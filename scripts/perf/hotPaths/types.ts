@@ -21,6 +21,8 @@ export type ScenarioName =
   | "base64-large"
   | "base64-head"
   | "base64-tail"
+  | "voice-message-encode"
+  | "proxy-tts-detect"
   | "storage-sqlite-flush"
   | "verification-snapshot"
   | "verification-snapshot-clone"

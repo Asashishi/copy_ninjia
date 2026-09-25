@@ -10,7 +10,8 @@ import type { MessageTriggerContext } from "../../types/auto";
  * 上下文，再判断是否需要回复。「直接唤起时必须回一句」只能在这里定义。
  *
  * 不把下面那半段（掷骰 + recordChatMedia + 返回值）一起收进来：那一段各 handler
- * 的差异正是 media 载荷本身；该载荷必须在调用点一次写全，不经半成品对象展开。
+ * 的差异正是各自的媒体字段；这些字段在调用点直接写进 buildAiRecordMediaMessage 的
+ * options，不经半成品对象展开。
  */
 export interface ReplyToUnresolvableMediaParams {
   context: MessageTriggerContext;

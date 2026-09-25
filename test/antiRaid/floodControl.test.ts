@@ -10,6 +10,7 @@ import { temporaryAdBypassActivityCache } from
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { chatStateOf } from "../helpers/chatState";
 
 const BOT_ID: number = 99;
 /** 固定的主线程观测时刻；投递载荷原样带给 Worker 当窗口时刻。 */
@@ -36,7 +37,7 @@ function candidate(
 
 beforeEach(() => {
   chatStateCache.clear();
-  chatStateCache.set(-1001, { isFloodControlEnabled: true });
+  chatStateCache.set(-1001, chatStateOf({ isFloodControlEnabled: true }));
   whitelistEntryCache.clear();
   temporaryAdBypassActivityCache.clear();
 });
@@ -52,7 +53,7 @@ describe("刷屏计数的主线程投递门禁", () => {
     chatStateCache.clear();
     expect(candidate(groupMessage())).toBeUndefined();
 
-    chatStateCache.set(-1001, { isFloodControlEnabled: true });
+    chatStateCache.set(-1001, chatStateOf({ isFloodControlEnabled: true }));
     expect(candidate(groupMessage())?.type).toBe("floodCandidate");
   });
 
@@ -60,7 +61,7 @@ describe("刷屏计数的主线程投递门禁", () => {
     const expected: FloodCandidateMessage | undefined = candidate();
     chatStateCache.clear();
 
-    expect(candidate(groupMessage(), { isFloodControlEnabled: true })).toEqual(expected);
+    expect(candidate(groupMessage(), chatStateOf({ isFloodControlEnabled: true }))).toEqual(expected);
     expect(candidate()).toBeUndefined();
   });
 
@@ -82,9 +83,9 @@ describe("刷屏计数的主线程投递门禁", () => {
 
   test("无名发送者的标签兜底随本群人设切换文案风格", () => {
     const nameless: Message = groupMessage({ from: { id: 7, is_bot: false, first_name: "" } } as Partial<Message>);
-    expect(candidate(nameless, { isFloodControlEnabled: true })?.label)
+    expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true }))?.label)
       .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
-    expect(candidate(nameless, { isFloodControlEnabled: true, aiPersona: "温柔的助手" })?.label)
+    expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true, aiPersona: "温柔的助手" }))?.label)
       .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
   });
 

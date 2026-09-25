@@ -3,6 +3,7 @@ import {
   RUNNER_DRAIN_POLL_INTERVAL_MS,
   RUNNER_DRAIN_TIMEOUT_MS,
 } from "../../consts/lifecycle";
+import { settleWithinBudget } from "../../libs/inflight";
 import {
   createMonotonicDeadline,
   isMonotonicDeadlineExpired,
@@ -96,7 +97,10 @@ export async function drainAcknowledgedUpdateRunner(
   return "unsettled";
 }
 
-/** 等待已启动的群标题维护任务；预算耗尽时先取消任务，再向停机门禁报告失败。 */
+/**
+ * 等待已启动的群标题维护任务；预算耗尽时先取消任务，再向停机门禁报告失败。
+ * task 由 app/lifecycle.ts 在启动时接上 catch，结算即视为完成。
+ */
 export async function waitForLifecycleBackgroundMaintenance(
   task: Promise<void>,
   timeoutMs: number,
@@ -108,14 +112,7 @@ export async function waitForLifecycleBackgroundMaintenance(
     dependencies.logger.error("Skipping unfinished chat title refresh during emergency disposal; aborted it.");
     return false;
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const settled: boolean = await Promise.race([
-    task.then((): boolean => true),
-    new Promise<boolean>((resolve: (value: boolean | PromiseLike<boolean>) => void): void => {
-      timer = setTimeout((): void => resolve(false), timeoutMs);
-    }),
-  ]);
-  if (timer !== undefined) clearTimeout(timer);
+  const settled: boolean = await settleWithinBudget([task], timeoutMs);
   if (!settled) {
     dependencies.abortChatTitleRefresh();
     dependencies.logger.error(`Chat title refresh did not settle within ${timeoutMs}ms and was aborted.`);

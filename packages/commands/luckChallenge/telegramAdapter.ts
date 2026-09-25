@@ -7,6 +7,7 @@ import type { LuckDraw } from "../../types/luckChallenge";
 import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
 import { logApiError } from "../../infra/telegram";
+import { isTelegramRequestRejected } from "../../infra/telegram/errors";
 import { signalArgs } from "../../libs/telegramSignalArgs";
 import { logger } from "../../infra/logger";
 import {
@@ -86,12 +87,6 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
       buildFortuneResult({ draw, userId: fromUser.id, userLabel, text: undefined }),
       buildProbabilityResult(draw, fromUser.id, userLabel),
     ];
-  // 结果正文是本 bot 的模板（问候、抽签结果、防伪回执），用户真正写的只有所求
-  // 事项这一段；广告检测按结果正文取回它来判（见 infra/inlineResultSources.ts）。
-  // 没写所求事项的纯运势与概率结果里没有一个字是用户写的，`text` 为空时本次
-  // 应答不登记，那两条结果因此也不进判定。
-  recordInlineResultSources(fromUser.id, text, results);
-
   try {
     await ctx.answerInlineQuery(
       results,
@@ -101,5 +96,11 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
   } catch (error: unknown) {
     throwIfUpdateAborted();
     logApiError("answer luck inline query", error);
+    if (isTelegramRequestRejected(error)) return;
   }
+  // 结果正文是本 bot 的模板（问候、抽签结果、防伪回执），用户真正写的只有所求
+  // 事项这一段；广告检测按结果正文取回它来判（见 infra/inlineResultSources.ts）。
+  // 没写所求事项的纯运势与概率结果里没有一个字是用户写的，`text` 为空时本次
+  // 应答不登记，那两条结果因此也不进判定。
+  recordInlineResultSources(fromUser.id, text, results);
 }

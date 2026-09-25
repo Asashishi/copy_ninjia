@@ -42,7 +42,7 @@ function adoptLuckSecret(secret: LuckReceiptSecret): void {
  * 收下一条当日已确认结果，撑满时拒收并只记一行日志。
  *
  * 拒收而不是淘汰最旧：淘汰等于让一个刷子把当天正常用户的记录顶掉。被拒的 key
- * 只是「今天测过」记不住——派生是确定性的，重新预览仍是同一条结果（取舍见
+ * 只是「今天测过」记不住——派生是确定性的，重新预览仍是同一条结果（见
  * consts/luckChallenge.ts 的 DAILY_LUCK_CACHE_MAX）。
  * @returns 真的收下了为 true；撑满拒收为 false，调用方据此决定要不要落盘。
  */

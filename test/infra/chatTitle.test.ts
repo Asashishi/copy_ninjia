@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../../packages/consts/telegram";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
+import { chatStateOf } from "../helpers/chatState";
+import type { ChatState } from "../../packages/types/chatState";
 
-const states = new Map<number, { isInitEnabled: true; title?: string }>();
+const states = new Map<number, ChatState>();
 const saveStateInBackground = mock((_context: string): void => {});
 const getChat = mock(async (_chatId: number, _signal?: AbortSignal): Promise<{
   type: "supergroup";
@@ -11,7 +13,7 @@ const getChat = mock(async (_chatId: number, _signal?: AbortSignal): Promise<{
 }> => ({ type: "supergroup", title: "title" }));
 const loggerInfo = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
-const getChatState = mock((chatId: number) => states.get(chatId) ?? {});
+const getChatState = mock((chatId: number) => states.get(chatId) ?? chatStateOf());
 
 mock.module("../../packages/infra/telegram/mainClient", () => ({ bot: { api: { getChat } } }));
 mock.module("../../packages/infra/logger", () => ({
@@ -43,7 +45,7 @@ beforeEach(() => {
 
 describe("chat title maintenance", () => {
   test("群消息入口保留单参数调用语义，并在标题变化时落盘", () => {
-    states.set(1, { isInitEnabled: true, title: "旧标题" });
+    states.set(1, chatStateOf({ isInitEnabled: true, title: "旧标题" }));
 
     recordChatTitleFromChat({ id: 1, type: "supergroup", title: "新标题" });
 
@@ -53,7 +55,7 @@ describe("chat title maintenance", () => {
   });
 
   test("群消息入口复用调用方已读取的状态，不重复查表或改变写入语义", () => {
-    const state = { isInitEnabled: true as const, title: "旧标题" };
+    const state: ChatState = chatStateOf({ isInitEnabled: true, title: "旧标题" });
     states.set(1, state);
 
     recordChatTitleFromChat(
@@ -68,7 +70,7 @@ describe("chat title maintenance", () => {
 
   test("25 个受管 chat 使用固定小并发池并全部独立结算", async () => {
     for (let chatId: number = 1; chatId <= STATE_MANAGED_CHAT_LIMIT; chatId++) {
-      states.set(chatId, { isInitEnabled: true });
+      states.set(chatId, chatStateOf({ isInitEnabled: true }));
     }
     let active: number = 0;
     let maxActive: number = 0;
@@ -91,7 +93,7 @@ describe("chat title maintenance", () => {
 
   test("标题没变化的群不触发落盘", async () => {
     for (let chatId: number = 1; chatId <= 100; chatId++) {
-      states.set(chatId, { isInitEnabled: true, title: `chat-${chatId}` });
+      states.set(chatId, chatStateOf({ isInitEnabled: true, title: `chat-${chatId}` }));
     }
     getChat.mockImplementation(async (chatId: number) => ({
       type: "supergroup" as const,
@@ -105,7 +107,7 @@ describe("chat title maintenance", () => {
 
   test("不足一批的尾巴在收尾时落盘，不会留在内存里", async () => {
     for (let chatId: number = 1; chatId <= 3; chatId++) {
-      states.set(chatId, { isInitEnabled: true });
+      states.set(chatId, chatStateOf({ isInitEnabled: true }));
     }
     getChat.mockImplementation(async (chatId: number) => ({
       type: "supergroup" as const,
@@ -119,7 +121,7 @@ describe("chat title maintenance", () => {
   });
 
   test("abort 后不再保存悬挂请求的迟到结果", async () => {
-    states.set(1, { isInitEnabled: true });
+    states.set(1, chatStateOf({ isInitEnabled: true }));
     let resolveChat!: () => void;
     getChat.mockImplementationOnce(async () => {
       await new Promise<void>((resolve) => { resolveChat = resolve; });

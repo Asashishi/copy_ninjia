@@ -233,7 +233,7 @@ export function createOpenAiReplySession(
       // 预算等于让后续轮次继续白送额度。
       const response: OpenAI.Responses.Response | undefined = result.response;
       const webSearchCalls: number = response === undefined ? 0 : countWebSearchCalls(response);
-      // 成功与失败两条分支按同一顺序初始化同一组字段，理由同
+      // 成功与失败两条分支按同一顺序初始化同一组字段，同
       // aiChat/gemini/replySession.ts 的同名分支。
       if (!result.ok) {
         return {

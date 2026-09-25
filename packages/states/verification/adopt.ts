@@ -1,21 +1,8 @@
 import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import { trimSlidingWindowArray } from "../../libs/slidingWindowRateLimit";
 import type { VerificationSnapshot } from "../../types/antiRaid/verification";
-import type { ExpelSnapshot, VerificationState } from "../../types/states/verification";
-import { checkingInviterOf, expellingOf } from "./shared";
-
-/** 终态处置只读快照里的那几项，四个 phase 共用同一份取法。 */
-function expelSnapshotOf(record: VerificationSnapshot): ExpelSnapshot {
-  return {
-    label: record.label,
-    isBot: record.isBot,
-    announcementMessageId: record.announcementMessageId,
-    reminderMessageId: record.reminderMessageId,
-    replyReminderMessageId: record.replyReminderMessageId,
-    joinedAt: record.joinedAt,
-    expiresAt: record.expiresAt,
-  };
-}
+import type { VerificationState } from "../../types/states/verification";
+import { checkingInviterOf, expellingOf, snapshotOf } from "./shared";
 
 /**
  * 把一份落盘验证快照重建成内存状态。纯转换：不碰 Map、不建计时器、不读墙钟
@@ -47,10 +34,10 @@ export function adoptVerificationState(record: VerificationSnapshot, now: number
     };
   }
   if (record.phase === "checkingInviter") {
-    return checkingInviterOf(record.terminalInviterId, expelSnapshotOf(record));
+    return checkingInviterOf(record.terminalInviterId, snapshotOf(record));
   }
   if (record.phase === "expelling") {
-    return expellingOf(record.expelReason, expelSnapshotOf(record), record);
+    return expellingOf(record.expelReason, snapshotOf(record), record);
   }
   return {
     kind: "pending",

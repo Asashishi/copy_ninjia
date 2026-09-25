@@ -11,6 +11,7 @@ export {
   configureStoragePersistenceReply,
   flushStorageDatabase,
   pendingStorageDatabaseDomains,
+  setStorageFlushHold,
 } from "./storageDatabase/flush";
 export { adoptStorageDatabase, inspectStorageDatabase } from "./storageDatabase/hydration";
 export {

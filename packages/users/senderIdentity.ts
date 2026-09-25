@@ -201,7 +201,7 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  * resolveSenderIdentity 构造（cacheSender 与 resolveReplyTarget 都走它），启动预热的
  * updateCachedIdentity 写入的是持久化状态里原样保留该标记的身份。
  *
- * 双向一致才采信缓存里的那份，理由同 resolveUsernameTarget：单边残留的别名
+ * 双向一致才采信缓存里的那份，同 resolveUsernameTarget：单边残留的别名
  * 会把标签写成另一个人的名字。
  */
 export function resolveIdTarget(targetId: number): CachedUser {

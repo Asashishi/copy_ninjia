@@ -37,6 +37,7 @@ import type {
   PendingBlockedRemovalParams,
   RemoveBlockedMembersParams,
   TrackBlockedRemovalInput,
+  BlocklistSweepRecord,
 } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 import type {
@@ -47,7 +48,6 @@ import type {
   IdentityStoragePersistedReply,
 } from "../../types/diskIO/replies";
 import type { FlushResult } from "../../types/lifecycle";
-import type { BlocklistSweepRecord } from "../../types/blocklist";
 
 /** 新一轮补扫完整取代同群旧批次，并把变化纳入 durable outbox 快照。 */
 export function forgetSupersededChatSweepBatches(

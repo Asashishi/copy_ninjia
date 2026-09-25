@@ -52,6 +52,7 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
     case "readJoinLog":
     case "readBlocklistIdPage":
     case "recoveryReplay":
+    case "storageFlushHold":
       break;
     default: {
       // 穷尽性断言：新增 DiskIOOperationMessage 变体时这一行编译失败，必须为它显式定价。
@@ -74,6 +75,7 @@ export function isDiskBusinessMessage(message: DiskIOOperationMessage): message 
     case "diagnosticBatch":
     case "load":
     case "recoveryReplay":
+    case "storageFlushHold":
     case "flush":
     case "readIdentityPolicies":
     case "readBlocklistIdPage":

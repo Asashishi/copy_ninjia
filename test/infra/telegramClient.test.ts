@@ -9,7 +9,7 @@ const hydrateFiles = mock((token: string) => ({ kind: "files", token }));
 const telegramOutboundGate = mock(() => ({ kind: "outbound-gate" }));
 const initTelegramOutbound = mock((): void => {});
 const mainSendPhoto = mock(async (..._args: unknown[]) => ({ message_id: 19 }));
-const mainSendAudio = mock(async (..._args: unknown[]) => ({ message_id: 20 }));
+const mainSendVoice = mock(async (..._args: unknown[]) => ({ message_id: 20 }));
 const rawDeleteEphemeralMessage = mock(async (..._args: unknown[]): Promise<true> => true);
 const mainApiCalls: { readonly method: string; readonly args: readonly unknown[] }[] = [];
 let botConstructions: number = 0;
@@ -38,8 +38,8 @@ class FakeBot {
     this.api = new Proxy<Record<PropertyKey, unknown>>({
       config: { use: botUse },
       raw: { deleteEphemeralMessage: rawDeleteEphemeralMessage },
-      sendAudio: mainSendAudio,
       sendPhoto: mainSendPhoto,
+      sendVoice: mainSendVoice,
     }, {
       get(target: Record<PropertyKey, unknown>, property: PropertyKey): unknown {
         const existing: unknown = target[property];
@@ -160,7 +160,7 @@ describe("Telegram 客户端初始化", () => {
     const permissions: Readonly<Record<string, boolean>> = { can_send_messages: false };
     const cases: readonly Readonly<{
       method: Exclude<keyof typeof client.telegramApi,
-        "deleteEphemeralMessage" | "sendAudio" | "sendPhoto">;
+        "deleteEphemeralMessage" | "sendPhoto" | "sendVoice">;
       args: readonly unknown[];
     }>[] = [
       { method: "answerCallbackQuery", args: ["callback-id", { text: "done" }, signal] },
@@ -203,36 +203,23 @@ describe("Telegram 客户端初始化", () => {
     }> => ({ method: entry.method, args: entry.args })));
   });
 
-  test("音频、缩略图和取消信号完整透传到最终 grammY 边界", async () => {
+  test("语音字节与取消信号透传到最终 grammY 边界", async () => {
     mainClient.initTelegramClients();
-    mainSendAudio.mockClear();
-    const audioBytes: Uint8Array = new Uint8Array([1, 2, 3]);
-    const thumbnailBytes: Uint8Array = new Uint8Array([4, 5, 6]);
+    mainSendVoice.mockClear();
+    const voiceBytes: Uint8Array = new Uint8Array([7, 8, 9]);
     const signal: AbortSignal = new AbortController().signal;
 
-    await client.telegramApi.sendAudio(
+    await client.telegramApi.sendVoice(
       -1001,
-      { bytes: audioBytes, fileName: "song.mp3" },
-      {
-        caption: "song",
-        thumbnail: { bytes: thumbnailBytes, fileName: "cover.jpg" },
-      },
+      { bytes: voiceBytes, fileName: "voice.ogg" },
+      { duration: 3 },
       signal as never
     );
 
-    const args: unknown[] | undefined = mainSendAudio.mock.calls[0];
+    const args: unknown[] | undefined = mainSendVoice.mock.calls[0];
     expect(args?.[0]).toBe(-1001);
-    expect(args?.[1]).toEqual(expect.objectContaining({
-      bytes: audioBytes,
-      fileName: "song.mp3",
-    }));
-    expect(args?.[2]).toEqual({
-      caption: "song",
-      thumbnail: expect.objectContaining({
-        bytes: thumbnailBytes,
-        fileName: "cover.jpg",
-      }),
-    });
+    expect(args?.[1]).toEqual(expect.objectContaining({ bytes: voiceBytes, fileName: "voice.ogg" }));
+    expect(args?.[2]).toEqual({ duration: 3 });
     expect(args?.[3]).toBe(signal);
   });
 

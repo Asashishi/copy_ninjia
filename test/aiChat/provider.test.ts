@@ -19,9 +19,9 @@ const {
   mediaAiProvider,
   reloadAgentDeploymentConfig,
   reportUnimplementedAgentCapabilities,
-  songAiProvider,
   summaryAiProvider,
   textAiProvider,
+  ttsAiProvider,
 } = await import("../../packages/aiChat/provider");
 const { geminiClientCache } = await import("../../packages/cache/workers/aiChat/gemini");
 const { openAiClientCache } = await import("../../packages/cache/workers/aiChat/openai");
@@ -56,7 +56,7 @@ beforeEach((): void => {
       model: "grok-image",
       imageProtocol: "xai",
     },
-    song: { provider: "google", apiKey: "google-song-key", baseUrl: undefined, model: "lyria" },
+    tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, model: "tts-model", voice: "Leda" },
   };
   loggerError.mockClear();
 });
@@ -66,7 +66,7 @@ test("每项能力按 agent 配置独立选择 provider", () => {
   expect(summaryAiProvider().name).toBe("openai");
   expect(mediaAiProvider().name).toBe("google");
   expect(imageAiProvider()?.name).toBe("openai");
-  expect(songAiProvider()?.name).toBe("google");
+  expect(ttsAiProvider()?.name).toBe("google");
 });
 
 test("修改一项只影响该能力", () => {
@@ -79,10 +79,10 @@ test("修改一项只影响该能力", () => {
   expect(summaryAiProvider().name).toBe("openai");
 });
 
-test("song 缺省时明确不提供生歌实现", () => {
-  const { song: _song, ...withoutSong } = agentConfig;
-  agentConfig = withoutSong;
-  expect(songAiProvider()).toBeNull();
+test("tts 缺省时明确不提供语音合成实现", () => {
+  const { tts: _tts, ...withoutTts } = agentConfig;
+  agentConfig = withoutTts;
+  expect(ttsAiProvider()).toBeNull();
 });
 
 test("image 缺省时明确不提供生图实现", () => {
@@ -128,15 +128,16 @@ test("相同协议、端点和凭据的不同能力共享一个配额闸门", ()
 test("配了但这一家没实现的可选能力，只在启动时记一次诊断", () => {
   agentConfig = {
     ...agentConfig,
-    song: { provider: "openai", apiKey: "openai-song-key", baseUrl: undefined, model: "song-model" },
+    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, model: "tts-model", voice: "Leda" },
   };
+  expect(ttsAiProvider()).toEqual({ name: "openai" });
   reportUnimplementedAgentCapabilities();
   expect(loggerError).toHaveBeenCalledTimes(1);
   const diagnostic: string = String(loggerError.mock.calls[0]![0]);
-  expect(diagnostic).toContain("$.agent.song");
-  expect(diagnostic).toContain("generate_song");
+  expect(diagnostic).toContain("$.agent.tts");
+  expect(diagnostic).toContain("send_voice");
   // 诊断不回显凭据。
-  expect(diagnostic).not.toContain("openai-song-key");
+  expect(diagnostic).not.toContain("openai-tts-key");
 });
 
 test("两家都实现的能力不刷诊断", () => {
@@ -160,8 +161,8 @@ test("跨能力调用无法通过类型检查", () => {
     rejected.push(textAiProvider().generateText);
     // @ts-expect-error 生图路由不承载语音转写。
     rejected.push(imageAiProvider()?.transcribeVoice);
-    // @ts-expect-error 生歌路由不承载生图。
-    rejected.push(songAiProvider()?.generateImage);
+    // @ts-expect-error 语音合成路由不承载生图。
+    rejected.push(ttsAiProvider()?.generateImage);
   };
   expect(typeof assertCrossCapabilityCallsRejected).toBe("function");
 });
@@ -260,19 +261,20 @@ test("媒体门面的读图与转写都各自过闸并透出结果", async () =>
   }
 });
 
-test("生图与生歌门面透出 provider 结果", async () => {
+test("生图与语音合成门面透出 provider 结果", async () => {
   const generateImage = spyOn(openAiProvider, "generateImage")
     .mockImplementation(async () => ({ bytes: new Uint8Array([1]), mimeType: "image/png" }) as never);
-  const generateSong = spyOn(geminiProvider, "generateSong")
-    .mockImplementation(async () => ({ bytes: new Uint8Array([2]), mimeType: "audio/mp3" }) as never);
+  const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech")
+    .mockImplementation(async () => ({ bytes: new Uint8Array([2]), mimeType: "audio/wav" }) as never);
   try {
     await expect(imageAiProvider()?.generateImage({} as never))
       .resolves.toEqual({ bytes: new Uint8Array([1]), mimeType: "image/png" });
-    await expect(songAiProvider()?.generateSong?.({} as never))
-      .resolves.toEqual({ bytes: new Uint8Array([2]), mimeType: "audio/mp3" });
+    expect(ttsAiProvider()).toBe(ttsAiProvider());
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ" }))
+      .resolves.toEqual({ bytes: new Uint8Array([2]), mimeType: "audio/wav" });
   } finally {
     generateImage.mockRestore();
-    generateSong.mockRestore();
+    synthesizeSpeech.mockRestore();
   }
 });
 
@@ -285,12 +287,12 @@ test("agent 热重载丢弃门面与 SDK 客户端，按新快照重建", () => 
   reloadAgentDeploymentConfig({
     ...agentConfig,
     text: { ...agentConfig.text, model: "gemini-text-reloaded" },
-    song: undefined,
+    tts: undefined,
   });
 
   expect(textAiProvider()).not.toBe(oldText);
   expect(summaryAiProvider()).not.toBe(oldSummary);
-  expect(songAiProvider()).toBeNull();
+  expect(ttsAiProvider()).toBeNull();
   expect(geminiClientCache.current).toBeNull();
   expect(openAiClientCache.current).toBeNull();
 });
@@ -298,11 +300,11 @@ test("agent 热重载丢弃门面与 SDK 客户端，按新快照重建", () => 
 test("agent 热重载保留仍被引用的配额 lane，摘除失去引用的 lane", () => {
   textAiProvider();
   summaryAiProvider();
-  songAiProvider();
+  ttsAiProvider();
   expect(aiProviderQuotaLanes.map((lane) => lane.apiKey)).toEqual([
     "google-text-key",
     "openai-summary-key",
-    "google-song-key",
+    "google-tts-key",
   ]);
   const summaryLane = aiProviderQuotaLanes[1]!;
 
@@ -315,7 +317,7 @@ test("agent 热重载保留仍被引用的配额 lane，摘除失去引用的 la
   // text 换了凭据：旧 lane 失去引用被摘除；summary 只换模型，并发额度原样延续。
   expect(aiProviderQuotaLanes.map((lane) => lane.apiKey)).toEqual([
     "openai-summary-key",
-    "google-song-key",
+    "google-tts-key",
   ]);
   summaryAiProvider();
   expect(aiProviderQuotaLanes[0]).toBe(summaryLane);
@@ -341,8 +343,21 @@ test("只有 media 能力变化时两种输入模态才回到未探测状态", (
 test("agent 热重载后按新快照重记「配了但没实现」的诊断", () => {
   reloadAgentDeploymentConfig({
     ...agentConfig,
-    song: { provider: "openai", apiKey: "openai-song-key", baseUrl: undefined, model: "song-model" },
+    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, model: "tts-model", voice: "Leda" },
   });
   expect(loggerError).toHaveBeenCalledTimes(1);
-  expect(String(loggerError.mock.calls[0]![0])).toContain("$.agent.song");
+  expect(String(loggerError.mock.calls[0]![0])).toContain("$.agent.tts");
+});
+
+test("agent 热重载删除 tts 后摘除它独占的配额 lane", () => {
+  ttsAiProvider();
+  const ttsLane = aiProviderQuotaLanes.find((lane) => lane.apiKey === "google-tts-key");
+  expect(ttsLane).toBeDefined();
+
+  reloadAgentDeploymentConfig({ ...agentConfig, text: { ...agentConfig.text, model: "other-text" } });
+
+  expect(aiProviderQuotaLanes).toContain(ttsLane!);
+  reloadAgentDeploymentConfig({ ...agentConfig, tts: undefined });
+  expect(aiProviderQuotaLanes).not.toContain(ttsLane!);
+  expect(ttsAiProvider()).toBeNull();
 });

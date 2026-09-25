@@ -109,12 +109,8 @@ describe("启动总闸的 state 输入判定", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test.each([undefined, {}, { "-1": [
-    { translatedUser: { id: 2 }, language: "en" },
-    { translatedUser: { id: 3 }, language: "uk" },
-    { translatedUser: { id: 4 }, language: "ru" },
-  ] }])("可选翻译状态 %j 合法时启动继续推进到 Worker 初始化", async (translate: unknown) => {
-    const content: string = JSON.stringify({ ...JSON.parse(legal), translate });
+  test("state.json 只含 global 时启动继续推进到 Worker 初始化", async () => {
+    const content: string = legal;
     await Bun.write(statePath, content);
     await Bun.write(backupPath, content);
     const lifecycle = new ApplicationLifecycle(testDependencies);
@@ -128,8 +124,8 @@ describe("启动总闸的 state 输入判定", () => {
     expect(writes).toEqual([]);
   });
 
-  test.each(["primary", "backup"])("%s 翻译状态非法时联网前拒绝启动，主备字节不变", async (copy: string) => {
-    const invalid: string = JSON.stringify({ ...JSON.parse(legal), translate: { "-1": [{ translatedUser: { id: 2 }, language: "invalid" }] } });
+  test.each(["primary", "backup"])("%s 仍带 translate 块时联网前拒绝启动，主备字节不变", async (copy: string) => {
+    const invalid: string = JSON.stringify({ ...JSON.parse(legal), translate: { "-1": [{ translatedUser: { id: 2 }, language: "en" }] } });
     const primary: string = copy === "primary" ? invalid : legal;
     const backup: string = copy === "backup" ? invalid : legal;
     await Bun.write(statePath, primary);

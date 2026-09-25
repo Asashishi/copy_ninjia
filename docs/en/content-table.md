@@ -30,7 +30,7 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 | 🛠️ **Modifications** | Step-by-step recipes for commands, AI tools, and schema edits | [📖 06 Recipes](06-modification-guide.md) |
 | 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
 | 🎮 **Look up a command** | Every command, permission semantics and behavioural details (the root README keeps only a summary) | [📖 08 Commands](08-commands.md) |
-| 🖼️ **Images and scheduled tasks** | Collection, content deduplication, albums, time zones and path bases | [📖 Configuration](../../config_example/README/en.md) |
+| 🖼️ **Images and scheduled tasks** | Collection, content deduplication, albums, scheduled voice, time zones and path bases | [📖 Configuration](../../config_example/README/en.md) |
 | 📊 **Read the numbers** | Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency | [📖 09 Performance](09-performance.md) |
 | ❓ **Bot not replying** | Checklist for a running bot that stays silent | [📖 10 FAQ](10-faq.md) |
 

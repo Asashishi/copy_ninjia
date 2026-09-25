@@ -77,7 +77,7 @@ export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "bounded-rolling-buffer",
 ];
 
-/** 九条完整生产动作的固定出数顺序：七条落盘动作与两条用户可见流程。 */
+/** 十条完整生产动作的固定出数顺序：七条落盘动作与三条用户可见流程。 */
 export const CHAIN_NAMES: readonly ChainName[] = [
   "join-log-append",
   "identity-policy-write",
@@ -88,6 +88,7 @@ export const CHAIN_NAMES: readonly ChainName[] = [
   "diagnostic-log",
   "ad-detect-command",
   "ai-reply-command",
+  "cron-send-voice",
 ];
 
 /**
@@ -302,7 +303,7 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   },
 ];
 
-/** 完整流程分区：七条 durable 动作与两条本地命令流程的单次耗时及吞吐。 */
+/** 完整流程分区：七条 durable 动作与三条本地命令流程的单次耗时及吞吐。 */
 export async function runChainSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {

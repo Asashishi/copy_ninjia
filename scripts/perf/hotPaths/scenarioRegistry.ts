@@ -48,6 +48,7 @@ import {
 } from "./transcriptScenarios";
 import type { Scenario, ScenarioName } from "./types";
 import { base64PayloadScenario, replyAdmissionScenario, replyDeliveryScenario } from "./replyScenarios";
+import { proxyTtsDetectScenario, voiceMessageEncodeScenario } from "./voiceScenarios";
 
 /** 按稳定名称建立一份独立场景；每个子进程只调用一次。 */
 export function createScenario(name: ScenarioName): Scenario {
@@ -64,6 +65,8 @@ export function createScenario(name: ScenarioName): Scenario {
     case "base64-large": return base64PayloadScenario("large");
     case "base64-head": return base64PayloadScenario("head");
     case "base64-tail": return base64PayloadScenario("tail");
+    case "voice-message-encode": return voiceMessageEncodeScenario();
+    case "proxy-tts-detect": return proxyTtsDetectScenario();
     case "storage-sqlite-flush": return storageFlushScenario();
     case "verification-snapshot": return verificationSnapshotScenario(false);
     case "verification-snapshot-clone": return verificationSnapshotScenario(true);

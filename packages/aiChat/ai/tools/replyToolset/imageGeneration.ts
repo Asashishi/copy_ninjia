@@ -36,7 +36,7 @@ import type {
   ImageGenerationAvailability,
   ImageGenerationClaim,
 } from "../../../../types/aiChat/imageGeneration";
-import type { TelegramSendResult } from "../../../../types/telegram";
+import type { TelegramPhotoSendResult } from "../../../../types/telegram";
 import { generateChatImage } from "../../imageGeneration";
 import { normalizeImageAspectRatio } from "../../utils/aspectRatio";
 import { downloadTelegramVisionImage } from "../../telegramImage";
@@ -44,7 +44,7 @@ import { mediaTaskRunner } from "../../../../cache/workers/aiChat/mediaTasks";
 import type { VisionImage } from "../../../../types/media";
 import { cleanReply } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
-import { sendDirectMessage } from "./messageState";
+import { acceptRoundText, sendDirectMessage } from "./messageState";
 import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 
 /** 省略 aspect_ratio 时执行侧采用的比例：有参考素材就取最接近它的官方比例。
@@ -196,7 +196,7 @@ export function createGenerateImageExecutor(
     const captionBudgetLeft: boolean =
       HARD_MAX_ACTIONS_PER_REPLY - getActionsUsed() >= IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS;
     const separateCaption: boolean = caption !== null && inlineCaption === null && captionBudgetLeft;
-    if (caption !== null && (inlineCaption !== null || separateCaption)) state.acceptedCanonicalTexts.add(caption);
+    if (caption !== null && (inlineCaption !== null || separateCaption)) acceptRoundText(state, caption);
     return {
       result: JSON.stringify({
         success: true,
@@ -251,7 +251,7 @@ export function createGenerateImageExecutor(
             });
           }
 
-          const sent: TelegramSendResult | undefined = await sendPhotoWithResult({
+          const sent: TelegramPhotoSendResult | undefined = await sendPhotoWithResult({
             chatId: ctx.chatId,
             bytes: image.bytes,
             mimeType: image.mimeType,
@@ -267,11 +267,14 @@ export function createGenerateImageExecutor(
           const memoryPrompt: string = truncateInline(sanitizeInline(parsed.prompt), IMAGE_GENERATION_MEMORY_PROMPT_MAX_CHARS);
           const imageTag: string = imageSentTagTemplate(memoryPrompt, ctx.imageGenerationReference !== undefined);
 
-          ctx.onImageSent(
-            inlineCaption !== null ? `${imageTag}${inlineCaption}` : imageTag,
-            sent.messageId,
-            sent.repliedToMessageId
-          );
+          ctx.onImageSent({
+            text: inlineCaption !== null ? `${imageTag}${inlineCaption}` : imageTag,
+            messageId: sent.messageId,
+            repliedToMessageId: sent.repliedToMessageId,
+            origin: ctx.imageGenerationReference !== undefined ? "referenceGenerated" : "generated",
+            caption: inlineCaption ?? "",
+            photo: sent.photo,
+          });
 
           let actionsUsedByTool: number = 1;
           let captionDelivery: "inline" | "separate_message" | "failed" | "no_action_budget" | null =

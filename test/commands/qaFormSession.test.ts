@@ -7,7 +7,6 @@ import { qaFormSessions, resetChatQaCache } from "../../packages/cache/main/qa";
 import {
   closeQaFormSession,
   closeQaFormSessionsInChat,
-  findQaFormSession,
   openQaFormSession,
 } from "../../packages/commands/qa/session";
 import type { QaFormSession } from "../../packages/types/qa";
@@ -40,7 +39,7 @@ describe("/qa set 表单会话", () => {
 
     expect(second).not.toBe(first);
     expect(second!.q).toBeUndefined();
-    expect(findQaFormSession(CHAT_ID)).toBe(second!);
+    expect(qaFormSessions.get(CHAT_ID)).toBe(second!);
     expect(qaFormSessions.size).toBe(1);
   });
 
@@ -48,7 +47,7 @@ describe("/qa set 表单会话", () => {
     // 模拟命令侧 sender_chat 是本群的场景：openedById 等于群 id。
     openQaFormSession({ chatId: CHAT_ID, openedById: CHAT_ID, onDiscard: noop });
 
-    expect(findQaFormSession(CHAT_ID)).toBeDefined();
+    expect(qaFormSessions.get(CHAT_ID)).toBeDefined();
   });
 
   test("达到全局上限后拒绝新建，而不是踢掉别人正在填的那张", () => {
@@ -72,7 +71,7 @@ describe("/qa set 表单会话", () => {
     expect(closeQaFormSession(session)).toBeFalse();
 
     expect(qaFormSessions.size).toBe(0);
-    expect(findQaFormSession(CHAT_ID)).toBeUndefined();
+    expect(qaFormSessions.get(CHAT_ID)).toBeUndefined();
   });
 
   test("teardown 只清本群，别的群不受影响", () => {
@@ -85,8 +84,8 @@ describe("/qa set 表单会话", () => {
     });
 
     expect(closed).toEqual([CHAT_ID]);
-    expect(findQaFormSession(CHAT_ID)).toBeUndefined();
-    expect(findQaFormSession(-1002)).toBeDefined();
+    expect(qaFormSessions.get(CHAT_ID)).toBeUndefined();
+    expect(qaFormSessions.get(-1002)).toBeDefined();
   });
 
   test("整表复位清掉全部会话", () => {
@@ -112,13 +111,13 @@ describe("/qa set 表单会话", () => {
 
       jest.advanceTimersByTime(QA_FORM_SESSION_TTL_MS - 1);
       expect(expired).toHaveLength(0);
-      expect(findQaFormSession(CHAT_ID)).toBe(session);
+      expect(qaFormSessions.get(CHAT_ID)).toBe(session);
 
       jest.advanceTimersByTime(1);
 
       expect(expired).toEqual([session]);
       expect(session.timer).toBeNull();
-      expect(findQaFormSession(CHAT_ID)).toBeUndefined();
+      expect(qaFormSessions.get(CHAT_ID)).toBeUndefined();
       expect(qaFormSessions.size).toBe(0);
     } finally {
       jest.useRealTimers();

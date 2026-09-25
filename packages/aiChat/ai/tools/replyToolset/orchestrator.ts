@@ -5,15 +5,21 @@ import {
   REPLY_INVALIDATED_TOOL_ERROR,
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
-  GENERATE_SONG_TOOL,
   GROUP_QA_ANSWER_TOOL,
   GROUP_QA_QUERY_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
+  SEND_VOICE_TOOL,
   unknownToolError,
   VIEW_STICKER_PACK_TOOL,
 } from "../../../../consts/tools";
-import type { ReplyActionChains, ReplyToolContext, ReplyToolExecution, ReplyToolset } from "../../../../types/aiChat/replies";
+import type {
+  ReplyActionChains,
+  ReplyToolContext,
+  ReplyToolExecution,
+  ReplyToolset,
+  RoundMessageState,
+} from "../../../../types/aiChat/replies";
 import type { StickerPackCandidate, StickerRoundState } from "../../../../types/stickers/tools";
 import { TOOL_DECLARATIONS } from "../index";
 import {
@@ -26,7 +32,7 @@ import {
 } from "../stickers";
 import { buildGenerateImageToolDefinition, createGenerateImageExecutor } from "./imageGeneration";
 import { buildImageReferenceBlock } from "./imageReference";
-import { buildGenerateSongToolDefinition, createGenerateSongExecutor } from "./songGeneration";
+import { buildSendVoiceToolDefinition, createSendVoiceExecutor } from "./voiceMessage";
 import {
   buildAddReactionToolDefinition,
   buildSendMessageToolDefinition,
@@ -40,8 +46,7 @@ import {
   executeGroupQaQuery,
 } from "./groupQa";
 import { toolError } from "../../utils/toolResult";
-import { imageAiProvider, songAiProvider } from "../../../provider";
-import type { RoundMessageState } from "../../../../types/aiChat/replies";
+import { imageAiProvider, ttsAiProvider } from "../../../provider";
 import { createReplyActionChains, toolResultActions } from "./actionChains";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
@@ -57,12 +62,14 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   // 重媒体工具只在直接触发轮查询供应商能力并挂载；随机插话与非直接媒体评价
   // 不读取对应 provider，也不向模型暴露工具 schema。
   const imageEnabled: boolean = ctx.mediaToolsRequested && imageAiProvider() !== null;
-  const songEnabled: boolean = ctx.mediaToolsRequested && songAiProvider()?.generateSong !== undefined;
+  // 语音工具不看触发类型，只看部署能力：挂载在同一份部署下跨回复恒定，调用与否
+  // 由模型按工具说明判断。
+  const voiceEnabled: boolean = ttsAiProvider()?.synthesizeSpeech !== undefined;
   const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
   ];
   if (imageEnabled) declarations.push(buildGenerateImageToolDefinition());
-  if (songEnabled) declarations.push(buildGenerateSongToolDefinition());
+  if (voiceEnabled) declarations.push(buildSendVoiceToolDefinition());
   declarations.push(buildAddReactionToolDefinition());
   if (viewDefinition !== null) declarations.push(viewDefinition);
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
@@ -79,9 +86,9 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   const executeGenerateImage: ((argumentsJson: string) => ReplyToolExecution) | null = imageEnabled
     ? createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed)
     : null;
-  // 生歌执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。
-  const executeGenerateSong: ((argumentsJson: string) => ReplyToolExecution) | null =
-    songEnabled ? createGenerateSongExecutor(ctx, messageState) : null;
+  // 语音执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。
+  const executeSendVoice: ((argumentsJson: string) => ReplyToolExecution) | null =
+    voiceEnabled ? createSendVoiceExecutor(ctx) : null;
 
   function dispatch(name: string, argumentsJson: string): ReplyToolExecution {
     switch (name) {
@@ -93,10 +100,10 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
         return executeGenerateImage === null
           ? toolError(unknownToolError(name))
           : executeGenerateImage(argumentsJson);
-      case GENERATE_SONG_TOOL:
-        return executeGenerateSong === null
+      case SEND_VOICE_TOOL:
+        return executeSendVoice === null
           ? toolError(unknownToolError(name))
-          : executeGenerateSong(argumentsJson);
+          : executeSendVoice(argumentsJson);
       case GROUP_QA_QUERY_TOOL:
         return executeGroupQaQuery(ctx.chatQa);
       case GROUP_QA_ANSWER_TOOL:
@@ -147,7 +154,7 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
       const isActionTool: boolean = ACTION_TOOL_NAMES.includes(name);
       if (isActionTool && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
         return Promise.resolve(toolError(
-          `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images + songs) per reply`
+          `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images + voices) per reply`
         ));
       }
 

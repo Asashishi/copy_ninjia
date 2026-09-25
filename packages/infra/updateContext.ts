@@ -47,8 +47,7 @@ export function currentUpdateAbortSignal(): AbortSignal | undefined {
  * 各读一次墙钟，同一条消息的判定就可能横跨毫秒边界——这正是主干内部早已用
  * 单个 `now` 防住的那件事，本函数只是把同一条不变量扩到整条 update。
  *
- * 顺带的代价差别很大：时钟读取在部署机上不一定走 vDSO 快路径，实测可达
- * 微秒量级，而本函数命中已填值只是一次 AsyncLocalStorage 取值。
+ * 已填值时只做一次 AsyncLocalStorage 取值，不再读墙钟。
  *
  * 不在 update 作用域内（Worker、启动路径、单测直调）时如实返回当刻墙钟，
  * 语义与直接调用 `Date.now()` 完全一致。
@@ -64,7 +63,7 @@ export function updateNow(): number {
  *
  * 只有一个调用点：自动流水线在频道帖自发消息 rendezvous
  * （最长 SELF_SENT_RENDEZVOUS_TIMEOUT_MS）之后恢复处理。等待前的时刻不得带过
- * 这条边界，理由与那里「恢复处理必须读取当时现值」的状态复读完全相同。
+ * 这条边界，与那里「恢复处理必须读取当时现值」的状态复读相同。
  */
 export function refreshUpdateNow(): number {
   const scope: UpdateScope | undefined = updateScopeStorage.getStore();

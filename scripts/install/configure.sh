@@ -60,7 +60,7 @@ fi
 
 if [ -e config/agent.json ]; then
   info "保留既有 config/agent.json，未改动。"
-elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写歌）？不配也能启动。" n; then
+elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语音）？不配也能启动。" n; then
   CONFIGURED_CAPABILITIES=()
   AGENT_CONFIG_NAMES=()
   AGENT_CONFIG_PROVIDERS=()
@@ -68,6 +68,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
   AGENT_CONFIG_MODELS=()
   AGENT_CONFIG_BASE_URLS=()
   AGENT_CONFIG_IMAGE_PROTOCOLS=()
+  AGENT_CONFIG_VOICES=()
   for capability in "${AGENT_CAPABILITIES[@]}"; do
     printf '\n'
     if ! confirm "配置 ${capability}？" n; then
@@ -92,6 +93,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
     done
     base_url=""
     image_protocol=""
+    voice=""
     if [ "$provider" = "openai" ]; then
       ask base_url "  ${capability} 的 base_url（可留空用官方端点；只接受 https，明文 http 仅限本机）："
       if [ "$capability" = "image" ]; then
@@ -102,6 +104,12 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
         done
       fi
     fi
+    if [ "$capability" = "tts" ]; then
+      while [ -z "$voice" ]; do
+        ask voice "  tts 的 voice（预置音色名如 Leda，或 AI Studio Voice design 的 voice_ 音色 ID）："
+        [ -z "$voice" ] && warn "voice 不能为空。"
+      done
+    fi
     CONFIGURED_CAPABILITIES+=("$capability")
     AGENT_CONFIG_NAMES+=("$capability")
     AGENT_CONFIG_PROVIDERS+=("$provider")
@@ -109,7 +117,8 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
     AGENT_CONFIG_MODELS+=("$model")
     AGENT_CONFIG_BASE_URLS+=("$base_url")
     AGENT_CONFIG_IMAGE_PROTOCOLS+=("$image_protocol")
-    unset api_key provider model base_url image_protocol
+    AGENT_CONFIG_VOICES+=("$voice")
+    unset api_key provider model base_url image_protocol voice
   done
 
   printf '\n'
@@ -123,24 +132,25 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
     create_config_staging_path "$AGENT_CONFIG_TARGET_PATH" AGENT_CONFIG_STAGING_PATH
     if ! {
       for capability_index in "${!AGENT_CONFIG_NAMES[@]}"; do
-        printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
           "${AGENT_CONFIG_NAMES[$capability_index]}" \
           "${AGENT_CONFIG_PROVIDERS[$capability_index]}" \
           "${AGENT_CONFIG_API_KEYS[$capability_index]}" \
           "${AGENT_CONFIG_MODELS[$capability_index]}" \
           "${AGENT_CONFIG_BASE_URLS[$capability_index]}" \
-          "${AGENT_CONFIG_IMAGE_PROTOCOLS[$capability_index]}"
+          "${AGENT_CONFIG_IMAGE_PROTOCOLS[$capability_index]}" \
+          "${AGENT_CONFIG_VOICES[$capability_index]}"
       done
     } | bun -e '
       const bytes = new Uint8Array(await Bun.stdin.arrayBuffer());
       const fields = new TextDecoder().decode(bytes).split("\0");
       fields.pop();
-      if (fields.length === 0 || fields.length % 6 !== 0) {
+      if (fields.length === 0 || fields.length % 7 !== 0) {
         throw new Error("invalid agent config field stream");
       }
       const agent = {};
-      for (let offset = 0; offset < fields.length; offset += 6) {
-        const [name, provider, apiKey, model, baseUrl, imageProtocol] = fields.slice(offset, offset + 6);
+      for (let offset = 0; offset < fields.length; offset += 7) {
+        const [name, provider, apiKey, model, baseUrl, imageProtocol, voice] = fields.slice(offset, offset + 7);
         const entry = {
           provider,
           api_key: apiKey,
@@ -148,6 +158,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、写�
         if (baseUrl.length > 0) entry.base_url = baseUrl;
         entry.model = model;
         if (imageProtocol.length > 0) entry.image_protocol = imageProtocol;
+        if (voice.length > 0) entry.voice = voice;
         agent[name] = entry;
       }
       await Bun.write(Bun.stdout, `${JSON.stringify({ agent }, null, 2)}\n`);

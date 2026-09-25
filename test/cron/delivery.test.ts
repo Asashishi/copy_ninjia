@@ -2,11 +2,14 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { HttpError, InputFile } from "grammy";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { CronAction, CronDeliveryOutcome } from "../../packages/types/cron";
+import type { CronAction, CronDeliveryOutcome, CronRoundVoices } from "../../packages/types/cron";
+import type { VoiceSynthesisResult } from "../../packages/types/aiChat/voiceMessage";
 import type { RandomImagePick } from "../../packages/types/randomImage";
 
 /** 记录调用并按预设返回的 grammY api 替身。 */
 const calls: { method: string; args: unknown[] }[] = [];
+/** 发图应答里的 photo 档位。 */
+const SENT_PHOTO = [{ file_id: "sent", file_unique_id: "sent-u", width: 800, height: 600 }];
 let nextFailure: unknown = undefined;
 function apiMethod(method: string): (...args: unknown[]) => Promise<unknown> {
   return async (...args: unknown[]): Promise<unknown> => {
@@ -16,7 +19,17 @@ function apiMethod(method: string): (...args: unknown[]) => Promise<unknown> {
       nextFailure = undefined;
       throw failure;
     }
-    if (method === "sendMediaGroup") return (args[1] as unknown[]).map((_: unknown, index: number) => ({ message_id: 77 + index, chat: { id: -1001 } }));
+    if (method === "sendMediaGroup") {
+      return (args[1] as { caption?: string }[]).map((item: { caption?: string }, index: number) => ({
+        message_id: 77 + index, chat: { id: -1001 }, photo: SENT_PHOTO, caption: item.caption,
+      }));
+    }
+    if (method === "sendPhoto") {
+      return { message_id: 77, chat: { id: -1001 }, photo: SENT_PHOTO, caption: (args[2] as { caption?: string }).caption };
+    }
+    if (method === "sendVoice") {
+      return { message_id: 77, chat: { id: -1001 }, voice: { file_id: "voice-file", file_unique_id: "voice-u", duration: 3 } };
+    }
     return { message_id: 77, chat: { id: -1001 } };
   };
 }
@@ -34,11 +47,21 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
       sendPhoto: apiMethod("sendPhoto"),
       sendMediaGroup: apiMethod("sendMediaGroup"),
       sendDocument: apiMethod("sendDocument"),
+      sendVoice: apiMethod("sendVoice"),
     },
   },
 }));
 mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
+const recordBotImage = mock((..._args: unknown[]): void => {});
+mock.module("../../packages/aiChat/botImages", () => ({ recordBotImage }));
+/** OGG 头 + 两字节的合成替身；每次返回新数组，确认复用的是登记下的那一份。 */
+function voiceResult(): VoiceSynthesisResult {
+  return { ok: true, voice: { bytes: new Uint8Array([0x4f, 0x67, 0x67, 0x53, 1, 2]), durationSeconds: 3 } };
+}
+const synthesizeVoice = mock(async (..._args: unknown[]): Promise<VoiceSynthesisResult> => voiceResult());
+const realWorkerBridge = await import("../../packages/aiChat/workerBridge");
+mock.module("../../packages/aiChat/workerBridge", () => ({ ...realWorkerBridge, synthesizeVoice }));
 
 const { deliverCronAction } = await import("../../packages/cron/delivery");
 const { TEST_DATA_ROOT } = await import("../preloadEnv");
@@ -48,8 +71,12 @@ const { getRandomHImageDirectory } = await import("../../packages/infra/storage/
 const { TelegramRetryQueueFullError } = await import("../../packages/infra/telegram/outboundRetryPolicy");
 const { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } = await import("../../packages/consts/telegram");
 
-function deliver(action: CronAction, signal: AbortSignal = new AbortController().signal): Promise<CronDeliveryOutcome> {
-  return deliverCronAction(-1001, action, signal);
+function deliver(
+  action: CronAction,
+  signal: AbortSignal = new AbortController().signal,
+  voices: CronRoundVoices = new Map()
+): Promise<CronDeliveryOutcome> {
+  return deliverCronAction({ chatId: -1001, action, signal, voices });
 }
 
 beforeEach(() => {
@@ -57,6 +84,9 @@ beforeEach(() => {
   nextFailure = undefined;
   markSelfSent.mockClear();
   pickRandomImage.mockClear();
+  recordBotImage.mockClear();
+  synthesizeVoice.mockClear();
+  synthesizeVoice.mockImplementation(async (): Promise<VoiceSynthesisResult> => voiceResult());
   mkdirSync(FILES_ROOT, { recursive: true });
 });
 
@@ -77,6 +107,22 @@ describe("cron 发送边界", () => {
     expect(calls).toEqual([
       { method: "sendPhoto", args: [-1001, "https://e.com/a.png", { caption: "今日图" }, expect.any(AbortSignal)] },
       { method: "sendDocument", args: [-1001, "https://e.com/r.zip", { caption: undefined }, expect.any(AbortSignal)] },
+    ]);
+  });
+
+  test("发出的每张图都写一条 AI 记忆占位自录，文字与文件不写", async () => {
+    await deliver({ type: "send_message", content: "hi" });
+    await deliver({ type: "send_file", content: undefined, source: { kind: "url", url: "https://e.com/r.zip" } });
+    expect(recordBotImage).not.toHaveBeenCalled();
+
+    await deliver({ type: "send_image", content: "今日图", source: { kind: "urls", urls: ["https://e.com/a.png"] }, isBlurred: false });
+    expect(recordBotImage).toHaveBeenCalledWith({ chatId: -1001, messageId: 77, caption: "今日图", edited: false });
+
+    recordBotImage.mockClear();
+    await deliver({ type: "send_image", content: "相册", source: { kind: "urls", urls: ["https://e.com/a.png", "https://e.com/b.png"] }, isBlurred: false });
+    expect(recordBotImage.mock.calls).toEqual([
+      [{ chatId: -1001, messageId: 77, caption: "相册", edited: false }],
+      [{ chatId: -1001, messageId: 78, caption: "", edited: false }],
     ]);
   });
 
@@ -189,4 +235,73 @@ test("抽图异步返回前取消，停止后不提交发送", async () => {
   expect(await deliver({ type: "send_image", content: undefined, isBlurred: false, source: { kind: "random", directory: null } }, controller.signal))
     .toEqual({ kind: "aborted" });
   expect(calls).toEqual([]);
+});
+
+describe("send_voice", () => {
+  const VOICE: CronAction = { type: "send_voice", content: "おやすみ", tone: "眠そうに" };
+
+  test("台词与语气交给公共合成实现，以 OGG 语音气泡发送并登记自发消息", async () => {
+    const signal: AbortSignal = new AbortController().signal;
+    expect(await deliver(VOICE, signal)).toEqual({ kind: "sent" });
+    expect(synthesizeVoice).toHaveBeenCalledWith({ text: "おやすみ", tone: "眠そうに", signal });
+    expect(calls).toHaveLength(1);
+    const [chatId, upload, options] = calls[0]!.args as [number, InputFile, { duration: number }];
+    expect(calls[0]!.method).toBe("sendVoice");
+    expect(chatId).toBe(-1001);
+    expect(upload).toBeInstanceOf(InputFile);
+    expect(upload.filename).toBe("voice.ogg");
+    expect(options).toEqual({ duration: 3 });
+    expect(markSelfSent).toHaveBeenCalledWith(-1001, 77);
+    expect(recordBotImage).not.toHaveBeenCalled();
+  });
+
+  test("同一轮只合成一次；首次发送成功前的重试重新上传，成功后后续会话改用 file_id", async () => {
+    const voices: CronRoundVoices = new Map();
+    nextFailure = Object.assign(new Error("Bad Gateway"), { error_code: 502, description: "Bad Gateway" });
+    expect(await deliver(VOICE, undefined, voices)).toEqual({ kind: "retryable", detail: "502 Bad Gateway" });
+    expect(voices.get(VOICE)?.fileId).toBeUndefined();
+    expect(await deliver(VOICE, undefined, voices)).toEqual({ kind: "sent" });
+    expect(voices.get(VOICE)?.fileId).toBe("voice-file");
+    expect(await deliverCronAction({ chatId: -1002, action: VOICE, signal: new AbortController().signal, voices }))
+      .toEqual({ kind: "sent" });
+    expect(synthesizeVoice).toHaveBeenCalledTimes(1);
+    expect(voices.get(VOICE)?.voice.durationSeconds).toBe(3);
+    const sources: unknown[] = calls.map((call: { args: unknown[] }): unknown => call.args[1]);
+    expect(sources[0]).toBeInstanceOf(InputFile);
+    expect(sources[1]).toBeInstanceOf(InputFile);
+    expect(sources[2]).toBe("voice-file");
+    expect(calls[2]!.args[0]).toBe(-1002);
+    expect(calls[2]!.args[2]).toEqual({ duration: 3 });
+    expect(markSelfSent).toHaveBeenLastCalledWith(-1002, 77);
+    // 新的一轮用新表，重新合成。
+    await deliver(VOICE);
+    expect(synthesizeVoice).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([
+    ["worker unavailable", "retryable"],
+    ["synthesis failed", "retryable"],
+    ["timed out", "retryable"],
+    ["tts unconfigured", "permanent"],
+    ["tts unsupported", "permanent"],
+    ["opus encoder failed", "permanent"],
+  ] as const)("合成失败 %s 按 %s 返回，不发送也不登记", async (reason, kind) => {
+    const voices: CronRoundVoices = new Map();
+    synthesizeVoice.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => ({ ok: false, reason }));
+    expect(await deliver(VOICE, undefined, voices)).toEqual({ kind, detail: `speech synthesis failed: ${reason}` });
+    expect(calls).toEqual([]);
+    expect(voices.size).toBe(0);
+  });
+
+  test("合成期间取消按 aborted 返回，不发送", async () => {
+    const controller: AbortController = new AbortController();
+    synthesizeVoice.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => {
+      controller.abort();
+      return voiceResult();
+    });
+    expect(await deliver(VOICE, controller.signal)).toEqual({ kind: "aborted" });
+    synthesizeVoice.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => ({ ok: false, reason: "aborted" }));
+    expect(await deliver(VOICE)).toEqual({ kind: "aborted" });
+    expect(calls).toEqual([]);
+  });
 });

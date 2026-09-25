@@ -46,7 +46,7 @@ import { buildRuntimeStateBlock } from "./runtimeState";
  * 那一轮的响应本来就不可用，缓存已经无从谈起。
  *
  * toolset 包含 packages/aiChat/ai/tools 的静态查询函数（当前为东京天气）和
- * 按轮组装的行动工具（发言、反应、两层贴纸及符合资格时的生图/生歌）；可见
+ * 按轮组装的行动工具（发言、反应、两层贴纸、符合资格时的生图及已配置时的语音）；可见
  * 副作用在接纳后的独立调用链内发生。服务端检索工具由 toolset.webSearch 单独声明，并由
  * 供应商执行。
  *
@@ -69,7 +69,7 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
  *   回复任务；这三段恒定出现，直接触发只体现为回复任务开头多一句唤起者声明。
  *   本文件在转录与回复任务之间补上第四段运行时状态（心情与当前时间）。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
- *   副作用（发消息/贴纸/反应/图片/歌曲）都发生在它内部；toolset.functions
+ *   副作用（发消息/贴纸/反应/图片/语音）都发生在它内部；toolset.functions
  *   直接传给供应商会话。
  * @returns 模型最后一轮的正文文本（正常情况下模型已通过工具把话说完、正文
  *   为空）；请求失败、超时、被 token 上限腰斩、空输出、工具结果无法续接或本轮

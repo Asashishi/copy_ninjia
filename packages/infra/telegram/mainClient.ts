@@ -19,7 +19,6 @@ import type {
   TelegramApi,
   TelegramDeleteEphemeralMessageParams,
   TelegramMemoryFile,
-  TelegramSendAudioOptions,
 } from "../../types/telegramWorker";
 
 type FirstOverloadReturn<T> = T extends {
@@ -73,31 +72,6 @@ const mainTelegramApi: TelegramApi = {
     bot.api.getStickerSet(...args),
   restrictChatMember: (...args: Parameters<TelegramApi["restrictChatMember"]>): ReturnType<TelegramApi["restrictChatMember"]> =>
     bot.api.restrictChatMember(...args),
-  // grammY 的外部签名固定为四个位置参数；此处适配层必须逐位透传。
-  // eslint-disable-next-line max-params
-  sendAudio: (
-    chatId: Parameters<TelegramApi["sendAudio"]>[0],
-    audio: TelegramMemoryFile,
-    other: TelegramSendAudioOptions = {},
-    signal?: Parameters<TelegramApi["sendAudio"]>[3]
-  ): ReturnType<TelegramApi["sendAudio"]> => {
-    const {
-      thumbnail,
-      ...grammyFields
-    }: TelegramSendAudioOptions = other;
-    const grammyOther: Parameters<Api["sendAudio"]>[2] = {
-      ...grammyFields,
-      ...(thumbnail === undefined
-        ? {}
-        : { thumbnail: new InputFile(thumbnail.bytes, thumbnail.fileName) }),
-    };
-    return bot.api.sendAudio(
-      chatId,
-      new InputFile(audio.bytes, audio.fileName),
-      grammyOther,
-      signal
-    );
-  },
   sendChatAction: (...args: Parameters<TelegramApi["sendChatAction"]>): ReturnType<TelegramApi["sendChatAction"]> =>
     bot.api.sendChatAction(...args),
   sendMessage: (...args: Parameters<TelegramApi["sendMessage"]>): ReturnType<TelegramApi["sendMessage"]> =>
@@ -117,6 +91,19 @@ const mainTelegramApi: TelegramApi = {
   ),
   sendSticker: (...args: Parameters<TelegramApi["sendSticker"]>): ReturnType<TelegramApi["sendSticker"]> =>
     bot.api.sendSticker(...args),
+  // grammY 的外部签名固定为四个位置参数；此处适配层必须逐位透传。
+  // eslint-disable-next-line max-params
+  sendVoice: (
+    chatId: Parameters<TelegramApi["sendVoice"]>[0],
+    voice: TelegramMemoryFile,
+    other: Parameters<TelegramApi["sendVoice"]>[2] = {},
+    signal?: Parameters<TelegramApi["sendVoice"]>[3]
+  ): ReturnType<TelegramApi["sendVoice"]> => bot.api.sendVoice(
+    chatId,
+    new InputFile(voice.bytes, voice.fileName),
+    other,
+    signal
+  ),
   setChatPermissions: (...args: Parameters<TelegramApi["setChatPermissions"]>): ReturnType<TelegramApi["setChatPermissions"]> =>
     bot.api.setChatPermissions(...args),
   setMessageReaction: (...args: Parameters<TelegramApi["setMessageReaction"]>): ReturnType<TelegramApi["setMessageReaction"]> =>

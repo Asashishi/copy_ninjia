@@ -4,7 +4,7 @@ import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
  * 广告命中样本文件（packages/workers/diskIO/adSampleFile.ts）的落盘线程内存状态。
  *
  * 只有一个追加游标，没有待写缓冲：样本是纯旁路素材，写失败就丢，不进统一
- * flush、不占重试预算（理由见 adSampleFile.ts 的文件头）。
+ * flush、不占重试预算（见 adSampleFile.ts 的文件头）。
  */
 
 /**

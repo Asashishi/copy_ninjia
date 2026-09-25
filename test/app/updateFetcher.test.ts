@@ -1,6 +1,11 @@
 import { expect, spyOn, test } from "bun:test";
 import { createUpdateFetcher } from "@grammyjs/runner";
 import { createAcknowledgedUpdateFetcher } from "../../packages/app/updateFetcher";
+import {
+  UPDATE_POLL_INITIAL_RETRY_MS,
+  UPDATE_POLL_MAX_RETRY_MS,
+  UPDATE_POLL_RETRY_WINDOW_MS,
+} from "../../packages/consts/updateRunner";
 
 interface FetchTrace {
   readonly requests: readonly unknown[];
@@ -14,7 +19,17 @@ interface FetchScenario {
   readonly rounds?: number;
 }
 
-async function trace(candidate: boolean, results: readonly unknown[], rounds: number = 1): Promise<FetchTrace> {
+interface TraceOptions {
+  readonly rounds?: number;
+  /** 这个假时刻之前的请求一律抛 network，之后按 results 依次返回。 */
+  readonly failUntil?: number;
+}
+
+async function trace(
+  candidate: boolean,
+  results: readonly unknown[],
+  { rounds = 1, failUntil = 0 }: TraceOptions = {}
+): Promise<FetchTrace> {
   let now: number = 1_000_000;
   let calls: number = 0;
   const requests: unknown[] = [];
@@ -33,6 +48,7 @@ async function trace(candidate: boolean, results: readonly unknown[], rounds: nu
   const bot: { readonly api: { getUpdates(args: unknown): Promise<unknown[]> } } = {
     api: { getUpdates: async (args: unknown): Promise<unknown[]> => {
       requests.push({ ...(args as object), at: now });
+      if (now < failUntil) throw new Error("network");
       const value: unknown = results[Math.min(calls++, results.length - 1)];
       if (Array.isArray(value)) return value;
       throw value;
@@ -56,6 +72,8 @@ async function trace(candidate: boolean, results: readonly unknown[], rounds: nu
   return { requests, delays, outputs };
 }
 
+// 参照实现（@grammyjs/runner）的指数退避不封顶；只在退避尚未触顶的场景逐项对拍，
+// 触顶之后的行为由下面两条独立用例锁定。
 const scenarios: readonly FetchScenario[] = [
   { name: "成功、空响应与 offset", results: [[{ update_id: 10 }], [], [{ update_id: 12 }]], rounds: 3 },
   { name: "网络失败恢复与下一批重置退避", results: [new Error("network"), new Error("network"), [{ update_id: 10 }], new Error("again"), [{ update_id: 11 }]], rounds: 2 },
@@ -63,13 +81,34 @@ const scenarios: readonly FetchScenario[] = [
   { name: "409 不重试", results: [{ error_code: 409 }] },
   { name: "429 先等待 retry_after 再指数退避", results: [{ error_code: 429, parameters: { retry_after: 0.125 } }, [{ update_id: 10 }]] },
   { name: "无 retry_after 的 429", results: [{ error_code: 429 }, [{ update_id: 10 }]] },
-  { name: "15 小时重试预算", results: [new Error("persistent")] },
   { name: "retry_after 超过重试预算", results: [{ error_code: 429, parameters: { retry_after: 54_100 } }] },
 ];
 for (const scenario of scenarios) {
   test(scenario.name, async (): Promise<void> => {
-    const original: FetchTrace = await trace(false, scenario.results, scenario.rounds);
-    const candidate: FetchTrace = await trace(true, scenario.results, scenario.rounds);
+    const original: FetchTrace = await trace(false, scenario.results, { rounds: scenario.rounds });
+    const candidate: FetchTrace = await trace(true, scenario.results, { rounds: scenario.rounds });
     expect(candidate).toEqual(original);
   });
 }
+
+test("持续失败时退避翻倍后封顶，并在重试窗口内抛出最后一次错误", async (): Promise<void> => {
+  const { delays, outputs, requests }: FetchTrace = await trace(true, [new Error("persistent")]);
+  expect(delays[0]).toBe(UPDATE_POLL_INITIAL_RETRY_MS);
+  for (let index: number = 1; index < delays.length; index++) {
+    expect(delays[index]).toBe(Math.min(delays[index - 1]! * 2, UPDATE_POLL_MAX_RETRY_MS));
+  }
+  expect(Math.max(...delays)).toBe(UPDATE_POLL_MAX_RETRY_MS);
+  const waited: number = delays.reduce((sum: number, delay: number): number => sum + delay, 0);
+  expect(waited).toBeLessThanOrEqual(UPDATE_POLL_RETRY_WINDOW_MS);
+  expect(waited + UPDATE_POLL_MAX_RETRY_MS).toBeGreaterThan(UPDATE_POLL_RETRY_WINDOW_MS);
+  expect(requests).toHaveLength(delays.length + 1);
+  expect(outputs).toEqual([new Error("persistent")]);
+});
+
+test("断网恢复后最多再等一个封顶退避就重新取数", async (): Promise<void> => {
+  const outageMs: number = 30 * 60_000;
+  const { requests, outputs }: FetchTrace = await trace(true, [[{ update_id: 10 }]], { failUntil: 1_000_000 + outageMs });
+  const recoveredAt: number = (requests[requests.length - 1] as { at: number }).at;
+  expect(outputs).toEqual([[{ update_id: 10 }]]);
+  expect(recoveredAt - (1_000_000 + outageMs)).toBeLessThanOrEqual(UPDATE_POLL_MAX_RETRY_MS);
+});

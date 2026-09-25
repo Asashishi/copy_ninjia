@@ -5,15 +5,16 @@ import type { StickerPackCandidate } from "../../../packages/types/stickers/tool
 import type { ChatActionHeartbeatControl } from "../../../packages/types/aiChat/chatAction";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 import type { AiReplySession, AiReplyTurn, AiToolOutput } from "../../../packages/types/aiChat/provider";
+import { sineWav } from "../../helpers/wav";
 
 const sendMessage = mock(async (_params: unknown): Promise<TelegramSendResult | undefined> => ({ messageId: 101 }));
 const sendSticker = mock(async (_params: unknown): Promise<number | undefined> => 102);
 const sendPhoto = mock(async (_params: unknown): Promise<TelegramSendResult | undefined> => ({ messageId: 103 }));
-const sendAudio = mock(async (_params: unknown): Promise<TelegramSendResult | undefined> => ({ messageId: 104 }));
+const sendVoice = mock(async (_params: unknown): Promise<TelegramSendResult | undefined> => ({ messageId: 104 }));
 const reaction = mock(async (_params: unknown): Promise<boolean> => true);
 const sleep = mock(async (_ms: number, _signal?: AbortSignal): Promise<void> => {});
 const generateImage = mock(async (_params: unknown) => ({ bytes: new Uint8Array([1]), mimeType: "image/png" as const }));
-const generateSong = mock(async (_params: unknown) => ({ bytes: new Uint8Array([1]), mimeType: "audio/mpeg" }));
+const synthesizeSpeech = mock(async (_params: unknown) => ({ bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" }));
 const heartbeatControls: ChatActionHeartbeatControl[] = [];
 let session: AiReplySession;
 function heartbeat(): ChatActionHeartbeatControl {
@@ -45,7 +46,7 @@ mock.module("../../../packages/infra/telegram", () => ({
   sendMessageWithResult: sendMessage,
   sendSticker,
   sendPhotoWithResult: sendPhoto,
-  sendAudioWithResult: sendAudio,
+  sendVoiceWithResult: sendVoice,
   setMessageReaction: reaction,
 }));
 mock.module("../../../packages/aiChat/ai/tools/stickers", () => ({
@@ -55,18 +56,16 @@ mock.module("../../../packages/aiChat/ai/tools/stickers", () => ({
 mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat: heartbeat }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({ generateChatImage: generateImage }));
-mock.module("../../../packages/aiChat/ai/songCover", () => ({ generateSongCover: async (): Promise<null> => null }));
 mock.module("../../../packages/aiChat/provider", () => ({
   ...realProvider,
   imageAiProvider: () => ({}),
-  songAiProvider: () => ({ generateSong }),
+  ttsAiProvider: () => ({ synthesizeSpeech }),
   textAiProvider: () => ({ createReplySession: (): AiReplySession => session }),
 }));
 
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
 const { generateReply } = await import("../../../packages/workers/aiChat/replyModel");
 const { resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
-const { resetSongGenerationCache } = await import("../../../packages/cache/workers/aiChat/songGeneration");
 const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 const { TELEGRAM_CAPTION_MAX_CHARS } = await import("../../../packages/consts/telegram");
 const { runTelegramCategorizedRequest } = await import("../../../packages/infra/telegram/outboundGate");
@@ -87,7 +86,7 @@ function context(controller: AbortController = new AbortController()): ReplyTool
     onMessageSent: mock((): void => {}),
     onStickerSent: mock((): void => {}),
     onImageSent: mock((): void => {}),
-    onSongSent: mock((): void => {}),
+    onVoiceSent: mock((): void => {}),
   };
 }
 
@@ -99,15 +98,14 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 beforeEach(() => {
   heartbeatControls.length = 0;
   resetImageGenerationCache();
-  resetSongGenerationCache();
   sendMessage.mockReset().mockResolvedValue({ messageId: 101 });
   sendSticker.mockReset().mockResolvedValue(102);
   sendPhoto.mockReset().mockResolvedValue({ messageId: 103 });
-  sendAudio.mockReset().mockResolvedValue({ messageId: 104 });
+  sendVoice.mockReset().mockResolvedValue({ messageId: 104 });
   reaction.mockReset().mockResolvedValue(true);
   sleep.mockReset().mockResolvedValue();
   generateImage.mockReset().mockResolvedValue({ bytes: new Uint8Array([1]), mimeType: "image/png" });
-  generateSong.mockReset().mockResolvedValue({ bytes: new Uint8Array([1]), mimeType: "audio/mpeg" });
+  synthesizeSpeech.mockReset().mockImplementation(async () => ({ bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" }));
   initTelegramOutbound();
 });
 
@@ -224,16 +222,16 @@ test("媒体生成挂起时模型继续调用，长图注预算在接纳时预�
     expect(receipt.actions_used).toBe(2);
     expect(receipt.queued).toBe(true);
     expect(JSON.parse(await toolset.execute("send_message", JSON.stringify({ text: caption }))).skipped).toBe("duplicate");
-    expect(JSON.parse(await toolset.execute("generate_song", '{"prompt":"a song"}')).queued).toBe(true);
-    expect(generateSong).not.toHaveBeenCalled();
-    expect(sendAudio).not.toHaveBeenCalled();
+    expect(JSON.parse(await toolset.execute("send_voice", '{"text":"バカ"}')).queued).toBe(true);
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(sendVoice).not.toHaveBeenCalled();
     expect(sendPhoto).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(JSON.parse(await toolset.execute("generate_image", '{"prompt":"another"}')).error).toContain("Image limit reached");
-    expect(JSON.parse(await toolset.execute("generate_song", '{"prompt":"another"}')).error).toContain("Song limit reached");
+    expect(JSON.parse(await toolset.execute("send_voice", '{"text":"ざぁこ"}')).error).toContain("Voice limit reached");
     image.resolve({ bytes: new Uint8Array([1]), mimeType: "image/png" });
     await toolset.settle();
-    expect(sendAudio).toHaveBeenCalledTimes(1);
+    expect(sendVoice).toHaveBeenCalledTimes(1);
     expect(sendPhoto).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(toolset.actionsUsed()).toBe(3);

@@ -18,6 +18,7 @@ import type {
   DiskIORecoveryTransport,
   LoadRequest,
   RecoveryReplayRequest,
+  StorageFlushHoldRequest,
 } from "../../types/diskIO/messages";
 import type { LoadedReply } from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -151,12 +152,30 @@ function postRecoveryReplayMark(worker: Worker, active: boolean): boolean {
   return false;
 }
 
+/**
+ * 开合镜像重放区间标记。区间内 Worker 暂缓共享 SQLite 的满批与定时提交，关标记后
+ * 按批次阈值一次提交（见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）。
+ * 投递失败按 fatal 处理。
+ */
+function postStorageFlushHold(worker: Worker, active: boolean): boolean {
+  const request: StorageFlushHoldRequest = { type: "storageFlushHold", active };
+  if (safePostDiskIO(worker, request, `storage flush hold (${active ? "open" : "close"})`)) return true;
+  stopWorkerAfterLoadFailure(
+    worker,
+    `Worker rejected the ${active ? "opening" : "closing"} storage flush hold`,
+    true
+  );
+  return false;
+}
+
 export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Promise<void> {
   if (diskIORuntime.worker !== worker) return;
   const revisions: DiskIORecoveryRevisions = new DiskIORecoveryRevisions();
   if (replayMirrors) {
     // 按显式优先级等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
-    // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。
+    // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。各领域镜像全部投递
+    // 完成前共享 SQLite 不做满批提交。
+    if (!postStorageFlushHold(worker, true)) return;
     for (const registration of diskIORuntime.respawnListeners) {
       const scope: RecoveryTransportScope = createRecoveryTransportScope(worker, revisions);
       let replayed: boolean;
@@ -183,6 +202,7 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
         return;
       }
     }
+    if (!postStorageFlushHold(worker, false)) return;
   }
   // 重放区间要圈起来告诉 Worker：区间内的写失败没有任何后续 flush 会去问，
   // 只能按 fatal 停机处理（见 types/diskIO.ts 的 RecoveryReplayRequest）。整段

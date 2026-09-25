@@ -16,7 +16,7 @@ export function formatMinSec(ms: number): string {
 }
 
 /** getTokyoDateKey 的格式器：模块加载时构造一次复用（Intl.DateTimeFormat
- *  的构造远贵于 format 调用本身，同下方另外两个格式器的理由）——
+ *  的构造远贵于 format 调用本身，同下方另外两个格式器）——
  *  日志落盘按条调用它算文件名日期，不能每条日志都重新构造一个格式器。 */
 const TOKYO_DATE_KEY_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Tokyo",
@@ -66,7 +66,7 @@ export function getTokyoDayStartTimestamp(timestampMs: number): number {
 /**
  * 0~99 的两位零填充串定表；只服务下方固定宽度的时间串。
  *
- * 模块加载时建一次（同本文件那几个 Intl 格式器提到模块级的理由）。月、日、时、
+ * 模块加载时建一次（同本文件那几个模块级 Intl 格式器）。月、日、时、
  * 分、秒五个字段每条进滚动记忆的群消息都要取一遍，查表只做一次下标读取，不为
  * 每个字段现造一个补零串。表只在本文件内使用，声明成只读容器，元素是字符串因而
  * 没有更深一层的可写字段。

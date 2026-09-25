@@ -5,6 +5,7 @@ export {
   invalidateAiChat,
   queryAiMood,
   switchAiMood,
+  synthesizeVoice,
   syncAiChatConfig,
   terminateAiChat,
 } from "./workerBridge";
@@ -15,3 +16,6 @@ export {
   recordChatMessage,
 } from "./messageIngress";
 export type { GenerateAndSendReplyParams } from "./messageIngress";
+export { recordBotImage } from "./botImages";
+export type { RecordBotImageParams } from "./botImages";
+export type { VoiceSynthesisRequest } from "./voiceSynthesis";

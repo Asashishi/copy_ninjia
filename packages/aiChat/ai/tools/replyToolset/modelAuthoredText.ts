@@ -8,7 +8,7 @@ import type { RoundMessageState } from "../../../../types/aiChat/replies";
 import { toolError } from "../../utils/toolResult";
 import { isDuplicateOfAcceptedText } from "./messageState";
 
-type ModelAuthoredTextSurface = "message" | "picture" | "song";
+type ModelAuthoredTextSurface = "message" | "picture";
 
 function forgedActionError(surface: ModelAuthoredTextSurface, marker: string): string {
   if (surface === "message") {
@@ -43,7 +43,7 @@ function renderableCommandError(surface: ModelAuthoredTextSurface): string {
 export function modelAuthoredTextPolicyResult(
   text: string,
   state: RoundMessageState,
-  surface: "message" | "picture" | "song"
+  surface: "message" | "picture"
 ): string | null {
   if (isDuplicateOfAcceptedText(state, text)) {
     return DUPLICATE_REPLY_RESULT;

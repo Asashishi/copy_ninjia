@@ -38,7 +38,7 @@ type WhiteMutationOutcome =
  * 的条目永远读不到），disable 照常放行——那正是清掉旧部署遗留条目的路径，但它
  * 的回执只能说「清掉了表里的残留」，不能说成「已经踢出白名单」。
  *
- * 当前群自己的 identity 一律拒绝（匿名管理员皮套），理由见函数体那道闸。
+ * 当前群自己的 identity 一律拒绝（匿名管理员皮套），见函数体那道闸。
  */
 export async function handleWhiteCommand(
   ctx: CommandContext<Context>
@@ -87,7 +87,7 @@ export async function handleWhiteCommand(
     requireIdentityPolicies: true,
     // 与 /block（commands/block.ts）、/block disable（commands/unblock.ts）同一道闸：
     // 匿名管理员拿当前群当皮套时 Telegram 只给 sender_chat=本群，
-    // resolveCommandTarget 按设计原样返回这个群自己的 identity（理由见
+    // resolveCommandTarget 按设计原样返回这个群自己的 identity（见
     // targetResolution.ts 的 currentChatTargetText）。这里必须拒绝——把群 identity
     // 写进白名单，isWhitelisted 会对该群匿名身份发的每一条消息成立（广告检测与
     // 永久拉黑一律豁免，见 antiRaid/memberFacts.ts），随后 /permission <群 id> all

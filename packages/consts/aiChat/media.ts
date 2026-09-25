@@ -16,7 +16,7 @@ export const ANIMATION_PENDING_PLACEHOLDER: string = "[GIF：识别中]";
 /** GIF 视觉描述最终失败时替换进转录的占位。 */
 export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请无视此消息]";
 
-/** 描述字数和输出 token 上限。 */
+/** 图片视觉描述的最大字符数；输出 token 上限见 consts/aiChat/{gemini,openai}.ts。 */
 export const IMAGE_DESCRIPTION_MAX_CHARS: number = 125;
 /** 贴纸和 GIF 短描述的最大字符数。 */
 export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 100;
@@ -29,11 +29,25 @@ export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
  * 别的兜底。
  */
 export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
-/** 单个媒体下载允许读入内存的最大字节数。 */
-export const MEDIA_MAX_DOWNLOAD_BYTES: number = 16 * 1024 * 1024;
+/**
+ * 内联媒体请求的整体字节预算：Gemini 官方规定内联数据的整个请求（提示词、system
+ * 指令与 base64 字节合计）不超过 20 MB。两家实现共用同一份媒体字节，按更严的这家取。
+ * 所属模块：本文件与 consts/aiChat/voice.ts 的字节上限推导。
+ */
+export const MEDIA_INLINE_REQUEST_MAX_BYTES: number = 20_000_000;
+/** 内联请求里留给提示词、system 指令与请求封装的字节余量；所属模块同 MEDIA_INLINE_REQUEST_MAX_BYTES。 */
+export const MEDIA_INLINE_PROMPT_RESERVE_BYTES: number = 1_000_000;
+/**
+ * 单张视觉图片（下载与转码后）允许读入内存并内联进请求的最大字节数，也是下载
+ * 与 photo 档位选择的上限。按 base64 编码后加 MEDIA_INLINE_PROMPT_RESERVE_BYTES
+ * 恰好不超过 MEDIA_INLINE_REQUEST_MAX_BYTES 推导（14,250,000 字节）。所属模块：
+ * aiChat/ai/telegramImage.ts、infra/telegram/workerRequests.ts 与 auto/message/facts.ts。
+ */
+export const MEDIA_MAX_DOWNLOAD_BYTES: number =
+  Math.floor((MEDIA_INLINE_REQUEST_MAX_BYTES - MEDIA_INLINE_PROMPT_RESERVE_BYTES) / 4) * 3;
 /** 非目录媒体描述的全局 LRU 上限。 */
 export const MEDIA_DESCRIPTION_CACHE_MAX: number = 4_096;
-/** 下载、转码、视觉 API 共用执行器的并发与排队硬顶。 */
+/** 下载、转码、视觉 API 共用执行器的并发上限；排队上限见 MEDIA_DESCRIPTION_MAX_PENDING。 */
 export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 25;
 /** 媒体执行器等待队列的硬顶，超出立即拒绝。 */
 export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;

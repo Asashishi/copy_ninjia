@@ -114,6 +114,12 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     delete state[field];
     return true;
   },
+  disableChatStateSwitch: (chatId: number, key: string): boolean => {
+    const state: Record<string, unknown> | undefined = states.get(chatId);
+    if (state?.[key] !== true) return false;
+    delete state[key];
+    return true;
+  },
   purgeChatStateExceptLockdown: (chatId: number): void => { states.delete(chatId); },
   persistChatState: async (): Promise<void> => {},
   saveChatStateInBackground: (chatId: number, context: string): void => {

@@ -75,6 +75,7 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId), aiPersona: personas.get(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>
     new Map([...aiEnabledChats, ...knownChats, ...personas.keys()].map((chatId: number): [number, unknown] => [chatId, { aiPersona: personas.get(chatId) }])),
+  activeCopyTargetIdIn: (): undefined => undefined,
 }));
 
 const aiChat = await import("../../../packages/aiChat");
@@ -84,6 +85,7 @@ const {
   latestStickerCatalogs,
   moodRequestCounter,
   moodRequestWaiters,
+  voiceSynthesisWaiters,
   purgedAiMemoryChats,
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
@@ -121,6 +123,8 @@ beforeEach(() => {
   aiChatInvalidateRequestCounter.current = 0;
   for (const waiter of moodRequestWaiters.values()) clearTimeout(waiter.timer);
   moodRequestWaiters.clear();
+  for (const waiter of voiceSynthesisWaiters.values()) clearTimeout(waiter.timer);
+  voiceSynthesisWaiters.clear();
   moodRequestCounter.current = 0;
   latestStickerCatalogs.clear();
   pendingStickerCatalogRevisions.clear();
@@ -586,6 +590,38 @@ describe("AI main-thread persistence mirror", () => {
     await expect(aiChat.switchAiMood(-1001)).rejects.toThrow("AI Worker is unavailable.");
     expect(moodRequestWaiters.size).toBe(0);
     expect(aiChatWorkerState.available).toBeFalse();
+  });
+
+  test("语音合成回执按 requestId 结算；Worker 未启动、崩溃重建与投递失败都按不可用结算", async () => {
+    await expect(aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined }))
+      .resolves.toEqual({ ok: false, reason: "worker unavailable" });
+    expect(workerPosts.some((message: AiChatWorkerMessage): boolean => message.type === "synthesizeVoice")).toBeFalse();
+
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const synthesized = aiChat.synthesizeVoice({ text: "おやすみ", tone: "眠そうに", signal: undefined });
+    const request = workerPosts.at(-1);
+    if (request?.type !== "synthesizeVoice") throw new Error("Expected a synthesizeVoice request");
+    expect(request).toEqual({ type: "synthesizeVoice", requestId: request.requestId, text: "おやすみ", tone: "眠そうに" });
+    const bytes: Uint8Array<ArrayBuffer> = new Uint8Array([1, 2, 3]);
+    supervisorOptions!.onEvent({
+      type: "voiceSynthesized",
+      requestId: request.requestId,
+      result: { ok: true, voice: { bytes, durationSeconds: 2 } },
+    });
+    await expect(synthesized).resolves.toEqual({ ok: true, voice: { bytes, durationSeconds: 2 } });
+    expect(voiceSynthesisWaiters.size).toBe(0);
+    // 迟到或重复的回执直接丢弃。
+    supervisorOptions!.onEvent({ type: "voiceSynthesized", requestId: request.requestId, result: { ok: false, reason: "synthesis failed" } });
+
+    const crashed = aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined });
+    supervisorOptions!.onRespawn(() => true);
+    await expect(crashed).resolves.toEqual({ ok: false, reason: "worker unavailable" });
+    expect(voiceSynthesisWaiters.size).toBe(0);
+
+    workerPostAccepted = false;
+    await expect(aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined }))
+      .resolves.toEqual({ ok: false, reason: "worker unavailable" });
+    expect(voiceSynthesisWaiters.size).toBe(0);
   });
 
   test("revision 计数器只在 teardown 之后丢掉，还有在途墓碑时留着", async () => {

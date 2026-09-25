@@ -4,7 +4,8 @@ export { assertCurrentBotConfigDirectory } from "../../packages/config/botInput"
 export { validateAgentDeploymentConfig } from "../../packages/config/agent";
 import { parseBotConfig, assertCurrentBotConfigDirectory } from "../../packages/config/botInput";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
-import { readJsonInput } from "../../packages/libs/inputValidation";
+import { invalidInput, readJsonInput } from "../../packages/libs/inputValidation";
+import { STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../packages/consts/paths";
 import { isPlainRecord } from "../../packages/libs/record";
 import { dirname } from "node:path";
 import type { BotAtmosphere } from "../../packages/types/atmosphere";
@@ -21,6 +22,20 @@ export { initializeStorageDatabase } from "../../packages/database/interact/init
 export async function validateExistingDeploymentInputs(): Promise<void> {
   const readiness: typeof Readiness = await import("../../packages/config/readiness");
   await readiness.validateExistingDeploymentInputs();
+}
+
+/**
+ * 安装前拒绝仍带 translate 块的 state.json 与备份副本：翻译会话须先经
+ * migrate:translate-sessions 冷迁移进 chat_states。文件不存在时跳过。
+ */
+export async function assertStateFilesMigrated(): Promise<void> {
+  for (const path of [STATE_FILE_PATH, STATE_BACKUP_FILE_PATH]) {
+    if (!await Bun.file(path).exists()) continue;
+    const value: unknown = await readJsonInput(path);
+    if (isPlainRecord(value) && "translate" in value) {
+      invalidInput(path, "state.translate", "absent; run the migrate:translate-sessions cold migration first");
+    }
+  }
 }
 
 /** 只严格校验候选文件内容；部署目录的旧入口由安装准备与启动总闸检查。 */

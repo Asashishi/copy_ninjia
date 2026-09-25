@@ -324,7 +324,12 @@ describe("explicit Worker initialization", () => {
         permissionEntryCount: 0,
       } } as MessageEvent<DiskIOReply>);
       expect(respawns).toBe(1);
-      expect(second.messages).toEqual([expect.objectContaining({ type: "load" }), luckDraw]);
+      // 镜像 listener 同步投递完成；关闭提交暂缓的标记在其后的微任务里发出。
+      expect(second.messages).toEqual([
+        expect.objectContaining({ type: "load" }),
+        { type: "storageFlushHold", active: true },
+        luckDraw,
+      ]);
 
       first.onmessage!({ data: { ...ack, revision: 99 } } as MessageEvent<DiskIOReply>);
       expect(persisted).toEqual([ack]);
@@ -401,17 +406,18 @@ describe("explicit Worker initialization", () => {
       await Promise.resolve();
 
       expect(diskIORuntime.writable).toBeFalse();
-      expect(worker.messages).toEqual([]);
+      expect(worker.messages).toEqual([{ type: "storageFlushHold", active: true }]);
       expect(diskIORuntime.pendingBusinessMessages.size).toBe(1);
       expect(await diskIO.flushDiskIO(10)).toBe("failed");
 
       gate.resolve();
       await Bun.sleep(0);
-      // 镜像先于业务缓冲；缓冲那一批被一对重放标记框住，好让 Worker 知道这段
-      // 区间内的写失败没有任何后续 flush 会去问（见 types/diskIO.ts 的
-      // RecoveryReplayRequest）。镜像走 scoped transport，不在区间内。
+      // 镜像先于业务缓冲。镜像被一对提交暂缓标记框住（StorageFlushHoldRequest）；
+      // 缓冲那一批被一对重放标记框住（RecoveryReplayRequest），区间内写失败按 fatal 处理。
       expect(worker.messages).toEqual([
+        { type: "storageFlushHold", active: true },
         luckDraw,
+        { type: "storageFlushHold", active: false },
         { type: "recoveryReplay", active: true },
         bufferedDraw,
         { type: "recoveryReplay", active: false },
@@ -468,16 +474,24 @@ describe("explicit Worker initialization", () => {
       expect(invocations).toBe(2);
       expect(currentRecovery.messages).toEqual([
         expect.objectContaining({ type: "load" }),
+        { type: "storageFlushHold", active: true },
         currentDraw,
+        { type: "storageFlushHold", active: false },
       ]);
       expect(diskIORuntime.writable).toBeTrue();
 
       oldGate.resolve();
       await Bun.sleep(0);
-      expect(staleRecovery.messages).toEqual([expect.objectContaining({ type: "load" })]);
+      // 开标记在这一代仍是当前代际时发出；代际失效后不再收到任何重放消息。
+      expect(staleRecovery.messages).toEqual([
+        expect.objectContaining({ type: "load" }),
+        { type: "storageFlushHold", active: true },
+      ]);
       expect(currentRecovery.messages).toEqual([
         expect.objectContaining({ type: "load" }),
+        { type: "storageFlushHold", active: true },
         currentDraw,
+        { type: "storageFlushHold", active: false },
       ]);
       expect(diskIORuntime.worker).toBe(currentRecovery as unknown as Worker);
       expect(diskIORuntime.writable).toBeTrue();

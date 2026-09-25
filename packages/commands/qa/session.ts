@@ -12,11 +12,6 @@ import { qaFormSessions } from "../../cache/main/qa";
 import { QA_FORM_SESSION_MAX, QA_FORM_SESSION_TTL_MS } from "../../consts/qa";
 import type { QaFormSession } from "../../types/qa";
 
-/** 取某群当前未完成的表单；没有则 undefined。 */
-export function findQaFormSession(chatId: number): QaFormSession | undefined {
-  return qaFormSessions.get(chatId);
-}
-
 /**
  * 结束一张表单：停掉 timer 并从表里摘掉。
  *

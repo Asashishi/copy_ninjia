@@ -146,7 +146,7 @@ function owesBlockedJoinCount(key: string, now: number): boolean {
 /**
  * 记下这次物理入群的计数已经交出去了。
  *
- * 与判定分开的理由：只有处置真的登记进 outbox，才会有人（Worker 侧的
+ * 与判定分开：只有处置真的登记进 outbox，才会有人（Worker 侧的
  * removeBlockedMembers）替这次入群 recordJoin。登记失败却把去重项消耗掉，
  * 同一次入群的另一路投递就只能带 joinedAt: undefined，这次入群从反刷群滑动
  * 窗口里彻底消失。

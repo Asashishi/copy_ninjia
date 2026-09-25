@@ -23,7 +23,7 @@ import type {
  * 清理：派发时出队、停管与关开关时按群摘键、Worker 停止时整体丢弃。
  * 容量：不单独设闸——每个键在队列里最多占一个位置（由 queuedAdDetectKeys 保证），
  * 长度因此被 pendingAdMessages 的 AD_DETECT_MAX_PENDING_SENDERS 硬顶兜住。
- * Worker 崩溃重建：不重放，随 isolate 一起清空（理由见模块头注）。
+ * Worker 崩溃重建：不重放，随 isolate 一起清空（见模块头注）。
  */
 export const adDetectQueue: LinkedQueue<string> = new LinkedQueue<string>();
 
@@ -119,7 +119,7 @@ export const adDetectCapacitySaturated: { current: boolean } = { current: false 
  * 判定流水线是否已经进入停机 quiesce。
  *
  * quiesceAdDetectQueue 置真、start/stop 置假。在途判定不登记进 Worker 的 drain
- * 集合（理由见 queue.ts 的 runAdDetectBatch），可能在主线程 drain 之后才返回；
+ * 集合（见 queue.ts 的 runAdDetectBatch），可能在主线程 drain 之后才返回；
  * detectOne 在任何处置前读取这面旗并丢弃迟到结果。
  */
 export const adDetectStopping: { current: boolean } = { current: false };

@@ -1,6 +1,6 @@
 /** `/bot_status` 本机进程指标的换算与展示常量。 */
 
-import type { ChatStateSwitchKey } from "../types/botStatus";
+import type { ChatStateSwitchKey } from "../types/chatState";
 
 /** 一秒包含的微秒数；用于把 process.cpuUsage 与 uptime 放到同一量纲。 */
 export const BOT_STATUS_MICROSECONDS_PER_SECOND: number = 1_000_000;

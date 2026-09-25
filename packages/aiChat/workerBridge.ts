@@ -56,6 +56,9 @@ import {
 } from "../infra/telegram/workerRequests";
 import { toError } from "../libs/errorMessage";
 import { activeStickerCatalogs, mirrorStickerCatalog, pruneStickerCatalogMirror } from "./stickerMirror";
+import { failAllVoiceSynthesisWaiters, requestVoiceSynthesis, settleVoiceSynthesis } from "./voiceSynthesis";
+import type { VoiceSynthesisRequest } from "./voiceSynthesis";
+import type { VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
 
 /** 在途心情查询/重抽请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
  *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
@@ -186,12 +189,16 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
         }
         break;
       }
+      case "voiceSynthesized":
+        settleVoiceSynthesis(event);
+        break;
     }
   },
   onRespawn: (postToNext: (message: AiChatWorkerMessage) => boolean): void => {
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodRequestWaiters("AI Worker crashed before acknowledging the mood request.");
     rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
+    failAllVoiceSynthesisWaiters();
     settleAiMemoryTeardownWorker();
     // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
     // record/trigger 到达。重放的 init 带着主线程当前生效的配置快照（热重载由
@@ -224,6 +231,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     aiMemoryFlushBarrier.settleAll("failed");
     rejectAllMoodRequestWaiters("AI Worker gave up restarting before acknowledging the mood request.");
     rejectAllAiChatInvalidateWaiters("AI Worker gave up before completing chat invalidation.");
+    failAllVoiceSynthesisWaiters();
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
     // pendingAiMemoryDeletes 由 Disk I/O durable 回执拥有，绝不能在这里清空。
     purgedAiMemoryChats.clear();
@@ -341,6 +349,7 @@ export async function terminateAiChat(): Promise<void> {
   aiMemoryFlushBarrier.settleAll("failed");
   rejectAllMoodRequestWaiters("AI Worker is shutting down before acknowledging the mood request.");
   rejectAllAiChatInvalidateWaiters("AI Worker is shutting down before completing chat invalidation.");
+  failAllVoiceSynthesisWaiters();
   aiChatWorkerState.available = false;
   purgedAiMemoryChats.clear();
   postPurgeAiMemoryPersistRevisions.clear();
@@ -396,6 +405,18 @@ export function queryAiMood(chatId: number): Promise<string> {
  */
 export function switchAiMood(chatId: number): Promise<string> {
   return requestAiMood(chatId, "switchMood");
+}
+
+/**
+ * `/send` 代发 TTS 与 cron `send_voice` 的语音合成入口：把台词与语气交给 AI Worker 的
+ * 公共实现，拿回编码好的语音；等待、取消与结算见 aiChat/voiceSynthesis.ts。AI Worker
+ * 没在运行（AI 前提不齐或已放弃重启）时按「worker unavailable」返回。
+ */
+export function synthesizeVoice(request: VoiceSynthesisRequest): Promise<VoiceSynthesisResult> {
+  return requestVoiceSynthesis(request, {
+    post,
+    workerAvailable: aiChatWorkerState.available && lastInitState.current !== null,
+  });
 }
 
 /**

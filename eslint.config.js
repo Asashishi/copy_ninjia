@@ -151,6 +151,8 @@ export default defineConfig(
       "default-case-last": "error",
       "eqeqeq": ["error", "always"],
       "max-params": ["error", 3],
+      // 同一模块的值导入与类型导入各合并为一条声明；两者之间允许分开。
+      "no-duplicate-imports": ["error", { allowSeparateTypeImports: true }],
       "no-else-return": ["error", { allowElseIf: true }],
       "no-lonely-if": "error",
       "no-restricted-syntax": [

@@ -3,8 +3,7 @@ import {
   bufferedMessageFixture,
   bufferedReplyReferenceFixture,
 } from "../../helpers/aiMemoryFixtures";
-import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
-import type { AiMemorySnapshot } from "../../../packages/types/aiChat/memory";
+import type { BufferedMessage, AiMemorySnapshot } from "../../../packages/types/aiChat/memory";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});

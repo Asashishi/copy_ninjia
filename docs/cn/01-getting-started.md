@@ -93,7 +93,7 @@ Bot 身份和超级管理员写入 `config/bot.json`：
   - BotFather 下发的 token。
 - **`super_admin_user_id`**（必填）
   - 单个十进制超级管理员用户 ID。这个身份本身即持有白名单能授予的
-    **全部**逐项权限，**不需要**写入 SQLite 白名单表；copy、生图、生歌的冷却
+    **全部**逐项权限，**不需要**写入 SQLite 白名单表；copy、生图的冷却
     豁免只归这个身份。它同时恒在白名单边界内，因此享有自动处置保护，并且
     不可被 `/block`、`/mute` 或 `/batch_kick` 处置。入群验证的「通过」按钮
     只认本群非匿名管理员，与白名单和超级管理员身份无关。
@@ -134,11 +134,13 @@ AI 的 provider、API key、端点与模型按能力写入 `config/agent.json`�
     不重复，最多 500 条。
 
 - **`config/agent.json`**（[示例](../../config_example/agent.json)）
-  - **内容**：`agent.ad_detect`、`text`、`summary`、`media`、`image`、`song` 六项能力。
+  - **内容**：`agent.ad_detect`、`text`、`summary`、`media`、`image`、`tts` 六项能力。
     每项独立声明 `provider`、`api_key`、可选 `base_url` 与 `model`；provider 当前只接受
-    `google`、`openai`。`text`、`summary`、`media` 是 AI 对话必备项；`image`、`song`
-    缺省时只摘掉对应工具；`ad_detect` 缺省时只阻止广告检测。OpenAI 生图还必须显式
-    声明 `image_protocol`（`openai`、`openai-standard` 或 `xai`）。`base_url` 只接受
+    `google`、`openai`。`text`、`summary`、`media` 是 AI 对话必备项；`image`、`tts`
+    缺省时只摘掉对应工具（`tts` 缺省时 `/send` 的 TTS 请求也会报错，`cron.json` 用到
+    `send_voice` 时则拒绝启动）；`ad_detect` 缺省时只阻止广告检测。OpenAI 生图还必须显式
+    声明 `image_protocol`（`openai`、`openai-standard` 或 `xai`）；`tts` 还必须声明非空 `voice`
+    （预置音色名，或 AI Studio Voice design 的 `voice_` 音色 ID）。`base_url` 只接受
     `https`，明文 `http` 仅限 `localhost`、`127.0.0.1`、`::1`；URL 不得带用户名/密码
     或 `#` 片段。
   - **校验**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。文件与字段严格
@@ -206,20 +208,20 @@ chmod 660 database/storage.sqlite
 ```json
 "global": {
   "assets": {
+    "randomHImageDir": "./h_image",
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…",
-    "randomHImageDir": "./h_image"
+    "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-前四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
+其后四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。`state.json` 走严格 `JSON.parse`，块里不能带 `//` 注释。
 
-五项缺省字段在启动成功时被自动补成代码里的内置值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。前四项要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
+五项缺省字段在启动成功时被自动补成代码里的内置值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)），所以打开文件就能看到当前生效的地址，直接改即可。四条直链要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `botDefaultAvatarUrl` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——会在启动解码时拒绝整份 `state.json` 并点名字段路径，不会静默退回默认图。
 
-第五项 `randomHImageDir` 是 `/h_image` 专用图库，也是 cron 未指定目录时的随机图来源，缺省 `./h_image`。只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析；裸目录名和 `~/…` 无效。启动会创建缺失目录，核对读写与访问权限，并严格检查每个条目：只允许以内容 SHA-256 的 64 位小写十六进制摘要命名、扩展名为 `jpg`/`jpeg`/`png`/`webp` 的普通文件；子目录、文件链接、隐藏文件和残留临时文件均拒绝启动。目录根本身可以是符号链接。启动不重算内容哈希，手工文件名与内容的对应由部署方负责。推荐通过 `/h_image add` 收图；合规图片的增删无需重启，抽图时超过 10 MB 的文件会被跳过。首次运行的 `state.json` 在启动成功后补写生成。cron 显式指定的独立随机目录允许普通文件名，详见 [部署配置说明](../../config_example/README/zh.md)。
+第一项 `randomHImageDir` 是 `/h_image` 专用图库，也是 cron 未指定目录时的随机图来源，缺省 `./h_image`。只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析；裸目录名和 `~/…` 无效。启动会创建缺失目录，核对读写与访问权限，并严格检查每个条目：只允许以内容 SHA-256 的 64 位小写十六进制摘要命名、扩展名为 `jpg`/`jpeg`/`png`/`webp` 的普通文件；子目录、文件链接、隐藏文件和残留临时文件均拒绝启动。目录根本身可以是符号链接。启动不重算内容哈希，手工文件名与内容的对应由部署方负责。推荐通过 `/h_image add` 收图；合规图片的增删无需重启，抽图时超过 10 MB 的文件会被跳过。首次运行的 `state.json` 在启动成功后补写生成。cron 显式指定的独立随机目录允许普通文件名，详见 [部署配置说明](../../config_example/README/zh.md)。
 
 **改法是停机改**：运行中的进程持有权威内存，会整份覆写这个文件，改完必须 `systemctl stop` → 编辑 → `systemctl start`（同 [07 运维与排障](07-operations.md)）。
 

@@ -38,8 +38,9 @@
 - **`packages/aiChat/`**
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
     memory mirror、起動時と hot reload 時の状態投入、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
-  - **代表的なファイル**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`memoryMirror.ts`、
-    `availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
+  - **代表的なファイル**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`botImages.ts`（コマンドと定時タスクが送った画像のプレースホルダー自己記録の入口）、
+    `voiceSynthesis.ts`（`/send` と cron が AI Worker に音声合成を依頼する際の待機と決着）、
+    `memoryMirror.ts`、`availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
     `index.ts` は薄い公開入口だけを提供。
 - **`packages/antiRaid/`**
   - **責務**：Anti-Raid のメインスレッド代理と広告 model capability。Worker 監督、
@@ -84,7 +85,7 @@
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
-  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`。AI chat の
+  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（音声合成の共通実装）。AI chat の
     model 送受信はここではなく、vendor ごとの `packages/aiChat/{gemini,openai}/` にあります。
 - **`packages/workers/antiRaid/adDetect/`**
   - **責務**：provider routed 広告検出パイプライン。バッチキュー、送信者ごとの
@@ -124,11 +125,11 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **インストーラー**：`install.sh` は対象ワークツリーを特定し、そのバージョンの入口へ処理を渡します。`scripts/install/` の repository、service、config、runtime、configure、start の各 shell モジュールの可読性と構文を一括確認してから順に読み込みます。`installSources.ts` は構文検査と隔離フィクスチャへ同じモジュール一覧を提供します。
-  - **Cold migration**：`migrateHImageAddPermission.ts` は schema v10 の停止時バックアップを検証し、独立した出力と検証一覧を生成します。`migrations/hImageAddPermission/database.ts` は系譜検証と schema v11 権限トランザクションを担当し、アプリ起動 graph には入りません。`migrateRandomImageNames.ts` はランダム画像ライブラリの旧ファイル名を内容の SHA-256 による名前へ再構築した独立出力を生成します。こちらもソースは読むだけで、`ready.json` だけを完了マーカーとします。
+  - **Cold migration**：`migrateTranslateSessions.ts` は停止時バックアップの主副 state と schema v11 database を検証し、独立した出力と検証一覧を生成します。`migrations/translateSessions/state.ts` は state から `translate` ブロックを切り出し、`migrations/translateSessions/database.ts` は 1 トランザクションでセッションを `chat_states` へ書き込み、`migrations/files.ts` は両エッジ共通のファイル一覧とパス包含判定を担います。いずれもアプリ起動 graph には入りません。`migrateRandomImageNames.ts` はランダム画像ライブラリの旧ファイル名を内容の SHA-256 による名前へ再構築した独立出力を生成します。こちらもソースは読むだけで、`ready.json` だけを完了マーカーとします。
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
   - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、リリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`、および 2 つの benchmark ルートが共用する `fixtures/copyTree.ts`（ディレクトリツリーの複製）と `fixtures/pathBoundary.ts`（書き込み境界の実パス構成要素の検査）。
 
-`scripts/migrations/active.ts` はビルド・配布検証・規約チェック共通の移行一覧です。`migrateBotConfig.ts` は Bot 身元と口調、state の画像庫項目、cron 固定画像配列、明示指定した project root の Google 資格情報を扱い、`migrations/botConfig/` が解析とファイル準備を担います。バイナリには 3 本の CLI が含まれ、`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` で実行します。配置手順は [07 運用手順](07-operations.md) を参照してください。
+`scripts/migrations/active.ts` はビルド・配布検証・規約チェック共通の移行一覧です。バイナリには 2 本のエッジの CLI が含まれ、`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` で実行します。配置手順は [07 運用手順](07-operations.md) を参照してください。
 
 `botInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`bot.ts` は runtime snapshot を担当します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
 
@@ -154,12 +155,12 @@
 
 - **`main/`**
   - **所有者**：メインスレッド。
-  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラーと `translateState.ts` の群別翻訳セッション、`chatState.ts` の `chat_states` ホット読み取りコピー（`Map`、最大 25 グループ）、
+  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラー、`chatState.ts` の `chat_states` ホット読み取りコピー（`Map`、最大 25 グループ。群別翻訳セッションを含む）、
     Disk I/O ホスト、および **Worker のメインスレッド側プロキシとミラー**
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **所有者**：AI 雑談 Worker。
-  - **内容**：ローリングメモリ、返信の受理判定、機嫌、ステッカーカタログとセット、
+  - **内容**：ローリングメモリ、返信の受理判定、Bot 画像への返信時の画像説明補完の登録、機嫌、ステッカーカタログとセット、メインスレッドから受け取った進行中の音声合成、
     および両 provider のクライアント singleton。
 - **`workers/antiRaid/`**
   - **所有者**：Anti-Raid Worker。

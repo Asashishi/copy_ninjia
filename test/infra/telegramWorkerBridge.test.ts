@@ -40,7 +40,7 @@ const rawApi: Record<PropertyKey, unknown> = new Proxy<Record<PropertyKey, unkno
   },
 });
 const mainSendPhoto = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 19 }));
-const mainSendAudio = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 20 }));
+const mainSendVoice = mock(async (..._args: unknown[]): Promise<unknown> => ({ message_id: 21 }));
 let hydratedFilePath: string | undefined = "files/media.bin";
 const mainGetFile = mock(async (..._args: unknown[]): Promise<unknown> => ({
   file_path: hydratedFilePath,
@@ -61,7 +61,7 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
       raw: rawApi,
       getFile: mainGetFile,
       sendPhoto: mainSendPhoto,
-      sendAudio: mainSendAudio,
+      sendVoice: mainSendVoice,
     },
   },
 }));
@@ -87,7 +87,7 @@ beforeEach((): void => {
   rawGetChat.mockClear();
   rawDispatches.length = 0;
   mainSendPhoto.mockClear();
-  mainSendAudio.mockClear();
+  mainSendVoice.mockClear();
   mainGetFile.mockClear();
   hydratedFilePath = "files/media.bin";
   actionSendMessage.mockClear();
@@ -336,25 +336,32 @@ describe("Telegram Worker 双工代理", () => {
     );
   });
 
-  test("音频与缩略图直接转移原 ArrayBuffer，不建立媒体全量副本", async (): Promise<void> => {
-    const audioBytes: Uint8Array<ArrayBuffer> = new Uint8Array(24 * 1_024 * 1_024);
-    const thumbnailBytes: Uint8Array<ArrayBuffer> = new Uint8Array([4, 5, 6]);
+  test("语音消息直接转移原 ArrayBuffer，载荷原样透传", async (): Promise<void> => {
+    const voiceBytes: Uint8Array<ArrayBuffer> = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
 
-    await workerTelegramApi.sendAudio(
+    await workerTelegramApi.sendVoice(
       -1001,
-      { bytes: audioBytes, fileName: "song.mp3" },
-      { thumbnail: { bytes: thumbnailBytes, fileName: "cover.jpg" } }
+      { bytes: voiceBytes, fileName: "voice.ogg" },
+      { duration: 2, message_thread_id: 7 }
     );
 
     const request = duplexRequests[0]?.request as
-      | Extract<TelegramWorkerRequest, { operation: "sendAudio" }>
+      | Extract<TelegramWorkerRequest, { operation: "sendVoice" }>
       | undefined;
-    expect(request?.bytes).toBe(audioBytes);
-    expect(request?.thumbnailBytes).toBe(thumbnailBytes);
-    expect(duplexRequests[0]?.transfer).toEqual([
-      audioBytes.buffer,
-      thumbnailBytes.buffer,
-    ]);
+    expect(request).toEqual({
+      operation: "sendVoice",
+      category: "message",
+      chatId: -1001,
+      bytes: voiceBytes,
+      fileName: "voice.ogg",
+      other: { duration: 2, message_thread_id: 7 },
+    });
+    expect(request?.bytes).toBe(voiceBytes);
+    expect(duplexRequests[0]?.transfer).toEqual([voiceBytes.buffer]);
+    await expect(workerTelegramApi.sendVoice(
+      -1001,
+      "remote-file-id" as unknown as TelegramMemoryFile
+    )).rejects.toThrow("Worker voice must use the project-owned in-memory file shape.");
   });
 
   test("子视图只复制可见区间，避免转移并 detach 仍被其它视图共享的 backing store", async (): Promise<void> => {
@@ -375,38 +382,24 @@ describe("Telegram Worker 双工代理", () => {
     expect(duplexRequests[0]?.transfer).toEqual([request?.bytes.buffer as ArrayBuffer]);
   });
 
-  test("SharedArrayBuffer 与音频缩略图共享 backing store 时只转移独立副本一次", async (): Promise<void> => {
+  test("SharedArrayBuffer 只转移独立副本，独占的普通 ArrayBuffer 原样转移", async (): Promise<void> => {
     const shared: SharedArrayBuffer = new SharedArrayBuffer(3);
     const sharedBytes: Uint8Array<SharedArrayBuffer> = new Uint8Array(shared);
     sharedBytes.set([7, 8, 9]);
 
-    await workerTelegramApi.sendAudio(
-      -1001,
-      { bytes: sharedBytes, fileName: "song.mp3" },
-      { thumbnail: { bytes: sharedBytes, fileName: "cover.jpg" } }
-    );
+    await workerTelegramApi.sendVoice(-1001, { bytes: sharedBytes, fileName: "voice.ogg" });
 
     const request = duplexRequests[0]?.request as
-      | Extract<TelegramWorkerRequest, { operation: "sendAudio" }>
+      | Extract<TelegramWorkerRequest, { operation: "sendVoice" }>
       | undefined;
     expect(request?.bytes).toEqual(new Uint8Array([7, 8, 9]));
-    expect(request?.thumbnailBytes).toEqual(new Uint8Array([7, 8, 9]));
     expect(request?.bytes.buffer).toBeInstanceOf(ArrayBuffer);
-    expect(request?.thumbnailBytes?.buffer).toBeInstanceOf(ArrayBuffer);
     expect(request?.bytes.buffer).not.toBe(shared);
-    expect(request?.thumbnailBytes?.buffer).not.toBe(shared);
-    expect(duplexRequests[0]?.transfer).toEqual([
-      request?.bytes.buffer as ArrayBuffer,
-      request?.thumbnailBytes?.buffer as ArrayBuffer,
-    ]);
+    expect(duplexRequests[0]?.transfer).toEqual([request?.bytes.buffer as ArrayBuffer]);
 
     duplexRequests.length = 0;
     const exclusive: Uint8Array<ArrayBuffer> = new Uint8Array([1, 2, 3]);
-    await workerTelegramApi.sendAudio(
-      -1001,
-      { bytes: exclusive, fileName: "song.mp3" },
-      { thumbnail: { bytes: exclusive, fileName: "cover.jpg" } }
-    );
+    await workerTelegramApi.sendVoice(-1001, { bytes: exclusive, fileName: "voice.ogg" });
     expect(duplexRequests[0]?.transfer).toEqual([exclusive.buffer]);
   });
 });
@@ -525,27 +518,29 @@ describe("主线程 Telegram Worker 能力边界", () => {
     expect(args?.[3]).toBe(signal);
   });
 
-  test("音频与可选缩略图都在主线程重建 InputFile", async (): Promise<void> => {
+  test("语音消息在主线程重建 InputFile；Anti-Raid 无权发送语音", async (): Promise<void> => {
     const signal: AbortSignal = new AbortController().signal;
-    await handleAiWorkerTelegramRequest({
-      operation: "sendAudio",
+    const request: TelegramWorkerRequest = {
+      operation: "sendVoice",
       category: "message",
       chatId: -1001,
       bytes: new Uint8Array([1, 2, 3]),
-      fileName: "song.mp3",
-      thumbnailBytes: new Uint8Array([4, 5, 6]),
-      other: { caption: "song" },
-    }, signal);
+      fileName: "voice.ogg",
+      other: { duration: 1 },
+    };
+    await expect(handleAiWorkerTelegramRequest(request, signal)).resolves.toEqual({ message_id: 21 });
 
-    const args: unknown[] | undefined = mainSendAudio.mock.calls[0];
+    const args: unknown[] | undefined = mainSendVoice.mock.calls[0];
     expect(args?.[0]).toBe(-1001);
     expect(args?.[1]).toBeInstanceOf(InputFile);
     expect(await (args?.[1] as InputFile).toRaw()).toEqual(new Uint8Array([1, 2, 3]));
-    const other = args?.[2] as { caption?: string; thumbnail?: InputFile } | undefined;
-    expect(other?.caption).toBe("song");
-    expect(other?.thumbnail).toBeInstanceOf(InputFile);
-    expect(await other?.thumbnail?.toRaw()).toEqual(new Uint8Array([4, 5, 6]));
+    expect(args?.[2]).toEqual({ duration: 1 });
     expect(args?.[3]).toBe(signal);
+
+    await expect(handleAntiRaidWorkerTelegramRequest(request, signal))
+      .rejects.toThrow("unsupported Telegram capability");
+    await expect(handleAiWorkerTelegramRequest({ ...request, category: "query" } as never, signal))
+      .rejects.toThrow("Telegram Worker sendVoice must use the message category.");
   });
 
   test("下载能力区分缺路径、HTTP、体积、空响应与成功字节，并只转移成功 buffer", async (): Promise<void> => {

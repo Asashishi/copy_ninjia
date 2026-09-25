@@ -12,6 +12,7 @@
  */
 
 import { mock } from "bun:test";
+import type { TranslateState } from "../../packages/types/translate";
 
 export const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 export const recordChatMediaMock = mock((..._args: unknown[]): void => {});
@@ -49,6 +50,9 @@ export const autoMessageChatState: {
 
 export const autoMessageCopyState: { targetId: number | undefined } = { targetId: undefined };
 
+/** 各群的翻译会话；`getChatState(chatId).translate` 按群读取，没有条目即无会话。 */
+export const autoMessageTranslateSessions = new Map<number, readonly TranslateState[]>();
+
 /**
  * 本群已登记的问答；空表等价于「这个群没开问答」，`getChatQa` 返回 undefined，
  * 直答链路在第一行就走开（口径同 infra/qaStore.ts）。
@@ -58,16 +62,19 @@ export const autoMessageQaEntries: Map<string, string> = new Map<string, string>
 mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
   sendMessage: sendMessageMock,
+  sendVoiceWithResult: async (): Promise<undefined> => undefined,
   bot: { api: {} },
   logApiError: (): void => {},
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
+  disableChatStateSwitch: (): boolean => false,
   activeCopyTargetIdIn: (): number | undefined => autoMessageCopyState.targetId,
   persistGlobalState: async (): Promise<void> => {},
   activeCopyModeIn: (): undefined => undefined,
   getActiveProxySendTarget: (): undefined => undefined,
-  getChatState: (): Record<string, unknown> => ({
+  getChatState: (chatId: number): Record<string, unknown> => ({
+    translate: autoMessageTranslateSessions.get(chatId),
     isAIChatEnabled: autoMessageChatState.isAIChatEnabled,
     isTranslationEnabled: autoMessageChatState.isTranslationEnabled,
     isInitEnabled: autoMessageChatState.isInitEnabled,
@@ -75,6 +82,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
       ? undefined
       : Date.now() + autoMessageChatState.quietUntilOffsetMs,
   }),
+  getChatStateCache: (): ReadonlyMap<number, unknown> => new Map(),
   getOrCreateChatState: (): Record<string, unknown> => ({}),
   persistChatState: async (): Promise<void> => {},
   saveChatStateInBackground: (): void => {},
@@ -95,6 +103,7 @@ mock.module("../../packages/aiChat", () => ({
   recordChatMessage: recordChatMessageMock,
   recordChatMedia: recordChatMediaMock,
   generateAndSendReply: generateAndSendReplyMock,
+  synthesizeVoice: async (): Promise<{ ok: false; reason: "worker unavailable" }> => ({ ok: false, reason: "worker unavailable" }),
 }));
 mock.module("../../packages/infra/selfSentTracker", () => ({
   isSelfSent: (): boolean => false,
@@ -124,4 +133,5 @@ export function resetAutoMessageMocks(): void {
   autoMessageChatState.isInitEnabled = false;
   autoMessageChatState.quietUntilOffsetMs = 60_000;
   autoMessageQaEntries.clear();
+  autoMessageTranslateSessions.clear();
 }

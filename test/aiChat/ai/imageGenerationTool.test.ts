@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ReplyToolContext, RoundMessageState } from "../../../packages/types/aiChat/replies";
 import type { ChatActionPhase } from "../../../packages/types/aiChat/chatAction";
-import type { TelegramSendResult } from "../../../packages/types/telegram";
+import type { TelegramPhotoSendResult, TelegramSendResult } from "../../../packages/types/telegram";
+import type { TelegramVisionSource } from "../../../packages/types/media";
 import type { TaskPriority } from "../../../packages/libs/prioritizedBoundedTaskRunner";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
+const GENERATED_PHOTO: TelegramVisionSource = { fileId: "sent-photo", fileUniqueId: "sent-photo-u", width: 1024, height: 768 };
 const generateChatImage = mock(async (..._args: unknown[]): Promise<{
   bytes: Uint8Array;
   mimeType: "image/png";
@@ -27,8 +29,9 @@ async function runMediaTaskStub<T>(_priority: TaskPriority, task: () => Promise<
   return await task();
 }
 const runMediaTask = mock(runMediaTaskStub);
-const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
+const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramPhotoSendResult | undefined> => ({
   messageId: 77,
+  photo: GENERATED_PHOTO,
   repliedToMessageId: 42,
 }));
 // 超长图注降级时执行器会补发一条独立文本；这条走的是 sendMessageWithResult，
@@ -58,7 +61,7 @@ mock.module("../../../packages/cache/workers/aiChat/mediaTasks", () => ({ mediaT
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
 const { buildImageReferenceBlock } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageReference");
 const { IMAGE_REFERENCE_POINTER } = await import("../../../packages/consts/aiChat/prompts/tools");
-const { createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
+const { acceptRoundText, createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
 const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 
@@ -100,7 +103,7 @@ function buildContext(
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
-    onSongSent: mock((..._args: unknown[]): void => {}),
+    onVoiceSent: mock((..._args: unknown[]): void => {}),
   };
 }
 
@@ -130,7 +133,7 @@ beforeEach(() => {
   runMediaTask.mockReset();
   runMediaTask.mockImplementation(runMediaTaskStub);
   sendPhotoWithResult.mockReset();
-  sendPhotoWithResult.mockResolvedValue({ messageId: 77, repliedToMessageId: 42 });
+  sendPhotoWithResult.mockResolvedValue({ messageId: 77, repliedToMessageId: 42, photo: GENERATED_PHOTO });
   sendMessageWithResult.mockReset();
   sendMessageWithResult.mockResolvedValue({ messageId: 78, repliedToMessageId: 42 });
   sleepMock.mockReset();
@@ -232,7 +235,7 @@ describe("generate_image 工具执行器", () => {
       messageThreadId: undefined,
     });
     // 图片请求固定指向触发消息，服务端实际挂上后自录回调才带回复目标。
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：日落下的纸飞机）", 77, 42);
+    expect(ctx.onImageSent).toHaveBeenCalledWith({ text: "（生成并发送了一张图片：日落下的纸飞机）", messageId: 77, repliedToMessageId: 42, origin: "generated", caption: "", photo: GENERATED_PHOTO });
   });
 
   test("参考图按需从 Telegram 下载并以内联图片交给生图模型", async () => {
@@ -254,7 +257,7 @@ describe("generate_image 工具执行器", () => {
     });
     expect(result.aspect_ratio).toBe("16:9");
     expect(result.reference_image_used).toBe(true);
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（参考素材生成并发送了一张图片：把原图改成油画）", 77, 42);
+    expect(ctx.onImageSent).toHaveBeenCalledWith({ text: "（参考素材生成并发送了一张图片：把原图改成油画）", messageId: 77, repliedToMessageId: 42, origin: "referenceGenerated", caption: "", photo: GENERATED_PHOTO });
   });
 
   test("参考图下显式比例仍优先，非官方比例照常归一化", async () => {
@@ -323,13 +326,13 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("Telegram 退化为无回复发送时不伪造图片回复关系", async () => {
-    sendPhotoWithResult.mockResolvedValueOnce({ messageId: 77 });
+    sendPhotoWithResult.mockResolvedValueOnce({ messageId: 77, photo: GENERATED_PHOTO });
     const ctx: ReplyToolContext = buildContext();
 
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "回复目标已删除" })));
 
     expect(result.success).toBe(true);
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：回复目标已删除）", 77, undefined);
+    expect(ctx.onImageSent).toHaveBeenCalledWith({ text: "（生成并发送了一张图片：回复目标已删除）", messageId: 77, repliedToMessageId: undefined, origin: "generated", caption: "", photo: GENERATED_PHOTO });
   });
 
   test("图注随图作为同一条消息发出，并合并进同一条自录", async () => {
@@ -353,7 +356,7 @@ describe("generate_image 工具执行器", () => {
       caption: "照着你说的画了一张",
     });
     // 一条消息只留一条自录：图记号和图注拼在同一个 message_id 上。
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：日落下的纸飞机）照着你说的画了一张", 77, 42);
+    expect(ctx.onImageSent).toHaveBeenCalledWith({ text: "（生成并发送了一张图片：日落下的纸飞机）照着你说的画了一张", messageId: 77, repliedToMessageId: 42, origin: "generated", caption: "照着你说的画了一张", photo: GENERATED_PHOTO });
     expect(ctx.onMessageSent).not.toHaveBeenCalled();
     expect(sendMessageWithResult).not.toHaveBeenCalled();
     // 图注计入本轮已说过的话，模型随后复述会被 send_message 的去重拦下。
@@ -388,7 +391,7 @@ describe("generate_image 工具执行器", () => {
       messageThreadId: undefined,
       signal: undefined,
     });
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：超长图注）", 77, 42);
+    expect(ctx.onImageSent).toHaveBeenCalledWith({ text: "（生成并发送了一张图片：超长图注）", messageId: 77, repliedToMessageId: 42, origin: "generated", caption: "", photo: GENERATED_PHOTO });
     expect(ctx.onMessageSent).toHaveBeenCalledWith(longCaption, 78, 42);
     expect(state.acceptedCanonicalTexts.has(longCaption)).toBe(true);
   });
@@ -486,7 +489,7 @@ describe("generate_image 工具执行器", () => {
 
   test("图注与本轮已发消息相同时静默跳过，且不消耗冷却", async () => {
     const state: RoundMessageState = createRoundMessageState();
-    state.acceptedCanonicalTexts.add("画好了");
+    acceptRoundText(state, "画好了");
 
     const result = JSON.parse(await buildExecutor(buildContext(), state)(JSON.stringify({
       prompt: "重复图注",
@@ -546,7 +549,7 @@ describe("generate_image 工具执行器", () => {
     expect(blank.success).toBe(true);
     expect(blank.caption_delivery).toBeUndefined();
     expect(sendPhotoWithResult.mock.calls[1]?.[0]).not.toHaveProperty("caption");
-    expect(ctx.onImageSent).toHaveBeenCalledWith("（生成并发送了一张图片：空图注）", 77, 42);
+    expect(ctx.onImageSent).toHaveBeenCalledWith({ text: "（生成并发送了一张图片：空图注）", messageId: 77, repliedToMessageId: 42, origin: "generated", caption: "", photo: GENERATED_PHOTO });
   });
 
   test("工具说明告诉模型图注与图同属一条消息、超长会被拆开", () => {
@@ -584,7 +587,7 @@ describe("generate_image 工具执行器", () => {
     });
     sendPhotoWithResult.mockImplementationOnce(async () => {
       events.push("sent");
-      return { messageId: 77, repliedToMessageId: 42 };
+      return { messageId: 77, repliedToMessageId: 42, photo: GENERATED_PHOTO };
     });
 
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "显示状态" })));

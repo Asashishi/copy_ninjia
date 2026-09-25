@@ -53,7 +53,7 @@ import type {
 import type { LuckSecretRecoveryInspection } from "./luckSecretFile";
 import type { JoinLogRecoveryInspection } from "./joinLogFiles";
 import type { VerificationRecoveryInspection } from "./verificationRecovery";
-import type { StorageDatabaseInspection } from "./storageDatabase/hydration";
+import type { StorageDatabaseInspection } from "../../types/identityStorage";
 import { errorMessage } from "../../libs/errorMessage";
 
 export type DiskIOStartupReplySink = (

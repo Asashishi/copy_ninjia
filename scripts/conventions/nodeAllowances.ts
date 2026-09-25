@@ -283,8 +283,8 @@ export const TEST_SHARED_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowan
     purpose: "isolated temporary-root lifecycle, config fixture copies, metadata and permission fixtures, and filesystem topology fixtures",
   },
   "node:fs/promises": {
-    symbols: ["chmod", "lstat", "mkdir", "mkdtemp", "rm", "symlink"],
-    purpose: "asynchronous metadata and isolated temporary-root lifecycle",
+    symbols: ["lstat", "mkdir", "mkdtemp", "rename", "rm"],
+    purpose: "asynchronous metadata, isolated temporary-root lifecycle, and moving fixture directories out of place",
   },
   "node:os": {
     symbols: ["tmpdir"],

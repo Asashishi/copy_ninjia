@@ -1,18 +1,26 @@
-import { CHAT_STATE_KEYS, LOCKDOWN_KEYS } from "../../consts/storageSchema";
+import {
+  CACHED_USER_KEYS,
+  CHAT_STATE_KEYS,
+  LOCKDOWN_KEYS,
+  TRANSLATE_SESSION_KEYS,
+} from "../../consts/storageSchema";
 import type { ChatPermissions } from "grammy/types";
 import { BOT_CHAT_PERMISSION_KEYS } from "../../consts/botAdmin";
 import { CHAT_PERMISSION_KEYS } from "../../consts/storage";
-import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
-import { isEmptyChatState } from "../../libs/chatState";
+import {
+  invalidInput,
+  optionalBooleanField,
+  optionalStringField,
+  optionalTimestampField,
+  parseJsonInput,
+} from "../../libs/inputValidation";
+import { TRANSLATE_CHAT_USER_LIMIT } from "../../consts/translate";
+import type { InputFieldContext } from "../../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../../libs/record";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
-import type { ChatState, LockdownPhase, LockdownRecord } from "../../types/chatState";
+import type { CachedUser, ChatState, LockdownPhase, LockdownRecord } from "../../types/chatState";
+import type { TranslateState } from "../../types/translate";
 import type { BotChatPermissions } from "../../types/telegram";
-
-interface DecodeFieldContext {
-  readonly source: string;
-  readonly path: string;
-}
 
 /** 严格校验 SQLite 主键可直接表示 Telegram 群或频道 ID。 */
 export function assertTelegramChatId(chatId: number, source: string): void {
@@ -21,21 +29,10 @@ export function assertTelegramChatId(chatId: number, source: string): void {
   }
 }
 
-function optionalBoolean(
-  value: Record<string, unknown>,
-  key: string,
-  { source, path }: DecodeFieldContext
-): boolean | undefined {
-  const field: unknown = value[key];
-  if (field === undefined) return undefined;
-  if (typeof field !== "boolean") return invalidInput(source, `${path}.${key}`, "a boolean");
-  return field;
-}
-
 function requiredBoolean(
   value: Record<string, unknown>,
   key: string,
-  { source, path }: DecodeFieldContext
+  { source, path }: InputFieldContext
 ): boolean {
   const field: unknown = value[key];
   if (typeof field !== "boolean") return invalidInput(source, `${path}.${key}`, "a required boolean");
@@ -46,25 +43,12 @@ function requiredBoolean(
 function optionalMessageId(
   value: Record<string, unknown>,
   key: string,
-  { source, path }: DecodeFieldContext
+  { source, path }: InputFieldContext
 ): number | undefined {
   const field: unknown = value[key];
   if (field === undefined) return undefined;
   if (!Number.isSafeInteger(field) || (field as number) < 1) {
     return invalidInput(source, `${path}.${key}`, "a positive safe integer message ID");
-  }
-  return field as number;
-}
-
-function optionalTimestamp(
-  value: Record<string, unknown>,
-  key: string,
-  { source, path }: DecodeFieldContext
-): number | undefined {
-  const field: unknown = value[key];
-  if (field === undefined) return undefined;
-  if (!Number.isSafeInteger(field) || (field as number) < 0) {
-    return invalidInput(source, `${path}.${key}`, "a non-negative safe integer timestamp");
   }
   return field as number;
 }
@@ -97,7 +81,7 @@ function decodeBotPermissions(
   if (!isPlainRecord(value) || !hasOnlyKeys(value, BOT_CHAT_PERMISSION_KEYS)) {
     return invalidInput(source, path, "the complete supported bot permission object");
   }
-  const context: DecodeFieldContext = { source, path };
+  const context: InputFieldContext = { source, path };
   const permissions: BotChatPermissions = {
     isAdministrator: requiredBoolean(value, "isAdministrator", context),
     isAnonymous: requiredBoolean(value, "isAnonymous", context),
@@ -150,12 +134,12 @@ function decodeLockdown(
     return invalidInput(source, `${path}.phase`, "applying, active, reconciling, or restoring");
   }
   const phase: LockdownPhase = phaseValue;
-  const context: DecodeFieldContext = { source, path };
-  const intentId: number | undefined = optionalTimestamp(value, "intentId", context);
+  const context: InputFieldContext = { source, path };
+  const intentId: number | undefined = optionalTimestampField(value, "intentId", context);
   if (intentId === undefined || intentId === 0) {
     return invalidInput(source, `${path}.intentId`, "a positive safe integer");
   }
-  const expiresAt: number | undefined = optionalTimestamp(value, "expiresAt", context);
+  const expiresAt: number | undefined = optionalTimestampField(value, "expiresAt", context);
   if (expiresAt === undefined) {
     return invalidInput(source, `${path}.expiresAt`, "a required non-negative safe integer timestamp");
   }
@@ -194,7 +178,58 @@ export function assertPersistableLockdown(
   decodeLockdown(record, source, "$.lockdown");
 }
 
-/** 合并并严格解码 status 与 ai_persona；未知字段及状态、人设同时为空的行均拒绝。 */
+/** 翻译目标身份：非零安全整数 id，其余字段可选且类型严格；按固定字段顺序构造。 */
+function decodeTranslatedUser(value: unknown, context: InputFieldContext): CachedUser {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, CACHED_USER_KEYS)) {
+    return invalidInput(context.source, context.path, "an object containing only id, username, first_name, last_name, title and isChannel");
+  }
+  if (typeof value.id !== "number" || !Number.isSafeInteger(value.id) || value.id === 0) {
+    return invalidInput(context.source, `${context.path}.id`, "a non-zero safe integer");
+  }
+  return {
+    id: value.id,
+    username: optionalStringField(value, "username", context),
+    first_name: optionalStringField(value, "first_name", context),
+    last_name: optionalStringField(value, "last_name", context),
+    title: optionalStringField(value, "title", context),
+    isChannel: optionalBooleanField(value, "isChannel", context),
+  };
+}
+
+/**
+ * 本群翻译会话：1 至 TRANSLATE_CHAT_USER_LIMIT 项，每项只含 translatedUser 与 language，
+ * 目标身份在群内唯一，方向限定为 ja、cn、en、uk、ru。
+ */
+function decodeTranslateSessions(value: unknown, source: string): readonly TranslateState[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > TRANSLATE_CHAT_USER_LIMIT) {
+    return invalidInput(source, "$.translate", `an array containing 1 to ${TRANSLATE_CHAT_USER_LIMIT} translation sessions`);
+  }
+  const sessions: TranslateState[] = [];
+  const userIds: Set<number> = new Set();
+  for (let index: number = 0; index < value.length; index++) {
+    const path: string = `$.translate[${index}]`;
+    const entry: unknown = value[index];
+    if (!isPlainRecord(entry) || !hasOnlyKeys(entry, TRANSLATE_SESSION_KEYS)) {
+      return invalidInput(source, path, "an object containing only translatedUser and language");
+    }
+    const language: unknown = entry.language;
+    if (language !== "ja" && language !== "cn" && language !== "en" && language !== "uk" && language !== "ru") {
+      return invalidInput(source, `${path}.language`, "one of ja, cn, en, uk or ru");
+    }
+    const translatedUser: CachedUser = decodeTranslatedUser(entry.translatedUser, { source, path: `${path}.translatedUser` });
+    if (userIds.has(translatedUser.id)) {
+      return invalidInput(source, `${path}.translatedUser.id`, "unique within the chat");
+    }
+    userIds.add(translatedUser.id);
+    sessions.push({ translatedUser, language });
+  }
+  return sessions;
+}
+
+/**
+ * 合并并严格解码 status 与 ai_persona；未知字段、状态与人设同时为空的行均拒绝。
+ * 缺省的开关解码为 false。
+ */
 export function decodeChatStateData(text: string, source: string, aiPersona: string | null = null): ChatState {
   const persona: string | undefined = decodeAiPersona(aiPersona, source);
   const value: unknown = parseJsonInput(text, source);
@@ -205,37 +240,59 @@ export function decodeChatStateData(text: string, source: string, aiPersona: str
   if (titleValue !== undefined && typeof titleValue !== "string") {
     return invalidInput(source, "$.title", "a string");
   }
-  const rootContext: DecodeFieldContext = { source, path: "$" };
+  const rootContext: InputFieldContext = { source, path: "$" };
   const state: ChatState = {
     aiPersona: persona,
-    quietUntil: optionalTimestamp(value, "quietUntil", rootContext),
+    quietUntil: optionalTimestampField(value, "quietUntil", rootContext),
     lockdown: value.lockdown === undefined
       ? undefined
       : decodeLockdown(value.lockdown, source, "$.lockdown"),
-    isAIChatEnabled: optionalBoolean(value, "isAIChatEnabled", rootContext),
-    isTranslationEnabled: optionalBoolean(value, "isTranslationEnabled", rootContext),
-    isAdDetectEnabled: optionalBoolean(value, "isAdDetectEnabled", rootContext),
-    isFloodControlEnabled: optionalBoolean(value, "isFloodControlEnabled", rootContext),
-    isAntiRaidEnabled: optionalBoolean(value, "isAntiRaidEnabled", rootContext),
-    isInitEnabled: optionalBoolean(value, "isInitEnabled", rootContext),
+    isAIChatEnabled: optionalBooleanField(value, "isAIChatEnabled", rootContext) === true,
+    isTranslationEnabled: optionalBooleanField(value, "isTranslationEnabled", rootContext) === true,
+    isAdDetectEnabled: optionalBooleanField(value, "isAdDetectEnabled", rootContext) === true,
+    isFloodControlEnabled: optionalBooleanField(value, "isFloodControlEnabled", rootContext) === true,
+    isAntiRaidEnabled: optionalBooleanField(value, "isAntiRaidEnabled", rootContext) === true,
+    isInitEnabled: optionalBooleanField(value, "isInitEnabled", rootContext) === true,
     botPermissions: value.botPermissions === undefined
       ? undefined
       : decodeBotPermissions(value.botPermissions, source, "$.botPermissions"),
     title: titleValue,
-    isProxySendEnabled: optionalBoolean(value, "isProxySendEnabled", rootContext),
+    isProxySendEnabled: optionalBooleanField(value, "isProxySendEnabled", rootContext) === true,
+    translate: value.translate === undefined ? undefined : decodeTranslateSessions(value.translate, source),
   };
-  if (isEmptyChatState(state)) {
+  if (persona === undefined && Object.keys(value).length === 0) {
     return invalidInput(source, "$", "a non-empty chat-state object");
   }
   return state;
 }
 
-/** 编码前走同一严格解码器，非法内存状态不得进入 SQLite。 */
+/** 开关为 true 时写入 true，否则省略该键。 */
+function enabledOrOmitted(enabled: boolean): true | undefined {
+  return enabled ? true : undefined;
+}
+
+/**
+ * 编码前走同一严格解码器，非法内存状态不得进入 SQLite。字段顺序与
+ * createChatState 一致；aiPersona 另存 ai_persona 列，不进入状态载荷。
+ */
 export function encodeChatStateData(
   state: Readonly<ChatState>,
   source: string = "chat state"
 ): string {
-  const text: string = JSON.stringify({ ...state, aiPersona: undefined });
+  const text: string = JSON.stringify({
+    quietUntil: state.quietUntil,
+    lockdown: state.lockdown,
+    isAIChatEnabled: enabledOrOmitted(state.isAIChatEnabled),
+    isTranslationEnabled: enabledOrOmitted(state.isTranslationEnabled),
+    isAdDetectEnabled: enabledOrOmitted(state.isAdDetectEnabled),
+    isFloodControlEnabled: enabledOrOmitted(state.isFloodControlEnabled),
+    isAntiRaidEnabled: enabledOrOmitted(state.isAntiRaidEnabled),
+    isInitEnabled: enabledOrOmitted(state.isInitEnabled),
+    botPermissions: state.botPermissions,
+    title: state.title,
+    isProxySendEnabled: enabledOrOmitted(state.isProxySendEnabled),
+    translate: state.translate,
+  });
   decodeChatStateData(text, source, state.aiPersona ?? null);
   return text;
 }

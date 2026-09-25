@@ -4,7 +4,7 @@
  * 与 antiRaid/blocklistGuard.ts）。本模块负责「把这些 id 清出这个群」这一步：
  * 探测、封禁、失败重试，以及秒踢路径顺带的入群计数与公告清理。
  *
- * 放在 Worker 里的理由和验证超时踢人一样：重试节奏、群停管代际与整批结算都由
+ * 与验证超时踢人一样放在 Worker 里：重试节奏、群停管代际与整批结算都由
  * Anti-Raid owner 维护；每个 Telegram 调用只通过双工能力交给主线程总闸执行，
  * Worker 等待网络时不阻塞 mailbox，主线程 update handler 也不等待整批补扫。
  *
@@ -90,7 +90,7 @@ async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneP
       const outcome: BanChatMemberOutcome = await banChatSenderChatWithOutcome(chatId, userId, telegramApi);
       if (outcome === "banned") return "removed";
       // 同真人分支：权限不够时重试没有意义，这批等的是权限变更。没有
-      // targetIsAdmin 那一档可分辨，理由见 banChatSenderChatWithOutcome。
+      // targetIsAdmin 那一档可分辨，见 banChatSenderChatWithOutcome。
       if (outcome === "forbidden") return "forbidden";
     } else {
       if (probeMembership) {
@@ -244,7 +244,7 @@ async function removeBlockedMembers({
   }
   // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
   //
-  // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，理由见
+  // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，见
   // ./botPermissions.ts）：机器人完全可能是「有 can_restrict_members、没有
   // can_delete_messages」的管理员，那种群里每个黑名单入群都换来一次注定 400 的
   // 删除。它们虽与踢人分属独立 429 类别，注定失败的请求仍会白占网络、日志和

@@ -112,7 +112,7 @@ function downloadTelegramFile(
 /**
  * 把 Worker 经本边界发出的消息登记进**主线程**的自发消息表。
  *
- * 存在的理由是 `infra/selfSentTracker.ts` 按线程隔离：Worker 侧那次
+ * `infra/selfSentTracker.ts` 按线程隔离，因此需要本函数：Worker 侧那次
  * `sendMessage` 在自己的 isolate 里 `markSelfSent`，而真正的 Bot API 调用发生在
  * 下面的 `bot.api.raw.*`——那条路绕开了共享动作层的登记。主线程因此认不出这条
  * 消息是自己发的，频道帖回投时会被当成新内容喂进 AI/复读流水线，或被
@@ -165,19 +165,14 @@ async function dispatchTelegramWorkerRequest(
         request.other,
         signal as never
       );
-    case "sendAudio":
+    case "sendVoice":
       if (request.category !== "message") {
-        throw new Error("Telegram Worker sendAudio must use the message category.");
+        throw new Error("Telegram Worker sendVoice must use the message category.");
       }
-      return bot.api.sendAudio(
+      return bot.api.sendVoice(
         request.chatId,
         new InputFile(request.bytes, request.fileName),
-        {
-          ...request.other,
-          ...(request.thumbnailBytes === undefined
-            ? {}
-            : { thumbnail: new InputFile(request.thumbnailBytes, "cover.jpg") }),
-        },
+        request.other,
         signal as never
       );
     case "downloadFile":
@@ -213,7 +208,7 @@ function aiAllows(request: TelegramWorkerRequest): boolean {
     return (request.operation === "sendTemporaryMessage" && request.purpose === "notice") ||
       request.operation === "downloadFile" ||
       request.operation === "sendPhoto" ||
-      request.operation === "sendAudio";
+      request.operation === "sendVoice";
   }
   switch (request.call.method) {
     case "getStickerSet":

@@ -38,7 +38,7 @@ const isMainThread: boolean = Bun.isMainThread;
 /**
  * Worker 侧转发出口。整条协议（有界队列、单批 ACK、溢出汇总）住在
  * infra/logger/forwarding.ts；这里只把它接到本 isolate 的 postMessage 上。
- * 拆开的理由见那个文件的头注：isMainThread 是加载期常量，协议留在本文件里
+ * 拆开的见那个文件的头注：isMainThread 是加载期常量，协议留在本文件里
  * 就永远只能在真 Worker 里执行，测不到。
  */
 const forwardToMainThread: ForwardedLogSink = (batch: ForwardedLogBatch): void => {

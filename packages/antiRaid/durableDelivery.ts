@@ -140,7 +140,7 @@ function containsBlockedRemoval(messages: readonly AntiRaidWorkerMessage[]): boo
  * @returns 真正投给 Worker 的消息条数。durable 对账可能把整批
  *   removeBlockedMembers 扣下（见 prepareDurableAntiRaidMessages），此时本函数
  *   正常 resolve 但一条都没投出去——调用方若把「没抛错」当成「已投递」就会
- *   永久卡住自己的 claim，理由见 types/blocklist.ts 的 BlockedMemberRemover。
+ *   永久卡住自己的 claim，见 types/blocklist.ts 的 BlockedMemberRemover。
  */
 export async function postAntiRaidDurably(
   messages: readonly AntiRaidWorkerMessage[],

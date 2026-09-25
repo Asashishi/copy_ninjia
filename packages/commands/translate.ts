@@ -3,11 +3,10 @@ import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser, ChatState } from "../types/chatState";
 import type { TranslateState } from "../types/translate";
-import { translateStates } from "../cache/main/translateState";
 import { translateConfigReadiness } from "../config/readiness";
 import { TRANSLATE_ARGUMENT_PATTERN, TRANSLATE_STOP_ARGUMENT_PATTERN, TRANSLATE_LANGUAGE_LABELS, TRANSLATE_LIST_JSON_INDENT, TRANSLATE_LIST_JSON_LANGUAGE } from "../consts/translate";
 
-import { getChatState, persistGlobalState } from "../infra/storage/stateStore";
+import { getChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { explicitReplyTo } from "../libs/forumTopic";
 import { isTelegramGroupChatId } from "../libs/telegramId";
@@ -130,12 +129,12 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (!setTranslateState(chatId, { translatedUser: target, language })) {
     await sendCommandMessage({
       chatId,
-      text: translateStates.has(chatId) ? chatAtmosphere(chatId).TRANSLATE_CHAT_CAPACITY_TEXT : chatAtmosphere(chatId).TRANSLATE_CAPACITY_TEXT,
+      text: getChatState(chatId).translate !== undefined ? chatAtmosphere(chatId).TRANSLATE_CHAT_CAPACITY_TEXT : chatAtmosphere(chatId).TRANSLATE_CAPACITY_TEXT,
       replyToMessageId: messageId,
     });
     return;
   }
-  await persistGlobalState("translation started");
+  await persistChatState(chatId, "translation started");
   const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
   await sendCommandMessage({
     chatId,

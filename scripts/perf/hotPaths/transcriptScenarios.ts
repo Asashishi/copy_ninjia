@@ -40,7 +40,7 @@ const RECORD_SOURCES: readonly AiRecordContext[] = [
     username: "carol", messageId: 3,
     replyTo: {
       messageId: 2, id: BENCHMARK_SENDER_ID + 2, firstName: "Bob", lastName: "", username: undefined,
-      text: "被回复的原文", quote: undefined, forwardedFrom: undefined,
+      text: "被回复的原文", quote: undefined, forwardedFrom: undefined, botImage: undefined,
     },
     forwardedFrom: undefined, persistImmediately: false,
   },
@@ -150,7 +150,7 @@ export function replyReferenceScenario(): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
-        checksum += resolveReplyReference(messages[index % messages.length]!)?.text.length ?? 0;
+        checksum += resolveReplyReference(messages[index % messages.length]!, 4242)?.text.length ?? 0;
       }
       return checksum;
     },

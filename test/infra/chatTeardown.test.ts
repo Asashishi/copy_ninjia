@@ -43,6 +43,13 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     delete state[field];
     return true;
   },
+  disableChatStateSwitch: (chatId: number, key: string): boolean => {
+    calls.push(`disable:${key}`);
+    const state = states.get(chatId);
+    if (state?.[key] !== true) return false;
+    delete state[key];
+    return true;
+  },
   purgeChatStateExceptLockdown: (chatId: number): void => {
     calls.push(`prune:${chatId}`);
     const lockdown = states.get(chatId)?.lockdown;
@@ -129,7 +136,7 @@ describe("chat runtime teardown", () => {
     states.set(-1001, { isProxySendEnabled: true });
     await chatTeardown.teardownChatRuntime(-1001, "explicitDisable");
     expect(calls).toEqual([
-      "clear:isProxySendEnabled",
+      "disable:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
       "qa:-1001",
@@ -155,7 +162,7 @@ describe("chat runtime teardown", () => {
     expect(error).toBeInstanceOf(AggregateError);
     expect((error as AggregateError).errors).toEqual([copyError, aiError]);
     expect(calls).toEqual([
-      "clear:isProxySendEnabled",
+      "disable:isProxySendEnabled",
       "gag:-1001",
       "qa:-1001",
       "anti:-1001",
@@ -210,7 +217,7 @@ describe("chat runtime teardown", () => {
     expect(calls.slice(0, 11)).toEqual([
       "clear:botPermissions",
       "save:bot permissions forgotten",
-      "clear:isProxySendEnabled",
+      "disable:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
       "qa:-1001",
@@ -254,7 +261,7 @@ describe("chat runtime teardown", () => {
     await botAdmin.handleMyChatMemberUpdate(memberContext("member"), syncChatPersonaSurfaces);
     expect(reasons).toEqual(["lostAuthority"]);
     expect(calls.slice(0, 7)).toEqual([
-      "clear:isProxySendEnabled",
+      "disable:isProxySendEnabled",
       "copy:-1001",
       "gag:-1001",
       "qa:-1001",

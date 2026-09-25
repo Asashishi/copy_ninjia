@@ -1,3 +1,4 @@
+import { qaFormSessions } from "../../cache/main/qa";
 /**
  * 收集当前表单发起者投递的问题与回答；字段消息进入删除流程后由本领域认领。
  * 异步等待后复核会话身份，关闭的会话不再接收字段；跨模块约束见 docs/cn/04-invariants.md。
@@ -14,7 +15,6 @@ import {
 } from "../../infra/selfSentTracker";
 import { visibleSenderId } from "../../users/visibleSender";
 import type { QaFieldInput, QaFormIngressResult, QaFormSession } from "../../types/qa";
-import { findQaFormSession } from "./session";
 import { parseQaFieldMessage } from "./rendering";
 
 /**
@@ -26,7 +26,7 @@ export async function claimQaFieldMessage(
   message: Message
 ): Promise<QaFormIngressResult | null> {
   // 无表单时只查一次 Map；频道自发标记等待排在身份与格式检查之后。
-  const session: QaFormSession | undefined = findQaFormSession(message.chat.id);
+  const session: QaFormSession | undefined = qaFormSessions.get(message.chat.id);
   if (session === undefined) return null;
   if (message.message_id === session.formMessageId) return null;
   // 频道回投包含表单示例、回执及 Worker 回复；自发消息不参与字段收集。
@@ -38,14 +38,14 @@ export async function claimQaFieldMessage(
   // Worker 发送登记与频道回投没有顺序保证，频道帖先等待有界自发标记。
   if (needsBotOwnMessageWait(message) && await waitForBotOwnMessage(message)) return null;
   throwIfUpdateAborted();
-  if (findQaFormSession(message.chat.id) !== session) return null;
+  if (qaFormSessions.get(message.chat.id) !== session) return null;
 
   // 认领之后立刻删掉这条投递消息：它只是把文本带进表单的载具，答案还可能是
   // 一整块 JSON，留在群里既没意义又会被后面的流水线当成普通消息。
   await deleteMessageWithOutcome(message.chat.id, message.message_id);
   throwIfUpdateAborted();
 
-  const active: boolean = findQaFormSession(message.chat.id) === session;
+  const active: boolean = qaFormSessions.get(message.chat.id) === session;
   const questionTooLong: boolean = parsed.q !== undefined &&
     parsed.q.length > CHAT_QA_QUESTION_MAX_CHARS;
   const answerTooLong: boolean = parsed.a !== undefined &&

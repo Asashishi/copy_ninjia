@@ -1,7 +1,8 @@
-import { storagePendingBudget } from "../../../cache/workers/diskIO/storageDatabase";
+import {
+  storagePendingBudget,
+  pendingChatQaWrites,
+} from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
-import { pendingChatQaWrites } from
-  "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../consts/qa";
 import { assertChatQaQuestion, decodeChatQaData } from "../../../database/codec/chatQa";
@@ -23,7 +24,7 @@ import { flushIfStorageFull } from "./flush";
  *
  * 只查这一个群的 `q` 列，不读 data：容量闸要的只是「这个群现在登记了哪几句」，
  * 而 data 是 JSONB BLOB，读它必须逐行物化成 JSON 文本——那是每次问答写入都要
- * 白付的转换与字符串分配。与 chat_states 的容量闸同一取舍。
+ * 白付的转换与字符串分配。与 chat_states 的容量闸同一口径。
  */
 function effectiveChatQaQuestions(chatId: number): Set<string> {
   const rows: readonly Pick<StoredChatQaRow, "q">[] = readStoredChatQaQuestions(

@@ -1,3 +1,5 @@
+import type { BotImageOrigin } from "../../../types/aiChat/memory";
+
 /** 群聊转录行内标注的共享模板。拼装侧（aiChat/ai/utils/chatTranscript.ts 的
  * formatReplyReference/formatForwardTag）与说明文案侧（本目录 memory.ts 的
  * SUMMARY_SYSTEM_PROMPT、转录段首格式说明）共用同一模板，防止格式与说明
@@ -124,10 +126,11 @@ export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");
 
 /**
  * 机器人自己动作在转录里的记号——这些行由**执行侧在动作真正落地之后**写入
- * （见 aiChat/ai/tools/replyToolset/imageGeneration.ts 与 aiChat/ai/stickers/describe.ts 的自录），
+ * （见 aiChat/ai/tools/replyToolset/imageGeneration.ts、aiChat/ai/stickers/describe.ts、
+ * aiChat/ai/tools/replyToolset/voiceMessage.ts 与 workers/aiChat/botImages.ts 的自录），
  * 模型只能读到、绝不能自己产出。
  *
- * 两个模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是
+ * 这些模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是
  * 「这个动作确实发生过」的唯一凭据，执行侧写一份、拦截侧再手抄一份，两边一漂移
  * 就等于凭据失效。生图撞上群冷却时模型有概率不说「发不了」，而是照着转录里见过
  * 的这个形状用 send_message 打一段「（…生成并发送了一张图片：…）」出来——群友看到
@@ -142,17 +145,34 @@ export function imageSentTagTemplate(prompt: string, reference: boolean): string
   return `（${reference ? "参考素材" : ""}${SELF_IMAGE_TAG_MARKER}：${prompt}）`;
 }
 
-/** 同上，生歌动作的记号。 */
-export function songSentTagTemplate(prompt: string): string {
-  return `（${SELF_SONG_TAG_MARKER}：${prompt}）`;
+/** 同上，语音动作的记号；text 是念出来的台词原文。 */
+export function voiceSentTagTemplate(text: string): string {
+  return `（${SELF_VOICE_TAG_MARKER}：${text}）`;
+}
+
+/** 同上，命令与定时任务发图的记号；description 为空串时是尚未识图的占位态。 */
+function commandImageSentTagTemplate(description: string): string {
+  return description ? `（${SELF_COMMAND_IMAGE_TAG_MARKER}：${description}）` : `（${SELF_COMMAND_IMAGE_TAG_MARKER}）`;
+}
+
+/**
+ * 机器人自发图片按来源选记号：命令图用 commandImageSentTagTemplate，两种生图用
+ * imageSentTagTemplate。detail 在占位态是生图提示词（命令图为空串），内容态是识图描述。
+ */
+export function botImageTagTemplate(origin: BotImageOrigin, detail: string): string {
+  return origin === "command"
+    ? commandImageSentTagTemplate(detail)
+    : imageSentTagTemplate(detail, origin === "referenceGenerated");
 }
 
 /** 贴纸自录记号的固定词。 */
 const SELF_STICKER_TAG_MARKER: string = "发了一枚贴纸";
 /** 生图自录记号的固定词。 */
 const SELF_IMAGE_TAG_MARKER: string = "生成并发送了一张图片";
-/** 生歌自录记号的固定词。 */
-const SELF_SONG_TAG_MARKER: string = "生成并发送了一首歌";
+/** 语音自录记号的固定词。 */
+const SELF_VOICE_TAG_MARKER: string = "发送了一条语音";
+/** 命令与定时任务发图自录记号的固定词。 */
+const SELF_COMMAND_IMAGE_TAG_MARKER: string = "发送了一张图片";
 
 /**
  * 拦截侧用的记号清单：只用来把命中的那个词写进报错文案，判定看的是下面的
@@ -161,14 +181,15 @@ const SELF_SONG_TAG_MARKER: string = "生成并发送了一首歌";
 export const SELF_ACTION_TAG_MARKERS: readonly string[] = [
   SELF_STICKER_TAG_MARKER,
   SELF_IMAGE_TAG_MARKER,
-  SELF_SONG_TAG_MARKER,
+  SELF_VOICE_TAG_MARKER,
+  SELF_COMMAND_IMAGE_TAG_MARKER,
 ];
 
 /**
  * 拦截侧的判定式：模型给 send_message 的正文里命中其中任何一条，就是在用文字
  * 伪造一次执行侧动作，必须拒发（见 aiChat/ai/tools/replyToolset/sendMessage.ts）。
  *
- * 锚定的是上面两个模板的**整体形状**而不是裸短语：记号要出现在一对全角括号
+ * 锚定的是上面这些模板的**整体形状**而不是裸短语：记号要出现在一对全角括号
  * 里、紧跟着 `：` 或收尾的 `）`，中间只允许一小段没跨过 `）` 的前缀（模型仿写
  * 时会把「参考素材」改成「参考上传的素材」这类说法，只认字面模板等于没拦）。
  *
@@ -180,12 +201,15 @@ export const SELF_ACTION_TAG_MARKERS: readonly string[] = [
 export const SELF_ACTION_TAG_PATTERNS: readonly RegExp[] = [
   new RegExp(`（[^）]{0,20}${SELF_STICKER_TAG_MARKER}(?:：|）)`),
   new RegExp(`（[^）]{0,20}${SELF_IMAGE_TAG_MARKER}(?:：|）)`),
-  new RegExp(`（[^）]{0,20}${SELF_SONG_TAG_MARKER}(?:：|）)`),
+  new RegExp(`（[^）]{0,20}${SELF_VOICE_TAG_MARKER}(?:：|）)`),
+  new RegExp(`（[^）]{0,20}${SELF_COMMAND_IMAGE_TAG_MARKER}(?:：|）)`),
 ];
 
 /** 说明文案里引用的贴纸自录占位形态。 */
 export const STICKER_SENT_TAG_HINT: string = stickerSentTagTemplate("…");
 /** 说明文案里引用的生图自录占位形态。 */
 export const IMAGE_SENT_TAG_HINT: string = imageSentTagTemplate("…", false);
-/** 说明文案里引用的生歌自录占位形态。 */
-export const SONG_SENT_TAG_HINT: string = songSentTagTemplate("…");
+/** 说明文案里引用的语音自录占位形态。 */
+export const VOICE_SENT_TAG_HINT: string = voiceSentTagTemplate("…");
+/** 说明文案里引用的命令发图自录占位形态。 */
+export const COMMAND_IMAGE_SENT_TAG_HINT: string = commandImageSentTagTemplate("…");

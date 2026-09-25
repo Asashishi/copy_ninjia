@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
 import type { TranslateLanguage, TranslateState } from "../../packages/types/translate";
-import { translateStates } from "../../packages/cache/main/translateState";
 
 const copyMessage = mock(async (..._args: unknown[]): Promise<number> => 10);
 const sendMessage = mock(async (..._args: unknown[]): Promise<number> => 11);
@@ -11,10 +10,38 @@ let configured: boolean = true;
 mock.module("../../packages/infra/telegram", () => ({ copyMessage, sendMessage }));
 mock.module("../../packages/translate/client", () => ({ translateText }));
 mock.module("../../packages/config/readiness", () => ({ translateConfigReadiness: () => ({ ok: configured }) }));
+interface TestChatState {
+  translate: readonly TranslateState[] | undefined;
+  readonly isTranslationEnabled: boolean;
+}
+
+/** 翻译会话按群存放；开关统一读共享的 enabled。 */
+const chatStates = new Map<number, TestChatState>();
+
+function createTestChatState(): TestChatState {
+  return { translate: undefined, get isTranslationEnabled(): boolean { return enabled; } };
+}
+
+function chatStateFor(chatId: number): TestChatState {
+  let chatState: TestChatState | undefined = chatStates.get(chatId);
+  if (chatState === undefined) {
+    chatState = createTestChatState();
+    chatStates.set(chatId, chatState);
+  }
+  return chatState;
+}
+
+/** 按群读写群状态上的 translate 字段。 */
+const translateStates = {
+  set: (chatId: number, sessions: readonly TranslateState[]): void => { chatStateFor(chatId).translate = sessions; },
+  clear: (): void => { chatStates.clear(); },
+};
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: () => ({ isTranslationEnabled: enabled }),
+  getChatState: (chatId: number): TestChatState => chatStates.get(chatId) ?? createTestChatState(),
+  getChatStateCache: (): ReadonlyMap<number, TestChatState> => chatStates,
+  getOrCreateChatState: chatStateFor,
   activeCopyTargetIdIn: () => 999,
-  persistGlobalState: async (): Promise<void> => {},
+  persistChatState: async (): Promise<void> => {},
 }));
 const { activeTranslateStateIn, translateMessage } = await import("../../packages/translate/message");
 const { stopTranslation, setTranslateState } = await import("../../packages/translate/state");

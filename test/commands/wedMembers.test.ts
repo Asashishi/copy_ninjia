@@ -4,7 +4,7 @@ import { wedChats } from "../../packages/cache/main/wed";
 import { resetWedMemberStates, wedMemberStates } from "../../packages/cache/main/wedMembers";
 import { getOrCreateWedChat } from "../../packages/commands/wed/chats";
 import { observeWedMembers } from "../../packages/commands/wed/members";
-import { WED_CHAT_CACHE_MAX_ENTRIES, WED_MEMBER_LIMIT } from "../../packages/consts/wed";
+import { WED_MEMBER_LIMIT } from "../../packages/consts/wed";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { isPresentMember } from "../../packages/libs/chatMember";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
@@ -24,7 +24,7 @@ beforeEach(() => {
 afterEach(resetWedMemberStates);
 
 test("首次 /init 特许放行仍不提前建缓存，启用后才记录成员", () => {
-  getOrCreateChatState(-1001).isInitEnabled = undefined;
+  getOrCreateChatState(-1001).isInitEnabled = false;
   observeWedMembers(message(1, -1001, { text: "/init enable" }));
   expect(wedMemberStates.has(-1001)).toBeFalse();
   getOrCreateChatState(-1001).isInitEnabled = false;
@@ -97,22 +97,9 @@ test("成员权威表满额时拒绝建立新群交互，已有群仍可命中",
   expect(getOrCreateWedChat(-1)).toBe(wedChats.get(-1));
 });
 
-test("群交互缓存容量为 1024，命中刷新 LRU，未命中不淘汰", () => {
-  const first = getOrCreateWedChat(-1)!;
-  const second = getOrCreateWedChat(-2)!;
-  for (let id = 3; id <= WED_CHAT_CACHE_MAX_ENTRIES; id++) {
-    wedChats.set(-id, { controller: new AbortController(), members: new Set(), sessions: new Map() });
-  }
-  expect(wedChats.size).toBe(1_024);
-  expect(getOrCreateWedChat(-1)).toBe(first);
-  expect(wedChats.get(-10_000)).toBeUndefined();
-  expect(wedChats.size).toBe(1_024);
-  const newest = getOrCreateWedChat(-10_000)!;
-  expect(newest).toBeDefined();
-  expect(wedChats.size).toBe(1_024);
-  expect(wedChats.has(-1)).toBeTrue();
-  expect(wedChats.has(-2)).toBeFalse();
-  expect(second.controller.signal.aborted).toBeTrue();
-  expect(first.controller.signal.aborted).toBeFalse();
-  expect(wedMemberStates.get(-2)!.members).toBe(second.members);
+test("交互表与成员集合同界：2,000 个不同群只建立 STATE_MANAGED_CHAT_LIMIT 个交互", () => {
+  let created: number = 0;
+  for (let id = 1; id <= 2_000; id++) if (getOrCreateWedChat(-id) !== undefined) created++;
+  expect(created).toBe(STATE_MANAGED_CHAT_LIMIT);
+  expect(wedChats.size).toBe(STATE_MANAGED_CHAT_LIMIT);
 });

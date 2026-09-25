@@ -6,8 +6,7 @@ import { join } from "node:path";
 import { FULL_SUITE_ROUNDS } from "./fullSuite/constants";
 import { createBenchmarkConfigRoot, createRunRoot, removeMockPath } from "./fullSuite/mockRoot";
 import { assertSameRuntime, FULL_SUITE_ENTRY, HOT_PATH_ENTRY, runRounds } from "./fullSuite/sectionRunner";
-import type { SectionContext } from "./fullSuite/sectionRunner";
-import type { RoundsOptions } from "./fullSuite/sectionRunner";
+import type { SectionContext, RoundsOptions } from "./fullSuite/sectionRunner";
 import type { ScenarioName } from "./hotPaths/types";
 import type { ChainName } from "./fullSuite/types";
 import { runTextReview } from "./review/text";
@@ -19,10 +18,10 @@ const HOT_PATHS: readonly ScenarioName[] = [
   "bounded-response-empty", "bounded-response-tiny", "bounded-response-small", "bounded-response-normal", "bounded-response-large",
   "registered-middleware",
 ];
-const CHAINS: readonly ChainName[] = ["ad-detect-command", "ai-reply-command"];
+const CHAINS: readonly ChainName[] = ["ad-detect-command", "ai-reply-command", "cron-send-voice"];
 const AI_REPLIES: readonly ScenarioName[] = [
   "reply-admission", "reply-delivery-normal", "reply-delivery-capacity",
-  "base64-normal", "base64-large", "base64-head", "base64-tail",
+  "base64-normal", "base64-large", "base64-head", "base64-tail", "voice-message-encode",
 ];
 interface ReviewRound {
   readonly bunVersion: string;

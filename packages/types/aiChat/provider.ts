@@ -1,20 +1,20 @@
 /**
  * AI 闲聊的供应商中立契约。回复往返、纯文本生成、视觉描述与生图由本文件定义
  * 实现形状，具体收发在 aiChat/<vendor>/ 实现包里落地。部署层只要求 text、summary、
- * media；image/song 缺配置时不挂对应工具。语音转写是否可用由实现与首次请求探测。
+ * media；image/tts 缺配置时不挂对应工具。语音转写是否可用由实现与首次请求探测。
  *
  * 领域侧（工具编排、记忆压缩、贴纸目录、生图工具）只认这里的类型，不再
  * import 任何供应商 SDK 的类型——换供应商时编译期就能确认哪些调用点没接上。
  * 跨模块约束见 docs/cn/04-invariants.md。
  *
  * **可选能力一律用「这个成员在不在」表达，不用供应商名字判断。** 领域侧写
- * `provider.generateSong === undefined` 而不是 `provider.name !== "google"`：后者
+ * `provider.synthesizeSpeech === undefined` 而不是 `provider.name !== "google"`：后者
  * 会让每个调用点都记住一份「谁支持什么」的名单，再有第三家或某家补齐能力时，
  * 漏改的那处只会在运行期表现成一个不该出现的工具。
  */
 
 import type { GeneratedChatImage, ImageGenerationAspectRatio } from "./imageGeneration";
-import type { GeneratedChatSong } from "./songGeneration";
+import type { SynthesizedSpeech } from "./voiceMessage";
 import type { VisionImage, VoiceClip } from "../media";
 import type { AgentProvider } from "../config";
 
@@ -208,13 +208,12 @@ export interface AiImageRequest {
 }
 
 /**
- * 生歌请求。
- *
- * 没有画幅/时长这类参数：Lyria 的曲长由 prompt 自己表达，实现包不再另外造一套
- * 可调档位去猜（见 aiChat/gemini/song.ts）。
+ * 语音合成请求：一句要念出来的台词，以及可选的本句说话语气。音色来自部署配置，
+ * 基础朗读风格由实现包固定，tone 追加在基础风格之后只作用于这一句。
  */
-export interface AiSongRequest {
-  readonly prompt: string;
+export interface AiSpeechRequest {
+  readonly text: string;
+  readonly tone?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -245,7 +244,7 @@ export interface AiReplySessionParams {
 /**
  * 五项能力各自的最小契约。
  *
- * 拆开的理由是**编译期边界**：config/agent.json 按能力独立选 provider，一次
+ * 按**编译期边界**拆开：config/agent.json 按能力独立选 provider，一次
  * summary 路由拿到的实现只应该被用来生成摘要。若各处都拿着完整的
  * AiChatProvider，「从 summary 那一家去读图」或「拿 media 那一家开回复会话」在
  * 类型上完全合法，只有运行期才会表现成用错了模型和端点——而那正是本项目刻意
@@ -278,7 +277,7 @@ export interface AiMediaProvider {
    *
    * 显式声明 `this: void`：可选成员必须先取出来判空再调用，而带隐式 this 的方法
    * 签名一旦被取成变量就丢了接收者。实现包给的本来就是自由函数，这里把这件事
-   * 写进类型，顺带让「取出来再调」成为合法写法（generateSong 同理）。
+   * 写进类型，顺带让「取出来再调」成为合法写法（synthesizeSpeech 同理）。
    */
   transcribeVoice?(this: void, request: AiVoiceRequest): Promise<AiTextResult>;
 }
@@ -289,21 +288,20 @@ export interface AiImageProvider {
   generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null>;
 }
 
-/** 生歌能力。 */
-export interface AiSongProvider {
+/** 语音合成能力。 */
+export interface AiSpeechProvider {
   readonly name: AgentProvider;
   /**
-   * 生歌。缺席表示这一家没有这项能力，回复工具集直接不挂 generate_song
-   * （见 aiChat/ai/tools/replyToolset/orchestrator.ts）——模型看不到的工具不会
-   * 被调用，因此这里不需要再有一条运行期的「不支持」错误路径。
+   * 语音合成。缺席表示这一家没有这项能力，回复工具集直接不挂 send_voice
+   * （见 aiChat/ai/tools/replyToolset/orchestrator.ts）。
    */
-  generateSong?(this: void, request: AiSongRequest): Promise<GeneratedChatSong | null>;
+  synthesizeSpeech?(this: void, request: AiSpeechRequest): Promise<SynthesizedSpeech | null>;
 }
 
 /**
  * 一家供应商对 AI 闲聊全部模型能力的实现；实现包导出的就是这一个对象。
  *
- * 选取按 text、summary、media、image、song 五项能力拆分，见 aiChat/provider.ts：
+ * 选取按 text、summary、media、image、tts 五项能力拆分，见 aiChat/provider.ts：
  * 路由持有完整实现，交给调用方的却只有上面对应的那一份最小契约。每项只读取
  * config/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此两家
  * 客户端可以在同一条 Worker 线程上同时存在，并按能力持有各自实例
@@ -314,4 +312,4 @@ export interface AiChatProvider extends
   AiSummaryProvider,
   AiMediaProvider,
   AiImageProvider,
-  AiSongProvider {}
+  AiSpeechProvider {}

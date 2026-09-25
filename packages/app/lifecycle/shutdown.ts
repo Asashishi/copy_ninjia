@@ -14,7 +14,7 @@ import type { ApplicationLifecycleDependencies } from "../lifecycleDependencies"
  * 主文件保留 init/wait/run、进程 handler 与实例锁处置，这里只负责「按固定顺序
  * 走完每个 owner，并把每一步的结果如实带回去」。
  *
- * 失败隔离是本模块存在的理由：异常退出路径上 dispose() 是最后一次落盘机会，
+ * 本模块负责失败隔离：异常退出路径上 dispose() 是最后一次落盘机会，
  * 任何单个 owner 抛错都不允许跳过其后的 owner 与 flushStateToDisk。
  * @see ../../../docs/cn/04-invariants.md
  */
@@ -359,7 +359,7 @@ function allOwnersSettled(results: ShutdownResults): boolean {
 }
 
 /**
- * 把停机结局分成三态（语义与取舍见 types/lifecycle.ts 的 `ShutdownOutcome`）。
+ * 把停机结局分成三态（语义见 types/lifecycle.ts 的 `ShutdownOutcome`）。
  *
  * 中间那一态由三条路径产生：最终确认请求失败、前置未满足而跳过，或
  * `runner.task()` 直接抛错把整段确认前闸门跳过。

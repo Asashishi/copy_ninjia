@@ -69,10 +69,10 @@ export const botConfigCache: { current: BotConfig | null } = { current: null };
 export const adDetectAgentConfigCache: { current: AdDetectAgentConfig | null } = { current: null };
 
 /**
- * config/agent.json 的 **AI 对话能力段**快照；分段理由与填充口径同上。
+ * config/agent.json 的 **AI 对话能力段**快照；分段与填充口径同上。
  *
  * 主线程由启动总闸填充、热重载整体替换；AI 闲聊 Worker 由 init 与 configReload
  * 消息 adopt 填充，崩溃重建时由 lastInitState 重放主线程当前快照。回复、总结、
- * 读图、生图、生歌逐轮取模型名与凭据都只读这里，Worker 从不碰磁盘。
+ * 读图、生图、语音合成逐轮取模型名与凭据都只读这里，Worker 从不碰磁盘。
  */
 export const agentDeploymentConfigCache: { current: AgentDeploymentConfig | null } = { current: null };

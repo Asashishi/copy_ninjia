@@ -4,7 +4,7 @@
  * 冷却、动作预算与失败计数都在 aiChat/ai/tools/replyToolset/imageGeneration.ts。
  *
  * 选取只读 config/agent.json 的 image 能力；text、summary、media 各自独立路由，
- * 生图不会跟随其中任何一项（理由见 provider.ts）。
+ * 生图不会跟随其中任何一项（见 provider.ts）。
  *
  * 宽高比归一（normalizeImageAspectRatio）在 aiChat/ai/utils/aspectRatio.ts，
  * 载荷校验在 aiChat/ai/utils/imagePayload.ts：两者与供应商无关，且必须只有

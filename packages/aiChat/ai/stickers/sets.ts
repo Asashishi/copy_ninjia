@@ -39,7 +39,7 @@ const defaultStickerSetApi: StickerSetApi = telegramApi as unknown as StickerSet
  * 生成）都用。
  *
  * 本模块持有 AI 闲聊 Worker 独占的贴纸集合缓存，因此**只能在那条线程里
- * 加载**；主线程也要用的两个纯函数在 aiChat/ai/stickers/describe.ts，理由见该文件
+ * 加载**；主线程也要用的两个纯函数在 aiChat/ai/stickers/describe.ts，见该文件
  * 模块头注。
  */
 

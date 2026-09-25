@@ -38,6 +38,7 @@ import {
   pendingStorageDatabaseDomains,
   readBlocklistIdPage,
   readIdentityPolicies,
+  setStorageFlushHold,
 } from "./diskIO/storageDatabase";
 import { flushLogBuffer, handleLogMessage } from "./diskIO/logFiles";
 import {
@@ -306,12 +307,15 @@ export async function handleDiskIOWorkerMessage(
     case "recoveryReplay":
       diskIOReplayWindow.current = msg.active;
       break;
+    case "storageFlushHold":
+      setStorageFlushHold(msg.active, postReply);
+      break;
     case "joinLog":
       try {
         await handleJoinLogMessage(msg);
       } catch (error: unknown) {
         // 缓冲满、跨日前刷盘失败、跨日清理抛错都会从这里逸出。异常一旦离开
-        // onmessage，Bun 会直接终止整条落盘线程（见 infra/diskIO/host.ts 的实测
+        // onmessage，Bun 会直接终止整条落盘线程（见 infra/diskIO/host.ts 的
         // 注释）：在途 flush 全部按失败结算、各领域缓冲随线程一起没了，反复触发
         // 还会顶到 diskIORestartThrottle 把整个进程停掉——为了一条入群事实。
         // 按 cache/workers/diskIO/joinLog.ts 的约定只拖垮 joinLog 这一个领域：

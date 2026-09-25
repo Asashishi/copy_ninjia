@@ -169,6 +169,7 @@ export function textReviewInputs(scenario: TextReviewScenario): readonly TextRev
         text: textOf({ length, alphabet: scenario.alphabet, layout: scenario.layout, index: index + 101 }),
         quote: textOf({ length: Math.min(length, 128), alphabet: scenario.alphabet, layout: "canonical", index: index + 201 }),
         forwardedFrom: undefined,
+        botImage: undefined,
       }
       : undefined;
     const source: AiRecordContext = {

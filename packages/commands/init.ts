@@ -7,7 +7,7 @@ import type { ChatState } from "../types/chatState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
 import { logger } from "../infra/logger";
 import {
-  clearChatStateField,
+  disableChatStateSwitch,
   getChatState,
   getChatStateCache,
   getOrCreateChatState,
@@ -54,10 +54,10 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
   // 一条既没有意义，又会在别处已经管着 STATE_MANAGED_CHAT_LIMIT 个群时让
   // assertChatStateCapacity 抛错——那会把「关掉之后再关一次」这条
   // docs/cn/04-invariants.md 点名的手工重试路径变成一次带非零码的进程退出。
-  // clearChatStateField 对没有条目的群是显式 no-op，随后那次 persistChatState
+  // disableChatStateSwitch 对没有条目的群是显式 no-op，随后那次 persistChatState
   // 照样写出删除墓碑，重复 disable 仍会重跑清理。
   if (isEnabled) getOrCreateChatState(chatId).isInitEnabled = true;
-  else clearChatStateField(chatId, "isInitEnabled");
+  else disableChatStateSwitch(chatId, "isInitEnabled");
   // 唯一不作废的情形：对已经启用的群重复 /init enable。那是一次空操作，若
   // 照样作废，随后的重新判定会让 recordBotChatPermissions 看到未知 -> 管理员，
   // 被当成一次全新的边沿，把整份黑名单再清扫一遍（名单几百条时就是几百次
@@ -87,7 +87,7 @@ export async function handleInitCommand(ctx: CommandContext<Context>): Promise<v
       await teardownChatRuntime(chatId, "explicitDisable");
       // 拆完才删这一行：本群的 AI 记忆、`/wed` 奖池、入群日志与问答都由各 owner
       // 在上面那一步删掉，`chat_states` 是最后一样。删除排在总开关那次 durable
-      // 落盘**之后**，理由同上——它自己也是不可逆的持久化动作。
+      // 落盘**之后**，同上——它自己也是不可逆的持久化动作。
       //
       // 功能开关一并删掉（lockdown 除外，它还要用来解锁）。留着的话，这条记录
       // 既不空、也不再被管理，却继续占着 STATE_MANAGED_CHAT_LIMIT 的一个名额，

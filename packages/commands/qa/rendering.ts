@@ -24,7 +24,7 @@ interface QaLabelHit {
 /**
  * 某个偏移是否落在代码块内部。
  *
- * 存在的理由是答案里那些整段 JSON：块内出现一行以「回答:」开头的文本时，
+ * 用于答案里那些整段 JSON：块内出现一行以「回答:」开头的文本时，
  * 若照样当成新字段的标签，答案会被从中间切断。`pre` 与 `code` 都算块内。
  */
 function isInsideCodeEntity(

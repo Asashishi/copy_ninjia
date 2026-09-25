@@ -15,9 +15,9 @@ import { toErrorOr } from "../libs/errorMessage";
  * - 识别 Worker 回传的有界 error 日志批次（logger.ts 的转发模式），转投主线程
  *   唯一的落盘线程并确认该批；其余消息交给 onEvent（业务事件回传）；
  * - Worker 崩溃时按节流重建：Bun 里 Worker 内部一旦抛出未捕获异常（同步或
- *   async 均如此，已实测验证）就会直接终止该 Worker 线程，不需要（实际上
+ *   async 均如此）就会直接终止该 Worker 线程，不需要（实际上
  *   也没法）手动 terminate，直接换新实例顶上，并经 onRespawn 重放必要状态；
- * - 放弃自愈的节流阈值/理由见 consts/workerSupervisor.ts；永久不可用时
+ * - 放弃自愈的节流阈值见 consts/workerSupervisor.ts；永久不可用时
  *   post() 返回 false，并通知 ApplicationLifecycle 停止 runner。不同 Bun
  *   版本对不可用 Worker 的 postMessage 可能抛出或静默丢弃，因此投递边界
  *   也把同步异常统一收敛为 false。

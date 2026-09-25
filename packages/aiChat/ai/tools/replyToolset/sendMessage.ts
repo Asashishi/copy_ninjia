@@ -3,19 +3,23 @@ import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
 import { pauseForToolAction } from "../../utils/toolPause";
 import { sendMessageWithResult } from "../../../../infra/telegram";
-import type { ReplyToolContext, ReplyToolExecution } from "../../../../types/aiChat/replies";
+import type {
+  ReplyToolContext,
+  ReplyToolExecution,
+  RoundMessageState,
+} from "../../../../types/aiChat/replies";
 import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
 import type { TelegramSendResult } from "../../../../types/telegram";
 import { isEmojiOnly } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
 import { parseBooleanField } from "../../utils/toolArgs";
 import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
+import { acceptRoundText, reserveCorrectionText } from "./messageState";
 import {
   applyQuickTypoCorrection,
   decideMessageTypo,
   parseCleanMessageText,
 } from "./typoHandling";
-import type { RoundMessageState } from "../../../../types/aiChat/replies";
 import type { TypoDecision } from "../../../../types/aiChat/typo";
 
 /** 校验并预占正文与错字额度；发送和纠正由同一条独立调用链依次执行。 */
@@ -46,8 +50,8 @@ export function createSendMessageExecutor(
       remainingActions: HARD_MAX_ACTIONS_PER_REPLY - getActionsUsed(),
     });
     if (typo.shouldUseTypo) state.typoUsedThisRound = true;
-    state.acceptedCanonicalTexts.add(text);
-    if (typo.shouldUseTypo && typo.correctionText) state.reservedCorrectionText = typo.correctionText;
+    acceptRoundText(state, text);
+    if (typo.shouldUseTypo && typo.correctionText) reserveCorrectionText(state, typo.correctionText);
     const correctTypo: boolean = typo.shouldUseTypo && typo.mode === "quick" &&
       typo.correctionText !== null && !isEmojiOnly(typo.correctionText);
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");

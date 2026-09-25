@@ -261,6 +261,7 @@ export interface RunHotPathGateChildOptions {
   readonly measurementMode: "retained" | "steadyProfile";
   readonly fixture: HotPathGateFixture;
   readonly calibration: HotPathGateCalibration;
+  /** 稳态进程 GC 暂停占比的硬上限：CPU 分档预算加软超限余量。 */
   readonly maxGcPausePercent: number;
 }
 

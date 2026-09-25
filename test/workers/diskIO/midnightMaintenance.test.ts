@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { VerificationPersistedReply } from
-  "../../../packages/types/diskIO";
-import type { IdentityStoragePersistedReply } from
-  "../../../packages/types/diskIO";
+import type {
+  VerificationPersistedReply,
+  IdentityStoragePersistedReply,
+} from "../../../packages/types/diskIO";
 import type { DiskIOMaintenanceReplySink } from "../../../packages/workers/diskIO/midnightMaintenance";
 
 const maintainLuckForDay = mock((_day: string): void => {});

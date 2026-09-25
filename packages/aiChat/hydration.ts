@@ -28,7 +28,7 @@ import type { AiBotInfo } from "../types/aiChat/protocol";
 
 /**
  * 按镜像把 AI 记忆投给已启动的 Worker：未开启 AI 或已不受管的群安排 durable 删除，
- * 其余群一次 hydrate。判据只看群开关，不看配置可用性（理由见 aiChat/availability.ts）。
+ * 其余群一次 hydrate。判据只看群开关，不看配置可用性（见 aiChat/availability.ts）。
  */
 function postMirroredAiMemories(): void {
   const enabledMemories: Map<number, string> = new Map();

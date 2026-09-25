@@ -1,3 +1,4 @@
+import { clearChatBotImageCache, resetAiChatBotImageCache } from "./botImages";
 import { resetAiChatCompactionCache } from "./compaction";
 import { clearChatHeartbeatCache, resetAiChatHeartbeatCache } from "./heartbeat";
 import { resetAiChatIdentityCache } from "./identity";
@@ -6,7 +7,6 @@ import { resetAiChatMemoryCache } from "./memory";
 import { resetAiChatMoodCache } from "./mood";
 import { resetAiProviderSchedulerCache } from "./providerScheduler";
 import { invalidateChatReplyCache, resetAiChatReplyCache } from "./replies";
-import { resetSongGenerationCache } from "./songGeneration";
 
 /** owner: workers/aiChat。本文件不持有状态，只聚合本线程各领域缓存模块的失效与清理边界。 */
 
@@ -15,6 +15,7 @@ import { resetSongGenerationCache } from "./songGeneration";
 export function invalidateChatRuntimeCache(chatId: number): void {
   invalidateChatReplyCache(chatId);
   clearChatHeartbeatCache(chatId);
+  clearChatBotImageCache(chatId);
 }
 
 /**
@@ -26,6 +27,7 @@ export function invalidateChatRuntimeCache(chatId: number): void {
  */
 export function resetAiChatWorkerCache(): void {
   resetAiChatHeartbeatCache();
+  resetAiChatBotImageCache();
   resetAiChatCompactionCache();
   resetAiChatIdentityCache();
   resetImageGenerationCache();
@@ -33,5 +35,4 @@ export function resetAiChatWorkerCache(): void {
   resetAiChatMoodCache();
   resetAiProviderSchedulerCache();
   resetAiChatReplyCache();
-  resetSongGenerationCache();
 }

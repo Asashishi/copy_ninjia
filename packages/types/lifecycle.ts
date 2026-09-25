@@ -79,7 +79,7 @@ export interface ShutdownResults {
  * 必须是三态而不是「干净 / 不干净」两态：`offsetWithheld` 指「所有 owner 都排空
  * 落盘、Worker 已终止，只有最终 offset 那道 gate 没走完」。它与 `unsettled` 同样
  * 非零退出并打印诊断行（offset 没确认意味着重启后会重投，运维必须看得见），但
- * **只有 `unsettled` 才扣住实例锁**——扣锁的唯一理由是「可能还有人在写共享数据
+ * **只有 `unsettled` 才扣住实例锁**——扣锁的唯一条件是「可能还有人在写共享数据
  * 目录」，而这一态下那个风险不存在。
  */
 export type ShutdownOutcome = "clean" | "offsetWithheld" | "unsettled";

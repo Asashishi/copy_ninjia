@@ -36,7 +36,7 @@ import type { AgentCapability, AgentCapabilityConfig } from "../../types/config"
 
 /**
  * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
- * 其余能力走通用档。生歌由 aiChat/gemini/song.ts 在每次调用上另行覆盖。
+ * 其余能力走通用档。语音合成由 aiChat/gemini/speech.ts 在每次调用上另行覆盖。
  */
 function geminiRequestTimeoutMs(capability: AgentCapability): number {
   return capability === "media" ? GEMINI_MEDIA_REQUEST_TIMEOUT_MS : GEMINI_REQUEST_TIMEOUT_MS;
@@ -47,8 +47,8 @@ function geminiRequestTimeoutMs(capability: AgentCapability): number {
  * 由 GEMINI_REQUEST_RETRY_ATTEMPTS 显式约束。Worker 线程各自拥有独立实例，
  * 崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
  *
- * 导出是为了让 aiChat/gemini/song.ts 复用同一个实例：生歌走 Interactions API 那条
- * 端点，用不上下面的 generateContent 封装，但**必须**共用这一个客户端——每条流水线
+ * 导出是为了让 aiChat/gemini/speech.ts 复用同一个实例：语音合成走
+ * Interactions API 那条端点，用不上下面的 generateContent 封装，但**必须**共用这一个客户端——每条流水线
  * 各 new 一个会让同一条 Worker 线程上散着好几份连接池与鉴权状态。本包之外不得
  * import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
  */

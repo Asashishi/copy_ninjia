@@ -2,11 +2,15 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil as pollUntil } from "../../helpers/waitUntil";
 import type { AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
-import type { MediaCommentContext, ReplyPromptSections, ReplyToolset } from "../../../packages/types/aiChat/replies";
+import type {
+  MediaCommentContext,
+  ReplyPromptSections,
+  ReplyToolset,
+  ReplyDeliveryTurn,
+} from "../../../packages/types/aiChat/replies";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 import type { UserContentOptions } from "../../../packages/workers/aiChat/promptContext";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
-import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
 import {
   RATE_LIMIT_LONG_MAX_TRIGGERS, RATE_LIMIT_LONG_WINDOW_MS,
   REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX,

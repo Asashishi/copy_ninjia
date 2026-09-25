@@ -87,7 +87,7 @@ export function joinPersonName(
 }
 
 /**
- * 复用同一个 Segmenter：它的构造远贵于一次 segment 调用（理由同 libs/time.ts
+ * 复用同一个 Segmenter：它的构造远贵于一次 segment 调用（同 libs/time.ts
  * 里几个 Intl.DateTimeFormat 提到模块级）。这里不能照搬 time.ts 在模块加载时
  * 直接构造——旧运行时没有 Intl.Segmenter，模块级构造抛错会让整个模块 import
  * 失败，而 splitGraphemes 的契约是「没有就退化为按码点切分」。
@@ -184,4 +184,13 @@ export function truncateAtClauseBoundary(text: string, maxChars: number): string
   if (lastSentenceEnd >= 0 && lastSentenceEnd + 1 >= minKeep) return hardCut.slice(0, lastSentenceEnd + 1);
   if (lastClauseBreak >= 0 && lastClauseBreak >= minKeep) return hardCut.slice(0, lastClauseBreak);
   return hardCut;
+}
+
+/**
+ * 媒体转录行：描述或占位标签在前，媒体自带的 caption 以一个空格接在后面；
+ * caption 为空串时直接返回标签本身。主线程的回复引用与兜底占位、AI Worker 的
+ * 媒体转录共用这一处拼法。
+ */
+export function composeMediaText(tag: string, caption: string): string {
+  return caption ? `${tag} ${caption}` : tag;
 }

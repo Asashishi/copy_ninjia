@@ -1,7 +1,7 @@
 import { REPLY_REFERENCE_MAX_CHARS } from "../../consts/aiChat/memory";
 import { sanitizeInline, stripLeadingAtSigns, truncateInline } from "../../libs/text";
 import { formatTokyoTime } from "../../libs/time";
-import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
+import type { BufferedMessage, BufferedReplyReference, PendingBotImage } from "../../types/aiChat/memory";
 import type { AiRecordContext, AiReplyReference } from "../../types/aiChat/protocol";
 
 /**
@@ -54,6 +54,7 @@ export function buildBufferedMessage(
     replyTo: source.replyTo ? sanitizeReplyReference(source.replyTo) : undefined,
     forwardedFrom: sanitizedForwardedFrom ? sanitizedForwardedFrom : undefined,
     at: formatTokyoTime(now),
+    pendingImage: undefined,
   };
 }
 
@@ -62,7 +63,7 @@ export function buildBufferedMessage(
  *
  * 落盘 JSON 里缺省字段是**不存在**的键（stringify 丢 undefined），因此
  * `JSON.parse` 产出的隐藏类完全取决于那条记录当初有没有 username/replyTo/
- * forwardedFrom——恢复一个群就可能同时灌进四五种形状，而它们随后要和新消息
+ * forwardedFrom/pendingImage——恢复一个群就可能同时灌进四五种形状，而它们随后要和新消息
  * 混在同一个 deque 里被转录逐条读。这里按固定顺序重建一遍，代价只在启动恢复
  * 时按条付一次。
  *
@@ -71,6 +72,7 @@ export function buildBufferedMessage(
  */
 export function normalizeHydratedBufferedMessage(message: BufferedMessage): BufferedMessage {
   const replyTo: BufferedReplyReference | undefined = message.replyTo;
+  const pendingImage: PendingBotImage | undefined = message.pendingImage;
   return {
     messageId: message.messageId,
     id: message.id,
@@ -90,5 +92,9 @@ export function normalizeHydratedBufferedMessage(message: BufferedMessage): Buff
     },
     forwardedFrom: message.forwardedFrom,
     at: message.at,
+    pendingImage: pendingImage === undefined ? undefined : {
+      origin: pendingImage.origin,
+      caption: pendingImage.caption,
+    },
   };
 }

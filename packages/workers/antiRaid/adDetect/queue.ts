@@ -61,6 +61,7 @@ import {
   AD_DETECT_BATCH_SIZE,
   AD_DETECT_MESSAGE_MAX_CHARS,
   AD_DETECT_QUEUE_TICK_MS,
+  EMPTY_AD_CANDIDATE_ENTRIES,
 } from "../../../consts/antiRaid/adDetect";
 import { sanitizeInline, truncateInline } from "../../../libs/text";
 import {
@@ -76,7 +77,6 @@ import {
   latestSeq,
   pruneConsumedContext,
 } from "./bundle";
-import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../../consts/antiRaid/adDetect";
 import {
   clearChatReferencedAdWarnings,
   clearIdentityReferencedAdWarnings,
@@ -289,7 +289,7 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
 
 /**
  * 停机 quiesce：停掉批处理 timer，不再开始新的判定。在途的那一次照常自己收尾，
- * 但没有登记进在途任务集合，因此不会拖住 drain（理由见 runAdDetectBatch）。
+ * 但没有登记进在途任务集合，因此不会拖住 drain（见 runAdDetectBatch）。
  * 队列与消息串原样保留——它们随 isolate 一起消失，没必要在退出路径上多做清理。
  */
 export function quiesceAdDetectQueue(): void {

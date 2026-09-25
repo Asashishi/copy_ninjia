@@ -1,5 +1,6 @@
 import type { Message, MessageId } from "grammy/types";
 import type {
+  TelegramPhotoSendResult,
   TelegramSendResult,
 } from "../../../types/telegram";
 import type { TelegramApi } from "../../../types/telegramWorker";
@@ -11,11 +12,12 @@ import {
   runTelegramAction,
 } from "./core";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { pickPhotoFile } from "../../../libs/telegramImage";
 import { toTelegramSendResult } from "./sendResult";
 
 type SendStickerApi = Pick<TelegramApi, "sendSticker">;
 type SendPhotoApi = Pick<TelegramApi, "sendPhoto">;
-type SendAudioApi = Pick<TelegramApi, "sendAudio">;
+type SendVoiceApi = Pick<TelegramApi, "sendVoice">;
 
 export interface SendStickerParams {
   chatId: number;
@@ -70,7 +72,7 @@ export interface SendPhotoParams {
   hasSpoiler?: boolean;
 }
 
-/** 从内存上传图片，登记自发消息并返回实际回复关系。 */
+/** 从内存上传图片，登记自发消息并返回实际回复关系与这张图的视觉源。 */
 export async function sendPhotoWithResult({
   chatId,
   bytes,
@@ -81,14 +83,14 @@ export async function sendPhotoWithResult({
   caption,
   messageThreadId,
   hasSpoiler = false,
-}: SendPhotoParams): Promise<TelegramSendResult | undefined> {
+}: SendPhotoParams): Promise<TelegramPhotoSendResult | undefined> {
   return runTelegramAction({
     action: "send photo",
     execute: async (
       requestSignal?: AbortSignal
     ): Promise<Message.PhotoMessage> => {
       const extension: string = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : "webp";
-      // 定形一次初始化，理由同 actions/messages.ts 的 sendMessageWithResult。
+      // 定形一次初始化，同 actions/messages.ts 的 sendMessageWithResult。
       const other: Parameters<SendPhotoApi["sendPhoto"]>[2] = {
         message_thread_id: messageThreadId,
         caption: caption ? caption : undefined,
@@ -102,75 +104,65 @@ export async function sendPhotoWithResult({
         ...signalArgs(requestSignal)
       );
     },
-    map: (sent: Message.PhotoMessage): TelegramSendResult | undefined =>
-      toTelegramSendResult(chatId, sent),
+    map: (sent: Message.PhotoMessage): TelegramPhotoSendResult => {
+      const result: TelegramSendResult = toTelegramSendResult(chatId, sent);
+      return {
+        messageId: result.messageId,
+        repliedToMessageId: result.repliedToMessageId,
+        photo: pickPhotoFile(sent.photo),
+      };
+    },
     fallback: undefined,
     signal,
     shouldLogError: logUnlessAborted,
   });
 }
 
-export interface SendAudioParams {
+export interface SendVoiceParams {
   chatId: number;
-  /** Worker 调用会转移底层 ArrayBuffer；函数返回 Promise 后不得再读取。 */
+  /** OGG/Opus 语音字节；Worker 调用会转移底层 ArrayBuffer，函数返回 Promise 后不得再读取。 */
   bytes: Uint8Array;
-  /** 带真实容器扩展名的上传文件名。 */
+  /** 带 `.ogg` 扩展名的上传文件名。 */
   fileName: string;
   replyToMessageId?: number;
-  api?: SendAudioApi;
+  api?: SendVoiceApi;
   signal?: AbortSignal;
-  /** 说明须由调用方限制在 Telegram caption 长度上限内。 */
-  caption?: string;
-  title?: string;
-  performer?: string;
+  /** 整秒时长。 */
   duration?: number;
-  /** 已满足 Telegram 尺寸和体积约束的 JPEG 封面。 */
-  thumbnailBytes?: Uint8Array;
   /** 论坛群的话题标识；挂回复时也必须显式传递。 */
   messageThreadId?: number;
 }
 
-/** 从内存上传音频，登记自发消息并返回实际回复关系。 */
-export async function sendAudioWithResult({
+/** 从内存上传语音消息，登记自发消息并返回实际回复关系。 */
+export async function sendVoiceWithResult({
   chatId,
   bytes,
   fileName,
   replyToMessageId,
   api = telegramApi,
   signal,
-  caption,
-  title,
-  performer,
   duration,
-  thumbnailBytes,
   messageThreadId,
-}: SendAudioParams): Promise<TelegramSendResult | undefined> {
+}: SendVoiceParams): Promise<TelegramSendResult | undefined> {
   return runTelegramAction({
-    action: "send audio",
+    action: "send voice",
     execute: async (
       requestSignal?: AbortSignal
-    ): Promise<Message.AudioMessage> => {
-      // 定形一次初始化，理由同 actions/messages.ts 的 sendMessageWithResult；
-      // 这里七个可选字段，条件展开会长出 2^7 = 128 种 shape。
-      const other: Parameters<SendAudioApi["sendAudio"]>[2] = {
+    ): Promise<Message.VoiceMessage> => {
+      // 定形一次初始化，同 actions/messages.ts 的 sendMessageWithResult。
+      const other: Parameters<SendVoiceApi["sendVoice"]>[2] = {
         message_thread_id: messageThreadId,
-        caption: caption ? caption : undefined,
-        title: title ? title : undefined,
-        performer: performer ? performer : undefined,
         duration,
-        thumbnail: thumbnailBytes
-          ? { bytes: thumbnailBytes, fileName: "cover.jpg" }
-          : undefined,
         reply_parameters: replyParametersFor(replyToMessageId),
       };
-      return api.sendAudio(
+      return api.sendVoice(
         chatId,
         { bytes, fileName },
         other,
         ...signalArgs(requestSignal)
       );
     },
-    map: (sent: Message.AudioMessage): TelegramSendResult | undefined =>
+    map: (sent: Message.VoiceMessage): TelegramSendResult | undefined =>
       toTelegramSendResult(chatId, sent),
     fallback: undefined,
     signal,

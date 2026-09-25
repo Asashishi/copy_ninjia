@@ -136,6 +136,20 @@ describe("diskIO/logFiles 启动恢复", () => {
     });
   });
 
+  test("参数全是字符串时记录里不写 args 键", async () => {
+    await initLogFiles();
+    const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
+    const day: string = getTokyoDateKey(new Date(timestamp));
+
+    await handleLogMessage({ timestamp, level: "info", args: ["bot", "started"] });
+    expect(await flushLogBuffer()).toBeTrue();
+    const parsed = JSON.parse(await Bun.file(join(LOGS_DIR, `${day}.json`)).text()) as Record<string, object>;
+    const records = Object.values(parsed);
+    expect(records).toHaveLength(1);
+    expect(Object.keys(records[0]!)).toEqual(["level", "message"]);
+    expect(records[0]).toEqual({ level: "info", message: "bot started" });
+  });
+
   test("每日维护先提交日志缓冲，再清理新出现的临时与过期文件", async () => {
     await initLogFiles();
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");

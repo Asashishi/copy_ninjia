@@ -5,9 +5,9 @@
  *
  * 权限按 Bot API 的成员身份判定：群主与管理员可发（频道管理员要有 can_post_messages）；
  * 被限制的机器人按自身的 can_send_*；普通成员再读群的默认成员权限；已离开或被踢出不可发。
- * 文字要 can_send_messages，图片要 can_send_photos，文件要 can_send_documents；缺任何
- * 一项整群跳过，不让一个群只收到半套动作。查询失败的群本轮同样跳过（错误由统一的
- * Telegram 动作边界记日志）。
+ * 文字要 can_send_messages，图片要 can_send_photos，文件要 can_send_documents，语音要
+ * can_send_voice_notes；缺任何一项整群跳过，不让一个群只收到半套动作。查询失败的群本轮
+ * 同样跳过（错误由统一的 Telegram 动作边界记日志）。
  */
 
 import type { ChatFullInfo, ChatMember, ChatPermissions } from "grammy/types";
@@ -22,19 +22,32 @@ export function sendNeedsOf(actions: readonly Readonly<CronAction>[]): CronSendN
   let text: boolean = false;
   let photos: boolean = false;
   let documents: boolean = false;
+  let voiceNotes: boolean = false;
   for (const action of actions) {
-    if (action.type === "send_message") text = true;
-    else if (action.type === "send_image") photos = true;
-    else documents = true;
+    switch (action.type) {
+      case "send_message":
+        text = true;
+        break;
+      case "send_image":
+        photos = true;
+        break;
+      case "send_file":
+        documents = true;
+        break;
+      case "send_voice":
+        voiceNotes = true;
+        break;
+    }
   }
-  return { text, photos, documents };
+  return { text, photos, documents, voiceNotes };
 }
 
 /** 一组 can_send_* 是否覆盖本任务需要的全部发送权限；缺省的位按没有处理。 */
 function coversNeeds(permissions: Readonly<ChatPermissions>, needs: CronSendNeeds): boolean {
   return (!needs.text || permissions.can_send_messages === true) &&
     (!needs.photos || permissions.can_send_photos === true) &&
-    (!needs.documents || permissions.can_send_documents === true);
+    (!needs.documents || permissions.can_send_documents === true) &&
+    (!needs.voiceNotes || permissions.can_send_voice_notes === true);
 }
 
 /**

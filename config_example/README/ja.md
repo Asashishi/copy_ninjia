@@ -41,7 +41,7 @@ blocklist、未完了 removal は deployment 設定ではなく runtime data で
 | `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
-| `cron.json` | 定時送信タスク（テキスト・画像・ファイル） | 定時タスクなし |
+| `cron.json` | 定時送信タスク（テキスト・画像・ファイル・ボイス） | 定時タスクなし |
 | `g-auth.json` | `/translate` 用の Google Cloud service account key。例は placeholder だけで、実 key はデプロイ側が帯域外で `config/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
 
 AI chat はこのディレクトリにない `prompt/persona.md` にも依存します。optional file が存在するのに
@@ -60,7 +60,12 @@ bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.
   `media` のいずれかの追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI
   雑談や広告検出はすぐに停止して理由を log に 1 行残し、グループ switch は元の値のままです。
   前提が戻れば再起動なしで自動的に再開します。file を削除すると log に
-  `Deployment config <path> was removed.` を残します。`image`・`song` の追加・削除はそのまま反映します。
+  `Deployment config <path> was removed.` を残します。`image`・`tts` の追加・削除はそのまま反映します。
+- `cron.json` の `send_voice` は `agent.json` の `tts`（と `text`・`summary`・`media`）に依存します。
+  新しいタスク表が `send_voice` を使うのにその時点で使える `tts` が無ければ、`cron.json` の変更を
+  丸ごと拒否します。タスク表がまだ `send_voice` を使っている間は、`tts`（または `agent.json` 全体や
+  会話 core capability）を外す `agent.json` の変更も同様に丸ごと拒否します。どちらの拒否も直前に
+  適用済みの設定を使い続けて error log を残します。起動時に同じ組み合わせがあれば起動を拒否します。
 - `stickers.json` に新しく加えた pack はすぐに catalog 生成を始めます。外した pack は AI に
   提示されなくなり、その catalog は次回 startup 時に allowlist に沿って整理されます。
 - `mood.json` に残っている mood は各 chat に即時反映し、現在の mood が削除された chat は次に
@@ -102,7 +107,7 @@ endpoint、model を独立に選びます。capability ごとに別 service を�
 | `summary` | 長期会話 memory の圧縮と sticker pack summary | AI chat core。必須 |
 | `media` | 画像／sticker 説明と voice 転写 | AI chat core。必須 |
 | `image` | 生画像 tool の登録 | optional。欠落はこの tool だけを除去 |
-| `song` | 生歌 tool の登録 | optional。欠落または implementation 非対応ならこの tool だけを除去 |
+| `tts` | 音声合成：AI のボイス tool（日本語セリフを合成してボイスメッセージで送信）、`/send` 中継の TTS request、`cron.json` の `send_voice` で共用 | optional。欠落または implementation 非対応ならボイス tool を除去し、`/send` の TTS request は error になる。`cron.json` が `send_voice` を使うなら必須 |
 
 通常 capability の field は次の 4 個です。
 
@@ -123,9 +128,16 @@ model 名から自動判定しません。
 - `openai-standard`：GPT Image family 共通の standard size protocol。
 - `xai`：xAI JSON／aspect-ratio protocol。
 
-`image.provider` が `google` の場合は `image_protocol` を書けません。現在、song generation を
-実装しているのは Google だけなので、`song.provider: "openai"` は generic schema を通っても
-song tool を登録しません。
+`image.provider` が `google` の場合は `image_protocol` を書けません。
+
+`tts` は 4 個の field に加えて空でない `voice` が必須で、合成 request の voice としてそのまま渡します。
+prebuilt voice 名（例の `Leda`）、または AI Studio Voice design が生成した `voice_` voice ID を指定できます。
+design した voice はその `api_key` の project に属し、1 年後に失効します。プログラムは空でない文字列で
+あることだけを検証し、voice が存在するかは最初の合成 request で決まります。現在、音声合成を実装して
+いるのは Google だけなので、`tts.provider: "openai"` は設定検証を通ってもボイス tool を登録せず、
+`/send` と `cron.json` の音声 request も失敗して error log を残します。3 つとも AI Worker 上で合成する
+ため、AI chat の残りの前提（`stickers.json`、`mood.json`、`prompt/persona.md`）も揃っている必要があり、
+欠けていると合成は「Worker 利用不可」で失敗します。
 
 `media` の vision と voice 対応は、最初の実 request で別々に probe／cache します。明示的に
 unsupported と判定した後、その Worker は同種 media を download しません。成功は supported、
@@ -204,7 +216,8 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 テキスト、time zone を明示してテキスト・URL の画像・ファイルを順に送るもの、
 プロジェクトルートからの相対パスで指定したローカル画像と絶対パスで指定したローカルファイル、
 `rand_cron` の区間で既定の画像ライブラリから抽選する
-もの、`@daily` と単一値の `rand_cron` で指定ディレクトリから抽選するもの、そして `just_once` です。
+もの、`@daily` と単一値の `rand_cron` で指定ディレクトリから抽選するもの、口調ありと口調なしの
+`send_voice`、そして `just_once` です。
 例の会話 id、URL、ローカルパスはすべて架空で、そのまま `config/` に置くとローカルファイルが存在
 しないため起動を拒否します。必要なタスクだけを選び、会話 id とパスを実際の値に書き換えてから
 `config/cron.json` に書いてください。installer が例からこのファイルを作ることはありません。
@@ -221,7 +234,8 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
       { "type": "send_message", "payload": { "content": "おはよう" } },
       { "type": "send_image", "payload": { "content": "今日の一枚", "rand_image": true } },
       { "type": "send_image", "payload": { "url": ["https://example.com/a.png", "https://example.com/b.png"], "is_blurred": true } },
-      { "type": "send_file", "payload": { "content": "週報", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
+      { "type": "send_file", "payload": { "content": "週報", "path": "/srv/copy-ninjia/reports/weekly.pdf" } },
+      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おはよう、今日もがんばろうね" } }
     ]
   }
 ]
@@ -243,6 +257,12 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 - `send_image`：`content` は任意の単一文字列（最大 1024 文字）。固定画像は `url` 配列かファイル `path` 配列のどちらか一方、1–10 項目を指定します。1 枚でも `"url": ["https://example.com/a.jpg"]` のように配列にし、`rand_image` は省略または `false` のみです。1 枚は写真、2–10 枚は 1 回のアルバム要求で送り、caption は先頭だけ、別のテキスト投稿はしません。アルバムには複数の Telegram message ID があります。`is_blurred: true` は全画像に spoiler を付け、省略または `false` は付けません。
   `rand_image: true` は 1 枚だけ抽選します。`url` とファイル配列は禁止で、`path` は任意のディレクトリ文字列です。省略時は `state.global.assets.randomHImageDir`、別のディレクトリを明示した場合は SHA-256 命名規則を要求しません。
 - `send_file`：`content` は任意（最大 1024 文字）。送信元は `url` か `path` のちょうど 1 つ。
+- `send_voice`：`content` は必須で、読み上げるセリフ（最大 256 文字）です。`tone` は任意で、この 1 文の
+  話し方（最大 64 文字）を固定のベース声色の後ろに付け足し、省略するとベース声色だけを使います。
+  どちらも改行を空白にまとめ、前後の空白を除いた後で空であってはなりません。セリフは `agent.json` の
+  `tts` で合成してボイスメッセージとして送るため、`tts` の設定が必須です（上記「稼働中の変更」参照）。
+  同じ回ではこのボイスを 1 回だけ合成し、再試行や後続グループへの送信は同じ音声を使い回します。最初の送信が成功した後は
+  Telegram が返した `file_id` を参照し、再アップロードしません。
 
 `path` は絶対パスか、プロジェクトルート（ソース実行ではリポジトリのルート、バイナリではサービスの
 作業ディレクトリ）からの相対パスで書き、ホスト上のどこにあるファイルやディレクトリでも指せます
@@ -258,8 +278,9 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 - 同じタスクの回が重なることはなく、停止中に逃した発火は補いません。`just_once` の実行記録と
   `rand_cron` の待ち時間はメモリだけにあり、再起動するとやり直しです。
 - ネットワーク、Telegram の 5xx、出力ゲートの再試行後も返る 429、送信キュー満杯で失敗した動作は 2・4・8 秒の間隔で最大 3 回
-  再試行します。それ以外（Telegram の 4xx、グループからの削除、ローカルファイルの削除など）は
-  再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
+  再試行します。`send_voice` の合成が音声を返さなかった場合、待機のタイムアウト、AI Worker が一時的に
+  使えない場合も同様に再試行します。それ以外（Telegram の 4xx、グループからの削除、ローカルファイルの削除、
+  `tts` が未設定または implementation 非対応、音声エンコードの失敗など）は再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
   その回の残りの動作を飛ばします。タイムアウトしても Telegram 側に届いていた場合、再試行で
   重複して送られます。
 - 定時メッセージは残し、30 秒削除は掛けません。フォーラムのトピックは付けないため、トピックを
@@ -272,8 +293,8 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
   動作を飛ばすだけで次へ進み、複数列挙時は失敗ログにどの会話かを書きます。
 - `chat_id: ["all"]`：各回の開始時に、`/init enable` 済みの全グループについて Bot の現在の送信権限を
   1 つずつ確認します（オーナーと管理者は送信可、制限中は Bot 自身の送信権限、一般メンバーならグループの
-  既定メンバー権限で判定）。テキストはメッセージ送信、画像は写真送信、ファイルはドキュメント送信の
-  権限が必要で、タスクが使う権限が 1 つでも欠けるグループは丸ごと飛ばし、半分だけ届くことはありません。
+  既定メンバー権限で判定）。テキストはメッセージ送信、画像は写真送信、ファイルはドキュメント送信、
+  ボイスはボイスメッセージ送信の権限が必要で、タスクが使う権限が 1 つでも欠けるグループは丸ごと飛ばし、半分だけ届くことはありません。
   送信できるグループは chat id の昇順で動作一式を順に実行し、グループ間も 1 秒空けます。あるグループ
   で最終的に失敗しても、そのグループの残りの動作を飛ばすだけで、chat id をログに残して次のグループへ
   進みます。飛ばしたグループがあれば、回の終わりに `Cron task "<name>" skipped <n> chat(s) without send permission.`

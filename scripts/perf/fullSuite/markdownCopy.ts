@@ -100,7 +100,9 @@ const ZH: BenchmarkCopy = {
       "替换为进程内固定应答，因此包含提示词、状态机、处置、序列化和磁盘等全部本地工作，但不含网络。" +
       "`ai_chat` 到消息发送完成为止，不把 30 秒定时批量执行的记忆快照强摊到每轮回复；该成本由 AI 记忆快照行单列。" +
       "它还扣除了发送前 1.5–7.5 秒的拟人停顿：这段停顿逐次实测、按群限速且不占 CPU，" +
-      "保留它只会显示产品节奏而不是处理能力。",
+      "保留它只会显示产品节奏而不是处理能力。" +
+      "cron 语音一行同样把语音合成模型与 Telegram 换成固定应答（约 11 秒的 WAV），" +
+      "包含 Base64 解码、WAV 解析、Opus 编码与发送边界；合成在生产中位于 AI Worker，这一行在同一进程内串起两侧，不含线程间传递。",
     storage:
       "复用 `bun run perf:identity-database` 的实现；「冷」指连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。",
     "container-algorithm":
@@ -197,7 +199,10 @@ const EN: BenchmarkCopy = {
       "serialization and disk work but no network time. `ai_chat` ends when the reply is sent and does not force " +
       "the 30-second batched memory snapshot into every reply; the AI memory snapshot row prices that separately. " +
       "It also subtracts the measured 1.5–7.5 second human-like pre-send pause, which is per-chat pacing that " +
-      "uses no CPU and does not block other chats.",
+      "uses no CPU and does not block other chats. The cron voice row likewise replaces the speech model and " +
+      "Telegram with canned replies (an 11-second WAV) and includes Base64 decoding, WAV parsing, Opus encoding " +
+      "and the send boundary; synthesis runs on the AI Worker in production, and this row chains both sides in " +
+      "one process without the cross-thread hop.",
     storage:
       "Reuses `bun run perf:identity-database`; \"cold\" means an empty connection page cache and statement cache, " +
       "not a dropped OS page cache.",
@@ -292,7 +297,10 @@ const JA: BenchmarkCopy = {
       "通信をプロセス内の固定応答に置き換えるため、プロンプト、状態機械、処置、直列化、ディスクなどのローカル処理を" +
       "すべて含むが通信時間は含まない。`ai_chat` は返信送信で完了し、30 秒ごとの一括メモリスナップショットを各返信に" +
       "強制配賦しない。その費用は AI メモリスナップショット行で別に示す。送信前の 1.5～7.5 秒の擬人的な間も実測して" +
-      "差し引く。この待機はチャット単位で CPU を使わず、他のチャットを止めない。",
+      "差し引く。この待機はチャット単位で CPU を使わず、他のチャットを止めない。" +
+      "cron 音声の行も音声合成モデルと Telegram を固定応答（約 11 秒の WAV）に置き換え、Base64 デコード、WAV 解析、" +
+      "Opus エンコードと送信境界を含む。本番では合成は AI Worker 上で動くが、この行は同一プロセス内で両側をつなぎ、" +
+      "スレッド間の受け渡しは含まない。",
     storage:
       "`bun run perf:identity-database` の実装を再利用。「コールド」は接続のページキャッシュと文キャッシュが空である意味で、" +
       "OS のページキャッシュを破棄したという意味ではない。",

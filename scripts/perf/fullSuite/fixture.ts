@@ -130,6 +130,7 @@ export function buildAiMemorySnapshot(chatIndex: number): string {
       replyTo: undefined,
       forwardedFrom: undefined,
       at,
+      pendingImage: undefined,
     };
   }
   const summaries: string[] = new Array<string>(COLD_START_AI_MEMORY_SUMMARIES);

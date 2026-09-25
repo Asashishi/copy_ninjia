@@ -1,5 +1,12 @@
 import { Composer, GrammyError } from "grammy";
-import type { Bot } from "grammy";
+import type {
+  Bot,
+  BotError,
+  Context,
+  Filter,
+  MiddlewareFn,
+  NextFunction,
+} from "grammy";
 import { handleIncomingMessageMiddleware, handleReaction } from "../auto";
 import {
   confirmLuckDraw,
@@ -59,13 +66,6 @@ import {
   shouldRoutePrivateProxyMessage,
 } from "../infra/updateGate";
 import { messageOriginIdentityId } from "../users/messageOrigin";
-import type {
-  BotError,
-  Context,
-  Filter,
-  MiddlewareFn,
-  NextFunction,
-} from "grammy";
 import type { Chat, Message } from "grammy/types";
 import type { HandlerRegistration } from "../types/lifecycle";
 
@@ -213,11 +213,10 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
-  // message / channel_post 上的 ingress 与消息兜底一律直接挂 bot.use，自己判定
-  // update 类型：grammY 的 on/hears 经 filter -> branch -> lazy 注册，每条 update
-  // 都要 await 一次工厂、建一个数组并 new 一个 Composer。判据与 on("message")、
-  // on(["message", "channel_post"]) 相同（allowed_updates 不含 edited_*，因此
-  // `ctx.msg` 恒等于 `message ?? channelPost`），命中集合、顺序与认领语义不变。
+  // message / channel_post 上的 ingress 与消息兜底一律直接挂 bot.use，在 middleware
+  // 内自行判定 update 类型。判据与 on("message")、on(["message", "channel_post"])
+  // 相同（allowed_updates 不含 edited_*，`ctx.msg` 恒等于 `message ?? channelPost`），
+  // 命中集合、顺序与认领语义一致。
 
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {

@@ -691,19 +691,39 @@ describe("gag 消息与 inline 入口", () => {
     expect(rendered).toHaveLength(2);
     // 登记的是归一后的源文本，与 renderGagSpeech 内部变形前用的是同一段文本。
     for (const messageText of rendered) {
-      expect(inlineResultSourceOf(messageText)).toBe("小号 也有啊");
+      expect(inlineResultSourceOf(7, messageText)).toBe("小号 也有啊");
     }
 
     // 每敲一个键就来一次应答并整体覆盖：上一次按键那些结果再也取不回源文本，
     // 只会被当成拿不到，而不会拿这次的源文本去判上一次那条正文。
     const latest: string[] = await renderQuery("小号也有啊喵", "inline-source-2");
-    expect(inlineResultSourceOf(latest[0]!)).toBe("小号也有啊喵");
-    expect(inlineResultSourceOf(rendered[0]!)).toBeUndefined();
+    expect(inlineResultSourceOf(7, latest[0]!)).toBe("小号也有啊喵");
+    expect(inlineResultSourceOf(7, rendered[0]!)).toBeUndefined();
 
     // 源文本为空的应答不登记：那种结果只有前缀和填充点，没有一个字是用户写的。
     const emptyRendered: string[] = await renderQuery("", "inline-source-empty");
-    expect(inlineResultSourceOf(emptyRendered[0]!)).toBeUndefined();
-    expect(inlineResultSourceOf(latest[0]!)).toBe("小号也有啊喵");
+    expect(inlineResultSourceOf(7, emptyRendered[0]!)).toBeUndefined();
+    expect(inlineResultSourceOf(7, latest[0]!)).toBe("小号也有啊喵");
+
+    // Bot API 明确拒收的应答没有送达任何结果，不得顶掉上一次送达的登记。
+    const rejectedError: Error = Object.assign(new Error("Bad Request"), {
+      error_code: 400,
+      description: "Bad Request: query is too old and response timeout expired or query ID is invalid",
+    });
+    answerInlineQuery.mockImplementationOnce(async (): Promise<void> => {
+      throw rejectedError;
+    });
+    const rejected: string[] = await renderQuery("被拒收的", "inline-source-rejected");
+    expect(inlineResultSourceOf(7, rejected[0]!)).toBeUndefined();
+    expect(inlineResultSourceOf(7, latest[0]!)).toBe("小号也有啊喵");
+
+    // 网络失败时结果可能已经送达，照常登记。
+    answerInlineQuery.mockImplementationOnce(async (): Promise<void> => {
+      throw new Error("socket hang up");
+    });
+    const ambiguous: string[] = await renderQuery("网络中断的", "inline-source-ambiguous");
+    expect(inlineResultSourceOf(7, ambiguous[0]!)).toBe("网络中断的");
+    expect(inlineResultSourceOf(7, latest[0]!)).toBeUndefined();
   });
 
   test("频道查询只携带目标 ID，结果用主页和超级群 ID 双重绑定落点", async () => {
@@ -744,6 +764,9 @@ describe("gag 消息与 inline 入口", () => {
       length: rendering.gagSpeechPrefix("口塞").length,
       url: "https://t.me/c/2233445566/1#-1001",
     });
+    // 源文本登记在频道名下：落群后的发送者是 sender_chat，不是打字的管理员。
+    expect(inlineResultSourceOf(channelSession.targetId, messageText)).toBe("功能没了喵");
+    expect(inlineResultSourceOf(4_242, messageText)).toBeUndefined();
   });
 
   test("非法或过期 gag 前缀静默返回空结果，不生成可发送拒绝文本", async () => {

@@ -662,8 +662,6 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
   });
 
   test("分块步长严格小于 LRU 容量，同一次预取的前一块不会被后一块整块驱逐", () => {
-    // 相等时 /batch_kick 那种上万条的批量预取只剩最后一块是热的，被挤掉的白名单
-    // 管理员会按冷未命中判成普通成员踢出去（见 commands/batchKick.ts）。
     expect(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES)
       .toBeLessThan(IDENTITY_READ_CACHE_MAX_ENTRIES);
   });

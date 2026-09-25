@@ -159,7 +159,7 @@ export async function flushJoinLogBuffer(): Promise<boolean> {
  * 统一 flush 的 joinLog 领域出口：缓冲全部写盘成功、且这一轮没有被拒收的入群
  * 事实，才算该领域落盘成功。
  *
- * 与 flushJoinLogBuffer 分开的理由：跨日准备与按需读取用后者判断的是「缓冲里
+ * 与 flushJoinLogBuffer 分开：跨日准备与按需读取用后者判断的是「缓冲里
  * 这些条目写进去了没有」，不能被一条压根没进缓冲的事实反复卡住（那会让每一条
  * 新入群事件都在同一个跨日检查上抛错）。拒收标记只在这一个出口消费。
  */
@@ -173,7 +173,7 @@ export async function flushJoinLogDomain(): Promise<boolean> {
  *
  * 缓冲必须同步丢掉——留着的话，本条之后的任何一次 flush 都会把属于已停管群的入群
  * 事实重新写回一份刚被删掉的文件。删除失败保留待删标记，由 `joinLogPurge` 领域
- * 的每一次 flush 重试并回报；那一格与追写的 `joinLog` 分开记，理由见
+ * 的每一次 flush 重试并回报；那一格与追写的 `joinLog` 分开记，见
  * types/diskIO/replies.ts 的 DiskIODomain。
  */
 export function handleJoinLogDeleteMessage(msg: JoinLogDeleteDiskMessage): void {

@@ -1,3 +1,5 @@
+import type { BotImageOrigin } from "../../types/aiChat/memory";
+
 /** AI 持久化回复引用的字段闭集。 */
 export const BUFFERED_REPLY_REFERENCE_KEYS: readonly string[] = [
   "id",
@@ -27,6 +29,20 @@ export const BUFFERED_MESSAGE_KEYS: readonly string[] = [
   "replyTo",
   "forwardedFrom",
   "at",
+  "pendingImage",
+];
+
+/** AI 持久化逐字消息里占位态图片（pendingImage）的字段闭集。 */
+export const PENDING_BOT_IMAGE_KEYS: readonly string[] = [
+  "origin",
+  "caption",
+];
+
+/** 占位态图片来源（PendingBotImage.origin）的取值闭集；决定回填时使用的自录记号。 */
+export const BOT_IMAGE_ORIGINS: readonly BotImageOrigin[] = [
+  "command",
+  "generated",
+  "referenceGenerated",
 ];
 
 /** AI 记忆快照的顶层字段闭集。 */

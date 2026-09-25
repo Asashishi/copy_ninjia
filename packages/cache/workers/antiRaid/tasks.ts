@@ -27,7 +27,7 @@ export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 }
  * 生命周期据此拒绝确认 Telegram offset 并以非零状态退出——重启后整批 update 被
  * 重投（重复的验证踢人与通知），systemd 报单元失败。drain 到达时就地 abort：
  * 排队中的请求立刻结算成失败，而这些处置本就是尽力而为的，丢一次不构成安全
- * 边界失守（同 adDetect/queue.ts 的 runAdDetectBatch 干脆不登记的理由）。
+ * 边界失守（同 adDetect/queue.ts 的 runAdDetectBatch 不登记）。
  *
  * 生命周期：懒创建（第一个要发这类请求的调用方创建）；drain 分支调
  * quiesceAntiRaidDispatch 就地 abort，此后**一直**是已 abort 状态——停机之后

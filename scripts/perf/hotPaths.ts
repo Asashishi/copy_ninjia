@@ -147,6 +147,8 @@ function parseScenarioName(value: string | undefined): ScenarioName {
     case "base64-large":
     case "base64-head":
     case "base64-tail":
+    case "voice-message-encode":
+    case "proxy-tts-detect":
     case "storage-sqlite-flush":
     case "verification-snapshot":
     case "verification-snapshot-clone":
@@ -198,6 +200,7 @@ function parseScenarioName(value: string | undefined): ScenarioName {
         "<verification-snapshot|verification-snapshot-clone|" +
         "cooldown-hit|cooldown-renew|cooldown-growth|cooldown-saturated|cooldown-expiry|" +
         "reply-admission|reply-delivery-normal|reply-delivery-capacity|base64-normal|base64-large|base64-head|base64-tail|" +
+        "voice-message-encode|proxy-tts-detect|" +
         "bounded-response-empty|bounded-response-tiny|bounded-response-small|bounded-response-normal|bounded-response-large|" +
         "sender-no-username|sender-stable-username|sender-mixed-identity|" +
         "luck-receipt-fast-path|" +

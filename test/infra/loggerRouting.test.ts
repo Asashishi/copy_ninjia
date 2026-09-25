@@ -271,7 +271,7 @@ describe("logger persistence routing boundary", () => {
       "adopted-summary-key",
       "adopted-media-key",
       "adopted-image-key",
-      "adopted-song-key",
+      "adopted-tts-key",
       "adopted-ad-key",
     ];
     adoptAgentDeploymentConfig({
@@ -279,7 +279,7 @@ describe("logger persistence routing boundary", () => {
       summary: { provider: "openai", apiKey: "adopted-summary-key", baseUrl: undefined, model: "summary" },
       media: { provider: "google", apiKey: "adopted-media-key", baseUrl: undefined, model: "media" },
       image: { provider: "google", apiKey: "adopted-image-key", baseUrl: undefined, model: "image", imageProtocol: undefined },
-      song: { provider: "google", apiKey: "adopted-song-key", baseUrl: undefined, model: "song" },
+      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, model: "tts", voice: "Leda" },
     });
     adoptAdDetectAgentConfig({
       provider: "openai",

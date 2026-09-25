@@ -53,6 +53,8 @@ mock.module("../../packages/infra/telegram/avatar/download", (): unknown => ({
 mock.module("../../packages/infra/telegram/avatar/webProfile", (): unknown => ({
   fetchAvatarFromWebProfile: async (): Promise<never> => { throw new Error("Unexpected profile scrape"); },
 }));
+const recordBotImage = mock((..._args: unknown[]): void => {});
+mock.module("../../packages/aiChat/botImages", (): unknown => ({ recordBotImage }));
 mock.module("../../packages/infra/telegram", (): unknown => ({
   deleteMessageWithOutcome: async (): Promise<never> => { throw new Error("Unexpected photo deletion"); },
 }));
@@ -62,7 +64,7 @@ const { readCurrentAvatar }: typeof AvatarReader =
 const { sendWedResult, replaceWedResult }: typeof WedMessages =
   await import("../../packages/commands/wed/messages");
 
-beforeEach(() => { requests.length = 0; chatStateCache.clear(); });
+beforeEach(() => { requests.length = 0; chatStateCache.clear(); recordBotImage.mockClear(); });
 
 test("抽取与更换均按当前人设同时渲染无名身份称呼和按钮", async () => {
   const actor: User = { id: 1, first_name: "", is_bot: false };
@@ -135,4 +137,19 @@ test("真实头像读取与 grammY 出站在并发上限内只传 JSON，不下�
   }
   expect(sent).toBe(WED_MAX_CONCURRENT);
   expect(replaced).toBe(WED_MAX_CONCURRENT);
+});
+
+test("结果图发出与换图后各写一条 AI 记忆占位自录，换图标记为原位重置", async (): Promise<void> => {
+  const session: WedSession = {
+    chatId: -100, actor: user, messageThreadId: undefined,
+    controller: new AbortController(), messageId: undefined, targetId: undefined,
+    confirmed: false, busy: true,
+  };
+  const candidate: WedCandidate = { identity: user, photo: current.file_id };
+  expect(await sendWedResult({ session, candidate, replyToMessageId: 50, signal: session.controller.signal })).toBeTrue();
+  expect(await replaceWedResult(session, candidate, session.controller.signal)).toBeTrue();
+  expect(recordBotImage.mock.calls).toEqual([
+    [{ chatId: -100, messageId: 100, caption: "", edited: false }],
+    [{ chatId: -100, messageId: 100, caption: "", edited: true }],
+  ]);
 });

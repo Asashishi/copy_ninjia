@@ -57,6 +57,7 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>
     new Map([...aiEnabledChats].map((chatId: number): [number, unknown] => [chatId, {}])),
+  activeCopyTargetIdIn: (): undefined => undefined,
 }));
 
 const aiChat = await import("../../../packages/aiChat");

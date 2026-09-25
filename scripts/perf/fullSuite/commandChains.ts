@@ -35,12 +35,23 @@ import type { recordChatMessage } from
   "../../../packages/workers/aiChat/rollingMemory";
 import type { generateAndSendReply } from
   "../../../packages/workers/aiChat/replyPipeline";
+import type {
+  resolveSpeechSynthesizer,
+  synthesizeVoiceMessage,
+} from "../../../packages/aiChat/ai/voiceSynthesis";
+import type { deliverCronAction } from "../../../packages/cron/delivery";
+import type { CronAction, CronDeliveryOutcome, CronRoundVoices } from "../../../packages/types/cron";
+import type { SpeechSynthesizerLookup, VoiceSynthesisResult } from "../../../packages/types/aiChat/voiceMessage";
+import { benchmarkWav } from "../wavFixture";
 import type { ChainDefinition } from "./chainDefinition";
 import type { ChainName } from "./types";
 
 export interface CommandChainDependencies {
   readonly chainAdDetectCommands: number;
   readonly chainAiReplyCommands: number;
+  readonly chainCronVoiceCommands: number;
+  readonly cronVoiceWarmupOperations: number;
+  readonly cronVoicePcmBytes: number;
   readonly aiReplyWarmupOperations: number;
   readonly aiReplySettleAttempts: number;
   readonly adDetectDrainBudgetMs: number;
@@ -67,6 +78,9 @@ export interface CommandChainDependencies {
   readonly replyGenerationTasks: typeof replyGenerationTasks;
   readonly recordChatMessage: typeof recordChatMessage;
   readonly generateAndSendReply: typeof generateAndSendReply;
+  readonly resolveSpeechSynthesizer: typeof resolveSpeechSynthesizer;
+  readonly synthesizeVoiceMessage: typeof synthesizeVoiceMessage;
+  readonly deliverCronAction: typeof deliverCronAction;
 }
 
 const AI_REPLY_SEED_MESSAGES: number = 12;
@@ -275,6 +289,69 @@ function aiReplyCommandChain(
   };
 }
 
+/**
+ * cron `send_voice` 的完整本地流程：语音合成公共实现（tts 门面的配额闸门 → Gemini
+ * 语音适配层 → Base64 解码 → WAV 解析 → Opus 编码）交回语音后登记进本轮语音表，再经
+ * cron 发送边界发出语音气泡。生产中合成位于 AI Worker、结果随回执转移给主线程；这里在
+ * 同一进程内串起两侧，不含线程间传递。模型与 Telegram 都是罐头应答。
+ */
+function cronSendVoiceChain(
+  dependencies: CommandChainDependencies
+): ChainDefinition {
+  const chatId: number = dependencies.benchmarkChatId(0);
+  const action: Readonly<CronAction> = {
+    type: "send_voice",
+    content: "性能基准：今晚也早点睡吧，明天见。",
+    tone: "眠そうに小声で",
+  };
+  const synthesizer: { current: SpeechSynthesizerLookup | null } = { current: null };
+  return {
+    chain: "cron-send-voice",
+    operations: dependencies.chainCronVoiceCommands,
+    recordsPerOperation: 1,
+    warmupOperations: dependencies.cronVoiceWarmupOperations,
+    prepare: async (): Promise<void> => {
+      await dependencies.ensureAgentDeploymentConfig();
+      const audio: string = benchmarkWav(dependencies.cronVoicePcmBytes).toBase64();
+      dependencies.geminiClientCache.current = new Map([["tts", {
+        interactions: {
+          create: (): Promise<unknown> => Promise.resolve({
+            output_audio: { data: audio, mime_type: "audio/wav" },
+          }),
+        },
+      }]] as never);
+      synthesizer.current = dependencies.resolveSpeechSynthesizer();
+      if (!synthesizer.current.ok) {
+        throw new Error(`Benchmark speech synthesis is unavailable: ${synthesizer.current.reason}.`);
+      }
+    },
+    run: async (sequence: number): Promise<void> => {
+      const lookup: SpeechSynthesizerLookup | null = synthesizer.current;
+      if (lookup?.ok !== true) throw new Error("Benchmark speech synthesizer was not prepared.");
+      const result: VoiceSynthesisResult = await dependencies.synthesizeVoiceMessage(
+        lookup.synthesize,
+        { text: action.content, tone: action.tone, signal: undefined },
+        `benchmark ${sequence}`
+      );
+      if (!result.ok) throw new Error(`Cron voice ${sequence} produced no voice: ${result.reason}.`);
+      const voices: CronRoundVoices = new Map([[action, { voice: result.voice, fileId: undefined }]]);
+      const sentBefore: number = dependencies.cannedTelegramCalls.get("sendVoice") ?? 0;
+      const outcome: CronDeliveryOutcome = await dependencies.deliverCronAction({
+        chatId,
+        action,
+        signal: new AbortController().signal,
+        voices,
+      });
+      if (outcome.kind !== "sent") {
+        throw new Error(`Cron voice ${sequence} was not delivered: ${outcome.kind}.`);
+      }
+      if ((dependencies.cannedTelegramCalls.get("sendVoice") ?? 0) <= sentBefore) {
+        throw new Error(`Cron voice ${sequence} produced no outgoing voice message.`);
+      }
+    },
+  };
+}
+
 /** 返回命令链路定义；存储链路交给 storageChains。 */
 export function createCommandChain(
   chain: ChainName,
@@ -283,6 +360,7 @@ export function createCommandChain(
   switch (chain) {
     case "ad-detect-command": return adDetectCommandChain(dependencies);
     case "ai-reply-command": return aiReplyCommandChain(dependencies);
+    case "cron-send-voice": return cronSendVoiceChain(dependencies);
     case "join-log-append":
     case "identity-policy-write":
     case "temporary-whitelist-write":

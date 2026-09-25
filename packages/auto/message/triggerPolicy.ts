@@ -24,7 +24,7 @@ export function shouldAttemptRandomTrigger(context: MessageTriggerContext): bool
  *
  * 两级结果都要用：`!== "none"` 决定 handler 的返回值（是否已接管这条消息），
  * `=== "claimed"` 经 recordContext.ts 的 mediaReplyBackpressurePlaceholder 决定媒体
- * 是否发起回复轮。三态取值的理由见
+ * 是否发起回复轮。三态取值的见
  * types/auto.ts 的 RandomMediaTrigger。
  */
 export function claimRandomMediaTrigger(

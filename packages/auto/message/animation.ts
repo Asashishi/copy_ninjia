@@ -6,6 +6,8 @@ import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto
 import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { TelegramVisionSource } from "../../types/media";
+import { ANIMATION_PLACEHOLDER } from "../../consts/auto";
+import { composeMediaText } from "../../libs/text";
 
 /** 记录 GIF 缩略图描述；无缩略图时退回纯文本上下文。 */
 export function handleAnimationMessage(context: MessageTriggerContext): boolean {
@@ -19,7 +21,7 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
     return replyToUnresolvableMedia({
       context,
       speaker,
-      text: caption ? `[GIF] ${caption}` : "[GIF]",
+      text: composeMediaText(ANIMATION_PLACEHOLDER, caption),
     });
   }
 
@@ -27,18 +29,16 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
   recordChatMedia(buildAiRecordMediaMessage({
     context,
     speaker,
-    media: {
-      kind: "animation",
-      caption,
-      fileId: visionSource.fileId,
-      fileUniqueId: visionSource.fileUniqueId,
-      width: visionSource.width,
-      height: visionSource.height,
-      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
-      stickerFallbackText: undefined,
-      voiceMime: undefined,
-      voiceDurationSeconds: 0,
-    },
+    kind: "animation",
+    caption,
+    fileId: visionSource.fileId,
+    fileUniqueId: visionSource.fileUniqueId,
+    width: visionSource.width,
+    height: visionSource.height,
+    replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
+    stickerFallbackText: undefined,
+    voiceMime: undefined,
+    voiceDurationSeconds: 0,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

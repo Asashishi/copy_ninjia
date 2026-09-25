@@ -1,4 +1,5 @@
 import type { LruCache } from "../libs/lruCache";
+import type { EncodedVoiceMessage } from "./aiChat/voiceMessage";
 
 /** send_file 的单个来源：Telegram 拉取的地址，或已按项目根解析成绝对路径的本机文件。 */
 export type CronFileSource =
@@ -18,7 +19,8 @@ export type CronImageSource =
 /**
  * cron.json 的一个动作；`content` 缺省为 undefined（图片与文件不带附加文字）。
  * `send_image` 的 `isBlurred` 取自 `is_blurred`，缺省 false；为 true 时给全部图片加剧透遮罩。
- * 多图共用一份 content，只作为相册首图的 caption。
+ * 多图共用一份 content，只作为相册首图的 caption。`send_voice` 的 content 是要念的台词、
+ * tone 是拼在基础朗读风格之后的语气（缺省 undefined），两者已清洗成单行。
  */
 export type CronAction =
   | { readonly type: "send_message"; readonly content: string }
@@ -28,7 +30,8 @@ export type CronAction =
     readonly source: CronImageSource;
     readonly isBlurred: boolean;
   }
-  | { readonly type: "send_file"; readonly content: string | undefined; readonly source: CronFileSource };
+  | { readonly type: "send_file"; readonly content: string | undefined; readonly source: CronFileSource }
+  | { readonly type: "send_voice"; readonly content: string; readonly tone: string | undefined };
 
 /** 任务 `chat_id` 数组的「所有群」写法（consts/cron.ts 的 CRON_ALL_CHATS）。 */
 export type CronAllChats = "all";
@@ -101,6 +104,7 @@ export interface CronSendNeeds {
   readonly text: boolean;
   readonly photos: boolean;
   readonly documents: boolean;
+  readonly voiceNotes: boolean;
 }
 
 /**
@@ -111,6 +115,22 @@ export interface CronGroupTargets {
   readonly chatIds: readonly number[];
   readonly skipped: number;
 }
+
+/** 一轮里一个 `send_voice` 动作已合成好的语音（packages/cron/delivery.ts）。 */
+export interface CronRoundVoice {
+  readonly voice: EncodedVoiceMessage;
+  /**
+   * 本轮首次发送成功后 Telegram 交回的语音 file_id；取得前为 undefined，按字节上传。
+   * 取得后本轮的后续会话与重试直接引用它，不再上传。
+   */
+  fileId: string | undefined;
+}
+
+/**
+ * 一轮里已合成好的 `send_voice` 语音，按动作对象身份索引（packages/cron/run.ts 每轮新建、
+ * 轮次结束即丢弃）。同一轮的重试与后续会话直接复用，不再重新合成；合成失败不登记。
+ */
+export type CronRoundVoices = Map<Readonly<CronAction>, CronRoundVoice>;
 
 /** 一次动作投递的结果（packages/cron/delivery.ts），决定是否重试。 */
 export type CronDeliveryOutcome =

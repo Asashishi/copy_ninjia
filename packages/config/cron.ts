@@ -5,7 +5,9 @@
  * 再逐项核对 `payload.path` 指向的文件或目录存在且类型相符（跟随符号链接）。
  * 固定图片使用 1–10 项文件或 URL 数组，随机图片的 path 使用可选目录字符串；
  * 随机目录缺省时由发送侧读取 state 的专用图库，该路径按运行时数据根解析。
- * `payload.path` 写绝对路径，或相对项目根（PROJECT_ROOT）的路径，不限定目录。任何一处
+ * `payload.path` 写绝对路径，或相对项目根（PROJECT_ROOT）的路径，不限定目录。
+ * `send_voice` 依赖 config/agent.json 的 `agent.tts`：assertCronVoiceSupported 在启动总闸
+ * （ensureCronConfig）与热重载（config/reload.ts）里按当时生效的 agent 配置核对。任何一处
  * 非法都整份拒绝：启动时拒绝启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含
  * 文件路径、字段路径与期望形态。
  */
@@ -27,10 +29,15 @@ import {
   CRON_TASK_NAME_MAX_CHARS,
 } from "../consts/cron";
 import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../consts/paths";
+import { VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../consts/aiChat/voiceMessage";
+import { agentTtsConfig } from "./agent";
+import { sanitizeInline } from "../libs/text";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import { parseDurationTokenMs } from "../libs/durationToken";
-import { invalidInput, readJsonInput } from "../libs/inputValidation";
+import { invalidInput, optionalBooleanField, readJsonInput } from "../libs/inputValidation";
+import type { InputFieldContext } from "../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../libs/record";
+import type { AgentTtsCapabilityConfig } from "../types/config";
 import type {
   CronAction,
   CronChatTargets,
@@ -42,35 +49,25 @@ import type {
 } from "../types/cron";
 
 /** 字段路径与诊断文件的组合，逐层下传。 */
-interface FieldContext {
-  readonly sourcePath: string;
-  readonly field: string;
+
+function fail(context: InputFieldContext, expected: string): never {
+  return invalidInput(context.source, context.path, expected);
 }
 
-function fail(context: FieldContext, expected: string): never {
-  return invalidInput(context.sourcePath, context.field, expected);
-}
-
-function child(context: FieldContext, key: string): FieldContext {
-  return { sourcePath: context.sourcePath, field: `${context.field}.${key}` };
+function child(context: InputFieldContext, key: string): InputFieldContext {
+  return { source: context.source, path: `${context.path}.${key}` };
 }
 
 /** 非空（去空白后）且不超过上限的字符串。 */
-function boundedText(value: unknown, context: FieldContext, maxChars: number): string {
+function boundedText(value: unknown, context: InputFieldContext, maxChars: number): string {
   if (typeof value !== "string" || value.trim().length === 0 || value.length > maxChars) {
     return fail(context, `a non-empty string of at most ${maxChars} characters`);
   }
   return value;
 }
 
-function optionalBoolean(value: unknown, context: FieldContext): boolean {
-  if (value === undefined) return false;
-  if (typeof value !== "boolean") return fail(context, "a boolean");
-  return value;
-}
-
 /** `"<min>-<max>"` 或单值（≡ `1m-<值>`），单位 m/h/d，落在 [1m, 24d] 且 min ≤ max。 */
-function parseRandomInterval(value: unknown, context: FieldContext): CronRandomInterval {
+function parseRandomInterval(value: unknown, context: InputFieldContext): CronRandomInterval {
   const expected: string = "\"<min>-<max>\" or \"<max>\" with m/h/d units, within 1m-24d and min <= max";
   if (typeof value !== "string") return fail(context, expected);
   const parts: string[] = value.split("-");
@@ -89,7 +86,7 @@ function parseRandomInterval(value: unknown, context: FieldContext): CronRandomI
 }
 
 /** 本机的文件或目录路径：绝对路径原样使用，相对路径按项目根解析；拒绝空串与 NUL，返回规范化后的绝对路径。 */
-function parseLocalPath(value: unknown, context: FieldContext): string {
+function parseLocalPath(value: unknown, context: InputFieldContext): string {
   if (typeof value !== "string" || value.trim().length === 0 || value.includes("\0")) {
     return fail(context, "an absolute local path or a path relative to the project root");
   }
@@ -97,7 +94,7 @@ function parseLocalPath(value: unknown, context: FieldContext): string {
 }
 
 /** 交给 Telegram 拉取的绝对 http(s) 地址；只校验形态。 */
-function parseUrl(value: unknown, context: FieldContext): string {
+function parseUrl(value: unknown, context: InputFieldContext): string {
   const parsed: URL | null = typeof value === "string" ? URL.parse(value) : null;
   if (parsed === null || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
     return fail(context, "an absolute http(s) URL");
@@ -105,12 +102,17 @@ function parseUrl(value: unknown, context: FieldContext): string {
   return parsed.href;
 }
 
-function optionalCaption(value: unknown, context: FieldContext): string | undefined {
+/** 非空（清洗成单行并去空白后）且原文不超过上限的字符串；返回清洗后的单行。 */
+function boundedLine(value: unknown, context: InputFieldContext, maxChars: number): string {
+  return sanitizeInline(boundedText(value, context, maxChars)).trim();
+}
+
+function optionalCaption(value: unknown, context: InputFieldContext): string | undefined {
   return value === undefined ? undefined : boundedText(value, context, TELEGRAM_CAPTION_MAX_CHARS);
 }
 
 /** 恰好一个 `url` 或 `path`（普通文件）。 */
-function parseFileSource(payload: Record<string, unknown>, context: FieldContext): CronFileSource {
+function parseFileSource(payload: Record<string, unknown>, context: InputFieldContext): CronFileSource {
   if ((payload.url === undefined) === (payload.path === undefined)) {
     return fail(context, "exactly one of url or path");
   }
@@ -119,30 +121,30 @@ function parseFileSource(payload: Record<string, unknown>, context: FieldContext
 }
 
 /** 固定图片必须是一个非空来源数组；单张也使用数组，不接受随机目录。 */
-function parseImageSources(payload: Record<string, unknown>, context: FieldContext): CronImageSource {
+function parseImageSources(payload: Record<string, unknown>, context: InputFieldContext): CronImageSource {
   if ((payload.url === undefined) === (payload.path === undefined)) {
     return fail(context, "exactly one of url or path arrays");
   }
   const isUrl: boolean = payload.url !== undefined;
   const value: unknown = isUrl ? payload.url : payload.path;
-  const fieldContext: FieldContext = child(context, isUrl ? "url" : "path");
+  const fieldContext: InputFieldContext = child(context, isUrl ? "url" : "path");
   if (!Array.isArray(value) || value.length === 0 || value.length > CRON_MAX_IMAGES) {
     return fail(fieldContext, `an array of 1–${CRON_MAX_IMAGES} image sources`);
   }
   const sources: string[] = [];
   for (let index: number = 0; index < value.length; index++) {
-    const item: FieldContext = { sourcePath: context.sourcePath, field: `${fieldContext.field}[${index}]` };
+    const item: InputFieldContext = { source: context.source, path: `${fieldContext.path}[${index}]` };
     sources.push(isUrl ? parseUrl(value[index], item) : parseLocalPath(value[index], item));
   }
   return isUrl ? { kind: "urls", urls: sources } : { kind: "paths", paths: sources };
 }
 
-function parseAction(value: unknown, context: FieldContext): CronAction {
+function parseAction(value: unknown, context: InputFieldContext): CronAction {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, ["type", "payload"]) || !isPlainRecord(value.payload)) {
     return fail(context, "{ type, payload: object }");
   }
   const payload: Record<string, unknown> = value.payload;
-  const payloadContext: FieldContext = child(context, "payload");
+  const payloadContext: InputFieldContext = child(context, "payload");
   switch (value.type) {
     case "send_message":
       if (!hasOnlyKeys(payload, ["content"])) return fail(payloadContext, "{ content }");
@@ -155,8 +157,8 @@ function parseAction(value: unknown, context: FieldContext): CronAction {
         return fail(payloadContext, "{ content?, rand_image?, url?, path?, is_blurred? }");
       }
       const content: string | undefined = optionalCaption(payload.content, child(payloadContext, "content"));
-      const isBlurred: boolean = optionalBoolean(payload.is_blurred, child(payloadContext, "is_blurred"));
-      if (!optionalBoolean(payload.rand_image, child(payloadContext, "rand_image"))) {
+      const isBlurred: boolean = optionalBooleanField(payload, "is_blurred", payloadContext) === true;
+      if (optionalBooleanField(payload, "rand_image", payloadContext) !== true) {
         return { type: "send_image", content, source: parseImageSources(payload, payloadContext), isBlurred };
       }
       if (payload.url !== undefined) return fail(child(payloadContext, "url"), "absent when rand_image is true");
@@ -173,8 +175,17 @@ function parseAction(value: unknown, context: FieldContext): CronAction {
         content: optionalCaption(payload.content, child(payloadContext, "content")),
         source: parseFileSource(payload, payloadContext),
       };
+    case "send_voice":
+      if (!hasOnlyKeys(payload, ["content", "tone"])) return fail(payloadContext, "{ content, tone? }");
+      return {
+        type: "send_voice",
+        content: boundedLine(payload.content, child(payloadContext, "content"), VOICE_OPERATOR_TEXT_MAX_CHARS),
+        tone: payload.tone === undefined
+          ? undefined
+          : boundedLine(payload.tone, child(payloadContext, "tone"), VOICE_TONE_MAX_CHARS),
+      };
     default:
-      return fail(child(context, "type"), "send_message, send_image or send_file");
+      return fail(child(context, "type"), "send_message, send_image, send_file or send_voice");
   }
 }
 
@@ -184,7 +195,7 @@ function parseAction(value: unknown, context: FieldContext): CronAction {
  * 三种写法都必须是数组，且都至少要有一个元素；`"all"` 只能单独出现，`"except"` 只能作为
  * 首项。会话 id 是非零安全整数且不得重复，最多 CRON_MAX_CHAT_IDS_PER_TASK 个。
  */
-function parseChatTargets(value: unknown, context: FieldContext): CronChatTargets {
+function parseChatTargets(value: unknown, context: InputFieldContext): CronChatTargets {
   const expected: string =
     `["${CRON_ALL_CHATS}"], ["${CRON_EXCEPT_CHATS}", <chat id>, ...] or a list of at most ` +
     `${CRON_MAX_CHAT_IDS_PER_TASK} unique non-zero safe integer chat ids`;
@@ -203,7 +214,7 @@ function parseChatTargets(value: unknown, context: FieldContext): CronChatTarget
     const chatId: unknown = value[index];
     if (typeof chatId !== "number" || !Number.isSafeInteger(chatId) || chatId === 0 || chatIds.includes(chatId)) {
       return fail(
-        { sourcePath: context.sourcePath, field: `${context.field}[${index}]` },
+        { source: context.source, path: `${context.path}[${index}]` },
         "a unique non-zero safe integer chat id"
       );
     }
@@ -219,7 +230,7 @@ interface CronScheduleFields {
 }
 
 /** 校验时区与表达式：两者都用 Bun.cron.parse 判定，且必须还有将来的触发时间。 */
-function parseSchedule(record: Record<string, unknown>, context: FieldContext): CronScheduleFields {
+function parseSchedule(record: Record<string, unknown>, context: InputFieldContext): CronScheduleFields {
   // 只有键真正缺省才用默认时区；显式写出的非法值（含 null）照常拒绝。
   const timeZone: unknown = record.time_zone === undefined ? CRON_DEFAULT_TIME_ZONE : record.time_zone;
   if (typeof timeZone !== "string" || timeZone.length === 0) return fail(child(context, "time_zone"), "an IANA time zone name");
@@ -241,7 +252,7 @@ function parseSchedule(record: Record<string, unknown>, context: FieldContext): 
   return { cron, timeZone };
 }
 
-function parseTask(value: unknown, context: FieldContext): CronTask {
+function parseTask(value: unknown, context: InputFieldContext): CronTask {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, CRON_TASK_KEYS)) {
     return fail(context, "{ name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
   }
@@ -251,32 +262,32 @@ function parseTask(value: unknown, context: FieldContext): CronTask {
   const randomInterval: CronRandomInterval | undefined = value.rand_cron === undefined
     ? undefined
     : parseRandomInterval(value.rand_cron, child(context, "rand_cron"));
-  const justOnce: boolean = optionalBoolean(value.just_once, child(context, "just_once"));
+  const justOnce: boolean = optionalBooleanField(value, "just_once", context) === true;
   if (justOnce && randomInterval !== undefined) {
     return fail(child(context, "just_once"), "false or absent when rand_cron is set");
   }
   if (!Array.isArray(value.actions) || value.actions.length === 0 || value.actions.length > CRON_MAX_ACTIONS_PER_TASK) {
     return fail(child(context, "actions"), `a non-empty array with at most ${CRON_MAX_ACTIONS_PER_TASK} actions`);
   }
-  const actionsContext: FieldContext = child(context, "actions");
+  const actionsContext: InputFieldContext = child(context, "actions");
   const actions: Readonly<CronAction>[] = [];
   for (let index: number = 0; index < value.actions.length; index++) {
-    actions.push(parseAction(value.actions[index], { sourcePath: context.sourcePath, field: `${actionsContext.field}[${index}]` }));
+    actions.push(parseAction(value.actions[index], { source: context.source, path: `${actionsContext.path}[${index}]` }));
   }
   return { name, chatTargets, cron, timeZone, randomInterval, justOnce, actions };
 }
 
 /** 严格解析 cron.json 的内容；只做形态与词法判定，不访问文件系统。 */
 export function parseCronConfig(value: unknown, sourcePath: string = CRON_CONFIG_PATH): CronConfig {
-  const root: FieldContext = { sourcePath, field: "$" };
+  const root: InputFieldContext = { source: sourcePath, path: "$" };
   if (!Array.isArray(value) || value.length > CRON_MAX_TASKS) {
     return fail(root, `an array with at most ${CRON_MAX_TASKS} tasks`);
   }
   const tasks: Readonly<CronTask>[] = [];
   const names: Set<string> = new Set();
   for (let index: number = 0; index < value.length; index++) {
-    const task: CronTask = parseTask(value[index], { sourcePath, field: `$[${index}]` });
-    if (names.has(task.name)) return fail({ sourcePath, field: `$[${index}].name` }, "unique across tasks");
+    const task: CronTask = parseTask(value[index], { source: sourcePath, path: `$[${index}]` });
+    if (names.has(task.name)) return fail({ source: sourcePath, path: `$[${index}].name` }, "unique across tasks");
     names.add(task.name);
     tasks.push(task);
   }
@@ -287,7 +298,7 @@ export function parseCronConfig(value: unknown, sourcePath: string = CRON_CONFIG
 async function verifyLocalSource(
   path: string,
   kind: "file" | "directory",
-  context: FieldContext
+  context: InputFieldContext
 ): Promise<void> {
   let valid: boolean;
   try {
@@ -306,12 +317,12 @@ export async function loadCronConfig(path: string = CRON_CONFIG_PATH): Promise<C
     const actions: readonly Readonly<CronAction>[] = config[taskIndex]!.actions;
     for (let actionIndex: number = 0; actionIndex < actions.length; actionIndex++) {
       const action: Readonly<CronAction> = actions[actionIndex]!;
-      if (action.type === "send_message") continue;
-      const context: FieldContext = { sourcePath: path, field: `$[${taskIndex}].actions[${actionIndex}].payload.path` };
+      if (action.type === "send_message" || action.type === "send_voice") continue;
+      const context: InputFieldContext = { source: path, path: `$[${taskIndex}].actions[${actionIndex}].payload.path` };
       if (action.source.kind === "path") await verifyLocalSource(action.source.path, "file", context);
       else if (action.source.kind === "paths") {
         for (let index: number = 0; index < action.source.paths.length; index++) {
-          await verifyLocalSource(action.source.paths[index]!, "file", { sourcePath: path, field: `${context.field}[${index}]` });
+          await verifyLocalSource(action.source.paths[index]!, "file", { source: path, path: `${context.path}[${index}]` });
         }
       } else if (action.source.kind === "random" && action.source.directory !== null) {
         await verifyLocalSource(action.source.directory, "directory", context);
@@ -321,14 +332,53 @@ export async function loadCronConfig(path: string = CRON_CONFIG_PATH): Promise<C
   return config;
 }
 
+/**
+ * `send_voice` 要用 config/agent.json 的 `agent.tts` 合成语音：任务表里出现 send_voice 而
+ * tts 缺省时，按第一个 send_voice 动作的字段路径拒绝整份文件。
+ * @param tts 与这份任务表同时生效的 tts 配置；启动时是刚校验的 agent 配置，热重载时是
+ *   本轮对账后生效的那一份。
+ */
+export function assertCronVoiceSupported(
+  config: CronConfig,
+  tts: AgentTtsCapabilityConfig | undefined,
+  sourcePath: string = CRON_CONFIG_PATH
+): void {
+  if (tts !== undefined) return;
+  for (let taskIndex: number = 0; taskIndex < config.length; taskIndex++) {
+    const actions: readonly Readonly<CronAction>[] = config[taskIndex]!.actions;
+    for (let actionIndex: number = 0; actionIndex < actions.length; actionIndex++) {
+      if (actions[actionIndex]!.type !== "send_voice") continue;
+      fail(
+        { source: sourcePath, path: `$[${taskIndex}].actions[${actionIndex}].type` },
+        "send_message, send_image or send_file unless config/agent.json configures $.agent.tts alongside text, summary and media"
+      );
+    }
+  }
+}
+
+/** 任务表里是否有 send_voice 动作；热重载据此判断 agent.json 能否去掉 tts。 */
+export function cronConfigUsesVoice(config: CronConfig): boolean {
+  for (const task of config) {
+    for (const action of task.actions) {
+      if (action.type === "send_voice") return true;
+    }
+  }
+  return false;
+}
+
 /** 接管已严格校验的任务表：启动总闸或 config/ 热重载；null 表示文件已删除或缺省。 */
 export function adoptCronConfig(config: CronConfig | null): void {
   cronConfigCache.current = config;
 }
 
-/** 启动总闸：文件存在时加载并接管。 */
+/**
+ * 启动总闸：文件存在时加载、核对 send_voice 与 `agent.tts` 后接管。须排在 agent.json 的
+ * 校验之后（见 config/readiness.ts 的 validateExistingDeploymentInputs）。
+ */
 export async function ensureCronConfig(): Promise<void> {
-  adoptCronConfig(await loadCronConfig());
+  const config: CronConfig = await loadCronConfig();
+  assertCronVoiceSupported(config, agentTtsConfig());
+  adoptCronConfig(config);
 }
 
 /** 当前生效的任务表；文件缺省时为空表。只读 holder，不读盘。 */

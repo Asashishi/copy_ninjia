@@ -35,8 +35,9 @@
 - **`packages/aiChat/`**
   - **职责**：AI 闲聊主线程代理与模型能力，包括 Worker 监督、记忆镜像、启动与热重载的状态灌入、可用性判定，
     以及供应商实现包（`gemini/`、`openai/`）、provider 选取、贴纸、工具和媒体实现。
-  - **典型文件**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`memoryMirror.ts`、
-    `availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`；
+  - **典型文件**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`botImages.ts`（命令与定时任务发图的占位自录入口）、
+    `voiceSynthesis.ts`（`/send` 与 cron 向 AI Worker 请求语音合成的等待与结算）、
+    `memoryMirror.ts`、`availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`；
     `index.ts` 只提供薄公开入口。
 - **`packages/antiRaid/`**
   - **职责**：Anti-Raid 主线程代理与广告模型能力，包括 Worker 监督、持久化交接、
@@ -85,7 +86,7 @@
     `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
-  - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`；AI 闲聊的模型收发不在
+  - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（语音合成公共实现）；AI 闲聊的模型收发不在
     这里，而在与供应商同名的 `packages/aiChat/{gemini,openai}/` 实现包。
 - **`packages/workers/antiRaid/adDetect/`**
   - **职责**：广告检测流水线，包括排队批处理、消息串整形、provider 判定与命中处置。
@@ -120,11 +121,11 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **安装器**：`install.sh` 定位目标工作树并转交该版本入口；`scripts/install/` 的 repository、service、config、runtime、configure、start 六个 shell 模块由入口统一检查可读性和语法后按序加载。`installSources.ts` 为语法检查与隔离夹具提供相同模块清单。
-  - **冷迁移**：`migrateHImageAddPermission.ts` 校验 schema v10 停机备份并生成独立产物与校验清单；`migrations/hImageAddPermission/database.ts` 校验源谱系并执行 schema v11 的权限迁移事务，不进入应用启动依赖图。`migrateRandomImageNames.ts` 把随机图库的旧文件名重建成按内容 SHA-256 命名的独立产物，同样只读源目录、以 `ready.json` 作为唯一完成标记。
+  - **冷迁移**：`migrateTranslateSessions.ts` 校验停机备份里的主备 state 与 schema v11 数据库并生成独立产物与校验清单；`migrations/translateSessions/state.ts` 拆出 state 的 `translate` 块，`migrations/translateSessions/database.ts` 在一个事务里把会话写进 `chat_states`，`migrations/files.ts` 是两条边共用的文件清单与路径包含判定，均不进入应用启动依赖图。`migrateRandomImageNames.ts` 把随机图库的旧文件名重建成按内容 SHA-256 命名的独立产物，同样只读源目录、以 `ready.json` 作为唯一完成标记。
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
   - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`，以及两套基准根共用的 `fixtures/copyTree.ts`（目录树复制）与 `fixtures/pathBoundary.ts`（写入边界的真实路径分量核对）。
 
-`scripts/migrations/active.ts` 是当前冷迁移入口清单，供构建、发行校验和约定门禁共用。`migrateBotConfig.ts` 处理 Bot 身份与语气、state 图库字段、cron 固定图片数组，以及显式提供的项目根 Google 凭据；`migrations/botConfig/` 承担解析与文件准备。发行包携带三条边的 CLI，通过 `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` 执行，部署步骤见 [07 运维与排障](07-operations.md)。
+`scripts/migrations/active.ts` 是当前冷迁移入口清单，供构建、发行校验和约定门禁共用。发行包携带两条边的 CLI，通过 `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` 执行，部署步骤见 [07 运维与排障](07-operations.md)。
 
 `botInput.ts` 提供安装器和运行时共用的严格读取、解析入口，导入时不读部署文件或填充缓存；`bot.ts` 负责运行时快照。`libs/inflight.ts` 统一在途任务的有界等待，领域 owner 保留自己的接纳、取消和零预算策略；`infra/backgroundTasks.ts` 负责后台任务错误记录和结算后摘除。群开关命令共用 `commands/superAdminToggle.ts` 的授权、配置门禁、写入、持久化与回执顺序。
 
@@ -150,11 +151,11 @@
 
 - **`main/`**
   - **owner**：主线程。
-  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像与 `translateState.ts` 的按群翻译会话、`chatState.ts` 的 `chat_states` 群状态热读副本（`Map`，至多 25 个群）、Disk I/O 宿主，以及
+  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像、`chatState.ts` 的 `chat_states` 群状态热读副本（`Map`，至多 25 个群，含按群翻译会话）、Disk I/O 宿主，以及
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。
-  - **内容**：滚动记忆、回复准入、心情、贴纸目录与集合，以及两家供应商的客户端单例。
+  - **内容**：滚动记忆、回复准入、回复机器人图片时的识图回填登记、心情、贴纸目录与集合、主线程转交的在途语音合成，以及两家供应商的客户端单例。
 - **`workers/antiRaid/`**
   - **owner**：Anti-Raid Worker。
   - **内容**：验证/锁定状态机、刷屏窗口、广告检测队列、Google/OpenAI 客户端。

@@ -1,9 +1,8 @@
 import type { Message } from "grammy/types";
 import { isReplyToSelf, resolveForwardOrigin, resolveMentionFacts, resolveReplyReference } from "./facts";
 import { explicitReplyTo, forumTopicThreadId } from "../../libs/forumTopic";
-import type { AiBotInfo } from "../../types/aiChat/protocol";
+import type { AiBotInfo, AiDirectTriggerReason } from "../../types/aiChat/protocol";
 import type { MentionFacts, MessageTriggerContext } from "../../types/auto";
-import type { AiDirectTriggerReason } from "../../types/aiChat/protocol";
 
 export interface CreateMessageTriggerContextParams {
   message: Message;
@@ -40,7 +39,7 @@ export function createMessageTriggerContext({
     isQuiet,
     aiReplyProbability,
     repliedTo,
-    replyReference: resolveReplyReference(message),
+    replyReference: resolveReplyReference(message, bot.id),
     forwardedFrom: resolveForwardOrigin(message),
     isMentioned: mentionFacts.isMentioned,
     hasOtherMention: mentionFacts.hasOtherMention,

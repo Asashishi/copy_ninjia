@@ -59,16 +59,17 @@ async function sendWedNotice(
 /**
  * 群关闭先同步关闸，再删除状态机拥有的结果；重启不恢复这些会话。
  *
- * 交互缓存与长期成员集合是两份状态，收场也不同：前者按 LRU 淘汰过就可能不在，
- * 后者只要这个群发过言就一直在。因此**成员集合的删除不挂在 `chat !== undefined`
- * 上**——被淘汰过的群同样要把奖池删干净。只有被撤管理员那一路两样都不动：权限
- * 随时可能加回来，那时奖池必须原样还在（见 libs/chatTeardown.ts 的 purgesChatData）。
+ * 交互缓存与长期成员集合是两份状态，收场也不同：前者只在本进程有过交互、且没被
+ * 先前的 teardown 收掉时才存在，后者只要这个群发过言就一直在。因此**成员集合的
+ * 删除不挂在 `chat !== undefined` 上**——没有交互的群同样要把奖池删干净。只有被撤
+ * 管理员那一路只收交互、不动成员集合：权限随时可能加回来，那时奖池必须原样还在
+ * （见 libs/chatTeardown.ts 的 purgesChatData）。
  */
 export async function teardownWedInChat(
   chatId: number,
   reason: ChatTeardownReason
 ): Promise<void> {
-  const chat: WedChat | undefined = wedChats.peek(chatId);
+  const chat: WedChat | undefined = wedChats.get(chatId);
   if (chat !== undefined) {
     wedChats.delete(chatId);
     await teardownWedChat(chat);

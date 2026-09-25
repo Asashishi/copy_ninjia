@@ -14,7 +14,8 @@
  * 段与段之间插入 NUL 分隔：被哈希的都是提示词与 JSON 文本，其中不可能出现 NUL，
  * 因此「a + b」和「ab + 空」这类拼接歧义不可能把两段不同的前缀算成同一个指纹。
  * @param parts 已序列化好的前缀各段，顺序即语义，由调用方保证同一形态顺序稳定。
- * @returns 十六进制摘要串。
+ * @returns base64url 摘要串，固定 43 字符，让「前缀 + `:` + 指纹」落在
+ *   OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH 以内（见 consts/aiChat/openai.ts）。
  */
 export function stablePrefixFingerprint(parts: readonly string[]): string {
   const hasher: Bun.CryptoHasher = new Bun.CryptoHasher("sha256");
@@ -22,5 +23,5 @@ export function stablePrefixFingerprint(parts: readonly string[]): string {
     hasher.update("\0");
     hasher.update(part);
   }
-  return hasher.digest("hex");
+  return hasher.digest("base64url");
 }

@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5104_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.19%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5142_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.23%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5104 件のテストが全て成功 / テストファイル 444 件 / expect() 呼び出し 192,389 回 / 関数カバレッジ 97.06% / 行カバレッジ 98.19%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5142 件のテストが全て成功 / テストファイル 450 件 / expect() 呼び出し 194,128 回 / 関数カバレッジ 97.16% / 行カバレッジ 98.23%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -109,7 +109,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>👁️ マルチモーダル &amp; 創作</b><br>
-  <sub>画像と音声を理解し、画像や楽曲を作って群へ返します。</sub></p>
+  <sub>画像と音声を理解し、画像を作ったりボイスを送ったりして群へ返します。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🔎 リアルタイム事実確認</b><br>
@@ -165,7 +165,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>⏰ 定時送信</b><br>
-  <sub>時区を指定して文章・ファイル・ランダム画像・固定画像 1〜10 枚を送信。一度限りの実行やランダム間隔にも対応します。</sub></p>
+  <sub>時区を指定して文章・ファイル・ボイス・ランダム画像・固定画像 1〜10 枚を送信。一度限りの実行やランダム間隔にも対応します。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 人設と通知の口調</b><br>
@@ -197,10 +197,23 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>📨 プライベート中継</b><br>
-  <sub>スーパー管理者が個別チャットで /send を開始すると、管理中の指定群へメッセージを転送できます。</sub></p>
+  <sub>スーパー管理者が個別チャットで /send を開始すると、管理中の指定群へメッセージを転送でき、テキストを Bot にボイスで読み上げさせることもできます。</sub></p>
 </td>
 </tr>
 </table>
+
+### ボイス・画像・記憶
+
+| 機能 | 動作 |
+| :--- | :--- |
+| AI ボイス | 音色と文ごとの口調を設定可能。1 ラウンド 1 件、セリフは UTF-16 コード単位で最大 64。送信成功後にセリフを記憶 |
+| 管理者・定時ボイス | `/send` と cron は TTS を共用し、上限は UTF-16 コード単位で 256。cron は各ラウンドで 1 回合成し、Telegram の `file_id` を再利用 |
+| 画像の記憶 | 生成画像は内容を記録。`/wed`・`/h_image`・定時画像はまずプレースホルダーを記録し、返信された時に画像を認識 |
+
+音声には `agent.tts` の明示設定が必要です（現在は Google が提供）。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
+
+> [!IMPORTANT]
+> [13.0.2 → 14.0.0 更新手順](07-operations.md#upgrade-14)
 
 各機能の挙動・設定・境界は **[📚 開発者ドキュメント](content-table.md)** を参照してください。
 
@@ -312,7 +325,7 @@ Bot をグループ管理者にし、使う機能に応じて権限を付与し�
 | 管理者権限 | 使う機能 |
 | :--- | :--- |
 | メッセージの削除 | `/gag`、広告検出による広告の削除、ブロックリスト入りチャンネル identity の発言の削除 |
-| メンバーの制限と BAN | 未認証メンバーのキック、Anti-Raid のプライベートモード、`/block enable|disable`、`/mute`、`/unmute`、`/batch_kick`、連投ミュート、広告検出による BAN |
+| メンバーの制限と BAN | 未認証メンバーのキック、Anti-Raid のプライベートモード、`/block enable\|disable`、`/mute`、`/unmute`、`/batch_kick`、連投ミュート、広告検出による BAN |
 
 参加認証は管理者であること自体にも依存します。Telegram はメンバーの参加・退出イベントを管理者の Bot にしか送りません。権限が足りないときは、Bot の通知が欠けている権限を示します。`isCanViewBotStatus` を持つ identity は `/bot_status` で現在のグループに付与された権限を確認できます。
 

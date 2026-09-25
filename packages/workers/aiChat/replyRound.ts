@@ -22,23 +22,25 @@ import { raceAbort } from "../../libs/abortSignal";
 import { truncateInline } from "../../libs/text";
 import { isReplyRoundRateLimited } from "../../states/replyAdmission";
 import type { AiBotInfo, ImageGenerationReference } from "../../types/aiChat/protocol";
-import type { BufferedReplyReference } from "../../types/aiChat/memory";
+import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type {
   QueuedReplyTrigger,
   ReplyPromptSections,
   ReplyToolContext,
   ReplyToolset,
   ReplyDeliveryTurn,
+  SentGeneratedImage,
+  MediaCommentContext,
 } from "../../types/aiChat/replies";
 import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { generateReply } from "./replyModel";
 import { reserveReplyDelivery } from "./replyDelivery";
 import { buildReplyPromptSections } from "./promptContext";
-import type { MediaCommentContext } from "../../types/aiChat/replies";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 import { notifyRateLimited } from "./replyState";
 import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGeneration";
 import { recordChatMessage } from "./rollingMemory";
+import { repliedBotImageBackfill, trackGeneratedImage } from "./botImages";
 import type { ChatActionHeartbeatControl } from "../../types/aiChat/chatAction";
 
 export interface ReplyRoundRequest {
@@ -89,7 +91,7 @@ export function startReplyRound(
   const generation: number = request.generation ?? cachedReplyGeneration(chatId);
   if (!isCachedReplyGenerationCurrent(chatId, generation)) return false;
 
-  // 自动插话与随机媒体评价不得动用重媒体工具（生图、生歌）。用户直接回复/@
+  // 自动插话与随机媒体评价不得动用重媒体工具（生图）。用户直接回复/@
   // 的文字轮，以及带 directTriggerReason 的媒体轮才向工具上下文开放统一资格。
   const mediaToolsAllowed: boolean = imageGenerationRequested &&
     !isRandomTrigger &&
@@ -145,6 +147,12 @@ export function startReplyRound(
         ? await raceAbort(mediaPreparation, { signal, cancelled: null, rejected: null })
         : mediaComment;
       if (!isActive() || resolvedMedia === null) return;
+      // 触发消息回复了机器人的图片且正在识图时，等回填完成再拼提示词（见 botImages.ts）。
+      const botImageBackfill: Promise<void> | undefined = repliedBotImageBackfill(chatId, replyToMessageId);
+      if (botImageBackfill !== undefined) {
+        await raceAbort(botImageBackfill, { signal, cancelled: undefined, rejected: undefined });
+        if (!isActive()) return;
+      }
       // 排队媒体使用入站快照的身份与回复边，只将占位正文替换为解析结果。
       const resolvedQueuedTrigger: QueuedReplyTrigger | undefined = queuedTrigger && resolvedMedia
         ? {
@@ -176,7 +184,7 @@ export function startReplyRound(
           : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
             (resolvedMedia?.triggerReference?.messageId === repliedToMessageId ? resolvedMedia.triggerReference : undefined) ??
             (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
-        /** 四个自发消息回调唯一的差别是文案来源，贴纸没有回复关系可还原。
+        /** 各自发消息回调唯一的差别是文案来源，贴纸没有回复关系可还原。
          * 主线程认自己的消息不靠这里回投——代理边界在把 id 交回本线程之前就已
          * 登记（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage），
          * 因此这里只剩自录转录一件事。任何一份拷贝漏掉 isActive() 都会把已经
@@ -185,14 +193,14 @@ export function startReplyRound(
           text: string,
           messageId: number,
           repliedToMessageId?: number
-        ): void => {
-          if (!isActive()) return;
+        ): BufferedMessage | null => {
+          if (!isActive()) return null;
           // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言在转录里
           // 同样带「回复了谁」。请求侧固定指向触发
           // 消息，因此只采信服务端实际返回的回复关系。
           const selfReplyTo: BufferedReplyReference | undefined =
             selfReplyReferenceFor(repliedToMessageId);
-          recordChatMessage(buildSelfRecordMessage({
+          return recordChatMessage(buildSelfRecordMessage({
             chatId,
             self: selfInfo,
             messageId,
@@ -215,10 +223,22 @@ export function startReplyRound(
           signal,
           onMessageSent: recordSelfSent,
           // 贴纸没有可还原的回复关系，只登记描述。
-          onStickerSent: (stickerDescription: string, messageId: number): void =>
-            recordSelfSent(stickerDescription, messageId),
-          onImageSent: recordSelfSent,
-          onSongSent: recordSelfSent,
+          onStickerSent: (stickerDescription: string, messageId: number): void => {
+            recordSelfSent(stickerDescription, messageId);
+          },
+          // 生图先以占位态自录，再识图原位换成画面内容。
+          onImageSent: (image: SentGeneratedImage): void => {
+            const entry: BufferedMessage | null = recordSelfSent(image.text, image.messageId, image.repliedToMessageId);
+            if (entry === null) return;
+            trackGeneratedImage({
+              chatId,
+              entry,
+              origin: image.origin,
+              caption: image.caption,
+              photo: image.photo,
+            });
+          },
+          onVoiceSent: recordSelfSent,
         };
         const toolset: ReplyToolset = await createReplyToolset(ctx, delivery.ready);
         let finalText: string | null = null;

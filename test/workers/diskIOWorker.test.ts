@@ -26,6 +26,7 @@ import {
   handleChatStateWrite,
   handleIdentityPolicyWrite,
   handleJoinLogMessage,
+  setStorageFlushHold,
   handleLogMessage,
   handleLuckDrawMessage,
   handleTemporaryAdBypassWrite,
@@ -242,6 +243,13 @@ describe("Disk I/O Worker protocol router", () => {
     // 在线消息不升级为停机：主线程仍持有未 ACK 的 revision，Worker 重建时重放。
     expect(postMessage).not.toHaveBeenCalled();
     rejectedStorageDomains.clear();
+  });
+
+  test("镜像重放区间标记按顺序交给共享 SQLite 的提交暂缓开关", async () => {
+    setStorageFlushHold.mockClear();
+    await route({ type: "storageFlushHold", active: true });
+    await route({ type: "storageFlushHold", active: false });
+    expect(setStorageFlushHold.mock.calls.map((call: unknown[]): unknown => call[0])).toEqual([true, false]);
   });
 
   test("恢复重放期间的身份写失败升级为停机回执，不只是记拒收", async () => {

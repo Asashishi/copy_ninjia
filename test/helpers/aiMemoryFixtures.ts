@@ -34,6 +34,7 @@ export function bufferedMessageFixture(
     replyTo: undefined,
     forwardedFrom: undefined,
     at: "2026/08/02 11:45:00",
+    pendingImage: undefined,
     ...overrides,
   };
 }
@@ -68,6 +69,7 @@ export function aiReplyReferenceFixture(
     text: "被回复的正文",
     quote: undefined,
     forwardedFrom: undefined,
+    botImage: undefined,
     ...overrides,
   };
 }

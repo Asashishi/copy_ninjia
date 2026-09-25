@@ -10,8 +10,8 @@ import type {
 import type {
   MediaInputResultEvent,
   MediaInputTransition,
+  MediaInputModalityState,
 } from "../types/states/mediaInputSupport";
-import type { MediaInputModalityState } from "../types/states/mediaInputSupport";
 
 /**
  * media 模型视觉/语音输入支持度的四档状态机（纯函数，不读时钟、不写缓存、

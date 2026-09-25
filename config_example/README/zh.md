@@ -38,7 +38,7 @@ done
 | `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `cron.json` | 定时发送任务（文字、图片、文件） | 没有定时任务 |
+| `cron.json` | 定时发送任务（文字、图片、文件、语音） | 没有定时任务 |
 | `g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
 
 AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
@@ -56,7 +56,11 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 - 新增或删除 `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`，在 `agent.json`
   里整段增删 `ad_detect`，或增删 `text`、`summary`、`media` 中任一项，直接改变对应功能的可用性：缺了前提的 AI 闲聊或广告检测
   立即停用并在日志记一行原因，群开关保持原值；补齐后自动恢复，无需重启。删除文件时日志
-  记 `Deployment config <路径> was removed.`。`image`、`song` 的增删直接生效。
+  记 `Deployment config <路径> was removed.`。`image`、`tts` 的增删直接生效。
+- `cron.json` 的 `send_voice` 依赖 `agent.json` 的 `tts`（连同 `text`、`summary`、`media`）：
+  新任务表用到 `send_voice` 而当时没有可用的 `tts` 时，整份 `cron.json` 改动被拒绝；任务表仍在
+  用 `send_voice` 时，去掉 `tts`（或删掉整份 `agent.json`、对话核心能力）的 `agent.json` 改动
+  同样整份被拒绝。两种拒绝都沿用上一份已生效配置并记错误日志；启动时出现同样的组合直接拒绝启动。
 - `stickers.json` 新加入的贴纸包立即开始生成目录；移出的包不再供 AI 使用，其目录在
   下次重启时按白名单清理。
 - `mood.json` 中仍然存在的心情对各群立即生效；当前心情已被删除的群在下次用到时重抽。
@@ -93,7 +97,7 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 | `summary` | 压缩长期对话记忆、生成贴纸包简介 | AI 对话核心，必须存在 |
 | `media` | 识图、描述贴纸和转写语音 | AI 对话核心，必须存在 |
 | `image` | 为 AI 注册生图工具 | 可选；缺失只移除生图工具 |
-| `song` | 为 AI 注册生歌工具 | 可选；缺失或实现不支持只移除生歌工具 |
+| `tts` | 语音合成：AI 语音工具（日语台词合成后以语音消息发出）、`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 共用 | 可选；缺失或实现不支持时移除语音工具、`/send` TTS 请求报错；`cron.json` 用到 `send_voice` 时必须存在 |
 
 普通能力使用下面四个字段：
 
@@ -114,8 +118,15 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 - `openai-standard`：GPT Image 系列共同支持的标准尺寸协议。
 - `xai`：xAI 的 JSON 与画幅协议。
 
-`image.provider` 为 `google` 时禁止填写 `image_protocol`。当前只有 Google 实现了生歌，
-所以 `song.provider` 选择 `openai` 虽能通过通用配置校验，但不会注册生歌工具。
+`image.provider` 为 `google` 时禁止填写 `image_protocol`。
+
+`tts` 在四个字段之外还必须配置非空 `voice`，原样作为合成请求的音色：可以是预置音色名
+（示例中的 `Leda`），也可以是 AI Studio Voice design 生成的 `voice_` 音色 ID。设计音色归属
+该 `api_key` 所在的项目，且会在一年后过期；程序只校验它是非空字符串，音色是否存在由第一次
+合成请求决定。当前只有 Google 实现了语音合成，所以 `tts.provider` 选择 `openai` 虽能通过
+配置校验，但不会注册语音工具，`/send` 与 `cron.json` 的语音请求也会失败并记错误日志。三处都在
+AI Worker 上合成，因此还需要 AI 对话的其余前提（`stickers.json`、`mood.json`、
+`prompt/persona.md`）齐备，否则合成按「Worker 不可用」失败。
 
 `media` 的视觉与语音输入支持度分别在第一次真实请求时探测和缓存。明确不支持后，
 当前 Worker 生命周期内不再下载该类媒体；成功后记为支持；网络等瞬时错误保持未知，
@@ -186,7 +197,8 @@ SDK。安装器不会从示例生成这个文件。
 
 [`config_example/cron.json`](../cron.json) 收录了覆盖全部写法的示例任务：工作日发纯文字；显式写出
 时区，依次发文字、网址图片和网址文件；按相对项目根的路径发送本地图片、按绝对路径发送本地文件；
-`rand_cron` 区间从默认图库抽图；`@daily` 加单值 `rand_cron` 从指定目录抽图；以及 `just_once`。示例里的会话 id、地址和
+`rand_cron` 区间从默认图库抽图；`@daily` 加单值 `rand_cron` 从指定目录抽图；带语气与不带语气的
+`send_voice`；以及 `just_once`。示例里的会话 id、地址和
 本地路径都是假的，原样放进 `config/` 会因本地文件不存在而拒绝启动；按需挑任务、改成真实的会话 id
 与路径后写进 `config/cron.json`。安装器不会从示例生成这个文件。
 
@@ -202,7 +214,8 @@ SDK。安装器不会从示例生成这个文件。
       { "type": "send_message", "payload": { "content": "早上好" } },
       { "type": "send_image", "payload": { "content": "今日图", "rand_image": true } },
       { "type": "send_image", "payload": { "url": ["https://example.com/a.png", "https://example.com/b.png"], "is_blurred": true } },
-      { "type": "send_file", "payload": { "content": "周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
+      { "type": "send_file", "payload": { "content": "周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } },
+      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おはよう、今日もがんばろうね" } }
     ]
   }
 ]
@@ -224,6 +237,11 @@ SDK。安装器不会从示例生成这个文件。
 - `send_image`：`content` 是一份可选文字（最长 1024 字符）。固定图片来源只能二选一：`url` 数组或 `path` 文件数组，长度 1–10；单张也必须写数组，如 `"url": ["https://example.com/a.jpg"]`。此时 `rand_image` 只能省略或为 `false`。一张用单图发送，2–10 张用一次相册请求，只有第一张带 caption，不另发文字；相册有多个 Telegram 消息 ID。`is_blurred: true` 对全部图片加剧透遮罩，缺省或 `false` 不加。
   `rand_image: true` 每次只随机一张：禁止 `url` 与文件数组，`path` 只能是目录字符串；省略时使用 `state.global.assets.randomHImageDir`，指定其他目录时不要求 SHA-256 命名。
 - `send_file`：`content` 可选（最长 1024 字符），来源恰好一个 `url` 或 `path`。
+- `send_voice`：`content` 必填，是要念的台词（最长 256 字符）；`tone` 可选，是这一句的说话语气
+  （最长 64 字符），拼在固定的基础声线之后，省略则只用基础声线。两者换行合并成空格、去掉首尾空白
+  后不能为空。台词经 `agent.json` 的 `tts` 合成后以语音气泡发出；必须配置 `tts`，见上文「运行中修改」。
+  同一轮里这句语音只合成一次，重试和发往后续群都复用同一段语音；第一次发送成功后改用 Telegram 返回的 `file_id`，
+  不再重复上传。
 
 `path` 写绝对路径，或相对项目根目录的路径（源码运行时项目根是仓库根，二进制运行时是服务的工作
 目录），可以指向本机任何位置的文件或目录（符号链接按指向的对象判定）；加载时就
@@ -237,7 +255,8 @@ GIF 可用，其余类型发不出去属于配置问题。本地上传的上限�
 - 同一任务的两轮不会重叠；停机期间错过的触发不补发。`just_once` 的执行记录与 `rand_cron`
   的随机等待都只在内存里，重启后重新开始。
 - 某个动作因网络、Telegram 5xx、出站闸重试后仍返回的 429 或出站队列满失败时，按 2、4、8 秒退避最多重试 3 次；
-  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删）不重试。最终失败时日志记一条
+  `send_voice` 的合成没交回音频、等待超时或 AI Worker 暂不可用同样按此重试。
+  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删、`tts` 未配置或实现不支持、音频编码失败）不重试。最终失败时日志记一条
   `Cron task "<name>" action #<n> ...`，并跳过本轮剩下的动作。超时但 Telegram 实际已收到时，
   重试会重复发送一条。
 - 定时消息长期保留，不做 30 秒删除；不带论坛话题，开了话题的群里发到 General。全部请求照常经过
@@ -248,7 +267,7 @@ GIF 可用，其余类型发不出去属于配置问题。本地上传的上限�
   失败日志写明是哪个会话。
 - `chat_id: ["all"]`：每一轮开始时，对所有已 `/init enable` 的群逐个现查机器人此刻的发送权限
   （群主、管理员直接可发；被限制时看它自己的发送权限；普通成员看群的默认成员权限）。文字要能
-  发消息、图片要能发图片、文件要能发文件，本任务用到的缺任何一项，整群跳过，不会只收到半套。
+  发消息、图片要能发图片、文件要能发文件、语音要能发语音消息，本任务用到的缺任何一项，整群跳过，不会只收到半套。
   可发送的群按 chat id 从小到大逐个执行整套动作，群与群之间同样间隔 1 秒；某个群最终失败只跳过
   该群剩下的动作，日志写明群 id，然后继续下一个群。有群被跳过时，本轮结束记一行
   `Cron task "<name>" skipped <n> chat(s) without send permission.`。随机图每个群各抽一张。

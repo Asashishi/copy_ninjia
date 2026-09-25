@@ -20,7 +20,12 @@ mock.module("../../../packages/libs/sleep", () => ({
 const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
 const { createSendMessageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/sendMessage");
-const { createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
+const {
+  acceptRoundText,
+  createRoundMessageState,
+  isDuplicateOfAcceptedText,
+  reserveCorrectionText,
+} = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const { modelAuthoredTextPolicyResult } = await import("../../../packages/aiChat/ai/tools/replyToolset/modelAuthoredText");
 
 function context(): ReplyToolContext {
@@ -41,7 +46,7 @@ function context(): ReplyToolContext {
     onMessageSent: mock((): void => {}),
     onStickerSent: mock((): void => {}),
     onImageSent: mock((): void => {}),
-    onSongSent: mock((): void => {}),
+    onVoiceSent: mock((): void => {}),
   };
 }
 
@@ -109,7 +114,7 @@ describe("单轮回复静默去重", () => {
   test("已发送的媒体附言阻止同轮独立文字重发", async () => {
     const ctx: ReplyToolContext = context();
     const state: RoundMessageState = createRoundMessageState();
-    state.acceptedCanonicalTexts.add("今晚 月色不错");
+    acceptRoundText(state, "今晚 月色不错");
     const execute = createSendMessageExecutor(ctx, state, (): number => 1);
     expect(execute(JSON.stringify({ text: "今晚\n月色不错" }))).toBe(JSON.stringify({
       success: true, skipped: "duplicate", actions_used: 0,
@@ -119,15 +124,32 @@ describe("单轮回复静默去重", () => {
     expect(ctx.chatAction.set).not.toHaveBeenCalled();
   });
 
-  test("正文、图片附言、歌曲附言共享同一去重回执，标点与字词有差异时仍可发送", () => {
+  test("正文与图片附言共享同一去重回执，标点与字词有差异时仍可发送", () => {
     const state: RoundMessageState = createRoundMessageState();
-    state.acceptedCanonicalTexts.add("今晚 月色不错");
-    for (const surface of ["message", "picture", "song"] as const) {
+    acceptRoundText(state, "今晚 月色不错");
+    for (const surface of ["message", "picture"] as const) {
       expect(JSON.parse(modelAuthoredTextPolicyResult("今晚\n月色不错", state, surface)!)).toEqual({
         success: true, skipped: "duplicate", actions_used: 0,
       });
       expect(modelAuthoredTextPolicyResult("今晚 月色不错？", state, surface)).toBeNull();
       expect(modelAuthoredTextPolicyResult("明晚 月色不错", state, surface)).toBeNull();
     }
+  });
+
+  test("接纳时按归一化形态登记：NFD 与 NFC、连续空白和首尾空白视为同一文本", () => {
+    const state: RoundMessageState = createRoundMessageState();
+    acceptRoundText(state, "  cafe\u0301   不错 ");
+    expect(state.acceptedCanonicalTexts.has("café 不错")).toBe(true);
+    expect(isDuplicateOfAcceptedText(state, "café\t不错")).toBe(true);
+    expect(isDuplicateOfAcceptedText(state, "\ncafe\u0301 不错\n")).toBe(true);
+    expect(isDuplicateOfAcceptedText(state, "Café 不错")).toBe(false);
+  });
+
+  test("执行侧接管的纠正字同样按归一化形态判重", () => {
+    const state: RoundMessageState = createRoundMessageState();
+    reserveCorrectionText(state, " 在 ");
+    expect(state.reservedCorrectionText).toBe("在");
+    expect(isDuplicateOfAcceptedText(state, "在")).toBe(true);
+    expect(isDuplicateOfAcceptedText(state, "再")).toBe(false);
   });
 });

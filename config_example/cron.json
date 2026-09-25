@@ -63,12 +63,21 @@
     ]
   },
   {
+    "name": "nightly-voice-greeting",
+    "chat_id": [-1001234567890],
+    "cron": "0 23 * * *",
+    "actions": [
+      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おやすみ、また明日ね" } },
+      { "type": "send_voice", "payload": { "content": "夜ふかしはほどほどにね" } }
+    ]
+  },
+  {
     "name": "one-time-welcome-notice",
     "chat_id": [-1009876543210],
     "cron": "0 20 * * *",
     "just_once": true,
     "actions": [
-      { "type": "send_message", "payload": { "content": "本群已接入机器人，用 /help 看看它会做什么" } }
+      { "type": "send_message", "payload": { "content": "本群已接入机器人，可以回复群友发送 /贴贴 等动作命令" } }
     ]
   }
 ]

@@ -16,15 +16,15 @@ export type {
 
 export {
   copyMessage,
-  sendAudioWithResult,
   sendPhotoWithResult,
   sendSticker,
+  sendVoiceWithResult,
 } from "./actions/mediaMessages";
 export type {
   CopyMessageParams,
-  SendAudioParams,
   SendPhotoParams,
   SendStickerParams,
+  SendVoiceParams,
 } from "./actions/mediaMessages";
 
 export {

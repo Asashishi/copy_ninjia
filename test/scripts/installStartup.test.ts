@@ -21,8 +21,8 @@ function firstInstallPrompts(ai: boolean): PromptReply[] {
     { prompt: "现在配置 AI 能力", reply: ai ? "y" : "n" },
   ];
   if (ai) {
-    for (const capability of ["ad_detect", "text", "summary", "media", "image", "song"]) {
-      const enabled: boolean = ["text", "summary", "media"].includes(capability);
+    for (const capability of ["ad_detect", "text", "summary", "media", "image", "tts"]) {
+      const enabled: boolean = ["text", "summary", "media", "tts"].includes(capability);
       prompts.push({ prompt: `配置 ${capability}？`, reply: enabled ? "y" : "n" });
       if (enabled) {
         prompts.push(
@@ -30,6 +30,7 @@ function firstInstallPrompts(ai: boolean): PromptReply[] {
           { prompt: `${capability} 的 api_key`, reply: "installation-test-api-key", secret: true },
           { prompt: `${capability} 的 model`, reply: "installation-test-model" }
         );
+        if (capability === "tts") prompts.push({ prompt: "tts 的 voice", reply: "Leda" });
       }
     }
   }
@@ -51,6 +52,11 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
   expect(output).toContain(`INSTALL_WORKERS ${JSON.stringify(
     (ai ? ["aiChatWorker.ts", "antiRaidWorker.ts", "diskIOWorker.ts"] : ["antiRaidWorker.ts", "diskIOWorker.ts"])
   )}`);
+  if (ai) {
+    const agent: { readonly agent: Readonly<Record<string, Readonly<Record<string, unknown>>>> } =
+      await Bun.file(join(fixture.configRoot, "agent.json")).json();
+    expect(agent.agent.tts).toMatchObject({ provider: "google", model: "installation-test-model", voice: "Leda" });
+  }
   expect(await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists()).toBe(true);
   expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).json()).toBeDefined();
   expect(await Bun.file(join(fixture.runtimeRoot, "bot.lock")).exists()).toBe(false);

@@ -4,10 +4,9 @@
  * perThread：主线程、AI 闲聊 Worker、Anti-Raid Worker 都会经 infra/telegram 发消息，
  * 各自在本线程登记自己刚发出的那条，互不共享也不需要共享——判回环只看本线程发过什么。
  *
- * 两张表都按 chatId 分层、内层才是 messageId，而不是拼 `chatId:messageId` 复合串：
- * 判回环在每条群消息上最多要跑 5 次（调用点清单见 infra/selfSentTracker.ts 头注），
- * 复合串等于每次现造一个短命字符串，实测比两次整数键查找贵一个量级。分层之后
- * 没发过消息的群在外层就落空，连内层都不必查。
+ * 两张表都按 chatId 分层、内层才是 messageId，按两次整数键查找，不构造复合字符串键。
+ * 判回环在每条群消息上最多要跑 5 次（调用点清单见 infra/selfSentTracker.ts 头注）；
+ * 没发过消息的群在外层就落空，不查内层。
  */
 
 import type { SelfSentWaiter } from "../../types/telegram";

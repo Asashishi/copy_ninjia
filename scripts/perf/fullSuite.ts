@@ -20,12 +20,11 @@
  */
 
 import { arch, cpus, platform, release, totalmem } from "node:os";
-import { FULL_SUITE_ROUNDS } from "./fullSuite/constants";
+import { FULL_SUITE_ROUNDS, PERFORMANCE_MOCK_ROOT_NAME } from "./fullSuite/constants";
 import {
   addProcessIo,
   emptyProcessIo,
 } from "./fullSuite/processIo";
-import { PERFORMANCE_MOCK_ROOT_NAME } from "./fullSuite/constants";
 import {
   createBenchmarkConfigRoot,
   createRunRoot,

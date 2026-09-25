@@ -12,6 +12,7 @@ import {
   pendingWhitelistWrites,
   rejectedStorageDomains,
   storagePersistenceReplyHolder,
+  storageFlushHold,
   storageWriteFlushTimer,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import {
@@ -51,6 +52,10 @@ function armStorageFlushTimer(): void {
   if (!hasPendingStorageWrites() || storageWriteFlushTimer.current !== null || storageWriteRetry.signaled) return;
   storageWriteFlushTimer.current = setTimeout((): void => {
     storageWriteFlushTimer.current = null;
+    if (storageFlushHold.current) {
+      armStorageFlushTimer();
+      return;
+    }
     const reply: IdentityPersistenceReply | null = storagePersistenceReplyHolder.current;
     if (reply === null) {
       console.error("[diskIOWorker] storage database flush reply channel is unavailable.");
@@ -70,9 +75,10 @@ function armStorageFlushTimer(): void {
 /**
  * 任一领域达到批次阈值即提交全部领域，否则为首条变化建立固定截止 timer。
  * 事务失败后新输入仅合并最终值，由有界退避 timer 重试；条目和字节预算独立执行。
+ * 镜像重放区间（storageFlushHold）内只挂 timer，不提交。
  */
 export function flushIfStorageFull(reply: IdentityPersistenceReply): void {
-  if (storageWriteRetry.failures > 0) { armStorageFlushTimer(); return; }
+  if (storageWriteRetry.failures > 0 || storageFlushHold.current) { armStorageFlushTimer(); return; }
   if (
     pendingWhitelistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingBlocklistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
@@ -217,4 +223,13 @@ export function configureStoragePersistenceReply(
   reply: IdentityPersistenceReply
 ): void {
   storagePersistenceReplyHolder.current = reply;
+}
+
+/**
+ * 开合镜像重放区间。关闭时按批次阈值补做一次判定：已达阈值立即以一个事务提交
+ * 区间内的全部变化，否则保留定时提交。
+ */
+export function setStorageFlushHold(active: boolean, reply: IdentityPersistenceReply): void {
+  storageFlushHold.current = active;
+  if (!active) flushIfStorageFull(reply);
 }

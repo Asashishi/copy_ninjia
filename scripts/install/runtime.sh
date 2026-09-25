@@ -86,7 +86,13 @@ step "5/8 准备配置目录"
 bun -e '
   import { assertCurrentBotConfigDirectory } from "./scripts/install/runtime";
   await assertCurrentBotConfigDirectory("config");
-' || die "先执行 migrate:bot-config 冷迁移；二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateBotConfig.js --help 查看用法。"
+' || die "config/ 仍是 12.1.0 格式：先安装 13.x 发行版并按其说明执行 migrate:bot-config 冷迁移，再升级到本版本。"
+
+# state.json 的翻译会话已改存 chat_states；旧文件必须先经冷迁移，不在安装器里改写。
+bun -e '
+  import { assertStateFilesMigrated } from "./scripts/install/runtime";
+  await assertStateFilesMigrated();
+' || die "先执行 migrate:translate-sessions 冷迁移；二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateTranslateSessions.js --help 查看用法。"
 
 mkdir -p config
 for example_file in config_example/*.json; do

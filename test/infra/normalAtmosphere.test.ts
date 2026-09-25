@@ -14,14 +14,15 @@ import type * as StateStoreModule from "../../packages/infra/storage/stateStore"
 import { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../packages/consts/luckChallenge";
 import { getTokyoDateKey } from "../../packages/libs/time";
 import { dailyLuckCache, luckCacheState, luckReceiptSecretState, recentCallTimestamps } from "../../packages/cache/main/luckChallenge";
+import { chatStateOf } from "../helpers/chatState";
 
 const config: typeof BotModule = { ...await import("../../packages/config/bot") };
 mock.module("../../packages/config/bot", () => ({ ...config, BOT_ATMOSPHERE: "plain" }));
 const stateStore: typeof StateStoreModule = { ...await import("../../packages/infra/storage/stateStore") };
-const states = new Map<number, ChatState>([[-1, { aiPersona: "custom" }], [-2, {}]]);
+const states = new Map<number, ChatState>([[-1, chatStateOf({ aiPersona: "custom" })], [-2, chatStateOf()]]);
 mock.module("../../packages/infra/storage/stateStore", () => ({
   ...stateStore,
-  getChatState: (id: number): ChatState => states.get(id) ?? {},
+  getChatState: (id: number): ChatState => states.get(id) ?? chatStateOf(),
   getChatStateCache: (): ReadonlyMap<number, ChatState> => states,
 }));
 const { chatAtmosphere } = await import("../../packages/infra/atmosphere");

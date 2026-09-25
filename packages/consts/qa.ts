@@ -17,7 +17,7 @@ export const CHAT_QA_MAX_PER_CHAT: number = 15;
 /**
  * 单条问题文本的最大长度（UTF-16 code unit）。
  *
- * 上限存在的理由不是存储，而是直答路径：问题文本是 Map 的键，超长键会让每条
+ * 上限约束的是直答路径：问题文本是 Map 的键，超长键会让每条
  * 群消息的哈希与比较成本随之上涨。同时它也挡住把整段文章当成问题登记。
  * 所属模块：packages/commands/qa/。
  */

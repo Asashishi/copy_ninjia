@@ -2,6 +2,7 @@ import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import type { DiskIORecoveryTransport, DiskIORespawnListener } from "../../packages/types/diskIO/messages";
 
 /**
  * mock.module 必须在任何真实 import 之前调用（静态 import 会被提升，所以下面
@@ -70,6 +71,7 @@ const {
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
 } = await import("../../packages/consts/luckChallenge");
 const { getTokyoDateKey } = await import("../../packages/libs/time");
+const luckCache = await import("../../packages/commands/luckChallenge/cache");
 const TEST_SECRET = {
   version: 1 as const,
   day: getTokyoDateKey(),
@@ -356,7 +358,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     // （见 packages/infra/inlineResultSources.ts）。
     const ctx = makeInlineCtx(334, "加我微信 abcd");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
-    expect(inlineResultSourceOf(bodyTextOf(ctx.results[0])))
+    expect(inlineResultSourceOf(334, bodyTextOf(ctx.results[0])))
       .toBe("加我微信 abcd");
 
     // 没写所求事项时两条结果里没有一个字是用户写的，不登记也就不进判定。
@@ -364,8 +366,41 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     await luckChallenge.handleLuckChallengeInlineQuery(plain as any);
     expect(plain.results.length).toBe(2);
     for (const result of plain.results) {
-      expect(inlineResultSourceOf(bodyTextOf(result))).toBeUndefined();
+      expect(inlineResultSourceOf(335, bodyTextOf(result))).toBeUndefined();
     }
+  });
+
+  test("Bot API 明确拒收的应答不顶掉上一次登记；结果可能已送达的失败照常登记", async () => {
+    const delivered = makeInlineCtx(336, "上一次送达的");
+    await luckChallenge.handleLuckChallengeInlineQuery(delivered as any);
+    const deliveredText: string = bodyTextOf(delivered.results[0]);
+
+    const rejectedResults: any[] = [];
+    const rejectedError: Error = Object.assign(new Error("Bad Request"), {
+      error_code: 400,
+      description: "Bad Request: query is too old and response timeout expired or query ID is invalid",
+    });
+    await luckChallenge.handleLuckChallengeInlineQuery({
+      inlineQuery: { from: { id: 336, username: undefined, first_name: "Test" }, query: "被拒收的" },
+      answerInlineQuery: async (r: any[]): Promise<void> => {
+        rejectedResults.push(...r);
+        throw rejectedError;
+      },
+    } as any);
+    expect(logApiErrorMock).toHaveBeenCalledWith("answer luck inline query", rejectedError);
+    expect(inlineResultSourceOf(336, deliveredText)).toBe("上一次送达的");
+    expect(inlineResultSourceOf(336, bodyTextOf(rejectedResults[0]))).toBeUndefined();
+
+    const ambiguousResults: any[] = [];
+    await luckChallenge.handleLuckChallengeInlineQuery({
+      inlineQuery: { from: { id: 336, username: undefined, first_name: "Test" }, query: "网络中断的" },
+      answerInlineQuery: async (r: any[]): Promise<void> => {
+        ambiguousResults.push(...r);
+        throw new Error("socket hang up");
+      },
+    } as any);
+    expect(inlineResultSourceOf(336, bodyTextOf(ambiguousResults[0]))).toBe("网络中断的");
+    expect(inlineResultSourceOf(336, deliveredText)).toBeUndefined();
   });
 
   test("带文本：同款问题按钮只展示前 4 个字加 ...，但仍携带完整文本", async () => {
@@ -766,5 +801,172 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     } finally {
       mockTodayOverride = null;
     }
+  });
+});
+
+describe("运势日缓存的跨日轮换、共享刷新与 Worker 重建重放", () => {
+  function secretFor(day: string) {
+    return { version: 1 as const, day, key: TEST_SECRET.key };
+  }
+
+  function respawnListener(): DiskIORespawnListener {
+    const call: unknown[] | undefined = onDiskIORespawnMock.mock.calls.find(
+      (args: unknown[]): boolean => args[0] === "daily luck"
+    );
+    if (call === undefined) throw new Error("daily luck respawn listener was not registered");
+    return call[2] as DiskIORespawnListener;
+  }
+
+  function recordingTransport(
+    accept: boolean,
+    loadSecret: (day: string) => Promise<ReturnType<typeof secretFor>> = async (day: string) => secretFor(day)
+  ): { transport: DiskIORecoveryTransport; posted: unknown[]; loadedDays: string[] } {
+    const posted: unknown[] = [];
+    const loadedDays: string[] = [];
+    return {
+      posted,
+      loadedDays,
+      transport: {
+        post: (message: unknown): boolean => {
+          posted.push(message);
+          return accept;
+        },
+        ensureLuckReceiptSecret: async (day: string) => {
+          loadedDays.push(day);
+          return loadSecret(day);
+        },
+      } as unknown as DiskIORecoveryTransport,
+    };
+  }
+
+  beforeEach(() => {
+    mockTodayOverride = null;
+    cache.dailyLuckCache.clear();
+    cache.dailyLuckCacheSaturated.current = false;
+    cache.pendingLuckDraws.clear();
+    cache.luckCacheState.dayKey = "";
+    cache.luckReceiptSecretState.current = null;
+    cache.luckRuntimeState.dayRefreshPromise = null;
+    cache.luckRuntimeState.daySwitchedInProcess = false;
+    luckChallenge.restoreLuckState(TEST_SECRET, null);
+    postDiskIOMock.mockClear();
+    loggerErrorMock.mockClear();
+    ensureLuckReceiptSecretMock.mockClear();
+    ensureLuckReceiptSecretError = null;
+  });
+
+  test("Worker 重建后按当日键全量重放已确认结果", async () => {
+    luckCache.getOrDrawLuck("7001");
+    luckCache.promotePendingDraw("7001");
+    luckCache.getOrDrawLuck("7002");
+    luckCache.promotePendingDraw("7002");
+    const { transport, posted, loadedDays } = recordingTransport(true);
+
+    await expect(respawnListener()(transport)).resolves.toBeTrue();
+
+    expect(loadedDays).toEqual([]);
+    expect(posted).toEqual([
+      expect.objectContaining({ type: "luckDraw", day: TEST_SECRET.day, key: "7001" }),
+      expect.objectContaining({ type: "luckDraw", day: TEST_SECRET.day, key: "7002" }),
+    ]);
+  });
+
+  test("重放途中投递被拒时立即报告失败", async () => {
+    luckCache.getOrDrawLuck("7001");
+    luckCache.promotePendingDraw("7001");
+    luckCache.getOrDrawLuck("7002");
+    luckCache.promotePendingDraw("7002");
+    const { transport, posted } = recordingTransport(false);
+
+    await expect(respawnListener()(transport)).resolves.toBeFalse();
+    expect(posted).toHaveLength(1);
+  });
+
+  test("重建时已跨东京日：经恢复 transport 取新日密钥，旧日结果不再重放", async () => {
+    luckCache.getOrDrawLuck("7003");
+    luckCache.promotePendingDraw("7003");
+    mockTodayOverride = "2030-01-03";
+    try {
+      const { transport, posted, loadedDays } = recordingTransport(true);
+      await expect(respawnListener()(transport)).resolves.toBeTrue();
+      expect(loadedDays).toEqual(["2030-01-03"]);
+      expect(posted).toEqual([]);
+      expect(cache.luckCacheState.dayKey).toBe("2030-01-03");
+      expect(ensureLuckReceiptSecretMock).not.toHaveBeenCalled();
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
+
+  test("取密钥期间又跨过东京零点时继续取下一天，最终采用当前日期", async () => {
+    mockTodayOverride = "2030-01-04";
+    ensureLuckReceiptSecretMock.mockImplementationOnce(async (day: string) => {
+      mockTodayOverride = "2030-01-05";
+      return secretFor(day);
+    });
+    try {
+      await luckCache.ensureLuckCacheFreshForToday();
+      expect(ensureLuckReceiptSecretMock.mock.calls.map((args: unknown[]): unknown => args[0]))
+        .toEqual(["2030-01-04", "2030-01-05"]);
+      expect(cache.luckCacheState.dayKey).toBe("2030-01-05");
+      expect(cache.luckReceiptSecretState.current?.day).toBe("2030-01-05");
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
+
+  test("Worker 返回的密钥日期与请求不符时拒绝采用", async () => {
+    mockTodayOverride = "2030-01-06";
+    ensureLuckReceiptSecretMock.mockImplementationOnce(async () => secretFor("2030-01-01"));
+    try {
+      await expect(luckCache.ensureLuckCacheFreshForToday())
+        .rejects.toThrow("returned luck secret for 2030-01-01, expected 2030-01-06");
+      expect(cache.luckCacheState.dayKey).toBe(TEST_SECRET.day);
+      expect(cache.luckRuntimeState.dayRefreshPromise).toBeNull();
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
+
+  test("共享刷新失败：在线入口原样抛出，重建重放自行重试", async () => {
+    mockTodayOverride = "2030-01-07";
+    const error: Error = new Error("shared refresh failed");
+    const shared: Promise<void> = Promise.reject(error);
+    shared.catch((): undefined => undefined);
+    try {
+      cache.luckRuntimeState.dayRefreshPromise = shared;
+      await expect(luckCache.ensureLuckCacheFreshForToday()).rejects.toBe(error);
+      expect(cache.luckRuntimeState.dayRefreshPromise).toBeNull();
+      expect(ensureLuckReceiptSecretMock).not.toHaveBeenCalled();
+
+      cache.luckRuntimeState.dayRefreshPromise = shared;
+      const { transport, loadedDays } = recordingTransport(true);
+      await expect(respawnListener()(transport)).resolves.toBeTrue();
+      expect(loadedDays).toEqual(["2030-01-07"]);
+      expect(cache.luckCacheState.dayKey).toBe("2030-01-07");
+    } finally {
+      mockTodayOverride = null;
+    }
+  });
+
+  test("启动恢复拒绝违反档位、区间或容量不变量的当日记录", () => {
+    const tier = LUCK_TIERS[0]!;
+    const [min, max]: readonly [number, number] = tier.fortunePercentRange;
+    expect(() => luckChallenge.restoreLuckState(TEST_SECRET, {
+      day: TEST_SECRET.day,
+      entries: new Map([["k", { label: "不存在的档位", fortunePercent: min }]]),
+    })).toThrow("tier-label invariant");
+    expect(() => luckChallenge.restoreLuckState(TEST_SECRET, {
+      day: TEST_SECRET.day,
+      entries: new Map([["k", { label: tier.label, fortunePercent: max + 1 }]]),
+    })).toThrow("tier-range invariant");
+    const oversized = new Map<string, { label: string; fortunePercent: number }>();
+    for (let index: number = 0; index <= DAILY_LUCK_CACHE_MAX; index++) {
+      oversized.set(`k-${index}`, { label: tier.label, fortunePercent: min });
+    }
+    expect(() => luckChallenge.restoreLuckState(TEST_SECRET, {
+      day: TEST_SECRET.day,
+      entries: oversized,
+    })).toThrow("persistence capacity");
   });
 });

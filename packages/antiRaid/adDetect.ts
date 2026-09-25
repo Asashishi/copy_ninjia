@@ -235,8 +235,8 @@ export interface FormatAdNoticeParams {
 
 /**
  * 群内播报：只带展示标签与判定理由，不回显广告原文（回显等于替广告再发一遍）。
- * 模型没给理由时用兜底文案——这条消息存在的意义就是说清「为什么这个人没了」，
- * 不能空着。导出仅为可测试性。
+ * 模型没给理由时用兜底文案，播报必须说明这个人为什么被移出，不能空着。
+ * 导出仅为可测试性。
  *
  * 文案按**真正登记上的封禁群数**分三岔，一个群都不能多说：
  * - 一个都没登记上（outbox 触顶、刚被撤管理员、`/init disable`）时人根本没被踢走，
@@ -267,7 +267,7 @@ export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmo
  * 发播报并挂上自动清理。播报本身 KICK_NOTICE_AUTO_DELETE_MS（30 秒）后自删，
  * 与超时踢人的战报同一条约定，不给群里留一条永久的公告。
  *
- * 发在主线程而不是判定线程：文案要断言封禁结果，而结果只有这边知道（理由见
+ * 发在主线程而不是判定线程：文案要断言封禁结果，而结果只有这边知道（见
  * workers/antiRaid/adDetect/disposal.ts 的 disposeAdSender）。整段尽力而为，
  * 失败不影响已经落定的拉黑与封禁登记。
  *

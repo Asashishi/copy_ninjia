@@ -20,11 +20,14 @@ import {
   CHAIN_AI_REPLY_COMMANDS,
   CHAIN_CHAT_QA_WRITES,
   CHAIN_CHAT_STATE_WRITES,
+  CHAIN_CRON_VOICE_COMMANDS,
+  CHAIN_CRON_VOICE_PCM_BYTES,
   CHAIN_IDENTITY_BATCHES,
   CHAIN_JOIN_LOG_EVENTS,
   CHAIN_LOG_ENTRIES,
   CHAIN_TEMPORARY_AD_BYPASS_WRITES,
   CHAIN_WARMUP_OPERATIONS,
+  CRON_VOICE_WARMUP_OPERATIONS,
 } from "./constants";
 import {
   benchmarkChatId,
@@ -103,6 +106,9 @@ import { recordChatMessage } from
   "../../../packages/workers/aiChat/rollingMemory";
 import { generateAndSendReply } from
   "../../../packages/workers/aiChat/replyPipeline";
+import { resolveSpeechSynthesizer, synthesizeVoiceMessage } from
+  "../../../packages/aiChat/ai/voiceSynthesis";
+import { deliverCronAction } from "../../../packages/cron/delivery";
 import type { ChainDefinition } from "./chainDefinition";
 import type { CommandChainDependencies } from "./commandChains";
 import type { ProcessIoSnapshot } from "./processIo";
@@ -148,6 +154,9 @@ const STORAGE_CHAIN_DEPENDENCIES: StorageChainDependencies = {
 const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   chainAdDetectCommands: CHAIN_AD_DETECT_COMMANDS,
   chainAiReplyCommands: CHAIN_AI_REPLY_COMMANDS,
+  chainCronVoiceCommands: CHAIN_CRON_VOICE_COMMANDS,
+  cronVoiceWarmupOperations: CRON_VOICE_WARMUP_OPERATIONS,
+  cronVoicePcmBytes: CHAIN_CRON_VOICE_PCM_BYTES,
   aiReplyWarmupOperations: AI_REPLY_WARMUP_OPERATIONS,
   aiReplySettleAttempts: AI_REPLY_SETTLE_ATTEMPTS,
   adDetectDrainBudgetMs: AD_DETECT_DRAIN_BUDGET_MS,
@@ -174,11 +183,15 @@ const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   replyGenerationTasks,
   recordChatMessage,
   generateAndSendReply,
+  resolveSpeechSynthesizer,
+  synthesizeVoiceMessage,
+  deliverCronAction,
 };
 
 const COMMAND_CHAINS: ReadonlySet<ChainName> = new Set<ChainName>([
   "ad-detect-command",
   "ai-reply-command",
+  "cron-send-voice",
 ]);
 
 function createChain(chain: ChainName): ChainDefinition {
@@ -205,7 +218,8 @@ function parseChainName(value: string | undefined): ChainName {
     case "ai-memory-snapshot":
     case "diagnostic-log":
     case "ad-detect-command":
-    case "ai-reply-command": return value;
+    case "ai-reply-command":
+    case "cron-send-voice": return value;
     default:
       throw new Error(
         "Chain child expects one declared storage or command chain name."

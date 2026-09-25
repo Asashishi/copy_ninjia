@@ -1,3 +1,4 @@
+import { qaFormSessions } from "../cache/main/qa";
 import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 /**
@@ -17,7 +18,14 @@ import type { CommandContext, Context } from "grammy";
 import type { Message } from "grammy/types";
 import { CHAT_QA_MAX_PER_CHAT, QA_SUBCOMMAND_PATTERN } from "../consts/qa";
 
-import { chatQaCount, getChatQa, removeAllChatQa, removeChatQa, setChatQa } from "../infra/qaStore";
+import {
+  chatQaCount,
+  getChatQa,
+  removeAllChatQa,
+  removeChatQa,
+  setChatQa,
+  ChatQaCapacityError,
+} from "../infra/qaStore";
 import { forumTopicThreadId } from "../libs/forumTopic";
 import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
@@ -37,7 +45,6 @@ import { renderQaFormPrompt } from "./qa/rendering";
 import {
   closeQaFormSession,
   closeQaFormSessionsInChat,
-  findQaFormSession,
   openQaFormSession,
 } from "./qa/session";
 
@@ -107,7 +114,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
   }
   const openedById: number = actor.id;
   // 同一发起人可重开；其他身份不能替换当前会话。
-  const existing: QaFormSession | undefined = findQaFormSession(chatId);
+  const existing: QaFormSession | undefined = qaFormSessions.get(chatId);
   if (existing !== undefined && existing.openedById !== openedById) {
     await sendCommandMessage({
       chatId,
@@ -140,7 +147,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
       // 已发消息的删除责任。
       onSent: (formMessageId: number): void => {
         session.formMessageId = formMessageId;
-        if (findQaFormSession(chatId) !== session) discardQaForm(session);
+        if (qaFormSessions.get(chatId) !== session) discardQaForm(session);
       },
     });
     if (formMessageId === undefined) {
@@ -189,7 +196,7 @@ async function settleQaForm(session: QaFormSession, q: string, a: string): Promi
  * 进入删除流程后返回 true，禁止下游再次处理该消息；见 docs/cn/04-invariants.md。
  */
 export function handleQaMessageIngress(message: Message): boolean | Promise<boolean> {
-  if (findQaFormSession(message.chat.id) === undefined) return false;
+  if (qaFormSessions.get(message.chat.id) === undefined) return false;
   return claimQaFormDelivery(message);
 }
 
@@ -200,7 +207,7 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
   const session: QaFormSession = claimed.session;
   const chatId: number = session.chatId;
   throwIfUpdateAborted();
-  if (findQaFormSession(chatId) !== session) return true;
+  if (qaFormSessions.get(chatId) !== session) return true;
 
   // 超长的那一项没写进会话，先把它说清楚；表单留着等一条合规的重发。同一条
   // 消息里另一项合规时它已经进了会话，表单要跟上；两项都被挡下时会话一个字
@@ -209,7 +216,7 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
     if (claimed.accepted.q !== undefined || claimed.accepted.a !== undefined) {
       await editQaForm(session, renderQaFormPrompt(session.q, session.a, chatAtmosphere(session.chatId)));
     }
-    if (findQaFormSession(chatId) !== session) return true;
+    if (qaFormSessions.get(chatId) !== session) return true;
     await sendCommandMessage({
       chatId,
       text: claimed.questionTooLong
@@ -228,7 +235,7 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
     // 还差一项：表单先跟上，再告诉用户已经收下哪一样。回执 30 秒后就自删，
     // 之后只有表单还说得出这张单子填到了哪（见 qa/notices.ts 的 editQaForm）。
     await editQaForm(session, renderQaFormPrompt(q, a, chatAtmosphere(session.chatId)));
-    if (findQaFormSession(chatId) !== session) return true;
+    if (qaFormSessions.get(chatId) !== session) return true;
     await sendCommandMessage({
       chatId,
       text: claimed.accepted.q !== undefined
@@ -283,7 +290,7 @@ async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<vo
     // 与 /permission query 同一口径的长期保留例外：这是一张要照着逐条核对的
     // 看板，30 秒清理会在读完之前收走它。查不到那条的提示仍走默认清理。
     preserveInGroup: true,
-    // 长期保留 ⇒ 自己带话题，理由见 SendMessageParams.messageThreadId。
+    // 长期保留 ⇒ 自己带话题，见 SendMessageParams.messageThreadId。
     messageThreadId: forumTopicThreadId(ctx.msg),
   });
 }
@@ -337,4 +344,3 @@ export function teardownQaInChat(chatId: number, reason: ChatTeardownReason): vo
 }
 
 registerChatTeardown("qa", teardownQaInChat);
-import { ChatQaCapacityError } from "../infra/qaStore";

@@ -18,7 +18,7 @@ import {
 } from "../infra/blocklist/sweep";
 import { readJoinLog } from "../infra/diskIO";
 import { logger } from "../infra/logger";
-import { prefetchIdentityPolicies } from "../infra/identityStorage";
+import { readIdentityPolicyVerdicts } from "../infra/identityStorage";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../consts/identityStorage";
 import type {
   BanChatMemberOutcome,
@@ -38,6 +38,7 @@ import type {
 } from "../libs/boundedSettledBatch";
 import { rejectUnlessSuperAdmin } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
+import type { IdentityPolicyVerdicts } from "../types/identityStorage";
 
 interface BatchKickStats {
   kicked: number;
@@ -53,7 +54,7 @@ interface BatchKickStats {
    * 按住了，不该再白白惊动清扫。
    */
   blockedHandoffs: number;
-  /** 真正进入处置的记录条数；身份预取失败中断时小于总条数。 */
+  /** 真正进入处置的记录条数；身份冷读失败中断时小于总条数。 */
   scanned: number;
   /** 是否因为身份冷读失败提前中断；true 时剩余记录一个都没动过。 */
   aborted: boolean;
@@ -76,6 +77,8 @@ interface ProcessJoinRecordParams {
   chatId: number;
   record: JoinLogRecord;
   stats: BatchKickStats;
+  /** 本块开始前直接冷读的永久策略结论；与实时缓存取并集判定是否跳过。 */
+  verdicts: IdentityPolicyVerdicts;
 }
 
 /**
@@ -86,13 +89,14 @@ async function processJoinRecord({
   chatId,
   record,
   stats,
+  verdicts,
 }: ProcessJoinRecordParams): Promise<void> {
   // isWhitelisted 已经把超级管理员算进白名单边界（whitelist.ts）。
-  if (isWhitelisted(record.userId)) {
+  if (verdicts.whitelisted.has(record.userId) || isWhitelisted(record.userId)) {
     stats.protected++;
     return;
   }
-  if (isUserBlocked(record.userId)) {
+  if (verdicts.blocked.has(record.userId) || isUserBlocked(record.userId)) {
     stats.blocked++;
     stats.blockedHandoffs++;
     return;
@@ -167,12 +171,11 @@ interface RunBatchKickParams {
  * 用固定小并发消费日志；每条结果保留输入下标，意外异常不会截断其余记录。
  * Telegram 总闸已经负责 429 的有限退避，这里不再套一层重复踢人重试。
  *
- * 身份预取与消费必须**逐块交错**，且每块严格小于身份 LRU 容量：一次把上万条
- * 记录全部预取完的话，前面的块早被后面的块整块挤出缓存，轮到它们时
- * `isWhitelisted` 冷未命中会把白名单管理员/频道身份当普通成员踢出去，黑名单
- * 成员也会绕过黑名单流程被静默踢掉（见 consts/identityStorage.ts 的
- * IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES）。冷读失败同样不能按「不在白名单」处置，
- * 只能就地中断，剩余记录一条都不碰。
+ * 每块开始前直接冷读本块全部身份的永久策略结论并局部持有，逐块与消费交错。
+ * 白名单与黑名单判定取「局部结论 ∪ 实时缓存」：一块要处理数分钟，期间其它流量
+ * 可能把本块身份挤出身份 LRU，只看缓存的话冷未命中会把白名单管理员/频道身份当
+ * 普通成员踢出去。冷读失败不能按「不在白名单」处置，只能就地中断，剩余记录
+ * 一条都不碰。
  */
 async function runBatchKick({
   chatId,
@@ -198,10 +201,10 @@ async function runBatchKick({
       offset,
       offset + IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
     );
-    const prefetched: boolean = await prefetchIdentityPolicies(
+    const verdicts: IdentityPolicyVerdicts | null = await readIdentityPolicyVerdicts(
       chunk.map((record: JoinLogRecord): number => record.userId)
     );
-    if (!prefetched) {
+    if (verdicts === null) {
       stats.aborted = true;
       return stats;
     }
@@ -212,7 +215,7 @@ async function runBatchKick({
         execute: async ({
           item: record,
         }: BoundedBatchExecution<JoinLogRecord>): Promise<void> => {
-          await processJoinRecord({ chatId, record, stats });
+          await processJoinRecord({ chatId, record, stats, verdicts });
         },
       });
     stats.scanned += chunk.length;

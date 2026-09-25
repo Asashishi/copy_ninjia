@@ -16,7 +16,6 @@ import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/we
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState, superAdminUserIdState, defaultAtmosphereState } from "../cache/workers/aiChat/identity";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
-import { sweepSongGenerationCache } from "../cache/workers/aiChat/songGeneration";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
 import {
   aiChatMaintenanceTimer,
@@ -32,6 +31,9 @@ import {
   recordChatMessage,
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
+import { handleCancelVoiceSynthesis, handleSynthesizeVoice } from "./aiChat/voiceSynthesis";
+import { recordBotImage, resolveRepliedBotImage } from "./aiChat/botImages";
+import type { BufferedMessage } from "../types/aiChat/memory";
 import { applyAiChatConfigReload } from "./aiChat/configReload";
 import {
   drainPendingReplyQueues,
@@ -47,6 +49,7 @@ import type {
   AiMemoryFlushedEvent,
   AiMoodQueriedEvent,
   AiMoodSwitchedEvent,
+  RepliedBotImage,
 } from "../types/aiChat/protocol";
 import type { AiStickerCatalogEvent } from "../types/stickers/protocol";
 import { resetWorkerDuplex } from "../libs/workerDuplex";
@@ -63,8 +66,10 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  * 服务端联网检索，workers/aiChat/replyModel.ts）、以及回复准入控制（并发闸 + 5 分钟
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
  * 应景贴纸与重媒体创作全部工具化（send_message / add_reaction /
- * view_sticker_pack + send_sticker / generate_image / generate_song，见
- * aiChat/ai/tools/replyToolset/）；生图与生歌只在直接触发轮按供应商能力挂载。
+ * view_sticker_pack + send_sticker / generate_image / send_voice，见
+ * aiChat/ai/tools/replyToolset/）；生图只在直接触发轮按供应商能力挂载，语音按
+ * 部署能力挂载、由模型按工具说明决定是否调用。主线程的 `/send` 代发 TTS 与 cron
+ * `send_voice` 经 synthesizeVoice 请求借用同一套合成实现（aiChat/voiceSynthesis.ts）。
  * 模型在同一次对话里自主决定可用工具的组合与顺序。发往 Telegram 的调用统一经双工能力请求回到主线程，
  * Worker 不持有独立 Telegram 网络客户端；机器人自己的账号身份改由主线程在
  * bot.init() 后经 init 消息注入，见 cache/workers/aiChat/identity.ts 的 botInfoState）。
@@ -178,14 +183,22 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       if (msg.persona === null) chatPersonas.delete(msg.chatId);
       else chatPersonas.set(msg.chatId, msg.persona);
       break;
-    case "record":
+    case "record": {
       if (aiChatWorkerQuiescing.current) break;
-      recordChatMessage(msg);
+      const entry: BufferedMessage | null = recordChatMessage(msg);
+      const botImage: RepliedBotImage | undefined = msg.replyTo?.botImage;
+      if (entry !== null && botImage !== undefined) resolveRepliedBotImage(msg.chatId, entry, botImage);
       if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
       break;
+    }
     case "recordMedia":
       if (aiChatWorkerQuiescing.current) break;
       recordChatMedia(msg);
+      if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
+      break;
+    case "recordBotImage":
+      if (aiChatWorkerQuiescing.current) break;
+      recordBotImage(msg);
       if (msg.persistImmediately === true) flushMemorySnapshot(msg.chatId, true);
       break;
     case "trigger":
@@ -230,6 +243,12 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
         moodName: switchMood(msg.chatId).name,
       } satisfies AiMoodSwitchedEvent);
       break;
+    case "synthesizeVoice":
+      handleSynthesizeVoice(msg);
+      break;
+    case "cancelVoiceSynthesis":
+      handleCancelVoiceSynthesis(msg);
+      break;
   }
 }
 
@@ -243,7 +262,6 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   // 没有 onFinished 会来推队列（见 aiChat/replyPipeline.ts）。
   drainPendingReplyQueues(now);
   sweepImageGenerationCache(now);
-  sweepSongGenerationCache(now);
   // 配置轮换、任务结算与上报均会清理旧包；维护节拍复核仍在途或待上报的条目。
   pruneStickerCatalogs(getStickerConfig().packs);
   // 启动那次对账整包失败的（拉贴纸集合时网络抖了一下）在这里补回来：

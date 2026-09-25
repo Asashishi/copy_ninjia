@@ -13,10 +13,17 @@ import {
 } from "../../packages/consts/performance";
 import {
   assertHotPathMedianPolicyCoverage,
+  createHotPathCalibrationStaleReport,
+  createHotPathGcSoftReport,
   createHotPathMedianLatencyReport,
+  hotPathGcPauseFailPercent,
   selectHotPathGcPausePercentLimit,
 } from "./hotPaths/gateLimits";
-import type { HotPathMedianLatencyReport } from "./hotPaths/gateLimits";
+import type {
+  HotPathCalibrationStaleReport,
+  HotPathGcSoftReport,
+  HotPathMedianLatencyReport,
+} from "./hotPaths/gateLimits";
 import {
   readHotPathGateCalibration,
   writeHotPathGateLastRun,
@@ -68,7 +75,8 @@ const calibration: HotPathGateCalibration = await readHotPathGateCalibration(
   PERFORMANCE_RESULT_PATH
 );
 const availableCpuCount: number = availableParallelism();
-const maxGcPausePercent: number = selectHotPathGcPausePercentLimit(availableCpuCount);
+const gcPauseBudgetPercent: number = selectHotPathGcPausePercentLimit(availableCpuCount);
+const maxGcPausePercent: number = hotPathGcPauseFailPercent(gcPauseBudgetPercent);
 const shouldWriteResult: boolean = Bun.argv.includes("--write-result");
 const gateFixture: HotPathGateFixture = await createHotPathGateFixture();
 let gateFixturePresent: boolean = true;
@@ -91,6 +99,8 @@ process.once("exit", cleanupGateFixture);
 
 const gateResults: ScenarioGateResult[] = [];
 const softLatencyReports: HotPathMedianLatencyReport[] = [];
+const softGcReports: HotPathGcSoftReport[] = [];
+const calibrationStaleReports: HotPathCalibrationStaleReport[] = [];
 let expectedBunVersion: string | undefined;
 let expectedBunRevision: string | undefined;
 const medianLatencyPolicy: ReadonlyMap<string, number> =
@@ -148,14 +158,28 @@ for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
       reportThresholdNsPerOp,
     });
   if (latencyReport !== null) softLatencyReports.push(latencyReport);
+  const staleReport: HotPathCalibrationStaleReport | null = createHotPathCalibrationStaleReport({
+    scenario,
+    medianNsPerOp: maxMedianNsPerOp,
+    bunRevision: reference.bunRevision,
+    reportThresholdNsPerOp,
+  });
+  if (staleReport !== null) calibrationStaleReports.push(staleReport);
+  const maxGcPercent: number = maximum(profileRuns.map(
+    (run: ChildProfileResult): number => run.gcProfile!.gcPercent
+  ));
+  const gcReport: HotPathGcSoftReport | null = createHotPathGcSoftReport({
+    scenario,
+    gcPercent: maxGcPercent,
+    budgetPercent: gcPauseBudgetPercent,
+  });
+  if (gcReport !== null) softGcReports.push(gcReport);
   gateResults.push({
     scenario,
     repeats: profileRuns.length,
     bunVersion: reference.bunVersion,
     bunRevision: reference.bunRevision,
-    maxGcPercent: maximum(profileRuns.map(
-      (run: ChildProfileResult): number => run.gcProfile!.gcPercent
-    )),
+    maxGcPercent,
     maxSampledRssBytes: maximum(retainedRuns.map(
       (run: ChildProfileResult): number => run.peakSampledRssBytes
     )),
@@ -205,12 +229,25 @@ for (const [scenario, reportThresholdNsPerOp] of medianLatencyPolicy) {
 if (expectedBunVersion === undefined || expectedBunRevision === undefined) {
   throw new Error("Hot-path profile gate has no configured scenarios.");
 }
+for (const report of calibrationStaleReports) {
+  console.error(
+    `hot-path calibration stale: ${report.scenario} median ${report.medianNsPerOp.toFixed(1)} ns/op ` +
+    `is ${report.headroomRatio.toFixed(1)}x below its ${report.reportThresholdNsPerOp} ns/op policy; ` +
+    "recalibrate on an idle machine."
+  );
+}
 for (const report of softLatencyReports) {
   console.error(
     `hot-path soft latency: ${report.scenario} median ${report.medianNsPerOp.toFixed(1)} ns/op ` +
     `exceeds its ${report.reportThresholdNsPerOp} ns/op policy by ` +
     `${report.overrunNsPerOp.toFixed(1)} ns/op (+${report.overrunPercent.toFixed(1)}%) ` +
     `on Bun ${expectedBunRevision}.`
+  );
+}
+for (const report of softGcReports) {
+  console.error(
+    `hot-path soft gc: ${report.scenario} GC paused for ${report.gcPercent.toFixed(3)}% of steady time, ` +
+    `above its ${report.budgetPercent}% budget and within the ${report.failPercent}% hard limit.`
   );
 }
 
@@ -231,9 +268,11 @@ const lastRun: Readonly<Record<string, unknown>> = {
     minProfileSamples: calibration.limits.minProfileSamples,
   },
   softReportThresholds: {
+    maxGcPausePercent: gcPauseBudgetPercent,
     medianNsPerOpByScenario: calibration.medianNsPerOpReportThresholds,
   },
   softLatencyReports,
+  softGcReports,
   scenarios: gateResults,
 };
 

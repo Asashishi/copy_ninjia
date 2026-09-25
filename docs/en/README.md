@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5104_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.19%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5142_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.23%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5104 tests passed, 444 test files, 192,389 expect() calls, 97.06% function coverage, 98.19% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5142 tests passed, 450 test files, 194,128 expect() calls, 97.16% function coverage, 98.23% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -105,7 +105,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>👁️ Multimodal understanding and creation</b><br>
-  <sub>Reads images and voice notes, and replies with pictures or songs.</sub></p>
+  <sub>Reads images and voice notes, and replies with pictures or voice messages.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🔎 Live fact-checking</b><br>
@@ -161,7 +161,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>⏰ Scheduled Posts</b><br>
-  <sub>Schedule text, files, random images or 1–10 fixed images with time zones, one-shot tasks and random intervals.</sub></p>
+  <sub>Schedule text, files, voice, random images or 1–10 fixed images with time zones, one-shot tasks and random intervals.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 Personas &amp; Notice Styles</b><br>
@@ -193,10 +193,23 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>📨 Private Relay</b><br>
-  <sub>The super administrator can start /send in private chat to relay messages to a managed group.</sub></p>
+  <sub>The super administrator can start /send in private chat to relay messages to a managed group, or have the bot speak a line there as a voice message.</sub></p>
 </td>
 </tr>
 </table>
+
+### Voice, images, and memory
+
+| Capability | Behavior |
+| :--- | :--- |
+| AI voice | Configurable voice and per-line tone; one voice per round, up to 64 UTF-16 code units; remembers the line after a successful send |
+| Operator and scheduled voice | `/send` and cron share TTS with a 256 UTF-16 code-unit limit; cron synthesizes once per round and reuses the Telegram `file_id` |
+| Image memory | Generated images are described; `/wed`, `/h_image`, and scheduled images start as placeholders and are described when someone replies |
+
+Voice requires explicit `agent.tts` configuration (currently provided by Google). `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
+
+> [!IMPORTANT]
+> [13.0.2 → 14.0.0 upgrade steps](07-operations.md#upgrade-14)
 
 Behavior details, configuration and boundaries for each feature live in the **[📚 developer docs](content-table.md)**.
 
@@ -305,7 +318,7 @@ Make the bot a group administrator and grant the rights for the features you use
 | Administrator right | Features that use it |
 | :--- | :--- |
 | Delete messages | `/gag`, deleting ads found by ad detection, deleting messages from blocklisted channel identities |
-| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block enable|disable`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
+| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block enable\|disable`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
 
 Join verification also depends on the administrator status itself: Telegram sends member join and leave events only to administrator bots. When a right is missing, the bot's notice names that right; identities holding `isCanViewBotStatus` can run `/bot_status` to see the rights granted in the current chat.
 

@@ -2,7 +2,8 @@ import type { AtmosphereTexts } from "../../types/atmosphere";
 import { chatAtmosphere } from "../../infra/atmosphere";
 /**
  * /wed 状态消息的唯一发送边界。可操作的图片结果只由移除、
- * 重开、LRU 淘汰和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
+ * 重开和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
+ * 结果图发出与换图后都写一条占位态自录（见 aiChat/botImages.ts）。
  * 发送、取消和自发消息登记遵守 docs/cn/04-invariants.md 的 Telegram 出站约束。
  */
 import { InputFile } from "grammy";
@@ -11,6 +12,7 @@ import { BOT_PROFILE_PHOTO_FILE_NAME } from "../../consts/telegram";
 import { bot } from "../../infra/telegram/mainClient";
 import { deleteMessageWithOutcome } from "../../infra/telegram";
 import { markSelfSent } from "../../infra/selfSentTracker";
+import { recordBotImage } from "../../aiChat";
 import {
   logUnlessAborted,
   replyParametersFor,
@@ -53,6 +55,7 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
       session.messageId = sent.message_id;
       session.targetId = candidate.identity.id;
       markSelfSent(session.chatId, sent.message_id);
+      recordBotImage({ chatId: session.chatId, messageId: sent.message_id, caption: sent.caption ?? "", edited: false });
       return true;
     },
     fallback: false,
@@ -81,9 +84,12 @@ export function replaceWedResult(session: WedSession, candidate: WedCandidate, s
         ...signalArgs(requestSignal)
       );
     },
-    map: (): boolean => {
+    map: (edited: Message | true): boolean => {
       session.targetId = candidate.identity.id;
       session.confirmed = false;
+      if (edited !== true) {
+        recordBotImage({ chatId: session.chatId, messageId: edited.message_id, caption: edited.caption ?? "", edited: true });
+      }
       return true;
     },
     fallback: false,

@@ -18,6 +18,7 @@ import {
   deleteMessageWithOutcome,
   logApiError,
 } from "../../infra/telegram";
+import { isTelegramRequestRejected } from "../../infra/telegram/errors";
 import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
@@ -310,15 +311,6 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
       }
     }
   }
-  // 发言正文由 renderGagSpeech 变形生成且不可逆，落群消息里没有这个人真正打的
-  // 字；广告检测只能按结果正文取回这里登记的源文本（见
-  // infra/inlineResultSources.ts）。归一方式与 renderGagSpeech 内部一致，登记的
-  // 因此正是被变形的那段文本。
-  recordInlineResultSources(
-    inlineQuery.from.id,
-    sanitizeInline(scopedQuery?.text ?? ""),
-    results
-  );
   try {
     await ctx.answerInlineQuery(
       results,
@@ -331,6 +323,19 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
   } catch (error: unknown) {
     throwIfUpdateAborted();
     logApiError("answer gag inline query", error);
+    if (isTelegramRequestRejected(error)) return true;
+  }
+  // 发言正文由 renderGagSpeech 变形生成且不可逆，落群消息里没有这个人真正打的
+  // 字；广告检测只能按结果正文取回这里登记的源文本（见
+  // infra/inlineResultSources.ts）。归一方式与 renderGagSpeech 内部一致，登记的
+  // 因此正是被变形的那段文本。登记在会话目标名下：结果只含该目标的会话，落群
+  // 后的发送者（本人 from.id 或频道 sender_chat.id）正是它。
+  if (scopedQuery !== undefined) {
+    recordInlineResultSources(
+      scopedQuery.targetId,
+      sanitizeInline(scopedQuery.text),
+      results
+    );
   }
   return true;
 }

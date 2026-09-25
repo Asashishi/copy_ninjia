@@ -156,7 +156,7 @@ export function buildAdCandidate(
   const selfInlineResult: boolean = message.via_bot?.id === botId;
   let inlineSource: string | undefined;
   if (selfInlineResult) {
-    inlineSource = inlineResultSourceOf(message.text ?? "");
+    inlineSource = inlineResultSourceOf(senderId, message.text ?? "");
     if (inlineSource === undefined) return undefined;
   }
 

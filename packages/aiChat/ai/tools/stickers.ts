@@ -1,4 +1,12 @@
-import { EMPTY_STICKER_MENU } from "../../../consts/aiChat/stickers";
+import {
+  EMPTY_STICKER_MENU,
+  MAX_STICKER_PACK_VIEWS_PER_REPLY,
+  MAX_STICKERS_PER_REPLY,
+  STICKER_CHOOSE_DELAY_BASE_MS,
+  STICKER_CHOOSE_DELAY_JITTER_MS,
+  STICKER_INTENT_MAX_CHARS,
+  STICKER_PACK_SUMMARY_PENDING,
+} from "../../../consts/aiChat/stickers";
 import type { StickerSet } from "grammy/types";
 import type { AiToolDefinition } from "../../../types/aiChat/provider";
 import { getStickerConfig } from "../../../config/stickers";
@@ -7,14 +15,6 @@ import { logger } from "../../../infra/logger";
 import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
 import { parseIndexField, parseToolArguments } from "../utils/toolArgs";
 import { raceAbort } from "../../../libs/abortSignal";
-import {
-  MAX_STICKER_PACK_VIEWS_PER_REPLY,
-  MAX_STICKERS_PER_REPLY,
-  STICKER_CHOOSE_DELAY_BASE_MS,
-  STICKER_CHOOSE_DELAY_JITTER_MS,
-  STICKER_INTENT_MAX_CHARS,
-  STICKER_PACK_SUMMARY_PENDING,
-} from "../../../consts/aiChat/stickers";
 import {
   SEND_STICKER_TOOL_INSTRUCTION,
   STICKER_INTENT_SELECTION_INSTRUCTION,

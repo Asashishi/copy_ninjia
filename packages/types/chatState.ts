@@ -45,6 +45,10 @@ export type CopyMode = "reverse" | "nya";
  * 互不影响——主线程以容量 25 的 LRU 保留 SQLite `chat_states` 的热读值。复读目标不在
  * 这里——复读消耗的是机器人头像/人格这一份全局资源，同一时刻全局只有一个
  * 复读目标，见 GlobalCopyState。
+ *
+ * `is*Enabled` 七个开关在内存中恒为 boolean，默认 false；读取统一写 `=== true` 或
+ * `!== true`。持久化时只写入为 true 的开关，缺省键解码为 false（见
+ * database/codec/chatState.ts）。其余字段缺省为 undefined，表示从没设过。
  */
 export interface ChatState {
   /** 本群自定义 AI 人设；缺省使用 prompt/persona.md，独立存入 ai_persona 列。 */
@@ -62,35 +66,31 @@ export interface ChatState {
    * isCanControllAIPermission 的身份可用，超级管理员恒持有，见
    * commands/aiChat.ts）。
    */
-  isAIChatEnabled?: boolean;
+  isAIChatEnabled: boolean;
   /**
    * 本群 /translate 翻译功能是否启用。缺省视为禁用，需通过
    * /translate enable 显式开启（仅持有 isCanControllTranslatePermission 的
    * 身份可用，超级管理员恒持有，见 commands/translate.ts）。
-   * 判断时必须使用 === true；false 与缺省等价，
-   * 保存时会被规范化删除。
    */
-  isTranslationEnabled?: boolean;
+  isTranslationEnabled: boolean;
   /**
    * 本群是否启用广告检测（消息串经配置的 provider 判定，命中即按 /block 处置）。
    * 缺省视为禁用，需通过 /ad_detect enable 显式开启（仅持有
    * isCanControllAdDetectPermission 的身份可用，超级管理员恒持有，见
    * commands/adDetect.ts）。
-   * 判断时必须使用 === true。
    */
-  isAdDetectEnabled?: boolean;
+  isAdDetectEnabled: boolean;
   /**
    * 本群是否启用防刷屏禁言。缺省视为禁用，需通过 /flood_control enable
    * 显式开启（仅持有 isCanControllFloodControlPermission 的身份可用，超级
-   * 管理员恒持有，见 commands/floodControl.ts）。判断时必须使用 === true。
+   * 管理员恒持有，见 commands/floodControl.ts）。
    */
-  isFloodControlEnabled?: boolean;
+  isFloodControlEnabled: boolean;
   /**
    * 本群是否启用入群守卫：入群验证（按钮 + 超时踢出）与防冲群私密模式
    * （短时间大量入群时关闭邀请权限）两条链路合用这一个开关，缺省视为禁用，
    * 需通过 /antiraid enable 显式开启（仅持有 isCanControllAntiRaidPermission
-   * 的身份可用，超级管理员恒持有，见 commands/antiRaid.ts）。判断时必须使用
-   * === true。
+   * 的身份可用，超级管理员恒持有，见 commands/antiRaid.ts）。
    *
    * 它**不覆盖**同在 Anti-Raid Worker 里跑的其余能力：广告检测归
    * isAdDetectEnabled、防刷屏禁言归 isFloodControlEnabled、永久黑名单不设开关。
@@ -98,15 +98,15 @@ export interface ChatState {
    * 并让 Worker 清掉这个群已开的验证窗口、对仍生效的私密模式发起恢复
    * （见 antiRaid/workerBridge/controller.ts 的 deactivateJoinGuardChat）。
    */
-  isAntiRaidEnabled?: boolean;
+  isAntiRaidEnabled: boolean;
   /**
-   * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化（false），
+   * 本群是否已初始化，机器人是否处理这个群的更新。缺省视为未初始化，
    * 需由超级管理员通过 /init enable 显式开启（见 commands/init.ts）。未初始化
    * 群的更新在 app/registerHandlers.ts 的前置网关处直接丢弃（除 /init 与本群
    * 无关的 my_chat_member 外），不进入授权维护、入群验证、普通指令匹配、AI
    * 调用等后续处理。
    */
-  isInitEnabled?: boolean;
+  isInitEnabled: boolean;
   /**
    * 机器人自己在本群的完整管理员权限快照。由主线程的 `my_chat_member`
    * 更新近实时替换，未知时按需 `getChatMember` 现查回填（见
@@ -127,8 +127,26 @@ export interface ChatState {
    * 本群是否为唯一的 /send 中转目标。状态挂在目标群并持久化，避免另存目标
    * ID 形成双份事实；命令入口负责全局唯一约束。
    */
-  isProxySendEnabled?: boolean;
+  isProxySendEnabled: boolean;
+  /**
+   * 本群的 /translate 翻译会话；每项一个目标，按目标去重，最多
+   * TRANSLATE_CHAT_USER_LIMIT 项。没有会话时为 undefined，不保存空数组。替换会话时
+   * 创建新对象，用对象身份撤销旧会话的在途响应（见 translate/message.ts）。
+   */
+  translate?: readonly TranslateState[];
 }
+
+/**
+ * ChatState 上取值为布尔的群功能开关字段名。关闭开关经 infra/storage/stateStore.ts 的
+ * disableChatStateSwitch；`/bot_status` 的功能块按 consts/botStatus.ts 的
+ * BOT_STATUS_FEATURE_KEYS 逐项列出。
+ */
+export type ChatStateSwitchKey = {
+  [Key in keyof ChatState]-?: boolean extends ChatState[Key] ? Key : never;
+}[keyof ChatState];
+
+/** ChatState 上以 undefined 表示「从没设过」的可选字段名；清除经 clearChatStateField。 */
+export type ChatStateOptionalField = Exclude<keyof ChatState, ChatStateSwitchKey>;
 
 /**
  * copy 类功能的全局状态：复读目标和冷却时钟所有群共用同一份（消耗的是机器人
@@ -146,7 +164,8 @@ export interface GlobalCopyState {
 }
 
 /**
- * 所有群共用的外部素材：四条直链与随机图片目录，五项各自独立。
+ * 所有群共用的外部素材：随机图片目录与四条直链，五项各自独立。字段顺序即
+ * state.json 中 `global.assets` 的写出顺序，`randomHImageDir` 在首位。
  *
  * 缺字段表示从没设过，回退到 consts/ui/assets.ts 的内置常量；启动时缺项会被
  * 自动补成当前生效值（见 infra/storage/stateStore.ts 的 seedMissingAssetState），
@@ -156,6 +175,11 @@ export interface GlobalCopyState {
  * 改完需要重启（运行中的进程持有权威内存并会整份覆写文件）。
  */
 export interface GlobalAssetState {
+  /**
+   * 随机图片（`/h_image`）的来源目录；相对路径按运行时数据根解析，
+   * 缺省用 RANDOM_H_IMAGE_DIR。启动时不存在则自动创建。
+   */
+  randomHImageDir?: string;
   /** 「未卜先知」内联结果的缩略图直链；缺省用 FORTUNE_THUMBNAIL_URL。 */
   fortuneThumbnailUrl?: string;
   /** 「概率论」内联结果的缩略图直链；缺省用 PROBABILITY_THUMBNAIL_URL。 */
@@ -164,11 +188,6 @@ export interface GlobalAssetState {
   gagThumbnailUrl?: string;
   /** `/icon reset`、`/copy stop` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
   botDefaultAvatarUrl?: string;
-  /**
-   * 随机图片（`/h_image`）的来源目录；相对路径按运行时数据根解析，
-   * 缺省用 RANDOM_H_IMAGE_DIR。启动时不存在则自动创建。
-   */
-  randomHImageDir?: string;
 }
 
 /**
@@ -181,13 +200,11 @@ export interface GlobalState {
 }
 
 /**
- * state.json 保存 global 与按群的 translate 会话。群功能开关仍由
+ * state.json 只保存所有群共用的 global 块。按群的状态（功能开关、翻译会话等）由
  * `database/storage.sqlite` 的 `chat_states` 表持久化。
- * translate 缺省表示从未设置翻译会话；每群为非空数组，最多五个不同身份，逐条严格校验。
  */
 export interface StateFileSchema {
   global: GlobalState;
-  translate?: Readonly<Record<string, readonly TranslateState[]>>;
 }
 
 /**
@@ -220,5 +237,4 @@ export interface DecodedGlobalState {
 /** decodeStateFile 与 StateStore.load 的返回形态；落盘侧仍用 StateFileSchema。 */
 export interface DecodedStateFile {
   global: DecodedGlobalState;
-  translate: Readonly<Record<string, readonly TranslateState[]>>;
 }

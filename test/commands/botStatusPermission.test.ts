@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { translateStates } from "../../packages/cache/main/translateState";
+import type { TranslateState } from "../../packages/types/translate";
 
 interface SentCommandMessage {
   readonly chatId: number;
@@ -21,7 +21,11 @@ const telegramOutboundStats = mock((): Readonly<{
   pending: number;
   capacity: number;
 }> => ({ active: 0, pending: 0, capacity: 81_920 }));
-const getChatState = mock((_chatId: number): Readonly<Record<string, never>> => ({}));
+/** 各群翻译会话；getChatState 按群带出 translate 字段。 */
+const translateStates = new Map<number, readonly TranslateState[]>();
+const getChatState = mock((chatId: number): Readonly<{ translate: readonly TranslateState[] | undefined }> => ({
+  translate: translateStates.get(chatId),
+}));
 const readBotProcessStatus = mock((): Readonly<{
   uptimeSeconds: number;
   averageCpuPercent: number;

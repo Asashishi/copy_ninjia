@@ -3,7 +3,7 @@ import type { AgentCapability } from "../../../types/config";
 
 /**
  * OpenAI 底层客户端的线程内缓存。aiChat/openai/client.ts 按能力首次请求时
- * 填充；每项能力独立持有 api_key 与 base_url，容量固定最多五个条目。
+ * 填充；每项能力独立持有 api_key 与 base_url，容量固定最多六个条目。
  * 进程退出时随 isolate 释放，Worker 崩溃重建后从空 holder 按配置重建。
  *
  * 归属 AI 闲聊 Worker：AI 闲聊供应商的全部调用方（回复生成、视觉描述、

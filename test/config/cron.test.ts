@@ -1,7 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { loadCronConfig, parseCronConfig } from "../../packages/config/cron";
+import {
+  assertCronVoiceSupported,
+  cronConfigUsesVoice,
+  ensureCronConfig,
+  getCronConfig,
+  adoptCronConfig,
+  loadCronConfig,
+  parseCronConfig,
+} from "../../packages/config/cron";
+import { adoptAgentDeploymentConfig } from "../../packages/config/agent";
+import { VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
+import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
 import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../../packages/consts/paths";
 import type { CronConfig } from "../../packages/types/cron";
 import { TEST_DATA_ROOT } from "../preloadEnv";
@@ -28,6 +39,71 @@ function rejects(value: unknown, message: string): void {
 afterEach(() => {
   rmSync(FILES_ROOT, { recursive: true, force: true });
   rmSync(CRON_CONFIG_PATH, { force: true });
+  adoptAgentDeploymentConfig(null);
+  adoptCronConfig(null);
+});
+
+const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, voice: "Leda" };
+
+/** 只关心 tts 段的 agent 快照；对话核心能力段在这些用例里不被读取。 */
+function agentWith(tts: AgentTtsCapabilityConfig | undefined): AgentDeploymentConfig {
+  return { tts } as unknown as AgentDeploymentConfig;
+}
+
+describe("send_voice", () => {
+  test("content 必填、tone 可省；两者清洗成单行后保存", () => {
+    const config: CronConfig = parseCronConfig([task({
+      actions: [
+        { type: "send_voice", payload: { content: " おやすみ\nまた明日 ", tone: " 眠そうに\n小声で " } },
+        { type: "send_voice", payload: { content: "おはよう" } },
+      ],
+    })], PATH);
+    expect(config[0]!.actions).toEqual([
+      { type: "send_voice", content: "おやすみ また明日", tone: "眠そうに 小声で" },
+      { type: "send_voice", content: "おはよう", tone: undefined },
+    ]);
+    expect(cronConfigUsesVoice(config)).toBe(true);
+    expect(cronConfigUsesVoice(parseCronConfig([task()], PATH))).toBe(false);
+  });
+
+  test("键、类型与长度严格判定，诊断写明字段路径", () => {
+    const voice = (payload: Record<string, unknown>): unknown => [task({ actions: [{ type: "send_voice", payload }] })];
+    rejects(voice({ tone: "眠そうに" }), "$[0].actions[0].payload.content");
+    rejects(voice({ content: "   " }), "$[0].actions[0].payload.content");
+    rejects(voice({ content: "あ".repeat(VOICE_OPERATOR_TEXT_MAX_CHARS + 1) }), `at most ${VOICE_OPERATOR_TEXT_MAX_CHARS} characters`);
+    rejects(voice({ content: "hi", tone: "" }), "$[0].actions[0].payload.tone");
+    rejects(voice({ content: "hi", tone: null }), "$[0].actions[0].payload.tone");
+    rejects(voice({ content: "hi", tone: "あ".repeat(VOICE_TONE_MAX_CHARS + 1) }), `at most ${VOICE_TONE_MAX_CHARS} characters`);
+    rejects(voice({ content: "hi", text: "hi" }), "{ content, tone? }");
+    expect(parseCronConfig(voice({ content: "あ".repeat(VOICE_OPERATOR_TEXT_MAX_CHARS) }), PATH)).toHaveLength(1);
+  });
+
+  test("用到 send_voice 而 agent.tts 缺省时按第一个 send_voice 的字段路径拒绝", () => {
+    const config: CronConfig = parseCronConfig([
+      task(),
+      task({ name: "voice", actions: [
+        { type: "send_message", payload: { content: "hi" } },
+        { type: "send_voice", payload: { content: "おやすみ" } },
+      ] }),
+    ], PATH);
+    expect(() => assertCronVoiceSupported(config, undefined, PATH)).toThrow(
+      `${PATH}: $[1].actions[1].type must be send_message, send_image or send_file unless config/agent.json configures $.agent.tts alongside text, summary and media`
+    );
+    expect(() => assertCronVoiceSupported(config, TTS, PATH)).not.toThrow();
+    expect(() => assertCronVoiceSupported(parseCronConfig([task()], PATH), undefined, PATH)).not.toThrow();
+  });
+
+  test("启动总闸按已校验的 agent 配置核对：没配 tts 拒绝启动，配了才接管", async () => {
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_voice", payload: { content: "hi" } }] })]));
+    adoptAgentDeploymentConfig(null);
+    await expect(ensureCronConfig()).rejects.toThrow("$[0].actions[0].type");
+    adoptAgentDeploymentConfig(agentWith(undefined));
+    await expect(ensureCronConfig()).rejects.toThrow("unless config/agent.json configures $.agent.tts");
+    expect(getCronConfig()).toEqual([]);
+    adoptAgentDeploymentConfig(agentWith(TTS));
+    await ensureCronConfig();
+    expect(getCronConfig()[0]!.actions).toEqual([{ type: "send_voice", content: "hi", tone: undefined }]);
+  });
 });
 
 describe("parseCronConfig", () => {
@@ -134,7 +210,7 @@ describe("parseCronConfig", () => {
     rejects([task({ message_thread_id: 12 })], "$[0] must be { name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
     rejects([task({ actions: [] })], "$[0].actions must be a non-empty array with at most 16 actions");
     rejects([task({ actions: Array.from({ length: 17 }, () => ({ type: "send_message", payload: { content: "x" } })) })], "$[0].actions must be");
-    rejects([task({ actions: [{ type: "send_video", payload: {} }] })], "$[0].actions[0].type must be send_message, send_image or send_file");
+    rejects([task({ actions: [{ type: "send_video", payload: {} }] })], "$[0].actions[0].type must be send_message, send_image, send_file or send_voice");
     rejects([task({ actions: [{ type: "send_message", payload: { content: "" } }] })], "$[0].actions[0].payload.content must be");
     rejects([task({ actions: [{ type: "send_message", payload: { content: "x".repeat(4097) } }] })], "$[0].actions[0].payload.content must be a non-empty string of at most 4096 characters");
     rejects([task({ actions: [{ type: "send_file", payload: { content: "x".repeat(1025), url: "https://e.com/f" } }] })], "$[0].actions[0].payload.content must be a non-empty string of at most 1024 characters");

@@ -8,10 +8,12 @@
 import { chatAtmosphere } from "../../infra/atmosphere";
 import { pickRandomImage } from "../../infra/randomImage";
 import { getRandomHImageDirectory } from "../../infra/storage/stateStore";
+import { recordBotImage } from "../../aiChat";
 import { sendCommandMessage, sendPhotoWithResult } from "../../infra/telegram";
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import type { HImageRequest } from "../../types/hImage";
 import type { RandomImagePick } from "../../types/randomImage";
+import type { TelegramPhotoSendResult } from "../../types/telegram";
 
 /** sendHImageResult 的入参。 */
 interface SendHImageResultParams extends HImageRequest {
@@ -22,10 +24,11 @@ interface SendHImageResultParams extends HImageRequest {
  * `/h_image` 结果图片的唯一发送边界。**长期保留**：这是用户授权的保留例外（见
  * docs/cn/04-invariants.md），不挂固定延迟删除；论坛群带触发消息所在话题并
  * 回复触发消息。图片固定以 Telegram 剧透遮罩发送，点开才显示。经共享的
- * sendPhotoWithResult 发送，自发登记、throttler 与 429 分类闸都在那一层。
+ * sendPhotoWithResult 发送，自发登记、throttler 与 429 分类闸都在那一层；
+ * 发送成功后写一条占位态自录（见 aiChat/botImages.ts）。
  */
 async function sendHImageResult({ chatId, messageId, messageThreadId, pick }: SendHImageResultParams): Promise<void> {
-  await sendPhotoWithResult({
+  const sent: TelegramPhotoSendResult | undefined = await sendPhotoWithResult({
     chatId,
     bytes: pick.bytes,
     mimeType: pick.mimeType,
@@ -33,6 +36,7 @@ async function sendHImageResult({ chatId, messageId, messageThreadId, pick }: Se
     messageThreadId,
     hasSpoiler: true,
   });
+  if (sent !== undefined) recordBotImage({ chatId, messageId: sent.messageId, caption: "", edited: false });
 }
 
 /** 抽取并发送；抽取失败按结果回一句 30 秒提示。 */

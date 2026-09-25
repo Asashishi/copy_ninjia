@@ -1,4 +1,12 @@
-import { MEDIA_CLOSED_RESULT, MEDIA_BACKOFF_RESULT, MEDIA_TASK_REJECTED_RESULT, MEDIA_CANCELLED_RESULT } from "../../consts/aiChat/media";
+import {
+  MEDIA_CLOSED_RESULT,
+  MEDIA_BACKOFF_RESULT,
+  MEDIA_TASK_REJECTED_RESULT,
+  MEDIA_CANCELLED_RESULT,
+  IMAGE_DESCRIPTION_MAX_CHARS,
+  MEDIA_DESCRIPTION_ERROR_LABEL,
+  SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
+} from "../../consts/aiChat/media";
 /**
  * 群聊媒体的异步解析入口，四种媒体共用：图片/贴纸/GIF 走视觉描述（下载 Telegram
  * 文件，按需转码成视觉接口通吃的 jpg/png，见 infra/image.ts），语音走转写（原样把
@@ -34,17 +42,11 @@ import {
   setMediaInputProbe,
 } from "../../cache/workers/aiChat/mediaInputSupport";
 import { isMediaInputClosed } from "../../states/mediaInputSupport";
-import {
-  IMAGE_DESCRIPTION_MAX_CHARS,
-  MEDIA_DESCRIPTION_ERROR_LABEL,
-  SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
-} from "../../consts/aiChat/media";
 import { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT, STICKER_DESCRIPTION_PROMPT } from "../../consts/aiChat/prompts/media";
-import type { MediaKind } from "../../types/media";
+import type { MediaKind, VisionImage } from "../../types/media";
 import { downloadTelegramVisionImage } from "./telegramImage";
 import { mediaTaskRunner } from "../../cache/workers/aiChat/mediaTasks";
 import { transcribeVoiceUncached } from "./voiceTranscription";
-import type { VisionImage } from "../../types/media";
 import type {
   TransientDescriptionAbortState,
 } from "../../cache/workers/aiChat/imageDescription";

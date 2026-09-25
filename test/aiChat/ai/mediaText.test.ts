@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AiRecordMediaMessage } from "../../../packages/types/aiChat/protocol";
+import { composeMediaText } from "../../../packages/libs/text";
 import {
-  composeMediaText,
   fallbackTextFor,
   pendingPlaceholderFor,
   replyFallbackDescriptionFor,

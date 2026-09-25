@@ -74,16 +74,24 @@ export function expellingOf(
   };
 }
 
-/** 把待验证记录冻结为终态处置所需的最小语义快照。 */
-export function snapshotOf(state: PendingState): ExpelSnapshot {
+/** snapshotOf 的来源：内存中的待验证记录或落盘快照，后者的三个消息 ID 可缺省。 */
+type ExpelSnapshotSource =
+  Pick<ExpelSnapshot, "label" | "isBot" | "joinedAt" | "expiresAt"> &
+  Partial<Pick<ExpelSnapshot, "announcementMessageId" | "reminderMessageId" | "replyReminderMessageId">>;
+
+/**
+ * 把待验证记录或落盘快照冻结为终态处置所需的最小语义快照；新建路径与 adopt
+ * 路径共用这一处取法，字段顺序固定。
+ */
+export function snapshotOf(source: ExpelSnapshotSource): ExpelSnapshot {
   return {
-    label: state.label,
-    isBot: state.isBot,
-    announcementMessageId: state.announcementMessageId,
-    reminderMessageId: state.reminderMessageId,
-    replyReminderMessageId: state.replyReminderMessageId,
-    joinedAt: state.joinedAt,
-    expiresAt: state.expiresAt,
+    label: source.label,
+    isBot: source.isBot,
+    announcementMessageId: source.announcementMessageId,
+    reminderMessageId: source.reminderMessageId,
+    replyReminderMessageId: source.replyReminderMessageId,
+    joinedAt: source.joinedAt,
+    expiresAt: source.expiresAt,
   };
 }
 

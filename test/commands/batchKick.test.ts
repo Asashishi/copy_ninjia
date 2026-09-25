@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../packages/consts/identityStorage";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
+import type { IdentityPolicyVerdicts } from "../../packages/types/identityStorage";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { lastReplyText } from "../helpers/replies";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
@@ -23,8 +24,9 @@ const readJoinLog = mock(
   async (..._args: unknown[]): Promise<readonly JoinLogRecord[]> => []
 );
 const loggerError = mock((..._args: unknown[]): void => {});
-const prefetchIdentityPolicies = mock(
-  async (_ids: readonly number[]): Promise<boolean> => true
+const EMPTY_VERDICTS: IdentityPolicyVerdicts = { whitelisted: new Set(), blocked: new Set() };
+const readIdentityPolicyVerdicts = mock(
+  async (_ids: readonly number[]): Promise<IdentityPolicyVerdicts | null> => EMPTY_VERDICTS
 );
 
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
@@ -36,7 +38,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number): boolean => id === 1,
 }));
 mock.module("../../packages/infra/blocklist/membership", () => ({ isUserBlocked }));
-mock.module("../../packages/infra/identityStorage", () => ({ prefetchIdentityPolicies }));
+mock.module("../../packages/infra/identityStorage", () => ({ readIdentityPolicyVerdicts }));
 mock.module("../../packages/infra/blocklist/sweep", () => ({
   requestBlocklistResweep,
   sweepBlockedMembers,
@@ -92,11 +94,13 @@ beforeEach(() => {
     sweepBlockedMembers,
     readJoinLog,
     loggerError,
-    prefetchIdentityPolicies,
+    readIdentityPolicyVerdicts,
   ]) {
     mocked.mockClear();
   }
-  prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => true);
+  readIdentityPolicyVerdicts.mockImplementation(
+    async (): Promise<IdentityPolicyVerdicts | null> => EMPTY_VERDICTS
+  );
   readJoinLog.mockImplementation(async (): Promise<readonly JoinLogRecord[]> => []);
   probeChatMembership.mockImplementation(
     async (): Promise<boolean | undefined> => true
@@ -345,36 +349,67 @@ describe("/batch_kick", () => {
   });
 });
 
-describe("身份预取与批次消费必须交错", () => {
-  test("每块预取严格小于身份 LRU 容量，且逐块与消费交错", async () => {
+describe("身份结论按块直接冷读并与消费交错", () => {
+  test("每块冷读严格小于身份 LRU 容量，且逐块与消费交错", async () => {
     const records: { userId: number; joinedAt: number }[] = [];
     for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
       records.push({ userId: 1_000 + index, joinedAt: 1 });
     }
     readJoinLog.mockResolvedValueOnce(records);
-    const prefetchedAtCall: number[] = [];
-    prefetchIdentityPolicies.mockImplementation(
-      async (ids: readonly number[]): Promise<boolean> => {
-        prefetchedAtCall.push(kickChatMemberWithOutcome.mock.calls.length);
+    const readAtCall: number[] = [];
+    readIdentityPolicyVerdicts.mockImplementation(
+      async (ids: readonly number[]): Promise<IdentityPolicyVerdicts | null> => {
+        readAtCall.push(kickChatMemberWithOutcome.mock.calls.length);
         expect(ids.length).toBeLessThanOrEqual(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
-        return true;
+        return EMPTY_VERDICTS;
       }
     );
 
     await handleBatchKickCommand(context());
 
-    // 一次全量预取的话第二块的 id 会把第一块整块挤出 LRU，轮到它们时白名单
-    // 管理员会按冷未命中被踢出（见 consts/identityStorage.ts）。
-    expect(prefetchIdentityPolicies).toHaveBeenCalledTimes(2);
-    expect(prefetchedAtCall[0]).toBe(0);
-    // 第二次预取发生在第一块**已经消费完**之后，而不是一开始就全部取完。
-    expect(prefetchedAtCall[1]).toBe(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
+    expect(readIdentityPolicyVerdicts).toHaveBeenCalledTimes(2);
+    expect(readAtCall[0]).toBe(0);
+    // 第二次冷读发生在第一块**已经消费完**之后，而不是一开始就全部取完。
+    expect(readAtCall[1]).toBe(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
     expect(lastReplyText(sendMessage)).toContain(`的 ${records.length} 条入群记录中的 ${records.length} 条`);
+  });
+
+  test("局部结论为白名单时即使实时缓存已冷也不踢", async () => {
+    // 42 不在 isWhitelisted mock 的白名单里，模拟处置期间被其它流量挤出 LRU。
+    readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
+    readIdentityPolicyVerdicts.mockImplementation(
+      async (): Promise<IdentityPolicyVerdicts | null> => ({
+        whitelisted: new Set([42]),
+        blocked: new Set(),
+      })
+    );
+
+    await handleBatchKickCommand(context());
+
+    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
+  });
+
+  test("局部结论为黑名单时交回黑名单流程，不走只踢不封", async () => {
+    readJoinLog.mockResolvedValueOnce([{ userId: 43, joinedAt: 1 }]);
+    readIdentityPolicyVerdicts.mockImplementation(
+      async (): Promise<IdentityPolicyVerdicts | null> => ({
+        whitelisted: new Set(),
+        blocked: new Set([43]),
+      })
+    );
+
+    await handleBatchKickCommand(context());
+
+    expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
   });
 
   test("冷读失败时一个人都不动，并如实回执", async () => {
     readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
-    prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => false);
+    readIdentityPolicyVerdicts.mockImplementation(
+      async (): Promise<IdentityPolicyVerdicts | null> => null
+    );
 
     await handleBatchKickCommand(context());
 
@@ -391,10 +426,12 @@ describe("身份预取与批次消费必须交错", () => {
     }
     readJoinLog.mockResolvedValueOnce(records);
     let call: number = 0;
-    prefetchIdentityPolicies.mockImplementation(async (): Promise<boolean> => {
-      call++;
-      return call === 1;
-    });
+    readIdentityPolicyVerdicts.mockImplementation(
+      async (): Promise<IdentityPolicyVerdicts | null> => {
+        call++;
+        return call === 1 ? EMPTY_VERDICTS : null;
+      }
+    );
 
     await handleBatchKickCommand(context());
 

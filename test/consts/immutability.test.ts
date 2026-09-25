@@ -1,4 +1,4 @@
-import { NO_MENTION_FACTS } from "../../packages/consts/auto";
+import { NO_MENTION_FACTS, RANDOM_ECHO_MODES } from "../../packages/consts/auto";
 import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
@@ -72,11 +72,16 @@ import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/gemini";
 import {
   OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO,
   OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO,
+  EMPTY_OUTPUT_ITEMS,
 } from "../../packages/consts/aiChat/openai";
-import { RANDOM_ECHO_MODES } from "../../packages/consts/auto";
 import { RANDOM_IMAGE_EXTENSIONS } from "../../packages/consts/randomImage";
 import { H_IMAGE_TEXTS } from "../../packages/consts/atmosphere/teasing/hImage";
-import { EMPTY_MESSAGE_ENTITIES, MUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
+import {
+  EMPTY_MESSAGE_ENTITIES,
+  MUTED_CHAT_PERMISSIONS,
+  DISABLED_LINK_PREVIEW,
+  NO_SIGNAL_ARGS,
+} from "../../packages/consts/telegram";
 import { QA_ANSWER_LABELS, QA_QUESTION_LABELS } from "../../packages/consts/qa";
 import { DEFAULT_CHAT_STATE, adoptChatState, createChatState, isEmptyChatState } from "../../packages/libs/chatState";
 import { CHAT_STATE_KEYS } from "../../packages/consts/storageSchema";
@@ -92,10 +97,8 @@ import * as Media from "../../packages/consts/aiChat/media";
 import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
 import { NO_VERIFICATION_EFFECTS } from "../../packages/consts/antiRaid/verification";
 import { NO_LOCKDOWN_EFFECTS } from "../../packages/consts/antiRaid/lockdown";
-import { EMPTY_OUTPUT_ITEMS } from "../../packages/consts/aiChat/openai";
 import { EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/tools";
 import { EMPTY_STICKER_MENU } from "../../packages/consts/aiChat/stickers";
-import { DISABLED_LINK_PREVIEW, NO_SIGNAL_ARGS } from "../../packages/consts/telegram";
 
 /**
  * 共享常量表的不可变性回归测试。
@@ -381,8 +384,8 @@ test("默认群状态单例与它的只读访问器都不许被写", () => {
   };
   expect(assertBotPermissionsReadonly).toBeFunction();
   // 读取照常。
-  expect(DEFAULT_CHAT_STATE.isInitEnabled).toBeUndefined();
-  expect(DEFAULT_CHAT_STATE.isFloodControlEnabled).toBeUndefined();
+  expect(DEFAULT_CHAT_STATE.isInitEnabled).toBeFalse();
+  expect(DEFAULT_CHAT_STATE.isFloodControlEnabled).toBeFalse();
 });
 
 test("默认群状态单例与新建状态同形状：形状不一致会让热路径的读取重新发散", () => {
@@ -408,6 +411,7 @@ test("默认群状态单例与新建状态同形状：形状不一致会让热�
     botPermissions: true,
     title: true,
     isProxySendEnabled: true,
+    translate: true,
   };
   expect(Object.keys(createChatState())).toEqual(Object.keys(shape));
   expect(Object.keys(DEFAULT_CHAT_STATE)).toEqual(Object.keys(shape));
@@ -417,7 +421,7 @@ test("默认群状态单例与新建状态同形状：形状不一致会让热�
   expect([...CHAT_STATE_KEYS]).toEqual(Object.keys(shape).filter((key: string): boolean => key !== "aiPersona"));
 });
 
-test("isEmptyChatState 必须认得全部 12 个字段：漏掉一个就会把有状态的群当成空条目回收", () => {
+test("isEmptyChatState 必须认得全部 13 个字段：漏掉一个就会把有状态的群当成空条目回收", () => {
   // 回收判定漏一个字段，那个群的状态会在下一次保存时连同条目一起消失。
   const values: Readonly<Record<keyof ChatState, unknown>> = {
     aiPersona: "人设",
@@ -432,11 +436,12 @@ test("isEmptyChatState 必须认得全部 12 个字段：漏掉一个就会把�
     botPermissions: botPermissions(),
     title: "群名",
     isProxySendEnabled: true,
+    translate: [{ translatedUser: { id: 1 }, language: "ja" }],
   };
   expect(isEmptyChatState(createChatState())).toBe(true);
   for (const [field, value] of Object.entries(values)) {
     const state: ChatState = createChatState();
-    (state as Record<string, unknown>)[field] = value;
+    (state as unknown as Record<string, unknown>)[field] = value;
     expect(isEmptyChatState(state)).toBe(false);
   }
 });

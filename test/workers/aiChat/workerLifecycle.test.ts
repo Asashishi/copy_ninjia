@@ -75,6 +75,9 @@ mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
   recordChatMessage,
 }));
 mock.module("../../../packages/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
+const recordBotImage = mock((..._args: unknown[]): void => {});
+const resolveRepliedBotImage = mock((..._args: unknown[]): void => {});
+mock.module("../../../packages/workers/aiChat/botImages", () => ({ recordBotImage, resolveRepliedBotImage }));
 mock.module("../../../packages/workers/aiChat/replyPipeline", () => ({
   generateAndSendReply,
   drainPendingReplyQueues,
@@ -84,6 +87,9 @@ mock.module("../../../packages/workers/aiChat/replyGeneration", () => ({
   quiesceAiChatReplies,
 }));
 mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }));
+const handleSynthesizeVoice = mock((..._args: unknown[]): void => { calls.push("synthesizeVoice"); });
+const handleCancelVoiceSynthesis = mock((..._args: unknown[]): void => { calls.push("cancelVoiceSynthesis"); });
+mock.module("../../../packages/workers/aiChat/voiceSynthesis", () => ({ handleCancelVoiceSynthesis, handleSynthesizeVoice }));
 mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMood, refreshChatMoods, switchMood }));
 mock.module("../../../packages/infra/logger", () => ({
   acceptForwardedLogBatch: (): boolean => false,
@@ -135,6 +141,8 @@ beforeEach(() => {
     purgeChatMemory,
     recordChatMessage,
     recordChatMedia,
+    recordBotImage,
+    resolveRepliedBotImage,
     generateAndSendReply,
     invalidateChatReplies,
     quiesceAiChatReplies,
@@ -179,6 +187,24 @@ describe("AI Chat Worker lifecycle", () => {
         text: "hi",
       },
       {
+        type: "record",
+        chatId: -1001,
+        senderId: 7,
+        firstName: "Alice",
+        lastName: "",
+        username: "alice",
+        messageId: 11,
+        replyTo: {
+          messageId: 5, id: 99, firstName: "Ninja", lastName: "", username: undefined,
+          text: "[图片]", quote: undefined, forwardedFrom: undefined,
+          botImage: { fileId: "bot-photo", fileUniqueId: "bot-photo-u", caption: "" },
+        },
+        forwardedFrom: undefined,
+        persistImmediately: false,
+        text: "这是谁",
+      },
+      { type: "recordBotImage", chatId: -1001, messageId: 12, caption: "图注", edited: false, persistImmediately: true },
+      {
         type: "recordMedia",
         chatId: -1001,
         senderId: 7,
@@ -209,6 +235,12 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "switchMood", chatId: -1001, requestId: 4, deadlineAt: Number.MAX_SAFE_INTEGER },
     ];
 
+    const repliedEntry = { messageId: 11 };
+    recordChatMessage.mockImplementationOnce((): void => { calls.push("record"); });
+    recordChatMessage.mockImplementationOnce(((): unknown => {
+      calls.push("record");
+      return repliedEntry;
+    }) as () => void);
     for (const message of messages) worker.handleAiChatWorkerMessage(message);
     await Bun.sleep(0);
 
@@ -218,10 +250,14 @@ describe("AI Chat Worker lifecycle", () => {
     // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
     expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
-    expect(recordChatMessage).toHaveBeenCalledTimes(1);
+    expect(recordChatMessage).toHaveBeenCalledTimes(2);
+    expect(resolveRepliedBotImage).toHaveBeenCalledTimes(1);
+    expect(resolveRepliedBotImage).toHaveBeenCalledWith(-1001, repliedEntry, { fileId: "bot-photo", fileUniqueId: "bot-photo-u", caption: "" });
+    expect(recordBotImage).toHaveBeenCalledWith({ type: "recordBotImage", chatId: -1001, messageId: 12, caption: "图注", edited: false, persistImmediately: true });
     expect(recordChatMedia).toHaveBeenCalledTimes(1);
     expect(flushMemorySnapshot).toHaveBeenNthCalledWith(1, -1001, true);
     expect(flushMemorySnapshot).toHaveBeenNthCalledWith(2, -1001, true);
+    expect(flushMemorySnapshot).toHaveBeenNthCalledWith(3, -1001, true);
     expect(generateAndSendReply).toHaveBeenCalledWith({
       type: "trigger",
       messageThreadId: undefined,
@@ -396,6 +432,16 @@ describe("AI Chat Worker lifecycle", () => {
 
     expect(switchMood).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  test("语音合成请求与撤回交给 Worker 侧转交模块", () => {
+    const synthesize: AiChatWorkerMessage = { type: "synthesizeVoice", requestId: 1, text: "hi", tone: undefined };
+    const cancel: AiChatWorkerMessage = { type: "cancelVoiceSynthesis", requestId: 1 };
+    worker.handleAiChatWorkerMessage(synthesize);
+    worker.handleAiChatWorkerMessage(cancel);
+    expect(calls).toEqual(["synthesizeVoice", "cancelVoiceSynthesis"]);
+    expect(handleSynthesizeVoice).toHaveBeenCalledWith(synthesize);
+    expect(handleCancelVoiceSynthesis).toHaveBeenCalledWith(cancel);
   });
 
   test("过期的 queryMood 请求不再读取或初始化心情", () => {

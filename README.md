@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5104_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.19%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5142_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.23%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
-    <img alt="bun run test:coverage：5104 项测试全部通过 / 444 个测试文件 / 192,389 次 expect() 调用 / 函数覆盖率 97.06% / 行覆盖率 98.19%" src="public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：5142 项测试全部通过 / 450 个测试文件 / 194,128 次 expect() 调用 / 函数覆盖率 97.16% / 行覆盖率 98.23%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -105,7 +105,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>👁️ 多模态与创作</b><br>
-  <sub>看得懂图片和语音，也能画图、写歌发回群里。</sub></p>
+  <sub>看得懂图片和语音，也能画图、发语音回群里。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🔎 实时查证</b><br>
@@ -161,7 +161,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>⏰ 定时发送</b><br>
-  <sub>按时区定时发送文字、文件、随机图或 1–10 张固定图片，支持一次性任务与随机间隔。</sub></p>
+  <sub>按时区定时发送文字、文件、语音、随机图或 1–10 张固定图片，支持一次性任务与随机间隔。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 人设与通知语气</b><br>
@@ -193,10 +193,23 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>📨 私聊中转</b><br>
-  <sub>超级管理员在私聊开启 /send 后，可把消息转发到指定的已接管群。</sub></p>
+  <sub>超级管理员在私聊开启 /send 后，可把消息转发到指定的已接管群，也能让机器人把一段文字念成语音发过去。</sub></p>
 </td>
 </tr>
 </table>
+
+### 语音、图片与记忆
+
+| 能力 | 当前行为 |
+| :--- | :--- |
+| AI 语音 | 可配置音色和每句语气；每轮最多一条，台词最多 64 个 UTF-16 码元；发送成功后记住台词 |
+| 管理员与定时语音 | `/send` 和 cron 共用 TTS，台词最多 256 个 UTF-16 码元；定时语音每轮合成一次并复用 Telegram `file_id` |
+| 图片记忆 | AI 生图记录实际画面；`/wed`、`/h_image` 和定时图片先记占位，有人回复时再识图 |
+
+语音需要显式配置 `agent.tts`（当前由 Google 提供）；`/send` 复制的消息与语音、定时文字与语音不会自动写入 AI 记忆。图片自录需要本群开启 AI 且未处于复读状态。配置、报错和长度规则见 [FAQ](docs/cn/10-faq.md)。
+
+> [!IMPORTANT]
+> [13.0.2 → 14.0.0 升级步骤](docs/cn/07-operations.md#upgrade-14)
 
 每项功能的行为细节、配置与边界见 **[📚 开发者文档](docs/cn/content-table.md)**。
 
@@ -302,7 +315,7 @@ Copy Ninjia 的架构总览、模块导览、运行时权威约束、测试流�
 | 管理员权限 | 用到它的功能 |
 | :--- | :--- |
 | 删除消息 | `/gag`、广告检测删除广告、删除黑名单频道身份的发言 |
-| 限制与封禁成员 | 入群验证踢人、防冲群私密模式、`/block enable|disable`、`/mute`、`/unmute`、`/batch_kick`、刷屏禁言、广告处置封禁 |
+| 限制与封禁成员 | 入群验证踢人、防冲群私密模式、`/block enable\|disable`、`/mute`、`/unmute`、`/batch_kick`、刷屏禁言、广告处置封禁 |
 
 入群验证还依赖管理员身份本身：Telegram 只向管理员机器人推送成员进出事件。缺权限时，机器人的提示会点名缺的是哪一项；持有 `isCanViewBotStatus` 的身份可用 `/bot_status` 查看本群已授予的权限。
 

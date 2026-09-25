@@ -1,11 +1,29 @@
 import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User, Chat } from "grammy/types";
-import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../consts/aiChat/media";
-import { FALLBACK_CHANNEL_NAME, FALLBACK_SPEAKER_NAME, NO_MENTION_FACTS } from "../../consts/auto";
+import {
+  ANIMATION_PLACEHOLDER,
+  AUDIO_PLACEHOLDER,
+  FALLBACK_CHANNEL_NAME,
+  FALLBACK_SPEAKER_NAME,
+  LOCATION_PLACEHOLDER,
+  NON_TEXT_PLACEHOLDER,
+  NO_MENTION_FACTS,
+  PHOTO_PLACEHOLDER,
+  VIDEO_NOTE_PLACEHOLDER,
+  VIDEO_PLACEHOLDER,
+  VOICE_PLACEHOLDER,
+  contactPlaceholder,
+  dicePlaceholder,
+  documentPlaceholder,
+  pollPlaceholder,
+  stickerPlaceholder,
+  venuePlaceholder,
+} from "../../consts/auto";
 import { explicitReplyTo } from "../../libs/forumTopic";
-import { joinPersonName } from "../../libs/text";
+import { pickPhotoFile } from "../../libs/telegramImage";
+import { composeMediaText, joinPersonName } from "../../libs/text";
 import { visibleSenderChat, visibleSenderId } from "../../users/visibleSender";
 import type { TelegramVisionSource } from "../../types/media";
-import type { AiReplyReference } from "../../types/aiChat/protocol";
+import type { AiReplyReference, RepliedBotImage } from "../../types/aiChat/protocol";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
 import type { MentionFacts } from "../../types/auto";
 
@@ -147,27 +165,41 @@ export function resolveForwardOrigin(message: Message): string | undefined {
  * 自己进入缓存时异步获得描述，这里的类型标签负责旧消息已滑出缓存时兜底。 */
 function replyReferenceText(message: Message): string {
   if (typeof message.text === "string") return message.text;
-  const caption: string = typeof message.caption === "string" ? ` ${message.caption}` : "";
-  if (message.photo) return `[图片]${caption}`;
-  if (message.sticker) return `[贴纸${message.sticker.emoji ? `：${message.sticker.emoji}` : ""}]`;
-  if (message.animation) return `[GIF]${caption}`;
-  if (message.video) return `[视频]${caption}`;
-  if (message.video_note) return "[视频消息]";
-  if (message.voice) return `[语音]${caption}`;
-  if (message.audio) return `[音频]${caption}`;
-  if (message.document) return `[文件${message.document.file_name ? `：${message.document.file_name}` : ""}]${caption}`;
-  if (message.poll) return `[投票：${message.poll.question}]`;
-  if (message.dice) return `[骰子：${message.dice.emoji} ${message.dice.value}]`;
-  if (message.contact) return `[联系人：${message.contact.first_name}${message.contact.last_name ? ` ${message.contact.last_name}` : ""}]`;
-  if (message.venue) return `[地点：${message.venue.title}]`;
-  if (message.location) return "[位置]";
-  return "[非文本消息]";
+  const caption: string = typeof message.caption === "string" ? message.caption : "";
+  if (message.photo) return composeMediaText(PHOTO_PLACEHOLDER, caption);
+  if (message.sticker) return stickerPlaceholder(message.sticker.emoji);
+  if (message.animation) return composeMediaText(ANIMATION_PLACEHOLDER, caption);
+  if (message.video) return composeMediaText(VIDEO_PLACEHOLDER, caption);
+  if (message.video_note) return VIDEO_NOTE_PLACEHOLDER;
+  if (message.voice) return composeMediaText(VOICE_PLACEHOLDER, caption);
+  if (message.audio) return composeMediaText(AUDIO_PLACEHOLDER, caption);
+  if (message.document) return composeMediaText(documentPlaceholder(message.document.file_name), caption);
+  if (message.poll) return pollPlaceholder(message.poll.question);
+  if (message.dice) return dicePlaceholder(message.dice.emoji, message.dice.value);
+  if (message.contact) return contactPlaceholder(message.contact.first_name, message.contact.last_name);
+  if (message.venue) return venuePlaceholder(message.venue.title);
+  if (message.location) return LOCATION_PLACEHOLDER;
+  return NON_TEXT_PLACEHOLDER;
+}
+
+/** 被回复的是机器人自己发的图片时取出识图所需的那张图，其余返回 undefined。 */
+function repliedBotImage(repliedTo: Message, botId: number): RepliedBotImage | undefined {
+  const photo: PhotoSize[] | undefined = repliedTo.photo;
+  if (repliedTo.from?.id !== botId || photo === undefined || photo.length === 0) return undefined;
+  const source: TelegramVisionSource = pickPhotoFile(photo);
+  return {
+    fileId: source.fileId,
+    fileUniqueId: source.fileUniqueId,
+    caption: typeof repliedTo.caption === "string" ? repliedTo.caption : "",
+  };
 }
 
 /** 提取当前消息的显式回复关系。Telegram 已在 reply_to_message 中附带原消息，
  * 因此无需额外 API 请求；论坛话题自动填入的话题创建消息不算回复（见
- * libs/forumTopic.ts 的 explicitReplyTo）；quote 则保留用户选中的精确引用片段。 */
-export function resolveReplyReference(message: Message): AiReplyReference | undefined {
+ * libs/forumTopic.ts 的 explicitReplyTo）；quote 则保留用户选中的精确引用片段。
+ * 被回复的是机器人自己的图片时附上 botImage，由 Worker 识图后回填（见
+ * workers/aiChat/botImages.ts）。 */
+export function resolveReplyReference(message: Message, botId: number): AiReplyReference | undefined {
   const repliedTo: Message | undefined = explicitReplyTo(message);
   if (!repliedTo) return undefined;
   const speaker: AiSpeakerSnapshot = resolveSpeaker(repliedTo);
@@ -184,22 +216,8 @@ export function resolveReplyReference(message: Message): AiReplyReference | unde
     text: replyReferenceText(repliedTo),
     quote: quote ? quote : undefined,
     forwardedFrom: forwardedFrom ? forwardedFrom : undefined,
+    botImage: repliedBotImage(repliedTo, botId),
   };
-}
-
-/**
- * 从 Telegram 按分辨率升序返回的 photo 档位中挑最大且未声明超限的一档；
- * 全部超限时仍退回最小档，由下载侧的真实字节上限做最终防护。
- */
-export function pickPhotoFile(sizes: PhotoSize[]): TelegramVisionSource {
-  for (let i: number = sizes.length - 1; i >= 0; i--) {
-    const size: PhotoSize = sizes[i]!;
-    if (!size.file_size || size.file_size <= MEDIA_MAX_DOWNLOAD_BYTES) {
-      return { fileId: size.file_id, fileUniqueId: size.file_unique_id, width: size.width, height: size.height };
-    }
-  }
-  const smallest: PhotoSize = sizes[0]!;
-  return { fileId: smallest.file_id, fileUniqueId: smallest.file_unique_id, width: smallest.width, height: smallest.height };
 }
 
 /** GIF 只分析 Telegram 缩略图，缓存键仍使用 animation 自身的唯一 id。 */

@@ -11,7 +11,7 @@ import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
  * （查时间不是工具：当前时间默认拼进每次请求的系统提示词，转录行也自带
  * 每条消息的发送时间，见 libs/time.ts 的 getCurrentTime、
  * workers/aiChat/replyModel.ts 与 aiChat/ai/utils/chatTranscript.ts。）
- * 有副作用的行动工具（发言/反应/两层贴纸/生图/生歌）不在这份静态清单里；
+ * 有副作用的行动工具（发言/反应/两层贴纸/生图/语音）不在这份静态清单里；
  * 它们依赖 chatId、逐轮状态或动态能力，并由 replyToolset/ 按轮组装。
  */
 

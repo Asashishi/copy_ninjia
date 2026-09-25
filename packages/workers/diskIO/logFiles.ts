@@ -18,7 +18,7 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO/messages";
-import type { DayFileState } from "../../types/diskIO/storage";
+import type { DayFileState, BufferedLogEntry } from "../../types/diskIO/storage";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
 import {
   DAY_FILE_PATTERN,
@@ -41,16 +41,16 @@ import {
   repairTruncatedAppendOnlyContent,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import type { BufferedLogEntry } from "../../types/diskIO/storage";
 import { enqueueDiskIOOperation } from "./operationQueue";
 
 interface LogRecord {
   level: string;
   message: string;
-  /** 原始参数列表。只在存在非字符串参数（展开后的 Error 对象等结构化数据）
-   *  时落盘；纯字符串参数已逐字进了 message，再存一份 args 纯属重复，见
-   *  handleLogMessage 里的判断。 */
-  args?: unknown[];
+  /**
+   * 原始参数列表。存在非字符串参数（展开后的 Error 对象等结构化数据）时为完整
+   * 参数列表，否则为 undefined；undefined 不写入日志文件。
+   */
+  args: unknown[] | undefined;
 }
 
 /** 东京时区、含毫秒的日期时间格式器（模块加载时构造一次复用，同 libs/time.ts
@@ -297,22 +297,20 @@ export async function flushLogBuffer(): Promise<boolean> {
 
 /** 处理一条日志消息：入内存 buffer，达到阈值立即落盘，否则按需启动定时器。 */
 export async function handleLogMessage(msg: LogMessage): Promise<void> {
-  // message 只拼字符串参数；非字符串参数（展开后的 Error 对象等）只存进
-  // args，不再 stringify 一份嵌进 message——那样同一份数据会在一条记录里
-  // 落两次盘（message 里一次、args 里一次），错误堆栈这种大块头尤其浪费。
-  // 全是字符串参数时 message 已含全部信息，args 整个省略。
+  // message 只拼字符串参数；存在非字符串参数（展开后的 Error 对象等）时，完整
+  // 参数列表只写进 args。全是字符串参数时 args 为 undefined，落盘时省略。
   const stringArgs: string[] = [];
   let hasStructuredArgs: boolean = false;
   for (const arg of msg.args) {
     if (typeof arg === "string") stringArgs.push(arg);
     else hasStructuredArgs = true;
   }
-  const record: LogRecord = { level: msg.level, message: stringArgs.join(" ") };
-  if (hasStructuredArgs) {
-    record.args = msg.args;
-  }
-  // key 的顺序完全由前面的本地日期时间前缀决定，uuid 段只负责区分同一毫秒内的
-  // 多条日志，因此这里要的是随机 id、不是可排序 id。
+  const record: LogRecord = {
+    level: msg.level,
+    message: stringArgs.join(" "),
+    args: hasStructuredArgs ? msg.args : undefined,
+  };
+  // key 按本地日期时间前缀排序，uuid 段只区分同一毫秒内的多条日志。
   const bufferedEntries: number = markLogDirty({
     day: dayKey(msg.timestamp),
     text: serializeDayFileEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),

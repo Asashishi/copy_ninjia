@@ -28,11 +28,11 @@
 | `bun run check:coverage` | 现跑一次覆盖率，核对三语 README 徽章/图注、三份本页与两张覆盖率图的指标与真实读数一致；会整跑一遍测试，不进 `check` |
 | `bun run test:fault-injection` | 确定性故障注入套件 |
 | `bun run perf:hot-paths` | 单个热路径场景的独立进程测量（`--profile` 加采样分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 51 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` 精选的 10 个热路径场景的内存/GC/JIT 门禁（注册表共 58 个；其余按全量基准清单或专项命令运行），已并入 `check`；`--write-result` 把本次读数写回根目录 `performance-result.json` |
 | `bun run perf:join-log` | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库六项真实冷热读写的独立进程基准 |
 | `bun run perf:full` | 六个分区各跑三轮的全量基准；只在发布和明确指令时跑，`--write-doc` 同时写回三份 09 性能基准页与 `performance-result.json` 的 `fullSuite.lastRun` |
-| `bun run perf:review` | 专项复核：12 个既有热点、7 个 AI 回复/载荷场景、两条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择；文本清洗与冷却表专项分别在显式 `--text` / `--cooldown` 时运行 |
+| `bun run perf:review` | 专项复核：12 个既有热点、8 个 AI 回复/载荷/语音编码场景、三条完整命令链与真实 Disk I/O Worker 压力；每项三轮独立进程，按 `--hot-paths` / `--ai` / `--chains` / `--worker` 选择；文本清洗与冷却表专项分别在显式 `--text` / `--cooldown` 时运行 |
 | `bun run build -- --version <tag>` | 显式版本必填，无默认值；构建当前 Linux 平台二进制，隔离验证后生成 `dist/` 发行包和 SHA-256 文件，不包含 `.map` 文件 |
 | `bun run release:check -- --version <tag>` | frozen lockfile 安装 + check + 覆盖率指标核对 + 故障注入 + 二进制构建验证，发布前必跑；缺失或非法版本在安装依赖前拒绝 |
 | `bun run release:build -- --version <tag>` | 在干净、已提交的 `dev` 上原生构建正式版本 |
@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5104 tests / 444 files / 192389 次 `expect()`**；全源码**函数覆盖率 97.06% / 行覆盖率 98.19%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5142 tests / 450 files / 194128 次 `expect()`**；全源码**函数覆盖率 97.16% / 行覆盖率 98.23%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -84,9 +84,9 @@
 
 安装隔离检查还覆盖既有 unit 数据根缺失或不匹配、`EnvironmentFiles` 与相关 `PassEnvironment` / `UnsetEnvironment` 拒绝、启动后 `NRestarts` 基线及计数回落拒绝、已有配置重新填写后的 mode 保留。系统命令全部由夹具接管，失败预检必须早于配置、unit 和运行数据的写入。
 
-`test/scripts/installMigration.test.ts` 验证 12.1.0 mock 备份经冷迁移、按清单手工放置、源码安装及真实启动的完整链路，并拒绝未经迁移的身份入口。`scripts/checkBinary.ts` 在构建验证时对包内迁移工具、二进制安装及启动执行同类检查，目标进程不使用系统 Bun。两者复用 `scripts/fixtures/migrationDeployment.ts`，覆盖 schema v10 的两种合法谱系、非空 WAL、全部数据库业务表、state 主备、Google 凭据、部署配置与图库内容；源备份哈希、权限、属主和链接拓扑保持不变。数据库迁移只增加声明的权限位、更新版本并追加谱系条目，其余业务内容不变。
+`test/scripts/installMigration.test.ts` 验证 13.x mock 备份经冷迁移、按清单手工放置、源码安装及真实启动的完整链路，并拒绝仍是 12.1.0 身份入口或 `state.json` 仍带 `translate` 的部署。`scripts/checkBinary.ts` 在构建验证时对包内迁移工具、二进制安装及启动执行同类检查，目标进程不使用系统 Bun。两者复用 `scripts/fixtures/migrationDeployment.ts`，覆盖 schema v11 的两种合法谱系、非空 WAL、全部数据库业务表、state 主备、Google 凭据、部署配置与图库内容；源备份哈希、权限、属主和链接拓扑保持不变。翻译会话迁移只改写对应群的 `chat_states.status` 或为其新建行，版本与谱系不变，其余业务内容不变。
 
-凭据使用临时生成的 RSA 密钥；`test/scripts/migrateBotConfig.test.ts` 另核对 BOM 原样保留、非法或缺失凭据、来源冲突和不覆盖产物。源码迁移安装用例同时进入故障注入套件。可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateBotConfig.test.ts` 单独验证源码链路，二进制链路随 `bun run build -- --version <tag>` 验证。
+`test/scripts/migrateTranslateSessions.test.ts` 另核对无备份副本、源库版本或谱系不符、已有会话、非法会话、容量超限、不覆盖产物、写产物中途失败与源输出互相包含。源码迁移安装用例同时进入故障注入套件。可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateTranslateSessions.test.ts` 单独验证源码链路，二进制链路随 `bun run build -- --version <tag>` 验证。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
@@ -102,15 +102,15 @@
 
 `test/workers/antiRaid/verificationWelcome.test.ts` 贯通真实双工协议、主线程临时消息及删除边界，Telegram 出站由 SDK transformer 接管。用例覆盖四种欢迎文案、回复锚点、回执丢失、取消、Worker teardown/重建、发送与传输失败，核对删除任务只认领一次、timer 不阻止退出及后续副作用顺序；它同时属于全量测试与故障注入套件。
 
-`/wed` 交互回归覆盖 1,024 项 LRU 容量、命令和按钮命中续期、淘汰取消排队与在途交互、迟到结果清理、单条删除失败后的继续清理、update 取消隔离和停机排空；成员权威表单独验证 25 群满额拒绝。持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。抽取回归另外确认只按 ID 读头像、身份取自 `getChat` 的私聊资料、不再调 `getChatMember`。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
+`/wed` 交互回归覆盖交互表与成员表同为 25 群上限、teardown 取消排队与在途交互、迟到结果清理、单条删除失败后的继续清理、忙碌会话自行收尾和停机排空；成员权威表单独验证 25 群满额拒绝。持久化回归覆盖每群集合引用复用、15 万人容量、退群腾位、dirty 的 TTL/累计条数、静默跳过、投递失败、Worker 恢复水位、停机 flush，以及非法文件在全域启动门禁中保留原样并拒绝联网。抽取回归另外确认只按 ID 读头像、身份取自 `getChat` 的私聊资料、不再调 `getChatMember`。`test/app/registerHandlersDispatch.test.ts` 另外验证初始化网关拒绝期间只清理退群 ID。性能验证复用 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch` 和 `registered-middleware` 场景；`wed-member-churn` 检查满额时拒绝新 ID、保留已有成员。
 
 ## 热路径门禁
 
 `bun run perf:hot-path-gate` 是 `bun run check` 的最后一段，合入 `master` 前必须执行。它按 `packages/consts/performance.ts` 的 `HOT_PATH_PROFILE_SCENARIOS` 逐场景、逐次重复各起两个独立子进程：`steadyProfile` 只判断正式循环的 GC 与 JIT，`retained` 在没有 profiler 自身内存干扰时判断 RSS、heapUsed 波峰与 full-GC 后留存。
 
-校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟与 GC 暂停来源读数，以及 RSS/留存硬上限。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
+校准记录保存在 [`performance-result.json`](../../performance-result.json)，由 `scripts/perf/hotPaths/gateResult.ts` 严格解析。`gateRuntime.ts` 在约定检查和热路径子进程启动前核对 `packageManager`、当前 Bun version/revision 与校准构建；不一致时先重新实测校准。记录保留采样进程数、逐场景延迟与 GC 暂停来源读数，以及 RSS/留存硬上限。逐场景延迟阈值 `medianNsPerOpReportThresholds` 只上报、不判失败，取两个时段各场景最慢中位数的 1.5 倍向上取整，为 VPS 时段性波动留余量；某场景本次各进程最慢中位数仍低于阈值的 1/`HOT_PATH_CALIBRATION_STALE_RATIO`（5）时，门禁输出一行 `hot-path calibration stale` 提示在空闲机器上重校，不改判据。历史 `fullSuite` 全量读数保留各自的运行时间和 Bun 构建。
 
-`steadyProfile` 子进程显式启用 `BUN_JSC_logGC=1`；`hotPaths/gcProfile.ts` 只累加正式循环边界内 JSC 日志的 `p=…ms` 暂停段，除以同窗口单调耗时，得到 GC 暂停时间占比。JSC 启动握手、唯一完整窗口和暂停格式必须匹配，缺失或未知格式即失败；无暂停只在完整有效日志下记为 0。JIT 层级仍由采样 profiler 统计。`retained` 的强制 GC 在计时边界外，不参与该比例。校准逐场景保存至少三轮独立进程的暂停数据。GC 暂停占比上限统一按进程可用 CPU 数分档：4 核及以上 25%，2～3 核 30%，单核 35%；等于上限时通过，超过时失败。标准由 `packages/consts/performance.ts` 的 `HOT_PATH_GC_CPU_BUDGETS` 定义，门禁启动时通过 `node:os.availableParallelism()` 读取可用并行度并选择本次预算；Linux CPU 亲和性限制参与该读数。输出中的 `availableCpuCount` 与 `thresholds.maxGcPausePercent` 记录本次使用的 CPU 数和统一上限。
+`steadyProfile` 子进程显式启用 `BUN_JSC_logGC=1`；`hotPaths/gcProfile.ts` 只累加正式循环边界内 JSC 日志的 `p=…ms` 暂停段，除以同窗口单调耗时，得到 GC 暂停时间占比。JSC 启动握手、唯一完整窗口和暂停格式必须匹配，缺失或未知格式即失败；无暂停只在完整有效日志下记为 0。JIT 层级仍由采样 profiler 统计。`retained` 的强制 GC 在计时边界外，不参与该比例。校准逐场景保存至少三轮独立进程的暂停数据。GC 暂停占比预算统一按进程可用 CPU 数分档：4 核及以上 25%，2～3 核 30%，单核 35%。场景各稳态进程的最大占比超过预算、但不超过预算加 `HOT_PATH_GC_SOFT_OVERRUN_PERCENT`（5 个百分点）时，门禁输出一行 `hot-path soft gc` 并照常通过；任一稳态进程超过预算加 5 个百分点（4 核及以上即 30%）时失败，等于该值时通过。预算与余量由 `packages/consts/performance.ts` 的 `HOT_PATH_GC_CPU_BUDGETS` 和 `HOT_PATH_GC_SOFT_OVERRUN_PERCENT` 定义，门禁启动时通过 `node:os.availableParallelism()` 读取可用并行度并选择本次预算；Linux CPU 亲和性限制参与该读数。输出中的 `availableCpuCount` 记录本次使用的 CPU 数，`thresholds.maxGcPausePercent` 记录判失败的硬上限，`softReportThresholds.maxGcPausePercent` 记录预算，`softGcReports` 记录超出预算的场景。
 
 `perf:isolated-hot-path --profile` 与 `perf:review` 的 profile 输出用于 JIT 和采样诊断，不提供 GC 暂停比例。需要 GC 读数时运行 `perf:hot-path-gate`；`perf:disk-transport` 与 `perf:review --text` 同样由父进程解析 GC 日志，逐轮返回独立的 `gcProfile`。
 
@@ -138,11 +138,11 @@
 
 ## 专项场景与传输压力验证
 
-`bun run perf:review` 复用全量基准的隔离根、配置夹具、进程编排及出站罐头，输出 JSON 并清理本轮数据根。`--hot-paths` 覆盖发送者、消息滑窗、权限读取、AI 活跃窗口、待验证快照及 clone、空块/细碎块/1 KiB/1 MiB/16 MiB 响应读取和注册链；12 项各三轮普通测量与三轮 profile。完整异步读取按场景显式预热并记录实际 JIT 层级，其余场景沿用优化层级稳定性检查。
+`bun run perf:review` 复用全量基准的隔离根、配置夹具、进程编排及出站罐头，输出 JSON 并清理本轮数据根。`--hot-paths` 覆盖发送者、消息滑窗、权限读取、AI 活跃窗口、待验证快照及 clone、空块/细碎块/1 KiB/1 MiB/视觉媒体上限（`MEDIA_MAX_DOWNLOAD_BYTES`，14,250,000 字节）响应读取和注册链；12 项各三轮普通测量与三轮 profile。完整异步读取按场景显式预热并记录实际 JIT 层级，其余场景沿用优化层级稳定性检查。
 
-`--ai` 测量准入判定、正常发送、容量/重开压力，以及 Base64 1 MiB、8 MiB、异常首部和尾部。7 个场景各三轮独立计时与三轮 profile，直接调用生产函数；发送场景断言单群/全局容量、真实收尾和清理，并要求生产 JIT 探针稳定。容量压力每批包含 128 个存活槽位及容量拒收检查，耗时按整批报告。Base64 保留编码/解码大小上限、标准字母表与严格尾部位检查，正则不带 g/y，解码仅一次。固定输入与预热用于局部测量，不包含真实模型、Telegram 网络或完整生产载荷的内存预算；JIT profile 不提供 GC 暂停计量。
+`--ai` 测量准入判定、正常发送、容量/重开压力，Base64 1 MiB、8 MiB、异常首部和尾部，以及语音合成公共实现的 WAV 解析与 Opus 编码（`voice-message-encode`，约 2.7 秒语音，供应商为固定 WAV 替身）。8 个场景各三轮独立计时与三轮 profile，直接调用生产函数；发送场景断言单群/全局容量、真实收尾和清理，并要求生产 JIT 探针稳定。容量压力每批包含 128 个存活槽位及容量拒收检查，耗时按整批报告。Base64 保留编码/解码大小上限、标准字母表与严格尾部位检查，正则不带 g/y，解码仅一次。固定输入与预热用于局部测量，不包含真实模型、Telegram 网络或完整生产载荷的内存预算；JIT profile 不提供 GC 暂停计量。
 
-`--chains` 运行启用功能的 `ad-detect-command` 与 `ai-reply-command`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
+`--chains` 运行启用功能的 `ad-detect-command`、`ai-reply-command` 与 `cron-send-voice`，逐轮断言 Telegram 罐头调用及处置排空。`--worker` 经真实 Disk I/O Worker 每轮写入 400 批、每批 128 条消息；每批等待最终 revision ACK，每轮执行两次优雅停机重建并核对 25 群恢复值。该项包含 clone、事务及落盘等待，报告吞吐、延迟、堆留存与 RSS；它不替代故障注入。以上模式各跑三轮，不改全量基准和默认十场景硬门禁的阈值。
 
 `--cooldown` 仅在显式选择时运行五类生产冷却场景：`cooldown-hit`、`cooldown-renew`、`cooldown-growth`、`cooldown-saturated` 和 `cooldown-expiry`，覆盖已有键命中、单键续期、建表、满表拒绝与整批到期。容量和窗口复用生产常量，每项各三轮独立计时与 profile，断言接纳数量并观测生产函数的 JIT 探针。建表场景在每轮预热和正式采样前复位，复位不计入耗时。普通测量提供延迟、留存堆和 RSS，profile 提供 JIT 采样，不提供 GC 暂停比例；该模式不进入默认复核或全量基准，也不修改热路径硬门禁阈值。
 
@@ -150,7 +150,7 @@
 
 `sender-mixed-identity` 交替输入普通用户与频道身份，观察稳态读数和 JIT 重新优化；发送者数量与单用户场景不同，两者的耗时差不能单独解释为 shape 混合成本。基准用户 ID 覆盖超出 int32 的数值，生产中也允许较小 ID。
 
-注册表包含 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` 和 `storage-sqlite-flush`。前四项覆盖成员集合命中、填充、满额拒绝和切群；middleware 场景运行真实注册链并断言活动路径；SQLite 场景对空库提交 128 个删除，主要衡量事务调度，不能作为磁盘吞吐读数。
+注册表包含 `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` 和 `storage-sqlite-flush`。前四项覆盖成员集合命中、填充、满额拒绝和切群；middleware 场景运行真实注册链并断言活动路径；SQLite 场景对空库提交 128 个删除，主要衡量事务调度，不能作为磁盘吞吐读数。`proxy-tts-detect` 按普通文字、非 TTS 代码块与 TTS 请求三种私聊消息轮转调用 `/send` 中转的 TTS 判定；非 JSON 代码块走 JSONC 解析失败分支，JIT 探针会记到重新优化。
 
 运行 `bun run perf:isolated-hot-path <场景>`，加 `--profile` 单独采样。该入口复用 `gateFixture.ts` 建立独立配置和数据根，注入三个独立子进程并在结束后清理 run 目录；出站由基准罐头接管。固定 Bun 与输入、完成预热，分别观察 retained 与 profile 输出；JIT 采样数不足时不得推断优化层级稳定。
 
@@ -162,7 +162,7 @@
 
 `bun run perf:full` 只在发布和明确指令时运行，不进 `bun run check`，也不设失败阈值——热路径的硬门禁仍是上面的 `perf:hot-path-gate`。它把六个分区各跑三轮独立子进程再取平均：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线。每一项除平均值外还给最小值、最大值与变异系数，CV 明显变大的那一行不能拿去和历史比。
 
-被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有两条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出。这两条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
+被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有三条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出，`cron-send-voice` 走语音合成公共实现（tts 门面、Gemini 语音适配层、Base64 解码、WAV 解析、Opus 编码）再经 `deliverCronAction` 发出语音气泡——生产中合成在 AI Worker、结果随回执转给主线程，这条链路在同一进程内串起两侧，不含线程间传递。这三条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
 
 数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此不会经生产写路径落到真实数据根；建目录、复制、写文件与删除另有一道共用边界（`scripts/perf/fullSuite/mockRoot.ts`）：先按词法判定路径落在 `performance/` 内，再逐段核对仓库根到目标之间**已经存在**的真实路径分量，任何一段是软链接即拒绝。删除只核对父链，末端本身是软链接时只摘链接、不动目标；mock 根本身永不删除。加 `--write-doc` 同时写回 `docs/{cn,en,ja}/09-performance.md` 的三语区块和 `performance-result.json` 的 `fullSuite.lastRun`；读数与各分区口径见 [09 性能基准](09-performance.md)。
 

@@ -19,7 +19,11 @@ import {
   TYPO_QUICK_CORRECTION_PROBABILITY,
   AI_TEXT_TYPO_PROBABILITY,
 } from "../../../packages/consts/aiChat/tools";
-import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../../packages/consts/aiChat/media";
+import {
+  MEDIA_INLINE_PROMPT_RESERVE_BYTES,
+  MEDIA_INLINE_REQUEST_MAX_BYTES,
+  MEDIA_MAX_DOWNLOAD_BYTES,
+} from "../../../packages/consts/aiChat/media";
 import { VOICE_MAX_DOWNLOAD_BYTES } from "../../../packages/consts/aiChat/voice";
 import {
   KICKED_REJOIN_GRACE_MS,
@@ -106,6 +110,16 @@ describe("跨领域的字节与时间窗口关系", () => {
   /** consts/aiChat/voice.ts：语音内联上限须严格小于 MEDIA_MAX_DOWNLOAD_BYTES。 */
   test("语音内联上限严格小于通用媒体下载上限", () => {
     expect(VOICE_MAX_DOWNLOAD_BYTES).toBeLessThan(MEDIA_MAX_DOWNLOAD_BYTES);
+  });
+
+  /** consts/aiChat/media.ts：视觉与语音字节 base64 编码后加提示词余量都不超过内联请求预算。 */
+  test("视觉与语音上限编码后加余量不超过内联请求预算", () => {
+    for (const limit of [MEDIA_MAX_DOWNLOAD_BYTES, VOICE_MAX_DOWNLOAD_BYTES]) {
+      const encoded: number = Math.ceil(limit / 3) * 4;
+      expect(encoded + MEDIA_INLINE_PROMPT_RESERVE_BYTES).toBeLessThanOrEqual(MEDIA_INLINE_REQUEST_MAX_BYTES);
+    }
+    expect(new Uint8Array(MEDIA_MAX_DOWNLOAD_BYTES).toBase64().length)
+      .toBe(MEDIA_INLINE_REQUEST_MAX_BYTES - MEDIA_INLINE_PROMPT_RESERVE_BYTES);
   });
 
   /** consts/antiRaid/verification.ts：重进宽限须严格小于 LOCKDOWN_KICK_DEDUPE_MS。 */

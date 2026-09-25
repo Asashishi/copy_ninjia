@@ -1,4 +1,4 @@
-import { AI_MEMORY_NON_SPACE_WHITESPACE_PATTERN, AI_MEMORY_TIME_PATTERN, BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS } from "../consts/aiChat/persistence";
+import { AI_MEMORY_NON_SPACE_WHITESPACE_PATTERN, AI_MEMORY_TIME_PATTERN, BOT_IMAGE_ORIGINS, BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS, PENDING_BOT_IMAGE_KEYS } from "../consts/aiChat/persistence";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
@@ -8,6 +8,7 @@ import { invalidInput, parseJsonInput } from "./inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "./record";
 import type {
   AiMemorySnapshot,
+  BotImageOrigin,
   BufferedMessage,
 } from "../types/aiChat/memory";
 import { formatTokyoTime } from "./time";
@@ -59,12 +60,24 @@ function validateReplyReference(value: unknown, source: string, field: string): 
   }
 }
 
+function validatePendingBotImage(value: unknown, source: string, field: string): void {
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, PENDING_BOT_IMAGE_KEYS) ||
+    !BOT_IMAGE_ORIGINS.includes(value.origin as BotImageOrigin)
+  ) {
+    invalidInput(source, field, `an object with origin (${BOT_IMAGE_ORIGINS.join(" | ")}) and caption`);
+  }
+  validateInline(value.caption, source, `${field}.caption`);
+}
+
 function validateBufferedMessage(value: unknown, source: string, field: string): void {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, BUFFERED_MESSAGE_KEYS)) {
     invalidInput(source, field, "the current buffered message object");
   }
   validateSpeaker(value, source, field);
   if (value.replyTo !== undefined) validateReplyReference(value.replyTo, source, `${field}.replyTo`);
+  if (value.pendingImage !== undefined) validatePendingBotImage(value.pendingImage, source, `${field}.pendingImage`);
   if (typeof value.at !== "string" || !AI_MEMORY_TIME_PATTERN.test(value.at)) {
     invalidInput(source, `${field}.at`, "a valid Tokyo local time in YYYY/MM/DD HH:mm:ss format");
   }

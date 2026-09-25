@@ -18,9 +18,9 @@ export {
 } from "./actions/messages";
 export {
   copyMessage,
-  sendAudioWithResult,
   sendPhotoWithResult,
   sendSticker,
+  sendVoiceWithResult,
 } from "./actions/mediaMessages";
 export {
   deleteEphemeralMessageWithOutcome,

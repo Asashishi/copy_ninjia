@@ -47,7 +47,7 @@ import { handleTemporaryAdBypassWrite } from
   "../../../packages/workers/diskIO/storageDatabase/temporaryAdBypass";
 import { handleChatStateWrite } from
   "../../../packages/workers/diskIO/storageDatabase/chatState";
-import { flushStorageDatabase } from
+import { flushStorageDatabase, setStorageFlushHold } from
   "../../../packages/workers/diskIO/storageDatabase/flush";
 import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import {
@@ -65,6 +65,7 @@ import type {
 } from "../../../packages/types/diskIO";
 import type { WhitelistEntryData } from "../../../packages/types/identityPolicy";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../../packages/consts/whitelist";
+import { chatStateOf } from "../../helpers/chatState";
 
 const META: Readonly<{ firstName: string; lastName: string; username: string }> = {
   firstName: "本天才才不是雑魚喵~",
@@ -147,10 +148,10 @@ function chatStateWrite(
   return { aiPersona: null,
     type: "chatStateWrite",
     chatId,
-    data: encodeChatStateData({
+    data: encodeChatStateData(chatStateOf({
       isInitEnabled: true,
       ...(proxyEnabled ? { isProxySendEnabled: true } : {}),
-    }),
+    })),
     revision,
   };
 }
@@ -275,6 +276,48 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     const restored = hydrateStorageDatabase();
     expect(restored.pendingBlockedRemovals.size).toBe(0);
     expect(restored.blocklistEntryCount).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES - 1);
+  });
+
+  test("镜像重放区间内 tombstone 先于快照凑满批次也不提交，关标记后同一事务落盘", () => {
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    handlePendingRemovalSnapshot({ type: "blocklistRemovals", removals: [[9, removal(9)]], revision: 1 }, reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    acknowledgements.length = 0;
+
+    // Worker 重建后的重放顺序：黑名单写入（优先级 100）先于待踢快照（101）。
+    setStorageFlushHold(true, reply);
+    for (let index: number = 1; index < IDENTITY_WRITE_BATCH_MAX_ENTRIES; index++) {
+      handleIdentityPolicyWrite(blocklistWrite(1_000 + index, 1 + index), reply);
+    }
+    handleIdentityPolicyWrite({
+      type: "identityPolicyWrite",
+      table: "blocklist",
+      id: 7,
+      data: null,
+      revision: 1_000,
+    }, reply);
+    expect(pendingBlocklistWrites.size).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES);
+    expect(acknowledgements).toHaveLength(0);
+    handlePendingRemovalSnapshot({ type: "blocklistRemovals", removals: [], revision: 2 }, reply);
+    expect(acknowledgements).toHaveLength(0);
+
+    setStorageFlushHold(false, reply);
+    expect(acknowledgements).toHaveLength(1);
+    expect(acknowledgements[0]!.removalSnapshotRevision).toBe(2);
+    resetStorageDatabaseCache();
+    const restored = hydrateStorageDatabase();
+    expect(restored.pendingBlockedRemovals.size).toBe(0);
+    expect(restored.blocklistEntryCount).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES - 1);
+  });
+
+  test("关闭提交暂缓时未达批次阈值则不提交，保留定时提交", () => {
+    setStorageFlushHold(true, reply);
+    handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
+    setStorageFlushHold(false, reply);
+    expect(acknowledgements).toHaveLength(0);
+    expect(pendingBlocklistWrites.size).toBe(1);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    expect(acknowledgements).toHaveLength(1);
   });
 
   test("待踢启动恢复按 removal_id 每页 2048 条读取并在页间继续", () => {
@@ -672,7 +715,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
         { length: STATE_MANAGED_CHAT_LIMIT + 1 },
         (_value: unknown, index: number) => ({ aiPersona: null,
           chatId: -2_000 - index,
-          data: encodeChatStateData({ isInitEnabled: true }),
+          data: encodeChatStateData(chatStateOf({ isInitEnabled: true })),
         })
       ),
     });
@@ -688,8 +731,8 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       blocklist: [],
       removals: [],
       chatStates: [
-        { aiPersona: null, chatId: -3_001, data: encodeChatStateData({ isProxySendEnabled: true }) },
-        { aiPersona: null, chatId: -3_002, data: encodeChatStateData({ isProxySendEnabled: true }) },
+        { aiPersona: null, chatId: -3_001, data: encodeChatStateData(chatStateOf({ isProxySendEnabled: true })) },
+        { aiPersona: null, chatId: -3_002, data: encodeChatStateData(chatStateOf({ isProxySendEnabled: true })) },
       ],
     });
     closeStorageDatabase(second);

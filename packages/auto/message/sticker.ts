@@ -24,18 +24,16 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
   recordChatMedia(buildAiRecordMediaMessage({
     context,
     speaker,
-    media: {
-      kind: "sticker",
-      caption: "",
-      fileId: visionSource.fileId,
-      fileUniqueId: visionSource.fileUniqueId,
-      width: visionSource.width,
-      height: visionSource.height,
-      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
-      stickerFallbackText: fallbackText,
-      voiceMime: undefined,
-      voiceDurationSeconds: 0,
-    },
+    kind: "sticker",
+    caption: "",
+    fileId: visionSource.fileId,
+    fileUniqueId: visionSource.fileUniqueId,
+    width: visionSource.width,
+    height: visionSource.height,
+    replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
+    stickerFallbackText: fallbackText,
+    voiceMime: undefined,
+    voiceDurationSeconds: 0,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

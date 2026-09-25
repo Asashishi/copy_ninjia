@@ -3,6 +3,7 @@ import type { Update } from "grammy/types";
 import {
   UPDATE_POLL_INITIAL_RETRY_MS,
   UPDATE_POLL_LIMIT,
+  UPDATE_POLL_MAX_RETRY_MS,
   UPDATE_POLL_RETRY_WINDOW_MS,
   UPDATE_POLL_TIMEOUT_SECONDS,
 } from "../consts/updateRunner";
@@ -14,6 +15,8 @@ import type { TelegramAllowedUpdates } from "../types/lifecycle";
 
 /**
  * 每个 runner 独占一个取数闭包；请求与全部退避继承本次取数的取消信号。
+ * 失败退避从 UPDATE_POLL_INITIAL_RETRY_MS 起翻倍，封顶 UPDATE_POLL_MAX_RETRY_MS，
+ * 累计超出 UPDATE_POLL_RETRY_WINDOW_MS 前抛出最后一次错误。
  * 返回的 offset 只在下次调用时发送，调用方须先完成本条 middleware。
  * @see ../../docs/cn/04-invariants.md
  */
@@ -54,7 +57,7 @@ export function createAcknowledgedUpdateFetcher(
         }
         if (delay >= remainingMonotonicTime(retryDeadline)) throw error;
         await sleep(delay, signal);
-        delay *= 2;
+        delay = Math.min(delay * 2, UPDATE_POLL_MAX_RETRY_MS);
       }
     }
   };

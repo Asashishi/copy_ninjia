@@ -8,6 +8,7 @@ import {
   activeCopyModeIn,
   activeCopyTargetIdIn,
   clearChatStateField,
+  disableChatStateSwitch,
   getActiveProxySendTarget,
   getBotDefaultAvatarUrl,
   getChatState,
@@ -45,6 +46,7 @@ import type {
   StateFileSchema,
 } from "../../../packages/types/chatState";
 import { botPermissions } from "../../helpers/botPermissions";
+import { chatStateOf } from "../../helpers/chatState";
 
 /**
  * 让某一条路径的 stat 或 bytes 以给定 errno 失败，其余路径走真实 Bun.file。
@@ -85,7 +87,6 @@ async function rejectedReadPaths(load: Promise<unknown>): Promise<string[]> {
 function schema(chatId: number): DecodedStateFile {
   return {
     global: { copy: { copiedUser: null, lastCopyTime: chatId }, assets: {} },
-    translate: {},
   };
 }
 
@@ -601,7 +602,7 @@ describe("StateStore 默认读取边界", () => {
     await Bun.write(statePath, legal);
     const store = storeAt();
     try {
-      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal), "state.json"));
       expect(writes).toEqual([{ path: backupPath, content: legal }]);
     } finally {
       store.dispose();
@@ -612,7 +613,7 @@ describe("StateStore 默认读取边界", () => {
     await Bun.write(backupPath, legal);
     const store = storeAt();
     try {
-      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal), "state.json"));
       expect(writes).toEqual([{ path: statePath, content: legal }]);
     } finally {
       store.dispose();
@@ -625,7 +626,7 @@ describe("StateStore 默认读取边界", () => {
     await Bun.write(backupPath, stale);
     const store = storeAt();
     try {
-      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal), "state.json"));
       expect(writes).toEqual([{ path: backupPath, content: legal }]);
     } finally {
       store.dispose();
@@ -653,7 +654,7 @@ describe("StateStore 默认读取边界", () => {
     await Bun.write(backupPath, legal);
     const store = storeAt();
     try {
-      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal), "state.json"));
       expect(writes).toEqual([]);
     } finally {
       store.dispose();
@@ -666,7 +667,7 @@ describe("StateStore 默认读取边界", () => {
     await Bun.write(backupPath, bytes);
     const store = storeAt();
     try {
-      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal)));
+      await expect(store.load()).resolves.toEqual(decodeStateFile(JSON.parse(legal), "state.json"));
       // 两份副本剥离 BOM 后内容一致，不触发同步写入。
       expect(writes).toEqual([]);
     } finally {
@@ -693,8 +694,8 @@ describe("群级状态门面", () => {
       announced: true,
       expiresAt: 1_700_000_000_000,
     };
-    chatStateCache.set(-1001, { isAIChatEnabled: true, botPermissions: permissions });
-    chatStateCache.set(-1002, { isAIChatEnabled: true, botPermissions: permissions, lockdown });
+    chatStateCache.set(-1001, chatStateOf({ isAIChatEnabled: true, botPermissions: permissions }));
+    chatStateCache.set(-1002, chatStateOf({ isAIChatEnabled: true, botPermissions: permissions, lockdown }));
 
     purgeChatStateExceptLockdown(-1001);
     purgeChatStateExceptLockdown(-1002);
@@ -702,15 +703,15 @@ describe("群级状态门面", () => {
     purgeChatStateExceptLockdown(-1003);
 
     expect(chatStateCache.has(-1001)).toBeFalse();
-    expect(chatStateCache.get(-1002)).toEqual({ lockdown });
+    expect(chatStateCache.get(-1002)).toEqual(chatStateOf({ lockdown }));
     expect(chatStateCache.has(-1003)).toBeFalse();
   });
 
   test("中转发送目标全局唯一，扫描全部群只认显式启用的那个", () => {
-    chatStateCache.set(-1001, { isAIChatEnabled: true });
+    chatStateCache.set(-1001, chatStateOf({ isAIChatEnabled: true }));
     expect(getActiveProxySendTarget()).toBeUndefined();
 
-    chatStateCache.set(-1002, { isProxySendEnabled: true });
+    chatStateCache.set(-1002, chatStateOf({ isProxySendEnabled: true }));
     expect(getActiveProxySendTarget()).toBe(-1002);
   });
 
@@ -732,13 +733,28 @@ describe("群级状态门面", () => {
     state.isAIChatEnabled = true;
     state.isProxySendEnabled = true;
 
-    expect(clearChatStateField(-1001, "isAntiRaidEnabled")).toBeFalse();
-    expect(clearChatStateField(-1001, "isAIChatEnabled")).toBeTrue();
+    expect(disableChatStateSwitch(-1001, "isAntiRaidEnabled")).toBeFalse();
+    expect(disableChatStateSwitch(-1001, "isAIChatEnabled")).toBeTrue();
+    expect(chatStateCache.get(-1001)?.isAIChatEnabled).toBeFalse();
     expect(chatStateCache.get(-1001)?.isProxySendEnabled).toBeTrue();
 
-    expect(clearChatStateField(-1001, "isProxySendEnabled")).toBeTrue();
+    expect(disableChatStateSwitch(-1001, "isProxySendEnabled")).toBeTrue();
     expect(chatStateCache.has(-1001)).toBeFalse();
-    expect(clearChatStateField(-1001, "isProxySendEnabled")).toBeFalse();
+    expect(disableChatStateSwitch(-1001, "isProxySendEnabled")).toBeFalse();
+  });
+
+  test("清可选字段区分未设置与已清除，并在最后一项清空后回收群条目", (): void => {
+    const state: ChatState = getOrCreateChatState(-1002);
+    state.quietUntil = Date.now() + 60_000;
+    state.title = "群名";
+
+    expect(clearChatStateField(-1002, "aiPersona")).toBeFalse();
+    expect(clearChatStateField(-1002, "quietUntil")).toBeTrue();
+    expect(chatStateCache.get(-1002)?.quietUntil).toBeUndefined();
+
+    expect(clearChatStateField(-1002, "title")).toBeTrue();
+    expect(chatStateCache.has(-1002)).toBeFalse();
+    expect(clearChatStateField(-1002, "title")).toBeFalse();
   });
 });
 
@@ -813,7 +829,6 @@ describe("素材直链的加载接线", () => {
     // 也看不出来。
     const statePath: string = join(dir, "state.json");
     const stored: DecodedStateFile = {
-      translate: {},
       global: {
         copy: { copiedUser: null },
         assets: {
@@ -852,7 +867,6 @@ describe("素材直链的加载接线", () => {
   test("复读目标、模式、所属群与冷却时间按判别联合完整恢复", async () => {
     const statePath: string = join(dir, "state-with-copy.json");
     const stored: DecodedStateFile = {
-      translate: {},
       global: {
         copy: {
           copiedUser: { id: 42, first_name: "Target" },
@@ -927,12 +941,20 @@ describe("启动补齐素材直链", () => {
     expect(writes.map((write): string => write.path))
       .toEqual(["/virtual/seed-state.json", "/virtual/seed-state.json.bak"]);
     expect(JSON.parse(writes[0]!.content).global.assets).toEqual({
+      randomHImageDir: RANDOM_H_IMAGE_DIR,
       fortuneThumbnailUrl: FORTUNE_THUMBNAIL_URL,
       probabilityThumbnailUrl: PROBABILITY_THUMBNAIL_URL,
       gagThumbnailUrl: GAG_THUMBNAIL_URL,
       botDefaultAvatarUrl: BOT_DEFAULT_AVATAR_URL,
-      randomHImageDir: RANDOM_H_IMAGE_DIR,
     });
+    // 写出顺序固定：randomHImageDir 在 global.assets 的首位。
+    expect(Object.keys(JSON.parse(writes[0]!.content).global.assets)).toEqual([
+      "randomHImageDir",
+      "fortuneThumbnailUrl",
+      "probabilityThumbnailUrl",
+      "gagThumbnailUrl",
+      "botDefaultAvatarUrl",
+    ]);
   });
 
   test("已配置的项原样保留，只补其余缺项", () => {

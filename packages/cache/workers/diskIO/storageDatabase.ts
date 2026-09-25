@@ -129,6 +129,13 @@ export const pendingRemovalSnapshotRevision: { current: number | null } = {
 /** Worker 本代际已接收的最高 outbox revision，用于拒绝迟到快照。 */
 export const latestRemovalSnapshotRevision: { current: number } = { current: 0 };
 
+/**
+ * Worker 重建后的镜像重放区间是否打开。由主线程 `storageFlushHold` 标记开合
+ * （见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）；为 true 时满批与定时
+ * 提交暂缓。新 Worker 与 resetStorageDatabaseCache 从 false 起步，容量为一个布尔值。
+ */
+export const storageFlushHold: { current: boolean } = { current: false };
+
 /** 第一条未提交变化建立的 30 秒固定截止 timer。 */
 export const storageWriteFlushTimer: {
   current: ReturnType<typeof setTimeout> | null;
@@ -170,6 +177,7 @@ export function resetStorageDatabaseCache(): void {
   pendingRemovalSnapshotRevision.current = null;
   latestRemovalSnapshotRevision.current = 0;
   rejectedStorageDomains.clear();
+  storageFlushHold.current = false;
   if (storageWriteFlushTimer.current !== null) {
     clearTimeout(storageWriteFlushTimer.current);
     storageWriteFlushTimer.current = null;

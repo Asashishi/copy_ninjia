@@ -41,6 +41,22 @@ Bot のプロセスは動いているのにグループで反応がないとき�
 
 `just_once` の実行記録はメモリ内だけなので、再起動で再登録します。完了したタスクは `config/cron.json` から削除してください。`rand_cron` の待機もリセットされ、停止中の予定は補送しません。固定画像は 1〜10 項目の配列、ランダム画像の `path` はディレクトリ文字列です。cron の相対パスはプロジェクトルート、専用画像庫はデータルート基準です。例は [配置設定](../../config_example/README/ja.md#cronjson) を参照してください。
 
+## 定時ボイスや `/send` のボイスが送られないのは？
+
+どちらも `config/agent.json` の `agent.tts` を使って AI Worker 上で合成します。`cron.json` が `tts` なしで `send_voice` を使うと起動を拒否し、稼働中にこの組み合わせになる変更はホットリロードで拒否されエラーログに残ります。`/send` のボイス依頼には「音声合成が未設定」と返します。`tts` を設定しても失敗する場合はログを確認してください。`speech synthesis failed: worker unavailable` は AI Worker が動いていないこと（`stickers.json`、`mood.json`、`prompt/persona.md` も必要）、`tts unsupported` は選んだ provider が音声合成を実装していないこと（現在は `google` のみ）、`synthesis failed` / `timed out` は主にモデル側の問題を示します。`/send` のボイス依頼はメッセージ全体を 1 つのコードブロックにし、`type` を `tts` にする必要があります。それ以外は通常のメッセージとして転送されます。項目と上限は [設定説明](../../config_example/README/ja.md#cronjson) と [08 コマンド](08-commands.md) を参照してください。
+
+## 音声の長さ・温度・記憶はどう設定しますか？
+
+| 入口 | セリフ上限 | 送信成功後の AI 記憶 |
+| :--- | ---: | :--- |
+| AI `send_voice` | 64 | セリフを記録 |
+| 個人チャットの `/send` TTS | 256 | 自動記録なし |
+| cron `send_voice` | 256 | 自動記録なし |
+
+長さは UTF-16 コード単位で数え、`tone` の上限は共通で 64 です。空白の正規化後に検証します。`/send` の超過は書式案内を返します。cron の不正なフィールドは起動を拒否し、hot reload では更新全体を拒否してログに記録します。音声レスポンスには別途 8 MiB の上限があり、文字数は音声の秒数を保証しません。
+
+音色は `config/agent.json` の `agent.tts.voice` で設定します。3 つの入口は [`packages/consts/aiChat/gemini.ts`](../../packages/consts/aiChat/gemini.ts) の `GEMINI_SPEECH_TEMPERATURE`（現在 `1.25`）と `GEMINI_SPEECH_STYLE` を共用します。JSON 設定ではなくソース定数なので、変更後は再ビルド、またはソース版サービスの再起動が必要です。
+
 ---
 
 <div align="center">

@@ -5,9 +5,9 @@ import {
   copyMessageMock,
   generateAndSendReplyMock,
   resetAutoMessageMocks,
+  autoMessageTranslateSessions,
   sendMessageMock,
 } from "../helpers/autoMessageMocks";
-import { translateStates } from "../../packages/cache/main/translateState";
 
 const translateText = mock(async (..._args: unknown[]): Promise<string> => "こんにちは");
 mock.module("../../packages/translate/client", () => ({ translateText }));
@@ -28,14 +28,14 @@ function context(senderId: number, chatId: number = -1001): never {
 beforeEach(() => {
   resetAutoMessageMocks();
   autoMessageChatState.isTranslationEnabled = true;
-  translateStates.clear();
-  translateStates.set(-1001, [{ translatedUser: { id: 7 }, language: "ja" }]);
+  autoMessageTranslateSessions.clear();
+  autoMessageTranslateSessions.set(-1001, [{ translatedUser: { id: 7 }, language: "ja" }]);
   translateText.mockClear();
 });
 
 describe("群消息翻译分流", () => {
   test("同群多个目标分别使用自己的语言，非目标不翻译", async () => {
-    translateStates.set(-1001, [
+    autoMessageTranslateSessions.set(-1001, [
       { translatedUser: { id: 7 }, language: "uk" },
       { translatedUser: { id: 8 }, language: "ru" },
     ]);
@@ -97,7 +97,7 @@ describe("群消息翻译分流", () => {
   });
 
   test("频道马甲按可见身份匹配翻译目标", async () => {
-    translateStates.set(-1001, [{ translatedUser: { id: -3003, isChannel: true }, language: "ja" }]);
+    autoMessageTranslateSessions.set(-1001, [{ translatedUser: { id: -3003, isChannel: true }, language: "ja" }]);
     const ctx = context(8) as any;
     ctx.msg.sender_chat = { id: -3003, type: "channel", title: "Channel" };
     await handleIncomingMessageMiddleware(ctx);

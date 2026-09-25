@@ -70,8 +70,8 @@
 | ムード時間とコマンド timeout | `packages/consts/aiChat/mood.ts` |
 | ツール action・lookup 上限、typing と typo のテンポ | `packages/consts/aiChat/tools.ts` |
 | 音声文字起こしの長さ・サイズ上限と placeholder | `packages/consts/aiChat/voice.ts` |
-| 楽曲生成の cooldown・round 上限・カバー画像と曲情報 | `packages/consts/aiChat/songGeneration.ts` |
-| request timeout、retry 回数、sampling と safety 段位 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
+| ボイスツールの round 上限・セリフ/口調の長さ・Opus エンコード parameter | `packages/consts/aiChat/voiceMessage.ts` |
+| request timeout、retry 回数、sampling と safety 段位、音声合成の基本声質と temperature | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
 | **model、provider、key、endpoint** | 定数ではなく `config/agent.json` で能力ごとに設定。[01-getting-started](01-getting-started.md) 参照 |
 | OAI 互換画像 wire protocol / size profile | `config/agent.json` の必須 `agent.image.image_protocol`。profile 追加時は型、固定 canvas table、exhaustive dispatch、test も同期 |
 | 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |
@@ -85,13 +85,13 @@
 
 ## provider の任意能力を追加する
 
-契約は能力ごとの 5 つの最小 interface（`AiTextProvider`・`AiSummaryProvider`・`AiMediaProvider`・`AiImageProvider`・`AiSongProvider`）に分割され、`AiChatProvider` はその合成です。実装パッケージが export するのは今も 1 つの完全な object ですが、`aiChat/provider.ts` の各能力 resolver は対応する 1 枚だけを渡すため、能力をまたいだ呼び出しは**コンパイル時**に成立しません（`test/aiChat/provider.test.ts` の `@ts-expect-error` を参照）。各 interface の中はさらに必須と任意に分かれます：必須（返信 session・plain text・vision 記述・画像生成）はどの provider も実装し、任意のもの（現在は `transcribeVoice` と `generateSong`）は実装した provider だけが持ちます。
+契約は能力ごとの 5 つの最小 interface（`AiTextProvider`・`AiSummaryProvider`・`AiMediaProvider`・`AiImageProvider`・`AiSpeechProvider`）に分割され、`AiChatProvider` はその合成です。実装パッケージが export するのは今も 1 つの完全な object ですが、`aiChat/provider.ts` の各能力 resolver は対応する 1 枚だけを渡すため、能力をまたいだ呼び出しは**コンパイル時**に成立しません（`test/aiChat/provider.test.ts` の `@ts-expect-error` を参照）。各 interface の中はさらに必須と任意に分かれます：必須（返信 session・plain text・vision 記述・画像生成）はどの provider も実装し、任意のもの（現在は音声文字起こし `transcribeVoice` と音声合成 `synthesizeSpeech`）は実装した provider だけが持ちます。
 
 1. **契約**：[`packages/types/aiChat/provider.ts`](../../packages/types/aiChat/provider.ts) に**任意 member** として宣言し、`this: void` を明示します——任意 member は一度変数に取り出して null check してから呼ぶ必要があり、暗黙 this を持つ method signature は取り出した時点で receiver を失います。
 2. **実装**：対応する実装パッケージにだけ追加し、そのパッケージの `index.ts` で組み立てます。対応しない側は**キーごと書かないでください**：`undefined` と書いても型としては等価ですが、読む人は「未完成の穴」だと受け取ります。
 3. **判定**：呼び出し側は必ず `provider.someCapability === undefined` と書き、`provider.name !== "gemini"` とは**書きません**。名前で判定すると呼び出し点ごとに「誰が何をサポートするか」の一覧を抱えることになり、3 社目が現れた日や、どちらかが能力を獲得した日に、直し漏れた 1 か所は runtime にしか現れません。
-4. **欠落時の扱いを決める**：静かに degrade できるもの（音声文字起こし）は fallback placeholder と log 1 行にとどめ、**そのために provider を替えません**。できないもの（楽曲生成）は tool 自体を載せません——モデルに見えない tool は呼ばれません。「runtime に非対応 error を投げる」だけを唯一の防衛線にしないでください。
-5. **能力が省略される**：toolset は round 単位で組み立てます。`image`/`song` 設定または実装 member が無い場合、declaration と executor を同時に外します。
+4. **欠落時の扱いを決める**：静かに degrade できるもの（音声文字起こし）は fallback placeholder と log 1 行にとどめ、**そのために provider を替えません**。できないもの（音声合成）は tool 自体を載せません——モデルに見えない tool は呼ばれません。tool 以外の呼び出し元（`/send` の TTS request、cron の `send_voice`）は `resolveSpeechSynthesizer` の同じ判定で明確な失敗理由を受け取り、起動時と hot reload 時には設定検証が先に弾きます。「runtime に非対応 error を投げる」だけを唯一の防衛線にしないでください。
+5. **能力が省略される**：toolset は round 単位で組み立てます。`image`/`tts` 設定または実装 member が無い場合、declaration と executor を同時に外します。
 
 ## AI ツールの追加
 
@@ -99,7 +99,7 @@
 2. **定義**：stateless な静的 query tool の `AiToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
 3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
 4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
-5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、サーバー側ウェブ検索、round ごとに各 1 回成功できるスタンプ・リアクション・生成画像・生成楽曲です。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
+5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、サーバー側ウェブ検索、round ごとに各 1 回のスタンプ・リアクション・生成画像・ボイスです。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
 7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要なら3 言語の README 能力表を更新します。
 

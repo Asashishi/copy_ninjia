@@ -43,6 +43,7 @@ import type { StorageDatabase, StorageDatabaseChange } from
   "../../packages/types/storageDatabase";
 import type { StoredTemporaryAdBypassActivity } from
   "../../packages/types/temporaryAdBypass";
+import { chatStateOf } from "../helpers/chatState";
 
 const CHAT_ID: number = -1_001;
 const OTHER_CHAT_ID: number = -1_002;
@@ -101,8 +102,8 @@ beforeEach((): void => {
       [32, { data: encodePendingBlockedRemovalData({ params: { chatId: CHAT_ID, probeMembership: true, removalId: 32 }, createdAt: 1, attempts: 0, lastFailure: null }).text }],
     ]),
     chatStates: new Map([
-      [CHAT_ID, { data: encodeChatStateData({ isAIChatEnabled: true }), aiPersona: null }],
-      [OTHER_CHAT_ID, { data: encodeChatStateData({ isAIChatEnabled: true }), aiPersona: null }],
+      [CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
+      [OTHER_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
     ]),
     chatQa: qaChange([
       [CHAT_ID, "怎么入群？", "看置顶"],

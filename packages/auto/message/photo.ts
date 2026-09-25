@@ -1,5 +1,6 @@
 import { recordChatMedia } from "../../aiChat";
-import { pickPhotoFile, resolveSpeaker } from "./facts";
+import { resolveSpeaker } from "./facts";
+import { pickPhotoFile } from "../../libs/telegramImage";
 import { buildAiRecordMediaMessage, mediaReplyBackpressurePlaceholder } from "./recordContext";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
@@ -18,19 +19,17 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
   recordChatMedia(buildAiRecordMediaMessage({
     context,
     speaker,
-    media: {
-      kind: "photo",
-      caption,
-      fileId: photoFile.fileId,
-      fileUniqueId: photoFile.fileUniqueId,
-      width: photoFile.width,
-      height: photoFile.height,
-      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
-      // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
-      stickerFallbackText: undefined,
-      voiceMime: undefined,
-      voiceDurationSeconds: 0,
-    },
+    kind: "photo",
+    caption,
+    fileId: photoFile.fileId,
+    fileUniqueId: photoFile.fileUniqueId,
+    width: photoFile.width,
+    height: photoFile.height,
+    replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
+    // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
+    stickerFallbackText: undefined,
+    voiceMime: undefined,
+    voiceDurationSeconds: 0,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

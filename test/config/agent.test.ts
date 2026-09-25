@@ -41,7 +41,7 @@ const AGENT: Readonly<Record<string, unknown>> = {
     model: "grok-image",
     image_protocol: "xai",
   },
-  song: { provider: "google", api_key: "google-song-key", model: "lyria-test" },
+  tts: { provider: "google", api_key: "google-tts-key", model: "tts-test", voice: "Leda" },
 };
 
 const AGENT_EXAMPLE: Readonly<Record<string, Readonly<Record<string, unknown>>>> = (
@@ -83,7 +83,7 @@ describe("agent capability config", () => {
         model: "grok-image",
         imageProtocol: "xai",
       },
-      song: { provider: "google", apiKey: "google-song-key", baseUrl: undefined, model: "lyria-test" },
+      tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, model: "tts-test", voice: "Leda" },
     });
   });
 
@@ -96,18 +96,18 @@ describe("agent capability config", () => {
     }
   });
 
-  test("三项对话必备能力不能缺，image 与 song 可缺省", () => {
+  test("三项对话必备能力不能缺，image 与 tts 可缺省", () => {
     for (const missing of ["text", "summary", "media"] as const) {
       const value: Record<string, unknown> = { ...AGENT };
       delete value[missing];
       expect(() => parseAgentDeploymentConfig(value, "agent.json"))
-        .toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, song\? \}/);
+        .toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, tts\? \}/);
     }
-    const withoutSong: Record<string, unknown> = { ...AGENT };
-    delete withoutSong.song;
-    expect(parseAgentDeploymentConfig(withoutSong, "agent.json").song).toBeUndefined();
-    delete withoutSong.image;
-    expect(parseAgentDeploymentConfig(withoutSong, "agent.json").image).toBeUndefined();
+    const withoutOptional: Record<string, unknown> = { ...AGENT };
+    delete withoutOptional.image;
+    expect(parseAgentDeploymentConfig(withoutOptional, "agent.json").image).toBeUndefined();
+    delete withoutOptional.tts;
+    expect(parseAgentDeploymentConfig(withoutOptional, "agent.json").tts).toBeUndefined();
   });
 
   test("模型、端点与未知键严格校验", () => {
@@ -130,7 +130,7 @@ describe("agent capability config", () => {
   });
 
   test("所有能力只拒绝示例中的实际占位凭据，且错误不回显凭据", async () => {
-    for (const capability of ["ad_detect", "text", "summary", "media", "image", "song"] as const) {
+    for (const capability of ["ad_detect", "text", "summary", "media", "image", "tts"] as const) {
       const exampleCapability: Readonly<Record<string, unknown>> | undefined = AGENT_EXAMPLE[capability];
       const placeholder: unknown = exampleCapability?.api_key;
       if (typeof placeholder !== "string") throw new Error(`missing example api_key for ${capability}`);
@@ -215,17 +215,54 @@ describe("agent capability config", () => {
     });
   });
 
-  test("song 可选择任一已支持 provider，由工具装配判断实现能力", () => {
+  test("tts 可选择任一已支持 provider，由工具装配判断实现能力", () => {
     const parsed: AgentDeploymentConfig = parseAgentDeploymentConfig({
       ...AGENT,
-      song: { provider: "openai", api_key: "key", model: "song-model" },
+      tts: { provider: "openai", api_key: "key", model: "tts-model", voice: "Leda" },
     }, "agent.json");
-    expect(parsed.song).toEqual({
+    expect(parsed.tts).toEqual({
       provider: "openai",
       apiKey: "key",
       baseUrl: undefined,
-      model: "song-model",
+      model: "tts-model",
+      voice: "Leda",
     });
+  });
+
+  test("能力名单之外的键（如 song）一律拒绝", () => {
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      song: { provider: "google", api_key: "key", model: "lyria" },
+    }, "agent.json")).toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, tts\? \}/);
+  });
+});
+
+describe("agent tts capability", () => {
+  test("tts 非法时带字段路径拒绝，已存在的非法 tts 同样阻止整份文件加载", async () => {
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "google", api_key: "key", model: "m", voice: "Leda", style: "cheerful" },
+    }, "agent.json")).toThrow(/agent\.tts must be exactly \{ provider, api_key, base_url\?, model, voice \}/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "google", api_key: "key", model: "m" },
+    }, "agent.json")).toThrow(/agent\.tts\.voice must be a non-empty string/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "google", api_key: "key", model: "m", voice: "  " },
+    }, "agent.json")).toThrow(/agent\.tts\.voice must be a non-empty string/);
+    expect(parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "google", api_key: "key", model: "m", voice: " voice_abc123 " },
+    }, "agent.json").tts?.voice).toBe("voice_abc123");
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "google", api_key: "key", model: "", voice: "Leda" },
+    }, "agent.json")).toThrow(/agent\.tts\.model must be a non-empty string/);
+    const path: string = await writeConfig({ agent: { ad_detect: AD_DETECT, tts: { provider: "azure", api_key: "k", model: "m", voice: "Leda" } } });
+    await expect(validateAgentDeploymentConfig(path)).rejects.toThrow(
+      `${path}: $.agent.tts.provider must be "google" or "openai"`
+    );
   });
 });
 

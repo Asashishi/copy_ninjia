@@ -167,7 +167,7 @@ export function getCatalogEntry(fileUniqueId: string): StickerCatalogEntry | und
 }
 
 /** 把一个包的目录序列化成可落盘的快照 JSON 文本。stringify 只在这里做
- *  一次，此后全程以字符串流转（理由与格式约定同 workers/aiChatWorker.ts
+ *  一次，此后全程以字符串流转（格式约定同 workers/aiChatWorker.ts
  *  的 buildMemorySnapshot）。 */
 function buildSnapshot(pack: string): string {
   const snapshot: StickerCatalogSnapshot = { version: 1, entries: Object.fromEntries(getPackMap(pack)), summary: packSummaries.get(pack) ?? null, savedAt: Date.now() };

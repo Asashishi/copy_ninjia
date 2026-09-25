@@ -70,8 +70,8 @@
 | 心情时长与开关超时 | `packages/consts/aiChat/mood.ts` |
 | 工具动作/查询上限、打字与错字节奏 | `packages/consts/aiChat/tools.ts` |
 | 语音转写的时长/体积上限与占位文案 | `packages/consts/aiChat/voice.ts` |
-| 生歌冷却、每轮上限、封面与曲目信息 | `packages/consts/aiChat/songGeneration.ts` |
-| 请求超时、重试次数、采样与安全档位 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
+| 语音工具的每轮上限、台词/语气长度与 Opus 编码参数 | `packages/consts/aiChat/voiceMessage.ts` |
+| 请求超时、重试次数、采样与安全档位、语音合成的基础声线与温度 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
 | **模型名、provider、key、端点** | 不是常量：`config/agent.json` 按能力配置，见 [01-getting-started](01-getting-started.md) |
 | OAI 兼容生图线协议/尺寸能力档 | `config/agent.json` 的必填 `agent.image.image_protocol`；新增档位还要同步类型、固定画幅表、穷举分派与测试 |
 | 验证窗口、刷屏阈值、追加/收敛策略 | `packages/consts/antiRaid/` |
@@ -85,13 +85,13 @@
 
 ## 新增一项可选供应商能力
 
-契约按能力拆成五份最小接口（`AiTextProvider`、`AiSummaryProvider`、`AiMediaProvider`、`AiImageProvider`、`AiSongProvider`），`AiChatProvider` 是它们的组合——实现包导出的仍是这一个完整对象，但 `aiChat/provider.ts` 的每个能力路由只把对应的那一份交出去，跨能力调用在**编译期**就不成立（断言见 `test/aiChat/provider.test.ts` 的 `@ts-expect-error`）。每份接口内部再分必备与可选：必备的（回复会话、纯文本、视觉描述、生图）每家都要实现，可选的（当前是语音转写 `transcribeVoice` 与生歌 `generateSong`）只有实现了的那家才带。
+契约按能力拆成五份最小接口（`AiTextProvider`、`AiSummaryProvider`、`AiMediaProvider`、`AiImageProvider`、`AiSpeechProvider`），`AiChatProvider` 是它们的组合——实现包导出的仍是这一个完整对象，但 `aiChat/provider.ts` 的每个能力路由只把对应的那一份交出去，跨能力调用在**编译期**就不成立（断言见 `test/aiChat/provider.test.ts` 的 `@ts-expect-error`）。每份接口内部再分必备与可选：必备的（回复会话、纯文本、视觉描述、生图）每家都要实现，可选的（当前是语音转写 `transcribeVoice` 与语音合成 `synthesizeSpeech`）只有实现了的那家才带。
 
 1. **契约**：在 [`packages/types/aiChat/provider.ts`](../../packages/types/aiChat/provider.ts) 用**可选成员**声明，并显式写 `this: void`——可选成员必须先取出来判空再调用，带隐式 this 的方法签名一旦取成变量就丢了接收者。
 2. **实现**：只在支持的那个实现包里加，并在该包的 `index.ts` 装配进去。不支持的那家**连键都不要写**：写成 `undefined` 与不写在类型上等价，但读代码的人会以为那是一个待填的坑。
 3. **判定**：调用方一律写 `provider.someCapability === undefined`，**绝不写** `provider.name !== "gemini"`。按名字判会让每个调用点各记一份「谁支持什么」的名单，再有第三家或某家补齐能力时，漏改的那处只会在运行期表现成一个不该出现的工具。
-4. **缺席的处置要想清楚**：能默默降级的（如语音转写）就留兜底占位并记一行日志，**不得为此临时换一家**；不能降级的（如生歌）就整个不挂那个工具——模型看不到的工具不会被调用。两种都不要留一条「运行期报不支持」的路径当唯一防线。
-5. **能力被配置摘挂**：工具按轮组装；`image`/`song` 缺配置或实现成员缺失时，定义与执行器必须一起摘掉，不能对 `undefined` 取调用。
+4. **缺席的处置要想清楚**：能默默降级的（如语音转写）就留兜底占位并记一行日志，**不得为此临时换一家**；不能降级的（如语音合成）就整个不挂那个工具——模型看不到的工具不会被调用；工具之外的调用方（`/send` 的 TTS 请求、cron `send_voice`）经 `resolveSpeechSynthesizer` 同一判定拿到明确的失败原因，由配置校验在启动与热重载时先挡住。两种都不要留一条「运行期报不支持」的路径当唯一防线。
+5. **能力被配置摘挂**：工具按轮组装；`image`/`tts` 缺配置或实现成员缺失时，定义与执行器必须一起摘掉，不能对 `undefined` 取调用。
 
 ## 新增一个 AI 工具
 
@@ -99,7 +99,7 @@
 2. **定义**：无状态的静态查询工具把 `AiToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
 3. **实现**：在 `packages/aiChat/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
 4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
-5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、服务端联网检索，以及贴纸/反应/生成图片/生成歌曲各一次成功）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
+5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、服务端联网检索，以及贴纸/反应/生成图片/语音各一次）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
 6. **提示词**：如需使用规则，在 `packages/consts/aiChat/prompts/` 补充；涉及转录格式的必须复用 `transcript.ts` 共享模板，两侧不得各自手写。
 7. **测试 + 文档**：`test/aiChat/ai/`（或对应功能/Worker 路径）补测试；三语 README 能力表按需更新。
 

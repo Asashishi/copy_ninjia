@@ -39,8 +39,9 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/aiChat/`**
   - **Responsibility**: AI-chat main-thread proxy and model capabilities, including Worker
     supervision, memory mirror, startup and hot-reload hydration, availability, the provider implementation packages (`gemini/`, `openai/`) and their selection, stickers, tools, and media.
-  - **Representative files**: `workerBridge.ts`, `hydration.ts`, `messageIngress.ts`, `memoryMirror.ts`,
-    `availability.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
+  - **Representative files**: `workerBridge.ts`, `hydration.ts`, `messageIngress.ts`, `botImages.ts` (placeholder self-record entry for images sent by commands and scheduled tasks),
+    `voiceSynthesis.ts` (waiting on and settling speech-synthesis requests that `/send` and cron send to the AI Worker),
+    `memoryMirror.ts`, `availability.ts`, `provider.ts`, `gemini/`, `openai/`, and `ai/`;
     `index.ts` is only a thin public entry point.
 - **`packages/antiRaid/`**
   - **Responsibility**: Anti-Raid main-thread proxy and ad model capability, including Worker
@@ -87,7 +88,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
-  - **Representative files**: `tools/replyToolset/`, `utils/`, `provider.ts`. AI-chat model
+  - **Representative files**: `tools/replyToolset/`, `utils/`, `provider.ts`, `voiceSynthesis.ts` (shared speech-synthesis implementation). AI-chat model
     transport does not live here; it lives in the per-vendor packages
     `packages/aiChat/{gemini,openai}/`.
 - **`packages/workers/antiRaid/adDetect/`**
@@ -128,11 +129,11 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Installer**: `install.sh` locates the target worktree and hands off to its versioned entry. It checks readability and syntax of the repository, service, config, runtime, configure, and start shell modules in `scripts/install/` before sourcing them in order. `installSources.ts` supplies the same module list to syntax checks and isolated fixtures.
-  - **Cold migration**: `migrateHImageAddPermission.ts` validates a schema v10 cold backup and produces isolated output and manifests; `migrations/hImageAddPermission/database.ts` validates lineage and executes the schema v11 permission transaction. These modules stay outside the application startup graph. `migrateRandomImageNames.ts` rebuilds the random image library's old file names into isolated output named after each picture's content SHA-256, likewise reading the source only and using `ready.json` as the sole completion marker.
+  - **Cold migration**: `migrateTranslateSessions.ts` validates both state copies and the schema v11 database in a cold backup and produces isolated output and manifests; `migrations/translateSessions/state.ts` splits the `translate` block out of state, `migrations/translateSessions/database.ts` writes the sessions into `chat_states` in one transaction, and `migrations/files.ts` holds the file manifests and path-containment check shared by both edges. These modules stay outside the application startup graph. `migrateRandomImageNames.ts` rebuilds the random image library's old file names into isolated output named after each picture's content SHA-256, likewise reading the source only and using `ready.json` as the sole completion marker.
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
   - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`, plus `fixtures/copyTree.ts` (directory-tree copying) and `fixtures/pathBoundary.ts` (real path-component checks for the write boundary), both shared by the two benchmark roots.
 
-`scripts/migrations/active.ts` lists active migration entries for builds, release verification and convention checks. `migrateBotConfig.ts` handles Bot identity/style, the state library field, cron fixed-image arrays and explicitly supplied project-root Google credentials; `migrations/botConfig/` owns parsing and file preparation. Binary packages include all three CLIs, run with `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<entry>.js`; see [07 Operations](07-operations.md) for deployment steps.
+`scripts/migrations/active.ts` lists active migration entries for builds, release verification and convention checks. Binary packages include both edge CLIs, run with `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<entry>.js`; see [07 Operations](07-operations.md) for deployment steps.
 
 `botInput.ts` provides strict reading and parsing shared by the installer and runtime, without reading deployment files or populating caches on import; `bot.ts` owns the runtime snapshot. `libs/inflight.ts` provides bounded waits for in-flight tasks while domain owners retain admission, cancellation, and zero-budget policies. `infra/backgroundTasks.ts` logs background-task errors and removes settled tasks. Group toggles share the authorization, configuration gate, write, persistence, and receipt sequence in `commands/superAdminToggle.ts`.
 
@@ -158,12 +159,12 @@ The first directory level under `packages/cache/` declares which thread owns tha
 
 - **`main/`**
   - **Owner**: main thread.
-  - **Contents**: command and automatic-pipeline state, the `state.json` global mirror and per-group sessions in `translateState.ts` managed through the `stateStore.ts` facade plus the `chat_states` hot-read copy in `chatState.ts` (a `Map`, at most 25 groups), the
+  - **Contents**: command and automatic-pipeline state, the `state.json` global mirror managed through the `stateStore.ts` facade plus the `chat_states` hot-read copy in `chatState.ts` (a `Map`, at most 25 groups, including per-group translation sessions), the
     Disk I/O host, and the **main-thread proxies and mirrors of the Workers**
     (`main/aiChat.ts`, `main/antiRaid/`).
 - **`workers/aiChat/`**
   - **Owner**: AI chat Worker.
-  - **Contents**: rolling memory, reply admission, mood, sticker catalog and sets, and both providers' client singletons.
+  - **Contents**: rolling memory, reply admission, the back-fill registry for replies to bot images, mood, sticker catalog and sets, in-flight speech synthesis handed over by the main thread, and both providers' client singletons.
 - **`workers/antiRaid/`**
   - **Owner**: Anti-Raid Worker.
   - **Contents**: verification/lockdown state machines, flood windows, ad-detection queue,

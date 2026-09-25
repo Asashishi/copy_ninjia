@@ -50,6 +50,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     return state;
   },
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
+  getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => states,
   persistChatState,
   persistGlobalState: async (): Promise<void> => {},
 }));

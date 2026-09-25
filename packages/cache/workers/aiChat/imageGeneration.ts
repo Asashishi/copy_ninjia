@@ -13,9 +13,8 @@ import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../..
  * 内存状态；aiChatWorker.ts 只驱动周期性 sweepImageGenerationCache 维护。
  * owner: AI 闲聊 Worker 线程（packages/workers/aiChatWorker.ts）。
  *
- * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，两个
- * 工具共用同一套「先占位、失败按 token 撤销」语义；生图与生歌各自一张独立的表，
- * 互不共享容量与冷却时刻。
+ * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，实现
+ * 「先占位、失败按 token 撤销」语义；本文件只持有生图那张表。
  */
 
 /**

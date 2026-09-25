@@ -45,3 +45,59 @@ export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";
  * 两项都为 false。全局共享一份，调用方只读字段，不得修改。
  */
 export const NO_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: false, hasOtherMention: false };
+
+/**
+ * 非文本消息的类型标签（所属模块：auto/message）。回复引用在原消息已滑出 AI 缓存时
+ * 用它兜底（facts.ts），媒体解析不出素材时也用它作纯文本上下文（animation.ts）；
+ * 带 caption 时由 libs/text.ts 的 composeMediaText 以空格接上。
+ */
+export const PHOTO_PLACEHOLDER: string = "[图片]";
+/** GIF 的类型标签；用法同 PHOTO_PLACEHOLDER。 */
+export const ANIMATION_PLACEHOLDER: string = "[GIF]";
+/** 视频的类型标签；用法同 PHOTO_PLACEHOLDER。 */
+export const VIDEO_PLACEHOLDER: string = "[视频]";
+/** 圆形视频消息的类型标签；不带 caption。 */
+export const VIDEO_NOTE_PLACEHOLDER: string = "[视频消息]";
+/** 语音的类型标签；用法同 PHOTO_PLACEHOLDER。 */
+export const VOICE_PLACEHOLDER: string = "[语音]";
+/** 音频文件的类型标签；用法同 PHOTO_PLACEHOLDER。 */
+export const AUDIO_PLACEHOLDER: string = "[音频]";
+/** 位置的类型标签；不带 caption。 */
+export const LOCATION_PLACEHOLDER: string = "[位置]";
+/** 以上类型都不匹配时的兜底标签。 */
+export const NON_TEXT_PLACEHOLDER: string = "[非文本消息]";
+
+/** 贴纸的类型标签；有 emoji 时写成 `[贴纸：😺]`，否则为 `[贴纸]`。所属模块：auto/message/facts.ts。 */
+export function stickerPlaceholder(emoji: string | undefined): string {
+  return emoji ? `[贴纸：${emoji}]` : "[贴纸]";
+}
+
+/** 文件的类型标签；有文件名时写成 `[文件：a.pdf]`，否则为 `[文件]`。所属模块：auto/message/facts.ts。 */
+export function documentPlaceholder(fileName: string | undefined): string {
+  return fileName ? `[文件：${fileName}]` : "[文件]";
+}
+
+/** 投票的类型标签，带题目。所属模块：auto/message/facts.ts。 */
+export function pollPlaceholder(question: string): string {
+  return `[投票：${question}]`;
+}
+
+/** 骰子的类型标签，带表情与点数。所属模块：auto/message/facts.ts。 */
+export function dicePlaceholder(emoji: string, value: number): string {
+  return `[骰子：${emoji} ${value}]`;
+}
+
+/** 联系人的类型标签；姓氏存在时以空格接在名字后。所属模块：auto/message/facts.ts。 */
+export function contactPlaceholder(firstName: string, lastName: string | undefined): string {
+  return lastName ? `[联系人：${firstName} ${lastName}]` : `[联系人：${firstName}]`;
+}
+
+/** 地点的类型标签，带地点名。所属模块：auto/message/facts.ts。 */
+export function venuePlaceholder(title: string): string {
+  return `[地点：${title}]`;
+}
+
+/** 无法转写的语音在上下文里的标签，带时长秒数。所属模块：auto/message/voice.ts。 */
+export function voiceDurationPlaceholder(durationSeconds: number): string {
+  return `[语音 ${durationSeconds} 秒]`;
+}

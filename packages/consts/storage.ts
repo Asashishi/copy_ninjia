@@ -25,12 +25,11 @@ export const STATE_SAVE_MAX_ATTEMPTS: number = STATE_SAVE_RETRY_DELAYS_MS.length
  * 本机器人同时接管的最大群数。它是启动期和运行期均不可放宽的容量不变量；
  * 超出时必须由部署方删除不再管理的群后重新启动。
  *
- * 这一个数同时封住三处存储和一道命令闸，改动必须同批复核：
+ * 这一个数同时封住两处存储和一道命令闸，改动必须同批复核：
  * - SQLite `chat_states`：主线程 LRU 容量与建新记录的硬闸
  *   （cache/main/chatState.ts、infra/chatStateStorage.ts 的 assertChatStateCapacity），
- *   以及启动期的行数校验（database/validation/storageRows.ts）。
- * - `state.json` 的 `state.translate`：按群翻译会话的群数上限
- *   （libs/stateFileCodec.ts 的解码校验、translate/state.ts 的写入闸）。
+ *   以及启动期的行数校验（database/validation/storageRows.ts）。按群翻译会话保存在
+ *   同一行里，translate/state.ts 新建群状态前按同一上限判定。
  * - `memory/wed/`：每群成员快照的文件数上限（workers/diskIO/wedMemberFiles.ts）。
  * - `/init enable`：接管一个新群前的名额判定（commands/init.ts）。
  *

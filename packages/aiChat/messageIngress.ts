@@ -6,6 +6,7 @@ import {
   pendingAiMemoryTeardowns,
 } from "../cache/main/aiChat";
 import type {
+  AiRecordBotImageMessage,
   AiRecordMediaMessage,
   AiRecordMessage,
   AiTriggerMessage,
@@ -25,7 +26,7 @@ import { postAiChatOrThrow } from "./workerBridge";
  * 它的值域是 `number | null`，存进去的值永远不是 `undefined`，所以
  * `get(...) === undefined` 与 `!has(...)` 逐字等价，同一个键不必查两遍。
  */
-function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage): void {
+function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage | AiRecordBotImageMessage): void {
   const armedRevision: number | null | undefined =
     postPurgeAiMemoryPersistRevisions.get(message.chatId);
   const shouldArm: boolean = armedRevision === undefined &&
@@ -58,15 +59,16 @@ function isTelegramReplyBackpressured(): boolean {
 /**
  * 记录一条群消息到 Worker 侧滚动上下文；主线程只负责保持 FIFO 投递顺序。
  *
- * 入参就是最终载荷，不做 `{type, ...message}` 式的重新展开。载荷由
- * auto/message/recordContext.ts 与 aiChat/ai/utils/selfRecord.ts 一次成型。
+ * 入参就是最终载荷，不做 `{type, ...message}` 式的重新展开。文字记录由
+ * auto/message/recordContext.ts 与 aiChat/ai/utils/selfRecord.ts 一次成型；命令与
+ * 定时任务发出的机器人图片（占位态，不识图）由 aiChat/botImages.ts 现造。
  *
  * **调用即交出所有权：** postMemoryRecord 对 `persistImmediately` 的置位
  * 改的就是调用方传入的那个对象本身。每个调用点须用 builder 现造一份传入，
  * 不得把同一个载荷对象重复投递——上一次投递可能已经把它的即时持久化标志
  * 置上，重复投会跟着白走一次 durable 落盘。
  */
-export function recordChatMessage(message: AiRecordMessage): void {
+export function recordChatMessage(message: AiRecordMessage | AiRecordBotImageMessage): void {
   purgedAiMemoryChats.delete(message.chatId);
   postMemoryRecord(message);
 }

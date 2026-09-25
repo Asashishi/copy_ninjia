@@ -11,6 +11,7 @@ import type {
 import { BOT_CHAT_PERMISSION_KEYS } from "../../packages/consts/botAdmin";
 import { BOT_STATUS_FEATURE_KEYS } from "../../packages/consts/botStatus";
 import { botPermissions } from "../helpers/botPermissions";
+import { chatStateOf } from "../helpers/chatState";
 
 function statusSnapshot(): BotStatusSnapshot {
   return {
@@ -21,7 +22,7 @@ function statusSnapshot(): BotStatusSnapshot {
         provider: "openai",
         apiKey: "secret-text-key",
         baseUrl: "https://secret-text.example/v1",
-        model: "gpt-status",
+        model: "openai/gpt-status",
       },
       summary: {
         provider: "google",
@@ -35,6 +36,13 @@ function statusSnapshot(): BotStatusSnapshot {
         baseUrl: undefined,
         model: "gemini-media",
       },
+      tts: {
+        provider: "google",
+        apiKey: "secret-tts-key",
+        baseUrl: undefined,
+        model: "gemini-tts",
+        voice: "Leda",
+      },
     },
     adDetectReady: true,
     adDetectConfig: {
@@ -43,14 +51,14 @@ function statusSnapshot(): BotStatusSnapshot {
       baseUrl: "https://secret-ad.example/v1",
       model: "ad-model",
     },
-    chatState: {
+    chatState: chatStateOf({
       isInitEnabled: true,
       isAIChatEnabled: true,
       aiPersona: "secret-persona\n本群的自定义提示词正文",
       isAdDetectEnabled: true,
       isAntiRaidEnabled: true,
       botPermissions: botPermissions({ canDeleteMessages: true }),
-    },
+    }),
     telegramActive: 7,
     telegramPending: 1_024,
     telegramCapacity: 81_920,
@@ -74,12 +82,14 @@ describe("/bot_status", () => {
 
     expect(text).toStartWith("机器人状态");
     expect(text).toContain("全局模型能力：");
-    expect(text).toContain("群聊正文：已配置 · openai / gpt-status");
+    expect(text).toContain("群聊正文：已配置 · gpt-status\n");
     expect(text).toContain("图片生成：未配置");
-    expect(text).toContain("歌曲生成：未配置");
-    expect(text).toContain("广告检测：已配置 · openai / ad-model");
+    expect(text).toContain("语音合成：已配置 · gemini-tts\n");
+    expect(text).toContain("广告检测：已配置 · ad-model\n");
     expect(text).toContain("Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/81920");
     expect(text).not.toContain("本群的自定义提示词正文");
+    expect(text).not.toContain("openai");
+    expect(text).not.toContain("google");
     // 本群一组：id 在前，提示词状态在最后。
     expect(text).toContain(
       "• 本群 ID：-1001234567890\n" +
@@ -111,7 +121,7 @@ describe("/bot_status", () => {
       aiConfig: null,
       adDetectReady: false,
       adDetectConfig: null,
-      chatState: {},
+      chatState: chatStateOf(),
       telegramActive: 0,
       telegramPending: 0,
       aiContextUsage: undefined,

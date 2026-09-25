@@ -101,6 +101,7 @@ export const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemova
 export const flushJoinLogDomain = mock((): boolean => true);
 export const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 export const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
+export const setStorageFlushHold = mock((_active: boolean, _reply: unknown): void => {});
 export const handleChatStateWrite = mock((_message: unknown): void => {});
 export const handleChatQaWrite = mock((_message: unknown): void => {});
 export const handleTemporaryAdBypassWrite = mock((_message: unknown): void => {});
@@ -206,6 +207,7 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
     requestId: message.requestId,
     page: { ids: [], nextCursor: message.afterId, done: true },
   }),
+  setStorageFlushHold,
   readIdentityPolicies: (message: { requestId: number }): unknown => ({
     type: "identityPoliciesRead",
     requestId: message.requestId,

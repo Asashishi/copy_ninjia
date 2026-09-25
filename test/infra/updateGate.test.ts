@@ -101,7 +101,7 @@ describe("shouldPassInitGate", () => {
       const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
       expect(shouldPassInitGate(ctx)).toBe(true);
     } finally {
-      getOrCreateChatState(chatId).isInitEnabled = undefined;
+      getOrCreateChatState(chatId).isInitEnabled = false;
     }
   });
 
@@ -139,7 +139,7 @@ describe("shouldPassInitGate", () => {
       ctx.msg = ctx.message;
       expect(shouldPassInitGate(ctx)).toBe(true);
     } finally {
-      getOrCreateChatState(chatId).isInitEnabled = undefined;
+      getOrCreateChatState(chatId).isInitEnabled = false;
     }
   });
 });

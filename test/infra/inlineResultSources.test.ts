@@ -1,4 +1,4 @@
-/** 全部 inline 功能共用的「结果正文 → 查询源文本」登记表。 */
+/** 全部 inline 功能共用的「发言身份 + 结果正文 → 查询源文本」登记表。 */
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import type { InlineQueryResult } from "grammy/types";
@@ -28,17 +28,26 @@ describe("inline 结果源文本登记", () => {
       textResult("gag-a", "（透过口塞）小. .. ..号"),
       textResult("gag-b", "（透过口塞）小...号. .也"),
     ]);
-    expect(inlineResultSourceOf("（透过口塞）小. .. ..号")).toBe("小号也有啊");
-    expect(inlineResultSourceOf("（透过口塞）小...号. .也")).toBe("小号也有啊");
-    expect(inlineResultSourceOf("（透过口塞）没登记过的正文")).toBeUndefined();
-    expect(inlineResultSourceOf("")).toBeUndefined();
+    expect(inlineResultSourceOf(7, "（透过口塞）小. .. ..号")).toBe("小号也有啊");
+    expect(inlineResultSourceOf(7, "（透过口塞）小...号. .也")).toBe("小号也有啊");
+    expect(inlineResultSourceOf(7, "（透过口塞）没登记过的正文")).toBeUndefined();
+    expect(inlineResultSourceOf(7, "")).toBeUndefined();
   });
 
-  test("同一个查询者的新应答整体覆盖旧登记，不留历史", () => {
+  test("只查发送者自己的登记：正文与别人撞上也取不到别人的源文本", () => {
+    recordInlineResultSources(7, "甲打的字", [textResult("gag-a", "（透过口塞）撞. ..车")]);
+    recordInlineResultSources(8, "乙打的字", [textResult("gag-b", "（透过口塞）撞. ..车")]);
+    expect(inlineResultSourceOf(7, "（透过口塞）撞. ..车")).toBe("甲打的字");
+    expect(inlineResultSourceOf(8, "（透过口塞）撞. ..车")).toBe("乙打的字");
+    // 没登记过的发送者即使正文与表内逐字相同也一律取不到。
+    expect(inlineResultSourceOf(9, "（透过口塞）撞. ..车")).toBeUndefined();
+  });
+
+  test("同一个发言身份的新应答整体覆盖旧登记，不留历史", () => {
     recordInlineResultSources(7, "小号", [textResult("gag-a", "旧正文")]);
     recordInlineResultSources(7, "小号也有啊", [textResult("gag-a", "新正文")]);
-    expect(inlineResultSourceOf("新正文")).toBe("小号也有啊");
-    expect(inlineResultSourceOf("旧正文")).toBeUndefined();
+    expect(inlineResultSourceOf(7, "新正文")).toBe("小号也有啊");
+    expect(inlineResultSourceOf(7, "旧正文")).toBeUndefined();
     expect(inlineResultSources.size).toBe(1);
   });
 
@@ -49,13 +58,13 @@ describe("inline 结果源文本登记", () => {
       { type: "game", id: "game", game_short_name: "g" },
     ]);
     expect(inlineResultSources.size).toBe(0);
-    expect(inlineResultSourceOf("你好，@x")).toBeUndefined();
+    expect(inlineResultSourceOf(7, "你好，@x")).toBeUndefined();
   });
 
-  test("撑满上限时按最久未登记的查询者淘汰，重新登记的回到队尾", () => {
-    for (let authorId: number = 1; authorId <= INLINE_RESULT_SOURCE_MAX_AUTHORS; authorId += 1) {
-      recordInlineResultSources(authorId, `源 ${authorId}`, [
-        textResult(`r-${authorId}`, `正文 ${authorId}`),
+  test("撑满上限时按最久未登记的发言身份淘汰，重新登记的回到队尾", () => {
+    for (let speakerId: number = 1; speakerId <= INLINE_RESULT_SOURCE_MAX_AUTHORS; speakerId += 1) {
+      recordInlineResultSources(speakerId, `源 ${speakerId}`, [
+        textResult(`r-${speakerId}`, `正文 ${speakerId}`),
       ]);
     }
     // 最旧的那位重新查询一次：他回到队尾，被挤掉的应当是第二旧的那位。
@@ -67,8 +76,8 @@ describe("inline 结果源文本登记", () => {
     ]);
 
     expect(inlineResultSources.size).toBe(INLINE_RESULT_SOURCE_MAX_AUTHORS);
-    expect(inlineResultSourceOf("正文 新来的")).toBe("新来的");
-    expect(inlineResultSourceOf("正文 1 改")).toBe("源 1 改");
-    expect(inlineResultSourceOf("正文 2")).toBeUndefined();
+    expect(inlineResultSourceOf(newcomerId, "正文 新来的")).toBe("新来的");
+    expect(inlineResultSourceOf(1, "正文 1 改")).toBe("源 1 改");
+    expect(inlineResultSourceOf(2, "正文 2")).toBeUndefined();
   });
 });

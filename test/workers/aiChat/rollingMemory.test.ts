@@ -92,6 +92,7 @@ describe("AI rolling-memory capacity", () => {
       }),
       forwardedFrom: "[id:789] Carol",
       at: expect.any(String),
+      pendingImage: undefined,
     });
   });
 
@@ -186,6 +187,7 @@ describe("AI rolling-memory capacity", () => {
       text: "第一行\n第二行",
       quote: "第二行\n末尾",
       forwardedFrom: "频道 [id:-100666]\n东京日报",
+      botImage: undefined,
     })).toEqual({
       messageId: 9,
       id: 2,

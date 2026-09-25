@@ -10,7 +10,8 @@
  * `chat_id` 逐个列出会话时按书写顺序投递，不查发送权限；`["all"]` 与 `["except", ...]`
  * 先解析本轮的可发送群（cron/targets.ts），再按 chat id 升序逐群执行整套动作。两种写法
  * 下会话与会话之间同样间隔 CRON_ACTION_GAP_MS；一个会话的失败只中止该会话剩余的动作，
- * 随后继续下一个会话。
+ * 随后继续下一个会话。每轮新建一张 CronRoundVoices，`send_voice` 在本轮只合成一次，
+ * 首次发送成功后改用 Telegram 交回的 file_id、不再上传，重试与各会话共用；轮次结束即丢弃。
  */
 
 import { CRON_ACTION_GAP_MS, CRON_ACTION_RETRY_DELAYS_MS, CRON_NO_EXCLUDED_CHAT_IDS } from "../consts/cron";
@@ -18,13 +19,25 @@ import { logger } from "../infra/logger";
 import { sleep } from "../libs/sleep";
 import { deliverCronAction } from "./delivery";
 import { resolveCronGroupTargets } from "./targets";
-import type { CronAction, CronChatTargets, CronDeliveryOutcome, CronGroupTargets, CronTaskSchedule } from "../types/cron";
+import type {
+  CronAction,
+  CronChatTargets,
+  CronDeliveryOutcome,
+  CronGroupTargets,
+  CronRoundVoices,
+  CronTaskSchedule,
+} from "../types/cron";
+
+/** 一轮共用的上下文；每轮建一次。 */
+interface CronRoundContext {
+  readonly schedule: CronTaskSchedule;
+  readonly signal: AbortSignal;
+  readonly voices: CronRoundVoices;
+}
 
 /** 向一个会话投递所需的上下文；每个会话建一次，动作与重试共用。 */
-interface CronDeliveryContext {
-  readonly schedule: CronTaskSchedule;
+interface CronDeliveryContext extends CronRoundContext {
   readonly chatId: number;
-  readonly signal: AbortSignal;
   /** 本轮投递多个会话；日志据此写明是哪个会话。 */
   readonly perChat: boolean;
 }
@@ -52,12 +65,12 @@ async function pause(ms: number, signal: AbortSignal): Promise<boolean> {
 
 /** 向一个会话投递一个动作，按分类重试。 */
 async function deliverWithRetries(
-  { schedule, chatId, signal }: CronDeliveryContext,
+  { schedule, chatId, signal, voices }: CronDeliveryContext,
   action: Readonly<CronAction>
 ): Promise<CronActionResult> {
   for (let attempt: number = 0; ; attempt++) {
     if (isStopped(schedule, signal)) return { kind: "stopped" };
-    const outcome: CronDeliveryOutcome = await deliverCronAction(chatId, action, signal);
+    const outcome: CronDeliveryOutcome = await deliverCronAction({ chatId, action, signal, voices });
     if (outcome.kind === "sent") return { kind: "delivered" };
     if (outcome.kind === "aborted") return { kind: "stopped" };
     const delay: number | undefined = CRON_ACTION_RETRY_DELAYS_MS[attempt];
@@ -98,26 +111,24 @@ async function runActions(context: CronDeliveryContext): Promise<boolean> {
  * 只有「逐个列出的单个会话」按整轮口径记日志；`["all"]`、`["except", ...]` 与列出多个
  * 会话时，失败日志一律写明是哪个会话——前两种本轮解析出几个群不固定，日志口径不能跟着变。
  */
-async function runChats(
-  schedule: CronTaskSchedule,
-  chatIds: readonly number[],
-  signal: AbortSignal
-): Promise<boolean> {
+async function runChats(round: CronRoundContext, chatIds: readonly number[]): Promise<boolean> {
+  const { schedule, signal, voices }: CronRoundContext = round;
   const chatTargets: CronChatTargets = schedule.task.chatTargets;
   const perChat: boolean = chatTargets.kind !== "list" || chatIds.length > 1;
   for (let index: number = 0; index < chatIds.length; index++) {
     if (isStopped(schedule, signal)) return false;
     if (index > 0 && !await pause(CRON_ACTION_GAP_MS, signal)) return false;
-    if (!await runActions({ schedule, chatId: chatIds[index]!, signal, perChat })) return false;
+    if (!await runActions({ schedule, signal, voices, chatId: chatIds[index]!, perChat })) return false;
   }
   return true;
 }
 
 /** 执行一个任务的一轮；不抛出。 */
 export async function runCronRound(schedule: CronTaskSchedule, signal: AbortSignal): Promise<void> {
+  const round: CronRoundContext = { schedule, signal, voices: new Map() };
   const chatTargets: CronChatTargets = schedule.task.chatTargets;
   if (chatTargets.kind === "list") {
-    await runChats(schedule, chatTargets.chatIds, signal);
+    await runChats(round, chatTargets.chatIds);
     return;
   }
   const targets: CronGroupTargets = await resolveCronGroupTargets(
@@ -125,7 +136,7 @@ export async function runCronRound(schedule: CronTaskSchedule, signal: AbortSign
     chatTargets.kind === "except" ? chatTargets.chatIds : CRON_NO_EXCLUDED_CHAT_IDS,
     signal
   );
-  if (!await runChats(schedule, targets.chatIds, signal)) return;
+  if (!await runChats(round, targets.chatIds)) return;
   if (targets.skipped > 0) {
     logger.log(`Cron task "${schedule.task.name}" skipped ${targets.skipped} chat(s) without send permission.`);
   }

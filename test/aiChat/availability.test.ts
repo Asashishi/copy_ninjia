@@ -6,6 +6,7 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { ChatState } from "../../packages/types/chatState";
+import { createChatState } from "../../packages/libs/chatState";
 
 const CHAT_ID: number = -1001;
 
@@ -54,10 +55,9 @@ describe("AI 闲聊可用性", () => {
   });
 
   test("群开关缺省（从没设过）按关闭处理", () => {
-    // isAIChatEnabled 在 createChatState（packages/libs/chatState.ts）建立的
-    // 规范形状里恒存在，缺省为 undefined；判定要求严格 === true。
+    // 规范形状里开关的缺省值即关闭（见 packages/libs/chatState.ts 的 createChatState）。
     readiness.ok = true;
-    chatState.isAIChatEnabled = undefined;
+    chatState.isAIChatEnabled = createChatState().isAIChatEnabled;
     expect(isAiChatActiveIn(CHAT_ID)).toBeFalse();
   });
 });

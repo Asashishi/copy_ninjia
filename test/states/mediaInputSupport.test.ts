@@ -19,8 +19,10 @@ import {
 import type {
   AiTextResult,
 } from "../../packages/types/aiChat/provider";
-import type { MediaInputTransition } from "../../packages/types/states/mediaInputSupport";
-import type { MediaInputModalityState } from "../../packages/types/states/mediaInputSupport";
+import type {
+  MediaInputTransition,
+  MediaInputModalityState,
+} from "../../packages/types/states/mediaInputSupport";
 
 const NOW: number = 1_000_000;
 

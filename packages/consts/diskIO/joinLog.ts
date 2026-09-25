@@ -32,9 +32,13 @@ export const JOIN_LOG_ACCEPTED_EVENT_DAYS: number = 2;
 export const JOIN_LOG_MAX_USERS_PER_CHAT_DAY: number = 250_000;
 
 /**
- * Disk I/O Worker 内最多常驻的群日索引数。运维基线约 15 个活跃群、每群保留
- * 3 日，64 可覆盖常态 45 份索引并留出跨日查询余量；超出后按 LRU 丢弃可从
- * 磁盘重建的索引，不改变权威文件。
+ * Disk I/O Worker 内最多常驻的群日索引数。入群日志只为受管群写入（初始化网关），
+ * 写入集合为 STATE_MANAGED_CHAT_LIMIT × JOIN_LOG_ACCEPTED_EVENT_DAYS = 50 份，
+ * 64 在此之上为 `/batch_kick` 的跨日查询留出余量；第三个保留日只在查询时打开。
+ * 超出后按 LRU 丢弃可从磁盘重建的索引，不改变权威文件。
+ *
+ * 内存上界：单份索引满载 JOIN_LOG_MAX_USERS_PER_CHAT_DAY 条时约 21 MiB
+ * （Bun 1.4.2 实测 latestByUser），64 份同时满载的理论最坏约 1.3 GiB；常态远低于此。
  */
 export const JOIN_LOG_MAX_CACHED_FILES: number = 64;
 

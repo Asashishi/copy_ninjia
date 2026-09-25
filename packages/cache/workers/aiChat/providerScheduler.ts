@@ -20,7 +20,7 @@ export const aiProviderFacades: AiProviderFacadeCache = {
   media: undefined,
   mediaBackground: undefined,
   image: undefined,
-  song: undefined,
+  tts: undefined,
 };
 
 /**
@@ -33,7 +33,7 @@ export function resetAiProviderFacades(): void {
   aiProviderFacades.media = undefined;
   aiProviderFacades.mediaBackground = undefined;
   aiProviderFacades.image = undefined;
-  aiProviderFacades.song = undefined;
+  aiProviderFacades.tts = undefined;
 }
 
 /**

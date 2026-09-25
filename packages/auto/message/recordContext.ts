@@ -42,12 +42,29 @@ export function buildAiRecordMessage({
 }
 
 /**
- * 媒体记录里逐载荷不同的那部分；身份与回复关系仍由本文件统一填。
+ * 四个媒体 handler 写入 `replyTelegramBackpressured` 的构造值：直接触发或已占到
+ * 随机评价名额（`claimed`）时为 false，由 aiChat/messageIngress.ts 在投递时刻覆写为
+ * 实时快照；不发起回复为 undefined。
  *
- * 从协议类型 `Pick` 派生，协议字段变化会让四个调用点在编译期同步收敛。各字段
- * 的语义（语音传 0、仅贴纸用等）由协议侧 JSDoc 统一声明。
+ * 判定在 handler 侧算好再作为 options 字段传入，buildAiRecordMediaMessage 只做直接取值。
  */
-export type AiRecordMediaPayload = Pick<
+export function mediaReplyBackpressurePlaceholder(
+  context: MessageTriggerContext,
+  randomTrigger: RandomMediaTrigger
+): boolean | undefined {
+  return context.directTriggerReason !== undefined || randomTrigger === "claimed"
+    ? false
+    : undefined;
+}
+
+/**
+ * 媒体记录的构造参数：身份与回复关系之外，其余是逐载荷不同的字段，平铺在同一个
+ * options 里直接写进载荷。
+ *
+ * 媒体字段从协议类型 `Pick` 派生，协议字段变化会让四个调用点在编译期同步收敛。
+ * 各字段的语义（语音传 0、仅贴纸用等）由协议侧 JSDoc 统一声明。
+ */
+export interface BuildAiRecordMediaMessageParams extends Pick<
   AiRecordMediaMessage,
   | "kind"
   | "caption"
@@ -59,35 +76,25 @@ export type AiRecordMediaPayload = Pick<
   | "stickerFallbackText"
   | "voiceMime"
   | "voiceDurationSeconds"
->;
-
-/**
- * 四个媒体 handler 写入 `replyTelegramBackpressured` 的构造值：直接触发或已占到
- * 随机评价名额（`claimed`）时为 false，由 aiChat/messageIngress.ts 在投递时刻覆写为
- * 实时快照；不发起回复为 undefined。
- *
- * 判定在 handler 侧算好再放进 media 载荷，buildAiRecordMediaMessage 只做直接取值。
- */
-export function mediaReplyBackpressurePlaceholder(
-  context: MessageTriggerContext,
-  randomTrigger: RandomMediaTrigger
-): boolean | undefined {
-  return context.directTriggerReason !== undefined || randomTrigger === "claimed"
-    ? false
-    : undefined;
-}
-
-export interface BuildAiRecordMediaMessageParams {
+> {
   context: MessageTriggerContext;
   speaker: AiSpeakerSnapshot;
-  media: AiRecordMediaPayload;
 }
 
 /** 一条媒体记录的完整 Worker 载荷。 */
 export function buildAiRecordMediaMessage({
   context,
   speaker,
-  media,
+  kind,
+  caption,
+  fileId,
+  fileUniqueId,
+  width,
+  height,
+  replyTelegramBackpressured,
+  stickerFallbackText,
+  voiceMime,
+  voiceDurationSeconds,
 }: BuildAiRecordMediaMessageParams): AiRecordMediaMessage {
   return {
     type: "recordMedia",
@@ -100,16 +107,16 @@ export function buildAiRecordMediaMessage({
     replyTo: context.replyReference,
     forwardedFrom: context.forwardedFrom,
     persistImmediately: false,
-    kind: media.kind,
-    caption: media.caption,
-    fileId: media.fileId,
-    fileUniqueId: media.fileUniqueId,
-    width: media.width,
-    height: media.height,
-    replyTelegramBackpressured: media.replyTelegramBackpressured,
-    stickerFallbackText: media.stickerFallbackText,
-    voiceMime: media.voiceMime,
-    voiceDurationSeconds: media.voiceDurationSeconds,
+    kind,
+    caption,
+    fileId,
+    fileUniqueId,
+    width,
+    height,
+    replyTelegramBackpressured,
+    stickerFallbackText,
+    voiceMime,
+    voiceDurationSeconds,
     directTriggerReason: context.directTriggerReason,
     // Worker 按入站占位并异步解析媒体；话题落点随载荷保留到该轮实际发送。
     messageThreadId: context.messageThreadId,

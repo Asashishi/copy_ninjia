@@ -11,10 +11,9 @@ import { RATE_LIMIT_LONG_WINDOW_MS } from "../../consts/aiChat/rateLimit";
 import { logger } from "../../infra/logger";
 import type { TimestampDeque } from "../../libs/timestampDeque";
 import { admitTrigger, isReplyRoundRateLimited } from "../../states/replyAdmission";
-import type { QueuedReplyTrigger } from "../../types/aiChat/replies";
+import type { QueuedReplyTrigger, MediaCommentContext } from "../../types/aiChat/replies";
 import type { BufferedReplyReference } from "../../types/aiChat/memory";
 import type { AdmitDecision } from "../../types/states/replyAdmission";
-import type { MediaCommentContext } from "../../types/aiChat/replies";
 import {
   drainReplyQueue as drainQueuedReplies,
   flushOverflowNotice,
@@ -89,7 +88,7 @@ function onReplyModelFinished(chatId: number): void {
  * 一轮结束时的推力：先把欠下的溢出提示补出去，再按窗口余量推队列。
  *
  * 两件事分开做。提示是欠着群成员的一句话，窗口满不满都要发；推队列则必须设闸，
- * 理由见 drainReplyQueueIfWindowAllows。
+ * 见 drainReplyQueueIfWindowAllows。
  */
 function onReplyRoundFinished(chatId: number): void {
   if (aiChatWorkerQuiescing.current) return;

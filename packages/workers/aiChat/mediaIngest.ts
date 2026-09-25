@@ -1,17 +1,18 @@
-import { sanitizeInline } from "../../libs/text";
+import { composeMediaText, sanitizeInline } from "../../libs/text";
 import { displaySpeakerName } from "../../aiChat/ai/utils/chatTranscript";
 import { getCatalogEntry } from "../../aiChat/ai/stickers/catalog";
 import { describeMedia } from "../../aiChat/ai/imageDescription";
 import { dirtyMemoryChats } from "../../cache/workers/aiChat/memory";
 import { cachedReplyGeneration, isCachedReplyGenerationCurrent } from "../../cache/workers/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
-import type { AiRecordMediaMessage, ImageGenerationReference } from "../../types/aiChat/protocol";
-import { composeMediaText, fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
+import type { AiRecordMediaMessage, ImageGenerationReference, RepliedBotImage } from "../../types/aiChat/protocol";
+import { fallbackTextFor, pendingPlaceholderFor, replyFallbackDescriptionFor, resolvedTagFor } from "./mediaText";
 import { buildBufferedMessage } from "./bufferedMessage";
 import { pushBufferedMessage } from "./rollingMemory";
 import { generateAndSendReply } from "./replyPipeline";
 import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGeneration";
 import { replyReferenceForBufferedEntry } from "./bufferedMessageIndex";
+import { resolveRepliedBotImage } from "./botImages";
 import type { MediaCommentContext } from "../../types/aiChat/replies";
 import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 
@@ -19,7 +20,7 @@ import type { StickerCatalogEntry } from "../../types/stickers/catalog";
  * 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。
  *
  * 「有没有图片工具资格」直接读 directTriggerReason，不再另有一个布尔字段重复它
- * （理由见 types/aiChat/protocol.ts 的 directTriggerReason 与 messageThreadId）。
+ * （见 types/aiChat/protocol.ts 的 directTriggerReason 与 messageThreadId）。
  */
 function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGenerationReference | undefined {
   if (msg.directTriggerReason === undefined || (msg.kind !== "photo" && msg.kind !== "sticker")) {
@@ -31,6 +32,12 @@ function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGeneration
     width: msg.width,
     height: msg.height,
   };
+}
+
+/** 这条媒体回复了机器人的图片时，识图回填回复引用（见 botImages.ts）。 */
+function resolveRepliedBotImageOf(msg: AiRecordMediaMessage, entry: BufferedMessage): void {
+  const botImage: RepliedBotImage | undefined = msg.replyTo?.botImage;
+  if (botImage !== undefined) resolveRepliedBotImage(msg.chatId, entry, botImage);
 }
 
 /** 入站与解析完成使用同一份媒体身份、回复关系和直接触发资格。 */
@@ -50,6 +57,7 @@ function mediaCommentFor(msg: AiRecordMediaMessage, entry: BufferedMessage, desc
 
 /**
  * 媒体先同步记录并准入占位，再异步识别；识别完成回填原条目和本轮上下文。
+ * 回复了机器人图片的媒体另由 botImages.ts 识图回填回复引用，回复轮开始前等待它。
  * 直接触发失败时使用兜底描述，随机评价失败时完成空占位。贴纸目录命中时同步使用真实描述。
  * 只有 `replyTelegramBackpressured` 有值的媒体进入回复准入，并把这份主线程投递时刻的
  * 高压快照交给准入：高压时随机评价丢弃、直接触发同群只开一轮（媒体本身照常记录）。
@@ -70,6 +78,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
         composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption)
       )!;
       pushBufferedMessage(msg.chatId, entry);
+      resolveRepliedBotImageOf(msg, entry);
       if (telegramBackpressured !== undefined) {
         generateAndSendReply({
           chatId: msg.chatId,
@@ -92,6 +101,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption)
   )!;
   pushBufferedMessage(msg.chatId, entry);
+  resolveRepliedBotImageOf(msg, entry);
   const preparation: PromiseWithResolvers<MediaCommentContext | null> | undefined =
     telegramBackpressured !== undefined
       ? Promise.withResolvers<MediaCommentContext | null>()

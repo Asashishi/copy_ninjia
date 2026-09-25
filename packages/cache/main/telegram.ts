@@ -2,8 +2,8 @@
  * 主线程唯一的 Telegram 客户端与按类别 429 退避运行态。
  *
  * owner：main。正常请求不排队；Telegram 返回 429 后，请求及同类别后来者进入
- * 对应侵入式 FIFO。全类别合计最多 81,920 条，超出即拒绝；Worker 崩溃时其代际
- * signal 会 O(1) 摘除。进程重启从空队列开始，安全动作由 verification 快照和
+ * 对应侵入式 FIFO。全类别合计最多 TELEGRAM_429_RETRY_QUEUE_MAX 条，超出即拒绝；
+ * Worker 崩溃时其代际 signal 会 O(1) 摘除。进程重启从空队列开始，安全动作由 verification 快照和
  * blocklist outbox 重放，退避层不复制持久化权威。客户端初始化与首次 429 分别
  * 填充单例句柄和对应类别队列。
  */
@@ -49,8 +49,8 @@ export const telegramOutboundAbortController: { current: AbortController } = {
 /**
  * 主线程唯一 Telegram 出站 429 队列的计数、active 对象、类别状态与排空等待者。
  * activeJobs 只保存已开始且未结算的现有 job，预算耗尽时用于同步取消；正常或
- * 取消结算立即删除。容量为 active 请求数加 81,920 条 pending 硬顶，进程重启
- * 从空状态开始。nextAdmissionSeq 是下一条 job 的接纳序号，每构造一条 job 加一，
+ * 取消结算立即删除。容量为 active 请求数加 TELEGRAM_429_RETRY_QUEUE_MAX 条 pending
+ * 硬顶，进程重启从空状态开始。nextAdmissionSeq 是下一条 job 的接纳序号，每构造一条 job 加一，
  * 跨出站生命周期代际不清零。
  */
 export const telegramOutboundGateState: {

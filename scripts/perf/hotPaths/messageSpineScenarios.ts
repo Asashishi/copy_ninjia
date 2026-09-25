@@ -253,18 +253,16 @@ export function aiMediaDirectTriggerScenario(): Scenario {
         const payload: AiRecordMediaMessage = buildAiRecordMediaMessage({
           context,
           speaker,
-          media: {
-            kind: "photo",
-            caption: "看看这张",
-            fileId: "AgACAgUAAx",
-            fileUniqueId: "AQADu",
-            width: 1280,
-            height: 720,
-            replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, claim),
-            stickerFallbackText: undefined,
-            voiceMime: undefined,
-            voiceDurationSeconds: 0,
-          },
+          kind: "photo",
+          caption: "看看这张",
+          fileId: "AgACAgUAAx",
+          fileUniqueId: "AQADu",
+          width: 1280,
+          height: 720,
+          replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, claim),
+          stickerFallbackText: undefined,
+          voiceMime: undefined,
+          voiceDurationSeconds: 0,
         });
         checksum += payload.width + (payload.directTriggerReason === undefined ? 0 : 1);
       }

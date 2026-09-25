@@ -73,3 +73,9 @@ export interface MentionFacts {
  * - `claimed`：掷中且占到名额，解析完成后真的会评价。
  */
 export type RandomMediaTrigger = "none" | "candidate" | "claimed";
+
+/**
+ * 消息自动流水线交给 AI handler 的载荷种类（auto/message/index.ts）：
+ * 非 `/` 开头的文本、贴纸、图片、GIF、语音。其余载荷没有对应的 AI handler。
+ */
+export type AiTriggerPayload = "text" | "sticker" | "photo" | "animation" | "voice";

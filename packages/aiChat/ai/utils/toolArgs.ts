@@ -4,7 +4,7 @@
  * 提示喂回模型。aiChat/ai/tools/replyToolset/ 与 aiChat/ai/tools/stickers.ts 共用，
  * 避免各自重复一份 try/catch JSON.parse 样板。
  *
- * 需要一次读多个字段的工具（生图、生歌）直接用 parseToolArguments 拿整张记录，
+ * 需要一次读多个字段的工具（生图、语音）直接用 parseToolArguments 拿整张记录，
  * 不要为每个字段各解析一遍。
  */
 

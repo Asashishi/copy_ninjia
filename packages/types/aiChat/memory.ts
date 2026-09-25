@@ -5,7 +5,7 @@ import type { AiSpeakerSnapshot } from "./speaker";
 /**
  * 一条 Telegram 回复所指向的原消息快照。
  *
- * 可选字段一律写成 `T | undefined` 而非 `?:`，理由与 AiSpeakerSnapshot 相同：
+ * 可选字段一律写成 `T | undefined` 而非 `?:`，与 AiSpeakerSnapshot 相同：
  * 形状恒定才能让转录渲染的属性读取保持单态。
  */
 export interface BufferedReplyReference extends AiSpeakerSnapshot {
@@ -33,6 +33,25 @@ export interface BufferedMessage extends AiSpeakerSnapshot {
   forwardedFrom: string | undefined;
   /** 已格式化的东京时间。 */
   at: string;
+  /**
+   * 机器人自发图片尚未写入画面内容时的占位状态；普通消息与已有内容的图片为 undefined。
+   * 占位态的 text 只有自录记号（生图带提示词）与图注，识图完成后由
+   * workers/aiChat/botImages.ts 按本字段重写 text 并清空本字段。
+   */
+  pendingImage: PendingBotImage | undefined;
+}
+
+/**
+ * 机器人自发图片的来源，决定回填时使用的自录记号：命令与定时任务发图、
+ * 生图、带参考素材的生图（见 consts/aiChat/prompts/transcript.ts 的 botImageTagTemplate）。
+ */
+export type BotImageOrigin = "command" | "generated" | "referenceGenerated";
+
+/** 占位态图片回填画面内容所需的全部事实。 */
+export interface PendingBotImage {
+  origin: BotImageOrigin;
+  /** 已清洗的图注；没有图注为空串。回填后原样接在记号之后。 */
+  caption: string;
 }
 
 /** chat_states.ai_context 的版本化落盘结构。 */

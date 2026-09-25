@@ -1,4 +1,6 @@
 import type { AiRecordMediaMessage } from "../../types/aiChat/protocol";
+import type { BotImageOrigin } from "../../types/aiChat/memory";
+import { botImageTagTemplate } from "../../consts/aiChat/prompts/transcript";
 import type { MediaKind } from "../../types/media";
 import {
   ANIMATION_FALLBACK_PLACEHOLDER,
@@ -11,13 +13,7 @@ import {
 import { VOICE_FALLBACK_PLACEHOLDER, VOICE_PENDING_PLACEHOLDER } from "../../consts/aiChat/voice";
 
 /** 媒体转录行/占位/回填标签的纯字符串拼装，供 mediaIngest.ts 的
- *  recordChatMedia 与 replyQueue.ts 的 pushReplyTrigger 共用。 */
-
-/** 媒体转录行：描述/占位标签在前，媒体自带的 caption（若有）跟在后面
- *  （贴纸没有 caption，恒为空串，等价于直接返回标签本身）。 */
-export function composeMediaText(tag: string, sanitizedCaption: string): string {
-  return sanitizedCaption ? `${tag} ${sanitizedCaption}` : tag;
-}
+ *  recordChatMedia、replyQueue.ts 的 pushReplyTrigger 与 botImages.ts 共用。 */
 
 /** 媒体刚入缓存、描述还没解析出来时的占位文本，按类型区分措辞。 */
 export function pendingPlaceholderFor(kind: MediaKind): string {
@@ -65,4 +61,10 @@ export function replyFallbackDescriptionFor(msg: AiRecordMediaMessage): string {
   if (msg.kind === "sticker" && msg.stickerFallbackText) return msg.stickerFallbackText;
   if (msg.kind === "voice") return "（这条语音没能识别出来，你没听清对方说了什么）";
   return "（画面内容没能识别出来，你没看清对方发了什么）";
+}
+
+/** 机器人自发图片的转录正文：自录记号紧接已清洗的图注。detail 在占位态是生图
+ *  提示词（命令图为空串），内容态是识图描述，记号选择见 botImageTagTemplate。 */
+export function botImageText(origin: BotImageOrigin, detail: string, caption: string): string {
+  return `${botImageTagTemplate(origin, detail)}${caption}`;
 }

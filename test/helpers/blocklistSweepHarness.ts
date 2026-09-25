@@ -1,4 +1,7 @@
-import type { IdentityPolicyRawReadResult } from "../../packages/types/identityStorage";
+import type {
+  IdentityPolicyRawReadResult,
+  BlocklistIdPage,
+} from "../../packages/types/identityStorage";
 import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "./diskIOMock";
 /**
@@ -10,7 +13,6 @@ import { beforeEach, expect, mock } from "bun:test";
 import { loggerStub } from "./loggerMock";
 import type { BlockedMemberRemover } from "../../packages/types/blocklist";
 import { BLOCKLIST_SWEEP_PAGE_SIZE } from "../../packages/consts/identityStorage";
-import type { BlocklistIdPage } from "../../packages/types/identityStorage";
 import {
   blockedIdentityTestView as blockedUserIds,
   readBlockedIdentityTestIds,
@@ -96,6 +98,7 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     return current;
   },
   clearChatStateField: (): boolean => false,
+  disableChatStateSwitch: (): boolean => false,
   purgeChatStateExceptLockdown: (): void => {},
   persistChatState,
   saveChatStateInBackground: (): void => {},

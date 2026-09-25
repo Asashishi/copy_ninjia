@@ -687,3 +687,58 @@ describe("媒体直接叫机器人", () => {
     });
   });
 });
+
+describe("没有 AI handler 的载荷", () => {
+  beforeEach(() => {
+    resetAutoMessageMocks();
+    clearUserReplyTriggerTimes();
+    clearAiReplyActivity();
+  });
+
+  afterAll((): void => {
+    clearUserReplyTriggerTimes();
+    clearAiReplyActivity();
+  });
+
+  test("回复机器人并 @ 它的视频：不记录、不触发", async () => {
+    await handleIncomingMessageMiddleware({
+      me: botInfo,
+      msg: {
+        message_id: 40,
+        date: 1,
+        chat,
+        from: alice,
+        reply_to_message: botReply,
+        video: { file_id: "video-file", file_unique_id: "video-uid", width: 640, height: 360, duration: 3 },
+        caption: "看这个 @test_bot",
+        caption_entities: [{ type: "mention", offset: 4, length: 9 }],
+      },
+    } as any);
+
+    expect(recordChatMediaMock).not.toHaveBeenCalled();
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test("回复机器人并 @ 它的 `/` 开头文本：不记录、不触发", async () => {
+    await handleIncomingMessageMiddleware({
+      me: botInfo,
+      msg: {
+        message_id: 41,
+        date: 1,
+        chat,
+        from: alice,
+        reply_to_message: botReply,
+        text: "/unknown @test_bot",
+        entities: [
+          { type: "bot_command", offset: 0, length: 8 },
+          { type: "mention", offset: 9, length: 9 },
+        ],
+      },
+    } as any);
+
+    expect(recordChatMediaMock).not.toHaveBeenCalled();
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+});

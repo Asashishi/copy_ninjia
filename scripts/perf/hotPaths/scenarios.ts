@@ -36,9 +36,11 @@ import {
 import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
 import { createGagTargetProfileUrl } from "../../../packages/commands/gag/identity";
 import type { GagSession } from "../../../packages/types/gag";
-import type { AdCandidateMessage, AdSampleContext } from
-  "../../../packages/types/antiRaid/adDetect";
-import type { AdCandidateEntry } from "../../../packages/types/antiRaid/adDetect";
+import type {
+  AdCandidateMessage,
+  AdSampleContext,
+  AdCandidateEntry,
+} from "../../../packages/types/antiRaid/adDetect";
 import {
   BENCHMARK_CHAT_ID,
   BENCHMARK_EPOCH_MS,

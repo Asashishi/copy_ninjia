@@ -49,27 +49,31 @@ export const GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS: number = 16_384;
 export const GEMINI_REPLY_ERROR_LABEL: string = "Gemini API";
 /** 生图请求在错误日志里的调用名。 */
 export const GEMINI_IMAGE_ERROR_LABEL: string = "Gemini image generation API";
-/** 生歌请求在错误日志里的调用名。 */
-export const GEMINI_SONG_ERROR_LABEL: string = "Gemini song generation API";
+/** 语音合成请求在错误日志里的调用名。 */
+export const GEMINI_SPEECH_ERROR_LABEL: string = "Gemini speech synthesis API";
 
 /**
- * 单次生歌请求的超时上限，独立于 GEMINI_REQUEST_TIMEOUT_MS：生歌走 Interactions
- * API 的另一条端点，合成一首整曲耗时以分钟计。SDK 的 next-gen 客户端只继承构造期
- * 的 `httpOptions.timeout`，因此这一档必须在每次调用时显式传入（见
- * aiChat/gemini/song.ts）。
+ * 单次语音合成请求的总超时。语音合成走 Interactions API，SDK 只继承构造期的
+ * `httpOptions.timeout`，因此这一档在每次调用时显式传入（见 aiChat/gemini/speech.ts）。
  */
-export const GEMINI_SONG_REQUEST_TIMEOUT_MS: number = 600_000;
+export const GEMINI_SPEECH_REQUEST_TIMEOUT_MS: number = 60_000;
+
+/** 语音合成请求的总尝试次数（含首次）；SDK 只对 408/429/5xx 与网络错误重试。 */
+export const GEMINI_SPEECH_REQUEST_ATTEMPTS: number = 3;
+
+/** 语音合成的采样温度，经 `generation_config.temperature` 传入。 */
+export const GEMINI_SPEECH_TEMPERATURE: number = 1.25;
 
 /**
- * 生歌请求的总尝试次数（含首次），固定为 1、不重试。瞬时网络抖动造成的损失由
- * 调用方一层的冷却核销策略承担，见 replyToolset/songGeneration.ts。
+ * 语音合成的基础朗读风格，经 `speech_metadata.style` 随台词一起提交；模型给出
+ * 本句语气时拼在它之后（见 aiChat/gemini/speech.ts）。
  */
-export const GEMINI_SONG_REQUEST_ATTEMPTS: number = 1;
+export const GEMINI_SPEECH_STYLE: string = "女性の、いたずら好きそうな高く元気そうな声。";
 
 /**
  * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
- * 超时上限。media 有独立档位，见下一个常量；生歌另见
- * GEMINI_SONG_REQUEST_TIMEOUT_MS。
+ * 超时上限。media 有独立档位，见下一个常量；语音合成另见
+ * GEMINI_SPEECH_REQUEST_TIMEOUT_MS。
  */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
 /**

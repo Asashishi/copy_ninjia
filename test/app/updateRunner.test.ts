@@ -3,6 +3,7 @@ import type { Update } from "grammy/types";
 import { BotError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
+import { waitUntil } from "../helpers/waitUntil";
 import { logger } from "../../packages/infra/logger";
 import { currentUpdateAbortSignal, currentUpdateTopic } from "../../packages/infra/updateContext";
 
@@ -39,7 +40,7 @@ describe("acknowledgement-safe update runner", () => {
     };
     const runner = runAcknowledgedUpdateBatches(bot as unknown as Bot, ["message"]);
     try {
-      await Bun.sleep(5);
+      expect(await waitUntil((): boolean => topics.length === 2)).toBeTrue();
       expect(topics).toEqual([{ chatId: -1001, threadId: 42 }, undefined]);
     } finally {
       await runner.stop();

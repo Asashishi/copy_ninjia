@@ -161,7 +161,15 @@ function temporaryAdBypassWriteChain(
   const chatId: number = dependencies.benchmarkChatId(0);
   const totalOperations: number = dependencies.chainWarmupOperations +
     dependencies.chainTemporaryAdBypassWrites;
-  const chatState: Readonly<ChatState> = { isAdDetectEnabled: true };
+  const chatState: Readonly<ChatState> = {
+    isAIChatEnabled: false,
+    isTranslationEnabled: false,
+    isAdDetectEnabled: true,
+    isFloodControlEnabled: false,
+    isAntiRaidEnabled: false,
+    isInitEnabled: false,
+    isProxySendEnabled: false,
+  };
   return {
     chain: "temporary-whitelist-write",
     operations: dependencies.chainTemporaryAdBypassWrites,
@@ -379,6 +387,7 @@ export function createStorageChain(
     case "ai-memory-snapshot": return aiMemoryChain(dependencies);
     case "diagnostic-log": return diagnosticLogChain(dependencies);
     case "ad-detect-command":
-    case "ai-reply-command": return undefined;
+    case "ai-reply-command":
+    case "cron-send-voice": return undefined;
   }
 }

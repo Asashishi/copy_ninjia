@@ -2,8 +2,8 @@ import { SELF_SPEAKER_NAME } from "../../../consts/aiChat/prompts/transcript";
 import type {
   AiBotInfo,
   AiRecordMessage,
-  AiReplyReference,
 } from "../../../types/aiChat/protocol";
+import type { BufferedReplyReference } from "../../../types/aiChat/memory";
 
 /**
  * 机器人把自己刚发出的消息写回滚动记忆时的公共载荷。主线程侧与 AI Worker 侧
@@ -20,8 +20,8 @@ export interface SelfRecordMessageParams {
   messageId: number;
   /** 这条自录的正文。 */
   text: string;
-  /** Telegram 实际建立的回复关系；没挂回复时传 undefined。 */
-  replyTo?: AiReplyReference | undefined;
+  /** Telegram 实际建立的回复关系（热区快照）；没挂回复时传 undefined。 */
+  replyTo?: BufferedReplyReference | undefined;
 }
 
 export function buildSelfRecordMessage({
@@ -39,7 +39,18 @@ export function buildSelfRecordMessage({
     lastName: "",
     username: undefined,
     messageId,
-    replyTo,
+    // 快照逐字段复制成协议引用：自录的回复目标由 Worker 自己解析，不带待识图的 botImage。
+    replyTo: replyTo === undefined ? undefined : {
+      messageId: replyTo.messageId,
+      id: replyTo.id,
+      firstName: replyTo.firstName,
+      lastName: replyTo.lastName,
+      username: replyTo.username,
+      text: replyTo.text,
+      quote: replyTo.quote,
+      forwardedFrom: replyTo.forwardedFrom,
+      botImage: undefined,
+    },
     forwardedFrom: undefined,
     persistImmediately: false,
     text,

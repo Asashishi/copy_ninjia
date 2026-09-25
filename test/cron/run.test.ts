@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import type { CronAction, CronChatTargets, CronDeliveryOutcome, CronGroupTargets, CronTaskSchedule } from "../../packages/types/cron";
+import type { CronAction, CronChatTargets, CronDeliveryOutcome, CronGroupTargets, CronRoundVoices, CronTaskSchedule } from "../../packages/types/cron";
+import type { DeliverCronActionOptions } from "../../packages/cron/delivery";
 
 const delivered: string[] = [];
 const destinations: number[] = [];
 const outcomes: CronDeliveryOutcome[] = [];
-const deliverCronAction = mock(async (
-  chatId: number,
-  action: CronAction,
-  _signal: AbortSignal
-): Promise<CronDeliveryOutcome> => {
+const roundVoices: CronRoundVoices[] = [];
+const deliverCronAction = mock(async ({ chatId, action, voices }: DeliverCronActionOptions): Promise<CronDeliveryOutcome> => {
   destinations.push(chatId);
+  roundVoices.push(voices);
   delivered.push(action.type === "send_message" ? action.content : action.type);
   return outcomes.shift() ?? { kind: "sent" };
 });
@@ -71,6 +70,7 @@ async function settle(round: Promise<void>, stepMs: number = 500): Promise<void>
 beforeEach(() => {
   delivered.length = 0;
   destinations.length = 0;
+  roundVoices.length = 0;
   outcomes.length = 0;
   groupTargets = { chatIds: [], skipped: 0 };
   excludedChatIds.length = 0;
@@ -228,10 +228,23 @@ describe("chat_id: [\"all\"] 与 [\"except\", ...] 的一轮", () => {
     expect(excludedChatIds).toEqual([[]]);
   });
 
+  test("一轮里各群与各次重试共用同一张语音表，下一轮换新表", async () => {
+    groupTargets = { chatIds: [-2, -1], skipped: 0 };
+    const target: CronTaskSchedule = schedule([{ type: "send_voice", content: "おやすみ", tone: undefined }], { kind: "all" });
+    outcomes.push({ kind: "retryable", detail: "502 Bad Gateway" });
+    await settle(runCronRound(target, new AbortController().signal));
+    expect(destinations).toEqual([-2, -2, -1]);
+    expect(new Set(roundVoices).size).toBe(1);
+    await settle(runCronRound(target, new AbortController().signal));
+    expect(roundVoices).toHaveLength(5);
+    expect(roundVoices[3]).not.toBe(roundVoices[0]);
+    expect(roundVoices[4]).toBe(roundVoices[3]);
+  });
+
   test("调度被撤销后不再进入下一个群", async () => {
     groupTargets = { chatIds: [-2, -1], skipped: 0 };
     const target: CronTaskSchedule = schedule([{ type: "send_message", content: "one" }], { kind: "all" });
-    deliverCronAction.mockImplementationOnce(async (chatId: number): Promise<CronDeliveryOutcome> => {
+    deliverCronAction.mockImplementationOnce(async ({ chatId }: DeliverCronActionOptions): Promise<CronDeliveryOutcome> => {
       destinations.push(chatId);
       target.cancelled = true;
       return { kind: "sent" };

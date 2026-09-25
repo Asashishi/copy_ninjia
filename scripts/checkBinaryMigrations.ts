@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { prepareMigratedDeployment } from "./fixtures/migrationDeployment";
 import type { MigratedDeployment } from "./fixtures/migrationDeployment";
 
-/** 两种合法 schema v10 谱系均核对非空 WAL 与全部业务表；产物交给安装检查。 */
+/** 两种合法 schema v11 谱系均核对非空 WAL 与全部业务表；产物交给安装检查。 */
 export async function checkBinaryMigrations(packageRoot: string): Promise<MigratedDeployment> {
   await prepareMigratedDeployment({
-    packageRoot, root: join(packageRoot, "historical-migration-check"), binary: true, historical: true, extendedInputs: true,
+    packageRoot, root: join(packageRoot, "historical-migration-check"), binary: true, historical: true,
   });
   return prepareMigratedDeployment({
     packageRoot, root: join(packageRoot, "cold-migration-check"), binary: true,

@@ -8,6 +8,7 @@ import type {
   User,
 } from "grammy/types";
 import type { TelegramApi } from "./telegramWorker";
+import type { TelegramVisionSource } from "./media";
 
 /**
  * 头像交互可使用的身份；发起身份来自更新，候选身份来自本轮查询。只给 ID 时由 getChat
@@ -38,7 +39,7 @@ export type CurrentAvatarResult =
  * 类型的话，新增一个状态时漏改任何一处都编译通过，运行时才发现发出去的是
  * 另一个状态。
  */
-export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "upload_document";
+export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "record_voice";
 
 /** Telegram Bot API 标准 emoji 反应的精确联合。 */
 export type ReactionEmoji = ReactionTypeEmoji["emoji"];
@@ -56,8 +57,13 @@ export interface TelegramSendResult {
   repliedToMessageId?: number;
 }
 
+/** 图片发送结果：另带 Telegram 为这张图返回的视觉源（取档见 libs/telegramImage.ts 的 pickPhotoFile）。 */
+export interface TelegramPhotoSendResult extends TelegramSendResult {
+  photo: TelegramVisionSource;
+}
+
 /**
- * 一个查询者最近一次 inline 应答：他打进查询的源文本，以及这次应答渲染出的
+ * 一个发言身份最近一次 inline 应答：查询里打进的源文本，以及这次应答渲染出的
  * 全部结果正文（同一次查询可能同时给出多条结果，只有被选中的那条会落群）。
  */
 export interface InlineResultSource {

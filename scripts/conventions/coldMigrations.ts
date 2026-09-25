@@ -25,7 +25,7 @@ export async function collectColdMigrationProblems(
   ).sort();
   const problems: string[] = [];
   if (IDENTITY_DATABASE_SCHEMA_VERSION !== 11) {
-    problems.push("/h_image add permission cold migration must map schema v10 to the current SQLite schema");
+    problems.push("translation session cold migration must operate on the current SQLite schema v11");
   }
 
   if (migrationCommands.join(",") !== declaredCommands.join(",")) {

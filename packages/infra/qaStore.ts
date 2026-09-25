@@ -160,7 +160,7 @@ export function removeAllChatQa(chatId: number): number {
       removed++;
     }
   } finally {
-    // 空表不留存，理由同 removeChatQa：直答路径第一步要能靠 undefined 短路。
+    // 空表不留存，同 removeChatQa：直答路径第一步要能靠 undefined 短路。
     // 收在 finally 里：中途抛错时已经摘走的那几条不能再回到表里，而剩下的必须
     // 原样留着等重试，两者都要求按此刻的 size 判定。
     if (questions.size === 0) chatQaEntries.delete(chatId);

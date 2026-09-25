@@ -1,6 +1,7 @@
 import { generateAndSendReply, recordChatMessage } from "../../aiChat";
 import { pickStickerVisionSource } from "../../aiChat/ai/stickers/describe";
-import { pickPhotoFile, resolveSpeaker } from "./facts";
+import { resolveSpeaker } from "./facts";
+import { pickPhotoFile } from "../../libs/telegramImage";
 import { buildAiRecordMessage } from "./recordContext";
 import type { MessageTriggerContext } from "../../types/auto";
 import { shouldAttemptRandomTrigger, tryClaimUserReplyTrigger } from "./triggerPolicy";

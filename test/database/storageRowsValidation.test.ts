@@ -12,6 +12,7 @@ import type {
   StoredChatStateRow,
   StoredStorageMetadataRow,
 } from "../../packages/types/storageDatabase";
+import { chatStateOf } from "../helpers/chatState";
 
 /**
  * 共享 SQLite 业务行的**启动期严格校验**。
@@ -95,7 +96,7 @@ describe("schema 版本行", () => {
 describe("群状态严格解码", () => {
   test("合法行按群 id 解出状态", () => {
     const states: Map<number, ChatState> = decodeStoredChatStates(
-      [chatStateRow(CHAT_ID, { isInitEnabled: true })],
+      [chatStateRow(CHAT_ID, chatStateOf({ isInitEnabled: true }))],
       SOURCE
     );
     expect(states.get(CHAT_ID)?.isInitEnabled).toBe(true);
@@ -105,7 +106,7 @@ describe("群状态严格解码", () => {
     const rows: StoredChatStateRow[] = Array.from(
       { length: STATE_MANAGED_CHAT_LIMIT + 1 },
       (_value: unknown, index: number): StoredChatStateRow =>
-        chatStateRow(-1_000 - index, { isInitEnabled: true })
+        chatStateRow(-1_000 - index, chatStateOf({ isInitEnabled: true }))
     );
     expect(() => decodeStoredChatStates(rows, SOURCE))
       .toThrow(new RegExp(`at most ${STATE_MANAGED_CHAT_LIMIT} chats`));
@@ -115,35 +116,35 @@ describe("群状态严格解码", () => {
     const rows: StoredChatStateRow[] = Array.from(
       { length: STATE_MANAGED_CHAT_LIMIT },
       (_value: unknown, index: number): StoredChatStateRow =>
-        chatStateRow(-1_000 - index, { isInitEnabled: true })
+        chatStateRow(-1_000 - index, chatStateOf({ isInitEnabled: true }))
     );
     expect(decodeStoredChatStates(rows, SOURCE).size).toBe(STATE_MANAGED_CHAT_LIMIT);
   });
 
   test("同一群出现两行时拒绝，不让后一行静默覆盖前一行", () => {
     expect(() => decodeStoredChatStates([
-      chatStateRow(CHAT_ID, { isInitEnabled: true }),
-      chatStateRow(CHAT_ID, { isInitEnabled: false }),
+      chatStateRow(CHAT_ID, chatStateOf({ isInitEnabled: true })),
+      chatStateRow(CHAT_ID, chatStateOf({ title: "另一行" })),
     ], SOURCE)).toThrow(/duplicate chat primary key/);
   });
 
   test("同时有两个代发目标时拒绝：代发入口全局只能有一个", () => {
     expect(() => decodeStoredChatStates([
-      chatStateRow(CHAT_ID, { isProxySendEnabled: true }),
-      chatStateRow(CHAT_ID - 1, { isProxySendEnabled: true }),
+      chatStateRow(CHAT_ID, chatStateOf({ isProxySendEnabled: true })),
+      chatStateRow(CHAT_ID - 1, chatStateOf({ isProxySendEnabled: true })),
     ], SOURCE)).toThrow(/at most one active proxy send target/);
   });
 
   test("只有一个代发目标时正常解出", () => {
     expect(() => decodeStoredChatStates([
-      chatStateRow(CHAT_ID, { isProxySendEnabled: true }),
-      chatStateRow(CHAT_ID - 1, { isInitEnabled: true }),
+      chatStateRow(CHAT_ID, chatStateOf({ isProxySendEnabled: true })),
+      chatStateRow(CHAT_ID - 1, chatStateOf({ isInitEnabled: true })),
     ], SOURCE)).not.toThrow();
   });
 
   test("主键不是合法群 id 时拒绝", () => {
     expect(() => decodeStoredChatStates(
-      [chatStateRow(1_001, { isInitEnabled: true })],
+      [chatStateRow(1_001, chatStateOf({ isInitEnabled: true }))],
       SOURCE
     )).toThrow();
   });

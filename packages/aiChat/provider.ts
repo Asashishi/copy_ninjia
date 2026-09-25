@@ -1,7 +1,7 @@
 /**
  * AI agent 按能力选择 SDK 实现的唯一入口。
  *
- * config/agent.json 的 text、summary、media、image、song 各自声明 provider；这里
+ * config/agent.json 的 text、summary、media、image、tts 各自声明 provider；这里
  * 只把 google/openai 映射到实现包，不做运行时故障切换，也不从模型名或 base_url
  * 猜供应商。api_key 与端点同样来自该能力配置；启动总闸会在建立外部连接前完成
  * 严格校验。跨模块与生命周期约束见 docs/cn/04-invariants.md。
@@ -28,7 +28,11 @@ import {
 } from "../consts/aiChat/provider";
 import { logger } from "../infra/logger";
 import { createPrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
-import type { AgentDeploymentConfig } from "../types/config";
+import type {
+  AgentDeploymentConfig,
+  AgentCapability,
+  AgentCapabilityConfig,
+} from "../types/config";
 import type {
   AiChatProvider,
   AiImageProvider,
@@ -39,8 +43,8 @@ import type {
   AiReplySessionParams,
   AiReplyTurn,
   AiReplyTurnRequest,
-  AiSongRequest,
-  AiSongProvider,
+  AiSpeechProvider,
+  AiSpeechRequest,
   AiSummaryProvider,
   AiTextResult,
   AiTextRequest,
@@ -50,8 +54,7 @@ import type {
 } from "../types/aiChat/provider";
 import type { AiProviderQuotaLane } from "../types/aiChat/providerScheduler";
 import type { GeneratedChatImage } from "../types/aiChat/imageGeneration";
-import type { GeneratedChatSong } from "../types/aiChat/songGeneration";
-import type { AgentCapability, AgentCapabilityConfig } from "../types/config";
+import type { SynthesizedSpeech } from "../types/aiChat/voiceMessage";
 import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
 
 /** provider 到实现包的穷举映射；扩展 AgentProvider 时编译器会要求同步补项。 */
@@ -193,7 +196,7 @@ function createMediaFacade(
 /**
  * 把一次「生成一件媒体」的调用裹进交互优先的配额闸门。
  *
- * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图与生歌的调用方都
+ * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图与语音合成的调用方都
  * 按「这次没做出来」处理，不能把队列拒绝泄漏成一个 undefined 让工具层再猜一次。
  */
 function scheduleMediaGeneration<
@@ -227,19 +230,19 @@ function createImageFacade(
   };
 }
 
-function createSongFacade(
+function createSpeechFacade(
   provider: AiChatProvider,
   config: AgentCapabilityConfig
-): AiSongProvider {
-  const generateSong: AiSongProvider["generateSong"] = provider.generateSong;
+): AiSpeechProvider {
+  const synthesizeSpeech: AiSpeechProvider["synthesizeSpeech"] = provider.synthesizeSpeech;
   // 选中的那一家没有这项能力时只交出名字：工具层据此不注册对应工具。
-  if (generateSong === undefined) return { name: provider.name };
+  if (synthesizeSpeech === undefined) return { name: provider.name };
   return {
     name: provider.name,
-    generateSong: scheduleMediaGeneration<AiSongRequest, GeneratedChatSong>(
+    synthesizeSpeech: scheduleMediaGeneration<AiSpeechRequest, SynthesizedSpeech>(
       quotaRunnerFor(config),
-      (request: AiSongRequest): Promise<GeneratedChatSong | null> =>
-        generateSong(request)
+      (request: AiSpeechRequest): Promise<SynthesizedSpeech | null> =>
+        synthesizeSpeech(request)
     ),
   };
 }
@@ -288,7 +291,7 @@ export function mediaAiProvider(
  */
 interface OptionalCapabilityFacadeParams<TFacade> {
   /** 部署配置里的能力键，也是记忆化槽位名。 */
-  readonly capability: "image" | "song";
+  readonly capability: "image" | "tts";
   /** 当前缓存值；`undefined` 专表「还没问过」。 */
   readonly cached: TFacade | null | undefined;
   /** 配置齐全时构造门面。 */
@@ -324,14 +327,14 @@ export function imageAiProvider(): AiImageProvider | null {
   });
 }
 
-/** 生歌能力；缺配置时不注册对应工具。 */
-export function songAiProvider(): AiSongProvider | null {
-  return optionalCapabilityFacade<AiSongProvider>({
-    capability: "song",
-    cached: aiProviderFacades.song,
-    create: (config: AgentCapabilityConfig): AiSongProvider =>
-      createSongFacade(AI_CHAT_PROVIDERS[config.provider], config),
-    store: (facade: AiSongProvider | null): void => { aiProviderFacades.song = facade; },
+/** 语音合成能力；缺配置时不注册对应工具。 */
+export function ttsAiProvider(): AiSpeechProvider | null {
+  return optionalCapabilityFacade<AiSpeechProvider>({
+    capability: "tts",
+    cached: aiProviderFacades.tts,
+    create: (config: AgentCapabilityConfig): AiSpeechProvider =>
+      createSpeechFacade(AI_CHAT_PROVIDERS[config.provider], config),
+    store: (facade: AiSpeechProvider | null): void => { aiProviderFacades.tts = facade; },
   });
 }
 
@@ -343,11 +346,11 @@ export function songAiProvider(): AiSongProvider | null {
  */
 export function reportUnimplementedAgentCapabilities(): void {
   const config: AgentDeploymentConfig = getAgentDeploymentConfig();
-  const song: AgentCapabilityConfig | undefined = config.song;
-  if (song !== undefined && AI_CHAT_PROVIDERS[song.provider].generateSong === undefined) {
+  const tts: AgentCapabilityConfig | undefined = config.tts;
+  if (tts !== undefined && AI_CHAT_PROVIDERS[tts.provider].synthesizeSpeech === undefined) {
     logger.error(
-      `Song generation stays unavailable: $.agent.song selects the "${song.provider}" provider, ` +
-      "which does not implement it. The generate_song tool will not be registered."
+      `Speech synthesis stays unavailable: $.agent.tts selects the "${tts.provider}" provider, ` +
+      "which does not implement it. The send_voice tool will not be registered."
     );
   }
   if (AI_CHAT_PROVIDERS[config.media.provider].transcribeVoice === undefined) {
@@ -364,7 +367,7 @@ function isQuotaLaneInUse(lane: AiProviderQuotaLane, config: AgentDeploymentConf
     isQuotaLaneOf(lane, config.summary) ||
     isQuotaLaneOf(lane, config.media) ||
     (config.image !== undefined && isQuotaLaneOf(lane, config.image)) ||
-    (config.song !== undefined && isQuotaLaneOf(lane, config.song));
+    (config.tts !== undefined && isQuotaLaneOf(lane, config.tts));
 }
 
 /**

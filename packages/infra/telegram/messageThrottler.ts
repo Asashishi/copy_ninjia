@@ -9,6 +9,8 @@ import {
 } from "@grammyjs/transformer-throttler";
 import {
   TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX,
+  TELEGRAM_MESSAGE_GLOBAL_RESERVOIR,
+  TELEGRAM_MESSAGE_GLOBAL_REFRESH_INTERVAL_MS,
   TELEGRAM_MESSAGE_GROUP_PENDING_MAX,
   TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX,
 } from "../../consts/telegram";
@@ -58,9 +60,9 @@ export function telegramMessageThrottler(): Transformer<RawApi> {
   const throttler: Transformer<RawApi> = apiThrottler({
     // 全局速率保持插件 1.2.1 的默认值，只补 OVERFLOW 高水位。
     global: {
-      reservoir: 30,
-      reservoirRefreshAmount: 30,
-      reservoirRefreshInterval: 1_000,
+      reservoir: TELEGRAM_MESSAGE_GLOBAL_RESERVOIR,
+      reservoirRefreshAmount: TELEGRAM_MESSAGE_GLOBAL_RESERVOIR,
+      reservoirRefreshInterval: TELEGRAM_MESSAGE_GLOBAL_REFRESH_INTERVAL_MS,
       highWater: TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX,
       strategy: BottleneckStrategy.OVERFLOW,
     },

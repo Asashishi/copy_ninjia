@@ -33,6 +33,7 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
+  disableChatStateSwitch: (): boolean => false,
   getChatState: (chatId: number) => unmanagedChatIds.has(chatId)
     ? { ...chatState, isInitEnabled: false }
     : chatState,

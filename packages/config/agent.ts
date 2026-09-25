@@ -1,13 +1,14 @@
-import { LOOPBACK_HOSTS, EXPECTED_BASE_URL } from "../consts/agent";
 import {
-  adDetectAgentConfigCache,
-  agentDeploymentConfigCache,
-} from "../cache/perThread/config";
-import {
+  LOOPBACK_HOSTS,
+  EXPECTED_BASE_URL,
   AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
   AGENT_API_KEY_PLACEHOLDERS,
   AGENT_CAPABILITY_NAMES,
 } from "../consts/agent";
+import {
+  adDetectAgentConfigCache,
+  agentDeploymentConfigCache,
+} from "../cache/perThread/config";
 import { AGENT_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
@@ -18,22 +19,24 @@ import type {
   AgentDeploymentConfig,
   AgentImageCapabilityConfig,
   AgentProvider,
+  AgentTtsCapabilityConfig,
   OpenAiImageProtocol,
 } from "../types/config";
 
 /**
  * config/agent.json：所有 AI 能力的统一部署配置。
  *
- * 顶层只含 agent；其下按能力而不是按 SDK 分组。ad_detect、text、summary、media、image、song 各自声明
+ * 顶层只含 agent；其下按能力而不是按 SDK 分组。ad_detect、text、summary、media、image、tts 各自声明
  * provider、api_key、model 与可选 base_url。provider 只表示调用协议，目前只接受 google
  * 与 openai；模型品牌不受枚举限制，因此 Grok 等 OpenAI 兼容模型使用 openai
- * provider 加对应端点。text、summary、media 是对话核心能力；ad_detect、image、song
+ * provider 加对应端点。text、summary、media 是对话核心能力；ad_detect、image、tts
  * 均可缺省，由对应功能门禁或工具装配单独处理。非法或未知字段在
  * 建立外部连接前直接拒绝启动。
  *
  * image 额外要求 OpenAI 侧显式给 image_protocol；Google 侧禁止该字段。请求体差异
- * 不能从模型名或端点可靠推断。image/song 缺省或所选实现不支持时，分别不挂
- * 生图/生歌工具。
+ * 不能从模型名或端点可靠推断。tts 额外要求 voice（预置音色名或 `voice_` 音色 ID），
+ * 只校验为非空字符串，音色是否存在由首次合成请求决定。image/tts 缺省或所选实现不支持时，分别不挂
+ * 生图/语音工具。
  *
  * **读盘只发生在主线程。** 本文件分成三段边界，谁能调哪一段由所在线程决定：
  *
@@ -168,6 +171,24 @@ function parseImageCapability(
   };
 }
 
+/** 解码语音合成能力；通用四项之外必填 voice。 */
+function parseTtsCapability(
+  value: unknown,
+  sourcePath: string
+): AgentTtsCapabilityConfig {
+  const context: string = "$.agent.tts";
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["provider", "api_key", "base_url", "model", "voice"])) {
+    return invalidInput(sourcePath, context, "exactly { provider, api_key, base_url?, model, voice }");
+  }
+  return {
+    provider: requiredProvider(value.provider, `${context}.provider`, sourcePath),
+    apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
+    baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
+    model: requiredString(value.model, `${context}.model`, sourcePath),
+    voice: requiredString(value.voice, `${context}.voice`, sourcePath),
+  };
+}
+
 /** 解码广告检测能力；base_url 缺省时跟随所选 SDK 的官方端点。 */
 export function parseAdDetectAgentConfig(
   value: unknown,
@@ -191,12 +212,12 @@ export function parseAgentDeploymentConfig(
     return invalidInput(
       sourcePath,
       "$.agent",
-      "exactly { ad_detect?, text, summary, media, image?, song? }"
+      "exactly { ad_detect?, text, summary, media, image?, tts? }"
     );
   }
-  let song: AgentCapabilityConfig | undefined;
-  if (value.song !== undefined) {
-    song = parseCapability(value.song, "$.agent.song", sourcePath);
+  let tts: AgentTtsCapabilityConfig | undefined;
+  if (value.tts !== undefined) {
+    tts = parseTtsCapability(value.tts, sourcePath);
   }
   const image: AgentImageCapabilityConfig | undefined = value.image === undefined
     ? undefined
@@ -206,7 +227,7 @@ export function parseAgentDeploymentConfig(
     summary: parseCapability(value.summary, "$.agent.summary", sourcePath),
     media: parseCapability(value.media, "$.agent.media", sourcePath),
     image,
-    song,
+    tts,
   };
 }
 
@@ -240,7 +261,7 @@ export async function loadAgentConfigSnapshots(
     return invalidInput(
       path,
       "$.agent",
-      "only { ad_detect?, text?, summary?, media?, image?, song? }"
+      "only { ad_detect?, text?, summary?, media?, image?, tts? }"
     );
   }
   const adDetectConfig: AdDetectAgentConfig | undefined = record.ad_detect === undefined
@@ -250,8 +271,8 @@ export async function loadAgentConfigSnapshots(
   if (record.summary !== undefined) parseCapability(record.summary, "$.agent.summary", path);
   if (record.media !== undefined) parseCapability(record.media, "$.agent.media", path);
   if (record.image !== undefined) parseImageCapability(record.image, path);
-  if (record.song !== undefined) {
-    parseCapability(record.song, "$.agent.song", path);
+  if (record.tts !== undefined) {
+    parseTtsCapability(record.tts, path);
   }
   const hasAiChatCore: boolean = AGENT_AI_CHAT_REQUIRED_CAPABILITIES.every(
     (key: string): boolean => Object.hasOwn(record, key)
@@ -360,4 +381,13 @@ export function getAgentDeploymentConfig(): AgentDeploymentConfig {
     );
   }
   return config;
+}
+
+/**
+ * 本 isolate 当前的 `agent.tts` 配置；文件、对话核心能力段或 tts 段缺省时为 undefined。
+ * 只读 holder，不读盘。主线程的 `/send` 代发 TTS、cron `send_voice` 与 cron.json 的
+ * 交叉校验据此判定语音合成是否已配置。
+ */
+export function agentTtsConfig(): AgentTtsCapabilityConfig | undefined {
+  return agentDeploymentConfigCache.current?.tts;
 }

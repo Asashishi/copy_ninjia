@@ -92,7 +92,7 @@ export const replyAbortControllers: Map<string, AbortController> = new Map();
 /**
  * 每个 chat:generation 尚未 settle 的回复及其发送链、提示、媒体描述与记忆压缩任务。
  * 清理：每个 Promise settle 时从内层 Set 移除，Set 空了删外层键；群失效与
- * resetAiChatReplyCache 整表清空。容量与不设淘汰的理由同 replyAbortControllers，
+ * resetAiChatReplyCache 整表清空。容量与淘汰口径同 replyAbortControllers，
  * 两张表覆盖同一批 chat:generation 键。
  */
 export const replyGenerationTasks: Map<string, Set<Promise<void>>> = new Map();

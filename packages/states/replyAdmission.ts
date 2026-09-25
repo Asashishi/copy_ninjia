@@ -12,16 +12,11 @@ import type {
  * - admitTrigger：并发闸，在触发到达时判定。
  * - isReplyRoundRateLimited：限频闸，在真正开始一轮前判定。
  *
- * 两道闸不是同一个状态对象的两次转移——之间隔着「入队等待补跑」这个
- * 不定时长的中间态（补跑时才会走到 isReplyRoundRateLimited，见 replyQueue.ts），且
- * 没有一个有意义的离散状态集合可以枚举（不像
- * verification/lockdown 那样有 PENDING/ACTIVE 这类需要持久化在 Map 里、
- * 会被后续事件引用的状态），本质是两次独立的阈值判定，各自只吃调用方
- * 算好的标量。因此这里不采用 transition(state, event) 的单机形态，而是
- * 两个独立的纯函数——滑动窗口（longTriggerTimes）、队列
- * （pendingReplyTriggers）、在途计数（activeReplyCounts）、提示冷却
- * （rateLimitNoticeTimes）这些内存容器与计时留在 replyState/replyQueue/
- * replyRound 三个运行时模块里，只把已经算好的数字喂进来。
+ * 两道闸是两次独立的阈值判定，之间隔着「入队等待补跑」的中间态（补跑时才走到
+ * isReplyRoundRateLimited，见 replyQueue.ts），各自只接收调用方算好的标量。滑动
+ * 窗口（longTriggerTimes）、队列（pendingReplyTriggers）、在途计数
+ * （activeReplyCounts）、提示冷却（rateLimitNoticeTimes）等容器与计时属于
+ * replyState/replyQueue/replyRound 三个运行时模块。
  */
 
 /**

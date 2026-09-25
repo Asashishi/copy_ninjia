@@ -29,10 +29,11 @@
       "model": "grok-imagine-image",
       "image_protocol": "xai"
     },
-    "song": {
+    "tts": {
       "provider": "google",
       "api_key": "replace-with-google-api-key",
-      "model": "lyria-3-pro-preview"
+      "model": "gemini-3.8-flash-lite-tts",
+      "voice": "Leda"
     }
   }
 }

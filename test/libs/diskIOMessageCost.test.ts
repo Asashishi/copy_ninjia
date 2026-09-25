@@ -225,6 +225,11 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     payloadBytes: 0,
     business: false,
   },
+  storageFlushHold: {
+    message: { type: "storageFlushHold", active: true },
+    payloadBytes: 0,
+    business: false,
+  },
 };
 
 describe("Disk I/O 消息计价", () => {

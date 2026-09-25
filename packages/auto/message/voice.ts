@@ -7,6 +7,8 @@ import { replyToUnresolvableMedia } from "./mediaFallback";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { claimRandomMediaTrigger, mediaTriggerHandled } from "./triggerPolicy";
 import type { AiSpeakerSnapshot } from "../../types/aiChat/speaker";
+import { voiceDurationPlaceholder } from "../../consts/auto";
+import { composeMediaText } from "../../libs/text";
 
 /**
  * 语音消息进入转写管线的准入判定。
@@ -36,13 +38,10 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
   const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
   const caption: string = typeof message.caption === "string" ? message.caption : "";
   if (!isTranscribable(voice)) {
-    // 时长写进转录行：模型至少知道「对方发了条多长的语音」，而不是只看到一个
-    // 没有任何信息量的 [语音]。
-    const label: string = `[语音 ${voice.duration} 秒]`;
     return replyToUnresolvableMedia({
       context,
       speaker,
-      text: caption ? `${label} ${caption}` : label,
+      text: composeMediaText(voiceDurationPlaceholder(voice.duration), caption),
     });
   }
 
@@ -50,21 +49,19 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
   recordChatMedia(buildAiRecordMediaMessage({
     context,
     speaker,
-    media: {
-      kind: "voice",
-      caption,
-      fileId: voice.file_id,
-      fileUniqueId: voice.file_unique_id,
-      // 语音没有画幅；两个尺寸字段恒为 0，形状约束见 types/aiChat/protocol.ts。
-      width: 0,
-      height: 0,
-      replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
-      // 直接回复/@ 只开放重媒体工具资格，具体调不调由模型判断；语音不作为
-      // 生图参考素材（imageGenerationReferenceFor 只认图片和贴纸）。
-      stickerFallbackText: undefined,
-      voiceMime: voice.mime_type,
-      voiceDurationSeconds: voice.duration,
-    },
+    kind: "voice",
+    caption,
+    fileId: voice.file_id,
+    fileUniqueId: voice.file_unique_id,
+    // 语音没有画幅；两个尺寸字段恒为 0，形状约束见 types/aiChat/protocol.ts。
+    width: 0,
+    height: 0,
+    replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
+    // 直接回复/@ 只开放重媒体工具资格，具体调不调由模型判断；语音不作为
+    // 生图参考素材（imageGenerationReferenceFor 只认图片和贴纸）。
+    stickerFallbackText: undefined,
+    voiceMime: voice.mime_type,
+    voiceDurationSeconds: voice.duration,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

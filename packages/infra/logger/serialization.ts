@@ -61,7 +61,7 @@ function currentSecrets(): readonly string[] {
   if (agent !== null) {
     secrets.push(agent.text.apiKey, agent.summary.apiKey, agent.media.apiKey);
     if (agent.image !== undefined) secrets.push(agent.image.apiKey);
-    if (agent.song !== undefined) secrets.push(agent.song.apiKey);
+    if (agent.tts !== undefined) secrets.push(agent.tts.apiKey);
   }
   for (const previous of loggerSecretsMemo.value) {
     if (secrets.length >= LOGGER_MAX_REDACTED_SECRETS) break;

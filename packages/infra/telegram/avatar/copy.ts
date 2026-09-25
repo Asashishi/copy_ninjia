@@ -107,7 +107,7 @@ async function attemptCopyUserProfilePhoto(
 export interface CopyUserProfilePhotoOptions {
   /**
    * 调用方上下文里带的 username（回复目标、身份缓存），**只作诊断线索**，不作
-   * 抓取目标——理由见 copyUserProfilePhoto 里那段注释。
+   * 抓取目标——见 copyUserProfilePhoto 里那段注释。
    */
   username?: string;
   signal?: AbortSignal;

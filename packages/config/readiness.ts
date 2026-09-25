@@ -111,7 +111,7 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
  * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
  *
  * agent 配置按能力声明 provider、api_key、model 与 base_url。AI 对话只要求
- * text、summary、media；image/song 缺省不阻塞，由工具装配单独摘挂。探测不读取
+ * text、summary、media；image/tts 缺省不阻塞，由工具装配单独摘挂。探测不读取
  * ad_detect，因此它的缺省不影响 AI 对话，反过来也一样。
  *
  * 顺序即拒绝顺序：probeAll 报第一份坏掉的文件，改动这张表等于改动运维看到的

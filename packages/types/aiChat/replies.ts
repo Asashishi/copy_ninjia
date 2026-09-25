@@ -2,8 +2,8 @@ import type { AiToolDefinition } from "./provider";
 import type { StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../stickers/tools";
 import type { ChatActionControl } from "./chatAction";
 import type { AiDirectTriggerReason, ImageGenerationReference } from "./protocol";
-import type { BufferedReplyReference } from "./memory";
-import type { MediaKind } from "../media";
+import type { BotImageOrigin, BufferedReplyReference } from "./memory";
+import type { MediaKind, TelegramVisionSource } from "../media";
 import type { LinkedQueue } from "../../libs/linkedQueue";
 
 /** 同群并发位占满时排队补跑的直接触发快照。 */
@@ -59,25 +59,25 @@ export interface ReplyToolContext {
   /**
    * 本轮全部发送要落进的论坛话题；General、非论坛群与讨论组评论为 undefined。
    *
-   * 收在上下文里而不是逐个工具各传一次：一轮里文字、贴纸、生图、生歌与「正在
-   * 输入…」是同一条对话的五种出口，任一处漏掉都会把那一件事单独扔进 General
+   * 收在上下文里而不是逐个工具各传一次：一轮里文字、贴纸、生图、语音与
+   * 「正在输入…」是同一条对话的五种出口，任一处漏掉都会把那一件事单独扔进 General
    * （见 libs/forumTopic.ts）。
    */
   messageThreadId: number | undefined;
   /** 本群已登记问答；为空或缺省时本轮不挂问答工具，模型看不到它们。 */
   chatQa?: ReadonlyMap<string, string>;
   /**
-   * 重媒体工具（generate_image / generate_song）的直接触发资格；为 false 时工具
-   * 整个不挂，为 true 时才按供应商能力挂载。它**不**代表生图或生歌意图已由程序
-   * 预判——具体意图仍由模型按当前消息自行判断。
+   * 重媒体工具（generate_image）的直接触发资格；为 false 时工具整个不挂，为 true
+   * 时才按供应商能力挂载。它**不**代表生图意图已由程序预判——具体意图仍由模型按
+   * 当前消息自行判断。
    *
-   * 两个工具共用由 workers/aiChat/replyRound.ts 的 mediaToolsAllowed 计算的
-   * 资格。协议层 `imageGenerationRequested` 记录入口是否允许图片工具，轮次开始
-   * 时再与随机触发和媒体直接触发状态合并。
+   * 资格由 workers/aiChat/replyRound.ts 的 mediaToolsAllowed 计算。协议层
+   * `imageGenerationRequested` 记录入口是否允许图片工具，轮次开始时再与随机触发
+   * 和媒体直接触发状态合并。
    */
   mediaToolsRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;
-  /** superAdmin 触发：跳过重媒体工具的群共享冷却（生图与生歌各有各的冷却表）。 */
+  /** superAdmin 触发：跳过生图的群共享冷却。 */
   bypassMediaToolCooldown: boolean;
   chatAction: ChatActionControl;
   stickerLock: StickerSendLockControl;
@@ -91,9 +91,24 @@ export interface ReplyToolContext {
    *  人自己的发言同样保留上下文中的回复关系。 */
   onMessageSent: (text: string, messageId: number, repliedToMessageId?: number) => void;
   onStickerSent: (stickerDescription: string, messageId: number) => void;
-  onImageSent: (imageDescription: string, messageId: number, repliedToMessageId?: number) => void;
-  /** 与 onImageSent 同构：生歌落地后自录，同样只采信服务端实际返回的回复关系。 */
-  onSongSent: (songDescription: string, messageId: number, repliedToMessageId?: number) => void;
+  /** 生图落地后自录并开始识图，见 workers/aiChat/botImages.ts 的 trackGeneratedImage。 */
+  onImageSent: (image: SentGeneratedImage) => void;
+  /** 语音落地后自录；与 onMessageSent 同构，只采信服务端实际返回的回复关系。 */
+  onVoiceSent: (voiceDescription: string, messageId: number, repliedToMessageId?: number) => void;
+}
+
+/** 生图落地后交给 Worker 自录的事实。 */
+export interface SentGeneratedImage {
+  /** 占位态正文：生图记号（带提示词）接图注。 */
+  text: string;
+  messageId: number;
+  /** Telegram 实际建立的回复目标；没有挂上回复时为 undefined。 */
+  repliedToMessageId: number | undefined;
+  origin: Exclude<BotImageOrigin, "command">;
+  /** 随图发出的图注；没有图注为空串。 */
+  caption: string;
+  /** Telegram 为这张图返回的视觉源，供识图下载。 */
+  photo: TelegramVisionSource;
 }
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */
@@ -163,9 +178,12 @@ export interface ReplyDeliveryWindow {
 /** 一轮行动工具内的已接纳文本与错字占用状态。 */
 export interface RoundMessageState {
   typoUsedThisRound: boolean;
-  /** 接纳时登记正文及媒体附言，容量受本轮动作硬顶约束，随轮次释放。 */
+  /**
+   * 接纳时登记的正文及媒体附言的归一化形态（见 replyToolset/messageState.ts 的
+   * acceptRoundText），容量受本轮动作硬顶约束，随轮次释放。
+   */
   acceptedCanonicalTexts: Set<string>;
-  /** 执行侧已接管的错字纠正单字；防止模型从工具结果自行补发。 */
+  /** 执行侧已接管的错字纠正单字的归一化形态；防止模型从工具结果自行补发。 */
   reservedCorrectionText: string | null;
 }
 

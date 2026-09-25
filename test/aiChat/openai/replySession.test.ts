@@ -27,6 +27,7 @@ mock.module("../../../packages/aiChat/openai/client", () => ({ requestOpenAiResu
 const { createOpenAiReplySession } = await import("../../../packages/aiChat/openai/replySession");
 const {
   OPENAI_PROMPT_CACHE_BREAKPOINT_MODEL_PREFIX,
+  OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH,
   OPENAI_PROMPT_CACHE_KEY_PREFIX,
   OPENAI_PROMPT_CACHE_TTL,
   OPENAI_REPLY_MAX_TOKENS,
@@ -122,6 +123,7 @@ describe("OpenAI 回复会话的请求映射", () => {
     await first.request(baseRequest());
     const key: string = capturedBody(0).prompt_cache_key as string;
     expect(key.startsWith(OPENAI_PROMPT_CACHE_KEY_PREFIX + ":")).toBe(true);
+    expect(key.length).toBeLessThanOrEqual(OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH);
 
     // 易变区块换了不影响键：那一段本来就不在可缓存的前缀里。
     const samePrefix: AiReplySession = createOpenAiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["换了一整段转录"] });

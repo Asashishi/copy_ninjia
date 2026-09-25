@@ -12,7 +12,7 @@ import {
 import { forumTopicThreadId } from "../../libs/forumTopic";
 import { isQuietUntilActive } from "../../libs/chatState";
 import type { AiBotInfo } from "../../types/aiChat/protocol";
-import type { MessageTriggerContext } from "../../types/auto";
+import type { AiTriggerPayload, MessageTriggerContext } from "../../types/auto";
 import type { ChatState } from "../../types/chatState";
 import type { TranslateState } from "../../types/translate";
 import { activeTranslateStateIn, translateMessage } from "../../translate/message";
@@ -37,12 +37,27 @@ import { createMessageTriggerContext } from "./triggerContext";
 import { handleVoiceMessage } from "./voice";
 
 /**
+ * 判定这条消息交给哪个 AI handler；没有对应 handler（视频、文件、以 `/` 开头的
+ * 文本等）返回 undefined。按「一条消息只可能是其中一种载荷」逐项判定；语音排在
+ * 最后，与它在群里的出现频率一致（前面几种命中就不再往下判）。
+ */
+function aiTriggerPayloadOf(message: Message): AiTriggerPayload | undefined {
+  if (typeof message.text === "string") {
+    return message.text.startsWith("/") ? undefined : "text";
+  }
+  if (message.sticker) return "sticker";
+  if (Array.isArray(message.photo) && message.photo.length > 0) return "photo";
+  if (message.animation) return "animation";
+  if (message.voice) return "voice";
+  return undefined;
+}
+
+/**
  * 消息自动流水线的编排层。各载荷 handler 只负责自己的记录与触发语义；这里
  * 保留跨领域的固定顺序：标题/自回弹门禁 → 活跃度 → 翻译目标 → 复制目标 → 私聊中转 →
  * 问答直答 → AI 文本或媒体 → 群聊主动行为。
  *
- * 媒体 handler 的分派顺序按「一条消息只可能是其中一种载荷」写成 else-if 链；
- * 语音排在最后，与它在群里的出现频率一致（前面几种命中就不再往下判）。
+ * AI 分支先由 aiTriggerPayloadOf 判定载荷，只有存在对应 handler 时才构造触发上下文。
  */
 function handleAcceptedIncomingMessage(
   message: Message,
@@ -126,26 +141,35 @@ function handleAcceptedIncomingMessage(
     isAiChatConfigured() && state.isAIChatEnabled === true;
 
   if (copyTargetId === undefined && aiChatEnabled) {
-    const triggerContext: MessageTriggerContext = createMessageTriggerContext({
-      message,
-      bot: botIdentity,
-      now,
-      isQuiet,
-      aiReplyProbability,
-    });
-    let shouldStop: boolean = false;
-    if (typeof message.text === "string" && !message.text.startsWith("/")) {
-      shouldStop = handleTextMessage(triggerContext);
-    } else if (message.sticker) {
-      shouldStop = handleStickerMessage(triggerContext);
-    } else if (Array.isArray(message.photo) && message.photo.length > 0) {
-      shouldStop = handlePhotoMessage(triggerContext);
-    } else if (message.animation) {
-      shouldStop = handleAnimationMessage(triggerContext);
-    } else if (message.voice) {
-      shouldStop = handleVoiceMessage(triggerContext);
+    const payload: AiTriggerPayload | undefined = aiTriggerPayloadOf(message);
+    if (payload !== undefined) {
+      const triggerContext: MessageTriggerContext = createMessageTriggerContext({
+        message,
+        bot: botIdentity,
+        now,
+        isQuiet,
+        aiReplyProbability,
+      });
+      let shouldStop: boolean;
+      switch (payload) {
+        case "text":
+          shouldStop = handleTextMessage(triggerContext);
+          break;
+        case "sticker":
+          shouldStop = handleStickerMessage(triggerContext);
+          break;
+        case "photo":
+          shouldStop = handlePhotoMessage(triggerContext);
+          break;
+        case "animation":
+          shouldStop = handleAnimationMessage(triggerContext);
+          break;
+        case "voice":
+          shouldStop = handleVoiceMessage(triggerContext);
+          break;
+      }
+      if (shouldStop) return;
     }
-    if (shouldStop) return;
   }
 
   // 复制目标活动期间禁止本群其它主动行为；无目标时才处理洗澡触发，

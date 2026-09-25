@@ -83,11 +83,13 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
  * 文本与昵称都会被压成单行（见 sanitizeInline，防转录注入）。
  * @param message 主线程投递过来的整条记录载荷；逐字段语义见
  *   packages/types/aiChat/protocol.ts 的 AiRecordContext / AiRecordMessage
- *   （那里也写明了字段必须一次性齐备、不得事后补键的理由）。
+ *   （那里也写明了字段必须一次性齐备、不得事后补键）。
+ * @returns 写入热区的条目；清洗后没有正文时为 null。
  */
-export function recordChatMessage(message: AiRecordMessage): void {
+export function recordChatMessage(message: AiRecordMessage): BufferedMessage | null {
   const entry: BufferedMessage | null = buildBufferedMessage(message, message.text);
   if (entry) pushBufferedMessage(message.chatId, entry);
+  return entry;
 }
 
 /** 删除某群全部可持久化记忆及其衍生运行时状态。 */
@@ -149,7 +151,7 @@ function buildMemorySnapshot(chatId: number): string {
 
 /**
  * 取某群此刻的上下文占用量。两个计数直接读所属容器的 size，不遍历、不复制；
- * pendingSummaries 不计入冷区（理由见 types/aiChat/memory.ts 的 AiMemoryUsage）。
+ * pendingSummaries 不计入冷区（见 types/aiChat/memory.ts 的 AiMemoryUsage）。
  */
 function buildMemoryUsage(chatId: number): AiMemoryUsage {
   return {
@@ -228,7 +230,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
   let skippedOverCapacity: number = 0;
   // 容量判定随准入递增，不在循环里反复重建 Set：chatMemoryIds() 每次
   // 都要新建一个 Set 并完整遍历 chatBuffers / chatSummaries / pendingSummaries，
-  // 逐群调用就把启动恢复变成 O(n²)（同 ensureMemoryCapacity 已经写下的取舍）。
+  // 逐群调用就把启动恢复变成 O(n²)（同 ensureMemoryCapacity）。
   let memoryChatCount: number = chatMemoryIds().size;
   // 恢复出来的群在下一条新消息之前都不 dirty，不会产生 memory 事件；主线程的
   // 占用量镜像因此只能由本次 hydrate 播种（见下方那条 memoryUsages）。

@@ -329,6 +329,20 @@ export interface RecoveryReplayRequest {
   active: boolean;
 }
 
+/**
+ * 主线程 -> diskIOWorker：Worker 重建后镜像重放区间的开合标记。
+ *
+ * 区间内共享 SQLite 的满批提交与定时提交只重新挂定时器、不提交；显式 flush 与
+ * AI 上下文写入前的强制提交照常执行。关标记到达时若任一领域已达批次阈值，立即以
+ * 一个事务提交区间内的全部变化，因此按优先级依次重放的黑名单写入与待踢 outbox
+ * 快照落在同一事务里（见 docs/cn/04-invariants.md 的 Disk I/O 恢复约束）。
+ */
+export interface StorageFlushHoldRequest {
+  type: "storageFlushHold";
+  /** true = 镜像重放开始；false = 重放结束，恢复满批与定时提交。 */
+  active: boolean;
+}
+
 /** 主线程跨东京日期后要求唯一 Disk I/O Worker 加载或原子轮换日级密钥。 */
 export interface EnsureLuckSecretRequest {
   type: "ensureLuckSecret";
@@ -394,6 +408,7 @@ export type DiskIOOperationMessage =
   | DiskIORequestMessage
   | LoadRequest
   | RecoveryReplayRequest
+  | StorageFlushHoldRequest
   | DiskFlushRequest;
 
 /** 主线程单批在途的业务及有序读取；确认仅表示消费完成，不代表落盘。 */

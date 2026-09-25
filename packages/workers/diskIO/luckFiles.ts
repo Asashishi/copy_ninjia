@@ -9,7 +9,7 @@
  * 什么」的领域状态调度（状态本体在 cache/workers/diskIO/luck.ts）。
  *
  * 本文件运行在磁盘 IO 线程里，自身错误一律 console.error（journal 兜底），
- * 理由见 workers/diskIOWorker.ts 模块头。
+ * 见 workers/diskIOWorker.ts 模块头。
  */
 
 import {

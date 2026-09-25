@@ -193,7 +193,7 @@ export async function handlePermissionCommand(
       entities: helpMessage.entities,
       replyToMessageId: messageId,
       preserveInGroup: true,
-      // 长期保留的看板必须自己带话题，理由见 SendMessageParams.messageThreadId。
+      // 长期保留的看板必须自己带话题，见 SendMessageParams.messageThreadId。
       messageThreadId: forumTopicThreadId(ctx.msg),
     });
     return;
@@ -242,7 +242,7 @@ export async function handlePermissionCommand(
       text: queryMessage.text,
       entities: queryMessage.entities,
       replyToMessageId: messageId,
-      // 与上面的 help 同一口径的长期保留例外；理由见
+      // 与上面的 help 同一口径的长期保留例外；见
       // formatPermissionQueryMessage 的 JSDoc。目标解析失败、修改拒绝与用法
       // 提示仍走默认 30 秒清理，本例外只覆盖成功渲染出的那张权限看板。
       preserveInGroup: true,

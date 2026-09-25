@@ -15,7 +15,7 @@ export const luckCacheState: { dayKey: string } = { dayKey: "" };
 /** 当日已确认抽签结果；启动恢复填充，跨日整体清空。
  *  容量上限 DAILY_LUCK_CACHE_MAX：key 里带着用户随手输入的问题原文哈希，
  *  「当日唯一 key 数」是攻击者选的数字而不是自然上界，撑满时拒绝新 key
- *  （理由与取舍见 consts/luckChallenge.ts 的同名常量）。 */
+ *  （见 consts/luckChallenge.ts 的同名常量）。 */
 export const dailyLuckCache: Map<string, LuckDraw> = new Map();
 /** 当日容量撑满是否已经记过一行日志；跨日随缓存一起复位，避免逐条刷屏。 */
 export const dailyLuckCacheSaturated: { current: boolean } = { current: false };

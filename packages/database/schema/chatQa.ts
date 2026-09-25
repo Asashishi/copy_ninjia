@@ -1,8 +1,11 @@
 import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { jsonbText, jsonDataCheck } from "./jsonb";
 import type { JsonDataTable } from "./jsonb";
-import type { CheckBuilder } from "drizzle-orm/sqlite-core";
-import type { SQLiteColumn, SQLiteTableExtraConfigValue } from "drizzle-orm/sqlite-core";
+import type {
+  CheckBuilder,
+  SQLiteColumn,
+  SQLiteTableExtraConfigValue,
+} from "drizzle-orm/sqlite-core";
 
 /**
  * 群问答：`(chat_id, q)` 复合主键，`data` 保存严格 SQLite JSONB 的 `{"a": …}`。

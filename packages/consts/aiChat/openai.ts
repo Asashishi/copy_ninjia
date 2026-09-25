@@ -64,6 +64,14 @@ export const OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 16_384;
 export const OPENAI_PROMPT_CACHE_KEY_PREFIX: string = "hunhebi-reply";
 
 /**
+ * Responses API 接受的 `prompt_cache_key` 最大长度（字符）。
+ *
+ * 超长会被整条请求以 400 拒绝。前缀 + `:` + 43 字符的 base64url SHA-256 指纹
+ * （见 aiChat/openai/promptCacheKey.ts）必须落在这个上限内，由测试核对。
+ */
+export const OPENAI_PROMPT_CACHE_KEY_MAX_LENGTH: number = 64;
+
+/**
  * 支持显式 prompt cache breakpoint 的 OpenAI 官方模型族前缀。
  *
  * 只认当前官方明确支持该请求形态的 GPT-5.6 家族；兼容端点即使复用同一模型名也

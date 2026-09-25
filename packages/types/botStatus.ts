@@ -1,13 +1,3 @@
-import type { ChatState } from "./chatState";
-
-/**
- * ChatState 上取值为布尔的群功能开关字段名。`/bot_status` 的功能块逐项列出这些开关
- * 此刻的真假，展示顺序见 consts/botStatus.ts 的 BOT_STATUS_FEATURE_KEYS。
- */
-export type ChatStateSwitchKey = {
-  [Key in keyof ChatState]-?: boolean extends ChatState[Key] ? Key : never;
-}[keyof ChatState];
-
 /** `/bot_status` 展示的当前 Bot 进程本机资源快照。 */
 export interface BotProcessStatus {
   /** 自进程启动以来经过的秒数。 */

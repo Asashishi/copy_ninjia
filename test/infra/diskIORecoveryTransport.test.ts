@@ -133,8 +133,8 @@ describe("Disk I/O 恢复握手的 scoped transport", () => {
 
       expect(posted).toBeFalse();
       expect(secretError).toContain("no longer active");
-      // 已死的那一代一条重放消息都不该收到。
-      expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
+      // 已死的那一代一条重放消息都不该收到；重放开始前那条提交暂缓标记发出时它仍是当前代际。
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" }), { type: "storageFlushHold", active: true }]);
     } finally {
       restoreListeners();
       await fixture.dispose();

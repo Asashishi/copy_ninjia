@@ -182,7 +182,7 @@ function rollbackSuppression(chatId: number, userId: number, entry: FloodWindowE
  * 禁言一名刷屏者并播报。
  *
  * 播报排在最后且只在禁言真的落地之后发：它断言的正是「人已经被按住了」，
- * 禁言没成还照发就是一条与事实相反的公告（同广告检测播报的理由）。
+ * 禁言没成还照发就是一条与事实相反的公告（同广告检测播报）。
  *
  * **每个 await 之后都要复核这条窗口还在表里**（stillManaged）。停管、`/init disable`
  * 与群 teardown 都会走 deactivateChat → clearChatFloodWindows 把这个群的窗口全部
@@ -193,7 +193,7 @@ function rollbackSuppression(chatId: number, userId: number, entry: FloodWindowE
  * 的 stillCurrent 都是就地中止。
  *
  * 代价是 FLOOD_WINDOW_MAX_MEMBERS 的 LRU 淘汰恰好撞在这次往返上时会少判一次
- * 刷屏，与那个常量 JSDoc 里写明的取舍完全一致（sweepFloodWindows 不会碰它：
+ * 刷屏，与那个常量 JSDoc 的约定一致（sweepFloodWindows 不会碰它：
  * 触发那一刻已置上乐观抑制位）。
  */
 async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void> {
@@ -244,7 +244,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     return;
   }
   // 抑制位对齐到真实的禁言结束时刻：触发那一刻置的是乐观值，中间还隔着一次
-  // 身份确证的往返。条目已被替换时不再回写，理由同 rollbackSuppression。
+  // 身份确证的往返。条目已被替换时不再回写，同 rollbackSuppression。
   // 只向后对齐、不把乐观值往回缩：mutedUntil 读的是原始墙钟，校时往回跳时它
   // 会比乐观值还早，直接赋值等于把抑制期提前作废（同 handleFloodCandidate）。
   if (stillManaged()) {

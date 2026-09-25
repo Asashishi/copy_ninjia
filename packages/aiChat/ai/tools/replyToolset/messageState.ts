@@ -18,14 +18,20 @@ function canonicalReplyText(text: string): string {
   return text.normalize("NFC").replace(/\s+/gu, " ").trim();
 }
 
+/** 登记本轮已接纳的正文或媒体附言；按归一化形态入集合。 */
+export function acceptRoundText(state: RoundMessageState, text: string): void {
+  state.acceptedCanonicalTexts.add(canonicalReplyText(text));
+}
+
+/** 登记执行侧接管的错字纠正字；按归一化形态保存。 */
+export function reserveCorrectionText(state: RoundMessageState, text: string): void {
+  state.reservedCorrectionText = canonicalReplyText(text);
+}
+
 /** 同轮已接纳或发送的正文、媒体附言与执行侧接管的纠正字共用判重边界。 */
 export function isDuplicateOfAcceptedText(state: RoundMessageState, text: string): boolean {
   const canonical: string = canonicalReplyText(text);
-  if (state.reservedCorrectionText !== null && canonicalReplyText(state.reservedCorrectionText) === canonical) return true;
-  for (const acceptedText of state.acceptedCanonicalTexts) {
-    if (canonicalReplyText(acceptedText) === canonical) return true;
-  }
-  return false;
+  return state.reservedCorrectionText === canonical || state.acceptedCanonicalTexts.has(canonical);
 }
 
 export interface SendDirectMessageParams {

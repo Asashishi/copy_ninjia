@@ -1,9 +1,10 @@
 import { beforeEach, expect, mock, test } from "bun:test";
 import type { ChatState } from "../../packages/types/chatState";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { chatStateOf } from "../helpers/chatState";
 
 const states: Map<number, ChatState> = new Map<number, ChatState>();
-const empty: Readonly<ChatState> = {};
+const empty: Readonly<ChatState> = chatStateOf();
 const readState = mock((chatId: number): Readonly<ChatState> => states.get(chatId) ?? empty);
 mock.module("../../packages/infra/storage/stateStore", () => ({ getChatState: readState }));
 const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
@@ -11,8 +12,8 @@ const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
 beforeEach(() => { states.clear(); readState.mockClear(); });
 
 test("群人设配置决定语气，AI 开关不改变选择，读取复用常量表", () => {
-  states.set(-1001, { aiPersona: "温和回答", isAIChatEnabled: false });
-  states.set(-1002, { isAIChatEnabled: true });
+  states.set(-1001, chatStateOf({ aiPersona: "温和回答", isAIChatEnabled: false }));
+  states.set(-1002, chatStateOf({ isAIChatEnabled: true }));
   expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
   expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
   expect(chatAtmosphere(-1002)).toBe(ATMOSPHERE_TEXTS.teasing);
@@ -22,7 +23,7 @@ test("群人设配置决定语气，AI 开关不改变选择，读取复用常�
 });
 
 test("人设修改和群状态删除即时切换，不保留另一份主线程风格缓存", () => {
-  const state: ChatState = { aiPersona: "自定义" };
+  const state: ChatState = chatStateOf({ aiPersona: "自定义" });
   states.set(-1001, state);
   expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
   state.aiPersona = undefined;

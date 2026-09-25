@@ -6,6 +6,7 @@ import {
   bufferedReplyReferenceFixture,
 } from "../../helpers/aiMemoryFixtures";
 import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../../packages/types/aiChat/replies";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import { REPLY_DELIVERY_MAX_PER_CHAT } from "../../../packages/consts/aiChat/rateLimit";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 
@@ -47,7 +48,8 @@ const defaultPromptSections = (): ReplyPromptSections => ({
 });
 let builtPromptSections: ReplyPromptSections | null = defaultPromptSections();
 const buildReplyPromptSections = mock((..._args: unknown[]): ReplyPromptSections | null => builtPromptSections);
-const recordChatMessage = mock((..._args: unknown[]): void => {});
+const recordChatMessage = mock((..._args: unknown[]): BufferedMessage | null => null);
+const pushBufferedMessage = mock((..._args: unknown[]): void => {});
 const logError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
@@ -55,7 +57,7 @@ mock.module("../../../packages/aiChat/ai/stickers/sendLock", () => ({ createStic
 mock.module("../../../packages/aiChat/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
 mock.module("../../../packages/workers/aiChat/replyModel", () => ({ generateReply }));
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
-mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
+mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage, pushBufferedMessage }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ error: logError }),
 }));
@@ -73,6 +75,7 @@ const {
   resetAiChatReplyCache,
 } = await import("../../../packages/cache/workers/aiChat/replies");
 const { invalidateChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
+const { repliedBotImageBackfills } = await import("../../../packages/cache/workers/aiChat/botImages");
 const { TimestampDeque } = await import("../../../packages/libs/timestampDeque");
 const { RATE_LIMIT_LONG_MAX_TRIGGERS } = await import("../../../packages/consts/aiChat/rateLimit");
 const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
@@ -252,18 +255,53 @@ describe("AI 单轮回复生命周期", () => {
     ]]);
   });
 
+  test("触发消息回复了机器人图片且正在识图时，等回填完成再拼提示词", async () => {
+    const backfill: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    repliedBotImageBackfills.set(-1001, new Map([[10, backfill.promise]]));
+    try {
+      let finished: boolean = false;
+      startReplyRound({
+        chatId: -1001,
+        triggerSenderId: 7,
+        replyToMessageId: 10,
+        messageThreadId: undefined,
+        imageGenerationRequested: false,
+        isRandomTrigger: false,
+      }, (): void => {
+        finished = true;
+      });
+      await Bun.sleep(5);
+      expect(buildReplyPromptSections).not.toHaveBeenCalled();
+
+      backfill.resolve();
+      await waitUntil((): boolean => finished);
+      expect(buildReplyPromptSections).toHaveBeenCalledTimes(1);
+      expect(generateReply).toHaveBeenCalledTimes(1);
+    } finally {
+      repliedBotImageBackfills.clear();
+    }
+  });
+
   test("工具发送回调只在代际仍有效时登记滚动记忆", async () => {
     actionsUsed = 2;
     generateReply.mockImplementationOnce(async (): Promise<null> => {
       capturedContext!.onMessageSent("文字消息", 101);
       capturedContext!.onStickerSent("[贴纸：挥手]", 102);
-      capturedContext!.onImageSent("[生成图片：夜空]", 103);
+      capturedContext!.onImageSent({
+        text: "（生成并发送了一张图片：夜空）",
+        messageId: 103,
+        repliedToMessageId: undefined,
+        origin: "generated",
+        caption: "",
+        photo: { fileId: "generated", fileUniqueId: "generated-u", width: 1024, height: 1024 },
+      });
+      capturedContext!.onVoiceSent("（发送了一条语音：バカ）", 106);
       return null;
     });
 
     await runRound();
 
-    expect(recordChatMessage).toHaveBeenCalledTimes(3);
+    expect(recordChatMessage).toHaveBeenCalledTimes(4);
   });
 
   test("实际回复目标已滑出热区时，用轮次捕获的触发快照保留自录回复边", async () => {

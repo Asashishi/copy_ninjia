@@ -69,7 +69,7 @@ export type OpenAiImageProtocol = "openai" | "openai-standard" | "xai";
 export type AgentProvider = "google" | "openai";
 
 /** agent 配置中的能力名；每项分别选择 provider、模型与端点。 */
-export type AgentCapability = "text" | "summary" | "media" | "image" | "song";
+export type AgentCapability = "text" | "summary" | "media" | "image" | "tts";
 
 /** Google GenAI SDK 承载的一项能力配置。 */
 export interface GoogleAgentCapabilityConfig {
@@ -102,6 +102,15 @@ export interface OpenAiAgentImageCapabilityConfig extends OpenAiAgentCapabilityC
   readonly imageProtocol: OpenAiImageProtocol;
 }
 
+/**
+ * 语音合成能力配置：通用四项之外必填 voice。voice 原样交给实现包，取值是预置音色名
+ * 或 Google AI Studio Voice design 生成的 `voice_` 音色 ID（后者归属 api_key 所在
+ * 项目、有效期一年，过期后须重新生成并替换）。
+ */
+export type AgentTtsCapabilityConfig = AgentCapabilityConfig & {
+  readonly voice: string;
+};
+
 /** 生图能力配置。 */
 export type AgentImageCapabilityConfig =
   | GoogleAgentImageCapabilityConfig
@@ -110,7 +119,7 @@ export type AgentImageCapabilityConfig =
 /**
  * config/agent.json 的 agent 段；三项对话核心能力必填且各自独立路由。
  * `text` 是带工具往返的群聊回复，`summary` 是无状态纯文本摘要，`media` 是视觉
- * 描述与语音转写，`image` 是生图，`song` 是生歌。
+ * 描述与语音转写，`image` 是生图，`tts` 是语音合成。
  */
 export interface AgentDeploymentConfig {
   readonly text: AgentCapabilityConfig;
@@ -118,8 +127,8 @@ export interface AgentDeploymentConfig {
   readonly media: AgentCapabilityConfig;
   /** 缺省不影响 AI 对话，只是不注册生图工具。 */
   readonly image?: AgentImageCapabilityConfig;
-  /** 缺省表示不提供生歌工具；实现不支持时同样不会注册对应工具。 */
-  readonly song?: AgentCapabilityConfig;
+  /** 缺省表示不提供语音工具；实现不支持时同样不会注册对应工具。 */
+  readonly tts?: AgentTtsCapabilityConfig;
 }
 
 /**

@@ -1,4 +1,3 @@
-import type { AtmosphereTexts } from "../../../types/atmosphere";
 import { workerAtmosphere } from "../atmosphere";
 /**
  * 判定命中后的处置副作用（入群守卫线程侧）：删掉这一串消息，并把「这个人该按
@@ -64,11 +63,6 @@ interface DisposalMessageIdsParams {
   readonly messageIdThrough?: number;
 }
 
-/** 引用类广告第一次命中时的公开警告；刻意不透露内部五分钟升级窗口。 */
-export function formatReferencedAdWarning(label: string, atmosphere: AtmosphereTexts): string {
-  return atmosphere.NOTICE_TEXTS.adReferenceWarning(label);
-}
-
 /**
  * 第一次引用类广告的公开警告。主线程在发出消息的同一成功回调里登记 30 秒删除，
  * 返回成功即表示清理 owner 已接管；Worker 后续退出也不会遗留非功能性提示。
@@ -80,7 +74,7 @@ export function warnReferencedAdSender(
     purpose: "adWarning",
     chatId: bundle.chatId,
     identityId: bundle.senderId,
-    text: formatReferencedAdWarning(bundle.label, workerAtmosphere(bundle.chatId)),
+    text: workerAtmosphere(bundle.chatId).NOTICE_TEXTS.adReferenceWarning(bundle.label),
     deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
   });
 }
@@ -177,7 +171,7 @@ function disposalMessageIds({
 export function deleteStragglerAdMessage(chatId: number, messageId: number): void {
   // 确证没有删消息权限就别打：这些请求与验证超时踢人共用一条限流队列，一场
   // 广告突袭能把几十个注定 400 的删除顶在真正的踢人前面。三态里只拦确证的
-  // false，「没观测到」照常发（理由见 ../botPermissions.ts）。
+  // false，「没观测到」照常发（见 ../botPermissions.ts）。
   if (botCanDeleteIn(chatId) === false) return;
   void deleteMessage(chatId, messageId, telegramApi);
 }

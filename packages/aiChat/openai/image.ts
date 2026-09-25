@@ -24,7 +24,7 @@
  * 同一个 SDK 客户端的底层 `post`（保留认证、超时和重试），只替换请求体形状。
  *
  * OpenAI 原生两条分支的内容审核档位**不对称**：只有 generate 带 moderation，
- * 因为 SDK 只在 generate 的参数类型上声明了它（理由见 consts/aiChat/openai.ts 的
+ * 因为 SDK 只在 generate 的参数类型上声明了它（见 consts/aiChat/openai.ts 的
  * OPENAI_IMAGE_MODERATION）。xAI 官方只把 `respect_moderation` 公开为响应状态，
  * 没有公开请求级的降档或关闭字段；因此 xAI 两条分支采用其客户端可表达的最低
  * 限制——不发送任何额外审核字段，服务端最终策略仍由 xAI 决定。

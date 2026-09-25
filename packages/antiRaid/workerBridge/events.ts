@@ -35,7 +35,7 @@ import { acceptVerificationDeferred } from "../verificationAttempts";
 /**
  * 把群当前的 lockdown 意图写入 SQLite，落定后回执给 Worker。
  *
- * 指纹排除 expiresAt（理由见 types/antiRaid/internal.ts）；对账轮次仅在恢复语义
+ * 指纹排除 expiresAt（见 types/antiRaid/internal.ts）；对账轮次仅在恢复语义
  * 真正推进时重跑。期间收到的新事件通过 queued 集合在当前微任务结束后续跑，
  * 避免丢掉最后一次唤醒。
  */

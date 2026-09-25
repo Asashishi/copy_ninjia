@@ -9,6 +9,17 @@ export interface IdentityPolicyRawReadResult {
   readonly temporaryAdBypass: readonly StoredTemporaryAdBypassActivity[];
 }
 
+/**
+ * 一次直接冷读得到的本批永久策略结论，只由发起读取的调用方局部持有。
+ * 不经过身份 LRU，因此批量处置期间其它流量的缓存淘汰不会改变它。
+ */
+export interface IdentityPolicyVerdicts {
+  /** 读取时刻存在永久白名单记录的身份（不含只由配置授予的超级管理员）。 */
+  readonly whitelisted: ReadonlySet<number>;
+  /** 读取时刻存在黑名单记录的身份。 */
+  readonly blocked: ReadonlySet<number>;
+}
+
 /** SQLite 按主键稳定顺序返回的一页黑名单 ID；载荷受固定页大小硬顶。 */
 export interface BlocklistIdPage {
   readonly ids: readonly number[];
@@ -65,4 +76,11 @@ export interface StorageDatabaseHydration {
    * 一次性读全，不像 outbox 那样分页。
    */
   readonly chatQa: Map<number, ReadonlyMap<string, string>>;
+}
+
+/** 整库严格校验成功后的有限恢复快照；尚未发布到 Worker 缓存。 */
+export interface StorageDatabaseInspection {
+  readonly hydration: StorageDatabaseHydration;
+  readonly aiMemories: ReadonlyMap<number, string>;
+  readonly pendingRemovalData: ReadonlyMap<number, string>;
 }

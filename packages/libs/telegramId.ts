@@ -18,7 +18,7 @@ export function isTelegramGroupChatId(value: unknown): value is number {
  * 的入群验证按钮、commands/wed.ts 的 `/wed` 按钮）与 gag 的 inline 查询、隐藏
  * 校验链接共用这一道判定：裸 `Number()` 加 `Number.isSafeInteger` 会放过 `"1e3"`、
  * `"0x10"`、`" 12"`、`"12.0"`、`"+5"` 这些非规范写法，而本 bot 生成的载荷只可能是
- * 规范十进制，多认的那几种写法全部来自外部构造。同一理由见 libs/verificationKey.ts
+ * 规范十进制，多认的那几种写法全部来自外部构造。同一见 libs/verificationKey.ts
  * 的往返比对。
  */
 export function parseUserIdArgument(argument: string): number | undefined {
@@ -29,7 +29,7 @@ export function parseUserIdArgument(argument: string): number | undefined {
 
 /**
  * 把字符串解析成 Telegram 会话 id（频道/群的规范十进制负安全整数）；不合法时返回
- * undefined。安全整数那道闸的理由同 parseUserIdArgument，只是方向朝负。
+ * undefined。安全整数那道闸的同 parseUserIdArgument，只是方向朝负。
  *
  * commands/send.ts 拿解析结果去开持久代发会话，裸 `Number()` 会放过
  * `-100123456789.0`、`0x2d` 这类非规范写法。

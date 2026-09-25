@@ -102,25 +102,20 @@ describe("grammY 丢弃值为 undefined 的出站字段", () => {
     });
   });
 
-  test("multipart 路径：sendAudio 的七个可选字段同样丢弃 undefined", async () => {
-    const audio = (): InputFile => new InputFile(new Uint8Array([1, 2, 3]), "song.mp3");
+  test("multipart 路径：sendVoice 的可选字段同样丢弃 undefined", async () => {
+    const voice = (): InputFile => new InputFile(new Uint8Array([1, 2, 3]), "voice.ogg");
     const fixedShape: CapturedRequest = await capture((api: Api): Promise<unknown> =>
-      api.raw.sendAudio({
+      api.raw.sendVoice({
         chat_id: -100_123,
-        audio: audio(),
-        caption: "封面",
+        voice: voice(),
         message_thread_id: undefined,
-        title: undefined,
-        performer: undefined,
         duration: undefined,
-        thumbnail: undefined,
         reply_parameters: undefined,
       }));
     const omitted: CapturedRequest = await capture((api: Api): Promise<unknown> =>
-      api.raw.sendAudio({
+      api.raw.sendVoice({
         chat_id: -100_123,
-        audio: audio(),
-        caption: "封面",
+        voice: voice(),
       }));
 
     expect(fixedShape.contentType).toContain("multipart/form-data");

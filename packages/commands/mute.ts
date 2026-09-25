@@ -69,7 +69,7 @@ async function forbiddenReplyText(
  * 任一不满足时回复嘲讽/说明并返回 false，调用方直接 return。
  * `restrictChatMember` 按 Bot API 的定义只对超级群有效，普通群与私聊里连
  * 目标都不必解析——打出去只会换一句报错（同 antiRaid/floodControl.ts 只在
- * 超级群计数的理由）。
+ * 超级群计数的口径）。
  */
 async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mute" | "unmute"): Promise<boolean> {
   const chatId: number = ctx.chat.id;
@@ -98,7 +98,7 @@ async function passesMuteCommandGate(ctx: CommandContext<Context>, command: "mut
 /**
  * 目标是不是「按不下去」的身份：频道马甲/匿名管理员没有可禁言的成员身份
  * （restrictChatMember 只认真实用户，皮套底下是谁 Telegram 不暴露——同
- * antiRaid/floodControl.ts 不计数的理由）。命中时回复说明并返回 true。
+ * antiRaid/floodControl.ts 不计数的口径）。命中时回复说明并返回 true。
  */
 async function rejectUnrestrictableTarget(
   ctx: CommandContext<Context>,
@@ -160,7 +160,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: tokens.slice(0, -1).join(" "),
-    // 禁言可逆，但目标照样用 id 指定最准（同 /block 的理由：用户名会被释放后
+    // 禁言可逆，但目标照样用 id 指定最准（同 /block：用户名会被释放后
     // 重新注册）；时长 token 带单位字母，纯数字的 id 不会被它接住。
     acceptUserId: true,
     // 下面的自己人闸读 isWhitelisted，冷读失败时不能当成「不受保护」。

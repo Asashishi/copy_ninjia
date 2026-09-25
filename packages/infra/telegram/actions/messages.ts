@@ -139,7 +139,7 @@ export interface SendEphemeralMessageParams {
    * 消息 id 的**同步**登记点：拿到 id 的那一刻立即回调，早于 runTelegramAction
    * 在发送成功之后补做的 update 取消判定（见 actions/core.ts）。
    *
-   * 存在的理由只有一个：停机时 `runner.abortActive()` 可能恰好落在「远端已经
+   * 用于这一种情形：停机时 `runner.abortActive()` 可能恰好落在「远端已经
    * 收下这条消息、handler 还没走到下一行」的窗口里，此时 await 会以 AbortError
    * 解开，返回值连同 message id 一起丢失——发出去的提示从此没有任何人知道它的
    * id，状态机再也删不掉它。用它把 id 落进自己的状态，再让取消照常向上抛。
@@ -255,7 +255,7 @@ export interface EditMessageTextParams {
 }
 
 /**
- * 就地改写一条已发出的文本消息；不设置 parse_mode，理由同 sendMessageWithResult。
+ * 就地改写一条已发出的文本消息；不设置 parse_mode，同 sendMessageWithResult。
  *
  * @returns 是否已让远端处于目标状态。内容本就相同时同样为 true——调用方要的是
  *   「这条消息现在显示的是这一页」，而不是「本次真的发生了改写」。

@@ -38,15 +38,14 @@ export interface TelegramWorkerSendPhotoRequest {
   readonly other: Omit<TelegramRawPayload<"sendPhoto">, "chat_id" | "photo">;
 }
 
-/** Worker 上传音频所需的可克隆载荷；缩略图缺省时显式为 undefined。 */
-export interface TelegramWorkerSendAudioRequest {
-  readonly operation: "sendAudio";
+/** Worker 上传语音消息所需的可克隆载荷；主线程重新构造 grammY InputFile。 */
+export interface TelegramWorkerSendVoiceRequest {
+  readonly operation: "sendVoice";
   readonly category: "message";
   readonly chatId: number | string;
   readonly bytes: Uint8Array;
   readonly fileName: string;
-  readonly thumbnailBytes: Uint8Array | undefined;
-  readonly other: Omit<TelegramRawPayload<"sendAudio">, "chat_id" | "audio" | "thumbnail">;
+  readonly other: Omit<TelegramRawPayload<"sendVoice">, "chat_id" | "voice">;
 }
 
 /** 主线程代 Worker 完成 getFile + Telegram 文件下载的两段式请求。 */
@@ -99,7 +98,7 @@ export type TelegramWorkerDownloadFileResult = TelegramFileDownloadResult;
 
 /**
  * Worker 与主线程共用的内存上传描述；不携带 grammY 运行时对象。
- * Worker 代理会把 bytes.buffer 直接转移给主线程，调用 sendPhoto/sendAudio 后
+ * Worker 代理会把 bytes.buffer 直接转移给主线程，调用 sendPhoto/sendVoice 后
  * 原 Uint8Array 已失效，调用方不得读取或复用；这条所有权约束避免大媒体全量复制。
  */
 export interface TelegramMemoryFile {
@@ -114,14 +113,6 @@ export interface TelegramDeleteEphemeralMessageParams {
   readonly ephemeralMessageId: number;
 }
 
-/** 音频上传选项用项目内字节描述替代 grammY InputFile。 */
-export type TelegramSendAudioOptions = Omit<
-  NonNullable<Parameters<Api["sendAudio"]>[2]>,
-  "thumbnail"
-> & {
-  readonly thumbnail?: TelegramMemoryFile;
-};
-
 /** Worker -> 主线程的 Telegram 能力请求。 */
 export type TelegramWorkerRequest =
   | {
@@ -130,7 +121,7 @@ export type TelegramWorkerRequest =
     readonly call: TelegramWorkerJsonCall;
   }
   | TelegramWorkerSendPhotoRequest
-  | TelegramWorkerSendAudioRequest
+  | TelegramWorkerSendVoiceRequest
   | TelegramWorkerDownloadFileRequest
   | TelegramWorkerTemporaryMessageRequest;
 
@@ -163,16 +154,16 @@ export type TelegramApi = Pick<Api,
     params: TelegramDeleteEphemeralMessageParams,
     signal?: AbortSignal
   ): Promise<true>;
-  sendAudio(
-    chatId: Parameters<Api["sendAudio"]>[0],
-    audio: TelegramMemoryFile,
-    other?: TelegramSendAudioOptions,
-    signal?: Parameters<Api["sendAudio"]>[3]
-  ): ReturnType<Api["sendAudio"]>;
   sendPhoto(
     chatId: Parameters<Api["sendPhoto"]>[0],
     photo: TelegramMemoryFile,
     other?: Parameters<Api["sendPhoto"]>[2],
     signal?: Parameters<Api["sendPhoto"]>[3]
   ): ReturnType<Api["sendPhoto"]>;
+  sendVoice(
+    chatId: Parameters<Api["sendVoice"]>[0],
+    voice: TelegramMemoryFile,
+    other?: Parameters<Api["sendVoice"]>[2],
+    signal?: Parameters<Api["sendVoice"]>[3]
+  ): ReturnType<Api["sendVoice"]>;
 };

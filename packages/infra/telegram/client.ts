@@ -55,8 +55,6 @@ export const telegramApi: TelegramApi = {
     currentTelegramApi().getStickerSet(...args),
   restrictChatMember: (...args: Parameters<TelegramApi["restrictChatMember"]>): ReturnType<TelegramApi["restrictChatMember"]> =>
     currentTelegramApi().restrictChatMember(...args),
-  sendAudio: (...args: Parameters<TelegramApi["sendAudio"]>): ReturnType<TelegramApi["sendAudio"]> =>
-    currentTelegramApi().sendAudio(...args),
   sendChatAction: (...args: Parameters<TelegramApi["sendChatAction"]>): ReturnType<TelegramApi["sendChatAction"]> =>
     currentTelegramApi().sendChatAction(...args),
   sendMessage: (...args: Parameters<TelegramApi["sendMessage"]>): ReturnType<TelegramApi["sendMessage"]> =>
@@ -65,6 +63,8 @@ export const telegramApi: TelegramApi = {
     currentTelegramApi().sendPhoto(...args),
   sendSticker: (...args: Parameters<TelegramApi["sendSticker"]>): ReturnType<TelegramApi["sendSticker"]> =>
     currentTelegramApi().sendSticker(...args),
+  sendVoice: (...args: Parameters<TelegramApi["sendVoice"]>): ReturnType<TelegramApi["sendVoice"]> =>
+    currentTelegramApi().sendVoice(...args),
   setChatPermissions: (...args: Parameters<TelegramApi["setChatPermissions"]>): ReturnType<TelegramApi["setChatPermissions"]> =>
     currentTelegramApi().setChatPermissions(...args),
   setMessageReaction: (...args: Parameters<TelegramApi["setMessageReaction"]>): ReturnType<TelegramApi["setMessageReaction"]> =>

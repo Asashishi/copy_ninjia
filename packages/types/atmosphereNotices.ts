@@ -124,6 +124,14 @@ export interface AtmosphereNotices {
   readonly proxyNotGroup: (targetChatId: number) => string;
   readonly proxyUnavailable: (targetChatId: number) => string;
   readonly proxyStarted: (targetChatId: number) => string;
+  /** `/send` 代发里 `type` 为 `tts` 的代码块键或取值不合规；参数为台词与语气的字数上限。 */
+  readonly proxyTtsUsage: (textMaxChars: number, toneMaxChars: number) => string;
+  /** `/send` 代发的 TTS 请求遇到 `agent.tts` 未配置。 */
+  readonly proxyTtsUnconfigured: string;
+  /** 延迟命令执行器已满，TTS 请求没有接纳。 */
+  readonly proxyTtsBusy: string;
+  /** 合成或发送语音失败；代发会话保持开启。 */
+  readonly proxyTtsFailed: (targetChatId: number) => string;
   readonly translateConfigInvalid: (file: string) => string;
   readonly translateNotRunning: (targetLabel: string) => string;
   readonly translateStopped: (targetLabel: string) => string;

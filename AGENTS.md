@@ -147,7 +147,7 @@
 - `--write-doc` 同时写两处：三份 `09-performance.md` 的基准区块，以及仓库根 `performance-result.json` 的 `fullSuite.lastRun`（结构化报告全文）。两者是同一次运行的两种呈现，必须由这一个开关一起写出，不得拆成两个 flag。该文件的另一节 `hotPathProfileGate` 由热路径门禁写，两侧都只换自己那一格，见 `scripts/perf/performanceResult.ts`。
 - 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
 - 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。
-- 完整命令链路（`ad-detect-command`、`ai-reply-command`）只在**基准侧**替换出站：模型客户端使用 `packages/cache/` 已有的 holder，Telegram 使用 `scripts/perf/outboundGuard.ts` 的罐头应答，并在 `installOutboundGuards` 之后安装到最外层。`packages/` 不得包含基准专用分支；基准不得发起真实请求。
+- 完整命令链路（`ad-detect-command`、`ai-reply-command`、`cron-send-voice`）只在**基准侧**替换出站：模型客户端使用 `packages/cache/` 已有的 holder，Telegram 使用 `scripts/perf/outboundGuard.ts` 的罐头应答，并在 `installOutboundGuards` 之后安装到最外层。`packages/` 不得包含基准专用分支；基准不得发起真实请求。
 - 命令链路必须断言处置排空结果和 `cannedTelegramCalls` 计数；静默提前返回必须使基准失败。
 - 改动规模常量、迭代次数或分区构成后，在同一次发布里重新出数并在提交信息中说明。
 

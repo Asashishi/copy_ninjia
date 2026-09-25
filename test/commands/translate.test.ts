@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser, GlobalCopyState } from "../../packages/types/chatState";
 import type { TranslateLanguage, TranslateState } from "../../packages/types/translate";
 import type { SendCommandMessageParams } from "../../packages/infra/telegram/commandMessages";
-import { translateStates } from "../../packages/cache/main/translateState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { TRANSLATE_CAPACITY_TEXT, TRANSLATE_CHAT_CAPACITY_TEXT, TRANSLATE_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
 import {
@@ -13,7 +12,6 @@ import { teardownRegisteredChat } from "../../packages/infra/chatTeardownRegistr
 import { loggerStub } from "../helpers/loggerMock";
 
 const sendCommandMessage = mock(async (..._args: unknown[]): Promise<number> => 1);
-const persistGlobalState = mock(async (..._args: unknown[]): Promise<void> => {});
 const persistChatState = mock(async (..._args: unknown[]): Promise<void> => {});
 const copySideEffect = mock((): void => {});
 const updateCachedIdentity = mock((..._args: unknown[]): void => {});
@@ -21,6 +19,45 @@ let target: CachedUser | undefined = { id: 7, first_name: "Target" };
 let configured: boolean = true;
 let allowed: boolean = true;
 const state: { isTranslationEnabled?: boolean; aiPersona?: string } = {};
+
+interface TestChatState {
+  translate: readonly TranslateState[] | undefined;
+  isTranslationEnabled: boolean | undefined;
+  readonly aiPersona: string | undefined;
+}
+
+/** 翻译会话按群存放；开关与人设统一读写共享的 state。 */
+const chatStates = new Map<number, TestChatState>();
+
+function createTestChatState(): TestChatState {
+  return {
+    translate: undefined,
+    get isTranslationEnabled(): boolean | undefined { return state.isTranslationEnabled; },
+    set isTranslationEnabled(value: boolean | undefined) { state.isTranslationEnabled = value; },
+    get aiPersona(): string | undefined { return state.aiPersona; },
+  };
+}
+
+function chatStateFor(chatId: number): TestChatState {
+  let chatState: TestChatState | undefined = chatStates.get(chatId);
+  if (chatState === undefined) {
+    chatState = createTestChatState();
+    chatStates.set(chatId, chatState);
+  }
+  return chatState;
+}
+
+/** 断言用的会话视图：按群读写群状态上的 translate 字段。 */
+const translateStates = {
+  get: (chatId: number): readonly TranslateState[] | undefined => chatStates.get(chatId)?.translate,
+  has: (chatId: number): boolean => chatStates.get(chatId)?.translate !== undefined,
+  set: (chatId: number, sessions: readonly TranslateState[]): void => { chatStateFor(chatId).translate = sessions; },
+  get size(): number {
+    let count: number = 0;
+    for (const chatState of chatStates.values()) if (chatState.translate !== undefined) count++;
+    return count;
+  },
+};
 const globalCopy: GlobalCopyState = { copiedUser: { id: 8 }, copyChatId: -2002, copyMode: "nya", lastCopyTime: Date.now() };
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => target);
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage }));
@@ -29,10 +66,10 @@ mock.module("../../packages/config/readiness", () => ({
   translateConfigReadiness: () => configured ? { ok: true } : { ok: false, failure: { file: "g-auth.json", reason: "Invalid g-auth.json" } },
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: () => state,
-  getOrCreateChatState: () => state,
+  getChatState: (chatId: number): TestChatState => chatStates.get(chatId) ?? createTestChatState(),
+  getChatStateCache: (): ReadonlyMap<number, TestChatState> => chatStates,
+  getOrCreateChatState: chatStateFor,
   getGlobalCopyState: () => globalCopy,
-  persistGlobalState,
   persistChatState,
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
@@ -59,15 +96,13 @@ function context(argument: string, chatId: number = -1001): never {
 }
 
 beforeEach(() => {
-  translateStates.clear();
+  chatStates.clear();
   state.isTranslationEnabled = true;
   state.aiPersona = undefined;
   target = { id: 7, first_name: "Target" };
   configured = true;
   allowed = true;
   sendCommandMessage.mockClear();
-  persistGlobalState.mockReset();
-  persistGlobalState.mockResolvedValue(undefined);
   persistChatState.mockReset();
   persistChatState.mockResolvedValue(undefined);
   copySideEffect.mockClear();
@@ -87,7 +122,7 @@ describe("/translate 独立命令", () => {
     expect(translateStates.get(-1001)).toBe(previous);
     expect(previous).toHaveLength(5);
     expect(sendCommandMessage.mock.calls.at(-1)?.[0]).toMatchObject({ text: TRANSLATE_CHAT_CAPACITY_TEXT });
-    expect(persistGlobalState).toHaveBeenCalledTimes(5);
+    expect(persistChatState).toHaveBeenCalledTimes(5);
     await handleTranslateCommand(context("ru", -2002));
     expect(translateStates.get(-2002)).toHaveLength(1);
   });
@@ -108,7 +143,7 @@ describe("/translate 独立命令", () => {
     });
     expect(translateStates.get(-1001)).toEqual([other]);
     expect(translateStates.get(-1001)?.[0]).toBe(other);
-    expect(persistGlobalState).toHaveBeenCalledTimes(1);
+    expect(persistChatState).toHaveBeenCalledTimes(1);
   });
 
   test("目标解析失败不停止全群，单人重复停止仍确认持久化", async () => {
@@ -116,11 +151,11 @@ describe("/translate 独立命令", () => {
     target = undefined;
     await handleTranslateCommand(context("stop @Unknown"));
     expect(translateStates.get(-1001)).toHaveLength(1);
-    expect(persistGlobalState).not.toHaveBeenCalled();
+    expect(persistChatState).not.toHaveBeenCalled();
     target = { id: 7 };
     await handleTranslateCommand(context("stop 7"));
     expect(translateStates.get(-1001)).toHaveLength(1);
-    expect(persistGlobalState).toHaveBeenCalledTimes(1);
+    expect(persistChatState).toHaveBeenCalledTimes(1);
     expect(sendCommandMessage.mock.calls.at(-1)?.[0]).toMatchObject({ text: expect.stringContaining("本来就没在用翻译") });
   });
 
@@ -136,7 +171,7 @@ describe("/translate 独立命令", () => {
     }
     expect(JSON.stringify(globalCopy)).toBe(copyBefore);
     expect(copySideEffect).not.toHaveBeenCalled();
-    expect(persistGlobalState).toHaveBeenCalledTimes(5);
+    expect(persistChatState).toHaveBeenCalledTimes(5);
   });
 
   test.each(["en", "uk", "ru"] as const)("%s 方向参数先消费，用户名和回复交给共享目标解析", async (language: TranslateLanguage) => {
@@ -198,7 +233,6 @@ describe("/translate 独立命令", () => {
     expect(message.preserveInGroup).toBeUndefined();
     expect(translateStates.get(-1001)?.[0]).toBe(previous);
     expect(resolveCommandTarget).not.toHaveBeenCalled();
-    expect(persistGlobalState).not.toHaveBeenCalled();
     expect(persistChatState).not.toHaveBeenCalled();
   });
 
@@ -206,7 +240,7 @@ describe("/translate 独立命令", () => {
     await handleTranslateCommand(context(argument));
     expect(resolveCommandTarget).not.toHaveBeenCalled();
     expect(translateStates.size).toBe(0);
-    expect(persistGlobalState).not.toHaveBeenCalled();
+    expect(persistChatState).not.toHaveBeenCalled();
     expect(sendCommandMessage.mock.calls[0]?.[0]).toMatchObject({ text: expect.stringContaining("/translate list") });
   });
 
@@ -214,7 +248,7 @@ describe("/translate 独立命令", () => {
     target = undefined;
     await handleTranslateCommand(context(argument));
     expect(translateStates.size).toBe(0);
-    expect(persistGlobalState).not.toHaveBeenCalled();
+    expect(persistChatState).not.toHaveBeenCalled();
   });
 
   test("同一目标的活动方向不会被覆盖，其他目标可同时开启", async () => {
@@ -222,7 +256,7 @@ describe("/translate 独立命令", () => {
     const previous: TranslateState | undefined = translateStates.get(-1001)?.[0];
     await handleTranslateCommand(context("cn"));
     expect(translateStates.get(-1001)?.[0]).toBe(previous);
-    expect(persistGlobalState).toHaveBeenCalledTimes(1);
+    expect(persistChatState).toHaveBeenCalledTimes(1);
     expect(sendCommandMessage.mock.calls.at(-1)?.[0]).toMatchObject({ text: expect.stringContaining("/translate stop") });
     target = { id: 88 };
     await handleTranslateCommand(context("uk"));
@@ -259,7 +293,7 @@ describe("/translate 独立命令", () => {
 
   test("落盘完成前不发送开始或停止成功回执，失败原样上抛", async () => {
     const deferred = Promise.withResolvers<void>();
-    persistGlobalState.mockImplementationOnce(() => deferred.promise);
+    persistChatState.mockImplementationOnce(() => deferred.promise);
     const starting = handleTranslateCommand(context("ja"));
     await Bun.sleep(0);
     expect(translateStates.has(-1001)).toBe(true);
@@ -267,13 +301,14 @@ describe("/translate 独立命令", () => {
     deferred.resolve();
     await starting;
     sendCommandMessage.mockClear();
-    persistGlobalState.mockRejectedValueOnce(new Error("disk failed"));
+    persistChatState.mockRejectedValueOnce(new Error("disk failed"));
     await expect(handleTranslateCommand(context("stop"))).rejects.toThrow("disk failed");
     expect(sendCommandMessage).not.toHaveBeenCalled();
   });
 
   test("关闭功能需要翻译权限，获授权后删除本群会话", async () => {
     await handleTranslateCommand(context("ja"));
+    persistChatState.mockClear();
     allowed = false;
     await handleTranslateCommand(context("disable"));
     expect(translateStates.has(-1001)).toBe(true);
@@ -315,12 +350,14 @@ describe("/translate 独立命令", () => {
     await handleTranslateCommand(context("ja"));
     sendCommandMessage.mockClear();
     const pending = Promise.withResolvers<void>();
-    persistGlobalState.mockImplementationOnce(() => pending.promise);
+    persistChatState.mockClear();
+    persistChatState.mockImplementationOnce(() => pending.promise);
     const disabling = handleTranslateCommand(context("disable"));
     await Bun.sleep(0);
     expect(translateStates.has(-1001)).toBe(false);
     expect(state.isTranslationEnabled).toBe(true);
-    expect(persistChatState).not.toHaveBeenCalled();
+    // 只有会话删除那一次落盘在途，开关还没开始写。
+    expect(persistChatState).toHaveBeenCalledTimes(1);
     expect(sendCommandMessage).not.toHaveBeenCalled();
     pending.reject(new Error("session write failed"));
     await expect(disabling).rejects.toThrow("session write failed");
@@ -328,14 +365,15 @@ describe("/translate 独立命令", () => {
     expect(sendCommandMessage).not.toHaveBeenCalled();
     await handleTranslateCommand(context("disable"));
     expect(state.isTranslationEnabled).toBe(false);
-    expect(persistGlobalState).toHaveBeenCalledTimes(3);
+    // 失败那次只写了会话；成功那次先写会话、再写开关。
+    expect(persistChatState).toHaveBeenCalledTimes(3);
   });
 
-  test("会话删除持久化完成后才写 SQLite；开关落盘失败不恢复会话", async () => {
+  test("会话删除落盘完成后才写开关；开关落盘失败不恢复会话", async () => {
     await handleTranslateCommand(context("ja"));
     sendCommandMessage.mockClear();
     const order: string[] = [];
-    persistGlobalState.mockImplementationOnce(async (): Promise<void> => { order.push("session"); });
+    persistChatState.mockImplementationOnce(async (): Promise<void> => { order.push("session"); });
     persistChatState.mockImplementationOnce(async (): Promise<void> => {
       order.push("switch");
       throw new Error("switch write failed");
@@ -351,7 +389,7 @@ describe("/translate 独立命令", () => {
   test("teardown 先同步关闭会话，再等待落盘", async () => {
     await handleTranslateCommand(context("ja"));
     const deferred = Promise.withResolvers<void>();
-    persistGlobalState.mockImplementationOnce(() => deferred.promise);
+    persistChatState.mockImplementationOnce(() => deferred.promise);
     const stopping = teardownRegisteredChat("translate", -1001, "lostAuthority");
     expect(translateStates.has(-1001)).toBe(false);
     deferred.resolve();
@@ -367,7 +405,7 @@ describe("/translate 独立命令", () => {
     expect(translateStates.size).toBe(STATE_MANAGED_CHAT_LIMIT);
     await handleTranslateCommand(context("en"));
     expect(sendCommandMessage).toHaveBeenCalledWith({ chatId: -1001, text: TRANSLATE_CAPACITY_TEXT, replyToMessageId: 9 });
-    expect(persistGlobalState).not.toHaveBeenCalled();
+    expect(persistChatState).not.toHaveBeenCalled();
     expect(setTranslateState(-1, { translatedUser: { id: 50 }, language: "en" })).toBe(true);
     seedTranslateTargets();
     expect(updateCachedIdentity).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT + 1);

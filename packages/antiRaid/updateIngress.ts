@@ -436,7 +436,7 @@ export async function handleVerificationCallback(
   // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
   // 与命令参数共用同一道严格十进制判定（见 libs/telegramId.ts 的
   // parseUserIdArgument）：本 bot 只生成规范十进制，`"1e3"`、`" 12"` 这类写法
-  // 一律来自外部构造，没有放行的理由。
+  // 一律视为外部构造，不放行。
   const targetUserId: number | undefined = parseUserIdArgument(data.slice(prefixLength));
   if (targetUserId === undefined) {
     await answerCallbackQuery({

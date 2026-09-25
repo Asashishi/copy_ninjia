@@ -28,10 +28,10 @@ export const VOICE_TRANSCRIPT_MAX_CHARS: number = 1_024;
 /**
  * 单条语音允许读入内存并内联进请求的最大字节数。
  *
- * 明显小于 MEDIA_MAX_DOWNLOAD_BYTES（16 MiB）：音频是 base64 内联发给模型的，
- * 编码后要涨 4/3，而 Gemini 的单次内联请求总大小上限是 20 MB——按 16 MiB 放行会
- * 编出 21 MB 以上、整条请求被服务端拒收，观感上就是「长语音一律识别失败」。
- * 8 MiB 编码后约 10.7 MiB；正常 voice note 通常先撞下面的时长上限，这道硬顶
+ * 音频与图片一样 base64 内联发给模型，编码后涨 4/3，必须满足编码后加
+ * MEDIA_INLINE_PROMPT_RESERVE_BYTES 不超过 MEDIA_INLINE_REQUEST_MAX_BYTES（见
+ * consts/aiChat/media.ts）。8 MiB 编码后约 11.2 MB，低于视觉上限
+ * MEDIA_MAX_DOWNLOAD_BYTES；正常 voice note 通常先撞下面的时长上限，这道硬顶
  * 主要防异常码率或异常容器把请求体与 Worker 内存拉爆。
  */
 export const VOICE_MAX_DOWNLOAD_BYTES: number = 8 * 1_024 * 1_024;

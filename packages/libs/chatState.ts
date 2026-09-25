@@ -2,50 +2,43 @@ import type { ChatState } from "../types/chatState";
 import { QUIET_CLOCK_SKEW_TOLERANCE_MS, QUIET_MAX_DURATION_MS } from "../consts/commands";
 
 /**
- * ChatState 的规范形状：**所有字段在这里一次性初始化到位，此后只赋值、绝不
- * `delete`**。「没设过」由 `undefined` 表示，不由「键不存在」表示。
+ * ChatState 的规范形状：所有字段在这里按固定顺序一次初始化，此后只赋值、不
+ * `delete`。七个开关默认 false；其余字段以 `undefined` 表示从没设过。
  *
- * 这是热调用点的形状契约（AGENTS.md：热调用点必须保持对象 shape 稳定、不得事后
- * 增删字段）。每条群消息会由不同 middleware 各读取当前群状态；单个 middleware
- * 内必须复用已经取得的引用，避免为多个功能开关重复查表
- * （antiRaid/updateIngress.ts、antiRaid/floodControl.ts、antiRaid/adCandidate.ts、
- * auto/message/index.ts、aiChat/availability.ts）。所有写入方都必须从本构造器取得
- * 同一隐藏类，并以 undefined 表示缺省值。
+ * 每条群消息会由多个 middleware 读取当前群状态，所有写入方都从本构造器取得同一
+ * 隐藏类（antiRaid/updateIngress.ts、antiRaid/floodControl.ts、antiRaid/adCandidate.ts、
+ * auto/message/index.ts、aiChat/availability.ts 为主要读取方）。
  *
- * 持久化时状态编码器只把已设置的状态字段写入 JSONB status，aiPersona 独立写入
- * ai_persona；缺省字段不进入状态载荷。
+ * 持久化时状态编码器只写入已设置的字段与为 true 的开关，aiPersona 独立写入
+ * ai_persona 列（见 database/codec/chatState.ts）。
  */
 export function createChatState(): ChatState {
   return {
     aiPersona: undefined,
     quietUntil: undefined,
     lockdown: undefined,
-    isAIChatEnabled: undefined,
-    isTranslationEnabled: undefined,
-    isAdDetectEnabled: undefined,
-    isFloodControlEnabled: undefined,
-    isAntiRaidEnabled: undefined,
-    isInitEnabled: undefined,
+    isAIChatEnabled: false,
+    isTranslationEnabled: false,
+    isAdDetectEnabled: false,
+    isFloodControlEnabled: false,
+    isAntiRaidEnabled: false,
+    isInitEnabled: false,
     botPermissions: undefined,
     title: undefined,
-    isProxySendEnabled: undefined,
+    isProxySendEnabled: false,
+    translate: undefined,
   };
 }
 
 /**
- * 没有条目的群共用的只读缺省状态。形状必须与 createChatState() 完全一致——
- * 否则 getChatState 的返回值会在「有条目」和「没条目」之间来回换隐藏类，
- * 前面那份基准白做（形状一致性由 test/consts/immutability.test.ts 钉住）。
- * 不可变性由 `Readonly<ChatState>` 在编译期表达，不用 Object.freeze。
+ * 没有条目的群共用的只读缺省状态，形状与 createChatState() 一致（由
+ * test/consts/immutability.test.ts 锁定）。不可变性由 `Readonly<ChatState>` 在编译期
+ * 表达。
  */
 export const DEFAULT_CHAT_STATE: Readonly<ChatState> = createChatState();
 
 /**
- * 把解码出来的一份群状态搬进规范形状。
- *
- * `JSON.parse` 产出的对象只带文件里真正出现过的键，各群互不相同；直接放进
- * chatStateCache 就等于把磁盘上的稀疏形状带进热路径。逐字段抄写而不是对象展开：
- * 展开的结果形状取决于两个来源的键集合，写死字段顺序才能保证与
+ * 把解码出来的一份群状态按固定字段顺序逐字段抄进规范形状，结果与
  * createChatState() 同一个隐藏类。
  */
 export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
@@ -62,6 +55,7 @@ export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
   chatState.botPermissions = decoded.botPermissions;
   chatState.title = decoded.title;
   chatState.isProxySendEnabled = decoded.isProxySendEnabled;
+  chatState.translate = decoded.translate;
   return chatState;
 }
 
@@ -79,25 +73,10 @@ export function isQuietUntilActive(quietUntil: number | undefined, now: number =
 }
 
 /**
- * 把单群状态收敛到唯一的持久化表示。布尔开关统一只保存偏离缺省值的状态：
- * AI、初始化、翻译、广告检测、防刷屏、入群守卫和中转均缺省关闭，因此
- * false 不落盘。机器人权限快照始终整块保留：`isAdministrator: false`
- * 是「已确认不是管理员」，与未知状态不同。
- *
- * 已过期的 quietUntil 不再影响业务，也在这里回收。lockdown 即使已到期也
- * 不能删除：反刷群恢复流程仍需用其 originalPermissions 执行解锁。
- *
- * 「读数超出上限」与「已经到点」必须分开处置：前者的唯一成因是墙钟往回跳，
- * 清掉字段等于把这条静默从 LRU 和 SQLite 一并抹掉、时钟回正后也找不回来，
- * 而这个 normalizer 每次群状态写入前都会运行。收敛到上限即可
- * ——静默继续有效，且保证不晚于 QUIET_MAX_DURATION_MS 结束，正是这条上限
- * JSDoc 本来的意思（同 libs/slidingWindowRateLimit.ts 对回拨「只丢越界项、
- * 绝不整窗清空」的取舍）。
- *
- * 收敛一律写 `undefined` 而不是 `delete`：这个函数每次单群保存都会运行，
- * `delete` 会把该状态踢出它的隐藏类，而它正躺在每条群消息的读取路径
- * 上（形状契约见 createChatState）。落盘结果不受影响——`JSON.stringify` 跳过
- * 取值为 `undefined` 的键。
+ * 保存前收敛单群状态：已到期的 quietUntil 置为 undefined；因墙钟回拨而超出
+ * QUIET_MAX_DURATION_MS 的静默收敛到当前时刻加上限，静默继续有效。lockdown 即使
+ * 已到期也保留，反刷群恢复流程仍需用其 originalPermissions 解锁。只赋值不
+ * `delete`，形状契约见 createChatState。
  */
 export function normalizeChatState(chatState: ChatState, now: number = Date.now()): ChatState {
   if (chatState.quietUntil !== undefined) {
@@ -106,38 +85,26 @@ export function normalizeChatState(chatState: ChatState, now: number = Date.now(
       chatState.quietUntil = now + QUIET_MAX_DURATION_MS;
     }
   }
-  // 逐字段展开而不是遍历一张键名表：本函数每次单群保存都会运行（见
-  // infra/chatStateStorage.ts 的 encodeCurrentChatState），表在函数体里就是每次
-  // 调用新建一个数组，而按变量取属性（chatState[toggle]）也把这七次读写变成
-  // 多态访问。字段清单与 createChatState / isEmptyChatState 保持一致。
-  if (chatState.isAIChatEnabled === false) chatState.isAIChatEnabled = undefined;
-  if (chatState.isTranslationEnabled === false) chatState.isTranslationEnabled = undefined;
-  if (chatState.isAdDetectEnabled === false) chatState.isAdDetectEnabled = undefined;
-  if (chatState.isFloodControlEnabled === false) chatState.isFloodControlEnabled = undefined;
-  if (chatState.isAntiRaidEnabled === false) chatState.isAntiRaidEnabled = undefined;
-  if (chatState.isInitEnabled === false) chatState.isInitEnabled = undefined;
-  if (chatState.isProxySendEnabled === false) chatState.isProxySendEnabled = undefined;
   return chatState;
 }
 
 /**
- * 是否所有字段都还是缺省值。逐字段判定而不是数 `Object.keys().length`：规范形状
- * 下键一直都在，不能用键数判断状态是否为空。
- *
- * `botPermissions` 只要存在就不算缺省：其中全 false 是「已确认不是
- * 管理员」，与「没查过」是两回事（见 types/chatState.ts）。
+ * 是否所有字段都还是缺省值：开关全为 false，其余字段全为 undefined。
+ * `botPermissions` 只要存在就不算缺省：其中全 false 是「已确认不是管理员」，与
+ * 「没查过」不同（见 types/chatState.ts）。
  */
 export function isEmptyChatState(chatState: ChatState): boolean {
   return chatState.aiPersona === undefined &&
     chatState.quietUntil === undefined &&
     chatState.lockdown === undefined &&
-    chatState.isAIChatEnabled === undefined &&
-    chatState.isTranslationEnabled === undefined &&
-    chatState.isAdDetectEnabled === undefined &&
-    chatState.isFloodControlEnabled === undefined &&
-    chatState.isAntiRaidEnabled === undefined &&
-    chatState.isInitEnabled === undefined &&
+    !chatState.isAIChatEnabled &&
+    !chatState.isTranslationEnabled &&
+    !chatState.isAdDetectEnabled &&
+    !chatState.isFloodControlEnabled &&
+    !chatState.isAntiRaidEnabled &&
+    !chatState.isInitEnabled &&
     chatState.botPermissions === undefined &&
     chatState.title === undefined &&
-    chatState.isProxySendEnabled === undefined;
+    !chatState.isProxySendEnabled &&
+    chatState.translate === undefined;
 }

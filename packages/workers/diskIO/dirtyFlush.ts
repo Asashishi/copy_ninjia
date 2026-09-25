@@ -1,7 +1,7 @@
 /**
  * 贴纸目录与 wed 成员快照共用的 dirty 集合逐项写入循环：快照已不在缓存里（落盘前
  * 又被删除）就直接摘掉 dirty 标记；写成功才摘除，单项失败只 console.error
- * （journal 兜底，理由见 workers/diskIOWorker.ts 模块头）并保留标记。
+ * （journal 兜底，见 workers/diskIOWorker.ts 模块头）并保留标记。
  *
  * 不返回是否刷净，调用方通过残留集合的 size 自行判断。
  *

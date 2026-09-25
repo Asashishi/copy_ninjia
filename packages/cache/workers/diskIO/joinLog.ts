@@ -43,7 +43,7 @@ export const joinLogCleanupDay: { current: string | null } = { current: null };
  * 主线程在群 teardown 时投递一次 `deleteJoinLog` 即登记；该群窗口内的文件全部
  * unlink 成功才摘除，失败保留并在下一次统一 flush 时重试，期间 `joinLogPurge`
  * 领域一律回报失败，teardown 因此不会把「日志还在」报成删干净了。该领域与追写的
- * `joinLog` 分开记，理由见 types/diskIO/replies.ts 的 DiskIODomain。容量与群数
+ * `joinLog` 分开记，见 types/diskIO/replies.ts 的 DiskIODomain。容量与群数
  * 上限同阶；Worker 重建后为空，未确认的那次 teardown 由主线程重投。
  */
 export const joinLogDeletions: Set<number> = new Set();

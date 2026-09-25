@@ -11,10 +11,12 @@ import { teardownWedInChat } from "../../packages/commands/wed";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
 import { wedChats } from "../../packages/cache/main/wed";
 import * as diskIO from "../../packages/infra/diskIO";
-import type { DiskIORecoveryTransport } from "../../packages/types/diskIO/messages";
+import type {
+  DiskIORecoveryTransport,
+  DiskBusinessMessage,
+} from "../../packages/types/diskIO/messages";
 import { DiskIORecoveryRevisions } from "../../packages/libs/diskIORecoveryRevisions";
 import { LinkedQueue } from "../../packages/libs/linkedQueue";
-import type { DiskBusinessMessage } from "../../packages/types/diskIO/messages";
 import type { DomainFlushOutcome } from "../../packages/types/diskIO/replies";
 
 const post = spyOn(diskIO, "postDiskIO");

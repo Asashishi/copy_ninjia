@@ -11,6 +11,8 @@ const pickRandomImage = mock(async (_directory: string): Promise<RandomImagePick
 }));
 
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage, sendPhotoWithResult }));
+const recordBotImage = mock((..._args: unknown[]): void => {});
+mock.module("../../packages/aiChat/botImages", () => ({ recordBotImage }));
 mock.module("../../packages/infra/randomImage", () => ({
   pickRandomImage,
   readRandomImageLibrary: async (): Promise<unknown> => ({ size: 0, storedIds: new Set<string>() }),
@@ -63,7 +65,7 @@ async function submitHImage(ctx: never): Promise<void> {
 
 beforeEach(() => {
   recentHImageCallTimestamps.clear();
-  for (const mocked of [sendCommandMessage, sendPhotoWithResult, pickRandomImage]) mocked.mockClear();
+  for (const mocked of [sendCommandMessage, sendPhotoWithResult, pickRandomImage, recordBotImage]) mocked.mockClear();
   pickRandomImage.mockImplementation(async (): Promise<RandomImagePick> => ({
     status: "ok",
     bytes: new Uint8Array([1]),
@@ -112,6 +114,8 @@ describe("/h_image", () => {
       hasSpoiler: true,
     });
     expect(sendCommandMessage).not.toHaveBeenCalled();
+    // 发送成功后写一条没有图注的 AI 记忆占位自录。
+    expect(recordBotImage).toHaveBeenCalledWith({ chatId: CHAT_ID, messageId: 9, caption: "", edited: false });
   });
 
   test("抽取失败按结果回 30 秒提示", async () => {

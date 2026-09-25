@@ -23,8 +23,7 @@ import type {
   LoadedReply,
 } from "../../types/diskIO/replies";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
-import type { IdentityPolicyRawReadResult } from "../../types/identityStorage";
-import type { BlocklistIdPage } from "../../types/identityStorage";
+import type { IdentityPolicyRawReadResult, BlocklistIdPage } from "../../types/identityStorage";
 
 /**
  * 磁盘 IO 宿主（packages/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。

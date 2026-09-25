@@ -8,7 +8,10 @@
  * - 文件真正不存在是合法状态：启动时存在的文件被删除，对应 holder 换成 null；启动时
  *   缺省的文件运行期出现，按新内容填充。agent.json 的 ad_detect 段与对话核心能力段
  *   同理，各段独立判定；
- * - 与当前快照深相等的内容不替换，holder 对象身份保持不变。
+ * - 与当前快照深相等的内容不替换，holder 对象身份保持不变；
+ * - cron.json 的 send_voice 依赖 agent.json 的 `agent.tts`：新任务表用到 send_voice 而本轮
+ *   生效的 agent 配置没有 tts 时拒绝 cron.json 的变更；任务表仍用 send_voice 时拒绝去掉
+ *   tts 的 agent.json 变更。
  *
  * 一份文件内的变更要么整体生效、要么整体拒绝。拒绝诊断沿用 InputValidationError
  * 口径，只含文件路径、字段路径与期望形态。本模块只读盘并改写主线程 holder；
@@ -22,7 +25,7 @@ import {
   adoptAgentDeploymentConfig,
   loadAgentConfigSnapshots,
 } from "./agent";
-import { adoptCronConfig, loadCronConfig } from "./cron";
+import { adoptCronConfig, assertCronVoiceSupported, cronConfigUsesVoice, loadCronConfig } from "./cron";
 import { adoptMoodConfig, loadMoodConfig } from "./mood";
 import { deploymentInputExists } from "./readiness";
 import { adoptStickerConfig, loadStickerConfig } from "./stickers";
@@ -42,9 +45,11 @@ import {
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
 import type { CronConfig } from "../types/cron";
+import { InputValidationError } from "../libs/inputValidation";
 import type {
   AdSampleConfig,
   AgentConfigSnapshots,
+  AgentTtsCapabilityConfig,
   HotConfigRead,
   HotDeploymentConfigChanges,
   HotDeploymentConfigReads,
@@ -99,6 +104,53 @@ function nextFileSnapshot<T>({ read, current, rejections }: FileSnapshotOptions<
   }
 }
 
+/** reconcileVoiceDependency 的入参：agent.json 与 cron.json 各自判定后的候选。 */
+interface VoiceDependencyOptions {
+  /** agent.json 的候选两段快照；undefined 表示本轮被拒绝，保持当前快照。 */
+  readonly agent: AgentConfigSnapshots | undefined;
+  /** cron.json 的候选；undefined 保持不变，null 表示文件已删除。 */
+  readonly cron: CronConfig | null | undefined;
+  readonly rejections: string[];
+}
+
+/** 交叉核对后真正生效的两份候选；语义同 VoiceDependencyOptions 的同名字段。 */
+interface VoiceDependencyDecision {
+  readonly agent: AgentConfigSnapshots | undefined;
+  readonly cron: CronConfig | null | undefined;
+}
+
+/**
+ * cron.json 的 send_voice 依赖 agent.json 的 `agent.tts`。先按本轮会生效的 agent 配置核对
+ * 新任务表，缺 tts 时拒绝 cron.json 的变更；再按生效的任务表核对新 agent 配置，任务表仍用
+ * send_voice 而新配置去掉了 tts 时拒绝 agent.json 的变更。两份文件都保持整体生效或整体拒绝。
+ */
+function reconcileVoiceDependency({ agent, cron, rejections }: VoiceDependencyOptions): VoiceDependencyDecision {
+  const tts: AgentTtsCapabilityConfig | undefined = agent === undefined
+    ? agentDeploymentConfigCache.current?.tts
+    : agent.agent?.tts;
+  let acceptedCron: CronConfig | null | undefined = cron;
+  if (cron !== undefined && cron !== null) {
+    try {
+      assertCronVoiceSupported(cron, tts);
+    } catch (error: unknown) {
+      rejections.push(errorMessage(error));
+      acceptedCron = undefined;
+    }
+  }
+  const effectiveCron: CronConfig | null = acceptedCron === undefined ? cronConfigCache.current : acceptedCron;
+  const dropsTts: boolean = agent !== undefined && tts === undefined &&
+    agentDeploymentConfigCache.current?.tts !== undefined;
+  if (dropsTts && effectiveCron !== null && cronConfigUsesVoice(effectiveCron)) {
+    rejections.push(new InputValidationError(
+      AGENT_CONFIG_PATH,
+      "$.agent",
+      "configured with text, summary, media and tts while config/cron.json uses send_voice"
+    ).message);
+    return { agent: undefined, cron: acceptedCron };
+  }
+  return { agent, cron: acceptedCron };
+}
+
 /** 一轮热重载里已生效与已删除的文件路径收集表。 */
 interface FileOutcomePaths {
   readonly reloadedPaths: string[];
@@ -128,21 +180,36 @@ export function applyHotDeploymentConfigs(reads: HotDeploymentConfigReads): HotD
   if (adSamples !== undefined) adoptAdSampleConfig(adSamples);
   recordFileOutcome(adSamples, AD_SAMPLES_CONFIG_PATH, paths);
 
-  let adDetectChanged: boolean = false;
-  let aiAgentChanged: boolean = false;
+  // agent.json 与 cron.json 先各自判定、交叉核对 send_voice 与 agent.tts 之后再替换，
+  // 见 reconcileVoiceDependency。
+  let nextAgent: AgentConfigSnapshots | undefined;
   if (reads.agent.kind === "invalid") {
     rejections.push(reads.agent.reason);
   } else {
-    // agent.json 缺省时两段都按未配置判定；两段各自与当前快照比较、各自替换。
-    const next: AgentConfigSnapshots = reads.agent.kind === "absent"
-      ? { adDetect: null, agent: null }
-      : reads.agent.value;
-    if (!Bun.deepEquals(next.adDetect, adDetectAgentConfigCache.current)) {
-      adoptAdDetectAgentConfig(next.adDetect);
+    // agent.json 缺省时两段都按未配置判定。
+    nextAgent = reads.agent.kind === "absent" ? { adDetect: null, agent: null } : reads.agent.value;
+  }
+  const cronRead: CronConfig | null | undefined = nextFileSnapshot({
+    read: reads.cron,
+    current: cronConfigCache.current,
+    rejections,
+  });
+  const { agent: acceptedAgent, cron }: VoiceDependencyDecision = reconcileVoiceDependency({
+    agent: nextAgent,
+    cron: cronRead,
+    rejections,
+  });
+
+  let adDetectChanged: boolean = false;
+  let aiAgentChanged: boolean = false;
+  if (acceptedAgent !== undefined) {
+    // 两段各自与当前快照比较、各自替换。
+    if (!Bun.deepEquals(acceptedAgent.adDetect, adDetectAgentConfigCache.current)) {
+      adoptAdDetectAgentConfig(acceptedAgent.adDetect);
       adDetectChanged = true;
     }
-    if (!Bun.deepEquals(next.agent, agentDeploymentConfigCache.current)) {
-      adoptAgentDeploymentConfig(next.agent);
+    if (!Bun.deepEquals(acceptedAgent.agent, agentDeploymentConfigCache.current)) {
+      adoptAgentDeploymentConfig(acceptedAgent.agent);
       aiAgentChanged = true;
     }
     if (adDetectChanged || aiAgentChanged) {
@@ -167,11 +234,6 @@ export function applyHotDeploymentConfigs(reads: HotDeploymentConfigReads): HotD
   if (stickers !== undefined) adoptStickerConfig(stickers);
   recordFileOutcome(stickers, STICKERS_CONFIG_PATH, paths);
 
-  const cron: CronConfig | null | undefined = nextFileSnapshot({
-    read: reads.cron,
-    current: cronConfigCache.current,
-    rejections,
-  });
   if (cron !== undefined) adoptCronConfig(cron);
   recordFileOutcome(cron, CRON_CONFIG_PATH, paths);
 

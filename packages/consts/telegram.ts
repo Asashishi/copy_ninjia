@@ -105,7 +105,7 @@ export const MUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = {
  *
  * Bot API 对「解除限制」的说法就是把所有权限传 true——成员的实际权限仍与群
  * 默认权限取交集，所以这份全 true 不会赋予超出群设置的能力，只是把
- * MUTED_CHAT_PERMISSIONS 收走的那层个人限制整个摘掉。逐项显式写出的理由同
+ * MUTED_CHAT_PERMISSIONS 收走的那层个人限制整个摘掉。逐项显式写出的同
  * 上：这份常量也是「解除禁言到底恢复了什么」的唯一说明，必须与禁言集逐项
  * 对得上。全项为 true 时 `use_independent_chat_permissions` 同样不必带——
  * 联动打开的那几项本来就都要打开。
@@ -176,7 +176,7 @@ export const TELEGRAM_PHOTO_MAX_DIMENSION_SUM: number = 10_000;
 /**
  * `sendPhoto` 对长宽比的硬性上限（官方 Bot API：width / height 必须 ≤ 20，
  * 反过来同样）。判定取长边除以短边，两个方向共用这一个数。
- * 拒收时机与理由同 TELEGRAM_PHOTO_MAX_DIMENSION_SUM。
+ * 拒收时机与同 TELEGRAM_PHOTO_MAX_DIMENSION_SUM。
  */
 export const TELEGRAM_PHOTO_MAX_ASPECT_RATIO: number = 20;
 
@@ -189,11 +189,24 @@ export const TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES: number = 50 * 1024 * 1024;
  */
 export const TELEGRAM_DELETE_MESSAGES_BATCH_MAX: number = 100;
 
-/** 全部 Telegram 429 退避域合计允许保留的任务数，正常在途请求不计入。 */
-export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 81_920;
-/** grammY 全局发送桶允许等待的消息上限；与 429 的 81,920 总容量分开计数。 */
+/** grammY 全局发送桶允许等待的消息上限；与 TELEGRAM_429_RETRY_QUEUE_MAX 分开计数。 */
 export const TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX: number = 8_192;
-/** grammY 单群发送桶允许等待的消息上限；超过约 2 分钟积压后拒绝新消息。 */
+/**
+ * 全部 Telegram 429 退避域合计允许保留的任务数，正常在途请求不计入。
+ *
+ * 取 TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX 的 10 倍：message 类进入 429 队列之前已被
+ * grammY 全局桶限在其以内，其余 13 个类别不经过任何发送桶。本值只是内存硬顶，
+ * 超出即拒绝并交还领域 owner，不承担持久化。所属模块：infra/telegram/outboundQueue.ts。
+ */
+export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 10 * TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX;
+/** grammY 全局发送桶每个刷新周期放行的发送请求数（插件默认的每秒 30 次）；所属模块：infra/telegram/messageThrottler.ts。 */
+export const TELEGRAM_MESSAGE_GLOBAL_RESERVOIR: number = 30;
+/** grammY 全局发送桶的刷新周期；所属模块：infra/telegram/messageThrottler.ts。 */
+export const TELEGRAM_MESSAGE_GLOBAL_REFRESH_INTERVAL_MS: number = 1_000;
+/**
+ * grammY 单群发送桶允许等待的消息上限；超出即拒绝新消息。单群只串行保序、不设
+ * 独立速率，积压的排空时长取决于全局桶、请求往返与 429 退避。
+ */
 export const TELEGRAM_MESSAGE_GROUP_PENDING_MAX: number = 128;
 /** grammY 单私聊发送桶允许等待的消息上限；防止单一目标无限占用内存。 */
 export const TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX: number = 256;
@@ -221,12 +234,13 @@ export const SELF_SENT_MESSAGE_TTL_MS: number = 15_000;
 export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;
 
 /**
- * inline 源文本登记表（见 infra/inlineResultSources.ts）同时保留多少个**查询者**。
+ * inline 源文本登记表（见 infra/inlineResultSources.ts）同时保留多少个**发言身份**
+ * （结果落群后的发送者：gag 会话目标或运势查询者）。
  *
- * 每个查询者只占一条：新一次 inline 应答整体覆盖他上一次的登记，不留历史——
- * 只有最后一次应答里的结果才可能被发出去。上限管的是「同时有多少人正在输入
- * inline 查询」，inline 模式对任何人开放，因此必须有硬顶；撑满时按最久未登记
- * 的查询者淘汰，被淘汰只意味着他那条 inline 结果拿不到源文本、退回不判定。
+ * 每个发言身份只占一条：新一次 inline 应答整体覆盖它上一次的登记，不留历史——
+ * 只有最后一次应答里的结果才可能被发出去。上限管的是「同时有多少个身份正在被
+ * 输入 inline 查询」，inline 模式对任何人开放，因此必须有硬顶；撑满时按最久未
+ * 登记的发言身份淘汰，被淘汰只意味着它那条 inline 结果拿不到源文本、退回不判定。
  * 单条登记的正文上界为一次应答的全部结果内容（运势回执或至多 GAG_SESSION_MAX
  * 条、each 受 TELEGRAM_MESSAGE_MAX_CHARS 约束的 gag 文本），因此整表占用有界。
  */

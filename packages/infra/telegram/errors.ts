@@ -42,3 +42,13 @@ export function telegramErrorDetails(
   }
   return undefined;
 }
+
+/**
+ * Bot API 以 4xx（含 429）明确拒收了这次请求，请求没有生效。
+ * 网络失败、5xx 与本地错误不算：请求可能已经送达并生效。
+ */
+export function isTelegramRequestRejected(error: unknown): boolean {
+  const details: Readonly<{ errorCode: number; description: string }> | undefined =
+    telegramErrorDetails(error);
+  return details !== undefined && details.errorCode >= 400 && details.errorCode < 500;
+}

@@ -41,6 +41,22 @@
 
 `just_once` 的执行记录只保存在内存里，重启后会重新登记；已完成的任务应从 `config/cron.json` 删除。`rand_cron` 的等待也会重置，停机期间错过的触发不补发。固定图片必须写 1–10 项数组，随机图的 `path` 则是目录字符串；cron 相对路径按项目根解析，专用图库路径按数据根解析。配置示例见 [部署配置说明](../../config_example/README/zh.md#cronjson)。
 
+## 定时语音或 `/send` 语音为什么发不出来？
+
+两者都用 `config/agent.json` 的 `agent.tts` 在 AI Worker 上合成。`cron.json` 用到 `send_voice` 而没配 `tts` 时，启动直接拒绝，运行中改出这种组合的那一份改动会被热重载拒绝并记错误日志；`/send` 的语音请求会直接回「未配置语音合成」。配了 `tts` 仍失败时看日志：`speech synthesis failed: worker unavailable` 表示 AI Worker 没在运行（`stickers.json`、`mood.json`、`prompt/persona.md` 也要齐），`tts unsupported` 表示所选 provider 没实现语音合成（当前只有 `google`），`synthesis failed` / `timed out` 多为模型端问题。`/send` 的语音请求必须整条是代码块，且 `type` 为 `tts`，否则会按普通消息转发。字段与限制见 [部署配置说明](../../config_example/README/zh.md#cronjson) 与 [08 命令参考](08-commands.md)。
+
+## 语音长度、温度和记忆如何设置？
+
+| 入口 | 台词上限 | 发送成功后的 AI 记忆 |
+| :--- | ---: | :--- |
+| AI `send_voice` | 64 | 记录台词 |
+| 私聊 `/send` TTS | 256 | 不自动记录 |
+| cron `send_voice` | 256 | 不自动记录 |
+
+长度按 UTF-16 码元计，`tone` 上限统一为 64；空白归一化后再校验。`/send` 超限会回格式提示；cron 的非法字段会使启动失败，热重载时则拒绝整份改动并记日志。音频响应另有 8 MiB 上限，文本长度不保证合成时长。
+
+音色在 `config/agent.json` 的 `agent.tts.voice` 调整。三个入口共用 [`packages/consts/aiChat/gemini.ts`](../../packages/consts/aiChat/gemini.ts) 的 `GEMINI_SPEECH_TEMPERATURE`（当前 `1.25`）和 `GEMINI_SPEECH_STYLE`；它们是源码常量，修改后需重新构建或重启源码服务，不是 JSON 配置项。
+
 ---
 
 <div align="center">

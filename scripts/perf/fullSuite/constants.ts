@@ -13,6 +13,7 @@ import {
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
+import { VOICE_SPEECH_MAX_BYTES } from "../../../packages/consts/aiChat/voiceMessage";
 
 /** 每一项测量重复的独立轮数；报告按轮取平均，并附最小值、最大值与变异系数。 */
 export const FULL_SUITE_ROUNDS: number = 3;
@@ -114,6 +115,23 @@ export const CHAIN_AD_DETECT_COMMANDS: number = 150;
  * 触发在 STATE_MANAGED_CHAT_LIMIT 个群上轮转，保持每群请求数处于生产限频内。
  */
 export const CHAIN_AI_REPLY_COMMANDS: number = 40;
+
+/**
+ * cron 语音完整链路的计时条数。
+ *
+ * 一条 = 经语音合成公共实现把一句台词合成（供应商为罐头 WAV）、解码并编码成 OGG/Opus，
+ * 再经 cron 发送边界发出一条语音气泡并登记自发消息。
+ */
+export const CHAIN_CRON_VOICE_COMMANDS: number = 24;
+
+/** cron 语音链路的预热次数；每次完整合成、编码并发送一条语音。 */
+export const CRON_VOICE_WARMUP_OPERATIONS: number = 4;
+
+/**
+ * cron 语音链路罐头合成结果的 PCM 字节数：取生产合成上限 VOICE_SPEECH_MAX_BYTES 的
+ * 1/16，24 kHz 单声道 16 bit 下约 11 秒语音。
+ */
+export const CHAIN_CRON_VOICE_PCM_BYTES: number = VOICE_SPEECH_MAX_BYTES / 16;
 
 /** AI 回复链路的预热次数；每次完整执行一轮回复及生产拟人停顿。 */
 export const AI_REPLY_WARMUP_OPERATIONS: number = 8;

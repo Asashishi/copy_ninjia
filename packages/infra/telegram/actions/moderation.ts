@@ -36,7 +36,7 @@ export interface MuteChatMemberParams {
    *
    * 具体预算按各自的最短时长由调用方给出：刷屏禁言用
    * `FLOOD_MUTE_DISPATCH_TIMEOUT_MS`，`/mute` 用
-   * `时长 - MUTE_DISPATCH_MIN_REMAINING_MS`（两处常量各自写明取值理由）。
+   * `时长 - MUTE_DISPATCH_MIN_REMAINING_MS`（两处常量各自写明取值）。
    */
   dispatchTimeoutMs: number;
   api?: RestrictMemberApi;

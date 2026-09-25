@@ -1,7 +1,6 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { FlushResult } from "../../types/lifecycle";
 import { chatStateCache } from "../../cache/main/chatState";
-import { translateStates } from "../../cache/main/translateState";
 import { globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
 import { resolve } from "node:path";
 import { RUNTIME_DATA_ROOT } from "../../consts/paths";
@@ -21,6 +20,8 @@ import {
 import type {
   CachedUser,
   ChatState,
+  ChatStateOptionalField,
+  ChatStateSwitchKey,
   CopyMode,
   DecodedGlobalCopyState,
   DecodedStateFile,
@@ -172,10 +173,6 @@ export async function loadState(): Promise<void> {
   try {
     const decoded: DecodedStateFile | null = await sharedStateStore().load();
     if (decoded === null) return;
-    translateStates.clear();
-    for (const [chatId, state] of Object.entries(decoded.translate)) {
-      translateStates.set(Number(chatId), state);
-    }
     if (decoded.global.copy.lastCopyTime !== undefined) {
       globalCopyState.lastCopyTime = decoded.global.copy.lastCopyTime;
     }
@@ -186,11 +183,11 @@ export async function loadState(): Promise<void> {
       adoptCopyTarget(copy.copiedUser, copy.copyMode, copy.copyChatId);
     }
     // 直接整块赋值：缺字段就是 undefined，那是「从没设过」，不是「沿用上次」。
+    globalAssetState.randomHImageDir = decoded.global.assets.randomHImageDir;
     globalAssetState.fortuneThumbnailUrl = decoded.global.assets.fortuneThumbnailUrl;
     globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
     globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
     globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
-    globalAssetState.randomHImageDir = decoded.global.assets.randomHImageDir;
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
     throw error;
@@ -208,6 +205,10 @@ export async function loadState(): Promise<void> {
  */
 export function seedMissingAssetState(): number {
   let seeded: number = 0;
+  if (globalAssetState.randomHImageDir === undefined) {
+    globalAssetState.randomHImageDir = RANDOM_H_IMAGE_DIR;
+    seeded++;
+  }
   if (globalAssetState.fortuneThumbnailUrl === undefined) {
     globalAssetState.fortuneThumbnailUrl = FORTUNE_THUMBNAIL_URL;
     seeded++;
@@ -224,19 +225,12 @@ export function seedMissingAssetState(): number {
     globalAssetState.botDefaultAvatarUrl = BOT_DEFAULT_AVATAR_URL;
     seeded++;
   }
-  if (globalAssetState.randomHImageDir === undefined) {
-    globalAssetState.randomHImageDir = RANDOM_H_IMAGE_DIR;
-    seeded++;
-  }
   if (seeded > 0) saveGlobalStateInBackground("seed default asset URLs");
   return seeded;
 }
 
 function currentGlobalState(): StateFileSchema {
-  return {
-    global: { copy: globalCopyState, assets: globalAssetState },
-    translate: Object.fromEntries(translateStates),
-  };
+  return { global: { copy: globalCopyState, assets: globalAssetState } };
 }
 
 /**
@@ -297,13 +291,33 @@ export function getOrCreateChatState(chatId: number): ChatState {
   return chatState;
 }
 
-export function clearChatStateField(chatId: number, field: keyof ChatState): boolean {
-  const chatState: ChatState | undefined = chatStateCache.get(chatId);
-  // 判「有没有设过」看取值而不是 `field in chatState`：规范形状下键一直都在。
-  if (chatState?.[field] === undefined) return false;
-  chatState[field] = undefined;
+/** 收敛刚被清除字段的群状态；整条回到缺省时摘除热读副本条目。 */
+function settleClearedChatState(chatId: number, chatState: ChatState): void {
   normalizeChatState(chatState);
   if (isEmptyChatState(chatState)) chatStateCache.delete(chatId);
+}
+
+/**
+ * 清除一个可选字段（置为 undefined）。字段本来就没设过时返回 false，不改动状态。
+ * 调用方负责随后落盘。
+ */
+export function clearChatStateField(chatId: number, field: ChatStateOptionalField): boolean {
+  const chatState: ChatState | undefined = chatStateCache.get(chatId);
+  if (chatState?.[field] === undefined) return false;
+  chatState[field] = undefined;
+  settleClearedChatState(chatId, chatState);
+  return true;
+}
+
+/**
+ * 关闭一个群开关（置为 false）。开关本来就是关闭时返回 false，不改动状态。
+ * 调用方负责随后落盘。
+ */
+export function disableChatStateSwitch(chatId: number, key: ChatStateSwitchKey): boolean {
+  const chatState: ChatState | undefined = chatStateCache.get(chatId);
+  if (chatState?.[key] !== true) return false;
+  chatState[key] = false;
+  settleClearedChatState(chatId, chatState);
   return true;
 }
 

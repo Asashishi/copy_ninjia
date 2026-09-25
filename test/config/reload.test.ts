@@ -304,13 +304,96 @@ describe("config/ 热重载判定", () => {
 
   test("可选能力的增删只替换内容", async () => {
     const document = await readAgentDocument();
-    delete document.agent.song;
+    delete document.agent.tts;
     await writeJson(AGENT_CONFIG_PATH, document);
 
     const changes: HotDeploymentConfigChanges = await reload();
 
     expect(changes.rejections).toEqual([]);
     expect(changes.aiAgent).toBe(true);
-    expect(agentDeploymentConfigCache.current?.song).toBeUndefined();
+    expect(agentDeploymentConfigCache.current?.tts).toBeUndefined();
+  });
+});
+
+describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
+  const VOICE_TASKS: readonly Record<string, unknown>[] = [{
+    name: "voice",
+    chat_id: [-1001],
+    cron: "0 9 * * *",
+    actions: [{ type: "send_voice", payload: { content: "おはよう" } }],
+  }];
+  const TEXT_TASKS: readonly Record<string, unknown>[] = [{
+    name: "text",
+    chat_id: [-1001],
+    cron: "0 9 * * *",
+    actions: [{ type: "send_message", payload: { content: "hi" } }],
+  }];
+  const CRON_REJECTION: string =
+    `${CRON_CONFIG_PATH}: $[0].actions[0].type must be send_message, send_image or send_file ` +
+    "unless config/agent.json configures $.agent.tts alongside text, summary and media.";
+  const AGENT_REJECTION: string = `${AGENT_CONFIG_PATH}: $.agent must be configured with text, summary, media and tts while config/cron.json uses send_voice.`;
+
+  async function writeAgentWithoutTts(): Promise<void> {
+    const document = await readAgentDocument();
+    delete document.agent.tts;
+    await writeJson(AGENT_CONFIG_PATH, document);
+  }
+
+  test("agent.tts 缺省时新增 send_voice 的 cron.json 变更整份拒绝，任务表保持上一份", async () => {
+    await writeAgentWithoutTts();
+    expect((await reload()).rejections).toEqual([]);
+    const previous: CronConfig | null = cronConfigCache.current;
+
+    await writeJson(CRON_CONFIG_PATH, VOICE_TASKS);
+    const changes: HotDeploymentConfigChanges = await reload();
+
+    expect(changes.rejections).toEqual([CRON_REJECTION]);
+    expect(changes.cron).toBe(false);
+    expect(changes.reloadedPaths).toEqual([]);
+    expect(cronConfigCache.current).toBe(previous);
+  });
+
+  test("agent.tts 在时 send_voice 照常生效；任务表仍用它时去掉 tts 的 agent.json 变更整份拒绝", async () => {
+    await writeJson(CRON_CONFIG_PATH, VOICE_TASKS);
+    expect((await reload()).rejections).toEqual([]);
+    expect(cronConfigCache.current?.[0]?.actions).toEqual([{ type: "send_voice", content: "おはよう", tone: undefined }]);
+
+    await writeAgentWithoutTts();
+    const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.rejections).toEqual([AGENT_REJECTION]);
+    expect(changes.aiAgent).toBe(false);
+    expect(changes.adDetect).toBe(false);
+    expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+
+    rmSync(AGENT_CONFIG_PATH);
+    expect((await reload()).rejections).toEqual([AGENT_REJECTION]);
+    expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+    expect(adDetectAgentConfigCache.current).toBe(baseline.adDetect);
+  });
+
+  test("同一轮里去掉 send_voice 与去掉 tts 一起生效", async () => {
+    await writeJson(CRON_CONFIG_PATH, VOICE_TASKS);
+    await reload();
+    await writeJson(CRON_CONFIG_PATH, TEXT_TASKS);
+    await writeAgentWithoutTts();
+
+    const changes: HotDeploymentConfigChanges = await reload();
+
+    expect(changes.rejections).toEqual([]);
+    expect(changes.cron).toBe(true);
+    expect(changes.aiAgent).toBe(true);
+    expect(agentDeploymentConfigCache.current?.tts).toBeUndefined();
+  });
+
+  test("同一轮里新增 send_voice 又去掉 tts：拒绝 cron.json，agent.json 照常生效", async () => {
+    await writeJson(CRON_CONFIG_PATH, VOICE_TASKS);
+    await writeAgentWithoutTts();
+
+    const changes: HotDeploymentConfigChanges = await reload();
+
+    expect(changes.rejections).toEqual([CRON_REJECTION]);
+    expect(changes.cron).toBe(false);
+    expect(changes.aiAgent).toBe(true);
+    expect(cronConfigCache.current).toBe(baseline.cron);
   });
 });

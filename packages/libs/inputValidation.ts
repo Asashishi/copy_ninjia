@@ -18,6 +18,50 @@ export function invalidInput(
   throw new InputValidationError(sourcePath, fieldPath, expected);
 }
 
+/** 解码字段所在的输入来源与对象路径；原语报错时拼成 `<path>.<key>`。 */
+export interface InputFieldContext {
+  readonly source: string;
+  readonly path: string;
+}
+
+/** 读取对象上的可选布尔字段：缺省为 undefined，存在但不是布尔即拒绝。 */
+export function optionalBooleanField(
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+  { source, path }: InputFieldContext
+): boolean | undefined {
+  const field: unknown = value[key];
+  if (field === undefined) return undefined;
+  if (typeof field !== "boolean") return invalidInput(source, `${path}.${key}`, "a boolean");
+  return field;
+}
+
+/** 读取对象上的可选字符串字段：缺省为 undefined，存在但不是字符串即拒绝。 */
+export function optionalStringField(
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+  { source, path }: InputFieldContext
+): string | undefined {
+  const field: unknown = value[key];
+  if (field === undefined) return undefined;
+  if (typeof field !== "string") return invalidInput(source, `${path}.${key}`, "a string");
+  return field;
+}
+
+/** 读取对象上的可选毫秒时间戳：缺省为 undefined，存在时必须是非负安全整数。 */
+export function optionalTimestampField(
+  value: Readonly<Record<string, unknown>>,
+  key: string,
+  { source, path }: InputFieldContext
+): number | undefined {
+  const field: unknown = value[key];
+  if (field === undefined) return undefined;
+  if (typeof field !== "number" || !Number.isSafeInteger(field) || field < 0) {
+    return invalidInput(source, `${path}.${key}`, "a non-negative safe integer timestamp");
+  }
+  return field;
+}
+
 const STRICT_UTF8_DECODER: TextDecoder = new TextDecoder("utf-8", {
   fatal: true,
 });

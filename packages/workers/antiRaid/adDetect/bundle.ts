@@ -147,7 +147,7 @@ function entriesClaimContextPart(
  * Worker 再用 directText 做归因；发送者本人姓名或正文是广告时直接 block，广告只
  * 来自非白名单回复、引用或转发时先公开警告，五分钟内再次命中才升级。
  *
- * 接法与 appendLinkUrls 完全一致，两条理由同样成立：
+ * 接法与 appendLinkUrls 完全一致，两条同样成立：
  * - **接在截断之后、各有各的配额**（AD_SAMPLE_CONTEXT_MAX_CHARS）。先拼后截等于
  *   给发送者一个零成本绕过手段——几百字废话就能把引文顶出正文额度。
  * - **不带任何系统措辞**（不写「引用：」这类前缀）。那会给正文引入可被伪造的
@@ -193,7 +193,7 @@ export function claimSampleContextParts(
     replyTo = "";
   }
   // 认领者被 enforceBundleCapacity 挤掉时这段引文会跟着从串里消失。那条路径
-  // 本来就是「只剩没判过的可丢」的既定取舍（见文件头），而且是自愈的：串里
+  // 本来就是「只剩没判过的可丢」的既定规则（见文件头），而且是自愈的：串里
   // 再没人带着这段引文，下一条回复原消息的候选就会重新认领一份。
   if (quote.length === 0) {
     if (replyTo.length === 0) return text;
@@ -208,7 +208,7 @@ export function claimSampleContextParts(
 }
 
 /**
- * 在 Worker 侧再收一次样本上下文的长度，理由同 appendLinkUrls：跨线程消息的
+ * 在 Worker 侧再收一次样本上下文的长度，同 appendLinkUrls：跨线程消息的
  * 形状由本侧兜底。原样展开的话这两个字段是整条流水线上唯一没有 Worker 侧上界
  * 的部分，而它们跟着每条 entry 常驻内存，条数按待检表容量放大。
  *
@@ -280,7 +280,7 @@ export function selectAdBundleEntries(bundle: AdMessageBundle): AdBundleSelectio
 }
 
 /**
- * 把已经选好的一串消息拼成模型可读的编号清单，取舍见 selectAdBundleEntries。
+ * 把已经选好的一串消息拼成模型可读的编号清单，见 selectAdBundleEntries。
  * 这里只负责拼，不再自己筛：判定读到的与水位推进依据的必须是同一份清单。
  */
 export function formatAdBundleText(entries: readonly AdCandidateEntry[]): string {

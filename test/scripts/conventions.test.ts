@@ -292,34 +292,32 @@ describe("project convention collectors", () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
     const active: Readonly<Record<string, string>> = {
-      "migrate:bot-config": "bun scripts/migrateBotConfig.ts",
-      "migrate:h-image-add-permission": "bun scripts/migrateHImageAddPermission.ts",
       "migrate:random-image-names": "bun scripts/migrateRandomImageNames.ts",
+      "migrate:translate-sessions": "bun scripts/migrateTranslateSessions.ts",
     };
 
     await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: active }));
     expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
-    for (const entry of ["scripts/migrateHImageAddPermission.ts", "scripts/migrateRandomImageNames.ts", "scripts/migrateBotConfig.ts"]) {
+    for (const entry of ["scripts/migrateRandomImageNames.ts", "scripts/migrateTranslateSessions.ts"]) {
       await Bun.write(join(root, entry), "export {};\n");
     }
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
     // 少一条声明过的边同样要报，不只是多出来的那种。
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:h-image-add-permission": active["migrate:h-image-add-permission"]! },
+      scripts: { "migrate:translate-sessions": active["migrate:translate-sessions"]! },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:bot-config, migrate:h-image-add-permission, migrate:random-image-names"
+        "package.json must expose exactly the declared active cold migration commands migrate:random-image-names, migrate:translate-sessions"
       ),
       expect.stringContaining("migrate:random-image-names must invoke"),
-      expect.stringContaining("migrate:bot-config must invoke"),
     ]);
 
     await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: { ...active, "migrate:legacy": "bun scripts/legacy.ts" } }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:bot-config, migrate:h-image-add-permission"
+        "package.json must expose exactly the declared active cold migration commands migrate:random-image-names, migrate:translate-sessions"
       ),
     ]);
   });

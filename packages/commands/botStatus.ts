@@ -4,7 +4,6 @@ import { atmosphereOf } from "../libs/atmosphere";
 import type { MessageEntity } from "grammy/types";
 import type { CommandContext, Context } from "grammy";
 import { activeGagSessionCount } from "../cache/main/gag";
-import { translateStates } from "../cache/main/translateState";
 import { TRANSLATE_CHAT_USER_LIMIT } from "../consts/translate";
 import { getAdDetectAgentConfig, getAgentDeploymentConfig } from "../config/agent";
 import { adDetectConfigReadiness, aiChatConfigReadiness } from "../config/readiness";
@@ -60,12 +59,17 @@ function statusLabel(value: string): string {
   return `${normalized.slice(0, BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS - 1)}…`;
 }
 
+/**
+ * 只展示模型名：不带 provider，并去掉模型 id 里最后一个 `/` 之前的厂商命名空间
+ * （`openai/gpt-6-luna` 展示为 `gpt-6-luna`）。
+ */
 function capabilityLine(
   label: string,
   config: AgentCapabilityConfig | undefined
 ): string {
   if (config === undefined) return `• ${label}：未配置`;
-  return `• ${label}：已配置 · ${config.provider} / ${statusLabel(config.model)}`;
+  const modelName: string = config.model.slice(config.model.lastIndexOf("/") + 1);
+  return `• ${label}：已配置 · ${statusLabel(modelName)}`;
 }
 
 /** 把进程 uptime 格式化为不会随本地时区变化的天与时分秒。 */
@@ -158,7 +162,7 @@ function featuresJson(chatState: Readonly<ChatState>): string {
 }
 
 /**
- * 只展示 provider/model，不输出 api_key、base_url 或配置失败细节。
+ * 模型能力只展示模型名，不输出 provider、api_key、base_url 或配置失败细节。
  *
  * 本群 id 用 `code` 实体，权限块与功能块用 `pre` 实体标出范围，而不是拼反引号：本项目的发送
  * 边界一律不设 parse_mode（见 infra/telegram/actions/messages.ts），反引号只会原样显示。
@@ -190,7 +194,7 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     lines.push(capabilityLine("记忆摘要", snapshot.aiConfig.summary));
     lines.push(capabilityLine("媒体理解", snapshot.aiConfig.media));
     lines.push(capabilityLine("图片生成", snapshot.aiConfig.image));
-    lines.push(capabilityLine("歌曲生成", snapshot.aiConfig.song));
+    lines.push(capabilityLine("语音合成", snapshot.aiConfig.tts));
   }
   lines.push(
     snapshot.adDetectReady && snapshot.adDetectConfig !== null
@@ -274,7 +278,7 @@ export async function handleBotStatusCommand(
     telegramPending: stats.pending,
     telegramCapacity: stats.capacity,
     activeGagSessions: activeGagSessionCount(),
-    activeTranslateSessions: translateStates.get(ctx.chat.id)?.length ?? 0,
+    activeTranslateSessions: getChatState(ctx.chat.id).translate?.length ?? 0,
     aiContextUsage: aiMemoryUsages.get(ctx.chat.id),
     processStatus: readBotProcessStatus(),
   });

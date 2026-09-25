@@ -41,6 +41,22 @@ The dedicated library accepts only regular images named by content SHA-256. Subd
 
 `just_once` records live only in memory and are registered again after restart; remove completed tasks from `config/cron.json`. `rand_cron` waits also reset, and missed occurrences are not replayed. Fixed images require arrays of 1–10 items, whereas random-image `path` is a directory string. Cron relative paths use the project root; the dedicated library uses the data root. See [deployment configuration](../../config_example/README/en.md#cronjson) for examples.
 
+## Why is a scheduled or `/send` voice message not sent?
+
+Both synthesize on the AI Worker with `agent.tts` from `config/agent.json`. If `cron.json` uses `send_voice` without `tts`, startup is refused, and a runtime edit that creates this combination is rejected by hot reload with an error log; a `/send` voice request replies that speech synthesis is not configured. If `tts` is configured and it still fails, check the logs: `speech synthesis failed: worker unavailable` means the AI Worker is not running (`stickers.json`, `mood.json` and `prompt/persona.md` must also be present), `tts unsupported` means the selected provider does not implement speech synthesis (currently only `google` does), and `synthesis failed` / `timed out` usually point to the model side. A `/send` voice request must be exactly one code block with `type` set to `tts`; anything else is relayed as a normal message. Fields and limits are in [deployment configuration](../../config_example/README/en.md#cronjson) and [08 commands](08-commands.md).
+
+## How are voice length, temperature, and memory configured?
+
+| Entry point | Text limit | AI memory after a successful send |
+| :--- | ---: | :--- |
+| AI `send_voice` | 64 | Records the spoken line |
+| Private `/send` TTS | 256 | No automatic recording |
+| cron `send_voice` | 256 | No automatic recording |
+
+Lengths use UTF-16 code units; `tone` is limited to 64 for every entry point. Validation follows whitespace normalization. Oversized `/send` requests get a format hint. Invalid cron fields reject startup, or reject the entire hot-reload update with an error log. Audio responses also have an 8 MiB cap; text length does not guarantee a duration.
+
+Set the voice in `config/agent.json` at `agent.tts.voice`. All three entry points share `GEMINI_SPEECH_TEMPERATURE` (currently `1.25`) and `GEMINI_SPEECH_STYLE` in [`packages/consts/aiChat/gemini.ts`](../../packages/consts/aiChat/gemini.ts). These are source constants, requiring a rebuild or a restart of the source service after editing; they are not JSON settings.
+
 ---
 
 <div align="center">

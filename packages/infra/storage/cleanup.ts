@@ -1,8 +1,7 @@
-import { CANDIDATE_OWNER_PID_PATTERN } from "../../consts/storage";
+import { CANDIDATE_OWNER_PID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { isErrno } from "../../libs/errno";
 import { logger } from "../logger";
 import { readLinuxProcessIdentity } from "./instanceLock";

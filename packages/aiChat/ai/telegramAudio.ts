@@ -4,11 +4,11 @@
  * 与 telegramImage.ts 的两处刻意差别：
  * 1. **不转码。** voice note 恒为 OGG/Opus，而多模态理解接口本来就收 audio/ogg；
  *    图片那侧要过 sharp 是因为两家视觉接口只认 jpg/png，这里没有对等约束。
- * 2. **上限更小。** 音频要 base64 内联进模型请求，编码后涨 4/3，而单次内联请求
- *    有 20 MB 的总上限——沿用媒体那条 16 MiB 会编出 21 MB 以上、整条请求被服务端
- *    拒收（见 consts/aiChat/voice.ts 的 VOICE_MAX_DOWNLOAD_BYTES）。
+ * 2. **上限更小。** 音频同样 base64 内联进模型请求，编码后涨 4/3，受同一份内联
+ *    请求预算约束；语音另按 Worker 内存取更小的上限（见 consts/aiChat/voice.ts 的
+ *    VOICE_MAX_DOWNLOAD_BYTES 与 consts/aiChat/media.ts 的 MEDIA_INLINE_REQUEST_MAX_BYTES）。
  *
- * 两步超时仍各自计时、invalidate signal 仍贯穿两步，理由与取图那条完全相同
+ * 两步超时仍各自计时、invalidate signal 仍贯穿两步，与取图那条相同
  * （见 telegramImage.ts 的超时注释）。完整下载 URL 只存在于主线程请求边界，
  * Worker 只接收受上限约束的字节，不接触或记录 URL。
  *

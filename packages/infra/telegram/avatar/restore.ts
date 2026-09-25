@@ -68,7 +68,7 @@ async function attemptRestoreDefaultProfilePhoto(
   try {
     const response: Response = await fetch(url, {
       // 跟随重定向：地址是部署配置，而图床与对象存储的直链先跳一次到存储域名是
-      // 常态（理由见 restoreDefaultProfilePhoto）。
+      // 常态（见 restoreDefaultProfilePhoto）。
       redirect: "follow",
       signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
     });

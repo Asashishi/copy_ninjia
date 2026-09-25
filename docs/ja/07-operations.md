@@ -67,8 +67,8 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。未設定時はプロジェクトルートを使用し、明示的な空白値は起動時に拒否します。
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：`global.copy` の全体復唱状態、`global.assets` の 4 本の素材 URL とランダム画像ディレクトリ、`translate` の群別翻訳セッション。グループスイッチ・ロックダウン記録・権限スナップショットは `database/storage.sqlite` の `chat_states` に保持します。
-  - **翻訳形式**：任意のトップレベル `translate` は欠落時 `{}`。キーは正規形の負整数グループ ID、値は 1–5 セッションの空でない配列です。例：`"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`。最大 25 群、同群内の identity ID は一意で、方向は `ja`・`cn`・`en`・`uk`・`ru` のみ。identity は `CachedUser` として厳密検証します。`global.copy.copyMode` は欠落・`reverse`・`nya` だけを受け入れます。主ファイルまたは LKG の不正、単独オブジェクトなどの旧形式は起動を拒否し、自動更新や項目破棄をしません。
+  - **内容**：`global.copy` の全体復唱状態と、`global.assets` の 4 本の素材 URL とランダム画像ディレクトリ。グループスイッチ・ロックダウン記録・権限スナップショット・翻訳セッションは `database/storage.sqlite` の `chat_states` に保持します。
+  - **形式**：トップレベルは `global` だけです。`global.copy.copyMode` は欠落・`reverse`・`nya` だけを受け入れます。主ファイルまたは LKG の不正、`translate` などの未知のトップレベルキーは起動を拒否し、自動更新や項目破棄をしません。
   - **状態の手動編集**：サービスを停止して inactive を確認し、作業ツリー外の `mktemp -d` に主備とデプロイデータをバックアップして mode・所有者・SHA-256 を記録します。両方を編集し、変更対象外の `global` を保持して `decodeStateFile` で厳密検証し、差分と権限を確認してから起動します。アップグレードは下記 cold migration に従い、サンプルや Git の内容でデプロイ状態を置き換えてはいけません。
   - **バックアップ**：主・副を同時にバックアップ。
   - **素材直リンクの変更は停止中のみ**：プロセスは正式な状態をメモリに保持しファイル全体を
@@ -119,8 +119,8 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     ファイルをすべて削除し、自然な期限切れを待ちません（管理者権限の剥奪では削除しません）。
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
   - **内容**：schema v11 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します（`data` は `blockedAt`、Telegram metadata、省略可能な `participantInvalidCount` を持ち、この field を認識しない旧版はこの field を持つ row があると起動を拒否します。そうした版へ戻すときはプログラムだけを置き換えず、アップグレード前の同一時点の database バックアップも併せて復元しなければなりません）。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
-  - **群状態と人設**：`chat_states` は最大 25 行。`chat_id` が主キー、`status` は必須 JSONB、`ai_persona` は NULL 許容・空白のみ不可の TEXT で、本群専用プロンプトを保存します。未設定ならプロジェクトの `prompt/persona.md` を使用します。起動時に状態と人設を既存メインスレッド群 cache に読み込み、`/bot_status` は設定の有無をそこから確認します。`/init disable` と Bot 退群では行と人設を削除し、未復元 lockdown は復元 protocol に従って保持します。
-  - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
+  - **群状態と人設**：`chat_states` は最大 25 行。`chat_id` が主キー、`status` は必須 JSONB、`ai_persona` は NULL 許容・空白のみ不可の TEXT で、本群専用プロンプトを保存します。未設定ならプロジェクトの `prompt/persona.md` を使用します。起動時に状態と人設を既存メインスレッド群 cache に読み込み、`/bot_status` は設定の有無をそこから確認します。`status.translate` は本群の翻訳セッションで、欠落はセッションなし、存在する場合は 1–5 セッションの空でない配列です（例：`"translate": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]`）。同群内の identity ID は一意で、方向は `ja`・`cn`・`en`・`uk`・`ru` のみ、identity は `CachedUser` として厳密検証します。`/init disable` と Bot 退群では行と人設を削除し、未復元 lockdown は復元 protocol に従って保持します。
+  - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。まだ説明していない Bot 画像の逐語メッセージは `pendingImage`（`origin` は `command` / `generated` / `referenceGenerated`、`caption` は単一行）を持ち、説明済みの画像と通常のメッセージはこのキーを持ちません。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
   - **バックアップと復元**：群会話と専用プロンプトを含む機密データです。Bot 停止中に本体と存在する WAL/SHM を同一集合として作業ツリー外へコピーし、所有者・mode・SHA-256 を記録して検証します。Disk I/O Worker が DB を独占し、起動時に integrity、JSONB、schema、系譜、厳密な行 codec、policy 排他、outbox 参照を検証します。群状態と AI snapshot は同じ接続から復元します。identity の参照は 8,192 件 LRU と update に必要な ID の cold read を使います。検証失敗時は自動建庫・移行・行破棄・縮退をせず起動を拒否します。
 - **`memory/ad-detected/sample.json`**
   - **内容**：広告判定ヒットの生サンプル。時刻、メッセージ ID と本文、判定理由、
@@ -160,43 +160,47 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 起動は database 欠落を「空 policy」と推測しないため、新規 deployment は現行 schema の空 database を明示的に一度作成する必要があります。手順は [01 セットアップ](01-getting-started.md#identity-storage-の初期化) にあり、`install.sh` にも含まれています。作成 entry point は既存 target の上書きを拒否します。
 
-### schema v10 からの cold migration
+<a id="upgrade-14"></a>
 
-database の移行入口は [`scripts/migrateHImageAddPermission.ts`](../../scripts/migrateHImageAddPermission.ts) です。直前の移行出力の厳密な schema v10 系譜を受け付け、schema v11 を出力します。古い配置は先に [段階的アップグレード](#1109-からの段階的なアップグレード) で v10 に更新してください。未知の系譜と移行済み v11 は拒否します。Bot 設定と画像名には本節の独立ツールを使います。本番起動は現形式だけを検証し、移行は行いません。
+### 13.0.2 から 14.0.0 への更新
 
-1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、実際の設定・資格情報・実行データをコピーします。SQLite 本体と既存 WAL/SHM は同一停止時点のものを使い、ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
-2. ソース外の新しい出力先を指定します。親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
+> [!IMPORTANT]
+> 14.0.0 では翻訳セッションの手動移行が必要です。停止とバックアップの後にプログラムと配置データを更新し、すべての設定・データを検証してから起動してください。
+
+| 確認項目 | 操作 |
+| :--- | :--- |
+| state と SQLite | 次節の翻訳セッション移行を実行。`state.json` は `global` だけを保持し、セッションは `chat_states` へ移動。schema は v11 のまま |
+| AI 設定 | `config/agent.json` の `agent.song` を削除。楽曲生成は提供しません。音声を使う場合は[設定ガイド](../../config_example/README/ja.md#agentjson)に従い、`agent.tts` の provider・モデル・資格情報・音色を明示設定（`base_url` は任意） |
+| 画像ライブラリ | 専用ディレクトリの全ファイル名を確認。UUID 名が残る場合は本ページの画像移行で SHA-256 名を生成 |
+| 復元と権限 | 外部バックアップと一覧を保持。設定・資格情報を復元し、移行成果物の所有者と mode を維持。サービスアカウントには state、DB ディレクトリ（WAL/SHM を含む）、lock、memory への書き込み権限が必要 |
+
+コールド移行では、起動時と同じ完全な読み取り専用 DB 検証を行い、JSONB・行形式・identity policy の排他・outbox 参照を確認します。失敗時はバックアップと一時成果物を保持し、該当エラーを解消してから続行します。固定の 13.0.2 fixture と新規インストールは隔離 mock テストで検証していますが、実際の配置データも別途検証が必要です。
+
+### 翻訳セッションのコールド移行（state.json → chat_states）
+
+翻訳セッションは `state.json` の `translate` ブロックから、SQLite `chat_states` の各グループ行の `translate` フィールドへ移り、`state.json` は `global` だけを保持します。現行の起動と installer は `translate` を含む state ファイルを拒否し、自動移行は行いません。入口は [`scripts/migrateTranslateSessions.ts`](../../scripts/migrateTranslateSessions.ts) で、13.x が出力する形式だけを受け付けます。state は `global` と任意の `translate`、database は受け付け可能な系譜の schema v11 で、どのグループ行にもまだ `translate` がないことが条件です。未知の系譜、移行済み database、不正なセッション、移行後に 25 グループを超える場合は拒否します。古い配置は先に[次節](#130x-より前のバージョンからのアップグレード)で 13.x 形式に到達させてください。本番起動は現形式だけを検証し、移行は行いません。
+
+1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、`state.json`、`state.json.bak`、`database/` 全体（SQLite 本体と既存 WAL/SHM は同一停止時点のもの）、`config/` と `memory/` をコピーします。ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
+2. ソースバックアップ外の新しい出力先を指定します。親ディレクトリは事前に存在する必要があります。スクリプトはソース、サービス、実際のデプロイファイルを変更しません。
 
 ```bash
-bun run migrate:h-image-add-permission \
+bun run migrate:translate-sessions \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. 各 `permission_list.policy` に boolean 権限 `isCanAddHImage`（`/h_image add` による画像の追加）を追加します。既存権限がすべて true のメンバーだけ true、他は false です。元の権限・identity metadata・群状態・context・専用人設・他領域のデータは保持します。スーパー管理者は database 行に依存せず、runtime で常に true を持ちます。新規メンバーは false が既定で、以後は `/permission` で個別に付与・撤回できます。
-4. 変換、厳密検証、SQLite checkpoint、接続終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata、および `enabledPermissions`・`disabledPermissions` を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行します。既存出力は上書きできません。
-5. 停止状態で検証済み SQLite 本体を手動置換します。旧 WAL/SHM はバックアップ済みで DB を開くプロセスがない場合だけ削除し、新本体と混在させません。一覧から元の所有者と mode を復元し、サービスアカウントが SQLite と親ディレクトリに書けることを確認します。`config/` は読み取り専用でも構いません。
-6. DB を開く前に設置後ハッシュを確認し、設定・主備状態・現行 DB を厳密検証します。すべて整ってから起動し、最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認します。全検証完了まで外部バックアップを保持します。rollback は旧データに対応するプログラムと同一時点のバックアップ全体を復元します。
+バイナリ配布には有効な全コールド移行が同梱され、system Bun やソース取得は不要です：`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateTranslateSessions.js --source-root <backup> --output-root <new-directory>`。
+
+3. 主 `state.json` のグループごとのセッションを、対応する `chat_states` 行の `translate` フィールドへ書き込みます。既存行は status だけを置き換え、AI context と人設は保持します。行のないグループには、セッションだけを含む行を新規作成します。`state.json` と `state.json.bak` はそれぞれ `translate` ブロックを除去し、`global` はそのまま保持します。バックアップ副本のセッションは移行しません。他のテーブル、schema バージョン、移行系譜は変わりません。
+4. 変換、厳密検証、SQLite checkpoint、接続終了、ソース再確認が完了した場合だけ `ready.json` が生成されます。`sourceFiles` と `outputFiles` のハッシュ・metadata、および `migratedChats`・`migratedSessions`・`createdChatRows` を確認します。失敗・中断時はバックアップと途中出力を保持し、元のバックアップから別の新規出力先へ再実行します。既存出力は上書きできません。
+5. 停止状態で `state.json`、存在する場合の `state.json.bak`、`database/storage.sqlite` を手動置換します。旧 WAL/SHM は一貫したバックアップがあり DB を開くプロセスがない場合だけ削除し、新本体と混在させません。`sourceFiles` から元の所有者と mode を復元し、サービスアカウントが state ファイル、SQLite と親ディレクトリに書けることを確認します。`config/` は読み取り専用でも構いません。
+6. DB を開く前に設置後ハッシュを確認し、設定・主備状態・現行 DB を厳密検証します。すべて整ってから起動し、最低 2 回の supervisor 再起動間隔にわたり `active/running`、増えない `NRestarts`、journal に新しい非ゼロ終了がないことを確認し、翻訳が有効なグループでセッションが引き続き動作することを確かめます。全検証完了まで外部バックアップを保持します。rollback は対応するプログラムと同一時点のバックアップ全体を復元します。
 
 読み取り専用 SQLite 接続でも SHM インデックスを再構築する場合があります。DB を開く前にハッシュを記録し、サイドカー索引の変化は元のバックアップ清単を上書きせず別途記録してください。
 
-### Bot 設定と画像ソースのコールド移行
+### 13.0.x より前のバージョンからのアップグレード
 
-サービスを停止して inactive を確認し、設定 root、data root、state 主副本と対象画像の外部バックアップを作成します。Google 翻訳を利用する配置では project root の `g-auth.json` もバックアップしてください。ファイル一覧、ハッシュ、所有者、mode を記録します。設定・data・project のバックアップは分離可能で、出力先は設定と data の両方の外にある新規ディレクトリとし、どの入力ファイルの実体も含めてはいけません。受け付ける直接入力形式は `telegram.json`、任意の state フィールド `randomImageDir`、固定画像の scalar cron source です。12.1.0 で画像フィールドや `cron.json` が欠落している場合、補って作る必要はありません。新旧混在、不正値、さらに古い形式は拒否され、古い配置は先にこの入力形式まで段階的に更新する必要があります。
-
-ソースでは `bun run migrate:bot-config --source-config-root <config-backup> --source-data-root <data-backup> --output-root <new-directory> [--source-google-auth <credentials-backup-file>]`。バイナリ配布には有効な全 migration tool が同梱され、system Bun やソース取得は不要です。次の例は project root の資格情報も移行します：
-
-```bash
-BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateBotConfig.js --source-config-root /backup/config --source-data-root /backup/data --output-root /backup/prepared --source-google-auth /backup/project/g-auth.json
-```
-
-project root に Google 資格情報がない場合、`--source-google-auth` は省略します。tool は場所を検索・推測しません。明示したファイルは存在し、現在のサービスアカウントの厳密な検証を通る必要があります。UTF-8 BOM を含む元のバイト列を出力の `config/g-auth.json` へそのままコピーし、ハッシュがバックアップと一致することを確認します。この指定時に入力設定 root に `g-auth.json` が存在すると、dangling symlink を含め完了を拒否します。先に資格情報の出所を確認してください。manifest は path、hash、mode、所有者、link 構造のみを記録し、資格情報の本文を含めません。
-
-同じディレクトリの `migrateRandomImageNames.js` と `migrateHImageAddPermission.js` は、それぞれ独立した画像名と SQLite の移行です。引数は各 `--help` で確認します。後者は 12.1.0 の schema v10 データベースから v11 産物を作成します。停止時のバックアップには、存在する `database/storage.sqlite-wal` と `database/storage.sqlite-shm` も保持してください。その tool の manifest に従って移行済みデータベースを配置し、古い sidecar を混ぜてはいけません。通常起動と installer は自動移行しません。
-
-完了マーカーは `ready.json` のみです。中断時は現場を保持し、新規出力先で再実行します。ハッシュ確認後、mapping の `config/bot.json`、任意の `config/cron.json`、`config/g-auth.json`、`data/state.json`/`.bak` だけを手動配置し、バックアップ済みの旧 `telegram.json` 入口を除去します。元の所有者、mode、symlink 構造を復元してください。project root の資格情報バックアップは全検証終了まで保持します。現在の runtime は設定 root の資格情報だけを読みます。一時ファイルは 0600、ディレクトリは 0700 です。配置時は manifest に従って権限を復元し、サービスアカウントが SQLite ディレクトリ（WAL/SHM を含む）、state、各 memory ディレクトリへ書けることを確認します。その他の設定と未変更データはバックアップから保持し、サンプルで上書きしません。画像パスは維持され、画像の移動はしません。画像名の移行が必要なら別 tool を実行し、画像だけを配置してください。専用画像ディレクトリに manifest を入れてはいけません。
-
-全設定・state・画像を検証してから起動し、active/running、最低 2 回の supervisor 再起動間隔、NRestarts の非増加、journal に新しい非ゼロ終了がないことを確認してからバックアップを削除します。失敗時はバックアップと現場を保持します。
+13.0.x より前の配置は、先に段階的に 13.x 形式へ到達させます。`13.0.2` タグのソース（または 13.0.2 のリリースパッケージ）を用意し、そのドキュメントに従って停止状態で `migrate:h-image-add-permission`（schema v10 → v11）と `migrate:bot-config`（12.1.0 の Bot 識別設定、画像ライブラリのフィールド、cron の固定画像、project root の Google 資格情報）を実行します。その出力を配置してから、本バージョンで上節の翻訳セッション移行を実行します。中間バージョンを起動する必要はありません。現行の入口はこれらの古い形式を直接受け付けません。installer も 12.1.0 の `telegram.json` 識別入口を見つけると拒否し、先に 13.x へ更新するよう案内します。
 
 ### ランダム画像ライブラリのファイル名コールド移行
 
@@ -236,7 +240,7 @@ bun run migrate:random-image-names \
 
 ### 11.0.9 からの段階的なアップグレード
 
-11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、最後に現行入口で v11 を生成します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは最後の段階、つまり上節の手順だけを実施します。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0 タグが必要で、三つの出力ディレクトリは未作成である必要があります。
+11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、13.0.2 リリースの `migrate:h-image-add-permission` で v11 を生成します。Bot 設定も同様に 13.0.2 の `migrate:bot-config` で 13.x 形式へ移行します。その後、現行入口で[翻訳セッション移行](#翻訳セッションのコールド移行statejson-chat_states)を完了します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは 13.0.2 の段階から始めます。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0、13.0.2 タグが必要で、各出力ディレクトリは未作成である必要があります。
 
 中間ソースはこの手順の必須入力です。11.0.9 タグまたは現行ソースアーカイブだけを持つ環境では、先に固定コミットの完全なソースを取得してください。リリース前にそのソースを独立して保持・提供し、squash 後に reset される dev 履歴だけに依存しないでください。
 
@@ -261,12 +265,18 @@ git archive 12.1.0 | tar -x -C "$RELEASE_CODE"
     --source-root /absolute/new-schema-v9-staging \
     --output-root /absolute/new-schema-v10-staging
 )
-bun run migrate:h-image-add-permission \
-  --source-root /absolute/new-schema-v10-staging \
-  --output-root /absolute/new-schema-v11-staging
+V13_CODE="$(mktemp -d)"
+git archive 13.0.2 | tar -x -C "$V13_CODE"
+(
+  cd "$V13_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:h-image-add-permission \
+    --source-root /absolute/new-schema-v10-staging \
+    --output-root /absolute/new-schema-v11-staging
+)
 ```
 
-第一段階では元の 16 権限がすべて true の場合だけ `isCanConfigAiPrompt` を付与し、第二段階では 17 権限がすべて true の場合だけ `isCanClearContext` を付与し、第三段階では 18 権限がすべて true の場合だけ `isCanAddHImage` を付与します。第一段階は `chat_states` に存在するグループの記憶だけを取り込みます。対応行のない記憶は `discardedContexts` に計上し、グループ状態を作成しません。各段階の `ready.json`、入力・出力ハッシュ、取り込み・破棄件数を確認し、最終 v11 主 DB だけを設置します。元のバックアップ全体を保持し、移行済みの `memory/ai/` を配備ルートから手動で削除してください。他の設定と状態は元のパスに保持します。続いて上節の所有者・権限復元、厳密検証、起動観察を実施します。現行ランタイムと移行入口は v8 や v9 を直接受け付けません。
+第一段階では元の 16 権限がすべて true の場合だけ `isCanConfigAiPrompt` を付与し、第二段階では 17 権限がすべて true の場合だけ `isCanClearContext` を付与し、第三段階では 18 権限がすべて true の場合だけ `isCanAddHImage` を付与します。第一段階は `chat_states` に存在するグループの記憶だけを取り込みます。対応行のない記憶は `discardedContexts` に計上し、グループ状態を作成しません。各段階の `ready.json`、入力・出力ハッシュ、取り込み・破棄件数を確認し、v11 主 DB と 13.x 形式の state を翻訳セッション移行の入力にします。元のバックアップ全体を保持し、移行済みの `memory/ai/` を配備ルートから手動で削除してください。他の設定と状態は元のパスに保持します。続いて上節の所有者・権限復元、厳密検証、起動観察を実施します。現行ランタイムと移行入口は v8 や v9 を直接受け付けません。
 
 ## 起動失敗の調査
 
@@ -360,7 +370,8 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 - `logs/`：Disk I/O Worker がエラーを batch 追記します。文面は英語なので直接 grep できます。
 - Worker crash はレート制限付きで自己修復し、ミラーまたは snapshot から復元します。介入が必要なのは crash loop が繰り返される場合で、通常は永続化データとコード version の不一致が原因です。
 - 永続化が上限付き retry を使い切ると、プロセスは非ゼロで終了します。これは availability より durability を優先する設計です。systemd が最後の整合状態から再起動します。
-- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定時タスクのある動作が最終的に失敗し、その回の残りを飛ばしました。末尾は Telegram のエラーコードと説明、またはローカルの理由です。`403` はたいてい Bot が送信先グループから外されたこと、`400` はたいてい URL が取得できないか Telegram がファイル形式を受け付けないこと、`local file ... is missing` は `payload.path` の指すローカルファイルがなくなったことを示します。`cron.json` や素材を直せば hot reload され、再起動は不要です。
+- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定時タスクのある動作が最終的に失敗し、その回の残りを飛ばしました。末尾は Telegram のエラーコードと説明、またはローカルの理由です。`403` はたいてい Bot が送信先グループから外されたこと、`400` はたいてい URL が取得できないか Telegram がファイル形式を受け付けないこと、`local file ... is missing` は `payload.path` の指すローカルファイルがなくなったこと、`speech synthesis failed: <理由>` は `send_voice` が音声を合成できなかったことを示します（`tts unconfigured` / `tts unsupported` は設定の問題、`worker unavailable` は AI Worker が動いていないこと、`synthesis failed` / `timed out` はたいていモデル側の問題で、同時に `Gemini speech synthesis API` のエラーが 1 行出ます）。`cron.json` や素材を直せば hot reload され、再起動は不要です。
+- `/send TTS for chat <id> produced no voice: <理由>`：`/send` 中継の音声 request が音声を合成できませんでした。理由の読み方は上と同じです。スーパー管理者の個人チャットにも失敗の一言が届き、中継セッションは開いたままです。
 - `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：複数の会話に送るタスク（`["all"]`、`["except", ...]`、または複数を個別に列挙）がある会話で最終的に失敗し、その会話の残りの動作だけを飛ばしました。他のグループには通常どおり送ります。原因の読み方は上と同じです。`Cron task "<name>" skipped <n> chat(s) without send permission.` は通常ログで、Bot に送信権限がないか照会に失敗したためにその回で飛ばしたグループがあったことを示します。
 - `Failed to probe chat membership` / `Failed to ban chat member` が `PARTICIPANT_ID_INVALID` で終わる場合、通常はブロックリストに退会済みアカウントがあります。sweep は通常の backoff で retry を続けます。1 chat での 1 回の sweep 処分ですべての要求がこのエラーを返すと 1 回と数え、いずれかの chat でそのユーザーを確認または BAN できれば 0 に戻ります。5 回に達するとブロックリストと待機中の処分から自動で外し、`Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results` を記録します。`/wed` の日次再確認は同じエラーでその ID を候補集合から外し、error log は残しません。
 

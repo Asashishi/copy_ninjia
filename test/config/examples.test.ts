@@ -109,6 +109,10 @@ describe("config_example 与解析器保持同步", () => {
     for (const entry of config) {
       for (const action of entry.actions) {
         // 本地路径的两种写法：相对项目根解析后落在项目根下，绝对路径在项目根之外。
+        if (action.type === "send_voice") {
+          sources.add(action.tone === undefined ? "send_voice" : "send_voice:tone");
+          continue;
+        }
         if (action.type !== "send_message" && action.source.kind === "path") {
           pathForms.add(action.source.path.startsWith(`${PROJECT_ROOT}${sep}`) ? "relative" : "absolute");
         }
@@ -128,6 +132,8 @@ describe("config_example 与解析器保持同步", () => {
       "send_image:random:directory",
       "send_image:urls",
       "send_message",
+      "send_voice",
+      "send_voice:tone",
     ]);
     expect([...pathForms].sort()).toEqual(["absolute", "relative"]);
   });

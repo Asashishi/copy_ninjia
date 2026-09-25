@@ -38,7 +38,8 @@ export const globalCopyState: GlobalCopyState = {
  * 没有任何写入方**——没有命令改它，换图靠手工编辑 state.json 后重启。容量固定为
  * 五个可选标量，五个字段在创建时一次写齐（哪怕都是 undefined），此后只赋值不增删
  * 键：它是每次 global 状态落盘都要读的长期单例，
- * shape 不该在 loadState 之后再变一次。
+ * shape 不该在 loadState 之后再变一次。字段的创建顺序就是 state.json 中
+ * `global.assets` 的写出顺序，`randomHImageDir` 在首位。
  *
  * 字段缺省 = 从没设过，该项回退到代码里的内置常量（见 infra/storage/stateStore.ts
  * 的五个取值函数）。取值函数保留这层兜底而不依赖补齐：补齐只发生在主进程的启动
@@ -46,9 +47,9 @@ export const globalCopyState: GlobalCopyState = {
  * 渲染与复原头像都跑在主线程，Worker 侧没有镜像。
  */
 export const globalAssetState: GlobalAssetState = {
+  randomHImageDir: undefined,
   fortuneThumbnailUrl: undefined,
   probabilityThumbnailUrl: undefined,
   gagThumbnailUrl: undefined,
   botDefaultAvatarUrl: undefined,
-  randomHImageDir: undefined,
 };

@@ -26,6 +26,7 @@ export async function collectTelegramMessageProblems(
     "antiRaid/adDetect.ts": "announceAdDisposal",
     "auto/message/qaDirectAnswer.ts": "sendQaDirectAnswer",
     "auto/message/proxySend.ts": "handlePrivateProxySend",
+    "auto/message/proxyTts.ts": "sendProxyTtsNotice",
     "auto/message/proactive.ts": "replyToBathTrigger",
   };
   for (const directory of ["workers", "antiRaid", "auto"]) {

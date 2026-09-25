@@ -2,7 +2,7 @@ import type { PrioritizedBoundedTaskRunner } from "../../libs/prioritizedBounded
 import type {
   AiImageProvider,
   AiMediaProvider,
-  AiSongProvider,
+  AiSpeechProvider,
   AiSummaryProvider,
   AiTextProvider,
 } from "./provider";
@@ -28,5 +28,5 @@ export interface AiProviderFacadeCache {
   /** undefined 表示尚未解析，null 表示部署未配置该能力。 */
   image: AiImageProvider | null | undefined;
   /** undefined 表示尚未解析，null 表示部署未配置该能力。 */
-  song: AiSongProvider | null | undefined;
+  tts: AiSpeechProvider | null | undefined;
 }

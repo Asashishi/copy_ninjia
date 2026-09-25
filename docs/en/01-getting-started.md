@@ -107,7 +107,7 @@ capability reference. Put bot identity and the super administrator in `config/bo
 - **`super_admin_user_id`** (required)
   - One decimal super-administrator user ID. That identity by itself holds **every** granular
     permission the allowlist can grant, so it does **not** need a row in the SQLite table;
-    the copy, image-generation and song-generation cooldown exemptions belong to this
+    the copy and image-generation cooldown exemptions belong to this
     identity alone. It is also always inside the allowlist boundary, and therefore protected
     from automatic enforcement, and cannot be targeted by `/block`, `/mute`, or `/batch_kick`.
     The join-verification "通过" button recognises only non-anonymous administrators of that
@@ -154,12 +154,14 @@ Editing `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, or `cron.
     non-blank and unique, at most 500.
 
 - **`config/agent.json`** ([example](../../config_example/agent.json))
-  - **Contents**: `agent.ad_detect`, `text`, `summary`, `media`, `image`, and `song`.
+  - **Contents**: `agent.ad_detect`, `text`, `summary`, `media`, `image`, and `tts`.
     Each capability independently declares `provider`, `api_key`, optional `base_url`, and
     `model`; providers currently accept `google` and `openai`. AI chat requires `text`,
-    `summary`, and `media`. Missing `image` or `song` only removes its tool, while missing
-    `ad_detect` only disables ad detection. OpenAI image capabilities also require an explicit
-    `image_protocol`: `openai`, `openai-standard`, or `xai`. `base_url` accepts `https` only;
+    `summary`, and `media`. Missing `image` or `tts` only removes its tool (a missing `tts` also
+    makes `/send` TTS requests fail, and refuses startup when `cron.json` uses `send_voice`), while
+    missing `ad_detect` only disables ad detection. OpenAI image capabilities also require an explicit
+    `image_protocol`: `openai`, `openai-standard`, or `xai`; `tts` also requires a non-empty `voice`
+    (a prebuilt voice name or an AI Studio Voice design `voice_` ID). `base_url` accepts `https` only;
     plain `http` is limited to `localhost`, `127.0.0.1`, and `::1`, and the URL must carry no
     userinfo and no `#` fragment.
   - **Validation**: [`packages/config/agent.ts`](../../packages/config/agent.ts). Unknown keys,
@@ -245,20 +247,20 @@ The three inline thumbnails (the two `/luck_challenge` results and the gag speec
 ```json
 "global": {
   "assets": {
+    "randomHImageDir": "./h_image",
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…",
-    "randomHImageDir": "./h_image"
+    "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-The first four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
+The four keys after it are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
 
-Missing values among the five fields are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The first four fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+Missing values among the five fields are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The four URL fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
 
-The fifth key, `randomHImageDir`, is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. A first-run `state.json` is seeded after successful startup. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
+The first key, `randomHImageDir`, is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. A first-run `state.json` is seeded after successful startup. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
 
 **Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
 

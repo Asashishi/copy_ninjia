@@ -4,8 +4,8 @@
  * 本目录下的任何子模块。
  *
  * 音频转写走 OpenAI 兼容 audio transcriptions；所配 media 模型/端点是否支持由
- * 第一次真实请求确认并缓存。生歌仍是可选能力，本包不实现，因此 OpenAI song
- * 配置不会把工具挂进本轮。
+ * 第一次真实请求确认并缓存。语音合成是可选能力，本包不实现，因此 OpenAI tts
+ * 配置不会把语音工具挂进本轮。
  */
 
 import { generateOpenAiImage } from "./image";

@@ -9,14 +9,15 @@ import {
   hasCopyableContent,
   isReplyToSelf,
   pickAnimationVisionSource,
-  pickPhotoFile,
   resolveForwardOrigin,
   resolveMentionFacts,
   resolveReplyReference,
   resolveSpeaker,
 } from "../../packages/auto/message/facts";
+import { pickPhotoFile } from "../../packages/libs/telegramImage";
 
 const chat = { id: -100800, type: "supergroup", title: "Test Group" } as const;
+const TEST_BOT_ID: number = 999;
 const alice = { id: 123, is_bot: false, first_name: "Alice", last_name: "Tester", username: "alice_dev" } as const;
 
 function message(overrides: Record<string, unknown> = {}): Message {
@@ -263,7 +264,7 @@ describe("auto/message/facts", () => {
     });
 
     expect(isReplyToSelf(topicMessage(selfCreated))).toBe(false);
-    expect(resolveReplyReference(topicMessage(selfCreated))).toBeUndefined();
+    expect(resolveReplyReference(topicMessage(selfCreated), TEST_BOT_ID)).toBeUndefined();
     const bot: AiBotInfo = { id: 999, username: "test_bot", first_name: "Test Bot" };
     const context: MessageTriggerContext = createMessageTriggerContext({
       message: topicMessage(topicCreated),
@@ -281,7 +282,7 @@ describe("auto/message/facts", () => {
     // 话题内显式回复另一条消息仍按回复处理。
     const explicit: Message = topicMessage(message({ message_id: 7, is_topic_message: true, message_thread_id: 3, text: "上一句" }));
     expect(isReplyToSelf(explicit)).toBe(true);
-    expect(resolveReplyReference(explicit)?.messageId).toBe(7);
+    expect(resolveReplyReference(explicit, TEST_BOT_ID)?.messageId).toBe(7);
   });
 
   test("回复引用保留原发送者、原文和 Telegram 选中的精确片段", () => {
@@ -293,7 +294,7 @@ describe("auto/message/facts", () => {
         text: "第一句\n第二句",
       }),
       quote: { text: "第二句", position: 4, is_manual: true },
-    }))).toEqual(aiReplyReferenceFixture({
+    }), TEST_BOT_ID)).toEqual(aiReplyReferenceFixture({
       messageId: 40,
       id: 456,
       firstName: "Bob",
@@ -309,7 +310,28 @@ describe("auto/message/facts", () => {
         photo: [{ file_id: "photo", file_unique_id: "photo-u", width: 10, height: 10 }],
         caption: "看这里",
       }),
-    }))?.text).toBe("[图片] 看这里");
+    }), TEST_BOT_ID)?.text).toBe("[图片] 看这里");
+  });
+
+  test("只有回复机器人自己的图片时才附上识图所需的那张图", () => {
+    const photo = [
+      { file_id: "small", file_unique_id: "small-u", width: 90, height: 90, file_size: 1_000 },
+      { file_id: "large", file_unique_id: "large-u", width: 1024, height: 1024, file_size: 100_000 },
+    ];
+    const botSender = { id: TEST_BOT_ID, is_bot: true, first_name: "Test Bot" };
+    expect(resolveReplyReference(message({
+      reply_to_message: message({ message_id: 41, from: botSender, photo, caption: "你的群友老婆是 Bob!" }),
+    }), TEST_BOT_ID)?.botImage).toEqual({ fileId: "large", fileUniqueId: "large-u", caption: "你的群友老婆是 Bob!" });
+    expect(resolveReplyReference(message({
+      reply_to_message: message({ message_id: 41, from: botSender, photo }),
+    }), TEST_BOT_ID)?.botImage).toEqual({ fileId: "large", fileUniqueId: "large-u", caption: "" });
+    // 群友的图片与机器人的文字都不带。
+    expect(resolveReplyReference(message({
+      reply_to_message: message({ message_id: 41, photo }),
+    }), TEST_BOT_ID)?.botImage).toBeUndefined();
+    expect(resolveReplyReference(message({
+      reply_to_message: message({ message_id: 41, from: botSender, text: "文字" }),
+    }), TEST_BOT_ID)?.botImage).toBeUndefined();
   });
 
   test("resolveForwardOrigin 覆盖四种转发来源，非转发返回 undefined", () => {
@@ -361,7 +383,7 @@ describe("auto/message/facts", () => {
         forward_origin: { type: "hidden_user", date: 1, sender_user_name: "神秘人" },
         text: "转来的爆料",
       }),
-    }))).toEqual(aiReplyReferenceFixture({
+    }), TEST_BOT_ID)).toEqual(aiReplyReferenceFixture({
       messageId: 42,
       id: 456,
       firstName: "Bob",
@@ -415,5 +437,41 @@ describe("auto/message/facts", () => {
     expect(hasCopyableContent(message({ text: "hello" }))).toBe(true);
     expect(hasCopyableContent(message({ photo: [{ file_id: "p", file_unique_id: "u", width: 1, height: 1 }] }))).toBe(true);
     expect(hasCopyableContent(message({ new_chat_members: [alice] }))).toBe(false);
+  });
+});
+
+describe("回复引用的非文本占位", () => {
+  function referenceText(repliedTo: Record<string, unknown>): string | undefined {
+    return resolveReplyReference(
+      message({ text: "这个呢", reply_to_message: message({ message_id: 40, ...repliedTo }) }),
+      TEST_BOT_ID
+    )?.text;
+  }
+
+  test("各类型占位逐字固定，带 caption 的类型以空格接上图注", () => {
+    const cases: readonly (readonly [Record<string, unknown>, string])[] = [
+      [{ photo: [{ file_id: "p", file_unique_id: "p", width: 1, height: 1 }] }, "[图片]"],
+      [{ photo: [{ file_id: "p", file_unique_id: "p", width: 1, height: 1 }], caption: "晚霞" }, "[图片] 晚霞"],
+      [{ sticker: { emoji: "😺" } }, "[贴纸：😺]"],
+      [{ sticker: {} }, "[贴纸]"],
+      [{ animation: {} }, "[GIF]"],
+      [{ animation: {}, caption: "笑死" }, "[GIF] 笑死"],
+      [{ video: {}, caption: "看" }, "[视频] 看"],
+      [{ video_note: {} }, "[视频消息]"],
+      [{ voice: {}, caption: "听" }, "[语音] 听"],
+      [{ audio: {} }, "[音频]"],
+      [{ document: { file_name: "a.pdf" }, caption: "资料" }, "[文件：a.pdf] 资料"],
+      [{ document: {} }, "[文件]"],
+      [{ poll: { question: "吃什么" } }, "[投票：吃什么]"],
+      [{ dice: { emoji: "🎲", value: 6 } }, "[骰子：🎲 6]"],
+      [{ contact: { first_name: "Ann", last_name: "Lee" } }, "[联系人：Ann Lee]"],
+      [{ contact: { first_name: "Ann" } }, "[联系人：Ann]"],
+      [{ venue: { title: "车站" }, location: {} }, "[地点：车站]"],
+      [{ location: {} }, "[位置]"],
+      [{}, "[非文本消息]"],
+    ];
+    for (const [repliedTo, expected] of cases) {
+      expect(referenceText(repliedTo)).toBe(expected);
+    }
   });
 });

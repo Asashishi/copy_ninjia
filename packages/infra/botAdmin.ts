@@ -228,11 +228,9 @@ function admitBotPermissionProbe(chatId: number, now?: number): boolean {
  * 而且发生在唯一必须跑得快的那条路上。退避期内直接返回：本来也拿不到可写的
  * 确证快照，下游读到的仍是「未知」，与现查失败时同义。
  *
- * 现查也**不 await**（同 ensureBotChatPermissions）。它要付一次 getChatMember 往返
- * 外加一次 durable 落盘，而 app/updateRunner.ts 是严格串行的——一条 update 没跑完
- * 就不再 getUpdates——于是冷进程里刷群的第一条 chat_member 会拿这两样把整条
- * ingress 顶住，验证窗口和后面每一条更新一起顺延。既然退避命中时这条路径本来就
- * 「这一轮拿不到快照」照常往下走，晚一拍拿到就是同一种情形，没有理由为它停住 ingress。
+ * 现查也**不 await**（同 ensureBotChatPermissions）：本条 update 不等 getChatMember
+ * 往返与 durable 落盘（app/updateRunner.ts 严格串行，等待会顺延整条 ingress）。
+ * 这一轮读到的仍是「未知」，与退避命中时同义；快照到达后由下一条更新读到。
  */
 export async function markBotAdminObserved(chatId: number): Promise<void> {
   const known: BotChatPermissions | undefined = getChatState(chatId).botPermissions;
@@ -275,7 +273,7 @@ export function invalidateBotAdminStatus(chatId: number): void {
  * 同步读取已经观测到的管理员身份。
  *
  * `undefined` 只表示「本进程还没确证过这个群」，调用方自行决定是否付一次
- * `resolveBotAdminStatus` 的现查；不得把未知折算成 false。存在的理由是每条群
+ * `resolveBotAdminStatus` 的现查；不得把未知折算成 false。用于每条群
  * 消息的 ingress：稳定态下这个群的权限快照早就在 ChatState 里，走
  * `resolveBotAdminStatus` 只是为了一个已经在手的布尔值分配一个 Promise
  * （形状约束见 AGENTS.md「高频路径可直接读取现值时不得创建投影对象」）。
@@ -380,7 +378,7 @@ export function botCanDeleteMessagesIn(chatId: number): boolean | undefined {
  * 机器人在某群持有的完整管理员权限。已记录的群直接同步命中；从未记录过的
  * 群现查一次 getChatMember 并回填（带在途去重，同群并发判定共享同一次请求）。
  *
- * 存在的理由是**先判后打**：踢人、禁言、删消息在缺权限时都只换回一句 400
+ * 职责是**先判后打**：踢人、禁言、删消息在缺权限时都只换回一句 400
  * `not enough rights`，而那句话与「目标本身是管理员」共用同一个错误码，事后
  * 看日志分不开（见 infra/telegram/actions.ts 的 banChatMemberWithOutcome）。
  * 有了 State 里的这份唯一快照，绝大多数判定是一次 Map 查找，只有快照缺失的群

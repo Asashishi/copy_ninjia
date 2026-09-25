@@ -5,8 +5,8 @@
  * 素材说明由本模块渲染到 CURRENT_RUNTIME_STATE 区块（见 workers/aiChat/runtimeState.ts）。
  * 系统提示词与工具声明的前缀缓存约束见 docs/cn/04-invariants.md。
  *
- * 生图与生歌的群冷却不进提示词，只在工具被调用时由执行侧判定并返回剩余秒数（见
- * imageGeneration.ts 与 songGeneration.ts 的冷却闸）；本模块因此不读任何冷却状态。
+ * 生图的群冷却不进提示词，只在工具被调用时由执行侧判定并返回剩余秒数（见
+ * imageGeneration.ts 的冷却闸）；本模块因此不读任何冷却状态。
  *
  * 所属线程：AI 闲聊 Worker；本模块自身不持有缓存。
  */

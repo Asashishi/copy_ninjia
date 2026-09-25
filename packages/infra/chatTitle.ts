@@ -28,7 +28,7 @@ import type { ChatState } from "../types/chatState";
 /**
  * 记录一次确证的群名称，与已知值不同才写入并落盘（避免高频群消息把这里
  * 变成每条消息都触发一次写入）。未初始化的群（isInitEnabled !== true）不记录，
- * 理由同 infra/botAdmin.ts 的 recordBotChatPermissions——不能让只是被拉进去、
+ * 同 infra/botAdmin.ts 的 recordBotChatPermissions——不能让只是被拉进去、
  * 从没人管过的群凭空在 `chat_states` 里长出条目。
  */
 function applyChatTitle(

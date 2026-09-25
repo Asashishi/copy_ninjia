@@ -3,6 +3,7 @@ import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
 import type { AiMemoryUsage } from "./memory";
 import type { AiSpeakerSnapshot } from "./speaker";
+import type { VoiceSynthesisResult } from "./voiceMessage";
 import type {
   AgentDeploymentConfig,
   MoodConfig,
@@ -60,6 +61,19 @@ export interface AiReplyReference extends AiSpeakerSnapshot {
   quote: string | undefined;
   /** 原消息是转发时的来源标注（见 auto/message/facts.ts 的 resolveForwardOrigin）。 */
   forwardedFrom: string | undefined;
+  /**
+   * 被回复的是机器人自己发的图片时，供 Worker 识图的那张图；其余为 undefined。
+   * 只随本条记录过线，不进逐字缓存与落盘（见 workers/aiChat/botImages.ts）。
+   */
+  botImage: RepliedBotImage | undefined;
+}
+
+/** 被回复的机器人图片：下载所需的 file_id、去重键与原图注。 */
+export interface RepliedBotImage {
+  fileId: string;
+  fileUniqueId: string;
+  /** 原消息图注；没有图注为空串。未清洗，由 Worker 统一清洗。 */
+  caption: string;
 }
 
 /**
@@ -138,6 +152,27 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   messageThreadId: number | undefined;
 }
 
+/**
+ * 主线程命令与定时任务发出一张图片后的占位自录（见 aiChat/botImages.ts）。
+ *
+ * Worker 以自身身份写入一条占位态图片条目，不识图；有人回复这张图时才识图并原位
+ * 回填（见 workers/aiChat/botImages.ts）。`persistImmediately` 语义同 AiRecordContext，
+ * 构造点先写 false。
+ */
+export interface AiRecordBotImageMessage {
+  type: "recordBotImage";
+  chatId: number;
+  messageId: number;
+  /** 图片消息的图注；没有图注为空串。未清洗，由 Worker 统一清洗。 */
+  caption: string;
+  /**
+   * true 表示同一条消息换了图（/wed 更换）：只把仍在热区的原条目重置为占位态，
+   * 不新增条目；false 表示新发出的图片，追加到热区末尾。
+   */
+  edited: boolean;
+  persistImmediately: boolean;
+}
+
 export interface AiTriggerMessage {
   type: "trigger";
   chatId: number;
@@ -167,7 +202,7 @@ export interface AiTriggerMessage {
   /**
    * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
    *
-   * 本轮全部主动发送（文字、贴纸、生图、生歌、「正在输入…」与限频提示）都要带上
+   * 本轮全部主动发送（文字、贴纸、生图、语音、「正在输入…」与限频提示）都要带上
    * 它，否则话题群里除「挂了回复」之外的每一条都会掉进 General。判定与提取见
    * libs/forumTopic.ts。键恒发、缺省显式 undefined，不得省略。
    */
@@ -220,19 +255,45 @@ export interface AiQueryMoodMessage {
   deadlineAt: number;
 }
 
+/**
+ * 主线程转交的一次语音合成（`/send` 代发的 TTS 与 cron `send_voice`，见
+ * aiChat/voiceSynthesis.ts）。Worker 经公共实现 aiChat/ai/voiceSynthesis.ts 合成并编码，
+ * 再以同 requestId 的 voiceSynthesized 回执带回结果；台词与语气已由主线程清洗并校验长度。
+ */
+export interface AiSynthesizeVoiceMessage {
+  type: "synthesizeVoice";
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 voiceSynthesisRequestCounter）。 */
+  requestId: number;
+  text: string;
+  /** 拼在基础朗读风格之后的本句语气；键恒发，未给出时为 undefined。 */
+  tone: string | undefined;
+}
+
+/**
+ * 主线程撤回一次仍在途的语音合成（调用方取消或等待超时）：Worker 中止这次合成；
+ * 撤回后仍可能到达的回执由主线程按未知 requestId 丢弃。
+ */
+export interface AiCancelVoiceSynthesisMessage {
+  type: "cancelVoiceSynthesis";
+  requestId: number;
+}
+
 export type AiChatWorkerMessage =
   | AiPersonaMessage
   | AiInitMessage
   | AiConfigReloadMessage
   | AiRecordMessage
   | AiRecordMediaMessage
+  | AiRecordBotImageMessage
   | AiTriggerMessage
   | AiHydrateMessage
   | AiHydrateStickerCatalogMessage
   | AiFlushMemoryMessage
   | AiInvalidateChatMessage
   | AiQueryMoodMessage
-  | AiSwitchMoodMessage;
+  | AiSwitchMoodMessage
+  | AiSynthesizeVoiceMessage
+  | AiCancelVoiceSynthesisMessage;
 
 export interface AiMemoryEvent {
   type: "memory";
@@ -299,6 +360,16 @@ export interface AiMoodQueriedEvent {
   moodName: string;
 }
 
+/**
+ * synthesizeVoice 的回执，主线程凭 requestId 结算等待者。成功时 `voice.bytes` 的底层
+ * buffer 随消息转移，Worker 发出后不再读取。
+ */
+export interface AiVoiceSynthesizedEvent {
+  type: "voiceSynthesized";
+  requestId: number;
+  result: VoiceSynthesisResult;
+}
+
 export type AiChatWorkerEvent =
   | AiMemoryEvent
   | AiMemoryUsagesEvent
@@ -307,4 +378,5 @@ export type AiChatWorkerEvent =
   | AiChatInvalidatedEvent
   | AiMoodQueriedEvent
   | AiMoodSwitchedEvent
+  | AiVoiceSynthesizedEvent
   | AiStickerCatalogEvent;

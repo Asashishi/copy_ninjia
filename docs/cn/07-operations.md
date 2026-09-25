@@ -67,8 +67,8 @@ WantedBy=multi-user.target
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（未设置时使用项目根目录；显式空白值拒绝启动）：
 
 - **`state.json` + `state.json.bak`**
-  - **内容**：`global.copy` 的全局复读状态、`global.assets` 的四条素材直链与随机图片目录，以及 `translate` 的按群翻译会话。群开关、锁定记录和权限快照保存在 `database/storage.sqlite` 的 `chat_states`。
-  - **翻译格式**：顶层可选 `translate` 缺省为 `{}`；键必须是规范负整数群 ID，值为 1–5 个会话的非空数组。例如 `"translate": {"-1001": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]}`。最多 25 群，同群身份 ID 不得重复，方向仅允许 `ja`、`cn`、`en`、`uk`、`ru`，身份按 `CachedUser` 严格校验。`global.copy.copyMode` 仅接受缺省、`reverse`、`nya`。非法主文件或 LKG、单会话对象等旧形态均拒绝启动，不自动升级或丢弃条目。
+  - **内容**：`global.copy` 的全局复读状态，以及 `global.assets` 的四条素材直链与随机图片目录。群开关、锁定记录、权限快照与翻译会话保存在 `database/storage.sqlite` 的 `chat_states`。
+  - **格式**：顶层只有 `global`。`global.copy.copyMode` 仅接受缺省、`reverse`、`nya`。非法主文件或 LKG、出现 `translate` 等未知顶层键均拒绝启动，不自动升级或丢弃条目。
   - **手工修改状态**：停服务并确认 inactive，在工作树外用 `mktemp -d` 备份主备及部署数据，记录权限、属主和 SHA-256，再编辑两份状态。保留未修改的 `global` 字段，并用 `decodeStateFile` 严格解析主备、核对预期差异和权限后启动。版本升级按下方冷迁移流程执行，不用示例或 Git 内容覆盖部署状态。
   - **备份**：主备一起备份。
   - **改素材直链只能停机改**：进程持有权威内存并会整份覆写这个文件，运行中编辑会被
@@ -112,8 +112,8 @@ WantedBy=multi-user.target
     日志一并删掉，不等自然过期（被撤管理员不删）。
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
   - **内容**：schema v11 共享存储数据库。`permission_list.policy` 是永久身份权限的严格 JSONB，`blocklist_entries` 保存黑名单（`data` 含 `blockedAt`、Telegram meta 与可选的 `participantInvalidCount`；不认识该字段的旧版本读到带该字段的行会拒绝启动，回滚到这类版本必须连同升级前同一时点的数据库备份一起恢复，不能只替换程序），`temporary_ad_bypass_entries` 保存临时广告免检累计；后者使用 `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at` 与 `qualified_at`。`pending_blocked_removals` 保存未完成的群级封禁任务；`storage_metadata` 与 Drizzle journal 共同约束 schema 和精确谱系。
-  - **群状态与人设**：`chat_states` 最多 25 行。`chat_id` 是群主键；`status` 是必填 JSONB 状态；`ai_persona` 是可空、非空白 TEXT，仅保存本群自定义提示词，缺省使用项目 `prompt/persona.md`。状态与人设在启动时读入现有主线程群缓存，`/bot_status` 直接查看是否已设置。`/init disable` 或 Bot 离群清除整行及人设；待恢复的 lockdown 状态按恢复协议保留。
-  - **AI 上下文**：`ai_context` 是可空 JSONB version=1 快照，包含逐字消息、摘要、待合并摘要与保存时间，沿用 AI Worker 记忆缓存及主线程恢复镜像。只更新已有群行，不保留仅有上下文的行；清空记忆将该列置 NULL，不改人设。正文、名称与引用字段为单行，引用 text/quote 最多 500 个 UTF-16 码元，`at` 为有效东京本地时间 `YYYY/MM/DD HH:mm:ss`；摘要允许换行。非法字段拒绝恢复并指出嵌套路径，不修复原数据。
+  - **群状态与人设**：`chat_states` 最多 25 行。`chat_id` 是群主键；`status` 是必填 JSONB 状态；`ai_persona` 是可空、非空白 TEXT，仅保存本群自定义提示词，缺省使用项目 `prompt/persona.md`。状态与人设在启动时读入现有主线程群缓存，`/bot_status` 直接查看是否已设置。`status.translate` 是本群翻译会话，缺省表示没有会话，存在时为 1–5 个会话的非空数组，例如 `"translate": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]`；同群身份 ID 不得重复，方向仅允许 `ja`、`cn`、`en`、`uk`、`ru`，身份按 `CachedUser` 严格校验。`/init disable` 或 Bot 离群清除整行及人设；待恢复的 lockdown 状态按恢复协议保留。
+  - **AI 上下文**：`ai_context` 是可空 JSONB version=1 快照，包含逐字消息、摘要、待合并摘要与保存时间，沿用 AI Worker 记忆缓存及主线程恢复镜像。只更新已有群行，不保留仅有上下文的行；清空记忆将该列置 NULL，不改人设。正文、名称与引用字段为单行，引用 text/quote 最多 500 个 UTF-16 码元，`at` 为有效东京本地时间 `YYYY/MM/DD HH:mm:ss`；机器人图片尚未识图时逐字消息带 `pendingImage`（`origin` 取 `command` / `generated` / `referenceGenerated`，`caption` 为单行），已识图或普通消息不含该键；摘要允许换行。非法字段拒绝恢复并指出嵌套路径，不修复原数据。
   - **备份与恢复**：数据库包含敏感群聊记忆与自定义提示词，必须备份。停 Bot 后，将主库及存在的 WAL/SHM 作为同一集合复制到工作树外，记录并核对 owner/mode 与 SHA-256。Disk I/O Worker 独占数据库，启动校验 integrity、JSONB、schema、谱系、严格行 codec、名单互斥与 outbox 引用；群状态和 AI 快照从同一连接恢复。身份热读使用 8,192 项 LRU，只按 update 所需身份冷读。任一校验失败都拒绝启动，不自动建库、迁移、丢行或降级。
 - **`memory/ad-detected/sample.json`**
   - **内容**：广告判定命中的原始样本，包括时间、消息 id 与正文、判定理由、
@@ -152,43 +152,47 @@ WantedBy=multi-user.target
 
 启动不会凭缺失数据库猜测「空名单」，所以全新部署必须显式建一次当前 schema 的空库。步骤见 [01 环境搭建](01-getting-started.md#初始化身份数据库)，`install.sh` 也已包含。目标库已存在时建库入口直接拒绝覆盖。
 
-### 从 schema v10 冷迁移
+<a id="upgrade-14"></a>
 
-身份数据库的冷迁移入口是 [`scripts/migrateHImageAddPermission.ts`](../../scripts/migrateHImageAddPermission.ts)，只接受上一次迁移产出的 schema v10 精确谱系并输出 schema v11。更旧部署先按 [分阶段升级](#从-1109-分阶段升级) 到达 v10；未知谱系与已迁移的 v11 均拒绝。Bot 配置与图库命名由本节各自的独立工具迁移。生产启动只校验当前格式，不执行迁移。
+### 从 13.0.2 升级到 14.0.0
 
-1. 停止服务并确认 inactive、没有残留进程。用 `mktemp -d` 在工作树外备份真实配置、凭据和运行时数据；SQLite 主库与已有 WAL/SHM 必须来自同一停机时点。记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
+> [!IMPORTANT]
+> 14.0.0 需要手工迁移翻译会话。先停服并备份，再更新程序与部署数据；配置和数据校验完成前不要启动。
+
+| 检查项 | 操作 |
+| :--- | :--- |
+| 状态与 SQLite | 按下节执行翻译会话冷迁移；`state.json` 仅保留 `global`，会话进入 `chat_states`，schema 仍为 v11 |
+| AI 配置 | 删除 `config/agent.json` 中的 `agent.song`；当前不提供歌曲生成。需要语音时按[配置说明](../../config_example/README/zh.md#agentjson)显式设置 `agent.tts` 的 provider、模型、凭据和音色，`base_url` 可选 |
+| 图库 | 逐项核对专用图库命名；仍使用 UUID 文件名时，按本页图库冷迁移生成 SHA-256 名称 |
+| 恢复与权限 | 保留外部备份及清单；恢复配置和凭据，按原属主与权限部署迁移产物。服务账号须能写状态文件、数据库目录（含 WAL/SHM）、锁及记忆目录 |
+
+冷迁移使用与启动相同的完整数据库只读校验，覆盖 JSONB、行格式、身份策略互斥及 outbox 引用。失败时保留备份和暂存产物，处理具体错误后再继续。13.0.2 固定夹具和全新安装均有隔离 mock 测试；它们不能替代对实际部署数据的校验。
+
+### 翻译会话冷迁移（state.json → chat_states）
+
+翻译会话从 `state.json` 的 `translate` 块改存到 SQLite `chat_states` 各群行的 `translate` 字段，`state.json` 只保留 `global`。当前启动与安装器拒绝仍带 `translate` 的 state 文件，不执行自动迁移。入口是 [`scripts/migrateTranslateSessions.ts`](../../scripts/migrateTranslateSessions.ts)，只接受 13.x 产出的格式：state 为 `global` 加可选 `translate`，数据库为 schema v11 受支持谱系且任何群行都还没有 `translate`。未知谱系、已迁移的库、非法会话或迁移后群数超过 25 均拒绝。更早的部署先按[下一节](#从-130x-之前的版本升级)到达 13.x 格式。生产启动只校验当前格式，不执行迁移。
+
+1. 停止服务并确认 inactive、没有残留进程。用 `mktemp -d` 在工作树外备份 `state.json`、`state.json.bak`、整个 `database/`（SQLite 主库与已有 WAL/SHM 必须来自同一停机时点），以及 `config/` 与 `memory/`；记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
 2. 指定源备份之外的新输出目录，父目录须存在。脚本不改源文件、不操作服务、不替换部署文件。
 
 ```bash
-bun run migrate:h-image-add-permission \
+bun run migrate:translate-sessions \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-3. 迁移为每条 `permission_list.policy` 增加布尔权限 `isCanAddHImage`（`/h_image add` 收图）。原有全部权限均为 true 的成员设为 true，其余设为 false；原权限、身份元数据、群状态、上下文、人设及其他领域数据保持不变。超级管理员不依赖此表，运行时始终直授 true。新成员默认 false，后续可以通过 `/permission` 单独授予或撤销。
-4. `ready.json` 是转换、严格校验、SQLite checkpoint、连接关闭及源复核完成的唯一标记。核对 `sourceFiles`、`outputFiles` 的哈希和元数据，以及 `enabledPermissions`、`disabledPermissions` 计数。失败或中断时保留备份与不完整产物，从原备份向新目录重跑；不覆盖既有输出。
-5. 在停机状态下手工替换验证后的 SQLite 主库。旧 WAL/SHM 只在已有一致备份且确认无数据库句柄时移除，不得与新主库混用。按清单恢复原属主与权限，确保服务账号能写 SQLite 和父目录；`config/` 可只读。
-6. 打开数据库前核对安装后哈希，再严格校验配置、主备状态和当前数据库。全部就位后启动，观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长且 journal 无新增非零退出。全部核验完成前保留外部备份；回滚必须恢复对应代码与同一时点的数据集。
+二进制发行包携带全部当前有效冷迁移，不需要系统 Bun 或源码：`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateTranslateSessions.js --source-root <备份> --output-root <新目录>`。
+
+3. 主 `state.json` 的每群会话写入对应 `chat_states` 行的 `translate` 字段：已有行只替换 status，AI 上下文与人设不变；没有行的群新建一行，只含会话。`state.json` 与 `state.json.bak` 各自去掉 `translate` 块，`global` 原样保留；备份副本里的会话不迁移。其余表、schema 版本与迁移谱系不变。
+4. `ready.json` 是转换、严格校验、SQLite checkpoint、连接关闭及源复核完成的唯一标记。核对 `sourceFiles`、`outputFiles` 的哈希和元数据，以及 `migratedChats`、`migratedSessions`、`createdChatRows` 计数。失败或中断时保留备份与不完整产物，从原备份向新目录重跑；不覆盖既有输出。
+5. 在停机状态下手工替换 `state.json`、存在时的 `state.json.bak` 与 `database/storage.sqlite`。旧 WAL/SHM 只在已有一致备份且确认无数据库句柄时移除，不得与新主库混用。按 `sourceFiles` 恢复原属主与权限，确保服务账号能写 state 文件、SQLite 和其目录；`config/` 可只读。
+6. 打开数据库前核对安装后哈希，再严格校验配置、主备状态和当前数据库。全部就位后启动，观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长且 journal 无新增非零退出，并在开着翻译的群确认会话仍生效。全部核验完成前保留外部备份；回滚必须恢复对应代码与同一时点的数据集。
 
 只读 SQLite 连接也可能重建 SHM 索引；先记录文件哈希，再做数据库校验，旁路索引变化须单独记录，不能覆盖原始备份清单。
 
-### Bot 配置与图片来源的冷迁移
+### 从 13.0.x 之前的版本升级
 
-先停止服务并确认 inactive，在工作树外备份配置根、数据根、state 主备与相关图库；使用 Google 翻译的部署还须备份项目根的 `g-auth.json`。记录文件清单、SHA-256、权限和属主。配置、数据和项目备份根可分开，输出目录必须全新、在配置与数据输入根之外，且不能覆盖任何源文件目标。脚本只接受本次直接输入格式：`telegram.json` 身份配置、可选的 `randomImageDir` 状态字段及固定图片标量来源；12.1.0 中缺省的图库字段和 `cron.json` 不需要补造。新旧混写、非法状态或更早格式均拒绝。更早部署须先分阶段到达此输入格式。
-
-源码入口为 `bun run migrate:bot-config --source-config-root <配置备份> --source-data-root <数据备份> --output-root <新目录> [--source-google-auth <凭据备份文件>]`。二进制发行包携带全部当前有效冷迁移，不需要系统 Bun 或源码；以下示例同时迁移项目根凭据：
-
-```bash
-BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateBotConfig.js --source-config-root /backup/config --source-data-root /backup/data --output-root /backup/prepared --source-google-auth /backup/project/g-auth.json
-```
-
-没有项目根 Google 凭据时省略 `--source-google-auth`；脚本不会搜索或推测其位置。显式指定后，该文件必须存在并通过当前服务账号严格校验，原文字节（含 UTF-8 BOM）不变地写入产物 `config/g-auth.json`，输出哈希必须与备份一致。此时输入配置根若已有 `g-auth.json`（包括悬空链接），脚本拒绝完成，须先确认凭据来源。清单只记录路径、哈希、权限、属主和链接拓扑，不记录凭据正文。
-
-同目录提供 `migrateRandomImageNames.js` 与 `migrateHImageAddPermission.js`，各自通过 `--help` 查看所需参数；它们处理独立的图库命名和 SQLite 格式。12.1.0 的 schema v10 数据库使用后者生成 v11 产物。停机备份需保留存在的 `database/storage.sqlite-wal` 与 `database/storage.sqlite-shm`，按该工具清单部署迁移后的数据库，不能再混入旧旁路文件。正常启动与安装器不会自动迁移。
-
-只有 `ready.json` 表示校验完成；中断产物保留，换全新输出目录重跑。核对清单哈希后，仅手工部署映射中的 `config/bot.json`、可选 `config/cron.json`、`config/g-auth.json` 和 `data/state.json`/`.bak`，删除已备份的旧 `telegram.json` 入口并恢复原权限、属主和链接拓扑。项目根凭据备份保留至全部验证结束；当前运行时只读取配置根的凭据。新产物暂存权限为 0600、目录为 0700，部署时按清单恢复，并确保服务账号能写 SQLite 目录（含 WAL/SHM）、state 与各 memory 目录。其余部署配置和未变更的数据从备份原样保留，不用示例配置覆盖。图库路径值原样保留，不自动搬图；需要命名迁移时单独运行图库工具，只复制其图片产物，不能把 `ready.json` 等清单放进专用图库。
-
-全部配置、状态和图库校验通过后才能启动；确认 active/running，观察至少两个 supervisor 重启间隔，核对 NRestarts 不增长、journal 无新增非零退出，再清理备份。任一步失败都保留备份与现场。
+13.0.x 之前的部署先分阶段到达 13.x 格式：检出 `13.0.2` 标签的源码（或安装 13.0.2 发行包），按其文档在停机状态下执行 `migrate:h-image-add-permission`（schema v10 → v11）与 `migrate:bot-config`（12.1.0 的 Bot 身份配置、图库字段、cron 固定图片与项目根 Google 凭据），部署其产物后，再用本版本执行上节的翻译会话迁移，不需要启动中间版本。当前入口不直接接受这些更早格式；安装器发现 12.1.0 的 `telegram.json` 身份入口时同样拒绝，并提示先升级到 13.x。
 
 ### 随机图库文件名冷迁移
 
@@ -221,7 +225,7 @@ bun run migrate:random-image-names \
 
 ### 从 11.0.9 分阶段升级
 
-11.0.9 使用 schema v8，需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，最后由当前入口产出 v11；全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署只做最后一段，即上节的步骤。运行以下命令前，先按上节完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0 标签，三个暂存输出目录须不存在。
+11.0.9 使用 schema v8，数据库需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，然后用 13.0.2 发布的 `migrate:h-image-add-permission` 产出 v11；Bot 配置同样用 13.0.2 的 `migrate:bot-config` 迁到 13.x 格式。之后由当前入口完成[翻译会话迁移](#翻译会话冷迁移statejson-chat_states)。全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署从 13.0.2 那一段开始。运行以下命令前，先完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0、13.0.2 标签，暂存输出目录须不存在。
 
 中间源码是本流程的必需输入。仅有 11.0.9 标签或当前版本的源码压缩包时，须先取得上述固定提交的完整源码；发布前应独立保留并提供该源码，不能依赖 squash 后会被重置的 dev 历史。
 
@@ -246,12 +250,18 @@ git archive 12.1.0 | tar -x -C "$RELEASE_CODE"
     --source-root /absolute/new-schema-v9-staging \
     --output-root /absolute/new-schema-v10-staging
 )
-bun run migrate:h-image-add-permission \
-  --source-root /absolute/new-schema-v10-staging \
-  --output-root /absolute/new-schema-v11-staging
+V13_CODE="$(mktemp -d)"
+git archive 13.0.2 | tar -x -C "$V13_CODE"
+(
+  cd "$V13_CODE"
+  bun install --frozen-lockfile
+  bun run migrate:h-image-add-permission \
+    --source-root /absolute/new-schema-v10-staging \
+    --output-root /absolute/new-schema-v11-staging
+)
 ```
 
-第一阶段按原有全部 16 项权限授予 `isCanConfigAiPrompt`，第二阶段按完整 17 项权限授予 `isCanClearContext`，第三阶段按完整 18 项权限授予 `isCanAddHImage`。第一阶段仅导入 `chat_states` 已有群的记忆；无对应群行的记忆计入 `discardedContexts`，不创建群状态。逐阶段检查 `ready.json`、源/产物哈希和导入/丢弃计数，最终只安装 v11 主库；保留整份原始备份，手工移除部署根中已迁移的 `memory/ai/`，其余配置和状态按原路径保留。继续执行上节的权限恢复、严格校验和启动观察。当前运行时与迁移入口均不直接接受 v8 或 v9。
+第一阶段按原有全部 16 项权限授予 `isCanConfigAiPrompt`，第二阶段按完整 17 项权限授予 `isCanClearContext`，第三阶段按完整 18 项权限授予 `isCanAddHImage`。第一阶段仅导入 `chat_states` 已有群的记忆；无对应群行的记忆计入 `discardedContexts`，不创建群状态。逐阶段检查 `ready.json`、源/产物哈希和导入/丢弃计数，v11 主库与 13.x 格式的 state 再作为翻译会话迁移的输入；保留整份原始备份，手工移除部署根中已迁移的 `memory/ai/`，其余配置和状态按原路径保留。继续执行上节的权限恢复、严格校验和启动观察。当前运行时与迁移入口均不直接接受 v8 或 v9。
 
 ## 启动失败排查
 
@@ -337,7 +347,8 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 - `logs/`：错误由 Disk I/O Worker 批量追加，文案英文，可直接 grep。
 - Worker 崩溃会节流自愈并从镜像/快照恢复；反复崩溃循环才需要介入（通常意味着持久化数据与代码版本不匹配）。
 - 有限重试耗尽的持久化失败会让进程以非零状态退出——这是设计行为（durability 优先于可用性），由 systemd 拉起后从上一致状态续跑。
-- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定时任务的某个动作最终失败，本轮剩下的动作已跳过。末尾是 Telegram 的错误码与描述或本地原因：`403` 多为机器人已被移出目标群，`400` 多为地址不可用或文件类型不被 Telegram 接受，`local file ... is missing` 表示 `payload.path` 指向的本地文件已经不在了。改好 `cron.json` 或素材后会自动热重载，不用重启。
+- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定时任务的某个动作最终失败，本轮剩下的动作已跳过。末尾是 Telegram 的错误码与描述或本地原因：`403` 多为机器人已被移出目标群，`400` 多为地址不可用或文件类型不被 Telegram 接受，`local file ... is missing` 表示 `payload.path` 指向的本地文件已经不在了，`speech synthesis failed: <原因>` 是 `send_voice` 没合成出语音（`tts unconfigured` / `tts unsupported` 为配置问题，`worker unavailable` 表示 AI Worker 没在运行，`synthesis failed` / `timed out` 多为模型端问题，同时会有一行 `Gemini speech synthesis API` 的错误）。改好 `cron.json` 或素材后会自动热重载，不用重启。
+- `/send TTS for chat <id> produced no voice: <原因>`：`/send` 中转里的语音请求没合成出语音，原因的读法同上；超管私聊同时收到一句失败提示，中转会话保持开启。
 - `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：投递多个会话的任务（`["all"]`、`["except", ...]` 或逐个列出多个会话）在某个会话最终失败，只跳过这个会话剩下的动作，其余会话照常发送；原因的读法同上。`Cron task "<name>" skipped <n> chat(s) without send permission.` 是普通日志，表示本轮有群因机器人缺发送权限或查询失败被跳过。
 - `Failed to probe chat membership` / `Failed to ban chat member` 以 `PARTICIPANT_ID_INVALID` 结尾时，通常是黑名单里有已销号账号。补扫照常按退避重试；同一用户在一个群的一次补扫里全部请求都返回这一句记 1 次，任一群查到或封到 TA 即清零，累计 5 次后自动移出黑名单与待踢批次，并记 `Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results`。`/wed` 每日复核遇到同一错误直接把该 ID 移出候选集合，不记错误日志。
 

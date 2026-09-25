@@ -7,6 +7,7 @@ import type {
   AiMemoryDeleteWaiter,
   AiMemoryTeardown,
   MoodRequestWaiter,
+  VoiceSynthesisWaiter,
 } from "../../types/aiChat/waiters";
 
 /** AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态。 */
@@ -140,6 +141,16 @@ export const purgedAiMemoryChats: Set<number> = new Set();
 export const moodRequestWaiters: Map<number, MoodRequestWaiter> = new Map();
 /** 本进程内已分配的最高心情请求 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
 export const moodRequestCounter: { current: number } = { current: 0 };
+/**
+ * requestId → 语音合成等待者（`/send` 代发 TTS 与 cron `send_voice`，见
+ * aiChat/voiceSynthesis.ts）。发出 synthesizeVoice 前登记；回执、等待超时、调用方
+ * 取消、Worker 崩溃重建、放弃或终止时结算并删除，Worker 重建不重放：旧实例的回执不可能
+ * 再到达，一律按「worker unavailable」结算。容量等于同时在途的合成请求数，上界为延迟
+ * 命令执行器的并发与 cron 同时在途的轮数之和；不设淘汰。
+ */
+export const voiceSynthesisWaiters: Map<number, VoiceSynthesisWaiter> = new Map();
+/** 本进程内已分配的最高语音合成 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
+export const voiceSynthesisRequestCounter: { current: number } = { current: 0 };
 /**
  * requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算并删除，
  * 四条路径都会清空条目，没有别的保留方。Worker 重建不重放：旧实例的回执不可能

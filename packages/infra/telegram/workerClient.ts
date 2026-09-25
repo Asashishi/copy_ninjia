@@ -4,7 +4,6 @@ import type {
   TelegramApi,
   TelegramDeleteEphemeralMessageParams,
   TelegramMemoryFile,
-  TelegramRawPayload,
   TelegramWorkerDownloadFileResult,
   TelegramWorkerJsonCall,
   TelegramWorkerRequest,
@@ -71,9 +70,8 @@ type TransferableTelegramMemoryFile = TelegramMemoryFile & {
 };
 
 /**
- * Worker 上传文件的完整普通 ArrayBuffer 直接移交，不再复制最多 24 MiB 的
- * 音频/图片。调用约定禁止发送后复用 bytes；SharedArrayBuffer 或子视图不能证明
- * 独占 backing store，只在这两个非标准输入上建立精确副本，避免 detach 其它别名。
+ * Worker 上传文件的完整普通 ArrayBuffer 直接移交，不再复制图片或语音字节。调用约定
+ * 禁止发送后复用 bytes；SharedArrayBuffer 或子视图不能证明独占 backing store，只在这两个非标准输入上建立精确副本，避免 detach 其它别名。
  */
 function checkedMemoryFile(value: unknown, label: string): TransferableTelegramMemoryFile {
   if (
@@ -96,6 +94,34 @@ function checkedMemoryFile(value: unknown, label: string): TransferableTelegramM
     return value as TransferableTelegramMemoryFile;
   }
   return { bytes: new Uint8Array(bytes), fileName: value.fileName };
+}
+
+interface RequestMemoryFileSendParams {
+  /** 调用方传入的内存文件；形状由 checkedMemoryFile 校验。 */
+  readonly file: unknown;
+  /** 出现在形状错误里的英文名称。 */
+  readonly label: string;
+  /** 用校验后的字节与文件名构造完整请求。 */
+  readonly buildRequest: (bytes: Uint8Array<ArrayBuffer>, fileName: string) => TelegramWorkerRequest;
+  readonly signal: AbortSignal | undefined;
+}
+
+/**
+ * 上传类请求的共用边界：校验内存文件后把字节 buffer 随请求转移给主线程。
+ * 校验失败与投递异常都以 rejected Promise 返回。
+ */
+async function requestMemoryFileSend<TResult>({
+  file,
+  label,
+  buildRequest,
+  signal,
+}: RequestMemoryFileSendParams): Promise<TResult> {
+  const checked: TransferableTelegramMemoryFile = checkedMemoryFile(file, label);
+  return requestMainThread<TelegramWorkerRequest, TResult>(
+    buildRequest(checked.bytes, checked.fileName),
+    signal,
+    [checked.bytes.buffer]
+  );
 }
 
 /**
@@ -187,39 +213,6 @@ export const workerTelegramApi: TelegramApi = {
       payload: { chat_id: chatId, user_id: userId, permissions, ...other },
     }, asSignal(signal));
   },
-  sendAudio: (...args: Parameters<TelegramApi["sendAudio"]>): ReturnType<TelegramApi["sendAudio"]> => {
-    const [chatId, audioValue, other = {}, signal]: Parameters<TelegramApi["sendAudio"]> = args;
-    return (async (): ReturnType<TelegramApi["sendAudio"]> => {
-      const audio: TransferableTelegramMemoryFile = checkedMemoryFile(audioValue, "Worker audio");
-      const audioBytes: Uint8Array<ArrayBuffer> = audio.bytes;
-      const thumbnailValue: TelegramMemoryFile | undefined = other.thumbnail;
-      let thumbnailBytes: Uint8Array<ArrayBuffer> | undefined;
-      if (thumbnailValue !== undefined) {
-        const thumbnail: TransferableTelegramMemoryFile = checkedMemoryFile(
-          thumbnailValue,
-          "Worker audio thumbnail"
-        );
-        thumbnailBytes = thumbnail.bytes;
-      }
-      const payloadOther: Omit<TelegramRawPayload<"sendAudio">, "chat_id" | "audio" | "thumbnail"> = {
-        ...other,
-      };
-      delete (payloadOther as Partial<TelegramRawPayload<"sendAudio">>).thumbnail;
-      const transfer: Bun.Transferable[] = [audioBytes.buffer];
-      if (thumbnailBytes !== undefined && thumbnailBytes.buffer !== audioBytes.buffer) {
-        transfer.push(thumbnailBytes.buffer);
-      }
-      return requestMainThread<TelegramWorkerRequest, Awaited<ReturnType<Api["sendAudio"]>>>({
-        operation: "sendAudio",
-        category: "message",
-        chatId,
-        bytes: audioBytes,
-        fileName: audio.fileName,
-        thumbnailBytes,
-        other: payloadOther,
-      }, asSignal(signal), transfer);
-    })();
-  },
   sendChatAction: (...args: Parameters<Api["sendChatAction"]>): ReturnType<Api["sendChatAction"]> => {
     const [chatId, action, other = {}, signal]: Parameters<Api["sendChatAction"]> = args;
     return requestCall("chatAction", {
@@ -235,19 +228,24 @@ export const workerTelegramApi: TelegramApi = {
     }, asSignal(signal));
   },
   sendPhoto: (...args: Parameters<TelegramApi["sendPhoto"]>): ReturnType<TelegramApi["sendPhoto"]> => {
-    const [chatId, photoValue, other = {}, signal]: Parameters<TelegramApi["sendPhoto"]> = args;
-    return (async (): ReturnType<TelegramApi["sendPhoto"]> => {
-      const photo: TransferableTelegramMemoryFile = checkedMemoryFile(photoValue, "Worker photo");
-      const bytes: Uint8Array<ArrayBuffer> = photo.bytes;
-      return requestMainThread<TelegramWorkerRequest, Awaited<ReturnType<Api["sendPhoto"]>>>({
-        operation: "sendPhoto",
-        category: "message",
-        chatId,
-        bytes,
-        fileName: photo.fileName,
-        other,
-      }, asSignal(signal), [bytes.buffer]);
-    })();
+    const [chatId, photo, other = {}, signal]: Parameters<TelegramApi["sendPhoto"]> = args;
+    return requestMemoryFileSend({
+      file: photo,
+      label: "Worker photo",
+      buildRequest: (bytes: Uint8Array<ArrayBuffer>, fileName: string): TelegramWorkerRequest =>
+        ({ operation: "sendPhoto", category: "message", chatId, bytes, fileName, other }),
+      signal: asSignal(signal),
+    });
+  },
+  sendVoice: (...args: Parameters<TelegramApi["sendVoice"]>): ReturnType<TelegramApi["sendVoice"]> => {
+    const [chatId, voice, other = {}, signal]: Parameters<TelegramApi["sendVoice"]> = args;
+    return requestMemoryFileSend({
+      file: voice,
+      label: "Worker voice",
+      buildRequest: (bytes: Uint8Array<ArrayBuffer>, fileName: string): TelegramWorkerRequest =>
+        ({ operation: "sendVoice", category: "message", chatId, bytes, fileName, other }),
+      signal: asSignal(signal),
+    });
   },
   editMessageText: (...args: Parameters<TelegramApi["editMessageText"]>): ReturnType<TelegramApi["editMessageText"]> => {
     const [chatId, messageId, text, other = {}, signal]: Parameters<TelegramApi["editMessageText"]> = args;

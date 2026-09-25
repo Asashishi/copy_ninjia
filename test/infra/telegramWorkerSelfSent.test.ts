@@ -56,7 +56,7 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
         sendSticker: async (payload: SentPayload): Promise<unknown> => sentMessage(payload.chat_id),
       },
       sendPhoto: async (chatId: number): Promise<unknown> => sentMessage(chatId),
-      sendAudio: async (chatId: number): Promise<unknown> => sentMessage(chatId),
+      sendVoice: async (chatId: number): Promise<unknown> => sentMessage(chatId),
     },
   },
 }));
@@ -104,10 +104,10 @@ describe("Worker 拿到 id 之前，主线程已经登记了这条自发消息",
     expect(isSelfSent(CHAT_ID, messageIdOf(sent))).toBeTrue();
   });
 
-  test("生歌", async (): Promise<void> => {
-    const sent: unknown = await workerTelegramApi.sendAudio(
+  test("语音", async (): Promise<void> => {
+    const sent: unknown = await workerTelegramApi.sendVoice(
       CHAT_ID,
-      { bytes: new Uint8Array([4, 5, 6]), fileName: "song.mp3" }
+      { bytes: new Uint8Array([4, 5, 6]), fileName: "voice.ogg" }
     );
 
     expect(isSelfSent(CHAT_ID, messageIdOf(sent))).toBeTrue();

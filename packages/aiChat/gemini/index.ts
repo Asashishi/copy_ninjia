@@ -3,14 +3,14 @@
  * 领域侧只经 aiChat/provider.ts 的各能力路由拿到它，不直接 import
  * 本目录下的任何子模块。
  *
- * 四项必备能力（回复会话、纯文本、视觉、生图）之外，本包还实现语音转写与生歌。
- * OpenAI 侧也实现语音转写，但不实现生歌；调用方一律按「这个成员在不在」判断，
- * 不按供应商名字判断，理由见 types/aiChat/provider.ts 的模块头注。
+ * 四项必备能力（回复会话、纯文本、视觉、生图）之外，本包还实现语音转写与语音合成。
+ * OpenAI 侧也实现语音转写，但不实现语音合成；调用方一律按「这个成员在不在」判断，
+ * 不按供应商名字判断，见 types/aiChat/provider.ts 的模块头注。
  */
 
 import { generateGeminiImage } from "./image";
 import { createGeminiReplySession } from "./replySession";
-import { generateGeminiSong } from "./song";
+import { synthesizeGeminiSpeech } from "./speech";
 import { describeGeminiVision, generateGeminiText, transcribeGeminiVoice } from "./text";
 import type { AiChatProvider } from "../../types/aiChat/provider";
 
@@ -22,5 +22,5 @@ export const geminiProvider: AiChatProvider = {
   describeVision: describeGeminiVision,
   generateImage: generateGeminiImage,
   transcribeVoice: transcribeGeminiVoice,
-  generateSong: generateGeminiSong,
+  synthesizeSpeech: synthesizeGeminiSpeech,
 };

@@ -1,5 +1,5 @@
 import { CHAT_TEARDOWN_ORDER } from "../consts/chatTeardown";
-import { clearChatStateField } from "./storage/stateStore";
+import { disableChatStateSwitch } from "./storage/stateStore";
 import { teardownRegisteredChat } from "./chatTeardownRegistry";
 import type { ChatTeardownReason } from "../types/chatTeardown";
 
@@ -9,7 +9,7 @@ export async function teardownChatRuntime(
   reason: ChatTeardownReason
 ): Promise<void> {
   // 代理入口与全部 owner 必须在第一个 await 前同步关闸；异步 owner 随后统一等待。
-  clearChatStateField(chatId, "isProxySendEnabled");
+  disableChatStateSwitch(chatId, "isProxySendEnabled");
   const teardowns: Promise<void>[] = [];
   for (const owner of CHAT_TEARDOWN_ORDER) {
     teardowns.push(teardownRegisteredChat(owner, chatId, reason));

@@ -5,9 +5,12 @@
  * 延迟删除；不带话题（落在 General），不设 `parse_mode`。全部请求都经主线程
  * grammY 客户端，因此照常经过发送类 throttler 与 429 分类出站闸；成功后登记自发消息。
  * 单图调用 sendPhoto，多图调用一次 sendMediaGroup，只有首图携带 caption；
- * 相册逐项应用遮罩并登记所有返回消息 ID。每次调用只投递一次，
- * 失败按 CronDeliveryOutcome 分类交给 cron/run.ts 决定是否重试，
- * 本边界不记日志。
+ * 相册逐项应用遮罩并登记所有返回消息 ID；发出的每张图都写一条 AI 记忆占位态自录。
+ * `send_voice` 先经 AI Worker 的语音合成公共实现（aiChat/voiceSynthesis.ts）把台词与语气
+ * 合成成 OGG/Opus，再调用 sendVoice；合成结果登记进本轮的 CronRoundVoices，重试与后续
+ * 会话复用同一段语音。本轮首次发送成功后记下 Telegram 交回的 file_id，之后改为引用它，
+ * 不再重复上传。每次调用只投递一次，失败按 CronDeliveryOutcome 分类交给 cron/run.ts
+ * 决定是否重试，本边界不记日志。
  */
 
 import { HttpError, InputFile } from "grammy";
@@ -15,6 +18,8 @@ import type { InputMediaPhoto, Message } from "grammy/types";
 import type { Stats } from "node:fs";
 import { basename } from "node:path";
 import { TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES, TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } from "../consts/telegram";
+import { recordBotImage, synthesizeVoice } from "../aiChat";
+import { VOICE_FILE_NAME } from "../consts/aiChat/voiceMessage";
 import { pickRandomImage } from "../infra/randomImage";
 import { getRandomHImageDirectory } from "../infra/storage/stateStore";
 import { runTelegramAction } from "../infra/telegram/actions/core";
@@ -23,7 +28,15 @@ import { telegramErrorDetails } from "../infra/telegram/errors";
 import { bot } from "../infra/telegram/mainClient";
 import { TelegramRetryQueueFullError } from "../infra/telegram/outboundRetryPolicy";
 import { signalArgs } from "../libs/telegramSignalArgs";
-import type { CronAction, CronDeliveryOutcome, CronFileSource, CronImageSource } from "../types/cron";
+import type {
+  CronAction,
+  CronDeliveryOutcome,
+  CronFileSource,
+  CronImageSource,
+  CronRoundVoice,
+  CronRoundVoices,
+} from "../types/cron";
+import type { EncodedVoiceMessage, VoiceSynthesisFailure, VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
 import type { RandomImagePick } from "../types/randomImage";
 import { errorMessage } from "../libs/errorMessage";
 
@@ -43,6 +56,14 @@ function classifyFailure(error: unknown): CronDeliveryOutcome {
   return error instanceof HttpError ? { kind: "retryable", detail: message } : { kind: "permanent", detail: message };
 }
 
+/** 登记一条已发出的 cron 消息；图片另写一条占位态自录（见 aiChat/botImages.ts）。 */
+function recordSentMessage(chatId: number, message: Message): void {
+  toTelegramSendResult(chatId, message);
+  if (message.photo !== undefined) {
+    recordBotImage({ chatId, messageId: message.message_id, caption: message.caption ?? "", edited: false });
+  }
+}
+
 /** 执行一次发送；成功登记自发消息，失败取回错误分类而不记日志。 */
 async function send(
   chatId: number,
@@ -55,8 +76,8 @@ async function send(
     execute,
     map: (messages: Message | Message[]): true => {
       if (Array.isArray(messages)) {
-        for (const message of messages) toTelegramSendResult(chatId, message);
-      } else toTelegramSendResult(chatId, messages);
+        for (const message of messages) recordSentMessage(chatId, message);
+      } else recordSentMessage(chatId, messages);
       return true;
     },
     fallback: undefined,
@@ -140,14 +161,74 @@ function isOutcome(value: string | InputFile | CronDeliveryOutcome): value is Cr
 }
 
 /**
- * 向一个会话投递一个动作一次。`rand_image` 每次调用都重新抽取；抽不出或本地文件不可用
- * 按不可重试失败返回。signal 取消在途请求（停机超时）。
+ * 合成失败的分类：能力缺席与编码失败不重试；Worker 暂不可用（重建中）、供应商没交回
+ * 音频与等待超时可重试。
  */
-export async function deliverCronAction(
-  chatId: number,
-  action: Readonly<CronAction>,
+function classifySynthesisFailure(reason: VoiceSynthesisFailure): CronDeliveryOutcome {
+  switch (reason) {
+    case "aborted":
+      return { kind: "aborted" };
+    case "worker unavailable":
+    case "synthesis failed":
+    case "timed out":
+      return { kind: "retryable", detail: `speech synthesis failed: ${reason}` };
+    default:
+      return { kind: "permanent", detail: `speech synthesis failed: ${reason}` };
+  }
+}
+
+/** 取本轮已合成的语音，没有时合成一次并登记；失败返回分类结果。 */
+async function roundVoice(
+  action: Readonly<Extract<CronAction, { readonly type: "send_voice" }>>,
+  voices: CronRoundVoices,
   signal: AbortSignal
-): Promise<CronDeliveryOutcome> {
+): Promise<CronRoundVoice | CronDeliveryOutcome> {
+  const cached: CronRoundVoice | undefined = voices.get(action);
+  if (cached !== undefined) return cached;
+  const result: VoiceSynthesisResult = await synthesizeVoice({ text: action.content, tone: action.tone, signal });
+  if (!result.ok) return classifySynthesisFailure(result.reason);
+  const entry: CronRoundVoice = { voice: result.voice, fileId: undefined };
+  voices.set(action, entry);
+  return entry;
+}
+
+/** 发一条语音：已有本轮 file_id 时引用它，否则上传字节并在成功后记下交回的 file_id。 */
+async function sendRoundVoice(
+  chatId: number,
+  entry: CronRoundVoice,
+  requestSignal: AbortSignal | undefined
+): Promise<Message> {
+  const voice: EncodedVoiceMessage = entry.voice;
+  const message: Message = await bot.api.sendVoice(
+    chatId,
+    entry.fileId ?? new InputFile(voice.bytes, VOICE_FILE_NAME),
+    { duration: voice.durationSeconds },
+    ...signalArgs(requestSignal)
+  );
+  entry.fileId ??= message.voice?.file_id;
+  return message;
+}
+
+/** deliverCronAction 的入参。 */
+export interface DeliverCronActionOptions {
+  readonly chatId: number;
+  readonly action: Readonly<CronAction>;
+  /** 取消在途请求与合成（停机超时）。 */
+  readonly signal: AbortSignal;
+  /** 本轮已合成的语音；send_voice 从这里复用或登记。 */
+  readonly voices: CronRoundVoices;
+}
+
+/**
+ * 向一个会话投递一个动作一次。`rand_image` 每次调用都重新抽取；抽不出或本地文件不可用
+ * 按不可重试失败返回。`send_voice` 本轮首次投递时合成，之后复用；首次发送成功后改用 file_id。
+ */
+export async function deliverCronAction({
+  chatId,
+  action,
+  signal,
+  voices,
+}: DeliverCronActionOptions): Promise<CronDeliveryOutcome> {
   if (signal.aborted) return { kind: "aborted" };
   switch (action.type) {
     case "send_message":
@@ -192,6 +273,13 @@ export async function deliverCronAction(
         { caption: action.content },
         ...signalArgs(requestSignal)
       ), signal);
+    }
+    case "send_voice": {
+      const entry: CronRoundVoice | CronDeliveryOutcome = await roundVoice(action, voices, signal);
+      if (signal.aborted) return { kind: "aborted" };
+      if ("kind" in entry) return entry;
+      return send(chatId, (requestSignal?: AbortSignal): Promise<Message> =>
+        sendRoundVoice(chatId, entry, requestSignal), signal);
     }
   }
 }

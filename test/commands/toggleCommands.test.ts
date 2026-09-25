@@ -13,6 +13,7 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { botPermissions } from "../helpers/botPermissions";
 import { lastReplyText } from "../helpers/replies";
 import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
+import { chatStateOf } from "../helpers/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
@@ -184,7 +185,7 @@ describe("超级管理员开关命令", () => {
     clearAdDetection.mockImplementationOnce((): never => {
       throw new Error("Anti-Raid Worker is unavailable.");
     });
-    states.set(-1001, { isAdDetectEnabled: true });
+    states.set(-1001, chatStateOf({ isAdDetectEnabled: true }));
 
     await handleAdDetectCommand(context("disable"));
 
@@ -211,7 +212,7 @@ describe("超级管理员开关命令", () => {
     clearFloodControl.mockImplementationOnce((): never => {
       throw new Error("Anti-Raid Worker is unavailable.");
     });
-    states.set(-1001, { isFloodControlEnabled: true });
+    states.set(-1001, chatStateOf({ isFloodControlEnabled: true }));
 
     await handleFloodControlCommand(context("disable"));
 
@@ -251,7 +252,7 @@ describe("超级管理员开关命令", () => {
     deactivateJoinGuardChat.mockImplementationOnce((): never => {
       throw new Error("Anti-Raid Worker is unavailable.");
     });
-    states.set(-1001, { isAntiRaidEnabled: true });
+    states.set(-1001, chatStateOf({ isAntiRaidEnabled: true }));
 
     await handleAntiRaidCommand(context("disable"));
 
@@ -296,7 +297,7 @@ describe("超级管理员开关命令", () => {
 
   test("State 已管理 25 个群时拒绝为第 26 个群启用 /init", async () => {
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) {
-      states.set(-2_000 - index, { isInitEnabled: true });
+      states.set(-2_000 - index, chatStateOf({ isInitEnabled: true }));
     }
 
     await handleInitCommand(context("enable"));
@@ -318,7 +319,7 @@ describe("超级管理员开关命令", () => {
   });
 
   test("/init disable 连群名一起清掉：不再管的群不留任何记录", async () => {
-    states.set(-1001, { isInitEnabled: true, title: "Test Group" });
+    states.set(-1001, chatStateOf({ isInitEnabled: true, title: "Test Group" }));
 
     await handleInitCommand(context("disable"));
 
@@ -357,7 +358,7 @@ describe("超级管理员开关命令", () => {
   });
 
   test("/init disable 同时失效 AI 并整行删除群状态，enable 恢复群更新入口", async () => {
-    states.set(-1001, { botPermissions: botPermissions(), isAIChatEnabled: true });
+    states.set(-1001, chatStateOf({ botPermissions: botPermissions(), isAIChatEnabled: true }));
     await handleInitCommand(context("disable"));
     // 整行没了：功能开关、权限快照与总开关一起删掉。
     expect(states.has(-1001)).toBeFalse();
@@ -368,7 +369,7 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     // 重新启用不恢复任何功能开关：那一行已经删掉了，要用哪个功能逐条重开。
-    expect(states.get(-1001)?.isAIChatEnabled).toBeUndefined();
+    expect(states.get(-1001)?.isAIChatEnabled).toBeFalse();
     expect(invalidateBotAdminStatus).toHaveBeenCalledTimes(2);
     // disable 写两次（总开关一次、拆完的整行删除一次），enable 一次。
     expect(saveStateInBackground).toHaveBeenCalledTimes(3);
@@ -380,20 +381,20 @@ describe("超级管理员开关命令", () => {
 
   test("/init disable 保留仍未恢复的 lockdown，只删其余群配置", async () => {
     const lockdown: LockdownRecord = { phase: "active", intentId: 7, originalPermissions: {}, announced: true, expiresAt: 9_000 };
-    states.set(-1001, { isInitEnabled: true, isAdDetectEnabled: true, lockdown });
+    states.set(-1001, chatStateOf({ isInitEnabled: true, isAdDetectEnabled: true, lockdown }));
 
     await handleInitCommand(context("disable"));
 
-    expect(states.get(-1001)).toEqual({ lockdown });
+    expect(states.get(-1001)).toEqual(chatStateOf({ lockdown }));
   });
 
   test("/init disable 拆运行态失败仍持久化禁用状态，回执如实说没拆干净", async () => {
     const teardownError = new Error("chat teardown failed");
-    states.set(-1001, {
+    states.set(-1001, chatStateOf({
       isInitEnabled: true,
       isAdDetectEnabled: true,
       botPermissions: botPermissions(),
-    });
+    }));
     teardownChatRuntime.mockRejectedValueOnce(teardownError);
 
     // 拆运行态失败不上抛。
@@ -401,7 +402,7 @@ describe("超级管理员开关命令", () => {
 
     // 总开关已经 durable 地关掉；整行删除排在 teardown 之后，这一轮没跑到，
     // 功能开关还留着。
-    expect(states.get(-1001)?.isInitEnabled).toBeUndefined();
+    expect(states.get(-1001)?.isInitEnabled).toBeFalse();
     expect(states.get(-1001)?.isAdDetectEnabled).toBe(true);
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
@@ -421,7 +422,7 @@ describe("超级管理员开关命令", () => {
     // teardownChatRuntime 里有不可逆的持久化动作（aiChat owner 的 durable 记忆
     // 删除、translate owner 的会话删除）；口径同 superAdminToggle.ts 的 runChatToggleCommand。
     const order: string[] = [];
-    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions(), aiPersona: "本群人设" });
+    states.set(-1001, chatStateOf({ isInitEnabled: true, botPermissions: botPermissions(), aiPersona: "本群人设" }));
     persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
       order.push(`persist:${context}`);
       saveStateInBackground(context);
@@ -448,11 +449,11 @@ describe("超级管理员开关命令", () => {
   test("拆完无条件补一次落盘，把整行删除与 teardown 清掉的 isProxySendEnabled 一起写下去", async () => {
     // teardownChatRuntime 同步清掉的持久字段只有 isProxySendEnabled，整行删除同样只动内存。
     const order: string[] = [];
-    states.set(-1001, {
+    states.set(-1001, chatStateOf({
       isInitEnabled: true,
       isProxySendEnabled: true,
       botPermissions: botPermissions(),
-    });
+    }));
     persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
       order.push(`persist:${context}`);
       saveStateInBackground(context);
@@ -472,7 +473,7 @@ describe("超级管理员开关命令", () => {
 
   test("/init disable 落盘失败仍原样上抛，不确认这条 update", async () => {
     const persistError = new Error("state store quiesced");
-    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    states.set(-1001, chatStateOf({ isInitEnabled: true, botPermissions: botPermissions() }));
     persistChatState.mockRejectedValueOnce(persistError);
 
     await expect(handleInitCommand(context("disable"))).rejects.toBe(persistError);
@@ -487,7 +488,8 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isTranslationEnabled).toBe(true);
     await handleTranslateCommand(context("disable"));
     expect(states.get(-1001)?.isTranslationEnabled).toBe(false);
-    expect(saveStateInBackground).toHaveBeenCalledTimes(2);
+    // enable 写一次；disable 先写会话删除、再写开关。
+    expect(saveStateInBackground).toHaveBeenCalledTimes(3);
   });
 
   test("/ai_chat disable 在 state 与记忆删除都完成前不发送成功反馈", async () => {
@@ -591,7 +593,7 @@ describe("开关命令的同状态重复执行", () => {
     clearAdDetection.mockImplementationOnce((): never => {
       throw new Error("Anti-Raid Worker is unavailable.");
     });
-    states.set(-1001, { isAdDetectEnabled: true });
+    states.set(-1001, chatStateOf({ isAdDetectEnabled: true }));
 
     await handleAdDetectCommand(context("disable"));
     expect(clearAdDetection).toHaveBeenCalledTimes(1);
@@ -604,7 +606,7 @@ describe("开关命令的同状态重复执行", () => {
   });
 
   test("/init 重复 enable 仍不作废管理员记录，只是回执说破没变", async () => {
-    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    states.set(-1001, chatStateOf({ isInitEnabled: true, botPermissions: botPermissions() }));
 
     await handleInitCommand(context("enable"));
 

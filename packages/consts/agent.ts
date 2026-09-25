@@ -15,7 +15,7 @@ export const AGENT_CAPABILITY_NAMES: readonly string[] = [
   "summary",
   "media",
   "image",
-  "song",
+  "tts",
 ];
 
 /**

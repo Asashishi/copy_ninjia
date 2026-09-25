@@ -13,7 +13,7 @@ import { assertDequeCapacities } from "./dequeCapacity";
  * libs/slidingWindowRateLimit.ts 的头注。
  *
  * 与 libs/boundedDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
- * 理由与共用校验的取舍写在 libs/dequeCapacity.ts 的头注里。
+ * 共用校验见 libs/dequeCapacity.ts 的头注。
  */
 export class TimestampDeque {
   private values: number[];

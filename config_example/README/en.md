@@ -44,7 +44,7 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | `stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
-| `cron.json` | Scheduled sends (text, pictures, files) | No scheduled tasks |
+| `cron.json` | Scheduled sends (text, pictures, files, voice) | No scheduled tasks |
 | `g-auth.json` | Google Cloud service-account key for `/translate`; the example holds placeholders only, and the operator places the real key in `config/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
 
 AI chat also needs `prompt/persona.md`, which does not belong in this directory. An optional file
@@ -68,8 +68,14 @@ strict schema used at startup:
   availability directly: AI chat or ad detection stops as soon as a prerequisite is missing and
   logs one line with the reason, per-chat switches keep their values, and the feature resumes
   automatically once the prerequisite is back, with no restart. Deleting a file logs
-  `Deployment config <path> was removed.`. Adding or removing `image` or `song` takes effect
+  `Deployment config <path> was removed.`. Adding or removing `image` or `tts` takes effect
   directly.
+- `send_voice` in `cron.json` depends on `tts` in `agent.json` (together with `text`, `summary`,
+  and `media`): a new task list that uses `send_voice` while no usable `tts` is configured rejects
+  the whole `cron.json` change; while the task list still uses `send_voice`, an `agent.json` change
+  that removes `tts` (or deletes the whole `agent.json` or a chat core capability) is rejected as a
+  whole too. Both rejections keep the last applied configuration and log an error; the same
+  combination at startup refuses startup.
 - Packs newly added to `stickers.json` start building their catalogs immediately; removed packs
   are no longer offered to the AI, and their catalogs are cleaned up against the whitelist at the
   next restart.
@@ -112,7 +118,7 @@ key, but credentials and failures never fall back across capabilities.
 | `summary` | Compacts long-term conversation memory and summarizes sticker packs | AI-chat core; required |
 | `media` | Describes images/stickers and transcribes voice | AI-chat core; required |
 | `image` | Registers the image-generation tool | Optional; absence removes only this tool |
-| `song` | Registers the song-generation tool | Optional; absence or an unsupported implementation removes only this tool |
+| `tts` | Speech synthesis shared by the AI voice tool (Japanese lines synthesized and sent as voice messages), `/send` relay TTS requests, and `send_voice` in `cron.json` | Optional; absence or an unsupported implementation removes the voice tool and makes `/send` TTS requests fail; required when `cron.json` uses `send_voice` |
 
 Ordinary capabilities accept these four fields:
 
@@ -134,9 +140,17 @@ shape:
 - `openai-standard`: standard sizes shared by the GPT Image family.
 - `xai`: xAI JSON and aspect-ratio protocol.
 
-`image_protocol` is forbidden when `image.provider` is `google`. Currently only Google implements
-song generation, so `song.provider: "openai"` passes the generic schema but does not register the
-song tool.
+`image_protocol` is forbidden when `image.provider` is `google`.
+
+Besides the four fields, `tts` requires a non-empty `voice`, passed verbatim as the synthesis voice:
+either a prebuilt voice name (`Leda` in the example) or a `voice_` ID created with AI Studio Voice
+design. A designed voice belongs to the project of that `api_key` and expires after one year; the
+program only checks that it is a non-empty string, and whether the voice exists is decided by the
+first synthesis request. Currently only Google implements speech synthesis, so
+`tts.provider: "openai"` passes validation but does not register the voice tool, and voice
+requests from `/send` and `cron.json` fail with an error log. All three synthesize on the AI
+Worker, so the remaining AI-chat prerequisites (`stickers.json`, `mood.json`,
+`prompt/persona.md`) must also be in place; otherwise synthesis fails as "Worker unavailable".
 
 Vision and voice support for `media` are probed and cached separately on the first real request.
 After an explicit unsupported result, that Worker no longer downloads that media type. Success
@@ -223,7 +237,8 @@ JSON, so comments are not allowed.
 text; a task that spells out its time zone and sends text, then an image and a file by URL; a local
 image by a path relative to the project root and a local file by absolute path; a `rand_cron`
 range drawing from the default image library; `@daily`
-with a single-value `rand_cron` drawing from a given directory; and `just_once`. The chat ids, URLs
+with a single-value `rand_cron` drawing from a given directory; `send_voice` with and without a
+tone; and `just_once`. The chat ids, URLs
 and local paths in it are fake, and an unedited copy in `config/` refuses startup because the local
 files do not exist. Pick the tasks you need, replace the chat ids and paths with real ones, and write
 them into `config/cron.json`. The installer never creates this file from the example.
@@ -240,7 +255,8 @@ them into `config/cron.json`. The installer never creates this file from the exa
       { "type": "send_message", "payload": { "content": "Good morning" } },
       { "type": "send_image", "payload": { "content": "Picture of the day", "rand_image": true } },
       { "type": "send_image", "payload": { "url": ["https://example.com/a.png", "https://example.com/b.png"], "is_blurred": true } },
-      { "type": "send_file", "payload": { "content": "Weekly report", "path": "/srv/copy-ninjia/reports/weekly.pdf" } }
+      { "type": "send_file", "payload": { "content": "Weekly report", "path": "/srv/copy-ninjia/reports/weekly.pdf" } },
+      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おはよう、今日もがんばろうね" } }
     ]
   }
 ]
@@ -262,6 +278,14 @@ Action `type` and `payload`:
 - `send_image`: one optional `content` string (up to 1024 characters). Fixed images require exactly one array: `url` or file `path`, with 1–10 entries; even one image uses an array, such as `"url": ["https://example.com/a.jpg"]`. `rand_image` must be absent or `false`. One image uses a photo request; 2–10 use one album request with the caption on the first item only and no separate text message. An album has multiple Telegram message IDs. `is_blurred: true` adds a spoiler to every item; absent or `false` omits it.
   `rand_image: true` draws one image: `url` and file arrays are forbidden, and optional `path` must be a directory string. Without it the source is `state.global.assets.randomHImageDir`; an explicit other directory has no SHA-256 naming requirement.
 - `send_file`: `content` is optional (at most 1024 characters); exactly one of `url` or `path`.
+- `send_voice`: `content` is required and is the line to speak (at most 256 characters); `tone` is
+  optional and sets how this line is spoken (at most 64 characters), appended after the fixed base
+  voice style; without it only the base style is used. After line breaks are merged into spaces and
+  surrounding whitespace is trimmed, neither may be empty. The line is synthesized through `tts` in
+  `agent.json` and sent as a voice bubble; `tts` must be configured, see "Editing While Running"
+  above. Within one run the line is synthesized only once, and retries and later groups reuse the
+  same audio; after the first successful send they reference the `file_id` Telegram returned
+  instead of uploading it again.
 
 `path` is either absolute or relative to the project root (the repository root when running from
 source, the service's working directory for the binary) and may point to a file or directory
@@ -280,8 +304,10 @@ Runtime behavior:
   made up. `just_once` records and `rand_cron` waits live only in memory and start over after a
   restart.
 - An action that fails with a network error, a Telegram 5xx, a 429 remaining after outbound-gate retries, or a full outbound queue is retried
-  up to 3 times with 2, 4, and 8 second back-off; other failures (Telegram 4xx, the bot removed
-  from the chat, a deleted local file) are not retried. A final failure logs one
+  up to 3 times with 2, 4, and 8 second back-off; for `send_voice`, synthesis that returns no
+  audio, a wait that times out, or a temporarily unavailable AI Worker is retried the same way.
+  Other failures (Telegram 4xx, the bot removed from the chat, a deleted local file, `tts` not
+  configured or unsupported by the implementation, an audio encoding failure) are not retried. A final failure logs one
   `Cron task "<name>" action #<n> ...` line and skips the rest of that run. When a request times
   out but Telegram did receive it, the retry sends a duplicate.
 - Scheduled messages stay; they are not deleted after 30 seconds. They carry no forum topic, so in a
@@ -296,7 +322,8 @@ Runtime behavior:
 - `chat_id: ["all"]`: at the start of each run the bot checks its current send permission in every
   group with `/init enable`, one by one (owner and administrators can send; when restricted, its own
   send permissions count; as a plain member, the group's default member permissions count). Text
-  needs permission to send messages, pictures to send photos, files to send documents; a group
+  needs permission to send messages, pictures to send photos, files to send documents, voice to
+  send voice notes; a group
   missing any permission the task needs is skipped entirely, so no group gets half a run. The
   groups that can receive run the whole action list one by one in ascending chat id order, with
   the same 1-second gap between groups. A final failure in one group only skips the rest of that

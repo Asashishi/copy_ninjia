@@ -360,7 +360,7 @@ async function checkCredentialIsolation(): Promise<void> {
     { prompt: "配置 summary？", reply: "n" },
     { prompt: "配置 media？", reply: "n" },
     { prompt: "配置 image？", reply: "n" },
-    { prompt: "配置 song？", reply: "n" },
+    { prompt: "配置 tts？", reply: "n" },
     systemdPrompt(),
   ]);
 

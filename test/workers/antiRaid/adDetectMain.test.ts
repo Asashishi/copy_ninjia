@@ -8,8 +8,9 @@ import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
-const chatStates = new Map<number, Record<string, unknown>>();
-const getChatState = mock((chatId: number) => chatStates.get(chatId) ?? {});
+import { chatStateOf } from "../../helpers/chatState";
+const chatStates = new Map<number, ChatState>();
+const getChatState = mock((chatId: number) => chatStates.get(chatId) ?? chatStateOf());
 const activeVerificationSnapshots = new Map<string, unknown>();
 const dispatched: RemoveBlockedMembersParams[][] = [];
 const errorLogs: string[] = [];
@@ -133,7 +134,7 @@ const OBSERVED_AT_MS: number = Date.parse("2026-03-01T00:00:00Z");
 function buildAdCandidate(
   candidateMessage: Message,
   botId: number,
-  chatState: Readonly<ChatState> = chatStates.get(candidateMessage.chat.id) ?? {}
+  chatState: Readonly<ChatState> = chatStates.get(candidateMessage.chat.id) ?? chatStateOf()
 ): ReturnType<typeof buildAdCandidateFromContext> {
   return buildAdCandidateFromContext({
     message: candidateMessage, botId, chatState, now: OBSERVED_AT_MS,
@@ -142,11 +143,11 @@ function buildAdCandidate(
 beforeEach(() => {
   getChatState.mockClear();
   chatStates.clear();
-  chatStates.set(-1001, {
+  chatStates.set(-1001, chatStateOf({
     isAdDetectEnabled: true,
     isInitEnabled: true,
     botPermissions: botPermissions(),
-  });
+  }));
   activeVerificationSnapshots.clear();
   dispatched.length = 0;
   errorLogs.length = 0;
@@ -251,17 +252,17 @@ describe("广告检测投递门禁", () => {
     expect(buildAdCandidate(
       message(),
       999,
-      { isAdDetectEnabled: true }
+      chatStateOf({ isAdDetectEnabled: true })
     )).toEqual(expected);
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
   });
 
   test("候选标签使用消息上下文中的人设，与门禁共用同一份群状态", () => {
     const candidateMessage: Message = message({ from: { id: 7, is_bot: false, first_name: "" } });
-    expect(buildAdCandidate(candidateMessage, 999, { isAdDetectEnabled: true, aiPersona: "普通风格" })?.label)
+    expect(buildAdCandidate(candidateMessage, 999, chatStateOf({ isAdDetectEnabled: true, aiPersona: "普通风格" }))?.label)
       .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
-    chatStates.set(-1001, { isAdDetectEnabled: true, aiPersona: "普通风格" });
-    expect(buildAdCandidate(candidateMessage, 999, { isAdDetectEnabled: true })?.label)
+    chatStates.set(-1001, chatStateOf({ isAdDetectEnabled: true, aiPersona: "普通风格" }));
+    expect(buildAdCandidate(candidateMessage, 999, chatStateOf({ isAdDetectEnabled: true }))?.label)
       .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
   });
 
@@ -271,7 +272,7 @@ describe("广告检测投递门禁", () => {
       const plain: boolean = index % 2 === 0;
       fixtures.push({
         message: message({ chat: { id: -1001 - index, type: "supergroup", title: "群" }, from: { id: 7, is_bot: false, first_name: "" } }),
-        state: { isAdDetectEnabled: true, aiPersona: plain ? "自定义" : undefined },
+        state: chatStateOf({ isAdDetectEnabled: true, aiPersona: plain ? "自定义" : undefined }),
         label: (plain ? ATMOSPHERE_TEXTS.plain : ATMOSPHERE_TEXTS.teasing).NOTICE_TEXTS.unknownUser,
       });
     }
@@ -289,7 +290,7 @@ describe("广告检测投递门禁", () => {
   });
 
   test("没开开关、私聊、无正文与机器人自己的消息都不判定", () => {
-    chatStates.set(-1002, {});
+    chatStates.set(-1002, chatStateOf());
     expect(buildAdCandidate(message({ chat: { id: -1002, type: "supergroup", title: "群" } }), 999)).toBeUndefined();
     expect(buildAdCandidate(message({ chat: { id: 7, type: "private", first_name: "x" } }), 999)).toBeUndefined();
     expect(buildAdCandidate(message({ text: "   " }), 999)).toBeUndefined();
@@ -623,6 +624,36 @@ describe("广告检测投递门禁", () => {
       input_message_content: { message_text: "点这里" },
     }]);
     expect(buildAdCandidate(otherBotMessage(), 999)?.text).toBe("点这里");
+  });
+
+  test("inline 源文本严格按发送者 id 取：正文撞上别人的登记也不借用", () => {
+    const collidedText: string = "（透过口塞）撞. ..车";
+    recordInlineResultSources(8, "别人打的字", [{
+      type: "article",
+      id: "gag--1001-8",
+      title: "在 群 发言",
+      input_message_content: { message_text: collidedText },
+    }]);
+    expect(buildAdCandidate(message({
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: collidedText,
+    }), 999)).toBeUndefined();
+
+    // 频道 gag 登记在频道 id 名下，落群后按 sender_chat.id 取回。
+    recordInlineResultSources(-100555, "频道打的字", [{
+      type: "article",
+      id: "gag--1001--100555",
+      title: "以频道身份发言",
+      input_message_content: { message_text: collidedText },
+    }]);
+    const channel = buildAdCandidate(message({
+      from: { id: 136_817_688, is_bot: true, first_name: "Channel" },
+      sender_chat: { id: -100555, type: "channel", title: "频道" },
+      via_bot: { id: 999, is_bot: true, first_name: "Bot" },
+      text: collidedText,
+    }), 999);
+    expect(channel?.text).toBe("频道打的字");
+    expect(channel?.senderId).toBe(-100555);
   });
 
   test("仍在入群验证窗口内时带上 justJoined 事实", () => {

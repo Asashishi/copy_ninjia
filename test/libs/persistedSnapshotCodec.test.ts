@@ -21,7 +21,7 @@ test("真实 writer 的缺省字段和嵌套引用经 JSON 往返保持完全一
   for (const raw of ["普通正文", "第一行\n第二行\t末尾", "😀 非 BMP 字符", "", "x".repeat(499) + " y", "x".repeat(499) + "😀"]) {
     const message: BufferedMessage = buildBufferedMessage({ ...context, replyTo: {
       messageId: 1, id: 2, firstName: "\n甲", lastName: "", username: "@@ @other",
-      text: raw, quote: raw, forwardedFrom: "频道\u0085来源",
+      text: raw, quote: raw, forwardedFrom: "频道\u0085来源", botImage: undefined,
     } }, "正文\n下一行", timestamp)!;
     const content: string = bytes(message);
     const decoded: AiMemorySnapshot = parseAiMemorySnapshot(content, source);
@@ -57,6 +57,27 @@ for (const field of ["text", "quote"]) {
     expect((): AiMemorySnapshot => parseAiMemorySnapshot(bytes({ ...base, replyTo: {
       messageId: 1, id: 2, firstName: "甲", lastName: "", text: "正文", [field]: "x".repeat(REPLY_REFERENCE_MAX_CHARS + 1),
     } }), source)).toThrow(`$.buffer[0].replyTo.${field} must be at most ${REPLY_REFERENCE_MAX_CHARS}`);
+  });
+}
+
+test("占位态图片随快照往返，缺省时不写出该键", (): void => {
+  const pending: BufferedMessage = { ...base, pendingImage: { origin: "referenceGenerated", caption: "图注" } };
+  expect(JSON.stringify(parseAiMemorySnapshot(bytes(pending), source))).toBe(bytes(pending));
+  expect(bytes(base)).not.toContain("pendingImage");
+});
+
+for (const pendingImage of [
+  { origin: "sticker", caption: "" },
+  { origin: "command" },
+  { origin: "command", caption: "", extra: 1 },
+  { origin: "command", caption: 7 },
+  { origin: "command", caption: "第一行\n第二行" },
+  "command",
+  null,
+]) {
+  test(`占位态图片的非法值报告具体路径：${JSON.stringify(pendingImage)}`, (): void => {
+    expect((): AiMemorySnapshot => parseAiMemorySnapshot(bytes({ ...base, pendingImage }), source))
+      .toThrow(`${source}: $.buffer[0].pendingImage`);
   });
 }
 

@@ -66,7 +66,7 @@ export interface ColdStartRound {
   readonly peakRssBytes: number;
 }
 
-/** 七条真实落盘动作与两条用户可见本地流程；全部从生产入口驱动。 */
+/** 七条真实落盘动作与三条用户可见本地流程；全部从生产入口驱动。 */
 export type ChainName =
   | "join-log-append"
   | "identity-policy-write"
@@ -76,7 +76,8 @@ export type ChainName =
   | "ai-memory-snapshot"
   | "diagnostic-log"
   | "ad-detect-command"
-  | "ai-reply-command";
+  | "ai-reply-command"
+  | "cron-send-voice";
 
 /** 单条链路一轮的完整回传；延迟分位数来自逐次 durable 往返。 */
 export interface ChainRound {

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
  * Telegram API，这里全部替换成 mock。infra/storage/stateStore 用一份内存实现
  * 代替，只覆盖 handleSendCommand 用到的接口（getChatState、
  * getOrCreateChatState、getChatStateCache、getActiveProxySendTarget、
- * clearChatStateField、persistChatState），getActiveProxySendTarget 复刻真实
+ * disableChatStateSwitch、persistChatState），getActiveProxySendTarget 复刻真实
  * 实现的扫描语义。
  */
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
@@ -42,10 +42,10 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     }
     return undefined;
   },
-  clearChatStateField: (chatId: number, field: string): boolean => {
+  disableChatStateSwitch: (chatId: number, key: string): boolean => {
     const state = chatStates.get(chatId);
-    if (!state || !(field in state)) return false;
-    delete state[field];
+    if (state?.[key] !== true) return false;
+    delete state[key];
     if (Object.keys(state).length === 0) chatStates.delete(chatId);
     return true;
   },

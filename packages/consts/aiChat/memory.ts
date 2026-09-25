@@ -1,3 +1,5 @@
+import { STATE_MANAGED_CHAT_LIMIT } from "../storage";
+
 /** 冷消息压缩请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
 export const CHAT_SUMMARY_ERROR_LABEL: string = "AI summarize API";
 
@@ -29,8 +31,15 @@ export const COMPACTION_MAX_PENDING_PER_CHAT: number = 25;
 export const AI_SNAPSHOT_INTERVAL_MS: number = 30_000;
 /** hydrate 少恢复一条，保证下一次 push 能精确命中轮换等值边界。 */
 export const AI_MEMORY_HYDRATE_BUFFER_MAX: number = VERBATIM_CONTEXT_MAX - 1;
-/** Worker 常驻群记忆总上限，超额按最后活动时间淘汰。 */
-export const AI_MEMORY_MAX_CHATS: number = 100;
+/**
+ * Worker 常驻群记忆总上限，超额按最后活动时间淘汰。
+ *
+ * 取两倍受管群数：AI 记忆只属于受管群（`chat_states.ai_context`），但未完成的
+ * teardown 最多 STATE_MANAGED_CHAT_LIMIT 项（见 aiChat/memoryMirror.ts 的
+ * beginAiMemoryTeardown），旧群记忆可能与同样多的新受管群短暂并存。取值不得低于
+ * 这个和，否则淘汰会落到仍在使用的受管群上。
+ */
+export const AI_MEMORY_MAX_CHATS: number = 2 * STATE_MANAGED_CHAT_LIMIT;
 /** 单条摘要硬性字符上限。 */
 export const SUMMARY_MAX_CHARS: number = 500;
 /** 回复引用只保留足以辨认原消息的单行片段，避免重复整条长消息撑大上下文。 */

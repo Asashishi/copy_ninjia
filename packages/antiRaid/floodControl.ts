@@ -51,7 +51,7 @@ export function buildFloodCandidate({
   if (currentState.isFloodControlEnabled !== true) return undefined;
   // 频道马甲与匿名管理员没有可禁言的成员身份：restrictChatMember 只认真实用户，
   // 拿频道/群 id 去调只会换一句报错，而皮套底下是谁 Telegram 并不暴露——与
-  // `/block` 拒绝把当前群身份当成员目标是同一条理由。
+  // `/block` 拒绝把当前群身份当成员目标是同一约束。
   if (visibleSenderChat(message) !== undefined) return undefined;
 
   const sender: User | undefined = message.from;

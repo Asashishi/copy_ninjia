@@ -1,4 +1,7 @@
-import { EMPTY_OUTPUT_ITEMS } from "../../consts/aiChat/openai";
+import {
+  EMPTY_OUTPUT_ITEMS,
+  OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS,
+} from "../../consts/aiChat/openai";
 import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
 /**
  * OpenAI Responses 响应里的项目级诊断与 output item 解析。正文直接读 SDK 的
@@ -6,7 +9,6 @@ import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
  * 与服务端联网检索计数。职责与 aiChat/gemini/response.ts 一一对应。
  */
 
-import { OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS } from "../../consts/aiChat/openai";
 import { isPlainRecord } from "../../libs/record";
 import type OpenAI from "openai";
 import type { AiFunctionCall } from "../../types/aiChat/provider";
@@ -44,7 +46,7 @@ function errorDiagnosticField(value: unknown): string | undefined {
  * **之外**（见 openai/client.ts 里 abnormalResponseDiagnostic 的调用位置）：
  * 异常会一路穿过 session.request() 与 generateReply，最后被回复循环最外层的
  * .catch 吞掉——群里是整轮静默，日志里只剩一个泛化的 TypeError，恰好把这个
- * 诊断存在的意义丢干净。理由同下方 responseOutputText 对 output_text 的处理。
+ * 诊断存在的意义丢干净。同下方 responseOutputText 对 output_text 的处理。
  *
  * 两个字段都过 errorDiagnosticField：形状不受本进程控制，长度也一样。
  */

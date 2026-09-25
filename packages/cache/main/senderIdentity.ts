@@ -24,7 +24,7 @@ export const senderUsernameCache: Map<number, string> = new Map();
  * consts/senderIdentity.ts 的 USER_CACHE_MAX，淘汰也由那一处的 deleteAlias 一并完成。
  * 值与 userCache 里是同一个 CachedUser 引用，不额外持有对象。
  *
- * 存在的理由只有一个：cacheSender 的稳态判定跑在每条群消息上，要的就是这个对象。
+ * 用途：cacheSender 在每条群消息上的稳态判定直接读这个对象。
  * 没有本表时那条路径先取 alias 再用字符串键回查 userCache，两次查找里第二次是字符串
  * 键；直查之后只剩一次数值键查找（见 users/senderIdentity.ts 的 cacheSender）。
  *

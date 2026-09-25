@@ -31,7 +31,6 @@ const {
   deleteReferencedAdMessages,
   deleteStragglerAdMessage,
   disposeAdSender,
-  formatReferencedAdWarning,
   deleteStaleReferencedAdWarning,
   warnReferencedAdSender,
 } = await import("../../../packages/workers/antiRaid/adDetect/disposal");
@@ -256,7 +255,7 @@ describe("广告处置副作用", () => {
           : Number.NEGATIVE_INFINITY,
     });
 
-    const warning: string = formatReferencedAdWarning("@spammer", ATMOSPHERE_TEXTS.teasing);
+    const warning: string = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adReferenceWarning("@spammer");
     expect(warning).toContain("不要回复、引用或转发广告相关内容");
     expect(warning).toContain("连这点都记不住吗，杂鱼♡");
     expect(warning).not.toContain("五分钟");

@@ -30,6 +30,7 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
+  disableChatStateSwitch: (): boolean => false,
   // 入群守卫开着：本文件考察的是守卫开启时黑名单如何取代验证投递（关着时
   // 的行为由 test/antiRaid/joinGuardSwitch.test.ts 覆盖）。
   getChatState: () => ({ isInitEnabled: true, isFloodControlEnabled: true, isAntiRaidEnabled: true }),

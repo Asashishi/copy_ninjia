@@ -40,7 +40,7 @@ const {
   SEND_MESSAGE_TOOL,
 } = await import("../../../packages/consts/tools");
 const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
-const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
+const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION, SEND_VOICE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
 const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../../packages/consts/tools");
 const { stickerMenuCache, stickerMenuRevision } =
@@ -74,7 +74,7 @@ test("工具集真实挂载服务端联网检索，并同时提供函数行动�
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
-    onSongSent: mock((..._args: unknown[]): void => {}),
+    onVoiceSent: mock((..._args: unknown[]): void => {}),
   });
 
   expect(toolset.webSearch).toBe(true);
@@ -101,7 +101,7 @@ describe("add_reaction 成功动作计数", () => {
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
       onImageSent: mock((..._args: unknown[]): void => {}),
-      onSongSent: mock((..._args: unknown[]): void => {}),
+      onVoiceSent: mock((..._args: unknown[]): void => {}),
     };
   }
 
@@ -128,11 +128,21 @@ describe("add_reaction 成功动作计数", () => {
   });
 });
 
+test("语音说过的意思不得再用文字重发：三处提示都按语义而非字面约束", () => {
+  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("send_voice 念过的台词");
+  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("（发送了一条语音：…）");
+  expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("翻成中文、换个说法或加上注释再发出来都算重复");
+  expect(SEND_VOICE_TOOL_INSTRUCTION).toContain("语音里已经说过的意思不要再用 send_message 发一遍");
+  expect(SEND_VOICE_TOOL_INSTRUCTION).toContain("文字只发语音之外的内容");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("正文、图片 caption 与语音台词共用这条规则");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("用中文或其它语言把语音里说过的话再发成文字，同样算重复");
+});
+
 test("回复提示把独立文字限死在 send_message，媒体配文走对应 caption，最终响应不得夹带正文", () => {
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("主回复、贴纸说明、动作之后的补充文字都必须显式调用");
   expect(REPLY_ACTION_INSTRUCTION).toContain("独立文字只用 send_message");
   expect(SEND_MESSAGE_TOOL_INSTRUCTION).toContain("写进 generate_image 的 caption");
-  expect(REPLY_ACTION_INSTRUCTION).toContain("随附文字写进对应工具的 caption，不要再复述");
+  expect(REPLY_ACTION_INSTRUCTION).toContain("随附文字写进 generate_image 的 caption，不要再复述");
   expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
 });
 
@@ -159,7 +169,7 @@ test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才�
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
-    onSongSent: mock((..._args: unknown[]): void => {}),
+    onVoiceSent: mock((..._args: unknown[]): void => {}),
   });
 
   for (let action: number = 1; action <= HARD_MAX_ACTIONS_PER_REPLY; action++) {
@@ -199,7 +209,7 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
     onMessageSent,
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
-    onSongSent: mock((..._args: unknown[]): void => {}),
+    onVoiceSent: mock((..._args: unknown[]): void => {}),
   });
 
   const result = JSON.parse(await executeAndSettle(toolset,
@@ -233,7 +243,7 @@ test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
-    onSongSent: mock((..._args: unknown[]): void => {}),
+    onVoiceSent: mock((..._args: unknown[]): void => {}),
   });
 
   const result = JSON.parse(await executeAndSettle(toolset,
@@ -364,7 +374,7 @@ describe("send_message typo correction", () => {
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
       onImageSent: mock((..._args: unknown[]): void => {}),
-      onSongSent: mock((..._args: unknown[]): void => {}),
+      onVoiceSent: mock((..._args: unknown[]): void => {}),
     });
 
     const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "不该发出" })));
@@ -398,7 +408,7 @@ describe("send_message typo correction", () => {
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
         onImageSent: mock((..._args: unknown[]): void => {}),
-        onSongSent: mock((..._args: unknown[]): void => {}),
+        onVoiceSent: mock((..._args: unknown[]): void => {}),
       });
 
       const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -446,7 +456,7 @@ describe("send_message typo correction", () => {
         onMessageSent,
         onStickerSent: mock((..._args: unknown[]): void => {}),
         onImageSent: mock((..._args: unknown[]): void => {}),
-        onSongSent: mock((..._args: unknown[]): void => {}),
+        onVoiceSent: mock((..._args: unknown[]): void => {}),
       });
 
       const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -490,7 +500,7 @@ describe("send_message typo correction", () => {
         onMessageSent: mock((..._args: unknown[]): void => {}),
         onStickerSent: mock((..._args: unknown[]): void => {}),
         onImageSent: mock((..._args: unknown[]): void => {}),
-        onSongSent: mock((..._args: unknown[]): void => {}),
+        onVoiceSent: mock((..._args: unknown[]): void => {}),
       });
 
       const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -539,7 +549,7 @@ describe("send_message typo correction", () => {
         onMessageSent: mock((..._args: unknown[]): void => {}),
         onStickerSent: mock((..._args: unknown[]): void => {}),
         onImageSent: mock((..._args: unknown[]): void => {}),
-        onSongSent: mock((..._args: unknown[]): void => {}),
+        onVoiceSent: mock((..._args: unknown[]): void => {}),
       });
 
       const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
@@ -577,7 +587,7 @@ describe("send_message 重复消息去重", () => {
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
       onImageSent: mock((..._args: unknown[]): void => {}),
-      onSongSent: mock((..._args: unknown[]): void => {}),
+      onVoiceSent: mock((..._args: unknown[]): void => {}),
     };
   }
 
@@ -602,9 +612,17 @@ describe("send_message 重复消息去重", () => {
     const forgedSticker = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "（发了一枚贴纸：情绪含义 😂）",
     })));
+    const forgedVoice = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
+      text: "（发送了一条语音：この雑魚♡）",
+    })));
+    const forgedCommandImage = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
+      text: "（发送了一张图片）你的群友老婆是 Bob!",
+    })));
 
     expect(forgedImage.error).toContain("must not narrate an action");
     expect(forgedSticker.error).toContain("must not narrate an action");
+    expect(forgedVoice.error).toContain("must not narrate an action");
+    expect(forgedCommandImage.error).toContain("must not narrate an action");
     expect(sendMessageMock).not.toHaveBeenCalled();
     expect(toolset.actionsUsed()).toBe(0);
 
@@ -719,7 +737,7 @@ describe("send_message 可点击命令守卫", () => {
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
       onImageSent: mock((..._args: unknown[]): void => {}),
-      onSongSent: mock((..._args: unknown[]): void => {}),
+      onVoiceSent: mock((..._args: unknown[]): void => {}),
     };
   }
 
@@ -799,7 +817,7 @@ function baseToolContext(): Record<string, unknown> {
     onMessageSent: mock((..._args: unknown[]): void => {}),
     onStickerSent: mock((..._args: unknown[]): void => {}),
     onImageSent: mock((..._args: unknown[]): void => {}),
-    onSongSent: mock((..._args: unknown[]): void => {}),
+    onVoiceSent: mock((..._args: unknown[]): void => {}),
   };
 }
 
@@ -895,7 +913,7 @@ describe("工具分派", () => {
       onMessageSent: mock((..._args: unknown[]): void => {}),
       onStickerSent: mock((..._args: unknown[]): void => {}),
       onImageSent: mock((..._args: unknown[]): void => {}),
-      onSongSent: mock((..._args: unknown[]): void => {}),
+      onVoiceSent: mock((..._args: unknown[]): void => {}),
     };
   }
 

@@ -30,7 +30,7 @@ function apiWithSuccesses(): TelegramApi {
     sendChatAction: mock(async (..._args: unknown[]) => true),
     answerCallbackQuery: mock(async (..._args: unknown[]) => true),
     sendSticker: mock(async (..._args: unknown[]) => ({ message_id: 12 })),
-    sendPhoto: mock(async (..._args: unknown[]) => ({ message_id: 13 })),
+    sendPhoto: mock(async (..._args: unknown[]) => ({ message_id: 13, photo: [{ file_id: "photo-small", file_unique_id: "photo-small-u", width: 90, height: 90, file_size: 1_000 }, { file_id: "photo-large", file_unique_id: "photo-large-u", width: 1024, height: 1024, file_size: 100_000 }] })),
     setMessageReaction: mock(async (..._args: unknown[]) => true),
     deleteMessage: mock(async (..._args: unknown[]) => true),
     deleteMessages: mock(async (..._args: unknown[]) => true),
@@ -83,7 +83,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendChatAction({ chatId: -1001, action: "choose_sticker", api })).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBe(12);
-    expect(await actions.sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toEqual({ messageId: 13 });
+    expect(await actions.sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toEqual({ messageId: 13, photo: { fileId: "photo-large", fileUniqueId: "photo-large-u", width: 1024, height: 1024 } });
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
     expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("kicked");

@@ -205,7 +205,7 @@ describe("应用最终 offset 确认与排空", () => {
 
     const originalSetTimeout: typeof setTimeout = globalThis.setTimeout;
     const originalClearTimeout: typeof clearTimeout = globalThis.clearTimeout;
-    const timeoutToken = {} as ReturnType<typeof setTimeout>;
+    const timeoutToken = { unref: () => timeoutToken } as unknown as ReturnType<typeof setTimeout>;
     globalThis.setTimeout = ((callback: (...args: unknown[]) => void): ReturnType<typeof setTimeout> => {
       queueMicrotask(callback);
       return timeoutToken;

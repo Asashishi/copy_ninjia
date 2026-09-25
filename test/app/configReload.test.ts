@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import { rename } from "node:fs/promises";
 import { waitUntil } from "../helpers/waitUntil";
 import type {
   AdSampleConfig,
@@ -35,7 +36,7 @@ const {
   defaultStickerConfigCache,
 } = await import("../../packages/cache/perThread/config");
 const { adDetectConfigReadinessCache, aiChatConfigReadinessCache } = await import("../../packages/cache/main/configReadiness");
-const { AD_SAMPLES_CONFIG_PATH, CRON_CONFIG_PATH, MOOD_CONFIG_PATH, STICKERS_CONFIG_PATH } = await import("../../packages/consts/paths");
+const { AD_SAMPLES_CONFIG_PATH, CONFIG_ROOT, CRON_CONFIG_PATH, MOOD_CONFIG_PATH, STICKERS_CONFIG_PATH } = await import("../../packages/consts/paths");
 const { cronConfigCache } = await import("../../packages/cache/main/cron");
 
 const originalMoodText: string = await Bun.file(MOOD_CONFIG_PATH).text();
@@ -243,5 +244,51 @@ describe("config/ 目录监听", () => {
     await settle();
     expect(syncAiChatConfig).not.toHaveBeenCalled();
     expect(defaultMoodConfigCache.current).toBe(originalMood);
+  });
+});
+
+describe("config/ 监听的失效与关闸", () => {
+  test("watcher 运行中出错时记错误日志并关闭，本进程不再热重载", async () => {
+    startConfigReload();
+    await settle();
+    const watcher = configReloadRuntime.watcher;
+    expect(watcher).not.toBeNull();
+    const error: Error = new Error("inotify limit reached");
+
+    watcher!.emit("error", error);
+
+    expect(loggerError).toHaveBeenCalledWith(
+      "Deployment config watcher failed; runtime config reload stays off until restart:",
+      error
+    );
+    expect(configReloadRuntime.watcher).toBeNull();
+  });
+
+  test("配置目录不可监听时只记错误日志，不建立 watcher", async () => {
+    const movedRoot: string = `${CONFIG_ROOT}.moved`;
+    await rename(CONFIG_ROOT, movedRoot);
+    try {
+      startConfigReload();
+      expect(configReloadRuntime.watcher).toBeNull();
+      expect(loggerError.mock.calls[0]![0]).toBe(
+        "Deployment config watcher could not start; runtime config reload stays off until restart:"
+      );
+    } finally {
+      await rename(movedRoot, CONFIG_ROOT);
+    }
+  });
+
+  test("关闸清掉等待中的防抖 timer，之后的文件改动不再分发", async () => {
+    startConfigReload();
+    await settle();
+    await Bun.write(MOOD_CONFIG_PATH, moodDocument("关闸前"));
+    expect(await waitUntil((): boolean => configReloadRuntime.debounceTimer !== null)).toBe(true);
+
+    quiesceConfigReload();
+
+    expect(configReloadRuntime.debounceTimer).toBeNull();
+    expect(configReloadRuntime.watcher).toBeNull();
+    await settle();
+    expect(syncAiChatConfig).not.toHaveBeenCalled();
   });
 });

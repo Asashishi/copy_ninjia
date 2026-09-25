@@ -10,7 +10,7 @@
  * 的字数上限各不相同，那是领域策略，不该下沉到供应商实现包。
  *
  * 请求体以构造器形式交给 client.ts，让 config/agent.json 的解析发生在它的
- * try 内（理由见 client.ts 的 requestOpenAiResult）。
+ * try 内（见 client.ts 的 requestOpenAiResult）。
  */
 
 import OpenAI, { toFile } from "openai";

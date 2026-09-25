@@ -6,10 +6,10 @@ export const IDENTITY_READ_CACHE_MAX_ENTRIES: number = 8_192;
 /**
  * 单次跨线程冷读携带的主键上限；**必须严格小于** IDENTITY_READ_CACHE_MAX_ENTRIES。
  *
- * 两者相等时，同一次预取的第 N+1 块会把第 N 块整块挤出 LRU：`/batch_kick` 那种
- * 上万条的批量路径预取完成后只剩最后一块是热的，被挤掉的白名单管理员按冷未命中
- * 判成「不在白名单」而被踢出（见 whitelist.ts 的 isWhitelisted）。留出余量
- * 还能容纳同一条命令自己的目标身份预取。
+ * 预热时已缓存的主键先刷新热度、冷键再整块写入，块不超过 LRU 容量才能保证同一
+ * 块里的主键在写完后全部仍在缓存中；留出余量还能容纳同一条 update 的其它身份。
+ * 破坏性批量处置不依赖这份缓存的驻留，而是按块直接取局部结论（见
+ * infra/identityStorage/read.ts 的 readIdentityPolicyVerdicts）。
  */
 export const IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES: number = 4_096;
 

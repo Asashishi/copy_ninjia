@@ -28,11 +28,11 @@
 | `bun run check:coverage` | いまカバレッジを計測し、3 言語 README の badge/alt、本ページ 3 部、カバレッジ画像 2 枚の数値が実測と一致するか照合。テスト全体を再実行するので `check` には含めない |
 | `bun run test:fault-injection` | 決定論的 fault injection suite |
 | `bun run perf:hot-paths` | 単一の hot path シナリオを独立 process で測定（`--profile` で sampling 分析） |
-| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 51 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
+| `bun run perf:hot-path-gate` | `HOT_PATH_PROFILE_SCENARIOS` で厳選した 10 個の hot path シナリオの memory/GC/JIT gate（registry は 58 個で、残りは全量基準の manifest または個別 command で実行）。`check` に組み込み済み。`--write-result` で今回の読数を repository root の `performance-result.json` に記録 |
 | `bun run perf:join-log` | 入室ログ 250,000 件上限で capacity・snapshot・append-accounting の独立 process 比較 benchmark を実行 |
 | `bun run perf:identity-database` | identity database の cold/hot な読み書き 6 項目を独立 process で benchmark |
 | `bun run perf:full` | 6 セクション × 3 ラウンドの全量 benchmark。リリース時と明示指示時のみ実行し、`--write-doc` で 3 言語の 09 パフォーマンスページと `performance-result.json` の `fullSuite.lastRun` を同時に更新 |
-| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload の 7 シナリオ、2 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択。テキスト清掃とクールダウンの専用検証は `--text` / `--cooldown` を明示した場合のみ実行 |
+| `bun run perf:review` | 既存の 12 hot path、AI 返信・payload・音声エンコードの 8 シナリオ、3 本の完全 command chain、実 Disk I/O Worker 負荷を各 3 独立ラウンドで検証。`--hot-paths` / `--ai` / `--chains` / `--worker` で選択。テキスト清掃とクールダウンの専用検証は `--text` / `--cooldown` を明示した場合のみ実行 |
 | `bun run build -- --version <tag>` | バージョンの明示指定が必須で既定値なし。現在の Linux 向けバイナリを隔離検証後、`.map` を含まないアーカイブと SHA-256 ファイルを `dist/` へ出力 |
 | `bun run release:check -- --version <tag>` | frozen lockfile install + check + カバレッジ数値の照合 + fault injection + バイナリ構築・検証。リリース前に必須。バージョン未指定・不正は依存関係のインストール前に拒否 |
 | `bun run release:build -- --version <tag>` | クリーンでコミット済みの `dev` から正式版をネイティブ構築 |
@@ -69,7 +69,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5104 tests / 444 files / 192389 `expect()` calls**。全ソースコードの**関数カバレッジは 97.06%、行カバレッジは 98.19%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5142 tests / 450 files / 194128 `expect()` calls**。全ソースコードの**関数カバレッジは 97.16%、行カバレッジは 98.23%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -84,9 +84,9 @@
 
 installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFiles` と関連する `PassEnvironment` / `UnsetEnvironment` の拒否、起動後の `NRestarts` 基準値と減少拒否、既存設定再入力時の mode 保持も検証します。system command はすべて fixture が受け持ち、preflight 失敗は設定・unit・実行データへの書き込みより前に発生する必要があります。
 
-`test/scripts/installMigration.test.ts` は 12.1.0 の mock バックアップから cold migration、mapping 産物の手動配置、ソースインストール、実際の起動までを検証し、未移行の identity 入口を拒否します。ビルド検証の `scripts/checkBinary.ts` は同梱 migration tool、バイナリインストール、起動を同様に確認し、対象プロセスは system Bun を使いません。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、schema v10 の 2 種類の正規系譜、空でない WAL、全業務テーブル、state 主副本、Google 資格情報、配置設定、画像内容を扱います。元バックアップのハッシュ、mode、所有者、link 構造を維持します。データベース移行は宣言した権限 bit の追加、version の更新、系譜 entry の追加だけを行い、その他の業務内容を保持します。
+`test/scripts/installMigration.test.ts` は 13.x の mock バックアップから cold migration、mapping 産物の手動配置、ソースインストール、実際の起動までを検証し、12.1.0 の identity 入口が残る配置や `state.json` に `translate` が残る配置を拒否します。ビルド検証の `scripts/checkBinary.ts` は同梱 migration tool、バイナリインストール、起動を同様に確認し、対象プロセスは system Bun を使いません。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、schema v11 の 2 種類の正規系譜、空でない WAL、全業務テーブル、state 主副本、Google 資格情報、配置設定、画像内容を扱います。元バックアップのハッシュ、mode、所有者、link 構造を維持します。翻訳セッション移行は対象群の `chat_states.status` の書き換えか行の新規作成だけを行い、version、系譜、その他の業務内容を保持します。
 
-資格情報には一時生成した RSA 鍵を使用します。`test/scripts/migrateBotConfig.test.ts` は BOM の保持、資格情報の不正・欠落、出所の競合、産物の上書き拒否も確認します。ソース移行インストールのテストは fault injection にも含まれます。ソース経路は `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateBotConfig.test.ts`、バイナリ経路は `bun run build -- --version <tag>` で検証できます。
+`test/scripts/migrateTranslateSessions.test.ts` はバックアップ副本の欠落、ソース DB の version・系譜の不一致、既存セッション、不正セッション、容量超過、産物の上書き拒否、産物書き込み途中の失敗、ソースと出力の相互包含も確認します。ソース移行インストールのテストは fault injection にも含まれます。ソース経路は `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateTranslateSessions.test.ts`、バイナリ経路は `bun run build -- --version <tag>` で検証できます。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
@@ -102,15 +102,15 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 `test/workers/antiRaid/verificationWelcome.test.ts` は実際の双方向プロトコル、main thread の一時通知境界、削除 owner を通し、Telegram 出力を SDK transformer で代替します。4 種類の歓迎文、返信先、応答消失、取消、Worker teardown・再生成、送信・通信失敗を検証し、削除の一度だけの登録、終了を妨げない timer、後続副作用の順序を確認します。このファイルは全量テストと障害注入の両方に含まれます。
 
-`/wed` の操作回帰は 1,024 件の LRU 容量、コマンドとボタン参照による利用順更新、eviction 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、update 取消からの独立性、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。抽選の回帰では、ID でアバターを読み、身分を `getChat` の private chat 情報から取り、`getChatMember` を呼ばないことも確認します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
+`/wed` の操作回帰は操作表とメンバー表が同じ 25 群上限に収まること、teardown 時の待機・実行中操作の取消、遅着結果の清掃、個別削除失敗後の継続、処理中 session の自己清掃、停止時 drain を検証します。メンバー正本では 25 群の満杯時拒否を別途検証します。永続化回帰は各群の集合参照の再利用、15 万人上限、退室後の追加、dirty の TTL/件数閾値、変更なし時の無送信、送信失敗、Worker 復旧水位、停止時 flush、不正ファイルの原本保持と接続前の起動拒否を検証します。抽選の回帰では、ID でアバターを読み、身分を `getChat` の private chat 情報から取り、`getChatMember` を呼ばないことも確認します。`test/app/registerHandlersDispatch.test.ts` は初期化 gate が拒否した更新でも退室 ID だけを削除することを確認します。性能確認は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware` を再利用し、`wed-member-churn` は満杯で新規 ID を拒否して既存メンバーを保持することを検証します。
 
 ## Hot path gate
 
 `bun run perf:hot-path-gate` は `bun run check` の最終段で、`master` へのマージ前に実行する必要があります。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` の各シナリオ・各繰り返しごとに独立した子プロセスを 2 つ起動します。`steadyProfile` は正式ループの GC と JIT だけを判定し、`retained` は profiler 自身のメモリ干渉がない状態で RSS、heapUsed のピーク、full GC 後の残存を判定します。
 
-校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延と GC 停止の測定値、RSS/保持量の hard limit を含みます。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
+校準記録を [`performance-result.json`](../../performance-result.json) に保存し、`scripts/perf/hotPaths/gateResult.ts` が厳密に解析します。`gateRuntime.ts` は規約検査と hot-path 子 process の開始前に `packageManager`、現在の Bun version/revision、校準 build を照合し、不一致なら再測定を要求します。記録には process 数、各場面の遅延と GC 停止の測定値、RSS/保持量の hard limit を含みます。場面別の遅延閾値 `medianNsPerOpReportThresholds` は報告だけで失敗にはせず、2 つの時間帯での各場面の最も遅い中央値の 1.5 倍を切り上げた値とし、VPS の時間帯による変動に余裕を残します。今回の各プロセスで最も遅い中央値でも閾値の 1/`HOT_PATH_CALIBRATION_STALE_RATIO`（5）を下回った場面では、gate が `hot-path calibration stale` を 1 行出力して空いているマシンでの再校準を促し、判定基準は変えません。過去の `fullSuite` 結果は各回の時刻と Bun build を維持します。
 
-`steadyProfile` 子プロセスは `BUN_JSC_logGC=1` を明示的に有効化します。`hotPaths/gcProfile.ts` は正式ループの境界内にある JSC の `p=…ms` 停止区間だけを合計し、同じ窓の単調経過時間で割って GC 停止時間比率を得ます。起動 handshake、唯一の完全な窓、停止ログ形式の一致が必須で、欠落・未知形式は失敗です。完全な有効ログで停止がなかった場合だけ 0 を記録します。JIT 層は sampling profiler で集計します。`retained` の強制 GC は計時境界外で、この比率には含めません。シナリオ別 calibration は最低 3 個の独立プロセスの停止データを保存します。GC 停止時間比率の上限は、プロセスが利用可能な CPU 数に応じて全シナリオ共通で適用します。4 コア以上は 25%、2～3 コアは 30%、1 コアは 35% です。上限と同じ値は合格し、上限を超えると失敗します。基準は `packages/consts/performance.ts` の `HOT_PATH_GC_CPU_BUDGETS` で定義します。ゲート起動時に `node:os.availableParallelism()` から利用可能な並列度を取得して上限を選び、Linux の CPU affinity 制限もこの値に反映されます。出力の `availableCpuCount` と `thresholds.maxGcPausePercent` に、今回の CPU 数と共通上限を記録します。
+`steadyProfile` 子プロセスは `BUN_JSC_logGC=1` を明示的に有効化します。`hotPaths/gcProfile.ts` は正式ループの境界内にある JSC の `p=…ms` 停止区間だけを合計し、同じ窓の単調経過時間で割って GC 停止時間比率を得ます。起動 handshake、唯一の完全な窓、停止ログ形式の一致が必須で、欠落・未知形式は失敗です。完全な有効ログで停止がなかった場合だけ 0 を記録します。JIT 層は sampling profiler で集計します。`retained` の強制 GC は計時境界外で、この比率には含めません。シナリオ別 calibration は最低 3 個の独立プロセスの停止データを保存します。GC 停止時間比率の予算は、プロセスが利用可能な CPU 数に応じて全シナリオ共通で適用します。4 コア以上は 25%、2～3 コアは 30%、1 コアは 35% です。シナリオの各定常プロセスの最大比率が予算を超えても、予算に `HOT_PATH_GC_SOFT_OVERRUN_PERCENT`（5 ポイント）を加えた値以内であれば、ゲートは `hot-path soft gc` を 1 行出力して合格とします。いずれかの定常プロセスが予算 + 5 ポイント（4 コア以上では 30%）を超えると失敗し、その値と同じなら合格です。予算と余裕幅は `packages/consts/performance.ts` の `HOT_PATH_GC_CPU_BUDGETS` と `HOT_PATH_GC_SOFT_OVERRUN_PERCENT` で定義します。ゲート起動時に `node:os.availableParallelism()` から利用可能な並列度を取得して予算を選び、Linux の CPU affinity 制限もこの値に反映されます。出力の `availableCpuCount` に今回の CPU 数、`thresholds.maxGcPausePercent` に失敗判定の hard limit、`softReportThresholds.maxGcPausePercent` に予算、`softGcReports` に予算を超えたシナリオを記録します。
 
 `perf:isolated-hot-path --profile` と `perf:review` の profile 出力は JIT・sampling 診断用で、GC 停止比率は提供しません。GC 計測には `perf:hot-path-gate` を使います。`perf:disk-transport` と `perf:review --text` も親プロセスで GC ログを解析し、各ラウンドに独立した `gcProfile` を返します。
 
@@ -138,11 +138,11 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 ## 個別シナリオと伝送ストレス検証
 
-`bun run perf:review` は全量基準と同じ隔離 root、設定 fixture、process runner、出力先の canned reply を使い、JSON を出力して各実行の data root を削除します。`--hot-paths` は sender、message window、permission read、AI activity、認証 snapshot と clone、空/微小 chunk および 1 KiB/1 MiB/16 MiB response、登録 middleware の 12 scenario を、それぞれ通常測定 3 回と profile 3 回で検証します。完全な非同期読み取りは明示した回数で warmup し、実際の JIT tier を記録します。他の scenario は最適化 tier の安定性検査を維持します。
+`bun run perf:review` は全量基準と同じ隔離 root、設定 fixture、process runner、出力先の canned reply を使い、JSON を出力して各実行の data root を削除します。`--hot-paths` は sender、message window、permission read、AI activity、認証 snapshot と clone、空/微小 chunk および 1 KiB/1 MiB/vision media 上限（`MEDIA_MAX_DOWNLOAD_BYTES`、14,250,000 byte）の response、登録 middleware の 12 scenario を、それぞれ通常測定 3 回と profile 3 回で検証します。完全な非同期読み取りは明示した回数で warmup し、実際の JIT tier を記録します。他の scenario は最適化 tier の安定性検査を維持します。
 
-`--ai` は受付判定、通常送信、容量・再開負荷、Base64 の 1 MiB / 8 MiB / 異常先頭 / 異常末尾を測定します。7 シナリオで各 3 回の独立 process による計時と 3 回の profile を実行し、production 関数を直接使います。送信シナリオは chat 別/全体容量、実完了、後処理を断言し、production JIT probe の安定を要求します。負荷の 1 iteration は 128 存続 slot と容量拒否検証を含み、遅延は batch 全体の値です。Base64 は符号化後と復号後のサイズ上限、標準 alphabet、末尾 bit の厳密検査、g/y なしの正規表現、1 回だけの decode を維持します。固定入力と warmupによる局所測定であり、実 model / Telegram network や全 production payload の memory 予算は含みません。JIT sampling summary は GC 停止時間を提供しません。
+`--ai` は受付判定、通常送信、容量・再開負荷、Base64 の 1 MiB / 8 MiB / 異常先頭 / 異常末尾、および音声合成共通実装の WAV 解析と Opus エンコード（`voice-message-encode`、約 2.7 秒の音声、provider は固定 WAV の代役）を測定します。8 シナリオで各 3 回の独立 process による計時と 3 回の profile を実行し、production 関数を直接使います。送信シナリオは chat 別/全体容量、実完了、後処理を断言し、production JIT probe の安定を要求します。負荷の 1 iteration は 128 存続 slot と容量拒否検証を含み、遅延は batch 全体の値です。Base64 は符号化後と復号後のサイズ上限、標準 alphabet、末尾 bit の厳密検査、g/y なしの正規表現、1 回だけの decode を維持します。固定入力と warmupによる局所測定であり、実 model / Telegram network や全 production payload の memory 予算は含みません。JIT sampling summary は GC 停止時間を提供しません。
 
-`--chains` は機能を有効にした `ad-detect-command` と `ai-reply-command` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
+`--chains` は機能を有効にした `ad-detect-command`、`ai-reply-command`、`cron-send-voice` を実行し、Telegram canned call 数と処理完了を検証します。`--worker` は各 round で実 Disk I/O Worker に 128 message × 400 batch を渡し、batch ごとに最終 revision の ACK を待ちます。各 round で 2 回の graceful shutdown と Worker 再構築を行い、25 chat の復旧値を照合します。clone、transaction、disk wait を含め、throughput、latency、retained heap、RSS を記録しますが、fault injection の代用にはなりません。各 mode は 3 round で、全量基準と既定 10 scenario の hard gate 閾値は変更しません。
 
 `--cooldown` は明示した場合のみ、production のクールダウンを 5 シナリオで測定します。`cooldown-hit`、`cooldown-renew`、`cooldown-growth`、`cooldown-saturated`、`cooldown-expiry` が、既存キーの hit、単一キーの更新、表の充填、満杯時の拒否、一括期限切れを検証します。容量と期間は production 定数を使います。各シナリオは独立 process で通常測定 3 回と profile 3 回を実行し、受理件数を断言して production JIT probe を観測します。充填シナリオは各 warmup と正式 sample の直前に初期化し、その処理は計時に含めません。通常測定は latency、保持 heap、RSS を返し、profile は JIT sample を返しますが GC 停止比率は返しません。この mode は既定の検証と全量基準には含めず、hard gate の閾値も変更しません。
 
@@ -150,7 +150,7 @@ write-through scenario は 4,096 key の working set に対して 65,536 operati
 
 `sender-mixed-identity` は user と channel の identity を交互に入力して steady behavior と JIT 再最適化を観測します。単一 user scenario とは sender 数が異なるため、時間差を shape 混在だけのコストとは解釈しません。benchmark の user ID は int32 を超える値を扱い、production では小さい ID も有効です。
 
-registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware`、`storage-sqlite-flush` を含みます。最初の 4 項目はメンバー集合の hit・充填・満杯時の拒否・chat 切替を検証します。middleware は実際の登録 chain と活動経路を検証します。SQLite は空 DB に 128 delete を送るため、主に transaction scheduling の測定であり、disk throughput の値ではありません。
+registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-member-chat-switch`、`registered-middleware`、`storage-sqlite-flush` を含みます。最初の 4 項目はメンバー集合の hit・充填・満杯時の拒否・chat 切替を検証します。middleware は実際の登録 chain と活動経路を検証します。SQLite は空 DB に 128 delete を送るため、主に transaction scheduling の測定であり、disk throughput の値ではありません。`proxy-tts-detect` は通常テキスト、TTS 以外のコードブロック、TTS request の 3 種類のプライベートメッセージを順番に入れ替えて `/send` 中継の TTS 判定を呼びます。JSON でないコードブロックは JSONC 解析失敗の分岐を通り、JIT probe には再最適化が記録されます。
 
 `bun run perf:isolated-hot-path <scenario>` を実行し、別の sampling には `--profile` を付けます。この入口は `gateFixture.ts` で独立した設定・data root を作り、3 回の独立子 process に渡して、終了後に run directory を削除します。外部送信は基準用の固定応答が受け持ちます。Bun と入力を固定し、warm-up 後に retained と profile を別々に観測します。JIT sample が不足する場合は tier の安定を判断できません。
 
@@ -162,7 +162,7 @@ registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-
 
 `bun run perf:full` はリリース時と明示的な指示があったときにのみ実行します。`bun run check` には含めず、失敗閾値も設けません。ホットパスのハードゲートは上記の `perf:hot-path-gate` のままです。6 つのセクションをそれぞれ独立プロセスで 3 ラウンド実行し、平均を報告します。コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、コンテナとアルゴリズム、参加ログ容量線の 6 つです。各項目には平均に加えて最小値・最大値・変動係数も付き、CV が大きく跳ねた行は履歴と比較できません。
 
-計測対象はすべて既存コードの再利用です。ホットパスは `perf:hot-paths` のシナリオと反復数をそのまま使い、ストレージは `perf:identity-database` の実装を呼び、容量線は `perf:join-log` の子プロセスを呼びます。チェーンは `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` というメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測します。さらに**コマンド全体**を計測する 2 本があります。`ad-detect-command` は `enqueueAdCandidate` から `runAdDetectBatch`、そしてメインスレッドの `handleAdDetected` による処理の排出まで、`ai-reply-command` は `recordChatMessage` と `generateAndSendReply` から返信が実際に送信されるまでです。この 2 本のモデル呼び出しと Telegram 送信は `scripts/perf/outboundGuard.ts` のプロセス内固定応答が返します——ベンチマークは実際のリクエストを一切発行せず、API 費用も発生しません。`ai-reply-command` はさらに送信前の擬人的な間を実測して差し引きます（基準は [09 パフォーマンス](09-performance.md)）。コールドスタートは満載のフィクスチャ上で `packages/app/lifecycle.ts` の init 順に段階ごとに計測し、通信を伴う処理と 2 つの業務 Worker の生成は含みません。
+計測対象はすべて既存コードの再利用です。ホットパスは `perf:hot-paths` のシナリオと反復数をそのまま使い、ストレージは `perf:identity-database` の実装を呼び、容量線は `perf:join-log` の子プロセスを呼びます。チェーンは `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` というメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測します。さらに**コマンド全体**を計測する 3 本があります。`ad-detect-command` は `enqueueAdCandidate` から `runAdDetectBatch`、そしてメインスレッドの `handleAdDetected` による処理の排出まで、`ai-reply-command` は `recordChatMessage` と `generateAndSendReply` から返信が実際に送信されるまで、`cron-send-voice` は音声合成共通実装（tts facade、Gemini 音声 adapter、Base64 decode、WAV 解析、Opus エンコード）を経て `deliverCronAction` でボイスメッセージを送るまでです——本番では合成は AI Worker で行い、結果は receipt でメインスレッドへ渡りますが、このチェーンは同一プロセス内で両側をつなぎ、スレッド間の受け渡しは含みません。この 3 本のモデル呼び出しと Telegram 送信は `scripts/perf/outboundGuard.ts` のプロセス内固定応答が返します——ベンチマークは実際のリクエストを一切発行せず、API 費用も発生しません。`ai-reply-command` はさらに送信前の擬人的な間を実測して差し引きます（基準は [09 パフォーマンス](09-performance.md)）。コールドスタートは満載のフィクスチャ上で `packages/app/lifecycle.ts` の init 順に段階ごとに計測し、通信を伴う処理と 2 つの業務 Worker の生成は含みません。
 
 データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、production の書き込み経路から実データルートへ到達することはありません。加えてディレクトリ作成、コピー、ファイル書き込み、削除は共通の境界（`scripts/perf/fullSuite/mockRoot.ts`）を通ります：まずパスが字句的に `performance/` 配下かを判定し、次にリポジトリルートから対象までの**すでに存在する**パス構成要素を 1 つずつ検査し、いずれかがシンボリックリンクなら拒否します。削除は親チェーンだけを検査するため、末端自体がシンボリックリンクの場合はリンクだけを外し、リンク先には触れません。mock ルート自体は決して削除しません。`--write-doc` は `docs/{cn,en,ja}/09-performance.md` の 3 言語 block と `performance-result.json` の `fullSuite.lastRun` を同時に書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
 

@@ -60,8 +60,13 @@ export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
  * 三份独立 Map 都使用同一硬上限，给主线程、Anti-Raid Worker 与 Disk I/O Worker
  * 的镜像留下明确且一致的容量边界。所属模块：
  * antiRaid/verificationMirror.ts 与 workers/diskIO/verificationRecovery.ts。
+ *
+ * 取值推导：私密模式秒踢的占位不持久化、不计入本上限，只有待验证与终态记录计入。
+ * 私密模式生效时每群每分钟至多 ANTI_RAID_PER_MINUTE_LIMIT 人进入验证、各自存活
+ * VERIFICATION_TIMEOUT_MS，稳态约为 STATE_MANAGED_CHAT_LIMIT × 45 × 3 ≈ 3,375 条；
+ * 其余余量留给私密模式未能生效（冷却期或缺少改权限的权限）时的溢出。
  */
-export const VERIFICATION_RECORD_CAPACITY: number = 10_000;
+export const VERIFICATION_RECORD_CAPACITY: number = 15_000;
 /**
  * 冷启动恢复终态时，Worker 并发反查群类型的硬顶。请求按群复用，超过时保留终态
  * 等下一轮退避，避免大量历史群同时恢复时无界创建 getChat Promise。

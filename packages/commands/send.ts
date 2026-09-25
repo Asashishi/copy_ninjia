@@ -1,6 +1,6 @@
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
-import { clearChatStateField, getActiveProxySendTarget, getChatStateCache, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
+import { disableChatStateSwitch, getActiveProxySendTarget, getChatStateCache, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { logApiError, sendCommandMessage } from "../infra/telegram";
 import { bot } from "../infra/telegram/mainClient";
 import { signalArgs } from "../libs/telegramSignalArgs";
@@ -14,7 +14,7 @@ import type { ChatFullInfo } from "grammy/types";
 
 /**
  * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达、且已经在
- * chat_states 里被纳管的 group/supergroup（这条命令自己绝不新建群状态，理由见
+ * chat_states 里被纳管的 group/supergroup（这条命令自己绝不新建群状态，见
  * 下方那处判定），持久化位置由 ChatState.isProxySendEnabled 定义。
  */
 export async function handleSendCommand(ctx: CommandContext<Context>): Promise<void> {
@@ -33,7 +33,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
       await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyAlreadyStopped, replyToMessageId: messageId });
       return;
     }
-    clearChatStateField(activeTargetChatId, "isProxySendEnabled");
+    disableChatStateSwitch(activeTargetChatId, "isProxySendEnabled");
     await persistChatState(activeTargetChatId, "send finished");
     await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.proxyStopped, replyToMessageId: messageId });
     return;

@@ -32,6 +32,20 @@ export const CHAT_STATE_KEYS: readonly string[] = [
   "botPermissions",
   "title",
   "isProxySendEnabled",
+  "translate",
+];
+
+/** 群状态里一条翻译会话的字段闭集（database/codec/chatState.ts 严格解析用）。 */
+export const TRANSLATE_SESSION_KEYS: readonly string[] = ["translatedUser", "language"];
+
+/** 翻译会话目标身份的字段闭集（database/codec/chatState.ts 严格解析用）。 */
+export const CACHED_USER_KEYS: readonly string[] = [
+  "id",
+  "username",
+  "first_name",
+  "last_name",
+  "title",
+  "isChannel",
 ];
 
 /** 群锁定状态持久化字段闭集，用于严格解析。 */

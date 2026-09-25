@@ -26,8 +26,9 @@ import type {
 import type {
   MediaInputEffect,
   MediaInputTransition,
+  MediaInputModalityState,
+  MediaInputSupportState,
 } from "../../../types/states/mediaInputSupport";
-import type { MediaInputModalityState, MediaInputSupportState } from "../../../types/states/mediaInputSupport";
 
 /**
  * 两种模态各自最多一个首次探测 Promise。字段在首次读取时一次性建立，之后只替换

@@ -66,10 +66,12 @@ export const AD_REFERENCE_WARNING_WINDOW_MS: number = 300_000;
  * 入队的旧 key；同一 key 的后续消息仍受单 key 条数/字符上限约束。
  *
  * 这个数字直接乘出入群守卫线程 isolate 的常驻上界：每个 key 最多
- * AD_DETECT_MAX_MESSAGES_PER_SENDER（15）条，每条最多 AD_DETECT_MESSAGE_MAX_CHARS
- * 正文加两段 AD_DETECT_SENDER_NAME_MAX_CHARS 的姓名、
- * AD_DETECT_MAX_LINK_URLS × AD_DETECT_LINK_URL_MAX_CHARS 的 URL 段、再加
- * 两段 AD_SAMPLE_CONTEXT_MAX_CHARS 的样本上下文。撑满不是 OOM 一个启发式那么
+ * AD_DETECT_MAX_MESSAGES_PER_SENDER（15）条，每条 AdCandidateEntry 同时持有送检
+ * 文本 `text`（AD_DETECT_MESSAGE_MAX_CHARS 正文、两段 AD_DETECT_SENDER_NAME_MAX_CHARS
+ * 姓名、AD_DETECT_MAX_LINK_URLS × AD_DETECT_LINK_URL_MAX_CHARS 的 URL 段与两段
+ * AD_SAMPLE_CONTEXT_MAX_CHARS 引用上下文）、归因文本 `directText`（姓名与正文）以及
+ * 单独保存的 `quote` / `replyTo`，合计约 3.6k 字符。满载约 15 × 8,192 × 3.6k ≈
+ * 4.4 亿字符，按 Latin-1 / UTF-16 存储约 0.44–0.88 GB。撑满不是 OOM 一个启发式那么
  * 简单——入群验证、封锁、黑名单执行都在同一个 isolate 里，跟着一起死，
  * supervisedWorker 烧完 WORKER_MAX_RESTARTS 后验证就静默失效了。上限因此按
  * 「撑满也还活着」定，而不是按「能接纳多少人」定。8,192 与 15 条是一起调下来的，
@@ -187,7 +189,7 @@ export const AD_DETECT_REASON_MAX_CHARS: number = 80;
  * 随每条消息一起带的「被引用段」与「被回复原文」的最大字符数。
  *
  * 这两样**与正文一起送检**，并且各自独占这份配额、不占正文的
- * AD_DETECT_MESSAGE_MAX_CHARS——理由同 AD_DETECT_MAX_LINK_URLS：共用额度的话，
+ * AD_DETECT_MESSAGE_MAX_CHARS——同 AD_DETECT_MAX_LINK_URLS：共用额度的话，
  * 一段填充文本就能把引文顶出去，而「先发正常消息、隔一段时间编辑成广告、再用
  * 回复/引用顶上来」正是当前最主流的广告发法（见 docs/cn/04-invariants.md 与
  * workers/antiRaid/adDetect/bundle.ts 的 claimSampleContextParts）。

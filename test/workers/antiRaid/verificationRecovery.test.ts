@@ -1,6 +1,6 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
 import type {
@@ -64,6 +64,12 @@ mock.module("../../../packages/infra/telegram", () => ({
 }));
 
 const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
+
+/** 推进假时钟并冲刷由到期 timer 派生的微任务。 */
+async function advanceFakeTimers(ms: number): Promise<void> {
+  jest.advanceTimersByTime(ms);
+  for (let index: number = 0; index < 10; index++) await Promise.resolve();
+}
 const { verificationEntries } = await import("../../../packages/cache/workers/antiRaid/verification");
 
 function record(
@@ -192,17 +198,22 @@ describe("Anti-Raid Worker verification recovery", () => {
   });
 
   test("adopt uses remaining expiry, replaces old timers, and handles expired records immediately", async () => {
+    jest.useFakeTimers();
     const active: VerificationSnapshot = record(42, Date.now() + 100);
-    runtime.adoptVerifications({ type: "adoptVerifications", generation: 1, verifications: [active] });
-    const firstEntry = verificationEntries.get("-1001:42");
-    runtime.adoptVerifications({ type: "adoptVerifications", generation: 1, verifications: [active] });
-    expect(verificationEntries.get("-1001:42")).toBe(firstEntry);
+    try {
+      runtime.adoptVerifications({ type: "adoptVerifications", generation: 1, verifications: [active] });
+      const firstEntry = verificationEntries.get("-1001:42");
+      runtime.adoptVerifications({ type: "adoptVerifications", generation: 1, verifications: [active] });
+      expect(verificationEntries.get("-1001:42")).toBe(firstEntry);
 
-    runtime.adoptVerifications({ type: "adoptVerifications", generation: 2, verifications: [active] });
-    await Bun.sleep(30);
-    expect(kicks).toBe(0);
-    await Bun.sleep(100);
-    expect(kicks).toBe(0);
+      runtime.adoptVerifications({ type: "adoptVerifications", generation: 2, verifications: [active] });
+      await advanceFakeTimers(30);
+      expect(kicks).toBe(0);
+      await advanceFakeTimers(100);
+      expect(kicks).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
     settleLatestTerminal(42);
     await Bun.sleep(0);
     expect(kicks).toBe(1);
@@ -320,13 +331,18 @@ describe("Anti-Raid Worker verification recovery", () => {
       expiresAt: now + 10_000,
     };
 
-    runtime.adoptVerifications({ type: "adoptVerifications", generation: 7, verifications: [original] });
-    const originalEntry = verificationEntries.get("-1001:60");
-    runtime.adoptVerifications({ type: "adoptVerifications", generation: 7, verifications: [extended] });
-    expect(verificationEntries.get("-1001:60")).not.toBe(originalEntry);
+    jest.useFakeTimers();
+    try {
+      runtime.adoptVerifications({ type: "adoptVerifications", generation: 7, verifications: [original] });
+      const originalEntry = verificationEntries.get("-1001:60");
+      runtime.adoptVerifications({ type: "adoptVerifications", generation: 7, verifications: [extended] });
+      expect(verificationEntries.get("-1001:60")).not.toBe(originalEntry);
 
-    await Bun.sleep(100);
-    expect(verificationEntries.get("-1001:60")?.state.kind).toBe("pending");
+      await advanceFakeTimers(100);
+      expect(verificationEntries.get("-1001:60")?.state.kind).toBe("pending");
+    } finally {
+      jest.useRealTimers();
+    }
 
     // 清理延长后的计时器，避免测试进程等待或影响后续用例。
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 8, verifications: [] });

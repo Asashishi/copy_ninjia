@@ -7,10 +7,11 @@ import {
 import { InputValidationError } from "../../packages/libs/inputValidation";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "../helpers/botPermissions";
+import { chatStateOf } from "../helpers/chatState";
 
 describe("chat_states codec", () => {
   test("当前翻译开关严格往返，运行时拒绝旧开关名称", () => {
-    const text: string = encodeChatStateData({ isTranslationEnabled: true }, "chat_states[-1001].status");
+    const text: string = encodeChatStateData(chatStateOf({ isTranslationEnabled: true }), "chat_states[-1001].status");
     expect(decodeChatStateData(text, "chat_states[-1001].status").isTranslationEnabled).toBe(true);
     for (const value of [
       { isJATranslationEnabled: true },
@@ -25,7 +26,7 @@ describe("chat_states codec", () => {
       canRestrictMembers: true,
       canPinMessages: true,
     });
-    const text: string = encodeChatStateData({
+    const text: string = encodeChatStateData(chatStateOf({
       isInitEnabled: true,
       isFloodControlEnabled: true,
       botPermissions: permissions,
@@ -36,7 +37,7 @@ describe("chat_states codec", () => {
         originalPermissions: { can_invite_users: true },
         expiresAt: 3_000,
       },
-    }, "chat_states[-1001].status");
+    }), "chat_states[-1001].status");
     expect(decodeChatStateData(text, "chat_states[-1001].status")).toEqual({
       quietUntil: undefined,
       lockdown: {
@@ -46,20 +47,20 @@ describe("chat_states codec", () => {
         originalPermissions: { can_invite_users: true },
         expiresAt: 3_000,
       },
-      isAIChatEnabled: undefined,
-      isTranslationEnabled: undefined,
-      isAdDetectEnabled: undefined,
+      isAIChatEnabled: false,
+      isTranslationEnabled: false,
+      isAdDetectEnabled: false,
       isFloodControlEnabled: true,
-      isAntiRaidEnabled: undefined,
+      isAntiRaidEnabled: false,
       isInitEnabled: true,
       botPermissions: permissions,
       title: undefined,
-      isProxySendEnabled: undefined,
+      isProxySendEnabled: false,
     });
   });
 
   test("封锁公告的 message ID 必须能原样往返：重启接管的那一轮靠它删公告", () => {
-    const text: string = encodeChatStateData({
+    const text: string = encodeChatStateData(chatStateOf({
       lockdown: {
         phase: "active",
         intentId: 5,
@@ -68,7 +69,7 @@ describe("chat_states codec", () => {
         originalPermissions: { can_invite_users: true },
         expiresAt: 9_000,
       },
-    }, "chat_states[-1001].status");
+    }), "chat_states[-1001].status");
     expect(decodeChatStateData(text, "chat_states[-1001].status").lockdown).toEqual({
       phase: "active",
       intentId: 5,
@@ -278,11 +279,31 @@ describe("chat_states codec 的拒绝分支", () => {
 });
 
 test("人设独立于 status，空白和非法类型不回退默认", () => {
-  const status = encodeChatStateData({ isInitEnabled: true, aiPersona: "群人设" });
+  const status = encodeChatStateData(chatStateOf({ isInitEnabled: true, aiPersona: "群人设" }));
   expect(JSON.parse(status)).toEqual({ isInitEnabled: true });
   expect(decodeChatStateData(status, "chat_states[-1001]", "群人设").aiPersona).toBe("群人设");
   expect(decodeChatStateData(status, "chat_states[-1001]", null).aiPersona).toBeUndefined();
   for (const invalid of ["", " ", "\n", 1, true, {}]) {
     expect(() => decodeChatStateData(status, "chat_states[-1001]", invalid as string)).toThrow("ai_persona");
   }
+});
+
+describe("chat_states 开关的持久化表示", () => {
+  test("只写入为 true 的开关，字段顺序与规范形状一致", () => {
+    const text: string = encodeChatStateData(chatStateOf({
+      quietUntil: 5_000,
+      isAIChatEnabled: false,
+      isInitEnabled: true,
+      title: "群名",
+      isProxySendEnabled: true,
+    }), "chat_states[-1001].status");
+    expect(text).toBe('{"quietUntil":5000,"isInitEnabled":true,"title":"群名","isProxySendEnabled":true}');
+  });
+
+  test("缺省的开关解码为 false；只含 false 值的行仍视为非空行", () => {
+    const decoded = decodeChatStateData('{"isInitEnabled":false}', "chat_states[-1001].status");
+    expect(decoded.isInitEnabled).toBeFalse();
+    expect(decoded.isAIChatEnabled).toBeFalse();
+    expect(() => decodeChatStateData("{}", "chat_states[-1001].status")).toThrow("non-empty chat-state object");
+  });
 });

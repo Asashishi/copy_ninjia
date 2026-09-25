@@ -162,7 +162,7 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
   try {
     await Bun.write(Bun.file(handle.fd), content);
     // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前显式
-    // 设回要求的最终权限，理由同 atomicWriteSync。
+    // 设回要求的最终权限，同 atomicWriteSync。
     if (targetMode !== undefined) await handle.chmod(targetMode);
     await handle.sync();
   } catch (error: unknown) {

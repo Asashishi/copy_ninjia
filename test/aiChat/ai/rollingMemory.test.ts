@@ -86,8 +86,8 @@ test("协议 hydrate 遇到坏快照时整批 fail-closed，不接管前面的�
   }
 });
 
-test("受管群容量始终不超过 Worker 记忆容量", () => {
-  expect(STATE_MANAGED_CHAT_LIMIT).toBeLessThanOrEqual(AI_MEMORY_MAX_CHATS);
+test("Worker 记忆容量覆盖受管群与同样多的未完成 teardown", () => {
+  expect(AI_MEMORY_MAX_CHATS).toBeGreaterThanOrEqual(2 * STATE_MANAGED_CHAT_LIMIT);
 });
 
 test("严格 hydrate 后恢复合法快照", () => {

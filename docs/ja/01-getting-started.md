@@ -107,7 +107,7 @@ Bot identity とスーパー管理者は `config/bot.json` に置きます。
 - **`super_admin_user_id`**（必須）
   - スーパー管理者を表す 1 つの十進ユーザー ID。この identity 自体が
     allowlist で付与できる**すべて**の個別 permission を持つため、
-    SQLite allowlist table に row を書く必要は**ありません**。copy・画像生成・楽曲生成の
+    SQLite allowlist table に row を書く必要は**ありません**。copy・画像生成の
     cooldown 免除はこの identity だけが持ちます。常に allowlist 境界の内側にもいるので、
     自動処分からの保護も受け、`/block`、`/mute`、`/batch_kick` の対象にもできません。
     参加認証の「通过」ボタンはそのグループの非匿名管理者だけを認め、allowlist や
@@ -154,12 +154,14 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     不可、最大 500 件です。
 
 - **`config/agent.json`**（[example](../../config_example/agent.json)）
-  - **内容**：`agent.ad_detect`、`text`、`summary`、`media`、`image`、`song`。
+  - **内容**：`agent.ad_detect`、`text`、`summary`、`media`、`image`、`tts`。
     各能力が `provider`、`api_key`、任意の `base_url`、`model` を個別に持ちます。
     provider は現在 `google` と `openai` のみです。AI 雑談には `text`、`summary`、
-    `media` が必須です。`image` と `song` が無い場合は対応 tool だけを外し、
-    `ad_detect` が無い場合は広告検出だけを止めます。OpenAI 画像能力では
-    `image_protocol`（`openai`、`openai-standard`、`xai`）も必須です。`base_url` は
+    `media` が必須です。`image` と `tts` が無い場合は対応 tool だけを外し
+    （`tts` が無いと `/send` の TTS request も error になり、`cron.json` が `send_voice` を使うなら
+    起動を拒否します）、`ad_detect` が無い場合は広告検出だけを止めます。OpenAI 画像能力では
+    `image_protocol`（`openai`、`openai-standard`、`xai`）も必須です。`tts` には空でない `voice`
+    （prebuilt voice 名、または AI Studio Voice design の `voice_` voice ID）も必須です。`base_url` は
     `https` のみを受け付け、平文 `http` は `localhost`・`127.0.0.1`・`::1` に限られます。
     URL に userinfo と `#` fragment は含められません。
   - **検証**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。未知 key、空の
@@ -244,20 +246,20 @@ sidecar が同じ協働 group を継承します。
 ```json
 "global": {
   "assets": {
+    "randomHImageDir": "./h_image",
     "fortuneThumbnailUrl": "https://…",
     "probabilityThumbnailUrl": "https://…",
     "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…",
-    "randomHImageDir": "./h_image"
+    "botDefaultAvatarUrl": "https://…"
   }
 }
 ```
 
-最初の 4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
+それに続く 4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
 
-5 項目の欠落フィールドは起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。最初の 4 項目の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+5 項目の欠落フィールドは起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。4 本の URL 項目の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
 
-5 つ目のキー `randomHImageDir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` です。絶対パスか `./`・`../` で始まる明示的相対パスを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。初回の `state.json` は起動成功後に補完されます。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
+最初のキー `randomHImageDir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` です。絶対パスか `./`・`../` で始まる明示的相対パスを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。初回の `state.json` は起動成功後に補完されます。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
 
 **変更は停止中に行います**：稼働中のプロセスは正式な状態をメモリに保持しファイル全体を上書きするため、`systemctl stop` → 編集 → `systemctl start` の順です（[07 運用とトラブルシューティング](07-operations.md) を参照）。
 

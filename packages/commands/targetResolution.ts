@@ -112,11 +112,11 @@ function resolveArgumentTarget({
  * 把用户完全可控的参数原文压成能安全插进提示语的一段。
  *
  * 先压成单行再收长度：参数原文可以长到近 4096 字符，原样插回提示语就会拼出一条
- * 超过 Telegram 单条上限的消息，发不出去，用户只收到沉默（理由见 consts/commands.ts
+ * 超过 Telegram 单条上限的消息，发不出去，用户只收到沉默（见 consts/commands.ts
  * 的 INVALID_USERNAME_ECHO_MAX_CHARS）。用 sanitizeDisplayName 而不是 sanitizeInline：
  * 这段要被拼进机器人自己写的句子中间，和昵称是同一处境——一个 RLO 就能让整句的
  * 其余部分反向渲染，一个 `/batch_kick 1d` 参数则让机器人自己印出可点击命令
- * （两条理由都见 libs/text.ts 的 sanitizeDisplayName，中和已在那一层做掉）。
+ * （两条都见 libs/text.ts 的 sanitizeDisplayName，中和已在那一层做掉）。
  *
  * **不要在这里或 sendCommandMessage 上加整条 containsRenderableCommand 守卫**：
  * 命令回执是机器人自己写的句子，`/unquiet`、`/batch_kick`、`/x` 这些用法提示本来
@@ -174,7 +174,7 @@ export async function resolveCommandTarget({
   let targetUser: CachedUser;
   if (replyTarget !== undefined) {
     // 参数与回复指向同一个人是无害的重复（回复某人、又把他的 id 打了一遍），
-    // 照常放行；其余情形一律报冲突，理由见函数头注。
+    // 照常放行；其余情形一律报冲突，见函数头注。
     if (argument !== undefined && (argument.kind !== "resolved" || argument.user.id !== replyTarget.id)) {
       await sendCommandMessage({
         chatId,

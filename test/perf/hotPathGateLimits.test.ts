@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
+  HOT_PATH_CALIBRATION_STALE_RATIO,
+  HOT_PATH_GC_SOFT_OVERRUN_PERCENT,
+} from "../../packages/consts/performance";
+import {
   assertHotPathMedianPolicyCoverage,
+  createHotPathCalibrationStaleReport,
+  createHotPathGcSoftReport,
   createHotPathMedianLatencyReport,
+  hotPathGcPauseFailPercent,
   selectHotPathGcPausePercentLimit,
 } from "../../scripts/perf/hotPaths/gateLimits";
 
@@ -15,6 +22,24 @@ describe("热路径 GC 按可用 CPU 数分档", () => {
   test.each([0, -1, 1.5, NaN, Infinity])("非法 CPU 数拒绝分档：%#", (cpuCount: number): void => {
     expect((): number => selectHotPathGcPausePercentLimit(cpuCount))
       .toThrow("positive integer CPU count");
+  });
+});
+
+describe("热路径 GC 软超限", () => {
+  test("硬上限是 CPU 分档预算加 5 个百分点", (): void => {
+    expect(HOT_PATH_GC_SOFT_OVERRUN_PERCENT).toBe(5);
+    expect(hotPathGcPauseFailPercent(selectHotPathGcPausePercentLimit(4))).toBe(30);
+    expect(hotPathGcPauseFailPercent(selectHotPathGcPausePercentLimit(1))).toBe(40);
+  });
+
+  test("不超过预算时没有报告，超过预算时返回预算与硬上限但不抛错", (): void => {
+    expect(createHotPathGcSoftReport({ scenario: "steady", gcPercent: 25, budgetPercent: 25 })).toBeNull();
+    expect(createHotPathGcSoftReport({ scenario: "steady", gcPercent: 25.5, budgetPercent: 25 })).toEqual({
+      scenario: "steady",
+      gcPercent: 25.5,
+      budgetPercent: 25,
+      failPercent: 30,
+    });
   });
 });
 
@@ -73,5 +98,26 @@ describe("热路径纳秒软上报", () => {
     );
 
     expect([...policy]).toEqual([["first", 10], ["second", 20]]);
+  });
+});
+
+describe("热路径校准过松提示", () => {
+  const input = { scenario: "steady", bunRevision: "rev", reportThresholdNsPerOp: 300 };
+
+  test("阈值超过本次读数的倍数上限时提示重校，并给出余量倍数", () => {
+    expect(createHotPathCalibrationStaleReport({ ...input, medianNsPerOp: 50 })).toEqual({
+      scenario: "steady",
+      medianNsPerOp: 50,
+      reportThresholdNsPerOp: 300,
+      headroomRatio: 6,
+    });
+  });
+
+  test("恰好等于倍数上限或余量更小时不提示", () => {
+    expect(createHotPathCalibrationStaleReport({
+      ...input,
+      medianNsPerOp: 300 / HOT_PATH_CALIBRATION_STALE_RATIO,
+    })).toBeNull();
+    expect(createHotPathCalibrationStaleReport({ ...input, medianNsPerOp: 200 })).toBeNull();
   });
 });

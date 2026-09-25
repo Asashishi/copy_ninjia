@@ -1,7 +1,7 @@
 import { decodeBase64Payload } from "../../../packages/aiChat/ai/utils/base64Payload";
 import type { DecodeBase64PayloadOptions } from "../../../packages/aiChat/ai/utils/base64Payload";
 import { IMAGE_GENERATION_MAX_BYTES } from "../../../packages/consts/aiChat/imageGeneration";
-import { SONG_GENERATION_MAX_BYTES, SONG_GENERATION_MAX_ENCODED_CHARS } from "../../../packages/consts/aiChat/songGeneration";
+import { VOICE_SPEECH_MAX_BYTES, VOICE_SPEECH_MAX_ENCODED_CHARS } from "../../../packages/consts/aiChat/voiceMessage";
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../../packages/consts/aiChat/rateLimit";
 import { admitTrigger, isReplyRoundRateLimited } from "../../../packages/states/replyAdmission";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
@@ -42,7 +42,7 @@ export function replyAdmissionScenario(): Scenario {
 
 /** 固定字节分布与大小，独立测量有效媒体和异常首尾；解码结果逐次校验。 */
 export function base64PayloadScenario(shape: "normal" | "large" | "head" | "tail"): Scenario {
-  const size: number = shape === "large" ? SONG_GENERATION_MAX_BYTES / 3 : IMAGE_GENERATION_MAX_BYTES / 10;
+  const size: number = shape === "large" ? VOICE_SPEECH_MAX_BYTES : IMAGE_GENERATION_MAX_BYTES / 10;
   const payload: Uint8Array = new Uint8Array(size);
   for (let index: number = 0; index < payload.length; index++) payload[index] = (index * 73 + 19) % 256;
   const encoded: string = payload.toBase64();
@@ -50,8 +50,8 @@ export function base64PayloadScenario(shape: "normal" | "large" | "head" | "tail
     encoded: new TextDecoder().decode(new TextEncoder().encode(
       shape === "head" ? `!${encoded.slice(1)}` : shape === "tail" ? `${encoded.slice(0, -1)}!` : encoded
     )),
-    maxEncodedChars: SONG_GENERATION_MAX_ENCODED_CHARS,
-    maxBytes: SONG_GENERATION_MAX_BYTES,
+    maxEncodedChars: VOICE_SPEECH_MAX_ENCODED_CHARS,
+    maxBytes: VOICE_SPEECH_MAX_BYTES,
   };
   const invalid: boolean = shape === "head" || shape === "tail";
   const iterations: number = shape === "head" ? 1_000_000 : shape === "large" ? 16 : 80;
