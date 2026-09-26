@@ -33,7 +33,7 @@ const {
 } = await import("../../packages/commands/deferredCommands");
 const { deferredCommandRuntime: hImageRuntime } = await import("../../packages/cache/main/deferredCommands");
 const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
-const { getRandomHImageDirectory } = await import("../../packages/infra/storage/stateStore");
+const { getAssetConfig } = await import("../../packages/config/assets");
 const {
   DEFERRED_COMMAND_MAX_CONCURRENT: H_IMAGE_MAX_CONCURRENT,
   DEFERRED_COMMAND_MAX_PENDING: H_IMAGE_MAX_PENDING,
@@ -100,7 +100,7 @@ describe("/h_image", () => {
 
     await submitHImage(context("", 7));
     expect(sendPhotoWithResult).not.toHaveBeenCalled();
-    expect(pickRandomImage).toHaveBeenCalledWith(getRandomHImageDirectory());
+    expect(pickRandomImage).toHaveBeenCalledWith(getAssetConfig().randomHImageDirectory);
 
     pending.resolve({ status: "ok", bytes: new Uint8Array([4, 5]), mimeType: "image/webp", fileName: "b.webp" });
     expect(await drainHImageRuntime(1_000)).toBe("flushed");

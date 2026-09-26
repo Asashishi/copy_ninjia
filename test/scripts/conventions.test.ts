@@ -293,23 +293,23 @@ describe("project convention collectors", () => {
     mkdirSync(join(root, "scripts"), { recursive: true });
     const active: Readonly<Record<string, string>> = {
       "migrate:random-image-names": "bun scripts/migrateRandomImageNames.ts",
-      "migrate:translate-sessions": "bun scripts/migrateTranslateSessions.ts",
+      "migrate:global-state": "bun scripts/migrateGlobalState.ts",
     };
 
     await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: active }));
     expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
-    for (const entry of ["scripts/migrateRandomImageNames.ts", "scripts/migrateTranslateSessions.ts"]) {
+    for (const entry of ["scripts/migrateRandomImageNames.ts", "scripts/migrateGlobalState.ts"]) {
       await Bun.write(join(root, entry), "export {};\n");
     }
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
     // 少一条声明过的边同样要报，不只是多出来的那种。
     await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:translate-sessions": active["migrate:translate-sessions"]! },
+      scripts: { "migrate:global-state": active["migrate:global-state"]! },
     }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:random-image-names, migrate:translate-sessions"
+        "package.json must expose exactly the declared active cold migration commands migrate:global-state, migrate:random-image-names"
       ),
       expect.stringContaining("migrate:random-image-names must invoke"),
     ]);
@@ -317,7 +317,7 @@ describe("project convention collectors", () => {
     await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: { ...active, "migrate:legacy": "bun scripts/legacy.ts" } }));
     expect(await collectColdMigrationProblems(root)).toEqual([
       expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:random-image-names, migrate:translate-sessions"
+        "package.json must expose exactly the declared active cold migration commands migrate:global-state, migrate:random-image-names"
       ),
     ]);
   });

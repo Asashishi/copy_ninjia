@@ -66,24 +66,11 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
 
 `COPY_NINJIA_DATA_ROOT` determines every runtime-data path. When unset, it defaults to the project root; an explicitly blank value is rejected at startup:
 
-- **`state.json` + `state.json.bak`**
-  - **Contents**: global copying in `global.copy`, plus four asset URLs and the random image directory in `global.assets`. Group switches, lockdown records, permission snapshots and translation sessions live in `chat_states` inside `database/storage.sqlite`.
-  - **Format**: the only top-level key is `global`. `global.copy.copyMode` accepts omission, `reverse`, or `nya`. An invalid primary or LKG, or any unknown top-level key such as `translate`, refuses startup; runtime never upgrades or discards entries.
-  - **Manual state editing**: stop the service and confirm inactive, then use `mktemp -d` outside the worktree to back up both state copies and deployment data with modes, owners and SHA-256 hashes. Edit both copies, retain untouched `global` fields, strictly decode both with `decodeStateFile`, and verify intended differences and permissions before startup. Follow the cold-migration procedure below for upgrades; examples and Git content must never replace deployment state.
-  - **Backup**: back up the primary and backup together.
-  - **Asset URLs can only be edited while stopped**: the process holds the authoritative state in
-    memory and rewrites the whole file, so an edit made while running is erased by the next save.
-    Stop the service → edit `global.assets` → start it. Missing entries are seeded with their
-    currently effective values once startup has fully succeeded; a malformed value (missing or
-    wrong scheme) rejects the whole file at decode time and names the field path. Any image host
-    works as long as it serves raw image bytes; the three thumbnails must be `https`, only
-    `botDefaultAvatarUrl` may be plain `http`, and that download **does follow redirects** — a
-    direct link that 302s to the actual storage domain (the built-in Drive default among them)
-    works as-is, with no need to resolve the final hop yourself.
-  - **Check the four entries before upgrading**: the three thumbnails now accept `https` only, so
-    one left as `http://` by an older version refuses to start at decode time and names the field
-    path.
-  - **Dedicated image directory** (`global.assets.randomHImageDir`, default `./h_image`, relative to the data root): `/h_image` and cron random images without an explicit directory draw here. Add pictures through `/h_image add`; manual files require a 64-character lowercase content SHA-256 basename and a jpg/jpeg/png/webp extension. Keep other features’ images elsewhere. Startup rejects invalid names, subdirectories, file symlinks and leftover `.h_image-add-*` temporary files. Stop and back up before reviewing and removing leftovers. The service account needs read, write and directory access. A missing directory is created with mode 0755. Valid images can be added or removed without restarting; changing the path requires a stopped-service edit. Rollback restores configuration, state and the library together with matching code.
+- **`memory/global/state.json`**
+  - **Contents**: global copying in `copy` and the daily speech-synthesis count in `ttsUsage` (window start `windowStartedAt` and `count`, written by the bot; to reset it by hand, stop the service and delete the whole block). Group switches, lockdown records, permission snapshots and translation sessions live in `chat_states` inside `database/storage.sqlite`; the asset directory and URLs live in `config/dynamic/assets.json`.
+  - **Format**: the top level holds only the required `copy` and the optional `ttsUsage`. `copy.copyMode` accepts omission, `reverse`, or `nya`. A missing file means the state was never used; an existing but invalid file or any unknown key refuses startup, and runtime never upgrades or drops entries. The main thread writes it exclusively (temporary file + fsync + atomic rename); the Disk I/O Worker never touches `memory/global/`.
+  - **Manual state editing**: stop the service and confirm inactive, then use `mktemp -d` outside the worktree to back up the file and deployment data with modes, owners and SHA-256 hashes. Edit it keeping untouched fields, strictly parse it with `decodeGlobalStateFile`, check the expected diff and modes, then start. Version upgrades follow the cold migrations below; never overwrite deployment state with examples or Git content.
+  - **Old location**: while 14.x `state.json` or `state.json.bak` remains in the data root, startup and the installer refuse; follow the [global state cold migration](#global-state-cold-migration-statejson-memoryglobalstatejson-configdynamicassetsjson).
 - **`memory/wed/<chatId>.json`**
   - **Contents**: a plain numeric array of speaking-member IDs per group, such as `[5974478892]`; the main thread reuses one long-lived `Set<number>` per group. Up to 25 groups and 150,000 IDs per group are accepted. Full sets retain existing members and accept new IDs once departures free space.
   - **Validation**: filenames use canonical negative safe-integer group IDs; entries are unique positive safe integers. Invalid JSON, duplicates, types, or capacity refuse startup without truncating or repairing files. Missing directories or files are allowed and created as needed.
@@ -93,7 +80,7 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
   - **Contents**: version=1 catalog for one allowlisted sticker pack, with emoji/description
     entries keyed by `file_unique_id` plus a pack summary.
   - **Backup**: reconstructible by reconciling the live pack; startup deletes files for packs
-    no longer listed in `config/stickers.json`.
+    no longer listed in `config/dynamic/stickers.json`.
 - **`memory/luck/<YYYY-MM-DD>.json`**
   - **Contents**: fortune results for the current Tokyo day; keys are user IDs and may include a
     digest of the requested subject.
@@ -130,13 +117,32 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
   - **Contents**: raw samples of ad-detection hits, including time, message IDs and text, verdict
     reason, and quote/reply context.
   - **Backup**: **pure side channel; the process never reads it.** Losing it changes no behavior,
-    only the material used to retune `config/ad_samples.json`. At 8 MiB it rotates automatically
+    only the material used to retune `config/dynamic/ad_samples.json`. At 8 MiB it rotates automatically
     to `sample.<Tokyo date>[.<sequence>].json`; archives retain the latest 15 Tokyo calendar days,
     including today.
 - **`memory/ad-detected/sample.<YYYY-MM-DD>[.<sequence>].json`**
   - **Contents**: rotated `sample.json` archives; the second archive on one day starts at `.2`.
   - **Backup**: strictly named regular files are retained for the latest 15 Tokyo calendar days;
     unknown names, directories, and symlinks are never auto-deleted.
+- **`memory/ai-daily-usage/usage.json`**
+  - **Contents**: token usage of model requests, taken only from the provider's usage fields and
+    never containing conversation content. One JSON object: the leading `summary` totals the latest
+    finished Tokyo day (requests, input/cached/output tokens, hit rate, and the same totals grouped by
+    `<capability>/<provider>/<model>`); every other key is a not-yet-summarized record keyed by Tokyo
+    time plus a UUID, holding capability, provider, model, and the three token counts. The hit rate is
+    cached tokens divided by the input tokens of requests that reported cache usage, rounded to 4
+    decimals; a request whose provider reported no cache usage has `cachedInputTokens: null` and only
+    counts toward the totals.
+  - **Writes**: records reach the Disk I/O Worker's in-memory buffer through the diagnostic channel
+    and are appended at 300 entries or 30 seconds after the first one, and on every unified flush.
+    Tokyo-midnight maintenance and startup maintenance fold records before today into the latest
+    day's `summary` and delete them, keeping one day of summary.
+  - **Backup**: pure side channel; losing it changes no behavior, and a failed write drops only that
+    batch of statistics. If the file is edited into a shape the current format rejects (other than a
+    torn tail), startup refuses and keeps its bytes; delete or fix it before starting again.
+  - **Metered calls**: covers `text`, `summary`, `media`, `image`, `tts` and `ad_detect`. Google generateContent and Interactions map their own fields and include response plus thought tokens. OpenAI Responses, ad-detection Chat Completions, image generation/editing and token-based transcription use their respective usage fields. Each valid usage response is recorded once, including empty bodies, decode failures, every application-level retry response and SDK responses arriving after cancellation. Missing tokens and duration-only transcription responses are not estimated. Daily TTS request quotas are stored separately in `memory/global/state.json`.
+  - **Missing-record diagnostics**: `AI token usage unavailable` contains only capability, provider and reason: `missing` (missing usage), `invalid` (invalid usage), `sink` (no per-thread sink), `duration` (duration only), or `transport` (sink failure or main-thread rejection). Each combination is logged once per sink lifecycle, without model names, content or credentials. Diagnostic FIFO overflow has a separate bounded drop summary; Disk I/O logs write failures. This file provides best-effort statistics, not a complete bill.
+
 - **`logs/`**
   - **Contents**: error logs with English messages.
   - **Backup**: as needed.
@@ -144,13 +150,13 @@ The installer downloads the matching Latest package and SHA-256 only for a new d
   - **Contents**: single-instance lock.
   - **Backup**: retain with the stopped-service snapshot; do not edit manually or restore locks into a running process.
 
-No files live directly at the top of `memory/`; each of the six domains owns one subdirectory, while identity policy lives separately under `database/`. Startup first scans the state domains that require recovery read-only, including the `joinlog/` retention window, and strictly decodes all inputs. Owners are adopted only after every domain succeeds; directory creation, temporary/orphan/expired-file cleanup, and compaction run after the success reply, followed by one Bun-native midnight maintenance cron with an explicit `Asia/Tokyo` timezone. The cron first notifies the main thread to admit the daily `/wed` membership review, then maintains fortune files, logs, join logs, ad-sample archives, pending-verification day files, and temporary-ad-bypass activity, isolating one domain's failure from the rest; existing startup and business-event paths remain fallbacks. Temporary-ad-bypass maintenance first commits pending final values in shared SQLite and refuses deletion while temporary writes remain uncommitted. It retains current-day rows and rows that qualified on the day that just ended, deletes unqualified rows from that day and every older row in full, and normalizes an expired old-day write arriving after cleanup into a tombstone at its original revision. `ad-detected/` still appears only after the first hit; when the directory already exists, post-startup maintenance scans directory entries without reading sample contents. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and maintenance publishes today's atomic snapshot and removes old days only after startup succeeds. At runtime the unified cron triggers the same rollover; failure retains the active mirror and retries through an unref'ed one-second timer.
+No files live directly at the top of `memory/`; each of the eight domains owns one subdirectory, while identity policy lives separately under `database/`. Startup first scans the state domains that require recovery read-only, including the `joinlog/` retention window, and strictly decodes all inputs. Owners are adopted only after every domain succeeds; directory creation, temporary/orphan/expired-file cleanup, and compaction run after the success reply, followed by one Bun-native midnight maintenance cron with an explicit `Asia/Tokyo` timezone. The cron first notifies the main thread to admit the daily `/wed` membership review, then maintains fortune files, logs, the AI cache usage summary, join logs, ad-sample archives, pending-verification day files, and temporary-ad-bypass activity, isolating one domain's failure from the rest; existing startup and business-event paths remain fallbacks. Temporary-ad-bypass maintenance first commits pending final values in shared SQLite and refuses deletion while temporary writes remain uncommitted. It retains current-day rows and rows that qualified on the day that just ended, deletes unqualified rows from that day and every older row in full, and normalizes an expired old-day write arriving after cleanup into a tombstone at its original revision. `ad-detected/` still appears only after the first hit; when the directory already exists, post-startup maintenance scans directory entries without reading sample contents. Physically, `anti-raid/<day>.json` is an append log rather than a plain active list: creation and updates append full snapshots, settlement appends a `null` tombstone for the same key, and recovery folds that history into the currently active Challenges. If downtime crosses Tokyo midnight, startup strictly reads the latest prior day and overlays today's newer records; corrupt prior data fails recovery without rewriting either file, and maintenance publishes today's atomic snapshot and removes old days only after startup succeeds. At runtime the unified cron triggers the same rollover; failure retains the active mirror and retries through an unref'ed one-second timer.
 
 A `joinlog/` query reads at most the two chat/day files covering `[since, now]` and keeps the user's latest join in that window. The third retained day exists only for a request captured at 23:59 but handled after midnight. A file evaluates compaction after 10,000 redundant records or 4 MiB of new appends and rewrites atomically only when at least 512 KiB can be reclaimed. Parseable schema violations reject that file's read/write without changing its bytes; only a truncated tail may be repaired by the append layer.
 
 ### `memory/` Support Files and Process-Only State
 
-- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. Startup inspection records these files without deleting them. After every domain has validated and startup has replied successfully, maintenance for logs, `stickers/`, `luck/`, `joinlog/`, and `wed/` removes the matching `*.tmp`. An existing `ad-detected/` directory removes `.sample.json.*.tmp` during post-startup maintenance, while the first sample write retains the same fallback; `anti-raid/` excludes temporary files from recovery input. `storage.sqlite-wal` and `storage.sqlite-shm` are normal SQLite sidecars, not orphan temporary files, and must never be deleted under this rule.
+- Atomic replacement briefly creates `.<target-name>.<pid>.<uuid>.tmp`, which disappears after `fsync + rename`; only a hard kill between those steps should leave one behind. Startup inspection records these files without deleting them. After every domain has validated and startup has replied successfully, maintenance for logs, `ai-daily-usage/`, `stickers/`, `luck/`, `joinlog/`, and `wed/` removes the matching `*.tmp`. An existing `ad-detected/` directory removes `.sample.json.*.tmp` during post-startup maintenance, while the first sample write retains the same fallback; `anti-raid/` excludes temporary files from recovery input. `storage.sqlite-wal` and `storage.sqlite-shm` are normal SQLite sidecars, not orphan temporary files, and must never be deleted under this rule.
 - Challenge timers, the ad-detection admission queue/deduplication set, and short-lived Telegram member/admin caches are process-only and have no files.
 
 Back up the complete data root while the bot is stopped or at a storage-snapshot consistency boundary; the SQLite main database and existing sidecars must come from one point. Treat both `memory/` and `database/` as sensitive. New memory files default to `0644`, while the database and sidecars default to `0660` on first creation; adoption and atomic replacement preserve the modes of existing files. See [04](04-invariants.md#persistence).
@@ -163,51 +169,47 @@ The runtime has no old-format compatibility path and never creates this database
 
 Startup never guesses that a missing database means empty policy, so a fresh deployment must explicitly create one empty database at the current schema. The steps are in [01 Setup](01-getting-started.md#initializing-identity-storage), and `install.sh` already includes them. The creation entry point refuses to overwrite an existing target.
 
-<a id="upgrade-14"></a>
+<a id="upgrade-15"></a>
 
-### Upgrading from 13.0.2 to 14.0.0
+### Upgrading from 14.0.0 to 15.0.0
 
 > [!IMPORTANT]
-> 14.0.0 requires a manual translation-session migration. Stop and back up before updating the application and deployment data. Validate all configuration and data before startup.
+> 15.0.0 moves the global state from `state.json` in the data root to `memory/global/state.json`, moves the random image directory and asset URLs to `config/dynamic/assets.json`, no longer keeps `state.json.bak`, and splits `config/` into `static/` and `dynamic/` subdirectories by how changes take effect. Stop the service and back up first, then update the program and deployment data; do not start until configuration and data are validated.
 
 | Check | Action |
 | :--- | :--- |
-| State and SQLite | Run the translation-session migration below. `state.json` keeps only `global`; sessions move into `chat_states`. The schema remains v11 |
-| AI configuration | Remove `agent.song` from `config/agent.json`; song generation is unavailable. For voice, explicitly configure the provider, model, credentials, and voice (`base_url` is optional) in `agent.tts` using the [configuration guide](../../config_example/README/en.md#agentjson) |
-| Image library | Check every dedicated-library filename. If UUID names remain, use the image-library migration on this page to produce SHA-256 names |
-| Recovery and permissions | Retain the external backup and manifest. Restore configuration and credentials, and install migration outputs with their original owners and modes. The service account needs write access to state files, the database directory (including WAL/SHM), locks, and memory directories |
+| Global state | Run the global state cold migration below. Place its output at `memory/global/state.json` and move the old `state.json` and `state.json.bak` out of the data root. Startup and the installer refuse while either remains there |
+| Asset configuration | The migration writes only asset values that differ from the built-in defaults into `config/dynamic/assets.json`; when it produces no such file, none is needed. Fields are described in the [configuration reference](../../config_example/README/en.md#assetsjson) |
+| Configuration layout | While stopped, move `bot.json` and `g-auth.json` into `config/static/` and the other six files (`agent.json`, `assets.json`, `ad_samples.json`, `mood.json`, `stickers.json`, `cron.json`) into `config/dynamic/`, keeping their owners and modes; create `config/dynamic/` even when it stays empty. Startup refuses while any of these files remains at the top level of `config/` or sits in the wrong subdirectory, or while `config/dynamic/` is missing; the installer also refuses misplaced files. Files under `static/` need a restart after a change, files under `dynamic/` are hot-reloaded. See the [configuration reference](../../config_example/README/en.md) |
+| Restore and permissions | Keep the external backup and manifest. The service account must be able to write `memory/global/`, the database directory (including WAL/SHM), the lock and the other memory directories; `config/` may remain read-only |
 
-The cold migration uses the same complete read-only database validation as startup, including JSONB, row formats, mutually exclusive identity policies, and outbox references. Keep backups and staged outputs on failure, resolve the reported error, then continue. Fixed 13.0.2 fixtures and clean installations have isolated mock tests; actual deployment data still requires validation.
+### Global state cold migration (state.json → memory/global/state.json + config/dynamic/assets.json)
 
-### Translation session cold migration (state.json → chat_states)
+The entry is [`scripts/migrateGlobalState.ts`](../../scripts/migrateGlobalState.ts), which accepts only the 14.x format: `state.json` whose only top-level key is `global`, with a required `copy` and optional `assets`, matching the 14.0.0 state format (`ttsUsage`, which appeared only after 14.0.0, is refused as well). When `state.json.bak` exists it must be byte-identical to `state.json`; otherwise the migration refuses and leaves the reconciliation to an operator. Unknown lineage, the already migrated format, or invalid fields are rejected. Older deployments first reach the 14.x format through the [next section](#upgrading-from-versions-before-1400). Production startup validates the current format and performs no migration.
 
-Translation sessions move from the `translate` block of `state.json` to the `translate` field of each group's SQLite `chat_states` row; `state.json` keeps only `global`. Current startup and the installer reject state files that still contain `translate` and never migrate automatically. The entry is [`scripts/migrateTranslateSessions.ts`](../../scripts/migrateTranslateSessions.ts), which accepts only the 13.x format: state with `global` plus an optional `translate`, and a schema v11 database with supported lineage in which no chat row has `translate` yet. Unknown lineage, already migrated databases, invalid sessions, or more than 25 groups after migration are rejected. Older deployments first reach the 13.x format through the [next section](#upgrading-from-versions-before-130x). Production startup validates the current format and performs no migration.
-
-1. Stop the service and confirm inactive with no remaining process. Use `mktemp -d` outside the worktree to back up `state.json`, `state.json.bak`, the whole `database/` directory (the SQLite main database and any WAL/SHM must come from the same stopped-service point), plus `config/` and `memory/`. Record the file manifest, modes, owners and SHA-256 hashes, then verify every copy.
-2. Choose a new output directory outside the source backup, under an existing parent. The script does not modify the source, manage services or replace deployment files.
+1. Stop the service and confirm inactive with no remaining process. Use `mktemp -d` outside the worktree to back up `state.json`, `state.json.bak`, `config/`, the whole `database/` directory (the SQLite main database and any WAL/SHM must come from the same stopped-service point) and `memory/`. Record the file manifest, modes, owners and SHA-256 hashes, then verify every copy.
+2. Choose a new output directory outside the source backup; its parent must exist. The script never changes source files, operates the service, or replaces deployment files.
 
 ```bash
-bun run migrate:translate-sessions \
+bun run migrate:global-state \
   --source-root /absolute/cold-backup \
   --output-root /absolute/new-staging-directory
 ```
 
-Binary packages include every active cold migration and require neither system Bun nor a source checkout: `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateTranslateSessions.js --source-root <backup> --output-root <new-directory>`.
+Binary release packages carry every currently active cold migration and need neither a system Bun nor source code: `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js --source-root <backup> --output-root <new-directory>`.
 
-3. Each group's sessions from the primary `state.json` are written to the `translate` field of its `chat_states` row. An existing row only has its status replaced, keeping AI context and persona; a group without a row gets a new row containing only the sessions. `state.json` and `state.json.bak` each lose their `translate` block while `global` stays unchanged; sessions in the backup copy are not migrated. Other tables, the schema version and the migration lineage remain unchanged.
-4. Only `ready.json` marks completed conversion, strict validation, SQLite checkpoint, connection closure and source verification. Check hashes and metadata in `sourceFiles` and `outputFiles`, plus the `migratedChats`, `migratedSessions` and `createdChatRows` counts. On failure or interruption, retain the backup and partial output and rerun from the original backup into a new directory. Existing output cannot be overwritten.
-5. While stopped, manually replace `state.json`, `state.json.bak` when present, and `database/storage.sqlite`. Remove old WAL/SHM only after a consistent backup exists and no database handle remains; never combine them with the new main database. Restore original ownership and modes from `sourceFiles`. The service account must be able to write the state files, SQLite and its directory; `config/` may remain read-only.
-6. Verify installed hashes before opening the database, then strictly validate configuration, both state files and the current database. Start only when everything is ready. Confirm `active/running` over at least two supervisor restart intervals, unchanged `NRestarts` and no new nonzero journal exits, and confirm sessions still work in a group with active translation. Retain the external backup until all checks pass. Rollback restores the matching program and the entire backup set from one point.
+3. `copy` is written unchanged to the output `memory/global/state.json` (without the `global` wrapper). The five `assets` entries are renamed to the `config/dynamic/assets.json` keys (`random_h_image_dir`, `fortune_thumbnail_url`, `probability_thumbnail_url`, `gag_thumbnail_url`, `bot_default_avatar_url`); values are trimmed, URLs are normalized, and only values that differ from the built-in defaults are kept. When every value matches, the file is not produced. The database is not part of this migration.
+4. `ready.json` is the only marker that conversion, strict validation and source rechecking finished. Verify the hashes and metadata in `sourceFiles` and `outputFiles`, plus `assetKeys`. On failure or interruption, keep the backup and the incomplete output and rerun from the original backup into a new directory; existing output is never overwritten.
+5. While stopped, place `memory/global/state.json` under the runtime data root and, when present, the output's `config/dynamic/assets.json` under the configuration directory's `dynamic/`, then move the old `state.json` and `state.json.bak` out of the data root (keeping them in the external backup). Make sure the service account can write `memory/global/`; `config/dynamic/assets.json` may stay read-only like the rest of the configuration.
+6. Strictly validate configuration and global state, then start. Observe at least two supervisor restart intervals, confirm `active/running`, a stable `NRestarts` and no new non-zero exits in the journal, and check that the copy target in the startup log and the `/h_image` library are as expected. Keep the external backup until everything is verified; rollback must restore the matching code and a dataset from the same point in time.
 
-A read-only SQLite connection may rebuild the SHM index. Record file hashes before opening the database, and record sidecar index changes separately without overwriting the original backup manifest.
+### Upgrading from versions before 14.0.0
 
-### Upgrading from versions before 13.0.x
-
-Deployments older than 13.0.x first reach the 13.x format in stages: check out the `13.0.2` tag (or install the 13.0.2 release package) and, following its documentation while stopped, run `migrate:h-image-add-permission` (schema v10 → v11) and `migrate:bot-config` (12.1.0 Bot identity configuration, image-library fields, fixed cron images and project-root Google credentials). Deploy their outputs, then run the translation session migration above with this version; no intermediate version needs to start. Current entries do not accept these earlier formats directly; the installer also refuses a 12.1.0 `telegram.json` identity entry and asks for an upgrade to 13.x first.
+Deployments older than 14.0.0 first reach the 14.x format in stages: check out the `14.0.0` tag (or install the 14.0.0 release package) and, following its documentation while stopped, run `migrate:translate-sessions` (deployments older than 13.0.x first run `migrate:h-image-add-permission` and `migrate:bot-config` following the `13.0.2` documentation). Deploy their outputs, then run the global state migration above with this version; no intermediate version needs to start. Current entries do not accept these earlier formats directly; the installer also refuses a 12.1.0 `telegram.json` identity entry and asks for an upgrade to 13.x first.
 
 ### Random image library file-name cold migration
 
-The dedicated library is configured by `state.json`’s `global.assets.randomHImageDir`, defaulting to `h_image/` under the runtime data root. This cold migration accepts the direct predecessor `<uuidv7>[-<file_unique_id>]<extension>` naming format and produces **content SHA-256** names with an extension. Startup rejects old names and never migrates automatically. The entry point is
+The dedicated library is configured by `random_h_image_dir` in `config/dynamic/assets.json`, defaulting to `h_image/` under the runtime data root. This cold migration accepts the direct predecessor `<uuidv7>[-<file_unique_id>]<extension>` naming format and produces **content SHA-256** names with an extension. Startup rejects old names and never migrates automatically. The entry point is
 [`scripts/migrateRandomImageNames.ts`](../../scripts/migrateRandomImageNames.ts).
 
 1. Stop the service and confirm it is inactive with no leftover processes. Take a complete external
@@ -243,7 +245,7 @@ bun run migrate:random-image-names \
 
 ### Staged upgrade from 11.0.9
 
-11.0.9 uses schema v8 and needs three stages: in an isolated directory, run `migrate:ai-context` from pinned commit `500e848faeda75dcae3c3329507f24d05137e3b9` to produce v9, then `migrate:clear-context-permission` from the 12.1.0 release to produce v10, and then `migrate:h-image-add-permission` from the 13.0.2 release to produce v11; Bot configuration likewise reaches the 13.x format through the 13.0.2 `migrate:bot-config`. The current entry then completes the [translation session migration](#translation-session-cold-migration-statejson-chat_states). Keep the service stopped throughout; the intermediate applications do not need to run. A deployment already on 12.x (schema v10) starts at the 13.0.2 stage. Before these commands, take the external consistent backup described above, including `memory/ai/` and SQLite WAL/SHM. The Git repository must contain the pinned commit and the 12.1.0 and 13.0.2 tags, and none of the staging output directories may already exist.
+11.0.9 uses schema v8 and needs three stages: in an isolated directory, run `migrate:ai-context` from pinned commit `500e848faeda75dcae3c3329507f24d05137e3b9` to produce v9, then `migrate:clear-context-permission` from the 12.1.0 release to produce v10, and then `migrate:h-image-add-permission` from the 13.0.2 release to produce v11; Bot configuration likewise reaches the 13.x format through the 13.0.2 `migrate:bot-config`. `migrate:translate-sessions` from the 14.0.0 release then reaches the 14.x format, and the current entry completes the [global state migration](#global-state-cold-migration-statejson-memoryglobalstatejson-configdynamicassetsjson). Keep the service stopped throughout; the intermediate applications do not need to run. A deployment already on 12.x (schema v10) starts at the 13.0.2 stage. Before these commands, take the external consistent backup described above, including `memory/ai/` and SQLite WAL/SHM. The Git repository must contain the pinned commit and the 12.1.0 and 13.0.2 tags, and none of the staging output directories may already exist.
 
 The intermediate source is a required input. A checkout containing only the 11.0.9 tag or the current source archive must first obtain the complete source of the pinned commit. Preserve and make that source available before release; do not rely on dev history that will be reset after the squash merge.
 
@@ -295,32 +297,32 @@ Startup failures are **deliberately fail-fast** and include their cause. Resolve
     model. If it still fails, use a local filesystem with the required semantics.
 - **`bot.lock` refuses startup**
   - **Cause and action**: see the next section.
+- **Configuration layout mismatch**
+  - **Cause**: a deployment file sits at the top level of `config/` or in the wrong subdirectory (the error reads `<path>: $ must be absent; <file> belongs in <subdirectory>/.`), or `config/dynamic/` is missing.
+  - **Fix**: while stopped, move `bot.json` and `g-auth.json` into `config/static/` and the other deployment files into `config/dynamic/`, keeping owners and modes.
 - **Configuration schema validation fails**
-  - **Cause**: invalid `config/*.json`.
+  - **Cause**: invalid `config/{static,dynamic}/*.json`.
   - **Action**: fix the named field. Mood weights must total exactly 100, weather/time
     multipliers must not exceed 100, and at most 5 sticker packs are allowed.
 - **Identity database is missing or fails validation**
   - **Cause**: migration has not run; `storage.sqlite` is not writable; integrity, JSONB, schema,
     or migration lineage is invalid; a row codec fails; or the blocklist intersects the permanent
     or temporary ad bypass.
-  - **Action**: only confirmed schema v10 backups qualify for the current v10 → v11 cold migration. Older lineages must reach v10 through staged upgrades first. For fresh databases or rollback, see [Identity Storage Migration](#identity-storage-migration).
+  - **Action**: the current database format is schema v11. Keep a valid 14.0.0 database unchanged; older lineages use the staged upgrades above. For fresh databases or rollback, see [Identity Storage Migration](#identity-storage-migration).
     Restore the database and sidecars from one consistency point and repair collaboration-group
     permissions before starting. Never create an empty replacement or delete failing rows.
-- **Both state copies are invalid**
-  - **Cause**: a schema-changing version was deployed without migrating data.
-  - **Action**: migrate using
-    [06 Changing a Persistence Schema](06-modification-guide.md#changing-a-persistence-schema),
-    then restart; the program does not modify the originals.
 - **Fortune results and receipt key are inconsistent**
   - **Cause**: the current-day results and `receipt-secret.json` came from different backup
     points, or only one was restored.
   - **Action**: stop the bot and restore the complete `memory/luck/` directory from one
     consistency point; do not delete or regenerate only the key.
-- **The primary state file or its backup is invalid**
-  - **Cause**: `state.json` or `state.json.bak` cannot be parsed or does not match the current schema.
-  - **Action**: keep the service stopped, back up both originals, and correct the input using the
-    file path, field path, and expected shape in the error. Validate again before starting.
-    The runtime preserves invalid files byte for byte, refuses startup, and creates no `*.corrupt` files.
+- **The global state file is invalid or `state.json` remains in the old location**
+  - **Cause**: `memory/global/state.json` cannot be parsed or does not match the current schema, or
+    14.x `state.json` / `state.json.bak` still sits in the data root.
+  - **Action**: keep the service stopped, back up the originals, and correct the input using the
+    file path, field path, and expected shape in the error, then validate again. Files in the old
+    location go through the cold migration and then leave the data root. The runtime preserves
+    invalid files byte for byte, refuses startup, and creates no `*.corrupt` files.
 
 ### `bot.lock` Refuses Startup
 
@@ -330,7 +332,7 @@ The lock file has the strict format `v2:pid:starttime:boot_id:sha256(token)`, wh
 - **Stale v2 lock** after a dead process or machine restart: the next startup or exit removes it automatically; no manual action is needed.
 - **Old or damaged format**: incompatible locks are not read, automatically migrated, or guessed from PID. After confirming that no related process is running, delete the old lock manually and restart.
 - **Release fails during shutdown**: the process exits nonzero and leaves the lock in place because ownership could not be verified or unlink failed. Resolve the reported filesystem or ownership error first; do not delete a lock whose owner may still be active.
-- `.candidate.*` files are candidates used by the hard-link lock protocol. `.tmp` files are temporary atomic rewrites of `state.json` or the lock registry. Normal operations remove them; current-format leftovers are reclaimed at startup after the owner is confirmed inactive or the instance lock is acquired.
+- `.candidate.*` files are candidates used by the hard-link lock protocol. `.tmp` files are temporary atomic rewrites of the global state file or the lock registry. Normal operations remove them; current-format leftovers are reclaimed at startup after the owner is confirmed inactive or the instance lock is acquired.
 
 The token fingerprint identifies the lock owner; it is not a data-isolation boundary. Parallel bot deployments must use separate data-root directories.
 
@@ -372,7 +374,7 @@ The observation window is twice the effective restart-delay upper bound plus two
 - `logs/`: the Disk I/O Worker appends errors in batches. Messages are in English and can be grepped directly.
 - Worker crashes are rate-limited, self-healing, and restored from mirrors or snapshots. Intervene only when crashes loop repeatedly, which usually means persisted data and code versions do not match.
 - A persistence operation that exhausts bounded retries terminates the process nonzero by design: durability takes priority over availability. systemd restarts it from the last consistent state.
-- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`: an action of a scheduled task finally failed and the rest of that run was skipped. The tail is Telegram's error code and description or a local reason: `403` usually means the bot was removed from the target chat, `400` usually means the URL is unreachable or Telegram rejects the file type, `local file ... is missing` means the local file a `payload.path` points to is gone, and `speech synthesis failed: <reason>` means `send_voice` produced no voice (`tts unconfigured` / `tts unsupported` are configuration problems, `worker unavailable` means the AI Worker is not running, and `synthesis failed` / `timed out` usually point to the model side, accompanied by a `Gemini speech synthesis API` error line). Fixing `cron.json` or the files is hot-reloaded; no restart is needed.
+- `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`: an action of a scheduled task finally failed and the rest of that run was skipped. The tail is Telegram's error code and description or a local reason: `403` usually means the bot was removed from the target chat, `400` usually means the URL is unreachable or Telegram rejects the file type, `local file ... is missing` means the local file a `payload.path` points to is gone, and `speech synthesis failed: <reason>` means `send_voice` produced no voice (`tts unconfigured` / `tts unsupported` are configuration problems, `worker unavailable` means the AI Worker is not running, and `synthesis failed` / `timed out` usually point to the model side, accompanied by a `Gemini speech synthesis API` error line, and `daily limit reached` means the daily voice quota `agent.tts.daily_limit` is used up and is not retried). Fixing `cron.json` or the files is hot-reloaded; no restart is needed.
 - `/send TTS for chat <id> produced no voice: <reason>`: a voice request in the `/send` relay produced no voice; read the reason as above. The super administrator also receives a one-line failure notice in the private chat, and the relay session stays open.
 - `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`: a task delivering to several chats (`["all"]`, `["except", ...]`, or several explicitly listed chats) finally failed in one of them; only that group's remaining actions were skipped and the other groups still received the run. Read the cause as above. `Cron task "<name>" skipped <n> chat(s) without send permission.` is an ordinary log line: some groups were skipped this run because the bot lacked a send permission there or the lookup failed.
 - `Failed to probe chat membership` / `Failed to ban chat member` lines ending in `PARTICIPANT_ID_INVALID` usually mean a deleted account is on the blocklist. Sweeps keep retrying with the usual backoff. One sweep disposal in one chat where every request returned that error counts once, and finding or banning the user in any chat resets the count. At 5 the user is removed from the blocklist and pending removals automatically, with a `Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results` log line. The `/wed` daily review drops such an ID from the candidate set on the same error without logging it.

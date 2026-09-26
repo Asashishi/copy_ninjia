@@ -15,8 +15,24 @@ import {
 beforeEach(() => resetRecentComments());
 
 describe("recent channel comment cache", () => {
-  test("频道帖子评论与随后自动加群的关联窗口同样固定为三分钟", () => {
-    expect(COMMENT_JOIN_CORRELATE_MS).toBe(3 * 60_000);
+  test("乱序确认不覆盖同 key 的较新留言", () => {
+    rememberRecentComment({ chatId: -1001, userId: 42, messageId: 12, observedAt: 2_000 });
+    rememberRecentComment({ chatId: -1001, userId: 42, messageId: 11, observedAt: 1_000 });
+    expect(takeRecentComment(-1001, 42, 2_000)).toEqual({ messageId: 12, observedAt: 2_000 });
+  });
+
+  test("墙钟回退时读取和 sweeper 都删除未来留言", () => {
+    rememberRecentComment({ chatId: -1001, userId: 42, messageId: 12, observedAt: 2_000 });
+    rememberRecentComment({ chatId: -1001, userId: 43, messageId: 13, observedAt: 2_000 });
+    expect(takeRecentComment(-1001, 42, 1_999)).toBeUndefined();
+    expect(sweepRecentComments(1_999)).toBe(1);
+    expect(recentChannelComments.size).toBe(0);
+  });
+
+  test("容量清理使用较旧观察时刻时仍保留异步乱序的较新留言", () => {
+    rememberRecentComment({ chatId: -1001, userId: 42, messageId: 12, observedAt: 2_000 });
+    expect(sweepRecentComments(1_999, false)).toBe(0);
+    expect(takeRecentComment(-1001, 42, 2_000)?.messageId).toBe(12);
   });
 
   test("记录可被消费一次，过期项即使 sweeper 尚未运行也不会被误用", () => {
@@ -45,7 +61,7 @@ describe("recent channel comment cache", () => {
     expect([...recentChannelComments.keys()]).toEqual(["-1001:2"]);
   });
 
-  test("达到全局容量时淘汰 observedAt 最早项，容量始终不越界", () => {
+  test("达到全局容量时淘汰最早插入项，容量始终不越界", () => {
     for (let userId = 1; userId <= RECENT_COMMENT_CACHE_MAX; userId++) {
       rememberRecentComment({
         chatId: -1001,

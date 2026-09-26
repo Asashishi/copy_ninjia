@@ -69,7 +69,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5142 tests / 450 files / 194128 `expect()` calls**。全ソースコードの**関数カバレッジは 97.16%、行カバレッジは 98.23%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5228 tests / 459 files / 254242 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.38%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -84,9 +84,11 @@
 
 installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFiles` と関連する `PassEnvironment` / `UnsetEnvironment` の拒否、起動後の `NRestarts` 基準値と減少拒否、既存設定再入力時の mode 保持も検証します。system command はすべて fixture が受け持ち、preflight 失敗は設定・unit・実行データへの書き込みより前に発生する必要があります。
 
-`test/scripts/installMigration.test.ts` は 13.x の mock バックアップから cold migration、mapping 産物の手動配置、ソースインストール、実際の起動までを検証し、12.1.0 の identity 入口が残る配置や `state.json` に `translate` が残る配置を拒否します。ビルド検証の `scripts/checkBinary.ts` は同梱 migration tool、バイナリインストール、起動を同様に確認し、対象プロセスは system Bun を使いません。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、schema v11 の 2 種類の正規系譜、空でない WAL、全業務テーブル、state 主副本、Google 資格情報、配置設定、画像内容を扱います。元バックアップのハッシュ、mode、所有者、link 構造を維持します。翻訳セッション移行は対象群の `chat_states.status` の書き換えか行の新規作成だけを行い、version、系譜、その他の業務内容を保持します。
+`bun test --isolate test/infra/aiCacheUsagePipeline.test.ts test/workers/antiRaid/verificationCallback.test.ts test/workers/antiRaid/recentComments.test.ts test/infra/selfSentTracker.test.ts` は、6 種の usage を provider mock から Worker 転送、診断 ACK、永続化、日次集計まで検証します。コールバックの instance/generation、照会と応答の同時停滞、コメントの順序逆転・時計逆行、reset による waiter の false 決着も対象です。usage pipeline と認証コールバックは `test:fault-injection` にも含まれます。データは独立した一時 root、外部送信は mock を使います。
 
-`test/scripts/migrateTranslateSessions.test.ts` はバックアップ副本の欠落、ソース DB の version・系譜の不一致、既存セッション、不正セッション、容量超過、産物の上書き拒否、産物書き込み途中の失敗、ソースと出力の相互包含も確認します。ソース移行インストールのテストは fault injection にも含まれます。ソース経路は `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateTranslateSessions.test.ts`、バイナリ経路は `bun run build -- --version <tag>` で検証できます。
+`test/scripts/installMigration.test.ts` は 14.0.0 形式の mock バックアップから `migrate:global-state` による cold migration、mapping 産物の手動配置（グローバル状態、素材設定、設定を `config/static/` と `config/dynamic/` へ移すこと）、ソースインストール、実際の起動までの経路を検証し、12.1.0 の identity 入口が残る配置や、データルートに 14.x の `state.json`/`state.json.bak` が残る配置を拒否します。ビルド検証の `scripts/checkBinary.ts` は同梱 migration tool、バイナリインストール、起動を同様に確認し、対象プロセスは system Bun を使いません。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、schema v11 の 2 種類の正規系譜、空でない WAL、全業務テーブル、バイト単位で同一の `state.json` 主副本、Google 資格情報、配置設定、画像内容を扱います。元バックアップのハッシュ、mode、所有者、link 構造を維持し、database の業務内容、version、系譜は移行の前後で変わりません。
+
+`test/scripts/migrateGlobalState.test.ts` は素材の正規化と既定値でない項目だけの書き出し、バックアップ副本の欠落、主副本の不一致、未知の系譜（移行済みの新形式、13.x の `translate`、14.0.0 より後に追加された `ttsUsage`、未知フィールドと不正値）、ソースファイルの欠落やリンク、ソース内または既存の出力ディレクトリ、産物書き込み途中の失敗後に新しいディレクトリで再実行できることも確認します。2 つのファイルはどちらも fault injection に含まれます。ソース経路は `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateGlobalState.test.ts`、バイナリ経路は `bun run build -- --version <tag>` で検証できます。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
@@ -165,6 +167,8 @@ registry は `wed-member-hit`、`wed-member-growth`、`wed-member-churn`、`wed-
 計測対象はすべて既存コードの再利用です。ホットパスは `perf:hot-paths` のシナリオと反復数をそのまま使い、ストレージは `perf:identity-database` の実装を呼び、容量線は `perf:join-log` の子プロセスを呼びます。チェーンは `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` というメインスレッドの本番エントリから実際の Disk I/O Worker を駆動し、永続化の完了応答までを計測します。さらに**コマンド全体**を計測する 3 本があります。`ad-detect-command` は `enqueueAdCandidate` から `runAdDetectBatch`、そしてメインスレッドの `handleAdDetected` による処理の排出まで、`ai-reply-command` は `recordChatMessage` と `generateAndSendReply` から返信が実際に送信されるまで、`cron-send-voice` は音声合成共通実装（tts facade、Gemini 音声 adapter、Base64 decode、WAV 解析、Opus エンコード）を経て `deliverCronAction` でボイスメッセージを送るまでです——本番では合成は AI Worker で行い、結果は receipt でメインスレッドへ渡りますが、このチェーンは同一プロセス内で両側をつなぎ、スレッド間の受け渡しは含みません。この 3 本のモデル呼び出しと Telegram 送信は `scripts/perf/outboundGuard.ts` のプロセス内固定応答が返します——ベンチマークは実際のリクエストを一切発行せず、API 費用も発生しません。`ai-reply-command` はさらに送信前の擬人的な間を実測して差し引きます（基準は [09 パフォーマンス](09-performance.md)）。コールドスタートは満載のフィクスチャ上で `packages/app/lifecycle.ts` の init 順に段階ごとに計測し、通信を伴う処理と 2 つの業務 Worker の生成は含みません。
 
 データはすべてリポジトリ直下の `performance/`（`.gitignore` 済み）に書き、設定は `config_example/` から読み、各ラウンドの終了後にツリーごと削除します。実行が終わればこのディレクトリには何も残りません。親プロセスは production の実装モジュールを一切 import しないため、production の書き込み経路から実データルートへ到達することはありません。加えてディレクトリ作成、コピー、ファイル書き込み、削除は共通の境界（`scripts/perf/fullSuite/mockRoot.ts`）を通ります：まずパスが字句的に `performance/` 配下かを判定し、次にリポジトリルートから対象までの**すでに存在する**パス構成要素を 1 つずつ検査し、いずれかがシンボリックリンクなら拒否します。削除は親チェーンだけを検査するため、末端自体がシンボリックリンクの場合はリンクだけを外し、リンク先には触れません。mock ルート自体は決して削除しません。`--write-doc` は `docs/{cn,en,ja}/09-performance.md` の 3 言語 block と `performance-result.json` の `fullSuite.lastRun` を同時に書き換えます。計測値と各セクションの定義は [09 パフォーマンスベンチマーク](09-performance.md) を参照してください。
+
+容量計量はシンボリックリンクと明示的な ENOENT を無視し、それ以外の readdir/stat エラーはベンチマークを失敗させます。入れ子の finally により、計量が例外を投げても各 round のディレクトリを後片付けします。`test/perf/fullSuiteProcessIo.test.ts` と `test/perf/fullSuiteSections.test.ts` がエラー注入と後片付け境界を検証します。
 
 ## コミット手順
 

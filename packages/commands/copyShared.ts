@@ -84,9 +84,9 @@ export async function claimCopyCooldownOrReject(
  * 隔着 await（发提示消息等），期间超级管理员（豁免冷却检查）可能已在别的群
  * 成功占用并触发复制，无条件回滚会把 TA 的占用抹掉、让全局冷却凭空消失。
  *
- * 回滚也要落盘：占用那一步已经把 claimedAt 写进了 state.json（见
+ * 回滚也要落盘：占用那一步已经把 claimedAt 写进了全局状态文件（见
  * claimCopyCooldownOrReject），若这里只回滚内存、不落盘，进程在“占用后已
- * 回滚、但还没被任何其它事件顺带落盘”的这段窗口内重启，state.json 上留着
+ * 回滚、但还没被任何其它事件顺带落盘”的这段窗口内重启，状态文件上留着
  * 的仍是那个已作废的 claimedAt——重启后除超级管理员外每个人的下一次 /copy 都
  * 会被这个本不该存在的冷却错误地拒绝，直到它自然过期。
  */

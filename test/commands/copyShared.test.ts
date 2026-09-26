@@ -36,9 +36,6 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
     globalCopyState.lastCopyTime = previous;
     return true;
   },
-  // copy/avatarQueue.ts 在主线程取默认头像直链后传给 restoreDefaultProfilePhoto；
-  // 这里的替身必须一并提供，否则整个模块的具名导入会在加载期就失败。
-  getBotDefaultAvatarUrl: (): string => DEFAULT_AVATAR_URL,
   persistGlobalState: async (context: string): Promise<void> => { saveStateInBackground(context); },
 }));
 mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandTarget }));
@@ -47,6 +44,8 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 
 const shared = await import("../../packages/commands/copyShared");
+const { assetConfigCache } = await import("../../packages/cache/main/assets");
+const { DEFAULT_ASSET_CONFIG } = await import("../../packages/consts/ui/assets");
 const {
   drainAvatarUpdates,
   initAvatarUpdates,
@@ -323,6 +322,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
   });
 
   test("复原任务与偷脸任务共用同一个执行槽，走 restoreDefaultProfilePhoto", async () => {
+    assetConfigCache.current = { ...DEFAULT_ASSET_CONFIG, botDefaultAvatarUrl: DEFAULT_AVATAR_URL };
     shared.restoreAvatarInBackground({
       chatId: -1001,
       source: "icon",
@@ -332,8 +332,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
     // 复原不该走偷脸那条路径：两者的失败含义完全不同。
     expect(copyUserProfilePhoto).not.toHaveBeenCalled();
-    // 直链在主线程取好后传进去，avatar/restore.ts 自己不碰 state（见 avatarQueue.ts）。
+    // 直链在主线程取好后传进去，avatar/restore.ts 自己不读素材快照（见 avatarQueue.ts）。
     expect(restoreDefaultProfilePhoto.mock.calls[0]?.[0]).toBe(DEFAULT_AVATAR_URL);
+    assetConfigCache.current = DEFAULT_ASSET_CONFIG;
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.iconRestored }));
   });
 

@@ -1,7 +1,8 @@
 /**
  * 主线程转交的语音合成（`/send` 代发的 TTS 与 cron `send_voice`）在 AI Worker 侧的
- * 执行：经公共实现 aiChat/ai/voiceSynthesis.ts 合成并编码，以同 requestId 的
- * voiceSynthesized 回执带回结果，成功时转移语音字节的底层 buffer。
+ * 执行：经公共实现 aiChat/ai/voiceSynthesis.ts 按 `operator` 额度口径（完整的
+ * `agent.tts.daily_limit`）合成并编码，以同 requestId 的 voiceSynthesized 回执带回结果，成功时
+ * 转移语音字节的底层 buffer。
  *
  * 每次请求的取消信号合入 Worker 的统一生命周期信号：Worker 停止或进入排空时在途合成
  * 一并中止；排空开始后到达的请求直接回「worker unavailable」。在途表见
@@ -35,6 +36,7 @@ async function synthesize(
       {
         text: msg.text,
         tone: msg.tone,
+        quota: "operator",
         signal: AbortSignal.any([controller.signal, aiChatWorkerAbortController.current.signal]),
       },
       `main-thread request ${msg.requestId}`

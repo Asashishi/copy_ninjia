@@ -3,8 +3,8 @@
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
  * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite、入群日志与 wed 成员集合都由
  * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
- * 互相踩坏。群状态也进入同一 SQLite；只有 主线程持有的 `state.json` 是明确例外，
- * 由主线程 StateStore 独立异步维护。
+ * 互相踩坏。群状态也进入同一 SQLite；只有主线程持有的 `memory/global/state.json` 是明确
+ * 例外，由主线程 StateStore 独立异步维护，本 Worker 不访问 memory/global/。
  *
  * 本文件只做消息路由与统一 flush 调度；启动恢复编排在 diskIO/startup.ts，
  * 具体领域逻辑分别在
@@ -41,6 +41,7 @@ import {
   setStorageFlushHold,
 } from "./diskIO/storageDatabase";
 import { flushLogBuffer, handleLogMessage } from "./diskIO/logFiles";
+import { flushAiCacheBuffer, handleAiCacheUsageMessage } from "./diskIO/aiCacheFile";
 import {
   configureLuckAppendStalledReply,
   flushLuckAppends,
@@ -117,7 +118,7 @@ function postReply(reply: DiskIOReply): void {
 
 /**
  * 统一 flush：普通范围覆盖日志与全部业务领域；`business` 范围只在已知日志故障的
- * 受控重建前使用。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
+ * 受控重建前使用。两种范围都会刷出 AI 缓存用量统计，但它的失败不进回执。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
  * 该刷的都立即刷。
  */
 async function flushAll(
@@ -126,6 +127,9 @@ async function flushAll(
   // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
   const failedDomains: DiskIODomain[] = [];
   if (scope === "all" && !await flushLogBuffer()) failedDomains.push("log");
+  // 缓存用量是旁路统计：照常刷出，失败只丢这一批并由 aiCacheFile.ts 记 console.error，
+  // 不计入失败领域，因此不会让等待业务落盘的调用方判为失败。
+  await flushAiCacheBuffer();
   if (!flushAiMemorySnapshots()) failedDomains.push("aiMemory");
   if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
   if (!flushWedMemberFiles()) failedDomains.push("wedMembers");
@@ -179,6 +183,16 @@ export async function handleDiskIOWorkerMessage(
       // （见 diskIO/adSampleFile.ts 的文件头）。
       for (const diagnostic of msg.messages) {
         if (diagnostic.type === "adSample") await handleAdSampleMessage(diagnostic);
+      }
+      // 缓存用量同为旁路统计：先进内存缓冲，由阈值、定时或统一 flush 追加落盘；
+      // 缓冲与刷盘失败只丢统计，不影响本批 ACK（见 diskIO/aiCacheFile.ts）。
+      for (const diagnostic of msg.messages) {
+        if (diagnostic.type !== "aiCacheUsage") continue;
+        try {
+          await handleAiCacheUsageMessage(diagnostic);
+        } catch (error: unknown) {
+          console.error("[diskIOWorker] failed to buffer AI cache usage:", error);
+        }
       }
       const reply: DiskDiagnosticBatchAcceptedReply = {
         type: "diagnosticBatchAccepted",

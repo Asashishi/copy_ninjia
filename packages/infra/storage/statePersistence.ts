@@ -1,8 +1,9 @@
-import { lstat } from "node:fs/promises";
+import { lstat, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { Stats } from "node:fs";
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
-import { STATE_BACKUP_FILE_PATH, STATE_FILE_PATH } from "../../consts/paths";
-import { STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
+import { GLOBAL_STATE_FILE_PATH, LEGACY_STATE_FILE_PATHS } from "../../consts/paths";
+import { RUNTIME_DATA_ROOT_MAX_MODE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
 import { atomicWriteText } from "../../libs/atomicFile";
 import { isErrno } from "../../libs/errno";
 import {
@@ -13,15 +14,14 @@ import {
 } from "../../libs/inputValidation";
 import { createLatestValueRunner } from "../../libs/latestValueRunner";
 import type { LatestValueRunner } from "../../libs/latestValueRunner";
-import { decodeStateFile } from "../../libs/stateFileCodec";
+import { decodeGlobalStateFile } from "../../libs/stateFileCodec";
 import type { FlushResult } from "../../types/lifecycle";
-import type { DecodedStateFile, StateFileSchema } from "../../types/chatState";
+import type { DecodedGlobalState, GlobalState } from "../../types/chatState";
 import { logger } from "../logger";
 import { toError } from "../../libs/errorMessage";
 
 export interface StateStoreOptions {
   stateFilePath?: string;
-  backupFilePath?: string;
   readText?: (path: string) => Promise<string | null>;
   writeText?: (path: string, content: string) => Promise<void>;
   retryDelaysMs?: readonly number[];
@@ -41,23 +41,6 @@ interface StateWrite {
   revision: number;
 }
 
-interface ValidStateCopy {
-  kind: "valid";
-  content: string;
-  schema: DecodedStateFile;
-}
-
-interface InvalidStateCopy {
-  kind: "invalid";
-  error: Error;
-}
-
-interface MissingStateCopy {
-  kind: "missing";
-}
-
-type StateCopy = ValidStateCopy | InvalidStateCopy | MissingStateCopy;
-
 interface PersistenceWaiter {
   revision: number;
   resolve: () => void;
@@ -66,7 +49,7 @@ interface PersistenceWaiter {
 
 /**
  * 叶子路径本身是否真的不存在。`BunFile.stat()` 跟随软链接，悬空链接和缺失文件
- * 同样报 ENOENT；只有 `lstat` 也报 ENOENT 才算「从没写过这份副本」。
+ * 同样报 ENOENT；只有 `lstat` 也报 ENOENT 才算「从没写过状态文件」。
  */
 async function isMissingLeaf(path: string): Promise<boolean> {
   try {
@@ -78,7 +61,7 @@ async function isMissingLeaf(path: string): Promise<boolean> {
 }
 
 /**
- * 状态副本的默认读取边界：目标必须是普通文件，内容必须是严格 UTF-8。
+ * 状态文件的默认读取边界：目标必须是普通文件，内容必须是严格 UTF-8。
  *
  * 用 `BunFile.stat()` 而不是 `exists()`：后者对目录返回 false，会把「路径被占成
  * 目录」误判成缺省。目录、指向目录的链接、其它非普通文件、悬空链接以及
@@ -88,7 +71,7 @@ async function isMissingLeaf(path: string): Promise<boolean> {
  *
  * 错误统一收敛为 InputValidationError，只带文件路径、字段路径和期望形态，不回显
  * 底层异常与状态内容（见 docs/cn/04-invariants.md 的严格解析约束）。
- * @returns 副本文本；叶子路径真正缺失时为 null。
+ * @returns 文件文本；叶子路径真正缺失时为 null。
  */
 async function readExistingText(path: string): Promise<string | null> {
   let stats: Stats;
@@ -107,6 +90,25 @@ async function readExistingText(path: string): Promise<string | null> {
 }
 
 /**
+ * 14.x 数据根下的 state.json 与备份副本任一存在即拒绝：当前格式不读取它们，继续运行会让
+ * 复读状态与语音计数静默归零。只有叶子路径真正不存在才放行；启动恢复（stateStore.ts 的
+ * loadState）与安装器共用。
+ */
+export async function assertLegacyStateFilesAbsent(): Promise<void> {
+  for (const path of LEGACY_STATE_FILE_PATHS) {
+    if (!await isMissingLeaf(path)) {
+      invalidInput(path, "$", "absent; migrate it with migrate:global-state and move it out of the data root");
+    }
+  }
+}
+
+/** 默认写入边界：状态目录缺失时先按数据根权限上限建出，再原子写入。 */
+async function writeStateText(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true, mode: RUNTIME_DATA_ROOT_MAX_MODE });
+  await atomicWriteText(path, content);
+}
+
+/**
  * 保留解析错误的文件路径、字段路径和期望形态；为解码错误补齐文件路径。
  * 两类错误均不携带状态值，见 docs/cn/04-invariants.md 的严格解析约束。
  */
@@ -119,12 +121,12 @@ function describeStateDecodeFailure(path: string, error: unknown): Error {
 }
 
 /**
- * state.json 的可注入持久化边界：负责 global schema 解码/序列化、latest-only
- * 串行写、失败退避和退出 flush；按群的状态由 SQLite 独立持久化。
+ * memory/global/state.json 的可注入持久化边界：负责全局状态 schema 解码/序列化、
+ * latest-only 串行原子写、失败退避和退出 flush；按群的状态由 SQLite 独立持久化。
+ * 状态目录由主线程独占，Disk I/O Worker 不访问（见 docs/cn/04-invariants.md）。
  */
 export class StateStore {
   private readonly stateFilePath: string;
-  private readonly backupFilePath: string;
   private readonly readText: (path: string) => Promise<string | null>;
   private readonly writeText: (path: string, content: string) => Promise<void>;
   private readonly retryDelaysMs: readonly number[];
@@ -145,10 +147,9 @@ export class StateStore {
   private fatalSignaled: boolean = false;
 
   constructor({
-    stateFilePath = STATE_FILE_PATH,
-    backupFilePath,
+    stateFilePath = GLOBAL_STATE_FILE_PATH,
     readText = readExistingText,
-    writeText = atomicWriteText,
+    writeText = writeStateText,
     retryDelaysMs = STATE_SAVE_RETRY_DELAYS_MS,
     maxAttempts = STATE_SAVE_MAX_ATTEMPTS,
     onRetryError = (attempt: number, error: unknown): void => {
@@ -160,8 +161,6 @@ export class StateStore {
     onFatal,
   }: StateStoreOptions = {}) {
     this.stateFilePath = stateFilePath;
-    this.backupFilePath = backupFilePath ??
-      (stateFilePath === STATE_FILE_PATH ? STATE_BACKUP_FILE_PATH : `${stateFilePath}.bak`);
     this.readText = readText;
     this.writeText = writeText;
     this.retryDelaysMs = retryDelaysMs;
@@ -178,7 +177,6 @@ export class StateStore {
     this.fatalHandler = onFatal;
     this.writer = createLatestValueRunner<StateWrite>(async (write: StateWrite): Promise<void> => {
       await this.writeText(this.stateFilePath, write.json);
-      await this.writeText(this.backupFilePath, write.json);
       if (this.dirtyWrite !== null && this.dirtyWrite.revision <= write.revision) {
         this.dirtyWrite = null;
       }
@@ -187,74 +185,29 @@ export class StateStore {
     });
   }
 
-  async load(): Promise<DecodedStateFile | null> {
-    // 两份副本全部读完并严格解码后，才允许补齐缺失副本或同步合法副本。
-    const copies: [PromiseSettledResult<StateCopy>, PromiseSettledResult<StateCopy>] = await Promise.allSettled([
-      this.readCopy(this.stateFilePath),
-      this.readCopy(this.backupFilePath),
-    ]);
-    const readFailures: unknown[] = copies
-      .filter((result: PromiseSettledResult<StateCopy>): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result: PromiseRejectedResult): unknown => result.reason as unknown);
-    if (readFailures.length > 0) {
-      // 聚合消息点名两条副本路径；每条成员错误再各自带上失败的那一份。
-      throw new AggregateError(
-        readFailures,
-        `Failed to read ${this.stateFilePath} or ${this.backupFilePath}.`
-      );
-    }
-    const primary: StateCopy = (copies[0] as PromiseFulfilledResult<StateCopy>).value;
-    const backup: StateCopy = (copies[1] as PromiseFulfilledResult<StateCopy>).value;
-    // 存在但非法的主文件必须原样保留并拒绝启动，见 docs/cn/04-invariants.md。
-    if (primary.kind === "invalid") throw primary.error;
-    if (primary.kind === "missing" && backup.kind === "missing") return null;
-
-    if (primary.kind === "valid") {
-      if (backup.kind === "valid" && backup.content === primary.content) return primary.schema;
-      if (backup.kind === "invalid") {
-        // 备份也是当前持久化状态的一部分；存在但非法时不猜测是否可以
-        // 用主副本覆盖，保留两份原字节并拒绝启动。
-        throw backup.error;
-      }
-      await this.writeText(this.backupFilePath, primary.content);
-      return primary.schema;
-    }
-
-    // 仅在主文件真正缺失且备份合法时重建主文件。
-    if (backup.kind === "valid") {
-      logger.log(`Restoring ${this.stateFilePath} from the last known good copy ${this.backupFilePath}.`);
-      await this.writeText(this.stateFilePath, backup.content);
-      return backup.schema;
-    }
-
-    const errors: Error[] = [primary, backup]
-      .filter((copy: InvalidStateCopy | MissingStateCopy): copy is InvalidStateCopy => copy.kind === "invalid")
-      .map((copy: InvalidStateCopy): Error => copy.error);
-    throw new AggregateError(
-      errors,
-      `Neither ${this.stateFilePath} nor ${this.backupFilePath} contains a valid state; manual recovery is required.`
-    );
-  }
-
-  private async readCopy(path: string): Promise<StateCopy> {
-    const content: string | null = await this.readText(path);
-    if (content === null) return { kind: "missing" };
+  /**
+   * 读取并严格解码状态文件。文件真正不存在时返回 null（从未写过）；存在但不可读、
+   * 不是普通文件或解码失败时原样保留并抛出，见 docs/cn/04-invariants.md。
+   */
+  async load(): Promise<DecodedGlobalState | null> {
+    const content: string | null = await this.readText(this.stateFilePath);
+    if (content === null) return null;
     try {
-      return { kind: "valid", content, schema: decodeStateFile(parseJsonInput(content, path), path) };
+      return decodeGlobalStateFile(parseJsonInput(content, this.stateFilePath), this.stateFilePath);
     } catch (error: unknown) {
-      return { kind: "invalid", error: describeStateDecodeFailure(path, error) };
+      throw describeStateDecodeFailure(this.stateFilePath, error);
     }
   }
 
-  save(schema: StateFileSchema, options: StateSaveOptions = {}): Promise<void> {
+  save(schema: GlobalState, options: StateSaveOptions = {}): Promise<void> {
     if (this.quiescing || this.disposed) {
       return Promise.reject(new Error("StateStore is quiescing and no longer accepts writes."));
     }
     let json: string;
     try {
       json = JSON.stringify(schema, null, 2);
-      // 写出前用启动期同一严格 codec 再解码一次，两份磁盘副本只接收可被再次加载的值。
-      decodeStateFile(JSON.parse(json), this.stateFilePath);
+      // 写出前用启动期同一严格 codec 再解码一次，磁盘只接收可被再次加载的值。
+      decodeGlobalStateFile(JSON.parse(json), this.stateFilePath);
     } catch (error: unknown) {
       const reason: Error = toError(error);
       return Promise.reject(reason);

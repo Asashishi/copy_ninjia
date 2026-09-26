@@ -16,10 +16,11 @@ export const LOGGER_CIRCULAR_ERROR_VALUE: string = "[circular error reference]";
 
 /**
  * 线程内值级脱敏名单的容量上限：当前生效的 Telegram token 与至多六项 agent 能力
- * 凭据，加上 config/ 热重载替换下来的旧凭据；超出时丢弃最早退役的旧凭据。
- * 所属模块：infra/logger/serialization.ts。
+ * 凭据（api_key 加 google provider 至多 AGENT_HEADERS_MAX_ENTRIES 个 headers 值），加上
+ * config/dynamic/ 热重载替换下来的旧凭据；超出时丢弃最早退役的旧凭据。当前凭据恒排在旧凭据
+ * 之前且不受上限截断。所属模块：infra/logger/serialization.ts。
  */
-export const LOGGER_MAX_REDACTED_SECRETS: number = 32;
+export const LOGGER_MAX_REDACTED_SECRETS: number = 128;
 
 /** logger 单次 emit 最多展开的 Error 数，所有参数与嵌套分支共享预算。 */
 export const LOGGER_MAX_ERROR_NODES: number = 64;

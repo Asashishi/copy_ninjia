@@ -14,7 +14,7 @@ import type { ConfigReadinessCache } from "../../types/config";
  * 下方替换时机整体覆盖，不留空表示「还没判定过」。
  *
  * 填充：启动总闸（config/readiness.ts 的 validateExistingDeploymentInputs）。
- * 替换：config/ 热重载每轮按 holder 重算，可用性或失败文件变化时由
+ * 替换：config/dynamic/ 热重载每轮按 holder 重算，可用性或失败文件变化时由
  * app/configReload.ts 经 adoptAiChatConfigReadiness 整体替换；转为可用时先完成
  * AI Worker 恢复再发布。清理：无，进程重启恢复为 null（null 按「启动预检未完成」
  * 判不可用）。只在主线程，Worker 崩溃不影响。

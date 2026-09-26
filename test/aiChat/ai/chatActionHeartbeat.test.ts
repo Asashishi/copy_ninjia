@@ -5,7 +5,7 @@ import type {
   ChatActionHeartbeatDependencies,
   ChatActionSendRequest,
 } from "../../../packages/aiChat/ai/chatActionHeartbeat";
-import type { ChatActionHeartbeatEntry } from "../../../packages/types";
+import type { ChatActionHeartbeatEntry } from "../../../packages/types/aiChat/chatAction";
 import { settleBackgroundWork } from "../../libs/helpers";
 
 type PhaseSender = (chatId: number, signal?: AbortSignal) => Promise<boolean>;

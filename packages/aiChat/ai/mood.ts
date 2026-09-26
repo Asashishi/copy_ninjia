@@ -17,7 +17,7 @@ interface WeightedMood {
  * 寿命（区间见 consts/aiChat/mood.ts），到期后下次拼提示词时重抽，与群里
  * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
  * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
- * 的文案、base weight 与倍率来自部署配置 config/mood.json（严格解码见
+ * 的文案、base weight 与倍率来自部署配置 config/dynamic/mood.json（严格解码见
  * config/mood.ts，主进程启动时严格解析、Worker 经初始化与热重载消息接管快照）。两个内存缓存
  * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
@@ -80,7 +80,7 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
 
 /**
  * 按当前天气/时段调整过的权重表抽一个心情：现查一次天气分桶与时段分桶，
- * 把 config/mood.json 各档位的 base weight 逐个按各自倍率调整后，在
+ * 把 config/dynamic/mood.json 各档位的 base weight 逐个按各自倍率调整后，在
  * [0, 调整后总权重) 里掷一个连续骰子累加匹配：乘上倍率之后的权重不是整数、
  * 总和也不固定。
  */

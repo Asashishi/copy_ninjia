@@ -2,7 +2,7 @@
  * OpenAI 实现包（packages/aiChat/openai/）独占的常量：token 上限、请求超时、
  * SDK 重试次数、画幅表与几处请求参数档位。
  *
- * **模型名不在这里**：provider=openai 的能力从 config/agent.json 各自读取 model
+ * **模型名不在这里**：provider=openai 的能力从 config/dynamic/agent.json 各自读取 model
  * 与可选 base_url，代码不持有任何模型默认值（见 packages/config/agent.ts）。
  *
  * 与 Gemini 侧的几处不对等，换供应商时行为会随之变化，不要当成等价替换：
@@ -101,7 +101,7 @@ export const OPENAI_IMAGE_ERROR_LABEL: string = "OpenAI image generation API";
 export const OPENAI_REQUEST_TIMEOUT_MS: number = 180_000;
 /**
  * media 能力（视觉描述与语音转写）的独立超时，宽于纯文本往返：服务端需先把
- * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/agent.json
+ * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/dynamic/agent.json
  * 的 `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
  */
 export const OPENAI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;

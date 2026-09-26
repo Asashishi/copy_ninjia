@@ -10,6 +10,8 @@ import {
   deleteDeferredVerification,
   stopVerificationRuntime,
 } from "./antiRaid/verificationRuntime";
+import { installAiCacheUsageSink } from "../infra/aiCacheUsage";
+import type { AiCacheUsage } from "../types/aiCache";
 import {
   adoptLockdowns,
   deactivateLockdownChat,
@@ -59,6 +61,7 @@ import type {
   AdVerdictTrueEvent,
 } from "../types/antiRaid/adDetect";
 import type {
+  AntiRaidAiCacheUsageEvent,
   AntiRaidBarrierCompleteEvent,
   AntiRaidDrainCompleteEvent,
   BlockedMembersRemovedEvent,
@@ -120,7 +123,7 @@ declare const self: Worker;
 export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
   switch (msg.type) {
     case "agentConfig":
-      // 主线程投给本线程的第一条消息，config/ 热重载替换广告检测配置时再投一次
+      // 主线程投给本线程的第一条消息，config/dynamic/ 热重载替换广告检测配置时再投一次
       // （见 types/antiRaid/protocol.ts 的 AntiRaidAgentConfigMessage）。
       defaultAtmosphereState.current = msg.defaultAtmosphere;
       adoptAdDetectConfigMessage(msg);
@@ -269,6 +272,9 @@ export function startAntiRaidWorker(): void {
   if (antiRaidCacheSweepTimer.current !== null) return;
   installBusinessWorkerPort<AntiRaidWorkerRequest, AntiRaidWorkerMessage>(handleAntiRaidWorkerMessage);
   setWorkerDuplexRequestSignal(antiRaidDispatchSignal());
+  installAiCacheUsageSink((usage: AiCacheUsage): void => {
+    self.postMessage({ type: "aiCacheUsage", usage } satisfies AntiRaidAiCacheUsageEvent);
+  });
   startAdDetectQueue(
     (event: AdDetectedEvent): void => self.postMessage(event),
     (event: AdVerdictTrueEvent): void => self.postMessage(event)
@@ -287,6 +293,7 @@ export function stopAntiRaidWorker(): void {
   stopVerificationRuntime();
   stopLockdownRuntime();
   stopAdDetectQueue();
+  installAiCacheUsageSink(null);
   resetAdminCache();
   resetLinkedChannelCache();
   resetRecentComments();

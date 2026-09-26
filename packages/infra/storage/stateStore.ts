@@ -1,22 +1,14 @@
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { FlushResult } from "../../types/lifecycle";
 import { chatStateCache } from "../../cache/main/chatState";
-import { globalAssetState, globalCopyState, stateStoreHolder } from "../../cache/main/storage";
-import { resolve } from "node:path";
-import { RUNTIME_DATA_ROOT } from "../../consts/paths";
-import {
-  BOT_DEFAULT_AVATAR_URL,
-  FORTUNE_THUMBNAIL_URL,
-  GAG_THUMBNAIL_URL,
-  PROBABILITY_THUMBNAIL_URL,
-  RANDOM_H_IMAGE_DIR,
-} from "../../consts/ui/assets";
+import { globalCopyState, globalTtsUsageState, stateStoreHolder } from "../../cache/main/storage";
 import {
   DEFAULT_CHAT_STATE,
   createChatState,
   isEmptyChatState,
   normalizeChatState,
 } from "../../libs/chatState";
+import type { TtsDailyUsage } from "../../types/aiChat/voiceMessage";
 import type {
   CachedUser,
   ChatState,
@@ -24,14 +16,14 @@ import type {
   ChatStateSwitchKey,
   CopyMode,
   DecodedGlobalCopyState,
-  DecodedStateFile,
+  DecodedGlobalState,
   GlobalCopyState,
-  StateFileSchema,
+  GlobalState,
 } from "../../types/chatState";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
 import { assertChatStateCapacity } from "../chatStateStorage";
-import { StateStore } from "./statePersistence";
+import { StateStore, assertLegacyStateFilesAbsent } from "./statePersistence";
 import { toError } from "../../libs/errorMessage";
 
 export {
@@ -76,47 +68,6 @@ export function activeCopyModeIn(chatId: number): CopyMode | undefined {
     return undefined;
   }
   return globalCopyState.copyMode;
-}
-
-/**
- * 「未卜先知」内联结果此刻该用的缩略图直链。
- *
- * 五个取值函数都直接返回**最终可用值**而不是 `string | undefined`：与
- * agent 能力配置不同，这里的缺省只对应一个内置常量；语义在这里收敛一次，
- * 调用点就不必各自记得兜底。
- */
-export function getFortuneThumbnailUrl(): string {
-  return globalAssetState.fortuneThumbnailUrl ?? FORTUNE_THUMBNAIL_URL;
-}
-
-/** 「概率论」内联结果此刻该用的缩略图直链；缺省语义同上。 */
-export function getProbabilityThumbnailUrl(): string {
-  return globalAssetState.probabilityThumbnailUrl ?? PROBABILITY_THUMBNAIL_URL;
-}
-
-/** gag 发言内联结果此刻该用的缩略图直链；缺省语义同上。 */
-export function getGagThumbnailUrl(): string {
-  return globalAssetState.gagThumbnailUrl ?? GAG_THUMBNAIL_URL;
-}
-
-/**
- * 复原机器人头像时该抓的那张默认脸；缺省语义同上。
- *
- * 取值在主线程完成、URL 作为参数传进 infra/telegram/avatar/restore.ts 的
- * restoreDefaultProfilePhoto：该实现被 aiChat 与 antiRaid 两条 Worker 一并
- * import，不能碰只属于主线程的 cache/main/storage.ts（见 docs/cn/04-invariants.md
- * 的缓存线程归属）。
- */
-export function getBotDefaultAvatarUrl(): string {
-  return globalAssetState.botDefaultAvatarUrl ?? BOT_DEFAULT_AVATAR_URL;
-}
-
-/**
- * 随机图片目录的绝对路径；缺省语义同上。相对路径按运行时数据根（state.json 所在
- * 目录）解析，绝对路径原样使用。
- */
-export function getRandomHImageDirectory(): string {
-  return resolve(RUNTIME_DATA_ROOT, globalAssetState.randomHImageDir ?? RANDOM_H_IMAGE_DIR);
 }
 
 export function getChatStateCache(): ReadonlyMap<number, ChatState> {
@@ -169,73 +120,51 @@ export function restoreCopyCooldown(claimedAt: number, previousLastCopyTime: num
   return true;
 }
 
+/** 启动恢复：拒绝未迁移的旧位置状态文件，再从 memory/global/state.json 恢复全局状态。 */
 export async function loadState(): Promise<void> {
   try {
-    const decoded: DecodedStateFile | null = await sharedStateStore().load();
+    await assertLegacyStateFilesAbsent();
+    const decoded: DecodedGlobalState | null = await sharedStateStore().load();
     if (decoded === null) return;
-    if (decoded.global.copy.lastCopyTime !== undefined) {
-      globalCopyState.lastCopyTime = decoded.global.copy.lastCopyTime;
+    if (decoded.copy.lastCopyTime !== undefined) {
+      globalCopyState.lastCopyTime = decoded.copy.lastCopyTime;
     }
-    // 判别联合让 copyChatId 在这一支里就是 number，不必再用非空断言把它从
-    // undefined 里捞出来（配对由 libs/stateFileCodec.ts 的 globalCopy 强制）。
-    const copy: DecodedGlobalCopyState = decoded.global.copy;
+    // 判别联合让 copyChatId 在这一支里就是 number（配对由 libs/stateFileCodec.ts 的 globalCopy 强制）。
+    const copy: DecodedGlobalCopyState = decoded.copy;
     if (copy.copiedUser !== null) {
       adoptCopyTarget(copy.copiedUser, copy.copyMode, copy.copyChatId);
     }
-    // 直接整块赋值：缺字段就是 undefined，那是「从没设过」，不是「沿用上次」。
-    globalAssetState.randomHImageDir = decoded.global.assets.randomHImageDir;
-    globalAssetState.fortuneThumbnailUrl = decoded.global.assets.fortuneThumbnailUrl;
-    globalAssetState.probabilityThumbnailUrl = decoded.global.assets.probabilityThumbnailUrl;
-    globalAssetState.gagThumbnailUrl = decoded.global.assets.gagThumbnailUrl;
-    globalAssetState.botDefaultAvatarUrl = decoded.global.assets.botDefaultAvatarUrl;
+    globalTtsUsageState.current = decoded.ttsUsage ?? null;
   } catch (error: unknown) {
     logger.error("Failed to load state:", error);
     throw error;
   }
 }
 
-/**
- * 把 `state.global.assets` 里没设过的项补成内置常量，并在确有补写时落一次盘。
- * 只补缺的那一项：已经配过的值原样保留。
- *
- * 落盘走 saveGlobalStateInBackground 而不是 persistGlobalState：写失败不拦住启动，
- * 按 StateStore 既有的重试与 fatal 通道处理（见 app/lifecycle.ts 的
- * setStatePersistenceFatalHandler）。
- * @returns 本次补写了几项；五项都配过时为 0，且不产生任何写盘。
- */
-export function seedMissingAssetState(): number {
-  let seeded: number = 0;
-  if (globalAssetState.randomHImageDir === undefined) {
-    globalAssetState.randomHImageDir = RANDOM_H_IMAGE_DIR;
-    seeded++;
-  }
-  if (globalAssetState.fortuneThumbnailUrl === undefined) {
-    globalAssetState.fortuneThumbnailUrl = FORTUNE_THUMBNAIL_URL;
-    seeded++;
-  }
-  if (globalAssetState.probabilityThumbnailUrl === undefined) {
-    globalAssetState.probabilityThumbnailUrl = PROBABILITY_THUMBNAIL_URL;
-    seeded++;
-  }
-  if (globalAssetState.gagThumbnailUrl === undefined) {
-    globalAssetState.gagThumbnailUrl = GAG_THUMBNAIL_URL;
-    seeded++;
-  }
-  if (globalAssetState.botDefaultAvatarUrl === undefined) {
-    globalAssetState.botDefaultAvatarUrl = BOT_DEFAULT_AVATAR_URL;
-    seeded++;
-  }
-  if (seeded > 0) saveGlobalStateInBackground("seed default asset URLs");
-  return seeded;
+function currentGlobalState(): GlobalState {
+  return {
+    copy: globalCopyState,
+    ttsUsage: globalTtsUsageState.current ?? undefined,
+  };
 }
 
-function currentGlobalState(): StateFileSchema {
-  return { global: { copy: globalCopyState, assets: globalAssetState } };
+/** 语音合成每日计数的最新持久化值；null 表示从没用过。供 AI Worker 启动与重建时灌回。 */
+export function getTtsUsage(): TtsDailyUsage | null {
+  return globalTtsUsageState.current;
+}
+
+/**
+ * 接管 AI Worker 回传的全量计数（ttsUsage 事件）并在后台落盘；写失败按 StateStore
+ * 既有的重试与 fatal 通道处理。
+ */
+export function adoptTtsUsage(usage: TtsDailyUsage): void {
+  globalTtsUsageState.current = usage;
+  saveGlobalStateInBackground("record TTS daily usage");
 }
 
 /**
  * 全局状态的 durability barrier。值在调用同步栈内完成序列化，
- * 返回的 Promise 只会在对应 revision（或更新 revision）主、备两份都落盘后完成。
+ * 返回的 Promise 只会在对应 revision（或更新 revision）落盘后完成。
  */
 export async function persistGlobalState(context: string): Promise<void> {
   throwIfUpdateAborted();

@@ -3,12 +3,8 @@ installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
-import type {
-  AntiRaidWorkerEvent,
-  PendingVerificationSnapshot,
-  VerificationSnapshot,
-  VerificationUpsertEvent,
-} from "../../../packages/types";
+import type { AntiRaidWorkerEvent, VerificationUpsertEvent } from "../../../packages/types/antiRaid/events";
+import type { PendingVerificationSnapshot, VerificationSnapshot } from "../../../packages/types/antiRaid/verification";
 
 let kicks: number = 0;
 const deletedMessageIds: number[] = [];

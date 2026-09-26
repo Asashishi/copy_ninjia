@@ -99,7 +99,7 @@ test("空环境 bootstrap 安装并启动真实应用，系统操作与网络由
     workerGuards: output.match(/^INSTALL_WORKER_NETWORK_GUARD\r?$/gm)?.length,
     gracefullyStopped: output.includes("Received SIGTERM; beginning graceful shutdown."),
     database: await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists(),
-    state: await Bun.file(join(fixture.runtimeRoot, "state.json")).exists(), lockReleased: !await Bun.file(join(fixture.runtimeRoot, "bot.lock")).exists(),
+    lockReleased: !await Bun.file(join(fixture.runtimeRoot, "bot.lock")).exists(),
     noUnexpectedOutbound: !outbound.includes(":blocked") && !output.includes("INSTALL_NETWORK_BLOCKED"),
     observed12Seconds: outbound.includes("sleep:guarded:12"), unitGenerated: await Bun.file(join(fixture.runtimeRoot, "unit-preview")).exists(),
     databaseMode: await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists() ? (statSync(join(fixture.runtimeRoot, "database/storage.sqlite")).mode & 0o777).toString(8) : null,

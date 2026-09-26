@@ -67,7 +67,7 @@ const { deliverCronAction } = await import("../../packages/cron/delivery");
 const { TEST_DATA_ROOT } = await import("../preloadEnv");
 /** 本地来源的测试目录；cron.json 的 path 解析后一律是绝对路径。 */
 const FILES_ROOT: string = join(TEST_DATA_ROOT, "cron-delivery-files");
-const { getRandomHImageDirectory } = await import("../../packages/infra/storage/stateStore");
+const { getAssetConfig } = await import("../../packages/config/assets");
 const { TelegramRetryQueueFullError } = await import("../../packages/infra/telegram/outboundRetryPolicy");
 const { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } = await import("../../packages/consts/telegram");
 
@@ -149,10 +149,10 @@ describe("cron 发送边界", () => {
     expect(calls).toEqual([]);
   });
 
-  test("rand_image 每次调用都重新抽取；省略目录时用 state 的随机图片目录", async () => {
+  test("rand_image 每次调用都重新抽取；省略目录时用 assets.json 的随机图片目录", async () => {
     await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: null }, isBlurred: false });
     await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: FILES_ROOT }, isBlurred: false });
-    expect(pickRandomImage.mock.calls.map((call: [string]): string => call[0])).toEqual([getRandomHImageDirectory(), FILES_ROOT]);
+    expect(pickRandomImage.mock.calls.map((call: [string]): string => call[0])).toEqual([getAssetConfig().randomHImageDirectory, FILES_ROOT]);
     expect((calls[0]!.args[1] as InputFile).filename).toBe("drawn.png");
 
     pickRandomImage.mockImplementationOnce(async (): Promise<RandomImagePick> => ({ status: "empty" }));

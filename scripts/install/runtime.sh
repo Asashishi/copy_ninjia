@@ -82,20 +82,22 @@ fi
 step "5/8 准备配置目录"
 # --------------------------------------------------------------------------
 
-# 旧文件在模板补缺之前拒绝，迁移必须由部署方显式执行。
+# 旧入口与放错位置的部署文件在模板补缺之前拒绝，迁移必须由部署方显式执行。
 bun -e '
-  import { assertCurrentBotConfigDirectory } from "./scripts/install/runtime";
-  await assertCurrentBotConfigDirectory("config");
-' || die "config/ 仍是 12.1.0 格式：先安装 13.x 发行版并按其说明执行 migrate:bot-config 冷迁移，再升级到本版本。"
+  import { assertNoMisplacedConfigFiles } from "./scripts/install/runtime";
+  await assertNoMisplacedConfigFiles("config");
+' || die "config/ 布局不是当前格式：有 telegram.json 时先安装 13.x 发行版并按其说明执行 migrate:bot-config 冷迁移；其余部署文件按上面报错的路径移入 config/static/（bot.json、g-auth.json）或 config/dynamic/（其余六份），再重新安装。"
 
-# state.json 的翻译会话已改存 chat_states；旧文件必须先经冷迁移，不在安装器里改写。
+# 全局状态已迁到 memory/global/state.json，素材配置迁到 config/dynamic/assets.json；数据根的旧
+# state.json 必须先经冷迁移并移走，不在安装器里改写。
 bun -e '
   import { assertStateFilesMigrated } from "./scripts/install/runtime";
   await assertStateFilesMigrated();
-' || die "先执行 migrate:translate-sessions 冷迁移；二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateTranslateSessions.js --help 查看用法。"
+' || die "数据根仍有 state.json 或 state.json.bak：先执行 migrate:global-state 冷迁移并按清单替换；二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js --help 查看用法。"
 
-mkdir -p config
-for example_file in config_example/*.json; do
+mkdir -p config/static config/dynamic
+for example_file in config_example/static/*.json config_example/dynamic/*.json; do
+  config_path="config/${example_file#config_example/}"
   config_name="$(basename -- "$example_file")"
   if [ "$config_name" = "agent.json" ]; then
     # agent 示例含故意不可用的占位凭据；只有完成问卷后才生成部署文件。
@@ -109,11 +111,11 @@ for example_file in config_example/*.json; do
     # 定时任务示例只示意用法：会话 id 与地址都是假的，本地来源也不存在；缺省即没有定时任务。
     continue
   fi
-  if [ -e "config/${config_name}" ]; then
+  if [ -e "$config_path" ]; then
     # 已有配置一律不覆盖：那是部署方数据，不能被示例值顶掉。
-    info "保留 config/${config_name}（已存在）。"
+    info "保留 ${config_path}（已存在）。"
     continue
   fi
-  create_config_from_example "$example_file" "config/${config_name}"
-  info "新建 config/${config_name}（来自示例）。"
+  create_config_from_example "$example_file" "$config_path"
+  info "新建 ${config_path}（来自示例）。"
 done

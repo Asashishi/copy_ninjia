@@ -15,6 +15,7 @@ import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";
 import type { Candidate, GenerateContentParameters, GenerateContentResponse } from "@google/genai";
 import { geminiClientCache } from "../../cache/workers/aiChat/gemini";
 import { logger } from "../../infra/logger";
+import { reportGeminiUsage } from "../../infra/aiCacheUsage";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import {
   GEMINI_REQUEST_RETRY_ATTEMPTS,
@@ -65,6 +66,7 @@ export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
     apiKey: config.apiKey,
     httpOptions: {
       baseUrl: config.baseUrl,
+      headers: config.headers,
       timeout: geminiRequestTimeoutMs(capability),
       retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
     },
@@ -80,7 +82,7 @@ export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
  * 记下来，否则上层只能看到「没产出」，查不到原因。
  * @param buildBody 拼出完整请求体的闭包（model/contents/config 等由调用方拼好），
  *   直接使用官方 SDK 的 GenerateContentParameters，SDK 升级造成的字段漂移会在
- *   编译期暴露。收的是闭包而不是拼好的对象，因为请求体里要读 config/agent.json
+ *   编译期暴露。收的是闭包而不是拼好的对象，因为请求体里要读 config/dynamic/agent.json
  *   对应能力的模型名：在调用方的对象字面量里求值，这份
  *   部署配置一旦写坏，抛出的位置就在本函数**之外**，绕开这里唯一的失败归一化，
  *   于是上层拿不到 ok:false 而是被更外层的 catch 吞掉——回复轮次会连同排队中的
@@ -103,6 +105,7 @@ export async function requestGeminiResult(
       geminiRequestTimeoutMs(capability)
     );
     requestSignal.throwIfAborted();
+    const model: string = String(body.model);
     data = await raceAbortOrThrow(getGeminiClient(capability).models.generateContent({
       ...body,
       config: {
@@ -115,6 +118,9 @@ export async function requestGeminiResult(
         // 计时器影响。
         abortSignal: requestSignal,
       },
+    }).then((response: GenerateContentResponse): GenerateContentResponse => {
+      reportGeminiUsage({ capability, model, usage: response.usageMetadata });
+      return response;
     }), requestSignal);
   } catch (error: unknown) {
     if (body?.config?.abortSignal?.aborted === true) {

@@ -54,6 +54,8 @@ const {
   requestGeminiTextResult,
 } = await import("../../../packages/aiChat/gemini/client");
 const { geminiClientCache } = await import("../../../packages/cache/workers/aiChat/gemini");
+const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 
 describe("Gemini request safety settings", () => {
   beforeEach(() => {
@@ -104,6 +106,29 @@ describe("Gemini request safety settings", () => {
 
     expect(createdClientOptions).toHaveLength(1);
     expect(createdClientOptions[0]?.httpOptions?.timeout).toBe(GEMINI_MEDIA_REQUEST_TIMEOUT_MS);
+  });
+
+  test("拿到响应即上报用量：没有 cachedContentTokenCount 按 0 计，输出含思考", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    try {
+      generateContent.mockImplementationOnce(async (): Promise<GenerateContentResponse> => geminiResponse({
+        candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
+        usageMetadata: { promptTokenCount: 2_000, cachedContentTokenCount: 1_024, candidatesTokenCount: 30, thoughtsTokenCount: 12 },
+      }));
+      await requestGeminiResult("text", () => ({ model: "text", contents: "hi" }), "Test");
+      generateContent.mockImplementationOnce(async (): Promise<GenerateContentResponse> => geminiResponse({
+        candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
+        usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 5 },
+      }));
+      await requestGeminiResult("media", () => ({ model: "media", contents: "hi" }), "Test");
+    } finally {
+      installAiCacheUsageSink(null);
+    }
+    expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+      { capability: "text", provider: "google", model: "text", inputTokens: 2_000, cachedInputTokens: 1_024, outputTokens: 42 },
+      { capability: "media", provider: "google", model: "media", inputTokens: 300, cachedInputTokens: 0, outputTokens: 5 },
+    ]);
   });
 
   test("systemInstruction 保持在 config 独立字段，不拼入普通对话 contents", async () => {
@@ -316,6 +341,8 @@ describe("Gemini request safety settings", () => {
   });
 
   test("SDK 内部等待不监听 signal 时，invalidate 仍立即结束调用", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
     const controller: AbortController = new AbortController();
     let settleSdkTask!: (value: GenerateContentResponse) => void;
     const sdkTask: Promise<GenerateContentResponse> = new Promise<GenerateContentResponse>((
@@ -340,11 +367,15 @@ describe("Gemini request safety settings", () => {
     });
     expect(loggerError).not.toHaveBeenCalled();
     settleSdkTask(geminiResponse({
+      usageMetadata: { promptTokenCount: 7, candidatesTokenCount: 9 },
       candidates: [{
         finishReason: FinishReason.STOP,
         content: { role: "model", parts: [{ text: "late" }] },
       }],
     }));
     await sdkTask;
+    await Promise.resolve();
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({ inputTokens: 7, outputTokens: 9 });
   });
 });

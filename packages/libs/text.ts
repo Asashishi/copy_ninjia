@@ -13,7 +13,6 @@ import {
  * 各处不再自己抄。
  */
 
-import { graphemeSegmenterHolder } from "../cache/perThread/text";
 import { neutralizeRenderableCommands } from "./renderableCommand";
 
 /**
@@ -86,43 +85,12 @@ export function joinPersonName(
   return lastName ?? "";
 }
 
-/**
- * 复用同一个 Segmenter：它的构造远贵于一次 segment 调用（同 libs/time.ts
- * 里几个 Intl.DateTimeFormat 提到模块级）。这里不能照搬 time.ts 在模块加载时
- * 直接构造——旧运行时没有 Intl.Segmenter，模块级构造抛错会让整个模块 import
- * 失败，而 splitGraphemes 的契约是「没有就退化为按码点切分」。
- * holder 按 owner 约束放在 cache/perThread/text.ts；各线程只使用自己的副本。
- */
-function graphemeSegmenter(): Intl.Segmenter | null {
-  if (graphemeSegmenterHolder.current !== null) return graphemeSegmenterHolder.current;
-  try {
-    graphemeSegmenterHolder.current = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-  } catch {
-    // 只缓存成功，失败不写进 holder。构造失败未必是「本运行时不支持」这种永久
-    // 事实，也可能是 ICU 数据一时不可用、内存压力下分配失败这类瞬时故障；把它
-    // 记下来就等于把一次性抖动固化成进程生命周期内的降级，此后每条 /copy reverse 都
-    // 按码点拆 ZWJ 序列、吐出坏掉的 emoji，直到重启为止。下次调用重试即可——
-    // 真正不支持的运行时无非每次多付一次抛错，与提取 holder 之前的行为一致。
-    return null;
-  }
-  return graphemeSegmenterHolder.current;
-}
+/** 字形簇 Segmenter：模块加载时构造一次，各线程复用自己加载的那份。 */
+const GRAPHEME_SEGMENTER: Intl.Segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-/** 清空已缓存的 Segmenter；仅供单测在替换 Intl.Segmenter 前后重置状态。 */
-export function resetGraphemeSegmenterCache(): void {
-  graphemeSegmenterHolder.current = null;
-}
-
-/** 按 Unicode 扩展字形簇切分；旧运行时不支持 Segmenter 时退化为按码点。 */
+/** 按 Unicode 扩展字形簇切分。 */
 export function splitGraphemes(text: string): string[] {
-  const segmenter: Intl.Segmenter | null = graphemeSegmenter();
-  if (segmenter === null) return Array.from(text);
-  try {
-    return Array.from(segmenter.segment(text), (segment: Intl.SegmentData): string => segment.segment);
-  } catch {
-    // 构造之外的失败仍按原契约退化，保持与提取 holder 之前逐字一致的行为。
-    return Array.from(text);
-  }
+  return Array.from(GRAPHEME_SEGMENTER.segment(text), (segment: Intl.SegmentData): string => segment.segment);
 }
 
 /**

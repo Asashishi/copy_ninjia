@@ -54,6 +54,8 @@ const {
   requestOpenAiTextResult,
 } = await import("../../../packages/aiChat/openai/client");
 const { openAiClientCache } = await import("../../../packages/cache/workers/aiChat/openai");
+const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 const {
   OPENAI_REQUEST_MAX_RETRIES,
   OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
@@ -85,7 +87,7 @@ afterEach(() => {
 });
 
 describe("客户端构造", () => {
-  test("超时与重试次数由 consts 固定，baseURL 取自 config/agent.json 的对应能力", () => {
+  test("超时与重试次数由 consts 固定，baseURL 取自 config/dynamic/agent.json 的对应能力", () => {
     expect(OPENAI_REQUEST_MAX_RETRIES).toBe(5);
     // media 比纯文本往返宽一档；两个数一起断言，改单边时这里立刻红。
     expect(OPENAI_REQUEST_TIMEOUT_MS).toBe(180_000);
@@ -169,6 +171,8 @@ describe("失败分类", () => {
   });
 
   test("调用方主动取消时不记错误日志", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
     const controller: AbortController = new AbortController();
     let settleSdkTask!: (value: unknown) => void;
     const sdkTask: Promise<unknown> = new Promise<unknown>((
@@ -189,6 +193,7 @@ describe("失败分类", () => {
     expect(result.ok === false && result.diagnostic).toBe("request aborted");
     expect(loggerError).not.toHaveBeenCalled();
     settleSdkTask({
+      usage: { input_tokens: 7, output_tokens: 9 },
       status: "completed",
       error: null,
       incomplete_details: null,
@@ -196,6 +201,9 @@ describe("失败分类", () => {
       output_text: "late",
     });
     await sdkTask;
+    await Promise.resolve();
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({ inputTokens: 7, outputTokens: 9 });
   });
 
   test("HTTP 成功但产出不可用时归类成响应失败并带上收尾原因", async () => {
@@ -228,6 +236,28 @@ describe("失败分类", () => {
     );
   });
 
+  test("拿到响应即上报缓存用量：官方字段优先，兼容端点回落到 prompt_cache_hit_tokens", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    try {
+      respondWith({ usage: { input_tokens: 1_000, input_tokens_details: { cached_tokens: 600 }, output_tokens: 20 } });
+      await requestOpenAiResult({ capability: "text", buildBody: () => BODY, errorLabel: "Test" });
+      respondWith({ usage: { input_tokens: 900, output_tokens: 10, prompt_cache_hit_tokens: 512 } });
+      await requestOpenAiResult({ capability: "summary", buildBody: () => BODY, errorLabel: "Test" });
+      respondWith({ usage: { input_tokens: 900, output_tokens: 10 } });
+      await requestOpenAiResult({ capability: "media", buildBody: () => BODY, errorLabel: "Test" });
+      respondWith({});
+      await requestOpenAiResult({ capability: "text", buildBody: () => BODY, errorLabel: "Test" });
+    } finally {
+      installAiCacheUsageSink(null);
+    }
+    expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+      { capability: "text", provider: "openai", model: "test-model", inputTokens: 1_000, cachedInputTokens: 600, outputTokens: 20 },
+      { capability: "summary", provider: "openai", model: "test-model", inputTokens: 900, cachedInputTokens: 512, outputTokens: 10 },
+      { capability: "media", provider: "openai", model: "test-model", inputTokens: 900, cachedInputTokens: null, outputTokens: 10 },
+    ]);
+  });
+
   test("正常收尾时不记任何错误日志", async () => {
     respondWith({ output_text: "正文" });
     const result = await requestOpenAiResult({ capability: "summary", buildBody: () => BODY, errorLabel: "AI test API" });
@@ -235,8 +265,8 @@ describe("失败分类", () => {
     expect(loggerError).not.toHaveBeenCalled();
   });
 
-  test("请求体构造抛错（config/agent.json 写坏）归类成请求失败，而不是掀给调用方", async () => {
-    const configError = new Error("config/agent.json: $.agent.summary must be a valid capability");
+  test("请求体构造抛错（config/dynamic/agent.json 写坏）归类成请求失败，而不是掀给调用方", async () => {
+    const configError = new Error("config/dynamic/agent.json: $.agent.summary must be a valid capability");
     const result = await requestOpenAiResult({
       capability: "summary",
       buildBody: (): never => { throw configError; },

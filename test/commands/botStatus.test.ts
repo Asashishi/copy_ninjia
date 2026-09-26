@@ -1,3 +1,4 @@
+import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
 import { describe, expect, test } from "bun:test";
 import {
   buildBotStatusMessage,
@@ -22,26 +23,33 @@ function statusSnapshot(): BotStatusSnapshot {
         provider: "openai",
         apiKey: "secret-text-key",
         baseUrl: "https://secret-text.example/v1",
+        headers: undefined,
         model: "openai/gpt-status",
       },
       summary: {
         provider: "google",
         apiKey: "secret-summary-key",
         baseUrl: undefined,
+        headers: undefined,
         model: "gemini-summary",
       },
       media: {
         provider: "google",
         apiKey: "secret-media-key",
         baseUrl: undefined,
+        headers: undefined,
         model: "gemini-media",
       },
       tts: {
         provider: "google",
         apiKey: "secret-tts-key",
         baseUrl: undefined,
+        headers: undefined,
         model: "gemini-tts",
         voice: "Leda",
+        style: GEMINI_SPEECH_STYLE,
+        dailyLimit: 100,
+        dailyReserveQuota: 25,
       },
     },
     adDetectReady: true,
@@ -49,6 +57,7 @@ function statusSnapshot(): BotStatusSnapshot {
       provider: "openai",
       apiKey: "secret-ad-key",
       baseUrl: "https://secret-ad.example/v1",
+      headers: undefined,
       model: "ad-model",
     },
     chatState: chatStateOf({

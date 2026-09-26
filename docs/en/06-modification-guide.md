@@ -10,7 +10,7 @@
 
 ---
 
-Each recipe names the files to touch and the order to follow. The universal prerequisites are: read [`AGENTS.md`](../../AGENTS.md) before editing; back up runtime data such as `state.json`, `memory/`, and `bot.lock` before changing it or exercising a code path that may write it indirectly; finish with a green `bun run check`; and update the root README when needed.
+Each recipe names the files to touch and the order to follow. The universal prerequisites are: read [`AGENTS.md`](../../AGENTS.md) before editing; back up runtime data such as `memory/global/state.json` and the rest of `memory/`, and `bot.lock`, before changing it or exercising a code path that may write it indirectly; finish with a green `bun run check`; and update the root README when needed.
 
 ## Adding a Concurrent Batch
 
@@ -49,7 +49,7 @@ CJK action commands such as `/咬` and `/贴贴` (whose action word is one or tw
 
 ## Switching Languages: No i18n Here — Fork It
 
-Fixed user-facing copy is Simplified Chinese. `packages/consts/atmosphere/` provides teasing and ordinary styles. `atmosphere` in `config/bot.json` chooses the Bot's default notice style; a custom group AI persona takes priority for ordinary notices. Notice style does not rewrite the AI persona and is independent of client language.
+Fixed user-facing copy is Simplified Chinese. `packages/consts/atmosphere/` provides teasing and ordinary styles. `atmosphere` in `config/static/bot.json` chooses the Bot's default notice style; a custom group AI persona takes priority for ordinary notices. Notice style does not rewrite the AI persona and is independent of client language.
 
 - Text tables contain fixed strings and formatters. Telegram `entities` use UTF-16 offsets computed from the rendered text. Names, questions, prompts, and model output are not rewritten for tone.
 - Action commands such as `/咬` use one or two Chinese characters; command parsing and display copy are maintained separately.
@@ -70,10 +70,10 @@ All parameters are centralized under `packages/consts/`, so changing a value doe
 | Mood duration and command timeout | `packages/consts/aiChat/mood.ts` |
 | Tool action/lookup limits, typing and typo pacing | `packages/consts/aiChat/tools.ts` |
 | Voice transcription duration/size limits and placeholders | `packages/consts/aiChat/voice.ts` |
-| Voice tool per-round cap, line/tone length and Opus encoding parameters | `packages/consts/aiChat/voiceMessage.ts` |
+| Voice tool per-round cap, line/tone length, daily quota defaults and counting window, Opus encoding parameters | `packages/consts/aiChat/voiceMessage.ts` |
 | Request timeouts, retry counts, sampling and safety tiers, speech-synthesis base voice style and temperature | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
-| **Models, providers, keys, endpoints** | Not constants: configured per capability in `config/agent.json`; see [01-getting-started](01-getting-started.md) |
-| OAI-compatible image wire protocol / size profile | Required `agent.image.image_protocol` in `config/agent.json`; a new profile also requires synchronized types, fixed canvas tables, exhaustive dispatch, and tests |
+| **Models, providers, keys, endpoints** | Not constants: configured per capability in `config/dynamic/agent.json`; see [01-getting-started](01-getting-started.md) |
+| OAI-compatible image wire protocol / size profile | Required `agent.image.image_protocol` in `config/dynamic/agent.json`; a new profile also requires synchronized types, fixed canvas tables, exhaustive dispatch, and tests |
 | Verification window, spam threshold, append/compaction policy | `packages/consts/antiRaid/` |
 | Copy cooldown, `/quiet` range, username rules, action-command rate limit | `packages/consts/commands.ts` |
 | Random-trigger cooldown per sender | `packages/consts/auto.ts` |
@@ -112,7 +112,7 @@ The contract is split into five minimal per-capability interfaces (`AiTextProvid
 ## Changing the Persona or JSON Configuration
 
 - Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `bot.json` loads strictly before network access; `stickers.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. Runtime edits to `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, and `cron.json` hot-reload, with the rejection rules in [04 Runtime Invariants](04-invariants.md); every other deployment input requires a restart after a change. The permanent allowlist, blocklist, temporary-ad-bypass activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
+- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `bot.json` loads strictly before network access; `stickers.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. Runtime edits to `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, and `cron.json` under `config/dynamic/` hot-reload, with the rejection rules in [04 Runtime Invariants](04-invariants.md); `bot.json` and `g-auth.json` under `config/static/` and every other deployment input require a restart after a change. A new deployment file must first be assigned its subdirectory and registered in the placement table of `packages/config/layout.ts`. The permanent allowlist, blocklist, temporary-ad-bypass activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
 - The emoji available to the AI `add_reaction` tool are fixed in `AI_REACTION_EMOJIS` in [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts); its element type is restricted to Telegram standard reactions, and changes ship with the code.
 
 ## Adding Deployment JSON Configuration
@@ -136,15 +136,15 @@ The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#pers
 1. Change the persisted types under `packages/types/` and their validators, implementing strict validation for the new format.
 2. Add or update tests under `test/infra/storage/`, `test/workers/diskIO/`, and related paths, then run `bun run test:fault-injection`.
 3. **Stop the old process** and confirm `bot.lock` has been released.
-4. Manually migrate `state.json`, `state.json.bak`, and affected snapshots under `memory/` to the new format. Copy backups before migration.
-5. Deploy and start the new version. If both state copies are reported invalid, the migration is incomplete. The program does not modify the originals; fix them before restarting.
+4. Manually migrate `memory/global/state.json` and the other affected snapshots under `memory/` to the new format. Copy backups before migration.
+5. Deploy and start the new version. If the global state file is reported invalid, the migration is incomplete. The program does not modify the originals; fix them before restarting.
 6. Verify deployment hashes and strict parsing, then confirm active/running status for at least two restart intervals, no increase in NRestarts, and no new non-zero exits in the journal before deleting temporary backups.
 
-**Adding an optional block can skip steps 3–4**, provided "missing" is defined precisely: the decoder accepts both the absent block and absent fields (follow `globalAssets` in `libs/stateFileCodec.ts` — both branches return the same field set so the self-check inside `save` never sees two shapes), and the accessors collapse the default into a single fallback value. `state.global.assets` is the worked example: existing files decode unchanged and behave exactly as they did without the block. If the block is a knob meant to be hand-edited, add a startup seed (`seedMissingAssetState`) that writes the missing entries with their currently effective values so the keys show up in the file; the seed must run after **every `await` that can abort startup**, fill gaps only, and persist in the background — see [04](04-invariants.md#durability-and-snapshot-contracts). Conversely, **any change that makes an existing file fail to decode still goes through the full steps 3–4**.
+**Adding an optional block can skip steps 3–4**, provided "missing" is defined precisely: the decoder accepts an absent block, and the accessors collapse the default into a single fallback value. The worked example is `ttsUsage` in `memory/global/state.json` (`globalTtsUsage` in `libs/stateFileCodec.ts`): an absent block means never used, and existing files decode unchanged. Knobs meant to be hand-edited by the deployment do not belong in runtime state; put them under `config/` (such as `config/dynamic/assets.json`), where the matching parser supplies the built-in defaults and the bot never writes back. Conversely, **any change that makes an existing file fail to decode still goes through the full steps 3–4**.
 
 ## Adding a SQLite Table
 
-One constraint harder than editing `state.json`: **the runtime never migrates automatically** and refuses to start when the database version does not match, so every new table needs an offline cold migration. In order:
+One constraint harder than editing `memory/global/state.json`: **the runtime never migrates automatically** and refuses to start when the database version does not match, so every new table needs an offline cold migration. In order:
 
 1. Declare the table in `packages/database/schema/<domain>.ts` and register it in `schema/storage.ts`; the `data` column uses `jsonbText` plus `jsonDataCheck`, the same shape as every other business table.
 2. Write `schema/migrations/000N_<name>.sql` and add its entry to `migrations/meta/_journal.json`.

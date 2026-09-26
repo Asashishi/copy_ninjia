@@ -14,7 +14,7 @@ export const H_IMAGE_TEXTS: Readonly<{
 }> = {
   usage: "发送 /h_image 抽一张图；回复一条带图片的消息并发送 /h_image add，可把图片收进随机图库。",
   busy: "图片请求过多，请稍后再试。",
-  missingDirectory: "图片目录不存在，请检查 state.json 的 global.assets.randomHImageDir。",
+  missingDirectory: "图片目录不存在，请检查 config/dynamic/assets.json 的 random_h_image_dir。",
   empty: "图片目录里还没有可发送的图片（支持 jpg、jpeg、png、webp）。",
   tooLarge: (fileName: string): string => `图片目录里没有能发送的图片，最后抽中的 ${fileName} 超过 10 MB，Telegram 不接受；请压缩后再放回，或移出超限文件。`,
   addUsage: "请先回复一条带图片的消息，再发送 /h_image add。",

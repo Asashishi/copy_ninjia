@@ -1,4 +1,4 @@
-import type { DiskBusinessMessage } from "../../packages/types/diskIO/messages";
+import type { DiskBusinessMessage, DiskIORespawnListener, VerificationDeleteDiskMessage, VerificationUpsertDiskMessage } from "../../packages/types/diskIO/messages";
 import { diskIOReplyStub, diskIOStub } from "./diskIOMock";
 import { loggerStub } from "./loggerMock";
 /**
@@ -7,15 +7,10 @@ import { loggerStub } from "./loggerMock";
  */
 
 import { afterEach, beforeEach, mock } from "bun:test";
-import type {
-  AntiRaidWorkerEvent,
-  AntiRaidWorkerMessage,
-  DiskIORespawnListener,
-  VerificationDeleteDiskMessage,
-  VerificationPersistedReply,
-  VerificationSnapshot,
-  VerificationUpsertDiskMessage,
-} from "../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../packages/types/antiRaid/events";
+import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid/protocol";
+import type { VerificationSnapshot } from "../../packages/types/antiRaid/verification";
+import type { VerificationPersistedReply } from "../../packages/types/diskIO/replies";
 
 export const workerPosts: AntiRaidWorkerMessage[] = [];
 /** 列在这里的消息类型被 Worker 投递拒收（post 返回 false），模拟 Worker 不可达。 */

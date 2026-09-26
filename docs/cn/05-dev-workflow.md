@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5142 tests / 450 files / 194128 次 `expect()`**；全源码**函数覆盖率 97.16% / 行覆盖率 98.23%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5228 tests / 459 files / 254242 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.38%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -84,9 +84,11 @@
 
 安装隔离检查还覆盖既有 unit 数据根缺失或不匹配、`EnvironmentFiles` 与相关 `PassEnvironment` / `UnsetEnvironment` 拒绝、启动后 `NRestarts` 基线及计数回落拒绝、已有配置重新填写后的 mode 保留。系统命令全部由夹具接管，失败预检必须早于配置、unit 和运行数据的写入。
 
-`test/scripts/installMigration.test.ts` 验证 13.x mock 备份经冷迁移、按清单手工放置、源码安装及真实启动的完整链路，并拒绝仍是 12.1.0 身份入口或 `state.json` 仍带 `translate` 的部署。`scripts/checkBinary.ts` 在构建验证时对包内迁移工具、二进制安装及启动执行同类检查，目标进程不使用系统 Bun。两者复用 `scripts/fixtures/migrationDeployment.ts`，覆盖 schema v11 的两种合法谱系、非空 WAL、全部数据库业务表、state 主备、Google 凭据、部署配置与图库内容；源备份哈希、权限、属主和链接拓扑保持不变。翻译会话迁移只改写对应群的 `chat_states.status` 或为其新建行，版本与谱系不变，其余业务内容不变。
+`bun test --isolate test/infra/aiCacheUsagePipeline.test.ts test/workers/antiRaid/verificationCallback.test.ts test/workers/antiRaid/recentComments.test.ts test/infra/selfSentTracker.test.ts` 核对六类用量从供应商 mock 到 Worker 转发、诊断 ACK、落盘和跨日汇总，以及回调实例/代际、查询与回执同时挂起、评论乱序/回拨、reset 以 false 结算等待者。用量闭环与验证回调同时进入 `test:fault-injection`；所有数据使用独立临时根，出站使用 mock。
 
-`test/scripts/migrateTranslateSessions.test.ts` 另核对无备份副本、源库版本或谱系不符、已有会话、非法会话、容量超限、不覆盖产物、写产物中途失败与源输出互相包含。源码迁移安装用例同时进入故障注入套件。可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateTranslateSessions.test.ts` 单独验证源码链路，二进制链路随 `bun run build -- --version <tag>` 验证。
+`test/scripts/installMigration.test.ts` 验证 14.0.0 格式的 mock 备份经 `migrate:global-state` 冷迁移、按清单手工放置（全局状态、素材配置，以及把配置移入 `config/static/` 与 `config/dynamic/`）、源码安装及真实启动的完整链路，并拒绝仍是 12.1.0 身份入口或数据根仍有 14.x `state.json`/`state.json.bak` 的部署。`scripts/checkBinary.ts` 在构建验证时对包内迁移工具、二进制安装及启动执行同类检查，目标进程不使用系统 Bun。两者复用 `scripts/fixtures/migrationDeployment.ts`，覆盖 schema v11 的两种合法谱系、非空 WAL、全部数据库业务表、逐字节相同的 `state.json` 主备副本、Google 凭据、部署配置与图库内容；源备份哈希、权限、属主和链接拓扑保持不变，数据库业务内容、版本与谱系迁移前后不变。
+
+`test/scripts/migrateGlobalState.test.ts` 另核对素材归一化与只写非缺省项、没有备份副本、主备副本不一致、未知谱系（已迁移的新格式、13.x 的 `translate`、14.0.0 之后才有的 `ttsUsage`、未知字段与非法取值）、源文件缺失或为链接、输出目录位于源内或已存在，以及写产物中途失败后换新目录重跑。两个文件都进入故障注入套件。可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateGlobalState.test.ts` 单独验证源码链路，二进制链路随 `bun run build -- --version <tag>` 验证。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
@@ -165,6 +167,8 @@
 被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有三条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出，`cron-send-voice` 走语音合成公共实现（tts 门面、Gemini 语音适配层、Base64 解码、WAV 解析、Opus 编码）再经 `deliverCronAction` 发出语音气泡——生产中合成在 AI Worker、结果随回执转给主线程，这条链路在同一进程内串起两侧，不含线程间传递。这三条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
 
 数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此不会经生产写路径落到真实数据根；建目录、复制、写文件与删除另有一道共用边界（`scripts/perf/fullSuite/mockRoot.ts`）：先按词法判定路径落在 `performance/` 内，再逐段核对仓库根到目标之间**已经存在**的真实路径分量，任何一段是软链接即拒绝。删除只核对父链，末端本身是软链接时只摘链接、不动目标；mock 根本身永不删除。加 `--write-doc` 同时写回 `docs/{cn,en,ja}/09-performance.md` 的三语区块和 `performance-result.json` 的 `fullSuite.lastRun`；读数与各分区口径见 [09 性能基准](09-performance.md)。
+
+足迹计量忽略符号链接和明确的 ENOENT，其他 readdir/stat 错误使基准失败；每轮通过嵌套 finally 保证计量抛错时仍执行目录清理。`test/perf/fullSuiteProcessIo.test.ts` 与 `test/perf/fullSuiteSections.test.ts` 覆盖错误注入与清理边界。
 
 ## 提交流程
 

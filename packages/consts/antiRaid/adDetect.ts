@@ -146,7 +146,7 @@ export const AD_DETECT_LINK_URL_MAX_CHARS: number = 256;
 
 /**
  * 判定输出的 token 上限。结果本身只有一小段 JSON，但这个额度是**推理与正文
- * 共用**的——广告检测模型（config/agent.json 的 agent.ad_detect.model）可能是推理模型，
+ * 共用**的——广告检测模型（config/dynamic/agent.json 的 agent.ad_detect.model）可能是推理模型，
  * 长而杂乱的消息串会消耗大量 reasoning token。给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文
  * 一个字都没写出来（finish_reason=length、content 为空），上层只能当作「本次
  * 没判定」把这条广告放过去。因此额度按最坏情况给足，而不是按结果长度给
@@ -176,7 +176,7 @@ export const AD_DETECT_GOOGLE_REQUEST_ATTEMPTS: number = 3;
 /** 模型成功响应但正文不可用时的总尝试次数（含首次），两种 provider 共用。 */
 export const AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS: number = 2;
 
-/** config/ad_samples.json 允许的最大条数。 */
+/** config/dynamic/ad_samples.json 允许的最大条数。 */
 export const MAX_CONFIGURED_AD_SAMPLES: number = 500;
 
 /** 单条广告示例允许的最大字符数。 */
@@ -203,12 +203,12 @@ export const AD_SAMPLE_CONTEXT_MAX_CHARS: number = 200;
  * 判定器的系统提示词，**只写判定规则**。
  *
  * 这里刻意不列「博彩/刷单/换汇/卡料」这类题材清单：题材口径由部署配置
- * config/ad_samples.json 的示例承担（拼装见 buildAdDetectSystemPrompt），两处
+ * config/dynamic/ad_samples.json 的示例承担（拼装见 buildAdDetectSystemPrompt），两处
  * 各写一份就会各自漂移——改了示例却忘了改提示词，模型看到的就是两套互相打架
  * 的口径。规则管「凭什么算广告」，示例管「本部署认的是哪几类」，分工不重叠。
  * 规则本身也按结构而非关键词来写：广告的用词天天换，骨架不变。
  *
- * **收紧任何一条规则前先拿 config/ad_samples.json 的正样本对一遍。** 那份清单是
+ * **收紧任何一条规则前先拿 config/dynamic/ad_samples.json 的正样本对一遍。** 那份清单是
  * 部署方从真实命中里攒的，规则说「通常不是」而样本说「命中同类即判 true」时，
  * 模型收到的是一对互相打脸的指令，而受损的一侧是召回——被放过的广告不留任何
  * 日志痕迹，没人会发现。招工诈骗那一类尤其容易踩：「招聘客服，包吃住，月入过万，
@@ -287,7 +287,7 @@ const AD_DETECT_ESTABLISHED_FACT: string =
  * 拼出本次判定的完整系统提示词。示例为空时不追加示例段——空清单下多写一句
  * 「以下是示例：」只会让模型去猜一个并不存在的口径。系统事实固定拼在最后，
  * 让前面这段长提示词与示例清单保持同一前缀，命中服务端的提示词缓存。
- * @param samples 已校验的部署者广告示例（config/ad_samples.json）。
+ * @param samples 已校验的部署者广告示例（config/dynamic/ad_samples.json）。
  * @param justJoined 该发送者此刻是否仍在入群验证窗口内。
  */
 export function buildAdDetectSystemPrompt(samples: readonly string[], justJoined: boolean): string {

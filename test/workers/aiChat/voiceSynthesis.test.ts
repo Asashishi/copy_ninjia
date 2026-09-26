@@ -6,16 +6,16 @@
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { sineWav } from "../../helpers/wav";
-import type { AiSpeechRequest } from "../../../packages/types/aiChat/provider";
-import type { SynthesizedSpeech } from "../../../packages/types/aiChat/voiceMessage";
+import type { AiMeteredSpeechRequest } from "../../../packages/types/aiChat/provider";
+import type { SpeechSynthesisAttempt } from "../../../packages/types/aiChat/voiceMessage";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
 Object.defineProperty(globalThis, "self", { configurable: true, value: { postMessage } });
 
-const synthesizeSpeech = mock(async (_request: AiSpeechRequest): Promise<SynthesizedSpeech | null> => ({
-  bytes: sineWav(24_000, 0.5),
-  mimeType: "audio/wav",
+const synthesizeSpeech = mock(async (_request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => ({
+  ok: true,
+  speech: { bytes: sineWav(24_000, 0.5), mimeType: "audio/wav" },
 }));
 const ttsAiProvider = mock((): unknown => ({ name: "google", synthesizeSpeech }));
 const loggerError = mock((..._args: unknown[]): void => {});
@@ -37,9 +37,9 @@ async function nextEvent(): Promise<[unknown, unknown]> {
 beforeEach(() => {
   postMessage.mockClear();
   synthesizeSpeech.mockClear();
-  synthesizeSpeech.mockImplementation(async (): Promise<SynthesizedSpeech | null> => ({
-    bytes: sineWav(24_000, 0.5),
-    mimeType: "audio/wav",
+  synthesizeSpeech.mockImplementation(async (): Promise<SpeechSynthesisAttempt> => ({
+    ok: true,
+    speech: { bytes: sineWav(24_000, 0.5), mimeType: "audio/wav" },
   }));
   ttsAiProvider.mockImplementation((): unknown => ({ name: "google", synthesizeSpeech }));
   loggerError.mockClear();
@@ -63,27 +63,33 @@ describe("公共实现", () => {
     expect(resolveSpeechSynthesizer()).toEqual({ ok: true, synthesize: synthesizeSpeech });
   });
 
-  test("合成后编码成 OGG/Opus；合成返回空、signal 已中止与编码失败各自归类", async () => {
-    const encoded = await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", tone: "小声で" }, "test");
+  test("合成后编码成 OGG/Opus；合成失败、额度用尽、signal 已中止与编码失败各自归类", async () => {
+    const encoded = await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", tone: "小声で", quota: "ai" }, "test");
     expect(encoded.ok).toBeTrue();
     if (!encoded.ok) throw new Error("expected encoded voice");
     expect(new TextDecoder().decode(encoded.voice.bytes.subarray(0, 4))).toBe("OggS");
     expect(encoded.voice.durationSeconds).toBe(1);
-    expect(synthesizeSpeech).toHaveBeenCalledWith({ text: "hi", tone: "小声で" });
+    expect(synthesizeSpeech).toHaveBeenCalledWith({ text: "hi", tone: "小声で", quota: "ai" });
 
-    synthesizeSpeech.mockImplementationOnce(async (): Promise<null> => null);
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi" }, "test")).toEqual({ ok: false, reason: "synthesis failed" });
+    synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({ ok: false, reason: "synthesis failed" }));
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai" }, "test")).toEqual({ ok: false, reason: "synthesis failed" });
+
+    synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({ ok: false, reason: "daily limit reached" }));
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai" }, "test")).toEqual({ ok: false, reason: "daily limit reached" });
 
     const controller: AbortController = new AbortController();
-    synthesizeSpeech.mockImplementationOnce(async (): Promise<SynthesizedSpeech> => {
+    synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => {
       controller.abort();
-      return { bytes: sineWav(24_000, 0.5), mimeType: "audio/wav" };
+      return { ok: true, speech: { bytes: sineWav(24_000, 0.5), mimeType: "audio/wav" } };
     });
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", signal: controller.signal }, "test"))
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai", signal: controller.signal }, "test"))
       .toEqual({ ok: false, reason: "aborted" });
 
-    synthesizeSpeech.mockImplementationOnce(async (): Promise<SynthesizedSpeech> => ({ bytes: new Uint8Array([1]), mimeType: "audio/mp3" }));
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi" }, "chat -1")).toEqual({ ok: false, reason: "unsupported speech mime type" });
+    synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({
+      ok: true,
+      speech: { bytes: new Uint8Array([1]), mimeType: "audio/mp3" },
+    }));
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai" }, "chat -1")).toEqual({ ok: false, reason: "unsupported speech mime type" });
     expect(loggerError).toHaveBeenCalledWith("Voice message encoding failed (chat -1): unsupported speech mime type.");
   });
 });
@@ -98,7 +104,7 @@ describe("AI Worker 侧转交", () => {
     expect(typed.requestId).toBe(7);
     expect(typed.result.ok).toBeTrue();
     expect(transfer).toEqual([typed.result.voice.bytes.buffer]);
-    expect(synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ text: "おやすみ", tone: "眠そうに" });
+    expect(synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ text: "おやすみ", tone: "眠そうに", quota: "operator" });
     expect(voiceSynthesisRequests.size).toBe(0);
   });
 
@@ -118,12 +124,12 @@ describe("AI Worker 侧转交", () => {
 
   test("撤回与 Worker 生命周期信号都会中止在途合成", async () => {
     const signals: AbortSignal[] = [];
-    synthesizeSpeech.mockImplementation(async (request: AiSpeechRequest): Promise<null> => {
+    synthesizeSpeech.mockImplementation(async (request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => {
       signals.push(request.signal!);
       await new Promise<void>((resolve: () => void): void => {
         request.signal!.addEventListener("abort", (): void => resolve(), { once: true });
       });
-      return null;
+      return { ok: false, reason: "synthesis failed" };
     });
     handleSynthesizeVoice({ type: "synthesizeVoice", requestId: 3, text: "hi", tone: undefined });
     handleCancelVoiceSynthesis({ type: "cancelVoiceSynthesis", requestId: 3 });
@@ -139,7 +145,7 @@ describe("AI Worker 侧转交", () => {
   });
 
   test("合成意外抛错时记日志并按合成失败回执", async () => {
-    synthesizeSpeech.mockImplementationOnce(async (): Promise<null> => { throw new Error("boom"); });
+    synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => { throw new Error("boom"); });
     handleSynthesizeVoice({ type: "synthesizeVoice", requestId: 5, text: "hi", tone: undefined });
     expect((await nextEvent())[0]).toEqual({ type: "voiceSynthesized", requestId: 5, result: { ok: false, reason: "synthesis failed" } });
     expect(loggerError.mock.calls[0]![0]).toBe("Voice synthesis for main-thread request 5 threw:");

@@ -109,7 +109,7 @@ export function emptyProcessIo(): ProcessIoDelta {
   };
 }
 
-/** 递归统计目录足迹；符号链接不跟随，按 0 字节记，避免统计到根外的文件。 */
+/** 递归统计目录足迹；忽略符号链接和已消失的条目，其余 I/O 错误使计量失败。 */
 export function measureDirectoryFootprint(root: string): DirectoryFootprint {
   let bytes: number = 0;
   let files: number = 0;
@@ -119,7 +119,8 @@ export function measureDirectoryFootprint(root: string): DirectoryFootprint {
     let entries: readonly Dirent[];
     try {
       entries = readdirSync(directory, { withFileTypes: true });
-    } catch {
+    } catch (error: unknown) {
+      if ((error as { readonly code?: unknown } | null)?.code !== "ENOENT") throw error;
       continue;
     }
     for (const entry of entries) {
@@ -129,11 +130,12 @@ export function measureDirectoryFootprint(root: string): DirectoryFootprint {
         continue;
       }
       if (!entry.isFile()) continue;
-      files += 1;
       try {
         const stats: Stats = statSync(path);
+        files += 1;
         bytes += stats.size;
-      } catch {
+      } catch (error: unknown) {
+        if ((error as { readonly code?: unknown } | null)?.code !== "ENOENT") throw error;
         continue;
       }
     }

@@ -1,3 +1,4 @@
+import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -43,7 +44,7 @@ afterEach(() => {
   adoptCronConfig(null);
 });
 
-const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, voice: "Leda" };
+const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, headers: undefined, voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 };
 
 /** 只关心 tts 段的 agent 快照；对话核心能力段在这些用例里不被读取。 */
 function agentWith(tts: AgentTtsCapabilityConfig | undefined): AgentDeploymentConfig {
@@ -87,7 +88,7 @@ describe("send_voice", () => {
       ] }),
     ], PATH);
     expect(() => assertCronVoiceSupported(config, undefined, PATH)).toThrow(
-      `${PATH}: $[1].actions[1].type must be send_message, send_image or send_file unless config/agent.json configures $.agent.tts alongside text, summary and media`
+      `${PATH}: $[1].actions[1].type must be send_message, send_image or send_file unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media`
     );
     expect(() => assertCronVoiceSupported(config, TTS, PATH)).not.toThrow();
     expect(() => assertCronVoiceSupported(parseCronConfig([task()], PATH), undefined, PATH)).not.toThrow();
@@ -98,7 +99,7 @@ describe("send_voice", () => {
     adoptAgentDeploymentConfig(null);
     await expect(ensureCronConfig()).rejects.toThrow("$[0].actions[0].type");
     adoptAgentDeploymentConfig(agentWith(undefined));
-    await expect(ensureCronConfig()).rejects.toThrow("unless config/agent.json configures $.agent.tts");
+    await expect(ensureCronConfig()).rejects.toThrow("unless config/dynamic/agent.json configures $.agent.tts");
     expect(getCronConfig()).toEqual([]);
     adoptAgentDeploymentConfig(agentWith(TTS));
     await ensureCronConfig();
@@ -289,14 +290,14 @@ describe("loadCronConfig", () => {
   test("相对路径按项目根解析后再核对存在与类型", async () => {
     await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({
       actions: [
-        { type: "send_file", payload: { path: "config_example/cron.json" } },
+        { type: "send_file", payload: { path: "config_example/dynamic/cron.json" } },
         { type: "send_image", payload: { rand_image: true, path: "public" } },
       ],
     })]));
     expect((await loadCronConfig())[0]!.actions).toHaveLength(2);
     await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "config_example/missing.pdf" } }] })]));
     await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: "config_example/cron.json" } }] })]));
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: "config_example/dynamic/cron.json" } }] })]));
     await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing directory.");
   });
 

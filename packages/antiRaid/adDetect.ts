@@ -68,7 +68,7 @@ function managedChatIds(originChatId: number): number[] {
  * Worker 恢复窗口里会占那份触顶即致命停机的重放缓冲，而这条样本体积最大、
  * 命中时最密集，不该拿一个纯诊断把进程送走（见 infra/diskIO.ts）。
  * 它存在的唯一目的是让人回头翻原文，据此调
- * config/ad_samples.json 的判定口径——判定规则由提示词定死，题材口径全靠那份
+ * config/dynamic/ad_samples.json 的判定口径——判定规则由提示词定死，题材口径全靠那份
  * 示例，而示例只能从真实命中里攒（见 consts/antiRaid/adDetect.ts）。
  *
  * 排在 blockUser 之前：这一步是同步记账，而下面几步要等落盘与投递屏障，中途

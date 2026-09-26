@@ -18,14 +18,9 @@ import {
   verificationFileState,
   verificationPendingChanges,
 } from "../../../packages/cache/workers/diskIO/verification";
-import type {
-  PendingVerificationSnapshot,
-  VerificationDeleteDiskMessage,
-  VerificationPersistedReply,
-  VerificationSnapshot,
-  VerificationSnapshotBase,
-  VerificationUpsertDiskMessage,
-} from "../../../packages/types";
+import type { PendingVerificationSnapshot, VerificationSnapshot, VerificationSnapshotBase } from "../../../packages/types/antiRaid/verification";
+import type { VerificationDeleteDiskMessage, VerificationUpsertDiskMessage } from "../../../packages/types/diskIO/messages";
+import type { VerificationPersistedReply } from "../../../packages/types/diskIO/replies";
 import {
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_VERSION,

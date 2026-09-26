@@ -28,7 +28,7 @@ async function recoverStickerCatalogs(
   return inspection.snapshots;
 }
 
-import type { StickerCatalogSnapshot } from "../../../packages/types";
+import type { StickerCatalogSnapshot } from "../../../packages/types/stickers/catalog";
 
 /** 快照在管线上以序列化 JSON 文本流转（见 types/stickers/protocol.ts 的
  *  AiStickerCatalogEvent.snapshot），写入接口也吃字符串。 */

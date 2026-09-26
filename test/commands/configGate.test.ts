@@ -87,22 +87,22 @@ beforeEach(() => {
 
 describe("部署配置写坏时的 enable 拒绝", () => {
   test("/ai_chat enable 点名坏掉的那份文件，状态一个字都不改", async () => {
-    aiChatVerdict = broken("config/mood.json");
+    aiChatVerdict = broken("config/dynamic/mood.json");
     await handleAiChatCommand(context("enable"));
 
     expect(states.size).toBe(0);
     expect(persistChatState).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("config/mood.json"),
+      text: expect.stringContaining("config/dynamic/mood.json"),
       replyToMessageId: 7,
     });
     // 用户看到的是中文文案，运维要的定位信息在日志里（英文，见 AGENTS.md）。
-    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Invalid config/mood.json"));
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("Invalid config/dynamic/mood.json"));
   });
 
   test("/ai_chat disable 不受配置影响：坏掉之后仍要能清残留开关", async () => {
-    aiChatVerdict = broken("config/mood.json");
+    aiChatVerdict = broken("config/dynamic/mood.json");
     states.set(-1001, { isAIChatEnabled: true });
     await handleAiChatCommand(context("disable"));
 
@@ -111,13 +111,13 @@ describe("部署配置写坏时的 enable 拒绝", () => {
   });
 
   test("/ad_detect enable 点名示例清单", async () => {
-    adDetectVerdict = broken("config/ad_samples.json");
+    adDetectVerdict = broken("config/dynamic/ad_samples.json");
     await handleAdDetectCommand(context("enable"));
 
     expect(states.size).toBe(0);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("config/ad_samples.json"),
+      text: expect.stringContaining("config/dynamic/ad_samples.json"),
       replyToMessageId: 7,
     });
   });
@@ -138,27 +138,27 @@ describe("部署配置写坏时的 enable 拒绝", () => {
   test("/mood switch 也点名坏掉的心情表，不投递重抽请求", async () => {
     // 本群开着 AI 闲聊（配置是后来才被改坏的）：拒绝理由必须是那份文件，
     // 而不是「Worker 没回话」那条兜底文案。
-    aiChatVerdict = broken("config/mood.json");
+    aiChatVerdict = broken("config/dynamic/mood.json");
     states.set(-1001, { isAIChatEnabled: true });
     await handleMoodCommand(context("switch"));
 
     expect(switchAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("config/mood.json"),
+      text: expect.stringContaining("config/dynamic/mood.json"),
       replyToMessageId: 7,
     });
   });
 
   test("/mood query 也点名坏掉的心情表，不投递查询请求", async () => {
-    aiChatVerdict = broken("config/mood.json");
+    aiChatVerdict = broken("config/dynamic/mood.json");
     states.set(-1001, { isAIChatEnabled: true });
     await handleMoodCommand(context("query"));
 
     expect(queryAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("config/mood.json"),
+      text: expect.stringContaining("config/dynamic/mood.json"),
       replyToMessageId: 7,
     });
   });

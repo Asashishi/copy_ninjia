@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { globalAssetState, stateStoreHolder } from "../../../packages/cache/main/storage";
+import { globalTtsUsageState, stateStoreHolder } from "../../../packages/cache/main/storage";
 import { STATE_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
 import { logger } from "../../../packages/infra/logger";
 import {
   StateStore,
+  adoptTtsUsage,
   flushStateToDisk,
   loadState,
   persistGlobalState,
-  seedMissingAssetState,
   setStatePersistenceFatalHandler,
 } from "../../../packages/infra/storage/stateStore";
 
@@ -47,25 +47,23 @@ describe("全局状态落盘门面", () => {
     });
   });
 
-  test("后台补写素材失败只记错误日志，不向调用方抛出", async () => {
+  test("后台登记语音计数落盘失败只记错误日志，不向调用方抛出", async () => {
     const store: StateStore = new StateStore({ stateFilePath: "/virtual/facade-state.json" });
     const failure: Error = new Error("disk full");
     const save = spyOn(store, "save").mockRejectedValue(failure);
     const loggedError = spyOn(logger, "error").mockImplementation((): void => {});
     stateStoreHolder.current = store;
-    const previous = { ...globalAssetState };
-    globalAssetState.randomHImageDir = undefined;
     try {
-      expect(seedMissingAssetState()).toBeGreaterThan(0);
+      adoptTtsUsage({ windowStartedAt: 1_700_000_000_000, count: 1 });
       await Promise.resolve();
       await Promise.resolve();
       expect(save).toHaveBeenCalledTimes(1);
       expect(loggedError).toHaveBeenCalledWith(
-        "Failed to persist background global state update (seed default asset URLs):",
+        "Failed to persist background global state update (record TTS daily usage):",
         failure
       );
     } finally {
-      Object.assign(globalAssetState, previous);
+      globalTtsUsageState.current = null;
       loggedError.mockRestore();
     }
   });

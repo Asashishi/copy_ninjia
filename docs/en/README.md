@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5142_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.23%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5228_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5142 tests passed, 450 test files, 194,128 expect() calls, 97.16% function coverage, 98.23% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5228 tests passed, 459 test files, 254,242 expect() calls, 98.06% function coverage, 98.38% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -206,10 +206,10 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 | Operator and scheduled voice | `/send` and cron share TTS with a 256 UTF-16 code-unit limit; cron synthesizes once per round and reuses the Telegram `file_id` |
 | Image memory | Generated images are described; `/wed`, `/h_image`, and scheduled images start as placeholders and are described when someone replies |
 
-Voice requires explicit `agent.tts` configuration (currently provided by Google). `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
+Voice requires explicit `agent.tts` configuration (currently provided by Google; `base_url` and `headers` allow calling it through a third-party gateway). The three entry points share a daily request limit `daily_limit` (default 100), of which `daily_reserve_quota` (default 25) is reserved for `/send` and cron; once it is used up no further requests are issued. `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
 
 > [!IMPORTANT]
-> [13.0.2 → 14.0.0 upgrade steps](07-operations.md#upgrade-14)
+> [14.0.0 → 15.0.0 upgrade steps](07-operations.md#upgrade-15)
 
 Behavior details, configuration and boundaries for each feature live in the **[📚 developer docs](content-table.md)**.
 
@@ -219,7 +219,7 @@ Behavior details, configuration and boundaries for each feature live in the **[�
 
 Command access follows the entry point: **group members** can use copy, translation, action commands, quiet mode, `/info`, `/wed`, `/h_image` and more. **Identity permission keys** (`isCanXxx`) control `/bot_status`, `/prompt`, `/mute`, `/gag`, `/block`, `/h_image add` and each feature switch. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, and `/batch_kick`; `/send` requires the super administrator in private chat.
 
-Image-library and `config/cron.json` fields and rules are in [deployment configuration](../../config_example/README/en.md); source and binary cold migrations are in the [operations guide](07-operations.md).
+Image-library and `config/dynamic/cron.json` fields and rules are in [deployment configuration](../../config_example/README/en.md); source and binary cold migrations are in the [operations guide](07-operations.md).
 
 The full command table, permission semantics and per-command behaviour live in **[📖 08 Command and Behaviour Reference](08-commands.md)**.
 
@@ -243,9 +243,9 @@ Manual install:
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
-mkdir -p config
-for example in config_example/*.json; do   # copy missing examples only; g-auth.json and cron.json are illustrative
-  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+mkdir -p config/static config/dynamic
+for example in config_example/static/*.json config_example/dynamic/*.json; do   # copy missing examples only; g-auth.json and cron.json are illustrative
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" "config/${example#config_example/}" ;; esac
 done                                       # fill in bot_token and super_admin_user_id in bot.json
 ```
 

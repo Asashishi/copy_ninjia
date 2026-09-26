@@ -3,12 +3,32 @@
  * 工具、`/send` 代发的 TTS 请求、cron `send_voice`——的领域预算，以及 Telegram 语音
  * 消息的编码参数。群聊语音转写的常量在 consts/aiChat/voice.ts。
  *
- * **模型名不在这里**：走 config/agent.json 的 `agent.tts`，代码不持有任何模型
+ * **模型名不在这里**：走 config/dynamic/agent.json 的 `agent.tts`，代码不持有任何模型
  * 默认值（见 config/agent.ts）。音色、风格、超时与错误标签属于供应商能力，在
  * consts/aiChat/gemini.ts。
  *
  * 所属模块：AI 语音合成。
  */
+
+/**
+ * `agent.tts.daily_limit` 缺省时的每日上限：每个计数窗口内三个调用方共用的供应商请求数。
+ * 计数在 AI Worker 的语音合成门面发起请求前登记（见 aiChat/ai/ttsUsage.ts），窗口与
+ * 次数持久化在 memory/global/state.json 的 `ttsUsage`。
+ */
+export const TTS_DEFAULT_DAILY_LIMIT: number = 100;
+
+/**
+ * `agent.tts.daily_reserve_quota` 缺省时从每日上限里留给 `/send` 代发 TTS 与 cron
+ * `send_voice` 的次数；AI 语音工具只能用到 `daily_limit - daily_reserve_quota`，
+ * 提示词与工具回执里的余量同样按它计算。
+ */
+export const TTS_DEFAULT_DAILY_RESERVE_QUOTA: number = 25;
+
+/**
+ * 计数窗口长度（ms）。窗口从当前窗口内第一次请求起算；登记时距窗口起点已满本值，
+ * 就以这次请求为新起点从 1 重新计数。
+ */
+export const TTS_USAGE_WINDOW_MS: number = 86_400_000;
 
 /** 语音工具单轮最多接纳一条语音；接纳时同时预占一个共享可见动作。 */
 export const MAX_VOICES_PER_REPLY: number = 1;

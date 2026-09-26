@@ -29,7 +29,8 @@
  * 没有公开请求级的降档或关闭字段；因此 xAI 两条分支采用其客户端可表达的最低
  * 限制——不发送任何额外审核字段，服务端最终策略仍由 xAI 决定。
  *
- * 线协议由 config/agent.ts 从 agent.image 的必填 image_protocol 解析一次并缓存。
+ * 线协议由 config/agentCapability.ts 从 agent.image 的必填 image_protocol 解析，随 agent
+ * 配置快照缓存。
  * 新增协议必须扩展 OpenAiImageProtocol 与下方各处穷举 switch，
  * 不得再把端点/模型特判散落到请求路径。
  */
@@ -48,6 +49,7 @@ import {
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
+import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { decodeGeneratedImageBySignature } from "../ai/utils/imagePayload";
 import { getOpenAiClient } from "./client";
@@ -262,7 +264,7 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
   try {
     signal?.throwIfAborted();
     // 配置取一次就够：两条分支用的是同一个模型，分别取只会让「换模型时两边不一致」
-    // 成为可能。取用放在 try 内，因为 config/agent.json 写坏时解析会抛——留在外面
+    // 成为可能。取用放在 try 内，因为 config/dynamic/agent.json 写坏时解析会抛——留在外面
     // 就等于让一次配置笔误把异常掀给调用方，而本函数的契约是「失败返回 null」。
     const capabilityConfig: AgentImageCapabilityConfig | undefined = getAgentDeploymentConfig().image;
     if (capabilityConfig === undefined) {
@@ -280,7 +282,16 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_IMAGE_REQUEST_TIMEOUT_MS);
     requestSignal.throwIfAborted();
     const response: OpenAI.Images.ImagesResponse = await raceAbortOrThrow(
-      requestOpenAiCompatibleImage(config, request, requestSignal),
+      requestOpenAiCompatibleImage(config, request, requestSignal)
+        .then((result: OpenAI.Images.ImagesResponse): OpenAI.Images.ImagesResponse => {
+          reportAiCacheUsage({
+            capability: "image", provider: "openai", model,
+            inputTokens: result.usage?.input_tokens,
+            cachedInputTokens: undefined,
+            outputTokens: result.usage?.output_tokens,
+          });
+          return result;
+        }),
       requestSignal
     );
     const entry: OpenAI.Images.Image | undefined = response.data?.[0];

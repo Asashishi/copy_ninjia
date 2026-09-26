@@ -51,7 +51,7 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
       // 非 async），上面那句已经把 draining 置回 false：这次 push 其实已经结算
       // 完了，绝不能再把这个 settled promise 挂回 running——那样此后每次 push 都
       // 看到 running !== null，只置 pending 并返回同一个陈旧拒绝，drain 再也不会
-      // 重启，对唯一的生产使用方 stateStore 而言就是 state.json 彻底停写。
+      // 重启，对唯一的生产使用方 stateStore 而言就是全局状态文件彻底停写。
       if (draining) running = started;
       return started;
     },

@@ -571,6 +571,7 @@ describe("adopt 接管", () => {
       announced: true,
       announcementMessageId: ANNOUNCEMENT_MESSAGE_ID,
       remainingMs,
+      persisted: true,
     });
     // 接管方只认落盘下来的公告记账：上一代那次发送的结局已无从追认。
     expect(next).toEqual({
@@ -587,7 +588,7 @@ describe("adopt 接管", () => {
 
   test("接管的记录没有公告 ID → 解除时不删消息，也不猜 ID", () => {
     const { next } = transitionLockdown(undefined, {
-      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: true, remainingMs: 0,
+      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: true, remainingMs: 0, persisted: true,
     });
     expect(next).toEqual({
       kind: "active",
@@ -609,7 +610,7 @@ describe("adopt 接管", () => {
 
   test("接管一条没公告过的锁定 → 补发公告（群里必须知道自己为什么进不来人）", () => {
     const active = transitionLockdown(undefined, {
-      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: false, remainingMs: 60_000,
+      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: false, remainingMs: 60_000, persisted: true,
     });
     expect(active.next).toEqual({
       kind: "active",
@@ -639,7 +640,7 @@ describe("adopt 接管", () => {
 
   test("接管正在收尾的 RESTORING → 不补公告（马上就要解除，前言不搭后语）", () => {
     const restoring = transitionLockdown(undefined, {
-      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, announced: false, remainingMs: 0,
+      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, announced: false, remainingMs: 0, persisted: true,
     });
     expect(restoring.effects.map((effect) => effect.kind))
       .toEqual(["prefetchAdmins", "beginRestore"]);
@@ -647,7 +648,7 @@ describe("adopt 接管", () => {
 
   test("剩余时长恰好算出 0（崩溃期间已经过期）→ 立即安排恢复，不无谓多等", () => {
     const { effects } = transitionLockdown(undefined, {
-      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: true, remainingMs: 0,
+      type: "adopt", phase: "active", intentId: 1, originalPermissions: PERMS, announced: true, remainingMs: 0, persisted: true,
     });
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: false },
@@ -658,7 +659,7 @@ describe("adopt 接管", () => {
   test("已有记录时 adopt 幂等跳过", () => {
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, {
-      type: "adopt", phase: "active", intentId: 9, originalPermissions: {}, announced: true, remainingMs: LOCKDOWN_MS,
+      type: "adopt", phase: "active", intentId: 9, originalPermissions: {}, announced: true, remainingMs: LOCKDOWN_MS, persisted: true,
     });
     expect(next).toBe(state);
     expect(effects).toEqual([]);
@@ -673,6 +674,7 @@ describe("adopt 接管", () => {
       announced: true,
       announcementMessageId: ANNOUNCEMENT_MESSAGE_ID,
       remainingMs: 0,
+      persisted: true,
     });
     expect(applying.next).toEqual({
       kind: "applying",
@@ -686,7 +688,7 @@ describe("adopt 接管", () => {
     expect(applying.effects.map((effect) => effect.kind)).toEqual(["prefetchAdmins", "commitApply"]);
 
     const restoring = transitionLockdown(undefined, {
-      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, announced: false, remainingMs: 0,
+      type: "adopt", phase: "restoring", intentId: 8, originalPermissions: PERMS, announced: false, remainingMs: 0, persisted: true,
     });
     expect(restoring.next).toEqual({
       kind: "restoring",

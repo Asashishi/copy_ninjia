@@ -2,6 +2,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../packages/consts/configLayout";
 import { checkBinaryMigrations } from "./checkBinaryMigrations";
 import { assertMigrationSourcesUnchanged, deployMigratedFixture } from "./fixtures/migrationDeployment";
 import type { MigratedDeployment } from "./fixtures/migrationDeployment";
@@ -43,9 +44,10 @@ try {
   await copyFixtureTree(join(root, "config_example"), join(root, "config"));
   // 与首次部署一样不物化只示意结构的示例：g-auth.json 的占位私钥会被启动总闸拒绝，
   // cron.json 的会话 id、地址与本地来源都是假的。
-  for (const name of ["g-auth.json", "cron.json"]) await Bun.file(join(root, "config", name)).delete();
-  await Bun.write(join(root, "config/bot.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
-  await Bun.write(join(root, "config/agent.json"), JSON.stringify({ agent: {
+  await Bun.file(join(root, "config", STATIC_CONFIG_DIR_NAME, "g-auth.json")).delete();
+  await Bun.file(join(root, "config", DYNAMIC_CONFIG_DIR_NAME, "cron.json")).delete();
+  await Bun.write(join(root, "config", STATIC_CONFIG_DIR_NAME, "bot.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
+  await Bun.write(join(root, "config", DYNAMIC_CONFIG_DIR_NAME, "agent.json"), JSON.stringify({ agent: {
     text: { provider: "openai", api_key: "binary-test-key", model: "test" },
     summary: { provider: "openai", api_key: "binary-test-key", model: "test" },
     media: { provider: "openai", api_key: "binary-test-key", model: "test" },
@@ -71,7 +73,7 @@ try {
   for (const marker of ["diskIOWorker.ts", "aiChatWorker.ts", "antiRaidWorker.ts", "BINARY_API getUpdates", "BINARY_WEATHER"]) {
     if (!output.includes(marker)) throw new Error(`Binary check missing ${marker}:\n${output}`);
   }
-  if (output.includes("BINARY_NETWORK_BLOCKED") || existsSync(join(root, "bot.lock")) || !existsSync(join(root, "state.json"))) {
+  if (output.includes("BINARY_NETWORK_BLOCKED") || existsSync(join(root, "bot.lock"))) {
     throw new Error(`Binary check did not complete cleanly:\n${output}`);
   }
   const migrated: MigratedDeployment = await checkBinaryMigrations(root);
@@ -127,12 +129,16 @@ try {
   for (const marker of ["diskIOWorker.ts", "aiChatWorker.ts", "antiRaidWorker.ts", "Received SIGTERM; beginning graceful shutdown."]) {
     if (!migratedOutput.includes(marker)) throw new Error(`Migrated binary startup missing ${marker}:\n${migratedOutput}`);
   }
-  if (started.exitCode !== 0 || !migratedOutput.includes("Restored state for 1 chat(s).") ||
+  if (started.exitCode !== 0 || !migratedOutput.includes("Restored state for 1 chat(s), currently copying 42.") ||
     !migratedOutput.includes("BINARY_API getUpdates") || migratedOutput.includes("BINARY_NETWORK_BLOCKED") ||
     migratedOutput.includes("Shutdown drain/flush results:") || existsSync(join(fixture.runtimeRoot, "bot.lock"))) {
     throw new Error(`Migrated binary startup failed:\n${migratedOutput}`);
   }
-  for (const name of ["agent.json", "ad_samples.json", "mood.json", "stickers.json", "reactions.json", "g-auth.json"]) {
+  for (const name of [
+    ...["agent.json", "ad_samples.json", "mood.json", "stickers.json", "assets.json"].map((file: string): string => join(DYNAMIC_CONFIG_DIR_NAME, file)),
+    join(STATIC_CONFIG_DIR_NAME, "g-auth.json"),
+    "reactions.json",
+  ]) {
     if (await Bun.file(join(fixture.configRoot, name)).text() !== await Bun.file(join(migrated.config, name)).text()) {
       throw new Error(`Binary installer changed a preserved configuration: ${name}`);
     }

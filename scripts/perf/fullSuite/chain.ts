@@ -98,6 +98,8 @@ import { enqueueAdCandidate, runAdDetectBatch } from
   "../../../packages/workers/antiRaid/adDetect/queue";
 import { geminiClientCache } from
   "../../../packages/cache/workers/aiChat/gemini";
+import { ttsDailyUsage } from
+  "../../../packages/cache/workers/aiChat/ttsUsage";
 import { botInfoState } from
   "../../../packages/cache/workers/aiChat/identity";
 import { replyGenerationTasks } from
@@ -179,6 +181,7 @@ const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   cannedTelegramCalls,
   cannedTelegramCallTimes,
   geminiClientCache,
+  ttsDailyUsage,
   botInfoState,
   replyGenerationTasks,
   recordChatMessage,

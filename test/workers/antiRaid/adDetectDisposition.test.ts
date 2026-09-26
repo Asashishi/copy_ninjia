@@ -478,7 +478,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("命中即写一条旁路样本，含时间、消息、理由与引用/回复上下文", async () => {
-    // 判定规则由提示词定死，题材口径全靠 config/ad_samples.json 的示例，而示例
+    // 判定规则由提示词定死，题材口径全靠 config/dynamic/ad_samples.json 的示例，而示例
     // 只能从真实命中里攒——这条旁路就是那份原始素材。
     handleAdDetected(detected());
     await drainAdDisposals(5_000);

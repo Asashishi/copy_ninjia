@@ -1,7 +1,7 @@
 /**
  * AI agent 按能力选择 SDK 实现的唯一入口。
  *
- * config/agent.json 的 text、summary、media、image、tts 各自声明 provider；这里
+ * config/dynamic/agent.json 的 text、summary、media、image、tts 各自声明 provider；这里
  * 只把 google/openai 映射到实现包，不做运行时故障切换，也不从模型名或 base_url
  * 猜供应商。api_key 与端点同样来自该能力配置；启动总闸会在建立外部连接前完成
  * 严格校验。跨模块与生命周期约束见 docs/cn/04-invariants.md。
@@ -9,6 +9,8 @@
  * 归属 AI 闲聊 Worker：所有调用方都在该线程上。
  */
 
+import { claimTtsUsage } from "./ai/ttsUsage";
+import { ttsQuotaLimit } from "./ai/utils/ttsUsageWindow";
 import { geminiProvider } from "./gemini";
 import { openAiProvider } from "./openai";
 import {
@@ -32,6 +34,8 @@ import type {
   AgentDeploymentConfig,
   AgentCapability,
   AgentCapabilityConfig,
+  AgentImageCapabilityConfig,
+  AgentTtsCapabilityConfig,
 } from "../types/config";
 import type {
   AiChatProvider,
@@ -43,8 +47,9 @@ import type {
   AiReplySessionParams,
   AiReplyTurn,
   AiReplyTurnRequest,
+  AiMeteredSpeechRequest,
+  AiSpeechFacade,
   AiSpeechProvider,
-  AiSpeechRequest,
   AiSummaryProvider,
   AiTextResult,
   AiTextRequest,
@@ -54,7 +59,7 @@ import type {
 } from "../types/aiChat/provider";
 import type { AiProviderQuotaLane } from "../types/aiChat/providerScheduler";
 import type { GeneratedChatImage } from "../types/aiChat/imageGeneration";
-import type { SynthesizedSpeech } from "../types/aiChat/voiceMessage";
+import type { SpeechSynthesisAttempt, SynthesizedSpeech } from "../types/aiChat/voiceMessage";
 import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
 
 /** provider 到实现包的穷举映射；扩展 AgentProvider 时编译器会要求同步补项。 */
@@ -196,8 +201,8 @@ function createMediaFacade(
 /**
  * 把一次「生成一件媒体」的调用裹进交互优先的配额闸门。
  *
- * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图与语音合成的调用方都
- * 按「这次没做出来」处理，不能把队列拒绝泄漏成一个 undefined 让工具层再猜一次。
+ * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图调用方按「这次没做出来」
+ * 处理，不能把队列拒绝泄漏成一个 undefined 让工具层再猜一次。
  */
 function scheduleMediaGeneration<
   TRequest extends { readonly signal?: AbortSignal },
@@ -230,20 +235,34 @@ function createImageFacade(
   };
 }
 
+/**
+ * 语音合成门面：请求经交互优先的配额闸门排队，轮到执行、紧挨着发起供应商请求时
+ * 登记每日计数（aiChat/ai/ttsUsage.ts 的 claimTtsUsage）；超出本门面所属 `agent.tts`
+ * 配置按请求 `quota` 口径算出的上限时不发请求。排队期间被取消或队列已满的请求不计数。
+ */
 function createSpeechFacade(
   provider: AiChatProvider,
-  config: AgentCapabilityConfig
-): AiSpeechProvider {
+  config: AgentTtsCapabilityConfig
+): AiSpeechFacade {
   const synthesizeSpeech: AiSpeechProvider["synthesizeSpeech"] = provider.synthesizeSpeech;
   // 选中的那一家没有这项能力时只交出名字：工具层据此不注册对应工具。
   if (synthesizeSpeech === undefined) return { name: provider.name };
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  const synthesize = async (request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => {
+    if (!claimTtsUsage(ttsQuotaLimit(config, request.quota))) return { ok: false, reason: "daily limit reached" };
+    const speech: SynthesizedSpeech | null = await synthesizeSpeech(request);
+    return speech === null ? { ok: false, reason: "synthesis failed" } : { ok: true, speech };
+  };
   return {
     name: provider.name,
-    synthesizeSpeech: scheduleMediaGeneration<AiSpeechRequest, SynthesizedSpeech>(
-      quotaRunnerFor(config),
-      (request: AiSpeechRequest): Promise<SynthesizedSpeech | null> =>
-        synthesizeSpeech(request)
-    ),
+    async synthesizeSpeech(request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> {
+      const result: SpeechSynthesisAttempt | undefined = await runner.run(
+        "interactive",
+        (): Promise<SpeechSynthesisAttempt> => synthesize(request),
+        request.signal
+      );
+      return result ?? { ok: false, reason: "synthesis failed" };
+    },
   };
 }
 
@@ -289,52 +308,53 @@ export function mediaAiProvider(
  *
  * `undefined` 专表「还没问过」，`null` 表「问过、没配」，两者严格分开缓存。
  */
-interface OptionalCapabilityFacadeParams<TFacade> {
+interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts", TFacade> {
   /** 部署配置里的能力键，也是记忆化槽位名。 */
-  readonly capability: "image" | "tts";
+  readonly capability: TCapability;
   /** 当前缓存值；`undefined` 专表「还没问过」。 */
   readonly cached: TFacade | null | undefined;
-  /** 配置齐全时构造门面。 */
-  readonly create: (config: AgentCapabilityConfig) => TFacade;
+  /** 配置齐全时以该能力自己的配置构造门面。 */
+  readonly create: (config: NonNullable<AgentDeploymentConfig[TCapability]>) => TFacade;
   /** 写回记忆化槽位；null 同样要写。 */
   readonly store: (facade: TFacade | null) => void;
 }
 
-function optionalCapabilityFacade<TFacade>({
+function optionalCapabilityFacade<TCapability extends "image" | "tts", TFacade>({
   capability,
   cached,
   create,
   store,
-}: OptionalCapabilityFacadeParams<TFacade>): TFacade | null {
+}: OptionalCapabilityFacadeParams<TCapability, TFacade>): TFacade | null {
   if (cached !== undefined) return cached;
-  if (getAgentDeploymentConfig()[capability] === undefined) {
+  const config: AgentDeploymentConfig[TCapability] = getAgentDeploymentConfig()[capability];
+  if (config === undefined) {
     store(null);
     return null;
   }
-  const facade: TFacade = create(capabilityConfig(capability));
+  const facade: TFacade = create(config);
   store(facade);
   return facade;
 }
 
 /** 生图能力；未配置时不注册对应工具。 */
 export function imageAiProvider(): AiImageProvider | null {
-  return optionalCapabilityFacade<AiImageProvider>({
+  return optionalCapabilityFacade<"image", AiImageProvider>({
     capability: "image",
     cached: aiProviderFacades.image,
-    create: (config: AgentCapabilityConfig): AiImageProvider =>
+    create: (config: AgentImageCapabilityConfig): AiImageProvider =>
       createImageFacade(AI_CHAT_PROVIDERS[config.provider], config),
     store: (facade: AiImageProvider | null): void => { aiProviderFacades.image = facade; },
   });
 }
 
-/** 语音合成能力；缺配置时不注册对应工具。 */
-export function ttsAiProvider(): AiSpeechProvider | null {
-  return optionalCapabilityFacade<AiSpeechProvider>({
+/** 带每日计数的语音合成能力；缺配置时不注册对应工具。 */
+export function ttsAiProvider(): AiSpeechFacade | null {
+  return optionalCapabilityFacade<"tts", AiSpeechFacade>({
     capability: "tts",
     cached: aiProviderFacades.tts,
-    create: (config: AgentCapabilityConfig): AiSpeechProvider =>
+    create: (config: AgentTtsCapabilityConfig): AiSpeechFacade =>
       createSpeechFacade(AI_CHAT_PROVIDERS[config.provider], config),
-    store: (facade: AiSpeechProvider | null): void => { aiProviderFacades.tts = facade; },
+    store: (facade: AiSpeechFacade | null): void => { aiProviderFacades.tts = facade; },
   });
 }
 

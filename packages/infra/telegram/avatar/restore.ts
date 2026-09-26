@@ -21,15 +21,14 @@ import type {
 /**
  * 把机器人头像复原成 `url` 指向的那张默认脸。
  *
- * URL 由调用方传入而不是在这里取：它来自 `state.global.assets.botDefaultAvatarUrl`，
- * 缺省回退到 consts/ui/assets.ts 的 BOT_DEFAULT_AVATAR_URL（见
- * infra/storage/stateStore.ts 的 getBotDefaultAvatarUrl）。头像入口只由主线程加载，
- * 但仍不反向读取 state 内存：取值留在同一 owner 的 copy/avatarQueue.ts，让本模块
- * 只负责一次有界下载与头像恢复动作（见 docs/cn/04-invariants.md 的缓存线程归属）。
+ * URL 由调用方传入：它来自 config/dynamic/assets.json 的 `bot_default_avatar_url`，缺省为
+ * consts/ui/assets.ts 的 BOT_DEFAULT_AVATAR_URL（见 config/assets.ts 的 getAssetConfig）。
+ * 头像入口只由主线程加载，但仍不读取素材快照：取值留在同一 owner 的
+ * copy/avatarQueue.ts，让本模块只负责一次有界下载与头像恢复动作（见 docs/cn/04-invariants.md 的缓存线程归属）。
  *
  * **对图床不做任何限定**：任意能直出图片字节的地址都成立，图床、对象存储、自建
  * 静态资源都行，代码里不认哪一家；这一项也是唯一允许明文 http 的素材直链——它由
- * 本进程自己抓取，走不走 TLS 是配置者的决定（见 libs/stateFileCodec.ts 的 assetUrl）。
+ * 本进程自己抓取，走不走 TLS 是配置者的决定（见 config/assets.ts 的 assetUrl）。
  *
  * 这条下载**跟随重定向**：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，
  * 而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google

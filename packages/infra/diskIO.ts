@@ -1,7 +1,7 @@
 /**
  * 进程唯一的共享数据 Disk I/O Worker 宿主（主线程侧）：统一承载日志、AI/贴纸快照、
  * 每日运势、待验证当日增量 JSON、群状态与 /block 黑名单——由 diskIOWorker 在单一 Worker
- * 线程里串行执行，避免多个业务 Worker 并发写坏共享文件。state.json 只保存 global，
+ * 线程里串行执行，避免多个业务 Worker 并发写坏共享文件。全局状态 memory/global/state.json
  * 由主线程经 infra/storage/stateStore.ts 门面交给 statePersistence.ts 独立异步读写与 flush。
  *
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建、
@@ -57,6 +57,7 @@ import type {
   DiskIOOperationMessage,
   LoadRequest,
   AdSampleDiskMessage,
+  AiCacheUsageDiskMessage,
   LogMessage,
 } from "../types/diskIO/messages";
 import type {
@@ -145,15 +146,15 @@ export function relayLogMessage(message: LogMessage): boolean {
 }
 
 /**
- * 主线程 -> diskIOWorker：排队一条不进入业务恢复缓冲的旁路诊断（目前只有广告命中样本）。
+ * 主线程 -> diskIOWorker：排队一条不进入业务恢复缓冲的旁路诊断（广告命中样本与 AI 缓存用量）。
  *
  * 与 postDiskIO 的差别是它进入独立有界 FIFO，不占 pendingBusinessMessages 的
  * 恢复预算，也绝不触发业务 fatal；Worker 代际失败后原批重发，容量越界则记入
- * 一条后续汇总。样本文件自身仍是
- * best effort 的人工素材，写盘失败不会拖垮权威状态，见 diskIO/adSampleFile.ts。
+ * 一条后续汇总。样本文件与用量统计都是 best effort 的旁路数据，写盘失败不会拖垮权威状态，
+ * 见 diskIO/adSampleFile.ts 与 diskIO/aiCacheFile.ts。
  * @returns 已由有界诊断通道接管；调用方无需自行重试。
  */
-export function postDiskIODiagnostic(message: AdSampleDiskMessage): boolean {
+export function postDiskIODiagnostic(message: AdSampleDiskMessage | AiCacheUsageDiskMessage): boolean {
   if (!diskIORuntime.initialized) return false;
   return enqueueDiskIODiagnostic(message);
 }

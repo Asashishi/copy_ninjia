@@ -34,6 +34,16 @@ describe("Telegram 公开头像解析", () => {
     expect(extractPublicUsername(null)).toBeUndefined();
   });
 
+  test("属性值里的命名与数字实体按规范解码，越界、代理区与未知实体原样保留", () => {
+    const extract = (query: string): string | undefined => extractAvatarUrlFromProfileHtml(
+      `<img class="tgme_page_photo_image" src="${telegramCdnUrl}/avatar.jpg?${query}">`
+    );
+    expect(extract("a=&quot;&apos;&lt;&gt;")).toBe(`${telegramCdnUrl}/avatar.jpg?a=%22%27%3C%3E`);
+    expect(extract("b=&#65;&#x42;&#X43;")).toBe(`${telegramCdnUrl}/avatar.jpg?b=ABC`);
+    expect(extract("c=&#x110000;&#xD800;&#55296;")).toBe(`${telegramCdnUrl}/avatar.jpg?c=&#x110000;&#xD800;&#55296;`);
+    expect(extract("d=&copy;")).toBe(`${telegramCdnUrl}/avatar.jpg?d=&copy;`);
+  });
+
   test("按 class token 提取头像，并兼容单双引号、属性顺序、大小写和 HTML entity", () => {
     expect(
       extractAvatarUrlFromProfileHtml(

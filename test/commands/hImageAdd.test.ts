@@ -45,7 +45,7 @@ const { deferredCommandRuntime } = await import("../../packages/cache/main/defer
 const { mediaGroupImages } = await import("../../packages/cache/main/mediaGroups");
 const { recentHImageCallTimestamps } = await import("../../packages/cache/main/hImage");
 const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
-const { getRandomHImageDirectory } = await import("../../packages/infra/storage/stateStore");
+const { getAssetConfig } = await import("../../packages/config/assets");
 
 const CHAT_ID: number = -1001;
 // 真实可解码的字节：收图路径现在要读一次宽高（infra/image.ts 的 readImageDimensions），
@@ -61,7 +61,7 @@ const SKEWED: Uint8Array = await new Bun.Image(imageFixture(2_100, 100)).png().b
  *  两条门槛的逐像素边界另在 test/libs/telegramImage.test.ts 直接钉纯判定。 */
 const AT_LIMIT: Uint8Array = await new Bun.Image(imageFixture(2_000, 100)).png().bytes();
 const texts = chatAtmosphere(CHAT_ID).H_IMAGE_TEXTS;
-const directory: string = getRandomHImageDirectory();
+const directory: string = getAssetConfig().randomHImageDirectory;
 /** 收图写下的文件名：内容 SHA-256 加保存扩展名。 */
 const CONTENT_NAME: RegExp = /^[0-9a-f]{64}\.(?:jpg|png|webp)$/;
 

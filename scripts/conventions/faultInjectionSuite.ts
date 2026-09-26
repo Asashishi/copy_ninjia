@@ -45,7 +45,7 @@ interface ProjectPackageJson {
  * 进这套套件只会拖长发布前的必跑面而换不到恢复能力。
  */
 export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
-  { path: "scripts/migrateTranslateSessions.ts", purpose: "translation session cold migration integrity and interruption recovery" },
+  { path: "scripts/migrateGlobalState.ts", purpose: "global state cold migration integrity and interruption recovery" },
   {
     path: "test/helpers/diskIOWorkerHarness.ts",
     purpose: "Disk I/O Worker initialization, backpressure, diagnostic restart and give-up",

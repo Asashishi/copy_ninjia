@@ -8,6 +8,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../packages/consts/configLayout";
 import {
   IDENTITY_DATABASE_DIRECTORY_MODE,
   IDENTITY_DATABASE_FILE_MODE,
@@ -39,8 +40,8 @@ function assertContains(value: string, expected: string, message: string): void 
 
 async function checkTelegramRollback(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  mkdirSync(fixture.configRoot);
-  const telegramPath: string = join(fixture.configRoot, "bot.json");
+  mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   const original: string = validTelegram();
   await writeText(telegramPath, original, 0o640);
   const result: InstallerRunResult = runInstaller(fixture, [
@@ -66,7 +67,7 @@ async function checkTelegramRollback(): Promise<void> {
     "外部备份内容必须与原配置一致"
   );
   const manifest: string = await Bun.file(join(backupDirectory, "manifest.tsv")).text();
-  assertContains(manifest, "config/bot.json\tmode=640", "备份清单必须记录路径与权限");
+  assertContains(manifest, "config/static/bot.json\tmode=640", "备份清单必须记录路径与权限");
   assertCondition(/sha256=[0-9a-f]{64}/.test(manifest), "备份清单必须记录 SHA-256");
   assertContains(await Bun.file(fixture.callLog).text(), "cp-preserve=failure", "属主保留失败分支必须实测");
   assertCondition(
@@ -93,15 +94,15 @@ async function checkStagingPermissionFailureCleanup(): Promise<void> {
 
 async function checkInterruptedResume(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  mkdirSync(fixture.configRoot);
-  await writeText(join(fixture.configRoot, "bot.json"), validTelegram(), 0o600);
+  mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+  await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
   const interrupted: InstallerRunResult = runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" },
     { prompt: "现在配置 AI 能力", close: true },
   ]);
   assertCondition(interrupted.exitCode !== 0, "步骤 6 输入中断时安装器必须失败");
   assertCondition(
-    !existsSync(join(fixture.configRoot, "agent.json")),
+    !existsSync(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json")),
     "步骤 6 中断不得物化 agent 示例"
   );
 
@@ -113,23 +114,23 @@ async function checkInterruptedResume(): Promise<void> {
   assertEqual(resumed.exitCode, 0, "中断后重跑并跳过 AI 配置必须成功");
   assertContains(resumed.output, "现在配置 AI 能力", "重跑必须进入 AI 配置步骤");
   assertCondition(
-    !existsSync(join(fixture.configRoot, "agent.json")),
+    !existsSync(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json")),
     "跳过 AI 配置不得物化 agent 示例"
   );
   assertCondition(
-    !existsSync(join(fixture.configRoot, "g-auth.json")),
+    !existsSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "g-auth.json")),
     "安装器不得物化翻译凭据示例"
   );
   assertCondition(
-    !existsSync(join(fixture.configRoot, "cron.json")),
+    !existsSync(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "cron.json")),
     "安装器不得物化定时任务示例"
   );
 }
 
 async function checkSuccessfulReplacement(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  mkdirSync(fixture.configRoot);
-  const telegramPath: string = join(fixture.configRoot, "bot.json");
+  mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   await writeText(telegramPath, JSON.stringify({
     bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere: "normal",
   }), 0o640);
@@ -152,10 +153,10 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertEqual(replacementStats.uid, originalOwner.uid, "原子替换必须保持既有配置属主");
   assertEqual(replacementStats.gid, originalOwner.gid, "原子替换必须保持既有配置属组");
   const exampleMode: number = statSync(
-    join(fixture.worktree, "config_example", "stickers.json")
+    join(fixture.worktree, "config_example", DYNAMIC_CONFIG_DIR_NAME, "stickers.json")
   ).mode & 0o777;
   const deployedExampleMode: number = statSync(
-    join(fixture.configRoot, "stickers.json")
+    join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "stickers.json")
   ).mode & 0o777;
   assertEqual(
     deployedExampleMode,
@@ -190,12 +191,12 @@ async function checkSuccessfulReplacement(): Promise<void> {
 async function checkFirstFillMode(): Promise<void> {
   for (const placeholderMode of [undefined, 0o644]) {
     const fixture: InstallerFixture = await createFixture();
-    const telegramPath: string = join(fixture.configRoot, "bot.json");
+    const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
     if (placeholderMode !== undefined) {
-      mkdirSync(fixture.configRoot);
+      mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
       await writeText(
         telegramPath,
-        await Bun.file(join(fixture.worktree, "config_example", "bot.json")).text(),
+        await Bun.file(join(fixture.worktree, "config_example", STATIC_CONFIG_DIR_NAME, "bot.json")).text(),
         placeholderMode
       );
     }
@@ -245,13 +246,13 @@ async function checkServiceDataRoot(): Promise<void> {
   ];
   for (const environment of rejected) {
     const fixture: InstallerFixture = await createFixture();
-    mkdirSync(fixture.configRoot);
+    mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     const telegram: string = validTelegram();
-    await writeText(join(fixture.configRoot, "bot.json"), telegram, 0o600);
+    await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), telegram, 0o600);
     const result: InstallerRunResult = runInstaller(fixture, [], environment(fixture));
     assertCondition(result.exitCode !== 0, "既有 unit 与安装环境的数据根不一致时必须失败");
     assertContains(result.output, "COPY_NINJIA_DATA_ROOT", "拒绝信息必须点名数据根环境项");
-    assertEqual(await Bun.file(join(fixture.configRoot, "bot.json")).text(), telegram, "拒绝时不得修改配置");
+    assertEqual(await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).text(), telegram, "拒绝时不得修改配置");
     assertEqual(readdirSync(fixture.configRoot).length, 1, "拒绝时不得创建配置");
     assertEqual(readdirSync(fixture.runtimeRoot).length, 0, "拒绝时不得写入运行时数据");
     assertEqual(readdirSync(fixture.backupRoot).length, 0, "拒绝时不得开始部署备份");
@@ -284,8 +285,8 @@ async function checkServiceDataRoot(): Promise<void> {
   ];
   for (const environment of accepted) {
     const fixture: InstallerFixture = await createFixture();
-    mkdirSync(fixture.configRoot);
-    await writeText(join(fixture.configRoot, "bot.json"), validTelegram(), 0o600);
+    mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+    await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
     const result: InstallerRunResult = runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "n" },
       { prompt: "现在配置 AI 能力", reply: "n" },
@@ -297,11 +298,11 @@ async function checkServiceDataRoot(): Promise<void> {
 
 async function checkSymlinkTopologyPreserved(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  mkdirSync(fixture.configRoot);
+  mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
   const linkedDirectory: string = join(fixture.root, "linked-config");
   mkdirSync(linkedDirectory);
   const realTelegramPath: string = join(linkedDirectory, "telegram.json");
-  const telegramPath: string = join(fixture.configRoot, "bot.json");
+  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   await writeText(realTelegramPath, validTelegram(), 0o640);
   symlinkSync(realTelegramPath, telegramPath);
   const replacementToken: string = "987654321:symlink_test_token";
@@ -325,8 +326,8 @@ async function checkSymlinkTopologyPreserved(): Promise<void> {
 
 async function checkUnverifiedJournalBackupRetention(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  mkdirSync(fixture.configRoot);
-  const telegramPath: string = join(fixture.configRoot, "bot.json");
+  mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   await writeText(telegramPath, validTelegram(), 0o600);
   const result: InstallerRunResult = runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
@@ -345,8 +346,8 @@ async function checkUnverifiedJournalBackupRetention(): Promise<void> {
 
 async function checkCredentialIsolation(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  mkdirSync(fixture.configRoot);
-  await writeText(join(fixture.configRoot, "bot.json"), validTelegram(), 0o600);
+  mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+  await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
   const apiKey: string = "test key with spaces, quote-\" and 日本語";
   const result: InstallerRunResult = runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" },
@@ -365,7 +366,7 @@ async function checkCredentialIsolation(): Promise<void> {
   ]);
 
   assertEqual(result.exitCode, 0, "包含特殊字符的 AI 凭据必须完成配置");
-  const agentConfig: string = await Bun.file(join(fixture.configRoot, "agent.json")).text();
+  const agentConfig: string = await Bun.file(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json")).text();
   assertContains(agentConfig, JSON.stringify(apiKey), "AI 凭据必须无损写入 JSON");
   const calls: string = await Bun.file(fixture.callLog).text();
   assertContains(calls, "generator-secret-env=absent", "生成器环境不得继承 AI 凭据");
@@ -413,12 +414,12 @@ async function checkServiceProtection(): Promise<void> {
   ];
   for (const environment of rejected) {
     const fixture: InstallerFixture = await createFixture();
-    mkdirSync(fixture.configRoot);
+    mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     const telegram: string = validTelegram();
-    await writeText(join(fixture.configRoot, "bot.json"), telegram, 0o600);
+    await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), telegram, 0o600);
     const result: InstallerRunResult = runInstaller(fixture, [], environment);
     assertCondition(result.exitCode !== 0, "运行中、未知状态或路径不符时必须失败");
-    assertEqual(await Bun.file(join(fixture.configRoot, "bot.json")).text(), telegram, "拒绝时不得修改配置");
+    assertEqual(await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).text(), telegram, "拒绝时不得修改配置");
     assertEqual(readdirSync(fixture.configRoot).length, 1, "拒绝时不得创建配置");
     assertEqual(readdirSync(fixture.runtimeRoot).length, 0, "拒绝时不得写入运行时数据");
     assertEqual(readdirSync(fixture.backupRoot).length, 0, "拒绝时不得开始部署备份");
@@ -460,8 +461,8 @@ async function checkServiceObservation(): Promise<void> {
   for (const scenario of cases) {
     const fixture: InstallerFixture = await createFixture();
     if (scenario.fresh === true) rmSync(join(fixture.root, "systemd/copy-ninjia.service"));
-    mkdirSync(fixture.configRoot);
-    await writeText(join(fixture.configRoot, "bot.json"), validTelegram(), 0o600);
+    mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
+    await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
     const result: InstallerRunResult = runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "y" },
       { prompt: "Telegram bot token", reply: "987654321:observation_test_token", secret: true },

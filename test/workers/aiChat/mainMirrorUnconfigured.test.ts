@@ -1,3 +1,4 @@
+import type { TtsDailyUsage } from "../../../packages/types/aiChat/voiceMessage";
 import { diskIOStub } from "../../helpers/diskIOMock";
 /**
  * AI agent 核心配置不可用时主线程侧代理的行为。与 mainMirrorRecovery.test.ts
@@ -28,7 +29,7 @@ const aiEnabledChats = new Set<number>();
 mock.module("../../../packages/config/readiness", () => ({
   aiChatConfigReadiness: () => ({
     ok: false,
-    failure: { file: "config/agent.json", reason: "missing agent.media" },
+    failure: { file: "config/dynamic/agent.json", reason: "missing agent.media" },
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -53,11 +54,15 @@ mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   onDiskIOGiveUp: (_callback: () => void): void => {},
   relayLogMessage: (): boolean => true,
 })));
+// 主线程 `global.ttsUsage` 镜像：启动与重建时灌回 Worker，ttsUsage 回执写入。
+const ttsUsageMirror: { current: TtsDailyUsage | null } = { current: null };
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>
     new Map([...aiEnabledChats].map((chatId: number): [number, unknown] => [chatId, {}])),
   activeCopyTargetIdIn: (): undefined => undefined,
+  getTtsUsage: (): TtsDailyUsage | null => ttsUsageMirror.current,
+  adoptTtsUsage: (usage: TtsDailyUsage): void => { ttsUsageMirror.current = usage; },
 }));
 
 const aiChat = await import("../../../packages/aiChat");
@@ -133,6 +138,7 @@ describe("AI main-thread proxy with unavailable agent config", () => {
     expect(initWorker).toHaveBeenCalledTimes(1);
     expect(workerPosts.map((message: AiChatWorkerMessage): string => message.type)).toEqual([
       "init",
+      "hydrateTtsUsage",
       "hydrate",
       "hydrateStickerCatalog",
     ]);
@@ -140,8 +146,9 @@ describe("AI main-thread proxy with unavailable agent config", () => {
       type: "init",
       botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
     });
-    expect(workerPosts[1]).toEqual({ type: "hydrate", memories: new Map([[-1002, "enabled-memory"]]) });
-    expect(workerPosts[2]).toEqual({
+    expect(workerPosts[1]).toEqual({ type: "hydrateTtsUsage", usage: null });
+    expect(workerPosts[2]).toEqual({ type: "hydrate", memories: new Map([[-1002, "enabled-memory"]]) });
+    expect(workerPosts[3]).toEqual({
       type: "hydrateStickerCatalog",
       catalogs: new Map([["pack_a", "restored-catalog"]]),
     });

@@ -1,3 +1,4 @@
+import type { TtsDailyUsage } from "../../../packages/types/aiChat/voiceMessage";
 import { pendingStickerCatalogRevisions, stickerCatalogRevisionCounter } from "../../../packages/cache/main/stickers";
 import { diskIOReplyStub, diskIOStub } from "../../helpers/diskIOMock";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
@@ -14,6 +15,8 @@ import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../.
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
+  AdSampleDiskMessage,
+  AiCacheUsageDiskMessage,
   DiskBusinessMessage,
   DiskIORecoveryTransport,
   DiskIORespawnListener,
@@ -21,6 +24,7 @@ import type {
 
 const workerPosts: AiChatWorkerMessage[] = [];
 const diskPosts: DiskBusinessMessage[] = [];
+const diagnosticPosts: (AdSampleDiskMessage | AiCacheUsageDiskMessage)[] = [];
 const initWorker = mock((): void => {});
 const teardownFatal = mock((_error: Error): void => {});
 mock.module("../../../packages/infra/diskIO/fatal", () => ({ signalDiskIOFatal: teardownFatal }));
@@ -51,6 +55,10 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
+  postDiskIODiagnostic: (message: AdSampleDiskMessage | AiCacheUsageDiskMessage): boolean => {
+    diagnosticPosts.push(message);
+    return true;
+  },
   onDiskIOReply: diskIOReplyStub({
     aiMemoryDeletedPersisted: (callback: (reply: AiMemoryDeletedPersistedReply) => void): void => {
       diskDeletePersisted = callback;
@@ -71,11 +79,15 @@ mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
 // 主线程群状态缓存同时提供 AI 开关和可选人设。
 const knownChats = new Set<number>();
 const personas = new Map<number, string>();
+// 主线程 `global.ttsUsage` 镜像：启动与重建时灌回 Worker，ttsUsage 回执写入。
+const ttsUsageMirror: { current: TtsDailyUsage | null } = { current: null };
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId), aiPersona: personas.get(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>
     new Map([...aiEnabledChats, ...knownChats, ...personas.keys()].map((chatId: number): [number, unknown] => [chatId, { aiPersona: personas.get(chatId) }])),
   activeCopyTargetIdIn: (): undefined => undefined,
+  getTtsUsage: (): TtsDailyUsage | null => ttsUsageMirror.current,
+  adoptTtsUsage: (usage: TtsDailyUsage): void => { ttsUsageMirror.current = usage; },
 }));
 
 const aiChat = await import("../../../packages/aiChat");
@@ -361,6 +373,7 @@ describe("AI main-thread persistence mirror", () => {
         stickers: getStickerConfig(),
         persona: getPersona(),
       },
+      { type: "hydrateTtsUsage", usage: null },
       { type: "hydrate", memories: new Map([[-1001, "latest-memory"]]) },
       { type: "hydrateStickerCatalog", catalogs: new Map([["pack_a", "latest-catalog"]]) },
     ]);
@@ -622,6 +635,41 @@ describe("AI main-thread persistence mirror", () => {
     await expect(aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined }))
       .resolves.toEqual({ ok: false, reason: "worker unavailable" });
     expect(voiceSynthesisWaiters.size).toBe(0);
+  });
+
+  test("语音合成每日计数：init 后灌回持久化值，回执写入镜像，崩溃重建重放最新值", () => {
+    ttsUsageMirror.current = { windowStartedAt: 1_000, count: 3 };
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const types: string[] = workerPosts.map((message: AiChatWorkerMessage): string => message.type);
+    expect(types.slice(0, 2)).toEqual(["init", "hydrateTtsUsage"]);
+    expect(workerPosts[1]).toEqual({ type: "hydrateTtsUsage", usage: { windowStartedAt: 1_000, count: 3 } });
+
+    supervisorOptions!.onEvent({ type: "ttsUsage", usage: { windowStartedAt: 1_000, count: 4 } });
+    expect(ttsUsageMirror.current).toEqual({ windowStartedAt: 1_000, count: 4 });
+
+    const replayed: AiChatWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
+      replayed.push(message);
+      return true;
+    });
+    expect(replayed.slice(0, 2).map((message: AiChatWorkerMessage): string => message.type)).toEqual(["init", "hydrateTtsUsage"]);
+    expect(replayed[1]).toEqual({ type: "hydrateTtsUsage", usage: { windowStartedAt: 1_000, count: 4 } });
+    ttsUsageMirror.current = null;
+  });
+
+  test("AI Worker 的缓存用量事件原样转投诊断通道", () => {
+    diagnosticPosts.length = 0;
+    const usage = {
+      timestamp: 1_700_000_000_000,
+      capability: "text",
+      provider: "openai",
+      model: "deepseek-flash",
+      inputTokens: 20_000,
+      cachedInputTokens: 16_384,
+      outputTokens: 120,
+    } as const;
+    supervisorOptions!.onEvent({ type: "aiCacheUsage", usage });
+    expect(diagnosticPosts).toEqual([{ type: "aiCacheUsage", ...usage }]);
   });
 
   test("revision 计数器只在 teardown 之后丢掉，还有在途墓碑时留着", async () => {

@@ -9,12 +9,12 @@ step "6/8 填写配置"
 CONFIGURE_TELEGRAM=1
 BOT_ATMOSPHERE="$(bun -e '
   import { loadInstallerBotAtmosphere } from "./scripts/install/runtime";
-  console.log(await loadInstallerBotAtmosphere("config/bot.json"));
-')" || die "config/bot.json 严格校验未通过，原文件未改动。"
+  console.log(await loadInstallerBotAtmosphere("config/static/bot.json"));
+')" || die "config/static/bot.json 严格校验未通过，原文件未改动。"
 BOT_CONFIG_MODE_POLICY=new
-if [ -e config/bot.json ] &&
-   ! grep -q 'replace-with-telegram-bot-token' config/bot.json; then
-  if confirm "config/bot.json 已经填过，是否重新填写？" n; then
+if [ -e config/static/bot.json ] &&
+   ! grep -q 'replace-with-telegram-bot-token' config/static/bot.json; then
+  if confirm "config/static/bot.json 已经填过，是否重新填写？" n; then
     BOT_CONFIG_MODE_POLICY=preserve
   else
     CONFIGURE_TELEGRAM=0
@@ -38,7 +38,7 @@ if [ "$CONFIGURE_TELEGRAM" -eq 1 ]; then
   done
   BOT_CONFIG_STAGING_PATH=""
   BOT_CONFIG_TARGET_PATH=""
-  resolve_config_target_path config/bot.json BOT_CONFIG_TARGET_PATH
+  resolve_config_target_path config/static/bot.json BOT_CONFIG_TARGET_PATH
   create_config_staging_path "$BOT_CONFIG_TARGET_PATH" BOT_CONFIG_STAGING_PATH
   cat > "$BOT_CONFIG_STAGING_PATH" <<JSON
 {
@@ -50,16 +50,16 @@ JSON
   unset BOT_TOKEN SUPER_ADMIN_USER_ID BOT_ATMOSPHERE
   backup_deployment_config "$BOT_CONFIG_TARGET_PATH"
   validate_staged_telegram_config "$BOT_CONFIG_STAGING_PATH" ||
-    die "候选 config/bot.json 严格校验未通过，原文件未改动。"
+    die "候选 config/static/bot.json 严格校验未通过，原文件未改动。"
   commit_staged_config \
     "$BOT_CONFIG_STAGING_PATH" "$BOT_CONFIG_TARGET_PATH" "$BOT_CONFIG_MODE_POLICY"
   BOT_CONFIG_MODE="$(stat -c '%a' -- "$BOT_CONFIG_TARGET_PATH")" ||
-    die "无法读取 config/bot.json 权限。"
-  info "已写入 config/bot.json（权限 ${BOT_CONFIG_MODE}）。"
+    die "无法读取 config/static/bot.json 权限。"
+  info "已写入 config/static/bot.json（权限 ${BOT_CONFIG_MODE}）。"
 fi
 
-if [ -e config/agent.json ]; then
-  info "保留既有 config/agent.json，未改动。"
+if [ -e config/dynamic/agent.json ]; then
+  info "保留既有 config/dynamic/agent.json，未改动。"
 elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语音）？不配也能启动。" n; then
   CONFIGURED_CAPABILITIES=()
   AGENT_CONFIG_NAMES=()
@@ -124,11 +124,11 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
   printf '\n'
   if [ "${#CONFIGURED_CAPABILITIES[@]}" -eq 0 ]; then
     clear_agent_config_inputs
-    info "一项都没配，未建立 config/agent.json；AI 相关功能保持不可用。"
+    info "一项都没配，未建立 config/dynamic/agent.json；AI 相关功能保持不可用。"
   else
     AGENT_CONFIG_STAGING_PATH=""
     AGENT_CONFIG_TARGET_PATH=""
-    resolve_config_target_path config/agent.json AGENT_CONFIG_TARGET_PATH
+    resolve_config_target_path config/dynamic/agent.json AGENT_CONFIG_TARGET_PATH
     create_config_staging_path "$AGENT_CONFIG_TARGET_PATH" AGENT_CONFIG_STAGING_PATH
     if ! {
       for capability_index in "${!AGENT_CONFIG_NAMES[@]}"; do
@@ -168,9 +168,9 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
     fi
     clear_agent_config_inputs
     validate_staged_agent_config "$AGENT_CONFIG_STAGING_PATH" ||
-      die "候选 config/agent.json 严格校验未通过，未建立部署文件。"
+      die "候选 config/dynamic/agent.json 严格校验未通过，未建立部署文件。"
     commit_staged_config "$AGENT_CONFIG_STAGING_PATH" "$AGENT_CONFIG_TARGET_PATH" new
-    info "已写入 config/agent.json（权限 600）：${CONFIGURED_CAPABILITIES[*]}"
+    info "已写入 config/dynamic/agent.json（权限 600）：${CONFIGURED_CAPABILITIES[*]}"
     for required_capability in "${AGENT_REQUIRED_CAPABILITIES[@]}"; do
       case " ${CONFIGURED_CAPABILITIES[*]} " in
         *" ${required_capability} "*) ;;
@@ -180,6 +180,6 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
   fi
 fi
 
-if [ ! -e config/g-auth.json ]; then
-  info "未发现 config/g-auth.json：/translate 翻译不可用。需要的话把 GCP 服务账号密钥（结构见 config_example/g-auth.json）放到 config/ 再重启。"
+if [ ! -e config/static/g-auth.json ]; then
+  info "未发现 config/static/g-auth.json：/translate 翻译不可用。需要的话把 GCP 服务账号密钥（结构见 config_example/static/g-auth.json）放到 config/static/ 再重启。"
 fi

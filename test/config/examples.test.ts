@@ -1,5 +1,5 @@
 /**
- * `config_example/*.json` 必须能被自己那份严格解析器接受。
+ * `config_example/{static,dynamic}/*.json` 必须能被自己那份严格解析器接受。
  *
  * install.sh 的「准备配置目录」一步把这些示例逐份复制成部署方的初始
  * `config/<name>.json`（agent.json、g-auth.json 与 cron.json 除外：agent.json 含故意不可用的
@@ -16,44 +16,55 @@
 
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { join, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { loadAdSampleConfig } from "../../packages/config/adSamples";
 import { parseCronConfig } from "../../packages/config/cron";
 import { parseGoogleServiceAccountKey } from "../../packages/config/googleAuth";
 import { loadMoodConfig } from "../../packages/config/mood";
 import { loadStickerConfig } from "../../packages/config/stickers";
 import { parseBotConfig } from "../../packages/config/botInput";
-import { PROJECT_ROOT } from "../../packages/consts/paths";
+import {
+  AD_SAMPLES_CONFIG_PATH,
+  AGENT_CONFIG_PATH,
+  BOT_CONFIG_PATH,
+  CONFIG_ROOT,
+  CRON_CONFIG_PATH,
+  GOOGLE_AUTH_FILE_PATH,
+  MOOD_CONFIG_PATH,
+  PROJECT_ROOT,
+  STICKERS_CONFIG_PATH,
+} from "../../packages/consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { readJsonInput } from "../../packages/libs/inputValidation";
 import type { CronAction, CronConfig, CronTask } from "../../packages/types/cron";
 
 const EXAMPLE_ROOT: string = join(import.meta.dir, "..", "..", "config_example");
 
-function examplePath(name: string): string {
-  return join(EXAMPLE_ROOT, name);
+/** 部署路径常量在 config_example/ 里的对应示例；子目录布局与部署配置根一致。 */
+function examplePath(deploymentPath: string): string {
+  return join(EXAMPLE_ROOT, relative(CONFIG_ROOT, deploymentPath));
 }
 
 /** install.sh 原样复制的三份示例，各自走自己的 load*（含读盘与严格解析）。 */
 const COPIED_EXAMPLES: readonly (readonly [string, (path: string) => Promise<unknown>])[] = [
-  ["stickers.json", loadStickerConfig],
-  ["mood.json", loadMoodConfig],
-  ["ad_samples.json", loadAdSampleConfig],
+  [STICKERS_CONFIG_PATH, loadStickerConfig],
+  [MOOD_CONFIG_PATH, loadMoodConfig],
+  [AD_SAMPLES_CONFIG_PATH, loadAdSampleConfig],
 ];
 
 describe("config_example 与解析器保持同步", () => {
-  for (const [name, load] of COPIED_EXAMPLES) {
-    test(`${name} 能被自己的解析器接受`, async () => {
+  for (const [deploymentPath, load] of COPIED_EXAMPLES) {
+    test(`${relative(CONFIG_ROOT, deploymentPath)} 能被自己的解析器接受`, async () => {
       // 不断言具体内容：示例值本就允许改，要守住的是「改完仍然解析得动」。
-      expect(await load(examplePath(name))).toBeDefined();
+      expect(await load(examplePath(deploymentPath))).toBeDefined();
     });
   }
 
   test("bot.json 恰好因为占位 token 被拒绝，且占位符与常量一致", async () => {
-    const raw: unknown = await readJsonInput(examplePath("bot.json"));
+    const raw: unknown = await readJsonInput(examplePath(BOT_CONFIG_PATH));
     expect(raw).toMatchObject({ bot_token: TELEGRAM_BOT_TOKEN_PLACEHOLDER });
 
-    const path: string = examplePath("bot.json");
+    const path: string = examplePath(BOT_CONFIG_PATH);
     const parse = (): unknown => parseBotConfig(raw, path);
     expect(parse).toThrow(
       `${path}: $.bot_token must be a configured non-placeholder string`
@@ -69,7 +80,7 @@ describe("config_example 与解析器保持同步", () => {
   });
 
   test("g-auth.json 示例恰好因为占位私钥被拒绝，换成真实 RSA 私钥后其余字段形态被接受", async () => {
-    const path: string = examplePath("g-auth.json");
+    const path: string = examplePath(GOOGLE_AUTH_FILE_PATH);
     const raw: Readonly<Record<string, unknown>> =
       await readJsonInput(path) as Readonly<Record<string, unknown>>;
     expect((): unknown => parseGoogleServiceAccountKey(raw, path)).toThrow(
@@ -85,7 +96,7 @@ describe("config_example 与解析器保持同步", () => {
 
   test("cron.json 示例能被严格解析，并覆盖字段、动作与来源的全部写法", async () => {
     // 只做纯解析：本地来源是否存在要到加载时才核对，示例里的路径都是假的。
-    const path: string = examplePath("cron.json");
+    const path: string = examplePath(CRON_CONFIG_PATH);
     const raw: unknown = await readJsonInput(path);
     const config: CronConfig = parseCronConfig(raw, path);
     // 至少一个任务显式写出 time_zone；取值可以与缺省相同。
@@ -143,7 +154,7 @@ describe("config_example 与解析器保持同步", () => {
     // 补它没覆盖的另一半——示例自身的键集合与字段形态仍然合法。
     const { parseAgentDeploymentConfig } = await import("../../packages/config/agent");
     const raw: Readonly<{ agent: Readonly<Record<string, unknown>> }> =
-      await readJsonInput(examplePath("agent.json")) as Readonly<{
+      await readJsonInput(examplePath(AGENT_CONFIG_PATH)) as Readonly<{
         agent: Readonly<Record<string, unknown>>;
       }>;
     const withRealKeys: Record<string, unknown> = {};

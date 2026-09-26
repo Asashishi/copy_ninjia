@@ -9,6 +9,7 @@ import { assertPersistableLockdown } from "../../database/codec/chatState";
 import { recordBlocklistParticipantReadability } from "../../infra/blocklist/participantInvalid";
 import { settleBlockedRemoval } from "../../infra/blocklist/sweep";
 import { logger } from "../../infra/logger";
+import { relayAiCacheUsage } from "../../infra/aiCacheUsageRelay";
 import {
   clearChatStateField,
   getChatStateCache,
@@ -199,6 +200,10 @@ export function handleAntiRaidWorkerEvent(
       break;
     case "drainComplete":
       antiRaidBarrier.settle(event.drainId, "flushed");
+      break;
+    case "aiCacheUsage":
+      // 旁路统计：诊断通道未就绪时直接丢弃，不影响广告判定。
+      relayAiCacheUsage(event.usage);
       break;
   }
 }

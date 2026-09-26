@@ -9,10 +9,8 @@ import { beforeEach, mock, spyOn } from "bun:test";
 import { loggerStub } from "./loggerMock";
 import { checkingInviterOf } from "../../packages/states/verification";
 import type { InlineKeyboardMarkup } from "grammy/types";
-import type {
-  AntiRaidWorkerEvent,
-  VerificationAttemptPermitResult,
-} from "../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../packages/types/antiRaid/events";
+import type { VerificationAttemptPermitResult } from "../../packages/types/antiRaid/protocol";
 import type {
   ExpelSnapshot,
   VerificationEffect,

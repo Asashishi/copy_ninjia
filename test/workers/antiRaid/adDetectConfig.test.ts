@@ -18,6 +18,7 @@ const reloadedAdDetect: AdDetectAgentConfig = {
   provider: "openai",
   apiKey: "reloaded-ad-key",
   baseUrl: "https://ad.example/v1",
+  headers: undefined,
   model: "reloaded-ad-model",
 };
 

@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { IDENTITY_DATABASE_SCHEMA_VERSION } from "../../packages/consts/identityStorage";
 
 import { ACTIVE_COLD_MIGRATION_EDGES } from "../migrations/active";
 import type { ColdMigrationEdge } from "../migrations/active";
@@ -24,10 +23,6 @@ export async function collectColdMigrationProblems(
     (edge: ColdMigrationEdge): string => edge.command
   ).sort();
   const problems: string[] = [];
-  if (IDENTITY_DATABASE_SCHEMA_VERSION !== 11) {
-    problems.push("translation session cold migration must operate on the current SQLite schema v11");
-  }
-
   if (migrationCommands.join(",") !== declaredCommands.join(",")) {
     problems.push(
       "package.json must expose exactly the declared active cold migration commands " +

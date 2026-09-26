@@ -15,7 +15,7 @@ export const PROCESS_IDENTITY_PATTERN: RegExp =
 export const BOT_LOCK_LINE_PATTERN: RegExp =
   /^v2:([1-9]\d*):(0|[1-9]\d*):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):([0-9a-f]{64})$/;
 
-/** state.json 后台写入失败后的退避序列；用尽后固定使用最后一档。 */
+/** 全局状态文件后台写入失败后的退避序列；用尽后固定使用最后一档。 */
 export const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000, 30_000];
 
 /** 单份最新 state 快照的最大落盘尝试数；用尽后进入 fatal 停机路径。 */
@@ -54,12 +54,14 @@ export const STATE_MANAGED_CHAT_LIMIT: number = 25;
 export const RUNTIME_DATA_ROOT_MAX_MODE: number = 0o755;
 
 /**
- * 数据根下承载敏感运行时文件的顶层目录。显式数据根预检会提前建立并验证
- * 这些边界；更深层文件即使是 0644，也不能绕过顶层目录权限。
+ * 数据根下承载敏感运行时文件的目录，按创建顺序排列（父目录在前）。显式数据根预检会
+ * 提前建立并验证这些边界；更深层文件即使是 0644，也不能绕过这些目录的权限。
+ * `memory/global` 是主线程独占的全局状态目录，其余 memory/ 子目录归 Disk I/O Worker。
  */
 export const RUNTIME_SENSITIVE_DIRECTORY_NAMES: readonly string[] = [
   "logs",
   "memory",
+  "memory/global",
   "database",
 ];
 

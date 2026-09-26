@@ -17,7 +17,7 @@
 - **`LICENSES/`**
   - **内容**：项目 MIT 许可证 [`LICENSE`](../../LICENSES/LICENSE)，以及汉字变体数据使用的 [`Unicode-3.0.txt`](../../LICENSES/Unicode-3.0.txt)。
 - **`packages/app/`**
-  - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、`config/` 热重载监听与分发、
+  - **职责**：启动/退出生命周期、已存在部署输入的启动校验出口、`config/dynamic/` 热重载监听与分发、
     handler 注册、命令菜单与 update runner，以及生命周期副作用依赖装配。
   - **典型文件**：`lifecycle.ts`、`lifecycleDependencies.ts`、`configReload.ts`、
     `registerHandlers.ts`、`updateRunner.ts` / `updateFetcher.ts`。`ApplicationLifecycleDependencies` 从装配对象
@@ -64,8 +64,8 @@
     四段生命周期，外加 `adopt.ts` 把落盘快照重建成内存状态）、`lockdown.ts` 与 `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt`
     五段生命周期）、`replyAdmission.ts`、`adDetectAdmission.ts`、`temporaryAdBypass.ts`。
 - **`packages/config/`**
-  - **职责**：部署 `config/*.json` 的严格 schema、进程快照、热重载判定与按功能聚合的可用性判定；身份策略不在这里。
-  - **典型文件**：`bot.ts`、`botInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`、`reload.ts`。
+  - **职责**：部署 `config/{static,dynamic}/*.json` 的严格 schema、进程快照、热重载判定与按功能聚合的可用性判定；身份策略不在这里。
+  - **典型文件**：`bot.ts`、`botInput.ts`、`layout.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`、`reload.ts`。
 - **`packages/database/`**
   - **职责**：共享 SQLite（身份策略 + 群状态）的 schema、codec、行校验与 Drizzle 交互边界；运行时句柄只由 Disk I/O Worker 持有。
   - **典型目录**：`schema/`（含 `migrations/`）、`codec/identity.ts`、`codec/chatState.ts`、
@@ -86,7 +86,7 @@
     `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
-  - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（语音合成公共实现）；AI 闲聊的模型收发不在
+  - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（语音合成公共实现）、`ttsUsage.ts`（语音合成每日计数）；AI 闲聊的模型收发不在
     这里，而在与供应商同名的 `packages/aiChat/{gemini,openai}/` 实现包。
 - **`packages/workers/antiRaid/adDetect/`**
   - **职责**：广告检测流水线，包括排队批处理、消息串整形、provider 判定与命中处置。
@@ -95,7 +95,7 @@
     `config.ts`（接管主线程投递的配置快照）。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理，以及随机图片的目录准备与抽取。
-  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
+  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker 的模型客户端上报请求缓存用量的边界）、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
 - **`packages/infra/identityPolicy/`**
   - **职责**：白名单逐项权限、临时广告免检与黑白名单互斥协调的主线程读取边界。
   - **典型文件**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。
@@ -103,7 +103,7 @@
   - **职责**：黑名单主线程基础设施，按身份判定、同步名单、durable outbox、群清扫与销号识别拆分。
   - **典型文件**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepEligibility.ts`、`sweepReplay.ts`、`sweepRetryState.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
-  - **职责**：数据根预检、实例锁、业务状态门面、可注入的 `state.json` 持久化边界与启动清理。
+  - **职责**：数据根预检、实例锁、业务状态门面、可注入的 `memory/global/state.json` 持久化边界（含对数据根旧 `state.json` 的拒绝）与启动清理。
   - **典型文件**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。
     `stateStore.ts` 负责业务内存与快照，`statePersistence.ts` 负责严格解码、latest-only 写入、重试与 flush。
 - **`packages/cache/`**
@@ -121,13 +121,13 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **安装器**：`install.sh` 定位目标工作树并转交该版本入口；`scripts/install/` 的 repository、service、config、runtime、configure、start 六个 shell 模块由入口统一检查可读性和语法后按序加载。`installSources.ts` 为语法检查与隔离夹具提供相同模块清单。
-  - **冷迁移**：`migrateTranslateSessions.ts` 校验停机备份里的主备 state 与 schema v11 数据库并生成独立产物与校验清单；`migrations/translateSessions/state.ts` 拆出 state 的 `translate` 块，`migrations/translateSessions/database.ts` 在一个事务里把会话写进 `chat_states`，`migrations/files.ts` 是两条边共用的文件清单与路径包含判定，均不进入应用启动依赖图。`migrateRandomImageNames.ts` 把随机图库的旧文件名重建成按内容 SHA-256 命名的独立产物，同样只读源目录、以 `ready.json` 作为唯一完成标记。
+  - **冷迁移**：`migrateGlobalState.ts` 校验停机备份里 14.0.0 格式的 `state.json`（与逐字节相同的 `state.json.bak`），把 `copy` 写成独立产物 `memory/global/state.json`，把与内置缺省不同的素材项写成 `config/dynamic/assets.json`，并生成校验清单；`migrateRandomImageNames.ts` 把随机图库的旧文件名重建成按内容 SHA-256 命名的独立产物。两者都只读源目录、以 `ready.json` 作为唯一完成标记；`migrations/files.ts` 是两条边共用的文件清单与路径包含判定，均不进入应用启动依赖图。
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
   - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`，以及两套基准根共用的 `fixtures/copyTree.ts`（目录树复制）与 `fixtures/pathBoundary.ts`（写入边界的真实路径分量核对）。
 
 `scripts/migrations/active.ts` 是当前冷迁移入口清单，供构建、发行校验和约定门禁共用。发行包携带两条边的 CLI，通过 `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` 执行，部署步骤见 [07 运维与排障](07-operations.md)。
 
-`botInput.ts` 提供安装器和运行时共用的严格读取、解析入口，导入时不读部署文件或填充缓存；`bot.ts` 负责运行时快照。`libs/inflight.ts` 统一在途任务的有界等待，领域 owner 保留自己的接纳、取消和零预算策略；`infra/backgroundTasks.ts` 负责后台任务错误记录和结算后摘除。群开关命令共用 `commands/superAdminToggle.ts` 的授权、配置门禁、写入、持久化与回执顺序。
+`botInput.ts` 提供安装器和运行时共用的严格读取、解析入口，导入时不读部署文件或填充缓存；`bot.ts` 负责运行时快照，读取前先经 `layout.ts` 检查 `config/static/` 与 `config/dynamic/` 的目录布局。`libs/inflight.ts` 统一在途任务的有界等待，领域 owner 保留自己的接纳、取消和零预算策略；`infra/backgroundTasks.ts` 负责后台任务错误记录和结算后摘除。群开关命令共用 `commands/superAdminToggle.ts` 的授权、配置门禁、写入、持久化与回执顺序。
 
 `commands/wed.ts` 持有交互状态机，`wed/dispatch.ts` 负责接纳，`wed/chats.ts` 负责群交互缓存的创建、LRU 淘汰和会话清理，`wed/members.ts` 只观察成员变更，`wed/runtime.ts` 将共用有界执行器接入应用生命周期，`wed/rendering.ts` 保持纯渲染。交互状态与执行器句柄放在 `cache/main/wed.ts`；每群长期成员集合与 dirty 窗口放在 `cache/main/wedMembers.ts`，由 `wed/persistence.ts` 负责启动接管、批量投递和 Worker 重建重放。`workers/diskIO/wedMemberFiles.ts` 负责文件严格校验与原子替换，待写快照只放在 `cache/workers/diskIO/wed.ts`。头像读取和出站复用 `infra/telegram/`。
 
@@ -151,11 +151,11 @@
 
 - **`main/`**
   - **owner**：主线程。
-  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `state.json` 全局镜像、`chatState.ts` 的 `chat_states` 群状态热读副本（`Map`，至多 25 个群，含按群翻译会话）、Disk I/O 宿主，以及
+  - **内容**：命令与自动流水线状态、由 `stateStore.ts` 门面管理的 `memory/global/state.json` 全局镜像、`assets.ts` 的 `config/dynamic/assets.json` 素材快照、`chatState.ts` 的 `chat_states` 群状态热读副本（`Map`，至多 25 个群，含按群翻译会话）、Disk I/O 宿主，以及
     **主线程侧的 Worker 代理与镜像**（`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **owner**：AI 闲聊 Worker。
-  - **内容**：滚动记忆、回复准入、回复机器人图片时的识图回填登记、心情、贴纸目录与集合、主线程转交的在途语音合成，以及两家供应商的客户端单例。
+  - **内容**：滚动记忆、回复准入、回复机器人图片时的识图回填登记、心情、贴纸目录与集合、主线程转交的在途语音合成、语音合成每日计数，以及两家供应商的客户端单例。
 - **`workers/antiRaid/`**
   - **owner**：Anti-Raid Worker。
   - **内容**：验证/锁定状态机、刷屏窗口、广告检测队列、Google/OpenAI 客户端。
@@ -165,7 +165,7 @@
 - **`perThread/`**
   - **owner**：每条线程各一份。
   - **内容**：Telegram 能力实现 holder（主线程真实适配器、业务 Worker 双工代理）、
-    Worker 双工 waiter、部署配置单例、自发消息登记、update 取消上下文存储；同一份代码在每条线程独立实例化。
+    Worker 双工 waiter、部署配置单例、自发消息登记、update 取消上下文存储、AI 缓存用量上报出口；同一份代码在每条线程独立实例化。
 
 注意 `main/antiRaid/` 与 `workers/antiRaid/` 是**两拨完全不共享的状态**：权威状态机在 Worker 内，主线程那份只是供崩溃重放的纯数据镜像。放错目录不是风格问题——写进去的东西对面永远读不到。`bun run check:conventions` 按真实模块图核对这条归属（详见 [04 运行时权威约束](04-invariants.md#线程与状态归属)），违例时打印完整引入链。
 
@@ -177,7 +177,6 @@
 
 - 兼容入口只服务旧 import 的渐进迁移；**新代码一律直接从领域子文件导入**。
 - 兼容入口不得重新持有状态、解析配置或引入 import 副作用。
-- `packages/types/index.ts` 同理，仅为测试/渐进迁移保留。
 - 包内 `index.ts` 只有在调用方确实需要单一 package surface 时才作为稳定公开入口；当前 `packages/aiChat/index.ts`、`packages/antiRaid/index.ts` 与 `packages/infra/telegram/index.ts` 都只做显式薄导出、不持有状态；`infra/telegram/index.ts` 只重导出现有业务模块经它使用的客户端、常规动作与命令回执符号，新代码直接从 `client`、`actions/*`、`commandMessages` 等叶子模块导入。aiChat 与 antiRaid 的生产代码内部仍直接 import 对应 owner 叶子模块；这三个入口都不使用无边界的 `export *`。
 
 ## 测试的镜像结构

@@ -1,16 +1,13 @@
 /** 安装器与运行时共用的 Bot 配置解码；导入时不读盘、不填充线程缓存。 */
 
-import { lstat } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { DEFAULT_BOT_ATMOSPHERE, LEGACY_BOT_CONFIG_NAME } from "../consts/bot";
-import { isErrno } from "../libs/errno";
+import { DEFAULT_BOT_ATMOSPHERE } from "../consts/bot";
 import { BOT_CONFIG_PATH } from "../consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../consts/telegram";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../libs/record";
 import type { BotConfig } from "../types/config";
 
-/** 解码 config/bot.json；未知字段、空 token 与非法 ID 一律拒绝。 */
+/** 解码 config/static/bot.json；未知字段、空 token 与非法 ID 一律拒绝。 */
 export function parseBotConfig(
   value: unknown,
   sourcePath: string = BOT_CONFIG_PATH
@@ -42,22 +39,9 @@ export function parseBotConfig(
   };
 }
 
-/** 按指定路径读取并严格解析，不改写运行时快照。 */
+/** 按指定路径读取并严格解析，不改写运行时快照；目录布局由 config/layout.ts 另行检查。 */
 export async function loadBotConfig(
   path: string = BOT_CONFIG_PATH
 ): Promise<BotConfig> {
-  await assertCurrentBotConfigDirectory(dirname(path));
   return parseBotConfig(await readJsonInput(path), path);
-}
-
-/** 配置目录存在旧入口即拒绝，包含悬空链接；不读取或回写旧文件。 */
-export async function assertCurrentBotConfigDirectory(directory: string): Promise<void> {
-  const path: string = join(directory, LEGACY_BOT_CONFIG_NAME);
-  try {
-    await lstat(path);
-  } catch (error: unknown) {
-    if (isErrno(error, "ENOENT")) return;
-    return invalidInput(path, "$", "absent after explicit cold migration to bot.json");
-  }
-  return invalidInput(path, "$", "absent after explicit cold migration to bot.json");
 }

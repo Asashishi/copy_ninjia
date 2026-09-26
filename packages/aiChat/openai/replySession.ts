@@ -190,7 +190,7 @@ export function createOpenAiReplySession(
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingModelItems = undefined;
-      // 请求体在 requestOpenAiResult 的 try 内构造：模型名来自 config/agent.json，
+      // 请求体在 requestOpenAiResult 的 try 内构造：模型名来自 config/dynamic/agent.json，
       // 那份文件写坏时解析会抛，构造留在这里就等于让异常绕过整条 ok:false 通路
       // （见 client.ts 的 requestOpenAiResult 与 config/readiness.ts 的闸门）。
       const tools: OpenAI.Responses.Tool[] = buildTools(request);

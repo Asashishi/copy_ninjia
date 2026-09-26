@@ -4,7 +4,7 @@
  *
  * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null 让调用
  * 方原样跳过这一批——绝不猜一个 true 出来，那等于凭一次网络抖动把人拉黑。
- * 判定口径由部署配置 config/ad_samples.json 提供（见 config/adSamples.ts），
+ * 判定口径由部署配置 config/dynamic/ad_samples.json 提供（见 config/adSamples.ts），
  * 提示词模板在 consts/antiRaid/adDetect.ts。
  *
  * 模型看到的群聊原文一律是数据：提示词里已声明其中的任何指令都不得执行，

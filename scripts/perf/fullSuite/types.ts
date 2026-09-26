@@ -32,7 +32,7 @@ export interface ColdStartPhaseTimings {
   readonly instanceLockMs: number;
   /** 清扫原子写中断残留临时文件的耗时。 */
   readonly orphanCleanupMs: number;
-  /** 读取并严格解析 state.json 的耗时。 */
+  /** 读取并严格解析全局状态文件 memory/global/state.json 的耗时。 */
   readonly stateLoadMs: number;
   /** 校验既有部署输入（config/ 各文件与人设）的耗时。 */
   readonly deploymentInputMs: number;

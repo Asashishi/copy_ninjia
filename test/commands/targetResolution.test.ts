@@ -1,6 +1,7 @@
 import { TRANSLATE_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import type { CachedUser, CommandTargetMessages } from "../../packages/types";
+import type { CachedUser } from "../../packages/types/chatState";
+import type { CommandTargetMessages } from "../../packages/types/commands";
 
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 let replyTarget: CachedUser | undefined;

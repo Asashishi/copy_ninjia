@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5142_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.23%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5228_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5142 件のテストが全て成功 / テストファイル 450 件 / expect() 呼び出し 194,128 回 / 関数カバレッジ 97.16% / 行カバレッジ 98.23%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5228 件のテストが全て成功 / テストファイル 459 件 / expect() 呼び出し 254,242 回 / 関数カバレッジ 98.06% / 行カバレッジ 98.38%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -210,10 +210,10 @@
 | 管理者・定時ボイス | `/send` と cron は TTS を共用し、上限は UTF-16 コード単位で 256。cron は各ラウンドで 1 回合成し、Telegram の `file_id` を再利用 |
 | 画像の記憶 | 生成画像は内容を記録。`/wed`・`/h_image`・定時画像はまずプレースホルダーを記録し、返信された時に画像を認識 |
 
-音声には `agent.tts` の明示設定が必要です（現在は Google が提供）。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
+音声には `agent.tts` の明示設定が必要です（現在は Google が提供。`base_url` と `headers` でサードパーティ gateway 経由でも呼び出せます）。3 つの入口は 1 日の回数上限 `daily_limit`（既定 100）を共有し、そのうち `daily_reserve_quota`（既定 25）回は `/send` と cron 専用で、使い切ると request を発行しません。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
 
 > [!IMPORTANT]
-> [13.0.2 → 14.0.0 更新手順](07-operations.md#upgrade-14)
+> [14.0.0 → 15.0.0 更新手順](07-operations.md#upgrade-15)
 
 各機能の挙動・設定・境界は **[📚 開発者ドキュメント](content-table.md)** を参照してください。
 
@@ -225,7 +225,7 @@
 
 コマンドは入口で認可します。**群メンバー**は Copy、翻訳、アクション、静音モード、`/info`、`/wed`、`/h_image` などを使用できます。**identity 権限キー**（`isCanXxx`）は `/bot_status`、`/prompt`、`/mute`、`/gag`、`/block`、`/h_image add` と各機能スイッチを制御します。**`SUPER_ADMIN_USER_ID` 専用**は `/init`、権限変更、allowlist からの削除、`/batch_kick`。`/send` はスーパー管理者の個人チャットだけで使用できます。
 
-画像庫と `config/cron.json` の項目・規則は [配置設定](../../config_example/README/ja.md)、ソース・バイナリのコールド移行は [運用手順](07-operations.md) を参照してください。
+画像庫と `config/dynamic/cron.json` の項目・規則は [配置設定](../../config_example/README/ja.md)、ソース・バイナリのコールド移行は [運用手順](07-operations.md) を参照してください。
 
 完全なコマンド表、権限の読み方、コマンドごとの挙動は **[📖 08 コマンドと挙動リファレンス](08-commands.md)** にあります。
 
@@ -251,9 +251,9 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
-mkdir -p config
-for example in config_example/*.json; do   # 不足分だけコピー。g-auth.json と cron.json は書き方の例なのでコピーしない
-  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" config/ ;; esac
+mkdir -p config/static config/dynamic
+for example in config_example/static/*.json config_example/dynamic/*.json; do   # 不足分だけコピー。g-auth.json と cron.json は書き方の例なのでコピーしない
+  case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" "config/${example#config_example/}" ;; esac
 done                                       # bot.json の bot_token と super_admin_user_id を記入
 ```
 

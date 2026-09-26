@@ -1,6 +1,7 @@
 import { startChatActionHeartbeat } from "../../aiChat/ai/chatActionHeartbeat";
 import { createStickerSendLock } from "../../aiChat/ai/stickers/sendLock";
 import { createReplyToolset } from "../../aiChat/ai/tools/replyToolset/orchestrator";
+import { buildVoiceQuotaLine } from "../../aiChat/ai/tools/replyToolset/voiceMessage";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
 import { botInfoState, superAdminUserIdState } from "../../cache/workers/aiChat/identity";
 import {
@@ -168,6 +169,7 @@ export function startReplyRound(
         mediaComment: queuedTrigger ? undefined : resolvedMedia,
         queuedTrigger: resolvedQueuedTrigger,
         roundHasTypo,
+        voiceQuota: buildVoiceQuotaLine(),
       });
       if (!promptSections) return;
 

@@ -39,10 +39,8 @@ import {
   flushStateToDisk,
   getChatStateCache,
   getGlobalCopyState,
-  getRandomHImageDirectory,
   hydrateChatStateCache,
   loadState,
-  seedMissingAssetState,
   setStatePersistenceFatalHandler,
 } from "../infra/storage/stateStore";
 import {
@@ -55,6 +53,7 @@ import { monotonicNow } from "../libs/monotonicDeadline";
 import { updateCachedIdentity } from "../users/senderIdentity";
 import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
 import { validateExistingDeploymentInputs } from "../config/readiness";
+import { getAssetConfig } from "../config/assets";
 import { quiesceConfigReload, startConfigReload } from "./configReload";
 import { registerCommandMenu } from "./commandMenu";
 import { registerHandlers } from "./registerHandlers";
@@ -115,7 +114,7 @@ export const lifecycleDependencies = {
   logger,
   monotonicNow,
   validateExistingDeploymentInputs,
-  prepareRandomImageDirectory: (): Promise<void> => ensureRandomImageDirectory(getRandomHImageDirectory()),
+  prepareRandomImageDirectory: (): Promise<void> => ensureRandomImageDirectory(getAssetConfig().randomHImageDirectory),
   refreshAllChatTitles,
   registerCommandMenu,
   registerHandlers,
@@ -123,7 +122,6 @@ export const lifecycleDependencies = {
   releaseSingleInstanceLock,
   restoreLuckState,
   runAcknowledgedUpdateBatches,
-  seedMissingAssetState,
   quiesceAvatarUpdates,
   quiesceChatTitleRefresh,
   quiesceGagRuntime,

@@ -27,6 +27,8 @@ import type {
 } from "../outboundGuard";
 import type { geminiClientCache } from
   "../../../packages/cache/workers/aiChat/gemini";
+import type { ttsDailyUsage } from
+  "../../../packages/cache/workers/aiChat/ttsUsage";
 import type { botInfoState } from
   "../../../packages/cache/workers/aiChat/identity";
 import type { replyGenerationTasks } from
@@ -74,6 +76,7 @@ export interface CommandChainDependencies {
   readonly cannedTelegramCalls: typeof cannedTelegramCalls;
   readonly cannedTelegramCallTimes: typeof cannedTelegramCallTimes;
   readonly geminiClientCache: typeof geminiClientCache;
+  readonly ttsDailyUsage: typeof ttsDailyUsage;
   readonly botInfoState: typeof botInfoState;
   readonly replyGenerationTasks: typeof replyGenerationTasks;
   readonly recordChatMessage: typeof recordChatMessage;
@@ -290,7 +293,7 @@ function aiReplyCommandChain(
 }
 
 /**
- * cron `send_voice` 的完整本地流程：语音合成公共实现（tts 门面的配额闸门 → Gemini
+ * cron `send_voice` 的完整本地流程：语音合成公共实现（tts 门面的配额闸门与每日计数 → Gemini
  * 语音适配层 → Base64 解码 → WAV 解析 → Opus 编码）交回语音后登记进本轮语音表，再经
  * cron 发送边界发出语音气泡。生产中合成位于 AI Worker、结果随回执转移给主线程；这里在
  * 同一进程内串起两侧，不含线程间传递。模型与 Telegram 都是罐头应答。
@@ -328,9 +331,11 @@ function cronSendVoiceChain(
     run: async (sequence: number): Promise<void> => {
       const lookup: SpeechSynthesizerLookup | null = synthesizer.current;
       if (lookup?.ok !== true) throw new Error("Benchmark speech synthesizer was not prepared.");
+      // 每次从空计数起步：迭代次数超过每日上限时门面会拒绝发起请求。
+      dependencies.ttsDailyUsage.current = null;
       const result: VoiceSynthesisResult = await dependencies.synthesizeVoiceMessage(
         lookup.synthesize,
-        { text: action.content, tone: action.tone, signal: undefined },
+        { text: action.content, tone: action.tone, quota: "operator", signal: undefined },
         `benchmark ${sequence}`
       );
       if (!result.ok) throw new Error(`Cron voice ${sequence} produced no voice: ${result.reason}.`);

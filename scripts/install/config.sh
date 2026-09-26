@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 由目标工作树 install.sh 按顺序 source；共享其严格模式、日志函数与安装上下文。
 
-# config_example/agent.json 里的六项 AI 能力，顺序与示例一致。
+# config_example/dynamic/agent.json 里的六项 AI 能力，顺序与示例一致。
 readonly AGENT_CAPABILITIES=(ad_detect text summary media image tts)
 # AI 闲聊的必备能力；缺任意一项，/ai_chat enable 会被拒绝。
 readonly AGENT_REQUIRED_CAPABILITIES=(text summary media)

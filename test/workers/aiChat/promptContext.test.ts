@@ -10,8 +10,8 @@ import { REPLY_ACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompt
 import { REPLY_TARGET_EVICTED_TAG } from "../../../packages/consts/aiChat/prompts/transcript";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
-import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
-import type { ReplyPromptSections } from "../../../packages/types/aiChat/replies";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
+import type { QueuedReplyTrigger, ReplyPromptSections } from "../../../packages/types/aiChat/replies";
 import { buildReplyPromptSections } from "../../../packages/workers/aiChat/promptContext";
 import { indexBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessageIndex";
 
@@ -73,6 +73,27 @@ test("直接唤起在回复任务开头声明唤起者完整身份，不再另�
   expect(Object.keys(sections)).toEqual(["referenceMemory", "currentConversation", "replyTask"]);
   // 跨任务相同的行动总则只在 system prompt 出现，动态任务只保留触发语义。
   expect(sections.replyTask).not.toContain(REPLY_ACTION_INSTRUCTION);
+  // 未挂载 send_voice 时没有余量行。
+  expect(sections.replyTask).not.toContain("今日语音余量");
+
+  // 余量行是回复任务区块的最后一行，紧贴 [END] 标签，不新增 Part。
+  const withQuota: ReplyPromptSections = buildReplyPromptSections(
+    -1001,
+    { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    {
+      triggerMessageId: total,
+      directInvokerId: invokerId,
+      isRandomTrigger: false,
+      roundHasTypo: false,
+      voiceQuota: "\n今日语音余量：send_voice 今天还能用 12 次（每天 75 次，所有群共用）。",
+    }
+  )!;
+  expect(withQuota.replyTask).toEndWith(
+    "\n今日语音余量：send_voice 今天还能用 12 次（每天 75 次，所有群共用）。\n" +
+    `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`
+  );
+  expect(withQuota.referenceMemory).toBe(sections.referenceMemory);
+  expect(withQuota.currentConversation).toBe(sections.currentConversation);
 });
 
 test("触发消息已不在热区索引时，唤起者身份从逐字缓存里取最近一条回填", () => {
@@ -373,4 +394,40 @@ test("媒体特殊回复任务明确标出来源到当前发送者的转发路�
   )!;
 
   expect(sections.replyTask).toContain("这份内容是转发来的，转发路径：「[id:4] Dave → [id:3] Carol Chan」");
+});
+
+test.each([
+  ["sticker", "一枚贴纸"],
+  ["animation", "一个 GIF（动图）"],
+  ["voice", "一条语音"],
+  ["photo", "一张图片"],
+] as const)("媒体回复任务按类型 %s 给出名词「%s」", (kind, noun) => {
+  const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
+  messages.push(bufferedMessageFixture({
+    messageId: 83,
+    id: 3,
+    firstName: "Carol",
+    text: "[媒体] 回复",
+    at: "2026/07/22 12:02:00",
+  }));
+  chatBuffers.set(-1001, messages);
+
+  const sections: ReplyPromptSections = buildReplyPromptSections(
+    -1001,
+    { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    {
+      triggerMessageId: 83,
+      isRandomTrigger: false,
+      mediaComment: {
+        kind,
+        senderId: 3,
+        senderName: "Carol",
+        description: "内容描述",
+        directTriggerReason: "reply",
+      },
+      roundHasTypo: false,
+    }
+  )!;
+
+  expect(sections.replyTask).toContain(`刚才 Carol 用${noun}回复了你上一条消息。`);
 });

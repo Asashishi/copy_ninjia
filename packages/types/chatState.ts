@@ -1,6 +1,7 @@
 import type { ChatPermissions } from "grammy/types";
 import type { BotChatPermissions } from "./telegram";
 import type { TranslateState } from "./translate";
+import type { TtsDailyUsage } from "./aiChat/voiceMessage";
 
 /** 反刷群锁定跨 Worker 与持久化共用的离散阶段。 */
 export type LockdownPhase = "applying" | "active" | "reconciling" | "restoring";
@@ -164,51 +165,18 @@ export interface GlobalCopyState {
 }
 
 /**
- * 所有群共用的外部素材：随机图片目录与四条直链，五项各自独立。字段顺序即
- * state.json 中 `global.assets` 的写出顺序，`randomHImageDir` 在首位。
- *
- * 缺字段表示从没设过，回退到 consts/ui/assets.ts 的内置常量；启动时缺项会被
- * 自动补成当前生效值（见 infra/storage/stateStore.ts 的 seedMissingAssetState），
- * 文件里因此始终能看到这五个键，补齐后为一次性快照，不随代码里的常量再变化。
- *
- * 没有任何命令会改这一块，运行期也没有写入方，只由部署方手工编辑 state.json，
- * 改完需要重启（运行中的进程持有权威内存并会整份覆写文件）。
- */
-export interface GlobalAssetState {
-  /**
-   * 随机图片（`/h_image`）的来源目录；相对路径按运行时数据根解析，
-   * 缺省用 RANDOM_H_IMAGE_DIR。启动时不存在则自动创建。
-   */
-  randomHImageDir?: string;
-  /** 「未卜先知」内联结果的缩略图直链；缺省用 FORTUNE_THUMBNAIL_URL。 */
-  fortuneThumbnailUrl?: string;
-  /** 「概率论」内联结果的缩略图直链；缺省用 PROBABILITY_THUMBNAIL_URL。 */
-  probabilityThumbnailUrl?: string;
-  /** gag 发言内联结果的缩略图直链；缺省用 GAG_THUMBNAIL_URL。 */
-  gagThumbnailUrl?: string;
-  /** `/icon reset`、`/copy stop` 复原机器人默认头像时抓的图；缺省用 BOT_DEFAULT_AVATAR_URL。 */
-  botDefaultAvatarUrl?: string;
-}
-
-/**
- * 所有群共用的全局状态，按用途分块：`copy` 是复读状态与冷却时钟，`assets`
- * 是外部素材直链。AI provider 与模型只由 config/agent.json 管理，不进入状态。
+ * memory/global/state.json 的落盘形态：所有群共用的全局状态，按用途分块。`copy` 是
+ * 复读状态与冷却时钟，`ttsUsage` 是语音合成的每日计数（缺省表示从没用过）。按群的状态
+ * 由 `database/storage.sqlite` 的 `chat_states` 表持久化；外部素材由 config/dynamic/assets.json、
+ * AI provider 与模型由 config/dynamic/agent.json 管理，都不进入状态。
  */
 export interface GlobalState {
   copy: GlobalCopyState;
-  assets: GlobalAssetState;
+  ttsUsage?: TtsDailyUsage;
 }
 
 /**
- * state.json 只保存所有群共用的 global 块。按群的状态（功能开关、翻译会话等）由
- * `database/storage.sqlite` 的 `chat_states` 表持久化。
- */
-export interface StateFileSchema {
-  global: GlobalState;
-}
-
-/**
- * `state.global.copy` 解码后的形态，与运行期的 `GlobalCopyState` 分开维护
+ * 全局状态 `copy` 块解码后的形态，与运行期的 `GlobalCopyState` 分开维护
  * （后者是主线程可变持有者，初始只有 `copiedUser: null`，三个字段由
  * adoptCopyTarget 一次写齐）。判别联合强制「copiedUser 为 null ⟺ 没有
  * copyMode/copyChatId；copiedUser 非空 ⟺ copyChatId 是合法负数群 id」这条配对，
@@ -228,13 +196,9 @@ export type DecodedGlobalCopyState =
     lastCopyTime?: number;
   }>;
 
-/** 解码后的 global 块；只有 copy 的形态与运行期不同，assets 逐字相同。 */
+/** decodeGlobalStateFile 与 StateStore.load 的返回形态；copy 的形态与运行期不同，落盘侧用 GlobalState。 */
 export interface DecodedGlobalState {
   copy: DecodedGlobalCopyState;
-  assets: GlobalAssetState;
-}
-
-/** decodeStateFile 与 StateStore.load 的返回形态；落盘侧仍用 StateFileSchema。 */
-export interface DecodedStateFile {
-  global: DecodedGlobalState;
+  /** 缺省为 undefined，表示从没发起过语音合成请求。 */
+  ttsUsage: TtsDailyUsage | undefined;
 }

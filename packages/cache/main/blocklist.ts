@@ -108,15 +108,6 @@ export const blocklistSweepSchedulerState: BlocklistSweepSchedulerState = {
   runSweep: null,
 };
 
-/**
- * 群不再由本机器人看管：丢掉补扫进度，重新接管后重新欠一次。
- * 纯状态操作——在途批次的丢弃是业务判定，收在 infra/blocklist/ 的
- * forgetChatBlocklistWork 里，调用方一律用那个（cache 层不写业务逻辑）。
- */
-export function clearBlocklistSweepState(chatId: number): void {
-  blocklistSweepState.delete(chatId);
-}
-
 /** 未注册时的显式 no-op：没有 owner 就没人能执行处置，因此投出去的条数恒为 0。 */
 const noBlockedMemberRemover: BlockedMemberRemover = (): Promise<number> => Promise.resolve(0);
 

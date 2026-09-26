@@ -17,8 +17,8 @@
 - **`/proc` を読み取れる Linux**：インスタンスロックは `/proc/<pid>/stat` と boot ID に依存します。ほかのプラットフォームでは fail-closed で起動を拒否します。
 - **Bun 1.4.2**：ソース方式と開発時に必要で、`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2` で導入できます。バイナリ配布物はこのランタイムを同梱し、システム Bun は不要です。Node.js は使用しません。
 - **Telegram Bot Token**：[@BotFather](https://t.me/BotFather) で `/newbot` を実行して作成します。
-- **設定した AI 能力の API Key**：`config/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
-- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、`config/g-auth.json` として保存します（構造は [example](../../config_example/g-auth.json) を参照。example の placeholder 秘密鍵は拒否されます）。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
+- **設定した AI 能力の API Key**：`config/dynamic/agent.json` の各能力が key、provider、endpoint、model を個別に持ちます。[Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/)、または設定した互換サービスから取得します。能力間の fallback はありません。
+- **任意：Google Cloud サービスアカウント JSON**：`/translate` の翻訳を使う場合だけ必要で、`config/static/g-auth.json` として保存します（構造は [example](../../config_example/static/g-auth.json) を参照。example の placeholder 秘密鍵は拒否されます）。欠落時は `/translate` がこのファイルを名指しして拒否し、翻訳セッションは実行されませんが、起動は妨げられません。ファイルが存在して壊れている場合は、起動時の総ゲートが解析段階で起動を拒否します。
 
 `g-auth.json` は `packages/config/googleAuth.ts` が厳密に解析します。`client_email` は空でない文字列、`private_key` は解析可能な空でない RS256 用 RSA PEM 秘密鍵（EC、Ed25519、RSA-PSS は拒否）です。`type` は省略可能で、存在する場合は `service_account` に限ります。SDK が使用する `private_key_id`、`project_id`、`quota_project_id`、`universe_domain` は省略可能な空でない文字列です。その他の metadata はそのまま保持します。Worker 作成や Telegram 接続より前に検証し、エラーにはファイルパス・フィールドパス・期待する形だけを記載し、資格情報の値は出力しません。
 
@@ -85,11 +85,11 @@ pipe 実行では fd 0 が script 本文そのものなので、すべての問�
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
-mkdir -p config
-for example in config_example/*.json; do
+mkdir -p config/static config/dynamic
+for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in
     g-auth.json | cron.json) ;;
-    *) cp -n "$example" config/ ;;
+    *) cp -n "$example" "config/${example#config_example/}" ;;
   esac
 done
 ```
@@ -100,7 +100,7 @@ done
 
 全 field と能力の説明は
 [`config_example/README/ja.md`](../../config_example/README/ja.md) を参照してください。
-Bot identity とスーパー管理者は `config/bot.json` に置きます。
+Bot identity とスーパー管理者は `config/static/bot.json` に置きます。
 
 - **`bot_token`**（必須）
   - BotFather が発行した token。
@@ -118,53 +118,58 @@ Bot identity とスーパー管理者は `config/bot.json` に置きます。
   - allowlist identity は `/permission query` で自身の permission を照会し、
     `/permission help` で説明を確認できます。スーパー管理者の `query` は全開の
     view を返します。
-AI の provider、API key、endpoint、model は能力ごとに `config/agent.json` へ置きます。
+AI の provider、API key、endpoint、model は能力ごとに `config/dynamic/agent.json` へ置きます。
 runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` を設定し、
 未指定ならプロジェクトルートを使います。詳細は
 [07 運用とトラブルシューティング](07-operations.md#データルート) を参照してください。
 翻訳を使う場合は、サービスアカウントキーを
-`config/g-auth.json` に保存します。`config/` ディレクトリ全体が `.gitignore` の対象です。
+`config/static/g-auth.json` に保存します。`config/` ディレクトリ全体が `.gitignore` の対象です。
 
 任意の `atmosphere` は `"mesugaki"`（雌小鬼、既定）または `"normal"`（普通）のみ受け付けます。カスタム AI 人設のある群は引き続き普通の通知を優先し、その他の群の通知とメニューにはこの設定を使います。変更は再起動で反映され、installer で identity を再入力しても有効な風格は維持されます。`telegram.json` が残っている場合、`bot.json` との併存も含め、明示的な cold migration まで起動とインストールを拒否します。
 
 ## プロジェクト側の設定ファイル
 
-`config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。
+`config/` は deployment 固有の設定ディレクトリで、Git の追跡対象外です。初回だけ `config_example/` からコピーし、その後は `config/` だけを編集してください。example ディレクトリは実行時設定ではありません。`config/` には 2 つの subdirectory があります。`static/` には `bot.json`、`g-auth.json` を置き、変更後は再起動が必要です。`dynamic/` には残りの 6 つ（`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`）を置き、稼働中の編集は hot reload されます。file が `config/` 直下や誤った subdirectory にある場合、または `dynamic/` がない場合は起動を拒否します。
 
-稼働中に `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`（定時タスク。形式は [config_example/README](../../config_example/README/ja.md)）を編集すると hot reload されます。main thread が `config/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。上記 AI 設定ファイルの追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI 雑談や広告検出はすぐに停止し（グループ switch は元の値のまま）、前提が戻れば再起動なしで自動的に再開します。`bot.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が必要です。
+稼働中に `config/dynamic/` の `assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`（定時タスク。形式は [config_example/README](../../config_example/README/ja.md)）を編集すると hot reload されます。main thread が `config/dynamic/` を監視し、最後の変更から約 0.5 秒後に起動時と同じ厳密 schema で parse し直し、通れば snapshot を差し替えて関係する Worker に渡します。parse に失敗した変更は丸ごと拒否して error log を 1 行残し、process は直前に適用済みの設定を使い続けます。不正なまま残した file は次回起動時にやはり startup を拒否します。上記 AI 設定ファイルの追加・削除、`agent.json` での `ad_detect` 全体や `text`/`summary`/`media` の追加・削除は、対応する機能の可用性をそのまま変えます。前提が欠けた AI 雑談や広告検出はすぐに停止し（グループ switch は元の値のまま）、前提が戻れば再起動なしで自動的に再開します。`config/static/` の `bot.json`、`g-auth.json` と `prompt/persona.md` は hot reload されず、変更後は再起動が必要です。
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **内容**：AI チャットの基本ペルソナ。
   - **検証**：プレーンテキスト、schema なし。
-- **`config/bot.json`**（[example](../../config_example/bot.json)）
+- **`config/static/bot.json`**（[example](../../config_example/static/bot.json)）
   - **内容**：Bot API token、唯一のスーパー管理者 user ID、任意の通知口調 `atmosphere`。
   - **検証**：[`packages/config/botInput.ts`](../../packages/config/botInput.ts)。network
     接続前に厳密ロードし、欠落、未知 field、空 token、不正な ID は startup を拒否します。
-- **`config/stickers.json`**（[example](../../config_example/stickers.json)）
+- **`config/dynamic/stickers.json`**（[example](../../config_example/dynamic/stickers.json)）
   - **内容**：AI が使えるスタンプパック、最大 5 個。
   - **検証**：[`packages/config/stickers.ts`](../../packages/config/stickers.ts)。
-- **`config/mood.json`**（[example](../../config_example/mood.json)）
+- **`config/dynamic/mood.json`**（[example](../../config_example/dynamic/mood.json)）
   - **内容**：ムードの文面、重み、天気・時間帯の倍率。
   - **検証**：[`packages/config/mood.ts`](../../packages/config/mood.ts)。重みは正の整数で、
     合計がちょうど 100 でなければなりません。
-- **`config/ad_samples.json`**（[example](../../config_example/ad_samples.json)）
+- **`config/dynamic/ad_samples.json`**（[example](../../config_example/dynamic/ad_samples.json)）
   - **内容**：広告検出の判定基準となる例文。ファイル自体が文字列配列です。
   - **検証**：
     [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts)。空文字と重複は
     不可、最大 500 件です。
 
-- **`config/agent.json`**（[example](../../config_example/agent.json)）
+- **`config/dynamic/agent.json`**（[example](../../config_example/dynamic/agent.json)）
   - **内容**：`agent.ad_detect`、`text`、`summary`、`media`、`image`、`tts`。
     各能力が `provider`、`api_key`、任意の `base_url`、`model` を個別に持ちます。
-    provider は現在 `google` と `openai` のみです。AI 雑談には `text`、`summary`、
+    provider は現在 `google` と `openai` のみです。`provider` が `google` の能力は `headers`
+    （1〜8 個の追加 request header。サードパーティ gateway の認証などに使い、値はログ上で資格情報として
+    秘匿）も宣言でき、`openai` ではこの field を受け付けません。AI 雑談には `text`、`summary`、
     `media` が必須です。`image` と `tts` が無い場合は対応 tool だけを外し
     （`tts` が無いと `/send` の TTS request も error になり、`cron.json` が `send_voice` を使うなら
     起動を拒否します）、`ad_detect` が無い場合は広告検出だけを止めます。OpenAI 画像能力では
     `image_protocol`（`openai`、`openai-standard`、`xai`）も必須です。`tts` には空でない `voice`
-    （prebuilt voice 名、または AI Studio Voice design の `voice_` voice ID）も必須です。`base_url` は
+    （prebuilt voice 名、または AI Studio Voice design の `voice_` voice ID）も必須で、任意で
+    `daily_limit`（1 日のボイス回数上限、既定 100）と `daily_reserve_quota`（そのうち `/send` と cron
+    のために残す回数、既定 25、`daily_limit` 未満）を指定できます。`base_url` は
     `https` のみを受け付け、平文 `http` は `localhost`・`127.0.0.1`・`::1` に限られます。
     URL に userinfo と `#` fragment は含められません。
-  - **検証**：[`packages/config/agent.ts`](../../packages/config/agent.ts)。未知 key、空の
+  - **検証**：[`packages/config/agent.ts`](../../packages/config/agent.ts)（能力ごとの field 解析は
+    [`packages/config/agentCapability.ts`](../../packages/config/agentCapability.ts)）。未知 key、空の
     key/model、不正な provider・URL・protocol は拒否します。**この file を読むのは main
     thread だけです**。起動時に一度 parse し、稼働中の編集は hot reload で厳密に parse し直して、
     各 Worker には init または reload message で渡します。Worker 側は受け取った snapshot を
@@ -174,6 +179,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     （後者は `$.agent.media` を指す診断を 1 行記録）はどちらも以後 download しません。
     一時的な障害は回数に応じた backoff だけで、能力を恒久的に閉じることはありません。
     hot reload で `media` 能力が差し替わると、2 種類の入力を改めて probe します。
+  - **朗読スタイル**：任意の `agent.tts.style` は trim 後に空でない文字列とし、省略時は `GEMINI_SPEECH_STYLE` を使います。hot reload は新しい request に反映され、項目削除で既定値に戻ります。[音声設定](../../config_example/README/ja.md)を参照してください。
 
 恒久 allowlist、blocklist、一時 allowlist activity、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、
@@ -235,33 +241,31 @@ sidecar が同じ協働 group を継承します。
 `state.json.global.model` の runtime 選択はもう読みません。model 変更は `agent.json` の該当能力を
 編集し、保存すると hot reload で反映されます。
 
-旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/bot.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
+旧 `.env` の `PRIVILEGED_USERS_ID` にある各 ID は、環境変数を削除する前に legacy allowlist input へ移し、**9.1.5 上で** identity storage migration を実行します（この script は 9.2.0 で削除済み。[運用文書](07-operations.md#identity-storage-migration) を参照）。migration 後の SQLite を手編集してはいけません。membership だけ必要なら値は空 object `{}` で構わず、その他は必要な permission だけ有効にします。スーパー管理者は allowlist table へ移行せず、permission は `config/static/bot.json` の identity 自体から得ます。migration 後は `/permission help` で key を確認し、`/permission query` で自身の完全な view を照会できます。`/white` と `/permission` は database transaction で永続化するため、`config/` は read-only のままで構いません。
 
 **注意：資格情報を外しても起動は拒否されませんが、そのグループは静かに止まります。** 起動時の総ゲートが検証するのは**すでに存在する**デプロイ入力だけです（[`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs` を参照）。存在するファイルは厳密なパースを通らなければならず、本当に存在しないファイルは起動を妨げません。`chat_states` の `true` は従来どおり復元されますが、対応機能は唯一の判定入口で利用不可と判定されます——起動時に前提が欠けていれば AI 雑談の Worker はそもそも起動せずメモリは main thread のミラーに入るだけで（`memory/` のスナップショットは前提が戻るまでそのまま保持されます）、稼働中に hot reload で外した場合は Worker が待機します。`/translate` のセッションは動作せず、広告検出は bundle を送らなくなります。グループからは Bot が外した時点（またはその再起動）を境に雑談・広告検出・翻訳をやめたようにしか見えず、痕跡は `logs/` の 1 行だけです。したがって資格情報を外す前に `/ai_chat disable`、`/ad_detect disable`、`/translate disable` を実行するか、前提そのものを復旧してください。AI 雑談と広告検出は前提が戻れば hot reload で自動的に再開しますが、`g-auth.json` は hot reload されないため再起動が必要です。
 
 ### インラインサムネイルと Bot 既定アバターの差し替え
 
-インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口）と、`/icon reset`・`/copy stop` で復元する既定アバターの直リンクは、いずれも `state.json` の `global.assets` にあります。
+インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口）、`/icon reset`・`/copy stop` で復元する既定アバター、`/h_image` 専用画像庫のディレクトリは、いずれも任意の `config/dynamic/assets.json` に書きます。
 
 ```json
-"global": {
-  "assets": {
-    "randomHImageDir": "./h_image",
-    "fortuneThumbnailUrl": "https://…",
-    "probabilityThumbnailUrl": "https://…",
-    "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…"
-  }
+{
+  "random_h_image_dir": "./h_image",
+  "fortune_thumbnail_url": "https://…",
+  "probability_thumbnail_url": "https://…",
+  "gag_thumbnail_url": "https://…",
+  "bot_default_avatar_url": "https://…"
 }
 ```
 
-それに続く 4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。`state.json` は厳格な `JSON.parse` を通るため、ブロックに `//` コメントを含めることはできません。
+後ろの 4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。ファイルも各フィールドも任意で、省略するとコード内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）を使います。[`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) は 5 項目すべてを内蔵既定値で記載しており、installer が初期設定としてコピーするので、必要な項目だけ書き換えてください。ファイルは厳格な JSON として parse されるため、コメントは書けません。
 
-5 項目の欠落フィールドは起動成功時に内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）で補完されるため、ファイルを開けば現在有効なアドレスが並んでおり、そのまま書き換えられます。4 本の URL 項目の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `botDefaultAvatarUrl` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、既定画像へ黙って戻すのではなく、起動時に `state.json` 全体を拒否してフィールドパスを示します。
+4 本の URL 項目の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `bot_default_avatar_url` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、起動時ならフィールドパスを示して起動を拒否し、稼働中ならその変更を拒否して直前に適用済みの設定を使い続けます。既定画像へ黙って戻すことはありません。
 
-最初のキー `randomHImageDir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` です。絶対パスか `./`・`../` で始まる明示的相対パスを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。初回の `state.json` は起動成功後に補完されます。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
+`random_h_image_dir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` です。絶対パスか `./`・`../` で始まる明示的相対パスを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
 
-**変更は停止中に行います**：稼働中のプロセスは正式な状態をメモリに保持しファイル全体を上書きするため、`systemctl stop` → 編集 → `systemctl start` の順です（[07 運用とトラブルシューティング](07-operations.md) を参照）。
+`assets.json` は `config/dynamic/` にあり、**稼働中の変更は hot reload されます**。URL は次の利用から反映されます。`random_h_image_dir` を新しいディレクトリに変えると、起動時と同じ基準で新ディレクトリを作成・検査し、検査に失敗した場合は変更全体を拒否して元のディレクトリを使い続けます。ファイルを削除するとすべて内蔵既定値に戻ります。Bot がこのファイルを書き戻すことはありません。
 
 ## Telegram 側の設定（BotFather とグループ）
 
@@ -292,7 +296,7 @@ bun run start     # ロングポーリングを開始
 ## 動作確認
 
 - 誰かのメッセージに返信して `/copy` を送ると、Bot がそのユーザーの copy とアバター同期を開始します。
-- エラーが発生すると `logs/` にログファイルが作られます。エラーがなければ空のままの場合があります。`state.json` は初回の起動成功時に作成されます——起動が完全に成功した時点で `global.assets` の素材直リンクが現在有効な値で補完され、永続化されます（次節を参照）。
+- エラーが発生すると `logs/` にログファイルが作られます。エラーがなければ空のままの場合があります。`memory/global/state.json` は copy 状態か音声合成の回数が初めて変わったときに作成され、それまで存在しないのは正常です。
 - `Ctrl+C` で停止すると、入口の quiesce、各キューの drain、状態の flush を行ってから正常終了します。
 
 データルートの事前検査、`bot.lock`、state 検証による起動失敗は意図的な fail-fast です。[07 運用とトラブルシューティング](07-operations.md#起動失敗の調査) に従って対応してください。

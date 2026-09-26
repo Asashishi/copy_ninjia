@@ -33,7 +33,10 @@
       "provider": "google",
       "api_key": "replace-with-google-api-key",
       "model": "gemini-3.8-flash-lite-tts",
-      "voice": "Leda"
+      "voice": "en-us-nika",
+      "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
+      "daily_limit": 100,
+      "daily_reserve_quota": 25
     }
   }
 }

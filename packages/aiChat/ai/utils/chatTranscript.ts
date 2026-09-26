@@ -192,7 +192,7 @@ function buildRosterBlock(context: TranscriptContext): string {
   for (const [origin, code] of context.origins) originLines.push(rosterEntryTemplate(code, origin));
 
   return (
-    `${SPEAKER_ROSTER_BLOCK_NAME}下面转录的每一行只写编号，编号对应的人看这里；「${SELF_ROSTER_CODE}」就是你自己：\n` +
+    `${SPEAKER_ROSTER_BLOCK_NAME}上面转录的每一行只写编号，编号对应的人看这里；「${SELF_ROSTER_CODE}」就是你自己：\n` +
     speakerLines.join("\n") +
     (originLines.length > 0
       ? `\n\n${FORWARD_ROSTER_BLOCK_NAME}行内「${forwardTagTemplate("f…")}」对应的原始来源看这里：\n` + originLines.join("\n")
@@ -288,8 +288,9 @@ function formatCompactReplyTag(
  * 压缩摘要、上一块逐字镜像和正在发生的对话等权看待。
  *
  * 行本身走紧凑渲染：身份、转发来源各出一次名册，行内只写编号；日期只在变化时
- * 单起一行；消息号只给真的会被引用的行；被回复消息只留指针。整段转录每次回复
- * 都要重发且无法跨回复缓存，因此重复结构必须保持紧凑。
+ * 单起一行；消息号只给真的会被引用的行；被回复消息只留指针。名册排在全部逐字行
+ * 之后：窗口里出现新发言人只改动区块末尾，两次块轮换之间逐字行对上一轮是纯追加，
+ * 供应商的自动前缀缓存能一路命中到最新的变化点。
  * 各项对「认人 / 回复回溯」的影响在 88 道客观题上与全量格式打平，见
  * test/aiChat/ai/chatTranscript.test.ts 钉住的形状。
  *
@@ -320,7 +321,6 @@ export function buildTieredVerbatimTranscript(
     ? 0
     : Math.ceil(overflow / TIER_BOUNDARY_ALIGNMENT) * TIER_BOUNDARY_ALIGNMENT;
   const text: string =
-    buildRosterBlock(context) + "\n\n" +
     (hotStart > 0
       ? "【较早逐字记录（次要背景）】这些记录仍是原文，但判断当前话题和应答对象时应让位于下方最热记忆：\n" +
         renderRange(deduped, context, { start: 0, end: hotStart }) +
@@ -328,7 +328,8 @@ export function buildTieredVerbatimTranscript(
       : "") +
     `【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】这是滑动缓存里最新、最应优先关注的逐字消息。` +
     "判断当前话题、人物指代、@对象、情绪和该回应谁时，必须优先依据本段；最后一条是最新消息：\n" +
-    renderRange(deduped, context, { start: hotStart, end: deduped.length });
+    renderRange(deduped, context, { start: hotStart, end: deduped.length }) +
+    "\n\n" + buildRosterBlock(context);
   return {
     text,
     codeOf: context.speakers,

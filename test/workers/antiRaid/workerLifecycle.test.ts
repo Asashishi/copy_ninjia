@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { AntiRaidWorkerEvent, AntiRaidWorkerMessage } from "../../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
+import type { AntiRaidWorkerMessage } from "../../../packages/types/antiRaid/protocol";
 import type { AdDetectAgentConfig } from "../../../packages/types/config";
 import { workerDuplexRequestSignal } from "../../../packages/cache/perThread/workerDuplex";
 import { workerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
@@ -11,6 +12,8 @@ const workerEvents: AntiRaidWorkerEvent[] = [];
 let removeBlockedMembersTask: Promise<void> = Promise.resolve();
 let deleteDeferredVerificationResult: boolean = false;
 let deletionFlushRequestSignal: AbortSignal | null | undefined;
+/** drain 时统一延迟删除 flush 交回的删除任务；缺省为空。 */
+let pendingDeletionTasks: readonly Promise<void>[] = [];
 const workerSelf: {
   onmessage: ((event: MessageEvent<AntiRaidWorkerMessage>) => void) | null;
   postMessage: (event: AntiRaidWorkerEvent) => void;
@@ -86,7 +89,7 @@ mock.module("../../../packages/infra/telegram/actions/messageLifecycle", () => (
   flushPendingMessageDeletions(): readonly Promise<void>[] {
     calls.push("flushGenericMessageDeletions");
     deletionFlushRequestSignal = workerDuplexRequestSignal.current;
-    return [];
+    return pendingDeletionTasks;
   },
   resetPendingMessageDeletions(): void { calls.push("resetGenericMessageDeletions"); },
 }));
@@ -114,12 +117,14 @@ const { VERIFICATION_REVISION_RETENTION_MS } = await import(
   "../../../packages/consts/antiRaid/verification"
 );
 const { adDetectAgentConfigCache } = await import("../../../packages/cache/perThread/config");
+const { aiCacheUsageSink } = await import("../../../packages/cache/perThread/aiCacheUsage");
 
 /** 主线程投递过来的那一代 ad_detect 快照；断言 Worker 原样收进 holder。 */
 const injectedAdDetectConfig: AdDetectAgentConfig = {
   provider: "openai",
   apiKey: "injected-ad-key",
   baseUrl: undefined,
+  headers: undefined,
   model: "injected-ad-model",
 };
 
@@ -242,6 +247,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       },
       { type: "adopt", lockdowns: [] },
       { type: "lockdownPersisted", chatId: -1001, phase: "applying", intentId: 1 },
+      { type: "lockdownPersistFailed", chatId: -1001, phase: "applying", intentId: 2 },
       { type: "adoptVerifications", generation: 1, verifications: [] },
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
@@ -268,7 +274,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       // 广告队列、刷屏窗口、权限与群类型镜像一个都不动（各有各的开关）。
       "disableJoinGuard", "deactivateLockdown",
       "message", "callback",
-      "adopt", "lockdownPersisted", "adoptVerifications", "verificationPersisted", "adminsChanged",
+      "adopt", "lockdownPersisted", "lockdownPersistFailed", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
       "floodCandidate", "clearFloodWindows", "clearIdentityAdDetect",
       "botPermissionsChanged", "chatKindChanged",
@@ -288,6 +294,35 @@ describe("Anti-Raid Worker lifecycle", () => {
     worker.startAntiRaidWorker();
     expect(telegramApiState.current).toBe(workerTelegramApi);
     worker.stopAntiRaidWorker();
+  });
+
+  test("drain 等统一延迟删除 flush 交回的删除任务结算后才回 drainComplete", async () => {
+    let releaseDeletion!: () => void;
+    pendingDeletionTasks = [new Promise<void>((resolve: () => void): void => { releaseDeletion = resolve; })];
+    worker.startAntiRaidWorker();
+    try {
+      workerSelf.onmessage!({ data: { type: "drain", drainId: 21 } } as MessageEvent<AntiRaidWorkerMessage>);
+      await Bun.sleep(0);
+      expect(workerEvents).toEqual([]);
+
+      releaseDeletion();
+      await Bun.sleep(0);
+      expect(workerEvents).toEqual([{ type: "drainComplete", drainId: 21 }]);
+    } finally {
+      pendingDeletionTasks = [];
+      worker.stopAntiRaidWorker();
+    }
+  });
+
+  test("启动时装上缓存用量出口，把用量作为事件发回主线程；停止时卸下", () => {
+    worker.startAntiRaidWorker();
+    const usage = {
+      timestamp: 1, capability: "ad_detect", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 8, outputTokens: 1,
+    } as const;
+    aiCacheUsageSink.current!(usage);
+    expect(workerEvents).toContainEqual({ type: "aiCacheUsage", usage });
+    worker.stopAntiRaidWorker();
+    expect(aiCacheUsageSink.current).toBeNull();
   });
 
   test("mailbox barrier 不等网络任务，真实 drain 必须等在途任务结算", async () => {

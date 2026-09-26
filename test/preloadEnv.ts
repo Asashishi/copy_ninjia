@@ -1,6 +1,7 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../packages/consts/configLayout";
 import {
   CONFIG_ROOT_ENV,
   RUNTIME_DATA_ROOT_ENV,
@@ -31,19 +32,21 @@ export const TEST_CONFIG_ROOT: string = join(TEST_DATA_ROOT, "config");
 
 const CONFIG_EXAMPLE_ROOT: string = join(import.meta.dir, "..", "config_example");
 cpSync(CONFIG_EXAMPLE_ROOT, TEST_CONFIG_ROOT, { recursive: true });
+const TEST_STATIC_CONFIG_DIR: string = join(TEST_CONFIG_ROOT, STATIC_CONFIG_DIR_NAME);
+const TEST_DYNAMIC_CONFIG_DIR: string = join(TEST_CONFIG_ROOT, DYNAMIC_CONFIG_DIR_NAME);
 // 翻译凭据示例的占位私钥必然被严格解析拒绝；副本与安装器一样不带它，翻译可用性
 // 由 preload 与各用例自行设定。
-rmSync(join(TEST_CONFIG_ROOT, "g-auth.json"));
+rmSync(join(TEST_STATIC_CONFIG_DIR, "g-auth.json"));
 // 定时任务示例只示意用法：会话 id、地址与本地路径都是假的。副本换成空任务表，
 // 需要任务的用例自行写入。
-writeFileSync(join(TEST_CONFIG_ROOT, "cron.json"), "[]\n");
-const TEST_AGENT_CONFIG_PATH: string = join(TEST_CONFIG_ROOT, "agent.json");
+writeFileSync(join(TEST_DYNAMIC_CONFIG_DIR, "cron.json"), "[]\n");
+const TEST_AGENT_CONFIG_PATH: string = join(TEST_DYNAMIC_CONFIG_DIR, "agent.json");
 const TEST_AGENT_CONFIG: string = readFileSync(TEST_AGENT_CONFIG_PATH, "utf8").replace(
   /replace-with-([a-z]+)-api-key/g,
   "test-only-$1-api-key"
 );
 writeFileSync(TEST_AGENT_CONFIG_PATH, TEST_AGENT_CONFIG, { mode: 0o600 });
-const TEST_BOT_CONFIG_PATH: string = join(TEST_CONFIG_ROOT, "bot.json");
+const TEST_BOT_CONFIG_PATH: string = join(TEST_STATIC_CONFIG_DIR, "bot.json");
 const TEST_BOT_CONFIG: string = readFileSync(TEST_BOT_CONFIG_PATH, "utf8").replace(
   "replace-with-telegram-bot-token",
   "123456789:test-only-telegram-bot-token"

@@ -3,6 +3,7 @@ import { AI_CHAT_WORKER_URL } from "../consts/paths";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { logger } from "../infra/logger";
 import { postDiskIO } from "../infra/diskIO";
+import { relayAiCacheUsage } from "../infra/aiCacheUsageRelay";
 import { isAiChatConfigured } from "./availability";
 import { getAgentDeploymentConfig } from "../config/agent";
 import { getMoodConfig } from "../config/mood";
@@ -32,7 +33,7 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import { getChatStateCache, getChatState } from "../infra/storage/stateStore";
+import { adoptTtsUsage, getChatStateCache, getChatState, getTtsUsage } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -192,6 +193,13 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
       case "voiceSynthesized":
         settleVoiceSynthesis(event);
         break;
+      case "ttsUsage":
+        adoptTtsUsage(event.usage);
+        break;
+      case "aiCacheUsage":
+        // 旁路统计：诊断通道未就绪时直接丢弃，不影响回复。
+        relayAiCacheUsage(event.usage);
+        break;
     }
   },
   onRespawn: (postToNext: (message: AiChatWorkerMessage) => boolean): void => {
@@ -206,6 +214,9 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     // 调用之前的话 lastInitState.current 仍是 null，没有可重放的，新 Worker 等
     // 本来就该来的那次 initAiChat 调用即可。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
+    // 语音合成每日计数：新 Worker 从空值起步，凭主线程持有的最新回执恢复，
+    // 排在任何 trigger/synthesizeVoice 之前到达。
+    if (lastInitState.current && !postToNext({ type: "hydrateTtsUsage", usage: getTtsUsage() })) return;
     for (const [chatId, state] of getChatStateCache()) {
       if (state.aiPersona !== undefined && !postToNext({ type: "persona", chatId, persona: state.aiPersona })) return;
     }
@@ -252,7 +263,7 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
 }
 
 /**
- * 启动 AI Worker 并注入身份与主线程当前生效的配置快照，再补发各群人设。FIFO
+ * 启动 AI Worker 并注入身份与主线程当前生效的配置快照，再补发语音合成每日计数与各群人设。FIFO
  * 保证 init 先于一切 record/trigger 到达；Worker 靠它在转录里认出自己并自录自己
  * 发的消息。投递全部成功后才记 lastInitState 并发布可用标记：Worker 崩溃重启要
  * 重放这条消息，投递失败时两者都保持原值。调用方负责确认 AI 前提的 holder 已齐
@@ -272,6 +283,7 @@ export function startAiChatWorker(botInfo: AiBotInfo): void {
     persona: getPersona(),
   };
   postAiChatOrThrow(message);
+  postAiChatOrThrow({ type: "hydrateTtsUsage", usage: getTtsUsage() });
   for (const [chatId, state] of getChatStateCache()) {
     if (state.aiPersona !== undefined) postAiChatOrThrow({ type: "persona", chatId, persona: state.aiPersona });
   }
@@ -285,7 +297,7 @@ export function startAiChatWorker(botInfo: AiBotInfo): void {
  *
  * 前提不可用时整条线不启动：连线程都不建，lastInitState 保持 null，停机路径上的
  * flushAiMemory 因此直接返回 flushed、terminateAiChat 面对空 worker 也是 no-op
- * （见 infra/supervisedWorker.ts）。身份照样记下，config/ 热重载补齐前提时由
+ * （见 infra/supervisedWorker.ts）。身份照样记下，config/dynamic/ 热重载补齐前提时由
  * aiChat/hydration.ts 的 resumeAiChat 据此启动。
  */
 export function initAiChat(botInfo: AiBotInfo): void {

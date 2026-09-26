@@ -33,10 +33,7 @@ import {
   postDiskIO,
   terminateDiskIO,
 } from "../../../packages/infra/diskIO";
-import {
-  persistGlobalState,
-  seedMissingAssetState,
-} from "../../../packages/infra/storage/stateStore";
+import { persistGlobalState } from "../../../packages/infra/storage/stateStore";
 import type { SeededFixtureCounts } from "./fixture";
 
 /** 播种模式：冷启动要满库，链路测量要空库。 */
@@ -60,9 +57,8 @@ function parseSeedMode(value: string | undefined): SeedMode {
 
 async function seedWorkerOwnedFiles(mode: SeedMode): Promise<void> {
   await loadPersistedData();
-  // state.json 也要真的存在：冷启动那一段量的是「读到一份完整部署数据」的成本，
+  // 全局状态文件也要真的存在：冷启动那一段量的是「读到一份完整部署数据」的成本，
   // 缺文件时 loadState 只是一次 ENOENT 早退，与生产走的不是同一条路。
-  seedMissingAssetState();
   await persistGlobalState("performance benchmark fixture");
   if (mode === "chain") return;
   for (let index: number = 0; index < COLD_START_AI_MEMORY_CHATS; index += 1) {

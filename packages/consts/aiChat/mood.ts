@@ -22,7 +22,7 @@ export const MOOD_REQUEST_TIMEOUT_MS: number = 5_000;
  */
 export const MOOD_MULTIPLIER_MAX: number = 100;
 
-// 天气/时段桶的运行时全集，供部署配置（config/mood.json）的倍率表键做运行时
+// 天气/时段桶的运行时全集，供部署配置（config/dynamic/mood.json）的倍率表键做运行时
 // 校验。从 satisfies Record<Bucket, true> 的键派生而非手写数组：
 // types/aiChat/mood.ts 的联合类型增删桶而这里没跟上时直接编译报错，不靠人工同步。
 /** 天气桶联合类型的运行时全集，用于配置键校验。 */

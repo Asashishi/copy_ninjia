@@ -1,4 +1,4 @@
-/** 当前冷迁移直接前序（13.x / schema v11，state.json 仍带 translate）的非空数据库夹具。 */
+/** 当前冷迁移直接前序（14.x / schema v11）的非空数据库夹具；全局状态迁移不改数据库。 */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -13,12 +13,12 @@ import {
   IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT,
 } from "../../packages/consts/identityStorage";
 
-/** 迁移不得改动的表：保留原始 SQLite 值，连 JSONB 字节与空值一起比较。 */
+/** 迁移与安装都不得改动的表：保留原始 SQLite 值，连 JSONB 字节与空值一起比较。 */
 const PRESERVED_TABLES: readonly string[] = [
   "permission_list", "blocklist_entries", "pending_blocked_removals", "chat_qa", "temporary_ad_bypass_entries",
 ];
 
-/** 夹具里已有 chat_states 行的群；迁移只替换它的 status。 */
+/** 夹具里已有 chat_states 行的群。 */
 export const MIGRATION_FIXTURE_CHAT_ID: number = -1001;
 
 export interface MigrationDatabaseFixture {
@@ -74,7 +74,7 @@ export async function createMigrationDatabase({
     client.run("INSERT INTO temporary_ad_bypass_entries VALUES (99, 0, NULL, 0, 1, 1000, NULL)");
     const preserved: Map<string, readonly unknown[]> = new Map();
     for (const table of PRESERVED_TABLES) preserved.set(table, client.query(`SELECT * FROM ${table} ORDER BY 1`).all());
-    const chatContext: unknown = client.query("SELECT ai_context, ai_persona FROM chat_states WHERE chat_id = ?").get(MIGRATION_FIXTURE_CHAT_ID);
+    const chatContext: unknown = client.query("SELECT status, ai_context, ai_persona FROM chat_states WHERE chat_id = ?").get(MIGRATION_FIXTURE_CHAT_ID);
     const lineage: readonly unknown[] = client.query("SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at").all();
     for (const suffix of ["", "-wal", "-shm"]) {
       await Bun.write(join(source, `database/storage.sqlite${suffix}`), Bun.file(`${livePath}${suffix}`));
@@ -84,25 +84,12 @@ export async function createMigrationDatabase({
   } finally { client.close(true); }
 }
 
-/**
- * 迁移只能替换 chat_states 的 status：其余业务表、AI 上下文、人设、schema 版本与谱系
- * 必须逐行、逐字节相同，expectedTranslate 为各群迁入后的会话。
- */
-export function assertMigratedDatabase(
-  path: string,
-  expected: MigrationDatabaseFixture,
-  expectedTranslate: ReadonlyMap<number, unknown>
-): void {
+/** 部署后的数据库与夹具逐行、逐字节相同：业务表、群状态、AI 上下文、人设、schema 版本与谱系。 */
+export function assertMigratedDatabase(path: string, expected: MigrationDatabaseFixture): void {
   const client: Database = new Database(path, { readonly: true });
   try {
     for (const [table, rows] of expected.preserved) expect<readonly unknown[]>(client.query(`SELECT * FROM ${table} ORDER BY 1`).all()).toEqual(rows);
-    expect(client.query("SELECT ai_context, ai_persona FROM chat_states WHERE chat_id = ?").get(MIGRATION_FIXTURE_CHAT_ID)).toEqual(expected.chatContext);
-    for (const [chatId, translate] of expectedTranslate) {
-      const row: { translate: string } | null = client.query<{ translate: string }, [number]>(
-        "SELECT json_extract(status, '$.translate') AS translate FROM chat_states WHERE chat_id = ?"
-      ).get(chatId);
-      expect(JSON.parse(row?.translate ?? "null")).toEqual(translate);
-    }
+    expect(client.query("SELECT status, ai_context, ai_persona FROM chat_states WHERE chat_id = ?").get(MIGRATION_FIXTURE_CHAT_ID)).toEqual(expected.chatContext);
     expect(client.query("SELECT json(data) AS data FROM storage_metadata").all()).toEqual([{ data: '{"version":11}' }]);
     expect<readonly unknown[]>(client.query("SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at").all()).toEqual(expected.lineage);
     expect(client.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });

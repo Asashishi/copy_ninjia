@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import { rename } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { waitUntil } from "../helpers/waitUntil";
 import type {
   AdSampleConfig,
@@ -36,7 +37,14 @@ const {
   defaultStickerConfigCache,
 } = await import("../../packages/cache/perThread/config");
 const { adDetectConfigReadinessCache, aiChatConfigReadinessCache } = await import("../../packages/cache/main/configReadiness");
-const { AD_SAMPLES_CONFIG_PATH, CONFIG_ROOT, CRON_CONFIG_PATH, MOOD_CONFIG_PATH, STICKERS_CONFIG_PATH } = await import("../../packages/consts/paths");
+const {
+  AD_SAMPLES_CONFIG_PATH,
+  CRON_CONFIG_PATH,
+  DYNAMIC_CONFIG_DIR,
+  MOOD_CONFIG_PATH,
+  STATIC_CONFIG_DIR,
+  STICKERS_CONFIG_PATH,
+} = await import("../../packages/consts/paths");
 const { cronConfigCache } = await import("../../packages/cache/main/cron");
 
 const originalMoodText: string = await Bun.file(MOOD_CONFIG_PATH).text();
@@ -92,7 +100,7 @@ afterAll((): void => {
   quiesceConfigReload();
 });
 
-describe("config/ 目录监听", () => {
+describe("config/dynamic/ 目录监听", () => {
   test("启动时对账一轮；内容未变时不分发也不记日志", async () => {
     startConfigReload();
     await settle();
@@ -116,6 +124,21 @@ describe("config/ 目录监听", () => {
     expect(defaultMoodConfigCache.current?.moods[0]?.name).toBe("平静");
     expect(syncAntiRaidAgentConfig).not.toHaveBeenCalled();
     expect(loggerLog).toHaveBeenCalledWith(`Reloaded deployment config ${MOOD_CONFIG_PATH}.`);
+  });
+
+  test("config/static/ 下的改动不在监听范围内，不武装防抖", async () => {
+    startConfigReload();
+    await settle();
+    const probe: string = join(STATIC_CONFIG_DIR, "reload-probe.json");
+    await Bun.write(probe, "{}\n");
+    try {
+      // 负向断言：整个防抖加读取窗口内持续观察，timer 一次都不该出现。
+      expect(await waitUntil((): boolean => configReloadRuntime.debounceTimer !== null, TEST_DEBOUNCE_MS * 3)).toBe(false);
+    } finally {
+      await rm(probe, { force: true });
+    }
+    await settle();
+    expect(syncAiChatConfig).not.toHaveBeenCalled();
   });
 
   test("连续写入合并到防抖窗口之后，只应用最后一份内容", async () => {
@@ -156,7 +179,7 @@ describe("config/ 目录监听", () => {
     expect(published(aiChatConfigReadinessCache)).toEqual({
       ok: false,
       failure: {
-        file: "config/mood.json",
+        file: "config/dynamic/mood.json",
         reason: `${MOOD_CONFIG_PATH}: $ must be a readable valid JSON document.`,
       },
     });
@@ -206,7 +229,7 @@ describe("config/ 目录监听", () => {
     await Bun.file(AD_SAMPLES_CONFIG_PATH).delete();
 
     expect(await waitUntil((): boolean => !published(adDetectConfigReadinessCache).ok)).toBe(true);
-    expect(published(adDetectConfigReadinessCache)).toMatchObject({ ok: false, failure: { file: "config/ad_samples.json" } });
+    expect(published(adDetectConfigReadinessCache)).toMatchObject({ ok: false, failure: { file: "config/dynamic/ad_samples.json" } });
     expect(syncAntiRaidAgentConfig).toHaveBeenCalledTimes(1);
     expect(published(aiChatConfigReadinessCache).ok).toBe(true);
 
@@ -247,7 +270,7 @@ describe("config/ 目录监听", () => {
   });
 });
 
-describe("config/ 监听的失效与关闸", () => {
+describe("config/dynamic/ 监听的失效与关闸", () => {
   test("watcher 运行中出错时记错误日志并关闭，本进程不再热重载", async () => {
     startConfigReload();
     await settle();
@@ -264,9 +287,9 @@ describe("config/ 监听的失效与关闸", () => {
     expect(configReloadRuntime.watcher).toBeNull();
   });
 
-  test("配置目录不可监听时只记错误日志，不建立 watcher", async () => {
-    const movedRoot: string = `${CONFIG_ROOT}.moved`;
-    await rename(CONFIG_ROOT, movedRoot);
+  test("动态配置目录不可监听时只记错误日志，不建立 watcher", async () => {
+    const movedRoot: string = `${DYNAMIC_CONFIG_DIR}.moved`;
+    await rename(DYNAMIC_CONFIG_DIR, movedRoot);
     try {
       startConfigReload();
       expect(configReloadRuntime.watcher).toBeNull();
@@ -274,7 +297,7 @@ describe("config/ 监听的失效与关闸", () => {
         "Deployment config watcher could not start; runtime config reload stays off until restart:"
       );
     } finally {
-      await rename(movedRoot, CONFIG_ROOT);
+      await rename(movedRoot, DYNAMIC_CONFIG_DIR);
     }
   });
 

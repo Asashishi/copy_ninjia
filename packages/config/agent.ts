@@ -1,8 +1,5 @@
 import {
-  LOOPBACK_HOSTS,
-  EXPECTED_BASE_URL,
   AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
-  AGENT_API_KEY_PLACEHOLDERS,
   AGENT_CAPABILITY_NAMES,
 } from "../consts/agent";
 import {
@@ -12,22 +9,21 @@ import {
 import { AGENT_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
+import { parseCapability, parseImageCapability, parseTtsCapability } from "./agentCapability";
 import type {
   AdDetectAgentConfig,
-  AgentCapabilityConfig,
   AgentConfigSnapshots,
   AgentDeploymentConfig,
   AgentImageCapabilityConfig,
-  AgentProvider,
   AgentTtsCapabilityConfig,
-  OpenAiImageProtocol,
 } from "../types/config";
 
 /**
- * config/agent.json：所有 AI 能力的统一部署配置。
+ * config/dynamic/agent.json：所有 AI 能力的统一部署配置。
  *
  * 顶层只含 agent；其下按能力而不是按 SDK 分组。ad_detect、text、summary、media、image、tts 各自声明
- * provider、api_key、model 与可选 base_url。provider 只表示调用协议，目前只接受 google
+ * provider、api_key、model 与可选 base_url；google provider 另可声明 headers，给每个请求附加
+ * 请求头（三方网关鉴权等），openai provider 不接受该字段。provider 只表示调用协议，目前只接受 google
  * 与 openai；模型品牌不受枚举限制，因此 Grok 等 OpenAI 兼容模型使用 openai
  * provider 加对应端点。text、summary、media 是对话核心能力；ad_detect、image、tts
  * 均可缺省，由对应功能门禁或工具装配单独处理。非法或未知字段在
@@ -35,7 +31,9 @@ import type {
  *
  * image 额外要求 OpenAI 侧显式给 image_protocol；Google 侧禁止该字段。请求体差异
  * 不能从模型名或端点可靠推断。tts 额外要求 voice（预置音色名或 `voice_` 音色 ID），
- * 只校验为非空字符串，音色是否存在由首次合成请求决定。image/tts 缺省或所选实现不支持时，分别不挂
+ * 只校验为非空字符串，音色是否存在由首次合成请求决定；可选 style 指定基础风格，缺省使用
+ * GEMINI_SPEECH_STYLE。可选的 daily_limit 与 daily_reserve_quota
+ * 给出每日额度与留给 `/send`、cron 的次数。image/tts 缺省或所选实现不支持时，分别不挂
  * 生图/语音工具。
  *
  * **读盘只发生在主线程。** 本文件分成三段边界，谁能调哪一段由所在线程决定：
@@ -51,143 +49,6 @@ import type {
  *    Worker 崩溃重建重放的是主线程当前生效的那份快照（见 aiChat/workerBridge.ts
  *    与 antiRaid/workerBridge/controller.ts），Worker 自己从不读盘。
  */
-
-/** 解码必填非空字符串。 */
-function requiredString(value: unknown, context: string, sourcePath: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return invalidInput(sourcePath, context, "a non-empty string");
-  }
-  return value.trim();
-}
-
-/** 解码必填凭据；示例占位串存在时必须在启动阶段拒绝。 */
-function requiredApiKey(value: unknown, context: string, sourcePath: string): string {
-  const apiKey: string = requiredString(value, context, sourcePath);
-  if (AGENT_API_KEY_PLACEHOLDERS.includes(apiKey)) {
-    return invalidInput(sourcePath, context, "a configured non-placeholder string");
-  }
-  return apiKey;
-}
-
-/**
- * 解码可选的绝对端点；缺省交给对应 SDK 的官方地址。
- *
- * 默认只收 HTTPS：这个字段旁边就是同一项能力的 api_key，配成非本机的明文 HTTP
- * 端点等于让密钥每次请求都在网络上裸奔，而校验放行之后没有任何一层会再提醒。
- * 本机三个回环主机是例外——本地代理和测试端点是正当用法，且流量不出机器。
- *
- * userinfo 一律拒绝：`https://user:pass@host` 里的凭据既进不了脱敏名单（脱敏
- * 读的是 api_key），又会被 SDK 原样拼进每一次请求 URL，一旦进日志就是明文。
- * 认证只走 api_key 这一条路。
- *
- * fragment 一律拒绝：两家 SDK 都把 base_url 当路径前缀拼接，`#` 之后的部分不会
- * 被发到服务端。留着它只会让人以为自己配了一个能生效的端点。
- */
-function optionalBaseUrl(value: unknown, context: string, sourcePath: string): string | undefined {
-  if (value === undefined) return undefined;
-  const raw: string = requiredString(value, context, sourcePath);
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return invalidInput(sourcePath, context, EXPECTED_BASE_URL);
-  }
-  if (parsed.username.length > 0 || parsed.password.length > 0 || parsed.hash.length > 0) {
-    return invalidInput(sourcePath, context, EXPECTED_BASE_URL);
-  }
-  if (parsed.protocol === "https:") return raw;
-  if (parsed.protocol === "http:" && LOOPBACK_HOSTS.includes(parsed.hostname)) return raw;
-  return invalidInput(sourcePath, context, EXPECTED_BASE_URL);
-}
-
-/** 解码 provider；Gemini 是模型家族名，对外协议名统一为 google。 */
-function requiredProvider(value: unknown, context: string, sourcePath: string): AgentProvider {
-  if (value === "google" || value === "openai") return value;
-  return invalidInput(sourcePath, context, '"google" or "openai"');
-}
-
-/** 解码 OpenAI 兼容生图协议。 */
-function requiredImageProtocol(
-  value: unknown,
-  context: string,
-  sourcePath: string
-): OpenAiImageProtocol {
-  if (value === "openai" || value === "openai-standard" || value === "xai") return value;
-  return invalidInput(sourcePath, context, '"openai", "openai-standard", or "xai"');
-}
-
-/** 解码一项普通能力；四项字段之外的拼写错误一律拒绝。 */
-function parseCapability(
-  value: unknown,
-  context: string,
-  sourcePath: string
-): AgentCapabilityConfig {
-  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["provider", "api_key", "base_url", "model"])) {
-    return invalidInput(sourcePath, context, "exactly { provider, api_key, base_url?, model }");
-  }
-  return {
-    provider: requiredProvider(value.provider, `${context}.provider`, sourcePath),
-    apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
-    baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
-    model: requiredString(value.model, `${context}.model`, sourcePath),
-  };
-}
-
-/** 解码生图能力；只有 OpenAI 协议分支接受并要求 image_protocol。 */
-function parseImageCapability(
-  value: unknown,
-  sourcePath: string
-): AgentImageCapabilityConfig {
-  const context: string = "$.agent.image";
-  if (!isPlainRecord(value)) {
-    return invalidInput(sourcePath, context, "an object");
-  }
-  const provider: AgentProvider = requiredProvider(value.provider, `${context}.provider`, sourcePath);
-  if (provider === "google") {
-    if (!hasOnlyKeys(value, ["provider", "api_key", "base_url", "model"])) {
-      return invalidInput(sourcePath, context, "exactly { provider, api_key, base_url?, model } when provider is google");
-    }
-    return {
-      provider,
-      apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
-      baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
-      model: requiredString(value.model, `${context}.model`, sourcePath),
-      imageProtocol: undefined,
-    };
-  }
-  if (!hasOnlyKeys(value, ["provider", "api_key", "base_url", "model", "image_protocol"])) {
-    return invalidInput(
-      sourcePath,
-      context,
-      "exactly { provider, api_key, base_url?, model, image_protocol } when provider is openai"
-    );
-  }
-  return {
-    provider,
-    apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
-    baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
-    model: requiredString(value.model, `${context}.model`, sourcePath),
-    imageProtocol: requiredImageProtocol(value.image_protocol, `${context}.image_protocol`, sourcePath),
-  };
-}
-
-/** 解码语音合成能力；通用四项之外必填 voice。 */
-function parseTtsCapability(
-  value: unknown,
-  sourcePath: string
-): AgentTtsCapabilityConfig {
-  const context: string = "$.agent.tts";
-  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["provider", "api_key", "base_url", "model", "voice"])) {
-    return invalidInput(sourcePath, context, "exactly { provider, api_key, base_url?, model, voice }");
-  }
-  return {
-    provider: requiredProvider(value.provider, `${context}.provider`, sourcePath),
-    apiKey: requiredApiKey(value.api_key, `${context}.api_key`, sourcePath),
-    baseUrl: optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath),
-    model: requiredString(value.model, `${context}.model`, sourcePath),
-    voice: requiredString(value.voice, `${context}.voice`, sourcePath),
-  };
-}
 
 /** 解码广告检测能力；base_url 缺省时跟随所选 SDK 的官方端点。 */
 export function parseAdDetectAgentConfig(
@@ -386,7 +247,8 @@ export function getAgentDeploymentConfig(): AgentDeploymentConfig {
 /**
  * 本 isolate 当前的 `agent.tts` 配置；文件、对话核心能力段或 tts 段缺省时为 undefined。
  * 只读 holder，不读盘。主线程的 `/send` 代发 TTS、cron `send_voice` 与 cron.json 的
- * 交叉校验据此判定语音合成是否已配置。
+ * 交叉校验据此判定语音合成是否已配置，`/send` 的额度提示读它的 dailyLimit；AI Worker 的
+ * 语音余量与余量行读它的 dailyLimit 与 dailyReserveQuota。
  */
 export function agentTtsConfig(): AgentTtsCapabilityConfig | undefined {
   return agentDeploymentConfigCache.current?.tts;

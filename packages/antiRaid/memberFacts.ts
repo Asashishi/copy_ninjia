@@ -43,13 +43,6 @@ export function pickMember(user: PickMemberParams): AntiRaidMember {
   return { id: user.id, username: user.username, first_name: user.first_name, isBot: user.is_bot === true };
 }
 
-/** 某个 ChatMember 是否实际还在聊天中（相对于已离开/已被踢出而言）。 */
-export function isActiveChatMember(member: ChatMember): boolean {
-  if (member.status === "left" || member.status === "kicked") return false;
-  if (member.status === "restricted") return member.is_member;
-  return true; // "member" | "administrator" | "creator"
-}
-
 /**
  * 只有身份可归因的非匿名管理员才提供“邀请者免验证”。匿名管理员仍是
  * Telegram 管理员，也仍可因自身管理员身份免验证；这里只避免把匿名操作

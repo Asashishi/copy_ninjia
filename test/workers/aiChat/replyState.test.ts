@@ -32,7 +32,9 @@ import { timestampDequeContents, timestampDequeOf } from "../../helpers/timestam
 import { logger } from "../../../packages/infra/logger";
 import { VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
-import type { BufferedMessage, ChatActionHeartbeatEntry, QueuedReplyTrigger } from "../../../packages/types";
+import type { ChatActionHeartbeatEntry } from "../../../packages/types/aiChat/chatAction";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
+import type { QueuedReplyTrigger } from "../../../packages/types/aiChat/replies";
 import {
   invalidateChatReplies,
   quiesceAiChatReplies,

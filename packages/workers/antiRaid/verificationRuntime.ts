@@ -44,8 +44,8 @@ import { runVerificationEffects } from "./verificationEffects";
 import {
   handleJoinEvent,
   handleTrackedMessageEvent,
-  handleVerificationCallbackEvent,
 } from "./verificationEvents";
+import { handleVerificationCallbackEvent } from "./verificationCallbacks";
 import {
   cancelReminderDelivery,
   clearReminderDeliveries,

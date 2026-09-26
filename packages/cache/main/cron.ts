@@ -3,7 +3,7 @@ import type { CronConfig, CronRuntime } from "../../types/cron";
 /**
  * Owner: 主线程。cron.json 的已生效任务表（packages/config/cron.ts）。
  *
- * 启动总闸在文件存在时填充；config/ 热重载每轮整体替换，文件被删除时置 null（等价于
+ * 启动总闸在文件存在时填充；config/dynamic/ 热重载每轮整体替换，文件被删除时置 null（等价于
  * 空表）。只整体替换、不就地改写；容量由 CRON_MAX_TASKS 与 CRON_MAX_ACTIONS_PER_TASK
  * 限定。不跨线程，Worker 崩溃不影响；进程重启从 null 重新填充。
  */

@@ -292,7 +292,7 @@ export function joinLogEvent(index: number): JoinLogDiskMessage {
     chatId: benchmarkChatId(index % COLD_START_CHAT_STATE_ROWS),
     userId: benchmarkUserId(index),
     joinedAt,
-    day: getTokyoDateKey(new Date(joinedAt)),
+    day: getTokyoDateKey(joinedAt),
   };
 }
 

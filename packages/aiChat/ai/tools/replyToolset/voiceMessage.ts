@@ -3,16 +3,18 @@
  * OGG/Opus 后以 Telegram 语音消息发送到当前群。
  *
  * 工具声明逐字恒定，只要 `agent.tts` 配置且实现具备语音合成就挂载；调用与否由
- * 模型按工具说明（SEND_VOICE_TOOL_INSTRUCTION）判断，执行侧不另设按轮资格。
+ * 模型按工具说明（SEND_VOICE_TOOL_INSTRUCTION）与回复任务末尾的今日余量行
+ * （buildVoiceQuotaLine）判断，执行侧不另设按轮资格。
  *
- * 接纳阶段同步完成资格、限额与参数校验并预占一个共享动作；独立发送链里经公共实现
- * （aiChat/ai/voiceSynthesis.ts）合成并编码，期间亮「正在录音」状态，发送前切回 idle
- * 并等状态收敛。落地后按同一消息登记语音自录记号。工具声明、参数口径、单轮限额与
- * 挂回复只属于本工具。
+ * 接纳阶段同步完成资格、单轮限额、模型可见的每日余量与参数校验并预占一个共享动作，
+ * 接纳回执带上扣除本次后的余量；独立发送链里经公共实现（aiChat/ai/voiceSynthesis.ts）
+ * 按 `ai` 额度口径合成并编码，期间亮「正在录音」状态，发送前切回 idle 并等状态
+ * 收敛。落地后按同一消息登记语音自录记号。工具声明、参数口径、单轮限额与挂回复只属于
+ * 本工具。
  */
 
 import type { AiToolDefinition } from "../../../../types/aiChat/provider";
-import { SEND_VOICE_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
+import { SEND_VOICE_TOOL_INSTRUCTION, voiceQuotaSentence } from "../../../../consts/aiChat/prompts/tools";
 import { voiceSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
 import {
   MAX_VOICES_PER_REPLY,
@@ -20,9 +22,17 @@ import {
   VOICE_TEXT_MAX_CHARS,
   VOICE_TONE_MAX_CHARS,
 } from "../../../../consts/aiChat/voiceMessage";
-import { REPLY_INVALIDATED_TOOL_ERROR, SEND_VOICE_TOOL } from "../../../../consts/tools";
+import {
+  REPLY_INVALIDATED_TOOL_ERROR,
+  SEND_VOICE_DAILY_LIMIT_TOOL_ERROR,
+  SEND_VOICE_TOOL,
+} from "../../../../consts/tools";
+import { agentTtsConfig } from "../../../../config/agent";
 import { sendVoiceWithResult } from "../../../../infra/telegram";
 import { sanitizeInline } from "../../../../libs/text";
+import { ttsAiProvider } from "../../../provider";
+import { aiTtsRemaining } from "../../ttsUsage";
+import { ttsQuotaLimit } from "../../utils/ttsUsageWindow";
 import { resolveSpeechSynthesizer, synthesizeVoiceMessage } from "../../voiceSynthesis";
 import { parseToolArguments } from "../../utils/toolArgs";
 import { toolError } from "../../utils/toolResult";
@@ -30,6 +40,22 @@ import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
 import type { ReplyToolContext, ReplyToolExecution } from "../../../../types/aiChat/replies";
 import type { SpeechSynthesizerLookup, VoiceSynthesisResult } from "../../../../types/aiChat/voiceMessage";
 import type { TelegramSendResult } from "../../../../types/telegram";
+import type { AgentTtsCapabilityConfig } from "../../../../types/config";
+
+/** 本轮是否挂载 send_voice：`agent.tts` 已配置且所选实现具备语音合成。 */
+export function isSendVoiceAvailable(): boolean {
+  return ttsAiProvider()?.synthesizeSpeech !== undefined;
+}
+
+/**
+ * 回复任务区块末尾的今日语音余量行（含行首换行），按当前 `agent.tts` 的 `ai` 口径上限
+ * 计算；本轮不挂 send_voice 时为空串。回复开始时读取一次，同一回复的工具往返复用。
+ */
+export function buildVoiceQuotaLine(): string {
+  const tts: AgentTtsCapabilityConfig | undefined = agentTtsConfig();
+  if (tts === undefined || !isSendVoiceAvailable()) return "";
+  return "\n" + voiceQuotaSentence(aiTtsRemaining(), ttsQuotaLimit(tts, "ai"));
+}
 
 /** send_voice 的工具声明；整段逐字恒定，不接受任何本轮上下文。 */
 export function buildSendVoiceToolDefinition(): AiToolDefinition {
@@ -101,6 +127,8 @@ export function createSendVoiceExecutor(
         { retryable: false }
       );
     }
+    const remaining: number = aiTtsRemaining();
+    if (remaining <= 0) return toolError(SEND_VOICE_DAILY_LIMIT_TOOL_ERROR, { retryable: false });
     const parsed: ParsedVoiceArguments | null = parseArguments(argumentsJson);
     if (!parsed) {
       return toolError(
@@ -110,7 +138,7 @@ export function createSendVoiceExecutor(
     }
     acceptedVoices++;
     return {
-      result: JSON.stringify({ success: true, queued: true, actions_used: 1 }),
+      result: JSON.stringify({ success: true, queued: true, actions_used: 1, voice_remaining_today: remaining - 1 }),
       run: async (chatAction: ChatActionControl): Promise<string> => {
         if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
         chatAction.set("record_voice");
@@ -118,7 +146,7 @@ export function createSendVoiceExecutor(
         try {
           encoded = await synthesizeVoiceMessage(
             synthesizer.synthesize,
-            { text: parsed.text, tone: parsed.tone, signal: ctx.signal },
+            { text: parsed.text, tone: parsed.tone, quota: "ai", signal: ctx.signal },
             `chat ${ctx.chatId}`
           );
         } finally {
@@ -127,7 +155,9 @@ export function createSendVoiceExecutor(
         }
         if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
         if (!encoded.ok) {
-          return toolError("Voice synthesis failed or returned no usable audio", { retryable: false });
+          return encoded.reason === "daily limit reached"
+            ? toolError(SEND_VOICE_DAILY_LIMIT_TOOL_ERROR, { retryable: false })
+            : toolError("Voice synthesis failed or returned no usable audio", { retryable: false });
         }
         const sent: TelegramSendResult | undefined = await sendVoiceWithResult({
           chatId: ctx.chatId,

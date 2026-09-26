@@ -100,12 +100,13 @@ const worker = await import("../../../packages/workers/aiChatWorker");
 const { botInfoState, superAdminUserIdState, defaultAtmosphereState } = await import("../../../packages/cache/workers/aiChat/identity");
 const { stickerMenuRevision } = await import("../../../packages/cache/workers/aiChat/stickers/menu");
 const { agentDeploymentConfigCache } = await import("../../../packages/cache/perThread/config");
+const { aiCacheUsageSink } = await import("../../../packages/cache/perThread/aiCacheUsage");
 
 /** 主线程投递过来的那一代快照；断言 Worker 原样收进 holder，不另行读盘。 */
 const injectedAgentConfig: AgentDeploymentConfig = {
-  text: { provider: "google", apiKey: "injected-text-key", baseUrl: undefined, model: "injected-text" },
-  summary: { provider: "openai", apiKey: "injected-summary-key", baseUrl: undefined, model: "injected-summary" },
-  media: { provider: "google", apiKey: "injected-media-key", baseUrl: undefined, model: "injected-media" },
+  text: { provider: "google", apiKey: "injected-text-key", baseUrl: undefined, headers: undefined, model: "injected-text" },
+  summary: { provider: "openai", apiKey: "injected-summary-key", baseUrl: undefined, headers: undefined, model: "injected-summary" },
+  media: { provider: "google", apiKey: "injected-media-key", baseUrl: undefined, headers: undefined, model: "injected-media" },
 };
 const { aiChatWorkerAbortController, aiChatWorkerDrain, aiChatWorkerQuiescing } =
   await import("../../../packages/cache/workers/aiChat/worker");
@@ -285,6 +286,17 @@ describe("AI Chat Worker lifecycle", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "moodQueried", chatId: -1001, requestId: 3, moodName: "平静" });
     expect(switchMood).toHaveBeenCalledWith(-1001);
     expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 4, moodName: "开心" });
+  });
+
+  test("启动时装上缓存用量出口，把用量作为事件发回主线程；停止时卸下", () => {
+    worker.startAiChatWorker();
+    const usage = {
+      timestamp: 1, capability: "text", provider: "google", model: "m", inputTokens: 10, cachedInputTokens: 0, outputTokens: 1,
+    } as const;
+    aiCacheUsageSink.current!(usage);
+    expect(postMessage).toHaveBeenCalledWith({ type: "aiCacheUsage", usage });
+    worker.stopAiChatWorker();
+    expect(aiCacheUsageSink.current).toBeNull();
   });
 
   test("configReload 只替换变化的领域并失效各自的派生状态", () => {

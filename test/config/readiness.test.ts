@@ -119,8 +119,8 @@ beforeEach(async (): Promise<void> => {
 
 describe("deployment config readiness", () => {
   test("Telegram 进程级配置缺失时无条件拒绝启动", async () => {
-    telegramFailure = "config/bot.json: $.bot_token must be a non-empty string";
-    await expect(validateExistingDeploymentInputs()).rejects.toThrow("config/bot.json: $.bot_token");
+    telegramFailure = "config/static/bot.json: $.bot_token must be a non-empty string";
+    await expect(validateExistingDeploymentInputs()).rejects.toThrow("config/static/bot.json: $.bot_token");
   });
 
   test("配置齐全时两项 AI 功能分别放行", async () => {
@@ -135,7 +135,7 @@ describe("deployment config readiness", () => {
     await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     if (verdict.ok) throw new Error("expected a failure verdict");
-    expect(verdict.failure.file).toBe("config/stickers.json");
+    expect(verdict.failure.file).toBe("config/dynamic/stickers.json");
     stickerFailure = null;
     expect(aiChatConfigReadiness().ok).toBe(false);
   });
@@ -153,7 +153,7 @@ describe("deployment config readiness", () => {
     await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness().ok).toBe(true);
     const verdict: ConfigReadiness = adDetectConfigReadiness();
-    expect(verdict.ok === false && verdict.failure.file).toBe("config/agent.json");
+    expect(verdict.ok === false && verdict.failure.file).toBe("config/dynamic/agent.json");
   });
 
   test("命中缓存后不再调用 loader，且返回同一结论引用", async () => {
@@ -212,7 +212,7 @@ describe("Google service account readiness", () => {
     await validateExistingDeploymentInputs();
     const result = translateConfigReadiness();
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.failure.file).toBe("config/g-auth.json");
+    expect(result.ok === false && result.failure.file).toBe("config/static/g-auth.json");
     expect(googleServiceAccountKey.current).toBeNull();
     await writeAuthFile(JSON.stringify({ client_email: "bot@example.com", private_key: testPrivateKey }));
     await validateExistingDeploymentInputs();

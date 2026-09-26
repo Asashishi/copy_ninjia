@@ -10,6 +10,7 @@
 import OpenAI from "openai";
 import { adDetectOpenAiClientHolder } from "../../cache/workers/antiRaid/openai";
 import { logger } from "../../infra/logger";
+import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
 import { getAdDetectAgentConfig } from "../../config/agent";
 import {
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
@@ -32,6 +33,17 @@ function getAdDetectOpenAiClient(): OpenAI {
     maxRetries: AD_DETECT_OPENAI_REQUEST_MAX_RETRIES,
   });
   return adDetectOpenAiClientHolder.current;
+}
+
+/**
+ * Chat Completions 用量里命中缓存的输入 token：官方字段是 `prompt_tokens_details.cached_tokens`；
+ * DeepSeek 给出 `prompt_cache_hit_tokens`。都没有时为 undefined。
+ */
+function completionCachedTokens(usage: OpenAI.CompletionUsage | undefined): unknown {
+  if (usage === undefined) return undefined;
+  const cached: unknown = usage.prompt_tokens_details?.cached_tokens;
+  if (cached !== undefined) return cached;
+  return (usage as unknown as Readonly<Record<string, unknown>>).prompt_cache_hit_tokens;
 }
 
 /** 一次尝试的结果；null 表示请求失败且已经记日志。 */
@@ -64,6 +76,14 @@ async function attemptOpenAiAdDetectJson({
           { role: "user", content: userContent },
         ],
       });
+    reportAiCacheUsage({
+      capability: "ad_detect",
+      provider: "openai",
+      model,
+      inputTokens: completion.usage?.prompt_tokens,
+      cachedInputTokens: completionCachedTokens(completion.usage),
+      outputTokens: completion.usage?.completion_tokens,
+    });
     const choice: OpenAI.Chat.Completions.ChatCompletion.Choice | undefined = completion.choices[0];
     return {
       body: choice?.message.content ?? "",

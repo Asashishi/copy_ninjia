@@ -16,8 +16,8 @@ import { runChatToggleCommand } from "./superAdminToggle";
  * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权。
  *
  * 机器人不是本群管理员时判定根本不会触发（删不掉广告也封不了人），开关照样
- * 可以先开着：补上管理员身份之后立刻生效。config/agent.json 的 agent.ad_detect 能力或
- * config/ad_samples.json 写坏则不同——那是判定本身没有凭据/没有口径，开着也
+ * 可以先开着：补上管理员身份之后立刻生效。config/dynamic/agent.json 的 agent.ad_detect 能力或
+ * config/dynamic/ad_samples.json 写坏则不同——那是判定本身没有凭据/没有口径，开着也
  * 永远不会有结论，因此这里直接拒绝开启，不留一个看着已生效、实际什么都不做
  * 的开关。
  *

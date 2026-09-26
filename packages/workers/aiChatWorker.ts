@@ -6,6 +6,8 @@ import {
   pruneStickerCatalogs,
   retryIncompleteStickerCatalogs,
 } from "../aiChat/ai/stickers/catalog";
+import { installAiCacheUsageSink } from "../infra/aiCacheUsage";
+import type { AiCacheUsage } from "../types/aiCache";
 import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
 import { adoptMoodConfig } from "../config/mood";
 import { chatPersonas } from "../cache/workers/aiChat/persona";
@@ -32,6 +34,7 @@ import {
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { handleCancelVoiceSynthesis, handleSynthesizeVoice } from "./aiChat/voiceSynthesis";
+import { hydrateTtsUsage } from "../aiChat/ai/ttsUsage";
 import { recordBotImage, resolveRepliedBotImage } from "./aiChat/botImages";
 import type { BufferedMessage } from "../types/aiChat/memory";
 import { applyAiChatConfigReload } from "./aiChat/configReload";
@@ -42,6 +45,7 @@ import {
 import { invalidateChatReplies, quiesceAiChatReplies } from "./aiChat/replyGeneration";
 import { currentMood, switchMood } from "../aiChat/ai/mood";
 import type {
+  AiCacheUsageEvent,
   AiChatInvalidatedEvent,
   AiChatWorkerMessage,
   AiInvalidateChatMessage,
@@ -249,6 +253,9 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
     case "cancelVoiceSynthesis":
       handleCancelVoiceSynthesis(msg);
       break;
+    case "hydrateTtsUsage":
+      hydrateTtsUsage(msg.usage);
+      break;
   }
 }
 
@@ -278,6 +285,9 @@ export function startAiChatWorker(): void {
   aiChatWorkerAbortController.current = new AbortController();
   aiChatWorkerDrain.current = null;
   installBusinessWorkerPort<TelegramWorkerRequest, AiChatWorkerMessage>(handleAiChatWorkerMessage);
+  installAiCacheUsageSink((usage: AiCacheUsage): void => {
+    self.postMessage({ type: "aiCacheUsage", usage } satisfies AiCacheUsageEvent);
+  });
   aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
   aiChatMaintenanceTimer.current.unref();
   // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与
@@ -297,6 +307,7 @@ export function stopAiChatWorker(): void {
     aiChatMaintenanceTimer.current = null;
   }
   stopWeatherRefreshLoop();
+  installAiCacheUsageSink(null);
   chatPersonas.clear();
   resetWorkerDuplex("AI Worker stopped before the main-thread request completed.");
   self.onmessage = null;

@@ -132,6 +132,8 @@ export interface AtmosphereNotices {
   readonly proxyTtsBusy: string;
   /** 合成或发送语音失败；代发会话保持开启。 */
   readonly proxyTtsFailed: (targetChatId: number) => string;
+  /** 语音合成每日额度已用尽，没有发起请求；参数为每日上限，代发会话保持开启。 */
+  readonly proxyTtsDailyLimit: (dailyLimit: number) => string;
   readonly translateConfigInvalid: (file: string) => string;
   readonly translateNotRunning: (targetLabel: string) => string;
   readonly translateStopped: (targetLabel: string) => string;

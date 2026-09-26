@@ -1,7 +1,7 @@
 import { CANDIDATE_OWNER_PID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { LOCK_FILE_PATH, STATE_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
+import { GLOBAL_STATE_FILE_PATH, LOCK_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { isErrno } from "../../libs/errno";
 import { logger } from "../logger";
 import { readLinuxProcessIdentity } from "./instanceLock";
@@ -53,45 +53,74 @@ async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
     active?.bootId !== owner.bootId;
 }
 
-/** 持锁后清扫 state.json（含 .bak）/bot.lock 原子写中断留下的顶层临时文件。 */
+/** 一个待清扫目录：只认其中这些目标文件的原子写临时件，lockFileName 非 null 时也认锁的辅助文件。 */
+interface CleanupDirectory {
+  readonly directory: string;
+  readonly atomicTempPrefixes: readonly string[];
+  readonly lockFileName: string | null;
+}
+
+/** 按目录归并状态文件与锁文件；两者同目录时合成一项。 */
+function cleanupDirectories(stateFilePath: string, lockFilePath: string): readonly CleanupDirectory[] {
+  const lockDirectory: CleanupDirectory = {
+    directory: dirname(lockFilePath),
+    atomicTempPrefixes: [`.${basename(lockFilePath)}.`],
+    lockFileName: basename(lockFilePath),
+  };
+  const statePrefix: string = `.${basename(stateFilePath)}.`;
+  if (dirname(stateFilePath) === lockDirectory.directory) {
+    return [{ ...lockDirectory, atomicTempPrefixes: [statePrefix, ...lockDirectory.atomicTempPrefixes] }];
+  }
+  return [
+    lockDirectory,
+    { directory: dirname(stateFilePath), atomicTempPrefixes: [statePrefix], lockFileName: null },
+  ];
+}
+
+/**
+ * 持锁后清扫全局状态文件（memory/global/）与 bot.lock（数据根）原子写中断留下的临时文件，
+ * 以及锁的孤儿辅助文件。目录尚不存在时跳过。
+ */
 export async function cleanupOrphanedTempFiles({
-  stateFilePath = STATE_FILE_PATH,
+  stateFilePath = GLOBAL_STATE_FILE_PATH,
   lockFilePath = LOCK_FILE_PATH,
   readDirectory = readdir,
   removeFile = (path: string): Promise<void> => Bun.file(path).delete(),
   isInactiveLockOwner = hasInactiveCurrentFormatOwner,
 }: StorageCleanupOptions = {}): Promise<void> {
-  const dir: string = dirname(stateFilePath);
-  let entries: string[];
-  try {
-    entries = await readDirectory(dir);
-  } catch (error: unknown) {
-    logger.error("Failed to scan project root for orphaned temp files:", error);
-    return;
-  }
-  const prefixes: string[] = [basename(stateFilePath), basename(lockFilePath)].map((name: string): string => `.${name}.`);
-  const escapedLockName: string = basename(lockFilePath).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const guardCandidatePattern: RegExp = new RegExp(
-    `^${escapedLockName}\\.guard\\.candidate\\.[1-9]\\d*\\.` +
-    "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-  );
-  const guardRecoveryName: string = `${basename(lockFilePath)}.guard.recovery`;
-  for (const entry of entries) {
-    const isAtomicTemp: boolean = entry.endsWith(TMP_FILE_SUFFIX) &&
-      prefixes.some((prefix: string): boolean => entry.startsWith(prefix));
-    const isGuardOrphan: boolean = entry === guardRecoveryName || guardCandidatePattern.test(entry);
-    if (!isAtomicTemp && !isGuardOrphan) continue;
-    const path: string = join(dir, entry);
+  for (const target of cleanupDirectories(stateFilePath, lockFilePath)) {
+    let entries: string[];
     try {
-      if (isGuardOrphan && !await isInactiveLockOwner(path)) {
-        logger.error(
-          `Refusing to remove lock helper ${entry}: its owner is still active or could not be determined.`
-        );
-        continue;
-      }
-      await removeFile(path);
+      entries = await readDirectory(target.directory);
     } catch (error: unknown) {
-      if (!isErrno(error, "ENOENT")) logger.error(`Failed to remove orphaned temp file ${entry}:`, error);
+      if (!isErrno(error, "ENOENT")) {
+        logger.error(`Failed to scan ${target.directory} for orphaned temp files:`, error);
+      }
+      continue;
+    }
+    const lockFileName: string | null = target.lockFileName;
+    const guardCandidatePattern: RegExp | null = lockFileName === null ? null : new RegExp(
+      `^${lockFileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.guard\\.candidate\\.[1-9]\\d*\\.` +
+      "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    );
+    for (const entry of entries) {
+      const isAtomicTemp: boolean = entry.endsWith(TMP_FILE_SUFFIX) &&
+        target.atomicTempPrefixes.some((prefix: string): boolean => entry.startsWith(prefix));
+      const isGuardOrphan: boolean = lockFileName !== null &&
+        (entry === `${lockFileName}.guard.recovery` || guardCandidatePattern?.test(entry) === true);
+      if (!isAtomicTemp && !isGuardOrphan) continue;
+      const path: string = join(target.directory, entry);
+      try {
+        if (isGuardOrphan && !await isInactiveLockOwner(path)) {
+          logger.error(
+            `Refusing to remove lock helper ${entry}: its owner is still active or could not be determined.`
+          );
+          continue;
+        }
+        await removeFile(path);
+      } catch (error: unknown) {
+        if (!isErrno(error, "ENOENT")) logger.error(`Failed to remove orphaned temp file ${entry}:`, error);
+      }
     }
   }
 }

@@ -39,7 +39,7 @@ interface ParsedStickerCatalog {
 }
 
 /**
- * 机器人自己要发的贴纸（config/stickers.json 白名单包）的画面描述目录：
+ * 机器人自己要发的贴纸（config/dynamic/stickers.json 白名单包）的画面描述目录：
  * file_unique_id -> { emoji, description }，外加一条整包简介（≤200 字，
  * 见 summarizePack）。让 aiChat/ai/tools/stickers.ts 挑贴纸时能按「画面实际是什么」而非
  * 「作者随手标的 emoji」来判断应景与否；整包简介供两层贴纸工具的第一层
@@ -209,7 +209,7 @@ function isStalePack(pack: string, active: ReadonlySet<string>): boolean {
 
 /**
  * 按新的白名单剪掉已下架包的目录、简介与失败记录；生成中及待上报包继续保留。
- * 热重载替换 config/stickers.json 后由 workers/aiChat/configReload.ts 调用，维护节拍
+ * 热重载替换 config/dynamic/stickers.json 后由 workers/aiChat/configReload.ts 调用，维护节拍
  * （workers/aiChatWorker.ts）再兜一次。剪掉任何东西都让贴纸菜单失效。
  *
  * 生成与上报责任结束后，getCatalogEntry 不再复用已下架包的目录。

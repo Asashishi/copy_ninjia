@@ -13,7 +13,7 @@ import { createOpenAiReplySession } from "./replySession";
 import { describeOpenAiVision, generateOpenAiText, transcribeOpenAiVoice } from "./text";
 import type { AiChatProvider } from "../../types/aiChat/provider";
 
-/** OpenAI 协议实现；每项能力的认证与端点来自 config/agent.json。 */
+/** OpenAI 协议实现；每项能力的认证与端点来自 config/dynamic/agent.json。 */
 export const openAiProvider: AiChatProvider = {
   name: "openai",
   createReplySession: createOpenAiReplySession,

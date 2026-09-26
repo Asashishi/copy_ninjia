@@ -141,9 +141,9 @@ export class ApplicationLifecycle {
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
     await this.dependencies.validateExistingDeploymentInputs();
-    // 按已校验的 state 准备专用图库，并在 Worker 与外部连接之前核对权限、文件名和条目类型。
+    // 按已校验的 config/dynamic/assets.json 准备专用图库，并在 Worker 与外部连接之前核对权限、文件名和条目类型。
     await this.dependencies.prepareRandomImageDirectory();
-    // global state 主副本与部署输入都通过严格校验后，才创建本地 Disk I/O Worker。
+    // 全局状态与部署输入都通过严格校验后，才创建本地 Disk I/O Worker。
     // SQLite 群状态只负责恢复运行时开关，不充当功能前提或数据正确性的启动总闸；
     // 功能命令和消息入口各自在 readiness 边界拒绝不可用配置。
     this.dependencies.initDiskIO({ onFatal: this.handleDiskIOFatal });
@@ -185,30 +185,12 @@ export class ApplicationLifecycle {
     this.flags.antiRaidInitialized = true;
     // 定时任务按启动总闸接管的 cron.json 登记；先于热重载，热重载的对账才有调度器可改。
     this.dependencies.startCronScheduler();
-    // 两条业务 Worker 都已持有初始配置快照，此后 config/ 的改动才有分发对象。
+    // 两条业务 Worker 都已持有初始配置快照，此后 config/dynamic/ 的改动才有分发对象。
     this.dependencies.startConfigReload();
     this.dependencies.initBlocklistSweepScheduler();
     // SQLite 黑名单身份未必已有对应 outbox；在 runner 接收新 update 前，对
     // 所有已初始化且已确证管理员的群补一轮，频道 ID 会由 Worker 走封发言权路径。
     await this.dependencies.sweepManagedBlocklistChats();
-
-    // 素材直链与随机图片目录只能手工编辑，缺省时又整块不出现在文件里。把没设过的项按内置常量
-    // 补进 state 并后台落盘，改图的人打开 state.json 就能看到当前生效值（见
-    // infra/storage/stateStore.ts 的 seedMissingAssetState）。补写不阻塞启动。
-    //
-    // 排在**最后一个会拒绝启动的 await 之后**：部署输入闸、持久化恢复、bot.init 与
-    // 黑名单补扫都可能中止这次启动，而被拒绝的那次运行不该顺手改写运维正要拿去
-    // 排查的 state.json——只排在部署输入闸之后是守不住这句话的。
-    //
-    // 确有补写就记一行：改的是部署方的文件，logs/ 里不能只字不提（见
-    // AGENTS.md 的数据归属）。
-    const seededAssets: number = this.dependencies.seedMissingAssetState();
-    if (seededAssets > 0) {
-      this.dependencies.logger.log(
-        `Seeded ${seededAssets} missing state.global.assets value(s) with built-in defaults; ` +
-        "state.json and its backup are being rewritten in the background."
-      );
-    }
 
     this.dependencies.logger.log(
       `Bot started as @${this.dependencies.bot.botInfo.username}. ` +

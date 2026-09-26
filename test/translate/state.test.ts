@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { decodeChatStateData, encodeChatStateData } from "../../packages/database/codec/chatState";
-import { decodeStateFile } from "../../packages/libs/stateFileCodec";
+import { decodeGlobalStateFile } from "../../packages/libs/stateFileCodec";
 import type { TranslateState } from "../../packages/types/translate";
 import { chatStateOf } from "../helpers/chatState";
 
@@ -64,11 +64,11 @@ describe("chat_states 里的翻译会话", () => {
   });
 });
 
-describe("state.json 不再保存翻译会话", () => {
+describe("全局状态文件不保存翻译会话", () => {
   test("顶层 translate 块一律拒绝", () => {
     for (const translate of [{}, { "-1001": [{ translatedUser: { id: 7 }, language: "ja" }] }]) {
-      expect(() => decodeStateFile({ global: { copy: { copiedUser: null } }, translate }, "state.json"))
-        .toThrow("state.json: state.translate must be absent (not part of the current state schema).");
+      expect(() => decodeGlobalStateFile({ copy: { copiedUser: null }, translate }, "state.json"))
+        .toThrow("state.json: $.translate must be absent (not part of the current state schema).");
     }
   });
 });

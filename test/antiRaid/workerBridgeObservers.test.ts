@@ -1,12 +1,8 @@
-import type { DiskIORespawnListener } from "../../packages/types/diskIO/messages";
+import type { DiskIORespawnListener, DiskBusinessMessage, DiskIORecoveryTransport } from "../../packages/types/diskIO/messages";
 import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import type {
-  DiskBusinessMessage,
-  DiskIORecoveryTransport,
-  VerificationPersistedReply,
-} from "../../packages/types";
+import type { VerificationPersistedReply } from "../../packages/types/diskIO/replies";
 import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid/protocol";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import type { ChatTeardownReason } from "../../packages/types/chatTeardown";

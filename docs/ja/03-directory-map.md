@@ -66,8 +66,8 @@
   - **代表的なファイル**：`verification.ts` と `verification/`（`join`/`pending`/`terminal`/`disable` の 4 区分に加え、永続スナップショットをメモリ上の state に再構築する `adopt.ts`）、`lockdown.ts` と `lockdown/`（`apply`/`persistence`/`restore`/`announcement`/`adopt` の 5 区分）、`replyAdmission.ts`、
     `adDetectAdmission.ts`、`temporaryAdBypass.ts`。
 - **`packages/config/`**
-  - **責務**：deployment `config/*.json` の厳密 schema、process snapshot、hot reload 判定、feature 単位の readiness 判定。identity policy はここに置きません。
-  - **代表的なファイル**：`bot.ts`、`botInput.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`、`reload.ts`。
+  - **責務**：deployment `config/{static,dynamic}/*.json` の厳密 schema、process snapshot、hot reload 判定、feature 単位の readiness 判定。identity policy はここに置きません。
+  - **代表的なファイル**：`bot.ts`、`botInput.ts`、`layout.ts`、`agent.ts`、`stickers.ts`、`adSamples.ts`、`readiness.ts`、`reload.ts`。
 - **`packages/database/`**
   - **責務**：共有 SQLite（identity policy と chat state）の schema、codec、行検証、Drizzle interaction boundary。runtime handle は Disk I/O Worker だけが owner です。
   - **代表的な path**：`schema/`（`migrations/` を含む）、`codec/identity.ts`、`codec/chatState.ts`、`codec/chatQa.ts`、`codec/temporaryAdBypass.ts`、`interact/`（`connection.ts`、`transaction.ts`、`identityPolicy.ts`、`chatState.ts`、`chatQa.ts`、`temporaryAdBypass.ts`、`aiContext.ts`、`migration.ts`、`initialization.ts`、`inspection.ts`）、`validation/storageRows.ts`。
@@ -85,7 +85,7 @@
 - **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
-  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（音声合成の共通実装）。AI chat の
+  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（音声合成の共通実装）、`ttsUsage.ts`（音声合成の 1 日あたりの回数）。AI chat の
     model 送受信はここではなく、vendor ごとの `packages/aiChat/{gemini,openai}/` にあります。
 - **`packages/workers/antiRaid/adDetect/`**
   - **責務**：provider routed 広告検出パイプライン。バッチキュー、送信者ごとの
@@ -97,7 +97,7 @@
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
   - **代表的なファイル**：`telegram/`（`telegram/avatar/`、`telegram/actions/` を含む）、`diskIO.ts` と `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、
-    `supervisedWorker.ts`、`workerSupervisor.ts`、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）。
+    `supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker のモデル client がリクエストのキャッシュ使用量を報告する境界）、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）。
 - **`packages/infra/identityPolicy/`**
   - **責務**：ホワイトリストの項目別権限、一時広告免除の累計、ブラックリストとの排他制御を担うメインスレッド側の読み取り境界。
   - **代表的なファイル**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。
@@ -106,7 +106,7 @@
     durable outbox、チャット掃除、退会アカウント検出に分割。
   - **代表的なファイル**：`membership.ts`、`outbox.ts`、`participantInvalid.ts`、`sweep.ts`、`sweepEligibility.ts`、`sweepReplay.ts`、`sweepRetryState.ts`、`sweepScheduler.ts`。
 - **`packages/infra/storage/`**
-  - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `state.json` 永続化境界、起動時の清掃。
+  - **責務**：データルート事前検査、インスタンスロック、業務 state facade、注入可能な `memory/global/state.json` 永続化境界（データルートの旧 `state.json` の拒否を含む）、起動時の清掃。
   - **代表的なファイル**：`dataRoot.ts`、`instanceLock.ts`、`stateStore.ts`、`statePersistence.ts`、`cleanup.ts`。
     `stateStore.ts` は業務メモリと snapshot、`statePersistence.ts` は厳密 decode、latest-only write、retry、flush を担当します。
 - **`packages/cache/`**
@@ -125,13 +125,13 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **インストーラー**：`install.sh` は対象ワークツリーを特定し、そのバージョンの入口へ処理を渡します。`scripts/install/` の repository、service、config、runtime、configure、start の各 shell モジュールの可読性と構文を一括確認してから順に読み込みます。`installSources.ts` は構文検査と隔離フィクスチャへ同じモジュール一覧を提供します。
-  - **Cold migration**：`migrateTranslateSessions.ts` は停止時バックアップの主副 state と schema v11 database を検証し、独立した出力と検証一覧を生成します。`migrations/translateSessions/state.ts` は state から `translate` ブロックを切り出し、`migrations/translateSessions/database.ts` は 1 トランザクションでセッションを `chat_states` へ書き込み、`migrations/files.ts` は両エッジ共通のファイル一覧とパス包含判定を担います。いずれもアプリ起動 graph には入りません。`migrateRandomImageNames.ts` はランダム画像ライブラリの旧ファイル名を内容の SHA-256 による名前へ再構築した独立出力を生成します。こちらもソースは読むだけで、`ready.json` だけを完了マーカーとします。
+  - **Cold migration**：`migrateGlobalState.ts` は停止時バックアップにある 14.0.0 形式の `state.json`（とバイト単位で同一の `state.json.bak`）を検証し、`copy` を独立出力 `memory/global/state.json` に、組み込み既定値と異なる素材項目を `config/dynamic/assets.json` に書き出し、検証一覧を生成します。`migrateRandomImageNames.ts` はランダム画像ライブラリの旧ファイル名を内容の SHA-256 による名前へ再構築した独立出力を生成します。どちらもソースは読むだけで、`ready.json` だけを完了マーカーとします。`migrations/files.ts` は両エッジ共通のファイル一覧とパス包含判定を担い、いずれもアプリ起動 graph には入りません。
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
   - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、リリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`、および 2 つの benchmark ルートが共用する `fixtures/copyTree.ts`（ディレクトリツリーの複製）と `fixtures/pathBoundary.ts`（書き込み境界の実パス構成要素の検査）。
 
 `scripts/migrations/active.ts` はビルド・配布検証・規約チェック共通の移行一覧です。バイナリには 2 本のエッジの CLI が含まれ、`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` で実行します。配置手順は [07 運用手順](07-operations.md) を参照してください。
 
-`botInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`bot.ts` は runtime snapshot を担当します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
+`botInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`bot.ts` は runtime snapshot を担当し、読む前に `layout.ts` で `config/static/` と `config/dynamic/` の構成を検査します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
 
 `commands/wed.ts` は操作の状態機械、`wed/dispatch.ts` は受理、`wed/chats.ts` はグループ操作キャッシュの作成・LRU eviction・session 清掃、`wed/members.ts` はメンバー変更の観測、`wed/runtime.ts` は共用有界実行器とアプリケーション lifecycle の接続を担当し、`wed/rendering.ts` は純粋な描画処理です。操作状態と実行器 handle は `cache/main/wed.ts`、各グループの長期メンバー集合と dirty window は `cache/main/wedMembers.ts` に置きます。`wed/persistence.ts` が起動時の接管、バッチ送信、Worker 再構築時の replay を担当します。`workers/diskIO/wedMemberFiles.ts` はファイルの厳格検証と原子置換を行い、書き込み待ち snapshot は `cache/workers/diskIO/wed.ts` が所有します。アバター読み取りと出力は `infra/telegram/` を再利用します。
 
@@ -155,13 +155,13 @@
 
 - **`main/`**
   - **所有者**：メインスレッド。
-  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `state.json` ミラー、`chatState.ts` の `chat_states` ホット読み取りコピー（`Map`、最大 25 グループ。群別翻訳セッションを含む）、
+  - **内容**：コマンドと自動パイプラインの状態、`stateStore.ts` facade が管理するグローバル `memory/global/state.json` ミラー、`assets.ts` の `config/dynamic/assets.json` 素材 snapshot、`chatState.ts` の `chat_states` ホット読み取りコピー（`Map`、最大 25 グループ。群別翻訳セッションを含む）、
     Disk I/O ホスト、および **Worker のメインスレッド側プロキシとミラー**
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **所有者**：AI 雑談 Worker。
   - **内容**：ローリングメモリ、返信の受理判定、Bot 画像への返信時の画像説明補完の登録、機嫌、ステッカーカタログとセット、メインスレッドから受け取った進行中の音声合成、
-    および両 provider のクライアント singleton。
+    音声合成の 1 日あたりの回数、および両 provider のクライアント singleton。
 - **`workers/antiRaid/`**
   - **所有者**：Anti-Raid Worker。
   - **内容**：認証/ロックダウンの状態機械、連投ウィンドウ、広告検出キュー、
@@ -173,7 +173,7 @@
   - **所有者**：各スレッドに 1 つずつ。
   - **内容**：Telegram capability holder（main thread の実 adapter または Worker の duplex proxy）、
     Worker duplex waiter、デプロイ設定 singleton、自己送信メッセージ登録、update 取消コンテキストの
-    storage。同じモジュールを
+    storage、AI キャッシュ使用量の報告先。同じモジュールを
     各スレッドが独立に実体化し、共有を意図しません。
 
 `main/antiRaid/` と `workers/antiRaid/` は**何一つ共有しない別々の状態**である点に注意してください。正式な状態機械は Worker の中にあり、メインスレッド側はクラッシュ再生のための純粋なデータにすぎません。ディレクトリを間違えるのはスタイルの問題ではありません。書き込んだ内容が相手側から永遠に読めなくなります。`bun run check:conventions` が実際のモジュールグラフでこの所有関係を照合し（[04 実行時の正式な不変条件](04-invariants.md#スレッドと状態の帰属) を参照）、違反時は import 連鎖を全て出力します。
@@ -186,7 +186,6 @@
 
 - 互換エントリは古い import を段階移行するためだけに存在します。**新しいコードは必ずドメインのサブファイルから直接 import します。**
 - 互換エントリは状態を所有せず、設定を解析せず、import 時の副作用を導入しません。
-- `packages/types/index.ts` も同様で、テストと段階移行のためだけに残します。
 - パッケージ内の `index.ts` は、呼び出し側が単一 package surface を本当に必要とする場合だけ安定した公開入口にします。現在の `packages/aiChat/index.ts`、`packages/antiRaid/index.ts`、`packages/infra/telegram/index.ts` は薄い明示的 export のみで、状態を所有しません。`infra/telegram/index.ts` は既存の業務モジュールが経由して使う client・通常アクション・コマンド受領の symbol だけを再 export し、新しいコードは `client`、`actions/*`、`commandMessages` などの leaf module を直接 import します。aiChat と antiRaid の production 内部は引き続き owner の leaf module を直接 import し、これら 3 つの入口はいずれも無制限な `export *` surface を使いません。
 
 ## テストのミラー構造

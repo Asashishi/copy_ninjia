@@ -114,7 +114,7 @@ describe("自发消息登记的分层容量", () => {
     }
   });
 
-  test("线程停止时带着在途 waiter 一起清空，不留悬挂 timer", async () => {
+  test("重置以 false 结算在途 waiter，迟到登记不改变已经结算的结果", async () => {
     const channelMessage: Message = {
       message_id: 40,
       date: 1,
@@ -122,8 +122,7 @@ describe("自发消息登记的分层容量", () => {
       text: "pending",
     } as Message;
 
-    // 有界 rendezvous 尚未判定就赶上线程停止：teardown 必须把 waiter 的 timer
-    // 一并清掉，否则这批 timer 会一直挂到 rendezvous 超时才结算。
+    // 重置同步取消 timer，并让当前等待者得到明确的否定结果。
     const pending: Promise<boolean> = waitForBotOwnMessage(channelMessage, 60_000);
     markSelfSent(-1001, 10);
     expect(pendingSelfSentWaiters.size).toBe(1);
@@ -133,12 +132,10 @@ describe("自发消息登记的分层容量", () => {
 
     expect(pendingSelfSentWaiters.size).toBe(0);
     expect(sentMessages.size).toBe(0);
-    // waiter 被清掉后这条 promise 不再有结算方；断言它在下一拍仍未结算即可。
-    const settled: unknown = await Promise.race([
-      pending.then((): string => "settled"),
-      Promise.resolve("still-pending"),
-    ]);
-    expect(settled).toBe("still-pending");
+    await expect(pending).resolves.toBeFalse();
+    markSelfSent(-4004, 40);
+    await expect(pending).resolves.toBeFalse();
+    resetSelfSentTracker();
   });
 
   test("重复登记同一条只保留一个 timer，不重复占用条目", () => {

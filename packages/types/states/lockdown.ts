@@ -99,7 +99,8 @@ export type LockdownMachineEvent =
     announced: boolean;
     announcementMessageId?: number;
     remainingMs: number;
-    persisted?: boolean;
+    /** 同 AdoptableLockdown.persisted。 */
+    persisted: boolean;
   };
 
 /**

@@ -9,7 +9,7 @@
  * 清洗与截断由调用方通过 normalize 传入——摘要、贴纸整包简介、三类媒体描述
  * 的字数上限各不相同，那是领域策略，不该下沉到供应商实现包。
  *
- * 请求体以构造器形式交给 client.ts，让 config/agent.json 的解析发生在它的
+ * 请求体以构造器形式交给 client.ts，让 config/dynamic/agent.json 的解析发生在它的
  * try 内（见 client.ts 的 requestOpenAiResult）。
  */
 
@@ -24,6 +24,7 @@ import {
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
+import { reportAiCacheUsage, warnAiUsageUnavailable } from "../../infra/aiCacheUsage";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
 import type { AiRequestFailureKind } from "../ai/utils/textResult";
@@ -124,7 +125,19 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
             response_format: "json",
           },
           { signal: requestSignal }
-        ),
+        ).then((result: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse): OpenAI.Audio.Transcriptions.TranscriptionCreateResponse => {
+          if (result.usage?.type === "duration") {
+            warnAiUsageUnavailable("media", "openai", "duration");
+          } else {
+            reportAiCacheUsage({
+              capability: "media", provider: "openai", model,
+              inputTokens: result.usage?.input_tokens,
+              cachedInputTokens: undefined,
+              outputTokens: result.usage?.output_tokens,
+            });
+          }
+          return result;
+        }),
         requestSignal
       );
     return finalizeAiTextResult(request.normalize(response.text));

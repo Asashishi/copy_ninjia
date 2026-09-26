@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,6 +68,29 @@ describe("基准的读写计量", () => {
 });
 
 describe("mock 根落盘足迹", () => {
+  test.each(["EIO", "EACCES"])("目录读取遇到 %s 时计量失败", (code: string) => {
+    const error = Object.assign(new Error("fixture"), { code });
+    const read = spyOn(fs, "readdirSync").mockImplementation((): never => { throw error; });
+    try {
+      expect(() => measureDirectoryFootprint("/fixture")).toThrow(error);
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  test.each(["EIO", "EACCES", "ENOENT"])("stat 遇到 %s 时只允许已消失文件不计数", async (code: string) => {
+    const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-stat-footprint-"));
+    await Bun.write(join(root, "file"), "fixture");
+    const error = Object.assign(new Error("fixture"), { code });
+    const stat = spyOn(fs, "statSync").mockImplementation((): never => { throw error; });
+    try {
+      if (code === "ENOENT") expect(measureDirectoryFootprint(root)).toEqual({ bytes: 0, files: 0 });
+      else expect(() => measureDirectoryFootprint(root)).toThrow(error);
+    } finally {
+      stat.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test("递归统计普通文件，跳过符号链接与目录本身", async () => {
     const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-footprint-"));
     try {

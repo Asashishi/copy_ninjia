@@ -1,5 +1,11 @@
 import type { VerificationEffect } from "../../types/states/verification";
 
+/** 验证回调管理员查询等待上限；满载只回执稍后重试，不继续增加查询等待者。 */
+export const VERIFICATION_CALLBACK_CHECK_MAX: number = 10_000;
+
+/** 验证回执的在途上限；正常结果与查询过载回执共用预算，满载不创建新请求。 */
+export const VERIFICATION_CALLBACK_REPLY_MAX: number = 10_000;
+
 /**
  * 状态不变或无需副作用的验证转移共用的空效果表；只读，任何转移都不得向它追加。
  * 所属模块：states/verification/。

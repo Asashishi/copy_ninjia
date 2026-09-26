@@ -22,6 +22,7 @@ import { redactSecretsInText } from "../../libs/redaction";
 import { jsonSerializedBytes } from "../../libs/jsonBytes";
 import type {
   AdDetectAgentConfig,
+  AgentCapabilityConfig,
   AgentDeploymentConfig,
   BotConfig,
 } from "../../types/config";
@@ -30,6 +31,13 @@ import type {
 interface SerializationBudget {
   errors: number;
   items: number;
+}
+
+/** 一项能力的凭据：api_key，以及 google provider headers 的每个值。 */
+function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig): void {
+  secrets.push(config.apiKey);
+  if (config.headers === undefined) return;
+  for (const value of Object.values(config.headers)) secrets.push(value);
 }
 
 /**
@@ -56,12 +64,13 @@ function currentSecrets(): readonly string[] {
   const secrets: string[] = [];
   const telegramToken: string | undefined = telegram?.botToken;
   if (telegramToken !== undefined) secrets.push(telegramToken);
-  const adDetectApiKey: string | undefined = adDetect?.apiKey;
-  if (adDetectApiKey !== undefined) secrets.push(adDetectApiKey);
+  if (adDetect !== null) pushCapabilitySecrets(secrets, adDetect);
   if (agent !== null) {
-    secrets.push(agent.text.apiKey, agent.summary.apiKey, agent.media.apiKey);
-    if (agent.image !== undefined) secrets.push(agent.image.apiKey);
-    if (agent.tts !== undefined) secrets.push(agent.tts.apiKey);
+    pushCapabilitySecrets(secrets, agent.text);
+    pushCapabilitySecrets(secrets, agent.summary);
+    pushCapabilitySecrets(secrets, agent.media);
+    if (agent.image !== undefined) pushCapabilitySecrets(secrets, agent.image);
+    if (agent.tts !== undefined) pushCapabilitySecrets(secrets, agent.tts);
   }
   for (const previous of loggerSecretsMemo.value) {
     if (secrets.length >= LOGGER_MAX_REDACTED_SECRETS) break;

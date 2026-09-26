@@ -12,7 +12,6 @@ import {
   blocklistRemovalCounter,
   blocklistSweepPages,
   blocklistSweepState,
-  clearBlocklistSweepState,
   pendingBlockedRemovals,
 } from "../../cache/main/blocklist";
 import {
@@ -336,7 +335,7 @@ export function forgetChatBlocklistWork(chatId: number): void {
   if (changed && !queuePendingBlockedRemovalsSnapshot()) {
     logger.error(`Failed to queue blocklist removal outbox cleanup for unmanaged chat ${chatId}.`);
   }
-  clearBlocklistSweepState(chatId);
+  blocklistSweepState.delete(chatId);
 }
 
 function settleRemovalSnapshot(reply: IdentityStoragePersistedReply): void {

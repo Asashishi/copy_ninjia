@@ -2,7 +2,7 @@
  * 群聊语音转写（Telegram voice note）的领域常量：占位文案、字数与体积上限、
  * 可接收的音频容器。
  *
- * **模型名不在这里**：语音走 config/agent.json 的 `agent.media`（与图片/贴纸/GIF
+ * **模型名不在这里**：语音走 config/dynamic/agent.json 的 `agent.media`（与图片/贴纸/GIF
  * 的视觉理解共用一项能力），代码不持有任何模型默认值，见 config/agent.ts。
  * 输出 token 上限属于供应商实现，在 consts/aiChat/{gemini,openai}.ts。
  * 所属模块：packages/aiChat/ai/voiceTranscription.ts 与 workers/aiChat/mediaText.ts。

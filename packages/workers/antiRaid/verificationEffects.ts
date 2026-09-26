@@ -1,5 +1,5 @@
 import { workerAtmosphere } from "./atmosphere";
-import type { AtmosphereTexts } from "../../types/atmosphere";
+import { answerVerificationCallback } from "./verificationCallbacks";
 import {
   verificationEntries,
   verificationGeneration,
@@ -9,7 +9,6 @@ import { VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS } from "../../consts/ant
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { logger } from "../../infra/logger";
 import {
-  answerCallbackQuery,
   deleteMessage,
   telegramApi,
 } from "../../infra/telegram";
@@ -184,28 +183,9 @@ export async function runVerificationEffects({
         );
         break;
       }
-      case "answerCallback": {
-        const atmosphere: AtmosphereTexts = workerAtmosphere(chatId);
-        const replyText: string =
-          effect.reply === "ok"
-            ? atmosphere.NOTICE_TEXTS.verificationCallbackPassed
-            : effect.reply === "invalid"
-              ? atmosphere.NOTICE_TEXTS.verificationCallbackExpired
-              : effect.reply === "useSelfButton"
-                ? atmosphere.NOTICE_TEXTS.verificationUseSelfButton(atmosphere.VERIFICATION_SELF_BUTTON_TEXT, atmosphere.VERIFICATION_APPROVE_BUTTON_TEXT)
-                : effect.reply === "notApprover"
-                  ? atmosphere.NOTICE_TEXTS.verificationAdminOnly
-                  : effect.reply === "approverUnknown"
-                    ? atmosphere.NOTICE_TEXTS.verificationAdminUnknown
-                    : atmosphere.NOTICE_TEXTS.verificationOtherUser;
-        await answerCallbackQuery({
-          callbackQueryId: effect.callbackQueryId,
-          text: replyText,
-          showAlert: effect.reply !== "ok",
-          api: telegramApi,
-        });
+      case "answerCallback":
+        await answerVerificationCallback({ chatId, callbackQueryId: effect.callbackQueryId, reply: effect.reply });
         break;
-      }
       case "startAdminCheck":
         startAdminCheck({
           chatId,

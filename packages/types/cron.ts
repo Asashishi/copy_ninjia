@@ -9,7 +9,7 @@ export type CronFileSource =
 /**
  * `send_image` 的来源；固定图片使用 1–10 项地址或文件数组，单张也使用数组。
  * `random` 从目录均匀抽一张（infra/randomImage.ts）；directory 为 null 时使用
- * state 的专用图库（getRandomHImageDirectory），显式目录已按项目根解析为绝对路径。
+ * config/dynamic/assets.json 的专用图库（getAssetConfig().randomHImageDirectory），显式目录已按项目根解析为绝对路径。
  */
 export type CronImageSource =
   | { readonly kind: "urls"; readonly urls: readonly string[] }

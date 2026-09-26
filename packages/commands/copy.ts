@@ -84,7 +84,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     }
   }
 
-  // 成功反馈和头像任务必须等对应 revision 的主、备两份 state 都 durable，
+  // 成功反馈和头像任务必须等对应 revision 的全局状态 durable，
   // 避免 update 已确认后重启复活旧 copy 状态。
   await persistGlobalState("copy started");
 

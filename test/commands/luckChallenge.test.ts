@@ -57,8 +57,10 @@ let mockTodayOverride: string | null = null;
 const realTime = { ...(await import("../../packages/libs/time")) };
 mock.module("../../packages/libs/time", () => ({
   ...realTime,
-  getTokyoDateKey: (date?: Date): string =>
-    (mockTodayOverride === null || date ? realTime.getTokyoDateKey(date) : mockTodayOverride),
+  getTokyoDateKey: (timestampMs?: number): string =>
+    (mockTodayOverride === null || timestampMs !== undefined
+      ? realTime.getTokyoDateKey(timestampMs)
+      : mockTodayOverride),
 }));
 
 const luckChallenge = await import("../../packages/commands/luckChallenge/index");
@@ -405,7 +407,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
   test("带文本：同款问题按钮只展示前 4 个字加 ...，但仍携带完整文本", async () => {
     const question = "谷歌没发 3.5 pro 我要死了呜啊啊啊啊";
-    const ctx = makeInlineCtx(8603940412, question);
+    const ctx = makeInlineCtx(337, question);
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
 
     const sameQuestionButton = ctx.results[0]!.reply_markup.inline_keyboard[0]![1]!;
@@ -415,7 +417,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
   test("同款问题按钮按字形簇截断，不拆开 ZWJ 组合表情", async () => {
     const question = "👨‍👩‍👧‍👦ABCD";
-    const ctx = makeInlineCtx(8603940413, question);
+    const ctx = makeInlineCtx(338, question);
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
 
     const sameQuestionButton = ctx.results[0]!.reply_markup.inline_keyboard[0]![1]!;

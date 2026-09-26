@@ -10,6 +10,7 @@ import {
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
 } from "../../consts/antiRaid/adDetect";
 import { logger } from "../../infra/logger";
+import { reportGeminiUsage } from "../../infra/aiCacheUsage";
 import type { AdDetectAgentConfig } from "../../types/config";
 import type { AdDetectJsonRequestParams } from "../../types/antiRaid/adDetect";
 
@@ -23,6 +24,7 @@ function getAdDetectGoogleClient(): GoogleGenAI {
     apiKey: config.apiKey,
     httpOptions: {
       baseUrl: config.baseUrl,
+      headers: config.headers,
       timeout: AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS,
       retryOptions: { attempts: AD_DETECT_GOOGLE_REQUEST_ATTEMPTS },
     },
@@ -57,6 +59,7 @@ async function attemptGoogleJson({
         },
       },
     });
+    reportGeminiUsage({ capability: "ad_detect", model, usage: response.usageMetadata });
     const candidate: Candidate | undefined = response.candidates?.[0];
     if (candidate?.finishReason !== FinishReason.STOP) return null;
     const body: string = response.text?.trim() ?? "";

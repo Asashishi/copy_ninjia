@@ -1,3 +1,4 @@
+import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { AgentDeploymentConfig } from "../../packages/types/config";
@@ -9,6 +10,8 @@ mock.module("../../packages/config/agent", () => ({
     agentConfig = config;
   },
 }));
+const postMessage = mock((..._args: unknown[]): void => {});
+Object.defineProperty(globalThis, "self", { configurable: true, value: { postMessage } });
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub({ error: loggerError }),
@@ -24,6 +27,7 @@ const {
   ttsAiProvider,
 } = await import("../../packages/aiChat/provider");
 const { geminiClientCache } = await import("../../packages/cache/workers/aiChat/gemini");
+const { ttsDailyUsage } = await import("../../packages/cache/workers/aiChat/ttsUsage");
 const { openAiClientCache } = await import("../../packages/cache/workers/aiChat/openai");
 const {
   getMediaInputState,
@@ -46,17 +50,18 @@ beforeEach((): void => {
   geminiClientCache.current = null;
   openAiClientCache.current = null;
   agentConfig = {
-    text: { provider: "google", apiKey: "google-text-key", baseUrl: undefined, model: "gemini-text" },
-    summary: { provider: "openai", apiKey: "openai-summary-key", baseUrl: "https://openai.example/v1", model: "gpt-summary" },
-    media: { provider: "google", apiKey: "google-media-key", baseUrl: "https://google.example", model: "gemini-media" },
+    text: { provider: "google", apiKey: "google-text-key", baseUrl: undefined, headers: undefined, model: "gemini-text" },
+    summary: { provider: "openai", apiKey: "openai-summary-key", baseUrl: "https://openai.example/v1", headers: undefined, model: "gpt-summary" },
+    media: { provider: "google", apiKey: "google-media-key", baseUrl: "https://google.example", headers: undefined, model: "gemini-media" },
     image: {
       provider: "openai",
       apiKey: "xai-image-key",
       baseUrl: "https://xai.example/v1",
+      headers: undefined,
       model: "grok-image",
       imageProtocol: "xai",
     },
-    tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, model: "tts-model", voice: "Leda" },
+    tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
   };
   loggerError.mockClear();
 });
@@ -72,7 +77,7 @@ test("每项能力按 agent 配置独立选择 provider", () => {
 test("修改一项只影响该能力", () => {
   agentConfig = {
     ...agentConfig,
-    media: { provider: "openai", apiKey: "openai-media-key", baseUrl: undefined, model: "vision-model" },
+    media: { provider: "openai", apiKey: "openai-media-key", baseUrl: undefined, headers: undefined, model: "vision-model" },
   };
   expect(mediaAiProvider().name).toBe("openai");
   expect(textAiProvider().name).toBe("google");
@@ -115,8 +120,8 @@ test("每项路由只暴露自己那一项能力", () => {
 test("相同协议、端点和凭据的不同能力共享一个配额闸门", () => {
   agentConfig = {
     ...agentConfig,
-    text: { provider: "openai", apiKey: "shared-key", baseUrl: "https://shared.example/v1", model: "chat" },
-    summary: { provider: "openai", apiKey: "shared-key", baseUrl: "https://shared.example/v1", model: "summary" },
+    text: { provider: "openai", apiKey: "shared-key", baseUrl: "https://shared.example/v1", headers: undefined, model: "chat" },
+    summary: { provider: "openai", apiKey: "shared-key", baseUrl: "https://shared.example/v1", headers: undefined, model: "summary" },
   };
 
   textAiProvider();
@@ -128,7 +133,7 @@ test("相同协议、端点和凭据的不同能力共享一个配额闸门", ()
 test("配了但这一家没实现的可选能力，只在启动时记一次诊断", () => {
   agentConfig = {
     ...agentConfig,
-    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, model: "tts-model", voice: "Leda" },
+    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
   };
   expect(ttsAiProvider()).toEqual({ name: "openai" });
   reportUnimplementedAgentCapabilities();
@@ -270,11 +275,47 @@ test("生图与语音合成门面透出 provider 结果", async () => {
     await expect(imageAiProvider()?.generateImage({} as never))
       .resolves.toEqual({ bytes: new Uint8Array([1]), mimeType: "image/png" });
     expect(ttsAiProvider()).toBe(ttsAiProvider());
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ" }))
-      .resolves.toEqual({ bytes: new Uint8Array([2]), mimeType: "audio/wav" });
+    ttsDailyUsage.current = null;
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" }))
+      .resolves.toEqual({ ok: true, speech: { bytes: new Uint8Array([2]), mimeType: "audio/wav" } });
   } finally {
     generateImage.mockRestore();
     synthesizeSpeech.mockRestore();
+    ttsDailyUsage.current = null;
+  }
+});
+
+test("语音合成门面发起请求前登记每日计数，达到调用方上限时不发起请求", async () => {
+  const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech")
+    .mockImplementation(async () => null);
+  postMessage.mockClear();
+  ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 74 };
+  try {
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai" }))
+      .resolves.toEqual({ ok: false, reason: "synthesis failed" });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    expect(ttsDailyUsage.current?.count).toBe(75);
+    expect(postMessage).toHaveBeenCalledWith({ type: "ttsUsage", usage: ttsDailyUsage.current });
+
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai" }))
+      .resolves.toEqual({ ok: false, reason: "daily limit reached" });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    expect(ttsDailyUsage.current?.count).toBe(75);
+
+    // `/send` 与 cron 使用完整上限，仍可越过 AI 的预留线。
+    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
+    expect(ttsDailyUsage.current?.count).toBe(76);
+
+    // 排队期间已取消的请求不登记计数。
+    const aborted: AbortController = new AbortController();
+    aborted.abort();
+    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", signal: aborted.signal });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
+    expect(ttsDailyUsage.current?.count).toBe(76);
+  } finally {
+    synthesizeSpeech.mockRestore();
+    ttsDailyUsage.current = null;
   }
 });
 
@@ -343,7 +384,7 @@ test("只有 media 能力变化时两种输入模态才回到未探测状态", (
 test("agent 热重载后按新快照重记「配了但没实现」的诊断", () => {
   reloadAgentDeploymentConfig({
     ...agentConfig,
-    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, model: "tts-model", voice: "Leda" },
+    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
   });
   expect(loggerError).toHaveBeenCalledTimes(1);
   expect(String(loggerError.mock.calls[0]![0])).toContain("$.agent.tts");

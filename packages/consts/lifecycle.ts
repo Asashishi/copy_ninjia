@@ -46,7 +46,7 @@ export const AI_CHAT_INVALIDATE_TIMEOUT_MS: number = 10_000;
 export const AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS: number = 7_000;
 /** 正常停机等待 Disk I/O Worker flush 的预算。 */
 export const DISK_IO_FLUSH_TIMEOUT_MS: number = 3_000;
-/** 正常停机等待 state 主/LKG 写入的预算。 */
+/** 正常停机等待全局状态文件写入的预算。 */
 export const STATE_FLUSH_TIMEOUT_MS: number = 3_000;
 /** 正常停机等待头像、反应与翻译 owner 的预算。 */
 const BACKGROUND_MAINTENANCE_TIMEOUT_MS: number = 3_000;

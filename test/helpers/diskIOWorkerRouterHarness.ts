@@ -5,10 +5,16 @@
  */
 
 import { afterAll, beforeEach, mock } from "bun:test";
-import type { DiskIOMessage } from "../../packages/types";
+import type { DiskIOMessage } from "../../packages/types/diskIO/messages";
 
 export const handleLogMessage = mock((_message: unknown): void => {});
 export const handleAdSampleMessage = mock((_message: unknown): void => {});
+export const handleAiCacheUsageMessage = mock(async (_message: unknown): Promise<void> => {});
+export const flushAiCacheBuffer = mock(async (): Promise<boolean> => true);
+export const inspectAiCacheFile = mock(async (): Promise<{ readonly kind: "aiCache" }> => ({ kind: "aiCache" }));
+export const adoptAiCacheFile = mock((_inspection: unknown): void => {});
+export const maintainAiCacheFile = mock(async (): Promise<void> => {});
+export const summarizeAiCache = mock(async (_day?: string): Promise<void> => {});
 export const markAiMemorySnapshotDirty = mock((_input: unknown): void => {});
 export const deleteAiMemorySnapshot = mock((_chatId: number, _revision: number): void => {});
 export const markStickerCatalogSnapshotDirty = mock((_pack: string, _snapshot: string): void => {});
@@ -156,6 +162,14 @@ mock.module("../../packages/workers/diskIO/verificationWrites", () => ({
   handleVerificationUpsert,
   maintainVerificationDayForToday,
 }));
+mock.module("../../packages/workers/diskIO/aiCacheFile", () => ({
+  adoptAiCacheFile,
+  flushAiCacheBuffer,
+  handleAiCacheUsageMessage,
+  inspectAiCacheFile,
+  maintainAiCacheFile,
+  summarizeAiCache,
+}));
 mock.module("../../packages/workers/diskIO/adSampleFile", () => ({
   handleAdSampleMessage,
   maintainAdSampleFiles,
@@ -248,6 +262,12 @@ beforeEach(() => {
   for (const fn of [
     handleLogMessage,
     handleAdSampleMessage,
+    handleAiCacheUsageMessage,
+    flushAiCacheBuffer,
+    inspectAiCacheFile,
+    adoptAiCacheFile,
+    maintainAiCacheFile,
+    summarizeAiCache,
     markAiMemorySnapshotDirty,
     deleteAiMemorySnapshot,
     markStickerCatalogSnapshotDirty,

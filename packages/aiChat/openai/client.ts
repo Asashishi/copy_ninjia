@@ -14,6 +14,7 @@ import OpenAI from "openai";
 import { openAiClientCache } from "../../cache/workers/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
+import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
 import {
   OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
   OPENAI_REQUEST_MAX_RETRIES,
@@ -68,6 +69,17 @@ export function getOpenAiClient(capability: AgentCapability): OpenAI {
   return client;
 }
 
+/**
+ * Responses 用量里命中缓存的输入 token：官方字段是 `input_tokens_details.cached_tokens`；
+ * DeepSeek 等兼容端点缺它时读 `prompt_cache_hit_tokens`。都没有时为 undefined。
+ */
+function responsesCachedTokens(usage: OpenAI.Responses.ResponseUsage | undefined): unknown {
+  if (usage === undefined) return undefined;
+  const cached: unknown = (usage.input_tokens_details as { cached_tokens?: unknown } | undefined)?.cached_tokens;
+  if (cached !== undefined) return cached;
+  return (usage as unknown as Readonly<Record<string, unknown>>).prompt_cache_hit_tokens;
+}
+
 /** OpenAI Responses 调用的完整参数；能力决定客户端端点。 */
 export interface OpenAiRequestOptions {
   readonly capability: AgentCapability;
@@ -82,7 +94,7 @@ export interface OpenAiRequestOptions {
  * 否则上层只能看到「没产出」，查不到原因。
  * @param buildBody 就地构造完整请求体，直接使用官方 SDK 的参数类型，SDK 升级
  *   造成的字段漂移会在编译期暴露。收的是构造器而不是构造好的对象，因为模型名
- *   与端点来自 config/agent.json 的对应能力（见 config/agent.ts），配置写坏时解析
+ *   与端点来自 config/dynamic/agent.json 的对应能力（见 config/agent.ts），配置写坏时解析
  *   会抛：构造放在调用方就意味着异常绕过本函数的 try、直接掀掉整轮回复，上层
  *   为 `ok:false` 准备的诊断与降级路径一条都走不到，运维只看得见 bot 不说话。
  * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
@@ -105,8 +117,18 @@ export async function requestOpenAiResult({
     // 到期或上游取消时立即结算，不受 SDK 内部退避计时器影响。
     const requestSignal: AbortSignal = signalWithTimeout(signal, openAiRequestTimeoutMs(capability));
     requestSignal.throwIfAborted();
+    const model: string = String(body.model);
     response = await raceAbortOrThrow(
-      getOpenAiClient(capability).responses.create(body, { signal: requestSignal }),
+      getOpenAiClient(capability).responses.create(body, { signal: requestSignal })
+        .then((result: OpenAI.Responses.Response): OpenAI.Responses.Response => {
+          reportAiCacheUsage({
+            capability, provider: "openai", model,
+            inputTokens: result.usage?.input_tokens,
+            cachedInputTokens: responsesCachedTokens(result.usage),
+            outputTokens: result.usage?.output_tokens,
+          });
+          return result;
+        }),
       requestSignal
     );
   } catch (error: unknown) {

@@ -1,13 +1,13 @@
 /**
- * `/h_image` 抽图：从随机图片目录（state.global.assets.randomHImageDir，见
- * infra/storage/stateStore.ts 的 getRandomHImageDirectory）均匀抽一张发到触发的群。
+ * `/h_image` 抽图：从随机图片目录（config/dynamic/assets.json 的 random_h_image_dir，见
+ * config/assets.ts 的 getAssetConfig）均匀抽一张发到触发的群。
  * 在延迟命令执行器里运行（见 commands/deferredCommands.ts）。结果图片只经
  * sendHImageResult 发送；抽取失败的提示走 sendCommandMessage，30 秒后删除。
  */
 
 import { chatAtmosphere } from "../../infra/atmosphere";
 import { pickRandomImage } from "../../infra/randomImage";
-import { getRandomHImageDirectory } from "../../infra/storage/stateStore";
+import { getAssetConfig } from "../../config/assets";
 import { recordBotImage } from "../../aiChat";
 import { sendCommandMessage, sendPhotoWithResult } from "../../infra/telegram";
 import type { AtmosphereTexts } from "../../types/atmosphere";
@@ -41,7 +41,7 @@ async function sendHImageResult({ chatId, messageId, messageThreadId, pick }: Se
 
 /** 抽取并发送；抽取失败按结果回一句 30 秒提示。 */
 export async function deliverRandomImage(request: HImageRequest): Promise<void> {
-  const pick: RandomImagePick = await pickRandomImage(getRandomHImageDirectory());
+  const pick: RandomImagePick = await pickRandomImage(getAssetConfig().randomHImageDirectory);
   if (pick.status === "ok") {
     await sendHImageResult({ ...request, pick });
     return;

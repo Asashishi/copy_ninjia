@@ -30,7 +30,7 @@ function refuseUnavailableTranslation(chatId: number, messageId: number | undefi
 /**
  * 独立翻译命令：方向加回复目标或 @username 开始，stop 停止本群全部或指定目标，
  * list 用 JSON 代码块列出方向，enable/disable 使用既有翻译权限。
- * 会话变更等主、备落盘后才反馈成功。
+ * 会话变更等落盘后才反馈成功。
  */
 export async function handleTranslateCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;

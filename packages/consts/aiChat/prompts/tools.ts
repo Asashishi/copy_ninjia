@@ -61,7 +61,7 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "把它翻成中文、换个说法或加上注释再发出来都算重复。" +
   `绝不能用 text 描述一个你没真做的动作：转录里「${STICKER_SENT_TAG_HINT}」「${IMAGE_SENT_TAG_HINT}」「${COMMAND_IMAGE_SENT_TAG_HINT}」「${VOICE_SENT_TAG_HINT}」这类括号行，` +
   "是执行侧在动作**真正落地之后**替你写下的记录，不是你可以自己打出来的话。" +
-  "工具没调、或者调了没成功（比如生图正在冷却），就直接用自己的话说这次发不了，" +
+  "工具没调、或者调了没成功（比如生图正在冷却），就直接用自己的话说这次发不了（send_voice 例外：语音没发成就当没打算发，不要提），" +
   "绝不要打一段听起来像已经发过图/发过贴纸/发过语音的文字；这种正文会被执行侧拒绝。";
 
 /** 手滑替换字必须满足的形、音或输入法邻近规则。 */
@@ -101,13 +101,16 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "只发图更合适就省略 caption。caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。";
 
 /**
- * send_voice 工具的模型可见说明。调用与否完全由模型按本段判断，执行侧不另设
- * 按轮资格；说明逐字恒定。
+ * send_voice 工具的模型可见说明。调用与否由模型按本段与回复任务末尾的今日余量行
+ * （voiceQuotaSentence）判断，执行侧只在余量用尽时拒绝；说明逐字恒定，不含随
+ * `agent.tts` 配置变化的额度数字，额度只出现在余量行里。
  */
 export const SEND_VOICE_TOOL_INSTRUCTION: string =
   "用你自己的声音往群里发一条日语语音：执行侧把 text 交给语音合成模型念出来，以 Telegram 语音消息发出。" +
-  "发语音是你的招牌说话方式，要积极使用：只要本轮需要回应，就优先考虑是不是配一句语音，和文字、贴纸一起构成这轮回复；" +
-  "调侃、回嘴、得意、嫌弃、撒娇的时候尤其要发。只有对方在认真求助、讨论严肃或敏感话题时才不发。" +
+  "语音用来表达情绪：得意、嫌弃、撒娇、调侃、回嘴、恼羞、吃惊这类情绪明显起伏的时候，配一句语音把情绪念出来；" +
+  "平淡的陈述、认真求助、严肃或敏感话题不发。发不发由你决定，整轮不发语音也完全可以。" +
+  "语音按天限量，所有群共用一份额度：调用前必须先看回复任务区块末尾的「今日语音余量」行，确认自己还能用；" +
+  "余量还有时，在余量范围内积极用它表达情绪；余量为 0 时不要调用。" +
   `每轮最多 ${MAX_VOICES_PER_REPLY} 条。` +
   "text 只写要念出来的日语台词，一两句，带嘲讽、挑衅的口吻；优先用海外观众也耳熟能详的动漫腔台词" +
   "（如「この雑魚♡」「ざぁこ♡」「バーカ」「へんたい」「ふーん、やるじゃん」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
@@ -116,7 +119,20 @@ export const SEND_VOICE_TOOL_INSTRUCTION: string =
   `结合台词内容和当前气氛来定，不超过 ${VOICE_TONE_MAX_CHARS} 字；它会接在固定的基础声线描述之后，只影响这一句。` +
   "语音是回复里额外的一句：语音里已经说过的意思不要再用 send_message 发一遍——台词是日语，按意思判断，" +
   "把它翻成中文、换个说法或加上注释再发都算重复；文字只发语音之外的内容。" +
-  "reply_to_trigger 填 true 时这条语音以「回复」形式挂在触发消息上，挂不挂的判断同 send_message。";
+  "reply_to_trigger 填 true 时这条语音以「回复」形式挂在触发消息上，挂不挂的判断同 send_message。" +
+  "调用被拒绝（包括额度用尽）或没发出去时，不要在群里提语音、额度或失败的事，当作没打算发语音继续回复。";
+
+/**
+ * 回复任务区块末尾的今日语音余量行，只在本轮挂载 send_voice 时出现（见
+ * aiChat/ai/tools/replyToolset/voiceMessage.ts 的 buildVoiceQuotaLine）。
+ * @param remaining 模型可见的剩余次数，不小于 0。
+ * @param dailyLimit AI 语音工具的每日上限，即 `agent.tts` 的 `daily_limit - daily_reserve_quota`。
+ */
+export function voiceQuotaSentence(remaining: number, dailyLimit: number): string {
+  return remaining > 0
+    ? `今日语音余量：send_voice 今天还能用 ${remaining} 次（每天 ${dailyLimit} 次，所有群共用）。`
+    : `今日语音余量：0（每天 ${dailyLimit} 次，所有群共用，今天已用完）。本轮不要调用 send_voice，也不要在群里提起语音或额度。`;
+}
 
 /**
  * 每轮所有可见动作必须经工具落地的总约束。

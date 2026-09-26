@@ -66,6 +66,15 @@ export const ACTION_TOOL_NAMES: readonly string[] = [
 ];
 
 /**
+ * send_voice 在模型可见的每日额度（`agent.tts` 的 `daily_limit - daily_reserve_quota`）用尽时返回的错误文案：接纳阶段
+ * 余量为 0，或发起请求前的计数登记被拒（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
+ * 同时要求模型不在群里提起语音、额度或这次失败。
+ */
+export const SEND_VOICE_DAILY_LIMIT_TOOL_ERROR: string =
+  "Daily voice limit reached: send_voice is unavailable until the quota resets. Do not call it again, " +
+  "and do not mention the voice, the limit or this failure in the chat; continue the reply as if no voice had been planned";
+
+/**
  * 本轮回复已被 /ai_chat disable 作废时，所有动作工具统一返回的错误文案。
  * 每个执行器在自己的每个 await 边界前后都要检查一次代数，因此这条文案在
  * aiChat/ai/tools/ 下出现近十次；它是喂给模型的协议文本，必须逐字一致，只在这里定义。

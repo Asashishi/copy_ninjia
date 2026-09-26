@@ -1,9 +1,10 @@
+import type { AiCacheUsage } from "../aiCache";
 import type { Atmosphere } from "../atmosphere";
 import type { MediaKind, TelegramVisionSource } from "../media";
 import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../stickers/protocol";
 import type { AiMemoryUsage } from "./memory";
 import type { AiSpeakerSnapshot } from "./speaker";
-import type { VoiceSynthesisResult } from "./voiceMessage";
+import type { TtsDailyUsage, VoiceSynthesisResult } from "./voiceMessage";
 import type {
   AgentDeploymentConfig,
   MoodConfig,
@@ -32,7 +33,7 @@ export type AiDirectTriggerReason = "reply" | "mention";
 export interface AiInitMessage {
   type: "init";
   botInfo: AiBotInfo;
-  /** 主线程从 config/bot.json 读取后注入；Worker 不直接加载 Bot 部署配置。 */
+  /** 主线程从 config/static/bot.json 读取后注入；Worker 不直接加载 Bot 部署配置。 */
   superAdminUserId: number;
   defaultAtmosphere: Atmosphere;
   agent: AgentDeploymentConfig;
@@ -42,7 +43,7 @@ export interface AiInitMessage {
 }
 
 /**
- * config/ 热重载后主线程已生效的 AI 部署配置（见 app/configReload.ts）。字段为
+ * config/dynamic/ 热重载后主线程已生效的 AI 部署配置（见 app/configReload.ts）。字段为
  * undefined 表示该领域本轮未变化；主线程在投递前同步改写 lastInitState，Worker
  * 重建时由 init 重放同一份最新快照。`agent` 带凭据，传输与脱敏约束同 AiInitMessage。
  */
@@ -278,6 +279,16 @@ export interface AiCancelVoiceSynthesisMessage {
   requestId: number;
 }
 
+/**
+ * 语音合成每日计数的恢复值：startAiChatWorker 在 init 之后投递 memory/global/state.json
+ * 恢复出的 `ttsUsage`，Worker 崩溃重建时 onRespawn 重放主线程持有的最新 ttsUsage 回执
+ * （见 aiChat/workerBridge.ts）。null 表示从没用过。
+ */
+export interface AiHydrateTtsUsageMessage {
+  type: "hydrateTtsUsage";
+  usage: TtsDailyUsage | null;
+}
+
 export type AiChatWorkerMessage =
   | AiPersonaMessage
   | AiInitMessage
@@ -293,7 +304,8 @@ export type AiChatWorkerMessage =
   | AiQueryMoodMessage
   | AiSwitchMoodMessage
   | AiSynthesizeVoiceMessage
-  | AiCancelVoiceSynthesisMessage;
+  | AiCancelVoiceSynthesisMessage
+  | AiHydrateTtsUsageMessage;
 
 export interface AiMemoryEvent {
   type: "memory";
@@ -347,7 +359,7 @@ export interface AiMoodSwitchedEvent {
   type: "moodSwitched";
   chatId: number;
   requestId: number;
-  /** 新抽中的心情档位名（config/mood.json 的 name 字段）。 */
+  /** 新抽中的心情档位名（config/dynamic/mood.json 的 name 字段）。 */
   moodName: string;
 }
 
@@ -356,7 +368,7 @@ export interface AiMoodQueriedEvent {
   type: "moodQueried";
   chatId: number;
   requestId: number;
-  /** 当前有效心情档位名（config/mood.json 的 name 字段）。 */
+  /** 当前有效心情档位名（config/dynamic/mood.json 的 name 字段）。 */
   moodName: string;
 }
 
@@ -370,6 +382,21 @@ export interface AiVoiceSynthesizedEvent {
   result: VoiceSynthesisResult;
 }
 
+/**
+ * Worker 登记一次语音合成请求后的全量计数（见 aiChat/ai/ttsUsage.ts）：主线程据此
+ * 替换全局状态的 `ttsUsage` 并落盘，作为 Worker 重建时的重放来源。
+ */
+export interface AiTtsUsageEvent {
+  type: "ttsUsage";
+  usage: TtsDailyUsage;
+}
+
+/** Worker -> 主线程：一次模型请求的缓存用量，主线程经诊断通道转投 memory/ai-daily-usage/。 */
+export interface AiCacheUsageEvent {
+  type: "aiCacheUsage";
+  usage: AiCacheUsage;
+}
+
 export type AiChatWorkerEvent =
   | AiMemoryEvent
   | AiMemoryUsagesEvent
@@ -379,4 +406,6 @@ export type AiChatWorkerEvent =
   | AiMoodQueriedEvent
   | AiMoodSwitchedEvent
   | AiVoiceSynthesizedEvent
+  | AiTtsUsageEvent
+  | AiCacheUsageEvent
   | AiStickerCatalogEvent;

@@ -248,8 +248,8 @@ export async function readJoinLog(
   await ensureCurrentDayPrepared(today);
   const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
 
-  const firstDay: string = getTokyoDateKey(new Date(request.since));
-  const lastDay: string = getTokyoDateKey(new Date(request.now));
+  const firstDay: string = getTokyoDateKey(request.since);
+  const lastDay: string = getTokyoDateKey(request.now);
   const requestedDays: string[] =
     firstDay === lastDay ? [firstDay] : [firstDay, lastDay];
   // 只认本群、本窗口这一两个文件的落盘结果：别的群写不动与这次读取无关，

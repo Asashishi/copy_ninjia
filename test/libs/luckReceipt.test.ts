@@ -12,7 +12,7 @@ import {
   luckReceiptHashFromLine,
   verifyLuckReceipt,
 } from "../../packages/libs/luckReceipt";
-import type { LuckReceiptSecret } from "../../packages/types";
+import type { LuckReceiptSecret } from "../../packages/types/diskIO/storage";
 
 const DAY = "2026-07-19";
 const SECRET: LuckReceiptSecret = {

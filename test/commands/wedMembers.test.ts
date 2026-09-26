@@ -41,7 +41,7 @@ test("每群独立 15 万个 ID，满额保留已有成员，退群后继续接�
   observeWedMembers(message(1));
   observeWedMembers(message(WED_MEMBER_LIMIT + 1));
   expect(members).toBeInstanceOf(Set);
-  expect(members.size).toBe(150_000);
+  expect(members.size).toBe(WED_MEMBER_LIMIT);
   expect(members.has(1)).toBeTrue();
   expect(members.has(2)).toBeTrue();
   expect(members.has(WED_MEMBER_LIMIT + 1)).toBeFalse();
@@ -85,9 +85,18 @@ test("离群服务消息和 chat_member 移除 ID，restricted 只有 is_member 
   expect([...wedMemberStates.get(-1001)!.members.keys()]).toEqual([2]);
   observeWedMembers({ chat: { id: -1001, type: "supergroup" }, chatMember: { new_chat_member: { user: { id: 2 }, status: "restricted", is_member: false } } } as never);
   expect(wedMemberStates.get(-1001)!.members.size).toBe(0);
-  expect(isPresentMember({ status: "restricted", is_member: true } as ChatMember)).toBeTrue();
-  expect(isPresentMember({ status: "kicked" } as ChatMember)).toBeFalse();
-  expect(isPresentMember({ status: "administrator" } as ChatMember)).toBeTrue();
+});
+
+test.each([
+  [{ status: "creator" }, true],
+  [{ status: "administrator" }, true],
+  [{ status: "member" }, true],
+  [{ status: "restricted", is_member: true }, true],
+  [{ status: "restricted", is_member: false }, false],
+  [{ status: "left" }, false],
+  [{ status: "kicked" }, false],
+] as const)("统一成员判定覆盖全部合法状态：%j", (member, expected) => {
+  expect(isPresentMember(member as ChatMember)).toBe(expected);
 });
 
 test("成员权威表满额时拒绝建立新群交互，已有群仍可命中", () => {

@@ -554,7 +554,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       voiceDurationSeconds: 0,
     })).resolves.toBeNull();
     expect(mediaInputSupportCache.current?.vision.support).toBe("misconfigured");
-    // 诊断要指向 config/agent.json 的 media 段，而不是含糊地说模型没这项能力。
+    // 诊断要指向 config/dynamic/agent.json 的 media 段，而不是含糊地说模型没这项能力。
     const diagnostics: string[] = loggerError.mock.calls.map((call: unknown[]): string => String(call[0]));
     expect(diagnostics.filter((line: string): boolean => line.includes("$.agent.media"))).toHaveLength(1);
 

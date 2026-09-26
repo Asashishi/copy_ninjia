@@ -47,7 +47,7 @@ export const forwardedLogDropState: {
  * owner：每条线程各持一份（同 cache/perThread/config.ts 的三个凭据 holder）。
  *
  * `infra/logger/serialization.ts` 的 currentSecrets 每条日志都要把凭据摊成一个
- * 数组交给值级脱敏；三份配置只在启动与 config/ 热重载时替换，逐条重建纯属白付。
+ * 数组交给值级脱敏；三份配置只在启动与 config/dynamic/ 热重载时替换，逐条重建纯属白付。
  * 这里缓存上一次的结果，**并连同它依据的三个 holder 取值一起记下来**：判据是
  * 对象身份，不是「已经算过一次」——三个 holder 都是惰性填充的，先记一次空结果
  * 就把「配置还没读完」固化成「这个进程没有凭据」，此后每条日志都不再脱敏。所有

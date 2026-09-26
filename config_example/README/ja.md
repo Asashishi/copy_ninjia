@@ -11,20 +11,27 @@ production 設定として使用できません。
 `cron.json` の例は定時タスクの書き方を示すだけなので、どちらもコピーしないでください。
 
 ```bash
-mkdir -p config
-for example in config_example/*.json; do
+mkdir -p config/static config/dynamic
+for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in
     g-auth.json | cron.json) ;;
-    *) cp -n "$example" config/ ;;
+    *) cp -n "$example" "config/${example#config_example/}" ;;
   esac
 done
 ```
 
 既存 file を上書きする copy command を使わず、`config_example/` を deployment backup として
 扱わないでください。`config/` には credential が含まれるため、service account だけが読める
-権限を推奨します。稼働中の `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
-`cron.json` の変更は hot reload され、それ以外の file は変更後に再起動が必要です（下記「稼働中の変更」）。allowlist、
-blocklist、未完了 removal は deployment 設定ではなく runtime data であり、
+権限を推奨します。`config/` は変更の反映方法で 2 つの subdirectory に分かれます。
+
+- `config/static/`：`bot.json`、`g-auth.json`。変更後は再起動が必要です。
+- `config/dynamic/`：`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+  `cron.json`。稼働中の変更は hot reload されます（下記「稼働中の変更」）。
+
+`config/dynamic/` は必ず存在させてください（空でも構いません）。いずれかの file が `config/` 直下や
+もう一方の subdirectory にあると startup を拒否します。
+
+allowlist、blocklist、未完了 removal は deployment 設定ではなく runtime data であり、
 `database/storage.sqlite` にまとめて保存し、command または明示 migration script だけで変更します。
 
 すべての JSON は strict schema で解析します。file が存在する場合、未知／誤記 field、型違い、
@@ -36,20 +43,21 @@ blocklist、未完了 removal は deployment 設定ではなく runtime data で
 
 | ファイル | 設定内容 | 欠落時の動作 |
 | --- | --- | --- |
-| `bot.json` | Telegram Bot token と唯一のスーパー管理者 | 常に startup を拒否 |
-| `agent.json` | capability ごとの AI provider、credential、endpoint、model | capability ごとに異なる。下記参照 |
-| `stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
-| `mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
-| `ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
-| `cron.json` | 定時送信タスク（テキスト・画像・ファイル・ボイス） | 定時タスクなし |
-| `g-auth.json` | `/translate` 用の Google Cloud service account key。例は placeholder だけで、実 key はデプロイ側が帯域外で `config/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
+| `static/bot.json` | Telegram Bot token と唯一のスーパー管理者 | 常に startup を拒否 |
+| `dynamic/agent.json` | capability ごとの AI provider、credential、endpoint、model | capability ごとに異なる。下記参照 |
+| `dynamic/stickers.json` | AI chat が使える sticker pack | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `dynamic/mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `dynamic/ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
+| `dynamic/cron.json` | 定時送信タスク（テキスト・画像・ファイル・ボイス） | 定時タスクなし |
+| `dynamic/assets.json` | `/h_image` 専用画像庫のディレクトリと、inline 結果のサムネイル・既定アバターの URL | すべて組み込み既定値 |
+| `static/g-auth.json` | `/translate` 用の Google Cloud service account key。例は placeholder だけで、実 key はデプロイ側が帯域外で `config/static/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
 
 AI chat はこのディレクトリにない `prompt/persona.md` にも依存します。optional file が存在するのに
 不正な場合、feature が無効でも startup を拒否します。
 
 ## 稼働中の変更
 
-bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+bot は `config/dynamic/` だけを監視します。`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
 `cron.json` を最後に保存してから約 0.5 秒後に、起動時と同じ strict schema で parse し直します。
 
 - parse が通り内容が変わっていれば snapshot を差し替えて関係する Worker に渡し、log に
@@ -70,12 +78,16 @@ bot は `config/` を監視します。`ad_samples.json`、`agent.json`、`mood.
   提示されなくなり、その catalog は次回 startup 時に allowlist に沿って整理されます。
 - `mood.json` に残っている mood は各 chat に即時反映し、現在の mood が削除された chat は次に
   使うときに引き直します。
+- `assets.json` の変更は、サムネイルと既定アバター URL については次に使う時点から有効になります。
+  ファイルを削除するとすべて組み込み既定値に戻ります。`random_h_image_dir` が新しいディレクトリを
+  指す場合は、起動時と同じ規則でそのディレクトリを作成・検査してから切り替え、検査に失敗すると
+  `assets.json` の変更全体を拒否して元のディレクトリを使い続けます。
 - `cron.json` はタスク名で照合します。内容が変わらないタスクは元のタイミングを保ち、変更・
   削除されたタスクはスケジュールを止め（実行中の回は次の動作の前で止まります）、新しいタスクは
   スケジュールを始めます。ファイルを削除するとすべてのタスクが消えます。
 
-`bot.json`、`prompt/persona.md`、`g-auth.json` は hot reload されず、変更後は再起動が
-必要です。
+`config/static/` の `bot.json`、`g-auth.json` と `prompt/persona.md` は hot reload されず、
+変更後は再起動が必要です。
 
 ## `bot.json`
 
@@ -109,7 +121,7 @@ endpoint、model を独立に選びます。capability ごとに別 service を�
 | `image` | 生画像 tool の登録 | optional。欠落はこの tool だけを除去 |
 | `tts` | 音声合成：AI のボイス tool（日本語セリフを合成してボイスメッセージで送信）、`/send` 中継の TTS request、`cron.json` の `send_voice` で共用 | optional。欠落または implementation 非対応ならボイス tool を除去し、`/send` の TTS request は error になる。`cron.json` が `send_voice` を使うなら必須 |
 
-通常 capability の field は次の 4 個です。
+通常 capability の field は次のとおりです。
 
 | field | 意味 |
 | --- | --- |
@@ -117,6 +129,23 @@ endpoint、model を独立に選びます。capability ごとに別 service を�
 | `api_key` | この capability 専用の非空 API key |
 | `base_url` | optional の absolute `https` endpoint。省略時は選択 SDK の official endpoint。平文 `http` は `localhost`・`127.0.0.1`・`::1`（ローカル proxy）のみ許可し、それ以外は起動を拒否します——このフィールドの隣には同じ capability の `api_key` があるためです。URL に userinfo と `#` fragment を含めることはできません |
 | `model` | endpoint が受理する非空 model identifier。program は推測も書換えもしない |
+| `headers` | optional。`provider` が `google` の場合だけ許可：その capability の全 request に付ける request header object で、サードパーティ gateway（Cloudflare AI Gateway の `cf-aig-authorization` など）の認証などに使う。1〜8 個。名前は正しい HTTP header 名で、大文字小文字を無視して重複不可、`x-goog-api-key` は不可（Google key は `api_key` にだけ書く）。値は前後の空白を除いて空でない印字可能 ASCII。各値はログ上で資格情報として秘匿する。`openai` capability にこの field があると起動を拒否する。書き方は表の後の例を参照 |
+
+Google capability に `provider`・`api_key`・`model` だけを書くと Google の official endpoint に直接接続します。[`config_example/dynamic/agent.json`](../dynamic/agent.json) はこの書き方です。Cloudflare AI Gateway 経由にする場合は gateway の `base_url` と認証用の `headers` を加えます。`agent` 段の `media` の例：
+
+```json
+{
+  "media": {
+    "provider": "google",
+    "api_key": "replace-with-google-api-key",
+    "base_url": "https://gateway.ai.cloudflare.com/v1/replace-with-account-id/replace-with-gateway-id/google-ai-studio",
+    "headers": {
+      "cf-aig-authorization": "Bearer replace-with-cloudflare-ai-gateway-token"
+    },
+    "model": "gemini-3.5-flash-lite"
+  }
+}
+```
 
 xAI や別の OpenAI-compatible gateway は `provider: "openai"` とし、その capability の
 `base_url` と `model` を設定します。`provider` は SDK と wire protocol だけを選び、URL や
@@ -130,14 +159,30 @@ model 名から自動判定しません。
 
 `image.provider` が `google` の場合は `image_protocol` を書けません。
 
-`tts` は 4 個の field に加えて空でない `voice` が必須で、合成 request の voice としてそのまま渡します。
-prebuilt voice 名（例の `Leda`）、または AI Studio Voice design が生成した `voice_` voice ID を指定できます。
+`tts` は共通 field に加えて空でない `voice` が必須で、合成 request の voice としてそのまま渡します。
+prebuilt voice 名（例の `Nika`）、または AI Studio Voice design が生成した `voice_` voice ID を指定できます。
 design した voice はその `api_key` の project に属し、1 年後に失効します。プログラムは空でない文字列で
 あることだけを検証し、voice が存在するかは最初の合成 request で決まります。現在、音声合成を実装して
 いるのは Google だけなので、`tts.provider: "openai"` は設定検証を通ってもボイス tool を登録せず、
 `/send` と `cron.json` の音声 request も失敗して error log を残します。3 つとも AI Worker 上で合成する
 ため、AI chat の残りの前提（`stickers.json`、`mood.json`、`prompt/persona.md`）も揃っている必要があり、
 欠けていると合成は「Worker 利用不可」で失敗します。
+
+`agent.tts.style` は任意の基本朗読スタイルです。trim 後に空でない文字列が必要で、null、空白だけの文字列、ほかの型は拒否します。省略時は `GEMINI_SPEECH_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` を使います。3 つの音声入口で共用し、hot reload は新しい request に反映され、発行済み request は元の設定 snapshot を保持します。項目を削除すると既定値に戻ります。request ごとの `tone` は引き続き `<基本スタイル>; 细节: <口調>` として連結します。
+
+`tts` には optional な 1 日あたりの回数 field が 2 つあり、3 つの入口で 1 つの回数を共有します。
+
+| field | 意味 |
+| --- | --- |
+| `daily_limit` | 1 つの計数窓で発行できる合成 request の最大数。正の整数、既定 100。`/send` 中継と `cron.json` の `send_voice` はこの数まで使える |
+| `daily_reserve_quota` | `daily_limit` のうち `/send` と cron のために残す回数。整数、0 〜 `daily_limit - 1`、既定 25。AI のボイス tool は `daily_limit - daily_reserve_quota` までしか使えない |
+
+計数窓は窓内の最初の request から始まり、24 時間経つと次の request を起点に数え直します。窓と回数は
+runtime data root の `memory/global/state.json` の `ttsUsage` に保存され、再起動後も引き継がれます。合成呼び出し 1 回で 1 回と数え、
+SDK 内部の retry は別に数えません。上限に達すると request を発行しません。AI はボイスを送らず、群内でも
+触れません。`/send` は上限の一言を返します。cron は `daily limit reached` の error log を 1 行残し、
+再試行しません。2 つの field は hot reload ですぐ反映され、使用済み回数はリセットされません。上限を
+下げて使用済み回数が新しい上限を超えた場合は、上限に達したものとして扱います。
 
 `media` の vision と voice 対応は、最初の実 request で別々に probe／cache します。明示的に
 unsupported と判定した後、その Worker は同種 media を download しません。成功は supported、
@@ -171,6 +216,31 @@ permission key と default は `/permission help` が現行 reference です。�
 2 つの policy table の重複は network 接続前に startup を拒否します。legacy JSON deployment は
 [運用文書](../../docs/ja/07-operations.md) の一回限りの migration に従い、旧 file を `config/` へ戻さないでください。
 
+## `assets.json`
+
+ファイルも各フィールドも任意で、省略したフィールドは組み込み既定値を使います。変更する項目だけを
+書きます。例：
+
+```json
+{
+  "random_h_image_dir": "./images",
+  "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+}
+```
+
+| フィールド | 用途 | 形式 |
+| --- | --- | --- |
+| `random_h_image_dir` | `/h_image` と cron ランダム画像の専用画像庫。既定 `./h_image` | 絶対ディレクトリまたは `./`・`../` で始まるパス。相対パスは runtime data root 基準 |
+| `fortune_thumbnail_url` | 「未卜先知」inline 結果のサムネイル | 絶対 https URL |
+| `probability_thumbnail_url` | 「概率论」inline 結果のサムネイル | 絶対 https URL |
+| `gag_thumbnail_url` | gag 発言 inline 結果のサムネイル | 絶対 https URL |
+| `bot_default_avatar_url` | `/icon reset`・`/copy stop` で bot アバターを戻すときにダウンロードする画像 | 絶対 http または https URL |
+
+文字列の前後の空白は取り除きます。未知のフィールド、空白を除くと空になる文字列、形式に合わない値は
+起動を拒否します（稼働中はその変更を拒否します）。
+[`config_example/dynamic/assets.json`](../dynamic/assets.json) は 5 つのフィールドすべてを組み込み既定値で記載しています。
+丸ごとコピーして必要な項目だけ変更できます。
+
 ## `stickers.json`
 
 `packs` は `t.me` link ではなく Telegram sticker pack の short name 配列です。unique entry は
@@ -200,8 +270,8 @@ normalize 後に非空、unique、1,024 文字以下でなければなりませ�
 ## `g-auth.json`
 
 例は GCP console からダウンロードする service account key file と同じ形で、構造の対照用です。
-placeholder の秘密鍵は parse できないため、そのまま `config/` に置くと startup を拒否します。
-翻訳を使う場合は実 key file を `config/g-auth.json` として保存し、使わない場合はこの file を
+placeholder の秘密鍵は parse できないため、そのまま `config/static/` に置くと startup を拒否します。
+翻訳を使う場合は実 key file を `config/static/g-auth.json` として保存し、使わない場合はこの file を
 置かないでください。`client_email` は非空、`private_key` は parse 可能な RSA PEM 秘密鍵で、
 `type` は存在する場合 `service_account` に限ります。`private_key_id`、`project_id`、
 `quota_project_id`、`universe_domain` は存在する場合に非空 string でなければならず、その他の
@@ -212,15 +282,15 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 トップレベルはタスクの配列で、ファイルが無いか `[]` なら定時タスクはありません。strict JSON
 のためコメントは書けません。
 
-[`config_example/cron.json`](../cron.json) にはすべての書き方を網羅する例のタスクがあります：平日の
+[`config_example/dynamic/cron.json`](../dynamic/cron.json) にはすべての書き方を網羅する例のタスクがあります：平日の
 テキスト、time zone を明示してテキスト・URL の画像・ファイルを順に送るもの、
 プロジェクトルートからの相対パスで指定したローカル画像と絶対パスで指定したローカルファイル、
 `rand_cron` の区間で既定の画像ライブラリから抽選する
 もの、`@daily` と単一値の `rand_cron` で指定ディレクトリから抽選するもの、口調ありと口調なしの
 `send_voice`、そして `just_once` です。
-例の会話 id、URL、ローカルパスはすべて架空で、そのまま `config/` に置くとローカルファイルが存在
+例の会話 id、URL、ローカルパスはすべて架空で、そのまま `config/dynamic/` に置くとローカルファイルが存在
 しないため起動を拒否します。必要なタスクだけを選び、会話 id とパスを実際の値に書き換えてから
-`config/cron.json` に書いてください。installer が例からこのファイルを作ることはありません。
+`config/dynamic/cron.json` に書いてください。installer が例からこのファイルを作ることはありません。
 
 ```json
 [
@@ -255,7 +325,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 
 - `send_message`：`content` 必須、最大 4096 文字。
 - `send_image`：`content` は任意の単一文字列（最大 1024 文字）。固定画像は `url` 配列かファイル `path` 配列のどちらか一方、1–10 項目を指定します。1 枚でも `"url": ["https://example.com/a.jpg"]` のように配列にし、`rand_image` は省略または `false` のみです。1 枚は写真、2–10 枚は 1 回のアルバム要求で送り、caption は先頭だけ、別のテキスト投稿はしません。アルバムには複数の Telegram message ID があります。`is_blurred: true` は全画像に spoiler を付け、省略または `false` は付けません。
-  `rand_image: true` は 1 枚だけ抽選します。`url` とファイル配列は禁止で、`path` は任意のディレクトリ文字列です。省略時は `state.global.assets.randomHImageDir`、別のディレクトリを明示した場合は SHA-256 命名規則を要求しません。
+  `rand_image: true` は 1 枚だけ抽選します。`url` とファイル配列は禁止で、`path` は任意のディレクトリ文字列です。省略時は `assets.json` の `random_h_image_dir`、別のディレクトリを明示した場合は SHA-256 命名規則を要求しません。
 - `send_file`：`content` は任意（最大 1024 文字）。送信元は `url` か `path` のちょうど 1 つ。
 - `send_voice`：`content` は必須で、読み上げるセリフ（最大 256 文字）です。`tone` は任意で、この 1 文の
   話し方（最大 64 文字）を固定のベース声色の後ろに付け足し、省略するとベース声色だけを使います。
@@ -280,7 +350,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 - ネットワーク、Telegram の 5xx、出力ゲートの再試行後も返る 429、送信キュー満杯で失敗した動作は 2・4・8 秒の間隔で最大 3 回
   再試行します。`send_voice` の合成が音声を返さなかった場合、待機のタイムアウト、AI Worker が一時的に
   使えない場合も同様に再試行します。それ以外（Telegram の 4xx、グループからの削除、ローカルファイルの削除、
-  `tts` が未設定または implementation 非対応、音声エンコードの失敗など）は再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
+  `tts` が未設定または implementation 非対応、当日のボイス上限到達、音声エンコードの失敗など）は再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
   その回の残りの動作を飛ばします。タイムアウトしても Telegram 側に届いていた場合、再試行で
   重複して送られます。
 - 定時メッセージは残し、30 秒削除は掛けません。フォーラムのトピックは付けないため、トピックを
@@ -307,9 +377,9 @@ placeholder の秘密鍵は parse できないため、そのまま `config/` �
 
 | パス項目 | 相対パスの基準 | 形式 |
 | --- | --- | --- |
-| `state.global.assets.randomHImageDir` | 実行時データルート | 絶対ディレクトリまたは `./`・`../` で始まるパス |
+| `assets.json` の `random_h_image_dir` | 実行時データルート | 絶対ディレクトリまたは `./`・`../` で始まるパス |
 | cron 固定画像 `payload.path` | プロジェクトルート | ファイルパス 1〜10 個の配列 |
 | cron ランダム画像 `payload.path` | プロジェクトルート | 任意のディレクトリ文字列。省略時だけ専用画像庫を選択 |
 | cron ファイル `payload.path` | プロジェクトルート | 単一ファイルパス文字列 |
 
-`state.global.assets.randomHImageDir` は `/h_image` 専用で、既定は `./h_image` です。`/h_image` のような絶対パスと `./h_image`、`../h_image` のような明示的相対パスを受け付け、相対パスは runtime data root 基準です。他機能の画像を混ぜず、追加は `/h_image add` を使ってください。手動追加は内容 SHA-256 の小文字 16 進数 64 文字をファイル名本体にし、拡張子は jpg/jpeg/png/webp とします。Worker と外部接続より前に名前と項目型を非同期検査し、不正ファイル、サブディレクトリ、ファイル symlink、残存一時ファイルがあれば起動を拒否します。全画像の内容ハッシュは再計算せず、手動名と内容の一致は運用者の責任です。cron で明示した別のディレクトリには命名規則を課しません。ローカル内容の読み取り・事前検査・アップロードは非同期で、アルバム全体の画像を先読みせず再オープン可能な stream を保持します。
+`assets.json` の `random_h_image_dir` は `/h_image` 専用で、既定は `./h_image` です。`/h_image` のような絶対パスと `./h_image`、`../h_image` のような明示的相対パスを受け付け、相対パスは runtime data root 基準です。他機能の画像を混ぜず、追加は `/h_image add` を使ってください。手動追加は内容 SHA-256 の小文字 16 進数 64 文字をファイル名本体にし、拡張子は jpg/jpeg/png/webp とします。Worker と外部接続より前に名前と項目型を非同期検査し、不正ファイル、サブディレクトリ、ファイル symlink、残存一時ファイルがあれば起動を拒否します。全画像の内容ハッシュは再計算せず、手動名と内容の一致は運用者の責任です。cron で明示した別のディレクトリには命名規則を課しません。ローカル内容の読み取り・事前検査・アップロードは非同期で、アルバム全体の画像を先読みせず再オープン可能な stream を保持します。

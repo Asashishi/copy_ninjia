@@ -14,7 +14,7 @@ afterEach((): void => {
   botConfigCache.current = null;
 });
 
-describe("config/bot.json", () => {
+describe("config/static/bot.json", () => {
   test("测试配置可加载且输出稳定的运行时类型", () => {
     expect(BOT_TOKEN).toBe("123456789:test-only-telegram-bot-token");
     expect(SUPER_ADMIN_USER_ID).toBe(123456789);

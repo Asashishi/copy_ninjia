@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import type { VerificationSnapshot } from "../../../packages/types/antiRaid";
+import { VERIFICATION_CALLBACK_CHECK_MAX, VERIFICATION_CALLBACK_REPLY_MAX } from "../../../packages/consts/antiRaid/verification";
+import { verificationCallbackChecks, verificationCallbackReplies } from "../../../packages/cache/workers/antiRaid/verificationCallbacks";
+import { antiRaidInFlightTasks } from "../../../packages/cache/workers/antiRaid/tasks";
 
 const loggerErrorMock = mock((_message: unknown, _error?: unknown): void => {});
 const answerCallbackQueryMock = mock(async (_params: { callbackQueryId: string; text?: string }): Promise<boolean> => true);
@@ -118,6 +121,70 @@ afterEach((): void => {
 });
 
 describe("verification callback ownership", () => {
+  test.each(["adopt", "rejoin", "disable", "remove", "stop"] as const)("%s 后管理员查询迟到不能批准新的 pending", async (change) => {
+    let finish!: (admins: { user: { id: number } }[]) => void;
+    getChatAdministratorsMock.mockImplementationOnce(() => new Promise((resolve): void => { finish = resolve; }));
+    adoptPending(42);
+    const previous = verificationEntries.get(`${CHAT_ID}:42`);
+    click({ callbackQueryId: "old-owner", targetUserId: 42, action: "approve", fromId: ADMIN_ID });
+    if (change === "rejoin") {
+      runtime.dispatchVerification(CHAT_ID, 42, { type: "left" });
+      runtime.handleJoin({ type: "join", chatId: CHAT_ID, member: { id: 42, first_name: "New" } });
+    } else {
+      if (change === "disable") runtime.disableJoinGuardChat(CHAT_ID);
+      if (change === "remove") runtime.deactivateVerificationChat(CHAT_ID);
+      if (change === "stop") runtime.stopVerificationRuntime();
+      runtime.adoptVerifications({ type: "adoptVerifications", generation: 2,
+        verifications: [{ ...pendingRecord(42, false), generation: 2 }] });
+    }
+    expect(verificationEntries.get(`${CHAT_ID}:42`)).not.toBe(previous);
+    finish([{ user: { id: ADMIN_ID } }]);
+    await drainAntiRaidTasks();
+    expect(verificationEntries.get(`${CHAT_ID}:42`)?.state.kind).toBe("pending");
+    expect(answeredText("old-owner")).toContain("失效");
+    expect(verificationCallbackChecks.current).toBe(0);
+  });
+
+  test("pending 原地记录普通消息时管理员查询仍能正常批准", async () => {
+    let finish!: (admins: { user: { id: number } }[]) => void;
+    getChatAdministratorsMock.mockImplementationOnce(() => new Promise((resolve): void => { finish = resolve; }));
+    adoptPending(42);
+    click({ callbackQueryId: "same-owner", targetUserId: 42, action: "approve", fromId: ADMIN_ID });
+    runtime.dispatchVerification(CHAT_ID, 42, { type: "trackedMessage", messageId: 7, inCommentThread: false, now: Date.now() });
+    finish([{ user: { id: ADMIN_ID } }]);
+    await drainAntiRaidTasks();
+    expect(verificationEntries.has(`${CHAT_ID}:42`)).toBeFalse();
+  });
+
+  test("管理员请求和满载回执同时挂起时任务有界，stop 不提前释放尚未结算的名额", async () => {
+    let finish!: (admins: { user: { id: number } }[]) => void;
+    let reply!: (value: boolean) => void;
+    const pendingReply: Promise<boolean> = new Promise<boolean>((resolve): void => { reply = resolve; });
+    getChatAdministratorsMock.mockImplementationOnce(() => new Promise((resolve): void => { finish = resolve; }));
+    answerCallbackQueryMock.mockImplementation(() => pendingReply);
+    adoptPending(42);
+    for (let index = 0; index < VERIFICATION_CALLBACK_CHECK_MAX; index++) {
+      click({ callbackQueryId: `burst-${index}`, targetUserId: 42, action: "approve", fromId: ADMIN_ID });
+    }
+    expect(verificationCallbackChecks.current).toBe(VERIFICATION_CALLBACK_CHECK_MAX);
+    expect(answerCallbackQueryMock).not.toHaveBeenCalled();
+    for (let index = 0; index < VERIFICATION_CALLBACK_REPLY_MAX * 2; index++) {
+      click({ callbackQueryId: `overload-${index}`, targetUserId: 42, action: "approve", fromId: ADMIN_ID });
+    }
+    expect(getChatAdministratorsMock).toHaveBeenCalledTimes(1);
+    expect(verificationCallbackChecks.current).toBe(VERIFICATION_CALLBACK_CHECK_MAX);
+    expect(verificationCallbackReplies.current).toBe(VERIFICATION_CALLBACK_REPLY_MAX);
+    expect(antiRaidInFlightTasks.size).toBeLessThanOrEqual(VERIFICATION_CALLBACK_CHECK_MAX + VERIFICATION_CALLBACK_REPLY_MAX + 1);
+    runtime.stopVerificationRuntime();
+    expect(verificationCallbackChecks.current).toBe(VERIFICATION_CALLBACK_CHECK_MAX);
+    expect(verificationCallbackReplies.current).toBe(VERIFICATION_CALLBACK_REPLY_MAX);
+    finish([]);
+    reply(true);
+    await drainAntiRaidTasks();
+    expect(verificationCallbackChecks.current).toBe(0);
+    expect(verificationCallbackReplies.current).toBe(0);
+    expect(antiRaidInFlightTasks.size).toBe(0);
+  });
   test("缺少 chatId 的回调只确认 Telegram query，不进入验证状态机", async (): Promise<void> => {
     runtime.handleVerificationCallback({
       type: "callback",
@@ -132,6 +199,8 @@ describe("verification callback ownership", () => {
     expect(answerCallbackQueryMock).toHaveBeenCalledTimes(1);
     expect(answerCallbackQueryMock).toHaveBeenCalledWith({
       callbackQueryId: "detached-callback",
+      text: undefined,
+      showAlert: false,
       api: expect.any(Object),
     });
     expect(verificationEntries.size).toBe(0);

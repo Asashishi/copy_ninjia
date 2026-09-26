@@ -26,6 +26,8 @@ mock.module("../../packages/infra/telegram/actions", () => ({
   banChatSenderChat: async (): Promise<boolean> => true,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
+  getTtsUsage: (): null => null,
+  adoptTtsUsage: (): void => {},
   getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => states,
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {

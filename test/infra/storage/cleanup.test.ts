@@ -14,7 +14,6 @@ describe("storage startup cleanup", () => {
       lockFilePath: "/virtual/bot.lock",
       readDirectory: async () => [
         ".state.json.1.uuid.tmp",
-        ".state.json.bak.1.uuid.tmp",
         ".bot.lock.1.uuid.tmp",
         ".other.json.1.uuid.tmp",
         "bot.lock.guard.candidate.42.11111111-1111-4111-8111-111111111111",
@@ -31,11 +30,46 @@ describe("storage startup cleanup", () => {
 
     expect(removed).toEqual([
       "/virtual/.state.json.1.uuid.tmp",
-      "/virtual/.state.json.bak.1.uuid.tmp",
       "/virtual/.bot.lock.1.uuid.tmp",
       "/virtual/bot.lock.guard.candidate.42.11111111-1111-4111-8111-111111111111",
       "/virtual/bot.lock.guard.recovery",
     ]);
+  });
+
+  test("状态文件与锁不同目录时各扫各的：状态目录只认状态临时件，缺失目录直接跳过", async () => {
+    const removed: string[] = [];
+    const scanned: string[] = [];
+    const listing: Readonly<Record<string, readonly string[]>> = {
+      "/virtual": [".bot.lock.1.uuid.tmp", ".state.json.1.uuid.tmp", "bot.lock.guard.recovery"],
+      "/virtual/memory/global": [".state.json.2.uuid.tmp", ".bot.lock.2.uuid.tmp", "bot.lock.guard.recovery"],
+    };
+    await cleanupOrphanedTempFiles({
+      stateFilePath: "/virtual/memory/global/state.json",
+      lockFilePath: "/virtual/bot.lock",
+      readDirectory: async (path) => { scanned.push(path); return [...listing[path]!]; },
+      isInactiveLockOwner: async () => true,
+      removeFile: async (path) => { removed.push(path); },
+    });
+    expect(scanned).toEqual(["/virtual", "/virtual/memory/global"]);
+    expect(removed).toEqual([
+      "/virtual/.bot.lock.1.uuid.tmp",
+      "/virtual/bot.lock.guard.recovery",
+      "/virtual/memory/global/.state.json.2.uuid.tmp",
+    ]);
+
+    const missing: Error & { code?: string } = new Error("ENOENT");
+    missing.code = "ENOENT";
+    removed.length = 0;
+    await cleanupOrphanedTempFiles({
+      stateFilePath: "/virtual/memory/global/state.json",
+      lockFilePath: "/virtual/bot.lock",
+      readDirectory: async (path) => {
+        if (path !== "/virtual") throw missing;
+        return [".bot.lock.3.uuid.tmp"];
+      },
+      removeFile: async (path) => { removed.push(path); },
+    });
+    expect(removed).toEqual(["/virtual/.bot.lock.3.uuid.tmp"]);
   });
 
   test("目录扫描失败时安全返回，不尝试删除任何文件", async () => {

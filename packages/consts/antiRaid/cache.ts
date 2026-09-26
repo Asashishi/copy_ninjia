@@ -18,7 +18,7 @@ export const ANTI_RAID_CACHE_SWEEP_INTERVAL_MS: number = 5 * 60 * 1000;
  * 丢掉仍应关联的评论。
  */
 export const COMMENT_JOIN_CORRELATE_MS: number = 3 * 60_000;
-/** 最近评论关联缓存的全局条目硬顶；满载时优先清过期，再淘汰最早到期项。 */
+/** 最近评论关联缓存的全局条目硬顶；满载时优先清过期，再淘汰最早插入项。 */
 export const RECENT_COMMENT_CACHE_MAX: number = 5_000;
 /**
  * 冷缓存评论区确认最多同时占用的成员键数；同一成员只保留一个可更新 owner，

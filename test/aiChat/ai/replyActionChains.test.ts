@@ -14,7 +14,10 @@ const sendVoice = mock(async (_params: unknown): Promise<TelegramSendResult | un
 const reaction = mock(async (_params: unknown): Promise<boolean> => true);
 const sleep = mock(async (_ms: number, _signal?: AbortSignal): Promise<void> => {});
 const generateImage = mock(async (_params: unknown) => ({ bytes: new Uint8Array([1]), mimeType: "image/png" as const }));
-const synthesizeSpeech = mock(async (_params: unknown) => ({ bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" }));
+const synthesizeSpeech = mock(async (_params: unknown) => ({
+  ok: true as const,
+  speech: { bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" },
+}));
 const heartbeatControls: ChatActionHeartbeatControl[] = [];
 let session: AiReplySession;
 function heartbeat(): ChatActionHeartbeatControl {
@@ -105,7 +108,10 @@ beforeEach(() => {
   reaction.mockReset().mockResolvedValue(true);
   sleep.mockReset().mockResolvedValue();
   generateImage.mockReset().mockResolvedValue({ bytes: new Uint8Array([1]), mimeType: "image/png" });
-  synthesizeSpeech.mockReset().mockImplementation(async () => ({ bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" }));
+  synthesizeSpeech.mockReset().mockImplementation(async () => ({
+    ok: true as const,
+    speech: { bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" },
+  }));
   initTelegramOutbound();
 });
 

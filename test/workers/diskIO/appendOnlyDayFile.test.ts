@@ -11,7 +11,7 @@ import {
 } from "../../../packages/workers/diskIO/appendOnlyDayFile";
 import { PERSISTED_FILE_MODE } from
   "../../../packages/consts/diskIO/common";
-import type { DayFileState } from "../../../packages/types";
+import type { DayFileState } from "../../../packages/types/diskIO/storage";
 
 let dir: string;
 const UTF8_ENCODER: TextEncoder = new TextEncoder();

@@ -50,14 +50,14 @@ describe("按 holder 重算功能可用性", () => {
     expect(aiChatReadinessFromHolders()).toEqual({ ok: true });
 
     agentDeploymentConfigCache.current = null;
-    expect(failedFile(aiChatReadinessFromHolders())).toBe("config/agent.json");
+    expect(failedFile(aiChatReadinessFromHolders())).toBe("config/dynamic/agent.json");
     personaCache.current = null;
     expect(failedFile(aiChatReadinessFromHolders())).toBe("prompt/persona.md");
     defaultMoodConfigCache.current = null;
-    expect(failedFile(aiChatReadinessFromHolders())).toBe("config/mood.json");
+    expect(failedFile(aiChatReadinessFromHolders())).toBe("config/dynamic/mood.json");
     defaultStickerConfigCache.current = null;
     const readiness: ConfigReadiness = aiChatReadinessFromHolders();
-    expect(failedFile(readiness)).toBe("config/stickers.json");
+    expect(failedFile(readiness)).toBe("config/dynamic/stickers.json");
     expect(readiness.ok ? "" : readiness.failure.reason).toContain("$ must be a readable valid JSON document");
   });
 
@@ -77,9 +77,9 @@ describe("按 holder 重算功能可用性", () => {
 
     adDetectAgentConfigCache.current = null;
     const readiness: ConfigReadiness = adDetectReadinessFromHolders();
-    expect(failedFile(readiness)).toBe("config/agent.json");
+    expect(failedFile(readiness)).toBe("config/dynamic/agent.json");
     expect(readiness.ok ? "" : readiness.failure.reason).toContain("$.agent.ad_detect must be configured");
     defaultAdSampleConfigCache.current = null;
-    expect(failedFile(adDetectReadinessFromHolders())).toBe("config/ad_samples.json");
+    expect(failedFile(adDetectReadinessFromHolders())).toBe("config/dynamic/ad_samples.json");
   });
 });

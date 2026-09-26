@@ -17,26 +17,24 @@ const {
   loadState,
   registerCommandMenu,
   releaseSingleInstanceLock,
-  seedMissingAssetState,
   testDependencies,
 } = sharedFixture;
 
 installLifecycleFixtureHooks();
 
 /**
- * 启动总闸对 state 副本的真实字节判定。
+ * 启动总闸对 memory/global/state.json 的真实字节判定。
  *
  * 只有 `loadState` 接到真实临时 `StateStore.load()`，其余出站依旧是 fixture 的
- * mock：这条链路要验证的是「磁盘上确有一份非法副本时进程拒绝启动」，不是
+ * mock：这条链路要验证的是「磁盘上确有一份非法状态文件时进程拒绝启动」，不是
  * Telegram 或 Worker 行为。写盘同样注入 mock，用来断言被拒绝的启动一个字节都
  * 没有回写。
  */
-describe("启动总闸的 state 输入判定", () => {
-  const legal: string = '{"global":{"copy":{"copiedUser":{"id":1,"first_name":"X"},"copyChatId":-1}}}';
+describe("启动总闸的全局状态输入判定", () => {
+  const legal: string = '{"copy":{"copiedUser":{"id":1,"first_name":"X"},"copyChatId":-1}}';
 
   let dir: string;
   let statePath: string;
-  let backupPath: string;
   let writes: string[];
 
   /** 把 fixture 的 loadState 换成真实 StateStore；写入仍走 mock 计数。 */
@@ -58,7 +56,6 @@ describe("启动总闸的 state 输入判定", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "lifecycle-state-input-"));
     statePath = join(dir, "state.json");
-    backupPath = `${statePath}.bak`;
     useRealStateLoad();
   });
 
@@ -66,11 +63,10 @@ describe("启动总闸的 state 输入判定", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("主副本含非法 UTF-8 时以非零码退出，且不建立任何对外连接", async () => {
+  test("状态文件含非法 UTF-8 时以非零码退出，且不建立任何对外连接", async () => {
     const bytes: Uint8Array = new TextEncoder().encode(legal);
     bytes[legal.indexOf('"X"') + 1] = 0xff;
     await Bun.write(statePath, bytes);
-    await Bun.write(backupPath, legal);
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run("main");
@@ -82,19 +78,15 @@ describe("启动总闸的 state 输入判定", () => {
     expect(registerCommandMenu).not.toHaveBeenCalled();
     expect(botInit).not.toHaveBeenCalled();
     expect(initAiChat).not.toHaveBeenCalled();
-    expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
-    // 运维接着要排查的就是这两份文件：字节保持原样，也不产生隔离件。
+    // 运维接着要排查的就是这份文件：字节保持原样，也不产生隔离件。
     expect(Array.from(await Bun.file(statePath).bytes())).toEqual(Array.from(bytes));
-    expect(await Bun.file(backupPath).text()).toBe(legal);
-    expect(readdirSync(dir)).toEqual(["state.json", "state.json.bak"]);
+    expect(readdirSync(dir)).toEqual(["state.json"]);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("备份路径被占成目录时同样拒绝启动，不因主副本合法而放行", async () => {
-    await Bun.write(statePath, legal);
-    // 备份路径被占成目录：exists() 对目录返回 false，只有 stat 能识别。
-    mkdirSync(backupPath);
+  test("状态路径被占成目录时拒绝启动", async () => {
+    mkdirSync(statePath);
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run("main");
@@ -103,16 +95,12 @@ describe("启动总闸的 state 输入判定", () => {
     expect(process.exitCode).toBe(1);
     expect(initDiskIO).not.toHaveBeenCalled();
     expect(initTelegramClients).not.toHaveBeenCalled();
-    expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
-    expect(await Bun.file(statePath).text()).toBe(legal);
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("state.json 只含 global 时启动继续推进到 Worker 初始化", async () => {
-    const content: string = legal;
-    await Bun.write(statePath, content);
-    await Bun.write(backupPath, content);
+  test("合法状态文件让启动继续推进到 Worker 初始化", async () => {
+    await Bun.write(statePath, legal);
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
     await lifecycle.run("main");
@@ -124,21 +112,18 @@ describe("启动总闸的 state 输入判定", () => {
     expect(writes).toEqual([]);
   });
 
-  test.each(["primary", "backup"])("%s 仍带 translate 块时联网前拒绝启动，主备字节不变", async (copy: string) => {
-    const invalid: string = JSON.stringify({ ...JSON.parse(legal), translate: { "-1": [{ translatedUser: { id: 2 }, language: "en" }] } });
-    const primary: string = copy === "primary" ? invalid : legal;
-    const backup: string = copy === "backup" ? invalid : legal;
-    await Bun.write(statePath, primary);
-    await Bun.write(backupPath, backup);
+  test("仍是 14.x 的 global 包装时联网前拒绝启动，字节不变", async () => {
+    const legacy: string = JSON.stringify({ global: JSON.parse(legal) });
+    await Bun.write(statePath, legacy);
     const lifecycle = new ApplicationLifecycle(testDependencies);
+
     await lifecycle.run("main");
     await lifecycle.dispose();
+
     expect(process.exitCode).toBe(1);
     expect(initDiskIO).not.toHaveBeenCalled();
     expect(initTelegramClients).not.toHaveBeenCalled();
-    expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(writes).toEqual([]);
-    expect(await Bun.file(statePath).text()).toBe(primary);
-    expect(await Bun.file(backupPath).text()).toBe(backup);
+    expect(await Bun.file(statePath).text()).toBe(legacy);
   });
 });

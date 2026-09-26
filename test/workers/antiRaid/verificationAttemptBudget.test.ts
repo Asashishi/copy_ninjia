@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import type {
-  AntiRaidWorkerEvent,
-  VerificationAttemptPermitResult,
-  VerificationSnapshot,
-} from "../../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
+import type { VerificationAttemptPermitResult } from "../../../packages/types/antiRaid/protocol";
+import type { VerificationSnapshot } from "../../../packages/types/antiRaid/verification";
 
 const workerEvents: AntiRaidWorkerEvent[] = [];
 Object.defineProperty(globalThis, "self", {

@@ -37,6 +37,8 @@ mock.module("openai", () => {
 
 const { requestOpenAiAdDetectJson } = await import("../../../packages/antiRaid/ai/openai");
 const { adDetectOpenAiClientHolder } = await import("../../../packages/cache/workers/antiRaid/openai");
+const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 const {
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
   AD_DETECT_OPENAI_REQUEST_MAX_RETRIES,
@@ -92,6 +94,23 @@ describe("OpenAI 兼容广告检测请求入口", () => {
     expect(body.messages).toEqual([
       { role: "system", content: "只输出 JSON" },
       { role: "user", content: "1. 在吗" },
+    ]);
+  });
+
+  test("每次成功响应都按 ad_detect 上报用量，DeepSeek 的命中数读 prompt_cache_hit_tokens", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    try {
+      create.mockResolvedValueOnce({
+        choices: [{ message: { content: "{\"ok\": true}" } }],
+        usage: { prompt_tokens: 1_200, completion_tokens: 30, prompt_cache_hit_tokens: 1_152, prompt_cache_miss_tokens: 48 },
+      });
+      await requestOpenAiAdDetectJson(request());
+    } finally {
+      installAiCacheUsageSink(null);
+    }
+    expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+      { capability: "ad_detect", provider: "openai", model: "deepseek-v4-flash", inputTokens: 1_200, cachedInputTokens: 1_152, outputTokens: 30 },
     ]);
   });
 

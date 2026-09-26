@@ -381,6 +381,52 @@ describe("/gag 与 /ungag 状态机", () => {
     expect(gagSessionsByChat.has(session.chatId)).toBeFalse();
   });
 
+  test("teardown 同时删掉当前、待替换与已退役的发言入口提示", async () => {
+    const session: GagSession = createSession({
+      speakNoticeMessageId: 55,
+      pendingSpeakNoticeMessageId: 56,
+      retiredSpeakNoticeMessageId: 57,
+    });
+    addSession(session);
+    await gag.teardownGagInChat(session.chatId);
+    const deletedEphemeralIds: number[] = deleteEphemeralMessageWithOutcome.mock.calls.map(
+      (call: unknown[]): number => (call[0] as EphemeralDeletionParams).ephemeralMessageId
+    );
+    expect(deletedEphemeralIds).toEqual([55, 56, 57]);
+    expect(session.retiredSpeakNoticeMessageId).toBe(0);
+    expect(gagSessionsByChat.has(session.chatId)).toBeFalse();
+  });
+
+  test("已退役的入口与当前入口是同一条时只删一次，退役槽位直接清零", async () => {
+    const session: GagSession = createSession({
+      speakNoticeMessageId: 55,
+      retiredSpeakNoticeMessageId: 55,
+    });
+    addSession(session);
+    await gag.teardownGagInChat(session.chatId);
+    expect(deleteEphemeralMessageWithOutcome).toHaveBeenCalledTimes(1);
+    expect(session.retiredSpeakNoticeMessageId).toBe(0);
+  });
+
+  test("已退役入口删除失败时保留 ending owner 与退役槽位，后续重试成功才释放", async () => {
+    deleteEphemeralMessageWithOutcome
+      .mockImplementationOnce(async (): Promise<string> => "deleted")
+      .mockImplementationOnce(async (): Promise<string> => "failed");
+    const session: GagSession = createSession({
+      speakNoticeMessageId: 55,
+      retiredSpeakNoticeMessageId: 57,
+    });
+    addSession(session);
+
+    await gag.teardownGagInChat(session.chatId);
+    expect(sessionFor(session.chatId)).toBe(session);
+    expect(session.retiredSpeakNoticeMessageId).toBe(57);
+
+    await gag.teardownGagInChat(session.chatId);
+    expect(session.retiredSpeakNoticeMessageId).toBe(0);
+    expect(gagSessionsByChat.has(session.chatId)).toBeFalse();
+  });
+
   test("提示删除失败时保留 ending owner，后续 teardown 成功才释放", async () => {
     deleteEphemeralMessageWithOutcome.mockImplementationOnce(
       async (): Promise<string> => "failed"

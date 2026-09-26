@@ -487,3 +487,10 @@ function assertBotAtmospheresReadonly(): void {
   BOT_ATMOSPHERES.normal = "teasing";
 }
 void assertBotAtmospheresReadonly;
+
+import { DEFAULT_ASSET_CONFIG } from "../../packages/consts/ui/assets";
+function assertDefaultAssetConfigReadonly(): void {
+  // @ts-expect-error 内置素材缺省快照也是 holder 初值，调用方不能改写。
+  DEFAULT_ASSET_CONFIG.gagThumbnailUrl = "https://changed.example/g.png";
+}
+void assertDefaultAssetConfigReadonly;

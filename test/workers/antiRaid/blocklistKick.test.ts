@@ -3,15 +3,15 @@ import type { FlushResult } from "../../../packages/types/lifecycle";
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import type { AntiRaidWorkerMessage } from "../../../packages/types";
-import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../../packages/types/diskIO";
+import type { AntiRaidWorkerMessage } from "../../../packages/types/antiRaid/protocol";
+import type { DiskBusinessMessage, AdSampleDiskMessage, AiCacheUsageDiskMessage } from "../../../packages/types/diskIO";
 import {
   blockedIdentityTestView as blockedUserIds,
   readBlockedIdentityTestIds,
 } from "../../helpers/identityStorage";
 
 /** 测试观察业务写入与诊断消息。 */
-type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage;
+type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage | AiCacheUsageDiskMessage;
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
 /** 被要求补齐权限位的群，验证刷屏投递顺手触发了那次按需现查。 */

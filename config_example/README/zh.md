@@ -10,19 +10,25 @@
 定时任务的写法，两者都不要复制：
 
 ```bash
-mkdir -p config
-for example in config_example/*.json; do
+mkdir -p config/static config/dynamic
+for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in
     g-auth.json | cron.json) ;;
-    *) cp -n "$example" config/ ;;
+    *) cp -n "$example" "config/${example#config_example/}" ;;
   esac
 done
 ```
 
 不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。
-`config/` 中包含凭据，建议只允许服务账号读取。运行中修改 `ad_samples.json`、
-`agent.json`、`mood.json`、`stickers.json`、`cron.json` 会热重载，其余文件修改后必须重启，详见下文
-「运行中修改」。白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
+`config/` 中包含凭据，建议只允许服务账号读取。`config/` 按生效方式分成两个子目录：
+
+- `config/static/`：`bot.json`、`g-auth.json`，修改后必须重启。
+- `config/dynamic/`：`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+  `cron.json`，运行中修改会热重载，详见下文「运行中修改」。
+
+`config/dynamic/` 必须存在（可以为空）；任一文件放在 `config/` 顶层或另一个子目录下都会拒绝启动。
+
+白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
 `database/storage.sqlite`，只通过命令和显式迁移脚本修改。
 
 所有 JSON 都按严格 schema 解析：文件只要存在，未知字段、拼错的字段、错误类型、
@@ -33,20 +39,21 @@ done
 
 | 文件 | 配置内容 | 缺失时的行为 |
 | --- | --- | --- |
-| `bot.json` | Telegram Bot token、唯一超级管理员与可选通知语气 | 始终拒绝启动 |
-| `agent.json` | 各项 AI 能力自己的 provider、凭据、端点和模型 | 由能力决定，见下文 |
-| `stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `cron.json` | 定时发送任务（文字、图片、文件、语音） | 没有定时任务 |
-| `g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
+| `static/bot.json` | Telegram Bot token、唯一超级管理员与可选通知语气 | 始终拒绝启动 |
+| `dynamic/agent.json` | 各项 AI 能力自己的 provider、凭据、端点和模型 | 由能力决定，见下文 |
+| `dynamic/stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `dynamic/mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `dynamic/ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
+| `dynamic/cron.json` | 定时发送任务（文字、图片、文件、语音） | 没有定时任务 |
+| `dynamic/assets.json` | `/h_image` 专用图库目录与内联结果缩略图、默认头像的直链 | 全部取内置缺省 |
+| `static/g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/static/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
 
 AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
 即使对应功能当前关闭也会拒绝启动。
 
 ## 运行中修改
 
-机器人监听 `config/`。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
+机器人只监听 `config/dynamic/`。`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
 `cron.json` 最后一次保存约 0.5 秒后，按启动时同一套严格 schema 重新解析：
 
 - 解析通过且内容有变化：替换快照并投给相关 Worker，日志记一行
@@ -64,10 +71,13 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 - `stickers.json` 新加入的贴纸包立即开始生成目录；移出的包不再供 AI 使用，其目录在
   下次重启时按白名单清理。
 - `mood.json` 中仍然存在的心情对各群立即生效；当前心情已被删除的群在下次用到时重抽。
+- `assets.json` 改动后，内联结果缩略图与默认头像直链从下一次使用起生效；删除文件等于全部恢复
+  内置缺省。`random_h_image_dir` 指向新目录时，先按启动时同一口径建出并检查新目录，检查失败则整份
+  `assets.json` 改动被拒绝，继续使用原目录。
 - `cron.json` 按任务名对账：内容没变的任务保留原有计时；改动或删除的任务停止调度，正在
   执行的那一轮在下一个动作前停下；新增的任务开始调度。删除文件等于清空全部任务。
 
-`bot.json`、`prompt/persona.md` 与 `g-auth.json` 不热重载，修改后须重启。
+`config/static/` 下的 `bot.json`、`g-auth.json` 与 `prompt/persona.md` 不热重载，修改后须重启。
 
 ## `bot.json`
 
@@ -99,7 +109,7 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 | `image` | 为 AI 注册生图工具 | 可选；缺失只移除生图工具 |
 | `tts` | 语音合成：AI 语音工具（日语台词合成后以语音消息发出）、`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 共用 | 可选；缺失或实现不支持时移除语音工具、`/send` TTS 请求报错；`cron.json` 用到 `send_voice` 时必须存在 |
 
-普通能力使用下面四个字段：
+普通能力使用下面的字段：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -107,6 +117,23 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 | `api_key` | 这一项能力自己的非空 API key |
 | `base_url` | 可选的绝对 `https` 端点；省略时使用对应 SDK 的官方端点。明文 `http` 只允许 `localhost`、`127.0.0.1`、`::1`（本机代理），其余一律拒绝启动——这个字段旁边就是同一项能力的 `api_key`。URL 里不得带用户名/密码，也不得带 `#` 片段 |
 | `model` | 端点实际接受的非空模型标识，不由程序猜测或改写 |
+| `headers` | 可选，只在 `provider` 为 `google` 时允许：附加到该能力每个请求上的请求头对象，用于三方网关（如 Cloudflare AI Gateway 的 `cf-aig-authorization`）鉴权等。1～8 个；名必须是合法 HTTP 头名、忽略大小写不重复，且不得是 `x-goog-api-key`（Google key 只写在 `api_key`）；值去掉首尾空白后必须是非空的可打印 ASCII。每个值都按凭据在日志中脱敏。`openai` 能力写了这个字段会拒绝启动。写法见表后示例 |
+
+Google 能力只填 `provider`、`api_key` 和 `model` 时直连 Google 官方端点，[`config_example/dynamic/agent.json`](../dynamic/agent.json) 就是这种写法。经 Cloudflare AI Gateway 转发时再加上网关的 `base_url` 和鉴权用的 `headers`，`agent` 段里的 `media` 例如：
+
+```json
+{
+  "media": {
+    "provider": "google",
+    "api_key": "replace-with-google-api-key",
+    "base_url": "https://gateway.ai.cloudflare.com/v1/replace-with-account-id/replace-with-gateway-id/google-ai-studio",
+    "headers": {
+      "cf-aig-authorization": "Bearer replace-with-cloudflare-ai-gateway-token"
+    },
+    "model": "gemini-3.5-flash-lite"
+  }
+}
+```
 
 OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provider: "openai"`，并在该
 能力自己的 `base_url` 和 `model` 中写明端点与模型。`provider` 只决定请求协议和 SDK，
@@ -120,13 +147,28 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 
 `image.provider` 为 `google` 时禁止填写 `image_protocol`。
 
-`tts` 在四个字段之外还必须配置非空 `voice`，原样作为合成请求的音色：可以是预置音色名
-（示例中的 `Leda`），也可以是 AI Studio Voice design 生成的 `voice_` 音色 ID。设计音色归属
+`tts` 在通用字段之外还必须配置非空 `voice`，原样作为合成请求的音色：可以是预置音色名
+（示例中的 `Nika`），也可以是 AI Studio Voice design 生成的 `voice_` 音色 ID。设计音色归属
 该 `api_key` 所在的项目，且会在一年后过期；程序只校验它是非空字符串，音色是否存在由第一次
 合成请求决定。当前只有 Google 实现了语音合成，所以 `tts.provider` 选择 `openai` 虽能通过
 配置校验，但不会注册语音工具，`/send` 与 `cron.json` 的语音请求也会失败并记错误日志。三处都在
 AI Worker 上合成，因此还需要 AI 对话的其余前提（`stickers.json`、`mood.json`、
 `prompt/persona.md`）齐备，否则合成按「Worker 不可用」失败。
+
+`agent.tts.style` 是可选的基础朗读风格，必须是 trim 后非空的字符串；`null`、空白或其他类型均拒绝。缺省使用 `GEMINI_SPEECH_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`。三个语音入口共用此配置；热重载后新请求使用新值，已发起请求保留原配置快照，删除字段恢复默认。单次请求的 `tone` 仍按 `<基础风格>; 细节: <语气>` 拼接。
+
+`tts` 另有两个可选的每日额度字段，三个入口共用一份计数：
+
+| 字段 | 含义 |
+| --- | --- |
+| `daily_limit` | 每个计数窗口内最多发起的合成请求数，正整数，缺省 100。`/send` 代发与 `cron.json` 的 `send_voice` 可用满这个数 |
+| `daily_reserve_quota` | 从 `daily_limit` 里留给 `/send` 与 cron 的次数，整数，0 ～ `daily_limit - 1`，缺省 25。AI 语音工具只能用到 `daily_limit - daily_reserve_quota` |
+
+计数窗口从窗口内第一次请求起算，满 24 小时后以下一次请求为起点重新计数；窗口与次数存在
+运行时数据根 `memory/global/state.json` 的 `ttsUsage`，重启后延续。一次合成调用计一次，SDK 内部重试不另计。
+额度用尽后不再发起请求：AI 不发语音、也不在群里提起；`/send` 回一句额度提示；cron 记一条
+`daily limit reached` 错误日志且不重试。两个字段热重载即生效，已用次数不清零；调低后已用次数
+超过新上限时按用尽处理。
 
 `media` 的视觉与语音输入支持度分别在第一次真实请求时探测和缓存。明确不支持后，
 当前 Worker 生命周期内不再下载该类媒体；成功后记为支持；网络等瞬时错误保持未知，
@@ -154,6 +196,28 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 `/permission help` 为准，数据库 schema 非法、版本不匹配或两张名单存在交集都会在
 联网前拒绝启动。旧 JSON 部署按 [运维文档](../../docs/cn/07-operations.md) 的一次性
 迁移流程处理，不要把旧文件复制回 `config/`。
+
+## `assets.json`
+
+可选文件，每个字段也都可选；缺省的字段取内置缺省。只写需要改的项，例如：
+
+```json
+{
+  "random_h_image_dir": "./images",
+  "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+}
+```
+
+| 字段 | 用途 | 形态 |
+| --- | --- | --- |
+| `random_h_image_dir` | `/h_image` 与 cron 随机图片的专用图库，缺省 `./h_image` | 绝对路径或 `./`、`../` 开头的目录路径，相对路径以运行时数据根为基准 |
+| `fortune_thumbnail_url` | 「未卜先知」内联结果的缩略图 | 绝对 https URL |
+| `probability_thumbnail_url` | 「概率论」内联结果的缩略图 | 绝对 https URL |
+| `gag_thumbnail_url` | gag 发言内联结果的缩略图 | 绝对 https URL |
+| `bot_default_avatar_url` | `/icon reset`、`/copy stop` 复原机器人头像时下载的图片 | 绝对 http 或 https URL |
+
+字符串的首尾空白会被去掉；未知字段、去掉空白后为空的串和不符合形态的值都会拒绝启动（运行中则拒绝这次改动）。
+[`config_example/dynamic/assets.json`](../dynamic/assets.json) 按内置缺省写全了五个字段，可以整份复制后只改需要的项。
 
 ## `stickers.json`
 
@@ -185,7 +249,7 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 ## `g-auth.json`
 
 示例与 GCP 控制台下载的服务账号密钥文件同形，只用于对照结构；占位私钥无法解析，
-原样放进 `config/` 会拒绝启动。需要翻译时把真实密钥文件存为 `config/g-auth.json`；
+原样放进 `config/static/` 会拒绝启动。需要翻译时把真实密钥文件存为 `config/static/g-auth.json`；
 不需要翻译就不要放这个文件。`client_email` 必须非空，`private_key` 必须是可解析的
 RSA PEM 私钥；`type` 存在时只能是 `service_account`；`private_key_id`、`project_id`、
 `quota_project_id`、`universe_domain` 存在时必须是非空字符串；其余官方字段原样交给
@@ -195,12 +259,12 @@ SDK。安装器不会从示例生成这个文件。
 
 顶层是任务数组，缺省或 `[]` 表示没有定时任务。严格 JSON，不能写注释。
 
-[`config_example/cron.json`](../cron.json) 收录了覆盖全部写法的示例任务：工作日发纯文字；显式写出
+[`config_example/dynamic/cron.json`](../dynamic/cron.json) 收录了覆盖全部写法的示例任务：工作日发纯文字；显式写出
 时区，依次发文字、网址图片和网址文件；按相对项目根的路径发送本地图片、按绝对路径发送本地文件；
 `rand_cron` 区间从默认图库抽图；`@daily` 加单值 `rand_cron` 从指定目录抽图；带语气与不带语气的
 `send_voice`；以及 `just_once`。示例里的会话 id、地址和
-本地路径都是假的，原样放进 `config/` 会因本地文件不存在而拒绝启动；按需挑任务、改成真实的会话 id
-与路径后写进 `config/cron.json`。安装器不会从示例生成这个文件。
+本地路径都是假的，原样放进 `config/dynamic/` 会因本地文件不存在而拒绝启动；按需挑任务、改成真实的会话 id
+与路径后写进 `config/dynamic/cron.json`。安装器不会从示例生成这个文件。
 
 ```json
 [
@@ -235,7 +299,7 @@ SDK。安装器不会从示例生成这个文件。
 
 - `send_message`：`content` 必填，最长 4096 字符。
 - `send_image`：`content` 是一份可选文字（最长 1024 字符）。固定图片来源只能二选一：`url` 数组或 `path` 文件数组，长度 1–10；单张也必须写数组，如 `"url": ["https://example.com/a.jpg"]`。此时 `rand_image` 只能省略或为 `false`。一张用单图发送，2–10 张用一次相册请求，只有第一张带 caption，不另发文字；相册有多个 Telegram 消息 ID。`is_blurred: true` 对全部图片加剧透遮罩，缺省或 `false` 不加。
-  `rand_image: true` 每次只随机一张：禁止 `url` 与文件数组，`path` 只能是目录字符串；省略时使用 `state.global.assets.randomHImageDir`，指定其他目录时不要求 SHA-256 命名。
+  `rand_image: true` 每次只随机一张：禁止 `url` 与文件数组，`path` 只能是目录字符串；省略时使用 `assets.json` 的 `random_h_image_dir`，指定其他目录时不要求 SHA-256 命名。
 - `send_file`：`content` 可选（最长 1024 字符），来源恰好一个 `url` 或 `path`。
 - `send_voice`：`content` 必填，是要念的台词（最长 256 字符）；`tone` 可选，是这一句的说话语气
   （最长 64 字符），拼在固定的基础声线之后，省略则只用基础声线。两者换行合并成空格、去掉首尾空白
@@ -256,7 +320,7 @@ GIF 可用，其余类型发不出去属于配置问题。本地上传的上限�
   的随机等待都只在内存里，重启后重新开始。
 - 某个动作因网络、Telegram 5xx、出站闸重试后仍返回的 429 或出站队列满失败时，按 2、4、8 秒退避最多重试 3 次；
   `send_voice` 的合成没交回音频、等待超时或 AI Worker 暂不可用同样按此重试。
-  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删、`tts` 未配置或实现不支持、音频编码失败）不重试。最终失败时日志记一条
+  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删、`tts` 未配置或实现不支持、当日语音额度用尽、音频编码失败）不重试。最终失败时日志记一条
   `Cron task "<name>" action #<n> ...`，并跳过本轮剩下的动作。超时但 Telegram 实际已收到时，
   重试会重复发送一条。
 - 定时消息长期保留，不做 30 秒删除；不带论坛话题，开了话题的群里发到 General。全部请求照常经过
@@ -278,9 +342,9 @@ GIF 可用，其余类型发不出去属于配置问题。本地上传的上限�
 
 | 路径字段 | 相对路径的基准 | 形态 |
 | --- | --- | --- |
-| `state.global.assets.randomHImageDir` | 运行时数据根 | 绝对路径或 `./`、`../` 开头的目录路径 |
+| `assets.json` 的 `random_h_image_dir` | 运行时数据根 | 绝对路径或 `./`、`../` 开头的目录路径 |
 | cron 固定图片 `payload.path` | 项目根 | 1–10 个文件路径的数组 |
 | cron 随机图片 `payload.path` | 项目根 | 可选目录字符串；省略才使用上述专用图库 |
 | cron 文件 `payload.path` | 项目根 | 单个文件路径字符串 |
 
-`state.global.assets.randomHImageDir` 是 `/h_image` 色图功能专用目录，默认 `./h_image`。绝对路径（如 `/h_image`）与显式相对路径（`./h_image`、`../h_image`）都支持，相对路径以运行时数据根为基准。不要随意放置其他功能的图片；应通过 `/h_image add` 入库，手工放置必须自行以内容 SHA-256 的 64 位小写十六进制摘要命名，扩展名为 jpg/jpeg/png/webp。启动在 Worker 和外部连接之前异步检查命名及条目类型；非法文件、子目录、文件链接和残留临时文件均报错拒绝启动。启动不重算全库内容哈希，手工文件名与真实摘要的对应关系由部署方负责。cron 显式目录独立使用，无此命名要求。文件与目录内容读取、预检和上传均为异步；本地相册只持有可重开的文件流，不预读全部图片。
+`assets.json` 的 `random_h_image_dir` 是 `/h_image` 色图功能专用目录，默认 `./h_image`。绝对路径（如 `/h_image`）与显式相对路径（`./h_image`、`../h_image`）都支持，相对路径以运行时数据根为基准。不要随意放置其他功能的图片；应通过 `/h_image add` 入库，手工放置必须自行以内容 SHA-256 的 64 位小写十六进制摘要命名，扩展名为 jpg/jpeg/png/webp。启动在 Worker 和外部连接之前异步检查命名及条目类型；非法文件、子目录、文件链接和残留临时文件均报错拒绝启动。启动不重算全库内容哈希，手工文件名与真实摘要的对应关系由部署方负责。cron 显式目录独立使用，无此命名要求。文件与目录内容读取、预检和上传均为异步；本地相册只持有可重开的文件流，不预读全部图片。

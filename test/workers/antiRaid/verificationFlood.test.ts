@@ -5,7 +5,8 @@ import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from
   "../../../packages/consts/antiRaid/lockdown";
-import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
+import type { VerificationSnapshot } from "../../../packages/types/antiRaid/verification";
 
 const actions: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];

@@ -14,7 +14,7 @@
  */
 
 import type { GeneratedChatImage, ImageGenerationAspectRatio } from "./imageGeneration";
-import type { SynthesizedSpeech } from "./voiceMessage";
+import type { SpeechSynthesisAttempt, SynthesizedSpeech, TtsQuotaScope } from "./voiceMessage";
 import type { VisionImage, VoiceClip } from "../media";
 import type { AgentProvider } from "../config";
 
@@ -218,6 +218,14 @@ export interface AiSpeechRequest {
 }
 
 /**
+ * 经 tts 门面发起的语音合成请求：在供应商请求之外带上本调用方的额度口径。
+ * AI 语音工具传 `ai`，主线程转交的 `/send` 与 cron 传 `operator`。
+ */
+export interface AiMeteredSpeechRequest extends AiSpeechRequest {
+  readonly quota: TtsQuotaScope;
+}
+
+/**
  * 创建一轮回复会话所需的初始上下文。
  *
  * 区块按「跨轮回复是否逐字不变」分成两组，而不是按语义分。这条分界是给供应商
@@ -244,7 +252,7 @@ export interface AiReplySessionParams {
 /**
  * 五项能力各自的最小契约。
  *
- * 按**编译期边界**拆开：config/agent.json 按能力独立选 provider，一次
+ * 按**编译期边界**拆开：config/dynamic/agent.json 按能力独立选 provider，一次
  * summary 路由拿到的实现只应该被用来生成摘要。若各处都拿着完整的
  * AiChatProvider，「从 summary 那一家去读图」或「拿 media 那一家开回复会话」在
  * 类型上完全合法，只有运行期才会表现成用错了模型和端点——而那正是本项目刻意
@@ -288,7 +296,7 @@ export interface AiImageProvider {
   generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null>;
 }
 
-/** 语音合成能力。 */
+/** 语音合成能力：实现包交出的供应商契约。 */
 export interface AiSpeechProvider {
   readonly name: AgentProvider;
   /**
@@ -299,11 +307,21 @@ export interface AiSpeechProvider {
 }
 
 /**
+ * tts 门面（aiChat/provider.ts 的 ttsAiProvider）：请求经交互优先的配额闸门排队，
+ * 轮到执行时先按 `quota` 口径登记每日计数，超出上限时不发起供应商请求。
+ */
+export interface AiSpeechFacade {
+  readonly name: AgentProvider;
+  /** 缺席语义同 AiSpeechProvider.synthesizeSpeech。 */
+  synthesizeSpeech?(this: void, request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt>;
+}
+
+/**
  * 一家供应商对 AI 闲聊全部模型能力的实现；实现包导出的就是这一个对象。
  *
  * 选取按 text、summary、media、image、tts 五项能力拆分，见 aiChat/provider.ts：
  * 路由持有完整实现，交给调用方的却只有上面对应的那一份最小契约。每项只读取
- * config/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此两家
+ * config/dynamic/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此两家
  * 客户端可以在同一条 Worker 线程上同时存在，并按能力持有各自实例
  * （见 cache/workers/aiChat/{gemini,openai}.ts）。
  */

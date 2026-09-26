@@ -1,6 +1,4 @@
 import { workerAtmosphere } from "./atmosphere";
-import { logger } from "../../infra/logger";
-import { answerCallbackQuery, telegramApi } from "../../infra/telegram";
 import { lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import {
   deferredVerificationRecords,
@@ -14,7 +12,6 @@ import type {
   AntiRaidMember,
   NewMemberMessage,
   TrackedChatMessage,
-  VerifyCallbackMessage,
 } from "../../types/antiRaid/protocol";
 import type {
   ThreadCommentConfirmation,
@@ -25,7 +22,7 @@ import type {
   JoinEvent,
   VerificationState,
 } from "../../types/states/verification";
-import { freshAdminIds, isChatAdmin } from "./adminCache";
+import { freshAdminIds } from "./adminCache";
 import { trackAntiRaidTask } from "./taskTracker";
 import {
   cachedChatHasLinkedChannel,
@@ -282,64 +279,5 @@ export function handleTrackedMessageEvent({
     messageId: message.messageId,
     inCommentThread: false,
     now: observedAt,
-  });
-}
-
-export interface HandleVerificationCallbackEventParams {
-  message: VerifyCallbackMessage;
-  dispatchVerification: VerificationDispatcher;
-}
-
-/**
- * 把按钮点击翻译成状态机事件。本人验证与本人点击同步结算；只有「别人替
- * 目标点通过」且目标仍在 pending 时，才付一次管理员身份闸（见 adminCache.ts
- * 的 isChatAdmin）再回投，查不出来按 undefined 回投。
- */
-export function handleVerificationCallbackEvent({
-  message,
-  dispatchVerification,
-}: HandleVerificationCallbackEventParams): void {
-  const chatId: number | undefined = message.chatId;
-  if (chatId === undefined) {
-    void trackAntiRaidTask({
-      task: answerCallbackQuery({
-        callbackQueryId: message.callbackQueryId,
-        api: telegramApi,
-      }).catch((error: unknown): void => {
-        logger.error("Error answering join verification callback:", error);
-      }),
-    });
-    return;
-  }
-  const targetUserId: number = message.targetUserId;
-  const isSelf: boolean = message.from.id === targetUserId;
-  const needsAdminCheck: boolean =
-    message.action === "approve" &&
-    !isSelf &&
-    verificationEntries.get(verificationKey(chatId, targetUserId))?.state.kind === "pending";
-  if (!needsAdminCheck) {
-    dispatchVerification(chatId, targetUserId, {
-      type: "callback",
-      callbackQueryId: message.callbackQueryId,
-      action: message.action,
-      isSelf,
-      fromCanApprove: false,
-      fromLabel: memberLabel(message.from, message.chatId ?? 0),
-    });
-    return;
-  }
-  const fromLabel: string = memberLabel(message.from, message.chatId ?? 0);
-  void trackAntiRaidTask({
-    task: isChatAdmin(chatId, message.from.id, "verification approver")
-      .then((isAdmin: boolean | undefined): void => {
-        dispatchVerification(chatId, targetUserId, {
-          type: "callback",
-          callbackQueryId: message.callbackQueryId,
-          action: "approve",
-          isSelf: false,
-          fromCanApprove: isAdmin,
-          fromLabel,
-        });
-      }),
   });
 }

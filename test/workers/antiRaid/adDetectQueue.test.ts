@@ -205,12 +205,12 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   test("判定抛错按「本次没判定」结算：记一行日志、推进水位，不静默死循环", async () => {
     // classifyAdText 的同步准备阶段也会抛：它先调 adDetectSystemPrompt →
     // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
-    // config/ad_samples.json 改坏，每一次调用都重新抛同一个错。不接住的话异常
+    // config/dynamic/ad_samples.json 改坏，每一次调用都重新抛同一个错。不接住的话异常
     // 一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个吞掉：checkedSeq
     // 永不推进，之后每条新发言都会把同一批旧内容带回来再次失败，全程一行日志
     // 都没有，而 /ad_detect 仍然报告功能已启用。
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict | null> => {
-      throw new Error("config/ad_samples.json must contain a JSON object.");
+      throw new Error("config/dynamic/ad_samples.json must contain a JSON object.");
     });
     enqueueAdCandidate(candidate({ messageId: 1, text: "加我微信" }), 1_000);
 

@@ -39,10 +39,10 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
       purpose: "private-key syntax validation",
     },
   },
-  "packages/config/botInput.ts": {
+  "packages/config/layout.ts": {
     "node:fs/promises": {
-      symbols: ["lstat"],
-      purpose: "rejecting legacy Bot configuration entries including dangling links without reading their contents",
+      symbols: ["lstat", "stat"],
+      purpose: "deployment config layout validation: rejecting misplaced entries including dangling links without reading their contents, and requiring the dynamic directory",
     },
   },
   "packages/config/readiness.ts": {
@@ -96,8 +96,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/infra/storage/statePersistence.ts": {
     "node:fs/promises": {
-      symbols: ["lstat"],
-      purpose: "distinguishing a truly missing state copy from a dangling symbolic link",
+      symbols: ["lstat", "mkdir"],
+      purpose: "distinguishing a truly missing state file from a dangling symbolic link, and creating the global state directory",
     },
   },
   "packages/libs/atomicFile.ts": {
@@ -141,6 +141,12 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
     "node:fs": {
       symbols: ["mkdirSync", "readdirSync"],
       purpose: "owner-local journal metadata and stale-file cleanup",
+    },
+  },
+  "packages/workers/diskIO/aiCacheFile.ts": {
+    "node:fs": {
+      symbols: ["mkdirSync", "readdirSync"],
+      purpose: "AI cache statistics directory creation and stale-file cleanup",
     },
   },
   "packages/workers/diskIO/logFiles.ts": {
@@ -202,6 +208,10 @@ export const PRODUCTION_BUFFER_GLOBALS: Readonly<Record<string, BufferGlobalAllo
   "packages/workers/diskIO/joinLogRecords.ts": {
     methods: ["byteLength"],
     purpose: "join-log serialized byte accounting",
+  },
+  "packages/workers/diskIO/aiCacheFile.ts": {
+    methods: ["byteLength"],
+    purpose: "AI cache statistics serialized byte accounting",
   },
   "packages/workers/diskIO/logFiles.ts": {
     methods: ["byteLength"],
@@ -316,6 +326,12 @@ export const TEST_NODE_IMPORTS: Readonly<
     "node:fs": {
       symbols: "*",
       purpose: "spyOn targets for metadata and access-mode failures",
+    },
+  },
+  "test/perf/fullSuiteProcessIo.test.ts": {
+    "node:fs": {
+      symbols: "*",
+      purpose: "spyOn targets for directory and metadata I/O failures",
     },
   },
   "test/productionModules.test.ts": {

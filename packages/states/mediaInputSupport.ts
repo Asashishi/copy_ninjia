@@ -82,7 +82,7 @@ export function reduceMediaInputResult(
           nextProbeAt: 0,
           configGeneration: current.configGeneration,
         },
-        // 只在落定那一次记：诊断要能一眼指向 config/agent.json 的 media 段，
+        // 只在落定那一次记：诊断要能一眼指向 config/dynamic/agent.json 的 media 段，
         // 但不能每份媒体刷一条。
         effects: result.mediaFailure === "misconfigured"
           ? [{ kind: "logMisconfiguredMediaEndpoint", capability }]

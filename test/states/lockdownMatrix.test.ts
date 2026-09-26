@@ -127,6 +127,7 @@ const LOCKDOWN_COLUMNS: Readonly<Record<
     announced: true,
     announcementMessageId: ANNOUNCEMENT_MESSAGE_ID,
     remainingMs: 60_000,
+    persisted: true,
   }),
 };
 

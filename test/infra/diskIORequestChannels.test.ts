@@ -1,16 +1,11 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { waitUntil } from "../helpers/waitUntil";
-import type {
-  DiskIOMessage,
-  DiskIOReply,
-  LuckAppendStalledReply,
-  LuckDrawDiskMessage,
-} from "../../packages/types";
+import type { DiskIOMessage, LuckDrawDiskMessage } from "../../packages/types/diskIO/messages";
+import type { DiskIOReply, LuckAppendStalledReply, WedMembersDeletedPersistedReply } from "../../packages/types/diskIO/replies";
 import type {
   BlocklistIdPage,
   IdentityPolicyRawReadResult,
 } from "../../packages/types/identityStorage";
-import type { WedMembersDeletedPersistedReply } from "../../packages/types/diskIO/replies";
 import { onDiskIOReply } from "../../packages/infra/diskIO/observers";
 import {
   blocklistIdPageReadRequests,

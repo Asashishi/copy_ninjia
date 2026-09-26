@@ -2,17 +2,15 @@
  * 日志落盘逻辑：接收 diskIOWorker.ts 路由来的日志消息，先进入内存 buffer，
  * 达到阈值（见 consts/diskIO/appendOnly.ts）或
  * 收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
- * JSON 对象，键为「本地日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
+ * JSON 对象，键为「东京日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
  * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
  * 一致。
  *
  * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
  * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts。
  * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO/appendOnly.ts），跨天写入
- * 与每日维护都会清理过期文件。日期显式按东京时区划分（同 libs/time.ts 的 getTokyoDateKey，
- * 与运势/AI 记忆两个同进程内子系统口径一致），不依赖部署机器自身的系统
- * 时区设置——不然一旦部署环境时区漂移，三类落盘数据会在同一次事故里表现
- * 不一致。
+ * 与每日维护都会清理过期文件。日期与 key 前缀按东京时区划分（libs/time.ts 的
+ * getTokyoDateKey、formatTokyoLogTimestamp），与部署机器的系统时区无关。
  */
 
 import { mkdirSync, readdirSync } from "node:fs";
@@ -30,7 +28,7 @@ import {
 } from "../../consts/diskIO/appendOnly";
 import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
-import { getTokyoDateKey } from "../../libs/time";
+import { formatTokyoLogTimestamp, getTokyoDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { bestEffortUnlink, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
@@ -52,22 +50,6 @@ interface LogRecord {
    */
   args: unknown[] | undefined;
 }
-
-/** 东京时区、含毫秒的日期时间格式器（模块加载时构造一次复用，同 libs/time.ts
- *  里那几个模块级格式器一个道理）。libs/time.ts 的 formatTokyoTime 没有
- *  毫秒精度、分隔符也不同（"/" 而非 "-"），日志 key 需要毫秒来对齐同一秒内
- *  多条日志的先后顺序，所以这里单独维护一份，不复用它。 */
-const TOKYO_DATETIME_MS_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Tokyo",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  fractionalSecondDigits: 3,
-  hour12: false,
-});
 
 function assertLogFileSchema(path: string, parsed: unknown): void {
   if (!isPlainRecord(parsed)) {
@@ -149,23 +131,6 @@ async function openLogDay(day: string): Promise<DayFileState> {
   return adoptLogDay(await inspectLogDay(day));
 }
 
-/** 毫秒时间戳 → 东京时区的「YYYY-MM-DD HH:mm:ss.SSS」，用作落盘日志条目的
- *  key（人类可读部分；同一毫秒内的多条日志靠后缀的 UUID 区分，见
- *  handleLogMessage）。用 formatToParts 手工拼接，不依赖某个 locale 恰好
- *  输出这个分隔符形态。 */
-function formatDateTime(timestamp: number): string {
-  const parts: Record<string, string> = {};
-  for (const part of TOKYO_DATETIME_MS_FORMATTER.formatToParts(timestamp)) {
-    if (part.type !== "literal") parts[part.type] = part.value;
-  }
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}`;
-}
-
-/** 毫秒时间戳 → 东京时区的日期串（YYYY-MM-DD），用作日志文件名与保留期阈值计算。 */
-function dayKey(timestamp: number): string {
-  return getTokyoDateKey(new Date(timestamp));
-}
-
 /**
  * 清掉 LOGS_DIR 下残留的 *.tmp：openDayFile 的维护性重写（appendOnlyDayFile.ts
  * 经 atomicWriteTextSync）走 tmp + rename，正常情况 rename 后 tmp 不会留下；只有
@@ -183,7 +148,7 @@ async function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
 async function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
-  const oldestKept: string = dayKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
+  const oldestKept: string = getTokyoDateKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
   for (const name of names) {
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     // 删除失败不影响写入，下次跨天再试。
@@ -232,7 +197,7 @@ export interface LogFilesInspection {
 /** 跨域启动第一阶段：只读校验当前日志，并预计算必要的规范化内容。 */
 export async function inspectLogFiles(): Promise<LogFilesInspection> {
   const names: string[] = inspectOptionalDirectory(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
-  return { names, day: await inspectLogDay(dayKey(Date.now())) };
+  return { names, day: await inspectLogDay(getTokyoDateKey()) };
 }
 
 /** 全域 inspect 成功后接管日志游标；可修复尾部只在这一阶段原子发布。 */
@@ -310,10 +275,10 @@ export async function handleLogMessage(msg: LogMessage): Promise<void> {
     message: stringArgs.join(" "),
     args: hasStructuredArgs ? msg.args : undefined,
   };
-  // key 按本地日期时间前缀排序，uuid 段只区分同一毫秒内的多条日志。
+  // key 按东京日期时间前缀排序，uuid 段只区分同一毫秒内的多条日志。
   const bufferedEntries: number = markLogDirty({
-    day: dayKey(msg.timestamp),
-    text: serializeDayFileEntry(`${formatDateTime(msg.timestamp)}_${crypto.randomUUID()}`, record),
+    day: getTokyoDateKey(msg.timestamp),
+    text: serializeDayFileEntry(`${formatTokyoLogTimestamp(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
   if (bufferedEntries >= FLUSH_MAX_ENTRIES) {
     await flushLogBuffer();

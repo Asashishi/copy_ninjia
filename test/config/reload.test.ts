@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import {
   adDetectAgentConfigCache,
   agentDeploymentConfigCache,
@@ -9,9 +10,13 @@ import {
 } from "../../packages/cache/perThread/config";
 import { applyHotDeploymentConfigs, readHotDeploymentConfigs } from "../../packages/config/reload";
 import { cronConfigCache } from "../../packages/cache/main/cron";
+import { assetConfigCache } from "../../packages/cache/main/assets";
+import { DEFAULT_ASSET_CONFIG } from "../../packages/consts/ui/assets";
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  ASSETS_CONFIG_PATH,
+  RUNTIME_DATA_ROOT,
   CRON_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
@@ -69,6 +74,8 @@ afterEach(async (): Promise<void> => {
   defaultMoodConfigCache.current = baseline.mood;
   defaultStickerConfigCache.current = baseline.stickers;
   cronConfigCache.current = baseline.cron;
+  rmSync(ASSETS_CONFIG_PATH, { force: true });
+  assetConfigCache.current = DEFAULT_ASSET_CONFIG;
 });
 
 async function reload(): Promise<HotDeploymentConfigChanges> {
@@ -83,10 +90,11 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await Bun.write(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-describe("config/ 热重载判定", () => {
+describe("config/dynamic/ 热重载判定", () => {
   test("内容与已生效快照相同时不替换任何 holder", async () => {
     const changes: HotDeploymentConfigChanges = await reload();
     expect(changes).toEqual({
+      assets: false,
       adDetect: false,
       aiAgent: false,
       adSamples: false,
@@ -330,8 +338,8 @@ describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
   }];
   const CRON_REJECTION: string =
     `${CRON_CONFIG_PATH}: $[0].actions[0].type must be send_message, send_image or send_file ` +
-    "unless config/agent.json configures $.agent.tts alongside text, summary and media.";
-  const AGENT_REJECTION: string = `${AGENT_CONFIG_PATH}: $.agent must be configured with text, summary, media and tts while config/cron.json uses send_voice.`;
+    "unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media.";
+  const AGENT_REJECTION: string = `${AGENT_CONFIG_PATH}: $.agent must be configured with text, summary, media and tts while config/dynamic/cron.json uses send_voice.`;
 
   async function writeAgentWithoutTts(): Promise<void> {
     const document = await readAgentDocument();
@@ -395,5 +403,73 @@ describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
     expect(changes.cron).toBe(false);
     expect(changes.aiAgent).toBe(true);
     expect(cronConfigCache.current).toBe(baseline.cron);
+  });
+});
+
+describe("config/dynamic/assets.json 热重载", () => {
+  test("文件出现、修改与删除：整体替换快照，删除时换回内置缺省", async () => {
+    await writeJson(ASSETS_CONFIG_PATH, { gag_thumbnail_url: "https://cdn.example/gag.png" });
+    let changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.rejections).toEqual([]);
+    expect(changes.assets).toBe(true);
+    expect(changes.reloadedPaths).toEqual([ASSETS_CONFIG_PATH]);
+    expect(assetConfigCache.current).toEqual({
+      ...DEFAULT_ASSET_CONFIG,
+      gagThumbnailUrl: "https://cdn.example/gag.png",
+    });
+
+    const adopted = assetConfigCache.current;
+    changes = await reload();
+    expect(changes.assets).toBe(false);
+    expect(assetConfigCache.current).toBe(adopted);
+
+    rmSync(ASSETS_CONFIG_PATH);
+    changes = await reload();
+    expect(changes.assets).toBe(true);
+    expect(changes.removedPaths).toEqual([ASSETS_CONFIG_PATH]);
+    expect(assetConfigCache.current).toBe(DEFAULT_ASSET_CONFIG);
+  });
+
+  test("非法内容整份拒绝，快照保持上一份，诊断不回显原值", async () => {
+    await writeJson(ASSETS_CONFIG_PATH, { fortune_thumbnail_url: "cdn.example/secret-path.png" });
+    const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.assets).toBe(false);
+    expect(changes.rejections).toEqual([
+      `${ASSETS_CONFIG_PATH}: $.fortune_thumbnail_url must be an absolute https URL.`,
+    ]);
+    expect(assetConfigCache.current).toBe(DEFAULT_ASSET_CONFIG);
+  });
+
+  test("切换随机图片目录时先建好并检查新目录再接管", async () => {
+    const created: string = join(RUNTIME_DATA_ROOT, "reload-gallery");
+    rmSync(created, { recursive: true, force: true });
+    await writeJson(ASSETS_CONFIG_PATH, { random_h_image_dir: "./reload-gallery" });
+    try {
+      const changes: HotDeploymentConfigChanges = await reload();
+      expect(changes.rejections).toEqual([]);
+      expect(assetConfigCache.current.randomHImageDirectory).toBe(created);
+      expect(readdirSync(created)).toEqual([]);
+    } finally {
+      rmSync(created, { recursive: true, force: true });
+    }
+  });
+
+  test("新目录检查失败时拒绝 assets.json 的变更，保留旧目录", async () => {
+    const polluted: string = join(RUNTIME_DATA_ROOT, "reload-polluted-gallery");
+    mkdirSync(polluted, { recursive: true });
+    await Bun.write(join(polluted, "not-a-digest.png"), "x");
+    await writeJson(ASSETS_CONFIG_PATH, {
+      random_h_image_dir: "./reload-polluted-gallery",
+      gag_thumbnail_url: "https://cdn.example/gag.png",
+    });
+    try {
+      const changes: HotDeploymentConfigChanges = await reload();
+      expect(changes.assets).toBe(false);
+      expect(changes.rejections).toHaveLength(1);
+      expect(changes.rejections[0]).toContain("$.random_h_image_dir must be a regular image named");
+      expect(assetConfigCache.current).toBe(DEFAULT_ASSET_CONFIG);
+    } finally {
+      rmSync(polluted, { recursive: true, force: true });
+    }
   });
 });

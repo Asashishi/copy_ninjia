@@ -2,8 +2,7 @@
  * 随机图片：`/h_image` 的目录准备、抽取与收图写盘。
  *
  * 启动时严格检查专用图库；运行时为 /h_image 与 cron 提供抽图、计数和按内容摘要收图。
- * 不持有缓存，也不发送；目录路径由调用方传入（部署默认值见 infra/storage/stateStore.ts 的
- * getRandomHImageDirectory）。
+ * 不持有缓存，也不发送；目录路径由调用方传入（部署值见 config/assets.ts 的 getAssetConfig）。
  * 每次抽取都重新枚举目录，增删图片不用重启；低频路径，不缓存目录列表。
  */
 
@@ -11,7 +10,7 @@ import { access, lstat, mkdir, readdir, rename } from "node:fs/promises";
 import { constants } from "node:fs";
 import type { Dirent } from "node:fs";
 import { extname, join } from "node:path";
-import { STATE_FILE_PATH } from "../consts/paths";
+import { ASSETS_CONFIG_PATH } from "../consts/paths";
 import {
   RANDOM_IMAGE_CONTENT_NAME_PATTERN,
   RANDOM_IMAGE_EXTENSIONS,
@@ -32,14 +31,15 @@ import type {
 } from "../types/randomImage";
 
 /**
- * 启动时准备 /h_image 专用图库并校验 SHA-256 文件名、扩展名与条目类型。
+ * 准备 /h_image 专用图库并校验 SHA-256 文件名、扩展名与条目类型：启动时在外部连接之前
+ * 调用（见 docs/cn/04-invariants.md），config/dynamic/ 热重载切换目录时在接管新快照之前调用。
  * 检查只读目录项，不重算内容摘要；不修复或清理非法条目。允许目录根链接，
- * 拒绝子目录、文件链接及临时文件；外部连接之前调用，见 docs/cn/04-invariants.md。
+ * 拒绝子目录、文件链接及临时文件；报错点名 config/dynamic/assets.json 的 random_h_image_dir。
  */
 export async function ensureRandomImageDirectory(directory: string): Promise<void> {
-  const field: string = "state.global.assets.randomHImageDir";
+  const field: string = "$.random_h_image_dir";
   const invalid: InputValidationError = new InputValidationError(
-    STATE_FILE_PATH, field, `an accessible existing or creatable directory (resolved to ${directory})`
+    ASSETS_CONFIG_PATH, field, `an accessible existing or creatable directory (resolved to ${directory})`
   );
   try {
     await lstat(directory);

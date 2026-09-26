@@ -49,7 +49,6 @@ const {
   releaseSingleInstanceLock,
   runnerStop,
   runnerTask,
-  seedMissingAssetState,
   seedSenderCache,
   setCopiedUser,
   setBusinessWorkerFatalHandler,
@@ -243,17 +242,9 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("initTelegram"));
     expect(calls.indexOf("initDiskIO")).toBeLessThan(calls.indexOf("hydrateIdentityCounts"));
     expect(calls.indexOf("hydrateIdentityCounts")).toBeLessThan(calls.indexOf("botInit"));
-    // 补齐素材直链必须排在所有会拒绝启动的 await 之后（部署输入闸、bot.init、
-    // 黑名单补扫），被拒绝启动的运行不改写 state.json。
-    expect(calls.indexOf("loadState")).toBeLessThan(calls.indexOf("seedAssets"));
-    // 随机图片目录按已校验的 state 准备，且在任何 Worker 与外部连接之前。
+    // 随机图片目录按已校验的 config/dynamic/assets.json 准备，且在任何 Worker 与外部连接之前。
     expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(calls.indexOf("prepareImageDir"));
     expect(calls.indexOf("prepareImageDir")).toBeLessThan(calls.indexOf("initDiskIO"));
-    expect(calls.indexOf("validateDeploymentInputs")).toBeLessThan(
-      calls.indexOf("seedAssets")
-    );
-    expect(calls.indexOf("botInit")).toBeLessThan(calls.indexOf("seedAssets"));
-    expect(calls.indexOf("sweepBlocklist")).toBeLessThan(calls.indexOf("seedAssets"));
     expect(hydrateBlocklist).toHaveBeenCalledWith(expect.any(Map));
     expect(calls.indexOf("initAntiRaid")).toBeLessThan(
       calls.indexOf("initBlocklistScheduler")
@@ -292,11 +283,10 @@ describe("应用启动失败与退出清理", () => {
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
-  test("部署输入闸拒绝时不补齐素材直链，state.json 保持运维看到的原样", async () => {
-    // 补齐是纯可读性写入；被拒绝启动的那次运行改写 state.json 只会干扰排查。
+  test("部署输入闸拒绝时不初始化 Telegram 与 Disk I/O Worker", async () => {
     validateExistingDeploymentInputs.mockImplementationOnce(async (): Promise<void> => {
       calls.push("validateDeploymentInputs");
-      throw new Error("config/mood.json: $ must match its current schema");
+      throw new Error("config/dynamic/mood.json: $ must match its current schema");
     });
     const lifecycle = new ApplicationLifecycle(testDependencies);
 
@@ -304,44 +294,9 @@ describe("应用启动失败与退出清理", () => {
     await lifecycle.dispose();
 
     expect(process.exitCode).toBe(1);
-    expect(seedMissingAssetState).not.toHaveBeenCalled();
     expect(initTelegramClients).not.toHaveBeenCalled();
     expect(initDiskIO).not.toHaveBeenCalled();
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("部署输入闸之后的启动拒绝同样不补齐——bot.init 失败也不改写 state.json", async () => {
-    // 部署输入闸不是最后一道拒绝点：吊销的 token 要到 bot.init 才炸。
-    botInit.mockImplementationOnce(async (): Promise<never> => {
-      calls.push("botInit");
-      throw new Error("401: Unauthorized");
-    });
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.run("main");
-    await lifecycle.dispose();
-
-    expect(process.exitCode).toBe(1);
-    expect(calls).toContain("botInit");
-    expect(seedMissingAssetState).not.toHaveBeenCalled();
-    expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
-  });
-
-  test("启动全程成功后才补齐素材直链，并按补写项数留一行日志", async () => {
-    seedMissingAssetState.mockImplementationOnce((): number => {
-      calls.push("seedAssets");
-      return 2;
-    });
-    const lifecycle = new ApplicationLifecycle(testDependencies);
-
-    await lifecycle.init();
-    await lifecycle.dispose();
-
-    // 排在最后一个会拒绝启动的 await（黑名单补扫）之后。
-    expect(calls.indexOf("seedAssets")).toBeGreaterThan(calls.indexOf("sweepBlocklist"));
-    expect(testDependencies.logger.log).toHaveBeenCalledWith(
-      expect.stringContaining("Seeded 2 missing state.global.assets value(s)")
-    );
   });
 
   test("轮询任务异常后执行完整持久化顺序，报未确认 offset 但照常释放实例锁", async () => {

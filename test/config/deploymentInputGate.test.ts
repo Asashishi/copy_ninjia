@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { generateKeyPairSync } from "node:crypto";
 import { join } from "node:path";
 import { TEST_CONFIG_ROOT, TEST_DATA_ROOT } from "../preloadEnv";
+import { DYNAMIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
 import type { BotConfig } from "../../packages/types/config";
 
 const testRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "copy-ninjia-input-gate-"));
@@ -65,7 +66,7 @@ const { googleServiceAccountKey } = await import("../../packages/cache/main/tran
 /** 每个用例都从一份合法部署开始；只有被点名的那一份被改成非法。 */
 beforeEach(async (): Promise<void> => {
   for (const name of ["stickers.json", "mood.json", "ad_samples.json", "agent.json", "cron.json"]) {
-    await Bun.write(join(testRoot, name), Bun.file(join(TEST_CONFIG_ROOT, name)));
+    await Bun.write(join(testRoot, name), Bun.file(join(TEST_CONFIG_ROOT, DYNAMIC_CONFIG_DIR_NAME, name)));
   }
   await Bun.write(PERSONA_FILE_PATH, Bun.file(join(import.meta.dir, "..", "..", "prompt", "persona.md")));
   await Bun.write(AUTH_PATH, JSON.stringify({

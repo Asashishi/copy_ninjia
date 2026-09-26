@@ -1,3 +1,4 @@
+import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   LOGGER_CIRCULAR_ERROR_VALUE,
@@ -6,12 +7,9 @@ import {
   LOGGER_NESTED_ERROR_MAX_DEPTH,
 } from "../../packages/consts/logger";
 import { REDACTED_SECRET } from "../../packages/consts/redaction";
-import type {
-  DiskDiagnosticBatchRequest,
-  DiskIOMessage,
-  DiskIOReply,
-  LogEnvelope,
-} from "../../packages/types";
+import { AGENT_CAPABILITY_NAMES, AGENT_HEADERS_MAX_ENTRIES } from "../../packages/consts/agent";
+import type { DiskDiagnosticBatchRequest, DiskIOMessage, LogEnvelope } from "../../packages/types/diskIO/messages";
+import type { DiskIOReply } from "../../packages/types/diskIO/replies";
 import type {
   AdDetectAgentConfig,
   AgentDeploymentConfig,
@@ -222,14 +220,15 @@ describe("logger persistence routing boundary", () => {
       superAdminUserId: 1,
     };
     agentDeploymentConfigCache.current = {
-      text: { provider: "google", apiKey: normalizedSecrets[1], baseUrl: undefined, model: "text" },
-      summary: { provider: "openai", apiKey: "summary-key", baseUrl: undefined, model: "summary" },
-      media: { provider: "google", apiKey: "media-key", baseUrl: undefined, model: "media" },
+      text: { provider: "google", apiKey: normalizedSecrets[1], baseUrl: undefined, headers: undefined, model: "text" },
+      summary: { provider: "openai", apiKey: "summary-key", baseUrl: undefined, headers: undefined, model: "summary" },
+      media: { provider: "google", apiKey: "media-key", baseUrl: undefined, headers: undefined, model: "media" },
     };
     adDetectAgentConfigCache.current = {
       provider: "openai",
       apiKey: normalizedSecrets[2],
       baseUrl: "https://api.deepseek.com",
+      headers: undefined,
       model: "ad",
     };
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
@@ -259,6 +258,47 @@ describe("logger persistence routing boundary", () => {
     }
   });
 
+  test("google provider headers 的每个值都进脱敏名单", () => {
+    const originalAgent: AgentDeploymentConfig | null = agentDeploymentConfigCache.current;
+    const originalAdDetect: AdDetectAgentConfig | null = adDetectAgentConfigCache.current;
+    const headerSecrets: readonly string[] = ["Bearer gateway-text-token", "trace-media-value", "Bearer gateway-ad-token"];
+    agentDeploymentConfigCache.current = {
+      text: {
+        provider: "google",
+        apiKey: "text-key",
+        baseUrl: undefined,
+        headers: { "cf-aig-authorization": headerSecrets[0]! },
+        model: "text",
+      },
+      summary: { provider: "openai", apiKey: "summary-key", baseUrl: undefined, headers: undefined, model: "summary" },
+      media: { provider: "google", apiKey: "media-key", baseUrl: undefined, headers: { "x-trace": headerSecrets[1]! }, model: "media" },
+    };
+    adDetectAgentConfigCache.current = {
+      provider: "google",
+      apiKey: "ad-key",
+      baseUrl: undefined,
+      headers: { "cf-aig-authorization": headerSecrets[2]! },
+      model: "ad",
+    };
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      logger.error(`gateway rejected: ${headerSecrets.join(" / ")}`, new Error(`upstream echoed ${headerSecrets[1]}`));
+      const serialized: string = JSON.stringify(consoleError.mock.calls.at(-1));
+      for (const secret of headerSecrets) expect(serialized).not.toContain(secret);
+      expect(consoleError.mock.calls.at(-1)![0]).toBe("gateway rejected: [REDACTED] / [REDACTED] / [REDACTED]");
+    } finally {
+      consoleError.mockRestore();
+      agentDeploymentConfigCache.current = originalAgent;
+      adDetectAgentConfigCache.current = originalAdDetect;
+    }
+  });
+
+  test("脱敏名单上限容得下六项能力按 headers 上限配满时的全部当前凭据", () => {
+    const telegramToken: number = 1;
+    const capabilities: number = AGENT_CAPABILITY_NAMES.length;
+    expect(telegramToken + capabilities * (1 + AGENT_HEADERS_MAX_ENTRIES)).toBeLessThan(LOGGER_MAX_REDACTED_SECRETS);
+  });
+
   test("Worker 侧 adopt 进来的快照同样进脱敏名单", () => {
     // 两条业务线程不读盘，凭据只经初始化消息 adopt 进本 isolate 的 holder
     // （见 config/agent.ts）。脱敏名单读的就是这两个 holder，因此这条路必须与
@@ -275,16 +315,17 @@ describe("logger persistence routing boundary", () => {
       "adopted-ad-key",
     ];
     adoptAgentDeploymentConfig({
-      text: { provider: "google", apiKey: "adopted-text-key", baseUrl: undefined, model: "text" },
-      summary: { provider: "openai", apiKey: "adopted-summary-key", baseUrl: undefined, model: "summary" },
-      media: { provider: "google", apiKey: "adopted-media-key", baseUrl: undefined, model: "media" },
-      image: { provider: "google", apiKey: "adopted-image-key", baseUrl: undefined, model: "image", imageProtocol: undefined },
-      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, model: "tts", voice: "Leda" },
+      text: { provider: "google", apiKey: "adopted-text-key", baseUrl: undefined, headers: undefined, model: "text" },
+      summary: { provider: "openai", apiKey: "adopted-summary-key", baseUrl: undefined, headers: undefined, model: "summary" },
+      media: { provider: "google", apiKey: "adopted-media-key", baseUrl: undefined, headers: undefined, model: "media" },
+      image: { provider: "google", apiKey: "adopted-image-key", baseUrl: undefined, headers: undefined, model: "image", imageProtocol: undefined },
+      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, headers: undefined, model: "tts", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
     });
     adoptAdDetectAgentConfig({
       provider: "openai",
       apiKey: "adopted-ad-key",
       baseUrl: "https://api.deepseek.com",
+      headers: undefined,
       model: "ad",
     });
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
@@ -545,6 +586,7 @@ describe("logger persistence routing boundary", () => {
       provider: "openai",
       apiKey: "\"",
       baseUrl: "https://api.deepseek.com",
+      headers: undefined,
       model: "ad",
     };
     const consoleError = spyOn(console, "error").mockImplementation(() => {});

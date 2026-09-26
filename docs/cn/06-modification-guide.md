@@ -10,7 +10,7 @@
 
 ---
 
-每个配方给出触碰的文件与顺序。通用前提：改动前读 [`AGENTS.md`](../../AGENTS.md)；涉及运行时数据文件（`state.json`、`memory/`、`bot.lock`）或会间接写它们的代码路径时，动手前先备份；完成后 `bun run check` 全绿并按需同步根 README。
+每个配方给出触碰的文件与顺序。通用前提：改动前读 [`AGENTS.md`](../../AGENTS.md)；涉及运行时数据文件（`memory/global/state.json` 与其余 `memory/`、`bot.lock`）或会间接写它们的代码路径时，动手前先备份；完成后 `bun run check` 全绿并按需同步根 README。
 
 ## 增加并发批处理
 
@@ -49,7 +49,7 @@
 
 ## 换成别的语言：不做 i18n，请自行 fork
 
-面向用户的固定提示均为简体中文，`packages/consts/atmosphere/` 提供雌小鬼版与普通版。`config/bot.json` 的 `atmosphere` 选择 Bot 默认通知语气；群自定义 AI 人设优先选择普通版。通知语气不改写 AI 人设，也不随客户端语言切换。
+面向用户的固定提示均为简体中文，`packages/consts/atmosphere/` 提供雌小鬼版与普通版。`config/static/bot.json` 的 `atmosphere` 选择 Bot 默认通知语气；群自定义 AI 人设优先选择普通版。通知语气不改写 AI 人设，也不随客户端语言切换。
 
 - 文案表保存固定字符串和格式化函数，Telegram `entities` 的 UTF-16 偏移由最终渲染文本计算。昵称、问题、提示词和模型输出不参与语气替换。
 - `/咬` 等动作命令使用 1~2 个中文字；其命令解析与显示文案分别维护。
@@ -70,10 +70,10 @@
 | 心情时长与开关超时 | `packages/consts/aiChat/mood.ts` |
 | 工具动作/查询上限、打字与错字节奏 | `packages/consts/aiChat/tools.ts` |
 | 语音转写的时长/体积上限与占位文案 | `packages/consts/aiChat/voice.ts` |
-| 语音工具的每轮上限、台词/语气长度与 Opus 编码参数 | `packages/consts/aiChat/voiceMessage.ts` |
+| 语音工具的每轮上限、台词/语气长度、每日额度缺省值与计数窗口、Opus 编码参数 | `packages/consts/aiChat/voiceMessage.ts` |
 | 请求超时、重试次数、采样与安全档位、语音合成的基础声线与温度 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
-| **模型名、provider、key、端点** | 不是常量：`config/agent.json` 按能力配置，见 [01-getting-started](01-getting-started.md) |
-| OAI 兼容生图线协议/尺寸能力档 | `config/agent.json` 的必填 `agent.image.image_protocol`；新增档位还要同步类型、固定画幅表、穷举分派与测试 |
+| **模型名、provider、key、端点** | 不是常量：`config/dynamic/agent.json` 按能力配置，见 [01-getting-started](01-getting-started.md) |
+| OAI 兼容生图线协议/尺寸能力档 | `config/dynamic/agent.json` 的必填 `agent.image.image_protocol`；新增档位还要同步类型、固定画幅表、穷举分派与测试 |
 | 验证窗口、刷屏阈值、追加/收敛策略 | `packages/consts/antiRaid/` |
 | copy 冷却、/quiet 范围、用户名规则、动作命令限流 | `packages/consts/commands.ts` |
 | 随机触发的发言人冷却 | `packages/consts/auto.ts` |
@@ -112,7 +112,7 @@
 ## 修改人设与 JSON 配置
 
 - 人设：改 [`prompt/persona.md`](../../prompt/persona.md)，重启生效。与转录格式、身份标记耦合的互动规则由代码注入，不写进人设文件。
-- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`bot.json` 在联网前严格加载；`stickers.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json` 运行中修改即热重载，拒绝口径见 [04 运行时权威约束](04-invariants.md)；其余部署输入修改后须重启。
+- 部署配置只改 Git 忽略的 `config/`；`config_example/` 是新部署模板，只有 schema 或默认示例本身变化时才同步。`bot.json` 在联网前严格加载；`stickers.json`、`mood.json` 与其它功能输入按对应启用边界严格校验。`config/dynamic/` 下的 `assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json` 运行中修改即热重载，拒绝口径见 [04 运行时权威约束](04-invariants.md)；`config/static/` 下的 `bot.json`、`g-auth.json` 与其余部署输入修改后须重启。新增部署文件时先确定它属于哪个子目录，并登记进 `packages/config/layout.ts` 的归属表。
 - AI `add_reaction` 工具可用的 emoji 固定在 [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts) 的 `AI_REACTION_EMOJIS`，元素类型限定为 Telegram 标准反应，改动随代码发布。永久白名单、黑名单、临时广告免检累计与待踢 outbox 不属于部署配置，权威数据在 `database/storage.sqlite`；改身份结构时先更新 `packages/database/schema/`、对应的 `packages/database/codec/`、领域类型与严格校验，再提供停服迁移脚本和故障注入测试，不得重新引入 JSON 兼容读取。
 
 ## 新增部署 JSON 配置
@@ -136,15 +136,15 @@
 1. 改 `packages/types/` 中的持久化类型与对应校验，写好新格式的严格校验。
 2. 补/改测试（`test/infra/storage/`、`test/workers/diskIO/` 等），跑 `bun run test:fault-injection`。
 3. **停掉旧进程**（确认 `bot.lock` 释放）。
-4. 手动把现有 `state.json`、`state.json.bak` 与受影响的 `memory/` 快照迁移到新格式；迁移前先复制备份。
-5. 部署新版并启动。若报两份 state 副本均无效，说明迁移不完整——程序不会动原文件，修好再启。
+4. 手动把现有 `memory/global/state.json` 与受影响的其余 `memory/` 快照迁移到新格式；迁移前先复制备份。
+5. 部署新版并启动。若报全局状态文件非法，说明迁移不完整——程序不会动原文件，修好再启。
 6. 核验部署文件哈希与严格解析结果，确认服务在至少两个重启间隔内保持 active/running、NRestarts 不增长且 journal 无新增非零退出，再删除临时备份。
 
-**新增可选块可以免掉第 3–4 步**，前提是把「缺省」定义清楚：解码器对整块与块内字段都允许缺省（照 `libs/stateFileCodec.ts` 里 `globalAssets` 的写法，两条分支返回同一组字段，`save` 的自校验才不会看到两种 shape），取值侧收敛出唯一的兜底值。现成范例是 `state.global.assets`——旧文件不用改也能读回，行为与没有这一块时逐字相同。若这一块是给人手工编辑的旋钮，再补一个启动补齐（`seedMissingAssetState`）把缺项写成当前生效值，让键出现在文件里；补齐必须排在**所有会中止启动的 `await` 之后**、只补缺项、走后台落盘，理由见 [04](04-invariants.md#落盘与快照契约)。反过来，**任何会让旧文件解码失败的改动仍然走完整的 3–4 步**。
+**新增可选块可以免掉第 3–4 步**，前提是把「缺省」定义清楚：解码器允许整块缺省，取值侧把缺省收敛成唯一的兜底值。现成范例是 `memory/global/state.json` 的 `ttsUsage`（`libs/stateFileCodec.ts` 的 `globalTtsUsage`）——整块缺省按从没用过处理，旧文件不用改也能读回。需要部署方手工编辑的旋钮不放进运行时状态，而是放进 `config/`（如 `config/dynamic/assets.json`），由对应解析器取内置缺省，机器人不回写。反过来，**任何会让旧文件解码失败的改动仍然走完整的 3–4 步**。
 
 ## 新增一张 SQLite 表
 
-比改 `state.json` 多一条硬约束：**运行时不自动迁移**，库版本对不上就拒绝启动，因此每加一张表都要配一条停机冷迁移。顺序：
+比改 `memory/global/state.json` 多一条硬约束：**运行时不自动迁移**，库版本对不上就拒绝启动，因此每加一张表都要配一条停机冷迁移。顺序：
 
 1. `packages/database/schema/<domain>.ts` 声明表并注册进 `schema/storage.ts`；`data` 列沿用 `jsonbText` + `jsonDataCheck`，与其余业务表同一口径。
 2. 写 `schema/migrations/000N_<name>.sql`，并把条目补进 `migrations/meta/_journal.json`。

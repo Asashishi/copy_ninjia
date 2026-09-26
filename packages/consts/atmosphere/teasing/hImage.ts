@@ -14,7 +14,7 @@ export const H_IMAGE_TEXTS: Readonly<{
 }> = {
   usage: "笨蛋，直接发 /h_image 抽一张；回复一条带图的消息发 /h_image add 才是往图库里收图♡",
   busy: "一口气要这么多图，本天才忙不过来啦，杂鱼等会儿再来♡",
-  missingDirectory: "图片目录都不见了，笨蛋管理员去看看 state.json 的 global.assets.randomHImageDir 吧♡",
+  missingDirectory: "图片目录都不见了，笨蛋管理员去看看 config/dynamic/assets.json 的 random_h_image_dir 吧♡",
   empty: "图库里一张能发的都没有呀（只认 jpg、jpeg、png、webp），杂鱼先往里塞点图再来♡",
   tooLarge: (fileName: string): string => `图库里一张能发的都挑不出来，最后抽到的 ${fileName} 还超过 10 MB，Telegram 可不收这么胖的图，压一压或者挪走吧♡`,
   addUsage: "笨蛋，要先回复一条带图的消息，再发 /h_image add 才行♡",

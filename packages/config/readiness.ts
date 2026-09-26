@@ -5,14 +5,14 @@
  * （`/ai_chat enable`、`/ad_detect enable`、`/translate enable`）按需判定。
  *
  * 结论按功能缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
- * 启动总闸填充三条结论。之后 config/ 热重载每轮改写 holder，由 app/configReload.ts
+ * 启动总闸填充三条结论。之后 config/dynamic/ 热重载每轮改写 holder，由 app/configReload.ts
  * 按本模块的 *ReadinessFromHolders 重算 AI 闲聊与广告检测两条并经 adopt* 发布；
  * 翻译结论（g-auth.json 不热重载）只在启动时判定。
  *
  * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
  * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
  *
- * 功能 readiness 对 config/agent.json 仍按消费方**分段**探测，且与运行时共用同
+ * 功能 readiness 对 config/dynamic/agent.json 仍按消费方**分段**探测，且与运行时共用同
  * 一对 holder：启动总闸严格解析整份文件后会同时填充两段快照，探测因此只是
  * 「holder 空不空」的一次分支，已存在文件在一个进程里只解析一次。运行时那一侧
  * 只读 holder，Worker 的那份由初始化消息投递（见 config/agent.ts 的边界说明）。
@@ -25,6 +25,7 @@ import { validateGoogleServiceAccountKey } from "./googleAuth";
 import { googleServiceAccountKey } from "../cache/main/translate";
 import { lstat } from "node:fs/promises";
 import { ensureAdSampleConfig } from "./adSamples";
+import { ensureAssetConfig } from "./assets";
 import { ensureMoodConfig } from "./mood";
 import { ensureStickerConfig } from "./stickers";
 import { getBotConfig } from "./bot";
@@ -51,6 +52,7 @@ import {
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  ASSETS_CONFIG_PATH,
   CRON_CONFIG_PATH,
   GOOGLE_AUTH_FILE_PATH,
   MOOD_CONFIG_PATH,
@@ -118,26 +120,26 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
  * 拒绝文案。
  */
 const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "config/stickers.json", load: ensureStickerConfig },
-  { file: "config/mood.json", load: ensureMoodConfig },
+  { file: "config/dynamic/stickers.json", load: ensureStickerConfig },
+  { file: "config/dynamic/mood.json", load: ensureMoodConfig },
   { file: "prompt/persona.md", load: ensurePersona },
-  { file: "config/agent.json", load: ensureAgentDeploymentConfig },
+  { file: "config/dynamic/agent.json", load: ensureAgentDeploymentConfig },
 ];
 
 /**
- * 广告检测要读的两份：判定口径的示例清单，以及 config/agent.json 的
+ * 广告检测要读的两份：判定口径的示例清单，以及 config/dynamic/agent.json 的
  * **ad_detect 段**。
  *
  * 开启广告检测时后者**必填**：`provider`、`api_key` 与 `model` 缺一不可；缺文件、
- * 缺能力、缺字段都在这里判为不可用。可省的只有 `base_url`，缺省时由所选 SDK
- * 使用自己的官方端点；兼容端点必须显式配置。
+ * 缺能力、缺字段都在这里判为不可用。`base_url` 可省，缺省时由所选 SDK 使用官方端点；
+ * Google 能力另可设置 `headers`。字段均由 agent 配置解析器严格校验。
  *
  * 这份功能结论只探 ad_detect 段；文件一旦存在，其他段的合法性已由
  * validateExistingDeploymentInputs 的启动总闸独立保证。
  */
 const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "config/ad_samples.json", load: ensureAdSampleConfig },
-  { file: "config/agent.json", load: ensureAdDetectAgentConfig },
+  { file: "config/dynamic/ad_samples.json", load: ensureAdSampleConfig },
+  { file: "config/dynamic/agent.json", load: ensureAdDetectAgentConfig },
 ];
 
 /** 一份缺失部署输入的不可用结论；诊断口径同 InputValidationError。 */
@@ -154,17 +156,17 @@ function unavailable(file: string, message: string): ConfigReadiness {
  */
 export function aiChatReadinessFromHolders(): ConfigReadiness {
   if (defaultStickerConfigCache.current === null) {
-    return unavailable("config/stickers.json", new InputValidationError(STICKERS_CONFIG_PATH, "$", "a readable valid JSON document").message);
+    return unavailable("config/dynamic/stickers.json", new InputValidationError(STICKERS_CONFIG_PATH, "$", "a readable valid JSON document").message);
   }
   if (defaultMoodConfigCache.current === null) {
-    return unavailable("config/mood.json", new InputValidationError(MOOD_CONFIG_PATH, "$", "a readable valid JSON document").message);
+    return unavailable("config/dynamic/mood.json", new InputValidationError(MOOD_CONFIG_PATH, "$", "a readable valid JSON document").message);
   }
   if (personaCache.current === null) {
     return unavailable("prompt/persona.md", new InputValidationError(PERSONA_PATH, "$", "a readable non-empty UTF-8 text file").message);
   }
   if (agentDeploymentConfigCache.current === null) {
     return unavailable(
-      "config/agent.json",
+      "config/dynamic/agent.json",
       new InputValidationError(AGENT_CONFIG_PATH, "$.agent", "configured with text, summary and media").message
     );
   }
@@ -174,11 +176,11 @@ export function aiChatReadinessFromHolders(): ConfigReadiness {
 /** 按主线程当前 holder 判定广告检测的部署前提；顺序与 AD_DETECT_PROBES 一致，其余同上。 */
 export function adDetectReadinessFromHolders(): ConfigReadiness {
   if (defaultAdSampleConfigCache.current === null) {
-    return unavailable("config/ad_samples.json", new InputValidationError(AD_SAMPLES_CONFIG_PATH, "$", "a readable valid JSON document").message);
+    return unavailable("config/dynamic/ad_samples.json", new InputValidationError(AD_SAMPLES_CONFIG_PATH, "$", "a readable valid JSON document").message);
   }
   if (adDetectAgentConfigCache.current === null) {
     return unavailable(
-      "config/agent.json",
+      "config/dynamic/agent.json",
       new InputValidationError(AGENT_CONFIG_PATH, "$.agent.ad_detect", "configured").message
     );
   }
@@ -245,6 +247,7 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
     { path: GOOGLE_AUTH_FILE_PATH, load: validateAndCacheGoogleServiceAccountKey },
     { path: PERSONA_PATH, load: ensurePersona },
     { path: CRON_CONFIG_PATH, load: ensureCronConfig },
+    { path: ASSETS_CONFIG_PATH, load: ensureAssetConfig },
   ];
   for (const probe of probes) {
     if (await deploymentInputExists(probe.path)) await probe.load();
@@ -254,7 +257,7 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   translateConfigReadinessCache.current ??= {
     ok: false,
     failure: {
-      file: "config/g-auth.json",
+      file: "config/static/g-auth.json",
       reason: `${GOOGLE_AUTH_FILE_PATH}: $ must be a configured Google service account JSON file.`,
     },
   };

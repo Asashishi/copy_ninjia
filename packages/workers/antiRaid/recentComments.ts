@@ -34,7 +34,10 @@ export function rememberRecentComment({
 }: RememberRecentCommentParams): void {
   const key: string = verificationKey(chatId, userId);
   const existing: RecentChannelComment | undefined = recentChannelComments.get(key);
-  if (existing !== undefined) recentChannelComments.delete(key);
+  if (existing !== undefined) {
+    if (observedAt < existing.observedAt) return;
+    recentChannelComments.delete(key);
+  }
 
   // 先按时间清一遍：能靠过期回收就不必淘汰还在窗口内的条目。最小 observedAt 的
   // 下界证明没有到期条目时跳过这次整表扫描（raid 高峰持续触顶时每次插入都会走到）。
@@ -42,12 +45,12 @@ export function rememberRecentComment({
     recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX &&
     observedAt - recentCommentsMinObservedAt.current >= COMMENT_JOIN_CORRELATE_MS
   ) {
-    sweepRecentComments(observedAt);
+    // 容量清理使用消息观察时刻，异步乱序时不能把较新的有效观察当成墙钟回退。
+    sweepRecentComments(observedAt, false);
   }
   if (observedAt < recentCommentsMinObservedAt.current) recentCommentsMinObservedAt.current = observedAt;
   // 清完仍触顶时由共享实现淘汰最早插入项。每次更新都是「先 delete 旧 key 再
-  // set」，Map 的插入序即观察时间序（observedAt 随调用单调不减），最早项恒为
-  // 迭代器第一项，O(1) 淘汰，不必线性扫描。
+  // set」，异步确认可能让观察时间乱序；容量仍按插入序 O(1) 淘汰。
   setBoundedMapValue({
     map: recentChannelComments,
     key,
@@ -56,25 +59,31 @@ export function rememberRecentComment({
   });
 }
 
+function isCommentInWindow(observedAt: number, now: number): boolean {
+  const age: number = now - observedAt;
+  return age >= 0 && age < COMMENT_JOIN_CORRELATE_MS;
+}
+
 /** 消费（取出并删除）某人最近暂存的评论区留言，没有则返回 undefined。 */
 export function takeRecentComment(chatId: number, userId: number, now: number = Date.now()): RecentChannelComment | undefined {
   const key: string = verificationKey(chatId, userId);
   const entry: RecentChannelComment | undefined = recentChannelComments.get(key);
   if (!entry) return undefined;
   recentChannelComments.delete(key);
-  if (now - entry.observedAt >= COMMENT_JOIN_CORRELATE_MS) return undefined;
+  if (!isCommentInWindow(entry.observedAt, now)) return undefined;
   return { messageId: entry.messageId, observedAt: entry.observedAt };
 }
 
 /**
  * 由 Anti-Raid Worker 的唯一周期 sweeper 调用；删除到期项并把 observedAt 下界重算为
- * 剩余条目的精确最小值。返回删除数便于测试和观测。
+ * 剩余条目的精确最小值。墙钟调用同时删除未来记录；容量清理以观察时刻调用时
+ * discardFuture 为 false，以容许异步乱序。返回删除数便于测试和观测。
  */
-export function sweepRecentComments(now: number = Date.now()): number {
+export function sweepRecentComments(now: number = Date.now(), discardFuture: boolean = true): number {
   let deleted: number = 0;
   let minObservedAt: number = Number.POSITIVE_INFINITY;
   for (const [key, entry] of recentChannelComments) {
-    if (now - entry.observedAt >= COMMENT_JOIN_CORRELATE_MS) {
+    if (!isCommentInWindow(entry.observedAt, now) && (discardFuture || entry.observedAt <= now)) {
       recentChannelComments.delete(key);
       deleted++;
     } else if (entry.observedAt < minObservedAt) {

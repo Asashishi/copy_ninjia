@@ -90,7 +90,7 @@ describe("diskIO/joinLogFiles", () => {
     expect(await Bun.file(invalidDayPath).text()).toBe("{}");
 
     rmSync(invalidDayPath);
-    const futureDay: string = getTokyoDateKey(new Date(todayAt() + 2 * 24 * 60 * 60_000));
+    const futureDay: string = getTokyoDateKey(todayAt() + 2 * 24 * 60 * 60_000);
     const futurePath: string = datedFile(-1001, futureDay);
     await Bun.write(futurePath, "{}");
     await expect(recoverJoinLogFiles()).rejects.toThrow("a date no later than the current Tokyo day");
@@ -129,7 +129,7 @@ describe("diskIO/joinLogFiles", () => {
   test("每日维护先提交缓冲，再按目标东京日清理过期文件", async () => {
     await recoverJoinLogFiles();
     const now: number = todayAt();
-    const tomorrow: string = getTokyoDateKey(new Date(now + 24 * 60 * 60_000));
+    const tomorrow: string = getTokyoDateKey(now + 24 * 60 * 60_000);
     const stalePath: string = datedFile(-1001, "2000-01-01");
     await Bun.write(stalePath, "{}");
     await handleJoinLogMessage(joinMessage(-1001, 42, now));
@@ -143,7 +143,7 @@ describe("diskIO/joinLogFiles", () => {
 
   test("临时与过期文件删不掉时静默跳过，保留其缓存，其余照删", async () => {
     await recoverJoinLogFiles();
-    const tomorrow: string = getTokyoDateKey(new Date(todayAt() + 24 * 60 * 60_000));
+    const tomorrow: string = getTokyoDateKey(todayAt() + 24 * 60 * 60_000);
     const stuckTempPath: string = join(joinLogDir, "stuck.json.tmp");
     const stuckStalePath: string = datedFile(-1001, "2000-01-02");
     const stalePath: string = datedFile(-1001, "2000-01-01");
@@ -208,7 +208,7 @@ describe("diskIO/joinLogFiles", () => {
     ]);
     expect(existsSync(datedFile(
       -1001,
-      getTokyoDateKey(new Date(beforeMidnight))
+      getTokyoDateKey(beforeMidnight)
     ))).toBeTrue();
     expect(existsSync(currentFile(-1001))).toBeTrue();
   });
@@ -216,7 +216,7 @@ describe("diskIO/joinLogFiles", () => {
   test("首次写入或命令读取保留最近三个自然日并清理更旧日志与孤儿临时文件", async () => {
     const today: string = getTokyoDateKey();
     const twoDaysAgo: string =
-      getTokyoDateKey(new Date(todayAt() - 2 * 24 * 60 * 60_000));
+      getTokyoDateKey(todayAt() - 2 * 24 * 60 * 60_000);
     mkdirSync(joinLogDir, { recursive: true });
     const stalePath: string = join(joinLogDir, "-1001.2000-01-01.json");
     const retainedPath: string =
@@ -730,7 +730,7 @@ describe("diskIO/joinLogFiles", () => {
 
   test("整群删除清掉本群保留窗口内外的全部日志、接管游标与待写事实", async () => {
     const today: string = getTokyoDateKey();
-    const yesterday: string = getTokyoDateKey(new Date(todayAt(-24 * 60 * 60_000)));
+    const yesterday: string = getTokyoDateKey(todayAt(-24 * 60 * 60_000));
     await handleJoinLogMessage(joinMessage(-1001, 42, todayAt()));
     await flushJoinLogBuffer();
     mkdirSync(joinLogDir, { recursive: true });

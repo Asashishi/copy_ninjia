@@ -21,7 +21,7 @@ import { TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES, TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } f
 import { recordBotImage, synthesizeVoice } from "../aiChat";
 import { VOICE_FILE_NAME } from "../consts/aiChat/voiceMessage";
 import { pickRandomImage } from "../infra/randomImage";
-import { getRandomHImageDirectory } from "../infra/storage/stateStore";
+import { getAssetConfig } from "../config/assets";
 import { runTelegramAction } from "../infra/telegram/actions/core";
 import { toTelegramSendResult } from "../infra/telegram/actions/sendResult";
 import { telegramErrorDetails } from "../infra/telegram/errors";
@@ -113,7 +113,7 @@ async function localUpload(path: string, maxBytes: number): Promise<InputFile | 
 
 /** 异步抽取单张图片并归一化图库错误，缺省目录使用专用图库。 */
 async function randomImageInput(directory: string | null): Promise<InputFile | CronDeliveryOutcome> {
-  const pick: RandomImagePick = await pickRandomImage(directory ?? getRandomHImageDirectory());
+  const pick: RandomImagePick = await pickRandomImage(directory ?? getAssetConfig().randomHImageDirectory);
   switch (pick.status) {
     case "ok":
       return new InputFile(pick.bytes, pick.fileName);
@@ -161,8 +161,8 @@ function isOutcome(value: string | InputFile | CronDeliveryOutcome): value is Cr
 }
 
 /**
- * 合成失败的分类：能力缺席与编码失败不重试；Worker 暂不可用（重建中）、供应商没交回
- * 音频与等待超时可重试。
+ * 合成失败的分类：能力缺席、每日额度用尽与编码失败不重试；Worker 暂不可用（重建中）、
+ * 供应商没交回音频与等待超时可重试。
  */
 function classifySynthesisFailure(reason: VoiceSynthesisFailure): CronDeliveryOutcome {
   switch (reason) {

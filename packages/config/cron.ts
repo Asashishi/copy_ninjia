@@ -1,12 +1,12 @@
 /**
- * config/cron.json 的严格解析：定时任务表，缺省即没有任务。
+ * config/dynamic/cron.json 的严格解析：定时任务表，缺省即没有任务。
  *
  * parseCronConfig 只做形态、取值与路径的词法判定，不做 I/O；loadCronConfig 在读盘后
  * 再逐项核对 `payload.path` 指向的文件或目录存在且类型相符（跟随符号链接）。
  * 固定图片使用 1–10 项文件或 URL 数组，随机图片的 path 使用可选目录字符串；
  * 随机目录缺省时由发送侧读取 state 的专用图库，该路径按运行时数据根解析。
  * `payload.path` 写绝对路径，或相对项目根（PROJECT_ROOT）的路径，不限定目录。
- * `send_voice` 依赖 config/agent.json 的 `agent.tts`：assertCronVoiceSupported 在启动总闸
+ * `send_voice` 依赖 config/dynamic/agent.json 的 `agent.tts`：assertCronVoiceSupported 在启动总闸
  * （ensureCronConfig）与热重载（config/reload.ts）里按当时生效的 agent 配置核对。任何一处
  * 非法都整份拒绝：启动时拒绝启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含
  * 文件路径、字段路径与期望形态。
@@ -333,7 +333,7 @@ export async function loadCronConfig(path: string = CRON_CONFIG_PATH): Promise<C
 }
 
 /**
- * `send_voice` 要用 config/agent.json 的 `agent.tts` 合成语音：任务表里出现 send_voice 而
+ * `send_voice` 要用 config/dynamic/agent.json 的 `agent.tts` 合成语音：任务表里出现 send_voice 而
  * tts 缺省时，按第一个 send_voice 动作的字段路径拒绝整份文件。
  * @param tts 与这份任务表同时生效的 tts 配置；启动时是刚校验的 agent 配置，热重载时是
  *   本轮对账后生效的那一份。
@@ -350,7 +350,7 @@ export function assertCronVoiceSupported(
       if (actions[actionIndex]!.type !== "send_voice") continue;
       fail(
         { source: sourcePath, path: `$[${taskIndex}].actions[${actionIndex}].type` },
-        "send_message, send_image or send_file unless config/agent.json configures $.agent.tts alongside text, summary and media"
+        "send_message, send_image or send_file unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media"
       );
     }
   }
@@ -366,7 +366,7 @@ export function cronConfigUsesVoice(config: CronConfig): boolean {
   return false;
 }
 
-/** 接管已严格校验的任务表：启动总闸或 config/ 热重载；null 表示文件已删除或缺省。 */
+/** 接管已严格校验的任务表：启动总闸或 config/dynamic/ 热重载；null 表示文件已删除或缺省。 */
 export function adoptCronConfig(config: CronConfig | null): void {
   cronConfigCache.current = config;
 }

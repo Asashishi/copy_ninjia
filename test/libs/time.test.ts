@@ -3,6 +3,8 @@ import {
   formatTokyoTime,
   getCurrentTime,
   getTokyoDayIndex,
+  formatTokyoLogTimestamp,
+  getTokyoDateKey,
   getTokyoDayStartTimestamp,
   getTokyoHour,
 } from "../../packages/libs/time";
@@ -153,52 +155,89 @@ describe("libs/time getCurrentTime 与 getTokyoHour", () => {
     expect(current.formatted).toContain(`${Number(day)}日`);
   });
 
-  test("getTokyoHour 恒在 0~23，且与 UTC+9 算术一致", () => {
+  test("getTokyoHour 恒在 0~23，与 Intl 参照一致且 1970 前归一", () => {
     for (const utcHour of [0, 8, 14, 15, 23]) {
-      const date: Date = new Date(Date.UTC(2026, 0, 15, utcHour, 30, 0));
-      const hour: number = getTokyoHour(date);
-      expect(hour).toBeGreaterThanOrEqual(0);
-      expect(hour).toBeLessThanOrEqual(23);
+      const timestampMs: number = Date.UTC(2026, 0, 15, utcHour, 30, 0);
+      const hour: number = getTokyoHour(timestampMs);
       expect(hour).toBe((utcHour + 9) % 24);
+      expect(hour).toBe(Number(HOUR_REFERENCE_FORMATTER.format(timestampMs)));
     }
+    expect(getTokyoHour(Date.UTC(1969, 11, 31, 20, 0, 0))).toBe(5);
+    const now: number = Date.now();
+    const hour: number = getTokyoHour();
+    expect([getTokyoHour(now), getTokyoHour(now + 3_600_000)]).toContain(hour);
+  });
+});
+
+const DATE_KEY_REFERENCE_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const HOUR_REFERENCE_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Tokyo",
+  hourCycle: "h23",
+  hour: "numeric",
+});
+
+const LOG_TIMESTAMP_REFERENCE_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Tokyo",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  fractionalSecondDigits: 3,
+  hour12: false,
+});
+
+function referenceLogTimestamp(timestampMs: number): string {
+  const parts: Record<string, string> = {};
+  for (const part of LOG_TIMESTAMP_REFERENCE_FORMATTER.formatToParts(timestampMs)) {
+    if (part.type !== "literal") parts[part.type] = part.value;
+  }
+  return `${parts.year}-${parts.month}-${parts.day} ` +
+    `${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond}`;
+}
+
+/** 1970-2100 均匀采样、伪随机散点与跨日/闰日/年末各 ±1500 ms 逐毫秒的时间戳。 */
+function sampledTimestamps(): readonly number[] {
+  const end: number = Date.UTC(2100, 0, 1);
+  const samples: number[] = [];
+  let state: number = 123_456_789;
+  for (let i: number = 0; i < 10_000; i++) {
+    samples.push(Math.floor((i / 10_000) * end));
+    state = (state * 1_664_525 + 1_013_904_223) >>> 0;
+    samples.push(Math.floor((state / 0x1_0000_0000) * end));
+  }
+  for (const anchor of [
+    Date.UTC(2026, 0, 1, 15, 0, 0, 0),
+    Date.UTC(2024, 1, 29, 15, 0, 0, 0),
+    Date.UTC(2025, 11, 31, 15, 0, 0, 0),
+  ]) {
+    for (let delta: number = -1_500; delta <= 1_500; delta++) samples.push(anchor + delta);
+  }
+  return samples;
+}
+
+describe("libs/time getTokyoDateKey 与 formatTokyoLogTimestamp", () => {
+  test("形态与缺省参数", () => {
+    expect(getTokyoDateKey(1_760_000_000_000)).toBe("2025-10-09");
+    expect(formatTokyoLogTimestamp(1_760_000_000_007)).toBe("2025-10-09 17:53:20.007");
+    expect(formatTokyoLogTimestamp(1_760_000_000_070)).toBe("2025-10-09 17:53:20.070");
+    expect(formatTokyoLogTimestamp(1_760_000_000_700)).toBe("2025-10-09 17:53:20.700");
+    const before: string = getTokyoDateKey(Date.now());
+    const current: string = getTokyoDateKey();
+    expect([before, getTokyoDateKey(Date.now())]).toContain(current);
   });
 
-  /**
-   * 拿不到 hour 段时的兜底必须仍是**东京**小时。
-   *
-   * 判据不能只比对数值：`date.getHours()` 给的是**宿主本地**小时，而本仓库的
-   * 部署机恰好是 JST，两者恰好相等，光比数字这条分支在这台机器上永远测不出
-   * 差别。因此这里把 `getHours` 换成一个会抛的桩——兜底一旦碰它就当场失败，
-   * 与宿主时区无关。心情分档（aiChat/ai/mood.ts）是唯一消费方，选错档不报错，
-   * 只会让群里心情长期偏一个时段。
-   */
-  test("formatToParts 取不到 hour 时，兜底走 UTC+9 算术且不碰宿主本地时间", () => {
-    const originalParts: typeof Intl.DateTimeFormat.prototype.formatToParts =
-      Intl.DateTimeFormat.prototype.formatToParts;
-    const originalGetHours: typeof Date.prototype.getHours = Date.prototype.getHours;
-    // 只清掉 hour 段，其余照常：模拟 ICU 数据缺失而不是整个 Intl 不可用。
-    Intl.DateTimeFormat.prototype.formatToParts = function formatToPartsWithoutHour(
-      this: Intl.DateTimeFormat,
-      date?: Date | number
-    ): Intl.DateTimeFormatPart[] {
-      return originalParts.call(this, date).filter(
-        (part: Intl.DateTimeFormatPart): boolean => part.type !== "hour"
-      );
-    };
-    Date.prototype.getHours = function forbiddenHostLocalHours(this: Date): number {
-      throw new Error("getTokyoHour must not fall back to host-local hours");
-    };
-    try {
-      for (const utcHour of [0, 8, 14, 15, 23]) {
-        const date: Date = new Date(Date.UTC(2026, 0, 15, utcHour, 30, 0));
-        expect(getTokyoHour(date)).toBe((utcHour + 9) % 24);
-      }
-      // 1970 之前时间戳为负，取余会得到负数；兜底必须归一回 0~23。
-      const beforeEpoch: Date = new Date(Date.UTC(1969, 11, 31, 20, 0, 0));
-      expect(getTokyoHour(beforeEpoch)).toBe(5);
-    } finally {
-      Intl.DateTimeFormat.prototype.formatToParts = originalParts;
-      Date.prototype.getHours = originalGetHours;
+  test("与 Intl 参照实现逐字符一致", () => {
+    for (const timestampMs of sampledTimestamps()) {
+      expect(getTokyoDateKey(timestampMs)).toBe(DATE_KEY_REFERENCE_FORMATTER.format(timestampMs));
+      expect(formatTokyoLogTimestamp(timestampMs)).toBe(referenceLogTimestamp(timestampMs));
     }
   });
 });

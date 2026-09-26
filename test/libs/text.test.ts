@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resetGraphemeSegmenterCache, sanitizeDisplayName, sanitizeInline, splitGraphemes, stripLeadingAtSigns, truncateAtClauseBoundary, truncateInline } from "../../packages/libs/text";
+import { sanitizeDisplayName, sanitizeInline, splitGraphemes, stripLeadingAtSigns, truncateAtClauseBoundary, truncateInline } from "../../packages/libs/text";
 
 describe("libs/text truncateAtClauseBoundary", () => {
   test("不超限时原样返回", () => {
@@ -60,29 +60,6 @@ describe("libs/text truncateAtClauseBoundary", () => {
 describe("libs/text splitGraphemes", () => {
   test("ZWJ 表情和组合附加符分别保持为一个字形簇", () => {
     expect(splitGraphemes("A👨‍👩‍👧‍👦éB")).toEqual(["A", "👨‍👩‍👧‍👦", "é", "B"]);
-  });
-});
-
-describe("libs/text Segmenter 降级", () => {
-  test("构造失败按码点降级，且不把瞬时失败锁死到进程结束", () => {
-    const family = "A\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}\u00E9B";
-    // Intl.Segmenter 在类型上是只读属性，用可写别名换掉它再还原。
-    const intl = Intl as { Segmenter: typeof Intl.Segmenter };
-    const original = intl.Segmenter;
-    resetGraphemeSegmenterCache();
-    try {
-      // 用抛错的替身模拟 ICU 数据不可用之类的瞬时构造失败。
-      intl.Segmenter = function FailingSegmenter(): never {
-        throw new Error("ICU unavailable");
-      } as unknown as typeof Intl.Segmenter;
-      // 降级路径：按码点拆，字形簇会被拆散——这正是失败时可接受的兜底。
-      expect(splitGraphemes(family)).toEqual(Array.from(family));
-    } finally {
-      intl.Segmenter = original;
-    }
-    // 关键：失败没有被写进 holder，恢复后立刻重新用上 Segmenter，
-    // 而不是永久停留在降级路径上。
-    expect(splitGraphemes(family)).toEqual(["A", "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}", "\u00E9", "B"]);
   });
 });
 

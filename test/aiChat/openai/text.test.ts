@@ -3,7 +3,9 @@
  * 等字段的请求体构造，以及语音转写的取消与错误分类路径。
  */
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 import { loggerStub } from "../../helpers/loggerMock";
 import OpenAI from "openai";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
@@ -37,6 +39,26 @@ const {
 } = await import("../../../packages/consts/aiChat/openai");
 
 type ResponseBody = OpenAI.Responses.ResponseCreateParamsNonStreaming;
+
+afterEach(() => installAiCacheUsageSink(null));
+
+test("转写的 token 型用量计入 media，duration 和未给用量不伪造 token", async () => {
+  const reported: AiCacheUsage[] = [];
+  installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+  for (const usage of [
+    { type: "tokens", input_tokens: 7, output_tokens: 9, total_tokens: 16 },
+    { type: "duration", seconds: 3 },
+    undefined,
+  ]) {
+    createTranscription.mockResolvedValueOnce({ text: "", usage } as any);
+    await transcribeOpenAiVoice({
+      prompt: "p", clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 },
+      errorLabel: "fixture", normalize: (text: string): string => text,
+    });
+  }
+  expect(reported).toHaveLength(1);
+  expect(reported[0]).toMatchObject({ capability: "media", provider: "openai", inputTokens: 7, cachedInputTokens: null, outputTokens: 9 });
+});
 
 /** 从被 mock 的 requestOpenAiTextResult 首个调用参数中取出 buildBody 闭包
  *  并求值，得到实际发送的请求体。 */
@@ -222,18 +244,20 @@ describe("语音转写", () => {
   });
 
   test("调用中由上游取消时安静结束，不把主动取消记成端点故障", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
     const controller: AbortController = new AbortController();
     let markStarted!: () => void;
-    let settleSdkTask!: (value: { text: string }) => void;
+    let settleSdkTask!: (value: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse) => void;
     const started: Promise<void> = new Promise<void>((resolve: () => void): void => {
       markStarted = resolve;
     });
-    const sdkTask: Promise<{ text: string }> = new Promise<{ text: string }>((
-      resolve: (value: { text: string }) => void
+    const sdkTask: Promise<OpenAI.Audio.Transcriptions.TranscriptionCreateResponse> = new Promise<OpenAI.Audio.Transcriptions.TranscriptionCreateResponse>((
+      resolve: (value: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse) => void
     ): void => {
       settleSdkTask = resolve;
     });
-    createTranscription.mockImplementationOnce((): Promise<{ text: string }> => {
+    createTranscription.mockImplementationOnce((): Promise<OpenAI.Audio.Transcriptions.TranscriptionCreateResponse> => {
       markStarted();
       return sdkTask;
     });
@@ -249,8 +273,11 @@ describe("语音转写", () => {
     controller.abort();
     await expect(pendingResult).resolves.toEqual({ ok: false, retryable: false });
     expect(loggerError).not.toHaveBeenCalled();
-    settleSdkTask({ text: "late" });
+    settleSdkTask({ text: "late", usage: { type: "tokens", input_tokens: 7, output_tokens: 9, total_tokens: 16 } });
     await sdkTask;
+    await Promise.resolve();
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({ inputTokens: 7, outputTokens: 9 });
   });
 
   test("404 与 405 归为端点或模型配置错误", async () => {

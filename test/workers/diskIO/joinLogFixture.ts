@@ -90,7 +90,7 @@ function joinMessage(
     chatId,
     userId,
     joinedAt,
-    day: getTokyoDateKey(new Date(joinedAt)),
+    day: getTokyoDateKey(joinedAt),
   };
 }
 

@@ -19,7 +19,7 @@ flowchart TD
     classDef main stroke:#8e75ff,stroke-width:2.5px;
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
-    MAIN["🧵 主线程<br/>确认式 update runner（逐条串行取数）<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（state.json）"]:::main
+    MAIN["🧵 主线程<br/>确认式 update runner（逐条串行取数）<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（memory/global/state.json）"]:::main
     AI["🤖 AI Worker<br/>多轮工具调用（可替换 provider）<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
     RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
     DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 身份数据库 / 运势 / 验证文件 / 入群日志 / wed 成员"]:::worker
@@ -31,10 +31,10 @@ flowchart TD
 
 分工原则是**状态独占**：每份运行时状态只有一个 owner，跨线程只传消息不共享内存。
 
-- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及权威内存镜像：`cache/main/storage.ts` 的 `state.json` 全局镜像（copy 状态与素材直链），以及 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名、中转标记与翻译会话，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
+- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及权威内存镜像：`cache/main/storage.ts` 的 `memory/global/state.json` 全局镜像（copy 状态与语音合成每日计数）、`cache/main/assets.ts` 的 `config/dynamic/assets.json` 素材快照，以及 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名、中转标记与翻译会话，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
 - **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
 - **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
-- **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`joinlog/`、`wed/` 六个领域目录的串行读写；`state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
+- **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`ai-daily-usage/`、`joinlog/`、`wed/` 七个领域目录的串行读写；`memory/global/state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
 
 [`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge/controller.ts`](../../packages/antiRaid/workerBridge/controller.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/)。
 
@@ -88,7 +88,7 @@ flowchart TD
 
 - **文本**以占位文本形式即时入队，保住其在对话时序中的位置。
 - **图片 / 贴纸 / GIF** 同样先占位入队，再异步下载并调用视觉模型生成描述，解析完成后原地回填同一条目的文本字段；命中贴纸白名单目录时跳过异步解析，直接写入目录里的现成描述。
-- **语音**走同一条占位—回填管线，只是把视觉描述换成逐字转写（使用 `config/agent.json` 的 `media` 能力）。转录行由 `[语音]` 变成 `[语音：<原话>]`。超过时长或体积上限的语音在下载之前就被拦掉；视觉与语音支持度分别由首次真实请求探测：明确不支持、或端点以 404/405 表明模型/路径不存在（记一行指向 `$.agent.media` 的诊断）之后都不再下载该模态；超时、429、5xx 这类端点故障只按连续次数做有限指数退避，退避期内直接降级为占位、不下载也不占执行器槽位，一次成功即清零。单份媒体自身的问题不改变模态结论。
+- **语音**走同一条占位—回填管线，只是把视觉描述换成逐字转写（使用 `config/dynamic/agent.json` 的 `media` 能力）。转录行由 `[语音]` 变成 `[语音：<原话>]`。超过时长或体积上限的语音在下载之前就被拦掉；视觉与语音支持度分别由首次真实请求探测：明确不支持、或端点以 404/405 表明模型/路径不存在（记一行指向 `$.agent.media` 的诊断）之后都不再下载该模态；超时、429、5xx 这类端点故障只按连续次数做有限指数退避，退避期内直接降级为占位、不下载也不占执行器槽位，一次成功即清零。单份媒体自身的问题不改变模态结论。
 
 触发回复时，滚动记忆被组装成上一节所述的四段式模型输入，随服务端联网检索工具与自定义工具一并发给 `agent.text` 配置的 provider；摘要、媒体、生图与语音合成各自读取自己的能力配置，不做运行时故障切换。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`）；同一回复始终使用固定的联网规则，每轮次数上限作为软限制写在那份规则里；真实调用数由回复循环记账并在跨过上限时点名，但检索工具在一轮内恒挂（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用。发送类工具先校验并返回乐观接纳回执，每次调用的生成、停顿、主线程 Telegram 代理和真实发送回调由独立链持有；模型可继续查询、调用其它工具或结束。查看与查询直接返回真实数据，不等待发送队列：
 
@@ -97,7 +97,7 @@ flowchart TD
 - 🔍 **查看贴纸包**——同步返回本轮真实贴纸清单，调用次数独立计数，发送必须先查看对应包。
 - 🎟️ **发送贴纸**——一轮最多接纳一次。
 - 🎨 **生成图片**——只在群友直接 @/回复机器人或用媒体直接唤起时，按对应供应商能力挂进工具集；随机插话与非直接媒体评价不暴露这个工具。一轮最多接纳一次。图片发出后先按提示词写回记忆，再识图把那一条换成实际画面。
-- 🎙️ **发送语音**——配置了 `agent.tts` 且所选实现具备语音合成时每轮都挂进工具集，与触发类型无关，是否调用由模型按工具说明判断。模型写一两句日语台词（`text`），可附一句本句语气（`tone`）；合成结果在 AI Worker 本地编码成 OGG/Opus，以 Telegram 语音消息发到触发所在的话题，可选择回复触发消息。合成与编码期间显示「正在录音」状态。一轮最多接纳一次，计入统一动作预算。「文本 + 语气 → 语音」这一段是公共实现（[`packages/aiChat/ai/voiceSynthesis.ts`](../../packages/aiChat/ai/voiceSynthesis.ts)）；`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 从主线程经 `synthesizeVoice` 请求交给 AI Worker 走同一条链，拿回编码好的语音后由各自的发送边界发出。工具声明与用法只属于 AI。
+- 🎙️ **发送语音**——配置了 `agent.tts` 且所选实现具备语音合成时每轮都挂进工具集，与触发类型无关，是否调用由模型按工具说明判断。模型写一两句日语台词（`text`），可附一句本句语气（`tone`）；合成结果在 AI Worker 本地编码成 OGG/Opus，以 Telegram 语音消息发到触发所在的话题，可选择回复触发消息。合成与编码期间显示「正在录音」状态。一轮最多接纳一次，计入统一动作预算。「文本 + 语气 → 语音」这一段是公共实现（[`packages/aiChat/ai/voiceSynthesis.ts`](../../packages/aiChat/ai/voiceSynthesis.ts)）；`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 从主线程经 `synthesizeVoice` 请求交给 AI Worker 走同一条链，拿回编码好的语音后由各自的发送边界发出。工具声明与用法只属于 AI。三个入口共用每日计数：tts 门面在发起供应商请求前登记一次，计数窗口从窗口内第一次请求起算、满 24 小时后重计，窗口与次数存在 `memory/global/state.json` 的 `ttsUsage`。`/send` 与 cron 可用满 `agent.tts.daily_limit`（缺省 100）次，AI 只能用到 `daily_limit - daily_reserve_quota`（缺省 75）次，余下 `daily_reserve_quota`（缺省 25）次留给运维入口；模型从回复任务区块末尾的「今日语音余量」行得知还能用几次，余量用尽时工具直接拒绝，并要求模型不在群里提起。
 
 AI 回复的AI 回复的文字、贴纸、图片与语音只在真实发送成功后写回滚动记忆，并按策略周期性快照落盘；`/wed`、`/h_image` 与定时任务发出的图片以「发送了一张图片」的占位写入，有人回复这张图时才识图回填；单轮动作次数上限与防循环规则见 [04 运行时权威约束](04-invariants.md)。
 
@@ -109,13 +109,14 @@ AI 回复的AI 回复的文字、贴纸、图片与语音只在真实发送成�
 
 `index.ts` 只导出一个 `application`（`ApplicationLifecycle` 实例），并在 `import.meta.main` 为真时调用 `application.run("main")`。`"main"` 模式安装进程信号/异常 handler，并把未处理的运行错误记录为非零退出。测试或嵌入式宿主显式调用 `application.run("test")`：该模式不接管进程 handler，并在完成 `dispose()` 后把启动/轮询异常原样交还调用方。两种模式共用同一条 `init()` → `wait()` → `dispose()` 边界，普通 import 仍无副作用。
 
+0. 导入 [`packages/config/bot.ts`](../../packages/config/bot.ts) 时（早于下列任何初始化）先经 [`packages/config/layout.ts`](../../packages/config/layout.ts) 检查 `config/` 布局：部署文件放在顶层或放错子目录、或 `config/dynamic/` 不存在即拒绝启动；随后严格读取 `config/static/bot.json`。
 1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
 2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件，严格校验并恢复 `state.json` 主备副本，再由业务门面填充权威内存；`bot.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。随后按恢复出的 `state.global.assets.randomHImageDir` 准备专用图库（[`packages/infra/randomImage.ts`](../../packages/infra/randomImage.ts)）：创建缺失目录，核对访问权限、SHA-256 文件名与条目类型，失败拒绝启动。
+3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件；数据根下仍有 14.x 的 `state.json` 或 `state.json.bak` 时拒绝启动，然后严格校验并恢复 `memory/global/state.json`（缺失按从未使用处理），再由业务门面填充权威内存；`bot.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。随后按已校验的 `config/dynamic/assets.json` 的 `random_h_image_dir`（缺省 `./h_image`）准备专用图库（[`packages/infra/randomImage.ts`](../../packages/infra/randomImage.ts)）：创建缺失目录，核对访问权限、SHA-256 文件名与条目类型，失败拒绝启动。
 4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志、wed 成员与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先经 `midnightMaintenance` 通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时广告免检累计；各领域原有的启动或业务事件触发清理继续作为兜底，待验证轮换失败只保留不阻止退出的一秒重试 timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink，也不留下维护 cron。主线程接管 wed 成员集合，并接收 `chat_states`、永久名单计数和未完成处置，不复制永久白名单、黑名单或临时广告免检活动整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
 5. 注册 handler、设置命令菜单并执行 `bot.init()`。
-6. 初始化 **AI Worker**（AI 配置不可用时不启动 Worker、只记一行日志，恢复出的记忆与贴纸目录只写进主线程镜像，等热重载补齐配置后再启动），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker**，按 `cron.json` 启动定时任务调度（[`packages/cron/scheduler.ts`](../../packages/cron/scheduler.ts)），开始监听 `config/` 热重载，再初始化黑名单补扫调度，并对已托管的群补扫一轮黑名单。
-7. 把 `state.global.assets` 的缺项补成内置缺省值（后台落盘，不阻塞启动；首次运行的 `state.json` 由此生成），启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
+6. 初始化 **AI Worker**（AI 配置不可用时不启动 Worker、只记一行日志，恢复出的记忆与贴纸目录只写进主线程镜像，等热重载补齐配置后再启动），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker**，按 `cron.json` 启动定时任务调度（[`packages/cron/scheduler.ts`](../../packages/cron/scheduler.ts)），开始监听 `config/dynamic/` 热重载，再初始化黑名单补扫调度，并对已托管的群补扫一轮黑名单。
+7. 启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
 
 失败与退出统一由 `ApplicationLifecycle` 收口：只有已取得的资源才会释放或 flush。
 
@@ -123,7 +124,7 @@ AI 回复的AI 回复的文字、贴纸、图片与语音只在真实发送成�
 
 正常与异常停机由同一个生命周期收口，顺序固定：
 
-1. **Quiesce**：停下标题、头像、翻译、gag 与 wed 新预约、延迟命令（`/h_image` 抽图与收图、`/info` 查询）接纳、cron 定时任务、blocklist 补扫调度器和 `config/` 热重载监听，并停止 runner。九个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这九个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。九次调用都是幂等的，重复执行没有代价。
+1. **Quiesce**：停下标题、头像、翻译、gag 与 wed 新预约、延迟命令（`/h_image` 抽图与收图、`/info` 查询）接纳、cron 定时任务、blocklist 补扫调度器和 `config/dynamic/` 热重载监听，并停止 runner。九个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这九个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。九次调用都是幂等的，重复执行没有代价。
 2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
 3. **Flush 与 dispose**：正常路径先排空 Anti-Raid、gag 提示与统一延迟删除，再 flush AI、排空 Telegram 出站、flush Disk I/O 与 StateStore；最终 dispose 固定按同一维护排空顺序，再执行「flush AI → 终止 AI → 排空 Telegram 出站 → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」。
 

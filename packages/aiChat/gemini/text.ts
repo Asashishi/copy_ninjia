@@ -3,7 +3,7 @@
  * requestGeminiTextResult，差别只在请求体：文本走一段 user 文本，视觉多挂一份
  * inlineData 图片字节，语音则挂一份 inlineData 音频字节。
  *
- * 视觉与语音共用 config/agent.json 的 `agent.media`：那一档本来就是多模态理解
+ * 视觉与语音共用 config/dynamic/agent.json 的 `agent.media`：那一档本来就是多模态理解
  * 模型，图片与音频是它的两种输入模态，不是两个模型。
  *
  * 清洗与截断由调用方通过 normalize 传入——摘要、贴纸整包简介、三类媒体描述与

@@ -2,7 +2,7 @@ import type { FSWatcher } from "node:fs";
 import type { LatestValueRunner } from "../../libs/latestValueRunner";
 
 /**
- * owner：主线程。config/ 热重载（app/configReload.ts）的运行时状态。
+ * owner：主线程。config/dynamic/ 热重载（app/configReload.ts）的运行时状态。
  *
  * startConfigReload 填充 watcher 与执行器并开始接纳事件；每个文件事件整体替换
  * 一次防抖 timer，到期即清空；quiesceConfigReload 停止接纳、关闭 watcher 并清除

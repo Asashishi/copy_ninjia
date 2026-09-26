@@ -15,7 +15,7 @@ import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";
  * 媒体命中时更新使用顺序；最多保存 4,096 项，不设 TTL。Worker 崩溃后从空
  * 缓存重建，媒体再次使用时重新描述。
  *
- * config/stickers.json 白名单包的描述不属于这份缓存：它们从
+ * config/dynamic/stickers.json 白名单包的描述不属于这份缓存：它们从
  * memory/stickers/ 恢复进 stickerCatalog 的常驻内存目录，只有线上贴纸包
  * 对账发现增删时才更新。消息记录会先查该目录，未命中才走这里；生成目录
  * 新条目时也绕过这里，避免本地条目占用 MEDIA_DESCRIPTION_CACHE_MAX 额度、

@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
-import type {
-  AiMemoryPersistedReply,
-  DiskIORecoveryTransport,
-  DiskIOReply,
-  LuckDrawDiskMessage,
-  VerificationPersistedReply,
-} from "../../packages/types";
+import type { DiskIORecoveryTransport, LuckDrawDiskMessage } from "../../packages/types/diskIO/messages";
+import type { AiMemoryPersistedReply, DiskIOReply, VerificationPersistedReply } from "../../packages/types/diskIO/replies";
 import { diskIORuntime, pendingLoad } from "../../packages/cache/main/diskIO";
 import { onDiskIOReply } from "../../packages/infra/diskIO/observers";
 import {

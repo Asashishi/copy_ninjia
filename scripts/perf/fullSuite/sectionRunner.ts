@@ -145,8 +145,11 @@ export async function runRounds<TRound>(
         onStderr,
       }));
     } finally {
-      context.recordFootprint(dependencies.measureDirectoryFootprint(runtimeRoot));
-      dependencies.removeMockPath(runtimeRoot);
+      try {
+        context.recordFootprint(dependencies.measureDirectoryFootprint(runtimeRoot));
+      } finally {
+        dependencies.removeMockPath(runtimeRoot);
+      }
     }
   }
   return rounds;

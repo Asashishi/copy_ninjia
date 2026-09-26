@@ -9,7 +9,7 @@ import type {
   VerificationEvent,
   VerificationState,
 } from "../../../packages/types/states/verification";
-import type { VerificationAttemptPermitResult } from "../../../packages/types";
+import type { VerificationAttemptPermitResult } from "../../../packages/types/antiRaid/protocol";
 
 const {
   CHAT_ID,

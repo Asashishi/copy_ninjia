@@ -1,9 +1,7 @@
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type {
-  DiskBusinessMessage,
-  VerificationSnapshot,
-} from "../../packages/types";
+import type { VerificationSnapshot } from "../../packages/types/antiRaid/verification";
+import type { DiskBusinessMessage } from "../../packages/types/diskIO/messages";
 
 const diskPosts: DiskBusinessMessage[] = [];
 

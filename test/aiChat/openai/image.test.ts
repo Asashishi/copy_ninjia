@@ -6,7 +6,9 @@
  * 「换回 Gemini 不必改任何调用点」这个前提。
  */
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 import { loggerStub } from "../../helpers/loggerMock";
 import type {
   AgentDeploymentConfig,
@@ -25,10 +27,10 @@ mock.module("../../../packages/aiChat/openai/client", () => ({
 }));
 mock.module("../../../packages/config/agent", () => ({
   getAgentDeploymentConfig: (): AgentDeploymentConfig => ({
-    text: { provider: "openai", apiKey: "text-key", baseUrl: undefined, model: "r" },
-    summary: { provider: "openai", apiKey: "summary-key", baseUrl: undefined, model: "s" },
-    media: { provider: "openai", apiKey: "media-key", baseUrl: undefined, model: "m" },
-    image: { provider: "openai", apiKey: "image-key", baseUrl: undefined, model: IMAGE_MODEL, imageProtocol },
+    text: { provider: "openai", apiKey: "text-key", baseUrl: undefined, headers: undefined, model: "r" },
+    summary: { provider: "openai", apiKey: "summary-key", baseUrl: undefined, headers: undefined, model: "s" },
+    media: { provider: "openai", apiKey: "media-key", baseUrl: undefined, headers: undefined, model: "m" },
+    image: { provider: "openai", apiKey: "image-key", baseUrl: undefined, headers: undefined, model: IMAGE_MODEL, imageProtocol },
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -46,6 +48,26 @@ const { IMAGE_GENERATION_MAX_BYTES } = await import("../../../packages/consts/ai
 
 const PNG: Uint8Array = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const JPEG: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+
+afterEach(() => installAiCacheUsageSink(null));
+
+test("所有图片协议的生成和编辑都在解码前按响应计量一次", async () => {
+  const reported: AiCacheUsage[] = [];
+  installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+  const response = { data: [], usage: { input_tokens: 30, output_tokens: 50, total_tokens: 80, input_tokens_details: { image_tokens: 20, text_tokens: 10 } } };
+  for (const protocol of ["openai", "openai-standard", "xai"] as const) {
+    imageProtocol = protocol;
+    generate.mockResolvedValueOnce(response);
+    if (protocol === "xai") post.mockResolvedValueOnce(response);
+    else edit.mockResolvedValueOnce(response);
+    await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
+    await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1", referenceImage: { bytes: PNG, mime: "image/png" } })).resolves.toBeNull();
+  }
+  expect(reported).toHaveLength(6);
+  for (const usage of reported) {
+    expect(usage).toMatchObject({ capability: "image", provider: "openai", model: IMAGE_MODEL, inputTokens: 30, cachedInputTokens: null, outputTokens: 50 });
+  }
+});
 
 function respondWith(encoded: string): void {
   generate.mockResolvedValueOnce({ data: [{ b64_json: encoded }] });
@@ -373,6 +395,8 @@ describe("失败处理", () => {
   }, 2_000);
 
   test("调用方主动取消时静默返回 null，不记错误日志", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
     const controller: AbortController = new AbortController();
     let settleSdkTask!: (value: unknown) => void;
     const sdkTask: Promise<unknown> = new Promise<unknown>((
@@ -390,7 +414,10 @@ describe("失败处理", () => {
 
     await expect(pendingResult).resolves.toBeNull();
     expect(loggerError).not.toHaveBeenCalled();
-    settleSdkTask({ data: [{ b64_json: PNG.toBase64() }] });
+    settleSdkTask({ usage: { input_tokens: 7, output_tokens: 9 }, data: [{ b64_json: PNG.toBase64() }] });
     await sdkTask;
+    await Promise.resolve();
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({ inputTokens: 7, outputTokens: 9 });
   });
 });

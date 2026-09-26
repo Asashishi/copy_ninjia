@@ -3,10 +3,10 @@ import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { Message } from "grammy/types";
-import type { AntiRaidWorkerMessage } from "../../packages/types";
+import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid/protocol";
 import type { AdDetectionMessageContext } from
   "../../packages/types/antiRaid/adDetect";
-import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../packages/types/diskIO";
+import type { DiskBusinessMessage, AdSampleDiskMessage, AiCacheUsageDiskMessage } from "../../packages/types/diskIO";
 
 /**
  * `/antiraid` 开关在主线程投递侧的边界（见 antiRaid/updateIngress.ts）。
@@ -17,7 +17,7 @@ import type { DiskBusinessMessage, AdSampleDiskMessage } from "../../packages/ty
  */
 
 /** 测试观察业务写入与诊断消息。 */
-type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage;
+type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage | AiCacheUsageDiskMessage;
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
 const diskPosts: TestDiskMessage[] = [];

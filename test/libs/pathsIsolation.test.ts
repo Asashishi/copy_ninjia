@@ -14,7 +14,9 @@ import {
   MOOD_CONFIG_PATH,
   PROJECT_ROOT,
   RUNTIME_DATA_ROOT,
-  STATE_FILE_PATH,
+  GLOBAL_STATE_FILE_PATH,
+  LEGACY_STATE_FILE_PATHS,
+  STATIC_CONFIG_DIR,
   STICKERS_CONFIG_PATH,
 } from "../../packages/consts/paths";
 import { TEST_CONFIG_ROOT } from "../preloadEnv";
@@ -22,7 +24,8 @@ import { TEST_CONFIG_ROOT } from "../preloadEnv";
 test("测试环境的真实运行时文件与生产数据根完全隔离", async () => {
   expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);
   for (const path of [
-    STATE_FILE_PATH,
+    GLOBAL_STATE_FILE_PATH,
+    ...LEGACY_STATE_FILE_PATHS,
     LOCK_FILE_PATH,
     LOGS_DIR,
     MEMORY_DIR,
@@ -54,7 +57,7 @@ test("测试环境的默认部署配置只读取独占临时副本", () => {
     expect(path.startsWith(`${CONFIG_ROOT}/`)).toBeTrue();
     expect(existsSync(path)).toBeTrue();
   }
-  // 翻译凭据与其它部署配置同住 config/；测试副本删掉了示例里的占位凭据。
-  expect(GOOGLE_AUTH_FILE_PATH).toBe(join(CONFIG_ROOT, "g-auth.json"));
+  // 翻译凭据位于静态子目录 config/static/；测试副本删掉了示例里的占位凭据。
+  expect(GOOGLE_AUTH_FILE_PATH).toBe(join(STATIC_CONFIG_DIR, "g-auth.json"));
   expect(existsSync(GOOGLE_AUTH_FILE_PATH)).toBeFalse();
 });

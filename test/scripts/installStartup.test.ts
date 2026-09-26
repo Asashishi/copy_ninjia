@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
 import { openStorageDatabase } from "../../packages/database/interact/connection";
 import { seedStorageDatabase } from "../../scripts/fixtures/storageDatabase";
 import {
@@ -54,11 +55,12 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
   )}`);
   if (ai) {
     const agent: { readonly agent: Readonly<Record<string, Readonly<Record<string, unknown>>>> } =
-      await Bun.file(join(fixture.configRoot, "agent.json")).json();
+      await Bun.file(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json")).json();
     expect(agent.agent.tts).toMatchObject({ provider: "google", model: "installation-test-model", voice: "Leda" });
   }
   expect(await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists()).toBe(true);
-  expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).json()).toBeDefined();
+  // 全新部署没有需要持久化的全局状态，启动不写状态文件。
+  expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).exists()).toBe(false);
   expect(await Bun.file(join(fixture.runtimeRoot, "bot.lock")).exists()).toBe(false);
   expect(await Bun.file(join(fixture.worktree, "state.json")).exists()).toBe(false);
   expect(await Bun.file(fixture.outboundLog).text()).not.toContain(":blocked");
@@ -67,11 +69,11 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
 describe("install.sh 到真实应用启动", () => {
   test("重填 Bot 身份时保留指向外部 telegram.json 的链接、权限和普通语气", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
-    mkdirSync(fixture.configRoot);
+    mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     const external: string = join(fixture.root, "external-secrets");
     mkdirSync(external);
     const target: string = join(external, "telegram.json");
-    const entry: string = join(fixture.configRoot, "bot.json");
+    const entry: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
     await writeText(target, JSON.stringify({
       bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere: "normal",
     }), 0o640);
@@ -102,7 +104,7 @@ describe("install.sh 到真实应用启动", () => {
     expect(first.exitCode, first.output).toBe(0);
     await assertInstalledStartup(fixture, first.output, ai);
 
-    const telegram: string = await Bun.file(join(fixture.configRoot, "bot.json")).text();
+    const telegram: string = await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).text();
     const database = openStorageDatabase({ path: join(fixture.runtimeRoot, "database/storage.sqlite") });
     try {
       seedStorageDatabase(database, {
@@ -118,18 +120,18 @@ describe("install.sh 到真实应用启动", () => {
     await assertInstalledStartup(fixture, second.output, ai);
     expect(second.output).toContain("Restored state for 1 chat(s).");
     expect(second.output).toContain("INSTALL_API getChat");
-    expect(await Bun.file(join(fixture.configRoot, "bot.json")).text()).toBe(telegram);
+    expect(await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).text()).toBe(telegram);
   }, 60_000);
 
   test("存在但非法的可选配置在启动之前拒绝", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
-    await writeText(join(fixture.configRoot, "stickers.json"), "{}\n");
+    await writeText(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "stickers.json"), "{}\n");
     const result = runInstaller(fixture, firstInstallPrompts(false));
     expect(result.exitCode).not.toBe(0);
     expect(result.output).toContain("stickers.json: $ must be");
     expect(result.output).not.toContain("INSTALL_API");
     expect(result.output).not.toContain("Bot started");
     expect(await Bun.file(join(fixture.runtimeRoot, "state.json")).exists()).toBe(false);
-    expect(await Bun.file(join(fixture.configRoot, "stickers.json")).text()).toBe("{}\n");
+    expect(await Bun.file(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "stickers.json")).text()).toBe("{}\n");
   }, 30_000);
 });

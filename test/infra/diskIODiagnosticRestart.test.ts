@@ -4,7 +4,8 @@ import {
   DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD,
   DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES,
 } from "../../packages/consts/diskIO/diagnostics";
-import type { DiskIOMessage, DiskIOReply } from "../../packages/types";
+import type { DiskIOMessage } from "../../packages/types/diskIO/messages";
+import type { DiskIOReply } from "../../packages/types/diskIO/replies";
 import {
   emitSuccessfulDiskIOLoad as emitSuccessfulLoad,
   FakeDiskIOWorker as FakeWorker,

@@ -113,6 +113,11 @@ export interface UserContentOptions {
    *  createReplyToolset（ReplyToolContext.roundHasTypo），两处必须用同一次
    *  掷骰结果。 */
   roundHasTypo: boolean;
+  /**
+   * 回复任务区块末尾的今日语音余量行（见 aiChat/ai/tools/replyToolset/voiceMessage.ts 的
+   * buildVoiceQuotaLine），拼在 [END] 标签之前；本轮不挂 send_voice 时省略或为空串。
+   */
+  voiceQuota?: string;
 }
 
 /**
@@ -133,6 +138,7 @@ export function buildReplyPromptSections(
     mediaComment,
     queuedTrigger,
     roundHasTypo,
+    voiceQuota = "",
   }: UserContentOptions
 ): ReplyPromptSections | null {
   const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
@@ -245,6 +251,7 @@ export function buildReplyPromptSections(
     // 不出错的轮次完全不拼这一段——两个分支的提示词严格分开，模型看不到
     // 「本来可能出错」这件事（见 consts/aiChat/prompts/tools.ts）。
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +
+    voiceQuota +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`;
   return { referenceMemory, currentConversation, replyTask };

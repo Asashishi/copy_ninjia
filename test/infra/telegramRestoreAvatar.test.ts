@@ -81,7 +81,7 @@ beforeEach(() => {
 });
 
 describe("默认头像的取图口径", () => {
-  test("传入的直链原样使用——部署方可用 state.global.assets 换脸", async () => {
+  test("传入的直链原样使用——部署方可用 config/dynamic/assets.json 换脸", async () => {
     // 目标 URL 由主线程从 state 取好后传进来（见 copy/avatarQueue.ts），本模块
     // 被两条 Worker 一并 import，不能自己去读只属于主线程的 state 内存。
     const configured: string = "https://cdn.example/custom-face.jpg";

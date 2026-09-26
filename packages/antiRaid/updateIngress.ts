@@ -17,7 +17,7 @@ import {
 } from "../infra/botAdmin";
 import { VERIFY_APPROVE_CALLBACK_PREFIX, VERIFY_SELF_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
 
-import { isAdminStatus } from "../libs/chatMember";
+import { isAdminStatus, isPresentMember } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { hasUserMessageContent } from "../users/messageContent";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
@@ -31,7 +31,6 @@ import {
 } from "./blocklistGuard";
 import { buildFloodCandidate } from "./floodControl";
 import {
-  isActiveChatMember,
   isInviterExemptAdmin,
   pickMember,
 } from "./memberFacts";
@@ -84,8 +83,8 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 
   // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由本群
   // 管理员代点「通过」作保）。
-  const wasActive: boolean = isActiveChatMember(update.old_chat_member);
-  const isActive: boolean = isActiveChatMember(update.new_chat_member);
+  const wasActive: boolean = isPresentMember(update.old_chat_member);
+  const isActive: boolean = isPresentMember(update.new_chat_member);
 
   // 管理员任免、入离群及匿名模式切换同样以 chat_member 更新送达：同步给
   // Worker 侧的邀请者豁免缓存，让「非匿名管理员拉人免验证」的同步判定

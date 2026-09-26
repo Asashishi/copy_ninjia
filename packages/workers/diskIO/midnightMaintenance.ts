@@ -1,6 +1,7 @@
 /** Disk I/O Worker 东京午夜维护编排：逐领域执行并隔离失败。 */
 
 import { maintainAdSampleFiles } from "./adSampleFile";
+import { summarizeAiCache } from "./aiCacheFile";
 import { maintainJoinLogRetention } from "./joinLogFiles";
 import { maintainLogRetention } from "./logFiles";
 import { maintainLuckForDay } from "./luckFiles";
@@ -34,7 +35,7 @@ async function runTasksSequentially(
   }
 }
 
-/** 先通知主线程接纳日级任务，再依次维护六个磁盘领域；不等待主线程复核。 */
+/** 先通知主线程接纳日级任务，再依次维护七个磁盘领域；不等待主线程复核。 */
 export function runDiskIOMidnightMaintenance(
   reply: DiskIOMaintenanceReplySink,
   day: string = getTokyoDateKey()
@@ -43,6 +44,7 @@ export function runDiskIOMidnightMaintenance(
     ["main thread", (): void => reply({ type: "midnightMaintenance", day })],
     ["luck", async (): Promise<void> => maintainLuckForDay(day)],
     ["logs", async (): Promise<void> => maintainLogRetention()],
+    ["ai cache", (): Promise<void> => summarizeAiCache(day)],
     ["join logs", async (): Promise<void> => maintainJoinLogRetention(day)],
     ["ad samples", (): Promise<void> => maintainAdSampleFiles(day)],
     ["verifications", (): Promise<void> => maintainVerificationDayForToday(reply, day)],

@@ -20,13 +20,8 @@ import {
 import {
   DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES,
 } from "../../packages/consts/diskIO/diagnostics";
-import type {
-  DiskIOMessage,
-  DiskIORecoveryTransport,
-  DiskIOReply,
-  DiskIORespawnListener,
-  LuckDrawDiskMessage,
-} from "../../packages/types";
+import type { DiskIOMessage, DiskIORecoveryTransport, DiskIORespawnListener, LuckDrawDiskMessage } from "../../packages/types/diskIO/messages";
+import type { DiskIOReply } from "../../packages/types/diskIO/replies";
 import {
   crashDiskIOWorker,
   emitDiskIOLuckSecretReply,

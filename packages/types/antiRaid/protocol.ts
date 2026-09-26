@@ -93,7 +93,7 @@ export interface AdoptableLockdown {
   /** 上一代留下的封锁公告消息 ID；接管方解除时按它删除，缺省即不删。 */
   announcementMessageId?: number;
   /** false 表示仅存在主线程 LRU 最终值，必须继续等待 SQLite 的落盘回执。 */
-  persisted?: boolean;
+  persisted: boolean;
   /** 距离应当恢复原始权限还剩多久。 */
   remainingMs: number;
 }
@@ -226,7 +226,7 @@ export interface ChatKindChangedMessage {
 
 /**
  * 主线程 -> Worker：主线程当前生效的广告检测能力配置与示例清单。初始化、Worker
- * 重建与 config/ 热重载替换这两份快照时各投递一次；adSamples 为 null 表示广告
+ * 重建与 config/dynamic/ 热重载替换这两份快照时各投递一次；adSamples 为 null 表示广告
  * 检测不可用，Worker 保留原 holder 不动。
  */
 export interface AntiRaidAgentConfigMessage {

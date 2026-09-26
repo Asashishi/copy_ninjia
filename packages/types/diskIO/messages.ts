@@ -1,3 +1,4 @@
+import type { AiCacheUsage } from "../aiCache";
 import type { AdSampleMessage } from "../antiRaid/adDetect";
 import type { VerificationSnapshot } from "../antiRaid/verification";
 import type { PendingBlockedRemoval } from "../blocklist";
@@ -195,7 +196,7 @@ export interface ChatQaWriteDiskMessage {
  *
  * 这是整个持久化里唯一**只写不读**的一类：进程从不加载它，启动恢复也不碰，
  * 丢了不影响任何运行时状态。它存在的唯一目的是让人回头翻原始素材、据此调
- * config/ad_samples.json 的判定口径（见 workers/diskIO/adSampleFile.ts）。
+ * config/dynamic/ad_samples.json 的判定口径（见 workers/diskIO/adSampleFile.ts）。
  */
 export interface AdSampleDiskMessage {
   type: "adSample";
@@ -213,10 +214,18 @@ export interface AdSampleDiskMessage {
 }
 
 /**
+ * 主线程 -> diskIOWorker：一次模型请求的缓存用量（见 types/aiCache.ts）。进入
+ * memory/ai-daily-usage/ 的内存缓冲，按阈值、定时或统一 flush 追加落盘。
+ */
+export interface AiCacheUsageDiskMessage extends AiCacheUsage {
+  type: "aiCacheUsage";
+}
+
+/**
  * 不进入权威业务恢复缓冲的 Disk I/O 诊断。传输层在进程存活期间保留到 ACK；
  * 各落盘领域是否把写失败升级为业务失败，仍由日志与广告样本各自决定。
  */
-export type DiskDiagnosticMessage = LogEnvelope | AdSampleDiskMessage;
+export type DiskDiagnosticMessage = LogEnvelope | AdSampleDiskMessage | AiCacheUsageDiskMessage;
 
 /** 主线程 -> diskIOWorker：单批、总消息数与载荷字节均有硬顶的 ACK 诊断批次。 */
 export interface DiskDiagnosticBatchRequest {

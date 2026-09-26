@@ -16,7 +16,7 @@ export interface AdDetectionMessageContext {
  * 传输实现只把这些语义映射到各自 SDK。
  */
 export interface AdDetectJsonRequestParams {
-  /** 模型名来自 config/agent.json 的 agent.ad_detect。 */
+  /** 模型名来自 config/dynamic/agent.json 的 agent.ad_detect。 */
   readonly model: string;
   /** 系统提示词；OpenAI JSON 模式要求其中出现 json。 */
   readonly systemPrompt: string;

@@ -37,7 +37,8 @@ const {
   LUCK_DEFERRED_DRAW_MAX,
 } = await import("../../../packages/consts/diskIO/appendOnly");
 const { DAILY_LUCK_CACHE_MAX } = await import("../../../packages/consts/luckChallenge");
-import type { LuckAppendStalledReply, LuckDrawDiskMessage } from "../../../packages/types";
+import type { LuckDrawDiskMessage } from "../../../packages/types/diskIO/messages";
+import type { LuckAppendStalledReply } from "../../../packages/types/diskIO/replies";
 
 const DAY = "2026-07-16";
 

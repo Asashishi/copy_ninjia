@@ -18,7 +18,6 @@ const cleanupOrphanedTempFiles = mock(async (): Promise<void> => { calls.push("c
 const validateExistingDeploymentInputs = mock(async (): Promise<void> => {
   calls.push("validateDeploymentInputs");
 });
-const seedMissingAssetState = mock((): number => { calls.push("seedAssets"); return 0; });
 const loadState = mock(async (): Promise<void> => { calls.push("loadState"); });
 const refreshAllChatTitles = mock(async (): Promise<void> => { calls.push("refreshTitles"); });
 const loadPersistedData = mock(async () => ({
@@ -195,7 +194,6 @@ const testDependencies = {
   releaseSingleInstanceLock,
   restoreLuckState,
   runAcknowledgedUpdateBatches,
-  seedMissingAssetState,
   quiesceAvatarUpdates,
   quiesceBlocklistSweepScheduler,
   quiesceChatTitleRefresh,
@@ -264,7 +262,6 @@ export function installLifecycleFixtureHooks(): void {
       cleanupOrphanedTempFiles,
       validateExistingDeploymentInputs,
       loadState,
-      seedMissingAssetState,
       refreshAllChatTitles,
       loadPersistedData,
       flushDiskIO,
@@ -435,7 +432,6 @@ export const lifecycleFixture = {
   runnerSize,
   runnerStop,
   runnerTask,
-  seedMissingAssetState,
   seedSenderCache,
   setCopiedUser,
   setLastSeenUpdateId,

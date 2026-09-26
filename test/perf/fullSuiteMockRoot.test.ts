@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, rmdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
 import {
   PERFORMANCE_MOCK_ROOT,
   PROJECT_ROOT,
@@ -90,12 +91,12 @@ describe("mock 根的建立与清理", () => {
     try {
       const configRoot: string = await createBenchmarkConfigRoot(runRoot);
       const telegramDocument: unknown = await Bun.file(
-        join(configRoot, "bot.json")
+        join(configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")
       ).json();
       const agentDocument: Readonly<{
         agent?: Readonly<{ ad_detect?: unknown }>;
       }> = await Bun.file(
-        join(configRoot, "agent.json")
+        join(configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json")
       ).json();
       expect((): unknown => parseBotConfig(
         telegramDocument,
@@ -110,7 +111,7 @@ describe("mock 根的建立与清理", () => {
         "benchmark/agent.json"
       )).not.toThrow();
       // 翻译凭据示例不进基准配置根，启动总闸按「缺省」处理翻译。
-      expect(await Bun.file(join(configRoot, "g-auth.json")).exists()).toBeFalse();
+      expect(await Bun.file(join(configRoot, STATIC_CONFIG_DIR_NAME, "g-auth.json")).exists()).toBeFalse();
     } finally {
       removeMockPath(runRoot);
     }
@@ -197,8 +198,8 @@ describe("mock 根的文件系统边界", () => {
       const victim: string = join(external, "agent.json");
       await Bun.write(victim, "external agent config");
       const configRoot: string = join(runRoot, BENCHMARK_CONFIG_ROOT_NAME);
-      mkdirSync(configRoot, { recursive: true });
-      symlinkSync(victim, join(configRoot, "agent.json"));
+      mkdirSync(join(configRoot, DYNAMIC_CONFIG_DIR_NAME), { recursive: true });
+      symlinkSync(victim, join(configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json"));
 
       await expect(createBenchmarkConfigRoot(runRoot)).rejects.toThrow("symbolic link");
       expect(await Bun.file(victim).text()).toBe("external agent config");

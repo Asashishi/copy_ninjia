@@ -14,7 +14,7 @@ import { synthesizeGeminiSpeech } from "./speech";
 import { describeGeminiVision, generateGeminiText, transcribeGeminiVoice } from "./text";
 import type { AiChatProvider } from "../../types/aiChat/provider";
 
-/** Google GenAI 协议实现；每项能力的认证与端点来自 config/agent.json。 */
+/** Google GenAI 协议实现；每项能力的认证与端点来自 config/dynamic/agent.json。 */
 export const geminiProvider: AiChatProvider = {
   name: "google",
   createReplySession: createGeminiReplySession,

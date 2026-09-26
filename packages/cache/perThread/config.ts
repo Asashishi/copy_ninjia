@@ -43,14 +43,14 @@ export const defaultAdSampleConfigCache: { current: AdSampleConfig | null } = { 
 export const personaCache: { current: string | null } = { current: null };
 
 /**
- * config/bot.json 的主线程只读快照；Bot 配置模块启动时读盘填充，进程重启后重建。
+ * config/static/bot.json 的主线程只读快照；Bot 配置模块启动时读盘填充，进程重启后重建。
  * Worker 不加载 Bot 配置，本 holder 保持 null；通知风格随初始化载荷单独注入。
  * 不热重载，容量至多一个对象且无需淘汰；线程边界见 docs/cn/04-invariants.md。
  */
 export const botConfigCache: { current: BotConfig | null } = { current: null };
 
 /**
- * config/agent.json 的 **agent.ad_detect 能力**快照；主线程权威值的本线程副本。
+ * config/dynamic/agent.json 的 **agent.ad_detect 能力**快照；主线程权威值的本线程副本。
  *
  * 填充时机按线程分两路：
  * - 主线程：启动总闸 validateAgentDeploymentConfig 解析成功后写入；文件在但没有
@@ -69,7 +69,7 @@ export const botConfigCache: { current: BotConfig | null } = { current: null };
 export const adDetectAgentConfigCache: { current: AdDetectAgentConfig | null } = { current: null };
 
 /**
- * config/agent.json 的 **AI 对话能力段**快照；分段与填充口径同上。
+ * config/dynamic/agent.json 的 **AI 对话能力段**快照；分段与填充口径同上。
  *
  * 主线程由启动总闸填充、热重载整体替换；AI 闲聊 Worker 由 init 与 configReload
  * 消息 adopt 填充，崩溃重建时由 lastInitState 重放主线程当前快照。回复、总结、

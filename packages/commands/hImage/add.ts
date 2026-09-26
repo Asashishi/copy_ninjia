@@ -27,7 +27,7 @@ import { logger } from "../../infra/logger";
 import { mediaGroupImagesIn } from "../../infra/mediaGroups";
 import { readImageDimensions } from "../../infra/image";
 import { isRandomImageDirectory, readRandomImageLibrary, storeRandomImage } from "../../infra/randomImage";
-import { getRandomHImageDirectory } from "../../infra/storage/stateStore";
+import { getAssetConfig } from "../../config/assets";
 import { sendCommandMessage } from "../../infra/telegram";
 import { downloadTelegramFileBytes } from "../../infra/telegram/fileDownload";
 import { currentUpdateAbortSignal } from "../../infra/updateContext";
@@ -111,7 +111,7 @@ async function collectImage({
 /** 先列一遍图库目录，再在总预算内逐张收图，最后回一句汇总。 */
 async function addRandomImages(request: HImageAddRequest): Promise<void> {
   const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere(request.chatId).H_IMAGE_TEXTS;
-  const directory: string = getRandomHImageDirectory();
+  const directory: string = getAssetConfig().randomHImageDirectory;
   if (!await isRandomImageDirectory(directory)) {
     await sendCommandMessage({ chatId: request.chatId, text: texts.missingDirectory, replyToMessageId: request.messageId });
     return;

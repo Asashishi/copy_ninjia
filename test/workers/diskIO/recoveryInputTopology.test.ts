@@ -24,7 +24,7 @@ const { inspectJoinLogFiles } = await import("../../../packages/workers/diskIO/j
 const { inspectWedMemberFiles } = await import("../../../packages/workers/diskIO/wedMemberFiles");
 const { openAppendOnlyFile, openValidatedAppendOnlyFile } = await import("../../../packages/workers/diskIO/appendOnlyDayFile");
 const today: string = getTokyoDateKey();
-const yesterday: string = getTokyoDateKey(new Date(Date.now() - 86_400_000));
+const yesterday: string = getTokyoDateKey(Date.now() - 86_400_000);
 const domains: readonly Readonly<{ name: string; path: string; inspect: () => unknown }>[] = [
   { name: "verification today", path: join(paths.VERIFICATION_MEMORY_DIR, `${today}.json`), inspect: () => inspectVerificationDay(today) },
   { name: "verification prior", path: join(paths.VERIFICATION_MEMORY_DIR, `${yesterday}.json`), inspect: () => inspectVerificationDay(today) },

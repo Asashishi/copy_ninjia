@@ -42,11 +42,11 @@ export interface StickerCatalogRecoveryInspection {
  * 跨域启动第一阶段（只读）：严格校验 memory/stickers/ 下每个贴纸包的目录快照
  * （孤儿快照同样先严格解码），把它们归类成待载入快照、孤儿快照与临时文件残留。
  * 本函数不写盘、不删除。机制与其它快照领域基本一致，只是文件名使用 pack short
- * name；多一步 activePacks 对账——config/stickers.json 的白名单已经不包含的包
+ * name；多一步 activePacks 对账——config/dynamic/stickers.json 的白名单已经不包含的包
  * 记为孤儿，不载入内存，也就不会让 aiChat/ai/stickers/catalog.ts 的
  * getCatalogEntry 继续拿一个已下架包的旧描述去匹配群友发的贴纸。删除由全域
  * 校验成功后的 maintainStickerCatalogFiles 执行。
- * @param activePacks 当前 config/stickers.json 的贴纸包白名单（见
+ * @param activePacks 当前 config/dynamic/stickers.json 的贴纸包白名单（见
  *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿；null 表示白名单缺省，
  *   全部现存快照照常载入，不判孤儿。
  */

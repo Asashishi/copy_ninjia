@@ -5,13 +5,8 @@ import { describe, expect, test } from "bun:test";
 import { adDetectAgentConfigSnapshot, adoptAdDetectAgentConfig } from "../../../packages/config/agent";
 import { adoptAdSampleConfig, getAdSampleConfig } from "../../../packages/config/adSamples";
 
-import type {
-  AntiRaidWorkerMessage,
-  DiskBusinessMessage,
-  DiskIORecoveryTransport,
-  VerificationDeleteDiskMessage,
-  VerificationUpsertDiskMessage,
-} from "../../../packages/types";
+import type { AntiRaidWorkerMessage } from "../../../packages/types/antiRaid/protocol";
+import type { DiskBusinessMessage, DiskIORecoveryTransport, VerificationDeleteDiskMessage, VerificationUpsertDiskMessage } from "../../../packages/types/diskIO/messages";
 
 const {
   activeVerificationSnapshots,

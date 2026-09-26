@@ -2,7 +2,7 @@
  * Gemini 实现包（packages/aiChat/gemini/）独占的常量：请求超时、SDK 重试次数、
  * 分辨率档位与内容过滤档位。
  *
- * **模型名不在这里**：provider=google 的能力从 config/agent.json 各自读取 model
+ * **模型名不在这里**：provider=google 的能力从 config/dynamic/agent.json 各自读取 model
  * 与可选 base_url，代码不持有任何模型默认值（见 config/agent.ts）。
  *
  * 与供应商无关的预算（工具轮数、动作上限、采样温度、token 上限）留在
@@ -65,10 +65,13 @@ export const GEMINI_SPEECH_REQUEST_ATTEMPTS: number = 3;
 export const GEMINI_SPEECH_TEMPERATURE: number = 1.25;
 
 /**
- * 语音合成的基础朗读风格，经 `speech_metadata.style` 随台词一起提交；模型给出
- * 本句语气时拼在它之后（见 aiChat/gemini/speech.ts）。
+ * 语音合成未配置 agent.tts.style 时的默认基础风格，经 `speech_metadata.style` 随台词提交；调用方给出
+ * 本句语气时以 GEMINI_SPEECH_TONE_SEPARATOR 接在它之后（见 aiChat/gemini/speech.ts）。
  */
-export const GEMINI_SPEECH_STYLE: string = "女性の、いたずら好きそうな高く元気そうな声。";
+export const GEMINI_SPEECH_STYLE: string = "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色";
+
+/** 基础朗读风格与本句语气之间的连接段，拼成 `<基础风格>; 细节: <语气，其他要求>`。 */
+export const GEMINI_SPEECH_TONE_SEPARATOR: string = "; 细节: ";
 
 /**
  * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
@@ -78,7 +81,7 @@ export const GEMINI_SPEECH_STYLE: string = "女性の、いたずら好きそう
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
 /**
  * media 能力（视觉描述与语音转写）的独立超时，宽于纯文本往返：服务端需先把
- * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/agent.json
+ * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/dynamic/agent.json
  * 的 `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
  */
 export const GEMINI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;

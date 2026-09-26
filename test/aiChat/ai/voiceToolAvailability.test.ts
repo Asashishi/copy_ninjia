@@ -8,7 +8,10 @@ import type { ReplyToolContext, ReplyToolset } from "../../../packages/types/aiC
 import type { AiToolDefinition } from "../../../packages/types/aiChat/provider";
 import { loggerStub } from "../../helpers/loggerMock";
 
-const synthesizeSpeech = mock(async (..._args: unknown[]): Promise<null> => null);
+const synthesizeSpeech = mock(async (..._args: unknown[]): Promise<{ ok: false; reason: "synthesis failed" }> => ({
+  ok: false,
+  reason: "synthesis failed",
+}));
 const ttsAiProvider = mock((): unknown => ({ name: "google", synthesizeSpeech }));
 const realTelegram = await import("../../../packages/infra/telegram");
 const realProvider = await import("../../../packages/aiChat/provider");
@@ -85,7 +88,7 @@ describe("语音工具的挂载", () => {
     const toolset: ReplyToolset = await createReplyToolset(buildContext());
     const result = JSON.parse(await toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
 
-    expect(result).toEqual({ success: true, queued: true, actions_used: 1 });
+    expect(result).toEqual({ success: true, queued: true, actions_used: 1, voice_remaining_today: 74 });
     expect(toolset.actionsUsed()).toBe(1);
     await toolset.settle();
     expect(ACTION_TOOL_NAMES).toContain(SEND_VOICE_TOOL);

@@ -113,7 +113,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   test("日志先进入内存批次，显式 flush 会取消 timer 并保留结构化参数", async () => {
     await initLogFiles();
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
-    const day: string = getTokyoDateKey(new Date(timestamp));
+    const day: string = getTokyoDateKey(timestamp);
 
     await handleLogMessage({ timestamp, level: "error", args: ["request failed", { code: 503 }, "retrying"] });
     expect(flushBuffer.entries).toHaveLength(1);
@@ -139,7 +139,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   test("参数全是字符串时记录里不写 args 键", async () => {
     await initLogFiles();
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
-    const day: string = getTokyoDateKey(new Date(timestamp));
+    const day: string = getTokyoDateKey(timestamp);
 
     await handleLogMessage({ timestamp, level: "info", args: ["bot", "started"] });
     expect(await flushLogBuffer()).toBeTrue();
@@ -162,7 +162,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     await maintainLogRetention();
 
     expect(flushBuffer.entries).toHaveLength(0);
-    expect(existsSync(join(LOGS_DIR, `${getTokyoDateKey(new Date(timestamp))}.json`))).toBeTrue();
+    expect(existsSync(join(LOGS_DIR, `${getTokyoDateKey(timestamp)}.json`))).toBeTrue();
     expect(existsSync(stalePath)).toBeFalse();
     expect(existsSync(tempPath)).toBeFalse();
   });

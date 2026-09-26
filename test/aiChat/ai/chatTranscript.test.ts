@@ -35,7 +35,7 @@ import {
   transcriptDateHeader,
 } from "../../../packages/consts/aiChat/prompts/transcript";
 import { FALLBACK_SPEAKER_NAME } from "../../../packages/consts/auto";
-import type { BufferedMessage } from "../../../packages/types";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import {
   bufferedMessageFixture,
   bufferedReplyReferenceFixture,
@@ -188,7 +188,9 @@ describe("AI 群聊转录身份格式", () => {
       .toBeLessThan(transcript.indexOf("【最热记忆"));
     expect(transcript.indexOf("【最热记忆"))
       .toBeLessThan(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT + 1}`));
-    expect(transcript).toEndWith(`u${COMPACT_BATCH_SIZE + 1}：消息 ${COMPACT_BATCH_SIZE + 1}`);
+    // 最新一条是逐字行的最后一行，名册整段排在全部逐字行之后。
+    expect(transcript).toContain(`u${COMPACT_BATCH_SIZE + 1}：消息 ${COMPACT_BATCH_SIZE + 1}\n\n${SPEAKER_ROSTER_BLOCK_NAME}`);
+    expect(transcript).toEndWith(`u${COMPACT_BATCH_SIZE + 1}=[id:${COMPACT_BATCH_SIZE + 1}] 千早 愛音`);
     // 每个分层区块开头都要重发一次当前日期，否则跳进最热区块就看不到日期。
     const dateHeaders: number = transcript.split("── 2026/07/17 ──").length - 1;
     expect(dateHeaders).toBe(2);
@@ -275,7 +277,9 @@ describe("AI 群聊转录身份格式", () => {
     ];
     const transcript: string = renderTranscript(messages, { selfId: 99, triggerMessageId: 3 });
 
-    expect(transcript).toStartWith("【发言人名册】");
+    // 名册排在全部逐字行之后：新发言人只改动区块末尾，逐字行保持纯追加。
+    expect(transcript).toStartWith("【最热记忆");
+    expect(transcript.indexOf("] u1：群友再说一句")).toBeLessThan(transcript.indexOf(SPEAKER_ROSTER_BLOCK_NAME));
     expect(transcript).toContain("u1=[id:42] [username:@anon_tokyo] 千早 愛音");
     expect(transcript).toContain(`${SELF_ROSTER_CODE}=[id:99] ${SELF_SPEAKER_NAME}`);
     expect(transcript).not.toContain("ninja_bot");
@@ -521,4 +525,22 @@ describe("AI 群聊转录身份格式", () => {
     }))).toContain(REPLY_TARGET_EVICTED_TAG);
   });
 
+});
+
+describe("AI 群聊转录的前缀稳定性", () => {
+  test("两次块轮换之间，新发言人加入只改动名册，逐字行对上一轮是纯追加", () => {
+    const first: BufferedMessage[] = [
+      { ...message, messageId: 1, id: 1, text: "第一句" },
+      { ...message, messageId: 2, id: 2, text: "第二句" },
+    ];
+    const before: string = renderTranscript(first, { selfId: 99, triggerMessageId: 2 });
+    const after: string = renderTranscript(
+      [...first, { ...message, messageId: 3, id: 3, text: "新来的人说话" }],
+      { selfId: 99, triggerMessageId: 3 }
+    );
+    // 上一轮的触发消息号（#2）不再出现，前缀一直延续到那一行之前。
+    const unchangedPrefix: string = before.slice(0, before.indexOf("#2"));
+    expect(after.startsWith(unchangedPrefix)).toBeTrue();
+    expect(after.indexOf(SPEAKER_ROSTER_BLOCK_NAME)).toBeGreaterThan(after.indexOf("新来的人说话"));
+  });
 });

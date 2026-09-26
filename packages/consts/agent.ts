@@ -1,6 +1,6 @@
 /**
- * `config/agent.json` 的 `agent` 段允许出现的全部能力名，顺序与
- * `config_example/agent.json` 一致。
+ * `config/dynamic/agent.json` 的 `agent` 段允许出现的全部能力名，顺序与
+ * `config_example/dynamic/agent.json` 一致。
  *
  * 这份名单是唯一权威源：`packages/config/agent.ts` 的两处 `hasOnlyKeys` 用它
  * 决定「未知字段一律拒绝」，install.sh 的安装问卷按同一份名单逐项询问，
@@ -46,3 +46,30 @@ export const LOOPBACK_HOSTS: readonly string[] = ["localhost", "127.0.0.1", "[::
 export const EXPECTED_BASE_URL: string =
   "an absolute https URL without credentials or a fragment " +
   "(plain http is allowed only for localhost, 127.0.0.1, and ::1)";
+
+/**
+ * google provider 能力的 headers 最多条数。每个值都进日志值级脱敏名单，
+ * 六项能力按上限配满时名单仍在 LOGGER_MAX_REDACTED_SECRETS 之内。
+ * 所属模块：AI 能力部署配置。
+ */
+export const AGENT_HEADERS_MAX_ENTRIES: number = 8;
+
+/**
+ * headers 里禁止出现的请求头名（小写）：Google 凭据只走 api_key，由 SDK 写进
+ * x-goog-api-key。所属模块：AI 能力部署配置。
+ */
+export const AGENT_RESERVED_HEADER_NAMES: readonly string[] = ["x-goog-api-key"];
+
+/** headers 的请求头名形态：RFC 9110 token。所属模块：AI 能力部署配置。 */
+export const AGENT_HEADER_NAME_PATTERN: RegExp = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/** headers 去掉首尾空白后的请求头值形态：可打印 ASCII 与空格、制表符。所属模块：AI 能力部署配置。 */
+export const AGENT_HEADER_VALUE_PATTERN: RegExp = /^[\t\x20-\x7e]+$/;
+
+/** headers 对象严格校验的期望形态，不含用户配置值。所属模块：AI 能力部署配置。 */
+export const EXPECTED_AGENT_HEADERS: string =
+  `an object of 1 to ${AGENT_HEADERS_MAX_ENTRIES} HTTP header names (tokens, unique ignoring case, ` +
+  "not x-goog-api-key; use api_key) mapped to string values";
+
+/** headers 单个请求头值严格校验的期望形态，不含用户配置值。所属模块：AI 能力部署配置。 */
+export const EXPECTED_AGENT_HEADER_VALUE: string = "a non-empty string of printable ASCII characters";

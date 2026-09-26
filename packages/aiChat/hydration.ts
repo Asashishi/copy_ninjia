@@ -1,5 +1,5 @@
 /**
- * AI Worker 的状态灌入：启动恢复与 config/ 热重载恢复共用同一份主线程镜像。
+ * AI Worker 的状态灌入：启动恢复与 config/dynamic/ 热重载恢复共用同一份主线程镜像。
  *
  * 启动时 diskIOWorker 恢复出的 AI 记忆与贴纸目录一律先写进主线程镜像
  * （cache/main/aiChat.ts 的 latestAiMemories / latestStickerCatalogs，也是双向崩溃
@@ -80,9 +80,9 @@ export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
 }
 
 /**
- * config/ 热重载让 AI 前提从不可用变为可用时调用（见 app/configReload.ts）。调用方
+ * config/dynamic/ 热重载让 AI 前提从不可用变为可用时调用（见 app/configReload.ts）。调用方
  * 在本函数正常返回之后才发布 readiness，因此投喂在此之前一直关闭；抛错时调用方
- * 保持不可用，下一次 config/ 事件再试。
+ * 保持不可用，下一次 config/dynamic/ 事件再试。
  *
  * - Worker 已在运行（启动时可用、之后前提缺失而闲置）：按主线程当前快照改写
  *   lastInitState 并投递完整 configReload。

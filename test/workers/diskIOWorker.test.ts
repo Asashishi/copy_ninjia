@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { DiskIOMessage, DiskIOOperationMessage } from "../../packages/types";
-import type { AdSampleDiskMessage } from "../../packages/types/diskIO/messages";
+import type { DiskIOMessage, DiskIOOperationMessage, AdSampleDiskMessage } from "../../packages/types/diskIO/messages";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
 import {
   adoptAiMemorySnapshots,
@@ -21,6 +20,8 @@ import {
   flushStickerCatalogs,
   flushVerificationChanges,
   handleAdSampleMessage,
+  handleAiCacheUsageMessage,
+  flushAiCacheBuffer,
   handleBlocklistRemovalsMessage,
   handleChatQaWrite,
   handleChatStateWrite,
@@ -101,6 +102,22 @@ describe("Disk I/O Worker protocol router", () => {
       type: "diagnosticBatchAccepted",
       batchId: 7,
     });
+  });
+
+  test("诊断批次里的 AI 缓存用量进 ai-daily-usage 缓冲，统一 flush 一并刷出且失败不进回执", async () => {
+    const usage = {
+      type: "aiCacheUsage", timestamp: 1, capability: "text", provider: "openai", model: "m",
+      inputTokens: 10, cachedInputTokens: 4, outputTokens: 1,
+    } as const;
+    await route({ type: "diagnosticBatch", batchId: 8, messages: [usage] });
+    expect(handleAiCacheUsageMessage).toHaveBeenCalledWith(usage);
+    expect(handleLogMessage).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith({ type: "diagnosticBatchAccepted", batchId: 8 });
+
+    flushAiCacheBuffer.mockImplementationOnce(async (): Promise<boolean> => false);
+    await route({ type: "flush", flushId: 9, scope: "all" });
+    expect(flushAiCacheBuffer).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "flushed", flushedId: 9 });
   });
 
   /** 批内逐条派发 + 回执与批号/批长校验一起验证：批号与批长是协议不变量，越界必须当场抛，不能吞掉半个批次再回一个 accepted。 */

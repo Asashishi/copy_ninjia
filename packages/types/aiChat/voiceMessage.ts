@@ -9,13 +9,41 @@
 
 import type { AgentProvider } from "../config";
 import type { Base64PayloadDecodeFailure } from "./payload";
-import type { AiSpeechRequest } from "./provider";
+import type { AiMeteredSpeechRequest } from "./provider";
 
 /** 已校验大小的合成语音：容器字节与供应商声明的 MIME。 */
 export interface SynthesizedSpeech {
   bytes: Uint8Array;
   mimeType: string;
 }
+
+/**
+ * 语音合成的每日计数：当前窗口内第一次请求的时间戳与窗口内已发起的请求数。
+ * 与 memory/global/state.json 的 `ttsUsage` 同形；每次登记都换成新对象，不原地修改。
+ */
+export interface TtsDailyUsage {
+  /** 当前计数窗口的起点（ms），即窗口内第一次发起合成请求的时刻。 */
+  readonly windowStartedAt: number;
+  /**
+   * 窗口内已发起的合成请求数，正整数。`agent.tts.daily_limit` 调低后可能大于新上限，
+   * 此时窗口内的请求一律按额度用尽拒绝。
+   */
+  readonly count: number;
+}
+
+/**
+ * 一次合成请求所用的每日额度口径：`operator`（`/send` 代发与 cron `send_voice`）可用到
+ * `agent.tts.daily_limit`；`ai`（AI 语音工具）只能用到 `daily_limit - daily_reserve_quota`。
+ */
+export type TtsQuotaScope = "ai" | "operator";
+
+/**
+ * 语音合成门面一次调用的结果：`daily limit reached` 表示这次调用没有发起供应商请求；
+ * `synthesis failed` 表示供应商没交回可用音频或本地配额队列已满。
+ */
+export type SpeechSynthesisAttempt =
+  | { readonly ok: true; readonly speech: SynthesizedSpeech }
+  | { readonly ok: false; readonly reason: "synthesis failed" | "daily limit reached" };
 
 /** 合成载荷不可用的具体原因，只用于错误日志定位（英文，见 AGENTS.md 的日志约定）。 */
 export type SynthesizedSpeechDecodeFailure =
@@ -63,13 +91,15 @@ export type VoiceEncodeResult =
 /**
  * 一次「文本 + 语气 → Telegram 语音消息」没有产出语音的原因，只用于错误日志与回执
  * 分类（英文）。前两项是能力缺席（`agent.tts` 缺省、所选实现没有语音合成）；
- * `synthesis failed` 是供应商没交回可用音频（含本地配额队列已满）；`aborted` 是调用方
- * 取消；`worker unavailable` 与 `timed out` 只出现在主线程经 AI Worker 转交的请求上。
+ * `synthesis failed` 是供应商没交回可用音频（含本地配额队列已满）；`daily limit reached`
+ * 是本调用方的每日额度已用尽、未发起请求；`aborted` 是调用方取消；`worker unavailable`
+ * 与 `timed out` 只出现在主线程经 AI Worker 转交的请求上。
  */
 export type VoiceSynthesisFailure =
   | "tts unconfigured"
   | "tts unsupported"
   | "synthesis failed"
+  | "daily limit reached"
   | "aborted"
   | "worker unavailable"
   | "timed out"
@@ -80,8 +110,11 @@ export type VoiceSynthesisResult =
   | { readonly ok: true; readonly voice: EncodedVoiceMessage }
   | { readonly ok: false; readonly reason: VoiceSynthesisFailure };
 
-/** 本 isolate 的语音合成入口；只在 AI Worker 上取得（见 aiChat/ai/voiceSynthesis.ts）。 */
-export type SpeechSynthesizer = (request: AiSpeechRequest) => Promise<SynthesizedSpeech | null>;
+/**
+ * 本 isolate 的语音合成入口，即带每日计数的 tts 门面；只在 AI Worker 上取得（见
+ * aiChat/ai/voiceSynthesis.ts）。
+ */
+export type SpeechSynthesizer = (request: AiMeteredSpeechRequest) => Promise<SpeechSynthesisAttempt>;
 
 /**
  * 查找语音合成入口的结果：`agent.tts` 缺省时 providerName 为 undefined；所选实现没有

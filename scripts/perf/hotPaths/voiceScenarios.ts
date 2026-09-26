@@ -15,8 +15,12 @@ import { parseProxyTtsRequest } from "../../../packages/auto/message/proxyTts";
 import { VOICE_SPEECH_MAX_BYTES } from "../../../packages/consts/aiChat/voiceMessage";
 import { benchmarkWav } from "../wavFixture";
 import type { Message } from "grammy/types";
-import type { AiSpeechRequest } from "../../../packages/types/aiChat/provider";
-import type { SynthesizedSpeech, VoiceSynthesisResult } from "../../../packages/types/aiChat/voiceMessage";
+import type { AiMeteredSpeechRequest } from "../../../packages/types/aiChat/provider";
+import type {
+  SpeechSynthesisAttempt,
+  SynthesizedSpeech,
+  VoiceSynthesisResult,
+} from "../../../packages/types/aiChat/voiceMessage";
 import type { Scenario } from "./types";
 
 /** 合成上限的 1/64：24 kHz 单声道 16 bit 下约 2.7 秒，一两句台词的量级。 */
@@ -25,8 +29,9 @@ const VOICE_ENCODE_PCM_BYTES: number = VOICE_SPEECH_MAX_BYTES / 64;
 /** 固定 WAV 替身交给公共实现，逐次核对产出的是 OGG 容器。 */
 export function voiceMessageEncodeScenario(): Scenario {
   const speech: SynthesizedSpeech = { bytes: benchmarkWav(VOICE_ENCODE_PCM_BYTES), mimeType: "audio/wav" };
-  const synthesize = (_request: AiSpeechRequest): Promise<SynthesizedSpeech> => Promise.resolve(speech);
-  const request: AiSpeechRequest = { text: "性能基准台词", tone: "小声で" };
+  const attempt: SpeechSynthesisAttempt = { ok: true, speech };
+  const synthesize = (_request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => Promise.resolve(attempt);
+  const request: AiMeteredSpeechRequest = { text: "性能基准台词", tone: "小声で", quota: "operator" };
   return {
     iterations: 24,
     warmupIterations: 24,

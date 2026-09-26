@@ -6,6 +6,8 @@ import { resetWedFileWrites } from "../../cache/workers/diskIO/wed";
 import { inspectWedMemberFiles, maintainWedMemberFiles } from "./wedMemberFiles";
 import type { WedMemberInspection } from "./wedMemberFiles";
 import { inspectLogFiles, adoptLogFiles, maintainLogFiles } from "./logFiles";
+import { adoptAiCacheFile, inspectAiCacheFile, maintainAiCacheFile } from "./aiCacheFile";
+import type { AiCacheInspection } from "./aiCacheFile";
 import {
   adoptAiMemorySnapshots,
 } from "./aiMemoryStorage";
@@ -75,6 +77,7 @@ async function runMaintenance(
 ): Promise<void> {
   const tasks: readonly (readonly [string, () => void | Promise<void>])[] = [
     ["logs", (): Promise<void> => maintainLogFiles(inspections.logs)],
+    ["ai cache", (): Promise<void> => maintainAiCacheFile()],
     ["wed members", (): Promise<void> => maintainWedMemberFiles(inspections.wedMembers)],
     ["sticker catalogs", (): Promise<void> => maintainStickerCatalogFiles(inspections.stickerCatalogs)],
     ["join logs", (): Promise<void> => maintainJoinLogFiles(inspections.joinLogs)],
@@ -113,6 +116,7 @@ export async function handleDiskIOStartupLoad(
   try {
     const today: string = getTokyoDateKey();
     const logs: LogFilesInspection = await inspectLogFiles();
+    const aiCache: AiCacheInspection = await inspectAiCacheFile();
     const stickerCatalogs: StickerCatalogRecoveryInspection =
       await inspectStickerCatalogs(stickerPacks);
     const joinLogs: JoinLogRecoveryInspection = await inspectJoinLogFiles(today);
@@ -130,6 +134,7 @@ export async function handleDiskIOStartupLoad(
     const identityStorage: ReturnType<typeof adoptStorageDatabase> =
       adoptStorageDatabase(storage);
     adoptLogFiles(logs);
+    adoptAiCacheFile(aiCache);
     resetWedFileWrites();
     adoptAiMemorySnapshots(storage.aiMemories);
     adoptStickerCatalogSnapshots(stickerCatalogs);

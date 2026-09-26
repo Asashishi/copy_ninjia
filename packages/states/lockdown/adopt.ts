@@ -34,13 +34,13 @@ export function handleAdopt(
         intentId: event.intentId,
         // 下面立刻发 commitApply 的那一路必须同时置位，否则补发公告带来的
         // 那次落盘回执会让同一轮再写一次 Telegram。
-        commitStarted: event.persisted !== false,
+        commitStarted: event.persisted,
         ...announcement,
       },
       effects: [
         { kind: "prefetchAdmins", onlyIfCold: false },
         ...announceEffects,
-        ...(event.persisted === false
+        ...(!event.persisted
           ? []
           : [{ kind: "commitApply" } as const]),
       ],
@@ -52,12 +52,12 @@ export function handleAdopt(
         kind: "restoring",
         originalPermissions: event.originalPermissions,
         intentId: event.intentId,
-        restoreAfterPersist: event.persisted === false,
+        restoreAfterPersist: !event.persisted,
         ...announcement,
       },
       effects: [
         { kind: "prefetchAdmins", onlyIfCold: false },
-        ...(event.persisted === false
+        ...(!event.persisted
           ? []
           : [{ kind: "beginRestore", originalPermissions: event.originalPermissions } as const]),
       ],
@@ -69,14 +69,14 @@ export function handleAdopt(
         kind: "reconciling",
         originalPermissions: event.originalPermissions,
         intentId: event.intentId,
-        reapplyAfterPersist: event.persisted === false,
+        reapplyAfterPersist: !event.persisted,
         ...announcement,
       },
       effects: [
         { kind: "prefetchAdmins", onlyIfCold: false },
         ...announceEffects,
         { kind: "scheduleRestore", delayMs: event.remainingMs },
-        ...(event.persisted === false
+        ...(!event.persisted
           ? []
           : [{ kind: "beginReapply" } as const]),
       ],

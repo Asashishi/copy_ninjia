@@ -1,3 +1,4 @@
+import type { AiCacheUsage } from "../aiCache";
 import type { ChatPermissions } from "grammy/types";
 import type { LockdownPhase } from "../chatState";
 import type { AdDetectionEvent } from "./adDetect";
@@ -75,6 +76,12 @@ export interface AntiRaidDrainCompleteEvent {
   drainId: number;
 }
 
+/** Worker -> 主线程：一次广告判定请求的缓存用量，主线程经诊断通道转投 memory/ai-daily-usage/。 */
+export interface AntiRaidAiCacheUsageEvent {
+  type: "aiCacheUsage";
+  usage: AiCacheUsage;
+}
+
 /** Anti-Raid Worker 发回主线程的完整事件协议。 */
 export type AntiRaidWorkerEvent =
   | LockdownEvent
@@ -85,4 +92,5 @@ export type AntiRaidWorkerEvent =
   | BlockedMembersRemovedEvent
   | AdDetectionEvent
   | AntiRaidBarrierCompleteEvent
-  | AntiRaidDrainCompleteEvent;
+  | AntiRaidDrainCompleteEvent
+  | AntiRaidAiCacheUsageEvent;

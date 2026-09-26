@@ -2,7 +2,7 @@
  * mock 数据根的建立、校验与清理。
  *
  * 全量基准的全部落盘只允许发生在仓库根下的 `performance/` 里：部署机上同一个
- * 工作目录里还摆着真实的 `database/`、`memory/`、`state.json` 与 `bot.lock`。
+ * 工作目录里还摆着真实的 `database/`、`memory/`（含全局状态）与 `bot.lock`。
  * 建目录、复制、写文件都先过 `assertInsidePerformanceMockRoot`，删除先过同一道
  * 形态闸加父链核对，越界一律抛错。词法前缀判定挡不住软链接，真实分量的核对在
  * `scripts/fixtures/pathBoundary.ts`。
@@ -12,6 +12,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../../../packages/consts/configLayout";
 import { copyFixtureTree } from "../../fixtures/copyTree";
 import {
   assertUnlinkedFixtureParent,
@@ -113,7 +114,7 @@ export async function createBenchmarkConfigRoot(runRoot: string): Promise<string
   // Bun.write 经链接写到 mock 根之外。
   await copyFixtureTree(CONFIG_EXAMPLE_ROOT, configRoot, assertInsidePerformanceMockRoot);
 
-  const agentPath: string = join(configRoot, "agent.json");
+  const agentPath: string = join(configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json");
   let agentConfig: string = await Bun.file(agentPath).text();
   for (const placeholder of AGENT_API_KEY_PLACEHOLDERS) {
     agentConfig = agentConfig.replaceAll(placeholder, BENCHMARK_AGENT_API_KEY);
@@ -128,7 +129,7 @@ export async function createBenchmarkConfigRoot(runRoot: string): Promise<string
   assertInsidePerformanceMockRoot(agentPath);
   await Bun.write(agentPath, agentConfig);
 
-  const telegramPath: string = join(configRoot, "bot.json");
+  const telegramPath: string = join(configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   const botConfig: string = (await Bun.file(telegramPath).text()).replaceAll(
     TELEGRAM_BOT_TOKEN_PLACEHOLDER,
     BENCHMARK_BOT_TOKEN
@@ -142,11 +143,11 @@ export async function createBenchmarkConfigRoot(runRoot: string): Promise<string
   await Bun.write(telegramPath, botConfig);
 
   // 翻译凭据示例的占位私钥必然被启动总闸拒绝；与安装器一样不物化它，基准里翻译保持缺省。
-  const googleAuthPath: string = join(configRoot, "g-auth.json");
+  const googleAuthPath: string = join(configRoot, STATIC_CONFIG_DIR_NAME, "g-auth.json");
   assertInsidePerformanceMockRoot(googleAuthPath);
   await Bun.file(googleAuthPath).delete();
   // 定时任务示例的会话 id 与地址都是假的，本地来源也不存在；基准里定时任务保持缺省。
-  const cronPath: string = join(configRoot, "cron.json");
+  const cronPath: string = join(configRoot, DYNAMIC_CONFIG_DIR_NAME, "cron.json");
   assertInsidePerformanceMockRoot(cronPath);
   await Bun.file(cronPath).delete();
   return configRoot;

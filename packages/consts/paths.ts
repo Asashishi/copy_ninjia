@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "./configLayout";
 import {
   CONFIG_ROOT_ENV,
   RUNTIME_DATA_ROOT_ENV,
@@ -45,38 +46,56 @@ export const RUNTIME_DATA_ROOT: string = CONFIGURED_DATA_ROOT === undefined
   ? PROJECT_ROOT
   : resolve(CONFIGURED_DATA_ROOT);
 
-/** state.json 主文件路径。 */
-export const STATE_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "state.json");
-/** state.json 的 last-known-good 同目录副本；与主文件使用同一严格 schema。 */
-export const STATE_BACKUP_FILE_PATH: string = `${STATE_FILE_PATH}.bak`;
+/**
+ * 14.x 放在数据根的全局状态文件与其备份副本。当前格式不读取它们：任一存在即拒绝启动，
+ * 须先经 migrate:global-state 冷迁移并由运维移走（见 infra/storage/stateStore.ts 的 loadState）。
+ */
+export const LEGACY_STATE_FILE_PATHS: readonly string[] = [
+  join(RUNTIME_DATA_ROOT, "state.json"),
+  join(RUNTIME_DATA_ROOT, "state.json.bak"),
+];
 /** 数据目录单实例 owner 锁文件路径。 */
 export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 
 /** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
-/** 部署配置目录；测试显式指向临时数据根下的 config_example/ 副本。 */
+/**
+ * 部署配置目录；测试显式指向临时数据根下的 config_example/ 副本。顶层只放 static/ 与
+ * dynamic/ 两个子目录，按生效方式分开存放部署文件；顶层的部署文件名一律由
+ * config/layout.ts 拒绝启动。
+ */
 export const CONFIG_ROOT: string = resolve(
   optionalRootPath(CONFIG_ROOT_ENV) ?? join(PROJECT_ROOT, "config")
 );
+/** 静态部署配置目录：bot.json 与 g-auth.json。 */
+export const STATIC_CONFIG_DIR: string = join(CONFIG_ROOT, STATIC_CONFIG_DIR_NAME);
+/**
+ * 动态部署配置目录：六份可热重载文件（见 config/reload.ts）。启动时必须是已存在的目录，
+ * 运行期目录级监听覆盖文件的新建、改写、改名替换与删除。
+ */
+export const DYNAMIC_CONFIG_DIR: string = join(CONFIG_ROOT, DYNAMIC_CONFIG_DIR_NAME);
 
-/** 应景贴纸包白名单配置文件。 */
-export const STICKERS_CONFIG_PATH: string = join(CONFIG_ROOT, "stickers.json");
-/** AI 心情档位配置（文案、base weight、天气/时段倍率），见 packages/config/mood.ts。 */
-export const MOOD_CONFIG_PATH: string = join(CONFIG_ROOT, "mood.json");
-/** 广告检测的部署者示例清单（纯字符串数组），见 packages/config/adSamples.ts。 */
-export const AD_SAMPLES_CONFIG_PATH: string = join(CONFIG_ROOT, "ad_samples.json");
+/** 应景贴纸包白名单配置文件（可选、可热重载）。 */
+export const STICKERS_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "stickers.json");
+/** AI 心情档位配置（文案、base weight、天气/时段倍率；可选、可热重载），见 packages/config/mood.ts。 */
+export const MOOD_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "mood.json");
+/** 广告检测的部署者示例清单（纯字符串数组；可选、可热重载），见 packages/config/adSamples.ts。 */
+export const AD_SAMPLES_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "ad_samples.json");
 
-/** Bot token、超级管理员 ID 与默认通知风格的必填部署配置文件。 */
-export const BOT_CONFIG_PATH: string = join(CONFIG_ROOT, "bot.json");
+/** Bot token、超级管理员 ID 与默认通知风格的必填部署配置文件（静态，修改后须重启）。 */
+export const BOT_CONFIG_PATH: string = join(STATIC_CONFIG_DIR, "bot.json");
 
 /**
- * AI 部署配置；agent 下的各项能力分别配置 provider、api_key、model 与可选
- * base_url，见 packages/config/agent.ts。
+ * AI 部署配置（可选、可热重载）；agent 下的各项能力分别配置 provider、api_key、model 与可选
+ * base_url（google provider 另可配置 headers），文件级加载见 packages/config/agent.ts，
+ * 单项能力的字段解码见 packages/config/agentCapability.ts。
  */
-export const AGENT_CONFIG_PATH: string = join(CONFIG_ROOT, "agent.json");
+export const AGENT_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "agent.json");
+/** 外部素材直链与随机图片目录（可选、可热重载），见 packages/config/assets.ts。 */
+export const ASSETS_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "assets.json");
 /** 定时任务部署配置（可选、可热重载），见 packages/config/cron.ts。 */
-export const CRON_CONFIG_PATH: string = join(CONFIG_ROOT, "cron.json");
+export const CRON_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "cron.json");
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 
@@ -85,10 +104,18 @@ export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 aiChat/ai/stickers/catalog.ts）、
  * 待验证当日增量（anti-raid/ 下只保留东京当天），以及滚动 24 小时入群事实
  * （joinlog/）和每群已发言成员集合（wed/），均由 diskIOWorker 落盘，见
- * packages/workers/diskIOWorker.ts。每一类数据各占一个子目录，顶层不放单个
- * 文件。不进 git，与 logs/ 同级对待；部署时应按敏感数据保护。
+ * packages/workers/diskIOWorker.ts；ai-daily-usage/ 下是模型请求的缓存用量统计，同样由 diskIOWorker
+ * 落盘；global/ 下的全局状态由主线程落盘。每一类数据各占
+ * 一个子目录，顶层不放单个文件。不进 git，与 logs/ 同级对待；部署时应按敏感数据保护。
  */
 export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
+/**
+ * 所有群共用的全局状态目录；与 memory/ 下 Disk I/O Worker 的各领域目录并列，由主线程
+ * StateStore 独占写入（见 infra/storage/statePersistence.ts）。
+ */
+export const GLOBAL_STATE_DIR: string = join(MEMORY_DIR, "global");
+/** 全局状态文件：复读状态、冷却时钟与语音合成每日计数。 */
+export const GLOBAL_STATE_FILE_PATH: string = join(GLOBAL_STATE_DIR, "state.json");
 /**
  * SQLite 运行时数据库目录；与 memory/ 平级，只由 Disk I/O Worker 和显式迁移脚本访问。
  */
@@ -114,7 +141,7 @@ export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
 /**
  * 广告检测命中样本的旁路目录。与 memory/ 下其余子目录同级，但性质完全不同：
  * 它**不是运行时状态**，进程从不读样本内容；启动成功后的维护只扫描目录项，
- * 清理孤儿临时文件与过期归档。内容纯粹用于回头优化 config/ad_samples.json。
+ * 清理孤儿临时文件与过期归档。内容纯粹用于回头优化 config/dynamic/ad_samples.json。
  */
 export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
 /**
@@ -124,9 +151,16 @@ export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
  * 所属模块：workers/diskIO/adSampleFile.ts。
  */
 export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.json");
+/** AI 缓存使用统计目录；只由 Disk I/O Worker 写入，见 workers/diskIO/aiCacheFile.ts。 */
+export const AI_CACHE_MEMORY_DIR: string = join(MEMORY_DIR, "ai-daily-usage");
+/**
+ * AI 缓存使用统计文件：顶部 `summary` 是最近一个已结束东京日的汇总，其余键是尚未汇总的
+ * 逐条用量记录。每日东京 0 点把前一天的记录并入汇总后删除。
+ */
+export const AI_CACHE_FILE_PATH: string = join(AI_CACHE_MEMORY_DIR, "usage.json");
 
-/** Google Cloud 服务账号密钥（/translate 翻译用），与其它部署配置同在 Git 忽略的 config/ 下。 */
-export const GOOGLE_AUTH_FILE_PATH: string = join(CONFIG_ROOT, "g-auth.json");
+/** Google Cloud 服务账号密钥（/translate 翻译用；静态，修改后须重启），位于 Git 忽略的 config/static/ 下。 */
+export const GOOGLE_AUTH_FILE_PATH: string = join(STATIC_CONFIG_DIR, "g-auth.json");
 
 /**
  * 原子重写（写 tmp、rename 覆盖目标路径）统一使用的临时后缀，全项目落盘复用，

@@ -167,6 +167,7 @@ describe("cron 语音链路", () => {
       benchmarkChatId: (index: number): number => -1_000 - index,
       ensureAgentDeploymentConfig: async (): Promise<void> => {},
       geminiClientCache: geminiClients as never,
+      ttsDailyUsage: { current: { windowStartedAt: Date.now(), count: 100 } },
       cannedTelegramCalls: calls,
       resolveSpeechSynthesizer: () => ({ ok: true, synthesize: async () => null }),
       synthesizeVoiceMessage: async (): Promise<VoiceSynthesisResult> => VOICE,

@@ -33,7 +33,7 @@ import {
   LOCKDOWN_RETRIGGER_COOLDOWN_MS,
 } from
   "../../../packages/consts/antiRaid/lockdown";
-import type { AntiRaidWorkerEvent } from "../../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
 
 const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
@@ -499,6 +499,7 @@ describe("Lockdown write-ahead runtime", () => {
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: false,
       remainingMs: 0,
+      persisted: true,
     }]);
     await settleLockdownCalls();
 
@@ -519,7 +520,7 @@ describe("Lockdown write-ahead runtime", () => {
     lockdownRuntime.adoptLockdowns([{
       chatId, phase: "restoring", intentId: 20,
       originalPermissions: { can_invite_users: true, can_send_messages: true },
-      announced: true, announcementMessageId: 640, remainingMs: 0,
+      announced: true, announcementMessageId: 640, remainingMs: 0, persisted: true,
     }]);
     try {
       await settleLockdownCalls();
@@ -555,6 +556,7 @@ describe("Lockdown write-ahead runtime", () => {
       announced: true,
       announcementMessageId: 640,
       remainingMs: 0,
+      persisted: true,
     }]);
     await settleLockdownCalls();
 
@@ -606,6 +608,7 @@ describe("Lockdown write-ahead runtime", () => {
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: false,
       remainingMs: 0,
+      persisted: true,
     }]);
     await Bun.sleep(0);
 
@@ -768,6 +771,7 @@ describe("Lockdown write-ahead runtime", () => {
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: true,
       remainingMs: 0,
+      persisted: true,
     }]);
     await Bun.sleep(0);
     expect(permissionWrites[0]).toEqual({
@@ -786,6 +790,7 @@ describe("Lockdown write-ahead runtime", () => {
       originalPermissions: { can_invite_users: false, can_send_messages: true },
       announced: false,
       remainingMs: 0,
+      persisted: true,
     }]);
     await Bun.sleep(0);
     // 管理员在锁定期内已主动重新开启邀请时，以当前显式修改为准。
@@ -812,6 +817,7 @@ describe("Lockdown write-ahead runtime", () => {
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: false,
       remainingMs: 0,
+      persisted: true,
     }]);
     await Bun.sleep(0);
 
@@ -839,6 +845,7 @@ describe("Lockdown write-ahead runtime", () => {
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: true,
       remainingMs: 60_000,
+      persisted: true,
     }]);
     await Bun.sleep(0);
 

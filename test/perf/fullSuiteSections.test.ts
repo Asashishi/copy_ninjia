@@ -30,6 +30,21 @@ function hotPathRound(
 }
 
 describe("全量基准分区编排", () => {
+  test("足迹计量失败也清理当前轮次的临时根", async () => {
+    const removed: string[] = [];
+    const context: SectionContext = {
+      runRoot: "/fixture", configRoot: "/fixture/config", rounds: 1,
+      onProgress(): void {}, recordIo(): void {}, recordOperations(): void {}, recordFootprint(): void {},
+      dependencies: {
+        spawnJsonChild: async <TResult>(): Promise<TResult> => ({}) as TResult,
+        createRuntimeRoot: (): string => "/fixture/round",
+        measureDirectoryFootprint: (): never => { throw new Error("fixture EIO"); },
+        removeMockPath: (path: string): void => { removed.push(path); },
+      },
+    };
+    await expect(runRounds(context, { label: "fixture", seedMode: "none", args: [] })).rejects.toThrow("fixture EIO");
+    expect(removed).toEqual(["/fixture/round"]);
+  });
   test("按轮透传追加环境与 stderr 回调，隔离根变量不可被覆盖", async (): Promise<void> => {
     const calls: SpawnChildOptions[] = [];
     let nextRoot: number = 0;

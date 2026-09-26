@@ -1,12 +1,13 @@
 /**
- * config/ 部署配置热重载的主线程 owner（状态见 cache/main/configReload.ts）。
+ * config/dynamic/ 部署配置热重载的主线程 owner（状态见 cache/main/configReload.ts）。
  *
- * 目录级 `fs.watch` 覆盖原地写入、临时文件改名替换、删除与重建；任何事件只重新
+ * 只监听 config/dynamic/（config/static/ 下的文件修改后须重启）。目录级 `fs.watch` 覆盖原地写入、临时文件改名替换、删除与重建；任何事件只重新
  * 武装一次防抖 timer，到期后由最新值执行器串行跑一轮：config/reload.ts 读取并
- * 严格解析五份可热重载文件 → 同步替换主线程 holder → 按 holder 重算广告检测与
- * AI 闲聊的可用性 → 把变化投给持有副本的 Worker（AI 闲聊：agent 对话段、mood、
- * stickers；Anti-Raid：ad_detect 段与广告示例）→ cron.json 变化时对账定时任务。一轮在途时到达的事件合并成至多
- * 一轮补跑。
+ * 严格解析六份可热重载文件（assets.json 切换随机图片目录时先准备新目录）→ 同步替换
+ * 主线程 holder → 按 holder 重算广告检测与 AI 闲聊的可用性 → 把变化投给持有副本的
+ * Worker（AI 闲聊：agent 对话段、mood、stickers；Anti-Raid：ad_detect 段与广告示例）
+ * → cron.json 变化时对账定时任务。assets.json 只有主线程读取，不分发。一轮在途时
+ * 到达的事件合并成至多一轮补跑。
  *
  * 被拒绝的变更逐条记英文错误日志，对应快照保持上一份已校验版本；拒绝口径见
  * config/reload.ts。文件或段的增删改变功能可用性：转为不可用时先发布结论、关闭
@@ -32,7 +33,7 @@ import {
 } from "../config/readiness";
 import { applyHotDeploymentConfigs, readHotDeploymentConfigs } from "../config/reload";
 import { CONFIG_RELOAD_DEBOUNCE_MS } from "../consts/configReload";
-import { CONFIG_ROOT } from "../consts/paths";
+import { DYNAMIC_CONFIG_DIR } from "../consts/paths";
 import { logger } from "../infra/logger";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
 import type { ConfigReadiness, HotDeploymentConfigChanges, HotDeploymentConfigReads } from "../types/config";
@@ -128,7 +129,7 @@ function handleWatcherError(error: unknown): void {
 }
 
 /**
- * 开始监听 config/。须在 AI 闲聊与 Anti-Raid 初始化之后调用，保证首轮分发时
+ * 开始监听 config/dynamic/。须在 AI 闲聊与 Anti-Raid 初始化之后调用，保证首轮分发时
  * Worker 已持有初始快照；启动总闸到监听建立之间的改动没有事件可等，因此
  * 建立后立即对账一轮。watcher 建立失败时记错误日志，本进程不热重载，已生效
  * 配置照常运行。重复调用不重复建立 watcher。
@@ -137,7 +138,7 @@ export function startConfigReload(): void {
   if (configReloadRuntime.watcher !== null) return;
   let watcher: FSWatcher;
   try {
-    watcher = watch(CONFIG_ROOT, scheduleConfigReload);
+    watcher = watch(DYNAMIC_CONFIG_DIR, scheduleConfigReload);
   } catch (error: unknown) {
     logger.error("Deployment config watcher could not start; runtime config reload stays off until restart:", error);
     return;

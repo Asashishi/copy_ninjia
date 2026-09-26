@@ -10,7 +10,7 @@ import {
   storeRandomImage,
 } from "../../packages/infra/randomImage";
 import { RANDOM_IMAGE_CONTENT_NAME_PATTERN, RANDOM_IMAGE_MAX_BYTES } from "../../packages/consts/randomImage";
-import { STATE_FILE_PATH } from "../../packages/consts/paths";
+import { ASSETS_CONFIG_PATH } from "../../packages/consts/paths";
 import type { RandomImageLibrary, RandomImagePick, StoreRandomImageResult } from "../../packages/types/randomImage";
 
 const roots: string[] = [];
@@ -44,11 +44,11 @@ describe("ensureRandomImageDirectory", () => {
     expect(await Bun.file(join(real, `${"a".repeat(64)}.png`)).text()).toBe("x");
   });
 
-  test("路径是文件时拒绝，诊断写明 state 文件、字段与解析后的路径", async () => {
+  test("路径是文件时拒绝，诊断写明 assets.json、字段与解析后的路径", async () => {
     const file: string = join(temporaryRoot(), "images");
     await Bun.write(file, "not a directory");
     await expect(ensureRandomImageDirectory(file)).rejects.toThrow(
-      `${STATE_FILE_PATH}: state.global.assets.randomHImageDir must be an accessible existing or creatable directory (resolved to ${file}).`
+      `${ASSETS_CONFIG_PATH}: $.random_h_image_dir must be an accessible existing or creatable directory (resolved to ${file}).`
     );
   });
 
@@ -56,13 +56,13 @@ describe("ensureRandomImageDirectory", () => {
     const file: string = join(temporaryRoot(), "parent");
     await Bun.write(file, "x");
     await expect(ensureRandomImageDirectory(join(file, "images"))).rejects.toThrow(
-      "state.global.assets.randomHImageDir must be an accessible existing or creatable directory"
+      "$.random_h_image_dir must be an accessible existing or creatable directory"
     );
   });
 
   test("目录不存在且创建失败时拒绝（procfs 不允许建目录，root 也一样）", async () => {
     await expect(ensureRandomImageDirectory("/proc/copy-ninjia-random-image-test/images")).rejects.toThrow(
-      "state.global.assets.randomHImageDir must be an accessible existing or creatable directory"
+      "$.random_h_image_dir must be an accessible existing or creatable directory"
     );
   });
 });
@@ -258,7 +258,7 @@ test("专用图库拒绝非法名称、扩展名、子目录与文件链接，�
     const root: string = temporaryRoot();
     const path: string = join(root, name);
     await Bun.write(path, "preserve");
-    await expect(ensureRandomImageDirectory(root)).rejects.toThrow(`${path}: state.global.assets.randomHImageDir`);
+    await expect(ensureRandomImageDirectory(root)).rejects.toThrow(`${path}: $.random_h_image_dir`);
     expect(await Bun.file(path).text()).toBe("preserve");
   }
   for (const link of [true, false]) {
@@ -277,5 +277,5 @@ test("专用图库启动检查命名而不重算内容，悬空目录根拒绝",
   await ensureRandomImageDirectory(root);
   const link: string = join(temporaryRoot(), "dangling");
   symlinkSync(join(root, "absent"), link);
-  await expect(ensureRandomImageDirectory(link)).rejects.toThrow("state.global.assets.randomHImageDir");
+  await expect(ensureRandomImageDirectory(link)).rejects.toThrow("$.random_h_image_dir");
 });

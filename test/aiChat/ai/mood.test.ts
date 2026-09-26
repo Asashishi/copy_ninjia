@@ -17,7 +17,7 @@ import {
 import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from
   "../../../packages/consts/aiChat/mood";
-import type { MoodOption } from "../../../packages/types";
+import type { MoodOption } from "../../../packages/types/aiChat/mood";
 import type { MoodConfig } from "../../../packages/types/config";
 
 /**

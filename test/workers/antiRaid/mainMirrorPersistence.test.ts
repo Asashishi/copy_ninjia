@@ -3,10 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { waitUntil } from "../../helpers/waitUntil";
 
-import type {
-  AntiRaidWorkerEvent,
-  AntiRaidWorkerMessage,
-} from "../../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
+import type { AntiRaidWorkerMessage } from "../../../packages/types/antiRaid/protocol";
 
 const {
   activeVerificationSnapshots,

@@ -95,7 +95,7 @@ function antiRaidWorkerResponseTransfer(
 
 const {
   init: initAntiRaidWorker,
-  post,
+  post: postAntiRaid,
   terminate: terminateAntiRaidWorker,
 }: SupervisedWorkerHandle<WorkerDuplexInbound<AntiRaidWorkerMessage>> =
   superviseDuplexWorker<
@@ -164,14 +164,12 @@ const {
   });
 
 registerAntiRaidBridgeObservers({
-  post,
+  post: postAntiRaid,
   deactivateChat: deactivateAntiRaidChat,
 });
 
-/** 尽力把一条消息投给当前代际的 Anti-Raid Worker。 */
-export function postAntiRaid(message: AntiRaidWorkerMessage): boolean {
-  return post(message);
-}
+/** 尽力把一条消息投给当前代际的 Anti-Raid Worker；返回是否已投出。 */
+export { postAntiRaid };
 
 /**
  * 热重载替换广告检测配置后，把主线程当前快照投给 Worker（见 app/configReload.ts）。
@@ -179,7 +177,7 @@ export function postAntiRaid(message: AntiRaidWorkerMessage): boolean {
  */
 export function syncAntiRaidAgentConfig(): void {
   if (!antiRaidRuntimeState.initialized) return;
-  if (!replayAdDetectAgentConfig(post)) {
+  if (!replayAdDetectAgentConfig(postAntiRaid)) {
     logger.error("Anti-Raid Worker rejected the ad detection config reload; the next respawn replays the reloaded snapshot.");
   }
 }
@@ -187,11 +185,11 @@ export function syncAntiRaidAgentConfig(): void {
 /** 群人设写入和删除完成后推送风格；不可用的 Worker 在重建时重放当前群状态。 */
 export function syncAntiRaidAtmosphere(chatId: number): void {
   if (!antiRaidRuntimeState.initialized) return;
-  post({ type: "atmosphere", chatId, plain: getChatState(chatId).aiPersona !== undefined });
+  postAntiRaid({ type: "atmosphere", chatId, plain: getChatState(chatId).aiPersona !== undefined });
 }
 
 function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
-  if (post(message)) return;
+  if (postAntiRaid(message)) return;
   throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
 }
 
@@ -209,18 +207,18 @@ export function initAntiRaid(): void {
   advanceActiveVerificationGeneration(generation);
   try {
     initAntiRaidWorker();
-    if (!replayAdDetectAgentConfig(post)) {
+    if (!replayAdDetectAgentConfig(postAntiRaid)) {
       throw new WorkerUndeliveredError(
         "Anti-Raid Worker rejected the agent configuration snapshot."
       );
     }
-    if (!replayBotPermissions(post)) {
+    if (!replayBotPermissions(postAntiRaid)) {
       throw new WorkerUndeliveredError("Anti-Raid Worker rejected the bot permissions snapshot.");
     }
-    if (!replayChatKinds(post)) {
+    if (!replayChatKinds(postAntiRaid)) {
       throw new WorkerUndeliveredError("Anti-Raid Worker rejected the chat kind snapshot.");
     }
-    if (!replayChatAtmospheres(post)) {
+    if (!replayChatAtmospheres(postAntiRaid)) {
       throw new WorkerUndeliveredError("Anti-Raid Worker rejected the atmosphere snapshot.");
     }
     postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
@@ -236,7 +234,7 @@ export function initAntiRaid(): void {
       );
     }
     // 必须先 adopt 再拆残留，确保 Worker 发出持久化 tombstone。
-    purgeDisabledJoinGuards(post);
+    purgeDisabledJoinGuards(postAntiRaid);
   } catch (error: unknown) {
     antiRaidRuntimeState.initialized = false;
     stopEmergencyLockdownRecoveries();

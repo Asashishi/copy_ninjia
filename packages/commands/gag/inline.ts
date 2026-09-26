@@ -13,7 +13,7 @@ import {
 } from "../../consts/gag";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
 import { signalArgs } from "../../libs/telegramSignalArgs";
-import { getGagThumbnailUrl } from "../../infra/storage/stateStore";
+import { getAssetConfig } from "../../config/assets";
 import {
   deleteMessageWithOutcome,
   logApiError,
@@ -255,7 +255,7 @@ function buildGagInlineResult(
     resultTitle,
     {
       description: `透过${toolLabel}`,
-      thumbnail_url: getGagThumbnailUrl(),
+      thumbnail_url: getAssetConfig().gagThumbnailUrl,
     }
   ).text(messageText, {
     entities,

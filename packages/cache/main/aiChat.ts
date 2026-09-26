@@ -28,7 +28,7 @@ export const lastInitState: { current: AiInitMessage | null } = { current: null 
  * 机器人自己的账号身份，供 AI Worker 在运行期首次启动时组装 init 消息。
  *
  * 填充：启动时 initAiChat 无论配置是否可用都写入一次（bot.init() 之后）。
- * 使用：config/ 热重载让 AI 闲聊从「启动时就不可用」变为可用时，
+ * 使用：config/dynamic/ 热重载让 AI 闲聊从「启动时就不可用」变为可用时，
  * aiChat/hydration.ts 的 resumeAiChat 据此启动 Worker。清理：无，进程重启归零。
  * 只在主线程，Worker 崩溃不影响；容量恒为一个对象。
  */

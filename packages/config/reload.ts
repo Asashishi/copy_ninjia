@@ -1,7 +1,7 @@
 /**
- * config/ 热重载的主线程判定：按启动总闸同一套严格解析器读取五份可热重载部署
- * 文件（ad_samples.json、agent.json、mood.json、stickers.json、cron.json），再与主线程
- * 已生效快照比较并整体替换 holder。
+ * config/dynamic/ 热重载的主线程判定：按启动总闸同一套严格解析器读取六份可热重载部署
+ * 文件（assets.json、ad_samples.json、agent.json、mood.json、stickers.json、cron.json），
+ * 再与主线程已生效快照比较并整体替换 holder。
  *
  * 判定口径（约束见 docs/cn/04-invariants.md）：
  * - 读不到（ENOENT 以外）或严格解析失败的变更整份拒绝，holder 保留上一份已校验快照；
@@ -9,6 +9,9 @@
  *   缺省的文件运行期出现，按新内容填充。agent.json 的 ad_detect 段与对话核心能力段
  *   同理，各段独立判定；
  * - 与当前快照深相等的内容不替换，holder 对象身份保持不变；
+ * - assets.json 缺省即全部取内置缺省，删除文件时换回 DEFAULT_ASSET_CONFIG；随机图片目录
+ *   与当前快照不同时，读取阶段先按启动同一口径准备并严格检查新目录，失败则拒绝
+ *   assets.json 的变更；
  * - cron.json 的 send_voice 依赖 agent.json 的 `agent.tts`：新任务表用到 send_voice 而本轮
  *   生效的 agent 配置没有 tts 时拒绝 cron.json 的变更；任务表仍用 send_voice 时拒绝去掉
  *   tts 的 agent.json 变更。
@@ -20,6 +23,7 @@
  */
 
 import { adoptAdSampleConfig, loadAdSampleConfig } from "./adSamples";
+import { adoptAssetConfig, loadAssetConfig } from "./assets";
 import {
   adoptAdDetectAgentConfig,
   adoptAgentDeploymentConfig,
@@ -29,6 +33,7 @@ import { adoptCronConfig, assertCronVoiceSupported, cronConfigUsesVoice, loadCro
 import { adoptMoodConfig, loadMoodConfig } from "./mood";
 import { deploymentInputExists } from "./readiness";
 import { adoptStickerConfig, loadStickerConfig } from "./stickers";
+import { assetConfigCache } from "../cache/main/assets";
 import { cronConfigCache } from "../cache/main/cron";
 import {
   adDetectAgentConfigCache,
@@ -40,15 +45,19 @@ import {
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
+  ASSETS_CONFIG_PATH,
   CRON_CONFIG_PATH,
   MOOD_CONFIG_PATH,
   STICKERS_CONFIG_PATH,
 } from "../consts/paths";
+import { DEFAULT_ASSET_CONFIG } from "../consts/ui/assets";
+import { ensureRandomImageDirectory } from "../infra/randomImage";
 import type { CronConfig } from "../types/cron";
 import { InputValidationError } from "../libs/inputValidation";
 import type {
   AdSampleConfig,
   AgentConfigSnapshots,
+  AssetConfig,
   AgentTtsCapabilityConfig,
   HotConfigRead,
   HotDeploymentConfigChanges,
@@ -71,14 +80,34 @@ async function readHotConfig<T>(
   }
 }
 
-/** 按固定顺序逐份读取五份可热重载部署文件；不改写任何 holder。 */
+/**
+ * 读取 assets.json；随机图片目录与当前快照不同时，接管之前先准备并严格检查新目录，
+ * 失败按拒绝处理。
+ */
+async function readHotAssetConfig(): Promise<HotConfigRead<AssetConfig>> {
+  const read: HotConfigRead<AssetConfig> = await readHotConfig(ASSETS_CONFIG_PATH, loadAssetConfig);
+  if (read.kind === "invalid") return read;
+  const directory: string = read.kind === "loaded"
+    ? read.value.randomHImageDirectory
+    : DEFAULT_ASSET_CONFIG.randomHImageDirectory;
+  if (directory === assetConfigCache.current.randomHImageDirectory) return read;
+  try {
+    await ensureRandomImageDirectory(directory);
+  } catch (error: unknown) {
+    return { kind: "invalid", reason: errorMessage(error) };
+  }
+  return read;
+}
+
+/** 按固定顺序逐份读取六份可热重载部署文件；不改写任何 holder。 */
 export async function readHotDeploymentConfigs(): Promise<HotDeploymentConfigReads> {
+  const assets: HotConfigRead<AssetConfig> = await readHotAssetConfig();
   const adSamples: HotConfigRead<AdSampleConfig> = await readHotConfig(AD_SAMPLES_CONFIG_PATH, loadAdSampleConfig);
   const agent: HotConfigRead<AgentConfigSnapshots> = await readHotConfig(AGENT_CONFIG_PATH, loadAgentConfigSnapshots);
   const mood: HotConfigRead<MoodConfig> = await readHotConfig(MOOD_CONFIG_PATH, loadMoodConfig);
   const stickers: HotConfigRead<StickerConfig> = await readHotConfig(STICKERS_CONFIG_PATH, loadStickerConfig);
   const cron: HotConfigRead<CronConfig> = await readHotConfig(CRON_CONFIG_PATH, loadCronConfig);
-  return { adSamples, agent, mood, stickers, cron };
+  return { assets, adSamples, agent, mood, stickers, cron };
 }
 
 /** nextFileSnapshot 的入参：本轮读取结果、当前快照与拒绝诊断收集表。 */
@@ -144,7 +173,7 @@ function reconcileVoiceDependency({ agent, cron, rejections }: VoiceDependencyOp
     rejections.push(new InputValidationError(
       AGENT_CONFIG_PATH,
       "$.agent",
-      "configured with text, summary, media and tts while config/cron.json uses send_voice"
+      "configured with text, summary, media and tts while config/dynamic/cron.json uses send_voice"
     ).message);
     return { agent: undefined, cron: acceptedCron };
   }
@@ -171,6 +200,19 @@ function recordFileOutcome<T>(next: T | null | undefined, path: string, paths: F
 export function applyHotDeploymentConfigs(reads: HotDeploymentConfigReads): HotDeploymentConfigChanges {
   const rejections: string[] = [];
   const paths: FileOutcomePaths = { reloadedPaths: [], removedPaths: [] };
+
+  let assetsChanged: boolean = false;
+  if (reads.assets.kind === "invalid") {
+    rejections.push(reads.assets.reason);
+  } else {
+    const assets: Readonly<AssetConfig> = reads.assets.kind === "absent" ? DEFAULT_ASSET_CONFIG : reads.assets.value;
+    if (!Bun.deepEquals(assets, assetConfigCache.current)) {
+      adoptAssetConfig(assets);
+      assetsChanged = true;
+      if (reads.assets.kind === "absent") paths.removedPaths.push(ASSETS_CONFIG_PATH);
+      else paths.reloadedPaths.push(ASSETS_CONFIG_PATH);
+    }
+  }
 
   const adSamples: AdSampleConfig | null | undefined = nextFileSnapshot({
     read: reads.adSamples,
@@ -238,6 +280,7 @@ export function applyHotDeploymentConfigs(reads: HotDeploymentConfigReads): HotD
   recordFileOutcome(cron, CRON_CONFIG_PATH, paths);
 
   return {
+    assets: assetsChanged,
     adDetect: adDetectChanged,
     aiAgent: aiAgentChanged,
     adSamples: adSamples !== undefined,

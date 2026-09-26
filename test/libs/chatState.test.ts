@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ChatState } from "../../packages/types";
+import type { ChatState } from "../../packages/types/chatState";
 import { QUIET_MAX_DURATION_MS } from "../../packages/consts/commands";
 import { normalizeChatState } from "../../packages/libs/chatState";
 import { botPermissions } from "../helpers/botPermissions";

@@ -32,7 +32,7 @@ import {
 } from "../stickers";
 import { buildGenerateImageToolDefinition, createGenerateImageExecutor } from "./imageGeneration";
 import { buildImageReferenceBlock } from "./imageReference";
-import { buildSendVoiceToolDefinition, createSendVoiceExecutor } from "./voiceMessage";
+import { buildSendVoiceToolDefinition, createSendVoiceExecutor, isSendVoiceAvailable } from "./voiceMessage";
 import {
   buildAddReactionToolDefinition,
   buildSendMessageToolDefinition,
@@ -46,7 +46,7 @@ import {
   executeGroupQaQuery,
 } from "./groupQa";
 import { toolError } from "../../utils/toolResult";
-import { imageAiProvider, ttsAiProvider } from "../../../provider";
+import { imageAiProvider } from "../../../provider";
 import { createReplyActionChains, toolResultActions } from "./actionChains";
 
 /** 组装工具定义、领域执行器和整轮共享的总动作预算。 */
@@ -63,8 +63,8 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   // 不读取对应 provider，也不向模型暴露工具 schema。
   const imageEnabled: boolean = ctx.mediaToolsRequested && imageAiProvider() !== null;
   // 语音工具不看触发类型，只看部署能力：挂载在同一份部署下跨回复恒定，调用与否
-  // 由模型按工具说明判断。
-  const voiceEnabled: boolean = ttsAiProvider()?.synthesizeSpeech !== undefined;
+  // 由模型按工具说明与回复任务末尾的今日余量判断。
+  const voiceEnabled: boolean = isSendVoiceAvailable();
   const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(ctx.roundHasTypo),
   ];

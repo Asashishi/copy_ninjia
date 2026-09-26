@@ -10,7 +10,7 @@
 
 ---
 
-各項目では変更するファイルと順序を示します。共通の前提は、編集前に [`AGENTS.md`](../../AGENTS.md) を読むこと、`state.json`、`memory/`、`bot.lock` などの実行時データを変更する場合や間接的に書き込むコード経路を実行する場合は先にバックアップすること、最後に `bun run check` をすべて通すこと、必要に応じてルート README を同期することです。
+各項目では変更するファイルと順序を示します。共通の前提は、編集前に [`AGENTS.md`](../../AGENTS.md) を読むこと、`memory/global/state.json` とその他の `memory/`、`bot.lock` などの実行時データを変更する場合や間接的に書き込むコード経路を実行する場合は先にバックアップすること、最後に `bun run check` をすべて通すこと、必要に応じてルート README を同期することです。
 
 ## 並行 batch の追加
 
@@ -49,7 +49,7 @@
 
 ## 別の言語にする：i18n はやらないので fork してください
 
-固定通知は簡体中国語で、`packages/consts/atmosphere/` に雌小鬼版と普通版を置きます。`config/bot.json` の `atmosphere` が Bot の既定通知口調を選び、専用 AI 人設のある群では普通版を優先します。通知口調は AI 人設を書き換えず、クライアント言語にも依存しません。
+固定通知は簡体中国語で、`packages/consts/atmosphere/` に雌小鬼版と普通版を置きます。`config/static/bot.json` の `atmosphere` が Bot の既定通知口調を選び、専用 AI 人設のある群では普通版を優先します。通知口調は AI 人設を書き換えず、クライアント言語にも依存しません。
 
 - 文言表は固定文字列と formatter を保持し、Telegram `entities` の UTF-16 offset は描画後の本文から計算します。名前・質問・プロンプト・モデル出力を口調変更のために置換しません。
 - `/咬` などの action command は 1〜2 文字の漢字を使い、コマンド解析と表示文言を別々に管理します。
@@ -70,10 +70,10 @@
 | ムード時間とコマンド timeout | `packages/consts/aiChat/mood.ts` |
 | ツール action・lookup 上限、typing と typo のテンポ | `packages/consts/aiChat/tools.ts` |
 | 音声文字起こしの長さ・サイズ上限と placeholder | `packages/consts/aiChat/voice.ts` |
-| ボイスツールの round 上限・セリフ/口調の長さ・Opus エンコード parameter | `packages/consts/aiChat/voiceMessage.ts` |
+| ボイスツールの round 上限・セリフ/口調の長さ・1 日の回数上限の既定値と計数窓・Opus エンコード parameter | `packages/consts/aiChat/voiceMessage.ts` |
 | request timeout、retry 回数、sampling と safety 段位、音声合成の基本声質と temperature | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
-| **model、provider、key、endpoint** | 定数ではなく `config/agent.json` で能力ごとに設定。[01-getting-started](01-getting-started.md) 参照 |
-| OAI 互換画像 wire protocol / size profile | `config/agent.json` の必須 `agent.image.image_protocol`。profile 追加時は型、固定 canvas table、exhaustive dispatch、test も同期 |
+| **model、provider、key、endpoint** | 定数ではなく `config/dynamic/agent.json` で能力ごとに設定。[01-getting-started](01-getting-started.md) 参照 |
+| OAI 互換画像 wire protocol / size profile | `config/dynamic/agent.json` の必須 `agent.image.image_protocol`。profile 追加時は型、固定 canvas table、exhaustive dispatch、test も同期 |
 | 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |
 | copy cooldown、`/quiet` 範囲、username 規則、アクションコマンドの rate limit | `packages/consts/commands.ts` |
 | 送信者ごとのランダムトリガー cooldown | `packages/consts/auto.ts` |
@@ -112,7 +112,7 @@
 ## ペルソナまたは JSON 設定の変更
 
 - ペルソナ：[`prompt/persona.md`](../../prompt/persona.md) を変更し、再起動で反映します。transcript 形式、identity marker、返信先判定に関わる実行時 interaction rule はコードから注入し、ペルソナファイルには置きません。
-- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`bot.json` は network 接続前に strict load し、`stickers.json`、`mood.json` などの feature input は各 enablement 境界で検証します。`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json` は稼働中の編集が hot reload され、拒否の基準は [04 実行時の権威的制約](04-invariants.md) にあります。その他の deployment input は変更後に再起動が必要です。恒久 allowlist、blocklist、一時 allowlist activity、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、対応する `packages/database/codec/`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
+- deployment 固有の変更は Git ignore 対象の `config/` だけに行い、`config_example/` は schema または default example が変わるときだけ同期します。`bot.json` は network 接続前に strict load し、`stickers.json`、`mood.json` などの feature input は各 enablement 境界で検証します。`config/dynamic/` の `assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json` は稼働中の編集が hot reload され、拒否の基準は [04 実行時の権威的制約](04-invariants.md) にあります。`config/static/` の `bot.json`、`g-auth.json` とその他の deployment input は変更後に再起動が必要です。deployment file を追加するときは所属 subdirectory を決め、`packages/config/layout.ts` の配置表に登録します。恒久 allowlist、blocklist、一時 allowlist activity、removal outbox は deployment config ではなく、authority は `database/storage.sqlite` です。identity structure を変える場合、先に `packages/database/schema/`、対応する `packages/database/codec/`、domain type、strict validation を更新し、停止中 migration script と fault-injection test を用意します。JSON 互換 read を戻してはいけません。
 - AI の `add_reaction` tool が使える emoji は [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts) の `AI_REACTION_EMOJIS` に固定され、要素型は Telegram 標準リアクションに限定されます。変更は code と一緒に release します。
 
 ## deployment JSON 設定の追加
@@ -136,15 +136,15 @@
 1. `packages/types/` の永続化型と validator を変更し、新形式を厳密に検証します。
 2. `test/infra/storage/`、`test/workers/diskIO/` などのテストを追加または変更し、`bun run test:fault-injection` を実行します。
 3. **旧プロセスを停止**し、`bot.lock` が解放されたことを確認します。
-4. `state.json`、`state.json.bak`、影響する `memory/` snapshot を新形式へ手動 migration します。migration 前にコピーでバックアップします。
-5. 新版をデプロイして起動します。state の 2 コピーが両方無効と出た場合は migration が不完全です。プログラムは元ファイルを変更しないため、修正してから再起動します。
+4. 既存の `memory/global/state.json` と影響するその他の `memory/` snapshot を新形式へ手動 migration します。migration 前にコピーでバックアップします。
+5. 新版をデプロイして起動します。グローバル状態ファイルが不正と出た場合は migration が不完全です。プログラムは元ファイルを変更しないため、修正してから再起動します。
 6. deployment のハッシュと厳格解析を検証し、少なくとも 2 回の再起動間隔にわたり active/running、NRestarts の増加なし、journal の新規非ゼロ終了なしを確認してから一時バックアップを削除します。
 
-**任意ブロックの追加は手順 3–4 を省略できます**。条件は「未設定」を明確に定義することです。decoder はブロック自体の欠落とフィールドの欠落の両方を許容し（`libs/stateFileCodec.ts` の `globalAssets` に倣い、両分岐が同じフィールド集合を返すことで `save` の自己検証が 2 種類の shape を見ないようにします）、取得側で既定値を 1 つに収束させます。実例は `state.global.assets` で、既存ファイルは無変更のまま読み込め、ブロックが無かった頃と同じ挙動になります。そのブロックが人手で編集する調整項目なら、起動時の補完（`seedMissingAssetState`）を足して未設定項目に現在有効な値を書き、キーがファイルに現れるようにします。補完は**起動を中断しうるすべての `await` の後**に実行し、欠けている項目だけを埋め、background で永続化します（[04](04-invariants.md#永続化と-snapshot-の-contract) を参照）。逆に、**既存ファイルの decode を失敗させる変更は従来どおり手順 3–4 を完全に実施します**。
+**任意ブロックの追加は手順 3–4 を省略できます**。条件は「未設定」を明確に定義することです。decoder はブロック全体の欠落を許容し、取得側で欠落を 1 つの既定値に収束させます。実例は `memory/global/state.json` の `ttsUsage`（`libs/stateFileCodec.ts` の `globalTtsUsage`）で、ブロック全体の欠落は未使用として扱い、既存ファイルは無変更のまま読み込めます。運用者が手で編集する調整項目は実行時状態に置かず、`config/`（例：`config/dynamic/assets.json`）に置いて、対応する parser が内蔵既定値を取り、Bot は書き戻しません。逆に、**既存ファイルの decode を失敗させる変更は従来どおり手順 3–4 を完全に実施します**。
 
 ## SQLite table を追加する
 
-`state.json` の変更より制約が 1 つ厳しくなります。**runtime は自動 migration を行わず**、database の version が合わなければ起動を拒否するため、table を 1 つ増やすたびに停止時 cold migration が必要です。手順：
+`memory/global/state.json` の変更より制約が 1 つ厳しくなります。**runtime は自動 migration を行わず**、database の version が合わなければ起動を拒否するため、table を 1 つ増やすたびに停止時 cold migration が必要です。手順：
 
 1. `packages/database/schema/<domain>.ts` で table を宣言し、`schema/storage.ts` に登録します。`data` 列は他の業務 table と同じく `jsonbText` と `jsonDataCheck` を使います。
 2. `schema/migrations/000N_<name>.sql` を書き、`migrations/meta/_journal.json` に entry を追加します。

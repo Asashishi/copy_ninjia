@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import type { AntiRaidWorkerEvent, VerificationSnapshot } from "../../../packages/types";
+import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
+import type { VerificationSnapshot } from "../../../packages/types/antiRaid/verification";
 
 const chatRequests: PromiseWithResolvers<Record<string, unknown>>[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];

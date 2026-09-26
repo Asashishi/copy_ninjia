@@ -10,7 +10,7 @@ import type { AgentCapability } from "../../../types/config";
  * 记忆压缩、贴纸整包简介、生图）都在那条线程上，主线程侧只经消息协议要
  * 结果，不碰客户端。
  *
- * 与 cache/workers/aiChat/gemini.ts 可以同时非空：config/agent.json 按能力分别
+ * 与 cache/workers/aiChat/gemini.ts 可以同时非空：config/dynamic/agent.json 按能力分别
  * 选择 provider，因此 summary 走 OpenAI、media 走 Google 时两边都会常驻。
  *
  * 注意与 cache/workers/antiRaid/openai.ts 的区别：那份属于入群守卫线程、

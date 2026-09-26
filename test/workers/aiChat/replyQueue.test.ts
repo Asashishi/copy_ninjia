@@ -17,7 +17,8 @@ import {
 } from "../../../packages/consts/aiChat/rateLimit";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
-import type { BufferedMessage, QueuedReplyTrigger } from "../../../packages/types";
+import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
+import type { QueuedReplyTrigger } from "../../../packages/types/aiChat/replies";
 import { drainReplyQueue, pushReplyTrigger, triggerKindFor } from "../../../packages/workers/aiChat/replyQueue";
 import { indexBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessageIndex";
 

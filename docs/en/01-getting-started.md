@@ -17,8 +17,8 @@ This page takes a clean environment all the way to "the bot works normally in a 
 - **Linux with a readable `/proc`**: the instance lock depends on `/proc/<pid>/stat` and the boot ID. It fails closed on other platforms.
 - **Bun 1.4.2**: required for source installation and development; install it with `curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2`. Binary packages include this runtime and need no system Bun. Node.js is not required.
 - **Telegram Bot Token**: create one through [@BotFather](https://t.me/BotFather) with `/newbot`.
-- **API keys for configured AI capabilities**: each `config/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
-- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `config/g-auth.json` (see the [example](../../config_example/g-auth.json) for its structure; the example's placeholder private key is rejected). When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
+- **API keys for configured AI capabilities**: each `config/dynamic/agent.json` capability owns its key, provider, endpoint, and model. Obtain keys from [Google AI Studio](https://aistudio.google.com/), the [OpenAI Platform](https://platform.openai.com/), or the configured compatible service. Capabilities never fail over into one another.
+- **Optional Google Cloud service-account JSON**: only required by `/translate` for translation; store it as `config/static/g-auth.json` (see the [example](../../config_example/static/g-auth.json) for its structure; the example's placeholder private key is rejected). When it is missing, `/translate` refuses and names the file and translation sessions remain inactive, but startup is unaffected; when the file exists and is malformed, the startup gate refuses to start while parsing it.
 
 `packages/config/googleAuth.ts` strictly parses `g-auth.json`: `client_email` must be a non-empty string and `private_key` a parseable, non-empty RSA PEM private key for RS256 (EC, Ed25519, and RSA-PSS are rejected). `type` is optional; when present it must equal `service_account`. The SDK-consumed `private_key_id`, `project_id`, `quota_project_id`, and `universe_domain` fields are optional non-empty strings. Other metadata is retained verbatim. Validation precedes Worker creation and Telegram connections; errors contain only the file path, field path, and expected form, never credential values.
 
@@ -86,11 +86,11 @@ Reruns retain existing databases and replace configuration only after an explici
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
-mkdir -p config
-for example in config_example/*.json; do
+mkdir -p config/static config/dynamic
+for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in
     g-auth.json | cron.json) ;;
-    *) cp -n "$example" config/ ;;
+    *) cp -n "$example" "config/${example#config_example/}" ;;
   esac
 done
 ```
@@ -100,7 +100,7 @@ The `g-auth.json` and `cron.json` examples are illustrative only and must not be
 ## Configuring Telegram Identity
 
 See [`config_example/README/en.md`](../../config_example/README/en.md) for the complete field and
-capability reference. Put bot identity and the super administrator in `config/bot.json`:
+capability reference. Put bot identity and the super administrator in `config/static/bot.json`:
 
 - **`bot_token`** (required)
   - Token issued by BotFather.
@@ -118,53 +118,60 @@ capability reference. Put bot identity and the super administrator in `config/bo
   - Allowlisted identities may use `/permission query` to inspect their own permissions and
     `/permission help` to read the permission catalog; the super administrator's `query`
     returns the all-true view.
-Configure AI providers, API keys, endpoints, and models per capability in `config/agent.json`.
+Configure AI providers, API keys, endpoints, and models per capability in `config/dynamic/agent.json`.
 To relocate runtime data, set `COPY_NINJIA_DATA_ROOT` in the process environment; when omitted,
 data stays under the project root. See [07 Operations and Troubleshooting](07-operations.md#data-root).
-For translation, save the service-account key as `config/g-auth.json`; the whole `config/`
+For translation, save the service-account key as `config/static/g-auth.json`; the whole `config/`
 directory is covered by `.gitignore`.
 
 Optional `atmosphere` accepts only `"mesugaki"` (teasing, the default) or `"normal"` (ordinary). A group with a custom AI persona still uses ordinary notices; other groups and their command menus use this setting. Restart to apply it. The installer preserves a valid style when changing identity. Any remaining `telegram.json`, including one beside `bot.json`, blocks installation and startup until explicit cold migration.
 
 ## Project Configuration Files
 
-`config/` is deployment-owned and excluded from Git. Copy it from `config_example/` once, then edit only `config/`; the example directory is not the runtime configuration.
+`config/` is deployment-owned and excluded from Git. Copy it from `config_example/` once, then edit only `config/`; the example directory is not the runtime configuration. `config/` has two subdirectories: `static/` holds `bot.json` and `g-auth.json`, which need a restart after a change; `dynamic/` holds the other six files (`assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, `cron.json`), which hot-reload on edit. Startup fails if a file sits at the top level of `config/` or in the wrong subdirectory, or if `dynamic/` is missing.
 
-Editing `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, or `cron.json` (scheduled tasks; format in [config_example/README](../../config_example/README/en.md)) while the bot runs hot-reloads it: the main thread watches `config/` and, about 0.5 seconds after the last change, re-parses the file with the same strict schema used at startup, then swaps the snapshot and hands it to the Workers that use it. A change that fails to parse is rejected as a whole and logged as one error, and the process keeps the last applied configuration; a file left invalid still refuses the next startup. Adding or deleting the AI configuration files listed above, or adding or removing the whole `ad_detect` section or any of `text`/`summary`/`media` in `agent.json`, changes the matching feature's availability directly: AI chat or ad detection stops as soon as a prerequisite is missing (per-chat switches keep their values) and resumes automatically once it is back, with no restart. `bot.json`, `prompt/persona.md`, and `g-auth.json` are not hot-reloaded and require a restart.
+Editing `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, or `cron.json` under `config/dynamic/` (scheduled tasks; format in [config_example/README](../../config_example/README/en.md)) while the bot runs hot-reloads it: the main thread watches `config/dynamic/` and, about 0.5 seconds after the last change, re-parses the file with the same strict schema used at startup, then swaps the snapshot and hands it to the Workers that use it. A change that fails to parse is rejected as a whole and logged as one error, and the process keeps the last applied configuration; a file left invalid still refuses the next startup. Adding or deleting the AI configuration files listed above, or adding or removing the whole `ad_detect` section or any of `text`/`summary`/`media` in `agent.json`, changes the matching feature's availability directly: AI chat or ad detection stops as soon as a prerequisite is missing (per-chat switches keep their values) and resumes automatically once it is back, with no restart. `bot.json` and `g-auth.json` under `config/static/`, and `prompt/persona.md`, are not hot-reloaded and require a restart.
 
 - **[`prompt/persona.md`](../../prompt/persona.md)**
   - **Contents**: base persona for AI chat.
   - **Validation**: plain text; no schema.
-- **`config/bot.json`** ([example](../../config_example/bot.json))
+- **`config/static/bot.json`** ([example](../../config_example/static/bot.json))
   - **Contents**: Bot API token, the sole super-administrator user ID, and optional notice style `atmosphere`.
   - **Validation**: [`packages/config/botInput.ts`](../../packages/config/botInput.ts), loaded
     strictly before network access; missing files, unknown fields, blank tokens, and invalid IDs
     abort startup.
-- **`config/stickers.json`** ([example](../../config_example/stickers.json))
+- **`config/dynamic/stickers.json`** ([example](../../config_example/dynamic/stickers.json))
   - **Contents**: sticker packs available to the AI, up to 5.
   - **Validation**: [`packages/config/stickers.ts`](../../packages/config/stickers.ts).
-- **`config/mood.json`** ([example](../../config_example/mood.json))
+- **`config/dynamic/mood.json`** ([example](../../config_example/dynamic/mood.json))
   - **Contents**: mood tiers, including copy, weights, and weather/time multipliers.
   - **Validation**: [`packages/config/mood.ts`](../../packages/config/mood.ts); weights must
     be positive integers totaling exactly 100.
-- **`config/ad_samples.json`** ([example](../../config_example/ad_samples.json))
+- **`config/dynamic/ad_samples.json`** ([example](../../config_example/dynamic/ad_samples.json))
   - **Contents**: ad-detection reference samples; the file itself is a string array.
   - **Validation**:
     [`packages/config/adSamples.ts`](../../packages/config/adSamples.ts); entries must be
     non-blank and unique, at most 500.
 
-- **`config/agent.json`** ([example](../../config_example/agent.json))
+- **`config/dynamic/agent.json`** ([example](../../config_example/dynamic/agent.json))
   - **Contents**: `agent.ad_detect`, `text`, `summary`, `media`, `image`, and `tts`.
     Each capability independently declares `provider`, `api_key`, optional `base_url`, and
-    `model`; providers currently accept `google` and `openai`. AI chat requires `text`,
+    `model`; providers currently accept `google` and `openai`. A capability whose `provider` is
+    `google` may also declare `headers` (1 to 8 extra request headers, for third-party gateway
+    authentication and similar; values are redacted in logs as credentials); `openai` does not
+    accept this field. AI chat requires `text`,
     `summary`, and `media`. Missing `image` or `tts` only removes its tool (a missing `tts` also
     makes `/send` TTS requests fail, and refuses startup when `cron.json` uses `send_voice`), while
     missing `ad_detect` only disables ad detection. OpenAI image capabilities also require an explicit
     `image_protocol`: `openai`, `openai-standard`, or `xai`; `tts` also requires a non-empty `voice`
-    (a prebuilt voice name or an AI Studio Voice design `voice_` ID). `base_url` accepts `https` only;
+    (a prebuilt voice name or an AI Studio Voice design `voice_` ID), plus optional `daily_limit`
+    (daily voice request limit, default 100) and `daily_reserve_quota` (how many of those are
+    reserved for `/send` and cron, default 25, must be less than `daily_limit`). `base_url` accepts
+    `https` only;
     plain `http` is limited to `localhost`, `127.0.0.1`, and `::1`, and the URL must carry no
     userinfo and no `#` fragment.
-  - **Validation**: [`packages/config/agent.ts`](../../packages/config/agent.ts). Unknown keys,
+  - **Validation**: [`packages/config/agent.ts`](../../packages/config/agent.ts) (per-capability field
+    decoding lives in [`packages/config/agentCapability.ts`](../../packages/config/agentCapability.ts)). Unknown keys,
     blank keys/models, and invalid providers, URLs, or protocols are rejected. **Only the main thread
     reads this file**: it parses it once at startup and re-parses it strictly on hot reload, then
     hands the snapshot to each Worker in its init or reload message; Workers only read the snapshot
@@ -174,6 +181,7 @@ Editing `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, or `cron.
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
     downloads, while transient failures only back off and never close the capability for good. Once
     hot reload replaces the `media` capability, both inputs are probed again.
+  - **Speech style**: optional `agent.tts.style` must be non-empty after trimming and defaults to `GEMINI_SPEECH_STYLE`. Hot reload affects new requests; removing the field restores the default. See [voice configuration](../../config_example/README/en.md).
 
 Permanent-allowlist, blocklist, temporary-ad-bypass activity, and pending-removal state are no longer deployment JSON. They live together
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates
@@ -236,33 +244,31 @@ environment variables into the unified `agent.json`; never overwrite deployment 
 with `config_example/`. Runtime selections in `state.json.global.model` are no longer read.
 Model changes are made by editing the relevant capability in `agent.json`; saving the file hot-reloads it.
 
-Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/bot.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
+Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into the legacy allowlist input and run the identity-storage migration **on 9.1.5** (that script was removed in 9.2.0, see [Operations](07-operations.md#identity-storage-migration)); never hand-edit SQLite after migration. An empty object `{}` preserves membership-only behavior, and other permissions can be enabled as needed. Do not migrate the super administrator into the allowlist table: its permissions come directly from `config/static/bot.json`. Afterwards, `/permission help` exposes the current key catalog and `/permission query` returns the caller's complete view. `/white` and `/permission` persist through database transactions, so `config/` may remain read-only.
 
 **Careful: removing a credential does not fail startup, but that chat goes quiet.** The startup gate validates only deployment inputs that **already exist** (see `validateExistingDeploymentInputs` in [`packages/config/readiness.ts`](../../packages/config/readiness.ts)): a present file must parse strictly, while a genuinely absent one does not block startup. The `true` in `chat_states` is restored as usual, but the matching feature is judged unavailable at its single decision entry point — when the prerequisite is missing at startup the AI chat Worker never starts and memory only enters the main-thread mirror (the snapshots under `memory/` stay untouched until the prerequisite returns), and when it is removed at runtime through hot reload the Worker goes idle; `/translate` sessions remain inactive, and ad detection stops submitting bundles. The group simply sees the bot stop chatting, stop catching ads, or stop translating from that moment (or that restart) onward, with a single line in `logs/` as the only trace. So run `/ai_chat disable`, `/ad_detect disable`, or `/translate disable` before removing a credential — or restore the prerequisite instead: AI chat and ad detection resume automatically through hot reload, while `g-auth.json` is not hot-reloaded and needs a restart.
 
 ### Replacing the Inline Thumbnails and the Default Avatar
 
-The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry) and the default avatar restored by `/icon reset` and `/copy stop` are all configured under `global.assets` in `state.json`:
+The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry), the default avatar restored by `/icon reset` and `/copy stop`, and the dedicated `/h_image` library directory all live in the optional `config/dynamic/assets.json`:
 
 ```json
-"global": {
-  "assets": {
-    "randomHImageDir": "./h_image",
-    "fortuneThumbnailUrl": "https://…",
-    "probabilityThumbnailUrl": "https://…",
-    "gagThumbnailUrl": "https://…",
-    "botDefaultAvatarUrl": "https://…"
-  }
+{
+  "random_h_image_dir": "./h_image",
+  "fortune_thumbnail_url": "https://…",
+  "probability_thumbnail_url": "https://…",
+  "gag_thumbnail_url": "https://…",
+  "bot_default_avatar_url": "https://…"
 }
 ```
 
-The four keys after it are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. `state.json` goes through a strict `JSON.parse`, so the block must not carry `//` comments.
+The last four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. The file and every field are optional; a missing value uses the built-in default in the code (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)). [`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) spells out all five values with their built-in defaults and the installer copies it as the initial configuration, so edit only the entries you need. The file is parsed as strict JSON and must not carry comments.
 
-Missing values among the five fields are seeded with the built-in defaults (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)) on a successful startup, so the file always shows the addresses currently in effect and you edit them in place. The four URL fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `botDefaultAvatarUrl` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — makes startup reject the whole `state.json` and name the field path instead of silently falling back to the default image.
+The four URL fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `bot_default_avatar_url` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — refuses startup and names the field path; at runtime the edit is rejected and the last applied configuration stays in effect, instead of silently falling back to the default image.
 
-The first key, `randomHImageDir`, is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. A first-run `state.json` is seeded after successful startup. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
+`random_h_image_dir` is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
 
-**Edit it while stopped**: the running process holds the authoritative state in memory and rewrites the whole file, so `systemctl stop` → edit → `systemctl start` (see [07 Operations and Troubleshooting](07-operations.md)).
+`assets.json` lives under `config/dynamic/`, so **runtime edits are hot-reloaded**: URLs take effect from their next use; when `random_h_image_dir` points to a new directory, that directory is first created and checked under the same rules as at startup, and if the check fails the whole edit is rejected and the old directory stays in use. Deleting the file restores every built-in default. The bot never writes this file back.
 
 ## Telegram-Side Configuration (BotFather and the Group)
 
@@ -293,7 +299,7 @@ After startup succeeds, have `SUPER_ADMIN_USER_ID` run the following in the targ
 ## Verifying the Setup
 
 - Reply to someone's message with `/copy`; the bot should start copying that user and synchronize its avatar.
-- Error log files appear under `logs/` when errors occur; the directory may remain empty otherwise. `state.json` is created on the first successful startup — once startup has fully succeeded, the asset URLs under `global.assets` are seeded with their currently effective values and persisted (see the next section).
+- Error log files appear under `logs/` when errors occur; the directory may remain empty otherwise. `memory/global/state.json` is created the first time the copy state or the speech-synthesis count changes; its absence before that is normal.
 - Stop with `Ctrl+C`. The process quiesces entry points, drains queues, flushes state, and then exits through the normal shutdown path.
 
 Startup failures from the data-root preflight, `bot.lock`, or state validation are deliberately fail-fast. Follow [07 Operations and Troubleshooting](07-operations.md#startup-failures) to resolve them.
