@@ -11,7 +11,7 @@
  */
 
 /**
- * `agent.tts.daily_limit` 缺省时的每日上限：每个计数窗口内三个调用方共用的供应商请求数。
+ * `agent.tts.daily_limit` 缺省时的每日总预算：每个窗口拆为 AI 与预留两份独立额度。
  * 计数在 AI Worker 的语音合成门面发起请求前登记（见 aiChat/ai/ttsUsage.ts），窗口与
  * 次数持久化在 memory/global/state.json 的 `ttsUsage`。
  */
@@ -19,14 +19,14 @@ export const TTS_DEFAULT_DAILY_LIMIT: number = 100;
 
 /**
  * `agent.tts.daily_reserve_quota` 缺省时从每日上限里留给 `/send` 代发 TTS 与 cron
- * `send_voice` 的次数；AI 语音工具只能用到 `daily_limit - daily_reserve_quota`，
- * 提示词与工具回执里的余量同样按它计算。
+ * `send_voice` 共用的独立次数；AI 使用另外的 `daily_limit - daily_reserve_quota` 次，
+ * 两边分别计数、互不借用；提示词与工具回执只扣 AI 已用次数。
  */
 export const TTS_DEFAULT_DAILY_RESERVE_QUOTA: number = 25;
 
 /**
  * 计数窗口长度（ms）。窗口从当前窗口内第一次请求起算；登记时距窗口起点已满本值，
- * 就以这次请求为新起点从 1 重新计数。
+ * 就以这次请求为新起点，两项计数清零后只登记本次请求所属的那一项。
  */
 export const TTS_USAGE_WINDOW_MS: number = 86_400_000;
 

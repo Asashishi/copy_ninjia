@@ -3,13 +3,16 @@ import { existsSync, readdirSync, rmSync, statSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR } from "../../../packages/consts/paths";
 import { AD_SAMPLE_FILE_MAX_BYTES, PERSISTED_FILE_MODE } from "../../../packages/consts/diskIO/common";
+import { FLUSH_MAX_ENTRIES } from "../../../packages/consts/diskIO/appendOnly";
 import {
   adSampleArchiveCursor,
   adSampleArchiveSweepDay,
+  adSampleBuffer,
   adSampleFileState,
   adSampleTempsSwept,
 } from "../../../packages/cache/workers/diskIO/adSample";
 import {
+  flushAdSampleBuffer,
   handleAdSampleMessage,
   maintainAdSampleFiles,
   sweepExpiredAdSampleArchives,
@@ -34,11 +37,20 @@ function sample(overrides: Partial<AdSampleDiskMessage> = {}): AdSampleDiskMessa
   };
 }
 
+/** 收下一条样本并立即刷出批次，对应统一 flush 的落盘点。 */
+async function appendSample(message: AdSampleDiskMessage): Promise<void> {
+  await handleAdSampleMessage(message);
+  await flushAdSampleBuffer();
+}
+
 async function readSamples(): Promise<Record<string, Record<string, unknown>>> {
   return JSON.parse(await Bun.file(AD_SAMPLE_FILE_PATH).text()) as Record<string, Record<string, unknown>>;
 }
 
 beforeEach(() => {
+  if (adSampleBuffer.timer !== null) clearTimeout(adSampleBuffer.timer);
+  adSampleBuffer.timer = null;
+  adSampleBuffer.chunks = [];
   adSampleFileState.current = null;
   adSampleTempsSwept.current = false;
   adSampleArchiveSweepDay.current = null;
@@ -47,8 +59,23 @@ beforeEach(() => {
 });
 
 describe("广告命中样本旁路", () => {
-  test("首条命中自建目录与文件，键是 chatId:首条 messageId", async () => {
+  test("样本先进批次，由 unref timer 或 flush 落盘，累计 FLUSH_MAX_ENTRIES 条立即追加", async () => {
     await handleAdSampleMessage(sample());
+    expect(existsSync(AD_SAMPLE_FILE_PATH)).toBeFalse();
+    expect(adSampleBuffer.chunks).toHaveLength(1);
+    expect(adSampleBuffer.timer?.hasRef()).toBeFalse();
+
+    for (let index: number = 1; index < FLUSH_MAX_ENTRIES; index++) {
+      await handleAdSampleMessage(sample({ messages: [{ messageId: 1_000 + index, text: "批量" }] }));
+    }
+
+    expect(adSampleBuffer.chunks).toHaveLength(0);
+    expect(adSampleBuffer.timer).toBeNull();
+    expect(Object.keys(await readSamples())).toHaveLength(FLUSH_MAX_ENTRIES);
+  });
+
+  test("首条命中自建目录与文件，键是 chatId:首条 messageId", async () => {
+    await appendSample(sample());
 
     const samples = await readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:11"]);
@@ -68,8 +95,8 @@ describe("广告命中样本旁路", () => {
   });
 
   test("后续命中按位置追加，不整文件重写，旧条目原样保留", async () => {
-    await handleAdSampleMessage(sample());
-    await handleAdSampleMessage(sample({
+    await appendSample(sample());
+    await appendSample(sample({
       chatId: -1002,
       senderId: 8,
       messages: [{ messageId: 21, text: "日入过千" }],
@@ -84,19 +111,19 @@ describe("广告命中样本旁路", () => {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     await Bun.write(AD_SAMPLE_FILE_PATH, '{\n  "-1001:1": {\n    "reason": "旧的"\n  },\n  "-1001:2": {\n    "rea');
 
-    await handleAdSampleMessage(sample());
+    await appendSample(sample());
 
     const samples = await readSamples();
     expect(Object.keys(samples)).toEqual(["-1001:1", "-1001:11"]);
   });
 
   test("涨过上限就整份改名归档，新文件从空写起", async () => {
-    await handleAdSampleMessage(sample());
+    await appendSample(sample());
     // 撑到上限：轮转判断在每次追加前跑，不是只在重新打开游标时跑。
     adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: false };
     const archivedBytes: string = await Bun.file(AD_SAMPLE_FILE_PATH).text();
 
-    await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
+    await appendSample(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
 
     expect(Object.keys(await readSamples())).toEqual(["-1001:99"]);
     // 新归档落在 15 个东京自然日保留窗口内，内容应原样保留。
@@ -116,7 +143,7 @@ describe("广告命中样本旁路", () => {
     await sweepExpiredAdSampleArchives({ today });
     expect(adSampleArchiveCursor.current).toEqual({ day: today, nextIndex: 2 });
     adSampleFileState.current = { size: AD_SAMPLE_FILE_MAX_BYTES, empty: true };
-    await handleAdSampleMessage(sample({ messages: [{ messageId: 99, text: "gap" }] }));
+    await appendSample(sample({ messages: [{ messageId: 99, text: "gap" }] }));
 
     expect(existsSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.2.json`))).toBeTrue();
   });
@@ -180,7 +207,7 @@ describe("广告命中样本旁路", () => {
     expect(removed).toHaveLength(1);
     expect(removed[0]?.endsWith("sample.2000-01-01.2.json")).toBe(true);
     expect(logError).toHaveBeenCalledTimes(1);
-    await handleAdSampleMessage(sample());
+    await appendSample(sample());
     expect(Object.keys(await readSamples())).toEqual(["-1001:11"]);
     expect(listCalls).toBe(1);
     logError.mockRestore();
@@ -196,7 +223,7 @@ describe("广告命中样本旁路", () => {
         throw new Error("injected readdir failure");
       },
     });
-    await handleAdSampleMessage(sample());
+    await appendSample(sample());
 
     expect(Object.keys(await readSamples())).toEqual(["-1001:11"]);
     expect(logError).toHaveBeenCalledTimes(1);
@@ -231,8 +258,11 @@ describe("广告命中样本旁路", () => {
     rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
     await Bun.write(AD_SAMPLE_MEMORY_DIR, "not a directory");
 
-    await expect(handleAdSampleMessage(sample())).resolves.toBeUndefined();
+    await handleAdSampleMessage(sample());
+    await expect(flushAdSampleBuffer()).resolves.toBeUndefined();
     expect(adSampleFileState.current).toBeNull();
+    // 失败即弃：这一批不留在缓冲里等重试。
+    expect(adSampleBuffer.chunks).toHaveLength(0);
     expect(existsSync(AD_SAMPLE_FILE_PATH)).toBe(false);
 
     rmSync(AD_SAMPLE_MEMORY_DIR, { force: true });

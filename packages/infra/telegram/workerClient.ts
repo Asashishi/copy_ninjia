@@ -1,8 +1,7 @@
 import type { Api } from "grammy";
 import { requestMainThread } from "../../libs/workerDuplex";
 import type {
-  TelegramApi,
-  TelegramDeleteEphemeralMessageParams,
+  TelegramWorkerApi,
   TelegramMemoryFile,
   TelegramWorkerDownloadFileResult,
   TelegramWorkerJsonCall,
@@ -128,7 +127,7 @@ async function requestMemoryFileSend<TResult>({
  * 业务 Worker 的 grammY Api 结构化代理。它不创建或使用本地网络客户端；
  * 每个方法只把可克隆 payload 交给主线程双工能力边界。
  */
-export const workerTelegramApi: TelegramApi = {
+export const workerTelegramApi: TelegramWorkerApi = {
   answerCallbackQuery: (...args: Parameters<Api["answerCallbackQuery"]>): ReturnType<Api["answerCallbackQuery"]> => {
     const [callbackQueryId, other = {}, signal]: Parameters<Api["answerCallbackQuery"]> = args;
     return requestCall("callback", {
@@ -150,13 +149,6 @@ export const workerTelegramApi: TelegramApi = {
       payload: { chat_id: chatId, sender_chat_id: senderChatId },
     }, asSignal(signal));
   },
-  copyMessage: (...args: Parameters<Api["copyMessage"]>): ReturnType<Api["copyMessage"]> => {
-    const [chatId, fromChatId, messageId, other = {}, signal]: Parameters<Api["copyMessage"]> = args;
-    return requestCall("message", {
-      method: "copyMessage",
-      payload: { chat_id: chatId, from_chat_id: fromChatId, message_id: messageId, ...other },
-    }, asSignal(signal));
-  },
   deleteMessage: (...args: Parameters<Api["deleteMessage"]>): ReturnType<Api["deleteMessage"]> => {
     const [chatId, messageId, signal]: Parameters<Api["deleteMessage"]> = args;
     return requestCall("delete", {
@@ -171,19 +163,6 @@ export const workerTelegramApi: TelegramApi = {
       payload: { chat_id: chatId, message_ids: messageIds },
     }, asSignal(signal));
   },
-  deleteEphemeralMessage: ({
-    chatId,
-    receiverUserId,
-    ephemeralMessageId,
-  }: TelegramDeleteEphemeralMessageParams, signal?: AbortSignal): Promise<true> =>
-    requestCall("delete", {
-      method: "deleteEphemeralMessage",
-      payload: {
-        chat_id: chatId,
-        receiver_user_id: receiverUserId,
-        ephemeral_message_id: ephemeralMessageId,
-      },
-    }, signal),
   getChat: (...args: Parameters<Api["getChat"]>): ReturnType<Api["getChat"]> => {
     const [chatId, signal]: Parameters<Api["getChat"]> = args;
     return requestCall("query", { method: "getChat", payload: { chat_id: chatId } }, asSignal(signal));
@@ -227,8 +206,8 @@ export const workerTelegramApi: TelegramApi = {
       payload: { chat_id: chatId, text, ...other },
     }, asSignal(signal));
   },
-  sendPhoto: (...args: Parameters<TelegramApi["sendPhoto"]>): ReturnType<TelegramApi["sendPhoto"]> => {
-    const [chatId, photo, other = {}, signal]: Parameters<TelegramApi["sendPhoto"]> = args;
+  sendPhoto: (...args: Parameters<TelegramWorkerApi["sendPhoto"]>): ReturnType<TelegramWorkerApi["sendPhoto"]> => {
+    const [chatId, photo, other = {}, signal]: Parameters<TelegramWorkerApi["sendPhoto"]> = args;
     return requestMemoryFileSend({
       file: photo,
       label: "Worker photo",
@@ -237,8 +216,8 @@ export const workerTelegramApi: TelegramApi = {
       signal: asSignal(signal),
     });
   },
-  sendVoice: (...args: Parameters<TelegramApi["sendVoice"]>): ReturnType<TelegramApi["sendVoice"]> => {
-    const [chatId, voice, other = {}, signal]: Parameters<TelegramApi["sendVoice"]> = args;
+  sendVoice: (...args: Parameters<TelegramWorkerApi["sendVoice"]>): ReturnType<TelegramWorkerApi["sendVoice"]> => {
+    const [chatId, voice, other = {}, signal]: Parameters<TelegramWorkerApi["sendVoice"]> = args;
     return requestMemoryFileSend({
       file: voice,
       label: "Worker voice",
@@ -246,16 +225,6 @@ export const workerTelegramApi: TelegramApi = {
         ({ operation: "sendVoice", category: "message", chatId, bytes, fileName, other }),
       signal: asSignal(signal),
     });
-  },
-  editMessageText: (...args: Parameters<TelegramApi["editMessageText"]>): ReturnType<TelegramApi["editMessageText"]> => {
-    const [chatId, messageId, text, other = {}, signal]: Parameters<TelegramApi["editMessageText"]> = args;
-    if (typeof text !== "string") {
-      return Promise.reject(new TypeError("Worker editMessageText requires plain text."));
-    }
-    return requestCall("edit", {
-      method: "editMessageText",
-      payload: { chat_id: chatId, message_id: messageId, text, ...other },
-    }, asSignal(signal));
   },
   sendSticker: (...args: Parameters<Api["sendSticker"]>): ReturnType<Api["sendSticker"]> => {
     const [chatId, sticker, other = {}, signal]: Parameters<Api["sendSticker"]> = args;
@@ -286,13 +255,6 @@ export const workerTelegramApi: TelegramApi = {
     return requestCall("kick", {
       method: "unbanChatMember",
       payload: { chat_id: chatId, user_id: userId, ...other },
-    }, asSignal(signal));
-  },
-  unbanChatSenderChat: (...args: Parameters<Api["unbanChatSenderChat"]>): ReturnType<Api["unbanChatSenderChat"]> => {
-    const [chatId, senderChatId, signal]: Parameters<Api["unbanChatSenderChat"]> = args;
-    return requestCall("kick", {
-      method: "unbanChatSenderChat",
-      payload: { chat_id: chatId, sender_chat_id: senderChatId },
     }, asSignal(signal));
   },
 };

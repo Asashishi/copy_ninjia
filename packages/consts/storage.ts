@@ -22,6 +22,13 @@ export const STATE_SAVE_RETRY_DELAYS_MS: readonly number[] = [250, 1_000, 5_000,
 export const STATE_SAVE_MAX_ATTEMPTS: number = STATE_SAVE_RETRY_DELAYS_MS.length + 1;
 
 /**
+ * 全局状态文件后台写入（不等待落盘的 save）的合并窗口：从首个未落盘变化计时，到期
+ * 写出窗口内的最新值；等待落盘的写入与停机 flush 立即写出并取消该窗口。
+ * 所属模块：infra/storage/statePersistence.ts。
+ */
+export const STATE_BACKGROUND_SAVE_DELAY_MS: number = 5_000;
+
+/**
  * 本机器人同时接管的最大群数。它是启动期和运行期均不可放宽的容量不变量；
  * 超出时必须由部署方删除不再管理的群后重新启动。
  *

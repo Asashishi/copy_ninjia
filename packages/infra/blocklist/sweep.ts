@@ -227,10 +227,10 @@ export async function sweepBlockedMembers(
   // reject；必须留在 try 内，否则 reject 会跳过 finally 里的 armBlocklistSweepScheduler()。
   try {
     // canClaimSweep 判定不通过时提前返回，避免付出一次不必要的名单页读：
-    // readBlocklistSweepPage 会先触发 Disk I/O Worker 的全领域 flush（不看各领域
-    // 攒批阈值，见 infra/identityStorage/sweep.ts 与 workers/diskIOWorker.ts 的
-    // flushAll），再跨线程取一页主键。判据与 prepareBlocklistSweep 同源，下方仍会
-    // 复查一次。
+    // readBlocklistSweepPage 会先触发 Disk I/O Worker 的黑名单领域 flush（立即提交
+    // 共享 SQLite 事务，不看攒批阈值，见 infra/identityStorage/sweep.ts 与
+    // workers/diskIOWorker.ts 的 flushDomain），再跨线程取一页主键。判据与
+    // prepareBlocklistSweep 同源，下方仍会复查一次。
     if (!canClaimSweep(blocklistSweepState.get(chatId), now)) return;
     const page: BlocklistIdPage = hasAnyBlockedIdentity()
       ? await readBlocklistSweepPage(null)
@@ -282,8 +282,8 @@ export async function sweepManagedBlocklistChats(
 ): Promise<void> {
   try {
     if (!hasAnyBlockedIdentity()) return;
-    // 与 sweepBlockedMembers 同一道闸：一个群都扫不动时不付那次全领域 flush 加
-    // 分页读。下面的逐群循环仍照旧遍历整张表，因此读盘期间新变得可扫的群依然
+    // 与 sweepBlockedMembers 同一道闸：一个群都扫不动时不付那次黑名单领域 flush
+    // 加分页读。下面的逐群循环仍照旧遍历整张表，因此读盘期间新变得可扫的群依然
     // 会被这一轮带上。
     if (!hasClaimableManagedChat(now)) return;
     let page: BlocklistIdPage;

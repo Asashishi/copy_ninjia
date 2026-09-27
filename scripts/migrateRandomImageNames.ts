@@ -1,3 +1,4 @@
+import { fileSha256 } from "./fileSha256";
 import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Dirent, Stats } from "node:fs";
@@ -57,13 +58,6 @@ export interface RandomImageNameMigrationResult {
   /** 因内容重复而合并掉的张数；明细见 duplicates。 */
   readonly deduplicated: number;
   readonly duplicates: readonly RandomImageDuplicate[];
-}
-
-/** 清单哈希按 Bun 文件流增量计算，不把整张图读进内存。 */
-async function fileSha256(path: string): Promise<string> {
-  const hasher: Bun.CryptoHasher = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
-  return hasher.digest("hex");
 }
 
 /** 单张图的事实：内容哈希与部署权限元数据；符号链接与非普通文件一律拒绝。 */

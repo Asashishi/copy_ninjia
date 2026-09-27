@@ -52,7 +52,7 @@
 
   **临时广告免检按展示身份跨群累计广告检测中的正常发言**：只有广告配置可用且本群显式开启广告检测时，真实用户或频道马甲才计数；服务消息、自动转发、机器人自身、本群匿名管理员皮套和永久白名单成员都不计。东京自然日内第 8 条发言把当天记为一次合格日，同一天只记一次；首个合格日立即授予只包含广告免检的 `TEMPORARY_AD_BYPASS_PERMISSIONS`。连续 7 个合格日后才写入永久白名单，永久条目仍只持有这份广告免检权限。累计严格按东京自然日重算，不使用滚动 24 小时：刚结束日已经合格的行保留到新一天，以延续临时广告免检和连续日数；新一天第一条符合累计条件的发言把 `send_count` 重算为 1 并清空本日 `qualified_at`，第 8 条再标记本日合格。当天合格后同一日的后续发言不再改写该行：`send_count` 与 `counted_at` 冻结在达标那条发言上，因而 `counted_at` 与 `qualified_at` 相等；日界推进、保留判定、严格解码与零点清理读到的事实完全不变。若新一天没有再次合格，下一个东京零点删除整行及其中的发言累计；更早的行同样删除，当日行保留。午夜维护先提交共享 SQLite 的在途最终值，事务失败且临时广告免检写仍在途时拒绝清理；清理后才到达的旧日写按相同日界归一化，失效值以原 revision 的墓碑 ACK，不能把旧行重新插回。主线程 LRU 的权限读取与 Worker 重建也使用同一日界，因此过期缓存不授予广告免检，过期未 ACK 最终值重放为墓碑。适用的广告 true verdict、身份拉黑或永久晋升会显式清除整条临时累计；已经授予豁免后到达的旧 verdict 不得撤权。墙钟回拨到 `counted_at` 之前时从当前消息重建计数时间轴并保留已经授予的临时资格，不沿用未来计数；当天已合格的行 `counted_at` 就是 `qualified_at`，因此回拨落在达标之后仍按同一东京日继续，两种情形都保留成员关系。
 
-  **写入采用容量准入、write-through 与精确 revision ACK**：身份写入先检查未确认主键和字节预算及传输容量，再发布 LRU 最终值、登记 revision 并投给 Disk I/O。每张主线程身份表按替换差额维护字节总数，只有精确 ACK 才释放对应最终值的预算；旧 ACK 不影响新 revision。主线程各领域最多保留 8,192 个未确认主键和 32 MiB 估算载荷，Worker 六张 SQLite 表共用同一上限。Worker 对永久白名单、黑名单、临时广告免检和 outbox 按 128 个变化，群状态和问答按托管群上限，或首个变化等待 30 秒触发同步事务。成功事务清空缓冲后发送精确 ACK；失败保留全部待写值，按 30 秒、60 秒退避，连续三次失败通知宿主停止新业务。停机显式 flush 可再次尝试。迟到读不得覆盖未确认最终值，恢复按 revision 重放；`/white`、`/permission` 和 `/block` 的关键成功回执等待本领域 durable 确认，拒收、超时和 ACK 缺失由命令就地报告。
+  **写入采用容量准入、write-through 与精确 revision ACK**：身份写入先检查未确认主键和字节预算及传输容量，再发布 LRU 最终值、登记 revision 并投给 Disk I/O。每张主线程身份表按替换差额维护字节总数，只有精确 ACK 才释放对应最终值的预算；旧 ACK 不影响新 revision。主线程各领域最多保留 8,192 个未确认主键和 32 MiB 估算载荷，Worker 六张 SQLite 表共用同一上限。Worker 对永久白名单、黑名单、临时广告免检和 outbox 按 128 个变化，群状态按托管群上限，问答按 `CHAT_QA_WRITE_BATCH_MAX_ENTRIES`（32）条变化，或首个变化等待 30 秒触发同步事务。成功事务清空缓冲后发送精确 ACK；失败保留全部待写值，按 30 秒、60 秒退避，连续三次失败通知宿主停止新业务。停机显式 flush 可再次尝试。迟到读不得覆盖未确认最终值，恢复按 revision 重放；`/white`、`/permission` 和 `/block` 的关键成功回执等待本领域 durable 确认，拒收、超时和 ACK 缺失由命令就地报告。领域屏障（`flushDiskIODomain` / `flushDiskIODomainOutcome`）以该领域名作为 flush 范围，Worker 只刷这一个领域，其它领域的攒批窗口不受影响；SQLite 六表与 AI 上下文共用一个事务，任一 SQLite 领域（含 `aiMemory`）的屏障都会提交全部表的待写值。Anti-Raid 的 durable 投递（`postAntiRaidDurably`）在镜像变化后只经 `verification` 与 `chatState` 两道领域屏障落盘，停机排空（`drainAntiRaid`）仍走统一 flush。
 
   **超级管理员权限来自身份本身，不来自 SQLite 行**：`packages/infra/identityPolicy/whitelist.ts` 的 `getEffectiveWhitelistPermissions` 对 `SUPER_ADMIN_USER_ID` 直接返回逐项全开的 `SUPER_ADMIN_WHITELIST_PERMISSIONS`；其余身份先读永久白名单，未命中时才以仍处于东京日保留边界内的临时广告免检返回 `TEMPORARY_AD_BYPASS_PERMISSIONS`。这个覆盖只发生在读取侧、永不落盘；换超级管理员不会留下全开旧身份。`/white` 与 `/permission` 都拒绝把当前群自己的 identity 当目标；`/white enable` 可由 `isCanWhiteOther` 委托，但只能按默认权限新增其它身份，删除成员与权限修改仍只允许超级管理员。
 
@@ -63,9 +63,11 @@
 
   `text`、`summary`、`media` 三项齐备才算 AI 对话可用；缺 `image`/`tts` 只摘对应工具，缺 `ad_detect` 只阻止广告检测。`tts` 另有两个主线程消费方：`/send` 代发的 TTS 请求在 `tts` 缺省时直接报错；`cron.json` 用到 `send_voice` 时 `tts`（连同对话核心三项）必须存在，启动总闸按先 `agent.json` 后 `cron.json` 的顺序校验，缺失即拒绝启动（`packages/config/cron.ts` 的 `assertCronVoiceSupported`）。启动 preflight 严格校验已经存在的部署输入；可选输入缺省时由 readiness 判定相应功能不可用，持久化群开关保持原值。
 
-  **可选能力一律按「这个成员在不在」判定，绝不按供应商名字。** 两家都实现语音转写入口，但所配 media 模型是否接受视觉/语音由两种模态各自的首次真实请求探测；每种模态只允许一个在途探测，SDK 最多尝试五次，等待者不占媒体执行槽。结论分四档：`supported`；`unsupported`（端点明确拒绝该模态）；`misconfigured`（404/405，模型或 base_url 写错，落定时记一行指向 `$.agent.media` 的诊断）；其余保持 `unknown`。`unsupported` 与 `misconfigured` 都是终局，在 Worker 生命周期内不再下载该模态，直到热重载替换 `media` 能力：届时两种模态进入新配置代次、回到 `unknown`，旧代次请求迟到的结论一律丢弃。端点故障（超时、408/429/5xx、网络）按连续次数做有限指数退避（30 秒起，封顶 10 分钟），退避期内直接返回共享结果、不下载也不占执行槽，一次成功即清零；普通 4xx 参数错误、下载失败与空响应只是这一份媒体的问题，既不下模态结论也不推进退避。语音工具按 `provider.synthesizeSpeech === undefined` 摘挂，且「配了这项能力但所选实现没有它」会在 Worker 初始化与每次 agent 配置热重载后各记一次诊断。
+  **可选能力一律按「这个成员在不在」判定，绝不按供应商名字。** 两家都实现语音转写入口，但所配 media 模型是否接受视觉/语音由两种模态各自的首次真实请求探测；每种模态只允许一个在途探测，重试由供应商 SDK 的预算控制，等待者不占媒体执行槽但占共享等待额度。结论分四档：`supported`；`unsupported`（端点明确拒绝该模态）；`misconfigured`（404/405，模型或 base_url 写错，落定时记一行指向 `$.agent.media` 的诊断）；其余保持 `unknown`。`unsupported` 与 `misconfigured` 阻止该模态的新下载与请求；同配置代次已经在途的请求若成功，仍可恢复为 `supported` 并清空退避。热重载替换 `media` 能力时，两种模态进入新配置代次、回到 `unknown`，旧代次请求迟到的结论一律丢弃。端点故障（超时、408/429/5xx、网络）按连续次数做有限指数退避（30 秒起，封顶 10 分钟），退避期内直接返回共享结果、不下载也不占执行槽，一次成功即清零；普通 4xx 参数错误、文件格式或编码错误、损坏媒体、下载失败与空响应只是这一份媒体的问题，既不下模态结论也不推进退避。语音工具按 `provider.synthesizeSpeech === undefined` 摘挂，且「配了这项能力但所选实现没有它」会在 Worker 初始化与每次 agent 配置热重载后各记一次诊断。
 
-  冷探测中某一份媒体的下载、参数或空响应失败只交还它自己的调用方，等待者继续逐份串行探测。已支持模态的并发请求在准入时记录能力状态对象；同一状态下接纳的请求最多推进一次端点失败退避，迟到失败不能覆盖成功或重复增加失败次数。媒体事件的 `replyTelegramBackpressured` 在主线程一次填入：`undefined` 不评论，布尔值表示本条允许评论及其 Telegram 背压快照；Worker 据此决定随机触发与回复并发，不追加跨线程查询。
+  冷探测中某一份媒体的下载、参数或空响应失败只交还它自己的调用方，等待者继续逐份串行探测。已支持模态的并发请求在准入时记录能力状态对象；同一状态下接纳的请求最多推进一次端点失败退避，迟到的瞬时失败不能覆盖成功或重复增加失败次数。媒体事件的 `replyTelegramBackpressured` 在主线程一次填入：`undefined` 不评论，布尔值表示本条允许评论及其 Telegram 背压快照；Worker 据此决定随机触发与回复并发，不追加跨线程查询。
+
+  媒体错误由 `packages/aiChat/ai/utils/mediaSupportError.ts` 统一分类。HTTP 400/415/422 只有在正文明确拒绝媒体输入、包含模型/端点/输入模态的能力证据，且没有单份文件格式、编码、尺寸、损坏等错误证据时，才形成 `unsupported` 结论；单独的 `Unsupported media type` 不足以关闭模态。404/405 优先归为配置错误，408/429/5xx 与无 HTTP 状态的网络失败归为端点故障。
 
   **OAI 兼容侧的生图线协议必须来自 `config/dynamic/agent.json` 的 `agent.image.image_protocol`，不得按端点或模型名猜测，也不得缺省兜底。**当前允许 `openai`、`openai-standard` 与 `xai`；能力档写错时不得在 400 后自动换档重试。新增协议必须同步共享联合、画幅映射、穷举分派与测试。
 
@@ -101,6 +103,9 @@
 ### 出站请求与消息安全
 
 - **Telegram 网络能力只有主线程一份**：真实 grammY Bot、Bot API HTTP 与 Telegram 文件 CDN 下载都由主线程发起；AI/Anti-Raid Worker 只能经 `supervisedDuplexWorker` 的结构化白名单请求能力，不能 import grammY 运行时、`mainClient.ts` 或 Bot token。Worker 代际失效会 abort 本代请求并结算 waiter；主线程回包同步失败同样撤销该代际，不能留下永久悬挂的 Promise。`check:conventions` 按 Worker 真实模块闭包执行这道隔离，类型专用 import 不算运行时依赖。
+
+  Worker 代理实现只读的 `TelegramWorkerApi` 子集；`copyMessage`、`deleteEphemeralMessage`、`editMessageText`、`unbanChatSenderChat` 仅由主线程的完整 `TelegramApi` 提供，不进入 Worker 协议或分派。共享门面在 Worker 本地拒绝这些方法；可用方法仍经 `requestMainThread`、主线程 owner 白名单与统一出站闸，上传和 CDN 下载也走同一边界。
+
 - **Worker 经双工代理发出的消息，由主线程在代理边界统一登记自发**（`infra/telegram/workerRequests.ts` 的 `markWorkerSentMessage`）。`infra/selfSentTracker.ts` 按线程隔离：Worker 侧那次 `markSelfSent` 记在它自己的 isolate 里，而真正的 Bot API 调用发生在主线程的 `bot.api.raw.*`，绕开了共享动作层的登记。缺这一处，主线程就认不出这条消息是自己发的——频道帖回投时它会被当成新内容喂进 AI/复读流水线，或被 `/qa set` 的投递入口认领。登记发生在响应回传给 Worker 之前；判据取**返回值的形状**（有 `message_id` 且有数字 `chat.id`）而不是按方法名 switch，新增能力只要产出 Message 就自动被覆盖。读结果而不读 payload 的 `chat_id`，是因为后者可以是 `@username` 字符串（唯一只返回 `MessageId`、拿不到 chat 的 `copyMessage` 不在任何 Worker 能力白名单里）。登记早于 Worker 拿到 message id 的那一刻，两个 Worker 都不回投「我发了什么」，这条边界因此是全部 Worker 自发消息的唯一登记点。
 
   **这次登记不消除回投竞态，只把它收窄**：登记时刻是发送响应落地，而回投可能由一次并发的长轮询先取回。因此凡是会对消息产生输出、又可能收到频道帖或频道自动转发的入口，除同步的 `isBotOwnMessage` 外还必须走 `needsBotOwnMessageWait` + `waitForBotOwnMessage` 的有界 rendezvous（`auto/message/index.ts`、`commands/cjkAction.ts`、`commands/qa/ingress.ts` 三处）。rendezvous 成立的前提正是「登记必然会到」；对一条永远不会被登记的消息，它只会烧满 `SELF_SENT_RENDEZVOUS_TIMEOUT_MS` 再放行，而 update runner 严格串行，那就是整个进程停这么久。
@@ -158,11 +163,13 @@
 
   并发批处理不得直接使用 `Promise.all`。互不依赖的固定任务必须用 `Promise.allSettled` 等待全部落定并逐项汇总失败；动态输入必须通过固定 worker 数的 `runBoundedSettledBatch`，结果保留 `item/index/attempt`。额外重试只能针对领域明确可重试的错误，由有限退避数组硬顶并记录每次退避；Telegram 总闸等下层 owner 已经负责重试时，调用点不得再重复执行有副作用的请求。只等待 owner 已登记在途任务的 drain 可以直接对快照 `allSettled`，但任务本身必须已有错误归属，不能把 settlement 当作吞错出口。
 
-  Disk I/O 运行时恢复是一整段不可分割的握手：load 成功后，各领域必须只用本代际的 scoped transport 按登记顺序重放并等待全部异步工作，再按 FIFO 排空恢复窗口的有界业务缓冲，最后才可公开 writable；镜像重放前后各发一条 `storageFlushHold` 开合标记，区间内 Worker 的满批与定时提交只挂 timer，关标记时按阈值一次事务提交，因此按优先级分开重放的黑名单写入与 outbox 快照不会被拆进两个事务；显式 flush 与 AI 上下文强制提交不受该标记影响；
+  Disk I/O 运行时恢复是一整段不可分割的握手：load 成功后，各领域必须只用本代际的 scoped transport 按登记顺序重放并等待全部异步工作，再按 FIFO 排空恢复窗口的有界业务缓冲，最后才可公开 writable；镜像重放前后各发一条 `storageFlushHold` 开合标记，区间内 Worker 的满批与定时提交只挂 timer，关标记时按阈值一次事务提交，因此按优先级分开重放的黑名单写入与 outbox 快照不会被拆进两个事务；显式 flush 不受该标记影响，AI 上下文的删除与 purge 后首份快照在区间内只排队，关标记时立即提交；
 
   listener 的 `false`、throw、reject、超时或 scoped post 拒绝都必须终止当前代际并 fatal。旧代际 listener 的迟到结算不得写入或激活新实例。需要确认处理与落盘边界的调用方必须把 `false` 当作失败，不能确认对应 Telegram update。
 
-- **主线程到 Disk I/O 的业务传输始终有界**：待发送与在途载荷共同占用 45,000 条和 64 MiB 估算预算，控制消息另有 16 个预留槽。每批最多 128 条，只允许一批在途；Worker 本地串行操作队列最多 8 项。批消费 ACK 只释放传输窗口，领域持久化 ACK 才表示 durable；30 秒未收到批 ACK 或容量拒收触发 fatal，并保留最终 flush 通道。Worker 重建保留业务 FIFO，读取 waiter 失败结算；本代际镜像重放后排空 FIFO，再公开 writable。恢复期间的 revision 水位及贴纸/成员操作的对象标记只屏蔽被镜像覆盖的旧写，不丢弃后来到达的更新。
+  排空恢复 FIFO 前后另发一对 `recoveryReplay` 开合标记（`RecoveryReplayRequest`）：共享 SQLite 写消息在线被拒收时，Worker 记下领域拒收标记，由调用方紧随其后的领域屏障取得失败回执，update 不被确认即可重投；恢复 FIFO 里的那条没有后续屏障来问它，区间内的拒收因此额外回 `recoveryReplayFailed`，主线程据此走统一 fatal 停机，让 Telegram 从上一个确认点重投。
+
+- **主线程到 Disk I/O 的业务传输始终有界**：待发送与在途载荷共同占用 45,000 条和 64 MiB 估算预算，控制消息另有 16 个预留槽。每批最多 128 条，只允许一批在途；Worker 本地串行操作队列最多 8 项，入队来源有界：主线程业务批与诊断批各至多一批在途，load 与每日维护 cron 各一项，Worker 自排的各领域定时 flush 到点后经 `workers/diskIO/timedFlush.ts` 合并成一项（同一来源在执行前重复到点只执行一次），其余模块不直接入队。批消费 ACK 只释放传输窗口，领域持久化 ACK 才表示 durable；30 秒未收到批 ACK 或容量拒收触发 fatal，并保留最终 flush 通道。Worker 重建保留业务 FIFO，读取 waiter 失败结算；本代际镜像重放后排空 FIFO，再公开 writable。恢复期间的 revision 水位及贴纸/成员操作的对象标记只屏蔽被镜像覆盖的旧写，不丢弃后来到达的更新。
 
 - **Worker 的非功能性群提示统一由主线程发送和清理**：AI 限流/话题错误、解除锁定、入群验证欢迎语/终态和刷屏禁言通知成功发送后 30 秒删除。`sendTemporaryMessageFromMain` 的 `notice` 请求使用统一群提示期限，可选 `replyToMessageId` 透传原回复锚点。主线程在发送成功的 `onSent` 回调内登记删除，先于向 Worker 回传消息 ID；回执丢失、请求取消或 Worker 重建都不转移这份清理责任。发送失败不登记任务；欢迎语的发送/传输错误由统一 Telegram 动作边界归一化，后续验证副作用继续按序执行。删除 timer 使用 `unref()`，失败走统一 Telegram 错误日志。验证按钮与 `/qa set` 表单由状态机删除，inline 运势由 inline API 生成。
 
@@ -231,14 +238,14 @@
 
   **`generate_image` 只在直接触发轮挂载。** 用户直接 @/回复机器人，或用带 `directTriggerReason` 的媒体直接唤起时，`replyRound.ts` 才把 `mediaToolsRequested` 置为 true；`createReplyToolset` 随后按 image provider 能力决定是否挂载。随机插话与非直接媒体评价不读取 image provider，也不向模型暴露对应 schema。该资格只控制工具可见性，具体创作意图仍由模型判断。
 
-  **`send_voice` 不受这项资格约束。** 只要 `agent.tts` 已配置且所选实现具备 `synthesizeSpeech`，每轮都挂载，工具声明逐字恒定；是否发语音完全由模型按工具说明判断，执行侧不另设按轮资格，只校验每轮一条的上限、模型可见的每日余量、参数与统一动作预算。台词（`text`）不超过 `VOICE_TEXT_MAX_CHARS`，可选语气（`tone`）不超过 `VOICE_TONE_MAX_CHARS`，超长或类型不符按参数错误退回、不截断。台词是念出来的音频，不属于可见文字出口，不经 `modelAuthoredTextPolicyResult` 判重；「语音里说过的意思不得再用 `send_message` 重发」只由提示词按语义约束（台词是日语，翻译、换说法或加注释都算重复），执行侧不做语义比对。语音真实发送成功后，执行侧按同一条消息写入 `（发送了一条语音：…）` 自录记号。语音按天限量：每轮回复开始时读一次模型可见余量（本 isolate 当前 `agent.tts` 的 `daily_limit - daily_reserve_quota` 减去当前窗口内已用次数，不小于 0），拼成回复任务区块末尾、`[END]` 标签之前的「今日语音余量」行（`buildVoiceQuotaLine`，只在挂载 `send_voice` 时出现）；区块数仍为 4，稳定前缀与工具声明不受影响，同一回复的工具往返复用同一行。余量为 0 时执行侧在接纳阶段以 `SEND_VOICE_DAILY_LIMIT_TOOL_ERROR` 拒绝；接纳回执带 `voice_remaining_today`（扣除本次后的余量）。错误文案与工具说明都要求模型不在群里提起语音、额度或失败。
+  **`send_voice` 不受这项资格约束。** 只要 `agent.tts` 已配置且所选实现具备 `synthesizeSpeech`，每轮都挂载，工具声明逐字恒定；是否发语音完全由模型按工具说明判断，执行侧不另设按轮资格，只校验每轮一条的上限、模型可见的每日余量、参数与统一动作预算。台词（`text`）不超过 `VOICE_TEXT_MAX_CHARS`，可选语气（`tone`）不超过 `VOICE_TONE_MAX_CHARS`，超长或类型不符按参数错误退回、不截断。台词是念出来的音频，不属于可见文字出口，不经 `modelAuthoredTextPolicyResult` 判重；「语音里说过的意思不得再用 `send_message` 重发」只由提示词按语义约束（台词是日语，翻译、换说法或加注释都算重复），执行侧不做语义比对。语音真实发送成功后，执行侧按同一条消息写入 `（发送了一条语音：…）` 自录记号。语音按天限量：每轮回复开始时读一次模型可见余量（本 isolate 当前 `agent.tts` 的 `daily_limit - daily_reserve_quota` 减去当前窗口内的 `agentCount`，不小于 0），拼成回复任务区块末尾、`[END]` 标签之前的「今日语音余量」行（`buildVoiceQuotaLine`，只在挂载 `send_voice` 时出现）；区块数仍为 4，稳定前缀与工具声明不受影响，同一回复的工具往返复用同一行。余量为 0 时执行侧在接纳阶段以 `SEND_VOICE_DAILY_LIMIT_TOOL_ERROR` 拒绝；接纳回执带 `voice_remaining_today`（扣除本次后的余量）。错误文案与工具说明都要求模型不在群里提起语音、额度或失败。
 
-  **「文本 + 语气 → 语音」只有一份实现**（`packages/aiChat/ai/voiceSynthesis.ts`，AI Worker）：`resolveSpeechSynthesizer` 判定入口在不在，`synthesizeVoiceMessage` 经 tts 门面（交互优先配额闸门）合成，signal 已中止则不再编码，再编码成 OGG/Opus；语气一律拼在基础朗读风格之后。工具声明、参数口径、每轮限额与挂回复只属于 AI 语音工具。`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 在主线程经 `packages/aiChat/voiceSynthesis.ts` 投递 `synthesizeVoice`，Worker 以同 requestId 的 `voiceSynthesized` 回执带回结果，成功时转移语音字节的 buffer。等待者在投递前登记，只有五条结算路径：回执、`VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS` 超时、调用方取消、投递被拒、Worker 崩溃重建 / 放弃 / 终止；超时与取消再投 `cancelVoiceSynthesis` 中止 Worker 侧合成，迟到回执按未知 requestId 丢弃。结算一律交回结果联合、不 reject。Worker 侧每次合成的 signal 合入 Worker 生命周期信号，排空开始后到达的请求直接回「worker unavailable」。运维台词上限是 `VOICE_OPERATOR_TEXT_MAX_CHARS`，约束单次编码占用 AI Worker 线程的时长。**每日计数只在 tts 门面登记**（`packages/aiChat/provider.ts`）：请求经配额闸门排队，轮到执行、紧挨着发起供应商请求时按请求的额度口径（`quota`）调用 `aiChat/ai/ttsUsage.ts` 的 `claimTtsUsage`；排队期间取消或被满队列拒绝的请求不计数，超过调用方上限时不发请求、结算为 `daily limit reached`。上限由门面构造时捕获的 `agent.tts` 按 `ttsQuotaLimit` 算出：AI 语音工具传 `ai`，上限为 `daily_limit - daily_reserve_quota`；转交给 Worker 的 `/send` 与 cron 传 `operator`，上限为 `daily_limit`；两者共用同一计数。热重载改了这两个字段时门面缓存整体丢弃，新请求按新值判定，已用次数不清零。一次登记对应一次合成调用，SDK 内部重试（`GEMINI_SPEECH_REQUEST_ATTEMPTS`）不另计。窗口从窗口内第一次请求起算，登记时距起点已满 `TTS_USAGE_WINDOW_MS` 就以本次请求为新起点从 1 计。
+  **「文本 + 语气 → 语音」只有一份实现**（`packages/aiChat/ai/voiceSynthesis.ts`，AI Worker）：`resolveSpeechSynthesizer` 判定入口在不在，`synthesizeVoiceMessage` 经 tts 门面（交互优先配额闸门）合成，signal 已中止则不再编码，再编码成 OGG/Opus；语气一律拼在基础朗读风格之后。工具声明、参数口径、每轮限额与挂回复只属于 AI 语音工具。`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 在主线程经 `packages/aiChat/voiceSynthesis.ts` 投递 `synthesizeVoice`，Worker 以同 requestId 的 `voiceSynthesized` 回执带回结果，成功时转移语音字节的 buffer。等待者在投递前登记，只有五条结算路径：回执、`VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS` 超时、调用方取消、投递被拒、Worker 崩溃重建 / 放弃 / 终止；超时与取消再投 `cancelVoiceSynthesis` 中止 Worker 侧合成，迟到回执按未知 requestId 丢弃。结算一律交回结果联合、不 reject。Worker 侧每次合成的 signal 合入 Worker 生命周期信号，排空开始后到达的请求直接回「worker unavailable」。运维台词上限是 `VOICE_OPERATOR_TEXT_MAX_CHARS`，约束单次编码占用 AI Worker 线程的时长。**每日计数只在 tts 门面登记**（`packages/aiChat/provider.ts`）：请求经配额闸门排队，轮到执行、紧挨着发起供应商请求时按请求的额度口径（`quota`）调用 `aiChat/ai/ttsUsage.ts` 的 `claimTtsUsage`；排队期间取消或被满队列拒绝的请求不计数，超过调用方上限时不发请求、结算为 `daily limit reached`。上限由门面构造时捕获的 `agent.tts` 按 `ttsQuotaLimit` 算出：AI 语音工具传 `ai`，上限为 `daily_limit - daily_reserve_quota`；转交给 Worker 的 `/send` 与 cron 传 `operator`，上限为 `daily_reserve_quota`。AI 只检查并累加 `agentCount`，`/send` 与 cron 只检查并累加 `reserveCount`；两边独立，互不借用。预留为 0 时两个运维入口不发起合成请求。热重载改了这两个字段时门面缓存整体丢弃，新请求按新值判定，已用次数不清零。一次登记对应一次合成调用，SDK 内部重试（`GEMINI_SPEECH_REQUEST_ATTEMPTS`）不另计。窗口从窗口内第一次请求起算，登记时距起点已满 `TTS_USAGE_WINDOW_MS` 就以本次请求为新起点，将两项计数清零后只登记本次请求所属的一项。
 
   并发满载后排队的直接触发，在补跑时被限频闸拒绝必须停在队首、不得继续消费队列：限频只看该群窗口内的轮数、与是哪一条触发无关，第一条被拒就意味着后面每一条都会被拒，而被拒时并发计数不增长——继续往下走就是在同一个同步 tick 里把整队 @ 提及/回复全部丢弃，那些人一句回复都收不到。
 - **语音配置快照**：`agent.tts.style` 由 `packages/config/agentCapability.ts` 严格解析，缺省填入 `GEMINI_SPEECH_STYLE`，非法值拒绝。`packages/aiChat/gemini/speech.ts` 在发起请求时从同一 tts 快照读取 model、voice、style，保留本句 tone 拼接；热重载只影响后续请求，删除 style 恢复默认。
 
-- **模型 token 以 SDK 返回的有效 usage 为准**：`packages/infra/aiCacheUsage.ts` 是统一校验与线程内上报边界，`packages/infra/aiCacheUsageRelay.ts` 统一主线程到 Disk I/O 的诊断信封。覆盖 text、summary、media、image、tts、ad_detect；TTS Interactions、图片生成/编辑与音频转写在各协议入口适配。用量先于正文或音频/图片解码判定上报；外层已取消时，SDK 仍返回的有效用量也只计一次，SDK 未返回 usage 则不估算。Gemini 正文与思考 token 分别校验后相加；OpenAI 输出不再另加 reasoning token。转写仅有 duration 时不换算 token。上报失败不改变模型业务结果，诊断与持久化口径见 [07 运维](07-operations.md)。
+- **模型 token 以 SDK 返回的有效 usage 为准**：`packages/infra/aiCacheUsage.ts` 是统一校验与线程内上报边界，`packages/infra/aiCacheUsageRelay.ts` 统一主线程到 Disk I/O 的诊断信封。覆盖 text、summary、media、image、tts、ad_detect；TTS Interactions、图片生成/编辑与音频转写在各协议入口适配。用量先于正文或音频/图片解码判定上报；外层已取消时，SDK 仍返回的有效用量也只计一次，SDK 未返回 usage 则不估算。Gemini 正文与思考 token 分别校验后相加；OpenAI 输出不再另加 reasoning token。转写仅有 duration 时不换算 token。给出 token 数时只记 token；只给费用的响应（xAI 生图的 `cost_in_usd_ticks`，经 `reportXAiUsage`）记为费用计量，同一响应不同时记两种。上报失败不改变模型业务结果，诊断与持久化口径见 [07 运维](07-operations.md)。
 
 - AI 回复的准入是两道独立的闸，中间隔着「入队等待补跑」这个不定时长的中间态：并发闸（`admitTrigger`）在触发到达时判，限频闸（`isReplyRoundRateLimited`）在真正开一轮前判 5 分钟滑动窗口。
 
@@ -259,6 +266,12 @@
 - **四种媒体（图片/贴纸/GIF/语音）共用同一条「占位入缓存 → 异步解析 → 原位回填」管线**，去重缓存、有界执行器与回填时序只有一份；逐媒体的差异只落在「走视觉描述还是走语音转写」这一个分派上（`packages/aiChat/ai/imageDescription.ts` 的 `resolveMedia`）。语音另起一条并行管线就要把并发合并、容量淘汰、执行槽竞争各写一遍，而那几处的正确性恰恰是最难覆盖的。
 
   非目录媒体描述共用 AI Worker 的 `transientDescriptionCache`，按 `file_unique_id` 保存最多 4,096 项 Promise（`MEDIA_DESCRIPTION_CACHE_MAX`）。命中更新 LRU 顺序，超容量只淘汰最久未使用项，失败结果摘除，不设 TTL；同一媒体的在途请求按 Promise 合并，Worker 重建后从空缓存开始。白名单贴纸目录独立恢复，不占这份 LRU，也不因它淘汰而删除。
+
+  **媒体识别仅在 LRU 未命中后检查新任务容量。** 每次调用只查询一次 LRU；已完成结果直接返回，在途结果合并订阅，两者都不新增执行或等待额度。未命中且无容量时直接返回 `null` 描述，不插入失败条目，也不触发有效缓存淘汰。模态关闭、退避及已取消请求的入口检查仍先于缓存读取。
+
+  聊天识别、贴纸目录描述和生图参考文件下载共用 `cache/workers/aiChat/mediaTasks.ts` 的执行器：真实执行最多 `MEDIA_DESCRIPTION_MAX_CONCURRENCY`（32）个，执行器排队与两种模态的冷探测等待合计最多 `MEDIA_DESCRIPTION_MAX_PENDING`（256）个。未知模态各自只执行一个探测；等待转执行或重新探测时先释放等待位，再在同一同步段内接纳后续任务。已有空闲执行槽时可直接启动无需冷等待的任务。
+
+  `libs/sharedResult.ts` 为共享任务保存可摘除订阅：取消立即移除等待记录和 abort 监听，正常结算清空全部订阅。单个消费者取消不影响其他消费者；最后一个可取消消费者离开且没有无信号消费者时，中止底层任务并按 Promise 身份摘除 LRU 条目。冷等待取消后的结算释放等待额度；LRU 淘汰不撤销仍有消费者的任务，旧任务清理不得删除同键的新任务。Worker 重建后执行器、等待计数与订阅一并清空。
 
 - **机器人自发的图片在滚动记忆里分占位态与内容态**（`packages/workers/aiChat/botImages.ts`）。逐字条目的可选字段 `pendingImage`（`origin` + `caption`）存在即占位态：正文只有自录记号（生图带提示词）与图注；缺省即内容态：记号里是识图描述。两态之间只有「识图成功后原位改写并清空 `pendingImage`」这一种转换。
 
@@ -475,7 +488,7 @@
   **离群判定只有机器人是群管理员时才可靠，非管理员群里抽到已离群的人是既定行为**：Bot API 只保证机器人是管理员时 `getChatMember` 能查其他成员，`chat_member` 更新也只推送给管理员机器人；`left_chat_member` 服务消息不论隐私模式都会推送给所有机器人，但 Telegram 在较大的超级群或隐藏了成员列表时可能不生成它，注销账号则不产生任何信号；抽取用的 `getChat(userId)` 只返回用户私聊资料，与在不在群无关。因此机器人不是管理员的群里，每日复核在第一次查询就因群级拒绝结束本群、一个也删不掉，离群清理只剩 `left_chat_member` 这一条路，没收到的离群者一直留在集合里，照常被抽中发图。抽取路径不做在群校验、不调 `getChatMember`，集合也没有按发言时间的过期；需要可靠清理的群，由部署方给机器人管理员权限，此后 `chat_member` 更新与每日复核照常生效。
 - `/wed` 命令和回调在统一 `/init` 网关之后；新增成员还要求 `isInitEnabled === true`，首次 `/init` 的特许放行不能提前建立候选。网关拒绝时仍处理退群清理，但只删除已有集合中的 ID，不创建群状态、不放行业务更新。
 - `packages/cache/main/wedMembers.ts` 是成员权威 owner，每群长期复用同一个 `Set<number>`，最多 150,000 人；满额保留已有成员并拒绝新 ID，退群腾出空间后继续接纳。`packages/cache/main/wed.ts` 只持有交互状态与执行器，每位用户每群一张会话、每群最多 512 张。交互群表是普通 `Map`，只能为已取得成员集合的群建立；成员权威表与启动文件校验受 `STATE_MANAGED_CHAT_LIMIT`（25）限制，满额拒绝新群，群 teardown 先删交互再清成员集合，因此交互群同样不超过 25 个，两张表都不做淘汰。频道发言、回复和转发来源、自动转发及匿名群身份不扩充候选。普通发言只做同步集合查询、实际新增和标脏，不创建临时集合、候选快照或跨线程投递；抽取用的候选数组只在命令和更换按钮路径创建。
-- 只有实际新增或删除才增加 revision、设置 dirty 并累计条数；重复发言、满额拒绝和不存在的删除保持静默。成员 owner 共用 DiskIO 的 300 条 / 30 秒阈值，从首条未提交变更计时，累计阈值提前异步调度；批次只为脏群生成最终数组。DiskIO 复用统一 dirty flush 与 tmp、fsync、rename 原子替换 `memory/wed/<chatId>.json`，成功释放待写数组，失败保留每群最新快照并重试。Worker 重建时主线程重放待删操作与最终集合；恢复过滤仅覆盖重放时已在有界 FIFO 中的同群旧消息，不以跨生命周期修订号大小判断新旧，后续新操作继续按序送达。
+- 只有实际新增或删除才增加 revision、设置 dirty 并累计条数；重复发言、满额拒绝和不存在的删除保持静默。成员 owner 共用 DiskIO 的 `FLUSH_MAX_ENTRIES`（256）条 / `FLUSH_INTERVAL_MS`（30 秒）阈值，从首条未提交变更计时，累计阈值提前异步调度；批次只为脏群生成最终数组。DiskIO 复用统一 dirty flush 与 tmp、fsync、rename 原子替换 `memory/wed/<chatId>.json`，成功释放待写数组，失败保留每群最新快照并重试。Worker 重建时主线程重放待删操作与最终集合；恢复过滤仅覆盖重放时已在有界 FIFO 中的同群旧消息，不以跨生命周期修订号大小判断新旧，后续新操作继续按序送达。
 
   **整群删除保留独立待确认责任**：`purgeWedMembers` 摘除 `wedMemberStates` 后，将进程内唯一删除编号登记到 `pendingWedMemberDeletes`，再投递并等待领域 flush。拒收、flush 失败或 Worker 重建均保留责任，重复 purge、原重试 timer 与恢复重放继续提交；匹配的 `wedMembersDeletedPersisted` 或本次领域 flush 成功才释放责任。迟到旧回执和旧 flush 不结算新一轮删除。DiskIO 删除入口取消旧快照并立即 durable unlink，失败使用原 timer 重试；新快照取消旧待删标记，同群只有最新操作拥有重试责任。删除未确认时重新启用，以空奖池和待写空快照接管，不能恢复旧候选。奖池与待删记录合计最多 `STATE_MANAGED_CHAT_LIMIT`（25），满额拒绝新群，同群重开不增加占额。
 - 启动全域只读门禁校验规范负整数群文件名、正安全整数用户 ID、唯一性、每群 150,000 条及总群数上限；任一非法输入拒绝启动并保留原文件。目录或文件缺失按无记录处理，由程序按需创建。校验构建的集合经 Worker 消息复制后由主线程直接接管，且必须在 Telegram 客户端初始化前完成；读取和抽取不重建集合。
@@ -495,7 +508,7 @@
 
 ### `/h_image` 随机图片
 
-- 随机图片目录来自已校验的 `config/dynamic/assets.json` 的 `random_h_image_dir`（缺省 `./h_image`，只收绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析，`config/assets.ts` 的 `getAssetConfig().randomHImageDirectory`）。启动时在部署输入闸之后、任何 Worker 与外部连接之前由 `infra/randomImage.ts` 的 `ensureRandomImageDirectory` 准备：是目录（含指向目录的符号链接）则不动，缺失则创建，存在但不是目录或建不出来就拒绝启动，诊断只写 `assets.json` 路径、字段路径与解析后的目录。热重载把 `random_h_image_dir` 换成新目录时，先按同一口径准备并检查新目录，失败则拒绝这次改动、继续用原目录。运行期目录被删不自动重建。
+- 随机图片目录来自已校验的 `config/dynamic/assets.json` 的 `onlyPath.random_h_image_dir`（缺省 `./h_image`，只收绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析，`config/assets.ts` 的 `getAssetConfig().randomHImageDirectory`）。启动时在部署输入闸之后、任何 Worker 与外部连接之前由 `infra/randomImage.ts` 的 `ensureRandomImageDirectory` 准备：是目录（含指向目录的符号链接）则不动，缺失则创建，存在但不是目录或建不出来就拒绝启动，诊断只写 `assets.json` 路径、字段路径（`$.onlyPath.random_h_image_dir`）与解析后的目录。热重载把 `random_h_image_dir` 换成新目录时，先按同一口径准备并检查新目录，失败则拒绝这次改动、继续用原目录。运行期目录被删不自动重建。
 
 - `ensureRandomImageDirectory` 在任何 Worker 与外部连接之前检查专用图库的可读、可写、可访问性，并逐项要求普通文件、合法扩展名和 64 位小写 SHA-256 文件名；目录根允许链接，子目录、文件链接、隐藏文件与残留临时文件均拒绝启动。只核对名称与条目类型，不重算内容摘要、不清理或修复输入。cron 显式指定的独立随机目录不受此命名约束。
 
@@ -533,14 +546,14 @@
 
 ### 落盘与快照契约
 
-- `memory/global/state.json` 使用最新值合并、临时文件、fsync 和原子 rename，顶层只保存 `copy`（必填）与 `ttsUsage`（可缺省），没有备份副本；素材直链与随机图片目录在 `config/dynamic/assets.json`，群功能开关与翻译会话在 SQLite `chat_states`。数据根下仍有 14.x 的 `state.json` 或 `state.json.bak` 时启动与安装器都拒绝（`assertLegacyStateFilesAbsent`），当前格式不读取它们。copy 的权威变更必须等待对应 revision 写入 `memory/global/state.json` 后才能反馈成功并返回 middleware。
-- **`memory/global/state.json` 的 `ttsUsage`（语音合成每日计数）的权威值在 AI Worker**（`cache/workers/aiChat/ttsUsage.ts`），主线程 `cache/main/storage.ts` 的 `globalTtsUsageState` 只是持久化镜像：Worker 每登记一次就以 `ttsUsage` 事件回传全量计数（`{ windowStartedAt, count }`，每次换新对象），主线程整体替换镜像并走 `StateStore` 的后台落盘（最新值合并，不设 durability barrier，进程崩溃时尚未落盘的登记会丢失）。AI Worker 启动时在 `init` 之后、崩溃重建时在重放的 `init` 之后收到 `hydrateTtsUsage`，先于任何 trigger 与 `synthesizeVoice` 到达；镜像为 null 表示从没用过。整块缺省 = 从没用过；存在时 `windowStartedAt` 必须是非负安全整数、`count` 必须是正安全整数，否则拒绝启动；`count` 不与 `agent.tts.daily_limit` 对拍，上限调低后窗口内已用次数可能超过新上限，此时按额度用尽处理。AI Worker 先于 state flush 终止，停机前最后一次登记会进入最终落盘。
+- `memory/global/state.json` 使用最新值合并、临时文件、fsync 和原子 rename，顶层只保存 `copy`（必填）与 `ttsUsage`（可缺省），没有备份副本；素材配置（随机图片目录、默认头像来源与缩略图直链）在 `config/dynamic/assets.json`，群功能开关与翻译会话在 SQLite `chat_states`。启动恢复与安装器共用只读状态闸 `loadCurrentGlobalState`（[`packages/infra/storage/statePersistence.ts`](../../packages/infra/storage/statePersistence.ts)）：数据根下仍有 14.x 的 `state.json` 或 `state.json.bak` 时拒绝（`assertLegacyStateFilesAbsent`），当前格式不读取它们；随后按当前 schema 严格解码 `memory/global/state.json`，未迁移的总计数 `ttsUsage` 等非法内容同样拒绝，安装器因此在注册和启动服务之前停止。copy 的权威变更必须等待对应 revision 写入 `memory/global/state.json` 后才能反馈成功并返回 middleware。
+- **`memory/global/state.json` 的 `ttsUsage`（语音合成每日计数）的权威值在 AI Worker**（`cache/workers/aiChat/ttsUsage.ts`），主线程 `cache/main/storage.ts` 的 `globalTtsUsageState` 只是持久化镜像：Worker 每登记一次就以 `ttsUsage` 事件回传全量计数（`{ windowStartedAt, agentCount, reserveCount }`，每次换新对象），主线程整体替换镜像并交给 `StateStore` 的后台写：最新值合并，从首个未落盘变化起等 `STATE_BACKGROUND_SAVE_DELAY_MS`（5 秒）写出，期间任一等待落盘的写入（如 copy 的权威变更）或停机 flush 会连同最新计数立即写出；不设 durability barrier，进程崩溃时尚未落盘的登记会丢失。AI Worker 启动时在 `init` 之后、崩溃重建时在重放的 `init` 之后收到 `hydrateTtsUsage`，先于任何 trigger 与 `synthesizeVoice` 到达；镜像为 null 表示从没用过。整块缺省 = 从没用过；存在时 `windowStartedAt`、`agentCount`、`reserveCount` 都必须是非负安全整数，两项计数至少一项大于 0，否则拒绝启动。计数不与配置上限对拍，上限调低后对应计数超过新上限时，只拒绝该额度的新请求。旧 `count` 字段拒绝启动，必须先停机冷迁移。AI Worker 先于 state flush 终止，停机前最后一次登记会进入最终落盘。
 - **翻译会话独立于 copy**：会话是 `ChatState.translate` 字段，随 `chat_states` 行持久化并由主线程热读副本持有，因此与其它群状态共用 25 群容量；每群以只读非空数组保存 1–5 个不同身份及各自的 `ja|cn|en|uk|ru` 方向，无会话时为 `undefined`。没有群状态行的群在容量已满时拒绝开始翻译；非法值、重复身份、空数组或超容量均拒绝启动，`memory/global/state.json` 出现 `translate` 同样拒绝启动。恢复通过既有身份缓存播种目标，不创建 Worker 镜像。消息热路径按群查 Map，再在最多 5 项中按身份查找，不创建投影对象。仅文字消息进入复制或翻译，媒体及图注不发送；同目标与 copy 并存时翻译优先。增删目标替换数组，保留其他目标的会话对象身份；异步结果只在对应会话仍有效时发送。开始与停止都先同步改写该群状态，再等待 `persistChatState` 的精确 durable ACK；`/translate disable` 先持久化会话删除，再持久化 `isTranslationEnabled`，任一步失败都不反馈成功。开关权限为 `isCanControllTranslatePermission`，`/bot_status` 读取本群数组长度。翻译不操作头像或占用 copy 冷却。
 - **全局状态文件在解码之前先过读取边界**（`infra/storage/statePersistence.ts`）：`memory/global/state.json` 必须是普通文件或指向普通文件的有效符号链接。目录、指向目录的链接、悬空链接与 `EACCES`/`ELOOP`/`ENOTDIR` 等访问失败均拒绝启动；只有 `lstat` 也返回 `ENOENT` 时才按文件缺省处理。内容使用 fatal `TextDecoder` 严格解码 UTF-8 并剥离 BOM；读取、解码或 schema 校验失败均保留原文件。错误只含文件路径、字段路径和期望形态。
-- **`config/dynamic/assets.json`（两张内联抽签缩略图、gag 发言 inline 缩略图与机器人默认头像的直链，以及随机图片目录 `random_h_image_dir`）文件或字段缺省 = 从没设过 = 回退代码常量**（`consts/ui/assets.ts`），不是「沿用上次」。主线程快照在 `cache/main/assets.ts`：启动总闸在文件存在时整体接管，热重载每轮按读取结果整体替换，文件被删除时换回内置缺省。机器人从不回写这个文件；只读取、不补写，因此代码常量变化会直接反映到未写该字段的部署上。
-- 素材直链的合法性在解码期判定：非空、去首尾空白、可解析的绝对地址，读回的是 WHATWG 归一化后的 `href` 而不是原串（`trim` 只管首尾，URL 构造器还会吃掉字符串内部的 tab/LF/CR 并对空格做百分号编码，留着原串等于让一个「构造器认、Telegram 不认」的地址通过校验）。**不限定图床**，但限定协议：三张缩略图由 Telegram 客户端去取，只认 `https`；只有由本进程自己抓取的 `botDefaultAvatarUrl` 允许明文 `http`，走不走 TLS 是配置者的决定。写坏一律拒绝整份文件而不是静默回退常量——少写 scheme 时 Telegram 只是不显示这张图，与「图挂了」在群里看不出区别。
-- 复原默认头像那条 fetch **跟随重定向**（`redirect: "follow"`）：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google Drive 链接即是）。逼配置者自己解析出终点只会把一个必然踩到的坑变成必须写进文档的注意事项。`/copy`、`/icon steal` 那三条禁用 redirect 属于[出站请求与消息安全](#出站请求与消息安全)那条约束——那些地址来自 Bot API 的 `file_path` 与 t.me 主页的 HTML，受 Telegram 自有资产域 allowlist 管，与本项不是一回事。`AVATAR_MAX_DOWNLOAD_BYTES` 的有界读取和上传前的字节签名校验照旧，但那两道防的是「拿回来的根本不是图片」（Drive 的配额/病毒扫描 HTML 插页是典型），与跳不跳转无关。
-- 四条失败日志都点名生效的地址，才能区分「`assets.json` 写错了」和「随版本发布的兜底常量烂了」；但**只打 `origin + pathname`**（`libs/redaction.ts` 的 `redactUrlForLog`），查询串、fragment 与 userinfo 一律丢掉。这一项由部署方配置，可能是 S3/OSS 的预签名地址，而 `logs/<day>.json` 的 mode 是 `0644` 且属于备份对象，同文件里的 `redactSecretsInText` 只脱敏已加载配置中的凭据、不看 query。取图仍用完整地址——削掉签名这张图就取不回来了。
+- **`config/dynamic/assets.json` 顶层只有三组：`onlyPath`（随机图片目录 `random_h_image_dir`）、`pathOrUrl`（机器人默认头像 `bot_default_avatar`）、`onlyUrl`（两张内联抽签缩略图与 gag 发言 inline 缩略图）。文件、分组或字段缺省 = 从没设过 = 回退代码常量**（`consts/ui/assets.ts`），不是「沿用上次」。主线程快照在 `cache/main/assets.ts`：启动总闸在文件存在时整体接管，热重载每轮按读取结果整体替换，文件被删除时换回内置缺省。机器人从不回写这个文件；只读取、不补写，因此代码常量变化会直接反映到未写该字段的部署上。未知分组、组外字段（含平铺在顶层的旧字段）、分组不是对象均拒绝整份文件，不做旧格式兼容。
+- 素材直链的合法性在解码期判定：非空、去首尾空白、可解析的绝对地址，读回的是 WHATWG 归一化后的 `href` 而不是原串（`trim` 只管首尾，URL 构造器还会吃掉字符串内部的 tab/LF/CR 并对空格做百分号编码，留着原串等于让一个「构造器认、Telegram 不认」的地址通过校验）。**不限定图床**，但限定协议：三张缩略图由 Telegram 客户端去取，只认 `https`；只有由本进程自己抓取的 `pathOrUrl.bot_default_avatar` 允许明文 `http`，走不走 TLS 是配置者的决定。本机路径只收绝对路径或 `./`、`../` 开头的显式相对路径（不含 NUL），相对路径按运行时数据根解析；`bot_default_avatar` 命中本机路径形态即解析为本机文件来源（`DefaultAvatarSource` 的 `path`），否则按直链判定。`parseAssetConfig` 只做词法判定、不做 I/O；本机头像文件由 `loadAssetConfig`（启动总闸与热重载共用）核对为存在的普通文件（跟随符号链接）、不超过 `AVATAR_MAX_DOWNLOAD_BYTES`、字节签名为 JPEG 或 PNG，最多读上限加一个字节。写坏一律拒绝整份文件而不是静默回退常量——少写 scheme 时 Telegram 只是不显示这张图，与「图挂了」在群里看不出区别。
+- 复原默认头像那条 fetch **跟随重定向**（`redirect: "follow"`）：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google Drive 链接即是）。逼配置者自己解析出终点只会把一个必然踩到的坑变成必须写进文档的注意事项。`/copy`、`/icon steal` 那三条禁用 redirect 属于[出站请求与消息安全](#出站请求与消息安全)那条约束——那些地址来自 Bot API 的 `file_path` 与 t.me 主页的 HTML，受 Telegram 自有资产域 allowlist 管，与本项不是一回事。`AVATAR_MAX_DOWNLOAD_BYTES` 的有界读取和上传前的字节签名校验防的是「拿回来的根本不是图片」（Drive 的配额/病毒扫描 HTML 插页是典型），与跳不跳转无关。本机文件来源每次尝试都按同一上限重新有界读取并校验字节签名；读不到、超限或不是 JPEG/PNG 属确定性失败，不重试。
+- 本机文件来源的失败日志点名解析后的绝对路径。直链来源的四条失败日志都点名生效的地址，才能区分「`assets.json` 写错了」和「随版本发布的兜底常量烂了」；但**只打 `origin + pathname`**（`libs/redaction.ts` 的 `redactUrlForLog`），查询串、fragment 与 userinfo 一律丢掉。这一项由部署方配置，可能是 S3/OSS 的预签名地址，而 `logs/<day>.json` 的 mode 是 `0644` 且属于备份对象，同文件里的 `redactSecretsInText` 只脱敏已加载配置中的凭据、不看 query。取图仍用完整地址——削掉签名这张图就取不回来了。
 - 统一 logger 在写入 journal、Worker 信封与 `logs/` **之前**同时执行两层脱敏：已加载配置中的凭据（含 google provider 的每个 `headers` 值）按值替换；SDK/HTTP 错误对象中的 `authorization`、`cookie`、`set-cookie`、API key、token、secret 与 password 等凭据字段按键替换，原始 header tuple 形态同样覆盖。后一层不能只靠 配置凭据清单——xAI/Cloudflare 响应 Cookie 不是本进程配置值。实现必须复用既有 JSON 序列化遍历，不得为每条错误日志深拷贝对象；request id、限流余量与 token 数量等非凭据诊断必须保留。
 
 - logger 在输出前展开 `cause`、`AggregateError.errors` 和 Error 类型的自有可枚举字段，逐层脱敏。单次 emit 共享最多 64 个 Error、256 个参数/属性/数组元素的展开预算，最大嵌套层级为 5，参数 JSON 不超过 64 KiB；循环、深度或预算超限使用静态占位符。
@@ -548,29 +561,29 @@
 - **`ChatState` 是规范形状：所有字段一次建齐，此后只赋值、绝不 `delete`**（`libs/chatState.ts` 的 `createChatState`）。「没设过」由 `undefined` 表示，不由「键不存在」表示；`getChatState` 对没有条目的群交出的 `DEFAULT_CHAT_STATE` 必须同形状，否则「有条目/没条目」之间来回换隐藏类。这是热调用点的形状契约（AGENTS.md：不得事后增删字段）——每条群消息要读 4~6 次 `getChatState(chatId).isXEnabled`（`antiRaid/updateIngress.ts`、`antiRaid/floodControl.ts`、`antiRaid/adCandidate.ts`、`auto/message/index.ts`、`aiChat/availability.ts`）。
 
   **状态与人设分别编码**：`encodeChatStateData` 只把偏离缺省值的状态字段写入 `chat_states.status`；`aiPersona` 独立写入 `ai_persona`。已确证的 `botPermissions` 即使全部为 false 也必须保留，与未查询的 `undefined` 不同。规范 `ChatState` 一次初始化全部 13 个字段，判空逐字段读取取值，并计入人设；仅有上下文不能让群状态存活。解码结果经 `adoptChatState` 进入同一规范形状，未设置的字段取 `undefined`，不得通过增删键改变热路径对象形状。
-- AI 记忆按群事务更新 `chat_states.ai_context`，贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的 JSON 追加文件。每批追加在成功回执前 fsync；待验证终结追加 tombstone。启动跨东京午夜时，先严格解码最新旧日文件，再以当天 active/tombstone 为更晚权威值合并并原子压缩到当天；只有发布成功才删除旧日，旧日损坏则保持新旧文件不动并拒绝恢复。稳态只保留东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；
+- AI 记忆由 AI Worker 每 `AI_SNAPSHOT_INTERVAL_MS`（30 秒）上报 dirty 快照；Disk I/O Worker 严格校验后把每群最终值排入共享 SQLite 事务缓冲，随其它表在同一事务内按主键更新 `chat_states.ai_context`，跟随共享事务的定时、满批、领域屏障与停机 flush 提交；非法快照就地拒收并记 `aiMemory` 拒收标记，不推进 revision 水位线；删除与 purge 后首份快照立即提交，镜像重放区间内与事务失败后的重试退避期内只排队，分别在区间关闭时与重试时提交。贴纸目录按实体写原子快照；日志、运势和待验证状态使用可修复尾部截断的 JSON 追加文件。运势、AI 缓存用量与广告样本按 `FLUSH_MAX_ENTRIES`（256）条或首条后 `FLUSH_INTERVAL_MS`（30 秒）批量追加；待验证的普通字段变化按 key 合并，累计 256 个 key 或等满 30 秒追加，新建、终态与终结立即追加。每批追加在成功回执前 fsync；待验证终结追加 tombstone。启动跨东京午夜时，先严格解码最新旧日文件，再以当天 active/tombstone 为更晚权威值合并并原子压缩到当天；只有发布成功才删除旧日，旧日损坏则保持新旧文件不动并拒绝恢复。稳态只保留东京当天文件，并在条数/字节阈值处收敛为 active 快照。截断修复必须按 JSON 字符串、转义与括号深度识别顶层成员边界，不能依赖对象值的收尾缩进；
 - Disk I/O 启动恢复严格分成三阶段：所有持久化域先只读 inspect/解码，全部成功后统一 adopt 内存 owner 与可写 SQLite 连接，成功回执后才执行临时/孤儿/过期文件清理、compact，并注册唯一的东京零点维护 cron。该 cron 逐领域隔离失败，先通知主线程接纳 `/wed` 每日成员复核，再触发运势、日志、入群日志、广告样本、待验证与临时广告免检维护；既有启动/事件路径仍作为兜底。任一 inspect 失败都不得改变任一领域的文件或权限，也不得留下维护 cron；AI 记忆与贴纸协议在 AI Worker 再水合时复用同一严格 decoder，坏载荷必须让该 Worker 初始化/重建明确失败，不能静默跳过单项。
 
   `null` tombstone 与其它基础类型都必须被视为完整的最后值。
-- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 SQLite 清空事务达到 durable 边界或删除已被更新 revision 覆盖时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。一次已确认删除或 LRU 淘汰后的首份新快照必须立即写入，主线程在收到对应 durable upsert 回执前保留 revision 标记并在 Disk I/O Worker 重建后重放最新镜像。
+- AI 记忆 upsert/delete 按 chat 使用运行时单调 revision。主线程持有未确认删除 tombstone，Disk I/O Worker 只有在 SQLite 清空事务达到 durable 边界、删除本来就迟于已接受的更新 revision，或尚未提交的删除被更新 revision 覆盖且覆盖它的写入已提交时才回执；Worker 重建会重放 tombstone 与最新镜像，顺序不决定最终结果。一次已确认删除或 LRU 淘汰后的首份新快照必须立即写入，主线程在收到对应 durable upsert 回执前保留 revision 标记并在 Disk I/O Worker 重建后重放最新镜像。
 
   `/bot_status` 展示的本群上下文容量只读这份镜像的派生计数：滑动热记忆条数与冷摘要轮数由 AI Worker 随记忆快照上报，hydrate 完成后再全量播种一次，两个计数与快照镜像同生共死。主线程不得在命令路径上解析快照 JSON 现算，也不得把「无条目」解释成沿用旧值——那一律表示此刻没有可展示的上下文，按 0 展示。
 
   启动恢复以 SQLite `chat_states` 为准，只 hydrate 明确启用 AI 的群，并为关闭群的残留快照安排删除。当前快照中的每条热区消息必须包含正数 `messageId`；消息索引由这些消息重建，不单独持久化。
 
-- `chat_member` 入群事实只有在 `flushDiskIODomain("joinLog")` 返回 `flushed` 后才能确认对应 update；投递成功不等于 durable。**但「已缓冲待写」必须与「写入失败」分开报**：落盘 Worker 崩溃自愈期间 `diskIORuntime.writable` 为 false，`postDiskIO` 把消息压进有硬顶的重放 FIFO 并返回 true，而同一窗口里 `requestDiskIOFlush` 因为没有可写的 Worker 直接短路成 `failed`——那是「此刻没人能刷盘」，不是「写坏了」。`recordJoinLog` 必须在投递**之前**取样 `isDiskIOBuffering()` 并据此放行（投递之后再问会把「已进缓冲」误读成「已发出」），否则窗口内任意一次入群都会让 `updateIngress` 抛错、经 `bot.catch` rethrow 让 `handleUpdate` reject，把一次可自愈的瞬时故障放大成整进程非零退出加上一整段更新重投。缓冲不是静默丢弃：握手结束后由 `activateDiskIOWorker` 原序重放，重放失败或缓冲触顶都走 `stopWorkerAfterLoadFailure` 的统一 fatal 停机路径。
+- `chat_member` 入群事实进批次即受理：`recordJoinLog` 投递带单调序号的事实并登记进主线程未确认镜像（`cache/main/joinLog.ts`）后立即返回，不等待落盘。Disk I/O Worker 累计 `FLUSH_MAX_ENTRIES`（256）条或首条后 `FLUSH_INTERVAL_MS`（30 秒）按 `chatId:day` 分组追写并 fsync，停机统一 flush 写出剩余批次。处置推进后 Worker 发出 `joinLogPersisted` 回执，带已收下的最大序号 `through` 与其中仍留在缓冲里的序号 `pending`：其余不超过 `through` 的事实都已写入或按窗口外丢弃，主线程据此释放它们，镜像只保留尚未落盘的事实。Worker 崩溃重建时镜像经 respawn listener 原序重放，恢复 FIFO 中序号不超过重放末条的事实由 `DiskIORecoveryRevisions` 跳过；已写入过的精确重投由磁盘索引在追加前跳过。尚未落盘的事实达到 `JOIN_LOG_MAX_BUFFERED_ENTRIES`（1,024 条，四个批次）或 Disk I/O 拒收时 `recordJoinLog` 返回 false，`updateIngress` 抛错让该 update 不被确认并由 Telegram 重投，磁盘持续故障不会转成无界内存。进程被强杀或断电时，最近一个窗口内尚未落盘的入群事实丢失。
 
 - 入群日志追加完成 fsync 后，压缩在 rename 前失败只记录维护错误，不否定追加回执；rename 后必须补齐父目录 fsync，否则本次拒绝 ACK、丢弃缓存并退避。再次接管已有文件也先同步父目录，再恢复追加游标与索引。
 
-  **这条承诺靠重放区间标记兑现**（`RecoveryReplayRequest`）：拒收标记之所以一个布尔就够，依据是「`recordJoinLog` 的 post 与紧随其后的领域 flush 之间没有 await，两条消息必然成对相邻到达」；而恢复缓冲重放是这个前提的唯一例外——那条消息的 post 发生在崩溃窗口里，`recordJoinLog` 在缓冲那一刻就已经放行了该 update，此后没有任何 flush 会再问它写没写进去。Worker 自己看不出「在线」与「重放」的区别，因此由主线程在排空前后各发一条标记把那段区间圈出来（整段排空是同步的，中间插不进在线消息，框住的恰好是重放的那一批）：区间内的写失败额外回一条 `recoveryReplayFailed`，主线程据此停机让 Telegram 从上一个确认点整段重投。少了这道标记，拒收标记会挂到某个**无关**的后续入群事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条却没有任何痕迹。Worker 写失败必须把原分组放回缓冲并退避重试，不能清空后丢弃；待刷事实硬顶 1,200 条，满载必须快速失败并让尚未确认的 update 重投，不能把磁盘故障转成无界内存。**这条快速失败必须由 Worker 的消息路由兜住**：异常一旦逸出 `onmessage`，Bun 会终止整条落盘线程，在途 flush 全按失败结算、各领域缓冲随线程一起丢，代价远超一条入群事实。路由捕获后记下拒收标记，由统一 flush 的 joinLog 出口消费一次并回报该领域失败——被拒的事实不在缓冲里，只看缓冲会把「什么都没写成」报成落盘成功。群日 latest-by-user 索引最多常驻 64 份并按 LRU 淘汰，失败退避最多记 128 份；两者都可由权威文件/下一次重试安全重建，绝不能当成持久化成功的证据。
+  Worker 写失败必须把原分组放回缓冲并退避重试，不能清空后丢弃；这些事实列在回执的 `pending` 里，镜像继续持有它们；一个群的文件持续写不进只留下它自己的事实，其它群已写入的事实照常释放。Worker 的待写集合恒为主线程镜像的子集，镜像硬顶同时约束 Worker 内存。`handleJoinLogMessage` 不因单条事实抛出：跨日清理失败只记 `console.error` 并照常缓冲（新事实落在保留窗口内，清理不会删它的文件），下一条事实与每日维护会重试清理。群日 latest-by-user 索引最多常驻 64 份并按 LRU 淘汰，失败退避最多记 128 份；两者都可由权威文件/下一次重试安全重建，绝不能当成持久化成功的证据。
 
-  **群 teardown 的整群删除必须另占一个领域**（`joinLogPurge`）：追写那一格由每一条入群事实的 durable 屏障消费，把一个已停管群删不掉的文件算进去，就等于让那一个文件把**所有群**的入群 update 全部判成未确认、无限重投——而按 `chatId:day` 分组回报失败，本来就是为了不让一个群的坏文件连坐其它群。删除侧同步丢掉该群仍在缓冲里的待写事实（否则下一次 flush 会把它们写回一份刚删掉的文件），逐个文件走带目录 fsync 的 unlink，失败保留待删标记并由后续 flush 重试。
+  **群 teardown 的整群删除另占一个领域**（`joinLogPurge`）：`purgeChatJoinLog` 的屏障只刷这一格，一个已停管群删不掉的文件只让那一次 teardown 回报失败，不连坐其它群的入群批次。删除侧同步丢掉该群仍在 Worker 缓冲里的待写事实，主线程同时把该群条目从未确认镜像摘除（否则下一次 flush 或 Worker 重建会把它们写回一份刚删掉的文件），逐个文件走带目录 fsync 的 unlink，失败保留待删标记并由后续 flush 重试。
 
   Telegram 重投的完全相同事件由磁盘恢复出的索引在追加前跳过。`/batch_kick` 读取的是 `[since, now]` 滚动窗口，跨东京午夜时合并两个群日文件，而不是截成“当天”。
 
   **窗口两端与 `joinedAt` 必须同源**：库里的 `joinedAt` 全部来自 Telegram 的 `update.date`（`antiRaid/updateIngress.ts`），因此 `/batch_kick` 的「现在」取本条命令消息自带的 `ctx.msg.date`，不是宿主的 `Date.now()`——两个时钟直接相减，窗口边界会整体漂移出它们之间的偏差，而 `readJoinLog` 既拿 `since`/`now` 逐条比 `joinedAt`，也拿它们算该读哪一两个日文件（那些文件名同样是按 `joinedAt` 的东京日期起的）。文件保留期那侧仍按宿主时钟判（`readJoinLog` 里的 `today`）：那问的是「盘上还剩哪几天」，由 Worker 自己的跨日清理决定，与事件时间无关。
 
-  **「窗口外」的两侧收场不同，必须分开判**：**过旧**（停机后 Telegram 重投的几天前入群）是有意静默丢弃——滚动 24 小时窗口本来就用不上它，报失败只会让这条 update 永远得不到确认、被反复重投；**领先本 Worker 今天**则不是「窗口用不上」，而是事件时间与宿主时钟对不上，必须抛进上面那个统一拒收出口。照过旧那样静默 return 的话，`recordJoinLog` 会把它当成已经落盘，这条入群从此在 `/batch_kick` 里查无此人、全链路零日志。
+  **「窗口外」的两侧收场不同，必须分开判**：**过旧**（停机后 Telegram 重投的几天前入群）是有意静默丢弃——滚动 24 小时窗口本来就用不上它；缓冲为空时立即发出处置回执，免得这类事实占住主线程镜像。**领先本 Worker 今天**是事件时间与宿主时钟对不上（典型是 Telegram 先跨过东京零点），这类事实照常进缓冲，由 flush 留到本 Worker 的东京日期追上后再写：启动恢复拒绝未来日期文件，不能提前建文件。留待期间它列在回执的 `pending` 里；停机统一 flush 时若仍未写入，joinLog 领域如实回报失败。
 
   **`/batch_kick` 战报里的「黑名单交回封禁」必须真的交回去**：命中黑名单就早退的那几条记录，本命令一步都没做（不探测、不移除），只在回执里报个数。不在整批结束后请一次补扫（`requestBlocklistResweep` + `sweepBlockedMembers`）的话那句话是空的——管理员据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在，而典型成因正是更早的封禁批次在限流下被判 `complete` 而实际没生效、人还坐在群里。派发按「早退条数」而不是 `blocked` 总数触发：并发拉黑后补封成功那条路已经把人按住了，不必再惊动清扫；整批只派发一次，`prepareBlocklistSweep` 自带 claim 与 `nextRetryAt` 闸门，逐条调用只是在命令的固定小并发池里空转。
 
@@ -584,7 +597,7 @@
 
 - **普通 inline 运势使用 Bot 配置的语气**：[InlineQuery](https://core.telegram.org/bots/api#inlinequery) 没有目标群 ID，签名回执也不提供可用于查询阶段的群身份。不得由查询用户、其他群缓存或 `chat_type` 推断发送目标。
 
-- **AI 持久化只更新已有群**：启动从同一 SQLite 连接读取并严格解码 `ai_context`，恢复 AI Worker 记忆及主线程未确认快照镜像。上下文写入前先提交本群待写状态；状态事务失败时保留上下文待写值，不提前回 durable ACK。上下文只执行按主键 UPDATE，迟到快照不能复活已删群；状态与人设写入不覆盖上下文。记忆删除只置空 `ai_context`，群行删除则清除三列。
+- **AI 持久化只更新已有群**：启动从同一 SQLite 连接读取并严格解码 `ai_context`，恢复 AI Worker 记忆及主线程未确认快照镜像。上下文与群状态排入同一个共享事务缓冲，事务内先写群状态再按主键 UPDATE 上下文：同批新建的群行先存在，迟到快照不能复活已删群；事务失败时两者一起保留重试，不提前回 durable ACK。状态与人设写入不覆盖上下文。记忆删除只置空 `ai_context`，群行删除则清除三列。
 
 ### 群状态与 `chat_states`
 
@@ -649,7 +662,7 @@
   落盘失败时 `/block` 的回复必须说破「没写进硬盘」：Worker 侧写盘错误只有 `console.error`，按设计不进 `logs/`。
   **唯一例外是每日运势的追加停摆**：连续失败到阈值时 Worker 额外向主线程发一条 `luckAppendStalled` 诊断，由运势 owner 记一行 `logger.error` 进 `logs/`（边沿触发，一次故障期只报一条）。它报的不是某一次 write(2) 的错，而是「一个领域已持续丢数据」——而运势的丢失在别处完全无迹可寻：主线程 `dailyLuckCache` 照常命中，用户看不出异常。递归风险为零：据此记的日志走 log 领域，log 领域自己写失败仍只 `console.error`。
 
-  **落盘确认按领域收敛**：统一 flush（`flushAll`）是八个领域的合取，任何一个失败都会让整体回执变成 `flushFailed`；`/block` 只能等 `flushDiskIODomain("blocklist")`，否则某群 `memory/wed/<chat>.json` 属主不对也会让它报「小本本没能写进硬盘」，把运维引向一个其实没坏的文件。回执因此必须带 `failedDomains`，主线程据此点名真正坏掉的领域——不点名就没有任何一条进得了 `logs/`。AI 缓存用量统计（`memory/ai-daily-usage/`）也随统一 flush 刷出，但它是旁路数据，刷盘失败只由 Worker `console.error` 并丢掉那一批，**不进 `failedDomains`**：整轮 `flushDiskIO` 的调用方（Anti-Raid 的 durable 投递、停机最后一刷）不得因为统计写不进去而判为失败。
+  **落盘确认按领域收敛**：`/block` 只等 `flushDiskIODomain("blocklist")`，Worker 只刷黑名单所在的 SQLite 事务（`flushScope` 按领域路由），`memory/wed/<chat>.json` 属主不对这类无关故障既不会被这次屏障触发，也不会让它报「小本本没能写进硬盘」。停机与诊断重建前的统一 flush 覆盖全部领域，回执带 `failedDomains`，主线程据此点名真正坏掉的领域——不点名就没有任何一条进得了 `logs/`；SQLite 屏障的回执可能带上同一事务里其它表的失败，由 `narrowFlushResultToDomain` 收窄到目标领域。AI 缓存用量统计（`memory/ai-daily-usage/`）与广告样本也随统一 flush 刷出，但它们是旁路数据，刷盘失败只由 Worker `console.error` 并丢掉那一批，**不进 `failedDomains`**：停机最后一刷不得因为统计或样本写不进去而判为失败。
 
   **重复 `/block` 是落盘失败后的重试动作**：目标已在黑名单 LRU 里但仍有未 ACK 的 `blocklist` revision 时，`ensureBlocklistEntryQueued` 必须重投最终值并重新等确认，不能因为「LRU 里已经有了」就把 `persisted` 当成 true——那会连着两次都告诉管理员成功了，而 SQLite 根本没有这条记录。黑名单成员入群一律 ban（不是「踢而不封」）——那条只踢不封的规则是为反刷群自动踢出防误杀而设，黑名单里的每个 id 都是管理员亲手写进去的。
 
@@ -657,7 +670,7 @@
 
   **边沿只能消耗在落地那一刻，不能消耗在投递那一刻**：`recordBotChatPermissions` 每次确证管理员身份都调一次 `sweepBlockedMembers`，「这个群扫过了没有」由 `blocklistSweepState`（`packages/cache/main/blocklist.ts`）按 Worker 的 `blockedMembersRemoved` 回执记账——只有 `complete` 才记 `sweptAt`。把它挂在身份变更的边沿上，一次限流失败就等于那些人永久坐在群里。
 
-  重试同样挂在身份观测上，而那类更新每条入群都会来一次，因此必须有 `BLOCKLIST_SWEEP_RETRY_INTERVAL_MS` 这道退避闸——**而且这道闸必须排在名单页读之前**：`readBlocklistSweepPage` 不是本地读，它先向 Disk I/O Worker 请求一次 `scope:"all"` 的 flush（`flushAll` 明确不看各领域的攒批阈值，会把当时所有脏领域立刻写盘），再跨线程取一页主键。把闸排在读之后，稳定态下每条 `chat_member` 更新都要为一次注定被 `prepareBlocklistSweep` 丢掉的分页读付一次全领域落盘，入群洪流上尤其贵。资格判定只有一份实现（`infra/blocklist/sweepEligibility.ts` 的 `isManagedAdminChat` / `isSweepSlotFree` / `canClaimSweep`），由 `prepareBlocklistSweep`、`sweepBlockedMembers`、`sweepManagedBlocklistChats`、`nextBlocklistSweepAt` 与 `hydrateBlocklist` 共用；读盘期间状态仍可能变化，因此 `prepareBlocklistSweep` 在 await 之后照旧复查一次，调用点的预判只去掉注定空转的那一趟 I/O。`/init` 开关与撤管理员/离群都经 `forgetChatBlocklistWork` 清掉该群的清扫进度**并丢弃在途批次**，重新接管后重新欠一次；
+  重试同样挂在身份观测上，而那类更新每条入群都会来一次，因此必须有 `BLOCKLIST_SWEEP_RETRY_INTERVAL_MS` 这道退避闸——**而且这道闸必须排在名单页读之前**：`readBlocklistSweepPage` 不是本地读，它先向 Disk I/O Worker 请求一次 `blocklist` 领域 flush（不看攒批阈值，立即提交共享 SQLite 事务），再跨线程取一页主键。把闸排在读之后，稳定态下每条 `chat_member` 更新都要为一次注定被 `prepareBlocklistSweep` 丢掉的分页读付一次 SQLite 提交与跨线程往返，入群洪流上尤其贵。资格判定只有一份实现（`infra/blocklist/sweepEligibility.ts` 的 `isManagedAdminChat` / `isSweepSlotFree` / `canClaimSweep`），由 `prepareBlocklistSweep`、`sweepBlockedMembers`、`sweepManagedBlocklistChats`、`nextBlocklistSweepAt` 与 `hydrateBlocklist` 共用；读盘期间状态仍可能变化，因此 `prepareBlocklistSweep` 在 await 之后照旧复查一次，调用点的预判只去掉注定空转的那一趟 I/O。`/init` 开关与撤管理员/离群都经 `forgetChatBlocklistWork` 清掉该群的清扫进度**并丢弃在途批次**，重新接管后重新欠一次；
 
   这一步必须排在状态落盘**之前**——停管是 Telegram 已经告知的权威事实，不会因为 `chat_states` 没写成而撤销，而落盘一旦拒绝，进程随即退出、盘上那份 `botPermissions` 快照还写着 `isAdministrator: true`，启动恢复那道过滤兜不住，那批注定失败的处置会在每次重启与每次 Worker 重建时原样重投。
 
@@ -753,7 +766,7 @@
 
   **每个发言身份只占一条、整体覆盖，不留历史**：inline 查询每敲一个键就来一次应答，只有最后一次里的结果才可能被真正发出去；同一次应答的多条结果（同一个人在多个群同时被 gag）共享同一段源文本，必须一起登记。容量硬顶 `INLINE_RESULT_SOURCE_MAX_AUTHORS`（inline 模式对任何人开放，同时被输入的身份数没有别的上界），撑满按最久未登记的发言身份淘汰。落群正文必须与登记的结果正文**逐字相同**才认——客户端偶尔会发出上一次按键那条结果，发完又立刻开下一次查询也会把登记覆盖掉，那时宁可当作拿不到源文本，也不能拿另一段文本去判一条真实消息。**取不到源文本一律不判定**（没登记、被容量挤掉、进程在发言之后重启、正文对不上）：宁可漏一条，也不让本 bot 的渲染结果流进判定。源文本为空的应答同样不登记，因为那种结果里没有一个字是用户写的（纯运势、概率、限流提示）。
 
-  **这条豁免必须一并盖住引文**：讨论组评论区里每条顶层评论的 `reply_to_message` 都是同一条频道贴，只挡贴本身、却把它的正文抄进 `sampleContext` 送检，等于拿频道自己的推广文案去判每一个评论者——一条频道推广就能把整个评论区的人逐个连坐拉黑，而他们一个字都没写。`quote` 是从被回复消息里截的片段，因此一并丢掉。
+  **这条豁免必须一并盖住引文**：讨论组评论区里每条顶层评论的 `reply_to_message` 都是同一条频道贴，只挡贴本身、却把它的正文抄进引用上下文（`sampleQuote` / `sampleReplyTo`）送检，等于拿频道自己的推广文案去判每一个评论者——一条频道推广就能把整个评论区的人逐个连坐拉黑，而他们一个字都没写。`quote` 是从被回复消息里截的片段，因此一并丢掉。
 
   **群管理员/群主永不被处置**：处置与 `/block` 同权且不可逆（永久名单 + 每个托管群封禁 + `revoke_messages` 抹掉近期消息），而管理员转发合作方链接、玩笑说「加我微信」都足以被读成推广。闸门分两道——入队时用 Worker 侧的管理员缓存（`freshAdminIds`）挡掉已知管理员、省下额度；判定命中后再以 `getChatAdministrators` 为准确证一次，**确证不了一律按不处置办**（放过一条广告的代价远小于误封群主，何况下一条消息会重新排队，那时缓存已经热了）。
 
@@ -831,7 +844,7 @@
 
   **收紧提示词里任何一条结构规则之前，必须拿 `config/dynamic/ad_samples.json` 的正样本逐条对一遍**：规则管「凭什么算广告」、示例管「本部署认的是哪几类」，而两边都在讲同一件事的口径。规则说「通常不是」而示例清单说「命中同类即判 true」时，模型收到的是一对互相打脸的指令，受损的一侧永远是召回——被放过的广告不留任何日志痕迹，没人会发现。招工诈骗那一类尤其容易踩：那些正样本根本不留联系方式（引流全靠对方私聊），把「三件套」写成必须同时凑齐就会让清单里十几条正样本整批判 false。
 
-  **个人候选的姓名与正文共同送检**：Worker 从现有 `AdCandidateMessage.meta` 读取发言时的 `firstName`、`lastName`，分别清洗为单行并按 `AD_DETECT_SENDER_NAME_MAX_CHARS`（128 个 UTF-16 码元）保留完整代理对，与正文独立限长。姓名不变且消息仅重复已认领引文时静默跳过；姓名改变仍送检。姓名随每条 entry 冻结，计入整串预算，并原样进入命中样本；后续改名不改写已接纳的内容。`directText` 包含本人姓名和非转发正文，转发者姓名仍属于本人内容。姓名中的推广按直接广告归因，普通姓名不单独构成广告。姓名和正文均只进入 user 数据段；候选过滤、白名单与管理员豁免沿用统一边界。
+  **个人候选的姓名与正文共同送检**：Worker 从 `AdCandidateMessage` 平铺的 `firstName`、`lastName` 读取发言时的姓名（候选除 `linkUrls` 外只含原始值字段，留在 Bun structured clone 的扁平快路径上；Worker 侧只在姓名变化时重组消息串的元数据对象），分别清洗为单行并按 `AD_DETECT_SENDER_NAME_MAX_CHARS`（128 个 UTF-16 码元）保留完整代理对，与正文独立限长。姓名不变且消息仅重复已认领引文时静默跳过；姓名改变仍送检。姓名随每条 entry 冻结，计入整串预算，并原样进入命中样本；后续改名不改写已接纳的内容。`directText` 包含本人姓名和非转发正文，转发者姓名仍属于本人内容。姓名中的推广按直接广告归因，普通姓名不单独构成广告。姓名和正文均只进入 user 数据段；候选过滤、白名单与管理员豁免沿用统一边界。
 
   **纯链接是高于其它启发式信号的硬性反例**：剔除 `bundle.ts` 附加的每行序号后，如果整串只由一个或多个链接及可选的普通姓名组成，且姓名和正文均没有推广、招募或交易文案，必须判 false。`vless://`、`vmess://`、`trojan://`、`ss://` 等代理节点或订阅协议同样属于链接；URL 长度、查询参数、百分号编码与片段名都不能单独把它翻成广告。这条边界只保护纯链接，链接旁出现的真实营销文案仍按正样本与其它规则判定。
 
@@ -843,13 +856,13 @@
 
   模型看到的群聊原文一律是数据，`reason` 只进日志与播报文案，不参与任何控制流。
 
-  **命中即写一条旁路样本**（`memory/ad-detected/sample.json`，见 `workers/diskIO/adSampleFile.ts`）：判定规则由提示词定死，题材口径全靠 `config/dynamic/ad_samples.json` 的示例，而示例只能从真实命中里攒——没有原始素材，误判就只能靠人凭印象复述。
+  **命中即记一条旁路样本**（`memory/ad-detected/sample.json`，见 `workers/diskIO/adSampleFile.ts`；先进 Disk I/O 内存批次，`FLUSH_MAX_ENTRIES`（256）条或首条后 `FLUSH_INTERVAL_MS`（30 秒）追加，停机统一 flush 照常刷出）：判定规则由提示词定死，题材口径全靠 `config/dynamic/ad_samples.json` 的示例，而示例只能从真实命中里攒——没有原始素材，误判就只能靠人凭印象复述。
 
-  这是整个持久化里**唯一不读样本内容**的一类：启动恢复不 hydrate，也不进统一 flush 的领域清单（一个纯诊断文件的写盘失败不该让 `/block` 的落盘确认报失败）；启动成功后的 maintenance 与统一东京零点 cron 只扫描目录项，首次写入仍是兜底。孤儿临时文件每个 Worker isolate 至多扫描一次，归档保留期每个东京日最多清扫一次；当前文件达到 8 MiB 时自动轮转为 `sample.<东京日期>[.<正整数序号>].json`，归档严格按文件名日期保留今天在内最近 15 个东京自然日。清扫只删除严格匹配的普通文件，扫描或单文件删除失败均继续旁路追加；样本允许截断自愈，失败即弃且只 `console.error`；
+  这是整个持久化里**唯一不读样本内容**的一类：启动恢复不 hydrate，也不进 flush 回执的失败领域清单（一个纯诊断文件的写盘失败不该让落盘确认报失败）；启动成功后的 maintenance 与统一东京零点 cron 只扫描目录项，首次写入仍是兜底。孤儿临时文件每个 Worker isolate 至多扫描一次，归档保留期每个东京日最多清扫一次；当前文件达到 8 MiB 时自动轮转为 `sample.<东京日期>[.<正整数序号>].json`，归档严格按文件名日期保留今天在内最近 15 个东京自然日。清扫只删除严格匹配的普通文件，扫描或单文件删除失败均继续旁路追加；样本允许截断自愈，批次写失败整批丢弃且只 `console.error`，Disk I/O Worker 重建时未刷出的批次随 isolate 丢失；
 
   投递排在 `blockUser` 之前，那之后每一步都可能抛错，而这条素材恰恰是「这次判得对不对」的唯一证据。样本按**整串**记录而不是只留触发那一条：判定看的就是整串，只留一条的话人看到的是一句孤立的话，复现不出模型当时读到的东西。
 
-  **被引用段与被回复原文既进判定、也进样本**，但从投递入口起就走两个独立字段（`text` 与 `sampleContext`），两条理由各自独立：判定侧必须在正文按 `AD_DETECT_MESSAGE_MAX_CHARS` 截断**之后**再接上（先拼后截就是一条零成本绕过路径，几百字废话即可把引文顶出额度），样本侧必须留一份没并进正文的原样（人回头查误判时得分得清哪一段是他自己写的、哪一段是引来的）。
+  **被引用段与被回复原文既进判定、也进样本**，但从投递入口起就与正文分开走（`text` 之外另有 `sampleQuote`、`sampleReplyTo`，Worker 侧由 `boundSampleContext` 限长后收成 `AdSampleContext`），两条理由各自独立：判定侧必须在正文按 `AD_DETECT_MESSAGE_MAX_CHARS` 截断**之后**再接上（先拼后截就是一条零成本绕过路径，几百字废话即可把引文顶出额度），样本侧必须留一份没并进正文的原样（人回头查误判时得分得清哪一段是他自己写的、哪一段是引来的）。
 
   接上去时**不带任何系统措辞**（不写「引用：」这类前缀），理由同 URL：那会给正文引入可被伪造的结构，发送者把同样的字打进自己的正文就能假装某段话是别人说的。
 

@@ -118,9 +118,7 @@ describe("explicit Worker initialization", () => {
     }
   });
 
-  test("全量恢复采用三十秒读取预算和四万五千条待写上限", () => {
-    expect(LOAD_TIMEOUT_MS).toBe(30_000);
-    expect(DEFAULT_MAX_PENDING_BUSINESS_MESSAGES).toBe(45_000);
+  test("全量恢复采用 LOAD_TIMEOUT_MS 读取预算和 DEFAULT_MAX_PENDING_BUSINESS_MESSAGES 待写上限", () => {
     expect(diskIORuntime.runtimeRecoveryTimeoutMs).toBe(LOAD_TIMEOUT_MS);
     expect(diskIORuntime.maxPendingBusinessMessages).toBe(
       DEFAULT_MAX_PENDING_BUSINESS_MESSAGES
@@ -217,7 +215,7 @@ describe("explicit Worker initialization", () => {
 
       const flushPromise = diskIO.flushDiskIO(1_000);
       const flush = first.messages.at(-1)!;
-      expect(flush.type).toBe("flush");
+      expect(flush).toMatchObject({ type: "flush", scope: "all" });
       first.onmessage!({ data: { type: "flushed", flushedId: flush.type === "flush" ? flush.flushId : -1 } } as MessageEvent<DiskIOReply>);
       await flushPromise;
 
@@ -225,7 +223,7 @@ describe("explicit Worker initialization", () => {
       const failedFlush = first.messages.at(-1)!;
       expect(failedFlush.type).toBe("flush");
       // 回执按领域回报失败，让 /block 这类只关心自己那个领域的调用方不被
-      // 无关领域误导（见 workers/diskIOWorker.ts 的 flushAll）。
+      // 无关领域误导（见 workers/diskIOWorker.ts 的 flushScope）。
       const failedReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: failedFlush.type === "flush" ? failedFlush.flushId : -1,
@@ -234,13 +232,14 @@ describe("explicit Worker initialization", () => {
       first.onmessage!({ data: failedReply } as MessageEvent<DiskIOReply>);
       expect(await failedFlushPromise).toBe("failed");
 
+      // 领域屏障只请求自己那一格；SQLite 共用一个事务，回执可能带上同事务里其它表的失败。
       const unrelatedDomainFlushPromise = diskIO.flushDiskIODomain("blocklist", 1_000);
       const unrelatedDomainFlush = first.messages.at(-1)!;
-      expect(unrelatedDomainFlush.type).toBe("flush");
+      expect(unrelatedDomainFlush).toMatchObject({ type: "flush", scope: "blocklist" });
       const unrelatedDomainReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: unrelatedDomainFlush.type === "flush" ? unrelatedDomainFlush.flushId : -1,
-        failedDomains: ["aiMemory"],
+        failedDomains: ["whitelist"],
       };
       first.onmessage!({ data: unrelatedDomainReply } as MessageEvent<DiskIOReply>);
       expect(await unrelatedDomainFlushPromise).toBe("flushed");
@@ -261,16 +260,16 @@ describe("explicit Worker initialization", () => {
       // 把运维引向一个跟本次失败毫无关系的文件。
       const outcomePromise = diskIO.flushDiskIODomainOutcome("blocklist", 1_000);
       const outcomeFlush = first.messages.at(-1)!;
-      expect(outcomeFlush.type).toBe("flush");
+      expect(outcomeFlush).toMatchObject({ type: "flush", scope: "blocklist" });
       const outcomeReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: outcomeFlush.type === "flush" ? outcomeFlush.flushId : -1,
-        failedDomains: ["blocklist", "joinLog"],
+        failedDomains: ["blocklist", "whitelist"],
       };
       first.onmessage!({ data: outcomeReply } as MessageEvent<DiskIOReply>);
       expect(await outcomePromise).toEqual({
         result: "failed",
-        failedDomains: ["blocklist", "joinLog"],
+        failedDomains: ["blocklist", "whitelist"],
       });
 
       const persisted: VerificationPersistedReply[] = [];

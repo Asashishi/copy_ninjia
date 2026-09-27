@@ -64,7 +64,7 @@ export function setAdDetectWarningNow(value: number): void {
   warningNow = value;
 }
 
-/** 默认空姓名用于单独验证正文、引用与队列语义；姓名用例显式传入 meta。 */
+/** 默认空姓名用于单独验证正文、引用与队列语义；姓名用例显式传入 firstName/lastName。 */
 export function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandidateMessage {
   return {
     type: "adCandidate",
@@ -74,13 +74,17 @@ export function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandid
     // 本 harness 的用例一律显式给 enqueueAdCandidate 传 now；这一项只保证载荷完整。
     observedAt: Date.now(),
     text: "随便聊聊",
-    linkUrls: [],
     label: "@spammer",
-    meta: { firstName: "", lastName: "", username: "spammer" },
+    firstName: "",
+    lastName: "",
+    username: "spammer",
     isChannel: false,
     isForwarded: false,
     blocked: false,
     justJoined: false,
+    linkUrls: undefined,
+    sampleQuote: undefined,
+    sampleReplyTo: undefined,
     ...overrides,
   };
 }

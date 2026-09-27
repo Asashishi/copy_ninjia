@@ -21,11 +21,6 @@ import {
 } from "../../../packages/workers/antiRaid/lockdownJoinWindow";
 import { readBotChatPermissions } from "../../../packages/libs/chatMember";
 import { cacheSender } from "../../../packages/users/senderIdentity";
-import {
-  appendLinkUrls,
-  boundSampleContext,
-  claimSampleContextParts,
-} from "../../../packages/workers/antiRaid/adDetect/bundle";
 import { redactSecretsInText } from "../../../packages/libs/redaction";
 import { drawLuckTier } from "../../../packages/commands/luckChallenge/draw";
 import { GAG_SESSION_MAX } from "../../../packages/consts/gag";
@@ -36,11 +31,6 @@ import {
 import { collectDueGagSpeakNotices } from "../../../packages/commands/gag/counter";
 import { createGagTargetProfileUrl } from "../../../packages/commands/gag/identity";
 import type { GagSession } from "../../../packages/types/gag";
-import type {
-  AdCandidateMessage,
-  AdSampleContext,
-  AdCandidateEntry,
-} from "../../../packages/types/antiRaid/adDetect";
 import {
   BENCHMARK_CHAT_ID,
   BENCHMARK_EPOCH_MS,
@@ -48,14 +38,9 @@ import {
   channelMessageFixture,
   messageFixture,
 } from "./fixtures";
-import { AD_SAMPLE_TEXTS } from "./adFixture";
 import { prototypeProbes } from "./jitTiers";
 import type { Scenario } from "./types";
 
-/** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
-const EMPTY_LINK_URLS: readonly string[] = [];
-/** 广告无上下文路径的只读既有条目。 */
-const EMPTY_AD_ENTRIES: readonly AdCandidateEntry[] = [];
 export function senderScenario(username?: string): Scenario {
   const message: Message = messageFixture(username);
   return {
@@ -262,56 +247,6 @@ export function boundedRollingBufferScenario(): Scenario {
       BoundedDeque.prototype,
       ["push", "shift", "last"]
     ),
-  };
-}
-
-export function adEmptyMetadataScenario(): Scenario {
-  return {
-    iterations: 1_000_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        const sample: string = AD_SAMPLE_TEXTS[index % AD_SAMPLE_TEXTS.length] ?? "";
-        const linkedText: string = appendLinkUrls(sample, EMPTY_LINK_URLS);
-        const context: AdSampleContext | undefined = boundSampleContext(undefined);
-        const text: string = context === undefined
-          ? linkedText
-          : claimSampleContextParts(linkedText, context, EMPTY_AD_ENTRIES);
-        checksum += text.length;
-      }
-      return checksum;
-    },
-    // 本场景走的是「无元数据」那条分支：boundSampleContext 恒返回 undefined，
-    // claimSampleContextParts 永远不会被调用，因此不登记它。
-    probes: { appendLinkUrls, boundSampleContext },
-  };
-}
-
-export function adWireCloneScenario(): Scenario {
-  const message: AdCandidateMessage = {
-    type: "adCandidate",
-    chatId: BENCHMARK_CHAT_ID,
-    senderId: BENCHMARK_SENDER_ID,
-    messageId: 1,
-    observedAt: BENCHMARK_EPOCH_MS,
-    text: "ordinary message",
-    label: "@stable_user",
-    meta: { firstName: "Stable", lastName: "", username: "stable_user" },
-    isChannel: false,
-    isForwarded: false,
-    blocked: false,
-    justJoined: false,
-  };
-  return {
-    iterations: 200_000,
-    run: (iterations: number): number => {
-      let checksum: number = 0;
-      for (let index: number = 0; index < iterations; index += 1) {
-        const cloned: AdCandidateMessage = structuredClone(message);
-        checksum += cloned.text.length;
-      }
-      return checksum;
-    },
   };
 }
 

@@ -11,6 +11,7 @@ import {
 } from "../../packages/infra/randomImage";
 import { RANDOM_IMAGE_CONTENT_NAME_PATTERN, RANDOM_IMAGE_MAX_BYTES } from "../../packages/consts/randomImage";
 import { ASSETS_CONFIG_PATH } from "../../packages/consts/paths";
+import { RANDOM_H_IMAGE_DIR_FIELD } from "../../packages/consts/ui/assets";
 import type { RandomImageLibrary, RandomImagePick, StoreRandomImageResult } from "../../packages/types/randomImage";
 
 const roots: string[] = [];
@@ -48,7 +49,7 @@ describe("ensureRandomImageDirectory", () => {
     const file: string = join(temporaryRoot(), "images");
     await Bun.write(file, "not a directory");
     await expect(ensureRandomImageDirectory(file)).rejects.toThrow(
-      `${ASSETS_CONFIG_PATH}: $.random_h_image_dir must be an accessible existing or creatable directory (resolved to ${file}).`
+      `${ASSETS_CONFIG_PATH}: ${RANDOM_H_IMAGE_DIR_FIELD} must be an accessible existing or creatable directory (resolved to ${file}).`
     );
   });
 
@@ -56,13 +57,13 @@ describe("ensureRandomImageDirectory", () => {
     const file: string = join(temporaryRoot(), "parent");
     await Bun.write(file, "x");
     await expect(ensureRandomImageDirectory(join(file, "images"))).rejects.toThrow(
-      "$.random_h_image_dir must be an accessible existing or creatable directory"
+      `${RANDOM_H_IMAGE_DIR_FIELD} must be an accessible existing or creatable directory`
     );
   });
 
   test("目录不存在且创建失败时拒绝（procfs 不允许建目录，root 也一样）", async () => {
     await expect(ensureRandomImageDirectory("/proc/copy-ninjia-random-image-test/images")).rejects.toThrow(
-      "$.random_h_image_dir must be an accessible existing or creatable directory"
+      `${RANDOM_H_IMAGE_DIR_FIELD} must be an accessible existing or creatable directory`
     );
   });
 });
@@ -258,7 +259,7 @@ test("专用图库拒绝非法名称、扩展名、子目录与文件链接，�
     const root: string = temporaryRoot();
     const path: string = join(root, name);
     await Bun.write(path, "preserve");
-    await expect(ensureRandomImageDirectory(root)).rejects.toThrow(`${path}: $.random_h_image_dir`);
+    await expect(ensureRandomImageDirectory(root)).rejects.toThrow(`${path}: ${RANDOM_H_IMAGE_DIR_FIELD}`);
     expect(await Bun.file(path).text()).toBe("preserve");
   }
   for (const link of [true, false]) {
@@ -277,5 +278,5 @@ test("专用图库启动检查命名而不重算内容，悬空目录根拒绝",
   await ensureRandomImageDirectory(root);
   const link: string = join(temporaryRoot(), "dangling");
   symlinkSync(join(root, "absent"), link);
-  await expect(ensureRandomImageDirectory(link)).rejects.toThrow("$.random_h_image_dir");
+  await expect(ensureRandomImageDirectory(link)).rejects.toThrow(RANDOM_H_IMAGE_DIR_FIELD);
 });

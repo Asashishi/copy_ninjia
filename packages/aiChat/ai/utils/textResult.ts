@@ -25,7 +25,8 @@ export type AiRequestFailureKind =
  * - `rejected`（普通 4xx 拒绝这次请求内容）说明这一份输入不合适；SDK 重试已耗尽，
  *   不得再套一层完整请求。两者都**不带** mediaFailure——单份坏媒体既不该关闭整条
  *   模态，也不该推动退避。
- * - `unsupported` / `misconfigured` 是确定性终局；模态状态机据此停止后续下载。
+ * - `unsupported` / `misconfigured` 是确定性模态结论；模态状态机据此阻止新下载与请求，
+ *   同配置代次的在途成功仍可恢复支持结论。
  * - `request`（端点故障：网络、超时、408/429/5xx）对媒体是**瞬时**结论：模态结论
  *   不变，只按次数退避，绝不永久关闭。
  *

@@ -1,5 +1,6 @@
 /** owner: workers/aiChat。非本地贴纸目录媒体描述的临时内存缓存。 */
 
+import type { SharedResult } from "../../../libs/sharedResult";
 import { LruCache } from "../../../libs/lruCache";
 import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";
 
@@ -24,36 +25,10 @@ import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";
 export const transientDescriptionCache: LruCache<string, Promise<string | null>> = new LruCache(MEDIA_DESCRIPTION_CACHE_MAX);
 
 /**
- * 一份在途描述的消费者取消状态。controller 只属于 AI Worker；每个带 signal 的
- * 调用按引用计数登记，最后一个可取消消费者离开且没有无信号消费者时才中止底层
- * 下载/供应商请求，避免同一 file_unique_id 的一个聊天取消后误杀另一个聊天。
+ * 在途描述的可取消订阅。imageDescription.ts 建立任务时填充、结算时删除；任务数由
+ * 媒体执行与等待额度共同约束，LRU 淘汰不释放仍有消费者的任务。取消立即摘除订阅，
+ * 最后一个消费者离开时由任务 owner 中止底层请求。Worker 崩溃后随 isolate 清空。
+ * 无条目表示任务已结算，此时直接读取缓存 Promise。
  */
-export interface TransientDescriptionAbortState {
-  readonly controller: AbortController;
-  /**
-   * 本任务在 transientDescriptionCache 里占的键。中止时要按这个键连带摘除条目：
-   * 中止后到底层请求回卷完之间，条目仍指向一份注定为 null 的 Promise，这段窗口里
-   * 进来的新消费者会命中它并拿到与自身取消无关的 null。
-   */
-  readonly fileUniqueId: string;
-  readonly consumers: Map<AbortSignal, number>;
-  /**
-   * 不带 signal、因而无法退出等待的消费者数。只增不减是有意的：它仅在 settled
-   * 为 false 的窗口里被读，而这类消费者恰好一直等到 Promise 结算——结算时
-   * settled 先置真，中止判定已经短路，计数是否归零不再影响任何决策。
-   */
-  uncancellableConsumers: number;
-  settled: boolean;
-}
-
-/**
- * 在途描述 Promise 到取消状态的弱映射。由 imageDescription.ts 在创建 Promise 时
- * 填充、结算时删除；Worker 崩溃后随线程整体重建。容量由
- * transientDescriptionCache 的上限间接约束，弱键也不会阻止已淘汰 Promise 回收。
- * 无条目表示 Promise 已结算或不是当前实现创建的在途项，此时只读取其结果，绝不
- * 猜测并沿用旧 controller。
- */
-export const transientDescriptionAbortStates: WeakMap<
-  Promise<string | null>,
-  TransientDescriptionAbortState
-> = new WeakMap<Promise<string | null>, TransientDescriptionAbortState>();
+export const transientDescriptionTasks: WeakMap<Promise<string | null>, SharedResult<string | null>> =
+  new WeakMap<Promise<string | null>, SharedResult<string | null>>();

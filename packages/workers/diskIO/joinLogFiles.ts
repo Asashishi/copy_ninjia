@@ -1,14 +1,14 @@
 /**
- * 滚动 24 小时入群事实的路由与调度层：缓冲、按 `chatId:day` 分组 flush、跨日
- * 准备与命令按需读取。文件接管与写入在 diskIO/joinLogWrites.ts，启动恢复与
+ * 滚动 24 小时入群事实的路由与调度层：缓冲、按 `chatId:day` 分组 flush、joinLogPersisted
+ * 处置回执、跨日准备与命令按需读取。文件接管与写入在 diskIO/joinLogWrites.ts，启动恢复与
  * 过期清理在 diskIO/joinLogRecovery.ts。
  */
 
 import {
-  consumeJoinLogRejection,
   joinLogBuffer,
   joinLogCleanupDay,
   joinLogDeletions,
+  joinLogPersistedNotifier,
   markJoinLogDirty,
 } from "../../cache/workers/diskIO/joinLog";
 import {
@@ -47,7 +47,7 @@ import {
   joinLogPath,
   writeFileEntries,
 } from "./joinLogWrites";
-import { enqueueDiskIOOperation } from "./operationQueue";
+import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 export {
   inspectJoinLogFiles,
   maintainJoinLogFiles,
@@ -61,9 +61,8 @@ async function ensureCurrentDayPrepared(today: string): Promise<void> {
   const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
   if (failedKeys.size > 0) {
     // 但「先删后刷」只在**这次要删掉的那一天**仍有未落盘条目时才成立。任意一个
-    // 群写失败就整体拒绝跨日准备的话，每一条新入群事实都会卡在同一个检查上
-    // （handleJoinLogMessage 会因此走 noteJoinLogRejected，连坐一条无关 update
-    // 被重投），而清理动的是保留窗口**之外**的文件，与它们毫无关系。
+    // 群写失败就整体拒绝跨日准备的话，每日维护与 `/batch_kick` 读取都会卡在同一个
+    // 检查上，而清理动的是保留窗口**之外**的文件，与它们毫无关系。
     const retainedDays: ReadonlySet<string> =
       recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
     for (const key of failedKeys) {
@@ -83,20 +82,30 @@ export async function maintainJoinLogRetention(
   }
 }
 
-function scheduleJoinLogFlush(delayMs: number = FLUSH_INTERVAL_MS): void {
-  if (joinLogBuffer.timer !== null) return;
-  joinLogBuffer.timer = setTimeout((): void => {
-    joinLogBuffer.timer = null;
-    void enqueueDiskIOOperation(async (): Promise<void> => {
-      await flushJoinLogBuffer();
-    });
-  }, delayMs);
-  joinLogBuffer.timer.unref();
+/**
+ * 发出 joinLogPersisted：through 是已收下的最大序号，pending 是仍留在缓冲里的序号，
+ * 其余不超过 through 的事实都已写入或丢弃。一个群的文件持续写不进只让它自己的事实
+ * 留在 pending，不挡住其它群的释放。through 与 pending 条数都没变时不重发。
+ */
+function publishJoinLogPersisted(): void {
+  const through: number = joinLogBuffer.receivedThrough;
+  const pendingCount: number = joinLogBuffer.entries.length;
+  if (
+    through === joinLogBuffer.acknowledgedThrough &&
+    pendingCount === joinLogBuffer.acknowledgedPending
+  ) return;
+  const pending: number[] = [];
+  for (const entry of joinLogBuffer.entries) pending.push(entry.sequence);
+  joinLogBuffer.acknowledgedThrough = through;
+  joinLogBuffer.acknowledgedPending = pendingCount;
+  joinLogPersistedNotifier.current({ type: "joinLogPersisted", through, pending });
 }
 
 /**
- * 立即把所有群的待写入群事实按目标文件分组追写；失败分组原样保留并退避。
- * @returns 本次写失败的 `chatId:day` 键集合；空集表示全部落盘。
+ * 立即把所有群的待写入群事实按目标文件分组追写；失败分组原样保留并退避，事件日期
+ * 领先本 Worker 今天的条目留到下一次 flush（启动恢复拒绝未来日期文件，不能提前建文件）。
+ * 结束时按剩余缓冲发出处置回执。
+ * @returns 本次写失败的 `chatId:day` 键集合；空集只表示没有写失败，领先条目不计入。
  *
  * 返回**哪些**分组失败而不只是「有没有失败」：一个群的文件写不动（ENOSPC、
  * 部署后 chown 导致 EACCES、尾部截断）不能连坐其它群——按需读取和跨日准备
@@ -104,19 +113,27 @@ function scheduleJoinLogFlush(delayMs: number = FLUSH_INTERVAL_MS): void {
  * 一起失败，而它自己的日志文件完好且早已刷盘。
  */
 async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
-  if (joinLogBuffer.timer !== null) {
-    clearTimeout(joinLogBuffer.timer);
-    joinLogBuffer.timer = null;
+  cancelDiskIOFlushTimer(joinLogBuffer);
+  if (joinLogBuffer.entries.length === 0) {
+    publishJoinLogPersisted();
+    return new Set<string>();
   }
-  if (joinLogBuffer.entries.length === 0) return new Set<string>();
+  const today: string = getTokyoDateKey();
   const entries: BufferedJoinLogEntry[] = joinLogBuffer.entries;
   joinLogBuffer.entries = [];
+  let aheadEntries: BufferedJoinLogEntry[] | null = null;
   const groups: Map<string, {
     chatId: number;
     day: string;
     entries: BufferedJoinLogEntry[];
   }> = new Map();
   for (const entry of entries) {
+    // YYYY-MM-DD 定宽零填充，字典序即日期序。
+    if (entry.day > today) {
+      aheadEntries ??= [];
+      aheadEntries.push(entry);
+      continue;
+    }
     const key: string = fileKey(entry.chatId, entry.day);
     let group: {
       chatId: number;
@@ -142,30 +159,27 @@ async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
       failedKeys.add(key);
     }
   }
-  if (failedEntries.length === 0) return failedKeys;
-  // flush 是同步 owner，新消息不能在循环中插入；仍使用 prepend 语义明确保证
-  // 失败的旧事实排在未来新事实之前。
-  joinLogBuffer.entries = failedEntries.concat(joinLogBuffer.entries);
-  scheduleJoinLogFlush(JOIN_LOG_REOPEN_RETRY_MS);
+  if (failedEntries.length > 0 || aheadEntries !== null) {
+    // flush 是同步 owner，新消息不能在循环中插入；仍使用 prepend 语义明确保证
+    // 留下的旧事实排在未来新事实之前。
+    joinLogBuffer.entries = aheadEntries === null
+      ? failedEntries.concat(joinLogBuffer.entries)
+      : failedEntries.concat(aheadEntries, joinLogBuffer.entries);
+    // 领先条目只需等东京日期追上；失败分组在各自退避期内由 writeFileEntries 直接跳过。
+    armDiskIOFlushTimer(
+      joinLogBuffer,
+      aheadEntries === null ? JOIN_LOG_REOPEN_RETRY_MS : FLUSH_INTERVAL_MS,
+      flushJoinLogBuffer
+    );
+  }
+  publishJoinLogPersisted();
   return failedKeys;
 }
 
-/** 缓冲整体落盘成功；调用方只关心「有没有失败」时用它。 */
+/** 缓冲是否已整体落盘：没有写失败、也没有留待下一次 flush 的领先条目。 */
 export async function flushJoinLogBuffer(): Promise<boolean> {
-  return (await flushJoinLogEntries()).size === 0;
-}
-
-/**
- * 统一 flush 的 joinLog 领域出口：缓冲全部写盘成功、且这一轮没有被拒收的入群
- * 事实，才算该领域落盘成功。
- *
- * 与 flushJoinLogBuffer 分开：跨日准备与按需读取用后者判断的是「缓冲里
- * 这些条目写进去了没有」，不能被一条压根没进缓冲的事实反复卡住（那会让每一条
- * 新入群事件都在同一个跨日检查上抛错）。拒收标记只在这一个出口消费。
- */
-export async function flushJoinLogDomain(): Promise<boolean> {
-  const flushed: boolean = await flushJoinLogBuffer();
-  return consumeJoinLogRejection() ? false : flushed;
+  await flushJoinLogEntries();
+  return joinLogBuffer.entries.length === 0;
 }
 
 /**
@@ -182,38 +196,40 @@ export function handleJoinLogDeleteMessage(msg: JoinLogDeleteDiskMessage): void 
   );
   joinLogDeletions.add(msg.chatId);
   purgeChatJoinLogFiles(msg.chatId);
+  publishJoinLogPersisted();
 }
 
 /**
- * 缓冲一条仍可能落在滚动 24 小时窗口内的入群事件。
+ * 缓冲一条仍可能落在滚动 24 小时窗口内的入群事件；累计 FLUSH_MAX_ENTRIES 条立即刷出，
+ * 否则按需排定 FLUSH_INTERVAL_MS 定时刷出。本函数不因单条事实失败而抛出，事实一律由
+ * 缓冲、丢弃或留待重试之一收下，主线程镜像按处置回执释放（见 infra/joinLog.ts）。
  *
- * 本函数不吞异常：调用方（diskIOWorker 的 joinLog 分支）负责兜底并记下拒收，
- * 缺了那层兜底异常会逸出 Worker 的 onmessage、被 Bun 直接终止整条落盘线程。
- *
- * 「窗口外」的两侧收场不同，必须分开判：
+ * 「窗口外」的两侧收场不同：
  *
  * - **过旧**（停机后 Telegram 重投的几天前入群）是**有意静默丢弃**。滚动 24 小时
- *   窗口本来就用不上它，报失败只会让这条 update 永远得不到确认、被反复重投。
- * - **领先**（事件日期比本 Worker 的今天还晚）不是「窗口用不上」，而是事件时间与
- *   宿主时钟对不上。照过旧那样静默 return 的话，recordJoinLog 会把它当成已经落盘
- *   （见 infra/joinLog.ts），这条入群从此在 `/batch_kick` 里查无此人、全链路零日志。
- *   抛出去交给统一的拒收出口：update 不被确认，Telegram 重投一次即可自愈。
+ *   窗口本来就用不上它；缓冲为空时立即发出处置回执，免得这类事实占住主线程镜像。
+ * - **领先**（事件日期比本 Worker 的今天还晚）是事件时间与宿主时钟对不上，典型是
+ *   Telegram 先跨过东京零点。它照常进缓冲，由 flush 留到本 Worker 的日期追上后再写：
+ *   提前建出未来日期文件会让下一次启动恢复拒绝启动。
  */
 export async function handleJoinLogMessage(
   msg: JoinLogDiskMessage
 ): Promise<void> {
   const today: string = getTokyoDateKey();
   // YYYY-MM-DD 定宽零填充，字典序即日期序。
-  if (msg.day > today) {
-    throw new Error(
-      `Join log event day ${msg.day} is ahead of the worker's current Tokyo day ${today}.`
-    );
-  }
-  if (!isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS)) {
+  if (msg.day <= today && !isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS)) {
+    joinLogBuffer.receivedThrough = msg.sequence;
+    if (joinLogBuffer.entries.length === 0) publishJoinLogPersisted();
     return;
   }
-  await ensureCurrentDayPrepared(today);
+  try {
+    await ensureCurrentDayPrepared(today);
+  } catch (error: unknown) {
+    // 本条落在保留窗口内，过期清理不会删它的文件；下一条事实与每日维护会重试清理。
+    console.error("[diskIOWorker] failed to prepare the join log day:", error);
+  }
   const length: number = markJoinLogDirty({
+    sequence: msg.sequence,
     chatId: msg.chatId,
     day: msg.day,
     record: {
@@ -221,11 +237,12 @@ export async function handleJoinLogMessage(
       joinedAt: msg.joinedAt,
     },
   });
+  joinLogBuffer.receivedThrough = msg.sequence;
   if (length >= FLUSH_MAX_ENTRIES) {
     await flushJoinLogBuffer();
     return;
   }
-  scheduleJoinLogFlush();
+  armDiskIOFlushTimer(joinLogBuffer, FLUSH_INTERVAL_MS, flushJoinLogBuffer);
 }
 
 /**

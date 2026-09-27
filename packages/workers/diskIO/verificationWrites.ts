@@ -6,10 +6,9 @@ import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification
 import {
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
-  VERIFICATION_FLUSH_INTERVAL_MS,
-  VERIFICATION_FLUSH_MAX_KEYS,
   VERIFICATION_ROLLOVER_RETRY_MS,
 } from "../../consts/diskIO/verification";
+import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO/appendOnly";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
 import {
   verificationFileState,
@@ -34,7 +33,7 @@ import {
   compactVerificationDay,
   removeOldVerificationDays,
 } from "./verificationRecovery";
-import { enqueueDiskIOOperation } from "./operationQueue";
+import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
 export type VerificationReplySink = (reply: VerificationPersistedReply) => void;
 
@@ -78,17 +77,16 @@ async function rolloverVerificationDay(
   acknowledge(changes, reply);
 }
 
+/** 装轮换失败后的唯一重试 timer；到点按当时的东京日期重新维护。 */
 function scheduleVerificationRolloverRetry(
   reply: VerificationReplySink,
   dir: string
 ): void {
-  verificationRolloverRetryTimer.timer = setTimeout((): void => {
-    verificationRolloverRetryTimer.timer = null;
-    void enqueueDiskIOOperation(async (): Promise<void> => {
-      await maintainVerificationDayForToday(reply, getTokyoDateKey(), dir);
-    });
-  }, VERIFICATION_ROLLOVER_RETRY_MS);
-  verificationRolloverRetryTimer.timer.unref();
+  armDiskIOFlushTimer(
+    verificationRolloverRetryTimer,
+    VERIFICATION_ROLLOVER_RETRY_MS,
+    (): Promise<void> => maintainVerificationDayForToday(reply, getTokyoDateKey(), dir)
+  );
 }
 
 /**
@@ -100,14 +98,8 @@ export async function maintainVerificationDayForToday(
   day: string = getTokyoDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
 ): Promise<void> {
-  if (verificationFlushTimer.timer !== null) {
-    clearTimeout(verificationFlushTimer.timer);
-    verificationFlushTimer.timer = null;
-  }
-  if (verificationRolloverRetryTimer.timer !== null) {
-    clearTimeout(verificationRolloverRetryTimer.timer);
-    verificationRolloverRetryTimer.timer = null;
-  }
+  cancelDiskIOFlushTimer(verificationFlushTimer);
+  cancelDiskIOFlushTimer(verificationRolloverRetryTimer);
   try {
     await rolloverVerificationDay(day, reply, dir);
   } catch (error: unknown) {
@@ -117,18 +109,16 @@ export async function maintainVerificationDayForToday(
   }
 }
 
+/** 按需装普通验证变化的合并 timer；已装时不重复装。 */
 function scheduleVerificationFlush(
   reply: VerificationReplySink,
   dir: string
 ): void {
-  if (verificationFlushTimer.timer !== null) return;
-  verificationFlushTimer.timer = setTimeout((): void => {
-    verificationFlushTimer.timer = null;
-    void enqueueDiskIOOperation(async (): Promise<void> => {
-      await flushVerificationChanges(reply, dir);
-    });
-  }, VERIFICATION_FLUSH_INTERVAL_MS);
-  verificationFlushTimer.timer.unref();
+  armDiskIOFlushTimer(
+    verificationFlushTimer,
+    FLUSH_INTERVAL_MS,
+    (): Promise<boolean> => flushVerificationChanges(reply, dir)
+  );
 }
 
 export interface HandleVerificationUpsertParams {
@@ -138,7 +128,7 @@ export interface HandleVerificationUpsertParams {
   day?: string;
 }
 
-/** 新建立即追加；普通字段变化按 key 在 250ms 窗口内合并。 */
+/** 新建与终态立即追加；普通字段变化按 key 合并，累计 FLUSH_MAX_ENTRIES 个 key 或等满 FLUSH_INTERVAL_MS 后追加。 */
 export async function handleVerificationUpsert({
   msg,
   reply,
@@ -171,7 +161,7 @@ export async function handleVerificationUpsert({
   verificationPendingChanges.set(key, { ...snapshot, value: snapshot });
   if (
     msg.critical ||
-    verificationPendingChanges.size >= VERIFICATION_FLUSH_MAX_KEYS
+    verificationPendingChanges.size >= FLUSH_MAX_ENTRIES
   ) {
     await flushVerificationChanges(reply, dir, day);
   } else {
@@ -214,19 +204,13 @@ export async function flushVerificationChanges(
   dir: string = VERIFICATION_MEMORY_DIR,
   day: string = getTokyoDateKey()
 ): Promise<boolean> {
-  if (verificationFlushTimer.timer !== null) {
-    clearTimeout(verificationFlushTimer.timer);
-    verificationFlushTimer.timer = null;
-  }
+  cancelDiskIOFlushTimer(verificationFlushTimer);
 
   try {
     mkdirSync(dir, { recursive: true });
     if (verificationFileState.current?.day !== day) {
       await rolloverVerificationDay(day, reply, dir);
-      if (verificationRolloverRetryTimer.timer !== null) {
-        clearTimeout(verificationRolloverRetryTimer.timer);
-        verificationRolloverRetryTimer.timer = null;
-      }
+      cancelDiskIOFlushTimer(verificationRolloverRetryTimer);
       return true;
     }
     if (verificationPendingChanges.size === 0) return true;

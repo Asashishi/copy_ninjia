@@ -11,7 +11,6 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 
 const {
-  currentTokyoWeather,
   startWeatherRefreshLoop,
   stopWeatherRefreshLoop,
 } = await import("../../../packages/aiChat/ai/weather");
@@ -62,7 +61,7 @@ describe("Open-Meteo 适配层", () => {
       expect(fetchJsonWithTimeout).toHaveBeenCalledTimes(1);
 
       expect(intervalCallback).not.toBeNull();
-      expect(currentTokyoWeather()).toEqual({
+      expect(weatherCache.current).toEqual({
         currentTemperatureC: 31.5,
         currentCondition: WEATHER_CODE_DESCRIPTIONS[0]!,
         todayMaxC: 35,
@@ -76,8 +75,8 @@ describe("Open-Meteo 适配层", () => {
       responses.push(validWeather(999, 998));
       intervalCallback!();
       await flushRefresh();
-      expect(currentTokyoWeather()?.currentCondition).toContain("代码 999");
-      expect(currentTokyoWeather()?.todayCondition).toContain("代码 998");
+      expect(weatherCache.current?.currentCondition).toContain("代码 999");
+      expect(weatherCache.current?.todayCondition).toContain("代码 998");
       stopWeatherRefreshLoop();
       intervalCallback!();
       expect(fetchJsonWithTimeout).toHaveBeenCalledTimes(2);
@@ -101,14 +100,14 @@ describe("Open-Meteo 适配层", () => {
     try {
       startWeatherRefreshLoop();
       await flushRefresh();
-      expect(currentTokyoWeather()).toBe(previous);
+      expect(weatherCache.current).toBe(previous);
       expect(loggerError).not.toHaveBeenCalled();
 
       responses.push({ current: { temperature_2m: "hot" }, daily: {} });
       stopWeatherRefreshLoop();
       startWeatherRefreshLoop();
       await flushRefresh();
-      expect(currentTokyoWeather()).toBe(previous);
+      expect(weatherCache.current).toBe(previous);
       expect(loggerError).toHaveBeenCalledWith("Open-Meteo API returned unexpected shape:", expect.anything());
     } finally {
       globalThis.setInterval = originalSetInterval;
@@ -125,7 +124,7 @@ describe("Open-Meteo 适配层", () => {
     expect(signal.aborted).toBe(true);
     pending.resolve(validWeather());
     await flushRefresh();
-    expect(currentTokyoWeather()).toBeNull();
+    expect(weatherCache.current).toBeNull();
   });
 
   test.each([validWeather(0, 3, 10), null, { current: "invalid" }])(
@@ -139,10 +138,10 @@ describe("Open-Meteo 适配层", () => {
       startWeatherRefreshLoop();
       current.resolve(validWeather(0, 3, 20));
       await flushRefresh();
-      expect(currentTokyoWeather()?.currentTemperatureC).toBe(20);
+      expect(weatherCache.current?.currentTemperatureC).toBe(20);
       old.resolve(late);
       await flushRefresh();
-      expect(currentTokyoWeather()?.currentTemperatureC).toBe(20);
+      expect(weatherCache.current?.currentTemperatureC).toBe(20);
       expect(loggerError).not.toHaveBeenCalled();
     }
   );

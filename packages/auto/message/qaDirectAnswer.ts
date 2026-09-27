@@ -2,7 +2,7 @@
  * 群问答直答：文本与登记的问题**完全一致**时直接回答，不经过 AI。
  *
  * 这条判定挂在每条群消息的主干上，因此第一步就必须便宜到可以忽略：
- * `getChatQa(chatId)` 对没登记过问答的群返回 undefined，整条路径到此为止，
+ * `chatQaEntries.get(chatId)`（cache/main/qa.ts，只读）对没登记过问答的群返回 undefined，整条路径到此为止，
  * 零分配、零字符串操作。只有真的开了问答的群才会走到查表那一步，而那一步
  * 也是拿 `message.text` 原串直接 `Map.get`，同样不产生任何中间对象——问题文本
  * 在**写入时**就 trim 好了，热路径不做归一化。
@@ -15,7 +15,7 @@
 
 import type { Message, MessageEntity } from "grammy/types";
 import { sendMessage } from "../../infra/telegram";
-import { getChatQa } from "../../infra/qaStore";
+import { chatQaEntries } from "../../cache/main/qa";
 import { renderFencedText } from "../../libs/codeFence";
 import type { RichTextMessage } from "../../types/telegram";
 
@@ -55,7 +55,7 @@ export function resolveQaDirectAnswer(
   botUsername: string
 ): string | undefined {
   // 绝大多数群在这一行就走开：没登记过问答的群连 message.text 都不会被读。
-  const entries: ReadonlyMap<string, string> | undefined = getChatQa(chatId);
+  const entries: ReadonlyMap<string, string> | undefined = chatQaEntries.get(chatId);
   if (entries === undefined) return undefined;
   const text: string | undefined = message.text;
   if (text === undefined) return undefined;

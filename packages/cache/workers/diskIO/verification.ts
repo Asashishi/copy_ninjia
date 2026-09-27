@@ -26,9 +26,9 @@ import type { DayFileState } from "../../../types/diskIO/storage";
  */
 export const verificationWorkerCache: Map<string, VerificationSnapshot> = new Map();
 /**
- * 250ms 合并窗口内每个成员的最新变化；flush 后按 revision 删除，
- * resetVerificationPersistenceCache 整表清空。容量：一个合并窗口内发生变化的
- * 成员数，上界同 verificationWorkerCache。Worker 崩溃重建：不重放——未落盘的
+ * 合并窗口（FLUSH_INTERVAL_MS，或累计 FLUSH_MAX_ENTRIES 个 key）内每个成员的最新变化；
+ * flush 后按 revision 删除，resetVerificationPersistenceCache 整表清空。容量：一个合并
+ * 窗口内发生变化的成员数，上界同 verificationWorkerCache。Worker 崩溃重建：不重放——未落盘的
  * 那一批由主线程按未 ACK revision 重投。
  */
 export const verificationPendingChanges: Map<string, VerificationFileChange> = new Map();
@@ -42,7 +42,7 @@ export const verificationFileState: {
   appendedEntries: 0,
   appendedBytes: 0,
 };
-/** 普通验证变化的短合并 timer；flush/reset 时清除。 */
+/** 普通验证变化的合并 timer；flush/reset 时清除。 */
 export const verificationFlushTimer: { timer: ReturnType<typeof setTimeout> | null } = { timer: null };
 /** 午夜轮换失败后的唯一重试 timer；成功、重新维护或 reset 时清除。 */
 export const verificationRolloverRetryTimer: {

@@ -133,90 +133,74 @@ function productionJitTiersAreStable(
   return observedProductionProbe;
 }
 
+/**
+ * perf:hot-paths 接受的全部场景名。Record 的键在编译期与 ScenarioName 逐一对齐（缺一或
+ * 多一都报错），解析与用法提示都由它生成。
+ */
+const SCENARIO_NAMES: Readonly<Record<ScenarioName, true>> = {
+  "cooldown-hit": true,
+  "cooldown-renew": true,
+  "cooldown-growth": true,
+  "cooldown-saturated": true,
+  "cooldown-expiry": true,
+  "reply-admission": true,
+  "reply-delivery-normal": true,
+  "reply-delivery-capacity": true,
+  "base64-normal": true,
+  "base64-large": true,
+  "base64-head": true,
+  "base64-tail": true,
+  "voice-message-encode": true,
+  "proxy-tts-detect": true,
+  "storage-sqlite-flush": true,
+  "verification-snapshot": true,
+  "verification-snapshot-clone": true,
+  "bounded-response-empty": true,
+  "bounded-response-tiny": true,
+  "bounded-response-small": true,
+  "bounded-response-normal": true,
+  "bounded-response-large": true,
+  "wed-member-hit": true,
+  "wed-member-growth": true,
+  "wed-member-churn": true,
+  "wed-member-chat-switch": true,
+  "registered-middleware": true,
+  "sender-no-username": true,
+  "sender-stable-username": true,
+  "sender-mixed-identity": true,
+  "luck-receipt-fast-path": true,
+  "ai-activity-window": true,
+  "ai-activity-lru-miss": true,
+  "ad-empty-metadata": true,
+  "ad-wire-clone": true,
+  "ad-capacity-reject": true,
+  "identity-permission-read": true,
+  "temporary-whitelist-activity": true,
+  "join-timestamp-window": true,
+  "quota-timestamp-window": true,
+  "bounded-rolling-buffer": true,
+  "chat-state-read": true,
+  "chat-state-map-read": true,
+  "self-sent-empty": true,
+  "self-sent-active": true,
+  "incoming-message-spine": true,
+  "ai-media-direct-trigger": true,
+  "flood-window-hit": true,
+  "flood-window-growth": true,
+  "flood-window-steady": true,
+  "gag-speak-counter": true,
+  "buffered-message-build": true,
+  "transcript-render": true,
+  "reply-reference": true,
+  "mention-facts": true,
+  "mention-facts-plain": true,
+  "redact-clean-log": true,
+  "luck-tier-table": true,
+};
+
 function parseScenarioName(value: string | undefined): ScenarioName {
-  switch (value) {
-    case "cooldown-hit":
-    case "cooldown-renew":
-    case "cooldown-growth":
-    case "cooldown-saturated":
-    case "cooldown-expiry":
-    case "reply-admission":
-    case "reply-delivery-normal":
-    case "reply-delivery-capacity":
-    case "base64-normal":
-    case "base64-large":
-    case "base64-head":
-    case "base64-tail":
-    case "voice-message-encode":
-    case "proxy-tts-detect":
-    case "storage-sqlite-flush":
-    case "verification-snapshot":
-    case "verification-snapshot-clone":
-    case "bounded-response-empty":
-    case "bounded-response-tiny":
-    case "bounded-response-small":
-    case "bounded-response-normal":
-    case "bounded-response-large":
-    case "wed-member-hit":
-    case "wed-member-growth":
-    case "wed-member-churn":
-    case "wed-member-chat-switch":
-    case "registered-middleware":
-    case "sender-no-username":
-    case "sender-stable-username":
-    case "sender-mixed-identity":
-    case "luck-receipt-fast-path":
-    case "ai-activity-window":
-    case "ai-activity-lru-miss":
-    case "ad-empty-metadata":
-    case "ad-wire-clone":
-    case "ad-capacity-reject":
-    case "identity-permission-read":
-    case "temporary-whitelist-activity":
-    case "join-timestamp-window":
-    case "quota-timestamp-window":
-    case "bounded-rolling-buffer":
-    case "chat-state-read":
-    case "chat-state-map-read":
-    case "self-sent-empty":
-    case "self-sent-active":
-    case "incoming-message-spine":
-    case "ai-media-direct-trigger":
-    case "flood-window-hit":
-    case "flood-window-growth":
-    case "flood-window-steady":
-    case "gag-speak-counter":
-    case "buffered-message-build":
-    case "transcript-render":
-    case "reply-reference":
-    case "mention-facts":
-    case "mention-facts-plain":
-    case "redact-clean-log":
-    case "luck-tier-table":
-      return value;
-    default:
-      throw new Error(
-        "Usage: bun run perf:hot-paths -- " +
-        "<verification-snapshot|verification-snapshot-clone|" +
-        "cooldown-hit|cooldown-renew|cooldown-growth|cooldown-saturated|cooldown-expiry|" +
-        "reply-admission|reply-delivery-normal|reply-delivery-capacity|base64-normal|base64-large|base64-head|base64-tail|" +
-        "voice-message-encode|proxy-tts-detect|" +
-        "bounded-response-empty|bounded-response-tiny|bounded-response-small|bounded-response-normal|bounded-response-large|" +
-        "sender-no-username|sender-stable-username|sender-mixed-identity|" +
-        "luck-receipt-fast-path|" +
-        "ai-activity-window|ai-activity-lru-miss|ad-empty-metadata|" +
-        "ad-wire-clone|ad-capacity-reject|identity-permission-read|" +
-        "temporary-whitelist-activity|" +
-        "join-timestamp-window|quota-timestamp-window|bounded-rolling-buffer|" +
-        "chat-state-read|chat-state-map-read|self-sent-empty|incoming-message-spine|" +
-        "wed-member-hit|wed-member-growth|wed-member-churn|wed-member-chat-switch|registered-middleware|storage-sqlite-flush|" +
-        "ai-media-direct-trigger|" +
-        "flood-window-hit|flood-window-growth|flood-window-steady|" +
-        "gag-speak-counter|" +
-        "buffered-message-build|transcript-render|reply-reference|" +
-        "mention-facts|mention-facts-plain|redact-clean-log|luck-tier-table>"
-      );
-  }
+  if (value !== undefined && Object.hasOwn(SCENARIO_NAMES, value)) return value as ScenarioName;
+  throw new Error(`Usage: bun run perf:hot-paths -- <${Object.keys(SCENARIO_NAMES).join("|")}>`);
 }
 
 /**

@@ -14,12 +14,11 @@ import {
 } from "../../cache/workers/aiChat/weather";
 import { fetchJsonWithTimeout } from "../../infra/httpFetch";
 import { isPlainRecord } from "../../libs/record";
-import type { TokyoWeatherResult } from "../../types/aiChat/weather";
 
 /**
- * 东京天气：唯一的数据来源与刷新入口。get_tokyo_weather 工具（见
- * aiChat/ai/tools/index.ts）与心情系统（见 aiChat/ai/mood.ts）共用同一份缓存，两边都
- * 只经 currentTokyoWeather 读缓存、不各自发请求——真正的网络请求只发生在
+ * 东京天气：唯一的数据来源与刷新入口，也是 weatherCache 的唯一写入者。
+ * get_tokyo_weather 工具（见 aiChat/ai/tools/index.ts）与心情系统（见 aiChat/ai/mood.ts）
+ * 直接只读同一份 weatherCache.current、不各自发请求——真正的网络请求只发生在
  * 本模块内部的定时刷新循环里（startWeatherRefreshLoop，由
  * workers/aiChatWorker.ts 在 Worker 启动时调用一次），用 Open-Meteo 的免费
  * 公开端点（不需要 API key，也没有调用额度限制）。
@@ -81,15 +80,6 @@ async function refreshTokyoWeather(controller: AbortController): Promise<void> {
     todayMinC,
     todayCondition: describeWeatherCode(todayCode),
   };
-}
-
-/**
- * 读取当前缓存的东京天气；首次成功刷新之前返回 null。get_tokyo_weather 工具与心情系统都只应该走这个
- * 函数，不直接碰 weatherCache——本模块是缓存的唯一写入者，调用方不需要、
- * 也不应该知道背后是个可变的缓存对象。
- */
-export function currentTokyoWeather(): TokyoWeatherResult | null {
-  return weatherCache.current;
 }
 
 /**

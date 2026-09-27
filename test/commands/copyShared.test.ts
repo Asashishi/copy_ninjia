@@ -4,6 +4,7 @@ import type { CachedUser } from "../../packages/types/chatState";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import type { AvatarNoticeSource } from "../../packages/types/copy/avatar";
 import type { Atmosphere } from "../../packages/types/atmosphere";
+import type { DefaultAvatarSource } from "../../packages/types/config";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const copyUserProfilePhoto = mock(async (..._args: unknown[]): Promise<boolean> => true);
@@ -13,7 +14,7 @@ const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUse
 const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
 const personas = new Map<number, { aiPersona?: string }>();
-const DEFAULT_AVATAR_URL: string = "https://cdn.example/default-face.jpg";
+const DEFAULT_AVATAR: DefaultAvatarSource = { kind: "path", path: "/srv/bot/default-face.png" };
 
 mock.module("../../packages/config/bot", () => ({
   BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 100 }));
@@ -322,7 +323,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
   });
 
   test("复原任务与偷脸任务共用同一个执行槽，走 restoreDefaultProfilePhoto", async () => {
-    assetConfigCache.current = { ...DEFAULT_ASSET_CONFIG, botDefaultAvatarUrl: DEFAULT_AVATAR_URL };
+    assetConfigCache.current = { ...DEFAULT_ASSET_CONFIG, botDefaultAvatar: DEFAULT_AVATAR };
     shared.restoreAvatarInBackground({
       chatId: -1001,
       source: "icon",
@@ -332,8 +333,8 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
     // 复原不该走偷脸那条路径：两者的失败含义完全不同。
     expect(copyUserProfilePhoto).not.toHaveBeenCalled();
-    // 直链在主线程取好后传进去，avatar/restore.ts 自己不读素材快照（见 avatarQueue.ts）。
-    expect(restoreDefaultProfilePhoto.mock.calls[0]?.[0]).toBe(DEFAULT_AVATAR_URL);
+    // 来源在主线程取好后传进去，avatar/restore.ts 自己不读素材快照（见 avatarQueue.ts）。
+    expect(restoreDefaultProfilePhoto.mock.calls[0]?.[0]).toBe(DEFAULT_AVATAR);
     assetConfigCache.current = DEFAULT_ASSET_CONFIG;
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.iconRestored }));
   });

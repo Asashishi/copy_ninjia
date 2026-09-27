@@ -88,12 +88,12 @@ bun -e '
   await assertNoMisplacedConfigFiles("config");
 ' || die "config/ 布局不是当前格式：有 telegram.json 时先安装 13.x 发行版并按其说明执行 migrate:bot-config 冷迁移；其余部署文件按上面报错的路径移入 config/static/（bot.json、g-auth.json）或 config/dynamic/（其余六份），再重新安装。"
 
-# 全局状态已迁到 memory/global/state.json，素材配置迁到 config/dynamic/assets.json；数据根的旧
-# state.json 必须先经冷迁移并移走，不在安装器里改写。
+# 全局状态按启动恢复同一口径只读校验：数据根不得残留旧 state.json，memory/global/state.json
+# 必须是当前格式。未迁移的状态由部署方冷迁移，不在安装器里改写，也不带着它注册和启动服务。
 bun -e '
   import { assertStateFilesMigrated } from "./scripts/install/runtime";
   await assertStateFilesMigrated();
-' || die "数据根仍有 state.json 或 state.json.bak：先执行 migrate:global-state 冷迁移并按清单替换；二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js --help 查看用法。"
+' || die "全局状态不是当前格式（文件与字段见上）：数据根仍有 state.json 或 state.json.bak 时，先用上一次全局状态迁移的发行版迁到 memory/global/state.json；memory/global/state.json 仍是总计数 ttsUsage 时，执行本版 migrate:global-state 拆分语音计数。二进制包用 BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js --help 查看用法。"
 
 mkdir -p config/static config/dynamic
 for example_file in config_example/static/*.json config_example/dynamic/*.json; do

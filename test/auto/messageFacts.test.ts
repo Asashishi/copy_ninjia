@@ -2,6 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
 import type { Animation, Message, MessageEntity, PhotoSize } from "grammy/types";
 import { MEDIA_MAX_DOWNLOAD_BYTES } from "../../packages/consts/aiChat/media";
+import {
+  BOTH_MENTION_FACTS,
+  BOT_MENTION_FACTS,
+  NO_MENTION_FACTS,
+  OTHER_MENTION_FACTS,
+} from "../../packages/consts/auto";
 import type { MentionFacts, MessageTriggerContext } from "../../packages/types/auto";
 import type { AiBotInfo } from "../../packages/types/aiChat/protocol";
 import { createMessageTriggerContext } from "../../packages/auto/message/triggerContext";
@@ -68,6 +74,24 @@ describe("auto/message/facts", () => {
       text: "找 bot",
       entities: [{ type: "text_mention", offset: 2, length: 3, user: { id: 999, is_bot: true, first_name: "Bot" } }],
     }), 999, "test_bot").hasOtherMention).toBe(false);
+  });
+
+  test("四种提及组合返回共享只读常量，正文与 caption 同解，空实体表视为未提及", () => {
+    const bot: MessageEntity = { type: "mention", offset: 0, length: 9 };
+    const other: MessageEntity = { type: "mention", offset: 10, length: 6 };
+    const cases: readonly [readonly MessageEntity[], Readonly<MentionFacts>][] = [
+      [[], NO_MENTION_FACTS],
+      [[{ type: "url", offset: 17, length: 3 }], NO_MENTION_FACTS],
+      [[bot], BOT_MENTION_FACTS],
+      [[other], OTHER_MENTION_FACTS],
+      [[bot, other], BOTH_MENTION_FACTS],
+    ];
+    const text: string = "@test_bot @alice abc";
+    for (const [entities, expected] of cases) {
+      expect(resolveMentionFacts(message({ text, entities }), TEST_BOT_ID, "test_bot")).toBe(expected);
+      expect(resolveMentionFacts(message({ caption: text, caption_entities: entities }), TEST_BOT_ID, "test_bot")).toBe(expected);
+    }
+    expect(resolveMentionFacts(message({ text }), TEST_BOT_ID, "test_bot")).toBe(NO_MENTION_FACTS);
   });
 
   /**

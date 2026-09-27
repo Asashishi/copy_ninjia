@@ -1,4 +1,10 @@
-import { NO_MENTION_FACTS, RANDOM_ECHO_MODES } from "../../packages/consts/auto";
+import {
+  BOTH_MENTION_FACTS,
+  BOT_MENTION_FACTS,
+  NO_MENTION_FACTS,
+  OTHER_MENTION_FACTS,
+  RANDOM_ECHO_MODES,
+} from "../../packages/consts/auto";
 import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
@@ -95,7 +101,12 @@ import { getChatState } from "../../packages/infra/storage/stateStore";
 
 import * as Media from "../../packages/consts/aiChat/media";
 import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
-import { NO_VERIFICATION_EFFECTS } from "../../packages/consts/antiRaid/verification";
+import {
+  CHANNEL_COMMENT_JOIN_EXEMPTION,
+  IDENTITY_JOIN_EXEMPTION,
+  NO_JOIN_EXEMPTION,
+  NO_VERIFICATION_EFFECTS,
+} from "../../packages/consts/antiRaid/verification";
 import { NO_LOCKDOWN_EFFECTS } from "../../packages/consts/antiRaid/lockdown";
 import { EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/tools";
 import { EMPTY_STICKER_MENU } from "../../packages/consts/aiChat/stickers";
@@ -475,11 +486,27 @@ function assertPromptTextsReadonly(): void {
 }
 void assertPromptTextsReadonly;
 
-function assertNoMentionFactsReadonly(): void {
-  // @ts-expect-error 无实体消息共享的提及事实不可修改。
+function assertMentionFactsReadonly(): void {
+  // @ts-expect-error 未提及任何人时共享的提及事实不可修改。
   NO_MENTION_FACTS.isMentioned = true;
+  // @ts-expect-error 只提及机器人时共享的提及事实不可修改。
+  BOT_MENTION_FACTS.hasOtherMention = true;
+  // @ts-expect-error 只提及他人时共享的提及事实不可修改。
+  OTHER_MENTION_FACTS.isMentioned = true;
+  // @ts-expect-error 同时提及时共享的提及事实不可修改。
+  BOTH_MENTION_FACTS.hasOtherMention = false;
 }
-void assertNoMentionFactsReadonly;
+void assertMentionFactsReadonly;
+
+function assertJoinExemptionsReadonly(): void {
+  // @ts-expect-error 没有豁免来源时共享的入群豁免结论不可修改。
+  NO_JOIN_EXEMPTION.exempt = true;
+  // @ts-expect-error 身份豁免时共享的入群豁免结论不可修改。
+  IDENTITY_JOIN_EXEMPTION.viaChannelComment = true;
+  // @ts-expect-error 评论区豁免时共享的入群豁免结论不可修改。
+  CHANNEL_COMMENT_JOIN_EXEMPTION.exempt = false;
+}
+void assertJoinExemptionsReadonly;
 
 import { BOT_ATMOSPHERES } from "../../packages/consts/bot";
 function assertBotAtmospheresReadonly(): void {
@@ -492,5 +519,7 @@ import { DEFAULT_ASSET_CONFIG } from "../../packages/consts/ui/assets";
 function assertDefaultAssetConfigReadonly(): void {
   // @ts-expect-error 内置素材缺省快照也是 holder 初值，调用方不能改写。
   DEFAULT_ASSET_CONFIG.gagThumbnailUrl = "https://changed.example/g.png";
+  // @ts-expect-error 默认头像来源同样只读，不能就地改成别的来源。
+  DEFAULT_ASSET_CONFIG.botDefaultAvatar.kind = "path";
 }
 void assertDefaultAssetConfigReadonly;

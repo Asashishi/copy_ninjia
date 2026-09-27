@@ -135,13 +135,12 @@ export type IdentityPersistenceReply = (
 ) => void;
 
 /**
- * 统一 flush 覆盖的落盘领域，回执按领域拆开：调用方（典型是 /block）只需要
- * 关心自己这条记录所在领域是否失败，不受无关领域影响（见
- * workers/diskIOWorker.ts 的 flushAll）。
+ * flush 覆盖的落盘领域，回执按领域拆开：调用方（典型是 /block）只需要关心自己这条
+ * 记录所在领域是否失败，不受无关领域影响（见 workers/diskIOWorker.ts 的 flushScope）。
  *
  * 入群日志占两格：`joinLog` 是追写，`joinLogPurge` 是群 teardown 的整群删除，
- * 两者分开领域各自独立失败。追写那一格由每一条入群事实的 durable 屏障消费
- * （见 infra/joinLog.ts 的 recordJoinLog）。
+ * 两者分开领域各自独立失败。追写那一格只在停机等统一 flush 中回报；入群事实本身
+ * 由 joinLogPersisted 处置回执确认（见 infra/joinLog.ts 的 recordJoinLog）。
  */
 export type DiskIODomain =
   | "log"
@@ -246,7 +245,7 @@ export interface LuckAppendStalledReply {
 }
 
 /**
- * diskIOWorker -> 主线程：恢复缓冲重放期间有一条业务事实没能写进去。
+ * diskIOWorker -> 主线程：恢复缓冲重放期间有一条共享 SQLite 写消息被拒收。
  *
  * 与 LuckAppendStalledReply 一样是「Worker 内部错误只 console.error」的窄口径例外，
  * 但走的不是日志而是停机：这条事实对应的 update 已经被确认过了（见
@@ -286,6 +285,19 @@ export interface WedMembersDeletedPersistedReply {
   readonly revision: number;
 }
 
+/**
+ * diskIOWorker -> 主线程：Worker 已收下序号不超过 through 的入群事实，其中仍留在缓冲里
+ * 等待重试的（写失败或事件日期领先）列在 pending；其余都已处置——写入并 fsync、按窗口外
+ * 静默丢弃，或随整群删除丢弃。Worker 只在 through 前进或 pending 变少时发送；主线程据此
+ * 从未确认镜像中释放已处置的事实（见 infra/joinLog.ts）。
+ */
+export interface JoinLogPersistedReply {
+  readonly type: "joinLogPersisted";
+  readonly through: number;
+  /** 序号不超过 through、仍在 Worker 缓冲里的事实；恒发送，没有时为空数组。 */
+  readonly pending: readonly number[];
+}
+
 /** 贴纸目录与目录项已 durable；主线程据此释放退出白名单的镜像。 */
 export interface StickerCatalogPersistedReply {
   readonly type: "stickerCatalogPersisted";
@@ -306,6 +318,7 @@ export interface DiskIOReplyListenerMap {
   readonly stickerCatalogPersisted: StickerCatalogPersistedReply;
   readonly luckAppendStalled: LuckAppendStalledReply;
   readonly identityStoragePersisted: IdentityStoragePersistedReply;
+  readonly joinLogPersisted: JoinLogPersistedReply;
 }
 
 /** 每类可订阅回执各自的监听器表。 */
@@ -314,6 +327,7 @@ export type DiskIOReplyListeners = {
 };
 
 export type DiskIOReply =
+  | JoinLogPersistedReply
   | StickerCatalogPersistedReply
   | WedMembersDeletedPersistedReply
   | MidnightMaintenanceReply

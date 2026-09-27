@@ -151,7 +151,7 @@ describe("adoptVerificationState：落盘快照重建成内存状态", () => {
       unconfirmedNoticeSent: true,
       successNoticeSent: true,
       removalConfirmed: true,
-      cleanupSettled: undefined,
+      cleanupSettled: false,
     });
   });
 

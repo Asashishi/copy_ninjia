@@ -1,9 +1,11 @@
 /**
  * AI 缓存使用统计落盘：memory/ai-daily-usage/usage.json 一份文件，内容是一个顶层 JSON 对象。
  *
- * - `summary`（写在首位）：最近一个已结束东京日的汇总，见 types/aiCache.ts 的 AiCacheSummary。
+ * - `summary`（写在首位）：最近一个已结束东京日的汇总，见 types/aiCache.ts 的 AiCacheSummary；
+ *   有过费用请求的合计另带 costInUsdTicks，没有时省略该键。
  * - 其余键：尚未汇总的逐条用量，键为「东京时间 YYYY-MM-DD HH:mm:ss.SSS_uuid」，值为
- *   capability、provider、model 与三项 token 数。
+ *   capability、provider、model 加上三项 token 数或 costInUsdTicks 二者之一（供应商给出
+ *   token 时只记 token，只给费用时记费用）。
  *
  * 逐条记录经诊断通道到达后先进内存缓冲（cache/workers/diskIO/aiCache.ts），达到
  * FLUSH_MAX_ENTRIES 或等满 FLUSH_INTERVAL_MS 后按 appendOnlyDayFile.ts 的机制追加到文件末尾，
@@ -26,6 +28,7 @@ import {
 } from "../../cache/workers/diskIO/aiCache";
 import {
   AI_CACHE_CAPABILITIES,
+  AI_CACHE_COST_ROW_FIELDS,
   AI_CACHE_GROUP_KEY_PATTERN,
   AI_CACHE_HIT_RATE_DIGITS,
   AI_CACHE_ROW_FIELDS,
@@ -33,6 +36,7 @@ import {
   AI_CACHE_SUMMARY_FIELDS,
   AI_CACHE_SUMMARY_KEY,
   AI_CACHE_TOTALS_FIELDS,
+  AI_CACHE_TOTALS_OPTIONAL_FIELDS,
 } from "../../consts/diskIO/aiCache";
 import {
   DAY_FILE_JSON_INDENT,
@@ -44,7 +48,7 @@ import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { bestEffortUnlink, inspectOptionalDirectory, inspectOptionalFile } from "../../libs/fileAccess";
 import { readUtf8TextInput } from "../../libs/inputValidation";
-import { hasExactKeys, isPlainRecord } from "../../libs/record";
+import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../libs/record";
 import { formatTokyoLogTimestamp, getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { AiCacheCapability, AiCacheSummary, AiCacheTotals } from "../../types/aiCache";
 import type { AgentProvider } from "../../types/config";
@@ -56,10 +60,10 @@ import {
   repairTruncatedAppendOnlyContent,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import { enqueueDiskIOOperation } from "./operationQueue";
+import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
-/** 文件里的一条逐条用量；时间在键上。 */
-interface AiCacheRow {
+/** 文件里一条按 token 计量的用量；时间在键上。 */
+interface AiCacheTokenRow {
   readonly capability: AiCacheCapability;
   readonly provider: AgentProvider;
   readonly model: string;
@@ -67,6 +71,17 @@ interface AiCacheRow {
   readonly cachedInputTokens: number | null;
   readonly outputTokens: number;
 }
+
+/** 文件里一条按费用计量的用量（供应商只给出费用时）；时间在键上。 */
+interface AiCacheCostRow {
+  readonly capability: AiCacheCapability;
+  readonly provider: AgentProvider;
+  readonly model: string;
+  readonly costInUsdTicks: number;
+}
+
+/** 文件里的一条逐条用量：token 与费用二选一，以字段集合区分。 */
+type AiCacheRow = AiCacheTokenRow | AiCacheCostRow;
 
 /** 解码后的统计文件；rows 保留文件中的顺序。 */
 interface AiCacheDocument {
@@ -81,13 +96,14 @@ export interface AiCacheInspection {
   readonly state: AppendOnlyFileState;
 }
 
-/** 可累加的合计；命中率在输出时才计算。 */
+/** 可累加的合计；命中率在输出时才计算，costInUsdTicks 在计入第一条费用请求前为 undefined。 */
 interface MutableTotals {
   requests: number;
   inputTokens: number;
   reportedInputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
+  costInUsdTicks: number | undefined;
 }
 
 function isTokenCount(value: unknown): value is number {
@@ -101,10 +117,23 @@ function invalid(reason: string): never {
 function decodeRow(key: string, value: unknown): AiCacheRow {
   if (
     !isPlainRecord(value) ||
-    !hasExactKeys(value, AI_CACHE_ROW_FIELDS) ||
     typeof value.capability !== "string" || !AI_CACHE_CAPABILITIES.has(value.capability) ||
     (value.provider !== "openai" && value.provider !== "google") ||
-    typeof value.model !== "string" || value.model.length === 0 ||
+    typeof value.model !== "string" || value.model.length === 0
+  ) {
+    return invalid(`contains an invalid usage record for key ${key}.`);
+  }
+  if (hasExactKeys(value, AI_CACHE_COST_ROW_FIELDS)) {
+    if (!isTokenCount(value.costInUsdTicks)) return invalid(`contains an invalid usage record for key ${key}.`);
+    return {
+      capability: value.capability as AiCacheCapability,
+      provider: value.provider,
+      model: value.model,
+      costInUsdTicks: value.costInUsdTicks,
+    };
+  }
+  if (
+    !hasExactKeys(value, AI_CACHE_ROW_FIELDS) ||
     !isTokenCount(value.inputTokens) ||
     (value.cachedInputTokens !== null &&
       (!isTokenCount(value.cachedInputTokens) || value.cachedInputTokens > value.inputTokens)) ||
@@ -129,14 +158,24 @@ function hitRate(cachedInputTokens: number, reportedInputTokens: number): number
   return Math.round(cachedInputTokens / reportedInputTokens * scale) / scale;
 }
 
+/** 必填字段齐全，且除必填与 AI_CACHE_TOTALS_OPTIONAL_FIELDS 外没有别的字段。 */
+function hasTotalsKeys(value: Record<string, unknown>, required: readonly string[]): boolean {
+  for (const key of required) {
+    if (!Object.hasOwn(value, key)) return false;
+  }
+  return hasOnlyKeys(value, [...required, ...AI_CACHE_TOTALS_OPTIONAL_FIELDS]);
+}
+
 /**
- * 解码一份合计。keys 是该对象应有的全部字段（汇总本身比 byModel 分组多 day 与 byModel）；
- * 命中数不得超过有缓存口径的输入数，后者不得超过总输入数，命中率必须等于按同一口径重算的值。
+ * 解码一份合计。keys 是该对象的必填字段（汇总本身比 byModel 分组多 day 与 byModel），
+ * costInUsdTicks 可缺省；命中数不得超过有缓存口径的输入数，后者不得超过总输入数，命中率
+ * 必须等于按同一口径重算的值。
  */
 function decodeTotals(value: unknown, keys: readonly string[], field: string): AiCacheTotals {
   if (
     !isPlainRecord(value) ||
-    !hasExactKeys(value, keys) ||
+    !hasTotalsKeys(value, keys) ||
+    (value.costInUsdTicks !== undefined && !isTokenCount(value.costInUsdTicks)) ||
     !isTokenCount(value.requests) ||
     !isTokenCount(value.inputTokens) ||
     !isTokenCount(value.reportedInputTokens) ||
@@ -155,6 +194,7 @@ function decodeTotals(value: unknown, keys: readonly string[], field: string): A
     cachedInputTokens: value.cachedInputTokens,
     outputTokens: value.outputTokens,
     cacheHitRate: hitRate(value.cachedInputTokens, value.reportedInputTokens),
+    costInUsdTicks: value.costInUsdTicks,
   };
 }
 
@@ -263,33 +303,29 @@ export async function maintainAiCacheFile(): Promise<void> {
   await summarizeAiCache();
 }
 
-/** 按需排一次定时刷盘；已有 timer 时不重复排。timer unref，不扣住 Worker 退出。 */
-function scheduleAiCacheFlush(): void {
-  if (aiCacheBuffer.timer !== null) return;
-  aiCacheBuffer.timer = setTimeout((): void => {
-    void enqueueDiskIOOperation(async (): Promise<void> => {
-      await flushAiCacheBuffer();
-    });
-  }, FLUSH_INTERVAL_MS);
-  aiCacheBuffer.timer.unref();
-}
-
 /** 收下一条用量：序列化进缓冲，达到阈值立即刷盘，否则按需排定时刷盘。 */
 export async function handleAiCacheUsageMessage(message: AiCacheUsageDiskMessage): Promise<void> {
-  const row: AiCacheRow = {
-    capability: message.capability,
-    provider: message.provider,
-    model: message.model,
-    inputTokens: message.inputTokens,
-    cachedInputTokens: message.cachedInputTokens,
-    outputTokens: message.outputTokens,
-  };
+  const row: AiCacheRow = message.kind === "cost"
+    ? {
+      capability: message.capability,
+      provider: message.provider,
+      model: message.model,
+      costInUsdTicks: message.costInUsdTicks,
+    }
+    : {
+      capability: message.capability,
+      provider: message.provider,
+      model: message.model,
+      inputTokens: message.inputTokens,
+      cachedInputTokens: message.cachedInputTokens,
+      outputTokens: message.outputTokens,
+    };
   aiCacheBuffer.texts.push(serializeDayFileEntry(
     `${formatTokyoLogTimestamp(message.timestamp)}_${crypto.randomUUID()}`,
     row
   ));
   if (aiCacheBuffer.texts.length >= FLUSH_MAX_ENTRIES) await flushAiCacheBuffer();
-  else scheduleAiCacheFlush();
+  else armDiskIOFlushTimer(aiCacheBuffer, FLUSH_INTERVAL_MS, flushAiCacheBuffer);
 }
 
 /**
@@ -297,10 +333,7 @@ export async function handleAiCacheUsageMessage(message: AiCacheUsageDiskMessage
  * 或本次失败时丢弃这一批并返回 false。
  */
 export async function flushAiCacheBuffer(): Promise<boolean> {
-  if (aiCacheBuffer.timer !== null) {
-    clearTimeout(aiCacheBuffer.timer);
-    aiCacheBuffer.timer = null;
-  }
+  cancelDiskIOFlushTimer(aiCacheBuffer);
   if (aiCacheBuffer.texts.length === 0) return true;
   const texts: string[] = aiCacheBuffer.texts;
   aiCacheBuffer.texts = [];
@@ -328,11 +361,22 @@ export async function flushAiCacheBuffer(): Promise<boolean> {
 }
 
 function emptyTotals(): MutableTotals {
-  return { requests: 0, inputTokens: 0, reportedInputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+  return {
+    requests: 0,
+    inputTokens: 0,
+    reportedInputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    costInUsdTicks: undefined,
+  };
 }
 
 function addRow(totals: MutableTotals, row: AiCacheRow): void {
   totals.requests += 1;
+  if ("costInUsdTicks" in row) {
+    totals.costInUsdTicks = (totals.costInUsdTicks ?? 0) + row.costInUsdTicks;
+    return;
+  }
   totals.inputTokens += row.inputTokens;
   totals.outputTokens += row.outputTokens;
   if (row.cachedInputTokens === null) return;
@@ -346,6 +390,9 @@ function addTotals(totals: MutableTotals, other: AiCacheTotals): void {
   totals.reportedInputTokens += other.reportedInputTokens;
   totals.cachedInputTokens += other.cachedInputTokens;
   totals.outputTokens += other.outputTokens;
+  if (other.costInUsdTicks !== undefined) {
+    totals.costInUsdTicks = (totals.costInUsdTicks ?? 0) + other.costInUsdTicks;
+  }
 }
 
 function finishTotals(totals: MutableTotals): AiCacheTotals {
@@ -356,6 +403,7 @@ function finishTotals(totals: MutableTotals): AiCacheTotals {
     cachedInputTokens: totals.cachedInputTokens,
     outputTokens: totals.outputTokens,
     cacheHitRate: hitRate(totals.cachedInputTokens, totals.reportedInputTokens),
+    costInUsdTicks: totals.costInUsdTicks,
   };
 }
 

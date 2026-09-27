@@ -92,7 +92,7 @@ export const BOT_CONFIG_PATH: string = join(STATIC_CONFIG_DIR, "bot.json");
  * 单项能力的字段解码见 packages/config/agentCapability.ts。
  */
 export const AGENT_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "agent.json");
-/** 外部素材直链与随机图片目录（可选、可热重载），见 packages/config/assets.ts。 */
+/** 素材配置：随机图片目录、机器人默认头像来源与 inline 缩略图直链（可选、可热重载），见 packages/config/assets.ts。 */
 export const ASSETS_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "assets.json");
 /** 定时任务部署配置（可选、可热重载），见 packages/config/cron.ts。 */
 export const CRON_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "cron.json");

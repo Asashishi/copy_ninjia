@@ -82,7 +82,8 @@ describe("入队时的送检文本整形", () => {
     enqueueAdCandidate(candidate({
       messageId: 1,
       text: "这种广告真烦",
-      sampleContext: { quote: "日入过千 加V xxx996", replyTo: "日入过千 加V xxx996" },
+      sampleQuote: "日入过千 加V xxx996",
+      sampleReplyTo: "日入过千 加V xxx996",
     }), 1_000);
 
     const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
@@ -100,7 +101,7 @@ describe("入队时的送检文本整形", () => {
     // 广告号把话术拆成三条、每条都回复同一条（已被编辑成广告的）消息。
     const replyTo: string = "日".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS);
     for (const [index, own] of ["加我", "微 信", "xxx996"].entries()) {
-      enqueueAdCandidate(candidate({ messageId: index + 1, text: own, sampleContext: { replyTo } }), 1_000);
+      enqueueAdCandidate(candidate({ messageId: index + 1, text: own, sampleReplyTo: replyTo }), 1_000);
     }
 
     const entries = pendingAdMessages.get("-1001:7")!.entries;
@@ -115,12 +116,12 @@ describe("入队时的送检文本整形", () => {
 
   test("认领者被裁掉后引文重新认领：串里再没人带着它时，下一条候选自己接一份", async () => {
     const replyTo: string = "日入过千 加V xxx996";
-    enqueueAdCandidate(candidate({ messageId: 1, text: "看这个", sampleContext: { replyTo } }), 1_000);
+    enqueueAdCandidate(candidate({ messageId: 1, text: "看这个", sampleReplyTo: replyTo }), 1_000);
     await runAdDetectBatch(1_000);
 
     // 第一条判过又出了去重窗口，pruneConsumedContext 会把它连引文一起裁掉。
     const later: number = 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
-    enqueueAdCandidate(candidate({ messageId: 2, text: "再看这个", sampleContext: { replyTo } }), later);
+    enqueueAdCandidate(candidate({ messageId: 2, text: "再看这个", sampleReplyTo: replyTo }), later);
 
     const entries = pendingAdMessages.get("-1001:7")!.entries;
     expect(entries.map((entry): string => entry.text)).toEqual([`再看这个 ${replyTo}`]);
@@ -130,7 +131,8 @@ describe("入队时的送检文本整形", () => {
     enqueueAdCandidate(candidate({
       messageId: 1,
       text: "真的假的",
-      sampleContext: { quote: "日入过千", replyTo: "加V xxx996" },
+      sampleQuote: "日入过千",
+      sampleReplyTo: "加V xxx996",
     }), 1_000);
 
     await runAdDetectBatch(1_000);
@@ -142,7 +144,7 @@ describe("入队时的送检文本整形", () => {
     enqueueAdCandidate(candidate({
       messageId: 1,
       text: "废".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
-      sampleContext: { quote: "日入过千 加V xxx996" },
+      sampleQuote: "日入过千 加V xxx996",
     }), 1_000);
 
     const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;

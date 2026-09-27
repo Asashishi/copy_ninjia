@@ -5,7 +5,7 @@ import type {
   VerificationState,
   VerificationTransition,
 } from "../../types/states/verification";
-import { expellingOf, isTerminalVerificationPhase, remindersOf } from "./shared";
+import { exemptOf, expellingOf, isTerminalVerificationPhase, kickedOf, remindersOf } from "./shared";
 
 /** 处理拉人者终核结果，管理员豁免，否则切换到可重放处置终态。 */
 export function handleTimeoutInviterVerdict(
@@ -23,14 +23,7 @@ export function handleTimeoutInviterVerdict(
     remindersOf(state.snapshot),
     { kind: "retractJoinCount", joinedAt: state.snapshot.joinedAt },
   ];
-  return {
-    next: {
-      kind: "exempt",
-      label: state.snapshot.label,
-      isBot: state.snapshot.isBot,
-    },
-    effects,
-  };
+  return { next: exemptOf(state.snapshot.label, state.snapshot.isBot), effects };
 }
 
 /** 落盘回执到达后打开终态本地执行门；重复回执保持幂等。 */
@@ -121,15 +114,7 @@ export function handleKickSettled(
   now: number
 ): VerificationTransition {
   if (state?.kind !== "kickPending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
-  return {
-    next: {
-      kind: "kicked",
-      label: state.label,
-      isBot: state.isBot,
-      kickedAt: now,
-    },
-    effects: NO_VERIFICATION_EFFECTS,
-  };
+  return { next: kickedOf(state.label, state.isBot, now), effects: NO_VERIFICATION_EFFECTS };
 }
 
 /** 只清除短期去重占位，不影响真实验证或可恢复终态。 */

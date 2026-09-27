@@ -26,7 +26,7 @@
  * 的日志落盘自己的错误，那是一场递归。
  */
 
-import { handleAdSampleMessage } from "./diskIO/adSampleFile";
+import { flushAdSampleBuffer, handleAdSampleMessage } from "./diskIO/adSampleFile";
 import {
   configureStoragePersistenceReply,
   flushStorageDatabase,
@@ -50,7 +50,7 @@ import {
 } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import {
-  flushJoinLogDomain,
+  flushJoinLogBuffer,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
   purgeJoinLogDeletions,
@@ -65,7 +65,6 @@ import {
   configureAiMemoryDeletePersistedReply,
   configureAiMemoryPersistedReply,
   deleteAiMemorySnapshot,
-  flushAiMemorySnapshots,
   markAiMemorySnapshotDirty,
 } from "./diskIO/aiMemoryStorage";
 import {
@@ -82,12 +81,12 @@ import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../consts/diskIO/business";
 import { forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
 import { luckWorkerCache } from "../cache/workers/diskIO/luck";
-import { noteJoinLogRejected } from "../cache/workers/diskIO/joinLog";
+import { joinLogPersistedNotifier } from "../cache/workers/diskIO/joinLog";
 import { noteStorageWriteRejected, storageWriteFatalReply } from "../cache/workers/diskIO/storageDatabase";
 import { StorageWriteCapacityError } from "../libs/storageWriteBudget";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
-  DiskFlushRequest,
+  DiskFlushScope,
   DiskIOMessage,
 } from "../types/diskIO/messages";
 import type {
@@ -117,31 +116,79 @@ function postReply(reply: DiskIOReply): void {
 }
 
 /**
- * 统一 flush：普通范围覆盖日志与全部业务领域；`business` 范围只在已知日志故障的
- * 受控重建前使用。两种范围都会刷出 AI 缓存用量统计，但它的失败不进回执。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，
- * 该刷的都立即刷。
+ * 把单个领域的缓冲立即落盘，失败时把该领域（SQLite 为本轮仍 dirty 或拒收的各表）记进
+ * failedDomains。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，都立即刷。
+ * 共享 SQLite 的七个领域（含 AI 上下文）共用一个事务，经任一领域名提交一次即覆盖全部表。
  */
-async function flushAll(
-  scope: DiskFlushRequest["scope"]
-): Promise<readonly DiskIODomain[]> {
-  // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
+async function flushDomain(domain: DiskIODomain, failedDomains: DiskIODomain[]): Promise<void> {
+  switch (domain) {
+    case "log":
+      if (!await flushLogBuffer()) failedDomains.push("log");
+      return;
+    case "stickerCatalog":
+      if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
+      return;
+    case "wedMembers":
+      if (!flushWedMemberFiles()) failedDomains.push("wedMembers");
+      return;
+    case "luck":
+      if (!await flushLuckAppends()) failedDomains.push("luck");
+      return;
+    case "verification":
+      if (!await flushVerificationChanges(postReply)) failedDomains.push("verification");
+      return;
+    case "whitelist":
+    case "blocklist":
+    case "temporaryAdBypass":
+    case "blocklistRemovalOutbox":
+    case "chatState":
+    case "chatQa":
+    case "aiMemory":
+      if (!flushStorageDatabase(postReply)) {
+        failedDomains.push(...pendingStorageDatabaseDomains());
+      }
+      return;
+    case "joinLog":
+      if (!await flushJoinLogBuffer()) failedDomains.push("joinLog");
+      return;
+    case "joinLogPurge":
+      // 整群删除单独占一格：一个已停管群删不掉的文件不能让入群追写那一格一起
+      // 判成未落盘（见 types/diskIO/replies.ts 的 DiskIODomain）。
+      if (!purgeJoinLogDeletions()) failedDomains.push("joinLogPurge");
+      return;
+    default: {
+      // 穷尽性断言：新增领域时这一行编译失败，必须在本 switch 里点名它的 flush 出口。
+      const unhandled: never = domain;
+      void unhandled;
+    }
+  }
+}
+
+/**
+ * 按 scope 执行 flush（范围语义见 types/diskIO/messages.ts 的 DiskFlushScope）。单领域
+ * 屏障只刷该领域；`all` 与 `business` 依次刷出全部业务领域，并刷出 AI 缓存用量统计与
+ * 广告样本两类旁路数据，旁路失败不进回执。
+ */
+async function flushScope(scope: DiskFlushScope): Promise<readonly DiskIODomain[]> {
   const failedDomains: DiskIODomain[] = [];
-  if (scope === "all" && !await flushLogBuffer()) failedDomains.push("log");
-  // 缓存用量是旁路统计：照常刷出，失败只丢这一批并由 aiCacheFile.ts 记 console.error，
+  if (scope !== "all" && scope !== "business") {
+    await flushDomain(scope, failedDomains);
+    return failedDomains;
+  }
+  // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
+  if (scope === "all") await flushDomain("log", failedDomains);
+  // 旁路统计与样本：照常刷出，失败只丢这一批并由各自模块记 console.error，
   // 不计入失败领域，因此不会让等待业务落盘的调用方判为失败。
   await flushAiCacheBuffer();
-  if (!flushAiMemorySnapshots()) failedDomains.push("aiMemory");
-  if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
-  if (!flushWedMemberFiles()) failedDomains.push("wedMembers");
-  if (!await flushLuckAppends()) failedDomains.push("luck");
-  if (!await flushVerificationChanges(postReply)) failedDomains.push("verification");
-  if (!flushStorageDatabase(postReply)) {
-    failedDomains.push(...pendingStorageDatabaseDomains());
-  }
-  if (!await flushJoinLogDomain()) failedDomains.push("joinLog");
-  // 整群删除单独占一格：一个已停管群删不掉的文件不能把所有群的入群事实一起
-  // 判成未落盘（见 types/diskIO/replies.ts 的 DiskIODomain）。
-  if (!purgeJoinLogDeletions()) failedDomains.push("joinLogPurge");
+  await flushAdSampleBuffer();
+  await flushDomain("stickerCatalog", failedDomains);
+  await flushDomain("wedMembers", failedDomains);
+  await flushDomain("luck", failedDomains);
+  await flushDomain("verification", failedDomains);
+  // 共享 SQLite 事务一次提交全部表与 AI 上下文。
+  await flushDomain("chatState", failedDomains);
+  await flushDomain("joinLog", failedDomains);
+  await flushDomain("joinLogPurge", failedDomains);
   // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
   // 的失败误导，而那个领域的真实错误按设计只有 console.error。
   return failedDomains;
@@ -179,7 +226,7 @@ export async function handleDiskIOWorkerMessage(
         postReply(retry);
         break;
       }
-      // 纯旁路素材：收到即写，不进合并窗口、不进统一 flush、失败即弃
+      // 纯旁路素材：先进样本批次，由阈值、定时或统一 flush 追加，失败即弃
       // （见 diskIO/adSampleFile.ts 的文件头）。
       for (const diagnostic of msg.messages) {
         if (diagnostic.type === "adSample") await handleAdSampleMessage(diagnostic);
@@ -210,9 +257,8 @@ export async function handleDiskIOWorkerMessage(
       });
       break;
     case "deleteAiMemory":
-      // 同步立即 unlink（而不是只走 dirty 标记 + 定时 flush）：删除是
-      // 幂等的，不必等 SNAPSHOT_FLUSH_INTERVAL_MS 的批量窗口。失败会保留
-      // dirty 删除状态；若线程在处理前或处理中崩溃，主线程持有的 revision
+      // 删除排入共享事务缓冲后立即提交，不等定时窗口。提交失败时缓冲保留删除最终值
+      // 由事务重试 timer 继续；若线程在处理前或处理中崩溃，主线程持有的 revision
       // tombstone 会在新 Worker 完成 load 后重放，直到收到 durable 删除回执。
       deleteAiMemorySnapshot(msg.chatId, msg.revision);
       break;
@@ -281,7 +327,7 @@ export async function handleDiskIOWorkerMessage(
     case "verificationDelete":
       await handleVerificationDelete({ msg, reply: postReply });
       break;
-    // 这两条与 joinLog 同理：handlePendingRemovalSnapshot 会在 removalId 重复、
+    // 共享 SQLite 写消息的非法输入就地拒收：handlePendingRemovalSnapshot 会在 removalId 重复、
     // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
     // handleIdentityPolicyWrite 由 validatePolicyData / assertOppositePolicyAbsent
     // 抛。异常一旦离开 onmessage，Bun 会直接终止整条落盘线程：在途 flush 全部按
@@ -325,38 +371,14 @@ export async function handleDiskIOWorkerMessage(
       setStorageFlushHold(msg.active, postReply);
       break;
     case "joinLog":
-      try {
-        await handleJoinLogMessage(msg);
-      } catch (error: unknown) {
-        // 缓冲满、跨日前刷盘失败、跨日清理抛错都会从这里逸出。异常一旦离开
-        // onmessage，Bun 会直接终止整条落盘线程（见 infra/diskIO/host.ts 的
-        // 注释）：在途 flush 全部按失败结算、各领域缓冲随线程一起没了，反复触发
-        // 还会顶到 diskIORestartThrottle 把整个进程停掉——为了一条入群事实。
-        // 按 cache/workers/diskIO/joinLog.ts 的约定只拖垮 joinLog 这一个领域：
-        // 记下拒收，recordJoinLog 紧接着那次 flush 就会拿到 flushFailed，该
-        // update 不被确认，Telegram 重投。
-        noteJoinLogRejected();
-        console.error("[diskIOWorker] failed to buffer a join log event:", error);
-        // 上面那套自愈的前提是「这条消息后面紧跟着调用方自己的 flush」。恢复
-        // 缓冲重放的那条没有：recordJoinLog 在缓冲那一刻就放行了该 update，此后
-        // 再没有人来问它写没写进去。拒收标记会一直挂到某个**无关**的后续入群
-        // 事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条却没有任何痕迹。
-        // 按 infra/joinLog.ts 承诺的口径升级为统一 fatal 停机，让 Telegram 从
-        // 上一个确认点整段重投。
-        if (diskIOReplayWindow.current) {
-          const reply: RecoveryReplayFailedReply = {
-            type: "recoveryReplayFailed",
-            domain: "joinLog",
-            error: errorMessage(error),
-          };
-          postReply(reply);
-        }
-      }
+      // 入群事实只进缓冲；写失败与领先本 Worker 今天的条目留在缓冲里重试，处置结果
+      // 经 joinLogPersisted 处置回执回报（见 diskIO/joinLogFiles.ts 的 handleJoinLogMessage）。
+      await handleJoinLogMessage(msg);
       break;
     case "deleteJoinLog":
-      // 与 joinLog 分支不同，这条不记拒收：目录列举与逐个 unlink 的失败都由
-      // purgeChatJoinLogFiles 自己收在 try 内并保留待删标记，删除结果经
-      // `joinLogPurge` 领域 flush 回报给发起 teardown 的调用方，不连坐无关的入群事实。
+      // 目录列举与逐个 unlink 的失败都由 purgeChatJoinLogFiles 自己收在 try 内并保留
+      // 待删标记，删除结果经 `joinLogPurge` 领域 flush 回报给发起 teardown 的调用方，
+      // 不连坐无关的入群事实。
       handleJoinLogDeleteMessage(msg);
       break;
     case "readJoinLog": {
@@ -388,7 +410,7 @@ export async function handleDiskIOWorkerMessage(
       await handleDiskIOStartupLoad(msg.stickerPacks, postReply);
       break;
     case "flush": {
-      const failedDomains: readonly DiskIODomain[] = await flushAll(msg.scope);
+      const failedDomains: readonly DiskIODomain[] = await flushScope(msg.scope);
       const reply: DiskFlushReply | DiskFlushFailedReply = failedDomains.length === 0
         ? { type: "flushed", flushedId: msg.flushId }
         : { type: "flushFailed", flushedId: msg.flushId, failedDomains };
@@ -420,8 +442,8 @@ export function queueDiskIOWorkerMessage(message: DiskIOMessage): Promise<void> 
  * 身份 SQLite 消息的统一拒收边界：异常只拖垮它自己那个领域，不离开 onmessage。
  *
  * 恢复重放区间内额外升级为 fatal：那批消息对应的 update 早已被 Telegram 确认，
- * 后面不会再有任何 flush 来问它写没写进去，继续跑就是静默丢数据（口径同
- * joinLog 与 types/diskIO.ts 的 RecoveryReplayRequest）。
+ * 后面不会再有任何 flush 来问它写没写进去，继续跑就是静默丢数据（见
+ * types/diskIO/messages.ts 的 RecoveryReplayRequest）。
  */
 function handleIdentityMessage(
   domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
@@ -447,6 +469,7 @@ function handleIdentityMessage(
 function startDiskIOWorker(): void {
   wedMemberDeletePersistedNotifier.current = postReply;
   stickerCatalogPersistedNotifier.current = postReply;
+  joinLogPersistedNotifier.current = postReply;
   storageWriteFatalReply.current = (): void => postReply({ type: "storageWriteStalled" });
   configureStoragePersistenceReply(postReply);
   configureAiMemoryDeletePersistedReply(postReply);

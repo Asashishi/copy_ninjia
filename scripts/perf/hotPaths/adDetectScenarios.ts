@@ -1,4 +1,4 @@
-/** 广告检测队列热路径场景；只复用真实 owner 状态与生产入口。 */
+/** 广告检测热路径场景：候选载荷的跨线程复制、正文拼接与队列容量闸；只复用真实 owner 状态与生产入口。 */
 
 import {
   adDetectCapacitySaturated,
@@ -17,12 +17,25 @@ import {
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../../../packages/consts/antiRaid/adDetect";
 import { enqueueAdCandidate } from "../../../packages/workers/antiRaid/adDetect/queue";
+import {
+  appendLinkUrls,
+  boundSampleContext,
+  claimSampleContextParts,
+} from "../../../packages/workers/antiRaid/adDetect/bundle";
 import type {
+  AdCandidateEntry,
   AdCandidateMessage,
   AdMessageBundle,
+  AdSampleContext,
 } from "../../../packages/types/antiRaid/adDetect";
 import type { Scenario } from "./types";
-import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
+import { AD_SAMPLE_TEXTS } from "./adFixture";
+import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
+
+/** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
+const EMPTY_LINK_URLS: readonly string[] = [];
+/** 广告无上下文路径的只读既有条目。 */
+const EMPTY_AD_ENTRIES: readonly AdCandidateEntry[] = [];
 
 /**
  * 为容量预置创建一份真实队列形态的独立 bundle。
@@ -69,22 +82,22 @@ const SATURATED_CANDIDATE: AdCandidateMessage = {
   messageId: 1,
   observedAt: BENCHMARK_EPOCH_MS,
   text: "广".repeat(AD_DETECT_MESSAGE_MAX_CHARS),
+  label: "benchmark rejected sender",
+  firstName: "Rejected",
+  lastName: "",
+  username: "rejected",
+  isChannel: false,
+  isForwarded: false,
+  blocked: false,
+  justJoined: false,
   linkUrls: Array.from(
     { length: AD_DETECT_MAX_LINK_URLS },
     (_unused: unknown, index: number): string =>
       `https://benchmark.invalid/${index}/${"x".repeat(AD_DETECT_LINK_URL_MAX_CHARS)}`
         .slice(0, AD_DETECT_LINK_URL_MAX_CHARS)
   ),
-  sampleContext: {
-    quote: "引".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS),
-    replyTo: "回".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS),
-  },
-  label: "benchmark rejected sender",
-  meta: { firstName: "Rejected", lastName: "", username: "rejected" },
-  isChannel: false,
-  isForwarded: false,
-  blocked: false,
-  justJoined: false,
+  sampleQuote: "引".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS),
+  sampleReplyTo: "回".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS),
 };
 
 /** 清空本场景触及的 Anti-Raid Worker owner 状态。 */
@@ -138,5 +151,64 @@ export function createAdCapacityRejectScenario(): Scenario {
       return checksum;
     },
     probes: { enqueueAdCandidate },
+  };
+}
+
+export function adEmptyMetadataScenario(): Scenario {
+  return {
+    iterations: 1_000_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        const sample: string = AD_SAMPLE_TEXTS[index % AD_SAMPLE_TEXTS.length] ?? "";
+        const linkedText: string = appendLinkUrls(sample, EMPTY_LINK_URLS);
+        const context: AdSampleContext | undefined = boundSampleContext(undefined, undefined);
+        const text: string = context === undefined
+          ? linkedText
+          : claimSampleContextParts(linkedText, context, EMPTY_AD_ENTRIES);
+        checksum += text.length;
+      }
+      return checksum;
+    },
+    // 本场景走的是「无元数据」那条分支：boundSampleContext 恒返回 undefined，
+    // claimSampleContextParts 永远不会被调用，因此不登记它。
+    probes: { appendLinkUrls, boundSampleContext },
+  };
+}
+
+/**
+ * 一条普通群消息的广告候选跨线程复制成本。字面量按 antiRaid/adCandidate.ts 的
+ * buildAdCandidate 的键序写全；AdCandidateMessage 的字段全部必填，缺键在编译期报错。
+ */
+export function adWireCloneScenario(): Scenario {
+  const message: AdCandidateMessage = {
+    type: "adCandidate",
+    chatId: BENCHMARK_CHAT_ID,
+    senderId: BENCHMARK_SENDER_ID,
+    messageId: 1,
+    observedAt: BENCHMARK_EPOCH_MS,
+    text: "ordinary message",
+    label: "@stable_user",
+    firstName: "Stable",
+    lastName: "",
+    username: "stable_user",
+    isChannel: false,
+    isForwarded: false,
+    blocked: false,
+    justJoined: false,
+    linkUrls: undefined,
+    sampleQuote: undefined,
+    sampleReplyTo: undefined,
+  };
+  return {
+    iterations: 200_000,
+    run: (iterations: number): number => {
+      let checksum: number = 0;
+      for (let index: number = 0; index < iterations; index += 1) {
+        const cloned: AdCandidateMessage = structuredClone(message);
+        checksum += cloned.text.length;
+      }
+      return checksum;
+    },
   };
 }

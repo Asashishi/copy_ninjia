@@ -3,6 +3,7 @@ import { loggerStub } from "../../helpers/loggerMock";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import type { TelegramWorkerDownloadFileResult } from "../../../packages/types/telegramWorker";
 import type { MediaInputModalityState } from "../../../packages/types/states/mediaInputSupport";
+import { createSharedResult } from "../../../packages/libs/sharedResult";
 
 const downloadTelegramFileFromMain = mock(async (..._args: unknown[]): Promise<TelegramWorkerDownloadFileResult> => ({
   status: "ok" as const,
@@ -762,7 +763,9 @@ describe("media 配置代次", () => {
       result: { ok: false, retryable: false, mediaFailure: "unsupported" },
       attemptState: getMediaInputState("voice"),
     });
-    setMediaInputProbe("vision", new Promise<AiTextResult>((): void => {}));
+    setMediaInputProbe("vision", createSharedResult(new Promise<AiTextResult>((): void => {}), {
+      cancelled: { ok: false, retryable: false }, rejected: { ok: false, retryable: true },
+    }));
 
     resetMediaInputSupport();
 

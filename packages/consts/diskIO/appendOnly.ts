@@ -5,7 +5,7 @@ export const RETENTION_DAYS: number = 3;
 /** 日志与运势文件名形态（YYYY-MM-DD.json）。 */
 export const DAY_FILE_PATTERN: RegExp = /^(\d{4}-\d{2}-\d{2})\.json$/;
 /** 批量落盘的累计变更阈值；各领域独立计数并调度。 */
-export const FLUSH_MAX_ENTRIES: number = 300;
+export const FLUSH_MAX_ENTRIES: number = 256;
 /** 批量落盘的时间阈值；从首条变更计时，未达累计阈值时到期触发。 */
 export const FLUSH_INTERVAL_MS: number = 30_000;
 /** appendOnlyDayFile 序列化与截断修复共同使用的 JSON 缩进宽度。 */
@@ -28,7 +28,7 @@ export const LOG_REOPEN_RETRY_MS: number = FLUSH_INTERVAL_MS * 10;
  * 本 Worker 自身的写盘错误按设计只有 `console.error`（见 workers/diskIOWorker.ts
  * 模块头），部署方可能不采集这条输出；这条诊断额外给出一条一定能进 `logs/`
  * 的告警，不取代 console.error。追加失败按 FLUSH_INTERVAL_MS 重排重试（见
- * scheduleLuckFlush），达到本阈值约等于持续写入失败 1 分钟。
+ * workers/diskIO/luckFiles.ts 的 retryLuckFlush），达到本阈值约等于持续写入失败 1 分钟。
  */
 export const LUCK_APPEND_STALL_ALERT_FAILURES: number = 3;
 

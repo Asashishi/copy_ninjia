@@ -70,7 +70,7 @@ describe("黑名单主键读失败的降级边界", () => {
     quiesceBlocklistSweepScheduler();
   });
 
-  test("退避未到期时连名单页都不读：那一次读是跨线程全领域 flush", async () => {
+  test("退避未到期时连名单页都不读：那一次读是跨线程的黑名单领域 flush", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     initBlocklistSweepScheduler();

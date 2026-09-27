@@ -81,11 +81,8 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
 }));
 mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   clearTemporaryAdBypassActivity,
-  hasActiveTemporaryAdBypass: (id: number): boolean =>
-    temporaryAdBypassIds.has(id),
   hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryAdBypassIds.has(id),
   hydrateTemporaryAdBypassActivities: (): void => {},
-  isTemporaryAdBypassActivityCached: (): boolean => true,
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
   dispatchBlockedRemovals,
@@ -109,6 +106,8 @@ const { markSelfSent } = await import("../../../packages/infra/selfSentTracker")
 const { resetSelfSentTracker } = await import("../../../packages/cache/perThread/selfSentTracker");
 const { blocklistEntryCache, whitelistEntryCache } =
   await import("../../../packages/cache/main/identityStorage");
+const { temporaryAdBypassActivityCache } =
+  await import("../../../packages/cache/main/temporaryAdBypass");
 function message(overrides: Partial<Message> = {}): Message {
   return {
     message_id: 10,
@@ -163,9 +162,11 @@ beforeEach(() => {
   temporaryAdBypassIds.clear();
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
+  temporaryAdBypassActivityCache.clear();
   for (const id of [7, -300, -1005]) {
     blocklistEntryCache.set(id, null);
     whitelistEntryCache.set(id, null);
+    temporaryAdBypassActivityCache.set(id, null);
   }
   blockUser.mockClear();
   clearTemporaryAdBypassActivity.mockClear();
@@ -193,7 +194,7 @@ test("姓名中的广告随候选原样传给 Worker，正常正文仍参与判�
     from: { id: 7, is_bot: false, first_name: "日入过千", last_name: "加V xxx996" },
     text: "大家早上好",
   }), 999);
-  expect(result?.meta).toEqual({ firstName: "日入过千", lastName: "加V xxx996", username: "" });
+  expect(result).toMatchObject({ firstName: "日入过千", lastName: "加V xxx996", username: "" });
   expect(result?.text).toBe("大家早上好");
 });
 
@@ -207,11 +208,16 @@ describe("广告检测投递门禁", () => {
       observedAt: expect.any(Number),
       text: "加我微信",
       label: "@spammer",
-      meta: { firstName: "Spammer", lastName: "", username: "spammer" },
+      firstName: "Spammer",
+      lastName: "",
+      username: "spammer",
       isChannel: false,
       isForwarded: false,
       blocked: false,
       justJoined: false,
+      linkUrls: undefined,
+      sampleQuote: undefined,
+      sampleReplyTo: undefined,
     });
     // 图片只看说明文字。
     expect(buildAdCandidate(message({ text: undefined, caption: "扫码进群" }), 999)?.text).toBe("扫码进群");
@@ -349,10 +355,15 @@ describe("广告检测投递门禁", () => {
       },
     }), 999);
     expect(candidate?.text).toBe("这种广告真烦");
-    expect(candidate?.sampleContext).toEqual({
-      quote: "日入过千 加V xxx996",
-      replyTo: "日入过千 加V xxx996",
+    expect(candidate).toMatchObject({
+      sampleQuote: "日入过千 加V xxx996",
+      sampleReplyTo: "日入过千 加V xxx996",
     });
+    // 跨线程载荷保持扁平：没有落地页时每个字段都是原始值。
+    const nestedFields: string[] = Object.entries(candidate ?? {})
+      .filter(([, value]: [string, unknown]): boolean => typeof value === "object" && value !== null)
+      .map(([key]: [string, unknown]): string => key);
+    expect(nestedFields).toEqual([]);
   });
 
   test("回归用例：自己一个字都不打、只靠引用把编辑成广告的旧消息顶上来，照样送检", () => {
@@ -363,7 +374,8 @@ describe("广告检测投递门禁", () => {
       quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
     }), 999);
     expect(candidate?.text).toBe("");
-    expect(candidate?.sampleContext).toEqual({ quote: "日入过千 加V xxx996" });
+    expect(candidate?.sampleQuote).toBe("日入过千 加V xxx996");
+    expect(candidate?.sampleReplyTo).toBeUndefined();
   });
 
   test("白名单来源的回复与引用不参与检测，但发送者自己的正文仍照常送检", () => {
@@ -384,7 +396,8 @@ describe("广告检测投递门禁", () => {
     }), 999);
 
     expect(candidate?.text).toBe("这是我自己写的正文");
-    expect(candidate?.sampleContext).toBeUndefined();
+    expect(candidate?.sampleQuote).toBeUndefined();
+    expect(candidate?.sampleReplyTo).toBeUndefined();
     expect(buildAdCandidate(message({
       text: undefined,
       quote: { text: "日入过千", position: 0, is_manual: true },
@@ -419,8 +432,8 @@ describe("广告检测投递门禁", () => {
       reply_to_message: repliedByChannel(senderChatId),
     });
 
-    expect(buildAdCandidate(quoted(-200), 999)?.sampleContext).toBeUndefined();
-    expect(buildAdCandidate(quoted(-300), 999)?.sampleContext).toBeDefined();
+    expect(buildAdCandidate(quoted(-200), 999)?.sampleQuote).toBeUndefined();
+    expect(buildAdCandidate(quoted(-300), 999)?.sampleQuote).toBeDefined();
   });
 
   test("回复一条转发消息时按原作者判白名单，不按转发者判", () => {
@@ -442,7 +455,8 @@ describe("广告检测投递门禁", () => {
       },
     }), 999);
 
-    expect(candidate?.sampleContext).toBeUndefined();
+    expect(candidate?.sampleQuote).toBeUndefined();
+    expect(candidate?.sampleReplyTo).toBeUndefined();
   });
 
   test("白名单来源的手工转发整条跳过，非白名单与隐藏来源保留转发事实", () => {
@@ -487,7 +501,8 @@ describe("广告检测投递门禁", () => {
       reply_to_message: repliedToColdSource,
     }), 999)).toMatchObject({
       text: "发送者自己的正文",
-      sampleContext: undefined,
+      sampleQuote: undefined,
+      sampleReplyTo: undefined,
     });
     expect(buildAdCandidate(message({
       text: undefined,

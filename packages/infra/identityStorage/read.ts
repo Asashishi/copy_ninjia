@@ -14,10 +14,7 @@ import {
   decodeWhitelistEntryData,
 } from "../../database/codec/identity";
 import { logger } from "../logger";
-import {
-  hydrateTemporaryAdBypassActivities,
-  isTemporaryAdBypassActivityCached,
-} from "../identityPolicy/temporaryAdBypass";
+import { hydrateTemporaryAdBypassActivities } from "../identityPolicy/temporaryAdBypass";
 import {
   currentIdentityPolicyText,
   rawIdentityPolicyRows,
@@ -73,7 +70,7 @@ export function hydrateIdentityStorageCounts(
 export function isIdentityPolicyCached(id: number): boolean {
   return whitelistEntryCache.has(id) &&
     blocklistEntryCache.has(id) &&
-    isTemporaryAdBypassActivityCached(id);
+    temporaryAdBypassActivityCache.has(id);
 }
 
 /** 同步读取已预热的白名单；冷缺失按 fail-closed 解释为不存在。 */
@@ -176,7 +173,7 @@ export async function prefetchIdentityPolicies(
     if (
       !whitelistEntryCache.has(id) ||
       !blocklistEntryCache.has(id) ||
-      !isTemporaryAdBypassActivityCached(id)
+      !temporaryAdBypassActivityCache.has(id)
     ) {
       missing.push(id);
     } else {

@@ -2,8 +2,13 @@ import { AD_DETECT_SENDER_NAME_MAX_CHARS } from "../../../consts/antiRaid/adDete
 import { sanitizeInline, truncateInline } from "../../../libs/text";
 import type { TelegramIdentityMetadata } from "../../../types/identityPolicy";
 
-/** 从现有候选元数据取得当次姓名；只生成送检数据，不读取 owner 或查询 Telegram。 */
-export function formatAdSenderName(meta: Readonly<TelegramIdentityMetadata>): string {
+/**
+ * 从当次候选的姓名字段取得送检姓名（调用方直接传 AdCandidateMessage）；只生成送检数据，
+ * 不读取 owner 或查询 Telegram。
+ */
+export function formatAdSenderName(
+  meta: Readonly<Pick<TelegramIdentityMetadata, "firstName" | "lastName">>
+): string {
   const firstName: string = truncateInline(sanitizeInline(meta.firstName), AD_DETECT_SENDER_NAME_MAX_CHARS);
   const lastName: string = truncateInline(sanitizeInline(meta.lastName), AD_DETECT_SENDER_NAME_MAX_CHARS);
   if (firstName.length === 0) return lastName;

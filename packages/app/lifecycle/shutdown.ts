@@ -412,7 +412,7 @@ export async function flushAllToDisk({
   });
   const state: FlushResult = await settler.flush(
     "state flush",
-    (): Promise<FlushResult> => dependencies.flushStateToDisk(timeouts.stateMs)
+    (): Promise<FlushResult> => dependencies.flushStateToDisk(timeouts.stateMs, false)
   );
 
   const unsettled: boolean = state !== "flushed" ||

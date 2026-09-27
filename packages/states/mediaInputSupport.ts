@@ -4,6 +4,7 @@ import {
   MEDIA_PROBE_MAX_TRANSIENT_FAILURES,
   NO_MEDIA_INPUT_EFFECTS,
 } from "../consts/aiChat/media";
+import { isPendingWithin } from "../libs/clockWindow";
 import type {
   MediaInputSupport,
 } from "../types/aiChat/provider";
@@ -20,7 +21,7 @@ import type {
  * cache/workers/aiChat/mediaInputSupport.ts。
  */
 
-/** 两档终局结论都不再下载、也不再请求，只是成因不同。 */
+/** 不支持与配置错误都阻止新请求；同配置代次的在途成功仍可恢复支持结论。 */
 export function isMediaInputClosed(support: MediaInputSupport): boolean {
   return support === "unsupported" || support === "misconfigured";
 }
@@ -35,12 +36,12 @@ function backoffMsFor(transientFailures: number): number {
  * 判断 nextProbeAt 在 now 时刻是否仍处于退避窗口内。
  *
  * 墙钟回拨会让 nextProbeAt 落在「比任何一档退避都远的未来」，那一刻起这个模态
- * 就再也等不到放行了。识别出来直接放行（口径同 auto/message/triggerPolicy.ts 的
- * 冷却处理：旧时间轴上的冷却点先失效，再从新时间轴重新计时）。
+ * 就再也等不到放行了。识别出来直接放行（libs/clockWindow.ts 的 isPendingWithin，
+ * 口径同 auto/message/triggerPolicy.ts 的冷却处理：旧时间轴上的冷却点先失效，再从
+ * 新时间轴重新计时）。
  */
 export function isWithinMediaProbeBackoff(nextProbeAt: number, now: number): boolean {
-  const remaining: number = nextProbeAt - now;
-  return remaining > 0 && remaining <= MEDIA_PROBE_BACKOFF_MAX_MS;
+  return isPendingWithin(nextProbeAt, now, MEDIA_PROBE_BACKOFF_MAX_MS);
 }
 
 /** 状态不变的归因结果；`next` 原样返回 current，调用方据此跳过整表替换。 */
@@ -90,7 +91,7 @@ export function reduceMediaInputResult(
       };
     }
     case "transient": {
-      // 已经落定的终局结论不被瞬时故障翻案：那两档说的是「这个端点做不到」，
+      // 已经落定的关闭结论不被瞬时故障翻案：那两档说的是「这个端点做不到」，
       // 与网络抖动无关。
       if (isMediaInputClosed(current.support)) return unchanged(current);
       // 首次失败整体替换状态，同代次其它请求的迟到失败不再影响后续探测。

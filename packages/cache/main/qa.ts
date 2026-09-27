@@ -3,8 +3,11 @@
 import type { QaFormSession } from "../../types/qa";
 
 /**
- * 群 -> 问题原文 -> 答案。主线程是唯一 owner：直答路径每条群消息读它一次，
- * `/qa set`、`/qa remove` 写它，写完再投给 Disk I/O Worker 落盘。
+ * 群 -> 问题原文 -> 答案。主线程是唯一 owner：infra/qaStore.ts 是唯一写入者，
+ * `/qa set`、`/qa remove` 经它写入后再投给 Disk I/O Worker 落盘；直答路径
+ * （auto/message/qaDirectAnswer.ts，每条群消息一次）、AI 触发载荷（aiChat/messageIngress.ts）
+ * 与 `/qa` 查询/翻页（commands/qa.ts、commands/qa/board.ts）直接只读，读取点以
+ * ReadonlyMap 接收，不改写内容。
  *
  * **填充**：启动时由 Disk I/O Worker 的 hydrate 结果整表灌入。
  * **清理**：`/qa remove` 删单条；`/init disable` 与离群的 teardown 删整群，失权停管的

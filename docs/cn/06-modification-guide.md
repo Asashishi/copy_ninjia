@@ -140,7 +140,7 @@
 5. 部署新版并启动。若报全局状态文件非法，说明迁移不完整——程序不会动原文件，修好再启。
 6. 核验部署文件哈希与严格解析结果，确认服务在至少两个重启间隔内保持 active/running、NRestarts 不增长且 journal 无新增非零退出，再删除临时备份。
 
-**新增可选块可以免掉第 3–4 步**，前提是把「缺省」定义清楚：解码器允许整块缺省，取值侧把缺省收敛成唯一的兜底值。现成范例是 `memory/global/state.json` 的 `ttsUsage`（`libs/stateFileCodec.ts` 的 `globalTtsUsage`）——整块缺省按从没用过处理，旧文件不用改也能读回。需要部署方手工编辑的旋钮不放进运行时状态，而是放进 `config/`（如 `config/dynamic/assets.json`），由对应解析器取内置缺省，机器人不回写。反过来，**任何会让旧文件解码失败的改动仍然走完整的 3–4 步**。
+**新增可选块可以免掉第 3–4 步**，前提是把「缺省」定义清楚：解码器允许整块缺省，取值侧把缺省收敛成唯一的兜底值。现成范例是 `memory/global/state.json` 的 `ttsUsage`（`libs/stateFileCodec.ts` 的 `globalTtsUsage`）——整块缺省按从没用过处理，未含此块的文件可直接读回；已经存在的旧 `count` 形态必须冷迁移为 `agentCount` 与 `reserveCount`。需要部署方手工编辑的旋钮不放进运行时状态，而是放进 `config/`（如 `config/dynamic/assets.json`），由对应解析器取内置缺省，机器人不回写。反过来，**任何会让旧文件解码失败的改动仍然走完整的 3–4 步**。
 
 ## 新增一张 SQLite 表
 

@@ -289,6 +289,7 @@ export function joinLogEvent(index: number): JoinLogDiskMessage {
   const joinedAt: number = Date.now();
   return {
     type: "joinLog",
+    sequence: index + 1,
     chatId: benchmarkChatId(index % COLD_START_CHAT_STATE_ROWS),
     userId: benchmarkUserId(index),
     joinedAt,

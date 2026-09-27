@@ -18,7 +18,7 @@ function pruneEntry(entry: AiReplyActivityEntry, now: number): void {
 }
 
 /**
- * 满载插入新群时扫描固定上限的表并淘汰 LRU。把 O(最多 500 群) 的工作留在
+ * 满载插入新群时扫描固定上限的表并淘汰 LRU。把 O(AI_REPLY_ACTIVITY_MAX_CHATS) 的工作留在
  * 缓存 miss 冷路径，避免每条已有群消息通过 Map delete/set 制造短命桶对象。
  */
 function evictLeastRecentlyUsedActivityEntry(): void {
@@ -44,7 +44,7 @@ function storeActivityEntry(
 }
 
 /**
- * 清理已空闲满一小时的群。只有全局单 timer 调用这个 O(最多 500 群)
+ * 清理已空闲满一小时的群。只有全局单 timer 调用这个 O(AI_REPLY_ACTIVITY_MAX_CHATS)
  * 扫描；每条消息的热路径只修剪它自己的队列。导出便于边界测试。
  */
 export function sweepAiReplyActivity(now: number = Date.now()): void {

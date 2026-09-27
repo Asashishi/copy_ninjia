@@ -15,6 +15,7 @@ import { collectColdMigrationProblems } from "../../scripts/conventions/coldMigr
 import { collectCommentReferenceProblems } from "../../scripts/conventions/commentReferences";
 import { collectWorkerTimerProblems } from "../../scripts/conventions/workerTimers";
 import { collectTelegramMessageProblems } from "../../scripts/conventions/telegramMessages";
+import { collectConstantValueAssertionProblems } from "../../scripts/conventions/testAssertions";
 import {
   collectCacheJsDocProblems,
   collectConstantProblems,
@@ -633,6 +634,45 @@ describe("注释交叉引用核对", () => {
       path: join(projectRoot, "packages", "caller.ts"),
       source: source("caller.ts", "/** 见 shared.ts 的 whatever。 */\nexport const x: number = 1;\n"),
       allSourceFiles,
+    })).toEqual([]);
+  });
+});
+
+describe("测试断言取值口径", () => {
+  test("拒绝把导入常量直接与数字字面量比对，静态与动态导入都算", () => {
+    const path: string = "/project/test/sample.test.ts";
+    const problems: readonly string[] = collectConstantValueAssertionProblems({
+      projectRoot: "/project",
+      path,
+      source: source(path, [
+        'import { LIMIT_MAX } from "../packages/consts/sample";',
+        'const { WINDOW_MS } = await import("../packages/consts/window");',
+        "expect(LIMIT_MAX).toBe(8);",
+        "expect(WINDOW_MS).toEqual(3 * 60_000);",
+        "expect(LIMIT_MAX).toStrictEqual(-(1));",
+      ].join("\n")),
+    });
+    expect(problems).toEqual([
+      expect.stringContaining("test/sample.test.ts:3 asserts imported constant LIMIT_MAX"),
+      expect.stringContaining("test/sample.test.ts:4 asserts imported constant WINDOW_MS"),
+      expect.stringContaining("test/sample.test.ts:5 asserts imported constant LIMIT_MAX"),
+    ]);
+  });
+
+  test("放过本文件夹具常量、非数字取值与由常量推导的期望", () => {
+    const path: string = "/project/test/sample.test.ts";
+    expect(collectConstantValueAssertionProblems({
+      projectRoot: "/project",
+      path,
+      source: source(path, [
+        'import { LIMIT_MAX, LABEL } from "../packages/consts/sample";',
+        "const LOCAL_FIXTURE: number = 3;",
+        "expect(LOCAL_FIXTURE).toBe(3);",
+        'expect(LABEL).toBe("label");',
+        "expect(LIMIT_MAX).toBe(LIMIT_MAX);",
+        "expect(LIMIT_MAX).toBeGreaterThan(1);",
+        "expect(limit).toBe(8);",
+      ].join("\n")),
     })).toEqual([]);
   });
 });

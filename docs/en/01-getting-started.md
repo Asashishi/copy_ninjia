@@ -166,7 +166,7 @@ Editing `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.j
     `image_protocol`: `openai`, `openai-standard`, or `xai`; `tts` also requires a non-empty `voice`
     (a prebuilt voice name or an AI Studio Voice design `voice_` ID), plus optional `daily_limit`
     (daily voice request limit, default 100) and `daily_reserve_quota` (how many of those are
-    reserved for `/send` and cron, default 25, must be less than `daily_limit`). `base_url` accepts
+    reserved for `/send` and cron, default 25, must be less than `daily_limit`). AI and reserve usage are counted independently and never borrow from each other; a zero reserve disables `/send` and cron synthesis. `base_url` accepts
     `https` only;
     plain `http` is limited to `localhost`, `127.0.0.1`, and `::1`, and the URL must carry no
     userinfo and no `#` fragment.
@@ -250,25 +250,37 @@ Before deleting the old `.env` variable `PRIVILEGED_USERS_ID`, put each ID into 
 
 ### Replacing the Inline Thumbnails and the Default Avatar
 
-The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry), the default avatar restored by `/icon reset` and `/copy stop`, and the dedicated `/h_image` library directory all live in the optional `config/dynamic/assets.json`:
+The three inline thumbnails (the two `/luck_challenge` results and the gag speech entry), the default avatar restored by `/icon reset` and `/copy stop`, and the dedicated `/h_image` library directory all live in the optional `config/dynamic/assets.json`. The top level groups the fields by the sources they accept:
 
 ```json
 {
-  "random_h_image_dir": "./h_image",
-  "fortune_thumbnail_url": "https://…",
-  "probability_thumbnail_url": "https://…",
-  "gag_thumbnail_url": "https://…",
-  "bot_default_avatar_url": "https://…"
+  "onlyPath": {
+    "random_h_image_dir": "./h_image"
+  },
+  "pathOrUrl": {
+    "bot_default_avatar": "https://…"
+  },
+  "onlyUrl": {
+    "fortune_thumbnail_url": "https://…",
+    "probability_thumbnail_url": "https://…",
+    "gag_thumbnail_url": "https://…"
+  }
 }
 ```
 
-The last four keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, the thumbnail for the gag inline result, and the image fetched when restoring the avatar. The file and every field are optional; a missing value uses the built-in default in the code (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)). [`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) spells out all five values with their built-in defaults and the installer copies it as the initial configuration, so edit only the entries you need. The file is parsed as strict JSON and must not carry comments.
+- `onlyPath`: local paths only. `random_h_image_dir` is the dedicated `/h_image` library directory.
+- `pathOrUrl`: a local path or a URL. `bot_default_avatar` is the image used when restoring the avatar.
+- `onlyUrl`: `https://` URLs only. The three keys are, in order, the thumbnail for the fortune result, the thumbnail for the probability result, and the thumbnail for the gag inline result.
 
-The four URL fields require an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; only `bot_default_avatar_url` may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call. That download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. A malformed value — a missing `https://`, for example — refuses startup and names the field path; at runtime the edit is rejected and the last applied configuration stays in effect, instead of silently falling back to the default image.
+The file, all three groups and every field are optional; a missing value uses the built-in default in the code (see [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)). [`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) spells out all three groups and five values with their built-in defaults and the installer copies it as the initial configuration, so edit only the entries you need. The file is parsed as strict JSON and must not carry comments; a top-level key other than the three groups, or a field in a group it does not belong to (including a field left flat at the top level or placed in the wrong group), is invalid. Migrate the previous flat format by hand as described in [07 Operations](07-operations.md#assets-groups).
 
-`random_h_image_dir` is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts absolute paths or explicit relative paths starting with `./` or `../`, resolved against the runtime data root; bare names and `~/…` are invalid. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
+A local path must be absolute or an explicit relative path starting with `./` or `../`; relative paths resolve against the runtime data root, and bare names and `~/…` are invalid.
 
-`assets.json` lives under `config/dynamic/`, so **runtime edits are hot-reloaded**: URLs take effect from their next use; when `random_h_image_dir` points to a new directory, that directory is first created and checked under the same rules as at startup, and if the check fails the whole edit is rejected and the old directory stays in use. Deleting the file restores every built-in default. The bot never writes this file back.
+A URL must be an **absolute URL that serves raw image bytes**; no image host is privileged (the built-in defaults happen to use Google Drive direct links, which is not a constraint — with Drive, note that a `/file/d/<id>/view` share link returns a web page rather than image bytes). The three thumbnails are fetched by Telegram clients and must be `https://`; local paths are not accepted for them. When `bot_default_avatar` is a URL it may be plain `http://`, since the bot downloads that one itself and whether it uses TLS is your call; that download **does follow redirects**, so the common shape where a direct link 302s to the actual storage domain (the built-in Google Drive default among them) works as-is — you do not have to resolve the final hop yourself. When `bot_default_avatar` is a local path, the file must be an existing regular file (a symlink to one is fine), at most 10 MiB, and a JPEG or PNG image; this is checked at startup and on hot reload, and the file is read again on every avatar restore. A malformed value — a missing `https://` or a local file that does not exist, for example — refuses startup and names the field path (such as `$.pathOrUrl.bot_default_avatar`); at runtime the edit is rejected and the last applied configuration stays in effect, instead of silently falling back to the default image.
+
+`random_h_image_dir` is the dedicated `/h_image` library and the default source for cron random images. It defaults to `./h_image` and accepts only the local paths described above. Startup creates a missing directory, checks read/write/traversal access, and validates every entry: only regular `jpg`/`jpeg`/`png`/`webp` files with a 64-character lowercase content SHA-256 basename are accepted. Subdirectories, file symlinks, hidden files and leftover temporary files refuse startup; the directory root itself may be a symlink. Startup does not rehash content, so operators must match manual names to bytes. Prefer `/h_image add`; valid additions and removals need no restart, and drawing skips files over 10 MB. Separate random directories explicitly configured for cron allow ordinary file names; see [deployment configuration](../../config_example/README/en.md).
+
+`assets.json` lives under `config/dynamic/`, so **runtime edits are hot-reloaded**: thumbnails and the default avatar take effect from their next use; when `random_h_image_dir` points to a new directory, that directory is first created and checked under the same rules as at startup, and if the check fails the whole edit is rejected and the old directory stays in use. Deleting the file restores every built-in default. The bot never writes this file back.
 
 ## Telegram-Side Configuration (BotFather and the Group)
 

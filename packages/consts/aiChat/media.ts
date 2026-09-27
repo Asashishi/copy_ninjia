@@ -3,6 +3,14 @@ import type { MediaInputEffect, MediaInputModalityState } from "../../types/stat
 /** 媒体视觉描述请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
 export const MEDIA_DESCRIPTION_ERROR_LABEL: string = "AI image understanding API";
 
+/** 供应商错误中属于单份媒体格式或内容的证据；错误分类器遇到这些词不形成模态结论。 */
+export const MEDIA_INPUT_FILE_ERROR_PATTERN: RegExp =
+  /\b(?:formats?|mime|codecs?|encodings?|corrupt(?:ed|ion)?|malformed|damaged|decod(?:e|ing)|resolution|dimensions?|sizes?|bytes?|base64|urls?)\b/i;
+
+/** 媒体错误分类器所需的能力边界证据；模型、端点、模态或明确的媒体输入，普通 media type 不构成证据。 */
+export const MEDIA_INPUT_CAPABILITY_PATTERN: RegExp =
+  /\b(?:model|endpoint|deployment|modalit(?:y|ies))\b|\b(?:image|vision|audio|voice|media)[ _-]?inputs?\b|\binput_(?:image|audio)\b/i;
+
 /** 图片视觉描述尚未落定时进入转录的占位。 */
 export const IMAGE_PENDING_PLACEHOLDER: string = "[图片：识别中]";
 /** 图片视觉描述最终失败时替换进转录的占位。 */
@@ -48,9 +56,9 @@ export const MEDIA_MAX_DOWNLOAD_BYTES: number =
 /** 非目录媒体描述的全局 LRU 上限。 */
 export const MEDIA_DESCRIPTION_CACHE_MAX: number = 4_096;
 /** 下载、转码、视觉 API 共用执行器的并发上限；排队上限见 MEDIA_DESCRIPTION_MAX_PENDING。 */
-export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 25;
-/** 媒体执行器等待队列的硬顶，超出立即拒绝。 */
-export const MEDIA_DESCRIPTION_MAX_PENDING: number = 75;
+export const MEDIA_DESCRIPTION_MAX_CONCURRENCY: number = 32;
+/** 媒体执行器排队与两种模态冷探测等待合计的硬顶，超出立即拒绝。 */
+export const MEDIA_DESCRIPTION_MAX_PENDING: number = 256;
 
 /**
  * 模态探测在连续瞬时失败后的首次退避时长（见

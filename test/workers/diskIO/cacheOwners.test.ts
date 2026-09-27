@@ -99,10 +99,14 @@ describe("Disk I/O append-domain cache owners", () => {
 
   test("入群日志 reset 同时清理缓冲、文件游标、退避与 timer", () => {
     expect(markJoinLogDirty({
+      sequence: 1,
       chatId: -1001,
       day: "2026-07-31",
       record: { userId: 42, joinedAt: 1 },
     })).toBe(1);
+    joinLogBuffer.receivedThrough = 1;
+    joinLogBuffer.acknowledgedThrough = 1;
+    joinLogBuffer.acknowledgedPending = 1;
     joinLogFileCaches.set("-1001:2026-07-31", {
       state: { size: 10, empty: false },
       latestByUser: new Map([[42, { userId: 42, joinedAt: 1 }]]),
@@ -119,6 +123,9 @@ describe("Disk I/O append-domain cache owners", () => {
 
     expect(joinLogBuffer.entries).toHaveLength(0);
     expect(joinLogBuffer.timer).toBeNull();
+    expect(joinLogBuffer.receivedThrough).toBe(0);
+    expect(joinLogBuffer.acknowledgedThrough).toBe(0);
+    expect(joinLogBuffer.acknowledgedPending).toBe(0);
     expect(joinLogFileCaches.size).toBe(0);
     expect(joinLogRetryAt.size).toBe(0);
     expect(joinLogCleanupDay.current).toBeNull();

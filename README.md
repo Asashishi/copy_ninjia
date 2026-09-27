@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5228_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5317_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.42%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
-    <img alt="bun run test:coverage：5228 项测试全部通过 / 459 个测试文件 / 254,242 次 expect() 调用 / 函数覆盖率 98.06% / 行覆盖率 98.38%" src="public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：5317 项测试全部通过 / 465 个测试文件 / 260,880 次 expect() 调用 / 函数覆盖率 98.07% / 行覆盖率 98.42%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -206,10 +206,10 @@
 | 管理员与定时语音 | `/send` 和 cron 共用 TTS，台词最多 256 个 UTF-16 码元；定时语音每轮合成一次并复用 Telegram `file_id` |
 | 图片记忆 | AI 生图记录实际画面；`/wed`、`/h_image` 和定时图片先记占位，有人回复时再识图 |
 
-语音需要显式配置 `agent.tts`（当前由 Google 提供，可用 `base_url` 与 `headers` 经三方网关调用）；三个入口共用每日次数上限 `daily_limit`（缺省 100），其中 `daily_reserve_quota`（缺省 25）次只留给 `/send` 与 cron，用尽后不再发起请求；`/send` 复制的消息与语音、定时文字与语音不会自动写入 AI 记忆。图片自录需要本群开启 AI 且未处于复读状态。配置、报错和长度规则见 [FAQ](docs/cn/10-faq.md)。
+语音需要显式配置 `agent.tts`（当前由 Google 提供，可用 `base_url` 与 `headers` 经三方网关调用）；`daily_limit`（缺省 100）拆为 AI 的独立额度（总额减预留）与 `/send`、cron 共用的 `daily_reserve_quota`（缺省 25），分别以 `agentCount`、`reserveCount` 计数，互不占用，24 小时窗口到期一起重置；`/send` 复制的消息与语音、定时文字与语音不会自动写入 AI 记忆。图片自录需要本群开启 AI 且未处于复读状态。配置、报错和长度规则见 [FAQ](docs/cn/10-faq.md)。
 
 > [!IMPORTANT]
-> [14.0.0 → 15.0.0 升级步骤](docs/cn/07-operations.md#upgrade-15)
+> [语音计数冷迁移与旧布局分阶段升级](docs/cn/07-operations.md#upgrade-15)
 
 每项功能的行为细节、配置与边界见 **[📚 开发者文档](docs/cn/content-table.md)**。
 
@@ -251,7 +251,7 @@ done                                       # 填好 bot.json 的 bot_token 与 s
 
 手工安装时首次启动前还要初始化身份数据库、在 BotFather 侧关闭 Privacy Mode 并开启 Inline Mode（完整清单见 [BotFather 与群权限配置](#botfather-setup)）。
 配置逐项含义、必填关系与严格校验规则见 [`config_example/README/zh.md`](config_example/README/zh.md)，
-完整步骤（含运行时数据根、素材直链与迁移命令）见 [01 环境搭建与首次运行](docs/cn/01-getting-started.md)。
+完整步骤（含运行时数据根、素材配置与迁移命令）见 [01 环境搭建与首次运行](docs/cn/01-getting-started.md)。
 
 完成身份数据库初始化与上述配置后，再运行：
 

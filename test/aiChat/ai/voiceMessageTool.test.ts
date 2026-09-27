@@ -37,7 +37,7 @@ const {
   buildVoiceQuotaLine,
   createSendVoiceExecutor,
 } = await import("../../../packages/aiChat/ai/tools/replyToolset/voiceMessage");
-const { VOICE_FILE_NAME, VOICE_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } = await import("../../../packages/consts/aiChat/voiceMessage");
+const { TTS_USAGE_WINDOW_MS, VOICE_FILE_NAME, VOICE_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } = await import("../../../packages/consts/aiChat/voiceMessage");
 const { ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
 const { SEND_VOICE_DAILY_LIMIT_TOOL_ERROR } = await import("../../../packages/consts/tools");
 const { SEND_VOICE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
@@ -117,12 +117,12 @@ describe("send_voice 声明", () => {
   });
 
   test("回复任务末尾的余量行按 75 次口径计算，未挂载时为空串", () => {
-    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 10 };
+    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 10, reserveCount: 25 };
     expect(buildVoiceQuotaLine()).toBe("\n今日语音余量：send_voice 今天还能用 65 次（每天 75 次，所有群共用）。");
-    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 80 };
+    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 80, reserveCount: 0 };
     expect(buildVoiceQuotaLine()).toStartWith("\n今日语音余量：0（");
     // 窗口已满一天：按从没用过计算。
-    ttsDailyUsage.current = { windowStartedAt: Date.now() - 86_400_000, count: 100 };
+    ttsDailyUsage.current = { windowStartedAt: Date.now() - TTS_USAGE_WINDOW_MS, agentCount: 75, reserveCount: 25 };
     expect(buildVoiceQuotaLine()).toContain("还能用 75 次");
     ttsAiProvider.mockImplementation((): unknown => ({ name: "openai" }));
     expect(buildVoiceQuotaLine()).toBe("");
@@ -130,7 +130,7 @@ describe("send_voice 声明", () => {
 
   test("余量行按 agent.tts 的 daily_limit - daily_reserve_quota 计算", () => {
     adoptTtsQuota(10, 4);
-    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 2 };
+    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 2, reserveCount: 0 };
     expect(buildVoiceQuotaLine()).toBe("\n今日语音余量：send_voice 今天还能用 4 次（每天 6 次，所有群共用）。");
     // 上限调低到已用次数以下：余量为 0。
     adoptTtsQuota(3, 2);
@@ -152,7 +152,7 @@ describe("send_voice 接纳闸", () => {
   });
 
   test("模型可见余量用尽时拒绝并要求不在群里提起，不合成", async () => {
-    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 75 };
+    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 75, reserveCount: 0 };
     const { result } = await runVoice(buildContext(), { text: "バカ" });
     expect(JSON.parse(result)).toEqual({ error: SEND_VOICE_DAILY_LIMIT_TOOL_ERROR, retryable: false });
     expect(SEND_VOICE_DAILY_LIMIT_TOOL_ERROR).toContain("do not mention the voice");
@@ -161,7 +161,7 @@ describe("send_voice 接纳闸", () => {
 
   test("余量按配置的 AI 口径计算：daily_reserve_quota 为 0 时可用满 daily_limit", async () => {
     adoptTtsQuota(80, 0);
-    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 75 };
+    ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 75, reserveCount: 0 };
     const { accepted } = await runVoice(buildContext(), { text: "バカ" });
     expect(JSON.parse(accepted)).toMatchObject({ success: true, voice_remaining_today: 4 });
   });

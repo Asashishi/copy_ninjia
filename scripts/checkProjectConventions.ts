@@ -47,6 +47,7 @@ import {
 } from "./conventions/nodeCompatibility";
 import type { NodeImportUsage } from "./conventions/nodeCompatibility";
 import { collectTelegramMessageProblems } from "./conventions/telegramMessages";
+import { collectConstantValueAssertionProblems } from "./conventions/testAssertions";
 import {
   collectEnvironmentAccessProblems,
   collectFullSuiteImportProblems,
@@ -360,7 +361,8 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
 }
 
-// Node 兼容 import 与依赖声明同时约束 scripts/ 与 test/，其余判定只针对 packages/。
+// Node 兼容 import 与依赖声明同时约束 scripts/ 与 test/，测试断言取值口径只约束 test/，
+// 其余判定只针对 packages/。
 for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_ROOT)]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
@@ -369,6 +371,9 @@ for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_
   nodeImportUsage.push(...collectNodeImportUsage(PROJECT_ROOT, path, source));
   failures.push(...collectUndeclaredDependencyProblems({ projectRoot: PROJECT_ROOT, path, source, declaredPackages }));
   failures.push(...collectFullSuiteImportProblems({ projectRoot: PROJECT_ROOT, path, source }));
+  if (path.startsWith(TEST_ROOT + "/")) {
+    failures.push(...collectConstantValueAssertionProblems({ projectRoot: PROJECT_ROOT, path, source }));
+  }
 }
 failures.push(...collectUnusedNodeAllowanceProblems(nodeImportUsage));
 

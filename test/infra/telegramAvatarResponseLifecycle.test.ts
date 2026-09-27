@@ -47,7 +47,7 @@ for (const stage of ["api", "default", "page", "image"] as const) {
     if (stage === "api") {
       expect(await downloadAvatarFile("avatar", 42)).toEqual({ status: "transient-failure" });
     } else if (stage === "default") {
-      expect(await restoreDefaultProfilePhoto(avatarUrl)).toBe(false);
+      expect(await restoreDefaultProfilePhoto({ kind: "url", url: avatarUrl })).toBe(false);
     } else {
       expect(await fetchAvatarFromWebProfile("CopyNinjiaBot")).toBeNull();
     }
@@ -71,7 +71,7 @@ test("成功头像响应完整读取且不走失败取消", async (): Promise<vo
     }));
   }) as unknown as typeof fetch;
   expect(await downloadAvatarFile("avatar", 42)).toEqual({ status: "ok", bytes: image });
-  expect(await restoreDefaultProfilePhoto(avatarUrl)).toBe(true);
+  expect(await restoreDefaultProfilePhoto({ kind: "url", url: avatarUrl })).toBe(true);
   expect(await fetchAvatarFromWebProfile("CopyNinjiaBot")).toEqual(image);
   expect(cancelled).toBe(0);
 });

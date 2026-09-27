@@ -249,7 +249,7 @@ function createSpeechFacade(
   if (synthesizeSpeech === undefined) return { name: provider.name };
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   const synthesize = async (request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => {
-    if (!claimTtsUsage(ttsQuotaLimit(config, request.quota))) return { ok: false, reason: "daily limit reached" };
+    if (!claimTtsUsage(request.quota, ttsQuotaLimit(config, request.quota))) return { ok: false, reason: "daily limit reached" };
     const speech: SynthesizedSpeech | null = await synthesizeSpeech(request);
     return speech === null ? { ok: false, reason: "synthesis failed" } : { ok: true, speech };
   };

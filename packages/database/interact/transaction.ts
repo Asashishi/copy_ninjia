@@ -5,6 +5,7 @@ import { blocklistEntries, permissionList } from "../schema/identityPolicy";
 import { pendingBlockedRemovals } from "../schema/pendingRemoval";
 import { temporaryAdBypassEntries } from "../schema/temporaryAdBypass";
 import type {
+  StorageAiContextChange,
   StorageDatabase,
   StorageDatabaseChange,
   StorageChatStateChange,
@@ -24,9 +25,14 @@ export interface CommitStorageDatabaseChangesOptions {
   readonly chatStates: ReadonlyMap<number, StorageChatStateChange>;
   /** 群问答按 (chatId, q) 复合主键变更；外层键为 chatId，内层键为问题文本 q。 */
   readonly chatQa: ReadonlyMap<number, ReadonlyMap<string, StorageDatabaseChange>>;
+  /** AI 上下文按群主键只更新 `ai_context` 列；排在群状态之后，群行不存在时不插入。 */
+  readonly aiContexts: ReadonlyMap<number, StorageAiContextChange>;
 }
 
-/** 共享 SQLite 各业务表的最终值在一个 Drizzle 显式事务中提交。 */
+/**
+ * 共享 SQLite 各业务表的最终值在一个 Drizzle 显式事务中提交。群状态先于 AI 上下文写入：
+ * 同批新建的群行先存在，同批删除的群行不会被迟到的上下文复活。
+ */
 export function commitStorageDatabaseChanges(
   database: StorageDatabase,
   {
@@ -36,6 +42,7 @@ export function commitStorageDatabaseChanges(
     removals,
     chatStates: chatStateChanges,
     chatQa: chatQaChanges,
+    aiContexts,
   }: CommitStorageDatabaseChangesOptions
 ): void {
   database.transaction((transaction: StorageDatabaseTransaction): void => {
@@ -105,6 +112,10 @@ export function commitStorageDatabaseChanges(
             }).run();
         }
       }
+    }
+    for (const [chatId, change] of aiContexts) {
+      transaction.update(chatStates).set({ aiContext: change.snapshot })
+        .where(eq(chatStates.chatId, chatId)).run();
     }
   });
 }

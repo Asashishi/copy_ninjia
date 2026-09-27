@@ -205,10 +205,11 @@ export function buildAdCandidate(
     }, atmosphere);
   const meta: Readonly<TelegramIdentityMetadata> =
     messageIdentityMetadata(message, senderChat);
-  // 两个可选字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
-  // 会让每条开启广告检测的群消息产出四种 hidden class，把 adDetect 队列的读点与
+  // 可缺席的字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
+  // 会让每条开启广告检测的群消息产出多种 hidden class，把 adDetect 队列的读点与
   // structured clone 边界一起多态化。口径同 aiChat/workerBridge.ts 的「字段一律
-  // 发出，不用条件展开」与 auto/message/facts.ts。
+  // 发出，不用条件展开」与 auto/message/facts.ts。元数据与引用上下文平铺成原始值
+  // 字段，载荷保持扁平（见 types/antiRaid/adDetect.ts 的 AdCandidateMessage）。
   return {
     type: "adCandidate",
     chatId,
@@ -217,7 +218,9 @@ export function buildAdCandidate(
     observedAt: now,
     text,
     label,
-    meta,
+    firstName: meta.firstName,
+    lastName: meta.lastName,
+    username: meta.username,
     isChannel: senderChat !== undefined,
     isForwarded,
     blocked,
@@ -225,6 +228,7 @@ export function buildAdCandidate(
     justJoined: activeVerificationSnapshots.size > 0 &&
       activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
     linkUrls,
-    sampleContext,
+    sampleQuote: sampleContext?.quote,
+    sampleReplyTo: sampleContext?.replyTo,
   };
 }

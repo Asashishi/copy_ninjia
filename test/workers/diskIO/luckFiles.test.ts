@@ -21,6 +21,7 @@ const {
   retryLuckFlush,
 } = await import("../../../packages/workers/diskIO/luckFiles");
 const { recoverLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
+const { cancelDiskIOFlushTimer } = await import("../../../packages/workers/diskIO/timedFlush");
 const {
   luckAppendFailures,
   luckAppendStalledNotifier,
@@ -83,11 +84,11 @@ function repairDayFile(day: string = DAY): void {
 
 /**
  * 立刻跑一次排着的那个重试定时器该做的事，不必真等 FLUSH_INTERVAL_MS（30 秒）。
- * 定时器本身要先 clearTimeout 掉，否则它到点还会再跑一次、落进后面的用例里。
+ * 与真实触发一样先清空槽位；定时器本身同时被取消，不会到点再跑一次、落进后面的用例里。
  */
 async function fireLuckFlushTimer(): Promise<void> {
   expect(luckFlushTimer.timer).not.toBeNull();
-  clearTimeout(luckFlushTimer.timer!);
+  cancelDiskIOFlushTimer(luckFlushTimer);
   await retryLuckFlush();
 }
 

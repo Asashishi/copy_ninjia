@@ -45,7 +45,7 @@ done
 | `dynamic/mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `dynamic/ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
 | `dynamic/cron.json` | 定时发送任务（文字、图片、文件、语音） | 没有定时任务 |
-| `dynamic/assets.json` | `/h_image` 专用图库目录与内联结果缩略图、默认头像的直链 | 全部取内置缺省 |
+| `dynamic/assets.json` | `/h_image` 专用图库目录、默认头像（本机文件或直链）与内联结果缩略图直链 | 全部取内置缺省 |
 | `static/g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/static/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
 
 AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
@@ -71,8 +71,8 @@ AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文
 - `stickers.json` 新加入的贴纸包立即开始生成目录；移出的包不再供 AI 使用，其目录在
   下次重启时按白名单清理。
 - `mood.json` 中仍然存在的心情对各群立即生效；当前心情已被删除的群在下次用到时重抽。
-- `assets.json` 改动后，内联结果缩略图与默认头像直链从下一次使用起生效；删除文件等于全部恢复
-  内置缺省。`random_h_image_dir` 指向新目录时，先按启动时同一口径建出并检查新目录，检查失败则整份
+- `assets.json` 改动后，内联结果缩略图与默认头像从下一次使用起生效；删除文件等于全部恢复
+  内置缺省。`onlyPath.random_h_image_dir` 指向新目录时，先按启动时同一口径建出并检查新目录，检查失败则整份
   `assets.json` 改动被拒绝，继续使用原目录。
 - `cron.json` 按任务名对账：内容没变的任务保留原有计时；改动或删除的任务停止调度，正在
   执行的那一轮在下一个动作前停下；新增的任务开始调度。删除文件等于清空全部任务。
@@ -157,15 +157,15 @@ AI Worker 上合成，因此还需要 AI 对话的其余前提（`stickers.json`
 
 `agent.tts.style` 是可选的基础朗读风格，必须是 trim 后非空的字符串；`null`、空白或其他类型均拒绝。缺省使用 `GEMINI_SPEECH_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`。三个语音入口共用此配置；热重载后新请求使用新值，已发起请求保留原配置快照，删除字段恢复默认。单次请求的 `tone` 仍按 `<基础风格>; 细节: <语气>` 拼接。
 
-`tts` 另有两个可选的每日额度字段，三个入口共用一份计数：
+`tts` 另有两个可选的每日额度字段，AI 与预留额度独立计数：
 
 | 字段 | 含义 |
 | --- | --- |
-| `daily_limit` | 每个计数窗口内最多发起的合成请求数，正整数，缺省 100。`/send` 代发与 `cron.json` 的 `send_voice` 可用满这个数 |
-| `daily_reserve_quota` | 从 `daily_limit` 里留给 `/send` 与 cron 的次数，整数，0 ～ `daily_limit - 1`，缺省 25。AI 语音工具只能用到 `daily_limit - daily_reserve_quota` |
+| `daily_limit` | 每个窗口分配给 AI 与预留额度的总预算，正整数，缺省 100 |
+| `daily_reserve_quota` | `/send` 与 cron 共用的独立额度，整数，0 ～ `daily_limit - 1`，缺省 25。AI 独立使用剩余的 `daily_limit - daily_reserve_quota` 次，互不借用；设为 0 时 `/send` 与 cron 不合成语音 |
 
 计数窗口从窗口内第一次请求起算，满 24 小时后以下一次请求为起点重新计数；窗口与次数存在
-运行时数据根 `memory/global/state.json` 的 `ttsUsage`，重启后延续。一次合成调用计一次，SDK 内部重试不另计。
+运行时数据根 `memory/global/state.json` 的 `ttsUsage`（`windowStartedAt`、`agentCount`、`reserveCount`），重启后延续。两项计数共用窗口，到期读取按零用量计算，下次登记请求时一起重置。一次合成调用计一次，SDK 内部重试不另计。
 额度用尽后不再发起请求：AI 不发语音、也不在群里提起；`/send` 回一句额度提示；cron 记一条
 `daily limit reached` 错误日志且不重试。两个字段热重载即生效，已用次数不清零；调低后已用次数
 超过新上限时按用尽处理。
@@ -199,25 +199,38 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 
 ## `assets.json`
 
-可选文件，每个字段也都可选；缺省的字段取内置缺省。只写需要改的项，例如：
+可选文件。顶层按字段能接受的来源分成 `onlyPath`、`pathOrUrl`、`onlyUrl` 三组；每组和组内每个字段都可选，
+缺省的字段取内置缺省。只写需要改的项，例如：
 
 ```json
 {
-  "random_h_image_dir": "./images",
-  "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+  "onlyPath": {
+    "random_h_image_dir": "./images"
+  },
+  "pathOrUrl": {
+    "bot_default_avatar": "./avatar/default.png"
+  },
+  "onlyUrl": {
+    "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+  }
 }
 ```
 
-| 字段 | 用途 | 形态 |
-| --- | --- | --- |
-| `random_h_image_dir` | `/h_image` 与 cron 随机图片的专用图库，缺省 `./h_image` | 绝对路径或 `./`、`../` 开头的目录路径，相对路径以运行时数据根为基准 |
-| `fortune_thumbnail_url` | 「未卜先知」内联结果的缩略图 | 绝对 https URL |
-| `probability_thumbnail_url` | 「概率论」内联结果的缩略图 | 绝对 https URL |
-| `gag_thumbnail_url` | gag 发言内联结果的缩略图 | 绝对 https URL |
-| `bot_default_avatar_url` | `/icon reset`、`/copy stop` 复原机器人头像时下载的图片 | 绝对 http 或 https URL |
+| 分组 | 字段 | 用途 | 形态 |
+| --- | --- | --- | --- |
+| `onlyPath` | `random_h_image_dir` | `/h_image` 与 cron 随机图片的专用图库，缺省 `./h_image` | 本机目录路径 |
+| `pathOrUrl` | `bot_default_avatar` | `/icon reset`、`/copy stop` 复原机器人头像时使用的图片 | 本机文件路径，或绝对 http/https URL |
+| `onlyUrl` | `fortune_thumbnail_url` | 「未卜先知」内联结果的缩略图 | 绝对 https URL |
+| `onlyUrl` | `probability_thumbnail_url` | 「概率论」内联结果的缩略图 | 绝对 https URL |
+| `onlyUrl` | `gag_thumbnail_url` | gag 发言内联结果的缩略图 | 绝对 https URL |
 
-字符串的首尾空白会被去掉；未知字段、去掉空白后为空的串和不符合形态的值都会拒绝启动（运行中则拒绝这次改动）。
-[`config_example/dynamic/assets.json`](../dynamic/assets.json) 按内置缺省写全了五个字段，可以整份复制后只改需要的项。
+本机路径只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径以运行时数据根为基准；裸名与 `~/…` 无效。
+`bot_default_avatar` 写本机路径时，该文件必须是存在的普通文件（可经符号链接）、不超过 10 MiB、内容为 JPEG 或 PNG，
+启动与热重载时即核对，每次复原头像时重新读取。三张缩略图由 Telegram 拉取，只接受 https 直链。
+
+字符串的首尾空白会被去掉；未知分组、组内不属于该组的字段、去掉空白后为空的串和不符合形态的值都会拒绝启动（运行中则拒绝这次改动）。
+[`config_example/dynamic/assets.json`](../dynamic/assets.json) 按内置缺省写全了三组五个字段，可以整份复制后只改需要的项。
+旧版平铺格式按 [07 运维与排障](../../docs/cn/07-operations.md#assets-groups) 手工迁移。
 
 ## `stickers.json`
 
@@ -299,7 +312,7 @@ SDK。安装器不会从示例生成这个文件。
 
 - `send_message`：`content` 必填，最长 4096 字符。
 - `send_image`：`content` 是一份可选文字（最长 1024 字符）。固定图片来源只能二选一：`url` 数组或 `path` 文件数组，长度 1–10；单张也必须写数组，如 `"url": ["https://example.com/a.jpg"]`。此时 `rand_image` 只能省略或为 `false`。一张用单图发送，2–10 张用一次相册请求，只有第一张带 caption，不另发文字；相册有多个 Telegram 消息 ID。`is_blurred: true` 对全部图片加剧透遮罩，缺省或 `false` 不加。
-  `rand_image: true` 每次只随机一张：禁止 `url` 与文件数组，`path` 只能是目录字符串；省略时使用 `assets.json` 的 `random_h_image_dir`，指定其他目录时不要求 SHA-256 命名。
+  `rand_image: true` 每次只随机一张：禁止 `url` 与文件数组，`path` 只能是目录字符串；省略时使用 `assets.json` 的 `onlyPath.random_h_image_dir`，指定其他目录时不要求 SHA-256 命名。
 - `send_file`：`content` 可选（最长 1024 字符），来源恰好一个 `url` 或 `path`。
 - `send_voice`：`content` 必填，是要念的台词（最长 256 字符）；`tone` 可选，是这一句的说话语气
   （最长 64 字符），拼在固定的基础声线之后，省略则只用基础声线。两者换行合并成空格、去掉首尾空白
@@ -342,9 +355,10 @@ GIF 可用，其余类型发不出去属于配置问题。本地上传的上限�
 
 | 路径字段 | 相对路径的基准 | 形态 |
 | --- | --- | --- |
-| `assets.json` 的 `random_h_image_dir` | 运行时数据根 | 绝对路径或 `./`、`../` 开头的目录路径 |
+| `assets.json` 的 `onlyPath.random_h_image_dir` | 运行时数据根 | 绝对路径或 `./`、`../` 开头的目录路径 |
+| `assets.json` 的 `pathOrUrl.bot_default_avatar`（写本机路径时） | 运行时数据根 | 绝对路径或 `./`、`../` 开头的文件路径 |
 | cron 固定图片 `payload.path` | 项目根 | 1–10 个文件路径的数组 |
 | cron 随机图片 `payload.path` | 项目根 | 可选目录字符串；省略才使用上述专用图库 |
 | cron 文件 `payload.path` | 项目根 | 单个文件路径字符串 |
 
-`assets.json` 的 `random_h_image_dir` 是 `/h_image` 色图功能专用目录，默认 `./h_image`。绝对路径（如 `/h_image`）与显式相对路径（`./h_image`、`../h_image`）都支持，相对路径以运行时数据根为基准。不要随意放置其他功能的图片；应通过 `/h_image add` 入库，手工放置必须自行以内容 SHA-256 的 64 位小写十六进制摘要命名，扩展名为 jpg/jpeg/png/webp。启动在 Worker 和外部连接之前异步检查命名及条目类型；非法文件、子目录、文件链接和残留临时文件均报错拒绝启动。启动不重算全库内容哈希，手工文件名与真实摘要的对应关系由部署方负责。cron 显式目录独立使用，无此命名要求。文件与目录内容读取、预检和上传均为异步；本地相册只持有可重开的文件流，不预读全部图片。
+`assets.json` 的 `onlyPath.random_h_image_dir` 是 `/h_image` 色图功能专用目录，默认 `./h_image`。绝对路径（如 `/h_image`）与显式相对路径（`./h_image`、`../h_image`）都支持，相对路径以运行时数据根为基准。不要随意放置其他功能的图片；应通过 `/h_image add` 入库，手工放置必须自行以内容 SHA-256 的 64 位小写十六进制摘要命名，扩展名为 jpg/jpeg/png/webp。启动在 Worker 和外部连接之前异步检查命名及条目类型；非法文件、子目录、文件链接和残留临时文件均报错拒绝启动。启动不重算全库内容哈希，手工文件名与真实摘要的对应关系由部署方负责。cron 显式目录独立使用，无此命名要求。文件与目录内容读取、预检和上传均为异步；本地相册只持有可重开的文件流，不预读全部图片。

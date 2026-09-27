@@ -40,6 +40,10 @@ export interface AdSampleContext {
  * 主线程 -> Worker：一条待广告判定的群消息。只有本群开了 /ad_detect enable、
  * 机器人是本群管理员、且发送者不是自己人时才投递（见 antiRaid/adCandidate.ts）。
  * Worker 侧按发送者归并成消息串排队送检，见 workers/antiRaid/adDetect/queue.ts。
+ *
+ * 字段全部必填、缺省显式 undefined，并且除 linkUrls 外只含原始值：Bun 的 structured
+ * clone 对值全为原始类型的扁平对象走快路径，嵌套对象会让每条候选的跨线程成本翻倍。
+ * 发送者元数据与引用上下文因此平铺成独立字段，Worker 侧按需重新组装。
  */
 export interface AdCandidateMessage {
   type: "adCandidate";
@@ -60,14 +64,15 @@ export interface AdCandidateMessage {
   observedAt: number;
   /** 已清洗成单行的正文（文本或图片说明）。 */
   text: string;
-  /** 被引用段与被回复原文；与 text 一起参与判定并留进命中样本。 */
-  sampleContext?: AdSampleContext;
-  /** 正文里不可见的 text_link 落地页 URL。 */
-  linkUrls?: string[];
   /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
   label: string;
-  /** Telegram 展示元数据；用户的 firstName、lastName 同时参与当次广告检测。 */
-  meta: Readonly<TelegramIdentityMetadata>;
+  /**
+   * Telegram 展示元数据（口径同 TelegramIdentityMetadata）；用户的 firstName、lastName
+   * 同时参与当次广告检测。
+   */
+  firstName: string;
+  lastName: string;
+  username: string;
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;
   /** 当前消息是手工转发；其 text/caption 归属于 forward_origin，而非转发者本人。 */
@@ -76,6 +81,14 @@ export interface AdCandidateMessage {
   blocked: boolean;
   /** 发送者此刻是否仍在入群验证窗口内。 */
   justJoined: boolean;
+  /** 正文里不可见的 text_link 落地页 URL；没有时为 undefined。 */
+  linkUrls: string[] | undefined;
+  /**
+   * 被引用段与被回复原文（口径同 AdSampleContext 的 quote 与 replyTo）；与 text 一起
+   * 参与判定并留进命中样本，缺席时为 undefined。
+   */
+  sampleQuote: string | undefined;
+  sampleReplyTo: string | undefined;
 }
 
 /** 主线程 -> Worker：丢掉这个群尚未送检的广告判定队列。 */

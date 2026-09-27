@@ -3,7 +3,9 @@ import type {
   BlocklistIdPage,
 } from "../../packages/types/identityStorage";
 import type { FlushResult } from "../../packages/types/lifecycle";
-import { diskIOStub } from "./diskIOMock";
+import { diskIOReplyStub, diskIOStub } from "./diskIOMock";
+import type { DiskIORespawnListener } from "../../packages/types/diskIO/messages";
+import type { IdentityStoragePersistedReply } from "../../packages/types/diskIO/replies";
 /**
  * 黑名单清扫与启动恢复各用例文件共用的替身、状态与隔离钩子：mock.module
  * 装配、Worker 回执工厂与 beforeEach 复位。
@@ -41,6 +43,10 @@ export const persistChatState = mock(async (): Promise<void> => {});
 export const remover = mock(async (...args: unknown[]): Promise<number> =>
   (args[0] as readonly unknown[]).length);
 export const postDiskIO = mock((..._args: unknown[]): boolean => true);
+/** 生产 owner 登记的 Disk I/O 重建重放回调，按 owner 名索引；用例据此驱动重放。 */
+export const respawnListeners = new Map<string, DiskIORespawnListener>();
+/** 生产 owner 登记的 identityStoragePersisted 回执回调；用例据此模拟事务 ACK。 */
+export const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
 /**
  * 黑名单主键读为跨线程 request/reply，Disk I/O 自愈窗口内会直接 reject
  * （见 infra/diskIO.ts）；用例可切换实现以模拟这个失败。
@@ -74,7 +80,14 @@ mock.module("../../packages/aiChat/workerBridge", () => ({
 }));
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
-  onDiskIORespawn: (): void => {},
+  onDiskIORespawn: (owner: string, _priority: number, listener: DiskIORespawnListener): void => {
+    respawnListeners.set(owner, listener);
+  },
+  onDiskIOReply: diskIOReplyStub({
+    identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
+      persistedListeners.push(listener);
+    },
+  }),
   readBlocklistIdPage,
   readIdentityPolicies: async (ids: readonly number[]): Promise<IdentityPolicyRawReadResult> => ({
     temporaryAdBypass: [],

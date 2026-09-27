@@ -103,13 +103,14 @@ const {
 } = await import("../../packages/cache/main/identityStorage");
 const {
   temporaryAdBypassActivityCache,
+  temporaryAdBypassWriteRevision,
   unacknowledgedTemporaryAdBypassWrites,
 } = await import(
   "../../packages/cache/main/temporaryAdBypass"
 );
 const {
   clearTemporaryAdBypassActivity,
-  hasActiveTemporaryAdBypass,
+  hasActiveTemporaryAdBypassAt,
   recordTemporaryAdBypassActivity,
 } = await import("../../packages/infra/identityPolicy/temporaryAdBypass");
 const {
@@ -177,7 +178,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     });
 
     await expect(prefetchIdentityPolicies([7])).resolves.toBeTrue();
-    expect(hasActiveTemporaryAdBypass(7)).toBeTrue();
+    expect(hasActiveTemporaryAdBypassAt(7, Date.now())).toBeTrue();
     await expect(prefetchIdentityPolicies([7])).resolves.toBeTrue();
     expect(readIdentityPolicies).toHaveBeenCalledTimes(1);
   });
@@ -471,6 +472,35 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(identityEntryCounts.whitelist).toBe(0);
     expect(unacknowledgedWhitelistWrites.has(7)).toBeFalse();
     expect(diskMessages).toEqual([]);
+  });
+
+  test("临时广告免检写入：revision 耗尽在发布前失败；投递被拒时保留最终值等待重建重放", () => {
+    const now: number = Date.now();
+    seedMissing(7);
+    temporaryAdBypassWriteRevision.current = Number.MAX_SAFE_INTEGER;
+
+    expect(() => recordTemporaryAdBypassActivity(7, now)).toThrow("revision space is exhausted");
+    expect(temporaryAdBypassActivityCache.peek(7)).toBeNull();
+    expect(unacknowledgedTemporaryAdBypassWrites.has(7)).toBeFalse();
+    expect(diskMessages).toEqual([]);
+
+    temporaryAdBypassWriteRevision.current = 0;
+    acceptDiskMessages = false;
+    const recorded: ReturnType<typeof recordTemporaryAdBypassActivity> =
+      recordTemporaryAdBypassActivity(7, now);
+
+    expect(recorded?.queued).toBeFalse();
+    expect(temporaryAdBypassActivityCache.peek(7)).toBe(recorded!.activity);
+    expect(unacknowledgedTemporaryAdBypassWrites.get(7)).toEqual({
+      activity: recorded!.activity,
+      revision: 1,
+    });
+    expect(diskMessages).toEqual([{
+      type: "temporaryAdBypassWrite",
+      id: 7,
+      activity: recorded!.activity,
+      revision: 1,
+    }]);
   });
 
   test("DiskIO Worker 重建只重放每个主键最新未 ACK 最终值", async () => {

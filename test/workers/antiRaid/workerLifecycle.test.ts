@@ -252,7 +252,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
-      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, observedAt: 1, text: "买号加我", linkUrls: [], label: "@spam", meta: { firstName: "Spam", lastName: "", username: "spam" }, isChannel: false, isForwarded: false, blocked: false, justJoined: true },
+      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, observedAt: 1, text: "买号加我", label: "@spam", firstName: "Spam", lastName: "", username: "spam", isChannel: false, isForwarded: false, blocked: false, justJoined: true, linkUrls: undefined, sampleQuote: undefined, sampleReplyTo: undefined },
       { type: "clearAdDetect", chatId: -1001 },
       { type: "floodCandidate", chatId: -1001, userId: 1, observedAt: 1, label: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },
@@ -317,7 +317,7 @@ describe("Anti-Raid Worker lifecycle", () => {
   test("启动时装上缓存用量出口，把用量作为事件发回主线程；停止时卸下", () => {
     worker.startAntiRaidWorker();
     const usage = {
-      timestamp: 1, capability: "ad_detect", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 8, outputTokens: 1,
+      kind: "tokens", timestamp: 1, capability: "ad_detect", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 8, outputTokens: 1,
     } as const;
     aiCacheUsageSink.current!(usage);
     expect(workerEvents).toContainEqual({ type: "aiCacheUsage", usage });

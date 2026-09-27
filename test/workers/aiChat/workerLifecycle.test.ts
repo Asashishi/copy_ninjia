@@ -291,7 +291,7 @@ describe("AI Chat Worker lifecycle", () => {
   test("启动时装上缓存用量出口，把用量作为事件发回主线程；停止时卸下", () => {
     worker.startAiChatWorker();
     const usage = {
-      timestamp: 1, capability: "text", provider: "google", model: "m", inputTokens: 10, cachedInputTokens: 0, outputTokens: 1,
+      kind: "tokens", timestamp: 1, capability: "text", provider: "google", model: "m", inputTokens: 10, cachedInputTokens: 0, outputTokens: 1,
     } as const;
     aiCacheUsageSink.current!(usage);
     expect(postMessage).toHaveBeenCalledWith({ type: "aiCacheUsage", usage });

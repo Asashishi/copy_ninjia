@@ -1,7 +1,10 @@
 import type {
   CheckingInviterState,
+  ExemptState,
   ExpelSnapshot,
   ExpellingState,
+  KickedState,
+  KickPendingState,
   PendingState,
   VerificationEffect,
   VerificationState,
@@ -20,6 +23,48 @@ export function isTerminalVerificationPhase(
   return phase === "kickPending" ||
     phase === "checkingInviter" ||
     phase === "expelling";
+}
+
+/** 建立 exempt 去重占位；全部构造点共用，保证同一个 kind 只有一种形状。 */
+export function exemptOf(label: string, isBot: boolean): ExemptState {
+  return { kind: "exempt", label, isBot };
+}
+
+/** kickPendingOf 的入参；两个 Worker 本地幂等门不在此列，构造与重建时恒为 false。 */
+export interface KickPendingParams {
+  readonly label: string;
+  readonly isBot: boolean;
+  readonly requestedAt: number;
+  readonly countedJoinAt: number | undefined;
+  readonly announcementMessageId: number | undefined;
+}
+
+/**
+ * 建立 kickPending 终态；新建、真正重进与 adopt 重建共用。effectStarted 与
+ * executionStarted 是 Worker 本地幂等门，不随快照持久化，一律从 false 起。
+ */
+export function kickPendingOf({
+  label,
+  isBot,
+  requestedAt,
+  countedJoinAt,
+  announcementMessageId,
+}: KickPendingParams): KickPendingState {
+  return {
+    kind: "kickPending",
+    label,
+    isBot,
+    requestedAt,
+    countedJoinAt,
+    announcementMessageId,
+    effectStarted: false,
+    executionStarted: false,
+  };
+}
+
+/** 建立私密模式踢人结算后的 kicked 去重占位。 */
+export function kickedOf(label: string, isBot: boolean, kickedAt: number): KickedState {
+  return { kind: "kicked", label, isBot, kickedAt };
 }
 
 /** 落盘快照里带过来的终态播报记账；新建终态时四项均为 undefined。 */
@@ -54,7 +99,7 @@ export function checkingInviterOf(
  * 建立 expelling 终态；构造顺序与形状约束同 checkingInviterOf。
  *
  * `executionStarted` 与 `cleanupSettled` 是 Worker 本地幂等门，不随快照持久化，
- * 因此重建时同样从初始值（false / undefined）起；其余四项由 adopt 从落盘记账带回。
+ * 因此重建时同样从 false 起；其余四项由 adopt 从落盘记账带回。
  */
 export function expellingOf(
   reason: ExpellingState["reason"],
@@ -70,7 +115,7 @@ export function expellingOf(
     unconfirmedNoticeSent: persisted?.unconfirmedNoticeSent,
     successNoticeSent: persisted?.successNoticeSent,
     removalConfirmed: persisted?.removalConfirmed,
-    cleanupSettled: undefined,
+    cleanupSettled: false,
   };
 }
 
@@ -92,6 +137,33 @@ export function snapshotOf(source: ExpelSnapshotSource): ExpelSnapshot {
     replyReminderMessageId: source.replyReminderMessageId,
     joinedAt: source.joinedAt,
     expiresAt: source.expiresAt,
+  };
+}
+
+/** 评论区豁免的来源：待验证记录或 flood 终态的快照。 */
+type ChannelCommentSource =
+  Pick<ExpelSnapshot, "label" | "isBot" | "joinedAt" | "reminderMessageId" | "replyReminderMessageId">;
+
+/**
+ * 频道评论区活动确证后的豁免转移：进入 exempt 占位，删两类提醒、撤销这次入群计数，
+ * 并以评论消息为锚发一条欢迎。
+ */
+export function channelCommentExemption(
+  source: ChannelCommentSource,
+  messageId: number
+): VerificationTransition {
+  return {
+    next: exemptOf(source.label, source.isBot),
+    effects: [
+      remindersOf(source),
+      { kind: "retractJoinCount", joinedAt: source.joinedAt },
+      {
+        kind: "sendWelcome",
+        variant: "channelComment",
+        targetLabel: source.label,
+        anchorMessageId: messageId,
+      },
+    ],
   };
 }
 

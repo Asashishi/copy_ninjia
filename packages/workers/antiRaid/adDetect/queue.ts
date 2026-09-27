@@ -109,6 +109,18 @@ import {
   verificationKeyPrefix,
 } from "../../../libs/verificationKey";
 import type { AdCandidateDecision } from "../../../types/states/adDetectAdmission";
+import type { TelegramIdentityMetadata } from "../../../types/identityPolicy";
+
+/** 把候选平铺的发送者元数据组装成消息串与处置事件共用的元数据对象。 */
+function candidateIdentityMetadata(
+  message: AdCandidateMessage
+): Readonly<TelegramIdentityMetadata> {
+  return {
+    firstName: message.firstName,
+    lastName: message.lastName,
+    username: message.username,
+  };
+}
 
 /**
  * 收下一条待判定消息：并进该发送者的消息串，并保证他在队列里排着。
@@ -154,7 +166,7 @@ export function enqueueAdCandidate(
   // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
   // （详见 bundle.ts 的 claimSampleContextParts，归因边界与跨条去重也写在那里）。
   const context: AdSampleContext | undefined =
-    boundSampleContext(message.sampleContext);
+    boundSampleContext(message.sampleQuote, message.sampleReplyTo);
   // 按码元硬切会把切点落在代理对中间：留下的孤立高位代理进模型提示词时
   // 被 UTF-8 编码换成 U+FFFD，还会原样写进 memory/ 的命中样本，运维复核误判时
   // 看到的是乱码而不是对方真正发的那个字。与同管线的 classifier.ts 用同一个
@@ -163,7 +175,7 @@ export function enqueueAdCandidate(
     truncateInline(sanitizeInline(message.text), AD_DETECT_MESSAGE_MAX_CHARS),
     message.linkUrls
   );
-  const senderName: string = message.isChannel ? "" : formatAdSenderName(message.meta);
+  const senderName: string = message.isChannel ? "" : formatAdSenderName(message);
   const senderText: string = senderName.length === 0
     ? textWithLinks
     : textWithLinks.length === 0 ? senderName : `${senderName} ${textWithLinks}`;
@@ -178,8 +190,8 @@ export function enqueueAdCandidate(
   // 只重复已认领引文且姓名未变时没有新内容；改名则必须留下当次姓名重新送检。
   const onlyKnownName: boolean = text === senderName &&
     existing !== undefined && existing.entries.length > 0 &&
-    existing.meta.firstName === message.meta.firstName &&
-    existing.meta.lastName === message.meta.lastName;
+    existing.meta.firstName === message.firstName &&
+    existing.meta.lastName === message.lastName;
   // 投递闸（没有可判定正文、已拉黑或自己的 TTL 内刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
@@ -198,7 +210,7 @@ export function enqueueAdCandidate(
     chatId: message.chatId,
     senderId: message.senderId,
     label: message.label,
-    meta: message.meta,
+    meta: candidateIdentityMetadata(message),
     isChannel: message.isChannel,
     justJoined: message.justJoined,
     entries: [],
@@ -207,9 +219,14 @@ export function enqueueAdCandidate(
     checkedSeq: 0,
   };
   if (existing !== undefined) {
-    // 昵称随时可改；播报要用最新的那个。
+    // 昵称随时可改；播报要用最新的那个。元数据只在变化时重新组装，同一发送者的
+    // 后续消息不为它分配对象。
     bundle.label = message.label;
-    bundle.meta = message.meta;
+    if (
+      bundle.meta.firstName !== message.firstName ||
+      bundle.meta.lastName !== message.lastName ||
+      bundle.meta.username !== message.username
+    ) bundle.meta = candidateIdentityMetadata(message);
     // 取并集而不是覆盖：验证会在窗口内通过，先发广告后点验证的人不该洗白。
     bundle.justJoined ||= message.justJoined;
   }

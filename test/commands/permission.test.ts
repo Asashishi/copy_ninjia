@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { NON_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
+import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { chatStateCache } from "../../packages/cache/main/chatState";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
@@ -275,7 +276,7 @@ describe("/permission", () => {
     expect(text).toContain("杂鱼♡");
     expect(text).toContain("/permission <用户id|频道id|@username>");
     expect(text).toContain("/permission <用户id|频道id|@username> all");
-    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_MAX_CHARS);
   });
 
   test("白名单用户可用 query 查询自己的完整权限，权限看板与 help 一样长期留存", async () => {

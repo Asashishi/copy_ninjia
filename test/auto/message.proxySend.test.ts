@@ -260,6 +260,15 @@ describe("/send 代发的 TTS 请求", () => {
     expect(eitherNotice((texts) => texts.proxyTtsBusy)).toContain(noticeTexts()[0]!);
   });
 
+  test("额度用尽时提示预留上限，代发会话保持开启", async () => {
+    synthesizeVoiceMock.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => ({ ok: false, reason: "daily limit reached" }));
+    await handleIncomingMessageMiddleware(codeBlockCtx(JSON.stringify({ type: "tts", text: "hi" })));
+    await deferredTasks.shift()!();
+    expect(eitherNotice((texts) => texts.proxyTtsDailyLimit(AGENT.tts!.dailyReserveQuota))).toContain(noticeTexts()[0]!);
+    expect(sendVoiceWithResultMock).not.toHaveBeenCalled();
+    expect(disableChatStateSwitchMock).not.toHaveBeenCalled();
+  });
+
   test("合成或发送失败只回一句提示，代发会话保持开启；取消时静默收尾", async () => {
     const request: any = codeBlockCtx(JSON.stringify({ type: "tts", text: "hi" }));
     synthesizeVoiceMock.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => ({ ok: false, reason: "timed out" }));

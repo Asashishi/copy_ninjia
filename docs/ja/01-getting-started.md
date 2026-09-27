@@ -165,7 +165,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     `image_protocol`（`openai`、`openai-standard`、`xai`）も必須です。`tts` には空でない `voice`
     （prebuilt voice 名、または AI Studio Voice design の `voice_` voice ID）も必須で、任意で
     `daily_limit`（1 日のボイス回数上限、既定 100）と `daily_reserve_quota`（そのうち `/send` と cron
-    のために残す回数、既定 25、`daily_limit` 未満）を指定できます。`base_url` は
+    のために残す回数、既定 25、`daily_limit` 未満）を指定できます。AI と予約枠は別々に数えて互いに借りず、予約枠 0 では `/send` と cron は合成しません。`base_url` は
     `https` のみを受け付け、平文 `http` は `localhost`・`127.0.0.1`・`::1` に限られます。
     URL に userinfo と `#` fragment は含められません。
   - **検証**：[`packages/config/agent.ts`](../../packages/config/agent.ts)（能力ごとの field 解析は
@@ -247,25 +247,37 @@ sidecar が同じ協働 group を継承します。
 
 ### インラインサムネイルと Bot 既定アバターの差し替え
 
-インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口）、`/icon reset`・`/copy stop` で復元する既定アバター、`/h_image` 専用画像庫のディレクトリは、いずれも任意の `config/dynamic/assets.json` に書きます。
+インライン結果のサムネイル 3 枚（`/luck_challenge` の 2 枚と gag 発言入口）、`/icon reset`・`/copy stop` で復元する既定アバター、`/h_image` 専用画像庫のディレクトリは、いずれも任意の `config/dynamic/assets.json` に書きます。トップレベルは各項目が受け付ける取得元で 3 つのグループに分かれます。
 
 ```json
 {
-  "random_h_image_dir": "./h_image",
-  "fortune_thumbnail_url": "https://…",
-  "probability_thumbnail_url": "https://…",
-  "gag_thumbnail_url": "https://…",
-  "bot_default_avatar_url": "https://…"
+  "onlyPath": {
+    "random_h_image_dir": "./h_image"
+  },
+  "pathOrUrl": {
+    "bot_default_avatar": "https://…"
+  },
+  "onlyUrl": {
+    "fortune_thumbnail_url": "https://…",
+    "probability_thumbnail_url": "https://…",
+    "gag_thumbnail_url": "https://…"
+  }
 }
 ```
 
-後ろの 4 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイル、アバター復元時に取得する画像です。ファイルも各フィールドも任意で、省略するとコード内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）を使います。[`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) は 5 項目すべてを内蔵既定値で記載しており、installer が初期設定としてコピーするので、必要な項目だけ書き換えてください。ファイルは厳格な JSON として parse されるため、コメントは書けません。
+- `onlyPath`：ローカルパスのみ。`random_h_image_dir` は `/h_image` 専用画像庫のディレクトリです。
+- `pathOrUrl`：ローカルパスまたは URL。`bot_default_avatar` はアバター復元時に使う画像です。
+- `onlyUrl`：`https://` の URL のみ。3 つのキーは順に、運勢結果のサムネイル、確率結果のサムネイル、gag 発言 inline 結果のサムネイルです。
 
-4 本の URL 項目の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付けます。明文の `http://` を許すのは `bot_default_avatar_url` だけで、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`https://` の書き忘れなど壊れた値は、起動時ならフィールドパスを示して起動を拒否し、稼働中ならその変更を拒否して直前に適用済みの設定を使い続けます。既定画像へ黙って戻すことはありません。
+ファイルも 3 つのグループも各フィールドも任意で、省略するとコード内蔵の既定値（[`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）を使います。[`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) は 3 グループ 5 項目すべてを内蔵既定値で記載しており、installer が初期設定としてコピーするので、必要な項目だけ書き換えてください。ファイルは厳格な JSON として parse されるため、コメントは書けません。3 グループ以外のトップレベルキーや、そのグループに属さないフィールド（トップレベルに平置きした項目や誤ったグループに置いた項目を含む）は不正として扱います。旧来の平置き形式は [07 運用手順](07-operations.md#assets-groups) に従って手動で移行してください。
 
-`random_h_image_dir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` です。絶対パスか `./`・`../` で始まる明示的相対パスを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
+ローカルパスは絶対パスか `./`・`../` で始まる明示的相対パスだけを受け付け、相対パスは実行時データルート基準です。裸の名前と `~/…` は無効です。
 
-`assets.json` は `config/dynamic/` にあり、**稼働中の変更は hot reload されます**。URL は次の利用から反映されます。`random_h_image_dir` を新しいディレクトリに変えると、起動時と同じ基準で新ディレクトリを作成・検査し、検査に失敗した場合は変更全体を拒否して元のディレクトリを使い続けます。ファイルを削除するとすべて内蔵既定値に戻ります。Bot がこのファイルを書き戻すことはありません。
+URL の要件は **画像バイトを直接返す絶対 URL** であることで、画像ホストは限定しません（内蔵の既定値がたまたま Google Drive の直リンクなだけで制約ではありません。Drive を使う場合、`/file/d/<id>/view` の共有リンクは画像バイトではなく Web ページを返す点に注意してください）。サムネイル 3 枚は Telegram クライアントが取得するため `https://` のみを受け付け、ローカルパスは使えません。`bot_default_avatar` を URL にする場合は明文の `http://` も許し、この画像は Bot 自身が取得するため TLS を使うかは運用側の判断です。この取得は**リダイレクトを追います**。そのため「直リンクがまず実ストレージのドメインへ 302 する」という一般的な形（内蔵既定の Drive リンクもこれです）はそのまま指定でき、最終ホップを自分で解決する必要はありません。`bot_default_avatar` をローカルパスにする場合、そのファイルは存在する通常ファイル（シンボリックリンク経由も可）で、10 MiB 以下の JPEG または PNG でなければなりません。起動時と hot reload 時に検査し、アバターを復元するたびにファイルを読み直します。`https://` の書き忘れやローカルファイルの不在など壊れた値は、起動時ならフィールドパス（例：`$.pathOrUrl.bot_default_avatar`）を示して起動を拒否し、稼働中ならその変更を拒否して直前に適用済みの設定を使い続けます。既定画像へ黙って戻すことはありません。
+
+`random_h_image_dir` は `/h_image` 専用画像庫で、cron がディレクトリを指定しない場合の抽選元でもあります。既定は `./h_image` で、上記のローカルパスだけを受け付けます。起動時に不足するディレクトリを作成し、読み書き・アクセス権と全項目を検査します。内容 SHA-256 の小文字 16 進数 64 文字を名前本体とする `jpg`/`jpeg`/`png`/`webp` の通常ファイルだけを許可し、サブディレクトリ・ファイルへのリンク・隠しファイル・残存一時ファイルは起動を拒否します。ディレクトリ自体はリンクでも構いません。内容ハッシュは再計算しないため、手動名と内容の一致は運用者が確認します。追加は `/h_image add` を推奨します。適合画像の追加・削除は再起動不要で、抽選時に 10 MB 超の画像を飛ばします。cron で明示した独立ディレクトリでは通常のファイル名を使えます。詳細は [配置設定](../../config_example/README/ja.md) を参照してください。
+
+`assets.json` は `config/dynamic/` にあり、**稼働中の変更は hot reload されます**。サムネイルと既定アバターは次の利用から反映されます。`random_h_image_dir` を新しいディレクトリに変えると、起動時と同じ基準で新ディレクトリを作成・検査し、検査に失敗した場合は変更全体を拒否して元のディレクトリを使い続けます。ファイルを削除するとすべて内蔵既定値に戻ります。Bot がこのファイルを書き戻すことはありません。
 
 ## Telegram 側の設定（BotFather とグループ）
 

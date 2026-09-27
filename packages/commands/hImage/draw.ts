@@ -1,5 +1,5 @@
 /**
- * `/h_image` 抽图：从随机图片目录（config/dynamic/assets.json 的 random_h_image_dir，见
+ * `/h_image` 抽图：从随机图片目录（config/dynamic/assets.json 的 onlyPath.random_h_image_dir，见
  * config/assets.ts 的 getAssetConfig）均匀抽一张发到触发的群。
  * 在延迟命令执行器里运行（见 commands/deferredCommands.ts）。结果图片只经
  * sendHImageResult 发送；抽取失败的提示走 sendCommandMessage，30 秒后删除。

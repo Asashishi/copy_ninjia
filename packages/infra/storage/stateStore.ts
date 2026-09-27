@@ -1,4 +1,3 @@
-import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import type { FlushResult } from "../../types/lifecycle";
 import { chatStateCache } from "../../cache/main/chatState";
 import { globalCopyState, globalTtsUsageState, stateStoreHolder } from "../../cache/main/storage";
@@ -23,7 +22,7 @@ import type {
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
 import { assertChatStateCapacity } from "../chatStateStorage";
-import { StateStore, assertLegacyStateFilesAbsent } from "./statePersistence";
+import { StateStore, loadCurrentGlobalState } from "./statePersistence";
 import { toError } from "../../libs/errorMessage";
 
 export {
@@ -120,11 +119,10 @@ export function restoreCopyCooldown(claimedAt: number, previousLastCopyTime: num
   return true;
 }
 
-/** 启动恢复：拒绝未迁移的旧位置状态文件，再从 memory/global/state.json 恢复全局状态。 */
+/** 启动恢复：经 loadCurrentGlobalState 拒绝未迁移的状态文件，再从 memory/global/state.json 恢复全局状态。 */
 export async function loadState(): Promise<void> {
   try {
-    await assertLegacyStateFilesAbsent();
-    const decoded: DecodedGlobalState | null = await sharedStateStore().load();
+    const decoded: DecodedGlobalState | null = await loadCurrentGlobalState(sharedStateStore());
     if (decoded === null) return;
     if (decoded.copy.lastCopyTime !== undefined) {
       globalCopyState.lastCopyTime = decoded.copy.lastCopyTime;
@@ -154,8 +152,9 @@ export function getTtsUsage(): TtsDailyUsage | null {
 }
 
 /**
- * 接管 AI Worker 回传的全量计数（ttsUsage 事件）并在后台落盘；写失败按 StateStore
- * 既有的重试与 fatal 通道处理。
+ * 接管 AI Worker 回传的全量计数（ttsUsage 事件）并交给后台写：合并窗口
+ * （STATE_BACKGROUND_SAVE_DELAY_MS）到期或下一次等待落盘的写入时写出；写失败按
+ * StateStore 既有的重试与 fatal 通道处理。
  */
 export function adoptTtsUsage(usage: TtsDailyUsage): void {
   globalTtsUsageState.current = usage;
@@ -189,10 +188,8 @@ function saveGlobalStateInBackground(context: string): void {
   });
 }
 
-export function flushStateToDisk(
-  timeoutMs: number = STATE_FLUSH_TIMEOUT_MS,
-  quiesce: boolean = false
-): Promise<FlushResult> {
+/** 在 timeoutMs 预算内排空全局状态写入；quiesce 为 true 时此后不再接受新写入（停机最后一刷）。 */
+export function flushStateToDisk(timeoutMs: number, quiesce: boolean): Promise<FlushResult> {
   return sharedStateStore().flush(timeoutMs, quiesce);
 }
 

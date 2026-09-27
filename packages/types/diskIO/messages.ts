@@ -5,6 +5,7 @@ import type { PendingBlockedRemoval } from "../blocklist";
 import type { IdentityPolicyTable } from "../identityPolicy";
 import type { TemporaryAdBypassActivity } from "../states/temporaryAdBypass";
 import type { LuckReceiptSecret } from "./storage";
+import type { DiskIODomain } from "./replies";
 
 /**
  * 磁盘 IO 线程（packages/workers/diskIOWorker.ts）统一的消息协议与快照类型：
@@ -126,7 +127,7 @@ export interface LuckDrawDiskMessage {
 export interface VerificationUpsertDiskMessage {
   type: "verificationUpsert";
   record: VerificationSnapshot;
-  /** 新建验证属于核心状态，绕过普通 250ms 合并窗口。 */
+  /** 新建与终态属于核心状态，绕过普通 FLUSH_INTERVAL_MS 合并窗口立即追加。 */
   critical: boolean;
 }
 
@@ -217,9 +218,7 @@ export interface AdSampleDiskMessage {
  * 主线程 -> diskIOWorker：一次模型请求的缓存用量（见 types/aiCache.ts）。进入
  * memory/ai-daily-usage/ 的内存缓冲，按阈值、定时或统一 flush 追加落盘。
  */
-export interface AiCacheUsageDiskMessage extends AiCacheUsage {
-  type: "aiCacheUsage";
-}
+export type AiCacheUsageDiskMessage = AiCacheUsage & { readonly type: "aiCacheUsage" };
 
 /**
  * 不进入权威业务恢复缓冲的 Disk I/O 诊断。传输层在进程存活期间保留到 ACK；
@@ -236,10 +235,15 @@ export interface DiskDiagnosticBatchRequest {
 
 /**
  * 主线程 -> diskIOWorker：一条权威 `chat_member` 入群事实。
- * Worker 按群、按东京日期追写；启动恢复不读取这类日志。
+ * Worker 先进内存批次，再按群、按东京日期追写；启动恢复不读取这类日志。
  */
 export interface JoinLogDiskMessage {
   type: "joinLog";
+  /**
+   * 主线程按投递顺序分配的正整数序号；Worker 以 joinLogPersisted 回执已收下的最大序号
+   * 与其中仍待写的序号，主线程据此释放未确认镜像（见 infra/joinLog.ts）。
+   */
+  sequence: number;
   chatId: number;
   userId: number;
   joinedAt: number;
@@ -325,12 +329,12 @@ export interface LoadRequest {
 /**
  * 主线程 -> diskIOWorker：恢复缓冲重放窗口的开合标记。
  *
- * 一条业务消息「写失败了」在两种到达方式下的收场完全不同。正常在线投递的那条
- * 后面紧跟着调用方自己的领域 flush（见 infra/joinLog.ts），失败由那次 flush 回报，
- * update 不被确认、Telegram 重投即可自愈；而恢复缓冲重放的那条**没有任何人再来
- * flush**——recordJoinLog 早在缓冲那一刻就已经放行了这条 update。Worker 自己看不出
- * 两者的区别，因此由主线程在重放前后各发一条标记把那段区间圈出来：区间内的写失败
- * 只能按 infra/joinLog.ts 承诺的那样走 stopWorkerAfterLoadFailure 的统一 fatal 停机。
+ * 一条共享 SQLite 写消息被拒收，在两种到达方式下的收场完全不同。正常在线投递的那条
+ * 由 Worker 记下领域拒收标记，调用方自己的领域屏障（如 infra/chatStateStorage.ts 的
+ * persistChatState）拿到失败回执，update 不被确认、Telegram 重投即可自愈；而恢复缓冲
+ * 重放的那条**没有任何人再来 flush**——投递方早在缓冲那一刻就已经放行了这条 update。
+ * Worker 自己看不出两者的区别，因此由主线程在重放前后各发一条标记把那段区间圈出来：
+ * 区间内的拒收只能走 stopWorkerAfterLoadFailure 的统一 fatal 停机。
  */
 export interface RecoveryReplayRequest {
   type: "recoveryReplay";
@@ -341,10 +345,10 @@ export interface RecoveryReplayRequest {
 /**
  * 主线程 -> diskIOWorker：Worker 重建后镜像重放区间的开合标记。
  *
- * 区间内共享 SQLite 的满批提交与定时提交只重新挂定时器、不提交；显式 flush 与
- * AI 上下文写入前的强制提交照常执行。关标记到达时若任一领域已达批次阈值，立即以
- * 一个事务提交区间内的全部变化，因此按优先级依次重放的黑名单写入与待踢 outbox
- * 快照落在同一事务里（见 docs/cn/04-invariants.md 的 Disk I/O 恢复约束）。
+ * 区间内共享 SQLite 的满批提交、定时提交与 AI 上下文的即时提交只重新挂定时器、不提交；
+ * 显式 flush 照常执行。关标记到达时若有待回执的 AI 上下文删除或即时快照，或任一领域已达
+ * 批次阈值，立即以一个事务提交区间内的全部变化，因此按优先级依次重放的黑名单写入与待踢
+ * outbox 快照落在同一事务里（见 docs/cn/04-invariants.md 的 Disk I/O 恢复约束）。
  */
 export interface StorageFlushHoldRequest {
   type: "storageFlushHold";
@@ -360,14 +364,19 @@ export interface EnsureLuckSecretRequest {
 }
 
 /**
- * 主线程 -> diskIOWorker：dirty 持久化领域立即落盘，随后回执。
- * `business` 仅供诊断日志连续失败后的受控重建前使用；它跳过已知故障的日志领域，
- * 但仍覆盖全部权威业务领域，不能作为普通停机 flush 的降级模式。
+ * flush 范围。`all` 覆盖日志、全部业务领域与旁路数据，供停机使用；`business` 仅供
+ * 诊断日志连续失败后的受控重建前使用，跳过已知故障的日志领域，但仍覆盖全部权威业务
+ * 领域，不能作为普通停机 flush 的降级模式；单个领域名是该领域的落盘屏障，只刷这一个
+ * 领域（共享 SQLite 的七个领域含 AI 上下文，共用一个事务，任一 SQLite 领域都会提交全部表的
+ * 待写值）。
  */
+export type DiskFlushScope = "all" | "business" | DiskIODomain;
+
+/** 主线程 -> diskIOWorker：scope 覆盖的 dirty 持久化领域立即落盘，随后回执。 */
 export interface DiskFlushRequest {
   type: "flush";
   flushId: number;
-  scope: "all" | "business";
+  scope: DiskFlushScope;
 }
 
 /** 主线程 -> diskIOWorker：按命令读取本群指定滚动时间窗内的入群记录。 */

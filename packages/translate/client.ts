@@ -6,7 +6,7 @@ import { googleServiceAccountKey, translateParentCache, translateRuntime } from 
 import type { GoogleServiceAccountKey } from "../types/config";
 import { TRANSLATE_REQUEST_TIMEOUT_MS } from "../consts/lifecycle";
 import { withTimeout } from "../libs/withTimeout";
-import { assertTimeoutMs, settleWithinBudget } from "../libs/inflight";
+import { assertTimeoutMs, settleWithinBudget, trackInflight } from "../libs/inflight";
 import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端使用启动时发布的凭据快照。
@@ -132,10 +132,10 @@ async function runTranslation(text: string, language: TranslateLanguage, expecte
 
 export function translateText(text: string, language: TranslateLanguage): Promise<string | null> {
   if (!translateRuntime.accepting) return Promise.resolve(null);
-  const task: Promise<string | null> = runTranslation(text, language, translateRuntime.generation);
-  translateRuntime.tasks.add(task);
-  void task.finally((): void => { translateRuntime.tasks.delete(task); });
-  return task;
+  return trackInflight(
+    translateRuntime.tasks,
+    runTranslation(text, language, translateRuntime.generation)
+  );
 }
 
 /** 等待所有已接收翻译结束；超时只报告，closeTranslate 仍会尝试关闭通道。 */

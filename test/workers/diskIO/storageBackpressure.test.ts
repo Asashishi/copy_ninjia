@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { STORAGE_PENDING_MAX_ENTRIES, STORAGE_PENDING_MAX_BYTES, STORAGE_WRITE_MAX_FAILURES } from "../../../packages/consts/diskIO/business";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
+import { IDENTITY_WRITE_BATCH_MAX_ENTRIES, IDENTITY_WRITE_FLUSH_INTERVAL_MS } from "../../../packages/consts/identityStorage";
 import { pendingTemporaryAdBypassWrites, resetStorageDatabaseCache, storageDatabaseHandle, storageWriteFatalReply, storageWriteRetry } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import { openStorageDatabase } from "../../../packages/database/interact/connection";
 import { clearStorageBusinessTables } from "../../../scripts/fixtures/storageDatabase";
@@ -67,15 +68,16 @@ test("自动重试按截止退避，连续失败达到上限后停止自动提�
     configureStoragePersistenceReply(reply);
     let fatalCount: number = 0; storageWriteFatalReply.current = (): void => { fatalCount++; };
     storageDatabaseHandle.current!.$client.run("PRAGMA query_only = ON");
-    for (let id: number = 1; id <= 128; id++) handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: 1 }, reply);
+    for (let id: number = 1; id <= IDENTITY_WRITE_BATCH_MAX_ENTRIES; id++) handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: 1 }, reply);
     expect(storageWriteRetry.failures).toBe(1);
-    jest.advanceTimersByTime(30_000);
-    expect(storageWriteRetry.failures).toBe(2);
-    jest.advanceTimersByTime(59_999);
-    expect(storageWriteRetry.failures).toBe(2);
-    jest.advanceTimersByTime(1);
-    expect(storageWriteRetry.failures).toBe(STORAGE_WRITE_MAX_FAILURES);
+    // 第 n 次失败后按 n 个提交间隔退避，截止前一毫秒不重试。
+    for (let failures: number = 1; failures < STORAGE_WRITE_MAX_FAILURES; failures++) {
+      jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS * failures - 1);
+      expect(storageWriteRetry.failures).toBe(failures);
+      jest.advanceTimersByTime(1);
+      expect(storageWriteRetry.failures).toBe(failures + 1);
+    }
     expect(fatalCount).toBe(1); expect(storageWriteFlushTimer.current).toBeNull();
-    expect(pendingTemporaryAdBypassWrites.size).toBe(128); expect(acks).toHaveLength(0);
+    expect(pendingTemporaryAdBypassWrites.size).toBe(IDENTITY_WRITE_BATCH_MAX_ENTRIES); expect(acks).toHaveLength(0);
   } finally { jest.useRealTimers(); }
 });

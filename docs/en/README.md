@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5228_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5317_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.42%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5228 tests passed, 459 test files, 254,242 expect() calls, 98.06% function coverage, 98.38% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5317 tests passed, 465 test files, 260,880 expect() calls, 98.07% function coverage, 98.42% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -206,10 +206,10 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 | Operator and scheduled voice | `/send` and cron share TTS with a 256 UTF-16 code-unit limit; cron synthesizes once per round and reuses the Telegram `file_id` |
 | Image memory | Generated images are described; `/wed`, `/h_image`, and scheduled images start as placeholders and are described when someone replies |
 
-Voice requires explicit `agent.tts` configuration (currently provided by Google; `base_url` and `headers` allow calling it through a third-party gateway). The three entry points share a daily request limit `daily_limit` (default 100), of which `daily_reserve_quota` (default 25) is reserved for `/send` and cron; once it is used up no further requests are issued. `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
+Voice requires explicit `agent.tts` configuration (currently provided by Google; `base_url` and `headers` allow calling it through a third-party gateway). `daily_limit` (default 100) is split into the AI quota (total minus reserve) and `daily_reserve_quota` (default 25) shared by `/send` and cron. They use separate `agentCount` and `reserveCount` counters, never consume each other's quota, and reset together after the 24-hour window. `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
 
 > [!IMPORTANT]
-> [14.0.0 → 15.0.0 upgrade steps](07-operations.md#upgrade-15)
+> [TTS count cold migration and staged upgrades](07-operations.md#upgrade-15)
 
 Behavior details, configuration and boundaries for each feature live in the **[📚 developer docs](content-table.md)**.
 
@@ -252,7 +252,7 @@ done                                       # fill in bot_token and super_admin_u
 With a manual install, before the first start you also initialise the identity database and, on the
 BotFather side, turn Privacy Mode off and Inline Mode on (full list in [BotFather & Group Rights Setup](#botfather-setup)). Field-by-field meanings, required combinations and the strict
 validation rules are in [`config_example/README/en.md`](../../config_example/README/en.md); the full
-walkthrough (runtime data root, asset URLs, migration commands) is in
+walkthrough (runtime data root, asset configuration, migration commands) is in
 [01 Getting Started](01-getting-started.md).
 
 After initializing identity storage and completing configuration, run:

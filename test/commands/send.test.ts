@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 
 /**
  * commands/send.ts 经 infra/telegram 会实例化真实的 grammY Bot、经
@@ -124,15 +125,15 @@ describe("handleSendCommand", () => {
   });
 
   // 目标群未纳管时只读 getChatStateCache，不调用 getOrCreateChatState；
-  // 容量闸（chat_states 满 25 个群）只属于 /init enable 那一处。
+  // 容量闸（chat_states 满 STATE_MANAGED_CHAT_LIMIT 个群）只属于 /init enable 那一处。
   test("目标群没被纳管时只回一句提示：不抛错、不建状态、不落盘，也不探可达性", async () => {
-    for (let index: number = 0; index < 25; index += 1) manage(-2_000 - index);
+    for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) manage(-2_000 - index);
 
     await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, "-100123"));
 
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
     expect(chatStates.has(-100123)).toBe(false);
-    expect(chatStates.size).toBe(25);
+    expect(chatStates.size).toBe(STATE_MANAGED_CHAT_LIMIT);
     expect(getChatMock).not.toHaveBeenCalled();
     expect(saveStateInBackgroundMock).not.toHaveBeenCalled();
   });

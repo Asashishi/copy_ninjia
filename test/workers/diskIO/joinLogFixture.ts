@@ -41,7 +41,6 @@ mock.module("../../../packages/libs/atomicFile", () => ({
 
 const {
   flushJoinLogBuffer,
-  flushJoinLogDomain,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
   purgeJoinLogDeletions,
@@ -61,9 +60,9 @@ const {
   joinLogBuffer,
   joinLogDeletions,
   joinLogFileCaches,
+  joinLogPersistedNotifier,
   joinLogRetryAt,
   markJoinLogDirty,
-  noteJoinLogRejected,
   resetJoinLogCache,
 } = await import("../../../packages/cache/workers/diskIO/joinLog");
 const {
@@ -77,16 +76,23 @@ const {
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
 } = await import("../../../packages/consts/diskIO/joinLog");
 const { getTokyoDateKey } = await import("../../../packages/libs/time");
-import type { JoinLogDiskMessage } from "../../../packages/types/diskIO";
+import type { JoinLogDiskMessage, JoinLogPersistedReply } from "../../../packages/types/diskIO";
 import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
+
+/** 本用例已分配的投递序号；每个用例从零开始，与主线程 recordJoinLog 同样逐条递增。 */
+const joinSequence: { current: number } = { current: 0 };
+/** 本用例收到的 joinLogPersisted 回执，按发出顺序排列。 */
+const persistedReplies: JoinLogPersistedReply[] = [];
 
 function joinMessage(
   chatId: number,
   userId: number,
   joinedAt: number
 ): JoinLogDiskMessage {
+  joinSequence.current += 1;
   return {
     type: "joinLog",
+    sequence: joinSequence.current,
     chatId,
     userId,
     joinedAt,
@@ -125,6 +131,11 @@ async function recoverJoinLogFiles(today?: string): Promise<void> {
 beforeEach(() => {
   rmSync(joinLogDir, { recursive: true, force: true });
   resetJoinLogCache();
+  joinSequence.current = 0;
+  persistedReplies.length = 0;
+  joinLogPersistedNotifier.current = (reply: JoinLogPersistedReply): void => {
+    persistedReplies.push(reply);
+  };
 });
 
 afterEach(() => {
@@ -180,7 +191,6 @@ export {
   UTF8_ENCODER,
   snapshotRewriteFault,
   flushJoinLogBuffer,
-  flushJoinLogDomain,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
   purgeJoinLogDeletions,
@@ -198,7 +208,7 @@ export {
   joinLogFileCaches,
   joinLogRetryAt,
   markJoinLogDirty,
-  noteJoinLogRejected,
+  persistedReplies,
   resetJoinLogCache,
   JOIN_LOG_COMPACT_CHECK_BYTES,
   JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES,

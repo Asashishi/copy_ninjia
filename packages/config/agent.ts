@@ -33,7 +33,7 @@ import type {
  * 不能从模型名或端点可靠推断。tts 额外要求 voice（预置音色名或 `voice_` 音色 ID），
  * 只校验为非空字符串，音色是否存在由首次合成请求决定；可选 style 指定基础风格，缺省使用
  * GEMINI_SPEECH_STYLE。可选的 daily_limit 与 daily_reserve_quota
- * 给出每日额度与留给 `/send`、cron 的次数。image/tts 缺省或所选实现不支持时，分别不挂
+ * 将每日预算拆为 AI 与 `/send`、cron 共用的预留额度，两边独立计数。image/tts 缺省或所选实现不支持时，分别不挂
  * 生图/语音工具。
  *
  * **读盘只发生在主线程。** 本文件分成三段边界，谁能调哪一段由所在线程决定：
@@ -247,7 +247,7 @@ export function getAgentDeploymentConfig(): AgentDeploymentConfig {
 /**
  * 本 isolate 当前的 `agent.tts` 配置；文件、对话核心能力段或 tts 段缺省时为 undefined。
  * 只读 holder，不读盘。主线程的 `/send` 代发 TTS、cron `send_voice` 与 cron.json 的
- * 交叉校验据此判定语音合成是否已配置，`/send` 的额度提示读它的 dailyLimit；AI Worker 的
+ * 交叉校验据此判定语音合成是否已配置，`/send` 的额度提示读它的 dailyReserveQuota；AI Worker 的
  * 语音余量与余量行读它的 dailyLimit 与 dailyReserveQuota。
  */
 export function agentTtsConfig(): AgentTtsCapabilityConfig | undefined {

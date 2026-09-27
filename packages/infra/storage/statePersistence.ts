@@ -3,7 +3,12 @@ import { dirname } from "node:path";
 import type { Stats } from "node:fs";
 import { STATE_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import { GLOBAL_STATE_FILE_PATH, LEGACY_STATE_FILE_PATHS } from "../../consts/paths";
-import { RUNTIME_DATA_ROOT_MAX_MODE, STATE_SAVE_MAX_ATTEMPTS, STATE_SAVE_RETRY_DELAYS_MS } from "../../consts/storage";
+import {
+  RUNTIME_DATA_ROOT_MAX_MODE,
+  STATE_BACKGROUND_SAVE_DELAY_MS,
+  STATE_SAVE_MAX_ATTEMPTS,
+  STATE_SAVE_RETRY_DELAYS_MS,
+} from "../../consts/storage";
 import { atomicWriteText } from "../../libs/atomicFile";
 import { isErrno } from "../../libs/errno";
 import {
@@ -26,13 +31,18 @@ export interface StateStoreOptions {
   writeText?: (path: string, content: string) => Promise<void>;
   retryDelaysMs?: readonly number[];
   maxAttempts?: number;
+  /** 后台写（waitForPersistence: false）的合并窗口，缺省 STATE_BACKGROUND_SAVE_DELAY_MS。 */
+  backgroundDelayMs?: number;
   onRetryError?: (attempt: number, error: unknown) => void;
   onFlushError?: (error: unknown) => void;
   onFatal?: (error: Error) => void;
 }
 
 export interface StateSaveOptions {
-  /** false 用于 fire-and-forget 快照：仍会重试，但不为每次后台变化保留等待者。 */
+  /**
+   * false 用于 fire-and-forget 快照：不为每次后台变化保留等待者，在后台合并窗口到期后
+   * 写出窗口内的最新值，失败仍会重试。等待落盘的写入与 flush 会提前写出。
+   */
   waitForPersistence?: boolean;
 }
 
@@ -91,13 +101,13 @@ async function readExistingText(path: string): Promise<string | null> {
 
 /**
  * 14.x 数据根下的 state.json 与备份副本任一存在即拒绝：当前格式不读取它们，继续运行会让
- * 复读状态与语音计数静默归零。只有叶子路径真正不存在才放行；启动恢复（stateStore.ts 的
- * loadState）与安装器共用。
+ * 复读状态与语音计数静默归零。只有叶子路径真正不存在才放行；由 loadCurrentGlobalState 在
+ * 解码 memory/global/state.json 之前调用。
  */
 export async function assertLegacyStateFilesAbsent(): Promise<void> {
   for (const path of LEGACY_STATE_FILE_PATHS) {
     if (!await isMissingLeaf(path)) {
-      invalidInput(path, "$", "absent; migrate it with migrate:global-state and move it out of the data root");
+      invalidInput(path, "$", "absent; first upgrade with the preceding global-state migration release, then run migrate:global-state for the current format");
     }
   }
 }
@@ -122,7 +132,8 @@ function describeStateDecodeFailure(path: string, error: unknown): Error {
 
 /**
  * memory/global/state.json 的可注入持久化边界：负责全局状态 schema 解码/序列化、
- * latest-only 串行原子写、失败退避和退出 flush；按群的状态由 SQLite 独立持久化。
+ * latest-only 串行原子写、后台写合并窗口、失败退避和退出 flush；按群的状态由 SQLite
+ * 独立持久化。
  * 状态目录由主线程独占，Disk I/O Worker 不访问（见 docs/cn/04-invariants.md）。
  */
 export class StateStore {
@@ -131,6 +142,7 @@ export class StateStore {
   private readonly writeText: (path: string, content: string) => Promise<void>;
   private readonly retryDelaysMs: readonly number[];
   private readonly maxAttempts: number;
+  private readonly backgroundDelayMs: number;
   private readonly onRetryError: (attempt: number, error: unknown) => void;
   private readonly onFlushError: (error: unknown) => void;
   private fatalHandler: ((error: Error) => void) | undefined;
@@ -140,6 +152,7 @@ export class StateStore {
   private nextRevision: number = 1;
   private retryAttempt: number = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private backgroundTimer: ReturnType<typeof setTimeout> | null = null;
   private observedWriterPromise: Promise<void> | null = null;
   private readonly persistenceWaiters: PersistenceWaiter[] = [];
   private quiescing: boolean = false;
@@ -152,6 +165,7 @@ export class StateStore {
     writeText = writeStateText,
     retryDelaysMs = STATE_SAVE_RETRY_DELAYS_MS,
     maxAttempts = STATE_SAVE_MAX_ATTEMPTS,
+    backgroundDelayMs = STATE_BACKGROUND_SAVE_DELAY_MS,
     onRetryError = (attempt: number, error: unknown): void => {
       logger.error(`Failed to persist state (attempt ${attempt}):`, error);
     },
@@ -171,6 +185,10 @@ export class StateStore {
     this.maxAttempts = maxAttempts;
     if (!Number.isSafeInteger(this.maxAttempts) || this.maxAttempts < 1) {
       throw new Error("StateStore maxAttempts must be a positive safe integer");
+    }
+    this.backgroundDelayMs = backgroundDelayMs;
+    if (!Number.isFinite(this.backgroundDelayMs) || this.backgroundDelayMs <= 0) {
+      throw new RangeError("StateStore background delay must be a positive finite number");
     }
     this.onRetryError = onRetryError;
     this.onFlushError = onFlushError;
@@ -214,13 +232,38 @@ export class StateStore {
     }
     const write: StateWrite = { json, revision: this.nextRevision++ };
     this.dirtyWrite = write;
-    const persisted: Promise<void> = options.waitForPersistence === false
-      ? Promise.resolve()
-      : new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
-        this.persistenceWaiters.push({ revision: write.revision, resolve, reject });
-      });
+    if (options.waitForPersistence === false) {
+      this.scheduleBackgroundWrite();
+      return Promise.resolve();
+    }
+    // 本次序列化的是完整最新状态，窗口内挂着的后台值随这次写入一并落盘。
+    this.clearBackgroundTimer();
+    const persisted: Promise<void> = new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
+      this.persistenceWaiters.push({ revision: write.revision, resolve, reject });
+    });
     void this.push(write);
     return persisted;
+  }
+
+  /**
+   * 从首个未落盘的后台变化起计时；到期写出届时的最新值，已有窗口时不重排。失败重试已排期时
+   * 不另开窗口，由重试 timer 按退避写出最新值，后台变化不额外消耗重试次数。
+   */
+  private scheduleBackgroundWrite(): void {
+    if (this.backgroundTimer !== null || this.retryTimer !== null) return;
+    this.backgroundTimer = setTimeout((): void => {
+      this.backgroundTimer = null;
+      const write: StateWrite | null = this.dirtyWrite;
+      if (write === null || this.retryTimer !== null || this.quiescing || this.disposed) return;
+      void this.push(write);
+    }, this.backgroundDelayMs);
+    this.backgroundTimer.unref();
+  }
+
+  private clearBackgroundTimer(): void {
+    if (this.backgroundTimer === null) return;
+    clearTimeout(this.backgroundTimer);
+    this.backgroundTimer = null;
   }
 
   private push(write: StateWrite): Promise<void> {
@@ -303,6 +346,7 @@ export class StateStore {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    this.clearBackgroundTimer();
     const write: StateWrite | null = this.dirtyWrite;
     const run: Promise<void> | null = write === null
       ? this.observedWriterPromise
@@ -336,10 +380,21 @@ export class StateStore {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+    this.clearBackgroundTimer();
     this.rejectPersistenceWaiters(new Error("StateStore was disposed before persistence completed."));
   }
 
   setFatalHandler(handler: ((error: Error) => void) | undefined): void {
     this.fatalHandler = handler;
   }
+}
+
+/**
+ * 启动恢复（stateStore.ts 的 loadState）与安装器共用的只读全局状态闸：先拒绝旧位置的状态
+ * 文件，再经 store 按当前 schema 严格解码 memory/global/state.json。不写盘；文件真正缺失时
+ * 返回 null，未迁移或非法的内容按 StateStore.load 的口径抛出。
+ */
+export async function loadCurrentGlobalState(store: StateStore): Promise<DecodedGlobalState | null> {
+  await assertLegacyStateFilesAbsent();
+  return store.load();
 }

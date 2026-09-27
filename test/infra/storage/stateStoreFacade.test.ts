@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { globalTtsUsageState, stateStoreHolder } from "../../../packages/cache/main/storage";
-import { STATE_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
 import { logger } from "../../../packages/infra/logger";
 import {
   StateStore,
@@ -16,7 +15,7 @@ describe("全局状态落盘门面", () => {
     stateStoreHolder.current = null;
   });
 
-  test("fatal handler 与 flush 原样转给当前 StateStore，flush 缺省预算与不 quiesce", async () => {
+  test("fatal handler 与 flush 原样转给当前 StateStore", async () => {
     const store: StateStore = new StateStore({
       stateFilePath: "/virtual/facade-state.json",
       writeText: async (): Promise<void> => {},
@@ -28,11 +27,11 @@ describe("全局状态落盘门面", () => {
 
     setStatePersistenceFatalHandler(handler);
     setStatePersistenceFatalHandler(undefined);
-    await flushStateToDisk();
+    await flushStateToDisk(40, false);
     await flushStateToDisk(25, true);
 
     expect(setFatalHandler.mock.calls).toEqual([[handler], [undefined]]);
-    expect(flush.mock.calls).toEqual([[STATE_FLUSH_TIMEOUT_MS, false], [25, true]]);
+    expect(flush.mock.calls).toEqual([[40, false], [25, true]]);
   });
   test("全局状态落盘失败时带上下文包装错误", async () => {
     const store: StateStore = new StateStore({ stateFilePath: "/virtual/facade-state.json" });
@@ -54,7 +53,7 @@ describe("全局状态落盘门面", () => {
     const loggedError = spyOn(logger, "error").mockImplementation((): void => {});
     stateStoreHolder.current = store;
     try {
-      adoptTtsUsage({ windowStartedAt: 1_700_000_000_000, count: 1 });
+      adoptTtsUsage({ windowStartedAt: 1_700_000_000_000, agentCount: 1, reserveCount: 0 });
       await Promise.resolve();
       await Promise.resolve();
       expect(save).toHaveBeenCalledTimes(1);

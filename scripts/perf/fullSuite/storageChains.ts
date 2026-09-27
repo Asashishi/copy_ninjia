@@ -93,13 +93,17 @@ function joinLogChain(
     operations: dependencies.chainJoinLogEvents,
     recordsPerOperation: 1,
     run: async (sequence: number): Promise<void> => {
-      if (!await dependencies.recordJoinLog({
+      if (!dependencies.recordJoinLog({
         chatId: dependencies.benchmarkChatId(
           sequence % dependencies.stateManagedChatLimit
         ),
         userId: dependencies.benchmarkUserId(sequence),
         joinedAt: Date.now(),
       })) {
+        throw new Error(`Join-log event ${sequence} was refused before reaching the Worker.`);
+      }
+      // 生产入口只进批次；显式领域屏障把这一条追写并取得落盘回执。
+      if (await dependencies.flushDiskIODomain("joinLog") !== "flushed") {
         throw new Error(`Join-log event ${sequence} did not reach the disk.`);
       }
     },

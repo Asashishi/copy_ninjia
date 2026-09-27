@@ -1,14 +1,21 @@
 import { telegramApiState } from "../../cache/perThread/telegramApi";
 import { logger } from "../logger";
 import { telegramErrorDetails } from "./errors";
-import type { TelegramApi } from "../../types/telegramWorker";
+import type { TelegramApi, InstalledTelegramApi } from "../../types/telegramWorker";
 
 /** 读取当前线程已经安装的 Telegram 能力实现；未初始化时拒绝旁路联网。 */
-export function currentTelegramApi(): TelegramApi {
-  const current: TelegramApi | null = telegramApiState.current;
+export function currentTelegramApi(): InstalledTelegramApi {
+  const current: InstalledTelegramApi | null = telegramApiState.current;
   if (current === null) {
     throw new Error("Telegram API capability has not been installed for this thread.");
   }
+  return current;
+}
+
+/** 主线程独占方法只接受完整主线程接口；Worker 线程在本地拒绝，不发送不可达代理请求。 */
+function currentMainTelegramApi(): TelegramApi {
+  const current: InstalledTelegramApi = currentTelegramApi();
+  if (!("copyMessage" in current)) throw new Error("Telegram capability is only available on the main thread.");
   return current;
 }
 
@@ -16,8 +23,8 @@ export function currentTelegramApi(): TelegramApi {
  * 由线程入口安装唯一能力实现。主线程安装真实客户端适配器，业务 Worker 安装
  * 双工代理；重复安装不同实现属于生命周期错误并立即拒绝。
  */
-export function installTelegramApi(api: TelegramApi): void {
-  const current: TelegramApi | null = telegramApiState.current;
+export function installTelegramApi(api: InstalledTelegramApi): void {
+  const current: InstalledTelegramApi | null = telegramApiState.current;
   if (current !== null && current !== api) {
     throw new Error("Telegram API capability is already installed for this thread.");
   }
@@ -36,19 +43,19 @@ export const telegramApi: TelegramApi = {
   banChatSenderChat: (...args: Parameters<TelegramApi["banChatSenderChat"]>): ReturnType<TelegramApi["banChatSenderChat"]> =>
     currentTelegramApi().banChatSenderChat(...args),
   copyMessage: (...args: Parameters<TelegramApi["copyMessage"]>): ReturnType<TelegramApi["copyMessage"]> =>
-    currentTelegramApi().copyMessage(...args),
+    currentMainTelegramApi().copyMessage(...args),
   deleteMessage: (...args: Parameters<TelegramApi["deleteMessage"]>): ReturnType<TelegramApi["deleteMessage"]> =>
     currentTelegramApi().deleteMessage(...args),
   deleteMessages: (...args: Parameters<TelegramApi["deleteMessages"]>): ReturnType<TelegramApi["deleteMessages"]> =>
     currentTelegramApi().deleteMessages(...args),
   deleteEphemeralMessage: (...args: Parameters<TelegramApi["deleteEphemeralMessage"]>): ReturnType<TelegramApi["deleteEphemeralMessage"]> =>
-    currentTelegramApi().deleteEphemeralMessage(...args),
+    currentMainTelegramApi().deleteEphemeralMessage(...args),
   getChat: (...args: Parameters<TelegramApi["getChat"]>): ReturnType<TelegramApi["getChat"]> =>
     currentTelegramApi().getChat(...args),
   getChatAdministrators: (...args: Parameters<TelegramApi["getChatAdministrators"]>): ReturnType<TelegramApi["getChatAdministrators"]> =>
     currentTelegramApi().getChatAdministrators(...args),
   editMessageText: (...args: Parameters<TelegramApi["editMessageText"]>): ReturnType<TelegramApi["editMessageText"]> =>
-    currentTelegramApi().editMessageText(...args),
+    currentMainTelegramApi().editMessageText(...args),
   getChatMember: (...args: Parameters<TelegramApi["getChatMember"]>): ReturnType<TelegramApi["getChatMember"]> =>
     currentTelegramApi().getChatMember(...args),
   getStickerSet: (...args: Parameters<TelegramApi["getStickerSet"]>): ReturnType<TelegramApi["getStickerSet"]> =>
@@ -72,7 +79,7 @@ export const telegramApi: TelegramApi = {
   unbanChatMember: (...args: Parameters<TelegramApi["unbanChatMember"]>): ReturnType<TelegramApi["unbanChatMember"]> =>
     currentTelegramApi().unbanChatMember(...args),
   unbanChatSenderChat: (...args: Parameters<TelegramApi["unbanChatSenderChat"]>): ReturnType<TelegramApi["unbanChatSenderChat"]> =>
-    currentTelegramApi().unbanChatSenderChat(...args),
+    currentMainTelegramApi().unbanChatSenderChat(...args),
 };
 
 /** 统一展开 Telegram API 错误，保留 Bot API 的状态码和 description。 */

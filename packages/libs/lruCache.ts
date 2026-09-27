@@ -94,7 +94,7 @@ export class LruCache<K, V> {
     return true;
   }
 
-  /** 清空全部条目（仅供单测重置状态用）。 */
+  /** 清空全部条目与迭代让位槽；用于 owner 整表重置（如 Disk I/O 重建后重新灌入计数时清空读取缓存）。 */
   clear(): void {
     this.map.clear();
     this.oldest = null;

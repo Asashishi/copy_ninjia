@@ -1,6 +1,6 @@
 /**
- * 媒体输入能力错误的供应商中立分类。只把错误正文明确同时表达「某种媒体输入不受
- * 支持」的 4xx 记为能力结论；普通参数错误、内容过滤与单份坏媒体都保持可恢复，
+ * 媒体输入能力错误的供应商中立分类。只把错误正文明确表达模型、端点或媒体输入
+ * 模态不受支持的 4xx 记为能力结论；普通参数错误、内容过滤与单份坏媒体都保持可恢复，
  * 不能因此关闭整个 Worker 生命周期的模态。
  *
  * 404/405 单独归为**配置错误**而不是能力缺失：这条 API 路径压根不可调用，最常见
@@ -10,6 +10,11 @@
  *
  * 纯函数叶子模块，不接触任何缓存与 SDK 类型（见 AGENTS.md 的「缓存与线程归属」）。
  */
+
+import {
+  MEDIA_INPUT_CAPABILITY_PATTERN,
+  MEDIA_INPUT_FILE_ERROR_PATTERN,
+} from "../../../consts/aiChat/media";
 
 /** 从供应商错误对象安全读取数值 HTTP 状态，避免兼容 SDK 把字段暴露成 any。 */
 export function numericErrorStatus(error: unknown): number | undefined {
@@ -46,14 +51,15 @@ function isEndpointFailureStatus(status: number | undefined): boolean {
 /**
  * 判断一次媒体请求是否明确暴露模型的输入模态边界。
  *
- * 常见 4xx 必须由错误正文同时命中“不支持”和“媒体输入”两类语义，不能仅凭状态码
- * 猜测；路径级的 404/405 由 isEndpointMisconfiguredError 单独归类。
+ * 常见 4xx 必须同时具备拒绝、媒体与能力边界证据。格式、编码或损坏等输入问题
+ * 不形成能力结论；路径级 404/405 由 isEndpointMisconfiguredError 单独归类。
  */
 function isExplicitUnsupportedMediaError(
   status: number | undefined,
   message: string
 ): boolean {
   if (status !== 400 && status !== 415 && status !== 422) return false;
+  if (MEDIA_INPUT_FILE_ERROR_PATTERN.test(message) || !MEDIA_INPUT_CAPABILITY_PATTERN.test(message)) return false;
 
   const normalized: string = message.toLowerCase();
   const rejectsCapability: boolean = normalized.includes("unsupported") ||
@@ -89,7 +95,7 @@ export type ProviderApiFailureKind =
  * 1. `misconfigured`——路径级 404/405 最先判。它说明这条能力的 model 或 base_url
  *    写错了，与「这个模型不支持读图」不该混在一起；先判它才不会把部署笔误记成
  *    模态缺失，把运维引去换模型。
- * 2. `unsupported`——仅媒体能力，且错误正文同时表达「不支持」和「媒体输入」。
+ * 2. `unsupported`——仅媒体能力，正文明确拒绝输入模态，且不包含单份媒体格式或内容错误。
  * 3. `rejected`——不是端点故障的其余状态：这一份输入不合适，换一份多半就成了，
  *    不推动模态退避。
  * 4. `endpointFailure`——408/429/5xx 与拿不到状态码的网络层失败。

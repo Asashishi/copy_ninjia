@@ -1,7 +1,10 @@
 /**
  * 入群日志的格式与生命周期常量。消费方是 packages/workers/diskIO/joinLogWrites.ts
- * （接管与写入）、joinLogFiles.ts（路由与读取）与 joinLogRecovery.ts（启动恢复）。
+ * （接管与写入）、joinLogFiles.ts（路由与读取）、joinLogRecovery.ts（启动恢复）与
+ * 主线程 infra/joinLog.ts（未确认镜像）。
  */
+
+import { FLUSH_MAX_ENTRIES } from "./appendOnly";
 
 /**
  * 按群、按东京日期命名的入群日志文件。
@@ -49,10 +52,13 @@ export const JOIN_LOG_MAX_CACHED_FILES: number = 64;
 export const JOIN_LOG_MAX_RETRY_FILES: number = 128;
 
 /**
- * 失败后仍可留在 Worker 内存中的最大待刷事实数，共四个 300 条落盘批次。
- * 达到上限后快速失败，由主线程拒绝 durability barrier 并保留 update 重投。
+ * 主线程未确认落盘的入群事实镜像上限，共四个 FLUSH_MAX_ENTRIES 批次；已写入的事实随
+ * 处置回执释放，只有尚未落盘的事实占用名额。Disk I/O Worker 的待写集合恒为该镜像的
+ * 子集，因此同一上限也约束 Worker 内存。达到上限后 recordJoinLog 快速失败，对应 update
+ * 不被确认并由 Telegram 重投。
+ * 所属模块：cache/main/joinLog.ts、infra/joinLog.ts。
  */
-export const JOIN_LOG_MAX_BUFFERED_ENTRIES: number = 1_200;
+export const JOIN_LOG_MAX_BUFFERED_ENTRIES: number = FLUSH_MAX_ENTRIES * 4;
 
 /** 已确认冗余历史达到该条数时评估一次原子压缩。 */
 export const JOIN_LOG_COMPACT_REDUNDANT_ENTRIES: number = 10_000;

@@ -24,6 +24,7 @@ import {
   summarizeAiCache,
 } from "../../../packages/workers/diskIO/aiCacheFile";
 import type { AiCacheUsageDiskMessage } from "../../../packages/types/diskIO/messages";
+import type { AiTokenUsage } from "../../../packages/types/aiCache";
 
 /** 东京某日中午的时间戳；只用于把记录归到指定东京日期。 */
 function tokyoNoon(day: string): number {
@@ -42,9 +43,13 @@ function rowKeyDay(key: string): string | undefined {
   return AI_CACHE_ROW_KEY_PATTERN.exec(key)?.[1];
 }
 
-function usage(day: string, overrides: Partial<AiCacheUsageDiskMessage> = {}): AiCacheUsageDiskMessage {
+function usage(
+  day: string,
+  overrides: Partial<Omit<AiTokenUsage, "kind">> = {}
+): AiCacheUsageDiskMessage {
   return {
     type: "aiCacheUsage",
+    kind: "tokens",
     timestamp: tokyoNoon(day),
     capability: "text",
     provider: "openai",
@@ -53,6 +58,19 @@ function usage(day: string, overrides: Partial<AiCacheUsageDiskMessage> = {}): A
     cachedInputTokens: 800,
     outputTokens: 50,
     ...overrides,
+  };
+}
+
+/** 一条只给费用的计量（xAI 生图）。 */
+function costUsage(day: string, costInUsdTicks: number): AiCacheUsageDiskMessage {
+  return {
+    type: "aiCacheUsage",
+    kind: "cost",
+    timestamp: tokyoNoon(day),
+    capability: "image",
+    provider: "openai",
+    model: "grok-image",
+    costInUsdTicks,
   };
 }
 
@@ -151,6 +169,58 @@ describe("diskIO/aiCacheFile 每日汇总", () => {
     expect(aiCacheFileState.current?.size).toBe((await Bun.file(AI_CACHE_FILE_PATH).stat()).size);
   });
 
+  test("费用记录只写费用字段，汇总与分组累加费用；只有 token 请求的分组不写费用键", async () => {
+    await initAiCache();
+    await handleAiCacheUsageMessage(costUsage("2026-09-25", 200_000_000));
+    await handleAiCacheUsageMessage(costUsage("2026-09-25", 300_000_000));
+    await handleAiCacheUsageMessage(usage("2026-09-25"));
+    expect(await flushAiCacheBuffer()).toBeTrue();
+    expect(Object.values(await readDocument())).toEqual([
+      { capability: "image", provider: "openai", model: "grok-image", costInUsdTicks: 200_000_000 },
+      { capability: "image", provider: "openai", model: "grok-image", costInUsdTicks: 300_000_000 },
+      { capability: "text", provider: "openai", model: "deepseek-flash", inputTokens: 1_000, cachedInputTokens: 800, outputTokens: 50 },
+    ]);
+
+    await summarizeAiCache("2026-09-26");
+    const summary: Record<string, unknown> = (await readDocument())[AI_CACHE_SUMMARY_KEY] as Record<string, unknown>;
+    expect(summary).toEqual({
+      day: "2026-09-25",
+      requests: 3,
+      inputTokens: 1_000,
+      reportedInputTokens: 1_000,
+      cachedInputTokens: 800,
+      outputTokens: 50,
+      cacheHitRate: expectedHitRate(800, 1_000),
+      costInUsdTicks: 500_000_000,
+      byModel: {
+        "image/openai/grok-image": {
+          requests: 2, inputTokens: 0, reportedInputTokens: 0, cachedInputTokens: 0, outputTokens: 0,
+          cacheHitRate: expectedHitRate(0, 0), costInUsdTicks: 500_000_000,
+        },
+        "text/openai/deepseek-flash": {
+          requests: 1, inputTokens: 1_000, reportedInputTokens: 1_000, cachedInputTokens: 800, outputTokens: 50,
+          cacheHitRate: expectedHitRate(800, 1_000),
+        },
+      },
+    });
+
+    // 带费用的汇总被重新接管，同日再汇总时费用继续相加。
+    resetAiCacheState();
+    await initAiCache();
+    await handleAiCacheUsageMessage(costUsage("2026-09-25", 1));
+    await summarizeAiCache("2026-09-26");
+    expect((await readDocument())[AI_CACHE_SUMMARY_KEY]).toMatchObject({ requests: 4, costInUsdTicks: 500_000_001 });
+  });
+
+  test("费用为 0 的请求仍算有过费用请求，汇总照写费用键", async () => {
+    await initAiCache();
+    await handleAiCacheUsageMessage(costUsage("2026-09-25", 0));
+    await summarizeAiCache("2026-09-26");
+    const summary: Record<string, unknown> = (await readDocument())[AI_CACHE_SUMMARY_KEY] as Record<string, unknown>;
+    expect(summary).toMatchObject({ requests: 1, costInUsdTicks: 0 });
+    expect((summary.byModel as Record<string, unknown>)["image/openai/grok-image"]).toMatchObject({ costInUsdTicks: 0 });
+  });
+
   test("汇总只保留最近一天：更早的记录与旧汇总被替换，同日汇总相加", async () => {
     await initAiCache();
     await handleAiCacheUsageMessage(usage("2026-09-24"));
@@ -204,6 +274,7 @@ const ROW_KEY: string = `${formatTokyoLogTimestamp(tokyoNoon("2026-09-26"))}_000
 const ROW = { capability: "text", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 4, outputTokens: 1 } as const;
 const TOTALS = {
   requests: 1, inputTokens: 10, reportedInputTokens: 10, cachedInputTokens: 4, outputTokens: 1, cacheHitRate: expectedHitRate(4, 10),
+  costInUsdTicks: undefined,
 } as const;
 const SUMMARY = { day: "2026-09-25", ...TOTALS, byModel: { "text/openai/m": TOTALS } } as const;
 
@@ -235,6 +306,9 @@ describe("diskIO/aiCacheFile 严格解码", () => {
     ["非法记录", { [ROW_KEY]: { capability: "text" } }, "contains an invalid usage record"],
     ["命中超过输入的记录", { [ROW_KEY]: { ...ROW, cachedInputTokens: 11 } }, "contains an invalid usage record"],
     ["记录多出字段", { [ROW_KEY]: { ...ROW, extra: 1 } }, "contains an invalid usage record"],
+    ["费用记录费用为负", { [ROW_KEY]: { capability: "image", provider: "openai", model: "m", costInUsdTicks: -1 } }, "contains an invalid usage record"],
+    ["记录同时带 token 与费用", { [ROW_KEY]: { ...ROW, costInUsdTicks: 1 } }, "contains an invalid usage record"],
+    ["汇总费用非法", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, costInUsdTicks: 1.5 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["非法汇总日期", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, day: "2026-02-30" } }, `contains an invalid ${AI_CACHE_SUMMARY_KEY}.day.`],
     ["汇总多出字段", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, extra: 1 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["命中率与合计不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, cacheHitRate: expectedHitRate(9, 10) } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],

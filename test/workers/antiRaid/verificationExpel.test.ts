@@ -422,7 +422,7 @@ describe("踢人失败时的权限告警", () => {
 
     expect(deletedMessageIds).toEqual([20]);
     expect(state.failureNoticeSent).toBeTrue();
-    expect(state.cleanupSettled).toBeUndefined();
+    expect(state.cleanupSettled).toBeFalse();
 
     // 第二轮：告警闩住了不再重发，公告仍然要重试删除。
     deletedMessageIds.length = 0;

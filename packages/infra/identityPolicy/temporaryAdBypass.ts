@@ -29,12 +29,10 @@ import type {
 } from "../../types/temporaryAdBypass";
 import type { TemporaryAdBypassActivity } from "../../types/states/temporaryAdBypass";
 
-/** 临时广告免检 LRU 是否已有该主键的正/负结论。 */
-export function isTemporaryAdBypassActivityCached(id: number): boolean {
-  return temporaryAdBypassActivityCache.has(id);
-}
-
-/** 查询墙钟当前东京日仍有效的临时广告免检成员关系。 */
+/**
+ * 查询墙钟当前时刻仍有效的临时广告免检成员关系。只在缓存确有免检记录时才读墙钟，负缓存与
+ * 未获免检的常态查询不取时钟；调用方已捕获时刻时改用 hasActiveTemporaryAdBypassAt。
+ */
 export function hasActiveTemporaryAdBypass(id: number): boolean {
   const activity: Readonly<TemporaryAdBypassActivity> | null | undefined =
     temporaryAdBypassActivityCache.get(id);
@@ -90,14 +88,15 @@ export function hydrateTemporaryAdBypassActivities(
   }
 }
 
+/**
+ * 发布一次临时累计最终值（activity 为 null 表示墓碑）。非墓碑只来自
+ * recordTemporaryAdBypassActivity，它在主键已预热时才推进累计。
+ */
 function queueTemporaryAdBypassWrite(
   id: number,
   activity: Readonly<TemporaryAdBypassActivity> | null
 ): boolean {
   assertTelegramIdentityId(id, "temporary ad bypass write");
-  if (activity !== null && !temporaryAdBypassActivityCache.has(id)) {
-    throw new Error(`Identity ${id} must be prefetched before a temporary ad bypass mutation.`);
-  }
   if (activity !== null) {
     assertTemporaryAdBypassActivity(activity, `temporary_ad_bypass_entries[${id}]`);
   }

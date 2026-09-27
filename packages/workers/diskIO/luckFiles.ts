@@ -39,7 +39,7 @@ import type { LuckDrawDiskMessage } from "../../types/diskIO/messages";
 import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 import type { LuckDayRecoveryInspection } from "./snapshotFiles";
-import { enqueueDiskIOOperation } from "./operationQueue";
+import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 import { errorMessage } from "../../libs/errorMessage";
 
 /** 装上运势追加停摆诊断的投递出口（仅 Worker 线程启动时调用一次）。 */
@@ -49,19 +49,11 @@ export function configureLuckAppendStalledReply(
   luckAppendStalledNotifier.current = notify;
 }
 
-/** 按需启动运势追加缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
- *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由 handleLuckDrawMessage 直接调
- *  flushLuckAppends 立即落盘。 */
-function scheduleLuckFlush(): void {
-  if (luckFlushTimer.timer !== null) return;
-  luckFlushTimer.timer = setTimeout((): void => {
-    void enqueueDiskIOOperation(retryLuckFlush);
-  }, FLUSH_INTERVAL_MS);
-  luckFlushTimer.timer.unref();
-}
-
 /**
- * 一次定时重试：刷盘，成功且还压着跨日滞留条目时立刻补录。
+ * 一次定时重试：刷盘，成功且还压着跨日滞留条目时立刻补录。运势追加缓冲的定时落盘
+ * 与追加失败后的重排都经 timedFlush.ts 的 armDiskIOFlushTimer 装到 luckFlushTimer
+ * 上，触发时执行本函数；条数达到 FLUSH_MAX_ENTRIES 时由 handleLuckDrawMessage 直接调
+ * flushLuckAppends 立即落盘。
  *
  * 补录不能挪进 flushLuckAppends()：handleLuckDrawMessage 的换日分支正是先调它
  * 再 startLuckDay，若它自己顺手补录，补录建立的新 owner 会紧接着被那句
@@ -74,7 +66,6 @@ function scheduleLuckFlush(): void {
  * 碰 Timeout 的运行时内部字段。
  */
 export async function retryLuckFlush(): Promise<void> {
-  luckFlushTimer.timer = null;
   if (await flushLuckAppends() && luckDeferredDraws.length > 0) {
     await drainDeferredLuckDraws();
   }
@@ -123,10 +114,7 @@ async function drainDeferredLuckDraws(): Promise<void> {
  * luckAppendFailures）。
  */
 export async function flushLuckAppends(): Promise<boolean> {
-  if (luckFlushTimer.timer !== null) {
-    clearTimeout(luckFlushTimer.timer);
-    luckFlushTimer.timer = null;
-  }
+  cancelDiskIOFlushTimer(luckFlushTimer);
   if (luckPendingAppends.length === 0) return true;
   if (!luckWorkerCache.current) return false;
   const day: string = luckWorkerCache.current.day;
@@ -137,7 +125,7 @@ export async function flushLuckAppends(): Promise<boolean> {
     luckAppendFailures.alerted = false;
   } catch (error: unknown) {
     luckFileState.current = null;
-    scheduleLuckFlush();
+    armDiskIOFlushTimer(luckFlushTimer, FLUSH_INTERVAL_MS, retryLuckFlush);
     console.error(`[diskIOWorker] failed to append luck entries for ${day}:`, error);
     luckAppendFailures.consecutive += 1;
     if (
@@ -234,7 +222,7 @@ export async function handleLuckDrawMessage(
   if (pendingEntries >= FLUSH_MAX_ENTRIES) {
     await flushLuckAppends();
   } else {
-    scheduleLuckFlush();
+    armDiskIOFlushTimer(luckFlushTimer, FLUSH_INTERVAL_MS, retryLuckFlush);
   }
 }
 

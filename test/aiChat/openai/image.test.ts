@@ -69,6 +69,37 @@ test("所有图片协议的生成和编辑都在解码前按响应计量一次",
   }
 });
 
+test("xAI 生图不给 token 时按费用计量；给出 token 时只记 token 并读取缓存命中", async () => {
+  const reported: AiCacheUsage[] = [];
+  installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+  imageProtocol = "xai";
+  const costOnly = { data: [], usage: { cost_in_usd_ticks: 200_000_000 } };
+  generate.mockResolvedValueOnce(costOnly);
+  post.mockResolvedValueOnce({ data: [], usage: { cost_in_usd_ticks: 300_000_000, input_tokens: null, output_tokens: null } });
+  await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
+  await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1", referenceImage: { bytes: PNG, mime: "image/png" } })).resolves.toBeNull();
+  generate.mockResolvedValueOnce({
+    data: [],
+    usage: { cost_in_usd_ticks: 1, input_tokens: 40, output_tokens: 60, input_tokens_details: { cached_tokens: 16 } },
+  });
+  await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
+
+  expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+    { kind: "cost", capability: "image", provider: "openai", model: IMAGE_MODEL, costInUsdTicks: 200_000_000 },
+    { kind: "cost", capability: "image", provider: "openai", model: IMAGE_MODEL, costInUsdTicks: 300_000_000 },
+    { kind: "tokens", capability: "image", provider: "openai", model: IMAGE_MODEL, inputTokens: 40, cachedInputTokens: 16, outputTokens: 60 },
+  ]);
+});
+
+test("OpenAI 原生生图只按 token 计量，只给费用的响应不入账", async () => {
+  const reported: AiCacheUsage[] = [];
+  installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+  imageProtocol = "openai";
+  generate.mockResolvedValueOnce({ data: [], usage: { cost_in_usd_ticks: 200_000_000 } });
+  await expect(generateOpenAiImage({ prompt: "p", aspectRatio: "1:1" })).resolves.toBeNull();
+  expect(reported).toEqual([]);
+});
+
 function respondWith(encoded: string): void {
   generate.mockResolvedValueOnce({ data: [{ b64_json: encoded }] });
 }

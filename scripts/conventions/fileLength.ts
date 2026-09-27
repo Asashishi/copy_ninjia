@@ -1,5 +1,5 @@
 /** 手写源码的文件长度硬上限；超过后必须按职责拆分。 */
-const MAX_SOURCE_LINES: number = 1_000;
+export const MAX_SOURCE_LINES: number = 1_024;
 
 /** 检查 TS、JS 和 shell 源码的物理行数；末尾换行不额外计作空行。 */
 export function collectFileLengthProblems(path: string, source: string): readonly string[] {

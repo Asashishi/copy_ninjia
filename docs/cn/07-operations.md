@@ -67,16 +67,16 @@ WantedBy=multi-user.target
 `COPY_NINJIA_DATA_ROOT` 派生所有运行时数据（未设置时使用项目根目录；显式空白值拒绝启动）：
 
 - **`memory/global/state.json`**
-  - **内容**：`copy` 的全局复读状态，以及 `ttsUsage` 的语音合成每日计数（窗口起点 `windowStartedAt` 与次数 `count`，由机器人写入；要手工清零就停服务后删掉整块）。群开关、锁定记录、权限快照与翻译会话保存在 `database/storage.sqlite` 的 `chat_states`；素材目录与直链在 `config/dynamic/assets.json`。
-  - **格式**：顶层只有必填的 `copy` 与可选的 `ttsUsage`。`copy.copyMode` 仅接受缺省、`reverse`、`nya`。文件缺失按从未使用处理；存在但非法、出现未知键均拒绝启动，不自动升级或丢弃条目。主线程独占写入（临时文件 + fsync + 原子 rename），Disk I/O Worker 不访问 `memory/global/`。
+  - **内容**：`copy` 的全局复读状态，以及 `ttsUsage` 的语音合成每日计数（共同窗口起点 `windowStartedAt`、AI 次数 `agentCount` 与预留次数 `reserveCount`，由机器人写入；要手工清零就停服务后删掉整块）。群开关、锁定记录、权限快照与翻译会话保存在 `database/storage.sqlite` 的 `chat_states`；图库目录、默认头像与缩略图等素材配置在 `config/dynamic/assets.json`。
+  - **格式**：顶层只有必填的 `copy` 与可选的 `ttsUsage`。`copy.copyMode` 仅接受缺省、`reverse`、`nya`。文件缺失按从未使用处理；存在但非法、出现未知键均拒绝启动，不自动升级或丢弃条目。安装器在准备配置目录时按启动恢复同一口径只读校验该文件，不符合当前格式（如未迁移的总计数 `ttsUsage`）时在注册和启动服务之前停止。主线程独占写入（临时文件 + fsync + 原子 rename），Disk I/O Worker 不访问 `memory/global/`。`copy` 的变更立即写出；`ttsUsage` 计数按 5 秒合并窗口后台写出，正常停机提交剩余变更，突然退出可能少记窗口内的次数。
   - **手工修改状态**：停服务并确认 inactive，在工作树外用 `mktemp -d` 备份该文件及部署数据，记录权限、属主和 SHA-256，再编辑。保留未修改的字段，并用 `decodeGlobalStateFile` 严格解析、核对预期差异和权限后启动。版本升级按下方冷迁移流程执行，不用示例或 Git 内容覆盖部署状态。
-  - **旧位置**：数据根下仍有 14.x 的 `state.json` 或 `state.json.bak` 时启动与安装器都拒绝，按[全局状态冷迁移](#全局状态冷迁移statejson-memoryglobalstatejson-configdynamicassetsjson)处理。
-- **色图专用目录**（`config/dynamic/assets.json` 的 `random_h_image_dir`，缺省 `./h_image`，相对数据根解析）：
+  - **旧位置**：数据根下仍有 14.x 的 `state.json` 或 `state.json.bak` 时启动与安装器都拒绝，按[全局状态冷迁移](#upgrade-15)处理。
+- **色图专用目录**（`config/dynamic/assets.json` 的 `onlyPath.random_h_image_dir`，缺省 `./h_image`，相对数据根解析）：
   `/h_image` 与未指定目录的 cron `rand_image` 从这里抽图。通过 `/h_image add` 收图；手工放置必须使用内容 SHA-256 的 64 位小写十六进制文件名，加 `jpg`/`jpeg`/`png`/`webp` 扩展名。禁止混放其他功能的图片。启动检查每个条目，非法名称、子目录、文件链接和残留 `.h_image-add-*` 临时文件均拒绝启动；停服备份后核对并整理残留。服务账号必须能读写和访问该目录；缺失时按 0755 创建。合规图片的增删无需重启；运行中改 `random_h_image_dir` 会先按同一口径准备并检查新目录，检查失败则拒绝这次改动。回滚须恢复与旧代码匹配的整套配置、状态和图库。
 - **`memory/wed/<chatId>.json`**
   - **内容**：每群已发言成员 ID 的纯数字数组，例如 `[5974478892]`；主线程每群长期复用一个 `Set<number>`。最多 25 群，每群最多 150,000 个 ID，满额保留已有成员，退群后可继续新增。
   - **校验**：文件名必须是规范负安全整数群 ID，数组元素必须是唯一的正安全整数；非法 JSON、重复、类型或容量错误拒绝启动，不截断或修复原文件。目录和文件缺失允许启动，由程序按需创建。
-  - **落盘与备份**：实际增删按累计 300 条或首条变更后 30 秒经 DiskIO 全量原子替换，无变化不写。没有按日过期，重启按文件恢复；`/init disable` 与机器人被移出群会连文件一起删掉（被撤管理员不删，权限加回来还要用）。纳入数据根的一致性备份，突然退出可能丢失尚未落盘的变更。
+  - **落盘与备份**：实际增删按累计 256 条或首条变更后 30 秒经 DiskIO 全量原子替换，无变化不写。没有按日过期，重启按文件恢复；`/init disable` 与机器人被移出群会连文件一起删掉（被撤管理员不删，权限加回来还要用）。纳入数据根的一致性备份，突然退出可能丢失尚未落盘的变更。
   - **离群清理**：退群服务消息、`chat_member` 更新与每日零点复核会把离群成员移出文件，后两者只在机器人是群管理员时生效。机器人不是管理员的群里只剩退群服务消息，而 Telegram 在较大的超级群或隐藏了成员列表时可能不发，文件里因此会留下已离群的 ID，`/wed` 也会照常抽到他们，这是预期行为，不是故障。要可靠清理，给机器人管理员权限；需要手工删 ID 时按运行时状态的规矩停服后再改文件。
 - **`memory/stickers/<pack>.json`**
   - **内容**：每个白名单贴纸包的 version=1 描述目录，按 `file_unique_id` 保存
@@ -98,6 +98,7 @@ WantedBy=multi-user.target
     压缩成 active 快照。
 - **`memory/joinlog/<chatId>.<YYYY-MM-DD>.json`**
   - **内容**：权威 `chat_member` 入群事实；`/batch_kick` 按滚动窗口读取。
+  - **落盘**：入群事实先进 Disk I/O Worker 的内存批次，满 256 条或首条后 30 秒按群日追加并 fsync，`/batch_kick` 查询前与正常停机时先刷出剩余批次；Disk I/O Worker 重建时主线程重放未确认的事实，进程被强杀或断电可能丢失最近一个窗口内的入群记录。
   - **备份**：含用户 id 与时间戳，按敏感数据备份；保留最近三个东京自然日以覆盖
     跨午夜在途查询。精确重投不重复追加，历史按用户最新值压缩；单群单日最多保留
     最新 250,000 人。`/init disable` 与机器人被移出群会把该群保留窗口内外的全部
@@ -105,11 +106,13 @@ WantedBy=multi-user.target
 - **`database/storage.sqlite`**（运行时可能同时存在 `-wal` / `-shm`）
   - **内容**：schema v11 共享存储数据库。`permission_list.policy` 是永久身份权限的严格 JSONB，`blocklist_entries` 保存黑名单（`data` 含 `blockedAt`、Telegram meta 与可选的 `participantInvalidCount`；不认识该字段的旧版本读到带该字段的行会拒绝启动，回滚到这类版本必须连同升级前同一时点的数据库备份一起恢复，不能只替换程序），`temporary_ad_bypass_entries` 保存临时广告免检累计；后者使用 `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at` 与 `qualified_at`。`pending_blocked_removals` 保存未完成的群级封禁任务；`storage_metadata` 与 Drizzle journal 共同约束 schema 和精确谱系。
   - **群状态与人设**：`chat_states` 最多 25 行。`chat_id` 是群主键；`status` 是必填 JSONB 状态；`ai_persona` 是可空、非空白 TEXT，仅保存本群自定义提示词，缺省使用项目 `prompt/persona.md`。状态与人设在启动时读入现有主线程群缓存，`/bot_status` 直接查看是否已设置。`status.translate` 是本群翻译会话，缺省表示没有会话，存在时为 1–5 个会话的非空数组，例如 `"translate": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]`；同群身份 ID 不得重复，方向仅允许 `ja`、`cn`、`en`、`uk`、`ru`，身份按 `CachedUser` 严格校验。`/init disable` 或 Bot 离群清除整行及人设；待恢复的 lockdown 状态按恢复协议保留。
-  - **AI 上下文**：`ai_context` 是可空 JSONB version=1 快照，包含逐字消息、摘要、待合并摘要与保存时间，沿用 AI Worker 记忆缓存及主线程恢复镜像。只更新已有群行，不保留仅有上下文的行；清空记忆将该列置 NULL，不改人设。正文、名称与引用字段为单行，引用 text/quote 最多 500 个 UTF-16 码元，`at` 为有效东京本地时间 `YYYY/MM/DD HH:mm:ss`；机器人图片尚未识图时逐字消息带 `pendingImage`（`origin` 取 `command` / `generated` / `referenceGenerated`，`caption` 为单行），已识图或普通消息不含该键；摘要允许换行。非法字段拒绝恢复并指出嵌套路径，不修复原数据。
+  - **AI 上下文**：`ai_context` 是可空 JSONB version=1 快照，包含逐字消息、摘要、待合并摘要与保存时间，沿用 AI Worker 记忆缓存及主线程恢复镜像。写入随共享 SQLite 事务提交（AI Worker 每 30 秒上报一次，共享事务最迟再等 30 秒），清空立即提交；突然退出可能丢失尚未提交的最近一段记忆。只更新已有群行，不保留仅有上下文的行；清空记忆将该列置 NULL，不改人设。正文、名称与引用字段为单行，引用 text/quote 最多 500 个 UTF-16 码元，`at` 为有效东京本地时间 `YYYY/MM/DD HH:mm:ss`；机器人图片尚未识图时逐字消息带 `pendingImage`（`origin` 取 `command` / `generated` / `referenceGenerated`，`caption` 为单行），已识图或普通消息不含该键；摘要允许换行。非法字段拒绝恢复并指出嵌套路径，不修复原数据。
   - **备份与恢复**：数据库包含敏感群聊记忆与自定义提示词，必须备份。停 Bot 后，将主库及存在的 WAL/SHM 作为同一集合复制到工作树外，记录并核对 owner/mode 与 SHA-256。Disk I/O Worker 独占数据库，启动校验 integrity、JSONB、schema、谱系、严格行 codec、名单互斥与 outbox 引用；群状态和 AI 快照从同一连接恢复。身份热读使用 8,192 项 LRU，只按 update 所需身份冷读。任一校验失败都拒绝启动，不自动建库、迁移、丢行或降级。
 - **`memory/ad-detected/sample.json`**
   - **内容**：广告判定命中的原始样本，包括时间、消息 id 与正文、判定理由、
     引用/回复上下文。
+  - **落盘**：命中样本先进 Disk I/O Worker 的内存批次，满 256 条或首条后 30 秒追加，
+    正常停机时刷出；批次写失败或 Disk I/O Worker 重建时整批丢弃。
   - **备份**：**纯旁路，进程从不读它**。丢失不影响行为，只影响回头调整
     `config/dynamic/ad_samples.json` 的素材。达到 8 MiB 时自动轮转为
     `sample.<东京日期>[.<序号>].json`；归档按文件名日期自动保留今天在内最近
@@ -119,18 +122,21 @@ WantedBy=multi-user.target
   - **备份**：严格按文件名日期保留最近 15 个东京自然日；未知命名、目录与符号链接
     不进入自动删除路径。
 - **`memory/ai-daily-usage/usage.json`**
-  - **内容**：模型请求的 token 用量，只取供应商响应里的 usage，不含会话内容。一个
+  - **内容**：模型请求的用量，只取供应商响应里的 usage，不含会话内容。一个
     JSON 对象：首位的 `summary` 是最近一个已结束东京日的汇总（请求数、输入/命中/输出
     token、命中率，以及按 `<能力>/<provider>/<模型>` 分组的同样合计）；其余键是尚未汇总的
-    逐条记录，键为东京时间加 UUID，值为能力、provider、模型与三项 token 数。命中率等于
+    逐条记录，键为东京时间加 UUID，值为能力、provider、模型，再加三项 token 数或
+    `costInUsdTicks` 二者之一：给出 token 数的请求只记 token，只给费用的请求（xAI 生图）
+    记费用，单位同 xAI（1 美元 = 10,000,000,000 ticks）。命中率等于
     命中 token 除以给出了缓存用量的请求的输入 token，保留 4 位小数；供应商没给缓存用量的
-    请求 `cachedInputTokens` 为 `null`，只计入总量。
-  - **落盘**：记录经诊断通道进入 Disk I/O Worker 的内存缓冲，满 300 条或首条后 30 秒
+    请求 `cachedInputTokens` 为 `null`，只计入总量。请求数同时计入 token 请求与费用请求；
+    有过费用请求的合计（汇总本身与分组）另带 `costInUsdTicks` 费用合计，没有时省略该键。
+  - **落盘**：记录经诊断通道进入 Disk I/O Worker 的内存缓冲，满 256 条或首条后 30 秒
     追加到文件末尾，统一 flush 时也会刷出。东京零点维护与启动维护把今天之前的记录并入
     最近那一天的 `summary` 后删除，只保留一天的汇总。
   - **备份**：纯旁路，丢失不影响行为；写盘失败只丢那一批统计。文件被改成不合当前格式
     （撕裂的末尾除外）时启动拒绝并保留原字节，删除或修正后再启动。
-  - **计量入口**：覆盖 `text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent 与 Interactions 分别映射字段，输出包括正文和思考；OpenAI Responses、广告检测 Chat Completions、图片生成/编辑及 token 型音频转写读取各自 usage。收到有效用量即记录，包括空正文、解码失败、应用层重试的每次响应，以及取消后 SDK 仍返回的响应；同一响应不重复计数。供应商未返回 token 或仅返回转写时长时不估算；TTS 每日次数配额独立保存于 `memory/global/state.json`。
+  - **计量入口**：覆盖 `text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent 与 Interactions 分别映射字段，输出包括正文和思考；OpenAI Responses、广告检测 Chat Completions、图片生成/编辑及 token 型音频转写读取各自 usage；`image_protocol: xai` 的生图/改图给出 token 分量时按 token 计入（缓存命中取 `input_tokens_details.cached_tokens`，只给一项时按 `missing` 诊断且不记录），两项 token 都缺席或为空时按 `usage.cost_in_usd_ticks` 计入费用，provider 记为 `openai`。收到有效用量即记录，包括空正文、解码失败、应用层重试的每次响应，以及取消后 SDK 仍返回的响应；同一响应不重复计数。供应商未返回 token 或仅返回转写时长时不估算；TTS 每日次数配额独立保存于 `memory/global/state.json`。
   - **缺记录诊断**：`AI token usage unavailable` 只含 capability、provider 和 reason：`missing`（用量缺失）、`invalid`（用量非法）、`sink`（本线程无出口）、`duration`（只有时长）、`transport`（出口投递失败或主线程拒收）。同一出口生命周期内每种组合仅记录一次，不包含模型名、正文或凭据。诊断 FIFO 溢出另有有界丢弃汇总，写盘失败由 Disk I/O 记录错误；该文件是尽力统计，不是完整账单。
 
 - **`logs/`**
@@ -161,45 +167,57 @@ WantedBy=multi-user.target
 
 <a id="upgrade-15"></a>
 
-### 从 14.0.0 升级到 15.0.0
+### 全局状态冷迁移（语音总计数 → 独立计数）
 
-> [!IMPORTANT]
-> 15.0.0 把全局状态从数据根的 `state.json` 移到 `memory/global/state.json`，把随机图库目录与素材直链移到 `config/dynamic/assets.json`，不再维护 `state.json.bak`，并把 `config/` 按生效方式拆成 `static/` 与 `dynamic/` 两个子目录。先停服并备份，再更新程序与部署数据；配置和数据校验完成前不要启动。
+入口是 [`scripts/migrateGlobalState.ts`](../../scripts/migrateGlobalState.ts)。源备份必须含 `memory/global/state.json`，顶层为必填 `copy` 和可选 `ttsUsage`；存在的 `ttsUsage` 必须是 `{ windowStartedAt, count }`。当前运行时只接受 `{ windowStartedAt, agentCount, reserveCount }`，不在启动时迁移；未迁移的总计数由安装器在注册和启动服务之前拒绝。脚本拒绝未知字段、非法数据和已经拆分的计数。
 
-| 检查项 | 操作 |
-| :--- | :--- |
-| 全局状态 | 按下节执行全局状态冷迁移；产物放到 `memory/global/state.json`，旧 `state.json` 与 `state.json.bak` 移出数据根。两者任一仍在数据根时，启动与安装器都拒绝 |
-| 素材配置 | 迁移只把与内置缺省不同的素材项写进 `config/dynamic/assets.json`；没有产出该文件时不需要放置。字段见[配置说明](../../config_example/README/zh.md#assetsjson) |
-| 配置目录布局 | 停机后把 `bot.json`、`g-auth.json` 移入 `config/static/`，其余六份（`agent.json`、`assets.json`、`ad_samples.json`、`mood.json`、`stickers.json`、`cron.json`）移入 `config/dynamic/`，保留原属主与 mode；`config/dynamic/` 即使为空也要建立。任一文件留在 `config/` 顶层或放错子目录、或 `config/dynamic/` 不存在时，启动拒绝；安装器同样拒绝放错位置的文件。`static/` 下的文件修改后须重启，`dynamic/` 下的文件热重载。字段与行为见[配置说明](../../config_example/README/zh.md) |
-| 恢复与权限 | 保留外部备份及清单；服务账号须能写 `memory/global/`、数据库目录（含 WAL/SHM）、锁及其余记忆目录；`config/` 可只读 |
-
-### 全局状态冷迁移（state.json → memory/global/state.json + config/dynamic/assets.json）
-
-入口是 [`scripts/migrateGlobalState.ts`](../../scripts/migrateGlobalState.ts)，只接受 14.x 产出的格式：`state.json` 顶层只有 `global`，其中 `copy` 必填，`assets` 可缺省（与 14.0.0 的状态格式一致，14.0.0 之后才有的 `ttsUsage` 同样拒绝）；`state.json.bak` 存在时必须与 `state.json` 逐字节相同，否则拒绝并交由人工核对。未知谱系、已迁移的新格式或非法字段均拒绝。更早的部署先按[下一节](#从-1400-之前的版本升级)到达 14.x 格式。生产启动只校验当前格式，不执行迁移。
-
-1. 停止服务并确认 inactive、没有残留进程。用 `mktemp -d` 在工作树外备份 `state.json`、`state.json.bak`、`config/`、整个 `database/`（SQLite 主库与已有 WAL/SHM 必须来自同一停机时点）与 `memory/`；记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
-2. 指定源备份之外的新输出目录，父目录须存在。脚本不改源文件、不操作服务、不替换部署文件。
+1. 停止服务并确认 inactive、进程已退出。用 `mktemp -d` 在工作树外备份 `config/`、存在的 `.env`、`g-auth.json`、整个 `database/`（含同一停机时点的 WAL/SHM）和 `memory/`；记录文件清单、权限、属主及 SHA-256，并核对副本。
+2. 确定旧总次数中属于 AI 的次数，并以 `--agent-count` 明确提供。脚本不猜测来源；`reserveCount = count - agentCount`，保持总次数、窗口起点和 `copy` 不变。若整块 `ttsUsage` 缺省，则不得提供该参数。
+3. 在源备份外选择一个尚不存在的输出目录，父目录必须存在：
 
 ```bash
 bun run migrate:global-state \
   --source-root /absolute/cold-backup \
-  --output-root /absolute/new-staging-directory
+  --output-root /absolute/new-staging-directory \
+  --agent-count <已核实的AI次数>
 ```
 
-二进制发行包携带全部当前有效冷迁移，不需要系统 Bun 或源码：`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js --source-root <备份> --output-root <新目录>`。
+二进制包可用 `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js` 加相同参数运行，不需要系统 Bun。脚本只生成独立产物，不操作服务或替换部署文件。
 
-3. `copy` 原样写进产物的 `memory/global/state.json`（顶层不再有 `global` 包装）。`assets` 的五项换成 `config/dynamic/assets.json` 的键（`random_h_image_dir`、`fortune_thumbnail_url`、`probability_thumbnail_url`、`gag_thumbnail_url`、`bot_default_avatar_url`），值去掉首尾空白、直链按 URL 归一化，只保留与内置缺省不同的项；全部相同时不生成该文件。数据库不参与本次迁移。
-4. `ready.json` 是转换、严格校验及源复核完成的唯一标记。核对 `sourceFiles`、`outputFiles` 的哈希和元数据，以及 `assetKeys`。失败或中断时保留备份与不完整产物，从原备份向新目录重跑；不覆盖既有输出。
-5. 在停机状态下把 `memory/global/state.json` 放到运行时数据根，存在时把产物里的 `config/dynamic/assets.json` 放到配置目录的 `dynamic/` 下，并把旧 `state.json` 与 `state.json.bak` 移出数据根（保留在外部备份中）。确保服务账号能写 `memory/global/`；`config/dynamic/assets.json` 与其余配置一样可只读。
-6. 严格校验配置与全局状态后启动，观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长且 journal 无新增非零退出，并确认启动日志里的复读目标与 `/h_image` 图库符合预期。全部核验完成前保留外部备份；回滚必须恢复对应代码与同一时点的数据集。
+4. `ready.json` 是唯一完成标记；核对 `sourceFiles` 和 `outputFiles` 的哈希、权限与属主，并按当前严格解析器验证输出。中断时保留备份与未完成目录，使用同一源备份、相同的次数分配和新输出目录重跑。
+5. 停机期间用产物替换数据根的 `memory/global/state.json`，恢复原权限和属主，确认服务账号可写 `memory/global/`。本次迁移不改变配置、数据库和素材路径；不得把整个产物目录覆盖部署目录。
+6. 全部配置和状态校验通过后启动，观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长、journal 无新增非零退出。全部核验通过后才能清理备份；失败则保留现场，回滚须恢复对应代码和同一时点的数据。
 
-### 从 14.0.0 之前的版本升级
+<a id="assets-groups"></a>
 
-14.0.0 之前的部署先分阶段到达 14.x 格式：检出 `14.0.0` 标签的源码（或安装 14.0.0 发行包），按其文档在停机状态下执行 `migrate:translate-sessions`（13.0.x 之前的部署还要先按 `13.0.2` 的文档执行 `migrate:h-image-add-permission` 与 `migrate:bot-config`），部署其产物后，再用本版本执行上节的全局状态迁移，不需要启动中间版本。当前入口不直接接受这些更早格式；安装器发现 12.1.0 的 `telegram.json` 身份入口时同样拒绝，并提示先升级到 13.x。
+### `assets.json` 分组迁移（手工）
+
+当前解析器只接受 `onlyPath`、`pathOrUrl`、`onlyUrl` 三组格式，入口是 [`packages/config/assets.ts`](../../packages/config/assets.ts)；平铺在顶层的旧字段按未知键拒绝启动，热重载同样拒绝。本迁移只改 `config/dynamic/assets.json`，没有迁移脚本，启动时也不自动转换；该文件缺省的部署无需迁移。
+
+1. 停止服务并确认 inactive、进程已退出、`bot.lock` 已释放。用 `mktemp -d` 在工作树外备份 `config/`，记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
+2. 按下表把已有字段移入对应分组，取值原样保留；原文件没写的字段继续缺省。
+
+| 旧字段 | 新位置 |
+| --- | --- |
+| `random_h_image_dir` | `onlyPath.random_h_image_dir` |
+| `bot_default_avatar_url` | `pathOrUrl.bot_default_avatar` |
+| `fortune_thumbnail_url` | `onlyUrl.fortune_thumbnail_url` |
+| `probability_thumbnail_url` | `onlyUrl.probability_thumbnail_url` |
+| `gag_thumbnail_url` | `onlyUrl.gag_thumbnail_url` |
+
+3. 原地改写，保留原权限与属主；用备份清单执行 `sha256sum -c`，确认只有 `dynamic/assets.json` 变化。
+4. 启动前用新代码调用 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，只读校验全部部署输入。
+5. 启动后观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长、journal 无新增非零退出。全部核验通过后才能清理备份；失败则保留现场，回滚须同时恢复旧代码与备份中的 `assets.json`。
+
+### 旧布局的分阶段升级
+
+数据根仍有 `state.json` 或 `state.json.bak` 时，先使用上一次全局状态迁移的发行版及其说明，将状态迁到 `memory/global/state.json`、素材项迁到 `config/dynamic/assets.json`，再运行本节的计数拆分，并按 [`assets.json` 分组迁移](#assets-groups)改写素材配置。更早格式须按各中间发行版的说明逐阶段迁移，当前脚本不保留跨多次迁移的兼容链。
+
+配置必须位于 `config/static/`（`bot.json`、`g-auth.json`）或 `config/dynamic/`（其余部署 JSON），并保留原权限与属主；`dynamic/` 即使为空也必须存在。启动与安装器拒绝旧状态位置和放错位置的配置；中间迁移不要求启动中间版本。
 
 ### 随机图库文件名冷迁移
 
-专用图库由 `config/dynamic/assets.json` 的 `random_h_image_dir` 指定，缺省为运行时数据根下的 `h_image/`。图库冷迁移只接受 `<uuidv7>[-<file_unique_id>]<扩展名>` 的直接前序命名，生成**内容 SHA-256** 加扩展名的图片。当前启动检查拒绝旧名称，不执行自动迁移。入口是
+专用图库由 `config/dynamic/assets.json` 的 `onlyPath.random_h_image_dir` 指定，缺省为运行时数据根下的 `h_image/`。图库冷迁移只接受 `<uuidv7>[-<file_unique_id>]<扩展名>` 的直接前序命名，生成**内容 SHA-256** 加扩展名的图片。当前启动检查拒绝旧名称，不执行自动迁移。入口是
 [`scripts/migrateRandomImageNames.ts`](../../scripts/migrateRandomImageNames.ts)。
 
 1. 停止服务并确认 inactive、没有残留进程。用 `mktemp -d` 在工作树外完整备份图库目录，记录
@@ -228,7 +246,7 @@ bun run migrate:random-image-names \
 
 ### 从 11.0.9 分阶段升级
 
-11.0.9 使用 schema v8，数据库需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，然后用 13.0.2 发布的 `migrate:h-image-add-permission` 产出 v11；Bot 配置同样用 13.0.2 的 `migrate:bot-config` 迁到 13.x 格式。之后用 14.0.0 发布的 `migrate:translate-sessions` 到达 14.x 格式，再由当前入口完成[全局状态迁移](#全局状态冷迁移statejson-memoryglobalstatejson-configdynamicassetsjson)。全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署从 13.0.2 那一段开始。运行以下命令前，先完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0、13.0.2 标签，暂存输出目录须不存在。
+11.0.9 使用 schema v8，数据库需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，然后用 13.0.2 发布的 `migrate:h-image-add-permission` 产出 v11；Bot 配置同样用 13.0.2 的 `migrate:bot-config` 迁到 13.x 格式。之后用 14.0.0 发布的 `migrate:translate-sessions` 到达 14.x 格式，再用上一次全局状态迁移的发行版转换旧布局，最后由当前入口完成[语音计数拆分](#upgrade-15)，并按 [`assets.json` 分组迁移](#assets-groups)改写素材配置。全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署从 13.0.2 那一段开始。运行以下命令前，先完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0、13.0.2 标签，暂存输出目录须不存在。
 
 中间源码是本流程的必需输入。仅有 11.0.9 标签或当前版本的源码压缩包时，须先取得上述固定提交的完整源码；发布前应独立保留并提供该源码，不能依赖 squash 后会被重置的 dev 历史。
 
@@ -301,7 +319,7 @@ git archive 13.0.2 | tar -x -C "$V13_CODE"
     `state.json` / `state.json.bak`。
   - **处理**：保持服务停止并备份原文件，按错误中的文件路径、字段路径和期望形态修正后重新
     校验；旧位置的文件按冷迁移流程处理后移出数据根。运行时保留非法文件原字节并拒绝启动，
-    不生成 `*.corrupt` 隔离件。
+    不生成 `*.corrupt` 隔离件；安装器按同一口径在注册和启动服务之前拒绝。
 
 ### `bot.lock` 拒绝启动
 

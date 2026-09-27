@@ -7,7 +7,7 @@ import {
   ANTI_RAID_DRAIN_TIMEOUT_MS,
   ANTI_RAID_DRAIN_MAX_ROUNDS,
 } from "../consts/antiRaid/protocol";
-import { flushDiskIO } from "../infra/diskIO";
+import { flushDiskIO, flushDiskIODomain } from "../infra/diskIO";
 import { WorkerUndeliveredError } from "../libs/workerDelivery";
 import {
   createMonotonicDeadline,
@@ -89,7 +89,7 @@ export async function drainAntiRaid(
       PromiseSettledResult<FlushResult>
     ] = await Promise.allSettled([
       flushDiskIO(persistenceBudget),
-      flushStateToDisk(persistenceBudget),
+      flushStateToDisk(persistenceBudget, false),
     ]);
     if (persistenceResults.some(
       (result: PromiseSettledResult<FlushResult>): boolean =>
@@ -136,7 +136,21 @@ function containsBlockedRemoval(messages: readonly AntiRaidWorkerMessage[]): boo
 }
 
 /**
- * update 安全交接：处理 mailbox 后，仅在镜像变化时同步两类持久化 owner。
+ * Anti-Raid 镜像的领域落盘屏障：待验证镜像在 `verification` 领域，锁定记录随群状态
+ * 在共享 SQLite 的 `chatState` 领域。两道屏障各自只刷自己那一格，其它领域的攒批
+ * 窗口不受影响；停机排空仍走统一 flush（见 drainAntiRaid）。
+ */
+function flushAntiRaidMirrors(
+  timeoutMs: number
+): Promise<[PromiseSettledResult<FlushResult>, PromiseSettledResult<FlushResult>]> {
+  return Promise.allSettled([
+    flushDiskIODomain("verification", timeoutMs),
+    flushDiskIODomain("chatState", timeoutMs),
+  ]);
+}
+
+/**
+ * update 安全交接：处理 mailbox 后，仅在镜像变化时经领域屏障落盘 Anti-Raid 镜像。
  * @returns 真正投给 Worker 的消息条数。durable 对账可能把整批
  *   removeBlockedMembers 扣下（见 prepareDurableAntiRaidMessages），此时本函数
  *   正常 resolve 但一条都没投出去——调用方若把「没抛错」当成「已投递」就会
@@ -180,10 +194,7 @@ export async function postAntiRaidDurably(
   const persistenceResults: [
     PromiseSettledResult<FlushResult>,
     PromiseSettledResult<FlushResult>
-  ] = await Promise.allSettled([
-    flushDiskIO(ANTI_RAID_BARRIER_TIMEOUT_MS),
-    flushStateToDisk(ANTI_RAID_BARRIER_TIMEOUT_MS),
-  ]);
+  ] = await flushAntiRaidMirrors(ANTI_RAID_BARRIER_TIMEOUT_MS);
   const failures: unknown[] = persistenceResults
     .filter(
       (
@@ -200,13 +211,13 @@ export async function postAntiRaidDurably(
       "Anti-Raid persistence boundary rejected."
     );
   }
-  const diskResult: FlushResult =
+  const verificationResult: FlushResult =
     (persistenceResults[0] as PromiseFulfilledResult<FlushResult>).value;
-  const stateResult: FlushResult =
+  const chatStateResult: FlushResult =
     (persistenceResults[1] as PromiseFulfilledResult<FlushResult>).value;
-  if (diskResult !== "flushed" || stateResult !== "flushed") {
+  if (verificationResult !== "flushed" || chatStateResult !== "flushed") {
     throw new Error(
-      `Anti-Raid persistence failed: disk=${diskResult}, state=${stateResult}.`
+      `Anti-Raid persistence failed: verification=${verificationResult}, chatState=${chatStateResult}.`
     );
   }
   return postedCount;

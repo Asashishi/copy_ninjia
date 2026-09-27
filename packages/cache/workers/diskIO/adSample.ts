@@ -1,11 +1,23 @@
 import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
 
 /**
- * 广告命中样本文件（packages/workers/diskIO/adSampleFile.ts）的落盘线程内存状态。
+ * Owner: Disk I/O Worker。广告命中样本文件（packages/workers/diskIO/adSampleFile.ts）的
+ * 落盘线程内存状态。
  *
- * 只有一个追加游标，没有待写缓冲：样本是纯旁路素材，写失败就丢，不进统一
- * flush、不占重试预算（见 adSampleFile.ts 的文件头）。
+ * 样本是纯旁路素材：批次写失败就丢，不进统一 flush 的失败领域、不占重试预算
+ * （见 adSampleFile.ts 的文件头）。
  */
+
+/**
+ * 待追加的已序列化样本与负责刷出它们的 timer。handleAdSampleMessage 填充，累计
+ * FLUSH_MAX_ENTRIES 条、FLUSH_INTERVAL_MS 到期或统一 flush 时整批取走；写失败整批
+ * 丢弃，因此容量不超过 FLUSH_MAX_ENTRIES 条。Worker 重建后随 isolate 清空，主线程
+ * 不镜像、不重放。
+ */
+export const adSampleBuffer: { chunks: string[]; timer: ReturnType<typeof setTimeout> | null } = {
+  chunks: [],
+  timer: null,
+};
 
 /**
  * 样本文件的追加游标。null 表示还没打开过、或上一次追加失败已作废——

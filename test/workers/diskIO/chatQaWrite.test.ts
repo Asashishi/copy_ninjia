@@ -3,7 +3,9 @@ import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { encodeChatQaData } from "../../../packages/database/codec/chatQa";
 import { clearStorageBusinessTables } from
   "../../../scripts/fixtures/storageDatabase";
+import { CHAT_QA_WRITE_BATCH_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import {
+  pendingChatQaEntryCount,
   pendingChatQaWrites,
   resetStorageDatabaseCache,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
@@ -28,6 +30,11 @@ function write(q: string, answer: string | null, revision: number): ChatQaWriteD
     data: answer === null ? null : encodeChatQaData(answer, SOURCE),
     revision,
   };
+}
+
+/** 指定群的一条非空问答写入，供跨群累计批次阈值的用例使用。 */
+function writeInChat(chatId: number, q: string, revision: number): ChatQaWriteDiskMessage {
+  return { ...write(q, "答案", revision), chatId };
 }
 
 beforeEach((): void => {
@@ -88,5 +95,27 @@ describe("Disk I/O Worker 的问答写入闸", () => {
 
     expect(acknowledged).toEqual([{ chatId: CHAT_ID, q: "怎么入群？", revision: 1 }]);
     expect(pendingChatQaWrites.has(CHAT_ID)).toBeFalse();
+  });
+
+  test("跨群累计到 CHAT_QA_WRITE_BATCH_MAX_ENTRIES 条问答变化立即提交全部待写值", () => {
+    const acknowledged: unknown[] = [];
+    const reply = (persisted: { chatQaWrites: readonly unknown[] }): void => {
+      acknowledged.push(...persisted.chatQaWrites);
+    };
+    for (let index: number = 0; index < CHAT_QA_WRITE_BATCH_MAX_ENTRIES - 1; index++) {
+      const chatId: number = CHAT_ID - Math.floor(index / CHAT_QA_MAX_PER_CHAT);
+      handleChatQaWrite(writeInChat(chatId, `问题${index}`, index + 1), reply);
+    }
+    // 同一条问题的更新只覆盖最终值，不另计一条。
+    handleChatQaWrite(write("问题0", "新答案", 100), reply);
+    expect(pendingChatQaEntryCount.current).toBe(CHAT_QA_WRITE_BATCH_MAX_ENTRIES - 1);
+    expect(acknowledged).toHaveLength(0);
+
+    const lastChatId: number = CHAT_ID - Math.floor((CHAT_QA_WRITE_BATCH_MAX_ENTRIES - 1) / CHAT_QA_MAX_PER_CHAT);
+    handleChatQaWrite(writeInChat(lastChatId, "最后一条", 200), reply);
+
+    expect(acknowledged).toHaveLength(CHAT_QA_WRITE_BATCH_MAX_ENTRIES);
+    expect(pendingChatQaWrites.size).toBe(0);
+    expect(pendingChatQaEntryCount.current).toBe(0);
   });
 });

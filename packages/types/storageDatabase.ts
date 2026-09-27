@@ -71,9 +71,14 @@ export interface StorageDatabaseChange {
   readonly data: string | null;
 }
 
-/** 群状态与人设由主线程以同一 revision 提交，上下文由 AI owner 单独提交。 */
+/** 群状态与人设由主线程以同一 revision 提交；上下文由 AI owner 以 StorageAiContextChange 另行排入。 */
 export interface StorageChatStateChange extends StorageDatabaseChange {
   readonly aiPersona: string | null;
+}
+
+/** 一群 AI 上下文在事务缓冲中的最终快照文本；null 表示清空 `ai_context`。 */
+export interface StorageAiContextChange {
+  readonly snapshot: string | null;
 }
 
 /** Drizzle 迁移日志中用于严格识别部署谱系的一项。 */

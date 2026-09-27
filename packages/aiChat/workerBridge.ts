@@ -372,8 +372,12 @@ export async function terminateAiChat(): Promise<void> {
 /**
  * 向 aiChatWorker 查询或重抽某群心情，并等待带 requestId 的结果回执。两类
  * 请求共用等待表、编号空间与超时生命周期；Worker 不发 Telegram 消息。
+ *
+ * - `queryMood`（/mood query）：读取当前有效心情；自然到期仍由 Worker 的 currentMood
+ *   统一处理，不强制切换尚未到期的心情。
+ * - `switchMood`（/mood switch）：要求 Worker 无视剩余寿命立即重抽，并带回新心情名。
  */
-function requestAiMood(
+export function requestAiMood(
   chatId: number,
   requestType: "queryMood" | "switchMood"
 ): Promise<string> {
@@ -402,21 +406,6 @@ function requestAiMood(
       reject(toError(error));
     }
   });
-}
-
-/**
- * /mood query：读取某群当前有效心情；自然到期仍由 Worker 的 currentMood
- * 统一处理，但不会强制切换尚未到期的心情。
- */
-export function queryAiMood(chatId: number): Promise<string> {
-  return requestAiMood(chatId, "queryMood");
-}
-
-/**
- * /mood switch：要求 Worker 无视剩余寿命立即重抽，并带回新心情名。
- */
-export function switchAiMood(chatId: number): Promise<string> {
-  return requestAiMood(chatId, "switchMood");
 }
 
 /**

@@ -26,7 +26,7 @@
 
 <!-- performance-benchmark:start -->
 
-**直近の全量ベンチマーク** · Bun 1.4.2 · 3 ラウンドの平均 · 2026-09-26T15:34:49Z · プロセス起動からローカル復元完了まで 372.4 ms · グループメッセージ 1 件を基本ディスパッチする 158.1 ns · ai_chat：返信 1 ターンを生成・送信する（通信と擬人的な間を除く） 809.1 µs / 1,149 回/s · 広告検出：グループメッセージ 1 件を判定・処置する（通信を除く） 2.95 ms / 313 回/s
+**直近の全量ベンチマーク** · Bun 1.4.2 · 3 ラウンドの平均 · 2026-09-27T14:46:45Z · プロセス起動からローカル復元完了まで 392.8 ms · グループメッセージ 1 件を基本ディスパッチする 153.3 ns · ai_chat：返信 1 ターンを生成・送信する（通信と擬人的な間を除く） 822.6 µs / 1,144 回/s · 広告検出：グループメッセージ 1 件を判定・処置する（通信を除く） 1.90 ms / 487 回/s
 
 ## 実行環境
 
@@ -38,7 +38,7 @@
 | メモリ | 7.76 GiB |
 | ラウンド数 | 3 |
 | モックデータルート | `performance/` |
-| 計測日時 | 2026-09-26T15:34:49Z |
+| 計測日時 | 2026-09-27T14:46:45Z |
 
 ## 総スループットと総 I/O（1 ラウンドあたり）
 
@@ -47,14 +47,14 @@
 | 指標 | 計測値 |
 | --- | --- |
 | 計測オペレーション数 | 392,931,429 |
-| プロセス読み込み | 167.65 MiB |
-| プロセス書き込み | 173.94 MiB |
+| プロセス読み込み | 167.27 MiB |
+| プロセス書き込み | 174.17 MiB |
 | ブロックデバイス読み込み | 0 B |
-| ブロックデバイス書き込み | 193.70 MiB |
-| 読み込みシステムコール | 52,427 |
-| 書き込みシステムコール | 86,241 |
-| モックルート使用量 | 15.87 MiB |
-| モックルートファイル数 | 105 |
+| ブロックデバイス書き込み | 193.43 MiB |
+| 読み込みシステムコール | 52,104 |
+| 書き込みシステムコール | 86,120 |
+| モックルート使用量 | 14.17 MiB |
+| モックルートファイル数 | 104 |
 
 ## コールドパス · 起動リカバリ
 
@@ -62,17 +62,17 @@
 
 | 段階 | 所要時間 | 変動 |
 | --- | --- | --- |
-| 本番モジュールを読み込む<br><code>module-graph</code> | 151.6 ms | ±1.1% |
-| データルートの単一インスタンスロックを取得する<br><code>instance-lock</code> | 12.49 ms | ±8.3% |
-| 中断された原子的書き込みの一時ファイルを削除する<br><code>orphan-cleanup</code> | 677.6 µs | ±1.6% |
-| 実行時状態を読み込み厳密に解析する<br><code>state-load</code> | 1.23 ms | ±7.3% |
-| デプロイ設定と AI ペルソナを検証する<br><code>deployment-inputs</code> | 4.44 ms | ±3.3% |
-| Disk I/O Worker を生成する<br><code>disk-io-init</code> | 325.4 µs | ±8.0% |
-| SQLite とスナップショットからデータを復元する<br><code>persisted-load</code> | 189.3 ms | ±2.5% |
-| メインスレッドのホットキャッシュを満たす<br><code>hydrate</code> | 289.9 µs | ±1.4% |
-| プロセス起動からローカル復元完了まで<br><code>ready-total</code> | 372.4 ms | ±1.3% |
+| 本番モジュールを読み込む<br><code>module-graph</code> | 160.1 ms | ±8.4% |
+| データルートの単一インスタンスロックを取得する<br><code>instance-lock</code> | 15.66 ms | ±21.2% |
+| 中断された原子的書き込みの一時ファイルを削除する<br><code>orphan-cleanup</code> | 691.6 µs | ±6.3% |
+| 実行時状態を読み込み厳密に解析する<br><code>state-load</code> | 1.27 ms | ±11.1% |
+| デプロイ設定と AI ペルソナを検証する<br><code>deployment-inputs</code> | 4.56 ms | ±7.0% |
+| Disk I/O Worker を生成する<br><code>disk-io-init</code> | 344.0 µs | ±8.9% |
+| SQLite とスナップショットからデータを復元する<br><code>persisted-load</code> | 197.8 ms | ±3.2% |
+| メインスレッドのホットキャッシュを満たす<br><code>hydrate</code> | 284.8 µs | ±3.2% |
+| プロセス起動からローカル復元完了まで<br><code>ready-total</code> | 392.8 ms | ±2.4% |
 
-> このラウンドの復元：ホワイトリスト 8,192 件 · ブロックリスト 8,192 件 · チャット状態 25 件 · チャット Q&A 375 件 · AI メモリスナップショット 25 件、プロセスのピーク RSS 117.06 MiB。
+> このラウンドの復元：ホワイトリスト 8,192 件 · ブロックリスト 8,192 件 · チャット状態 25 件 · チャット Q&A 375 件 · AI メモリスナップショット 25 件、プロセスのピーク RSS 117.60 MiB。
 
 ## ホットパス · 本番関数
 
@@ -80,34 +80,34 @@
 
 | シナリオ | 典型的な 1 回の時間 | 毎秒呼び出し数 | ピーク RSS | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- | --- |
-| グループメッセージ 1 件を基本ディスパッチする<br><code>incoming-message-spine</code> | 158.1 ns | 6,356,241 回/s | 91.48 MiB | 10.81 KiB | ±7.4% |
-| 直接呼びかけられたメディア 1 件のトリガー文脈と記録ペイロードを構築する<br><code>ai-media-direct-trigger</code> | 96.1 ns | 10,534,527 回/s | 94.14 MiB | 21.61 KiB | ±11.5% |
-| username のない送信者を解決する<br><code>sender-no-username</code> | 15.7 ns | 63,723,624 回/s | 77.57 MiB | 20.89 KiB | ±1.2% |
-| username が変わらない送信者を解決する<br><code>sender-stable-username</code> | 28.4 ns | 35,207,200 回/s | 78.04 MiB | 22.44 KiB | ±1.4% |
-| 同一 chat で user と channel 名義が交互に発言する際の送信者解決<br><code>sender-mixed-identity</code> | 34.7 ns | 28,881,755 回/s | 79.27 MiB | 20.60 KiB | ±3.2% |
-| Bot 自身からの空メッセージを拒否する<br><code>self-sent-empty</code> | 0.9 ns | 1,139,886,568 回/s | 76.23 MiB | 22.22 KiB | ±5.0% |
-| Bot が直前に送信している状態で、群メッセージが自身の折り返しかを判定する<br><code>self-sent-active</code> | 49.4 ns | 20,268,030 回/s | 78.99 MiB | 20.55 KiB | ±4.6% |
-| 現在のチャット状態を直接読む<br><code>chat-state-read</code> | 4.2 ns | 235,435,228 回/s | 76.96 MiB | 22.02 KiB | ±1.3% |
-| 状態 Map から 1 チャットを検索する<br><code>chat-state-map-read</code> | 10.5 ns | 95,055,366 回/s | 77.37 MiB | 20.60 KiB | ±4.1% |
-| AI 活動スライディングウィンドウを更新する<br><code>ai-activity-window</code> | 43.2 ns | 23,184,230 回/s | 79.08 MiB | 19.25 KiB | ±2.4% |
-| AI 活動 LRU の未登録項目を作成する<br><code>ai-activity-lru-miss</code> | 7.974 µs | 125,824 回/s | 101.40 MiB | 20.95 KiB | ±5.6% |
-| ローカルの ID 権限を検索する<br><code>identity-permission-read</code> | 93.7 ns | 10,672,544 回/s | 85.49 MiB | 22.12 KiB | ±1.6% |
-| 一時 allowlist の日内 qualified 定常状態と付与境界を進める<br><code>temporary-whitelist-activity</code> | 24.6 ns | 40,722,714 回/s | 86.55 MiB | 23.08 KiB | ±4.1% |
-| 既存の連投制御ウィンドウを検索する<br><code>flood-window-hit</code> | 50.6 ns | 19,754,625 回/s | 79.54 MiB | 20.93 KiB | ±1.2% |
-| 連投制御ウィンドウを追加・削除する<br><code>flood-window-growth</code> | 265.9 ns | 3,765,038 回/s | 118.57 MiB | 5.63 MiB | ±3.6% |
-| 定常状態の連投制御ウィンドウを更新する<br><code>flood-window-steady</code> | 314.7 ns | 3,178,547 回/s | 141.47 MiB | 20.37 KiB | ±1.6% |
-| 広告検出の空メタデータ高速経路<br><code>ad-empty-metadata</code> | 4.5 ns | 225,093,972 回/s | 77.37 MiB | 20.73 KiB | ±6.2% |
-| 広告候補の Worker ペイロードを複製する<br><code>ad-wire-clone</code> | 4.520 µs | 221,298 回/s | 87.75 MiB | 23.71 KiB | ±1.9% |
-| 満杯の広告検出キューを拒否する<br><code>ad-capacity-reject</code> | 98.6 ns | 10,193,322 回/s | 122.70 MiB | 24.70 KiB | ±7.5% |
-| AI コンテキストメッセージ 1 件を構築する<br><code>buffered-message-build</code> | 292.9 ns | 3,420,327 回/s | 88.68 MiB | 24.51 KiB | ±4.1% |
-| AI チャット文脈をプロンプトに描画する<br><code>transcript-render</code> | 37.04 µs | 26,999 回/s | 101.87 MiB | 22.43 KiB | ±0.7% |
-| 返信参照を抽出する<br><code>reply-reference</code> | 28.8 ns | 35,118,493 回/s | 91.27 MiB | 23.54 KiB | ±9.7% |
-| Telegram entity から @メンションを抽出する<br><code>mention-facts</code> | 45.2 ns | 22,367,239 回/s | 93.14 MiB | 20.84 KiB | ±10.2% |
-| entity のないメンション高速経路<br><code>mention-facts-plain</code> | 8.0 ns | 145,719,846 回/s | 77.27 MiB | 22.94 KiB | ±33.3% |
-| gag 発言カウンターを更新する<br><code>gag-speak-counter</code> | 37.1 ns | 26,957,105 回/s | 86.00 MiB | 19.78 KiB | ±1.3% |
-| 運勢送信レシートを引き受ける<br><code>luck-receipt-fast-path</code> | 21.7 ns | 46,027,678 回/s | 76.83 MiB | 22.86 KiB | ±0.1% |
-| パーセントから運勢ランクを検索する<br><code>luck-tier-table</code> | 16.1 ns | 62,032,129 回/s | 79.87 MiB | 20.84 KiB | ±2.7% |
-| 秘匿不要のログテキストを検査する<br><code>redact-clean-log</code> | 76.8 ns | 13,022,532 回/s | 78.91 MiB | 21.05 KiB | ±2.0% |
+| グループメッセージ 1 件を基本ディスパッチする<br><code>incoming-message-spine</code> | 153.3 ns | 6,567,743 回/s | 91.65 MiB | 6.67 KiB | ±8.1% |
+| 直接呼びかけられたメディア 1 件のトリガー文脈と記録ペイロードを構築する<br><code>ai-media-direct-trigger</code> | 107.2 ns | 9,359,660 回/s | 90.89 MiB | 20.33 KiB | ±5.5% |
+| username のない送信者を解決する<br><code>sender-no-username</code> | 15.4 ns | 64,873,966 回/s | 77.46 MiB | 21.69 KiB | ±0.4% |
+| username が変わらない送信者を解決する<br><code>sender-stable-username</code> | 29.0 ns | 34,528,297 回/s | 77.74 MiB | 20.80 KiB | ±2.3% |
+| 同一 chat で user と channel 名義が交互に発言する際の送信者解決<br><code>sender-mixed-identity</code> | 34.7 ns | 28,831,816 回/s | 79.34 MiB | 21.88 KiB | ±3.2% |
+| Bot 自身からの空メッセージを拒否する<br><code>self-sent-empty</code> | 0.8 ns | 1,179,564,321 回/s | 76.19 MiB | 23.08 KiB | ±0.7% |
+| Bot が直前に送信している状態で、群メッセージが自身の折り返しかを判定する<br><code>self-sent-active</code> | 51.1 ns | 19,604,560 回/s | 79.05 MiB | 20.30 KiB | ±2.9% |
+| 現在のチャット状態を直接読む<br><code>chat-state-read</code> | 4.0 ns | 252,194,565 回/s | 76.89 MiB | 20.80 KiB | ±3.8% |
+| 状態 Map から 1 チャットを検索する<br><code>chat-state-map-read</code> | 9.8 ns | 102,123,697 回/s | 76.92 MiB | 20.11 KiB | ±0.4% |
+| AI 活動スライディングウィンドウを更新する<br><code>ai-activity-window</code> | 42.0 ns | 23,837,416 回/s | 79.33 MiB | 22.79 KiB | ±1.0% |
+| AI 活動 LRU の未登録項目を作成する<br><code>ai-activity-lru-miss</code> | 1.063 µs | 942,477 回/s | 102.10 MiB | 20.88 KiB | ±3.7% |
+| ローカルの ID 権限を検索する<br><code>identity-permission-read</code> | 93.0 ns | 10,760,412 回/s | 85.48 MiB | 24.11 KiB | ±1.5% |
+| 一時 allowlist の日内 qualified 定常状態と付与境界を進める<br><code>temporary-whitelist-activity</code> | 32.6 ns | 33,539,232 回/s | 85.82 MiB | 21.56 KiB | ±32.1% |
+| 既存の連投制御ウィンドウを検索する<br><code>flood-window-hit</code> | 49.3 ns | 20,291,476 回/s | 79.29 MiB | 23.50 KiB | ±2.6% |
+| 連投制御ウィンドウを追加・削除する<br><code>flood-window-growth</code> | 280.9 ns | 3,581,666 回/s | 118.48 MiB | 5.63 MiB | ±8.0% |
+| 定常状態の連投制御ウィンドウを更新する<br><code>flood-window-steady</code> | 304.5 ns | 3,286,420 回/s | 155.15 MiB | 20.14 KiB | ±2.4% |
+| 広告検出の空メタデータ高速経路<br><code>ad-empty-metadata</code> | 4.3 ns | 234,918,761 回/s | 77.91 MiB | 21.25 KiB | ±0.7% |
+| 広告候補の Worker ペイロードを複製する<br><code>ad-wire-clone</code> | 2.431 µs | 411,377 回/s | 89.14 MiB | 23.60 KiB | ±1.4% |
+| 満杯の広告検出キューを拒否する<br><code>ad-capacity-reject</code> | 97.7 ns | 10,240,051 回/s | 123.18 MiB | 23.72 KiB | ±2.9% |
+| AI コンテキストメッセージ 1 件を構築する<br><code>buffered-message-build</code> | 270.4 ns | 3,700,496 回/s | 89.06 MiB | 24.58 KiB | ±2.5% |
+| AI チャット文脈をプロンプトに描画する<br><code>transcript-render</code> | 37.68 µs | 26,542 回/s | 101.73 MiB | 21.58 KiB | ±0.3% |
+| 返信参照を抽出する<br><code>reply-reference</code> | 26.2 ns | 38,402,674 回/s | 91.02 MiB | 22.95 KiB | ±9.2% |
+| Telegram entity から @メンションを抽出する<br><code>mention-facts</code> | 46.6 ns | 21,475,191 回/s | 97.01 MiB | 20.76 KiB | ±1.2% |
+| entity のないメンション高速経路<br><code>mention-facts-plain</code> | 8.2 ns | 149,247,003 回/s | 77.46 MiB | 22.91 KiB | ±36.6% |
+| gag 発言カウンターを更新する<br><code>gag-speak-counter</code> | 36.6 ns | 27,366,978 回/s | 86.18 MiB | 19.57 KiB | ±3.5% |
+| 運勢送信レシートを引き受ける<br><code>luck-receipt-fast-path</code> | 20.9 ns | 47,744,567 回/s | 77.15 MiB | 20.66 KiB | ±0.5% |
+| パーセントから運勢ランクを検索する<br><code>luck-tier-table</code> | 16.8 ns | 59,560,912 回/s | 79.43 MiB | 22.41 KiB | ±5.0% |
+| 秘匿不要のログテキストを検査する<br><code>redact-clean-log</code> | 75.0 ns | 13,327,521 回/s | 78.46 MiB | 20.51 KiB | ±1.0% |
 
 ## 完全処理 · コマンドと永続化アクション
 
@@ -115,16 +115,16 @@
 
 | 本番アクション | 完全処理能力 | 平均 1 回時間 | 典型的な時間 (p50) | 低速時の時間 (p95) | 最も遅い 1 回 | 業務レコード処理能力 | ブロックデバイス書き込み | 変動 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 参加ログ 1 件を追記して永続化 ACK を受け取る<br><code>join-log-append</code> | 903 回/s | 1.11 ms | 1.02 ms | 1.58 ms | 5.81 ms | 903 レコード/s | 3.91 MiB | ±2.3% |
-| ID ポリシー 128 件を書き込み永続化 ACK を受け取る<br><code>identity-policy-write</code> | 145 回/s | 6.89 ms | 7.84 ms | 11.05 ms | 19.51 ms | 18,578 レコード/s | 21.42 MiB | ±1.5% |
-| 一時 allowlist 活動 1 件を記録して SQLite の正確な ACK を受け取る<br><code>temporary-whitelist-write</code> | 642 回/s | 1.56 ms | 1.44 ms | 1.96 ms | 7.98 ms | 642 レコード/s | 3.15 MiB | ±0.3% |
-| チャット状態 1 件を書き込み SQLite 永続化 ACK を受け取る<br><code>chat-state-write</code> | 645 回/s | 1.55 ms | 1.46 ms | 1.96 ms | 7.91 ms | 645 レコード/s | 3.13 MiB | ±1.3% |
-| チャット Q&A 1 件を書き込み SQLite 永続化 ACK を受け取る<br><code>chat-qa-write</code> | 624 回/s | 1.60 ms | 1.47 ms | 2.28 ms | 6.96 ms | 624 レコード/s | 3.13 MiB | ±0.8% |
-| AI メモリスナップショット 1 件を書き直し永続化 ACK を受け取る<br><code>ai-memory-snapshot</code> | 353 回/s | 2.83 ms | 2.66 ms | 3.65 ms | 10.23 ms | 353 レコード/s | 5.55 MiB | ±1.4% |
-| 診断ログ 1 件を追記して永続化 ACK を受け取る<br><code>diagnostic-log</code> | 863 回/s | 1.16 ms | 1.06 ms | 1.57 ms | 6.79 ms | 863 レコード/s | 4.16 MiB | ±4.4% |
-| 広告検出：グループメッセージ 1 件を判定・処置する（通信を除く）<br><code>ad-detect-command</code> | 313 回/s | 3.20 ms | 2.95 ms | 4.48 ms | 10.79 ms | 313 レコード/s | 1.83 MiB | ±4.0% |
-| ai_chat：返信 1 ターンを生成・送信する（通信と擬人的な間を除く）<br><code>ai-reply-command</code> | 1,149 回/s | 862.8 µs | 809.1 µs | 1.23 ms | 1.59 ms | 1,149 レコード/s | 0 B | ±2.3% |
-| cron send_voice：音声 1 件を合成・エンコードして送信する（通信を除く）<br><code>cron-send-voice</code> | 5 回/s | 186.0 ms | 185.0 ms | 190.4 ms | 196.5 ms | 5 レコード/s | 0 B | ±0.6% |
+| 参加ログ 1 件を追記して永続化 ACK を受け取る<br><code>join-log-append</code> | 897 回/s | 1.12 ms | 984.5 µs | 1.50 ms | 8.70 ms | 897 レコード/s | 3.91 MiB | ±3.4% |
+| ID ポリシー 128 件を書き込み永続化 ACK を受け取る<br><code>identity-policy-write</code> | 147 回/s | 6.82 ms | 7.80 ms | 11.14 ms | 18.52 ms | 18,758 レコード/s | 21.42 MiB | ±0.5% |
+| 一時 allowlist 活動 1 件を記録して SQLite の正確な ACK を受け取る<br><code>temporary-whitelist-write</code> | 693 回/s | 1.44 ms | 1.33 ms | 1.90 ms | 8.42 ms | 693 レコード/s | 3.15 MiB | ±1.7% |
+| チャット状態 1 件を書き込み SQLite 永続化 ACK を受け取る<br><code>chat-state-write</code> | 680 回/s | 1.47 ms | 1.36 ms | 1.98 ms | 6.12 ms | 680 レコード/s | 3.13 MiB | ±3.8% |
+| チャット Q&A 1 件を書き込み SQLite 永続化 ACK を受け取る<br><code>chat-qa-write</code> | 692 回/s | 1.45 ms | 1.36 ms | 1.93 ms | 5.33 ms | 692 レコード/s | 3.13 MiB | ±2.3% |
+| AI メモリスナップショット 1 件を書き直し永続化 ACK を受け取る<br><code>ai-memory-snapshot</code> | 369 回/s | 2.71 ms | 2.47 ms | 4.01 ms | 9.88 ms | 369 レコード/s | 5.55 MiB | ±2.2% |
+| 診断ログ 1 件を追記して永続化 ACK を受け取る<br><code>diagnostic-log</code> | 860 回/s | 1.16 ms | 1.06 ms | 1.57 ms | 8.78 ms | 860 レコード/s | 4.16 MiB | ±1.3% |
+| 広告検出：グループメッセージ 1 件を判定・処置する（通信を除く）<br><code>ad-detect-command</code> | 487 回/s | 2.05 ms | 1.90 ms | 2.98 ms | 5.87 ms | 487 レコード/s | 1.20 MiB | ±2.4% |
+| ai_chat：返信 1 ターンを生成・送信する（通信と擬人的な間を除く）<br><code>ai-reply-command</code> | 1,144 回/s | 866.7 µs | 822.6 µs | 1.16 ms | 1.49 ms | 1,144 レコード/s | 0 B | ±1.4% |
+| cron send_voice：音声 1 件を合成・エンコードして送信する（通信を除く）<br><code>cron-send-voice</code> | 5 回/s | 189.6 ms | 188.4 ms | 194.2 ms | 202.6 ms | 5 レコード/s | 0 B | ±1.8% |
 
 ## ストレージ · SQLite とメインスレッドキャッシュ
 
@@ -132,12 +132,12 @@
 
 | 操作 | 毎秒呼び出し数 | 平均バッチ時間 | ブロックデバイス書き込み | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- | --- |
-| メインスレッドの ID LRU キャッシュを検索する<br><code>main-lru-read</code> | 29,749,580 回/s | 269.2 ns | 0 B | 7.14 KiB | ±3.3% |
-| ID を SQLite まで書き通し ACK を待つ<br><code>main-write-through-acked</code> | 19,680 回/s | 6.51 ms | 56.29 MiB | 41.95 KiB | ±1.8% |
-| SQLite クエリ（ウォーム接続を再利用）<br><code>storage-read-hot-connection</code> | 72,469 回/s | 110.4 µs | 5.29 MiB | 90.39 KiB | ±1.7% |
-| SQLite クエリ（バッチごとに新規接続）<br><code>storage-read-cold-connection</code> | 17,000 回/s | 470.7 µs | 2.92 MiB | 296.19 KiB | ±1.4% |
-| SQLite トランザクション書き込み（ウォーム接続を再利用）<br><code>storage-write-hot-connection</code> | 18,165 回/s | 7.05 ms | 73.14 MiB | 164.32 KiB | ±1.1% |
-| SQLite トランザクション書き込み（バッチごとに新規接続）<br><code>storage-write-cold-connection</code> | 15,085 回/s | 8.49 ms | 9.73 MiB | 201.04 KiB | ±1.9% |
+| メインスレッドの ID LRU キャッシュを検索する<br><code>main-lru-read</code> | 28,559,631 回/s | 280.2 ns | 0 B | 5.75 KiB | ±1.5% |
+| ID を SQLite まで書き通し ACK を待つ<br><code>main-write-through-acked</code> | 20,320 回/s | 6.30 ms | 56.29 MiB | 47.11 KiB | ±0.3% |
+| SQLite クエリ（ウォーム接続を再利用）<br><code>storage-read-hot-connection</code> | 77,333 回/s | 103.5 µs | 5.29 MiB | 76.16 KiB | ±1.6% |
+| SQLite クエリ（バッチごとに新規接続）<br><code>storage-read-cold-connection</code> | 17,245 回/s | 464.6 µs | 2.92 MiB | 295.86 KiB | ±3.7% |
+| SQLite トランザクション書き込み（ウォーム接続を再利用）<br><code>storage-write-hot-connection</code> | 18,297 回/s | 7.00 ms | 73.14 MiB | 188.41 KiB | ±1.7% |
+| SQLite トランザクション書き込み（バッチごとに新規接続）<br><code>storage-write-cold-connection</code> | 14,437 回/s | 8.87 ms | 9.73 MiB | 222.27 KiB | ±2.4% |
 
 ## コンテナとアルゴリズム
 
@@ -145,9 +145,9 @@
 
 | コンテナ | 典型的な 1 回の時間 | 毎秒呼び出し数 | ピーク RSS | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- | --- |
-| 上限付き時刻スライディングウィンドウの記録と期限切れ削除<br><code>quota-timestamp-window</code> | 17.7 ns | 56,501,370 回/s | 88.43 MiB | 22.40 KiB | ±0.8% |
-| 有界 join ウィンドウの飽和記録と期限切れ削除<br><code>join-timestamp-window</code> | 36.4 ns | 27,474,121 回/s | 79.42 MiB | 23.26 KiB | ±2.7% |
-| AI 有界ローリングメモリの追加と削除<br><code>bounded-rolling-buffer</code> | 17.3 ns | 57,985,468 回/s | 86.11 MiB | 25.24 KiB | ±2.9% |
+| 上限付き時刻スライディングウィンドウの記録と期限切れ削除<br><code>quota-timestamp-window</code> | 16.6 ns | 60,724,326 回/s | 87.73 MiB | 23.01 KiB | ±7.7% |
+| 有界 join ウィンドウの飽和記録と期限切れ削除<br><code>join-timestamp-window</code> | 35.6 ns | 28,117,502 回/s | 78.95 MiB | 23.81 KiB | ±1.4% |
+| AI 有界ローリングメモリの追加と削除<br><code>bounded-rolling-buffer</code> | 19.1 ns | 52,707,016 回/s | 85.72 MiB | 24.05 KiB | ±7.8% |
 
 ## 参加ログ · 25 万件の容量線
 
@@ -155,8 +155,8 @@
 
 | 操作 | 所要時間 | GC 前の割り当て | GC 後の残存 | 変動 |
 | --- | --- | --- | --- | --- |
-| 参加ログ 25 万件のスナップショットを複製する<br><code>snapshot</code> | 122.1 ms | 1.71 MiB | 4.89 KiB | ±4.0% |
-| 参加ログ 25 万件を容量上限まで切り詰める<br><code>capacity</code> | 16.82 ms | 0 B | -4.98 KiB | ±7.8% |
+| 参加ログ 25 万件のスナップショットを複製する<br><code>snapshot</code> | 120.3 ms | 1.74 MiB | 4.96 KiB | ±1.7% |
+| 参加ログ 25 万件を容量上限まで切り詰める<br><code>capacity</code> | 18.47 ms | 0 B | -3.60 KiB | ±1.5% |
 
 > 再現方法：`bun run perf:full`。
 

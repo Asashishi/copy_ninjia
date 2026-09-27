@@ -49,7 +49,7 @@ allowlist、blocklist、未完了 removal は deployment 設定ではなく runt
 | `dynamic/mood.json` | AI mood、base probability、天気／時刻 multiplier | AI chat を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `dynamic/ad_samples.json` | 広告分類の positive reference | 広告検出を有効化できない。すでに有効だった chat は静かに止まるが startup は成功する |
 | `dynamic/cron.json` | 定時送信タスク（テキスト・画像・ファイル・ボイス） | 定時タスクなし |
-| `dynamic/assets.json` | `/h_image` 専用画像庫のディレクトリと、inline 結果のサムネイル・既定アバターの URL | すべて組み込み既定値 |
+| `dynamic/assets.json` | `/h_image` 専用画像庫のディレクトリ、既定アバター（ローカルファイルまたは URL）、inline 結果のサムネイル URL | すべて組み込み既定値 |
 | `static/g-auth.json` | `/translate` 用の Google Cloud service account key。例は placeholder だけで、実 key はデプロイ側が帯域外で `config/static/` に置く | 翻訳を有効化できない。有効な翻訳セッションは message を処理しなくなるが startup は成功する |
 
 AI chat はこのディレクトリにない `prompt/persona.md` にも依存します。optional file が存在するのに
@@ -78,8 +78,8 @@ bot は `config/dynamic/` だけを監視します。`assets.json`、`ad_samples
   提示されなくなり、その catalog は次回 startup 時に allowlist に沿って整理されます。
 - `mood.json` に残っている mood は各 chat に即時反映し、現在の mood が削除された chat は次に
   使うときに引き直します。
-- `assets.json` の変更は、サムネイルと既定アバター URL については次に使う時点から有効になります。
-  ファイルを削除するとすべて組み込み既定値に戻ります。`random_h_image_dir` が新しいディレクトリを
+- `assets.json` の変更は、サムネイルと既定アバターについては次に使う時点から有効になります。
+  ファイルを削除するとすべて組み込み既定値に戻ります。`onlyPath.random_h_image_dir` が新しいディレクトリを
   指す場合は、起動時と同じ規則でそのディレクトリを作成・検査してから切り替え、検査に失敗すると
   `assets.json` の変更全体を拒否して元のディレクトリを使い続けます。
 - `cron.json` はタスク名で照合します。内容が変わらないタスクは元のタイミングを保ち、変更・
@@ -170,15 +170,15 @@ design した voice はその `api_key` の project に属し、1 年後に失�
 
 `agent.tts.style` は任意の基本朗読スタイルです。trim 後に空でない文字列が必要で、null、空白だけの文字列、ほかの型は拒否します。省略時は `GEMINI_SPEECH_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` を使います。3 つの音声入口で共用し、hot reload は新しい request に反映され、発行済み request は元の設定 snapshot を保持します。項目を削除すると既定値に戻ります。request ごとの `tone` は引き続き `<基本スタイル>; 细节: <口調>` として連結します。
 
-`tts` には optional な 1 日あたりの回数 field が 2 つあり、3 つの入口で 1 つの回数を共有します。
+`tts` には任意の 1 日あたりの枠 field が 2 つあり、AI と予約枠を別々に数えます。
 
 | field | 意味 |
 | --- | --- |
-| `daily_limit` | 1 つの計数窓で発行できる合成 request の最大数。正の整数、既定 100。`/send` 中継と `cron.json` の `send_voice` はこの数まで使える |
-| `daily_reserve_quota` | `daily_limit` のうち `/send` と cron のために残す回数。整数、0 〜 `daily_limit - 1`、既定 25。AI のボイス tool は `daily_limit - daily_reserve_quota` までしか使えない |
+| `daily_limit` | 1 窓で AI と予約枠に配分する総予算。正の整数、既定 100 |
+| `daily_reserve_quota` | `/send` と cron 共用の独立枠。整数、0 〜 `daily_limit - 1`、既定 25。AI は残りの `daily_limit - daily_reserve_quota` 回を独立して使い、互いに借りない。0 では運用側の合成を行わない |
 
 計数窓は窓内の最初の request から始まり、24 時間経つと次の request を起点に数え直します。窓と回数は
-runtime data root の `memory/global/state.json` の `ttsUsage` に保存され、再起動後も引き継がれます。合成呼び出し 1 回で 1 回と数え、
+runtime data root の `memory/global/state.json` の `ttsUsage`（`windowStartedAt`、`agentCount`、`reserveCount`）に保存され、再起動後も引き継がれます。両回数は窓を共有し、期限後の取得はゼロとして扱い、次の記録で一緒にリセットします。合成呼び出し 1 回で 1 回と数え、
 SDK 内部の retry は別に数えません。上限に達すると request を発行しません。AI はボイスを送らず、群内でも
 触れません。`/send` は上限の一言を返します。cron は `daily limit reached` の error log を 1 行残し、
 再試行しません。2 つの field は hot reload ですぐ反映され、使用済み回数はリセットされません。上限を
@@ -218,28 +218,42 @@ permission key と default は `/permission help` が現行 reference です。�
 
 ## `assets.json`
 
-ファイルも各フィールドも任意で、省略したフィールドは組み込み既定値を使います。変更する項目だけを
-書きます。例：
+ファイルは任意です。トップレベルは各フィールドが受け付ける取得元で `onlyPath`・`pathOrUrl`・`onlyUrl` の
+3 グループに分かれ、各グループも各フィールドも任意で、省略したフィールドは組み込み既定値を使います。
+変更する項目だけを書きます。例：
 
 ```json
 {
-  "random_h_image_dir": "./images",
-  "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+  "onlyPath": {
+    "random_h_image_dir": "./images"
+  },
+  "pathOrUrl": {
+    "bot_default_avatar": "./avatar/default.png"
+  },
+  "onlyUrl": {
+    "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+  }
 }
 ```
 
-| フィールド | 用途 | 形式 |
-| --- | --- | --- |
-| `random_h_image_dir` | `/h_image` と cron ランダム画像の専用画像庫。既定 `./h_image` | 絶対ディレクトリまたは `./`・`../` で始まるパス。相対パスは runtime data root 基準 |
-| `fortune_thumbnail_url` | 「未卜先知」inline 結果のサムネイル | 絶対 https URL |
-| `probability_thumbnail_url` | 「概率论」inline 結果のサムネイル | 絶対 https URL |
-| `gag_thumbnail_url` | gag 発言 inline 結果のサムネイル | 絶対 https URL |
-| `bot_default_avatar_url` | `/icon reset`・`/copy stop` で bot アバターを戻すときにダウンロードする画像 | 絶対 http または https URL |
+| グループ | フィールド | 用途 | 形式 |
+| --- | --- | --- | --- |
+| `onlyPath` | `random_h_image_dir` | `/h_image` と cron ランダム画像の専用画像庫。既定 `./h_image` | ローカルのディレクトリパス |
+| `pathOrUrl` | `bot_default_avatar` | `/icon reset`・`/copy stop` で bot アバターを戻すときに使う画像 | ローカルのファイルパス、または絶対 http/https URL |
+| `onlyUrl` | `fortune_thumbnail_url` | 「未卜先知」inline 結果のサムネイル | 絶対 https URL |
+| `onlyUrl` | `probability_thumbnail_url` | 「概率论」inline 結果のサムネイル | 絶対 https URL |
+| `onlyUrl` | `gag_thumbnail_url` | gag 発言 inline 結果のサムネイル | 絶対 https URL |
 
-文字列の前後の空白は取り除きます。未知のフィールド、空白を除くと空になる文字列、形式に合わない値は
-起動を拒否します（稼働中はその変更を拒否します）。
-[`config_example/dynamic/assets.json`](../dynamic/assets.json) は 5 つのフィールドすべてを組み込み既定値で記載しています。
-丸ごとコピーして必要な項目だけ変更できます。
+ローカルパスは絶対パスか `./`・`../` で始まる明示的相対パスだけで、相対パスは runtime data root 基準です。
+裸の名前と `~/…` は無効です。`bot_default_avatar` をローカルパスにする場合、そのファイルは存在する通常ファイル
+（シンボリックリンク経由も可）で、10 MiB 以下の JPEG または PNG でなければなりません。起動時と hot reload 時に
+検査し、アバターを復元するたびに読み直します。サムネイル 3 枚は Telegram が取得するため https URL だけを受け付けます。
+
+文字列の前後の空白は取り除きます。未知のグループ、所属しないグループに置いたフィールド、空白を除くと空になる
+文字列、形式に合わない値は起動を拒否します（稼働中はその変更を拒否します）。
+[`config_example/dynamic/assets.json`](../dynamic/assets.json) は 3 グループ 5 フィールドすべてを組み込み既定値で記載しています。
+丸ごとコピーして必要な項目だけ変更できます。旧来の平置き形式は
+[運用文書](../../docs/ja/07-operations.md#assets-groups) に従って手動で移行してください。
 
 ## `stickers.json`
 
@@ -325,7 +339,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/stat
 
 - `send_message`：`content` 必須、最大 4096 文字。
 - `send_image`：`content` は任意の単一文字列（最大 1024 文字）。固定画像は `url` 配列かファイル `path` 配列のどちらか一方、1–10 項目を指定します。1 枚でも `"url": ["https://example.com/a.jpg"]` のように配列にし、`rand_image` は省略または `false` のみです。1 枚は写真、2–10 枚は 1 回のアルバム要求で送り、caption は先頭だけ、別のテキスト投稿はしません。アルバムには複数の Telegram message ID があります。`is_blurred: true` は全画像に spoiler を付け、省略または `false` は付けません。
-  `rand_image: true` は 1 枚だけ抽選します。`url` とファイル配列は禁止で、`path` は任意のディレクトリ文字列です。省略時は `assets.json` の `random_h_image_dir`、別のディレクトリを明示した場合は SHA-256 命名規則を要求しません。
+  `rand_image: true` は 1 枚だけ抽選します。`url` とファイル配列は禁止で、`path` は任意のディレクトリ文字列です。省略時は `assets.json` の `onlyPath.random_h_image_dir`、別のディレクトリを明示した場合は SHA-256 命名規則を要求しません。
 - `send_file`：`content` は任意（最大 1024 文字）。送信元は `url` か `path` のちょうど 1 つ。
 - `send_voice`：`content` は必須で、読み上げるセリフ（最大 256 文字）です。`tone` は任意で、この 1 文の
   話し方（最大 64 文字）を固定のベース声色の後ろに付け足し、省略するとベース声色だけを使います。
@@ -377,9 +391,10 @@ placeholder の秘密鍵は parse できないため、そのまま `config/stat
 
 | パス項目 | 相対パスの基準 | 形式 |
 | --- | --- | --- |
-| `assets.json` の `random_h_image_dir` | 実行時データルート | 絶対ディレクトリまたは `./`・`../` で始まるパス |
+| `assets.json` の `onlyPath.random_h_image_dir` | 実行時データルート | 絶対ディレクトリまたは `./`・`../` で始まるパス |
+| `assets.json` の `pathOrUrl.bot_default_avatar`（ローカルパスの場合） | 実行時データルート | 絶対ファイルパスまたは `./`・`../` で始まるパス |
 | cron 固定画像 `payload.path` | プロジェクトルート | ファイルパス 1〜10 個の配列 |
 | cron ランダム画像 `payload.path` | プロジェクトルート | 任意のディレクトリ文字列。省略時だけ専用画像庫を選択 |
 | cron ファイル `payload.path` | プロジェクトルート | 単一ファイルパス文字列 |
 
-`assets.json` の `random_h_image_dir` は `/h_image` 専用で、既定は `./h_image` です。`/h_image` のような絶対パスと `./h_image`、`../h_image` のような明示的相対パスを受け付け、相対パスは runtime data root 基準です。他機能の画像を混ぜず、追加は `/h_image add` を使ってください。手動追加は内容 SHA-256 の小文字 16 進数 64 文字をファイル名本体にし、拡張子は jpg/jpeg/png/webp とします。Worker と外部接続より前に名前と項目型を非同期検査し、不正ファイル、サブディレクトリ、ファイル symlink、残存一時ファイルがあれば起動を拒否します。全画像の内容ハッシュは再計算せず、手動名と内容の一致は運用者の責任です。cron で明示した別のディレクトリには命名規則を課しません。ローカル内容の読み取り・事前検査・アップロードは非同期で、アルバム全体の画像を先読みせず再オープン可能な stream を保持します。
+`assets.json` の `onlyPath.random_h_image_dir` は `/h_image` 専用で、既定は `./h_image` です。`/h_image` のような絶対パスと `./h_image`、`../h_image` のような明示的相対パスを受け付け、相対パスは runtime data root 基準です。他機能の画像を混ぜず、追加は `/h_image add` を使ってください。手動追加は内容 SHA-256 の小文字 16 進数 64 文字をファイル名本体にし、拡張子は jpg/jpeg/png/webp とします。Worker と外部接続より前に名前と項目型を非同期検査し、不正ファイル、サブディレクトリ、ファイル symlink、残存一時ファイルがあれば起動を拒否します。全画像の内容ハッシュは再計算せず、手動名と内容の一致は運用者の責任です。cron で明示した別のディレクトリには命名規則を課しません。ローカル内容の読み取り・事前検査・アップロードは非同期で、アルバム全体の画像を先読みせず再オープン可能な stream を保持します。

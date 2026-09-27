@@ -10,8 +10,7 @@ const {
   activeVerificationSnapshots,
   antiRaidRuntimeState,
   chatStates,
-  flushDiskIO,
-  flushStateToDisk,
+  flushDiskIODomain,
   loggerError,
   pendingLockdownPersistence,
   persistedLockdownFingerprints,
@@ -290,14 +289,13 @@ describe("Anti-Raid mirror persistence barriers", () => {
     expect(antiRaidRuntimeState.persistenceVersion).toBe(version);
   });
 
-  test("chat_member update 必须依次跨过 Worker barrier 与两类落盘后才结算", async () => {
+  test("chat_member update 必须依次跨过 Worker barrier 与两个领域屏障后才结算", async () => {
     workerPosts.length = 0;
-    flushDiskIO.mockClear();
-    flushStateToDisk.mockClear();
-    const diskGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
-    const stateGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
-    flushDiskIO.mockImplementationOnce(() => diskGate.promise);
-    flushStateToDisk.mockImplementationOnce(() => stateGate.promise);
+    flushDiskIODomain.mockClear();
+    const verificationGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
+    const chatStateGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
+    flushDiskIODomain.mockImplementation((domain: string): Promise<FlushResult> =>
+      domain === "verification" ? verificationGate.promise : chatStateGate.promise);
     const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
     let settled: boolean = false;
     const handled = antiRaid.handleChatMemberUpdate({
@@ -319,21 +317,21 @@ describe("Anti-Raid mirror persistence barriers", () => {
     });
     await Bun.sleep(0);
     expect(settled).toBe(false);
-    expect(flushDiskIO).not.toHaveBeenCalled();
-    expect(flushStateToDisk).not.toHaveBeenCalled();
+    expect(flushDiskIODomain).not.toHaveBeenCalled();
 
     if (barrier?.type === "barrier") {
       workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
     await Bun.sleep(0);
-    expect(flushDiskIO).toHaveBeenCalledTimes(1);
-    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    // 只刷 Anti-Raid 镜像所在的两个领域，其它领域的攒批窗口不受影响。
+    expect(flushDiskIODomain.mock.calls.map((call: unknown[]): unknown => call[0]))
+      .toEqual(["verification", "chatState"]);
     expect(settled).toBe(false);
 
-    diskGate.resolve("flushed");
+    verificationGate.resolve("flushed");
     await Bun.sleep(0);
     expect(settled).toBe(false);
-    stateGate.resolve("flushed");
+    chatStateGate.resolve("flushed");
     await handled;
     expect(settled).toBe(true);
   });
@@ -399,9 +397,10 @@ describe("Anti-Raid mirror persistence barriers", () => {
     await anonymousAdminJoined;
   });
 
-  test("barrier 后任一持久化 owner 失败，安全 update 必须 reject", async () => {
+  test("barrier 后任一领域屏障失败，安全 update 必须 reject", async () => {
     workerPosts.length = 0;
-    flushDiskIO.mockResolvedValueOnce("failed");
+    flushDiskIODomain.mockImplementation(async (domain: string): Promise<FlushResult> =>
+      domain === "verification" ? "failed" : "flushed");
     const { antiRaidRuntimeState } = await import("../../../packages/cache/main/antiRaid/proxy");
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
@@ -422,13 +421,12 @@ describe("Anti-Raid mirror persistence barriers", () => {
       workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
 
-    await expect(handled).rejects.toThrow("Anti-Raid persistence failed: disk=failed, state=flushed");
+    await expect(handled).rejects.toThrow("Anti-Raid persistence failed: verification=failed, chatState=flushed");
   });
 
   test("Worker 在 barrier 等待期间重建会立即失败，不把旧实例回执当成功", async () => {
     workerPosts.length = 0;
-    flushDiskIO.mockClear();
-    flushStateToDisk.mockClear();
+    flushDiskIODomain.mockClear();
     const handled = antiRaid.handleChatMemberUpdate({
       me: { id: 99 },
       chatMember: {
@@ -444,8 +442,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
     workerHooks.supervisorOptions!.onRespawn((): boolean => true);
 
     await expect(handled).rejects.toThrow("Anti-Raid Worker barrier failed");
-    expect(flushDiskIO).not.toHaveBeenCalled();
-    expect(flushStateToDisk).not.toHaveBeenCalled();
+    expect(flushDiskIODomain).not.toHaveBeenCalled();
   });
 
   test("drain 超时会清理 waiter，迟到回执不能改变失败结果", async () => {

@@ -59,16 +59,10 @@ function executeJsonCall(
       return bot.api.raw.banChatMember(call.payload, signal as never);
     case "banChatSenderChat":
       return bot.api.raw.banChatSenderChat(call.payload, signal as never);
-    case "copyMessage":
-      return bot.api.raw.copyMessage(call.payload, signal as never);
     case "deleteMessage":
       return bot.api.raw.deleteMessage(call.payload, signal as never);
     case "deleteMessages":
       return bot.api.raw.deleteMessages(call.payload, signal as never);
-    case "deleteEphemeralMessage":
-      return bot.api.raw.deleteEphemeralMessage(call.payload, signal as never);
-    case "editMessageText":
-      return bot.api.raw.editMessageText(call.payload, signal as never);
     case "getChat":
       return bot.api.raw.getChat(call.payload, signal as never);
     case "getChatAdministrators":
@@ -91,8 +85,6 @@ function executeJsonCall(
       return bot.api.raw.setMessageReaction(call.payload, signal as never);
     case "unbanChatMember":
       return bot.api.raw.unbanChatMember(call.payload, signal as never);
-    case "unbanChatSenderChat":
-      return bot.api.raw.unbanChatSenderChat(call.payload, signal as never);
   }
 }
 

@@ -8,15 +8,15 @@ import type { AgentTtsCapabilityConfig } from "../../../types/config";
 import type { TtsDailyUsage, TtsQuotaScope } from "../../../types/aiChat/voiceMessage";
 
 /**
- * now 时刻仍计入当前窗口的请求数；从没用过、或距窗口起点已满 TTS_USAGE_WINDOW_MS
- * 时为 0。
+ * now 时刻仍有效的计数窗口；从没用过、或距窗口起点已满 TTS_USAGE_WINDOW_MS
+ * 时为 null，不修改输入。
  */
-export function activeTtsUsageCount(usage: TtsDailyUsage | null, now: number): number {
-  if (usage === null || now - usage.windowStartedAt >= TTS_USAGE_WINDOW_MS) return 0;
-  return usage.count;
+export function activeTtsUsage(usage: TtsDailyUsage | null, now: number): TtsDailyUsage | null {
+  if (usage === null || now - usage.windowStartedAt >= TTS_USAGE_WINDOW_MS) return null;
+  return usage;
 }
 
-/** 按 `agent.tts` 配置取某个额度口径的每日上限：`operator` 为 dailyLimit，`ai` 为 dailyLimit - dailyReserveQuota。 */
+/** 独立每日上限：`operator` 为 dailyReserveQuota，`ai` 为 dailyLimit - dailyReserveQuota。 */
 export function ttsQuotaLimit(tts: AgentTtsCapabilityConfig, scope: TtsQuotaScope): number {
-  return scope === "ai" ? tts.dailyLimit - tts.dailyReserveQuota : tts.dailyLimit;
+  return scope === "ai" ? tts.dailyLimit - tts.dailyReserveQuota : tts.dailyReserveQuota;
 }

@@ -9,6 +9,7 @@ import type {
   StoredIdentityIdLookups,
 } from "../../../types/storageDatabase";
 import type {
+  PendingAiContextWrite,
   PendingChatQaWrite,
   PendingChatStateWrite,
   PendingIdentityPolicyWrite,
@@ -89,7 +90,7 @@ export const pendingTemporaryAdBypassWrites: Map<
 export const pendingRemovalWrites: Map<number, PendingRemovalWrite> = new Map();
 
 /**
- * 群状态未提交最终值；容量达到 25 时仍由显式事务整体提交。
+ * 群状态未提交最终值；达到 STATE_MANAGED_CHAT_LIMIT 群时由显式事务整体提交。
  * 清理与重建路径同 pendingWhitelistWrites。
  */
 export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Map();
@@ -102,6 +103,23 @@ export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Ma
  * 一群的最后一条被提交或删除后，外层那一项随之移除，空 Map 不留存。
  */
 export const pendingChatQaWrites: Map<number, Map<string, PendingChatQaWrite>> = new Map();
+
+/**
+ * pendingChatQaWrites 内层条目总数（含删除墓碑），供批次阈值判定直接读取，不在每次
+ * 写入时遍历各群。与内层条目同增同删：新 (chatId, q) 进缓冲时加一，事务提交摘除
+ * 条目时减一，resetStorageDatabaseCache 归零；Worker 重建后从零开始，随主线程重放
+ * 重新累计。
+ */
+export const pendingChatQaEntryCount: { current: number } = { current: 0 };
+
+/**
+ * AI 上下文未提交最终值，按群一份；事务内排在群状态之后按主键更新 `ai_context`，
+ * 群行不存在时不插入。填充：aiMemoryStorage.ts 按 revision 接受 upsert 或删除时覆盖；
+ * 清理：提交成功后由 flush 摘除，失败保留重试，resetStorageDatabaseCache 清空。容量：
+ * 每群至多一项，上界 AI_MEMORY_MAX_CHATS，不计入 storagePendingBudget。Worker 重建后为空，
+ * 主线程重放最新快照与未确认删除墓碑。
+ */
+export const pendingAiContextWrites: Map<number, PendingAiContextWrite> = new Map();
 
 /**
  * Worker 当前待踢成员权威快照。启动从 SQLite 恢复，之后由主线程完整快照替换；
@@ -131,8 +149,8 @@ export const latestRemovalSnapshotRevision: { current: number } = { current: 0 }
 
 /**
  * Worker 重建后的镜像重放区间是否打开。由主线程 `storageFlushHold` 标记开合
- * （见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）；为 true 时满批与定时
- * 提交暂缓。新 Worker 与 resetStorageDatabaseCache 从 false 起步，容量为一个布尔值。
+ * （见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）；为 true 时满批、定时与
+ * AI 上下文的即时提交暂缓。新 Worker 与 resetStorageDatabaseCache 从 false 起步，容量为一个布尔值。
  */
 export const storageFlushHold: { current: boolean } = { current: false };
 
@@ -143,15 +161,15 @@ export const storageWriteFlushTimer: {
 
 /**
  * 本轮未进入写缓冲的拒收领域；统一 flush 取走后清空，避免永久失败。
- * 容量最多为六个 SQLite 持久化领域，Worker 重建时由 reset 清空。
+ * 容量最多为七个共享 SQLite 持久化领域（含 AI 上下文），Worker 重建时由 reset 清空。
  */
 export const rejectedStorageDomains: Set<
-  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
 > = new Set();
 
 /** 记下某个存储领域本轮拒收的一条消息；下一次 flush 会按该领域回报失败。 */
 export function noteStorageWriteRejected(
-  domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
 ): void {
   rejectedStorageDomains.add(domain);
 }
@@ -172,6 +190,8 @@ export function resetStorageDatabaseCache(): void {
   pendingRemovalWrites.clear();
   pendingChatStateWrites.clear();
   pendingChatQaWrites.clear();
+  pendingChatQaEntryCount.current = 0;
+  pendingAiContextWrites.clear();
   removalSnapshot.clear();
   removalSnapshotData.clear();
   pendingRemovalSnapshotRevision.current = null;

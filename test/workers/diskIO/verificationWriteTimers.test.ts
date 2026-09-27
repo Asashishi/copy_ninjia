@@ -2,10 +2,8 @@ import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  VERIFICATION_FLUSH_INTERVAL_MS,
-  VERIFICATION_ROLLOVER_RETRY_MS,
-} from "../../../packages/consts/diskIO/verification";
+import { VERIFICATION_ROLLOVER_RETRY_MS } from "../../../packages/consts/diskIO/verification";
+import { FLUSH_INTERVAL_MS } from "../../../packages/consts/diskIO/appendOnly";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
@@ -193,7 +191,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
     expect(timer?.hasRef()).toBeFalse();
     expect(verificationPendingChanges).toHaveLength(1);
 
-    jest.advanceTimersByTime(VERIFICATION_FLUSH_INTERVAL_MS);
+    jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
     await diskIOOperationTail.current;
 
     expect(verificationFlushTimer.timer).toBeNull();
@@ -223,7 +221,7 @@ describe("pending verification 定时落盘与午夜轮换", (): void => {
 
     rmSync(dir, { force: true });
     mkdirSync(dir, { recursive: true });
-    jest.advanceTimersByTime(VERIFICATION_FLUSH_INTERVAL_MS);
+    jest.advanceTimersByTime(FLUSH_INTERVAL_MS);
     await diskIOOperationTail.current;
 
     expect(verificationPendingChanges).toHaveLength(0);

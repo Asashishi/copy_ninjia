@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DiskIOMessage, DiskIOOperationMessage, AdSampleDiskMessage } from "../../packages/types/diskIO/messages";
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
 import {
   adoptAiMemorySnapshots,
@@ -9,16 +10,16 @@ import {
   adoptStorageDatabase,
   adoptVerificationDay,
   consoleError,
-  consumeJoinLogRejection,
   deleteAiMemorySnapshot,
   diskIOMaintenanceCron,
-  flushAiMemorySnapshots,
+  flushAdSampleBuffer,
   flushBlocklistRemovalOutbox,
-  flushJoinLogDomain,
+  flushJoinLogBuffer,
   flushLogBuffer,
   flushLuckAppends,
   flushStickerCatalogs,
   flushVerificationChanges,
+  pendingStorageDatabaseDomains,
   handleAdSampleMessage,
   handleAiCacheUsageMessage,
   flushAiCacheBuffer,
@@ -50,6 +51,7 @@ import {
   markAiMemorySnapshotDirty,
   markStickerCatalogSnapshotDirty,
   postMessage,
+  purgeJoinLogDeletions,
   queueDiskIOWorkerMessage,
   readJoinLog,
   recoverLuckReceiptSecret,
@@ -79,6 +81,7 @@ describe("Disk I/O Worker protocol router", () => {
     await route({ type: "blocklistRemovals", revision: 1, removals: [] });
     await route({
       type: "joinLog",
+      sequence: 1,
       chatId: -1,
       userId: 42,
       joinedAt: 1_000,
@@ -106,7 +109,7 @@ describe("Disk I/O Worker protocol router", () => {
 
   test("诊断批次里的 AI 缓存用量进 ai-daily-usage 缓冲，统一 flush 一并刷出且失败不进回执", async () => {
     const usage = {
-      type: "aiCacheUsage", timestamp: 1, capability: "text", provider: "openai", model: "m",
+      type: "aiCacheUsage", kind: "tokens", timestamp: 1, capability: "text", provider: "openai", model: "m",
       inputTokens: 10, cachedInputTokens: 4, outputTokens: 1,
     } as const;
     await route({ type: "diagnosticBatch", batchId: 8, messages: [usage] });
@@ -350,83 +353,24 @@ describe("Disk I/O Worker protocol router", () => {
     rejectedStorageDomains.clear();
   });
 
-  test("入群事实的 owner 抛错不逸出 onmessage，改记拒收让统一 flush 回报失败", async () => {
-    handleJoinLogMessage.mockImplementationOnce((): void => {
-      throw new Error("Failed to flush join logs before day rollover cleanup.");
-    });
-
-    const originalConsoleError = console.error;
-    console.error = consoleError as unknown as typeof console.error;
-    try {
-      // 路由必须捕获异常不逸出 onmessage，见 docs/cn/04-invariants.md。
-      await expect(route({
-        type: "joinLog",
-        chatId: -1,
-        userId: 42,
-        joinedAt: 1_000,
-        day: "1970-01-01",
-      })).resolves.toBeUndefined();
-    } finally {
-      console.error = originalConsoleError;
-    }
-    expect(consoleError).toHaveBeenCalledTimes(1);
-    // 代价只落在 joinLog 这一个领域：拒收标记让 recordJoinLog 紧接着那次
-    // flush 拿到 flushFailed，该 update 不被确认，Telegram 重投。
-    expect(consumeJoinLogRejection()).toBeTrue();
-    // 在线消息不升级为停机：它后面紧跟着调用方自己的 flush。
-    expect(postMessage).not.toHaveBeenCalled();
-  });
-
-  test("恢复缓冲重放期间的入群写失败升级为停机回执，不只是记拒收", async () => {
-    // 重放窗口内写失败必须升级为停机而非普通拒收标记，见 docs/cn/04-invariants.md
-    // 的 RecoveryReplayRequest 说明。
-    handleJoinLogMessage.mockImplementationOnce((): void => {
-      throw new Error("Join log buffer reached its hard limit of 4096 entries.");
-    });
-
-    const originalConsoleError = console.error;
-    console.error = consoleError as unknown as typeof console.error;
-    try {
-      await route({ type: "recoveryReplay", active: true });
-      await expect(route({
-        type: "joinLog",
-        chatId: -1,
-        userId: 42,
-        joinedAt: 1_000,
-        day: "1970-01-01",
-      })).resolves.toBeUndefined();
-      await route({ type: "recoveryReplay", active: false });
-    } finally {
-      console.error = originalConsoleError;
-    }
-
-    expect(postMessage).toHaveBeenCalledTimes(1);
-    expect(postMessage).toHaveBeenLastCalledWith({
-      type: "recoveryReplayFailed",
-      domain: "joinLog",
-      error: "Join log buffer reached its hard limit of 4096 entries.",
-    });
-    // 拒收标记照记不误：停机路径与领域内的回报互不取代。
-    expect(consumeJoinLogRejection()).toBeTrue();
-  });
-
-  test("重放窗口关闭后写失败回到常规语义，不再升级为停机", async () => {
+  test("重放窗口关闭后身份写拒收回到常规语义，只记领域拒收不升级为停机", async () => {
     await route({ type: "recoveryReplay", active: true });
     await route({ type: "recoveryReplay", active: false });
-    handleJoinLogMessage.mockImplementationOnce((): void => {
-      throw new Error("Failed to flush join logs before day rollover cleanup.");
+    handleIdentityPolicyWrite.mockImplementationOnce((): void => {
+      throw new Error("revision must be a positive safe integer.");
     });
 
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      await route({ type: "joinLog", chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01" });
+      await route({ type: "identityPolicyWrite", table: "whitelist", id: 7, data: null, revision: 1 });
     } finally {
       console.error = originalConsoleError;
     }
 
     expect(postMessage).not.toHaveBeenCalled();
-    expect(consumeJoinLogRejection()).toBeTrue();
+    expect([...rejectedStorageDomains]).toEqual(["whitelist"]);
+    rejectedStorageDomains.clear();
   });
 
   test("入群日志查询总有显式成功或失败回执", async () => {
@@ -582,6 +526,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
     const write: Promise<void> = queueDiskIOWorkerMessage({
       type: "joinLog",
+      sequence: 1,
       chatId: -1,
       userId: 42,
       joinedAt: 1_000,
@@ -611,7 +556,7 @@ describe("Disk I/O Worker protocol router", () => {
     });
     const load: Promise<void> = queueDiskIOWorkerMessage({ type: "load", stickerPacks: [] });
     const write: Promise<void> = queueDiskIOWorkerMessage({
-      type: "joinLog", chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01",
+      type: "joinLog", sequence: 1, chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01",
     });
     try {
       await entered.promise;
@@ -692,17 +637,18 @@ describe("Disk I/O Worker protocol router", () => {
   });
 
   test("flush 不短路其它 owner，并按领域回报失败", async () => {
-    flushAiMemorySnapshots.mockReturnValueOnce(false);
+    flushStickerCatalogs.mockReturnValueOnce(false);
     await route({ type: "flush", flushId: 11, scope: "all" });
 
     for (const fn of [
       flushLogBuffer,
-      flushAiMemorySnapshots,
+      flushAdSampleBuffer,
       flushStickerCatalogs,
       flushLuckAppends,
       flushVerificationChanges,
       flushBlocklistRemovalOutbox,
-      flushJoinLogDomain,
+      flushJoinLogBuffer,
+      purgeJoinLogDeletions,
     ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }
@@ -710,7 +656,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: 11,
-      failedDomains: ["aiMemory"],
+      failedDomains: ["stickerCatalog"],
     });
 
     flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
@@ -727,16 +673,93 @@ describe("Disk I/O Worker protocol router", () => {
 
     expect(flushLogBuffer).not.toHaveBeenCalled();
     for (const fn of [
-      flushAiMemorySnapshots,
+      flushAdSampleBuffer,
       flushStickerCatalogs,
       flushLuckAppends,
       flushVerificationChanges,
       flushBlocklistRemovalOutbox,
-      flushJoinLogDomain,
+      flushJoinLogBuffer,
+      purgeJoinLogDeletions,
     ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }
     expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 13 });
+  });
+
+  test("单领域屏障只刷目标领域，其它领域的缓冲窗口不受影响", async () => {
+    await route({ type: "flush", flushId: 15, scope: "chatState" });
+
+    // 共享 SQLite 的七个领域（含 AI 上下文）共用一个事务：任一 SQLite 领域名都提交一次。
+    expect(flushBlocklistRemovalOutbox).toHaveBeenCalledTimes(1);
+    for (const fn of [
+      flushLogBuffer,
+      flushAdSampleBuffer,
+      flushAiCacheBuffer,
+      flushStickerCatalogs,
+      flushLuckAppends,
+      flushVerificationChanges,
+      flushJoinLogBuffer,
+      purgeJoinLogDeletions,
+    ]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 15 });
+
+    // AI 上下文同在共享事务缓冲里，它的领域屏障同样只提交一次 SQLite 事务。
+    await route({ type: "flush", flushId: 17, scope: "aiMemory" });
+    expect(flushBlocklistRemovalOutbox).toHaveBeenCalledTimes(2);
+    expect(flushStickerCatalogs).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 17 });
+
+    purgeJoinLogDeletions.mockReturnValueOnce(false);
+    await route({ type: "flush", flushId: 16, scope: "joinLogPurge" });
+    expect(purgeJoinLogDeletions).toHaveBeenCalledTimes(1);
+    expect(flushJoinLogBuffer).not.toHaveBeenCalled();
+    expect(flushBlocklistRemovalOutbox).toHaveBeenCalledTimes(2);
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "flushFailed",
+      flushedId: 16,
+      failedDomains: ["joinLogPurge"],
+    });
+  });
+
+  test("身份与群问答领域屏障各提交一次共享 SQLite 事务，失败时按仍待写的表回报", async () => {
+    const scopes: readonly DiskIODomain[] = [
+      "whitelist",
+      "blocklist",
+      "temporaryAdBypass",
+      "blocklistRemovalOutbox",
+      "chatQa",
+    ];
+    let flushId: number = 30;
+    for (const scope of scopes) {
+      flushBlocklistRemovalOutbox.mockClear();
+      await route({ type: "flush", flushId, scope });
+      expect(flushBlocklistRemovalOutbox).toHaveBeenCalledTimes(1);
+      expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: flushId });
+      flushId++;
+    }
+    for (const fn of [
+      flushLogBuffer,
+      flushAdSampleBuffer,
+      flushAiCacheBuffer,
+      flushStickerCatalogs,
+      flushLuckAppends,
+      flushVerificationChanges,
+      flushJoinLogBuffer,
+      purgeJoinLogDeletions,
+    ]) {
+      expect(fn).not.toHaveBeenCalled();
+    }
+
+    flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
+    pendingStorageDatabaseDomains.mockReturnValueOnce(["whitelist", "blocklist"] as never);
+    await route({ type: "flush", flushId, scope: "temporaryAdBypass" });
+    expect(postMessage).toHaveBeenLastCalledWith({
+      type: "flushFailed",
+      flushedId: flushId,
+      failedDomains: ["whitelist", "blocklist"],
+    });
   });
 
   test("各领域全部成功时回执不带失败领域", async () => {

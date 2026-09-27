@@ -110,7 +110,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
       installAiCacheUsageSink(null);
     }
     expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
-      { capability: "ad_detect", provider: "openai", model: "deepseek-v4-flash", inputTokens: 1_200, cachedInputTokens: 1_152, outputTokens: 30 },
+      { kind: "tokens", capability: "ad_detect", provider: "openai", model: "deepseek-v4-flash", inputTokens: 1_200, cachedInputTokens: 1_152, outputTokens: 30 },
     ]);
   });
 

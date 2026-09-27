@@ -14,6 +14,7 @@ import {
 import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import type { ChatMemberAdministrator, ChatMemberOwner } from "grammy/types";
 import { trackAntiRaidTask } from "./taskTracker";
+import { isRecordedWithin } from "../../libs/clockWindow";
 
 /**
  * 各群非匿名管理员邀请豁免缓存：按需全量拉取 + TTL 缓存 + 拉取在途期间
@@ -33,7 +34,7 @@ import { trackAntiRaidTask } from "./taskTracker";
  */
 export function freshAdminIds(chatId: number, now: number = Date.now()): Set<number> | undefined {
   const cached: ChatAdminCache | undefined = chatAdmins.get(chatId);
-  if (!cached || now - cached.fetchedAt > ADMIN_CACHE_TTL_MS) return undefined;
+  if (!cached || !isRecordedWithin(cached.fetchedAt, now, ADMIN_CACHE_TTL_MS)) return undefined;
   return cached.adminIds;
 }
 

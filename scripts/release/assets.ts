@@ -1,3 +1,4 @@
+import { fileSha256 } from "../fileSha256";
 import { ACTIVE_COLD_MIGRATION_EDGES } from "../migrations/active";
 import type { ColdMigrationEdge } from "../migrations/active";
 import { join } from "node:path";
@@ -22,13 +23,6 @@ export interface VerifyAssetsOptions {
   readonly platforms: readonly string[];
   readonly sourceTree: string;
   readonly command: ReleaseCommand;
-}
-
-/** 流式计算压缩包 SHA-256，不把多平台发行包同时载入内存。 */
-export async function fileSha256(path: string): Promise<string> {
-  const hasher: Bun.CryptoHasher = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
-  return hasher.digest("hex");
 }
 
 /** 同时核对文件对、内容哈希、包内版本、平台、Bun 构建和 squash 前后相同的 Git tree。 */

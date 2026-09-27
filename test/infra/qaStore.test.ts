@@ -33,8 +33,6 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
 })));
 
 const {
-  chatQaCount,
-  getChatQa,
   hydrateChatQaCache,
   removeAllChatQa,
   removeChatQa,
@@ -55,7 +53,7 @@ describe("群问答主线程持久化边界", () => {
   test("写入先发布内存最终值，再排一条 SQLite 写", () => {
     expect(setChatQa(CHAT_ID, "怎么入群？", "点置顶")).toBe("created");
 
-    expect(getChatQa(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
     expect(posted).toHaveLength(1);
     expect(posted[0]).toMatchObject({
       type: "chatQaWrite",
@@ -69,7 +67,7 @@ describe("群问答主线程持久化边界", () => {
     setChatQa(CHAT_ID, "怎么入群？", "旧答案");
 
     expect(setChatQa(CHAT_ID, "怎么入群？", "新答案")).toBe("replaced");
-    expect(getChatQa(CHAT_ID)?.get("怎么入群？")).toBe("新答案");
+    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("新答案");
   });
 
   test("撞上每群上限后新增抛错，覆盖既有条目不受影响", () => {
@@ -81,7 +79,7 @@ describe("群问答主线程持久化边界", () => {
       .toThrow(`at most ${CHAT_QA_MAX_PER_CHAT} entries per chat`);
     // 覆盖不占新名额，因此必须仍然放行。
     expect(setChatQa(CHAT_ID, "问题0", "改了")).toBe("replaced");
-    expect(chatQaCount(CHAT_ID)).toBe(CHAT_QA_MAX_PER_CHAT);
+    expect((chatQaEntries.get(CHAT_ID)?.size ?? 0)).toBe(CHAT_QA_MAX_PER_CHAT);
   });
 
   test("删除只在真的删掉时返回 true，删空后整群从热表移除", () => {
@@ -91,7 +89,7 @@ describe("群问答主线程持久化边界", () => {
     expect(removeChatQa(CHAT_ID, "怎么入群？")).toBeTrue();
     // 空表不留存，否则直答路径第一步的 get(chatId) 再也不能靠 undefined 短路。
     expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
-    expect(getChatQa(CHAT_ID)).toBeUndefined();
+    expect(chatQaEntries.get(CHAT_ID)).toBeUndefined();
   });
 
   test("整群删除逐条发墓碑并把该群从热表移除；没登记过的群零投递", () => {
@@ -107,9 +105,9 @@ describe("群问答主线程持久化边界", () => {
       expect(message).toMatchObject({ type: "chatQaWrite", chatId: CHAT_ID, data: null });
     }
     expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
-    expect(getChatQa(CHAT_ID)).toBeUndefined();
+    expect(chatQaEntries.get(CHAT_ID)).toBeUndefined();
     // 只删这一个群。
-    expect(getChatQa(-2002)?.get("别的群？")).toBe("不动它");
+    expect(chatQaEntries.get(-2002)?.get("别的群？")).toBe("不动它");
 
     posted.length = 0;
     expect(removeAllChatQa(CHAT_ID)).toBe(0);
@@ -152,7 +150,7 @@ describe("群问答主线程持久化边界", () => {
     expect((): unknown => setChatQa(CHAT_ID, "怎么入群？", "点置顶")).toThrow("persistence");
 
     expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.has("怎么入群？")).toBeTrue();
-    expect(getChatQa(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
   });
 
   test("hydrate 只搬持久化值，空群不进热表", () => {
@@ -161,7 +159,7 @@ describe("群问答主线程持久化边界", () => {
       [-1002, new Map()],
     ]));
 
-    expect(getChatQa(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
-    expect(getChatQa(-1002)).toBeUndefined();
+    expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+    expect(chatQaEntries.get(-1002)).toBeUndefined();
   });
 });

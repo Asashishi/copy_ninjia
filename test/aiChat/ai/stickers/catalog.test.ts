@@ -46,7 +46,6 @@ const {
   flushDirtyStickerCatalogs,
   generatePackCatalog,
   getCatalogEntry,
-  getPackSummary,
   hydrateStickerCatalogs,
   pruneStickerCatalogs,
   retryIncompleteStickerCatalogs,
@@ -57,6 +56,7 @@ const {
   dirtyPacks,
   failedEntries,
   generatingPacks,
+  packSummaries,
   stickerCatalogRetryState,
 } = await import("../../../../packages/cache/workers/aiChat/stickers/catalog");
 const { stickerMenuRevision } = await import("../../../../packages/cache/workers/aiChat/stickers/menu");
@@ -113,7 +113,7 @@ test.each(["complete", "removed", "abort"] as const)("部分目录已有简介�
     getStickerSetMock.mockResolvedValue({ title: pack, stickers: [sticker(good, "👍"), sticker(bad, "👎")] });
     describeMediaForStickerCatalogMock.mockResolvedValueOnce(generatedText("成功项")).mockResolvedValueOnce(requestFailure);
     await generatePackCatalog(pack);
-    expect(getPackSummary(pack)).toBe("一包默认简介");
+    expect(packSummaries.get(pack)).toBe("一包默认简介");
     const retryAt: number = failedEntries.get(pack)!.get(bad)!;
     now = retryAt - 1;
     retryIncompleteStickerCatalogs([pack], now);
@@ -221,7 +221,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     );
 
     expect(getCatalogEntry("pack_before_bad_uid")).toBeUndefined();
-    expect(getPackSummary("pack_bad_shape")).toBeUndefined();
+    expect(packSummaries.get("pack_bad_shape")).toBeUndefined();
     expect(getCatalogEntry("pack_bad_shape_uid")).toBeUndefined();
   });
 
@@ -234,7 +234,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     await generatePackCatalog("pack_add");
 
     expect(getCatalogEntry("new-uid")).toEqual({ emoji: "😂", description: "一只猫大笑" });
-    expect(getPackSummary("pack_add")).toBe("一包猫猫表情");
+    expect(packSummaries.get("pack_add")).toBe("一包猫猫表情");
     expect(describeMediaForStickerCatalogMock).toHaveBeenCalledWith("id-new-uid", expect.any(AbortSignal));
     expect(describeMediaMock).not.toHaveBeenCalled();
     expect(transientDescriptionCache.has("new-uid")).toBe(false);
@@ -261,7 +261,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     await generatePackCatalog("pack_fail");
 
     expect(getCatalogEntry("kept-uid")).toEqual({ emoji: "😴", description: "保留的贴纸" });
-    expect(getPackSummary("pack_fail")).toBe("保留的简介");
+    expect(packSummaries.get("pack_fail")).toBe("保留的简介");
   });
 
   test("同一枚贴纸已有描述则不重复生成（不调用 describeMedia）", async () => {
@@ -281,7 +281,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     await generatePackCatalog("pack_summary_keep");
 
     expect(generateTextMock).not.toHaveBeenCalled();
-    expect(getPackSummary("pack_summary_keep")).toBe("旧简介");
+    expect(packSummaries.get("pack_summary_keep")).toBe("旧简介");
   });
 
   test("条目没变化但还没有简介：补生成简介", async () => {
@@ -291,7 +291,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
     await generatePackCatalog("pack_summary_backfill");
 
-    expect(getPackSummary("pack_summary_backfill")).toBe("补出来的简介");
+    expect(packSummaries.get("pack_summary_backfill")).toBe("补出来的简介");
   });
 
   test("简介生成失败且退避重试用尽（1 + 3 次）：保留旧简介，不清掉", async () => {
@@ -309,7 +309,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
     expect(getCatalogEntry("uid-d")).toEqual({ emoji: "😂", description: "新贴纸描述" });
     expect(generateTextMock).toHaveBeenCalledTimes(4);
-    expect(getPackSummary("pack_summary_fail")).toBe("旧简介仍在");
+    expect(packSummaries.get("pack_summary_fail")).toBe("旧简介仍在");
   });
 
   test("SDK 已耗尽请求重试时不再套目录业务重试", async () => {
@@ -324,7 +324,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     await generatePackCatalog("pack_request_fail");
 
     expect(generateTextMock).toHaveBeenCalledTimes(1);
-    expect(getPackSummary("pack_request_fail")).toBe("旧简介保留");
+    expect(packSummaries.get("pack_request_fail")).toBe("旧简介保留");
   });
 
   test("单枚解析与简介生成瞬时失败：退避重试内成功即正常写入", async () => {
@@ -340,7 +340,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
     expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(2);
     expect(getCatalogEntry("retry-uid")).toEqual({ emoji: "😂", description: "第二次成功的描述" });
-    expect(getPackSummary("pack_retry")).toBe("重试出的简介");
+    expect(packSummaries.get("pack_retry")).toBe("重试出的简介");
   });
 
   test("目录还没建起来的包在维护节拍上按间隔重试，建好之后不再打扰", async () => {
@@ -392,7 +392,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     await generatePackCatalog("pack_latch");
 
     expect(getCatalogEntry("latch-uid")).toEqual({ emoji: "😂", description: "终于描述出来了" });
-    expect(getPackSummary("pack_latch")).toBe("自愈出来的简介");
+    expect(packSummaries.get("pack_latch")).toBe("自愈出来的简介");
     expect(failedEntries.has("pack_latch")).toBe(false);
   });
 });
@@ -444,13 +444,13 @@ describe("aiChat/ai/stickers/catalog pruneStickerCatalogs 按白名单剪枝", (
 
     expect(catalogs.has("prune_stale")).toBe(false);
     expect(getCatalogEntry("prune-stale-uid")).toBeUndefined();
-    expect(getPackSummary("prune_stale")).toBeUndefined();
+    expect(packSummaries.get("prune_stale")).toBeUndefined();
     expect(failedEntries.has("prune_stale")).toBe(false);
     expect(dirtyPacks.has("prune_stale")).toBe(false);
     expect(stickerMenuRevision.current).toBeGreaterThan(revision);
     // 仍在白名单里的包保留已上报的目录。
     expect(getCatalogEntry("prune-kept-uid")).toEqual({ emoji: "😂", description: "留用包" });
-    expect(getPackSummary("prune_kept")).toBe("留用包简介");
+    expect(packSummaries.get("prune_kept")).toBe("留用包简介");
     expect(dirtyPacks.has("prune_kept")).toBe(false);
     dirtyPacks.delete("prune_kept");
   });

@@ -77,7 +77,14 @@ export function pumpChatAction({
     if (dependencies.entries.get(chatId) !== entry) return;
     const phase: ChatActionPhase = entry.action;
     if (phase === "idle") return;
-    if (deduplicable && entry.lastSentPhase === phase && Date.now() - entry.lastSentAt < dependencies.intervalMs) return;
+    // 同挡位在一个间隔内已送达过就不重发；墙钟回拨让 now 早于上次送达时按已过期处理。
+    const sinceLastSent: number = Date.now() - entry.lastSentAt;
+    if (
+      deduplicable &&
+      entry.lastSentPhase === phase &&
+      sinceLastSent >= 0 &&
+      sinceLastSent < dependencies.intervalMs
+    ) return;
     let ok: boolean;
     try {
       ok = await dependencies.sendChatAction({

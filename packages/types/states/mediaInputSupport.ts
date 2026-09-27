@@ -10,7 +10,7 @@ import type {
 export interface MediaInputModalityState {
   readonly support: MediaInputSupport;
   /**
-   * 连续瞬时失败次数，封顶 MEDIA_PROBE_MAX_TRANSIENT_FAILURES；成功或落定终局
+   * 连续瞬时失败次数，封顶 MEDIA_PROBE_MAX_TRANSIENT_FAILURES；成功或落定关闭
    * 结论时清零。只有 `transient` 计数——单份坏媒体不得把整条模态推进退避。
    */
   readonly transientFailures: number;

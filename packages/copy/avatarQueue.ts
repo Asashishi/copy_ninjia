@@ -45,10 +45,10 @@ async function consumeAvatarUpdates(): Promise<void> {
       try {
         // 偷脸与复原共用这一个执行槽，latest-only 语义对两类目标通用——连点
         // /icon steal 再 /icon reset，最终生效的是最后那个。
-        // 默认头像的直链在这里取：素材快照只属于主线程，而 avatar/restore.ts
-        // 被两条 Worker 一并 import（见 config/assets.ts 的 getAssetConfig）。
+        // 默认头像的来源在这里从主线程素材快照取好再传入；avatar/restore.ts 不读取
+        // 素材快照（见 config/assets.ts 的 getAssetConfig）。
         const updated: boolean = task.target.kind === "default"
-          ? await restoreDefaultProfilePhoto(getAssetConfig().botDefaultAvatarUrl, signal)
+          ? await restoreDefaultProfilePhoto(getAssetConfig().botDefaultAvatar, signal)
           : await copyUserProfilePhoto(
             task.target.user.id,
             !!task.target.user.isChannel,

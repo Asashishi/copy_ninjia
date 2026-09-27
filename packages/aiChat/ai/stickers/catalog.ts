@@ -29,6 +29,7 @@ import {
   STICKER_PACK_SUMMARY_MAX_CHARS,
 } from "../../../consts/aiChat/stickers";
 import { STICKER_PACK_SUMMARY_PROMPT } from "../../../consts/aiChat/prompts/media";
+import { isPendingWithin } from "../../../libs/clockWindow";
 import type { StickerCatalogEntry, StickerCatalogSnapshot } from "../../../types/stickers/catalog";
 import type { AiStickerCatalogEvent } from "../../../types/stickers/protocol";
 import type { AiTextResult } from "../../../types/aiChat/provider";
@@ -109,7 +110,7 @@ function isEntryFailureActive(pack: string, fileUniqueId: string): boolean {
   if (failed === undefined) return false;
   const retryAt: number | undefined = failed.get(fileUniqueId);
   if (retryAt === undefined) return false;
-  if (Date.now() < retryAt) return true;
+  if (isPendingWithin(retryAt, Date.now(), STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS)) return true;
   failed.delete(fileUniqueId);
   if (failed.size === 0) failedEntries.delete(pack);
   return false;
@@ -149,11 +150,6 @@ export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
     }
     if (snapshot.summary) packSummaries.set(pack, snapshot.summary);
   }
-}
-
-/** 某个白名单包的整包简介；还没生成出来（或生成失败）返回 undefined。 */
-export function getPackSummary(pack: string): string | undefined {
-  return packSummaries.get(pack);
 }
 
 /** 按贴纸自身的 file_unique_id 跨包合并查找目录条目——群聊里群友发的贴纸
@@ -264,7 +260,7 @@ export function retryIncompleteStickerCatalogs(packs: readonly string[], now: nu
     const failed: ReadonlyMap<string, number> | undefined = failedEntries.get(pack);
     if (failed !== undefined) {
       for (const retryAt of failed.values()) {
-        if (now >= retryAt) return true;
+        if (!isPendingWithin(retryAt, now, STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS)) return true;
       }
     }
     return false;

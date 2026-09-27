@@ -129,7 +129,8 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative file**: `test/commands/copyShared.test.ts`.
 - **`scripts/`**
   - **Installer**: `install.sh` locates the target worktree and hands off to its versioned entry. It checks readability and syntax of the repository, service, config, runtime, configure, and start shell modules in `scripts/install/` before sourcing them in order. `installSources.ts` supplies the same module list to syntax checks and isolated fixtures.
-  - **Cold migration**: `migrateGlobalState.ts` validates the 14.0.0-format `state.json` (and its byte-identical `state.json.bak`) in a cold backup, writes `copy` as isolated output `memory/global/state.json`, writes the asset values that differ from the built-in defaults as `config/dynamic/assets.json`, and produces a manifest; `migrateRandomImageNames.ts` rebuilds the random image library's old file names into isolated output named after each picture's content SHA-256. Both read the source only and use `ready.json` as the sole completion marker; `migrations/files.ts` holds the file manifests and path-containment check shared by both edges. These modules stay outside the application startup graph.
+  - **Cold migration**: `migrateGlobalState.ts` strictly reads `memory/global/state.json` from a cold backup and splits total `count` into `agentCount` and `reserveCount` using an explicit AI count, preserving the window start and copy state. It produces isolated output and a verification manifest. `migrateRandomImageNames.ts` converts old image names to content SHA-256 names. Both leave source directories untouched and use `ready.json` as the completion marker; `migrations/files.ts` provides shared manifest and path checks. None enter the application startup graph.
+  - **File digests**: `fileSha256.ts` computes incremental SHA-256 hexadecimal digests with `Bun.file(path).stream()` and `Bun.CryptoHasher`, shared by release verification, cold migrations, and migration snapshot fixtures. Each caller retains file-type, symlink, path, permission, and migration-manifest validation.
   - **Responsibility**: repository self-checks, performance benchmarks, and explicit offline data migrations.
   - **Representative files**: `checkProjectConventions.ts` with `conventions/`, `checkCoverageMetrics.ts` with `coverageSummary.ts`, `perf/identityDatabase.ts`, `perf/joinLog.ts`, `perf/hotPaths.ts`, `perf/hotPathProfileGate.ts`, `perf/hotPaths/gateResult.ts` (strict parsing of the gate's section in `performance-result.json`), and `perf/performanceResult.ts` (that file's shared write boundary, where each benchmark replaces only its own slot), the release-only full benchmark `perf/fullSuite.ts` with `perf/fullSuite/`, plus `fixtures/copyTree.ts` (directory-tree copying) and `fixtures/pathBoundary.ts` (real path-component checks for the write boundary), both shared by the two benchmark roots.
 
@@ -171,7 +172,7 @@ The first directory level under `packages/cache/` declares which thread owns tha
     Google/OpenAI ad-detection clients.
 - **`workers/diskIO/`**
   - **Owner**: Disk I/O Worker.
-  - **Contents**: per-domain write buffers, indexes, and dirty markers.
+  - **Contents**: per-domain write buffers, indexes, and dirty markers, plus the coalesced set of due timed flushes (`timedFlush.ts`).
 - **`perThread/`**
   - **Owner**: one copy per thread.
   - **Contents**: the Telegram-capability holder (real main-thread adapter or Worker duplex proxy),

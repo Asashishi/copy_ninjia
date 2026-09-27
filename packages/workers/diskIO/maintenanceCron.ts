@@ -25,6 +25,7 @@ export function registerDiskIOMaintenanceCron(
   diskIOMaintenanceCron.current = Bun.cron(
     DISK_IO_MAINTENANCE_CRON,
     (): void => {
+      // 维护按到点时刻排在统一队列末尾，不并入定时 flush：它要排在此前已到达的业务消息之后。
       void enqueueDiskIOOperation(
         async (): Promise<void> => runDiskIOMidnightMaintenance(reply)
       );

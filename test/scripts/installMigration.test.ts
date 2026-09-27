@@ -40,7 +40,23 @@ test.each(["state.json", "state.json.bak"])("数据根仍有 14.x 的 %s 时安�
   expect(await Bun.file(fixture.outboundLog).text()).not.toContain("systemctl:guarded:start");
 }, 30_000);
 
-test.each([false, true])("14.x mock 备份经源码冷迁移、安装与真实启动保留业务数据、全局状态与素材配置（历史谱系=%s）", async (historical: boolean): Promise<void> => {
+test("memory/global/state.json 仍是总计数 ttsUsage 时安装器在启动前拒绝并提示冷迁移，不改写状态或创建数据库", async (): Promise<void> => {
+  const fixture: InstallerFixture = await createFixture(true);
+  const path: string = join(fixture.runtimeRoot, "memory/global/state.json");
+  await Bun.write(path, JSON.stringify({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1_000, count: 10 } }));
+  const before: MigrationFileSnapshot | null = await readMigrationFileSnapshot(path);
+  const result: InstallerRunResult = runInstaller(fixture, []);
+  expect(result.exitCode).not.toBe(0);
+  expect(result.output).toContain("memory/global/state.json: $.ttsUsage.count must be absent");
+  expect(result.output).toContain("migrate:global-state");
+  expect(result.output).not.toContain("配置校验通过");
+  expect(result.output).not.toContain("INSTALL_API");
+  expect(await readMigrationFileSnapshot(path)).toEqual(before);
+  expect(await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists()).toBeFalse();
+  expect(await Bun.file(fixture.outboundLog).text()).not.toContain("systemctl:guarded:start");
+}, 30_000);
+
+test.each([false, true])("总计数 mock 备份经源码冷迁移、安装与真实启动保留业务数据、双计数与素材配置（历史谱系=%s）", async (historical: boolean): Promise<void> => {
   const fixture: InstallerFixture = await createFixture(true);
   const migrated: MigratedDeployment = await prepareMigratedDeployment({
     packageRoot: join(import.meta.dir, "../.."), root: join(fixture.root, "migration"), historical,

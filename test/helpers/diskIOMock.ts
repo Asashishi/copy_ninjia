@@ -15,7 +15,6 @@ export function diskIOStub(overrides: Partial<typeof diskIO> = {}): typeof diskI
   return {
     initDiskIO: (): never => { throw new Error("Disk I/O initialization fixture is not configured."); },
     isDiskIOInitialized: (): boolean => false,
-    isDiskIOBuffering: (): boolean => false,
     postDiskIO: (): boolean => false,
     postDiskIODiagnostic: (): boolean => false,
     relayLogMessage: (): boolean => false,

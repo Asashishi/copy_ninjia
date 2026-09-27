@@ -1,22 +1,30 @@
-import { KICKED_REJOIN_GRACE_MS, NO_VERIFICATION_EFFECTS, VERIFICATION_TIMEOUT_MS } from "../../consts/antiRaid/verification";
+import {
+  CHANNEL_COMMENT_JOIN_EXEMPTION,
+  IDENTITY_JOIN_EXEMPTION,
+  KICKED_REJOIN_GRACE_MS,
+  NO_JOIN_EXEMPTION,
+  NO_VERIFICATION_EFFECTS,
+  VERIFICATION_TIMEOUT_MS,
+} from "../../consts/antiRaid/verification";
 import type {
   JoinEvent,
+  JoinExemption,
   PendingState,
   VerificationEffect,
   VerificationState,
   VerificationTransition,
 } from "../../types/states/verification";
-import { pendingUpdated, remindersOf } from "./shared";
+import { exemptOf, kickPendingOf, pendingUpdated, remindersOf } from "./shared";
 
 /**
  * 汇总一次入群的全部豁免来源。关联频道评论区的直属评论和楼中楼回复都视为
  * 已实际参与讨论：Telegram 的入群/消息投递顺序不稳定，机器人也无法可靠
  * 反查线程根，因此只要在关联讨论线程观察到消息就豁免且不计刷群统计。
  */
-function resolveJoinExemption(event: JoinEvent): { exempt: boolean; viaChannelComment: boolean } {
-  if (event.identityExempt || event.actorSyncExempt) return { exempt: true, viaChannelComment: false };
-  if (event.recentComment !== undefined) return { exempt: true, viaChannelComment: true };
-  return { exempt: false, viaChannelComment: false };
+function resolveJoinExemption(event: JoinEvent): JoinExemption {
+  if (event.identityExempt || event.actorSyncExempt) return IDENTITY_JOIN_EXEMPTION;
+  if (event.recentComment !== undefined) return CHANNEL_COMMENT_JOIN_EXEMPTION;
+  return NO_JOIN_EXEMPTION;
 }
 
 /**
@@ -51,8 +59,7 @@ export function handleJoin(
       effects: [remindersOf(state.snapshot), ...replaced.effects],
     };
   }
-  const { exempt, viaChannelComment }: { exempt: boolean; viaChannelComment: boolean } =
-    resolveJoinExemption(event);
+  const { exempt, viaChannelComment }: JoinExemption = resolveJoinExemption(event);
   const invitedByOther: boolean = event.actorId !== undefined && event.actorId !== event.memberId;
 
   if (exempt) {
@@ -70,7 +77,7 @@ export function handleJoin(
       // 删除公告等前置 await 尚未完成：用新对象替换执行 token，旧副作用在
       // kickMember 前的对象同一性复核会自行失效。
       return {
-        next: { kind: "exempt", label: event.label, isBot: event.isBot },
+        next: exemptOf(event.label, event.isBot),
         // 只撤销确实计过数的那一格：重进补踢建出的 kickPending 没有对应的
         // recordJoin（见 KickPendingState.countedJoinAt），凭 requestedAt 撤
         // 会删掉同一 tick 里另一名合法计数成员，把刷群窗口压到阈值之下。
@@ -100,7 +107,7 @@ export function handleJoin(
         anchorMessageId: event.recentComment.messageId,
       });
     }
-    return { next: { kind: "exempt", label: event.label, isBot: event.isBot }, effects };
+    return { next: exemptOf(event.label, event.isBot), effects };
   }
 
   if (state !== undefined) {
@@ -127,16 +134,13 @@ export function handleJoin(
     ) {
       // 超过双路投递误差范围视为真正重进；新对象为新一代执行 token。
       return {
-        next: {
-          kind: "kickPending",
+        next: kickPendingOf({
           label: state.label,
           isBot: state.isBot,
           requestedAt: event.now,
           countedJoinAt: undefined,
           announcementMessageId: event.announcementMessageId,
-          effectStarted: false,
-          executionStarted: false,
-        },
+        }),
         effects,
       };
     }
@@ -153,16 +157,13 @@ export function handleJoin(
 
   if (event.lockdownActive) {
     return {
-      next: {
-        kind: "kickPending",
+      next: kickPendingOf({
         label: event.label,
         isBot: event.isBot,
         requestedAt: event.now,
         countedJoinAt: event.now,
         announcementMessageId: event.announcementMessageId,
-        effectStarted: false,
-        executionStarted: false,
-      },
+      }),
       effects: NO_VERIFICATION_EFFECTS,
     };
   }

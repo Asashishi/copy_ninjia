@@ -72,7 +72,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     }));
     enqueueAdCandidate(candidate({
       text: "这种广告真烦",
-      sampleContext: { quote: "日入过千 加V xxx996" },
+      sampleQuote: "日入过千 加V xxx996",
     }), 1_000);
 
     await runAdDetectBatch(1_000);
@@ -99,7 +99,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({
       messageId: 2,
       text: "又来一条",
-      sampleContext: { replyTo: "日入过千 加V second" },
+      sampleReplyTo: "日入过千 加V second",
     }), 2_000);
     expect(adDetectQueue.size).toBe(1);
   });
@@ -119,12 +119,12 @@ describe("引用类广告的警告升级与处置抑制", () => {
             enqueueAdCandidate(candidate({
               messageId: 556,
               text: "又来一条",
-              sampleContext: { quote: "日入过千 加V same" },
+              sampleQuote: "日入过千 加V same",
             }), 2_000);
             enqueueAdCandidate(candidate({
               messageId: 557,
               text: "连续第三条",
-              sampleContext: { quote: "日入过千 加V same" },
+              sampleQuote: "日入过千 加V same",
             }), 2_100);
             resolve({ messageId: 555, sentAt: 3_000 });
           };
@@ -132,7 +132,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
       ));
     enqueueAdCandidate(candidate({
       text: "第一次",
-      sampleContext: { quote: "日入过千 加V same" },
+      sampleQuote: "日入过千 加V same",
     }), 1_000);
 
     const running: Promise<void> = runAdDetectBatch(1_000);
@@ -164,14 +164,14 @@ describe("引用类广告的警告升级与处置抑制", () => {
     }));
     enqueueAdCandidate(candidate({
       text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
+      sampleQuote: "日入过千 加V first",
     }), 1_000);
     await runAdDetectBatch(1_000);
 
     enqueueAdCandidate(candidate({
       messageId: 2,
       text: "第二次",
-      sampleContext: { quote: "日入过千 加V second" },
+      sampleQuote: "日入过千 加V second",
     }), 2_000);
     await runAdDetectBatch(2_000);
 
@@ -187,7 +187,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     }));
     enqueueAdCandidate(candidate({
       text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
+      sampleQuote: "日入过千 加V first",
     }), 1_000);
     await runAdDetectBatch(1_000);
 
@@ -196,7 +196,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({
       messageId: 2,
       text: "连续回复",
-      sampleContext: { quote: "日入过千 加V again" },
+      sampleQuote: "日入过千 加V again",
     }), receivedWithinWindow);
     await runAdDetectBatch(
       1_000 + AD_REFERENCE_WARNING_WINDOW_MS + 60_000
@@ -213,7 +213,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     }));
     enqueueAdCandidate(candidate({
       text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
+      sampleQuote: "日入过千 加V first",
     }), 1_000);
     await runAdDetectBatch(1_000);
 
@@ -222,7 +222,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({
       messageId: 2,
       text: "窗口后",
-      sampleContext: { quote: "日入过千 加V later" },
+      sampleQuote: "日入过千 加V later",
     }), afterWindow);
     await runAdDetectBatch(afterWindow);
 
@@ -238,7 +238,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     warnReferencedAdSender.mockImplementationOnce(async (): Promise<undefined> => undefined);
     enqueueAdCandidate(candidate({
       text: "看看",
-      sampleContext: { quote: "日入过千 加V xxx996" },
+      sampleQuote: "日入过千 加V xxx996",
     }), 1_000);
 
     await runAdDetectBatch(1_000);
@@ -258,7 +258,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     );
     enqueueAdCandidate(candidate({
       text: "看看",
-      sampleContext: { quote: "日入过千 加V xxx996" },
+      sampleQuote: "日入过千 加V xxx996",
     }), 1_000);
 
     await runAdDetectBatch(1_000);
@@ -283,7 +283,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
       }));
     enqueueAdCandidate(candidate({
       text: "第一次",
-      sampleContext: { quote: "日入过千 加V first" },
+      sampleQuote: "日入过千 加V first",
     }), 1_000);
     const running: Promise<void> = runAdDetectBatch(1_000);
     await Bun.sleep(0);
@@ -448,7 +448,8 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({
       messageId: 2,
       text: "提为管理员之后又说一句",
-      sampleContext: { quote: "被引用的一段原文", replyTo: "被回复的一段原文" },
+      sampleQuote: "被引用的一段原文",
+      sampleReplyTo: "被回复的一段原文",
     }), 1_100);
 
     // 既不新增条目，也不改写既有条目——提前返回不得顺手动到别人的串。

@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, test } from "bun:test";
 // 公共模块桩收在 helper 里；必须在下面的 await import 之前登记。
 import {
   autoMessageChatState,
-  autoMessageQaEntries,
   generateAndSendReplyMock,
   recordChatMessageMock,
   resetAutoMessageMocks,
@@ -21,6 +20,7 @@ import {
  */
 
 const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");
+const { chatQaEntries } = await import("../../packages/cache/main/qa");
 
 const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 const CHAT_ID: number = -100800;
@@ -51,7 +51,7 @@ describe("问答直答在消息主干上的位置", () => {
   beforeEach(() => {
     resetAutoMessageMocks();
     autoMessageChatState.isInitEnabled = true;
-    autoMessageQaEntries.set("怎么入群？", "点置顶");
+    chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
   });
 
   test("命中时直接回答，并且不进 AI——写死的答案不该再付一次模型调用", async () => {
@@ -96,7 +96,7 @@ describe("问答直答在消息主干上的位置", () => {
   });
 
   test("本群没登记过问答时整条判定走开，照常进 AI", async () => {
-    autoMessageQaEntries.clear();
+    chatQaEntries.clear();
 
     await handleIncomingMessageMiddleware(mentioning("怎么入群？"));
 

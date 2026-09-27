@@ -43,12 +43,12 @@
 ## 品質ゲートの基準
 
 - **インストーラー起動の隔離**：フィクスチャは独立した一時設定・データルートを使用し、システム管理、依存インストール、ネットワーク送信を mock 化して、実際の `index.ts`、Worker、終了時の永続化を実行します。各 Worker は Bun `preload` でネットワーク代替を読み込み、天気には固定応答を返し、他の要求は拒否します。読み込み完了、ポーリング開始、SIGTERM 時の排空、ロックファイル削除を検証します。
-- **ファイル長と走査範囲**：手書き TS・JS・shell ファイルは 1,000 行を超えると拒否し、500 行を超えたら分割を検討します。追跡済みファイルと未 stage の新規ファイルが対象で、Git が無視する配備データは走査しません。インストーラーの構文検査は `install.sh` と宣言された全 shell モジュールを対象とします。
+- **ファイル長と走査範囲**：手書き TS・JS・shell ファイルは 1,024 行を超えると拒否し、512 行を超えたら分割を検討します。追跡済みファイルと未 stage の新規ファイルが対象で、Git が無視する配備データは走査しません。インストーラーの構文検査は `install.sh` と宣言された全 shell モジュールを対象とします。
 - **カバレッジの分母は全ソースコード**：`bun run check` はすべての production runtime モジュールを分母に入れます。どのテストからも到達しないモジュールは 0% として計算します。関数・行カバレッジのしきい値はどちらも 95% なので、テストなしの新規モジュールは全体カバレッジを直接下げます。
 - **ESLint + 完全 strict な tsc**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` をすべて有効化しています。production コードでは `any` を禁止し、テストだけを例外とします。
 - **型 import は独立して宣言**：ソース・script・test は独立した `import type` を使用します。ESLint の `no-restricted-syntax` が `import { value, type Shape }` などの inline type specifier を拒否します。`test/scripts/typeImportConventions.test.ts` は 3 種類のファイルで許可・拒否の境界を検証し、既存の `Promise.all` 禁止も確認します。
 - **明示的な型注釈は lint で強制**：production コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数とコールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制し、いずれも文脈からの推論を認めません。`for...of` / `for...in` のループ変数は TypeScript の構文上注釈を付けられないため、ルール側が自動的に除外します。初期化子がすでにアロー関数である const も対象外です。テストファイルはこの制約を受けません。
-- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コード・script・test の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、実行時の bare import がルート `package.json` に直接宣言されていること（hoist された推移的依存でしか解決できない package は失敗。runtime builtin と型だけの参照は対象外で、package subpath は所属 package に帰属）、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
+- **規約検査**：`check:conventions` はコード配置、Markdown のローカルリンク先、Markdown 内の「`<directory>/`（`a.ts`、`b.ts`）」という directory 一覧が名指しするファイルの存在（directory 名が一意に解決しない場合は skip）、tracked 非スクリプトファイルの実行権限、定数、cache owner を検査し、実際の thread module graph で Worker/Telegram 境界を照合します。`packages/workers/` 配下で生成される各 timer handle の `unref()`、production コード・script・test の Node compatibility import、許可された `Buffer` method、`Bun.argv` を使うべき process argument、Telegram の cleanup／長期保持例外、現在の cold migration 入口、fault injection suite の一覧、実行時の bare import がルート `package.json` に直接宣言されていること（hoist された推移的依存でしか解決できない package は失敗。runtime builtin と型だけの参照は対象外で、package subpath は所属 package に帰属）、14 か所の coverage 宣言、3 言語の performance record も静的に照合します。`test/` で import した `SCREAMING_SNAKE_CASE` 定数を数値リテラルと直接比較する assertion（`toBe`、`toEqual`、`toStrictEqual`）も失敗とし、期待値は定数 module から導くか、振る舞いを assert します。コメント内の「`<module>.ts` の `<symbol>` を参照」という相互参照も同様に照合し、名指しされた module がその symbol を宣言も再 export もしていない場合は失敗します（`export *` 互換入口は 1 段だけ展開）。`check:coverage` は別途実測し、宣言値全体の陳腐化を検出します。
   module-level のリテラル定数とその組合せはドメイン `consts` に置き、関数 composition と cache owner は別に確認します。module-level の Map、Set、WeakMap、WeakSet、AsyncLocalStorage と holder は owner 付きの `packages/cache/` にだけ宣言できます。Node builtin は `node:` prefix の有無によらず同じ許可表を使います。動的 load、再 export、`require`、`process.hrtime` / `nextTick`、分割代入も検査し、型専用宣言は runtime 検査から除外します。
 
   Node API 検査は `process.getBuiltinModule`、`globalThis.Buffer` とリテラル添字形式を対象にします。`Buffer.byteLength` などの例外は module・symbol・用途ごとに登録します。`@grammyjs/runner` は SDK 対照テスト用の開発依存で、production の取得処理はプロジェクトの offset 確認境界を使います。
@@ -69,7 +69,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5228 tests / 459 files / 254242 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.38%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5317 tests / 465 files / 260880 `expect()` calls**。全ソースコードの**関数カバレッジは 98.07%、行カバレッジは 98.42%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -86,9 +86,11 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 `bun test --isolate test/infra/aiCacheUsagePipeline.test.ts test/workers/antiRaid/verificationCallback.test.ts test/workers/antiRaid/recentComments.test.ts test/infra/selfSentTracker.test.ts` は、6 種の usage を provider mock から Worker 転送、診断 ACK、永続化、日次集計まで検証します。コールバックの instance/generation、照会と応答の同時停滞、コメントの順序逆転・時計逆行、reset による waiter の false 決着も対象です。usage pipeline と認証コールバックは `test:fault-injection` にも含まれます。データは独立した一時 root、外部送信は mock を使います。
 
-`test/scripts/installMigration.test.ts` は 14.0.0 形式の mock バックアップから `migrate:global-state` による cold migration、mapping 産物の手動配置（グローバル状態、素材設定、設定を `config/static/` と `config/dynamic/` へ移すこと）、ソースインストール、実際の起動までの経路を検証し、12.1.0 の identity 入口が残る配置や、データルートに 14.x の `state.json`/`state.json.bak` が残る配置を拒否します。ビルド検証の `scripts/checkBinary.ts` は同梱 migration tool、バイナリインストール、起動を同様に確認し、対象プロセスは system Bun を使いません。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、schema v11 の 2 種類の正規系譜、空でない WAL、全業務テーブル、バイト単位で同一の `state.json` 主副本、Google 資格情報、配置設定、画像内容を扱います。元バックアップのハッシュ、mode、所有者、link 構造を維持し、database の業務内容、version、系譜は移行の前後で変わりません。
+`bun test --isolate test/aiChat/ai/mediaAdmission.test.ts test/aiChat/ai/imageDescription.test.ts test/libs/sharedResult.test.ts test/infra/telegramWorkerCapabilities.test.ts` は、追加枠を消費しない LRU ヒット、共有実行枠と cold wait 枠、取り消し後の補充、購読の解放、追い出し後のタスク同一性、modality probe、設定世代を検証します。Worker テストは method × owner の許可・拒否表と、実際の受信側・outbound gate を通る proxy 経路を検証し、メッセージ、upload、CDN download、429 再試行、topic、自発メッセージ登録を含みます。`telegramWorkerCapabilities.test.ts` は障害注入スイートにも含まれます。network は mock に置き換え、独立した一時 data root を使用します。
 
-`test/scripts/migrateGlobalState.test.ts` は素材の正規化と既定値でない項目だけの書き出し、バックアップ副本の欠落、主副本の不一致、未知の系譜（移行済みの新形式、13.x の `translate`、14.0.0 より後に追加された `ttsUsage`、未知フィールドと不正値）、ソースファイルの欠落やリンク、ソース内または既存の出力ディレクトリ、産物書き込み途中の失敗後に新しいディレクトリで再実行できることも確認します。2 つのファイルはどちらも fault injection に含まれます。ソース経路は `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateGlobalState.test.ts`、バイナリ経路は `bun run build -- --version <tag>` で検証できます。
+`test/scripts/installMigration.test.ts` は合計回数形式の mock バックアップを `migrate:global-state`、手動配置、ソースインストール、実起動へ通し、業務データ、両回数、復唱状態、素材設定の保持を確認します。旧 identity 入口やデータルート直下の状態は段階的アップグレードが必要です。`scripts/checkBinary.ts` は同梱移行とバイナリ起動を同様に検証します。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、database の合法な系譜、非空 WAL、業務テーブル、設定、ソースのハッシュ・mode・所有者・リンク構成を確認します。
+
+`test/scripts/migrateGlobalState.test.ts` は AI 回数の明示配分、ブロック欠落、次数引数の欠落・不正、分割済み回数と未知系譜の拒否、不正なソース、欠落・リンクのソースファイル、出力先境界、中断後の現場保持と新ディレクトリへの再実行を検証します。両テストは故障注入に含まれ、ソースは `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateGlobalState.test.ts`、バイナリは `bun run build -- --version <tag>` で確認します。
 
 単一ファイルの debug で `bun test` を直接使うことはできますが、merge 前には必ず完全な `bun run check` を通してください。
 
@@ -100,7 +102,7 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 
 ## Fault injection suite
 
-`bun run test:fault-injection` は application / Worker lifecycle、封鎖復元、返信容量と取消、資格情報 snapshot、Telegram 送信と遅延削除の停止時 drain、グループ teardown と参加ログの永続化バリア、Anti-Raid タスクの drain と認証復旧、duplex Worker 再構築時の取消、Disk I/O の inspect・原子的書込・復旧障害を検証します。完全な一覧は [`package.json`](../../package.json) の script が正本です。`check:conventions` は登録 harness と production 復旧/lifecycle 境界への実 path 参照から登録漏れを検出します。静的な値 import、dynamic import、値の再 export、directory の `index.ts` 入口を含み、型だけの参照は除外します。空宣言の副作用は保持し、別 path の同名 module は一致させません。互換入口のように主題が混在する module は境界を特定の export に限定できます（`infra/telegram/index.ts`、`actions.ts`、`actions/messageLifecycle.ts` は遅延削除の flush/drain だけを数えます）。namespace は property access で判定し、object literal に展開するだけの替身は数えません。namespace をそのまま受け渡す場合、`export *`、結果を束縛しない dynamic import は取得範囲を確定できないため常に数えます。[04 実行時の不変条件](04-invariants.md) の永続化・停止・Worker lifecycle を変更する場合、この suite を通します。
+`bun run test:fault-injection` は application / Worker lifecycle、封鎖復元、返信容量と取消、資格情報 snapshot、Telegram 送信と遅延削除の停止時 drain、グループ teardown、参加ログの未確認ミラーと処理 receipt、Anti-Raid タスクの drain と認証復旧、duplex Worker 再構築時の取消、Disk I/O の inspect・原子的書込・復旧障害を検証します。完全な一覧は [`package.json`](../../package.json) の script が正本です。`check:conventions` は登録 harness と production 復旧/lifecycle 境界への実 path 参照から登録漏れを検出します。静的な値 import、dynamic import、値の再 export、directory の `index.ts` 入口を含み、型だけの参照は除外します。空宣言の副作用は保持し、別 path の同名 module は一致させません。互換入口のように主題が混在する module は境界を特定の export に限定できます（`infra/telegram/index.ts`、`actions.ts`、`actions/messageLifecycle.ts` は遅延削除の flush/drain だけを数えます）。namespace は property access で判定し、object literal に展開するだけの替身は数えません。namespace をそのまま受け渡す場合、`export *`、結果を束縛しない dynamic import は取得範囲を確定できないため常に数えます。[04 実行時の不変条件](04-invariants.md) の永続化・停止・Worker lifecycle を変更する場合、この suite を通します。
 
 `test/workers/antiRaid/verificationWelcome.test.ts` は実際の双方向プロトコル、main thread の一時通知境界、削除 owner を通し、Telegram 出力を SDK transformer で代替します。4 種類の歓迎文、返信先、応答消失、取消、Worker teardown・再生成、送信・通信失敗を検証し、削除の一度だけの登録、終了を妨げない timer、後続副作用の順序を確認します。このファイルは全量テストと障害注入の両方に含まれます。
 
@@ -130,7 +132,7 @@ gate を設けている項目：GC 停止時間比率、sampling RSS ピーク�
 
 ## 入室ログ性能 benchmark
 
-`bun run perf:join-log` は入力を容量 250,000 件、overflow 300 件、warm-up 10,000 件に固定し、snapshot・capacity・append-accounting の 3 経路の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。親 process は sample ごとに両 variant の checksum を突き合わせ、一致しなければ全体を失敗させます。`append-accounting` の 1 batch は production の `JOIN_LOG_MAX_BUFFERED_ENTRIES` を使い、合計が他の 2 経路と同じ 25 万件規模になるまで繰り返します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の実装——Map 全体 copy、全件 sort、完全な JSON 文字列生成（snapshot と capacity）、および 1 件ずつ再 serialize して byte 数だけを測る方式（append-accounting）——を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、追記後の byte 記帳、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。
+`bun run perf:join-log` は入力を容量 250,000 件、overflow `FLUSH_MAX_ENTRIES`（256）件、warm-up 10,000 件に固定し、snapshot・capacity・append-accounting の 3 経路の baseline/current をそれぞれ 5 個の独立 Bun process で実行します。親 process は sample ごとに両 variant の checksum を突き合わせ、一致しなければ全体を失敗させます。`append-accounting` の 1 batch は production の `JOIN_LOG_MAX_BUFFERED_ENTRIES` を使い、合計が他の 2 経路と同じ 25 万件規模になるまで繰り返します。出力には完全な Bun version/revision、所要時間の中央値と範囲、強制 GC 前後の JSC heap/object 変化を記録します。baseline は最適化前の実装——Map 全体 copy、全件 sort、完全な JSON 文字列生成（snapshot と capacity）、および 1 件ずつ再 serialize して byte 数だけを測る方式（append-accounting）——を、同一 Bun build 内の前後比較専用として固定したものです。`Bun.gc(true)` はこの benchmark にしか存在せず、production control flow には入りません。入室 index、容量裁剪、snapshot serialization、追記後の byte 記帳、分割 atomic write を変更した場合は必ず実行し、差が 5 sample の範囲に表れる noise より十分大きいことを確認します。
 
 ## Identity database 性能 benchmark
 

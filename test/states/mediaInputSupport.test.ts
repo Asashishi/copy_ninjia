@@ -62,8 +62,8 @@ describe("配置代次", () => {
   });
 });
 
-describe("终局结论", () => {
-  test("unsupported 落定后不再变化，也不记诊断", () => {
+describe("关闭结论", () => {
+  test("重复的 unsupported 不改变状态，也不记诊断", () => {
     const first: MediaInputTransition = reduce(state(), UNSUPPORTED);
     expect(first.next.support).toBe("unsupported");
     expect(first.effects).toEqual([]);
@@ -142,6 +142,15 @@ describe("瞬时故障退避", () => {
 });
 
 describe("成功与单份媒体故障", () => {
+  test("同配置代次的迟到成功恢复已关闭模态，旧配置成功仍被丢弃", () => {
+    const attempt: MediaInputModalityState = state({ support: "supported" });
+    for (const support of ["unsupported", "misconfigured"] as const) {
+      const current: MediaInputModalityState = state({ support });
+      expect(reduceMediaInputResult(current, { capability: "vision", result: OK, attemptState: attempt, now: NOW }).next.support).toBe("supported");
+      const reloaded: MediaInputModalityState = { ...current, configGeneration: current.configGeneration + 1 };
+      expect(reduceMediaInputResult(reloaded, { capability: "vision", result: OK, attemptState: attempt, now: NOW }).next).toBe(reloaded);
+    }
+  });
   test("成功清空失败计数与退避", () => {
     const current: MediaInputModalityState = state({
       support: "unknown",

@@ -54,6 +54,7 @@ import type { FlushResult } from "../types/lifecycle";
 import type {
   DiskBusinessMessage,
   DiskFlushRequest,
+  DiskFlushScope,
   DiskIOOperationMessage,
   LoadRequest,
   AdSampleDiskMessage,
@@ -174,21 +175,6 @@ export function postDiskIO(
   if (safePostDiskIO(worker, message, `${message.type} business message`)) return true;
   stopWorkerAfterLoadFailure(worker, `Worker synchronously rejected ${message.type}`, true);
   return false;
-}
-
-/**
- * Worker 当前是否处在「不可写、但仍在受理」的恢复握手期。
- *
- * 这段窗口里 postDiskIO 返回的 true 与平时不是一个意思：消息没有发给 Worker，
- * 而是进了有硬顶的 FIFO（pendingBusinessMessages），等 activateDiskIOWorker
- * 握手完成后原序重放；重放失败会走 stopWorkerAfterLoadFailure 的统一 fatal。
- * 同一窗口里 requestDiskIOFlush 直接短路成 `"failed"`——那是「此刻没人能刷盘」，
- * 不是「写坏了」。需要 durable 屏障的调用方（infra/joinLog.ts）必须能把两者
- * 分开，否则一次 Worker 崩溃自愈就会被放大成整进程退出。
- * @returns worker 还在但不可写为 true；worker 已经没了（terminate 后）为 false。
- */
-export function isDiskIOBuffering(): boolean {
-  return diskIORuntime.worker !== null && !diskIORuntime.writable;
 }
 
 /**
@@ -352,11 +338,12 @@ export async function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS):
   }
   const remaining: number = deadline - performance.now();
   if (remaining <= 0) return "timedOut";
-  return (await requestDiskIOFlush(remaining)).result;
+  return (await requestDiskIOFlush(remaining, "all")).result;
 }
 
 async function requestDiskIOFlush(
-  timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
+  timeoutMs: number,
+  scope: DiskFlushScope
 ): Promise<DomainFlushOutcome> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
   const worker: Worker | null = diskIORuntime.worker;
@@ -364,7 +351,7 @@ async function requestDiskIOFlush(
   let flushId: number | null = null;
   const result: FlushResult = await diskIOFlushBarrier.begin((id: number): boolean => {
     flushId = id;
-    const request: DiskFlushRequest = { type: "flush", flushId: id, scope: "all" };
+    const request: DiskFlushRequest = { type: "flush", flushId: id, scope };
     return safePostDiskIO(worker, request, "flush request");
   }, timeoutMs);
   if (flushId === null) return { result };
@@ -375,20 +362,16 @@ async function requestDiskIOFlush(
 }
 
 /**
- * 只关心某一个领域有没有落盘的 flush。仍然触发统一 flush（Worker 那边本来
- * 就是各领域一起刷），但把「无关领域失败」判成成功。
- *
- * 各文件领域与 SQLite 的失败独立归属；调用方只按回执中的目标领域判断结果。
+ * 单个领域的落盘屏障：Worker 只刷这一个领域（共享 SQLite 的七个领域共用一个事务，见
+ * types/diskIO/messages.ts 的 DiskFlushScope），其它领域的缓冲窗口不受影响。
+ * SQLite 回执可能带上同一事务里其它表的失败，这里把「无关领域失败」判成成功。
  * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
  */
 export async function flushDiskIODomain(
   domain: DiskIODomain,
   timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
 ): Promise<FlushResult> {
-  // 不经 flushDiskIODomainOutcome 转一手：这条是入群事实的 durable 屏障
-  // （infra/joinLog.ts），多套一层 async 就多一个 promise 和一个只为取 result
-  // 而生的临时对象。共用的只是下面那个同步判定。
-  return narrowFlushResultToDomain(await requestDiskIOFlush(timeoutMs), domain);
+  return narrowFlushResultToDomain(await requestDiskIOFlush(timeoutMs, domain), domain);
 }
 
 /**
@@ -401,14 +384,14 @@ export async function flushDiskIODomainOutcome(
   domain: DiskIODomain,
   timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
 ): Promise<DomainFlushOutcome> {
-  const outcome: DomainFlushOutcome = await requestDiskIOFlush(timeoutMs);
+  const outcome: DomainFlushOutcome = await requestDiskIOFlush(timeoutMs, domain);
   const result: FlushResult = narrowFlushResultToDomain(outcome, domain);
   return result === "failed" && outcome.failedDomains !== undefined
     ? { result, failedDomains: outcome.failedDomains }
     : { result };
 }
 
-/** 把整轮 flush 的结局收窄到单个领域：无关领域失败按成功计。 */
+/** 把一次 flush 的结局收窄到单个领域：无关领域失败按成功计。 */
 function narrowFlushResultToDomain(
   outcome: DomainFlushOutcome,
   domain: DiskIODomain

@@ -2,7 +2,7 @@ import { JOIN_WINDOW_MS } from "../../consts/antiRaid/lockdown";
 import { trimSlidingWindowArray } from "../../libs/slidingWindowRateLimit";
 import type { VerificationSnapshot } from "../../types/antiRaid/verification";
 import type { VerificationState } from "../../types/states/verification";
-import { checkingInviterOf, expellingOf, snapshotOf } from "./shared";
+import { checkingInviterOf, expellingOf, kickPendingOf, snapshotOf } from "./shared";
 
 /**
  * 把一份落盘验证快照重建成内存状态。纯转换：不碰 Map、不建计时器、不读墙钟
@@ -22,16 +22,13 @@ import { checkingInviterOf, expellingOf, snapshotOf } from "./shared";
  */
 export function adoptVerificationState(record: VerificationSnapshot, now: number): VerificationState {
   if (record.phase === "kickPending") {
-    return {
-      kind: "kickPending",
+    return kickPendingOf({
       label: record.label,
       isBot: record.isBot,
       requestedAt: record.requestedAt,
       countedJoinAt: record.countedJoinAt,
       announcementMessageId: record.announcementMessageId,
-      effectStarted: false,
-      executionStarted: false,
-    };
+    });
   }
   if (record.phase === "checkingInviter") {
     return checkingInviterOf(record.terminalInviterId, snapshotOf(record));

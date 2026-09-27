@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 const { getOrCreateChatState } = await import("../../packages/infra/storage/stateStore");
 const {
-  isSendCommandText,
+  isBotCommandText,
   shouldPassInitGate,
   shouldPassPrivateCommandGate,
   shouldRoutePrivateProxyMessage,
@@ -144,14 +144,14 @@ describe("shouldPassInitGate", () => {
   });
 });
 
-describe("isSendCommandText", () => {
+describe("isBotCommandText", () => {
   test("只匹配 /send 及发给当前机器人的 @BotUsername 变体", () => {
-    expect(isSendCommandText("/send", ME.username)).toBe(true);
-    expect(isSendCommandText("/send -100123", ME.username)).toBe(true);
-    expect(isSendCommandText("/send@Test_Bot finish", ME.username)).toBe(true);
-    expect(isSendCommandText("/send@other_bot finish", ME.username)).toBe(false);
-    expect(isSendCommandText("/sendx", ME.username)).toBe(false);
-    expect(isSendCommandText("/copy", ME.username)).toBe(false);
+    expect(isBotCommandText("/send", "/send", ME.username)).toBe(true);
+    expect(isBotCommandText("/send -100123", "/send", ME.username)).toBe(true);
+    expect(isBotCommandText("/send@Test_Bot finish", "/send", ME.username)).toBe(true);
+    expect(isBotCommandText("/send@other_bot finish", "/send", ME.username)).toBe(false);
+    expect(isBotCommandText("/sendx", "/send", ME.username)).toBe(false);
+    expect(isBotCommandText("/copy", "/send", ME.username)).toBe(false);
   });
 });
 

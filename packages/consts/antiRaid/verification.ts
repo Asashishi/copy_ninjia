@@ -1,4 +1,4 @@
-import type { VerificationEffect } from "../../types/states/verification";
+import type { JoinExemption, VerificationEffect } from "../../types/states/verification";
 
 /** 验证回调管理员查询等待上限；满载只回执稍后重试，不继续增加查询等待者。 */
 export const VERIFICATION_CALLBACK_CHECK_MAX: number = 10_000;
@@ -11,6 +11,13 @@ export const VERIFICATION_CALLBACK_REPLY_MAX: number = 10_000;
  * 所属模块：states/verification/。
  */
 export const NO_VERIFICATION_EFFECTS: readonly VerificationEffect[] = [];
+
+/** 入群没有任何豁免来源时的结论；全局共享，只读。所属模块：states/verification/join.ts。 */
+export const NO_JOIN_EXEMPTION: Readonly<JoinExemption> = { exempt: false, viaChannelComment: false };
+/** 身份豁免或拉人者同步豁免命中时的结论；全局共享，只读。所属模块：states/verification/join.ts。 */
+export const IDENTITY_JOIN_EXEMPTION: Readonly<JoinExemption> = { exempt: true, viaChannelComment: false };
+/** 入群前已观察到关联频道评论时的结论；全局共享，只读。所属模块：states/verification/join.ts。 */
+export const CHANNEL_COMMENT_JOIN_EXEMPTION: Readonly<JoinExemption> = { exempt: true, viaChannelComment: true };
 
 /**
  * 本人验证按钮 callback_data 的前缀，后面拼上待验证成员的 userId。

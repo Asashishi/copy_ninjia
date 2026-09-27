@@ -13,6 +13,7 @@
 
 import { mock } from "bun:test";
 import type { TranslateState } from "../../packages/types/translate";
+import { chatQaEntries } from "../../packages/cache/main/qa";
 
 export const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 export const recordChatMediaMock = mock((..._args: unknown[]): void => {});
@@ -53,12 +54,6 @@ export const autoMessageCopyState: { targetId: number | undefined } = { targetId
 /** 各群的翻译会话；`getChatState(chatId).translate` 按群读取，没有条目即无会话。 */
 export const autoMessageTranslateSessions = new Map<number, readonly TranslateState[]>();
 
-/**
- * 本群已登记的问答；空表等价于「这个群没开问答」，`getChatQa` 返回 undefined，
- * 直答链路在第一行就走开（口径同 infra/qaStore.ts）。
- */
-export const autoMessageQaEntries: Map<string, string> = new Map<string, string>();
-
 mock.module("../../packages/infra/telegram", () => ({
   copyMessage: copyMessageMock,
   sendMessage: sendMessageMock,
@@ -86,11 +81,6 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   getOrCreateChatState: (): Record<string, unknown> => ({}),
   persistChatState: async (): Promise<void> => {},
   saveChatStateInBackground: (): void => {},
-}));
-// 直答查表是主干上的一步；真实 qaStore 会把 Disk I/O 宿主一并拉进来。
-mock.module("../../packages/infra/qaStore", () => ({
-  getChatQa: (): ReadonlyMap<string, string> | undefined =>
-    autoMessageQaEntries.size === 0 ? undefined : autoMessageQaEntries,
 }));
 mock.module("../../packages/infra/chatTitle", () => ({
   recordChatTitleFromChat: (): void => {},
@@ -132,6 +122,6 @@ export function resetAutoMessageMocks(): void {
   autoMessageCopyState.targetId = undefined;
   autoMessageChatState.isInitEnabled = false;
   autoMessageChatState.quietUntilOffsetMs = 60_000;
-  autoMessageQaEntries.clear();
+  chatQaEntries.clear();
   autoMessageTranslateSessions.clear();
 }

@@ -146,9 +146,8 @@ test("回复提示把独立文字限死在 send_message，媒体配文走对应 
   expect(REPLY_ACTION_INSTRUCTION).toContain("最终响应保持空白");
 });
 
-test("模型提示限制为 8 个动作，执行侧留余量到 11 个动作才触发硬顶", async () => {
-  expect(AI_MAX_ACTIONS_PER_REPLY).toBe(8);
-  expect(HARD_MAX_ACTIONS_PER_REPLY).toBe(11);
+test("模型提示按 AI_MAX_ACTIONS_PER_REPLY 限制动作数，执行侧留余量到 HARD_MAX_ACTIONS_PER_REPLY 才触发硬顶", async () => {
+  expect(HARD_MAX_ACTIONS_PER_REPLY).toBeGreaterThan(AI_MAX_ACTIONS_PER_REPLY);
   expect(REPLY_ACTION_INSTRUCTION).toContain(`最多 ${AI_MAX_ACTIONS_PER_REPLY} 个`);
   expect(REPLY_ACTION_INSTRUCTION).not.toContain(`最多 ${HARD_MAX_ACTIONS_PER_REPLY} 个`);
 

@@ -4,8 +4,10 @@ import { logger } from "../../packages/infra/logger";
 import {
   installAiCacheUsageSink,
   reportAiCacheUsage,
+  reportAiCostUsage,
   reportGeminiUsage,
   reportGeminiInteractionUsage,
+  reportXAiUsage,
 } from "../../packages/infra/aiCacheUsage";
 import type { AiCacheUsage } from "../../packages/types/aiCache";
 
@@ -32,7 +34,7 @@ describe("AI 缓存用量上报边界", () => {
     expect(reported).toHaveLength(2);
     expect(reported[0]!.timestamp).toBeGreaterThanOrEqual(before);
     expect(reported[0]).toMatchObject({ capability: "text", inputTokens: 10, cachedInputTokens: 4, outputTokens: 2 });
-    expect(reported[1]!.cachedInputTokens).toBeNull();
+    expect(reported[1]).toMatchObject({ kind: "tokens", cachedInputTokens: null });
   });
 
   test.each([
@@ -53,7 +55,7 @@ describe("AI 缓存用量上报边界", () => {
     reportGeminiUsage({ capability: "ad_detect", model: "g", usage: { candidatesTokenCount: 3 } });
     reportGeminiUsage({ capability: "ad_detect", model: "g", usage: { promptTokenCount: 50, candidatesTokenCount: 3, thoughtsTokenCount: 4 } });
     expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
-      { capability: "ad_detect", provider: "google", model: "g", inputTokens: 50, cachedInputTokens: 0, outputTokens: 7 },
+      { kind: "tokens", capability: "ad_detect", provider: "google", model: "g", inputTokens: 50, cachedInputTokens: 0, outputTokens: 7 },
     ]);
   });
 });
@@ -109,4 +111,59 @@ test("用量诊断按固定维度去重、不回显模型或异常，重装出�
   } finally {
     warning.mockRestore();
   }
+});
+
+describe("只给费用的计量与 xAI 用量口径", () => {
+  test("费用计量校验为非负安全整数，缺失与非法分别诊断且不上报", () => {
+    install();
+    const warning = spyOn(logger, "warn").mockImplementation((): void => {});
+    try {
+      reportAiCostUsage({ capability: "image", provider: "openai", model: "x", costInUsdTicks: 5 });
+      reportAiCostUsage({ capability: "image", provider: "openai", model: "x", costInUsdTicks: undefined });
+      reportAiCostUsage({ capability: "image", provider: "google", model: "x", costInUsdTicks: -1 });
+      expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+        { kind: "cost", capability: "image", provider: "openai", model: "x", costInUsdTicks: 5 },
+      ]);
+      expect(warning.mock.calls.map((call: unknown[]): unknown => call[0])).toEqual([
+        "AI token usage unavailable: capability=image, provider=openai, reason=missing.",
+        "AI token usage unavailable: capability=image, provider=google, reason=invalid.",
+      ]);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  test("xAI 给出 token 分量时只按 token 计入；两项都为空或缺席时按费用计入", () => {
+    install();
+    reportXAiUsage({
+      capability: "image",
+      model: "x",
+      usage: { input_tokens: 8, output_tokens: 2, input_tokens_details: { cached_tokens: 3 }, cost_in_usd_ticks: 9 },
+    });
+    reportXAiUsage({ capability: "image", model: "x", usage: { input_tokens: null, output_tokens: null, cost_in_usd_ticks: 7 } });
+    reportXAiUsage({ capability: "image", model: "x", usage: { cost_in_usd_ticks: 6 } });
+    expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+      { kind: "tokens", capability: "image", provider: "openai", model: "x", inputTokens: 8, cachedInputTokens: 3, outputTokens: 2 },
+      { kind: "cost", capability: "image", provider: "openai", model: "x", costInUsdTicks: 7 },
+      { kind: "cost", capability: "image", provider: "openai", model: "x", costInUsdTicks: 6 },
+    ]);
+  });
+
+  test("xAI 只给一项 token、usage 缺席或不是对象时不上报并诊断", () => {
+    install();
+    const warning = spyOn(logger, "warn").mockImplementation((): void => {});
+    try {
+      reportXAiUsage({ capability: "image", model: "x", usage: { input_tokens: 8, cost_in_usd_ticks: 7 } });
+      reportXAiUsage({ capability: "text", model: "x", usage: undefined });
+      reportXAiUsage({ capability: "summary", model: "x", usage: [] });
+      expect(reported).toEqual([]);
+      expect(warning.mock.calls.map((call: unknown[]): unknown => call[0])).toEqual([
+        "AI token usage unavailable: capability=image, provider=openai, reason=missing.",
+        "AI token usage unavailable: capability=text, provider=openai, reason=missing.",
+        "AI token usage unavailable: capability=summary, provider=openai, reason=invalid.",
+      ]);
+    } finally {
+      warning.mockRestore();
+    }
+  });
 });

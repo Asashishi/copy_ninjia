@@ -1,4 +1,4 @@
-import { qaFormSessions } from "../cache/main/qa";
+import { chatQaEntries, qaFormSessions } from "../cache/main/qa";
 import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 /**
@@ -19,8 +19,6 @@ import type { Message } from "grammy/types";
 import { CHAT_QA_MAX_PER_CHAT, QA_SUBCOMMAND_PATTERN } from "../consts/qa";
 
 import {
-  chatQaCount,
-  getChatQa,
   removeAllChatQa,
   removeChatQa,
   setChatQa,
@@ -104,7 +102,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = await requiresQaPermission(ctx);
   if (actor === undefined) return;
-  if (chatQaCount(chatId) >= CHAT_QA_MAX_PER_CHAT) {
+  if ((chatQaEntries.get(chatId)?.size ?? 0) >= CHAT_QA_MAX_PER_CHAT) {
     await sendCommandMessage({
       chatId,
       text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.full,
@@ -253,7 +251,7 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
 async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const entries: ReadonlyMap<string, string> | undefined = getChatQa(chatId);
+  const entries: ReadonlyMap<string, string> | undefined = chatQaEntries.get(chatId);
   if (entries === undefined || entries.size === 0) {
     await sendCommandMessage({
       chatId,

@@ -118,11 +118,11 @@ export type AgentTtsCapabilityConfig = AgentCapabilityConfig & {
   readonly voice: string;
   /** 基础朗读风格；部署字段 style 缺省时使用 GEMINI_SPEECH_STYLE。 */
   readonly style: string;
-  /** 每个计数窗口内三个调用方共用的请求上限，正整数；`daily_limit` 缺省时为 TTS_DEFAULT_DAILY_LIMIT。 */
+  /** 每个窗口拆分给 AI 与预留额度的总预算，正整数；缺省时为 TTS_DEFAULT_DAILY_LIMIT。 */
   readonly dailyLimit: number;
   /**
-   * 留给 `/send` 代发与 cron `send_voice` 的次数，0～dailyLimit-1；AI 语音工具只能用到
-   * `dailyLimit - dailyReserveQuota`。`daily_reserve_quota` 缺省时为 TTS_DEFAULT_DAILY_RESERVE_QUOTA。
+   * `/send` 与 cron 共用的独立额度，0～dailyLimit-1；AI 独立使用 dailyLimit - dailyReserveQuota，
+   * 两边互不借用。daily_reserve_quota 缺省时为 TTS_DEFAULT_DAILY_RESERVE_QUOTA。
    */
   readonly dailyReserveQuota: number;
 };
@@ -166,6 +166,14 @@ export type HotConfigRead<T> =
   | { readonly kind: "invalid"; readonly reason: string };
 
 /**
+ * 机器人默认头像的来源：本进程下载的 http(s) 直链，或已按运行时数据根解析成绝对路径的本机文件
+ * （复原见 infra/telegram/avatar/restore.ts）。
+ */
+export type DefaultAvatarSource =
+  | { readonly kind: "url"; readonly url: string }
+  | { readonly kind: "path"; readonly path: string };
+
+/**
  * config/dynamic/assets.json 解析并补齐缺省后的外部素材配置（解析见 packages/config/assets.ts）。
  * 五项各自独立；文件或字段缺省时取 consts/ui/assets.ts 的内置常量。
  */
@@ -178,8 +186,8 @@ export interface AssetConfig {
   readonly probabilityThumbnailUrl: string;
   /** gag 发言内联结果的缩略图直链。 */
   readonly gagThumbnailUrl: string;
-  /** `/icon reset`、`/copy stop` 复原机器人默认头像时下载的直链。 */
-  readonly botDefaultAvatarUrl: string;
+  /** `/icon reset`、`/copy stop` 复原机器人默认头像时读取的直链或本机文件。 */
+  readonly botDefaultAvatar: DefaultAvatarSource;
 }
 
 /** config/reload.ts 对六份可热重载部署文件的一轮读取。 */

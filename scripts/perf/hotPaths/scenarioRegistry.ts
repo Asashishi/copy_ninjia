@@ -1,6 +1,10 @@
 /** 热路径场景名到独立领域夹具的唯一注册表。 */
 
-import { createAdCapacityRejectScenario } from "./adDetectScenarios";
+import {
+  adEmptyMetadataScenario,
+  adWireCloneScenario,
+  createAdCapacityRejectScenario,
+} from "./adDetectScenarios";
 import { cooldownScenario } from "./cooldownScenarios";
 import { storageFlushScenario } from "./storageFlushScenario";
 import { verificationSnapshotScenario } from "./verificationSnapshotScenario";
@@ -23,8 +27,6 @@ import {
   selfSentEmptyScenario,
 } from "./messageSpineScenarios";
 import {
-  adEmptyMetadataScenario,
-  adWireCloneScenario,
   aiActivityLruMissScenario,
   aiActivityScenario,
   boundedRollingBufferScenario,

@@ -201,6 +201,7 @@ export const diskIORuntime: DiskIORuntime = {
     stickerCatalogPersisted: [],
     luckAppendStalled: [],
     identityStoragePersisted: [],
+    joinLogPersisted: [],
   },
   giveUpListeners: [],
 };

@@ -15,18 +15,13 @@
 export const diskIOReplayWindow: { current: boolean } = { current: false };
 
 /**
- * Disk I/O Worker 的异步操作尾节点。启动 load、业务消息与维护 timer 都追加到
- * 同一条 Promise 链；每次只保留尚未结算的尾节点，结算后不保留历史消息。
+ * Disk I/O Worker 的异步操作尾节点。启动 load、业务消息与合并后的定时操作（见
+ * workers/diskIO/timedFlush.ts）都追加到同一条 Promise 链；每次只保留尚未结算的尾节点，结算后不保留历史消息。
  * Worker 重建会重新加载本 isolate，初值恢复为已结算 Promise。
  */
 export const diskIOOperationTail: { current: Promise<void> } = {
   current: Promise.resolve(),
 };
 
-/** Owner: Disk I/O Worker。入队自增、结算递减，最多八项；isolate 重建从零开始。 */
+/** Owner: Disk I/O Worker。入队自增、结算递减，上限见 DISK_WORKER_MAX_QUEUED_OPERATIONS；isolate 重建从零开始。 */
 export const diskIOOperationCount: { current: number } = { current: 0 };
-
-/** 仅供单测在用例之间重置窗口状态，避免一个用例遗留的 true 影响下一个。 */
-export function resetDiskIOReplayWindow(): void {
-  diskIOReplayWindow.current = false;
-}

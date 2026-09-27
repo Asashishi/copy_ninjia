@@ -177,7 +177,9 @@ export function resolveRepliedBotImage(chatId: number, entry: BufferedMessage, i
     repliedBotImageBackfills.set(chatId, byMessage);
   }
   byMessage.set(entry.messageId, task);
-  void task.finally((): void => forgetRepliedBotImage(chatId, entry.messageId, task));
+  // 成功与失败都走同一清理；拒绝由 describeBotImage 登记的回复代际任务集合观测。
+  const forget = (): void => forgetRepliedBotImage(chatId, entry.messageId, task);
+  void task.then(forget, forget);
 }
 
 /** 回复轮拼提示词前要等待的回填；这条触发消息没有在途识图时为 undefined。 */

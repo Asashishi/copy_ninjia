@@ -4,10 +4,6 @@
  * （journal 兜底，见 workers/diskIOWorker.ts 模块头）并保留标记。
  *
  * 不返回是否刷净，调用方通过残留集合的 size 自行判断。
- *
- * aiMemoryStorage.ts 形状相似但不复用本实现：它要在摘掉 dirty 标记的同一边界
- * 结算 aiMemoryImmediateRevisions 并发出 aiMemoryPersisted 回执，删除和即时写入
- * 的生命周期不属于通用循环。
  */
 export interface FlushDirtyEntriesParams<K, V> {
   dirty: Set<K>;

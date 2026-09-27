@@ -49,7 +49,7 @@ import {
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
-import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
+import { reportAiCacheUsage, reportXAiUsage } from "../../infra/aiCacheUsage";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { decodeGeneratedImageBySignature } from "../ai/utils/imagePayload";
 import { getOpenAiClient } from "./client";
@@ -284,12 +284,17 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     const response: OpenAI.Images.ImagesResponse = await raceAbortOrThrow(
       requestOpenAiCompatibleImage(config, request, requestSignal)
         .then((result: OpenAI.Images.ImagesResponse): OpenAI.Images.ImagesResponse => {
-          reportAiCacheUsage({
-            capability: "image", provider: "openai", model,
-            inputTokens: result.usage?.input_tokens,
-            cachedInputTokens: undefined,
-            outputTokens: result.usage?.output_tokens,
-          });
+          // xAI 生图可能只给费用不给 token，按 xAI 的 usage 口径判断记哪一种；OpenAI 原生只记 token。
+          if (protocol === "xai") {
+            reportXAiUsage({ capability: "image", model, usage: result.usage });
+          } else {
+            reportAiCacheUsage({
+              capability: "image", provider: "openai", model,
+              inputTokens: result.usage?.input_tokens,
+              cachedInputTokens: undefined,
+              outputTokens: result.usage?.output_tokens,
+            });
+          }
           return result;
         }),
       requestSignal

@@ -140,7 +140,7 @@
 5. 新版をデプロイして起動します。グローバル状態ファイルが不正と出た場合は migration が不完全です。プログラムは元ファイルを変更しないため、修正してから再起動します。
 6. deployment のハッシュと厳格解析を検証し、少なくとも 2 回の再起動間隔にわたり active/running、NRestarts の増加なし、journal の新規非ゼロ終了なしを確認してから一時バックアップを削除します。
 
-**任意ブロックの追加は手順 3–4 を省略できます**。条件は「未設定」を明確に定義することです。decoder はブロック全体の欠落を許容し、取得側で欠落を 1 つの既定値に収束させます。実例は `memory/global/state.json` の `ttsUsage`（`libs/stateFileCodec.ts` の `globalTtsUsage`）で、ブロック全体の欠落は未使用として扱い、既存ファイルは無変更のまま読み込めます。運用者が手で編集する調整項目は実行時状態に置かず、`config/`（例：`config/dynamic/assets.json`）に置いて、対応する parser が内蔵既定値を取り、Bot は書き戻しません。逆に、**既存ファイルの decode を失敗させる変更は従来どおり手順 3–4 を完全に実施します**。
+**任意ブロックの追加は手順 3–4 を省略できます**。条件は「未設定」を明確に定義することです。decoder はブロック全体の欠落を許容し、取得側で欠落を 1 つの既定値に収束させます。実例は `memory/global/state.json` の `ttsUsage`（`libs/stateFileCodec.ts` の `globalTtsUsage`）で、ブロック全体の欠落は未使用として扱い、ブロックのないファイルはそのまま読めます。既存の旧 `count` 形式は `agentCount` と `reserveCount` へ停止中に移行する必要があります。運用者が手で編集する調整項目は実行時状態に置かず、`config/`（例：`config/dynamic/assets.json`）に置いて、対応する parser が内蔵既定値を取り、Bot は書き戻しません。逆に、**既存ファイルの decode を失敗させる変更は従来どおり手順 3–4 を完全に実施します**。
 
 ## SQLite table を追加する
 

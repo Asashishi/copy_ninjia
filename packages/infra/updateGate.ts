@@ -32,19 +32,16 @@ export function shouldPassInitGate(ctx: Context): boolean {
   // 身份判定排在全部字符串工作之前；未初始化群的普通消息无需切词、大小写归一
   // 或模板拼接。
   if (actorId !== SUPER_ADMIN_USER_ID) return false;
-  const text: string = message?.text ?? "";
-  const firstToken: string = text.split(/\s/, 1)[0]?.toLowerCase() ?? "";
-  if (firstToken === "/init") return true;
-  return firstToken === `/init@${ctx.me.username.toLowerCase()}`;
+  return isBotCommandText(message?.text ?? "", "/init", ctx.me.username);
 }
 
 /**
- * 判断一段消息文本是不是发给当前机器人的 /send 指令本身。这里只校验命令词，
- * 参数仍交给 commands/send.ts；发送者身份由私聊前置网关和 handler 双重校验。
+ * 文本首词（按空白切分，不区分大小写）是否就是发给当前机器人的 command：裸命令或
+ * `command@<当前机器人用户名>`。参数不在这里校验。
  */
-export function isSendCommandText(text: string, botUsername: string): boolean {
+export function isBotCommandText(text: string, command: string, botUsername: string): boolean {
   const firstToken: string = (text.split(/\s/, 1)[0] ?? "").toLowerCase();
-  return firstToken === "/send" || firstToken === `/send@${botUsername.toLowerCase()}`;
+  return firstToken === command || firstToken === `${command}@${botUsername.toLowerCase()}`;
 }
 
 /**
@@ -65,7 +62,7 @@ export function shouldPassPrivateCommandGate(ctx: Context): boolean {
   const text: string | undefined = message?.text ?? message?.caption;
   if (!text?.startsWith("/")) return true;
   if (typeof message?.text !== "string") return false;
-  return ctx.from?.id === SUPER_ADMIN_USER_ID && isSendCommandText(text, ctx.me.username);
+  return ctx.from?.id === SUPER_ADMIN_USER_ID && isBotCommandText(text, "/send", ctx.me.username);
 }
 
 /**

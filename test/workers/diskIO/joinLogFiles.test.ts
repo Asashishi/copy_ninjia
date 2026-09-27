@@ -3,11 +3,11 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { JoinLogDiskMessage } from "../../../packages/types/diskIO/messages";
 import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
+import { FLUSH_MAX_ENTRIES } from "../../../packages/consts/diskIO/appendOnly";
 import {
   joinLogDir,
   UTF8_ENCODER,
   flushJoinLogBuffer,
-  flushJoinLogDomain,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
   purgeJoinLogDeletions,
@@ -25,11 +25,10 @@ import {
   joinLogFileCaches,
   joinLogRetryAt,
   markJoinLogDirty,
-  noteJoinLogRejected,
+  persistedReplies,
   JOIN_LOG_COMPACT_CHECK_BYTES,
   JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES,
   JOIN_LOG_COMPACT_REDUNDANT_ENTRIES,
-  JOIN_LOG_MAX_BUFFERED_ENTRIES,
   JOIN_LOG_MAX_CACHED_FILES,
   JOIN_LOG_MAX_RETRY_FILES,
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
@@ -262,21 +261,32 @@ describe("diskIO/joinLogFiles", () => {
     expect(await Bun.file(path).text()).toBe(original);
   });
 
-  test("跨日重投的旧事件不重新创建历史文件", async () => {
+  test("跨日重投的旧事件不重新创建历史文件，缓冲为空时立即发出处置回执", async () => {
     const staleAt: number = todayAt() - 3 * 24 * 60 * 60_000;
     await handleJoinLogMessage(joinMessage(-1001, 42, staleAt));
 
     expect(joinLogBuffer.entries).toHaveLength(0);
     expect(existsSync(joinLogDir)).toBeFalse();
+    expect(persistedReplies).toEqual([{ type: "joinLogPersisted", through: 1, pending: [] }]);
   });
 
-  test("领先本机今天的事件抛错交给统一拒收出口，不静默丢弃", async () => {
+  test("领先本机今天的事件留在缓冲里等日期追上，不提前建文件，回执把它列为待写", async () => {
     const aheadAt: number = todayAt() + 2 * 24 * 60 * 60_000;
+    await handleJoinLogMessage(joinMessage(-1001, 42, aheadAt));
+    await handleJoinLogMessage(joinMessage(-1002, 43, todayAt()));
 
-    await expect(handleJoinLogMessage(joinMessage(-1001, 42, aheadAt)))
-      .rejects.toThrow("is ahead of the worker's current Tokyo day");
-    expect(joinLogBuffer.entries).toHaveLength(0);
-    expect(existsSync(joinLogDir)).toBeFalse();
+    expect(await flushJoinLogBuffer()).toBeFalse();
+    expect(joinLogBuffer.entries).toEqual([{
+      sequence: 1,
+      chatId: -1001,
+      day: getTokyoDateKey(aheadAt),
+      record: { userId: 42, joinedAt: aheadAt },
+    }]);
+    expect(joinLogBuffer.timer).not.toBeNull();
+    expect(existsSync(currentFile(-1002))).toBeTrue();
+    expect(existsSync(datedFile(-1001, getTokyoDateKey(aheadAt)))).toBeFalse();
+    // 序号 2 已落盘可释放，序号 1 仍在缓冲里，回执把它列为待写。
+    expect(persistedReplies).toEqual([{ type: "joinLogPersisted", through: 2, pending: [1] }]);
   });
 
   test("同一事件重投不会增加物理文件字节", async () => {
@@ -372,21 +382,44 @@ describe("diskIO/joinLogFiles", () => {
 
       expect(await flushJoinLogBuffer()).toBeFalse();
       expect(joinLogBuffer.entries).toEqual([{
+        sequence: 1,
         chatId: -1001,
         day: getTokyoDateKey(),
         record: { userId: 42, joinedAt: now },
       }]);
       expect(joinLogBuffer.timer).not.toBeNull();
+      expect(persistedReplies).toEqual([{ type: "joinLogPersisted", through: 1, pending: [1] }]);
 
       rmSync(path, { recursive: true, force: true });
       joinLogRetryAt.clear();
       expect(await flushJoinLogBuffer()).toBeTrue();
       expect(joinLogBuffer.entries).toHaveLength(0);
+      expect(persistedReplies).toEqual([
+        { type: "joinLogPersisted", through: 1, pending: [1] },
+        { type: "joinLogPersisted", through: 1, pending: [] },
+      ]);
       expect(JSON.parse(await Bun.file(path).text())).toEqual({
         [`${now}:42`]: { userId: 42, joinedAt: now },
       });
     } finally {
       error.mockRestore();
+    }
+  });
+
+  test("入群日志目录建不出来时整批留在缓冲里退避，不抛出也不算已处置", async () => {
+    rmSync(joinLogDir, { recursive: true, force: true });
+    await Bun.write(joinLogDir, "not a directory");
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      for (let index: number = 0; index < FLUSH_MAX_ENTRIES; index += 1) {
+        await handleJoinLogMessage(joinMessage(-1001, index + 1, todayAt(index)));
+      }
+
+      expect(joinLogBuffer.entries).toHaveLength(FLUSH_MAX_ENTRIES);
+      expect(persistedReplies.at(-1)?.pending).toHaveLength(FLUSH_MAX_ENTRIES);
+    } finally {
+      error.mockRestore();
+      rmSync(joinLogDir, { force: true });
     }
   });
 
@@ -570,44 +603,43 @@ describe("diskIO/joinLogFiles", () => {
     );
   });
 
-  test("待刷缓冲达到硬顶后拒绝新增且不覆盖旧事实", () => {
-    const day: string = getTokyoDateKey();
-    for (
-      let index: number = 0;
-      index < JOIN_LOG_MAX_BUFFERED_ENTRIES;
-      index += 1
-    ) {
-      expect(markJoinLogDirty({
-        chatId: -30_000,
-        day,
-        record: { userId: index + 1, joinedAt: index + 1 },
-      })).toBe(index + 1);
+  test("累计 FLUSH_MAX_ENTRIES 条立即刷出，回执随之覆盖到最后一条", async () => {
+    const now: number = todayAt();
+    for (let index: number = 0; index < FLUSH_MAX_ENTRIES - 1; index += 1) {
+      await handleJoinLogMessage(joinMessage(-1001, index + 1, now + index));
     }
+    expect(joinLogBuffer.entries).toHaveLength(FLUSH_MAX_ENTRIES - 1);
+    expect(existsSync(currentFile(-1001))).toBeFalse();
+    expect(persistedReplies).toEqual([]);
 
-    expect(() => markJoinLogDirty({
-      chatId: -30_000,
-      day,
-      record: { userId: 999_999, joinedAt: 999_999 },
-    })).toThrow("hard limit");
-    expect(joinLogBuffer.entries).toHaveLength(
-      JOIN_LOG_MAX_BUFFERED_ENTRIES
-    );
-    expect(joinLogBuffer.entries[0]?.record.userId).toBe(1);
+    await handleJoinLogMessage(joinMessage(-1001, FLUSH_MAX_ENTRIES, now + FLUSH_MAX_ENTRIES));
+
+    expect(joinLogBuffer.entries).toHaveLength(0);
+    expect(joinLogBuffer.timer).toBeNull();
+    expect(Object.keys(JSON.parse(await Bun.file(currentFile(-1001)).text())))
+      .toHaveLength(FLUSH_MAX_ENTRIES);
+    expect(persistedReplies).toEqual([{ type: "joinLogPersisted", through: FLUSH_MAX_ENTRIES, pending: [] }]);
   });
 
-  test("拒收标记只拖垮 joinLog 领域，且被统一 flush 消费一次后即清零", async () => {
-    const day: string = getTokyoDateKey();
-    await handleJoinLogMessage({ type: "joinLog", chatId: -31_000, userId: 7, joinedAt: 1_000, day });
+  test("一个群写失败时只有它的事实留作待写，其它群照常落盘并可释放", async () => {
+    const now: number = todayAt();
+    mkdirSync(currentFile(-1001), { recursive: true });
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      await handleJoinLogMessage(joinMessage(-1002, 41, now));
+      await handleJoinLogMessage(joinMessage(-1001, 42, now + 1));
+      await handleJoinLogMessage(joinMessage(-1002, 43, now + 2));
 
-    // 拒收标记语义见 docs/cn/04-invariants.md 的 joinLog 领域说明。
-    noteJoinLogRejected();
-    expect(await flushJoinLogDomain()).toBeFalse();
-    expect(joinLogBuffer.entries).toHaveLength(0);
+      expect(await flushJoinLogBuffer()).toBeFalse();
+      expect(joinLogBuffer.entries.map((entry): number => entry.sequence)).toEqual([2]);
+      expect(persistedReplies).toEqual([{ type: "joinLogPersisted", through: 3, pending: [2] }]);
 
-    // 一次性消费：重投的下一条不该被上一条的失败连坐。
-    expect(await flushJoinLogDomain()).toBeTrue();
-    // 内部调用方（跨日准备、按需读取）判断的始终只是「缓冲写进去了没有」。
-    expect(await flushJoinLogBuffer()).toBeTrue();
+      // 条件未变的重试不重发回执。
+      expect(await flushJoinLogBuffer()).toBeFalse();
+      expect(persistedReplies).toHaveLength(1);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("单日判断不分配 Set 且覆盖锚点窗口边界", () => {
@@ -648,6 +680,7 @@ describe("diskIO/joinLogFiles", () => {
       const newestJoinedAt: number = base + JOIN_LOG_MAX_USERS_PER_CHAT_DAY + 1;
       const newUserId: number = JOIN_LOG_MAX_USERS_PER_CHAT_DAY + 1;
       markJoinLogDirty({
+        sequence: 1,
         chatId: -1001,
         day,
         record: { userId: newUserId, joinedAt: newestJoinedAt },
@@ -686,6 +719,7 @@ describe("diskIO/joinLogFiles", () => {
 
       // 同一份缓存再溢出一次只淘汰、不重复刷屏。
       markJoinLogDirty({
+        sequence: 2,
         chatId: -1001,
         day,
         record: { userId: newUserId + 1, joinedAt: newestJoinedAt + 1 },
@@ -737,8 +771,8 @@ describe("diskIO/joinLogFiles", () => {
     await Bun.write(datedFile(-1001, yesterday), "{}");
     await Bun.write(datedFile(-2002, today), "{}");
     // 删除之前又来了一条本群的入群事实：它属于一个已经不再接管的群，不能被写回去。
-    markJoinLogDirty({ chatId: -1001, day: today, record: { userId: 43, joinedAt: todayAt(1) } });
-    markJoinLogDirty({ chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } });
+    markJoinLogDirty({ sequence: 2, chatId: -1001, day: today, record: { userId: 43, joinedAt: todayAt(1) } });
+    markJoinLogDirty({ sequence: 3, chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } });
     expect(joinLogFileCaches.has(`-1001:${today}`)).toBeTrue();
 
     handleJoinLogDeleteMessage({ type: "deleteJoinLog", chatId: -1001 });
@@ -751,7 +785,7 @@ describe("diskIO/joinLogFiles", () => {
     // 只删这一个群：别的群的文件与待写事实都留着。
     expect(existsSync(datedFile(-2002, today))).toBeTrue();
     expect(joinLogBuffer.entries).toEqual([
-      { chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } },
+      { sequence: 3, chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } },
     ]);
     expect(purgeJoinLogDeletions()).toBeTrue();
     expect(existsSync(currentFile(-1001))).toBeFalse();
@@ -772,10 +806,10 @@ describe("diskIO/joinLogFiles", () => {
       handleJoinLogDeleteMessage({ type: "deleteJoinLog", chatId: -1001 });
       expect(joinLogDeletions.has(-1001)).toBeTrue();
       expect(purgeJoinLogDeletions()).toBeFalse();
-      // 别的群的入群事实照常落盘并回报成功：一个删不掉的文件不得让每一条入群
-      // update 都被判成未确认、无限重投（见 types/diskIO/replies.ts 的 DiskIODomain）。
+      // 别的群的入群事实照常落盘并回报成功：一个删不掉的文件不得连坐其它群的入群
+      // 批次（见 types/diskIO/replies.ts 的 DiskIODomain）。
       await handleJoinLogMessage(joinMessage(-2002, 42, todayAt()));
-      expect(await flushJoinLogDomain()).toBeTrue();
+      expect(await flushJoinLogBuffer()).toBeTrue();
 
       rmSync(currentFile(-1001), { recursive: true, force: true });
       expect(purgeJoinLogDeletions()).toBeTrue();

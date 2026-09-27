@@ -61,9 +61,11 @@ function schema(chatId: number): DecodedGlobalState {
 }
 
 describe("StateStore", () => {
-  test("拒绝非法重试延时与 flush 预算", () => {
+  test("拒绝非法重试延时、后台窗口与 flush 预算", () => {
     expect(() => new StateStore({ retryDelaysMs: [] })).toThrow("at least one retry delay");
     expect(() => new StateStore({ retryDelaysMs: [0] })).toThrow("positive finite");
+    expect(() => new StateStore({ backgroundDelayMs: 0 })).toThrow("background delay");
+    expect(() => new StateStore({ backgroundDelayMs: Number.POSITIVE_INFINITY })).toThrow("background delay");
     const store = new StateStore();
     expect(() => store.flush(0)).toThrow("positive finite");
     expect(() => store.flush(Number.NaN)).toThrow("positive finite");
@@ -125,6 +127,7 @@ describe("StateStore", () => {
     let attempts: number = 0;
     const store = new StateStore({
       retryDelaysMs: [1],
+      backgroundDelayMs: 1,
       writeText: async () => {
         attempts++;
         throw new Error("disk unavailable");
@@ -136,6 +139,86 @@ describe("StateStore", () => {
     await waitUntil((): boolean => attempts > 1);
     expect(attempts).toBeGreaterThan(1);
     await expect(store.flush(20, true)).resolves.toBe("failed");
+    store.dispose();
+  });
+
+  test("后台写在合并窗口到期前不落盘，到期只写出窗口内的最新值", async () => {
+    const writes: string[] = [];
+    const store = new StateStore({
+      backgroundDelayMs: 20,
+      writeText: async (_path, content) => {
+        writes.push(content);
+      },
+    });
+
+    await store.save(schema(50), { waitForPersistence: false });
+    await store.save(schema(51), { waitForPersistence: false });
+    await Bun.sleep(0);
+    expect(writes).toHaveLength(0);
+
+    await waitUntil((): boolean => writes.length > 0);
+    await Bun.sleep(30);
+    expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(51)]);
+    store.dispose();
+  });
+
+  test("等待落盘的写入立即写出并取消后台窗口，窗口内的旧值不再单独落盘", async () => {
+    const writes: string[] = [];
+    const store = new StateStore({
+      backgroundDelayMs: 20,
+      writeText: async (_path, content) => {
+        writes.push(content);
+      },
+    });
+
+    await store.save(schema(60), { waitForPersistence: false });
+    await store.save(schema(61));
+    expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(61)]);
+
+    await Bun.sleep(40);
+    expect(writes).toHaveLength(1);
+    store.dispose();
+  });
+
+  test("失败重试排期期间后台窗口不另写，由重试按退避写出最新值", async () => {
+    const writes: string[] = [];
+    let attempts: number = 0;
+    const store = new StateStore({
+      retryDelaysMs: [60],
+      backgroundDelayMs: 1,
+      onRetryError: () => {},
+      writeText: async (_path, content) => {
+        attempts++;
+        if (attempts === 1) throw new Error("disk hiccup");
+        writes.push(content);
+      },
+    });
+
+    await store.save(schema(80), { waitForPersistence: false });
+    await waitUntil((): boolean => attempts === 1);
+    await store.save(schema(81), { waitForPersistence: false });
+    await Bun.sleep(20);
+    // 退避未到期：后台变化没有触发额外写入。
+    expect(attempts).toBe(1);
+
+    await waitUntil((): boolean => writes.length === 1);
+    expect(attempts).toBe(2);
+    expect(JSON.parse(writes[0]!)).toEqual(schema(81));
+    store.dispose();
+  });
+
+  test("flush 立即写出后台窗口内的最新值", async () => {
+    const writes: string[] = [];
+    const store = new StateStore({
+      backgroundDelayMs: 60_000,
+      writeText: async (_path, content) => {
+        writes.push(content);
+      },
+    });
+
+    await store.save(schema(70), { waitForPersistence: false });
+    await expect(store.flush(1_000, true)).resolves.toBe("flushed");
+    expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(70)]);
     store.dispose();
   });
 
@@ -187,7 +270,7 @@ describe("StateStore", () => {
 
   test("手改错的字段拒绝启动，诊断点名字段且不回显原值", async () => {
     const edited: string = JSON.stringify({
-      copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1_700_000_000_000, count: -7 },
+      copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1_700_000_000_000, agentCount: -7, reserveCount: 0 },
     }, null, 2);
     const store = new StateStore({
       stateFilePath: "/virtual/state.json",
@@ -199,7 +282,7 @@ describe("StateStore", () => {
       (): null => null,
       (error: unknown): Error => error instanceof Error ? error : new Error("non-Error failure")
     );
-    expect(failure?.message).toBe("/virtual/state.json: $.ttsUsage.count must be a positive safe integer.");
+    expect(failure?.message).toBe("/virtual/state.json: $.ttsUsage.agentCount must be a non-negative safe integer.");
     expect(failure?.message).not.toContain("-7");
     store.dispose();
   });
@@ -560,7 +643,7 @@ describe("全局状态的加载接线", () => {
       const logged = spyOn(logger, "error").mockImplementation((): void => {});
       try {
         await expect(loadState()).rejects.toThrow(
-          `${legacyPath}: $ must be absent; migrate it with migrate:global-state and move it out of the data root.`
+          `${legacyPath}: $ must be absent; first upgrade with the preceding global-state migration release, then run migrate:global-state for the current format.`
         );
         expect(globalCopyState.lastCopyTime).toBeUndefined();
         expect(await Bun.file(legacyPath).text()).toBe("{\"global\":{}}");

@@ -122,7 +122,11 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，�
     adDetectGoogleClientHolder.current = fakeGoogle;
     expect(await requestGoogleAdDetectJson(adRequest)).toBe("ok");
     await flushDeliveries();
-    const rows = Object.values(await Bun.file(AI_CACHE_FILE_PATH).json()) as AiCacheUsage[];
+    const rows = Object.values(await Bun.file(AI_CACHE_FILE_PATH).json()) as {
+      readonly capability: string;
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+    }[];
     expect(rows).toHaveLength(10);
     expect(rows.filter((row) => row.capability === "ad_detect")).toHaveLength(3);
     expect(new Set(rows.map((row) => row.capability))).toEqual(new Set(["text", "summary", "media", "image", "tts", "ad_detect"]));

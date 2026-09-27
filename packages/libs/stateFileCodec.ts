@@ -93,23 +93,29 @@ function globalCopy(value: unknown, context: InputFieldContext): DecodedGlobalCo
 }
 
 /**
- * 语音合成每日计数。整块缺省表示从没用过；存在时两个字段都必填：windowStartedAt
- * 是非负安全整数时间戳，count 是正安全整数。count 不与 `agent.tts.daily_limit` 对拍：上限调低后
- * 窗口内已用次数可能超过新上限，按额度用尽处理。
+ * 语音合成每日计数。整块缺省表示从没用过；存在时三项都必填且均为非负安全整数，
+ * 两项计数至少一项大于 0。计数不与配置上限对拍：上限调低后按对应额度用尽处理。
  */
 function globalTtsUsage(value: unknown, context: InputFieldContext): TtsDailyUsage | undefined {
   if (value === undefined) return undefined;
   const raw: Record<string, unknown> = record(value, context);
-  knownKeys(raw, ["windowStartedAt", "count"], context);
+  knownKeys(raw, ["windowStartedAt", "agentCount", "reserveCount"], context);
   const windowStartedAt: unknown = raw.windowStartedAt;
   if (typeof windowStartedAt !== "number" || !Number.isSafeInteger(windowStartedAt) || windowStartedAt < 0) {
     return invalidInput(context.source, `${context.path}.windowStartedAt`, "a non-negative safe integer timestamp");
   }
-  const count: unknown = raw.count;
-  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 1) {
-    return invalidInput(context.source, `${context.path}.count`, "a positive safe integer");
+  const agentCount: unknown = raw.agentCount;
+  if (typeof agentCount !== "number" || !Number.isSafeInteger(agentCount) || agentCount < 0) {
+    return invalidInput(context.source, `${context.path}.agentCount`, "a non-negative safe integer");
   }
-  return { windowStartedAt, count };
+  const reserveCount: unknown = raw.reserveCount;
+  if (typeof reserveCount !== "number" || !Number.isSafeInteger(reserveCount) || reserveCount < 0) {
+    return invalidInput(context.source, `${context.path}.reserveCount`, "a non-negative safe integer");
+  }
+  if (agentCount === 0 && reserveCount === 0) {
+    return invalidInput(context.source, context.path, "at least one positive usage count");
+  }
+  return { windowStartedAt, agentCount, reserveCount };
 }
 
 /**

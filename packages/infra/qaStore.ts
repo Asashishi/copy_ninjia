@@ -44,22 +44,6 @@ export function hydrateChatQaCache(
   }
 }
 
-/**
- * 读取某群的问答表。
- *
- * 直答路径每条群消息调它一次，因此**不做任何投影**：直接交出内部 Map 的只读
- * 视图，调用方按 `message.text` 查一次即可，不产生临时对象。没有问答的群返回
- * undefined，调用方据此在第一步就走开。
- */
-export function getChatQa(chatId: number): ReadonlyMap<string, string> | undefined {
-  return chatQaEntries.get(chatId);
-}
-
-/** 本群已登记条数；`/qa set` 的容量闸与 `/qa query` 的渲染共用。 */
-export function chatQaCount(chatId: number): number {
-  return chatQaEntries.get(chatId)?.size ?? 0;
-}
-
 function trackUnacknowledged(chatId: number, q: string, revision: number): void {
   const existing: Map<string, number> | undefined = unacknowledgedChatQaWrites.get(chatId);
   const questions: Map<string, number> = existing ?? new Map<string, number>();

@@ -41,10 +41,17 @@ export const FALLBACK_CHANNEL_NAME: string = "某频道";
 export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";
 
 /**
- * 消息没有 entity 表时的提及事实（auto/message/facts.ts 的 resolveMentionFacts）：
- * 两项都为 false。全局共享一份，调用方只读字段，不得修改。
+ * 未提及任何人时的提及事实（auto/message/facts.ts 的 resolveMentionFacts）：没有
+ * entity 表，或实体里没有提及。两项都为 false；与下面三项一起覆盖全部四种结果，
+ * 全局各共享一份，调用方只读字段，不得修改。
  */
 export const NO_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: false, hasOtherMention: false };
+/** 只提及机器人自己时的提及事实（auto/message/facts.ts）；全局共享，只读。 */
+export const BOT_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: true, hasOtherMention: false };
+/** 只提及机器人以外的用户时的提及事实（auto/message/facts.ts）；全局共享，只读。 */
+export const OTHER_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: false, hasOtherMention: true };
+/** 同时提及机器人与其他用户时的提及事实（auto/message/facts.ts）；全局共享，只读。 */
+export const BOTH_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: true, hasOtherMention: true };
 
 /**
  * 非文本消息的类型标签（所属模块：auto/message）。回复引用在原消息已滑出 AI 缓存时

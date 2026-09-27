@@ -4,6 +4,7 @@ export { assertNoMisplacedConfigFiles } from "../../packages/config/layout";
 export { validateAgentDeploymentConfig } from "../../packages/config/agent";
 import { parseBotConfig } from "../../packages/config/botInput";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
+import { StateStore, loadCurrentGlobalState } from "../../packages/infra/storage/statePersistence";
 import { readJsonInput } from "../../packages/libs/inputValidation";
 import { isPlainRecord } from "../../packages/libs/record";
 import type { BotAtmosphere } from "../../packages/types/atmosphere";
@@ -22,8 +23,13 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   await readiness.validateExistingDeploymentInputs();
 }
 
-/** 安装前拒绝数据根下仍有 14.x 的 state.json 或备份副本，口径同启动恢复。 */
-export { assertLegacyStateFilesAbsent as assertStateFilesMigrated } from "../../packages/infra/storage/statePersistence";
+/**
+ * 安装前按启动恢复同一口径只读校验全局状态：数据根仍有 14.x 的 state.json 或备份副本，或
+ * memory/global/state.json 不是当前格式（例如未经 migrate:global-state 拆分的总计数 ttsUsage）时拒绝。
+ */
+export async function assertStateFilesMigrated(): Promise<void> {
+  await loadCurrentGlobalState(new StateStore());
+}
 
 /** 只严格校验候选文件内容；配置目录布局由安装准备（runtime.sh）与启动总闸检查。 */
 export async function validateStagedBotConfig(path: string): Promise<void> {

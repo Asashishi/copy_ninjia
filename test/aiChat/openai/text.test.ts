@@ -34,7 +34,6 @@ const {
 const {
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
-  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
 } = await import("../../../packages/consts/aiChat/openai");
 
@@ -210,7 +209,6 @@ describe("语音转写", () => {
     expect(passed?.aborted).toBe(false);
     controller.abort();
     expect(passed?.aborted).toBe(true);
-    expect(OPENAI_MEDIA_REQUEST_TIMEOUT_MS).toBe(240_000);
   });
 
   test("没有调用方 signal 时仍下传覆盖整轮重试的 deadline", async () => {

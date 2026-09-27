@@ -1,13 +1,21 @@
 /**
  * 滚动 24 小时入群日志的主线程写入与删除入口。写入只投递最小事件给 Disk I/O
- * Worker，主线程不保留成员列表；读取由 `/batch_kick` 直接调用 infra/diskIO.ts 的
- * readJoinLog；整群删除由群 teardown 的 `joinLog` owner 发起（本模块在加载时反向
- * 注册那个 owner）。
+ * Worker，主线程只保留未确认落盘的事实镜像（cache/main/joinLog.ts），不保留成员列表；
+ * 读取由 `/batch_kick` 直接调用 infra/diskIO.ts 的 readJoinLog；整群删除由群 teardown
+ * 的 `joinLog` owner 发起（本模块在加载时反向注册那个 owner）。
  */
 
 import { getTokyoDateKey } from "../libs/time";
 import { purgesChatData } from "../libs/chatTeardown";
+import { joinLogSequence, unacknowledgedJoinLogs } from "../cache/main/joinLog";
+import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
+import { JOIN_LOG_MAX_BUFFERED_ENTRIES } from "../consts/diskIO/joinLog";
 import type { ChatTeardownReason } from "../types/chatTeardown";
+import type {
+  DiskIORecoveryTransport,
+  JoinLogDiskMessage,
+} from "../types/diskIO/messages";
+import type { JoinLogPersistedReply } from "../types/diskIO/replies";
 import { registerChatTeardown } from "./chatTeardownRegistry";
 import * as diskIO from "./diskIO";
 
@@ -18,46 +26,62 @@ export interface RecordJoinLogParams {
 }
 
 /**
- * 记录一条权威 `chat_member` 入群事实；只在这条事实已经 durable、或已被落盘
- * Worker 的恢复缓冲接管后返回 true。
+ * 记录一条权威 `chat_member` 入群事实：投递给 Disk I/O Worker 的入群批次并登记进未确认
+ * 镜像后立即返回，不等待落盘。Worker 按 FLUSH_MAX_ENTRIES 条或 FLUSH_INTERVAL_MS 批量
+ * 追写，并以 joinLogPersisted 回执释放已处置的事实；Worker 崩溃重建时镜像原序重放，停机
+ * 统一 flush 写出剩余批次。进程被强杀或断电时，最近一个窗口内尚未落盘的事实会丢失。
  *
- * 「已缓冲待写」必须与「写入失败」分开报。Worker 因单次文件错误崩溃后，
- * onerror 会拉起替身并进入恢复握手期，那段窗口里 `postDiskIO` 把消息压进有
- * 硬顶的 FIFO 并返回 true，而 `flushDiskIODomain` 因为没有可写的 Worker 直接
- * 短路成 `"failed"`——同一个函数里两套语义。照 `"failed"` 报的话，窗口内任意
- * 用户入群都会让 antiRaid/updateIngress.ts 抛错、经 bot.catch rethrow 让
- * handleUpdate reject，进而使 ApplicationLifecycle.run("main") 以退出码 1 结束并**扣住
- * 最终 offset**，Telegram 把上次确认点之后的全部更新重投一遍——一次可自愈的
- * 瞬时故障被放大成整进程退出加重复投递。
- *
- * 缓冲不是静默丢弃：握手结束后 activateDiskIOWorker 原序重放这条消息，重放
- * 失败或缓冲触顶都会走 stopWorkerAfterLoadFailure 的统一 fatal 停机路径。
- *
- * 这条承诺靠的是重放区间标记（见 types/diskIO.ts 的 RecoveryReplayRequest）：
- * 缓冲这一刻本函数就已经放行了该 update，此后没有任何 flush 会再问它写没写进去，
- * 因此 Worker 必须知道自己正在重放，才能把区间内的写失败从「记个拒收标记等下一次
- * flush 回报」升级成停机。没有这道标记的话，拒收标记会挂到某个**无关**的后续入群
- * 事实那次 flush 上——那一条被连坐重投，真正丢掉的这一条却没有任何痕迹。
+ * @returns 已受理为 true；镜像已满 JOIN_LOG_MAX_BUFFERED_ENTRIES（磁盘持续写不进）或
+ *   Disk I/O 拒收时为 false，调用方据此让 update 失败，由 Telegram 重投。
  */
-export async function recordJoinLog({
+export function recordJoinLog({
   chatId,
   userId,
   joinedAt,
-}: RecordJoinLogParams): Promise<boolean> {
-  // 必须在投递**之前**取样：投递之后 Worker 可能刚好完成握手转为可写，那时
-  // 再问就会把「这条已经进了缓冲」误读成「这条已经发出去了」。
-  const bufferedDuringRecovery: boolean = diskIO.isDiskIOBuffering();
-  if (!diskIO.postDiskIO({
+}: RecordJoinLogParams): boolean {
+  if (unacknowledgedJoinLogs.size >= JOIN_LOG_MAX_BUFFERED_ENTRIES) return false;
+  const message: JoinLogDiskMessage = {
     type: "joinLog",
+    sequence: joinLogSequence.current + 1,
     chatId,
     userId,
     joinedAt,
     day: getTokyoDateKey(joinedAt),
-  })) {
-    return false;
+  };
+  if (!diskIO.postDiskIO(message)) return false;
+  joinLogSequence.current = message.sequence;
+  unacknowledgedJoinLogs.push(message);
+  return true;
+}
+
+/** 处置回执释放镜像：序号不超过 through 且不在 pending 里的事实已写入或丢弃。 */
+function settleJoinLogPersisted(reply: JoinLogPersistedReply): void {
+  if (reply.pending.length === 0) {
+    unacknowledgedJoinLogs.removeWhere(
+      (message: JoinLogDiskMessage): boolean => message.sequence <= reply.through
+    );
+    return;
   }
-  if (bufferedDuringRecovery) return true;
-  return await diskIO.flushDiskIODomain("joinLog") === "flushed";
+  const pending: ReadonlySet<number> = new Set(reply.pending);
+  unacknowledgedJoinLogs.removeWhere(
+    (message: JoinLogDiskMessage): boolean =>
+      message.sequence <= reply.through && !pending.has(message.sequence)
+  );
+}
+
+/** Worker 重建后原序重放全部未确认事实；已写过的精确重投由磁盘索引在追加前跳过。 */
+function replayJoinLogs(transport: DiskIORecoveryTransport): boolean {
+  for (const message of unacknowledgedJoinLogs.values()) {
+    if (!transport.post(message)) return false;
+  }
+  return true;
+}
+
+/** 整群删除接管该群的未确认事实：从镜像摘除，其余条目保持原有顺序。 */
+function dropChatJoinLogs(chatId: number): void {
+  unacknowledgedJoinLogs.removeWhere(
+    (message: JoinLogDiskMessage): boolean => message.chatId === chatId
+  );
 }
 
 /**
@@ -71,14 +95,17 @@ export async function recordJoinLog({
  * 保留窗口自然过期。失败原样上抛，由 teardown 的组合边界汇总（见
  * infra/chatTeardown.ts），`/init disable` 据此回执「有几样没拆干净」。
  *
- * 等的是 `joinLogPurge` 而不是追写那一格 `joinLog`：删除失败只该让这一次 teardown
- * 如实回报，绝不能让 recordJoinLog 把所有群的入群 update 一起判成未落盘
- * （见 types/diskIO/replies.ts 的 DiskIODomain）。
+ * 等的是 `joinLogPurge` 而不是追写那一格 `joinLog`：屏障只刷这一个领域，删除失败只让
+ * 这一次 teardown 如实回报，不牵动其它群的入群批次（见 types/diskIO/replies.ts 的
+ * DiskIODomain）。
  */
 export async function purgeChatJoinLog(chatId: number): Promise<void> {
   if (!diskIO.postDiskIO({ type: "deleteJoinLog", chatId })) {
     throw new Error(`Disk I/O refused the join log deletion for chat ${chatId}.`);
   }
+  // 删除消息排在该群所有已投递事实之后，Worker 会丢掉仍在缓冲里的那些；镜像同步摘除，
+  // 否则 Worker 重建时会把已停管群的事实重新写回。
+  dropChatJoinLogs(chatId);
   if (await diskIO.flushDiskIODomain("joinLogPurge") !== "flushed") {
     throw new Error(`Failed to delete the join logs for chat ${chatId}.`);
   }
@@ -88,3 +115,6 @@ registerChatTeardown("joinLog", (
   chatId: number,
   reason: ChatTeardownReason
 ): Promise<void> | undefined => purgesChatData(reason) ? purgeChatJoinLog(chatId) : undefined);
+
+diskIO.onDiskIOReply("joinLogPersisted", settleJoinLogPersisted);
+diskIO.onDiskIORespawn("join log", DISK_IO_RESPAWN_PRIORITIES.JOIN_LOG, replayJoinLogs);

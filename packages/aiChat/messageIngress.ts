@@ -15,7 +15,7 @@ import {
   AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER,
   AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
 } from "../consts/aiChat/provider";
-import { getChatQa } from "../infra/qaStore";
+import { chatQaEntries } from "../cache/main/qa";
 import { telegramOutboundStats } from "../infra/telegram/outboundLifecycle";
 import { postAiChatOrThrow } from "./workerBridge";
 
@@ -120,7 +120,7 @@ export function generateAndSendReply({
     // 同理恒发。本群没登记问答时是 undefined，Worker 侧据此不挂那两个工具；
     // structuredClone 会复制这张 Map，两条线程不共享可变内存。载荷有界：
     // 每群至多 CHAT_QA_MAX_PER_CHAT 条。
-    chatQa: getChatQa(chatId),
+    chatQa: chatQaEntries.get(chatId),
     // 话题群里除「挂了回复」之外的每一条主动发送都靠它才落回原话题；同样恒发，
     // General 与非论坛群是显式 undefined（见 libs/forumTopic.ts）。
     messageThreadId,

@@ -15,9 +15,10 @@ afterEach((): void => {
 });
 
 describe("config/static/bot.json", () => {
-  test("测试配置可加载且输出稳定的运行时类型", () => {
-    expect(BOT_TOKEN).toBe("123456789:test-only-telegram-bot-token");
-    expect(SUPER_ADMIN_USER_ID).toBe(123456789);
+  test("测试配置可加载且输出稳定的运行时类型", async () => {
+    const expected: BotConfig = parseBotConfig(await Bun.file(BOT_CONFIG_PATH).json());
+    expect(BOT_TOKEN).toBe(expected.botToken);
+    expect(SUPER_ADMIN_USER_ID).toBe(expected.superAdminUserId);
   });
 
   test("严格解析 token 与正安全整数超级管理员 ID", () => {

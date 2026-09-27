@@ -11,6 +11,7 @@ export class DiskIORecoveryRevisions {
   private readonly states: Map<number, number> = new Map();
   private readonly questions: Map<number, Map<string, number>> = new Map();
   private removals: number = 0;
+  private joinLogs: number = 0;
   private readonly coveredStickers: WeakSet<DiskBusinessMessage> = new WeakSet();
   private readonly coveredWedOperations: WeakSet<DiskBusinessMessage> = new WeakSet();
 
@@ -36,6 +37,8 @@ export class DiskIORecoveryRevisions {
         break;
       }
       case "blocklistRemovals": this.removals = message.revision; break;
+      // 未确认镜像按序号原序重放，FIFO 里序号不超过末条的入群事实都已随镜像送达。
+      case "joinLog": this.joinLogs = message.sequence; break;
       case "stickerCatalog":
         for (const previous of buffered.values()) {
           if (previous.type === "stickerCatalog" && previous.pack === message.pack) this.coveredStickers.add(previous);
@@ -43,7 +46,6 @@ export class DiskIORecoveryRevisions {
         break;
       // 入群日志整群删除按 FIFO 执行。
       case "deleteJoinLog":
-      case "joinLog":
       case "aiMemory":
       case "deleteAiMemory":
       case "forgetAiMemory":
@@ -63,6 +65,7 @@ export class DiskIORecoveryRevisions {
       case "deleteWedMembers": return this.coveredWedOperations.has(message);
       case "chatQaWrite": return (this.questions.get(message.chatId)?.get(message.q) ?? 0) >= message.revision;
       case "blocklistRemovals": return this.removals >= message.revision;
+      case "joinLog": return this.joinLogs >= message.sequence;
       case "stickerCatalog": return this.coveredStickers.has(message);
       default: return false;
     }

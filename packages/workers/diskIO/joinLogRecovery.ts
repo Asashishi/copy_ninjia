@@ -123,10 +123,9 @@ export function purgeChatJoinLogFiles(chatId: number): void {
 /**
  * 逐群重试仍未删净的入群日志；空集表示本领域没有待删的群。
  *
- * 空集先早退：本函数挂在统一 flush 上，而那条路径由每一条入群事实的 durable
- * 屏障走过（见 infra/joinLog.ts 的 recordJoinLog）。稳定态下待删集合恒为空，早退
- * 让这条高频路径连那份键快照都不分配（见 AGENTS.md 的「高频路径不得创建临时
- * 数组」）。键快照只在真的有待删群时才取：purgeChatJoinLogFiles 会就地删集合里的项。
+ * 空集先早退：本函数挂在 `joinLogPurge` 领域屏障与统一 flush 上，稳定态下待删集合
+ * 恒为空，早退让这两条路径连那份键快照都不分配。键快照只在真的有待删群时才取：
+ * purgeChatJoinLogFiles 会就地删集合里的项。
  */
 export function purgeJoinLogDeletions(): boolean {
   if (joinLogDeletions.size === 0) return true;

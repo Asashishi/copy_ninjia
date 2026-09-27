@@ -1,3 +1,5 @@
+import { STATE_MANAGED_CHAT_LIMIT } from "../storage";
+
 /** AI 随机搭话的按群活跃度观察窗口；不落盘，重启后从冷群起步。 */
 export const AI_REPLY_ACTIVITY_WINDOW_MS: number = 60 * 60 * 1000;
 /** 冷群随机搭话概率的初始分母；当前消息入窗后再参与递减。 */
@@ -7,8 +9,12 @@ export const AI_REPLY_PROBABILITY_BASE_MIN: number = 10;
 /** 达到封底后更旧的时刻已不影响概率。 */
 export const AI_REPLY_ACTIVITY_MAX_TIMESTAMPS: number =
   AI_REPLY_PROBABILITY_BASE_INITIAL - AI_REPLY_PROBABILITY_BASE_MIN;
-/** 活跃度表最多保留的群数；超额淘汰最久未活动群。 */
-export const AI_REPLY_ACTIVITY_MAX_CHATS: number = 500;
+/**
+ * 活跃度表最多保留的群数；超额淘汰最久未活动群。进表的只有通过 init 网关的群消息，
+ * 受管群不超过 STATE_MANAGED_CHAT_LIMIT；停管群的条目要等一个观察窗口空闲后才被清理，
+ * 可能与同样多的新受管群短暂并存，因此取两倍。所属模块：auto/message/aiReplyActivity.ts。
+ */
+export const AI_REPLY_ACTIVITY_MAX_CHATS: number = 2 * STATE_MANAGED_CHAT_LIMIT;
 
 /** 单群五分钟滚动窗口及其触发上限。 */
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;

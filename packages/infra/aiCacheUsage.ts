@@ -1,12 +1,14 @@
 /**
- * 模型请求缓存用量的上报边界：各供应商客户端在拿到响应后调用 reportAiCacheUsage，
- * 本线程装了出口（cache/perThread/aiCacheUsage.ts）才发出。只读取响应的 usage 字段，
- * SDK 返回有效用量即计入，包括取消后迟到、正文为空或解码失败的响应；不改变业务结果。
- * 缺失、非法或无法投递时丢弃，并按能力/供应商/原因给出有界诊断。
+ * 模型请求用量的上报边界：各供应商客户端在拿到响应后调用 reportAiCacheUsage（token）
+ * 或 reportAiCostUsage（只给费用的供应商），本线程装了出口（cache/perThread/aiCacheUsage.ts）
+ * 才发出。只读取响应的 usage 字段，SDK 返回有效用量即计入，包括取消后迟到、正文为空或
+ * 解码失败的响应；不改变业务结果。缺失、非法或无法投递时丢弃，并按能力/供应商/原因
+ * 给出有界诊断。
  */
 
 import { aiCacheUsageSink, aiUsageWarningKeys } from "../cache/perThread/aiCacheUsage";
 import { logger } from "./logger";
+import { isPlainRecord } from "../libs/record";
 import type { AiCacheCapability, AiCacheUsage, AiUsageUnavailableReason, AiUsageWarningKey } from "../types/aiCache";
 import type { AgentProvider } from "../types/config";
 import type { GenerateContentResponseUsageMetadata, Interactions } from "@google/genai";
@@ -61,7 +63,6 @@ export function reportAiCacheUsage({
   cachedInputTokens,
   outputTokens,
 }: AiCacheUsageReport): void {
-  const sink: ((usage: AiCacheUsage) => void) | null = aiCacheUsageSink.current;
   if (!isTokenCount(inputTokens) || !isTokenCount(outputTokens)) {
     warnAiUsageUnavailable(capability, provider,
       inputTokens === undefined || outputTokens === undefined ? "missing" : "invalid");
@@ -75,25 +76,92 @@ export function reportAiCacheUsage({
     }
     cached = cachedInputTokens;
   }
+  deliverAiUsage({
+    kind: "tokens",
+    timestamp: Date.now(),
+    capability,
+    provider,
+    model,
+    inputTokens,
+    cachedInputTokens: cached,
+    outputTokens,
+  });
+}
+
+/** 把一条已校验的计量交给本线程出口；出口缺失或拒收时只给出固定原因的诊断。 */
+function deliverAiUsage(usage: AiCacheUsage): void {
+  const sink: ((usage: AiCacheUsage) => void) | null = aiCacheUsageSink.current;
   if (sink === null) {
-    warnAiUsageUnavailable(capability, provider, "sink");
+    warnAiUsageUnavailable(usage.capability, usage.provider, "sink");
     return;
   }
   try {
-    sink({
-      timestamp: Date.now(),
-      capability,
-      provider,
-      model,
-      inputTokens,
-      cachedInputTokens: cached,
-      outputTokens,
-    });
+    sink(usage);
   } catch (error: unknown) {
     // Worker 出口拒收时只记录固定原因，不回显可能携带响应内容的异常。
     void error;
-    warnAiUsageUnavailable(capability, provider, "transport");
+    warnAiUsageUnavailable(usage.capability, usage.provider, "transport");
   }
+}
+
+/** reportAiCostUsage 的入参；费用按供应商原样传入，由本函数校验。 */
+export interface AiCostUsageReport {
+  readonly capability: AiCacheCapability;
+  readonly provider: AgentProvider;
+  readonly model: string;
+  /** 本次请求的费用（ticks，1 美元 = 10,000,000,000 ticks）。 */
+  readonly costInUsdTicks: unknown;
+}
+
+/** 校验并上报一次只给出费用的请求；诊断和投递失败均不得改变模型请求的业务结果。 */
+export function reportAiCostUsage({ capability, provider, model, costInUsdTicks }: AiCostUsageReport): void {
+  if (!isTokenCount(costInUsdTicks)) {
+    warnAiUsageUnavailable(capability, provider, costInUsdTicks === undefined ? "missing" : "invalid");
+    return;
+  }
+  deliverAiUsage({
+    kind: "cost",
+    timestamp: Date.now(),
+    capability,
+    provider,
+    model,
+    costInUsdTicks,
+  });
+}
+
+/** reportXAiUsage 的入参：xAI 响应的 usage 对象原样传入。 */
+export interface XAiUsageReport {
+  readonly capability: AiCacheCapability;
+  readonly model: string;
+  readonly usage: unknown;
+}
+
+/**
+ * 上报一次 xAI 请求的用量（经 OpenAI 兼容协议，供应商记为 openai）。xAI 的
+ * input_tokens / output_tokens 可为空或缺席：任一项给出时走 token 口径（缓存命中取
+ * input_tokens_details.cached_tokens），两项须齐全，只给一项按 missing 诊断且不改记费用；
+ * 两项都没有时改按 usage.cost_in_usd_ticks 计入费用。
+ */
+export function reportXAiUsage({ capability, model, usage }: XAiUsageReport): void {
+  if (usage !== undefined && !isPlainRecord(usage)) {
+    warnAiUsageUnavailable(capability, "openai", "invalid");
+    return;
+  }
+  const inputTokens: unknown = usage?.input_tokens ?? undefined;
+  const outputTokens: unknown = usage?.output_tokens ?? undefined;
+  if (inputTokens !== undefined || outputTokens !== undefined) {
+    const details: unknown = usage?.input_tokens_details;
+    reportAiCacheUsage({
+      capability,
+      provider: "openai",
+      model,
+      inputTokens,
+      cachedInputTokens: isPlainRecord(details) ? details.cached_tokens : undefined,
+      outputTokens,
+    });
+    return;
+  }
+  reportAiCostUsage({ capability, provider: "openai", model, costInUsdTicks: usage?.cost_in_usd_ticks });
 }
 
 /** reportGeminiUsage 的入参：generateContent 响应的 usageMetadata 原样传入。 */

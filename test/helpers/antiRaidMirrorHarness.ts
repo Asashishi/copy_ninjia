@@ -46,6 +46,10 @@ export const saveStateInBackground = mock((_context: string): void => {});
 export type FlushResult = "flushed" | "timedOut" | "failed";
 export const flushStateToDisk = mock(async (): Promise<FlushResult> => "flushed");
 export const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
+/** 领域落盘屏障；Anti-Raid 的 durable 投递按 verification 与 chatState 各请求一次。 */
+export const flushDiskIODomain = mock(
+  async (_domain: string, _timeoutMs?: number): Promise<FlushResult> => "flushed"
+);
 export const restoreLockdownInvitePermission = mock(async (..._args: unknown[]): Promise<void> => {});
 
 export const loggerError = mock((..._args: unknown[]): void => {});
@@ -54,7 +58,7 @@ mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub({ error: loggerError }),
 }));
 mock.module("../../packages/infra/joinLog", () => ({
-  recordJoinLog: async (): Promise<boolean> => true,
+  recordJoinLog: (): boolean => true,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (chatId: number, field: "lockdown"): boolean => {
@@ -124,7 +128,7 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO,
-  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
+  flushDiskIODomain,
   flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     if (message.type !== "verificationUpsert" && message.type !== "verificationDelete") throw new Error("Unexpected Disk I/O write.");
@@ -234,6 +238,8 @@ export async function resetAntiRaidTestState(): Promise<void> {
   flushStateToDisk.mockImplementation(async (): Promise<FlushResult> => "flushed");
   flushDiskIO.mockReset();
   flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
+  flushDiskIODomain.mockReset();
+  flushDiskIODomain.mockImplementation(async (): Promise<FlushResult> => "flushed");
   restoreLockdownInvitePermission.mockReset();
   restoreLockdownInvitePermission.mockImplementation(async (..._args: unknown[]): Promise<void> => {});
   loggerError.mockClear();

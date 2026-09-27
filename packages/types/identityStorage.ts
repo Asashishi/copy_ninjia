@@ -53,6 +53,14 @@ export interface PendingChatStateWrite {
   readonly revision: number;
 }
 
+/** 一群 AI 上下文的未提交最终值与对应 AI 记忆 revision；`snapshot` 为 null 表示清空。 */
+export interface PendingAiContextWrite {
+  readonly snapshot: string | null;
+  readonly revision: number;
+  /** 被本项覆盖、尚未回执的更早删除 revision；本项提交后一并回执，没有时为 null。 */
+  readonly coveredDeleteRevision: number | null;
+}
+
 /** 一条群问答的未提交最终值；`data` 为 null 表示删除这条问答。 */
 export interface PendingChatQaWrite {
   readonly data: string | null;

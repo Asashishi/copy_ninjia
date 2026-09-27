@@ -3,7 +3,7 @@ import { getMoodConfig } from "../../config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../consts/aiChat/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../consts/weather";
 import { getTokyoHour } from "../../libs/time";
-import { currentTokyoWeather } from "./weather";
+import { weatherCache } from "../../cache/workers/aiChat/weather";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../../types/aiChat/mood";
 
 /** 按当前天气/时段调整过权重的候选心情，仅用于 pickMood 的一次抽选。 */
@@ -22,9 +22,9 @@ interface WeightedMood {
  * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *
- * 天气数据经 aiChat/ai/weather.ts 的 currentTokyoWeather 读取——这里只读现有
+ * 天气数据直接读 cache/workers/aiChat/weather.ts 的 weatherCache.current——这里只读现有
  * 缓存，不在这条路径里发请求（重抽发生在 replyModel.ts 拼系统提示词的
- * 同步路径上，必须保持同步）；缓存保鲜由该模块内部的后台
+ * 同步路径上，必须保持同步）；缓存保鲜由 aiChat/ai/weather.ts 的后台
  * 定时循环负责（每小时刷新一次，见 startWeatherRefreshLoop），与
  * get_tokyo_weather 工具共用同一份数据、同一种「只读不发请求」的取用
  * 方式。缓存还没暖起来（Worker 刚启动、还没到第一次刷新）时按「没有
@@ -33,7 +33,7 @@ interface WeightedMood {
 
 /** 天气描述文案 -> 粗粒度天气桶：由 WEATHER_CODE_DESCRIPTIONS 反向推导，
  *  保证分类口径与天气服务本身完全一致，不会各改各的漂移。
- *  currentTokyoWeather 给心情系统能拿到的只有格式化后的中文描述
+ *  心情系统从天气缓存能拿到的只有格式化后的中文描述
  *  （TokyoWeatherResult 没有保留原始 WMO 代码，那是特意精简给模型看的
  *  字段），所以按描述文案反查桶。 */
 const WEATHER_DESCRIPTION_TO_BUCKET: Record<string, WeatherBucket> = Object.fromEntries(
@@ -61,10 +61,10 @@ export function classifyTimeBucket(hour: number): TimeBucket {
   return "night";
 }
 
-/** 当前天气分桶：经 aiChat/ai/weather.ts 的 currentTokyoWeather 读取，缓存为空
+/** 当前天气分桶：直接读 weatherCache.current，缓存为空
  *  （还没到第一次定时刷新）时返回 null，视为「没有天气影响」。 */
 function currentWeatherBucket(): WeatherBucket | null {
-  const condition: string | undefined = currentTokyoWeather()?.currentCondition;
+  const condition: string | undefined = weatherCache.current?.currentCondition;
   return condition ? WEATHER_DESCRIPTION_TO_BUCKET[condition] ?? null : null;
 }
 

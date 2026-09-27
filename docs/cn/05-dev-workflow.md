@@ -43,12 +43,12 @@
 ## 质量门禁的口径
 
 - **安装启动隔离**：安装夹具使用独立临时配置与数据根，mock 系统管理、依赖安装和网络出站，执行真实 `index.ts`、Worker 与退出落盘。每个 Worker 通过 Bun `preload` 安装网络替身，天气返回固定应答，其他请求被拒绝；测试核对替身已加载、轮询成功、SIGTERM 排空和锁文件清除。
-- **文件长度与扫描范围**：手写 TS、JS、shell 文件超过 1,000 行即拒绝；超过 500 行应评估拆分。检查覆盖受跟踪文件与尚未加入索引的新文件，Git 忽略的部署数据不进入扫描。安装语法检查同时覆盖 `install.sh` 和它声明的全部 shell 模块。
+- **文件长度与扫描范围**：手写 TS、JS、shell 文件超过 1,024 行即拒绝；超过 512 行应评估拆分。检查覆盖受跟踪文件与尚未加入索引的新文件，Git 忽略的部署数据不进入扫描。安装语法检查同时覆盖 `install.sh` 和它声明的全部 shell 模块。
 - **覆盖率分母是全源码**：`bun run check` 让所有生产运行时模块进入分母，未被任何测试触达的模块按 0% 计入；函数与行覆盖率门槛均为 95%。这意味着新增模块不写测试会直接拉低全局覆盖率。
 - **eslint + tsc 全严格**：`strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` 全开；生产代码禁 `any`（测试文件豁免）。
 - **类型导入独立声明**：源码、脚本和测试都使用独立 `import type`；ESLint 的 `no-restricted-syntax` 拒绝 `import { value, type Shape }` 等 inline type specifier。`test/scripts/typeImportConventions.test.ts` 验证三类文件的拒绝/接受边界，并确认 `Promise.all` 禁令仍然生效。
 - **显式类型标注由 lint 把守**：生产代码（`index.ts`、`packages/`、`scripts/`）的变量、形参、解构由 `@typescript-eslint/typedef` 强制标注，函数与回调的返回类型由 `@typescript-eslint/explicit-function-return-type` 强制，两者都不接受上下文推导。`for...of` / `for...in` 的循环变量 TS 语法不允许标注，规则自动跳过；初始化器已是箭头函数的 const 也放行。测试文件不受此约束。
-- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、Markdown 里「`<目录>/`（`a.ts`、`b.ts`）」这类目录清单点名的文件是否仍然存在（目录名解析不唯一时跳过）、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码、脚本与测试的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、故障注入套件清单、运行期裸导入必须由根 `package.json` 直接声明（只经传递依赖提升的包即失败；运行时内建模块与纯类型引用不参与，包子路径归到所属包）、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
+- **约定自检**：`check:conventions` 检查代码放置、本地 Markdown 链接、Markdown 里「`<目录>/`（`a.ts`、`b.ts`）」这类目录清单点名的文件是否仍然存在（目录名解析不唯一时跳过）、tracked 非脚本文件的可执行权限、常量与缓存归属，并按真实线程模块图核对 Worker/Telegram 边界；`packages/workers/` 内每个 timer 句柄的 `unref()`、生产代码、脚本与测试的 Node 兼容 import、`Buffer` 方法白名单、必须改用 `Bun.argv` 的进程参数读取、Telegram 提示清理与长期留存豁免、当前冷迁移入口、故障注入套件清单、运行期裸导入必须由根 `package.json` 直接声明（只经传递依赖提升的包即失败；运行时内建模块与纯类型引用不参与，包子路径归到所属包）、14 处覆盖率声明和三语性能记录也在这里做静态一致性检查；`test/` 里把导入的 `SCREAMING_SNAKE_CASE` 常量直接与数字字面量比对的断言（`toBe`、`toEqual`、`toStrictEqual`）同样失败，期望值要从常量模块推出或改断言行为；注释里「见 `<模块>.ts` 的 `<符号>`」这类交叉引用同样核对，被点名的模块不再声明或再导出该符号即失败（`export *` 兼容入口展开一层）。`check:coverage` 另起一次真实覆盖率运行，确认声明值没有整体过期。
   模块级纯字面量及其组合必须放在领域 `consts`，函数装配和缓存 owner 单独核对；模块级 Map、Set、WeakMap、WeakSet、AsyncLocalStorage 与 holder 只能声明在带 owner 的 `packages/cache/`。Node 内建模块带或不带 `node:` 前缀使用同一白名单；动态加载、重导出、`require`、`process.hrtime` / `nextTick` 和解构入口同样检查，类型专用声明不进入运行时检查。
 
   Node API 检查覆盖 `process.getBuiltinModule`、`globalThis.Buffer` 及字面量下标形式；`Buffer.byteLength` 等例外仍按模块、符号和用途登记。`@grammyjs/runner` 仅作为开发依赖用于 SDK 对照测试，生产取数使用项目的 offset 确认边界。
@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5228 tests / 459 files / 254242 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.38%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5317 tests / 465 files / 260880 次 `expect()`**；全源码**函数覆盖率 98.07% / 行覆盖率 98.42%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -86,9 +86,11 @@
 
 `bun test --isolate test/infra/aiCacheUsagePipeline.test.ts test/workers/antiRaid/verificationCallback.test.ts test/workers/antiRaid/recentComments.test.ts test/infra/selfSentTracker.test.ts` 核对六类用量从供应商 mock 到 Worker 转发、诊断 ACK、落盘和跨日汇总，以及回调实例/代际、查询与回执同时挂起、评论乱序/回拨、reset 以 false 结算等待者。用量闭环与验证回调同时进入 `test:fault-injection`；所有数据使用独立临时根，出站使用 mock。
 
-`test/scripts/installMigration.test.ts` 验证 14.0.0 格式的 mock 备份经 `migrate:global-state` 冷迁移、按清单手工放置（全局状态、素材配置，以及把配置移入 `config/static/` 与 `config/dynamic/`）、源码安装及真实启动的完整链路，并拒绝仍是 12.1.0 身份入口或数据根仍有 14.x `state.json`/`state.json.bak` 的部署。`scripts/checkBinary.ts` 在构建验证时对包内迁移工具、二进制安装及启动执行同类检查，目标进程不使用系统 Bun。两者复用 `scripts/fixtures/migrationDeployment.ts`，覆盖 schema v11 的两种合法谱系、非空 WAL、全部数据库业务表、逐字节相同的 `state.json` 主备副本、Google 凭据、部署配置与图库内容；源备份哈希、权限、属主和链接拓扑保持不变，数据库业务内容、版本与谱系迁移前后不变。
+`bun test --isolate test/aiChat/ai/mediaAdmission.test.ts test/aiChat/ai/imageDescription.test.ts test/libs/sharedResult.test.ts test/infra/telegramWorkerCapabilities.test.ts` 验证媒体 LRU 命中不新增额度、共享执行与冷等待容量、取消补位、订阅回收、淘汰后的任务身份、模态探测及配置代次；Worker 测试覆盖方法 × owner 的允许/拒绝矩阵，以及代理经真实接收端和出站闸的消息、上传、CDN 下载、429 重试、话题与自发登记。`telegramWorkerCapabilities.test.ts` 同时进入故障注入套件；网络由 mock 接管，使用独立临时数据根。
 
-`test/scripts/migrateGlobalState.test.ts` 另核对素材归一化与只写非缺省项、没有备份副本、主备副本不一致、未知谱系（已迁移的新格式、13.x 的 `translate`、14.0.0 之后才有的 `ttsUsage`、未知字段与非法取值）、源文件缺失或为链接、输出目录位于源内或已存在，以及写产物中途失败后换新目录重跑。两个文件都进入故障注入套件。可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateGlobalState.test.ts` 单独验证源码链路，二进制链路随 `bun run build -- --version <tag>` 验证。
+`test/scripts/installMigration.test.ts` 验证总计数格式的 mock 备份经过 `migrate:global-state` 拆分、按清单手工放置、源码安装与真实启动，保留业务数据、两项计数、复读状态及素材配置。仍使用旧身份入口或数据根旧状态路径的部署必须先分阶段升级。`scripts/checkBinary.ts` 对包内迁移工具和二进制启动执行同类检查；两者复用 `scripts/fixtures/migrationDeployment.ts`，核对数据库合法谱系、非空 WAL、业务表、配置与源文件的哈希、权限、属主和链接拓扑。
+
+`test/scripts/migrateGlobalState.test.ts` 覆盖明确分配 AI 次数、缺省块、次数参数缺失或非法、已拆分计数和未知谱系拒绝、非法源字段、源文件缺失或链接、输出目录边界，以及中断后保留现场并换新目录重跑。两组测试进入故障注入套件；源码链路可用 `bun test --isolate test/scripts/installMigration.test.ts test/scripts/migrateGlobalState.test.ts` 单独执行，二进制链路由 `bun run build -- --version <tag>` 验证。
 
 直接 `bun test` 单文件调试可以，但合并前必须过完整 `bun run check`。
 
@@ -100,7 +102,7 @@
 
 ## 故障注入套件
 
-`bun run test:fault-injection` 覆盖应用/Worker 生命周期、锁定恢复、回复容量与取消、凭据快照、Telegram 出站与延迟删除的停机排空、群 teardown 与入群日志落盘屏障、Anti-Raid 任务排空与验证恢复、双工 Worker 重建取消，以及 Disk I/O 的检查、原子写入和恢复故障；完整清单见 [`package.json`](../../package.json)。`check:conventions` 对登记的 harness 和生产恢复/生命周期边界按真实引用路径检查漏列，包含静态值导入、动态 import、值重导出与目录入口 `index.ts`；纯类型引用排除，空声明的副作用保留。同名其它模块不匹配。兼容入口这类混合主题模块的边界可限定到具体导出（`infra/telegram/index.ts`、`actions.ts` 与 `actions/messageLifecycle.ts` 只按延迟删除的 flush/drain 计入）：命名空间按属性访问判定，只展开进对象字面量的替身不计入；命名空间被整体传出、`export *` 与结果未绑定的动态导入无法确定取用范围，一律计入。涉及 [04 运行时权威约束](04-invariants.md) 的持久化、停机或 Worker 生命周期改动必须通过本套件。
+`bun run test:fault-injection` 覆盖应用/Worker 生命周期、锁定恢复、回复容量与取消、凭据快照、Telegram 出站与延迟删除的停机排空、群 teardown、入群日志未确认镜像与处置回执、Anti-Raid 任务排空与验证恢复、双工 Worker 重建取消，以及 Disk I/O 的检查、原子写入和恢复故障；完整清单见 [`package.json`](../../package.json)。`check:conventions` 对登记的 harness 和生产恢复/生命周期边界按真实引用路径检查漏列，包含静态值导入、动态 import、值重导出与目录入口 `index.ts`；纯类型引用排除，空声明的副作用保留。同名其它模块不匹配。兼容入口这类混合主题模块的边界可限定到具体导出（`infra/telegram/index.ts`、`actions.ts` 与 `actions/messageLifecycle.ts` 只按延迟删除的 flush/drain 计入）：命名空间按属性访问判定，只展开进对象字面量的替身不计入；命名空间被整体传出、`export *` 与结果未绑定的动态导入无法确定取用范围，一律计入。涉及 [04 运行时权威约束](04-invariants.md) 的持久化、停机或 Worker 生命周期改动必须通过本套件。
 
 `test/workers/antiRaid/verificationWelcome.test.ts` 贯通真实双工协议、主线程临时消息及删除边界，Telegram 出站由 SDK transformer 接管。用例覆盖四种欢迎文案、回复锚点、回执丢失、取消、Worker teardown/重建、发送与传输失败，核对删除任务只认领一次、timer 不阻止退出及后续副作用顺序；它同时属于全量测试与故障注入套件。
 
@@ -130,7 +132,7 @@
 
 ## 入群日志性能基准
 
-`bun run perf:join-log` 固定使用 250,000 条容量、300 条溢出和 10,000 条预热输入；快照（`snapshot`）、容量（`capacity`）与追加记账（`append-accounting`）三条路径的 baseline/current 各运行 5 个独立 Bun 进程，父进程逐样本比对两个变体的 checksum，不一致即整体失败。`append-accounting` 的单批规模取生产的 `JOIN_LOG_MAX_BUFFERED_ENTRIES`，重复到与另两条同在 25 万条量级。输出记录完整 Bun version/revision、耗时的中位数与范围，以及强制 GC 前后的 JSC heap/object 变化。baseline 固化的是分配优化前的算法——整表复制、全量排序与完整 JSON 字符串（快照与容量），以及按记录重新序列化一次只为量出它的字节数（追加记账）——只用于同一 Bun build 内的前后对照；`Bun.gc(true)` 只存在于该基准，不进入生产控制流。改动入群索引、容量裁剪、快照序列化、追加后的字节记账或分块原子写时必须运行，并确认差异明显大于 5 轮样本范围所显示的噪声。
+`bun run perf:join-log` 固定使用 250,000 条容量、`FLUSH_MAX_ENTRIES`（256）条溢出和 10,000 条预热输入；快照（`snapshot`）、容量（`capacity`）与追加记账（`append-accounting`）三条路径的 baseline/current 各运行 5 个独立 Bun 进程，父进程逐样本比对两个变体的 checksum，不一致即整体失败。`append-accounting` 的单批规模取生产的 `JOIN_LOG_MAX_BUFFERED_ENTRIES`，重复到与另两条同在 25 万条量级。输出记录完整 Bun version/revision、耗时的中位数与范围，以及强制 GC 前后的 JSC heap/object 变化。baseline 固化的是分配优化前的算法——整表复制、全量排序与完整 JSON 字符串（快照与容量），以及按记录重新序列化一次只为量出它的字节数（追加记账）——只用于同一 Bun build 内的前后对照；`Bun.gc(true)` 只存在于该基准，不进入生产控制流。改动入群索引、容量裁剪、快照序列化、追加后的字节记账或分块原子写时必须运行，并确认差异明显大于 5 轮样本范围所显示的噪声。
 
 ## 身份数据库性能基准
 

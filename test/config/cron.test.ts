@@ -15,6 +15,7 @@ import { adoptAgentDeploymentConfig } from "../../packages/config/agent";
 import { VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
 import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../../packages/consts/paths";
+import { CRON_RANDOM_INTERVAL_MAX_MS, CRON_RANDOM_INTERVAL_MIN_MS } from "../../packages/consts/cron";
 import type { CronConfig } from "../../packages/types/cron";
 import { TEST_DATA_ROOT } from "../preloadEnv";
 
@@ -148,11 +149,11 @@ describe("parseCronConfig", () => {
     ]);
   });
 
-  test("rand_cron 单值等于 1m-<值>，区间落在 1m-24d 且 min <= max", () => {
+  test("rand_cron 单值等于 <下限>-<值>，区间落在允许范围内且 min <= max", () => {
     expect(parseCronConfig([task({ rand_cron: "24h" })], PATH)[0]!.randomInterval)
-      .toEqual({ minMs: 60_000, maxMs: 24 * 3_600_000 });
+      .toEqual({ minMs: CRON_RANDOM_INTERVAL_MIN_MS, maxMs: 24 * 3_600_000 });
     expect(parseCronConfig([task({ rand_cron: "1m-24d" })], PATH)[0]!.randomInterval)
-      .toEqual({ minMs: 60_000, maxMs: 24 * 86_400_000 });
+      .toEqual({ minMs: CRON_RANDOM_INTERVAL_MIN_MS, maxMs: CRON_RANDOM_INTERVAL_MAX_MS });
     for (const value of ["25d", "30s", "0m", "2h-1h", "1h-2h-3h", "1.5h", 60, "01h"]) {
       rejects([task({ rand_cron: value })], `${PATH}: $[0].rand_cron must be`);
     }

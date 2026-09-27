@@ -97,7 +97,7 @@ const temporaryAdBypassPolicy = await import(
 );
 mock.module("../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   ...temporaryAdBypassPolicy,
-  hasActiveTemporaryAdBypass: (id: number): boolean => adBypassIds.has(id),
+  hasActiveTemporaryAdBypassAt: (id: number): boolean => adBypassIds.has(id),
 }));
 mock.module("../../packages/antiRaid/workerBridge/observers", () => ({
   registerAntiRaidBridgeObservers: (): void => {},

@@ -1,47 +1,16 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { rmSync } from "node:fs";
-import type {
-  AiMemoryDeletedPersistedReply,
-  AiMemoryPersistedReply,
-} from "../../../packages/types/diskIO";
 
-const recoveredAi: Map<number, string> = new Map<number, string>([[1, "ai-one"]]);
 const recoveredStickers: Map<string, string> = new Map<string, string>([["pack_one", "sticker-one"]]);
-const recoverAiMemories = mock((): Map<number, string> => new Map(recoveredAi));
 const recoverStickerCatalogs = mock((_packs: readonly string[]): Map<string, string> => new Map(recoveredStickers));
-const writeAiMemoryFile = mock((_chatId: number, _snapshot: string): void => {});
-const deleteAiMemoryFile = mock((_chatId: number): void => {});
 const writeStickerCatalogFile = mock((_pack: string, _snapshot: string): void => {});
-const aiFiles = { write: writeAiMemoryFile, delete: deleteAiMemoryFile };
 const stickerFiles = { write: writeStickerCatalogFile };
-const deleteReplies: AiMemoryDeletedPersistedReply[] = [];
-const persistedReplies: AiMemoryPersistedReply[] = [];
 
-const {
-  adoptAiMemorySnapshots,
-  deleteAiMemorySnapshot,
-  configureAiMemoryDeletePersistedReply,
-  configureAiMemoryPersistedReply,
-  flushAiMemorySnapshots,
-  markAiMemorySnapshotDirty,
-} = await import("../../../packages/workers/diskIO/aiMemoryStorage");
 const {
   adoptStickerCatalogSnapshots,
   flushStickerCatalogs,
   markStickerCatalogSnapshotDirty,
 } = await import("../../../packages/workers/diskIO/stickerCatalogFiles");
-const {
-  aiMemoryCache,
-  hydrateAiMemoryCache,
-  aiMemoryFlushState,
-  aiMemoryImmediateRevisions,
-  aiMemoryOperations,
-  aiMemoryRevisions,
-  deletedAiMemoryChats,
-  dirtyChats,
-  forgetAiMemoryChat,
-  resetAiMemoryCache,
-} = await import("../../../packages/cache/workers/diskIO/snapshots");
 const {
   inspectStickerCatalogs,
   maintainStickerCatalogFiles,
@@ -82,43 +51,28 @@ const {
 } = await import("../../../packages/cache/workers/diskIO/stickers");
 
 /**
- * 启动恢复的测试编排：生产在 adoptAiMemorySnapshots / adoptStickerCatalogSnapshots
- * 里做同一件事——把只读扫描的结果整体发布进 owner 缓存（见
- * workers/diskIO/startup.ts）。这里用注入的假 files 产出那份结果，好在不碰真实
- * 目录的前提下验证 owner 的替换语义。
+ * 启动恢复的测试编排：生产在 adoptStickerCatalogSnapshots 里做同一件事——把只读扫描的
+ * 结果整体发布进 owner 缓存（见 workers/diskIO/startup.ts）。这里用注入的假结果，好在
+ * 不碰真实目录的前提下验证 owner 的替换语义。
  */
-function hydrateAiMemorySnapshots(): Map<number, string> {
-  hydrateAiMemoryCache(recoverAiMemories());
-  return aiMemoryCache;
-}
-
 function hydrateStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
   hydrateStickerCatalogCache(recoverStickerCatalogs(activePacks));
   return stickerCatalogCache;
 }
 
 beforeEach(() => {
-  resetAiMemoryCache();
   resetStickerCatalogCache();
   clearStickerDirectory();
-  recoverAiMemories.mockClear();
   recoverStickerCatalogs.mockClear();
-  writeAiMemoryFile.mockClear();
-  deleteAiMemoryFile.mockClear();
   writeStickerCatalogFile.mockClear();
-  deleteReplies.length = 0;
-  persistedReplies.length = 0;
-  configureAiMemoryDeletePersistedReply((reply) => { deleteReplies.push(reply); });
-  configureAiMemoryPersistedReply((reply) => { persistedReplies.push(reply); });
 });
 
 afterEach(() => {
-  resetAiMemoryCache();
   resetStickerCatalogCache();
   clearStickerDirectory();
 });
 
-describe("Disk I/O snapshot domain owners", () => {
+describe("Disk I/O sticker catalog snapshot owner", () => {
   test("贴纸目录的三阶段启动 API 走真实目录：inspect 只读、adopt 才发布、maintenance 收尾", async () => {
     // 生产启动经 workers/diskIO/startup.ts 依次调用这三个函数；diskIOWorker.test.ts
     // 把它们整份 mock 掉，真实目录上的行为由本用例覆盖。
@@ -138,49 +92,12 @@ describe("Disk I/O snapshot domain owners", () => {
     await expect(maintainStickerCatalogFiles(inspection)).resolves.toBeUndefined();
   });
 
-  test("AI 上下文的 adopt 整体发布已校验 SQLite 快照", () => {
-    aiMemoryCache.set(-9999, "stale");
-    const snapshots = new Map<number, string>([[-1001, "snapshot"]]);
-    expect(adoptAiMemorySnapshots(snapshots)).toBe(aiMemoryCache);
-    expect(aiMemoryCache.has(-9999)).toBeFalse();
-    expect(aiMemoryCache.get(-1001)).toBe("snapshot");
-  });
-
   test("dirty 项的快照在落盘前消失时只摘标记，不再写盘", () => {
-    // 两个 owner 走的是各自的循环（AI 记忆自己那份还要顺带结算即时回执），
-    // 因此这条「标了 dirty 但快照已被删掉」的分支要各测一次。
     markStickerCatalogSnapshotDirty("pack_gone", "sticker-gone", 1);
     stickerCatalogCache.delete("pack_gone");
     flushStickerCatalogs(stickerFiles);
     expect(dirtyStickerPacks.size).toBe(0);
     expect(writeStickerCatalogFile).not.toHaveBeenCalled();
-
-    // AI 记忆侧先制造一次即时写盘失败，让 dirty 与即时 revision 同时留下来。
-    writeAiMemoryFile.mockImplementationOnce((): void => { throw new Error("disk full"); });
-    const errors = spyOn(console, "error").mockImplementation((): void => {});
-    try {
-      markAiMemorySnapshotDirty({
-        chatId: 42,
-        revision: 1,
-        snapshot: "memory-gone",
-        persistImmediately: true,
-        storage: aiFiles,
-      });
-    } finally {
-      errors.mockRestore();
-    }
-    expect(dirtyChats.has(42)).toBeTrue();
-    expect(aiMemoryImmediateRevisions.get(42)).toBe(1);
-
-    aiMemoryCache.delete(42);
-    writeAiMemoryFile.mockClear();
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    expect(dirtyChats.size).toBe(0);
-    // 即时 revision 必须一并摘掉：快照已经不存在，那份「purge 后首份新记忆已
-    // durable」的回执永远不该再发出去。
-    expect(aiMemoryImmediateRevisions.has(42)).toBeFalse();
-    expect(writeAiMemoryFile).not.toHaveBeenCalled();
-    expect(persistedReplies).toEqual([]);
   });
 
   test("markDirty 排的定时 flush 到点后真的落盘并交回 timer 槽", () => {
@@ -203,27 +120,14 @@ describe("Disk I/O snapshot domain owners", () => {
     }
   });
 
-  test("hydrate 整体替换旧状态，AI 与贴纸 markDirty/flush 使用独立 timer", () => {
-    aiMemoryCache.set(999, "stale-ai");
-    dirtyChats.add(999);
+  test("hydrate 整体替换旧状态，markDirty/flush 按快照写盘并交回 timer", () => {
     stickerCatalogCache.set("stale_pack", "stale-sticker");
     dirtyStickerPacks.add("stale_pack");
 
-    expect(hydrateAiMemorySnapshots()).toEqual(recoveredAi);
     expect(hydrateStickerCatalogs(["pack_one"])).toEqual(recoveredStickers);
-    expect(dirtyChats).toHaveLength(0);
     expect(dirtyStickerPacks).toHaveLength(0);
 
-    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", storage: aiFiles });
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
-    expect(aiMemoryFlushState.timer).not.toBeNull();
-    expect(stickerFlushState.timer).not.toBeNull();
-    expect(aiMemoryFlushState.timer).not.toBe(stickerFlushState.timer);
-
-    flushAiMemorySnapshots(aiFiles);
-    expect(writeAiMemoryFile).toHaveBeenCalledWith(2, "ai-two");
-    expect(dirtyChats).toHaveLength(0);
-    expect(aiMemoryFlushState.timer).toBeNull();
     expect(stickerFlushState.timer).not.toBeNull();
 
     flushStickerCatalogs(stickerFiles);
@@ -232,110 +136,29 @@ describe("Disk I/O snapshot domain owners", () => {
     expect(stickerFlushState.timer).toBeNull();
   });
 
-  test("purge 后首份 AI 快照立即写盘，失败时保留即时回执语义供 timer 重试", () => {
-    writeAiMemoryFile.mockImplementationOnce((): void => { throw new Error("temporary failure"); });
+  test("flush 失败保留状态并自动重排，成功重试后清理", () => {
     const errorSpy = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      writeStickerCatalogFile.mockImplementationOnce((): void => { throw new Error("sticker write failed"); });
 
-    markAiMemorySnapshotDirty({
-      chatId: 2,
-      revision: 3,
-      snapshot: "post-purge-memory",
-      persistImmediately: true,
-      storage: aiFiles,
-    });
+      markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
+      expect(flushStickerCatalogs(stickerFiles)).toBeFalse();
+      expect(dirtyStickerPacks.has("pack_two")).toBeTrue();
+      expect(stickerFlushState.timer).not.toBeNull();
 
-    expect(writeAiMemoryFile).toHaveBeenCalledTimes(1);
-    expect(dirtyChats.has(2)).toBeTrue();
-    expect(aiMemoryFlushState.timer).not.toBeNull();
-    expect(persistedReplies).toEqual([]);
-
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    expect(writeAiMemoryFile).toHaveBeenLastCalledWith(2, "post-purge-memory");
-    expect(persistedReplies).toEqual([{ type: "aiMemoryPersisted", chatId: 2, revision: 3 }]);
-    expect(aiMemoryFlushState.timer).toBeNull();
-    errorSpy.mockRestore();
-  });
-
-  test("单领域 flush/delete 失败保留状态并自动重排，成功重试后清理", () => {
-    const errorSpy = spyOn(console, "error").mockImplementation((): void => {});
-    writeAiMemoryFile.mockImplementationOnce((): void => { throw new Error("ai write failed"); });
-    writeStickerCatalogFile.mockImplementationOnce((): void => { throw new Error("sticker write failed"); });
-    deleteAiMemoryFile.mockImplementationOnce((): void => { throw new Error("ai delete failed"); });
-
-    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", storage: aiFiles });
-    markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
-    expect(flushAiMemorySnapshots(aiFiles)).toBeFalse();
-    expect(flushStickerCatalogs(stickerFiles)).toBeFalse();
-    expect(dirtyChats.has(2)).toBeTrue();
-    expect(dirtyStickerPacks.has("pack_two")).toBeTrue();
-    expect(aiMemoryFlushState.timer).not.toBeNull();
-    expect(stickerFlushState.timer).not.toBeNull();
-
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    expect(flushStickerCatalogs(stickerFiles)).toBeTrue();
-    expect(dirtyChats).toHaveLength(0);
-    expect(dirtyStickerPacks).toHaveLength(0);
-
-    deleteAiMemorySnapshot(2, 2, aiFiles);
-    expect(deletedAiMemoryChats.has(2)).toBeTrue();
-    expect(aiMemoryFlushState.timer).not.toBeNull();
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    expect(deletedAiMemoryChats).toHaveLength(0);
-    expect(aiMemoryFlushState.timer).toBeNull();
-    expect(errorSpy).toHaveBeenCalledTimes(3);
-    expect(deleteReplies).toEqual([{ type: "aiMemoryDeletedPersisted", chatId: 2, revision: 2 }]);
-    errorSpy.mockRestore();
-  });
-
-  test("迟到的旧 revision 删除只回执、不删除更新快照", () => {
-    hydrateAiMemorySnapshots();
-    markAiMemorySnapshotDirty({ chatId: 2, revision: 2, snapshot: "new-memory", storage: aiFiles });
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    writeAiMemoryFile.mockClear();
-
-    deleteAiMemorySnapshot(2, 1, aiFiles);
-
-    expect(deleteAiMemoryFile).not.toHaveBeenCalled();
-    expect(aiMemoryCache.get(2)).toBe("new-memory");
-    expect(deleteReplies).toEqual([{ type: "aiMemoryDeletedPersisted", chatId: 2, revision: 1 }]);
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    expect(writeAiMemoryFile).not.toHaveBeenCalled();
-  });
-
-  test("回归：teardown 后 forgetAiMemoryChat 让重新启用的 revision 1 不再被当成迟到消息", () => {
-    hydrateAiMemorySnapshots();
-    // 旧一代写到 revision 13，teardown 的 purge 用 14 删掉。
-    for (let revision: number = 1; revision <= 13; revision++) {
-      markAiMemorySnapshotDirty({ chatId: 2, revision, snapshot: `memory-${revision}`, storage: aiFiles });
+      expect(flushStickerCatalogs(stickerFiles)).toBeTrue();
+      expect(dirtyStickerPacks).toHaveLength(0);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      errorSpy.mockRestore();
     }
-    deleteAiMemorySnapshot(2, 14, aiFiles);
-    expect(aiMemoryRevisions.get(2)).toBe(14);
-
-    // 主线程 teardown 把自己的计数器归零，Worker 侧必须同一时刻丢掉水位线。
-    forgetAiMemoryChat(2);
-    expect(aiMemoryRevisions.has(2)).toBeFalse();
-    expect(aiMemoryOperations.has(2)).toBeFalse();
-
-    // 重新入群/重新授权后的第一份快照：没有这条回收路径时它会被静默丢弃，
-    // 一直丢到 revision 爬过 14 为止（期间进程重启即全丢，且零日志）。
-    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "fresh-memory", storage: aiFiles });
-    expect(aiMemoryCache.get(2)).toBe("fresh-memory");
-    expect(flushAiMemorySnapshots(aiFiles)).toBeTrue();
-    expect(writeAiMemoryFile).toHaveBeenLastCalledWith(2, "fresh-memory");
   });
 
-  test("reset 取消本领域 timer 并清空恢复态、dirty 与待删除集合", () => {
-    markAiMemorySnapshotDirty({ chatId: 2, revision: 1, snapshot: "ai-two", storage: aiFiles });
+  test("reset 取消本领域 timer 并清空恢复态与 dirty 集合", () => {
     markStickerCatalogSnapshotDirty("pack_two", "sticker-two", 1);
-    deletedAiMemoryChats.add(3);
 
-    resetAiMemoryCache();
     resetStickerCatalogCache();
 
-    expect(aiMemoryCache).toHaveLength(0);
-    expect(dirtyChats).toHaveLength(0);
-    expect(deletedAiMemoryChats).toHaveLength(0);
-    expect(aiMemoryFlushState.timer).toBeNull();
     expect(stickerCatalogCache).toHaveLength(0);
     expect(dirtyStickerPacks).toHaveLength(0);
     expect(stickerFlushState.timer).toBeNull();

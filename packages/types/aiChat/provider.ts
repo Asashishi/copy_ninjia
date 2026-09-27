@@ -57,7 +57,7 @@ export interface AiToolOutput {
  * cache/workers/aiChat/mediaInputSupport.ts。
  */
 export type MediaInputFailure =
-  /** 供应商明确说明这种输入模态不受支持；本 Worker 生命周期内不再尝试。 */
+  /** 供应商明确拒绝这种输入模态；阻止新请求，同配置代次的在途成功可恢复支持结论。 */
   | "unsupported"
   /** 模型不存在、端点路径错误等确定性配置问题；停止重复请求并记一次诊断。 */
   | "misconfigured"
@@ -86,7 +86,7 @@ export type MediaInputCapability = "vision" | "voice";
 /**
  * 一种媒体输入在本 Worker 生命周期内的探测结论。
  *
- * `unsupported` 与 `misconfigured` 都是终局——都不再下载、不再请求——但必须分开
+ * `unsupported` 与 `misconfigured` 都阻止新下载与请求；同配置代次的在途成功可恢复，二者分开
  * 记：前者是「这个模型就没有这项能力」，后者是「模型名或 base_url 写错了」。
  * 合并成一个值会让一次部署笔误在日志里长得和模型能力缺失一模一样。
  */

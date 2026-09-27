@@ -184,6 +184,7 @@ function runWriteBatches(
       removals: EMPTY_STORAGE_CHANGES,
       chatStates: new Map(),
       chatQa: EMPTY_CHAT_QA_CHANGES,
+      aiContexts: new Map(),
     });
     checksum += whitelist.size;
   }
@@ -206,6 +207,7 @@ function runColdWriteBatches(
         removals: EMPTY_STORAGE_CHANGES,
         chatStates: new Map(),
         chatQa: EMPTY_CHAT_QA_CHANGES,
+        aiContexts: new Map(),
       });
       checksum += whitelist.size;
     } finally {

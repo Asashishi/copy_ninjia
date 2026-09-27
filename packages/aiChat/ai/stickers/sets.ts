@@ -7,6 +7,7 @@ import { STICKER_SET_FAILURE_RETRY_MS } from "../../../consts/aiChat/stickers";
 import { invalidateStickerMenu } from "../../../cache/workers/aiChat/stickers/menu";
 import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
 import { getStickerConfig } from "../../../config/stickers";
+import { isPendingWithin } from "../../../libs/clockWindow";
 
 /** 配置轮换时释放退出白名单的正负缓存；在途请求仍服务已有等待者。 */
 export function pruneStickerSets(activePacks: readonly string[]): void {
@@ -61,7 +62,7 @@ export async function getStickerSet(
   if (cached) return cached;
   const retryAt: number | undefined = failedPacks.get(packName);
   if (retryAt !== undefined) {
-    if (Date.now() < retryAt) return null;
+    if (isPendingWithin(retryAt, Date.now(), STICKER_SET_FAILURE_RETRY_MS)) return null;
     failedPacks.delete(packName);
   }
 

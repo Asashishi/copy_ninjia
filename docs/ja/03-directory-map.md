@@ -125,7 +125,8 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **インストーラー**：`install.sh` は対象ワークツリーを特定し、そのバージョンの入口へ処理を渡します。`scripts/install/` の repository、service、config、runtime、configure、start の各 shell モジュールの可読性と構文を一括確認してから順に読み込みます。`installSources.ts` は構文検査と隔離フィクスチャへ同じモジュール一覧を提供します。
-  - **Cold migration**：`migrateGlobalState.ts` は停止時バックアップにある 14.0.0 形式の `state.json`（とバイト単位で同一の `state.json.bak`）を検証し、`copy` を独立出力 `memory/global/state.json` に、組み込み既定値と異なる素材項目を `config/dynamic/assets.json` に書き出し、検証一覧を生成します。`migrateRandomImageNames.ts` はランダム画像ライブラリの旧ファイル名を内容の SHA-256 による名前へ再構築した独立出力を生成します。どちらもソースは読むだけで、`ready.json` だけを完了マーカーとします。`migrations/files.ts` は両エッジ共通のファイル一覧とパス包含判定を担い、いずれもアプリ起動 graph には入りません。
+  - **Cold migration**：`migrateGlobalState.ts` は停止時バックアップの `memory/global/state.json` を厳密に読み、明示した AI 回数で合計 `count` を `agentCount` と `reserveCount` に分割します。窓の起点と復唱状態を維持し、独立出力と検証一覧を作成します。`migrateRandomImageNames.ts` は旧画像名を内容 SHA-256 名に変換します。両者はソースを変更せず、`ready.json` を完了マーカーとします。`migrations/files.ts` は一覧とパス判定を共用し、起動依存グラフには入りません。
+  - **ファイル要約値**：`fileSha256.ts` は `Bun.file(path).stream()` と `Bun.CryptoHasher` で SHA-256 の 16 進要約値を逐次計算し、リリース検証、cold migration、移行 snapshot fixture で共用します。ファイル種別、symlink、path、権限、移行 manifest の検証は各 caller が担当します。
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
   - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、リリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`、および 2 つの benchmark ルートが共用する `fixtures/copyTree.ts`（ディレクトリツリーの複製）と `fixtures/pathBoundary.ts`（書き込み境界の実パス構成要素の検査）。
 
@@ -168,7 +169,7 @@
     Google/OpenAI 広告検出クライアント。
 - **`workers/diskIO/`**
   - **所有者**：Disk I/O Worker。
-  - **内容**：各ドメインの書き込みバッファ、index、dirty マーカー。
+  - **内容**：各ドメインの書き込みバッファ、index、dirty マーカー、および期限到来した定時 flush をまとめる集合（`timedFlush.ts`）。
 - **`perThread/`**
   - **所有者**：各スレッドに 1 つずつ。
   - **内容**：Telegram capability holder（main thread の実 adapter または Worker の duplex proxy）、

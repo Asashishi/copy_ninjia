@@ -10,12 +10,8 @@ export const VERIFICATION_TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
   "gm"
 );
 
-/** 普通状态/提醒回填变化的短合并窗口；创建与终结立即追加。 */
-export const VERIFICATION_FLUSH_INTERVAL_MS: number = 250;
 /** 午夜轮换失败后的固定重试间隔；正常每日触发由统一维护 cron 负责。 */
 export const VERIFICATION_ROLLOVER_RETRY_MS: number = 1_000;
-/** 单次验证增量合并达到后立即刷盘的 key 数阈值。 */
-export const VERIFICATION_FLUSH_MAX_KEYS: number = 100;
 /** 重复历史达到任一阈值前收敛为 active 快照，避免当天文件无限增长。 */
 export const VERIFICATION_FILE_COMPACT_ENTRIES: number = 10_000;
 /** 待验证当日文件触发 active 快照收敛的字节阈值。 */

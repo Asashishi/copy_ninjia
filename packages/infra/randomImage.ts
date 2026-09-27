@@ -18,6 +18,7 @@ import {
   RANDOM_IMAGE_SAVE_EXTENSIONS,
   RANDOM_IMAGE_TEMP_PREFIX,
 } from "../consts/randomImage";
+import { RANDOM_H_IMAGE_DIR_FIELD } from "../consts/ui/assets";
 import { isErrno } from "../libs/errno";
 import { InputValidationError } from "../libs/inputValidation";
 import { pickRandom } from "../libs/random";
@@ -34,12 +35,11 @@ import type {
  * 准备 /h_image 专用图库并校验 SHA-256 文件名、扩展名与条目类型：启动时在外部连接之前
  * 调用（见 docs/cn/04-invariants.md），config/dynamic/ 热重载切换目录时在接管新快照之前调用。
  * 检查只读目录项，不重算内容摘要；不修复或清理非法条目。允许目录根链接，
- * 拒绝子目录、文件链接及临时文件；报错点名 config/dynamic/assets.json 的 random_h_image_dir。
+ * 拒绝子目录、文件链接及临时文件；报错点名 config/dynamic/assets.json 的 onlyPath.random_h_image_dir。
  */
 export async function ensureRandomImageDirectory(directory: string): Promise<void> {
-  const field: string = "$.random_h_image_dir";
   const invalid: InputValidationError = new InputValidationError(
-    ASSETS_CONFIG_PATH, field, `an accessible existing or creatable directory (resolved to ${directory})`
+    ASSETS_CONFIG_PATH, RANDOM_H_IMAGE_DIR_FIELD, `an accessible existing or creatable directory (resolved to ${directory})`
   );
   try {
     await lstat(directory);
@@ -64,7 +64,7 @@ export async function ensureRandomImageDirectory(directory: string): Promise<voi
     const extension: string = extname(entry.name);
     if (!entry.isFile() || !RANDOM_IMAGE_EXTENSIONS.has(extension.toLowerCase()) ||
       !RANDOM_IMAGE_CONTENT_NAME_PATTERN.test(entry.name.slice(0, -extension.length))) {
-      throw new InputValidationError(join(directory, entry.name), field,
+      throw new InputValidationError(join(directory, entry.name), RANDOM_H_IMAGE_DIR_FIELD,
         "a regular image named <64 lowercase SHA-256 hex characters>.jpg/.jpeg/.png/.webp");
     }
   }

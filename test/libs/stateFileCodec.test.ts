@@ -15,20 +15,28 @@ describe("decodeGlobalStateFile", () => {
     });
   });
 
-  test("语音合成每日计数：缺省为从没用过，存在时两项都必须合法", () => {
-    expect(decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1_000, count: 100 } }).ttsUsage)
-      .toEqual({ windowStartedAt: 1_000, count: 100 });
+  test("语音合成每日计数：缺省为从没用过，存在时三项都必须合法", () => {
+    expect(decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1_000, agentCount: 85, reserveCount: 15 } }).ttsUsage)
+      .toEqual({ windowStartedAt: 1_000, agentCount: 85, reserveCount: 15 });
     expect(decode({ copy: { copiedUser: null } }).ttsUsage).toBeUndefined();
-    expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { count: 1 } }))
+    expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { agentCount: 1, reserveCount: 0 } }))
       .toThrow("state.json: $.ttsUsage.windowStartedAt must be a non-negative safe integer timestamp.");
-    // count 不与 agent.tts.daily_limit 对拍：上限调低后已用次数可以超过新上限。
-    expect(decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, count: 1_000 } }).ttsUsage)
-      .toEqual({ windowStartedAt: 1, count: 1_000 });
-    for (const count of [0, -1, 1.5, "1", Number.MAX_SAFE_INTEGER + 1]) {
-      expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, count } }))
-        .toThrow("state.json: $.ttsUsage.count must be a positive safe integer.");
+    // 已用次数可以超过调低后的配置上限。
+    expect(decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 1_000, reserveCount: 2_000 } }).ttsUsage)
+      .toEqual({ windowStartedAt: 1, agentCount: 1_000, reserveCount: 2_000 });
+    for (const key of ["agentCount", "reserveCount"] as const) {
+      for (const value of [undefined, null, -1, 1.5, "1", Number.MAX_SAFE_INTEGER + 1]) {
+        expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 1, reserveCount: 1, [key]: value } }))
+          .toThrow(`state.json: $.ttsUsage.${key} must be a non-negative safe integer.`);
+      }
+      expect(decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 1, reserveCount: 1, [key]: 0 } }).ttsUsage?.[key])
+        .toBe(0);
     }
-    expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, count: 1, day: 1 } }))
+    expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 0, reserveCount: 0 } }))
+      .toThrow("state.json: $.ttsUsage must be at least one positive usage count.");
+    expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, count: 1 } }))
+      .toThrow("state.json: $.ttsUsage.count must be absent (not part of the current state schema).");
+    expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 1, reserveCount: 0, day: 1 } }))
       .toThrow("state.json: $.ttsUsage.day must be absent (not part of the current state schema).");
     expect(() => decode({ copy: { copiedUser: null }, ttsUsage: null }))
       .toThrow("state.json: $.ttsUsage must be an object.");

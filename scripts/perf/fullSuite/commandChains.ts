@@ -141,11 +141,16 @@ function adDetectCommandChain(
         observedAt: Date.now(),
         text: `性能基准广告文本 ${sequence}：加我微信 benchmark`,
         label: `Member${sequence}`,
-        meta: { firstName: `Member${sequence}`, lastName: "", username: "" },
+        firstName: `Member${sequence}`,
+        lastName: "",
+        username: "",
         isChannel: false,
         isForwarded: false,
         blocked: false,
         justJoined: true,
+        linkUrls: undefined,
+        sampleQuote: undefined,
+        sampleReplyTo: undefined,
       });
       await dependencies.runAdDetectBatch(Date.now());
       if (

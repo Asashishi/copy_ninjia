@@ -104,6 +104,7 @@ export function createDiskIOWorker(): Worker {
       case "stickerCatalogPersisted":
       case "luckAppendStalled":
       case "identityStoragePersisted":
+      case "joinLogPersisted":
         notifyReplyListeners(data.type, data);
         return;
       case "operationBatchAccepted":
@@ -122,7 +123,7 @@ export function createDiskIOWorker(): Worker {
         handleDiagnosticBatchRetry(w, data.batchId, data.retryAfterMs);
         return;
       case "recoveryReplayFailed":
-        // 对应的 update 已被确认过；按 infra/joinLog.ts 的口径停机，
+        // 对应的 update 已被确认过；按 RecoveryReplayRequest 的口径停机，
         // 让 Telegram 从上一个确认点重投。
         stopWorkerAfterLoadFailure(
           w,

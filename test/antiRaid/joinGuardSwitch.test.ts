@@ -85,7 +85,6 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO: async (): Promise<FlushResult> => "flushed",
   flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
-  isDiskIOBuffering: (): boolean => false,
   flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
   onDiskIORespawn: (): void => {},
   postDiskIO: (message: TestDiskMessage): boolean => {

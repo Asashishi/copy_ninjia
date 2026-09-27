@@ -143,7 +143,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/dynamic/agent
     声明 `image_protocol`（`openai`、`openai-standard` 或 `xai`）；`tts` 还必须声明非空 `voice`
     （预置音色名，或 AI Studio Voice design 的 `voice_` 音色 ID），可选 `daily_limit`（每日
     语音次数上限，缺省 100）与 `daily_reserve_quota`（其中留给 `/send` 与 cron 的次数，缺省
-    25，必须小于 `daily_limit`）。`base_url` 只接受
+    25，必须小于 `daily_limit`）。AI 与预留分别计数、互不借用；预留为 0 时 `/send` 和 cron 不合成语音。`base_url` 只接受
     `https`，明文 `http` 仅限 `localhost`、`127.0.0.1`、`::1`；URL 不得带用户名/密码
     或 `#` 片段。
   - **校验**：[`packages/config/agent.ts`](../../packages/config/agent.ts)（单项能力的字段解码在
@@ -208,25 +208,37 @@ chmod 660 database/storage.sqlite
 
 ### 换掉内联缩略图与机器人默认头像
 
-三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）、`/icon reset`、`/copy stop` 复原用的默认头像，以及 `/h_image` 专用图库目录，都写在可选的 `config/dynamic/assets.json`：
+三张内联结果缩略图（`/luck_challenge` 的「未卜先知」「概率论」，以及 gag 发言入口）、`/icon reset`、`/copy stop` 复原用的默认头像，以及 `/h_image` 专用图库目录，都写在可选的 `config/dynamic/assets.json`。顶层按字段能接受的来源分成三组：
 
 ```json
 {
-  "random_h_image_dir": "./h_image",
-  "fortune_thumbnail_url": "https://…",
-  "probability_thumbnail_url": "https://…",
-  "gag_thumbnail_url": "https://…",
-  "bot_default_avatar_url": "https://…"
+  "onlyPath": {
+    "random_h_image_dir": "./h_image"
+  },
+  "pathOrUrl": {
+    "bot_default_avatar": "https://…"
+  },
+  "onlyUrl": {
+    "fortune_thumbnail_url": "https://…",
+    "probability_thumbnail_url": "https://…",
+    "gag_thumbnail_url": "https://…"
+  }
 }
 ```
 
-后四个键依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图、复原头像时抓的那张图。文件和每个字段都可选，缺省即取代码里的内置值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）；[`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) 按内置值写全了五项，安装器会把它复制成初始配置，只改需要的项即可。文件走严格 JSON 解析，不能带注释。
+- `onlyPath`：只收本机路径。`random_h_image_dir` 是 `/h_image` 专用图库目录。
+- `pathOrUrl`：本机路径或直链。`bot_default_avatar` 是复原头像时使用的那张图。
+- `onlyUrl`：只收 `https://` 直链。三项依次是「未卜先知」的缩略图、「概率论」的缩略图、gag 发言 inline 结果的缩略图。
 
-四条直链要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`；只有 `bot_default_avatar_url` 允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定。抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。写坏——比如漏掉 `https://`——启动时拒绝启动并点名字段路径，运行中则拒绝这次改动、继续用上一份已生效配置，不会静默退回默认图。
+文件、三个分组和组内每个字段都可选，缺省即取代码里的内置值（见 [`packages/consts/ui/assets.ts`](../../packages/consts/ui/assets.ts)）；[`config_example/dynamic/assets.json`](../../config_example/dynamic/assets.json) 按内置值写全了三组五项，安装器会把它复制成初始配置，只改需要的项即可。文件走严格 JSON 解析，不能带注释；顶层出现三组以外的键、组内出现不属于该组的字段（包括把字段平铺在顶层或放错组）都按非法处理。旧版平铺格式按 [07 运维与排障](07-operations.md#assets-groups) 手工迁移。
 
-`random_h_image_dir` 是 `/h_image` 专用图库，也是 cron 未指定目录时的随机图来源，缺省 `./h_image`。只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析；裸目录名和 `~/…` 无效。启动会创建缺失目录，核对读写与访问权限，并严格检查每个条目：只允许以内容 SHA-256 的 64 位小写十六进制摘要命名、扩展名为 `jpg`/`jpeg`/`png`/`webp` 的普通文件；子目录、文件链接、隐藏文件和残留临时文件均拒绝启动。目录根本身可以是符号链接。启动不重算内容哈希，手工文件名与内容的对应由部署方负责。推荐通过 `/h_image add` 收图；合规图片的增删无需重启，抽图时超过 10 MB 的文件会被跳过。cron 显式指定的独立随机目录允许普通文件名，详见 [部署配置说明](../../config_example/README/zh.md)。
+本机路径只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径按运行时数据根解析；裸名和 `~/…` 无效。
 
-`assets.json` 位于 `config/dynamic/`，**运行中修改即热重载**：直链从下一次使用起生效；`random_h_image_dir` 指向新目录时先按启动时同一口径建出并检查新目录，检查失败则整份改动被拒绝、继续用原目录。删除文件等于全部恢复内置缺省。机器人从不回写这个文件。
+直链要求是**能直出图片字节的绝对地址**，图床不限（内置缺省恰好用了 Google Drive 直链，不代表只能用它；用 Drive 时注意分享页 `/file/d/<id>/view` 返回的是网页而不是图片字节）。三张缩略图由 Telegram 客户端去取，只接受 `https://`，不接受本机路径。`bot_default_avatar` 写直链时允许明文 `http://`，那张图由 Bot 自己抓，走不走 TLS 由你决定；抓头像那条请求**跟随重定向**，所以「直链先 302 到实际存储域名」这种常见形态（内置缺省那条 Drive 链接就是）直接填上即可，不必自己解析出终点。`bot_default_avatar` 写本机路径时，该文件必须是存在的普通文件（可经符号链接）、不超过 10 MiB、内容为 JPEG 或 PNG；启动与热重载时即核对，每次复原头像时重新读取该文件。写坏——比如漏掉 `https://`、本机文件不存在——启动时拒绝启动并点名字段路径（如 `$.pathOrUrl.bot_default_avatar`），运行中则拒绝这次改动、继续用上一份已生效配置，不会静默退回默认图。
+
+`random_h_image_dir` 是 `/h_image` 专用图库，也是 cron 未指定目录时的随机图来源，缺省 `./h_image`，只接受上述本机路径。启动会创建缺失目录，核对读写与访问权限，并严格检查每个条目：只允许以内容 SHA-256 的 64 位小写十六进制摘要命名、扩展名为 `jpg`/`jpeg`/`png`/`webp` 的普通文件；子目录、文件链接、隐藏文件和残留临时文件均拒绝启动。目录根本身可以是符号链接。启动不重算内容哈希，手工文件名与内容的对应由部署方负责。推荐通过 `/h_image add` 收图；合规图片的增删无需重启，抽图时超过 10 MB 的文件会被跳过。cron 显式指定的独立随机目录允许普通文件名，详见 [部署配置说明](../../config_example/README/zh.md)。
+
+`assets.json` 位于 `config/dynamic/`，**运行中修改即热重载**：缩略图与默认头像从下一次使用起生效；`random_h_image_dir` 指向新目录时先按启动时同一口径建出并检查新目录，检查失败则整份改动被拒绝、继续用原目录。删除文件等于全部恢复内置缺省。机器人从不回写这个文件。
 
 ## Telegram 侧配置（BotFather 与群内）
 

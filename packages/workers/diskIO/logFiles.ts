@@ -39,7 +39,7 @@ import {
   repairTruncatedAppendOnlyContent,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import { enqueueDiskIOOperation } from "./operationQueue";
+import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
 interface LogRecord {
   level: string;
@@ -222,26 +222,9 @@ export async function maintainLogRetention(): Promise<void> {
   await cleanupOldLogs();
 }
 
-/** 按需启动日志缓冲的定时落盘；已有定时器在跑就不重复排。条数达到
- *  FLUSH_MAX_ENTRIES 时不经过这个定时器，由 handleLogMessage 直接调
- *  flushLogBuffer 立即落盘。timer 一律 unref：有序停机由统一 flush 提前兑现，
- *  它不该单独扣住 Worker 事件循环（见 docs/cn/04-invariants.md）。 */
-function scheduleLogFlush(): void {
-  if (flushBuffer.timer !== null) return;
-  flushBuffer.timer = setTimeout((): void => {
-    void enqueueDiskIOOperation(async (): Promise<void> => {
-      await flushLogBuffer();
-    });
-  }, FLUSH_INTERVAL_MS);
-  flushBuffer.timer.unref();
-}
-
-/** 立即把内存 buffer 落盘（日志自身阈值触发，或统一 flush 指令触发时调用）。 */
+/** 立即把内存 buffer 落盘（日志自身阈值、定时器或统一 flush 指令触发时调用）。 */
 export async function flushLogBuffer(): Promise<boolean> {
-  if (flushBuffer.timer !== null) {
-    clearTimeout(flushBuffer.timer);
-    flushBuffer.timer = null;
-  }
+  cancelDiskIOFlushTimer(flushBuffer);
   if (flushBuffer.entries.length === 0) return true;
   const entries: BufferedLogEntry[] = flushBuffer.entries;
   flushBuffer.entries = [];
@@ -280,9 +263,11 @@ export async function handleLogMessage(msg: LogMessage): Promise<void> {
     day: getTokyoDateKey(msg.timestamp),
     text: serializeDayFileEntry(`${formatTokyoLogTimestamp(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
+  // 达到 FLUSH_MAX_ENTRIES 立即落盘；否则按需装定时落盘（已装时不重复），有序停机
+  // 由统一 flush 提前兑现（见 docs/cn/04-invariants.md）。
   if (bufferedEntries >= FLUSH_MAX_ENTRIES) {
     await flushLogBuffer();
   } else {
-    scheduleLogFlush();
+    armDiskIOFlushTimer(flushBuffer, FLUSH_INTERVAL_MS, flushLogBuffer);
   }
 }

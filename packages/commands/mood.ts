@@ -1,7 +1,7 @@
 import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
-import { queryAiMood, switchAiMood } from "../aiChat";
+import { requestAiMood } from "../aiChat";
 import { aiChatConfigReadiness } from "../config/readiness";
 import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
@@ -80,7 +80,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
 
   let moodName: string;
   try {
-    moodName = await queryAiMood(chatId);
+    moodName = await requestAiMood(chatId, "queryMood");
   } catch (error: unknown) {
     logger.error(`Failed to confirm AI mood query for chat ${chatId}:`, error);
     await sendCommandMessage({
@@ -101,7 +101,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
 /**
  * 处理 /mood switch 指令：立即重抽本群 AI 的当前心情并回复结果。心情缓存
  * 在 AI Worker 线程内（cache/workers/aiChat/mood.ts），主线程只 post 一条 switchMood
- * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/index.ts 的 switchAiMood），
+ * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/workerBridge.ts 的 requestAiMood），
  * 回复固定从这里发出，不走 AI 回复流水线。仅持有 isCanSwitchMood 的身份可用；
  * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权；其他人尝试只会被嘲讽。
  */
@@ -127,7 +127,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
 
   let moodName: string;
   try {
-    moodName = await switchAiMood(chatId);
+    moodName = await requestAiMood(chatId, "switchMood");
   } catch (error: unknown) {
     logger.error(`Failed to confirm AI mood switch for chat ${chatId}:`, error);
     await sendCommandMessage({

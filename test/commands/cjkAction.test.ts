@@ -233,9 +233,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  test("全局配额每 90 秒 450 次，超额后静默丢弃且不再解析目标", async () => {
-    expect(CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW).toBe(450);
-    expect(CJK_ACTION_RATE_LIMIT_WINDOW_MS).toBe(90_000);
+  test("全局配额按窗口内调用上限计数，超额后静默丢弃且不再解析目标", async () => {
 
     // handler 内部取墙钟，所以窗口要按真实时刻填满。
     const now: number = Date.now();

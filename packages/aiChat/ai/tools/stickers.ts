@@ -12,7 +12,7 @@ import type { AiToolDefinition } from "../../../types/aiChat/provider";
 import { getStickerConfig } from "../../../config/stickers";
 import { sendSticker } from "../../../infra/telegram";
 import { logger } from "../../../infra/logger";
-import { describeStickerForContext, getCatalogEntry, getPackSummary, getStickerSet } from "../stickers";
+import { describeStickerForContext, getCatalogEntry, getStickerSet } from "../stickers";
 import { parseIndexField, parseToolArguments } from "../utils/toolArgs";
 import { raceAbort } from "../../../libs/abortSignal";
 import {
@@ -27,6 +27,7 @@ import {
   stickerMenuInflight,
   stickerMenuRevision,
 } from "../../../cache/workers/aiChat/stickers/menu";
+import { packSummaries } from "../../../cache/workers/aiChat/stickers/catalog";
 import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
 import { pauseForToolAction } from "../utils/toolPause";
 import type { ChatActionControl } from "../../../types/aiChat/chatAction";
@@ -129,7 +130,7 @@ async function collectStickerPackMenu(signal: AbortSignal): Promise<StickerPackC
       if (entry) stickers.push({ sticker, emoji: entry.emoji, description: entry.description });
     }
     if (stickers.length === 0) continue;
-    menu.push({ pack, title: set.title, summary: getPackSummary(pack) ?? STICKER_PACK_SUMMARY_PENDING, stickers });
+    menu.push({ pack, title: set.title, summary: packSummaries.get(pack) ?? STICKER_PACK_SUMMARY_PENDING, stickers });
   }
   return menu;
 }

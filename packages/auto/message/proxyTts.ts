@@ -10,7 +10,7 @@
  * `type` 为 `tts` 但键或取值不合规时按格式错误拒绝，不代发；`agent.tts` 未配置时直接
  * 报错。合成与发送耗时较长，接纳后交给延迟命令执行器（commands/deferredCommands.ts），
  * 不占住串行的 update runner；执行器满时回「稍后再试」。合成或发送失败、每日额度
- * （`agent.tts.daily_limit`）用尽时只回一句提示，代发会话保持开启。给超管的提示都经
+ * （`agent.tts.daily_reserve_quota`，与 cron 共用）用尽时只回一句提示，代发会话保持开启。给超管的提示都经
  * sendProxyTtsNotice 发到私聊，不挂延迟删除。
  */
 
@@ -86,7 +86,7 @@ async function sendProxyTtsNotice(privateChatId: number, text: string): Promise<
 }
 
 /**
- * 合成失败时给超管的提示。额度用尽时写明主线程当前生效的 `agent.tts.daily_limit`；这时
+ * 合成失败时给超管的提示。额度用尽时写明主线程当前生效的 `agent.tts.daily_reserve_quota`；这时
  * `agent.tts` 已被热重载移除则按未配置提示。
  */
 function synthesisFailureNotice(targetChatId: number, reason: VoiceSynthesisFailure): string {
@@ -94,7 +94,7 @@ function synthesisFailureNotice(targetChatId: number, reason: VoiceSynthesisFail
   if (reason === "tts unconfigured") return notices.proxyTtsUnconfigured;
   if (reason !== "daily limit reached") return notices.proxyTtsFailed(targetChatId);
   const tts: AgentTtsCapabilityConfig | undefined = agentTtsConfig();
-  return tts === undefined ? notices.proxyTtsUnconfigured : notices.proxyTtsDailyLimit(tts.dailyLimit);
+  return tts === undefined ? notices.proxyTtsUnconfigured : notices.proxyTtsDailyLimit(tts.dailyReserveQuota);
 }
 
 /** 延迟执行器里的一次合成与发送；取消时静默收尾，其余失败回一句提示。 */

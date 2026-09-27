@@ -17,18 +17,22 @@ import type {
   AvatarFetchAttemptsOutcome,
   AvatarOperationAttemptResult,
 } from "./shared";
+import type { DefaultAvatarSource } from "../../../types/config";
+
+/** 取默认头像字节的一次结果：可上传的 JPEG/PNG 字节，或已记过日志的失败分类。 */
+type DefaultAvatarBytes = Uint8Array | "transient-failure" | "permanent-failure";
 
 /**
- * 把机器人头像复原成 `url` 指向的那张默认脸。
+ * 把机器人头像复原成 `source` 指向的那张默认脸。
  *
- * URL 由调用方传入：它来自 config/dynamic/assets.json 的 `bot_default_avatar_url`，缺省为
+ * 来源由调用方传入：它来自 config/dynamic/assets.json 的 `pathOrUrl.bot_default_avatar`，缺省为
  * consts/ui/assets.ts 的 BOT_DEFAULT_AVATAR_URL（见 config/assets.ts 的 getAssetConfig）。
  * 头像入口只由主线程加载，但仍不读取素材快照：取值留在同一 owner 的
- * copy/avatarQueue.ts，让本模块只负责一次有界下载与头像恢复动作（见 docs/cn/04-invariants.md 的缓存线程归属）。
+ * copy/avatarQueue.ts，让本模块只负责一次有界读取与头像恢复动作（见 docs/cn/04-invariants.md 的缓存线程归属）。
  *
- * **对图床不做任何限定**：任意能直出图片字节的地址都成立，图床、对象存储、自建
+ * `url` 来源**对图床不做任何限定**：任意能直出图片字节的地址都成立，图床、对象存储、自建
  * 静态资源都行，代码里不认哪一家；这一项也是唯一允许明文 http 的素材直链——它由
- * 本进程自己抓取，走不走 TLS 是配置者的决定（见 config/assets.ts 的 assetUrl）。
+ * 本进程自己抓取，走不走 TLS 是配置者的决定（见 config/assets.ts 的 defaultAvatarSource）。
  *
  * 这条下载**跟随重定向**：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，
  * 而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google
@@ -39,71 +43,113 @@ import type {
  * 地址来自 Bot API 的 file_path 与 t.me 主页的 HTML，归 Telegram 自有资产域
  * allowlist 管（见 docs/cn/04-invariants.md 的「出站请求与消息安全」），本函数不在其列。
  *
- * 有界读取（AVATAR_MAX_DOWNLOAD_BYTES）与上传前的字节签名校验照旧，但那两道防的
- * 是「拿回来的根本不是图片」，与跳不跳转无关。
+ * `path` 来源每次尝试都重新读本机文件（绝对路径，启动与热重载时已由 config/assets.ts 核对过）；
+ * 读不到按确定性失败处理。
+ *
+ * 两种来源都按 AVATAR_MAX_DOWNLOAD_BYTES 有界读取，并在上传前校验字节签名，防的是
+ * 「拿回来的根本不是图片」，与跳不跳转无关。
  *
  * 与 copyUserProfilePhoto 共用 runAvatarFetchAttempts 的有界重试，也与它一样
  * **区分永久与瞬时失败**：对端偶发 5xx 与限流值得重试，而「拿回来的根本不是
  * 图片」「Telegram 判定这张图不合规」重试多少次都是同一个结果，只会白烧头像
  * 接口的调用额度——那正是本函数的重试本想规避的 flood 限制。
- * @returns 复原成功为 true；下载失败、响应超限、载荷不是图片或
+ * @returns 复原成功为 true；下载或读文件失败、超限、载荷不是图片或
  *   setMyProfilePhoto 失败为 false（均已记日志）。
  */
-export async function restoreDefaultProfilePhoto(url: string, signal?: AbortSignal): Promise<boolean> {
+export async function restoreDefaultProfilePhoto(
+  source: Readonly<DefaultAvatarSource>,
+  signal?: AbortSignal
+): Promise<boolean> {
   const outcome: AvatarFetchAttemptsOutcome = await runAvatarFetchAttempts(
     (attempt: number): Promise<AvatarOperationAttemptResult> =>
-      attemptRestoreDefaultProfilePhoto(url, attempt, signal),
+      attemptRestoreDefaultProfilePhoto(source, attempt, signal),
     signal
   );
   return outcome === "ok";
 }
 
-/** 单次「下载默认头像并换上」的尝试；失败按可否重试分类，日志已在各分支记过。 */
+/** 单次「取默认头像并换上」的尝试；失败按可否重试分类，日志已在各分支记过。 */
 async function attemptRestoreDefaultProfilePhoto(
-  url: string,
+  source: Readonly<DefaultAvatarSource>,
   attempt: number,
   signal?: AbortSignal
 ): Promise<AvatarOperationAttemptResult> {
+  const label: string = source.kind === "url" ? redactUrlForLog(source.url) : source.path;
   try {
-    const response: Response = await fetch(url, {
-      // 跟随重定向：地址是部署配置，而图床与对象存储的直链先跳一次到存储域名是
-      // 常态（见 restoreDefaultProfilePhoto）。
-      redirect: "follow",
-      signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      void response.body?.cancel().catch((): undefined => undefined);
-      logger.error(`Failed to download the default avatar (${response.status}) from ${redactUrlForLog(url)} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`);
-      return "transient-failure";
-    }
-    const download: BoundedResponseResult = await readBoundedResponseBytes(response, AVATAR_MAX_DOWNLOAD_BYTES);
-    if (!download.ok) {
-      // 超限是确定性失败：同一个链接重试多少次都是这么大，点名字节数便于换图。
-      logger.error(`The default avatar at ${redactUrlForLog(url)} exceeded the download limit (${download.observedBytes} bytes)`);
-      return "permanent-failure";
-    }
-    // 上传前必须认一遍字节，与图床是哪一家无关：拿 **HTTP 200** 回一段 HTML 是
-    // 这类链接的通病（Drive 的 uc?export=download 在配额超限/病毒扫描警告时如此，
-    // 需要登录或已过期的分享链接同理）——response.ok 为真、有界读取成功，于是那段
-    // HTML 被当作静态图片交给 Telegram，换来一次确定性拒绝。响应体为 null 时
-    // readBoundedResponseBytes 会以零长 buffer 报 ok，同样在这里被挡下
-    // （长度不足以匹配任何签名）。
-    const format: SniffedImageFormat = sniffImageFormat(download.bytes);
-    if (format !== "jpeg" && format !== "png") {
-      logger.error(
-        `The default avatar link ${redactUrlForLog(url)} did not return a JPEG or PNG image ` +
-        `(sniffed=${format}, bytes=${download.bytes.byteLength}); it must serve raw image bytes ` +
-        "rather than an HTML page such as a login, quota or virus-scan interstitial"
-      );
-      return "permanent-failure";
-    }
-    await setBotProfilePhoto(download.bytes, signal);
+    const bytes: DefaultAvatarBytes = source.kind === "url"
+      ? await downloadDefaultAvatar(source.url, attempt, signal)
+      : await readDefaultAvatarFile(source.path);
+    if (typeof bytes === "string") return bytes;
+    await setBotProfilePhoto(bytes, signal);
     return "ok";
   } catch (error: unknown) {
     if (signal?.aborted) return "permanent-failure";
-    logApiError(`restore default profile photo from ${redactUrlForLog(url)} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`, error);
+    logApiError(`restore default profile photo from ${label} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`, error);
     // Telegram 的 400 是对这张图本身的判定（PHOTO_CROP_SIZE_SMALL 之类），换几次
     // 都一样；其余（429/5xx/网络抖动）才值得再试。
     return error instanceof GrammyError && error.error_code === 400 ? "permanent-failure" : "transient-failure";
   }
+}
+
+/** 下载 `url` 来源：非 2xx 属瞬时失败，超限与非 JPEG/PNG 属确定性失败；网络异常原样上抛。 */
+async function downloadDefaultAvatar(url: string, attempt: number, signal?: AbortSignal): Promise<DefaultAvatarBytes> {
+  const response: Response = await fetch(url, {
+    // 跟随重定向：地址是部署配置，而图床与对象存储的直链先跳一次到存储域名是
+    // 常态（见 restoreDefaultProfilePhoto）。
+    redirect: "follow",
+    signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    void response.body?.cancel().catch((): undefined => undefined);
+    logger.error(`Failed to download the default avatar (${response.status}) from ${redactUrlForLog(url)} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`);
+    return "transient-failure";
+  }
+  const download: BoundedResponseResult = await readBoundedResponseBytes(response, AVATAR_MAX_DOWNLOAD_BYTES);
+  if (!download.ok) {
+    // 超限是确定性失败：同一个链接重试多少次都是这么大，点名字节数便于换图。
+    logger.error(`The default avatar at ${redactUrlForLog(url)} exceeded the download limit (${download.observedBytes} bytes)`);
+    return "permanent-failure";
+  }
+  // 上传前必须认一遍字节，与图床是哪一家无关：拿 **HTTP 200** 回一段 HTML 是
+  // 这类链接的通病（Drive 的 uc?export=download 在配额超限/病毒扫描警告时如此，
+  // 需要登录或已过期的分享链接同理）——response.ok 为真、有界读取成功，于是那段
+  // HTML 被当作静态图片交给 Telegram，换来一次确定性拒绝。响应体为 null 时
+  // readBoundedResponseBytes 会以零长 buffer 报 ok，同样在这里被挡下
+  // （长度不足以匹配任何签名）。
+  const format: SniffedImageFormat = sniffImageFormat(download.bytes);
+  if (format !== "jpeg" && format !== "png") {
+    logger.error(
+      `The default avatar link ${redactUrlForLog(url)} did not return a JPEG or PNG image ` +
+      `(sniffed=${format}, bytes=${download.bytes.byteLength}); it must serve raw image bytes ` +
+      "rather than an HTML page such as a login, quota or virus-scan interstitial"
+    );
+    return "permanent-failure";
+  }
+  return download.bytes;
+}
+
+/**
+ * 读 `path` 来源：最多读 AVATAR_MAX_DOWNLOAD_BYTES 加一个字节。读不到、超限与非 JPEG/PNG
+ * 都属确定性失败——文件内容不会因重试而改变。
+ */
+async function readDefaultAvatarFile(path: string): Promise<DefaultAvatarBytes> {
+  let bytes: Uint8Array;
+  try {
+    bytes = await Bun.file(path).slice(0, AVATAR_MAX_DOWNLOAD_BYTES + 1).bytes();
+  } catch (error: unknown) {
+    logger.error(`Failed to read the default avatar file ${path}:`, error);
+    return "permanent-failure";
+  }
+  if (bytes.byteLength > AVATAR_MAX_DOWNLOAD_BYTES) {
+    logger.error(`The default avatar file ${path} exceeds the size limit (${AVATAR_MAX_DOWNLOAD_BYTES} bytes)`);
+    return "permanent-failure";
+  }
+  const format: SniffedImageFormat = sniffImageFormat(bytes);
+  if (format !== "jpeg" && format !== "png") {
+    logger.error(
+      `The default avatar file ${path} is not a JPEG or PNG image (sniffed=${format}, bytes=${bytes.byteLength})`
+    );
+    return "permanent-failure";
+  }
+  return bytes;
 }

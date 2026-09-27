@@ -67,15 +67,15 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 `COPY_NINJIA_DATA_ROOT` がすべての実行時データパスを決めます。未設定時はプロジェクトルートを使用し、明示的な空白値は起動時に拒否します。
 
 - **`memory/global/state.json`**
-  - **内容**：`copy` の全体復唱状態と、`ttsUsage` の音声合成の 1 日あたりの回数（窓の開始 `windowStartedAt` と回数 `count`。ボットが書き込みます。手でリセットするときはサービスを止めてからブロックごと削除します）。グループスイッチ・ロックダウン記録・権限スナップショット・翻訳セッションは `database/storage.sqlite` の `chat_states`、素材ディレクトリと URL は `config/dynamic/assets.json` に保持します。
-  - **形式**：トップレベルは必須の `copy` と任意の `ttsUsage` だけです。`copy.copyMode` は欠落・`reverse`・`nya` だけを受け入れます。ファイルがなければ未使用として扱い、存在して不正な場合や未知のキーがある場合は起動を拒否し、自動アップグレードやエントリの破棄は行いません。メインスレッドだけが書き込み（一時ファイル + fsync + アトミック rename）、Disk I/O Worker は `memory/global/` に触れません。
+  - **内容**：`copy` の全体復唱状態と、`ttsUsage` の音声合成の 1 日あたりの回数（共通の窓の開始 `windowStartedAt`、AI 回数 `agentCount`、予約枠の回数 `reserveCount`。ボットが書き込みます。手でリセットするときはサービスを止めてからブロックごと削除します）。グループスイッチ・ロックダウン記録・権限スナップショット・翻訳セッションは `database/storage.sqlite` の `chat_states`、画像庫ディレクトリ・既定アバター・サムネイルなどの素材設定は `config/dynamic/assets.json` に保持します。
+  - **形式**：トップレベルは必須の `copy` と任意の `ttsUsage` だけです。`copy.copyMode` は欠落・`reverse`・`nya` だけを受け入れます。ファイルがなければ未使用として扱い、存在して不正な場合や未知のキーがある場合は起動を拒否し、自動アップグレードやエントリの破棄は行いません。installer は設定ディレクトリの準備時に起動時の復元と同じ基準でこのファイルを読み取り専用で検証し、現在の形式に合わない場合（未移行の合計回数 `ttsUsage` など）はサービスの登録・起動の前に停止します。メインスレッドだけが書き込み（一時ファイル + fsync + アトミック rename）、Disk I/O Worker は `memory/global/` に触れません。`copy` の変更は即座に書き出します。`ttsUsage` の回数は 5 秒の結合窓の後にバックグラウンドで書き出し、通常停止では残りの変更を書き込みます。突然の終了では窓内の回数が記録されない場合があります。
   - **状態の手動編集**：サービスを停止して inactive を確認し、作業ツリー外の `mktemp -d` にこのファイルとデプロイデータを mode・所有者・SHA-256 付きでバックアップしてから編集します。変更しないフィールドは保持し、`decodeGlobalStateFile` で厳格に解析して想定差分と権限を確認してから起動します。バージョン更新は下記のコールド移行で行い、例や Git の内容でデプロイ状態を上書きしません。
-  - **旧位置**：data root に 14.x の `state.json` または `state.json.bak` が残っている間は、起動と installer が拒否します。[全体状態のコールド移行](#全体状態のコールド移行statejson-memoryglobalstatejson-configdynamicassetsjson)で処理してください。
-  - **専用画像ディレクトリ**（`config/dynamic/assets.json` の `random_h_image_dir`、既定 `./h_image`、data root 基準）：`/h_image` と明示ディレクトリのない cron ランダム画像が使います。追加は `/h_image add` を使い、手動ファイルは内容 SHA-256 の小文字 16 進数 64 文字に jpg/jpeg/png/webp 拡張子を付けます。他機能の画像は混ぜません。起動時に不正名、サブディレクトリ、ファイル symlink、残存 `.h_image-add-*` 一時ファイルを拒否します。残存物は停止・バックアップ後に確認して整理してください。サービスアカウントには読み書きとディレクトリアクセスが必要で、未作成なら 0755 で作成します。適合画像の増減は再起動不要です。稼働中に `random_h_image_dir` を変えると、同じ規則で新しいディレクトリを準備・検査してから切り替え、検査に失敗した変更は拒否します。ロールバックはコードに一致する設定・state・画像を一緒に復元します。
+  - **旧位置**：data root に 14.x の `state.json` または `state.json.bak` が残っている間は、起動と installer が拒否します。[全体状態のコールド移行](#upgrade-15)で処理してください。
+  - **専用画像ディレクトリ**（`config/dynamic/assets.json` の `onlyPath.random_h_image_dir`、既定 `./h_image`、data root 基準）：`/h_image` と明示ディレクトリのない cron ランダム画像が使います。追加は `/h_image add` を使い、手動ファイルは内容 SHA-256 の小文字 16 進数 64 文字に jpg/jpeg/png/webp 拡張子を付けます。他機能の画像は混ぜません。起動時に不正名、サブディレクトリ、ファイル symlink、残存 `.h_image-add-*` 一時ファイルを拒否します。残存物は停止・バックアップ後に確認して整理してください。サービスアカウントには読み書きとディレクトリアクセスが必要で、未作成なら 0755 で作成します。適合画像の増減は再起動不要です。稼働中に `random_h_image_dir` を変えると、同じ規則で新しいディレクトリを準備・検査してから切り替え、検査に失敗した変更は拒否します。ロールバックはコードに一致する設定・state・画像を一緒に復元します。
 - **`memory/wed/<chatId>.json`**
   - **内容**：各群の発言済みメンバー ID の数値配列（例：`[5974478892]`）。主スレッドは各群で同じ長期 `Set<number>` を再利用します。最大 25 群、各群 150,000 ID です。満杯では既存 ID を保持し、退室で空きができると追加を再開します。
   - **検証**：ファイル名は正規形の負の安全整数グループ ID、要素は重複のない正の安全整数です。不正 JSON、重複、型や容量の違反は原本を切り詰めたり修復したりせず起動を拒否します。ディレクトリやファイルの欠落は許可し、必要時に作成します。
-  - **保存とバックアップ**：実際の変更を累計 300 件または最初の変更から 30 秒で DiskIO に送り、全体を原子置換します。変更がなければ書き込みません。日次の期限は無く再起動時はファイルから復元しますが、`/init disable` と Bot のグループ退出ではファイルごと削除します（管理者権限の剥奪だけでは削除しません。権限が戻れば再び必要になるためです）。データルートの整合バックアップに含め、突然の終了では未保存変更を失う場合があります。
+  - **保存とバックアップ**：実際の変更を累計 256 件または最初の変更から 30 秒で DiskIO に送り、全体を原子置換します。変更がなければ書き込みません。日次の期限は無く再起動時はファイルから復元しますが、`/init disable` と Bot のグループ退出ではファイルごと削除します（管理者権限の剥奪だけでは削除しません。権限が戻れば再び必要になるためです）。データルートの整合バックアップに含め、突然の終了では未保存変更を失う場合があります。
   - **退室の整理**：退室サービスメッセージ、`chat_member` 更新、毎日深夜の再確認が退室者をファイルから外します。後の 2 つは Bot がグループ管理者のときだけ機能します。管理者でない群では退室サービスメッセージしか残らず、大きめのスーパーグループやメンバー一覧を隠した群では Telegram がそれを送らないことがあるため、ファイルに退室済みの ID が残り、`/wed` もそのまま抽選します。これは想定どおりの挙動で、障害ではありません。確実に整理するには Bot に管理者権限を与えてください。手作業で ID を消す場合は、ほかの実行時状態と同じくサービスを停止してから編集します。
 - **`memory/stickers/<pack>.json`**
   - **内容**：allowlist 対象スタンプパック 1 件の version=1 カタログ。
@@ -100,6 +100,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
     定常時は当日だけ保持し、履歴 10,000 件または 4 MiB で compact。
 - **`memory/joinlog/<chatId>.<YYYY-MM-DD>.json`**
   - **内容**：`/batch_kick` が rolling window で読む正式な `chat_member` 入室事実。
+  - **書き込み**：入室事実はまず Disk I/O Worker のメモリバッチに入り、256 件または最初の 1 件から 30 秒で chat/day ごとに追記して fsync する。`/batch_kick` の照会前と通常停止時には残りのバッチを先に書き出す。Disk I/O Worker の再構築時はメインスレッドが未確認の事実を再生し、プロセスの強制終了や電源断では直近 1 窓以内の入室記録を失う場合がある。
   - **バックアップ**：user ID と timestamp を含むため機密データとして扱う。
     深夜をまたぐ処理中 query のため東京暦日 3 日分を保持。完全な再配信は再追記せず、
     履歴は user ごとの最新値へ compact し、1 chat/day は最新 250,000 人まで保持。
@@ -108,11 +109,14 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
 - **`database/storage.sqlite`**（runtime では `-wal` / `-shm` sidecar が存在し得ます）
   - **内容**：schema v11 共有ストレージです。`permission_list.policy` は厳密な JSONB の恒久権限、`blocklist_entries` はブラックリストを保持します（`data` は `blockedAt`、Telegram metadata、省略可能な `participantInvalidCount` を持ち、この field を認識しない旧版はこの field を持つ row があると起動を拒否します。そうした版へ戻すときはプログラムだけを置き換えず、アップグレード前の同一時点の database バックアップも併せて復元しなければなりません）。`temporary_ad_bypass_entries` は `ad_bypass`、`ad_bypass_granted_at`、`qualified_days`、`send_count`、`counted_at`、`qualified_at` で広告免除の活動を集計します。`pending_blocked_removals` は未完了の群別 ban、`storage_metadata` と Drizzle journal は schema と厳密な系譜を保持します。
   - **群状態と人設**：`chat_states` は最大 25 行。`chat_id` が主キー、`status` は必須 JSONB、`ai_persona` は NULL 許容・空白のみ不可の TEXT で、本群専用プロンプトを保存します。未設定ならプロジェクトの `prompt/persona.md` を使用します。起動時に状態と人設を既存メインスレッド群 cache に読み込み、`/bot_status` は設定の有無をそこから確認します。`status.translate` は本群の翻訳セッションで、欠落はセッションなし、存在する場合は 1–5 セッションの空でない配列です（例：`"translate": [{"translatedUser": {"id": 123}, "language": "uk"}, {"translatedUser": {"id": 456}, "language": "ru"}]`）。同群内の identity ID は一意で、方向は `ja`・`cn`・`en`・`uk`・`ru` のみ、identity は `CachedUser` として厳密検証します。`/init disable` と Bot 退群では行と人設を削除し、未復元 lockdown は復元 protocol に従って保持します。
-  - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。まだ説明していない Bot 画像の逐語メッセージは `pendingImage`（`origin` は `command` / `generated` / `referenceGenerated`、`caption` は単一行）を持ち、説明済みの画像と通常のメッセージはこのキーを持ちません。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
+  - **AI context**：NULL 許容 JSONB `ai_context` は version=1 の逐語メッセージ、要約、未統合要約、保存時刻を保持し、既存 AI Worker memory cache とメインスレッド復元 mirror を使用します。書き込みは共有 SQLite transaction とともに commit され（AI Worker は 30 秒ごとに報告し、共有 transaction は最大でさらに 30 秒待ちます）、消去は即座に commit します。突然の終了では未 commit の直近の記憶を失う場合があります。書き込みは既存群行だけを更新し、context だけの行は保持しません。記憶の消去はこの列を NULL にして人設を保持します。本文・名前・引用は単一行、引用 text/quote は最大 500 UTF-16 code unit、`at` は有効な東京時刻 `YYYY/MM/DD HH:mm:ss` です。まだ説明していない Bot 画像の逐語メッセージは `pendingImage`（`origin` は `command` / `generated` / `referenceGenerated`、`caption` は単一行）を持ち、説明済みの画像と通常のメッセージはこのキーを持ちません。要約は改行可能。不正 field は復元を拒否して入れ子 path を示し、元データを変更しません。
   - **バックアップと復元**：群会話と専用プロンプトを含む機密データです。Bot 停止中に本体と存在する WAL/SHM を同一集合として作業ツリー外へコピーし、所有者・mode・SHA-256 を記録して検証します。Disk I/O Worker が DB を独占し、起動時に integrity、JSONB、schema、系譜、厳密な行 codec、policy 排他、outbox 参照を検証します。群状態と AI snapshot は同じ接続から復元します。identity の参照は 8,192 件 LRU と update に必要な ID の cold read を使います。検証失敗時は自動建庫・移行・行破棄・縮退をせず起動を拒否します。
 - **`memory/ad-detected/sample.json`**
   - **内容**：広告判定ヒットの生サンプル。時刻、メッセージ ID と本文、判定理由、
     引用/返信コンテキストを含む。
+  - **書き込み**：ヒットしたサンプルはまず Disk I/O Worker のメモリバッチに入り、256 件
+    または最初の 1 件から 30 秒で追記し、通常停止時にも書き出す。バッチの書き込み失敗時や
+    Disk I/O Worker の再構築時はバッチ全体を捨てる。
   - **バックアップ**：**純粋なバイパスで、プロセスは決して読みません**。失っても
     挙動は変わらず、`config/dynamic/ad_samples.json` を調整する素材が減るだけです。
     8 MiB 到達時に `sample.<東京日付>[.<連番>].json` へ自動ローテーションし、
@@ -123,22 +127,27 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **バックアップ**：厳密な名前の通常ファイルだけを直近 15 東京暦日保持。
     不明な名前、ディレクトリ、シンボリックリンクは自動削除しない。
 - **`memory/ai-daily-usage/usage.json`**
-  - **内容**：モデルリクエストの token 使用量。provider 応答の usage だけを取り、会話内容は
+  - **内容**：モデルリクエストの使用量。provider 応答の usage だけを取り、会話内容は
     含まない。1 つの JSON object で、先頭の `summary` は直近に終わった東京暦日の集計
     （リクエスト数、入力/キャッシュ命中/出力 token、命中率、および
     `<capability>/<provider>/<model>` ごとの同じ集計）。残りのキーは未集計の個別記録で、
-    キーは東京時刻 + UUID、値は capability、provider、model と 3 種の token 数。命中率は
+    キーは東京時刻 + UUID、値は capability、provider、model に加えて 3 種の token 数か
+    `costInUsdTicks` のどちらか一方。token 数を返したリクエストは token だけを記録し、
+    費用しか返さないリクエスト（xAI 画像生成）は xAI と同じ単位（1 ドル =
+    10,000,000,000 ticks）で費用を記録する。命中率は
     命中 token ÷ キャッシュ使用量を返したリクエストの入力 token で、小数 4 桁に丸める。
     キャッシュ使用量を返さない provider のリクエストは `cachedInputTokens` が `null` で、
-    合計にだけ入る。
-  - **書き込み**：記録は診断チャネル経由で Disk I/O Worker のメモリバッファに入り、300 件
+    合計にだけ入る。リクエスト数は token リクエストと費用リクエストの両方を数え、費用
+    リクエストを含む集計（summary 本体と各グループ）は `costInUsdTicks` の合計も持ち、
+    含まない集計ではこのキーを省く。
+  - **書き込み**：記録は診断チャネル経由で Disk I/O Worker のメモリバッファに入り、256 件
     または最初の 1 件から 30 秒で末尾に追記し、統一 flush でも書き出す。東京 0 時の
     maintenance と起動時 maintenance が今日より前の記録を直近の日の `summary` にまとめて
     削除し、集計は 1 日分だけ残す。
   - **バックアップ**：純粋な副経路で、失っても動作は変わらない。書き込み失敗はその
     バッチの統計を失うだけ。現行形式に合わない内容へ書き換えられた場合（末尾の破断を
     除く）は起動を拒否して元のバイトを残すので、削除または修正してから起動する。
-  - **計量対象**：`text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent と Interactions はそれぞれの field を対応付け、出力に応答と thought token を含めます。OpenAI Responses、広告判定 Chat Completions、画像生成・編集、token 型の文字起こしは各 usage を読みます。有効な usage は応答ごとに 1 回数え、空本文、decode 失敗、アプリ側 retry の各応答、取り消し後に届く SDK 応答も含みます。token 未提供や duration だけの応答は推定しません。TTS の 1 日の回数制限は別途 `memory/global/state.json` に保存します。
+  - **計量対象**：`text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent と Interactions はそれぞれの field を対応付け、出力に応答と thought token を含めます。OpenAI Responses、広告判定 Chat Completions、画像生成・編集、token 型の文字起こしは各 usage を読みます。`image_protocol: xai` の画像生成・編集は、token 数があれば token として記録し（キャッシュ命中は `input_tokens_details.cached_tokens`。片方だけのときは `missing` として診断し、記録しない）、両方が欠けているか null のときは `usage.cost_in_usd_ticks` を費用として記録します。provider は `openai` です。有効な usage は応答ごとに 1 回数え、空本文、decode 失敗、アプリ側 retry の各応答、取り消し後に届く SDK 応答も含みます。token 未提供や duration だけの応答は推定しません。TTS の 1 日の回数制限は別途 `memory/global/state.json` に保存します。
   - **記録欠落の診断**：`AI token usage unavailable` は capability、provider、reason だけを含みます。reason は `missing`（usage 欠落）、`invalid`（不正 usage）、`sink`（スレッド内の出口なし）、`duration`（時間だけ）、`transport`（出口送信失敗または主スレッド拒否）です。同じ出口の lifecycle 内で各組み合わせを 1 回だけ記録し、モデル名、本文、認証情報は含めません。診断 FIFO の超過は別の有界な破棄集計、書き込み失敗は Disk I/O のエラーで記録します。このファイルは best-effort の統計で、完全な請求記録ではありません。
 
 - **`logs/`**
@@ -169,45 +178,57 @@ runtime は旧形式の互換 path を持たず、database を自動作成しま
 
 <a id="upgrade-15"></a>
 
-### 14.0.0 から 15.0.0 への更新
+### 全体状態のコールド移行（音声合計回数 → 独立回数）
 
-> [!IMPORTANT]
-> 15.0.0 は全体状態を data root の `state.json` から `memory/global/state.json` へ、ランダム画像ディレクトリと素材 URL を `config/dynamic/assets.json` へ移し、`state.json.bak` を保持しなくなり、`config/` を反映方法ごとに `static/` と `dynamic/` の 2 つの subdirectory に分けます。先にサービスを停止してバックアップし、それからプログラムとデプロイデータを更新してください。設定とデータの検証が終わるまで起動しないでください。
+入口は [`scripts/migrateGlobalState.ts`](../../scripts/migrateGlobalState.ts) です。停止中のバックアップには `memory/global/state.json` が必要で、トップレベルは必須の `copy` と任意の `ttsUsage` です。`ttsUsage` がある場合は `{ windowStartedAt, count }` でなければなりません。実行時は `{ windowStartedAt, agentCount, reserveCount }` だけを受け付け、起動時には移行しません。未移行の合計回数は installer がサービスの登録・起動の前に拒否します。未知フィールド、不正データ、分割済み回数はスクリプトが拒否します。
 
-| 確認項目 | 操作 |
-| :--- | :--- |
-| 全体状態 | 次節の全体状態コールド移行を実行し、出力を `memory/global/state.json` に置き、旧 `state.json` と `state.json.bak` を data root の外へ移します。どちらかが data root に残っている間は起動と installer が拒否します |
-| 素材設定 | 移行は組み込み既定値と異なる素材項目だけを `config/dynamic/assets.json` に書きます。このファイルが出力されなければ置く必要はありません。フィールドは[設定リファレンス](../../config_example/README/ja.md#assetsjson)を参照 |
-| 設定ディレクトリ構成 | 停止後に `bot.json`、`g-auth.json` を `config/static/` へ、残りの 6 つ（`agent.json`、`assets.json`、`ad_samples.json`、`mood.json`、`stickers.json`、`cron.json`）を `config/dynamic/` へ移し、元の所有者と mode を保ちます。`config/dynamic/` は空でも作成します。いずれかの file が `config/` 直下や誤った subdirectory に残っている場合、または `config/dynamic/` がない場合は起動を拒否し、installer も置き場所の誤りを拒否します。`static/` の file は変更後に再起動が必要で、`dynamic/` の file は hot reload されます。詳細は[設定リファレンス](../../config_example/README/ja.md)を参照 |
-| 復元と権限 | 外部バックアップと一覧を保持します。サービスアカウントは `memory/global/`、database ディレクトリ（WAL/SHM を含む）、ロック、その他の memory ディレクトリに書けなければなりません。`config/` は読み取り専用でも構いません |
-
-### 全体状態のコールド移行（state.json → memory/global/state.json + config/dynamic/assets.json）
-
-入口は [`scripts/migrateGlobalState.ts`](../../scripts/migrateGlobalState.ts) で、14.x が出力する形式だけを受け付けます。`state.json` のトップレベルは `global` だけで、`copy` は必須、`assets` は任意です（14.0.0 の状態形式と同じで、14.0.0 より後に追加された `ttsUsage` も拒否します）。`state.json.bak` があれば `state.json` とバイト単位で一致しなければならず、一致しない場合は拒否して人手の照合に委ねます。未知の系譜、移行済みの新形式、不正なフィールドは拒否します。古い配置は先に[次節](#1400-より前のバージョンからのアップグレード)で 14.x 形式に到達させてください。本番起動は現形式だけを検証し、移行は行いません。
-
-1. サービスを停止し、inactive と全プロセスの終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、`state.json`、`state.json.bak`、`config/`、`database/` 全体（SQLite 本体と既存 WAL/SHM は同一停止時点のもの）と `memory/` をコピーします。ファイル一覧・mode・所有者・SHA-256 を記録して全コピーを検証します。
-2. ソースバックアップの外に新しい出力ディレクトリを指定します。親ディレクトリは存在している必要があります。スクリプトはソースを変更せず、サービスを操作せず、デプロイファイルも置換しません。
+1. サービスを停止し、inactive とプロセス終了を確認します。作業ツリー外に `mktemp -d` でバックアップを作り、`config/`、存在する `.env`・`g-auth.json`、`database/` 全体（同一停止時点の WAL/SHM を含む）と `memory/` をコピーします。ファイル一覧・mode・所有者・SHA-256 を記録し、副本を検証します。
+2. 旧合計のうち AI が使った回数を確認し、`--agent-count` で明示します。スクリプトは由来を推測せず、`reserveCount = count - agentCount` として合計、窓の起点、`copy` を維持します。`ttsUsage` 全体がない場合はこの引数を省略します。
+3. ソースバックアップ外の未作成ディレクトリを出力先に指定します。親ディレクトリは必要です。
 
 ```bash
 bun run migrate:global-state \
   --source-root /absolute/cold-backup \
-  --output-root /absolute/new-staging-directory
+  --output-root /absolute/new-staging-directory \
+  --agent-count <確認済みAI回数>
 ```
 
-バイナリ配布パッケージは現在有効なコールド移行をすべて同梱し、システムの Bun もソースも不要です：`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js --source-root <バックアップ> --output-root <新ディレクトリ>`。
+バイナリパッケージでは `BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/migrateGlobalState.js` に同じ引数を渡し、システム Bun なしで実行できます。スクリプトは独立した出力を作るだけで、サービス操作やデプロイファイルの置換は行いません。
 
-3. `copy` はそのまま出力の `memory/global/state.json` に書きます（`global` の包みはなくなります）。`assets` の 5 項目は `config/dynamic/assets.json` のキー（`random_h_image_dir`、`fortune_thumbnail_url`、`probability_thumbnail_url`、`gag_thumbnail_url`、`bot_default_avatar_url`）に変わり、値は前後の空白を除き URL を正規化したうえで、組み込み既定値と異なるものだけを残します。すべて一致すればこのファイルは生成しません。database はこの移行に関与しません。
-4. `ready.json` は変換・厳格検証・ソース再確認が完了した唯一の印です。`sourceFiles`・`outputFiles` のハッシュとメタデータ、および `assetKeys` を確認します。失敗や中断時はバックアップと不完全な出力を残し、元のバックアップから新しいディレクトリへ再実行します。既存の出力は上書きしません。
-5. 停止状態で `memory/global/state.json` を runtime data root に、存在する場合は出力の `config/dynamic/assets.json` を設定ディレクトリの `dynamic/` に置き、旧 `state.json` と `state.json.bak` を data root の外へ移します（外部バックアップには残します）。サービスアカウントが `memory/global/` に書けることを確認します。`config/dynamic/assets.json` は他の設定と同じく読み取り専用で構いません。
-6. 設定と全体状態を厳格に検証してから起動し、supervisor の再起動間隔を 2 回以上観察して `active/running`、`NRestarts` が増えないこと、journal に新しい非ゼロ終了がないこと、起動ログの復唱対象と `/h_image` の画像庫が想定どおりであることを確認します。すべての検証が終わるまで外部バックアップを保持し、ロールバックでは対応するコードと同一時点のデータ一式を復元します。
+4. 完了マーカーは `ready.json` だけです。`sourceFiles` と `outputFiles` のハッシュ・mode・所有者を照合し、現行 decoder で出力を厳密に検証します。中断時はバックアップと不完全な出力を残し、同じソース・回数配分で新しい出力先へ再実行します。
+5. 停止中にデータルートの `memory/global/state.json` だけを出力で置換し、元の mode・所有者を復元します。サービスアカウントは `memory/global/` に書けなければなりません。この移行では設定、database、素材パスを変更しません。出力ディレクトリ全体を配置先へ上書きしないでください。
+6. 設定と状態の検証がすべて通ってから起動します。supervisor の再起動間隔を 2 回以上観察し、`active/running`、`NRestarts` の増加なし、journal の新規非ゼロ終了なしを確認します。すべて通るまでバックアップを保持し、失敗時は現場を残します。ロールバックには同一時点のコードとデータが必要です。
 
-### 14.0.0 より前のバージョンからのアップグレード
+<a id="assets-groups"></a>
 
-14.0.0 より前の配置は段階的に 14.x 形式へ到達させます。`14.0.0` タグのソースを checkout（または 14.0.0 配布パッケージをインストール）し、そのドキュメントに従って停止状態で `migrate:translate-sessions` を実行します（13.0.x より前の配置は先に `13.0.2` のドキュメントに従って `migrate:h-image-add-permission` と `migrate:bot-config` を実行します）。その出力を配置してから、本バージョンで前節の全体状態移行を実行します。中間バージョンを起動する必要はありません。現在の入口はこれら以前の形式を直接受け付けません。installer も 12.1.0 の `telegram.json` identity 入口を見つけると拒否し、先に 13.x への更新を求めます。
+### `assets.json` のグループ化移行（手動）
+
+現在の parser（[`packages/config/assets.ts`](../../packages/config/assets.ts)）は `onlyPath`・`pathOrUrl`・`onlyUrl` の 3 グループ形式だけを受け付けます。トップレベルに平置きした旧フィールドは未知キーとして起動を拒否し、hot reload でも拒否します。この移行で変わるのは `config/dynamic/assets.json` だけで、移行スクリプトはなく、起動時の自動変換もしません。このファイルを置いていないデプロイは移行不要です。
+
+1. サービスを停止し、inactive・プロセス終了・`bot.lock` の解放を確認します。`mktemp -d` でワークツリー外に `config/` をバックアップし、ファイル一覧、mode、所有者、SHA-256 を記録して、コピーを 1 ファイルずつ照合します。
+2. 下表に従って既存フィールドを各グループへ移し、値はそのまま保ちます。旧ファイルに無かったフィールドは省略のままにします。
+
+| 旧フィールド | 新しい位置 |
+| --- | --- |
+| `random_h_image_dir` | `onlyPath.random_h_image_dir` |
+| `bot_default_avatar_url` | `pathOrUrl.bot_default_avatar` |
+| `fortune_thumbnail_url` | `onlyUrl.fortune_thumbnail_url` |
+| `probability_thumbnail_url` | `onlyUrl.probability_thumbnail_url` |
+| `gag_thumbnail_url` | `onlyUrl.gag_thumbnail_url` |
+
+3. mode と所有者を保ったままその場で書き換え、バックアップの一覧に対して `sha256sum -c` を実行し、変わったのが `dynamic/assets.json` だけであることを確認します。
+4. 起動前に新しいコードで [`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs` を呼び、全デプロイ入力を読み取り専用で検証します。
+5. 起動後は supervisor の再起動間隔を 2 回以上観察し、`active/running`、`NRestarts` が増えないこと、journal に新しい非ゼロ終了が無いことを確認します。すべて確認できてからバックアップを削除します。失敗時は現場を保持し、ロールバックでは旧コードとバックアップの `assets.json` を両方戻します。
+
+### 古い構成からの段階的アップグレード
+
+データルートに `state.json` または `state.json.bak` が残る場合は、先に前回の全体状態移行を含むリリースとその手順を使い、状態を `memory/global/state.json`、素材設定を `config/dynamic/assets.json` へ移します。その後で上記の回数分割を実行し、[`assets.json` のグループ化移行](#assets-groups)で素材設定を書き換えます。さらに古い形式は各中間移行を順番に行い、現行スクリプトは複数の過去移行を連結しません。
+
+設定は `config/static/`（`bot.json`、`g-auth.json`）と `config/dynamic/`（その他のデプロイ JSON）に配置し、mode と所有者を保ちます。`dynamic/` は空でも必要です。起動と installer は旧状態パスや配置を誤った設定を拒否します。中間移行のために中間版を起動する必要はありません。
 
 ### ランダム画像ライブラリのファイル名コールド移行
 
-専用画像は `config/dynamic/assets.json` の `random_h_image_dir` で指定し、既定は runtime data root 下の `h_image/` です。この cold migration は直接前序の `<uuidv7>[-<file_unique_id>]<拡張子>` だけを受け付け、**内容 SHA-256** と拡張子の名前を生成します。現在の起動検査は旧名を拒否し、自動移行しません。入口は
+専用画像は `config/dynamic/assets.json` の `onlyPath.random_h_image_dir` で指定し、既定は runtime data root 下の `h_image/` です。この cold migration は直接前序の `<uuidv7>[-<file_unique_id>]<拡張子>` だけを受け付け、**内容 SHA-256** と拡張子の名前を生成します。現在の起動検査は旧名を拒否し、自動移行しません。入口は
 [`scripts/migrateRandomImageNames.ts`](../../scripts/migrateRandomImageNames.ts) です。
 
 1. サービスを停止し、inactive で残留プロセスがないことを確認します。`mktemp -d` でライブラリ
@@ -243,7 +264,7 @@ bun run migrate:random-image-names \
 
 ### 11.0.9 からの段階的なアップグレード
 
-11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、13.0.2 リリースの `migrate:h-image-add-permission` で v11 を生成します。Bot 設定も同様に 13.0.2 の `migrate:bot-config` で 13.x 形式へ移行します。その後、14.0.0 リリースの `migrate:translate-sessions` で 14.x 形式に到達させ、現行入口で[全体状態移行](#全体状態のコールド移行statejson-memoryglobalstatejson-configdynamicassetsjson)を完了します。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは 13.0.2 の段階から始めます。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0、13.0.2 タグが必要で、各出力ディレクトリは未作成である必要があります。
+11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、13.0.2 リリースの `migrate:h-image-add-permission` で v11 を生成します。Bot 設定も同様に 13.0.2 の `migrate:bot-config` で 13.x 形式へ移行します。その後、14.0.0 リリースの `migrate:translate-sessions` で 14.x 形式に到達させ、前回の全体状態移行を含むリリースで配置を変換してから、現在の入口で[音声回数の分割](#upgrade-15)を完了し、[`assets.json` のグループ化移行](#assets-groups)を行います。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは 13.0.2 の段階から始めます。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0、13.0.2 タグが必要で、各出力ディレクトリは未作成である必要があります。
 
 中間ソースはこの手順の必須入力です。11.0.9 タグまたは現行ソースアーカイブだけを持つ環境では、先に固定コミットの完全なソースを取得してください。リリース前にそのソースを独立して保持・提供し、squash 後に reset される dev 履歴だけに依存しないでください。
 
@@ -321,7 +342,7 @@ git archive 13.0.2 | tar -x -C "$V13_CODE"
   - **対応**：サービスを停止したまま原本をバックアップし、エラーに示されたファイルパス、
     フィールドパス、期待される形式に従って修正して再検証します。旧位置のファイルはコールド移行を
     経てから data root の外へ移します。ランタイムは不正ファイルの全バイトを保全して起動を拒否し、
-    `*.corrupt` ファイルを生成しません。
+    `*.corrupt` ファイルを生成しません。installer も同じ基準でサービスの登録・起動の前に拒否します。
 
 ### `bot.lock` が起動を拒否する場合
 

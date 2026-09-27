@@ -16,6 +16,7 @@ mock.module("../../../packages/workers/aiChat/compaction", () => ({
 }));
 
 const {
+  flushDirtyMemories,
   flushMemorySnapshot,
   pushBufferedMessage,
 } = await import("../../../packages/workers/aiChat/rollingMemory");
@@ -216,6 +217,35 @@ describe("AI rolling-memory capacity", () => {
     });
     expect(chatBuffers.get(-1001)?.size).toBe(1);
     expect(dirtyMemoryChats.has(-1001)).toBeFalse();
+  });
+
+  test("周期 flush 按普通批次上报全部 dirty 群并清空标记；没有 dirty 群时不上报", () => {
+    pushBufferedMessage(-1001, entry("first"));
+    pushBufferedMessage(-1002, entry("second"));
+    pushBufferedMessage(-1002, entry("third"));
+
+    flushDirtyMemories();
+
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "memory",
+      chatId: -1001,
+      snapshot: expect.any(String),
+      persistImmediately: false,
+      usage: { bufferedCount: 1, summaryCount: 0 },
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      type: "memory",
+      chatId: -1002,
+      snapshot: expect.any(String),
+      persistImmediately: false,
+      usage: { bufferedCount: 2, summaryCount: 0 },
+    });
+    expect(dirtyMemoryChats.size).toBe(0);
+
+    postMessage.mockClear();
+    flushDirtyMemories();
+    expect(postMessage).not.toHaveBeenCalled();
   });
 
   test("LRU 淘汰优先跳过仍有回复轮次在途的最老群", () => {

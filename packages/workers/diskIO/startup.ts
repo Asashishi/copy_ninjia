@@ -1,6 +1,5 @@
 /** Disk I/O Worker 启动恢复编排：全域只读 inspect、统一 adopt、成功后 maintenance。 */
 
-import { aiMemoryCache } from "../../cache/workers/diskIO/snapshots";
 import { stickerCatalogCache } from "../../cache/workers/diskIO/stickers";
 import { resetWedFileWrites } from "../../cache/workers/diskIO/wed";
 import { inspectWedMemberFiles, maintainWedMemberFiles } from "./wedMemberFiles";
@@ -106,6 +105,7 @@ export async function handleDiskIOStartupLoad(
   stopDiskIOMaintenanceCron();
   let loadError: string | undefined;
   let verifications: Map<string, VerificationSnapshot> = new Map();
+  let aiMemories: Map<number, string> = new Map();
   let blocklistEntryCount: number = 0;
   let permissionEntryCount: number = 0;
   let pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
@@ -136,7 +136,7 @@ export async function handleDiskIOStartupLoad(
     adoptLogFiles(logs);
     adoptAiCacheFile(aiCache);
     resetWedFileWrites();
-    adoptAiMemorySnapshots(storage.aiMemories);
+    aiMemories = adoptAiMemorySnapshots(storage.aiMemories);
     adoptStickerCatalogSnapshots(stickerCatalogs);
     adoptLuckDay(luck);
     verifications = adoptVerificationDay(verificationState);
@@ -161,7 +161,7 @@ export async function handleDiskIOStartupLoad(
 
   postReply({
     type: "loaded",
-    aiMemories: aiMemoryCache,
+    aiMemories,
     stickerCatalogs: stickerCatalogCache,
     luckDay: maintenanceInspections?.luck.cache ?? null,
     luckReceiptSecret,

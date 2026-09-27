@@ -4,6 +4,12 @@ import { chmodSync, renameSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
+import {
+  ASSET_ONLY_PATH_GROUP,
+  ASSET_ONLY_PATH_KEYS,
+  ASSET_ONLY_URL_GROUP,
+  ASSET_PATH_OR_URL_GROUP,
+} from "../../packages/consts/ui/assets";
 import { ACTIVE_COLD_MIGRATION_EDGES } from "../migrations/active";
 import { copyFixtureTree } from "./copyTree";
 import { googleAuthFixture } from "./googleAuth";
@@ -44,6 +50,7 @@ const CONFIG_FILE_DIRECTORIES: Readonly<Record<string, string>> = {
   "ad_samples.json": DYNAMIC_CONFIG_DIR_NAME,
   "stickers.json": DYNAMIC_CONFIG_DIR_NAME,
   "mood.json": DYNAMIC_CONFIG_DIR_NAME,
+  "assets.json": DYNAMIC_CONFIG_DIR_NAME,
 };
 
 /** 含凭据、须保持 0600 的部署文件在当前布局下的相对路径。 */
@@ -53,13 +60,38 @@ const SECRET_CONFIG_FILES: readonly string[] = [
   join(STATIC_CONFIG_DIR_NAME, "g-auth.json"),
 ];
 
-/** 模拟运维停机后把平铺的旧配置按当前布局手工移入 static/ 与 dynamic/。 */
+/**
+ * 模拟运维按当前格式手工把平铺的素材字段分进 `onlyPath`、`pathOrUrl` 与 `onlyUrl` 三组，
+ * 旧 `bot_default_avatar_url` 改名为 `pathOrUrl.bot_default_avatar`。
+ */
+async function regroupAssetConfig(path: string): Promise<void> {
+  const flat: Readonly<Record<string, unknown>> = await Bun.file(path).json() as Readonly<Record<string, unknown>>;
+  const onlyPath: Record<string, unknown> = {};
+  const pathOrUrl: Record<string, unknown> = {};
+  const onlyUrl: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(flat)) {
+    if (ASSET_ONLY_PATH_KEYS.has(key)) onlyPath[key] = value;
+    else if (key === "bot_default_avatar_url") pathOrUrl.bot_default_avatar = value;
+    else onlyUrl[key] = value;
+  }
+  await Bun.write(path, JSON.stringify({
+    [ASSET_ONLY_PATH_GROUP]: onlyPath,
+    [ASSET_PATH_OR_URL_GROUP]: pathOrUrl,
+    [ASSET_ONLY_URL_GROUP]: onlyUrl,
+  }));
+}
+
+/**
+ * 模拟运维停机后把平铺的旧配置按当前布局手工移入 static/ 与 dynamic/，并把 assets.json
+ * 手工改成当前的分组格式。
+ */
 async function assembleConfigLayout(source: string, target: string): Promise<void> {
   await copyFixtureTree(source, target);
   for (const directory of [STATIC_CONFIG_DIR_NAME, DYNAMIC_CONFIG_DIR_NAME]) await mkdir(join(target, directory));
   for (const [name, directory] of Object.entries(CONFIG_FILE_DIRECTORIES)) {
     renameSync(join(target, name), join(target, directory, name));
   }
+  await regroupAssetConfig(join(target, DYNAMIC_CONFIG_DIR_NAME, "assets.json"));
   for (const path of SECRET_CONFIG_FILES) chmodSync(join(target, path), 0o600);
 }
 
@@ -89,17 +121,14 @@ export async function prepareMigratedDeployment({
   await Bun.write(join(config, "stickers.json"), JSON.stringify({ packs: [] }));
   await Bun.write(join(config, "mood.json"), JSON.stringify({ moods: [{ name: "迁移心情", weight: 100, instruction: "迁移前的心情指令" }] }));
   const copy: Readonly<Record<string, unknown>> = { copiedUser: { id: 42, first_name: "复读目标" }, copyChatId: -1001, lastCopyTime: 12 };
-  // 14.x 的 state.json：素材目录与一条直链偏离内置缺省，另一条与缺省相同（迁移不写它）。
-  const state: string = JSON.stringify({ global: {
-    copy,
-    assets: {
-      randomHImageDir: deployedImages,
-      fortuneThumbnailUrl: " https://example.com/fortune.png ",
-      gagThumbnailUrl: "https://drive.google.com/uc?export=view&id=1AhvfdbcwQnUBBk86yEafb_G3gZOWXim2",
-    },
-  } }, null, 2);
-  await Bun.write(join(data, "state.json"), state);
-  await Bun.write(join(data, "state.json.bak"), state);
+  await Bun.write(join(config, "assets.json"), JSON.stringify({
+    random_h_image_dir: deployedImages,
+    fortune_thumbnail_url: "https://example.com/fortune.png",
+  }));
+  // 源全局状态按总次数记录 TTS，迁移输入明确其中 7 次来自 AI。
+  const state: string = JSON.stringify({ copy, ttsUsage: { windowStartedAt: 1_000, count: 10 } }, null, 2);
+  await mkdir(join(data, "memory/global"), { recursive: true });
+  await Bun.write(join(data, "memory/global/state.json"), state);
   await mkdir(join(data, "memory/wed"), { recursive: true });
   await Bun.write(join(data, "memory/wed/-1001.json"), "[42,43]");
   await mkdir(join(data, "logs"));
@@ -134,7 +163,7 @@ export async function prepareMigratedDeployment({
   }
   const argumentsByCommand: Readonly<Record<string, readonly string[]>> = {
     "migrate:random-image-names": ["--source-directory", images],
-    "migrate:global-state": ["--source-root", data],
+    "migrate:global-state": ["--source-root", data, "--agent-count", "7"],
   };
   const outputs: Map<string, string> = new Map();
   for (const edge of ACTIVE_COLD_MIGRATION_EDGES) {
@@ -154,11 +183,9 @@ export async function prepareMigratedDeployment({
   }
   const stateOutput: string = outputs.get("migrate:global-state")!;
   const stateResult: GlobalStateMigrationResult = await Bun.file(join(stateOutput, "ready.json")).json() as GlobalStateMigrationResult;
-  expect(stateResult.assetKeys).toEqual(["random_h_image_dir", "fortune_thumbnail_url"]);
-  expect(await Bun.file(join(stateOutput, "memory/global/state.json")).json()).toEqual({ copy });
-  expect(await Bun.file(join(stateOutput, "config/dynamic/assets.json")).json()).toEqual({
-    random_h_image_dir: deployedImages,
-    fortune_thumbnail_url: "https://example.com/fortune.png",
+  expect(stateResult.outputFiles.map((file: { readonly path: string }): string => file.path)).toEqual(["memory/global/state.json"]);
+  expect(await Bun.file(join(stateOutput, "memory/global/state.json")).json()).toEqual({
+    copy, ttsUsage: { windowStartedAt: 1_000, agentCount: 7, reserveCount: 3 },
   });
   const imageOutput: string = outputs.get("migrate:random-image-names")!;
   const imageResult: RandomImageNameMigrationResult = await Bun.file(join(imageOutput, "ready.json")).json() as RandomImageNameMigrationResult;
@@ -169,10 +196,8 @@ export async function prepareMigratedDeployment({
     await Bun.write(join(deployedImages, file.name), Bun.file(join(imageOutput, file.name)));
   }
   await assertMigrationSourcesUnchanged(sources);
-  // 只组装清单对应的部署文件：全局状态与素材配置取产物，数据库沿用停机备份的一致性快照（含 WAL/SHM），
-  // 旧 state.json 与完成清单留在备份、产物目录。
+  // 全局状态取迁移产物，配置与数据库沿用停机备份；完成清单留在产物目录。
   await assembleConfigLayout(config, deployedConfig);
-  await Bun.write(join(deployedConfig, DYNAMIC_CONFIG_DIR_NAME, "assets.json"), Bun.file(join(stateOutput, "config/dynamic/assets.json")));
   await copyFixtureTree(join(data, "database"), join(deployedData, "database"));
   for (const name of ["memory", "logs"]) await copyFixtureTree(join(data, name), join(deployedData, name));
   await mkdir(join(deployedData, "memory/global"), { recursive: true });

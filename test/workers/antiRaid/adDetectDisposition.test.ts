@@ -77,11 +77,8 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
 }));
 mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   clearTemporaryAdBypassActivity,
-  hasActiveTemporaryAdBypass: (id: number): boolean =>
-    temporaryAdBypassIds.has(id),
   hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryAdBypassIds.has(id),
   hydrateTemporaryAdBypassActivities: (): void => {},
-  isTemporaryAdBypassActivityCached: (): boolean => true,
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
   dispatchBlockedRemovals,
@@ -109,6 +106,8 @@ const { inlineResultSources } = await import("../../../packages/cache/main/inlin
 const { resetSelfSentTracker } = await import("../../../packages/cache/perThread/selfSentTracker");
 const { blocklistEntryCache, whitelistEntryCache } =
   await import("../../../packages/cache/main/identityStorage");
+const { temporaryAdBypassActivityCache } =
+  await import("../../../packages/cache/main/temporaryAdBypass");
 function detected(overrides: Partial<AdDetectedEvent> = {}): AdDetectedEvent {
   return {
     type: "adDetected",
@@ -145,9 +144,11 @@ beforeEach(() => {
   temporaryAdBypassIds.clear();
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
+  temporaryAdBypassActivityCache.clear();
   for (const id of [7, -300, -1005]) {
     blocklistEntryCache.set(id, null);
     whitelistEntryCache.set(id, null);
+    temporaryAdBypassActivityCache.set(id, null);
   }
   blockUser.mockClear();
   clearTemporaryAdBypassActivity.mockClear();

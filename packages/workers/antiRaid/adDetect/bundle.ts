@@ -208,7 +208,8 @@ export function claimSampleContextParts(
 }
 
 /**
- * 在 Worker 侧再收一次样本上下文的长度，同 appendLinkUrls：跨线程消息的
+ * 把候选平铺的两段样本上下文（AdCandidateMessage 的 sampleQuote、sampleReplyTo）收成
+ * AdSampleContext，并在 Worker 侧再收一次长度，同 appendLinkUrls：跨线程消息的
  * 形状由本侧兜底。原样展开的话这两个字段是整条流水线上唯一没有 Worker 侧上界
  * 的部分，而它们跟着每条 entry 常驻内存，条数按待检表容量放大。
  *
@@ -218,11 +219,12 @@ export function claimSampleContextParts(
  * 样本侧每条都要如实记下它当时引的是什么。
  */
 export function boundSampleContext(
-  context: AdSampleContext | undefined
+  rawQuote: string | undefined,
+  rawReplyTo: string | undefined
 ): AdSampleContext | undefined {
-  if (context === undefined) return undefined;
-  const quote: string = sanitizeInline(context.quote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
-  const replyTo: string = sanitizeInline(context.replyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  if (rawQuote === undefined && rawReplyTo === undefined) return undefined;
+  const quote: string = sanitizeInline(rawQuote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  const replyTo: string = sanitizeInline(rawReplyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
   if (quote.length === 0 && replyTo.length === 0) return undefined;
   if (quote.length === 0) return { replyTo };
   if (replyTo.length === 0) return { quote };

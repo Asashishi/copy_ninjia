@@ -8,15 +8,17 @@
  *   扫描目录项以清理孤儿临时文件与过期归档
  *   ——它不是运行时状态，是给人看的原始素材，用来回头调 config/dynamic/ad_samples.json
  *   的判定口径。少一条、多一条、甚至整个文件被删都不影响机器人的任何行为。
- * - **不进统一 flush 的领域清单**。收到即写、失败即弃（只 console.error）。列进去
- *   的话，一个纯诊断文件的写盘失败会让 `/block` 的落盘确认报失败，把运维引向
- *   一个其实没坏的东西；而这份样本本来就允许丢。
+ * - **不进统一 flush 的失败领域清单**。样本先进内存批次（cache/workers/diskIO/adSample.ts），
+ *   累计 FLUSH_MAX_ENTRIES 条或等满 FLUSH_INTERVAL_MS 后整批追加，统一 flush 也会刷出；
+ *   写失败整批丢弃（只 console.error），Worker 重建时未刷出的批次随 isolate 丢失。
+ *   列进失败领域的话，一个纯诊断文件的写盘失败会让 `/block` 的落盘确认报失败，把运维
+ *   引向一个其实没坏的东西；而这份样本本来就允许丢。
  * - **允许截断自愈**（repair=true）。断电撕裂了末尾那条就裁掉，同日志/运势；
  *   这里连「丢掉最后几条」都不构成正确性问题。
  *
  * 攒太多时按 AD_SAMPLE_FILE_MAX_BYTES 轮转成带日期的归档；归档按文件名中的
  * 东京日期保留最近 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 个自然日。轮转是为了读回
- * 成本：追加游标在 Worker 重建后与每次追加失败后都作废，下一条命中要对整份
+ * 成本：追加游标在 Worker 重建后与每次追加失败后都作废，下一批样本要对整份
  * 文件重跑一次异步读 + parse，仍由唯一的串行 I/O owner 排队。
  */
 
@@ -33,14 +35,17 @@ import {
   DAY_MS,
   PERSISTED_FILE_MODE,
 } from "../../consts/diskIO/common";
+import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO/appendOnly";
 import {
   adSampleArchiveCursor,
   adSampleArchiveSweepDay,
+  adSampleBuffer,
   adSampleFileState,
   adSampleTempsSwept,
 } from "../../cache/workers/diskIO/adSample";
 import { getTokyoDateKey } from "../../libs/time";
 import { appendToAppendOnlyFile, openAppendOnlyFile, serializeDayFileEntry } from "./appendOnlyDayFile";
+import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
 /**
  * 一条样本的落地形态。刻意不放 senderId 以外的身份字段之外的东西——这份文件
@@ -236,20 +241,14 @@ function rotateIfOversized(state: AppendOnlyFileState): AppendOnlyFileState {
 }
 
 /**
- * 追加一条命中样本。失败只 console.error 并作废游标，不重试、不缓冲、不上报
- * ——调用方（diskIOWorker 的消息路由）也不看返回值。
+ * 把当前样本批次整批追加进 sample.json。失败只 console.error、作废游标并丢弃这一批，
+ * 不重试、不上报——调用方（统一 flush 与定时器）也不看结果。
  */
-export async function handleAdSampleMessage(
-  msg: AdSampleDiskMessage
-): Promise<void> {
-  const record: AdSampleRecord = {
-    detectedAt: msg.detectedAt,
-    chatId: msg.chatId,
-    senderId: msg.senderId,
-    label: msg.label,
-    reason: msg.reason,
-    messages: msg.messages,
-  };
+export async function flushAdSampleBuffer(): Promise<void> {
+  cancelDiskIOFlushTimer(adSampleBuffer);
+  if (adSampleBuffer.chunks.length === 0) return;
+  const chunk: string = adSampleBuffer.chunks.join(",\n");
+  adSampleBuffer.chunks = [];
   try {
     // 目录在这里按需建：本文件没有启动恢复阶段可以顺带建目录，而首次命中
     // 可能发生在部署后的任何时候。recursive 让它幂等。
@@ -261,20 +260,40 @@ export async function handleAdSampleMessage(
       PERSISTED_FILE_MODE,
       true
     );
-    // 每次追加前都判一次：游标一旦缓存下来就一直用下去，只在打开时判的话，
+    // 每批追加前都判一次：游标一旦缓存下来就一直用下去，只在打开时判的话，
     // 一个长期不重启的进程永远轮转不了。
     adSampleFileState.current = rotateIfOversized(adSampleFileState.current);
     const state: AppendOnlyFileState = adSampleFileState.current;
     await appendToAppendOnlyFile({
       path: AD_SAMPLE_FILE_PATH,
       state,
-      chunk: serializeDayFileEntry(sampleKey(msg), record),
+      chunk,
       mode: PERSISTED_FILE_MODE,
       repair: true,
     });
   } catch (error: unknown) {
     // 游标作废：可能已经有前缀落盘，旧位置不再可信，下次写入前重新探测。
     adSampleFileState.current = null;
-    console.error("[diskIOWorker] failed to append an ad detection sample:", error);
+    console.error("[diskIOWorker] failed to append ad detection samples:", error);
   }
+}
+
+/** 序列化一条命中样本并放进批次；达到 FLUSH_MAX_ENTRIES 立即整批追加，否则按需排定时刷出。 */
+export async function handleAdSampleMessage(
+  msg: AdSampleDiskMessage
+): Promise<void> {
+  const record: AdSampleRecord = {
+    detectedAt: msg.detectedAt,
+    chatId: msg.chatId,
+    senderId: msg.senderId,
+    label: msg.label,
+    reason: msg.reason,
+    messages: msg.messages,
+  };
+  adSampleBuffer.chunks.push(serializeDayFileEntry(sampleKey(msg), record));
+  if (adSampleBuffer.chunks.length >= FLUSH_MAX_ENTRIES) {
+    await flushAdSampleBuffer();
+    return;
+  }
+  armDiskIOFlushTimer(adSampleBuffer, FLUSH_INTERVAL_MS, flushAdSampleBuffer);
 }

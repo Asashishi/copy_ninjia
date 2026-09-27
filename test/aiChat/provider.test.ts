@@ -289,30 +289,50 @@ test("语音合成门面发起请求前登记每日计数，达到调用方上�
   const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech")
     .mockImplementation(async () => null);
   postMessage.mockClear();
-  ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, count: 74 };
+  ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 74, reserveCount: 0 };
   try {
     await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai" }))
       .resolves.toEqual({ ok: false, reason: "synthesis failed" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
-    expect(ttsDailyUsage.current?.count).toBe(75);
+    expect(ttsDailyUsage.current?.agentCount).toBe(75);
     expect(postMessage).toHaveBeenCalledWith({ type: "ttsUsage", usage: ttsDailyUsage.current });
 
     await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai" }))
       .resolves.toEqual({ ok: false, reason: "daily limit reached" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
-    expect(ttsDailyUsage.current?.count).toBe(75);
+    expect(ttsDailyUsage.current?.agentCount).toBe(75);
 
-    // `/send` 与 cron 使用完整上限，仍可越过 AI 的预留线。
+    // `/send` 与 cron 只累加 reserveCount，不占 agentCount。
     await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
-    expect(ttsDailyUsage.current?.count).toBe(76);
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75, reserveCount: 1 });
 
     // 排队期间已取消的请求不登记计数。
     const aborted: AbortController = new AbortController();
     aborted.abort();
     await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", signal: aborted.signal });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
-    expect(ttsDailyUsage.current?.count).toBe(76);
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75, reserveCount: 1 });
+  } finally {
+    synthesizeSpeech.mockRestore();
+    ttsDailyUsage.current = null;
+  }
+});
+
+test("预留额度用尽时门面拒绝 operator，AI 仍能请求且只增加 agentCount", async () => {
+  const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech").mockImplementation(async () => null);
+  const reserveCount: number = agentConfig.tts!.dailyReserveQuota;
+  ttsDailyUsage.current = { windowStartedAt: Date.now(), agentCount: 0, reserveCount };
+  postMessage.mockClear();
+  try {
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "operator" }))
+      .resolves.toEqual({ ok: false, reason: "daily limit reached" });
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai" }))
+      .resolves.toEqual({ ok: false, reason: "synthesis failed" });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 1, reserveCount });
   } finally {
     synthesizeSpeech.mockRestore();
     ttsDailyUsage.current = null;

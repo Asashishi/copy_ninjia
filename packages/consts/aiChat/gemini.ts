@@ -62,7 +62,7 @@ export const GEMINI_SPEECH_REQUEST_TIMEOUT_MS: number = 60_000;
 export const GEMINI_SPEECH_REQUEST_ATTEMPTS: number = 3;
 
 /** 语音合成的采样温度，经 `generation_config.temperature` 传入。 */
-export const GEMINI_SPEECH_TEMPERATURE: number = 1.25;
+export const GEMINI_SPEECH_TEMPERATURE: number = 1;
 
 /**
  * 语音合成未配置 agent.tts.style 时的默认基础风格，经 `speech_metadata.style` 随台词提交；调用方给出

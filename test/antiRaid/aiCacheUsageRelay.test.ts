@@ -24,6 +24,7 @@ afterEach(() => {
 test("Anti-Raid Worker 的缓存用量事件原样转投诊断通道，不回投 Worker", () => {
   const posted: unknown[] = [];
   const usage = {
+    kind: "tokens",
     timestamp: 1_700_000_000_000,
     capability: "ad_detect",
     provider: "openai",
@@ -42,7 +43,7 @@ test("用量诊断被拒收时按能力与供应商只告警一次", () => {
   accepts = false;
   try {
     const event = { type: "aiCacheUsage", usage: {
-      timestamp: 1, capability: "ad_detect", provider: "google", model: "fixture",
+      kind: "tokens", timestamp: 1, capability: "ad_detect", provider: "google", model: "fixture",
       inputTokens: 1, cachedInputTokens: 0, outputTokens: 2,
     } } as const;
     handleAntiRaidWorkerEvent(event, (): void => {});

@@ -47,6 +47,8 @@ export interface BufferedLogEntry {
 
 /** 一条尚未刷盘的入群事实及其目标文件。序列化只在 flush 确认仍为最新值后执行。 */
 export interface BufferedJoinLogEntry {
+  /** 主线程投递序号（见 JoinLogDiskMessage.sequence），随 joinLogPersisted 回执回报处置结果。 */
+  sequence: number;
   chatId: number;
   day: string;
   record: JoinLogRecord;
@@ -73,3 +75,14 @@ export interface JoinLogFileCache {
 export interface DayFileState extends AppendOnlyFileState {
   day: string;
 }
+
+/** Disk I/O 定时 flush 的一次性 timer 槽；null 表示当前没有待触发的 timer。 */
+export interface FlushTimerSlot {
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * 由领域定时 flush 触发、经合并入队执行的一项 Disk I/O 操作。
+ * 返回值被忽略；拒绝会让合并操作一并拒绝，并按统一操作队列的约定终止本代 Worker。
+ */
+export type TimedDiskIOOperation = () => unknown;

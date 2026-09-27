@@ -1,7 +1,8 @@
 import type { StickerCatalogEntry } from "../../../../types/stickers/catalog";
 
 /** owner：aiChat Worker。白名单贴纸包画面描述目录的权威内存状态。
- * 仅 aiChat/ai/stickers/catalog.ts 直接读写；其它领域不得绕过其公开生命周期 API。
+ * 仅 aiChat/ai/stickers/catalog.ts 写入；除 packSummaries 由贴纸工具只读外，其它领域
+ * 不得绕过其公开生命周期 API。
  * 每包容量由 Telegram 当前贴纸集合自然约束，不另设 TTL；目录快照持久化到
  * memory/stickers/，Worker 重建时接收主线程镜像并启动目录对账。dirty、失败
  * 与生成中集合只属于本次 Worker 生命周期，重启后清空重建。 */
@@ -17,7 +18,8 @@ import type { StickerCatalogEntry } from "../../../../types/stickers/catalog";
 export const catalogs: Map<string, Map<string, StickerCatalogEntry>> = new Map();
 
 /** pack short name -> AI 生成的整包简介（≤200 字），供两层贴纸工具的第一层
- *  挑包；生成/重生成时机见 packages/aiChat/ai/stickers/catalog.ts 的 generatePackCatalog。
+ *  挑包：aiChat/ai/tools/stickers.ts 直接只读，缺项表示尚未生成或生成失败。
+ *  生成/重生成时机见 packages/aiChat/ai/stickers/catalog.ts 的 generatePackCatalog。
  *  清理与容量跟随 catalogs：包退出白名单且生成、上报责任结束后随目录删除。
  *  Worker 重建时由主线程目录镜像恢复。 */
 export const packSummaries: Map<string, string> = new Map();

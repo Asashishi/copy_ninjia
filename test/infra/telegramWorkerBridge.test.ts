@@ -151,12 +151,6 @@ describe("Telegram Worker 双工代理", () => {
         payload: { chat_id: -1001, sender_chat_id: -2002 },
       },
       {
-        method: "copyMessage",
-        category: "message",
-        args: [-1001, -1002, 8, { caption: "copy" }, signal],
-        payload: { chat_id: -1001, from_chat_id: -1002, message_id: 8, caption: "copy" },
-      },
-      {
         method: "deleteMessage",
         category: "delete",
         args: [-1001, 9, signal],
@@ -167,18 +161,6 @@ describe("Telegram Worker 双工代理", () => {
         category: "delete",
         args: [-1001, [9, 10], signal],
         payload: { chat_id: -1001, message_ids: [9, 10] },
-      },
-      {
-        method: "deleteEphemeralMessage",
-        category: "delete",
-        args: [{ chatId: -1001, receiverUserId: 7, ephemeralMessageId: 11 }, signal],
-        payload: { chat_id: -1001, receiver_user_id: 7, ephemeral_message_id: 11 },
-      },
-      {
-        method: "editMessageText",
-        category: "edit",
-        args: [-1001, 12, "updated", { parse_mode: "HTML" }, signal],
-        payload: { chat_id: -1001, message_id: 12, text: "updated", parse_mode: "HTML" },
       },
       {
         method: "getChat",
@@ -245,12 +227,6 @@ describe("Telegram Worker 双工代理", () => {
         category: "kick",
         args: [-1001, 7, { only_if_banned: true }, signal],
         payload: { chat_id: -1001, user_id: 7, only_if_banned: true },
-      },
-      {
-        method: "unbanChatSenderChat",
-        category: "kick",
-        args: [-1001, -2002, signal],
-        payload: { chat_id: -1001, sender_chat_id: -2002 },
       },
     ];
     const methods = workerTelegramApi as unknown as Readonly<Record<

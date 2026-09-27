@@ -8,14 +8,20 @@ import {
   resetStorageDatabaseCache,
   storageDatabaseHandle,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
-import { BLOCKLIST_SWEEP_PAGE_SIZE } from
-  "../../../packages/consts/identityStorage";
-import { readBlocklistIdPage } from
-  "../../../packages/workers/diskIO/storageDatabase/identityPolicy";
+import {
+  BLOCKLIST_SWEEP_PAGE_SIZE,
+  BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES,
+} from "../../../packages/consts/identityStorage";
+import {
+  readBlocklistIdPage,
+  readIdentityPolicies,
+} from "../../../packages/workers/diskIO/storageDatabase/identityPolicy";
 import type { StorageDatabase } from
   "../../../packages/types/storageDatabase";
-import type { BlocklistIdPageReadReply } from
-  "../../../packages/types/diskIO";
+import type {
+  BlocklistIdPageReadReply,
+  IdentityPoliciesReadReply,
+} from "../../../packages/types/diskIO";
 
 function seedBlocklist(database: StorageDatabase, count: number): void {
   const insert = database.$client.prepare(
@@ -89,5 +95,45 @@ describe("Disk I/O 黑名单稳定游标页", () => {
     expect(reply.page?.ids[0]).toBe(2);
     expect(reply.page?.ids.at(-1)).toBe(BLOCKLIST_SWEEP_PAGE_SIZE + 1);
     expect(reply.page?.done).toBeFalse();
+  });
+
+  test("事务内待写增量超过硬顶时以错误回执拒绝扩页，不抛出 Worker", () => {
+    for (let id: number = 1; id <= BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES + 1; id++) {
+      pendingBlocklistWrites.set(id, { data: "{}", revision: id });
+    }
+
+    const reply: BlocklistIdPageReadReply = readBlocklistIdPage({
+      type: "readBlocklistIdPage",
+      requestId: 4,
+      afterId: null,
+    });
+
+    expect(reply).toEqual({
+      type: "blocklistIdPageRead",
+      requestId: 4,
+      error: expect.stringContaining("refusing to expand a sweep page"),
+    });
+  });
+
+  test("非法游标与非法身份主键都以错误回执结算对应请求", () => {
+    const page: BlocklistIdPageReadReply = readBlocklistIdPage({
+      type: "readBlocklistIdPage",
+      requestId: 5,
+      afterId: 1.5,
+    });
+    expect(page.type).toBe("blocklistIdPageRead");
+    expect(page.requestId).toBe(5);
+    expect(page.error).toEqual(expect.any(String));
+    expect(page.page).toBeUndefined();
+
+    const policies: IdentityPoliciesReadReply = readIdentityPolicies({
+      type: "readIdentityPolicies",
+      requestId: 6,
+      ids: [7, 0],
+    });
+    expect(policies.type).toBe("identityPoliciesRead");
+    expect(policies.requestId).toBe(6);
+    expect(policies.error).toEqual(expect.any(String));
+    expect(policies.whitelist).toBeUndefined();
   });
 });

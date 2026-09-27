@@ -188,7 +188,7 @@ export function mentionFactsScenario(withEntities: boolean): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
-        const facts: MentionFacts = resolveMentionFacts(
+        const facts: Readonly<MentionFacts> = resolveMentionFacts(
           messages[index % messages.length]!, 4242, "tensai_bot"
         );
         if (facts.isMentioned) checksum += 1;

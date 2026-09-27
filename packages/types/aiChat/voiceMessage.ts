@@ -18,22 +18,21 @@ export interface SynthesizedSpeech {
 }
 
 /**
- * 语音合成的每日计数：当前窗口内第一次请求的时间戳与窗口内已发起的请求数。
+ * 语音合成的每日计数：AI 与预留额度各自计数，共用窗口内第一次请求的时间戳。
  * 与 memory/global/state.json 的 `ttsUsage` 同形；每次登记都换成新对象，不原地修改。
  */
 export interface TtsDailyUsage {
   /** 当前计数窗口的起点（ms），即窗口内第一次发起合成请求的时刻。 */
   readonly windowStartedAt: number;
-  /**
-   * 窗口内已发起的合成请求数，正整数。`agent.tts.daily_limit` 调低后可能大于新上限，
-   * 此时窗口内的请求一律按额度用尽拒绝。
-   */
-  readonly count: number;
+  /** AI 语音工具已发起的请求数，非负安全整数；超过当前 AI 上限时拒绝该入口的新请求。 */
+  readonly agentCount: number;
+  /** `/send` 与 cron 共用的已发起请求数，非负安全整数；两项计数至少一项大于 0。 */
+  readonly reserveCount: number;
 }
 
 /**
- * 一次合成请求所用的每日额度口径：`operator`（`/send` 代发与 cron `send_voice`）可用到
- * `agent.tts.daily_limit`；`ai`（AI 语音工具）只能用到 `daily_limit - daily_reserve_quota`。
+ * 一次合成请求所用的独立每日额度：`operator`（`/send` 与 cron）使用 daily_reserve_quota，
+ * `ai`（AI 语音工具）使用 daily_limit - daily_reserve_quota；两者互不借用额度。
  */
 export type TtsQuotaScope = "ai" | "operator";
 

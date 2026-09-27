@@ -575,7 +575,7 @@ describe("AI main-thread persistence mirror", () => {
   test("心情查询/重抽回执按 requestId 结算；崩溃重启与投递失败都立即 reject", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
-    const queried = aiChat.queryAiMood(-1001);
+    const queried = aiChat.requestAiMood(-1001, "queryMood");
     const queryRequest = workerPosts.at(-1);
     if (queryRequest?.type !== "queryMood") throw new Error("Expected a queryMood request");
     expect(queryRequest.deadlineAt).toBeGreaterThan(Date.now());
@@ -583,7 +583,7 @@ describe("AI main-thread persistence mirror", () => {
     await expect(queried).resolves.toBe("平静");
     expect(moodRequestWaiters.size).toBe(0);
 
-    const switched = aiChat.switchAiMood(-1001);
+    const switched = aiChat.requestAiMood(-1001, "switchMood");
     const switchRequest = workerPosts.at(-1);
     if (switchRequest?.type !== "switchMood") throw new Error("Expected a switchMood request");
     expect(switchRequest.deadlineAt).toBeGreaterThan(Date.now());
@@ -594,13 +594,13 @@ describe("AI main-thread persistence mirror", () => {
     // 迟到/重复回执不应产生副作用。
     supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: switchRequest.requestId, moodName: "开心" });
 
-    const crashed = aiChat.queryAiMood(-1001);
+    const crashed = aiChat.requestAiMood(-1001, "queryMood");
     supervisorOptions!.onRespawn(() => true);
     await expect(crashed).rejects.toThrow("AI Worker crashed before acknowledging the mood request.");
     expect(moodRequestWaiters.size).toBe(0);
 
     workerPostAccepted = false;
-    await expect(aiChat.switchAiMood(-1001)).rejects.toThrow("AI Worker is unavailable.");
+    await expect(aiChat.requestAiMood(-1001, "switchMood")).rejects.toThrow("AI Worker is unavailable.");
     expect(moodRequestWaiters.size).toBe(0);
     expect(aiChatWorkerState.available).toBeFalse();
   });
@@ -638,14 +638,14 @@ describe("AI main-thread persistence mirror", () => {
   });
 
   test("语音合成每日计数：init 后灌回持久化值，回执写入镜像，崩溃重建重放最新值", () => {
-    ttsUsageMirror.current = { windowStartedAt: 1_000, count: 3 };
+    ttsUsageMirror.current = { windowStartedAt: 1_000, agentCount: 3, reserveCount: 2 };
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     const types: string[] = workerPosts.map((message: AiChatWorkerMessage): string => message.type);
     expect(types.slice(0, 2)).toEqual(["init", "hydrateTtsUsage"]);
-    expect(workerPosts[1]).toEqual({ type: "hydrateTtsUsage", usage: { windowStartedAt: 1_000, count: 3 } });
+    expect(workerPosts[1]).toEqual({ type: "hydrateTtsUsage", usage: { windowStartedAt: 1_000, agentCount: 3, reserveCount: 2 } });
 
-    supervisorOptions!.onEvent({ type: "ttsUsage", usage: { windowStartedAt: 1_000, count: 4 } });
-    expect(ttsUsageMirror.current).toEqual({ windowStartedAt: 1_000, count: 4 });
+    supervisorOptions!.onEvent({ type: "ttsUsage", usage: { windowStartedAt: 1_000, agentCount: 4, reserveCount: 2 } });
+    expect(ttsUsageMirror.current).toEqual({ windowStartedAt: 1_000, agentCount: 4, reserveCount: 2 });
 
     const replayed: AiChatWorkerMessage[] = [];
     supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => {
@@ -653,13 +653,14 @@ describe("AI main-thread persistence mirror", () => {
       return true;
     });
     expect(replayed.slice(0, 2).map((message: AiChatWorkerMessage): string => message.type)).toEqual(["init", "hydrateTtsUsage"]);
-    expect(replayed[1]).toEqual({ type: "hydrateTtsUsage", usage: { windowStartedAt: 1_000, count: 4 } });
+    expect(replayed[1]).toEqual({ type: "hydrateTtsUsage", usage: { windowStartedAt: 1_000, agentCount: 4, reserveCount: 2 } });
     ttsUsageMirror.current = null;
   });
 
   test("AI Worker 的缓存用量事件原样转投诊断通道", () => {
     diagnosticPosts.length = 0;
     const usage = {
+      kind: "tokens",
       timestamp: 1_700_000_000_000,
       capability: "text",
       provider: "openai",

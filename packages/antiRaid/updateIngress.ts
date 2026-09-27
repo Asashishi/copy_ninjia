@@ -112,16 +112,15 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
   if (!wasActive && isActive) {
     // 使用 Telegram 事件自带时间戳作为幂等 key 的一部分；落盘 Worker 在写前
-    // 按用户最新记录去重。同一 update 只有 joinLog 领域 durable 后才继续投递，
-    // 否则让 update 失败重投，不能静默漏掉慢速僵尸清理依据。
-    const joinLogged: boolean = await recordJoinLog({
+    // 按用户最新记录去重。入群事实进批次即受理；未确认镜像已满或 Disk I/O 拒收时
+    // 让 update 失败重投，不能静默漏掉慢速僵尸清理依据。
+    if (!recordJoinLog({
       chatId,
       userId: user.id,
       joinedAt: update.date * TELEGRAM_DATE_UNIT_MS,
-    });
-    if (!joinLogged) {
+    })) {
       throw new Error(
-        `Persistence Worker rejected join log event for chat ${chatId}, user ${user.id}.`
+        `Join log persistence refused the event for chat ${chatId}, user ${user.id}.`
       );
     }
     // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径

@@ -121,7 +121,8 @@
   - **典型文件**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **安装器**：`install.sh` 定位目标工作树并转交该版本入口；`scripts/install/` 的 repository、service、config、runtime、configure、start 六个 shell 模块由入口统一检查可读性和语法后按序加载。`installSources.ts` 为语法检查与隔离夹具提供相同模块清单。
-  - **冷迁移**：`migrateGlobalState.ts` 校验停机备份里 14.0.0 格式的 `state.json`（与逐字节相同的 `state.json.bak`），把 `copy` 写成独立产物 `memory/global/state.json`，把与内置缺省不同的素材项写成 `config/dynamic/assets.json`，并生成校验清单；`migrateRandomImageNames.ts` 把随机图库的旧文件名重建成按内容 SHA-256 命名的独立产物。两者都只读源目录、以 `ready.json` 作为唯一完成标记；`migrations/files.ts` 是两条边共用的文件清单与路径包含判定，均不进入应用启动依赖图。
+  - **冷迁移**：`migrateGlobalState.ts` 严格读取停机备份的 `memory/global/state.json`，按明确提供的 AI 次数将总计数 `count` 拆成 `agentCount` 与 `reserveCount`，保留窗口起点与复读状态，生成独立产物和校验清单；`migrateRandomImageNames.ts` 将图库旧文件名转换为内容 SHA-256 文件名。两者只读源目录，以 `ready.json` 为完成标记；`migrations/files.ts` 提供共用的清单和路径判定，均不进入应用启动依赖图。
+  - **文件摘要**：`fileSha256.ts` 使用 `Bun.file(path).stream()` 和 `Bun.CryptoHasher` 增量计算 SHA-256 十六进制摘要，供发行校验、冷迁移和迁移快照夹具共用；各调用方继续负责文件类型、符号链接、路径、权限与迁移清单校验。
   - **职责**：仓库自检、性能基准与必须停机执行的显式数据迁移。
   - **典型文件**：`checkProjectConventions.ts` 与 `conventions/`、`checkCoverageMetrics.ts` 与 `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts` 与 `perf/hotPaths/gateResult.ts`（`performance-result.json` 中门禁那一节的严格解析）、`perf/performanceResult.ts`（该文件的共享写入边界，两套基准各只换自己那一格），只在发布时跑的全量基准 `perf/fullSuite.ts` 与 `perf/fullSuite/`，以及两套基准根共用的 `fixtures/copyTree.ts`（目录树复制）与 `fixtures/pathBoundary.ts`（写入边界的真实路径分量核对）。
 
@@ -161,7 +162,7 @@
   - **内容**：验证/锁定状态机、刷屏窗口、广告检测队列、Google/OpenAI 客户端。
 - **`workers/diskIO/`**
   - **owner**：Disk I/O Worker。
-  - **内容**：各领域文件的写入缓冲、索引与脏标记。
+  - **内容**：各领域文件的写入缓冲、索引与脏标记，以及到点定时 flush 的合并集合（`timedFlush.ts`）。
 - **`perThread/`**
   - **owner**：每条线程各一份。
   - **内容**：Telegram 能力实现 holder（主线程真实适配器、业务 Worker 双工代理）、

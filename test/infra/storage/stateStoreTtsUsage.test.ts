@@ -28,11 +28,11 @@ describe("语音合成每日计数的持久化", () => {
   test("启动恢复文件里的计数；缺省时为 null", async () => {
     const statePath: string = join(dir, "state.json");
     await Bun.write(statePath, JSON.stringify({
-      copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 5_000, count: 7 },
+      copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 5_000, agentCount: 7, reserveCount: 2 },
     }));
     stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
     await loadState();
-    expect(getTtsUsage()).toEqual({ windowStartedAt: 5_000, count: 7 });
+    expect(getTtsUsage()).toEqual({ windowStartedAt: 5_000, agentCount: 7, reserveCount: 2 });
 
     stateStoreHolder.current.dispose();
     const emptyPath: string = join(dir, "state-empty.json");
@@ -45,11 +45,11 @@ describe("语音合成每日计数的持久化", () => {
   test("接管回执后写出 ttsUsage，读回一致", async () => {
     const statePath: string = join(dir, "state.json");
     stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
-    adoptTtsUsage({ windowStartedAt: 9_000, count: 3 });
-    expect(getTtsUsage()).toEqual({ windowStartedAt: 9_000, count: 3 });
+    adoptTtsUsage({ windowStartedAt: 9_000, agentCount: 3, reserveCount: 2 });
+    expect(getTtsUsage()).toEqual({ windowStartedAt: 9_000, agentCount: 3, reserveCount: 2 });
     expect(await stateStoreHolder.current.flush(5_000)).toBe("flushed");
     const written: GlobalState = JSON.parse(await Bun.file(statePath).text()) as GlobalState;
-    expect(written.ttsUsage).toEqual({ windowStartedAt: 9_000, count: 3 });
-    expect(decodeGlobalStateFile(written, statePath).ttsUsage).toEqual({ windowStartedAt: 9_000, count: 3 });
+    expect(written.ttsUsage).toEqual({ windowStartedAt: 9_000, agentCount: 3, reserveCount: 2 });
+    expect(decodeGlobalStateFile(written, statePath).ttsUsage).toEqual({ windowStartedAt: 9_000, agentCount: 3, reserveCount: 2 });
   });
 });

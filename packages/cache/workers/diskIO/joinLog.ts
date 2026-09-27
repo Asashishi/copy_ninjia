@@ -1,9 +1,9 @@
 import {
-  JOIN_LOG_MAX_BUFFERED_ENTRIES,
   JOIN_LOG_MAX_CACHED_FILES,
   JOIN_LOG_MAX_RETRY_FILES,
 } from "../../../consts/diskIO/joinLog";
 import { LruCache } from "../../../libs/lruCache";
+import type { JoinLogPersistedReply } from "../../../types/diskIO/replies";
 import type {
   BufferedJoinLogEntry,
   JoinLogFileCache,
@@ -12,7 +12,8 @@ import type {
 /**
  * 入群日志落盘的 Worker 独占状态。owner 线程是 Disk I/O Worker：
  * joinLogFileCaches 与 joinLogRetryAt 由 packages/workers/diskIO/joinLogWrites.ts
- * 填充与清理，joinLogBuffer 与 joinLogCleanupDay 由 joinLogFiles.ts 持有。
+ * 填充与清理，joinLogBuffer 与 joinLogCleanupDay 由 joinLogFiles.ts 持有，
+ * joinLogPersistedNotifier 由 workers/diskIOWorker.ts 启动时安装。
  */
 
 /**
@@ -49,55 +50,44 @@ export const joinLogCleanupDay: { current: string | null } = { current: null };
 export const joinLogDeletions: Set<number> = new Set();
 
 /**
- * 待刷条目和 timer 由同一个 Disk I/O Worker owner 持有。条目在成功刷盘时
- * 清空、失败时保留，达到硬顶后拒绝继续接纳；Worker/进程重启从空缓冲开始，
- * 对应主线程 durability barrier 会失败，Telegram update 因未确认而重投。
+ * 待刷入群事实、刷出 timer 与处置回执的发送状态，由同一个 Disk I/O Worker owner 持有。
  *
- * `rejected` 是「这一轮有入群事实压根没进缓冲」的一次性标记：缓冲满、跨日
- * 前的刷盘失败、跨日清理抛错都会置真（见 workers/diskIO/joinLogFiles.ts 的
- * handleJoinLogMessage 与 diskIOWorker.ts 的 joinLog 分支）。它必须与 entries
- * 分开记——被拒的那条事实不在 entries 里，只看 entries 会把「什么都没写成」
- * 报成落盘成功。由统一 flush 的 joinLog 出口消费一次即清零，让 Telegram 重投
- * 的下一条不被上一条的失败连坐；Worker 崩溃重建后为 false，此时未确认的
- * update 本来就会重投，不需要跨实例沿用。
+ * - entries：handleJoinLogMessage 填充；累计 FLUSH_MAX_ENTRIES 条、FLUSH_INTERVAL_MS
+ *   到期或显式 flush 时按 `chatId:day` 分组追写，写成的分组移出，写失败与事件日期领先
+ *   本 Worker 今天的条目留在缓冲里等下一次 flush。容量：恒为主线程未确认镜像的子集，
+ *   由 JOIN_LOG_MAX_BUFFERED_ENTRIES 在主线程一侧封顶，本侧不另设上限。
+ * - receivedThrough：已进缓冲或已按窗口外丢弃的最大序号。
+ * - acknowledgedThrough / acknowledgedPending：最近一次 joinLogPersisted 回执的 through 与
+ *   pending 条数；through 不变时不会有新条目进缓冲，两者都没变即说明没有新的已处置事实，
+ *   不再重发。
  *
- * 一个布尔够用（而不必按条计数），依据是主线程 recordJoinLog 的 post 与紧随
- * 其后的领域 flush 之间没有 await，两条消息必然成对相邻到达：每一条被拒的事实
- * 都由它自己那次 flush 消费掉这个标记。
- *
- * 恢复缓冲重放是这个成对前提的**唯一**例外——那条消息的 post 发生在崩溃窗口里，
- * 后面根本没有 flush 跟着。因此它不走这个标记，由 cache/workers/diskIO/recovery.ts
- * 的区间标记单独识别并升级为停机（见 diskIOWorker.ts 的 joinLog 分支）。
+ * Worker 崩溃重建后三者从空起步，主线程按未确认镜像原序重放；进程重启后镜像随之
+ * 消失，未落盘的事实丢失。
  */
 export const joinLogBuffer: {
   entries: BufferedJoinLogEntry[];
   timer: ReturnType<typeof setTimeout> | null;
-  rejected: boolean;
+  receivedThrough: number;
+  acknowledgedThrough: number;
+  acknowledgedPending: number;
 } = {
   entries: [],
   timer: null,
-  rejected: false,
+  receivedThrough: 0,
+  acknowledgedThrough: 0,
+  acknowledgedPending: 0,
 };
 
-/** 记下一条没能进入缓冲的入群事实；下一次统一 flush 必须据此回报失败。 */
-export function noteJoinLogRejected(): void {
-  joinLogBuffer.rejected = true;
-}
+/**
+ * joinLogPersisted 回执出口。Worker 入口启动时安装，isolate 销毁时释放；独立 owner
+ * 测试未安装时丢弃回执，容量一项。
+ */
+export const joinLogPersistedNotifier: { current: (reply: JoinLogPersistedReply) => void } = {
+  current: (): void => { /* 独立 owner 测试未安装 Worker 回执出口。 */ },
+};
 
-/** 取走并清零拒收标记；只有统一 flush 的 joinLog 出口可以消费它。 */
-export function consumeJoinLogRejection(): boolean {
-  const rejected: boolean = joinLogBuffer.rejected;
-  joinLogBuffer.rejected = false;
-  return rejected;
-}
-
-/** 追加一条待刷记录并返回批量长度；满载时不修改缓冲并快速失败。 */
+/** 追加一条待刷记录并返回批量长度。 */
 export function markJoinLogDirty(entry: BufferedJoinLogEntry): number {
-  if (joinLogBuffer.entries.length >= JOIN_LOG_MAX_BUFFERED_ENTRIES) {
-    throw new Error(
-      `Join log buffer reached its hard limit of ${JOIN_LOG_MAX_BUFFERED_ENTRIES} entries.`
-    );
-  }
   joinLogBuffer.entries.push(entry);
   return joinLogBuffer.entries.length;
 }
@@ -107,7 +97,9 @@ export function resetJoinLogCache(): void {
   if (joinLogBuffer.timer !== null) clearTimeout(joinLogBuffer.timer);
   joinLogBuffer.entries = [];
   joinLogBuffer.timer = null;
-  joinLogBuffer.rejected = false;
+  joinLogBuffer.receivedThrough = 0;
+  joinLogBuffer.acknowledgedThrough = 0;
+  joinLogBuffer.acknowledgedPending = 0;
   joinLogFileCaches.clear();
   joinLogRetryAt.clear();
   joinLogCleanupDay.current = null;

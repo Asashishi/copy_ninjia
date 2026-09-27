@@ -6,8 +6,9 @@
  * 保证每个构造点一次写全，同一个 kind 只有一种 hidden class，不会事后补字段改形状
  * （见 AGENTS.md「性能、内存与 Bun/JSC JIT」，口径同 types/aiChat/speaker.ts 与
  * workers/aiChat/bufferedMessage.ts）。漏写字段是编译错误，构造顺序由声明顺序固定；
- * 终态两个 kind 的构造统一收在 states/verification/shared.ts 的 checkingInviterOf /
- * expellingOf，adopt 重建与状态机新建共用同一份。值为 undefined 的字段在
+ * 除 pending 外各 kind 的构造统一收在 states/verification/shared.ts（exemptOf、
+ * kickPendingOf、kickedOf、checkingInviterOf、expellingOf），adopt 重建与状态机新建共用
+ * 同一份；pending 只在 join.ts 一处新建。值为 undefined 的字段在
  * `JSON.stringify` 时照常省略。
  *
  * 事件与 VerificationTransition 是每次转移现造现用的短命对象，不适用本条。
@@ -147,7 +148,7 @@ export interface ExpellingState {
    * 短路加一个前提——清理还欠着账时不能短路，否则一条删除失败过的验证公告会
    * 带着可点击的按钮永远挂在群里，再也没有任何一轮会重试它。
    */
-  cleanupSettled: boolean | undefined;
+  cleanupSettled: boolean;
 }
 
 export type VerificationTerminalState = CheckingInviterState | ExpellingState;
@@ -157,6 +158,15 @@ export type VerificationState =
   | KickPendingState
   | KickedState
   | VerificationTerminalState;
+
+/**
+ * 一次入群的豁免结论（states/verification/join.ts 的 resolveJoinExemption）；三种组合各有
+ * 一份共享只读常量（consts/antiRaid/verification.ts），调用方只读字段。
+ */
+export interface JoinExemption {
+  readonly exempt: boolean;
+  readonly viaChannelComment: boolean;
+}
 
 export interface JoinEvent {
   type: "join";

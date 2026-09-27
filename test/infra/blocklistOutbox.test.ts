@@ -9,10 +9,16 @@
 
 import { describe, expect, spyOn, test } from "bun:test";
 import { botPermissions } from "../helpers/botPermissions";
+import type {
+  DiskIORecoveryTransport,
+  DiskIORespawnListener,
+} from "../../packages/types/diskIO/messages";
 const {
   blockedUserIds,
   installBlocklistSweepHooks,
+  persistedListeners,
   postDiskIO,
+  respawnListeners,
   states,
 } = await import("../helpers/blocklistSweepHarness");
 
@@ -22,9 +28,13 @@ const {
   forgetUserBlocklistRemovals,
   hydrateBlocklist,
   persistPendingBlockedRemovals,
+  queuePendingBlockedRemovalsSnapshot,
   registerBlockedMemberRemover,
   trackBlockedRemoval,
 } = await import("../../packages/infra/blocklist/outbox");
+
+const { unacknowledgedRemovalSnapshotRevision } =
+  await import("../../packages/cache/main/identityStorage");
 
 const {
   quiesceBlocklistSweepScheduler,
@@ -340,5 +350,82 @@ describe("黑名单 outbox 的投递边界", () => {
     const batch = [{ chatId: -1001, userIds: [7], removalId: 21 }] as never;
 
     await expect(dispatchBlockedRemovals(batch)).resolves.toBe(1);
+  });
+});
+
+/** 模拟 Disk I/O 事务 ACK：把覆盖到 revision 的回执交给已登记的 owner。 */
+function acknowledgeRemovalSnapshot(revision: number): void {
+  for (const listener of persistedListeners) {
+    listener({
+      type: "identityStoragePersisted",
+      writes: [],
+      temporaryAdBypassWrites: [],
+      chatStateWrites: [],
+      chatQaWrites: [],
+      removalSnapshotRevision: revision,
+    });
+  }
+}
+
+/** 记录重放投递的恢复传输替身；accept 决定每次投递是否被接收。 */
+function recoveryTransport(accept: boolean): {
+  readonly transport: DiskIORecoveryTransport;
+  readonly posted: unknown[];
+} {
+  const posted: unknown[] = [];
+  return {
+    posted,
+    transport: {
+      post: (message: unknown): boolean => {
+        posted.push(message);
+        return accept;
+      },
+      ensureLuckReceiptSecret: async (): Promise<never> => {
+        throw new Error("The blocklist outbox replay must not read the luck secret.");
+      },
+    },
+  };
+}
+
+describe("Disk I/O 重建后的 outbox 快照重放", () => {
+  test("未收到事务 ACK 的快照按原 revision 整份重放；只有覆盖该 revision 的 ACK 才销账", async () => {
+    unacknowledgedRemovalSnapshotRevision.current = null;
+    pendingBlockedRemovals.set(...frozenTask(5, [7, 8]));
+    expect(queuePendingBlockedRemovalsSnapshot()).toBeTrue();
+    const revision: number | null = unacknowledgedRemovalSnapshotRevision.current;
+    expect(revision).not.toBeNull();
+
+    const replay: DiskIORespawnListener | undefined = respawnListeners.get("blocklist outbox");
+    expect(replay).toBeDefined();
+    const { transport, posted } = recoveryTransport(true);
+    expect(await replay!(transport)).toBeTrue();
+    expect(posted).toEqual([{
+      type: "blocklistRemovals",
+      revision,
+      removals: [[5, expect.objectContaining({
+        params: { chatId: -1001, probeMembership: false, removalId: 5, userIds: [7, 8] },
+      })]],
+    }]);
+
+    acknowledgeRemovalSnapshot(revision! - 1);
+    expect(unacknowledgedRemovalSnapshotRevision.current).toBe(revision);
+    acknowledgeRemovalSnapshot(revision!);
+    expect(unacknowledgedRemovalSnapshotRevision.current).toBeNull();
+
+    posted.length = 0;
+    expect(await replay!(transport)).toBeTrue();
+    expect(posted).toEqual([]);
+  });
+
+  test("重放投递被拒时返回 false，本轮恢复保持不可写且未 ACK 水位不变", async () => {
+    unacknowledgedRemovalSnapshotRevision.current = null;
+    pendingBlockedRemovals.set(...frozenTask(6));
+    expect(queuePendingBlockedRemovalsSnapshot()).toBeTrue();
+    const revision: number | null = unacknowledgedRemovalSnapshotRevision.current;
+
+    const { transport, posted } = recoveryTransport(false);
+    expect(await respawnListeners.get("blocklist outbox")!(transport)).toBeFalse();
+    expect(posted).toHaveLength(1);
+    expect(unacknowledgedRemovalSnapshotRevision.current).toBe(revision);
   });
 });

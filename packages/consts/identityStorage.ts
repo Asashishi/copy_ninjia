@@ -37,6 +37,12 @@ export const BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES: number =
 /** 第一条待写变化进入后，即使未满批也必须在该窗口内提交。 */
 export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;
 
+/**
+ * 群问答未提交变化（按 (chatId, q) 计条，含删除墓碑）累计到该条数时，立即用显式事务
+ * 提交当前全部待写变化。所属模块：workers/diskIO/storageDatabase/flush.ts。
+ */
+export const CHAT_QA_WRITE_BATCH_MAX_ENTRIES: number = 32;
+
 /** SQLite 当前唯一受支持的 schema 版本。 */
 export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 11;
 

@@ -3,7 +3,9 @@ import {
   storagePendingBudget,
   storageWriteRetry,
   storageWriteFatalReply,
+  pendingAiContextWrites,
   pendingBlocklistWrites,
+  pendingChatQaEntryCount,
   pendingChatQaWrites,
   pendingChatStateWrites,
   pendingRemovalSnapshotRevision,
@@ -16,6 +18,7 @@ import {
   storageWriteFlushTimer,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import {
+  CHAT_QA_WRITE_BATCH_MAX_ENTRIES,
   IDENTITY_WRITE_BATCH_MAX_ENTRIES,
   IDENTITY_WRITE_FLUSH_INTERVAL_MS,
 } from "../../../consts/identityStorage";
@@ -29,6 +32,7 @@ import type {
   TemporaryAdBypassPersistedRevision,
 } from "../../../types/diskIO/replies";
 import type {
+  PendingAiContextWrite,
   PendingChatQaWrite,
   PendingChatStateWrite,
   PendingIdentityPolicyWrite,
@@ -36,40 +40,60 @@ import type {
 } from "../../../types/identityStorage";
 import type { PendingTemporaryAdBypassWrite } from
   "../../../types/temporaryAdBypass";
+import { hasUrgentAiContextWrites, settleAiContextPersisted } from "./aiContext";
 import { requireStorageDatabase } from "./context";
 
-/** 任一共享 SQLite 业务表存在待提交最终值时返回 true。 */
+/** 任一共享 SQLite 业务表或 AI 上下文存在待提交最终值时返回 true。 */
 export function hasPendingStorageWrites(): boolean {
   return pendingWhitelistWrites.size > 0 ||
     pendingBlocklistWrites.size > 0 ||
     pendingTemporaryAdBypassWrites.size > 0 ||
     pendingRemovalWrites.size > 0 ||
     pendingChatStateWrites.size > 0 ||
-    pendingChatQaWrites.size > 0;
+    pendingChatQaWrites.size > 0 ||
+    pendingAiContextWrites.size > 0;
 }
 
-function armStorageFlushTimer(): void {
+/**
+ * 为已排入缓冲的变化建立固定截止 timer；没有待写变化、已有 timer 或已停止自动提交时
+ * 不重复装。AI 上下文的普通快照、事务失败后的退避与重放区间都走这条定时提交。
+ */
+export function scheduleStorageCommit(): void {
   if (!hasPendingStorageWrites() || storageWriteFlushTimer.current !== null || storageWriteRetry.signaled) return;
   storageWriteFlushTimer.current = setTimeout((): void => {
     storageWriteFlushTimer.current = null;
     if (storageFlushHold.current) {
-      armStorageFlushTimer();
+      scheduleStorageCommit();
       return;
     }
     const reply: IdentityPersistenceReply | null = storagePersistenceReplyHolder.current;
     if (reply === null) {
       console.error("[diskIOWorker] storage database flush reply channel is unavailable.");
-      armStorageFlushTimer();
+      scheduleStorageCommit();
       return;
     }
     if (!flushStorageDatabase(reply)) {
       console.error(
         "[diskIOWorker] failed to flush the storage database; retaining pending changes for retry."
       );
-      armStorageFlushTimer();
+      scheduleStorageCommit();
     }
   }, Math.max(IDENTITY_WRITE_FLUSH_INTERVAL_MS, storageWriteRetry.retryAt - performance.now()));
   storageWriteFlushTimer.current.unref();
+}
+
+/**
+ * AI 上下文删除与 purge 后首份快照的提交入口：立即提交全部表的待写值。镜像重放区间内、
+ * 事务失败后的重试退避期内或回执通道未安装时只挂 timer：区间关闭时由 setStorageFlushHold
+ * 立即提交，退避期由重试 timer 提交，不额外消耗连续失败预算。
+ */
+export function commitStorageUrgently(): void {
+  const reply: IdentityPersistenceReply | null = storagePersistenceReplyHolder.current;
+  if (storageFlushHold.current || storageWriteRetry.failures > 0 || reply === null) {
+    scheduleStorageCommit();
+    return;
+  }
+  flushStorageDatabase(reply);
 }
 
 /**
@@ -78,23 +102,24 @@ function armStorageFlushTimer(): void {
  * 镜像重放区间（storageFlushHold）内只挂 timer，不提交。
  */
 export function flushIfStorageFull(reply: IdentityPersistenceReply): void {
-  if (storageWriteRetry.failures > 0 || storageFlushHold.current) { armStorageFlushTimer(); return; }
+  if (storageWriteRetry.failures > 0 || storageFlushHold.current) { scheduleStorageCommit(); return; }
   if (
     pendingWhitelistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingBlocklistWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingTemporaryAdBypassWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
     pendingRemovalWrites.size >= IDENTITY_WRITE_BATCH_MAX_ENTRIES ||
-    pendingChatQaWrites.size >= STATE_MANAGED_CHAT_LIMIT ||
+    pendingChatQaEntryCount.current >= CHAT_QA_WRITE_BATCH_MAX_ENTRIES ||
     pendingChatStateWrites.size >= STATE_MANAGED_CHAT_LIMIT
   ) {
-    if (!flushStorageDatabase(reply)) armStorageFlushTimer();
+    if (!flushStorageDatabase(reply)) scheduleStorageCommit();
     return;
   }
-  armStorageFlushTimer();
+  scheduleStorageCommit();
 }
 
 /**
- * 当前各表待写值在一个显式事务中提交；成功后才清缓冲并回 ACK。
+ * 当前各表与 AI 上下文的待写值在一个显式事务中提交；成功后才清缓冲并回 ACK，AI 上下文
+ * 另按 AI 记忆协议发出删除与即时写入回执。
  * @returns true 表示本轮全部变化已 durable 或本来无变化。
  */
 export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
@@ -125,6 +150,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
   const removals: Map<number, PendingRemovalWrite> = pendingRemovalWrites;
   const chatStates: Map<number, PendingChatStateWrite> = pendingChatStateWrites;
   const chatQaChanges: Map<number, Map<string, PendingChatQaWrite>> = pendingChatQaWrites;
+  const aiContexts: Map<number, PendingAiContextWrite> = pendingAiContextWrites;
   const removalRevision: number | null = pendingRemovalSnapshotRevision.current;
   try {
     commitStorageDatabaseChanges(requireStorageDatabase(), {
@@ -134,6 +160,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
       removals,
       chatStates,
       chatQa: chatQaChanges,
+      aiContexts,
     });
   } catch (error: unknown) {
     console.error("[diskIOWorker] storage database transaction failed:", error);
@@ -143,7 +170,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
       storageWriteRetry.signaled = true;
       storageWriteFatalReply.current?.();
     }
-    armStorageFlushTimer();
+    scheduleStorageCommit();
     return false;
   }
   storagePendingBudget.reset();
@@ -180,11 +207,18 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
       pendingChatQaWrites.get(chatId);
     if (pending === undefined) continue;
     for (const [q, change] of questions) {
-      if (pending.get(q) === change) pending.delete(q);
+      if (pending.get(q) === change) {
+        pending.delete(q);
+        pendingChatQaEntryCount.current--;
+      }
       chatQaAcknowledgements.push({ chatId, q, revision: change.revision });
     }
     // 空 Map 不留存，否则每个曾登记过问答的群都会在缓冲里留一项空壳。
     if (pending.size === 0) pendingChatQaWrites.delete(chatId);
+  }
+  for (const [chatId, change] of aiContexts) {
+    if (pendingAiContextWrites.get(chatId) === change) pendingAiContextWrites.delete(chatId);
+    settleAiContextPersisted(chatId, change);
   }
   if (pendingRemovalSnapshotRevision.current === removalRevision) {
     pendingRemovalSnapshotRevision.current = null;
@@ -197,16 +231,16 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
     chatQaWrites: chatQaAcknowledgements,
     ...(removalRevision === null ? {} : { removalSnapshotRevision: removalRevision }),
   });
-  armStorageFlushTimer();
+  scheduleStorageCommit();
   return !rejected;
 }
 
 /** 取走拒收标记，并叠加本轮仍 dirty 的表，供统一 flush 返回精确失败领域。 */
 export function pendingStorageDatabaseDomains(): readonly (
-  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
 )[] {
   const domains: Set<
-    "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa"
+    "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
   > = new Set(rejectedStorageDomains);
   rejectedStorageDomains.clear();
   if (pendingWhitelistWrites.size > 0) domains.add("whitelist");
@@ -215,6 +249,7 @@ export function pendingStorageDatabaseDomains(): readonly (
   if (pendingRemovalWrites.size > 0) domains.add("blocklistRemovalOutbox");
   if (pendingChatStateWrites.size > 0) domains.add("chatState");
   if (pendingChatQaWrites.size > 0) domains.add("chatQa");
+  if (pendingAiContextWrites.size > 0) domains.add("aiMemory");
   return [...domains];
 }
 
@@ -226,10 +261,15 @@ export function configureStoragePersistenceReply(
 }
 
 /**
- * 开合镜像重放区间。关闭时按批次阈值补做一次判定：已达阈值立即以一个事务提交
- * 区间内的全部变化，否则保留定时提交。
+ * 开合镜像重放区间。关闭时有待回执的 AI 上下文删除或即时快照、且不在重试退避期，就立即以
+ * 一个事务提交区间内的全部变化；否则按批次阈值补做一次判定，未达阈值保留定时提交。
  */
 export function setStorageFlushHold(active: boolean, reply: IdentityPersistenceReply): void {
   storageFlushHold.current = active;
-  if (!active) flushIfStorageFull(reply);
+  if (active) return;
+  if (storageWriteRetry.failures === 0 && hasUrgentAiContextWrites()) {
+    flushStorageDatabase(reply);
+    return;
+  }
+  flushIfStorageFull(reply);
 }

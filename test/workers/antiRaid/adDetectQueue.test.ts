@@ -343,7 +343,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     }));
     enqueueAdCandidate(candidate({
       text: "日入过千 加V direct",
-      sampleContext: { quote: "转发来的广告" },
+      sampleQuote: "转发来的广告",
     }), 1_000);
 
     await runAdDetectBatch(1_000);
@@ -367,7 +367,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     });
     enqueueAdCandidate(candidate({
       text: "加V direct",
-      sampleContext: { quote: "转发来的广告" },
+      sampleQuote: "转发来的广告",
     }), 1_000);
 
     await runAdDetectBatch(1_000);
@@ -498,7 +498,8 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     Object.defineProperties(unreadAtCapacity, {
       text: { get: (): string => { payloadReads++; throw new Error("text must stay unread"); } },
       linkUrls: { get: (): string[] => { payloadReads++; throw new Error("links must stay unread"); } },
-      sampleContext: { get: (): never => { payloadReads++; throw new Error("context must stay unread"); } },
+      sampleQuote: { get: (): never => { payloadReads++; throw new Error("quote must stay unread"); } },
+      sampleReplyTo: { get: (): never => { payloadReads++; throw new Error("reply context must stay unread"); } },
     });
     expect((): void => enqueueAdCandidate(unreadAtCapacity, 1_000)).not.toThrow();
     expect(payloadReads).toBe(0);

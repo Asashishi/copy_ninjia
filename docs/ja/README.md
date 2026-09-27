@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5228_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.38%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5317_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.42%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5228 件のテストが全て成功 / テストファイル 459 件 / expect() 呼び出し 254,242 回 / 関数カバレッジ 98.06% / 行カバレッジ 98.38%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5317 件のテストが全て成功 / テストファイル 465 件 / expect() 呼び出し 260,880 回 / 関数カバレッジ 98.07% / 行カバレッジ 98.42%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -210,10 +210,10 @@
 | 管理者・定時ボイス | `/send` と cron は TTS を共用し、上限は UTF-16 コード単位で 256。cron は各ラウンドで 1 回合成し、Telegram の `file_id` を再利用 |
 | 画像の記憶 | 生成画像は内容を記録。`/wed`・`/h_image`・定時画像はまずプレースホルダーを記録し、返信された時に画像を認識 |
 
-音声には `agent.tts` の明示設定が必要です（現在は Google が提供。`base_url` と `headers` でサードパーティ gateway 経由でも呼び出せます）。3 つの入口は 1 日の回数上限 `daily_limit`（既定 100）を共有し、そのうち `daily_reserve_quota`（既定 25）回は `/send` と cron 専用で、使い切ると request を発行しません。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
+音声には `agent.tts` の明示設定が必要です（現在は Google が提供。`base_url` と `headers` でサードパーティ gateway 経由でも呼び出せます）。`daily_limit`（既定 100）は AI の独立枠（総額から予約枠を引いた数）と `/send`・cron 共用の `daily_reserve_quota`（既定 25）に分かれます。`agentCount` と `reserveCount` で別々に数え、互いの枠を消費せず、24 時間窓の期限後に一緒にリセットします。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
 
 > [!IMPORTANT]
-> [14.0.0 → 15.0.0 更新手順](07-operations.md#upgrade-15)
+> [音声回数のコールド移行と段階的アップグレード](07-operations.md#upgrade-15)
 
 各機能の挙動・設定・境界は **[📚 開発者ドキュメント](content-table.md)** を参照してください。
 
@@ -260,7 +260,7 @@ done                                       # bot.json の bot_token と super_ad
 手動 install の場合、初回起動の前に identity database の初期化と、BotFather 側での Privacy Mode
 無効化・Inline Mode 有効化も必要です（一覧は [BotFather とグループ権限の設定](#botfather-setup)）。設定項目の意味、必須の組み合わせ、厳格な検証ルールは
 [`config_example/README/ja.md`](../../config_example/README/ja.md)、手順の全体（ランタイム data root、
-素材の直リンク、移行コマンド）は [01 環境構築と初回起動](01-getting-started.md) にあります。
+素材設定、移行コマンド）は [01 環境構築と初回起動](01-getting-started.md) にあります。
 
 身元 database の初期化と上記設定を完了してから実行します：
 

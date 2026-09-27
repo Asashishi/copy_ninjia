@@ -16,8 +16,19 @@ import {
   settleGagBackgroundTasks,
 } from "../helpers/gagHarness";
 import type { EphemeralMessageParams } from "../helpers/gagHarness";
+import {
+  GAG_SPEAK_NOTICE_IDLE_INTERVAL_MS as IDLE_MS,
+  GAG_SPEAK_NOTICE_MESSAGE_INTERVAL as MESSAGE_INTERVAL,
+  GAG_SPEAK_NOTICE_REFRESH_INTERVAL_MS as REFRESH_MS,
+} from "../../packages/consts/gag";
 
 const gag = await import("../../packages/commands/gag");
+
+/** 用例时间线的前提：沉默阈值落在第一与第二次定时刷新之间。 */
+test("定时刷新间隔短于沉默阈值，沉默阈值短于两个刷新间隔", () => {
+  expect(REFRESH_MS).toBeLessThan(IDLE_MS);
+  expect(IDLE_MS).toBeLessThan(2 * REFRESH_MS);
+});
 
 installGagTestHooks();
 beforeEach((): void => {
@@ -58,71 +69,70 @@ async function sendVisibleMessages(count: number): Promise<void> {
 }
 
 describe("gag 沉默后的发言补发", () => {
-  test("30 秒照常补发，沉默满 45 秒发言立即补发，下一轮改在 75 秒", async () => {
+  test("定时照常补发，沉默满阈值后发言立即补发，下一轮从这次补发重新计时", async () => {
     await gag.handleGagCommand(commandContext());
     const session: GagSession = sessionFor(-1001)!;
     const startedAt: number = Date.now();
     const expiresAt: number = session.expiresAt;
-    await advanceTime(30_000);
+    await advanceTime(REFRESH_MS);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(2);
     expect(session.lastTargetMessageAt).toBe(startedAt);
-    await advanceTime(15_000);
+    await advanceTime(IDLE_MS - REFRESH_MS);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    expect(session.lastTargetMessageAt).toBe(startedAt + 45_000);
+    expect(session.lastTargetMessageAt).toBe(startedAt + IDLE_MS);
     expect(session.speakNoticeRefreshTimer?.hasRef()).toBeFalse();
-    await advanceTime(15_000);
-    expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    await advanceTime(14_999);
+    await advanceTime(REFRESH_MS - 1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
     await advanceTime(1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(4);
     expect(session.expiresAt).toBe(expiresAt);
-    expect(session.lastTargetMessageAt).toBe(startedAt + 45_000);
+    expect(session.lastTargetMessageAt).toBe(startedAt + IDLE_MS);
   });
 
-  test("44,999 毫秒不足沉默阈值，每次目标发言更新起点且不推迟定时补发", async () => {
+  test("差一毫秒不足沉默阈值，每次目标发言更新起点且不推迟定时补发", async () => {
     await gag.handleGagCommand(commandContext());
-    await advanceTime(30_000);
-    await advanceTime(14_999);
+    await advanceTime(REFRESH_MS);
+    await advanceTime(IDLE_MS - REFRESH_MS - 1);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(2);
     expect(sessionFor(-1001)!.lastTargetMessageAt).toBe(Date.now());
     await advanceTime(1);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(2);
-    await advanceTime(15_000);
+    await advanceTime(2 * REFRESH_MS - IDLE_MS);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    await advanceTime(20_000);
+    await advanceTime(1);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    await advanceTime(10_000);
+    await advanceTime(REFRESH_MS - 1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(4);
   });
 
-  test("7 条消息独立刷新且不更新目标沉默时间", async () => {
+  test("消息条数阈值独立刷新且不更新目标沉默时间", async () => {
     await gag.handleGagCommand(commandContext());
     const session: GagSession = sessionFor(-1001)!;
     const startedAt: number = Date.now();
-    await advanceTime(10_000);
-    await sendVisibleMessages(6);
+    const countRefreshAt: number = IDLE_MS - REFRESH_MS - 1;
+    await advanceTime(countRefreshAt);
+    await sendVisibleMessages(MESSAGE_INTERVAL - 1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(1);
     await sendVisibleMessages(1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(2);
     expect(session.lastTargetMessageAt).toBe(startedAt);
-    await advanceTime(30_000);
+    await advanceTime(REFRESH_MS);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    await advanceTime(5_000);
+    await advanceTime(IDLE_MS - countRefreshAt - REFRESH_MS);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(4);
     expect(session.messagesSinceSpeakNotice).toBe(0);
   });
 
-  test("同一条目标媒体命中沉默阈值和第 7 条时只刷新一次", async () => {
+  test("同一条目标媒体同时命中沉默阈值和消息条数阈值时只刷新一次", async () => {
     await gag.handleGagCommand(commandContext());
-    await advanceTime(30_000);
-    await advanceTime(15_000);
-    await sendVisibleMessages(6);
+    await advanceTime(REFRESH_MS);
+    await advanceTime(IDLE_MS - REFRESH_MS);
+    await sendVisibleMessages(MESSAGE_INTERVAL - 1);
     await gag.handleGagMessageIngress(normalMessage({
       text: undefined,
       photo: [{ file_id: "photo", file_unique_id: "unique", width: 1, height: 1 }],
@@ -140,9 +150,9 @@ describe("gag 沉默后的发言补发", () => {
     const startedAt: number = Date.now();
     addSession(otherUser);
     addSession(otherChat);
-    await advanceTime(30_000);
+    await advanceTime(REFRESH_MS);
     await sendVisibleMessages(1);
-    await advanceTime(15_000);
+    await advanceTime(IDLE_MS - REFRESH_MS);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
     expect(sendEphemeralMessage).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -155,7 +165,7 @@ describe("gag 沉默后的发言补发", () => {
     expect(otherChat.speakNoticeMessageId).toBe(55);
   });
 
-  test("定时请求阻塞期间回归发言与千条消息共享一个任务，完成后重设 30 秒", async () => {
+  test("定时请求阻塞期间回归发言与千条消息共享一个任务，完成后重设一个刷新间隔", async () => {
     await gag.handleGagCommand(commandContext());
     const session: GagSession = sessionFor(-1001)!;
     let finishSend: (() => void) | undefined;
@@ -167,12 +177,12 @@ describe("gag 沉默后的发言补发", () => {
         resolve(500);
       };
     }));
-    jest.advanceTimersByTime(30_000);
-    jest.advanceTimersByTime(15_000);
+    jest.advanceTimersByTime(REFRESH_MS);
+    jest.advanceTimersByTime(IDLE_MS - REFRESH_MS);
     for (let index: number = 0; index < 1_000; index++) {
       await gag.handleGagMessageIngress(normalMessage({ message_id: 2_000 + index }), 999);
     }
-    for (let index: number = 0; index < 7; index++) {
+    for (let index: number = 0; index < MESSAGE_INTERVAL; index++) {
       await gag.handleGagMessageIngress(normalMessage({
         message_id: 3_000 + index,
         from: { id: 8, is_bot: false, first_name: "Bob" },
@@ -186,16 +196,16 @@ describe("gag 沉默后的发言补发", () => {
     expect(sendCount).toBe(2);
     expect(session.speakNoticeMessageId).toBe(500);
     expect(session.lastTargetMessageAt).toBe(Date.now());
-    await advanceTime(15_000);
+    await advanceTime(REFRESH_MS - 1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(2);
-    await advanceTime(15_000);
+    await advanceTime(1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
   });
 
-  test("回归发言补发失败不丢旧入口，不连续重发，30 秒后定时重试", async () => {
+  test("回归发言补发失败不丢旧入口，不连续重发，一个刷新间隔后定时重试", async () => {
     await gag.handleGagCommand(commandContext());
-    await advanceTime(30_000);
-    await advanceTime(15_000);
+    await advanceTime(REFRESH_MS);
+    await advanceTime(IDLE_MS - REFRESH_MS);
     sendEphemeralMessage.mockResolvedValueOnce(undefined);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
@@ -203,9 +213,9 @@ describe("gag 沉默后的发言补发", () => {
     expect(deleteEphemeralMessageWithOutcome).toHaveBeenCalledTimes(1);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    await advanceTime(15_000);
+    await advanceTime(REFRESH_MS - 1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
-    await advanceTime(15_000);
+    await advanceTime(1);
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(4);
     expect(sessionFor(-1001)!.speakNoticeMessageId).toBe(102);
   });
@@ -213,8 +223,8 @@ describe("gag 沉默后的发言补发", () => {
   test("到期接管回归发言补发中的迟到入口，不复活会话或 timer", async () => {
     await gag.handleGagCommand(commandContext());
     const session: GagSession = sessionFor(-1001)!;
-    await advanceTime(30_000);
-    await advanceTime(15_000);
+    await advanceTime(REFRESH_MS);
+    await advanceTime(IDLE_MS - REFRESH_MS);
     let finishSend: (() => void) | undefined;
     sendEphemeralMessage.mockImplementationOnce((
       params: EphemeralMessageParams
@@ -234,25 +244,25 @@ describe("gag 沉默后的发言补发", () => {
     expect(deleteEphemeralMessageWithOutcome.mock.calls.map((call): number =>
       call[0].ephemeralMessageId
     )).toEqual([100, 101, 500]);
-    await advanceTime(60_000);
+    await advanceTime(REFRESH_MS + IDLE_MS);
     await speak();
     expect(sendEphemeralMessage).toHaveBeenCalledTimes(3);
   });
 
-  test("频道公开入口不走沉默补发，仍保留每 7 条刷新", async () => {
+  test("频道公开入口不走沉默补发，仍保留按消息条数刷新", async () => {
     resolveCommandTarget.mockResolvedValueOnce({
       id: -1002233445566,
       first_name: "频道",
       isChannel: true,
     });
     await gag.handleGagCommand(commandContext({ match: "-1002233445566" }));
-    await advanceTime(45_000);
+    await advanceTime(IDLE_MS);
     await gag.handleGagMessageIngress(normalMessage({
       sender_chat: { id: -1002233445566, type: "channel", title: "频道" },
     }), 999);
     await settleGagBackgroundTasks();
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    await sendVisibleMessages(7);
+    await sendVisibleMessages(MESSAGE_INTERVAL);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendEphemeralMessage).not.toHaveBeenCalled();
   });

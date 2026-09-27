@@ -21,17 +21,37 @@ export const AI_CACHE_HIT_RATE_DIGITS: number = 4;
  */
 export const AI_CACHE_CAPABILITIES: ReadonlySet<string> = new Set(AGENT_CAPABILITY_NAMES);
 
-/** 逐条用量记录的全部字段，缺一或多一都拒绝接管。所属模块：workers/diskIO/aiCacheFile.ts。 */
+/**
+ * 按 token 计量的逐条记录的全部字段，缺一或多一都拒绝接管；与 AI_CACHE_COST_ROW_FIELDS
+ * 二选一。所属模块：workers/diskIO/aiCacheFile.ts。
+ */
 export const AI_CACHE_ROW_FIELDS: readonly string[] = [
   "capability", "provider", "model", "inputTokens", "cachedInputTokens", "outputTokens",
 ];
 
-/** 合计（汇总本身与 byModel 每一组）的全部字段。所属模块：workers/diskIO/aiCacheFile.ts。 */
+/**
+ * 按费用计量的逐条记录的全部字段（供应商只给出 cost_in_usd_ticks 时）；与
+ * AI_CACHE_ROW_FIELDS 二选一。所属模块：workers/diskIO/aiCacheFile.ts。
+ */
+export const AI_CACHE_COST_ROW_FIELDS: readonly string[] = [
+  "capability", "provider", "model", "costInUsdTicks",
+];
+
+/**
+ * 合计（汇总本身与 byModel 每一组）的必填字段；另可带 AI_CACHE_TOTALS_OPTIONAL_FIELDS。
+ * 所属模块：workers/diskIO/aiCacheFile.ts。
+ */
 export const AI_CACHE_TOTALS_FIELDS: readonly string[] = [
   "requests", "inputTokens", "reportedInputTokens", "cachedInputTokens", "outputTokens", "cacheHitRate",
 ];
 
-/** 汇总条目的全部字段：日期、合计字段与 byModel。所属模块：workers/diskIO/aiCacheFile.ts。 */
+/**
+ * 合计的可选字段：费用请求的费用合计，只在这组有费用请求时写出，缺省即从没有过费用请求。
+ * 所属模块：workers/diskIO/aiCacheFile.ts。
+ */
+export const AI_CACHE_TOTALS_OPTIONAL_FIELDS: readonly string[] = ["costInUsdTicks"];
+
+/** 汇总条目的必填字段：日期、合计必填字段与 byModel。所属模块：workers/diskIO/aiCacheFile.ts。 */
 export const AI_CACHE_SUMMARY_FIELDS: readonly string[] = ["day", ...AI_CACHE_TOTALS_FIELDS, "byModel"];
 
 /**

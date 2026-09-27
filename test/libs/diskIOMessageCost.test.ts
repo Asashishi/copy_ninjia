@@ -160,6 +160,7 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
   joinLog: {
     message: {
       type: "joinLog",
+      sequence: 1,
       chatId: -1001,
       userId: 42,
       joinedAt: 1_700_000_000_000,

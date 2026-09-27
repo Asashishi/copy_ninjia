@@ -32,6 +32,11 @@ mock.module("../../packages/infra/diskIO", () => ({
     if (diskResult instanceof Error) throw diskResult;
     return diskResult;
   },
+  // durable 投递只经 verification 与 chatState 两个领域屏障；两者共用同一份结局。
+  flushDiskIODomain: async (): Promise<FlushResult> => {
+    if (diskResult instanceof Error) throw diskResult;
+    return diskResult;
+  },
 }));
 const realStateStore = await import("../../packages/infra/storage/stateStore");
 mock.module("../../packages/infra/storage/stateStore", () => ({
@@ -103,7 +108,7 @@ test("落盘边界拒绝时聚合原因，同样不是投递失败", async () =>
   expect(error).toBeInstanceOf(AggregateError);
   expect(error).not.toBeInstanceOf(WorkerUndeliveredError);
   expect((error as AggregateError).errors.map((reason: unknown): string => String(reason)))
-    .toEqual(["Error: disk boom"]);
+    .toEqual(["Error: disk boom", "Error: disk boom"]);
 });
 
 test("排空在上限轮数内不收敛时按 failed 收场并记录", async () => {

@@ -17,7 +17,9 @@ import type {
   VerifyTimeoutEvent,
 } from "../../types/states/verification";
 import {
+  channelCommentExemption,
   checkingInviterOf,
+  exemptOf,
   expellingOf,
   pendingUpdated,
   remindersOf,
@@ -31,21 +33,7 @@ export function handleTrackedMessage(
 ): VerificationTransition {
   if (state?.kind !== "pending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
 
-  if (event.inCommentThread) {
-    return {
-      next: { kind: "exempt", label: state.label, isBot: state.isBot },
-      effects: [
-        remindersOf(state),
-        { kind: "retractJoinCount", joinedAt: state.joinedAt },
-        {
-          kind: "sendWelcome",
-          variant: "channelComment",
-          targetLabel: state.label,
-          anchorMessageId: event.messageId,
-        },
-      ],
-    };
-  }
+  if (event.inCommentThread) return channelCommentExemption(state, event.messageId);
 
   // 频道评论区活动已提前豁免；其余消息按成员自己的滑动窗口统计。
   //
@@ -84,14 +72,7 @@ export function handleConfirmedThreadComment(
   state: VerificationState | undefined,
   event: ConfirmedThreadCommentEvent
 ): VerificationTransition {
-  if (state?.kind === "pending") {
-    return handleTrackedMessage(state, {
-      type: "trackedMessage",
-      messageId: event.messageId,
-      inCommentThread: true,
-      now: event.now,
-    });
-  }
+  if (state?.kind === "pending") return channelCommentExemption(state, event.messageId);
   if (
     state?.kind !== "expelling" ||
     state.reason !== "flood" ||
@@ -100,20 +81,7 @@ export function handleConfirmedThreadComment(
   ) {
     return { next: state, effects: NO_VERIFICATION_EFFECTS };
   }
-  const snapshot: ExpelSnapshot = state.snapshot;
-  return {
-    next: { kind: "exempt", label: snapshot.label, isBot: snapshot.isBot },
-    effects: [
-      remindersOf(snapshot),
-      { kind: "retractJoinCount", joinedAt: snapshot.joinedAt },
-      {
-        kind: "sendWelcome",
-        variant: "channelComment",
-        targetLabel: snapshot.label,
-        anchorMessageId: event.messageId,
-      },
-    ],
-  };
+  return channelCommentExemption(state.snapshot, event.messageId);
 }
 
 /**
@@ -243,7 +211,7 @@ export function handleAdminCheckResolved(
 ): VerificationTransition {
   if (state?.kind !== "pending") return { next: state, effects: NO_VERIFICATION_EFFECTS };
   return {
-    next: { kind: "exempt", label: state.label, isBot: state.isBot },
+    next: exemptOf(state.label, state.isBot),
     effects: [
       remindersOf(state),
       { kind: "retractJoinCount", joinedAt: state.joinedAt },

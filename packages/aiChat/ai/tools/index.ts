@@ -1,5 +1,5 @@
 import type { AiToolDefinition } from "../../../types/aiChat/provider";
-import { currentTokyoWeather } from "../weather";
+import { weatherCache } from "../../../cache/workers/aiChat/weather";
 import { GET_TOKYO_WEATHER_TOOL, unknownToolError } from "../../../consts/tools";
 import { toolError } from "../utils/toolResult";
 import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
@@ -29,7 +29,7 @@ export function callTool(name: string): string {
     case GET_TOKYO_WEATHER_TOOL: {
       // 只读现有缓存，不在这里发请求——真正的刷新由 aiChat/ai/weather.ts 的后台
       // 定时循环负责，见该文件模块头注。
-      const result: TokyoWeatherResult | null = currentTokyoWeather();
+      const result: TokyoWeatherResult | null = weatherCache.current;
       return JSON.stringify(result ?? { error: "Weather data not available yet" });
     }
     default:

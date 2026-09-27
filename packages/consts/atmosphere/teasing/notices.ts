@@ -132,7 +132,7 @@ export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   proxyTtsUnconfigured: "哼，config/dynamic/agent.json 里根本没配 agent.tts，本天才发不出声音啦，杂鱼♡",
   proxyTtsBusy: "本天才手上的活太多啦，这条语音等会儿再发，笨蛋♡",
   proxyTtsFailed: (targetChatId: number): string => `啧，往 ${targetChatId} 发语音失败了，转发还开着，再试一次吧笨蛋♡`,
-  proxyTtsDailyLimit: (dailyLimit: number): string => `本天才今天的嗓子用完啦（每天只唱 ${dailyLimit} 次），等额度恢复再来吧笨蛋♡ 转发还开着哦。`,
+  proxyTtsDailyLimit: (dailyLimit: number): string => `给你代发语音的预留额度用完啦（每天 ${dailyLimit} 次，和定时语音共用），等恢复再来吧笨蛋♡ 转发还开着哦。`,
   translateConfigInvalid: (file: string): string => `本天才的 ${file} 不见了或写坏了，翻不了呀。补好再重启，笨蛋♡`,
   translateNotRunning: (targetLabel: string): string => `${targetLabel} 本来就没在用翻译呀，笨蛋♡`,
   translateStopped: (targetLabel: string): string => `本天才已经停止给 ${targetLabel} 翻译啦，其他杂鱼照常哦♡`,

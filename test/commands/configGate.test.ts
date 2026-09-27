@@ -37,7 +37,11 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
-mock.module("../../packages/aiChat", () => ({ invalidateAiChat: mock((): void => {}), queryAiMood, switchAiMood }));
+mock.module("../../packages/aiChat", () => ({
+  invalidateAiChat: mock((): void => {}),
+  requestAiMood: (chatId: number, requestType: "queryMood" | "switchMood"): Promise<string> =>
+    requestType === "queryMood" ? queryAiMood(chatId) : switchAiMood(chatId),
+}));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));
 mock.module("../../packages/infra/storage/stateStore", () => ({

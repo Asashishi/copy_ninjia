@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { GrammyError } from "grammy";
-import type { TelegramApi } from "../../packages/types/telegramWorker";
+import type { InstalledTelegramApi, TelegramApi } from "../../packages/types/telegramWorker";
 import {
   resetSelfSentTracker,
 } from "../../packages/cache/perThread/selfSentTracker";
@@ -20,6 +20,8 @@ import {
   sendPhotoWithResult,
   unmuteChatMemberWithOutcome,
 } from "../../packages/infra/telegram/actions";
+import { readChatMemberUser } from "../../packages/infra/telegram/actions/membership";
+import { telegramApiState } from "../../packages/cache/perThread/telegramApi";
 import { isSelfSent } from "../../packages/infra/selfSentTracker";
 import { TelegramRetryPreconditionChangedError } from "../../packages/infra/telegram/errors";
 
@@ -403,6 +405,23 @@ describe("Telegram 常规动作封装", () => {
     expect(await probeChatMembership(-1001, 6, failedApi)).toBeUndefined();
     expect(await probeChatAdmin({ chatId: -1001, userId: 6, api: failedApi })).toBeUndefined();
     expect(await isChatMember(-1001, 6, failedApi)).toBe(false);
+  });
+
+  test("读取成员身份不解释成员状态：离群同样返回身份，查询失败回落 undefined", async () => {
+    const user = { id: 9, is_bot: false, first_name: "Gone" };
+    const getChatMember = mock(async (..._args: unknown[]): Promise<unknown> => ({ status: "left", user }));
+    telegramApiState.current = { getChatMember } as unknown as InstalledTelegramApi;
+    try {
+      expect(await readChatMemberUser({ chatId: -1001, userId: 9 })).toEqual(user);
+      expect(getChatMember).toHaveBeenCalledWith(-1001, 9);
+
+      getChatMember.mockImplementationOnce(async (): Promise<never> => {
+        throw new Error("member lookup failed");
+      });
+      expect(await readChatMemberUser({ chatId: -1001, userId: 9 })).toBeUndefined();
+    } finally {
+      telegramApiState.current = null;
+    }
   });
 
   test("禁言收走全部发言权限，截止时刻向上取整到秒", async () => {

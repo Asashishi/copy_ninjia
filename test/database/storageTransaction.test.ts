@@ -18,6 +18,7 @@ import {
   encodePendingBlockedRemovalData,
   encodeWhitelistEntryData,
 } from "../../packages/database/codec/identity";
+import { readStoredAiContexts } from "../../packages/database/interact/aiContext";
 import { readStoredChatQa } from "../../packages/database/interact/chatQa";
 import { readStoredChatStateIds } from "../../packages/database/interact/chatState";
 import {
@@ -47,11 +48,13 @@ import { chatStateOf } from "../helpers/chatState";
 
 const CHAT_ID: number = -1_001;
 const OTHER_CHAT_ID: number = -1_002;
-/** 每次提交都从「六张表都没有变更」出发，只铺开被点名的那一张。 */
+/** 每次提交都从「六张表与 AI 上下文都没有变更」出发，只铺开被点名的那一项。 */
 const NO_CHANGES: CommitStorageDatabaseChangesOptions = {
   whitelist: new Map(), blocklist: new Map(), temporaryAdBypass: new Map(),
-  removals: new Map(), chatStates: new Map(), chatQa: new Map(),
+  removals: new Map(), chatStates: new Map(), chatQa: new Map(), aiContexts: new Map(),
 };
+const AI_CONTEXT: string = JSON.stringify({ version: 1, buffer: [], summaries: ["对话摘要"], pendingSummary: null, savedAt: 1 });
+const NEW_CHAT_ID: number = -1_003;
 
 let temporaryRoot: string | null = null;
 let database: StorageDatabase;
@@ -117,6 +120,26 @@ afterEach((): void => {
   closeStorageDatabase(database);
   if (temporaryRoot !== null) rmSync(temporaryRoot, { recursive: true, force: true });
   temporaryRoot = null;
+});
+
+test("AI 上下文排在群状态之后：同批新建的群写得进，同批删除的群不被复活，null 清空该列", () => {
+  commitStorageDatabaseChanges(database, {
+    ...NO_CHANGES,
+    chatStates: new Map([
+      [NEW_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
+      [OTHER_CHAT_ID, { data: null, aiPersona: null }],
+    ]),
+    aiContexts: new Map([
+      [NEW_CHAT_ID, { snapshot: AI_CONTEXT }],
+      [OTHER_CHAT_ID, { snapshot: AI_CONTEXT }],
+      [CHAT_ID, { snapshot: AI_CONTEXT }],
+    ]),
+  });
+  expect(new Set(readStoredAiContexts(database, "test").keys())).toEqual(new Set([CHAT_ID, NEW_CHAT_ID]));
+  expect(readStoredChatStateIds(database).map((row: { chatId: number }): number => row.chatId)).not.toContain(OTHER_CHAT_ID);
+
+  commitStorageDatabaseChanges(database, { ...NO_CHANGES, aiContexts: new Map([[CHAT_ID, { snapshot: null }]]) });
+  expect([...readStoredAiContexts(database, "test").keys()]).toEqual([NEW_CHAT_ID]);
 });
 
 test("单题删除只命中 (群, 问题) 这一行", () => {

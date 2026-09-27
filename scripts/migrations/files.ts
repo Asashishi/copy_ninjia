@@ -1,3 +1,4 @@
+import { fileSha256 } from "../fileSha256";
 import { lstat } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { Stats } from "node:fs";
@@ -11,13 +12,6 @@ export interface MigrationFileRecord {
   readonly mode: number;
   readonly uid: number;
   readonly gid: number;
-}
-
-/** 清单哈希按 Bun 文件流增量计算，不持有整份文件。 */
-async function fileSha256(path: string): Promise<string> {
-  const hasher: Bun.CryptoHasher = new Bun.CryptoHasher("sha256");
-  for await (const chunk of Bun.file(path).stream()) hasher.update(chunk);
-  return hasher.digest("hex");
 }
 
 /** 读取 root 下一个普通文件的清单项；符号链接与非普通文件一律拒绝。 */

@@ -11,7 +11,12 @@ import {
 import { applyHotDeploymentConfigs, readHotDeploymentConfigs } from "../../packages/config/reload";
 import { cronConfigCache } from "../../packages/cache/main/cron";
 import { assetConfigCache } from "../../packages/cache/main/assets";
-import { DEFAULT_ASSET_CONFIG } from "../../packages/consts/ui/assets";
+import {
+  ASSET_ONLY_PATH_GROUP,
+  ASSET_ONLY_URL_GROUP,
+  DEFAULT_ASSET_CONFIG,
+  RANDOM_H_IMAGE_DIR_FIELD,
+} from "../../packages/consts/ui/assets";
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
@@ -408,7 +413,7 @@ describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
 
 describe("config/dynamic/assets.json 热重载", () => {
   test("文件出现、修改与删除：整体替换快照，删除时换回内置缺省", async () => {
-    await writeJson(ASSETS_CONFIG_PATH, { gag_thumbnail_url: "https://cdn.example/gag.png" });
+    await writeJson(ASSETS_CONFIG_PATH, { [ASSET_ONLY_URL_GROUP]: { gag_thumbnail_url: "https://cdn.example/gag.png" } });
     let changes: HotDeploymentConfigChanges = await reload();
     expect(changes.rejections).toEqual([]);
     expect(changes.assets).toBe(true);
@@ -431,11 +436,11 @@ describe("config/dynamic/assets.json 热重载", () => {
   });
 
   test("非法内容整份拒绝，快照保持上一份，诊断不回显原值", async () => {
-    await writeJson(ASSETS_CONFIG_PATH, { fortune_thumbnail_url: "cdn.example/secret-path.png" });
+    await writeJson(ASSETS_CONFIG_PATH, { [ASSET_ONLY_URL_GROUP]: { fortune_thumbnail_url: "cdn.example/secret-path.png" } });
     const changes: HotDeploymentConfigChanges = await reload();
     expect(changes.assets).toBe(false);
     expect(changes.rejections).toEqual([
-      `${ASSETS_CONFIG_PATH}: $.fortune_thumbnail_url must be an absolute https URL.`,
+      `${ASSETS_CONFIG_PATH}: $.${ASSET_ONLY_URL_GROUP}.fortune_thumbnail_url must be an absolute https URL.`,
     ]);
     expect(assetConfigCache.current).toBe(DEFAULT_ASSET_CONFIG);
   });
@@ -443,7 +448,7 @@ describe("config/dynamic/assets.json 热重载", () => {
   test("切换随机图片目录时先建好并检查新目录再接管", async () => {
     const created: string = join(RUNTIME_DATA_ROOT, "reload-gallery");
     rmSync(created, { recursive: true, force: true });
-    await writeJson(ASSETS_CONFIG_PATH, { random_h_image_dir: "./reload-gallery" });
+    await writeJson(ASSETS_CONFIG_PATH, { [ASSET_ONLY_PATH_GROUP]: { random_h_image_dir: "./reload-gallery" } });
     try {
       const changes: HotDeploymentConfigChanges = await reload();
       expect(changes.rejections).toEqual([]);
@@ -459,14 +464,14 @@ describe("config/dynamic/assets.json 热重载", () => {
     mkdirSync(polluted, { recursive: true });
     await Bun.write(join(polluted, "not-a-digest.png"), "x");
     await writeJson(ASSETS_CONFIG_PATH, {
-      random_h_image_dir: "./reload-polluted-gallery",
-      gag_thumbnail_url: "https://cdn.example/gag.png",
+      [ASSET_ONLY_PATH_GROUP]: { random_h_image_dir: "./reload-polluted-gallery" },
+      [ASSET_ONLY_URL_GROUP]: { gag_thumbnail_url: "https://cdn.example/gag.png" },
     });
     try {
       const changes: HotDeploymentConfigChanges = await reload();
       expect(changes.assets).toBe(false);
       expect(changes.rejections).toHaveLength(1);
-      expect(changes.rejections[0]).toContain("$.random_h_image_dir must be a regular image named");
+      expect(changes.rejections[0]).toContain(`${RANDOM_H_IMAGE_DIR_FIELD} must be a regular image named`);
       expect(assetConfigCache.current).toBe(DEFAULT_ASSET_CONFIG);
     } finally {
       rmSync(polluted, { recursive: true, force: true });

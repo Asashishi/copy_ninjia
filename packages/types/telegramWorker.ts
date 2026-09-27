@@ -10,11 +10,8 @@ export type TelegramWorkerJsonCall =
   | { readonly method: "answerCallbackQuery"; readonly payload: TelegramRawPayload<"answerCallbackQuery"> }
   | { readonly method: "banChatMember"; readonly payload: TelegramRawPayload<"banChatMember"> }
   | { readonly method: "banChatSenderChat"; readonly payload: TelegramRawPayload<"banChatSenderChat"> }
-  | { readonly method: "copyMessage"; readonly payload: TelegramRawPayload<"copyMessage"> }
   | { readonly method: "deleteMessage"; readonly payload: TelegramRawPayload<"deleteMessage"> }
   | { readonly method: "deleteMessages"; readonly payload: TelegramRawPayload<"deleteMessages"> }
-  | { readonly method: "deleteEphemeralMessage"; readonly payload: TelegramRawPayload<"deleteEphemeralMessage"> }
-  | { readonly method: "editMessageText"; readonly payload: TelegramRawPayload<"editMessageText"> }
   | { readonly method: "getChat"; readonly payload: TelegramRawPayload<"getChat"> }
   | { readonly method: "getChatAdministrators"; readonly payload: TelegramRawPayload<"getChatAdministrators"> }
   | { readonly method: "getChatMember"; readonly payload: TelegramRawPayload<"getChatMember"> }
@@ -25,8 +22,7 @@ export type TelegramWorkerJsonCall =
   | { readonly method: "sendSticker"; readonly payload: TelegramRawPayload<"sendSticker"> }
   | { readonly method: "setChatPermissions"; readonly payload: TelegramRawPayload<"setChatPermissions"> }
   | { readonly method: "setMessageReaction"; readonly payload: TelegramRawPayload<"setMessageReaction"> }
-  | { readonly method: "unbanChatMember"; readonly payload: TelegramRawPayload<"unbanChatMember"> }
-  | { readonly method: "unbanChatSenderChat"; readonly payload: TelegramRawPayload<"unbanChatSenderChat"> };
+  | { readonly method: "unbanChatMember"; readonly payload: TelegramRawPayload<"unbanChatMember"> };
 
 /** Worker 上传图片所需的可克隆载荷；主线程重新构造 grammY InputFile。 */
 export interface TelegramWorkerSendPhotoRequest {
@@ -127,7 +123,7 @@ export type TelegramWorkerRequest =
 
 /**
  * Telegram 动作层实际需要的 Api 子集。主线程由 bot.api 实现，业务 Worker 由
- * 双工代理实现；新增方法必须同时进入能力白名单与主线程分派。
+ * 双工代理实现其中的 TelegramWorkerApi 子集；主线程独占方法不进入 Worker 协议。
  */
 export type TelegramApi = Pick<Api,
   | "answerCallbackQuery"
@@ -167,3 +163,12 @@ export type TelegramApi = Pick<Api,
     signal?: Parameters<Api["sendVoice"]>[3]
   ): ReturnType<Api["sendVoice"]>;
 };
+
+/** 仅主线程提供的 Telegram 方法；不属于任何 Worker 的能力白名单。 */
+export type TelegramMainOnlyMethod = "copyMessage" | "deleteEphemeralMessage" | "editMessageText" | "unbanChatSenderChat";
+
+/** 业务 Worker 的代理接口，仅保留至少一个 owner 获准的能力。 */
+export type TelegramWorkerApi = Readonly<Omit<TelegramApi, TelegramMainOnlyMethod>>;
+
+/** 线程入口安装的真实主线程接口或 Worker 子集。 */
+export type InstalledTelegramApi = TelegramApi | TelegramWorkerApi;

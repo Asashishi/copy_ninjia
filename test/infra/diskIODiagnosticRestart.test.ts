@@ -49,8 +49,7 @@ async function failCurrentBatch(worker: FakeWorker): Promise<void> {
 }
 
 describe("Disk I/O diagnostic failure recycling", () => {
-  test("成功 ACK 清零连续失败，第 45 次失败受控重建并由新代际重投原批", async () => {
-    expect(DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES).toBe(45);
+  test("成功 ACK 清零连续失败，达到连续失败上限时受控重建并由新代际重投原批", async () => {
     const restoreWorker: () => void = installFakeDiskIOWorker();
     const error = spyOn(console, "error").mockImplementation((): void => {});
     try {
@@ -125,8 +124,7 @@ describe("Disk I/O diagnostic failure recycling", () => {
     }
   });
 
-  test("日志失败链第三次要求重建时中断 bot，普通崩溃预算不参与该计数", async () => {
-    expect(DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD).toBe(3);
+  test("日志失败链达到重建次数阈值时中断 bot，普通崩溃预算不参与该计数", async () => {
     const restoreWorker: () => void = installFakeDiskIOWorker();
     const error = spyOn(console, "error").mockImplementation((): void => {});
     const fatals: Error[] = [];

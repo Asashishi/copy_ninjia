@@ -99,7 +99,7 @@ describe("Google 广告检测请求入口", () => {
       installAiCacheUsageSink(null);
     }
     expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
-      { capability: "ad_detect", provider: "google", model: "gemini-ad", inputTokens: 700, cachedInputTokens: 512, outputTokens: 9 },
+      { kind: "tokens", capability: "ad_detect", provider: "google", model: "gemini-ad", inputTokens: 700, cachedInputTokens: 512, outputTokens: 9 },
     ]);
   });
 

@@ -9,6 +9,7 @@ import type { DiskIOMessage } from "../../packages/types/diskIO/messages";
 
 export const handleLogMessage = mock((_message: unknown): void => {});
 export const handleAdSampleMessage = mock((_message: unknown): void => {});
+export const flushAdSampleBuffer = mock(async (): Promise<void> => {});
 export const handleAiCacheUsageMessage = mock(async (_message: unknown): Promise<void> => {});
 export const flushAiCacheBuffer = mock(async (): Promise<boolean> => true);
 export const inspectAiCacheFile = mock(async (): Promise<{ readonly kind: "aiCache" }> => ({ kind: "aiCache" }));
@@ -89,7 +90,6 @@ export const inspectVerificationDay = mock((day: string): { readonly day: string
 export const adoptVerificationDay = mock((_inspection: unknown): Map<string, unknown> => new Map());
 export const maintainVerificationDay = mock((_inspection: unknown): void => {});
 export const flushLogBuffer = mock((): boolean => true);
-export const flushAiMemorySnapshots = mock((): boolean => true);
 export const flushStickerCatalogs = mock((): boolean => true);
 export const flushLuckAppends = mock((): boolean => true);
 const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
@@ -104,7 +104,7 @@ export const flushBlocklistRemovalOutbox = mock((): boolean => true);
 export const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
   "blocklistRemovalOutbox",
 ]);
-export const flushJoinLogDomain = mock((): boolean => true);
+export const flushJoinLogBuffer = mock((): boolean => true);
 export const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 export const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 export const setStorageFlushHold = mock((_active: boolean, _reply: unknown): void => {});
@@ -171,11 +171,12 @@ mock.module("../../packages/workers/diskIO/aiCacheFile", () => ({
   summarizeAiCache,
 }));
 mock.module("../../packages/workers/diskIO/adSampleFile", () => ({
+  flushAdSampleBuffer,
   handleAdSampleMessage,
   maintainAdSampleFiles,
 }));
 mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
-  flushJoinLogDomain,
+  flushJoinLogBuffer,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
   purgeJoinLogDeletions,
@@ -189,8 +190,6 @@ mock.module("../../packages/workers/diskIO/aiMemoryStorage", () => ({
   configureAiMemoryDeletePersistedReply: (): void => {},
   configureAiMemoryPersistedReply: (): void => {},
   deleteAiMemorySnapshot,
-  flushAiMemorySnapshots,
-
   markAiMemorySnapshotDirty,
 }));
 mock.module("../../packages/workers/diskIO/stickerCatalogFiles", () => ({
@@ -243,14 +242,12 @@ export const { diskIOMaintenanceCron } = await import(
 const { stopDiskIOMaintenanceCron } = await import(
   "../../packages/workers/diskIO/maintenanceCron"
 );
-// 拒收标记走真实的 owner 缓存：路由层的兜底就是靠它把失败传给统一 flush。
-export const { consumeJoinLogRejection } = await import("../../packages/cache/workers/diskIO/joinLog");
 export const {
   rejectedStorageDomains,
 } = await import("../../packages/cache/workers/diskIO/storageDatabase");
 export const {
   diskIOOperationTail,
-  resetDiskIOReplayWindow,
+  diskIOReplayWindow,
 } = await import("../../packages/cache/workers/diskIO/recovery");
 
 afterAll(() => {
@@ -262,6 +259,7 @@ beforeEach(() => {
   for (const fn of [
     handleLogMessage,
     handleAdSampleMessage,
+    flushAdSampleBuffer,
     handleAiCacheUsageMessage,
     flushAiCacheBuffer,
     inspectAiCacheFile,
@@ -290,7 +288,6 @@ beforeEach(() => {
     maintainJoinLogRetention,
     readJoinLog,
     flushLogBuffer,
-    flushAiMemorySnapshots,
     flushStickerCatalogs,
     flushLuckAppends,
     flushVerificationChanges,
@@ -299,7 +296,8 @@ beforeEach(() => {
     maintainTemporaryAdBypassActivities,
     flushBlocklistRemovalOutbox,
     pendingStorageDatabaseDomains,
-    flushJoinLogDomain,
+    flushJoinLogBuffer,
+    purgeJoinLogDeletions,
     handleBlocklistRemovalsMessage,
     handleIdentityPolicyWrite,
     handleChatStateWrite,
@@ -322,7 +320,7 @@ beforeEach(() => {
   ]) fn.mockClear();
   // 重放窗口是 Worker 独占的模块级状态：某个用例遗留的 true 会让后面每一次
   // 写失败都误报成停机回执。
-  resetDiskIOReplayWindow();
+  diskIOReplayWindow.current = false;
   diskIOOperationTail.current = Promise.resolve();
   luckWorkerCache.current = null;
   hydratedLuckEntries.current = new Map();
@@ -336,12 +334,12 @@ beforeEach(() => {
     chatQa: new Map<number, never>(),
   }));
   flushLogBuffer.mockReturnValue(true);
-  flushAiMemorySnapshots.mockReturnValue(true);
   flushStickerCatalogs.mockReturnValue(true);
   flushLuckAppends.mockReturnValue(true);
   flushVerificationChanges.mockReturnValue(true);
   flushBlocklistRemovalOutbox.mockReturnValue(true);
-  flushJoinLogDomain.mockReturnValue(true);
+  flushJoinLogBuffer.mockReturnValue(true);
+  purgeJoinLogDeletions.mockReturnValue(true);
   readJoinLog.mockImplementation(() => [{ userId: 42, joinedAt: 1_000 }]);
 });
 

@@ -225,7 +225,8 @@ export async function getJoinLogFileCache(
 }
 
 /**
- * 把一个 `chatId:day` 分组的待写条目落到该文件；成功后清掉该键的退避。
+ * 把一个 `chatId:day` 分组的待写条目落到该文件；成功后清掉该键的退避。建目录在内的
+ * 全部 I/O 失败都收在本函数内，不向缓冲的调用方抛出。
  * @returns 是否已落盘；false 时调用方保留条目并按退避重试。
  */
 export async function writeFileEntries(
@@ -234,7 +235,6 @@ export async function writeFileEntries(
   entries: readonly BufferedJoinLogEntry[]
 ): Promise<boolean> {
   if (entries.length === 0) return true;
-  mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
   const key: string = fileKey(chatId, day);
   const path: string = joinLogPath(chatId, day);
   const now: number = Date.now();
@@ -242,6 +242,7 @@ export async function writeFileEntries(
     return false;
   }
   try {
+    mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
     const cache: JoinLogFileCache = await getJoinLogFileCache(chatId, day);
     const newest: BufferedJoinLogEntry[] =
       newestBufferedJoinLogRecords(entries, cache.latestByUser);

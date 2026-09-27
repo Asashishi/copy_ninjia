@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   HOT_PATH_CALIBRATION_STALE_RATIO,
+  HOT_PATH_GC_CPU_BUDGETS,
   HOT_PATH_GC_SOFT_OVERRUN_PERCENT,
 } from "../../packages/consts/performance";
+import type { HotPathGcCpuBudget } from "../../packages/types/performance";
 import {
   assertHotPathMedianPolicyCoverage,
   createHotPathCalibrationStaleReport,
@@ -13,10 +15,25 @@ import {
 } from "../../scripts/perf/hotPaths/gateLimits";
 
 describe("热路径 GC 按可用 CPU 数分档", () => {
-  test.each([
-    [1, 35], [2, 30], [3, 30], [4, 25], [8, 25], [128, 25],
-  ])("%i 个 CPU 使用 %i% 暂停预算", (cpuCount: number, expected: number): void => {
-    expect(selectHotPathGcPausePercentLimit(cpuCount)).toBe(expected);
+  test.each(HOT_PATH_GC_CPU_BUDGETS.map((budget: HotPathGcCpuBudget): [HotPathGcCpuBudget] => [budget]))(
+    "分档下界 %o 使用该档暂停预算，直到下一档下界之前不变",
+    (budget: HotPathGcCpuBudget): void => {
+      expect(selectHotPathGcPausePercentLimit(budget.minCpuCount)).toBe(budget.maxPausePercent);
+      const higher: number[] = HOT_PATH_GC_CPU_BUDGETS
+        .map((candidate: HotPathGcCpuBudget): number => candidate.minCpuCount)
+        .filter((minCpuCount: number): boolean => minCpuCount > budget.minCpuCount);
+      const nextFloor: number = higher.length === 0 ? budget.minCpuCount * 32 : Math.min(...higher);
+      expect(selectHotPathGcPausePercentLimit(nextFloor - 1)).toBe(budget.maxPausePercent);
+    }
+  );
+
+  test("CPU 越多预算越紧，不随 CPU 数增加而放宽", (): void => {
+    let previous: number = Number.POSITIVE_INFINITY;
+    for (let cpuCount: number = 1; cpuCount <= 128; cpuCount++) {
+      const limit: number = selectHotPathGcPausePercentLimit(cpuCount);
+      expect(limit).toBeLessThanOrEqual(previous);
+      previous = limit;
+    }
   });
 
   test.each([0, -1, 1.5, NaN, Infinity])("非法 CPU 数拒绝分档：%#", (cpuCount: number): void => {
@@ -26,10 +43,11 @@ describe("热路径 GC 按可用 CPU 数分档", () => {
 });
 
 describe("热路径 GC 软超限", () => {
-  test("硬上限是 CPU 分档预算加 5 个百分点", (): void => {
-    expect(HOT_PATH_GC_SOFT_OVERRUN_PERCENT).toBe(5);
-    expect(hotPathGcPauseFailPercent(selectHotPathGcPausePercentLimit(4))).toBe(30);
-    expect(hotPathGcPauseFailPercent(selectHotPathGcPausePercentLimit(1))).toBe(40);
+  test("硬上限是 CPU 分档预算加 HOT_PATH_GC_SOFT_OVERRUN_PERCENT 个百分点", (): void => {
+    for (const budget of HOT_PATH_GC_CPU_BUDGETS) {
+      expect(hotPathGcPauseFailPercent(selectHotPathGcPausePercentLimit(budget.minCpuCount)))
+        .toBe(budget.maxPausePercent + HOT_PATH_GC_SOFT_OVERRUN_PERCENT);
+    }
   });
 
   test("不超过预算时没有报告，超过预算时返回预算与硬上限但不抛错", (): void => {

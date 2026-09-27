@@ -9,6 +9,7 @@ import {
   stickerFlushState,
 } from "../../cache/workers/diskIO/stickers";
 import { flushDirtyEntries } from "./dirtyFlush";
+import { cancelDiskIOFlushTimer } from "./timedFlush";
 import { writeStickerCatalogFile } from "./snapshotFiles";
 import type { StickerCatalogFileDependencies } from "../../types/diskIO/snapshotOwners";
 import type { StickerCatalogRecoveryInspection } from "./snapshotFiles";
@@ -18,6 +19,10 @@ const STICKER_CATALOG_FILE_DEPENDENCIES: Readonly<StickerCatalogFileDependencies
   write: writeStickerCatalogFile,
 };
 
+/**
+ * 按需装贴纸目录的重试/合并 timer。贴纸目录是同步覆盖写，到点直接在 timer 回调里写，
+ * 不进统一操作队列（与 wedMemberFiles.ts 相同）。
+ */
 function scheduleStickerCatalogFlush(): void {
   if (stickerFlushState.timer !== null) return;
   stickerFlushState.timer = setTimeout((): void => {
@@ -45,10 +50,7 @@ export function markStickerCatalogSnapshotDirty(pack: string, snapshot: string, 
 export function flushStickerCatalogs(
   files: Readonly<StickerCatalogFileDependencies> = STICKER_CATALOG_FILE_DEPENDENCIES
 ): boolean {
-  if (stickerFlushState.timer !== null) {
-    clearTimeout(stickerFlushState.timer);
-    stickerFlushState.timer = null;
-  }
+  cancelDiskIOFlushTimer(stickerFlushState);
   flushDirtyEntries({
     dirty: dirtyStickerPacks,
     cache: stickerCatalogCache,

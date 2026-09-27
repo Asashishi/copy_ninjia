@@ -40,3 +40,17 @@ test("无 revision 的贴纸只覆盖当前 FIFO 的同包快照，不按墙钟�
   expect(revisions.covers(old)).toBeTrue(); expect(revisions.covers(other)).toBeFalse();
   expect(revisions.covers(newer)).toBeFalse();
 });
+
+test("入群事实按序号覆盖：镜像重放到的最大序号及之前的 FIFO 事实不再投递", (): void => {
+  const revisions: DiskIORecoveryRevisions = new DiskIORecoveryRevisions();
+  const buffered = new LinkedQueue<DiskBusinessMessage>();
+  const join = (sequence: number): DiskBusinessMessage => ({
+    type: "joinLog", sequence, chatId: -7, userId: sequence, joinedAt: sequence, day: "2026-09-27",
+  });
+  expect(revisions.covers(join(1))).toBeFalse();
+  revisions.record(join(1), buffered);
+  revisions.record(join(2), buffered);
+  expect(revisions.covers(join(1))).toBeTrue();
+  expect(revisions.covers(join(2))).toBeTrue();
+  expect(revisions.covers(join(3))).toBeFalse();
+});

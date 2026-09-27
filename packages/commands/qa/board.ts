@@ -20,7 +20,7 @@ import type { CallbackQuery } from "grammy/types";
 import { QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_JSON_LANGUAGE, QA_QUERY_PAGE_ARG_PATTERN, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../consts/qa";
 
 import { answerCallbackQuery, editMessageText } from "../../infra/telegram";
-import { getChatQa } from "../../infra/qaStore";
+import { chatQaEntries } from "../../cache/main/qa";
 import { truncateInline } from "../../libs/text";
 import type { QaEntry } from "../../types/qa";
 import type { RichTextMessage } from "../../types/telegram";
@@ -117,7 +117,7 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   if (!Number.isSafeInteger(requested)) return true;
 
   const chatId: number = boardMessage.chat.id;
-  const stored: ReadonlyMap<string, string> | undefined = getChatQa(chatId);
+  const stored: ReadonlyMap<string, string> | undefined = chatQaEntries.get(chatId);
   const entries: QaEntry[] = [];
   if (stored !== undefined) for (const [q, a] of stored) entries.push({ q, a });
   const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);

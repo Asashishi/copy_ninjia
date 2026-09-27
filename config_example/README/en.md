@@ -51,7 +51,7 @@ configuration. Truly absent optional capabilities follow the feature boundaries 
 | `dynamic/mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `dynamic/ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
 | `dynamic/cron.json` | Scheduled sends (text, pictures, files, voice) | No scheduled tasks |
-| `dynamic/assets.json` | The dedicated `/h_image` library directory and the URLs of inline-result thumbnails and the default avatar | Every value uses its built-in default |
+| `dynamic/assets.json` | The dedicated `/h_image` library directory, the default avatar (local file or URL), and the URLs of inline-result thumbnails | Every value uses its built-in default |
 | `static/g-auth.json` | Google Cloud service-account key for `/translate`; the example holds placeholders only, and the operator places the real key in `config/static/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
 
 AI chat also needs `prompt/persona.md`, which does not belong in this directory. An optional file
@@ -89,7 +89,7 @@ strict schema used at startup:
 - Moods that still exist in `mood.json` take effect for every chat immediately; a chat whose
   current mood was removed draws a new one the next time it is used.
 - `assets.json` changes take effect for thumbnails and the default avatar from their next use;
-  deleting the file restores every built-in default. When `random_h_image_dir` points to a new
+  deleting the file restores every built-in default. When `onlyPath.random_h_image_dir` points to a new
   directory, that directory is created and checked with the same rules as startup first; if the
   check fails the whole `assets.json` change is rejected and the previous directory stays in use.
 - `cron.json` is reconciled by task name: unchanged tasks keep their timing, changed or removed
@@ -182,16 +182,16 @@ Worker, so the remaining AI-chat prerequisites (`stickers.json`, `mood.json`,
 
 `agent.tts.style` is an optional base speech style. It must be a non-empty string after trimming; null, whitespace-only strings and other types are rejected. When omitted it uses `GEMINI_SPEECH_STYLE`: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`. All three voice entry points share this setting. Hot reload applies to new requests; requests already issued retain their configuration snapshot. Removing the field restores the default. A request-specific `tone` is still appended as `<base style>; 细节: <tone>`.
 
-`tts` also has two optional daily quota fields; the three entry points share one count:
+`tts` has two optional daily quota fields, with independent AI and reserve counts:
 
 | Field | Meaning |
 | --- | --- |
-| `daily_limit` | Maximum synthesis requests issued per counting window; a positive integer, default 100. `/send` relay and `send_voice` in `cron.json` may use all of it |
-| `daily_reserve_quota` | How many of `daily_limit` are reserved for `/send` and cron; an integer from 0 to `daily_limit - 1`, default 25. The AI voice tool may use only `daily_limit - daily_reserve_quota` |
+| `daily_limit` | Total budget split between AI and reserve quotas per window; a positive integer, default 100 |
+| `daily_reserve_quota` | Independent quota shared by `/send` and cron; an integer from 0 to `daily_limit - 1`, default 25. AI independently uses `daily_limit - daily_reserve_quota`; neither borrows from the other. Zero disables operator synthesis |
 
 The counting window starts at the first request in it; once 24 hours have passed, the next request
 starts a new window. The window and count live in `ttsUsage` in `memory/global/state.json` under the runtime data root and carry over
-across restarts. One synthesis call counts once; SDK-internal retries are not counted separately.
+across restarts as `{ windowStartedAt, agentCount, reserveCount }`. Both counts share the window: expired reads use zero, and the next recorded request resets both. One synthesis call counts once; SDK-internal retries are not counted separately.
 Once the quota is used up no further requests are issued: the AI sends no voice and does not
 mention it in the group; `/send` replies with a quota notice; cron logs a `daily limit reached`
 error and does not retry. Both fields take effect on hot reload without resetting the used count;
@@ -234,28 +234,44 @@ tables aborts before network access. Migrate legacy JSON deployments once by fol
 
 ## `assets.json`
 
-The file is optional and so is every field; an absent field uses its built-in default. Write only
-the values you change, for example:
+The file is optional. The top level groups fields by the sources they accept into `onlyPath`,
+`pathOrUrl` and `onlyUrl`; every group and every field is optional, and an absent field uses its
+built-in default. Write only the values you change, for example:
 
 ```json
 {
-  "random_h_image_dir": "./images",
-  "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+  "onlyPath": {
+    "random_h_image_dir": "./images"
+  },
+  "pathOrUrl": {
+    "bot_default_avatar": "./avatar/default.png"
+  },
+  "onlyUrl": {
+    "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+  }
 }
 ```
 
-| Field | Purpose | Form |
-| --- | --- | --- |
-| `random_h_image_dir` | Dedicated library for `/h_image` and cron random pictures, default `./h_image` | Absolute directory or explicit `./` / `../` path; relative paths resolve against the runtime data root |
-| `fortune_thumbnail_url` | Thumbnail of the "未卜先知" inline result | Absolute https URL |
-| `probability_thumbnail_url` | Thumbnail of the "概率论" inline result | Absolute https URL |
-| `gag_thumbnail_url` | Thumbnail of the gag speech inline result | Absolute https URL |
-| `bot_default_avatar_url` | Picture downloaded when `/icon reset` or `/copy stop` restores the bot avatar | Absolute http or https URL |
+| Group | Field | Purpose | Form |
+| --- | --- | --- | --- |
+| `onlyPath` | `random_h_image_dir` | Dedicated library for `/h_image` and cron random pictures, default `./h_image` | Local directory path |
+| `pathOrUrl` | `bot_default_avatar` | Picture used when `/icon reset` or `/copy stop` restores the bot avatar | Local file path, or absolute http/https URL |
+| `onlyUrl` | `fortune_thumbnail_url` | Thumbnail of the "未卜先知" inline result | Absolute https URL |
+| `onlyUrl` | `probability_thumbnail_url` | Thumbnail of the "概率论" inline result | Absolute https URL |
+| `onlyUrl` | `gag_thumbnail_url` | Thumbnail of the gag speech inline result | Absolute https URL |
 
-Leading and trailing whitespace in strings is trimmed; unknown fields, strings that are empty after
-trimming and values of the wrong form abort startup (or reject the change while running).
-[`config_example/dynamic/assets.json`](../dynamic/assets.json) spells out all five fields with their built-in defaults;
-copy it whole and change only what you need.
+A local path must be absolute or an explicit `./` / `../` path; relative paths resolve against the
+runtime data root, and bare names and `~/…` are invalid. When `bot_default_avatar` is a local path,
+the file must be an existing regular file (a symlink to one is fine), at most 10 MiB, and a JPEG or
+PNG image; it is checked at startup and on hot reload and read again on every avatar restore. The
+three thumbnails are fetched by Telegram and accept only https URLs.
+
+Leading and trailing whitespace in strings is trimmed; unknown groups, fields placed outside their
+group, strings that are empty after trimming and values of the wrong form abort startup (or reject
+the change while running).
+[`config_example/dynamic/assets.json`](../dynamic/assets.json) spells out all three groups and five fields with their built-in defaults;
+copy it whole and change only what you need. Migrate the previous flat format by hand as described in
+[Operations](../../docs/en/07-operations.md#assets-groups).
 
 ## `stickers.json`
 
@@ -346,7 +362,7 @@ Action `type` and `payload`:
 
 - `send_message`: `content` is required, at most 4096 characters.
 - `send_image`: one optional `content` string (up to 1024 characters). Fixed images require exactly one array: `url` or file `path`, with 1–10 entries; even one image uses an array, such as `"url": ["https://example.com/a.jpg"]`. `rand_image` must be absent or `false`. One image uses a photo request; 2–10 use one album request with the caption on the first item only and no separate text message. An album has multiple Telegram message IDs. `is_blurred: true` adds a spoiler to every item; absent or `false` omits it.
-  `rand_image: true` draws one image: `url` and file arrays are forbidden, and optional `path` must be a directory string. Without it the source is `random_h_image_dir` in `assets.json`; an explicit other directory has no SHA-256 naming requirement.
+  `rand_image: true` draws one image: `url` and file arrays are forbidden, and optional `path` must be a directory string. Without it the source is `onlyPath.random_h_image_dir` in `assets.json`; an explicit other directory has no SHA-256 naming requirement.
 - `send_file`: `content` is optional (at most 1024 characters); exactly one of `url` or `path`.
 - `send_voice`: `content` is required and is the line to speak (at most 256 characters); `tone` is
   optional and sets how this line is spoken (at most 64 characters), appended after the fixed base
@@ -408,9 +424,10 @@ Runtime behavior:
 
 | Path field | Relative-path base | Shape |
 | --- | --- | --- |
-| `random_h_image_dir` in `assets.json` | Runtime data root | Absolute directory or explicit `./` / `../` path |
+| `onlyPath.random_h_image_dir` in `assets.json` | Runtime data root | Absolute directory or explicit `./` / `../` path |
+| `pathOrUrl.bot_default_avatar` in `assets.json` (when a local path) | Runtime data root | Absolute file path or explicit `./` / `../` path |
 | cron fixed-image `payload.path` | Project root | Array of 1–10 file paths |
 | cron random-image `payload.path` | Project root | Optional directory string; omission selects the dedicated library |
 | cron file `payload.path` | Project root | One file-path string |
 
-`random_h_image_dir` in `assets.json` is reserved for `/h_image`, defaulting to `./h_image`. Both absolute paths such as `/h_image` and explicit relative paths such as `./h_image` or `../h_image` are accepted; relative paths resolve against the runtime data root. Keep unrelated pictures elsewhere. Add images with `/h_image add`; manual additions must use the content SHA-256 as a 64-character lowercase hexadecimal basename with a jpg/jpeg/png/webp extension. Before Workers or external connections, startup asynchronously checks names and entry types. Invalid files, subdirectories, file symlinks and leftover temporary files abort startup. It does not rehash every image; operators are responsible for matching manual names to content. Explicit cron directories have no such naming requirement. Local content reads, preflight checks and uploads are asynchronous; albums retain reopenable streams rather than preloading every image.
+`onlyPath.random_h_image_dir` in `assets.json` is reserved for `/h_image`, defaulting to `./h_image`. Both absolute paths such as `/h_image` and explicit relative paths such as `./h_image` or `../h_image` are accepted; relative paths resolve against the runtime data root. Keep unrelated pictures elsewhere. Add images with `/h_image add`; manual additions must use the content SHA-256 as a 64-character lowercase hexadecimal basename with a jpg/jpeg/png/webp extension. Before Workers or external connections, startup asynchronously checks names and entry types. Invalid files, subdirectories, file symlinks and leftover temporary files abort startup. It does not rehash every image; operators are responsible for matching manual names to content. Explicit cron directories have no such naming requirement. Local content reads, preflight checks and uploads are asynchronous; albums retain reopenable streams rather than preloading every image.

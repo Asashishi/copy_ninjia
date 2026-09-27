@@ -23,7 +23,10 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
-mock.module("../../packages/aiChat", () => ({ queryAiMood, switchAiMood }));
+mock.module("../../packages/aiChat", () => ({
+  requestAiMood: (chatId: number, requestType: "queryMood" | "switchMood"): Promise<string> =>
+    requestType === "queryMood" ? queryAiMood(chatId) : switchAiMood(chatId),
+}));
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (chatId: number): Record<string, unknown> => states.get(chatId) ?? {},

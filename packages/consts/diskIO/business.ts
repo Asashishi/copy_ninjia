@@ -2,7 +2,12 @@
 export const DISK_BUSINESS_BATCH_MAX_MESSAGES: number = 128;
 /** 磁盘通道为恢复标记与最终 flush 预留的控制消息槽位。 */
 export const DISK_OPERATION_CONTROL_RESERVE: number = 16;
-/** Disk I/O Worker 本地串行队列的最大在途操作数；覆盖业务、诊断、load 与维护。 */
+/**
+ * Disk I/O Worker 本地串行队列的最大在途操作数（workers/diskIO/operationQueue.ts）。
+ * 来源上界为 5：主线程的业务批与诊断批各至多一批在途（均在处理完才回 ACK）、启动或
+ * 重建时的 load、每日维护 cron 的一项，以及本 Worker 全部定时 flush 合并后的一项（见
+ * workers/diskIO/timedFlush.ts）。超出即协议违约，拒收后终止本代 Worker。
+ */
 export const DISK_WORKER_MAX_QUEUED_OPERATIONS: number = 8;
 
 /** Disk I/O 业务传输保留载荷的估算字节上限；覆盖待发送和在途批次。 */

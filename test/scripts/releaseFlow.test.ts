@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { createReleaseCommand, readBuildSourceTree } from "../../scripts/release/command";
 import type { CommandResult, ReleaseCommand } from "../../scripts/release/command";
 import { ACTIVE_COLD_MIGRATION_EDGES } from "../../scripts/migrations/active";
-import { fileSha256, verifyReleaseAssets } from "../../scripts/release/assets";
+import { fileSha256 } from "../../scripts/fileSha256";
+import { verifyReleaseAssets } from "../../scripts/release/assets";
 import type { ReleaseAsset } from "../../scripts/release/assets";
 import { publishRelease } from "../../scripts/release/github";
 

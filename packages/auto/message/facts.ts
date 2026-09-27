@@ -2,11 +2,14 @@ import type { Animation, Message, MessageEntity, MessageOrigin, PhotoSize, User,
 import {
   ANIMATION_PLACEHOLDER,
   AUDIO_PLACEHOLDER,
+  BOTH_MENTION_FACTS,
+  BOT_MENTION_FACTS,
   FALLBACK_CHANNEL_NAME,
   FALLBACK_SPEAKER_NAME,
   LOCATION_PLACEHOLDER,
   NON_TEXT_PLACEHOLDER,
   NO_MENTION_FACTS,
+  OTHER_MENTION_FACTS,
   PHOTO_PLACEHOLDER,
   VIDEO_NOTE_PLACEHOLDER,
   VIDEO_PLACEHOLDER,
@@ -54,8 +57,9 @@ export function resolveSpeaker(message: Message): AiSpeakerSnapshot {
 /**
  * 一次遍历实体数组同时判定两个提及事实——createMessageTriggerContext 对每条
  * 消息都要两者，合并解析避免对同一条消息的 entities 重复扫两遍。正文与媒体
- * caption 共用同一套 entity 判定；没有 entity 表时返回共享的 NO_MENTION_FACTS，
- * 不分配对象。
+ * caption 共用同一套 entity 判定。两个事实以局部布尔值累计，按组合返回
+ * consts/auto.ts 的四个共享只读常量之一（没有 entity 表时直接返回 NO_MENTION_FACTS），
+ * 不分配对象；调用方只读字段，不比较对象身份。
  *
  * 逐个实体先用**长度**筛一道，筛掉的实体连子串都不物化：`toLowerCase` 只会让
  * 长度不变或变长（全 Unicode 里唯一会变长的是 U+0130，`test/auto/messageFacts.test.ts`
@@ -85,7 +89,8 @@ export function resolveMentionFacts(
   } else {
     return NO_MENTION_FACTS;
   }
-  const facts: MentionFacts = { isMentioned: false, hasOtherMention: false };
+  let isMentioned: boolean = false;
+  let hasOtherMention: boolean = false;
   // 只折用户名自己的大小写，不拼 `@用户名`：拼接必然分配一个短命字符串，而
   // 已经是小写的用户名 `toLowerCase` 原样返回同一个对象。前导 `@` 由下面的首码元
   // 判定承担，两者合起来与「整串比对 `@用户名` 的小写形态」逐字等价（`@` 既非
@@ -109,16 +114,17 @@ export function resolveMentionFacts(
           mentionText.charCodeAt(0) === 0x40 &&
           mentionText.endsWith(botUsernameLower)
         ) {
-          facts.isMentioned = true;
+          isMentioned = true;
           continue;
         }
       }
-      facts.hasOtherMention = true;
+      hasOtherMention = true;
     } else if (entity.type === "text_mention" && entity.user.id !== botId) {
-      facts.hasOtherMention = true;
+      hasOtherMention = true;
     }
   }
-  return facts;
+  if (isMentioned) return hasOtherMention ? BOTH_MENTION_FACTS : BOT_MENTION_FACTS;
+  return hasOtherMention ? OTHER_MENTION_FACTS : NO_MENTION_FACTS;
 }
 
 /** 判断当前消息是否显式回复同一个可见发送者先前的消息（判定见 libs/forumTopic.ts 的 explicitReplyTo）。 */

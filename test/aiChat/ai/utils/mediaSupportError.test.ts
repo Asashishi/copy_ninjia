@@ -26,6 +26,17 @@ describe("供应商 API 失败的状态读取", () => {
 });
 
 describe("供应商 API 失败的归因级联", () => {
+  test("单份媒体的格式、编码与损坏错误不关闭模态", () => {
+    for (const message of [
+      "Unsupported image format", "Cannot process corrupted image",
+      "Model does not support this audio codec", "Unsupported media type",
+      "Image MIME type is not supported", "Cannot process invalid image URL",
+    ]) {
+      for (const status of [400, 415, 422]) {
+        expect(classifyProviderApiFailure(status, message, true)).toBe("rejected");
+      }
+    }
+  });
   test("路径级 404/405 最先判，压过同一条消息里的模态语义", () => {
     // 正文本身命中 unsupported 语义，但 404/405 优先于模态判断。
     for (const status of [404, 405]) {
