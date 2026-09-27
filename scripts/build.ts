@@ -1,4 +1,4 @@
-/** 编译当前 Linux 平台的发行包；仅收集显式列出的源码资产和已安装的原生依赖。 */
+/** 编译当前 Linux 平台的发行包；仅收集显式列出的源码资产，不携带 node_modules。 */
 import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { familySync, GLIBC, MUSL } from "detect-libc";
@@ -11,7 +11,6 @@ import type { ReleaseCommand } from "./release/command";
 
 interface PackageManifest {
   readonly packageManager?: string;
-  readonly dependencies?: Readonly<Record<string, string>>;
 }
 
 const projectRoot: string = join(import.meta.dir, "..");
@@ -29,7 +28,6 @@ if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch) || 
   throw new Error("Build requires Linux x64/arm64 with glibc or musl; build natively on each release platform.");
 }
 const platform: string = `linux-${process.arch}${libc === MUSL ? "-musl" : ""}`;
-const sharpPlatform: string = `linux${libc === MUSL ? "musl" : ""}-${process.arch}`;
 const assetName: string = `copy-ninjia-${platform}`;
 const outputRoot: string = join(projectRoot, "dist");
 mkdirSync(outputRoot, { recursive: true });
@@ -45,17 +43,6 @@ function run(command: string[], cwd: string): void {
   if (result.exitCode !== 0) throw new Error(`Build command failed: ${command[0]}`);
 }
 
-const copiedPackages: Set<string> = new Set();
-/** 保留 sharp 官方加载器与当前平台原生库，按已安装 manifest 收集其直接依赖。 */
-async function copyPackage(name: string): Promise<void> {
-  if (copiedPackages.has(name)) return;
-  copiedPackages.add(name);
-  const source: string = join(projectRoot, "node_modules", name);
-  const dependency: PackageManifest = await Bun.file(join(source, "package.json")).json() as PackageManifest;
-  await copyFixtureTree(source, join(packageRoot, "node_modules", name));
-  for (const child of Object.keys(dependency.dependencies ?? {})) await copyPackage(child);
-}
-
 try {
   const executable: string = join(packageRoot, "copy-ninjia");
   const application: Bun.BuildOutput = await Bun.build({
@@ -64,7 +51,6 @@ try {
     ),
     root: projectRoot,
     compile: { outfile: executable, autoloadBunfig: false },
-    external: ["sharp"],
     minify: true,
     sourcemap: "none",
   });
@@ -77,7 +63,6 @@ try {
     sourcemap: "none",
     // 安装器通过发行包内的 Bun CLI 执行，路径同样以部署工作目录为根。
     define: { "Bun.isStandaloneExecutable": "true" },
-    external: ["sharp"],
   });
   if (!installer.success) throw new AggregateError(installer.logs, "Installer compilation failed.");
   for (const edge of ACTIVE_COLD_MIGRATION_EDGES) {
@@ -89,7 +74,6 @@ try {
       sourcemap: "none",
       // bundle 的目录与 consts 源码同为根下两层，SQL 等资产相对包根解析。
       define: { "Bun.isStandaloneExecutable": "false" },
-      external: ["sharp"],
     });
     if (!migration.success) throw new AggregateError(migration.logs, `Migration compilation failed: ${edge.command}`);
   }
@@ -99,7 +83,6 @@ try {
   for await (const file of new Bun.Glob("*.sh").scan(join(projectRoot, "scripts/install"))) {
     await Bun.write(join(packageRoot, "scripts/install", file), Bun.file(join(projectRoot, "scripts/install", file)));
   }
-  for (const name of ["sharp", `@img/sharp-${sharpPlatform}`, `@img/sharp-libvips-${sharpPlatform}`]) await copyPackage(name);
   for await (const file of new Bun.Glob("**/*.map").scan({ cwd: packageRoot, dot: true })) {
     await Bun.file(join(packageRoot, file)).delete();
   }

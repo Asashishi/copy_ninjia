@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 两种方式都从 `releases/latest` 读取 **GitHub Latest Release**，安装到 `COPY_NINJIA_DIR` 指定的目录（默认 `copy_ninjia/`，支持相对或绝对路径），再交给目标目录自己的 `install.sh`。获取失败时停止，不回退到 `master`。已有部署目录会复用当前版本，不执行升级或安装类型转换。
 
 - **源码方式**：clone 对应 tag（detached HEAD），校验 Bun **1.4.2** 与 `packageManager` 后执行锁定依赖安装。已有系统 Bun 版本不匹配时，在写配置前退出并提示手工安装。
-- **二进制方式**：识别 Linux x64/arm64 与 glibc/musl，下载 `copy-ninjia-<平台>.tar.gz` 和同名 `.sha256`，核对内容、包内版本与平台后放置到尚不存在的目标目录。Release 必须提供对应平台资产，缺失或校验失败即停止。包内含 Bun、Worker、原生图片依赖、配置示例与安装器，不需要 git、系统 Bun 或本机编译。保留完整发行目录，并在该目录运行 `./copy-ninjia`；`--version` 查询包版本。配置、素材和默认数据根均以部署工作目录为根，独立数据根仍由 `COPY_NINJIA_DATA_ROOT` 指定。
+- **二进制方式**：识别 Linux x64/arm64 与 glibc/musl，下载 `copy-ninjia-<平台>.tar.gz` 和同名 `.sha256`，核对内容、包内版本与平台后放置到尚不存在的目标目录。Release 必须提供对应平台资产，缺失或校验失败即停止。包内含 Bun、Worker、配置示例与安装器，图片编解码由内置 Bun 提供、不携带 `node_modules`，不需要 git、系统 Bun 或本机编译。保留完整发行目录，并在该目录运行 `./copy-ninjia`；`--version` 查询包版本。配置、素材和默认数据根均以部署工作目录为根，独立数据根仍由 `COPY_NINJIA_DATA_ROOT` 指定。
 
 已有源码工作树执行 `bash install.sh` 时保持 checkout；已有二进制目录执行该命令时复用当前发行包。
 
@@ -60,7 +60,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 
 安装流程包括以下步骤：
 
-1. **环境与发行包**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有部署。源码方式安装或核验指定 Bun，再执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期；二进制方式核验内置 Bun 与 `packageManager`，直接使用包内依赖。
+1. **环境与发行包**：检查 Linux、可读 `/proc` 和控制终端；按需补齐基础工具、取得 Latest Release 或复用既有部署。源码方式安装或核验指定 Bun，再执行 `bun install --frozen-lockfile`，沿用七天依赖冷却期；二进制方式核验内置 Bun 与 `packageManager`，依赖已编译进可执行文件。
 2. **部署配置**：只补缺少的示例文件，跳过 `agent.json`、`g-auth.json` 与 `cron.json` 示例。Telegram 身份可交互重填；既有文件先在工作树外备份，再校验候选文件并原子替换。未配置 AI 能力时不创建 `agent.json`，既有 AI 配置保持原样。生成的身份与 AI 配置权限为 `600`。
 3. **身份数据库与校验**：按生产路径解析结果检查 `database/storage.sqlite`，只在不存在时创建当前 schema 的空库，再校验部署输入。
 4. **服务与观察**：在已确认停止的部署上注册或复用 unit，启动并完成状态、动态观察时长、重启计数与 journal 核验。仅全部通过才清理配置和 unit 备份；验证失败非零退出，前台运行保留备份。

@@ -715,7 +715,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("语音走转写那条实现，绝不进视觉转码与视觉 API", async () => {
     // 这里的桩供应商只实现了 describeVision（等价于切到 OpenAI 的部署），因此
-    // 转写不可用、结果为 null；要断言的是**路由**：语音一次都不碰 sharp 转码和
+    // 转写不可用、结果为 null；要断言的是**路由**：语音一次都不碰图片转码和
     // 视觉接口，而不是它这次能不能识别出来。
     await expect(describeMedia({
       kind: "voice",

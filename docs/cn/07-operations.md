@@ -58,9 +58,9 @@ WantedBy=multi-user.target
 
 ### 二进制部署
 
-二进制发行目录包含 `copy-ninjia`、`binary.json`、安装器、配置示例、`prompt/`、数据库 schema 文件与 `node_modules/` 中的原生图片依赖；部署时保留完整目录。在该目录执行 `bash install.sh` 完成配置和新库初始化，前台运行使用 `./copy-ninjia`。systemd 的 `WorkingDirectory` 指向该目录，`ExecStart` 使用该目录内可执行文件的绝对路径，不带 `start` 参数；无需系统 Bun。
+二进制发行目录包含 `copy-ninjia`、`binary.json`、安装器、配置示例、`prompt/` 与数据库 schema 文件，不含 `node_modules/`（依赖已编译进可执行文件）；部署时保留完整目录。在该目录执行 `bash install.sh` 完成配置和新库初始化，前台运行使用 `./copy-ninjia`。systemd 的 `WorkingDirectory` 指向该目录，`ExecStart` 使用该目录内可执行文件的绝对路径，不带 `start` 参数；无需系统 Bun。
 
-安装器只为新目录下载 Latest 的对应平台包与 SHA-256，不覆盖或升级既有二进制部署。更新时按下述停机、外部备份、校验和手工迁移流程操作；先在独立暂存目录核验新包，再保留部署配置、凭据与数据并更新程序文件和随包依赖。需要冷迁移时先按本页迁移章节准备迁移工具；启动入口只接受当前格式。发行包构建、平台清单与上传校验见 [05 发布流程](05-dev-workflow.md#发布)。
+安装器只为新目录下载 Latest 的对应平台包与 SHA-256，不覆盖或升级既有二进制部署。更新时按下述停机、外部备份、校验和手工迁移流程操作；先在独立暂存目录核验新包，再保留部署配置、凭据与数据并更新程序文件；发行包不含 `node_modules/`，部署目录中残留的该目录不会被读取，可在停机时删除。需要冷迁移时先按本页迁移章节准备迁移工具；启动入口只接受当前格式。发行包构建、平台清单与上传校验见 [05 发布流程](05-dev-workflow.md#发布)。
 
 ## 数据根
 

@@ -449,7 +449,7 @@ describe("logger persistence routing boundary", () => {
   test("Error 自带 __proto__ 自有属性时照常落进诊断字段，不命中原型访问器", () => {
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     try {
-      // 依赖抛出来的 Error 带上这个键并不稀奇（grammY/genai/sharp/gRPC 包装的
+      // 依赖抛出来的 Error 带上这个键并不稀奇（grammY/genai/gRPC 包装的
       // payload 都可能）。累加对象若是普通 `{}`，`own[key] = ...` 命中的是
       // Object.prototype 继承来的访问器：值是对象就静默换掉记录的原型，不是对象
       // 就整句赋值失效——两种结局都让这个字段从 logs/ 的错误记录里消失，而它

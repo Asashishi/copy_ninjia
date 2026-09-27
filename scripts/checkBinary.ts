@@ -1,4 +1,4 @@
-/** 在独立临时部署中核对编译产物的安装校验、sharp、三个 Worker 与正常排空。 */
+/** 在独立临时部署中核对编译产物的安装校验、内置图片编解码、三个 Worker 与正常排空。 */
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -62,11 +62,15 @@ try {
     try { initializeStorageDatabase(db); } finally { closeStorageDatabase(db); }
     enableStorageDatabaseWal(IDENTITY_DATABASE_PATH);
     await validateExistingDeploymentInputs();
-    const sharp = (await import("sharp")).default;
-    const png = await sharp({ create: { width: 2, height: 2, channels: 4, background: "red" } }).png().toBuffer();
-    const metadata = await sharp(png).metadata();
-    if (metadata.width !== 2 || metadata.height !== 2) throw new Error("sharp roundtrip failed");
+    // 视觉转码只依赖运行时内置的 Bun.Image：gif 与由它编码的 webp 都要能转成 png。
+    const gif = Uint8Array.fromBase64("R0lGODlhAgACAIAAAExpcf//ACH/C05FVFNDQVBFMi4wAwEAAAAh+QQFCgAAACwAAAAAAgACAAACAoxTACH5BAUKAAAALAAAAAACAAIAgExpcQAA/wICjFMAOw==");
+    for (const source of [gif, await new Bun.Image(gif).webp().bytes()]) {
+      const metadata = await new Bun.Image(await new Bun.Image(source).png().bytes()).metadata();
+      if (metadata.format !== "png" || metadata.width !== 2 || metadata.height !== 2) throw new Error("Bun.Image transcoding failed");
+    }
   `], { BUN_BE_BUN: "1" });
+  // 编译产物不会从磁盘上的 node_modules 解析第三方包，发行包因此不得携带它。
+  if (existsSync(join(root, "node_modules"))) throw new Error("Binary package must not contain node_modules.");
   const output: string = run([], {
     BUN_OPTIONS: `--preload ${join(import.meta.dir, "../test/fixtures/binaryNetwork.ts")}`,
   });
@@ -144,7 +148,7 @@ try {
     }
   }
   await assertMigrationSourcesUnchanged(migrated.sources);
-  console.log("Binary check passed: installer and cold migrations without system Bun, sharp, three Workers and SIGTERM drain.");
+  console.log("Binary check passed: installer and cold migrations without system Bun, built-in image codecs, three Workers and SIGTERM drain.");
 } finally {
   cleanupFixtures();
   rmSync(root, { recursive: true, force: true });

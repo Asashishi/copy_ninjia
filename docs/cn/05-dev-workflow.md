@@ -61,7 +61,7 @@
 
 ### Bun 运行边界
 
-项目在 `bunfig.toml` 中设置 `run.bun = true`，依赖 CLI 的 Node shebang 也由当前 Bun 执行。图片转码在 `packages/infra/image.ts` 中按需加载 `sharp`：视觉输入的 JPEG/PNG 原样传递，WebP/GIF 转为 PNG，动画只读取首帧并保留透明度；缩略图保持比例且不放大小图，不按 EXIF 方向自动旋转，透明像素按黑色背景合成，再按质量档生成满足尺寸与体积上限的 JPEG。原生 API 替换必须覆盖相同的输入格式、透明度、动画帧与失败语义。
+项目在 `bunfig.toml` 中设置 `run.bun = true`，依赖 CLI 的 Node shebang 也由当前 Bun 执行。图片转码在 `packages/infra/image.ts` 中使用 Bun 内置的 `Bun.Image`：视觉输入的 JPEG/PNG 原样传递，WebP/GIF 转为 PNG 并保留透明度；GIF 取首帧，动态 WebP 先把首个 `ANMF` 帧重新封装为静态 WebP 再解码，按该帧自身尺寸输出、不合成到画布偏移。单张解码的像素数上限为 `VISION_TRANSCODE_MAX_PIXELS`（8K UHD，7680×4320），超限在分配像素缓冲前拒绝；抽帧时每个区间最多检查 `WEBP_MAX_SCANNED_CHUNKS` 个块，超出按容器不合法处理。转码失败返回 null，调用方按不解析处理。编解码器随 Bun 运行时提供，源码与二进制发行包都不依赖 `node_modules` 中的原生模块。
 
 文件内容写入和普通文件删除使用 [`Bun.write`、`Bun.file`](https://bun.com/docs/runtime/file-io)。独占创建后的写入使用 `Bun.write(Bun.file(handle.fd), content)`，由原句柄完成 fsync、关闭及原子发布；目录遍历、路径、同步持久化、权限与 hard link 等原生文件 API 未覆盖的操作使用 `node:` 接口。`AsyncLocalStorage`、PEM 私钥解析和无分配 UTF-8 字节计数保留 Bun 支持的兼容接口。Disk I/O 启动、午夜与跨日维护逐项等待异步删除，删除完成后才进入后续领域或发送持久化回执。
 
@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5317 tests / 465 files / 260880 次 `expect()`**；全源码**函数覆盖率 98.07% / 行覆盖率 98.42%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5323 tests / 465 files / 261542 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.41%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -215,7 +215,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 每次 squash 合并进 `master` 都要创建一个带二进制资产的 GitHub Release：
 
 1. 同步远端 tags，并通过 `gh release list` 读取当前 Latest Release tag。tag 严格使用不带 `v` 的 `MAJOR.MINOR.PATCH`；按本次完整改动的最高语义影响选择版本：破坏兼容升 `MAJOR`（`1.0.9` → `2.0.0`），向后兼容的新增功能升 `MINOR`（`1.0.9` → `1.1.0`），只有修复、性能、重构或文档时才升 `PATCH`（`1.0.9` → `1.0.10`）。
-2. 在代码与本次基准结果提交后，从干净的 `dev` 执行 `release:build`，通过 `--version` 显式传入本次 Release tag。版本不提供默认值，不读取源码 manifest 的版本；传入值同时写入包内 `package.json`、`binary.json`，可执行文件的 `--version` 输出必须一致。本次声明的每个平台分别使用同一 Git tree、同一 Bun version/revision，在对应架构和 libc 的环境原生构建。构建会验证版本、无 `.map` 文件、三个 Worker、图片原生依赖和二进制安装器；正式发行包必须在最终提交后生成。
+2. 在代码与本次基准结果提交后，从干净的 `dev` 执行 `release:build`，通过 `--version` 显式传入本次 Release tag。版本不提供默认值，不读取源码 manifest 的版本；传入值同时写入包内 `package.json`、`binary.json`，可执行文件的 `--version` 输出必须一致。本次声明的每个平台分别使用同一 Git tree、同一 Bun version/revision，在对应架构和 libc 的环境原生构建。构建会验证版本、无 `.map` 文件、不含 `node_modules`、三个 Worker、内置图片编解码和二进制安装器；正式发行包必须在最终提交后生成。
 3. 汇总各平台的 `.tar.gz` 与 `.tar.gz.sha256`，执行 `release:verify`。支持的平台名为 `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl`；`--platforms` 是本次必须提供的完整清单，缺项即失败。默认读取 `dist/`，也可用 `--directory` 指定汇总目录。包内 `binary.json` 的版本、平台、Git tree、Bun version/revision 和实际 SHA-256 必须一致；未提交工作树的产物拒绝发布。
 4. 按仓库与部署保护流程 squash 合入 `master`，确认 Git tree 与构建时一致，推送 `master` 后为该提交创建、单独推送 annotated version tag。已有 tag 不得覆盖、移动或复用。
 5. 准备英文 Release notes，仅描述上一个 Latest tag 到当前 `master` 的增量，包含 Highlights、Compatibility / Migration Notes、Validation。兼容性说明列出本次提供的二进制平台；门禁数值来自本次真实输出。执行 `release:publish`：脚本先验证本地和远端 `master`、annotated tag，再创建草稿、上传资产并下载核对内容，全部通过后才公开为 Latest，最后再次确认下载内容和远端引用。需要迁移附件时，可先创建说明一致的草稿并上传附件，再由脚本补齐二进制资产。

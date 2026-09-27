@@ -61,7 +61,7 @@
 
 ### Bun の実行境界
 
-`bunfig.toml` の `run.bun = true` により、Node shebang を持つ依存 CLI も現在の Bun で実行します。画像変換は `packages/infra/image.ts` が必要なときに `sharp` を読み込みます。視覚入力の JPEG/PNG はそのまま渡し、WebP/GIF は PNG に変換します。アニメーションは透明度を保った先頭フレームだけを読みます。サムネイルは縦横比を保ち、小さい画像の拡大や EXIF 方向による自動回転を行わず、透明な画素を黒い背景に合成したうえで、寸法と容量の上限を満たすまで JPEG の品質を順に試します。ネイティブ API への置き換えでは、同じ入力形式・透明度・アニメーションフレーム・失敗時の意味論を満たす必要があります。
+`bunfig.toml` の `run.bun = true` により、Node shebang を持つ依存 CLI も現在の Bun で実行します。画像変換は `packages/infra/image.ts` が Bun 内蔵の `Bun.Image` で行います。視覚入力の JPEG/PNG はそのまま渡し、WebP/GIF は透明度を保って PNG に変換します。GIF は先頭フレームを使い、アニメーション WebP は先頭の `ANMF` フレームを静的 WebP に詰め直してからデコードし、そのフレーム自身の寸法で出力します（キャンバス上のオフセットへは合成しません）。1 枚あたりのデコード画素数は `VISION_TRANSCODE_MAX_PIXELS`（8K UHD、7680×4320）が上限で、超える画像は画素バッファを確保する前に拒否します。フレーム抽出では範囲ごとに最大 `WEBP_MAX_SCANNED_CHUNKS` 個のチャンクだけを調べ、それを超える場合はコンテナ不正として扱います。変換に失敗すると null を返し、呼び出し側はその画像を解析しません。コーデックは Bun ランタイムに同梱されるため、ソース版もバイナリ版も `node_modules` のネイティブモジュールに依存しません。
 
 ファイル内容の書き込みと通常ファイルの削除には [`Bun.write` と `Bun.file`](https://bun.com/docs/runtime/file-io) を使用します。排他的作成後の書き込みは `Bun.write(Bun.file(handle.fd), content)` で行い、元のハンドルで fsync、close、原子的公開を完了します。ディレクトリ走査、パス、同期永続化、権限、hard link など Bun のネイティブ API が必要な意味論を提供しない操作には `node:` API を使用します。`AsyncLocalStorage`、PEM 秘密鍵の解析、割り当てを伴わない UTF-8 バイト数の計算にも Bun 対応の互換 API を使用します。Disk I/O の起動時・深夜・日付切り替え時の保守は、各非同期削除を待ってから次の領域へ進み、永続化の応答を返します。
 
@@ -69,7 +69,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5317 tests / 465 files / 260880 `expect()` calls**。全ソースコードの**関数カバレッジは 98.07%、行カバレッジは 98.42%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5323 tests / 465 files / 261542 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.41%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -216,7 +216,7 @@ build 間の差をコード最適化の効果として扱いません。失敗�
 `master` への squash merge ごとに、バイナリ資産付きの GitHub Release を 1 つ作成します。
 
 1. remote tag を同期し、`gh release list` で現在の Latest Release tag を取得します。tag は `v` prefix を付けない `MAJOR.MINOR.PATCH` 形式に限定します。変更セット全体で最も高い semantic impact に従い、breaking change は `MAJOR`（`1.0.9` → `2.0.0`）、後方互換の新機能は `MINOR`（`1.0.9` → `1.1.0`）、修正・性能改善・refactoring・documentation のみの場合は `PATCH`（`1.0.9` → `1.0.10`）を増やします。
-2. コードと今回のベンチマーク結果をコミット後、クリーンな `dev` で `release:build` を実行し、Release tag を `--version` で明示します。既定値やソース manifest の版は使わず、指定値をパッケージ内の `package.json` と `binary.json` に書き込み、実行ファイルの `--version` 出力との一致を検証します。宣言する各プラットフォームのアーキテクチャ・libc に対応する環境で、同一の Git tree と Bun version/revision を使ってネイティブ構築します。ビルドでは版、`.map` ファイルがないこと、3 つの Worker、画像処理のネイティブ依存、バイナリ用インストーラーを検証します。正式な公開資産は最終コミット後に生成します。
+2. コードと今回のベンチマーク結果をコミット後、クリーンな `dev` で `release:build` を実行し、Release tag を `--version` で明示します。既定値やソース manifest の版は使わず、指定値をパッケージ内の `package.json` と `binary.json` に書き込み、実行ファイルの `--version` 出力との一致を検証します。宣言する各プラットフォームのアーキテクチャ・libc に対応する環境で、同一の Git tree と Bun version/revision を使ってネイティブ構築します。ビルドでは版、`.map` ファイルと `node_modules` がないこと、3 つの Worker、内蔵の画像コーデック、バイナリ用インストーラーを検証します。正式な公開資産は最終コミット後に生成します。
 3. 各プラットフォームの `.tar.gz` と `.tar.gz.sha256` を集め、`release:verify` を実行します。対応する名前は `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl` です。`--platforms` は今回必要な全プラットフォームの一覧で、資産が不足すれば失敗します。既定では `dist/` を読み、別の集約先は `--directory` で指定します。`binary.json` の版、プラットフォーム、Git tree、Bun version/revision と実際の SHA-256 を照合し、未コミットの作業ツリーから作った資産は拒否します。
 4. リポジトリとデプロイの保護手順に従って `master` へ squash merge し、構築時と Git tree が一致することを確認します。`master` を push 後、そのコミットの annotated version tag を作成して個別に push します。既存 tag の上書き、移動、再利用は禁止です。
 5. 前回の Latest tag から現在の `master` までの差分だけを英語で説明し、Highlights、Compatibility / Migration Notes、Validation を含めます。互換性の説明に提供するバイナリのプラットフォームを列挙し、gate の数値には今回の実測値を使います。`release:publish` はローカル・リモートの `master` と annotated tag を照合してから草稿を作り、資産をアップロードしてダウンロード内容を検証します。全検証の通過後に Latest として公開し、ダウンロード内容とリモート参照を再確認します。移行用添付ファイルが必要な場合は、同じ説明文の草稿を先に作って添付し、スクリプトでバイナリ資産を追加できます。

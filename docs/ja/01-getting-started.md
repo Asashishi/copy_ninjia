@@ -45,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 両方式とも `releases/latest` から **GitHub Latest Release** を取得し、`COPY_NINJIA_DIR`（既定は `copy_ninjia/`、相対・絶対パス対応）へ配置して、そのディレクトリの `install.sh` に処理を渡します。取得失敗時は停止し、`master` にフォールバックしません。既存デプロイの版と方式を保持し、アップグレードや方式の変換は行いません。
 
 - **ソース方式**：対象 tag を detached HEAD で clone し、Bun **1.4.2** と `packageManager` を照合して固定済み依存関係をインストールします。既存のシステム Bun が一致しなければ設定の書き込み前に停止し、手動導入コマンドを表示します。
-- **バイナリ方式**：Linux x64/arm64 と glibc/musl を識別し、`copy-ninjia-<プラットフォーム>.tar.gz` と `.sha256` を取得します。内容、版、プラットフォームを検証してから、まだ存在しない対象ディレクトリへ配置します。対応資産が Release に無い場合や照合失敗時は停止します。Bun、Worker、画像処理のネイティブ依存、設定例、インストーラーが同梱され、git、システム Bun、対象マシンでのコンパイルは不要です。配布ディレクトリ全体を保持し、その中で `./copy-ninjia` を実行します。`--version` はパッケージの版を表示します。設定、素材、既定のデータルートはデプロイ作業ディレクトリを基準とし、独立データルートは引き続き `COPY_NINJIA_DATA_ROOT` で指定します。
+- **バイナリ方式**：Linux x64/arm64 と glibc/musl を識別し、`copy-ninjia-<プラットフォーム>.tar.gz` と `.sha256` を取得します。内容、版、プラットフォームを検証してから、まだ存在しない対象ディレクトリへ配置します。対応資産が Release に無い場合や照合失敗時は停止します。Bun、Worker、設定例、インストーラーが同梱され（画像のエンコード・デコードは内蔵 Bun が提供し、`node_modules` は同梱しません）、git、システム Bun、対象マシンでのコンパイルは不要です。配布ディレクトリ全体を保持し、その中で `./copy-ninjia` を実行します。`--version` はパッケージの版を表示します。設定、素材、既定のデータルートはデプロイ作業ディレクトリを基準とし、独立データルートは引き続き `COPY_NINJIA_DATA_ROOT` で指定します。
 
 既存ソースツリー内の `bash install.sh` は checkout を保持し、既存バイナリディレクトリ内では現在のパッケージを再利用します。
 

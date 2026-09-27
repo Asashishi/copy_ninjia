@@ -55,7 +55,6 @@
     "@grammyjs/transformer-throttler": "^1.2.1",
     "drizzle-orm": "0.45.2",
     "grammy": "^1.46.0",
-    "openai": "^7.15.0",
-    "sharp": "^0.35.4"
+    "openai": "^7.15.0"
   }
 }
