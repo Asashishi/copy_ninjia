@@ -25,7 +25,7 @@
 - **提示发出来一会儿就消失了**：命令校验失败、权限拒绝、用法提示和操作回执都在发送成功 30 秒后自动删除；长期保留的例外见 [08 命令与行为参考](08-commands.md)。
 - **`@机器人` 不出现运势候选**：没开 Inline Mode。
 - **`/咬` 这类动作命令没反应**：只认 1~2 个中文字；全局每 90 秒最多应答 450 次，超出直接静默丢弃。
-- **另一个机器人的消息没被翻译或复读，或时有时无**：需要开启 Bot-to-Bot Communication Mode（见 [BotFather 设置](../../README.md#botfather-setup)）。翻译处理文字与图注，没有文字的图片、贴纸、文件不发送，含可渲染 `/命令` 的消息整条跳过。
+- **另一个机器人的消息没被翻译或复读，或时有时无**：需要开启 Bot-to-Bot Communication Mode（见 [BotFather 设置](../../README.md#botfather-setup)）。翻译处理文字与图注，只发译文：没有文字的图片、贴纸、文件不发送，已是目标语言或只有数字、标点、表情的文字没有输出，含可渲染 `/命令` 的消息整条跳过。
 - **入群验证、广告检测、刷屏禁言没有动作**：三者默认关闭，需分别执行 `/antiraid enable`、`/ad_detect enable`、`/flood_control enable`，且机器人要是管理员并有 [群内管理员权限](../../README.md#botfather-setup) 表中对应的权限；广告检测还需要 `config/dynamic/agent.json` 配好广告检测能力。
 - **完全没反应，命令菜单也没有**：先确认进程在运行（`systemctl status <服务名>`、`journalctl -u <服务名>`），错误日志在数据根的 `logs/<日期>.json`。配置或状态写错时进程在启动阶段直接退出，日志写明文件路径和字段；日志反复出现 `Error fetching Telegram updates` 且错误码为 409，说明同一个 token 另有实例在拉取更新或设置了 webhook，进程会退出。排查步骤见 [07 运维与排障](07-operations.md#启动失败排查)。
 
@@ -43,7 +43,7 @@
 
 ## 定时语音或 `/send` 语音为什么发不出来？
 
-两者都用 `config/dynamic/agent.json` 的 `agent.tts` 在 AI Worker 上合成。`cron.json` 用到 `send_voice` 而没配 `tts` 时，启动直接拒绝，运行中改出这种组合的那一份改动会被热重载拒绝并记错误日志；`/send` 的语音请求会直接回「未配置语音合成」。配了 `tts` 仍失败时看日志：`speech synthesis failed: worker unavailable` 表示 AI Worker 没在运行（`stickers.json`、`mood.json`、`prompt/persona.md` 也要齐），`tts unsupported` 表示所选 provider 没实现语音合成（当前只有 `google`），`synthesis failed` / `timed out` 多为模型端问题，`daily limit reached` 表示当日语音额度已用尽：`/send` 与 cron 共用独立的 `daily_reserve_quota`（缺省 25）次并记录在 `reserveCount`，AI 独立使用 `daily_limit - daily_reserve_quota`（缺省 75）次并记录在 `agentCount`，两边互不占用；预留为 0 时 `/send` 和 cron 无法合成语音。计数窗口从窗口内第一次请求起算、满 24 小时后重计，记在 `memory/global/state.json` 的 `ttsUsage`；这两个数在 `agent.tts` 里调整，改完热重载即生效，已用次数不清零。`/send` 的语音请求必须整条是代码块，且 `type` 为 `tts`，否则会按普通消息转发。字段与限制见 [部署配置说明](../../config_example/README/zh.md#cronjson) 与 [08 命令参考](08-commands.md)。
+两者都用 `config/dynamic/agent.json` 的 `agent.tts` 在 AI Worker 上合成。`cron.json` 用到 `send_voice` 而没配 `tts` 时，启动直接拒绝，运行中改出这种组合的那一份改动会被热重载拒绝并记错误日志；`/send` 的语音请求会直接回「未配置语音合成」。配了 `tts` 仍失败时看日志：`speech synthesis failed: worker unavailable` 表示 AI Worker 没在运行（`stickers.json`、`mood.json`、`prompt/persona.md` 也要齐），`tts unsupported` 表示所选 provider 没实现语音合成（`google` 与 `openai` 当前都已实现），`synthesis failed` / `timed out` 多为模型端问题（OpenAI 兼容端点须支持 audio/speech 与 `opus` 格式，例如 Cloudflare 的 OpenAI 兼容入口没有该路由），`not an Ogg Opus stream`、`not an MP3 stream` 等表示端点返回的音频格式与请求不符，`daily limit reached` 表示当日语音额度已用尽：`/send` 与 cron 共用独立的 `daily_reserve_quota`（缺省 25）次并记录在 `reserveCount`，AI 独立使用 `daily_limit - daily_reserve_quota`（缺省 75）次并记录在 `agentCount`，两边互不占用；预留为 0 时 `/send` 和 cron 无法合成语音。计数窗口从窗口内第一次请求起算、满 24 小时后重计，记在 `memory/global/state.json` 的 `ttsUsage`；这两个数在 `agent.tts` 里调整，改完热重载即生效，已用次数不清零。`/send` 的语音请求必须整条是代码块，且 `type` 为 `tts`，否则会按普通消息转发。字段与限制见 [部署配置说明](../../config_example/README/zh.md#cronjson) 与 [08 命令参考](08-commands.md)。
 
 ## 语音长度、温度和记忆如何设置？
 
@@ -55,7 +55,7 @@
 
 长度按 UTF-16 码元计，`tone` 上限统一为 64；空白归一化后再校验。`/send` 超限会回格式提示；cron 的非法字段会使启动失败，热重载时则拒绝整份改动并记日志。音频响应另有 8 MiB 上限，文本长度不保证合成时长。
 
-音色由 `agent.tts.voice` 设置，基础风格由可选的 `agent.tts.style` 设置，两者位于 `config/dynamic/agent.json`，支持热重载。`style` trim 后必须非空，缺省使用 [`GEMINI_SPEECH_STYLE`](../../packages/consts/aiChat/gemini.ts)，删除字段恢复默认；三个入口共用，给出语气时拼成 `<基础风格>; 细节: <语气>`。新请求使用重载后的配置，已发起的请求保留原快照。采样温度仍由源码常量 `GEMINI_SPEECH_TEMPERATURE`（当前 `1`）决定，修改温度需要重新构建或重启源码服务。
+音色由 `agent.tts.voice` 设置，基础风格由可选的 `agent.tts.style` 设置，两者位于 `config/dynamic/agent.json`，支持热重载。`style` trim 后必须非空，缺省使用 [`TTS_DEFAULT_STYLE`](../../packages/consts/aiChat/voiceMessage.ts)，删除字段恢复默认；三个入口共用，给出语气时拼成 `<基础风格>; 细节: <语气>`，Gemini 作为 `speech_metadata.style`、OpenAI 作为 `instructions` 发送（OpenAI 官方说明 `tts-1` / `tts-1-hd` 不支持 `instructions`）。`speech_protocol: "xai"` 没有风格字段，不接受 `style`，语气也不发送。新请求使用重载后的配置，已发起的请求保留原快照。Gemini 的采样温度仍由源码常量 `GEMINI_SPEECH_TEMPERATURE`（当前 `1`）决定，修改温度需要重新构建或重启源码服务。
 
 ## 如何经三方网关（如 Cloudflare AI Gateway）调用 Google 模型？
 

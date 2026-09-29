@@ -1,8 +1,4 @@
 import { verificationEntries } from "../../../cache/workers/antiRaid/verification";
-import {
-  VERIFICATION_TERMINAL_RETRY_MAX_MS,
-  VERIFICATION_TERMINAL_RETRY_MS,
-} from "../../../consts/antiRaid/verification";
 import { logger } from "../../../infra/logger";
 import {
   kickChatMemberWithOutcome,
@@ -18,6 +14,7 @@ import type { VerificationState } from "../../../types/states/verification";
 import type { KickChatMemberOutcome } from "../../../infra/telegram";
 import { botCanRestrictIn } from "../botPermissions";
 import { resolveChatIsSupergroup } from "../chatKind";
+import { scheduleTerminalRetry } from "./retry";
 
 interface ScheduleKickRetryParams {
   chatId: number;
@@ -26,28 +23,16 @@ interface ScheduleKickRetryParams {
   dispatchVerification: VerificationDispatcher;
 }
 
-/** 为仍是当前 token 的私密模式踢人动作安排指数退避重试。 */
+/** 为仍是当前 token 的私密模式踢人动作安排指数退避重试；排上时清掉「效果已开始」标记。 */
 function scheduleKickRetry({
   chatId,
   userId,
   state,
   dispatchVerification,
 }: ScheduleKickRetryParams): void {
-  const key: string = verificationKey(chatId, userId);
-  const entry: VerificationEntry | undefined = verificationEntries.get(key);
-  if (entry?.state !== state) return;
-  state.effectStarted = false;
-  if (entry.timer !== undefined) clearTimeout(entry.timer);
-  const retries: number = entry.terminalRetries ?? 0;
-  entry.terminalRetries = retries + 1;
-  entry.timer = setTimeout(
-    (): void => dispatchVerification(chatId, userId, { type: "kickRetry" }),
-    Math.min(
-      VERIFICATION_TERMINAL_RETRY_MS * (2 ** retries),
-      VERIFICATION_TERMINAL_RETRY_MAX_MS
-    )
-  );
-  entry.timer.unref();
+  if (scheduleTerminalRetry({ chatId, userId, state, event: { type: "kickRetry" }, dispatchVerification })) {
+    state.effectStarted = false;
+  }
 }
 
 interface RunKickMemberEffectParams {

@@ -9,6 +9,24 @@ import { AI_REACTION_EMOJIS } from "../reactions";
 import { MAX_STICKER_PACK_VIEWS_PER_REPLY, MAX_STICKERS_PER_REPLY } from "../stickers";
 import { COMMAND_IMAGE_SENT_TAG_HINT, IMAGE_SENT_TAG_HINT, STICKER_SENT_TAG_HINT, VOICE_SENT_TAG_HINT } from "./transcript";
 import { REPLY_CONTEXT_SECTION_NAMES } from "./memory";
+import {
+  GENERATE_IMAGE_TOOL,
+  GROUP_QA_ANSWER_TOOL,
+  GROUP_QA_QUERY_TOOL,
+  SEND_VOICE_TOOL,
+} from "../../tools";
+
+/**
+ * 运行时状态区块里「本轮工具状态」段的段首标签。段内每个按轮有条件的工具各占一行、
+ * 只写事实（能不能用、是否冷却、还剩几次），怎么据此行动由系统提示词里的
+ * REPLY_ACTION_INSTRUCTION 与各工具说明规定；工具清单本身每轮恒定。
+ * 所属模块：aiChat/ai/tools/replyToolset/toolStatus.ts。
+ */
+export const TOOL_STATUS_BLOCK_LABEL: string = "【本轮工具状态】";
+
+/** 工具说明与行动总则里指向本轮工具状态段的固定说法；各工具说明共用，措辞不漂移。 */
+export const TOOL_STATUS_POINTER: string =
+  `${REPLY_CONTEXT_SECTION_NAMES.runtimeState} 区块的${TOOL_STATUS_BLOCK_LABEL}`;
 
 /** AI 回复判定无需回应时的输出约束；系统停止指令与排队任务共用。 */
 export const SILENT_REPLY_END_INSTRUCTION: string =
@@ -41,9 +59,9 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
   "只有整轮都挑不出对得上的，才改用文字或表情反应。";
 
 /** send_message 工具的模型可见使用说明。手滑轮与普通轮共用这段文案，
- * 因此绝不能提「出错/手滑」——两个分支的提示词严格分开（见
- * workers/aiChat/promptContext.ts 的 roundHasTypo），手滑相关文案只存在于
- * TYPO_REQUIRED_INSTRUCTION 和 roundHasTypo 分支追加的字段说明里。 */
+ * 因此绝不能提「出错/手滑」：手滑规则只存在于抽中时拼进回复任务的
+ * TYPO_REQUIRED_INSTRUCTION；恒声明的两个可选字段的说明只写「回复任务要求时才填」
+ * （见 aiChat/ai/tools/replyToolset/definitions.ts）。 */
 export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   "把一条独立的文字消息发到群里。只有确实有内容需要对群友说时才调用；" +
   "判断无需再发言时不要调用本工具，也不要发送空消息。不要把用于判断是否结束的内部分析、历史回应回顾或「本轮结束」「无需回复」等结束说明发到群里。" +
@@ -60,9 +78,8 @@ export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
   `send_voice 念过的台词（转录里「${VOICE_SENT_TAG_HINT}」这类行）也不要再用 text 发一遍：台词是日语，按意思判断，` +
   "把它翻成中文、换个说法或加上注释再发出来都算重复。" +
   `绝不能用 text 描述一个你没真做的动作：转录里「${STICKER_SENT_TAG_HINT}」「${IMAGE_SENT_TAG_HINT}」「${COMMAND_IMAGE_SENT_TAG_HINT}」「${VOICE_SENT_TAG_HINT}」这类括号行，` +
-  "是执行侧在动作**真正落地之后**替你写下的记录，不是你可以自己打出来的话。" +
-  "工具没调、或者调了没成功（比如生图正在冷却），就直接用自己的话说这次发不了（send_voice 例外：语音没发成就当没打算发，不要提），" +
-  "绝不要打一段听起来像已经发过图/发过贴纸/发过语音的文字；这种正文会被执行侧拒绝。";
+  "是执行侧在动作**真正落地之后**替你写下的记录，不是你可以自己打出来的话；" +
+  "绝不要打一段听起来像已经发过图/发过贴纸/发过语音的文字，这种正文会被执行侧拒绝。";
 
 /** 手滑替换字必须满足的形、音或输入法邻近规则。 */
 export const TYPO_SUBSTITUTION_RULE: string =
@@ -72,10 +89,10 @@ export const TYPO_SUBSTITUTION_RULE: string =
 /** 本轮抽中手滑时追加到模型上下文的必做要求。 */
 export const TYPO_REQUIRED_INSTRUCTION: string =
   "仅在本轮确实需要回应时执行以下手滑要求；判断无需再发言时，直接静默结束，不调用回复工具，也不为满足动作数继续发言。" +
-  "【本轮手滑】这一轮抽中了「出错」：这一轮 send_message 的 typo_original_char 和 typo_replacement_char 是必填字段。" +
-  "挑一条自然的短句，从 text 里原样抄一个已有字填进 typo_original_char（只写这一个字，不要写整句话），再把它要被换成的" +
-  `错字填进 typo_replacement_char（同样只写一个字，${TYPO_SUBSTITUTION_RULE}）——执行侧会自动把这个字在 text 里替换掉，` +
-  "你不用重新打一遍整句话。其余不想出错的消息，两个字段填成同一个字（哪个字都行）即可，不会产生错字。错字发出去之后" +
+  "【本轮手滑】这一轮抽中了「出错」：挑一条自然的短句，调用 send_message 时额外填上 typo_original_char 和 typo_replacement_char 两个字段——" +
+  "从 text 里原样抄一个已有字填进 typo_original_char（只写这一个字，不要写整句话），再把它要被换成的" +
+  `错字填进 typo_replacement_char（同样只写一个字，${TYPO_SUBSTITUTION_RULE}）；执行侧会自动把这个字在 text 里替换掉，` +
+  "你不用重新打一遍整句话。其余不想出错的消息不填这两个字段。错字发出去之后" +
   "90% 会由执行侧延迟补发正确的那一个字，10% 当作没发现；不会撤回错字消息，也不会重发正确全文。" +
   "你不用管、也不用为此多说话；绝对不要自己补发纠正、也不要把同一句话的正确版本再发一遍（内容相同的消息会被执行侧拒绝）。" +
   "这一轮不适用「通常 1~3 个动作」的默认节奏：请确保总共至少 3 个动作（可能含执行侧自动产生的纠正动作），" +
@@ -87,7 +104,8 @@ export const ADD_REACTION_TOOL_INSTRUCTION: string =
   `每轮回复最多 ${MAX_REACTIONS_PER_REPLY} 次。emoji 只能从下面这份清单里选：\n` +
   AI_REACTION_EMOJIS.join(" ");
 
-/** generate_image 工具的模型可见资格与冷却说明。 */
+/** generate_image 工具的模型可见资格与冷却说明。工具每轮恒挂；本轮能不能用、是否冷却
+ * 由运行时状态区块的本轮工具状态给出，执行侧在调用时再判一次并直接拒绝。 */
 export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   `根据群友当前请求生成或编辑一张 1K 图片并直接发送到群里，每轮最多成功发送 ${MAX_GENERATED_IMAGES_PER_REPLY} 张。` +
   "调用的硬前提是：本轮触发消息直接回复或 @ 了你，且消息本身明确要求画图、生图、" +
@@ -95,22 +113,24 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "都不构成调用意图；不得根据暗示或自行发挥擅自生图。执行侧只校验当前消息是否直接回复/@你，具体意图由你根据当前消息判断，不依赖关键词匹配。" +
   "prompt 必须是可独立交给图片模型的完整画面说明，" +
   `不要写对工具的解释。同一个群每 ${IMAGE_GENERATION_COOLDOWN_MS / 60_000} 分钟最多接受一次由普通用户触发的生图尝试，` +
-  "群内共享冷却；superAdmin 不受这项冷却限制。冷却只由执行侧在调用时判定，调用之前不会告诉你本轮还剩多久：" +
-  "还在冷却里的调用会被直接拒绝并返回剩余秒数，那时用 send_message 把「暂时不能生图、请约多少秒后再试」告诉群友，本轮不要再次调用本工具。" +
+  "群内共享冷却；superAdmin 不受这项冷却限制。" +
+  `本轮能不能用、是否还在冷却，看 ${TOOL_STATUS_POINTER}里 ${GENERATE_IMAGE_TOOL} 那一行：显示不可用或冷却中时不要调用；` +
+  "群友本轮明确要图而用不了时，用 send_message 一句话告诉 TA 这次画不了（冷却中就说约多少秒后再试）。" +
+  "执行侧在调用时会再判定一次，用不了的调用直接被拒绝，冷却中还会返回剩余秒数。" +
   "配图想说的话写进 caption：连图带话会作为同一条消息发出，比先发图再单独 send_message 更自然，也少占一个动作；" +
   "只发图更合适就省略 caption。caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。";
 
 /**
- * send_voice 工具的模型可见说明。调用与否由模型按本段与回复任务末尾的今日余量行
- * （voiceQuotaSentence）判断，执行侧只在余量用尽时拒绝；说明逐字恒定，不含随
+ * send_voice 工具的模型可见说明。调用与否由模型按本段与本轮工具状态里的余量行
+ * （voiceToolStatus）判断，执行侧在余量用尽时拒绝；说明逐字恒定，不含随
  * `agent.tts` 配置变化的额度数字，额度只出现在余量行里。
  */
 export const SEND_VOICE_TOOL_INSTRUCTION: string =
   "用你自己的声音往群里发一条日语语音：执行侧把 text 交给语音合成模型念出来，以 Telegram 语音消息发出。" +
   "语音用来表达情绪：得意、嫌弃、撒娇、调侃、回嘴、恼羞、吃惊这类情绪明显起伏的时候，配一句语音把情绪念出来；" +
   "平淡的陈述、认真求助、严肃或敏感话题不发。发不发由你决定，整轮不发语音也完全可以。" +
-  "语音按天限量，所有群共用一份额度：调用前必须先看回复任务区块末尾的「今日语音余量」行，确认自己还能用；" +
-  "余量还有时，在余量范围内积极用它表达情绪；余量为 0 时不要调用。" +
+  `语音按天限量，所有群共用一份额度：调用前先看 ${TOOL_STATUS_POINTER}里 ${SEND_VOICE_TOOL} 那一行；` +
+  "还有余量时，在余量范围内积极用它表达情绪；显示已用完时不要调用。" +
   `每轮最多 ${MAX_VOICES_PER_REPLY} 条。` +
   "text 只写要念出来的日语台词，一两句，带嘲讽、挑衅的口吻；优先用海外观众也耳熟能详的动漫腔台词" +
   "（如「この雑魚♡」「ざぁこ♡」「バーカ」「へんたい」「ふーん、やるじゃん」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
@@ -119,26 +139,64 @@ export const SEND_VOICE_TOOL_INSTRUCTION: string =
   `结合台词内容和当前气氛来定，不超过 ${VOICE_TONE_MAX_CHARS} 字；它会接在固定的基础声线描述之后，只影响这一句。` +
   "语音是回复里额外的一句：语音里已经说过的意思不要再用 send_message 发一遍——台词是日语，按意思判断，" +
   "把它翻成中文、换个说法或加上注释再发都算重复；文字只发语音之外的内容。" +
+  "语音可能合成失败而没有发出，所以文字里不要提到、预告或指向这条语音（如「听完」「多听几遍」「用声音骂你」），" +
+  "也不要解释为什么没用声音。" +
   "reply_to_trigger 填 true 时这条语音以「回复」形式挂在触发消息上，挂不挂的判断同 send_message。" +
-  "调用被拒绝（包括额度用尽）或没发出去时，不要在群里提语音、额度或失败的事，当作没打算发语音继续回复。";
+  "返回 success 时语音已经合成好，执行侧按顺序发出；success 里带 synthesis: \"pending\" 时语音还在合成，" +
+  "合成好后执行侧自动补发，合成失败就不会发出，照常继续回复，不要重试也不要等它；" +
+  "返回 error（额度用尽、合成失败或超时）时这条语音没有发出：" +
+  "不要重试，也不要在群里提语音、额度或失败的事，当作没打算发语音继续回复。";
 
 /**
- * 回复任务区块末尾的今日语音余量行，只在本轮挂载 send_voice 时出现（见
- * aiChat/ai/tools/replyToolset/voiceMessage.ts 的 buildVoiceQuotaLine）。
+ * 本轮工具状态里的语音余量行，只在部署了语音合成（send_voice 恒挂）时出现（见
+ * aiChat/ai/tools/replyToolset/toolStatus.ts）。
  * @param remaining 模型可见的剩余次数，不小于 0。
  * @param dailyLimit AI 语音工具的每日上限，即 `agent.tts` 的 `daily_limit - daily_reserve_quota`。
  */
-export function voiceQuotaSentence(remaining: number, dailyLimit: number): string {
+export function voiceToolStatus(remaining: number, dailyLimit: number): string {
   return remaining > 0
-    ? `今日语音余量：send_voice 今天还能用 ${remaining} 次（每天 ${dailyLimit} 次，所有群共用）。`
-    : `今日语音余量：0（每天 ${dailyLimit} 次，所有群共用，今天已用完）。本轮不要调用 send_voice，也不要在群里提起语音或额度。`;
+    ? `${SEND_VOICE_TOOL}：今天还剩 ${remaining} 次（每天 ${dailyLimit} 次，所有群共用）`
+    : `${SEND_VOICE_TOOL}：今天已用完（每天 ${dailyLimit} 次，所有群共用）`;
+}
+
+/**
+ * 本轮工具状态里「可以生图」的一行，后接参考素材说明（imageReferencePresent 或
+ * IMAGE_REFERENCE_ABSENT）。
+ * @param reference 本轮参考素材说明。
+ */
+export function imageToolStatusAvailable(reference: string): string {
+  return `${GENERATE_IMAGE_TOOL}：可用。参考素材：${reference}`;
+}
+
+/** 本轮工具状态里「本轮不是直接 @/回复机器人，不能生图」的一行。 */
+export const IMAGE_TOOL_STATUS_UNAUTHORIZED: string =
+  `${GENERATE_IMAGE_TOOL}：不可用（本轮不是群友直接 @ 或回复你）`;
+
+/**
+ * 本轮工具状态里「本群生图冷却中」的一行。
+ * @param retryAfterSeconds 回复开始时读到的剩余冷却秒数，向上取整、不小于 1。
+ */
+export function imageToolStatusCoolingDown(retryAfterSeconds: number): string {
+  return `${GENERATE_IMAGE_TOOL}：冷却中（约 ${retryAfterSeconds} 秒后恢复）`;
+}
+
+/**
+ * 本轮工具状态里的问答行；问答两件工具恒挂，这一行也恒出现。
+ * @param count 本轮 trigger 随附的本群问答条数。
+ */
+export function groupQaToolStatus(count: number): string {
+  return count > 0
+    ? `${GROUP_QA_QUERY_TOOL} / ${GROUP_QA_ANSWER_TOOL}：本群登记了 ${count} 条问答`
+    : `${GROUP_QA_QUERY_TOOL} / ${GROUP_QA_ANSWER_TOOL}：本群没有登记问答`;
 }
 
 /**
  * 每轮所有可见动作必须经工具落地的总约束。
  *
- * 本段只声明跨工具的不变量；每种动作的资格、字段和限额由对应工具说明负责。
- * 工具按轮裁剪，模型以本轮实际清单为准。
+ * 本段只声明跨工具的不变量；每种动作的字段和限额由对应工具说明负责。工具清单每轮
+ * 恒定，按轮变化的可用性只写在运行时状态区块的本轮工具状态里，本段规定模型据此
+ * 怎么做；执行侧在调用时另有同样的硬性判定。工具回执的语义（接纳、拒绝、失败后
+ * 不单独作反应）也只在本段声明一次。
  */
 export const REPLY_ACTION_INSTRUCTION: string =
   "先判断本轮是否仍需要回应。若触发消息已被你实质回应且没有新内容，或你判断话题已经结束、无需再发言，" +
@@ -146,10 +204,15 @@ export const REPLY_ACTION_INSTRUCTION: string =
   "结束不需要通过工具确认，不要用 send_message、caption、贴纸、反应或其他回复工具宣布结束，也不要复述先前已经给出的回应。" +
   "这项停止规则优先于最低动作数要求。只有确实需要回应时，" +
   `本轮至少完成一个群友可见动作，通常 1～3 个，最多 ${AI_MAX_ACTIONS_PER_REPLY} 个。` +
-  "所有可见动作只调用本轮工具清单中的工具；清单没有的不得调用。独立文字只用 send_message；" +
+  `工具清单每轮固定；某个工具本轮能不能用、还剩几次，以 ${TOOL_STATUS_POINTER}为准：` +
+  "标为不可用、冷却中或已用完的工具本轮不要调用，执行侧也会直接拒绝。独立文字只用 send_message；" +
   "生成图片时，随附文字写进 generate_image 的 caption，不要再复述。贴纸必须先 view_sticker_pack 再 send_sticker。" +
-  "查询和查看不算可见动作。工具未成功时不得声称已经完成。" +
-  "发送工具返回 success: true、queued: true 表示动作已接纳，执行侧负责排队、发送和重试；不要重复提交、查询发送进度或等候发送完成，可以继续处理其它任务或结束本轮。" +
+  "查询和查看不算可见动作。" +
+  "发送工具返回 success: true 且带 message_id 表示动作已经发出；返回 success: true、queued: true 表示动作已接纳，执行侧负责排队、发送和重试。" +
+  "两种情况都不要重复提交、查询发送进度或等候发送完成，可以继续处理其它任务或结束本轮。" +
+  "工具返回 error 表示这个动作没有发生：之后不得当作已经完成，不引用、不接着它说话，也不要原样重试。" +
+  "对失败本身不单独作反应：不道歉、不解释，不提工具、额度、冷却或失败，照原计划用其它方式回应或直接结束；" +
+  `唯一的例外是群友本轮明确要你画图而 ${GENERATE_IMAGE_TOOL} 用不了或被拒时，用 send_message 一句话告诉 TA 这次画不了（冷却中就说约多少秒后再试）。` +
   "查看与查询工具直接返回真实数据，按返回清单或数据继续判断，不要把发送接纳回执当成已经取得消息编号。" +
   "同一轮中同一内容只表达一次，正文、图片 caption 与语音台词共用这条规则；不要靠改标点、空格、换行或换个说法重复已经表达的意思。" +
   "语音台词是日语，按意思判断：用中文或其它语言把语音里说过的话再发成文字，同样算重复。" +
@@ -160,20 +223,13 @@ export const REPLY_ACTION_INSTRUCTION: string =
 /**
  * generate_image 工具描述末尾的常量指引。
  *
- * 参考素材尺寸每次触发都不同，写进工具声明就会让「静态系统提示词 + 全部工具声明 +
- * 参考记忆」这整段稳定前缀每轮换一个指纹，两家供应商的自动前缀缓存都会从这里开始
+ * 参考素材尺寸、群冷却剩余秒数每次触发都不同，写进工具声明就会让「静态系统提示词 +
+ * 全部工具声明」这段稳定前缀每轮换一个指纹，两家供应商的前缀缓存都会从这里开始
  * 落空（见 aiChat/{gemini,openai}/replySession.ts 的头注）。因此声明里只留这句逐字
- * 恒定的指引，素材本身写进运行时状态区块。
- *
- * 群冷却不在此列：它整条不进提示词，只由执行侧在调用时判定并在冷却中直接拒绝，
- * 见 aiChat/ai/tools/replyToolset/imageGeneration.ts。
+ * 恒定的指引，素材与冷却写进运行时状态区块的本轮工具状态。
  */
 export const IMAGE_REFERENCE_POINTER: string =
-  `本轮有没有可用的参考图片素材，以 ${REPLY_CONTEXT_SECTION_NAMES.runtimeState} 区块给出的说明为准。`;
-
-/** 运行时状态区块里参考素材段的段首标签。只在本轮真的挂了生图工具时出现，
- *  没挂生图的轮次整段不拼，运行时状态区块因此与不含生图的轮次逐字相同。 */
-export const IMAGE_REFERENCE_BLOCK_LABEL: string = "本轮生图参考素材：";
+  `本轮有没有可用的参考图片素材，见 ${TOOL_STATUS_POINTER}里 ${GENERATE_IMAGE_TOOL} 那一行。`;
 
 /** 本轮触发附带参考图素材时的说明。
  *  @param width 素材像素宽。

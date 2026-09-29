@@ -19,6 +19,7 @@ import {
   resetAiProviderFacades,
 } from "../cache/workers/aiChat/providerScheduler";
 import { geminiClientCache } from "../cache/workers/aiChat/gemini";
+import { textGeminiContextCache } from "../cache/workers/aiChat/geminiContextCache";
 import { resetMediaInputSupport } from "../cache/workers/aiChat/mediaInputSupport";
 import { openAiClientCache } from "../cache/workers/aiChat/openai";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../config/agent";
@@ -32,7 +33,6 @@ import { logger } from "../infra/logger";
 import { createPrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
 import type {
   AgentDeploymentConfig,
-  AgentCapability,
   AgentCapabilityConfig,
   AgentImageCapabilityConfig,
   AgentTtsCapabilityConfig,
@@ -75,7 +75,7 @@ const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiCh
  * 把五项能力都装配齐了」，门面构造要的是「这一次只许用这一项」，两件事由构造
  * 函数的返回类型分开表达，不必为同一份配置读两遍。
  */
-function capabilityConfig(capability: AgentCapability): AgentCapabilityConfig {
+function capabilityConfig(capability: "text" | "summary" | "media"): AgentCapabilityConfig {
   const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
   if (config === undefined) {
     throw new Error(`Agent capability "${capability}" is not configured.`);
@@ -83,17 +83,20 @@ function capabilityConfig(capability: AgentCapability): AgentCapabilityConfig {
   return config;
 }
 
+/** 配额归属只看的三项：供应商协议、端点与凭据；各能力配置（含 xai 语音协议）都带这三项。 */
+type QuotaLaneIdentity = Pick<AiProviderQuotaLane, "provider" | "baseUrl" | "apiKey">;
+
 /**
  * 以供应商协议、端点与凭据识别真实配额归属。模型名刻意不参与：同一账号下的
  * 多模型通常仍共享项目级额度，拆开会让总并发悄悄倍增。
  */
-function isQuotaLaneOf(lane: AiProviderQuotaLane, config: AgentCapabilityConfig): boolean {
+function isQuotaLaneOf(lane: AiProviderQuotaLane, config: QuotaLaneIdentity): boolean {
   return lane.provider === config.provider &&
     lane.baseUrl === config.baseUrl &&
     lane.apiKey === config.apiKey;
 }
 
-function quotaRunnerFor(config: AgentCapabilityConfig): PrioritizedBoundedTaskRunner {
+function quotaRunnerFor(config: QuotaLaneIdentity): PrioritizedBoundedTaskRunner {
   for (const lane of aiProviderQuotaLanes) {
     if (isQuotaLaneOf(lane, config)) return lane.runner;
   }
@@ -236,9 +239,10 @@ function createImageFacade(
 }
 
 /**
- * 语音合成门面：请求经交互优先的配额闸门排队，轮到执行、紧挨着发起供应商请求时
- * 登记每日计数（aiChat/ai/ttsUsage.ts 的 claimTtsUsage）；超出本门面所属 `agent.tts`
- * 配置按请求 `quota` 口径算出的上限时不发请求。排队期间被取消或队列已满的请求不计数。
+ * 语音合成门面：请求经交互优先的配额闸门排队。`quotaClaimed` 为 false 的请求在轮到
+ * 执行、紧挨着发起供应商请求时登记每日计数（aiChat/ai/ttsUsage.ts 的 claimTtsUsage），
+ * 超出本门面所属 `agent.tts` 配置按请求 `quota` 口径算出的上限时不发请求，排队期间被
+ * 取消或队列已满的不计数；为 true 的请求已由调用方登记，门面直接合成。
  */
 function createSpeechFacade(
   provider: AiChatProvider,
@@ -249,7 +253,9 @@ function createSpeechFacade(
   if (synthesizeSpeech === undefined) return { name: provider.name };
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   const synthesize = async (request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => {
-    if (!claimTtsUsage(request.quota, ttsQuotaLimit(config, request.quota))) return { ok: false, reason: "daily limit reached" };
+    if (!request.quotaClaimed && !claimTtsUsage(request.quota, ttsQuotaLimit(config, request.quota))) {
+      return { ok: false, reason: "daily limit reached" };
+    }
     const speech: SynthesizedSpeech | null = await synthesizeSpeech(request);
     return speech === null ? { ok: false, reason: "synthesis failed" } : { ok: true, speech };
   };
@@ -366,7 +372,7 @@ export function ttsAiProvider(): AiSpeechFacade | null {
  */
 export function reportUnimplementedAgentCapabilities(): void {
   const config: AgentDeploymentConfig = getAgentDeploymentConfig();
-  const tts: AgentCapabilityConfig | undefined = config.tts;
+  const tts: AgentTtsCapabilityConfig | undefined = config.tts;
   if (tts !== undefined && AI_CHAT_PROVIDERS[tts.provider].synthesizeSpeech === undefined) {
     logger.error(
       `Speech synthesis stays unavailable: $.agent.tts selects the "${tts.provider}" provider, ` +
@@ -396,14 +402,18 @@ function isQuotaLaneInUse(lane: AiProviderQuotaLane, config: AgentDeploymentConf
  * 整体替换本线程 holder 后丢弃按旧快照建立的能力门面与两家 SDK 客户端，下一次
  * 取用按新快照重建；在途请求继续持有旧门面与旧客户端直至结算。同一协议、端点
  * 与凭据的配额 lane 原样保留，并发额度跨重载延续；不再被任何能力引用的 lane
- * 从表中摘除。media 能力变化时两种输入模态回到未探测状态。
+ * 从表中摘除。media 能力变化时两种输入模态回到未探测状态；text 能力变化时丢弃
+ * Gemini 回复共用显式缓存的登记表，下一次回复按新客户端重新扫描。
  */
 export function reloadAgentDeploymentConfig(config: AgentDeploymentConfig): void {
-  const previousMedia: AgentCapabilityConfig = getAgentDeploymentConfig().media;
+  const previous: AgentDeploymentConfig = getAgentDeploymentConfig();
+  const previousMedia: AgentCapabilityConfig = previous.media;
+  const previousText: AgentCapabilityConfig = previous.text;
   adoptAgentDeploymentConfig(config);
   resetAiProviderFacades();
   geminiClientCache.current = null;
   openAiClientCache.current = null;
+  if (!Bun.deepEquals(previousText, config.text)) textGeminiContextCache.current = null;
   let kept: number = 0;
   for (const lane of aiProviderQuotaLanes) {
     if (isQuotaLaneInUse(lane, config)) aiProviderQuotaLanes[kept++] = lane;

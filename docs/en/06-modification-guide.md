@@ -71,7 +71,7 @@ All parameters are centralized under `packages/consts/`, so changing a value doe
 | Tool action/lookup limits, typing and typo pacing | `packages/consts/aiChat/tools.ts` |
 | Voice transcription duration/size limits and placeholders | `packages/consts/aiChat/voice.ts` |
 | Voice tool per-round cap, line/tone length, daily quota defaults and counting window, Opus encoding parameters | `packages/consts/aiChat/voiceMessage.ts` |
-| Request timeouts, retry counts, sampling and safety tiers, speech-synthesis base voice style and temperature | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
+| Request timeouts, retry counts, sampling and safety tiers, speech-synthesis temperature and per-protocol parameters (the default base style lives in `packages/consts/aiChat/voiceMessage.ts`) | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
 | **Models, providers, keys, endpoints** | Not constants: configured per capability in `config/dynamic/agent.json`; see [01-getting-started](01-getting-started.md) |
 | OAI-compatible image wire protocol / size profile | Required `agent.image.image_protocol` in `config/dynamic/agent.json`; a new profile also requires synchronized types, fixed canvas tables, exhaustive dispatch, and tests |
 | Verification window, spam threshold, append/compaction policy | `packages/consts/antiRaid/` |

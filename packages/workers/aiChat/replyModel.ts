@@ -46,13 +46,14 @@ import { buildRuntimeStateBlock } from "./runtimeState";
  * 那一轮的响应本来就不可用，缓存已经无从谈起。
  *
  * toolset 包含 packages/aiChat/ai/tools 的静态查询函数（当前为东京天气）和
- * 按轮组装的行动工具（发言、反应、两层贴纸、符合资格时的生图及已配置时的语音）；可见
- * 副作用在接纳后的独立调用链内发生。服务端检索工具由 toolset.webSearch 单独声明，并由
- * 供应商执行。
+ * 行动工具（发言、反应、两层贴纸、问答查询，部署配置了时的生图与语音）。工具清单
+ * 跨回复同样恒定：按轮变化的可用性写进运行时状态区块的本轮工具状态
+ * （toolset.toolStatus），执行器在调用时兜底拒绝。可见副作用在接纳后的独立调用链内
+ * 发生。服务端检索工具由 toolset.webSearch 单独声明，并由供应商执行。
  *
- * 查时间不走工具：当前时间与今天的心情拼进 user 内容的运行时状态区块（见
- * runtimeState.ts），转录行也自带每条消息的发送时间（见
- * aiChat/ai/utils/chatTranscript.ts 的 formatBufferedMessageLine）。两者都**不在**
+ * 查时间不走工具：当前时间、今天的心情与本轮工具状态拼进 user 内容的运行时状态区块
+ * （见 runtimeState.ts），转录行也自带每条消息的发送时间（见
+ * aiChat/ai/utils/chatTranscript.ts 的 formatBufferedMessageLine）。它们都**不在**
  * 系统提示词里——那一段必须逐字恒定，才能连同工具声明一起被供应商缓存住。
  */
 
@@ -67,7 +68,7 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
  *   buildRuntimeStateBlock）。
  * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话与本轮
  *   回复任务；这三段恒定出现，直接触发只体现为回复任务开头多一句唤起者声明。
- *   本文件在转录与回复任务之间补上第四段运行时状态（心情与当前时间）。
+ *   本文件在转录与回复任务之间补上第四段运行时状态（心情、当前时间与本轮工具状态）。
  * @param toolset 本轮回复的行动工具集（见 createReplyToolset），工具的执行
  *   副作用（发消息/贴纸/反应/图片/语音）都发生在它内部；toolset.functions
  *   直接传给供应商会话。
@@ -100,7 +101,7 @@ export async function generateReply(
     stableBlocks: [promptSections.referenceMemory],
     volatileBlocks: [
       promptSections.currentConversation,
-      buildRuntimeStateBlock(chatId, toolset.imageReference),
+      buildRuntimeStateBlock(chatId, toolset.toolStatus),
       promptSections.replyTask,
     ],
     signal: toolset.signal,
@@ -117,6 +118,7 @@ export async function generateReply(
     if (!toolset.isActive()) return null;
     const webSearchEnabled: boolean = toolset.webSearch && !searchDisabledByFallback;
 
+    toolset.beforeModelRequest();
     const turn: AiReplyTurn = await session.request({
       systemPrompt: staticSystemPrompt,
       // 整轮同一份声明，按引用透传：预算耗尽不再摘工具，模型多调一次只会拿到
@@ -166,8 +168,8 @@ export async function generateReply(
 
     const functionCalls: readonly AiFunctionCall[] = turn.functionCalls;
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
-      // 按模型顺序校验与接纳；发送回乐观结果，查看与查询回真实数据。
-      // 实际调用链和 Telegram 排队不参与本次模型往返的等待。
+      // 按模型顺序校验与接纳；发送回接纳结果（send_voice 最多等合成一个前台窗口再回），
+      // 查看与查询回真实数据。投递调用链和 Telegram 排队不参与本次模型往返的等待。
       const outputs: AiToolOutput[] = [];
       for (const call of functionCalls) {
         if (!toolset.isActive()) return null;

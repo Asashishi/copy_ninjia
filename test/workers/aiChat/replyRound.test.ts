@@ -9,18 +9,13 @@ import type { ReplyPromptSections, ReplyToolContext, ReplyToolset } from "../../
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import { REPLY_DELIVERY_MAX_PER_CHAT } from "../../../packages/consts/aiChat/rateLimit";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
+import { SELF_SPEAKER_NAME } from "../../../packages/consts/aiChat/prompts/transcript";
 
 const heartbeatStop = mock(async (): Promise<void> => {});
 const startChatActionHeartbeat = mock((_chatId: number) => ({
-  current: () => "idle" as const,
-  set: (_phase: "idle" | "typing" | "upload_photo" | "choose_sticker"): void => {},
+  set: (_phase: "idle" | "typing" | "upload_photo" | "choose_sticker"): number => 0,
   settle: async (): Promise<void> => {},
   stop: heartbeatStop,
-}));
-const stickerLockRelease = mock((): void => {});
-const createStickerSendLock = mock((_chatId: number) => ({
-  tryAcquire: (): boolean => true,
-  release: stickerLockRelease,
 }));
 const execute = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
 const settleActions = mock(async (): Promise<void> => {});
@@ -30,9 +25,11 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
   capturedContext = ctx;
   return {
     functions: [],
-    imageReference: "",
+    toolStatus: "",
     webSearch: true,
     has: (): boolean => true,
+    beforeModelRequest: (): void => {},
+    afterModel: (): void => {},
     execute,
     actionsUsed: (): number => actionsUsed,
     settle: settleActions,
@@ -53,7 +50,6 @@ const pushBufferedMessage = mock((..._args: unknown[]): void => {});
 const logError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat }));
-mock.module("../../../packages/aiChat/ai/stickers/sendLock", () => ({ createStickerSendLock }));
 mock.module("../../../packages/aiChat/ai/tools/replyToolset/orchestrator", () => ({ createReplyToolset }));
 mock.module("../../../packages/workers/aiChat/replyModel", () => ({ generateReply }));
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({ buildReplyPromptSections }));
@@ -110,8 +106,6 @@ beforeEach(() => {
   capturedContext = null;
   heartbeatStop.mockClear();
   startChatActionHeartbeat.mockClear();
-  stickerLockRelease.mockClear();
-  createStickerSendLock.mockClear();
   createReplyToolset.mockClear();
   execute.mockClear();
   settleActions.mockReset().mockResolvedValue();
@@ -147,7 +141,7 @@ describe("AI 单轮回复生命周期", () => {
     }
   });
 
-  test.each(["模型完成", "发送收尾"])("%s 通知抛错仍等待发送链、心跳与贴纸锁释放", async (phase) => {
+  test.each(["模型完成", "发送收尾"])("%s 通知抛错仍等待发送链与心跳收尾", async (phase) => {
     const pending = Promise.withResolvers<void>();
     const notified = Promise.withResolvers<void>();
     settleActions.mockImplementationOnce(() => pending.promise);
@@ -170,12 +164,10 @@ describe("AI 单轮回复生命周期", () => {
       expect(activeReplyCounts.has(-1001)).toBe(false);
       expect(replyGenerationTasks.size).toBe(1);
       expect(heartbeatStop).not.toHaveBeenCalled();
-      expect(stickerLockRelease).not.toHaveBeenCalled();
       pending.resolve();
       await notified.promise;
       for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
       expect(heartbeatStop).toHaveBeenCalledTimes(1);
-      expect(stickerLockRelease).toHaveBeenCalledTimes(1);
       expect(logError).toHaveBeenCalledWith("Error in AI reply task:", failure);
     } finally {
       pending.resolve();
@@ -200,14 +192,12 @@ describe("AI 单轮回复生命周期", () => {
       expect(activeReplyCounts.has(-1001)).toBe(false);
       expect(replyGenerationTasks.size).toBe(1);
       expect(heartbeatStop).not.toHaveBeenCalled();
-      expect(stickerLockRelease).not.toHaveBeenCalled();
       const tasks: Promise<void>[] = [...replyGenerationTasks.values()].flatMap((entries) => [...entries]);
       pending.resolve();
       await Promise.allSettled(tasks);
       expect(await finished.promise).toBe(-1001);
       expect(activeReplyCounts.has(-1001)).toBe(false);
       expect(heartbeatStop).toHaveBeenCalledTimes(1);
-      expect(stickerLockRelease).toHaveBeenCalledTimes(1);
     } finally {
       pending.resolve();
       for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
@@ -227,7 +217,6 @@ describe("AI 单轮回复生命周期", () => {
       JSON.stringify({ text: "最终正文", reply_to_trigger: true })
     );
     expect(heartbeatStop).toHaveBeenCalledTimes(1);
-    expect(stickerLockRelease).toHaveBeenCalledTimes(1);
     expect(activeReplyCounts.has(-1001)).toBe(false);
     expect(longTriggerTimes.get(-1001)?.size).toBe(1);
   });
@@ -285,6 +274,8 @@ describe("AI 单轮回复生命周期", () => {
   test("工具发送回调只在代际仍有效时登记滚动记忆", async () => {
     actionsUsed = 2;
     generateReply.mockImplementationOnce(async (): Promise<null> => {
+      // 空闲群里的第一轮是直接轮。
+      expect(capturedContext!.direct).toBe(true);
       capturedContext!.onMessageSent("文字消息", 101);
       capturedContext!.onStickerSent("[贴纸：挥手]", 102);
       capturedContext!.onImageSent({
@@ -328,7 +319,7 @@ describe("AI 单轮回复生命周期", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -1001,
       senderId: 99,
-      firstName: "自己（也就是你）",
+      firstName: SELF_SPEAKER_NAME,
       lastName: "",
       username: undefined,
       messageId: 104,
@@ -367,7 +358,7 @@ describe("AI 单轮回复生命周期", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: -1001,
       senderId: 99,
-      firstName: "自己（也就是你）",
+      firstName: SELF_SPEAKER_NAME,
       lastName: "",
       username: undefined,
       messageId: 105,
@@ -462,24 +453,22 @@ describe("AI 单轮回复生命周期", () => {
     );
   });
 
-  test("构造上下文失败仍释放贴纸锁与并发位，但不会启动心跳", async () => {
+  test("构造上下文失败仍释放并发位，但不会启动心跳", async () => {
     builtPromptSections = null;
 
     await runRound();
 
     expect(startChatActionHeartbeat).not.toHaveBeenCalled();
-    expect(stickerLockRelease).toHaveBeenCalledTimes(1);
     expect(activeReplyCounts.has(-1001)).toBe(false);
   });
 
-  test("生成异常也会停止心跳、释放锁并完成轮次", async () => {
+  test("生成异常也会停止心跳并完成轮次", async () => {
     generateReply.mockRejectedValueOnce(new Error("generation failed"));
 
     await runRound();
     await Promise.resolve();
 
     expect(heartbeatStop).toHaveBeenCalledTimes(1);
-    expect(stickerLockRelease).toHaveBeenCalledTimes(1);
     expect(activeReplyCounts.has(-1001)).toBe(false);
     expect(logError).toHaveBeenCalledWith("Error in AI reply task:", expect.any(Error));
   });
@@ -525,7 +514,6 @@ describe("AI 单轮回复生命周期", () => {
     }, finished);
 
     expect(finished).not.toHaveBeenCalled();
-    expect(createStickerSendLock).not.toHaveBeenCalled();
     expect(activeReplyCounts.size).toBe(0);
   });
 
@@ -547,7 +535,6 @@ describe("AI 单轮回复生命周期", () => {
     }, finished);
 
     expect(finished).not.toHaveBeenCalled();
-    expect(createStickerSendLock).not.toHaveBeenCalled();
     expect(activeReplyCounts.has(-1001)).toBe(false);
     expect(longTriggerTimes.get(-1001)?.size).toBe(RATE_LIMIT_LONG_MAX_TRIGGERS);
   });

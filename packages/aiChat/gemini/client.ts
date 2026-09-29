@@ -33,7 +33,7 @@ import type { ProviderApiFailureResult } from "../ai/utils/mediaSupportError";
 import { abnormalFinishDiagnostic, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
-import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
+import type { AgentCapability, AgentDeploymentConfig } from "../../types/config";
 
 /**
  * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
@@ -54,7 +54,7 @@ function geminiRequestTimeoutMs(capability: AgentCapability): number {
  * import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
  */
 export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
-  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
+  const config: AgentDeploymentConfig[AgentCapability] = getAgentDeploymentConfig()[capability];
   if (config?.provider !== "google") {
     throw new Error(`Agent capability "${capability}" is not configured for the Google provider.`);
   }

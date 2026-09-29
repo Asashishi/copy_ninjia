@@ -25,10 +25,9 @@ import {
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../../../consts/telegram";
 import { GENERATE_IMAGE_TOOL, REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
-import { pauseForToolAction } from "../../utils/toolPause";
 import { sendPhotoWithResult } from "../../../../infra/telegram";
 import { sanitizeInline, truncateInline } from "../../../../libs/text";
-import type { ReplyToolContext, ReplyToolExecution, RoundMessageState } from "../../../../types/aiChat/replies";
+import type { ReplyActionPause, ReplyToolContext, ReplyToolExecution, RoundMessageState } from "../../../../types/aiChat/replies";
 import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
 import type {
   GeneratedChatImage,
@@ -48,7 +47,7 @@ import { acceptRoundText, sendDirectMessage } from "./messageState";
 import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 
 /** 省略 aspect_ratio 时执行侧采用的比例：有参考素材就取最接近它的官方比例。
- *  参考素材文案与执行侧解析共用这一个函数，两处默认值不会漂移（见 imageReference.ts）。 */
+ *  本轮工具状态的参考素材文案与执行侧解析共用这一个函数，两处默认值不会漂移（见 toolStatus.ts）。 */
 export function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
   if (!reference || reference.width <= 0 || reference.height <= 0) return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
   return normalizeImageAspectRatio(`${reference.width}:${reference.height}`) ?? DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
@@ -56,10 +55,9 @@ export function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerati
 
 /**
  * generate_image 的工具声明。**整段逐字恒定**，不接受任何本轮上下文；前缀缓存约束见
- * docs/cn/04-invariants.md。参考素材文案住在运行时状态区块，见 imageReference.ts。
- * 群冷却连提示词都不进：剩余秒数只在调用真的发生时由执行侧算给模型（见
- * createGenerateImageExecutor 的冷却闸）。工具是否挂载仍由 createReplyToolset 按
- * mediaToolsRequested 决定。
+ * docs/cn/04-invariants.md。直接触发资格、群冷却剩余秒数与参考素材文案都写进运行时
+ * 状态区块的本轮工具状态（见 toolStatus.ts）；工具只要部署配置了生图能力就由
+ * createReplyToolset 恒挂，资格与冷却由 createGenerateImageExecutor 在调用时兜底拒绝。
  */
 export function buildGenerateImageToolDefinition(): AiToolDefinition {
   return {
@@ -205,7 +203,7 @@ export function createGenerateImageExecutor(
         aspect_ratio: parsed.aspectRatio,
         ...(caption !== null ? { caption_delivery: inlineCaption !== null ? "inline" : separateCaption ? "separate_message" : "no_action_budget" } : {}),
       }),
-      run: async (chatAction: ChatActionControl): Promise<string> => {
+      run: async (chatAction: ChatActionControl, pause: ReplyActionPause): Promise<string> => {
         let modelRequestStarted: boolean = false;
         try {
           if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
@@ -283,11 +281,9 @@ export function createGenerateImageExecutor(
           if (caption !== null && inlineCaption === null && !captionBudgetLeft) {
             captionDelivery = "no_action_budget";
           } else if (caption !== null && inlineCaption === null) {
-            chatAction.set("typing");
-            const invalidated: string | null = await pauseForToolAction({
-              delayMs: typingDelayMs(caption),
-              signal: ctx.signal,
-            });
+            // 图片落地，一段状态到此结束：图注的「正在输入」在静默之后亮起。
+            chatAction.set("idle");
+            const invalidated: string | null = await pause("typing", typingDelayMs(caption));
             chatAction.set("idle");
             await chatAction.settle();
 

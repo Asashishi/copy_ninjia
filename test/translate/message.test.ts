@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
 import type { TranslateLanguage, TranslateState } from "../../packages/types/translate";
+import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 
 const copyMessage = mock(async (..._args: unknown[]): Promise<number> => 10);
 const sendMessage = mock(async (..._args: unknown[]): Promise<number> => 11);
@@ -95,11 +96,21 @@ describe("独立翻译消息", () => {
   test.each([
     ["こんにちは", "ja"], ["你好", "cn"], ["这是一条中文消息", "cn"], ["Hello!", "en"], ["123🙂", "ja"],
     ["Привіт, світе!", "uk"], ["Привет, мир!", "ru"], ["123🙂", "uk"], ["123🙂", "ru"],
-  ] as const)("同语种或中性内容 %s 按字符串发送原文，不请求 API", async (text: string, language: TranslateLanguage) => {
+  ] as const)("同语种或中性内容 %s 不请求 API，也不发送原文", async (text: string, language: TranslateLanguage) => {
     await translateMessage(params(text, language));
     expect(translateText).not.toHaveBeenCalled();
     expect(copyMessage).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text, messageThreadId: 42 });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("带图注的媒体图注同语种时不请求 API，媒体也不复制", async () => {
+    const input = params("こんにちは");
+    const { text: _text, ...message } = input.message;
+    input.message = { ...message, photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }], caption: "こんにちは" } as Message;
+    await translateMessage(input);
+    expect(translateText).not.toHaveBeenCalled();
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test.each(["ja", "cn", "en"] as const)("跨语种发送 %s 翻译，保留话题且不挂回复", async (language: TranslateLanguage) => {
@@ -140,30 +151,15 @@ describe("独立翻译消息", () => {
     { document: { file_id: "f", file_unique_id: "u" }, caption: "你好", caption_entities: [{ type: "bold", offset: 0, length: 2 }] },
     { voice: { file_id: "f", file_unique_id: "u", duration: 1 }, caption: "你好" },
     { audio: { file_id: "f", file_unique_id: "u", duration: 1 }, caption: "你好" },
-  ])("带图注的媒体 %j 翻译图注，文件原样复制、图注换成译文", async (media: object) => {
+    { paid_media: { star_count: 1, paid_media: [] }, caption: "你好" },
+  ])("带图注的媒体 %j 只按字符串发送图注译文，媒体不复制", async (media: object) => {
     const input = params("你好");
     const { text: _text, ...message } = input.message;
     input.message = { ...message, ...media } as Message;
     await translateMessage(input);
     expect(translateText).toHaveBeenCalledWith("你好", "ja");
-    expect(sendMessage).not.toHaveBeenCalled();
-    expect(copyMessage).toHaveBeenCalledWith({
-      chatId: -1001, fromChatId: -1001, messageId: 5, messageThreadId: 42,
-      caption: "translated", showCaptionAboveMedia: undefined, videoStartTimestamp: undefined,
-    });
-  });
-
-  test("图注在上与视频起播时间照原消息传", async () => {
-    const input = params("你好");
-    const { text: _text, ...message } = input.message;
-    input.message = {
-      ...message,
-      video: { file_id: "f", file_unique_id: "u", width: 1, height: 1, duration: 30, start_timestamp: 12 },
-      caption: "你好",
-      show_caption_above_media: true,
-    } as Message;
-    await translateMessage(input);
-    expect(copyMessage).toHaveBeenCalledWith(expect.objectContaining({ caption: "translated", showCaptionAboveMedia: true, videoStartTimestamp: 12 }));
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: "translated", messageThreadId: 42 });
   });
 
   test.each([
@@ -182,22 +178,18 @@ describe("独立翻译消息", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("付费媒体不能复制，只发译文", async () => {
-    const input = params("你好");
-    const { text: _text, ...message } = input.message;
-    input.message = { ...message, paid_media: { star_count: 1, paid_media: [] }, caption: "你好" } as Message;
-    await translateMessage(input);
-    expect(copyMessage).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: "translated", messageThreadId: 42 });
-  });
-
-  test("译文超过正文或图注上限时丢弃，不发送", async () => {
-    translateText.mockResolvedValueOnce("x".repeat(4097));
-    await translateMessage(params("你好"));
+  test("译文按正文上限判定：图注译文超过图注上限仍发送，超过正文上限时丢弃", async () => {
     const media = params("你好");
     const { text: _text, ...message } = media.message;
     media.message = { ...message, photo: [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }], caption: "你好" } as Message;
-    translateText.mockResolvedValueOnce("x".repeat(1025));
+    const captionOverflow: string = "x".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1);
+    translateText.mockResolvedValueOnce(captionOverflow);
+    await translateMessage(media);
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: captionOverflow, messageThreadId: 42 });
+    sendMessage.mockClear();
+    translateText.mockResolvedValueOnce("x".repeat(TELEGRAM_MESSAGE_MAX_CHARS + 1));
+    await translateMessage(params("你好"));
+    translateText.mockResolvedValueOnce("x".repeat(TELEGRAM_MESSAGE_MAX_CHARS + 1));
     await translateMessage(media);
     expect(sendMessage).not.toHaveBeenCalled();
     expect(copyMessage).not.toHaveBeenCalled();
@@ -215,17 +207,26 @@ describe("独立翻译消息", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("API 失败按字符串发送原文", async () => {
+  test("API 失败不发送原文", async () => {
     translateText.mockResolvedValueOnce(null);
     await translateMessage(params("你好"));
     expect(copyMessage).not.toHaveBeenCalled();
-    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: "你好", messageThreadId: 42 });
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("繁体转简体仍请求翻译，不按中文同语种复制", async () => {
+  test("译文与原文逐字相同时视为同语种，不发送", async () => {
+    translateText.mockResolvedValueOnce("café");
+    await translateMessage(params("café", "en"));
+    expect(translateText).toHaveBeenCalledWith("café", "en");
+    expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("繁体转简体仍请求翻译，不按中文同语种跳过", async () => {
     await translateMessage(params("這是一條中文訊息", "cn"));
     expect(translateText).toHaveBeenCalledWith("這是一條中文訊息", "cn");
     expect(copyMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith({ chatId: -1001, text: "translated", messageThreadId: 42 });
   });
 
   test.each(["stop", "replace", "disable", "config"])("在途请求遇到 %s 后不得迟到发送", async (change: string) => {

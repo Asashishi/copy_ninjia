@@ -28,18 +28,22 @@ function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
 /**
  * 同步按入站顺序追加发送占位；媒体解析和模型请求均在占位后进行。
  * 固定数组只决定桶数，每桶用 FIFO 追加多轮；存活容量独立于模型并发计数。
- * commit 标记完整动作链就绪，finish 标记发送完成并等待按序回收。
- * 生命周期约束见 docs/cn/04-invariants.md。
+ * 群里没有在途轮次（没有窗口）时本轮是直接轮：占位即就绪，ready 当即放行，动作在工具调用内直接执行、边生成边发送；
+ * 它仍是发送链的队首，后续有序并行轮等它 finish 后才按入站顺位放行。直接轮在模型阶段独立占
+ * 1 个并发位，commit（模型阶段结束）时交还。有序并行轮的 commit 标记完整动作链就绪，finish
+ * 标记发送完成并等待按序回收。生命周期约束见 docs/cn/04-invariants.md。
  */
 export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefined {
   if (!hasReplyDeliveryCapacity(chatId)) return undefined;
   let window: ReplyDeliveryWindow | undefined = replyDeliveryWindows.get(chatId);
+  const direct: boolean = window === undefined;
   if (!window) {
     window = {
       slots: Array.from({ length: REPLY_ROUND_MAX_CONCURRENT }, (): LinkedQueue<ReplyDeliverySlot> => new LinkedQueue<ReplyDeliverySlot>()),
       head: 0,
       tail: 0,
       size: 0,
+      directModelActive: true,
     };
     replyDeliveryWindows.set(chatId, window);
   }
@@ -47,8 +51,9 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
   const slot: ReplyDeliverySlot = {
     ready: Promise.withResolvers<void>(),
     released: Promise.withResolvers<void>(),
-    state: "pending",
+    state: direct ? "ready" : "pending",
   };
+  if (direct) slot.ready.resolve();
   const bucket: LinkedQueue<ReplyDeliverySlot> | undefined = window.slots[window.tail];
   if (!bucket) throw new Error("AI reply delivery bucket missing.");
   bucket.push(slot);
@@ -57,8 +62,13 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
   replyDeliveryCounts.set(chatId, (replyDeliveryCounts.get(chatId) ?? 0) + 1);
   replyDeliveryTotal.current++;
   return {
+    direct,
     ready: slot.ready.promise,
     commit: (): void => {
+      if (direct) {
+        ownedWindow.directModelActive = false;
+        return;
+      }
       if (slot.state !== "pending") return;
       slot.state = "ready";
       advanceDelivery(chatId, ownedWindow);
@@ -75,4 +85,9 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
 export function hasReplyDeliveryCapacity(chatId: number): boolean {
   return replyDeliveryTotal.current < REPLY_DELIVERY_MAX_TOTAL &&
     (replyDeliveryCounts.get(chatId) ?? 0) < REPLY_DELIVERY_MAX_PER_CHAT;
+}
+
+/** 该群的直接轮仍在模型阶段；准入与补跑据此在有序并行上限之外另放行这 1 轮。 */
+export function isDirectReplyModelActive(chatId: number): boolean {
+  return replyDeliveryWindows.get(chatId)?.directModelActive === true;
 }

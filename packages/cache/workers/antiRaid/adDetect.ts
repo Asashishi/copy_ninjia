@@ -1,6 +1,7 @@
 import { LinkedQueue } from "../../../libs/linkedQueue";
 import type {
   AdDetectedEvent,
+  AdDetectPrompts,
   AdMessageBundle,
   ReferencedAdWarningState,
   AdVerdictTrueEvent,
@@ -77,13 +78,13 @@ export const referencedAdWarningGeneration: { current: number } = { current: 0 }
 export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
 
 /**
- * 广告判定 system prompt 的两个静态变体，键为发送者是否仍在入群窗口。
+ * 按当前广告示例快照拼好的判定提示词：规则与示例段，以及两个系统事实变体的完整系统提示词。
  *
- * classifier.ts 首次使用对应变体时填充；主线程投递新的广告示例快照时由
- * workers/antiRaid/adDetect/config.ts 清空。Anti-Raid Worker 崩溃后从空表重建。没有条目表示该变体尚未构造，调用方应
- * 用当前已严格加载的广告样本生成。键域只有 boolean，容量固定为两条。
+ * classifier.ts 首次判定时整份填充；主线程投递新的广告示例快照时由
+ * workers/antiRaid/adDetect/config.ts 置 null。Anti-Raid Worker 崩溃后从 null 重建。null 表示
+ * 尚未构造，调用方应用当前已严格加载的广告样本生成。容量固定为一份。
  */
-export const adDetectSystemPrompts: Map<boolean, string> = new Map();
+export const adDetectPrompts: { current: AdDetectPrompts | null } = { current: null };
 
 /**
  * 正在等待广告检测 provider 判定或首次公开警告发送结算的键；防止同一个人被并发

@@ -1,10 +1,11 @@
-import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
+import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   LOGGER_CIRCULAR_ERROR_VALUE,
   LOGGER_MAX_REDACTED_SECRETS,
   LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE,
   LOGGER_NESTED_ERROR_MAX_DEPTH,
+  LOGGER_UNSERIALIZABLE_VALUE,
 } from "../../packages/consts/logger";
 import { REDACTED_SECRET } from "../../packages/consts/redaction";
 import { AGENT_CAPABILITY_NAMES, AGENT_HEADERS_MAX_ENTRIES } from "../../packages/consts/agent";
@@ -246,7 +247,7 @@ describe("logger persistence routing boundary", () => {
       expect(stringArg).toBe("request failed: [REDACTED] / [REDACTED] / [REDACTED]");
       expect(errorArg).toMatchObject({
         path: "https://api.telegram.org/file/bot[REDACTED]/photo.jpg",
-        details: { apiKey: "[REDACTED]", cause: "[REDACTED]" },
+        details: { apiKey: REDACTED_SECRET, cause: REDACTED_SECRET },
       });
       const serialized: string = JSON.stringify([stringArg, errorArg]);
       for (const secret of normalizedSecrets) expect(serialized).not.toContain(secret);
@@ -319,7 +320,7 @@ describe("logger persistence routing boundary", () => {
       summary: { provider: "openai", apiKey: "adopted-summary-key", baseUrl: undefined, headers: undefined, model: "summary" },
       media: { provider: "google", apiKey: "adopted-media-key", baseUrl: undefined, headers: undefined, model: "media" },
       image: { provider: "google", apiKey: "adopted-image-key", baseUrl: undefined, headers: undefined, model: "image", imageProtocol: undefined },
-      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, headers: undefined, model: "tts", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
+      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, headers: undefined, model: "tts", voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
     });
     adoptAdDetectAgentConfig({
       provider: "openai",
@@ -550,7 +551,7 @@ describe("logger persistence routing boundary", () => {
         cause: {
           message: "middle",
           cause: LOGGER_CIRCULAR_ERROR_VALUE,
-          response: "[unserializable value]",
+          response: LOGGER_UNSERIALIZABLE_VALUE,
         },
       });
       expect(getterCalls).toBe(0);
@@ -599,7 +600,7 @@ describe("logger persistence routing boundary", () => {
       // 解析不了就退化成脱敏后的文本，敏感值仍然不得出现。
       expect(typeof fallback).toBe("string");
       expect(String(fallback)).toContain("fetch failed");
-      expect(String(fallback)).toContain("[REDACTED]");
+      expect(String(fallback)).toContain(REDACTED_SECRET);
     } finally {
       consoleError.mockRestore();
       adDetectAgentConfigCache.current = originalConfig;
@@ -618,7 +619,7 @@ describe("logger persistence routing boundary", () => {
         },
       };
       expect((): void => logger.error(hostileObject)).not.toThrow();
-      expect(consoleError.mock.calls.at(-1)![0]).toBe("[unserializable value]");
+      expect(consoleError.mock.calls.at(-1)![0]).toBe(LOGGER_UNSERIALIZABLE_VALUE);
 
       const hostileError: Error = new Error("original failure");
       Object.defineProperty(hostileError, "name", {
@@ -637,7 +638,7 @@ describe("logger persistence routing boundary", () => {
       expect(consoleError.mock.calls.at(-1)![0]).toMatchObject({
         name: "Error",
         message: "original failure",
-        response: "[unserializable value]",
+        response: LOGGER_UNSERIALIZABLE_VALUE,
       });
 
       const proxiedError: Error = new Proxy(new Error("proxied failure"), {
@@ -654,7 +655,7 @@ describe("logger persistence routing boundary", () => {
       const revoked: { proxy: object; revoke: () => void } = Proxy.revocable({}, {});
       revoked.revoke();
       expect((): void => logger.error(revoked.proxy)).not.toThrow();
-      expect(consoleError.mock.calls.at(-1)![0]).toBe("[unserializable value]");
+      expect(consoleError.mock.calls.at(-1)![0]).toBe(LOGGER_UNSERIALIZABLE_VALUE);
     } finally {
       consoleError.mockRestore();
     }

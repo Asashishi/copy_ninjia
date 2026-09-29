@@ -1,5 +1,5 @@
 import { DAY_MS } from "../consts/diskIO/common";
-import { TOKYO_UTC_OFFSET_MS } from "../consts/time";
+import { TOKYO_TIME_ZONE, TOKYO_UTC_OFFSET_MS } from "../consts/time";
 
 /**
  * 把毫秒数格式化成中文时长文案，如 90_000 -> "1分30秒"，30_000 -> "30秒"。
@@ -160,7 +160,7 @@ export interface CurrentTimeResult {
 /** getCurrentTime 的格式器：模块加载时构造一次，每次模型请求复用；
  *  长格式带星期等本地化词汇，由 Intl 产出。 */
 const TOKYO_FULL_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Tokyo",
+  timeZone: TOKYO_TIME_ZONE,
   dateStyle: "full",
   timeStyle: "medium",
 });
@@ -184,7 +184,7 @@ export function getCurrentTime(): CurrentTimeResult {
   const now: Date = new Date();
   return {
     iso: now.toISOString(),
-    timezone: "Asia/Tokyo",
+    timezone: TOKYO_TIME_ZONE,
     formatted: TOKYO_FULL_TIME_FORMATTER.format(now),
   };
 }

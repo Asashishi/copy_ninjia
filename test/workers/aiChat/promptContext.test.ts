@@ -6,7 +6,7 @@ import {
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
 import { COMPACT_BATCH_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
-import { REPLY_ACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/tools";
+import { REPLY_ACTION_INSTRUCTION, TOOL_STATUS_BLOCK_LABEL } from "../../../packages/consts/aiChat/prompts/tools";
 import { REPLY_TARGET_EVICTED_TAG } from "../../../packages/consts/aiChat/prompts/transcript";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
@@ -73,27 +73,9 @@ test("直接唤起在回复任务开头声明唤起者完整身份，不再另�
   expect(Object.keys(sections)).toEqual(["referenceMemory", "currentConversation", "replyTask"]);
   // 跨任务相同的行动总则只在 system prompt 出现，动态任务只保留触发语义。
   expect(sections.replyTask).not.toContain(REPLY_ACTION_INSTRUCTION);
-  // 未挂载 send_voice 时没有余量行。
-  expect(sections.replyTask).not.toContain("今日语音余量");
-
-  // 余量行是回复任务区块的最后一行，紧贴 [END] 标签，不新增 Part。
-  const withQuota: ReplyPromptSections = buildReplyPromptSections(
-    -1001,
-    { id: 99, first_name: "Ninja", username: "ninja_bot" },
-    {
-      triggerMessageId: total,
-      directInvokerId: invokerId,
-      isRandomTrigger: false,
-      roundHasTypo: false,
-      voiceQuota: "\n今日语音余量：send_voice 今天还能用 12 次（每天 75 次，所有群共用）。",
-    }
-  )!;
-  expect(withQuota.replyTask).toEndWith(
-    "\n今日语音余量：send_voice 今天还能用 12 次（每天 75 次，所有群共用）。\n" +
-    `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`
-  );
-  expect(withQuota.referenceMemory).toBe(sections.referenceMemory);
-  expect(withQuota.currentConversation).toBe(sections.currentConversation);
+  // 按轮变化的工具状态只在运行时状态区块，回复任务里没有。
+  expect(sections.replyTask).not.toContain(TOOL_STATUS_BLOCK_LABEL);
+  expect(sections.replyTask).toEndWith(`[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`);
 });
 
 test("触发消息已不在热区索引时，唤起者身份从逐字缓存里取最近一条回填", () => {

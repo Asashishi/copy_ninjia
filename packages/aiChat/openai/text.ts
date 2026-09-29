@@ -22,6 +22,7 @@ import {
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
   OPENAI_STORE_RESPONSES,
 } from "../../consts/aiChat/openai";
+import { VOICE_OGG_FILE_NAME } from "../../consts/aiChat/voiceMessage";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import { reportAiCacheUsage, warnAiUsageUnavailable } from "../../infra/aiCacheUsage";
@@ -106,7 +107,7 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
   if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
   try {
     const model: string = getAgentDeploymentConfig().media.model;
-    const upload: Uploadable = await toFile(request.clip.bytes, "voice.ogg", {
+    const upload: Uploadable = await toFile(request.clip.bytes, VOICE_OGG_FILE_NAME, {
       type: request.clip.mime,
     });
     if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };

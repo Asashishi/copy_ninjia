@@ -9,9 +9,10 @@ const copyMessageMock = mock(async (..._args: unknown[]): Promise<number | undef
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const sendVoiceWithResultMock = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({ messageId: 88 }));
 const VOICE_BYTES: Uint8Array<ArrayBuffer> = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
+const VOICE_FILE: string = "fixture-voice.mp3";
 const synthesizeVoiceMock = mock(async (..._args: unknown[]): Promise<VoiceSynthesisResult> => ({
   ok: true,
-  voice: { bytes: VOICE_BYTES, durationSeconds: 4 },
+  voice: { bytes: VOICE_BYTES, durationSeconds: 4, fileName: VOICE_FILE },
 }));
 /** 延迟执行器替身：接纳的任务收进队列，由用例显式执行。 */
 const deferredTasks: (() => Promise<void>)[] = [];
@@ -169,7 +170,7 @@ describe("/send 代发的 TTS 请求", () => {
     synthesizeVoiceMock.mockClear();
     synthesizeVoiceMock.mockImplementation(async (): Promise<VoiceSynthesisResult> => ({
       ok: true,
-      voice: { bytes: VOICE_BYTES, durationSeconds: 4 },
+      voice: { bytes: VOICE_BYTES, durationSeconds: 4, fileName: VOICE_FILE },
     }));
     submitDeferredCommandMock.mockClear();
     deferredTasks.length = 0;
@@ -196,7 +197,7 @@ describe("/send 代发的 TTS 请求", () => {
     expect(sendVoiceWithResultMock).toHaveBeenCalledWith({
       chatId: targetChatId,
       bytes: VOICE_BYTES,
-      fileName: "voice.ogg",
+      fileName: VOICE_FILE,
       signal: undefined,
       duration: 4,
     });

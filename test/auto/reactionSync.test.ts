@@ -1,13 +1,19 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import type { TranslateState } from "../../packages/types/translate";
 
 const activeCopyTargetIdIn = mock((_chatId: number): number | undefined => 42);
 const setMessageReactions = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const loggerLog = mock((..._args: unknown[]): void => {});
+/** 本群生效的翻译目标；缺省没有。 */
+let translatedUserId: number | undefined;
+const activeTranslateStateIn = mock((_chatId: number, userId: number): TranslateState | undefined =>
+  userId === translatedUserId ? { translatedUser: { id: userId }, language: "ja" } : undefined);
 
 mock.module("../../packages/infra/storage/stateStore", () => ({ activeCopyTargetIdIn }));
 mock.module("../../packages/infra/telegram", () => ({ setMessageReactions }));
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ log: loggerLog }) }));
+mock.module("../../packages/translate/message", () => ({ activeTranslateStateIn }));
 
 const { handleReaction } = await import("../../packages/auto/reactionSync");
 
@@ -39,6 +45,8 @@ beforeEach(() => {
   activeCopyTargetIdIn.mockClear();
   setMessageReactions.mockClear();
   loggerLog.mockClear();
+  activeTranslateStateIn.mockClear();
+  translatedUserId = undefined;
   activeCopyTargetIdIn.mockImplementation((): number | undefined => 42);
   setMessageReactions.mockImplementation(async (): Promise<boolean> => true);
 });
@@ -83,6 +91,18 @@ describe("reaction sync update entry", () => {
       expect.objectContaining({ reactions: [{ type: "custom_emoji", custom_emoji_id: "custom-2" }] }),
       expect.objectContaining({ reactions: [] }),
     ]);
+  });
+
+  test("复制目标同时是本群生效的翻译目标时只做翻译，不同步反应", async () => {
+    translatedUserId = 42;
+    await handleReaction(context({ emojiAdded: ["👍"] }));
+    await handleReaction(context({ emojiAdded: ["👍"] }, { actorChatId: 42 }));
+    expect(activeTranslateStateIn).toHaveBeenCalledWith(-1001, 42);
+    expect(setMessageReactions).not.toHaveBeenCalled();
+
+    translatedUserId = 8;
+    await handleReaction(context({ emojiAdded: ["👍"] }));
+    expect(setMessageReactions).toHaveBeenCalledTimes(1);
   });
 
   test("Telegram 动作失败时不记录成功延迟", async () => {

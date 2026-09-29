@@ -13,9 +13,13 @@ import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
  * 服务端工具调用记录接回 content（includeServerSideToolInvocations），否则
  * Gemini API 会拒绝该组合或丢失搜索上下文。
  *
- * 所有请求都发送完整的 systemInstruction、tools、toolConfig 与 contents，由
- * Gemini 的隐式缓存按公共前缀自动命中。稳定区块排在易变区块之前，工具往返只向
- * contents 尾部追加，因此跨回复的稳定前缀与回复内不断增长的前缀都能被复用。
+ * **两套请求结构**：每轮回复的第 1 次请求引用全群共用的显式缓存（cachedContent，只装
+ * systemInstruction + tools + toolConfig，scope 见 contextCache.ts），请求里只发全部 contents；
+ * 缓存暂不可用时这一次也走完整请求。第 2 次起一律发送完整的 systemInstruction、tools、
+ * toolConfig 与 contents，由 Gemini 的隐式缓存按公共前缀接住第 1 次留下的块与工具往返。
+ * 两套结构的 token 序列逐字一致，contents 与模型 content（含思考签名）的处理完全相同，
+ * 只有 config 在 cachedContent 与三项完整字段之间切换。稳定区块排在易变区块之前，工具
+ * 往返只向 contents 尾部追加。
  */
 
 import type {
@@ -36,6 +40,12 @@ import {
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { isPlainRecord } from "../../libs/record";
 import { requestGeminiResult } from "./client";
+import {
+  acquireGeminiContextCache,
+  geminiContextCacheContent,
+  releaseGeminiContextCache,
+} from "../../infra/geminiContextCache";
+import { TEXT_GEMINI_CONTEXT_CACHE_SCOPE } from "./contextCache";
 import { countGoogleSearchCalls, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type {
@@ -104,16 +114,35 @@ export function createGeminiReplySession(
   // 上一次 request() 拿到的模型 content，等 appendToolOutputs() 接回 contents。
   let pendingModelContent: Content | undefined;
 
-  /** 拼一次完整请求体；Gemini 自动按公共前缀处理隐式缓存。 */
-  function buildBody(request: AiReplyTurnRequest, tools: Tool[]): GenerateContentParameters {
+  // 本轮回复还没发过请求：只有第 1 次请求尝试引用共用显式缓存。
+  let firstRequest: boolean = true;
+
+  /**
+   * 拼一次请求体。cachedContent 非空时走显式缓存结构（systemInstruction、tools 与
+   * toolConfig 都在缓存里，请求不得再带）；为空时走完整结构，由隐式缓存按公共前缀命中。
+   */
+  function buildBody(
+    request: AiReplyTurnRequest,
+    tools: Tool[],
+    cachedContent: string | null
+  ): GenerateContentParameters {
+    // 查证过的轮次压低采样随机性，让模型照搜索结果讲；上层只给 grounded 语义，
+    // 取什么温度由本包决定。
+    const temperature: number = request.grounded ? GEMINI_GROUNDED_REPLY_TEMPERATURE : GEMINI_REPLY_TEMPERATURE;
+    const model: string = getAgentDeploymentConfig().text.model;
+    if (cachedContent !== null) {
+      return {
+        model,
+        contents,
+        config: { abortSignal: signal, cachedContent, temperature, maxOutputTokens: GEMINI_REPLY_MAX_TOKENS },
+      };
+    }
     return {
-      model: getAgentDeploymentConfig().text.model,
+      model,
       contents,
       config: {
         abortSignal: signal,
-        // 查证过的轮次压低采样随机性，让模型照搜索结果讲；上层只给
-        // grounded 语义，取什么温度由本包决定。
-        temperature: request.grounded ? GEMINI_GROUNDED_REPLY_TEMPERATURE : GEMINI_REPLY_TEMPERATURE,
+        temperature,
         maxOutputTokens: GEMINI_REPLY_MAX_TOKENS,
         systemInstruction: request.systemPrompt,
         tools,
@@ -122,15 +151,56 @@ export function createGeminiReplySession(
     };
   }
 
+  /**
+   * 第 1 次请求：先取共用显式缓存，取到就按显式结构发；端点以 404/4xx 拒绝这份缓存
+   * （已过期、被删或无权访问）时释放登记，再按完整结构补发一次。取不到或端点故障时
+   * 与完整请求的处理相同，不补发。模型名在请求体闭包里读，配置写坏时由
+   * requestGeminiResult 统一归一成失败结果。
+   */
+  async function requestFirst(request: AiReplyTurnRequest, tools: Tool[]): Promise<GeminiRequestResult> {
+    const acquired: { name: string | null } = { name: null };
+    const result: GeminiRequestResult = await requestGeminiResult(
+      "text",
+      (): GenerateContentParameters => {
+        acquired.name = acquireGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, geminiContextCacheContent({
+          model: getAgentDeploymentConfig().text.model,
+          systemInstruction: request.systemPrompt,
+          tools,
+          toolConfig: request.webSearchEnabled ? GEMINI_SERVER_TOOL_CONFIG : undefined,
+        }));
+        return buildBody(request, tools, acquired.name);
+      },
+      GEMINI_REPLY_ERROR_LABEL
+    );
+    const cachedContent: string | null = acquired.name;
+    if (
+      cachedContent === null ||
+      result.ok ||
+      (result.failureKind !== "misconfigured" && result.failureKind !== "rejected")
+    ) {
+      return result;
+    }
+    releaseGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, cachedContent);
+    return requestGeminiResult(
+      "text",
+      (): GenerateContentParameters => buildBody(request, tools, null),
+      GEMINI_REPLY_ERROR_LABEL
+    );
+  }
+
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingModelContent = undefined;
       const tools: Tool[] = buildTools(request);
-      const result: GeminiRequestResult = await requestGeminiResult(
-        "text",
-        (): GenerateContentParameters => buildBody(request, tools),
-        GEMINI_REPLY_ERROR_LABEL
-      );
+      const first: boolean = firstRequest;
+      firstRequest = false;
+      const result: GeminiRequestResult = first
+        ? await requestFirst(request, tools)
+        : await requestGeminiResult(
+          "text",
+          (): GenerateContentParameters => buildBody(request, tools, null),
+          GEMINI_REPLY_ERROR_LABEL
+        );
 
       // 检索次数在失败分支也要统计：那一次请求已经把服务端调用花掉了，不核销
       // 预算等于让后续轮次继续白送额度。

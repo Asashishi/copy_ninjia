@@ -66,13 +66,22 @@ export const ACTION_TOOL_NAMES: readonly string[] = [
 ];
 
 /**
- * send_voice 在模型可见的每日额度（`agent.tts` 的 `daily_limit - daily_reserve_quota`）用尽时返回的错误文案：接纳阶段
- * 余量为 0，或发起请求前的计数登记被拒（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
+ * send_voice 在模型可见的每日额度（`agent.tts` 的 `daily_limit - daily_reserve_quota`）用尽时返回的错误文案：工具调用时
+ * 同步登记计数被拒（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
  * 同时要求模型不在群里提起语音、额度或这次失败。
  */
 export const SEND_VOICE_DAILY_LIMIT_TOOL_ERROR: string =
   "Daily voice limit reached: send_voice is unavailable until the quota resets. Do not call it again, " +
   "and do not mention the voice, the limit or this failure in the chat; continue the reply as if no voice had been planned";
+
+/**
+ * send_voice 在前台窗口（VOICE_FOREGROUND_WAIT_MS）内合成失败、超时或音频无法编码时返回的错误文案：
+ * 这条语音没有发出。
+ * 同时要求模型不在群里提起语音或这次失败（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
+ */
+export const SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR: string =
+  "Voice was not sent: speech synthesis failed, timed out or returned no usable audio. Do not retry it, " +
+  "and do not mention the voice or this failure in the chat; continue the reply as if no voice had been planned";
 
 /**
  * 本轮回复已被 /ai_chat disable 作废时，所有动作工具统一返回的错误文案。

@@ -1,7 +1,8 @@
 /**
  * OpenAI Responses API 的底层收发与响应分类。本实现包（packages/aiChat/openai/）
  * 的回复会话、文本生成与视觉描述全部经由这里发请求（生图走 images 接口，
- * 见同目录 image.ts，但共用同一个客户端）。
+ * 见同目录 image.ts；openai 语音协议走 audio/speech，见同目录 speech.ts；两者共用同一套
+ * 按能力缓存的客户端。xai 语音协议不经 SDK，见 xaiSpeech.ts）。
  *
  * 收发走官方 openai SDK：超时与瞬时失败重试由 SDK 内建。客户端是线程内单例，
  * Worker 崩溃重建后由 cache/workers/aiChat/openai.ts 的空 holder 重新构造。
@@ -36,11 +37,12 @@ import {
 } from "./response";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type { AiTextResult } from "../../types/aiChat/provider";
-import type { AgentCapability, AgentCapabilityConfig } from "../../types/config";
+import type { AgentCapability, AgentDeploymentConfig } from "../../types/config";
 
 /**
  * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
- * 其余能力走通用档。image 由 aiChat/openai/image.ts 在每次请求上另行覆盖。
+ * 其余能力走通用档。image 与 tts 分别由 aiChat/openai/image.ts 与 aiChat/openai/speech.ts
+ * 在每次请求上另行覆盖。
  */
 function openAiRequestTimeoutMs(capability: AgentCapability): number {
   return capability === "media" ? OPENAI_MEDIA_REQUEST_TIMEOUT_MS : OPENAI_REQUEST_TIMEOUT_MS;
@@ -51,7 +53,7 @@ function openAiRequestTimeoutMs(capability: AgentCapability): number {
  * 凭据时复用错误的认证状态；timeout/maxRetries 是每次请求各自的预算。
  */
 export function getOpenAiClient(capability: AgentCapability): OpenAI {
-  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
+  const config: AgentDeploymentConfig[AgentCapability] = getAgentDeploymentConfig()[capability];
   if (config?.provider !== "openai") {
     throw new Error(`Agent capability "${capability}" is not configured for the OpenAI provider.`);
   }

@@ -340,7 +340,7 @@ function cronSendVoiceChain(
       dependencies.ttsDailyUsage.current = null;
       const result: VoiceSynthesisResult = await dependencies.synthesizeVoiceMessage(
         lookup.synthesize,
-        { text: action.content, tone: action.tone, quota: "operator", signal: undefined },
+        { text: action.content, tone: action.tone, quota: "operator", quotaClaimed: false, signal: undefined },
         `benchmark ${sequence}`
       );
       if (!result.ok) throw new Error(`Cron voice ${sequence} produced no voice: ${result.reason}.`);

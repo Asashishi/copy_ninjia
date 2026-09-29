@@ -1,17 +1,20 @@
 /**
- * 语音合成（TTS）这一项能力的领域类型：供应商合成结果、PCM 解码结果、
- * Telegram 语音消息编码结果与公共合成入口的结果。
+ * 语音合成（TTS）这一项能力的领域类型：供应商合成结果、PCM 解码结果、Telegram 可直接
+ * 发送的容器探测结果、Telegram 语音消息编码结果与公共合成入口的结果。
  *
- * 供应商只交回自己声明的容器字节（见 types/aiChat/provider.ts 的
- * AiSpeechProvider）；WAV 解析与 OGG/Opus 编码在与供应商无关的
- * aiChat/ai/utils/wavPcm.ts 与 aiChat/ai/voiceEncoding.ts 完成。
+ * 供应商只交回自己声明的容器字节（见 types/aiChat/provider.ts 的 AiSpeechProvider）；
+ * WAV 解析、OGG/Opus 编码与 OGG/Opus、MP3 的校验在与供应商无关的
+ * aiChat/ai/utils/wavPcm.ts、aiChat/ai/utils/voiceContainer.ts 与 aiChat/ai/voiceEncoding.ts 完成。
  */
 
 import type { AgentProvider } from "../config";
 import type { Base64PayloadDecodeFailure } from "./payload";
 import type { AiMeteredSpeechRequest } from "./provider";
 
-/** 已校验大小的合成语音：容器字节与供应商声明的 MIME。 */
+/**
+ * 已校验大小的合成语音：容器字节与 MIME。Gemini 为响应声明的 `audio/wav`；OpenAI 与 xAI
+ * 为请求时指定格式对应的 `audio/ogg`（Opus）与 `audio/mpeg`。
+ */
 export interface SynthesizedSpeech {
   bytes: Uint8Array;
   mimeType: string;
@@ -47,9 +50,10 @@ export type SpeechSynthesisAttempt =
 /** 合成载荷不可用的具体原因，只用于错误日志定位（英文，见 AGENTS.md 的日志约定）。 */
 export type SynthesizedSpeechDecodeFailure =
   | Base64PayloadDecodeFailure
-  | "missing audio mime type";
+  | "missing audio mime type"
+  | "audio body exceeds the size limit";
 
-/** 按大小与 MIME 解码合成载荷的结果；失败一律带上可记日志的原因。 */
+/** 按大小与 MIME 解码合成载荷（或有界读取音频响应体）的结果；失败一律带上可记日志的原因。 */
 export type SynthesizedSpeechDecodeResult =
   | { readonly ok: true; readonly speech: SynthesizedSpeech }
   | { readonly ok: false; readonly reason: SynthesizedSpeechDecodeFailure };
@@ -68,17 +72,36 @@ export type WavPcmDecodeResult =
   | { readonly ok: true; readonly samples: Float32Array; readonly sampleRate: number }
   | { readonly ok: false; readonly reason: WavPcmDecodeFailure };
 
-/** 可直接交给 Telegram sendVoice 的 OGG/Opus 语音。 */
+/**
+ * 供应商直接交回 Telegram 语音格式（OGG/Opus 或 MP3）时，容器校验不通过的具体原因，
+ * 只用于错误日志定位。
+ */
+export type VoiceContainerFailure =
+  | "not an Ogg Opus stream"
+  | "truncated Ogg page"
+  | "invalid Ogg granule position"
+  | "not an MP3 stream"
+  | "truncated MP3 frame";
+
+/** 容器校验结果：通过时带向上取整的整秒时长。 */
+export type VoiceContainerProbeResult =
+  | { readonly ok: true; readonly durationSeconds: number }
+  | { readonly ok: false; readonly reason: VoiceContainerFailure };
+
+/** 可直接交给 Telegram sendVoice 的语音：本地编码或校验通过的 OGG/Opus，或校验通过的 MP3。 */
 export interface EncodedVoiceMessage {
   /** 独占整块 ArrayBuffer；主线程转交的合成结果随回执转移这块 buffer。 */
   bytes: Uint8Array<ArrayBuffer>;
   /** 向上取整的整秒时长，填入 sendVoice 的 duration。 */
   durationSeconds: number;
+  /** sendVoice 上传用的文件名，扩展名与容器一致（VOICE_OGG_FILE_NAME 或 VOICE_MP3_FILE_NAME）。 */
+  fileName: string;
 }
 
 /** 语音编码失败的具体原因，只用于错误日志定位。 */
 export type VoiceEncodeFailure =
   | WavPcmDecodeFailure
+  | VoiceContainerFailure
   | "unsupported speech mime type"
   | "opus encoder failed";
 

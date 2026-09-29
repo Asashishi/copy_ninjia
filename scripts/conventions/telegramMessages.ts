@@ -186,7 +186,7 @@ export async function collectTelegramMessageProblems(
     visit(source);
   }
 
-  // 复读与翻译换图注复制媒体只经 copy/echo.ts 的 sendEchoPayload，一处决定哪些载荷可以复制。
+  // 复读换图注复制媒体只经 copy/echo.ts 的 sendEchoPayload，一处决定哪些载荷可以复制。
   const echoPath: string = join(sourceRoot, "copy", "echo.ts");
   for (const path of sourceFilesUnder(sourceRoot)) {
     const source: ts.SourceFile = await parseSourceFile(path);

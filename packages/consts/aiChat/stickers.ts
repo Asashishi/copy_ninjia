@@ -10,7 +10,7 @@ export const STICKER_PACK_NAME_PATTERN: RegExp = /^[A-Za-z0-9_]{1,64}$/;
 /** 一轮最多查看五个不同贴纸包；同一包由执行侧保证只能查看一次。 */
 export const MAX_STICKER_PACK_VIEWS_PER_REPLY: number = MAX_CONFIGURED_STICKER_PACKS;
 
-/** view_sticker_pack 展示「正在选择贴纸」的基础停顿和随机抖动。 */
+/** send_sticker 在串行链发送步骤里展示「正在选择贴纸」的基础停顿和随机抖动（见 aiChat/ai/tools/stickers.ts）。 */
 export const STICKER_CHOOSE_DELAY_BASE_MS: number = 1_500;
 /** 贴纸选择停顿额外增加的随机时间上界。 */
 export const STICKER_CHOOSE_DELAY_JITTER_MS: number = 3_500;

@@ -56,7 +56,7 @@
   - **代表的なファイル**：`echo.ts`、`copyModes.ts`、`avatarQueue.ts`。
 - **`packages/translate/`**
   - **責務**：群別セッション、対象復元、正規表現による文字種判定、遅延 Google 翻訳クライアント。
-  - **代表的なファイル**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`。通常コピーは `copy/echo.ts` を再利用。
+  - **代表的なファイル**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`。
 - **`packages/users/`**
   - **責務**：送信者 identity キャッシュ、表示上の送信者判定、ユーザーラベル生成、および名簿と広告判定が共用する identity metadata・メッセージ内容・発信元の解決。
   - **代表的なファイル**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`、`identityMetadata.ts`、`messageContent.ts`、`messageOrigin.ts`。
@@ -97,7 +97,7 @@
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
   - **代表的なファイル**：`telegram/`（`telegram/avatar/`、`telegram/actions/` を含む）、`diskIO.ts` と `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、
-    `supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker のモデル client がリクエストのキャッシュ使用量を報告する境界）、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）。
+    `supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker のモデル client がリクエストのキャッシュ使用量を報告する境界）、`geminiContextCache.ts`（Gemini 明示キャッシュの共有コア。返信と広告検出がそれぞれの scope を渡す）、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）。
 - **`packages/infra/identityPolicy/`**
   - **責務**：ホワイトリストの項目別権限、一時広告免除の累計、ブラックリストとの排他制御を担うメインスレッド側の読み取り境界。
   - **代表的なファイル**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。

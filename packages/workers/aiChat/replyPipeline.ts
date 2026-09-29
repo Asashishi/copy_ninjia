@@ -21,7 +21,7 @@ import {
   triggerKindFor,
 } from "./replyQueue";
 import { startReplyRound } from "./replyRound";
-import { hasReplyDeliveryCapacity } from "./replyDelivery";
+import { hasReplyDeliveryCapacity, isDirectReplyModelActive } from "./replyDelivery";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 
 /**
@@ -172,6 +172,7 @@ export function generateAndSendReply({
     queueSize: pendingReplyTriggers.get(chatId)?.size ?? 0,
     kind: triggerKindFor(isRandomTrigger, mediaComment),
     telegramBackpressured,
+    directRoundActive: isDirectReplyModelActive(chatId),
     deliveryAvailable: hasReplyDeliveryCapacity(chatId),
   });
   switch (decision) {

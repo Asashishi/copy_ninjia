@@ -11,12 +11,12 @@ export interface SendEchoPayloadParams {
    * 可渲染命令守卫与长度上限都由调用方在交来之前判定。
    */
   readonly text: string | undefined;
-  /** 论坛话题；复读与翻译不挂回复，必须显式带上。 */
+  /** 论坛话题；复读不挂回复，必须显式带上。 */
   readonly messageThreadId?: number;
 }
 
 /**
- * 复读、随机复读与翻译的唯一出口；本机不下载任何文件。
+ * 复读与随机复读的唯一出口；本机不下载任何文件。
  * - 纯文字消息：按字符串 `sendMessage`，不带实体、不设 parse_mode（链接与 @username 由
  *   Telegram 重新识别），原消息的 link_preview_options 原样沿用。
  * - 付费媒体：Telegram 不允许复制，只发文字；没有文字就不发。

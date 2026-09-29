@@ -1,4 +1,4 @@
-import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
+import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { describe, expect, test } from "bun:test";
 import {
   buildBotStatusMessage,
@@ -46,8 +46,10 @@ function statusSnapshot(): BotStatusSnapshot {
         baseUrl: undefined,
         headers: undefined,
         model: "gemini-tts",
+        speechProtocol: undefined,
         voice: "Leda",
-        style: GEMINI_SPEECH_STYLE,
+        style: TTS_DEFAULT_STYLE,
+        language: undefined,
         dailyLimit: 100,
         dailyReserveQuota: 25,
       },
@@ -121,6 +123,31 @@ describe("/bot_status", () => {
     // 原始条数属于记忆分层的内部机制，不对群友外露。
     expect(text).not.toContain("滑动热记忆");
     expect(text).not.toContain("冷记忆摘要");
+  });
+
+  test("xai 语音协议没有模型名，语音合成行展示音色", () => {
+    const snapshot: BotStatusSnapshot = statusSnapshot();
+    const text: string = buildBotStatusMessage({
+      ...snapshot,
+      aiConfig: {
+        ...snapshot.aiConfig!,
+        tts: {
+          provider: "openai",
+          apiKey: "secret-xai-key",
+          baseUrl: undefined,
+          headers: undefined,
+          model: undefined,
+          speechProtocol: "xai",
+          voice: "ara",
+          style: undefined,
+          language: "auto",
+          dailyLimit: 100,
+          dailyReserveQuota: 25,
+        },
+      },
+    }).text;
+    expect(text).toContain("语音合成：已配置 · ara\n");
+    expect(text).not.toContain("secret-xai-key");
   });
 
   test("部署能力不可用和群功能全关时给出明确状态", () => {

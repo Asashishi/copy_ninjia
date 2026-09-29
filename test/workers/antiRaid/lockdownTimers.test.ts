@@ -49,7 +49,6 @@ mock.module("../../../packages/infra/telegram/workerClient", () => ({
 }));
 mock.module("../../../packages/workers/antiRaid/taskTracker", () => ({
   trackAntiRaidTask: ({ task }: { task: Promise<void> }): Promise<void> => task,
-  antiRaidDispatchSignal: (): AbortSignal => new AbortController().signal,
 }));
 
 const { lockdownApiChains, lockdownEntries } =

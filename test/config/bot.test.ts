@@ -9,6 +9,7 @@ import { BOT_CONFIG_PATH } from "../../packages/consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { botConfigCache } from "../../packages/cache/perThread/config";
 import type { BotConfig } from "../../packages/types/config";
+import { DEFAULT_BOT_ATMOSPHERE } from "../../packages/consts/bot";
 
 afterEach((): void => {
   botConfigCache.current = null;
@@ -26,7 +27,7 @@ describe("config/static/bot.json", () => {
       { bot_token: "  token:secret  ", super_admin_user_id: 123 },
       "telegram.test.json"
     );
-    expect(parsed).toEqual({ atmosphere: "mesugaki", botToken: "token:secret", superAdminUserId: 123 });
+    expect(parsed).toEqual({ atmosphere: DEFAULT_BOT_ATMOSPHERE, botToken: "token:secret", superAdminUserId: 123 });
   });
 
   test("示例 token 在启动前拒绝且错误不回显原值", () => {
@@ -93,7 +94,7 @@ describe("config/static/bot.json", () => {
 test("通知风格只在真正缺省时默认雌小鬼", () => {
   for (const atmosphere of [undefined, "mesugaki", "normal"] as const) {
     expect(parseBotConfig({ bot_token: "secret", super_admin_user_id: 7, atmosphere }).atmosphere)
-      .toBe(atmosphere ?? "mesugaki");
+      .toBe(atmosphere ?? DEFAULT_BOT_ATMOSPHERE);
   }
   for (const atmosphere of [null, "plain", "teasing", "", 1, [], {}]) {
     expect(() => parseBotConfig({ bot_token: "secret", super_admin_user_id: 7, atmosphere }, "bot.fixture.json"))

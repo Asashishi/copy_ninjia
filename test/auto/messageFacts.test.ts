@@ -21,6 +21,7 @@ import {
   resolveSpeaker,
 } from "../../packages/auto/message/facts";
 import { pickPhotoFile } from "../../packages/libs/telegramImage";
+import { cartesianProduct } from "../../packages/libs/cartesianProduct";
 
 const chat = { id: -100800, type: "supergroup", title: "Test Group" } as const;
 const TEST_BOT_ID: number = 999;
@@ -147,35 +148,33 @@ describe("auto/message/facts", () => {
 
     let mismatch: string = "";
     let checked: number = 0;
-    for (const text of texts) {
-      for (const offset of offsets) {
-        for (const length of lengths) {
-          const entities = [
-            { type: "mention", offset, length },
-            { type: "mention", offset: 0, length: 4 },
-            { type: "text_mention", offset: 0, length: 1, user: { id: 999, is_bot: false, first_name: "B" } },
-            { type: "text_mention", offset: 0, length: 1, user: { id: 7, is_bot: false, first_name: "C" } },
-          ];
-          for (const shaped of [
-            message({ text, entities }),
-            message({ caption: text, caption_entities: entities }),
-          ]) {
-            for (const botUsername of usernames) {
-              const expected: MentionFacts = reference(shaped, 999, botUsername);
-              const actual: MentionFacts = resolveMentionFacts(shaped, 999, botUsername);
-              checked += 1;
-              if (
-                mismatch === "" &&
-                (expected.isMentioned !== actual.isMentioned ||
-                  expected.hasOtherMention !== actual.hasOtherMention)
-              ) {
-                mismatch = `text=${JSON.stringify(text)} offset=${offset} length=${length} ` +
-                  `bot=${JSON.stringify(botUsername)} expected=${JSON.stringify(expected)} ` +
-                  `actual=${JSON.stringify(actual)}`;
-              }
-            }
-          }
-        }
+    for (const { text, offset, length, field, botUsername } of cartesianProduct({
+      text: texts,
+      offset: offsets,
+      length: lengths,
+      field: ["text", "caption"],
+      botUsername: usernames,
+    })) {
+      const entities = [
+        { type: "mention", offset, length },
+        { type: "mention", offset: 0, length: 4 },
+        { type: "text_mention", offset: 0, length: 1, user: { id: 999, is_bot: false, first_name: "B" } },
+        { type: "text_mention", offset: 0, length: 1, user: { id: 7, is_bot: false, first_name: "C" } },
+      ];
+      const shaped: Message = field === "text"
+        ? message({ text, entities })
+        : message({ caption: text, caption_entities: entities });
+      const expected: MentionFacts = reference(shaped, 999, botUsername);
+      const actual: MentionFacts = resolveMentionFacts(shaped, 999, botUsername);
+      checked += 1;
+      if (
+        mismatch === "" &&
+        (expected.isMentioned !== actual.isMentioned ||
+          expected.hasOtherMention !== actual.hasOtherMention)
+      ) {
+        mismatch = `text=${JSON.stringify(text)} offset=${offset} length=${length} ` +
+          `bot=${JSON.stringify(botUsername)} expected=${JSON.stringify(expected)} ` +
+          `actual=${JSON.stringify(actual)}`;
       }
     }
     expect(mismatch).toBe("");

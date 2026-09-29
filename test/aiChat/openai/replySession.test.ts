@@ -15,6 +15,7 @@ import { DUPLICATE_REPLY_RESULT } from "../../../packages/consts/aiChat/tools";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/config";
 import type { AgentDeploymentConfig, OpenAiAgentCapabilityConfig } from "../../../packages/types/config";
+import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 
 const requestOpenAiResult = mock(async (..._args: unknown[]): Promise<OpenAiRequestResult> => ({
   ok: false,
@@ -273,7 +274,7 @@ describe("OpenAI 回复会话的产出解析", () => {
     expect(turn.text).toBe("正文");
     expect(turn.webSearchCalls).toBe(1);
     expect(turn.functionCalls).toEqual([
-      { id: "call-1", name: "send_message", argumentsJson: '{"text":"你好"}' },
+      { id: "call-1", name: SEND_MESSAGE_TOOL, argumentsJson: '{"text":"你好"}' },
     ]);
     // OpenAI 没有「服务端工具调用过多」的对等信号。
     expect(turn.toolCallLimitHit).toBe(false);

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { hasReplyDeliveryCapacity, reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
+import { hasReplyDeliveryCapacity, isDirectReplyModelActive, reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import { invalidateChatReplyCache, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows, resetAiChatReplyCache } from "../../../packages/cache/workers/aiChat/replies";
 import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat/rateLimit";
 import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
@@ -49,7 +49,7 @@ test("Worker 总预算限制多群及不断重开的旧代", async () => {
   expect(replyDeliveryTotal.current).toBe(0);
 });
 
-test("固定桶容纳多轮链，后轮先就绪也必须按入站顺位执行", async () => {
+test("固定桶容纳多轮链，直接轮当即放行，后轮先就绪也必须等前面的轮按入站顺位执行", async () => {
   const order: number[] = [];
   const turns: ReplyDeliveryTurn[] = [];
   const total: number = REPLY_ROUND_MAX_CONCURRENT * 3 + 1;
@@ -64,7 +64,8 @@ test("固定桶容纳多轮链，后轮先就绪也必须按入站顺位执行",
   expect(window.slots[0]!.size).toBe(4);
   for (let i: number = turns.length - 1; i > 0; i--) turns[i]!.commit();
   await Promise.resolve();
-  expect(order).toEqual([]);
+  // 第一轮是直接轮：占位即放行；后面的轮都已 commit，仍要等它发完。
+  expect(order).toEqual([0]);
   turns[0]!.commit();
   for (let i: number = 0; i < total; i++) {
     await turns[i]!.ready;
@@ -96,6 +97,63 @@ test("空轮提前完成不放行更晚回复，轮到完成项时直接跳过",
   await third.finish();
   third.commit();
   expect(replyDeliveryWindows.size).toBe(0);
+});
+
+test("群里没有在途轮次时是直接轮：占位即放行，commit 交还独立并发位，有序并行轮等它发完", async () => {
+  const direct = reserveReplyDelivery(1)!;
+  expect(direct.direct).toBe(true);
+  let directReady: boolean = false;
+  void direct.ready.then(() => { directReady = true; });
+  await Promise.resolve();
+  expect(directReady).toBe(true);
+  expect(isDirectReplyModelActive(1)).toBe(true);
+  const parallel = reserveReplyDelivery(1)!;
+  expect(parallel.direct).toBe(false);
+  let parallelReady: boolean = false;
+  void parallel.ready.then(() => { parallelReady = true; });
+  expect(replyDeliveryWindows.get(1)?.size).toBe(2);
+  // 有序并行轮的完整链已就绪，直接轮也结束了模型阶段，但直接轮没发完：并行轮继续等。
+  parallel.commit();
+  direct.commit();
+  direct.commit();
+  expect(isDirectReplyModelActive(1)).toBe(false);
+  await Promise.resolve();
+  expect(parallelReady).toBe(false);
+  await direct.finish();
+  await parallel.ready;
+  expect(parallelReady).toBe(true);
+  // 并行轮还在：下一轮仍是有序并行轮。
+  const next = reserveReplyDelivery(1)!;
+  expect(isDirectReplyModelActive(1)).toBe(false);
+  await parallel.finish();
+  next.commit();
+  await next.ready;
+  await next.finish();
+  expect(replyDeliveryWindows.size).toBe(0);
+  expect(replyDeliveryCounts.size).toBe(0);
+  // 全部清空后，下一轮又是直接轮。
+  const again = reserveReplyDelivery(1)!;
+  expect(isDirectReplyModelActive(1)).toBe(true);
+  again.commit();
+  await again.finish();
+  expect(replyDeliveryWindows.size).toBe(0);
+  expect(replyDeliveryTotal.current).toBe(0);
+});
+
+test("群失效后下一轮是新代的直接轮，旧代直接轮迟到收尾不影响新窗口", async () => {
+  const old = reserveReplyDelivery(1)!;
+  invalidateChatReplyCache(1);
+  const fresh = reserveReplyDelivery(1)!;
+  const window = replyDeliveryWindows.get(1);
+  expect(window?.directModelActive).toBe(true);
+  old.commit();
+  await old.finish();
+  expect(replyDeliveryWindows.get(1)).toBe(window);
+  expect(isDirectReplyModelActive(1)).toBe(true);
+  fresh.commit();
+  await fresh.finish();
+  expect(replyDeliveryWindows.size).toBe(0);
+  expect(replyDeliveryTotal.current).toBe(0);
 });
 
 test("群之间独立，旧代迟到回收不能删除新窗口", async () => {

@@ -47,7 +47,8 @@ import type { BlockedMembersRemovedEvent } from
 import type { RemoveBlockedMembersMessage } from
   "../../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../../types/blocklist";
-import { antiRaidDispatchSignal, trackAntiRaidTask } from "./taskTracker";
+import { antiRaidDispatchSignal } from "../../cache/workers/antiRaid/tasks";
+import { trackAntiRaidTask } from "./taskTracker";
 import { releaseAdDetectDedupKey } from "./adDetect/queueState";
 import { sleep } from "../../libs/sleep";
 

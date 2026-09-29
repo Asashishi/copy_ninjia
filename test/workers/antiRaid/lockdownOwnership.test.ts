@@ -64,7 +64,6 @@ mock.module("../../../packages/infra/telegram", () => ({
 mock.module("../../../packages/infra/telegram/workerClient", () => ({ sendTemporaryMessageFromMain: async (): Promise<undefined> => undefined }));
 mock.module("../../../packages/workers/antiRaid/taskTracker", () => ({
   trackAntiRaidTask: ({ task }: { task: Promise<void> }): Promise<void> => task,
-  antiRaidDispatchSignal: (): AbortSignal => new AbortController().signal,
 }));
 const { lockdownEntries, lockdownApiChains } = await import("../../../packages/cache/workers/antiRaid/lockdown");
 const { recordJoin, adoptLockdowns, deactivateLockdownChat, handleLockdownPersisted, handleLockdownPersistFailed, stopLockdownRuntime } = await import("../../../packages/workers/antiRaid/lockdownRuntime");

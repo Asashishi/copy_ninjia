@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5323_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.41%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5492_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.50%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5323 件のテストが全て成功 / テストファイル 465 件 / expect() 呼び出し 261,542 回 / 関数カバレッジ 98.06% / 行カバレッジ 98.41%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5492 件のテストが全て成功 / テストファイル 475 件 / expect() 呼び出し 262,413 回 / 関数カバレッジ 98.07% / 行カバレッジ 98.50%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -210,7 +210,7 @@
 | 管理者・定時ボイス | `/send` と cron は TTS を共用し、上限は UTF-16 コード単位で 256。cron は各ラウンドで 1 回合成し、Telegram の `file_id` を再利用 |
 | 画像の記憶 | 生成画像は内容を記録。`/wed`・`/h_image`・定時画像はまずプレースホルダーを記録し、返信された時に画像を認識 |
 
-音声には `agent.tts` の明示設定が必要です（現在は Google が提供。`base_url` と `headers` でサードパーティ gateway 経由でも呼び出せます）。`daily_limit`（既定 100）は AI の独立枠（総額から予約枠を引いた数）と `/send`・cron 共用の `daily_reserve_quota`（既定 25）に分かれます。`agentCount` と `reserveCount` で別々に数え、互いの枠を消費せず、24 時間窓の期限後に一緒にリセットします。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
+音声には `agent.tts` の明示設定が必要です（Google、または `provider: "openai"` で `speech_protocol` により OpenAI 互換 audio/speech か xAI（Grok）`/v1/tts` を選択。Google は `base_url` と `headers` でサードパーティ gateway 経由でも呼び出せます）。`daily_limit`（既定 100）は AI の独立枠（総額から予約枠を引いた数）と `/send`・cron 共用の `daily_reserve_quota`（既定 25）に分かれます。`agentCount` と `reserveCount` で別々に数え、互いの枠を消費せず、24 時間窓の期限後に一緒にリセットします。`/send` のコピー・音声と定時の文字・音声は AI 記憶に自動記録されません。画像の自動記録は、そのグループで AI が有効かつ復読中でない場合に動作します。設定・エラー・長さの規則： [FAQ](10-faq.md)。
 
 > [!IMPORTANT]
 > [音声回数のコールド移行と段階的アップグレード](07-operations.md#upgrade-15)

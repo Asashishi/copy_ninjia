@@ -1,9 +1,9 @@
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
-import { pauseForToolAction } from "../../utils/toolPause";
 import { sendMessageWithResult } from "../../../../infra/telegram";
 import type {
+  ReplyActionPause,
   ReplyToolContext,
   ReplyToolExecution,
   RoundMessageState,
@@ -63,13 +63,9 @@ export function createSendMessageExecutor(
         actions_used: correctTypo ? 2 : 1,
         ...(typo.rejectedReason ? { typo_rejected: typo.rejectedReason } : {}),
       }),
-      run: async (chatAction: ChatActionControl): Promise<string> => {
+      run: async (chatAction: ChatActionControl, pause: ReplyActionPause): Promise<string> => {
         if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-        chatAction.set("typing");
-        const invalidated: string | null = await pauseForToolAction({
-          delayMs: typingDelayMs(typo.textToSend),
-          signal: ctx.signal,
-        });
+        const invalidated: string | null = await pause("typing", typingDelayMs(typo.textToSend));
         if (invalidated !== null) return invalidated;
         chatAction.set("idle");
         await chatAction.settle();
@@ -94,7 +90,12 @@ export function createSendMessageExecutor(
         if (
           correctTypo && typo.correctionText
         ) {
-          const correctionSent: boolean = await applyQuickTypoCorrection(ctx, typo.correctionText);
+          const correctionSent: boolean = await applyQuickTypoCorrection({
+            ctx,
+            chatAction,
+            pause,
+            correctionText: typo.correctionText,
+          });
           if (correctionSent) actionsUsedByTool++;
           return JSON.stringify({
             success: true,

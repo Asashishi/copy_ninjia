@@ -22,8 +22,8 @@ import {
 } from "../../packages/cache/perThread/config";
 import { AGENT_CONFIG_PATH, CONFIG_ROOT } from "../../packages/consts/paths";
 import { AGENT_HEADERS_MAX_ENTRIES } from "../../packages/consts/agent";
-import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
-import { TTS_DEFAULT_DAILY_LIMIT, TTS_DEFAULT_DAILY_RESERVE_QUOTA } from "../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_DAILY_LIMIT, TTS_DEFAULT_DAILY_RESERVE_QUOTA, TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
+import { XAI_SPEECH_DEFAULT_LANGUAGE } from "../../packages/consts/aiChat/openai";
 import type { AdDetectAgentConfig, AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
 
 const AD_DETECT: Readonly<Record<string, string>> = {
@@ -88,7 +88,7 @@ describe("agent capability config", () => {
         model: "grok-image",
         imageProtocol: "xai",
       },
-      tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, headers: undefined, model: "tts-test", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
+      tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, headers: undefined, model: "tts-test", voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
     });
   });
 
@@ -224,7 +224,7 @@ describe("agent capability config", () => {
   test("tts 可选择任一已支持 provider，由工具装配判断实现能力", () => {
     const parsed: AgentDeploymentConfig = parseAgentDeploymentConfig({
       ...AGENT,
-      tts: { provider: "openai", api_key: "key", model: "tts-model", voice: "Leda" },
+      tts: { provider: "openai", api_key: "key", model: "tts-model", speech_protocol: "openai", voice: "Leda" },
     }, "agent.json");
     expect(parsed.tts).toEqual({
       provider: "openai",
@@ -232,10 +232,12 @@ describe("agent capability config", () => {
       baseUrl: undefined,
       headers: undefined,
       model: "tts-model",
+      speechProtocol: "openai",
       voice: "Leda",
-      style: GEMINI_SPEECH_STYLE,
-      dailyLimit: 100,
-      dailyReserveQuota: 25,
+      style: TTS_DEFAULT_STYLE,
+      language: undefined,
+      dailyLimit: TTS_DEFAULT_DAILY_LIMIT,
+      dailyReserveQuota: TTS_DEFAULT_DAILY_RESERVE_QUOTA,
     });
   });
 
@@ -282,8 +284,12 @@ describe("agent google headers", () => {
     }, "agent.json")).toThrow(/agent\.summary must be exactly \{ provider, api_key, base_url\?, model \} when provider is openai/);
     expect(() => parseAgentDeploymentConfig({
       ...AGENT,
-      tts: { provider: "openai", api_key: "key", model: "m", voice: "Leda", headers: { "x-a": "b" } },
-    }, "agent.json")).toThrow(/agent\.tts must be exactly \{ provider, api_key, base_url\?, model, voice, style\?, daily_limit\?, daily_reserve_quota\? \} when provider is openai/);
+      tts: { provider: "openai", api_key: "key", model: "m", speech_protocol: "openai", voice: "Leda", headers: { "x-a": "b" } },
+    }, "agent.json")).toThrow(/agent\.tts must be exactly \{ provider, api_key, base_url\?, model, speech_protocol, voice, style\?, daily_limit\?, daily_reserve_quota\? \} when provider is openai and speech_protocol is openai/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "openai", api_key: "key", speech_protocol: "xai", voice: "eve", headers: { "x-a": "b" } },
+    }, "agent.json")).toThrow(/agent\.tts must be exactly \{ provider, api_key, base_url\?, speech_protocol, voice, language\?, daily_limit\?, daily_reserve_quota\? \} when provider is openai and speech_protocol is xai/);
     expect(() => parseAgentDeploymentConfig({
       ...AGENT,
       image: { provider: "openai", api_key: "key", model: "m", image_protocol: "xai", headers: { "x-a": "b" } },
@@ -325,7 +331,7 @@ describe("agent google headers", () => {
 describe("agent tts capability", () => {
   test("style 缺省沿用常量，自定义先 trim，存在但非法时拒绝", () => {
     const base = { provider: "google", api_key: "key", model: "m", voice: "fixture" };
-    expect(parseAgentDeploymentConfig({ ...AGENT, tts: base }, "agent.json").tts?.style).toBe(GEMINI_SPEECH_STYLE);
+    expect(parseAgentDeploymentConfig({ ...AGENT, tts: base }, "agent.json").tts?.style).toBe(TTS_DEFAULT_STYLE);
     expect(parseAgentDeploymentConfig({ ...AGENT, tts: { ...base, style: "  cheerful  " } }, "agent.json").tts?.style).toBe("cheerful");
     for (const style of [null, 7, true, {}, [], "", " \n\t"]) {
       expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...base, style } }, "agent.json"))
@@ -357,6 +363,65 @@ describe("agent tts capability", () => {
     await expect(validateAgentDeploymentConfig(path)).rejects.toThrow(
       `${path}: $.agent.tts.provider must be "google" or "openai"`
     );
+  });
+
+  test("openai provider 必须声明 speech_protocol，google provider 不接受该字段", () => {
+    const openai = { provider: "openai", api_key: "key", model: "m", voice: "alloy" };
+    for (const speechProtocol of [undefined, "", "OpenAI", "grok", 1, null]) {
+      expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...openai, speech_protocol: speechProtocol } }, "agent.json"))
+        .toThrow(/agent\.tts\.speech_protocol must be "openai" or "xai"/);
+    }
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { provider: "google", api_key: "key", model: "m", voice: "Leda", speech_protocol: "openai" },
+    }, "agent.json")).toThrow(/agent\.tts must be exactly \{ provider, api_key, base_url\?, headers\?, model, voice, style\?, daily_limit\?, daily_reserve_quota\? \} when provider is google/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { ...openai, speech_protocol: "openai", language: "ja" },
+    }, "agent.json")).toThrow(/agent\.tts must be exactly \{ provider, api_key, base_url\?, model, speech_protocol, voice, style\?, daily_limit\?, daily_reserve_quota\? \} when provider is openai and speech_protocol is openai/);
+    const parsed: AgentTtsCapabilityConfig | undefined = parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { ...openai, speech_protocol: "openai", style: " cheerful ", base_url: "https://tts.example/v1" },
+    }, "agent.json").tts;
+    expect(parsed).toMatchObject({ speechProtocol: "openai", style: "cheerful", baseUrl: "https://tts.example/v1", language: undefined });
+  });
+
+  test("xai 协议没有 model 与 style：出现即拒绝，language 缺省 auto、存在时 trim", () => {
+    const xai = { provider: "openai", api_key: "xai-key", speech_protocol: "xai", voice: " ara " };
+    const expected: RegExp = /agent\.tts must be exactly \{ provider, api_key, base_url\?, speech_protocol, voice, language\?, daily_limit\?, daily_reserve_quota\? \} when provider is openai and speech_protocol is xai/;
+    for (const extra of [{ model: "grok-tts" }, { style: "cheerful" }, { model: "" }, { unknown: 1 }]) {
+      expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...xai, ...extra } }, "agent.json")).toThrow(expected);
+    }
+    expect(parseAgentDeploymentConfig({ ...AGENT, tts: xai }, "agent.json").tts).toEqual({
+      provider: "openai",
+      apiKey: "xai-key",
+      baseUrl: undefined,
+      headers: undefined,
+      model: undefined,
+      speechProtocol: "xai",
+      voice: "ara",
+      style: undefined,
+      language: XAI_SPEECH_DEFAULT_LANGUAGE,
+      dailyLimit: TTS_DEFAULT_DAILY_LIMIT,
+      dailyReserveQuota: TTS_DEFAULT_DAILY_RESERVE_QUOTA,
+    });
+    const custom: AgentTtsCapabilityConfig | undefined = parseAgentDeploymentConfig({
+      ...AGENT,
+      tts: { ...xai, language: " ja ", base_url: "https://api.x.ai/v1", daily_limit: 10, daily_reserve_quota: 2 },
+    }, "agent.json").tts;
+    expect(custom).toMatchObject({ language: "ja", baseUrl: "https://api.x.ai/v1", dailyLimit: 10, dailyReserveQuota: 2 });
+    for (const language of [null, 7, "", "  "]) {
+      expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...xai, language } }, "agent.json"))
+        .toThrow(/agent\.tts\.language must be a non-empty string/);
+    }
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...xai, voice: "" } }, "agent.json"))
+      .toThrow(/agent\.tts\.voice must be a non-empty string/);
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...xai, api_key: "replace-with-xai-api-key" } }, "agent.json"))
+      .toThrow(/agent\.tts\.api_key must be a configured non-placeholder string/);
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...xai, base_url: "http://api.x.ai/v1" } }, "agent.json"))
+      .toThrow(/agent\.tts\.base_url must be an absolute https URL/);
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...xai, daily_limit: 0 } }, "agent.json"))
+      .toThrow(/agent\.tts\.daily_limit must be a positive integer/);
   });
 
   test("daily_limit 与 daily_reserve_quota 缺省取默认值，显式给出时原样生效", () => {

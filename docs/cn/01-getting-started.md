@@ -141,7 +141,10 @@ AI 的 provider、API key、端点与模型按能力写入 `config/dynamic/agent
     缺省时只摘掉对应工具（`tts` 缺省时 `/send` 的 TTS 请求也会报错，`cron.json` 用到
     `send_voice` 时则拒绝启动）；`ad_detect` 缺省时只阻止广告检测。OpenAI 生图还必须显式
     声明 `image_protocol`（`openai`、`openai-standard` 或 `xai`）；`tts` 还必须声明非空 `voice`
-    （预置音色名，或 AI Studio Voice design 的 `voice_` 音色 ID），可选 `daily_limit`（每日
+    （Google 为预置音色名或 AI Studio Voice design 的 `voice_` 音色 ID，OpenAI、xAI 为各自的音色名）；
+    `provider` 为 `openai` 的 `tts` 另须声明 `speech_protocol`：`openai` 走 OpenAI 兼容 audio/speech，
+    `xai` 走 xAI `/v1/tts`（此时不接受 `model` 与 `style`，可选 `language` 缺省 `auto`），`google` 不接受该字段；
+    可选 `daily_limit`（每日
     语音次数上限，缺省 100）与 `daily_reserve_quota`（其中留给 `/send` 与 cron 的次数，缺省
     25，必须小于 `daily_limit`）。AI 与预留分别计数、互不借用；预留为 0 时 `/send` 和 cron 不合成语音。`base_url` 只接受
     `https`，明文 `http` 仅限 `localhost`、`127.0.0.1`、`::1`；URL 不得带用户名/密码
@@ -155,7 +158,7 @@ AI 的 provider、API key、端点与模型按能力写入 `config/dynamic/agent
     以 404/405 表明模型/路径不存在时都停止下载该类媒体（后者另记一行指向
     `$.agent.media` 的诊断），瞬时故障只按次数退避、不会永久关闭能力；热重载替换
     `media` 能力后，两种输入重新探测。
-  - **语音风格**：可选 `agent.tts.style` 经 trim 后必须为非空字符串，缺省使用 `GEMINI_SPEECH_STYLE`；热重载影响新请求，删除字段恢复默认。详见[语音配置](../../config_example/README/zh.md)。
+  - **语音风格**：可选 `agent.tts.style` 经 trim 后必须为非空字符串，缺省使用 `TTS_DEFAULT_STYLE`；`speech_protocol: "xai"` 不接受该字段。热重载影响新请求，删除字段恢复默认。详见[语音配置](../../config_example/README/zh.md)。
 
 永久白名单、黑名单、临时广告免检累计与待完成处置不是部署 JSON；它们统一放在运行时数据根的 `database/storage.sqlite`，由 Disk I/O Worker 在启动时完成 SQLite 完整性、migration 谱系、schema 版本、JSONB/关系列结构和名单互斥校验。其余配置按功能惰性校验：`/ai_chat enable` 读取贴纸、心情、人设和 `agent.json` 的对话能力；`/ad_detect enable` 读取相应分类前提；`/translate enable` 读取 `g-auth.json`。任一份读不动只拒绝对应开关与该功能的运行路径，不阻止进程启动；但**文件只要存在就必须能严格解析**，非法内容即使对应功能当前关着也会在启动总闸拒绝启动（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。AI 闲聊与广告检测的可用性在热重载后重算，补齐缺省配置会自动恢复；`g-auth.json` 与默认人设不热重载，补齐后须重启。
 

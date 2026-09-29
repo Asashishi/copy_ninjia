@@ -25,7 +25,7 @@ Bot のプロセスは動いているのにグループで反応がないとき�
 - **通知が表示されてしばらくすると消える**：コマンド検証の失敗、権限拒否、用法の案内、操作の結果は送信成功の 30 秒後に自動削除されます。長期保持の例外は [08 コマンドリファレンス](08-commands.md) を参照してください。
 - **`@Bot` で運勢の候補が出ない**：Inline Mode が有効になっていません。
 - **`/咬` のような動作コマンドに反応しない**：中国語 1〜2 文字だけを受け付けます。全体で 90 秒ごとに最大 450 回まで応答し、超過分は通知なしで破棄します。
-- **別の Bot のメッセージが翻訳・copy されない、または届いたり届かなかったりする**：Bot-to-Bot Communication Mode を有効にしてください（[BotFather の設定](README.md#botfather-setup) を参照）。翻訳は文字とキャプションを扱い、文字のない画像・スタンプ・ファイルは送らず、描画されるコマンド `/コマンド` を含むメッセージはまるごと飛ばします。
+- **別の Bot のメッセージが翻訳・copy されない、または届いたり届かなかったりする**：Bot-to-Bot Communication Mode を有効にしてください（[BotFather の設定](README.md#botfather-setup) を参照）。翻訳は文字とキャプションを扱い、訳文だけを送ります。文字のない画像・スタンプ・ファイルは送らず、すでに対象言語の文字や数字・句読点・絵文字だけの文字には何も出力せず、描画されるコマンド `/コマンド` を含むメッセージはまるごと飛ばします。
 - **参加認証、広告検出、連投ミュートが動かない**：3 つとも既定で無効です。それぞれ `/antiraid enable`、`/ad_detect enable`、`/flood_control enable` を実行し、Bot が管理者で[グループ内の管理者権限](README.md#botfather-setup) の表の権限を持っていることを確認してください。広告検出には `config/dynamic/agent.json` での広告検出能力の設定も必要です。
 - **まったく反応せず、コマンドメニューもない**：まずプロセスが動いているか確認します（`systemctl status <サービス名>`、`journalctl -u <サービス名>`）。エラーログは data root の `logs/<日付>.json` にあります。設定や状態の書き誤りがあるとプロセスは起動段階で終了し、ログにファイルパスとフィールドを記録します。ログに `Error fetching Telegram updates` がエラーコード 409 付きで繰り返し出る場合は、同じ token で別のインスタンスが更新を取得しているか webhook が設定されており、プロセスは終了します。調査手順は [07 運用とトラブルシューティング](07-operations.md#起動失敗の調査) を参照してください。
 
@@ -43,7 +43,7 @@ Bot のプロセスは動いているのにグループで反応がないとき�
 
 ## 定時ボイスや `/send` のボイスが送られないのは？
 
-どちらも `config/dynamic/agent.json` の `agent.tts` を使って AI Worker 上で合成します。`cron.json` が `tts` なしで `send_voice` を使うと起動を拒否し、稼働中にこの組み合わせになる変更はホットリロードで拒否されエラーログに残ります。`/send` のボイス依頼には「音声合成が未設定」と返します。`tts` を設定しても失敗する場合はログを確認してください。`speech synthesis failed: worker unavailable` は AI Worker が動いていないこと（`stickers.json`、`mood.json`、`prompt/persona.md` も必要）、`tts unsupported` は選んだ provider が音声合成を実装していないこと（現在は `google` のみ）、`synthesis failed` / `timed out` は主にモデル側の問題を示し、`daily limit reached` は 1 日のボイス上限を使い切ったことを示します。`/send` と cron は独立した `daily_reserve_quota`（既定 25）回を共有し `reserveCount` に記録します。AI は `daily_limit - daily_reserve_quota`（既定 75）回を独立して使い `agentCount` に記録し、両者は互いの枠を消費しません。予約枠 0 では運用側の音声合成を行いません。計数窓は窓内の最初の request から始まって 24 時間後に数え直し、`memory/global/state.json` の `ttsUsage` に記録します。この 2 つの値は `agent.tts` で調整でき、変更は hot reload ですぐ反映され、使用済み回数はリセットされません。`/send` のボイス依頼はメッセージ全体を 1 つのコードブロックにし、`type` を `tts` にする必要があります。それ以外は通常のメッセージとして転送されます。項目と上限は [設定説明](../../config_example/README/ja.md#cronjson) と [08 コマンド](08-commands.md) を参照してください。
+どちらも `config/dynamic/agent.json` の `agent.tts` を使って AI Worker 上で合成します。`cron.json` が `tts` なしで `send_voice` を使うと起動を拒否し、稼働中にこの組み合わせになる変更はホットリロードで拒否されエラーログに残ります。`/send` のボイス依頼には「音声合成が未設定」と返します。`tts` を設定しても失敗する場合はログを確認してください。`speech synthesis failed: worker unavailable` は AI Worker が動いていないこと（`stickers.json`、`mood.json`、`prompt/persona.md` も必要）、`tts unsupported` は選んだ provider が音声合成を実装していないこと（現在は `google` と `openai` の両方が実装済み）、`synthesis failed` / `timed out` は主にモデル側の問題を示し（OpenAI 互換 endpoint は audio/speech と `opus` 形式に対応している必要があります。たとえば Cloudflare の OpenAI 互換入口にはこの route がありません）、`not an Ogg Opus stream`、`not an MP3 stream` などは endpoint が要求と異なる形式の音声を返したことを示し、`daily limit reached` は 1 日のボイス上限を使い切ったことを示します。`/send` と cron は独立した `daily_reserve_quota`（既定 25）回を共有し `reserveCount` に記録します。AI は `daily_limit - daily_reserve_quota`（既定 75）回を独立して使い `agentCount` に記録し、両者は互いの枠を消費しません。予約枠 0 では運用側の音声合成を行いません。計数窓は窓内の最初の request から始まって 24 時間後に数え直し、`memory/global/state.json` の `ttsUsage` に記録します。この 2 つの値は `agent.tts` で調整でき、変更は hot reload ですぐ反映され、使用済み回数はリセットされません。`/send` のボイス依頼はメッセージ全体を 1 つのコードブロックにし、`type` を `tts` にする必要があります。それ以外は通常のメッセージとして転送されます。項目と上限は [設定説明](../../config_example/README/ja.md#cronjson) と [08 コマンド](08-commands.md) を参照してください。
 
 ## 音声の長さ・温度・記憶はどう設定しますか？
 
@@ -55,7 +55,7 @@ Bot のプロセスは動いているのにグループで反応がないとき�
 
 長さは UTF-16 コード単位で数え、`tone` の上限は共通で 64 です。空白の正規化後に検証します。`/send` の超過は書式案内を返します。cron の不正なフィールドは起動を拒否し、hot reload では更新全体を拒否してログに記録します。音声レスポンスには別途 8 MiB の上限があり、文字数は音声の秒数を保証しません。
 
-音色は `config/dynamic/agent.json` の `agent.tts.voice`、基本スタイルは任意の `agent.tts.style` で設定し、どちらも hot reload に対応します。style は trim 後に空でない文字列が必要です。省略または削除すると [`GEMINI_SPEECH_STYLE`](../../packages/consts/aiChat/gemini.ts) を使います。3 つの入口で共用し、口調を指定すると `<基本スタイル>; 细节: <口調>` として連結します。新しい request は再読み込み後の設定を使い、発行済み request は元の snapshot を保持します。サンプリング温度は引き続きソース定数 `GEMINI_SPEECH_TEMPERATURE`（現在 `1`）で決まり、温度変更には再ビルドまたはソース版サービスの再起動が必要です。
+音色は `config/dynamic/agent.json` の `agent.tts.voice`、基本スタイルは任意の `agent.tts.style` で設定し、どちらも hot reload に対応します。style は trim 後に空でない文字列が必要です。省略または削除すると [`TTS_DEFAULT_STYLE`](../../packages/consts/aiChat/voiceMessage.ts) を使います。3 つの入口で共用し、口調を指定すると `<基本スタイル>; 细节: <口調>` として連結し、Gemini には `speech_metadata.style`、OpenAI には `instructions` として送ります（OpenAI は `tts-1` / `tts-1-hd` が `instructions` に非対応と説明しています）。`speech_protocol: "xai"` にはスタイル field が無く、`style` を拒否し口調も送りません。新しい request は再読み込み後の設定を使い、発行済み request は元の snapshot を保持します。Gemini のサンプリング温度は引き続きソース定数 `GEMINI_SPEECH_TEMPERATURE`（現在 `1`）で決まり、温度変更には再ビルドまたはソース版サービスの再起動が必要です。
 
 ## サードパーティ gateway（Cloudflare AI Gateway など）経由で Google モデルを呼ぶには？
 

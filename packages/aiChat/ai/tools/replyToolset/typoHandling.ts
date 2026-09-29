@@ -4,8 +4,11 @@ import {
   TYPO_MIN_REMAINING_ACTIONS,
   TYPO_QUICK_CORRECTION_MAX_MS,
   TYPO_QUICK_CORRECTION_MIN_MS,
+  TYPO_QUICK_CORRECTION_TYPING_MS,
 } from "../../../../consts/aiChat/tools";
+import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
 import type {
+  ReplyActionPause,
   ReplyToolContext,
 } from "../../../../types/aiChat/replies";
 import type {
@@ -82,15 +85,32 @@ export function decideMessageTypo({
   };
 }
 
-export async function applyQuickTypoCorrection(
-  ctx: ReplyToolContext,
-  correctionText: string
-): Promise<boolean> {
+export interface ApplyQuickTypoCorrectionParams {
+  ctx: ReplyToolContext;
+  /** 本步动作的心跳句柄与拟人停顿，与错字消息同一步。 */
+  chatAction: ChatActionControl;
+  pause: ReplyActionPause;
+  correctionText: string;
+}
+
+/**
+ * 错字消息落地后补发正确单字：先静默 TYPO_QUICK_CORRECTION_MIN_MS～MAX_MS，再模拟固定
+ * TYPO_QUICK_CORRECTION_TYPING_MS 的「正在输入」，切 idle、等状态收敛后发送。返回补字是否送达。
+ */
+export async function applyQuickTypoCorrection({
+  ctx,
+  chatAction,
+  pause,
+  correctionText,
+}: ApplyQuickTypoCorrectionParams): Promise<boolean> {
   try {
     await sleep(
       randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS),
       ctx.signal
     );
+    if (await pause("typing", TYPO_QUICK_CORRECTION_TYPING_MS) !== null) return false;
+    chatAction.set("idle");
+    await chatAction.settle();
     const correctionMessageId: number | undefined = await sendDirectMessage({
       ctx,
       text: correctionText,

@@ -147,15 +147,55 @@ OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provid
 
 `image.provider` 为 `google` 时禁止填写 `image_protocol`。
 
-`tts` 在通用字段之外还必须配置非空 `voice`，原样作为合成请求的音色：可以是预置音色名
-（示例中的 `Nika`），也可以是 AI Studio Voice design 生成的 `voice_` 音色 ID。设计音色归属
-该 `api_key` 所在的项目，且会在一年后过期；程序只校验它是非空字符串，音色是否存在由第一次
-合成请求决定。当前只有 Google 实现了语音合成，所以 `tts.provider` 选择 `openai` 虽能通过
-配置校验，但不会注册语音工具，`/send` 与 `cron.json` 的语音请求也会失败并记错误日志。三处都在
+`tts` 在通用字段之外还必须配置非空 `voice`，原样作为合成请求的音色：Google 可以是预置音色名
+（示例中的 `Nika`），也可以是 AI Studio Voice design 生成的 `voice_` 音色 ID，OpenAI 与 xAI 为各自的
+音色名。设计音色归属该 `api_key` 所在的项目，且会在一年后过期；程序只校验它是非空字符串，音色是否
+存在由第一次合成请求决定。`tts.provider` 为 `openai` 时必须声明 `speech_protocol`（`google` 禁止该字段）：
+
+- `"openai"`：OpenAI 兼容 audio/speech，字段为 `provider`、`api_key`、`base_url?`、`model`、
+  `speech_protocol`、`voice`、`style?` 与两个额度字段；请求 `opus`（OGG/Opus），端点须支持该格式。
+- `"xai"`：xAI（Grok）`/v1/tts`，`base_url` 缺省为 `https://api.x.ai/v1`；端点没有模型名与风格指令，
+  出现 `model` 或 `style` 即拒绝；可选 `language`（BCP-47 代码或 `auto`，缺省 `auto`），`voice` 作为
+  `voice_id` 发送；请求 `mp3`（24 kHz、64 kbps），本句语气不发送。
+
+Google 的写法见 [`config_example/dynamic/agent.json`](../dynamic/agent.json)。另外两种写法，`agent` 段里的
+`tts` 例如：
+
+```json
+{
+  "tts": {
+    "provider": "openai",
+    "api_key": "replace-with-openai-api-key",
+    "model": "gpt-4o-mini-tts",
+    "speech_protocol": "openai",
+    "voice": "coral"
+  }
+}
+```
+
+```json
+{
+  "tts": {
+    "provider": "openai",
+    "api_key": "replace-with-xai-api-key",
+    "base_url": "https://api.x.ai/v1",
+    "speech_protocol": "xai",
+    "voice": "ara",
+    "language": "ja"
+  }
+}
+```
+
+OpenAI 写法省略 `base_url` 时走 OpenAI 官方端点，换成兼容服务时填它的端点；可选 `style` 与 Google 相同。
+xAI 写法的 `base_url` 可省略，`language` 省略时为 `auto`。两种写法都可再加 `daily_limit` 与
+`daily_reserve_quota`。
+
+OpenAI 与 xAI 返回的 OGG/Opus、MP3 是 Telegram 语音能直接收的格式，只校验容器、算出时长后原样发送；
+Gemini 返回的 WAV 在本地编码成 OGG/Opus。AI 语音工具、`/send` 与 `cron.json` 的语音都在
 AI Worker 上合成，因此还需要 AI 对话的其余前提（`stickers.json`、`mood.json`、
 `prompt/persona.md`）齐备，否则合成按「Worker 不可用」失败。
 
-`agent.tts.style` 是可选的基础朗读风格，必须是 trim 后非空的字符串；`null`、空白或其他类型均拒绝。缺省使用 `GEMINI_SPEECH_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`。三个语音入口共用此配置；热重载后新请求使用新值，已发起请求保留原配置快照，删除字段恢复默认。单次请求的 `tone` 仍按 `<基础风格>; 细节: <语气>` 拼接。
+`agent.tts.style` 是可选的基础朗读风格（`speech_protocol: "xai"` 不接受），必须是 trim 后非空的字符串；`null`、空白或其他类型均拒绝。缺省使用 `TTS_DEFAULT_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`。三个语音入口共用此配置；热重载后新请求使用新值，已发起请求保留原配置快照，删除字段恢复默认。单次请求的 `tone` 仍按 `<基础风格>; 细节: <语气>` 拼接，Gemini 作为 `speech_metadata.style`、OpenAI 作为 `instructions` 发送。
 
 `tts` 另有两个可选的每日额度字段，AI 与预留额度独立计数：
 
@@ -259,6 +299,11 @@ Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限�
 非空、不重复且不超过 1,024 个字符。应使用去标识化样本，不要放入无关个人信息或
 真实凭据。
 
+`agent.ad_detect` 使用 Google 协议时，判定规则与这些样本拼成的系统指令会建成
+Gemini 显式缓存（存活 1 小时，被使用时自动续期）：创建按全价计一次输入 token，
+另按小时收取存储费。内容低于所用模型的显式缓存下限（例如样本很少）时创建会被拒绝，
+之后照常不带缓存判定。
+
 ## `g-auth.json`
 
 示例与 GCP 控制台下载的服务账号密钥文件同形，只用于对照结构；占位私钥无法解析，
@@ -333,7 +378,7 @@ GIF 可用，其余类型发不出去属于配置问题。本地上传的上限�
   的随机等待都只在内存里，重启后重新开始。
 - 某个动作因网络、Telegram 5xx、出站闸重试后仍返回的 429 或出站队列满失败时，按 2、4、8 秒退避最多重试 3 次；
   `send_voice` 的合成没交回音频、等待超时或 AI Worker 暂不可用同样按此重试。
-  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删、`tts` 未配置或实现不支持、当日语音额度用尽、音频编码失败）不重试。最终失败时日志记一条
+  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删、`tts` 未配置或实现不支持、当日语音额度用尽、音频编码或格式校验失败）不重试。最终失败时日志记一条
   `Cron task "<name>" action #<n> ...`，并跳过本轮剩下的动作。超时但 Telegram 实际已收到时，
   重试会重复发送一条。
 - 定时消息长期保留，不做 30 秒删除；不带论坛话题，开了话题的群里发到 General。全部请求照常经过

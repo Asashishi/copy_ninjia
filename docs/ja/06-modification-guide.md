@@ -71,7 +71,7 @@
 | ツール action・lookup 上限、typing と typo のテンポ | `packages/consts/aiChat/tools.ts` |
 | 音声文字起こしの長さ・サイズ上限と placeholder | `packages/consts/aiChat/voice.ts` |
 | ボイスツールの round 上限・セリフ/口調の長さ・1 日の回数上限の既定値と計数窓・Opus エンコード parameter | `packages/consts/aiChat/voiceMessage.ts` |
-| request timeout、retry 回数、sampling と safety 段位、音声合成の基本声質と temperature | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
+| request timeout、retry 回数、sampling と safety 段位、音声合成の temperature とプロトコルごとのパラメータ（既定の基本スタイルは `packages/consts/aiChat/voiceMessage.ts`） | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
 | **model、provider、key、endpoint** | 定数ではなく `config/dynamic/agent.json` で能力ごとに設定。[01-getting-started](01-getting-started.md) 参照 |
 | OAI 互換画像 wire protocol / size profile | `config/dynamic/agent.json` の必須 `agent.image.image_protocol`。profile 追加時は型、固定 canvas table、exhaustive dispatch、test も同期 |
 | 認証 window、spam threshold、追記・compaction 方針 | `packages/consts/antiRaid/` |

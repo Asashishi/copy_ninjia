@@ -55,9 +55,9 @@ mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
 mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
 const recordBotImage = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/aiChat/botImages", () => ({ recordBotImage }));
-/** OGG 头 + 两字节的合成替身；每次返回新数组，确认复用的是登记下的那一份。 */
+/** MP3 帧头 + 两字节的合成替身；每次返回新数组，确认复用的是登记下的那一份。上传文件名取自合成结果。 */
 function voiceResult(): VoiceSynthesisResult {
-  return { ok: true, voice: { bytes: new Uint8Array([0x4f, 0x67, 0x67, 0x53, 1, 2]), durationSeconds: 3 } };
+  return { ok: true, voice: { bytes: new Uint8Array([0xFF, 0xF3, 0x84, 0xC4, 1, 2]), durationSeconds: 3, fileName: "fixture-voice.mp3" } };
 }
 const synthesizeVoice = mock(async (..._args: unknown[]): Promise<VoiceSynthesisResult> => voiceResult());
 const realWorkerBridge = await import("../../packages/aiChat/workerBridge");
@@ -249,7 +249,7 @@ describe("send_voice", () => {
     expect(calls[0]!.method).toBe("sendVoice");
     expect(chatId).toBe(-1001);
     expect(upload).toBeInstanceOf(InputFile);
-    expect(upload.filename).toBe("voice.ogg");
+    expect(upload.filename).toBe("fixture-voice.mp3");
     expect(options).toEqual({ duration: 3 });
     expect(markSelfSent).toHaveBeenCalledWith(-1001, 77);
     expect(recordBotImage).not.toHaveBeenCalled();

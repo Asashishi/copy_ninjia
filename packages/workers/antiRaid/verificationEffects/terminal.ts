@@ -3,11 +3,7 @@ import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegr
 import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
 import { verificationEntries } from "../../../cache/workers/antiRaid/verification";
-import {
-  VERIFICATION_TERMINAL_RETRY_MAX_MS,
-  VERIFICATION_TERMINAL_RETRY_MS,
-  VERIFICATION_TIMEOUT_MS,
-} from "../../../consts/antiRaid/verification";
+import { VERIFICATION_TIMEOUT_MS } from "../../../consts/antiRaid/verification";
 import { logger } from "../../../infra/logger";
 import {
   deleteMessageWithOutcome,
@@ -17,10 +13,7 @@ import {
 } from "../../../infra/telegram";
 import { formatMinSec } from "../../../libs/time";
 import { verificationKey } from "../../../libs/verificationKey";
-import type {
-  VerificationDispatcher,
-  VerificationEntry,
-} from "../../../types/antiRaid/internal";
+import type { VerificationDispatcher } from "../../../types/antiRaid/internal";
 import type {
   ExpelSnapshot,
   VerificationEffect,
@@ -34,6 +27,7 @@ import type {
 import { fetchAdminIds, freshAdminIds } from "../adminCache";
 import { botCanDeleteIn, botCanRestrictIn } from "../botPermissions";
 import { resolveChatIsSupergroup } from "../chatKind";
+import { scheduleTerminalRetry } from "./retry";
 
 /** 终态原地标记变化后发布新 revision 的边界。 */
 export type VerificationChangePublisher = (
@@ -77,36 +71,6 @@ interface RunExpelEffectParams {
   effect: Extract<VerificationEffect, { kind: "expel" | "expelFlood" }>;
   dispatchVerification: VerificationDispatcher;
   publishVerificationChange: VerificationChangePublisher;
-}
-
-interface ScheduleExpelRetryParams {
-  chatId: number;
-  userId: number;
-  state: VerificationState & { kind: "expelling" };
-  dispatchVerification: VerificationDispatcher;
-}
-
-/** 为仍是当前 token 的未结算处置安排指数退避。 */
-function scheduleExpelRetry({
-  chatId,
-  userId,
-  state,
-  dispatchVerification,
-}: ScheduleExpelRetryParams): void {
-  const key: string = verificationKey(chatId, userId);
-  const entry: VerificationEntry | undefined = verificationEntries.get(key);
-  if (entry?.state !== state) return;
-  if (entry.timer !== undefined) clearTimeout(entry.timer);
-  const retries: number = entry.terminalRetries ?? 0;
-  entry.terminalRetries = retries + 1;
-  entry.timer = setTimeout(
-    (): void => dispatchVerification(chatId, userId, { type: "terminalPersisted" }),
-    Math.min(
-      VERIFICATION_TERMINAL_RETRY_MS * (2 ** retries),
-      VERIFICATION_TERMINAL_RETRY_MAX_MS
-    )
-  );
-  entry.timer.unref();
 }
 
 /** 执行仍匹配快照的处置终态，并为未结算动作安排有上限的指数退避。 */
@@ -153,10 +117,11 @@ export async function runExpelEffect({
     expectedState.cleanupSettled === true
   ) {
     expectedState.executionStarted = false;
-    scheduleExpelRetry({
+    scheduleTerminalRetry({
       chatId,
       userId,
       state: expectedState,
+      event: { type: "terminalPersisted" },
       dispatchVerification,
     });
     return;
@@ -188,10 +153,11 @@ export async function runExpelEffect({
 
   // 成功播报已发送时等待落盘回执；只有未结算处置才进入本地指数退避。
   expectedState.executionStarted = false;
-  scheduleExpelRetry({
+  scheduleTerminalRetry({
     chatId,
     userId,
     state: expectedState,
+    event: { type: "terminalPersisted" },
     dispatchVerification,
   });
 }

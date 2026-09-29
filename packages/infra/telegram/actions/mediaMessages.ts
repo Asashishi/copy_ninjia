@@ -120,9 +120,9 @@ export async function sendPhotoWithResult({
 
 export interface SendVoiceParams {
   chatId: number;
-  /** OGG/Opus 语音字节；Worker 调用会转移底层 ArrayBuffer，函数返回 Promise 后不得再读取。 */
+  /** OGG/Opus 或 MP3 语音字节；Worker 调用会转移底层 ArrayBuffer，函数返回 Promise 后不得再读取。 */
   bytes: Uint8Array;
-  /** 带 `.ogg` 扩展名的上传文件名。 */
+  /** 扩展名与容器一致的上传文件名（`.ogg` 或 `.mp3`）。 */
   fileName: string;
   replyToMessageId?: number;
   api?: SendVoiceApi;

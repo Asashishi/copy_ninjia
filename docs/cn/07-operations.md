@@ -136,7 +136,7 @@ WantedBy=multi-user.target
     最近那一天的 `summary` 后删除，只保留一天的汇总。
   - **备份**：纯旁路，丢失不影响行为；写盘失败只丢那一批统计。文件被改成不合当前格式
     （撕裂的末尾除外）时启动拒绝并保留原字节，删除或修正后再启动。
-  - **计量入口**：覆盖 `text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent 与 Interactions 分别映射字段，输出包括正文和思考；OpenAI Responses、广告检测 Chat Completions、图片生成/编辑及 token 型音频转写读取各自 usage；`image_protocol: xai` 的生图/改图给出 token 分量时按 token 计入（缓存命中取 `input_tokens_details.cached_tokens`，只给一项时按 `missing` 诊断且不记录），两项 token 都缺席或为空时按 `usage.cost_in_usd_ticks` 计入费用，provider 记为 `openai`。收到有效用量即记录，包括空正文、解码失败、应用层重试的每次响应，以及取消后 SDK 仍返回的响应；同一响应不重复计数。供应商未返回 token 或仅返回转写时长时不估算；TTS 每日次数配额独立保存于 `memory/global/state.json`。
+  - **计量入口**：覆盖 `text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent 与 Interactions 分别映射字段，输出包括正文和思考；OpenAI Responses、广告检测 Chat Completions、图片生成/编辑及 token 型音频转写读取各自 usage；`image_protocol: xai` 的生图/改图给出 token 分量时按 token 计入（缓存命中取 `input_tokens_details.cached_tokens`，只给一项时按 `missing` 诊断且不记录），两项 token 都缺席或为空时按 `usage.cost_in_usd_ticks` 计入费用，provider 记为 `openai`。收到有效用量即记录，包括空正文、解码失败、应用层重试的每次响应，以及取消后 SDK 仍返回的响应；同一响应不重复计数。Gemini 显式缓存（回复共用缓存与广告检测缓存）的每次创建按全价计费，分别以 `text`、`ad_detect` 能力、输入为缓存 token 数、命中 0、输出 0 记一条，引用该缓存的请求照常按响应里的命中数计入。供应商未返回 token 或仅返回转写时长时不估算；OpenAI audio/speech 与 xAI `/tts` 的语音合成响应不带用量，按 `tts/openai/missing` 诊断一次、不记录。TTS 每日次数配额独立保存于 `memory/global/state.json`。
   - **缺记录诊断**：`AI token usage unavailable` 只含 capability、provider 和 reason：`missing`（用量缺失）、`invalid`（用量非法）、`sink`（本线程无出口）、`duration`（只有时长）、`transport`（出口投递失败或主线程拒收）。同一出口生命周期内每种组合仅记录一次，不包含模型名、正文或凭据。诊断 FIFO 溢出另有有界丢弃汇总，写盘失败由 Disk I/O 记录错误；该文件是尽力统计，不是完整账单。
 
 - **`logs/`**
@@ -209,9 +209,21 @@ bun run migrate:global-state \
 4. 启动前用新代码调用 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，只读校验全部部署输入。
 5. 启动后观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长、journal 无新增非零退出。全部核验通过后才能清理备份；失败则保留现场，回滚须同时恢复旧代码与备份中的 `assets.json`。
 
+<a id="tts-speech-protocol"></a>
+
+### `agent.json` 语音协议字段（手工）
+
+当前解析器（[`packages/config/agentCapability.ts`](../../packages/config/agentCapability.ts)）要求 `agent.tts.provider` 为 `openai` 时声明 `speech_protocol`：`"openai"` 走 OpenAI 兼容 audio/speech，`"xai"` 走 xAI `/tts`，两种写法的字段集见 [`config_example/README/zh.md`](../../config_example/README/zh.md)。缺省或取值非法时启动在建立外部连接前拒绝；运行期把文件改成这种内容时，热重载整份拒绝 `agent.json` 并继续使用上一份已校验快照，改对之前每次变更都被拒绝。本迁移只改 `config/dynamic/agent.json`，没有迁移脚本，启动时也不自动补字段；没有 `tts` 段或 `tts.provider` 为 `google` 的部署无需迁移。
+
+1. 停止服务并确认 inactive、进程已退出、`bot.lock` 已释放。用 `mktemp -d` 在工作树外备份 `config/`，记录文件清单、权限、属主与 SHA-256，并逐文件核对副本。
+2. 在 `agent.tts` 中补上 `"speech_protocol": "openai"`，其余字段原样保留。改用 xAI `/tts` 时写 `"speech_protocol": "xai"`，同时删除 `model` 与 `style`；`base_url` 可省略，可选 `language` 缺省为 `auto`。
+3. 原地改写，保留原权限与属主；用备份清单执行 `sha256sum -c`，确认只有 `dynamic/agent.json` 变化。
+4. 启动前用新代码调用 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`，只读校验全部部署输入。
+5. 启动后观察至少两个 supervisor 重启间隔，确认 `active/running`、`NRestarts` 不增长、journal 无新增非零退出。全部核验通过后才能清理备份；失败则保留现场，回滚须同时恢复旧代码与备份中的 `agent.json`。
+
 ### 旧布局的分阶段升级
 
-数据根仍有 `state.json` 或 `state.json.bak` 时，先使用上一次全局状态迁移的发行版及其说明，将状态迁到 `memory/global/state.json`、素材项迁到 `config/dynamic/assets.json`，再运行本节的计数拆分，并按 [`assets.json` 分组迁移](#assets-groups)改写素材配置。更早格式须按各中间发行版的说明逐阶段迁移，当前脚本不保留跨多次迁移的兼容链。
+数据根仍有 `state.json` 或 `state.json.bak` 时，先使用上一次全局状态迁移的发行版及其说明，将状态迁到 `memory/global/state.json`、素材项迁到 `config/dynamic/assets.json`，再运行本节的计数拆分，并按 [`assets.json` 分组迁移](#assets-groups)改写素材配置；`agent.tts` 使用 `openai` provider 时再按[语音协议字段](#tts-speech-protocol)补上 `speech_protocol`。更早格式须按各中间发行版的说明逐阶段迁移，当前脚本不保留跨多次迁移的兼容链。
 
 配置必须位于 `config/static/`（`bot.json`、`g-auth.json`）或 `config/dynamic/`（其余部署 JSON），并保留原权限与属主；`dynamic/` 即使为空也必须存在。启动与安装器拒绝旧状态位置和放错位置的配置；中间迁移不要求启动中间版本。
 
@@ -246,7 +258,7 @@ bun run migrate:random-image-names \
 
 ### 从 11.0.9 分阶段升级
 
-11.0.9 使用 schema v8，数据库需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，然后用 13.0.2 发布的 `migrate:h-image-add-permission` 产出 v11；Bot 配置同样用 13.0.2 的 `migrate:bot-config` 迁到 13.x 格式。之后用 14.0.0 发布的 `migrate:translate-sessions` 到达 14.x 格式，再用上一次全局状态迁移的发行版转换旧布局，最后由当前入口完成[语音计数拆分](#upgrade-15)，并按 [`assets.json` 分组迁移](#assets-groups)改写素材配置。全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署从 13.0.2 那一段开始。运行以下命令前，先完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0、13.0.2 标签，暂存输出目录须不存在。
+11.0.9 使用 schema v8，数据库需要三段：先在独立目录中用固定提交 `500e848faeda75dcae3c3329507f24d05137e3b9` 的 `migrate:ai-context` 产出 v9，再用 12.1.0 发布的 `migrate:clear-context-permission` 产出 v10，然后用 13.0.2 发布的 `migrate:h-image-add-permission` 产出 v11；Bot 配置同样用 13.0.2 的 `migrate:bot-config` 迁到 13.x 格式。之后用 14.0.0 发布的 `migrate:translate-sessions` 到达 14.x 格式，再用上一次全局状态迁移的发行版转换旧布局，最后由当前入口完成[语音计数拆分](#upgrade-15)，并按 [`assets.json` 分组迁移](#assets-groups)改写素材配置；`agent.tts` 使用 `openai` provider 时再按[语音协议字段](#tts-speech-protocol)补上 `speech_protocol`。全过程保持服务停止，不需要启动中间版本。已在 12.x（schema v10）上的部署从 13.0.2 那一段开始。运行以下命令前，先完成外部一致性备份，包含 `memory/ai/` 与 SQLite WAL/SHM。Git 仓库须包含该固定提交与 12.1.0、13.0.2 标签，暂存输出目录须不存在。
 
 中间源码是本流程的必需输入。仅有 11.0.9 标签或当前版本的源码压缩包时，须先取得上述固定提交的完整源码；发布前应独立保留并提供该源码，不能依赖 squash 后会被重置的 dev 历史。
 
@@ -372,6 +384,7 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 - `/send TTS for chat <id> produced no voice: <原因>`：`/send` 中转里的语音请求没合成出语音，原因的读法同上；超管私聊同时收到一句失败提示，中转会话保持开启。
 - `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：投递多个会话的任务（`["all"]`、`["except", ...]` 或逐个列出多个会话）在某个会话最终失败，只跳过这个会话剩下的动作，其余会话照常发送；原因的读法同上。`Cron task "<name>" skipped <n> chat(s) without send permission.` 是普通日志，表示本轮有群因机器人缺发送权限或查询失败被跳过。
 - `Failed to probe chat membership` / `Failed to ban chat member` 以 `PARTICIPANT_ID_INVALID` 结尾时，通常是黑名单里有已销号账号。补扫照常按退避重试；同一用户在一个群的一次补扫里全部请求都返回这一句记 1 次，任一群查到或封到 TA 即清零，累计 5 次后自动移出黑名单与待踢批次，并记 `Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results`。`/wed` 每日复核遇到同一错误直接把该 ID 移出候选集合，不记错误日志。
+- `Gemini context cache API` / `Gemini ad detection cache API`（回复 / 广告检测的 Gemini 显式缓存）：`create rejected: 400 …` 是 warn，表示缓存内容低于所用模型的显式缓存下限或参数不被接受，同一内容不再重试，请求照常不带缓存发出；`create failed`、`renew failed` 是瞬时失败，`GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS`（10 分钟）后再试，期间照常请求。
 
 ---
 

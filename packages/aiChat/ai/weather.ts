@@ -14,6 +14,7 @@ import {
 } from "../../cache/workers/aiChat/weather";
 import { fetchJsonWithTimeout } from "../../infra/httpFetch";
 import { isPlainRecord } from "../../libs/record";
+import { TOKYO_TIME_ZONE } from "../../consts/time";
 
 /**
  * 东京天气：唯一的数据来源与刷新入口，也是 weatherCache 的唯一写入者。
@@ -38,7 +39,7 @@ async function refreshTokyoWeather(controller: AbortController): Promise<void> {
   url.searchParams.set("longitude", String(TOKYO_LONGITUDE));
   url.searchParams.set("current", "temperature_2m,weather_code");
   url.searchParams.set("daily", "temperature_2m_max,temperature_2m_min,weather_code");
-  url.searchParams.set("timezone", "Asia/Tokyo");
+  url.searchParams.set("timezone", TOKYO_TIME_ZONE);
 
   const data: unknown = await fetchJsonWithTimeout({
     input: url,

@@ -90,6 +90,8 @@ function handleAcceptedIncomingMessage(
 
   const copyTargetId: number | undefined = activeCopyTargetIdIn(chatId);
   const translation: TranslateState | undefined = senderId === undefined ? undefined : activeTranslateStateIn(chatId, senderId);
+  // 生效的翻译目标只走翻译：同时是 copy 目标也不复读、不复制媒体；翻译整条不发送时
+  // （同语种、没有文字等）这条消息同样不再往下处理。
   if (translation !== undefined) {
     return translateMessage({
       chatId,

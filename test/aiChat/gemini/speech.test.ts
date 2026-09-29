@@ -23,10 +23,9 @@ const { synthesizeGeminiSpeech } = await import("../../../packages/aiChat/gemini
 const {
   GEMINI_SPEECH_REQUEST_ATTEMPTS,
   GEMINI_SPEECH_REQUEST_TIMEOUT_MS,
-  GEMINI_SPEECH_STYLE,
   GEMINI_SPEECH_TEMPERATURE,
-  GEMINI_SPEECH_TONE_SEPARATOR,
 } = await import("../../../packages/consts/aiChat/gemini");
+const { TTS_DEFAULT_STYLE, TTS_TONE_SEPARATOR } = await import("../../../packages/consts/aiChat/voiceMessage");
 
 const WAV_BYTES: Uint8Array = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4]);
 const INITIAL_CONFIG = getAgentDeploymentConfig();
@@ -64,7 +63,7 @@ describe("Gemini 语音合成适配器", () => {
     finish(audioInteraction());
     await pending;
     const styles = create.mock.calls.map(([body]) => (body as any).input[0].content[0].annotations[0].style);
-    expect(styles).toEqual([`first${GEMINI_SPEECH_TONE_SEPARATOR}tone`, "second", GEMINI_SPEECH_STYLE]);
+    expect(styles).toEqual([`first${TTS_TONE_SEPARATOR}tone`, "second", TTS_DEFAULT_STYLE]);
     const checkReadonly = (): void => {
       // @ts-expect-error 配置解析结果的基础风格不可由调用方改写
       getAgentDeploymentConfig().tts!.style = "mutation";
@@ -118,7 +117,7 @@ describe("Gemini 语音合成适配器", () => {
       input: readonly { content: readonly { annotations: readonly { style: string }[] }[] }[];
     };
     expect(body.input[0]!.content[0]!.annotations[0]!.style)
-      .toBe(`${getAgentDeploymentConfig().tts?.style}${GEMINI_SPEECH_TONE_SEPARATOR}鼻で笑うように`);
+      .toBe(`${getAgentDeploymentConfig().tts?.style}${TTS_TONE_SEPARATOR}鼻で笑うように`);
   });
 
   test("每次调用显式带超时、重试次数与合成后的 signal", async () => {

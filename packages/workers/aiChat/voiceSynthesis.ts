@@ -37,6 +37,7 @@ async function synthesize(
         text: msg.text,
         tone: msg.tone,
         quota: "operator",
+        quotaClaimed: false,
         signal: AbortSignal.any([controller.signal, aiChatWorkerAbortController.current.signal]),
       },
       `main-thread request ${msg.requestId}`

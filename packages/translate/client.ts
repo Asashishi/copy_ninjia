@@ -99,7 +99,7 @@ async function getTranslateParent(expectedGeneration: number): Promise<string> {
 
 /**
  * 通过 Google Cloud Translation API 将文本翻译成指定语言。
- * 失败时返回 null，让调用方可以退化为发送未翻译的原文，而不是直接丢弃消息。
+ * 失败时返回 null，调用方整条不发送。
  * @param text 待翻译的文本。
  */
 async function runTranslation(text: string, language: TranslateLanguage, expectedGeneration: number): Promise<string | null> {
@@ -119,9 +119,8 @@ async function runTranslation(text: string, language: TranslateLanguage, expecte
       targetLanguageCode: TRANSLATE_LANGUAGE_CODES[language],
       model: language === "en" ? `${parent}/models/${TRANSLATE_REGIONAL_MODEL}` : undefined,
     }, { timeout: TRANSLATE_REQUEST_TIMEOUT_MS });
-    // 空字符串和 null/undefined 同等对待：调用方靠 null 判断"翻译失败，退化
-    // 发原文"，空字符串若被当成"翻译成功"会尝试发一条空消息，被 Telegram
-    // 拒绝，消息就此静默丢失，而不是像真正失败时那样原样转发。
+    // 空字符串和 null/undefined 同样按失败返回 null，调用方不会发出一条注定被
+    // Telegram 拒绝的空消息。
     const translated: string | null | undefined = response.translations?.[0]?.translatedText;
     return translated ? translated : null;
   } catch (error: unknown) {

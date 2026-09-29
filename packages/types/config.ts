@@ -110,14 +110,22 @@ export interface OpenAiAgentImageCapabilityConfig extends OpenAiAgentCapabilityC
 }
 
 /**
- * 语音合成能力配置：通用字段之外必填 voice，另有基础风格与每日额度两项。voice 原样交给实现包，
- * 取值是预置音色名或 Google AI Studio Voice design 生成的 `voice_` 音色 ID（后者归属
- * api_key 所在项目、有效期一年，过期后须重新生成并替换）。
+ * OpenAI 协议下语音合成的线协议。
+ *
+ * 同 OpenAiImageProtocol，这是请求体能力边界，不是模型枚举：`openai` 表示 OpenAI
+ * audio/speech（官方 SDK，含兼容端点），`xai` 表示 xAI `POST /tts`（fetch，无模型名与风格
+ * 指令字段）。新增时在这里和 aiChat/openai/speech.ts 的穷举分派同步增加一档。
  */
-export type AgentTtsCapabilityConfig = AgentCapabilityConfig & {
+export type OpenAiSpeechProtocol = "openai" | "xai";
+
+/** 三种语音合成配置共有的音色与每日额度。 */
+interface AgentTtsVoiceQuota {
+  /**
+   * 原样交给实现包的音色：Google 为预置音色名或 AI Studio Voice design 生成的 `voice_` 音色 ID
+   * （归属 api_key 所在项目、有效期一年，过期后须重新生成并替换），OpenAI 为 audio/speech 的
+   * voice，xAI 为 `voice_id`。
+   */
   readonly voice: string;
-  /** 基础朗读风格；部署字段 style 缺省时使用 GEMINI_SPEECH_STYLE。 */
-  readonly style: string;
   /** 每个窗口拆分给 AI 与预留额度的总预算，正整数；缺省时为 TTS_DEFAULT_DAILY_LIMIT。 */
   readonly dailyLimit: number;
   /**
@@ -125,7 +133,46 @@ export type AgentTtsCapabilityConfig = AgentCapabilityConfig & {
    * 两边互不借用。daily_reserve_quota 缺省时为 TTS_DEFAULT_DAILY_RESERVE_QUOTA。
    */
   readonly dailyReserveQuota: number;
-};
+}
+
+/** Google 语音合成配置（Interactions API）；不接受 speech_protocol 与 language。 */
+export interface GoogleAgentTtsCapabilityConfig extends GoogleAgentCapabilityConfig, AgentTtsVoiceQuota {
+  readonly speechProtocol: undefined;
+  /** 基础朗读风格；部署字段 style 缺省时使用 TTS_DEFAULT_STYLE。 */
+  readonly style: string;
+  readonly language: undefined;
+}
+
+/** OpenAI audio/speech 协议的语音合成配置；风格经 `instructions` 发送。 */
+export interface OpenAiAgentTtsCapabilityConfig extends OpenAiAgentCapabilityConfig, AgentTtsVoiceQuota {
+  readonly speechProtocol: "openai";
+  /** 基础朗读风格；部署字段 style 缺省时使用 TTS_DEFAULT_STYLE。 */
+  readonly style: string;
+  readonly language: undefined;
+}
+
+/**
+ * xAI `POST /tts` 协议的语音合成配置。端点没有模型名与风格指令字段，部署配置出现 model 或
+ * style 即拒绝，因此两项恒为 undefined。
+ */
+export interface XAiAgentTtsCapabilityConfig extends AgentTtsVoiceQuota {
+  readonly provider: "openai";
+  readonly apiKey: string;
+  /** 留空表示走 xAI 官方端点 XAI_API_BASE_URL。 */
+  readonly baseUrl: string | undefined;
+  readonly headers: undefined;
+  readonly model: undefined;
+  readonly speechProtocol: "xai";
+  readonly style: undefined;
+  /** BCP-47 语言代码或 `auto`；部署字段 language 缺省时为 XAI_SPEECH_DEFAULT_LANGUAGE。 */
+  readonly language: string;
+}
+
+/** 语音合成能力配置；字段集固定，各协议不适用的字段恒为 undefined。 */
+export type AgentTtsCapabilityConfig =
+  | GoogleAgentTtsCapabilityConfig
+  | OpenAiAgentTtsCapabilityConfig
+  | XAiAgentTtsCapabilityConfig;
 
 /** 生图能力配置。 */
 export type AgentImageCapabilityConfig =

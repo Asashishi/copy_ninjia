@@ -1,6 +1,6 @@
 import type { AiToolDefinition } from "./provider";
-import type { StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../stickers/tools";
-import type { ChatActionControl } from "./chatAction";
+import type { StickerPackCandidate, StickerRoundState } from "../stickers/tools";
+import type { ChatActionControl, ChatActionPhase } from "./chatAction";
 import type { AiDirectTriggerReason, ImageGenerationReference } from "./protocol";
 import type { BotImageOrigin, BufferedReplyReference } from "./memory";
 import type { MediaKind, TelegramVisionSource } from "../media";
@@ -64,12 +64,12 @@ export interface ReplyToolContext {
    * （见 libs/forumTopic.ts）。
    */
   messageThreadId: number | undefined;
-  /** 本群已登记问答；为空或缺省时本轮不挂问答工具，模型看不到它们。 */
+  /** 本群已登记问答；为空或缺省时问答执行器返回空清单，本轮工具状态写明没有登记。 */
   chatQa?: ReadonlyMap<string, string>;
   /**
-   * 重媒体工具（generate_image）的直接触发资格；为 false 时工具整个不挂，为 true
-   * 时才按供应商能力挂载。它**不**代表生图意图已由程序预判——具体意图仍由模型按
-   * 当前消息自行判断。
+   * 重媒体工具（generate_image）的直接触发资格。工具只按部署能力恒挂；为 false 时
+   * 本轮工具状态写明不可用，执行器在调用时直接拒绝。它**不**代表生图意图已由程序
+   * 预判——具体意图仍由模型按当前消息自行判断。
    *
    * 资格由 workers/aiChat/replyRound.ts 的 mediaToolsAllowed 计算。协议层
    * `imageGenerationRequested` 记录入口是否允许图片工具，轮次开始时再与随机触发
@@ -79,8 +79,19 @@ export interface ReplyToolContext {
   imageGenerationReference?: ImageGenerationReference;
   /** superAdmin 触发：跳过生图的群共享冷却。 */
   bypassMediaToolCooldown: boolean;
+  /**
+   * 本轮聊天状态心跳句柄（见 aiChat/ai/chatActionHeartbeat.ts）。有序并行轮只由串行动作链按工具
+   * 调用顺序切换挡位（见 aiChat/ai/tools/replyToolset/actionChains.ts）；直接轮由工具集在还没执行过
+   * 动作的请求期间亮「正在输入」、挑贴纸的请求期间亮「正在选择贴纸」，动作工具在调用内执行时切到
+   * 各自的挡位（见 replyToolset/pacing.ts 与 replyToolset/orchestrator.ts）。
+   */
   chatAction: ChatActionControl;
-  stickerLock: StickerSendLockControl;
+  /**
+   * 本轮是直接轮（群里没有在途轮次时启动，见 workers/aiChat/replyDelivery.ts）：动作工具在调用内
+   * 直接执行并回真实结果，不排串行链，按直接轮节奏停顿（见 replyToolset/pacing.ts）；为 false 时是
+   * 有序并行轮。
+   */
+  direct: boolean;
   roundHasTypo: boolean;
   isActive: () => boolean;
   /** 本轮 generation 的取消信号；模型、等待和 Telegram 调用必须沿用。 */
@@ -113,22 +124,32 @@ export interface SentGeneratedImage {
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */
 export interface ReplyToolset {
-  /** 本轮全部自定义函数声明（静态查询工具 + 现组装的行动工具）。中立
-   *  JSON Schema 表达，两家供应商实现包各自转成自家形状。 */
+  /** 本轮全部自定义函数声明（静态查询工具 + 行动工具）。中立 JSON Schema 表达，
+   *  两家供应商实现包各自转成自家形状；同一部署同一人设下每轮逐字相同。 */
   readonly functions: readonly AiToolDefinition[];
-  /** 本轮生图参考素材文案，拼进运行时状态区块（见
-   *  aiChat/ai/tools/replyToolset/imageReference.ts）。没挂生图工具时为空串。
-   *  文案不进工具声明：素材尺寸每次触发都不同，会打散供应商侧缓存的稳定前缀。
-   *  群冷却连这里都不进，只由执行器在调用时判定并直接拒绝。 */
-  readonly imageReference: string;
+  /** 本轮工具状态段（含段首标签），拼进运行时状态区块（见
+   *  aiChat/ai/tools/replyToolset/toolStatus.ts）。按轮变化的可用性（直接触发资格、
+   *  群冷却、参考素材、语音余量、问答条数）只写在这里，不进工具声明，免得打散
+   *  供应商侧缓存的稳定前缀。 */
+  readonly toolStatus: string;
   /** 本轮是否挂载供应商的服务端联网检索工具（Gemini 的 googleSearch /
    *  OpenAI 的 hosted web_search）。 */
   readonly webSearch: boolean;
   readonly has: (name: string) => boolean;
+  /**
+   * 每次请求模型前调用：直接轮在还没执行过动作时亮「正在输入」，刚看过贴纸包时亮「正在选择贴纸」，
+   * 其余请求不亮；有序并行轮不切挡（见 replyToolset/orchestrator.ts）。
+   */
+  readonly beforeModelRequest: () => void;
+  /**
+   * 模型阶段结束时调用：直接轮收回请求期间亮着、还没被动作接走的状态；有序并行轮不切挡
+   * （见 replyToolset/orchestrator.ts）。
+   */
+  readonly afterModel: () => void;
   readonly execute: (name: string, argumentsJson: string) => Promise<string>;
   /** 已接纳动作的预占额度；失败或取消不退回给模型重复提交。 */
   readonly actionsUsed: () => number;
-  /** 等待已接纳调用链及其发送回调全部结算；调用前须结束模型工具派发。 */
+  /** 等串行链上与转入后台的动作及其发送回调全部结算；调用前须结束模型工具派发。 */
   readonly settle: () => Promise<void>;
   /** 实际成功落地的动作数，不含乐观接纳或失败的调用。 */
   readonly actionsCompleted: () => number;
@@ -137,25 +158,78 @@ export interface ReplyToolset {
   readonly signal?: AbortSignal;
 }
 
-/** 行动工具校验后的独立调用链；result 是接纳回执，run 返回实际执行结果。 */
-export interface PreparedReplyAction {
-  readonly result: string;
-  readonly run: (chatAction: ChatActionControl) => Promise<string>;
+/**
+ * 动作执行中的拟人停顿：亮 phase 挡并等 delayMs（心跳还在静默期时顺延剩余静默）；本轮作废时返回
+ * 交给调用方结算的工具错误，走完返回 null。有序并行轮每个动作都停顿，直接轮只有「正在输入」请求
+ * 交回的第一条文字不停顿（见 replyToolset/pacing.ts）。
+ */
+export type ReplyActionPause = (phase: ChatActionPhase, delayMs: number) => Promise<string | null>;
+
+/**
+ * 直接轮的动作节奏：请求模型期间按调用方给的挡位亮状态；「正在输入」请求交回的第一个动作是文字时
+ * 沿用请求期间亮着的挡位、不停顿，其余动作照常停顿。
+ */
+export interface DirectReplyPacing {
+  /** 请求模型前调用：亮 phase 挡，idle 表示这次请求不亮状态。 */
+  readonly beforeModelRequest: (phase: ChatActionPhase) => void;
+  /**
+   * 一个动作开始执行时调用：接走请求亮着的挡位，返回这个动作用的拟人停顿。text 表示动作是文字
+   * （send_message）；「正在输入」请求交回的第一个动作是文字时，它的第一次停顿只切挡。
+   */
+  readonly startAction: (text: boolean) => ReplyActionPause;
+  /** 一个动作执行完（落地、失败或作废）后调用：收回挡位并开始静默。 */
+  readonly endAction: () => void;
+  /** 模型阶段结束后调用：最后一次请求亮的挡位还没被动作接走时收回。 */
+  readonly endModel: () => void;
 }
 
-/** 本轮独立调用链的接纳、等待和真实完成计数。 */
+/** 一步动作的执行函数：参数是本轮心跳句柄与本轮节奏的拟人停顿，返回实际执行结果。 */
+export type ReplyActionRun = (chatAction: ChatActionControl, pause: ReplyActionPause) => Promise<string>;
+
+/** 行动工具校验后交给串行动作链的动作；result 是接纳回执，run 返回实际执行结果。 */
+export interface PreparedReplyAction {
+  readonly result: string;
+  readonly run: ReplyActionRun;
+}
+
+/**
+ * 本轮唯一的串行动作链：已接纳动作按工具调用顺序排队执行，聊天状态只由链上正在执行的
+ * 那一步切换；转入后台的动作结算后排到链尾（见 aiChat/ai/tools/replyToolset/actionChains.ts）。
+ */
 export interface ReplyActionChains {
-  readonly start: (name: string, action: PreparedReplyAction) => void;
+  /** 按调用顺序排入一个已接纳动作；这一步结束后状态切回 idle。 */
+  readonly start: (name: string, run: ReplyActionRun) => void;
+  /**
+   * 登记转入后台、不占链的动作：pending 结算出执行函数时排到链尾，结算为 null 时不投递。
+   * settle 连同它排入的步骤一起等待。
+   */
+  readonly defer: (name: string, pending: Promise<ReplyActionRun | null>) => void;
+  /** 等链上与后台全部结算；调用前须结束模型工具派发。 */
   readonly settle: () => Promise<void>;
+  /**
+   * 记下一次在链外直接执行的动作结果（直接轮）：与链上步骤同一口径累计真实落地数，结果带 error
+   * 时记英文日志。
+   */
+  readonly record: (name: string, result: string) => void;
   readonly completed: () => number;
 }
 
 /** 字符串表示立即可用的查询结果或拒绝；行动链交给本轮生命周期持有。 */
 export type ReplyToolExecution = string | PreparedReplyAction;
 
-/** 同群入站顺位句柄；模型结束后 commit 并释放模型位，动作等待 ready，收尾必须 await finish。 */
+/**
+ * 同群入站顺位句柄，动作等待 ready，收尾必须 await finish（等更早的轮全部回收后结算）。
+ * - 直接轮（群里没有在途轮次时启动）：发送链队首，ready 当即放行；动作在工具调用内直接执行、边生成边发送。
+ * - 有序并行轮：按入站顺位占位，commit 后且前面的轮（含直接轮）全部发完才放行 ready。
+ */
 export interface ReplyDeliveryTurn {
+  /** 本轮是直接轮。 */
+  readonly direct: boolean;
   readonly ready: Promise<void>;
+  /**
+   * 模型阶段结束（含提前返回与取消），可重复调用：有序并行轮标记完整动作链就绪；直接轮交还
+   * 它独立占用的那 1 个模型并发位。
+   */
   readonly commit: () => void;
   readonly finish: () => Promise<void>;
 }
@@ -167,12 +241,17 @@ export interface ReplyDeliverySlot {
   state: "pending" | "ready" | "done";
 }
 
-/** 单群定长发送桶数组；head/tail 按入站顺位循环，存活轮次由跨代际容量计数约束。 */
+/**
+ * 单群定长发送桶数组；head/tail 按入站顺位循环，队首可能是本窗口的直接轮。存活轮次由
+ * 跨代际容量计数约束。
+ */
 export interface ReplyDeliveryWindow {
   readonly slots: readonly LinkedQueue<ReplyDeliverySlot>[];
   head: number;
   tail: number;
   size: number;
+  /** 本窗口的直接轮仍在模型阶段；为 true 时有序并行轮之外另放行这 1 轮。 */
+  directModelActive: boolean;
 }
 
 /** 一轮行动工具内的已接纳文本与错字占用状态。 */

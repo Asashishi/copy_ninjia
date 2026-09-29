@@ -54,6 +54,12 @@ export const MAX_CUSTOM_TOOL_CALLS_PER_REPLY: number = 35;
 export const TYPING_ACTION_INTERVAL_MS: number = 4_000;
 /** 连续发送 chat action 失败后的止损阈值。 */
 export const CHAT_ACTION_MAX_CONSECUTIVE_FAILURES: number = 3;
+/**
+ * 一段聊天状态结束（切 idle、消息落地）到同群下一段状态亮起之间的最短静默（ms）。
+ * 静默期内心跳推迟点亮新挡位，拟人停顿顺延同样时长，可见时长不被吃掉。
+ * 所属模块：aiChat/ai/chatActionHeartbeat.ts。
+ */
+export const CHAT_ACTION_REST_MS: number = 500;
 
 /** 本轮由代码侧预先决定是否制造一次单字手滑。 */
 export const AI_TEXT_TYPO_PROBABILITY: number = 0.15;
@@ -71,10 +77,15 @@ export const TYPO_MIN_REMAINING_ACTIONS: number = 2;
 export const IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS: number = 2;
 /** 出错后补发正确单字的概率；剩余 10% 视为没发现。 */
 export const TYPO_QUICK_CORRECTION_PROBABILITY: number = 0.9;
-/** 手滑后快速补字停顿的最小值。 */
-export const TYPO_QUICK_CORRECTION_MIN_MS: number = 1_500;
-/** 手滑后快速补字停顿的最大值。 */
-export const TYPO_QUICK_CORRECTION_MAX_MS: number = 7_500;
+/** 错字消息落地后、补字的「正在输入」亮起前的静默停顿最小值（ms）；不短于 CHAT_ACTION_REST_MS。 */
+export const TYPO_QUICK_CORRECTION_MIN_MS: number = 1_000;
+/** 错字消息落地后、补字的「正在输入」亮起前的静默停顿最大值（ms）。 */
+export const TYPO_QUICK_CORRECTION_MAX_MS: number = 2_000;
+/**
+ * 补字发出前固定模拟「正在输入」的时长（ms），接在静默停顿之后。
+ * 所属模块：aiChat/ai/tools/replyToolset/typoHandling.ts。
+ */
+export const TYPO_QUICK_CORRECTION_TYPING_MS: number = 1_000;
 /** AI 回复工具对同轮重复文本的静默回执；不发送、不报错、不占用可见动作额度。 */
 export const DUPLICATE_REPLY_RESULT: string = JSON.stringify({
   success: true,

@@ -47,7 +47,11 @@ import {
 } from "./conventions/nodeCompatibility";
 import type { NodeImportUsage } from "./conventions/nodeCompatibility";
 import { collectTelegramMessageProblems } from "./conventions/telegramMessages";
-import { collectConstantValueAssertionProblems } from "./conventions/testAssertions";
+import {
+  collectConstantValueAssertionProblems,
+  collectExportedStringConstants,
+  collectStringConstantAssertionProblems,
+} from "./conventions/testAssertions";
 import {
   collectEnvironmentAccessProblems,
   collectFullSuiteImportProblems,
@@ -309,6 +313,8 @@ const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROO
 const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));
 /** 根 manifest 直接声明的包；逐文件核对运行期裸导入时共用。 */
 const declaredPackages: ReadonlySet<string> = await readDeclaredPackages(PROJECT_ROOT);
+/** packages/consts 导出的字符串常量表（取值 → 常量名），逐文件判定时顺带收集，供测试断言规则比对。 */
+const exportedStringConstants: Map<string, string[]> = new Map();
 /** 注释交叉引用按 basename 兜底解析时的候选集合；生产源码与入口一份就够。 */
 const referenceResolutionFiles: readonly string[] = [
   ...sourceFilesUnder(SOURCE_ROOT),
@@ -333,6 +339,7 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
   if (constsSourceFiles.has(path)) {
     for (const problem of collectConstantProblems(params)) failures.push(problem);
+    collectExportedStringConstants(source, exportedStringConstants);
   }
   for (const problem of collectObjectFreezeProblems(params)) failures.push(problem);
   if (!path.startsWith(CACHE_ROOT) && !path.startsWith(CONSTS_ROOT)) {
@@ -373,6 +380,12 @@ for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_
   failures.push(...collectFullSuiteImportProblems({ projectRoot: PROJECT_ROOT, path, source }));
   if (path.startsWith(TEST_ROOT + "/")) {
     failures.push(...collectConstantValueAssertionProblems({ projectRoot: PROJECT_ROOT, path, source }));
+    failures.push(...collectStringConstantAssertionProblems({
+      projectRoot: PROJECT_ROOT,
+      path,
+      source,
+      constants: exportedStringConstants,
+    }));
   }
 }
 failures.push(...collectUnusedNodeAllowanceProblems(nodeImportUsage));

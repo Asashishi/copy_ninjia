@@ -1,7 +1,10 @@
-import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
+import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import type { GoogleGenAI } from "@google/genai";
 import type { AgentDeploymentConfig } from "../../packages/types/config";
+import type { GeminiContextCacheRegistry } from "../../packages/types/geminiContextCache";
+import { SEND_VOICE_TOOL } from "../../packages/consts/tools";
 
 let agentConfig: AgentDeploymentConfig;
 mock.module("../../packages/config/agent", () => ({
@@ -27,6 +30,8 @@ const {
   ttsAiProvider,
 } = await import("../../packages/aiChat/provider");
 const { geminiClientCache } = await import("../../packages/cache/workers/aiChat/gemini");
+const { textGeminiContextCache } = await import("../../packages/cache/workers/aiChat/geminiContextCache");
+const { createGeminiContextCacheRegistry } = await import("../../packages/infra/geminiContextCache");
 const { ttsDailyUsage } = await import("../../packages/cache/workers/aiChat/ttsUsage");
 const { openAiClientCache } = await import("../../packages/cache/workers/aiChat/openai");
 const {
@@ -61,7 +66,7 @@ beforeEach((): void => {
       model: "grok-image",
       imageProtocol: "xai",
     },
-    tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
+    tts: { provider: "google", apiKey: "google-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
   };
   loggerError.mockClear();
 });
@@ -130,19 +135,59 @@ test("相同协议、端点和凭据的不同能力共享一个配额闸门", ()
   expect(aiProviderQuotaLanes).toHaveLength(1);
 });
 
+/** 暂时摘掉 OpenAI 实现包的语音合成，模拟「所选实现没有这项能力」；结束后原样装回。 */
+function withoutOpenAiSpeech(run: () => void): void {
+  const holder = openAiProvider as { synthesizeSpeech?: unknown };
+  const synthesizeSpeech: unknown = holder.synthesizeSpeech;
+  delete holder.synthesizeSpeech;
+  try {
+    run();
+  } finally {
+    holder.synthesizeSpeech = synthesizeSpeech;
+  }
+}
+
 test("配了但这一家没实现的可选能力，只在启动时记一次诊断", () => {
   agentConfig = {
     ...agentConfig,
-    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
+    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", speechProtocol: "openai", style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
   };
-  expect(ttsAiProvider()).toEqual({ name: "openai" });
-  reportUnimplementedAgentCapabilities();
+  withoutOpenAiSpeech((): void => {
+    expect(ttsAiProvider()).toEqual({ name: "openai" });
+    reportUnimplementedAgentCapabilities();
+  });
   expect(loggerError).toHaveBeenCalledTimes(1);
   const diagnostic: string = String(loggerError.mock.calls[0]![0]);
   expect(diagnostic).toContain("$.agent.tts");
-  expect(diagnostic).toContain("send_voice");
+  expect(diagnostic).toContain(SEND_VOICE_TOOL);
   // 诊断不回显凭据。
   expect(diagnostic).not.toContain("openai-tts-key");
+});
+
+test("OpenAI 两种语音协议都经 tts 门面进入 OpenAI 实现包，xai 配置按端点与凭据归入已有配额 lane", async () => {
+  const synthesizeSpeech = spyOn(openAiProvider, "synthesizeSpeech")
+    .mockImplementation(async () => ({ bytes: new Uint8Array([0xFF, 0xF3]), mimeType: "audio/mpeg" }));
+  try {
+    agentConfig = {
+      ...agentConfig,
+      tts: {
+        provider: "openai", apiKey: "xai-image-key", baseUrl: "https://xai.example/v1", headers: undefined, model: undefined,
+        speechProtocol: "xai", voice: "ara", style: undefined, language: "auto", dailyLimit: 100, dailyReserveQuota: 25,
+      },
+    };
+    imageAiProvider();
+    const lanes: number = aiProviderQuotaLanes.length;
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false }))
+      .resolves.toEqual({ ok: true, speech: { bytes: new Uint8Array([0xFF, 0xF3]), mimeType: "audio/mpeg" } });
+    expect(ttsAiProvider()?.name).toBe("openai");
+    expect(aiProviderQuotaLanes).toHaveLength(lanes);
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    reportUnimplementedAgentCapabilities();
+    expect(loggerError).not.toHaveBeenCalled();
+  } finally {
+    synthesizeSpeech.mockRestore();
+    ttsDailyUsage.current = null;
+  }
 });
 
 test("两家都实现的能力不刷诊断", () => {
@@ -276,7 +321,7 @@ test("生图与语音合成门面透出 provider 结果", async () => {
       .resolves.toEqual({ bytes: new Uint8Array([1]), mimeType: "image/png" });
     expect(ttsAiProvider()).toBe(ttsAiProvider());
     ttsDailyUsage.current = null;
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false }))
       .resolves.toEqual({ ok: true, speech: { bytes: new Uint8Array([2]), mimeType: "audio/wav" } });
   } finally {
     generateImage.mockRestore();
@@ -291,28 +336,45 @@ test("语音合成门面发起请求前登记每日计数，达到调用方上�
   postMessage.mockClear();
   ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 74, reserveCount: 0 };
   try {
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai" }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai", quotaClaimed: false }))
       .resolves.toEqual({ ok: false, reason: "synthesis failed" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     expect(ttsDailyUsage.current?.agentCount).toBe(75);
     expect(postMessage).toHaveBeenCalledWith({ type: "ttsUsage", usage: ttsDailyUsage.current });
 
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai" }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai", quotaClaimed: false }))
       .resolves.toEqual({ ok: false, reason: "daily limit reached" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     expect(ttsDailyUsage.current?.agentCount).toBe(75);
 
     // `/send` 与 cron 只累加 reserveCount，不占 agentCount。
-    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" });
+    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
     expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75, reserveCount: 1 });
 
     // 排队期间已取消的请求不登记计数。
     const aborted: AbortController = new AbortController();
     aborted.abort();
-    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", signal: aborted.signal });
+    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false, signal: aborted.signal });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
     expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75, reserveCount: 1 });
+  } finally {
+    synthesizeSpeech.mockRestore();
+    ttsDailyUsage.current = null;
+  }
+});
+
+test("调用方已登记计数（quotaClaimed）时门面不再登记，额度用尽也照常发起请求", async () => {
+  const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech").mockImplementation(async () => null);
+  const agentLimit: number = agentConfig.tts!.dailyLimit - agentConfig.tts!.dailyReserveQuota;
+  ttsDailyUsage.current = { windowStartedAt: Date.now(), agentCount: agentLimit, reserveCount: 0 };
+  postMessage.mockClear();
+  try {
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai", quotaClaimed: true }))
+      .resolves.toEqual({ ok: false, reason: "synthesis failed" });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: agentLimit, reserveCount: 0 });
+    expect(postMessage).not.toHaveBeenCalled();
   } finally {
     synthesizeSpeech.mockRestore();
     ttsDailyUsage.current = null;
@@ -325,11 +387,11 @@ test("预留额度用尽时门面拒绝 operator，AI 仍能请求且只增加 a
   ttsDailyUsage.current = { windowStartedAt: Date.now(), agentCount: 0, reserveCount };
   postMessage.mockClear();
   try {
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "operator" }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "operator", quotaClaimed: false }))
       .resolves.toEqual({ ok: false, reason: "daily limit reached" });
     expect(synthesizeSpeech).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai" }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai", quotaClaimed: false }))
       .resolves.toEqual({ ok: false, reason: "synthesis failed" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     expect(ttsDailyUsage.current).toMatchObject({ agentCount: 1, reserveCount });
@@ -401,10 +463,23 @@ test("只有 media 能力变化时两种输入模态才回到未探测状态", (
   expect(getMediaInputState("voice").configGeneration).toBe(1);
 });
 
+test("只有 text 能力变化时才丢弃 Gemini 回复共用显式缓存的登记表", () => {
+  const registry: GeminiContextCacheRegistry = createGeminiContextCacheRegistry({} as unknown as GoogleGenAI);
+  textGeminiContextCache.current = registry;
+
+  reloadAgentDeploymentConfig({ ...agentConfig, media: { ...agentConfig.media, model: "gemini-media-2" } });
+  expect(textGeminiContextCache.current).toBe(registry);
+
+  reloadAgentDeploymentConfig({ ...agentConfig, text: { ...agentConfig.text, apiKey: "google-text-key-rotated" } });
+  expect(textGeminiContextCache.current).toBeNull();
+});
+
 test("agent 热重载后按新快照重记「配了但没实现」的诊断", () => {
-  reloadAgentDeploymentConfig({
-    ...agentConfig,
-    tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
+  withoutOpenAiSpeech((): void => {
+    reloadAgentDeploymentConfig({
+      ...agentConfig,
+      tts: { provider: "openai", apiKey: "openai-tts-key", baseUrl: undefined, headers: undefined, model: "tts-model", voice: "Leda", speechProtocol: "openai", style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
+    });
   });
   expect(loggerError).toHaveBeenCalledTimes(1);
   expect(String(loggerError.mock.calls[0]![0])).toContain("$.agent.tts");

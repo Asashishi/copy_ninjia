@@ -4,15 +4,16 @@
  */
 
 import { TTS_USAGE_WINDOW_MS } from "../../../consts/aiChat/voiceMessage";
+import { isRecordedWithin } from "../../../libs/clockWindow";
 import type { AgentTtsCapabilityConfig } from "../../../types/config";
 import type { TtsDailyUsage, TtsQuotaScope } from "../../../types/aiChat/voiceMessage";
 
 /**
- * now 时刻仍有效的计数窗口；从没用过、或距窗口起点已满 TTS_USAGE_WINDOW_MS
- * 时为 null，不修改输入。
+ * now 时刻仍有效的计数窗口；从没用过、距窗口起点已满 TTS_USAGE_WINDOW_MS、或窗口起点
+ * 晚于 now（墙钟回拨，按窗口已结束处理，见 libs/clockWindow.ts）时为 null，不修改输入。
  */
 export function activeTtsUsage(usage: TtsDailyUsage | null, now: number): TtsDailyUsage | null {
-  if (usage === null || now - usage.windowStartedAt >= TTS_USAGE_WINDOW_MS) return null;
+  if (usage === null || !isRecordedWithin(usage.windowStartedAt, now, TTS_USAGE_WINDOW_MS - 1)) return null;
   return usage;
 }
 

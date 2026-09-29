@@ -18,7 +18,14 @@ export interface AdDetectionMessageContext {
 export interface AdDetectJsonRequestParams {
   /** 模型名来自 config/dynamic/agent.json 的 agent.ad_detect。 */
   readonly model: string;
-  /** 系统提示词；OpenAI JSON 模式要求其中出现 json。 */
+  /** 判定规则与部署示例段，不含系统事实；Gemini 路径的系统指令，也是它显式缓存的内容。 */
+  readonly instructions: string;
+  /** 本次的系统事实一行；Gemini 路径把它作为 user 轮里排在 userContent 之前的独立 part。 */
+  readonly fact: string;
+  /**
+   * instructions、换行与 fact 拼成的完整系统提示词；OpenAI 兼容路径的 system 段。
+   * OpenAI JSON 模式要求其中出现 json。
+   */
   readonly systemPrompt: string;
   /** 本次待处理的用户内容；一律当数据，不承担指令语义。 */
   readonly userContent: string;
@@ -26,6 +33,19 @@ export interface AdDetectJsonRequestParams {
   readonly maxOutputTokens: number;
   /** 出现在错误日志里的调用名（英文）。 */
   readonly errorLabel: string;
+}
+
+/**
+ * 按当前广告示例快照拼好的判定提示词（见 cache/workers/antiRaid/adDetect.ts）。
+ * 三段共用同一份 instructions 前缀；系统提示词 = instructions + 换行 + 对应的系统事实。
+ */
+export interface AdDetectPrompts {
+  /** 判定规则与部署示例段，不含系统事实。 */
+  readonly instructions: string;
+  /** 发送者仍在入群验证窗口内时的完整系统提示词。 */
+  readonly justJoinedSystemPrompt: string;
+  /** 发送者不在入群验证窗口内时的完整系统提示词。 */
+  readonly establishedSystemPrompt: string;
 }
 
 /** 参与判定、同时写进命中样本的上下文。两项都可能缺席。 */

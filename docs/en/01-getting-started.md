@@ -164,7 +164,10 @@ Editing `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.j
     makes `/send` TTS requests fail, and refuses startup when `cron.json` uses `send_voice`), while
     missing `ad_detect` only disables ad detection. OpenAI image capabilities also require an explicit
     `image_protocol`: `openai`, `openai-standard`, or `xai`; `tts` also requires a non-empty `voice`
-    (a prebuilt voice name or an AI Studio Voice design `voice_` ID), plus optional `daily_limit`
+    (for Google a prebuilt voice name or an AI Studio Voice design `voice_` ID; for OpenAI and xAI their
+    own voice names). A `tts` with `provider: "openai"` must also declare `speech_protocol`: `openai`
+    for OpenAI-compatible audio/speech, or `xai` for xAI `/v1/tts` (which rejects `model` and `style`
+    and accepts an optional `language`, default `auto`); `google` rejects the field. `tts` also accepts optional `daily_limit`
     (daily voice request limit, default 100) and `daily_reserve_quota` (how many of those are
     reserved for `/send` and cron, default 25, must be less than `daily_limit`). AI and reserve usage are counted independently and never borrow from each other; a zero reserve disables `/send` and cron synthesis. `base_url` accepts
     `https` only;
@@ -181,7 +184,7 @@ Editing `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.j
     wrong path, which also logs one diagnostic pointing at `$.agent.media`) both stop further
     downloads, while transient failures only back off and never close the capability for good. Once
     hot reload replaces the `media` capability, both inputs are probed again.
-  - **Speech style**: optional `agent.tts.style` must be non-empty after trimming and defaults to `GEMINI_SPEECH_STYLE`. Hot reload affects new requests; removing the field restores the default. See [voice configuration](../../config_example/README/en.md).
+  - **Speech style**: optional `agent.tts.style` must be non-empty after trimming and defaults to `TTS_DEFAULT_STYLE`; `speech_protocol: "xai"` rejects the field. Hot reload affects new requests; removing the field restores the default. See [voice configuration](../../config_example/README/en.md).
 
 Permanent-allowlist, blocklist, temporary-ad-bypass activity, and pending-removal state are no longer deployment JSON. They live together
 in `database/storage.sqlite` under the runtime data root. At startup, the Disk I/O Worker validates

@@ -1,4 +1,7 @@
-/** Anti-Raid Worker 异步副作用排空（packages/workers/antiRaid/taskTracker.ts）的内存状态。 */
+/**
+ * Anti-Raid Worker 异步副作用排空（packages/workers/antiRaid/taskTracker.ts）的内存状态，以及
+ * 停机取消信号的取用入口 antiRaidDispatchSignal。
+ */
 
 /**
  * 已启动且尚未结算的网络副作用。任务完成时由 tracker 删除；Worker stop 时
@@ -29,7 +32,7 @@ export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 }
  * 排队中的请求立刻结算成失败，而这些处置本就是尽力而为的，丢一次不构成安全
  * 边界失守（同 adDetect/queue.ts 的 runAdDetectBatch 不登记）。
  *
- * 生命周期：懒创建（第一个要发这类请求的调用方创建）；drain 分支调
+ * 生命周期：懒创建（第一个要发这类请求的调用方经 antiRaidDispatchSignal 创建）；drain 分支调
  * quiesceAntiRaidDispatch 就地 abort，此后**一直**是已 abort 状态——停机之后
  * 才到达的候选也就不再排队。Worker 崩溃重建随 isolate 重来，无需 adopt；
  * Worker stop 与测试隔离由 resetAntiRaidTaskTracker 换一个新的。
@@ -39,3 +42,14 @@ export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 }
  * 请求再创建这些删除任务，也避免把新任务误归进已经取消的生命周期。
  */
 export const antiRaidDispatchAbort: { current: AbortController | null } = { current: null };
+
+/**
+ * 排队时长可能远超 drain 预算的那些尽力而为请求共用的取消信号；控制器不存在时懒创建。
+ *
+ * 停机之后取到的是一个已经 abort 的信号，因此这类请求在 drain 之后不再排队，
+ * 而是立刻结算成失败——契约见上方 antiRaidDispatchAbort。
+ */
+export function antiRaidDispatchSignal(): AbortSignal {
+  antiRaidDispatchAbort.current ??= new AbortController();
+  return antiRaidDispatchAbort.current.signal;
+}

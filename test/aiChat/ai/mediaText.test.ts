@@ -7,6 +7,8 @@ import {
   replyFallbackDescriptionFor,
   resolvedTagFor,
 } from "../../../packages/workers/aiChat/mediaText";
+import { ANIMATION_PENDING_PLACEHOLDER, IMAGE_PENDING_PLACEHOLDER, STICKER_FALLBACK_PLACEHOLDER, STICKER_PENDING_PLACEHOLDER } from "../../../packages/consts/aiChat/media";
+import { VOICE_FALLBACK_PLACEHOLDER, VOICE_PENDING_PLACEHOLDER } from "../../../packages/consts/aiChat/voice";
 
 const stickerMessage: AiRecordMediaMessage = {
   type: "recordMedia",
@@ -35,25 +37,25 @@ const stickerMessage: AiRecordMediaMessage = {
 
 describe("AI 媒体转录文本", () => {
   test("按媒体类型生成待解析、成功和失败标签", () => {
-    expect(pendingPlaceholderFor("sticker")).toBe("[贴纸：识别中]");
-    expect(pendingPlaceholderFor("animation")).toBe("[GIF：识别中]");
-    expect(pendingPlaceholderFor("photo")).toBe("[图片：识别中]");
+    expect(pendingPlaceholderFor("sticker")).toBe(STICKER_PENDING_PLACEHOLDER);
+    expect(pendingPlaceholderFor("animation")).toBe(ANIMATION_PENDING_PLACEHOLDER);
+    expect(pendingPlaceholderFor("photo")).toBe(IMAGE_PENDING_PLACEHOLDER);
     expect(resolvedTagFor("sticker", "挥手")).toBe("[贴纸：挥手]");
     expect(resolvedTagFor("animation", "旋转")).toBe("[GIF：旋转]");
     expect(resolvedTagFor("photo", "天空")).toBe("[图片：天空]");
     expect(fallbackTextFor("sticker", stickerMessage)).toBe("[贴纸：🙂，来自 pack]");
     // 没有元数据兜底行的贴纸退回贴纸措辞的占位，不能错标成图片。
-    expect(fallbackTextFor("sticker", { ...stickerMessage, stickerFallbackText: undefined })).toBe("[贴纸：解析失败，请无视此消息]");
+    expect(fallbackTextFor("sticker", { ...stickerMessage, stickerFallbackText: undefined })).toBe(STICKER_FALLBACK_PLACEHOLDER);
     expect(fallbackTextFor("animation", { ...stickerMessage, kind: "animation" })).toContain("GIF");
     expect(fallbackTextFor("photo", { ...stickerMessage, kind: "photo" })).toContain("图片");
   });
 
   test("语音有自己的一套措辞，绝不能落到图片那条 default 分支上", () => {
-    expect(pendingPlaceholderFor("voice")).toBe("[语音：识别中]");
+    expect(pendingPlaceholderFor("voice")).toBe(VOICE_PENDING_PLACEHOLDER);
     expect(resolvedTagFor("voice", "今天下班一起吃饭吗")).toBe("[语音：今天下班一起吃饭吗]");
     // 贴纸的元数据兜底不适用于语音：这里必须是语音自己的失败占位。
     expect(fallbackTextFor("voice", { ...stickerMessage, kind: "voice", stickerFallbackText: undefined }))
-      .toBe("[语音：没听清，请无视此消息]");
+      .toBe(VOICE_FALLBACK_PLACEHOLDER);
   });
 
   test("caption 只在非空时拼接，直接触发失败时使用可回应描述", () => {

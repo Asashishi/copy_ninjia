@@ -15,7 +15,11 @@ import { collectColdMigrationProblems } from "../../scripts/conventions/coldMigr
 import { collectCommentReferenceProblems } from "../../scripts/conventions/commentReferences";
 import { collectWorkerTimerProblems } from "../../scripts/conventions/workerTimers";
 import { collectTelegramMessageProblems } from "../../scripts/conventions/telegramMessages";
-import { collectConstantValueAssertionProblems } from "../../scripts/conventions/testAssertions";
+import {
+  collectConstantValueAssertionProblems,
+  collectExportedStringConstants,
+  collectStringConstantAssertionProblems,
+} from "../../scripts/conventions/testAssertions";
 import {
   collectCacheJsDocProblems,
   collectConstantProblems,
@@ -441,12 +445,30 @@ describe("逐文件源码规则", () => {
       "}\n"
     ));
     expect(problems).toEqual(expect.arrayContaining([
-      expect.stringContaining("must import from a domain type module instead of types/index"),
+      expect.stringContaining("must import from a domain type module instead of the test-only barrel ./types"),
       expect.stringContaining("direct console.error is restricted to the disk I/O Worker boundary"),
       expect.stringContaining("exported function bad lacks an explicit return type"),
       expect.stringContaining("inline object parameter type must be an exported XxxParams interface"),
       expect.stringContaining("catch binding error must be explicitly typed unknown"),
     ]));
+  });
+
+  test("生产代码不得导入仅供测试的类型聚合入口；领域子模块照常", () => {
+    const path: string = "/project/packages/example.ts";
+    const problems: readonly string[] = collectDeclarationProblems(rule(
+      path,
+      "import type { A } from \"./types/index\";\n" +
+      "import type { B } from \"../types/antiRaid\";\n" +
+      "import type { C } from \"../../types/diskIO\";\n" +
+      "import type { D } from \"./types/antiRaid/internal\";\n" +
+      "import type { E } from \"./types/diskIO/messages\";\n" +
+      "export function use(a: A, b: B, c: C, d: D, e: E): unknown { return [a, b, c, d, e]; }\n"
+    ));
+    expect(problems).toEqual([
+      expect.stringContaining("packages/example.ts:1 production code must import from a domain type module instead of the test-only barrel ./types/index"),
+      expect.stringContaining("packages/example.ts:2 production code must import from a domain type module instead of the test-only barrel ../types/antiRaid"),
+      expect.stringContaining("packages/example.ts:3 production code must import from a domain type module instead of the test-only barrel ../../types/diskIO"),
+    ]);
   });
 
   test("diskIO Worker 边界仍然允许 console.error", () => {
@@ -672,6 +694,59 @@ describe("测试断言取值口径", () => {
         "expect(LIMIT_MAX).toBe(LIMIT_MAX);",
         "expect(LIMIT_MAX).toBeGreaterThan(1);",
         "expect(limit).toBe(8);",
+      ].join("\n")),
+    })).toEqual([]);
+  });
+
+  test("收集 consts 导出的字符串常量：拼接取值、同值多名都记下，未导出与过短的不收", () => {
+    const constants: Map<string, string[]> = new Map<string, string[]>();
+    collectExportedStringConstants(source("/project/packages/consts/sample.ts", [
+      'export const TOOL_NAME: string = "fixture_tool";',
+      'export const ALIAS_NAME: string = "fixture_" + `tool`;',
+      'export const SHORT: string = "short";',
+      'const PRIVATE_LABEL: string = "private label";',
+      "export const LIMIT: number = 12_345_678;",
+    ].join("\n")), constants);
+    expect([...constants]).toEqual([["fixture_tool", ["TOOL_NAME", "ALIAS_NAME"]]]);
+  });
+
+  test("拒绝匹配器实参里与 consts 字符串常量逐字相同的字面量，嵌套与 not/resolves 链都算", () => {
+    const path: string = "/project/test/sample.test.ts";
+    const constants: ReadonlyMap<string, readonly string[]> = new Map([
+      ["fixture_tool", ["TOOL_NAME"]],
+      ["Asia/Fixture", ["ZONE_A", "ZONE_B"]],
+    ]);
+    const problems: readonly string[] = collectStringConstantAssertionProblems({
+      projectRoot: "/project",
+      path,
+      constants,
+      source: source(path, [
+        'expect(definition.name).toBe("fixture_tool");',
+        'expect(call).toHaveBeenCalledWith(expect.objectContaining({ zone: "Asia/Fixture" }));',
+        'expect(names).not.toContain("fixture_tool");',
+        'await expect(pending).resolves.toEqual(["fixture_tool"]);',
+      ].join("\n")),
+    });
+    expect(problems).toEqual([
+      expect.stringContaining("test/sample.test.ts:1 asserts a string literal equal to TOOL_NAME"),
+      expect.stringContaining("test/sample.test.ts:2 asserts a string literal equal to ZONE_A / ZONE_B"),
+      expect.stringContaining("test/sample.test.ts:3 asserts a string literal equal to TOOL_NAME"),
+      expect.stringContaining("test/sample.test.ts:4 asserts a string literal equal to TOOL_NAME"),
+    ]);
+  });
+
+  test("放过本文件夹具原样透传的字面量、常量引用与匹配器之外的用法", () => {
+    const path: string = "/project/test/sample.test.ts";
+    expect(collectStringConstantAssertionProblems({
+      projectRoot: "/project",
+      path,
+      constants: new Map([["fixture_tool", ["TOOL_NAME"]], ["audio/fixture", ["MIME"]]]),
+      source: source(path, [
+        'const input = { mime: "audio/fixture" };',
+        'expect(normalize(input).mime).toBe("audio/fixture");',
+        "expect(definition.name).toBe(TOOL_NAME);",
+        'register("fixture_tool");',
+        'expect(parse("fixture_tool")).toBe(true);',
       ].join("\n")),
     })).toEqual([]);
   });

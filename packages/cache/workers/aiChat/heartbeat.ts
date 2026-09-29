@@ -6,7 +6,7 @@ import type { ChatActionHeartbeatEntry } from "../../../types/aiChat/chatAction"
 /**
  * chatId -> 共享聊天状态心跳；每个条目由同群全部在途回复轮引用计数。
  * 清理：clearChatHeartbeatCache（引用归零、群失效、AI 禁用）与
- * resetAiChatHeartbeatCache（Worker dispose/测试隔离）各自 clearInterval 后删键。
+ * resetAiChatHeartbeatCache（Worker dispose/测试隔离）各自清掉重发与静默定时器后删键。
  * 容量：同时存在回复轮的群数，上界为受管群数；不设淘汰——条目持有一个活跃
  * timer，按容量丢掉会让那个 timer 永远停不下来。
  */
@@ -18,6 +18,7 @@ export function clearChatHeartbeatCache(chatId: number): void {
   const entry: ChatActionHeartbeatEntry | undefined = typingHeartbeats.get(chatId);
   if (!entry) return;
   clearInterval(entry.timer);
+  clearTimeout(entry.restTimer ?? undefined);
   entry.owner = null;
   entry.action = "idle";
   typingHeartbeats.delete(chatId);

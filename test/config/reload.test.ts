@@ -201,6 +201,60 @@ describe("config/dynamic/ 热重载判定", () => {
     expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
   });
 
+  test("tts 切到 xai 协议仍带 model 或 style 时整份拒绝，provider 不切换；去掉后照常生效", async () => {
+    const document = await readAgentDocument();
+    const apiKey: string = "xai-reload-test-key";
+    for (const extra of [{ model: "grok-tts" }, { style: "cheerful" }]) {
+      document.agent.tts = { provider: "openai", api_key: apiKey, speech_protocol: "xai", voice: "ara", ...extra };
+      await writeJson(AGENT_CONFIG_PATH, document);
+
+      const changes: HotDeploymentConfigChanges = await reload();
+
+      expect(changes.aiAgent).toBe(false);
+      expect(changes.rejections).toHaveLength(1);
+      expect(changes.rejections[0]).toStartWith(`${AGENT_CONFIG_PATH}: $.agent.tts must be exactly {`);
+      expect(changes.rejections[0]).toContain("when provider is openai and speech_protocol is xai");
+      expect(changes.rejections[0]).not.toContain(apiKey);
+      expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+    }
+
+    document.agent.tts = { provider: "openai", api_key: apiKey, speech_protocol: "xai", voice: "ara" };
+    await writeJson(AGENT_CONFIG_PATH, document);
+    const accepted: HotDeploymentConfigChanges = await reload();
+    expect(accepted.rejections).toEqual([]);
+    expect(accepted.aiAgent).toBe(true);
+    expect(agentDeploymentConfigCache.current?.tts).toMatchObject({ provider: "openai", speechProtocol: "xai", model: undefined });
+  });
+
+  test("openai 的 tts 缺 speech_protocol 时整份拒绝并保留上一份快照，改对之前一直拒绝；补上后生效", async () => {
+    const document = await readAgentDocument();
+    const apiKey: string = "openai-speech-reload-test-key";
+    const tts: Record<string, unknown> = { provider: "openai", api_key: apiKey, model: "tts-model", voice: "coral" };
+    document.agent.tts = tts;
+    await writeJson(AGENT_CONFIG_PATH, document);
+
+    for (let attempt: number = 0; attempt < 2; attempt += 1) {
+      const changes: HotDeploymentConfigChanges = await reload();
+      expect(changes.aiAgent).toBe(false);
+      expect(changes.adDetect).toBe(false);
+      expect(changes.reloadedPaths).toEqual([]);
+      expect(changes.rejections).toEqual([`${AGENT_CONFIG_PATH}: $.agent.tts.speech_protocol must be "openai" or "xai".`]);
+      expect(changes.rejections[0]).not.toContain(apiKey);
+      expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+      expect(adDetectAgentConfigCache.current).toBe(baseline.adDetect);
+    }
+
+    document.agent.tts = { ...tts, speech_protocol: "openai" };
+    await writeJson(AGENT_CONFIG_PATH, document);
+    const accepted: HotDeploymentConfigChanges = await reload();
+    expect(accepted.rejections).toEqual([]);
+    expect(accepted.aiAgent).toBe(true);
+    expect(accepted.reloadedPaths).toEqual([AGENT_CONFIG_PATH]);
+    expect(agentDeploymentConfigCache.current?.tts).toMatchObject({
+      provider: "openai", speechProtocol: "openai", model: "tts-model", voice: "coral",
+    });
+  });
+
   test("删除启动时存在的文件：holder 换成 null 并记入删除清单，不算拒绝", async () => {
     rmSync(MOOD_CONFIG_PATH);
     const changes: HotDeploymentConfigChanges = await reload();

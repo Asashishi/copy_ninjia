@@ -1,7 +1,6 @@
 /** AI 与预留额度独立计数，共同过期，恢复与配置变动保持已用次数。 */
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { GEMINI_SPEECH_STYLE } from "../../../packages/consts/aiChat/gemini";
-import { TTS_USAGE_WINDOW_MS } from "../../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_STYLE, TTS_USAGE_WINDOW_MS } from "../../../packages/consts/aiChat/voiceMessage";
 import { adoptAgentDeploymentConfig } from "../../../packages/config/agent";
 import { ttsQuotaLimit } from "../../../packages/aiChat/ai/utils/ttsUsageWindow";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../../packages/types/config";
@@ -20,7 +19,7 @@ const AI_LIMIT: number = FULL_LIMIT - RESERVE_LIMIT;
 const CAPABILITY = { provider: "google", apiKey: "key", baseUrl: undefined, headers: undefined, model: "m" } as const;
 
 function ttsConfig(dailyLimit: number, dailyReserveQuota: number): AgentTtsCapabilityConfig {
-  return { ...CAPABILITY, voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit, dailyReserveQuota };
+  return { ...CAPABILITY, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit, dailyReserveQuota };
 }
 
 function adoptTts(tts: AgentTtsCapabilityConfig | undefined): void {
@@ -120,6 +119,14 @@ describe("aiTtsRemaining", () => {
     expect(aiTtsRemaining(NOW + TTS_USAGE_WINDOW_MS)).toBe(AI_LIMIT);
     expect(ttsDailyUsage.current).toBe(usage);
     expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  test("窗口起点晚于当前时刻（墙钟回拨）按窗口已结束处理", () => {
+    hydrateTtsUsage({ windowStartedAt: NOW, agentCount: AI_LIMIT, reserveCount: RESERVE_LIMIT });
+    expect(aiTtsRemaining(NOW)).toBe(0);
+    expect(aiTtsRemaining(NOW - 1)).toBe(AI_LIMIT);
+    expect(claimTtsUsage("ai", AI_LIMIT, NOW - 1)).toBeTrue();
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW - 1, agentCount: 1, reserveCount: 0 });
   });
 
   test("跟随配置变更，不清零；tts 缺省时为零", () => {

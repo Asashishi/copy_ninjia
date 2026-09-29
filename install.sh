@@ -131,11 +131,13 @@ worktree_version_suffix() {
 }
 
 # 取 GitHub 上 Latest Release 的 tag；来源只有 releases/latest 接口。
-# 任一环节失败时（pipefail）整条返回非零，由调用方 die，不回退到 master。
+# curl 读完整个响应后，再在内存里取第一个 tag_name 的值；下载失败或响应里没有
+# tag_name 时返回非零，由调用方 die，不回退到 master。
 latest_release_tag() {
-  curl -fsSL -H "Accept: application/vnd.github+json" -- "$RELEASE_API_URL" |
-    grep -m1 -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' |
-    cut -d'"' -f4
+  local response=""
+  response="$(curl -fsSL -H "Accept: application/vnd.github+json" -- "$RELEASE_API_URL")" || return 1
+  [[ "$response" =~ \"tag_name\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
 }
 
 require_command() {

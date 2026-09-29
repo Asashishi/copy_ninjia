@@ -72,8 +72,8 @@ import {
 } from "../infra/telegram/actions/messageLifecycle";
 import { resetRecentComments, sweepRecentComments } from "./antiRaid/recentComments";
 import { antiRaidCacheSweepTimer } from "../cache/workers/antiRaid/worker";
+import { antiRaidDispatchSignal } from "../cache/workers/antiRaid/tasks";
 import {
-  antiRaidDispatchSignal,
   drainAntiRaidTasks,
   quiesceAntiRaidDispatch,
   resetAntiRaidTaskTracker,

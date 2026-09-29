@@ -132,9 +132,11 @@ function declaration(name: string): AiToolDefinition {
 function toolset(overrides: Partial<ReplyToolset> = {}): ReplyToolset {
   return {
     functions: [],
-    imageReference: "",
+    toolStatus: "",
     webSearch: false,
     has: (): boolean => false,
+    beforeModelRequest: (): void => {},
+    afterModel: (): void => {},
     execute: async (): Promise<string> => JSON.stringify({ success: true }),
     actionsUsed: (): number => 0,
     settle: async (): Promise<void> => {},
@@ -228,6 +230,28 @@ test("直接触发按序传四个上下文区块，工具结果回喂后续跑",
   expect(appendedOutputs[0]![0]!.responseJson).toBe(JSON.stringify({ success: true }));
   // 动作与联网规则固定；工具往返复用完全相同的 system prompt。
   expect(requests[1]!.systemPrompt).toBe(first.systemPrompt);
+});
+
+test("每次请求模型前先调 beforeModelRequest，再发请求", async () => {
+  turns.push(
+    okTurn({ calls: [call(SEND_MESSAGE_TOOL, { text: "第一句" })] }),
+    okTurn({ text: "行动完成" })
+  );
+  // 记下每个时点已经发出的请求数，得出调用先后。
+  const order: string[] = [];
+  await generateReply(-1001, promptSections("聊天上下文"), toolset({
+    functions: [declaration(SEND_MESSAGE_TOOL)],
+    has: (name: string): boolean => name === SEND_MESSAGE_TOOL,
+    beforeModelRequest: (): void => { order.push(`before request ${requests.length + 1}`); },
+    afterModel: (): void => {},
+    execute: async (): Promise<string> => {
+      order.push(`execute after request ${requests.length}`);
+      return JSON.stringify({ success: true });
+    },
+    actionsUsed: (): number => 1,
+  }));
+  expect(order).toEqual(["before request 1", "execute after request 1", "before request 2"]);
+  expect(requestMock).toHaveBeenCalledTimes(2);
 });
 
 test("非直接触发同样只传四个区块，区块数与触发类型无关", async () => {

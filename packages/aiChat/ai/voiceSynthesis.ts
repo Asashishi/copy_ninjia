@@ -1,12 +1,13 @@
 /**
- * 语音合成的公共实现：把一句台词按可选语气合成并编码成可直接 sendVoice 的
- * OGG/Opus 语音。
+ * 语音合成的公共实现：把一句台词按可选语气合成并转成可直接 sendVoice 的语音
+ * （OGG/Opus 或 MP3，见 ./voiceEncoding.ts）。
  *
  * 三个调用方共用这一条链：AI 语音工具（tools/replyToolset/voiceMessage.ts），以及
  * 主线程经 AI Worker 转交的 `/send` 代发 TTS 与 cron `send_voice`（见
  * workers/aiChat/voiceSynthesis.ts）。工具声明、参数口径、单轮限额、挂回复与发送都归各
  * 调用方，这里只管「入口在不在」与「文本 + 语气 → 语音」。语气拼在基础朗读风格之后，
- * 由供应商实现处理（见 aiChat/gemini/speech.ts）；合成经 aiChat/provider.ts 的 tts
+ * 由供应商实现处理（见 aiChat/gemini/speech.ts 与 aiChat/openai/speech.ts；xai 协议不发送
+ * 语气）；合成经 aiChat/provider.ts 的 tts
  * 门面，受交互优先的配额闸门与每日计数（请求里的 quota 口径）约束。
  *
  * 所属线程：AI 闲聊 Worker；本模块不持有缓存。

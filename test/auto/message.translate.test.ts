@@ -82,7 +82,7 @@ describe("群消息翻译分流", () => {
     expect(translateText).not.toHaveBeenCalled();
   });
 
-  test("翻译目标的图片同时命中 copy 时只按翻译处理一次：图片原样复制、图注换成译文，不回落到 AI", async () => {
+  test("翻译目标的图片同时命中 copy 时只发图注译文：图片不复制，不回落到 AI", async () => {
     autoMessageCopyState.targetId = 7;
     const ctx = context(7) as any;
     delete ctx.msg.text;
@@ -90,9 +90,26 @@ describe("群消息翻译分流", () => {
     ctx.msg.caption = "你好";
     await handleIncomingMessageMiddleware(ctx);
     expect(translateText).toHaveBeenCalledWith("你好", "ja");
-    expect(copyMessageMock).toHaveBeenCalledTimes(1);
-    expect(copyMessageMock).toHaveBeenCalledWith(expect.objectContaining({ messageId: 5, caption: "こんにちは", messageThreadId: 42 }));
+    expect(copyMessageMock).not.toHaveBeenCalled();
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "こんにちは", messageThreadId: 42 });
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+  });
+
+  test.each(["copy", "none"])("翻译目标（copy 目标：%s）的同语种文字、无图注图片与贴纸整条不反应", async (copy: string) => {
+    if (copy === "copy") autoMessageCopyState.targetId = 7;
+    const sameLanguage = context(7) as any;
+    sameLanguage.msg.text = "こんにちは";
+    const photo = context(7) as any;
+    delete photo.msg.text;
+    photo.msg.photo = [{ file_id: "f", file_unique_id: "u", width: 1, height: 1 }];
+    const sticker = context(7) as any;
+    delete sticker.msg.text;
+    sticker.msg.sticker = { file_id: "f", file_unique_id: "u", type: "regular", width: 1, height: 1, is_animated: false, is_video: false };
+    for (const ctx of [sameLanguage, photo, sticker]) await handleIncomingMessageMiddleware(ctx);
+    expect(translateText).not.toHaveBeenCalled();
     expect(sendMessageMock).not.toHaveBeenCalled();
+    expect(copyMessageMock).not.toHaveBeenCalled();
     expect(generateAndSendReplyMock).not.toHaveBeenCalled();
   });
 

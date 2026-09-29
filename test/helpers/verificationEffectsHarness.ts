@@ -131,7 +131,7 @@ mock.module("../../packages/infra/telegram", () => ({
  */
 export interface VerificationEffectsDeps {
   readonly runVerificationEffects: (params: never) => Promise<void>;
-  readonly verificationEntries: Map<string, { state: unknown; timer?: ReturnType<typeof setTimeout> }>;
+  readonly verificationEntries: Map<string, { state: unknown; timer?: ReturnType<typeof setTimeout>; terminalRetries: number }>;
   readonly verificationRevisions: Map<string, { revision: number }>;
   readonly verificationGeneration: { current: number };
   readonly reminderDeliveries: Map<string, { timer?: ReturnType<typeof setTimeout> }>;
@@ -227,7 +227,7 @@ export function kickPendingState(): VerificationState & { kind: "kickPending" } 
 }
 
 export function setState(state: VerificationState): VerificationState {
-  requireDeps().verificationEntries.set(KEY, { state, timer: undefined });
+  requireDeps().verificationEntries.set(KEY, { state, timer: undefined, terminalRetries: 0 });
   return state;
 }
 

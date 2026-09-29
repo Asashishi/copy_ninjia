@@ -58,7 +58,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `echo.ts`, `copyModes.ts`, `avatarQueue.ts`.
 - **`packages/translate/`**
   - **Responsibility**: per-group sessions, target recovery, regex language checks, and the lazy Google translation client.
-  - **Representative files**: `state.ts`, `recovery.ts`, `message.ts`, `language.ts`, `client.ts`; ordinary copying reuses `copy/echo.ts`.
+  - **Representative files**: `state.ts`, `recovery.ts`, `message.ts`, `language.ts`, `client.ts`.
 - **`packages/users/`**
   - **Responsibility**: sender-identity cache, visible-sender resolution, user-label
     generation, plus the identity metadata, message-content and message-origin resolution shared by the allow/block lists and ad detection.
@@ -100,7 +100,7 @@ This page answers “where does this code live, and where should new code go?”
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
-  - **Representative files**: `telegram/` (including `telegram/avatar/` and `telegram/actions/`), `diskIO.ts` with `diskIO/` (`businessWrite.ts`, `diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `aiCacheUsage.ts` (the boundary through which AI/Anti-Raid Worker model clients report request cache usage), `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
+  - **Representative files**: `telegram/` (including `telegram/avatar/` and `telegram/actions/`), `diskIO.ts` with `diskIO/` (`businessWrite.ts`, `diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `aiCacheUsage.ts` (the boundary through which AI/Anti-Raid Worker model clients report request cache usage), `geminiContextCache.ts` (the shared core of the Gemini explicit caches; replies and ad detection each pass their own scope), `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
 - **`packages/infra/identityPolicy/`**
   - **Responsibility**: the main-thread read boundary for per-item whitelist permissions, temporary ad-bypass accrual, and blocklist/whitelist mutual-exclusion coordination.
   - **Representative files**: `whitelist.ts`, `temporaryAdBypass.ts`, and `coordination.ts`.

@@ -19,7 +19,6 @@ import { synthesizeVoice } from "../../aiChat";
 import { submitDeferredCommand } from "../../commands/deferredCommands";
 import { agentTtsConfig } from "../../config/agent";
 import {
-  VOICE_FILE_NAME,
   VOICE_OPERATOR_TEXT_MAX_CHARS,
   VOICE_TONE_MAX_CHARS,
 } from "../../consts/aiChat/voiceMessage";
@@ -111,7 +110,7 @@ async function deliverProxyTts({ privateChatId, targetChatId, text, tone }: Prox
   const sent: TelegramSendResult | undefined = await sendVoiceWithResult({
     chatId: targetChatId,
     bytes: result.voice.bytes,
-    fileName: VOICE_FILE_NAME,
+    fileName: result.voice.fileName,
     signal,
     duration: result.voice.durationSeconds,
   });

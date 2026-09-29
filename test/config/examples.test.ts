@@ -37,6 +37,7 @@ import {
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { readJsonInput } from "../../packages/libs/inputValidation";
 import type { CronAction, CronConfig, CronTask } from "../../packages/types/cron";
+import type { BotAtmosphere } from "../../packages/types/atmosphere";
 
 const EXAMPLE_ROOT: string = join(import.meta.dir, "..", "..", "config_example");
 
@@ -76,7 +77,11 @@ describe("config_example 与解析器保持同步", () => {
         { ...(raw as Readonly<Record<string, unknown>>), bot_token: "123456789:example" },
         path
       )
-    ).toEqual({ atmosphere: "mesugaki", botToken: "123456789:example", superAdminUserId: 123456789 });
+    ).toEqual({
+      atmosphere: (raw as Readonly<{ atmosphere: BotAtmosphere }>).atmosphere,
+      botToken: "123456789:example",
+      superAdminUserId: 123456789,
+    });
   });
 
   test("g-auth.json 示例恰好因为占位私钥被拒绝，换成真实 RSA 私钥后其余字段形态被接受", async () => {

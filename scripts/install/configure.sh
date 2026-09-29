@@ -68,6 +68,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
   AGENT_CONFIG_MODELS=()
   AGENT_CONFIG_BASE_URLS=()
   AGENT_CONFIG_IMAGE_PROTOCOLS=()
+  AGENT_CONFIG_SPEECH_PROTOCOLS=()
   AGENT_CONFIG_VOICES=()
   for capability in "${AGENT_CAPABILITIES[@]}"; do
     printf '\n'
@@ -86,11 +87,22 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
       ask_secret api_key "  ${capability} 的 api_key（输入不回显）："
       [ -z "$api_key" ] && warn "api_key 不能为空。"
     done
+    speech_protocol=""
+    if [ "$capability" = "tts" ] && [ "$provider" = "openai" ]; then
+      while true; do
+        ask speech_protocol "  tts 的 speech_protocol（openai 为 audio/speech，xai 为 xAI /tts）："
+        case "$speech_protocol" in openai|xai) break ;; esac
+        warn "只接受 openai 或 xai。"
+      done
+    fi
     model=""
-    while [ -z "$model" ]; do
-      ask model "  ${capability} 的 model："
-      [ -z "$model" ] && warn "model 不能为空。"
-    done
+    # xai 语音协议没有模型名，配置里不得出现 model。
+    if [ "$speech_protocol" != "xai" ]; then
+      while [ -z "$model" ]; do
+        ask model "  ${capability} 的 model："
+        [ -z "$model" ] && warn "model 不能为空。"
+      done
+    fi
     base_url=""
     image_protocol=""
     voice=""
@@ -117,8 +129,9 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
     AGENT_CONFIG_MODELS+=("$model")
     AGENT_CONFIG_BASE_URLS+=("$base_url")
     AGENT_CONFIG_IMAGE_PROTOCOLS+=("$image_protocol")
+    AGENT_CONFIG_SPEECH_PROTOCOLS+=("$speech_protocol")
     AGENT_CONFIG_VOICES+=("$voice")
-    unset api_key provider model base_url image_protocol voice
+    unset api_key provider model base_url image_protocol speech_protocol voice
   done
 
   printf '\n'
@@ -132,32 +145,34 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
     create_config_staging_path "$AGENT_CONFIG_TARGET_PATH" AGENT_CONFIG_STAGING_PATH
     if ! {
       for capability_index in "${!AGENT_CONFIG_NAMES[@]}"; do
-        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
           "${AGENT_CONFIG_NAMES[$capability_index]}" \
           "${AGENT_CONFIG_PROVIDERS[$capability_index]}" \
           "${AGENT_CONFIG_API_KEYS[$capability_index]}" \
           "${AGENT_CONFIG_MODELS[$capability_index]}" \
           "${AGENT_CONFIG_BASE_URLS[$capability_index]}" \
           "${AGENT_CONFIG_IMAGE_PROTOCOLS[$capability_index]}" \
+          "${AGENT_CONFIG_SPEECH_PROTOCOLS[$capability_index]}" \
           "${AGENT_CONFIG_VOICES[$capability_index]}"
       done
     } | bun -e '
       const bytes = new Uint8Array(await Bun.stdin.arrayBuffer());
       const fields = new TextDecoder().decode(bytes).split("\0");
       fields.pop();
-      if (fields.length === 0 || fields.length % 7 !== 0) {
+      if (fields.length === 0 || fields.length % 8 !== 0) {
         throw new Error("invalid agent config field stream");
       }
       const agent = {};
-      for (let offset = 0; offset < fields.length; offset += 7) {
-        const [name, provider, apiKey, model, baseUrl, imageProtocol, voice] = fields.slice(offset, offset + 7);
+      for (let offset = 0; offset < fields.length; offset += 8) {
+        const [name, provider, apiKey, model, baseUrl, imageProtocol, speechProtocol, voice] = fields.slice(offset, offset + 8);
         const entry = {
           provider,
           api_key: apiKey,
         };
         if (baseUrl.length > 0) entry.base_url = baseUrl;
-        entry.model = model;
+        if (model.length > 0) entry.model = model;
         if (imageProtocol.length > 0) entry.image_protocol = imageProtocol;
+        if (speechProtocol.length > 0) entry.speech_protocol = speechProtocol;
         if (voice.length > 0) entry.voice = voice;
         agent[name] = entry;
       }

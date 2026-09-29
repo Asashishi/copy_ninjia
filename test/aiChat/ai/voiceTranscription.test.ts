@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import type { TelegramWorkerDownloadFileResult } from "../../../packages/types/telegramWorker";
+import { VOICE_DEFAULT_MIME, VOICE_TRANSCRIPTION_ERROR_LABEL } from "../../../packages/consts/aiChat/voice";
 
 const downloadTelegramFileFromMain = mock(async (..._args: unknown[]): Promise<TelegramWorkerDownloadFileResult> => ({
   status: "ok" as const,
@@ -65,9 +66,9 @@ describe("Telegram 语音容器归一", () => {
   });
 
   test("缺失或白名单外的声明一律退回 OGG，不把外部输入原样转发进请求体", () => {
-    expect(normalizeVoiceMime(undefined)).toBe("audio/ogg");
-    expect(normalizeVoiceMime("audio/x-weird")).toBe("audio/ogg");
-    expect(normalizeVoiceMime("application/json")).toBe("audio/ogg");
+    expect(normalizeVoiceMime(undefined)).toBe(VOICE_DEFAULT_MIME);
+    expect(normalizeVoiceMime("audio/x-weird")).toBe(VOICE_DEFAULT_MIME);
+    expect(normalizeVoiceMime("application/json")).toBe(VOICE_DEFAULT_MIME);
   });
 });
 
@@ -84,7 +85,7 @@ describe("语音转写", () => {
     expect(request.clip.mime).toBe("audio/ogg");
     expect(request.clip.durationSeconds).toBe(12);
     expect(request.clip.bytes).toEqual(new Uint8Array([1, 2, 3]));
-    expect(request.errorLabel).toBe("AI voice transcription API");
+    expect(request.errorLabel).toBe(VOICE_TRANSCRIPTION_ERROR_LABEL);
     // 指令必须要原话而不是概括：这一行会被当成群友说过的话读。
     expect(request.prompt).toContain("逐字");
   });

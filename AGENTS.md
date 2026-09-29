@@ -156,7 +156,7 @@
 
 - 变量、参数、返回值、对象属性、数组元素和普通 `for` 变量必须显式标注类型。
 - 仅豁免 `for...of`/`for...in` 变量、初始化器为全标注箭头函数的 `const`、自引用 `typeof` 常量。
-- 共享类型按领域放在 `packages/types/<domain>.ts`；生产代码直接导入领域文件；`packages/types/index.ts` 仅供测试和渐进迁移。
+- 共享类型按领域放在 `packages/types/<domain>.ts`；生产代码直接导入领域文件；`packages/types/antiRaid.ts`、`packages/types/diskIO.ts` 这类聚合入口仅供测试。
 - 类型导入必须单独使用 `import type`。
 - 导出函数必须标注返回类型，包括 `Promise<T>`。
 - 必须使用 `catch (error: unknown)`。

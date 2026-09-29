@@ -29,11 +29,10 @@ import {
 } from "../../../cache/workers/aiChat/stickers/menu";
 import { packSummaries } from "../../../cache/workers/aiChat/stickers/catalog";
 import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
-import { pauseForToolAction } from "../utils/toolPause";
 import type { ChatActionControl } from "../../../types/aiChat/chatAction";
-import type { ReplyToolExecution } from "../../../types/aiChat/replies";
+import type { ReplyActionPause, ReplyToolExecution } from "../../../types/aiChat/replies";
 import type { StickerCatalogEntry } from "../../../types/stickers/catalog";
-import type { StickerCandidate, StickerPackCandidate, StickerRoundState, StickerSendLockControl } from "../../../types/stickers/tools";
+import type { StickerCandidate, StickerPackCandidate, StickerRoundState } from "../../../types/stickers/tools";
 
 /**
  * 应景贴纸的两层选择工具：
@@ -46,10 +45,8 @@ import type { StickerCandidate, StickerPackCandidate, StickerRoundState, Sticker
  * MAX_STICKERS_PER_REPLY 枚（当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（acceptedStickerUids 按
  * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
- * aiChat/ai/tools/replyToolset/orchestrator.ts）。轮内限额之外还有一道跨轮互斥：同群并发的几轮回复
- * 只有第一个走到发送的轮能抢到本群的发贴纸锁（见 aiChat/ai/stickers/sendLock.ts），
- * 其余轮的 send_sticker 被拒绝、改用文字回应，避免并发轮各发一枚在几秒内
- * 贴纸刷屏。
+ * aiChat/ai/tools/replyToolset/orchestrator.ts）。同群各轮的动作按入站顺序依次出站（见
+ * workers/aiChat/replyDelivery.ts），跨轮不另设互斥。
  *
  * 工具定义仍是按次回复现组装的（不进 packages/aiChat/ai/tools/index.ts 的静态清单）：菜单会随
  * 目录内容变化，且模型选中的编号要和组装工具描述时用的同一份菜单对应，
@@ -212,11 +209,6 @@ export function parseStickerIntent(argumentsJson: string): string | null {
 
 /** viewStickerPackTool 的入参。 */
 export interface ViewStickerPackToolParams {
-  /**
-   * 本轮聊天状态心跳的挡位切换句柄（见 aiChat/ai/chatActionHeartbeat.ts 的
-   * startChatActionHeartbeat）。
-   */
-  chatAction: ChatActionControl;
   /** 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单。 */
   menu: readonly StickerPackCandidate[];
   argumentsJson: string;
@@ -225,11 +217,10 @@ export interface ViewStickerPackToolParams {
 }
 
 /**
- * 校验查看额度并同步返回真实贴纸编号与描述，供模型下一次调用选择。
- * 选择状态跨越模型往返；拟人停顿只在独立发送链内执行。
+ * 校验查看额度并同步返回真实贴纸编号与描述，供模型下一次调用选择。不切聊天状态：
+ * 「正在选择贴纸」只在串行链的发送步骤里随拟人停顿亮起（见 sendStickerTool）。
  */
 export function viewStickerPackTool({
-  chatAction,
   menu,
   argumentsJson,
   state,
@@ -251,10 +242,6 @@ export function viewStickerPackTool({
     );
   }
 
-  // 切挡立即补发一次 choose_sticker，之后由心跳按间隔重发维持（间隔小于
-  // 约 5 秒的状态过期时间，显示连续）。
-  chatAction.set("choose_sticker");
-
   const candidate: StickerPackCandidate = menu[packIndex - 1]!;
   state.viewedPackIntents.set(packIndex, intent);
   return JSON.stringify({
@@ -267,16 +254,6 @@ export function viewStickerPackTool({
 
 /** sendStickerTool 的入参。 */
 export interface SendStickerToolParams {
-  /**
-   * 本轮聊天状态心跳的挡位切换句柄（见 aiChat/ai/chatActionHeartbeat.ts 的
-   * startChatActionHeartbeat）。
-   */
-  chatAction: ChatActionControl;
-  /**
-   * 本轮的同群发贴纸锁句柄（见 aiChat/ai/stickers/sendLock.ts 的
-   * createStickerSendLock）。
-   */
-  stickerLock: StickerSendLockControl;
   chatId: number;
   /** 本轮所在的论坛话题；缺了它话题群里的贴纸会掉进 General。 */
   messageThreadId: number | undefined;
@@ -298,12 +275,10 @@ export interface SendStickerToolParams {
 }
 
 /**
- * 校验已查看清单、限额与同群锁，接纳时预占贴纸，返回独立发送链。
- * 调用链持有选择心跳、取消信号和真实发送后的回调；同群锁由轮次收尾释放。
+ * 校验已查看清单与限额，接纳时预占贴纸，返回发送步骤。
+ * 发送步骤持有选择状态与拟人停顿（按注入的节奏）、取消信号和真实发送后的回调。
  */
 export function sendStickerTool({
-  chatAction,
-  stickerLock,
   chatId,
   messageThreadId,
   menu,
@@ -333,27 +308,16 @@ export function sendStickerTool({
     return toolError("Duplicate sticker: already accepted this exact sticker in this reply, pick a different one");
   }
 
-  // 跨轮互斥（放在全部参数/限额校验之后、发送序列之前）：抢不到锁说明
-  // 并发轮已经/正在发贴纸，本轮直到结束都不可能再抢到——终局拒绝，收回
-  // 本轮的选择挡位，让模型改用文字（见函数头注）。
-  if (!stickerLock.tryAcquire()) {
-    chatAction.set("idle");
-    return toolError("Sticker throttled: a concurrent reply in this chat is already sending a sticker; do not retry, reply with text instead");
-  }
   state.acceptedStickerUids.add(candidate.sticker.file_unique_id);
-  chatAction.set("idle");
   return {
     result: JSON.stringify({ success: true, queued: true, actions_used: 1 }),
-    run: async (chatAction: ChatActionControl): Promise<string> => {
+    run: async (chatAction: ChatActionControl, pause: ReplyActionPause): Promise<string> => {
       if (!isActive() || signal?.aborted === true) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-      if (chatAction.current() !== "choose_sticker") {
-        chatAction.set("choose_sticker");
-        const invalidated: string | null = await pauseForToolAction({
-          delayMs: STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
-          signal,
-        });
-        if (invalidated !== null) return invalidated;
-      }
+      const invalidated: string | null = await pause(
+        "choose_sticker",
+        STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS
+      );
+      if (invalidated !== null) return invalidated;
       chatAction.set("idle");
       await chatAction.settle();
       if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);

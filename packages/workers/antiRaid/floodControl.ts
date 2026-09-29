@@ -38,7 +38,8 @@ import { signalWithTimeout } from "../../libs/abortSignal";
 import { TimestampDeque } from "../../libs/timestampDeque";
 import { botCanRestrictIn } from "./botPermissions";
 import { isChatAdmin } from "./adminCache";
-import { antiRaidDispatchSignal, trackAntiRaidTask } from "./taskTracker";
+import { antiRaidDispatchSignal } from "../../cache/workers/antiRaid/tasks";
+import { trackAntiRaidTask } from "./taskTracker";
 import type { FloodCandidateMessage } from
   "../../types/antiRaid/protocol";
 import type {
@@ -201,8 +202,8 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     getFloodWindowEntry(message.chatId, message.userId) === entry;
   // 停机已经开始：这次处置整个放掉，连身份确证那一次往返都不必付。禁言是尽力
   // 而为的（到点由 Telegram 自行解除，本进程不排恢复计时器、不落盘），而它命中
-  // restrict 类 429 后的 retry_after 可以远超 drain 的预算——契约见 taskTracker 的
-  // antiRaidDispatchSignal。
+  // restrict 类 429 后的 retry_after 可以远超 drain 的预算——契约见
+  // cache/workers/antiRaid/tasks.ts 的 antiRaidDispatchSignal。
   const dispatchAbort: AbortSignal = antiRaidDispatchSignal();
   if (dispatchAbort.aborted) return;
   const targetIsAdmin: boolean | undefined = await isChatAdmin(message.chatId, message.userId, "flooding user");
@@ -230,7 +231,8 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     //   满窗口重来。
     // - 停机：这个任务登记在 drain 的等待集合里，而上面那个截止是 2 分钟量级、
     //   drain 的预算是秒级。不撤掉的话，凡是停机恰好落在排队期间就换来一次脏
-    //   退出加一批 update 重投（见 taskTracker 的 antiRaidDispatchSignal）。
+    //   退出加一批 update 重投（见 cache/workers/antiRaid/tasks.ts 的
+    //   antiRaidDispatchSignal）。
     dispatchTimeoutMs: FLOOD_MUTE_DISPATCH_TIMEOUT_MS,
     signal: dispatchAbort,
   });

@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
+import { SELF_SPEAKER_NAME } from "../../../packages/consts/aiChat/prompts/transcript";
 
 /**
  * 限频/溢出提示的投递路径（replyState.ts 的 notifyRateLimited）：按群冷却避免
@@ -73,7 +74,7 @@ describe("AI 限频提示", () => {
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: CHAT_ID,
       senderId: 99,
-      firstName: "自己（也就是你）",
+      firstName: SELF_SPEAKER_NAME,
       lastName: "",
       username: undefined,
       messageId: 501,

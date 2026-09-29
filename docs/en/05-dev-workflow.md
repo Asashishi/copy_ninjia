@@ -69,7 +69,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **5323 tests / 465 files / 261542 `expect()` calls**; full-source **function coverage 98.06% / line coverage 98.41%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **5492 tests / 475 files / 262413 `expect()` calls**; full-source **function coverage 98.07% / line coverage 98.50%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -196,10 +196,7 @@ These places all carry the same measured figures, so updating one obliges updati
 - **The equivalent `<img alt>` text in all three READMEs.** The graphic loads as an image, so the SVG's own `<title>` / `aria-label` never reaches a screen reader and the alt is the only accessible path.
 - **“Measurements for This Documentation Version” in all three workflow documents.**
 
-Two more sets of measured figures drift just as silently, independently of coverage:
-
-- **The Chinese string-literal count**. The figures live only in the “no i18n” section of all three copies of [06 Common Modification Recipes](06-modification-guide.md); the “On languages” note in each README just links there and carries no numbers. Recount after adding or removing user-facing copy: count the source lines spanned by string/template-literal nodes in the TypeScript AST, excluding comments. Do not grep for backticks — a backtick inside a regex literal throws the count off.
-- **Behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
+One more set of figures drifts just as silently, independently of coverage: **behavioral figures** such as probabilities, capacities, and durations, which must stay aligned with `packages/consts/`; see [06 Common Modification Recipes](06-modification-guide.md#adjusting-behavioral-parameters).
 
 ## Release
 

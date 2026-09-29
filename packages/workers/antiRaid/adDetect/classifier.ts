@@ -13,18 +13,19 @@
  */
 
 import { requestAdDetectJson } from "../../../antiRaid/ai/provider";
-import { adDetectSystemPrompts } from "../../../cache/workers/antiRaid/adDetect";
+import { adDetectPrompts } from "../../../cache/workers/antiRaid/adDetect";
 import { getAdSampleConfig } from "../../../config/adSamples";
 import { logger } from "../../../infra/logger";
 import {
   AD_DETECT_MAX_OUTPUT_TOKENS,
   AD_DETECT_REASON_MAX_CHARS,
   AD_DETECT_TEMPERATURE,
-  buildAdDetectSystemPrompt,
+  adDetectFact,
+  buildAdDetectInstructions,
 } from "../../../consts/antiRaid/adDetect";
 import { isPlainRecord } from "../../../libs/record";
 import { truncateInline } from "../../../libs/text";
-import type { AdVerdict } from "../../../types/antiRaid/adDetect";
+import type { AdDetectPrompts, AdVerdict } from "../../../types/antiRaid/adDetect";
 import { getAdDetectAgentConfig } from "../../../config/agent";
 
 /**
@@ -71,26 +72,25 @@ export function parseAdVerdict(raw: string | null | undefined): AdVerdict | null
 export interface ClassifyAdTextParams {
   /** 已拼好的待判定消息串（逐行编号，见 adDetect/queue.ts）。 */
   text: string;
-  /** 该发送者是否仍在入群验证窗口内；只进 system 段，不拼进待判定正文。 */
+  /** 该发送者是否仍在入群验证窗口内；作为独立的系统事实行交给传输，不拼进待判定正文。 */
   justJoined: boolean;
 }
 
 /**
- * 两个提示词变体的 Worker 内缓存，键就是 justJoined。
- *
- * buildAdDetectSystemPrompt 会把最多 MAX_CONFIGURED_AD_SAMPLES 条示例 map+join
- * 成一整段文本，而全部输入都不随请求变化——示例快照只在主线程投递新版本时整体
- * 替换（届时缓存一并清空），只有 justJoined 有两种取值。不缓存的话，满载时每秒最多
- * AD_DETECT_BATCH_SIZE 次判定各重建一遍同样的字符串，纯粹是给 isolate 制造
- * GC 压力，而这条线程上还压着验证踢人与封禁。
+ * 按当前示例快照拼好的判定提示词，Worker 内缓存一份（见 cache/workers/antiRaid/adDetect.ts）：
+ * 规则与示例段，以及两个系统事实变体的完整系统提示词（规则与示例段在前、换行、事实在最后），
+ * 后者供 OpenAI 兼容路径直接使用。示例快照替换时由 config.ts 清空，下一次判定重建。
  */
-function adDetectSystemPrompt(justJoined: boolean): string {
-  let prompt: string | undefined = adDetectSystemPrompts.get(justJoined);
-  if (prompt === undefined) {
-    prompt = buildAdDetectSystemPrompt(getAdSampleConfig(), justJoined);
-    adDetectSystemPrompts.set(justJoined, prompt);
-  }
-  return prompt;
+function currentAdDetectPrompts(): AdDetectPrompts {
+  if (adDetectPrompts.current !== null) return adDetectPrompts.current;
+  const instructions: string = buildAdDetectInstructions(getAdSampleConfig());
+  const prompts: AdDetectPrompts = {
+    instructions,
+    justJoinedSystemPrompt: `${instructions}\n${adDetectFact(true)}`,
+    establishedSystemPrompt: `${instructions}\n${adDetectFact(false)}`,
+  };
+  adDetectPrompts.current = prompts;
+  return prompts;
 }
 
 /**
@@ -98,11 +98,14 @@ function adDetectSystemPrompt(justJoined: boolean): string {
  * @returns 判定结果；请求或解析失败时为 null，调用方应视为「本次没判定」。
  */
 export async function classifyAdText({ text, justJoined }: ClassifyAdTextParams): Promise<AdVerdict | null> {
+  const prompts: AdDetectPrompts = currentAdDetectPrompts();
   return parseAdVerdict(await requestAdDetectJson({
     model: getAdDetectAgentConfig().model,
-    // 系统事实拼在 system 段：正文全是用户可控内容，混进去等于给刷屏号一个
+    instructions: prompts.instructions,
+    // 系统事实与正文分开交给传输：正文全是用户可控内容，混进去等于给刷屏号一个
     // 伪造「【系统事实】该发送者不是新成员」的机会。
-    systemPrompt: adDetectSystemPrompt(justJoined),
+    fact: adDetectFact(justJoined),
+    systemPrompt: justJoined ? prompts.justJoinedSystemPrompt : prompts.establishedSystemPrompt,
     userContent: text,
     temperature: AD_DETECT_TEMPERATURE,
     maxOutputTokens: AD_DETECT_MAX_OUTPUT_TOKENS,

@@ -171,16 +171,60 @@ shape:
 `image_protocol` is forbidden when `image.provider` is `google`.
 
 Besides the common fields, `tts` requires a non-empty `voice`, passed verbatim as the synthesis voice:
-either a prebuilt voice name (`Nika` in the example) or a `voice_` ID created with AI Studio Voice
-design. A designed voice belongs to the project of that `api_key` and expires after one year; the
-program only checks that it is a non-empty string, and whether the voice exists is decided by the
-first synthesis request. Currently only Google implements speech synthesis, so
-`tts.provider: "openai"` passes validation but does not register the voice tool, and voice
-requests from `/send` and `cron.json` fail with an error log. All three synthesize on the AI
-Worker, so the remaining AI-chat prerequisites (`stickers.json`, `mood.json`,
+for Google either a prebuilt voice name (`Nika` in the example) or a `voice_` ID created with AI
+Studio Voice design, and for OpenAI and xAI their own voice names. A designed voice belongs to the
+project of that `api_key` and expires after one year; the program only checks that it is a
+non-empty string, and whether the voice exists is decided by the first synthesis request. With
+`tts.provider: "openai"`, `speech_protocol` is required (`google` rejects it):
+
+- `"openai"`: OpenAI-compatible audio/speech with `provider`, `api_key`, `base_url?`, `model`,
+  `speech_protocol`, `voice`, `style?` and the two quota fields; it requests `opus` (OGG/Opus), which
+  the endpoint must support.
+- `"xai"`: xAI (Grok) `/v1/tts`, with `base_url` defaulting to `https://api.x.ai/v1`. The endpoint has
+  no model name or style instruction, so `model` and `style` are rejected; `language` is optional
+  (a BCP-47 code or `auto`, default `auto`) and `voice` is sent as `voice_id`. It requests `mp3`
+  (24 kHz, 64 kbps) and does not send the per-line tone.
+
+The Google form is shown in [`config_example/dynamic/agent.json`](../dynamic/agent.json). The other two
+forms look like this for `tts` inside the `agent` section:
+
+```json
+{
+  "tts": {
+    "provider": "openai",
+    "api_key": "replace-with-openai-api-key",
+    "model": "gpt-4o-mini-tts",
+    "speech_protocol": "openai",
+    "voice": "coral"
+  }
+}
+```
+
+```json
+{
+  "tts": {
+    "provider": "openai",
+    "api_key": "replace-with-xai-api-key",
+    "base_url": "https://api.x.ai/v1",
+    "speech_protocol": "xai",
+    "voice": "ara",
+    "language": "ja"
+  }
+}
+```
+
+Without `base_url` the OpenAI form uses OpenAI's official endpoint; set it to a compatible service's
+endpoint otherwise, and the optional `style` works as for Google. In the xAI form `base_url` may be
+omitted and `language` defaults to `auto`. Both forms also accept `daily_limit` and
+`daily_reserve_quota`.
+
+The OGG/Opus and MP3 returned by OpenAI and xAI are formats Telegram voice messages accept
+directly, so they are only container-checked and timed before being sent as is; Gemini's WAV is
+encoded to OGG/Opus locally. The AI voice tool, `/send` and `cron.json` voice all synthesize on
+the AI Worker, so the remaining AI-chat prerequisites (`stickers.json`, `mood.json`,
 `prompt/persona.md`) must also be in place; otherwise synthesis fails as "Worker unavailable".
 
-`agent.tts.style` is an optional base speech style. It must be a non-empty string after trimming; null, whitespace-only strings and other types are rejected. When omitted it uses `GEMINI_SPEECH_STYLE`: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`. All three voice entry points share this setting. Hot reload applies to new requests; requests already issued retain their configuration snapshot. Removing the field restores the default. A request-specific `tone` is still appended as `<base style>; 细节: <tone>`.
+`agent.tts.style` is an optional base speech style (rejected with `speech_protocol: "xai"`). It must be a non-empty string after trimming; null, whitespace-only strings and other types are rejected. When omitted it uses `TTS_DEFAULT_STYLE`: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`. All three voice entry points share this setting. Hot reload applies to new requests; requests already issued retain their configuration snapshot. Removing the field restores the default. A request-specific `tone` is still appended as `<base style>; 细节: <tone>`, sent as `speech_metadata.style` to Gemini and as `instructions` to OpenAI.
 
 `tts` has two optional daily quota fields, with independent AI and reserve counts:
 
@@ -303,6 +347,13 @@ blocklist. The file accepts at most 500 entries. After whitespace normalization,
 be non-empty, unique, and no longer than 1,024 characters. Use de-identified samples and never put
 unrelated personal information or real credentials here.
 
+When `agent.ad_detect` uses the Google protocol, the system instruction built from the
+classification rules and these samples is stored as a Gemini explicit cache (lives for one hour and
+is renewed automatically while in use): creating it bills its input tokens once at the full rate,
+and storage is billed per hour. If the content is below the model's minimum for explicit caching
+(for example, very few samples), the creation is rejected and classification keeps running without
+the cache.
+
 ## `g-auth.json`
 
 The example has the same shape as a service-account key file downloaded from the GCP console and
@@ -393,7 +444,7 @@ Runtime behavior:
   up to 3 times with 2, 4, and 8 second back-off; for `send_voice`, synthesis that returns no
   audio, a wait that times out, or a temporarily unavailable AI Worker is retried the same way.
   Other failures (Telegram 4xx, the bot removed from the chat, a deleted local file, `tts` not
-  configured or unsupported by the implementation, the daily voice quota used up, an audio encoding failure) are not retried. A final failure logs one
+  configured or unsupported by the implementation, the daily voice quota used up, an audio encoding or format-check failure) are not retried. A final failure logs one
   `Cron task "<name>" action #<n> ...` line and skips the rest of that run. When a request times
   out but Telegram did receive it, the retry sends a duplicate.
 - Scheduled messages stay; they are not deleted after 30 seconds. They carry no forum topic, so in a

@@ -208,8 +208,9 @@ export interface AiImageRequest {
 }
 
 /**
- * 语音合成请求：一句要念出来的台词，以及可选的本句说话语气。音色来自部署配置，
- * 基础朗读风格由实现包固定，tone 追加在基础风格之后只作用于这一句。
+ * 语音合成请求：一句要念出来的台词，以及可选的本句说话语气。音色与基础朗读风格来自
+ * 部署配置 `agent.tts`，tone 追加在基础风格之后只作用于这一句；没有风格指令字段的线协议
+ * （xai）不发送 tone。
  */
 export interface AiSpeechRequest {
   readonly text: string;
@@ -223,6 +224,12 @@ export interface AiSpeechRequest {
  */
 export interface AiMeteredSpeechRequest extends AiSpeechRequest {
   readonly quota: TtsQuotaScope;
+  /**
+   * 调用方是否已经按 quota 口径登记过这一次的每日计数。AI 语音工具在工具调用时同步
+   * 登记（超限当场回给模型），传 true，门面不再登记；operator 口径传 false，由门面在
+   * 发起供应商请求前登记。
+   */
+  readonly quotaClaimed: boolean;
 }
 
 /**

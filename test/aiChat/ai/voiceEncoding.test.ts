@@ -1,19 +1,24 @@
 /**
- * 语音编码：WAV → OGG/Opus。用真实 libopus WASM 编码，核对 OGG 页结构、
- * OpusHead 声明的原始采样率与收尾页的 granule 时长；非 WAV MIME 与 WAV 解析
- * 失败原样带回原因；编码器抛错时记原始错误并归一成失败原因。
+ * 语音编码：WAV → OGG/Opus 用真实 libopus WASM 编码，核对 OGG 页结构、OpusHead 声明的
+ * 原始采样率与收尾页的 granule 时长；OGG/Opus 与 MP3 校验后原样透传（独占字节副本、时长、
+ * 文件名）；不支持的 MIME、WAV 解析与容器校验失败原样带回原因；编码器抛错时记原始错误并
+ * 归一成失败原因。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
+import { mp3Frames } from "../../helpers/mp3";
 import { sineWav, wav } from "../../helpers/wav";
 import type { VoiceEncodeResult } from "../../../packages/types/aiChat/voiceMessage";
 import type opus from "@audio/encode-opus";
+import { OPUS_HEAD_MAGIC } from "../../../packages/consts/audio";
 
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 
 const { encodeVoiceMessage } = await import("../../../packages/aiChat/ai/voiceEncoding");
+const { VOICE_MP3_FILE_NAME, VOICE_OGG_FILE_NAME } = await import("../../../packages/consts/aiChat/voiceMessage");
+const { MP3_MIME_TYPE, OGG_OPUS_MIME_TYPE } = await import("../../../packages/consts/audio");
 
 interface OggPage {
   readonly headerType: number;
@@ -57,7 +62,7 @@ describe("encodeVoiceMessage", () => {
 
     const pages: OggPage[] = oggPages(result.voice.bytes);
     const head: Uint8Array = pages[0]!.body;
-    expect(new TextDecoder().decode(head.subarray(0, 8))).toBe("OpusHead");
+    expect(new TextDecoder().decode(head.subarray(0, 8))).toBe(OPUS_HEAD_MAGIC);
     expect(head[9]).toBe(1);
     const headView: DataView = new DataView(head.buffer, head.byteOffset, head.byteLength);
     expect(headView.getUint32(12, true)).toBe(24_000);
@@ -75,6 +80,43 @@ describe("encodeVoiceMessage", () => {
       mimeType: "Audio/X-WAV; codec=pcm",
     });
     expect(result.ok && result.voice.durationSeconds).toBe(1);
+  });
+
+  test("WAV 编码结果带 OGG 文件名", async () => {
+    const result: VoiceEncodeResult = await encodeVoiceMessage({ bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" });
+    expect(result.ok && result.voice.fileName).toBe(VOICE_OGG_FILE_NAME);
+  });
+
+  test("OGG/Opus 校验后原样透传：独占字节副本、granule 时长与 OGG 文件名", async () => {
+    const encoded: VoiceEncodeResult = await encodeVoiceMessage({ bytes: sineWav(24_000, 1.5), mimeType: "audio/wav" });
+    if (!encoded.ok) throw new Error(encoded.reason);
+    const padded: Uint8Array = new Uint8Array(encoded.voice.bytes.byteLength + 3);
+    padded.set(encoded.voice.bytes, 3);
+    const source: Uint8Array = padded.subarray(3);
+    const result: VoiceEncodeResult = await encodeVoiceMessage({ bytes: source, mimeType: `${OGG_OPUS_MIME_TYPE}; codecs=opus` });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.voice.bytes).toEqual(encoded.voice.bytes);
+    expect(result.voice.bytes.byteOffset).toBe(0);
+    expect(result.voice.bytes.byteLength).toBe(result.voice.bytes.buffer.byteLength);
+    expect(result.voice.durationSeconds).toBe(2);
+    expect(result.voice.fileName).toBe(VOICE_OGG_FILE_NAME);
+  });
+
+  test("MP3 校验后原样透传，带 MP3 文件名", async () => {
+    // 42 帧 × 576 / 24000 = 1.008 秒。
+    const mp3: Uint8Array<ArrayBuffer> = mp3Frames(42);
+    const result: VoiceEncodeResult = await encodeVoiceMessage({ bytes: mp3, mimeType: MP3_MIME_TYPE });
+    expect(result).toEqual({ ok: true, voice: { bytes: mp3, durationSeconds: 2, fileName: VOICE_MP3_FILE_NAME } });
+    expect(result.ok && result.voice.bytes.buffer).not.toBe(mp3.buffer);
+  });
+
+  test("OGG/Opus 与 MP3 容器校验失败带原因返回", async () => {
+    await expect(encodeVoiceMessage({ bytes: sineWav(24_000, 0.1), mimeType: OGG_OPUS_MIME_TYPE }))
+      .resolves.toEqual({ ok: false, reason: "not an Ogg Opus stream" });
+    await expect(encodeVoiceMessage({ bytes: mp3Frames(2).subarray(1), mimeType: MP3_MIME_TYPE }))
+      .resolves.toEqual({ ok: false, reason: "not an MP3 stream" });
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
   test("非 WAV 容器与 WAV 解析失败带原因返回，不调用编码器", async () => {

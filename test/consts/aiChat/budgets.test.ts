@@ -5,12 +5,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   AI_MAX_ACTIONS_PER_REPLY,
+  CHAT_ACTION_REST_MS,
   HARD_MAX_ACTIONS_PER_REPLY,
   IMAGE_SEPARATE_CAPTION_MIN_REMAINING_ACTIONS,
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
   MAX_REACTIONS_PER_REPLY,
   MAX_TOOL_ROUNDS,
   MAX_WEB_SEARCH_CALLS_PER_REPLY,
+  TYPING_ACTION_INTERVAL_MS,
   TYPING_DELAY_BASE_MS,
   TYPING_DELAY_MAX_MS,
   TYPO_MIN_REMAINING_ACTIONS,
@@ -94,8 +96,14 @@ describe("模拟输入停顿与手滑", () => {
     expect(TYPING_DELAY_BASE_MS).toBeLessThanOrEqual(TYPING_DELAY_MAX_MS);
   });
 
-  test("补字停顿区间非空", () => {
+  test("补字停顿区间非空，且不短于状态之间的最短静默", () => {
     expect(TYPO_QUICK_CORRECTION_MIN_MS).toBeLessThanOrEqual(TYPO_QUICK_CORRECTION_MAX_MS);
+    expect(TYPO_QUICK_CORRECTION_MIN_MS).toBeGreaterThanOrEqual(CHAT_ACTION_REST_MS);
+  });
+
+  test("状态之间的最短静默短于心跳重发间隔", () => {
+    expect(CHAT_ACTION_REST_MS).toBeGreaterThan(0);
+    expect(CHAT_ACTION_REST_MS).toBeLessThan(TYPING_ACTION_INTERVAL_MS);
   });
 
   test("两个概率都是 0~1 的真概率", () => {

@@ -7,7 +7,7 @@
  * 单图调用 sendPhoto，多图调用一次 sendMediaGroup，只有首图携带 caption；
  * 相册逐项应用遮罩并登记所有返回消息 ID；发出的每张图都写一条 AI 记忆占位态自录。
  * `send_voice` 先经 AI Worker 的语音合成公共实现（aiChat/voiceSynthesis.ts）把台词与语气
- * 合成成 OGG/Opus，再调用 sendVoice；合成结果登记进本轮的 CronRoundVoices，重试与后续
+ * 合成成 Telegram 语音（OGG/Opus 或 MP3），再按其文件名调用 sendVoice；合成结果登记进本轮的 CronRoundVoices，重试与后续
  * 会话复用同一段语音。本轮首次发送成功后记下 Telegram 交回的 file_id，之后改为引用它，
  * 不再重复上传。每次调用只投递一次，失败按 CronDeliveryOutcome 分类交给 cron/run.ts
  * 决定是否重试，本边界不记日志。
@@ -19,7 +19,6 @@ import type { Stats } from "node:fs";
 import { basename } from "node:path";
 import { TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES, TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } from "../consts/telegram";
 import { recordBotImage, synthesizeVoice } from "../aiChat";
-import { VOICE_FILE_NAME } from "../consts/aiChat/voiceMessage";
 import { pickRandomImage } from "../infra/randomImage";
 import { getAssetConfig } from "../config/assets";
 import { runTelegramAction } from "../infra/telegram/actions/core";
@@ -201,7 +200,7 @@ async function sendRoundVoice(
   const voice: EncodedVoiceMessage = entry.voice;
   const message: Message = await bot.api.sendVoice(
     chatId,
-    entry.fileId ?? new InputFile(voice.bytes, VOICE_FILE_NAME),
+    entry.fileId ?? new InputFile(voice.bytes, voice.fileName),
     { duration: voice.durationSeconds },
     ...signalArgs(requestSignal)
   );

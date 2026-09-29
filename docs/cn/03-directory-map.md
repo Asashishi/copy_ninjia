@@ -53,7 +53,7 @@
   - **典型文件**：`echo.ts`、`copyModes.ts`、`avatarQueue.ts`。
 - **`packages/translate/`**
   - **职责**：按群翻译会话、恢复目标、正则语言识别与惰性 Google 翻译客户端。
-  - **典型文件**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`；普通复制复用 `copy/echo.ts`。
+  - **典型文件**：`state.ts`、`recovery.ts`、`message.ts`、`language.ts`、`client.ts`。
 - **`packages/users/`**
   - **职责**：发送者身份缓存、可见发送者判定、用户标签生成，以及名单与广告判定共用的身份元数据、消息内容与来源解析。
   - **典型文件**：`senderIdentity.ts`、`visibleSender.ts`、`userLabel.ts`、`identityMetadata.ts`、`messageContent.ts`、`messageOrigin.ts`。
@@ -95,7 +95,7 @@
     `config.ts`（接管主线程投递的配置快照）。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理，以及随机图片的目录准备与抽取。
-  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker 的模型客户端上报请求缓存用量的边界）、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
+  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker 的模型客户端上报请求缓存用量的边界）、`geminiContextCache.ts`（Gemini 显式缓存的共用核心，回复与广告检测各传一个 scope）、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
 - **`packages/infra/identityPolicy/`**
   - **职责**：白名单逐项权限、临时广告免检与黑白名单互斥协调的主线程读取边界。
   - **典型文件**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。

@@ -397,7 +397,7 @@ describe("同步副作用的逐条执行", () => {
       event: { type: "kickSettled", now: expect.any(Number) },
     });
     // 结算掉的记录不排重试，也不记那行「踢不动」诊断。
-    expect(verificationEntries.get(KEY)?.terminalRetries).toBeUndefined();
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBe(0);
     expect(loggedErrors.some((line: string): boolean => line.includes("Lockdown kick"))).toBeFalse();
   });
 
@@ -520,6 +520,6 @@ describe("同步副作用的逐条执行", () => {
 
     expect(verificationEntries.get(KEY)?.state.kind).toBe("pending");
     expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
-    expect(verificationEntries.get(KEY)?.terminalRetries).toBeUndefined();
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBe(0);
   });
 });

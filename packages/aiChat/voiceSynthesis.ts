@@ -1,7 +1,7 @@
 /**
  * 主线程借用 AI Worker 的语音合成公共实现（aiChat/ai/voiceSynthesis.ts）：`/send`
- * 代发的 TTS 与 cron `send_voice` 都经这里把「文本 + 语气」交给 Worker，拿回编码好的
- * OGG/Opus 语音，再由各自的发送边界发出。
+ * 代发的 TTS 与 cron `send_voice` 都经这里把「文本 + 语气」交给 Worker，拿回可直接
+ * sendVoice 的语音（OGG/Opus 或 MP3，带上传文件名），再由各自的发送边界发出。
  *
  * 一次请求登记一个等待者（cache/main/aiChat.ts 的 voiceSynthesisWaiters）再投递
  * synthesizeVoice；结算只有五条路：回执、等待超时（VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS）、

@@ -1,10 +1,5 @@
 import type { Sticker } from "grammy/types";
 
-export interface StickerSendLockControl {
-  readonly tryAcquire: () => boolean;
-  readonly release: () => void;
-}
-
 export interface StickerCandidate {
   sticker: Sticker;
   emoji: string;

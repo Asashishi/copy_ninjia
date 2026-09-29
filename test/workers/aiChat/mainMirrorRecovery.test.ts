@@ -619,9 +619,9 @@ describe("AI main-thread persistence mirror", () => {
     supervisorOptions!.onEvent({
       type: "voiceSynthesized",
       requestId: request.requestId,
-      result: { ok: true, voice: { bytes, durationSeconds: 2 } },
+      result: { ok: true, voice: { bytes, durationSeconds: 2, fileName: "voice.mp3" } },
     });
-    await expect(synthesized).resolves.toEqual({ ok: true, voice: { bytes, durationSeconds: 2 } });
+    await expect(synthesized).resolves.toEqual({ ok: true, voice: { bytes, durationSeconds: 2, fileName: "voice.mp3" } });
     expect(voiceSynthesisWaiters.size).toBe(0);
     // 迟到或重复的回执直接丢弃。
     supervisorOptions!.onEvent({ type: "voiceSynthesized", requestId: request.requestId, result: { ok: false, reason: "synthesis failed" } });

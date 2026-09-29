@@ -20,11 +20,22 @@ import type {
  */
 
 /**
+ * 同群允许同时处理的模型轮数（含直接轮）：有序并行轮最多 REPLY_ROUND_MAX_CONCURRENT 个，直接轮
+ * 独立于它们，仍在模型阶段时另加这 1 轮；Telegram 发送高压时合计只放行 1 轮。
+ * @param telegramBackpressured 触发投递时刻的发送面高压快照。
+ * @param directRoundActive 该群的直接轮仍在模型阶段。
+ */
+export function replyRoundConcurrencyLimit(telegramBackpressured: boolean, directRoundActive: boolean): number {
+  if (telegramBackpressured) return 1;
+  return directRoundActive ? REPLY_ROUND_MAX_CONCURRENT + 1 : REPLY_ROUND_MAX_CONCURRENT;
+}
+
+/**
  * 按模型并发、存活容量、等待队列及触发种类决定启动、排队或丢弃。
  * 队列非空时，即使有空模型位也先入队；补跑按 FIFO 消费空位。
  * 模型完成、发送收尾、入队后及维护节拍均由 replyPipeline.ts 驱动补跑。
  * 完整发送链有独立容量闸；生命周期约束见 docs/cn/04-invariants.md。
- * @param input.activeRounds 该群当前模型处理尚未完成的回复轮数。
+ * @param input.activeRounds 该群当前模型处理尚未完成的回复轮数（含直接轮）。
  * @param input.queueSize 该群当前排队等待补跑的直接触发数。
  * @param input.kind 本次触发的种类。
  */
@@ -33,9 +44,7 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
     input.telegramBackpressured &&
     (input.kind === "random" || input.kind === "mediaRandom")
   ) return "dropSilently";
-  const maxConcurrent: number = input.telegramBackpressured
-    ? 1
-    : REPLY_ROUND_MAX_CONCURRENT;
+  const maxConcurrent: number = replyRoundConcurrencyLimit(input.telegramBackpressured, input.directRoundActive);
   if (input.deliveryAvailable && input.queueSize === 0 && input.activeRounds < maxConcurrent) {
     return "startRound";
   }

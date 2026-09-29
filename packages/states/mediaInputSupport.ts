@@ -5,6 +5,7 @@ import {
   NO_MEDIA_INPUT_EFFECTS,
 } from "../consts/aiChat/media";
 import { isPendingWithin } from "../libs/clockWindow";
+import { cappedExponentialMs } from "../libs/backoff";
 import type {
   MediaInputSupport,
 } from "../types/aiChat/provider";
@@ -28,8 +29,7 @@ export function isMediaInputClosed(support: MediaInputSupport): boolean {
 
 /** 第 n 次连续瞬时失败对应的退避时长；指数增长并封顶。 */
 function backoffMsFor(transientFailures: number): number {
-  const scaled: number = MEDIA_PROBE_BACKOFF_BASE_MS * 2 ** (transientFailures - 1);
-  return Math.min(scaled, MEDIA_PROBE_BACKOFF_MAX_MS);
+  return cappedExponentialMs(MEDIA_PROBE_BACKOFF_BASE_MS, transientFailures - 1, MEDIA_PROBE_BACKOFF_MAX_MS);
 }
 
 /**

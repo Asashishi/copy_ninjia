@@ -71,7 +71,7 @@
 | 工具动作/查询上限、打字与错字节奏 | `packages/consts/aiChat/tools.ts` |
 | 语音转写的时长/体积上限与占位文案 | `packages/consts/aiChat/voice.ts` |
 | 语音工具的每轮上限、台词/语气长度、每日额度缺省值与计数窗口、Opus 编码参数 | `packages/consts/aiChat/voiceMessage.ts` |
-| 请求超时、重试次数、采样与安全档位、语音合成的基础声线与温度 | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
+| 请求超时、重试次数、采样与安全档位、语音合成的温度与各线协议参数（默认基础风格在 `packages/consts/aiChat/voiceMessage.ts`） | `packages/consts/aiChat/gemini.ts`、`packages/consts/aiChat/openai.ts` |
 | **模型名、provider、key、端点** | 不是常量：`config/dynamic/agent.json` 按能力配置，见 [01-getting-started](01-getting-started.md) |
 | OAI 兼容生图线协议/尺寸能力档 | `config/dynamic/agent.json` 的必填 `agent.image.image_protocol`；新增档位还要同步类型、固定画幅表、穷举分派与测试 |
 | 验证窗口、刷屏阈值、追加/收敛策略 | `packages/consts/antiRaid/` |

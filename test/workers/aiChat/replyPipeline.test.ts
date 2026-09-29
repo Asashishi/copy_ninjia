@@ -27,7 +27,8 @@ const replyReferenceForBufferedMessage = mock((_chatId: number, _messageId: numb
 const botInfo = { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" };
 const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
 const hasReplyDeliveryCapacity = mock((_chatId: number): boolean => true);
-mock.module("../../../packages/workers/aiChat/replyDelivery", () => ({ hasReplyDeliveryCapacity }));
+const isDirectReplyModelActive = mock((_chatId: number): boolean => false);
+mock.module("../../../packages/workers/aiChat/replyDelivery", () => ({ hasReplyDeliveryCapacity, isDirectReplyModelActive }));
 
 mock.module("../../../packages/cache/workers/aiChat/identity", () => ({ botInfoState }));
 mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
@@ -69,6 +70,7 @@ beforeEach(() => {
   pendingReplyTriggers.clear();
   longTriggerTimes.clear();
   hasReplyDeliveryCapacity.mockReset().mockReturnValue(true);
+  isDirectReplyModelActive.mockReset().mockReturnValue(false);
   startReplyRound.mockReset().mockReturnValue(true);
   for (const fn of [
     admitTrigger,
@@ -91,6 +93,14 @@ describe("AI reply admission pipeline", () => {
     expect(pushReplyTrigger).toHaveBeenCalledTimes(1);
     expect(pushReplyTrigger).toHaveBeenCalledWith(expect.objectContaining({ replyToMessageId: 7 }));
     expect(startReplyRound).not.toHaveBeenCalled();
+  });
+
+  test("准入携带本群直接轮是否仍在模型阶段", () => {
+    isDirectReplyModelActive.mockReturnValue(true);
+    decision = "dropSilently";
+    generateAndSendReply(baseRequest);
+    expect(isDirectReplyModelActive).toHaveBeenCalledWith(baseRequest.chatId);
+    expect(admitTrigger).toHaveBeenCalledWith(expect.objectContaining({ directRoundActive: true }));
   });
 
   test("模型完成只补跑待处理队列，溢出提示留到发送收尾且仍遵守窗口限频", () => {

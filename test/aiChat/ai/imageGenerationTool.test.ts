@@ -4,6 +4,7 @@ import type { ChatActionPhase } from "../../../packages/types/aiChat/chatAction"
 import type { TelegramPhotoSendResult, TelegramSendResult } from "../../../packages/types/telegram";
 import type { TelegramVisionSource } from "../../../packages/types/media";
 import type { TaskPriority } from "../../../packages/libs/prioritizedBoundedTaskRunner";
+import { GENERATE_IMAGE_TOOL, SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const GENERATED_PHOTO: TelegramVisionSource = { fileId: "sent-photo", fileUniqueId: "sent-photo-u", width: 1024, height: 768 };
@@ -59,8 +60,15 @@ mock.module("../../../packages/aiChat/ai/telegramImage", () => ({ downloadTelegr
 mock.module("../../../packages/cache/workers/aiChat/mediaTasks", () => ({ mediaTaskRunner: { run: runMediaTask } }));
 
 const { buildGenerateImageToolDefinition, createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
-const { buildImageReferenceBlock } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageReference");
-const { IMAGE_REFERENCE_POINTER } = await import("../../../packages/consts/aiChat/prompts/tools");
+const { createSimulatedPause } = await import("../../../packages/aiChat/ai/tools/replyToolset/pacing");
+const { buildToolStatusBlock } = await import("../../../packages/aiChat/ai/tools/replyToolset/toolStatus");
+const {
+  IMAGE_REFERENCE_ABSENT,
+  IMAGE_REFERENCE_POINTER,
+  IMAGE_TOOL_STATUS_UNAUTHORIZED,
+  TOOL_STATUS_BLOCK_LABEL,
+  imageToolStatusAvailable,
+} = await import("../../../packages/consts/aiChat/prompts/tools");
 const { acceptRoundText, createRoundMessageState } = await import("../../../packages/aiChat/ai/tools/replyToolset/messageState");
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
 const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
@@ -77,7 +85,7 @@ function buildExecutor(
   const prepare = createGenerateImageExecutor(ctx, state, (): number => actionsUsed);
   return async (argumentsJson: string): Promise<string> => {
     const execution = prepare(argumentsJson);
-    return typeof execution === "string" ? execution : execution.run(ctx.chatAction);
+    return typeof execution === "string" ? execution : execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction, ctx.signal));
   };
 }
 
@@ -92,12 +100,11 @@ function buildContext(
     messageThreadId: undefined,
     mediaToolsRequested: requested,
     bypassMediaToolCooldown: bypass,
+    direct: false,
     chatAction: {
-      current: () => "idle",
-      set: mock((..._args: unknown[]): void => {}),
+      set: mock((..._args: unknown[]): number => 0),
       settle: mock(async (): Promise<void> => {}),
     },
-    stickerLock: { tryAcquire: () => true, release: () => {} },
     roundHasTypo: false,
     isActive: () => true,
     onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -158,43 +165,52 @@ describe("generate_image 工具执行器", () => {
     expect(JSON.stringify(buildGenerateImageToolDefinition())).toBe(baseline);
   });
 
-  test("参考素材文案原样落在运行时状态区块里，冷却一个字都不写", () => {
-    const absent = buildImageReferenceBlock({ ctx: buildContext(), imageEnabled: true });
-    expect(absent).toContain("当前触发没有附带参考图片");
-    expect(absent).toContain("未指定比例时默认使用 1:1");
-    expect(absent).not.toContain("冷却");
+  test("本轮工具状态的生图行：可用时带参考素材说明，冷却中给剩余秒数，superAdmin 不受冷却", () => {
+    const status = (ctx: ReplyToolContext): string =>
+      buildToolStatusBlock({ ctx, imageEnabled: true, voiceEnabled: false });
+    const absent = status(buildContext());
+    expect(absent).toStartWith(TOOL_STATUS_BLOCK_LABEL);
+    expect(absent).toContain(imageToolStatusAvailable(IMAGE_REFERENCE_ABSENT));
 
-    // 冷却推进与 superAdmin 旁路都不得在这一段里留下任何痕迹：本轮能不能生图只在
-    // 工具真的被调用时由执行侧判定。
     claimImageGeneration({ chatId: -1001, bypassCooldown: false });
-    expect(buildImageReferenceBlock({ ctx: buildContext(), imageEnabled: true })).toBe(absent);
-    expect(buildImageReferenceBlock({ ctx: buildContext(-1001, true), imageEnabled: true })).toBe(absent);
+    const cooling = status(buildContext());
+    expect(cooling).toMatch(/generate_image：冷却中（约 \d+ 秒后恢复）/);
+    expect(cooling).not.toContain(IMAGE_REFERENCE_ABSENT);
+    // superAdmin 旁路不读普通用户冷却，照常可用。
+    expect(status(buildContext(-1001, true))).toBe(absent);
 
-    const reference = buildImageReferenceBlock({ ctx: buildReferenceContext(), imageEnabled: true });
+    const reference = status(buildReferenceContext(-1002));
     expect(reference).toContain("参考图片素材");
     expect(reference).toContain("1600×900");
     expect(reference).toContain("默认使用最接近原素材的 16:9");
     expect(reference).toContain("不要向群友索要 URL");
   });
 
-  test("本轮没挂生图工具时参考素材段整段不出现", () => {
-    expect(buildImageReferenceBlock({
+  test("非直接触发写明不可用；部署没有生图能力时不出生图行", () => {
+    const unauthorized = buildToolStatusBlock({
+      ctx: buildContext(-1001, false, false),
+      imageEnabled: true,
+      voiceEnabled: false,
+    });
+    expect(unauthorized).toContain(IMAGE_TOOL_STATUS_UNAUTHORIZED);
+    expect(buildToolStatusBlock({
       ctx: buildContext(-1001, false, false),
       imageEnabled: false,
-    })).toBe("");
+      voiceEnabled: false,
+    })).not.toContain(GENERATE_IMAGE_TOOL);
   });
 
   test("冷却中在解析参数之前就返回提示，不请求模型", async () => {
     claimImageGeneration({ chatId: -1001, bypassCooldown: false });
 
     // 参数故意写坏：冷却闸排在参数解析之前，模型拿到的必须是「还要等多久」而不是一句
-    // 参数错误——提示词里没有任何冷却状态，这条工具结果是它唯一的告知渠道。
+    // 参数错误——本轮工具状态是回复开始时的快照，可能已经过期，调用时以这条结果为准。
     const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "" })));
 
     expect(result.error).toBe("Image generation is cooling down in this chat");
     expect(result.retry_after_seconds).toBeGreaterThan(0);
     expect(result.retryable).toBe(false);
-    expect(result.required_action).toContain("send_message");
+    expect(result.required_action).toContain(SEND_MESSAGE_TOOL);
     expect(generateChatImage).not.toHaveBeenCalled();
   });
 
@@ -572,9 +588,9 @@ describe("generate_image 工具执行器", () => {
     const ctx: ReplyToolContext = {
       ...buildContext(),
       chatAction: {
-        current: (): ChatActionPhase => "idle",
-        set: mock((phase: ChatActionPhase): void => {
+        set: mock((phase: ChatActionPhase): number => {
           events.push(phase);
+          return 0;
         }),
         settle: mock(async (): Promise<void> => {
           events.push("settled");
@@ -601,9 +617,9 @@ describe("generate_image 工具执行器", () => {
     const ctx: ReplyToolContext = {
       ...buildContext(),
       chatAction: {
-        current: (): ChatActionPhase => "idle",
-        set: mock((phase: ChatActionPhase): void => {
+        set: mock((phase: ChatActionPhase): number => {
           events.push(phase);
+          return 0;
         }),
         settle: mock(async (): Promise<void> => {
           events.push("settled");

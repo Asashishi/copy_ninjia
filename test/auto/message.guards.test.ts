@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
 import { LUCK_RECEIPT_DISPLAY_PREFIX } from "../../packages/consts/luckReceipt";
 import type { AiBotInfo, AiRecordMessage } from "../../packages/types/aiChat/protocol";
+import { SELF_SPEAKER_NAME } from "../../packages/consts/aiChat/prompts/transcript";
 
 const recorded: AiRecordMessage[] = [];
 let aiActive: boolean = true;
@@ -47,7 +48,7 @@ describe("inline 结果自录门禁", () => {
       type: "record",
       chatId: -1001,
       senderId: 99,
-      firstName: "自己（也就是你）",
+      firstName: SELF_SPEAKER_NAME,
       lastName: "",
       username: undefined,
       messageId: 17,

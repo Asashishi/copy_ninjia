@@ -8,6 +8,7 @@
 
 import { snapshotHeap } from "./heapSnapshot";
 import { median } from "./statistics";
+import { cartesianProduct } from "../../packages/libs/cartesianProduct";
 import { DAY_FILE_JSON_INDENT, FLUSH_MAX_ENTRIES } from "../../packages/consts/diskIO/appendOnly";
 import {
   JOIN_LOG_ENTRY_SEPARATOR_BYTES,
@@ -379,23 +380,23 @@ function runParent(): BenchmarkReport {
     "append-accounting",
   ];
   const variants: readonly Variant[] = ["baseline", "current"];
-  for (let sample: number = 0; sample < PROCESS_SAMPLE_COUNT; sample += 1) {
-    for (const operation of operations) {
-      for (const variant of variants) {
-        const result: ChildResult =
-          runIndependentChild(operation, variant);
-        if (
-          result.bunVersion !== Bun.version ||
-          result.bunRevision !== Bun.revision
-        ) {
-          throw new Error("All benchmark samples must use the same Bun build.");
-        }
-        const key: string = `${operation}:${variant}`;
-        const values: ChildResult[] = grouped.get(key) ?? [];
-        values.push(result);
-        grouped.set(key, values);
-      }
+  const samples: readonly number[] = Array.from(
+    { length: PROCESS_SAMPLE_COUNT },
+    (_: unknown, index: number): number => index
+  );
+  for (const { operation, variant } of cartesianProduct({ sample: samples, operation: operations, variant: variants })) {
+    const result: ChildResult =
+      runIndependentChild(operation, variant);
+    if (
+      result.bunVersion !== Bun.version ||
+      result.bunRevision !== Bun.revision
+    ) {
+      throw new Error("All benchmark samples must use the same Bun build.");
     }
+    const key: string = `${operation}:${variant}`;
+    const values: ChildResult[] = grouped.get(key) ?? [];
+    values.push(result);
+    grouped.set(key, values);
   }
   for (const operation of operations) {
     const baseline: ChildResult[] = grouped.get(`${operation}:baseline`)!;

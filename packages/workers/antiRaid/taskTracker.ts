@@ -53,18 +53,6 @@ export function trackAntiRaidTask<T>({
 }
 
 /**
- * 排队时长可能远超 drain 预算的那些尽力而为请求共用的取消信号。
- *
- * 停机之后取到的是一个已经 abort 的信号，因此这类请求在 drain 之后不再排队，
- * 而是立刻结算成失败——契约与用法见 cache/workers/antiRaid/tasks.ts 的
- * antiRaidDispatchAbort。
- */
-export function antiRaidDispatchSignal(): AbortSignal {
-  antiRaidDispatchAbort.current ??= new AbortController();
-  return antiRaidDispatchAbort.current.signal;
-}
-
-/**
  * drain 到达：撤掉所有还在消息桶或分类型 429 车道里等待的尽力而为请求。
  *
  * 必须排在 drainAntiRaidTasks 之前，且**必须**在统一延迟删除 flush 之前——

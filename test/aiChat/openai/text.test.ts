@@ -10,6 +10,8 @@ import { loggerStub } from "../../helpers/loggerMock";
 import OpenAI from "openai";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { CHAT_SUMMARY_ERROR_LABEL } from "../../../packages/consts/aiChat/memory";
+import { VOICE_OGG_FILE_NAME } from "../../../packages/consts/aiChat/voiceMessage";
 
 const requestOpenAiTextResult = mock(async (..._args: unknown[]): Promise<AiTextResult> => ({ ok: true, text: "ok" }));
 const createTranscription = mock(async (..._args: unknown[]): Promise<{ text: string }> => ({ text: "  你好\n世界  " }));
@@ -95,7 +97,7 @@ describe("纯文本生成", () => {
     expect(body.input).toBe("甲：你好\n乙：在");
     expect(body.max_output_tokens).toBe(OPENAI_CHAT_SUMMARY_MAX_TOKENS);
     expect(body.store).toBe(false);
-    expect((requestOpenAiTextResult.mock.calls[0]![0] as { errorLabel: string }).errorLabel).toBe("AI summarize API");
+    expect((requestOpenAiTextResult.mock.calls[0]![0] as { errorLabel: string }).errorLabel).toBe(CHAT_SUMMARY_ERROR_LABEL);
     expect((requestOpenAiTextResult.mock.calls[0]![0] as { signal?: AbortSignal }).signal)
       .toBe(controller.signal);
   });
@@ -199,7 +201,7 @@ describe("语音转写", () => {
     expect(body.model).toBe(getAgentDeploymentConfig().media.model);
     expect(body.prompt).toBe("逐字转写");
     expect(body.response_format).toBe("json");
-    expect(body.file.name).toBe("voice.ogg");
+    expect(body.file.name).toBe(VOICE_OGG_FILE_NAME);
     expect(body.file.type).toBe("audio/ogg");
     const passed: AbortSignal | undefined = (createTranscription.mock.calls[0]?.[1] as {
       readonly signal?: AbortSignal;

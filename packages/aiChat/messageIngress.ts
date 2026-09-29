@@ -117,7 +117,7 @@ export function generateAndSendReply({
     // 同 workers/aiChat/rollingMemory.ts：字段一律发出，不用条件展开，保持消息
     // 对象 shape 稳定。
     imageGenerationReference,
-    // 同理恒发。本群没登记问答时是 undefined，Worker 侧据此不挂那两个工具；
+    // 同理恒发。本群没登记问答时是 undefined，Worker 侧据此在本轮工具状态里写明没有登记；
     // structuredClone 会复制这张 Map，两条线程不共享可变内存。载荷有界：
     // 每群至多 CHAT_QA_MAX_PER_CHAT 条。
     chatQa: chatQaEntries.get(chatId),

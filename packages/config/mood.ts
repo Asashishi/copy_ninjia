@@ -7,6 +7,7 @@ import {
   WEATHER_BUCKETS,
 } from "../consts/aiChat/mood";
 import { MOOD_CONFIG_PATH } from "../consts/paths";
+import { cartesianProduct } from "../libs/cartesianProduct";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../libs/record";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../types/aiChat/mood";
@@ -101,23 +102,21 @@ function parseMoodOption(value: unknown, index: number, sourcePath: string): Moo
 function validateAdjustedWeights(moods: readonly MoodOption[], sourcePath: string): void {
   const weatherBuckets: readonly (WeatherBucket | null)[] =
     [null, ...WEATHER_BUCKETS];
-  for (const weather of weatherBuckets) {
-    for (const time of TIME_BUCKETS) {
-      let totalWeight: number = 0;
-      for (const mood of moods) {
-        const weatherMultiplier: number =
-          weather === null ? 1 : mood.weatherMultipliers?.[weather] ?? 1;
-        const timeMultiplier: number = mood.timeMultipliers?.[time] ?? 1;
-        const adjustedWeight: number =
-          mood.weight * weatherMultiplier * timeMultiplier;
-        if (!Number.isFinite(adjustedWeight) || adjustedWeight <= 0) {
-          return invalidInput(sourcePath, "$.moods", "finite positive adjusted weights for every bucket combination");
-        }
-        totalWeight += adjustedWeight;
+  for (const { weather, time } of cartesianProduct({ weather: weatherBuckets, time: TIME_BUCKETS })) {
+    let totalWeight: number = 0;
+    for (const mood of moods) {
+      const weatherMultiplier: number =
+        weather === null ? 1 : mood.weatherMultipliers?.[weather] ?? 1;
+      const timeMultiplier: number = mood.timeMultipliers?.[time] ?? 1;
+      const adjustedWeight: number =
+        mood.weight * weatherMultiplier * timeMultiplier;
+      if (!Number.isFinite(adjustedWeight) || adjustedWeight <= 0) {
+        return invalidInput(sourcePath, "$.moods", "finite positive adjusted weights for every bucket combination");
       }
-      if (!Number.isFinite(totalWeight) || totalWeight <= 0) {
-        return invalidInput(sourcePath, "$.moods", "a finite positive total weight for every bucket combination");
-      }
+      totalWeight += adjustedWeight;
+    }
+    if (!Number.isFinite(totalWeight) || totalWeight <= 0) {
+      return invalidInput(sourcePath, "$.moods", "a finite positive total weight for every bucket combination");
     }
   }
 }

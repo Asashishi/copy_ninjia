@@ -112,7 +112,7 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，�
     adoptAgentDeploymentConfig({ ...getAgentDeploymentConfig(), image: { ...openai, imageProtocol: "openai" }, media: openai });
     expect(await generateOpenAiImage({ prompt: "fixture", aspectRatio: "1:1" })).toBeNull();
     expect(await transcribeOpenAiVoice({ prompt: "fixture", clip: { bytes: new TextEncoder().encode("OggS"), mime: "audio/ogg", durationSeconds: 1 }, normalize: (text: string): string => text, errorLabel: "fixture" })).toEqual({ ok: true, text: "ok" });
-    const adRequest = { model: "ad-fixture", systemPrompt: "json", userContent: "fixture", temperature: 0, maxOutputTokens: 100, errorLabel: "fixture" };
+    const adRequest = { model: "ad-fixture", instructions: "json", fact: "fixture fact", systemPrompt: "json\nfixture fact", userContent: "fixture", temperature: 0, maxOutputTokens: 100, errorLabel: "fixture" };
     adoptAdDetectAgentConfig(openai);
     adDetectOpenAiClientHolder.current = fakeOpenAi;
     completion.mockResolvedValueOnce({ choices: [{ message: { content: "" } }], usage: { prompt_tokens: 50, completion_tokens: 5 } });

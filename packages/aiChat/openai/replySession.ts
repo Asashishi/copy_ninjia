@@ -32,7 +32,7 @@ import {
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { requestOpenAiResult } from "./client";
-import { stablePrefixFingerprint } from "./promptCacheKey";
+import { stablePrefixFingerprint } from "../../libs/prefixFingerprint";
 import {
   countWebSearchCalls,
   extractFunctionCalls,
@@ -128,7 +128,7 @@ function toInputItems(output: readonly OpenAI.Responses.ResponseOutputItem[]): O
  * 影响路由，让共享同一段前缀的请求尽量落到同一台机器上。GPT-5.6 官方端点还在最后
  * 一个稳定区块后放显式 breakpoint，同时保留 implicit 模式：显式断点服务跨回复的
  * 稳定前缀，隐式断点服务同一回复内持续增长的工具往返。兼容端点与其余模型不发送
- * 这两个字段。`prompt_cache_key` 的分段哈希约定见 openai/promptCacheKey.ts。
+ * 这两个字段。`prompt_cache_key` 的分段哈希约定见 libs/prefixFingerprint.ts。
  */
 export function createOpenAiReplySession(
   { stableBlocks, volatileBlocks, signal }: AiReplySessionParams

@@ -30,9 +30,11 @@ import type {
  * 建立外部连接前直接拒绝启动。
  *
  * image 额外要求 OpenAI 侧显式给 image_protocol；Google 侧禁止该字段。请求体差异
- * 不能从模型名或端点可靠推断。tts 额外要求 voice（预置音色名或 `voice_` 音色 ID），
- * 只校验为非空字符串，音色是否存在由首次合成请求决定；可选 style 指定基础风格，缺省使用
- * GEMINI_SPEECH_STYLE。可选的 daily_limit 与 daily_reserve_quota
+ * 不能从模型名或端点可靠推断。tts 额外要求 voice，只校验为非空字符串，音色是否存在由首次
+ * 合成请求决定；OpenAI 侧另要求 speech_protocol（`openai` 为 audio/speech，`xai` 为 xAI
+ * `POST /tts`），Google 侧禁止该字段。可选 style 指定基础风格，缺省使用 TTS_DEFAULT_STYLE；
+ * xai 协议没有模型名与风格指令，出现 model 或 style 即拒绝，另有可选 language（缺省 `auto`）。
+ * 可选的 daily_limit 与 daily_reserve_quota
  * 将每日预算拆为 AI 与 `/send`、cron 共用的预留额度，两边独立计数。image/tts 缺省或所选实现不支持时，分别不挂
  * 生图/语音工具。
  *
@@ -188,7 +190,8 @@ export async function ensureAgentDeploymentConfig(): Promise<void> {
 }
 
 /**
- * Anti-Raid Worker 初始化消息要投递的 ad_detect 快照。
+ * 本 isolate 当前的 ad_detect 快照：主线程据此投递 Anti-Raid Worker 初始化消息，Worker 侧
+ * 接管新快照前据此判断 agent.ad_detect 是否变化。
  *
  * 返回 null 表示**明确未配置**（文件缺省，或文件在但没有 ad_detect 段），不是
  * 「还没读」：调用点在启动总闸之后，文件一旦存在且该段非法，进程早已带着字段

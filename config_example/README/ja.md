@@ -160,15 +160,57 @@ model 名から自動判定しません。
 `image.provider` が `google` の場合は `image_protocol` を書けません。
 
 `tts` は共通 field に加えて空でない `voice` が必須で、合成 request の voice としてそのまま渡します。
-prebuilt voice 名（例の `Nika`）、または AI Studio Voice design が生成した `voice_` voice ID を指定できます。
-design した voice はその `api_key` の project に属し、1 年後に失効します。プログラムは空でない文字列で
-あることだけを検証し、voice が存在するかは最初の合成 request で決まります。現在、音声合成を実装して
-いるのは Google だけなので、`tts.provider: "openai"` は設定検証を通ってもボイス tool を登録せず、
-`/send` と `cron.json` の音声 request も失敗して error log を残します。3 つとも AI Worker 上で合成する
-ため、AI chat の残りの前提（`stickers.json`、`mood.json`、`prompt/persona.md`）も揃っている必要があり、
+Google は prebuilt voice 名（例の `Nika`）、または AI Studio Voice design が生成した `voice_` voice ID、
+OpenAI と xAI はそれぞれの voice 名を指定します。design した voice はその `api_key` の project に属し、
+1 年後に失効します。プログラムは空でない文字列であることだけを検証し、voice が存在するかは最初の合成
+request で決まります。`tts.provider` が `openai` のときは `speech_protocol` が必須です（`google` では拒否）。
+
+- `"openai"`：OpenAI 互換 audio/speech。field は `provider`、`api_key`、`base_url?`、`model`、
+  `speech_protocol`、`voice`、`style?` と 2 つの枠 field です。`opus`（OGG/Opus）を要求するため、
+  endpoint がこの形式に対応している必要があります。
+- `"xai"`：xAI（Grok）`/v1/tts`。`base_url` の既定は `https://api.x.ai/v1` です。endpoint にモデル名と
+  スタイル指示が無いため `model` と `style` は拒否します。`language` は任意（BCP-47 コードまたは `auto`、
+  既定 `auto`）で、`voice` は `voice_id` として送ります。`mp3`（24 kHz、64 kbps）を要求し、1 文ごとの
+  口調は送りません。
+
+Google の書き方は [`config_example/dynamic/agent.json`](../dynamic/agent.json) を参照してください。残りの 2 つは、
+`agent` セクション内の `tts` を次のように書きます。
+
+```json
+{
+  "tts": {
+    "provider": "openai",
+    "api_key": "replace-with-openai-api-key",
+    "model": "gpt-4o-mini-tts",
+    "speech_protocol": "openai",
+    "voice": "coral"
+  }
+}
+```
+
+```json
+{
+  "tts": {
+    "provider": "openai",
+    "api_key": "replace-with-xai-api-key",
+    "base_url": "https://api.x.ai/v1",
+    "speech_protocol": "xai",
+    "voice": "ara",
+    "language": "ja"
+  }
+}
+```
+
+OpenAI の書き方で `base_url` を省略すると OpenAI 公式 endpoint を使い、互換サービスではその endpoint を
+指定します。任意の `style` は Google と同じです。xAI の書き方では `base_url` を省略でき、`language` の
+省略時は `auto` です。どちらも `daily_limit` と `daily_reserve_quota` を追加できます。
+
+OpenAI と xAI が返す OGG/Opus と MP3 は Telegram のボイスがそのまま受け付ける形式なので、コンテナ検証と
+長さの算出だけを行って元の byte を送ります。Gemini の WAV はローカルで OGG/Opus にエンコードします。AI の
+ボイス tool、`/send`、`cron.json` の音声はいずれも AI Worker 上で合成するため、AI chat の残りの前提（`stickers.json`、`mood.json`、`prompt/persona.md`）も揃っている必要があり、
 欠けていると合成は「Worker 利用不可」で失敗します。
 
-`agent.tts.style` は任意の基本朗読スタイルです。trim 後に空でない文字列が必要で、null、空白だけの文字列、ほかの型は拒否します。省略時は `GEMINI_SPEECH_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` を使います。3 つの音声入口で共用し、hot reload は新しい request に反映され、発行済み request は元の設定 snapshot を保持します。項目を削除すると既定値に戻ります。request ごとの `tone` は引き続き `<基本スタイル>; 细节: <口調>` として連結します。
+`agent.tts.style` は任意の基本朗読スタイルです（`speech_protocol: "xai"` では受け付けません）。trim 後に空でない文字列が必要で、null、空白だけの文字列、ほかの型は拒否します。省略時は `TTS_DEFAULT_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` を使います。3 つの音声入口で共用し、hot reload は新しい request に反映され、発行済み request は元の設定 snapshot を保持します。項目を削除すると既定値に戻ります。request ごとの `tone` は引き続き `<基本スタイル>; 细节: <口調>` として連結し、Gemini には `speech_metadata.style`、OpenAI には `instructions` として送ります。
 
 `tts` には任意の 1 日あたりの枠 field が 2 つあり、AI と予約枠を別々に数えます。
 
@@ -281,6 +323,12 @@ deployment の分類方針を定義します。keyword blocklist ではありま
 normalize 後に非空、unique、1,024 文字以下でなければなりません。識別情報を除いた sample を使い、
 無関係な個人情報や実 credential を置かないでください。
 
+`agent.ad_detect` が Google protocol のとき、判定ルールとこれらの sample から組み立てた system
+instruction は Gemini の明示 cache になります（存続 1 時間、使われている間は自動で延長）。作成時に
+入力 token を 1 回だけ通常料金で課金し、別途 1 時間ごとの保存料がかかります。内容が使用 model の
+明示 cache の下限に届かない場合（sample が非常に少ないなど）は作成が拒否され、以降は cache なしで
+そのまま判定します。
+
 ## `g-auth.json`
 
 例は GCP console からダウンロードする service account key file と同じ形で、構造の対照用です。
@@ -364,7 +412,7 @@ placeholder の秘密鍵は parse できないため、そのまま `config/stat
 - ネットワーク、Telegram の 5xx、出力ゲートの再試行後も返る 429、送信キュー満杯で失敗した動作は 2・4・8 秒の間隔で最大 3 回
   再試行します。`send_voice` の合成が音声を返さなかった場合、待機のタイムアウト、AI Worker が一時的に
   使えない場合も同様に再試行します。それ以外（Telegram の 4xx、グループからの削除、ローカルファイルの削除、
-  `tts` が未設定または implementation 非対応、当日のボイス上限到達、音声エンコードの失敗など）は再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
+  `tts` が未設定または implementation 非対応、当日のボイス上限到達、音声エンコードまたは形式検証の失敗など）は再試行しません。最終的に失敗すると `Cron task "<name>" action #<n> ...` をログに 1 行残し、
   その回の残りの動作を飛ばします。タイムアウトしても Telegram 側に届いていた場合、再試行で
   重複して送られます。
 - 定時メッセージは残し、30 秒削除は掛けません。フォーラムのトピックは付けないため、トピックを

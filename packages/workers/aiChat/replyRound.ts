@@ -1,8 +1,7 @@
 import { startChatActionHeartbeat } from "../../aiChat/ai/chatActionHeartbeat";
-import { createStickerSendLock } from "../../aiChat/ai/stickers/sendLock";
 import { createReplyToolset } from "../../aiChat/ai/tools/replyToolset/orchestrator";
-import { buildVoiceQuotaLine } from "../../aiChat/ai/tools/replyToolset/voiceMessage";
 import { buildSelfRecordMessage } from "../../aiChat/ai/utils/selfRecord";
+import { parseToolResult } from "../../aiChat/ai/utils/toolResult";
 import { botInfoState, superAdminUserIdState } from "../../cache/workers/aiChat/identity";
 import {
   activeReplyCounts,
@@ -33,7 +32,6 @@ import type {
   SentGeneratedImage,
   MediaCommentContext,
 } from "../../types/aiChat/replies";
-import type { StickerSendLockControl } from "../../types/stickers/tools";
 import { generateReply } from "./replyModel";
 import { reserveReplyDelivery } from "./replyDelivery";
 import { buildReplyPromptSections } from "./promptContext";
@@ -53,7 +51,7 @@ export interface ReplyRoundRequest {
   /** 轮次开始前捕获的触发消息快照；生成或排队期间滑出热区时用于自录兜底。 */
   triggerReference?: BufferedReplyReference;
   isRandomTrigger: boolean;
-  /** 触发时刻的本群问答；空或缺省时本轮不挂问答工具。 */
+  /** 触发时刻的本群问答；空或缺省时问答执行器返回空清单，本轮工具状态写明没有登记。 */
   chatQa?: ReadonlyMap<string, string>;
   /** 本轮全部发送要落进的论坛话题；General、非论坛群为 undefined。 */
   messageThreadId: number | undefined;
@@ -64,9 +62,127 @@ export interface ReplyRoundRequest {
   generation?: number;
 }
 
+/** buildReplyToolContext 的输入：本轮请求与已解析的媒体、身份和生命周期句柄。 */
+interface ReplyToolContextParams {
+  readonly request: ReplyRoundRequest;
+  readonly selfInfo: AiBotInfo;
+  /** 本轮已解析的媒体上下文；非媒体轮为 undefined。 */
+  readonly resolvedMedia: MediaCommentContext | undefined;
+  readonly mediaToolsAllowed: boolean;
+  readonly heartbeat: ChatActionHeartbeatControl;
+  /** 本轮是否为直接轮（见 replyDelivery.ts）。 */
+  readonly direct: boolean;
+  readonly roundHasTypo: boolean;
+  readonly isActive: () => boolean;
+  readonly signal: AbortSignal;
+}
+
 /**
- * 过滑动窗口限频闸并启动一轮异步回复。占位、贴纸锁和聊天状态心跳均在
- * 本函数内成对获取/释放；模型交付完整链后释放并发位并通知补跑，整轮发送按入站顺序串行。
+ * 拼出本轮的工具上下文，连同各发送回调的自录：消息、贴纸、语音与生图发出后按 Telegram 实际
+ * 返回的回复目标写进转录（目标已滑出热区时退回媒体解析或轮次开始前捕获的触发快照），
+ * 本轮已作废时一律不写。主线程认自己的消息不靠这里回投——代理边界在把 id 交回本线程之前
+ * 就已登记（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage）。
+ */
+function buildReplyToolContext({
+  request,
+  selfInfo,
+  resolvedMedia,
+  mediaToolsAllowed,
+  heartbeat,
+  direct,
+  roundHasTypo,
+  isActive,
+  signal,
+}: ReplyToolContextParams): ReplyToolContext {
+  const {
+    chatId,
+    triggerSenderId,
+    replyToMessageId,
+    messageThreadId,
+    chatQa,
+    imageGenerationReference,
+    triggerReference,
+  }: ReplyRoundRequest = request;
+  const selfReplyReferenceFor = (
+    repliedToMessageId: number | undefined
+  ): BufferedReplyReference | undefined => repliedToMessageId === undefined
+    ? undefined
+    : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
+      (resolvedMedia?.triggerReference?.messageId === repliedToMessageId ? resolvedMedia.triggerReference : undefined) ??
+      (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
+  /** 各发送回调唯一的差别是文案来源；贴纸没有回复关系可还原。 */
+  const recordSelfSent = (
+    text: string,
+    messageId: number,
+    repliedToMessageId?: number
+  ): BufferedMessage | null => {
+    if (!isActive()) return null;
+    // 请求侧固定指向触发消息，因此只采信服务端实际返回的回复关系。
+    const selfReplyTo: BufferedReplyReference | undefined = selfReplyReferenceFor(repliedToMessageId);
+    return recordChatMessage(buildSelfRecordMessage({
+      chatId,
+      self: selfInfo,
+      messageId,
+      text,
+      ...(selfReplyTo === undefined ? {} : { replyTo: selfReplyTo }),
+    }));
+  };
+  return {
+    chatId,
+    replyToMessageId,
+    messageThreadId,
+    chatQa,
+    mediaToolsRequested: mediaToolsAllowed,
+    ...(mediaToolsAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
+    bypassMediaToolCooldown: triggerSenderId === superAdminUserIdState.current,
+    chatAction: heartbeat,
+    direct,
+    roundHasTypo,
+    isActive,
+    signal,
+    onMessageSent: recordSelfSent,
+    // 贴纸没有可还原的回复关系，只登记描述。
+    onStickerSent: (stickerDescription: string, messageId: number): void => {
+      recordSelfSent(stickerDescription, messageId);
+    },
+    // 生图先以占位态自录，再识图原位换成画面内容。
+    onImageSent: (image: SentGeneratedImage): void => {
+      const entry: BufferedMessage | null = recordSelfSent(image.text, image.messageId, image.repliedToMessageId);
+      if (entry === null) return;
+      trackGeneratedImage({
+        chatId,
+        entry,
+        origin: image.origin,
+        caption: image.caption,
+        photo: image.photo,
+      });
+    },
+    onVoiceSent: recordSelfSent,
+  };
+}
+
+/** 把模型的最终正文作为一条消息兜底发出（随机触发不挂回复）；发送失败只记日志。 */
+async function sendFallbackText(toolset: ReplyToolset, request: ReplyRoundRequest, finalText: string): Promise<void> {
+  const result: string = await toolset.execute(
+    SEND_MESSAGE_TOOL,
+    JSON.stringify({ text: finalText, reply_to_trigger: !request.isRandomTrigger })
+  );
+  const error: string | null = parseToolResult(result).error;
+  if (error !== null) logger.error(`AI reply fallback send failed (chat ${request.chatId}): ${error}`);
+}
+
+/** 零动作诊断日志里的触发类型。 */
+function triggerKindOf({ queuedTrigger, mediaComment, isRandomTrigger }: ReplyRoundRequest): string {
+  if (queuedTrigger) return "queued";
+  if (mediaComment?.directTriggerReason) return "media-direct";
+  if (mediaComment) return "media-comment";
+  return isRandomTrigger ? "random" : "direct";
+}
+
+/**
+ * 过滑动窗口限频闸并启动一轮异步回复。占位和聊天状态心跳均在
+ * 本函数内成对获取/释放；模型阶段结束后释放并发位并通知补跑，整轮发送按入站顺序串行。群里没有
+ * 在途轮次时本轮是直接轮，动作边生成边发送；之后的有序并行轮等它发完再按顺序出站（见 replyDelivery.ts）。
  * @returns 本次真的开了一轮为 true；被代际失效、容量或限频闸拒绝为 false。
  *   排队补跑那一路据此决定要不要把这条触发留在队首（见 replyQueue.ts）。
  */
@@ -80,10 +196,7 @@ export function startReplyRound(
     triggerSenderId,
     replyToMessageId,
     imageGenerationRequested,
-    imageGenerationReference,
-    triggerReference,
     isRandomTrigger,
-    chatQa,
     messageThreadId,
     mediaComment,
     mediaPreparation,
@@ -136,11 +249,12 @@ export function startReplyRound(
       const remaining: number = (activeReplyCounts.get(chatId) ?? 1) - 1;
       if (remaining > 0) activeReplyCounts.set(chatId, remaining);
       else activeReplyCounts.delete(chatId);
+      // 模型阶段结束即 commit：有序并行轮的完整链就绪，直接轮交还独立并发位；补跑按新上限判定。
+      delivery.commit();
       onModelFinished?.(chatId);
     };
     const isActive = (): boolean =>
       !signal.aborted && isCachedReplyGenerationCurrent(chatId, generation);
-    const stickerLock: StickerSendLockControl = createStickerSendLock(chatId);
     // 提示词和工具 schema 必须共用同一次抽签，否则配置概率不等于实际错字概率。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
@@ -169,101 +283,34 @@ export function startReplyRound(
         mediaComment: queuedTrigger ? undefined : resolvedMedia,
         queuedTrigger: resolvedQueuedTrigger,
         roundHasTypo,
-        voiceQuota: buildVoiceQuotaLine(),
       });
       if (!promptSections) return;
 
-      // 心跳从 idle 起步，只有具体发送工具临发前才显示输入或选择贴纸状态。
+      // 心跳从 idle 起步：直接轮在请求模型期间亮「正在输入」，有序并行轮只由串行动作链切换状态。
       const heartbeat: ChatActionHeartbeatControl =
         startChatActionHeartbeat({ chatId, messageThreadId, signal });
       try {
-        /** 只为 Telegram 实际返回的回复目标建边；目标已滑出热区时退回轮次
-         * 开始前捕获的触发快照。 */
-        const selfReplyReferenceFor = (
-          repliedToMessageId: number | undefined
-        ): BufferedReplyReference | undefined => repliedToMessageId === undefined
-          ? undefined
-          : replyReferenceForBufferedMessage(chatId, repliedToMessageId) ??
-            (resolvedMedia?.triggerReference?.messageId === repliedToMessageId ? resolvedMedia.triggerReference : undefined) ??
-            (triggerReference?.messageId === repliedToMessageId ? triggerReference : undefined);
-        /** 各自发消息回调唯一的差别是文案来源，贴纸没有回复关系可还原。
-         * 主线程认自己的消息不靠这里回投——代理边界在把 id 交回本线程之前就已
-         * 登记（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage），
-         * 因此这里只剩自录转录一件事。任何一份拷贝漏掉 isActive() 都会把已经
-         * 作废那一轮的自发消息写回热区。 */
-        const recordSelfSent = (
-          text: string,
-          messageId: number,
-          repliedToMessageId?: number
-        ): BufferedMessage | null => {
-          if (!isActive()) return null;
-          // 挂了回复的自发消息把目标还原成回复引用一起自录：自己的发言在转录里
-          // 同样带「回复了谁」。请求侧固定指向触发
-          // 消息，因此只采信服务端实际返回的回复关系。
-          const selfReplyTo: BufferedReplyReference | undefined =
-            selfReplyReferenceFor(repliedToMessageId);
-          return recordChatMessage(buildSelfRecordMessage({
-            chatId,
-            self: selfInfo,
-            messageId,
-            text,
-            ...(selfReplyTo === undefined ? {} : { replyTo: selfReplyTo }),
-          }));
-        };
-        const ctx: ReplyToolContext = {
-          chatId,
-          replyToMessageId,
-          messageThreadId,
-          chatQa,
-          mediaToolsRequested: mediaToolsAllowed,
-          ...(mediaToolsAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
-          bypassMediaToolCooldown: triggerSenderId === superAdminUserIdState.current,
-          chatAction: heartbeat,
-          stickerLock,
+        const ctx: ReplyToolContext = buildReplyToolContext({
+          request,
+          selfInfo,
+          resolvedMedia,
+          mediaToolsAllowed,
+          heartbeat,
+          direct: delivery.direct,
           roundHasTypo,
           isActive,
           signal,
-          onMessageSent: recordSelfSent,
-          // 贴纸没有可还原的回复关系，只登记描述。
-          onStickerSent: (stickerDescription: string, messageId: number): void => {
-            recordSelfSent(stickerDescription, messageId);
-          },
-          // 生图先以占位态自录，再识图原位换成画面内容。
-          onImageSent: (image: SentGeneratedImage): void => {
-            const entry: BufferedMessage | null = recordSelfSent(image.text, image.messageId, image.repliedToMessageId);
-            if (entry === null) return;
-            trackGeneratedImage({
-              chatId,
-              entry,
-              origin: image.origin,
-              caption: image.caption,
-              photo: image.photo,
-            });
-          },
-          onVoiceSent: recordSelfSent,
-        };
+        });
         const toolset: ReplyToolset = await createReplyToolset(ctx, delivery.ready);
         let finalText: string | null = null;
         try {
           finalText = await generateReply(chatId, promptSections, toolset);
 
           // 仅在没有接纳任何动作时兜底发送最终正文；排队中的动作同样阻止重复兜底。
-          if (finalText && toolset.actionsUsed() === 0) {
-            const fallbackResult: string = await toolset.execute(SEND_MESSAGE_TOOL, JSON.stringify({ text: finalText, reply_to_trigger: !isRandomTrigger }));
-            let fallbackError: string | null = null;
-            try {
-              const parsed: { error?: unknown; } = JSON.parse(fallbackResult) as { error?: unknown };
-              if (typeof parsed.error === "string") fallbackError = parsed.error;
-            } catch {
-              // 工具结果由本地执行器构造。
-            }
-            if (fallbackError !== null) {
-              logger.error(`AI reply fallback send failed (chat ${chatId}): ${fallbackError}`);
-            }
-          }
+          if (finalText && toolset.actionsUsed() === 0) await sendFallbackText(toolset, request, finalText);
         } finally {
-          delivery.commit();
-          heartbeat.set("idle");
+          // 模型不再被请求：收回直接轮请求期间亮着、没被动作接走的状态。
+          toolset.afterModel();
           try {
             finishModel();
           } finally {
@@ -274,30 +321,17 @@ export function startReplyRound(
         // 全部发送链收尾后按真实落地数记录零动作；已作废轮次保持静默。finalText 为
         // null 时模型侧已记下具体原因（见 replyModel.ts 的 generateReply），此处不另记。
         if (isActive() && toolset.actionsCompleted() === 0 && finalText !== null) {
-          const triggerKind: string = queuedTrigger
-            ? "queued"
-            : mediaComment?.directTriggerReason
-            ? "media-direct"
-            : mediaComment
-            ? "media-comment"
-            : isRandomTrigger
-            ? "random"
-            : "direct";
-          logger.error(`AI reply round ended with zero actions (chat ${chatId}, trigger=${triggerKind}, finalText=unsent).`);
+          logger.error(`AI reply round ended with zero actions (chat ${chatId}, trigger=${triggerKindOf(request)}, finalText=unsent).`);
         }
       } finally {
         await heartbeat.stop();
       }
     } finally {
       try {
-        stickerLock.release();
+        finishModel();
       } finally {
-        try {
-          finishModel();
-        } finally {
-          await delivery.finish();
-          onFinished(chatId);
-        }
+        await delivery.finish();
+        onFinished(chatId);
       }
     }
   }).catch((error: unknown): void => {

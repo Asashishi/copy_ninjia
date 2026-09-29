@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
+import { TOKYO_TIME_ZONE } from "../../../packages/consts/time";
 
 const responses: unknown[] = [];
 const fetchJsonWithTimeout = mock(async (..._args: unknown[]): Promise<unknown> => responses.shift() ?? null);
@@ -70,7 +71,7 @@ describe("Open-Meteo 适配层", () => {
       });
       const requestedUrl = (fetchJsonWithTimeout.mock.calls[0]![0] as { input: URL }).input;
       expect(requestedUrl.origin + requestedUrl.pathname).toBe(WEATHER_API_URL);
-      expect(requestedUrl.searchParams.get("timezone")).toBe("Asia/Tokyo");
+      expect(requestedUrl.searchParams.get("timezone")).toBe(TOKYO_TIME_ZONE);
 
       responses.push(validWeather(999, 998));
       intervalCallback!();

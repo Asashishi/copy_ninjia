@@ -67,6 +67,8 @@ describe("AI 回复代际状态", () => {
       pendingSendDeduplicate: true,
       lastSentPhase: "typing",
       lastSentAt: Date.now(),
+      restUntil: 0,
+      restTimer: null,
       inflight: new Set(),
       consecutiveFailures: 0,
     } satisfies ChatActionHeartbeatEntry);
@@ -224,6 +226,8 @@ describe("AI 回复代际状态", () => {
       pendingSendDeduplicate: true,
       lastSentPhase: "choose_sticker",
       lastSentAt: Date.now(),
+      restUntil: 0,
+      restTimer: null,
       inflight: new Set(),
       consecutiveFailures: 0,
     });

@@ -35,8 +35,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5323_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.41%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5492_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.50%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5323 tests passed, 465 test files, 261,542 expect() calls, 98.06% function coverage, 98.41% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5492 tests passed, 475 test files, 262,413 expect() calls, 98.07% function coverage, 98.50% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -206,7 +206,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 | Operator and scheduled voice | `/send` and cron share TTS with a 256 UTF-16 code-unit limit; cron synthesizes once per round and reuses the Telegram `file_id` |
 | Image memory | Generated images are described; `/wed`, `/h_image`, and scheduled images start as placeholders and are described when someone replies |
 
-Voice requires explicit `agent.tts` configuration (currently provided by Google; `base_url` and `headers` allow calling it through a third-party gateway). `daily_limit` (default 100) is split into the AI quota (total minus reserve) and `daily_reserve_quota` (default 25) shared by `/send` and cron. They use separate `agentCount` and `reserveCount` counters, never consume each other's quota, and reset together after the 24-hour window. `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
+Voice requires explicit `agent.tts` configuration (Google, or with `provider: "openai"` a `speech_protocol` choosing OpenAI-compatible audio/speech or xAI (Grok) `/v1/tts`; Google can be called through a third-party gateway with `base_url` and `headers`). `daily_limit` (default 100) is split into the AI quota (total minus reserve) and `daily_reserve_quota` (default 25) shared by `/send` and cron. They use separate `agentCount` and `reserveCount` counters, never consume each other's quota, and reset together after the 24-hour window. `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
 
 > [!IMPORTANT]
 > [TTS count cold migration and staged upgrades](07-operations.md#upgrade-15)

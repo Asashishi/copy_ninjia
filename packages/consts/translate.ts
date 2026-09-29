@@ -69,5 +69,5 @@ export const TRANSLATE_RUSSIAN_EVIDENCE: RegExp = /[А-Яа-яЁё]/u;
 /** 俄语文本只接受本语种字母及中性符号；乌克兰语的 є、і、ї、ґ 仍需翻译。 */
 export const TRANSLATE_RUSSIAN_TEXT: RegExp = /^[А-Яа-яЁё\p{N}\p{P}\p{S}\s\u200d\p{Variation_Selector}]+$/u;
 
-/** 无字母或汉字的数字、标点和表情原样复制，不请求翻译。 */
+/** 无字母或汉字的数字、标点和表情视为中性文字，不请求翻译、不发送。 */
 export const TRANSLATE_NEUTRAL_TEXT: RegExp = /^[\p{N}\p{P}\p{S}\s\u200d\p{Variation_Selector}]*$/u;

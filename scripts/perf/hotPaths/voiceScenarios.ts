@@ -31,7 +31,7 @@ export function voiceMessageEncodeScenario(): Scenario {
   const speech: SynthesizedSpeech = { bytes: benchmarkWav(VOICE_ENCODE_PCM_BYTES), mimeType: "audio/wav" };
   const attempt: SpeechSynthesisAttempt = { ok: true, speech };
   const synthesize = (_request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => Promise.resolve(attempt);
-  const request: AiMeteredSpeechRequest = { text: "性能基准台词", tone: "小声で", quota: "operator" };
+  const request: AiMeteredSpeechRequest = { text: "性能基准台词", tone: "小声で", quota: "operator", quotaClaimed: false };
   return {
     iterations: 24,
     warmupIterations: 24,

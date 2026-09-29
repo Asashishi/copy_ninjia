@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 
 const { startChatActionHeartbeat, pumpChatAction } = await import("../../../packages/aiChat/ai/chatActionHeartbeat");
 import type {
@@ -21,6 +21,7 @@ function dependencies(
     entries: new Map<number, ChatActionHeartbeatEntry>(),
     intervalMs: 60_000,
     maxConsecutiveFailures,
+    restMs: 0,
     sendUploadPhoto: async (): Promise<boolean> => true,
     sendChatAction: ({ action, chatId, signal }: ChatActionSendRequest): Promise<boolean> => {
       if (action === "typing") return sendTyping(chatId, signal);
@@ -29,6 +30,11 @@ function dependencies(
     },
   };
   return deps;
+}
+
+/** 假计时器下 settleBackgroundWork 的 setTimeout(0) 不会自行到点，改为排空微任务。 */
+async function flushMicrotasks(): Promise<void> {
+  for (let i: number = 0; i < 20; i++) await Promise.resolve();
 }
 
 describe("chatActionHeartbeat", () => {
@@ -57,8 +63,43 @@ describe("chatActionHeartbeat", () => {
 
     const second = startChatActionHeartbeat({ chatId: 100, messageThreadId: undefined, dependencies: deps, signal: secondController.signal });
     expect(deps.entries.get(100)?.signal).toBe(secondController.signal);
-    expect(first.current()).toBe("idle");
+    // 旧代句柄切挡不会写进新代条目。
+    first.set("typing");
+    expect(deps.entries.get(100)?.action).toBe("idle");
     await second.stop();
+  });
+
+  test("旧代未结束时同群新一代启动：清掉旧代的定时器，旧句柄 stop 不拆新条目", async () => {
+    const clearIntervalSpy = spyOn(globalThis, "clearInterval");
+    const clearTimeoutSpy = spyOn(globalThis, "clearTimeout");
+    try {
+      const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
+      const deps = dependencies(sendTyping, async () => true);
+      deps.restMs = 60_000;
+      const first = startChatActionHeartbeat({ chatId: 100, messageThreadId: undefined, dependencies: deps, signal: new AbortController().signal });
+      first.set("typing");
+      first.set("idle");
+      // 静默期内切挡：旧代条目挂上推迟补发的 restTimer。
+      first.set("typing");
+      const previous: ChatActionHeartbeatEntry = deps.entries.get(100)!;
+      expect(previous.restTimer).not.toBeNull();
+
+      const second = startChatActionHeartbeat({ chatId: 100, messageThreadId: undefined, dependencies: deps, signal: new AbortController().signal });
+      const current: ChatActionHeartbeatEntry = deps.entries.get(100)!;
+      expect(current).not.toBe(previous);
+      expect(current.refCount).toBe(1);
+      expect(clearIntervalSpy).toHaveBeenCalledWith(previous.timer);
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(previous.restTimer);
+
+      await first.stop();
+      expect(deps.entries.get(100)).toBe(current);
+      second.set("typing");
+      await second.stop();
+      expect(deps.entries.has(100)).toBe(false);
+    } finally {
+      clearIntervalSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+    }
   });
 
   test("心跳从 idle 起步不发状态；切换挡位时补发对应状态，idle 后 settle 等齐在途请求", async () => {
@@ -70,23 +111,23 @@ describe("chatActionHeartbeat", () => {
     deps.sendUploadPhoto = sendUploadPhoto;
     const heartbeat = startChatActionHeartbeat({ chatId: 123, messageThreadId: undefined, dependencies: deps });
 
-    expect(heartbeat.current()).toBe("idle");
+    expect(deps.entries.get(123)?.action).toBe("idle");
     expect(sendTyping).not.toHaveBeenCalled();
     expect(sendUploadPhoto).not.toHaveBeenCalled();
     expect(sendChooseSticker).not.toHaveBeenCalled();
 
     heartbeat.set("typing");
-    expect(heartbeat.current()).toBe("typing");
+    expect(deps.entries.get(123)?.action).toBe("typing");
     await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("upload_photo");
-    expect(heartbeat.current()).toBe("upload_photo");
+    expect(deps.entries.get(123)?.action).toBe("upload_photo");
     await settleBackgroundWork();
     expect(sendUploadPhoto).toHaveBeenCalledWith(123, undefined);
 
     heartbeat.set("choose_sticker");
-    expect(heartbeat.current()).toBe("choose_sticker");
+    expect(deps.entries.get(123)?.action).toBe("choose_sticker");
     await settleBackgroundWork();
     expect(sendChooseSticker).toHaveBeenCalledWith(123, undefined);
 
@@ -102,7 +143,6 @@ describe("chatActionHeartbeat", () => {
     await waiting;
     await heartbeat.stop();
     expect(deps.entries.size).toBe(0);
-    expect(heartbeat.current()).toBe("idle");
   });
 
   test("串行链在执行时重读挡位：发送在途时排队的旧挡位请求随切 idle 坍缩跳过", async () => {
@@ -143,6 +183,25 @@ describe("chatActionHeartbeat", () => {
     await heartbeat.stop();
   });
 
+  test("请求在途时切走挡位：这次送达不记节流，消息之后同挡位的补发立即发出", async () => {
+    const first: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
+    const sendTyping = mock((_chatId: number): Promise<boolean> => Promise.resolve(true));
+    sendTyping.mockImplementationOnce((): Promise<boolean> => first.promise);
+    const deps = dependencies(sendTyping, async () => true);
+    const heartbeat = startChatActionHeartbeat({ chatId: 333, messageThreadId: undefined, dependencies: deps });
+
+    heartbeat.set("typing");
+    await settleBackgroundWork();
+    // 发送前切 idle、等在途请求落定（消息随后落地会清掉状态）。
+    heartbeat.set("idle");
+    first.resolve(true);
+    await heartbeat.settle();
+    heartbeat.set("typing");
+    await settleBackgroundWork();
+    expect(sendTyping).toHaveBeenCalledTimes(2);
+    await heartbeat.stop();
+  });
+
   test("挡位归属：并发轮先结束时收回自己的挡位，不遗留给还在跑的轮", async () => {
     const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
     const deps = dependencies(async () => true, sendChooseSticker);
@@ -158,7 +217,7 @@ describe("chatActionHeartbeat", () => {
     await roundA.stop();
     expect(deps.entries.get(111)?.action).toBe("idle");
     expect(deps.entries.has(111)).toBe(true);
-    expect(roundB.current()).toBe("idle");
+    expect(deps.entries.get(111)?.owner).toBeNull();
 
     await roundB.stop();
     expect(deps.entries.size).toBe(0);
@@ -172,12 +231,11 @@ describe("chatActionHeartbeat", () => {
     roundA.set("typing");
     roundB.set("idle");
     expect(deps.entries.get(222)?.action).toBe("typing");
-    expect(roundA.current()).toBe("typing");
     // B 轮切非 idle 挡是后写覆盖（Telegram 同时只显示一种状态），归属随之
-    // 转移，A 轮视角回到 idle。
+    // 转移，A 轮的 set(idle) 不再能收回 B 轮的挡位。
     roundB.set("choose_sticker");
-    expect(roundA.current()).toBe("idle");
-    expect(roundB.current()).toBe("choose_sticker");
+    roundA.set("idle");
+    expect(deps.entries.get(222)?.action).toBe("choose_sticker");
 
     await roundA.stop();
     await roundB.stop();
@@ -249,7 +307,6 @@ describe("chatActionHeartbeat", () => {
     // 等齐链上请求后正常返回。
     await heartbeat.settle();
     expect(sendChooseSticker).not.toHaveBeenCalled();
-    expect(heartbeat.current()).toBe("idle");
     await heartbeat.stop();
   });
 
@@ -290,8 +347,147 @@ describe("chatActionHeartbeat", () => {
     await settleBackgroundWork();
     expect(sendTyping).toHaveBeenCalledTimes(3);
     expect(deps.entries.has(321)).toBe(false);
-    expect(heartbeat.current()).toBe("idle");
 
     await heartbeat.stop();
+  });
+
+  describe("状态之间的静默", () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    test("切 idle 后静默期内切挡只登记挡位并返回剩余静默，到点补发当时的挡位", async () => {
+      jest.useFakeTimers();
+      const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
+      const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
+      const deps = dependencies(sendTyping, sendChooseSticker);
+      deps.restMs = 500;
+      const heartbeat = startChatActionHeartbeat({ chatId: 505, messageThreadId: undefined, dependencies: deps });
+
+      expect(heartbeat.set("typing")).toBe(0);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+
+      expect(heartbeat.set("idle")).toBe(0);
+      jest.advanceTimersByTime(200);
+      const rest: number = heartbeat.set("typing");
+      expect(rest).toBeGreaterThanOrEqual(300);
+      expect(rest).toBeLessThanOrEqual(301);
+      heartbeat.set("choose_sticker");
+      jest.advanceTimersByTime(299);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+      expect(sendChooseSticker).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(2);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+      expect(sendChooseSticker).toHaveBeenCalledTimes(1);
+      await heartbeat.stop();
+    });
+
+    test("静默从最后一次切 idle 算起：落地后再切 idle 会顺延", async () => {
+      jest.useFakeTimers();
+      const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
+      const deps = dependencies(sendTyping, async () => true);
+      deps.restMs = 500;
+      const heartbeat = startChatActionHeartbeat({ chatId: 506, messageThreadId: undefined, dependencies: deps });
+
+      heartbeat.set("idle");
+      jest.advanceTimersByTime(300);
+      heartbeat.set("idle");
+      heartbeat.set("typing");
+      jest.advanceTimersByTime(300);
+      await flushMicrotasks();
+      expect(sendTyping).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(201);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+      await heartbeat.stop();
+    });
+
+    test("静默期内又切回 idle 的挡位到点不补发；非持有轮的 idle 不开始静默", async () => {
+      jest.useFakeTimers();
+      const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
+      const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
+      const deps = dependencies(sendTyping, sendChooseSticker);
+      deps.restMs = 500;
+      const roundA = startChatActionHeartbeat({ chatId: 507, messageThreadId: undefined, dependencies: deps });
+      const roundB = startChatActionHeartbeat({ chatId: 507, messageThreadId: undefined, dependencies: deps });
+
+      roundA.set("typing");
+      await flushMicrotasks();
+      roundB.set("idle");
+      expect(roundA.set("choose_sticker")).toBe(0);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+      expect(sendChooseSticker).toHaveBeenCalledTimes(1);
+
+      roundA.set("idle");
+      roundA.set("typing");
+      roundA.set("idle");
+      jest.advanceTimersByTime(600);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+
+      await roundA.stop();
+      await roundB.stop();
+    });
+
+    test("静默开始前已排队的请求轮到时仍在静默期内就跳过，静默结束才补发当时的挡位", async () => {
+      jest.useFakeTimers();
+      const inFlight = Promise.withResolvers<boolean>();
+      const sendTyping = mock((_chatId: number): Promise<boolean> => inFlight.promise);
+      const sendChooseSticker = mock(async (_chatId: number): Promise<boolean> => true);
+      const deps = dependencies(sendTyping, sendChooseSticker);
+      deps.restMs = 500;
+      const sendUploadPhoto = mock(async (): Promise<boolean> => true);
+      deps.sendUploadPhoto = sendUploadPhoto;
+      const heartbeat = startChatActionHeartbeat({ chatId: 509, messageThreadId: undefined, dependencies: deps });
+
+      heartbeat.set("typing");
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(1);
+      // 第一发还在途：这一发排在它后面。
+      heartbeat.set("choose_sticker");
+      heartbeat.set("idle");
+      expect(heartbeat.set("upload_photo")).toBeGreaterThan(0);
+      inFlight.resolve(true);
+      await flushMicrotasks();
+      expect(sendChooseSticker).not.toHaveBeenCalled();
+      expect(sendUploadPhoto).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(501);
+      await flushMicrotasks();
+      expect(sendUploadPhoto).toHaveBeenCalledTimes(1);
+      await heartbeat.stop();
+    });
+
+    test("静默期内不做定时重发，静默结束由推迟的补发接上", async () => {
+      jest.useFakeTimers();
+      const sendTyping = mock(async (_chatId: number): Promise<boolean> => true);
+      const deps = dependencies(sendTyping, async () => true);
+      deps.intervalMs = 100;
+      deps.restMs = 500;
+      const heartbeat = startChatActionHeartbeat({ chatId: 508, messageThreadId: undefined, dependencies: deps });
+
+      heartbeat.set("typing");
+      await flushMicrotasks();
+      jest.advanceTimersByTime(100);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(2);
+
+      heartbeat.set("idle");
+      heartbeat.set("typing");
+      jest.advanceTimersByTime(400);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(2);
+
+      jest.advanceTimersByTime(101);
+      await flushMicrotasks();
+      expect(sendTyping).toHaveBeenCalledTimes(3);
+      await heartbeat.stop();
+    });
   });
 });

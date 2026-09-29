@@ -1,8 +1,5 @@
 import { displaySpeakerName } from "../../aiChat/ai/utils/chatTranscript";
-import {
-  QUEUED_TRIGGER_SNIPPET_MAX_CHARS,
-  REPLY_ROUND_MAX_CONCURRENT,
-} from "../../consts/aiChat/rateLimit";
+import { QUEUED_TRIGGER_SNIPPET_MAX_CHARS } from "../../consts/aiChat/rateLimit";
 import {
   activeReplyCounts,
   pendingOverflowNotices,
@@ -10,10 +7,12 @@ import {
 } from "../../cache/workers/aiChat/replies";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import { truncateInline } from "../../libs/text";
+import { replyRoundConcurrencyLimit } from "../../states/replyAdmission";
 import type { BufferedMessage, BufferedReplyReference } from "../../types/aiChat/memory";
 import type { QueuedReplyTrigger, MediaCommentContext } from "../../types/aiChat/replies";
 import type { TriggerKind } from "../../types/states/replyAdmission";
 import { resolvedTagFor } from "./mediaText";
+import { isDirectReplyModelActive } from "./replyDelivery";
 import { notifyRateLimited } from "./replyState";
 import { lookupBufferedMessage, replyReferenceForBufferedEntry } from "./bufferedMessageIndex";
 
@@ -150,9 +149,7 @@ export function drainReplyQueue(chatId: number, startQueuedRound: (trigger: Queu
   while (queue.size > 0) {
     const trigger: QueuedReplyTrigger | undefined = queue.peek();
     if (trigger === undefined) break;
-    const maxConcurrent: number = trigger.telegramBackpressured
-      ? 1
-      : REPLY_ROUND_MAX_CONCURRENT;
+    const maxConcurrent: number = replyRoundConcurrencyLimit(trigger.telegramBackpressured, isDirectReplyModelActive(chatId));
     if ((activeReplyCounts.get(chatId) ?? 0) >= maxConcurrent) break;
     // 先 peek、开成了再出队：拒绝的那一条不能被吞掉。回调是同步的（真正的
     // 模型任务异步执行，完成回调至少晚一个微任务），因此这里不会

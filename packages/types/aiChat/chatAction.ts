@@ -7,8 +7,12 @@ import type { TelegramChatAction } from "../telegram";
 export type ChatActionPhase = TelegramChatAction | "idle";
 
 export interface ChatActionControl {
-  readonly current: () => ChatActionPhase;
-  readonly set: (phase: ChatActionPhase) => void;
+  /**
+   * 切挡。切到 idle 标记一段状态结束：发送前切一次，发送落地后调用方再切一次，同群静默
+   * CHAT_ACTION_REST_MS 从最后一次算起。切到非 idle 挡时返回它真正亮起前还要静默的毫秒数
+   * （不在静默期内为 0），拟人停顿据此顺延；切 idle 返回 0。
+   */
+  readonly set: (phase: ChatActionPhase) => number;
   readonly settle: () => Promise<void>;
 }
 
@@ -32,6 +36,10 @@ export interface ChatActionHeartbeatEntry {
   pendingSendDeduplicate: boolean;
   lastSentPhase: ChatActionPhase;
   lastSentAt: number;
+  /** 静默期结束时刻（performance.now 口径）；此前不发任何状态请求。 */
+  restUntil: number;
+  /** 静默期内推迟点亮的定时器；同一时刻最多一个，到点补发当时的挡位。 */
+  restTimer: ReturnType<typeof setTimeout> | null;
   inflight: Set<Promise<unknown>>;
   consecutiveFailures: number;
 }

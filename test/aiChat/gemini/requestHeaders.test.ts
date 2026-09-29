@@ -1,4 +1,4 @@
-import { GEMINI_SPEECH_STYLE } from "../../../packages/consts/aiChat/gemini";
+import { TTS_DEFAULT_STYLE } from "../../../packages/consts/aiChat/voiceMessage";
 /**
  * google provider 的 base_url 与 headers 落到真实请求上：用真实 @google/genai SDK，
  * 只替换 globalThis.fetch，核对 generateContent 与 Interactions（语音合成）两条路径
@@ -12,7 +12,7 @@ import { requestGeminiResult } from "../../../packages/aiChat/gemini/client";
 import { synthesizeGeminiSpeech } from "../../../packages/aiChat/gemini/speech";
 import type { GenerateContentParameters } from "@google/genai";
 import type { SynthesizedSpeech } from "../../../packages/types/aiChat/voiceMessage";
-import type { AgentCapabilityConfig } from "../../../packages/types/config";
+import type { GoogleAgentCapabilityConfig } from "../../../packages/types/config";
 
 const GATEWAY: string = "https://gateway.ai.cloudflare.com/v1/acc/gw/google-ai-studio";
 const GATEWAY_TOKEN: string = "Bearer cf-aig-test-token";
@@ -26,7 +26,7 @@ interface CapturedRequest {
 const captured: CapturedRequest[] = [];
 const originalFetch: typeof fetch = globalThis.fetch;
 
-function googleCapability(apiKey: string): AgentCapabilityConfig {
+function googleCapability(apiKey: string): GoogleAgentCapabilityConfig {
   return {
     provider: "google",
     apiKey,
@@ -66,7 +66,7 @@ beforeEach(() => {
     text: googleCapability("text-key"),
     summary: googleCapability("summary-key"),
     media: googleCapability("media-key"),
-    tts: { ...googleCapability("tts-key"), voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 },
+    tts: { ...googleCapability("tts-key"), voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
   });
 });
 

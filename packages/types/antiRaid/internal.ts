@@ -59,11 +59,12 @@ export interface VerificationEntry {
   state: VerificationState;
   timer: ReturnType<typeof setTimeout> | undefined;
   /**
-   * 终态处置（踢人/删消息）连续失败次数；只调节本地重试节奏，不进入状态机
+   * 终态处置（踢人/删消息）已安排的重试次数，条目构造时为 0，每次排程加一（见
+   * workers/antiRaid/verificationEffects/retry.ts）；只调节本地重试节奏，不进入状态机
    * 或持久化快照。记录不能因重试耗尽被删除，否则等于把未处置成员当成完成；
    * 条目删除即消失，Worker 重建后从头计数。
    */
-  terminalRetries?: number;
+  terminalRetries: number;
 }
 
 /** 反刷群 Worker 的入群滑动计数窗口。 */

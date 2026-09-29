@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5323 tests / 465 files / 261542 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.41%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5492 tests / 475 files / 262413 次 `expect()`**；全源码**函数覆盖率 98.07% / 行覆盖率 98.50%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -196,10 +196,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 - **三份 README 里 `<img alt>` 的等价文案**：图以图片加载，SVG 内部的 `<title>` / `aria-label` 读屏软件读不到，alt 是唯一的无障碍出口。
 - **三语本文的「当前文档版本实测」**。
 
-另有两组独立于覆盖率、同样容易悄悄过期的实测数值：
-
-- **中文字符串统计**：数值只写在三语 [06 常见修改配方](06-modification-guide.md) 的「不做 i18n」节；三语 README 的「关于语言」注只链到那一节，不重复数值。生产代码文案增删后重算：按 TypeScript AST 的字符串/模板字面量节点统计它们所在的源码行（不含注释）。别用 grep 数反引号——正则字面量里的反引号会把计数带偏。
-- **行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
+另有一组独立于覆盖率、同样容易悄悄过期的数值：**行为数值**（概率、容量、时长）：README 引用的这类数字与 `packages/consts/` 保持一致，见 [06 常见修改配方](06-modification-guide.md#调整行为参数)。
 
 ## 发布
 

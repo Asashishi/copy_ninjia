@@ -12,9 +12,9 @@ const sendStickerMock = mock(async (_params: {
   signal?: AbortSignal;
 }): Promise<number | undefined> => 12345);
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
-// sendStickerTool 的发送链在选择挡位被打断时会用 pauseForToolAction 做
-// 1.5~5 秒的拟人停顿（STICKER_CHOOSE_DELAY_BASE_MS/JITTER_MS），这里把 sleep
-// 换成立即 resolve，已 abort 时按 abort 原因 reject，单测无需真的等待。
+// sendStickerTool 的发送步骤会用 pauseForToolAction 做 1.5~5 秒的拟人停顿
+// （STICKER_CHOOSE_DELAY_BASE_MS/JITTER_MS），这里把 sleep 换成立即 resolve，
+// 已 abort 时按 abort 原因 reject，单测无需真的等待。
 mock.module("../../../packages/libs/sleep", () => ({
   sleep: async (_ms: number, signal?: AbortSignal): Promise<void> => {
     if (signal?.aborted === true) throw signal.reason;
@@ -31,7 +31,7 @@ const {
 } = await import("../../../packages/aiChat/ai/tools/stickers");
 const { REPLY_INVALIDATED_TOOL_ERROR, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../../packages/consts/tools");
 const { MAX_STICKER_PACK_VIEWS_PER_REPLY, STICKER_INTENT_MAX_CHARS } = await import("../../../packages/consts/aiChat/stickers");
-const { createStickerSendLock } = await import("../../../packages/aiChat/ai/stickers/sendLock");
+const { createDirectPacing, createSimulatedPause } = await import("../../../packages/aiChat/ai/tools/replyToolset/pacing");
 
 function candidate(fileId: string, emoji: string, description: string): any {
   return { sticker: { file_id: fileId, file_unique_id: `${fileId}-uid`, emoji }, emoji, description };
@@ -60,23 +60,15 @@ function viewedState(): any {
 }
 
 /** 聊天状态心跳挡位句柄的假实现（见 types/aiChat/chatAction.ts 的
- *  ChatActionControl），只记录 set 调用供断言，settle 立即落定。current 默认
- *  报告 choose_sticker（模拟 view 过包、选择状态未被打断的正常链路），传
- *  "idle" 可模拟挡位已被中途的消息打断。 */
-function chatActionMock(phase: string = "choose_sticker"): any {
-  return { current: (): string => phase, set: mock((_phase: string): void => {}), settle: mock(async (): Promise<void> => {}) };
-}
-
-/** 每个用例独享的发贴纸锁句柄：真实实现 + 独立 Map（不碰 Worker 全局的
- *  stickerSendLocks），单轮场景下恒能抢到，等价于加锁前的行为。 */
-function freshLock(chatId: number = 123): any {
-  return createStickerSendLock(chatId, new Map());
+ *  ChatActionControl），只记录 set 调用供断言，settle 立即落定。 */
+function chatActionMock(): any {
+  return { set: mock((_phase: string): number => 0), settle: mock(async (): Promise<void> => {}) };
 }
 
 function sendStickerForTest({
   argumentsJson,
   chatAction = chatActionMock(),
-  stickerLock = freshLock(),
+  direct = false,
   chatId = 123,
   menu = MENU,
   state = viewedState(),
@@ -84,14 +76,16 @@ function sendStickerForTest({
 }: {
   argumentsJson: string;
   chatAction?: any;
-  stickerLock?: any;
+  direct?: boolean;
   chatId?: number;
   menu?: any[];
   state?: any;
   onSent?: (stickerDescription: string, messageId: number) => void;
 }): Promise<string> {
-  const execution = sendStickerTool({ chatAction, stickerLock, chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent, isActive: (): boolean => true });
-  return Promise.resolve(typeof execution === "string" ? execution : execution.run(chatAction));
+  const execution = sendStickerTool({ chatId, messageThreadId: undefined, menu, argumentsJson, state, onSent, isActive: (): boolean => true });
+  // 有序并行轮注入真实停顿；直接轮这里是一批里的第一个动作（贴纸照样停顿）。
+  const pause = direct ? createDirectPacing(chatAction).startAction(false) : createSimulatedPause(chatAction);
+  return Promise.resolve(typeof execution === "string" ? execution : execution.run(chatAction, pause));
 }
 
 describe("aiChat/ai/stickers parseIndexField", () => {
@@ -158,29 +152,25 @@ describe("aiChat/ai/stickers 工具定义组装", () => {
 });
 
 describe("aiChat/ai/stickers viewStickerPackTool", () => {
-  test("合法调用返回意图和包内清单，按包记录意图，并把心跳切到「正在选择贴纸」挡", async () => {
-    const chatAction = chatActionMock();
+  test("合法调用返回意图和包内清单，按包记录意图", async () => {
     const state = createStickerRoundState();
-    const result = JSON.parse(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}', state }));
+    const result = JSON.parse(await viewStickerPackTool({ menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}', state }));
     expect(result.pack).toBe("猫猫包");
     expect(result.intent).toBe("表达被逗笑，但不要显得在嘲讽对方");
     expect(result.selection_instruction).toContain("严格按 intent");
     expect(result.stickers).toContain("1. 😂 一只猫大笑");
     expect(result.stickers).toContain("2. 😭 一只猫哭泣");
     expect(state.viewedPackIntents.get(1)).toBe("表达被逗笑，但不要显得在嘲讽对方");
-    expect(chatAction.set).toHaveBeenCalledWith("choose_sticker");
   });
 
   test("停顿期间轮次被作废：返回工具错误，不让 reject 逃出 execute", async () => {
     // signal 在调用前已 abort：viewStickerPackTool 在入口同步返回工具错误，
     // 不进入任何异步路径。
-    const chatAction = chatActionMock();
     const state = createStickerRoundState();
     const controller = new AbortController();
     controller.abort(new Error("chat teardown"));
 
     const result = await viewStickerPackTool({
-      chatAction,
       menu: MENU,
       argumentsJson: '{"pack_index": 1, "intent":"表达被逗笑，但不要显得在嘲讽对方"}',
       state,
@@ -195,58 +185,48 @@ describe("aiChat/ai/stickers viewStickerPackTool", () => {
   test("没有 emoji 的贴纸用占位文案，不留空", async () => {
     const state = createStickerRoundState();
     const menu = [pack({ name: "p", title: "包", summary: "简介", stickers: [candidate("x1", "", "一个没有 emoji 的贴纸")] })];
-    const result = JSON.parse(await viewStickerPackTool({ chatAction: chatActionMock(), menu, argumentsJson: '{"pack_index": 1, "intent":"表达疑惑，但不要带攻击性"}', state }));
+    const result = JSON.parse(await viewStickerPackTool({ menu, argumentsJson: '{"pack_index": 1, "intent":"表达疑惑，但不要带攻击性"}', state }));
     expect(result.stickers).toContain("1. （无 emoji） 一个没有 emoji 的贴纸");
   });
 
-  test("编号非法返回错误，不标记任何包、不切换聊天状态挡位", async () => {
-    const chatAction = chatActionMock();
+  test("编号非法返回错误，不标记任何包", async () => {
     const state = createStickerRoundState();
-    expect(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 99, "intent":"表达疑惑，但不要带攻击性"}', state })).toBe(JSON.stringify({ error: "Invalid pack_index" }));
+    expect(await viewStickerPackTool({ menu: MENU, argumentsJson: '{"pack_index": 99, "intent":"表达疑惑，但不要带攻击性"}', state })).toBe(JSON.stringify({ error: "Invalid pack_index" }));
     expect(state.viewedPackIntents.size).toBe(0);
-    expect(chatAction.set).not.toHaveBeenCalled();
   });
 
-  test("意图缺失或无效时拒绝查看，不标记包、不切换聊天状态挡位", async () => {
-    const chatAction = chatActionMock();
+  test("意图缺失或无效时拒绝查看，不标记包", async () => {
     const state = createStickerRoundState();
-    expect(JSON.parse(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1}', state })).error).toContain("Invalid intent");
+    expect(JSON.parse(await viewStickerPackTool({ menu: MENU, argumentsJson: '{"pack_index": 1}', state })).error).toContain("Invalid intent");
     expect(state.viewedPackIntents.size).toBe(0);
-    expect(chatAction.set).not.toHaveBeenCalled();
   });
 
-  test("同一个包每轮只能查看一次，重复查看保留首次意图且不再切换状态", async () => {
-    const chatAction = chatActionMock();
+  test("同一个包每轮只能查看一次，重复查看保留首次意图", async () => {
     const state = createStickerRoundState();
-    await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state });
-    chatAction.set.mockClear();
+    await viewStickerPackTool({ menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"表达惊讶，但不要显得害怕"}', state });
 
-    const repeated = JSON.parse(await viewStickerPackTool({ chatAction, menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state }));
+    const repeated = JSON.parse(await viewStickerPackTool({ menu: MENU, argumentsJson: '{"pack_index": 1, "intent":"改为表达好笑，但不要嘲讽对方"}', state }));
     expect(repeated.error).toContain("already viewed");
     expect(state.viewedPackIntents.get(1)).toBe("表达惊讶，但不要显得害怕");
-    expect(chatAction.set).not.toHaveBeenCalled();
   });
 
-  test("每轮最多查看五个不同贴纸包，第六个包被拒绝且不切换状态", async () => {
+  test("每轮最多查看五个不同贴纸包，第六个包被拒绝", async () => {
     const menu = Array.from(
       { length: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1 },
       (_, index) => pack({ name: `pack_${index}`, title: `包 ${index}`, summary: `简介 ${index}`, stickers: [candidate(`s${index}`, "🙂", `贴纸 ${index}`)] })
     );
     const state = createStickerRoundState();
     for (let packIndex = 1; packIndex <= MAX_STICKER_PACK_VIEWS_PER_REPLY; packIndex++) {
-      await viewStickerPackTool({ chatAction: chatActionMock(), menu, argumentsJson: JSON.stringify({ pack_index: packIndex, intent: `查看第 ${packIndex} 个包` }), state });
+      await viewStickerPackTool({ menu, argumentsJson: JSON.stringify({ pack_index: packIndex, intent: `查看第 ${packIndex} 个包` }), state });
     }
 
-    const chatAction = chatActionMock();
     const rejected = JSON.parse(await viewStickerPackTool({
-      chatAction,
       menu,
       argumentsJson: JSON.stringify({ pack_index: MAX_STICKER_PACK_VIEWS_PER_REPLY + 1, intent: "尝试查看第六个包" }),
       state,
     }));
     expect(rejected.error).toContain(`at most ${MAX_STICKER_PACK_VIEWS_PER_REPLY} different packs`);
     expect(state.viewedPackIntents.size).toBe(MAX_STICKER_PACK_VIEWS_PER_REPLY);
-    expect(chatAction.set).not.toHaveBeenCalled();
   });
 });
 
@@ -275,7 +255,7 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
     expect(sendStickerMock).not.toHaveBeenCalled();
   });
 
-  test("编号合法且看过包时先切 idle 并 settle 再发送、回调 onSent、返回成功结果", async () => {
+  test("编号合法且看过包时，发送步骤先亮选择贴纸并停顿，再切 idle、settle 后发送、回调 onSent、返回成功结果", async () => {
     sendStickerMock.mockClear();
     sendStickerMock.mockImplementationOnce(async () => 999);
     const chatAction = chatActionMock();
@@ -295,49 +275,38 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
       signal: undefined,
     });
     expect(result).toBe(JSON.stringify({ success: true }));
-    // 选择状态自 view 起一直维持着（current 报告 choose_sticker），发送前
-    // 不需要重新拉起，只切 idle 等在途请求落定。
-    expect(chatAction.set).not.toHaveBeenCalledWith("choose_sticker");
-    expect(chatAction.set).toHaveBeenCalledWith("idle");
+    // 选择状态与停顿都在串行链的发送步骤里。
+    expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["choose_sticker", "idle"]);
     expect(chatAction.settle).toHaveBeenCalled();
     expect(recorded).not.toBeNull();
     expect(recorded![1]).toBe(999);
     expect(recorded![0]).toContain("一只猫哭泣");
   });
 
-  test("选择状态被中途的消息打断（current 非 choose_sticker）时，发送前重新拉起再切 idle", async () => {
+  test("直接轮发贴纸：同样切到选择贴纸挡并停顿，随后切 idle、settle 后发送", async () => {
     sendStickerMock.mockClear();
-    sendStickerMock.mockImplementationOnce(async () => 999);
-    const chatAction = chatActionMock("idle");
-
+    const chatAction = chatActionMock();
     const result = await sendStickerForTest({
       argumentsJson: '{"pack_index": 1, "sticker_index": 2}',
       chatAction,
+      direct: true,
     });
-
     expect(result).toBe(JSON.stringify({ success: true }));
-    expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["idle", "choose_sticker", "idle"]);
+    expect(chatAction.set.mock.calls.map((call: unknown[]) => call[0])).toEqual(["choose_sticker", "idle"]);
     expect(chatAction.settle).toHaveBeenCalled();
-    expect(sendStickerMock).toHaveBeenCalledWith({
-      chatId: 123,
-      fileId: "a2",
-      signal: undefined,
-    });
+    expect(sendStickerMock).toHaveBeenCalledTimes(1);
   });
 
   test("同一轮最多发 1 枚，第二枚被限额拒绝（跨包同样计数）", async () => {
     sendStickerMock.mockClear();
     const state = viewedState();
-    const lock = freshLock();
     expect(JSON.parse(await sendStickerForTest({
       argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
-      stickerLock: lock,
       state,
     })).success).toBe(true);
 
     const result = JSON.parse(await sendStickerForTest({
       argumentsJson: '{"pack_index": 2, "sticker_index": 1}',
-      stickerLock: lock,
       state,
     }));
     expect(result.error).toContain("Sticker limit reached");
@@ -368,68 +337,33 @@ describe("aiChat/ai/stickers sendStickerTool", () => {
   });
 });
 
-describe("aiChat/ai/stickers 同群并发轮的发贴纸锁", () => {
-  test("并发轮已持锁时拒绝发送：不调 sendSticker，收回本轮的选择挡位", async () => {
+describe("aiChat/ai/stickers 跨轮", () => {
+  test("同群的两轮各自持有限额，都能发出贴纸", async () => {
     sendStickerMock.mockClear();
-    const locks = new Map<number, object>();
-    expect(createStickerSendLock(123, locks).tryAcquire()).toBe(true); // 并发轮先抢到
-    const chatAction = chatActionMock();
-
-    const result = JSON.parse(await sendStickerForTest({
+    expect(JSON.parse(await sendStickerForTest({
       argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
-      chatAction,
-      stickerLock: createStickerSendLock(123, locks),
-    }));
-
-    expect(result.error).toContain("Sticker throttled");
-    expect(sendStickerMock).not.toHaveBeenCalled();
-    // 锁被抢时立即把挡位收回 idle。
-    expect(chatAction.set).toHaveBeenCalledWith("idle");
-  });
-
-  test("持锁轮释放后，后续轮能重新抢到并正常发送", async () => {
-    sendStickerMock.mockClear();
-    const locks = new Map<number, object>();
-    const holder = createStickerSendLock(123, locks);
-    expect(holder.tryAcquire()).toBe(true);
-    holder.release();
-
-    const result = JSON.parse(await sendStickerForTest({
+      state: viewedState(),
+    })).success).toBe(true);
+    expect(JSON.parse(await sendStickerForTest({
       argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
-      stickerLock: createStickerSendLock(123, locks),
-    }));
-    expect(result.success).toBe(true);
-    expect(sendStickerMock).toHaveBeenCalledTimes(1);
+      state: viewedState(),
+    })).success).toBe(true);
+    expect(sendStickerMock).toHaveBeenCalledTimes(2);
   });
 
   test("发送失败后同一轮不能绕过预占限额换贴纸重投", async () => {
     sendStickerMock.mockClear();
     sendStickerMock.mockImplementationOnce(async () => undefined);
-    const lock = freshLock();
     const state = viewedState();
 
     expect(JSON.parse(await sendStickerForTest({
       argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
-      stickerLock: lock,
       state,
     })).error).toBe("Failed to send sticker");
     expect(JSON.parse(await sendStickerForTest({
       argumentsJson: '{"pack_index": 1, "sticker_index": 2}',
-      stickerLock: lock,
       state,
     })).error).toContain("Sticker limit reached");
     expect(sendStickerMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("锁按群隔离：别的群持锁不影响本群发送", async () => {
-    sendStickerMock.mockClear();
-    const locks = new Map<number, object>();
-    expect(createStickerSendLock(456, locks).tryAcquire()).toBe(true);
-
-    const result = JSON.parse(await sendStickerForTest({
-      argumentsJson: '{"pack_index": 1, "sticker_index": 1}',
-      stickerLock: createStickerSendLock(123, locks),
-    }));
-    expect(result.success).toBe(true);
   });
 });

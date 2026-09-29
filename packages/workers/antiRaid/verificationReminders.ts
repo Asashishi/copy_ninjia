@@ -10,6 +10,7 @@ import { VERIFICATION_REMINDER_RETRY_INITIAL_MS, VERIFICATION_REMINDER_RETRY_MAX
 
 import { reminderDeliveries, verificationEntries } from "../../cache/workers/antiRaid/verification";
 import { formatMinSec } from "../../libs/time";
+import { cappedExponentialMs } from "../../libs/backoff";
 import { verificationKey } from "../../libs/verificationKey";
 import type {
   ReminderDelivery,
@@ -71,8 +72,9 @@ function scheduleReminderRetry(
   }
   const remainingMs: number = delivery.expectedState.expiresAt - Date.now();
   if (remainingMs <= 0) return; // verifyTimeout 会延长期限并重新唤醒这个 owner。
-  const backoffMs: number = Math.min(
-    VERIFICATION_REMINDER_RETRY_INITIAL_MS * (2 ** delivery.attempts),
+  const backoffMs: number = cappedExponentialMs(
+    VERIFICATION_REMINDER_RETRY_INITIAL_MS,
+    delivery.attempts,
     VERIFICATION_REMINDER_RETRY_MAX_MS
   );
   delivery.attempts += 1;

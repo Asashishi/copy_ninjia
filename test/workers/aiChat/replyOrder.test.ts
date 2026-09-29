@@ -36,7 +36,7 @@ mock.module("../../../packages/aiChat/ai/tools/stickers", () => ({
 }));
 mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({
   startChatActionHeartbeat: () => ({
-    current: () => "idle", set: (): void => {},
+    set: (): number => 0,
     settle: async (): Promise<void> => {}, stop: async (): Promise<void> => {},
   }),
 }));
@@ -154,17 +154,18 @@ test.each(["drain", "invalidate", "quiesce"] as const)("跨四个限频窗口的
       now += RATE_LIMIT_LONG_WINDOW_MS + 1;
       for (let offset: number = 0; offset < RATE_LIMIT_LONG_MAX_TRIGGERS; offset++) {
         const id: number = window * RATE_LIMIT_LONG_MAX_TRIGGERS + offset + 1;
-        trigger(id, { telegramBackpressured: true });
+        trigger(id);
         if (id > REPLY_DELIVERY_MAX_PER_CHAT) continue;
         await waitUntil((): boolean => models.has(id));
         models.get(id)!.resolve(`回复${id}`);
-        await waitUntil((): boolean => !activeReplyCounts.has(-1001));
+        // 第 1 轮是直接轮：它在调用内发送并挂住，一直占着自己的模型位；其余是有序并行轮，排在它后面。
+        await waitUntil((): boolean => id === 1 ? sent.length === 1 : activeReplyCounts.get(-1001) === 1);
         models.delete(id); toolsets.delete(id); contexts.delete(id);
       }
       expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
       expect(replyDeliveryWindows.get(-1001)?.size).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
       expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
-      expect(activeReplyCounts.size).toBe(0);
+      expect(activeReplyCounts.get(-1001)).toBe(1);
       expect(sent).toEqual(["回复1"]);
     }
     expect([...replyGenerationTasks.values()][0]?.size).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
@@ -215,7 +216,8 @@ test("全局容量归还唤醒其它群，持续有队列的群轮流取得空�
   try {
     await waitUntil(() => models.has(1000));
     models.get(1000)!.resolve("占位回复");
-    await waitUntil(() => !activeReplyCounts.has(-1001));
+    // 直接轮在调用内发送并挂住，占着存活容量。
+    await waitUntil(() => sent.includes("占位回复"));
     for (let index: number = 0; index < REPLY_DELIVERY_MAX_TOTAL - 1; index++) {
       held.push(reserveReplyDelivery(100 + Math.floor(index / REPLY_DELIVERY_MAX_PER_CHAT))!);
     }
@@ -239,57 +241,71 @@ test("全局容量归还唤醒其它群，持续有队列的群轮流取得空�
   expect(replyDeliveryTotal.current).toBe(0);
 });
 
-test("模型按 3、1、2 完成，整轮回复仍严格按入站 1、2、3 出站", async () => {
+test("直接轮边生成边发送；有序并行轮等直接轮发完，模型按 3、2 完成仍按入站 2、3 出站", async () => {
   for (let i: number = 1; i <= 3; i++) trigger(i);
   await waitUntil(() => models.size === 3);
   for (const id of [3, 1, 2]) {
     const toolset = toolsets.get(id)!;
-    expect(JSON.parse(await toolset.execute("send_message", JSON.stringify({ text: `${id}a` }))).queued).toBe(true);
-    expect(JSON.parse(await toolset.execute("send_message", JSON.stringify({ text: `${id}b` }))).queued).toBe(true);
+    for (const part of ["a", "b"]) {
+      const result = JSON.parse(await toolset.execute("send_message", JSON.stringify({ text: `${id}${part}` })));
+      // 直接轮在调用内发出并回真实结果；有序并行轮回接纳回执。
+      if (id === 1) expect(typeof result.message_id).toBe("number");
+      else expect(result.queued).toBe(true);
+    }
   }
-  expect(sent).toEqual([]);
-  models.get(3)!.resolve(null);
-  await Bun.sleep(1);
-  expect(sent).toEqual([]);
-  models.get(1)!.resolve(null);
+  // 直接轮的模型还没结束，动作已经发出；有序并行轮等模型结束且直接轮发完。
   await waitUntil(() => sent.length === 2);
   expect(sent).toEqual(["1a", "1b"]);
+  models.get(3)!.resolve(null);
   models.get(2)!.resolve(null);
+  await Bun.sleep(1);
+  expect(sent).toEqual(["1a", "1b"]);
+  models.get(1)!.resolve(null);
   await settleTasks();
   expect(sent).toEqual(["1a", "1b", "2a", "2b", "3a", "3b"]);
   expect(replyDeliveryWindows.size).toBe(0);
   expect(activeReplyCounts.size).toBe(0);
 });
 
-test("首条发送挂起时仍逐个补跑 15 条待处理请求，完整链不占模型位", async () => {
+test("直接轮发送挂起时仍逐个补跑待处理请求，有序并行轮的完整链不占模型位", async () => {
   const pending = Promise.withResolvers<TelegramSendResult>();
   sendMessage.mockImplementationOnce((params) => { sent.push(params.text); return pending.promise; });
-  const total: number = REPLY_ROUND_MAX_CONCURRENT + REPLY_TRIGGER_QUEUE_MAX;
+  // 直接轮独立占 1 个模型位，有序并行轮另有满额。
+  const running: number = REPLY_ROUND_MAX_CONCURRENT + 1;
+  const total: number = running + REPLY_TRIGGER_QUEUE_MAX;
   for (let i: number = 1; i <= total; i++) trigger(i);
   try {
-    await waitUntil(() => models.size === REPLY_ROUND_MAX_CONCURRENT);
+    await waitUntil(() => models.size === running);
     const window = replyDeliveryWindows.get(-1001)!;
     expect(window.slots).toHaveLength(REPLY_ROUND_MAX_CONCURRENT);
+    expect(activeReplyCounts.get(-1001)).toBe(running);
     expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
-    expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(REPLY_ROUND_MAX_CONCURRENT + 1);
-    for (let i: number = 1; i <= total; i++) {
+    expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(running + 1);
+    // 直接轮在调用内发送并挂住：它仍在模型阶段、占着自己的那 1 位，队列不动。
+    models.get(1)!.resolve("回复1");
+    await waitUntil(() => sent.length === 1);
+    expect(activeReplyCounts.get(-1001)).toBe(running);
+    expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
+    for (let i: number = 2; i <= total; i++) {
       await waitUntil(() => models.has(i));
       models.get(i)!.resolve(`回复${i}`);
-      if (i <= REPLY_TRIGGER_QUEUE_MAX) {
-        await waitUntil(() => models.has(i + REPLY_ROUND_MAX_CONCURRENT));
-        expect(activeReplyCounts.get(-1001)).toBe(REPLY_ROUND_MAX_CONCURRENT);
-        expect(pendingReplyTriggers.get(-1001)?.size ?? 0).toBe(REPLY_TRIGGER_QUEUE_MAX - i);
+      const started: number = i - 1;
+      if (started <= REPLY_TRIGGER_QUEUE_MAX) {
+        await waitUntil(() => models.has(running + started));
+        expect(activeReplyCounts.get(-1001)).toBe(running);
+        expect(pendingReplyTriggers.get(-1001)?.size ?? 0).toBe(REPLY_TRIGGER_QUEUE_MAX - started);
       }
     }
-    await waitUntil(() => !activeReplyCounts.has(-1001));
+    await waitUntil(() => activeReplyCounts.get(-1001) === 1);
     expect(pendingReplyTriggers.has(-1001)).toBe(false);
+    // 有序并行轮全部排在挂住的直接轮之后。
     expect(window.size).toBe(total);
     expect(sent).toEqual(["回复1"]);
     expect([...replyGenerationTasks.values()][0]?.size).toBe(total);
     trigger(total + 1);
     await waitUntil(() => models.has(total + 1));
     models.get(total + 1)!.resolve(`回复${total + 1}`);
-    await waitUntil(() => !activeReplyCounts.has(-1001));
+    await waitUntil(() => activeReplyCounts.get(-1001) === 1);
     expect(window.slots).toHaveLength(REPLY_ROUND_MAX_CONCURRENT);
     expect(window.size).toBe(total + 1);
     pending.resolve({ messageId: 1 });
@@ -364,8 +380,8 @@ test("取消能释放仍在等媒体的占位和已就绪链，旧代不能占�
   expect(sent).toEqual(["新回复"]);
 });
 
-test.each([false, true])("待处理队列上限仍为 15，模型并发遵守高压标记 %s", async (telegramBackpressured) => {
-  const maxConcurrent: number = telegramBackpressured ? 1 : REPLY_ROUND_MAX_CONCURRENT;
+test.each([false, true])("待处理队列按上限截断，直接轮另计的模型并发遵守高压标记 %s", async (telegramBackpressured) => {
+  const maxConcurrent: number = telegramBackpressured ? 1 : REPLY_ROUND_MAX_CONCURRENT + 1;
   for (let i: number = 1; i <= maxConcurrent + REPLY_TRIGGER_QUEUE_MAX + 10; i++) trigger(i, { telegramBackpressured });
   await waitUntil(() => models.size === maxConcurrent);
   expect(activeReplyCounts.get(-1001)).toBe(maxConcurrent);
@@ -377,8 +393,10 @@ test.each([false, true])("待处理队列上限仍为 15，模型并发遵守高
 
 test("排队媒体仍先于后到文字，补跑使用解析正文和入站快照", async () => {
   const preparation = Promise.withResolvers<MediaCommentContext | null>();
-  for (let i: number = 1; i <= REPLY_ROUND_MAX_CONCURRENT; i++) trigger(i);
-  const mediaId: number = REPLY_ROUND_MAX_CONCURRENT + 1;
+  // 直接轮 + 满额有序并行轮占满模型位，媒体与文字都进队列。
+  const running: number = REPLY_ROUND_MAX_CONCURRENT + 1;
+  for (let i: number = 1; i <= running; i++) trigger(i);
+  const mediaId: number = running + 1;
   const textId: number = mediaId + 1;
   const media: MediaCommentContext = {
     kind: "photo", senderId: 7, senderName: "Alice", description: "",
@@ -390,7 +408,7 @@ test("排队媒体仍先于后到文字，补跑使用解析正文和入站快�
     mediaPreparation: preparation.promise,
   });
   trigger(textId);
-  await waitUntil(() => models.size === REPLY_ROUND_MAX_CONCURRENT);
+  await waitUntil(() => models.size === running);
   for (const model of models.values()) model.resolve(null);
   try {
     await waitUntil(() => models.has(textId));

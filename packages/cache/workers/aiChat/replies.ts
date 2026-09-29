@@ -43,12 +43,14 @@ export const rateLimitNoticeTimes: Map<number, number> = new Map();
  */
 export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
 /**
- * 每群正在处理的模型轮数，准入上限为 REPLY_ROUND_MAX_CONCURRENT，高压时为 1。
- * 启动时递增，模型结束并交付完整链时递减，归零时删除；发送等待不计入，Worker 重建后清空。
+ * 每群正在处理的模型轮数（含直接轮），准入上限见 states/replyAdmission.ts 的
+ * replyRoundConcurrencyLimit：有序并行 REPLY_ROUND_MAX_CONCURRENT 轮，直接轮在模型阶段另加 1 轮，高压时合计 1。
+ * 启动时递增，模型阶段结束时递减，归零时删除；发送等待不计入，Worker 重建后清空。
  */
 export const activeReplyCounts: Map<number, number> = new Map();
 /**
- * owner：AI Worker。入站准入时创建同群发送桶数组，桶数为 REPLY_ROUND_MAX_CONCURRENT。
+ * owner：AI Worker。群里没有在途轮次时由直接轮创建并占据队首（directModelActive 记它是否仍在
+ * 模型阶段），之后的有序并行轮按入站顺位占位；桶数为 REPLY_ROUND_MAX_CONCURRENT。
  * 每桶可持有多轮；存活轮次受单群与 Worker 容量闸限制，模型并发独立计数。
  * 完成项按入站顺位回收，全部排空时删除；群失效或 reset 清空，Worker 重建从空表开始。
  * 旧代迟到收尾不得删除新代条目，入站限频与 Telegram 控流各自生效。

@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GenerateContentParameters } from "@google/genai";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { GEMINI_IMAGE_ERROR_LABEL } from "../../../packages/consts/aiChat/gemini";
 
 const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<unknown> => null);
 
@@ -55,7 +56,7 @@ describe("Gemini 图片生成适配器", () => {
       },
     });
     expect(requestGeminiResponse.mock.calls[0]![0]).toBe("image");
-    expect(requestGeminiResponse.mock.calls[0]![2]).toBe("Gemini image generation API");
+    expect(requestGeminiResponse.mock.calls[0]![2]).toBe(GEMINI_IMAGE_ERROR_LABEL);
     expect(image?.mimeType).toBe("image/png");
     expect(image?.bytes).toEqual(expectedBytes);
   });

@@ -4,6 +4,8 @@ import {
   executeGroupQaAnswer,
   executeGroupQaQuery,
 } from "../../packages/aiChat/ai/tools/replyToolset/groupQa";
+import { TOOL_STATUS_POINTER } from "../../packages/consts/aiChat/prompts/tools";
+import { GROUP_QA_ANSWER_TOOL, GROUP_QA_QUERY_TOOL } from "../../packages/consts/tools";
 
 const ENTRIES: ReadonlyMap<string, string> = new Map([
   ["怎么入群？", "点置顶那条链接"],
@@ -11,19 +13,22 @@ const ENTRIES: ReadonlyMap<string, string> = new Map([
 ]);
 
 describe("群问答的两个模型工具", () => {
-  test("本群没登记问答时两个工具都不挂", () => {
-    expect(buildGroupQaToolDefinitions(undefined)).toHaveLength(0);
-    expect(buildGroupQaToolDefinitions(new Map())).toHaveLength(0);
-  });
-
-  test("有问答时挂两个纯查询工具，且都不占动作预算", async () => {
-    const definitions = buildGroupQaToolDefinitions(ENTRIES);
-    expect(definitions.map((d) => d.name)).toEqual(["group_qa_query", "group_qa_answer"]);
+  test("两个纯查询工具恒挂、逐字恒定，都不占动作预算，并指向本轮工具状态", async () => {
+    const definitions = buildGroupQaToolDefinitions();
+    expect(definitions.map((d) => d.name)).toEqual([GROUP_QA_QUERY_TOOL, GROUP_QA_ANSWER_TOOL]);
+    expect(JSON.stringify(buildGroupQaToolDefinitions())).toBe(JSON.stringify(definitions));
+    expect(definitions[0]!.description).toContain(TOOL_STATUS_POINTER);
     // 校验这两个工具名不在 ACTION_TOOL_NAMES 动作预算清单中。
     const { ACTION_TOOL_NAMES } = await import("../../packages/consts/tools");
     for (const definition of definitions) {
       expect(ACTION_TOOL_NAMES).not.toContain(definition.name);
     }
+  });
+
+  test("本群没登记问答时 query 返回空清单、answer 如实未找到", () => {
+    expect(JSON.parse(executeGroupQaQuery(undefined))).toEqual({ questions: [] });
+    expect(JSON.parse(executeGroupQaAnswer(undefined, JSON.stringify({ question: "怎么入群？" }))))
+      .toEqual({ found: false, question: "怎么入群？" });
   });
 
   test("query 只给问题清单，不泄漏答案", () => {

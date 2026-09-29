@@ -24,6 +24,7 @@ import type {
   AdDetectAgentConfig,
   AgentCapabilityConfig,
   AgentDeploymentConfig,
+  AgentTtsCapabilityConfig,
   BotConfig,
 } from "../../types/config";
 
@@ -34,7 +35,7 @@ interface SerializationBudget {
 }
 
 /** 一项能力的凭据：api_key，以及 google provider headers 的每个值。 */
-function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig): void {
+function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig | AgentTtsCapabilityConfig): void {
   secrets.push(config.apiKey);
   if (config.headers === undefined) return;
   for (const value of Object.values(config.headers)) secrets.push(value);

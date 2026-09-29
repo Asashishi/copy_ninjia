@@ -9,7 +9,6 @@ import type { registerHandlers } from "../../packages/app/registerHandlers";
 import type { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
 import type { createOwnerSettler } from "../../packages/app/lifecycle/shutdown";
 import type { startChatActionHeartbeat } from "../../packages/aiChat/ai/chatActionHeartbeat";
-import type { createStickerSendLock } from "../../packages/aiChat/ai/stickers/sendLock";
 import type { FlushResult } from "../../packages/types/lifecycle";
 
 /** 类型断言只放在不调用的闭包内；typecheck 检查赋值错误，测试不创建或改写运行时句柄。 */
@@ -79,23 +78,16 @@ test("Worker 与应用生命周期句柄的方法不可替换", (): void => {
   expect(check).toBeDefined();
 });
 
-test("AI 心跳与贴纸发送锁句柄的方法不可替换", (): void => {
+test("AI 心跳句柄的方法不可替换", (): void => {
   const check = (handles: {
     readonly heartbeat: ReturnType<typeof startChatActionHeartbeat>;
-    readonly stickerLock: ReturnType<typeof createStickerSendLock>;
   }): void => {
-    // @ts-expect-error 心跳挡位读取入口只读。
-    handles.heartbeat.current = (): "idle" => "idle";
     // @ts-expect-error 心跳挡位切换入口只读。
     handles.heartbeat.set = (): void => {};
     // @ts-expect-error 心跳排空入口只读。
     handles.heartbeat.settle = (): Promise<void> => Promise.resolve();
     // @ts-expect-error 心跳停止入口只读。
     handles.heartbeat.stop = (): Promise<void> => Promise.resolve();
-    // @ts-expect-error 贴纸锁占位入口只读。
-    handles.stickerLock.tryAcquire = (): boolean => false;
-    // @ts-expect-error 贴纸锁释放入口只读。
-    handles.stickerLock.release = (): void => {};
   };
   expect(check).toBeDefined();
 });

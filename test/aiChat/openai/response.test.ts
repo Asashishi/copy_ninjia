@@ -15,6 +15,7 @@ import {
 } from "../../../packages/aiChat/openai/response";
 import { EMPTY_FUNCTION_CALLS } from "../../../packages/consts/aiChat/tools";
 import { OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS } from "../../../packages/consts/aiChat/openai";
+import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 
 function response(overrides: Record<string, unknown>): OpenAI.Responses.Response {
   return {
@@ -149,7 +150,7 @@ describe("产出抽取", () => {
         { type: "function_call", call_id: "", name: "dropped", arguments: "{}" },
         { type: "message" },
       ],
-    }))).toEqual([{ id: "a", name: "send_message", argumentsJson: '{"text":"hi"}' }]);
+    }))).toEqual([{ id: "a", name: SEND_MESSAGE_TOOL, argumentsJson: '{"text":"hi"}' }]);
   });
 
   test("零调用交回共用空数组，不在热路径上每轮新建一个", () => {

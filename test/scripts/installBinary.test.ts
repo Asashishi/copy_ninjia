@@ -12,7 +12,19 @@ async function executable(path: string, script: string): Promise<void> {
   chmodSync(path, 0o700);
 }
 
-async function fixture(options: { corrupt?: boolean; missing?: boolean; version?: string; architecture?: string; musl?: boolean; symlink?: boolean; malformedChecksum?: boolean } = {}): Promise<{
+/** fixture 的可选变体；streamedLatest 让 releases/latest 按 GitHub 给 curl 的缩进多行 JSON 分两段写出。 */
+interface BinaryFixtureOptions {
+  readonly corrupt?: boolean;
+  readonly missing?: boolean;
+  readonly version?: string;
+  readonly architecture?: string;
+  readonly musl?: boolean;
+  readonly symlink?: boolean;
+  readonly malformedChecksum?: boolean;
+  readonly streamedLatest?: boolean;
+}
+
+async function fixture(options: BinaryFixtureOptions = {}): Promise<{
   root: string; target: string; result: Bun.SyncSubprocess<"pipe", "pipe">; calls: string;
 }> {
   const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-binary-download-"));
@@ -38,7 +50,12 @@ async function fixture(options: { corrupt?: boolean; missing?: boolean; version?
   await executable(join(bin, "curl"), `
 printf 'curl:%s\n' "$*" >> "$CALL_LOG"
 case "\u0024{*: -1}" in
-  */releases/latest) printf '{"tag_name":"99.0.0"}\n' ;;
+  */releases/latest)
+    if [ "$STREAMED_LATEST" != 1 ]; then printf '{"tag_name":"99.0.0"}\n'; exit 0; fi
+    # tag_name 之后的内容等读端取完前一段再写出，与网络分段到达时一致。
+    printf '{\n  "url": "https://api.github.com/repos/Asashishi/copy_ninjia/releases/1",\n  "tag_name": "99.0.0",\n'
+    sleep 0.2
+    printf '  "name": "99.0.0",\n  "body": "notes"\n}\n' ;;
   */99.0.0/copy-ninjia-linux-*.tar.gz) [ "$MISSING_ASSET" != 1 ] || exit 22; cp -- "$ASSET" "$3" ;;
   */99.0.0/copy-ninjia-linux-*.tar.gz.sha256) cp -- "$ASSET.sha256" "$3" ;;
   *) exit 93 ;;
@@ -62,6 +79,7 @@ esac`);
       PATH: `${bin}:/usr/bin:/bin`, HOME: root, TMPDIR: root, COPY_NINJIA_DIR: target,
       REAL_BUN: Bun.argv[0]!, REAL_SHA256SUM: Bun.which("sha256sum")!, ASSET: archive, CALL_LOG: callLog,
       MISSING_ASSET: options.missing ? "1" : "0", ARCHITECTURE: options.architecture ?? "x86_64",
+      STREAMED_LATEST: options.streamedLatest === true ? "1" : "0",
     },
     stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 10_000, killSignal: "SIGKILL",
   });
@@ -81,6 +99,15 @@ describe("二进制下载安装", (): void => {
     expect(calls).not.toContain("FORBIDDEN");
     expect(existsSync(join(target, "copy-ninjia"))).toBe(true);
     expect(existsSync(join(target, ".git"))).toBe(false);
+  });
+
+  test("releases/latest 返回分段到达的多行 JSON 时照常取到 tag 并完成下载", async (): Promise<void> => {
+    const { target, result, calls } = await fixture({ streamedLatest: true });
+    expect(decoder.decode(result.stdout)).toContain("Latest Release 是 99.0.0");
+    expect(decoder.decode(result.stdout)).toContain("PACKAGE_INSTALLER --binary");
+    expect(result.exitCode).toBe(0);
+    expect(calls).toContain("/99.0.0/copy-ninjia-linux-x64.tar.gz.sha256");
+    expect(existsSync(join(target, "copy-ninjia"))).toBe(true);
   });
 
   test.each([

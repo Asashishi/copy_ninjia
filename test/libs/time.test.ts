@@ -9,6 +9,7 @@ import {
   getTokyoHour,
 } from "../../packages/libs/time";
 import type { CurrentTimeResult } from "../../packages/libs/time";
+import { TOKYO_TIME_ZONE } from "../../packages/consts/time";
 
 /**
  * formatTokyoTime 的固定 UTC+9 算术与 Intl 参照实现逐字符对拍；拼接顺序与补零
@@ -135,7 +136,7 @@ describe("libs/time getCurrentTime 与 getTokyoHour", () => {
     const current: CurrentTimeResult = getCurrentTime();
     const after: number = Date.now();
 
-    expect(current.timezone).toBe("Asia/Tokyo");
+    expect(current.timezone).toBe(TOKYO_TIME_ZONE);
     const parsed: number = Date.parse(current.iso);
     expect(parsed).toBeGreaterThanOrEqual(before - 1_000);
     expect(parsed).toBeLessThanOrEqual(after + 1_000);

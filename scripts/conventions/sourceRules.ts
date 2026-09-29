@@ -211,6 +211,13 @@ export function collectModuleCacheProblems({
 }
 
 /**
+ * 生产代码不得导入的类型聚合入口（AGENTS.md「类型与接口」）：仅供测试的 `types/antiRaid` 与
+ * `types/diskIO`，以及不存在、也不得重建的 `types` 目录入口（`types/index`）。生产代码必须
+ * 直接导入所属领域模块。
+ */
+const TEST_ONLY_TYPE_BARREL_PATTERN: RegExp = /(^|\/)types(\/index|\/antiRaid|\/diskIO)?$/;
+
+/**
  * `packages/` 通用的五条 AST 判定：领域类型入口、`console.error` 边界、导出函数
  * 返回类型、内联对象参数类型与 catch 绑定标注。
  */
@@ -224,18 +231,11 @@ export function collectDeclarationProblems({
   function visit(node: ts.Node): void {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const modulePath: string = node.moduleSpecifier.text;
-      const importsTypeIndex: boolean =
-        /(^|\/)types$/.test(modulePath) || /(^|\/)types\/index$/.test(modulePath);
-      const importsAntiRaidTypeBarrel: boolean =
-        /(^|\/)types\/antiRaid$/.test(modulePath);
-      if (
-        modulePath.startsWith(".") &&
-        (importsTypeIndex || importsAntiRaidTypeBarrel)
-      ) {
+      if (modulePath.startsWith(".") && TEST_ONLY_TYPE_BARREL_PATTERN.test(modulePath)) {
         problems.push(
           `${relativePath}:` +
           `${lineOf(source, node)} ` +
-          `production code must import from a domain type module instead of types/index`
+          `production code must import from a domain type module instead of the test-only barrel ${modulePath}`
         );
       }
     }

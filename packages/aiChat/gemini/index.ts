@@ -4,8 +4,8 @@
  * 本目录下的任何子模块。
  *
  * 四项必备能力（回复会话、纯文本、视觉、生图）之外，本包还实现语音转写与语音合成。
- * OpenAI 侧也实现语音转写，但不实现语音合成；调用方一律按「这个成员在不在」判断，
- * 不按供应商名字判断，见 types/aiChat/provider.ts 的模块头注。
+ * OpenAI 侧同样实现这两项；调用方一律按「这个成员在不在」判断，不按供应商名字判断，
+ * 见 types/aiChat/provider.ts 的模块头注。
  */
 
 import { generateGeminiImage } from "./image";

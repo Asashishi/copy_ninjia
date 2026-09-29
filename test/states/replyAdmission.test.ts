@@ -4,15 +4,20 @@ import {
   REPLY_ROUND_MAX_CONCURRENT,
   REPLY_TRIGGER_QUEUE_MAX,
 } from "../../packages/consts/aiChat/rateLimit";
-import { admitTrigger as decideTrigger, isReplyRoundRateLimited } from "../../packages/states/replyAdmission";
+import {
+  admitTrigger as decideTrigger,
+  isReplyRoundRateLimited,
+  replyRoundConcurrencyLimit,
+} from "../../packages/states/replyAdmission";
 import type { AdmitDecision, AdmitTriggerInput, TriggerKind } from "../../packages/types/states/replyAdmission";
 
 const ALL_KINDS: TriggerKind[] = ["direct", "random", "mediaDirect", "mediaRandom"];
 
 function admitTrigger(
-  input: Omit<AdmitTriggerInput, "telegramBackpressured" | "deliveryAvailable">
+  input: Omit<AdmitTriggerInput, "telegramBackpressured" | "deliveryAvailable" | "directRoundActive"> &
+    Partial<Pick<AdmitTriggerInput, "directRoundActive">>
 ): AdmitDecision {
-  return decideTrigger({ ...input, telegramBackpressured: false, deliveryAvailable: true });
+  return decideTrigger({ directRoundActive: false, ...input, telegramBackpressured: false, deliveryAvailable: true });
 }
 
 describe("admitTrigger：并发未满且队列已空", () => {
@@ -91,6 +96,7 @@ describe("admitTrigger：Telegram 发送面软背压", () => {
       queueSize: 0,
       kind: "random",
       telegramBackpressured: true,
+      directRoundActive: false,
       deliveryAvailable: true,
     })).toBe("dropSilently");
   });
@@ -101,6 +107,7 @@ describe("admitTrigger：Telegram 发送面软背压", () => {
       queueSize: 0,
       kind: "direct",
       telegramBackpressured: true,
+      directRoundActive: false,
       deliveryAvailable: true,
     })).toBe("enqueue");
   });
@@ -108,11 +115,36 @@ describe("admitTrigger：Telegram 发送面软背压", () => {
 
 test.each(ALL_KINDS)("存活轮次容量耗尽时 %s 不继续调用模型", (kind) => {
   for (const queueSize of [0, REPLY_TRIGGER_QUEUE_MAX - 1, REPLY_TRIGGER_QUEUE_MAX]) {
-    expect(decideTrigger({ activeRounds: 0, queueSize, kind, telegramBackpressured: false, deliveryAvailable: false })).toBe(
+    expect(decideTrigger({ activeRounds: 0, queueSize, kind, telegramBackpressured: false, directRoundActive: false, deliveryAvailable: false })).toBe(
       kind === "random" || kind === "mediaRandom"
         ? "dropSilently" : queueSize >= REPLY_TRIGGER_QUEUE_MAX ? "enqueueOverflow" : "enqueue"
     );
   }
+});
+
+describe("直接轮独立于有序并行上限", () => {
+  test("直接轮在模型阶段时另放行它自己这 1 轮，有序并行仍是满额", () => {
+    expect(replyRoundConcurrencyLimit(false, false)).toBe(REPLY_ROUND_MAX_CONCURRENT);
+    expect(replyRoundConcurrencyLimit(false, true)).toBe(REPLY_ROUND_MAX_CONCURRENT + 1);
+    // 直接轮 + 满额有序并行：再来一条就排队。
+    expect(admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT, queueSize: 0, kind: "direct", directRoundActive: true })).toBe("startRound");
+    expect(admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT + 1, queueSize: 0, kind: "direct", directRoundActive: true })).toBe("enqueue");
+    // 直接轮的模型阶段已结束：只按有序并行上限判定。
+    expect(admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT, queueSize: 0, kind: "direct" })).toBe("enqueue");
+  });
+
+  test("发送面高压时合计只放行 1 轮，直接轮不另加", () => {
+    expect(replyRoundConcurrencyLimit(true, false)).toBe(1);
+    expect(replyRoundConcurrencyLimit(true, true)).toBe(1);
+    expect(decideTrigger({
+      activeRounds: 1,
+      queueSize: 0,
+      kind: "direct",
+      telegramBackpressured: true,
+      directRoundActive: true,
+      deliveryAvailable: true,
+    })).toBe("enqueue");
+  });
 });
 
 describe("isReplyRoundRateLimited：限频闸", () => {

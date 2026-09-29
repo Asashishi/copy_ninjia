@@ -147,7 +147,7 @@ program は root・`logs/`・`memory/`・初期 `database/` を作り（前 3 �
   - **バックアップ**：純粋な副経路で、失っても動作は変わらない。書き込み失敗はその
     バッチの統計を失うだけ。現行形式に合わない内容へ書き換えられた場合（末尾の破断を
     除く）は起動を拒否して元のバイトを残すので、削除または修正してから起動する。
-  - **計量対象**：`text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent と Interactions はそれぞれの field を対応付け、出力に応答と thought token を含めます。OpenAI Responses、広告判定 Chat Completions、画像生成・編集、token 型の文字起こしは各 usage を読みます。`image_protocol: xai` の画像生成・編集は、token 数があれば token として記録し（キャッシュ命中は `input_tokens_details.cached_tokens`。片方だけのときは `missing` として診断し、記録しない）、両方が欠けているか null のときは `usage.cost_in_usd_ticks` を費用として記録します。provider は `openai` です。有効な usage は応答ごとに 1 回数え、空本文、decode 失敗、アプリ側 retry の各応答、取り消し後に届く SDK 応答も含みます。token 未提供や duration だけの応答は推定しません。TTS の 1 日の回数制限は別途 `memory/global/state.json` に保存します。
+  - **計量対象**：`text`、`summary`、`media`、`image`、`tts`、`ad_detect`。Google generateContent と Interactions はそれぞれの field を対応付け、出力に応答と thought token を含めます。OpenAI Responses、広告判定 Chat Completions、画像生成・編集、token 型の文字起こしは各 usage を読みます。`image_protocol: xai` の画像生成・編集は、token 数があれば token として記録し（キャッシュ命中は `input_tokens_details.cached_tokens`。片方だけのときは `missing` として診断し、記録しない）、両方が欠けているか null のときは `usage.cost_in_usd_ticks` を費用として記録します。provider は `openai` です。有効な usage は応答ごとに 1 回数え、空本文、decode 失敗、アプリ側 retry の各応答、取り消し後に届く SDK 応答も含みます。Gemini の明示キャッシュ（返信の共有キャッシュと広告検出のキャッシュ）は作成のたびに通常料金で課金され、それぞれ `text`・`ad_detect` 能力として入力＝キャッシュ token 数、命中 0、出力 0 の 1 件を記録します。そのキャッシュを参照するリクエストは応答の命中数どおりに記録します。token 未提供や duration だけの応答は推定しません。OpenAI audio/speech と xAI `/tts` の音声合成応答は usage を返さず、`tts/openai/missing` として 1 度診断し記録しません。TTS の 1 日の回数制限は別途 `memory/global/state.json` に保存します。
   - **記録欠落の診断**：`AI token usage unavailable` は capability、provider、reason だけを含みます。reason は `missing`（usage 欠落）、`invalid`（不正 usage）、`sink`（スレッド内の出口なし）、`duration`（時間だけ）、`transport`（出口送信失敗または主スレッド拒否）です。同じ出口の lifecycle 内で各組み合わせを 1 回だけ記録し、モデル名、本文、認証情報は含めません。診断 FIFO の超過は別の有界な破棄集計、書き込み失敗は Disk I/O のエラーで記録します。このファイルは best-effort の統計で、完全な請求記録ではありません。
 
 - **`logs/`**
@@ -220,9 +220,21 @@ bun run migrate:global-state \
 4. 起動前に新しいコードで [`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs` を呼び、全デプロイ入力を読み取り専用で検証します。
 5. 起動後は supervisor の再起動間隔を 2 回以上観察し、`active/running`、`NRestarts` が増えないこと、journal に新しい非ゼロ終了が無いことを確認します。すべて確認できてからバックアップを削除します。失敗時は現場を保持し、ロールバックでは旧コードとバックアップの `assets.json` を両方戻します。
 
+<a id="tts-speech-protocol"></a>
+
+### `agent.json` の音声プロトコル欄（手動）
+
+現在の parser（[`packages/config/agentCapability.ts`](../../packages/config/agentCapability.ts)）は、`agent.tts.provider` が `openai` のとき `speech_protocol` の宣言を必須とします。`"openai"` は OpenAI 互換 audio/speech、`"xai"` は xAI `/tts` を使い、それぞれのフィールド構成は [`config_example/README/ja.md`](../../config_example/README/ja.md) にあります。欠落または不正な値は外部接続の前に起動を拒否します。実行中にファイルをこの状態へ書き換えると、hot reload は `agent.json` 全体を拒否して直前の検証済みスナップショットを使い続け、正しく直すまで以後の変更もすべて拒否します。この移行で変わるのは `config/dynamic/agent.json` だけで、移行スクリプトはなく、起動時にフィールドを補うこともしません。`tts` セクションが無い、または `tts.provider` が `google` のデプロイは移行不要です。
+
+1. サービスを停止し、inactive・プロセス終了・`bot.lock` の解放を確認します。`mktemp -d` でワークツリー外に `config/` をバックアップし、ファイル一覧、mode、所有者、SHA-256 を記録して、コピーを 1 ファイルずつ照合します。
+2. `agent.tts` に `"speech_protocol": "openai"` を追加し、他のフィールドはそのまま保ちます。xAI `/tts` を使う場合は `"speech_protocol": "xai"` とし、`model` と `style` を削除します。`base_url` は省略でき、任意の `language` の既定値は `auto` です。
+3. mode と所有者を保ったままその場で書き換え、バックアップの一覧に対して `sha256sum -c` を実行し、変わったのが `dynamic/agent.json` だけであることを確認します。
+4. 起動前に新しいコードで [`packages/config/readiness.ts`](../../packages/config/readiness.ts) の `validateExistingDeploymentInputs` を呼び、全デプロイ入力を読み取り専用で検証します。
+5. 起動後は supervisor の再起動間隔を 2 回以上観察し、`active/running`、`NRestarts` が増えないこと、journal に新しい非ゼロ終了が無いことを確認します。すべて確認できてからバックアップを削除します。失敗時は現場を保持し、ロールバックでは旧コードとバックアップの `agent.json` を両方戻します。
+
 ### 古い構成からの段階的アップグレード
 
-データルートに `state.json` または `state.json.bak` が残る場合は、先に前回の全体状態移行を含むリリースとその手順を使い、状態を `memory/global/state.json`、素材設定を `config/dynamic/assets.json` へ移します。その後で上記の回数分割を実行し、[`assets.json` のグループ化移行](#assets-groups)で素材設定を書き換えます。さらに古い形式は各中間移行を順番に行い、現行スクリプトは複数の過去移行を連結しません。
+データルートに `state.json` または `state.json.bak` が残る場合は、先に前回の全体状態移行を含むリリースとその手順を使い、状態を `memory/global/state.json`、素材設定を `config/dynamic/assets.json` へ移します。その後で上記の回数分割を実行し、[`assets.json` のグループ化移行](#assets-groups)で素材設定を書き換えます。`agent.tts` が `openai` provider の場合は、[音声プロトコル欄](#tts-speech-protocol)に従って `speech_protocol` も追加します。さらに古い形式は各中間移行を順番に行い、現行スクリプトは複数の過去移行を連結しません。
 
 設定は `config/static/`（`bot.json`、`g-auth.json`）と `config/dynamic/`（その他のデプロイ JSON）に配置し、mode と所有者を保ちます。`dynamic/` は空でも必要です。起動と installer は旧状態パスや配置を誤った設定を拒否します。中間移行のために中間版を起動する必要はありません。
 
@@ -264,7 +276,7 @@ bun run migrate:random-image-names \
 
 ### 11.0.9 からの段階的なアップグレード
 
-11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、13.0.2 リリースの `migrate:h-image-add-permission` で v11 を生成します。Bot 設定も同様に 13.0.2 の `migrate:bot-config` で 13.x 形式へ移行します。その後、14.0.0 リリースの `migrate:translate-sessions` で 14.x 形式に到達させ、前回の全体状態移行を含むリリースで配置を変換してから、現在の入口で[音声回数の分割](#upgrade-15)を完了し、[`assets.json` のグループ化移行](#assets-groups)を行います。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは 13.0.2 の段階から始めます。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0、13.0.2 タグが必要で、各出力ディレクトリは未作成である必要があります。
+11.0.9 は schema v8 を使用し、三段階が必要です。独立ディレクトリで固定コミット `500e848faeda75dcae3c3329507f24d05137e3b9` の `migrate:ai-context` を実行して v9 を生成し、12.1.0 リリースの `migrate:clear-context-permission` で v10 を生成し、13.0.2 リリースの `migrate:h-image-add-permission` で v11 を生成します。Bot 設定も同様に 13.0.2 の `migrate:bot-config` で 13.x 形式へ移行します。その後、14.0.0 リリースの `migrate:translate-sessions` で 14.x 形式に到達させ、前回の全体状態移行を含むリリースで配置を変換してから、現在の入口で[音声回数の分割](#upgrade-15)を完了し、[`assets.json` のグループ化移行](#assets-groups)を行い、`agent.tts` が `openai` provider の場合は[音声プロトコル欄](#tts-speech-protocol)の変更も行います。全工程でサービスを停止したままにし、中間バージョンのアプリは起動しません。すでに 12.x（schema v10）のデプロイは 13.0.2 の段階から始めます。以下の実行前に、上節の手順で `memory/ai/` と SQLite WAL/SHM を含む外部の整合バックアップを取得してください。Git リポジトリには固定コミットと 12.1.0、13.0.2 タグが必要で、各出力ディレクトリは未作成である必要があります。
 
 中間ソースはこの手順の必須入力です。11.0.9 タグまたは現行ソースアーカイブだけを持つ環境では、先に固定コミットの完全なソースを取得してください。リリース前にそのソースを独立して保持・提供し、squash 後に reset される dev 履歴だけに依存しないでください。
 
@@ -398,6 +410,7 @@ token fingerprint は lock owner の識別用であり、データ隔離境界�
 - `/send TTS for chat <id> produced no voice: <理由>`：`/send` 中継の音声 request が音声を合成できませんでした。理由の読み方は上と同じです。スーパー管理者の個人チャットにも失敗の一言が届き、中継セッションは開いたままです。
 - `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：複数の会話に送るタスク（`["all"]`、`["except", ...]`、または複数を個別に列挙）がある会話で最終的に失敗し、その会話の残りの動作だけを飛ばしました。他のグループには通常どおり送ります。原因の読み方は上と同じです。`Cron task "<name>" skipped <n> chat(s) without send permission.` は通常ログで、Bot に送信権限がないか照会に失敗したためにその回で飛ばしたグループがあったことを示します。
 - `Failed to probe chat membership` / `Failed to ban chat member` が `PARTICIPANT_ID_INVALID` で終わる場合、通常はブロックリストに退会済みアカウントがあります。sweep は通常の backoff で retry を続けます。1 chat での 1 回の sweep 処分ですべての要求がこのエラーを返すと 1 回と数え、いずれかの chat でそのユーザーを確認または BAN できれば 0 に戻ります。5 回に達するとブロックリストと待機中の処分から自動で外し、`Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results` を記録します。`/wed` の日次再確認は同じエラーでその ID を候補集合から外し、error log は残しません。
+- `Gemini context cache API` / `Gemini ad detection cache API`（返信 / 広告検出の Gemini 明示 cache）：`create rejected: 400 …` は warn で、cache 内容が使用 model の明示 cache 下限に届かないか引数が受け付けられなかったことを示します。同じ内容では再試行せず、request は cache なしでそのまま送ります。`create failed`・`renew failed` は一時的な失敗で、`GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS`（10 分）後に再試行し、その間も request は通常どおり動きます。
 
 ---
 

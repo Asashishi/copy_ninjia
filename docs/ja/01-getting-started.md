@@ -163,7 +163,9 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     （`tts` が無いと `/send` の TTS request も error になり、`cron.json` が `send_voice` を使うなら
     起動を拒否します）、`ad_detect` が無い場合は広告検出だけを止めます。OpenAI 画像能力では
     `image_protocol`（`openai`、`openai-standard`、`xai`）も必須です。`tts` には空でない `voice`
-    （prebuilt voice 名、または AI Studio Voice design の `voice_` voice ID）も必須で、任意で
+    （Google は prebuilt voice 名または AI Studio Voice design の `voice_` voice ID、OpenAI と xAI はそれぞれの voice 名）も必須です。
+    `provider` が `openai` の `tts` は `speech_protocol` も必須で、`openai` は OpenAI 互換 audio/speech、
+    `xai` は xAI `/v1/tts`（`model` と `style` は受け付けず、任意の `language` は既定 `auto`）を使います。`google` ではこの field を受け付けません。任意で
     `daily_limit`（1 日のボイス回数上限、既定 100）と `daily_reserve_quota`（そのうち `/send` と cron
     のために残す回数、既定 25、`daily_limit` 未満）を指定できます。AI と予約枠は別々に数えて互いに借りず、予約枠 0 では `/send` と cron は合成しません。`base_url` は
     `https` のみを受け付け、平文 `http` は `localhost`・`127.0.0.1`・`::1` に限られます。
@@ -179,7 +181,7 @@ runtime data を移す場合は process environment に `COPY_NINJIA_DATA_ROOT` 
     （後者は `$.agent.media` を指す診断を 1 行記録）はどちらも以後 download しません。
     一時的な障害は回数に応じた backoff だけで、能力を恒久的に閉じることはありません。
     hot reload で `media` 能力が差し替わると、2 種類の入力を改めて probe します。
-  - **朗読スタイル**：任意の `agent.tts.style` は trim 後に空でない文字列とし、省略時は `GEMINI_SPEECH_STYLE` を使います。hot reload は新しい request に反映され、項目削除で既定値に戻ります。[音声設定](../../config_example/README/ja.md)を参照してください。
+  - **朗読スタイル**：任意の `agent.tts.style` は trim 後に空でない文字列とし、省略時は `TTS_DEFAULT_STYLE` を使います。`speech_protocol: "xai"` ではこの field を受け付けません。hot reload は新しい request に反映され、項目削除で既定値に戻ります。[音声設定](../../config_example/README/ja.md)を参照してください。
 
 恒久 allowlist、blocklist、一時 allowlist activity、未完了 removal は deployment JSON ではなく、runtime data root の
 `database/storage.sqlite` にあります。Disk I/O Worker は startup 時に SQLite integrity、

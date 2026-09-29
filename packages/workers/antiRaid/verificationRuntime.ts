@@ -126,6 +126,7 @@ export function dispatchVerification(
       verificationEntries.set(key, {
         state: next,
         timer: startVerificationTimer(chatId, userId, next),
+        terminalRetries: 0,
       });
     }
   } else if (rescheduleTimer && entry !== undefined && next !== undefined) {
@@ -268,6 +269,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     verificationEntries.set(key, {
       state,
       timer: startVerificationTimer(record.chatId, record.userId, state),
+      terminalRetries: 0,
     });
     if (state.kind === "pending" && record.expiresAt <= now) {
       dispatchVerification(

@@ -65,15 +65,6 @@ export const GEMINI_SPEECH_REQUEST_ATTEMPTS: number = 3;
 export const GEMINI_SPEECH_TEMPERATURE: number = 1;
 
 /**
- * 语音合成未配置 agent.tts.style 时的默认基础风格，经 `speech_metadata.style` 随台词提交；调用方给出
- * 本句语气时以 GEMINI_SPEECH_TONE_SEPARATOR 接在它之后（见 aiChat/gemini/speech.ts）。
- */
-export const GEMINI_SPEECH_STYLE: string = "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色";
-
-/** 基础朗读风格与本句语气之间的连接段，拼成 `<基础风格>; 细节: <语气，其他要求>`。 */
-export const GEMINI_SPEECH_TONE_SEPARATOR: string = "; 细节: ";
-
-/**
  * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
  * 超时上限。media 有独立档位，见下一个常量；语音合成另见
  * GEMINI_SPEECH_REQUEST_TIMEOUT_MS。
@@ -115,3 +106,19 @@ export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
 export const GEMINI_SERVER_TOOL_CONFIG: Readonly<ToolConfig> = {
   includeServerSideToolInvocations: true,
 };
+
+/**
+ * 回复共用显式缓存（text scope）的 displayName 前缀，后接「分槽指纹:内容指纹」两段
+ * 指纹（形态见 consts/geminiContextCache.ts 的 GEMINI_CONTEXT_CACHE_KEY_PATTERN）。
+ * 启动扫描只接管或清理带这个前缀的条目。所属模块：aiChat/gemini/contextCache.ts。
+ */
+export const GEMINI_TEXT_CACHE_DISPLAY_NAME_PREFIX: string = "copy-ninjia:text:";
+
+/**
+ * 回复共用显式缓存同时登记的分槽上限。一个槽对应一份系统提示词（默认人设一槽，设了
+ * 自定义人设的群各一槽）；超出时删掉最久未用的槽。所属模块：aiChat/gemini/contextCache.ts。
+ */
+export const GEMINI_TEXT_CACHE_MAX_SLOTS: number = 4;
+
+/** 回复共用显式缓存的创建、续期、删除与扫描在日志里的调用名。所属模块：aiChat/gemini/contextCache.ts。 */
+export const GEMINI_TEXT_CACHE_ERROR_LABEL: string = "Gemini context cache API";

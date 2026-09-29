@@ -4,6 +4,12 @@ import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
 
 type LockdownPermissionsApi = Pick<TelegramApi, "getChat" | "setChatPermissions">;
 
+export interface RestoreLockdownInvitePermissionParams {
+  chatId: number;
+  originalPermissions: ChatPermissions;
+  api: LockdownPermissionsApi;
+}
+
 /**
  * 恢复 Anti-Raid 私密模式拥有的邀请权限。其它默认权限一律以 Telegram 当前
  * 值为准，避免覆盖管理员在锁定期间对媒体、投票等字段的并发修改；管理员已
@@ -16,12 +22,6 @@ type LockdownPermissionsApi = Pick<TelegramApi, "getChat" | "setChatPermissions"
  * 该边界同时供 Worker 正常恢复和主线程 onGiveUp 紧急恢复使用，保证两条
  * 路径不会逐渐产生不同的权限合并语义。
  */
-export interface RestoreLockdownInvitePermissionParams {
-  chatId: number;
-  originalPermissions: ChatPermissions;
-  api: LockdownPermissionsApi;
-}
-
 export async function restoreLockdownInvitePermission({
   chatId,
   originalPermissions,

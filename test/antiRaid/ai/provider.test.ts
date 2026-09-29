@@ -20,7 +20,9 @@ const { requestAdDetectJson } = await import("../../../packages/antiRaid/ai/prov
 
 const params: AdDetectJsonRequestParams = {
   model: "ad-model",
-  systemPrompt: "只输出 JSON",
+  instructions: "只输出 JSON",
+  fact: "【系统事实】夹具事实",
+  systemPrompt: "只输出 JSON\n【系统事实】夹具事实",
   userContent: "1. 在吗",
   temperature: 0.5,
   maxOutputTokens: 256,

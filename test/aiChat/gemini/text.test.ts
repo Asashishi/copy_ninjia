@@ -9,6 +9,8 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { GenerateContentParameters } from "@google/genai";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { CHAT_SUMMARY_ERROR_LABEL } from "../../../packages/consts/aiChat/memory";
+import { VOICE_TRANSCRIPTION_ERROR_LABEL } from "../../../packages/consts/aiChat/voice";
 
 const requestGeminiTextResult = mock(async (..._args: unknown[]): Promise<AiTextResult> => ({ ok: true, text: "ok" }));
 
@@ -46,7 +48,7 @@ describe("纯文本生成", () => {
     expect(body.config?.systemInstruction).toBe("把下面的对话压成一句话");
     expect(body.config?.temperature).toBe(GEMINI_SUMMARY_TEMPERATURE);
     expect(body.config?.maxOutputTokens).toBe(GEMINI_CHAT_SUMMARY_MAX_TOKENS);
-    expect(options.errorLabel).toBe("AI summarize API");
+    expect(options.errorLabel).toBe(CHAT_SUMMARY_ERROR_LABEL);
     expect(body.config?.abortSignal).toBe(controller.signal);
     expect(options.signal).toBe(controller.signal);
   });
@@ -134,7 +136,7 @@ describe("语音转写", () => {
       ],
     }]);
     expect((requestGeminiTextResult.mock.calls[0]![0] as { errorLabel: string }).errorLabel)
-      .toBe("AI voice transcription API");
+      .toBe(VOICE_TRANSCRIPTION_ERROR_LABEL);
   });
 
   test("转写档的 token 上限高于媒体描述档：逐字还原比概括长得多", async () => {

@@ -24,8 +24,8 @@ import type { BotProcessStatus } from "../types/botStatus";
 import type { BotChatPermissions } from "../types/telegram";
 import type {
   AdDetectAgentConfig,
-  AgentCapabilityConfig,
   AgentDeploymentConfig,
+  AgentTtsCapabilityConfig,
 } from "../types/config";
 import { rejectUnlessPermitted } from "./commandActor";
 
@@ -62,14 +62,18 @@ function statusLabel(value: string): string {
 /**
  * 只展示模型名：不带 provider，并去掉模型 id 里最后一个 `/` 之前的厂商命名空间
  * （`openai/gpt-6-luna` 展示为 `gpt-6-luna`）。
+ * @param model 该能力展示用的名字；undefined 表示该能力未配置。
  */
-function capabilityLine(
-  label: string,
-  config: AgentCapabilityConfig | undefined
-): string {
-  if (config === undefined) return `• ${label}：未配置`;
-  const modelName: string = config.model.slice(config.model.lastIndexOf("/") + 1);
+function capabilityLine(label: string, model: string | undefined): string {
+  if (model === undefined) return `• ${label}：未配置`;
+  const modelName: string = model.slice(model.lastIndexOf("/") + 1);
   return `• ${label}：已配置 · ${statusLabel(modelName)}`;
+}
+
+/** 语音合成行展示的名字：xai 协议没有模型名，展示音色；未配置时为 undefined。 */
+function ttsStatusName(tts: AgentTtsCapabilityConfig | undefined): string | undefined {
+  if (tts === undefined) return undefined;
+  return tts.speechProtocol === "xai" ? tts.voice : tts.model;
 }
 
 /** 把进程 uptime 格式化为不会随本地时区变化的天与时分秒。 */
@@ -162,7 +166,8 @@ function featuresJson(chatState: Readonly<ChatState>): string {
 }
 
 /**
- * 模型能力只展示模型名，不输出 provider、api_key、base_url 或配置失败细节。
+ * 模型能力只展示模型名（xai 语音协议没有模型名，展示音色），不输出 provider、api_key、base_url
+ * 或配置失败细节。
  *
  * 本群 id 用 `code` 实体，权限块与功能块用 `pre` 实体标出范围，而不是拼反引号：本项目的发送
  * 边界一律不设 parse_mode（见 infra/telegram/actions/messages.ts），反引号只会原样显示。
@@ -190,15 +195,15 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
   if (!snapshot.aiReady || snapshot.aiConfig === null) {
     lines.push("• AI 对话能力：不可用（部署配置未就绪）");
   } else {
-    lines.push(capabilityLine("群聊正文", snapshot.aiConfig.text));
-    lines.push(capabilityLine("记忆摘要", snapshot.aiConfig.summary));
-    lines.push(capabilityLine("媒体理解", snapshot.aiConfig.media));
-    lines.push(capabilityLine("图片生成", snapshot.aiConfig.image));
-    lines.push(capabilityLine("语音合成", snapshot.aiConfig.tts));
+    lines.push(capabilityLine("群聊正文", snapshot.aiConfig.text.model));
+    lines.push(capabilityLine("记忆摘要", snapshot.aiConfig.summary.model));
+    lines.push(capabilityLine("媒体理解", snapshot.aiConfig.media.model));
+    lines.push(capabilityLine("图片生成", snapshot.aiConfig.image?.model));
+    lines.push(capabilityLine("语音合成", ttsStatusName(snapshot.aiConfig.tts)));
   }
   lines.push(
     snapshot.adDetectReady && snapshot.adDetectConfig !== null
-      ? capabilityLine("广告检测", snapshot.adDetectConfig)
+      ? capabilityLine("广告检测", snapshot.adDetectConfig.model)
       : "• 广告检测：不可用（部署配置未就绪）"
   );
   lines.push(

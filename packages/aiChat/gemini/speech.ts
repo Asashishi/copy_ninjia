@@ -8,7 +8,8 @@
  * 服务端对非流式请求默认回 `audio/wav`（24 kHz 单声道 16 bit PCM）；
  * `generation_config` 指定音色与采样温度。
  * 音色取自 config/dynamic/agent.json 的 `agent.tts.voice`，经 `speech_config[].voice` 原样
- * 传入；基础风格取同一配置快照的 style，温度取自 consts/aiChat/gemini.ts。
+ * 传入；基础风格取同一配置快照的 style，与本句语气由 ai/utils/speechStyle.ts 拼接，
+ * 温度取自 consts/aiChat/gemini.ts。
  *
  * 超时与重试逐次显式传参：SDK 的 Interactions 客户端不继承构造期的
  * `httpOptions.retryOptions`，重试次数按 GEMINI_SPEECH_REQUEST_ATTEMPTS 声明；
@@ -26,13 +27,13 @@ import {
   GEMINI_SPEECH_REQUEST_ATTEMPTS,
   GEMINI_SPEECH_REQUEST_TIMEOUT_MS,
   GEMINI_SPEECH_TEMPERATURE,
-  GEMINI_SPEECH_TONE_SEPARATOR,
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import { reportGeminiInteractionUsage } from "../../infra/aiCacheUsage";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { decodeSynthesizedSpeech } from "../ai/utils/speechPayload";
+import { composeSpeechStyle } from "../ai/utils/speechStyle";
 import { getGeminiClient } from "./client";
 import type { AiSpeechRequest } from "../../types/aiChat/provider";
 import type { SynthesizedSpeech, SynthesizedSpeechDecodeResult } from "../../types/aiChat/voiceMessage";
@@ -74,13 +75,9 @@ interface SpeechInteractionOutput {
 /**
  * 构造携带台词与朗读风格的文本块。
  * @param text 要念出来的台词。
- * @param tone 本句说话语气；给出时经 GEMINI_SPEECH_TONE_SEPARATOR 接在配置的基础风格之后。
- * @param baseStyle 本次请求配置快照中的基础风格。
+ * @param style 基础风格与本句语气拼好的风格说明（见 ai/utils/speechStyle.ts）。
  */
-function speechTextContent(text: string, tone: string | undefined, baseStyle: string): Interactions.TextContent {
-  const style: string = tone === undefined
-    ? baseStyle
-    : baseStyle + GEMINI_SPEECH_TONE_SEPARATOR + tone;
+function speechTextContent(text: string, style: string): Interactions.TextContent {
   const annotation: SpeechMetadataAnnotation = { type: "speech_metadata", style };
   return {
     type: "text",
@@ -98,12 +95,12 @@ export async function synthesizeGeminiSpeech({ text, tone, signal }: AiSpeechReq
     const client: GoogleGenAI = getGeminiClient("tts");
     // 模型、音色与风格使用同一份配置快照，配置读取失败归一成一次普通失败。
     const tts: AgentTtsCapabilityConfig | undefined = getAgentDeploymentConfig().tts;
-    if (tts === undefined) throw new Error('Agent capability "tts" is not configured.');
+    if (tts?.provider !== "google") throw new Error('Agent capability "tts" is not configured for the Google provider.');
     interaction = await raceAbortOrThrow(
       client.interactions.create(
         {
           model: tts.model,
-          input: [{ type: "user_input", content: [speechTextContent(text, tone, tts.style)] }],
+          input: [{ type: "user_input", content: [speechTextContent(text, composeSpeechStyle(tts.style, tone))] }],
           response_format: { type: "audio" },
           generation_config: speechGenerationConfig(tts.voice),
         },

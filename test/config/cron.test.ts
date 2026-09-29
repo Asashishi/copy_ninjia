@@ -1,4 +1,3 @@
-import { GEMINI_SPEECH_STYLE } from "../../packages/consts/aiChat/gemini";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -12,10 +11,10 @@ import {
   parseCronConfig,
 } from "../../packages/config/cron";
 import { adoptAgentDeploymentConfig } from "../../packages/config/agent";
-import { VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_STYLE, VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
 import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../../packages/consts/paths";
-import { CRON_RANDOM_INTERVAL_MAX_MS, CRON_RANDOM_INTERVAL_MIN_MS } from "../../packages/consts/cron";
+import { CRON_DEFAULT_TIME_ZONE, CRON_RANDOM_INTERVAL_MAX_MS, CRON_RANDOM_INTERVAL_MIN_MS } from "../../packages/consts/cron";
 import type { CronConfig } from "../../packages/types/cron";
 import { TEST_DATA_ROOT } from "../preloadEnv";
 
@@ -45,7 +44,7 @@ afterEach(() => {
   adoptCronConfig(null);
 });
 
-const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, headers: undefined, voice: "Leda", style: GEMINI_SPEECH_STYLE, dailyLimit: 100, dailyReserveQuota: 25 };
+const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, headers: undefined, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 };
 
 /** 只关心 tts 段的 agent 快照；对话核心能力段在这些用例里不被读取。 */
 function agentWith(tts: AgentTtsCapabilityConfig | undefined): AgentDeploymentConfig {
@@ -115,7 +114,7 @@ describe("parseCronConfig", () => {
       name: "daily",
       chatTargets: { kind: "list", chatIds: [-1001] },
       cron: "0 9 * * *",
-      timeZone: "Asia/Tokyo",
+      timeZone: CRON_DEFAULT_TIME_ZONE,
       randomInterval: undefined,
       justOnce: false,
       actions: [{ type: "send_message", content: "hi" }],

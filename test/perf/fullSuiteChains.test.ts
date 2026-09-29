@@ -150,7 +150,7 @@ test.each(["complete", "missing", "stale"])("AI 快照链路先持久化群行�
 });
 
 describe("cron 语音链路", () => {
-  const ENCODED: EncodedVoiceMessage = { bytes: new Uint8Array([0x4f, 0x67, 0x67, 0x53]), durationSeconds: 11 };
+  const ENCODED: EncodedVoiceMessage = { bytes: new Uint8Array([0x4f, 0x67, 0x67, 0x53]), durationSeconds: 11, fileName: "voice.ogg" };
   const VOICE: VoiceSynthesisResult = { ok: true, voice: ENCODED };
 
   function voiceChain(overrides: Partial<CommandChainDependencies>): {

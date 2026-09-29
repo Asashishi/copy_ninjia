@@ -200,9 +200,10 @@ validate_staged_agent_config() {
 
 # API key 只保存在问答局部变量和数组里；生成完成或失败后立即清空。
 clear_agent_config_inputs() {
-  unset api_key provider model base_url image_protocol voice
+  unset api_key provider model base_url image_protocol speech_protocol voice
   unset AGENT_CONFIG_NAMES AGENT_CONFIG_PROVIDERS AGENT_CONFIG_API_KEYS
-  unset AGENT_CONFIG_MODELS AGENT_CONFIG_BASE_URLS AGENT_CONFIG_IMAGE_PROTOCOLS AGENT_CONFIG_VOICES
+  unset AGENT_CONFIG_MODELS AGENT_CONFIG_BASE_URLS AGENT_CONFIG_IMAGE_PROTOCOLS
+  unset AGENT_CONFIG_SPEECH_PROTOCOLS AGENT_CONFIG_VOICES
 }
 
 # EXIT 只清理尚未提交的候选文件；外部备份不能在失败路径被顺手删掉。

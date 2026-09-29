@@ -11,6 +11,7 @@
  */
 
 import { GROUP_QA_ANSWER_TOOL, GROUP_QA_QUERY_TOOL } from "../../../../consts/tools";
+import { TOOL_STATUS_POINTER } from "../../../../consts/aiChat/prompts/tools";
 import { toolError } from "../../utils/toolResult";
 import type { AiToolDefinition } from "../../../../types/aiChat/provider";
 
@@ -20,21 +21,19 @@ interface GroupQaAnswerArguments {
 }
 
 /**
- * 本群没有问答时给空表，两个工具都不挂。
+ * 两个问答工具的声明，每轮恒挂、逐字恒定。
  *
- * 不挂比挂一个空工具好：模型看不到的工具不会被调用，也就不会为一个注定返回
- * 「本群没有问答」的东西白费一次工具往返。
+ * 本群有没有登记问答只写进运行时状态区块的本轮工具状态（见 toolStatus.ts 的问答行），
+ * 工具清单不随群变化；没登记的群调用时由执行器如实返回空清单或未找到。
  */
-export function buildGroupQaToolDefinitions(
-  entries: ReadonlyMap<string, string> | undefined
-): readonly AiToolDefinition[] {
-  if (entries === undefined || entries.size === 0) return [];
+export function buildGroupQaToolDefinitions(): readonly AiToolDefinition[] {
   return [
     {
       name: GROUP_QA_QUERY_TOOL,
       description:
         "列出本群已登记的问答问题清单。当前这句话像是在问其中某一条时，先用这个工具" +
-        "看清单，再判断语义是否足够接近；接近才调 group_qa_answer 取答案。",
+        "看清单，再判断语义是否足够接近；接近才调 group_qa_answer 取答案。" +
+        `本群有没有登记问答，见 ${TOOL_STATUS_POINTER}；显示没有登记时不要调用。`,
       parametersJsonSchema: { type: "object", properties: {}, required: [] },
     },
     {

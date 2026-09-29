@@ -25,13 +25,21 @@ function firstInstallPrompts(ai: boolean): PromptReply[] {
     for (const capability of ["ad_detect", "text", "summary", "media", "image", "tts"]) {
       const enabled: boolean = ["text", "summary", "media", "tts"].includes(capability);
       prompts.push({ prompt: `配置 ${capability}？`, reply: enabled ? "y" : "n" });
-      if (enabled) {
+      if (capability === "tts") {
+        // xai 语音协议：问 speech_protocol、不问 model，openai provider 另问可留空的 base_url。
+        prompts.push(
+          { prompt: "tts 的 provider", reply: "openai" },
+          { prompt: "tts 的 api_key", reply: "installation-test-api-key", secret: true },
+          { prompt: "tts 的 speech_protocol", reply: "xai" },
+          { prompt: "tts 的 base_url", reply: "" },
+          { prompt: "tts 的 voice", reply: "ara" }
+        );
+      } else if (enabled) {
         prompts.push(
           { prompt: `${capability} 的 provider`, reply: "google" },
           { prompt: `${capability} 的 api_key`, reply: "installation-test-api-key", secret: true },
           { prompt: `${capability} 的 model`, reply: "installation-test-model" }
         );
-        if (capability === "tts") prompts.push({ prompt: "tts 的 voice", reply: "Leda" });
       }
     }
   }
@@ -56,7 +64,13 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
   if (ai) {
     const agent: { readonly agent: Readonly<Record<string, Readonly<Record<string, unknown>>>> } =
       await Bun.file(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json")).json();
-    expect(agent.agent.tts).toMatchObject({ provider: "google", model: "installation-test-model", voice: "Leda" });
+    expect(agent.agent.tts).toEqual({
+      provider: "openai",
+      api_key: "installation-test-api-key",
+      speech_protocol: "xai",
+      voice: "ara",
+    });
+    expect(output).not.toContain("tts 的 model");
   }
   expect(await Bun.file(join(fixture.runtimeRoot, "database/storage.sqlite")).exists()).toBe(true);
   // 全新部署没有需要持久化的全局状态，启动不写状态文件。

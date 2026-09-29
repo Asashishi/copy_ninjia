@@ -265,7 +265,7 @@ describe("AI 群聊转录身份格式", () => {
     expect(transcript).not.toContain("【较早逐字记录（次要背景）】");
     expect(transcript).toContain(`【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】`);
     // 一个人都没有时不拼【转发来源名册】那一段，避免给模型一段空表。
-    expect(transcript).not.toContain("【转发来源名册】");
+    expect(transcript).not.toContain(FORWARD_ROSTER_BLOCK_NAME);
     expect(transcript.endsWith("\n")).toBe(true);
   });
 

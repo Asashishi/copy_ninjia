@@ -2,9 +2,10 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { waitUntil as pollUntil } from "../../helpers/waitUntil";
 import type { ReplyToolContext } from "../../../packages/types/aiChat/replies";
 import type { StickerPackCandidate } from "../../../packages/types/stickers/tools";
-import type { ChatActionHeartbeatControl } from "../../../packages/types/aiChat/chatAction";
+import type { ChatActionControl, ChatActionPhase } from "../../../packages/types/aiChat/chatAction";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 import type { AiReplySession, AiReplyTurn, AiToolOutput } from "../../../packages/types/aiChat/provider";
+import type { SpeechSynthesisAttempt } from "../../../packages/types/aiChat/voiceMessage";
 import { sineWav } from "../../helpers/wav";
 
 const sendMessage = mock(async (_params: unknown): Promise<TelegramSendResult | undefined> => ({ messageId: 101 }));
@@ -14,21 +15,21 @@ const sendVoice = mock(async (_params: unknown): Promise<TelegramSendResult | un
 const reaction = mock(async (_params: unknown): Promise<boolean> => true);
 const sleep = mock(async (_ms: number, _signal?: AbortSignal): Promise<void> => {});
 const generateImage = mock(async (_params: unknown) => ({ bytes: new Uint8Array([1]), mimeType: "image/png" as const }));
-const synthesizeSpeech = mock(async (_params: unknown) => ({
+const synthesizeSpeech = mock(async (_params: unknown): Promise<SpeechSynthesisAttempt> => ({
   ok: true as const,
   speech: { bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" },
 }));
-const heartbeatControls: ChatActionHeartbeatControl[] = [];
 let session: AiReplySession;
-function heartbeat(): ChatActionHeartbeatControl {
-  const control: ChatActionHeartbeatControl = {
-    current: (): "idle" => "idle",
-    set: mock((): void => {}),
+/** 本轮心跳句柄替身：切挡与收敛按先后记进 events，发送替身也写同一份日志。 */
+const events: string[] = [];
+function chatActionControl(): ChatActionControl {
+  return {
+    set: mock((phase: ChatActionPhase): number => {
+      events.push(phase);
+      return 0;
+    }),
     settle: mock(async (): Promise<void> => {}),
-    stop: mock(async (): Promise<void> => {}),
   };
-  heartbeatControls.push(control);
-  return control;
 }
 const menu: readonly StickerPackCandidate[] = [{
   pack: "cats",
@@ -56,7 +57,6 @@ mock.module("../../../packages/aiChat/ai/tools/stickers", () => ({
   ...realStickers,
   buildStickerPackMenu: async (): Promise<readonly StickerPackCandidate[]> => menu,
 }));
-mock.module("../../../packages/aiChat/ai/chatActionHeartbeat", () => ({ startChatActionHeartbeat: heartbeat }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({ generateChatImage: generateImage }));
 mock.module("../../../packages/aiChat/provider", () => ({
@@ -70,6 +70,7 @@ const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/r
 const { generateReply } = await import("../../../packages/workers/aiChat/replyModel");
 const { resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
 const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
+const { VOICE_FOREGROUND_WAIT_MS } = await import("../../../packages/consts/aiChat/voiceMessage");
 const { TELEGRAM_CAPTION_MAX_CHARS } = await import("../../../packages/consts/telegram");
 const { runTelegramCategorizedRequest } = await import("../../../packages/infra/telegram/outboundGate");
 const { initTelegramOutbound, drainTelegramOutbound, telegramOutboundStats } = await import("../../../packages/infra/telegram/outboundLifecycle");
@@ -81,8 +82,8 @@ function context(controller: AbortController = new AbortController()): ReplyTool
     messageThreadId: 7,
     mediaToolsRequested: true,
     bypassMediaToolCooldown: true,
-    chatAction: heartbeat(),
-    stickerLock: { tryAcquire: (): boolean => true, release: (): void => {} },
+    direct: false,
+    chatAction: chatActionControl(),
     roundHasTypo: false,
     signal: controller.signal,
     isActive: (): boolean => !controller.signal.aborted,
@@ -99,7 +100,7 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
 }
 
 beforeEach(() => {
-  heartbeatControls.length = 0;
+  events.length = 0;
   resetImageGenerationCache();
   sendMessage.mockReset().mockResolvedValue({ messageId: 101 });
   sendSticker.mockReset().mockResolvedValue(102);
@@ -108,7 +109,7 @@ beforeEach(() => {
   reaction.mockReset().mockResolvedValue(true);
   sleep.mockReset().mockResolvedValue();
   generateImage.mockReset().mockResolvedValue({ bytes: new Uint8Array([1]), mimeType: "image/png" });
-  synthesizeSpeech.mockReset().mockImplementation(async () => ({
+  synthesizeSpeech.mockReset().mockImplementation(async (): Promise<SpeechSynthesisAttempt> => ({
     ok: true as const,
     speech: { bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" },
   }));
@@ -228,8 +229,9 @@ test("媒体生成挂起时模型继续调用，长图注预算在接纳时预�
     expect(receipt.actions_used).toBe(2);
     expect(receipt.queued).toBe(true);
     expect(JSON.parse(await toolset.execute("send_message", JSON.stringify({ text: caption }))).skipped).toBe("duplicate");
+    // 语音在工具调用内合成（回执带真实结果），不受前面挂起的生图阻塞；发送仍按调用顺序排在图后面。
     expect(JSON.parse(await toolset.execute("send_voice", '{"text":"バカ"}')).queued).toBe(true);
-    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     expect(sendVoice).not.toHaveBeenCalled();
     expect(sendPhoto).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
@@ -291,11 +293,12 @@ test("错字补发先预占额度并判重，只在原消息真实发送完成�
   }
 });
 
-test("已接纳链取消后不发送，settle 等待链及心跳全部停止", async () => {
+test("已接纳链取消后不发送，settle 等链收尾并把本轮状态收回 idle", async () => {
   const paused = Promise.withResolvers<void>();
   sleep.mockImplementation(() => paused.promise);
   const controller = new AbortController();
-  const toolset = await createReplyToolset(context(controller));
+  const ctx = context(controller);
+  const toolset = await createReplyToolset(ctx);
   await toolset.execute("send_message", '{"text":"取消消息"}');
   let settled: boolean = false;
   const draining: Promise<void> = toolset.settle().then((): void => { settled = true; });
@@ -306,7 +309,7 @@ test("已接纳链取消后不发送，settle 等待链及心跳全部停止", a
   await draining;
   expect(sendMessage).not.toHaveBeenCalled();
   expect(toolset.actionsCompleted()).toBe(0);
-  expect(heartbeatControls[1]!.stop).toHaveBeenCalledTimes(1);
+  expect(ctx.chatAction.set).toHaveBeenLastCalledWith("idle");
 });
 
 test("429 由原出站队列重试，view 不等冷却，完成时仅回调一次", async () => {
@@ -358,9 +361,306 @@ test("取消已经进入 429 队列的发送链会摘掉重试项，且不会回
     expect(ctx.onMessageSent).not.toHaveBeenCalled();
     expect(toolset.actionsCompleted()).toBe(0);
     expect(toolset.actionsUsed()).toBe(1);
-    expect(heartbeatControls[1]!.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.chatAction.set).toHaveBeenLastCalledWith("idle");
   } finally {
     controller.abort();
     await toolset.settle();
   }
+});
+
+test("聊天状态按工具调用顺序串行：前一条消息模拟输入期间，查看贴纸不亮状态，后续贴纸与语音不抢状态", async () => {
+  const typing = Promise.withResolvers<void>();
+  sleep.mockImplementationOnce(() => typing.promise);
+  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("message sent");
+    return { messageId: 101 };
+  });
+  sendSticker.mockImplementation(async (): Promise<number> => {
+    events.push("sticker sent");
+    return 102;
+  });
+  sendVoice.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("voice sent");
+    return { messageId: 104 };
+  });
+  const toolset = await createReplyToolset(context());
+  try {
+    await toolset.execute("send_message", '{"text":"先说一句"}');
+    await toolset.execute("view_sticker_pack", '{"pack_index":1,"intent":"打招呼"}');
+    await toolset.execute("send_sticker", '{"pack_index":1,"sticker_index":1}');
+    expect(JSON.parse(await toolset.execute("send_voice", '{"text":"バカ"}')).success).toBe(true);
+    // 语音已在调用时合成完，但链上还停在第一条消息的输入里：状态只有 typing。
+    expect(events).toEqual(["typing"]);
+    typing.resolve();
+    await toolset.settle();
+    const phases: string[] = events.filter((event: string): boolean => event !== "idle");
+    expect(phases).toEqual(["typing", "message sent", "choose_sticker", "sticker sent", "record_voice", "voice sent"]);
+    // 语音在调用时已合成好，轮到时按完整音频时长补「正在录音」。
+    expect(sleep.mock.calls.at(-1)?.[0]).toBe((sendVoice.mock.calls[0]![0] as { duration: number }).duration * 1_000);
+    expect(events.at(-1)).toBe("idle");
+    expect(toolset.actionsCompleted()).toBe(3);
+  } finally {
+    typing.resolve();
+    await toolset.settle();
+  }
+});
+
+test("语音前台窗口到点：回执 pending，链收回录音继续后续动作；合成成功后排到链尾按音频时长补录音再发送", async () => {
+  // 只截下前台窗口那一个计时器，由用例手动触发；其余计时器照常。
+  const realSetTimeout: typeof setTimeout = globalThis.setTimeout;
+  let closeWindow: (() => void) | null = null;
+  const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay?: number): ReturnType<typeof setTimeout> => {
+    if (delay !== VOICE_FOREGROUND_WAIT_MS) return realSetTimeout(callback, delay);
+    closeWindow = callback;
+    return realSetTimeout((): void => {}, delay);
+  }) as typeof setTimeout);
+  const synthesis = Promise.withResolvers<SpeechSynthesisAttempt>();
+  synthesizeSpeech.mockImplementationOnce(() => synthesis.promise);
+  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("message sent");
+    return { messageId: 101 };
+  });
+  sendVoice.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("voice sent");
+    return { messageId: 104 };
+  });
+  const toolset = await createReplyToolset(context());
+  try {
+    const receipt: Promise<string> = toolset.execute("send_voice", '{"text":"バカ"}');
+    await waitUntil((): boolean => events.includes("record_voice") && closeWindow !== null);
+    closeWindow!();
+    expect(JSON.parse(await receipt)).toMatchObject({ success: true, actions_used: 1, synthesis: "pending" });
+    expect(toolset.actionsUsed()).toBe(1);
+
+    await toolset.execute("send_message", '{"text":"继续说"}');
+    await waitUntil((): boolean => events.includes("message sent"));
+    expect(sendVoice).not.toHaveBeenCalled();
+    expect(events.filter((event: string): boolean => event !== "idle")).toEqual(["record_voice", "typing", "message sent"]);
+    expect(events[1]).toBe("idle");
+
+    let settled: boolean = false;
+    const draining: Promise<void> = toolset.settle().then((): void => {
+      settled = true;
+    });
+    await waitUntil((): boolean => toolset.actionsCompleted() === 1);
+    expect(settled).toBe(false);
+    synthesis.resolve({ ok: true, speech: { bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" } });
+    await draining;
+
+    const tail: string[] = events.slice(events.indexOf("message sent") + 1);
+    expect(tail.filter((event: string): boolean => event !== "idle")).toEqual(["record_voice", "voice sent"]);
+    expect(events.at(-1)).toBe("idle");
+    const recording: unknown[] | undefined = sleep.mock.calls.at(-1);
+    expect(recording?.[0]).toBe((sendVoice.mock.calls[0]![0] as { duration: number }).duration * 1_000);
+    expect(toolset.actionsUsed()).toBe(2);
+    expect(toolset.actionsCompleted()).toBe(2);
+  } finally {
+    timeoutSpy.mockRestore();
+    synthesis.resolve({ ok: false, reason: "synthesis failed" });
+    await toolset.settle();
+  }
+});
+
+test("后台动作自身 reject 时记英文错误日志，settle 照常结算且不排入投递", async () => {
+  const { createReplyActionChains } = await import("../../../packages/aiChat/ai/tools/replyToolset/actionChains");
+  const { logger } = await import("../../../packages/infra/logger");
+  const loggerError = spyOn(logger, "error").mockImplementation((): void => {});
+  try {
+    const ctx = context();
+    const chains = createReplyActionChains(ctx);
+    const failure: Error = new Error("background boom");
+    chains.defer("send_voice", Promise.reject(failure));
+    await chains.settle();
+    expect(loggerError).toHaveBeenCalledWith("AI reply background action failed (chat -1001, tool send_voice):", failure);
+    expect(chains.completed()).toBe(0);
+    expect(events).toEqual([]);
+  } finally {
+    loggerError.mockRestore();
+  }
+});
+
+test("直接轮：还没执行过动作的请求亮「正在输入」；send_message 在调用内直接发出并回真实结果，不停顿；之后的收尾请求不亮状态", async () => {
+  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("message sent");
+    return { messageId: 201, repliedToMessageId: 50 };
+  });
+  const ctx: ReplyToolContext = { ...context(), direct: true };
+  const toolset = await createReplyToolset(ctx);
+  expect(events).toEqual([]);
+  toolset.beforeModelRequest();
+  expect(events).toEqual(["typing"]);
+  const result = JSON.parse(await toolset.execute("send_message", JSON.stringify({ text: "直接发", reply_to_trigger: true })));
+  expect(result).toEqual({ success: true, message_id: 201, actions_used: 1 });
+  // 执行时切到动作对应的挡位（与请求期间相同）但不停顿；执行完收回挡位并开始静默。
+  expect(events).toEqual(["typing", "typing", "idle", "message sent", "idle"]);
+  expect(sleep).not.toHaveBeenCalled();
+  // 已经发过动作，下一次请求多半是收尾：不亮状态，免得最后一条消息之后还挂着一段「正在输入」。
+  toolset.beforeModelRequest();
+  expect(events).toEqual(["typing", "typing", "idle", "message sent", "idle"]);
+  expect(ctx.onMessageSent).toHaveBeenCalledWith("直接发", 201, 50);
+  expect(toolset.actionsUsed()).toBe(1);
+  expect(toolset.actionsCompleted()).toBe(1);
+  await toolset.settle();
+});
+
+test("直接轮：看过贴纸包后的那次模型请求亮「正在选择贴纸」，发贴纸时仍做选择停顿再发出", async () => {
+  sendSticker.mockImplementation(async (): Promise<number> => {
+    events.push("sticker sent");
+    return 102;
+  });
+  const toolset = await createReplyToolset({ ...context(), direct: true });
+  toolset.beforeModelRequest();
+  await toolset.execute("view_sticker_pack", '{"pack_index":1,"intent":"打招呼"}');
+  // 模型带着贴纸清单被再请求一次：这次是在挑贴纸。
+  toolset.beforeModelRequest();
+  expect(JSON.parse(await toolset.execute("send_sticker", '{"pack_index":1,"sticker_index":1}'))).toEqual({ success: true });
+  toolset.beforeModelRequest();
+  expect(events).toEqual(["typing", "choose_sticker", "choose_sticker", "idle", "sticker sent", "idle"]);
+  // 挑贴纸的请求很短，贴纸即便是这一批的第一个动作也要停顿，选择状态才看得见。
+  expect(sleep).toHaveBeenCalledTimes(1);
+  expect(toolset.actionsCompleted()).toBe(1);
+  await toolset.settle();
+});
+
+test("直接轮：语音在调用内等合成并亮「正在录音」，合成好后按语音时长模拟录音再发出，回执带消息编号与今日余量", async () => {
+  sendVoice.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("voice sent");
+    return { messageId: 104 };
+  });
+  const toolset = await createReplyToolset({ ...context(), direct: true });
+  toolset.beforeModelRequest();
+  const result = JSON.parse(await toolset.execute("send_voice", '{"text":"バカ"}'));
+  expect(result).toMatchObject({ success: true, message_id: 104, actions_used: 1 });
+  expect(typeof result.voice_remaining_today).toBe("number");
+  expect(events).toEqual(["typing", "record_voice", "record_voice", "idle", "voice sent", "idle"]);
+  expect(sleep.mock.calls.at(-1)?.[0]).toBe((sendVoice.mock.calls[0]![0] as { duration: number }).duration * 1_000);
+  expect(toolset.actionsUsed()).toBe(1);
+  expect(toolset.actionsCompleted()).toBe(1);
+  await toolset.settle();
+});
+
+test("直接轮：语音前台窗口到点回 pending，合成成功后在后台按音频时长补「正在录音」再发送", async () => {
+  const realSetTimeout: typeof setTimeout = globalThis.setTimeout;
+  let closeWindow: (() => void) | null = null;
+  const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay?: number): ReturnType<typeof setTimeout> => {
+    if (delay !== VOICE_FOREGROUND_WAIT_MS) return realSetTimeout(callback, delay);
+    closeWindow = callback;
+    return realSetTimeout((): void => {}, delay);
+  }) as typeof setTimeout);
+  const synthesis = Promise.withResolvers<SpeechSynthesisAttempt>();
+  synthesizeSpeech.mockImplementationOnce(() => synthesis.promise);
+  sendVoice.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("voice sent");
+    return { messageId: 104 };
+  });
+  const toolset = await createReplyToolset({ ...context(), direct: true });
+  try {
+    const receipt: Promise<string> = toolset.execute("send_voice", '{"text":"バカ"}');
+    await waitUntil((): boolean => closeWindow !== null);
+    closeWindow!();
+    expect(JSON.parse(await receipt)).toMatchObject({ success: true, actions_used: 1, synthesis: "pending" });
+    expect(events).toEqual(["record_voice", "idle"]);
+    expect(toolset.actionsCompleted()).toBe(0);
+
+    // 模型被再请求一次：pending 回执已占动作，这次请求不亮状态。
+    toolset.beforeModelRequest();
+    synthesis.resolve({ ok: true, speech: { bytes: sineWav(24_000, 0.2), mimeType: "audio/wav" } });
+    await toolset.settle();
+    expect(events.slice(2).filter((event: string): boolean => event !== "idle")).toEqual(["record_voice", "voice sent"]);
+    expect(sleep.mock.calls.at(-1)?.[0]).toBe((sendVoice.mock.calls[0]![0] as { duration: number }).duration * 1_000);
+    expect(toolset.actionsCompleted()).toBe(1);
+  } finally {
+    timeoutSpy.mockRestore();
+    synthesis.resolve({ ok: false, reason: "synthesis failed" });
+    await toolset.settle();
+  }
+});
+
+test("模型阶段结束：直接轮只收回没被动作接走的请求挡位，有序并行轮不切挡", async () => {
+  const direct = await createReplyToolset({ ...context(), direct: true });
+  direct.beforeModelRequest();
+  direct.afterModel();
+  expect(events).toEqual(["typing", "idle"]);
+
+  events.length = 0;
+  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => ({ messageId: 201 }));
+  const directWithAction = await createReplyToolset({ ...context(), direct: true });
+  directWithAction.beforeModelRequest();
+  await directWithAction.execute("send_message", '{"text":"发出去了"}');
+  directWithAction.beforeModelRequest();
+  directWithAction.afterModel();
+  expect(events).toEqual(["typing", "typing", "idle", "idle"]);
+
+  events.length = 0;
+  const ordered = await createReplyToolset(context());
+  ordered.beforeModelRequest();
+  ordered.afterModel();
+  expect(events).toEqual([]);
+  await direct.settle();
+  await directWithAction.settle();
+  await ordered.settle();
+});
+
+test("直接轮：动作执行抛错时回不可重试错误，不计完成动作", async () => {
+  sendMessage.mockImplementationOnce(async (): Promise<never> => { throw new Error("send failed"); });
+  const toolset = await createReplyToolset({ ...context(), direct: true });
+  const result = JSON.parse(await toolset.execute("send_message", '{"text":"会失败"}'));
+  expect(result).toEqual({ error: "Action send_message failed unexpectedly", retryable: false });
+  expect(toolset.actionsUsed()).toBe(0);
+  expect(toolset.actionsCompleted()).toBe(0);
+  await toolset.settle();
+});
+
+test("直接轮：一次响应交回的多个动作逐个发出，第一个直接发，之后的切挡并做拟人停顿；不亮状态的请求交回的文字也停顿", async () => {
+  sendMessage.mockImplementation(async (params: unknown): Promise<TelegramSendResult> => {
+    events.push(`sent ${(params as { text: string }).text}`);
+    return { messageId: 201 };
+  });
+  sleep.mockImplementation(async (ms: number): Promise<void> => {
+    events.push(`pause ${ms > 0 ? "yes" : "no"}`);
+  });
+  const toolset = await createReplyToolset({ ...context(), direct: true });
+  toolset.beforeModelRequest();
+  await toolset.execute("send_message", '{"text":"第一句"}');
+  await toolset.execute("send_message", '{"text":"第二句"}');
+  expect(events).toEqual([
+    "typing",
+    "typing", "idle", "sent 第一句", "idle",
+    "typing", "pause yes", "idle", "sent 第二句", "idle",
+  ]);
+  events.length = 0;
+  toolset.beforeModelRequest();
+  await toolset.execute("send_message", '{"text":"第三句"}');
+  expect(events).toEqual(["typing", "pause yes", "idle", "sent 第三句", "idle"]);
+  await toolset.settle();
+});
+
+test("直接轮：「正在输入」请求交回的第一个动作是生图时，独立图注照常模拟「正在输入」再发出", async () => {
+  sendPhoto.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("photo sent");
+    return { messageId: 103 };
+  });
+  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => {
+    events.push("caption sent");
+    return { messageId: 201 };
+  });
+  sleep.mockImplementation(async (ms: number): Promise<void> => {
+    events.push(`pause ${ms > 0 ? "yes" : "no"}`);
+  });
+  const toolset = await createReplyToolset({ ...context(), direct: true });
+  toolset.beforeModelRequest();
+  const caption: string = "长".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1);
+  const result = JSON.parse(await toolset.execute("generate_image", JSON.stringify({ prompt: "画一只猫", caption })));
+  expect(result.caption_delivery).toBe("separate_message");
+  expect(events.slice(events.indexOf("photo sent"))).toEqual([
+    "photo sent", "idle", "typing", "pause yes", "idle", "caption sent", "idle",
+  ]);
+  await toolset.settle();
+});
+
+test("有序并行轮请求模型前不切挡：状态只由串行链切换", async () => {
+  const toolset = await createReplyToolset(context());
+  toolset.beforeModelRequest();
+  expect(events).toEqual([]);
+  await toolset.settle();
 });

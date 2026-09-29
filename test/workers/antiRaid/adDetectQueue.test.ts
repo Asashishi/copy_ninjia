@@ -203,7 +203,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("判定抛错按「本次没判定」结算：记一行日志、推进水位，不静默死循环", async () => {
-    // classifyAdText 的同步准备阶段也会抛：它先调 adDetectSystemPrompt →
+    // classifyAdText 的同步准备阶段也会抛：它先调 currentAdDetectPrompts →
     // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
     // config/dynamic/ad_samples.json 改坏，每一次调用都重新抛同一个错。不接住的话异常
     // 一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个吞掉：checkedSeq

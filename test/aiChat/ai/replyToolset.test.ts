@@ -1,6 +1,7 @@
 import { executeAndSettle } from "../../helpers/replyToolExecution";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanReply, isEmojiOnly } from "../../../packages/aiChat/ai/utils/replyText";
+import { cartesianProduct } from "../../../packages/libs/cartesianProduct";
 import { buildCharacterTypo, pickTypoCorrectionMode } from "../../../packages/aiChat/ai/utils/typo";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 
@@ -39,8 +40,19 @@ const {
   GROUP_QA_QUERY_TOOL,
   SEND_MESSAGE_TOOL,
 } = await import("../../../packages/consts/tools");
-const { AI_MAX_ACTIONS_PER_REPLY, HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
-const { REPLY_ACTION_INSTRUCTION, SEND_MESSAGE_TOOL_INSTRUCTION, SEND_VOICE_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
+const {
+  AI_MAX_ACTIONS_PER_REPLY,
+  HARD_MAX_ACTIONS_PER_REPLY,
+  TYPO_QUICK_CORRECTION_MIN_MS,
+  TYPO_QUICK_CORRECTION_TYPING_MS,
+} = await import("../../../packages/consts/aiChat/tools");
+const {
+  REPLY_ACTION_INSTRUCTION,
+  SEND_MESSAGE_TOOL_INSTRUCTION,
+  SEND_VOICE_TOOL_INSTRUCTION,
+  TOOL_STATUS_BLOCK_LABEL,
+  groupQaToolStatus,
+} = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
 const { SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../../packages/consts/tools");
 const { stickerMenuCache, stickerMenuRevision } =
@@ -63,12 +75,11 @@ test("工具集真实挂载服务端联网检索，并同时提供函数行动�
     messageThreadId: undefined,
     mediaToolsRequested: true,
     bypassMediaToolCooldown: false,
+    direct: false,
     chatAction: {
-      current: () => "idle",
-      set: mock((..._args: unknown[]): void => {}),
+      set: mock((..._args: unknown[]): number => 0),
       settle: mock(async (): Promise<void> => {}),
     },
-    stickerLock: { tryAcquire: () => true, release: () => {} },
     roundHasTypo: false,
     isActive: () => true,
     onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -90,12 +101,11 @@ describe("add_reaction 成功动作计数", () => {
       messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
+      direct: false,
       chatAction: {
-        current: () => "idle" as const,
-        set: mock((..._args: unknown[]): void => {}),
+        set: mock((..._args: unknown[]): number => 0),
         settle: mock(async (): Promise<void> => {}),
       },
-      stickerLock: { tryAcquire: () => true, release: () => {} },
       roundHasTypo: false,
       isActive: () => true,
       onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -157,12 +167,11 @@ test("模型提示按 AI_MAX_ACTIONS_PER_REPLY 限制动作数，执行侧留余
     messageThreadId: undefined,
     mediaToolsRequested: false,
     bypassMediaToolCooldown: false,
+    direct: false,
     chatAction: {
-      current: () => "idle",
-      set: mock((..._args: unknown[]): void => {}),
+      set: mock((..._args: unknown[]): number => 0),
       settle: mock(async (): Promise<void> => {}),
     },
-    stickerLock: { tryAcquire: () => true, release: () => {} },
     roundHasTypo: false,
     isActive: () => true,
     onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -197,12 +206,11 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
     messageThreadId: undefined,
     mediaToolsRequested: false,
     bypassMediaToolCooldown: false,
+    direct: false,
     chatAction: {
-      current: () => "idle",
-      set: mock((..._args: unknown[]): void => {}),
+      set: mock((..._args: unknown[]): number => 0),
       settle: mock(async (): Promise<void> => {}),
     },
-    stickerLock: { tryAcquire: () => true, release: () => {} },
     roundHasTypo: false,
     isActive: () => true,
     onMessageSent,
@@ -231,12 +239,11 @@ test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不
     messageThreadId: 77,
     mediaToolsRequested: false,
     bypassMediaToolCooldown: false,
+    direct: false,
     chatAction: {
-      current: () => "idle",
-      set: mock((..._args: unknown[]): void => {}),
+      set: mock((..._args: unknown[]): number => 0),
       settle: mock(async (): Promise<void> => {}),
     },
-    stickerLock: { tryAcquire: () => true, release: () => {} },
     roundHasTypo: false,
     isActive: () => true,
     onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -362,12 +369,11 @@ describe("send_message typo correction", () => {
       messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
+      direct: false,
       chatAction: {
-        current: () => "idle",
-        set: mock((..._args: unknown[]): void => {}),
+        set: mock((..._args: unknown[]): number => 0),
         settle: mock(async (): Promise<void> => {}),
       },
-      stickerLock: { tryAcquire: () => true, release: () => {} },
       roundHasTypo: false,
       isActive: () => active,
       onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -382,25 +388,25 @@ describe("send_message typo correction", () => {
     expect(sendMessageMock).not.toHaveBeenCalled();
   });
 
-  test("快速补发只发送唯一错字对应的正确字，不接受模型给的整词", async () => {
+  test("快速补发只发送唯一错字对应的正确字，不接受模型给的整词；错字落地后先静默，再固定模拟「正在输入」后补字", async () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
       const onMessageSent = mock((..._args: unknown[]): void => {});
+      const phases: string[] = [];
       const toolset = await createReplyToolset({
         chatId: -100800,
         replyToMessageId: 10,
         messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
+        direct: false,
         chatAction: {
-          current: () => "idle",
-          set: mock((..._args: unknown[]): void => {}),
+          set: mock((phase: unknown): number => {
+            phases.push(String(phase));
+            return 0;
+          }),
           settle: mock(async (): Promise<void> => {}),
-        },
-        stickerLock: {
-          tryAcquire: () => true,
-          release: () => {},
         },
         roundHasTypo: true,
         isActive: () => true,
@@ -425,6 +431,12 @@ describe("send_message typo correction", () => {
       expect(onMessageSent).toHaveBeenNthCalledWith(1, "天汽", 100, undefined);
       expect(onMessageSent).toHaveBeenNthCalledWith(2, "气", 101, undefined);
       expect(deleteMessageMock).not.toHaveBeenCalled();
+      // Math.random 固定为 0：静默取下限，随后是固定时长的「正在输入」。
+      expect(sleepMock.mock.calls.slice(1).map((call: unknown[]) => call[0])).toEqual([
+        TYPO_QUICK_CORRECTION_MIN_MS,
+        TYPO_QUICK_CORRECTION_TYPING_MS,
+      ]);
+      expect(phases).toEqual(["typing", "idle", "typing", "idle", "idle"]);
     } finally {
       Math.random = originalRandom;
     }
@@ -441,14 +453,10 @@ describe("send_message typo correction", () => {
         messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
+        direct: false,
         chatAction: {
-          current: () => "idle",
-          set: mock((..._args: unknown[]): void => {}),
+          set: mock((..._args: unknown[]): number => 0),
           settle: mock(async (): Promise<void> => {}),
-        },
-        stickerLock: {
-          tryAcquire: () => true,
-          release: () => {},
         },
         roundHasTypo: false,
         isActive: () => true,
@@ -485,14 +493,10 @@ describe("send_message typo correction", () => {
         messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
+        direct: false,
         chatAction: {
-          current: () => "idle",
-          set: mock((..._args: unknown[]): void => {}),
+          set: mock((..._args: unknown[]): number => 0),
           settle: mock(async (): Promise<void> => {}),
-        },
-        stickerLock: {
-          tryAcquire: () => true,
-          release: () => {},
         },
         roundHasTypo: true,
         isActive: () => true,
@@ -537,12 +541,11 @@ describe("send_message typo correction", () => {
         messageThreadId: undefined,
         mediaToolsRequested: true,
         bypassMediaToolCooldown: false,
+        direct: false,
         chatAction: {
-          current: () => "idle",
-          set: mock((..._args: unknown[]): void => {}),
+          set: mock((..._args: unknown[]): number => 0),
           settle: mock(async (): Promise<void> => {}),
         },
-        stickerLock: { tryAcquire: () => true, release: () => {} },
         roundHasTypo: true,
         isActive: () => active,
         onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -575,12 +578,11 @@ describe("send_message 重复消息去重", () => {
       messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
+      direct: false,
       chatAction: {
-        current: () => "idle" as const,
-        set: mock((..._args: unknown[]): void => {}),
+        set: mock((..._args: unknown[]): number => 0),
         settle: mock(async (): Promise<void> => {}),
       },
-      stickerLock: { tryAcquire: () => true, release: () => {} },
       roundHasTypo,
       isActive: () => true,
       onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -725,12 +727,11 @@ describe("send_message 可点击命令守卫", () => {
       messageThreadId: undefined,
       mediaToolsRequested: true,
       bypassMediaToolCooldown: false,
+      direct: false,
       chatAction: {
-        current: () => "idle" as const,
-        set: mock((..._args: unknown[]): void => {}),
+        set: mock((..._args: unknown[]): number => 0),
         settle: mock(async (): Promise<void> => {}),
       },
-      stickerLock: { tryAcquire: () => true, release: () => {} },
       roundHasTypo,
       isActive: () => true,
       onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -805,12 +806,11 @@ function baseToolContext(): Record<string, unknown> {
     messageThreadId: undefined,
     mediaToolsRequested: false,
     bypassMediaToolCooldown: false,
+    direct: false,
     chatAction: {
-      current: () => "idle",
-      set: mock((..._args: unknown[]): void => {}),
+      set: mock((..._args: unknown[]): number => 0),
       settle: mock(async (): Promise<void> => {}),
     },
-    stickerLock: { tryAcquire: () => true, release: () => {} },
     roundHasTypo: false,
     isActive: () => true,
     onMessageSent: mock((..._args: unknown[]): void => {}),
@@ -820,13 +820,45 @@ function baseToolContext(): Record<string, unknown> {
   };
 }
 
+describe("工具清单恒定", () => {
+  test("触发类型、本群问答与手滑抽签都不改变工具声明的任何一个字节", async () => {
+    const shapes: string[] = [];
+    for (const { mediaToolsRequested, roundHasTypo, chatQa } of cartesianProduct({
+      mediaToolsRequested: [false, true],
+      roundHasTypo: [false, true],
+      chatQa: [undefined, new Map([["怎么入群？", "点置顶那条链接"]])],
+    })) {
+      const toolset = await createReplyToolset({
+        ...baseToolContext(),
+        mediaToolsRequested,
+        roundHasTypo,
+        chatQa,
+      } as never);
+      shapes.push(JSON.stringify(toolset.functions));
+      expect(toolset.toolStatus).toStartWith(TOOL_STATUS_BLOCK_LABEL);
+    }
+    expect(new Set(shapes).size).toBe(1);
+    const sendMessage = JSON.parse(shapes[0]!).find((definition: { name: string }) => definition.name === SEND_MESSAGE_TOOL);
+    expect(sendMessage.parametersJsonSchema.required).toEqual(["text"]);
+    expect(Object.keys(sendMessage.parametersJsonSchema.properties)).toContain("typo_original_char");
+  });
+
+  test("行动总则规定按本轮工具状态行事、失败后不单独作反应", () => {
+    expect(REPLY_ACTION_INSTRUCTION).toContain(TOOL_STATUS_BLOCK_LABEL);
+    expect(REPLY_ACTION_INSTRUCTION).toContain("标为不可用、冷却中或已用完的工具本轮不要调用");
+    expect(REPLY_ACTION_INSTRUCTION).toContain("工具返回 error 表示这个动作没有发生");
+    expect(REPLY_ACTION_INSTRUCTION).toContain("对失败本身不单独作反应");
+  });
+});
+
 describe("群问答工具在按次工具集里的接线", () => {
-  test("本群没有问答时两个工具都不挂，模型看不见就不会调", async () => {
+  test("本群没有问答时两个工具照样挂着，查询如实返回空清单，工具状态写明没有登记", async () => {
     const toolset = await createReplyToolset(baseToolContext() as never);
 
-    expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(false);
-    expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(false);
-    expect(toolset.functions.some((f) => f.name === GROUP_QA_QUERY_TOOL)).toBe(false);
+    expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(true);
+    expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
+    expect(JSON.parse(await executeAndSettle(toolset, GROUP_QA_QUERY_TOOL, "{}"))).toEqual({ questions: [] });
+    expect(toolset.toolStatus).toContain(groupQaToolStatus(0));
   });
 
   test("本群有问答时两个工具都挂上，且 dispatch 真的走到执行器", async () => {
@@ -837,6 +869,7 @@ describe("群问答工具在按次工具集里的接线", () => {
 
     expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(true);
     expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
+    expect(toolset.toolStatus).toContain(groupQaToolStatus(1));
 
     // 直接断言 ReplyToolContext.chatQa 被交给执行器，而不只依赖类型保证。
     const listed: { questions: string[] } = JSON.parse(
@@ -901,12 +934,11 @@ describe("工具分派", () => {
       messageThreadId: undefined,
       mediaToolsRequested: false,
       bypassMediaToolCooldown: false,
+      direct: false,
       chatAction: {
-        current: () => "idle" as const,
-        set: mock((..._args: unknown[]): void => {}),
+        set: mock((..._args: unknown[]): number => 0),
         settle: mock(async (): Promise<void> => {}),
       },
-      stickerLock: { tryAcquire: () => true, release: () => {} },
       roundHasTypo: false,
       isActive: () => true,
       onMessageSent: mock((..._args: unknown[]): void => {}),

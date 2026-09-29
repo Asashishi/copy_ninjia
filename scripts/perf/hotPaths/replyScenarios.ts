@@ -4,26 +4,26 @@ import { IMAGE_GENERATION_MAX_BYTES } from "../../../packages/consts/aiChat/imag
 import { VOICE_SPEECH_MAX_BYTES, VOICE_SPEECH_MAX_ENCODED_CHARS } from "../../../packages/consts/aiChat/voiceMessage";
 import { RATE_LIMIT_LONG_MAX_TRIGGERS, REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT, REPLY_TRIGGER_QUEUE_MAX } from "../../../packages/consts/aiChat/rateLimit";
 import { admitTrigger, isReplyRoundRateLimited } from "../../../packages/states/replyAdmission";
+import { cartesianProduct } from "../../../packages/libs/cartesianProduct";
 import { reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import { invalidateChatReplyCache, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows } from "../../../packages/cache/workers/aiChat/replies";
 import type { AdmitTriggerInput } from "../../../packages/types/states/replyAdmission";
 import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
 import type { Scenario } from "./types";
 
-/** 覆盖模型、存活容量、队列、触发种类和出站压力的准入组合，计时内仅传既有输入。 */
+/** 覆盖模型、直接轮、存活容量、队列、触发种类和出站压力的准入组合，计时内仅传既有输入。 */
 export function replyAdmissionScenario(): Scenario {
-  const inputs: AdmitTriggerInput[] = [];
-  for (const kind of ["direct", "random", "mediaDirect", "mediaRandom"] as const) {
-    for (const telegramBackpressured of [false, true]) {
-      for (const deliveryAvailable of [true, false]) {
-        for (const activeRounds of [0, 1, REPLY_ROUND_MAX_CONCURRENT - 1, REPLY_ROUND_MAX_CONCURRENT]) {
-          for (const queueSize of [0, REPLY_TRIGGER_QUEUE_MAX - 1, REPLY_TRIGGER_QUEUE_MAX]) {
-            inputs.push({ activeRounds, queueSize, kind, telegramBackpressured, deliveryAvailable });
-          }
-        }
-      }
-    }
-  }
+  const inputs: AdmitTriggerInput[] = cartesianProduct({
+    kind: ["direct", "random", "mediaDirect", "mediaRandom"],
+    telegramBackpressured: [false, true],
+    directRoundActive: [false, true],
+    deliveryAvailable: [true, false],
+    activeRounds: [0, 1, REPLY_ROUND_MAX_CONCURRENT - 1, REPLY_ROUND_MAX_CONCURRENT],
+    queueSize: [0, REPLY_TRIGGER_QUEUE_MAX - 1, REPLY_TRIGGER_QUEUE_MAX],
+  }).map(({ activeRounds, queueSize, kind, telegramBackpressured, directRoundActive, deliveryAvailable }: AdmitTriggerInput): AdmitTriggerInput =>
+    // 按生产调用点（workers/aiChat/replyPipeline.ts）的字面量字段顺序重建，对象 shape 与之一致。
+    ({ activeRounds, queueSize, kind, telegramBackpressured, directRoundActive, deliveryAvailable })
+  );
   const windowCounts: readonly number[] = [0, RATE_LIMIT_LONG_MAX_TRIGGERS - 1, RATE_LIMIT_LONG_MAX_TRIGGERS];
   return {
     iterations: 4_000_000,

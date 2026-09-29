@@ -15,6 +15,8 @@ export interface AdmitTriggerInput {
   queueSize: number;
   kind: TriggerKind;
   telegramBackpressured: boolean;
+  /** 该群的直接轮仍在模型阶段（见 workers/aiChat/replyDelivery.ts 的 isDirectReplyModelActive）。 */
+  directRoundActive: boolean;
   /** 当前群与 Worker 的存活回复轮次均未耗尽容量。 */
   deliveryAvailable: boolean;
 }
