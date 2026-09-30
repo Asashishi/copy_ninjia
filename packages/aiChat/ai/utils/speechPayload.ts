@@ -8,17 +8,20 @@
  *   libs/boundedResponse.ts 流式读取，超过 VOICE_SPEECH_MAX_BYTES 即拒绝，不保留部分响应体；
  *   容器结构由 aiChat/ai/voiceEncoding.ts 按 MIME 校验。
  *
- * 叶子模块，不接触任何缓存与 SDK 类型（见 AGENTS.md 的「缓存与线程归属」）。
+ * 另有两条三家实现共用的失败收尾（请求失败与载荷不可用），日志统一经 logger。
+ *
+ * 不持有缓存，不接触 SDK 类型。
  */
 
 import {
   VOICE_SPEECH_MAX_BYTES,
   VOICE_SPEECH_MAX_ENCODED_CHARS,
 } from "../../../consts/aiChat/voiceMessage";
+import { logger } from "../../../infra/logger";
 import { readBoundedResponseBytes } from "../../../libs/boundedResponse";
 import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import type { Base64PayloadDecodeResult } from "../../../types/aiChat/payload";
-import type { SynthesizedSpeechDecodeResult } from "../../../types/aiChat/voiceMessage";
+import type { SynthesizedSpeech, SynthesizedSpeechDecodeResult } from "../../../types/aiChat/voiceMessage";
 import { decodeBase64Payload } from "./base64Payload";
 
 /**
@@ -51,4 +54,21 @@ export async function readSpeechBody(response: Response, mimeType: string): Prom
   const body: BoundedResponseResult = await readBoundedResponseBytes(response, VOICE_SPEECH_MAX_BYTES);
   if (!body.ok) return { ok: false, reason: "audio body exceeds the size limit" };
   return { ok: true, speech: { bytes: body.bytes, mimeType } };
+}
+
+/**
+ * 合成请求失败的统一收尾：调用方 signal 已中止表示本轮作废，静默收尾；其余失败（含合成
+ * 超时）记一行 `Error calling <label>` 日志。恒返回 null。
+ * @param label 日志里的供应商接口名。
+ */
+export function speechRequestFailed(label: string, signal: AbortSignal | undefined, error: unknown): null {
+  if (signal?.aborted !== true) logger.error(`Error calling ${label}:`, error);
+  return null;
+}
+
+/** 载荷解码结果的统一收尾：不可用时记一行日志并返回 null，否则返回合成语音。 */
+export function speechFromDecoded(label: string, decoded: SynthesizedSpeechDecodeResult): SynthesizedSpeech | null {
+  if (decoded.ok) return decoded.speech;
+  logger.error(`${label} returned an unusable audio payload: ${decoded.reason}.`);
+  return null;
 }

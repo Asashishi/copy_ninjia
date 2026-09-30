@@ -29,13 +29,7 @@ import {
   hasEffectiveBlocklistIdentity,
 } from "./identityPolicy";
 
-/**
- * 一行待踢任务的解码结果与它的落盘文本。
- *
- * 两者**必须成对**：下面每一段都要同时用到「解出来的任务」和「要写进 BLOB 的
- * 那段文本」。合成一条记录后这个配对由类型保证，取值不存在只拿到一半的形态，
- * 因此写入段无需二次查表，也没有为缺值补的不可达分支。
- */
+/** 一行待踢任务的解码结果与它的落盘文本；两者成对出现，由类型保证不存在只拿到一半的形态。 */
 interface EncodedPendingRemovalRow {
   readonly pending: PendingBlockedRemoval;
   readonly data: string;

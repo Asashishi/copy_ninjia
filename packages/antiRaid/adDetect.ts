@@ -16,16 +16,16 @@ import { canBypassAdDetection } from "./memberFacts";
 import {
   blockUser,
   confirmBlocklistPersisted,
+  managedAdminChatIds,
 } from "../infra/blocklist/membership";
-import {
-  dispatchBlockedRemovals,
-  trackBlockedRemoval,
-} from "../infra/blocklist/outbox";
+import { isManagedAdminChat } from "../infra/blocklist/sweepEligibility";
+import { trackBlockedRemoval } from "../infra/blocklist/outbox";
+import { blockedMemberRemoverHolder } from "../cache/main/blocklist";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import { getChatStateCache, getChatState } from "../infra/storage/stateStore";
 import { postDiskIODiagnostic } from "../infra/diskIO";
-import { deleteMessageAfter, sendMessage } from "../infra/telegram/actions";
-import { KICK_NOTICE_AUTO_DELETE_MS } from "../consts/telegram";
+import { sendTemporaryMessageOnMain } from "../infra/telegram/temporaryMessage";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../consts/commands";
 import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
 import { trackBackgroundTask } from "../infra/backgroundTasks";
 import { settleWithinBudget } from "../libs/inflight";
@@ -43,22 +43,6 @@ import type {
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
 import type { AdSampleDiskMessage } from "../types/diskIO/messages";
 import type { FlushResult } from "../types/lifecycle";
-
-/** 处置目标所在的群清单：机器人已初始化且是管理员的群，同 /block 的连坐范围。 */
-function managedChatIds(originChatId: number): number[] {
-  const chatIds: number[] = [];
-  for (const [chatId, chatState] of getChatStateCache()) {
-    if (
-      chatState.botPermissions?.isAdministrator !== true ||
-      chatState.isInitEnabled !== true
-    ) continue;
-    chatIds.push(chatId);
-  }
-  // 判定发生的这个群排最前：那里正躺着刚发出来的广告，最该先封。
-  return chatIds.includes(originChatId)
-    ? [originChatId, ...chatIds.filter((chatId: number): boolean => chatId !== originChatId)]
-    : chatIds;
-}
 
 /**
  * 把这次命中的原始素材投给落盘线程（memory/ad-detected/sample.json）。
@@ -158,15 +142,19 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
     );
   }
 
-  // 重复命中只补触发群这一批，且照样过 managedChatIds 那道过滤：两次命中之间
+  // 处置范围与 /block 同源（managedAdminChatIds）：判定发生的这个群排最前，那里正躺着
+  // 刚发出来的广告，最该先封。重复命中只补触发群这一批，且照样过受管过滤：两次命中之间
   // 机器人可能刚被撤管理员或这个群刚 /init disable，那时连这一批也不该登记。
-  const managed: number[] = managedChatIds(event.chatId);
+  const managed: number[] = managedAdminChatIds(
+    event.chatId,
+    isManagedAdminChat(getChatStateCache().get(event.chatId))
+  );
   const enforcementChatIds: number[] = newlyBlocked
     ? managed
     : managed.filter((chatId: number): boolean => chatId === event.chatId);
   // 逐个群登记，失败只作废这一个群。整段用 map 的话，trackBlockedRemoval 中途
   // 抛出（outbox 满、id 空间耗尽）会让已登记的几批留在 outbox 里而
-  // dispatchBlockedRemovals 一次都调不到，这人在**所有**群都封不掉。降级语义同
+  // 处置 owner 一次都调不到，这人在**所有**群都封不掉。降级语义同
   // blocklistGuard.claimBlockedJoiner，失败的群改由补扫接手。
   const removals: RemoveBlockedMembersParams[] = [];
   let failedChats: number = 0;
@@ -202,7 +190,7 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       "those chats now owe a resweep."
     );
   }
-  await dispatchBlockedRemovals(removals);
+  await blockedMemberRemoverHolder.current(removals);
   logger.log(
     `Ad detection blocked sender ${event.senderId} (${event.reason || "no reason given"}) ` +
     `and queued removals in ${removals.length} chat(s).`
@@ -222,7 +210,7 @@ function disposeDetectedAd(event: AdDetectedEvent): Promise<void> {
 }
 
 export interface FormatAdNoticeParams {
-  /** 发送者的展示标签（昵称/频道名 + id），由 Worker 侧算好带回。 */
+  /** 发送者的展示标签（见 users/userLabel.ts 的 formatUserLabel），由 Worker 侧算好带回。 */
   label: string;
   /** 模型给的判定理由；空串走兜底文案。 */
   reason: string;
@@ -253,7 +241,7 @@ export interface FormatAdNoticeParams {
  * 删除失败由判定线程自己记日志（见 workers/antiRaid/adDetect/disposal.ts）。
  */
 export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmosphere }: FormatAdNoticeParams): string {
-  const head: string = atmosphere.NOTICE_TEXTS.adDetected(label, reason || "整串消息通篇都是推广引流");
+  const head: string = atmosphere.NOTICE_TEXTS.adDetected(label, reason || atmosphere.NOTICE_TEXTS.adDefaultReason);
   if (enforcedChats === 0) {
     return atmosphere.NOTICE_TEXTS.adNoManagedChat(head);
   }
@@ -264,35 +252,22 @@ export function formatAdNotice({ label, reason, enforcedChats, failedChats, atmo
 }
 
 /**
- * 发播报并挂上自动清理。播报本身 KICK_NOTICE_AUTO_DELETE_MS（30 秒）后自删，
- * 与超时踢人的战报同一条约定，不给群里留一条永久的公告。
+ * 发播报并挂上 COMMAND_MESSAGE_AUTO_DELETE_MS 的自动清理，经统一的临时提示边界
+ * （infra/telegram/temporaryMessage.ts）在拿到 id 的同步时点认领删除。
  *
  * 发在主线程而不是判定线程：文案要断言封禁结果，而结果只有这边知道（见
  * workers/antiRaid/adDetect/disposal.ts 的 disposeAdSender）。整段尽力而为，
- * 失败不影响已经落定的拉黑与封禁登记。
- *
- * 删除 owner 必须在 `onSent` 里、拿到 id 的同步时点认领，不能等 await 的返回值：
- * runTelegramAction 先跑 map（onSent 在其中）再检查 update 取消，远端已收下却恰好
- * 撞上停机 abort 时它抛错、返回值丢失，而这条播报已经挂在群里了——认领点写在
- * await 之后就等于把它永久留下。口径同 infra/telegram/commandMessages.ts 与
- * infra/telegram/temporaryMessage.ts；batchOnFlush 让同群公告合批成一次 deleteMessages。
+ * 失败不影响已经落定的拉黑与封禁登记；bot 主动播报不带话题。
  */
 async function announceAdDisposal(
   event: AdDetectedEvent,
   enforcedChats: number,
   failedChats: number
 ): Promise<void> {
-  await sendMessage({
+  await sendTemporaryMessageOnMain({
     chatId: event.chatId,
     text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats, atmosphere: chatAtmosphere(event.chatId) }),
-    onSent: (noticeMessageId: number): void => {
-      deleteMessageAfter({
-        chatId: event.chatId,
-        messageId: noticeMessageId,
-        delayMs: KICK_NOTICE_AUTO_DELETE_MS,
-        batchOnFlush: true,
-      });
-    },
+    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   });
 }
 
@@ -337,7 +312,7 @@ export function handleAdVerdictTrue(event: AdVerdictTrueEvent): void {
  * 停机排空：在预算内等待所有在途处置结算（含结算过程中新派生的）。
  *
  * 预算不能省。处置内部要走 confirmBlocklistPersisted（一次带 fsync 的领域 flush）
- * 与 dispatchBlockedRemovals（outbox 写前落盘 + mailbox 屏障），裸等的话，异常
+ * 与处置投递（outbox 写前落盘 + mailbox 屏障），裸等的话，异常
  * 退出那条把全部预算设成 0 的路径（EMERGENCY_FLUSH_TIMEOUTS，见
  * docs/cn/04-invariants.md）本该立刻结算成 timedOut，实际会一路拖到 15 秒强制退出
  * ——进程带非零码死在停机中途，实例锁不释放、offset 不确认。

@@ -16,24 +16,14 @@ import { isDirectReplyModelActive } from "./replyDelivery";
 import { notifyRateLimited } from "./replyState";
 import { lookupBufferedMessage, replyReferenceForBufferedEntry } from "./bufferedMessageIndex";
 
-/** 分类顺序与原短路判断一致：随机触发优先于媒体触发。 */
+/** 触发分类：随机触发优先于媒体触发。 */
 export function triggerKindFor(isRandomTrigger: boolean, mediaComment: MediaCommentContext | undefined): TriggerKind {
   if (isRandomTrigger) return "random";
   if (mediaComment) return mediaComment.directTriggerReason ? "mediaDirect" : "mediaRandom";
   return "direct";
 }
 
-/**
- * 保存直接触发的必要快照。媒体同步保存入站身份、占位正文和解析 Promise，
- * 补跑时使用解析结果；文本触发按 replyToMessageId 到热区索引里取那一条。
- *
- * **不能取缓冲区尾条**：主线程把 `record` 与 `trigger` 作为两条独立消息投过来，
- * 两者之间在途轮次的 `onMessageSent` 完全可能把机器人自己的消息推进 chatBuffers。
- * 那时尾条就是机器人自己那句，排队轮跑起来后提示词会渲染成「XX 也在跟你说话
- * （TA 说的是：「机器人上一句」）」——模型对着自己编造的内容回复。触发消息的
- * id 调用方已经解析好了，直接按 id 取（同 generateAndSendReply 的
- * replyReferenceForBufferedMessage）。
- */
+/** pushReplyTrigger 的入参。 */
 export interface PushReplyTriggerParams {
   chatId: number;
   triggerSenderId: number;
@@ -51,6 +41,16 @@ export interface PushReplyTriggerParams {
 }
 
 /**
+ * 保存直接触发的必要快照。媒体同步保存入站身份、占位正文和解析 Promise，
+ * 补跑时使用解析结果；文本触发按 replyToMessageId 到热区索引里取那一条。
+ *
+ * **不能取缓冲区尾条**：主线程把 `record` 与 `trigger` 作为两条独立消息投过来，
+ * 两者之间在途轮次的 `onMessageSent` 完全可能把机器人自己的消息推进 chatBuffers。
+ * 那时尾条就是机器人自己那句，排队轮跑起来后提示词会渲染成「XX 也在跟你说话
+ * （TA 说的是：「机器人上一句」）」——模型对着自己编造的内容回复。触发消息的
+ * id 调用方已经解析好了，直接按 id 取（同 generateAndSendReply 的
+ * replyReferenceForBufferedMessage）。
+ *
  * 两条分支的字段一律写全、缺省显式 undefined，不用条件展开：这些对象会推进
  * LinkedQueue 长期排着，随后被 drainReplyQueue 与 startQueuedRound 逐字段反复读，
  * 四个可选字段各自展开会让同一个类型分出至多 16 个隐藏类。口径同

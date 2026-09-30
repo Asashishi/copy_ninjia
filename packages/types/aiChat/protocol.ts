@@ -190,11 +190,8 @@ export interface AiTriggerMessage {
   /** 当前图片/贴纸，或本条文字回复的图片/贴纸；仅在直接触发的本轮短期附带。 */
   imageGenerationReference?: ImageGenerationReference;
   /**
-   * 本群已登记的问答（问题原文 -> 答案）；本群一条都没有时省略。
-   *
-   * 挂在这条已有消息上而不是另建一份 Worker 镜像：接收方所需的最终字段放进
-   * 现有消息，就不必为它维护推送时机、全量/增量模式和 Worker 重启后的重放方
-   * （见 AGENTS.md 的「缓存与线程归属」）。载荷有界——每群至多 CHAT_QA_MAX_PER_CHAT 条。
+   * 本群已登记的问答（问题原文 -> 答案）；本群一条都没有时省略。载荷有界——每群至多
+   * CHAT_QA_MAX_PER_CHAT 条。
    *
    * 一字不差的提问不会走到这里：那种情况在主干上就被直答短路了，连 trigger
    * 都不会发。到得了 Worker 的只有「意思像但字面不同」，交给模型判断。
@@ -315,12 +312,8 @@ export interface AiMemoryEvent {
   persistImmediately?: boolean;
   /**
    * 本群此刻的上下文占用量，供主线程的只读镜像展示（见 cache/main/aiChat.ts 的
-   * aiMemoryUsages）。
-   *
-   * 挂在这条已有事件上而不是另起一路上报：接收方所需的最终字段放进现有消息，
-   * 就不必为它单独维护推送时机（见 AGENTS.md 的「缓存与线程归属」）。这里用
-   * 一个对象而不是摊平成两个数字——本事件每群每 AI_SNAPSHOT_INTERVAL_MS 才走
-   * 一次，不在任何逐条消息的热路径上，而接收侧原样存进镜像、不再重建对象。
+   * aiMemoryUsages）。本事件每群每 AI_SNAPSHOT_INTERVAL_MS 才走一次，接收侧原样存进
+   * 镜像、不再重建对象。
    */
   usage: AiMemoryUsage;
 }

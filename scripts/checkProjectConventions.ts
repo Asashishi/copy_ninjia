@@ -194,7 +194,6 @@ const THREAD_ENTRIES: Readonly<Record<string, string>> = Object.fromEntries(
  * 项目自有协议和双工代理，连 grammY 运行时都不得进入其模块闭包。
  */
 const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
-  join(PROJECT_ROOT, "packages", "config", "telegram.ts"),
   join(PROJECT_ROOT, "packages", "cache", "main", "telegram.ts"),
   join(PROJECT_ROOT, "packages", "infra", "telegram", "mainClient.ts"),
   join(PROJECT_ROOT, "packages", "infra", "telegram", "messageThrottler.ts"),
@@ -303,12 +302,6 @@ for (const problem of collectCacheOwnershipProblems({
   failures.push(problem);
 }
 
-/**
- * 逐文件的源码约定：每个文件**只读一次、只解析一次**，适用的规则全在这一趟里跑完。
- *
- * cache/consts 规则按 sourceFilesUnder 的真实文件集合判定适用范围；
- * 模块级缓存规则由 collectSourceConventionProblems 判定。失败列表按文件汇总。
- */
 const cacheSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CACHE_ROOT));
 const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_ROOT));
 /** 根 manifest 直接声明的包；逐文件核对运行期裸导入时共用。 */
@@ -320,6 +313,10 @@ const referenceResolutionFiles: readonly string[] = [
   ...sourceFilesUnder(SOURCE_ROOT),
   THREAD_ENTRIES.main!,
 ];
+// 逐文件的源码约定：每个文件**只读一次、只解析一次**，适用的规则全在这一趟里跑完。
+// cache/consts 规则按 sourceFilesUnder 的真实文件集合判定适用范围；模块级缓存规则由
+// collectModuleCacheProblems 判定。失败列表按文件汇总。
+//
 // 仓库根的 index.ts 是生产入口，AGENTS.md 多条规则的适用范围写的就是「packages/ 与
 // index.ts」；它不在 sourceFilesUnder(SOURCE_ROOT) 里，必须显式并进同一趟判定，
 // 否则日志边界、Node 兼容与声明规范在这个文件上没有任何门禁。
@@ -347,7 +344,7 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
   for (const problem of collectDeclarationProblems(params)) failures.push(problem);
   failures.push(...collectEnvironmentAccessProblems(params));
-  if (path.startsWith(STATES_ROOT + "/") || path === STATES_ROOT + ".ts") {
+  if (path.startsWith(STATES_ROOT + "/")) {
     failures.push(...collectStatesPurityProblems(params));
   }
   if (path.startsWith(INFRA_ROOT + "/")) {
@@ -368,8 +365,8 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   }
 }
 
-// Node 兼容 import 与依赖声明同时约束 scripts/ 与 test/，测试断言取值口径只约束 test/，
-// 其余判定只针对 packages/。
+// Node 兼容 import、依赖声明与全量基准 import 边界同时约束 scripts/ 与 test/，测试断言
+// 取值口径只约束 test/，其余判定只针对 packages/。
 for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_ROOT)]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {

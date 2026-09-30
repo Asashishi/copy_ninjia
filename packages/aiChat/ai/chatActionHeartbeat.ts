@@ -9,7 +9,7 @@ import { trackInflight } from "../../libs/inflight";
 import type { ChatActionHeartbeatControl, ChatActionHeartbeatEntry, ChatActionPhase } from "../../types/aiChat/chatAction";
 import type { TelegramChatAction } from "../../types/telegram";
 
-/** 一发状态请求的完整参数；话题是第四项，因此收成 options。 */
+/** 一发状态请求的完整参数。 */
 export interface ChatActionSendRequest {
   action: TelegramChatAction;
   chatId: number;
@@ -26,7 +26,7 @@ export interface ChatActionHeartbeatDependencies {
   maxConsecutiveFailures: number;
   /** 一段状态结束后到下一段亮起的最短静默（ms）。 */
   restMs: number;
-  /** 唯一的发送口；新增挡位需同步更新依赖接口、默认值与分发分支。 */
+  /** 唯一的发送口；挡位取值由 TelegramChatAction 单点定义。 */
   sendChatAction(request: ChatActionSendRequest): Promise<boolean>;
 }
 
@@ -160,9 +160,9 @@ export interface StartChatActionHeartbeatParams {
 /**
  * 在整轮 AI 工具对话期间提供聊天状态的挡位心跳，从 idle 挡起步。有序并行轮生成/思考期间
  * 不亮任何状态，「正在输入/发送图片/选择贴纸/录音…」只由本轮串行动作链按工具调用顺序拉起
- * 有界窗口（见 aiChat/ai/tools/replyToolset/actionChains.ts），同一轮里任一时刻只有链上正在
- * 执行的那一步切挡。直接轮在还没执行过动作的请求期间亮「正在输入」、刚看过贴纸包的那次请求
- * 亮「正在选择贴纸」，其余请求不亮；动作工具在调用内执行时切到各自的挡位，模型阶段结束时收回
+ * 有界窗口（见 aiChat/ai/tools/replyToolset/actionChains.ts），链上的步骤按顺序切挡。直接轮的
+ * 动作同样由串行链切挡；链空闲时，还没接纳过动作的请求期间亮「正在输入」、刚看过贴纸包的那次
+ * 请求亮「正在选择贴纸」，其余请求不亮，链忙时请求的挡位等链排空再亮，模型阶段结束时收回
  * 还没被动作接走的请求挡位（见 replyToolset/pacing.ts 与 replyToolset/orchestrator.ts）；
  * 因此直接轮里模型最终只扣反应或静默结束时，群友会看到一段等不来消息的「正在输入」。
  * 切到非 idle 挡会补发一次对应状态（同挡位在间隔内刚发过则节流跳过），此后由定时器按间隔

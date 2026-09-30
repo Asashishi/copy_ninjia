@@ -48,7 +48,8 @@ export function getGlobalCopyState(): Readonly<GlobalCopyState> {
  * 本群此刻的复读目标 id；没有目标、或目标锁在别的群时为 undefined。
  *
  * 不返回 `{ copiedUser, copyMode }` 投影对象：该判定挂在每条群消息与每次反应更新上
- * （auto/message/index.ts、auto/reactionSync.ts、echo.ts、guards.ts），调用点只需
+ * （auto/message/index.ts、auto/message/echo.ts、auto/message/guards.ts、
+ * auto/reactionSync.ts、aiChat/botImages.ts），调用点只需
  * 判断「是不是 TA」。需要整份身份的冷路径直接读 getGlobalCopyState()。
  */
 export function activeCopyTargetIdIn(chatId: number): number | undefined {

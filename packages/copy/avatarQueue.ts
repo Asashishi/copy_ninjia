@@ -72,7 +72,8 @@ async function consumeAvatarUpdates(): Promise<void> {
   } finally {
     avatarUpdateState.running = false;
     notifyAvatarDrainIfIdle();
-    // 防御微任务交界：若 finally 前后刚好有新值到达，重新取得唯一执行槽。
+    // 循环因取消 break 或 catch 块内抛错提前退出时，期间新到的 pending 还没被消费；
+    // 重新取得唯一执行槽处理它。
     if (avatarUpdateState.pending !== null) void consumeAvatarUpdates();
   }
 }

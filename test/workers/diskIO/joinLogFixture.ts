@@ -43,12 +43,14 @@ const {
   flushJoinLogBuffer,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
-  purgeJoinLogDeletions,
-  inspectJoinLogFiles,
-  maintainJoinLogFiles,
   maintainJoinLogRetention,
   readJoinLog,
 } = await import("../../../packages/workers/diskIO/joinLogFiles");
+const {
+  inspectJoinLogFiles,
+  maintainJoinLogFiles,
+  purgeJoinLogDeletions,
+} = await import("../../../packages/workers/diskIO/joinLogRecovery");
 const {
   isRecentJoinLogDay,
   joinLogSnapshotChunks,

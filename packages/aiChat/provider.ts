@@ -9,7 +9,7 @@
  * 归属 AI 闲聊 Worker：所有调用方都在该线程上。
  */
 
-import { claimTtsUsage } from "./ai/ttsUsage";
+import { claimOperatorTtsUsage } from "./ai/ttsUsage";
 import { ttsQuotaLimit } from "./ai/utils/ttsUsageWindow";
 import { geminiProvider } from "./gemini";
 import { openAiProvider } from "./openai";
@@ -69,11 +69,7 @@ const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiCh
 };
 
 /**
- * 读取一项能力的部署配置；不做凭据或故障回退。
- *
- * 五个导出各自拿到 config 后直接索引 AI_CHAT_PROVIDERS：映射穷举要的是「这一家
- * 把五项能力都装配齐了」，门面构造要的是「这一次只许用这一项」，两件事由构造
- * 函数的返回类型分开表达，不必为同一份配置读两遍。
+ * 读取 text、summary、media 三项必备能力的部署配置；未配置时抛错，不做凭据或故障回退。
  */
 function capabilityConfig(capability: "text" | "summary" | "media"): AgentCapabilityConfig {
   const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
@@ -239,10 +235,10 @@ function createImageFacade(
 }
 
 /**
- * 语音合成门面：请求经交互优先的配额闸门排队。`quotaClaimed` 为 false 的请求在轮到
- * 执行、紧挨着发起供应商请求时登记每日计数（aiChat/ai/ttsUsage.ts 的 claimTtsUsage），
- * 超出本门面所属 `agent.tts` 配置按请求 `quota` 口径算出的上限时不发请求，排队期间被
- * 取消或队列已满的不计数；为 true 的请求已由调用方登记，门面直接合成。
+ * 语音合成门面：请求经交互优先的配额闸门排队。`operator` 口径的请求在轮到执行、紧挨着
+ * 发起供应商请求时登记每日计数（aiChat/ai/ttsUsage.ts 的 claimOperatorTtsUsage），超出本门面
+ * 所属 `agent.tts` 配置的 operator 上限时不发请求，排队期间被取消或队列已满的不计数；`ai`
+ * 口径由调用方自行预留与登记，门面直接合成。
  */
 function createSpeechFacade(
   provider: AiChatProvider,
@@ -253,7 +249,7 @@ function createSpeechFacade(
   if (synthesizeSpeech === undefined) return { name: provider.name };
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   const synthesize = async (request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => {
-    if (!request.quotaClaimed && !claimTtsUsage(request.quota, ttsQuotaLimit(config, request.quota))) {
+    if (request.quota === "operator" && !claimOperatorTtsUsage(ttsQuotaLimit(config, "operator"))) {
       return { ok: false, reason: "daily limit reached" };
     }
     const speech: SynthesizedSpeech | null = await synthesizeSpeech(request);
@@ -309,11 +305,7 @@ export function mediaAiProvider(
   return facade;
 }
 
-/**
- * 可缺席能力的门面记忆化：缺配置时把 `null` 也缓存下来。
- *
- * `undefined` 专表「还没问过」，`null` 表「问过、没配」，两者严格分开缓存。
- */
+/** optionalCapabilityFacade 的入参。 */
 interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts", TFacade> {
   /** 部署配置里的能力键，也是记忆化槽位名。 */
   readonly capability: TCapability;
@@ -325,6 +317,10 @@ interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts", TF
   readonly store: (facade: TFacade | null) => void;
 }
 
+/**
+ * 可缺席能力（image、tts）的门面记忆化：缺配置时把 `null` 也缓存下来。
+ * `undefined` 专表「还没问过」，`null` 表「问过、没配」，两者严格分开缓存。
+ */
 function optionalCapabilityFacade<TCapability extends "image" | "tts", TFacade>({
   capability,
   cached,

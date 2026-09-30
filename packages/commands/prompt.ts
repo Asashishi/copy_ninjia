@@ -4,7 +4,7 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { PROMPT_COMMAND_PATTERN } from "../consts/prompt";
 
-import { getChatState, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
+import { getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { forumTopicThreadId } from "../libs/forumTopic";
 import { hasWhitelistPermission } from "../infra/identityPolicy/whitelist";
@@ -15,9 +15,7 @@ export async function handlePromptCommand(ctx: CommandContext<Context>): Promise
   const chatId: number = ctx.chat.id;
   const actorId: number | undefined = resolveCommandActor(ctx)?.id;
   let text: string;
-  if (getChatState(chatId).isInitEnabled !== true) {
-    text = chatAtmosphere(chatId).PROMPT_COMMAND_TEXTS.notInitialized;
-  } else if (actorId === undefined || !hasWhitelistPermission(actorId, "isCanConfigAiPrompt")) {
+  if (actorId === undefined || !hasWhitelistPermission(actorId, "isCanConfigAiPrompt")) {
     text = chatAtmosphere(chatId).PROMPT_COMMAND_TEXTS.rejected;
   } else {
     const match: RegExpExecArray | null = PROMPT_COMMAND_PATTERN.exec(ctx.match.trim());

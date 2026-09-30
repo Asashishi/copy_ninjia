@@ -23,6 +23,14 @@ export interface GeminiContextCacheSlot {
   renewFailedAt: number;
 }
 
+/** 一槽创建被 400 拒绝的记录：被拒内容的指纹、该内容累计被拒次数与最近一次被拒的时刻。 */
+export interface GeminiContextCacheRejection {
+  readonly contentKey: string;
+  readonly count: number;
+  /** 最近一次被拒的时刻（epoch 毫秒）；未满上限时据此冷却。 */
+  readonly rejectedAt: number;
+}
+
 /** 一张登记表对服务端既有条目的启动扫描进度。 */
 export type GeminiContextCacheScanState = "idle" | "running" | "done";
 
@@ -38,11 +46,18 @@ export interface GeminiContextCacheRegistry {
   readonly creations: Map<string, Promise<void>>;
   /**
    * 槽键 → 最近一次创建失败（瞬时错误）或引用被拒后释放的时刻（epoch 毫秒）；该槽创建成功
-   * 或被淘汰时删除。
+   * 或被淘汰时删除，记下新失败时一并摘掉已过冷却期的记录。容量为一个冷却期内失败的槽数。
    */
   readonly failures: Map<string, number>;
-  /** 槽键 → 创建被端点以 400 拒绝的内容指纹，同一内容不再创建；该槽创建成功或被淘汰时删除。 */
-  readonly rejected: Map<string, string>;
+  /**
+   * 槽键 → 创建被端点以 400 拒绝的内容指纹、累计次数与时刻；未满
+   * GEMINI_CONTEXT_CACHE_MAX_REJECTIONS 次时按 GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS 冷却
+   * 后再试，满额后同一内容不再创建，被拒内容变了从 1 重新计。同一槽键之后创建成功、或该槽
+   * 已有的旧缓存被淘汰时删除；登记表在 `config.text` / `agent.ad_detect` 变化时整表替换。
+   * 容量为本表存续期间被拒的不同槽键数（每个槽键只记最近被拒的内容）；被拒的槽键不占
+   * slots，不按 maxSlots 截断。
+   */
+  readonly rejected: Map<string, GeminiContextCacheRejection>;
   scan: GeminiContextCacheScanState;
 }
 

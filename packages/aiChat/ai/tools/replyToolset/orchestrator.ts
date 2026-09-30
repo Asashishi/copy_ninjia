@@ -3,6 +3,7 @@ import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import {
   ACTION_TOOL_NAMES,
   REPLY_INVALIDATED_TOOL_ERROR,
+  TOOL_DECLARATIONS,
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
   GROUP_QA_ANSWER_TOOL,
@@ -15,16 +16,13 @@ import {
 } from "../../../../consts/tools";
 import type {
   DirectReplyPacing,
-  PreparedReplyAction,
   ReplyActionChains,
-  ReplyActionPause,
   ReplyToolContext,
   ReplyToolExecution,
   ReplyToolset,
   RoundMessageState,
 } from "../../../../types/aiChat/replies";
 import type { StickerPackCandidate, StickerRoundState } from "../../../../types/stickers/tools";
-import { TOOL_DECLARATIONS } from "../index";
 import {
   buildSendStickerToolDefinition,
   buildStickerPackMenu,
@@ -48,7 +46,6 @@ import {
   executeGroupQaAnswer,
   executeGroupQaQuery,
 } from "./groupQa";
-import { logger } from "../../../../infra/logger";
 import { parseToolResult, toolError } from "../../utils/toolResult";
 import { imageAiProvider } from "../../../provider";
 import { createReplyActionChains } from "./actionChains";
@@ -66,10 +63,11 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   const stickerState: StickerRoundState = createStickerRoundState();
   const messageState: RoundMessageState = createRoundMessageState();
   let actionsUsed: number = 0;
-  const chains: ReplyActionChains = createReplyActionChains(ctx, deliveryReady);
+  // 直接轮的节奏（见 pacing.ts 的 createDirectPacing）；有序并行轮为 null，链上每一步都做拟人停顿。
+  const directPacing: DirectReplyPacing | null = ctx.direct ? createDirectPacing(ctx.chatAction, ctx.signal) : null;
+  const chains: ReplyActionChains = createReplyActionChains(ctx, deliveryReady, directPacing);
   // 直接轮：上一批工具调用里看过贴纸包，下一次请求模型就是在挑贴纸。
   let choosingSticker: boolean = false;
-  const directPacing: DirectReplyPacing = createDirectPacing(ctx.chatAction, ctx.signal);
 
   const viewDefinition: AiToolDefinition | null = buildViewStickerPackToolDefinition(menu);
   const sendStickerDefinition: AiToolDefinition | null = buildSendStickerToolDefinition(menu);
@@ -98,39 +96,10 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   const executeGenerateImage: ((argumentsJson: string) => ReplyToolExecution) | null = imageEnabled
     ? createGenerateImageExecutor(ctx, messageState, (): number => actionsUsed)
     : null;
-  // 语音执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。准入通过后它自己投递（直接轮
-  // 在调用内发出，有序并行轮排进串行链），交回最多等前台窗口的回执 Promise（见 voiceMessage.ts）。
-  const executeSendVoice: ((argumentsJson: string) => string | Promise<string>) | null =
+  // 语音执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。准入通过后在后台开始合成，
+  // 交回接纳回执与投递步骤；窗口到点仍在合成时，投递步骤经 chains.defer 转入后台（见 voiceMessage.ts）。
+  const executeSendVoice: ((argumentsJson: string) => ReplyToolExecution) | null =
     voiceEnabled ? createSendVoiceExecutor(ctx, chains) : null;
-
-  /**
-   * 直接轮：在工具调用内执行动作，按直接轮节奏切挡与停顿（见 pacing.ts 的 createDirectPacing，只有
-   * send_message 算文字），把真实结果交回模型并经 chains.record 记账；send_voice 交来的是已在调用内
-   * 投递并记账的结果。执行抛错时记英文日志并回不可重试错误。无论结果如何，动作执行完都收回挡位并
-   * 开始静默。
-   */
-  async function runDirect(name: string, execution: PreparedReplyAction | Promise<string>): Promise<string> {
-    const pause: ReplyActionPause = directPacing.startAction(name === SEND_MESSAGE_TOOL);
-    try {
-      if (execution instanceof Promise) return await execution;
-      const result: string = await execution.run(ctx.chatAction, pause);
-      chains.record(name, result);
-      return result;
-    } catch (error: unknown) {
-      if (ctx.isActive()) logger.error(`AI reply action failed (chat ${ctx.chatId}, tool ${name}):`, error);
-      return toolError(`Action ${name} failed unexpectedly`, { retryable: false });
-    } finally {
-      directPacing.endAction();
-    }
-  }
-
-  /** 调用内等结果的动作（send_voice，以及直接轮的全部动作）：按交回模型的结果占额度。 */
-  function settleInCall(isActionTool: boolean, pending: Promise<string>): Promise<string> {
-    return pending.then((result: string): string => {
-      if (isActionTool) actionsUsed += parseToolResult(result).actionsUsed;
-      return result;
-    });
-  }
 
   /** 记下一次执行的回执：动作工具按回执占额度，接纳的动作交给串行链投递。 */
   function accept(name: string, isActionTool: boolean, execution: ReplyToolExecution): string {
@@ -140,7 +109,7 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     return result;
   }
 
-  function dispatch(name: string, argumentsJson: string): ReplyToolExecution | Promise<string> {
+  function dispatch(name: string, argumentsJson: string): ReplyToolExecution {
     switch (name) {
       case SEND_MESSAGE_TOOL:
         return executeSendMessage(argumentsJson);
@@ -194,38 +163,28 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     // 超出软限制时点名（见 workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
     webSearch: true,
     has: (name: string): boolean => names.has(name),
-    // 直接轮从请求模型起亮状态，直到模型交回的动作在调用内执行时切到各自的挡位。还没执行过动作的
-    // 请求亮「正在输入」，交回的第一条文字直接发出；刚看过贴纸包的那次请求是在挑贴纸，亮「正在选择
-    // 贴纸」；其余请求多半是收尾，不亮状态，之后交回的动作都做拟人停顿。
+    // 直接轮从请求模型起亮状态（串行链忙时由链上的步骤掌管，排空后再亮）。还没接纳过动作的请求亮
+    // 「正在输入」，交回的第一条文字直接发出；刚看过贴纸包的那次请求是在挑贴纸，亮「正在选择贴纸」；
+    // 其余请求多半是收尾，不亮状态，之后交回的动作都做拟人停顿。
     beforeModelRequest: (): void => {
-      if (!ctx.direct || !ctx.isActive()) return;
+      if (directPacing === null || !ctx.isActive()) return;
       directPacing.beforeModelRequest(choosingSticker ? "choose_sticker" : actionsUsed === 0 ? "typing" : "idle");
       choosingSticker = false;
     },
     afterModel: (): void => {
-      if (ctx.direct) directPacing.endModel();
+      directPacing?.endModel();
     },
-    execute: (name: string, argumentsJson: string): Promise<string> => {
-      if (!ctx.isActive()) {
-        return Promise.resolve(toolError(REPLY_INVALIDATED_TOOL_ERROR));
-      }
-      // 校验和接纳在调用时完成。有序并行轮：正文与附加动作按接纳回执先占额度再让模型继续，
-      // 由串行链投递，投递失败不退额度给模型重复投递；send_voice 的投递在调用时就按顺序排进
-      // 串行链，回执最多等合成一个前台窗口（VOICE_FOREGROUND_WAIT_MS）。直接轮：动作在调用内
-      // 执行，按真实结果占额度。模型的函数调用按顺序逐个执行，等待期间不会有第二个 execute 进来。
+    execute: (name: string, argumentsJson: string): string => {
+      if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
+      // 校验和接纳在调用时完成，两种轮次相同：动作按接纳回执先占额度，当场交回模型继续；
+      // 拟人停顿、语音合成的等待与发送都由串行链执行，失败只记日志，不退额度给模型重复投递。
       const isActionTool: boolean = ACTION_TOOL_NAMES.includes(name);
       if (isActionTool && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
-        return Promise.resolve(toolError(
+        return toolError(
           `Action limit reached: at most ${HARD_MAX_ACTIONS_PER_REPLY} actions (messages + stickers + reactions + images + voices) per reply`
-        ));
+        );
       }
-
-      const dispatched: ReplyToolExecution | Promise<string> = dispatch(name, argumentsJson);
-      if (ctx.direct && typeof dispatched !== "string") {
-        return settleInCall(isActionTool, runDirect(name, dispatched));
-      }
-      if (dispatched instanceof Promise) return settleInCall(isActionTool, dispatched);
-      return Promise.resolve(accept(name, isActionTool, dispatched));
+      return accept(name, isActionTool, dispatch(name, argumentsJson));
     },
     actionsUsed: (): number => actionsUsed,
     settle: (): Promise<void> => chains.settle(),

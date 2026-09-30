@@ -15,7 +15,7 @@ function albumPhoto(chatId: number, group: string, uniqueId: string): Message {
 }
 
 beforeEach(() => {
-  for (const key of [...mediaGroupImages.keys()]) mediaGroupImages.delete(key);
+  mediaGroupImages.clear();
 });
 
 describe("相册缓存", () => {

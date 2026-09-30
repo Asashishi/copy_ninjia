@@ -6,6 +6,7 @@ import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
 import { inspectOptionalFile } from "../../libs/fileAccess";
+import { hasExactKeys, isPlainRecord } from "../../libs/record";
 import { isCanonicalDateKey } from "../../libs/time";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 
@@ -26,30 +27,29 @@ const DEFAULT_IO: LuckSecretFileIO = {
   writeText: atomicWriteTextSync,
 };
 
+/** 严格解码 version=1 回执密钥；诊断按字段路径写明期望形态，不回显密钥。 */
 function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecret {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`${path} must contain an object`);
+  if (!isPlainRecord(value) || !hasExactKeys(value, ["version", "day", "key"])) {
+    return invalidInput(path, "$", "exactly { version, day, key }");
   }
-  const raw: Record<string, unknown> = value as Record<string, unknown>;
-  const keys: string[] = Object.keys(raw).sort();
-  if (keys.join(",") !== "day,key,version") throw new Error(`${path} has unknown or missing fields`);
-  if (raw.version !== 1) throw new Error(`${path}.version must be 1`);
+  if (value.version !== 1) return invalidInput(path, "$.version", "1");
   if (
-    typeof raw.day !== "string" ||
-    !LUCK_DAY_PATTERN.test(raw.day) ||
-    !isCanonicalDateKey(raw.day)
-  ) throw new Error(`${path}.day is invalid`);
-  if (typeof raw.key !== "string" || !LUCK_RECEIPT_SECRET_PATTERN.test(raw.key)) {
-    throw new Error(`${path}.key is invalid`);
+    typeof value.day !== "string" ||
+    !LUCK_DAY_PATTERN.test(value.day) ||
+    !isCanonicalDateKey(value.day)
+  ) return invalidInput(path, "$.day", "a canonical YYYY-MM-DD date");
+  const expectedKey: string = "a canonical base64url encoding of 32 bytes";
+  if (typeof value.key !== "string" || !LUCK_RECEIPT_SECRET_PATTERN.test(value.key)) {
+    return invalidInput(path, "$.key", expectedKey);
   }
-  const decoded: Uint8Array = Uint8Array.fromBase64(raw.key, { alphabet: "base64url" });
+  const decoded: Uint8Array = Uint8Array.fromBase64(value.key, { alphabet: "base64url" });
   if (
     decoded.length !== 32 ||
-    decoded.toBase64({ alphabet: "base64url", omitPadding: true }) !== raw.key
+    decoded.toBase64({ alphabet: "base64url", omitPadding: true }) !== value.key
   ) {
-    throw new Error(`${path}.key is not canonical base64url`);
+    return invalidInput(path, "$.key", expectedKey);
   }
-  return { version: 1, day: raw.day, key: raw.key };
+  return { version: 1, day: value.day, key: value.key };
 }
 
 function newSecret(day: string, path: string, io: LuckSecretFileIO): LuckReceiptSecret {
@@ -113,12 +113,7 @@ export async function inspectLuckReceiptSecret(
     return { day, path, secret: null };
   }
 
-  let secret: LuckReceiptSecret;
-  try {
-    secret = decodeLuckReceiptSecret(await readJsonInput(path), path);
-  } catch {
-    return invalidInput(path, "$", "the current version=1 luck receipt secret schema");
-  }
+  const secret: LuckReceiptSecret = decodeLuckReceiptSecret(await readJsonInput(path), path);
   if (secret.day > day) {
     return invalidInput(path, "$.day", "no later than the current Tokyo day");
   }

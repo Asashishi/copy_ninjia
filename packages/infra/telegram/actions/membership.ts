@@ -1,7 +1,7 @@
 import type { ChatMember, User } from "grammy/types";
 import { isAdminStatus, isPresentMember } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
-import { isChatMemberQueryDenied, isParticipantIdInvalid, runTelegramAction } from "./core";
+import { isChatMemberQueryDenied, isParticipantIdInvalid, logUnlessAborted, runTelegramAction } from "./core";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type { ChatMemberPresence } from "../../../types/telegram";
 import type { TelegramApi } from "../../../types/telegramWorker";
@@ -114,6 +114,7 @@ export async function probeChatAdmin(
       isAdminStatus(member.status),
     fallback: undefined,
     signal,
+    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -126,8 +127,8 @@ export interface ChatMemberUserOptions {
 
 /**
  * 取本轮查询到的成员身份，不解释成员状态，离群与被踢同样返回身份。
- * /wed 的候选信源只有 memory/wed 的已发言成员集合，抽中后只用这一次查询拿到
- * 图注和公开头像兜底所需的身份，见 commands/wed/draw.ts。
+ * 只供 `/info` 现查目标资料（commands/info.ts 的 lookUp）：要的是名称与用户名，
+ * 不判断在不在群。
  * @returns 查询成功返回身份，查询失败返回 undefined。
  */
 export function readChatMemberUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<User | undefined> {
@@ -138,13 +139,14 @@ export function readChatMemberUser({ chatId, userId, signal }: ChatMemberUserOpt
     map: (member: ChatMember): User => member.user,
     fallback: undefined,
     signal,
+    shouldLogError: logUnlessAborted,
   });
 }
 
 /**
  * 查询目标此刻是否在群，结局语义见 types/telegram.ts 的 ChatMemberPresence。
- * PARTICIPANT_ID_INVALID 按离群处理且不记 API 错误；本群拒绝查询与其它失败照常
- * 记一行 API 错误。
+ * PARTICIPANT_ID_INVALID 按离群处理且不记 API 错误；本群拒绝查询与其它失败除停机
+ * 取消外照常记一行 API 错误。
  */
 export async function readPresentChatUser({ chatId, userId, signal }: ChatMemberUserOptions): Promise<ChatMemberPresence> {
   let participantInvalid: boolean = false;
@@ -156,10 +158,10 @@ export async function readPresentChatUser({ chatId, userId, signal }: ChatMember
     map: (member: ChatMember): User | null => isPresentMember(member) ? member.user : null,
     fallback: undefined,
     signal,
-    shouldLogError: (error: unknown): boolean => {
+    shouldLogError: (error: unknown, actionSignal: AbortSignal | undefined): boolean => {
       participantInvalid = isParticipantIdInvalid(error);
       chatDenied = isChatMemberQueryDenied(error);
-      return !participantInvalid;
+      return !participantInvalid && logUnlessAborted(error, actionSignal);
     },
   });
   if (participantInvalid || user === null) return { kind: "absent" };

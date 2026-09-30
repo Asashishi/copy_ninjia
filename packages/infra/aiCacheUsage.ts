@@ -1,7 +1,8 @@
 /**
- * 模型请求用量的上报边界：各供应商客户端在拿到响应后调用 reportAiCacheUsage（token）
- * 或 reportAiCostUsage（只给费用的供应商），本线程装了出口（cache/perThread/aiCacheUsage.ts）
- * 才发出。只读取响应的 usage 字段，SDK 返回有效用量即计入，包括取消后迟到、正文为空或
+ * 模型请求用量的上报边界：各供应商客户端在拿到响应后调用 reportAiCacheUsage（token 口径）、
+ * reportGeminiUsage / reportGeminiInteractionUsage（Gemini 响应适配）或 reportXAiUsage
+ * （xAI 响应适配，无 token 时经 reportAiCostUsage 按费用口径计入），本线程装了出口
+ * （cache/perThread/aiCacheUsage.ts）才发出。只读取响应的 usage 字段，SDK 返回有效用量即计入，包括取消后迟到、正文为空或
  * 解码失败的响应；不改变业务结果。缺失、非法或无法投递时丢弃，并按能力/供应商/原因
  * 给出有界诊断。
  */

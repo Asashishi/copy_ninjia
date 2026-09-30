@@ -309,7 +309,7 @@ describe("Disk I/O 新代际握手与终止失败", () => {
     // 否则一次清理故障会把真正的故障掩盖掉。
     const fixture: RecoveryFixture = await startDiskIO();
     try {
-      FakeWorker.nextTerminateBehavior = "reject";
+      FakeWorker.nextTerminateBehavior = "throwSync";
       const second: FakeWorker = crashDiskIOWorker(fixture.first);
       second.onmessage!({ data: {
         type: "loaded",
@@ -335,10 +335,15 @@ describe("Disk I/O 新代际握手与终止失败", () => {
     }
   });
 
-  test("终止旧实例同步抛错时同样只记诊断", async () => {
+  test("运行时恢复致命失败同样通知放弃自愈：等待方按失败结算，进程级 flush 报 failed 而非超时", async () => {
     const fixture: RecoveryFixture = await startDiskIO();
+    let notified: number = 0;
+    const listener = (): void => { notified++; };
+    diskIO.onDiskIOGiveUp(listener);
     try {
-      FakeWorker.nextTerminateBehavior = "throwSync";
+      // 诊断批次不 ACK，进程级 flush 因此停在「等待诊断排空」。
+      diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["pending"] });
+      const flushing: Promise<unknown> = diskIO.flushDiskIO(60_000);
       const second: FakeWorker = crashDiskIOWorker(fixture.first);
       second.onmessage!({ data: {
         type: "loaded",
@@ -350,14 +355,14 @@ describe("Disk I/O 新代际握手与终止失败", () => {
         pendingBlockedRemovals: new Map(),
         blocklistEntryCount: 0,
         permissionEntryCount: 0,
-        error: "state file is corrupt",
+        error: "verification file is corrupt",
       } } as MessageEvent<DiskIOReply>);
-      await Bun.sleep(0);
 
-      expect(diskIORuntime.writable).toBeFalse();
-      expect(fixture.consoleError.mock.calls.flat().join(" "))
-        .toContain("failed to terminate unusable persistence Worker");
+      await expect(flushing).resolves.toBe("failed");
+      expect(notified).toBe(1);
+      expect(fixture.fatals).toHaveLength(1);
     } finally {
+      diskIORuntime.giveUpListeners.splice(diskIORuntime.giveUpListeners.indexOf(listener), 1);
       await fixture.dispose();
     }
   });
@@ -425,47 +430,13 @@ async function driveDiagnosticRecycle(worker: FakeWorker): Promise<void> {
 }
 
 describe("Disk I/O 诊断受控重建", () => {
-  test("业务 flush 以 rejection 结束：走 give-up 停机，不把 Worker 换掉了事", async () => {
-    // 换掉 Worker 等于默认非日志事实已经 durable——而这一步恰恰没能确认。
-    // flush barrier 当前实现只 resolve，这条 rejection 分支是给「等的这个
-    // promise 不由自己撰写」留的兜底，用替身把它驱动出来。
-    const fixture: RecoveryFixture = await startDiskIO();
-    const begin = spyOn(diskIOFlushBarrier, "begin")
-      .mockImplementation((): Promise<never> =>
-        Promise.reject(new Error("flush barrier exploded")));
-    const giveUps: number[] = [];
-    // giveUpListeners 是模块级表，没有注销入口；本文件不能给后面的用例留一个
-    // 还在往已结束用例的数组里 push 的回调。
-    const savedGiveUpListeners: (() => void)[] = [...diskIORuntime.giveUpListeners];
-    diskIO.onDiskIOGiveUp((): void => { giveUps.push(1); });
-    try {
-      await driveDiagnosticRecycle(fixture.first);
-      await Bun.sleep(0);
-
-      expect(begin).toHaveBeenCalled();
-      expect(diskIORuntime.writable).toBeFalse();
-      expect(giveUps).toHaveLength(1);
-      expect(fixture.fatals[0]?.message).toContain("runtime persistence recovery failed");
-      expect(fixture.consoleError.mock.calls.flat().join(" "))
-        .toContain("diagnostic-triggered business flush rejected");
-    } finally {
-      diskIORuntime.giveUpListeners.splice(
-        0,
-        diskIORuntime.giveUpListeners.length,
-        ...savedGiveUpListeners
-      );
-      begin.mockRestore();
-      await fixture.dispose();
-    }
-  });
-
   test("受控重建时终止旧实例失败：只记诊断，新代际照常建起来", async () => {
     const fixture: RecoveryFixture = await startDiskIO();
     try {
       await driveDiagnosticRecycle(fixture.first);
       const flush: Extract<DiskIOMessage, { type: "flush" }> =
         lastDiskIOMessage(fixture.first, "flush");
-      fixture.first.terminateBehavior = "reject";
+      fixture.first.terminateBehavior = "throwSync";
       fixture.first.onmessage!({ data: {
         type: "flushed",
         flushedId: flush.flushId,

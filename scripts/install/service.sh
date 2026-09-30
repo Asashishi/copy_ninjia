@@ -73,7 +73,6 @@ journal_nonzero_exit_lines() {
   grep -E 'code=exited, status=0*[1-9][0-9]*|code=(killed|dumped)' || true
 }
 
-# 以 root 直接执行，否则借 sudo；两者都没有时由调用方决定怎么办。
 # 原地写入前核对既有 unit 生效的 COPY_NINJIA_DATA_ROOT（含 drop-in）与安装器环境一致；
 # 身份库、部署输入校验和重写的 unit 都按安装器环境定位数据根。两侧同时缺省，或
 # 都设置且经 packages/consts/paths.ts 解析为同一路径时放行，其余情况拒绝继续。

@@ -13,7 +13,6 @@ import { commandArgumentTokens } from "./arguments";
 import { WHITELIST_PERMISSION_ALL_COMMAND, WHITELIST_PERMISSION_HELP_COMMAND, WHITELIST_PERMISSION_KEY_BY_LOWERCASE, WHITELIST_PERMISSION_KEYS, WHITELIST_PERMISSION_QUERY_COMMAND } from "../consts/whitelist";
 
 import {
-  confirmWhitelistEntryPersisted,
   enableAllWhitelistPermissions,
   getWhitelistPermissionQueryView,
   isWhitelisted,
@@ -21,7 +20,7 @@ import {
 } from "../infra/identityPolicy/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../config/bot";
 
-import { prefetchIdentityPolicies } from "../infra/identityStorage";
+import { confirmIdentityPolicyPersisted, prefetchIdentityPolicies } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatActorLabel, formatTargetLabel } from "../users/userLabel";
@@ -337,7 +336,7 @@ export async function handlePermissionCommand(
     let result: SetWhitelistPermissionResult;
     try {
       result = enableAllWhitelistPermissions(target.id);
-      await confirmWhitelistEntryPersisted(target.id, !result.changed);
+      await confirmIdentityPolicyPersisted("whitelist", target.id, !result.changed);
     } catch (error: unknown) {
       await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
       return;
@@ -360,7 +359,7 @@ export async function handlePermissionCommand(
   let result: SetWhitelistPermissionResult;
   try {
     result = setWhitelistPermission({ id: target.id, key, value });
-    await confirmWhitelistEntryPersisted(target.id, !result.changed);
+    await confirmIdentityPolicyPersisted("whitelist", target.id, !result.changed);
   } catch (error: unknown) {
     await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
     return;

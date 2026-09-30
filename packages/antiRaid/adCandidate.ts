@@ -1,6 +1,3 @@
-import { BOT_ATMOSPHERE } from "../config/bot";
-import { atmosphereOf } from "../libs/atmosphere";
-import type { AtmosphereTexts } from "../types/atmosphere";
 /** 广告检测主线程入口：把一条 Telegram 群消息收敛为 Worker 所需的最小候选载荷。 */
 
 import type {
@@ -28,7 +25,6 @@ import type {
   AdSampleContext,
 } from "../types/antiRaid/adDetect";
 import type { TelegramIdentityMetadata } from "../types/identityPolicy";
-import { formatUserLabel } from "../users/userLabel";
 import { messageOriginIdentityId } from "../users/messageOrigin";
 import { visibleSenderChat, visibleSenderId } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
@@ -60,8 +56,8 @@ function collectHiddenLinkUrls(
 }
 
 /**
- * 摘出非白名单来源的引用段与被回复原文，让“编辑旧消息后再顶上来”的广告仍进入
- * 判定；关联频道自动转发与白名单来源不连坐评论者，因此显式忽略其回复上下文。
+ * 被回复消息的来源身份：优先取 forward_origin 或 external_reply.origin 解析出的身份，
+ * 否则取被回复消息的可见发送者；隐藏来源或没有被回复消息时为 undefined。
  */
 function replySourceIdentityId(message: Message): number | undefined {
   const replied: Message | undefined = message.reply_to_message;
@@ -87,6 +83,10 @@ function sourceWhitelistStatus(
   return isIdentityPolicyCached(sourceId) ? false : undefined;
 }
 
+/**
+ * 摘出非白名单来源的引用段与被回复原文，让“编辑旧消息后再顶上来”的广告仍进入
+ * 判定；关联频道自动转发与白名单来源不连坐评论者，因此显式忽略其回复上下文。
+ */
 function buildSampleContext(
   message: Message,
   now: number
@@ -188,21 +188,6 @@ export function buildAdCandidate(
   const sampleContext: AdSampleContext | undefined = buildSampleContext(message, now);
   if (text.length === 0 && linkUrls === undefined && sampleContext === undefined) return undefined;
 
-  // 真人那一支直接把 `message.from` 交进去，不再现造投影：formatUserLabel 只读
-  // username / isChannel / title / first_name，grammY 的 `User` 在这四项上与
-  // CachedUser 逐字兼容，而这条路跑在每条开着广告检测的群消息上。
-  // `senderChat === undefined` 时 senderId 只能来自 `message.from.id`，上面那道
-  // `senderId === undefined` 早退已经证明它在；频道那一支仍要投影，它得合成
-  // `isChannel: true` 与 title。
-  const atmosphere: AtmosphereTexts = atmosphereOf(chatState, BOT_ATMOSPHERE);
-  const label: string = senderChat === undefined
-    ? formatUserLabel(message.from!, atmosphere)
-    : formatUserLabel({
-      id: senderId,
-      username: "username" in senderChat ? senderChat.username : undefined,
-      title: "title" in senderChat ? senderChat.title : undefined,
-      isChannel: true,
-    }, atmosphere);
   const meta: Readonly<TelegramIdentityMetadata> =
     messageIdentityMetadata(message, senderChat);
   // 可缺席的字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
@@ -217,7 +202,6 @@ export function buildAdCandidate(
     messageId: message.message_id,
     observedAt: now,
     text,
-    label,
     firstName: meta.firstName,
     lastName: meta.lastName,
     username: meta.username,

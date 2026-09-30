@@ -3,7 +3,7 @@ import { assertDequeCapacities } from "./dequeCapacity";
 /**
  * 有界引用双端队列。使用可增长的环形数组，避免长期高频队列为每个元素额外
  * 创建链表节点；移出元素时立即清掉 backing slot，不能让已淘汰对象被数组继续
- * 引用。只承载进程内状态，不改变任何持久化或跨线程格式。
+ * 引用。只承载进程内状态，不承担持久化格式或跨线程共享。
  *
  * 与 libs/timestampDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
  * 共用校验见 libs/dequeCapacity.ts 的头注。

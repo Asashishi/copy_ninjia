@@ -45,6 +45,7 @@ mock.module("../../../packages/workers/antiRaid/verificationAttemptPermit", () =
 const runtime = await import(
   "../../../packages/workers/antiRaid/verificationRuntime"
 );
+const { handleJoinEvent } = await import("../../../packages/workers/antiRaid/verificationEvents");
 const { drainAntiRaidTasks } = await import(
   "../../../packages/workers/antiRaid/taskTracker"
 );
@@ -129,11 +130,11 @@ describe("Anti-Raid Worker verification attempt budget", () => {
         revision: 3,
       }],
     });
-    runtime.handleJoin({
+    handleJoinEvent({
       type: "join",
       chatId: -1001,
       member: { id: 42, first_name: "Same member" },
-    });
+    }, runtime.dispatchVerification);
     expect(verificationEntries.has("-1001:42")).toBeFalse();
     expect(workerEvents).toHaveLength(1);
 
@@ -191,11 +192,11 @@ describe("Anti-Raid Worker verification attempt budget", () => {
       revision: 5,
     });
 
-    runtime.handleJoin({
+    handleJoinEvent({
       type: "join",
       chatId: -1001,
       member: { id: 42, first_name: "Same member" },
-    });
+    }, runtime.dispatchVerification);
     expect(verificationEntries.get("-1001:42")?.state.kind).toBe("pending");
     runtime.stopVerificationRuntime();
   });

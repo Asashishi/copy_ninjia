@@ -39,7 +39,7 @@ The dedicated library accepts only regular images named by content SHA-256. Subd
 
 ## Why does a scheduled task send again after restart?
 
-`just_once` records live only in memory and are registered again after restart; remove completed tasks from `config/dynamic/cron.json`. `rand_cron` waits also reset, and missed occurrences are not replayed. Fixed images require arrays of 1–10 items, whereas random-image `path` is a directory string. Cron relative paths use the project root; the dedicated library uses the data root. See [deployment configuration](../../config_example/README/en.md#cronjson) for examples.
+`just_once` records live only in memory and are registered again after restart; remove completed tasks from `config/dynamic/cron.json`. `rand_cron` waits also reset, and missed occurrences are not replayed. Fixed images require arrays of 1–10 items, whereas random-image `path` is a directory string. Cron relative paths and the dedicated library both resolve against the runtime data root; cron paths need no `./` prefix. See [deployment configuration](../../config_example/README/en.md#cronjson) for examples.
 
 ## Why is a scheduled or `/send` voice message not sent?
 

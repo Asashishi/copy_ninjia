@@ -85,7 +85,7 @@ This page answers “where does this code live, and where should new code go?”
   - **Representative files**: `aiChatWorker.ts`, `antiRaidWorker.ts`, `diskIOWorker.ts`,
     `businessWorkerPort.ts` (the thread port shared by both business Workers: Telegram proxy, duplex outlet, and inbound routing),
     `aiChat/`, `antiRaid/verificationEffects/`, `diskIO/storageDatabase.ts` with `diskIO/storageDatabase/`, and `diskIO/verification{Codec,Recovery,Writes}.ts`.
-- **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
+- **`packages/aiChat/ai/`**
   - **Responsibility**: model transports and capabilities live under their owning feature so
     thread and lifecycle ownership stays explicit.
   - **Representative files**: `tools/replyToolset/`, `utils/`, `provider.ts`, `voiceSynthesis.ts` (shared speech-synthesis implementation), `ttsUsage.ts` (daily speech-synthesis count). AI-chat model
@@ -96,11 +96,12 @@ This page answers “where does this code live, and where should new code go?”
     bundle shaping, verdicts, and disposal on a hit.
   - **Representative files**: `queue.ts` (entry point and tick), `queueState.ts` (admission
     predicates), `verdict.ts` (verdict and disposal orchestration), `bundle.ts`, `classifier.ts`,
-    `disposal.ts`, and `config.ts` (adopting configuration snapshots posted by the main thread).
+    `disposal.ts`, `config.ts` (adopting configuration snapshots posted by the main thread), and `ai/`
+    (`provider.ts` selects the `google.ts` or `openai.ts` transport by `ad_detect.provider`).
 - **`packages/infra/`**
   - **Responsibility**: the sole main-thread Telegram client and outbound gate, duplex Worker hosts,
     logger, and main-thread I/O proxies.
-  - **Representative files**: `telegram/` (including `telegram/avatar/` and `telegram/actions/`), `diskIO.ts` with `diskIO/` (`businessWrite.ts`, `diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `aiCacheUsage.ts` (the boundary through which AI/Anti-Raid Worker model clients report request cache usage), `geminiContextCache.ts` (the shared core of the Gemini explicit caches; replies and ad detection each pass their own scope), `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), and `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures).
+  - **Representative files**: `telegram/` (including `telegram/avatar/` and `telegram/actions/`), `diskIO.ts` with `diskIO/` (`businessWrite.ts`, `diagnosticChannel.ts`, `fatal.ts`, `host.ts`, `observers.ts`, `recovery.ts`, `requests.ts`, `storageAdmission.ts`, `transport.ts`), `identityStorage.ts` with `identityStorage/` (`read.ts`, `shared.ts`, `sweep.ts`, `write.ts`), `logger.ts` with `logger/` (`forwarding.ts`, `redaction.ts`, `serialization.ts`), `supervisedWorker.ts`, `workerSupervisor.ts`, `aiCacheUsage.ts` (the boundary through which AI/Anti-Raid Worker model clients report request cache usage), `geminiContextCache.ts` (the shared core of the Gemini explicit caches; replies and ad detection each pass their own scope), `mediaGroups.ts` (the album cache boundary), `telegram/fileDownload.ts` (the shared Telegram file download), `telegram/commandPhotos.ts` (30-second command replies with a photo), `randomImage.ts` (random image directory preparation, drawing, and writing collected pictures), and `commandExecutor.ts` (executor runtime creation and task submission shared by `/wed` and deferred commands).
 - **`packages/infra/identityPolicy/`**
   - **Responsibility**: the main-thread read boundary for per-item whitelist permissions, temporary ad-bypass accrual, and blocklist/whitelist mutual-exclusion coordination.
   - **Representative files**: `whitelist.ts`, `temporaryAdBypass.ts`, and `coordination.ts`.

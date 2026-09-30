@@ -27,7 +27,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       : undefined;
     const imageGenerationReference: TelegramVisionSource | undefined = repliedPhoto ?? repliedSticker;
     generateAndSendReply({
-      // 字段一律写全（缺省显式 undefined），不用条件展开：五个入口共用同一个
+      // 字段一律写全（缺省显式 undefined），不用条件展开：三个入口共用同一个
       // 隐藏类，messageIngress.ts 的解构与 Worker 侧读取才不会多态。口径同
       // auto/message/recordContext.ts。
       chatId,
@@ -55,6 +55,6 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       messageThreadId: context.messageThreadId,
     });
   }
-  // 掷骰命中但个人冷却未取得时仍不随机复读，与原流水线语义一致。
+  // 随机掷骰命中即接管这条消息：个人冷却未取得时不发起回复，也不进入洗澡触发等后续主动行为。
   return true;
 }

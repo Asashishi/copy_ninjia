@@ -60,7 +60,7 @@ export function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
 /**
  * 把一串消息写进待检表。
  *
- * **本函数不再判容量**：唯一调用方 enqueueAdCandidate 是纯同步的，它在清洗
+ * **本函数不判容量**：唯一调用方 enqueueAdCandidate 是纯同步的，它在清洗
  * 正文之前就问过 rejectNewAdBundleAtCapacity，满载的新 key 在那里已经返回；
  * 走到这里的要么是已在表里的 key（不占新名额），要么刚通过那道闸，中间没有
  * await 让 pendingAdMessages 变化。容量判据因此只有 isNewAdBundleAtCapacity

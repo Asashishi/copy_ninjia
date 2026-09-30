@@ -1,18 +1,17 @@
 import { wedChats, wedRuntime } from "../../cache/main/wed";
 import { WED_MAX_CONCURRENT, WED_MAX_PENDING } from "../../consts/wed";
-import { trackBackgroundTask } from "../../infra/backgroundTasks";
-import { combineWithUpdateAbortSignal, currentUpdateTopic, runWithUpdateAbortSignal } from "../../infra/updateContext";
+import { createCommandExecutorRuntime, submitCommandExecutorTask } from "../../infra/commandExecutor";
 import { assertTimeoutMs, drainTrackedTasks } from "../../libs/inflight";
-import { createPrioritizedBoundedTaskRunner } from "../../libs/prioritizedBoundedTaskRunner";
-import type { FlushResult, UpdateTopic } from "../../types/lifecycle";
-import type { WedChat, WedRuntime } from "../../types/wed";
+import type { CommandExecutorRuntime } from "../../types/commandExecutor";
+import type { FlushResult } from "../../types/lifecycle";
+import type { WedChat } from "../../types/wed";
 import { resetWedMemberStates } from "../../cache/main/wedMembers";
 import { flushWedMembers } from "./persistence";
 import { initWedMemberReview, stopWedMemberReview } from "./memberReview";
 
 /** 启动时创建唯一执行器；上一代还有任务时禁止重建。 */
 export function initWedRuntime(): void {
-  const previous: WedRuntime | null = wedRuntime.current;
+  const previous: CommandExecutorRuntime | null = wedRuntime.current;
   if (previous !== null && previous.tasks.size > 0) {
     throw new Error("Cannot initialize wed while tasks are unsettled.");
   }
@@ -21,17 +20,12 @@ export function initWedRuntime(): void {
   for (const [, chat] of wedChats) chat.controller.abort();
   wedChats.clear();
   resetWedMemberStates();
-  wedRuntime.current = {
-    runner: createPrioritizedBoundedTaskRunner({
-      maxConcurrent: WED_MAX_CONCURRENT,
-      maxPending: WED_MAX_PENDING,
-      maxBackgroundPending: 0,
-      interactiveBurst: 1,
-    }),
-    controller: new AbortController(),
-    tasks: new Set(),
-    accepting: true,
-  };
+  wedRuntime.current = createCommandExecutorRuntime({
+    maxConcurrent: WED_MAX_CONCURRENT,
+    maxPending: WED_MAX_PENDING,
+    maxBackgroundPending: 0,
+    interactiveBurst: 1,
+  });
 }
 
 /**
@@ -41,19 +35,16 @@ export function initWedRuntime(): void {
  * @see ../../../docs/cn/04-invariants.md
  */
 export function submitWedTask(chat: WedChat, task: () => Promise<unknown>): boolean {
-  const runtime: WedRuntime | null = wedRuntime.current;
+  const runtime: CommandExecutorRuntime | null = wedRuntime.current;
   if (runtime === null || !runtime.accepting || chat.controller.signal.aborted ||
     runtime.runner.pendingCount >= WED_MAX_PENDING) return false;
-  const taskSignal: AbortSignal = combineWithUpdateAbortSignal(runtime.controller.signal)!;
-  if (taskSignal.aborted) return false;
-  const queuedSignal: AbortSignal = AbortSignal.any([taskSignal, chat.controller.signal]);
-  const topic: UpdateTopic | undefined = currentUpdateTopic();
-  const completion: Promise<unknown> = runtime.runner.run("interactive", (): Promise<unknown> =>
-    runWithUpdateAbortSignal(taskSignal, task, topic), queuedSignal).catch((error: unknown): void => {
-    if (!taskSignal.aborted) throw error;
+  return submitCommandExecutorTask({
+    runtime,
+    priority: "interactive",
+    task,
+    errorLabel: "Unexpected error while processing wed interaction:",
+    queueSignal: chat.controller.signal,
   });
-  trackBackgroundTask(runtime.tasks, completion, "Unexpected error while processing wed interaction:");
-  return true;
 }
 
 /** 停机关闭接纳并取消成员复核；已接纳的交互仍在原执行器中按序排空。 */
@@ -66,7 +57,7 @@ export function quiesceWedRuntime(): void {
 export async function drainWedRuntime(timeoutMs: number): Promise<FlushResult> {
   assertTimeoutMs(timeoutMs, "Wed drain timeout");
   quiesceWedRuntime();
-  const runtime: WedRuntime | null = wedRuntime.current;
+  const runtime: CommandExecutorRuntime | null = wedRuntime.current;
   const drained: "flushed" | "timedOut" = runtime === null
     ? "flushed"
     : await drainTrackedTasks(runtime.tasks, runtime.controller, timeoutMs);

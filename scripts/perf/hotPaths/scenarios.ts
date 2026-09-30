@@ -177,11 +177,12 @@ export function joinTimestampWindowScenario(): Scenario {
 
 /**
  * 有硬顶配额窗口的容器成本：`TimestampDeque` + `tryConsumeSlidingWindow` 是
- * 除入群窗口外所有滑动窗口用的那一套（中文动作命令、运势内联查询、AI 回复长
- * 窗口、Worker 重启节流）。容量直接引生产常量——配额上限即长度上界，判定只在
- * 未满时记账，环形缓冲因此永远撑不满。
+ * 配额型滑动窗口用的那一套（中文动作命令、`/h_image`、运势内联查询、Worker 重启
+ * 节流）。容量直接引生产常量——配额上限即长度上界，判定只在未满时记账，环形缓冲
+ * 因此永远撑不满。
  *
- * 与 join-timestamp-window 同窗口长度、同迭代数，两行读数直接可比。
+ * 与 join-timestamp-window 迭代数相同、每次迭代时钟前进 1 ms；窗口长度不同（本场景
+ * 165 ms，入群窗口取生产 JOIN_WINDOW_MS）。
  */
 export function quotaTimestampWindowScenario(): Scenario {
   const timestamps: TimestampDeque =
@@ -250,24 +251,26 @@ export function boundedRollingBufferScenario(): Scenario {
   };
 }
 
-/**
- * 日志脱敏在「正文一个密钥都不含」这条主路径上的成本。
- *
- * 每条日志的每个参数都要跑一遍，而生产上几乎所有日志正文都不含密钥；因此这条
- * 早退路径才是它的常态，值得单列一个场景盯着。
- */
+/** 脱敏基准使用的占位密钥；均不出现在 BENCHMARK_LOG_LINES 中。 */
 const BENCHMARK_SECRETS: readonly string[] = [
   "1234567890:AAF-benchmark-token-value",
   "sk-benchmark-deepseek-key",
   "AIzaSyBenchmarkGeminiKeyValue",
 ];
 
+/** 不含任何密钥的日志正文，按下标轮换。 */
 const BENCHMARK_LOG_LINES: readonly string[] = [
   "Chat title refresh progress: 50/120, elapsed=310ms.",
   "Anti-Raid Worker rejected an ad detection candidate from chat -1001234567890.",
   "Failed to refresh chat title for chat -1009876543210:",
 ];
 
+/**
+ * 日志脱敏在「正文一个密钥都不含」这条主路径上的成本。
+ *
+ * 每条日志的每个参数都要跑一遍，而生产上几乎所有日志正文都不含密钥；因此这条
+ * 早退路径才是它的常态，值得单列一个场景盯着。
+ */
 export function redactCleanLogScenario(): Scenario {
   return {
     iterations: 1_000_000,
@@ -361,7 +364,7 @@ export function gagSpeakCounterScenario(): Scenario {
 /**
  * 每条群消息都要读 4~6 次的那张群状态表（`getChatState(chatId).isXEnabled`，
  * 调用点见 antiRaid/updateIngress.ts、antiRaid/floodControl.ts、
- * antiRaid/adCandidate.ts、auto/message/index.ts、aiChat/availability.ts）。
+ * auto/message/index.ts、aiChat/availability.ts）。
  *
  * **Map 查找刻意提到循环外**：本场景量对象 shape 稳定性，而不是
  * `chatStateCache.get`。这里只轮转已经取到手的状态对象，避免哈希查找掩盖字段读取。

@@ -36,21 +36,27 @@ export function resolveSpeechSynthesizer(): SpeechSynthesizerLookup {
 
 /**
  * 合成一句台词并编码成 Telegram 语音消息。合成返回时 signal 已中止则不再编码；
- * 每日额度用尽按 `daily limit reached` 结算；编码失败原因在这里记一行英文日志。不抛错。
+ * 每日额度用尽按 `daily limit reached` 结算；编码失败原因在这里记一行英文日志。不抛错：
+ * 合成入口或编码意外抛错时记一行英文日志，按 `synthesis failed` 结算。
  * @param synthesize resolveSpeechSynthesizer 取得的入口。
  * @param request 台词、可选语气、本调用方的额度口径与取消信号；台词与语气的清洗与长度
  *   口径由调用方负责。
- * @param logContext 编码失败日志里标明来源的英文片段（如 `chat -100123`）。
+ * @param logContext 编码失败与意外异常日志里标明来源的英文片段（如 `chat -100123`）。
  */
 export async function synthesizeVoiceMessage(
   synthesize: SpeechSynthesizer,
   request: AiMeteredSpeechRequest,
   logContext: string
 ): Promise<VoiceSynthesisResult> {
-  const attempt: SpeechSynthesisAttempt = await synthesize(request);
-  if (request.signal?.aborted === true) return { ok: false, reason: "aborted" };
-  if (!attempt.ok) return attempt;
-  const encoded: VoiceEncodeResult = await encodeVoiceMessage(attempt.speech);
-  if (!encoded.ok) logger.error(`Voice message encoding failed (${logContext}): ${encoded.reason}.`);
-  return encoded;
+  try {
+    const attempt: SpeechSynthesisAttempt = await synthesize(request);
+    if (request.signal?.aborted === true) return { ok: false, reason: "aborted" };
+    if (!attempt.ok) return attempt;
+    const encoded: VoiceEncodeResult = await encodeVoiceMessage(attempt.speech);
+    if (!encoded.ok) logger.error(`Voice message encoding failed (${logContext}): ${encoded.reason}.`);
+    return encoded;
+  } catch (error: unknown) {
+    logger.error(`Voice synthesis failed unexpectedly (${logContext}):`, error);
+    return { ok: false, reason: "synthesis failed" };
+  }
 }

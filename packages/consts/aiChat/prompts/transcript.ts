@@ -1,10 +1,12 @@
 import type { BotImageOrigin } from "../../../types/aiChat/memory";
+import { COMPACT_BATCH_SIZE } from "../memory";
 
-/** 群聊转录行内标注的共享模板。拼装侧（aiChat/ai/utils/chatTranscript.ts 的
- * formatReplyReference/formatForwardTag）与说明文案侧（本目录 memory.ts 的
- * SUMMARY_SYSTEM_PROMPT、转录段首格式说明）共用同一模板，防止格式与说明
+/** 群聊转录行内标注与区块名的共享模板。拼装侧（aiChat/ai/utils/chatTranscript.ts 的
+ * formatReplyReference/formatForwardTag 与各区块标题）与说明文案侧（本目录 memory.ts 的
+ * SUMMARY_SYSTEM_PROMPT、转录段首格式说明、记忆仲裁与禁言指令）共用同一模板，防止格式与说明
  * 各改各的漂移；说明里引用的占位形态直接以「…」代入模板生成，参照
- * workers/aiChat/mediaText.ts 的 resolvedTagFor 与 mediaTagHintFor。 */
+ * workers/aiChat/mediaText.ts 的 resolvedTagFor 与 workers/aiChat/promptContext.ts
+ * 的 mediaTagHintFor。 */
 
 /** 回复标注模板。target 是被回复者的完整身份段（[message_id:]/[id:] 等标记
  * 加显示名）；forwardTag/quote 传空串表示省略对应段。 */
@@ -38,10 +40,49 @@ export function rosterEntryTemplate(code: string, identity: string): string {
   return `${code}=${identity}`;
 }
 
-/** 发言人名册的区块名。拼装侧与说明/白名单/禁令四处共用同一份字面量。 */
-export const SPEAKER_ROSTER_BLOCK_NAME: string = "【发言人名册】";
-/** 转发来源名册的区块名。 */
-export const FORWARD_ROSTER_BLOCK_NAME: string = "【转发来源名册】";
+/** 区块名的方括号外壳：`【名称】`，带说明时为 `【名称（说明）】`。 */
+function blockTitle(name: string, note?: string): string {
+  return note === undefined ? `【${name}】` : `【${name}（${note}）】`;
+}
+
+/** 逐字转录里最新一段（至多 COMPACT_BATCH_SIZE 条）的分层名；所属模块：本文件的区块名与区块标题。 */
+const HOT_MEMORY_TIER_NAME: string = "最热记忆";
+/** 逐字转录里排在最热记忆之前那一段的分层名；所属模块：本文件的区块名与区块标题。 */
+const EARLIER_VERBATIM_TIER_NAME: string = "较早逐字记录";
+/** 更早对话压缩摘要的分层名；所属模块：本文件的区块名与区块标题。 */
+const COLD_MEMORY_TIER_NAME: string = "冷记忆";
+
+/** 最热记忆的区块名；本目录 memory.ts 的读法说明、仲裁规则、防注入白名单与禁言指令引用它。 */
+export const HOT_MEMORY_BLOCK_NAME: string = blockTitle(HOT_MEMORY_TIER_NAME);
+/** 较早逐字记录的区块名；引用方同 HOT_MEMORY_BLOCK_NAME。 */
+export const EARLIER_VERBATIM_BLOCK_NAME: string = blockTitle(EARLIER_VERBATIM_TIER_NAME);
+/** 冷记忆的区块名；引用方同 HOT_MEMORY_BLOCK_NAME，另作冷记忆为空时的占位开头。 */
+export const COLD_MEMORY_BLOCK_NAME: string = blockTitle(COLD_MEMORY_TIER_NAME);
+/** 发言人名册的区块名；拼装侧（aiChat/ai/utils/chatTranscript.ts 的 buildRosterBlock）与 memory.ts 的说明文案共用。 */
+export const SPEAKER_ROSTER_BLOCK_NAME: string = blockTitle("发言人名册");
+/** 转发来源名册的区块名；共用方同 SPEAKER_ROSTER_BLOCK_NAME。 */
+export const FORWARD_ROSTER_BLOCK_NAME: string = blockTitle("转发来源名册");
+
+/**
+ * 较早逐字记录区块的标题与读法，其后紧跟该段转录行；只在逐字缓存超出一个压缩块时出现。
+ * 所属模块：aiChat/ai/utils/chatTranscript.ts 的 buildTieredVerbatimTranscript。
+ */
+export const EARLIER_VERBATIM_BLOCK_HEADER: string =
+  `${blockTitle(EARLIER_VERBATIM_TIER_NAME, "次要背景")}这些记录仍是原文，但判断当前话题和应答对象时应让位于下方${HOT_MEMORY_TIER_NAME}：\n`;
+/**
+ * 最热记忆区块的标题与读法，其后紧跟该段转录行；标题里的条数与分层边界的上限
+ * COMPACT_BATCH_SIZE 一致。所属模块：aiChat/ai/utils/chatTranscript.ts 的 buildTieredVerbatimTranscript。
+ */
+export const HOT_MEMORY_BLOCK_HEADER: string =
+  `${blockTitle(HOT_MEMORY_TIER_NAME, `重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条`)}这是滑动缓存里最新、最应优先关注的逐字消息。` +
+  "判断当前话题、人物指代、@对象、情绪和该回应谁时，必须优先依据本段；最后一条是最新消息：\n";
+/**
+ * 冷记忆区块的标题与读法，其后紧跟按时间从旧到新编号的摘要。
+ * 所属模块：aiChat/ai/utils/chatTranscript.ts 的 buildColdMemoryBlock。
+ */
+export const COLD_MEMORY_BLOCK_HEADER: string =
+  `${blockTitle(COLD_MEMORY_TIER_NAME, "长期背景")}下列内容是更早对话的压缩摘要（按时间从旧到新），只用于理解长期话题、称呼、人物关系和前因后果，不用于判断当前状态；` +
+  "它与较新的逐字记录不一致时，只说明情况后来变了，当前状态以逐字记录为准：\n";
 
 /** 机器人自己在名册里的固定编号。不跟着 u1/u2 排号：模型认出「哪些行是我
  *  自己说的」是回复链路的前提，给它一个不需要查表就认得的记号。 */
@@ -131,10 +172,8 @@ export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");
  * 模型只能读到、绝不能自己产出。
  *
  * 这些模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是
- * 「这个动作确实发生过」的唯一凭据，执行侧写一份、拦截侧再手抄一份，两边一漂移
- * 就等于凭据失效。生图撞上群冷却时模型有概率不说「发不了」，而是照着转录里见过
- * 的这个形状用 send_message 打一段「（…生成并发送了一张图片：…）」出来——群友看到
- * 的是一条声称配了图、实际什么都没有的消息，而记忆里也会留下一条假的动作记录。
+ * 「这个动作确实发生过」的唯一凭据，拦截侧（send_message 正文校验，见
+ * SELF_ACTION_TAG_PATTERNS）按同一批词判定伪造，两边一漂移就等于凭据失效。
  */
 export function stickerSentTagTemplate(detail: string): string {
   return detail ? `（${SELF_STICKER_TAG_MARKER}：${detail}）` : `（${SELF_STICKER_TAG_MARKER}）`;

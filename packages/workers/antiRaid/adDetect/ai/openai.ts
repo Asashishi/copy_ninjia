@@ -8,17 +8,17 @@
  */
 
 import OpenAI from "openai";
-import { adDetectOpenAiClientHolder } from "../../cache/workers/antiRaid/openai";
-import { logger } from "../../infra/logger";
-import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
-import { getAdDetectAgentConfig } from "../../config/agent";
+import { adDetectOpenAiClientHolder } from "../../../../cache/workers/antiRaid/openai";
+import { logger } from "../../../../infra/logger";
+import { reportAiCacheUsage } from "../../../../infra/aiCacheUsage";
+import { getAdDetectAgentConfig } from "../../../../config/agent";
 import {
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
   AD_DETECT_OPENAI_REQUEST_MAX_RETRIES,
   AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS,
-} from "../../consts/antiRaid/adDetect";
-import type { AdDetectAgentConfig } from "../../types/config";
-import type { AdDetectJsonRequestParams } from "../../types/antiRaid/adDetect";
+} from "../../../../consts/antiRaid/adDetect";
+import type { AdDetectAgentConfig } from "../../../../types/config";
+import type { AdDetectJsonRequestParams } from "../../../../types/antiRaid/adDetect";
 
 /** 取得线程内唯一 OpenAI 兼容广告检测客户端。 */
 function getAdDetectOpenAiClient(): OpenAI {

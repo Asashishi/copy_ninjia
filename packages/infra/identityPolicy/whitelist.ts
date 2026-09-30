@@ -8,7 +8,6 @@ import {
 import { SUPER_ADMIN_USER_ID } from "../../config/bot";
 import {
   cachedWhitelistEntry,
-  confirmIdentityPolicyPersisted,
   queueIdentityPolicyWrite,
 } from "../identityStorage";
 import {
@@ -119,21 +118,10 @@ export function hasPermanentWhitelistPermission(
 }
 
 /**
- * 等目标白名单最终值落盘；幂等命中时补投仍未 ACK 的上一版最终值。
- * 命令据此才能把“缓存里已经如此”与“SQLite 已经如此”分开。
- */
-export function confirmWhitelistEntryPersisted(
-  id: number,
-  retryUnacknowledged: boolean
-): Promise<void> {
-  return confirmIdentityPolicyPersisted("whitelist", id, retryUnacknowledged);
-}
-
-/**
  * 发布一条白名单最终值，并确认它真的交到了 Disk I/O Worker 手上。
  *
  * `queueIdentityPolicyWrite` 返回 false 是 postDiskIO 拒收的唯一信号（见
- * infra/identityStorage.ts）：Worker 侧的写盘错误只有 console.error，不进入 logs/。
+ * infra/identityStorage/write.ts）：Worker 侧的写盘错误只有 console.error，不进入 logs/。
  * 拒收时在这里抛出，交给两条命令既有的 mutationFailed 分支如实回执
  * （commands/permission.ts、commands/white.ts）。
  */

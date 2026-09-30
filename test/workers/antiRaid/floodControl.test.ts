@@ -1,5 +1,6 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../packages/consts/commands";
 installTemporaryMessageWorkerMock();
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
@@ -335,7 +336,7 @@ describe("刷屏禁言的处置", () => {
     expect(deleteAfterCalls).toEqual([{
       chatId: -1001,
       messageId: 500,
-      delayMs: 30_000,
+      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       api: { kind: "guard-api" },
       batchOnFlush: true,
     }]);

@@ -15,9 +15,9 @@ const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined
 const unbanChatMemberIfBanned = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const unbanChatSenderChat = mock(async (..._args: unknown[]): Promise<boolean> => true);
 const resolveBotAdminStatus = mock(async (_chatId: number): Promise<boolean> => false);
-const chatStates: Map<number, { botPermissions?: BotChatPermissions }> = new Map<
+const chatStates: Map<number, { isInitEnabled?: boolean; botPermissions?: BotChatPermissions }> = new Map<
   number,
-  { botPermissions?: BotChatPermissions }
+  { isInitEnabled?: boolean; botPermissions?: BotChatPermissions }
 >();
 let target: CachedUser | undefined;
 /**
@@ -143,7 +143,7 @@ describe("/block disable", () => {
 
   test("从 SQLite 视图移除后在所有管理员群解除真人封禁", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
-    chatStates.set(-2002, { botPermissions: botPermissions() });
+    chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
     resolveBotAdminStatus.mockResolvedValueOnce(true);
 
     await handleUnblockCommand(context());
@@ -156,6 +156,17 @@ describe("/block disable", () => {
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       text: expect.stringContaining("2 个群"),
     }));
+  });
+
+  test("跨群解封与连坐同一清单：是管理员但未 /init enable 的群不解封", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
+    chatStates.set(-3003, { botPermissions: botPermissions() });
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
+
+    await handleUnblockCommand(context());
+
+    expect(unbanChatMemberIfBanned.mock.calls.map((call): unknown => call[0])).toEqual([-1001, -2002]);
   });
 
   test("目标名单预热失败由解析层拒绝：不回「本来就不在小本本上」，也不跨群解封", async () => {
@@ -196,7 +207,7 @@ describe("/block disable", () => {
     // 扇出与 /block 共用 runManagedChatBatch：常规 API 错误已由适配层归一化成
     // false，能抛到这里的是意外异常，逐项结算而不是让整条命令连同战报一起失败。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
-    chatStates.set(-2002, { botPermissions: botPermissions() });
+    chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
     resolveBotAdminStatus.mockResolvedValueOnce(true);
     unbanChatMemberIfBanned
       .mockRejectedValueOnce(new Error("unexpected adapter rejection"))

@@ -53,6 +53,7 @@ export async function sendSticker({
     fallback: undefined,
     signal,
     shouldLogError: logUnlessAborted,
+    selfSentChatId: chatId,
   });
 }
 
@@ -115,6 +116,7 @@ export async function sendPhotoWithResult({
     fallback: undefined,
     signal,
     shouldLogError: logUnlessAborted,
+    selfSentChatId: chatId,
   });
 }
 
@@ -167,6 +169,7 @@ export async function sendVoiceWithResult({
     fallback: undefined,
     signal,
     shouldLogError: logUnlessAborted,
+    selfSentChatId: chatId,
   });
 }
 
@@ -174,7 +177,7 @@ export interface CopyMessageParams {
   chatId: number;
   fromChatId: number;
   messageId: number;
-  /** 论坛群的话题标识；挂回复时也必须显式传递。 */
+  /** 论坛群的话题标识；不传时 Telegram 将消息发送到 General。 */
   messageThreadId?: number;
   /** 替换原图注的新文字（不带实体、不设 parse_mode）；不给则保留原图注。 */
   caption?: string;
@@ -215,5 +218,6 @@ export async function copyMessage({
       return copied.message_id;
     },
     fallback: undefined,
+    selfSentChatId: chatId,
   });
 }

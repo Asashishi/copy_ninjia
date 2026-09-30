@@ -40,28 +40,18 @@ describe("daily luck receipt secret file", () => {
   });
 
   test("损坏 JSON、错误 schema、非法 key 和未来日期均拒绝且不覆盖原文件", async () => {
-    const invalidContents = [
-      "{broken",
-      JSON.stringify({
-        version: 2,
-        day: "2026-07-19",
-        key: new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true }),
-      }),
-      JSON.stringify({
-        version: 1,
-        day: "2026-02-30",
-        key: new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true }),
-      }),
-      JSON.stringify({ version: 1, day: "2026-07-19", key: "short" }),
-      JSON.stringify({
-        version: 1,
-        day: "2026-07-20",
-        key: new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true }),
-      }),
+    const key: string = new Uint8Array(32).toBase64({ alphabet: "base64url", omitPadding: true });
+    const invalidContents: readonly (readonly [string, string])[] = [
+      ["{broken", `${path}: $`],
+      [JSON.stringify({ version: 1, day: "2026-07-19" }), `${path}: $ must be exactly { version, day, key }.`],
+      [JSON.stringify({ version: 2, day: "2026-07-19", key }), `${path}: $.version must be 1.`],
+      [JSON.stringify({ version: 1, day: "2026-02-30", key }), `${path}: $.day must be a canonical YYYY-MM-DD date.`],
+      [JSON.stringify({ version: 1, day: "2026-07-19", key: "short" }), `${path}: $.key must be a canonical base64url encoding of 32 bytes.`],
+      [JSON.stringify({ version: 1, day: "2026-07-20", key }), `${path}: $.day must be no later than the current Tokyo day.`],
     ];
-    for (const content of invalidContents) {
+    for (const [content, message] of invalidContents) {
       await Bun.write(path, content);
-      await expect(recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path })).rejects.toThrow();
+      await expect(recoverLuckReceiptSecret({ day: "2026-07-19", confirmedResultCount: 0, path })).rejects.toThrow(message);
       expect(await Bun.file(path).text()).toBe(content);
     }
   });

@@ -38,6 +38,8 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
     loggerErrorMock.mockClear();
     getChatMock.mockClear();
     setMyProfilePhotoMock.mockClear();
+    // 另一组用例会把上传改成持久拒绝；mockClear 不重置实现，这里显式恢复成功。
+    setMyProfilePhotoMock.mockImplementation(async (): Promise<boolean> => true);
     getChatMock.mockImplementation(async (_chatId: number): Promise<any> => ({
       id: -1003952764805,
       type: "channel",
@@ -55,7 +57,7 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
         `);
       }
       if (url === "https://cdn1.telesco.pe/avatar.jpg") {
-        return new Response(new Uint8Array([1, 2, 3]));
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff]));
       }
       return new Response("", { status: 404 });
     });
@@ -188,7 +190,7 @@ describe("copyUserProfilePhoto Bot API 主路径", () => {
       init?: RequestInit
     ): Promise<Response> => {
       fetchCalls.push({ input: urlOf(input), init });
-      return new Response(new Uint8Array([1, 2, 3]));
+      return new Response(new Uint8Array([0xff, 0xd8, 0xff]));
     }) as unknown as typeof fetch;
   });
 
@@ -276,5 +278,18 @@ describe("copyUserProfilePhoto Bot API 主路径", () => {
 
     expect(getFileMock).toHaveBeenCalledTimes(AVATAR_FETCH_MAX_ATTEMPTS);
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(AVATAR_FETCH_MAX_ATTEMPTS);
+  });
+
+  test("上传被 Telegram 400 拒绝时按确定性失败结束，不再重试", async () => {
+    setMyProfilePhotoMock.mockRejectedValueOnce(new GrammyError(
+      "Call to 'setMyProfilePhoto' failed!",
+      { ok: false, error_code: 400, description: "Bad Request: PHOTO_CROP_SIZE_SMALL" },
+      "setMyProfilePhoto",
+      {}
+    ));
+
+    await expect(copyUserProfilePhoto(42)).resolves.toBeFalse();
+
+    expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
   });
 });

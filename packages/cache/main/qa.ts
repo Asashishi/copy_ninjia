@@ -1,6 +1,6 @@
 /** Owner: 主线程。群问答的权威热缓存与 `/qa set` 表单会话。 */
 
-import type { QaFormSession } from "../../types/qa";
+import type { QaFormSession, UnacknowledgedChatQaWrite } from "../../types/qa";
 
 /**
  * 群 -> 问题原文 -> 答案。主线程是唯一 owner：infra/qaStore.ts 是唯一写入者，
@@ -48,7 +48,13 @@ export const qaFormSessions: Map<number, QaFormSession> = new Map();
  * STORAGE_PENDING_MAX_ENTRIES / STORAGE_PENDING_MAX_BYTES；精确 ACK 后移除。
  * 容量就由这两个预算封顶（外层另受受管群数约束），本表自身不淘汰未落盘事实。
  */
-export const unacknowledgedChatQaWrites: Map<number, Map<string, number>> = new Map();
+export const unacknowledgedChatQaWrites: Map<number, Map<string, UnacknowledgedChatQaWrite>> = new Map();
+
+/**
+ * 上表的总条数与准入估算字节；登记或覆盖一项时按差额更新，精确 ACK 删除该项时扣回，
+ * hydrate 与 reset 清零。
+ */
+export const unacknowledgedChatQaTotals: { entries: number; bytes: number } = { entries: 0, bytes: 0 };
 
 /** 主线程为问答写入分配的单调 revision；进程内唯一，重启从 1 重新开始。 */
 export const nextChatQaRevision: { current: number } = { current: 1 };
@@ -66,5 +72,7 @@ export function resetChatQaCache(): void {
   }
   qaFormSessions.clear();
   unacknowledgedChatQaWrites.clear();
+  unacknowledgedChatQaTotals.entries = 0;
+  unacknowledgedChatQaTotals.bytes = 0;
   nextChatQaRevision.current = 1;
 }

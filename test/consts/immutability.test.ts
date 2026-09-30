@@ -523,3 +523,12 @@ function assertDefaultAssetConfigReadonly(): void {
   DEFAULT_ASSET_CONFIG.botDefaultAvatar.kind = "path";
 }
 void assertDefaultAssetConfigReadonly;
+
+import { TOOL_DECLARATIONS } from "../../packages/consts/tools";
+function assertToolDeclarationsReadonly(): void {
+  // @ts-expect-error 静态查询工具清单不能由调用方增删。
+  TOOL_DECLARATIONS.push(TOOL_DECLARATIONS[0]!);
+  // @ts-expect-error 工具声明的字段同样只读，不能就地改名。
+  TOOL_DECLARATIONS[0]!.name = "changed";
+}
+void assertToolDeclarationsReadonly;

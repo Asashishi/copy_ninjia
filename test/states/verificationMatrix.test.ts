@@ -5,11 +5,8 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import {
-  checkingInviterOf,
-  expellingOf,
-  transitionVerification,
-} from "../../packages/states/verification";
+import { transitionVerification } from "../../packages/states/verification";
+import { checkingInviterOf, expellingOf } from "../../packages/states/verification/shared";
 import type {
   ExpelSnapshot,
   VerificationEffect,

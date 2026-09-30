@@ -85,6 +85,7 @@ async function send(
       failure = error;
       return false;
     },
+    selfSentChatId: chatId,
   });
   if (sent !== undefined) return { kind: "sent" };
   if (signal.aborted) return { kind: "aborted" };

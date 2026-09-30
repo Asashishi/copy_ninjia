@@ -41,14 +41,14 @@ const imageGenerationStore: CooldownClaimStore = {
   tokenLabel: "image-generation-claim",
 };
 
-/** 只读取某群此刻的生图可用性；工具执行器用它在解析参数之前先判一次能不能调。 */
+/** 生图冷却查询与占位共用的入参。 */
 export interface ImageGenerationCooldownParams {
   chatId: number;
   bypassCooldown: boolean;
   now?: number;
 }
 
-/** 只读检查当前冷却，不建立占位。 */
+/** 只读检查当前冷却，不建立占位；工具执行器在解析参数之前用它先判一次能不能调。 */
 export function getImageGenerationAvailability({
   chatId,
   bypassCooldown,
@@ -79,7 +79,7 @@ export function sweepImageGenerationCache(now: number = Date.now()): void {
   sweepCooldownClaims(imageGenerationStore, now);
 }
 
-/** Worker dispose 或测试隔离时清空全部生图占位和冷却。 */
+/** 测试隔离时清空全部生图占位和冷却。 */
 export function resetImageGenerationCache(): void {
   imageGenerationClaimTimes.clear();
   imageGenerationClaimTokens.clear();

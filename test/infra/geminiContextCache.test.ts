@@ -61,7 +61,9 @@ const {
   releaseGeminiContextCache,
 } = await import("../../packages/infra/geminiContextCache");
 const {
+  GEMINI_CONTEXT_CACHE_MAX_REJECTIONS,
   GEMINI_CONTEXT_CACHE_MIN_REMAINING_MS,
+  GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS,
   GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS,
   GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS,
   GEMINI_CONTEXT_CACHE_TTL_SECONDS,
@@ -70,7 +72,7 @@ const { GEMINI_SERVER_TOOL_CONFIG } = await import("../../packages/consts/aiChat
 const { TEXT_GEMINI_CONTEXT_CACHE_SCOPE } = await import("../../packages/aiChat/gemini/contextCache");
 const { textGeminiContextCache } = await import("../../packages/cache/workers/aiChat/geminiContextCache");
 const { aiChatWorkerAbortController } = await import("../../packages/cache/workers/aiChat/worker");
-const { AD_DETECT_GEMINI_CONTEXT_CACHE_SCOPE } = await import("../../packages/antiRaid/ai/google");
+const { AD_DETECT_GEMINI_CONTEXT_CACHE_SCOPE } = await import("../../packages/workers/antiRaid/adDetect/ai/google");
 const { adDetectGeminiContextCache } = await import("../../packages/cache/workers/antiRaid/geminiContextCache");
 const { adDetectGoogleClientHolder } = await import("../../packages/cache/workers/antiRaid/google");
 const { antiRaidDispatchAbort } = await import("../../packages/cache/workers/antiRaid/tasks");
@@ -401,6 +403,30 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       expect(create).toHaveBeenCalledTimes(2);
     });
 
+    test("记下新失败时摘掉已过冷却期的旧失败记录，冷却期内的照常保留", async () => {
+      create.mockImplementation(async (): Promise<CachedContent> => {
+        throw new ApiError({ message: "unavailable", status: 503 });
+      });
+      await finishScan();
+      const start: number = Date.now();
+      setSystemTime(new Date(start));
+      acquireGeminiContextCache(scope, content("系统指令 甲"));
+      await settleCreations();
+      setSystemTime(new Date(start + 1));
+      acquireGeminiContextCache(scope, content("系统指令 乙"));
+      await settleCreations();
+      expect(registry().failures.size).toBe(2);
+
+      setSystemTime(new Date(start + GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS));
+      acquireGeminiContextCache(scope, content("系统指令 丙"));
+      await settleCreations();
+
+      expect([...registry().failures.keys()]).toEqual([
+        content("系统指令 乙").slotKey,
+        content("系统指令 丙").slotKey,
+      ]);
+    });
+
     test("墙钟回拨到失败时刻之前按冷却已结束处理", async () => {
       create.mockImplementationOnce(async (): Promise<CachedContent> => {
         throw new Error("network down");
@@ -417,8 +443,43 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       expect(create).toHaveBeenCalledTimes(2);
     });
 
-    test("被 400 拒绝后同一内容不再创建、只记 warn；内容变了再试", async () => {
-      create.mockImplementationOnce(async (): Promise<CachedContent> => {
+    test("被 400 拒绝后冷却再试、只记 warn；同一内容满上限后不再创建，内容变了重新计", async () => {
+      await finishScan();
+      const start: number = Date.now();
+      for (let attempt: number = 1; attempt <= GEMINI_CONTEXT_CACHE_MAX_REJECTIONS; attempt++) {
+        create.mockImplementationOnce(async (): Promise<CachedContent> => {
+          throw new ApiError({ message: "Cached content is too small", status: 400 });
+        });
+        const rejectedAt: number = start + (attempt - 1) * GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS;
+        setSystemTime(new Date(rejectedAt));
+        acquireGeminiContextCache(scope, content());
+        await settleCreations();
+        expect(create).toHaveBeenCalledTimes(attempt);
+
+        // 拒绝冷却内不再创建。
+        setSystemTime(new Date(rejectedAt + GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS - 1));
+        expect(acquireGeminiContextCache(scope, content())).toBeNull();
+        await settleCreations();
+        expect(create).toHaveBeenCalledTimes(attempt);
+      }
+      expect(loggerWarn).toHaveBeenCalledTimes(GEMINI_CONTEXT_CACHE_MAX_REJECTIONS);
+      expect(loggerError).not.toHaveBeenCalled();
+
+      // 满额之后同一内容再也不创建。
+      setSystemTime(new Date(start + GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS * 10));
+      expect(acquireGeminiContextCache(scope, content())).toBeNull();
+      await settleCreations();
+      expect(create).toHaveBeenCalledTimes(GEMINI_CONTEXT_CACHE_MAX_REJECTIONS);
+
+      const changed: GeminiContextCacheContent = geminiContextCacheContent({ ...content(), model: "gemini-next" });
+      acquireGeminiContextCache(scope, changed);
+      await settleCreations();
+      expect(create).toHaveBeenCalledTimes(GEMINI_CONTEXT_CACHE_MAX_REJECTIONS + 1);
+      expect(registry().rejected.size).toBe(0);
+    });
+
+    test("被拒内容变了从 1 重新计，不继承上一份内容的次数", async () => {
+      create.mockImplementation(async (): Promise<CachedContent> => {
         throw new ApiError({ message: "Cached content is too small", status: 400 });
       });
       await finishScan();
@@ -426,19 +487,17 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       setSystemTime(new Date(start));
       acquireGeminiContextCache(scope, content());
       await settleCreations();
-      expect(loggerWarn).toHaveBeenCalledTimes(1);
-      expect(loggerError).not.toHaveBeenCalled();
-
-      setSystemTime(new Date(start + GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS * 10));
-      expect(acquireGeminiContextCache(scope, content())).toBeNull();
+      const retriedAt: number = start + GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS;
+      setSystemTime(new Date(retriedAt));
+      acquireGeminiContextCache(scope, content());
       await settleCreations();
-      expect(create).toHaveBeenCalledTimes(1);
+      const slotKey: string = content().slotKey;
+      expect(registry().rejected.get(slotKey)?.count).toBe(2);
 
       const changed: GeminiContextCacheContent = geminiContextCacheContent({ ...content(), model: "gemini-next" });
       acquireGeminiContextCache(scope, changed);
       await settleCreations();
-      expect(create).toHaveBeenCalledTimes(2);
-      expect(registry().rejected.size).toBe(0);
+      expect(registry().rejected.get(slotKey)).toEqual({ contentKey: changed.contentKey, count: 1, rejectedAt: retriedAt });
     });
 
     test("多于槽数上限的槽同时失败时，每个槽各自保留冷却与被拒记录", async () => {

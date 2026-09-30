@@ -58,16 +58,11 @@ import type {
 } from "../../types/aiChat/provider";
 
 /**
- * 按本轮配置拼请求要挂的工具集合。
+ * 按本轮配置拼请求要挂的工具集合：googleSearch 在前，函数声明合成一个 Tool。
  *
- * 中立的 AiToolDefinition 直接当 FunctionDeclaration 用，不逐字段抄一遍：
- * 前者是 `{ name, description, parametersJsonSchema }`，而 `@google/genai` 的
- * FunctionDeclaration 声明的恰好就是这三个（其余字段全可选，
- * `parametersJsonSchema?: unknown`）。逐字段复制产出的是形状完全相同的另一个
- * 对象，什么新东西都没有——而这里每个工具轮跑一次，用满 MAX_TOOL_ROUNDS 的
- * 一次回复就是几百个一次性对象，且就在每群每消息的回复路径上（见 AGENTS.md
- * 「不得复制同构对象」）。SDK 只序列化不改写这些声明，按引用透传是安全的；
- * 外层数组仍要新建一个，因为 Tool.functionDeclarations 要求可变数组。
+ * 中立的 AiToolDefinition（`{ name, description, parametersJsonSchema }`）与 SDK 的
+ * FunctionDeclaration 同形，按引用透传；SDK 只序列化、不改写这些声明。外层数组每次
+ * 新建，因为 Tool.functionDeclarations 要求可变数组。
  */
 function buildTools(request: AiReplyTurnRequest): Tool[] {
   const tools: Tool[] = [];

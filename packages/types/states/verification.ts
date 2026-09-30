@@ -8,7 +8,8 @@
  * workers/aiChat/bufferedMessage.ts）。漏写字段是编译错误，构造顺序由声明顺序固定；
  * 除 pending 外各 kind 的构造统一收在 states/verification/shared.ts（exemptOf、
  * kickPendingOf、kickedOf、checkingInviterOf、expellingOf），adopt 重建与状态机新建共用
- * 同一份；pending 只在 join.ts 一处新建。值为 undefined 的字段在
+ * 同一份；pending 以同一字段顺序的对象字面量分别构造于 states/verification/join.ts（新建）
+ * 与 adopt.ts（重建）。值为 undefined 的字段在
  * `JSON.stringify` 时照常省略。
  *
  * 事件与 VerificationTransition 是每次转移现造现用的短命对象，不适用本条。
@@ -64,7 +65,7 @@ export interface KickPendingState {
    * 调用方 recordJoin，而「踢完之后真的重新申请入群」那条路径状态已存在、
    * 不会再计一次数。撤销按值删队列里第一个相等的时间戳，同一 tick 内处理的
    * 多名入群成员时间戳完全相同，拿一个从未计数的值去撤，删掉的就是另一名
-   * 合法计数成员那一格（见 packages/libs/linkedQueue.ts 的 removeValue）。
+   * 合法计数成员那一格（见 packages/libs/timestampDeque.ts 的 removeValue）。
    */
   countedJoinAt: number | undefined;
   /** 入群公告 id；首次动作须在落盘回执后先清理该痕迹再踢人。 */

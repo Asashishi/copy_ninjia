@@ -3,7 +3,7 @@
 import { TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS } from "./telegram";
 import type { FlushTimeouts } from "../types/lifecycle";
 
-/** 等待 grammY runner 中在途 update 处理完毕的最长时间与轮询间隔。 */
+/** 等待 grammY runner 中在途 update 处理完毕的最长时间。 */
 export const RUNNER_DRAIN_TIMEOUT_MS: number = 5_000;
 /** 等待 runner 归零时的轮询间隔。 */
 export const RUNNER_DRAIN_POLL_INTERVAL_MS: number = 100;
@@ -26,7 +26,7 @@ export const FINAL_OFFSET_CONFIRM_TIMEOUT_MS: number = TELEGRAM_REPEATED_OFFSET_
 export const AI_MEMORY_FLUSH_TIMEOUT_MS: number = 2_000;
 /**
  * /ai_chat disable 等待旧 generation 的模型、工具与 Telegram 副作用收敛的预算。
- * 所属模块：aiChat/index.ts。
+ * 所属模块：aiChat/workerBridge.ts。
  */
 export const AI_CHAT_INVALIDATE_TIMEOUT_MS: number = 10_000;
 /**
@@ -48,7 +48,7 @@ export const AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS: number = 7_000;
 export const DISK_IO_FLUSH_TIMEOUT_MS: number = 3_000;
 /** 正常停机等待全局状态文件写入的预算。 */
 export const STATE_FLUSH_TIMEOUT_MS: number = 3_000;
-/** 正常停机等待头像、反应与翻译 owner 的预算。 */
+/** 正常停机时头像、翻译、Anti-Raid、gag、/wed、延迟命令、cron、延迟删除与 Telegram 出站各 owner 的排空预算，也是等待后台维护收尾的预算（见 app/lifecycle/shutdown.ts 的 SHUTDOWN_DRAIN_OWNERS）。 */
 const BACKGROUND_MAINTENANCE_TIMEOUT_MS: number = 3_000;
 
 /** 单次 Google Translation RPC 的上限，避免在途翻译无限阻塞停机。 */

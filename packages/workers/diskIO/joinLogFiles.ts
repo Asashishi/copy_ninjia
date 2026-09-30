@@ -48,12 +48,6 @@ import {
   writeFileEntries,
 } from "./joinLogWrites";
 import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
-export {
-  inspectJoinLogFiles,
-  maintainJoinLogFiles,
-  purgeJoinLogDeletions,
-} from "./joinLogRecovery";
-export type { JoinLogRecoveryInspection } from "./joinLogRecovery";
 
 async function ensureCurrentDayPrepared(today: string): Promise<void> {
   if (joinLogCleanupDay.current === today) return;

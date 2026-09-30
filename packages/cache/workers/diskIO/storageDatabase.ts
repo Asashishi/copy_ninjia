@@ -3,9 +3,10 @@
 import { closeStorageDatabase } from "../../../database/interact/connection";
 import { StorageWriteBudget } from "../../../libs/storageWriteBudget";
 import type { PendingBlockedRemoval } from "../../../types/blocklist";
-import type { IdentityPersistenceReply } from "../../../types/diskIO/replies";
+import type { IdentityPersistenceReply, StorageDatabaseDomain } from "../../../types/diskIO/replies";
 import type {
   StorageDatabase,
+  StorageDatabaseWriter,
   StoredIdentityIdLookups,
 } from "../../../types/storageDatabase";
 import type {
@@ -46,6 +47,19 @@ export const storedIdentityIdLookups: WeakMap<
   StorageDatabase,
   StoredIdentityIdLookups
 > = new WeakMap<StorageDatabase, StoredIdentityIdLookups>();
+
+/**
+ * Owner: Disk I/O Worker。
+ *
+ * 每条连接一整套统一事务提交用的预编译写语句，首次提交时由
+ * workers/diskIO/storageDatabase/flush.ts 建好放进来，同一连接的每次提交复用。容量、清理与
+ * Worker 重建口径同 storedIdentityIdLookups：每条活着的连接一项，键随连接回收，关库时
+ * `close(true)` 一并结束这些语句。
+ */
+export const storageDatabaseWriters: WeakMap<
+  StorageDatabase,
+  StorageDatabaseWriter
+> = new WeakMap<StorageDatabase, StorageDatabaseWriter>();
 
 /**
  * 30 秒 timer 使用的 ACK 通道；Worker 启动时填充，随整个 DiskIO isolate 销毁。
@@ -160,17 +174,14 @@ export const storageWriteFlushTimer: {
 } = { current: null };
 
 /**
- * 本轮未进入写缓冲的拒收领域；统一 flush 取走后清空，避免永久失败。
- * 容量最多为七个共享 SQLite 持久化领域（含 AI 上下文），Worker 重建时由 reset 清空。
+ * 本轮未进入写缓冲的拒收领域；单领域 flush 只取走本领域的标记，all/business flush
+ * 取走全部，取走即清除，避免永久失败。容量最多为七个共享 SQLite 持久化领域
+ * （含 AI 上下文），Worker 重建时由 reset 清空。
  */
-export const rejectedStorageDomains: Set<
-  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
-> = new Set();
+export const rejectedStorageDomains: Set<StorageDatabaseDomain> = new Set();
 
-/** 记下某个存储领域本轮拒收的一条消息；下一次 flush 会按该领域回报失败。 */
-export function noteStorageWriteRejected(
-  domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
-): void {
+/** 记下某个存储领域本轮拒收的一条消息；下一次覆盖该领域的 flush 会按该领域回报失败。 */
+export function noteStorageWriteRejected(domain: StorageDatabaseDomain): void {
   rejectedStorageDomains.add(domain);
 }
 

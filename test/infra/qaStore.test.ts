@@ -38,7 +38,7 @@ const {
   removeChatQa,
   setChatQa,
 } = await import("../../packages/infra/qaStore");
-const { chatQaEntries, unacknowledgedChatQaWrites, resetChatQaCache } =
+const { chatQaEntries, unacknowledgedChatQaTotals, unacknowledgedChatQaWrites, resetChatQaCache } =
   await import("../../packages/cache/main/qa");
 
 const CHAT_ID: number = -1001;
@@ -116,7 +116,7 @@ describe("群问答主线程持久化边界", () => {
 
   test("精确 ACK 只清对应 revision，迟到的 ACK 不清更新的写", () => {
     setChatQa(CHAT_ID, "怎么入群？", "点置顶");
-    const first: number = unacknowledgedChatQaWrites.get(CHAT_ID)!.get("怎么入群？")!;
+    const first: number = unacknowledgedChatQaWrites.get(CHAT_ID)!.get("怎么入群？")!.revision;
     setChatQa(CHAT_ID, "怎么入群？", "改了");
 
     persistedListener?.({
@@ -128,7 +128,22 @@ describe("群问答主线程持久化边界", () => {
     });
 
     // 迟到的 ACK 对应的是已经被更新值取代的那一版，不能把未确认记录清掉。
-    expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.get("怎么入群？")).toBe(first + 1);
+    expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.get("怎么入群？")?.revision).toBe(first + 1);
+    // 总账只记最新那一版：同一问题覆盖不重复计条数，字节按差额更新。
+    expect(unacknowledgedChatQaTotals).toEqual({
+      entries: 1,
+      bytes: unacknowledgedChatQaWrites.get(CHAT_ID)!.get("怎么入群？")!.bytes,
+    });
+
+    persistedListener?.({
+      type: "identityStoragePersisted",
+      temporaryAdBypassWrites: [],
+      writes: [],
+      chatStateWrites: [],
+      chatQaWrites: [{ chatId: CHAT_ID, q: "怎么入群？", revision: first + 1 }],
+    });
+    expect(unacknowledgedChatQaWrites.has(CHAT_ID)).toBeFalse();
+    expect(unacknowledgedChatQaTotals).toEqual({ entries: 0, bytes: 0 });
   });
 
   test("Worker 重建后按内存最终值重放未确认写", () => {
@@ -144,13 +159,24 @@ describe("群问答主线程持久化边界", () => {
     expect(replayed[0]).toMatchObject({ type: "chatQaWrite", chatId: CHAT_ID });
   });
 
-  test("投递失败仍保留未确认 revision，等重建重放", () => {
+  test("发布后投递失败不抛错：改动已生效，未确认 revision 留给重建重放", () => {
     postSucceeds = false;
 
-    expect((): unknown => setChatQa(CHAT_ID, "怎么入群？", "点置顶")).toThrow("persistence");
+    expect(setChatQa(CHAT_ID, "怎么入群？", "点置顶")).toBe("created");
 
     expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.has("怎么入群？")).toBeTrue();
     expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
+  });
+
+  test("整群删除遇到投递失败不中途打断，每条都摘除并留待重放", () => {
+    setChatQa(CHAT_ID, "问题一", "答案一");
+    setChatQa(CHAT_ID, "问题二", "答案二");
+    postSucceeds = false;
+
+    expect(removeAllChatQa(CHAT_ID)).toBe(2);
+
+    expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
+    expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.size).toBe(2);
   });
 
   test("hydrate 只搬持久化值，空群不进热表", () => {

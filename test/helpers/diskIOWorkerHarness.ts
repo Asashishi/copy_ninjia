@@ -8,7 +8,7 @@ import type { LuckReceiptSecret } from "../../packages/types/diskIO/storage";
  * （`try/catch` 包住调用本身，`.catch` 接住返回的 promise），把 `terminate`
  * 写成 `async` 只到得了后者。
  */
-export type FakeDiskIOTerminateBehavior = "resolve" | "reject" | "throwSync";
+export type FakeDiskIOTerminateBehavior = "succeed" | "throwSync";
 
 /** Disk I/O 主线程桥测试共用的无副作用 Worker 替身。 */
 export class FakeDiskIOWorker {
@@ -21,7 +21,7 @@ export class FakeDiskIOWorker {
    * 只能在构造前把配置放在这里。构造后即复位，不会漏给再下一个实例。
    */
   static nextRejectedTypes: readonly DiskIOMessage["type"][] = [];
-  static nextTerminateBehavior: FakeDiskIOTerminateBehavior = "resolve";
+  static nextTerminateBehavior: FakeDiskIOTerminateBehavior = "succeed";
 
   onmessage: ((event: MessageEvent<DiskIOReply>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
@@ -36,7 +36,7 @@ export class FakeDiskIOWorker {
     for (const type of FakeDiskIOWorker.nextRejectedTypes) this.rejectedTypes.add(type);
     this.terminateBehavior = FakeDiskIOWorker.nextTerminateBehavior;
     FakeDiskIOWorker.nextRejectedTypes = [];
-    FakeDiskIOWorker.nextTerminateBehavior = "resolve";
+    FakeDiskIOWorker.nextTerminateBehavior = "succeed";
     FakeDiskIOWorker.instances.push(this);
   }
 
@@ -58,16 +58,12 @@ export class FakeDiskIOWorker {
     this.messages.push(message);
   }
 
-  /** 刻意不写成 `async`：`throwSync` 要在调用点同步抛出，async 只会返回拒绝的 promise。 */
-  terminate(): Promise<number> {
+  /** 与 Web Worker 的 `terminate(): void` 同形；`throwSync` 在调用点同步抛出。 */
+  terminate(): void {
     this.terminated = true;
     if (this.terminateBehavior === "throwSync") {
       throw new Error("terminate failed synchronously");
     }
-    if (this.terminateBehavior === "reject") {
-      return Promise.reject(new Error("terminate rejected"));
-    }
-    return Promise.resolve(0);
   }
 }
 
@@ -76,13 +72,13 @@ export function installFakeDiskIOWorker(): () => void {
   const original: typeof Worker = globalThis.Worker;
   FakeDiskIOWorker.instances.length = 0;
   FakeDiskIOWorker.nextRejectedTypes = [];
-  FakeDiskIOWorker.nextTerminateBehavior = "resolve";
+  FakeDiskIOWorker.nextTerminateBehavior = "succeed";
   globalThis.Worker = FakeDiskIOWorker as unknown as typeof Worker;
   return (): void => {
     globalThis.Worker = original;
     FakeDiskIOWorker.instances.length = 0;
     FakeDiskIOWorker.nextRejectedTypes = [];
-    FakeDiskIOWorker.nextTerminateBehavior = "resolve";
+    FakeDiskIOWorker.nextTerminateBehavior = "succeed";
   };
 }
 

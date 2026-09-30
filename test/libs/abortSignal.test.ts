@@ -164,41 +164,9 @@ describe("raceAbort 共享等待", () => {
     expect(await wait).toBe(CANCELLED);
   });
 
-  test("钩子顺序固定为 onSettle → onCancel，取消与正常结算各走一次 onSettle", async () => {
-    const order: string[] = [];
-    const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
-    const controller: AbortController = new AbortController();
-
-    const wait: Promise<string> = raceAbort(gate.promise.then((): string => "done"), {
-      signal: controller.signal,
-      cancelled: "取消",
-      rejected: "失败",
-      onSettle: (): void => { order.push("settle"); },
-      onCancel: (): void => { order.push("cancel"); },
-    });
-    controller.abort();
-    expect(await wait).toBe("取消");
-    // 引用计数必须先释放，onCancel 才能读到「本等待者已离场」之后的真实计数。
-    expect(order).toEqual(["settle", "cancel"]);
-
-    gate.resolve();
-    const settled: PromiseWithResolvers<void> = Promise.withResolvers<void>();
-    const normal: Promise<string> = raceAbort(settled.promise.then((): string => "done"), {
-      signal: new AbortController().signal,
-      cancelled: "取消",
-      rejected: "失败",
-      onSettle: (): void => { order.push("settle-normal"); },
-      onCancel: (): void => { order.push("cancel-normal"); },
-    });
-    settled.resolve();
-    expect(await normal).toBe("done");
-    expect(order).toEqual(["settle", "cancel", "settle-normal"]);
-  });
-
-  test("传入已 abort 的 signal 时立即回退，并同样走过两个钩子", async () => {
+  test("传入已 abort 的 signal 时立即回退，共享工作不受影响", async () => {
     const controller: AbortController = new AbortController();
     controller.abort();
-    const order: string[] = [];
     let started: boolean = false;
     const shared: Promise<string> = Promise.resolve().then((): string => {
       started = true;
@@ -209,10 +177,7 @@ describe("raceAbort 共享等待", () => {
       signal: controller.signal,
       cancelled: "取消",
       rejected: "失败",
-      onSettle: (): void => { order.push("settle"); },
-      onCancel: (): void => { order.push("cancel"); },
     })).toBe("取消");
-    expect(order).toEqual(["settle", "cancel"]);
     // 共享工作不受这次等待影响，仍然自己跑完。
     expect(await shared).toBe("共享结果");
     expect(started).toBeTrue();
@@ -228,6 +193,6 @@ for (const mode of ["immediate", "later"]) {
     const output: string = await new Response(child.stdout).text();
     const errors: string = await new Response(child.stderr).text();
     expect(await child.exited, errors).toBe(0);
-    expect(JSON.parse(output)).toEqual({ unhandled: 0, result: "cancelled", order: ["settle", "cancel"] });
+    expect(JSON.parse(output)).toEqual({ unhandled: 0, result: "cancelled" });
   });
 }

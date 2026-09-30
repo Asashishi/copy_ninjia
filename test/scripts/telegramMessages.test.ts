@@ -67,8 +67,6 @@ describe("Telegram 提示留存门禁的边界豁免", () => {
         'sendCommandMessage({ chatId: 1, text: "cleaned", preserveInGroup: false });\n',
       "copy/echo.ts": "export function sendEchoPayload(): unknown { return copyMessage({ chatId: 1, caption: text }); }\n",
       "cron/delivery.ts": "export function deliverCronAction(): unknown { return bot.api.sendMessage(1, \"hi\"); }\n",
-      "antiRaid/adDetect.ts": 'import { sendMessage } from "../infra/telegram";\n' +
-        "export function announceAdDisposal(): unknown { return sendMessage({ chatId: 1 }); }\n",
       "auto/message/qaDirectAnswer.ts": 'import { sendMessage } from "../../infra/telegram";\n' +
         "export function sendQaDirectAnswer(): unknown { return sendMessage({ chatId: 1 }); }\n",
       "workers/antiRaid/lockdownApi.ts": 'import { sendMessage } from "../../infra/telegram";\n' +

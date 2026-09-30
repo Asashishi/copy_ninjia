@@ -28,15 +28,15 @@ export const aiMemoryRevisions: Map<number, number> = new Map();
  */
 export const aiMemoryOperations: Map<number, "upsert" | "delete"> = new Map();
 /**
- * 要求即时写入的最早 revision；若提交前被更新 revision 覆盖，提交最新快照
- * 后以最新 revision 回执，同样证明这次 purge 后已有新记忆 durable。
+ * 欠一次即时写入回执的群。提交前被更新 revision 覆盖时，提交最新快照后以最新
+ * revision 回执，同样证明这次 purge 后已有新记忆 durable。
  *
- * 填充：purge 之后的首份新快照登记一次。清理：共享事务提交后的回执结算
+ * 填充：purge 之后要求即时写入的首份新快照入队时登记。清理：共享事务提交后的回执结算
  * （storageDatabase/aiContext.ts 的 settleAiContextPersisted）、markAiMemoryDeleted
  * 与 resetAiMemoryCache。Worker 崩溃重建：不重建——它只表达「本进程这一刻还欠
  * 一次即时写」，新实例没有这笔欠账。容量：同时处于该状态的群数，上界为受管群数。
  */
-export const aiMemoryImmediateRevisions: Map<number, number> = new Map();
+export const aiMemoryImmediateChats: Set<number> = new Set();
 
 /**
  * AI 快照删除 durable 后的唯一回执出口。diskIOWorker 启动时配置，Worker
@@ -85,7 +85,7 @@ export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
   if (revision < currentRevision || (revision === currentRevision && currentOperation === "upsert")) return false;
   aiMemoryRevisions.set(chatId, revision);
   aiMemoryOperations.set(chatId, "delete");
-  aiMemoryImmediateRevisions.delete(chatId);
+  aiMemoryImmediateChats.delete(chatId);
   return true;
 }
 
@@ -108,5 +108,5 @@ export function forgetAiMemoryChat(chatId: number): void {
 export function resetAiMemoryCache(): void {
   aiMemoryRevisions.clear();
   aiMemoryOperations.clear();
-  aiMemoryImmediateRevisions.clear();
+  aiMemoryImmediateChats.clear();
 }

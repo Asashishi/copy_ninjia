@@ -140,7 +140,10 @@ export function hasAnyEffectiveBlocklistIdentity(): boolean {
 }
 
 function validatePolicyData(message: IdentityPolicyWriteDiskMessage): void {
-  const source: string = storageSource(`${message.table}_entries`, message.id);
+  const source: string = storageSource(
+    message.table === "whitelist" ? "permission_list" : "blocklist_entries",
+    message.id
+  );
   assertTelegramIdentityId(message.id, source);
   assertPositiveRevision(message.revision, source);
   if (message.data === null) return;

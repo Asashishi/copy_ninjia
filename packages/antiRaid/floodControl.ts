@@ -13,7 +13,6 @@ import { atmosphereOf } from "../libs/atmosphere";
 
 import { formatUserLabel } from "../users/userLabel";
 import { visibleSenderChat } from "../users/visibleSender";
-import { getChatState } from "../infra/storage/stateStore";
 import { canBypassFloodControl } from "./memberFacts";
 import type { FloodCandidateMessage } from "../types/antiRaid/protocol";
 import type { ChatState } from "../types/chatState";
@@ -29,8 +28,8 @@ export interface BuildFloodCandidateParams {
    * 调用方一律传 updateNow() 的返回值，见 infra/updateContext.ts。
    */
   readonly now: number;
-  /** 同一同步消息入口已读取的当前群状态；缺省时本函数自行读取。 */
-  readonly chatState?: Readonly<ChatState>;
+  /** 同一同步消息入口已读取的当前群状态。 */
+  readonly chatState: Readonly<ChatState>;
 }
 
 /** 把一条群消息收敛成刷屏计数投递。返回 undefined 表示这条不参与计数。 */
@@ -46,9 +45,7 @@ export function buildFloodCandidate({
   // chat.type，这道门禁随之自愈。
   if (message.chat.type !== "supergroup") return undefined;
   // 缺省关闭；在任何身份解析、白名单查询和候选对象创建之前直接返回。
-  const currentState: Readonly<ChatState> =
-    chatState ?? getChatState(message.chat.id);
-  if (currentState.isFloodControlEnabled !== true) return undefined;
+  if (chatState.isFloodControlEnabled !== true) return undefined;
   // 频道马甲与匿名管理员没有可禁言的成员身份：restrictChatMember 只认真实用户，
   // 拿频道/群 id 去调只会换一句报错，而皮套底下是谁 Telegram 并不暴露——与
   // `/block` 拒绝把当前群身份当成员目标是同一约束。
@@ -66,10 +63,10 @@ export function buildFloodCandidate({
     // 昵称是用户可控内容，清洗与退化都收在 formatUserLabel 里；Worker 侧只把
     // 它当纯文本拼进通知，出站消息一律不设 parse_mode（见 docs/cn/04-invariants.md）。
     //
-    // 直接把 `sender` 交进去，不再现造一个 `{ id, username, first_name }` 投影：
+    // 直接把 `sender` 交进去，不现造一个 `{ id, username, first_name }` 投影：
     // formatUserLabel 只读 username / isChannel / title / first_name，grammY 的
     // `User` 在这四项上与 CachedUser 逐字兼容（没有 isChannel 即按真人分支走），
     // 而这条路跑在每条计入刷屏窗口的群消息上，投影对象是一次纯浪费的分配。
-    label: formatUserLabel(sender, atmosphereOf(currentState, BOT_ATMOSPHERE)),
+    label: formatUserLabel(sender, atmosphereOf(chatState, BOT_ATMOSPHERE)),
   };
 }

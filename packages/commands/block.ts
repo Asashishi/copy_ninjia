@@ -13,18 +13,18 @@ import { formatTargetLabel } from "../users/userLabel";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 
 import { resolveCommandTarget } from "./targetResolution";
-import { commandArgumentTokens, parseToggleAction } from "./arguments";
+import { parseToggleAction, splitTrailingToken } from "./arguments";
+import type { TrailingTokenSplit } from "./arguments";
 import { handleBlockDisable } from "./unblock";
 import { rejectUnlessPermitted } from "./commandActor";
 import { botChatPermissionsIn } from "../infra/botAdmin";
 import { describeBotPermissionGap } from "../libs/botPermissionGap";
 import type { BotChatPermissions } from "../types/telegram";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
-import { identityMetadataFromCachedUser } from "../infra/identityStorage";
+import { identityMetadataFromCachedUser, requeueUnacknowledgedIdentityWrite } from "../infra/identityStorage";
 import {
   blockUser,
   confirmBlocklistPersisted,
-  ensureBlocklistEntryQueued,
   managedAdminChatIds,
   runManagedChatBatch,
 } from "../infra/blocklist/membership";
@@ -126,7 +126,8 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
   // 重复 /block 时也要等：这个 id 若是本进程新增、上一次落盘又失败了，管理员
   // 修好磁盘再跑一次正是最自然的重试动作，不能因为「LRU 里已经有了」就静默
   // 跳过——那会连着两次都告诉他成功了，而数据库里根本没有这条记录。
-  const requeued: boolean = newlyBlocked ? false : ensureBlocklistEntryQueued(targetUser.id);
+  // 最新 revision 尚未收到事务 ACK 时，把同一最终值重投给当前 Worker，不创建新 revision。
+  const requeued: boolean = newlyBlocked ? false : requeueUnacknowledgedIdentityWrite("blocklist", targetUser.id);
   const persisted: boolean = newlyBlocked || requeued ? await confirmBlocklistPersisted() : true;
 
   // 封禁清单与 /block disable 的跨群解封同源，见 infra/blocklist/membership.ts 的 managedAdminChatIds。
@@ -204,9 +205,9 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
   const failedCount: number = targetChatIds.length - bannedCount;
   const failedNote: string = failedCount > 0 ? atmosphere.NOTICE_TEXTS.blockPartialFailure(failedCount) : "";
   // “不在群”只表示本次没有执行移出动作，无法证明目标从未加入过；因此只说
-  // “确认封禁”，不再使用“提前拉黑（根本没进去过）”这类历史推断。
+  // “确认封禁”。
   const kickedNote: string = kickedCount > 0 ? atmosphere.NOTICE_TEXTS.blockKicked(kickedCount) : "";
-  const confirmedBannedNote: string = confirmedBannedCount > 0 ? `在 ${confirmedBannedCount} 个群确认封禁` : "";
+  const confirmedBannedNote: string = confirmedBannedCount > 0 ? atmosphere.NOTICE_TEXTS.blockConfirmedBanned(confirmedBannedCount) : "";
   const actionNote: string = [kickedNote, confirmedBannedNote].filter(Boolean).join("，");
   // 本来就在名单里的人再 /block 一次不该被说成「刚记上」。各群仍重新查询
   // 成员状态并封禁，让外部解封或重新入群后的当前状态得到重新结算。
@@ -229,8 +230,7 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
  * （isCanBlock / isCanUnBlock）。
  */
 export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<void> {
-  const tokens: string[] = commandArgumentTokens(ctx.match);
-  const rawAction: string | undefined = tokens.at(-1);
+  const { last: rawAction, rest: targetArgument }: TrailingTokenSplit = splitTrailingToken(ctx.match);
   const action: ToggleAction | undefined = rawAction === undefined ? undefined : parseToggleAction(rawAction);
   if (action === undefined) {
     await sendCommandMessage({
@@ -240,7 +240,6 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
     });
     return;
   }
-  const targetArgument: string = tokens.slice(0, -1).join(" ");
   if (action === "enable") await blockTarget(ctx, targetArgument);
   else await handleBlockDisable(ctx, targetArgument);
 }

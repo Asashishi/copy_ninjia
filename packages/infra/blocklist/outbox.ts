@@ -100,7 +100,7 @@ function restorePermissionBlockedSweep(
  * 投喂更新之前完成，否则启动瞬间进群的黑名单用户会漏踢。
  */
 export function hydrateBlocklist(
-  recoveredRemovals: Map<number, PendingBlockedRemoval> = new Map()
+  recoveredRemovals: Map<number, PendingBlockedRemoval>
 ): void {
   pendingBlockedRemovals.clear();
   blocklistSweepState.clear();
@@ -137,9 +137,11 @@ export function hydrateBlocklist(
       }
       continue;
     }
-    // 冻结批次在这里不裁剪：SQLite owner（inspectStorageDatabase 与
-    // handlePendingRemovalSnapshot，见 workers/diskIO/storageDatabase/pendingRemoval.ts）
-    // 对「冻结 userId 不在 blocklist_entries」直接抛错，进程在启动阶段以非零码退出并点名该行。
+    // 冻结批次在这里不裁剪：启动期由 inspectStorageDatabase（workers/diskIO/storageDatabase/
+    // hydration.ts）经 validateStorageDatabase 的 assertPendingRemovalBlocklistReferences
+    // （database/validation/storageRows.ts）对「冻结 userId 不在 blocklist_entries」直接抛错，
+    // 进程在启动阶段以非零码退出并点名该行；运行期的 handlePendingRemovalSnapshot
+    // （workers/diskIO/storageDatabase/pendingRemoval.ts）同样拒绝。
     const userIds: number[] = [...pending.params.userIds];
     pendingBlockedRemovals.set(removalId, {
       params: { ...pending.params, userIds },
@@ -221,7 +223,7 @@ export function materializeRemovalParams(
  */
 export function getPendingBlockedRemovalParams(
   removalId: number,
-  blockedIds: readonly number[] = []
+  blockedIds: readonly number[]
 ): RemoveBlockedMembersParams | undefined {
   const pending: PendingBlockedRemoval | undefined = pendingBlockedRemovals.get(removalId);
   if (pending === undefined) return undefined;
@@ -241,7 +243,7 @@ function releaseSweepClaim(chatId: number, removalId: number): void {
 /**
  * 把某个 id 从冻结名单批次摘掉。补扫不冻结名单，只有权威名单被清空时才连同
  * 补扫任务一起销账；所有销账路径同步释放永远不会再收到回执的 sweep claim。
- * @internal 由 membership.ts 的 /block disable 路径调用。
+ * @internal 由 membership.ts 的 unblockUser 调用（/block disable 与销号自动摘除）。
  */
 export function forgetUserBlocklistRemovals(userId: number): void {
   let changed: boolean = false;
@@ -311,13 +313,6 @@ export function trackBlockedRemoval(
     throw new Error("Blocklist removal has no target to enforce.");
   }
   return tracked;
-}
-
-/** 把已登记镜像的一批处置交给当前 Anti-Raid 执行 owner；返回真正投出的条数。 */
-export function dispatchBlockedRemovals(
-  removals: readonly RemoveBlockedMembersParams[]
-): Promise<number> {
-  return blockedMemberRemoverHolder.current(removals);
 }
 
 /**

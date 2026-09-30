@@ -1,4 +1,4 @@
-/** 复读文本变换（packages/copy/copyModes.ts）的常量。 */
+/** /copy 子命令解析与复读文本变换（commands/copy.ts、copy/copyModes.ts）的常量。 */
 
 /**
  * /copy 的子命令结构；只剥离完整的 stop、reverse 或 nya，目标参数交给共享身份解析器。

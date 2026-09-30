@@ -27,14 +27,21 @@ function clearOperationTimer(): void {
   diskIORuntime.operationTimer = null;
 }
 
-/** 状态发布前检查业务传输与恢复 FIFO 的合计容量；不改变任一队列。 */
-export function canQueueDiskIOBusiness(message: DiskBusinessMessage): boolean {
+/**
+ * 按已算好的载荷成本（libs/diskIOMessageCost.ts）检查业务传输与恢复 FIFO 的合计容量；
+ * 不改变任一队列，容量耗尽时通知 fatal。
+ */
+export function fitsDiskIOBusiness(cost: number): boolean {
   if (diskIORuntime.fatalSignaled) return false;
-  const cost: number = diskIOMessageCost(message);
   const fits: boolean = diskIORuntime.operationQueue.size + diskIORuntime.pendingBusinessMessages.size < diskIORuntime.maxPendingBusinessMessages &&
     cost <= DISK_BUSINESS_MAX_RETAINED_BYTES - diskIORuntime.operationQueue.retainedCost - diskIORuntime.pendingBusinessBytes;
   if (!fits) signalDiskIOFatal(new Error("Disk I/O business queue capacity was exhausted."));
   return fits;
+}
+
+/** 状态发布前检查业务传输与恢复 FIFO 的合计容量；不改变任一队列。 */
+export function canQueueDiskIOBusiness(message: DiskBusinessMessage): boolean {
+  return fitsDiskIOBusiness(diskIOMessageCost(message));
 }
 
 function pumpDiskIOOperations(worker: Worker): boolean {
@@ -57,8 +64,15 @@ function pumpDiskIOOperations(worker: Worker): boolean {
 /** 启动与诊断各自拥有有界握手；其余操作共用 FIFO，读取与 flush 不越过写入。 */
 export function safePostDiskIO(worker: Worker, message: DiskIOOperationMessage, context: string): boolean {
   if (message.type === "load" || message.type === "diagnosticBatch") return postRaw(worker, message, context);
+  return queueDiskIOOperationMessage(worker, message, diskIOMessageCost(message));
+}
+
+/**
+ * 按已算好的成本把一条操作排进共用 FIFO 并尝试投递；超出条数或字节硬顶时通知 fatal。
+ * 启动 load 与诊断批次不经这里，见 safePostDiskIO。
+ */
+export function queueDiskIOOperationMessage(worker: Worker, message: DiskIOOperationMessage, cost: number): boolean {
   if (diskIORuntime.worker !== worker) return false;
-  const cost: number = diskIOMessageCost(message);
   if (diskIORuntime.operationQueue.size + diskIORuntime.pendingBusinessMessages.size >=
       diskIORuntime.maxPendingBusinessMessages + DISK_OPERATION_CONTROL_RESERVE ||
     cost > DISK_OPERATION_MAX_RETAINED_BYTES - diskIORuntime.operationQueue.retainedCost - diskIORuntime.pendingBusinessBytes ||

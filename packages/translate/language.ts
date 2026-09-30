@@ -10,9 +10,15 @@ import {
   TRANSLATE_UKRAINIAN_TEXT,
   TRANSLATE_RUSSIAN_EVIDENCE,
   TRANSLATE_RUSSIAN_TEXT,
+  TRANSLATE_LANGUAGE_LABELS,
 } from "../consts/translate";
 import type { TranslateLanguage } from "../types/translate";
 import { TRANSLATE_TRADITIONAL_HAN } from "../consts/translateHan";
+
+/** 参数里的语言代码是否是支持的翻译方向（TRANSLATE_LANGUAGE_LABELS 的键）。 */
+export function isTranslateLanguage(code: string): code is TranslateLanguage {
+  return Object.hasOwn(TRANSLATE_LANGUAGE_LABELS, code);
+}
 
 /**
  * 符合目标文字形态或完全中性的文本不需要翻译，调用方整条不发送；不创建中间数组。

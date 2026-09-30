@@ -222,8 +222,8 @@ function hasSchemaV5MigrationLineage(
 }
 
 /**
- * 当前 v11 必须包含完整谱系，并以清理上下文权限与 `/h_image add` 权限两条迁移结尾，
- * 不接受缺项或额外项。
+ * 当前 v11 必须包含完整谱系，并依次以 AI 上下文、清理上下文权限、`/h_image add` 权限
+ * 三条迁移结尾，不接受缺项或额外项。
  */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,

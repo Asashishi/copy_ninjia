@@ -1,16 +1,6 @@
-import { logger } from "./logger";
-import { relayLogMessage } from "./diskIO";
-import { signalBusinessWorkerFatal } from "./workerSupervisor";
-import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
-import { createRestartThrottle } from "../libs/restartThrottle";
-import type {
-  ForwardedLogBatch,
-  ForwardedLogBatchAccepted,
-} from "../types/diskIO/messages";
-import { toErrorOr } from "../libs/errorMessage";
-
 /**
- * 可自愈的业务 Worker 宿主（主线程侧），aiChat/workerBridge.ts 与 antiRaid/workerBridge/controller.ts 共用的骨架：
+ * 可自愈的业务 Worker 宿主（主线程侧）骨架，由 infra/supervisedDuplexWorker.ts 包装后供
+ * aiChat/workerBridge.ts 与 antiRaid/workerBridge/controller.ts 使用：
  * - 创建 Worker 并 unref（不阻止进程退出，停机时在途任务随线程丢弃）；
  * - 识别 Worker 回传的有界 error 日志批次（logger.ts 的转发模式），转投主线程
  *   唯一的落盘线程并确认该批；其余消息交给 onEvent（业务事件回传）；
@@ -22,6 +12,19 @@ import { toErrorOr } from "../libs/errorMessage";
  *   版本对不可用 Worker 的 postMessage 可能抛出或静默丢弃，因此投递边界
  *   也把同步异常统一收敛为 false。
  */
+
+import { logger } from "./logger";
+import { relayLogMessage } from "./diskIO";
+import { signalBusinessWorkerFatal } from "./workerSupervisor";
+import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from "../consts/workerSupervisor";
+import { createRestartThrottle } from "../libs/restartThrottle";
+import type {
+  ForwardedLogBatch,
+  ForwardedLogBatchAccepted,
+} from "../types/diskIO/messages";
+import { toErrorOr } from "../libs/errorMessage";
+
+/** superviseWorker 的配置：Worker 脚本、日志称呼、放弃自愈的后果说明与三个可选生命周期回调。 */
 export interface SupervisedWorkerOptions<TMessage, TEvent> {
   /** Worker 脚本的 URL（new URL("...", import.meta.url).href）。 */
   url: string;
@@ -115,6 +118,19 @@ export function superviseWorker<TMessage, TEvent = never>(
     const controller: AbortController = new AbortController();
     generationAbortController = controller;
     w.unref();
+    // 本代际全部业务事件共用的回投与取消边界；实例被替换后 post 恒返回 false。
+    const eventContext: SupervisedWorkerEventContext<TMessage> = {
+      post: (message: TMessage, transfer?: Bun.Transferable[]): boolean => {
+        if (worker !== w) return false;
+        if (postToWorker(w, message, transfer)) return true;
+        becomeUnavailable(
+          w,
+          new Error(`${options.label} synchronous event response delivery was rejected.`)
+        );
+        return false;
+      },
+      signal: controller.signal,
+    };
     w.onmessage = (event: MessageEvent<unknown>): void => {
       const data: unknown = event.data;
       // __logBatch 转发不受下面的活跃实例守卫约束：它只是把这个 Worker 自己的
@@ -144,18 +160,7 @@ export function superviseWorker<TMessage, TEvent = never>(
       // 已入队一条基于旧快照的事件，若在 onerror 重建之后才被处理，会用
       // 过期数据覆盖新实例已经重放过的最新状态。
       if (worker !== w) return;
-      options.onEvent?.(data as TEvent, {
-        post: (message: TMessage, transfer?: Bun.Transferable[]): boolean => {
-          if (worker !== w) return false;
-          if (postToWorker(w, message, transfer)) return true;
-          becomeUnavailable(
-            w,
-            new Error(`${options.label} synchronous event response delivery was rejected.`)
-          );
-          return false;
-        },
-        signal: controller.signal,
-      });
+      options.onEvent?.(data as TEvent, eventContext);
     };
     w.onerror = (event: ErrorEvent): void => {
       // 已被替换的旧实例若迟到/重复上报错误，不得再次创建一条平行自愈链。

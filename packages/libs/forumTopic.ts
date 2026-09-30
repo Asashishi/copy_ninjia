@@ -22,8 +22,6 @@ import type { UpdateTopic } from "../types/lifecycle";
  * Worker 重建后由 ensurePendingReminder 用快照里的 welcomeAnchorMessageId 重发，
  * 同样不带话题。
  *
- * 这条豁免随入群验证的持久化格式下次因别的原因升版时重新评估。
- *
  * @returns 论坛话题内的消息返回该话题 id；General、非论坛群、讨论组评论一律
  *   返回 undefined，调用方据此不设置 `message_thread_id`。
  */

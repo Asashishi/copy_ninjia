@@ -22,7 +22,6 @@ import {
 import type {
   AiTextResult,
   MediaInputCapability,
-  MediaInputSupport,
 } from "../../../types/aiChat/provider";
 import type {
   MediaInputEffect,
@@ -117,11 +116,6 @@ function replaceModalityState(
 /** 读取模态状态；请求接纳时保留此只读对象，完成时用对象身份核对归因代次。 */
 export function getMediaInputState(capability: MediaInputCapability): MediaInputModalityState {
   return supportState()[capability];
-}
-
-/** 读取一种模态的当前结论；从未尝试时返回 unknown。 */
-export function getMediaInputSupport(capability: MediaInputCapability): MediaInputSupport {
-  return supportState()[capability].support;
 }
 
 /** 判断某模态此刻是否还压在退避里；判据见 states/mediaInputSupport.ts。 */

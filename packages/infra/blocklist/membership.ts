@@ -4,7 +4,9 @@
  * 判定必须是同步的：入群更新到达时要立刻决定踢不踢，不能等跨线程往返。
  * 每条 update 进入业务链前批量预热 LRU；写保持「先发布内存最终值、后投递
  * Disk I/O Worker」并保留到事务 ACK。durable removal outbox 由同目录 outbox.ts
- * 持有，本模块只在 /block disable 时请求它裁剪相关任务。
+ * 持有，本模块只在 unblockUser 时请求它裁剪相关任务。另含 `/block enable`、
+ * `/block disable` 与广告处置共用的托管群清单 `managedAdminChatIds`，以及有界并发处置
+ * `runManagedChatBatch`。
  * @see ../../../docs/cn/04-invariants.md
  */
 
@@ -16,6 +18,7 @@ import type {
   BoundedBatchResult,
 } from "../../libs/boundedSettledBatch";
 import { getChatStateCache } from "../storage/stateStore";
+import { isManagedAdminChat } from "./sweepEligibility";
 import { flushDiskIODomainOutcome } from "../diskIO";
 import { logger } from "../logger";
 import { forgetUserBlocklistRemovals } from "./outbox";
@@ -25,7 +28,6 @@ import {
   prefetchIdentityPolicies,
   queueBlocklistDeletion,
   queueIdentityPolicyWrite,
-  requeueUnacknowledgedIdentityWrite,
 } from "../identityStorage";
 import { IDENTITY_DATABASE_PATH } from "../../consts/paths";
 import { clearTemporaryAdBypassActivity } from
@@ -33,18 +35,18 @@ import { clearTemporaryAdBypassActivity } from
 import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
 
 /**
- * 连坐封禁与跨群解封共用的目标群清单：机器人已确证是管理员的全部托管群，发起群排在
- * 最前；发起群不是管理员时不进入清单。`/block enable` 与 `/block disable` 必须使用
- * 同一份清单。`runManagedChatBatch` 按输入顺序取任务、按输入顺序结算，计数与并发度无关。
- * @param isAdminHere 发起群的管理员位，由调用方现查（`botChatPermissionsIn`）；其余群
- *   读已落盘的权限快照。
+ * 连坐封禁、跨群解封与广告处置共用的目标群清单：发起群排在最前，其余为全部受管群——
+ * 已 `/init enable` 且已确证机器人是管理员（口径同 sweepEligibility.ts 的
+ * isManagedAdminChat）；发起群不是管理员时不进入清单。`/block enable`、`/block disable`
+ * 与广告处置必须使用同一份清单。`runManagedChatBatch` 按输入顺序取任务、按输入顺序
+ * 结算，计数与并发度无关。
+ * @param isAdminHere 发起群是否纳入：命令路径由调用方现查管理员位（`botChatPermissionsIn`，
+ *   命令能到达即已过 `/init` 网关）；广告处置按发起群的受管快照判定。其余群读已落盘的状态快照。
  */
 export function managedAdminChatIds(chatId: number, isAdminHere: boolean): number[] {
   const targetChatIds: number[] = isAdminHere ? [chatId] : [];
   for (const [adminChatId, chatState] of getChatStateCache()) {
-    if (chatState.botPermissions?.isAdministrator === true && adminChatId !== chatId) {
-      targetChatIds.push(adminChatId);
-    }
+    if (adminChatId !== chatId && isManagedAdminChat(chatState)) targetChatIds.push(adminChatId);
   }
   return targetChatIds;
 }
@@ -141,11 +143,7 @@ export async function assertSuperAdminNotBlocked(
  */
 export function blockUser(
   userId: number,
-  meta: Readonly<TelegramIdentityMetadata> = {
-    firstName: "",
-    lastName: "",
-    username: "",
-  }
+  meta: Readonly<TelegramIdentityMetadata>
 ): boolean {
   if (isUserBlocked(userId)) return false;
   const blockedAt: string = formatTokyoTime(Date.now());
@@ -173,15 +171,6 @@ export async function confirmBlocklistPersisted(): Promise<boolean> {
     : ` failed domains: ${outcome.failedDomains.join(", ")}.`;
   logger.error(`Blocklist entry was not persisted to disk: flush ${outcome.result}.${domainNote}`);
   return false;
-}
-
-/**
- * 重复 /block 时的落盘补投：若最新 revision 尚未收到事务 ACK，管理员再次执行
- * 命令会把同一最终值重投给当前 Worker，而不创建新的 revision。
- * @returns 本次补投了落盘消息、调用方应重新等一次确认为 true。
- */
-export function ensureBlocklistEntryQueued(userId: number): boolean {
-  return requeueUnacknowledgedIdentityWrite("blocklist", userId);
 }
 
 /**

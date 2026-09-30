@@ -22,8 +22,9 @@ export const TTS_TONE_SEPARATOR: string = "; 细节: ";
 
 /**
  * `agent.tts.daily_limit` 缺省时的每日总预算：每个窗口拆为 AI 与预留两份独立额度。
- * 计数在 AI Worker 的语音合成门面发起请求前登记（见 aiChat/ai/ttsUsage.ts），窗口与
- * 次数持久化在 memory/global/state.json 的 `ttsUsage`。
+ * 计数口径见 aiChat/ai/ttsUsage.ts：AI 语音工具在工具调用时预留、TTS 调用成功时登记，
+ * `/send` 与 cron 由 tts 门面在发起供应商请求前登记；窗口与次数持久化在
+ * memory/global/state.json 的 `ttsUsage`。
  */
 export const TTS_DEFAULT_DAILY_LIMIT: number = 100;
 
@@ -44,12 +45,11 @@ export const TTS_USAGE_WINDOW_MS: number = 86_400_000;
 export const MAX_VOICES_PER_REPLY: number = 1;
 
 /**
- * AI 语音工具等待合成结果的前台窗口（ms），从工具调用起算：工具回执与串行动作链上的语音
- * 步骤都最多等到这里。窗口内合成结束时回执给真实结果，链上按调用顺序投递；到点仍未结束时
- * 回执标明仍在合成，链上收回「正在录音」并把投递转入后台，链继续执行后续步骤。合成自身的
- * 超时不受本值影响（consts/aiChat/gemini.ts 的 GEMINI_SPEECH_REQUEST_TIMEOUT_MS、
- * consts/aiChat/openai.ts 的 OPENAI_SPEECH_REQUEST_TIMEOUT_MS）。所属模块：
- * aiChat/ai/tools/replyToolset/voiceMessage.ts。
+ * AI 语音工具的前台窗口（ms），从工具调用起算：串行动作链上的语音步骤最多等合成到这里。
+ * 窗口内合成结束时链上按调用顺序投递；到点仍未结束时链上收回「正在录音」并把投递转入后台，
+ * 链继续执行后续步骤。工具回执不等合成。合成自身的超时不受本值影响
+ * （consts/aiChat/gemini.ts 的 GEMINI_SPEECH_REQUEST_TIMEOUT_MS、consts/aiChat/openai.ts 的
+ * OPENAI_SPEECH_REQUEST_TIMEOUT_MS）。所属模块：aiChat/ai/tools/replyToolset/voiceMessage.ts。
  */
 export const VOICE_FOREGROUND_WAIT_MS: number = 25_000;
 

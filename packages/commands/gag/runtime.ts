@@ -11,6 +11,7 @@ import {
 } from "../../consts/gag";
 import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
 import { logger } from "../../infra/logger";
+import { settleWithinBudget } from "../../libs/inflight";
 import {
   deleteMessageWithOutcome,
   sendCommandMessage,
@@ -34,12 +35,12 @@ export type GagReservationOutcome =
   | "quiescing";
 
 /** 删除精确的会话对象；同目标的新会话不会被旧收尾误删。 */
-function removeGagSession(session: GagSession): boolean {
+function removeGagSession(session: GagSession): void {
   const sessions: GagSession[] | undefined =
     gagSessionsByChat.get(session.chatId);
-  if (sessions === undefined) return false;
+  if (sessions === undefined) return;
   const index: number = sessions.indexOf(session);
-  if (index === -1) return false;
+  if (index === -1) return;
   if (session.timer !== null) clearTimeout(session.timer);
   if (session.cleanupTimer !== null) clearTimeout(session.cleanupTimer);
   clearGagSpeakNoticeRefreshTimer(session);
@@ -47,7 +48,6 @@ function removeGagSession(session: GagSession): boolean {
   session.cleanupTimer = null;
   sessions.splice(index, 1);
   if (sessions.length === 0) gagSessionsByChat.delete(session.chatId);
-  return true;
 }
 
 /** 跨群 update 完成异步解析后，在主线程同步预约全局容量。 */
@@ -433,16 +433,9 @@ export function drainGagRuntime(timeoutMs: number): Promise<FlushResult> {
     void task;
     return Promise.resolve("timedOut");
   }
-  return new Promise<FlushResult>((resolve: (result: FlushResult) => void): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout(
-      (): void => resolve("timedOut"),
-      timeoutMs
-    );
-    void task.then((result: FlushResult): void => {
-      clearTimeout(timer);
-      resolve(result);
-    });
-  });
+  return settleWithinBudget([task], timeoutMs).then(
+    (settled: boolean): Promise<FlushResult> | FlushResult => settled ? task : "timedOut"
+  );
 }
 
 /** 清空 timer 与缓存；只供测试隔离，不执行 Telegram 动作。 */

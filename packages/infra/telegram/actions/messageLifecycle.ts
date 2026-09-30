@@ -123,25 +123,20 @@ function isMessageGone(error: unknown): boolean {
   );
 }
 
-/** 按群、接收者与临时消息 id 删除目标专属消息，并保留与普通删除相同的四态。 */
-export async function deleteEphemeralMessageWithOutcome(
-  {
-    chatId,
-    receiverUserId,
-    ephemeralMessageId,
-    api = telegramApi,
-  }: DeleteEphemeralMessageParams
+/**
+ * 执行一次删除并归入 deleted/gone/forbidden/failed 四态；普通删除与目标专属消息删除共用。
+ * 「消息已经不在了」不是故障（删痕迹这条路上它甚至是常态），不记 API 错误；停机取消由统一边界
+ * 直接上抛。
+ */
+async function runDeletion(
+  action: string,
+  execute: (signal?: AbortSignal) => Promise<true>
 ): Promise<DeleteMessageOutcome> {
   let gone: boolean = false;
   let permissionDenied: boolean = false;
   const deleted: boolean = await runTelegramAction({
-    action: "delete ephemeral message",
-    execute: (signal?: AbortSignal): Promise<true> =>
-      api.deleteEphemeralMessage({
-        chatId,
-        receiverUserId,
-        ephemeralMessageId,
-      }, ...signalArgs(signal)),
+    action,
+    execute,
     map: (): boolean => true,
     fallback: false,
     shouldLogError: (error: unknown): boolean => {
@@ -155,30 +150,32 @@ export async function deleteEphemeralMessageWithOutcome(
   return permissionDenied ? "forbidden" : "failed";
 }
 
+/** 按群、接收者与临时消息 id 删除目标专属消息，并保留与普通删除相同的四态。 */
+export function deleteEphemeralMessageWithOutcome(
+  {
+    chatId,
+    receiverUserId,
+    ephemeralMessageId,
+    api = telegramApi,
+  }: DeleteEphemeralMessageParams
+): Promise<DeleteMessageOutcome> {
+  return runDeletion(
+    "delete ephemeral message",
+    (signal?: AbortSignal): Promise<true> =>
+      api.deleteEphemeralMessage({ chatId, receiverUserId, ephemeralMessageId }, ...signalArgs(signal))
+  );
+}
+
 /** 删一条消息并保留 deleted/gone/forbidden/failed 四态结局。 */
-export async function deleteMessageWithOutcome(
+export function deleteMessageWithOutcome(
   chatId: number,
   messageId: number,
   api: Pick<TelegramApi, "deleteMessage"> = telegramApi
 ): Promise<DeleteMessageOutcome> {
-  let gone: boolean = false;
-  let permissionDenied: boolean = false;
-  const deleted: boolean = await runTelegramAction({
-    action: "delete message",
-    execute: (signal?: AbortSignal): Promise<true> =>
-      api.deleteMessage(chatId, messageId, ...signalArgs(signal)),
-    map: (): boolean => true,
-    fallback: false,
-    shouldLogError: (error: unknown): boolean => {
-      gone = isMessageGone(error);
-      permissionDenied = isPermissionDenied(error);
-      // 「消息已经不在了」不是故障：删痕迹这条路上它甚至是常态。
-      return !gone;
-    },
-  });
-  if (deleted) return "deleted";
-  if (gone) return "gone";
-  return permissionDenied ? "forbidden" : "failed";
+  return runDeletion(
+    "delete message",
+    (signal?: AbortSignal): Promise<true> => api.deleteMessage(chatId, messageId, ...signalArgs(signal))
+  );
 }
 
 export async function deleteMessage(

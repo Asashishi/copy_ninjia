@@ -30,6 +30,12 @@ export const unacknowledgedChatStateWrites: Map<
   UnacknowledgedChatStateWrite
 > = new Map();
 
+/**
+ * 上表全部条目的准入估算字节总数；登记或覆盖一项时按差额更新，精确 ACK 删除该项时扣回，
+ * 重放按重编码结果改写，reset 清零。
+ */
+export const unacknowledgedChatStateBytes: { current: number } = { current: 0 };
+
 /** 群状态写入 revision 发号器；只在主线程同步自增。 */
 export const chatStateWriteRevision: { current: number } = { current: 0 };
 
@@ -37,5 +43,6 @@ export const chatStateWriteRevision: { current: number } = { current: 0 };
 export function resetChatStateCache(): void {
   chatStateCache.clear();
   unacknowledgedChatStateWrites.clear();
+  unacknowledgedChatStateBytes.current = 0;
   chatStateWriteRevision.current = 0;
 }

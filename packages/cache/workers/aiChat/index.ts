@@ -20,11 +20,12 @@ export function invalidateChatRuntimeCache(chatId: number): void {
 }
 
 /**
- * 本线程各领域缓存的全量清理边界。
+ * 测试隔离用的聚合清理：依次调用下面十个领域模块各自的 reset。不覆盖 gemini、openai、
+ * imageDescription、mediaInputSupport、mediaTasks、persona、stickers、ttsUsage、
+ * voiceSynthesis、weather 与 worker 这些模块，用到它们的测试自行复位。
  *
- * **只有测试隔离用它**：生产中 AI Worker 的重建就是换一个 isolate，线程上下文
- * 销毁天然完成同样效果，没有任何生产路径需要手工清空这十份表。运行期的按群
- * 失效走上面的 invalidateChatRuntimeCache。
+ * 生产没有调用方：AI Worker 重建就是换一个 isolate，线程上下文销毁即清空全部缓存；
+ * 运行期的按群失效走上面的 invalidateChatRuntimeCache。
  */
 export function resetAiChatWorkerCache(): void {
   resetAiChatHeartbeatCache();

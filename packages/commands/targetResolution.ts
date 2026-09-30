@@ -50,7 +50,7 @@ export interface ResolveCommandTargetParams {
   /**
    * 是否接受裸会话 id（频道/群的负数 id）作为目标（缺省不接受）。
    *
-   * `/gag`、`/ungag`、`/block disable`、`/permission`、`/white` 与 `/info` 开启。
+   * `/gag`、`/ungag`、`/block disable`、`/permission`、`/white`、`/translate stop` 与 `/info` 开启。
    * `/block enable` 保持缺省，频道目标须由回复或用户名解析。
    * 形态校验见 consts/commands.ts 的 CHAT_ID_ARG_PATTERN；当前群身份的处置约束
    * 见 docs/cn/04-invariants.md。

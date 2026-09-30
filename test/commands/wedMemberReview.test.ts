@@ -10,7 +10,8 @@ import { enableWedMemberReview } from "../../packages/commands/wed/memberReview"
 import { observeWedMembers } from "../../packages/commands/wed/members";
 import { flushWedMembers, hydrateWedMembers, purgeWedMembers, removeWedMember } from "../../packages/commands/wed/persistence";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../../packages/commands/wed/runtime";
-import { WED_OPERATION_TIMEOUT_MS } from "../../packages/consts/wed";
+import { WED_MEMBER_REVIEW_INTERVAL_MS, WED_OPERATION_TIMEOUT_MS } from "../../packages/consts/wed";
+import { DAY_MS } from "../../packages/consts/diskIO/common";
 import * as diskIO from "../../packages/infra/diskIO";
 import { logger } from "../../packages/infra/logger";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
@@ -96,7 +97,7 @@ test("统一午夜通知等待 Bot 就绪，同日去重，次日继续；无需
   enableWedMemberReview();
   await tick();
   expect(probe).toHaveBeenCalledTimes(1);
-  await tick(86_400_000);
+  await tick(DAY_MS);
   midnight("2026-09-08");
   await tick();
   expect(probe).toHaveBeenCalledTimes(2);
@@ -116,11 +117,11 @@ test("所有群共用每秒五个 ID 的限速，只移除明确离群者并复�
   enableWedMemberReview();
   midnight();
   await tick();
-  await tick(199);
+  await tick(WED_MEMBER_REVIEW_INTERVAL_MS - 1);
   expect(starts).toEqual([0]);
   await tick(1);
-  for (let index: number = 0; index < 5; index++) await tick(200);
-  expect(starts).toEqual([0, 200, 400, 600, 800, 1_000, 1_200]);
+  for (let index: number = 0; index < 5; index++) await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
+  expect(starts).toEqual(Array.from({ length: 7 }, (_: unknown, index: number): number => index * WED_MEMBER_REVIEW_INTERVAL_MS));
   expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([
     [-1001, 1], [-1001, 2], [-1001, 3], [-1001, 4], [-1002, 5], [-1002, 6], [-1002, 7],
   ]);
@@ -138,14 +139,14 @@ test("慢查询后不补发积压，跨日整轮不重叠", async (): Promise<vo
   const gate = heldProbe();
   enableWedMemberReview();
   midnight();
-  await tick(86_400_000);
+  await tick(DAY_MS);
   midnight("2026-09-08");
   expect(probe).toHaveBeenCalledTimes(1);
   expect(wedRuntime.current!.tasks.size).toBe(1);
   gate.resolve(member(1));
   await tick();
   expect(probe).toHaveBeenCalledTimes(2);
-  await tick(199);
+  await tick(WED_MEMBER_REVIEW_INTERVAL_MS - 1);
   expect(probe).toHaveBeenCalledTimes(2);
   await tick(1);
   expect(probe).toHaveBeenCalledTimes(3);
@@ -162,7 +163,7 @@ test("查询耗时不足一毫秒也不会把下一次查询提前到 200 毫秒
   enableWedMemberReview();
   midnight();
   await tick();
-  await tick(199);
+  await tick(WED_MEMBER_REVIEW_INTERVAL_MS - 1);
   expect(probe).toHaveBeenCalledTimes(1);
   await tick(1);
   expect(probe).toHaveBeenCalledTimes(2);
@@ -193,7 +194,7 @@ test("Telegram 以 PARTICIPANT_ID_INVALID 拒绝的 ID 按离群移除且不记�
   enableWedMemberReview();
   midnight();
   await tick();
-  for (let index: number = 0; index < 2; index++) await tick(200);
+  for (let index: number = 0; index < 2; index++) await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
   expect(probe).toHaveBeenCalledTimes(3);
   expect([...members]).toEqual([1, 3]);
   expect(errorLog).toHaveBeenCalledTimes(1);
@@ -259,8 +260,8 @@ test("重新接管成员集合时结束旧集合的遍历，旧回包不能删�
   await tick();
   expect([...replacement]).toEqual([1, 3]);
   expect(probe).toHaveBeenCalledTimes(1);
-  await tick(200);
-  await tick(200);
+  await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
+  await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
   expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([[-1001, 1], [-1001, 1], [-1001, 3]]);
   expect([...replacement]).toEqual([1, 3]);
   expect(wedRuntime.current!.tasks.size).toBe(0);
@@ -283,7 +284,7 @@ test("复核中某群被停管只跳过该群，其余群照常复核", async ()
   expect(wedMemberReview.current!.chatId).toBeNull();
   expect(wedMemberReview.current!.userId).toBeNull();
   expect(wedMemberReview.current!.observed).toBeFalse();
-  for (let index: number = 0; index < 3; index++) await tick(200);
+  for (let index: number = 0; index < 3; index++) await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
   expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([[-1001, 1], [-1002, 5], [-1002, 6]]);
   expect(wedMemberStates.has(-1001)).toBeFalse();
   expect(wedRuntime.current!.tasks.size).toBe(0);
@@ -313,7 +314,7 @@ test("每群快照有限，跳过已删除成员，新发言 ID 留到下一轮"
   speak(4);
   gate.resolve(member(1));
   await tick();
-  await tick(200);
+  await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
   expect(probe.mock.calls.map((call) => call[1])).toEqual([1, 3]);
   expect([...wedMemberStates.get(-1001)!.members]).toEqual([1, 3, 4]);
 });
@@ -336,7 +337,7 @@ test("本群拒绝成员查询时只查一次即结束该群本轮，成员全�
   enableWedMemberReview();
   midnight();
   await tick();
-  for (let index: number = 0; index < 2; index++) await tick(200);
+  for (let index: number = 0; index < 2; index++) await tick(WED_MEMBER_REVIEW_INTERVAL_MS);
   expect(probe.mock.calls.map(([chatId, userId]) => [chatId, userId])).toEqual([[-1001, 1], [-1002, 4], [-1002, 5]]);
   expect([...denied]).toEqual([1, 2, 3]);
   expect([...reviewed]).toEqual([4]);

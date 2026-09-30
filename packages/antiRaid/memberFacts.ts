@@ -7,8 +7,9 @@ import type { ChatMember } from "grammy/types";
 import type { AntiRaidMember } from "../types/antiRaid/protocol";
 
 /**
- * 从 grammY 的 ChatMember/User 对象里提取入群守卫需要的几个事实。纯函数、
- * 无 I/O，供 antiRaid/updateIngress.ts 的 chat_member 与服务消息两条路径共用。
+ * 入群守卫主线程侧共用的成员事实：广告检测与防刷屏的白名单豁免读取
+ * （canBypassAdDetection、canBypassFloodControl），以及从 grammY 的 User/ChatMember
+ * 提取投递给 Worker 的身份字段与邀请者豁免资格（pickMember、isInviterExemptAdmin）。
  */
 
 /** 广告检测专用豁免：只按当前有效权限的广告检测单项决定。 */

@@ -29,6 +29,19 @@ const {
 type FlushResult = "flushed" | "timedOut" | "failed";
 
 const antiRaid = await import("../../../packages/antiRaid");
+const { LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS } = await import("../../../packages/consts/antiRaid/protocol");
+
+/** 对账轮数用尽时 events.ts 记下的那一行错误。 */
+function reconcileExhaustedLog(chatId: number): string {
+  return `Anti-raid lockdown intent for chat ${chatId} kept changing across ` +
+    `${LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS} durability rounds; yielding before retrying the latest intent.`;
+}
+
+/** Worker 发往主线程、针对 chatId 的全部消息。 */
+function workerPostsFor(chatId: number): AntiRaidWorkerMessage[] {
+  return workerPosts.filter((message: AntiRaidWorkerMessage): boolean =>
+    "chatId" in message && message.chatId === chatId);
+}
 
 installAntiRaidMirrorHooks({
   initAntiRaid: antiRaid.initAntiRaid,
@@ -278,6 +291,78 @@ describe("Anti-Raid mirror persistence barriers", () => {
       message.type === "lockdownPersisted" && message.chatId === -2011
     )).toBeFalse();
     expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  test("每轮落盘途中意图都换代、用尽对账轮数：记一行错误，不回执也不登记已落盘指纹，finally 释放 pending", async () => {
+    const chatId: number = -2013;
+    const firstIntentId: number = 100;
+    // 每次落盘途中把内存里的意图原地换一代，模拟恢复语义持续推进；不经事件入口，因此没有排队续跑。
+    saveState.mockImplementation(async (): Promise<void> => {
+      const state: { lockdown?: { intentId?: number } } | undefined = chatStates.get(chatId);
+      if (state?.lockdown?.intentId !== undefined) state.lockdown.intentId += 1;
+    });
+
+    workerHooks.supervisorOptions!.onEvent({
+      type: "lockdown",
+      chatId,
+      phase: "active",
+      intentId: firstIntentId,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt: 900_000,
+    });
+    expect(pendingLockdownPersistence.has(chatId)).toBeTrue();
+    await waitUntil((): boolean => !pendingLockdownPersistence.has(chatId));
+    await Bun.sleep(0);
+
+    expect(saveState).toHaveBeenCalledTimes(LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS);
+    expect(loggerError.mock.calls).toEqual([[reconcileExhaustedLog(chatId)]]);
+    expect(workerPostsFor(chatId)).toEqual([]);
+    expect(persistedLockdownFingerprints.has(chatId)).toBeFalse();
+    expect(pendingLockdownPersistence.has(chatId)).toBeFalse();
+    expect(queuedLockdownPersistence.has(chatId)).toBeFalse();
+    // 最新意图仍留在内存里，等下一次事件再落盘。
+    expect(chatStates.get(chatId)?.lockdown?.intentId).toBe(firstIntentId + LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS);
+  });
+
+  test("对账轮数用尽期间 Worker 又发来新意图：本任务记错误后让出，排队的续跑落定最新意图并只回执这一份", async () => {
+    const chatId: number = -2014;
+    const firstIntentId: number = 200;
+    const lockdownEvent = (intentId: number): AntiRaidWorkerEvent => ({
+      type: "lockdown",
+      chatId,
+      phase: "active",
+      intentId,
+      originalPermissions: { can_invite_users: true },
+      announced: true,
+      expiresAt: 900_000 + intentId,
+    });
+    // 前 LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS 次落盘途中各到达一条换代的意图，之后不再换代。
+    let saves: number = 0;
+    saveState.mockImplementation(async (): Promise<void> => {
+      saves += 1;
+      if (saves <= LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS) {
+        workerHooks.supervisorOptions!.onEvent(lockdownEvent(firstIntentId + saves));
+      }
+    });
+    const latestIntentId: number = firstIntentId + LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS;
+
+    workerHooks.supervisorOptions!.onEvent(lockdownEvent(firstIntentId));
+    await waitUntil((): boolean => workerPostsFor(chatId).length > 0 && !pendingLockdownPersistence.has(chatId));
+    await Bun.sleep(0);
+
+    expect(saveState).toHaveBeenCalledTimes(LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS + 1);
+    expect(loggerError.mock.calls).toEqual([[reconcileExhaustedLog(chatId)]]);
+    expect(workerPostsFor(chatId)).toEqual([
+      { type: "lockdownPersisted", chatId, phase: "active", intentId: latestIntentId },
+    ]);
+    expect(persistedLockdownFingerprints.get(chatId)).toEqual({
+      phase: "active",
+      intentId: latestIntentId,
+      announced: true,
+    });
+    expect(pendingLockdownPersistence.has(chatId)).toBeFalse();
+    expect(queuedLockdownPersistence.has(chatId)).toBeFalse();
   });
 
   test("没有 lockdown 记录时收到 unlock：不排后台保存，也不推进持久化版本", () => {

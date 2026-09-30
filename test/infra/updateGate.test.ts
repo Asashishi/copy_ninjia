@@ -11,8 +11,16 @@ const { SUPER_ADMIN_USER_ID } = await import("../../packages/config/bot");
 
 const ME = { id: 999, username: "test_bot", first_name: "TestBot" };
 
+/** 与 grammY 的 Context 一致：未单独指定 msg 时，`ctx.msg` 由 `message` 派生。 */
 function fakeCtx(overrides: Record<string, unknown>): any {
-  return { myChatMember: undefined, chat: undefined, msg: undefined, message: undefined, me: ME, ...overrides };
+  return {
+    myChatMember: undefined,
+    chat: undefined,
+    message: undefined,
+    me: ME,
+    ...overrides,
+    msg: "msg" in overrides ? overrides.msg : overrides.message,
+  };
 }
 
 describe("shouldPassInitGate", () => {

@@ -50,7 +50,6 @@ function createCapacityBundle(index: number): AdMessageBundle {
   return {
     chatId: BENCHMARK_CHAT_ID,
     senderId,
-    label: `benchmark sender ${senderId}`,
     meta: {
       firstName: `Benchmark ${senderId}`,
       lastName: "Sender",
@@ -82,7 +81,6 @@ const SATURATED_CANDIDATE: AdCandidateMessage = {
   messageId: 1,
   observedAt: BENCHMARK_EPOCH_MS,
   text: "广".repeat(AD_DETECT_MESSAGE_MAX_CHARS),
-  label: "benchmark rejected sender",
   firstName: "Rejected",
   lastName: "",
   username: "rejected",
@@ -188,7 +186,6 @@ export function adWireCloneScenario(): Scenario {
     messageId: 1,
     observedAt: BENCHMARK_EPOCH_MS,
     text: "ordinary message",
-    label: "@stable_user",
     firstName: "Stable",
     lastName: "",
     username: "stable_user",

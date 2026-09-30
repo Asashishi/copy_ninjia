@@ -26,7 +26,7 @@ import type { DeleteMessageOutcome } from "../infra/telegram/actions";
  * docs/cn/04-invariants.md。
  */
 
-/** 把一批处置投给 Worker 的方式；由 index.ts 在注册时把 postAntiRaidDurably 传进来。 */
+/** 把一批处置投给 Worker 的方式；由 durableDelivery.ts 在模块加载时把 postAntiRaidDurably 传进来。 */
 export type DurableAntiRaidPost = (messages: readonly AntiRaidWorkerMessage[]) => Promise<number>;
 
 /**

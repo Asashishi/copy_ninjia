@@ -1,7 +1,6 @@
 import { BOUNDED_RESPONSE_CHUNK_THRESHOLD, BOUNDED_RESPONSE_COALESCE_BYTES } from "../consts/streams";
 
-/** 全模块共用一个非 fatal 解码器；口径同 libs/atomicFile.ts 的 UTF8_ENCODER，
- *  不为每次解码新建一个（宽松解码，非法字节仍替换成 U+FFFD，与逐次新建同解）。 */
+/** 全模块共用一个非 fatal 解码器：宽松解码，非法字节替换成 U+FFFD。 */
 const UTF8_DECODER: TextDecoder = new TextDecoder();
 
 /** 有界响应读取结果；失败时返回实际观察到的大小，不保留部分响应体。 */
@@ -20,8 +19,16 @@ interface ByteStreamReader {
 }
 
 /**
- * 在读取过程中强制限制响应体大小。Content-Length 只用于提前拒绝，真正的
- * 在接纳每个非空块前累计检查字节上限；跳过空块并按字节预算限制暂存块引用。
+ * 丢弃不再读取的响应体并释放连接与缓冲；取消失败（流已锁定或已结束）静默忽略。返回的
+ * Promise 恒兑现：调用方可以 await 等释放完成，也可以不等。
+ */
+export function discardResponseBody(response: Response): Promise<void> {
+  return response.body?.cancel().catch((): undefined => undefined) ?? Promise.resolve();
+}
+
+/**
+ * 在读取过程中强制限制响应体大小。Content-Length 只用于提前拒绝，真正的上限在
+ * 接纳每个非空块之前按累计字节数检查；跳过空块并按字节预算限制暂存块引用。
  * 细碎输入由原生缓冲聚合，成功结果独占输出字节；输入生产者自身的分配不受本函数控制。
  */
 export async function readBoundedResponseBytes(response: Response, maxBytes: number): Promise<BoundedResponseResult> {
@@ -33,7 +40,7 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
   if (declaredLength && /^\d+$/.test(declaredLength)) {
     const parsedLength: number = Number(declaredLength);
     if (Number.isSafeInteger(parsedLength) && parsedLength > maxBytes) {
-      await response.body?.cancel().catch((): undefined => undefined);
+      await discardResponseBody(response);
       return { ok: false, reason: "too-large", observedBytes: parsedLength };
     }
   }

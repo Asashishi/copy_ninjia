@@ -11,13 +11,13 @@
 
 import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";
 import type { Candidate, GenerateContentResponse } from "@google/genai";
-import { adDetectGoogleClientHolder } from "../../cache/workers/antiRaid/google";
-import { antiRaidDispatchSignal } from "../../cache/workers/antiRaid/tasks";
+import { adDetectGoogleClientHolder } from "../../../../cache/workers/antiRaid/google";
+import { antiRaidDispatchSignal } from "../../../../cache/workers/antiRaid/tasks";
 import {
   adDetectGeminiCacheContent,
   adDetectGeminiContextCache,
-} from "../../cache/workers/antiRaid/geminiContextCache";
-import { getAdDetectAgentConfig } from "../../config/agent";
+} from "../../../../cache/workers/antiRaid/geminiContextCache";
+import { getAdDetectAgentConfig } from "../../../../config/agent";
 import {
   AD_DETECT_GEMINI_CACHE_DISPLAY_NAME_PREFIX,
   AD_DETECT_GEMINI_CACHE_ERROR_LABEL,
@@ -25,23 +25,23 @@ import {
   AD_DETECT_GOOGLE_REQUEST_ATTEMPTS,
   AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS,
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
-} from "../../consts/antiRaid/adDetect";
-import { logger } from "../../infra/logger";
-import { reportGeminiUsage } from "../../infra/aiCacheUsage";
+} from "../../../../consts/antiRaid/adDetect";
+import { logger } from "../../../../infra/logger";
+import { reportGeminiUsage } from "../../../../infra/aiCacheUsage";
 import {
   acquireGeminiContextCache,
   createGeminiContextCacheRegistry,
   geminiContextCacheContent,
   isGeminiContextCacheRejection,
   releaseGeminiContextCache,
-} from "../../infra/geminiContextCache";
-import type { AdDetectAgentConfig } from "../../types/config";
-import type { AdDetectJsonRequestParams } from "../../types/antiRaid/adDetect";
+} from "../../../../infra/geminiContextCache";
+import type { AdDetectAgentConfig } from "../../../../types/config";
+import type { AdDetectJsonRequestParams } from "../../../../types/antiRaid/adDetect";
 import type {
   GeminiContextCacheContent,
   GeminiContextCacheRegistry,
   GeminiContextCacheScope,
-} from "../../types/geminiContextCache";
+} from "../../../../types/geminiContextCache";
 
 /** 取得 Anti-Raid Worker 内唯一的 Google 广告检测客户端。 */
 function getAdDetectGoogleClient(): GoogleGenAI {

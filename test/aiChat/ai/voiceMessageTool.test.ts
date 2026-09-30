@@ -1,16 +1,25 @@
 import { TTS_DEFAULT_STYLE } from "../../../packages/consts/aiChat/voiceMessage";
 /**
- * send_voice 行动工具：工具声明恒定、单轮限额、调用时登记的每日计数、实现缺席、参数校验，
- * 调用时排进串行链的投递步骤（等合成期间「正在录音」→ 补足到音频时长 → idle → 发送），以及
- * 前台窗口到点后转入后台、合成成功后按音频时长亮「正在录音」再发送；额度与窗口内的合成、编码失败在工具
- * 回执里当场返回不可重试错误，发送失败由投递步骤返回，都不自录。
+ * send_voice 行动工具：工具声明逐字恒定与本轮工具状态的语音余量行；准入闸（本轮作废、单轮限额、
+ * 实现缺席、参数校验、按 `ai` 口径预留每日额度）在调用时同步判定，拒绝时在回执里当场返回错误，
+ * 通过即当场交回接纳回执并预占一个动作，在后台开始合成。每日计数只在 TTS 调用成功时登记（之后
+ * 编码失败也不退回），TTS 失败或抛错只释放预留。执行器交回的投递步骤：等合成期间亮「正在录音」，
+ * 合成好后再按语音时长模拟「正在录音」→ idle → 收敛 → 发送并自录；前台窗口到点仍在合成时收回
+ * 录音、经 chains.defer 转入后台，合成成功后补发。合成或编码失败只记英文日志、不投递、不自录；
+ * 发送失败由投递步骤返回不可重试错误且不自录。
  */
 
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { sineWav } from "../../helpers/wav";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../../packages/types/config";
-import type { ReplyActionChains, ReplyActionRun, ReplyToolContext } from "../../../packages/types/aiChat/replies";
+import type {
+  PreparedReplyAction,
+  ReplyActionChains,
+  ReplyActionRun,
+  ReplyToolContext,
+  ReplyToolExecution,
+} from "../../../packages/types/aiChat/replies";
 import type { SpeechSynthesisAttempt } from "../../../packages/types/aiChat/voiceMessage";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
 import { REPLY_INVALIDATED_TOOL_ERROR, SEND_VOICE_TOOL } from "../../../packages/consts/tools";
@@ -48,8 +57,8 @@ const {
   VOICE_TEXT_MAX_CHARS,
   VOICE_TONE_MAX_CHARS,
 } = await import("../../../packages/consts/aiChat/voiceMessage");
-const { ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
-const { SEND_VOICE_DAILY_LIMIT_TOOL_ERROR, SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR } = await import("../../../packages/consts/tools");
+const { pendingAiTtsReservations, ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
+const { SEND_VOICE_DAILY_LIMIT_TOOL_ERROR } = await import("../../../packages/consts/tools");
 const { SEND_VOICE_TOOL_INSTRUCTION, TOOL_STATUS_POINTER, voiceToolStatus } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { adoptAgentDeploymentConfig } = await import("../../../packages/config/agent");
 const { encodeVoiceMessage } = await import("../../../packages/aiChat/ai/voiceEncoding");
@@ -87,26 +96,17 @@ function buildContext(overrides: Partial<ReplyToolContext> = {}): ReplyToolConte
   };
 }
 
-/** 只记录排入步骤与后台登记的串行链替身；步骤由用例按需执行。 */
+/** 只记录后台登记的串行链替身；投递步骤由执行器交回、由用例按需执行，执行器不得自己排链。 */
 interface RecordedChains extends ReplyActionChains {
-  readonly runs: ReplyActionRun[];
   readonly deferred: Promise<ReplyActionRun | null>[];
-  readonly recorded: string[];
 }
 
 function recordedChains(): RecordedChains {
-  const runs: ReplyActionRun[] = [];
   const deferred: Promise<ReplyActionRun | null>[] = [];
-  const recorded: string[] = [];
   return {
-    runs,
     deferred,
-    recorded,
-    record: (_name: string, result: string): void => {
-      recorded.push(result);
-    },
-    start: (_name: string, run: ReplyActionRun): void => {
-      runs.push(run);
+    start: (): void => {
+      throw new Error("send_voice must hand its delivery step back instead of starting it");
     },
     defer: (_name: string, pending: Promise<ReplyActionRun | null>): void => {
       deferred.push(pending);
@@ -116,14 +116,17 @@ function recordedChains(): RecordedChains {
   };
 }
 
-/** 按空闲串行链执行一次调用：准入通过后立即执行排入的投递步骤；被拒时 result 同回执。 */
+/** 接纳通过时交回的回执与投递步骤；被拒（字符串）时让用例当场失败。 */
+function preparedVoice(execution: ReplyToolExecution): PreparedReplyAction {
+  if (typeof execution === "string") throw new Error(`expected an accepted voice, got ${execution}`);
+  return execution;
+}
+
+/** 按空闲串行链执行一次调用：准入通过后立即执行交回的投递步骤；被拒时 result 同回执。 */
 async function runVoice(ctx: ReplyToolContext, args: Record<string, unknown>): Promise<{ accepted: string; result: string }> {
-  const chains: RecordedChains = recordedChains();
-  const receipt: string | Promise<string> = createSendVoiceExecutor(ctx, chains)(JSON.stringify(args));
-  const run: ReplyActionRun | undefined = chains.runs[0];
-  const delivered: Promise<string> | undefined = run?.(ctx.chatAction, createSimulatedPause(ctx.chatAction));
-  const accepted: string = await receipt;
-  return { accepted, result: delivered === undefined ? accepted : await delivered };
+  const execution: ReplyToolExecution = createSendVoiceExecutor(ctx, recordedChains())(JSON.stringify(args));
+  if (typeof execution === "string") return { accepted: execution, result: execution };
+  return { accepted: execution.result, result: await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)) };
 }
 
 /** 记下心跳切挡、收敛与合成、发送的先后顺序。 */
@@ -155,6 +158,7 @@ beforeEach(() => {
   for (const mocked of [synthesizeSpeech, ttsAiProvider, sendVoiceWithResult, loggerError, sleep]) mocked.mockReset();
   synthesizeSpeech.mockImplementation(async (): Promise<SpeechSynthesisAttempt> => spoken(sineWav(24_000, 1.2)));
   ttsDailyUsage.current = null;
+  pendingAiTtsReservations.current = 0;
   adoptTtsQuota(100, 25);
   ttsAiProvider.mockImplementation((): unknown => ({ name: "google", synthesizeSpeech }));
   sendVoiceWithResult.mockImplementation(async (): Promise<TelegramSendResult | undefined> => ({
@@ -214,23 +218,28 @@ describe("send_voice 接纳闸", () => {
     expect(errorOf(result)).toBe(REPLY_INVALIDATED_TOOL_ERROR);
   });
 
-  test("单轮只接纳一条", async () => {
-    const chains: RecordedChains = recordedChains();
-    const execute = createSendVoiceExecutor(buildContext(), chains);
-    expect(JSON.parse(await execute(JSON.stringify({ text: "バカ" }))).success).toBe(true);
-    expect(errorOf(await execute(JSON.stringify({ text: "ざぁこ" })))).toContain("Voice limit reached");
-    expect(chains.runs).toHaveLength(1);
+  test("单轮只接纳一条", () => {
+    const execute = createSendVoiceExecutor(buildContext(), recordedChains());
+    expect(JSON.parse(preparedVoice(execute(JSON.stringify({ text: "バカ" }))).result).success).toBe(true);
+    const second: ReplyToolExecution = execute(JSON.stringify({ text: "ざぁこ" }));
+    expect(typeof second === "string" && errorOf(second)).toContain("Voice limit reached");
   });
 
-  test("调用时同步登记计数：两轮回复抢最后一次额度，后调用的当场拿到超限错误", async () => {
+  test("调用时同步预留额度：两轮回复抢最后一次额度，后调用的当场拿到超限错误；TTS 成功后才登记计数", async () => {
     ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 74, reserveCount: 0 };
     const first = createSendVoiceExecutor(buildContext(), recordedChains())(JSON.stringify({ text: "バカ" }));
     const second = createSendVoiceExecutor(buildContext(), recordedChains())(JSON.stringify({ text: "ざぁこ" }));
 
     expect(typeof second === "string" && JSON.parse(second)).toEqual({ error: SEND_VOICE_DAILY_LIMIT_TOOL_ERROR, retryable: false });
-    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75 });
-    expect(JSON.parse(await first)).toMatchObject({ success: true, voice_remaining_today: 0 });
+    expect(JSON.parse(preparedVoice(first).result)).toMatchObject({ success: true, voice_remaining_today: 0 });
+    // 准入只占预留：持久化计数要等 TTS 调用成功才加。
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 74 });
+    expect(pendingAiTtsReservations.current).toBe(1);
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    await synthesizeSpeech.mock.results[0]!.value;
+    await Bun.sleep(0);
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75 });
+    expect(pendingAiTtsReservations.current).toBe(0);
   });
 
   test("模型可见余量用尽时拒绝并要求不在群里提起，不合成", async () => {
@@ -273,23 +282,23 @@ describe("send_voice 接纳闸", () => {
 });
 
 describe("send_voice 投递", () => {
-  test("调用时排进串行链；链上等合成期间亮「正在录音」，合成好后再按语音时长模拟录音才发送，回执预占一个动作", async () => {
+  test("调用时当场交回接纳回执、不等合成；投递步骤等合成期间亮「正在录音」，合成好后再按语音时长模拟录音才发送", async () => {
     const ctx: ReplyToolContext = buildContext();
     const events: string[] = recordEvents(ctx);
     const synthesis: PromiseWithResolvers<SpeechSynthesisAttempt> = Promise.withResolvers<SpeechSynthesisAttempt>();
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const receipt: string | Promise<string> = createSendVoiceExecutor(ctx, chains)(
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(
       JSON.stringify({ text: "  この雑魚♡\nバーカ ", reply_to_trigger: true })
-    );
-    expect(chains.runs).toHaveLength(1);
-    const delivered: Promise<string> = chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction));
+    ));
+    // 合成还没结束，回执已经交回并预占一个动作。
+    expect(JSON.parse(execution.result)).toEqual({ success: true, queued: true, actions_used: 1, voice_remaining_today: 74 });
+    const delivered: Promise<string> = execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction));
     expect(events).toEqual(["record_voice"]);
 
     events.push("synthesized");
     synthesis.resolve(spoken(sineWav(24_000, 1.2)));
-    expect(JSON.parse(await receipt)).toEqual({ success: true, queued: true, actions_used: 1, voice_remaining_today: 74 });
     expect(JSON.parse(await delivered)).toEqual({ success: true, message_id: 77, actions_used: 1, voice_remaining_today: 74 });
     // 等合成时亮的「正在录音」不抵扣：发送前照样按语音时长模拟一段。
     expect(events).toEqual(["record_voice", "synthesized", "record_voice", "idle", "settled", "sent"]);
@@ -298,7 +307,6 @@ describe("send_voice 投递", () => {
       text: "この雑魚♡ バーカ",
       tone: undefined,
       quota: "ai",
-      quotaClaimed: true,
       signal: undefined,
     });
     const sendArgs = sendVoiceWithResult.mock.calls[0]![0] as Record<string, unknown>;
@@ -316,18 +324,23 @@ describe("send_voice 投递", () => {
   });
 
   test("补发：轮到投递步骤时语音已合成好，按语音时长重新模拟「正在录音」再发送", async () => {
+    // OGG/Opus 只做容器校验、不经异步编码，合成结果在一个宏任务内落定。
+    const ogg = await encodeVoiceMessage({ bytes: sineWav(24_000, 1.2), mimeType: "audio/wav" });
+    if (!ogg.ok) throw new Error("expected an encodable fixture");
+    synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => spoken(ogg.voice.bytes, OGG_OPUS_MIME_TYPE));
     const ctx: ReplyToolContext = buildContext();
     const events: string[] = recordEvents(ctx);
-    const chains: RecordedChains = recordedChains();
-    expect(JSON.parse(await createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" }))).success).toBe(true);
-    expect(JSON.parse(await chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ success: true, message_id: 77, actions_used: 1, voice_remaining_today: 74 });
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, recordedChains())(JSON.stringify({ text: "バカ" })));
+    expect(JSON.parse(execution.result).success).toBe(true);
+    await Bun.sleep(0);
+    expect(JSON.parse(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ success: true, message_id: 77, actions_used: 1, voice_remaining_today: 74 });
     expect(events).toEqual(["record_voice", "idle", "settled", "sent"]);
     const duration: unknown = (sendVoiceWithResult.mock.calls[0]![0] as Record<string, unknown>).duration;
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep.mock.calls[0]![0]).toBe((duration as number) * 1_000);
   });
 
-  test("前台窗口到点仍在合成：回执标明 pending 并预占动作，链上收回录音、转入后台；合成成功后按音频时长补录音再发送", async () => {
+  test("前台窗口到点仍在合成：链上收回录音、转入后台；合成成功后按音频时长补录音再发送", async () => {
     jest.useFakeTimers();
     const ctx: ReplyToolContext = buildContext();
     const events: string[] = recordEvents(ctx);
@@ -335,19 +348,13 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const receipt: string | Promise<string> = createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" }));
-    const step: Promise<string> = chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
+    expect(JSON.parse(execution.result)).toEqual({ success: true, queued: true, actions_used: 1, voice_remaining_today: 74 });
+    const step: Promise<string> = execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS - 1);
     expect(events).toEqual(["record_voice"]);
     jest.advanceTimersByTime(1);
 
-    expect(JSON.parse(await receipt)).toEqual({
-      success: true,
-      queued: true,
-      actions_used: 1,
-      voice_remaining_today: 74,
-      synthesis: "pending",
-    });
     expect(JSON.parse(await step)).toEqual({ synthesis: "background" });
     expect(events).toEqual(["record_voice", "idle"]);
     expect(chains.deferred).toHaveLength(1);
@@ -365,24 +372,25 @@ describe("send_voice 投递", () => {
     expect(ctx.onVoiceSent).toHaveBeenCalledWith("（发送了一条语音：バカ）", 77, 42);
   });
 
-  test("转入后台后合成失败：不投递、不自录，计数不退", async () => {
+  test("转入后台后合成失败：只记日志，不投递、不自录、不计数", async () => {
     jest.useFakeTimers();
     const ctx: ReplyToolContext = buildContext();
     const synthesis: PromiseWithResolvers<SpeechSynthesisAttempt> = Promise.withResolvers<SpeechSynthesisAttempt>();
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const receipt: string | Promise<string> = createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" }));
-    const step: Promise<string> = chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
+    const step: Promise<string> = execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS);
-    expect(JSON.parse(await receipt).synthesis).toBe("pending");
     expect(JSON.parse(await step)).toEqual({ synthesis: "background" });
 
     synthesis.resolve({ ok: false, reason: "synthesis failed" });
     expect(await chains.deferred[0]!).toBeNull();
+    expect(loggerError).toHaveBeenCalledWith("AI reply voice was not sent (chat -1001): synthesis failed.");
     expect(sendVoiceWithResult).not.toHaveBeenCalled();
     expect(ctx.onVoiceSent).not.toHaveBeenCalled();
-    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 1 });
+    expect(ttsDailyUsage.current).toBeNull();
+    expect(pendingAiTtsReservations.current).toBe(0);
   });
 
   test("链在窗口到点后才轮到：合成仍未结束时不亮录音、直接转入后台", async () => {
@@ -393,10 +401,9 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const receipt: string | Promise<string> = createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" }));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS);
-    expect(JSON.parse(await receipt).synthesis).toBe("pending");
-    expect(JSON.parse(await chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ synthesis: "background" });
+    expect(JSON.parse(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ synthesis: "background" });
     expect(events).toEqual([]);
     expect(chains.deferred).toHaveLength(1);
     synthesis.resolve({ ok: false, reason: "synthesis failed" });
@@ -414,14 +421,13 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const receipt: string | Promise<string> = createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" }));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS);
-    expect(JSON.parse(await receipt).synthesis).toBe("pending");
     jest.useRealTimers();
     synthesis.resolve(spoken(ogg.voice.bytes, OGG_OPUS_MIME_TYPE));
     await Bun.sleep(0);
 
-    expect(JSON.parse(await chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ success: true, message_id: 77, actions_used: 1, voice_remaining_today: 74 });
+    expect(JSON.parse(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ success: true, message_id: 77, actions_used: 1, voice_remaining_today: 74 });
     expect(events).toEqual(["record_voice", "idle", "settled", "sent"]);
     expect(chains.deferred).toHaveLength(0);
     expect(sleep).toHaveBeenCalledTimes(1);
@@ -434,14 +440,13 @@ describe("send_voice 投递", () => {
       text: "バカ",
       tone: "鼻で笑うように 小声で",
       quota: "ai",
-      quotaClaimed: true,
       signal: undefined,
     });
 
     for (const tone of [null, "   "]) {
       synthesizeSpeech.mockClear();
       await runVoice(buildContext(), { text: "バカ", tone });
-      expect(synthesizeSpeech.mock.calls[0]![0]).toStrictEqual({ text: "バカ", tone: undefined, quota: "ai", quotaClaimed: true, signal: undefined });
+      expect(synthesizeSpeech.mock.calls[0]![0]).toStrictEqual({ text: "バカ", tone: undefined, quota: "ai", signal: undefined });
     }
   });
 
@@ -450,55 +455,62 @@ describe("send_voice 投递", () => {
     expect((sendVoiceWithResult.mock.calls[0]![0] as Record<string, unknown>).replyToMessageId).toBeUndefined();
   });
 
-  test("窗口内合成失败或返回不可编码的音频时，工具回执当场报失败：不占动作、不发送、不自录，计数不退", async () => {
+  test("TTS 失败时不计数；TTS 成功而音频不可编码时照常计数；两种都只记日志、不发送、不自录", async () => {
     const ctx: ReplyToolContext = buildContext();
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({ ok: false, reason: "synthesis failed" }));
     const failed = await runVoice(ctx, { text: "バカ" });
-    expect(JSON.parse(failed.accepted)).toEqual({ error: SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR, retryable: false });
+    expect(JSON.parse(failed.accepted)).toMatchObject({ success: true, queued: true, actions_used: 1 });
     expect(JSON.parse(failed.result)).toEqual({ synthesis: "failed" });
-    expect(SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR).toContain("do not mention the voice");
-    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 1 });
+    expect(loggerError).toHaveBeenCalledWith("AI reply voice was not sent (chat -1001): synthesis failed.");
+    expect(ttsDailyUsage.current).toBeNull();
+    expect(pendingAiTtsReservations.current).toBe(0);
 
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => spoken(new Uint8Array([1, 2, 3]), "audio/mp3"));
-    expect(errorOf((await runVoice(ctx, { text: "バカ" })).accepted)).toBe(SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR);
+    expect(JSON.parse((await runVoice(ctx, { text: "バカ" })).result)).toEqual({ synthesis: "failed" });
     expect(loggerError).toHaveBeenCalledWith("Voice message encoding failed (chat -1001): unsupported speech mime type.");
+    expect(loggerError).toHaveBeenCalledWith("AI reply voice was not sent (chat -1001): unsupported speech mime type.");
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 1 });
+    expect(pendingAiTtsReservations.current).toBe(0);
     expect(sendVoiceWithResult).not.toHaveBeenCalled();
     expect(ctx.onVoiceSent).not.toHaveBeenCalled();
   });
 
-  test("合成意外抛错时记英文日志并按合成失败结算：回执报失败、投递步骤不发送", async () => {
+  test("合成意外抛错时记英文日志并按合成失败结算：投递步骤不发送", async () => {
     const ctx: ReplyToolContext = buildContext();
     const failure: Error = new Error("provider exploded");
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => {
       throw failure;
     });
     const { accepted, result } = await runVoice(ctx, { text: "バカ" });
-    expect(JSON.parse(accepted)).toEqual({ error: SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR, retryable: false });
+    expect(JSON.parse(accepted).success).toBe(true);
     expect(JSON.parse(result)).toEqual({ synthesis: "failed" });
     expect(loggerError).toHaveBeenCalledWith("Voice synthesis failed unexpectedly (chat -1001):", failure);
+    expect(loggerError).toHaveBeenCalledWith("AI reply voice was not sent (chat -1001): synthesis failed.");
+    expect(ttsDailyUsage.current).toBeNull();
+    expect(pendingAiTtsReservations.current).toBe(0);
     expect(sendVoiceWithResult).not.toHaveBeenCalled();
   });
 
-  test("合成期间本轮作废时不发送", async () => {
+  test("合成期间本轮作废时不发送、不记失败日志", async () => {
     let active: boolean = true;
     const ctx: ReplyToolContext = buildContext({ isActive: () => active });
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => {
       active = false;
       return spoken(sineWav(24_000, 0.5));
     });
-    const { accepted, result } = await runVoice(ctx, { text: "バカ" });
-    expect(errorOf(accepted)).toBe(REPLY_INVALIDATED_TOOL_ERROR);
+    const { result } = await runVoice(ctx, { text: "バカ" });
     expect(errorOf(result)).toBe(REPLY_INVALIDATED_TOOL_ERROR);
     expect(sendVoiceWithResult).not.toHaveBeenCalled();
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
   test("合成完成后、投递前作废时投递步骤直接返回作废错误", async () => {
     let active: boolean = true;
     const ctx: ReplyToolContext = buildContext({ isActive: () => active });
-    const chains: RecordedChains = recordedChains();
-    expect(JSON.parse(await createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" }))).success).toBe(true);
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, recordedChains())(JSON.stringify({ text: "バカ" })));
+    expect(JSON.parse(execution.result).success).toBe(true);
     active = false;
-    expect(errorOf(await chains.runs[0]!(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toBe(REPLY_INVALIDATED_TOOL_ERROR);
+    expect(errorOf(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toBe(REPLY_INVALIDATED_TOOL_ERROR);
     expect(sendVoiceWithResult).not.toHaveBeenCalled();
   });
 

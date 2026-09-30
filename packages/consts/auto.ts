@@ -19,7 +19,7 @@ export const USER_REPLY_TRIGGER_CACHE_MAX: number = 5_000;
 /** 没有复读对象时，随机复读一条新消息的概率。 */
 export const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
 
-/** 随机复读时的模式池：undefined 表示原样复读，其余对应各 /*_copy 的文本变换。 */
+/** 随机复读时的模式池：undefined 表示原样复读，其余对应 `/copy <mode>` 的文本变换。所属模块：auto/message/proactive.ts。 */
 export const RANDOM_ECHO_MODES: readonly (CopyMode | undefined)[] = [undefined, "reverse", "nya"];
 
 /**
@@ -35,9 +35,9 @@ export const BATH_TRIGGER_MAX_MESSAGE_LENGTH: number = 15;
 /** 「说到洗澡就回看看」的固定回复文本：发送与自录进 AI 对话缓存共用同一个常量，避免两处字面量各改各的漂移。 */
 export const BATH_TRIGGER_REPLY_TEXT: string = "看看";
 
-/** resolveSpeaker 解析发言人身份时的兜底展示名：频道马甲缺 title、以及既非频道也非真实用户（理论不可达的防御分支）时使用。 */
+/** 频道马甲（resolveSpeaker 的 sender_chat 分支）与转发来源的 chat 缺 title 时使用的兜底展示名。 */
 export const FALLBACK_CHANNEL_NAME: string = "某频道";
-/** 无法解析到用户或频道身份时使用的最终兜底展示名。 */
+/** 既无频道也无真实用户可解析，或用户、转发来源没有可展示名称时使用的最终兜底展示名。 */
 export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";
 
 /**

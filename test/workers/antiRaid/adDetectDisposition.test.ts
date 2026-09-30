@@ -6,6 +6,8 @@ import type { AdDetectedEvent } from "../../../packages/types/antiRaid";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
+import { isManagedAdminChat } from "../../../packages/infra/blocklist/sweepEligibility";
+import type { ChatState } from "../../../packages/types/chatState";
 const chatStates = new Map<number, Record<string, unknown>>();
 const activeVerificationSnapshots = new Map<string, unknown>();
 const dispatched: RemoveBlockedMembersParams[][] = [];
@@ -17,8 +19,9 @@ const confirmBlocklistPersisted = mock(async (): Promise<boolean> => true);
 const isUserBlocked = mock((userId: number): boolean => blockedIds.has(userId));
 const diskMessages: unknown[] = [];
 const postDiskIO = mock((message: unknown): boolean => (diskMessages.push(message), true));
-const dispatchBlockedRemovals = mock(async (removals: readonly RemoveBlockedMembersParams[]): Promise<void> => {
+const dispatchBlockedRemovals = mock(async (removals: readonly RemoveBlockedMembersParams[]): Promise<number> => {
   dispatched.push([...removals]);
+  return removals.length;
 });
 let removalCounter: number = 0;
 const resweepRequests: number[] = [];
@@ -70,10 +73,21 @@ mock.module("../../../packages/infra/telegram/actions", () => ({
   sendMessage,
   deleteMessageAfter,
 }));
+// 播报经统一的临时提示边界（infra/telegram/temporaryMessage.ts）发出，它直接依赖这两个子模块。
+mock.module("../../../packages/infra/telegram/actions/messages", () => ({ sendMessage }));
+mock.module("../../../packages/infra/telegram/actions/messageLifecycle", () => ({ deleteMessageAfter }));
 mock.module("../../../packages/infra/blocklist/membership", () => ({
   blockUser,
   confirmBlocklistPersisted,
   isUserBlocked,
+  // 与生产同一受管判据（isManagedAdminChat），只把数据源换成本文件的群状态表。
+  managedAdminChatIds: (chatId: number, isAdminHere: boolean): number[] => {
+    const chatIds: number[] = isAdminHere ? [chatId] : [];
+    for (const [otherChatId, state] of chatStates) {
+      if (otherChatId !== chatId && isManagedAdminChat(state as unknown as ChatState)) chatIds.push(otherChatId);
+    }
+    return chatIds;
+  },
 }));
 mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   clearTemporaryAdBypassActivity,
@@ -81,7 +95,6 @@ mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   hydrateTemporaryAdBypassActivities: (): void => {},
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
-  dispatchBlockedRemovals,
   trackBlockedRemoval,
 }));
 mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
@@ -98,7 +111,10 @@ const {
   handleAdVerdictTrue,
 } =
   await import("../../../packages/antiRaid/adDetect");
-const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
+// 处置投递经 cache/main/blocklist.ts 的执行 owner holder（生产由 initAntiRaid 安装）。
+const { blockedMemberRemoverHolder } = await import("../../../packages/cache/main/blocklist");
+blockedMemberRemoverHolder.current = dispatchBlockedRemovals;
+const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../../packages/consts/commands");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 const { blocklistIdentityMutationQueues } = await import("../../../packages/cache/main/blocklist");
 const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy/coordination");
@@ -338,7 +354,7 @@ describe("广告判定命中后的处置", () => {
     expect(deleteMessageAfter).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       messageId: NOTICE_MESSAGE_ID,
-      delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       batchOnFlush: true,
     }));
   });
@@ -418,7 +434,7 @@ describe("广告判定命中后的处置", () => {
     expect(deleteMessageAfter).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       messageId: NOTICE_MESSAGE_ID,
-      delayMs: KICK_NOTICE_AUTO_DELETE_MS,
+      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       batchOnFlush: true,
     }));
   });
@@ -518,8 +534,8 @@ describe("广告判定命中后的处置", () => {
     // 的落盘确认与 outbox 屏障会把停机一路拖到 15 秒强制退出：进程带非零码死在
     // 半路，实例锁不释放、offset 不确认。
     let release: (() => void) | undefined;
-    dispatchBlockedRemovals.mockImplementationOnce((): Promise<void> =>
-      new Promise<void>((resolve) => { release = resolve; }));
+    dispatchBlockedRemovals.mockImplementationOnce((): Promise<number> =>
+      new Promise<number>((resolve) => { release = (): void => resolve(1); }));
 
     handleAdDetected(detected());
     expect(await drainAdDisposals(0)).toBe("timedOut");
@@ -535,7 +551,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("投递失败不上抛，处置任务照样从在途集合里摘掉", async () => {
-    dispatchBlockedRemovals.mockImplementationOnce(async (): Promise<void> => {
+    dispatchBlockedRemovals.mockImplementationOnce(async (): Promise<number> => {
       throw new Error("worker unavailable");
     });
 

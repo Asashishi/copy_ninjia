@@ -12,6 +12,14 @@ export const TRANSLATE_LANGUAGE_LABELS: Readonly<Record<TranslateLanguage, strin
   ru: "俄语",
 };
 
+/** 命令写法里的语言代码清单（`ja|cn|...`），按 TRANSLATE_LANGUAGE_LABELS 的顺序派生；用法提示与参数正则共用。 */
+export const TRANSLATE_LANGUAGE_SYNOPSIS: string = Object.keys(TRANSLATE_LANGUAGE_LABELS).join("|");
+
+/** 用法提示里「代码 名称」逐项说明（`ja 日语，cn 简体中文，...`），按 TRANSLATE_LANGUAGE_LABELS 派生。 */
+export const TRANSLATE_LANGUAGE_GLOSSARY: string = Object.entries(TRANSLATE_LANGUAGE_LABELS)
+  .map(([code, label]: [string, string]): string => `${code} ${label}`)
+  .join("，");
+
 /** Google Translation 的目标代码；en 显式使用美国地区变体。 */
 export const TRANSLATE_LANGUAGE_CODES: Readonly<Record<TranslateLanguage, string>> = {
   ja: "ja",
@@ -34,7 +42,7 @@ export const TRANSLATE_REGIONAL_MODEL: string = "general/translation-llm";
  * /translate 的参数结构；方向后只留目标参数给共享身份解析器校验。
  * 方向词不区分大小写；捕获组保留原样大小写，调用方取值时自己 `toLowerCase()`。
  */
-export const TRANSLATE_ARGUMENT_PATTERN: RegExp = /^(ja|cn|en|uk|ru)(?:\s+([\s\S]+))?$/iu;
+export const TRANSLATE_ARGUMENT_PATTERN: RegExp = new RegExp(`^(${TRANSLATE_LANGUAGE_SYNOPSIS})(?:\\s+([\\s\\S]+))?$`, "iu");
 
 /** /translate stop 的参数结构；stop 不区分大小写，可选用户名或 ID 交给共享目标解析器。 */
 export const TRANSLATE_STOP_ARGUMENT_PATTERN: RegExp = /^stop(?:\s+([\s\S]+))?$/iu;

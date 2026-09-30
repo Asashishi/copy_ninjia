@@ -148,36 +148,48 @@ interface VoiceDependencyDecision {
   readonly cron: CronConfig | null | undefined;
 }
 
+/** 候选任务表与给定 tts 同时生效时的拒绝原因；没有候选（不变或已删除）或可以生效时为 null。 */
+function cronVoiceRejection(
+  cron: CronConfig | null | undefined,
+  tts: AgentTtsCapabilityConfig | undefined
+): string | null {
+  if (cron === undefined || cron === null) return null;
+  try {
+    assertCronVoiceSupported(cron, tts);
+    return null;
+  } catch (error: unknown) {
+    return errorMessage(error);
+  }
+}
+
 /**
- * cron.json 的 send_voice 依赖 agent.json 的 `agent.tts`。先按本轮会生效的 agent 配置核对
+ * cron.json 的 send_voice 依赖 agent.json 的 `agent.tts`。先按本轮候选的 agent 配置核对
  * 新任务表，缺 tts 时拒绝 cron.json 的变更；再按生效的任务表核对新 agent 配置，任务表仍用
- * send_voice 而新配置去掉了 tts 时拒绝 agent.json 的变更。两份文件都保持整体生效或整体拒绝。
+ * send_voice 而新配置去掉了 tts 时拒绝 agent.json 的变更。agent.json 被拒后 tts 仍是现行那份，
+ * 此时新任务表按它生效。两份文件都保持整体生效或整体拒绝。
  */
 function reconcileVoiceDependency({ agent, cron, rejections }: VoiceDependencyOptions): VoiceDependencyDecision {
-  const tts: AgentTtsCapabilityConfig | undefined = agent === undefined
-    ? agentDeploymentConfigCache.current?.tts
-    : agent.agent?.tts;
-  let acceptedCron: CronConfig | null | undefined = cron;
-  if (cron !== undefined && cron !== null) {
-    try {
-      assertCronVoiceSupported(cron, tts);
-    } catch (error: unknown) {
-      rejections.push(errorMessage(error));
-      acceptedCron = undefined;
-    }
-  }
-  const effectiveCron: CronConfig | null = acceptedCron === undefined ? cronConfigCache.current : acceptedCron;
-  const dropsTts: boolean = agent !== undefined && tts === undefined &&
-    agentDeploymentConfigCache.current?.tts !== undefined;
+  const currentTts: AgentTtsCapabilityConfig | undefined = agentDeploymentConfigCache.current?.tts;
+  const candidateTts: AgentTtsCapabilityConfig | undefined = agent === undefined ? currentTts : agent.agent?.tts;
+  const cronRejection: string | null = cronVoiceRejection(cron, candidateTts);
+  const effectiveCron: CronConfig | null = cron === undefined || cronRejection !== null
+    ? cronConfigCache.current
+    : cron;
+  const dropsTts: boolean = agent !== undefined && candidateTts === undefined && currentTts !== undefined;
   if (dropsTts && effectiveCron !== null && cronConfigUsesVoice(effectiveCron)) {
     rejections.push(new InputValidationError(
       AGENT_CONFIG_PATH,
       "$.agent",
       "configured with text, summary, media and tts while config/dynamic/cron.json uses send_voice"
     ).message);
-    return { agent: undefined, cron: acceptedCron };
+    // 现行 tts 必然存在（dropsTts），候选任务表因此总能与它一起生效。
+    return { agent: undefined, cron };
   }
-  return { agent, cron: acceptedCron };
+  if (cronRejection !== null) {
+    rejections.push(cronRejection);
+    return { agent, cron: undefined };
+  }
+  return { agent, cron };
 }
 
 /** 一轮热重载里已生效与已删除的文件路径收集表。 */

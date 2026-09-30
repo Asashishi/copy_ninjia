@@ -8,7 +8,6 @@ export const QA_QUERY_PAGE_NEXT_TEXT: string = "下一页 ›";
 
 /** 群问答三个子命令的表单、查询与删除文案。 */
 export const QA_COMMAND_TEXTS: Readonly<{
-  notInitialized: string;
   rejected: (label: string) => string;
   full: string;
   formBusy: string;
@@ -29,7 +28,6 @@ export const QA_COMMAND_TEXTS: Readonly<{
   removed: (q: string) => string;
   removeMissing: (q: string) => string;
 }> = {
-  notInitialized: "本群尚未接管，请先执行 /init enable。",
   rejected: (label: string): string => `${label} 没有 isCanControllQaPermission 权限，无法修改本群问答。`,
   full: `本群已达到 ${CHAT_QA_MAX_PER_CHAT} 条问答的上限，请先使用 /qa remove 删除不需要的条目。`,
   formBusy: "同时开启的问答表单已满，请稍后重试。",

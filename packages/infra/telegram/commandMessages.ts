@@ -9,8 +9,8 @@ import { updateTopicThreadIdFor } from "../updateContext";
 
 /**
  * 命令文本发送参数。群聊默认自动清理；`preserveInGroup` 只允许用于用户明确授权
- * 长期保留的内容，当前是 `/permission help`、`/permission query` 的权限看板，
- * 以及成功的中文动作命令结果。
+ * 长期保留的内容，当前是 `/permission help`、`/permission query` 的权限看板、
+ * `/qa query` 的问答看板，以及成功的中文动作命令结果。
  * gag 开始提示属于会话状态，直接走 sendMessage，不进入此命令清理边界。
  *
  * `messageThreadId` 省略时沿用当前 update 触发消息所在的论坛话题（仅限同群，见

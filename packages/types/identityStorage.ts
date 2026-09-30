@@ -71,6 +71,8 @@ export interface PendingChatQaWrite {
 export interface UnacknowledgedChatStateWrite {
   readonly revision: number;
   readonly deleted: boolean;
+  /** 这次写入载荷（状态正文与人设）的准入估算字节，计入 unacknowledgedChatStateBytes。 */
+  readonly bytes: number;
 }
 
 /** 共享存储数据库启动恢复交给主线程的有界结果。 */

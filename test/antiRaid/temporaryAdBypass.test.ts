@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
 import type { ChatState } from "../../packages/types/chatState";
 import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid";
+import { TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD, TEMPORARY_AD_BYPASS_REQUIRED_DAYS } from "../../packages/consts/temporaryAdBypass";
 
 const recorded: { readonly id: number; readonly now: number }[] = [];
 const permanentIds: Set<number> = new Set<number>();
@@ -23,15 +24,12 @@ mock.module("../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
     recorded.push({ id, now });
     if (grantOnRecord) temporaryIds.add(id);
     return {
-      activity: {
-        adBypass: grantOnRecord,
-        adBypassGrantedAt: grantOnRecord ? now : null,
-        qualifiedDays: promoteOnRecord ? 7 : grantOnRecord ? 1 : 0,
-        sendCount: 8,
-        countedAt: now,
-        qualifiedAt: grantOnRecord ? now : null,
-      },
-      queued: true,
+      adBypass: grantOnRecord,
+      adBypassGrantedAt: grantOnRecord ? now : null,
+      qualifiedDays: promoteOnRecord ? TEMPORARY_AD_BYPASS_REQUIRED_DAYS : grantOnRecord ? 1 : 0,
+      sendCount: TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD + 1,
+      countedAt: now,
+      qualifiedAt: grantOnRecord ? now : null,
     };
   },
   hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryIds.has(id),

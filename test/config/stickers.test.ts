@@ -10,6 +10,12 @@ describe("sticker config", () => {
     expect((await loadStickerConfig()).packs.length).toBeGreaterThan(0);
   });
 
+  test("short name 按首尾空白规范化后校验、查重并保存", () => {
+    expect(parseStickerConfig({ packs: [" pack_one ", "Pack2\n"] })).toEqual({ packs: ["pack_one", "Pack2"] });
+    expect(() => parseStickerConfig({ packs: ["same", " same "] })).toThrow("must be unique");
+    expect(() => parseStickerConfig({ packs: ["   "] })).toThrow("a valid Telegram sticker pack short name");
+  });
+
   test("拒绝重复、非法 short name 和额外字段", () => {
     expect(() => parseStickerConfig({ packs: ["same", "same"] })).toThrow("must be unique");
     expect(() => parseStickerConfig({ packs: ["https://t.me/addstickers/x"] })).toThrow("a valid Telegram sticker pack short name");

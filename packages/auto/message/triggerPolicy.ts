@@ -9,7 +9,7 @@ import {
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 import { verificationKey } from "../../libs/verificationKey";
 
-/** 文本和三类媒体共用的随机搭话/评价掷骰条件。 */
+/** 文本和四类媒体（photo/sticker/animation/voice）共用的随机搭话/评价掷骰条件。 */
 export function shouldAttemptRandomTrigger(context: MessageTriggerContext): boolean {
   return context.directTriggerReason === undefined &&
     !context.isQuiet &&
@@ -24,8 +24,7 @@ export function shouldAttemptRandomTrigger(context: MessageTriggerContext): bool
  *
  * 两级结果都要用：`!== "none"` 决定 handler 的返回值（是否已接管这条消息），
  * `=== "claimed"` 经 recordContext.ts 的 mediaReplyBackpressurePlaceholder 决定媒体
- * 是否发起回复轮。三态取值的见
- * types/auto.ts 的 RandomMediaTrigger。
+ * 是否发起回复轮。三态取值见 types/auto.ts 的 RandomMediaTrigger。
  */
 export function claimRandomMediaTrigger(
   context: MessageTriggerContext,

@@ -67,7 +67,7 @@ import type {
   BufferedMessage,
 } from "../../../packages/types/aiChat/memory";
 
-/** fixture 实际写出的行数与文件数；冷启动报告用它证明这一轮真的读到了数据。 */
+/** 播种子进程写到 stdout 的规模摘要：各表行数与 Worker 写出的事件、快照数；父进程只要求子进程成功退出并输出合法 JSON，不读取其中字段。 */
 export interface SeededFixtureCounts {
   readonly permissionList: number;
   readonly blocklistEntries: number;
@@ -297,7 +297,7 @@ export function joinLogEvent(index: number): JoinLogDiskMessage {
   };
 }
 
-/** fixture 的规模摘要；随冷启动读数一并回传，方便读者判断这批数是什么量级。 */
+/** fixture 的规模摘要；播种子进程按 JSON 打到 stdout。 */
 export function fixtureCounts(): SeededFixtureCounts {
   return {
     permissionList: COLD_START_IDENTITY_ROWS,

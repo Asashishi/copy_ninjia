@@ -13,7 +13,8 @@ import { monotonicNow } from "../../libs/monotonicDeadline";
 import { sleep } from "../../libs/sleep";
 import type { MidnightMaintenanceReply } from "../../types/diskIO/replies";
 import type { ChatMemberPresence } from "../../types/telegram";
-import type { WedMemberReview, WedRuntime } from "../../types/wed";
+import type { CommandExecutorRuntime } from "../../types/commandExecutor";
+import type { WedMemberReview } from "../../types/wed";
 import { removeWedMember } from "./persistence";
 
 /**
@@ -69,7 +70,7 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
 
 /** 接纳统一午夜通知；启动未就绪时暂存，整轮运行中不叠加任务。 */
 function requestWedMemberReview(day: string): void {
-  const runtime: WedRuntime | null = wedRuntime.current;
+  const runtime: CommandExecutorRuntime | null = wedRuntime.current;
   const review: WedMemberReview | null = wedMemberReview.current;
   if (runtime === null || !runtime.accepting || review === null) return;
   if (!review.ready) {

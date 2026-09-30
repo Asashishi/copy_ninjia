@@ -1,12 +1,13 @@
 /**
- * Gemini 实现包（packages/aiChat/gemini/）独占的常量：请求超时、SDK 重试次数、
- * 分辨率档位与内容过滤档位。
+ * Gemini 实现包（packages/aiChat/gemini/）独占的常量：请求超时与 SDK 重试次数、
+ * 采样温度与输出 token 上限、生图分辨率、内容过滤与工具配置、语音合成参数、日志调用名，
+ * 以及回复共用显式缓存（text scope）的前缀、槽数与日志名。
  *
  * **模型名不在这里**：provider=google 的能力从 config/dynamic/agent.json 各自读取 model
  * 与可选 base_url，代码不持有任何模型默认值（见 config/agent.ts）。
  *
- * 与供应商无关的预算（工具轮数、动作上限、采样温度、token 上限）留在
- * consts/aiChat/tools.ts 与各领域 consts 里——换供应商时那些数不该跟着动。
+ * 与供应商无关的预算（工具轮数、动作上限）留在 consts/aiChat/tools.ts 与各领域 consts
+ * 里——换供应商时那些数不该跟着动；采样温度与输出 token 上限属于供应商能力，两家各自定义。
  * 所属模块：packages/aiChat/gemini/。
  */
 
@@ -65,8 +66,8 @@ export const GEMINI_SPEECH_REQUEST_ATTEMPTS: number = 3;
 export const GEMINI_SPEECH_TEMPERATURE: number = 1;
 
 /**
- * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
- * 超时上限。media 有独立档位，见下一个常量；语音合成另见
+ * text（闲聊回复）、summary（冷消息压缩、贴纸整包简介）与 image（生图）三档能力的
+ * per-attempt 超时上限。media 有独立档位，见下一个常量；语音合成另见
  * GEMINI_SPEECH_REQUEST_TIMEOUT_MS。
  */
 export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
@@ -78,7 +79,7 @@ export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
 export const GEMINI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
 /**
  * Gemini SDK 对 408/429/5xx 的总尝试次数（首次加最多五次重试）；显式传入才能
- * 启用 SDK 2.12.0 的 retryOptions，所有调用方不得再重试这类请求失败。
+ * 启用 SDK 的 retryOptions，所有调用方不得再重试这类请求失败。
  */
 export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 6;
 
@@ -88,7 +89,7 @@ export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 6;
  * 调用方漂移（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节）。
  *
  * 这一档没有跨供应商对等物：OpenAI 侧的文本安全策略不可调（见
- * consts/aiChat/openai.ts 的模块头注），降级到 OpenAI 时回复口径会随之收紧。
+ * consts/aiChat/openai.ts 的模块头注），把能力配到 OpenAI 时回复口径会随之收紧。
  */
 export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },

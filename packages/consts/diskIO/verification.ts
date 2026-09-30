@@ -12,7 +12,7 @@ export const VERIFICATION_TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
 
 /** 午夜轮换失败后的固定重试间隔；正常每日触发由统一维护 cron 负责。 */
 export const VERIFICATION_ROLLOVER_RETRY_MS: number = 1_000;
-/** 重复历史达到任一阈值前收敛为 active 快照，避免当天文件无限增长。 */
+/** 追加条数或字节达到任一阈值时收敛为 active 快照，避免当天文件无限增长（字节阈值见 VERIFICATION_FILE_COMPACT_BYTES）。 */
 export const VERIFICATION_FILE_COMPACT_ENTRIES: number = 10_000;
 /** 待验证当日文件触发 active 快照收敛的字节阈值。 */
 export const VERIFICATION_FILE_COMPACT_BYTES: number = 4 * 1024 * 1024;

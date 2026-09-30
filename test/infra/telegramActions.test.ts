@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { GrammyError } from "grammy";
 import type { InstalledTelegramApi, TelegramApi } from "../../packages/types/telegramWorker";
 import {
+  inFlightSelfSends,
   resetSelfSentTracker,
 } from "../../packages/cache/perThread/selfSentTracker";
 import { sentMessageCount } from "../helpers/selfSentCount";
@@ -49,6 +50,24 @@ describe("Telegram 常规动作封装", () => {
       reply_parameters: { message_id: 42, allow_sending_without_reply: true },
     });
     expect(isSelfSent(-1001, 77)).toBe(true);
+  });
+
+  test("发送在途期间登记目标 chat，成功登记自发消息后与失败时都同步结算", async () => {
+    const inFlightDuringSend: (number | undefined)[] = [];
+    const sendMessageMock = mock(async (..._args: unknown[]) => {
+      inFlightDuringSend.push(inFlightSelfSends.get(-1001));
+      if (inFlightDuringSend.length === 2) throw new Error("network down");
+      return { message_id: 80 };
+    });
+    const api = { sendMessage: sendMessageMock } as unknown as TelegramApi;
+
+    await sendMessageWithResult({ chatId: -1001, text: "a", api });
+    expect(isSelfSent(-1001, 80)).toBe(true);
+    expect(inFlightSelfSends.size).toBe(0);
+    await expect(sendMessageWithResult({ chatId: -1001, text: "b", api })).resolves.toBeUndefined();
+
+    expect(inFlightDuringSend).toEqual([1, 1]);
+    expect(inFlightSelfSends.size).toBe(0);
   });
 
   test("话题群里不挂回复的发送带上 message_thread_id，否则会掉进 General", async () => {
@@ -245,7 +264,7 @@ describe("Telegram 常规动作封装", () => {
       api,
     });
 
-    expect(sent).toEqual({ messageId: 79 });
+    expect(sent).toEqual({ messageId: 79, repliedToMessageId: undefined });
     expect(isSelfSent(-1001, 79)).toBe(true);
   });
 

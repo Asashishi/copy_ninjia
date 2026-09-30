@@ -1,4 +1,4 @@
-/** 相册缓存最多保留的相册数，属 infra/mediaGroups.ts；满额时淘汰最久未写入的相册。 */
+/** 相册缓存最多保留的相册数，属 cache/main/mediaGroups.ts；满额时淘汰最久未写入的相册。 */
 export const MEDIA_GROUP_CACHE_MAX: number = 256;
 
 /** 一个相册最多记录的图片数，属 infra/mediaGroups.ts；等于 Telegram 相册的消息上限。 */

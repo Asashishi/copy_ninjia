@@ -135,7 +135,7 @@ describe("fetchJsonWithTimeout", () => {
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
 
-  test("预先取消时不发请求，仍经统一错误边界返回 null", async (): Promise<void> => {
+  test("预先取消时不发请求，仍经统一错误边界返回 null，不记错误日志", async (): Promise<void> => {
     const fetchAttempt = mock(async (): Promise<Response> => new Response("{}"));
     installFetch(fetchAttempt);
     const reason: Error = new Error("owner stopped");
@@ -144,15 +144,19 @@ describe("fetchJsonWithTimeout", () => {
       timeoutMs: 1_000, errorLabel: "Cancelled API",
     })).toBeNull();
     expect(fetchAttempt).not.toHaveBeenCalled();
-    expect(loggerError).toHaveBeenCalledWith("Error calling Cancelled API:", reason);
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
-  test("调用方取消在途 fetch，并透传取消原因", async (): Promise<void> => {
+  test("调用方取消在途 fetch 并透传取消原因；取消不是接口故障，不记错误日志", async (): Promise<void> => {
     const owner: AbortController = new AbortController();
     const reason: Error = new Error("owner stopped");
+    let receivedReason: unknown;
     installFetch((_input, init): Promise<Response> => new Promise((_resolve, reject): void => {
       const signal: AbortSignal = init!.signal!;
-      signal.addEventListener("abort", (): void => reject(signal.reason), { once: true });
+      signal.addEventListener("abort", (): void => {
+        receivedReason = signal.reason;
+        reject(signal.reason);
+      }, { once: true });
     }));
     const result: Promise<unknown> = fetchJsonWithTimeout({
       input: allowedUrl("/cancelled"), init: { signal: owner.signal },
@@ -160,7 +164,8 @@ describe("fetchJsonWithTimeout", () => {
     });
     owner.abort(reason);
     expect(await result).toBeNull();
-    expect(loggerError).toHaveBeenCalledWith("Error calling Cancelled API:", reason);
+    expect(receivedReason).toBe(reason);
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
   test.each(["owner", "timeout"])("响应正文未读完时 %s 取消仍生效", async (source: string): Promise<void> => {
@@ -187,6 +192,7 @@ describe("fetchJsonWithTimeout", () => {
     expect(await result).toBeNull();
     expect(receivedSignal?.aborted).toBe(true);
     expect(owner.signal.aborted).toBe(source === "owner");
-    expect(loggerError).toHaveBeenCalledTimes(1);
+    // 只有超时算接口故障；调用方取消静默收场。
+    expect(loggerError).toHaveBeenCalledTimes(source === "timeout" ? 1 : 0);
   });
 });

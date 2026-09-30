@@ -1,7 +1,6 @@
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
 import { toolError } from "../../utils/toolResult";
-import { sendMessageWithResult } from "../../../../infra/telegram";
 import type {
   ReplyActionPause,
   ReplyToolContext,
@@ -9,20 +8,25 @@ import type {
   RoundMessageState,
 } from "../../../../types/aiChat/replies";
 import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
-import type { TelegramSendResult } from "../../../../types/telegram";
-import { isEmojiOnly } from "../../utils/replyText";
+import { cleanReply, isEmojiOnly } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
-import { parseBooleanField } from "../../utils/toolArgs";
+import { parseBooleanField, parseStringField } from "../../utils/toolArgs";
 import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
-import { acceptRoundText, reserveCorrectionText } from "./messageState";
+import { acceptRoundText, reserveCorrectionText, sendDirectMessage } from "./messageState";
+import { pauseThenSettle } from "./pacing";
 import {
   applyQuickTypoCorrection,
   decideMessageTypo,
-  parseCleanMessageText,
 } from "./typoHandling";
 import type { TypoDecision } from "../../../../types/aiChat/typo";
 
-/** 校验并预占正文与错字额度；发送和纠正由同一条独立调用链依次执行。 */
+/** 解析并清洗 send_message 的 text 入参；清洗后为空返回 null。 */
+function parseCleanMessageText(argumentsJson: string): string | null {
+  const raw: string | null = parseStringField(argumentsJson, "text");
+  return raw === null ? null : cleanReply(raw);
+}
+
+/** 校验并预占正文与错字额度，返回接纳回执与执行函数；执行函数先发送正文，再按需补发正确单字。 */
 export function createSendMessageExecutor(
   ctx: ReplyToolContext,
   state: RoundMessageState,
@@ -53,7 +57,7 @@ export function createSendMessageExecutor(
     acceptRoundText(state, text);
     if (typo.shouldUseTypo && typo.correctionText) reserveCorrectionText(state, typo.correctionText);
     const correctTypo: boolean = typo.shouldUseTypo && typo.mode === "quick" &&
-      typo.correctionText !== null && !isEmojiOnly(typo.correctionText);
+      typo.correctionText !== null;
     const replyToTrigger: boolean = parseBooleanField(argumentsJson, "reply_to_trigger");
     const replyToMessageId: number | undefined = replyToTrigger ? ctx.replyToMessageId : undefined;
     return {
@@ -65,26 +69,21 @@ export function createSendMessageExecutor(
       }),
       run: async (chatAction: ChatActionControl, pause: ReplyActionPause): Promise<string> => {
         if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-        const invalidated: string | null = await pause("typing", typingDelayMs(typo.textToSend));
-        if (invalidated !== null) return invalidated;
-        chatAction.set("idle");
-        await chatAction.settle();
-        if (!ctx.isActive()) {
-          return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-        }
+        const blocked: string | null = await pauseThenSettle({
+          isActive: ctx.isActive,
+          chatAction,
+          pause,
+          phase: "typing",
+          delayMs: typingDelayMs(typo.textToSend),
+        });
+        if (blocked !== null) return blocked;
 
-        const sent: TelegramSendResult | undefined = await sendMessageWithResult({
-          chatId: ctx.chatId,
+        const sentMessageId: number | undefined = await sendDirectMessage({
+          ctx,
           text: typo.textToSend,
           replyToMessageId,
-          signal: ctx.signal,
-          // reply_to_trigger=false 的正文没有回复关系可以带路，话题群里缺了它
-          // 就会掉进 General；挂了回复也要带，回复目标被删时不至于跟着掉出话题。
-          messageThreadId: ctx.messageThreadId,
         });
-        if (sent === undefined) return toolError("Failed to send message");
-
-        ctx.onMessageSent(typo.textToSend, sent.messageId, sent.repliedToMessageId);
+        if (sentMessageId === undefined) return toolError("Failed to send message");
         let actionsUsedByTool: number = 1;
 
         if (
@@ -99,7 +98,7 @@ export function createSendMessageExecutor(
           if (correctionSent) actionsUsedByTool++;
           return JSON.stringify({
             success: true,
-            message_id: sent.messageId,
+            message_id: sentMessageId,
             actions_used: actionsUsedByTool,
             typo: { mode: "quick", correction: correctionSent ? "sent" : "failed" },
           });
@@ -107,7 +106,7 @@ export function createSendMessageExecutor(
 
         return JSON.stringify({
           success: true,
-          message_id: sent.messageId,
+          message_id: sentMessageId,
           actions_used: actionsUsedByTool,
           ...(typo.rejectedReason ? { typo_rejected: typo.rejectedReason } : {}),
         });

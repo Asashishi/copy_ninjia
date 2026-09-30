@@ -1,8 +1,4 @@
 import { chatAtmosphere } from "../infra/atmosphere";
-import type { CommandContext, Context } from "grammy";
-import type { CachedUser } from "../types/chatState";
-import type { CommandTargetMessages } from "../types/commands";
-import type { AvatarNoticeSource } from "../types/copy/avatar";
 import type {
   CopyCooldownClaim,
   GrantedCopyCooldownClaim,
@@ -17,13 +13,8 @@ import { sendCommandMessage } from "../infra/telegram";
 import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import { COPY_COOLDOWN_MS } from "../consts/commands";
 import { formatMinSec } from "../libs/time";
-import { queueAvatarUpdate } from "../copy/avatarQueue";
-import { resolveCommandTarget } from "./targetResolution";
 
-/**
- * copy 类命令（/copy 系与 /icon steal）的公共零件：共享冷却检查、
- * 目标解析（回复与用户名参数的一致性校验）、后台偷头像任务。
- */
+/** copy 类命令（/copy 系与 /icon）共用的全局冷却占用与撤回。 */
 
 /** 冷却检查只读取发起人的 id，用于判定超级管理员豁免。 */
 interface CopyCommandUser {
@@ -38,8 +29,8 @@ interface CopyCommandUser {
  * 冷却槽，中间不经过任何 await。当前 acknowledged runner 全局逐条处理 update，
  * 但这份原子性不能依赖调用入口；若"检查"和"占用"分成两步、中间跨了 await，
  * 两个几乎同时抵达的不同群命令就可能都读到"未冷却"从而一起放行，全局冷却
- * 形同虚设。调用方后续如果发现这次尝试并不会真正触发复制（解析目标失败、
- * 已经在复读别人等），必须调用 releaseCopyCooldownClaim 撤销占用，否则无效
+ * 形同虚设。调用方后续如果发现这次尝试并不会真正触发复制（解析目标失败等），
+ * 必须调用 releaseCopyCooldownClaim 撤销占用，否则无效
  * 尝试也会白白消耗掉全局冷却，殃及所有群。
  *
  * 占用在同步栈内完成后等待权威落盘；await 发生在写入之后，不影响上面的
@@ -79,7 +70,7 @@ export async function claimCopyCooldownOrReject(
 
 /**
  * 撤销 claimCopyCooldownOrReject 占用的冷却槽——用于这次尝试最终确认不会
- * 真正触发复制的时候（解析目标失败、已经在复读别人等），避免无效尝试白白
+ * 真正触发复制的时候（解析目标失败等），避免无效尝试白白
  * 消耗掉全局冷却。只在冷却槽仍是本次占用写入的值时才回滚：占用与回滚之间
  * 隔着 await（发提示消息等），期间超级管理员（豁免冷却检查）可能已在别的群
  * 成功占用并触发复制，无条件回滚会把 TA 的占用抹掉、让全局冷却凭空消失。
@@ -96,66 +87,4 @@ export async function releaseCopyCooldownClaim(
   if (restoreCopyCooldown(claim.claimedAt, claim.previousLastCopyTime)) {
     await persistGlobalState("copy cooldown released");
   }
-}
-
-/**
- * copy 类命令的目标解析，见 targetResolution.ts 的 resolveCommandTarget（回复
- * 优先于 @username）。解析失败（没给目标、@username 没缓存、目标是机器人
- * 自己）时反馈已发送。
- * @param messages 当前群氛围下该命令的目标解析文案表（见 consts/atmosphere/）。
- * @param rawArgument 去掉子命令后的目标参数。
- * @returns 解析出的目标；失败时为 undefined（提示已发送，调用方应直接返回）。
- */
-export async function resolveCopyCommandTarget(
-  ctx: CommandContext<Context>,
-  messages: CommandTargetMessages,
-  rawArgument: string
-): Promise<CachedUser | undefined> {
-  return resolveCommandTarget({
-    chatId: ctx.chat.id,
-    message: ctx.msg,
-    botUserId: ctx.me.id,
-    rawArgument,
-    messages,
-  });
-}
-
-/** stealAvatarInBackground 的入参。 */
-export interface StealAvatarInBackgroundParams {
-  chatId: number;
-  target: CachedUser;
-  source: AvatarNoticeSource;
-}
-
-/**
- * 在后台把目标的头像偷来设为机器人自己的头像，完成后按结果发送战报。
- * 不阻塞主消息处理：即使头像抓取失败或耗时很久，也不会卡住调用方的后续
- * 逻辑（比如 /copy 的复读已经生效）。
- */
-export function stealAvatarInBackground({
-  chatId,
-  target,
-  source,
-}: StealAvatarInBackgroundParams): void {
-  queueAvatarUpdate({ chatId, target: { kind: "user", user: target }, source });
-}
-
-/** restoreAvatarInBackground 的入参。 */
-export interface RestoreAvatarInBackgroundParams {
-  chatId: number;
-  source: AvatarNoticeSource;
-}
-
-/**
- * 在后台把头像复原成机器人自己的默认脸，完成后按结果发送战报。
- *
- * 与 stealAvatarInBackground 共用同一个 latest-only 执行槽（见
- * copy/avatarQueue.ts）：两者抢的是同一份换头像限流资源，且「最后一次指令
- * 说了算」对两类目标是同一条语义。
- */
-export function restoreAvatarInBackground({
-  chatId,
-  source,
-}: RestoreAvatarInBackgroundParams): void {
-  queueAvatarUpdate({ chatId, target: { kind: "default" }, source });
 }

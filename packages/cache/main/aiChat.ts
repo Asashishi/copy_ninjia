@@ -10,7 +10,7 @@ import type {
   VoiceSynthesisWaiter,
 } from "../../types/aiChat/waiters";
 
-/** AI 闲聊主线程侧代理（packages/aiChat/index.ts）的内存状态。 */
+/** AI 闲聊主线程侧代理（packages/aiChat/，公开入口 index.ts，主体在 workerBridge.ts）的内存状态。 */
 
 /**
  * AI Worker 记忆回传 barrier。模块加载时创建，Worker 终止时统一结算等待者；
@@ -36,7 +36,7 @@ export const aiChatBotInfo: { current: AiBotInfo | null } = { current: null };
 
 /**
  * 各群最新的 AI 记忆快照镜像（值是序列化 JSON 文本，与消息协议同形态，
- * 见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/index.ts 模块头注
+ * 见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），见 aiChat/workerBridge.ts 模块头注
  * 「AI 记忆持久化」。
  *
  * 填充：Worker 的 memory 事件逐群覆盖，启动恢复时由 hydration.ts 从磁盘快照播种。
@@ -136,7 +136,7 @@ export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Ma
  */
 export const purgedAiMemoryChats: Set<number> = new Set();
 /** 在途心情查询/重抽请求的等待表（requestId → waiter）：成功回执、超时或
- *  Worker 崩溃/终止时结算并删除（见 aiChat/index.ts），容量受并发
+ *  Worker 崩溃/终止时结算并删除（见 aiChat/workerBridge.ts），容量受并发
  *  /mood query 与 /mood switch 命令数约束。 */
 export const moodRequestWaiters: Map<number, MoodRequestWaiter> = new Map();
 /** 本进程内已分配的最高心情请求 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */

@@ -37,8 +37,9 @@ import type { IdentityPolicyRawReadResult, BlocklistIdPage } from "../../types/i
  */
 
 /**
- * loadPersistedData 当前挂起的启动恢复回调。运行时重建另由 infra/diskIO.ts
- * 的显式 recovery Worker 状态接管，成功前始终不可写。
+ * 启动恢复挂起的回调：infra/diskIO.ts 的 loadPersistedData 填充，infra/diskIO/host.ts
+ * 收到 loaded 回执时取走结算，terminateDiskIO 以拒绝结算。运行时重建另由
+ * infra/diskIO/recovery.ts 经 diskIORuntime.runtimeRecoveryWorker 接管，成功前始终不可写。
  */
 export const pendingLoad: {
   resolve: ((reply: LoadedReply) => void) | null;
@@ -64,7 +65,7 @@ export interface DiskIORequestChannel<TResult> {
   readonly label: string;
   /** Worker 回执缺少载荷时的错误文案；各领域点名自己缺的东西。 */
   readonly missingPayload: string;
-  /** 逐请求等待表；只由 infra/diskIO/host.ts 填充与结算。 */
+  /** 逐请求等待表；只由 infra/diskIO/requests.ts 填充与结算。 */
   readonly pending: Map<number, PendingDiskIORequest<TResult>>;
   /** 本代际发号器；terminateDiskIO 归零。 */
   nextRequestId: number;
@@ -106,9 +107,11 @@ export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = 
 
 /**
  * Worker 明确回复为部分失败、且正在等待调用方消费的 flush 回执。
- * host 只在对应 barrier 仍在途时填充，infra/diskIO.ts 在同一次请求恢复后立即删除；
- * 传输失败、超时、Worker 崩溃不会产生条目，因而不能被误判成某领域成功。
- * 容量：同时在途的 flush barrier 数（键是 requestId），由各 barrier 调用方
+ * infra/diskIO/host.ts 只在对应 barrier 仍在途时填充；infra/diskIO.ts 的
+ * requestDiskIOFlush 与 infra/diskIO/recovery.ts 的诊断回收 flush 在各自 barrier
+ * 结算后立即删除，terminateDiskIO 整表清空。传输失败、超时、Worker 崩溃不会产生条目，
+ * 因而不能被误判成某领域成功。
+ * 容量：同时在途的 flush barrier 数（键是 flushId），由各 barrier 调用方
  * 自己的串行边界封住；不设淘汰——丢掉一条会把部分失败读成全部成功。
  */
 export const pendingFlushFailedDomains: Map<number, readonly DiskIODomain[]> = new Map();
@@ -158,8 +161,10 @@ interface DiskIORuntime {
  * operationQueue 保存业务与读取的单批在途 FIFO；消费 ACK 后释放，崩溃时业务
  * 转交恢复 FIFO，查询由宿主拒绝。两份 FIFO 共用条数与字节上限，单批 timer
  * 超时通知 fatal。terminate 清理全部队列和 timer，Worker 重建按原序重放。
- * diagnosticDrainWaiters 只由并发的进程级 flush 填充，ACK、超时或 terminate
- * 结算清理，容量受同时在途的 shutdown flush 数约束；Worker 重建期间原样等待重放。
+ * diagnosticDrainWaiters 只由并发的进程级 flush 填充，ACK、超时、放弃自愈或
+ * terminate 结算清理，容量受同时在途的 shutdown flush 数约束；Worker 重建期间原样
+ * 等待重放。giveUpListeners 由 owner 模块初始化时经 onDiskIOGiveUp 登记，放弃自愈
+ * 时逐个调用，容量由订阅 owner 数固定。
  */
 export const diskIORuntime: DiskIORuntime = {
   worker: null,

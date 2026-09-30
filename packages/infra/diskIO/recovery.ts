@@ -25,8 +25,11 @@ import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { FlushResult } from "../../types/lifecycle";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 import { stickerPacksForRecovery } from "../../config/stickers";
-import { pauseDiskIODiagnosticChannel, resumeDiskIODiagnosticChannel } from
-  "./diagnosticChannel";
+import {
+  pauseDiskIODiagnosticChannel,
+  resumeDiskIODiagnosticChannel,
+  settleDiskDiagnosticDrainWaiters,
+} from "./diagnosticChannel";
 import {
   rejectAllPendingDiskIORequests,
   requestLuckSecretFromWorker,
@@ -45,8 +48,27 @@ export function clearRuntimeRecoveryTimer(): void {
 }
 
 /**
+ * 放弃自愈的统一通知：此后没有替补实例会重放或回执，仍在等待 durable 回执的 owner
+ * 立即按失败结算，等待诊断排空的进程级 flush 同样以 failed 结算。
+ */
+function notifyDiskIOGiveUp(): void {
+  for (const listener of diskIORuntime.giveUpListeners) listener();
+  settleDiskDiagnosticDrainWaiters("failed");
+}
+
+/** 终止已失效的实例；同步抛错只记诊断，不改变调用方已经收口的结论。 */
+function terminateUnusableWorker(worker: Worker, failure: string): void {
+  try {
+    worker.terminate();
+  } catch (error: unknown) {
+    writeDiskIODiagnostic(failure, error);
+  }
+}
+
+/**
  * 恢复失败的统一收口：让存储保持不可写、结算所有等待方并终止该实例。
- * @param fatal 是否升级为需要进程重启的致命失败（运行时恢复路径为 true）。
+ * @param fatal 是否升级为需要进程重启的致命失败（运行时恢复路径为 true）；
+ *   为 true 时先经 notifyDiskIOGiveUp 结算放弃自愈的等待方，再发出致命信号。
  */
 export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal: boolean): void {
   if (diskIORuntime.worker !== worker) return;
@@ -62,14 +84,10 @@ export function stopWorkerAfterLoadFailure(worker: Worker, reason: string, fatal
   diskIOFlushBarrier.settleAll("failed");
   rejectAllPendingDiskIORequests((): string =>
     `Persistence Worker became unavailable during recovery: ${reason}`);
-  try {
-    void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
-      writeDiskIODiagnostic("[diskIO] failed to terminate unusable persistence Worker:", error);
-    });
-  } catch (error: unknown) {
-    writeDiskIODiagnostic("[diskIO] failed to terminate unusable persistence Worker:", error);
-  }
-  if (fatal) signalDiskIOFatal(new Error(`[diskIO] runtime persistence recovery failed: ${reason}`));
+  terminateUnusableWorker(worker, "[diskIO] failed to terminate unusable persistence Worker:");
+  if (!fatal) return;
+  notifyDiskIOGiveUp();
+  signalDiskIOFatal(new Error(`[diskIO] runtime persistence recovery failed: ${reason}`));
 }
 
 export function isSuccessfulLoad(reply: LoadedReply): boolean {
@@ -205,7 +223,7 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
     if (!postStorageFlushHold(worker, false)) return;
   }
   // 重放区间要圈起来告诉 Worker：区间内的写失败没有任何后续 flush 会去问，
-  // 只能按 fatal 停机处理（见 types/diskIO.ts 的 RecoveryReplayRequest）。整段
+  // 只能按 fatal 停机处理（见 types/diskIO/messages.ts 的 RecoveryReplayRequest）。整段
   // 排空是同步的，中间不会插进在线消息，因此这对标记框住的恰好是重放的那一批。
   if (diskIORuntime.pendingBusinessMessages.size > 0) {
     if (!postRecoveryReplayMark(worker, true)) return;
@@ -301,13 +319,7 @@ export function recoverDiskIOWorker({
   rejectAllPendingDiskIORequests((label: string): string =>
     `Persistence Worker became unavailable while awaiting the ${label} reply.`);
   if (terminateWorker) {
-    try {
-      void Promise.resolve(worker.terminate()).catch((error: unknown): void => {
-        writeDiskIODiagnostic("[diskIO] failed to terminate recycled persistence Worker:", error);
-      });
-    } catch (error: unknown) {
-      writeDiskIODiagnostic("[diskIO] failed to terminate recycled persistence Worker:", error);
-    }
+    terminateUnusableWorker(worker, "[diskIO] failed to terminate recycled persistence Worker:");
   }
   const diagnosticRebuilds: number = cause === "diagnostic"
     ? diskIORuntime.consecutiveDiagnosticRebuilds + 1
@@ -325,7 +337,7 @@ export function recoverDiskIOWorker({
           `${WORKER_RESTART_WINDOW_MS / 1000}s, giving up self-healing and forcing a supervised process restart ` +
           "before any more updates are accepted."
     );
-    for (const listener of diskIORuntime.giveUpListeners) listener();
+    notifyDiskIOGiveUp();
     signalDiskIOFatal(new Error("Persistence Worker exhausted its runtime restart budget."));
     return;
   }
@@ -376,51 +388,32 @@ export function beginDiagnosticWorkerRecycle(
   diskIORuntime.writable = false;
   diskIORuntime.diagnosticRecycleWorker = worker;
   pauseDiskIODiagnosticChannel();
-  void flushBusinessBeforeDiagnosticRecycle(worker).then(
-    (result: FlushResult): void => {
-      if (
-        diskIORuntime.worker !== worker ||
-        diskIORuntime.diagnosticRecycleWorker !== worker
-      ) return;
-      diskIORuntime.diagnosticRecycleWorker = null;
-      if (result !== "flushed") {
-        writeDiskIODiagnostic(
-          `[diskIO] refusing diagnostic-triggered Worker recycle because the business flush ${result}; ` +
-          "forcing a supervised process restart without guessing whether non-log facts are durable."
-        );
-        for (const listener of diskIORuntime.giveUpListeners) listener();
-        stopWorkerAfterLoadFailure(
-          worker,
-          `business flush ${result} before diagnostic-triggered recycle`,
-          true
-        );
-        return;
-      }
-      recoverDiskIOWorker({
-        createWorker,
-        worker,
-        reason:
-          `diagnostic log persistence failed ${failureCount} consecutive times`,
-        terminateWorker: true,
-        cause: "diagnostic",
-      });
-    },
-    (error: unknown): void => {
-      if (
-        diskIORuntime.worker !== worker ||
-        diskIORuntime.diagnosticRecycleWorker !== worker
-      ) return;
-      diskIORuntime.diagnosticRecycleWorker = null;
+  // flush 屏障只以 FlushResult 结算、从不 reject。
+  void flushBusinessBeforeDiagnosticRecycle(worker).then((result: FlushResult): void => {
+    if (
+      diskIORuntime.worker !== worker ||
+      diskIORuntime.diagnosticRecycleWorker !== worker
+    ) return;
+    diskIORuntime.diagnosticRecycleWorker = null;
+    if (result !== "flushed") {
       writeDiskIODiagnostic(
-        "[diskIO] diagnostic-triggered business flush rejected; forcing a supervised process restart:",
-        error
+        `[diskIO] refusing diagnostic-triggered Worker recycle because the business flush ${result}; ` +
+        "forcing a supervised process restart without guessing whether non-log facts are durable."
       );
-      for (const listener of diskIORuntime.giveUpListeners) listener();
       stopWorkerAfterLoadFailure(
         worker,
-        "business flush rejected before diagnostic-triggered recycle",
+        `business flush ${result} before diagnostic-triggered recycle`,
         true
       );
+      return;
     }
-  );
+    recoverDiskIOWorker({
+      createWorker,
+      worker,
+      reason:
+        `diagnostic log persistence failed ${failureCount} consecutive times`,
+      terminateWorker: true,
+      cause: "diagnostic",
+    });
+  });
 }

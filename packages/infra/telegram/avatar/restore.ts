@@ -1,18 +1,17 @@
-import { GrammyError } from "grammy";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
   AVATAR_FETCH_TIMEOUT_MS,
   AVATAR_MAX_DOWNLOAD_BYTES,
 } from "../../../consts/telegram";
 import { signalWithTimeout } from "../../../libs/abortSignal";
-import { readBoundedResponseBytes } from "../../../libs/boundedResponse";
+import { discardResponseBody, readBoundedResponseBytes } from "../../../libs/boundedResponse";
 import type { BoundedResponseResult } from "../../../libs/boundedResponse";
 import { sniffImageFormat } from "../../image";
 import type { SniffedImageFormat } from "../../image";
 import { redactUrlForLog } from "../../../libs/redaction";
 import { logger } from "../../logger";
 import { logApiError } from "../client";
-import { runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
+import { avatarFailureFor, runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
 import type {
   AvatarFetchAttemptsOutcome,
   AvatarOperationAttemptResult,
@@ -36,8 +35,7 @@ type DefaultAvatarBytes = Uint8Array | "transient-failure" | "permanent-failure"
  *
  * 这条下载**跟随重定向**：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，
  * 而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google
- * Drive 链接就是如此）。逼配置者自己解析出终点地址只会把一个必然踩到的坑变成必须
- * 写进文档的注意事项。
+ * Drive 链接就是如此）。
  *
  * /copy、/icon steal 那三条禁用 redirect 是另一条约束，不是这一条的强化版：那些
  * 地址来自 Bot API 的 file_path 与 t.me 主页的 HTML，归 Telegram 自有资产域
@@ -85,9 +83,7 @@ async function attemptRestoreDefaultProfilePhoto(
   } catch (error: unknown) {
     if (signal?.aborted) return "permanent-failure";
     logApiError(`restore default profile photo from ${label} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`, error);
-    // Telegram 的 400 是对这张图本身的判定（PHOTO_CROP_SIZE_SMALL 之类），换几次
-    // 都一样；其余（429/5xx/网络抖动）才值得再试。
-    return error instanceof GrammyError && error.error_code === 400 ? "permanent-failure" : "transient-failure";
+    return avatarFailureFor(error);
   }
 }
 
@@ -100,7 +96,7 @@ async function downloadDefaultAvatar(url: string, attempt: number, signal?: Abor
     signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
   });
   if (!response.ok) {
-    void response.body?.cancel().catch((): undefined => undefined);
+    void discardResponseBody(response);
     logger.error(`Failed to download the default avatar (${response.status}) from ${redactUrlForLog(url)} (attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS})`);
     return "transient-failure";
   }

@@ -2,7 +2,7 @@
  * 稳定前缀指纹：把逐字不变的若干段提示词压成一个固定长度的摘要串。
  *
  * 调用方：OpenAI 回复会话的 `prompt_cache_key` 后缀（aiChat/openai/replySession.ts），
- * 以及 Gemini 共用显式缓存的分槽与内容键（aiChat/gemini/contextCache.ts）。用 SHA-256：
+ * 以及 Gemini 共用显式缓存的分槽与内容键（infra/geminiContextCache.ts）。用 SHA-256：
  * 指纹一旦撞车，前者会把请求路由到另一个群参考记忆所在的缓存分区，后者会让一段提示词
  * 引用另一段内容的显式缓存。
  *

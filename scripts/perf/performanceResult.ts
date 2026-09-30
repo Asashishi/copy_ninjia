@@ -12,7 +12,7 @@
 
 import { join } from "node:path";
 
-/** 仓库根被跟踪的性能记录文件；两套基准共用这一份，文件名只在这里出现一次。 */
+/** 仓库根被跟踪的性能记录文件；两套基准共用这一份。 */
 export const PERFORMANCE_RESULT_PATH: string = join(
   import.meta.dir,
   "..",

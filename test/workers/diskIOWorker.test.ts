@@ -19,12 +19,13 @@ import {
   flushLuckAppends,
   flushStickerCatalogs,
   flushVerificationChanges,
-  pendingStorageDatabaseDomains,
+  collectStorageDatabaseFailures,
   handleAdSampleMessage,
   handleAiCacheUsageMessage,
   flushAiCacheBuffer,
   handleBlocklistRemovalsMessage,
   handleChatQaWrite,
+  handleVerificationUpsert,
   handleChatStateWrite,
   handleIdentityPolicyWrite,
   handleJoinLogMessage,
@@ -33,7 +34,8 @@ import {
   handleLuckDrawMessage,
   handleTemporaryAdBypassWrite,
   handleVerificationDelete,
-  hydrateLuckDay,
+  replayDeferredLuckDraws,
+  switchLuckDay,
   hydratedLuckEntries,
   inspectJoinLogFiles,
   inspectLuckDay,
@@ -353,6 +355,38 @@ describe("Disk I/O Worker protocol router", () => {
     rejectedStorageDomains.clear();
   });
 
+  test("待验证写入被拒收时不离开 onmessage：下一次领域 flush 回报一次失败，重放区间内升级为 fatal", async () => {
+    const upsert: DiskIOMessage = { type: "verificationUpsert", record: {} as never, critical: false };
+    handleVerificationUpsert.mockImplementationOnce((): never => {
+      throw new RangeError("Verification persistence capacity exceeded.");
+    });
+    const originalConsoleError = console.error;
+    console.error = consoleError as unknown as typeof console.error;
+    try {
+      await route(upsert);
+      expect(postMessage).not.toHaveBeenCalled();
+      await route({ type: "flush", flushId: 41, scope: "verification" });
+      expect(postMessage).toHaveBeenLastCalledWith({ type: "flushFailed", flushedId: 41, failedDomains: ["verification"] });
+      await route({ type: "flush", flushId: 42, scope: "verification" });
+      expect(postMessage).toHaveBeenLastCalledWith({ type: "flushed", flushedId: 42 });
+
+      handleVerificationUpsert.mockImplementationOnce((): never => {
+        throw new RangeError("Verification persistence capacity exceeded.");
+      });
+      await route({ type: "recoveryReplay", active: true });
+      await route(upsert);
+      await route({ type: "recoveryReplay", active: false });
+    } finally {
+      console.error = originalConsoleError;
+    }
+    expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: "recoveryReplayFailed",
+      domain: "verification",
+      error: "Verification persistence capacity exceeded.",
+    }));
+    await route({ type: "flush", flushId: 43, scope: "verification" });
+  });
+
   test("重放窗口关闭后身份写拒收回到常规语义，只记领域拒收不升级为停机", async () => {
     await route({ type: "recoveryReplay", active: true });
     await route({ type: "recoveryReplay", active: false });
@@ -408,7 +442,7 @@ describe("Disk I/O Worker protocol router", () => {
     hydratedLuckEntries.current.set("confirmed", { label: "大吉", fortunePercent: 99 });
     await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 8 });
     expect(flushLuckAppends).toHaveBeenCalledTimes(1);
-    expect(hydrateLuckDay).toHaveBeenCalledWith("2026-07-22");
+    expect(switchLuckDay).toHaveBeenCalledWith("2026-07-22", true);
     expect(recoverLuckReceiptSecret).toHaveBeenLastCalledWith({
       day: "2026-07-22",
       confirmedResultCount: 1,
@@ -434,11 +468,14 @@ describe("Disk I/O Worker protocol router", () => {
     await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 10 });
 
     expect(flushLuckAppends).toHaveBeenCalledTimes(1);
-    expect(hydrateLuckDay).toHaveBeenCalledWith("2026-07-22");
-    expect(flushLuckAppends.mock.invocationCallOrder[0]).toBeLessThan(hydrateLuckDay.mock.invocationCallOrder[0]!);
+    expect(switchLuckDay).toHaveBeenCalledWith("2026-07-22", true);
+    expect(flushLuckAppends.mock.invocationCallOrder[0]).toBeLessThan(switchLuckDay.mock.invocationCallOrder[0]!);
+    // 滞留抽签在密钥按磁盘确认结果恢复之后才补录。
+    expect(recoverLuckReceiptSecret.mock.invocationCallOrder[0])
+      .toBeLessThan(replayDeferredLuckDraws.mock.invocationCallOrder[0]!);
 
     flushLuckAppends.mockClear();
-    hydrateLuckDay.mockClear();
+    switchLuckDay.mockClear();
     recoverLuckReceiptSecret.mockClear();
     postMessage.mockClear();
     luckWorkerCache.current = { day: "2026-07-21", entries: new Map() };
@@ -446,7 +483,7 @@ describe("Disk I/O Worker protocol router", () => {
 
     await route({ type: "ensureLuckSecret", day: "2026-07-22", requestId: 11 });
 
-    expect(hydrateLuckDay).not.toHaveBeenCalled();
+    expect(switchLuckDay).not.toHaveBeenCalled();
     expect(recoverLuckReceiptSecret).not.toHaveBeenCalled();
     expect(luckWorkerCache.current.day).toBe("2026-07-21");
     expect(postMessage).toHaveBeenLastCalledWith({
@@ -462,7 +499,7 @@ describe("Disk I/O Worker protocol router", () => {
     await route({ type: "ensureLuckSecret", day: "2026-07-21", requestId: 12 });
 
     expect(flushLuckAppends).not.toHaveBeenCalled();
-    expect(hydrateLuckDay).not.toHaveBeenCalled();
+    expect(switchLuckDay).not.toHaveBeenCalled();
     expect(recoverLuckReceiptSecret).not.toHaveBeenCalled();
     expect(luckWorkerCache.current.day).toBe("2026-07-22");
     expect(postMessage).toHaveBeenLastCalledWith({
@@ -659,8 +696,12 @@ describe("Disk I/O Worker protocol router", () => {
       failedDomains: ["stickerCatalog"],
     });
 
-    flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
+    // all/business 一次取走共享 SQLite 全部领域的失败。
+    collectStorageDatabaseFailures.mockImplementationOnce(
+      (_scope: DiskIODomain | null, failedDomains: DiskIODomain[]): void => { failedDomains.push("blocklistRemovalOutbox"); }
+    );
     await route({ type: "flush", flushId: 12, scope: "all" });
+    expect(collectStorageDatabaseFailures).toHaveBeenLastCalledWith(null, expect.any(Array));
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: 12,
@@ -752,13 +793,16 @@ describe("Disk I/O Worker protocol router", () => {
       expect(fn).not.toHaveBeenCalled();
     }
 
-    flushBlocklistRemovalOutbox.mockReturnValueOnce(false);
-    pendingStorageDatabaseDomains.mockReturnValueOnce(["whitelist", "blocklist"] as never);
+    // 单领域屏障只取走并回报本领域。
+    collectStorageDatabaseFailures.mockImplementationOnce(
+      (scope: DiskIODomain | null, failedDomains: DiskIODomain[]): void => { if (scope !== null) failedDomains.push(scope); }
+    );
     await route({ type: "flush", flushId, scope: "temporaryAdBypass" });
+    expect(collectStorageDatabaseFailures).toHaveBeenLastCalledWith("temporaryAdBypass", expect.any(Array));
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: flushId,
-      failedDomains: ["whitelist", "blocklist"],
+      failedDomains: ["temporaryAdBypass"],
     });
   });
 

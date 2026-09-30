@@ -139,7 +139,7 @@ export function sweepAiChatReplyCache(now: number = Date.now()): void {
   }
 }
 
-/** Worker dispose/测试隔离时撤销回复状态；存活发送槽位的容量记账保留到自行结算。 */
+/** 测试隔离时撤销回复状态；存活发送槽位的容量记账保留到自行结算。 */
 export function resetAiChatReplyCache(): void {
   replyGenerations.clear();
   rateLimitNoticeTimes.clear();

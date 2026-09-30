@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from "bun:test";
+import type { Mock } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import {
   aiCacheBuffer,
   aiCacheFileState,
+  aiCacheReopenState,
   resetAiCacheState,
 } from "../../../packages/cache/workers/diskIO/aiCache";
 import {
@@ -11,7 +13,11 @@ import {
   AI_CACHE_ROW_KEY_PATTERN,
   AI_CACHE_SUMMARY_KEY,
 } from "../../../packages/consts/diskIO/aiCache";
-import { DAY_FILE_JSON_INDENT, FLUSH_MAX_ENTRIES } from "../../../packages/consts/diskIO/appendOnly";
+import {
+  DAY_FILE_JSON_INDENT,
+  FLUSH_MAX_ENTRIES,
+  LOG_REOPEN_RETRY_MS,
+} from "../../../packages/consts/diskIO/appendOnly";
 import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
 import { TOKYO_UTC_OFFSET_MS } from "../../../packages/consts/time";
 import { formatTokyoLogTimestamp } from "../../../packages/libs/time";
@@ -124,6 +130,63 @@ describe("diskIO/aiCacheFile 缓冲与追加", () => {
     expect(aiCacheBuffer.texts).toHaveLength(0);
     expect(aiCacheBuffer.timer).toBeNull();
     expect(Object.keys(await readDocument())).toHaveLength(FLUSH_MAX_ENTRIES);
+  });
+});
+
+describe("diskIO/aiCacheFile 追加失败与退避", () => {
+  test("追加失败丢弃这一批并作废游标；退避窗口内的下一批不重新探测、同样丢弃；到点后重新探测并接着追加", async () => {
+    const consoleError: Mock<typeof console.error> = spyOn(console, "error").mockImplementation((): void => {});
+    const failedAt: number = tokyoNoon("2026-09-26");
+    const modelsOnDisk = async (): Promise<unknown[]> =>
+      Object.values(await readDocument()).map((row: unknown): unknown => (row as { model: unknown }).model);
+    try {
+      await initAiCache();
+      await handleAiCacheUsageMessage(usage("2026-09-26", { model: "kept-before-failure" }));
+      expect(await flushAiCacheBuffer()).toBeTrue();
+      const healthyContent: string = await Bun.file(AI_CACHE_FILE_PATH).text();
+
+      // 统计文件换成同名目录：下一次追加必然失败。
+      rmSync(AI_CACHE_FILE_PATH);
+      mkdirSync(AI_CACHE_FILE_PATH);
+      setSystemTime(new Date(failedAt));
+      await handleAiCacheUsageMessage(usage("2026-09-26", { model: "dropped-on-failure" }));
+      expect(aiCacheBuffer.timer).not.toBeNull();
+
+      expect(await flushAiCacheBuffer()).toBeFalse();
+      expect(aiCacheBuffer.texts).toEqual([]);
+      expect(aiCacheBuffer.timer).toBeNull();
+      expect(aiCacheFileState.current).toBeNull();
+      expect(aiCacheReopenState.retryAt).toBe(failedAt + LOG_REOPEN_RETRY_MS);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError.mock.calls[0]).toEqual(["[diskIOWorker] AI cache usage flush failed:", expect.any(Error)]);
+
+      // 文件已恢复可写，但仍在退避窗口内：不重新探测，这一批直接丢弃，也不再记错误。
+      rmSync(AI_CACHE_FILE_PATH, { recursive: true });
+      await Bun.write(AI_CACHE_FILE_PATH, healthyContent);
+      setSystemTime(new Date(failedAt + LOG_REOPEN_RETRY_MS - 1));
+      await handleAiCacheUsageMessage(usage("2026-09-26", { model: "dropped-in-backoff" }));
+
+      expect(await flushAiCacheBuffer()).toBeFalse();
+      expect(aiCacheBuffer.texts).toEqual([]);
+      expect(aiCacheBuffer.timer).toBeNull();
+      expect(aiCacheFileState.current).toBeNull();
+      expect(aiCacheReopenState.retryAt).toBe(failedAt + LOG_REOPEN_RETRY_MS);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(await Bun.file(AI_CACHE_FILE_PATH).text()).toBe(healthyContent);
+
+      // 退避到点：重新探测文件、接着已有记录追加，并清掉退避时刻。
+      setSystemTime(new Date(failedAt + LOG_REOPEN_RETRY_MS));
+      await handleAiCacheUsageMessage(usage("2026-09-26", { model: "appended-after-backoff" }));
+
+      expect(await flushAiCacheBuffer()).toBeTrue();
+      expect(aiCacheReopenState.retryAt).toBe(0);
+      expect(aiCacheFileState.current?.size).toBe((await Bun.file(AI_CACHE_FILE_PATH).stat()).size);
+      expect(await modelsOnDisk()).toEqual(["kept-before-failure", "appended-after-backoff"]);
+      expect(consoleError).toHaveBeenCalledTimes(1);
+    } finally {
+      setSystemTime();
+      consoleError.mockRestore();
+    }
   });
 });
 

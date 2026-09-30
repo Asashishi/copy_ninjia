@@ -1,9 +1,9 @@
 import type { CommandTargetMessages, ToggleCommandTexts } from "../../../types/commands";
-import { TRANSLATE_CHAT_USER_LIMIT } from "../../translate";
+import { TRANSLATE_CHAT_USER_LIMIT, TRANSLATE_LANGUAGE_GLOSSARY, TRANSLATE_LANGUAGE_SYNOPSIS } from "../../translate";
 
 /** /translate 参数错误统一提示。 */
 export const TRANSLATE_USAGE_TEXT: string =
-  `仅支持文字消息。回复目标后使用 /translate ja|cn|en|uk|ru，或使用 /translate ja|cn|en|uk|ru @username；ja 日语，cn 简体中文，en 美式英语，uk 乌克兰语，ru 俄语。每群最多 ${TRANSLATE_CHAT_USER_LIMIT} 人；/translate list 查看清单；/translate stop 停止全群，回复目标或使用 /translate stop @username/id 停止单人；/translate enable|disable 开关功能。`;
+  `仅支持文字消息。回复目标后使用 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS}，或使用 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS} @username；${TRANSLATE_LANGUAGE_GLOSSARY}。每群最多 ${TRANSLATE_CHAT_USER_LIMIT} 人；/translate list 查看清单；/translate stop 停止全群，回复目标或使用 /translate stop @username/id 停止单人；/translate enable|disable 开关功能。`;
 
 /** 翻译会话容量已满时拒绝新增，既有会话不受影响。 */
 export const TRANSLATE_CAPACITY_TEXT: string = "翻译群数已满，请先在不需要翻译的群执行 /translate stop。";
@@ -21,7 +21,7 @@ export const TRANSLATE_DISABLED_TEXT: string =
 /** /translate 开关文案。 */
 export const TRANSLATE_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
   rejection: (label: string): string => `${label} 没有管理本群翻译功能的权限。`,
-  usage: TRANSLATE_USAGE_TEXT, enabled: "本群翻译功能已开启，请使用 /translate ja|cn|en|uk|ru 选择语言和目标。",
+  usage: TRANSLATE_USAGE_TEXT, enabled: `本群翻译功能已开启，请使用 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS} 选择语言和目标。`,
   disabled: "本群翻译功能已关闭。", alreadyEnabled: "本群翻译功能已经处于开启状态。", alreadyDisabled: "本群翻译功能已经处于关闭状态。",
 };
 

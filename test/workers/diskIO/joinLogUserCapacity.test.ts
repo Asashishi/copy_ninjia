@@ -18,7 +18,7 @@ mock.module("../../../packages/consts/diskIO/joinLog", () => ({
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY: 2,
 }));
 
-const { inspectJoinLogFiles } = await import("../../../packages/workers/diskIO/joinLogFiles");
+const { inspectJoinLogFiles } = await import("../../../packages/workers/diskIO/joinLogRecovery");
 const { serializeJoinLogSnapshotEntry } = await import("../../../packages/workers/diskIO/joinLogRecords");
 const { getTokyoDateKey } = await import("../../../packages/libs/time");
 

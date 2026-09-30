@@ -63,11 +63,7 @@ export function superviseDuplexWorker<TMessage, TEvent, TRequest>(
     label: options.label,
     giveUpConsequence: options.giveUpConsequence,
     onGiveUp: options.onGiveUp,
-    onRespawn: options.onRespawn === undefined
-      ? undefined
-      : (post: (message: WorkerDuplexInbound<TMessage>) => boolean): void => options.onRespawn!(
-        (message: TMessage): boolean => post(message)
-      ),
+    onRespawn: options.onRespawn,
     onEvent: (
       data: WorkerDuplexOutbound<TRequest> | TEvent,
       context: SupervisedWorkerEventContext<WorkerDuplexInbound<TMessage>>

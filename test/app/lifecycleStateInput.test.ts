@@ -45,11 +45,7 @@ describe("启动总闸的全局状态输入判定", () => {
         stateFilePath: statePath,
         writeText: async (path: string): Promise<void> => { writes.push(path); },
       });
-      try {
-        await store.load();
-      } finally {
-        store.dispose();
-      }
+      await store.load();
     });
   }
 

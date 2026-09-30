@@ -32,12 +32,11 @@ import {
   XAI_SPEECH_RETRY_BASE_DELAY_MS,
   XAI_SPEECH_SAMPLE_RATE,
 } from "../../consts/aiChat/openai";
-import { logger } from "../../infra/logger";
 import { warnAiUsageUnavailable } from "../../infra/aiCacheUsage";
 import { signalWithTimeout } from "../../libs/abortSignal";
-import { readBoundedResponseText } from "../../libs/boundedResponse";
+import { discardResponseBody, readBoundedResponseText } from "../../libs/boundedResponse";
 import { sleep } from "../../libs/sleep";
-import { readSpeechBody } from "../ai/utils/speechPayload";
+import { readSpeechBody, speechFromDecoded, speechRequestFailed } from "../ai/utils/speechPayload";
 import type { AiSpeechRequest } from "../../types/aiChat/provider";
 import type { SynthesizedSpeech, SynthesizedSpeechDecodeResult } from "../../types/aiChat/voiceMessage";
 import type { XAiAgentTtsCapabilityConfig } from "../../types/config";
@@ -100,7 +99,7 @@ async function requestXAiSpeech(
     if (!isRetryableStatus(response.status) || attempt >= OPENAI_SPEECH_REQUEST_ATTEMPTS) {
       throw await httpStatusError(response);
     }
-    await response.body?.cancel().catch((): undefined => undefined);
+    await discardResponseBody(response);
     await sleep(retryDelayMs(attempt), signal);
   }
 }
@@ -121,14 +120,7 @@ export async function synthesizeXAiSpeech(
     warnAiUsageUnavailable("tts", "openai", "missing");
     decoded = await readSpeechBody(response, MP3_MIME_TYPE);
   } catch (error: unknown) {
-    // 调用方 signal 已中止表示本轮作废，静默收尾；合成超时仍记日志。
-    if (signal?.aborted === true) return null;
-    logger.error(`Error calling ${XAI_SPEECH_ERROR_LABEL}:`, error);
-    return null;
+    return speechRequestFailed(XAI_SPEECH_ERROR_LABEL, signal, error);
   }
-  if (!decoded.ok) {
-    logger.error(`${XAI_SPEECH_ERROR_LABEL} returned an unusable audio payload: ${decoded.reason}.`);
-    return null;
-  }
-  return decoded.speech;
+  return speechFromDecoded(XAI_SPEECH_ERROR_LABEL, decoded);
 }

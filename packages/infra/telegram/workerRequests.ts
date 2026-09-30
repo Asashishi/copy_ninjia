@@ -17,7 +17,7 @@ import type {
   TelegramWorkerTemporaryMessageSentResult,
 } from "../../types/telegramWorker";
 import { telegramRetryCategoryFor } from "./outboundRetryPolicy";
-import { markSelfSent } from "../selfSentTracker";
+import { beginSelfSentSend, endSelfSentSend, markSelfSent } from "../selfSentTracker";
 
 async function sendTemporaryMessage(
   request: Extract<TelegramWorkerRequest, { operation: "sendTemporaryMessage" }>,
@@ -180,19 +180,34 @@ async function dispatchTelegramWorkerRequest(
   }
 }
 
+/** 产消息（message 档）的 Worker 请求发往的数字 chat；其余请求不进入自发消息在途计数。 */
+function selfSentTargetChatId(request: TelegramWorkerRequest): number | undefined {
+  if (request.category !== "message") return undefined;
+  let chatId: number | string | undefined;
+  if (request.operation !== "call") chatId = request.chatId;
+  else if ("chat_id" in request.call.payload) chatId = request.call.payload.chat_id;
+  return typeof chatId === "number" ? chatId : undefined;
+}
+
 /**
  * 主线程执行已通过 Worker 能力白名单的 Telegram 请求。
  *
  * 所有 Worker 的 Telegram 请求都收在这一个漏斗里，自发消息登记因此也只此一处
- * （见 markWorkerSentMessage）。
+ * （见 markWorkerSentMessage）；产消息的请求在同一处登记在途发送。
  */
 async function executeTelegramWorkerRequest(
   request: TelegramWorkerRequest,
   signal: AbortSignal
 ): Promise<unknown> {
-  const result: unknown = await dispatchTelegramWorkerRequest(request, signal);
-  markWorkerSentMessage(result);
-  return result;
+  const selfSentChatId: number | undefined = selfSentTargetChatId(request);
+  if (selfSentChatId !== undefined) beginSelfSentSend(selfSentChatId);
+  try {
+    const result: unknown = await dispatchTelegramWorkerRequest(request, signal);
+    markWorkerSentMessage(result);
+    return result;
+  } finally {
+    if (selfSentChatId !== undefined) endSelfSentSend(selfSentChatId);
+  }
 }
 
 function aiAllows(request: TelegramWorkerRequest): boolean {

@@ -1,7 +1,7 @@
 /**
  * Gemini 显式缓存（cachedContent）的共用核心，与能力无关：槽登记、启动扫描、后台创建、
  * 续期、释放与淘汰。调用方传入自己的 scope（types/geminiContextCache.ts）：text 在
- * aiChat/gemini/contextCache.ts，ad_detect 在 antiRaid/ai/google.ts，各自的登记表放在
+ * aiChat/gemini/contextCache.ts，ad_detect 在 workers/antiRaid/adDetect/ai/google.ts，各自的登记表放在
  * 所在线程的 cache 里。
  *
  * **按系统指令分槽**：槽键是系统指令的指纹；槽里记着当前条目的内容键（模型、系统指令、
@@ -13,9 +13,11 @@
  * 不足 GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS 时后台续期。
  *
  * **失败口径**：创建被端点以 400 拒绝（内容低于该模型的最小 token 数或参数非法）时记下该槽
- * 的内容键，同一内容不再创建，只记 warn；其余创建失败、续期失败以及引用被拒后的释放，都在
- * GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS 内不再重发同一种请求（墙钟回拨按冷却已结束处理，见
- * libs/clockWindow.ts）。续期报 404（条目已不存在）时静默摘掉本地登记。
+ * 的内容键与累计次数，只记 warn；未满 GEMINI_CONTEXT_CACHE_MAX_REJECTIONS 次时
+ * GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS 后再试，满额后同一内容不再创建。其余创建失败、
+ * 续期失败以及引用被拒后的释放，都在 GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS 内不再重发同一种
+ * 请求（两种冷却遇墙钟回拨都按已结束处理，见 libs/clockWindow.ts）。续期报 404（条目已不存在）
+ * 时静默摘掉本地登记。
  *
  * 服务端条目 TTL 为 GEMINI_CONTEXT_CACHE_TTL_SECONDS，到期由 Google 自动删除；本模块在换
  * 内容、新建后发现接管以来从未用过的条目、超出槽数上限时主动删除。创建时的输入 token
@@ -28,7 +30,9 @@ import type { CachedContent, GoogleGenAI, Pager, Tool, ToolConfig } from "@googl
 import {
   GEMINI_CONTEXT_CACHE_KEY_PATTERN,
   GEMINI_CONTEXT_CACHE_LIST_PAGE_SIZE,
+  GEMINI_CONTEXT_CACHE_MAX_REJECTIONS,
   GEMINI_CONTEXT_CACHE_MIN_REMAINING_MS,
+  GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS,
   GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS,
   GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS,
   GEMINI_CONTEXT_CACHE_TTL_SECONDS,
@@ -40,6 +44,7 @@ import { logger } from "./logger";
 import type {
   GeminiContextCacheContent,
   GeminiContextCacheRegistry,
+  GeminiContextCacheRejection,
   GeminiContextCacheScope,
   GeminiContextCacheSlot,
 } from "../types/geminiContextCache";
@@ -65,7 +70,7 @@ export function createGeminiContextCacheRegistry(client: GoogleGenAI): GeminiCon
     slots: new Map<string, GeminiContextCacheSlot>(),
     creations: new Map<string, Promise<void>>(),
     failures: new Map<string, number>(),
-    rejected: new Map<string, string>(),
+    rejected: new Map<string, GeminiContextCacheRejection>(),
     scan: "idle",
   };
 }
@@ -196,7 +201,7 @@ async function scanExistingCaches(scope: Readonly<GeminiContextCacheScope>, regi
 
 /**
  * 创建一槽的条目并登记。成功后删掉同槽的旧条目与接管以来从未用过的条目，再按槽数上限
- * 淘汰；被 400 拒绝时记下内容键，其余失败记下时刻。
+ * 淘汰；被 400 拒绝时累计该内容的被拒次数与时刻，其余失败记下时刻。
  */
 async function createSlot(
   scope: Readonly<GeminiContextCacheScope>,
@@ -248,13 +253,29 @@ async function createSlot(
   } catch (error: unknown) {
     if (signal.aborted) return;
     if (error instanceof ApiError && error.status === 400) {
-      registry.rejected.set(slotKey, content.contentKey);
-      logger.warn(`${scope.errorLabel} create rejected: ${error.status} ${error.message}`);
+      const previous: GeminiContextCacheRejection | undefined = registry.rejected.get(slotKey);
+      const count: number = previous?.contentKey === content.contentKey ? previous.count + 1 : 1;
+      registry.rejected.set(slotKey, { contentKey: content.contentKey, count, rejectedAt: Date.now() });
+      logger.warn(
+        `${scope.errorLabel} create rejected (${count}/${GEMINI_CONTEXT_CACHE_MAX_REJECTIONS}): ` +
+        `${error.status} ${error.message}`
+      );
       return;
     }
-    registry.failures.set(slotKey, Date.now());
+    recordSlotFailure(registry, slotKey, Date.now());
     logger.error(`${scope.errorLabel} create failed:`, error);
   }
+}
+
+/**
+ * 记下该槽一次失败的时刻，并顺带摘掉已过 GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS 冷却期的
+ * 旧记录：过期记录不再影响任何判定。
+ */
+function recordSlotFailure(registry: GeminiContextCacheRegistry, slotKey: string, now: number): void {
+  for (const [key, failedAt] of registry.failures) {
+    if (!isRecordedWithin(failedAt, now, GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS - 1)) registry.failures.delete(key);
+  }
+  registry.failures.set(slotKey, now);
 }
 
 /** 登记一次后台创建；结束后只摘除自己那一项。 */
@@ -339,7 +360,13 @@ export function acquireGeminiContextCache(
     return slot.name;
   }
   if (registry.scan === "running" || registry.creations.has(content.slotKey)) return null;
-  if (registry.rejected.get(content.slotKey) === content.contentKey) return null;
+  const rejection: GeminiContextCacheRejection | undefined = registry.rejected.get(content.slotKey);
+  if (
+    rejection?.contentKey === content.contentKey && (
+      rejection.count >= GEMINI_CONTEXT_CACHE_MAX_REJECTIONS ||
+      isRecordedWithin(rejection.rejectedAt, now, GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS - 1)
+    )
+  ) return null;
   const failedAt: number | undefined = registry.failures.get(content.slotKey);
   if (failedAt !== undefined && isRecordedWithin(failedAt, now, GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS - 1)) return null;
   startCreation(scope, registry, content);
@@ -356,7 +383,7 @@ export function releaseGeminiContextCache(scope: Readonly<GeminiContextCacheScop
   for (const [key, slot] of registry.slots) {
     if (slot.name !== name) continue;
     registry.slots.delete(key);
-    registry.failures.set(key, Date.now());
+    recordSlotFailure(registry, key, Date.now());
     deleteRemote(scope, registry, name);
     return;
   }

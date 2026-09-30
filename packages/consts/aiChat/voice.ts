@@ -52,8 +52,7 @@ export const VOICE_MAX_DURATION_SECONDS: number = 512;
  *
  * Telegram voice note 恒为 OGG/Opus，白名单只是用来把 Telegram 声明的
  * `mime_type` 归一——声明缺失或写了别的容器时一律退回 VOICE_DEFAULT_MIME，不
- * 把一个没验证过的字符串原样转发给模型。只读数组类型防止调用方误改（不可变性
- * 只在编译期表达，见 AGENTS.md 的「常量」一节）。
+ * 把一个没验证过的字符串原样转发给模型。
  */
 export const VOICE_MIME_TYPES: readonly string[] = [
   "audio/ogg",

@@ -41,7 +41,7 @@ export const VERIFICATION_REMINDER_RETRY_MAX_MS: number = 15_000;
  * 却仍保有限制成员的权限）时，每个入群者都会留下一条不朽记录：常驻待验证表、
  * 常驻主线程镜像、持续刷新 memory/anti-raid/<day>.json。超过这个总时长就按
  * 普通超时结算：只踢不封，成员仍可重新加入。
- * 所属模块：states/verification.ts 的 handleVerifyTimeout。
+ * 所属模块：states/verification/pending.ts 的 handleVerifyTimeout。
  */
 export const VERIFICATION_REMINDER_UNDELIVERED_MAX_MS: number = 15 * 60 * 1000;
 /** 终态踢人失败后的**首次**重试间隔；记录保持持久化，不能把未处置成员当作已完成。 */
@@ -54,7 +54,7 @@ export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
  * 未验证成员各占一个永久的 30 秒循环，各自不停执行成员探测与踢出动作，
  * 并往 logs/ 里刷同一行报错，Worker 重建和进程重启后还会照单重新武装。
  * 退避到上限而不是放弃：管理员补上封禁权限后，最迟一个上限周期内自愈。
- * 所属模块：workers/antiRaid/verificationEffects.ts。
+ * 所属模块：workers/antiRaid/verificationEffects/retry.ts。
  */
 export const VERIFICATION_TERMINAL_RETRY_MAX_MS: number = 30 * 60 * 1000;
 /**
@@ -70,9 +70,10 @@ export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
  * tombstone。达到上限时主线程拒绝新 key 并触发受监督停机；启动恢复超过上限也
  * 直接拒绝，不淘汰、不截断安全状态。
  *
- * 三份独立 Map 都使用同一硬上限，给主线程、Anti-Raid Worker 与 Disk I/O Worker
- * 的镜像留下明确且一致的容量边界。所属模块：
- * antiRaid/verificationMirror.ts 与 workers/diskIO/verificationRecovery.ts。
+ * 主线程镜像与 Disk I/O Worker 的 Map 使用同一硬上限；Anti-Raid Worker 的运行态
+ * 不设独立上限，硬顶由主线程镜像与落盘侧挡住。所属模块：antiRaid/verificationMirror.ts、
+ * antiRaid/workerBridge/controller.ts、workers/diskIO/verificationWrites.ts、
+ * workers/diskIO/verificationRecovery.ts。
  *
  * 取值推导：私密模式秒踢的占位不持久化、不计入本上限，只有待验证与终态记录计入。
  * 私密模式生效时每群每分钟至多 ANTI_RAID_PER_MINUTE_LIMIT 人进入验证、各自存活
@@ -96,7 +97,7 @@ export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
  * 投递（chat_member 更新 + 服务消息）”还是“TA 真的重新
  * 申请了入群”（踢出动作只踢不封，本就能立刻重进）的分界线。
  * 远小于 LOCKDOWN_KICK_DEDUPE_MS——那个是占位整体存活时长，这个只区分
- * 同一次入群的两条腿，见 states/verification.ts 的 handleJoin。
+ * 同一次入群的两条腿，见 states/verification/join.ts 的 handleJoin。
  */
 export const KICKED_REJOIN_GRACE_MS: number = 5 * 1000;
 /** 终结 revision 为抵御重复 adopt 保留的时间；之后周期清理，避免按历史成员增长。 */

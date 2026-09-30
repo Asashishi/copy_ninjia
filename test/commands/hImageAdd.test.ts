@@ -108,7 +108,7 @@ beforeEach(() => {
   downloads.clear();
   hangDownloads = false;
   permitted = true;
-  for (const key of [...mediaGroupImages.keys()]) mediaGroupImages.delete(key);
+  mediaGroupImages.clear();
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   deferredCommandRuntime.current = null;

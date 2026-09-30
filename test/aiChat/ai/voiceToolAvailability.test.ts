@@ -1,6 +1,7 @@
 /**
- * send_voice 的挂载：只看部署能力、不看触发类型，挂载后每轮都可直接调用；未挂载时
- * 点名调用归一成未知工具；合成成功才计入共享动作预算。
+ * send_voice 的挂载：只看部署能力（`agent.tts` 已配置且所选实现具备语音合成）、不看触发类型，
+ * 挂载后每轮都可直接调用；未挂载时点名调用归一成未知工具。准入通过即当场交回接纳回执并预占
+ * 一个共享动作，与之后合成成败无关；合成失败时链上不发送、不计完成动作。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -28,7 +29,7 @@ mock.module("../../../packages/infra/telegram", () => ({
 }));
 
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
-const { ACTION_TOOL_NAMES, SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR, SEND_VOICE_TOOL } = await import("../../../packages/consts/tools");
+const { ACTION_TOOL_NAMES, SEND_VOICE_TOOL } = await import("../../../packages/consts/tools");
 
 function buildContext(overrides: Partial<ReplyToolContext> = {}): ReplyToolContext {
   return {
@@ -81,17 +82,17 @@ describe("语音工具的挂载", () => {
       const toolset: ReplyToolset = await createReplyToolset(buildContext());
 
       expect(toolNames(toolset)).not.toContain(SEND_VOICE_TOOL);
-      const result = JSON.parse(await toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
+      const result = JSON.parse(toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
       expect(result.error).toBe(`Unknown tool: ${SEND_VOICE_TOOL}`);
       expect(toolset.actionsUsed()).toBe(0);
     }
   });
 
-  test("合成成功的语音计入共享动作预算", async () => {
+  test("准入通过即当场交回接纳回执并预占一个共享动作，send_voice 属于共享动作工具", async () => {
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> =>
       ({ ok: true, speech: { bytes: sineWav(24_000, 0.5), mimeType: "audio/wav" } }));
     const toolset: ReplyToolset = await createReplyToolset(buildContext());
-    const result = JSON.parse(await toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
+    const result = JSON.parse(toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
 
     expect(result).toMatchObject({ success: true, queued: true, actions_used: 1 });
     expect(toolset.actionsUsed()).toBe(1);
@@ -99,12 +100,13 @@ describe("语音工具的挂载", () => {
     expect(ACTION_TOOL_NAMES).toContain(SEND_VOICE_TOOL);
   });
 
-  test("合成失败时工具回执当场报失败，不占共享动作预算", async () => {
+  test("合成失败时回执照常接纳并占共享动作预算，链上不发送、不计完成动作", async () => {
     const toolset: ReplyToolset = await createReplyToolset(buildContext());
-    const result = JSON.parse(await toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
+    const result = JSON.parse(toolset.execute(SEND_VOICE_TOOL, JSON.stringify({ text: "バカ" })));
 
-    expect(result).toEqual({ error: SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR, retryable: false });
-    expect(toolset.actionsUsed()).toBe(0);
+    expect(result).toMatchObject({ success: true, queued: true, actions_used: 1 });
+    expect(toolset.actionsUsed()).toBe(1);
     await toolset.settle();
+    expect(toolset.actionsCompleted()).toBe(0);
   });
 });

@@ -211,7 +211,7 @@ function runEmergencyLockdownRecovery(
     }
   })();
   recovery.inFlight = task;
-  // 两路都结算：finally 派生的 Promise 会带着 task 的拒绝，无人处理就成未处理拒绝。
+  // 用 then(settle, settle) 同时接住兑现与拒绝，拒绝在此被处理，不会派生出无人处理的 Promise。
   const settle = (): void => {
     if (recovery.inFlight === task) recovery.inFlight = null;
   };

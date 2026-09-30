@@ -37,7 +37,7 @@ function isQuoteWrapped(text: string): boolean {
  * 清洗模型给出的消息文本，得到可直接发送的纯文本：去掉联网搜索可能附带的
  * 行内引用标记（「[[1]](https://…)」，发到群里既丑又暴露机器人身份）、
  * 首尾空白、包裹的代码块围栏和成对引号，并截断到 Telegram 单条消息上限。
- * 空则返回 null。send_message 正文（见 replyToolset/typoHandling.ts 的
+ * 空则返回 null。send_message 正文（见 replyToolset/sendMessage.ts 的
  * parseCleanMessageText）与生图的图注解析（见 replyToolset/imageGeneration.ts）
  * 均经此清洗。
  */

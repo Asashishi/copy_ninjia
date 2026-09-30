@@ -13,6 +13,7 @@ import { storageWriteCost } from "../libs/storageWriteBudget";
 import {
   chatQaEntries,
   nextChatQaRevision,
+  unacknowledgedChatQaTotals,
   unacknowledgedChatQaWrites,
 } from "../cache/main/qa";
 import { CHAT_QA_MAX_PER_CHAT } from "../consts/qa";
@@ -28,6 +29,7 @@ import type {
 import type {
   IdentityStoragePersistedReply,
 } from "../types/diskIO/replies";
+import type { UnacknowledgedChatQaWrite } from "../types/qa";
 
 /** 问答条数达到上限；命令回执只把这一类失败解释为业务容量已满。 */
 export class ChatQaCapacityError extends Error {}
@@ -38,46 +40,53 @@ export function hydrateChatQaCache(
 ): void {
   chatQaEntries.clear();
   unacknowledgedChatQaWrites.clear();
+  unacknowledgedChatQaTotals.entries = 0;
+  unacknowledgedChatQaTotals.bytes = 0;
   for (const [chatId, questions] of entries) {
     if (questions.size === 0) continue;
     chatQaEntries.set(chatId, new Map(questions));
   }
 }
 
-function trackUnacknowledged(chatId: number, q: string, revision: number): void {
-  const existing: Map<string, number> | undefined = unacknowledgedChatQaWrites.get(chatId);
-  const questions: Map<string, number> = existing ?? new Map<string, number>();
-  if (existing === undefined) unacknowledgedChatQaWrites.set(chatId, questions);
-  questions.set(q, revision);
+/** 登记一条未 ACK 写入并按差额更新总条数与字节。 */
+function trackUnacknowledged(message: ChatQaWriteDiskMessage): void {
+  const existing: Map<string, UnacknowledgedChatQaWrite> | undefined =
+    unacknowledgedChatQaWrites.get(message.chatId);
+  const questions: Map<string, UnacknowledgedChatQaWrite> = existing ?? new Map<string, UnacknowledgedChatQaWrite>();
+  if (existing === undefined) unacknowledgedChatQaWrites.set(message.chatId, questions);
+  const previous: UnacknowledgedChatQaWrite | undefined = questions.get(message.q);
+  const bytes: number = storageWriteCost(message.data, message.q);
+  questions.set(message.q, { revision: message.revision, bytes });
+  if (previous === undefined) unacknowledgedChatQaTotals.entries++;
+  unacknowledgedChatQaTotals.bytes += bytes - (previous?.bytes ?? 0);
 }
 
-/** 发布前验证未 ACK 的问题、墓碑和正文预算；低频命令直接核对现有表。 */
+/** 发布前按差额核对未 ACK 的问题、墓碑和正文预算。 */
 function prepareChatQaWrite(chatId: number, q: string, answer: string | undefined): ChatQaWriteDiskMessage {
   const revision: number = nextChatQaRevision.current + 1;
   if (!Number.isSafeInteger(revision)) throw new Error("Chat-qa revision space is exhausted.");
   const data: string | null = answer === undefined ? null : encodeChatQaData(answer, `${IDENTITY_DATABASE_PATH}:chat_qa[${chatId}]`);
-  let entries: number = 1;
-  let bytes: number = storageWriteCost(data, q);
-  for (const [pendingChatId, questions] of unacknowledgedChatQaWrites) {
-    for (const pendingQ of questions.keys()) {
-      if (pendingChatId === chatId && pendingQ === q) continue;
-      entries++;
-      const previous: string | undefined = chatQaEntries.get(pendingChatId)?.get(pendingQ);
-      bytes += storageWriteCost(previous === undefined ? null : encodeChatQaData(previous, "chat qa admission"), pendingQ);
-    }
-  }
-  assertStorageAdmission(entries, bytes);
+  const previous: UnacknowledgedChatQaWrite | undefined = unacknowledgedChatQaWrites.get(chatId)?.get(q);
+  assertStorageAdmission(
+    unacknowledgedChatQaTotals.entries + (previous === undefined ? 1 : 0),
+    unacknowledgedChatQaTotals.bytes + storageWriteCost(data, q) - (previous?.bytes ?? 0)
+  );
   const message: ChatQaWriteDiskMessage = { type: "chatQaWrite", chatId, q, data, revision };
   if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat qa state publication.");
   return message;
 }
 
+/**
+ * 登记 revision 并投递；热表此时已发布最终值。投递失败只记日志，未 ACK 的
+ * revision 留给 Worker 重建时重放，口径同 chatStateStorage.ts 的 queueChatStateWrite。
+ */
 function queueChatQaWrite(message: ChatQaWriteDiskMessage): void {
   nextChatQaRevision.current = message.revision;
-  trackUnacknowledged(message.chatId, message.q, message.revision);
+  trackUnacknowledged(message);
   if (!postWithTransport(message)) {
-    logger.error("Failed to queue chat qa; retaining its revision for replay.");
-    throw new Error("Failed to queue chat qa persistence.");
+    logger.error(
+      `Failed to queue chat qa for chat ${message.chatId}; retaining revision ${message.revision} for replay.`
+    );
   }
 }
 
@@ -121,9 +130,7 @@ export function removeChatQa(chatId: number, q: string): boolean {
 /**
  * 群 teardown 的整群删除：删掉本群全部已登记问答。
  *
- * 逐条发墓碑而不是一条「删掉这个群」的批量消息：`chat_qa` 的主键是 (chatId, q)
- * 复合键，逐条删除复用现成的准入、revision 与重放路径，不必为一个每群至多
- * CHAT_QA_MAX_PER_CHAT 条的冷路径再造一套批量协议。
+ * 逐条发墓碑，复用 setChatQa/removeChatQa 的准入、revision 与重放路径。
  *
  * 与 `/qa remove` 同样只排进事务缓冲、不在这里等 durable 回执：调用方
  * （commands/qa.ts 的 teardownQaInChat）所在的 `/init disable` 与离群路径在 teardown
@@ -155,10 +162,15 @@ export function removeAllChatQa(chatId: number): number {
 /** 收到精确 ACK 后清掉对应未确认 revision；迟到的 ACK 不得清掉更新的写。 */
 function settleChatQaWrites(reply: IdentityStoragePersistedReply): void {
   for (const write of reply.chatQaWrites) {
-    const questions: Map<string, number> | undefined =
+    const questions: Map<string, UnacknowledgedChatQaWrite> | undefined =
       unacknowledgedChatQaWrites.get(write.chatId);
     if (questions === undefined) continue;
-    if (questions.get(write.q) === write.revision) questions.delete(write.q);
+    const pending: UnacknowledgedChatQaWrite | undefined = questions.get(write.q);
+    if (pending?.revision === write.revision) {
+      questions.delete(write.q);
+      unacknowledgedChatQaTotals.entries--;
+      unacknowledgedChatQaTotals.bytes -= pending.bytes;
+    }
     if (questions.size === 0) unacknowledgedChatQaWrites.delete(write.chatId);
   }
 }
@@ -166,12 +178,12 @@ function settleChatQaWrites(reply: IdentityStoragePersistedReply): void {
 /** Worker 重建后按内存最终值重放全部未确认写；正文从热表现编码。 */
 function replayChatQaWrites(transport: DiskIORecoveryTransport): boolean {
   for (const [chatId, questions] of unacknowledgedChatQaWrites) {
-    for (const [q, revision] of questions) {
+    for (const [q, pending] of questions) {
       const answer: string | undefined = chatQaEntries.get(chatId)?.get(q);
       const data: string | null = answer === undefined
         ? null
         : encodeChatQaData(answer, `${IDENTITY_DATABASE_PATH}:chat_qa[${chatId}]`);
-      if (!postWithTransport({ type: "chatQaWrite", chatId, q, data, revision }, transport)) {
+      if (!postWithTransport({ type: "chatQaWrite", chatId, q, data, revision: pending.revision }, transport)) {
         return false;
       }
     }

@@ -24,9 +24,8 @@ import {
   storageWriteFlushTimer,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import {
-  configureStoragePersistenceReply,
   flushStorageDatabase,
-  pendingStorageDatabaseDomains,
+  collectStorageDatabaseFailures,
 } from "../../../packages/workers/diskIO/storageDatabase/flush";
 import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import { handleIdentityPolicyWrite } from
@@ -34,6 +33,7 @@ import { handleIdentityPolicyWrite } from
 import { handlePendingRemovalSnapshot } from
   "../../../packages/workers/diskIO/storageDatabase/pendingRemoval";
 import type {
+  DiskIODomain,
   IdentityPolicyWriteDiskMessage,
   IdentityStoragePersistedReply,
 } from "../../../packages/types/diskIO";
@@ -111,7 +111,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     expect(pendingWhitelistWrites).toHaveLength(2);
     expect(acknowledgements).toHaveLength(0);
 
-    configureStoragePersistenceReply(reply);
+    storagePersistenceReplyHolder.current = reply;
     jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
 
     expect(storageWriteFlushTimer.current).toBeNull();
@@ -164,14 +164,13 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     try {
       jest.useFakeTimers();
       handleIdentityPolicyWrite(whitelistWrite(11, 6), reply);
-      configureStoragePersistenceReply(reply);
+      storagePersistenceReplyHolder.current = reply;
       closeStorageDatabase(storageDatabaseHandle.current!);
 
       jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
 
-      expect(error).toHaveBeenCalledWith(
-        "[diskIOWorker] failed to flush the storage database; retaining pending changes for retry."
-      );
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith("[diskIOWorker] storage database transaction failed:", expect.any(Error));
       expect(storageWriteFlushTimer.current).not.toBeNull();
       expect(pendingWhitelistWrites.get(11)?.revision).toBe(6);
       expect(acknowledgements).toHaveLength(0);
@@ -189,12 +188,53 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     handleIdentityPolicyWrite(whitelistWrite(12, 7), reply);
     pendingChatQaWrites.set(-1001, new Map([["问", { answer: "答", revision: 1 }]]) as never);
 
-    expect(new Set(pendingStorageDatabaseDomains()))
-      .toEqual(new Set(["blocklistRemovalOutbox", "whitelist", "chatQa"]));
+    const first: DiskIODomain[] = [];
+    collectStorageDatabaseFailures(null, first);
+    expect(new Set(first)).toEqual(new Set(["blocklistRemovalOutbox", "whitelist", "chatQa"]));
 
     // 取走一次之后拒收标记不再复现；仍 dirty 的表照旧上报。
-    expect(new Set(pendingStorageDatabaseDomains()))
-      .toEqual(new Set(["whitelist", "chatQa"]));
+    const second: DiskIODomain[] = [];
+    collectStorageDatabaseFailures(null, second);
+    expect(new Set(second)).toEqual(new Set(["whitelist", "chatQa"]));
+  });
+
+  test("单领域屏障只取走本领域的拒收标记，别的领域留给它自己的屏障回报", (): void => {
+    noteStorageWriteRejected("chatState");
+    noteStorageWriteRejected("whitelist");
+    handleIdentityPolicyWrite(whitelistWrite(13, 8), reply);
+
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    const whitelistBarrier: DiskIODomain[] = [];
+    collectStorageDatabaseFailures("whitelist", whitelistBarrier);
+    expect(whitelistBarrier).toEqual(["whitelist"]);
+
+    // whitelist 屏障不得带走 chatState 的拒收：那次失败要由 chatState 屏障看到。
+    const chatStateBarrier: DiskIODomain[] = [];
+    collectStorageDatabaseFailures("chatState", chatStateBarrier);
+    expect(chatStateBarrier).toEqual(["chatState"]);
+    const again: DiskIODomain[] = [];
+    collectStorageDatabaseFailures(null, again);
+    expect(again).toEqual([]);
+  });
+
+  test("事务提交成功而另有拒收标记时，提交结果仍报成功，定时节拍不记失败", (): void => {
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      jest.useFakeTimers();
+      noteStorageWriteRejected("chatQa");
+      handleIdentityPolicyWrite(whitelistWrite(14, 9), reply);
+      storagePersistenceReplyHolder.current = reply;
+
+      jest.advanceTimersByTime(IDENTITY_WRITE_FLUSH_INTERVAL_MS);
+
+      expect(pendingWhitelistWrites).toHaveLength(0);
+      expect(error).not.toHaveBeenCalled();
+      const failedDomains: DiskIODomain[] = [];
+      collectStorageDatabaseFailures(null, failedDomains);
+      expect(failedDomains).toEqual(["chatQa"]);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   test("空 outbox 的新 revision 当场 ACK，后续 flush 不重复确认", (): void => {

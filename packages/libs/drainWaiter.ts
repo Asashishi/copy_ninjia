@@ -1,15 +1,7 @@
 import type { FlushResult } from "../types/lifecycle";
 import { assertTimeoutMs } from "./inflight";
 
-/**
- * 停机 drain 的骨架：等待某个 owner 的在途与待执行工作归零，超出预算则 abort 并结算。
- *
- * 当前唯一的 owner 是头像更新队列（copy/avatarQueue.ts 的 drainAvatarUpdates）。
- * 固定两条语义：**预算为 0 时不抛校验错、而是立刻 abort 并按 timedOut 结算**，以及
- * 「登记 waiter 之后必须再触发一次空闲检查」。新增 owner 直接复用本函数，
- * 不要在调用点各写一份。
- * @see ../../docs/cn/04-invariants.md
- */
+/** drainWithWaiter 的入参。 */
 export interface DrainWaiterParams {
   /** owner 名，用于参数校验的错误文案（英文，见 AGENTS.md 日志约定）。 */
   owner: string;
@@ -26,7 +18,13 @@ export interface DrainWaiterParams {
 }
 
 /**
- * 有界等待某个 owner 排空。
+ * 停机 drain 的骨架：等待某个 owner 的在途与待执行工作归零，超出预算则 abort 并结算。
+ *
+ * 当前唯一的 owner 是头像更新队列（copy/avatarQueue.ts 的 drainAvatarUpdates）。
+ * 固定两条语义：**预算为 0 时不抛校验错、而是立刻 abort 并按 timedOut 结算**，以及
+ * 「登记 waiter 之后必须再触发一次空闲检查」。新增 owner 直接复用本函数，
+ * 不要在调用点各写一份。
+ * @see ../../docs/cn/04-invariants.md
  * @returns 归零返回 `"flushed"`；预算耗尽时先 abort 再返回 `"timedOut"`。
  */
 export function drainWithWaiter({

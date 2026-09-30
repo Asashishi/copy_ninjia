@@ -66,7 +66,7 @@ export interface ColdStartRound {
   readonly peakRssBytes: number;
 }
 
-/** 七条真实落盘动作与三条用户可见本地流程；全部从生产入口驱动。 */
+/** 七条真实落盘动作、三条用户可见本地流程与一条部署配置热重载；全部从生产入口驱动。 */
 export type ChainName =
   | "join-log-append"
   | "identity-policy-write"
@@ -77,7 +77,8 @@ export type ChainName =
   | "diagnostic-log"
   | "ad-detect-command"
   | "ai-reply-command"
-  | "cron-send-voice";
+  | "cron-send-voice"
+  | "cron-config-reload";
 
 /** 单条链路一轮的完整回传；延迟分位数来自逐次 durable 往返。 */
 export interface ChainRound {
@@ -163,7 +164,7 @@ export interface BenchmarkEntry {
   readonly metrics: readonly MetricStats[];
 }
 
-/** 报告分区 id；渲染顺序即数组顺序。 */
+/** 报告分区 id。 */
 export type SectionId =
   | "cold-start"
   | "hot-path"
@@ -227,6 +228,7 @@ export interface FullSuiteReport {
   readonly wallClockMs: number;
   readonly mockDataRoot: string;
   readonly environment: SuiteEnvironment;
+  /** 按渲染顺序排列的分区；渲染顺序即数组顺序。 */
   readonly sections: readonly BenchmarkSection[];
   readonly coldStart: ColdStartSummary;
   readonly totals: SuiteTotals;

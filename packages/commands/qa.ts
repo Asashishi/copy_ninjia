@@ -5,8 +5,8 @@ import { chatAtmosphere } from "../infra/atmosphere";
  * 群问答的三个子命令：`/qa set`、`/qa query`、`/qa remove`。
  *
  * `/qa set` 与 `/qa remove` 需要 `isCanControllQaPermission`（超级管理员恒持有）；
- * `/qa query` 是只读看板，群成员都能用。三条都要求本群已 `/init enable`——问答
- * 直答挂在消息主干上，没接管的群本来就不该有本天才的动静。
+ * `/qa query` 是只读看板，群成员都能用。三条只在已 `/init enable` 的群里可达：
+ * 未接管群的命令由 infra/updateGate.ts 的 shouldPassInitGate 挡下。
  *
  * **频道身份可用**：表单靠「问题:」「回答:」两条格式消息收文本，而不是 inline，
  * 因此频道马甲与匿名管理员在命令侧和投递侧是同一个 `sender_chat` id，两边对得上。
@@ -25,7 +25,6 @@ import {
   ChatQaCapacityError,
 } from "../infra/qaStore";
 import { forumTopicThreadId } from "../libs/forumTopic";
-import { getChatState } from "../infra/storage/stateStore";
 import { logger } from "../infra/logger";
 import { throwIfUpdateAborted } from "../infra/updateContext";
 import { sendCommandMessage } from "../infra/telegram";
@@ -48,9 +47,8 @@ import {
 
 export { handleQaBoardCallback } from "./qa/board";
 
-/** /qa 统一入口；先检查本群接管状态，再分派表单、查询或删除。 */
+/** /qa 统一入口；按子命令分派表单、查询或删除。 */
 export async function handleQaCommand(ctx: CommandContext<Context>): Promise<void> {
-  if (!await requiresInitialized(ctx.chat.id, ctx.msgId)) return;
   const match: RegExpExecArray | null = QA_SUBCOMMAND_PATTERN.exec(ctx.match.trim());
   // 子命令词不区分大小写；第二组是用户写的问题文本，保持原样。
   const subcommand: string | undefined = match?.[1]?.toLowerCase();
@@ -64,20 +62,6 @@ export async function handleQaCommand(ctx: CommandContext<Context>): Promise<voi
   } else {
     await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).QA_USAGE_TEXT, replyToMessageId: ctx.msgId });
   }
-}
-
-/** 本群是否已接管；未接管时统一回同一句，不区分命令。 */
-async function requiresInitialized(
-  chatId: number,
-  messageId: number | undefined
-): Promise<boolean> {
-  if (getChatState(chatId).isInitEnabled === true) return true;
-  await sendCommandMessage({
-    chatId,
-    text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.notInitialized,
-    replyToMessageId: messageId,
-  });
-  return false;
 }
 
 /** 维护类命令的权限闸；`/qa query` 不走这里。放行时返回发起身份，拒绝时已回执并返回 undefined。 */

@@ -20,10 +20,7 @@ import { readStoredTemporaryAdBypassActivities } from
   "../../../packages/database/interact/temporaryAdBypass";
 import { clearStorageBusinessTables } from
   "../../../scripts/fixtures/storageDatabase";
-import {
-  configureStoragePersistenceReply,
-  flushStorageDatabase,
-} from "../../../packages/workers/diskIO/storageDatabase/flush";
+import { flushStorageDatabase } from "../../../packages/workers/diskIO/storageDatabase/flush";
 import { hydrateStorageDatabase } from "../../helpers/storageDatabaseHydration";
 import {
   handleTemporaryAdBypassWrite,
@@ -103,7 +100,7 @@ afterEach((): void => {
 
 describe("临时广告免检 SQLite 合并写与过期清理", () => {
   test("同一主键在 30 秒窗口内只落最新最终值与 revision", (): void => {
-    configureStoragePersistenceReply(reply);
+    storagePersistenceReplyHolder.current = reply;
 
     handleTemporaryAdBypassWrite(activityWrite(7, 1), reply);
     const firstTimer: ReturnType<typeof setTimeout> | null = storageWriteFlushTimer.current;

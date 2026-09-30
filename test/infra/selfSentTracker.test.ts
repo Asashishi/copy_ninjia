@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, jest, test } from "bun:test";
 import type { Message } from "grammy/types";
 import {
+  beginSelfSentSend,
+  endSelfSentSend,
   isBotOwnMessage,
   isSelfSent,
   markSelfSent,
@@ -8,6 +10,7 @@ import {
   waitForBotOwnMessage,
 } from "../../packages/infra/selfSentTracker";
 import {
+  inFlightSelfSends,
   pendingSelfSentWaiters,
   resetSelfSentTracker,
   sentMessages,
@@ -26,13 +29,16 @@ describe("跨线程自发消息 rendezvous", () => {
       text: "bot post",
     } as Message;
 
+    beginSelfSentSend(-1001);
     const matched: Promise<boolean> = waitForBotOwnMessage(message);
     expect(needsBotOwnMessageWait(message)).toBeTrue();
     expect(pendingSelfSentWaiters.size).toBe(1);
     markSelfSent(-1001, 10);
+    endSelfSentSend(-1001);
 
     await expect(matched).resolves.toBeTrue();
     expect(pendingSelfSentWaiters.size).toBe(0);
+    expect(inFlightSelfSends.size).toBe(0);
   });
 
   test("关联讨论组自动转发按频道原帖编号等待标记", async () => {
@@ -50,11 +56,50 @@ describe("跨线程自发消息 rendezvous", () => {
       text: "forwarded bot post",
     } as Message;
 
+    beginSelfSentSend(-1001);
     const matched: Promise<boolean> = waitForBotOwnMessage(message);
     expect(needsBotOwnMessageWait(message)).toBeTrue();
     markSelfSent(-1001, 11);
+    endSelfSentSend(-1001);
 
     await expect(matched).resolves.toBeTrue();
+  });
+
+  test("目标频道没有在途发送时不建等待项，直接按外部消息放行", async () => {
+    const message: Message = {
+      message_id: 12,
+      date: 1,
+      chat: { id: -1001, type: "channel", title: "Channel" },
+      text: "external post",
+    } as Message;
+    // 另一个 chat 的在途发送不影响本频道的判定。
+    beginSelfSentSend(-9009);
+
+    await expect(waitForBotOwnMessage(message, 60_000)).resolves.toBeFalse();
+    expect(pendingSelfSentWaiters.size).toBe(0);
+    endSelfSentSend(-9009);
+  });
+
+  test("在途发送全部结算而未登记本条时立即以 false 放行，不等满窗口", async () => {
+    const message: Message = {
+      message_id: 13,
+      date: 1,
+      chat: { id: -1001, type: "channel", title: "Channel" },
+      text: "external post",
+    } as Message;
+    beginSelfSentSend(-1001);
+    beginSelfSentSend(-1001);
+    const matched: Promise<boolean> = waitForBotOwnMessage(message, 60_000);
+    markSelfSent(-1001, 14);
+    endSelfSentSend(-1001);
+    expect(pendingSelfSentWaiters.size).toBe(1);
+    expect(inFlightSelfSends.get(-1001)).toBe(1);
+
+    endSelfSentSend(-1001);
+
+    await expect(matched).resolves.toBeFalse();
+    expect(pendingSelfSentWaiters.size).toBe(0);
+    expect(inFlightSelfSends.size).toBe(0);
   });
 
   test("普通群消息不创建等待项；频道消息超时后按外部消息放行", async () => {
@@ -74,8 +119,10 @@ describe("跨线程自发消息 rendezvous", () => {
       chat: { id: -3004, type: "channel", title: "Channel" },
       text: "external post",
     } as Message;
+    beginSelfSentSend(-3004);
     await expect(waitForBotOwnMessage(channelMessage, 0)).resolves.toBeFalse();
     expect(pendingSelfSentWaiters.size).toBe(0);
+    endSelfSentSend(-3004);
   });
 });
 
@@ -123,6 +170,7 @@ describe("自发消息登记的分层容量", () => {
     } as Message;
 
     // 重置同步取消 timer，并让当前等待者得到明确的否定结果。
+    beginSelfSentSend(-4004);
     const pending: Promise<boolean> = waitForBotOwnMessage(channelMessage, 60_000);
     markSelfSent(-1001, 10);
     expect(pendingSelfSentWaiters.size).toBe(1);
@@ -132,6 +180,7 @@ describe("自发消息登记的分层容量", () => {
 
     expect(pendingSelfSentWaiters.size).toBe(0);
     expect(sentMessages.size).toBe(0);
+    expect(inFlightSelfSends.size).toBe(0);
     await expect(pending).resolves.toBeFalse();
     markSelfSent(-4004, 40);
     await expect(pending).resolves.toBeFalse();

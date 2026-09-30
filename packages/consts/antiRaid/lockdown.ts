@@ -12,7 +12,8 @@ export const NO_LOCKDOWN_EFFECTS: readonly LockdownEffect[] = [];
 export const JOIN_WINDOW_MS: number = 60 * 1000;
 /**
  * 滑动窗口内触发私密模式的入群人数上限，超过（第 46 人起）才触发，见
- * workers/antiRaid/lockdownRuntime.ts 的 recordJoin 与待验证成员消息窗口。
+ * workers/antiRaid/lockdownJoinWindow.ts 的 recordJoinWindow 与 states/verification/pending.ts
+ * 的 handleTrackedMessage（待验证成员消息窗口）。
  */
 export const ANTI_RAID_PER_MINUTE_LIMIT: number = 45;
 /**
@@ -39,6 +40,7 @@ export const RESTORE_RETRY_MS: number = 30 * 1000;
  * 群资料），而触发判定挂在每一条越过阈值的入群上：没有冷却，刷群期间每进
  * 一个人都会重来一次「发封锁公告 + 读权限 + 落盘」，群里刷满公告、Telegram
  * 侧刷满请求，却一次也锁不上。冷却期内入群仍照常计数与逐个验证，只是不再
- * 尝试进入私密模式。所属模块：workers/antiRaid/lockdownRuntime.ts。
+ * 尝试进入私密模式。所属模块：states/lockdown/shared.ts；冷却写入在
+ * workers/antiRaid/lockdownJoinWindow.ts。
  */
 export const LOCKDOWN_RETRIGGER_COOLDOWN_MS: number = 5 * 60 * 1000;

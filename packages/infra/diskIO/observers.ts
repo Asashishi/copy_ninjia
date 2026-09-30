@@ -48,7 +48,10 @@ export function onDiskIOReply<K extends keyof DiskIOReplyListenerMap>(
   diskIORuntime.replyListeners[type].push(listener);
 }
 
-/** Worker 耗尽重启预算后通知仍在等待 durable 回执的 owner 立即按失败结算。 */
+/**
+ * Disk I/O 放弃自愈（耗尽重启预算，或运行时恢复致命失败）后通知仍在等待 durable
+ * 回执的 owner 立即按失败结算。
+ */
 export function onDiskIOGiveUp(callback: () => void): void {
   diskIORuntime.giveUpListeners.push(callback);
 }

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
@@ -13,14 +13,16 @@ const realPaths = await import("../../../packages/consts/paths");
 mock.module("../../../packages/consts/paths", () => ({ ...realPaths, LUCK_MEMORY_DIR: luckDir }));
 
 const {
-  configureLuckAppendStalledReply,
   flushLuckAppends,
   handleLuckDrawMessage,
   hydrateLuckDay,
   maintainLuckForDay,
+  replayDeferredLuckDraws,
   retryLuckFlush,
+  switchLuckDay,
 } = await import("../../../packages/workers/diskIO/luckFiles");
-const { recoverLuckDay } = await import("../../../packages/workers/diskIO/snapshotFiles");
+const snapshotFiles = await import("../../../packages/workers/diskIO/snapshotFiles");
+const { recoverLuckDay } = snapshotFiles;
 const { cancelDiskIOFlushTimer } = await import("../../../packages/workers/diskIO/timedFlush");
 const {
   luckAppendFailures,
@@ -343,7 +345,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
 describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
   test("连续失败到阈值才发一条诊断，之前只累计不告警", async () => {
     const alerts: LuckAppendStalledReply[] = [];
-    configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => { alerts.push(reply); });
+    luckAppendStalledNotifier.current = (reply: LuckAppendStalledReply): void => { alerts.push(reply); };
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
 
@@ -366,7 +368,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
 
   test("同一故障期内继续失败不重复告警（边沿触发，不刷爆 logs/）", async () => {
     const alerts: LuckAppendStalledReply[] = [];
-    configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => { alerts.push(reply); });
+    luckAppendStalledNotifier.current = (reply: LuckAppendStalledReply): void => { alerts.push(reply); };
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
 
@@ -378,7 +380,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
 
   test("恢复后重新武装：下一次故障期会再告警一次", async () => {
     const alerts: LuckAppendStalledReply[] = [];
-    configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => { alerts.push(reply); });
+    luckAppendStalledNotifier.current = (reply: LuckAppendStalledReply): void => { alerts.push(reply); };
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
     for (let i = 0; i < LUCK_APPEND_STALL_ALERT_FAILURES; i++) await flushLuckAppends();
@@ -409,7 +411,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
     expect(luckAppendFailures.alerted).toBeFalse();
 
     const alerts: LuckAppendStalledReply[] = [];
-    configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => { alerts.push(reply); });
+    luckAppendStalledNotifier.current = (reply: LuckAppendStalledReply): void => { alerts.push(reply); };
     expect(await flushLuckAppends()).toBeFalse();
     expect(alerts.length).toBe(1);
     expect(alerts[0]!.consecutiveFailures).toBe(LUCK_APPEND_STALL_ALERT_FAILURES + 1);
@@ -418,10 +420,10 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
   test("诊断投递自己抛出时不逸出：落盘线程不被一行告警拖垮，且不算已告警", async () => {
     let throwOnNotify: boolean = true;
     const alerts: LuckAppendStalledReply[] = [];
-    configureLuckAppendStalledReply((reply: LuckAppendStalledReply): void => {
+    luckAppendStalledNotifier.current = (reply: LuckAppendStalledReply): void => {
       if (throwOnNotify) throw new Error("worker is terminating");
       alerts.push(reply);
-    });
+    };
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
 
@@ -498,6 +500,69 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
     // 丢的是最旧的两条，留下的是最近的一批。
     expect(luckDeferredDraws[0]?.key).toBe("k2");
     expect(luckDeferredDraws.at(-1)?.key).toBe(`k${LUCK_DEFERRED_DRAW_MAX + 1}`);
+  });
+
+  test("跨日取密钥的换日先取走滞留、按磁盘切 owner，补录后新一天不缺条目", async () => {
+    await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
+    breakDayFile();
+    await handleLuckDrawMessage(luckMsg({ key: "222", label: "凶", fortunePercent: 10.5, day: "2026-07-17" }));
+    expect(luckDeferredDraws.length).toBe(1);
+    repairDayFile();
+    expect(await flushLuckAppends()).toBeTrue();
+
+    const deferred: readonly LuckDrawDiskMessage[] | null = await switchLuckDay("2026-07-17", true);
+    // 目标日磁盘上还没有文件：owner 按磁盘现状接管（空），滞留已经取走、等补录。
+    expect(luckWorkerCache.current?.entries.size ?? 0).toBe(0);
+    expect(luckDeferredDraws.length).toBe(0);
+    await replayDeferredLuckDraws(deferred);
+
+    expect(luckWorkerCache.current?.day).toBe("2026-07-17");
+    expect(luckWorkerCache.current?.entries.get("222")).toEqual({ label: "凶", fortunePercent: 10.5 });
+    expect(await flushLuckAppends()).toBeTrue();
+    expect(await readDayFile("2026-07-17")).toEqual({ "222": { label: "凶", fortunePercent: 10.5 } });
+  });
+
+  test("每日维护补录期间重新滞留的抽签在接管目标日后补上，不随换 owner 丢失", async () => {
+    await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
+    breakDayFile();
+    await handleLuckDrawMessage(luckMsg({ key: "222", label: "凶", fortunePercent: 20.5, day: "2026-07-17" }));
+    await handleLuckDrawMessage(luckMsg({ key: "333", label: "吉", fortunePercent: 75, day: "2026-07-18" }));
+    expect(luckDeferredDraws.map((draw: LuckDrawDiskMessage): string => draw.key)).toEqual(["222", "333"]);
+    repairDayFile();
+    // 补录 07-18 那条要先刷出刚补录的 07-17：这一次追加失败，07-18 重新滞留；随后的刷盘恢复成功。
+    const realAppend: typeof snapshotFiles.appendLuckEntries = snapshotFiles.appendLuckEntries;
+    const append = spyOn(snapshotFiles, "appendLuckEntries");
+    append.mockImplementation(async (...args: Parameters<typeof snapshotFiles.appendLuckEntries>): Promise<void> => {
+      if (args[0] === "2026-07-17" && append.mock.calls.filter((call): boolean => call[0] === "2026-07-17").length === 1) {
+        throw new Error("injected luck append failure");
+      }
+      await realAppend(...args);
+    });
+    try {
+      await maintainLuckForDay("2026-07-17");
+    } finally {
+      append.mockRestore();
+    }
+
+    expect(luckDeferredDraws).toHaveLength(0);
+    expect(luckWorkerCache.current?.day).toBe("2026-07-18");
+    expect(luckWorkerCache.current?.entries.get("333")).toEqual({ label: "吉", fortunePercent: 75 });
+    expect(await flushLuckAppends()).toBeTrue();
+    expect(await readDayFile("2026-07-18")).toEqual({ "333": { label: "吉", fortunePercent: 75 } });
+  });
+
+  test("按磁盘切 owner 失败时滞留原样放回，owner 不变", async () => {
+    await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
+    breakDayFile();
+    await handleLuckDrawMessage(luckMsg({ key: "222", label: "凶", fortunePercent: 10.5, day: "2026-07-17" }));
+    repairDayFile();
+    expect(await flushLuckAppends()).toBeTrue();
+    breakDayFile("2026-07-17");
+
+    await expect(switchLuckDay("2026-07-17", true)).rejects.toThrow();
+
+    expect(luckWorkerCache.current?.day).toBe(DAY);
+    expect(luckDeferredDraws.map((draw: LuckDrawDiskMessage): string => draw.key)).toEqual(["222"]);
   });
 
   test("换 owner 会连同滞留区一起清空：hydrate 之后没有跨日残留", async () => {

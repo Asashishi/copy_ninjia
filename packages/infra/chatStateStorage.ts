@@ -14,6 +14,7 @@ import {
   chatStateCache,
   chatStateWriteRevision,
   resetChatStateCache,
+  unacknowledgedChatStateBytes,
   unacknowledgedChatStateWrites,
 } from "../cache/main/chatState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
@@ -78,6 +79,11 @@ export function assertChatStateCapacity(chatId: number): void {
   }
 }
 
+/** 一次群状态写入载荷的准入估算字节：状态正文加人设。 */
+function encodedChatStateCost(encoded: EncodedChatStateWrite): number {
+  return storageWriteCost(encoded.data) + storageWriteCost(encoded.aiPersona);
+}
+
 function encodeCurrentChatState(chatId: number): EncodedChatStateWrite {
   const state: ChatState | undefined = chatStateCache.get(chatId);
   if (state === undefined) return { data: null, deleted: true, aiPersona: null };
@@ -105,18 +111,16 @@ export function queueChatStateWrite(chatId: number): number {
     aiPersona: encoded.aiPersona,
     revision,
   };
-  let bytes: number = storageWriteCost(encoded.data) + storageWriteCost(encoded.aiPersona);
-  for (const pendingChatId of unacknowledgedChatStateWrites.keys()) {
-    if (pendingChatId === chatId) continue;
-    const state: ChatState | undefined = chatStateCache.get(pendingChatId);
-    bytes += storageWriteCost(state === undefined ? null : encodeChatStateData(state, "chat state admission")) + storageWriteCost(state?.aiPersona ?? null);
-  }
-  assertStorageAdmission(unacknowledgedChatStateWrites.size + (unacknowledgedChatStateWrites.has(chatId) ? 0 : 1), bytes);
+  const cost: number = encodedChatStateCost(encoded);
+  const previous: UnacknowledgedChatStateWrite | undefined = unacknowledgedChatStateWrites.get(chatId);
+  const bytes: number = unacknowledgedChatStateBytes.current + cost - (previous?.bytes ?? 0);
+  assertStorageAdmission(unacknowledgedChatStateWrites.size + (previous === undefined ? 1 : 0), bytes);
   if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat state publication.");
   // 准入通过后才摘除已空的群状态：闸抛错时热读副本与未 ACK 记账都保持调用前原样。
   if (encoded.deleted) chatStateCache.delete(chatId);
   chatStateWriteRevision.current = revision;
-  unacknowledgedChatStateWrites.set(chatId, { revision, deleted: encoded.deleted });
+  unacknowledgedChatStateWrites.set(chatId, { revision, deleted: encoded.deleted, bytes: cost });
+  unacknowledgedChatStateBytes.current = bytes;
   if (!postWithTransport(message)) {
     logger.error(
       `Failed to queue chat state ${chatId}; retaining revision ${revision} for replay.`
@@ -157,11 +161,11 @@ export function saveChatStateInBackground(chatId: number, context: string): void
 
 function settleChatStateWrites(reply: IdentityStoragePersistedReply): void {
   for (const persisted of reply.chatStateWrites) {
-    if (
-      unacknowledgedChatStateWrites.get(persisted.chatId)?.revision === persisted.revision
-    ) {
-      unacknowledgedChatStateWrites.delete(persisted.chatId);
-    }
+    const pending: UnacknowledgedChatStateWrite | undefined =
+      unacknowledgedChatStateWrites.get(persisted.chatId);
+    if (pending?.revision !== persisted.revision) continue;
+    unacknowledgedChatStateWrites.delete(persisted.chatId);
+    unacknowledgedChatStateBytes.current -= pending.bytes;
   }
 }
 
@@ -177,11 +181,14 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
     const current: UnacknowledgedChatStateWrite | undefined =
       unacknowledgedChatStateWrites.get(write.chatId);
     if (current?.revision !== write.revision) continue;
-    if (current.deleted !== encoded.deleted) {
+    const cost: number = encodedChatStateCost(encoded);
+    if (current.deleted !== encoded.deleted || current.bytes !== cost) {
       unacknowledgedChatStateWrites.set(write.chatId, {
         revision: current.revision,
         deleted: encoded.deleted,
+        bytes: cost,
       });
+      unacknowledgedChatStateBytes.current += cost - current.bytes;
     }
     const message: ChatStateWriteDiskMessage = {
       type: "chatStateWrite",

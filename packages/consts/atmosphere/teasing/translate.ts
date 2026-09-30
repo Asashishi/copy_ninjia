@@ -1,9 +1,9 @@
 import type { CommandTargetMessages, ToggleCommandTexts } from "../../../types/commands";
-import { TRANSLATE_CHAT_USER_LIMIT } from "../../translate";
+import { TRANSLATE_CHAT_USER_LIMIT, TRANSLATE_LANGUAGE_GLOSSARY, TRANSLATE_LANGUAGE_SYNOPSIS } from "../../translate";
 
 /** /translate 参数错误统一提示。 */
 export const TRANSLATE_USAGE_TEXT: string =
-  `笨蛋，本天才只处理文字消息。回复目标后用 /translate ja|cn|en|uk|ru，或 /translate ja|cn|en|uk|ru @username；ja 日语，cn 简体中文，en 美式英语，uk 乌克兰语，ru 俄语。每群最多 ${TRANSLATE_CHAT_USER_LIMIT} 人，查看语言用 /translate list；直接用 /translate stop 停止全群，回复目标或用 /translate stop @username/id 停止单人，功能开关用 /translate enable|disable♡`;
+  `笨蛋，本天才只处理文字消息。回复目标后用 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS}，或 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS} @username；${TRANSLATE_LANGUAGE_GLOSSARY}。每群最多 ${TRANSLATE_CHAT_USER_LIMIT} 人，查看语言用 /translate list；直接用 /translate stop 停止全群，回复目标或用 /translate stop @username/id 停止单人，功能开关用 /translate enable|disable♡`;
 
 /** 翻译会话容量已满时拒绝新增，既有会话不受影响。 */
 export const TRANSLATE_CAPACITY_TEXT: string = "翻译群数已满啦，先在不用翻译的群 /translate stop，再来开启，笨蛋♡";
@@ -22,9 +22,9 @@ export const TRANSLATE_DISABLED_TEXT: string =
 export const TRANSLATE_TOGGLE_TEXTS: Readonly<ToggleCommandTexts> = {
   rejection: (label: string): string => `就 ${label} 也想管本天才要不要翻译？没这项权限呀，笨蛋♡`,
   usage: TRANSLATE_USAGE_TEXT,
-  enabled: "哼，本天才赏脸开启本群翻译啦，用 /translate ja|cn|en|uk|ru 选方向和目标吧，杂鱼♡",
+  enabled: `哼，本天才赏脸开启本群翻译啦，用 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS} 选方向和目标吧，杂鱼♡`,
   disabled: "本群翻译功能已关闭，杂鱼需要时再来开启♡",
-  alreadyEnabled: "笨蛋，本群翻译功能本来就开着啦，直接用 /translate ja|cn|en|uk|ru 开始吧♡",
+  alreadyEnabled: `笨蛋，本群翻译功能本来就开着啦，直接用 /translate ${TRANSLATE_LANGUAGE_SYNOPSIS} 开始吧♡`,
   alreadyDisabled: "本群翻译功能本来就关着啦，笨蛋♡",
 };
 

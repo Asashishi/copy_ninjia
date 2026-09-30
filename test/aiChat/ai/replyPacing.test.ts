@@ -47,12 +47,13 @@ test("直接轮：「正在输入」请求交回的第一条文字只切挡，�
   const pacing = createDirectPacing(chatAction);
   pacing.beforeModelRequest("typing");
   const text = pacing.startAction(true);
+  const sticker = pacing.startAction(false);
+  pacing.chainStarted();
   expect(await text("typing", 1_200)).toBeNull();
   expect(await text("typing", 900)).toBeNull();
-  pacing.endAction();
-  expect(await pacing.startAction(false)("choose_sticker", 800)).toBeNull();
-  pacing.endAction();
-  expect(phases).toEqual(["typing", "typing", "typing", "idle", "choose_sticker", "idle"]);
+  expect(await sticker("choose_sticker", 800)).toBeNull();
+  pacing.chainDrained();
+  expect(phases).toEqual(["typing", "typing", "typing", "choose_sticker"]);
   expect(sleepDurations()).toEqual([900, 800]);
 });
 
@@ -61,23 +62,26 @@ test("直接轮：「正在输入」请求交回的第一个动作不是文字�
   pacing.beforeModelRequest("typing");
   // 生图：先亮发送图片，图片落地后独立图注再亮「正在输入」。
   const image = pacing.startAction(false);
+  pacing.chainStarted();
   chatAction.set("upload_photo");
   chatAction.set("idle");
   expect(await image("typing", 400)).toBeNull();
-  pacing.endAction();
-  expect(phases).toEqual(["typing", "upload_photo", "idle", "typing", "idle"]);
+  expect(phases).toEqual(["typing", "upload_photo", "idle", "typing"]);
   expect(sleepDurations()).toEqual([400]);
 });
 
 test("直接轮：挑贴纸请求亮选择状态且贴纸照常停顿；不亮状态的请求交回的文字照常停顿", async () => {
   const pacing = createDirectPacing(chatAction);
   pacing.beforeModelRequest("choose_sticker");
-  expect(await pacing.startAction(false)("choose_sticker", 700)).toBeNull();
-  pacing.endAction();
+  const sticker = pacing.startAction(false);
+  pacing.chainStarted();
+  expect(await sticker("choose_sticker", 700)).toBeNull();
+  pacing.chainDrained();
   pacing.beforeModelRequest("idle");
-  expect(await pacing.startAction(true)("typing", 500)).toBeNull();
-  pacing.endAction();
-  expect(phases).toEqual(["choose_sticker", "choose_sticker", "idle", "typing", "idle"]);
+  const text = pacing.startAction(true);
+  pacing.chainStarted();
+  expect(await text("typing", 500)).toBeNull();
+  expect(phases).toEqual(["choose_sticker", "choose_sticker", "typing"]);
   expect(sleepDurations()).toEqual([700, 500]);
 });
 
@@ -85,10 +89,41 @@ test("直接轮：同批前一个动作接走请求挡位后，「正在输入�
   const pacing = createDirectPacing(chatAction);
   pacing.beforeModelRequest("typing");
   pacing.startAction(false);
-  pacing.endAction();
+  pacing.chainStarted();
   expect(await pacing.startAction(true)("typing", 600)).toBeNull();
-  expect(phases).toEqual(["typing", "idle", "typing"]);
+  expect(phases).toEqual(["typing", "typing"]);
   expect(sleepDurations()).toEqual([600]);
+});
+
+test("直接轮：串行链忙时请求的挡位不亮，链排空后亮起，模型阶段结束时收回", async () => {
+  const pacing = createDirectPacing(chatAction);
+  pacing.beforeModelRequest("typing");
+  const first = pacing.startAction(true);
+  pacing.chainStarted();
+  expect(await first("typing", 1_000)).toBeNull();
+  // 链还在发第一条时模型已被再请求：挑贴纸的挡位不盖掉链上的状态。
+  pacing.beforeModelRequest("choose_sticker");
+  expect(phases).toEqual(["typing", "typing"]);
+  chatAction.set("idle");
+  pacing.chainDrained();
+  expect(phases).toEqual(["typing", "typing", "idle", "choose_sticker"]);
+  pacing.endModel();
+  expect(phases).toEqual(["typing", "typing", "idle", "choose_sticker", "idle"]);
+  expect(sleepDurations()).toEqual([]);
+});
+
+test("直接轮：后台补发的步骤不接走请求挡位，链排空后请求的挡位重新亮起", () => {
+  const pacing = createDirectPacing(chatAction);
+  pacing.beforeModelRequest("choose_sticker");
+  // 转入后台的语音合成好后排进链：链上的步骤掌管状态，结束时切回 idle。
+  pacing.chainStarted();
+  chatAction.set("record_voice");
+  chatAction.set("idle");
+  pacing.chainDrained();
+  // 链上的步骤已经盖掉请求的挡位：模型阶段结束前只由排空重新亮起的那一次收回。
+  pacing.endModel();
+  pacing.endModel();
+  expect(phases).toEqual(["choose_sticker", "record_voice", "idle", "choose_sticker", "idle"]);
 });
 
 test("直接轮：模型阶段结束时只收回还没被动作接走的请求挡位", () => {
@@ -96,15 +131,25 @@ test("直接轮：模型阶段结束时只收回还没被动作接走的请求�
   pacing.endModel();
   pacing.beforeModelRequest("typing");
   pacing.startAction(false);
-  pacing.endAction();
+  pacing.chainStarted();
   pacing.endModel();
+  pacing.chainDrained();
   pacing.beforeModelRequest("idle");
   pacing.endModel();
-  expect(phases).toEqual(["typing", "idle"]);
+  expect(phases).toEqual(["typing"]);
 
   phases.length = 0;
   pacing.beforeModelRequest("choose_sticker");
   pacing.endModel();
+  pacing.endModel();
+  expect(phases).toEqual(["choose_sticker", "idle"]);
+});
+
+test("直接轮：不亮状态的请求收回上一次请求亮着、没被动作接走的挡位", () => {
+  const pacing = createDirectPacing(chatAction);
+  pacing.beforeModelRequest("choose_sticker");
+  pacing.beforeModelRequest("idle");
+  pacing.beforeModelRequest("idle");
   pacing.endModel();
   expect(phases).toEqual(["choose_sticker", "idle"]);
 });

@@ -1,11 +1,9 @@
 /**
  * 每日运势的缓冲/落盘逻辑：接收 diskIOWorker.ts 路由来的 luckDraw 消息，
  * 先进内存缓冲（luckPendingAppends），攒满 FLUSH_MAX_ENTRIES 条、或距首条
- * 入队 FLUSH_INTERVAL_MS 时批量追加进 memory/luck/YYYY-MM-DD.json——与
- * diskIO/logFiles.ts 的 handleLogMessage/flushLogBuffer 完全对称，共用同
- * 一组窗口阈值（见 consts/diskIO/appendOnly.ts），只是缓冲区、定时器、落盘目标各自
- * 独立，互不影响。按位置追加/损坏修复的字节机制见 appendOnlyDayFile.ts，
- * 追加/清理的纯函数在 snapshotFiles.ts；本文件持有的是「什么时候刷、刷
+ * 入队 FLUSH_INTERVAL_MS 时批量追加进 memory/luck/YYYY-MM-DD.json（窗口阈值见
+ * consts/diskIO/appendOnly.ts）。按位置追加的字节机制见 appendOnlyDayFile.ts，
+ * 追加/清理的文件读写在 snapshotFiles.ts；本文件持有的是「什么时候刷、刷
  * 什么」的领域状态调度（状态本体在 cache/workers/diskIO/luck.ts）。
  *
  * 本文件运行在磁盘 IO 线程里，自身错误一律 console.error（journal 兜底），
@@ -36,18 +34,10 @@ import {
   recoverLuckDay,
 } from "./snapshotFiles";
 import type { LuckDrawDiskMessage } from "../../types/diskIO/messages";
-import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { DayFileState, LuckDayCache, LuckDrawRecord } from "../../types/diskIO/storage";
 import type { LuckDayRecoveryInspection } from "./snapshotFiles";
 import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 import { errorMessage } from "../../libs/errorMessage";
-
-/** 装上运势追加停摆诊断的投递出口（仅 Worker 线程启动时调用一次）。 */
-export function configureLuckAppendStalledReply(
-  notify: (reply: LuckAppendStalledReply) => void
-): void {
-  luckAppendStalledNotifier.current = notify;
-}
 
 /**
  * 一次定时重试：刷盘，成功且还压着跨日滞留条目时立刻补录。运势追加缓冲的定时落盘
@@ -55,10 +45,10 @@ export function configureLuckAppendStalledReply(
  * 上，触发时执行本函数；条数达到 FLUSH_MAX_ENTRIES 时由 handleLuckDrawMessage 直接调
  * flushLuckAppends 立即落盘。
  *
- * 补录不能挪进 flushLuckAppends()：handleLuckDrawMessage 的换日分支正是先调它
- * 再 startLuckDay，若它自己顺手补录，补录建立的新 owner 会紧接着被那句
- * startLuckDay 连同刚入队的条目一起清掉。所以「刷」与「补录」只在这条重试路径
- * 上组合，换日路径按自己的顺序来（先取走滞留区、再切 owner、最后逐条重放）。
+ * 补录不能挪进 flushLuckAppends()：两条换日路径正是先调它再经 switchLuckDay 切
+ * owner，若它自己顺手补录，补录建立的新 owner 会紧接着被那次切换连同刚入队的条目
+ * 一起清掉。所以「刷」与「补录」只在这条重试路径上组合，换日路径按 switchLuckDay
+ * 的顺序来（先取走滞留区、再切 owner、最后逐条重放）。
  *
  * 也不能等下一条 luckDraw 消息来推动：运势是每人每天一次的低频写入，「下一条」
  * 可能在几个小时之后，也可能今天再也没有——那时磁盘早就恢复了，条目却还只活在
@@ -66,9 +56,7 @@ export function configureLuckAppendStalledReply(
  * 碰 Timeout 的运行时内部字段。
  */
 export async function retryLuckFlush(): Promise<void> {
-  if (await flushLuckAppends() && luckDeferredDraws.length > 0) {
-    await drainDeferredLuckDraws();
-  }
+  if (await flushLuckAppends()) await replayDeferredLuckDraws(takeDeferredLuckDraws());
 }
 
 /**
@@ -92,10 +80,41 @@ function deferLuckDraw(msg: LuckDrawDiskMessage): void {
   luckDeferredDraws.push(msg);
 }
 
-/** 取走全部滞留抽签并逐条重新登记（换日判定由重新登记那一遍自己做）。 */
-async function drainDeferredLuckDraws(): Promise<void> {
-  const deferred: LuckDrawDiskMessage[] = luckDeferredDraws.splice(0, luckDeferredDraws.length);
+/** 取走全部滞留抽签；没有滞留时返回 null，不分配数组。 */
+function takeDeferredLuckDraws(): LuckDrawDiskMessage[] | null {
+  return luckDeferredDraws.length > 0 ? luckDeferredDraws.splice(0, luckDeferredDraws.length) : null;
+}
+
+/** 逐条补录取走的滞留抽签；换日与过期判定由重新登记那一遍自己做。 */
+export async function replayDeferredLuckDraws(
+  deferred: readonly LuckDrawDiskMessage[] | null
+): Promise<void> {
+  if (deferred === null) return;
   for (const pending of deferred) await handleLuckDrawMessage(pending);
+}
+
+/**
+ * 换日切换 owner 的统一顺序：先取走滞留抽签（hydrateLuckCache 会连同追加缓冲一并清空
+ * 滞留区），再以目标日接管 owner——recoverFromDisk 为 true 时按磁盘严格恢复（跨日取密钥），
+ * 否则新建空 owner（新一天的首条抽签）。磁盘恢复抛错时滞留原样放回、owner 不变。
+ * 调用方须已刷出旧日缓冲，并在 owner 就绪后把返回值交给 replayDeferredLuckDraws 补录。
+ */
+export async function switchLuckDay(
+  day: string,
+  recoverFromDisk: boolean
+): Promise<LuckDrawDiskMessage[] | null> {
+  const deferred: LuckDrawDiskMessage[] | null = takeDeferredLuckDraws();
+  if (!recoverFromDisk) {
+    startLuckDay(day);
+    return deferred;
+  }
+  try {
+    await hydrateLuckDay(day);
+  } catch (error: unknown) {
+    if (deferred !== null) luckDeferredDraws.unshift(...deferred);
+    throw error;
+  }
+  return deferred;
 }
 
 /**
@@ -134,7 +153,7 @@ export async function flushLuckAppends(): Promise<boolean> {
       luckAppendStalledNotifier.current !== null
     ) {
       // 诊断投递自己抛出绝不能逸出 onmessage：Bun 里 Worker 的未捕获异常会
-      // 直接终止整条落盘线程（见 diskIOWorker.ts 的 joinLog 分支），那等于为了
+      // 直接终止整条落盘线程（见 diskIOWorker.ts handleDiskIOWorkerMessage 中「共享 SQLite 写消息的非法输入就地拒收」一段），那等于为了
       // 一行告警把 AI 记忆、黑名单、待验证的缓冲一起赔进去——而这条路径恰恰
       // 只在写盘已经出问题时才走到。
       try {
@@ -185,17 +204,9 @@ export async function handleLuckDrawMessage(
       );
       return;
     }
-    // hydrateLuckCache 会把滞留区一并清空，所以取走必须早于 startLuckDay。
-    // 先判空再 splice：正常的午夜换日一条滞留都没有，无条件 splice 等于每天在这
-    // 条路径上白分配一个空数组（滞留只在磁盘故障期出现，是彻头彻尾的冷路径）。
-    const deferred: readonly LuckDrawDiskMessage[] | null = luckDeferredDraws.length > 0
-      ? luckDeferredDraws.splice(0, luckDeferredDraws.length)
-      : null;
-    startLuckDay(msg.day);
+    const deferred: LuckDrawDiskMessage[] | null = await switchLuckDay(msg.day, false);
     // 滞留的那些比本条更早发生，切完先补录；此刻滞留区已空，重入不会再递归一层。
-    if (deferred !== null) {
-      for (const pending of deferred) await handleLuckDrawMessage(pending);
-    }
+    await replayDeferredLuckDraws(deferred);
   }
 
   // 重新取一次 owner：上面补录滞留条目时，万一夹着比 msg 更新的一天，owner 已经
@@ -210,10 +221,8 @@ export async function handleLuckDrawMessage(
   // 去重按「key + 值」而不是只看 key：值也一样才算重复（本 Worker 崩溃
   // 重建后主线程会把 dailyLuckCache 全量重放一遍，见 infra/diskIO.ts 的
   // onDiskIORespawn，其中多数条目已经在崩溃前落过盘，不去重会白占地方）。
-  // 只看 key 会挡住合法的同 key 改值：restoreLuckState 因 LUCK_TIERS 改动
-  // 丢弃磁盘旧记录后用户当天重抽，新结果就是同 key 不同值，必须落盘覆盖，
-  // 否则每次重启都会重抽出不同结果。重复 key 追加是安全的——JSON.parse
-  // 只认最后一次出现，恢复时天然取到最新值。
+  // 只看 key 会挡住同 key 改值的消息；同 key 不同值的消息照常落盘覆盖。重复 key
+  // 追加是安全的——JSON.parse 只认最后一次出现，恢复时天然取到最新值。
   const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
   const known: LuckDrawRecord | undefined = dayCache.entries.get(msg.key);
   if (known?.label === record.label && known.fortunePercent === record.fortunePercent) return;
@@ -226,7 +235,11 @@ export async function handleLuckDrawMessage(
   }
 }
 
-/** 启动恢复边界：只读当天文件并以恢复结果整体替换内存 owner。 */
+/**
+ * 按磁盘现状严格恢复目标日的结果，并以恢复结果整体替换内存 owner 与追加游标；恢复同时
+ * 清理临时文件与过期日文件。换日经 switchLuckDay 调用（跨日取密钥与每日维护）；启动恢复走
+ * inspectLuckDay/adoptLuckDay 两阶段。
+ */
 export async function hydrateLuckDay(day: string): Promise<void> {
   const recoveredFileState: { current: DayFileState | null } = { current: null };
   const recovered: LuckDayCache | null = await recoverLuckDay(day, recoveredFileState);
@@ -244,8 +257,9 @@ export function adoptLuckDay(
 }
 
 /**
- * 每日维护先提交旧 owner 与故障期滞留抽签，再严格接管目标日并清理更早文件。
- * 目标日落后于当前 owner 时拒绝回拨，避免时钟回拨误删当前数据。
+ * 每日维护先提交旧 owner 与故障期滞留抽签，再经 switchLuckDay 严格接管目标日并清理更早
+ * 文件，接管后补录这期间重新滞留的抽签。目标日落后于当前 owner 时拒绝回拨，避免时钟回拨误删
+ * 当前数据。
  */
 export async function maintainLuckForDay(day: string): Promise<void> {
   const currentDay: string | undefined = luckWorkerCache.current?.day;
@@ -253,10 +267,10 @@ export async function maintainLuckForDay(day: string): Promise<void> {
   if (!await flushLuckAppends()) {
     throw new Error(`Failed to flush luck results before daily maintenance for ${day}.`);
   }
-  if (luckDeferredDraws.length > 0) await drainDeferredLuckDraws();
+  await replayDeferredLuckDraws(takeDeferredLuckDraws());
   if (!await flushLuckAppends()) {
     throw new Error(`Failed to flush deferred luck results before daily maintenance for ${day}.`);
   }
   if (luckWorkerCache.current?.day !== undefined && luckWorkerCache.current.day > day) return;
-  await hydrateLuckDay(day);
+  await replayDeferredLuckDraws(await switchLuckDay(day, true));
 }

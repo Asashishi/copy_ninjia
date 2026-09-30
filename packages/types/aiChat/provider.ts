@@ -101,7 +101,7 @@ export interface AiReplyTurnRequest {
    * 供应商的自动前缀缓存。
    */
   readonly systemPrompt: string;
-  /** 本轮允许模型调用的自定义函数；已按预算与禁用名单过滤。 */
+  /** 本轮挂载的自定义函数声明；同一回复内逐字恒定，预算与可用性只在执行侧兑现（见 workers/aiChat/replyModel.ts 头注）。 */
   readonly functions: readonly AiToolDefinition[];
   /** 本轮是否挂载供应商的服务端联网检索工具。 */
   readonly webSearchEnabled: boolean;
@@ -220,16 +220,12 @@ export interface AiSpeechRequest {
 
 /**
  * 经 tts 门面发起的语音合成请求：在供应商请求之外带上本调用方的额度口径。
- * AI 语音工具传 `ai`，主线程转交的 `/send` 与 cron 传 `operator`。
+ * AI 语音工具传 `ai`：每日计数由调用方在工具调用时预留（超限当场回给模型）、TTS 调用成功时
+ * 登记（见 aiChat/ai/ttsUsage.ts），门面不再登记。主线程转交的 `/send` 与 cron 传 `operator`：
+ * 由门面在发起供应商请求前登记。
  */
 export interface AiMeteredSpeechRequest extends AiSpeechRequest {
   readonly quota: TtsQuotaScope;
-  /**
-   * 调用方是否已经按 quota 口径登记过这一次的每日计数。AI 语音工具在工具调用时同步
-   * 登记（超限当场回给模型），传 true，门面不再登记；operator 口径传 false，由门面在
-   * 发起供应商请求前登记。
-   */
-  readonly quotaClaimed: boolean;
 }
 
 /**

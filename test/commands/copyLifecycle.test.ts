@@ -4,6 +4,8 @@ import type { CachedUser, CopyMode } from "../../packages/types/chatState";
 import { COPY_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
 import { COPY_USAGE_TEXT, ICON_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import type { AvatarUpdateRequest } from "../../packages/types/copy/avatar";
+import type { ResolveCommandTargetParams } from "../../packages/commands/targetResolution";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const saveStateInBackground = mock((..._args: unknown[]): void => {});
@@ -51,9 +53,23 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 mock.module("../../packages/commands/copyShared", () => ({
   claimCopyCooldownOrReject,
   releaseCopyCooldownClaim,
-  resolveCopyCommandTarget,
-  stealAvatarInBackground,
-  restoreAvatarInBackground,
+}));
+// 命令直接调用头像队列与共享目标解析；下面按「换成目标头像 / 复原默认头像」与
+// 「(ctx, 文案表, 目标参数)」两种视角转记，断言读起来与命令语义一一对应。
+mock.module("../../packages/copy/avatarQueue", () => ({
+  queueAvatarUpdate: (request: AvatarUpdateRequest): void => {
+    if (request.target.kind === "user") {
+      stealAvatarInBackground({ chatId: request.chatId, target: request.target.user, source: request.source });
+    } else {
+      restoreAvatarInBackground({ chatId: request.chatId, source: request.source });
+    }
+  },
+}));
+const realTargetResolution = await import("../../packages/commands/targetResolution");
+mock.module("../../packages/commands/targetResolution", () => ({
+  ...realTargetResolution,
+  resolveCommandTarget: (params: ResolveCommandTargetParams): Promise<CachedUser | undefined> =>
+    resolveCopyCommandTarget(params.message, params.messages, params.rawArgument),
 }));
 
 const { handleCopyCommand } = await import("../../packages/commands/copy");
@@ -63,6 +79,7 @@ function context(chatId: number = -1001, replyToUserId?: number, argument: strin
   return {
     chat: { id: chatId },
     from: { id: 8, first_name: "Caller" },
+    me: { id: 999 },
     msgId: 9,
     // 活动 copy 拒绝分支用 peekCommandTarget 只读地看一眼目标（回复优先），
     // 因此这里必须是一条真实形状的消息。

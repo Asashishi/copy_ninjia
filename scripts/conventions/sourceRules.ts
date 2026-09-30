@@ -158,13 +158,11 @@ export function collectConstantProblems({
 /**
  * `Object.freeze` 在 packages/ 下一处都不许有。
  *
- * 常量、部署配置快照、句柄对象都一样：它们本来就不会变，运行期再冻一次买不到
- * 任何东西，却要为此付一大笔读取成本（数字见 collectSharedConstantProblems 的
- * 注释与 AGENTS.md 的「常量」一节）。不可变性一律由 `readonly`/`Readonly<T>`
- * 在编译期表达——那是 0 成本、且能在写入点当场报错的那一份保护。
+ * 常量、部署配置快照、句柄对象都一样：不可变性一律由 `readonly`/`Readonly<T>`
+ * 在编译期表达（见 AGENTS.md「常量与不可变性」），不做运行期冻结。
  *
- * 这条独立于 consts 的常量检查：解析结果和句柄对象不是 SCREAMING_SNAKE 常量，
- * 走不到上面那段，但它们同样不该冻。
+ * 这条独立于 collectConstantProblems：解析结果和句柄对象不是 SCREAMING_SNAKE 常量，
+ * 走不到那一条，但同样不许冻结。
  */
 export function collectObjectFreezeProblems({
   projectRoot,

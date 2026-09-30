@@ -5,6 +5,7 @@ import type { TelegramPhotoSendResult, TelegramSendResult } from "../../../packa
 import type { TelegramVisionSource } from "../../../packages/types/media";
 import type { TaskPriority } from "../../../packages/libs/prioritizedBoundedTaskRunner";
 import { GENERATE_IMAGE_TOOL, SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
+import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../../packages/consts/telegram";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const GENERATED_PHOTO: TelegramVisionSource = { fileId: "sent-photo", fileUniqueId: "sent-photo-u", width: 1024, height: 768 };
@@ -342,7 +343,7 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("Telegram 退化为无回复发送时不伪造图片回复关系", async () => {
-    sendPhotoWithResult.mockResolvedValueOnce({ messageId: 77, photo: GENERATED_PHOTO });
+    sendPhotoWithResult.mockResolvedValueOnce({ messageId: 77, repliedToMessageId: undefined, photo: GENERATED_PHOTO });
     const ctx: ReplyToolContext = buildContext();
 
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "回复目标已删除" })));
@@ -382,7 +383,7 @@ describe("generate_image 工具执行器", () => {
   test("超过 caption 上限时降级成图片加独立文本两条消息，并结算两个动作", async () => {
     const ctx: ReplyToolContext = buildContext();
     const state: RoundMessageState = createRoundMessageState();
-    const longCaption: string = "长".repeat(1025);
+    const longCaption: string = "长".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1);
 
     const result = JSON.parse(await buildExecutor(ctx, state)(JSON.stringify({
       prompt: "超长图注",
@@ -417,7 +418,7 @@ describe("generate_image 工具执行器", () => {
     // 返回 actions_used: 2，顶破 HARD_MAX_ACTIONS_PER_REPLY 硬顶，因此丢图注不丢图。
     const ctx: ReplyToolContext = buildContext();
     const state: RoundMessageState = createRoundMessageState();
-    const longCaption: string = "长".repeat(1025);
+    const longCaption: string = "长".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1);
 
     const result = JSON.parse(await buildExecutor(ctx, state, HARD_MAX_ACTIONS_PER_REPLY - 1)(JSON.stringify({
       prompt: "超长图注",
@@ -445,7 +446,7 @@ describe("generate_image 工具执行器", () => {
 
   test("正好落在 caption 上限上的图注仍挂在图上", async () => {
     const ctx: ReplyToolContext = buildContext();
-    const exactCaption: string = "长".repeat(1024);
+    const exactCaption: string = "长".repeat(TELEGRAM_CAPTION_MAX_CHARS);
 
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
       prompt: "边界图注",
@@ -464,7 +465,7 @@ describe("generate_image 工具执行器", () => {
 
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
       prompt: "补发失败",
-      caption: "长".repeat(1025),
+      caption: "长".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1),
     })));
 
     expect(result.success).toBe(true);
@@ -578,9 +579,9 @@ describe("generate_image 工具执行器", () => {
     expect(definition.description).toContain("配图想说的话写进 caption");
     expect(definition.description).toContain("同一条消息");
     expect(schema.required).not.toContain("caption");
-    expect(schema.properties.caption.description).toContain("1024 字以内");
+    expect(schema.properties.caption.description).toContain(`${TELEGRAM_CAPTION_MAX_CHARS} 字以内`);
     expect(schema.properties.caption.description).toContain("拆成");
-    expect(schema.properties.caption.maxLength).toBe(4096);
+    expect(schema.properties.caption.maxLength).toBe(TELEGRAM_MESSAGE_MAX_CHARS);
   });
 
   test("实际生图期间显示正在发送图片，并在发送图片前切回 idle、等待状态收敛", async () => {

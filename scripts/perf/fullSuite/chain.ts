@@ -1,6 +1,6 @@
 /**
  * 完整流程 child runner：唯一加载生产实现的链路模块。
- * storageChains 与 commandChains 只接收这里装配的生产入口，不加载生产模块图。
+ * storageChains、commandChains 与 configChains 只接收这里装配的生产入口，不加载生产模块图。
  */
 
 import {
@@ -20,6 +20,7 @@ import {
   CHAIN_AI_REPLY_COMMANDS,
   CHAIN_CHAT_QA_WRITES,
   CHAIN_CHAT_STATE_WRITES,
+  CHAIN_CRON_RELOAD_OPERATIONS,
   CHAIN_CRON_VOICE_COMMANDS,
   CHAIN_CRON_VOICE_PCM_BYTES,
   CHAIN_IDENTITY_BATCHES,
@@ -27,6 +28,7 @@ import {
   CHAIN_LOG_ENTRIES,
   CHAIN_TEMPORARY_AD_BYPASS_WRITES,
   CHAIN_WARMUP_OPERATIONS,
+  CRON_RELOAD_WARMUP_OPERATIONS,
   CRON_VOICE_WARMUP_OPERATIONS,
 } from "./constants";
 import {
@@ -40,6 +42,7 @@ import { percentile } from "../statistics";
 import { diffProcessIo, readProcessIo } from "./processIo";
 import { createStorageChain } from "./storageChains";
 import { createCommandChain } from "./commandChains";
+import { createConfigChain } from "./configChains";
 import { MAIN_WRITE_THROUGH_WORKING_SET } from
   "../identityDatabase/constants";
 import { WHITE_ENTRY } from "../identityDatabase/fixtures";
@@ -55,7 +58,7 @@ import { IDENTITY_WRITE_BATCH_MAX_ENTRIES } from
   "../../../packages/consts/identityStorage";
 import { STATE_MANAGED_CHAT_LIMIT } from
   "../../../packages/consts/storage";
-import { RUNTIME_DATA_ROOT } from "../../../packages/consts/paths";
+import { CRON_CONFIG_PATH, RUNTIME_DATA_ROOT } from "../../../packages/consts/paths";
 import {
   flushDiskIO,
   flushDiskIODomain,
@@ -111,8 +114,19 @@ import { generateAndSendReply } from
 import { resolveSpeechSynthesizer, synthesizeVoiceMessage } from
   "../../../packages/aiChat/ai/voiceSynthesis";
 import { deliverCronAction } from "../../../packages/cron/delivery";
+import {
+  applyHotDeploymentConfigs,
+  readHotDeploymentConfigs,
+} from "../../../packages/config/reload";
+import {
+  quiesceCronScheduler,
+  reconcileCronSchedule,
+  startCronScheduler,
+} from "../../../packages/cron/scheduler";
+import { cronRuntime } from "../../../packages/cache/main/cron";
 import type { ChainDefinition } from "./chainDefinition";
 import type { CommandChainDependencies } from "./commandChains";
+import type { ConfigChainDependencies } from "./configChains";
 import type { ProcessIoSnapshot } from "./processIo";
 import type { StorageChainDependencies } from "./storageChains";
 import type { ChainName, ChainRound } from "./types";
@@ -191,10 +205,30 @@ const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   deliverCronAction,
 };
 
-const COMMAND_CHAINS: ReadonlySet<ChainName> = new Set<ChainName>([
+const CONFIG_CHAIN_DEPENDENCIES: ConfigChainDependencies = {
+  chainCronReloadOperations: CHAIN_CRON_RELOAD_OPERATIONS,
+  cronReloadWarmupOperations: CRON_RELOAD_WARMUP_OPERATIONS,
+  cronConfigPath: CRON_CONFIG_PATH,
+  runtimeDataRoot: RUNTIME_DATA_ROOT,
+  benchmarkChatId,
+  readHotDeploymentConfigs,
+  applyHotDeploymentConfigs,
+  startCronScheduler,
+  reconcileCronSchedule,
+  quiesceCronScheduler,
+  cronRuntime,
+  cannedTelegramCalls,
+};
+
+/**
+ * 出站换成罐头应答的链路：三条命令链路要断言出站计数；cron.json 热重载链路据此断言
+ * 计时窗口内没有任务执行。
+ */
+const CANNED_OUTBOUND_CHAINS: ReadonlySet<ChainName> = new Set<ChainName>([
   "ad-detect-command",
   "ai-reply-command",
   "cron-send-voice",
+  "cron-config-reload",
 ]);
 
 function createChain(chain: ChainName): ChainDefinition {
@@ -208,6 +242,11 @@ function createChain(chain: ChainName): ChainDefinition {
     COMMAND_CHAIN_DEPENDENCIES
   );
   if (command !== undefined) return command;
+  const config: ChainDefinition | undefined = createConfigChain(
+    chain,
+    CONFIG_CHAIN_DEPENDENCIES
+  );
+  if (config !== undefined) return config;
   throw new Error(`Chain ${chain} has no definition.`);
 }
 
@@ -222,15 +261,24 @@ function parseChainName(value: string | undefined): ChainName {
     case "diagnostic-log":
     case "ad-detect-command":
     case "ai-reply-command":
-    case "cron-send-voice": return value;
+    case "cron-send-voice":
+    case "cron-config-reload": return value;
     default:
       throw new Error(
-        "Chain child expects one declared storage or command chain name."
+        "Chain child expects one declared storage, command or config chain name."
       );
   }
 }
 
 async function measureChain(definition: ChainDefinition): Promise<ChainRound> {
+  try {
+    return await measurePreparedChain(definition);
+  } finally {
+    await definition.cleanup?.();
+  }
+}
+
+async function measurePreparedChain(definition: ChainDefinition): Promise<ChainRound> {
   await definition.prepare?.();
   const warmups: number =
     definition.warmupOperations ?? CHAIN_WARMUP_OPERATIONS;
@@ -297,7 +345,7 @@ async function runChainChild(chain: ChainName): Promise<ChainRound> {
   assertBenchmarkRuntimeRoot(RUNTIME_DATA_ROOT);
   routeBusinessLogsToStderr();
   installOutboundGuards();
-  if (COMMAND_CHAINS.has(chain)) installCannedTelegramOutbound();
+  if (CANNED_OUTBOUND_CHAINS.has(chain)) installCannedTelegramOutbound();
   // 与生产启动同序：部署输入预检填充贴纸等配置快照与三份功能 readiness。
   // loadPersistedData 要取贴纸包，广告检测链路要读 adDetectConfigReadiness()，
   // 两者都在这一步之后才有值。

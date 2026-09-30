@@ -93,14 +93,17 @@ function serializeProcessIdentity(identity: ProcessIdentity): string {
   return `v2:${valid.pid}:${valid.startTimeTicks}:${valid.bootId}`;
 }
 
-function parseProcessIdentity(content: string, path: string): ProcessIdentity {
+/** 按当前格式认出身份行；认不出时返回 null，字段取值不在这里校验。 */
+function matchProcessIdentity(content: string): ProcessIdentity | null {
   const match: RegExpExecArray | null = PROCESS_IDENTITY_PATTERN.exec(content);
-  if (!match) throw new Error(`${path} has an obsolete or invalid lock owner format; repair it manually.`);
-  return validateProcessIdentity({
-    pid: Number(match[1]),
-    startTimeTicks: match[2]!,
-    bootId: match[3]!,
-  });
+  if (!match) return null;
+  return { pid: Number(match[1]), startTimeTicks: match[2]!, bootId: match[3]! };
+}
+
+function parseProcessIdentity(content: string, path: string): ProcessIdentity {
+  const identity: ProcessIdentity | null = matchProcessIdentity(content);
+  if (identity === null) throw new Error(`${path} has an obsolete or invalid lock owner format; repair it manually.`);
+  return validateProcessIdentity(identity);
 }
 
 function sameProcessIdentity(left: ProcessIdentity, right: ProcessIdentity): boolean {
@@ -117,10 +120,22 @@ async function isProcessIdentityActive(
   return current !== null && sameProcessIdentity(identity, validateProcessIdentity(current, identity.pid));
 }
 
-async function resolveCurrentIdentity({
-  currentIdentity,
-  readProcessIdentity = readLinuxProcessIdentity,
-}: InstanceLockOptions): Promise<ProcessIdentity> {
+/**
+ * 锁或其辅助文件记录的属主此刻是否已不在：内容认不出当前格式的身份行时返回 undefined，
+ * 由调用方决定如何处理；认得出时按 PID 现查 /proc，进程不存在或启动时刻、boot id 与
+ * 记录不同即为 true。PID 本身非法时按「不能确定」返回 false。
+ */
+export async function isRecordedLockOwnerInactive(content: string): Promise<boolean | undefined> {
+  const owner: ProcessIdentity | null = matchProcessIdentity(content);
+  if (owner === null) return undefined;
+  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
+  return !await isProcessIdentityActive(owner, readLinuxProcessIdentity);
+}
+
+async function resolveCurrentIdentity(
+  currentIdentity: ProcessIdentity | undefined,
+  readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null>
+): Promise<ProcessIdentity> {
   if (currentIdentity !== undefined) {
     return validateProcessIdentity(currentIdentity, process.pid);
   }
@@ -304,7 +319,7 @@ export async function acquireSingleInstanceLock(
   });
   const tokenFingerprint: string = getBotTokenFingerprint(botToken);
   const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> = options.readProcessIdentity ?? readLinuxProcessIdentity;
-  const currentIdentity: ProcessIdentity = await resolveCurrentIdentity({ ...options, readProcessIdentity });
+  const currentIdentity: ProcessIdentity = await resolveCurrentIdentity(options.currentIdentity, readProcessIdentity);
   await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
     const activeRecords: BotLockRecord[] = [];
     for (const record of await readBotLockRecords(lockFilePath)) {
@@ -331,7 +346,7 @@ export async function releaseSingleInstanceLock(
   const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> =
     options.readProcessIdentity ?? readLinuxProcessIdentity;
   const currentIdentity: ProcessIdentity =
-    await resolveCurrentIdentity({ ...options, readProcessIdentity });
+    await resolveCurrentIdentity(options.currentIdentity, readProcessIdentity);
   await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
     const remaining: BotLockRecord[] = [];
     for (const record of await readBotLockRecords(lockFilePath)) {

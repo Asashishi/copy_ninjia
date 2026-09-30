@@ -15,7 +15,11 @@ mock.module("../../packages/infra/telegram/client", () => ({
   telegramApi,
   logApiError,
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent: (): void => {} }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  markSelfSent: (): void => {},
+  beginSelfSentSend: (): void => {},
+  endSelfSentSend: (): void => {},
+}));
 
 const actions = await import("../../packages/infra/telegram/actions");
 const membership = await import("../../packages/infra/telegram/actions/membership");

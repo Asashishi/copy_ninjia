@@ -111,7 +111,7 @@ describe("runtime data root preflight", () => {
     await prepareRuntimeDataRoot(privateRoot);
     const databaseDir: string = join(privateRoot, "database");
     chmodSync(databaseDir, IDENTITY_DATABASE_DIRECTORY_MODE);
-    const currentUid: number = typeof process.getuid === "function" ? process.getuid() : 0;
+    const currentUid: number = process.getuid!();
     const databaseGid: number = statSync(databaseDir).gid;
     const spoofDatabaseOwner = (async (path: string): Promise<Stats> => {
       const stats: Stats = await lstat(path);
@@ -135,7 +135,7 @@ describe("runtime data root preflight", () => {
 
   test("目录 owner 与运行 uid 不一致时在写探针前拒绝", async () => {
     const wrongOwnerRoot: string = join(testDir, "wrong-owner-root");
-    const currentUid: number = typeof process.getuid === "function" ? process.getuid() : 0;
+    const currentUid: number = process.getuid!();
 
     await expect(prepareRuntimeDataRoot(wrongOwnerRoot, {
       expectedOwnerUid: currentUid + 1,

@@ -18,8 +18,10 @@ import { isRecordedWithin } from "../../libs/clockWindow";
 
 /**
  * 各群非匿名管理员邀请豁免缓存：按需全量拉取 + TTL 缓存 + 拉取在途期间
- * 到达的增量变化缓冲重放（见 pendingAdminChangesDuringFetch 注释），供
- * verificationRuntime.ts 与 lockdownRuntime.ts 的同步邀请者判定使用。
+ * 到达的增量变化缓冲重放（见 pendingAdminChangesDuringFetch 注释），供入群验证
+ * （verificationEvents.ts、verificationEffects.ts、verificationEffects/terminal.ts、
+ * verificationCallbacks.ts）、私密模式预热（lockdownRuntime.ts）、刷屏禁言与广告处置的
+ * 管理员身份判定使用。
  * 匿名管理员故意不进入缓存：Telegram 对 ChatMemberUpdated.from 的匿名
  * 操作者表示没有稳定保证，不能用可能脱敏/共享的身份跳过入群验证。
  */

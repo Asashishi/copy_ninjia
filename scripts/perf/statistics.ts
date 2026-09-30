@@ -1,8 +1,5 @@
 /**
- * 各性能基准共用的统计原语。
- *
- * `hotPaths.ts` 与 `joinLog.ts` 用它取中位数，`identityDatabase/measurement.ts`
- * 与 `fullSuite/aggregate.ts` 用它取平均值和标准差。
+ * 各性能基准共用的统计原语：中位数、平均值、总体标准差与最近秩分位数。
  */
 
 /** 算术平均值；调用方保证输入非空。 */

@@ -4,18 +4,19 @@ import { join } from "node:path";
  * 三语 README 徽章、三语 README 图注、三份 05-dev-workflow 与两张覆盖率图必须
  * 描述同一次 `bun run test:coverage`。
  *
- * 这组数字散在 8 个文件、14 个位置，由维护者按
+ * 这组数字散在 8 个文件的多处位置（README 徽章与图注、05-dev-workflow 文案、覆盖率图的
+ * aria-label、title 与数值格），由维护者按
  * `docs/cn/05-dev-workflow.md` 的「同步 README 指标」逐处更新；本模块负责拒绝
  * 漏改或互相矛盾的指标。
  *
  * 判定分两层，与 performanceRecord.ts 同一口径：
- * 1. **本文件（`bun run check:conventions`，无条件生效）**：14 个位置必须逐字
+ * 1. **本文件（`bun run check:conventions`，无条件生效）**：全部位置必须逐字
  *    携带同一组数字。只改其中一处当场失败。
  * 2. `bun run check:coverage`（scripts/checkCoverageMetrics.ts）：现跑一次
  *    覆盖率，核对这组数字与真实读数一致。它要跑整套测试，因此不进
  *    `bun run check`，由发布流程和显式指令触发。
  *
- * 本层管不了「14 处一起过期」，那一层交给第 2 步；两层合起来才既拦得住手改
+ * 本层管不了「全部位置一起过期」，那一层交给第 2 步；两层合起来才既拦得住手改
  * 漏项，也拦得住整体陈旧。
  */
 
@@ -139,7 +140,7 @@ function formatMetrics(metrics: CoverageMetrics): string {
 }
 
 /**
- * 读出仓库当前声明的覆盖率指标；14 个位置不一致时返回 null 并记下问题。
+ * 读出仓库当前声明的覆盖率指标；各位置不一致时返回 null 并记下问题。
  * `bun run check:coverage` 复用它，避免两处各写一份解析。
  */
 export async function declaredCoverageMetrics(

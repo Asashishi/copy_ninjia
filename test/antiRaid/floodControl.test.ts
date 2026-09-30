@@ -4,12 +4,14 @@ import { buildFloodCandidate } from "../../packages/antiRaid/floodControl";
 import type { FloodCandidateMessage } from "../../packages/types/antiRaid/protocol";
 import type { ChatState } from "../../packages/types/chatState";
 import { chatStateCache } from "../../packages/cache/main/chatState";
+import { getChatState } from "../../packages/infra/storage/stateStore";
 import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";
 import { temporaryAdBypassActivityCache } from
   "../../packages/cache/main/temporaryAdBypass";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD, TEMPORARY_AD_BYPASS_REQUIRED_DAYS } from "../../packages/consts/temporaryAdBypass";
 import { chatStateOf } from "../helpers/chatState";
 
 const BOT_ID: number = 99;
@@ -27,10 +29,10 @@ function groupMessage(overrides: Partial<Message> = {}): Message {
   } as Message;
 }
 
-/** 收敛一次投递判定；本文件只关心门禁与标签，时刻固定不参与断言以外的逻辑。 */
+/** 收敛一次投递判定；本文件只关心门禁与标签，时刻固定不参与断言以外的逻辑。缺省读本群缓存状态。 */
 function candidate(
   message: Message = groupMessage(),
-  chatState?: Readonly<ChatState>
+  chatState: Readonly<ChatState> = getChatState(message.chat.id)
 ): FloodCandidateMessage | undefined {
   return buildFloodCandidate({ message, botId: BOT_ID, now: OBSERVED_AT, chatState });
 }
@@ -135,8 +137,8 @@ describe("刷屏计数的主线程投递门禁", () => {
     temporaryAdBypassActivityCache.set(7, {
       adBypass: true,
       adBypassGrantedAt: 1,
-      qualifiedDays: 7,
-      sendCount: 8,
+      qualifiedDays: TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
+      sendCount: TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD + 1,
       countedAt: 1,
       qualifiedAt: 1,
     });

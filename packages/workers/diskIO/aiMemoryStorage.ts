@@ -7,8 +7,7 @@
 
 import {
   aiMemoryDeletePersistedNotifier,
-  aiMemoryImmediateRevisions,
-  aiMemoryPersistedNotifier,
+  aiMemoryImmediateChats,
   hydrateAiMemoryCache,
   markAiMemoryDeleted,
   markAiMemoryDirty,
@@ -16,24 +15,6 @@ import {
 import { noteStorageWriteRejected } from "../../cache/workers/diskIO/storageDatabase";
 import { assertAiContextSnapshot, queueAiContextWrite } from "./storageDatabase/aiContext";
 import { commitStorageUrgently, scheduleStorageCommit } from "./storageDatabase/flush";
-import type {
-  AiMemoryDeletedPersistedReply,
-  AiMemoryPersistedReply,
-} from "../../types/diskIO/replies";
-
-/** Worker 启动时注入唯一回执出口；测试可替换为确定性收集器。 */
-export function configureAiMemoryDeletePersistedReply(
-  notify: (reply: AiMemoryDeletedPersistedReply) => void
-): void {
-  aiMemoryDeletePersistedNotifier.current = notify;
-}
-
-/** Worker 启动时注入 purge 后首份新快照的 durable 回执出口。 */
-export function configureAiMemoryPersistedReply(
-  notify: (reply: AiMemoryPersistedReply) => void
-): void {
-  aiMemoryPersistedNotifier.current = notify;
-}
 
 /** 跨域启动第二阶段：全部领域 inspect 成功后按磁盘快照重建水位线，并交出恢复结果（只复制键值引用）。 */
 export function adoptAiMemorySnapshots(
@@ -74,7 +55,7 @@ export function markAiMemorySnapshotDirty({
     scheduleStorageCommit();
     return;
   }
-  aiMemoryImmediateRevisions.set(chatId, revision);
+  aiMemoryImmediateChats.add(chatId);
   commitStorageUrgently();
 }
 

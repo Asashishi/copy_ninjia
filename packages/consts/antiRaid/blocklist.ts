@@ -23,8 +23,8 @@ export const BLOCKLIST_REMOVAL_RETRY_DELAY_MS: number = 5_000;
 export const BLOCKLIST_PARTICIPANT_INVALID_LIMIT: number = 5;
 
 /**
- * 一条回执的销号计数写入最多预热几轮。预热后要等补扫 flush 窗口关闭才写，
- * 等待期间相关身份被 LRU 淘汰时重新预热；轮数用尽只记错误并跳过这条回执。
+ * 一条回执的销号计数写入最多预热几轮。预热等待期间相关身份被 LRU 淘汰时重新预热；
+ * 轮数用尽只记错误并跳过这条回执。
  * 所属模块：infra/blocklist/participantInvalid.ts。
  */
 export const BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS: number = 3;
@@ -65,7 +65,7 @@ export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 4_096;
 /**
  * 启动恢复从 SQLite 顺序接管待踢 outbox 时的单页行数。使用 removal_id 游标，
  * 每页完成存储形态与领域解码后才读取下一页，避免一次性投影整表。
- * 所属模块：workers/diskIO/storageDatabase/hydration.ts。
+ * 所属模块：database/interact/inspection.ts、database/interact/validation.ts。
  */
 export const BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE: number = 2_048;
 

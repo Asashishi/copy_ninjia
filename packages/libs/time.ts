@@ -86,7 +86,8 @@ function formatSecondOfDay(secondOfDay: number): string {
  * 本文件的东京日历函数统一按固定 UTC+9 算术产出，不走 Intl，也不建 Date。
  * 成立的前提是只格式化本进程当下附近的时刻：日本 1948-1951 实行过夏令时，那段时间
  * 算术结果比 Intl 早一小时（1950-07-01 03:00 UTC：Intl 给 13:00、算术给 12:00）。
- * 全部调用点传的都是 `Date.now()` 派生值；格式化用户提供的历史时间必须改用 Intl。
+ * 除 libs/persistedSnapshotCodec.ts 对存档时间串的往返比对（两侧同为固定 UTC+9 算术）外，
+ * 调用点传的都是 `Date.now()` 派生值；格式化用户提供的历史时间必须改用 Intl。
  * `test/libs/time.test.ts` 用 Intl 参照实现逐字符对拍 1970-2100 的采样与边界。
  */
 

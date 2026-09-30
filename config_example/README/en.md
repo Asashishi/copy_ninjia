@@ -372,7 +372,7 @@ JSON, so comments are not allowed.
 
 [`config_example/dynamic/cron.json`](../dynamic/cron.json) holds example tasks that cover every form: plain weekday
 text; a task that spells out its time zone and sends text, then an image and a file by URL; a local
-image by a path relative to the project root and a local file by absolute path; a `rand_cron`
+image by a path relative to the runtime data root and a local file by absolute path; a `rand_cron`
 range drawing from the default image library; `@daily`
 with a single-value `rand_cron` drawing from a given directory; `send_voice` with and without a
 tone; and `just_once`. The chat ids, URLs
@@ -424,8 +424,9 @@ Action `type` and `payload`:
   same audio; after the first successful send they reference the `file_id` Telegram returned
   instead of uploading it again.
 
-`path` is either absolute or relative to the project root (the repository root when running from
-source, the service's working directory for the binary) and may point to a file or directory
+`path` is either absolute or relative to the runtime data root (`COPY_NINJIA_DATA_ROOT`; when unset, the project root:
+the repository root when running from source, the service's working directory for the binary), the same base as
+local paths in `assets.json`, except that no `./` prefix is required and bare relative paths are accepted; it may point to a file or directory
 anywhere on the host (a symbolic link
 is judged by what it points to). It must exist and have the right type when the configuration is
 loaded. Any file the service account can read can be sent into a chat, so never point it at
@@ -477,8 +478,8 @@ Runtime behavior:
 | --- | --- | --- |
 | `onlyPath.random_h_image_dir` in `assets.json` | Runtime data root | Absolute directory or explicit `./` / `../` path |
 | `pathOrUrl.bot_default_avatar` in `assets.json` (when a local path) | Runtime data root | Absolute file path or explicit `./` / `../` path |
-| cron fixed-image `payload.path` | Project root | Array of 1–10 file paths |
-| cron random-image `payload.path` | Project root | Optional directory string; omission selects the dedicated library |
-| cron file `payload.path` | Project root | One file-path string |
+| cron fixed-image `payload.path` | Runtime data root | Array of 1–10 file paths (absolute or any relative path) |
+| cron random-image `payload.path` | Runtime data root | Optional directory string (absolute or any relative path); omission selects the dedicated library |
+| cron file `payload.path` | Runtime data root | One file-path string (absolute or any relative path) |
 
 `onlyPath.random_h_image_dir` in `assets.json` is reserved for `/h_image`, defaulting to `./h_image`. Both absolute paths such as `/h_image` and explicit relative paths such as `./h_image` or `../h_image` are accepted; relative paths resolve against the runtime data root. Keep unrelated pictures elsewhere. Add images with `/h_image add`; manual additions must use the content SHA-256 as a 64-character lowercase hexadecimal basename with a jpg/jpeg/png/webp extension. Before Workers or external connections, startup asynchronously checks names and entry types. Invalid files, subdirectories, file symlinks and leftover temporary files abort startup. It does not rehash every image; operators are responsible for matching manual names to content. Explicit cron directories have no such naming requirement. Local content reads, preflight checks and uploads are asynchronous; albums retain reopenable streams rather than preloading every image.

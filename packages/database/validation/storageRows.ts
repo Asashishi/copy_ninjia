@@ -17,13 +17,19 @@ import type {
   StoredStorageMetadataRow,
 } from "../../types/storageDatabase";
 
-/** 统一生成 SQLite 业务行的安全来源路径，不包含行内容。 */
+/**
+ * 统一生成 SQLite 业务行的安全来源路径，不包含行内容。路径指向该表承载 JSONB 正文的列
+ * （chat_states.status、permission_list.policy，其余为 data）；temporary_ad_bypass_entries
+ * 全部是关系列，路径只写到行。
+ */
 export function storageRowSource(
   source: string,
   table: string,
   id: number | string
 ): string {
-  return `${source}:${table}[${String(id)}].${table === "chat_states" ? "status" : table === "permission_list" ? "policy" : "data"}`;
+  const row: string = `${source}:${table}[${String(id)}]`;
+  if (table === "temporary_ad_bypass_entries") return row;
+  return `${row}.${table === "chat_states" ? "status" : table === "permission_list" ? "policy" : "data"}`;
 }
 
 /** schema-version 解码只接收预先投影出的 metadata 行。 */

@@ -1,6 +1,6 @@
 import type { ChatPermissions } from "grammy/types";
 
-/** 状态持久化实现（packages/infra/storage/statePersistence.ts）的常量。文件路径见 paths.ts。 */
+/** 全局状态持久化、实例锁、数据根预检与群状态存储（packages/infra/storage/ 等）的常量。文件路径见 paths.ts。 */
 
 // DEFAULT_CHAT_STATE 与 createChatState() 的唯一形状定义位于 libs/chatState.ts。
 
@@ -40,7 +40,7 @@ export const STATE_BACKGROUND_SAVE_DELAY_MS: number = 5_000;
  * - `memory/wed/`：每群成员快照的文件数上限（workers/diskIO/wedMemberFiles.ts）。
  * - `/init enable`：接管一个新群前的名额判定（commands/init.ts）。
  *
- * 群问答（cache/main/qa.ts）与 wed 成员表（cache/main/wedMembers.ts）不再单独设界，
+ * 群问答（cache/main/qa.ts）与 wed 成员表（cache/main/wedMembers.ts）不单独设界，
  * 它们的容量由「受管群数 × 每群上限」推出，因此同样依赖这个常量。
  */
 export const STATE_MANAGED_CHAT_LIMIT: number = 25;

@@ -1,7 +1,10 @@
 import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
 
-/** 延迟命令执行器的主线程状态（cache/main/deferredCommands.ts）。 */
-export interface DeferredCommandRuntime {
+/**
+ * 主线程命令执行器的一代运行状态（`/wed` 与延迟命令各一份，见 infra/commandExecutor.ts）；
+ * 排队与在途任务都由停机边界观察。
+ */
+export interface CommandExecutorRuntime {
   readonly runner: PrioritizedBoundedTaskRunner;
   /** 停机超时时取消排队与在途任务。 */
   readonly controller: AbortController;

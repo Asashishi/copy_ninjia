@@ -16,7 +16,11 @@ mock.module("../../packages/infra/telegram/client", () => ({
   telegramApi,
   logApiError,
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  markSelfSent,
+  beginSelfSentSend: (): void => {},
+  endSelfSentSend: (): void => {},
+}));
 mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub({ error: loggerError }),
 }));
@@ -83,7 +87,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.sendChatAction({ chatId: -1001, action: "choose_sticker", api })).toBe(true);
     await expect(actions.answerCallbackQuery({ callbackQueryId: "callback", text: "done", showAlert: true, api })).resolves.toBeUndefined();
     expect(await actions.sendSticker({ chatId: -1001, fileId: "file", api })).toBe(12);
-    expect(await actions.sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toEqual({ messageId: 13, photo: { fileId: "photo-large", fileUniqueId: "photo-large-u", width: 1024, height: 1024 } });
+    expect(await actions.sendPhotoWithResult({ chatId: -1001, bytes: new Uint8Array([1]), mimeType: "image/png", api })).toEqual({ messageId: 13, repliedToMessageId: undefined, photo: { fileId: "photo-large", fileUniqueId: "photo-large-u", width: 1024, height: 1024 } });
     expect(await actions.setMessageReaction({ chatId: -1001, messageId: 3, emoji: "👍", api })).toBe(true);
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
     expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("kicked");
@@ -135,6 +139,22 @@ describe("Telegram 动作适配层失败归一化", () => {
     })).toBeUndefined();
     expect(logApiError).not.toHaveBeenCalled();
     expect(markSelfSent).not.toHaveBeenCalled();
+  });
+
+  test("成员与管理员探测被调用方取消时不记 API 错误", async () => {
+    const controller: AbortController = new AbortController();
+    controller.abort();
+    const getChatMember = mock(async (..._args: unknown[]): Promise<never> => {
+      throw new DOMException("aborted", "AbortError");
+    });
+
+    expect(await actions.probeChatAdmin({
+      chatId: -1001,
+      userId: 7,
+      api: { getChatMember } as never,
+      signal: controller.signal,
+    })).toBeUndefined();
+    expect(logApiError).not.toHaveBeenCalled();
   });
 
   test("主动 signal 进入带 other 参数 API 的正确取消槽位", async () => {

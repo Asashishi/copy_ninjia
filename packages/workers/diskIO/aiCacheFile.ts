@@ -44,10 +44,9 @@ import {
   FLUSH_MAX_ENTRIES,
   LOG_REOPEN_RETRY_MS,
 } from "../../consts/diskIO/appendOnly";
-import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { bestEffortUnlink, inspectOptionalDirectory, inspectOptionalFile } from "../../libs/fileAccess";
-import { readUtf8TextInput } from "../../libs/inputValidation";
+import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR } from "../../consts/paths";
+import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
+import { inspectOptionalDirectory } from "../../libs/fileAccess";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../../libs/record";
 import { formatTokyoLogTimestamp, getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { AiCacheCapability, AiCacheSummary, AiCacheTotals } from "../../types/aiCache";
@@ -57,9 +56,10 @@ import type { AppendOnlyFileState } from "../../types/diskIO/storage";
 import {
   AppendOnlyFileFormatError,
   appendToAppendOnlyFile,
-  repairTruncatedAppendOnlyContent,
+  inspectRepairableAppendOnlyFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
+import type { RepairableAppendOnlyInspection } from "./appendOnlyDayFile";
 import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
 /** 文件里一条按 token 计量的用量；时间在键上。 */
@@ -241,39 +241,19 @@ function decodeDocument(parsed: unknown): AiCacheDocument {
 
 /** 只读探测统计文件：裁掉撕裂尾部并严格解码，不写盘。 */
 export async function inspectAiCacheFile(): Promise<AiCacheInspection> {
-  if (!inspectOptionalFile(AI_CACHE_FILE_PATH)) {
+  const inspection: RepairableAppendOnlyInspection<AiCacheDocument> | null =
+    await inspectRepairableAppendOnlyFile(AI_CACHE_FILE_PATH, decodeDocument);
+  if (inspection === null) {
     return {
       document: { summary: null, rows: new Map() },
       rewriteContent: null,
       state: { size: 0, empty: true },
     };
   }
-  const content: string = await readUtf8TextInput(AI_CACHE_FILE_PATH);
-  let parsed: unknown;
-  let rewriteContent: string | null = null;
-  try {
-    parsed = JSON.parse(content) as unknown;
-  } catch {
-    rewriteContent = repairTruncatedAppendOnlyContent(content);
-    if (rewriteContent === null) return invalid("could not be parsed or repaired.");
-    parsed = JSON.parse(rewriteContent) as unknown;
-  }
-  const document: AiCacheDocument = decodeDocument(parsed);
-  const empty: boolean = Object.keys(parsed as Record<string, unknown>).length === 0;
-  if (!empty && rewriteContent === null && !content.endsWith("\n}")) {
-    rewriteContent = JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT);
-  }
   return {
-    document,
-    rewriteContent,
-    state: {
-      size: empty
-        ? 0
-        : rewriteContent === null
-          ? (await Bun.file(AI_CACHE_FILE_PATH).stat()).size
-          : Buffer.byteLength(rewriteContent),
-      empty,
-    },
+    document: inspection.decoded,
+    rewriteContent: inspection.rewriteContent,
+    state: inspection.state,
   };
 }
 
@@ -293,12 +273,11 @@ export function adoptAiCacheFile(inspection: AiCacheInspection): void {
 /** 启动成功后清掉原子重写留下的孤儿临时文件，并补做错过的每日汇总。 */
 export async function maintainAiCacheFile(): Promise<void> {
   if (inspectOptionalDirectory(AI_CACHE_MEMORY_DIR)) {
-    const prefix: string = `.${basename(AI_CACHE_FILE_PATH)}.`;
-    for (const name of readdirSync(AI_CACHE_MEMORY_DIR)) {
-      if (name.startsWith(prefix) && name.endsWith(TMP_FILE_SUFFIX)) {
-        await bestEffortUnlink(`${AI_CACHE_MEMORY_DIR}/${name}`);
-      }
-    }
+    await removeOrphanedTempFiles(
+      AI_CACHE_MEMORY_DIR,
+      readdirSync(AI_CACHE_MEMORY_DIR),
+      `.${basename(AI_CACHE_FILE_PATH)}.`
+    );
   }
   await summarizeAiCache();
 }

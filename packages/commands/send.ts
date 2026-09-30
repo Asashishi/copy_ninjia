@@ -8,7 +8,7 @@ import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
 } from "../infra/updateContext";
-import { isSuperAdmin } from "./superAdminToggle";
+import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import { parseChatIdArgument } from "../libs/telegramId";
 import type { ChatFullInfo } from "grammy/types";
 
@@ -23,7 +23,9 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
-  if (!isSuperAdmin(ctx.from)) return;
+  // 以 `ctx.from` 而非命令可见发起身份判定：私聊里没有频道马甲，也不该让 sender_chat
+  // 参与；对非本人的探测保持沉默，不确认这个指令存在。
+  if (ctx.from?.id !== SUPER_ADMIN_USER_ID) return;
 
   const arg: string = ctx.match.trim();
   const activeTargetChatId: number | undefined = getActiveProxySendTarget();

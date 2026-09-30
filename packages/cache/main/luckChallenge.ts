@@ -26,8 +26,9 @@ export const dailyLuckCacheSaturated: { current: boolean } = { current: false };
  * 用户光是打字预览（哪怕只是 @ 机器人几句、根本没打算测运势）不会留下
  * 任何痕迹。key 是 cacheKey（同 dailyLuckCache）。
  * 清理：confirmLuckDraw 认领后移入 dailyLuckCache 并删除本项，跨日随整份缓存
- * 一起清空。容量：与 dailyLuckCache 同界（DAILY_LUCK_CACHE_MAX），撑满时同样
- * 拒收新 key——key 里带的是用户随手输入的问题原文哈希，没有自然上界。
+ * 一起清空。容量：硬顶 PENDING_LUCK_CACHE_MAX（见 consts/luckChallenge.ts），经
+ * libs/boundedMap.ts 的 setBoundedMapValue 写入，撑满时淘汰最早插入的一项（FIFO）——
+ * key 里带的是用户随手输入的问题原文哈希，没有自然上界。
  * 进程重启不恢复：未确认的预览本来就不算「今天测过」。 */
 export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
 

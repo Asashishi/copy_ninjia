@@ -10,28 +10,29 @@ import {
   pendingAiContextWrites,
   resetStorageDatabaseCache,
   storageDatabaseHandle,
+  storagePersistenceReplyHolder,
   storageWriteFlushTimer,
 } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import {
   aiMemoryOperations,
   aiMemoryRevisions,
+  aiMemoryDeletePersistedNotifier,
+  aiMemoryPersistedNotifier,
   forgetAiMemoryChat,
   resetAiMemoryCache,
 } from "../../../packages/cache/workers/diskIO/snapshots";
 import {
   adoptAiMemorySnapshots,
-  configureAiMemoryDeletePersistedReply,
-  configureAiMemoryPersistedReply,
   deleteAiMemorySnapshot,
   markAiMemorySnapshotDirty,
 } from "../../../packages/workers/diskIO/aiMemoryStorage";
 import { handleChatStateWrite } from "../../../packages/workers/diskIO/storageDatabase/chatState";
 import {
-  configureStoragePersistenceReply,
   flushStorageDatabase,
-  pendingStorageDatabaseDomains,
+  collectStorageDatabaseFailures,
   setStorageFlushHold,
 } from "../../../packages/workers/diskIO/storageDatabase/flush";
+import type { DiskIODomain } from "../../../packages/types/diskIO/replies";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -56,11 +57,11 @@ beforeEach(() => {
   resetAiMemoryCache();
   storageDatabaseHandle.current = database;
   database.insert(chatStates).values({ chatId, status: '{"isInitEnabled":true}', aiPersona: "群人设" }).run();
-  configureStoragePersistenceReply(noReply);
+  storagePersistenceReplyHolder.current = noReply;
   persistedReplies.length = 0;
   deleteReplies.length = 0;
-  configureAiMemoryPersistedReply((reply): void => { persistedReplies.push(reply); });
-  configureAiMemoryDeletePersistedReply((reply): void => { deleteReplies.push(reply); });
+  aiMemoryPersistedNotifier.current = (reply: AiMemoryPersistedReply): void => { persistedReplies.push(reply); };
+  aiMemoryDeletePersistedNotifier.current = (reply: AiMemoryDeletedPersistedReply): void => { deleteReplies.push(reply); };
 });
 afterEach(() => {
   resetAiMemoryCache();
@@ -158,8 +159,10 @@ test("非法快照就地拒收：不进共享缓冲，记 aiMemory 拒收标记�
   expect(pendingAiContextWrites.size).toBe(0);
   // 非法快照不推进水位线：同一 revision 的合法快照随后仍被接受。
   expect(aiMemoryRevisions.has(chatId)).toBeFalse();
-  expect(pendingStorageDatabaseDomains()).toEqual(["aiMemory"]);
-  expect(pendingStorageDatabaseDomains()).toEqual([]);
+  const failedDomains: DiskIODomain[] = [];
+  collectStorageDatabaseFailures("aiMemory", failedDomains);
+  collectStorageDatabaseFailures("aiMemory", failedDomains);
+  expect(failedDomains).toEqual(["aiMemory"]);
   markAiMemorySnapshotDirty({ chatId, revision: 1, snapshot });
   expect(pendingAiContextWrites.get(chatId)?.revision).toBe(1);
 });

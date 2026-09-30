@@ -80,22 +80,10 @@ describe("供应商 API 失败的归因级联", () => {
 });
 
 describe("归因档位到失败结果的映射", () => {
-  test("三档可直接返回的结论各自带着固定诊断串", () => {
-    expect(providerApiFailureResult("misconfigured")).toEqual({
-      ok: false,
-      failureKind: "misconfigured",
-      diagnostic: "endpoint or model is unavailable",
-    });
-    expect(providerApiFailureResult("unsupported")).toEqual({
-      ok: false,
-      failureKind: "unsupported",
-      diagnostic: "media input is unsupported",
-    });
-    expect(providerApiFailureResult("rejected")).toEqual({
-      ok: false,
-      failureKind: "rejected",
-      diagnostic: "request was rejected",
-    });
+  test("三档可直接返回的结论各自映射成同名 failureKind", () => {
+    expect(providerApiFailureResult("misconfigured")).toEqual({ ok: false, failureKind: "misconfigured" });
+    expect(providerApiFailureResult("unsupported")).toEqual({ ok: false, failureKind: "unsupported" });
+    expect(providerApiFailureResult("rejected")).toEqual({ ok: false, failureKind: "rejected" });
   });
 
   test("endpointFailure 不映射成结果，交由调用点走自己的兜底路径", () => {

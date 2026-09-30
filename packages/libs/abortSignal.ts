@@ -98,7 +98,7 @@ export function raceAbortOrThrow<T>(
   });
 }
 
-/** raceAbort 的回退值与收尾钩子。同一份共享工作的各个等待者回退值不同，故按调用点传入。 */
+/** raceAbort 的取消源与回退值。同一份共享工作的各个等待者回退值不同，故按调用点传入。 */
 export interface RaceAbortOptions<T> {
   /** 本等待者自己的取消源；缺省表示一直等到 promise 结算（此时原样返回 promise）。 */
   readonly signal?: AbortSignal;
@@ -110,24 +110,17 @@ export interface RaceAbortOptions<T> {
    * null 上就无从表达，而且沉默地取错值。两者相同就显式写两遍。
    */
   readonly rejected: T;
-  /** 本等待者离场时的收尾，取消与正常结算都走一次，如引用计数释放。 */
-  readonly onSettle?: () => void;
-  /** 仅因取消离场时在 onSettle 之后追加的收尾，如「最后一个消费者走了就中止底层任务」。 */
-  readonly onCancel?: () => void;
 }
 
 /**
  * 让一份**共享**在途工作的等待服从各等待者自己的取消。
  *
- * 媒体描述、贴纸集合、贴纸菜单都做请求合并：一份在途工作被多个调用方复用，任一
- * 调用方失效时只结束**它自己的等待**并拿到既定回退值，底层是否随之中止由调用点
- * 的引用计数或 Worker 信号决定（onCancel）。
+ * 贴纸集合与贴纸菜单的请求合并、回复轮对媒体解析与机器人图片回填的等待，以及串行
+ * 动作链对前一步的等待都走这里：任一调用方失效时只结束**它自己的等待**并拿到既定
+ * 回退值，底层工作是否随之中止由其自身的取消信号决定。
  *
  * 与 libs/withTimeout.ts 的区别同本文件模块头：那边加的是等待上限，这边等的是别人
  * 的取消信号。
- *
- * 取消时钩子顺序固定为 onSettle → onCancel：引用计数必须先释放，onCancel 才能读到
- * 「本等待者已离场」后的真实计数。
  */
 export function raceAbort<T>(promise: Promise<T>, options: RaceAbortOptions<T>): Promise<T> {
   const signal: AbortSignal | undefined = options.signal;
@@ -135,8 +128,6 @@ export function raceAbort<T>(promise: Promise<T>, options: RaceAbortOptions<T>):
   const cancelled: T = options.cancelled;
   if (signal.aborted) {
     void promise.catch((_error: unknown): void => undefined);
-    options.onSettle?.();
-    options.onCancel?.();
     return Promise.resolve(cancelled);
   }
   const rejected: T = options.rejected;
@@ -149,13 +140,11 @@ export function raceAbort<T>(promise: Promise<T>, options: RaceAbortOptions<T>):
       if (finished) return;
       finished = true;
       activeSignal.removeEventListener("abort", onAbort);
-      options.onSettle?.();
       resolve(result);
     }
 
     function onAbort(): void {
       finish(cancelled);
-      options.onCancel?.();
     }
 
     // 已 abort 的 signal 不会再派发 abort 事件，但上面已经提前返回，因此这里

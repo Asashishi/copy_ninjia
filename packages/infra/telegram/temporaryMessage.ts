@@ -10,7 +10,8 @@ export interface SendTemporaryMessageOnMainParams {
   readonly messageThreadId?: number;
   readonly replyToMessageId?: number;
   readonly deleteAfterMs: number;
-  readonly signal: AbortSignal;
+  /** Worker 请求的取消信号；主线程自己发出的播报不带。 */
+  readonly signal?: AbortSignal;
 }
 
 /**

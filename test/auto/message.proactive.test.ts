@@ -7,7 +7,7 @@ const sendMessageMock = mock(
 );
 const recordChatMessageMock = mock((..._args: unknown[]): void => {});
 const echoMessageMock = mock(
-  async (..._args: unknown[]): Promise<string | undefined> => "echoed"
+  async (..._args: unknown[]): Promise<void> => {}
 );
 
 mock.module("../../packages/infra/telegram", () => ({

@@ -1,6 +1,6 @@
 /**
- * 生图宽高比的解析与归一，与供应商无关。领域侧（生图工具的入参校验、工具
- * 说明文案）与两家实现包的画幅映射共用这里的比值口径。
+ * 生图宽高比的解析与归一，与供应商无关。生图工具的入参校验与工具说明文案使用
+ * 这里的比值口径；实现包只接收已归一的官方比例。
  *
  * 纯函数叶子模块，不接触任何缓存与 SDK 类型（见 AGENTS.md 的「缓存与线程归属」）。
  */
@@ -50,8 +50,7 @@ function closestRatioIndex(target: number, candidates: readonly number[]): numbe
  * 官方比例原样保留；其它正数比例按最近项收敛。支持 W:H、W/H、WxH 与 W×H 写法。
  * @returns 归一后的官方比例；写法不合法或数值无效时返回 null。
  */
-export function normalizeImageAspectRatio(requested: string | undefined): ImageGenerationAspectRatio | null {
-  if (requested === undefined || requested.trim() === "") return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
+export function normalizeImageAspectRatio(requested: string): ImageGenerationAspectRatio | null {
   const match: RegExpExecArray | null = /^(\d+(?:\.\d+)?)\s*(?::|\/|x|×)\s*(\d+(?:\.\d+)?)$/i.exec(requested.trim());
   if (!match) return null;
   const width: number = Number(match[1]);

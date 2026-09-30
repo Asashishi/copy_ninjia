@@ -1,7 +1,8 @@
 /**
- * OpenAI 侧的纯文本生成与视觉描述。两者共用 client.ts 的
+ * OpenAI 侧的纯文本生成、视觉描述与语音转写。文本与视觉共用 client.ts 的
  * requestOpenAiTextResult，差别只在请求体：文本走一段 user 文本，视觉改喂
- * 一份 data URI 图片。
+ * 一份 data URI 图片；语音转写直接调 audio.transcriptions 并自行归因（见
+ * transcribeOpenAiVoice）。
  *
  * 两条路径都必须显式传 instructions：不给系统提示词时，部分代理网关会把
  * 自己的默认提示词灌进去，产出的文风与长度全不受本项目控制。
@@ -149,8 +150,9 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
       const status: number | undefined = numericErrorStatus(error);
       // APIError.message 已以 HTTP 状态码开头，此处不另加状态码。
       logger.error(`${request.errorLabel} error: ${error.message}`);
-      // 归因级联与失败结果映射都与两个 client 共用：本入口恒为媒体能力（语音
-      // 转写），isMediaCapability 直接传 true；endpointFailure 按端点故障 request 处理。
+      // 归因级联与 gemini/client.ts、openai/client.ts 共用 classifyProviderApiFailure；
+      // 本入口恒为媒体能力（语音转写），isMediaCapability 直接传 true，归因结果经
+      // classifyAiTextFailure 映射成 AiTextResult；endpointFailure 按端点故障 request 处理。
       const providerFailure: ProviderApiFailureKind =
         classifyProviderApiFailure(status, error.message, true);
       if (providerFailure !== "endpointFailure") failureKind = providerFailure;

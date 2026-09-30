@@ -56,7 +56,7 @@ function clearDiskDiagnosticRetryTimer(): void {
 }
 
 /** 结算等待诊断 FIFO 清空的全局 flush；领域级 flush 不登记到这里。 */
-function settleDiskDiagnosticDrainWaiters(result: FlushResult): void {
+export function settleDiskDiagnosticDrainWaiters(result: FlushResult): void {
   for (const waiter of diskIORuntime.diagnosticDrainWaiters) {
     clearTimeout(waiter.timer);
     waiter.resolve(result);
@@ -75,13 +75,13 @@ function scheduleDiskDiagnosticRetry(worker: Worker, retryAfterMs: number): void
 }
 
 /** 把下一批诊断交给指定代际；同一时刻最多存在一个尚未确认的批次。 */
-function pumpDiskIODiagnostics(worker: Worker): boolean {
-  if (diskIORuntime.worker !== worker || !diskIORuntime.writable) return false;
+function pumpDiskIODiagnostics(worker: Worker): void {
+  if (diskIORuntime.worker !== worker || !diskIORuntime.writable) return;
   // 已设置重试 timer 时，新日志只入本地 FIFO，不绕过 timer 重新投递。
-  if (diskIORuntime.diagnosticRetryTimer !== null) return true;
+  if (diskIORuntime.diagnosticRetryTimer !== null) return;
   const batch: AcknowledgedBatch<DiskDiagnosticMessage> | null =
     diskIORuntime.diagnosticQueue.nextDelivery();
-  if (batch === null) return true;
+  if (batch === null) return;
   const request: DiskDiagnosticBatchRequest = {
     type: "diagnosticBatch",
     batchId: batch.batchId,
@@ -89,10 +89,9 @@ function pumpDiskIODiagnostics(worker: Worker): boolean {
   };
   if (safePostDiskIO(worker, request, "diagnostic batch")) {
     diskIORuntime.diagnosticQueue.markDelivered(batch.batchId);
-    return true;
+    return;
   }
   diskIORuntime.diagnosticQueue.markDeliveryRejected();
-  return false;
 }
 
 /**

@@ -38,7 +38,7 @@ export interface PrepareRuntimeDataRootOptions {
 interface AssertPrivateDirectoryOptions {
   readonly allowCollaborativeGroup: boolean;
   readonly expectedGroupGids: readonly number[];
-  readonly expectedOwnerUid: number | undefined;
+  readonly expectedOwnerUid: number;
   readonly maximumMode: number;
 }
 
@@ -65,11 +65,7 @@ function assertPrivateDirectory(
     allowCollaborativeGroup &&
     expectedGroupGids.includes(stats.gid) &&
     (mode & 0o070) === 0o070;
-  if (
-    expectedOwnerUid !== undefined &&
-    stats.uid !== expectedOwnerUid &&
-    !hasWritableCollaborativeGroup
-  ) {
+  if (stats.uid !== expectedOwnerUid && !hasWritableCollaborativeGroup) {
     throw new Error(
       `${path} is owned by uid ${stats.uid}, expected runtime uid ${expectedOwnerUid}; ` +
       (allowCollaborativeGroup
@@ -85,10 +81,6 @@ function assertPrivateDirectory(
   }
 }
 
-function currentProcessGroupIds(): readonly number[] {
-  return typeof process.getgroups === "function" ? process.getgroups() : [];
-}
-
 /**
  * 在实例锁和任何联网/Worker 初始化之前验证数据根真正支持本仓库依赖的
  * durability 原语：可创建/写入、同目录 hard link、原子 rename 与目录 fsync。
@@ -101,8 +93,9 @@ export async function prepareRuntimeDataRoot(
   const {
     dependencies = {},
     enforcePrivatePermissions = true,
-    expectedGroupGids = currentProcessGroupIds(),
-    expectedOwnerUid = typeof process.getuid === "function" ? process.getuid() : undefined,
+    // 发行平台均为 Linux，POSIX 进程恒提供 getgroups/getuid。
+    expectedGroupGids = process.getgroups!(),
+    expectedOwnerUid = process.getuid!(),
   }: PrepareRuntimeDataRootOptions = options;
   const root: string = resolve(dataRoot);
   const fs: DataRootProbeDependencies = { ...DEFAULT_DEPENDENCIES, ...dependencies };

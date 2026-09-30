@@ -15,12 +15,22 @@ const minimal: Readonly<{ client_email: string; private_key: string }> = {
 const source: string = "/fixture/g-auth.json";
 
 test("最小凭据缺省 type，完整服务账号元数据均无损保留", (): void => {
-  expect(parseGoogleServiceAccountKey(minimal, source)).toBe(minimal);
+  expect(parseGoogleServiceAccountKey(minimal, source)).toEqual(minimal);
   const full: GoogleServiceAccountKey & Readonly<{ client_id: string; auth_uri: string }> = {
     ...minimal, type: "service_account", private_key_id: "key", project_id: "project",
     quota_project_id: "quota", universe_domain: "googleapis.com", client_id: "123", auth_uri: "https://accounts.google.com/o/oauth2/auth",
   };
-  expect(parseGoogleServiceAccountKey(full, source)).toBe(full);
+  expect(parseGoogleServiceAccountKey(full, source)).toEqual(full);
+});
+
+test("已知字符串字段按首尾空白规范化返回；PEM 私钥按原文交给 SDK", (): void => {
+  const padded = {
+    ...minimal, type: " service_account ", client_email: `  ${minimal.client_email}\n`,
+    project_id: " project ", auth_uri: " https://accounts.google.com/o/oauth2/auth ",
+  };
+  expect(parseGoogleServiceAccountKey(padded, source)).toEqual({
+    ...padded, type: "service_account", client_email: minimal.client_email, project_id: "project",
+  });
 });
 
 test("可解析的 EC 与 Ed25519 密钥不满足 RS256", (): void => {

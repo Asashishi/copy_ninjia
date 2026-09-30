@@ -19,8 +19,8 @@ import type { StickerCatalogEntry } from "../../types/stickers/catalog";
 /**
  * 直接拿当前图片/贴纸叫机器人时附上短期参考；是否实际编辑由模型决定。GIF 不隐式混入。
  *
- * 「有没有图片工具资格」直接读 directTriggerReason，不再另有一个布尔字段重复它
- * （见 types/aiChat/protocol.ts 的 directTriggerReason 与 messageThreadId）。
+ * 「有没有图片工具资格」直接读 directTriggerReason（见 types/aiChat/protocol.ts 的
+ * directTriggerReason）。
  */
 function imageGenerationReferenceFor(msg: AiRecordMediaMessage): ImageGenerationReference | undefined {
   if (msg.directTriggerReason === undefined || (msg.kind !== "photo" && msg.kind !== "sticker")) {
@@ -88,8 +88,9 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
           isRandomTrigger: false,
           telegramBackpressured,
           imageGenerationRequested: msg.directTriggerReason !== undefined,
-          ...(imageGenerationReference ? { imageGenerationReference } : {}),
+          imageGenerationReference,
           mediaComment: mediaCommentFor(msg, entry, catalogEntry.description),
+          mediaPreparation: undefined,
         });
       }
       return;
@@ -115,7 +116,7 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
       isRandomTrigger: false,
       telegramBackpressured,
       imageGenerationRequested: msg.directTriggerReason !== undefined,
-      ...(imageGenerationReference ? { imageGenerationReference } : {}),
+      imageGenerationReference,
       mediaComment: mediaCommentFor(msg, entry, ""),
       mediaPreparation: preparation.promise,
     });

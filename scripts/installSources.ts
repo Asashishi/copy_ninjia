@@ -17,7 +17,7 @@ export async function readInstallScripts(projectRoot: string): Promise<readonly 
   return sources;
 }
 
-/** 静态测试按 source 位置展开实际模块，保留原有步骤和函数的相对顺序。 */
+/** 静态测试按 source 位置把各模块正文就地展开进入口，展开后步骤与函数的相对顺序与执行顺序一致。 */
 export async function expandedInstallSource(projectRoot: string): Promise<string> {
   const sources: readonly InstallScriptSource[] = await readInstallScripts(projectRoot);
   let expanded: string = sources[0]!.source;

@@ -10,7 +10,7 @@ import { bot } from "../mainClient";
 import { signalArgs } from "../../../libs/telegramSignalArgs";
 import { downloadAvatarFile } from "./download";
 import type { AvatarDownloadResult } from "../../../types/telegram";
-import { runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
+import { avatarFailureFor, runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
 import type {
   AvatarFetchAttemptsOutcome,
   AvatarOperationAttemptResult,
@@ -67,7 +67,7 @@ async function attemptCopyUserProfilePhoto(
     } else {
       // 两个请求互不依赖（activeUniqueId 在两者都返回后才被消费），并发
       // 缩短这条用户可见路径的往返延迟。用 allSettled 等两边都落定，任一
-      // 失败再抛出原因，走外层 catch 原有的 transient-failure 语义。
+      // 失败再抛出原因，由外层 catch 按 avatarFailureFor 分类。
       const [chatResult, photosResult]: [PromiseSettledResult<ChatFullInfo>, PromiseSettledResult<UserProfilePhotos>] = await Promise.allSettled([
         bot.api.getChat(targetId, ...signalArgs(signal)),
         bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }, ...signalArgs(signal)),
@@ -99,7 +99,7 @@ async function attemptCopyUserProfilePhoto(
   } catch (error: unknown) {
     if (signal?.aborted) return "permanent-failure";
     logApiError("copy user profile photo", error);
-    return "transient-failure";
+    return avatarFailureFor(error);
   }
 }
 

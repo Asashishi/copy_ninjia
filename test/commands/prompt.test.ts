@@ -8,7 +8,7 @@ import type { ChatState } from "../../packages/types/chatState";
 import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { chatStateOf } from "../helpers/chatState";
-const state: ChatState = chatStateOf({ isInitEnabled: true });
+const state: ChatState = chatStateOf({});
 const send = mock(async (..._args: unknown[]): Promise<void> => {});
 const persist = mock(async (..._args: unknown[]): Promise<void> => {});
 let allowed: boolean = false;
@@ -28,13 +28,10 @@ function context(match: string, msg: object = {}, from: object | null = { id: 7,
   const chat = { id: -1001, type: "supergroup" };
   return { chat, msg: { chat, ...msg }, from: from ?? undefined, msgId: 1, match } as CommandContext<Context>;
 }
-beforeEach(() => { state.isInitEnabled = true; state.aiPersona = undefined; allowed = false; permissionChecks.length = 0; send.mockClear(); syncPersona.mockClear(); syncAtmosphere.mockClear(); syncMenu.mockClear(); persist.mockReset(); persist.mockResolvedValue(undefined); });
-test("无权限不配置，未初始化不写入", async () => {
+beforeEach(() => { state.aiPersona = undefined; allowed = false; permissionChecks.length = 0; send.mockClear(); syncPersona.mockClear(); syncAtmosphere.mockClear(); syncMenu.mockClear(); persist.mockReset(); persist.mockResolvedValue(undefined); });
+test("无权限不配置", async () => {
   await handlePromptCommand(context("config 新人设"));
   expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ text: PROMPT_COMMAND_TEXTS.rejected }));
-  allowed = true; state.isInitEnabled = false;
-  await handlePromptCommand(context("config 新人设"));
-  expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ text: PROMPT_COMMAND_TEXTS.notInitialized }));
   expect(persist).not.toHaveBeenCalled();
 });
 test.each(["", "config", "config   ", "remove extra", "other test"])("非法参数 %s 不写入", async (input) => {

@@ -25,7 +25,7 @@ export function shouldPassInitGate(ctx: Context): boolean {
   // 未初始化群的低成本网关必须在进入身份预热/入群守卫之前完成权限
   // 与目标 bot 校验。否则任意用户可用 /init（甚至 /init@OtherBot）反复触发
   // 管理员 API 查询；真正的命令处理器虽会拒绝权限，却已经太晚。
-  const message: Message | undefined = ctx.msg ?? ctx.message;
+  const message: Message | undefined = ctx.msg;
   const actorId: number | undefined =
     message?.sender_chat?.id ??
     (chat.type === "channel" ? chat.id : ctx.from?.id);

@@ -138,7 +138,6 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "fi",
     "if [[ \"$inline_source\" == *\"validateExistingDeploymentInputs\"* ]]; then",
     "  secret_env_state validation",
-    "  [ \"${FAKE_DEPLOYMENT_VALIDATION_FAIL:-0}\" = \"1\" ] && exit 42",
     "  exit 0",
     "fi",
     "printf 'bun:unexpected-inline\\n' >> \"$FAKE_CALL_LOG\"",

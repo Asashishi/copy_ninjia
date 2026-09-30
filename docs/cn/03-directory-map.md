@@ -84,7 +84,7 @@
     （两条业务 Worker 共用的线程端口：Telegram 代理、双工出口与入站路由），以及
     `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/storageDatabase.ts` 与
     `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
-- **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
+- **`packages/aiChat/ai/`**
   - **职责**：模型与能力按所属功能放置，避免共享目录模糊线程和生命周期边界。
   - **典型文件**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（语音合成公共实现）、`ttsUsage.ts`（语音合成每日计数）；AI 闲聊的模型收发不在
     这里，而在与供应商同名的 `packages/aiChat/{gemini,openai}/` 实现包。
@@ -92,10 +92,10 @@
   - **职责**：广告检测流水线，包括排队批处理、消息串整形、provider 判定与命中处置。
   - **典型文件**：`queue.ts`（入口与节拍）、`queueState.ts`（接纳判据）、
     `verdict.ts`（判定与处置编排）、`bundle.ts`、`classifier.ts`、`disposal.ts`、
-    `config.ts`（接管主线程投递的配置快照）。
+    `config.ts`（接管主线程投递的配置快照），以及 `ai/`（`provider.ts` 按 `ad_detect.provider` 选择 `google.ts` 或 `openai.ts` 传输）。
 - **`packages/infra/`**
   - **职责**：主线程唯一 Telegram 客户端与出站闸门、Worker 双工宿主、logger 与主线程 I/O 代理，以及随机图片的目录准备与抽取。
-  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker 的模型客户端上报请求缓存用量的边界）、`geminiContextCache.ts`（Gemini 显式缓存的共用核心，回复与广告检测各传一个 scope）、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）。
+  - **典型文件**：`telegram/`（含 `telegram/avatar/`、`telegram/actions/`）、`diskIO.ts` 与 `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` 与 `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` 与 `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、`supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker 的模型客户端上报请求缓存用量的边界）、`geminiContextCache.ts`（Gemini 显式缓存的共用核心，回复与广告检测各传一个 scope）、`randomImage.ts`（随机图目录准备、抽图与收图写盘）、`mediaGroups.ts`（相册缓存的读写边界）、`telegram/fileDownload.ts`（共享的 Telegram 文件下载）、`telegram/commandPhotos.ts`（带图的 30 秒命令回执）、`commandExecutor.ts`（`/wed` 与延迟命令共用的执行器运行状态创建与任务提交）。
 - **`packages/infra/identityPolicy/`**
   - **职责**：白名单逐项权限、临时广告免检与黑白名单互斥协调的主线程读取边界。
   - **典型文件**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。

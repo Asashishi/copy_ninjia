@@ -17,8 +17,8 @@
  * 用 libs/abortSignal.ts 的 signalWithTimeout 合成一个再传下去，同时照传
  * `timeout` 覆盖没有调用方 signal 的路径。
  *
- * 失败一律返回 null 并记一行英文错误日志，绝不抛错；调用方（语音工具）据此
- * 结算本次动作。
+ * 失败一律返回 null 并记一行英文错误日志，绝不抛错；调用方（aiChat/provider.ts 的
+ * tts 门面）据此结算为 `synthesis failed`。
  */
 
 import type { GoogleGenAI, Interactions } from "@google/genai";
@@ -32,25 +32,16 @@ import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import { reportGeminiInteractionUsage } from "../../infra/aiCacheUsage";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
-import { decodeSynthesizedSpeech } from "../ai/utils/speechPayload";
+import { decodeSynthesizedSpeech, speechFromDecoded, speechRequestFailed } from "../ai/utils/speechPayload";
 import { composeSpeechStyle } from "../ai/utils/speechStyle";
 import { getGeminiClient } from "./client";
 import type { AiSpeechRequest } from "../../types/aiChat/provider";
-import type { SynthesizedSpeech, SynthesizedSpeechDecodeResult } from "../../types/aiChat/voiceMessage";
+import type { SynthesizedSpeech } from "../../types/aiChat/voiceMessage";
 import type { AgentTtsCapabilityConfig } from "../../types/config";
 
 /**
- * 文本块上的朗读风格注解，字段形状同服务端的 SpeechAnnotation。已安装 SDK 的
- * `Interactions.Annotation` 联合未收录这一档，因此在构造请求体的唯一位置转换。
- */
-interface SpeechMetadataAnnotation {
-  readonly type: "speech_metadata";
-  readonly style: string;
-}
-
-/**
  * 语音合成的 generation_config。服务端接受 `temperature`，已安装 SDK 的
- * `Interactions.GenerationConfig` 未收录该字段，因此同样在构造请求体处转换。
+ * `Interactions.GenerationConfig` 未收录该字段，因此在构造请求体的唯一位置转换。
  */
 interface SpeechGenerationConfig {
   readonly speech_config: readonly { readonly voice: string }[];
@@ -78,12 +69,7 @@ interface SpeechInteractionOutput {
  * @param style 基础风格与本句语气拼好的风格说明（见 ai/utils/speechStyle.ts）。
  */
 function speechTextContent(text: string, style: string): Interactions.TextContent {
-  const annotation: SpeechMetadataAnnotation = { type: "speech_metadata", style };
-  return {
-    type: "text",
-    text,
-    annotations: [annotation as unknown as Interactions.Annotation],
-  };
+  return { type: "text", text, annotations: [{ type: "speech_metadata", style }] };
 }
 
 /** 把一句台词合成为语音；无可用音频载荷时返回 null。 */
@@ -116,10 +102,7 @@ export async function synthesizeGeminiSpeech({ text, tone, signal }: AiSpeechReq
       requestSignal
     );
   } catch (error: unknown) {
-    // 调用方 signal 已中止表示本轮作废，静默收尾；合成超时仍记日志。
-    if (signal?.aborted === true) return null;
-    logger.error(`Error calling ${GEMINI_SPEECH_ERROR_LABEL}:`, error);
-    return null;
+    return speechRequestFailed(GEMINI_SPEECH_ERROR_LABEL, signal, error);
   }
 
   const encoded: string | undefined = interaction.output_audio?.data;
@@ -127,13 +110,8 @@ export async function synthesizeGeminiSpeech({ text, tone, signal }: AiSpeechReq
     logger.error(`${GEMINI_SPEECH_ERROR_LABEL} returned no audio payload.`);
     return null;
   }
-  const decoded: SynthesizedSpeechDecodeResult = decodeSynthesizedSpeech(
-    encoded,
-    interaction.output_audio?.mime_type
+  return speechFromDecoded(
+    GEMINI_SPEECH_ERROR_LABEL,
+    decodeSynthesizedSpeech(encoded, interaction.output_audio?.mime_type)
   );
-  if (!decoded.ok) {
-    logger.error(`${GEMINI_SPEECH_ERROR_LABEL} returned an unusable audio payload: ${decoded.reason}.`);
-    return null;
-  }
-  return decoded.speech;
 }

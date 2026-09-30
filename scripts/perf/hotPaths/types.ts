@@ -1,8 +1,6 @@
 /**
  * 热点基准的公共契约：场景名、场景形状与 JIT 分层读数。
- *
- * 单独成文件是为了打断依赖环——scenarios.ts 要用 Scenario/JitProbe，jitTiers.ts
- * 也要用，而 jitTiers.ts 又被 scenarios.ts 引用来建探针表。
+ * 各领域场景文件与 jitTiers.ts 共用。
  */
 
 import type { HotPathProfileScenarioName } from "../../../packages/types/performance";
@@ -106,14 +104,7 @@ export interface Scenario {
   resetBeforeSample?: boolean;
   /**
    * 本场景想观测分层的热函数；键名原样进入结果 JSON，便于逐个对照。
-   * 不必登记基准循环自身，runBenchmark 会以 `scenario.run` 固定补上。
+   * 不必登记基准循环自身，collectJitTiers 会以 `scenario.run` 固定补上。
    */
   probes?: Readonly<Record<string, JitProbe>>;
 }
-
-/**
- * 一次堆快照。
- *
- * `heapStats()` 的计数只在 GC 边界更新。两次快照之间必须执行一次诊断 GC，
- * 否则零增量不能代表没有分配。
- */

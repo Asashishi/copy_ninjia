@@ -15,8 +15,9 @@ import type {
 import { invalidInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 
-/** 与通用追加格式一致的两级缩进，模块初始化一次后供热序列化路径复用。 */
+/** 条目一级缩进，宽度与通用追加格式的 DAY_FILE_JSON_INDENT 一致；模块初始化一次后供热序列化路径复用。 */
 const ENTRY_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
+/** 字段两级缩进。 */
 const FIELD_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT * 2);
 
 function isJoinLogRecord(value: unknown): value is JoinLogRecord {
@@ -259,9 +260,9 @@ function siftOldestSelectionDown(
 
 /**
  * 原地只保留 joinedAt 最新的 capacity 个成员。
- * 只分配 overflow 个 user id；常规批次溢出至多为单批 300 项，不再复制和排序
- * 整张 25 万项 Map。恢复异常超大旧文件时仍受文件本身规模约束，但不会制造
- * 第二份完整记录对象。
+ * 只分配 overflow 个 user id 的选择堆；溢出量不超过一次写入批次的条数（受
+ * JOIN_LOG_MAX_BUFFERED_ENTRIES 约束），不复制、不排序整张 Map，也不创建第二份
+ * 完整记录对象。
  * @returns 被裁掉的记录数；容量降级只在极端高基数群日触发。
  */
 export function trimJoinLogRecordsToCapacity(

@@ -223,7 +223,7 @@ describe("explicit Worker initialization", () => {
       const failedFlush = first.messages.at(-1)!;
       expect(failedFlush.type).toBe("flush");
       // 回执按领域回报失败，让 /block 这类只关心自己那个领域的调用方不被
-      // 无关领域误导（见 workers/diskIOWorker.ts 的 flushScope）。
+      // 无关领域误导（见 workers/diskIO/domainFlush.ts 的 flushScope）。
       const failedReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: failedFlush.type === "flush" ? failedFlush.flushId : -1,
@@ -232,21 +232,10 @@ describe("explicit Worker initialization", () => {
       first.onmessage!({ data: failedReply } as MessageEvent<DiskIOReply>);
       expect(await failedFlushPromise).toBe("failed");
 
-      // 领域屏障只请求自己那一格；SQLite 共用一个事务，回执可能带上同事务里其它表的失败。
-      const unrelatedDomainFlushPromise = diskIO.flushDiskIODomain("blocklist", 1_000);
-      const unrelatedDomainFlush = first.messages.at(-1)!;
-      expect(unrelatedDomainFlush).toMatchObject({ type: "flush", scope: "blocklist" });
-      const unrelatedDomainReply: DiskIOReply = {
-        type: "flushFailed",
-        flushedId: unrelatedDomainFlush.type === "flush" ? unrelatedDomainFlush.flushId : -1,
-        failedDomains: ["whitelist"],
-      };
-      first.onmessage!({ data: unrelatedDomainReply } as MessageEvent<DiskIOReply>);
-      expect(await unrelatedDomainFlushPromise).toBe("flushed");
-
+      // 领域屏障只请求自己那一格，回执只带该领域自己的失败。
       const targetDomainFlushPromise = diskIO.flushDiskIODomain("blocklist", 1_000);
       const targetDomainFlush = first.messages.at(-1)!;
-      expect(targetDomainFlush.type).toBe("flush");
+      expect(targetDomainFlush).toMatchObject({ type: "flush", scope: "blocklist" });
       const targetDomainReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: targetDomainFlush.type === "flush" ? targetDomainFlush.flushId : -1,

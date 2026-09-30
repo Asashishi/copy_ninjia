@@ -9,7 +9,8 @@ import {
   VERIFICATION_KICK_PENDING_RECORD_KEYS,
   VERIFICATION_LABEL_MAX_CHARS,
 } from "../../consts/diskIO/verification";
-import { verificationKey } from "../../libs/verificationKey";
+import { parseVerificationKey, verificationKey } from "../../libs/verificationKey";
+import type { ParsedVerificationKey } from "../../libs/verificationKey";
 import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
 import { isPlainRecord } from "../../libs/record";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
@@ -191,7 +192,13 @@ export function storedVerificationSnapshot(
   return { version: VERIFICATION_FILE_VERSION, ...snapshot };
 }
 
-/** 严格解码完整日文件；任一 active 记录畸形时整份拒绝。 */
+/** null 墓碑的键同样必须是「群 id:正整数用户 id」的规范验证键。 */
+function isVerificationTombstoneKey(key: string): boolean {
+  const parsed: ParsedVerificationKey | null = parseVerificationKey(key);
+  return parsed !== null && isTelegramGroupChatId(parsed.chatId) && isPositiveId(parsed.userId);
+}
+
+/** 严格解码完整日文件；任一 active 记录或墓碑键畸形时整份拒绝。 */
 export function decodeVerificationDay(
   path: string,
   content: string
@@ -202,6 +209,9 @@ export function decodeVerificationDay(
   const decoded: Map<string, VerificationDayValue> = new Map();
   for (const [key, value] of Object.entries(parsed)) {
     if (value === null) {
+      if (!isVerificationTombstoneKey(key)) {
+        return invalidInput(path, "$.<record>", "a current verification record or null tombstone");
+      }
       decoded.set(key, null);
       continue;
     }

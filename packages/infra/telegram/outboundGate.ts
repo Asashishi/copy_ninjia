@@ -27,6 +27,7 @@ import {
   removeRetryJob,
   takeRetryHead,
 } from "./outboundQueue";
+import { discardResponseBody } from "../../libs/boundedResponse";
 import { toErrorOr } from "../../libs/errorMessage";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
@@ -251,13 +252,13 @@ export function abortJob(job: TelegramOutboundJob): void {
  *
  * `telegramRetryAfterMilliseconds` 只读 header，不消费 body；被它判成 429 之后
  * 又不往外交的那些响应，如果就这么丢掉，body 会一直占着连接与缓冲——正是
- * telegram/workerRequests.ts 里「不读取错误页，但要显式释放响应体」防的那件事。
+ * telegram/fileDownload.ts 里「非 2xx 响应不读错误页，并显式释放响应体」防的那件事。
  * 只有 fetch 那条路（媒体下载、头像抓取）拿得到真正的 Response；grammY
  * transformer 那条路返回的是已解析的 Bot API 对象，这里恒为 no-op。
  */
 function releaseResponseBody(response: unknown): void {
   if (response instanceof Response) {
-    void response.body?.cancel().catch((): void => undefined);
+    void discardResponseBody(response);
   }
 }
 

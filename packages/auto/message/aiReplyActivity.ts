@@ -84,7 +84,7 @@ function probabilityFromCount(recentMessageCount: number): number {
 /**
  * 记录当前群消息并返回这一条应使用的 AI 随机搭话概率。当前消息先进滑动
  * 窗口；同群近期消息越多，概率越高，但不会越过热群下限。队列饱和追加
- * 和 Map 热度刷新都是 O(1)，到期修剪为均摊 O(1)。
+ * 和访问序号刷新都是 O(1)，到期修剪为均摊 O(1)。
  */
 export function observeGroupMessageForAiReply(chatId: number, now: number = Date.now()): number {
   let entry: AiReplyActivityEntry | undefined = aiReplyActivityByChat.get(chatId);

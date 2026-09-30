@@ -57,9 +57,8 @@ function resolveDirectory(
  *
  * **只走源码根**（调用方传 packages/ scripts/ test/），不扫仓库根：`database/`、
  * `logs/`、`memory/` 是部署方数据，其中两个是 2770，服务账号组外的用户跑门禁时
- * `readdirSync` 会直接抛，把整道 gate 拖垮；而文档里所有真正能解析出唯一目标的
- * 目录名（interact / schema / lockdown / verification / message）本来就都在
- * packages/ 下，收窄范围一条覆盖都不损失。
+ * `readdirSync` 会直接抛，把整道 gate 拖垮；而文档里能解析出唯一目标的目录名
+ * 本来就都在 packages/ 下，收窄范围一条覆盖都不损失。
  */
 export function collectSourceDirectories(
   roots: readonly string[]

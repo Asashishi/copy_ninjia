@@ -51,7 +51,11 @@ mock.module("../../packages/infra/telegram/mainClient", () => ({
     },
   },
 }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  markSelfSent,
+  beginSelfSentSend: (): void => {},
+  endSelfSentSend: (): void => {},
+}));
 mock.module("../../packages/infra/randomImage", () => ({ pickRandomImage }));
 const recordBotImage = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/aiChat/botImages", () => ({ recordBotImage }));

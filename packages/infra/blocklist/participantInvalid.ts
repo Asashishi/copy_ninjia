@@ -20,7 +20,6 @@ import {
   prefetchIdentityPolicies,
   queueIdentityPolicyWrite,
   retainParticipantInvalidBlocklistIds,
-  writeOutsideBlocklistSweepFlushWindows,
 } from "../identityStorage";
 import { runBlocklistIdentityMutation } from "../identityPolicy/coordination";
 import { logger } from "../logger";
@@ -44,14 +43,12 @@ async function unblockDeletedAccount(
   expected: Readonly<BlocklistEntryData>
 ): Promise<void> {
   if (!await prefetchIdentityPolicies([userId])) return;
-  await writeOutsideBlocklistSweepFlushWindows((): void => {
-    if (!isIdentityPolicyCached(userId) || cachedBlocklistEntry(userId) !== expected) return;
-    unblockUser(userId);
-    logger.log(
-      `Removed blocklisted user ${userId} after ${BLOCKLIST_PARTICIPANT_INVALID_LIMIT} consecutive ` +
-      "PARTICIPANT_ID_INVALID sweep results; treating the account as deleted."
-    );
-  });
+  if (!isIdentityPolicyCached(userId) || cachedBlocklistEntry(userId) !== expected) return;
+  unblockUser(userId);
+  logger.log(
+    `Removed blocklisted user ${userId} after ${BLOCKLIST_PARTICIPANT_INVALID_LIMIT} consecutive ` +
+    "PARTICIPANT_ID_INVALID sweep results; treating the account as deleted."
+  );
 }
 
 /** 同步写出一条回执对应的计数变化；调用方已确认相关身份全部在缓存中。 */
@@ -90,9 +87,9 @@ function applyParticipantReadability(
 }
 
 /**
- * 只预热需要改写的身份，并在补扫 flush 窗口之外一次写出整条回执的计数变化。
- * 已落定的 ID 可达一整页，先经不回填 LRU 的读取筛出仍带计数的少数条目；等待
- * 窗口期间有身份被淘汰时整条重来，不做部分写入。
+ * 只预热需要改写的身份，并在全部仍在缓存时同步写出整条回执的计数变化。
+ * 已落定的 ID 可达一整页，先经不回填 LRU 的读取筛出仍带计数的少数条目；预热
+ * 等待期间有身份被淘汰时整条重来，不做部分写入。
  */
 async function settleParticipantReadability(
   event: BlockedMembersRemovedEvent
@@ -105,12 +102,10 @@ async function settleParticipantReadability(
   const ids: readonly number[] = [...participantInvalidUserIds, ...resettableUserIds];
   for (let attempt: number = 1; attempt <= BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS; attempt++) {
     if (!await prefetchIdentityPolicies(ids)) return;
-    const written: boolean = await writeOutsideBlocklistSweepFlushWindows((): boolean => {
-      if (!allIdentityPoliciesCached(ids)) return false;
+    if (allIdentityPoliciesCached(ids)) {
       applyParticipantReadability(participantInvalidUserIds, resettableUserIds);
-      return true;
-    });
-    if (written) return;
+      return;
+    }
   }
   logger.error(
     `Skipped blocklist PARTICIPANT_ID_INVALID counts for removal ${event.removalId} in chat ` +

@@ -135,9 +135,10 @@ export interface BlocklistSweepPageState {
   readonly awaitingAck: boolean;
 }
 
-/** 主线程黑名单补扫最近截止时间调度器的固定容量运行态。 */
+/** 补扫调度器唯一的执行入口函数类型；init 时登记进 BlocklistSweepSchedulerState.runSweep，quiesce 时清除。 */
 export type BlocklistSweepRunner = () => Promise<void>;
 
+/** 主线程黑名单补扫最近截止时间调度器的固定容量运行态。 */
 export interface BlocklistSweepSchedulerState {
   timer: ReturnType<typeof setTimeout> | null;
   scheduledAt: number | null;

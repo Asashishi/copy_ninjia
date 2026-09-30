@@ -15,7 +15,7 @@ import type { BufferedMessage } from "../../../types/aiChat/memory";
  * 可持久化 AI 记忆的唯一内存 owner；快照恢复/刷盘由 rollingMemory.ts 编排。
  *
  * 清理：clearChatMemoryCache（群 teardown、`/clear_context`、`/ai_chat disable`）、
- * ensureMemoryCapacity 的 LRU 淘汰、resetAiChatMemoryCache（Worker dispose/测试隔离）。
+ * ensureMemoryCapacity 的 LRU 淘汰、resetAiChatMemoryCache（测试隔离）。
  * 容量：至多 AI_MEMORY_MAX_CHATS 个群（见 consts/aiChat/memory.ts），满载按
  * chatLastActivityTimes 淘汰最久未活动的那个群；每群条数由 BoundedDeque 自己封顶。
  * Worker 崩溃重建：新 isolate 由主线程 latestAiMemories 整份 hydrate。
@@ -71,7 +71,7 @@ export function clearChatMemoryCache(chatId: number): void {
   chatMessageIndexes.delete(chatId);
 }
 
-/** Worker dispose/测试隔离时清空所有记忆。 */
+/** 测试隔离时清空所有记忆。 */
 export function resetAiChatMemoryCache(): void {
   chatBuffers.clear();
   chatSummaries.clear();

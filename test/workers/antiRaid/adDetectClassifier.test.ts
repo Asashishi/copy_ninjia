@@ -10,7 +10,7 @@ const requestAdDetectJson = mock(async (..._args: unknown[]): Promise<string | n
 mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
-mock.module("../../../packages/antiRaid/ai/provider", () => ({ requestAdDetectJson }));
+mock.module("../../../packages/workers/antiRaid/adDetect/ai/provider", () => ({ requestAdDetectJson }));
 mock.module("../../../packages/config/adSamples", () => ({
   getAdSampleConfig: (): readonly string[] => ["加溦拉群"],
 }));

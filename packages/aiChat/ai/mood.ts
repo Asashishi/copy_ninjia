@@ -1,6 +1,7 @@
 import { chatMoodExpiresAts, chatMoods } from "../../cache/workers/aiChat/mood";
 import { getMoodConfig } from "../../config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../consts/aiChat/mood";
+import { MOOD_LABEL_NAME } from "../../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../consts/weather";
 import { getTokyoHour } from "../../libs/time";
 import { weatherCache } from "../../cache/workers/aiChat/weather";
@@ -23,8 +24,8 @@ interface WeightedMood {
  * 随 Worker 重启清空、下次用到时重抽。
  *
  * 天气数据直接读 cache/workers/aiChat/weather.ts 的 weatherCache.current——这里只读现有
- * 缓存，不在这条路径里发请求（重抽发生在 replyModel.ts 拼系统提示词的
- * 同步路径上，必须保持同步）；缓存保鲜由 aiChat/ai/weather.ts 的后台
+ * 缓存，不在这条路径里发请求（重抽发生在 workers/aiChat/runtimeState.ts 拼运行时
+ * 状态区块的同步路径上，必须保持同步）；缓存保鲜由 aiChat/ai/weather.ts 的后台
  * 定时循环负责（每小时刷新一次，见 startWeatherRefreshLoop），与
  * get_tokyo_weather 工具共用同一份数据、同一种「只读不发请求」的取用
  * 方式。缓存还没暖起来（Worker 刚启动、还没到第一次刷新）时按「没有
@@ -36,7 +37,7 @@ interface WeightedMood {
  *  心情系统从天气缓存能拿到的只有格式化后的中文描述
  *  （TokyoWeatherResult 没有保留原始 WMO 代码，那是特意精简给模型看的
  *  字段），所以按描述文案反查桶。 */
-const WEATHER_DESCRIPTION_TO_BUCKET: Record<string, WeatherBucket> = Object.fromEntries(
+const WEATHER_DESCRIPTION_TO_BUCKET: Readonly<Record<string, WeatherBucket>> = Object.fromEntries(
   Object.entries(WEATHER_CODE_DESCRIPTIONS).map(([code, description]: [string, string]): [string, WeatherBucket] => [description, classifyWeatherCodeBucket(Number(code))])
 );
 
@@ -135,14 +136,14 @@ export function currentMood(
 }
 
 /**
- * 拼进系统提示词的当前心情指令；当前档位及自然到期语义统一由 currentMood
+ * 拼进运行时状态区块的当前心情指令；当前档位及自然到期语义统一由 currentMood
  * 维护，避免查询命令与提示词拼装各自实现一遍缓存读取。
  */
 export function currentMoodInstruction(
   chatId: number
 ): string {
   const mood: MoodOption = currentMood(chatId);
-  return `【今天的心情：${mood.name}】${mood.instruction}`;
+  return `【${MOOD_LABEL_NAME}：${mood.name}】${mood.instruction}`;
 }
 
 /**

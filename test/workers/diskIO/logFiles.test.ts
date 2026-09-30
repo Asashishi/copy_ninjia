@@ -110,18 +110,16 @@ describe("diskIO/logFiles 启动恢复", () => {
     expect(loggerFileState.current).toBeNull();
   });
 
-  test("日志先进入内存批次，显式 flush 会取消 timer 并保留结构化参数", async () => {
+  test("日志先进入内存批次，显式 flush 落盘并保留结构化参数", async () => {
     await initLogFiles();
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
     const day: string = getTokyoDateKey(timestamp);
 
-    await handleLogMessage({ timestamp, level: "error", args: ["request failed", { code: 503 }, "retrying"] });
+    handleLogMessage({ timestamp, level: "error", args: ["request failed", { code: 503 }, "retrying"] });
     expect(flushBuffer.entries).toHaveLength(1);
-    expect(flushBuffer.timer).not.toBeNull();
 
     expect(await flushLogBuffer()).toBeTrue();
     expect(flushBuffer.entries).toHaveLength(0);
-    expect(flushBuffer.timer).toBeNull();
     const parsed = JSON.parse(await Bun.file(join(LOGS_DIR, `${day}.json`)).text()) as Record<string, {
       level: string;
       message: string;
@@ -141,7 +139,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
     const day: string = getTokyoDateKey(timestamp);
 
-    await handleLogMessage({ timestamp, level: "info", args: ["bot", "started"] });
+    handleLogMessage({ timestamp, level: "info", args: ["bot", "started"] });
     expect(await flushLogBuffer()).toBeTrue();
     const parsed = JSON.parse(await Bun.file(join(LOGS_DIR, `${day}.json`)).text()) as Record<string, object>;
     const records = Object.values(parsed);
@@ -157,7 +155,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     await Bun.write(stalePath, "{}");
     await Bun.write(tempPath, "partial");
     const timestamp: number = Date.now();
-    await handleLogMessage({ timestamp, level: "error", args: ["daily maintenance"] });
+    handleLogMessage({ timestamp, level: "error", args: ["daily maintenance"] });
 
     await maintainLogRetention();
 

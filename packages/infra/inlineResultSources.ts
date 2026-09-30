@@ -3,7 +3,6 @@ import type {
   InputMessageContent,
 } from "grammy/types";
 import { inlineResultSources } from "../cache/main/inlineResultSources";
-import { INLINE_RESULT_SOURCE_MAX_AUTHORS } from "../consts/telegram";
 import type { InlineResultSource } from "../types/telegram";
 
 /**
@@ -42,7 +41,7 @@ function inlineResultText(result: InlineQueryResult): string | undefined {
  * 运势为查询者本人。
  *
  * 传的就是交给 answerInlineQuery 的那份结果数组，正文由本函数取，调用方
- * 不必自己拼——渲染与登记之间不再有第二处需要保持一致的文本。
+ * 不必自己拼。
  *
  * 调用方在 answerInlineQuery 结算之后登记；Bot API 明确拒收
  * （infra/telegram/errors.ts 的 isTelegramRequestRejected）时不登记，保留上一次
@@ -66,15 +65,8 @@ export function recordInlineResultSources(
     if (text !== undefined && text.length > 0) resultTexts.push(text);
   }
   if (resultTexts.length === 0) return;
-  // 先删再写：Map 按插入序淘汰，重新登记的发言身份必须回到队尾，不被自己的旧
-  // 位置提前挤掉。
-  inlineResultSources.delete(speakerId);
+  // 重新登记的发言身份回到最新顺位，不被自己的旧位置提前挤掉。
   inlineResultSources.set(speakerId, { sourceText, resultTexts });
-  while (inlineResultSources.size > INLINE_RESULT_SOURCE_MAX_AUTHORS) {
-    const oldest: number | undefined = inlineResultSources.keys().next().value;
-    if (oldest === undefined) break;
-    inlineResultSources.delete(oldest);
-  }
 }
 
 /**
@@ -89,6 +81,6 @@ export function inlineResultSourceOf(
   resultText: string
 ): string | undefined {
   if (resultText.length === 0) return undefined;
-  const source: InlineResultSource | undefined = inlineResultSources.get(speakerId);
+  const source: InlineResultSource | undefined = inlineResultSources.peek(speakerId);
   return source?.resultTexts.includes(resultText) === true ? source.sourceText : undefined;
 }

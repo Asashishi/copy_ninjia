@@ -26,7 +26,7 @@ import { agentTtsConfig } from "../../../../config/agent";
 import { getImageGenerationAvailability } from "../../../../cache/workers/aiChat/imageGeneration";
 import { aiTtsRemaining } from "../../ttsUsage";
 import { ttsQuotaLimit } from "../../utils/ttsUsageWindow";
-import { defaultAspectRatioFor } from "./imageGeneration";
+import { defaultAspectRatioFor, imageCooldownRetrySeconds } from "./imageGeneration";
 import type { AgentTtsCapabilityConfig } from "../../../../types/config";
 import type { ImageGenerationAvailability } from "../../../../types/aiChat/imageGeneration";
 import type { ReplyToolContext } from "../../../../types/aiChat/replies";
@@ -54,7 +54,7 @@ function imageStatusLine(ctx: ToolStatusContext): string {
     bypassCooldown: ctx.bypassMediaToolCooldown,
   });
   if (!availability.allowed) {
-    return imageToolStatusCoolingDown(Math.max(1, Math.ceil(availability.retryAfterMs / 1_000)));
+    return imageToolStatusCoolingDown(imageCooldownRetrySeconds(availability.retryAfterMs));
   }
   const reference: ReplyToolContext["imageGenerationReference"] = ctx.imageGenerationReference;
   return imageToolStatusAvailable(reference

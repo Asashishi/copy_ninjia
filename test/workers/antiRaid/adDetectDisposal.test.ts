@@ -36,7 +36,7 @@ const {
 } = await import("../../../packages/workers/antiRaid/adDetect/disposal");
 const { adDetectPublishHolder, inFlightReferencedAdCleanupTasks } =
   await import("../../../packages/cache/workers/antiRaid/adDetect");
-const { KICK_NOTICE_AUTO_DELETE_MS } = await import("../../../packages/consts/telegram");
+const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../../packages/consts/commands");
 const { AD_DETECT_MAX_IN_FLIGHT } = await import(
   "../../../packages/consts/antiRaid/adDetect"
 );
@@ -49,7 +49,6 @@ function bundle(): AdMessageBundle {
   return {
     chatId: -1001,
     senderId: 7,
-    label: "@spammer",
     meta: { firstName: "Spammer", lastName: "", username: "spammer" },
     isChannel: false,
     justJoined: false,
@@ -105,6 +104,7 @@ describe("广告处置副作用", () => {
       chatId: -1001,
       senderId: 7,
       isChannel: false,
+      // 标签由 Worker 按冻结的元数据现算：有 username 时即 `@username`。
       label: "@spammer",
       meta: { firstName: "Spammer", lastName: "", username: "spammer" },
       reason: "引流加微信",
@@ -122,6 +122,31 @@ describe("广告处置副作用", () => {
     // 播报的文案要断言「在所有盯着的群里一起封掉了」，而此刻一个群都还没登记：
     // 谁知道结果谁播报，因此这一步不在本线程做（见 antiRaid/adDetect.ts）。
     expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
+  });
+
+  test("播报标签按冻结的元数据与本群氛围现算：频道念标题，缺名字时按氛围兜底", async () => {
+    const { applyWorkerAtmosphere } = await import("../../../packages/workers/antiRaid/atmosphere");
+    const events: AdDetectedEvent[] = [];
+    adDetectPublishHolder.current = (event: AdDetectedEvent): void => { events.push(event); };
+    const anonymous: AdMessageBundle = { ...bundle(), meta: { firstName: "", lastName: "", username: "" } };
+    const channel: AdMessageBundle = {
+      ...bundle(),
+      senderId: -1005,
+      isChannel: true,
+      meta: { firstName: "广告频道", lastName: "", username: "" },
+    };
+    applyWorkerAtmosphere(-1001, true);
+    try {
+      await disposeAdSender({ bundle: anonymous, judged: anonymous.entries, verdict: { isAd: true, reason: "" } });
+      await disposeAdSender({ bundle: channel, judged: channel.entries, verdict: { isAd: true, reason: "" } });
+    } finally {
+      applyWorkerAtmosphere(-1001, false);
+    }
+
+    expect(events.map((event: AdDetectedEvent): string => event.label)).toEqual([
+      ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser,
+      "广告频道",
+    ]);
   });
 
   test("样本只记模型真正读过的那一份，删除取判定依据与现场的并集", async () => {
@@ -265,7 +290,7 @@ describe("广告处置副作用", () => {
       chatId: -1001,
       identityId: 7,
       text: warning,
-      deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
+      deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     });
     expect(result).toEqual({ messageId: 555, sentAt: 1_500 });
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12]);

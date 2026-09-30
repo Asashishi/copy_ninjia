@@ -1,4 +1,3 @@
-import { workerAtmosphere } from "../atmosphere";
 /**
  * 判定命中后的处置副作用（入群守卫线程侧）：删掉这一串消息，并把「这个人该按
  * /block 处置」回投主线程。
@@ -10,6 +9,9 @@ import { workerAtmosphere } from "../atmosphere";
  * 播报同理跟着结果走，由主线程发（见 antiRaid/adDetect.ts 的 announceAdDisposal）。
  */
 
+import { workerAtmosphere } from "../atmosphere";
+import { formatUserLabel } from "../../../users/userLabel";
+import type { AtmosphereTexts } from "../../../types/atmosphere";
 import {
   deleteMessage,
   deleteMessages,
@@ -25,10 +27,8 @@ import { botCanDeleteIn } from "../botPermissions";
 import {
   AD_DETECT_MAX_IN_FLIGHT,
 } from "../../../consts/antiRaid/adDetect";
-import {
-  KICK_NOTICE_AUTO_DELETE_MS,
-  TELEGRAM_DELETE_MESSAGES_BATCH_MAX,
-} from "../../../consts/telegram";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
+import { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } from "../../../consts/telegram";
 import type {
   AdCandidateEntry,
   AdDetectedEvent,
@@ -64,23 +64,38 @@ interface DisposalMessageIdsParams {
 }
 
 /**
+ * 处置播报里的展示标签：按冻结的可见发送者元数据与当前群氛围现算，口径同
+ * users/userLabel.ts 的 formatUserLabel（频道的 firstName 即频道标题）。
+ */
+function adSenderLabel(bundle: AdMessageBundle, atmosphere: AtmosphereTexts): string {
+  return formatUserLabel({
+    id: bundle.senderId,
+    username: bundle.meta.username,
+    first_name: bundle.meta.firstName,
+    title: bundle.meta.firstName,
+    isChannel: bundle.isChannel,
+  }, atmosphere);
+}
+
+/**
  * 第一次引用类广告的公开警告。主线程在发出消息的同一成功回调里登记 30 秒删除，
  * 返回成功即表示清理 owner 已接管；Worker 后续退出也不会遗留非功能性提示。
  */
 export function warnReferencedAdSender(
   bundle: AdMessageBundle
 ): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
+  const atmosphere: AtmosphereTexts = workerAtmosphere(bundle.chatId);
   return sendTemporaryMessageFromMain({
     purpose: "adWarning",
     chatId: bundle.chatId,
     identityId: bundle.senderId,
-    text: workerAtmosphere(bundle.chatId).NOTICE_TEXTS.adReferenceWarning(bundle.label),
-    deleteAfterMs: KICK_NOTICE_AUTO_DELETE_MS,
+    text: atmosphere.NOTICE_TEXTS.adReferenceWarning(adSenderLabel(bundle, atmosphere)),
+    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   });
 }
 
 /**
- * 清理第一次警告覆盖的广告消息。删除是独立的尽力而为副作用，不再占用分类
+ * 清理第一次警告覆盖的广告消息。删除是独立的尽力而为副作用，不占用分类
  * in-flight；慢删除或 429 不能阻塞同一发送者警告后的再次判定。
  */
 export function deleteReferencedAdMessages({
@@ -169,9 +184,9 @@ function disposalMessageIds({
  * 部分一样是尽力而为，不登记进停机 drain 的在途集合。
  */
 export function deleteStragglerAdMessage(chatId: number, messageId: number): void {
-  // 确证没有删消息权限就别打：这些请求与验证超时踢人共用一条限流队列，一场
-  // 广告突袭能把几十个注定 400 的删除顶在真正的踢人前面。三态里只拦确证的
-  // false，「没观测到」照常发（见 ../botPermissions.ts）。
+  // 确证没有删消息权限就别打：一场广告突袭能产生几十个注定 400 的删除请求，白占
+  // 网络、日志和停机预算。三态里只拦确证的 false，「没观测到」照常发（见
+  // ../botPermissions.ts）。
   if (botCanDeleteIn(chatId) === false) return;
   void deleteMessage(chatId, messageId, telegramApi);
 }
@@ -183,8 +198,8 @@ export function deleteStragglerAdMessage(chatId: number, messageId: number): voi
  *
  * 群内播报**不在这里发**。它的文案要断言「在所有盯着的群里一起封掉了」，而
  * 那件事此刻还没发生：主线程可能因为 outbox 触顶、刚被撤管理员或 /init disable
- * 而一个群都登记不上。谁知道结果谁播报，因此挪到主线程的 disposeDetectedAd
- * （见 antiRaid/adCandidate.ts）。
+ * 而一个群都登记不上。谁知道结果谁播报，因此由主线程发（见 antiRaid/adDetect.ts
+ * 的 announceAdDisposal）。
  */
 export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSenderParams): Promise<void> {
   const messageIds: number[] = disposalMessageIds({
@@ -215,7 +230,7 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
     chatId: bundle.chatId,
     senderId: bundle.senderId,
     isChannel: bundle.isChannel,
-    label: bundle.label,
+    label: adSenderLabel(bundle, workerAtmosphere(bundle.chatId)),
     meta: bundle.meta,
     reason: verdict.reason,
     // 判定依据的整串原样带回主线程写进命中样本（见 diskIO/adSampleFile.ts）：
@@ -234,9 +249,9 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
   // revoke_messages，但它只覆盖「还在这个群里的成员」，频道马甲与已经自己退群的
   // 账号都不在其列；而这些正是本次判定的直接依据，无论如何都要清掉。
   //
-  // 走批量接口而不是逐条 await：这些请求与验证超时踢人共用一条限流队列，而广告
-  // 链路刻意不登记进在途任务集合，同时在跑多少条没有上界。逐条删会把一次处置
-  // 放大成几十个往返顶在踢人前面，正是当初拆开 API 队列要避免的事。
+  // 走批量接口而不是逐条 await：广告链路刻意不登记进在途任务集合，同时在跑多少条
+  // 没有上界；逐条删会把一次处置放大成几十个 delete 类别的往返，批量则每
+  // TELEGRAM_DELETE_MESSAGES_BATCH_MAX 条只占一个请求。
   await deleteAdMessages(bundle.chatId, messageIds);
 }
 
@@ -252,7 +267,7 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
  */
 async function deleteAdMessages(chatId: number, messageIds: readonly number[]): Promise<void> {
   // 同 deleteStragglerAdMessage：确证没权限时一次分片都不必发。一次处置的并集
-  // 可以远超 100 条，全打出去就是 ceil(N/100) 个注定失败的往返压在踢人前面。
+  // 可以远超 100 条，全打出去就是 ceil(N/100) 个注定失败的请求。
   if (botCanDeleteIn(chatId) === false) {
     logger.error(
       `Ad disposal skipped deleting ${messageIds.length} message(s) in chat ${chatId}: ` +

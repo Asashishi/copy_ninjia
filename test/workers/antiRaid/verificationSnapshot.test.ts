@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { verificationGeneration } from "../../../packages/cache/workers/antiRaid/verification";
 import { verificationSnapshot } from "../../../packages/workers/antiRaid/verificationSnapshot";
 import { decodeVerificationDay, storedVerificationSnapshot } from "../../../packages/workers/diskIO/verificationCodec";
-import { checkingInviterOf, expellingOf } from "../../../packages/states/verification";
+import { checkingInviterOf, expellingOf } from "../../../packages/states/verification/shared";
 import type { ExpelSnapshot, PendingState, VerificationState } from "../../../packages/types/states/verification";
 import type { VerificationSnapshot } from "../../../packages/types/antiRaid/verification";
 
@@ -51,5 +51,13 @@ test("终态快照保留各阶段字段且不会回写状态对象", (): void =>
     else if (state.kind === "checkingInviter") expect(snapshot).toMatchObject({ terminalInviterId: state.inviterId });
     else expect(snapshot).toMatchObject({ expelReason: state.reason, successNoticeSent: state.successNoticeSent, failureNoticeSent: state.failureNoticeSent, unconfirmedNoticeSent: state.unconfirmedNoticeSent, removalConfirmed: state.removalConfirmed });
     expect(decodeVerificationDay("fixture", JSON.stringify({ "-1001:42": storedVerificationSnapshot(snapshot) })).get("-1001:42")).toEqual(snapshot);
+  }
+});
+
+test("null 墓碑按规范验证键接纳，畸形墓碑键整份拒绝", (): void => {
+  expect(decodeVerificationDay("fixture", JSON.stringify({ "-1001:42": null })).get("-1001:42")).toBeNull();
+  for (const key of ["garbage", "-1001:0", "1001:42", "-1001:42.5", "-01001:42"]) {
+    expect(() => decodeVerificationDay("fixture", JSON.stringify({ [key]: null })))
+      .toThrow("fixture: $.<record> must be a current verification record or null tombstone.");
   }
 });

@@ -8,10 +8,5 @@ export function toTelegramSendResult(
   sent: Message
 ): TelegramSendResult {
   markSelfSent(chatId, sent.message_id);
-  return {
-    messageId: sent.message_id,
-    ...(sent.reply_to_message
-      ? { repliedToMessageId: sent.reply_to_message.message_id }
-      : {}),
-  };
+  return { messageId: sent.message_id, repliedToMessageId: sent.reply_to_message?.message_id };
 }

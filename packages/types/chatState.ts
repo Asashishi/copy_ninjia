@@ -115,7 +115,7 @@ export interface ChatState {
    * 仍保存一份 `isAdministrator: false` 且其它权限全 false 的完整快照。
    *
    * 这是主线程唯一的权威副本：入群守卫、/block 群清单与具体动作权限
-   * 都直接读它，不再并行维护第二张主线程 Map。
+   * 都直接读它。
    */
   botPermissions?: BotChatPermissions;
   /**

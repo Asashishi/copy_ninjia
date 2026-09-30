@@ -4,7 +4,7 @@ import type { GeminiContextCacheContent, GeminiContextCacheRegistry } from "../.
 
 /**
  * ad_detect scope 的登记表（结构见 types/geminiContextCache.ts，读写见
- * infra/geminiContextCache.ts，scope 在 antiRaid/ai/google.ts）。null 表示本线程尚未取用或
+ * infra/geminiContextCache.ts，scope 在 workers/antiRaid/adDetect/ai/google.ts）。null 表示本线程尚未取用或
  * 已被复位。
  *
  * 填充：provider=google 时第一次判定按当下 ad_detect 客户端新建，随即触发启动扫描，按

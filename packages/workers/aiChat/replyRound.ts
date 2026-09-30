@@ -124,7 +124,7 @@ function buildReplyToolContext({
       self: selfInfo,
       messageId,
       text,
-      ...(selfReplyTo === undefined ? {} : { replyTo: selfReplyTo }),
+      replyTo: selfReplyTo,
     }));
   };
   return {
@@ -133,7 +133,7 @@ function buildReplyToolContext({
     messageThreadId,
     chatQa,
     mediaToolsRequested: mediaToolsAllowed,
-    ...(mediaToolsAllowed && imageGenerationReference ? { imageGenerationReference } : {}),
+    imageGenerationReference: mediaToolsAllowed ? imageGenerationReference : undefined,
     bypassMediaToolCooldown: triggerSenderId === superAdminUserIdState.current,
     chatAction: heartbeat,
     direct,
@@ -162,8 +162,8 @@ function buildReplyToolContext({
 }
 
 /** 把模型的最终正文作为一条消息兜底发出（随机触发不挂回复）；发送失败只记日志。 */
-async function sendFallbackText(toolset: ReplyToolset, request: ReplyRoundRequest, finalText: string): Promise<void> {
-  const result: string = await toolset.execute(
+function sendFallbackText(toolset: ReplyToolset, request: ReplyRoundRequest, finalText: string): void {
+  const result: string = toolset.execute(
     SEND_MESSAGE_TOOL,
     JSON.stringify({ text: finalText, reply_to_trigger: !request.isRandomTrigger })
   );
@@ -255,7 +255,7 @@ export function startReplyRound(
     };
     const isActive = (): boolean =>
       !signal.aborted && isCachedReplyGenerationCurrent(chatId, generation);
-    // 提示词和工具 schema 必须共用同一次抽签，否则配置概率不等于实际错字概率。
+    // 提示词与 send_message 执行侧的错字处理必须共用同一次抽签，否则配置概率不等于实际错字概率。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
       const resolvedMedia: MediaCommentContext | null | undefined = mediaPreparation
@@ -307,7 +307,7 @@ export function startReplyRound(
           finalText = await generateReply(chatId, promptSections, toolset);
 
           // 仅在没有接纳任何动作时兜底发送最终正文；排队中的动作同样阻止重复兜底。
-          if (finalText && toolset.actionsUsed() === 0) await sendFallbackText(toolset, request, finalText);
+          if (finalText && toolset.actionsUsed() === 0) sendFallbackText(toolset, request, finalText);
         } finally {
           // 模型不再被请求：收回直接轮请求期间亮着、没被动作接走的状态。
           toolset.afterModel();

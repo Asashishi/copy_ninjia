@@ -20,28 +20,19 @@ export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_00
 
 /**
  * 单枚贴纸描述在退避序列也用完之后的负缓存时长（见 cache/workers/aiChat/stickers/catalog.ts 的
- * failedEntries）。
- *
- * 比 STICKER_CATALOG_RETRY_INTERVAL_MS 长得多：这张表兜的是「这一枚现在描述不
- * 出来」，而对账本身每 5 分钟就会走一遍，TTL 跟着对账走等于每轮都把整包重描一遍。
- * 又不能没有——视觉端点的故障常常是分钟级到小时级的（配额、密钥轮换），永久闩死
- * 会让首次部署撞上一次故障的包再也建不起目录。半小时是「故障恢复后自愈够快、
- * 永远好不了的包每小时最多多花两轮」的折中。
+ * failedEntries）：期间对账跳过该贴纸，到期后由下一次对账重描。远长于
+ * STICKER_CATALOG_RETRY_INTERVAL_MS，条目不会永久闩死。
  */
 export const STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS: number = 30 * 60_000;
 
 /**
  * 目录仍不完整的包在维护节拍上的重试间隔（见 aiChat/ai/stickers/catalog.ts 的
- * retryIncompleteStickerCatalogs）。
- *
- * 只在启动时对账一次是不够的：`getStickerSet` 失败会让 generatePackCatalog 整包
- * 放弃，而进程按 systemd 托管可以连跑几周——首次部署撞上一次网络抖动，两个贴纸
- * 工具就会对所有回复返回 null 直到下次重启。间隔取分钟级而不是跟着 30 秒的
- * 维护节拍走：包名配错这类永远好不了的情形下，重试本身也要跟着记一条错误日志。
+ * retryIncompleteStickerCatalogs）：目录为空、简介缺失或单枚失败负缓存到期的包，
+ * 两次维护重试至少相隔这么久。
  */
 export const STICKER_CATALOG_RETRY_INTERVAL_MS: number = 5 * 60_000;
 
-/** 整包简介与工具意图的领域约束。 */
+/** 整包简介的最大字符数；超出按子句边界截断（见 aiChat/ai/stickers/catalog.ts 的 summarizePack）。 */
 export const STICKER_PACK_SUMMARY_MAX_CHARS: number = 200;
 
 /** 贴纸整包简介请求在错误日志里的调用名；供应商中立，两家实现包共用。 */

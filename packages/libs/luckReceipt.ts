@@ -8,8 +8,8 @@ import {
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 /**
- * cache key 的编解码器在模块级复用（同 libs/time.ts 的 Intl.DateTimeFormat 处理）：
- * 这两个类在 Bun 上恒可用、构造不会失败，不需要 libs/text.ts 那种可重试的 holder。
+ * cache key 的编解码器在模块级复用，处理方式同 libs/text.ts 的 GRAPHEME_SEGMENTER 与
+ * libs/time.ts 的 TOKYO_FULL_TIME_FORMATTER：这两个类在 Bun 上恒可用、构造不会失败。
  *
  * 解码器带 `fatal: true`：非法 UTF-8 必须抛出而不是替换成 U+FFFD，否则伪造的
  * cache key 会被悄悄改写成另一个合法字符串。抛出后实例仍可继续使用——每次
@@ -89,8 +89,8 @@ export function createLuckReceipt(secret: LuckReceiptSecret, cacheKey: string): 
 }
 
 /**
- * 最终消息直接展示回执里已有的 HMAC-SHA256（转成十六进制），不再对完整
- * 回执额外做一次 SHA-256；原回执仍由 Telegram 实体元数据携带。
+ * 最终消息直接展示回执里已有的 HMAC-SHA256（转成十六进制）；原回执仍由
+ * Telegram 实体元数据携带。
  */
 export function luckReceiptHmacHash(receipt: string): string | undefined {
   const match: RegExpExecArray | null = LUCK_RECEIPT_PATTERN.exec(receipt);
@@ -109,7 +109,7 @@ export function isLuckReceiptHash(value: string): boolean {
 
 /**
  * 常量时间验证回执并直接还原 cache key；错误版本、日期、长度、编码或签名
- * 一律返回 undefined，不依赖任何待确认反向索引。
+ * 一律返回 undefined；验证只依赖回执自身与当日密钥。
  */
 export function verifyLuckReceipt(
   receipt: string,

@@ -24,8 +24,8 @@ import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "../helpers/botPermissions";
 
 /**
- * 黑名单销号计数的次序边界：回执到达顺序、逐身份队列里的解除核对、等待期间的
- * LRU 淘汰，以及补扫分页读的 flush 窗口。
+ * 黑名单销号计数的次序边界：回执到达顺序、逐身份队列里的解除核对、预热等待期间的
+ * LRU 淘汰，以及与补扫分页读 flush 的并发。
  */
 
 mock.module("../../packages/infra/diskIO", participantInvalidDiskIO);
@@ -41,7 +41,6 @@ const {
 } = await import("../../packages/cache/main/blocklist");
 const {
   blocklistEntryCache,
-  blocklistSweepFlushWindows,
   resetIdentityStorageCache,
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
@@ -56,8 +55,8 @@ const { recordBlocklistParticipantReadability } = await import("../../packages/i
 
 const EMPTY_PAGE: BlocklistIdPage = { ids: [], nextCursor: null, done: true };
 
-/** 打开一个补扫分页读的 flush 窗口，返回释放它的 resolver 与读取结果。 */
-function openSweepWindow(): { release: () => void; page: Promise<BlocklistIdPage> } {
+/** 发起一次卡在 flush 上的补扫分页读，返回放行 flush 的 resolver 与读取结果。 */
+function startGatedSweepPageRead(): { release: () => void; page: Promise<BlocklistIdPage> } {
   const gate: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
   participantInvalidHarness.flushGate = gate.promise;
   const page: Promise<BlocklistIdPage> = readBlocklistSweepPage(null);
@@ -129,107 +128,67 @@ describe("黑名单销号计数的次序", () => {
     expect(isUserBlocked(7)).toBeTrue();
   });
 
-  test("等待窗口期间身份被淘汰时整条回执重新预热后一起写出", async () => {
+  test("预热等待期间身份被淘汰时整条回执重新预热后一起写出", async () => {
     storeBlocked(7);
     storeBlocked(8);
-    await prefetchIdentityPolicies([7, 8]);
+    await prefetchIdentityPolicies([7]);
     readIdentityPolicies.mockClear();
-    const window: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
+    const read: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
+    participantInvalidHarness.readGate = read.promise;
 
     recordBlocklistParticipantReadability(receipt([7, 8]));
-    await Bun.sleep(0);
-    expect(readIdentityPolicies).not.toHaveBeenCalled();
-    whitelistEntryCache.delete(8);
-    window.release();
-    await expect(window.page).resolves.toEqual(EMPTY_PAGE);
+    await waitUntil((): boolean => readIdentityPolicies.mock.calls.length === 1);
+    // 预热正在读 8；这期间已缓存的 7 被淘汰。
+    whitelistEntryCache.delete(7);
+    participantInvalidHarness.readGate = null;
+    read.resolve();
     await drainParticipantInvalidWork();
 
-    expect(readIdentityPolicies.mock.calls.map((call) => call[0])).toEqual([[8]]);
+    expect(readIdentityPolicies.mock.calls.map((call) => call[0])).toEqual([[8], [7]]);
     expect(writtenCounts()).toEqual([[7, 1], [8, 1]]);
   });
 
-  test("每轮都在写入前被淘汰时，轮数用尽后跳过整条回执并记错误", async () => {
+  test("每轮预热等待期间都有身份被淘汰时，轮数用尽后跳过整条回执并记错误", async () => {
     storeBlocked(7);
     storeBlocked(8);
-    await prefetchIdentityPolicies([7, 8]);
+    await prefetchIdentityPolicies([7]);
     readIdentityPolicies.mockClear();
-    let window: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
+    let read: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
+    participantInvalidHarness.readGate = read.promise;
     recordBlocklistParticipantReadability(receipt([7, 8]));
-    await Bun.sleep(0);
 
     for (let attempt: number = 1; attempt <= BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS; attempt++) {
-      whitelistEntryCache.delete(8);
-      const read: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
-      participantInvalidHarness.readGate = read.promise;
-      window.release();
-      await expect(window.page).resolves.toEqual(EMPTY_PAGE);
-      if (attempt === BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS) break;
-      // 下一轮预热卡在读库时再开一个窗口，让它预热完仍须等待。
       await waitUntil((): boolean => readIdentityPolicies.mock.calls.length === attempt);
-      window = openSweepWindow();
-      participantInvalidHarness.readGate = null;
-      read.resolve();
-      await Bun.sleep(0);
+      // 这一轮在读哪个身份，就把另一个已缓存的淘汰掉。
+      const reading: readonly number[] = readIdentityPolicies.mock.calls[attempt - 1]![0] as readonly number[];
+      whitelistEntryCache.delete(reading.includes(8) ? 7 : 8);
+      const current: { promise: Promise<void>; resolve: () => void } = read;
+      read = Promise.withResolvers<void>();
+      participantInvalidHarness.readGate = attempt < BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS ? read.promise : null;
+      current.resolve();
     }
-    participantInvalidHarness.readGate = null;
     await drainParticipantInvalidWork();
 
     expect(identityWrites("blocklist")).toEqual([]);
-    expect(readIdentityPolicies).toHaveBeenCalledTimes(BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS - 1);
+    expect(readIdentityPolicies).toHaveBeenCalledTimes(BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS);
     expect(participantInvalidHarness.loggedErrors.some((message: string): boolean =>
       message.includes("Skipped blocklist PARTICIPANT_ID_INVALID counts for removal 1 in chat -1001")
     )).toBeTrue();
   });
 
-  test("补扫分页读处在 flush 窗口时，计数写入等窗口关闭后才投递", async () => {
+  test("补扫分页读 flush 期间落下的计数写入立即投递，也不让这次核对失败", async () => {
     storeBlocked(7);
     await prefetchIdentityPolicies([7]);
-    const window: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
+    const sweep: { release: () => void; page: Promise<BlocklistIdPage> } = startGatedSweepPageRead();
 
     recordBlocklistParticipantReadability(receipt([7]));
-    await Bun.sleep(0);
-    expect(identityWrites("blocklist")).toEqual([]);
-
-    window.release();
-    await expect(window.page).resolves.toEqual(EMPTY_PAGE);
     await drainParticipantInvalidWork();
     expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 1 });
 
-    // 窗口关闭后开始的分页读由自己的 flush 覆盖这次写入。
+    // 这次写入晚于 flush 发出，不属于它覆盖的那一批，核对只看更早的 revision。
+    sweep.release();
+    await expect(sweep.page).resolves.toEqual(EMPTY_PAGE);
+    // 之后开始的分页读由自己的 flush 覆盖这次写入。
     await expect(readBlocklistSweepPage(null)).resolves.toEqual(EMPTY_PAGE);
-  });
-
-  test("一个窗口关闭时另一个分页读仍在 flush，写入继续等待", async () => {
-    storeBlocked(7);
-    await prefetchIdentityPolicies([7]);
-    const first: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
-    recordBlocklistParticipantReadability(receipt([7]));
-    await Bun.sleep(0);
-    const second: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
-
-    first.release();
-    await expect(first.page).resolves.toEqual(EMPTY_PAGE);
-    await Bun.sleep(0);
-    expect(identityWrites("blocklist")).toEqual([]);
-
-    second.release();
-    await expect(second.page).resolves.toEqual(EMPTY_PAGE);
-    await drainParticipantInvalidWork();
-    expect(lastWrittenData(7)).toEqual({ blockedAt: BLOCKED_AT, meta: META, participantInvalidCount: 1 });
-  });
-
-  test("测试隔离重置后，迟到关闭的旧窗口不改变新的窗口计数", async () => {
-    const stale: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
-    expect(blocklistSweepFlushWindows.open).toBe(1);
-    resetIdentityStorageCache();
-    expect(blocklistSweepFlushWindows.open).toBe(0);
-    const current: { release: () => void; page: Promise<BlocklistIdPage> } = openSweepWindow();
-
-    stale.release();
-    await expect(stale.page).resolves.toEqual(EMPTY_PAGE);
-    expect(blocklistSweepFlushWindows.open).toBe(1);
-    current.release();
-    await expect(current.page).resolves.toEqual(EMPTY_PAGE);
-    expect(blocklistSweepFlushWindows.open).toBe(0);
   });
 });

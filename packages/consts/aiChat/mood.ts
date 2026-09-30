@@ -5,6 +5,12 @@ export const MOOD_ENTRY_REQUIRED_KEYS: readonly string[] = ["name", "weight", "i
 /** 单条心情配置允许额外出现的可选字段。 */
 export const MOOD_ENTRY_OPTIONAL_KEYS: readonly string[] = ["weatherMultipliers", "timeMultipliers"];
 
+/**
+ * mood.json 全部 base weight 之和必须恰好等于的值，让配置里的权重可以直接当百分比读。
+ * 抽取算法按倍率调整后的连续权重工作、不依赖总和。所属模块：config/mood.ts。
+ */
+export const MOOD_WEIGHT_TOTAL: number = 100;
+
 /** 心情的随机寿命区间：抽到后过这么久自然到期重抽，与群是否活跃无关；
  *  心情与到期时刻均不落盘。 */
 export const MOOD_REROLL_MIN_MS: number = 2 * 60 * 60_000;
@@ -23,8 +29,8 @@ export const MOOD_REQUEST_TIMEOUT_MS: number = 5_000;
 export const MOOD_MULTIPLIER_MAX: number = 100;
 
 // 天气/时段桶的运行时全集，供部署配置（config/dynamic/mood.json）的倍率表键做运行时
-// 校验。从 satisfies Record<Bucket, true> 的键派生而非手写数组：
-// types/aiChat/mood.ts 的联合类型增删桶而这里没跟上时直接编译报错，不靠人工同步。
+// 校验。由带 Record<Bucket, true> 标注的对象派生：types/aiChat/mood.ts 的联合类型
+// 增删桶而这里没跟上时直接编译报错。
 /** 天气桶联合类型的运行时全集，用于配置键校验。 */
 const WEATHER_BUCKET_FLAGS: Readonly<Record<WeatherBucket, true>> = {
   clear: true,

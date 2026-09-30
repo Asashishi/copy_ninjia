@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5492 tests / 475 files / 262413 次 `expect()`**；全源码**函数覆盖率 98.07% / 行覆盖率 98.50%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5539 tests / 481 files / 263075 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.51%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -166,7 +166,7 @@
 
 `bun run perf:full` 只在发布和明确指令时运行，不进 `bun run check`，也不设失败阈值——热路径的硬门禁仍是上面的 `perf:hot-path-gate`。它把六个分区各跑三轮独立子进程再取平均：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线。每一项除平均值外还给最小值、最大值与变异系数，CV 明显变大的那一行不能拿去和历史比。
 
-被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有三条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出，`cron-send-voice` 走语音合成公共实现（tts 门面、Gemini 语音适配层、Base64 解码、WAV 解析、Opus 编码）再经 `deliverCronAction` 发出语音气泡——生产中合成在 AI Worker、结果随回执转给主线程，这条链路在同一进程内串起两侧，不含线程间传递。这三条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
+被测实现全部复用现有代码：热路径直接跑 `perf:hot-paths` 的场景与迭代规模，存储调 `perf:identity-database` 的实现，容量线调 `perf:join-log` 的子进程，链路由 `recordJoinLog`、`persistChatState`、`queueIdentityPolicyWrite`、`postDiskIO`、`relayLogMessage` 这些主线程生产入口驱动真实 Disk I/O Worker，计时到落盘 durable 回执为止。另有三条**完整命令**链路：`ad-detect-command` 走 `enqueueAdCandidate` 到 `runAdDetectBatch` 再到主线程 `handleAdDetected` 的处置排空，`ai-reply-command` 走 `recordChatMessage` 与 `generateAndSendReply` 到回复真的发出，`cron-send-voice` 走语音合成公共实现（tts 门面、Gemini 语音适配层、Base64 解码、WAV 解析、Opus 编码）再经 `deliverCronAction` 发出语音气泡——生产中合成在 AI Worker、结果随回执转给主线程，这条链路在同一进程内串起两侧，不含线程间传递。这三条的模型调用与 Telegram 出站由 `scripts/perf/outboundGuard.ts` 的进程内罐头就地应答——基准从不发起真实请求，也不产生任何调用费用；`ai-reply-command` 另外按实测扣掉发送前的拟人停顿，口径见 [09 性能基准](09-performance.md)。另有一条部署配置链路 `cron-config-reload`：在满规格任务表（`CRON_MAX_TASKS` 个任务、每个 `CRON_MAX_ACTIONS_PER_TASK` 个动作，本地来源相对运行时数据根）上每次中途改动 1 个任务，按生产热重载顺序读取并严格解析六份可热重载文件、替换 holder 并按任务名对账调度器；计时窗口内不执行任何任务，改写与写盘不计时，并断言没有发出 Telegram 请求。冷启动在满库 fixture 上按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时，不含联网握手与两个业务 Worker 的创建。
 
 数据全部写在仓库根的 `performance/`（已进 `.gitignore`），配置读 `config_example/`，每轮跑完删除整棵目录，运行结束后该目录下不应有残留。父进程不 import 任何生产实现模块，因此不会经生产写路径落到真实数据根；建目录、复制、写文件与删除另有一道共用边界（`scripts/perf/fullSuite/mockRoot.ts`）：先按词法判定路径落在 `performance/` 内，再逐段核对仓库根到目标之间**已经存在**的真实路径分量，任何一段是软链接即拒绝。删除只核对父链，末端本身是软链接时只摘链接、不动目标；mock 根本身永不删除。加 `--write-doc` 同时写回 `docs/{cn,en,ja}/09-performance.md` 的三语区块和 `performance-result.json` 的 `fullSuite.lastRun`；读数与各分区口径见 [09 性能基准](09-performance.md)。
 

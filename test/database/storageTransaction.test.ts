@@ -36,8 +36,10 @@ import {
   deleteStaleTemporaryAdBypassActivities,
   readStoredTemporaryAdBypassActivities,
 } from "../../packages/database/interact/temporaryAdBypass";
-import { commitStorageDatabaseChanges } from
-  "../../packages/database/interact/transaction";
+import {
+  commitStorageDatabaseChanges,
+  prepareStorageDatabaseWriter,
+} from "../../packages/database/interact/transaction";
 import type { CommitStorageDatabaseChangesOptions } from
   "../../packages/database/interact/transaction";
 import type { StorageDatabase, StorageDatabaseChange } from
@@ -86,7 +88,7 @@ beforeEach((): void => {
   const path: string = join(temporaryRoot, "storage.sqlite");
   createStorageDatabase(path);
   database = openStorageDatabase({ path });
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     whitelist: new Map([
       [7, { data: encodeWhitelistEntryData({ permissions: DEFAULT_WHITELIST_PERMISSIONS, meta: { firstName: "甲", lastName: "", username: "jia" } }) }],
@@ -123,7 +125,7 @@ afterEach((): void => {
 });
 
 test("AI 上下文排在群状态之后：同批新建的群写得进，同批删除的群不被复活，null 清空该列", () => {
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     chatStates: new Map([
       [NEW_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
@@ -138,12 +140,12 @@ test("AI 上下文排在群状态之后：同批新建的群写得进，同批�
   expect(new Set(readStoredAiContexts(database, "test").keys())).toEqual(new Set([CHAT_ID, NEW_CHAT_ID]));
   expect(readStoredChatStateIds(database).map((row: { chatId: number }): number => row.chatId)).not.toContain(OTHER_CHAT_ID);
 
-  commitStorageDatabaseChanges(database, { ...NO_CHANGES, aiContexts: new Map([[CHAT_ID, { snapshot: null }]]) });
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), { ...NO_CHANGES, aiContexts: new Map([[CHAT_ID, { snapshot: null }]]) });
   expect([...readStoredAiContexts(database, "test").keys()]).toEqual([NEW_CHAT_ID]);
 });
 
 test("单题删除只命中 (群, 问题) 这一行", () => {
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     chatQa: qaChange([[CHAT_ID, "怎么入群？", null]]),
   });
@@ -153,7 +155,7 @@ test("单题删除只命中 (群, 问题) 这一行", () => {
 });
 
 test("同一批里既有删除又有写入时互不干扰", () => {
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     chatQa: qaChange([
       [CHAT_ID, "怎么入群？", null],
@@ -169,7 +171,7 @@ test("同一批里既有删除又有写入时互不干扰", () => {
 });
 
 test("白名单删除只命中该 id，黑名单不受影响", () => {
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     whitelist: new Map([[7, { data: null }]]),
   });
@@ -179,7 +181,7 @@ test("白名单删除只命中该 id，黑名单不受影响", () => {
 });
 
 test("黑名单删除只命中该 id，白名单不受影响", () => {
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     blocklist: new Map([[11, { data: null }]]),
   });
@@ -189,7 +191,7 @@ test("黑名单删除只命中该 id，白名单不受影响", () => {
 });
 
 test("待踢 outbox、临时免检与群状态的删除各自只命中一行", () => {
-  commitStorageDatabaseChanges(database, {
+  commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     removals: new Map([[31, { data: null }]]),
     temporaryAdBypass: new Map([[21, { activity: null, revision: 2 }]]),

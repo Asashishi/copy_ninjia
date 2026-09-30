@@ -55,8 +55,9 @@ export function trimSlidingWindowArray({
  * 就是这一条单趟压缩。
  *
  * 只给**独占该数组**的调用方用：入群验证的 `trackedMessageTimes` 由状态机原地持有，
- * 全部消费方都用 `[...]` 复制出去（controller / verificationMirror /
- * verificationSnapshot / verificationWrites / verificationCodec），没有第二处别名。
+ * 全部消费方都用 `[...]` 复制出去（antiRaid/verificationMirror.ts /
+ * workers/antiRaid/verificationSnapshot.ts / workers/diskIO/verificationWrites.ts /
+ * workers/diskIO/verificationCodec.ts），没有第二处别名。
  * 需要一份新数组的冷路径（恢复与接管）继续用 `trimSlidingWindowArray`。
  *
  * **参数刻意用位置形式，不要改成 options interface**：本函数用于每条待验证成员消息

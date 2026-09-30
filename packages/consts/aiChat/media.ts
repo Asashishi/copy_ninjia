@@ -28,13 +28,13 @@ export const ANIMATION_FALLBACK_PLACEHOLDER: string = "[GIF：解析失败，请
 export const IMAGE_DESCRIPTION_MAX_CHARS: number = 125;
 /** 贴纸和 GIF 短描述的最大字符数。 */
 export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 100;
-/** Telegram 下载超时与单文件字节上限。只覆盖取回文件字节那一次 fetch。 */
+/** Telegram 文件下载请求（从发出到读完）的超时；只覆盖取回文件字节那一次 fetch。getFile 的超时见 MEDIA_FILE_METADATA_TIMEOUT_MS，字节上限见 MEDIA_MAX_DOWNLOAD_BYTES。 */
 export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
 /**
  * 取文件元数据（`getFile`）的独立超时预算，必须与下载分开计时：两步共用一个
  * deadline 时，一次 429 退避就能把下载的额度吃光，下载几乎立刻 abort，机器人
- * 对着一张明明能看的图装看不见。媒体描述这一路不带 invalidate signal，没有
- * 别的兜底。
+ * 对着一张明明能看的图装看不见。取消信号（回复代际失效）同时合入两段超时，见
+ * infra/telegram/fileDownload.ts。
  */
 export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
 /**
@@ -49,7 +49,7 @@ export const MEDIA_INLINE_PROMPT_RESERVE_BYTES: number = 1_000_000;
  * 单张视觉图片（下载与转码后）允许读入内存并内联进请求的最大字节数，也是下载
  * 与 photo 档位选择的上限。按 base64 编码后加 MEDIA_INLINE_PROMPT_RESERVE_BYTES
  * 恰好不超过 MEDIA_INLINE_REQUEST_MAX_BYTES 推导（14,250,000 字节）。所属模块：
- * aiChat/ai/telegramImage.ts、infra/telegram/workerRequests.ts 与 auto/message/facts.ts。
+ * aiChat/ai/telegramImage.ts、infra/telegram/workerRequests.ts 与 libs/telegramImage.ts。
  */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number =
   Math.floor((MEDIA_INLINE_REQUEST_MAX_BYTES - MEDIA_INLINE_PROMPT_RESERVE_BYTES) / 4) * 3;

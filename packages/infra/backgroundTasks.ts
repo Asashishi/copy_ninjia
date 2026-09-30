@@ -1,7 +1,7 @@
 import { logger } from "./logger";
 
 /**
- * 广告处置、延迟删除与 gag 提示共用的后台任务错误边界。
+ * 各 owner 的后台任务（广告处置、延迟删除、延迟命令、wed 交互与成员复核、gag 提示）共用的错误边界。
  * 错误归一化后摘除任务；有界等待由 libs/inflight.ts 负责。
  */
 

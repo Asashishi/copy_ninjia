@@ -36,7 +36,6 @@ const { ttsDailyUsage } = await import("../../packages/cache/workers/aiChat/ttsU
 const { openAiClientCache } = await import("../../packages/cache/workers/aiChat/openai");
 const {
   getMediaInputState,
-  getMediaInputSupport,
   mediaInputSupportCache,
   recordMediaInputResult,
 } = await import("../../packages/cache/workers/aiChat/mediaInputSupport");
@@ -177,7 +176,7 @@ test("OpenAI 两种语音协议都经 tts 门面进入 OpenAI 实现包，xai �
     };
     imageAiProvider();
     const lanes: number = aiProviderQuotaLanes.length;
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" }))
       .resolves.toEqual({ ok: true, speech: { bytes: new Uint8Array([0xFF, 0xF3]), mimeType: "audio/mpeg" } });
     expect(ttsAiProvider()?.name).toBe("openai");
     expect(aiProviderQuotaLanes).toHaveLength(lanes);
@@ -321,7 +320,7 @@ test("生图与语音合成门面透出 provider 结果", async () => {
       .resolves.toEqual({ bytes: new Uint8Array([1]), mimeType: "image/png" });
     expect(ttsAiProvider()).toBe(ttsAiProvider());
     ttsDailyUsage.current = null;
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" }))
       .resolves.toEqual({ ok: true, speech: { bytes: new Uint8Array([2]), mimeType: "audio/wav" } });
   } finally {
     generateImage.mockRestore();
@@ -330,47 +329,44 @@ test("生图与语音合成门面透出 provider 结果", async () => {
   }
 });
 
-test("语音合成门面发起请求前登记每日计数，达到调用方上限时不发起请求", async () => {
+test("语音合成门面对 operator 请求在发起前登记每日计数，达到上限时不发起请求", async () => {
   const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech")
     .mockImplementation(async () => null);
+  const reserveLimit: number = agentConfig.tts!.dailyReserveQuota;
   postMessage.mockClear();
-  ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 74, reserveCount: 0 };
+  ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 0, reserveCount: reserveLimit - 1 };
   try {
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai", quotaClaimed: false }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" }))
       .resolves.toEqual({ ok: false, reason: "synthesis failed" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
-    expect(ttsDailyUsage.current?.agentCount).toBe(75);
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 0, reserveCount: reserveLimit });
     expect(postMessage).toHaveBeenCalledWith({ type: "ttsUsage", usage: ttsDailyUsage.current });
 
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "ai", quotaClaimed: false }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator" }))
       .resolves.toEqual({ ok: false, reason: "daily limit reached" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
-    expect(ttsDailyUsage.current?.agentCount).toBe(75);
-
-    // `/send` 与 cron 只累加 reserveCount，不占 agentCount。
-    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false });
-    expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
-    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75, reserveCount: 1 });
+    expect(ttsDailyUsage.current?.reserveCount).toBe(reserveLimit);
 
     // 排队期间已取消的请求不登记计数。
+    ttsDailyUsage.current = null;
     const aborted: AbortController = new AbortController();
     aborted.abort();
-    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", quotaClaimed: false, signal: aborted.signal });
-    expect(synthesizeSpeech).toHaveBeenCalledTimes(2);
-    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 75, reserveCount: 1 });
+    await ttsAiProvider()?.synthesizeSpeech?.({ text: "バカ", quota: "operator", signal: aborted.signal });
+    expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
+    expect(ttsDailyUsage.current).toBeNull();
   } finally {
     synthesizeSpeech.mockRestore();
     ttsDailyUsage.current = null;
   }
 });
 
-test("调用方已登记计数（quotaClaimed）时门面不再登记，额度用尽也照常发起请求", async () => {
+test("ai 口径由调用方预留与登记，门面不再登记，额度用尽也照常发起请求", async () => {
   const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech").mockImplementation(async () => null);
   const agentLimit: number = agentConfig.tts!.dailyLimit - agentConfig.tts!.dailyReserveQuota;
   ttsDailyUsage.current = { windowStartedAt: Date.now(), agentCount: agentLimit, reserveCount: 0 };
   postMessage.mockClear();
   try {
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai", quotaClaimed: true }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai" }))
       .resolves.toEqual({ ok: false, reason: "synthesis failed" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     expect(ttsDailyUsage.current).toMatchObject({ agentCount: agentLimit, reserveCount: 0 });
@@ -381,20 +377,20 @@ test("调用方已登记计数（quotaClaimed）时门面不再登记，额度�
   }
 });
 
-test("预留额度用尽时门面拒绝 operator，AI 仍能请求且只增加 agentCount", async () => {
+test("预留额度用尽时门面拒绝 operator，AI 仍能请求且门面不改计数", async () => {
   const synthesizeSpeech = spyOn(geminiProvider, "synthesizeSpeech").mockImplementation(async () => null);
   const reserveCount: number = agentConfig.tts!.dailyReserveQuota;
   ttsDailyUsage.current = { windowStartedAt: Date.now(), agentCount: 0, reserveCount };
   postMessage.mockClear();
   try {
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "operator", quotaClaimed: false }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "operator" }))
       .resolves.toEqual({ ok: false, reason: "daily limit reached" });
     expect(synthesizeSpeech).not.toHaveBeenCalled();
     expect(postMessage).not.toHaveBeenCalled();
-    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai", quotaClaimed: false }))
+    await expect(ttsAiProvider()?.synthesizeSpeech?.({ text: "hi", quota: "ai" }))
       .resolves.toEqual({ ok: false, reason: "synthesis failed" });
     expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
-    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 1, reserveCount });
+    expect(ttsDailyUsage.current).toMatchObject({ agentCount: 0, reserveCount });
   } finally {
     synthesizeSpeech.mockRestore();
     ttsDailyUsage.current = null;
@@ -456,10 +452,10 @@ test("只有 media 能力变化时两种输入模态才回到未探测状态", (
   });
 
   reloadAgentDeploymentConfig({ ...agentConfig, text: { ...agentConfig.text, model: "other-text" } });
-  expect(getMediaInputSupport("voice")).toBe("unsupported");
+  expect(getMediaInputState("voice").support).toBe("unsupported");
 
   reloadAgentDeploymentConfig({ ...agentConfig, media: { ...agentConfig.media, model: "gemini-media-2" } });
-  expect(getMediaInputSupport("voice")).toBe("unknown");
+  expect(getMediaInputState("voice").support).toBe("unknown");
   expect(getMediaInputState("voice").configGeneration).toBe(1);
 });
 

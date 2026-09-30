@@ -66,7 +66,7 @@ mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ error(message: unknown): void { errorLogs.push(String(message)); } }),
 }));
 
-const { AD_DETECT_GEMINI_CONTEXT_CACHE_SCOPE, requestGoogleAdDetectJson } = await import("../../../packages/antiRaid/ai/google");
+const { AD_DETECT_GEMINI_CONTEXT_CACHE_SCOPE, requestGoogleAdDetectJson } = await import("../../../packages/workers/antiRaid/adDetect/ai/google");
 const { adDetectGoogleClientHolder } = await import("../../../packages/cache/workers/antiRaid/google");
 const {
   adDetectGeminiCacheContent,

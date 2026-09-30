@@ -24,7 +24,6 @@ import type {
 import type { IdentityStoragePersistedReply } from "../../types/diskIO/replies";
 import type {
   StoredTemporaryAdBypassActivity,
-  RecordedTemporaryAdBypassActivity,
   UnacknowledgedTemporaryAdBypassWrite,
 } from "../../types/temporaryAdBypass";
 import type { TemporaryAdBypassActivity } from "../../types/states/temporaryAdBypass";
@@ -127,14 +126,16 @@ function queueTemporaryAdBypassWrite(
  * 收到与黑名单相交的累计写。
  *
  * 状态机原样返回入参（当天已达标后的稳态）时没有新事实要落盘：跳过 revision
- * 递增、LRU 写、未 ACK 记账与一次到 Disk I/O 线程的 structured clone，`queued`
- * 仍为 true。这一路同时跳过 `LruCache.set` 的热度刷新，因此调用方必须在同一条
- * 消息上先经 `hasActiveTemporaryAdBypassAt` 读过该主键，由那次 `get` 维持热度。
+ * 递增、LRU 写、未 ACK 记账与一次到 Disk I/O 线程的 structured clone。这一路同时
+ * 跳过 `LruCache.set` 的热度刷新，因此调用方必须在同一条消息上先经
+ * `hasActiveTemporaryAdBypassAt` 读过该主键，由那次 `get` 维持热度。投递失败由
+ * queueTemporaryAdBypassWrite 记日志并保留未 ACK 最终值等待重放。
+ * @returns 计入后的最终累计；未计入时为 undefined。
  */
 export function recordTemporaryAdBypassActivity(
   id: number,
   now: number = Date.now()
-): RecordedTemporaryAdBypassActivity | undefined {
+): Readonly<TemporaryAdBypassActivity> | undefined {
   if (
     !temporaryAdBypassActivityCache.has(id) ||
     blocklistEntryCache.peek(id) !== null
@@ -143,14 +144,11 @@ export function recordTemporaryAdBypassActivity(
     temporaryAdBypassActivityCache.peek(id) ?? null;
   const activity: Readonly<TemporaryAdBypassActivity> =
     advanceTemporaryAdBypassActivity(current, now);
-  if (activity === current) return { activity, queued: true };
-  return {
-    activity,
-    queued: queueTemporaryAdBypassWrite(id, activity),
-  };
+  if (activity !== current) queueTemporaryAdBypassWrite(id, activity);
+  return activity;
 }
 
-/** 广告判定为 true 时删除整条累计；不存在时幂等成功。 */
+/** 删除整条临时累计：广告判定为 true、晋升永久白名单后与 /block 拉黑时调用；不存在时幂等成功。 */
 export function clearTemporaryAdBypassActivity(id: number): boolean {
   const cached: boolean = temporaryAdBypassActivityCache.has(id);
   if (cached && temporaryAdBypassActivityCache.peek(id) === null) return true;

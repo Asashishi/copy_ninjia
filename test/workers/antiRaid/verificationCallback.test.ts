@@ -37,6 +37,8 @@ Object.defineProperty(globalThis, "self", {
 const runtime = await import(
   "../../../packages/workers/antiRaid/verificationRuntime"
 );
+const { handleJoinEvent } = await import("../../../packages/workers/antiRaid/verificationEvents");
+const { handleVerificationCallbackEvent } = await import("../../../packages/workers/antiRaid/verificationCallbacks");
 const { verificationEntries } = await import(
   "../../../packages/cache/workers/antiRaid/verification"
 );
@@ -85,14 +87,14 @@ interface ClickParams {
 }
 
 function click({ callbackQueryId, targetUserId, action, fromId }: ClickParams): void {
-  runtime.handleVerificationCallback({
+  handleVerificationCallbackEvent({
     type: "callback",
     callbackQueryId,
     chatId: CHAT_ID,
     targetUserId,
     action,
     from: { id: fromId, first_name: `User ${fromId}` },
-  });
+  }, runtime.dispatchVerification);
 }
 
 function answeredText(callbackQueryId: string): string | undefined {
@@ -129,7 +131,7 @@ describe("verification callback ownership", () => {
     click({ callbackQueryId: "old-owner", targetUserId: 42, action: "approve", fromId: ADMIN_ID });
     if (change === "rejoin") {
       runtime.dispatchVerification(CHAT_ID, 42, { type: "left" });
-      runtime.handleJoin({ type: "join", chatId: CHAT_ID, member: { id: 42, first_name: "New" } });
+      handleJoinEvent({ type: "join", chatId: CHAT_ID, member: { id: 42, first_name: "New" } }, runtime.dispatchVerification);
     } else {
       if (change === "disable") runtime.disableJoinGuardChat(CHAT_ID);
       if (change === "remove") runtime.deactivateVerificationChat(CHAT_ID);
@@ -186,13 +188,13 @@ describe("verification callback ownership", () => {
     expect(antiRaidInFlightTasks.size).toBe(0);
   });
   test("缺少 chatId 的回调只确认 Telegram query，不进入验证状态机", async (): Promise<void> => {
-    runtime.handleVerificationCallback({
+    handleVerificationCallbackEvent({
       type: "callback",
       callbackQueryId: "detached-callback",
       targetUserId: 42,
       action: "self",
       from: { id: 42, first_name: "Self" },
-    });
+    }, runtime.dispatchVerification);
 
     await drainAntiRaidTasks();
 
@@ -210,13 +212,13 @@ describe("verification callback ownership", () => {
     const failure: Error = new Error("callback unavailable");
     answerCallbackQueryMock.mockRejectedValueOnce(failure);
 
-    runtime.handleVerificationCallback({
+    handleVerificationCallbackEvent({
       type: "callback",
       callbackQueryId: "detached-failure",
       targetUserId: 43,
       action: "self",
       from: { id: 43, first_name: "Self" },
-    });
+    }, runtime.dispatchVerification);
 
     await drainAntiRaidTasks();
 

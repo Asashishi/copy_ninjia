@@ -33,7 +33,7 @@ export interface SendMessageParams {
   api?: SendMessageApi;
   keyboard?: InlineKeyboardMarkup;
   signal?: AbortSignal;
-  /** 由调用方自行算好偏移的富文本实体，见 sendMessageWithResult 的说明。 */
+  /** 由调用方自行算好偏移的富文本实体；空数组按未提供处理，不设置 parse_mode。 */
   entities?: readonly MessageEntity[];
   /** 是否关闭 Telegram 为正文中第一个 URL 自动生成的预览卡片。 */
   disableLinkPreview?: boolean;
@@ -112,6 +112,7 @@ export async function sendMessageWithResult({
     fallback: undefined,
     signal,
     shouldLogError: logUnlessAborted,
+    selfSentChatId: chatId,
   });
 }
 
@@ -269,10 +270,9 @@ export async function editMessageText({
   keyboard,
   signal,
 }: EditMessageTextParams): Promise<boolean> {
-  // 「内容本就相同」在这里就地咽掉，不进错误边界：那样才既不记 API 错误、
-  // 又对调用方报成功，而不必把结论从一个名叫 shouldLogError 的谓词里带出来。
-  // 其余失败原样抛给统一边界，停机 abort 因此也照 runBooleanTelegramAction
-  // 的既有口径不记错误。
+  // 「内容本就相同」在 execute 内就地吞掉：既不记 API 错误，也对调用方报成功。
+  // 其余失败原样抛给统一边界，停机 abort 由 runBooleanTelegramAction 的
+  // logUnlessAborted 判为不记错误。
   return runBooleanTelegramAction(
     "edit message text",
     async (requestSignal?: AbortSignal): Promise<true> => {

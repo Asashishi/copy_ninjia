@@ -11,14 +11,7 @@ import type { FlushResult } from "../types/lifecycle";
 
 // Google Cloud Translation - Advanced (v3) 客户端使用启动时发布的凭据快照。
 
-/**
- * 动态 import 回来的 SDK 里，本模块唯一用到的那部分。
- *
- * 只声明用得上的构造器，而不是给整个模块写类型：`typeof import(...)` 标注被
- * lint 禁止，顶层的 `import type { v3 as GoogleTranslate }` 又只是命名空间
- * **类型**别名、取不到值侧类型。写成结构类型既满足显式标注，也让 SDK 真实签名
- * 一旦漂移就在编译期暴露。
- */
+/** TranslationServiceClient 构造器的选项形状。 */
 interface TranslateClientParams {
   /** 启动总闸严格解析的完整服务账号快照。 */
   credentials: GoogleServiceAccountKey;
@@ -30,6 +23,10 @@ interface TranslateClientParams {
   [option: string]: string | number | object | undefined;
 }
 
+/**
+ * 动态 import 回来的 SDK 里，本模块唯一用到的那部分：只声明 TranslationServiceClient
+ * 构造器，SDK 真实签名一旦漂移就在编译期暴露。
+ */
 interface TranslateSdkV3 {
   TranslationServiceClient: new (options: TranslateClientParams) => GoogleTranslate.TranslationServiceClient;
 }

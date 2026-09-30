@@ -90,7 +90,7 @@ export const adDetectPrompts: { current: AdDetectPrompts | null } = { current: n
  * 正在等待广告检测 provider 判定或首次公开警告发送结算的键；防止同一个人被并发
  * 送检两次，同时它的 size 就是全局在途计数，由 AD_DETECT_MAX_IN_FLIGHT 兜住
  * 上界（见 adDetect/queue.ts 的 runAdDetectBatch）。派发时插入，判定 finally
- * 释放；引用类首次命中只在警告网络往返期间同步续占，广告消息的后续删除不再
+ * 释放；引用类首次命中只在警告网络往返期间同步续占，广告消息的后续删除不
  * 占分类额度。Worker 崩溃重建后随 isolate 一起归零，不需要主线程镜像。
  */
 export const inFlightAdDetectKeys: Set<string> = new Set<string>();

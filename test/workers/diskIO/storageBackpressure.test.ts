@@ -61,11 +61,10 @@ test("字节与条目预算独立生效；拒绝、替换和 reset 不泄漏额�
 
 test("自动重试按截止退避，连续失败达到上限后停止自动提交并只通知一次", async (): Promise<void> => {
   const { jest } = await import("bun:test");
-  const { configureStoragePersistenceReply } = await import("../../../packages/workers/diskIO/storageDatabase/flush");
-  const { storageWriteFlushTimer } = await import("../../../packages/cache/workers/diskIO/storageDatabase");
+  const { storagePersistenceReplyHolder, storageWriteFlushTimer } = await import("../../../packages/cache/workers/diskIO/storageDatabase");
   jest.useFakeTimers();
   try {
-    configureStoragePersistenceReply(reply);
+    storagePersistenceReplyHolder.current = reply;
     let fatalCount: number = 0; storageWriteFatalReply.current = (): void => { fatalCount++; };
     storageDatabaseHandle.current!.$client.run("PRAGMA query_only = ON");
     for (let id: number = 1; id <= IDENTITY_WRITE_BATCH_MAX_ENTRIES; id++) handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: 1 }, reply);

@@ -3,6 +3,7 @@ import {
   MOOD_ENTRY_OPTIONAL_KEYS,
   MOOD_ENTRY_REQUIRED_KEYS,
   MOOD_MULTIPLIER_MAX,
+  MOOD_WEIGHT_TOTAL,
   TIME_BUCKETS,
   WEATHER_BUCKETS,
 } from "../consts/aiChat/mood";
@@ -53,7 +54,10 @@ function parseMultipliers<Bucket extends string>(
   return multipliers;
 }
 
-/** 解码单个心情档位；必填字段缺失、未知字段和非法取值都在启动阶段直接报错。 */
+/**
+ * 解码单个心情档位；name 与 instruction 去掉首尾空白后返回。必填字段缺失、未知字段和
+ * 非法取值都在启动阶段直接报错。
+ */
 function parseMoodOption(value: unknown, index: number, sourcePath: string): MoodOption {
   const fieldPath: string = `$.moods[${index}]`;
   if (!isPlainRecord(value)) {
@@ -63,20 +67,22 @@ function parseMoodOption(value: unknown, index: number, sourcePath: string): Moo
   for (const key of Object.keys(value)) {
     if (!knownKeys.has(key)) return invalidInput(sourcePath, `${fieldPath}.<key>`, "a current mood schema field");
   }
-  if (typeof value.name !== "string" || value.name.trim().length === 0) {
+  const name: string = typeof value.name === "string" ? value.name.trim() : "";
+  if (name.length === 0) {
     return invalidInput(sourcePath, `${fieldPath}.name`, "a non-empty string");
   }
   if (typeof value.weight !== "number" || !Number.isInteger(value.weight) || value.weight <= 0) {
     return invalidInput(sourcePath, `${fieldPath}.weight`, "a positive integer");
   }
-  if (typeof value.instruction !== "string" || value.instruction.trim().length === 0) {
+  const instruction: string = typeof value.instruction === "string" ? value.instruction.trim() : "";
+  if (instruction.length === 0) {
     return invalidInput(sourcePath, `${fieldPath}.instruction`, "a non-empty string");
   }
 
   const mood: MoodOption = {
-    name: value.name,
+    name,
     weight: value.weight,
-    instruction: value.instruction,
+    instruction,
     ...(value.weatherMultipliers !== undefined
       ? { weatherMultipliers: parseMultipliers<WeatherBucket>(value.weatherMultipliers, {
         allowedBuckets: WEATHER_BUCKETS,
@@ -121,10 +127,8 @@ function validateAdjustedWeights(moods: readonly MoodOption[], sourcePath: strin
   }
 }
 
-/** 严格解码 mood.json；base weight 必须是正整数且总和恰好为 100（抽取算法
- *  本身按倍率调整后的连续权重工作、不依赖总和，恒等 100 是为了让配置里的
- *  权重可以直接当百分比读；限定整数让总和判断走精确的整数算术，没有
- *  浮点误差）。 */
+/** 严格解码 mood.json；base weight 必须是正整数且总和恰好为 MOOD_WEIGHT_TOTAL（限定
+ *  整数让总和判断走精确的整数算术，没有浮点误差）。 */
 export function parseMoodConfig(
   value: unknown,
   sourcePath: string = MOOD_CONFIG_PATH
@@ -143,8 +147,8 @@ export function parseMoodConfig(
   });
 
   const weightSum: number = moods.reduce((sum: number, mood: MoodOption): number => sum + mood.weight, 0);
-  if (weightSum !== 100) {
-    return invalidInput(sourcePath, "$.moods[*].weight", "positive integers summing to 100");
+  if (weightSum !== MOOD_WEIGHT_TOTAL) {
+    return invalidInput(sourcePath, "$.moods[*].weight", `positive integers summing to ${MOOD_WEIGHT_TOTAL}`);
   }
   validateAdjustedWeights(moods, sourcePath);
   return { moods };

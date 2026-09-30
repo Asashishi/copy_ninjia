@@ -17,6 +17,7 @@ import {
   sweepBlockedMembers,
 } from "../infra/blocklist/sweep";
 import { readJoinLog } from "../infra/diskIO";
+import { currentUpdateAbortSignal, throwIfUpdateAborted } from "../infra/updateContext";
 import { logger } from "../infra/logger";
 import { readIdentityPolicyVerdicts } from "../infra/identityStorage";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../consts/identityStorage";
@@ -176,6 +177,9 @@ interface RunBatchKickParams {
  * 可能把本块身份挤出身份 LRU，只看缓存的话冷未命中会把白名单管理员/频道身份当
  * 普通成员踢出去。冷读失败不能按「不在白名单」处置，只能就地中断，剩余记录
  * 一条都不碰。
+ *
+ * 停机取消本条 update 后，尚未开始的记录不再处理，在途记录因取消而失败的结果不计入
+ * 战报也不记日志；每块开始前与结束后各检查一次，取消即向上解开整条命令。
  */
 async function runBatchKick({
   chatId,
@@ -192,11 +196,13 @@ async function runBatchKick({
     scanned: 0,
     aborted: false,
   };
+  const updateSignal: AbortSignal | undefined = currentUpdateAbortSignal();
   for (
     let offset: number = 0;
     offset < records.length;
     offset += IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
   ) {
+    throwIfUpdateAborted(updateSignal);
     const chunk: readonly JoinLogRecord[] = records.slice(
       offset,
       offset + IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
@@ -215,9 +221,11 @@ async function runBatchKick({
         execute: async ({
           item: record,
         }: BoundedBatchExecution<JoinLogRecord>): Promise<void> => {
+          if (updateSignal?.aborted === true) return;
           await processJoinRecord({ chatId, record, stats, verdicts });
         },
       });
+    throwIfUpdateAborted(updateSignal);
     stats.scanned += chunk.length;
     for (const result of results) {
       if (result.status === "fulfilled") continue;

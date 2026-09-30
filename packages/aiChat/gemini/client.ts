@@ -48,10 +48,10 @@ function geminiRequestTimeoutMs(capability: AgentCapability): number {
  * 由 GEMINI_REQUEST_RETRY_ATTEMPTS 显式约束。Worker 线程各自拥有独立实例，
  * 崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
  *
- * 导出是为了让 aiChat/gemini/speech.ts 复用同一个实例：语音合成走
- * Interactions API 那条端点，用不上下面的 generateContent 封装，但**必须**共用这一个客户端——每条流水线
- * 各 new 一个会让同一条 Worker 线程上散着好几份连接池与鉴权状态。本包之外不得
- * import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
+ * 导出供本包内的 speech.ts（语音合成走 Interactions API 那条端点，用不上下面的
+ * generateContent 封装）与 contextCache.ts（显式缓存登记表）复用同一个实例：每条
+ * 流水线各 new 一个会让同一条 Worker 线程上散着好几份连接池与鉴权状态。本包之外
+ * 不得 import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
  */
 export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
   const config: AgentDeploymentConfig[AgentCapability] = getAgentDeploymentConfig()[capability];
@@ -124,13 +124,13 @@ export async function requestGeminiResult(
     }), requestSignal);
   } catch (error: unknown) {
     if (body?.config?.abortSignal?.aborted === true) {
-      return { ok: false, failureKind: "request", diagnostic: "request aborted" };
+      return { ok: false, failureKind: "request" };
     }
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${error.status} ${error.message}`);
       // 归因级联与它到失败结果的映射都收在 ai/utils/mediaSupportError.ts：
-      // 三个模型客户端共用同一条级联，两个 client 再共用同一份诊断串。
+      // 三个模型客户端共用同一条级联。
       // undefined 就是 endpointFailure 那一档，落到下面的统一兜底。
       const failure: ProviderApiFailureResult | undefined = providerApiFailureResult(
         classifyProviderApiFailure(error.status, error.message, capability === "media")
@@ -139,15 +139,14 @@ export async function requestGeminiResult(
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }
-    return { ok: false, failureKind: "request", diagnostic: "request failed" };
+    return { ok: false, failureKind: "request" };
   }
 
   const candidate: Candidate | undefined = data.candidates?.[0];
   if (candidate?.finishReason === FinishReason.MAX_TOKENS) {
-    // 被 maxOutputTokens 腰斩即便带着「已经写出半句话」的部分正文，上层照样
-    // 会把这半句话当正常回复发出去，观感上就是消息突然断掉；思考型请求更
-    // 容易在思考阶段就烧光额度、正文为空。不管有没有部分正文都记一条，
-    // 方便观测这类「中途夭折」的频率。
+    // MAX_TOKENS 由下面的 abnormalFinishDiagnostic 判为不可用响应，哪怕带着半句
+    // 正文也整份丢弃；思考型请求更容易在思考阶段就烧光额度、正文为空。不管有没有
+    // 部分正文都额外记一条 token 诊断，方便观测这类「中途夭折」的频率。
     logger.error(
       `${errorLabel} response was truncated by maxOutputTokens ` +
       `(hasPartialText=${!!responseText(data)}, ` +
@@ -165,7 +164,6 @@ export async function requestGeminiResult(
     return {
       ok: false,
       failureKind: "response",
-      diagnostic: abnormal,
       finishReason: candidate?.finishReason,
       finishMessage: candidate?.finishMessage,
       response: data,

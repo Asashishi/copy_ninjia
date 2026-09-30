@@ -5,12 +5,9 @@
  * cache/」的原则，本模块自己不持有任何 Map；空闲的 key（链跑完且没有新
  * 任务顶替）自动从传入的 Map 里删除，避免历史 key 无限累积。
  *
- * prev.then(task, task) 让上一项失败或成功都能推进链。这里刻意没有全局
- * onError——现有调用方（
- * workers/antiRaid/lockdownApi.ts 的 runLockdownApiCall、
- * workers/aiChat/compaction.ts 的 scheduleRotation）的 task 自身都已经
- * try/catch 到底、从不真正 reject，若换成全局 onError 反而会丢失各自的
- * 错误上下文（哪个 chatId、在做哪一步）。
+ * prev.then(task, task) 让上一项失败或成功都能推进链；task 须自行 try/catch 到底、
+ * 不得 reject（调用方：workers/antiRaid/lockdownApi.ts 的 runLockdownApiCall、
+ * workers/aiChat/compaction.ts 的 scheduleRotation）。
  */
 export interface KeyedSerialTaskRunner<K> {
   /**

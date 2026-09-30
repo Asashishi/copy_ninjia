@@ -65,7 +65,7 @@ type ShutdownOwnerClose =
 
 /** 一个按固定顺序排空的停机 owner。 */
 interface ShutdownDrainOwner {
-  /** 写进哪个结果字段；延迟删除不参与共享数据落盘闸门，为 null。 */
+  /** 写进哪个结果字段；延迟命令、cron 与延迟删除不参与共享数据落盘闸门，为 null。 */
   readonly result: keyof OwnerDrainResults | null;
   /** 失败隔离与诊断日志里的 owner 名。 */
   readonly label: string;

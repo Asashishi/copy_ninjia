@@ -1,7 +1,6 @@
 /**
- * 日志落盘逻辑：接收 diskIOWorker.ts 路由来的日志消息，先进入内存 buffer，
- * 达到阈值（见 consts/diskIO/appendOnly.ts）或
- * 收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
+ * 日志落盘逻辑：接收 diskIOWorker.ts 从诊断批路由来的日志消息，先进入内存 buffer，
+ * 每个诊断批消费完、每日维护或收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
  * JSON 对象，键为「东京日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
  * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
  * 一致。
@@ -17,12 +16,9 @@ import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { LogMessage } from "../../types/diskIO/messages";
 import type { DayFileState, BufferedLogEntry } from "../../types/diskIO/storage";
-import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
+import { LOGS_DIR } from "../../consts/paths";
 import {
   DAY_FILE_PATTERN,
-  DAY_FILE_JSON_INDENT,
-  FLUSH_INTERVAL_MS,
-  FLUSH_MAX_ENTRIES,
   LOG_REOPEN_RETRY_MS,
   RETENTION_DAYS,
 } from "../../consts/diskIO/appendOnly";
@@ -30,16 +26,15 @@ import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
 import { formatTokyoLogTimestamp, getTokyoDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
-import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { bestEffortUnlink, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
-import { readUtf8TextInput } from "../../libs/inputValidation";
+import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
+import { bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
-  repairTruncatedAppendOnlyContent,
+  inspectRepairableAppendOnlyFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
+import type { RepairableAppendOnlyInspection } from "./appendOnlyDayFile";
 
 interface LogRecord {
   level: string;
@@ -67,56 +62,36 @@ function assertLogFileSchema(path: string, parsed: unknown): void {
   }
 }
 
-/**
- * 接管某日日志前校验领域 schema。可解析的错误结构在通用格式化发生前就拒绝，
- * 保证原字节不变；截断内容则先由 openDayFile 修复，再校验修复结果。两次完整
- * 读取只发生在启动、跨日打开，以及追加失败后按 LOG_REOPEN_RETRY_MS 退避的那次
- * 重试上；追加热路径不调用本函数。
- */
+/** 某日日志文件的只读探测结果：追加游标、路径与需要原子发布的规范化文本（无需重写时为 null）。 */
 interface LogDayInspection {
   readonly state: DayFileState;
   readonly path: string;
   readonly rewriteContent: string | null;
 }
 
+/**
+ * 接管某日日志前校验领域 schema。可解析的错误结构在通用格式化发生前就拒绝，
+ * 保证原字节不变；截断内容先经 repairTruncatedAppendOnlyContent 在内存里修复，再校验
+ * 修复结果。整份日文件只读一遍，只发生在启动、跨日打开，以及追加失败后按
+ * LOG_REOPEN_RETRY_MS 退避的那次重试上；追加热路径不调用本函数。
+ */
 async function inspectLogDay(day: string): Promise<LogDayInspection> {
   const path: string = join(LOGS_DIR, `${day}.json`);
-  if (!inspectOptionalFile(path)) {
+  const inspection: RepairableAppendOnlyInspection<void> | null = await inspectRepairableAppendOnlyFile(
+    path,
+    (parsed: unknown): void => assertLogFileSchema(path, parsed)
+  );
+  if (inspection === null) {
     return {
       path,
       rewriteContent: null,
       state: { day, size: 0, empty: true },
     };
   }
-  const content: string = await readUtf8TextInput(path);
-  let parsed: unknown;
-  let rewriteContent: string | null = null;
-  try {
-    parsed = JSON.parse(content) as unknown;
-  } catch {
-    rewriteContent = repairTruncatedAppendOnlyContent(content);
-    if (rewriteContent === null) {
-      throw new AppendOnlyFileFormatError(path, "could not be parsed or repaired.");
-    }
-    parsed = JSON.parse(rewriteContent) as unknown;
-  }
-  assertLogFileSchema(path, parsed);
-  const empty: boolean = Object.keys(parsed as Record<string, unknown>).length === 0;
-  if (!empty && rewriteContent === null && !content.endsWith("\n}")) {
-    rewriteContent = JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT);
-  }
   return {
     path,
-    rewriteContent,
-    state: {
-      day,
-      size: empty
-        ? 0
-        : rewriteContent === null
-          ? (await Bun.file(path).stat()).size
-          : Buffer.byteLength(rewriteContent),
-      empty,
-    },
+    rewriteContent: inspection.rewriteContent,
+    state: { day, size: inspection.state.size, empty: inspection.state.empty },
   };
 }
 
@@ -132,18 +107,17 @@ async function openLogDay(day: string): Promise<DayFileState> {
 }
 
 /**
- * 清掉 LOGS_DIR 下残留的 *.tmp：openDayFile 的维护性重写（appendOnlyDayFile.ts
- * 经 atomicWriteTextSync）走 tmp + rename，正常情况 rename 后 tmp 不会留下；只有
+ * 清掉 LOGS_DIR 下残留的 *.tmp：日文件首条写入（appendOnlyDayFile.ts 的
+ * appendToAppendOnlyFile）、尾部修复与排版规范化（adoptLogDay，以及追加失败后
+ * openAppendOnlyFile 重新探测）都经 atomicWriteTextSync 走 tmp + rename，正常情况
+ * rename 后 tmp 不会留下；只有
  * 进程恰好在 writeFileSync 与 renameSync 之间被杀、或 rename 本身失败（磁盘
  * 满等）才会留下孤儿文件。DAY_FILE_PATTERN 只匹配 <day>.json，不匹配
  * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐
  * snapshotFiles.ts 的 maintainLuckDay 同样的清理。
  */
-async function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
-  for (const name of names) {
-    // 删除失败不影响主流程，下次同样的清理还会再试一次。
-    if (name.endsWith(TMP_FILE_SUFFIX)) await bestEffortUnlink(join(LOGS_DIR, name));
-  }
+function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
+  return removeOrphanedTempFiles(LOGS_DIR, names);
 }
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
@@ -160,7 +134,7 @@ async function writeDay(day: string, texts: string[]): Promise<boolean> {
   if (texts.length === 0) return true;
   const now: number = Date.now();
   // 上一次追加失败后还在退避窗口内：直接丢这一批，不重走 openLogDay。磁盘满、
-  // 卷转只读这类故障不会在一个 flush 周期内自愈，而重开一次要把整个日文件读两
+  // 卷转只读这类故障不会在一个 flush 周期内自愈，而重开一次要把整个日文件读一
   // 遍、逐条校验 schema、再扫一遍目录——不退避的话每个周期都要按日文件大小付
   // 一次这个代价，且故障期本身制造的 logger.error 还会把节拍压得更密。这条线程
   // 同时持有身份策略/群状态 SQLite、移除 outbox 与 AI 记忆快照（见
@@ -222,9 +196,8 @@ export async function maintainLogRetention(): Promise<void> {
   await cleanupOldLogs();
 }
 
-/** 立即把内存 buffer 落盘（日志自身阈值、定时器或统一 flush 指令触发时调用）。 */
+/** 立即把内存 buffer 落盘（诊断批尾、每日维护或统一 flush 指令触发时调用）。 */
 export async function flushLogBuffer(): Promise<boolean> {
-  cancelDiskIOFlushTimer(flushBuffer);
   if (flushBuffer.entries.length === 0) return true;
   const entries: BufferedLogEntry[] = flushBuffer.entries;
   flushBuffer.entries = [];
@@ -243,8 +216,11 @@ export async function flushLogBuffer(): Promise<boolean> {
   return await writeDay(day, texts) && clean;
 }
 
-/** 处理一条日志消息：入内存 buffer，达到阈值立即落盘，否则按需启动定时器。 */
-export async function handleLogMessage(msg: LogMessage): Promise<void> {
+/**
+ * 处理一条日志消息：只入内存 buffer。调用方（diskIOWorker.ts 的诊断批）消费完整批后
+ * 必定调用 flushLogBuffer，因此 buffer 不跨批累积，也不需要阈值或定时落盘。
+ */
+export function handleLogMessage(msg: LogMessage): void {
   // message 只拼字符串参数；存在非字符串参数（展开后的 Error 对象等）时，完整
   // 参数列表只写进 args。全是字符串参数时 args 为 undefined，落盘时省略。
   const stringArgs: string[] = [];
@@ -259,15 +235,8 @@ export async function handleLogMessage(msg: LogMessage): Promise<void> {
     args: hasStructuredArgs ? msg.args : undefined,
   };
   // key 按东京日期时间前缀排序，uuid 段只区分同一毫秒内的多条日志。
-  const bufferedEntries: number = markLogDirty({
+  markLogDirty({
     day: getTokyoDateKey(msg.timestamp),
     text: serializeDayFileEntry(`${formatTokyoLogTimestamp(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
-  // 达到 FLUSH_MAX_ENTRIES 立即落盘；否则按需装定时落盘（已装时不重复），有序停机
-  // 由统一 flush 提前兑现（见 docs/cn/04-invariants.md）。
-  if (bufferedEntries >= FLUSH_MAX_ENTRIES) {
-    await flushLogBuffer();
-  } else {
-    armDiskIOFlushTimer(flushBuffer, FLUSH_INTERVAL_MS, flushLogBuffer);
-  }
 }

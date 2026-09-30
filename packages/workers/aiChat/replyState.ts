@@ -21,7 +21,7 @@ import {
 export interface NotifyRateLimitedParams {
   chatId: number;
   now: number;
-  /** 缺省取当前代数；排队补跑那一路会显式传入捕获时的代数。 */
+  /** 缺省取当前代数（replyQueue.ts 的 flushOverflowNotice）；回复轮启动被限频时显式传入它捕获的代数。 */
   generation?: number;
   /** 提示要落进的论坛话题；General、非论坛群为 undefined。 */
   messageThreadId: number | undefined;

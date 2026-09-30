@@ -29,6 +29,7 @@ import {
 } from "../../../cache/workers/aiChat/stickers/menu";
 import { packSummaries } from "../../../cache/workers/aiChat/stickers/catalog";
 import { aiChatWorkerAbortController } from "../../../cache/workers/aiChat/worker";
+import { pauseThenSettle } from "./replyToolset/pacing";
 import type { ChatActionControl } from "../../../types/aiChat/chatAction";
 import type { ReplyActionPause, ReplyToolExecution } from "../../../types/aiChat/replies";
 import type { StickerCatalogEntry } from "../../../types/stickers/catalog";
@@ -46,9 +47,9 @@ import type { StickerCandidate, StickerPackCandidate, StickerRoundState } from "
  * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
  * aiChat/ai/tools/replyToolset/orchestrator.ts）。同群各轮的动作按入站顺序依次出站（见
- * workers/aiChat/replyDelivery.ts），跨轮不另设互斥。
+ * workers/aiChat/replyDelivery.ts）。
  *
- * 工具定义仍是按次回复现组装的（不进 packages/aiChat/ai/tools/index.ts 的静态清单）：菜单会随
+ * 工具定义按次回复现组装（不进 consts/tools.ts 的 TOOL_DECLARATIONS 静态清单）：菜单会随
  * 目录内容变化，且模型选中的编号要和组装工具描述时用的同一份菜单对应，
  * 两处必须共享 buildStickerPackMenu() 同一次调用的产出。
  */
@@ -198,8 +199,6 @@ export function buildSendStickerToolDefinition(menu: readonly StickerPackCandida
 /** 解析查看贴纸包时必填的表达意图：必须是去除首尾空白后的非空单行文本，
  * 且不能超过 STICKER_INTENT_MAX_CHARS，避免把大段推理带进工具往返。 */
 export function parseStickerIntent(argumentsJson: string): string | null {
-  // 解析样板收在 utils/toolArgs.ts：本文件另一处工具参数也走那里，两处各写一份
-  // try/catch 会让「顶层不是对象」这类形态在同一个工具集里有两种判法。
   const value: unknown = parseToolArguments(argumentsJson)?.intent;
   if (typeof value !== "string") return null;
   const intent: string = value.replace(/\s+/g, " ").trim();
@@ -218,7 +217,9 @@ export interface ViewStickerPackToolParams {
 
 /**
  * 校验查看额度并同步返回真实贴纸编号与描述，供模型下一次调用选择。不切聊天状态：
- * 「正在选择贴纸」只在串行链的发送步骤里随拟人停顿亮起（见 sendStickerTool）。
+ * 有序并行轮的「正在选择贴纸」在串行链的发送步骤里随拟人停顿亮起（见 sendStickerTool），
+ * 直接轮则由工具集在看过贴纸包后的下一次模型请求期间亮起（见 orchestrator.ts 的
+ * beforeModelRequest）。
  */
 export function viewStickerPackTool({
   menu,
@@ -313,14 +314,14 @@ export function sendStickerTool({
     result: JSON.stringify({ success: true, queued: true, actions_used: 1 }),
     run: async (chatAction: ChatActionControl, pause: ReplyActionPause): Promise<string> => {
       if (!isActive() || signal?.aborted === true) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
-      const invalidated: string | null = await pause(
-        "choose_sticker",
-        STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS
-      );
-      if (invalidated !== null) return invalidated;
-      chatAction.set("idle");
-      await chatAction.settle();
-      if (!isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
+      const blocked: string | null = await pauseThenSettle({
+        isActive,
+        chatAction,
+        pause,
+        phase: "choose_sticker",
+        delayMs: STICKER_CHOOSE_DELAY_BASE_MS + Math.random() * STICKER_CHOOSE_DELAY_JITTER_MS,
+      });
+      if (blocked !== null) return blocked;
       const sentMessageId: number | undefined = await sendSticker({
         chatId,
         fileId: candidate.sticker.file_id,

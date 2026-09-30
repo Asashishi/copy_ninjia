@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   assertCronVoiceSupported,
   cronConfigUsesVoice,
@@ -13,13 +13,26 @@ import {
 import { adoptAgentDeploymentConfig } from "../../packages/config/agent";
 import { TTS_DEFAULT_STYLE, VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
-import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../../packages/consts/paths";
-import { CRON_DEFAULT_TIME_ZONE, CRON_RANDOM_INTERVAL_MAX_MS, CRON_RANDOM_INTERVAL_MIN_MS } from "../../packages/consts/cron";
+import { CRON_CONFIG_PATH, PROJECT_ROOT, RUNTIME_DATA_ROOT } from "../../packages/consts/paths";
+import {
+  CRON_ALL_CHATS,
+  CRON_DEFAULT_TIME_ZONE,
+  CRON_EXCEPT_CHATS,
+  CRON_MAX_ACTIONS_PER_TASK,
+  CRON_MAX_CHAT_IDS_PER_TASK,
+  CRON_MAX_IMAGES,
+  CRON_MAX_TASKS,
+  CRON_RANDOM_INTERVAL_MAX_MS,
+  CRON_RANDOM_INTERVAL_MIN_MS,
+  CRON_TASK_NAME_MAX_CHARS,
+} from "../../packages/consts/cron";
+import { DURATION_UNIT_MS } from "../../packages/consts/commands";
+import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 import type { CronConfig } from "../../packages/types/cron";
 import { TEST_DATA_ROOT } from "../preloadEnv";
 
 const PATH: string = "/virtual/cron.json";
-/** 本地来源的测试目录；cron.json 的 path 可以是本机任意绝对路径或相对项目根的路径。 */
+/** 本地来源的测试目录；cron.json 的 path 可以是本机任意绝对路径或相对运行时数据根的路径。 */
 const FILES_ROOT: string = join(TEST_DATA_ROOT, "cron-files");
 
 /** 一个最小合法任务，按需覆盖字段。 */
@@ -136,7 +149,7 @@ describe("parseCronConfig", () => {
     })], PATH);
     expect(config[0]).toMatchObject({
       timeZone: "UTC",
-      randomInterval: { minMs: 6 * 3_600_000, maxMs: 24 * 3_600_000 },
+      randomInterval: { minMs: 6 * DURATION_UNIT_MS.h, maxMs: 24 * DURATION_UNIT_MS.h },
     });
     expect(config[0]!.actions).toEqual([
       { type: "send_image", content: "今日图", source: { kind: "random", directory: null }, isBlurred: false },
@@ -150,10 +163,15 @@ describe("parseCronConfig", () => {
 
   test("rand_cron 单值等于 <下限>-<值>，区间落在允许范围内且 min <= max", () => {
     expect(parseCronConfig([task({ rand_cron: "24h" })], PATH)[0]!.randomInterval)
-      .toEqual({ minMs: CRON_RANDOM_INTERVAL_MIN_MS, maxMs: 24 * 3_600_000 });
-    expect(parseCronConfig([task({ rand_cron: "1m-24d" })], PATH)[0]!.randomInterval)
+      .toEqual({ minMs: CRON_RANDOM_INTERVAL_MIN_MS, maxMs: 24 * DURATION_UNIT_MS.h });
+    // 整串首尾空白按规范化去掉，与其它字符串字段一致。
+    expect(parseCronConfig([task({ rand_cron: " 1h-24h\n" })], PATH)[0]!.randomInterval)
+      .toEqual({ minMs: DURATION_UNIT_MS.h, maxMs: 24 * DURATION_UNIT_MS.h });
+    const minMinutes: number = CRON_RANDOM_INTERVAL_MIN_MS / DURATION_UNIT_MS.m;
+    const maxDays: number = CRON_RANDOM_INTERVAL_MAX_MS / DURATION_UNIT_MS.d;
+    expect(parseCronConfig([task({ rand_cron: `${minMinutes}m-${maxDays}d` })], PATH)[0]!.randomInterval)
       .toEqual({ minMs: CRON_RANDOM_INTERVAL_MIN_MS, maxMs: CRON_RANDOM_INTERVAL_MAX_MS });
-    for (const value of ["25d", "30s", "0m", "2h-1h", "1h-2h-3h", "1.5h", 60, "01h"]) {
+    for (const value of [`${maxDays + 1}d`, "30s", "0m", "2h-1h", "1h-2h-3h", "1.5h", 60, "01h"]) {
       rejects([task({ rand_cron: value })], `${PATH}: $[0].rand_cron must be`);
     }
   });
@@ -169,13 +187,13 @@ describe("parseCronConfig", () => {
   });
 
   test("chat_id 的形态严格判定：标量、空数组、混写与重复 id 一律拒绝", () => {
-    const shape: string = `${PATH}: $[0].chat_id must be ["all"], ["except", <chat id>, ...] or a list of at most 64 unique non-zero safe integer chat ids.`;
+    const shape: string = `${PATH}: $[0].chat_id must be ["${CRON_ALL_CHATS}"], ["${CRON_EXCEPT_CHATS}", <chat id>, ...] or a list of at most ${CRON_MAX_CHAT_IDS_PER_TASK} unique non-zero safe integer chat ids.`;
     // 标量写法不再受理；"all" 只能单独出现，"except" 只能作为首项且必须带 id。
     for (const chatId of [-1001, "all", "except", [], ["all", -1001], ["except"], {}, null]) {
       rejects([task({ chat_id: chatId })], shape);
     }
-    rejects([task({ chat_id: Array.from({ length: 65 }, (_: unknown, index: number) => -index - 1) })], shape);
-    expect(parseCronConfig([task({ chat_id: Array.from({ length: 64 }, (_: unknown, index: number) => -index - 1) })], PATH)[0]!
+    rejects([task({ chat_id: Array.from({ length: CRON_MAX_CHAT_IDS_PER_TASK + 1 }, (_: unknown, index: number) => -index - 1) })], shape);
+    expect(parseCronConfig([task({ chat_id: Array.from({ length: CRON_MAX_CHAT_IDS_PER_TASK }, (_: unknown, index: number) => -index - 1) })], PATH)[0]!
       .chatTargets).toMatchObject({ kind: "list" });
     const element: string = `${PATH}: $[0].chat_id[1] must be a unique non-zero safe integer chat id.`;
     for (const chatId of [[-1001, 0], [-1001, "-1002"], [-1001, "all"], [-1001, -1001], [-1001, 1.5], [-1001, null], [-1001, Number.MAX_SAFE_INTEGER + 2]]) {
@@ -200,21 +218,40 @@ describe("parseCronConfig", () => {
   });
 
   test("顶层、任务与动作的形态、上限和唯一名都严格判定", () => {
-    rejects({}, "$ must be an array with at most 128 tasks");
-    rejects(Array.from({ length: 129 }, (_: unknown, index: number) => task({ name: `t${index}` })), "$ must be an array");
+    rejects({}, `$ must be an array with at most ${CRON_MAX_TASKS} tasks`);
+    rejects(Array.from({ length: CRON_MAX_TASKS + 1 }, (_: unknown, index: number) => task({ name: `t${index}` })), "$ must be an array");
     rejects([task({ extra: 1 })], "$[0] must be {");
-    rejects([task({ name: " " })], "$[0].name must be a non-empty string of at most 64 characters");
-    rejects([task({ name: "x".repeat(65) })], "$[0].name must be");
+    rejects([task({ name: " " })], `$[0].name must be a non-empty string of at most ${CRON_TASK_NAME_MAX_CHARS} characters`);
+    rejects([task({ name: "x".repeat(CRON_TASK_NAME_MAX_CHARS + 1) })], "$[0].name must be");
     rejects([task(), task()], "$[1].name must be unique across tasks");
     rejects([task({ chat_id: [0] })], "$[0].chat_id[0] must be a unique non-zero safe integer chat id");
     // 不支持论坛话题：message_thread_id 是未知键，整份拒绝。
     rejects([task({ message_thread_id: 12 })], "$[0] must be { name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
-    rejects([task({ actions: [] })], "$[0].actions must be a non-empty array with at most 16 actions");
-    rejects([task({ actions: Array.from({ length: 17 }, () => ({ type: "send_message", payload: { content: "x" } })) })], "$[0].actions must be");
+    rejects([task({ actions: [] })], `$[0].actions must be a non-empty array with at most ${CRON_MAX_ACTIONS_PER_TASK} actions`);
+    rejects([task({ actions: Array.from({ length: CRON_MAX_ACTIONS_PER_TASK + 1 }, () => ({ type: "send_message", payload: { content: "x" } })) })], "$[0].actions must be");
     rejects([task({ actions: [{ type: "send_video", payload: {} }] })], "$[0].actions[0].type must be send_message, send_image, send_file or send_voice");
     rejects([task({ actions: [{ type: "send_message", payload: { content: "" } }] })], "$[0].actions[0].payload.content must be");
-    rejects([task({ actions: [{ type: "send_message", payload: { content: "x".repeat(4097) } }] })], "$[0].actions[0].payload.content must be a non-empty string of at most 4096 characters");
-    rejects([task({ actions: [{ type: "send_file", payload: { content: "x".repeat(1025), url: "https://e.com/f" } }] })], "$[0].actions[0].payload.content must be a non-empty string of at most 1024 characters");
+    rejects([task({ actions: [{ type: "send_message", payload: { content: "x".repeat(TELEGRAM_MESSAGE_MAX_CHARS + 1) } }] })], `$[0].actions[0].payload.content must be a non-empty string of at most ${TELEGRAM_MESSAGE_MAX_CHARS} characters`);
+    rejects([task({ actions: [{ type: "send_file", payload: { content: "x".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1), url: "https://e.com/f" } }] })], `$[0].actions[0].payload.content must be a non-empty string of at most ${TELEGRAM_CAPTION_MAX_CHARS} characters`);
+  });
+
+  test("字符串字段按首尾空白规范化后校验并保存：名称、正文、路径、时区与表达式", () => {
+    const config: CronConfig = parseCronConfig([task({
+      name: " daily ",
+      cron: " 0 9 * * * ",
+      time_zone: ` ${CRON_DEFAULT_TIME_ZONE} `,
+      actions: [
+        { type: "send_message", payload: { content: "\n hi \n" } },
+        { type: "send_file", payload: { content: " caption ", path: " a.png " } },
+      ],
+    })], PATH);
+    expect(config[0]).toMatchObject({ name: "daily", cron: "0 9 * * *", timeZone: CRON_DEFAULT_TIME_ZONE });
+    expect(config[0]!.actions).toEqual([
+      { type: "send_message", content: "hi" },
+      { type: "send_file", content: "caption", source: { kind: "path", path: join(RUNTIME_DATA_ROOT, "a.png") } },
+    ]);
+    rejects([task({ time_zone: "   " })], "$[0].time_zone must be an IANA time zone name");
+    rejects([task({ actions: [{ type: "send_file", payload: { path: "  " } }] })], "$[0].actions[0].payload.path must be");
   });
 
   test("来源组合：恰好一个 url 或 path；rand_image 只用于图片且不配 url", () => {
@@ -244,22 +281,22 @@ describe("parseCronConfig", () => {
     rejects(image({ content: "x", is_blurred: true }, "send_message"), "$[0].actions[0].payload must be { content }");
   });
 
-  test("path 接受绝对路径与相对项目根的路径，不限定目录，按规范化结果保存", () => {
-    const expected: string = "$[0].actions[0].payload.path must be an absolute local path or a path relative to the project root.";
+  test("path 接受绝对路径与相对运行时数据根的路径，不限定目录，按规范化结果保存", () => {
+    const expected: string = "$[0].actions[0].payload.path must be an absolute local path or a path relative to the runtime data root.";
     const image = (payload: Record<string, unknown>): unknown => [task({ actions: [{ type: "send_image", payload }] })];
     for (const path of ["", "/tmp/a\0.png", "a\0.png", 7, null]) rejects(image({ path: [path] }), expected.replace("payload.path", "payload.path[0]"));
     rejects(image({ rand_image: true, path: "" }), expected);
     const parsedPath = (payload: Record<string, unknown>): unknown => parseCronConfig([task({ actions: [{ type: "send_file", payload }] })], PATH)[0]!.actions[0];
     expect(parsedPath({ path: "/etc/../opt/./r.pdf" })).toEqual({ type: "send_file", content: undefined, source: { kind: "path", path: "/opt/r.pdf" } });
     for (const [path, resolved] of [
-      ["a.png", join(PROJECT_ROOT, "a.png")],
-      ["./config/cron_files/x.png", join(PROJECT_ROOT, "config", "cron_files", "x.png")],
-      ["../shared/r.pdf", join(PROJECT_ROOT, "..", "shared", "r.pdf")],
+      ["a.png", join(RUNTIME_DATA_ROOT, "a.png")],
+      ["./config/cron_files/x.png", join(RUNTIME_DATA_ROOT, "config", "cron_files", "x.png")],
+      ["../shared/r.pdf", join(RUNTIME_DATA_ROOT, "..", "shared", "r.pdf")],
     ] as const) {
       expect(parsedPath({ path })).toEqual({ type: "send_file", content: undefined, source: { kind: "path", path: resolved } });
     }
     const config: CronConfig = parseCronConfig([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: "." } }] })], PATH);
-    expect(config[0]!.actions[0]).toEqual({ type: "send_image", content: undefined, source: { kind: "random", directory: PROJECT_ROOT }, isBlurred: false });
+    expect(config[0]!.actions[0]).toEqual({ type: "send_image", content: undefined, source: { kind: "random", directory: RUNTIME_DATA_ROOT }, isBlurred: false });
   });
 });
 
@@ -287,18 +324,28 @@ describe("loadCronConfig", () => {
     await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");
   });
 
-  test("相对路径按项目根解析后再核对存在与类型", async () => {
+  test("相对路径按运行时数据根解析后再核对存在与类型", async () => {
+    const relativeDir: string = relative(RUNTIME_DATA_ROOT, FILES_ROOT);
+    mkdirSync(join(FILES_ROOT, "gallery"), { recursive: true });
+    await Bun.write(join(FILES_ROOT, "report.pdf"), "pdf");
     await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({
       actions: [
-        { type: "send_file", payload: { path: "config_example/dynamic/cron.json" } },
-        { type: "send_image", payload: { rand_image: true, path: "public" } },
+        { type: "send_file", payload: { path: join(relativeDir, "report.pdf") } },
+        { type: "send_image", payload: { rand_image: true, path: join(relativeDir, "gallery") } },
       ],
     })]));
     expect((await loadCronConfig())[0]!.actions).toHaveLength(2);
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "config_example/missing.pdf" } }] })]));
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: join(relativeDir, "missing.pdf") } }] })]));
     await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");
-    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: "config_example/dynamic/cron.json" } }] })]));
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_image", payload: { rand_image: true, path: join(relativeDir, "report.pdf") } }] })]));
     await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing directory.");
+  });
+
+  test("相对路径不再按项目根解析：只在项目根下存在的文件按不存在拒绝", async () => {
+    // 测试 preload 把运行时数据根指到独立临时目录，两个基准在这里必然不同。
+    expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);
+    await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "config_example/dynamic/cron.json" } }] })]));
+    await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");
   });
 
   test("符号链接按指向的对象判定；悬空链接按不存在拒绝", async () => {
@@ -323,13 +370,13 @@ describe("loadCronConfig", () => {
 
 test("固定图片数组严格限制 1–10 项，拒绝随机模式与数组混用", () => {
   const image = (payload: unknown): unknown => [task({ actions: [{ type: "send_image", payload }] })];
-  for (const length of [1, 2, 10]) {
+  for (const length of [1, 2, CRON_MAX_IMAGES]) {
     const urls: string[] = Array.from({ length }, (_: unknown, index: number): string => `https://e.com/${index}.png`);
     expect(parseCronConfig(image({ url: urls, rand_image: false }), PATH)[0]!.actions[0])
       .toMatchObject({ source: { kind: "urls", urls } });
   }
-  for (const value of [[], Array(11).fill("https://e.com/a.png"), "https://e.com/a.png", null, {}]) {
-    rejects(image({ url: value }), "payload.url must be an array of 1–10");
+  for (const value of [[], Array(CRON_MAX_IMAGES + 1).fill("https://e.com/a.png"), "https://e.com/a.png", null, {}]) {
+    rejects(image({ url: value }), `payload.url must be an array of 1–${CRON_MAX_IMAGES}`);
   }
   for (const value of [null, 7, [], {}, "ftp://e.com/a.png"]) {
     rejects(image({ url: ["https://e.com/a.png", value] }), "payload.url[1] must be an absolute http(s) URL");
@@ -341,7 +388,7 @@ test("固定图片数组严格限制 1–10 项，拒绝随机模式与数组混
   rejects(image({ url: ["https://e.com/a.jpg"], rand_image: true }), "payload.url must be absent when rand_image is true");
   rejects(image({ url: ["https://e.com/a.jpg"], path: ["./a.jpg"] }), "payload must be exactly one of url or path arrays");
   expect(parseCronConfig(image({ path: ["./a.jpg", "/srv/b.png"] }), PATH)[0]!.actions[0])
-    .toMatchObject({ source: { kind: "paths", paths: [join(PROJECT_ROOT, "a.jpg"), "/srv/b.png"] } });
+    .toMatchObject({ source: { kind: "paths", paths: [join(RUNTIME_DATA_ROOT, "a.jpg"), "/srv/b.png"] } });
 });
 
 test("固定图片数组异步检查每个来源，目录或缺失文件报告精确下标", async () => {

@@ -36,7 +36,6 @@ import {
   clearMediaInputProbe,
   getMediaInputProbe,
   getMediaInputState,
-  getMediaInputSupport,
   isMediaInputProbeCoolingDown,
   recordMediaInputResult,
   setMediaInputProbe,
@@ -122,7 +121,7 @@ export function describeMedia(params: DescribeMediaParams): Promise<string | nul
   // 两类跳过都在建立 LRU 条目之前返回：不下载、不排队、也不留下一条注定为 null
   // 的缓存项。退避到期后同一份媒体仍可被下一条消息重新解析。
   if (
-    isMediaInputClosed(getMediaInputSupport(capability)) ||
+    isMediaInputClosed(getMediaInputState(capability).support) ||
     isMediaInputProbeCoolingDown(capability, Date.now())
   ) {
     return SKIPPED_DESCRIPTION_PROMISE;
@@ -133,7 +132,7 @@ export function describeMedia(params: DescribeMediaParams): Promise<string | nul
     return transientDescriptionTasks.get(cached)?.wait(params.signal) ?? cached;
   }
   if (!hasMediaTaskCapacity(
-    getMediaInputSupport(capability) !== "supported" && getMediaInputProbe(capability) !== null
+    getMediaInputState(capability).support !== "supported" && getMediaInputProbe(capability) !== null
   )) return SKIPPED_DESCRIPTION_PROMISE;
 
   const controller: AbortController = new AbortController();
@@ -262,7 +261,7 @@ function runMediaInputRequest(
   signal?: AbortSignal
 ): Promise<AiTextResult> {
   if (signal?.aborted === true) return Promise.resolve(MEDIA_CANCELLED_RESULT);
-  const support: MediaInputSupport = getMediaInputSupport(capability);
+  const support: MediaInputSupport = getMediaInputState(capability).support;
   if (isMediaInputClosed(support)) return MEDIA_CLOSED_PROMISE;
   if (isMediaInputProbeCoolingDown(capability, Date.now())) return MEDIA_BACKOFF_PROMISE;
   if (support === "supported") return runTrackedMediaAttempt(capability, task, signal);

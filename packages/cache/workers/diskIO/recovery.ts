@@ -4,7 +4,7 @@
  * 当前是否正处在主线程恢复缓冲的重放区间内。
  *
  * 由主线程 activateDiskIOWorker 在重放前后各发一条 `recoveryReplay` 标记开合
- * （见 types/diskIO.ts 的 RecoveryReplayRequest）。填充时机 = 收到 active:true；
+ * （见 types/diskIO/messages.ts 的 RecoveryReplayRequest）。填充时机 = 收到 active:true；
  * 清理时机 = 收到 active:false，或本 Worker 因崩溃被替换——新 Worker 从 false
  * 起步，而新一轮重放必然重新发一次 active:true，不需要跨实例沿用。
  *

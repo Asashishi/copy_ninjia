@@ -14,7 +14,6 @@ import type { BotChatPermissions } from "../types/telegram";
 import {
   botChatPermissionsIn,
 } from "../infra/botAdmin";
-import { getChatState } from "../infra/storage/stateStore";
 import {
   probeChatMembership,
   sendCommandMessage,
@@ -45,7 +44,7 @@ import {
 import type { GagReservationOutcome } from "./gag/runtime";
 import { resolveCommandTarget } from "./targetResolution";
 
-/** `/gag`、`/ungag` 共用的身份、群状态与机器人删除权限门禁。 */
+/** `/gag`、`/ungag` 共用的身份、群类型与机器人删除权限门禁。 */
 async function passesGagCommandGate(
   ctx: CommandContext<Context>,
   command: "gag" | "ungag"
@@ -63,14 +62,6 @@ async function passesGagCommandGate(
     await sendCommandMessage({
       chatId: ctx.chat.id,
       text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagGroupOnly,
-      replyToMessageId: ctx.msgId,
-    });
-    return false;
-  }
-  if (getChatState(ctx.chat.id).isInitEnabled !== true) {
-    await sendCommandMessage({
-      chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.gagNotInitialized,
       replyToMessageId: ctx.msgId,
     });
     return false;
@@ -256,7 +247,7 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
       text: renderGagPublicNotice(session),
       replyToMessageId: ctx.msgId,
       // 公开状态是「这个人被管教了」的一次性播报，留在下命令的话题即可，不搬家；
-      // 发言提示由状态机而非固定延迟清理持有，属长期留存，因此挂了回复也照样
+      // 它同样由状态机而非固定延迟清理持有，属长期留存，因此挂了回复也照样
       // 带话题；判定口径见 SendMessageParams.messageThreadId。
       messageThreadId: session.speakNoticeThreadId,
       onSent: recordPublicNotice,

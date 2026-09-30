@@ -14,7 +14,7 @@ import type { BotActionPermissions } from "../../../types/telegram";
  * 429）同样不写入条目。本表如实保留「未知 / 确证 false / 确证权限位」三态，未知
  * 档由调用方各自决定：现有读口一律是「确证 false 才放弃，未知照常发请求、让
  * Telegram 当裁判」（见 workers/antiRaid/botPermissions.ts 的两个读口，以及
- * floodControl.ts / adDetect/disposal.ts / verificationEffects.ts 的用法）。
+ * floodControl.ts / adDetect/disposal.ts / verificationEffects/kick.ts、terminal.ts 的用法）。
  * 新增读口必须沿用同一档口径，不得把 undefined 与 false 压成一个布尔。
  *
  * 条目数与 State 权威快照同阶（只有 `/init enable` 且确证过权限的群才有）。Worker

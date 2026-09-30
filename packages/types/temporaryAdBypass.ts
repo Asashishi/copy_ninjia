@@ -16,9 +16,3 @@ export interface PendingTemporaryAdBypassWrite {
   readonly activity: Readonly<TemporaryAdBypassActivity> | null;
   readonly revision: number;
 }
-
-/** 主线程计入一条发言后的 write-through 最终值与 Worker 接收结果。 */
-export interface RecordedTemporaryAdBypassActivity {
-  readonly activity: Readonly<TemporaryAdBypassActivity>;
-  readonly queued: boolean;
-}

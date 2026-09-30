@@ -382,9 +382,10 @@ token 指纹只用于识别锁 owner，不是数据隔离边界；多个 Bot 并
 - 有限重试耗尽的持久化失败会让进程以非零状态退出——这是设计行为（durability 优先于可用性），由 systemd 拉起后从上一致状态续跑。
 - `Cron task "<name>" action #<n> (<type>) failed after <k> attempt(s)`：定时任务的某个动作最终失败，本轮剩下的动作已跳过。末尾是 Telegram 的错误码与描述或本地原因：`403` 多为机器人已被移出目标群，`400` 多为地址不可用或文件类型不被 Telegram 接受，`local file ... is missing` 表示 `payload.path` 指向的本地文件已经不在了，`speech synthesis failed: <原因>` 是 `send_voice` 没合成出语音（`tts unconfigured` / `tts unsupported` 为配置问题，`worker unavailable` 表示 AI Worker 没在运行，`synthesis failed` / `timed out` 多为模型端问题，同时会有一行 `Gemini speech synthesis API` 的错误，`daily limit reached` 表示当日语音额度 `agent.tts.daily_limit` 已用尽、不重试）。改好 `cron.json` 或素材后会自动热重载，不用重启。
 - `/send TTS for chat <id> produced no voice: <原因>`：`/send` 中转里的语音请求没合成出语音，原因的读法同上；超管私聊同时收到一句失败提示，中转会话保持开启。
+- `AI reply voice was not sent (chat <id>): <原因>`：AI 回复里模型调用了 `send_voice`，但没有得到可发送的语音（供应商失败或超时、配额闸门排队被拒、音频无法编码），这条语音不发送，模型不会得知，回复的其余动作照常发出；供应商或编码层的具体错误在它之前另有一行。TTS 调用失败时不计入每日次数，TTS 已成功而编码失败时照常计数。
 - `Cron task "<name>" action #<n> (<type>) failed in chat <id> after <k> attempt(s)`：投递多个会话的任务（`["all"]`、`["except", ...]` 或逐个列出多个会话）在某个会话最终失败，只跳过这个会话剩下的动作，其余会话照常发送；原因的读法同上。`Cron task "<name>" skipped <n> chat(s) without send permission.` 是普通日志，表示本轮有群因机器人缺发送权限或查询失败被跳过。
 - `Failed to probe chat membership` / `Failed to ban chat member` 以 `PARTICIPANT_ID_INVALID` 结尾时，通常是黑名单里有已销号账号。补扫照常按退避重试；同一用户在一个群的一次补扫里全部请求都返回这一句记 1 次，任一群查到或封到 TA 即清零，累计 5 次后自动移出黑名单与待踢批次，并记 `Removed blocklisted user <id> after 5 consecutive PARTICIPANT_ID_INVALID sweep results`。`/wed` 每日复核遇到同一错误直接把该 ID 移出候选集合，不记错误日志。
-- `Gemini context cache API` / `Gemini ad detection cache API`（回复 / 广告检测的 Gemini 显式缓存）：`create rejected: 400 …` 是 warn，表示缓存内容低于所用模型的显式缓存下限或参数不被接受，同一内容不再重试，请求照常不带缓存发出；`create failed`、`renew failed` 是瞬时失败，`GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS`（10 分钟）后再试，期间照常请求。
+- `Gemini context cache API` / `Gemini ad detection cache API`（回复 / 广告检测的 Gemini 显式缓存）：`create rejected (n/3): 400 …` 是 warn，表示缓存内容低于所用模型的显式缓存下限或参数不被接受；同一内容 `GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS`（5 分钟）后再试，累计 3 次后不再重试，请求照常不带缓存发出；`create failed`、`renew failed` 是瞬时失败，`GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS`（10 分钟）后再试，期间照常请求。
 
 ---
 

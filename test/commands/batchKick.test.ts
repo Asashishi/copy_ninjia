@@ -6,6 +6,8 @@ import type { IdentityPolicyVerdicts } from "../../packages/types/identityStorag
 import { diskIOStub } from "../helpers/diskIOMock";
 import { lastReplyText } from "../helpers/replies";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { BATCH_KICK_CONCURRENCY } from "../../packages/consts/commands";
+import { runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const probeChatMembership = mock(
@@ -256,6 +258,31 @@ describe("/batch_kick", () => {
     );
     expect(lastReplyText(sendMessage)).toContain("踢出 1");
     expect(lastReplyText(sendMessage)).toContain("查询或请求失败 1");
+  });
+
+  test("停机取消后不再处理剩余记录，在途失败不记日志，整条命令以取消解开", async () => {
+    const records: { userId: number; joinedAt: number }[] = [];
+    for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
+      records.push({ userId: 2_000 + index, joinedAt: 1 });
+    }
+    readJoinLog.mockResolvedValueOnce(records);
+    const controller: AbortController = new AbortController();
+    probeChatMembership.mockImplementation(async (): Promise<boolean | undefined> => {
+      controller.abort(new DOMException("shutdown", "AbortError"));
+      throw controller.signal.reason;
+    });
+
+    await expect(runWithUpdateAbortSignal(
+      controller.signal,
+      (): Promise<void> => handleBatchKickCommand(context())
+    )).rejects.toThrow("shutdown");
+
+    // 只有取消前已经开始的那一轮并发探测，之后的记录与下一块一概不碰。
+    expect(probeChatMembership.mock.calls.length).toBeLessThanOrEqual(BATCH_KICK_CONCURRENCY);
+    expect(readIdentityPolicyVerdicts).toHaveBeenCalledTimes(1);
+    expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(loggerError).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("429 等待期间目标已离群时按 absent 结算，不误报请求失败", async () => {

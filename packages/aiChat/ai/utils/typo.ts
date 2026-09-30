@@ -6,13 +6,10 @@ import type {
   TypoCorrectionMode,
 } from "../../../types/aiChat/typo";
 
-// 字素簇切分复用 libs/text.ts，不另起一份：那边的 Segmenter 是惰性构造 +
-// try/catch 降级的，模块作用域直接 new 会让 ICU 不全的运行时连 import 都失败。
-
 /**
- * 出错分支里修正方式由代码侧按概率决定，模型不参与（见 consts/aiChat/tools.ts
- * 的 TYPO_QUICK_CORRECTION_PROBABILITY 注释）：90% 补发正确单字，
- * 剩余 10% 即「没发现」；没有撤回后重发正确全文这条分支。
+ * 出错分支里修正方式由代码侧按 TYPO_QUICK_CORRECTION_PROBABILITY 的概率决定（见
+ * consts/aiChat/tools.ts 的注释），模型不参与：命中时补发正确单字（quick），
+ * 否则不补发（ignore）。
  */
 export function pickTypoCorrectionMode(): TypoCorrectionMode {
   const roll: number = Math.random();

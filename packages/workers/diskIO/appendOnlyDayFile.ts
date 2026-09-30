@@ -4,23 +4,26 @@
  * 而是覆写文件结尾的「\n}」两字节、按位置追加，写入量只与本批条数有关，
  * 与文件大小无关。调用方是 diskIO/logFiles.ts（日志）、diskIO/snapshotFiles.ts 的
  * appendLuckEntries（每日运势）、diskIO/verificationWrites.ts（待验证）、
- * diskIO/joinLogWrites.ts（入群日志）与 diskIO/adSampleFile.ts（广告样本）；
+ * diskIO/joinLogWrites.ts（入群日志）、diskIO/adSampleFile.ts（广告样本）与
+ * diskIO/aiCacheFile.ts（AI 用量统计）；
  * 调用方各自负责 key/value 怎么序列化、
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
  * 打开、探测与追加；截断修复只供调用方显式选择的诊断材料和日志使用。
  *
  * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作，
- * 供入群日志与广告样本使用；openDayFile/appendToDayFile 是它们在
- * `<dir>/<day>.json` 命名约定上的薄封装。appendToDayFile 供按天滚动的日志、每日
- * 运势与待验证三个领域使用；openDayFile 只有每日运势（snapshotFiles.ts）使用，
- * 日志与待验证由各自模块构造 DayFileState。
+ * openAppendOnlyFile 供入群日志与广告样本使用，appendToAppendOnlyFile 另供 AI 用量统计
+ * 使用；openDayFile/appendToDayFile 是它们在 `<dir>/<day>.json` 命名约定上的薄封装。
+ * appendToDayFile 供按天滚动的日志、每日运势与待验证三个领域使用；openDayFile 只有每日
+ * 运势（snapshotFiles.ts）使用，日志与待验证由各自模块构造 DayFileState。日志与 AI 用量
+ * 统计的只读探测共用 inspectRepairableAppendOnlyFile（允许在内存里裁掉撕裂的末尾残片）。
  */
 
-import { closeSync, fsyncSync, openSync, statSync, writeSync } from "node:fs";
+import { closeSync, fsyncSync, openSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
-import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { atomicWriteTextSync, writeBufferFullySync } from "../../libs/atomicFile";
+import type { SyncBufferWriter } from "../../libs/atomicFile";
 import { readUtf8TextInput } from "../../libs/inputValidation";
 import { isPlainRecord } from "../../libs/record";
 import { inspectOptionalFile } from "../../libs/fileAccess";
@@ -35,15 +38,6 @@ if (DAY_FILE_JSON_INDENT < 1) {
   throw new Error("DAY_FILE_JSON_INDENT must be >= 1: serializeDayFileEntry relies on multi-line JSON.stringify output");
 }
 
-export interface SyncWriteRequest {
-  fd: number;
-  buffer: Uint8Array;
-  offset: number;
-  length: number;
-  position: number;
-}
-
-export type SyncBufferWriter = (request: SyncWriteRequest) => number;
 export type SyncFile = (fd: number) => void;
 
 export interface OpenValidatedAppendOnlyFileOptions {
@@ -55,41 +49,11 @@ export interface OpenValidatedAppendOnlyFileOptions {
   readonly empty: boolean;
 }
 
-export interface WriteBufferFullyParams {
-  position: number;
-  write?: SyncBufferWriter;
-}
-
 /** 目标文件不是可安全追记的当前格式；调用方必须阻止写入并安排人工恢复。 */
 export class AppendOnlyFileFormatError extends Error {
   constructor(path: string, reason: string) {
     super(`${path} ${reason}`);
     this.name = "AppendOnlyFileFormatError";
-  }
-}
-
-const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }: SyncWriteRequest): number =>
-  writeSync(fd, buffer, offset, length, position);
-
-/** write(2) 允许成功但只写一部分；只有整段字节落下才算 append 成功。 */
-function writeBufferFully(
-  fd: number,
-  buffer: Uint8Array,
-  { position, write = nodeWriteBuffer }: WriteBufferFullyParams
-): void {
-  let offset: number = 0;
-  while (offset < buffer.length) {
-    const written: number = write({
-      fd,
-      buffer,
-      offset,
-      length: buffer.length - offset,
-      position: position + offset,
-    });
-    if (!Number.isSafeInteger(written) || written <= 0 || written > buffer.length - offset) {
-      throw new Error(`Short write made no valid progress (${written} byte(s) reported).`);
-    }
-    offset += written;
   }
 }
 
@@ -158,6 +122,58 @@ export async function openAppendOnlyFile(
   state.size = statSync(path).size;
   state.empty = false;
   return state;
+}
+
+/** inspectRepairableAppendOnlyFile 的只读探测结果。 */
+export interface RepairableAppendOnlyInspection<T> {
+  /** 领域 decode 对（修复后的）解析结果给出的值。 */
+  readonly decoded: T;
+  /** 需要原子发布的裁尾或规范排版文本；无需重写时为 null。 */
+  readonly rewriteContent: string | null;
+  /** 发布后可追加的游标：size 取重写文本或物理文件大小。 */
+  readonly state: AppendOnlyFileState;
+}
+
+/**
+ * 只读探测一个允许自愈的追加型 JSON 对象文件（诊断日志与 AI 缓存用量共用）：解析失败时
+ * 在内存里经 repairTruncatedAppendOnlyContent 裁掉撕裂的末尾残片；领域 decode 在任何通用
+ * 格式化之前严格校验解析结果，非法时抛错、原字节不变；非空且结尾不规范时预计算规范排版。
+ * 整份文件只读一遍、不写盘；文件不存在时返回 null。
+ */
+export async function inspectRepairableAppendOnlyFile<T>(
+  path: string,
+  decode: (parsed: unknown) => T
+): Promise<RepairableAppendOnlyInspection<T> | null> {
+  if (!inspectOptionalFile(path)) return null;
+  const content: string = await readUtf8TextInput(path);
+  let parsed: unknown;
+  let rewriteContent: string | null = null;
+  try {
+    parsed = JSON.parse(content) as unknown;
+  } catch {
+    rewriteContent = repairTruncatedAppendOnlyContent(content);
+    if (rewriteContent === null) {
+      throw new AppendOnlyFileFormatError(path, "could not be parsed or repaired.");
+    }
+    parsed = JSON.parse(rewriteContent) as unknown;
+  }
+  const decoded: T = decode(parsed);
+  const empty: boolean = Object.keys(parsed as Record<string, unknown>).length === 0;
+  if (!empty && rewriteContent === null && !content.endsWith("\n}")) {
+    rewriteContent = JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT);
+  }
+  return {
+    decoded,
+    rewriteContent,
+    state: {
+      size: empty
+        ? 0
+        : rewriteContent === null
+          ? (await Bun.file(path).stat()).size
+          : Buffer.byteLength(rewriteContent),
+      empty,
+    },
+  };
 }
 
 /**
@@ -308,7 +324,7 @@ export async function appendToAppendOnlyFile({
   chunk,
   mode,
   repair = false,
-  write = nodeWriteBuffer,
+  write,
   sync = fsyncSync,
 }: AppendToAppendOnlyFileParams): Promise<void> {
   if (state.empty) {
@@ -324,7 +340,7 @@ export async function appendToAppendOnlyFile({
   const fd: number = openSync(path, "r+");
   let failure: unknown = null;
   try {
-    writeBufferFully(fd, data, { position: state.size - 2, write });
+    writeBufferFullySync(fd, data, { position: state.size - 2, write });
     // write/close 只保证字节进入内核页缓存；验证 persisted 与统一 flushed
     // 回执承诺的是断电后仍可恢复，因此每个已合并批次在成功返回前只 sync 一次。
     sync(fd);

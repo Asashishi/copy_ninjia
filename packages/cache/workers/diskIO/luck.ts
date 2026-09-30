@@ -14,8 +14,9 @@ export const luckPendingAppends: LuckPendingEntry[] = [];
  * - 填充：`handleLuckDrawMessage` 判定需要换日、但 `flushLuckAppends()` 失败时，
  *   把这条新日消息挪进来（丢掉的话磁盘恢复后当天文件永远缺它，而主线程的
  *   dailyLuckCache 已经按「今天抽过了」发过回执）。
- * - 清理：换日成功后由 `handleLuckDrawMessage` 整批取走并逐条重新登记；
- *   `hydrateLuckCache` 换 owner 时一并清空（那时它们要么已经补录、要么随
+ * - 清理：luckFiles.ts 在 owner 就绪后整批取走并逐条重新登记——switchLuckDay（新一天的首条
+ *   抽签、跨日取密钥、每日维护）先取走再换 owner，retryLuckFlush 与每日维护在旧日刷盘
+ *   成功后直接补录；`hydrateLuckCache` 换 owner 时清空剩余（那时它们要么已经补录、要么随
  *   启动恢复重新到来）。
  * - 容量：上界 `LUCK_DEFERRED_DRAW_MAX`，超出丢最旧的一条并 console.error。
  * - Worker 崩溃重建：随线程一起消失，由 infra/diskIO.ts 的 onDiskIORespawn
@@ -50,7 +51,7 @@ export const luckAppendFailures: { consecutive: number; alerted: boolean } =
  * 运势追加停摆诊断的投递出口（`self.postMessage` 包装），由 diskIOWorker.ts 的
  * startDiskIOWorker 在线程启动时装一次，此后不变。
  *
- * - 填充：`configureLuckAppendStalledReply`（仅 Worker 线程启动路径）。
+ * - 填充：startDiskIOWorker 直接赋值（仅 Worker 线程启动路径）。
  * - 清理：随线程终止一起消失；不随跨日或 hydrate 重置——它是线程级出口，不是
  *   当日 owner 的一部分。
  * - 「无条目」（current 为 null）的含义：本线程尚未装上诊断出口（典型是单测直接

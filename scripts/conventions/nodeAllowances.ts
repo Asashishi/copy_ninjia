@@ -41,8 +41,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/config/layout.ts": {
     "node:fs/promises": {
-      symbols: ["lstat", "stat"],
-      purpose: "deployment config layout validation: rejecting misplaced entries including dangling links without reading their contents, and requiring the dynamic directory",
+      symbols: ["lstat"],
+      purpose: "deployment config layout validation: rejecting misplaced entries including dangling links without reading their contents",
     },
   },
   "packages/config/readiness.ts": {
@@ -127,8 +127,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/appendOnlyDayFile.ts": {
     "node:fs": {
-      symbols: ["closeSync", "fsyncSync", "openSync", "statSync", "writeSync"],
-      purpose: "append-only descriptor metadata, writes, and fsync",
+      symbols: ["closeSync", "fsyncSync", "openSync", "statSync"],
+      purpose: "append-only descriptor metadata and fsync",
     },
   },
   "packages/workers/diskIO/joinLogWrites.ts": {
@@ -212,10 +212,6 @@ export const PRODUCTION_BUFFER_GLOBALS: Readonly<Record<string, BufferGlobalAllo
   "packages/workers/diskIO/aiCacheFile.ts": {
     methods: ["byteLength"],
     purpose: "AI cache statistics serialized byte accounting",
-  },
-  "packages/workers/diskIO/logFiles.ts": {
-    methods: ["byteLength"],
-    purpose: "log serialized byte accounting",
   },
   "packages/workers/diskIO/verificationRecovery.ts": {
     methods: ["byteLength"],
@@ -302,7 +298,7 @@ export const TEST_SHARED_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowan
   },
 };
 
-/** 测试文件中需要整模块替身或透传包装的精确 Node 兼容 import 位置。 */
+/** 测试文件中需要整模块替身、透传包装或 spyOn 目标的精确 Node 兼容 import 位置。 */
 export const TEST_NODE_IMPORTS: Readonly<
   Record<string, Readonly<Record<string, NodeImportAllowance>>>
 > = {

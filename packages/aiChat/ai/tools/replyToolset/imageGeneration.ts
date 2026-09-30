@@ -45,6 +45,7 @@ import { cleanReply } from "../../utils/replyText";
 import { typingDelayMs } from "../../utils/timing";
 import { acceptRoundText, sendDirectMessage } from "./messageState";
 import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
+import { pauseThenSettle } from "./pacing";
 
 /** 省略 aspect_ratio 时执行侧采用的比例：有参考素材就取最接近它的官方比例。
  *  本轮工具状态的参考素材文案与执行侧解析共用这一个函数，两处默认值不会漂移（见 toolStatus.ts）。 */
@@ -125,14 +126,22 @@ function parseArguments(
 }
 
 /**
+ * 生图冷却剩余毫秒换成告诉模型的秒数（向上取整）。工具状态行、调用入口的只读判定与
+ * claim 落空三处共用这一口径。
+ * @param retryAfterMs 冷却剩余毫秒，由生图冷却表给出，恒为正。
+ */
+export function imageCooldownRetrySeconds(retryAfterMs: number): number {
+  return Math.ceil(retryAfterMs / 1_000);
+}
+
+/**
  * 冷却未过时回给模型的统一提示。
  *
- * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段：这条工具结果是
- * 模型唯一一次知道「还要等多久」的机会，两条路径的文案与秒数口径因此必须同源。
+ * 调用入口的只读判定与 claim 落空（同群并发轮抢在前面）共用这一段，文案与秒数口径同源。
  * @param retryAfterMs 冷却剩余毫秒，由生图冷却表给出。
  */
 function coolingDownError(retryAfterMs: number): string {
-  const retryAfterSeconds: number = Math.ceil(retryAfterMs / 1_000);
+  const retryAfterSeconds: number = imageCooldownRetrySeconds(retryAfterMs);
   return toolError("Image generation is cooling down in this chat", {
     retry_after_seconds: retryAfterSeconds,
     retryable: false,
@@ -162,9 +171,9 @@ export function createGenerateImageExecutor(
         { retryable: false }
       );
     }
-    // 冷却状态不进提示词，因此在解析参数、下载参考图和请求模型之前先做一次只读
-    // 判定，冷却中直接把剩余秒数回给模型。真正的原子闸仍是下面的 claim——只读判定
-    // 与 claim 之间同群另一轮可能抢先占位，那条路径回同一段文案。
+    // 本轮工具状态里的冷却是组装时的快照，可能已过期；在解析参数、下载参考图和请求
+    // 模型之前先做一次只读判定，冷却中直接把剩余秒数回给模型。真正的原子闸仍是下面的
+    // claim——只读判定与 claim 之间同群另一轮可能抢先占位，那条路径回同一段文案。
     const availability: ImageGenerationAvailability = getImageGenerationAvailability({
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,
@@ -283,11 +292,15 @@ export function createGenerateImageExecutor(
           } else if (caption !== null && inlineCaption === null) {
             // 图片落地，一段状态到此结束：图注的「正在输入」在静默之后亮起。
             chatAction.set("idle");
-            const invalidated: string | null = await pause("typing", typingDelayMs(caption));
-            chatAction.set("idle");
-            await chatAction.settle();
+            const blocked: string | null = await pauseThenSettle({
+              isActive: ctx.isActive,
+              chatAction,
+              pause,
+              phase: "typing",
+              delayMs: typingDelayMs(caption),
+            });
 
-            const captionMessageId: number | undefined = invalidated !== null
+            const captionMessageId: number | undefined = blocked !== null
               ? undefined
               : await sendDirectMessage({
                 ctx,

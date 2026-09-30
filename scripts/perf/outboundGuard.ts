@@ -13,7 +13,7 @@ import type { Transformer } from "grammy";
  * `globalThis.fetch` 这道拦的是另一类调用：项目里直接写 `fetch(...)` 的地方
  * （头像抓取、JSON API）在调用时才解析全局，因此拦得住。
  *
- * 本模块由 hotPaths.ts 与 fullSuite 的各子进程共用。
+ * 本模块由热路径入口、fullSuite 各子进程与 review/diskPressure.ts 共用。
  */
 export function installOutboundGuards(): void {
   const deny: Transformer = (_prev: unknown, method: string): never => {
@@ -44,9 +44,8 @@ const CANNED_TELEGRAM_RESULTS: Readonly<Record<string, (payload: Record<string, 
   getChatAdministrators: (): readonly unknown[] => [],
   /**
    * 只有机器人自己算管理员：其余成员返回 `member`，机器人自己返回
-   * `administrator` 并带齐处置权限字段。所有人都返回 administrator 会让依赖
-   * 成员态的链路把发送者当管理员走进豁免分支，读数偏快且不准。当前广告链路靠
-   * 预热的管理员缓存，不会再触发这次查询。
+   * `administrator` 并带齐处置权限字段；广告链路靠预热的管理员缓存判定发送者，
+   * 不会触发这次查询。
    */
   getChatMember: (payload: Record<string, unknown>): unknown => {
     const userId: number = Number(payload.user_id);

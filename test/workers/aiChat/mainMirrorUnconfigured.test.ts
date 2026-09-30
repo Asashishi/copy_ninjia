@@ -35,7 +35,11 @@ mock.module("../../../packages/config/readiness", () => ({
 mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ log: loggerLog, error: loggerError, info: loggerLog, warn: loggerLog }),
 }));
-mock.module("../../../packages/infra/selfSentTracker", () => ({ markSelfSent: (): void => {} }));
+mock.module("../../../packages/infra/selfSentTracker", () => ({
+  markSelfSent: (): void => {},
+  beginSelfSentSend: (): void => {},
+  endSelfSentSend: (): void => {},
+}));
 mock.module("../../../packages/infra/supervisedWorker", () => ({
   superviseWorker: (_options: {
     onEvent: (event: AiChatWorkerEvent) => void;

@@ -81,8 +81,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   // 模式这条链路跟着它一起停（见 types/chatState.ts 的 isAntiRaidEnabled）。
   const joinGuardEnabled: boolean = getChatState(chatId).isAntiRaidEnabled === true;
 
-  // 机器人不再豁免——僵尸 bot 也会被批量拉进群刷屏，照常走验证（由本群
-  // 管理员代点「通过」作保）。
+  // 机器人同样走验证——僵尸 bot 也会被批量拉进群刷屏，由本群管理员代点「通过」作保。
   const wasActive: boolean = isPresentMember(update.old_chat_member);
   const isActive: boolean = isPresentMember(update.new_chat_member);
 
@@ -253,7 +252,7 @@ function ingestAdmittedMessage(
     const messages: AntiRaidWorkerMessage[] = [];
     const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
     for (const member of message.new_chat_members) {
-      // 机器人不再豁免（由本群管理员代点「通过」作保），只跳过本天才自己
+      // 机器人同样走验证（由本群管理员代点「通过」作保），只跳过本天才自己
       // ——自己既不能验证自己，也不该被自己踢出去。
       if (member.id === botId) continue;
       const joinMessage: AntiRaidWorkerMessage | undefined = joinGuardEnabled

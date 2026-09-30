@@ -44,8 +44,8 @@ export function currentUpdateAbortSignal(): AbortSignal | undefined {
  *
  * 同一条群消息会在两条 middleware 上各要一次时刻：入群守卫的投递段
  * （antiRaid/updateIngress.ts）与自动流水线主干（auto/message/index.ts）。两处
- * 各读一次墙钟，同一条消息的判定就可能横跨毫秒边界——这正是主干内部早已用
- * 单个 `now` 防住的那件事，本函数只是把同一条不变量扩到整条 update。
+ * 各读一次墙钟，同一条消息的判定就可能横跨毫秒边界；本函数让整条 update 共用同一个
+ * 时刻。
  *
  * 已填值时只做一次 AsyncLocalStorage 取值，不再读墙钟。
  *

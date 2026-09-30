@@ -5,7 +5,7 @@ import { hasExactKeys, isPlainRecord } from "../libs/record";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import type { StickerConfig } from "../types/config";
 
-/** 严格解码 stickers.json，并拒绝超量、非法或重复的贴纸包 short name。 */
+/** 严格解码 stickers.json（short name 去掉首尾空白），并拒绝超量、非法或重复的贴纸包 short name。 */
 export function parseStickerConfig(
   value: unknown,
   sourcePath: string = STICKERS_CONFIG_PATH
@@ -20,8 +20,9 @@ export function parseStickerConfig(
   const packs: string[] = [];
   const seen: Set<string> = new Set();
   for (let index: number = 0; index < value.packs.length; index++) {
-    const pack: unknown = value.packs[index];
-    if (typeof pack !== "string" || !STICKER_PACK_NAME_PATTERN.test(pack)) {
+    const entry: unknown = value.packs[index];
+    const pack: string = typeof entry === "string" ? entry.trim() : "";
+    if (!STICKER_PACK_NAME_PATTERN.test(pack)) {
       return invalidInput(sourcePath, `$.packs[${index}]`, "a valid Telegram sticker pack short name");
     }
     if (seen.has(pack)) return invalidInput(sourcePath, `$.packs[${index}]`, "unique");

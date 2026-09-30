@@ -1,4 +1,7 @@
-/** 群聊非功能性命令提示的延迟删除时长；发送边界见 infra/telegram。 */
+/**
+ * 群聊全部非功能性提示统一的延迟删除时长（命令提示与回执、广告警告与处置播报、刷屏禁言、
+ * 私密模式、入群验证与 AI 回复的群内提示）。所属模块：infra/telegram 的统一发送与清理边界。
+ */
 export const COMMAND_MESSAGE_AUTO_DELETE_MS: number = 30_000;
 
 /** `/bot_status` 展示单个模型名标签的最大字符数，防止部署值撑破消息上限。 */
@@ -94,13 +97,15 @@ export const CJK_ACTION_RATE_LIMIT_WINDOW_MS: number = 90_000;
  * 时长参数的完整匹配规则：正整数（不接受前导零/小数/正负号）紧跟一个单位
  * 字母，m=分钟、h=小时、d=天，大小写均可。捕获组 1 是数值、组 2 是单位。
  * 数值位数不设限：正则挡不住安全整数边界，换算成毫秒后由各命令自己的上限
- * 收敛或拒绝兜底。所属模块：libs/durationToken.ts（`/mute` 与 `/batch_kick` 共用）。
+ * 收敛或拒绝兜底。所属模块：libs/durationToken.ts（`/mute`、`/batch_kick` 与 cron.json 的
+ * `rand_cron` 区间共用）。
  */
 export const DURATION_TOKEN_PATTERN: Readonly<RegExp> = /^([1-9]\d*)([mhd])$/i;
 
 /**
  * 时长单位到毫秒的换算表，键集合与 DURATION_TOKEN_PATTERN 的单位捕获组一一
- * 对应，新增单位两处要同步改。所属模块：libs/durationToken.ts。
+ * 对应，新增单位两处要同步改。所属模块：libs/durationToken.ts；`commands/quiet.ts`、
+ * `commands/gag/runtime.ts` 也按它换算分钟。
  */
 export const DURATION_UNIT_MS: Readonly<Record<"m" | "h" | "d", number>> = {
   m: 60_000,
@@ -157,6 +162,11 @@ export const QUIET_DEFAULT_MINUTES: number = 3;
 export const QUIET_MIN_MINUTES: number = 1;
 /** /quiet 允许的最长分钟数。 */
 export const QUIET_MAX_MINUTES: number = 15;
+/**
+ * /quiet 时长参数的形态：只接受 ASCII 十进制整数；小数、正负号、`0x5`、`1e1` 一律回用法提示。
+ * 所属模块：commands/quiet.ts。
+ */
+export const QUIET_MINUTES_PATTERN: RegExp = /^\d+$/;
 /** /quiet 的最大有效持续时间，用于抵御墙钟回拨导致的异常延长。 */
 export const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
 
@@ -167,6 +177,6 @@ export const QUIET_MAX_DURATION_MS: number = QUIET_MAX_MINUTES * 60_000;
  * `quietUntil - now` 恰好等于 QUIET_MAX_DURATION_MS，容差为零，主机时钟任何
  * 回拨都会让顶格判定失效；本值为小幅回拨留出余量。超出容差的大幅回拨由
  * libs/chatState.ts 的 normalizeChatState 收敛到上限，不删除字段。
- * 所属模块：commands/quiet.ts 与 libs/chatState.ts。
+ * 所属模块：libs/chatState.ts。
  */
 export const QUIET_CLOCK_SKEW_TOLERANCE_MS: number = 60_000;

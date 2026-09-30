@@ -118,7 +118,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   });
 
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
-  // 因此必须在 isInit 网关前检查。
+  // 因此必须在 `shouldPassInitGate` 网关前检查。
   bot.use((ctx: Context, next: NextFunction): Promise<void> => {
     // `ctx.msg` 是每次求值的 getter 链（grammy/out/context.js 的 `get msg()` 串
     // 八个 update 字段），本条链上凡是要多次读取的地方一律先取成局部变量：
@@ -215,7 +215,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
 
   // message / channel_post 上的 ingress 与消息兜底一律直接挂 bot.use，在 middleware
   // 内自行判定 update 类型。判据与 on("message")、on(["message", "channel_post"])
-  // 相同（allowed_updates 不含 edited_*，`ctx.msg` 恒等于 `message ?? channelPost`），
+  // 相同（allowed_updates 不含 edited_*，消息类 update 只有 message 与 channel_post 两种），
   // 命中集合、顺序与认领语义一致。
 
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
@@ -227,7 +227,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   });
 
   // gag 同样要覆盖命令消息，因此必须位于全部 bot.command 之前；Anti-Raid 先看
-  // 原始消息，才能保持广告/刷屏/待验证追踪的既有事实口径。被 gag 的消息即使
+  // 原始消息，才能让广告/刷屏/待验证追踪按原始消息计数。被 gag 的消息即使
   // Telegram 删除失败也在这里终止，不得继续喂给 AI、copy 或命令处理器。
   bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message;
@@ -250,10 +250,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 拿到一条机器人回复（非白名单是拒绝文案，白名单是整份权限 JSON），等于一个
   // 不受防刷屏约束的回复放大器；黑名单频道身份发的这两条命令也不会被就地删除，
   // 待验证成员发的更不会产生 trackedMessage。
-  // 全部命令收在一层 `:entities:bot_command` 子链后面，而不是逐条挂在 bot 上：
-  // 外闸判据与 Context.has.command() 自己的第一步完全相同（都是
-  // `:entities:bot_command`），因此它是每条命令判据的严格超集，命中集合、相对
-  // 顺序和「命中即终止」的语义都不变，不带 bot_command 实体的消息一次跳过整组。
+  // 全部命令收在一层 `:entities:bot_command` 子链后面：外闸判据与
+  // Context.has.command() 自己的第一步完全相同（都是 `:entities:bot_command`），
+  // 因此它是每条命令判据的严格超集，不带 bot_command 实体的消息一次跳过整组。
   // 中文动作命令拿不到 bot_command 实体，因此由下面的「/」外闸单独承接。
   const commands: Composer<Filter<Context, ":entities:bot_command">> =
     bot.on(":entities:bot_command");

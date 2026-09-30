@@ -1,7 +1,8 @@
 /**
  * 入群日志的格式与生命周期常量。消费方是 packages/workers/diskIO/joinLogWrites.ts
- * （接管与写入）、joinLogFiles.ts（路由与读取）、joinLogRecovery.ts（启动恢复）与
- * 主线程 infra/joinLog.ts（未确认镜像）。
+ * （接管与写入）、joinLogFiles.ts（路由与读取）、joinLogRecovery.ts（启动恢复）、
+ * joinLogRecords.ts（快照分块与字节记账）、cache/workers/diskIO/joinLog.ts，以及主线程
+ * infra/joinLog.ts（未确认镜像）与 cache/main/joinLog.ts。
  */
 
 import { FLUSH_MAX_ENTRIES } from "./appendOnly";
@@ -78,7 +79,7 @@ export const JOIN_LOG_SNAPSHOT_CHUNK_BYTES: number = 256 * 1_024;
 /**
  * 空快照文本 `{}` 的 UTF-8 字节数。
  *
- * 下面三条与 workers/diskIO/joinLogRecords.ts 的序列化格式一一对应：快照容量
+ * 本条与下面两条与 workers/diskIO/joinLogRecords.ts 的序列化格式一一对应：快照容量
  * 记账走的是按记录的循环，对这些固定字面量重复调用 `Buffer.byteLength` 属于
  * 每条记录付一次的常量开销。改动序列化格式时必须同批更新这三条；
  * test/workers/diskIO/joinLogFiles.test.ts 用真实序列化结果的

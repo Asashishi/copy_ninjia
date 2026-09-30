@@ -1,8 +1,8 @@
 /**
  * 黑名单补扫的资格判定：这个群受不受管、它的 claim 槽位此刻空不空。
  *
- * 只做纯判定，不读缓存也不投递；`sweep.ts`、`sweepScheduler.ts`、`sweepRetryState.ts`
- * 与 `outbox.ts` 共用这份判据。消费方：`prepareBlocklistSweep` 决定建不建 claim、
+ * 只做纯判定，不读缓存也不投递；`sweep.ts`、`sweepScheduler.ts` 与 `outbox.ts`
+ * 共用这份判据。消费方：`prepareBlocklistSweep` 决定建不建 claim、
  * `sweepBlockedMembers` 决定付不付跨线程名单页读、`nextBlocklistSweepAt` 挑该排
  * timer 的群、`hydrateBlocklist` 筛恢复出的任务。
  * @see ../../../docs/cn/04-invariants.md

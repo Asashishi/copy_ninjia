@@ -22,12 +22,10 @@ beforeEach(() => {
 });
 
 describe("图片比例归一化", () => {
-  test("官方比例原样保留，省略时使用 1:1", () => {
+  test("官方比例原样保留", () => {
     for (const ratio of IMAGE_GENERATION_ASPECT_RATIOS) {
       expect(normalizeImageAspectRatio(ratio)).toBe(ratio);
     }
-    expect(normalizeImageAspectRatio(undefined)).toBe("1:1");
-    expect(normalizeImageAspectRatio("   ")).toBe("1:1");
   });
 
   test("接受常见比例写法，并把非官方比例换成最接近的官方比例", () => {

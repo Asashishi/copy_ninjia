@@ -37,8 +37,8 @@ export function resetAiProviderFacades(): void {
 }
 
 /**
- * Worker dispose 与测试隔离时丢弃配额 lane 和稳定门面。生产进程随后销毁整个
- * isolate，不会在旧执行器仍有任务时重建新 lane；测试调用方同样须先结算任务。
+ * 测试隔离时丢弃配额 lane 和稳定门面。调用方须先结算旧执行器上的任务，不能在旧
+ * 执行器仍有任务时重建新 lane。
  */
 export function resetAiProviderSchedulerCache(): void {
   aiProviderQuotaLanes.length = 0;

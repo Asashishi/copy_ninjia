@@ -12,6 +12,10 @@ import {
   blockedIdentityTestView as blockedUserIds,
   seedMissingIdentity,
 } from "../helpers/identityStorage";
+import type { TelegramIdentityMetadata } from "../../packages/types/identityPolicy";
+
+/** 本文件不关心展示元数据；拉黑时统一带空字段。 */
+const NO_META: Readonly<TelegramIdentityMetadata> = { firstName: "", lastName: "", username: "" };
 
 const diskMessages: DiskBusinessMessage[] = [];
 const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
@@ -51,13 +55,13 @@ const {
 const {
   assertSuperAdminNotBlocked,
   blockUser,
-  ensureBlocklistEntryQueued,
   isUserBlocked,
   unblockUser,
 } = await import("../../packages/infra/blocklist/membership");
 const {
   hasAnyBlockedIdentity,
   queueBlocklistDeletion,
+  requeueUnacknowledgedIdentityWrite,
 } = await import("../../packages/infra/identityStorage");
 
 beforeEach(() => {
@@ -88,7 +92,7 @@ describe("SQLite 黑名单主线程最终值", () => {
     expect(JSON.parse(queuedData!)).toEqual(expect.objectContaining({
       meta: expect.objectContaining({ username: "alice" }),
     }));
-    expect(blockUser(7)).toBeFalse();
+    expect(blockUser(7, NO_META)).toBeFalse();
   });
 
   test("拉黑已有临时累计时先排 tombstone，再排永久黑名单", () => {
@@ -103,7 +107,7 @@ describe("SQLite 黑名单主线程最终值", () => {
       qualifiedAt: now,
     });
 
-    expect(blockUser(8)).toBeTrue();
+    expect(blockUser(8, NO_META)).toBeTrue();
 
     expect(diskMessages).toEqual([
       expect.objectContaining({
@@ -214,9 +218,9 @@ describe("SQLite 黑名单主线程最终值", () => {
 
   test("未 ACK 最终值可重复补投；精确 ACK 后停止补投", () => {
     seedMissingIdentity(9);
-    blockUser(9);
+    blockUser(9, NO_META);
     diskMessages.length = 0;
-    expect(ensureBlocklistEntryQueued(9)).toBeTrue();
+    expect(requeueUnacknowledgedIdentityWrite("blocklist", 9)).toBeTrue();
     expect(diskMessages).toHaveLength(1);
     const revision: number = unacknowledgedBlocklistWrites.get(9)!.revision;
     for (const listener of persistedListeners) {
@@ -228,7 +232,7 @@ describe("SQLite 黑名单主线程最终值", () => {
         chatQaWrites: [],
       });
     }
-    expect(ensureBlocklistEntryQueued(9)).toBeFalse();
+    expect(requeueUnacknowledgedIdentityWrite("blocklist", 9)).toBeFalse();
   });
 });
 
@@ -240,7 +244,7 @@ describe("超管与黑名单互斥的启动断言", () => {
 
   test("超管在黑名单里时拒绝启动，并点名文件与两张表", async () => {
     seedMissingIdentity(1);
-    blockUser(1);
+    blockUser(1, NO_META);
     // isWhitelisted 对超管短路 true、isUserBlocked 不短路：两者同时成立时
     // sweepManagedBlocklistChats 会把这位新超管从每个托管群清出去，而他连一条
     // /block disable 都发不出来。按 AGENTS.md「不为用户行为兜底」在启动阶段退出。

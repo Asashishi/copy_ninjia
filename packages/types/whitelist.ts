@@ -19,7 +19,7 @@ export interface PermissionSetReplyParams {
  * help 与 query 两条回执都要在正文里嵌一个 JSON 代码块，实体偏移按前缀的
  * UTF-16 长度计算，因此 helpPrefix / queryPrefix **必须以换行结尾**：少了那个
  * 换行，代码块会从开场白的最后一个字符开始，Telegram 渲染出来是错位的。
- * 具体文案表见 packages/consts/whitelist.ts。
+ * 具体文案表见 packages/consts/atmosphere/ 下各风格的 whitelist.ts。
  */
 export interface PermissionCommandTexts {
   /** 参数形态不对时的固定用法说明。 */
@@ -63,16 +63,14 @@ export interface WhiteCommandTexts {
   /** 目标是超级管理员自己，且动作是 enable。 */
   readonly superAdminEnable: string;
   /**
-   * 目标是超级管理员自己、动作是 disable，且文件里确实有一条残留被清掉。
+   * 目标是超级管理员自己、动作是 disable，且白名单表里确实有一条残留被清掉。
    *
    * 与 disabled 分开：超级管理员的白名单身份与权限来自 SUPER_ADMIN_USER_ID
    * 本身（见 infra/identityPolicy/whitelist.ts 的 isWhitelisted 与
-   * getEffectiveWhitelistPermissions），删掉文件里那条残留改变不了其中任何
-   * 一样。沿用 disabled 那句「已经被本天才从白名单里踢出去啦」是一份与事实
-   * 相反的回执：紧接着 /permission query 仍会打印全开。
+   * getEffectiveWhitelistPermissions），清掉表里那条残留改变不了其中任何一样。
    */
   readonly superAdminDisableCleared: string;
-  /** 目标是超级管理员自己、动作是 disable，且文件里本来就没有残留条目。 */
+  /** 目标是超级管理员自己、动作是 disable，且白名单表里本来就没有残留条目。 */
   readonly superAdminDisableNoEntry: string;
   /** 目标解析成了当前群自己的身份（匿名管理员皮套或手滑粘了本群 id）。 */
   readonly currentChatTarget: string;

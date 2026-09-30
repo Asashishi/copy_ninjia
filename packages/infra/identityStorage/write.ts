@@ -183,7 +183,12 @@ export async function confirmIdentityPolicyPersisted(
   }
 }
 
-/** 重投某主键仍未 ACK 的最终值；不创建新 revision。 */
+/**
+ * 重投某主键仍未 ACK 的最终值；不创建新 revision。投递被拒只记日志：最终值仍留在未 ACK
+ * 表里等 Worker 重建重放。
+ * @returns 该主键存在未 ACK 最终值（已尝试补投）为 true，调用方应再等一次落盘确认；
+ *   已全部 ACK 为 false。
+ */
 export function requeueUnacknowledgedIdentityWrite(
   table: IdentityPolicyTable,
   id: number

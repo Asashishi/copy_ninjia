@@ -14,7 +14,7 @@
 export const antiRaidInFlightTasks: Set<Promise<unknown>> = new Set();
 
 /**
- * tracker 生命周期代际。Worker stop 时递增，使旧 Promise 的迟到 finally
+ * tracker 生命周期代际。Worker stop 时递增，使旧 Promise 的迟到结算
  * 不能清理下一次 start 已建立的新任务状态。
  */
 export const antiRaidTaskTrackerGeneration: { current: number } = { current: 0 };

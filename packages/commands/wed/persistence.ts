@@ -97,7 +97,7 @@ export async function purgeWedMembers(chatId: number): Promise<void> {
   if (pendingWedMemberDeletes.get(chatId) === message) pendingWedMemberDeletes.delete(chatId);
 }
 
-/** 先删除集合中的 ID，再登记落盘；退群事件、候选核实和每日复核共用此边界。 */
+/** 先删除集合中的 ID，再登记落盘；退群事件与每日复核共用此边界。 */
 export function removeWedMember(chatId: number, userId: number): void {
   const state: WedMemberState | undefined = wedMemberStates.get(chatId);
   if (state?.members.delete(userId)) markWedMembersDirty(state);

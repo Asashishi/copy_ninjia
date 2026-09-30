@@ -1,4 +1,4 @@
-/** 刷屏禁言（packages/antiRaid/floodControl.ts）的调参常量。 */
+/** 刷屏禁言（packages/workers/antiRaid/floodControl.ts）的调参常量。 */
 
 /**
  * 统计单人发言频率的滑动窗口时长。窗口边界语义由

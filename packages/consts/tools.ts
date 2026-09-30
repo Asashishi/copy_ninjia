@@ -1,7 +1,22 @@
-/** function calling 工具集合（packages/aiChat/ai/tools/index.ts）的调参常量。 */
+/** function calling 工具集合的工具名、静态查询工具声明与调参常量；执行侧见 packages/aiChat/ai/tools/。 */
+
+import type { AiToolDefinition } from "../types/aiChat/provider";
 
 /** get_tokyo_weather 工具名常量，避免魔法字符串两处漂移。 */
 export const GET_TOKYO_WEATHER_TOOL: string = "get_tokyo_weather";
+
+/**
+ * AI 回复流水线的静态查询工具声明：无入参、无副作用，由 aiChat/ai/tools/index.ts 的
+ * callTool 分发；aiChat/ai/tools/replyToolset/orchestrator.ts 每轮把它们排在按轮组装的
+ * 行动工具之前。元素字段只读，调用方不得改写。所属模块：aiChat/ai/tools/。
+ */
+export const TOOL_DECLARATIONS: readonly AiToolDefinition[] = [
+  {
+    name: GET_TOKYO_WEATHER_TOOL,
+    description: "获取东京今天的实时天气状况与气温（摄氏度）。",
+    parametersJsonSchema: { type: "object", properties: {}, required: [] },
+  },
+];
 
 /** send_sticker 工具名常量（见 aiChat/ai/tools/stickers.ts）。这个工具不在静态清单
  *  里——它的可选贴纸清单随白名单目录变化，需要按次请求动态
@@ -35,8 +50,9 @@ export const SEND_VOICE_TOOL: string = "send_voice";
 /**
  * group_qa_query 工具名：列出本群已登记的问答**问题清单**。
  *
- * 只在本群真的登记过问答时才进本轮工具集（见 replyToolset/groupQa.ts）。它是
- * 纯查询、不计入动作预算——模型先看清单，判断当前这句话是不是在问其中之一。
+ * 每轮恒挂（见 replyToolset/groupQa.ts）；本群有没有登记问答写在本轮工具状态里，
+ * 没有登记时执行器返回空清单。它是纯查询、不计入动作预算——模型先看清单，
+ * 判断当前这句话是不是在问其中之一。
  * 一字不差的提问根本走不到模型：那种情况由主干直答短路（见
  * auto/message/qaDirectAnswer.ts）。到得了这里的都是「意思像但字面不同」。
  */
@@ -52,7 +68,6 @@ export const GROUP_QA_ANSWER_TOOL: string = "group_qa_answer";
 
 /**
  * 会消耗整轮可见动作预算的工具名；查看贴纸包与查询类工具不计入。
- * 使用只读数组，调用方通过 includes 判断，避免共享 Set 被意外修改。
  *
  * send_voice 恒在清单里，即使本轮没挂这个工具：这份清单只回答「这个名字算不算
  * 可见动作」，不回答「本轮有没有这个工具」。后者由 toolset.has 判定。
@@ -67,7 +82,7 @@ export const ACTION_TOOL_NAMES: readonly string[] = [
 
 /**
  * send_voice 在模型可见的每日额度（`agent.tts` 的 `daily_limit - daily_reserve_quota`）用尽时返回的错误文案：工具调用时
- * 同步登记计数被拒（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
+ * 已登记数加在途预留达到上限、预留被拒（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
  * 同时要求模型不在群里提起语音、额度或这次失败。
  */
 export const SEND_VOICE_DAILY_LIMIT_TOOL_ERROR: string =
@@ -75,18 +90,9 @@ export const SEND_VOICE_DAILY_LIMIT_TOOL_ERROR: string =
   "and do not mention the voice, the limit or this failure in the chat; continue the reply as if no voice had been planned";
 
 /**
- * send_voice 在前台窗口（VOICE_FOREGROUND_WAIT_MS）内合成失败、超时或音频无法编码时返回的错误文案：
- * 这条语音没有发出。
- * 同时要求模型不在群里提起语音或这次失败（见 aiChat/ai/tools/replyToolset/voiceMessage.ts）。
- */
-export const SEND_VOICE_SYNTHESIS_FAILED_TOOL_ERROR: string =
-  "Voice was not sent: speech synthesis failed, timed out or returned no usable audio. Do not retry it, " +
-  "and do not mention the voice or this failure in the chat; continue the reply as if no voice had been planned";
-
-/**
  * 本轮回复已被 /ai_chat disable 作废时，所有动作工具统一返回的错误文案。
  * 每个执行器在自己的每个 await 边界前后都要检查一次代数，因此这条文案在
- * aiChat/ai/tools/ 下出现近十次；它是喂给模型的协议文本，必须逐字一致，只在这里定义。
+ * aiChat/ai/tools/ 下出现多处；它是喂给模型的协议文本，必须逐字一致，只在这里定义。
  */
 export const REPLY_INVALIDATED_TOOL_ERROR: string = "Reply invalidated because AI chat was disabled";
 

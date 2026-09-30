@@ -68,5 +68,6 @@ export function sendCommandPhoto({
     fallback: undefined,
     signal,
     shouldLogError: logUnlessAborted,
+    selfSentChatId: chatId,
   });
 }

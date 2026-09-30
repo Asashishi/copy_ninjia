@@ -16,7 +16,7 @@ import type {
   TypoDecision,
 } from "../../../../types/aiChat/typo";
 import { containsRenderableCommand } from "../../../../libs/renderableCommand";
-import { cleanReply, isEmojiOnly } from "../../utils/replyText";
+import { isEmojiOnly } from "../../utils/replyText";
 import {
   buildCharacterTypo,
   pickTypoCorrectionMode,
@@ -24,6 +24,7 @@ import {
 import { randomDelayMs } from "../../utils/timing";
 import { parseStringField } from "../../utils/toolArgs";
 import { sendDirectMessage } from "./messageState";
+import { pauseThenSettle } from "./pacing";
 
 export interface DecideMessageTypoParams {
   argumentsJson: string;
@@ -108,9 +109,14 @@ export async function applyQuickTypoCorrection({
       randomDelayMs(TYPO_QUICK_CORRECTION_MIN_MS, TYPO_QUICK_CORRECTION_MAX_MS),
       ctx.signal
     );
-    if (await pause("typing", TYPO_QUICK_CORRECTION_TYPING_MS) !== null) return false;
-    chatAction.set("idle");
-    await chatAction.settle();
+    const blocked: string | null = await pauseThenSettle({
+      isActive: ctx.isActive,
+      chatAction,
+      pause,
+      phase: "typing",
+      delayMs: TYPO_QUICK_CORRECTION_TYPING_MS,
+    });
+    if (blocked !== null) return false;
     const correctionMessageId: number | undefined = await sendDirectMessage({
       ctx,
       text: correctionText,
@@ -122,10 +128,4 @@ export async function applyQuickTypoCorrection({
     logger.error("Error while applying quick typo correction:", error);
     return false;
   }
-}
-
-/** send_message 入参的正文解析仍属于错字前的共同清洗步骤。 */
-export function parseCleanMessageText(argumentsJson: string): string | null {
-  const raw: string | null = parseStringField(argumentsJson, "text");
-  return raw === null ? null : cleanReply(raw);
 }

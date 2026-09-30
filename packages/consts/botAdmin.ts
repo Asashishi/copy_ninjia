@@ -34,7 +34,7 @@ export const BOT_CHAT_PERMISSION_KEYS: readonly (keyof BotChatPermissions)[] = [
  * 群里只有一个叫法。
  *
  * 字段全集与展示顺序以 BOT_CHAT_PERMISSION_KEYS 为准，这里只补名字；新增权限位时
- * 两处都要加，缺了会在类型层报错。
+ * 两处都要加：本表缺项会在类型层报错，BOT_CHAT_PERMISSION_KEYS 缺项不会。
  */
 export const BOT_CHAT_PERMISSION_LABELS: Readonly<
   Record<keyof BotChatPermissions, string>

@@ -23,10 +23,14 @@ const workerSelf: {
 };
 Object.defineProperty(globalThis, "self", { configurable: true, value: workerSelf });
 
+mock.module("../../../packages/workers/antiRaid/verificationEvents", () => ({
+  handleJoinEvent(): void { calls.push("join"); },
+  handleTrackedMessageEvent(): void { calls.push("message"); },
+}));
+mock.module("../../../packages/workers/antiRaid/verificationCallbacks", () => ({
+  handleVerificationCallbackEvent(): void { calls.push("callback"); },
+}));
 mock.module("../../../packages/workers/antiRaid/verificationRuntime", () => ({
-  handleJoin(): void { calls.push("join"); },
-  handleTrackedMessage(): void { calls.push("message"); },
-  handleVerificationCallback(): void { calls.push("callback"); },
   dispatchVerification(): void { calls.push("left"); },
   adoptVerifications(): void { calls.push("adoptVerifications"); },
   handleVerificationPersisted(): void { calls.push("verificationPersisted"); },
@@ -252,7 +256,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "verificationPersisted", key: "-1001:1", generation: 1, revision: 1 },
       { type: "adminsChanged", chatId: -1001, userId: 1, isInviterExempt: true },
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
-      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, observedAt: 1, text: "买号加我", label: "@spam", firstName: "Spam", lastName: "", username: "spam", isChannel: false, isForwarded: false, blocked: false, justJoined: true, linkUrls: undefined, sampleQuote: undefined, sampleReplyTo: undefined },
+      { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, observedAt: 1, text: "买号加我", firstName: "Spam", lastName: "", username: "spam", isChannel: false, isForwarded: false, blocked: false, justJoined: true, linkUrls: undefined, sampleQuote: undefined, sampleReplyTo: undefined },
       { type: "clearAdDetect", chatId: -1001 },
       { type: "floodCandidate", chatId: -1001, userId: 1, observedAt: 1, label: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },

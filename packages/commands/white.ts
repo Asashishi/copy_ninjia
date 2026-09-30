@@ -5,16 +5,16 @@ import type { CachedUser } from "../types/chatState";
 import type { ToggleAction } from "../types/commands";
 import type { SetWhitelistMembershipResult } from "../infra/identityPolicy/whitelist";
 import {
-  confirmWhitelistEntryPersisted,
   hasWhitelistPermission,
   setWhitelistMembership,
 } from "../infra/identityPolicy/whitelist";
 
-import { commandArgumentTokens, parseToggleAction } from "./arguments";
+import { parseToggleAction, splitTrailingToken } from "./arguments";
+import type { TrailingTokenSplit } from "./arguments";
 import { isUserBlocked } from "../infra/blocklist/membership";
 import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import { runProtectedIdentityMutation } from "../infra/identityPolicy/coordination";
-import { identityMetadataFromCachedUser } from "../infra/identityStorage";
+import { confirmIdentityPolicyPersisted, identityMetadataFromCachedUser } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
 import { sendCommandMessage } from "../infra/telegram";
 import { formatActorLabel, formatTargetLabel } from "../users/userLabel";
@@ -53,8 +53,7 @@ export async function handleWhiteCommand(
   if (actor === undefined) return;
   const actorIsSuperAdmin: boolean = actor.id === SUPER_ADMIN_USER_ID;
 
-  const tokens: string[] = commandArgumentTokens(ctx.match);
-  const rawAction: string | undefined = tokens.at(-1);
+  const { last: rawAction, rest: targetArgument }: TrailingTokenSplit = splitTrailingToken(ctx.match);
   const action: ToggleAction | undefined = rawAction === undefined
     ? undefined
     : parseToggleAction(rawAction);
@@ -75,7 +74,6 @@ export async function handleWhiteCommand(
     return;
   }
 
-  const targetArgument: string = tokens.slice(0, -1).join(" ");
   const target: CachedUser | undefined = await resolveCommandTarget({
     chatId,
     message: ctx.msg,
@@ -139,10 +137,7 @@ export async function handleWhiteCommand(
       }
     );
     if (outcome.kind === "updated") {
-      await confirmWhitelistEntryPersisted(
-        target.id,
-        !outcome.result.changed
-      );
+      await confirmIdentityPolicyPersisted("whitelist", target.id, !outcome.result.changed);
     }
   } catch (error: unknown) {
     logger.error(

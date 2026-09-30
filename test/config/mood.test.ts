@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { loadMoodConfig, parseMoodConfig } from "../../packages/config/mood";
+import { MOOD_MULTIPLIER_MAX, MOOD_WEIGHT_TOTAL } from "../../packages/consts/aiChat/mood";
 
 describe("mood config", () => {
   test("严格解析心情档位，并能加载全部部署配置", async () => {
@@ -14,16 +15,32 @@ describe("mood config", () => {
 
     const loaded = await loadMoodConfig();
     expect(loaded.moods.length).toBeGreaterThan(0);
-    expect(loaded.moods.reduce((sum, mood) => sum + mood.weight, 0)).toBe(100);
+    expect(loaded.moods.reduce((sum, mood) => sum + mood.weight, 0)).toBe(MOOD_WEIGHT_TOTAL);
   });
 
-  test("base weight 总和不为 100 时直接报错", () => {
+  test("name 与 instruction 按首尾空白规范化后校验、查重并保存", () => {
+    const parsed = parseMoodConfig({
+      moods: [
+        { name: " 开心 ", weight: 60, instruction: "\n很开心。 " },
+        { name: "困", weight: 40, instruction: "很困。" },
+      ],
+    });
+    expect(parsed.moods[0]).toMatchObject({ name: "开心", instruction: "很开心。" });
     expect(() => parseMoodConfig({
       moods: [
         { name: "开心", weight: 60, instruction: "很开心。" },
-        { name: "困", weight: 30, instruction: "很困。" },
+        { name: " 开心", weight: 40, instruction: "很困。" },
       ],
-    })).toThrow("positive integers summing to 100");
+    })).toThrow("$.moods[1].name must be unique");
+  });
+
+  test("base weight 总和不为 MOOD_WEIGHT_TOTAL 时直接报错", () => {
+    expect(() => parseMoodConfig({
+      moods: [
+        { name: "开心", weight: 1, instruction: "很开心。" },
+        { name: "困", weight: MOOD_WEIGHT_TOTAL - 2, instruction: "很困。" },
+      ],
+    })).toThrow(`positive integers summing to ${MOOD_WEIGHT_TOTAL}`);
   });
 
   test("拒绝额外字段、空列表、重名档位和非法权重/文案", () => {
@@ -35,7 +52,7 @@ describe("mood config", () => {
         { name: "开心", weight: 50, instruction: "还是开心。" },
       ],
     })).toThrow("must be unique");
-    expect(() => parseMoodConfig({ moods: [{ name: "开心", weight: 100, instruction: "很开心。", surprise: 1 }] })).toThrow("a current mood schema field");
+    expect(() => parseMoodConfig({ moods: [{ name: "开心", weight: MOOD_WEIGHT_TOTAL, instruction: "很开心。", surprise: 1 }] })).toThrow("a current mood schema field");
     expect(() => parseMoodConfig({ moods: [{ name: "开心", weight: -1, instruction: "很开心。" }] })).toThrow("weight must be a positive integer");
     expect(() => parseMoodConfig({
       moods: [
@@ -43,27 +60,27 @@ describe("mood config", () => {
         { name: "困", weight: 33.5, instruction: "很困。" },
       ],
     })).toThrow("weight must be a positive integer");
-    expect(() => parseMoodConfig({ moods: [{ name: "开心", weight: 100, instruction: " " }] })).toThrow("instruction must be a non-empty string");
-    expect(() => parseMoodConfig({ moods: [{ name: "", weight: 100, instruction: "很开心。" }] })).toThrow("name must be a non-empty string");
+    expect(() => parseMoodConfig({ moods: [{ name: "开心", weight: MOOD_WEIGHT_TOTAL, instruction: " " }] })).toThrow("instruction must be a non-empty string");
+    expect(() => parseMoodConfig({ moods: [{ name: "", weight: MOOD_WEIGHT_TOTAL, instruction: "很开心。" }] })).toThrow("name must be a non-empty string");
   });
 
   test("拒绝未知倍率桶、非正倍率和异常大的倍率", () => {
     expect(() => parseMoodConfig({
-      moods: [{ name: "开心", weight: 100, instruction: "很开心。", weatherMultipliers: { sunny: 1.5 } }],
+      moods: [{ name: "开心", weight: MOOD_WEIGHT_TOTAL, instruction: "很开心。", weatherMultipliers: { sunny: 1.5 } }],
     })).toThrow("a supported bucket name");
     expect(() => parseMoodConfig({
-      moods: [{ name: "开心", weight: 100, instruction: "很开心。", timeMultipliers: { midnight: 1.2 } }],
+      moods: [{ name: "开心", weight: MOOD_WEIGHT_TOTAL, instruction: "很开心。", timeMultipliers: { midnight: 1.2 } }],
     })).toThrow("a supported bucket name");
     expect(() => parseMoodConfig({
-      moods: [{ name: "开心", weight: 100, instruction: "很开心。", timeMultipliers: { night: 0 } }],
+      moods: [{ name: "开心", weight: MOOD_WEIGHT_TOTAL, instruction: "很开心。", timeMultipliers: { night: 0 } }],
     })).toThrow("a positive finite number");
     expect(() => parseMoodConfig({
       moods: [{
         name: "开心",
-        weight: 100,
+        weight: MOOD_WEIGHT_TOTAL,
         instruction: "很开心。",
         weatherMultipliers: { clear: Number.MAX_VALUE },
       }],
-    })).toThrow("no greater than 100");
+    })).toThrow(`no greater than ${MOOD_MULTIPLIER_MAX}`);
   });
 });

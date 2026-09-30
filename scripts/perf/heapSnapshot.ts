@@ -1,7 +1,7 @@
 /**
  * 各性能基准共用的 JSC 堆快照。
  *
- * 三个基准入口共用这份实现，保证报告里的 `heapSize` 字段口径一致。
+ * 各性能基准共用这份实现，保证报告里的 `heapSize` 字段口径一致。
  */
 
 import { heapStats } from "bun:jsc";

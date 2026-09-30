@@ -5,6 +5,7 @@
  * 三语名称集中在 `markdownEntryCopy.ts`。
  */
 
+import { CRON_MAX_ACTIONS_PER_TASK, CRON_MAX_TASKS } from "../../../packages/consts/cron";
 import type { SectionId } from "./types";
 
 /** 性能文档的三种语言；对应 docs/{cn,en,ja}/09-performance.md。 */
@@ -102,7 +103,11 @@ const ZH: BenchmarkCopy = {
       "它还扣除了发送前 1.5–7.5 秒的拟人停顿：这段停顿逐次实测、按群限速且不占 CPU，" +
       "保留它只会显示产品节奏而不是处理能力。" +
       "cron 语音一行同样把语音合成模型与 Telegram 换成固定应答（约 11 秒的 WAV），" +
-      "包含 Base64 解码、WAV 解析、Opus 编码与发送边界；合成在生产中位于 AI Worker，这一行在同一进程内串起两侧，不含线程间传递。",
+      "包含 Base64 解码、WAV 解析、Opus 编码与发送边界；合成在生产中位于 AI Worker，这一行在同一进程内串起两侧，不含线程间传递。" +
+      `cron.json 一行只量中途变更的开销，不执行任务：任务表取生产上限（${CRON_MAX_TASKS} 个任务、每个 ` +
+      `${CRON_MAX_ACTIONS_PER_TASK} 个动作，本地来源相对数据根），` +
+      "每次改动其中 1 个任务后按生产顺序读取并严格解析六份可热重载文件（含逐项核对本地来源）、替换快照并按任务名对账调度器；" +
+      "改写与写盘属于部署方，不计时；文件监听的防抖等待、随后的广告检测与 AI 闲聊可用性重算和热重载日志也不计入。",
     storage:
       "复用 `bun run perf:identity-database` 的实现；「冷」指连接页缓存与语句缓存为空，不声称绕过操作系统页缓存。",
     "container-algorithm":
@@ -202,7 +207,14 @@ const EN: BenchmarkCopy = {
       "uses no CPU and does not block other chats. The cron voice row likewise replaces the speech model and " +
       "Telegram with canned replies (an 11-second WAV) and includes Base64 decoding, WAV parsing, Opus encoding " +
       "and the send boundary; synthesis runs on the AI Worker in production, and this row chains both sides in " +
-      "one process without the cross-thread hop.",
+      "one process without the cross-thread hop. The cron.json row measures only the cost of a mid-run change and " +
+      `runs no task: the task table is at the production limit (${CRON_MAX_TASKS} tasks with ` +
+      `${CRON_MAX_ACTIONS_PER_TASK} actions each, local sources ` +
+      "relative to the data root); after one task is changed, the six hot-reloadable files are read and strictly " +
+      "parsed in production order (including a check of every local source), the snapshots are replaced and the " +
+      "scheduler is reconciled by task name. Rewriting and saving the file belong to the deployer and are not timed, " +
+      "nor are the file watcher's debounce wait, the following ad-detection and AI chat availability checks, " +
+      "or the reload log lines.",
     storage:
       "Reuses `bun run perf:identity-database`; \"cold\" means an empty connection page cache and statement cache, " +
       "not a dropped OS page cache.",
@@ -300,7 +312,13 @@ const JA: BenchmarkCopy = {
       "差し引く。この待機はチャット単位で CPU を使わず、他のチャットを止めない。" +
       "cron 音声の行も音声合成モデルと Telegram を固定応答（約 11 秒の WAV）に置き換え、Base64 デコード、WAV 解析、" +
       "Opus エンコードと送信境界を含む。本番では合成は AI Worker 上で動くが、この行は同一プロセス内で両側をつなぎ、" +
-      "スレッド間の受け渡しは含まない。",
+      "スレッド間の受け渡しは含まない。" +
+      `cron.json の行は途中変更の費用だけを測り、タスクは実行しない。タスク表は本番の上限（${CRON_MAX_TASKS} タスク、` +
+      `各 ${CRON_MAX_ACTIONS_PER_TASK} アクション、` +
+      "ローカルソースはデータルート相対）とし、1 タスクを変更するたびに本番と同じ順序でホットリロード対象の 6 ファイルを読み取って" +
+      "厳密に解析し（ローカルソースを 1 件ずつ確認）、スナップショットを置き換えてタスク名でスケジューラを突き合わせる。" +
+      "書き換えと保存はデプロイ側の作業なので計測せず、ファイル監視のデバウンス待ち、その後の広告検出と AI チャットの" +
+      "可用性の再判定、ホットリロードのログも含まない。",
     storage:
       "`bun run perf:identity-database` の実装を再利用。「コールド」は接続のページキャッシュと文キャッシュが空である意味で、" +
       "OS のページキャッシュを破棄したという意味ではない。",

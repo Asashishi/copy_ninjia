@@ -16,10 +16,7 @@ import type { CopyMode } from "../../types/chatState";
 import { echoMessage } from "./echo";
 import { hasCopyableContent } from "./facts";
 
-/**
- * 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。AI 开启时
- * 仍保留洗澡关键词响应，但禁用随机复读，避免两套随机插话机制同时运行。
- */
+/** handleProactiveMessageActions 的入参。 */
 export interface HandleProactiveMessageActionsParams {
   message: Message;
   bot: AiBotInfo;
@@ -39,7 +36,7 @@ async function replyToBathTrigger(
     replyToMessageId: message.message_id,
     // 这条回复不挂延迟删除，会长期留在群里，因此必须自己带话题：只靠
     // reply_parameters 的话，触发它的消息被删掉时整条回复会落进 General
-    // （同 performRandomEcho，见 SendMessageParams.messageThreadId）。
+    // （同随机复读，见 SendMessageParams.messageThreadId）。
     messageThreadId: forumTopicThreadId(message),
   });
   if (aiChatEnabled && sentMessageId !== undefined) {
@@ -52,20 +49,10 @@ async function replyToBathTrigger(
   }
 }
 
-/** 随机复读命中后吸收底层消息标识，保持编排层只暴露完成信号。 */
-async function performRandomEcho(
-  chatId: number,
-  message: Message,
-  mode: CopyMode | undefined
-): Promise<void> {
-  await echoMessage({
-    chatId,
-    message,
-    mode,
-    messageThreadId: forumTopicThreadId(message),
-  });
-}
-
+/**
+ * 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。AI 开启时
+ * 仍保留洗澡关键词响应，但禁用随机复读，避免两套随机插话机制同时运行。
+ */
 export function handleProactiveMessageActions({
   message,
   bot,
@@ -90,7 +77,7 @@ export function handleProactiveMessageActions({
     Math.random() < RANDOM_ECHO_PROBABILITY
   ) {
     const mode: CopyMode | undefined = pickRandom(RANDOM_ECHO_MODES);
-    return performRandomEcho(chatId, message, mode);
+    return echoMessage({ chatId, message, mode, messageThreadId: forumTopicThreadId(message) });
   }
   return undefined;
 }

@@ -12,7 +12,7 @@
  * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
  * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
  *
- * 功能 readiness 对 config/dynamic/agent.json 仍按消费方**分段**探测，且与运行时共用同
+ * 功能 readiness 对 config/dynamic/agent.json 按消费方**分段**探测，且与运行时共用同
  * 一对 holder：启动总闸严格解析整份文件后会同时填充两段快照，探测因此只是
  * 「holder 空不空」的一次分支，已存在文件在一个进程里只解析一次。运行时那一侧
  * 只读 holder，Worker 的那份由初始化消息投递（见 config/agent.ts 的边界说明）。

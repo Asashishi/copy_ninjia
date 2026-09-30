@@ -15,8 +15,8 @@ export const DAY_FILE_JSON_INDENT: number = 2;
  * 日志追加失败之后重新打开日文件的退避间隔（见 workers/diskIO/logFiles.ts 的
  * writeDay）。追加失败会丢弃当前游标，让下一次 flush 重新校验文件，避免在
  * 损坏的结尾上继续追加；重开一次需要整份读回、解析并校验日文件，因此以退避
- * 限制重试频率。这条线程同时持有身份策略/群状态 SQLite、移除 outbox 与 AI
- * 记忆快照，日志故障不应拖垮它们。
+ * 限制重试频率。这条线程同时持有身份策略、群状态、移除 outbox 与 AI 上下文的共享
+ * SQLite，日志故障不应拖垮它们。
  */
 export const LOG_REOPEN_RETRY_MS: number = FLUSH_INTERVAL_MS * 10;
 

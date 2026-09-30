@@ -35,7 +35,6 @@ const {
   mediaInputSupportCache,
   recordMediaInputResult,
   getMediaInputState,
-  getMediaInputSupport,
   resetMediaInputSupport,
   setMediaInputProbe,
 } = await import("../../../packages/cache/workers/aiChat/mediaInputSupport");
@@ -475,12 +474,21 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
         pending.push(describeMedia({ kind: "photo", fileId: `staggered-${index}`, fileUniqueId: `staggered-${index}`, voiceMime: undefined, voiceDurationSeconds: 0 }));
         await call.started;
       }
-      for (const [index, now] of [1_000_001, 1_031_001, 1_092_001, 1_213_001].entries()) {
+      const firstFailureAt: number = 1_000_001;
+      const firstProbeAt: number = firstFailureAt + MEDIA_PROBE_BACKOFF_BASE_MS;
+      // 后三次失败依次落在「前一次若计数会开出的那一档窗口」之后 1、2、3 秒。
+      const failureTimes: readonly number[] = [
+        firstFailureAt,
+        firstProbeAt + 1_000,
+        firstProbeAt + MEDIA_PROBE_BACKOFF_BASE_MS * 2 + 2_000,
+        firstProbeAt + MEDIA_PROBE_BACKOFF_BASE_MS * (2 + 4) + 3_000,
+      ];
+      for (const [index, now] of failureTimes.entries()) {
         time.mockReturnValue(now);
         calls[index]!.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
         await expect(pending[index]!).resolves.toBeNull();
         expect(mediaInputSupportCache.current!.vision.transientFailures).toBe(1);
-        expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(1_030_001);
+        expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(firstProbeAt);
       }
       const next: ControlledVisionCall = controlNextVisionCall();
       const result: Promise<string | null> = describeMedia({ kind: "photo", fileId: "next-probe", fileUniqueId: "next-probe", voiceMime: undefined, voiceDurationSeconds: 0 });
@@ -488,7 +496,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       next.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
       await expect(result).resolves.toBeNull();
       expect(mediaInputSupportCache.current!.vision.transientFailures).toBe(2);
-      expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(1_273_001);
+      expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(failureTimes[failureTimes.length - 1]! + MEDIA_PROBE_BACKOFF_BASE_MS * 2);
     } finally {
       time.mockRestore();
     }
@@ -501,7 +509,10 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     for (let failures: number = 1; failures <= MEDIA_PROBE_MAX_TRANSIENT_FAILURES + 2; failures++) {
       expectedBackoffs.push(Math.min(MEDIA_PROBE_BACKOFF_BASE_MS * 2 ** (failures - 1), MEDIA_PROBE_BACKOFF_MAX_MS));
     }
-    expect(expectedBackoffs.slice(0, 6)).toEqual([30_000, 60_000, 120_000, 240_000, 480_000, 600_000]);
+    // 从基准时长起逐档翻倍，恰好在计数封顶那一档达到上限：前一档仍低于上限。
+    expect(expectedBackoffs[0]).toBe(MEDIA_PROBE_BACKOFF_BASE_MS);
+    expect(expectedBackoffs[MEDIA_PROBE_MAX_TRANSIENT_FAILURES - 2]!).toBeLessThan(MEDIA_PROBE_BACKOFF_MAX_MS);
+    expect(expectedBackoffs[MEDIA_PROBE_MAX_TRANSIENT_FAILURES - 1]).toBe(MEDIA_PROBE_BACKOFF_MAX_MS);
 
     for (const [index, backoff] of expectedBackoffs.entries()) {
       const attemptState = getMediaInputState("vision");
@@ -803,7 +814,7 @@ describe("media 配置代次", () => {
       result: { ok: false, retryable: false, mediaFailure: "unsupported" },
       attemptState: fresh,
     });
-    expect(getMediaInputSupport("vision")).toBe("unsupported");
+    expect(getMediaInputState("vision").support).toBe("unsupported");
     expect(getMediaInputState("vision").configGeneration).toBe(fresh.configGeneration);
   });
 });

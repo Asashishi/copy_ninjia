@@ -110,7 +110,7 @@ test("每群容量超限和群数超限均拒绝启动，不截断文件", async
   ids.push(WED_MEMBER_LIMIT + 1);
   const bytes = JSON.stringify(ids);
   await Bun.write(path, bytes);
-  await expect(inspectWedMemberFiles()).rejects.toThrow("at most 150000");
+  await expect(inspectWedMemberFiles()).rejects.toThrow(`at most ${WED_MEMBER_LIMIT}`);
   expect(await Bun.file(path).text()).toBe(bytes);
   await Bun.file(path).delete();
   for (let id = 1; id <= STATE_MANAGED_CHAT_LIMIT + 1; id++) {

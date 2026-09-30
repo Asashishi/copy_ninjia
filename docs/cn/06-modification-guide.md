@@ -96,9 +96,9 @@
 ## 新增一个 AI 工具
 
 1. **名称常量**：在 [`packages/consts/tools.ts`](../../packages/consts/tools.ts) 定义工具名；若工具产生可见副作用，确认是否应加入 `ACTION_TOOL_NAMES`。
-2. **定义**：无状态的静态查询工具把 `AiToolDefinition` 放进 [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts)；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
+2. **定义**：无状态的静态查询工具把 `AiToolDefinition` 加进 [`packages/consts/tools.ts`](../../packages/consts/tools.ts) 的 `TOOL_DECLARATIONS`；需要 chat 上下文、动态 schema 或逐轮状态的行动工具，在 `packages/aiChat/ai/tools/replyToolset/` 提供 definition builder。reply toolset 的 orchestrator 会把这些领域定义统一收敛成中立的 `AiToolDefinition`（JSON Schema 参数），再由各供应商实现包的 `replySession.ts` 转成自家形状——新增工具不需要碰任何一家 SDK 的类型。
 3. **实现**：在 `packages/aiChat/ai/tools/` 实现执行逻辑；面向 Telegram 的副作用经主线程代理执行，Worker 内不直接持有 Bot 实例。
-4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
+4. **注册**：静态查询工具接入 `packages/aiChat/ai/tools/index.ts` 的 `callTool` 分发；行动工具接入 `packages/aiChat/ai/tools/replyToolset/` 的 definitions、dispatch 与按轮状态。
 5. **预算**：可见副作用工具应加入统一动作预算；不要默认增加单工具调用上限。只有确有领域理由的独立限制（当前为贴纸包查看、服务端联网检索，以及贴纸/反应/生成图片/语音各一次）才单独建常量；整轮自定义函数防循环硬顶仍统一生效（约束见 [04](04-invariants.md#worker-与状态所有权)）。
 6. **提示词**：如需使用规则，在 `packages/consts/aiChat/prompts/` 补充；涉及转录格式的必须复用 `transcript.ts` 共享模板，两侧不得各自手写。
 7. **测试 + 文档**：`test/aiChat/ai/`（或对应功能/Worker 路径）补测试；三语 README 能力表按需更新。
@@ -154,7 +154,7 @@
 6. 不随版本变的部分（如 `meta`）复用生产解析器；完整校验源备份后再生成独立产物，产物通过当前格式校验和源哈希复核后才写 `ready.json`。
 7. 落盘沿用既有 write-through：主线程发布内存最终值 → 投给 Disk I/O Worker → 显式事务 → 精确 revision ACK → Worker 重建后从内存重放。
 
-当前有效冷迁移在 `scripts/migrations/active.ts` 登记：SQLite 权限、图库命名、Bot 配置与图片来源三条边分别覆盖各自的数据范围。约束按迁移计数，与 Release 数量无关；同一份数据再次迁移时，只保留上一迁移产出格式到当前格式的直接边，并同步替换旧入口、测试与登记。`scripts/conventions/coldMigrations.ts` 校验登记与 package scripts 一致。
+当前有效冷迁移在 `scripts/migrations/active.ts` 登记：随机图库文件名（uuidv7 → 内容 SHA-256，`migrate:random-image-names`）与全局状态（`memory/global/state.json` 的语音总计数 → `agentCount`/`reserveCount`，`migrate:global-state`）两条边，分别覆盖各自的数据范围。约束按迁移计数，与 Release 数量无关；同一份数据再次迁移时，只保留上一迁移产出格式到当前格式的直接边，并同步替换旧入口、测试与登记。`scripts/conventions/coldMigrations.ts` 校验登记与 package scripts 一致。
 
 「只留一条边」约束的是 `scripts/` 下面向已部署数据的冷迁移脚本、它的测试与 `migrations/active.ts` 登记，不适用于 `schema/migrations/` 的 SQL 文件与 `meta/_journal.json`。后者必须从 `0000` 起完整保留：`createStorageDatabase` 建新库时由 Drizzle migrator 逐条重放，启动时 `packages/database/interact/inspection.ts` 的 `assertStorageDatabaseMigrationLineage` 也要求 `__drizzle_migrations` 带着完整谱系。
 

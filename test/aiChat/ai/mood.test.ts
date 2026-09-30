@@ -17,6 +17,7 @@ import {
 import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from
   "../../../packages/consts/aiChat/mood";
+import { MOOD_LABEL_NAME } from "../../../packages/consts/aiChat/prompts/mood";
 import type { MoodOption } from "../../../packages/types/aiChat/mood";
 import type { MoodConfig } from "../../../packages/types/config";
 
@@ -65,7 +66,7 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
       const instruction: string = currentMoodInstruction(1);
 
       expect(moods.get(1)?.name).toBe(FIRST_MOOD_NAME);
-      expect(instruction).toBe(`【今天的心情：${FIRST_MOOD_NAME}】${MOOD_OPTIONS[0]!.instruction}`);
+      expect(instruction).toBe(`【${MOOD_LABEL_NAME}：${FIRST_MOOD_NAME}】${MOOD_OPTIONS[0]!.instruction}`);
       expect(expiresAts.get(1)).toBe(1_000_000 + MOOD_REROLL_MIN_MS);
     } finally {
       Date.now = originalNow;
@@ -120,7 +121,7 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
 
   test("已有心情且没到期时用缓存的心情拼指令句", () => {
     seedMoods([[1, { name: "摆烂", weight: 20, instruction: "随便啦。" }]], [[1, Date.now() + 60_000]]);
-    expect(currentMoodInstruction(1)).toBe("【今天的心情：摆烂】随便啦。");
+    expect(currentMoodInstruction(1)).toBe(`【${MOOD_LABEL_NAME}：摆烂】随便啦。`);
   });
 });
 
@@ -150,7 +151,7 @@ describe("aiChat/ai/mood switchMood", () => {
       Math.random = () => 0.99; // roll 顶到上限，落在权重表最后一档
       switchMood(1);
       expect(currentMoodInstruction(1)).toBe(
-        `【今天的心情：${LAST_MOOD_NAME}】${MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.instruction}`
+        `【${MOOD_LABEL_NAME}：${LAST_MOOD_NAME}】${MOOD_OPTIONS[MOOD_OPTIONS.length - 1]!.instruction}`
       );
     } finally {
       Math.random = originalRandom;

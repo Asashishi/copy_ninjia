@@ -7,7 +7,12 @@ mock.module("../../packages/antiRaid/workerBridge/controller", () => ({
 const syncMenu = mock(async (): Promise<void> => {});
 mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: syncMenu }));
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT, INIT_CHAT_LIMIT_TEXT, INIT_TOGGLE_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
+import {
+  ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
+  INIT_CHAT_LIMIT_TEXT,
+  INIT_DISABLE_TEARDOWN_FAILED_TEXT,
+  INIT_TOGGLE_TEXTS,
+} from "../../packages/consts/atmosphere/teasing/commands";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { botPermissions } from "../helpers/botPermissions";
@@ -74,7 +79,7 @@ const { handleInitCommand } = await import("../../packages/commands/init");
 const { handleTranslateCommand } = await import("../../packages/commands/translate");
 const { handleFloodControlCommand } = await import("../../packages/commands/floodControl");
 const { handleAntiRaidCommand } = await import("../../packages/commands/antiRaid");
-const { isSuperAdmin, resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
+const { resolveSuperAdminToggleArg } = await import("../../packages/commands/superAdminToggle");
 
 function context(argument: string, userId: number | null = 100, chatId: number = -1001): never {
   const chat = { id: chatId, type: "supergroup" };
@@ -117,10 +122,6 @@ beforeEach(() => {
 
 describe("超级管理员开关命令", () => {
   test("权限与参数校验拒绝外部用户和未知参数", async () => {
-    expect(isSuperAdmin(undefined)).toBe(false);
-    expect(isSuperAdmin({ id: 101 } as never)).toBe(false);
-    expect(isSuperAdmin({ id: 100 } as never)).toBe(true);
-
     const messages = {
       texts: {
         rejection: (label: string): string => `reject:${label}`,
@@ -408,7 +409,7 @@ describe("超级管理员开关命令", () => {
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
     expect(saveStateInBackground).not.toHaveBeenCalledWith("init teardown settled");
     expect(syncAiChatPersona).not.toHaveBeenCalled();
-    expect(lastReplyText(sendMessage)).toContain("没能拆干净");
+    expect(lastReplyText(sendMessage)).toBe(INIT_DISABLE_TEARDOWN_FAILED_TEXT);
   });
 
   test("/init disable 不为没有记录的群建条目，重复关掉不撞群数上限", async () => {
@@ -602,7 +603,7 @@ describe("开关命令的同状态重复执行", () => {
     await handleAdDetectCommand(context("disable"));
     expect(clearAdDetection).toHaveBeenCalledTimes(2);
     expect(saveStateInBackground).toHaveBeenCalledWith("ad_detect toggled");
-    expect(lastReplyText(sendMessage)).toContain("本来就");
+    expect(lastReplyText(sendMessage)).toBe(ATMOSPHERE_TEXTS.teasing.AD_DETECT_TOGGLE_TEXTS.alreadyDisabled);
   });
 
   test("/init 重复 enable 仍不作废管理员记录，只是回执说破没变", async () => {
@@ -614,6 +615,6 @@ describe("开关命令的同状态重复执行", () => {
     expect(resolveBotAdminStatus).not.toHaveBeenCalled();
     expect((states.get(-1001)?.botPermissions as { isAdministrator?: boolean } | undefined)?.isAdministrator).toBe(true);
     expect(states.get(-1001)?.isInitEnabled).toBe(true);
-    expect(lastReplyText(sendMessage)).toContain("本来就");
+    expect(lastReplyText(sendMessage)).toBe(INIT_TOGGLE_TEXTS.alreadyEnabled);
   });
 });

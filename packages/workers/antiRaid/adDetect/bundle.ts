@@ -1,9 +1,8 @@
 /**
  * 单个发送者那一串待检消息（AdMessageBundle）的整形：裁剪、收容量、拼正文。
  *
- * 从 queue.ts 里分出来的一层——那边管的是「谁排在队里、什么时候起判定」，
- * 这里管的是「这一串里到底留哪几条、送检时长什么样」。两件事的不变量完全
- * 不同：前者围绕三张所有权表的同步增删（见 states/adDetectAdmission.ts），
+ * queue.ts 管的是「谁排在队里、什么时候起判定」，这里管的是「这一串里到底留
+ * 哪几条、送检时长什么样」。两件事的不变量完全不同：前者围绕三张所有权表的同步增删（见 states/adDetectAdmission.ts），
  * 后者围绕「未判定的内容一条都不能悄悄消失」。
  *
  * 贯穿本文件的那条规矩：**能挤掉的只有已经判过的条目**（seq <= checkedSeq）。
@@ -143,7 +142,7 @@ function entriesClaimContextPart(
  * 一条「新消息」的 text 里，只活在被引用段和被回复原文中——不读它们，这条路
  * 对广告检测完全免疫，而它恰恰是当前最主流的形态。
  *
- * 引用内容仍会让整串命中，但命中不再等于立即 block：主线程已排除白名单来源，
+ * 引用内容仍会让整串命中，但命中不等于立即 block：主线程已排除白名单来源，
  * Worker 再用 directText 做归因；发送者本人姓名或正文是广告时直接 block，广告只
  * 来自非白名单回复、引用或转发时先公开警告，五分钟内再次命中才升级。
  *
@@ -274,9 +273,8 @@ export function selectAdBundleEntries(bundle: AdMessageBundle): AdBundleSelectio
   }
   context.reverse();
   // 复用 context 承载最终清单：reverse 之后它正好就是清单的前半段（补回来的已判
-  // 上下文），把 pending 追加上去即可，不必再 `[...context, ...pending]` 展开出
-  // 第三个数组。两个数组都是本函数的局部变量，
-  // pending 不外传，因此不存在别名问题。
+  // 上下文），把 pending 追加上去即可。两个数组都是本函数的局部变量，pending
+  // 不外传，因此不存在别名问题。
   for (const entry of pending) context.push(entry);
   return { entries: context, checkedToSeq };
 }

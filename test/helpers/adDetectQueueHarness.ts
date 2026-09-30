@@ -74,7 +74,6 @@ export function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandid
     // 本 harness 的用例一律显式给 enqueueAdCandidate 传 now；这一项只保证载荷完整。
     observedAt: Date.now(),
     text: "随便聊聊",
-    label: "@spammer",
     firstName: "",
     lastName: "",
     username: "spammer",

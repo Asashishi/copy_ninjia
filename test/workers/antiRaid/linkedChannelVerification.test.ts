@@ -36,6 +36,7 @@ mock.module("../../../packages/infra/telegram", () => ({
 }));
 
 const runtime = await import("../../../packages/workers/antiRaid/verificationRuntime");
+const { handleJoinEvent, handleTrackedMessageEvent } = await import("../../../packages/workers/antiRaid/verificationEvents");
 const {
   threadCommentConfirmations,
   verificationEntries,
@@ -124,22 +125,22 @@ describe("cold linked-channel verification", () => {
       verifications: [],
     });
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 40,
       messageId: 698,
       repliesToChannelPost: true,
-    });
+    }, runtime.dispatchVerification);
 
     expect(recentChannelComments.get("-1001:40")?.messageId).toBe(698);
     expect(chatRequests).toHaveLength(0);
 
-    runtime.handleJoin({
+    handleJoinEvent({
       type: "join",
       chatId: -1001,
       member: { id: 40, first_name: "User 40" },
-    });
+    }, runtime.dispatchVerification);
 
     expect(verificationEntries.get("-1001:40")?.state.kind).toBe("exempt");
     expect(recentChannelComments.has("-1001:40")).toBeFalse();
@@ -153,13 +154,13 @@ describe("cold linked-channel verification", () => {
     });
     linkedChannels.set(-1001, { hasLinked: true, fetchedAt: Date.now() });
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 41,
       messageId: 699,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
 
     expect(verificationEntries.get("-1001:41")?.state.kind).toBe("exempt");
     expect(chatRequests).toHaveLength(0);
@@ -172,12 +173,12 @@ describe("cold linked-channel verification", () => {
       verifications: [pendingRecord(42, 1)],
     });
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 42,
       messageId: 700,
-    });
+    }, runtime.dispatchVerification);
 
     expect(verificationEntries.get("-1001:42")?.state).toMatchObject({
       kind: "pending",
@@ -193,13 +194,13 @@ describe("cold linked-channel verification", () => {
       verifications: [pendingRecord(42, 1)],
     });
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 42,
       messageId: 700,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
 
     expect(verificationEntries.get("-1001:42")?.state).toMatchObject({
       kind: "pending",
@@ -219,13 +220,13 @@ describe("cold linked-channel verification", () => {
       generation: 2,
       verifications: [pendingRecord(43, 2)],
     });
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 43,
       messageId: 701,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     expect(verificationEntries.get("-1001:43")?.state.kind).toBe("pending");
 
     chatRequests[0]!.resolve({ id: -1001, type: "supergroup", linked_chat_id: -2001 });
@@ -238,13 +239,13 @@ describe("cold linked-channel verification", () => {
       verifications: [pendingRecord(44, 3)],
     });
     resetLinkedChannelCache();
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 44,
       messageId: 702,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     runtime.dispatchVerification(-1001, 44, {
       type: "callback",
       callbackQueryId: "verified",
@@ -262,18 +263,18 @@ describe("cold linked-channel verification", () => {
 
   test("消息先于 join 时把确认绑定到新状态；查询失败保持 fail-closed 且下次可重试", async () => {
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 4, verifications: [] });
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 45,
       messageId: 703,
       isThreadReply: true,
-    });
-    runtime.handleJoin({
+    }, runtime.dispatchVerification);
+    handleJoinEvent({
       type: "join",
       chatId: -1001,
       member: { id: 45, first_name: "User 45" },
-    });
+    }, runtime.dispatchVerification);
     expect(verificationEntries.get("-1001:45")?.state.kind).toBe("pending");
 
     chatRequests[0]!.resolve({ id: -1001, type: "supergroup", linked_chat_id: -2001 });
@@ -286,25 +287,25 @@ describe("cold linked-channel verification", () => {
       verifications: [pendingRecord(46, 5)],
     });
     resetLinkedChannelCache();
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 46,
       messageId: 704,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     chatRequests[1]!.reject(new Error("getChat unavailable"));
     await settleAsyncWork();
     expect(verificationEntries.get("-1001:46")?.state.kind).toBe("pending");
     expect(linkedChannels.has(-1001)).toBe(false);
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 46,
       messageId: 705,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     expect(chatRequests).toHaveLength(3);
     chatRequests[2]!.resolve({ id: -1001, type: "supergroup", linked_chat_id: -2001 });
     await settleAsyncWork();
@@ -321,13 +322,13 @@ describe("cold linked-channel verification", () => {
       verifications: [record],
     });
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 47,
       messageId: 46,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
 
     expect(verificationEntries.get("-1001:47")?.state).toMatchObject({
       kind: "expelling",
@@ -362,13 +363,13 @@ describe("cold linked-channel verification", () => {
     });
 
     for (let messageId: number = 800; messageId < 820; messageId++) {
-      runtime.handleTrackedMessage({
+      handleTrackedMessageEvent({
         type: "message",
         chatId: -1001,
         userId: 48,
         messageId,
         isThreadReply: true,
-      });
+      }, runtime.dispatchVerification);
     }
 
     expect(chatRequests).toHaveLength(1);
@@ -388,13 +389,13 @@ describe("cold linked-channel verification", () => {
       generation: 8,
       verifications: [],
     });
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 49,
       messageId: 900,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     expect(threadCommentConfirmations.has("-1001:49")).toBeTrue();
 
     runtime.deactivateVerificationChat(-1001);
@@ -415,21 +416,21 @@ describe("cold linked-channel verification", () => {
       generation: 9,
       verifications: [],
     });
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 50,
       messageId: 901,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     runtime.deactivateVerificationChat(-1001);
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 50,
       messageId: 902,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
     expect(chatRequests).toHaveLength(1);
 
     chatRequests[0]!.resolve({
@@ -457,13 +458,13 @@ describe("cold linked-channel verification", () => {
       });
     }
 
-    runtime.handleTrackedMessage({
+    handleTrackedMessageEvent({
       type: "message",
       chatId: -1001,
       userId: 51,
       messageId: 903,
       isThreadReply: true,
-    });
+    }, runtime.dispatchVerification);
 
     expect(threadCommentConfirmations.size).toBe(
       THREAD_COMMENT_CONFIRMATION_MAX

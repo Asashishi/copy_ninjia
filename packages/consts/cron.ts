@@ -4,13 +4,13 @@ import type { CronAllChats, CronExceptChats } from "../types/cron";
 export const CRON_DEFAULT_TIME_ZONE: string = "Asia/Tokyo";
 
 /**
- * cron.json 任务 `chat_id` 数组的「所有群」写法，属 packages/config/cron.ts 与 packages/cron/run.ts：
+ * cron.json 任务 `chat_id` 数组的「所有群」写法，属 packages/config/cron.ts：
  * 写成 `["all"]` 时每一轮向所有已启用、且机器人此刻能发出全部动作的群逐个发送。
  */
 export const CRON_ALL_CHATS: CronAllChats = "all";
 
 /**
- * cron.json 任务 `chat_id` 数组的「排除」写法，属 packages/config/cron.ts 与 packages/cron/run.ts：
+ * cron.json 任务 `chat_id` 数组的「排除」写法，属 packages/config/cron.ts：
  * 首项写成 `"except"` 时，其余会话 id 从「所有已启用、且机器人此刻能发出全部动作的群」里剔除。
  */
 export const CRON_EXCEPT_CHATS: CronExceptChats = "except";
@@ -55,7 +55,7 @@ export const CRON_ACTION_GAP_MS: number = 1_000;
 export const CRON_ACTION_RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000];
 
 /**
- * just_once 执行记录（任务名）的 LRU 上限，属 cache/main/cron.ts；当前配置里的任务
+ * just_once 执行记录（任务名）的 LRU 上限，属 cron/scheduler.ts（创建 cache/main/cron.ts 里运行时的 justOnceRecords）；当前配置里的任务
  * 每次对账都会刷新自己的记录，淘汰只落在早已删除的旧名字上。
  */
 export const CRON_JUST_ONCE_RECORD_MAX: number = 1_024;

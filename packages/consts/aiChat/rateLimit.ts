@@ -35,5 +35,5 @@ export const REPLY_DELIVERY_MAX_TOTAL: number = 128;
 export const REPLY_TRIGGER_QUEUE_MAX: number = 15;
 /** 排队触发原文快照的截断上限。 */
 export const QUEUED_TRIGGER_SNIPPET_MAX_CHARS: number = 200;
-/** 限频提示本身的冷却与固定文案。 */
+/** 同群限频提示的冷却时长；冷却期内不重复发提示（提示文案在 consts/atmosphere/ 各风格的 aiChat_rateLimit.ts）。 */
 export const RATE_LIMIT_NOTICE_COOLDOWN_MS: number = 60_000;

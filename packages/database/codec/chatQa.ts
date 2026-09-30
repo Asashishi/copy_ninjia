@@ -38,7 +38,7 @@ export function decodeChatQaData(text: string, source: string): ChatQaEntryData 
  * 把一条答案编码为落库 JSON 文本。
  *
  * 与 decodeChatQaData 共用同一组长度上限，编码结果可被同一解码器还原。
- * 返回值可直接交给 Disk I/O Worker 写入，Worker 不再重新组装结构。
+ * 返回值可直接交给 Disk I/O Worker 写入。
  */
 export function encodeChatQaData(answer: string, source: string): string {
   if (answer.length === 0) {

@@ -1,4 +1,7 @@
-/** Disk I/O Worker 东京午夜维护编排：逐领域执行并隔离失败。 */
+/**
+ * Disk I/O Worker 的逐领域维护编排：启动（diskIO/startup.ts）与东京午夜维护共用
+ * runDiskIOMaintenanceTasks，逐领域执行并隔离失败。
+ */
 
 import { maintainAdSampleFiles } from "./adSampleFile";
 import { summarizeAiCache } from "./aiCacheFile";
@@ -22,15 +25,22 @@ export type DiskIOMaintenanceReplySink = (
   reply: IdentityStoragePersistedReply | VerificationPersistedReply | MidnightMaintenanceReply
 ) => void;
 
-/** 逐领域串行维护；单个领域失败只写 Worker 兜底日志，后续领域继续。 */
-async function runTasksSequentially(
-  tasks: readonly (readonly [string, () => void | Promise<void>])[]
+/** 一个领域的维护步骤：日志里的领域名与维护函数。 */
+type DiskIOMaintenanceTask = readonly [string, () => void | Promise<void>];
+
+/**
+ * 逐领域串行维护，启动与午夜维护共用；单个领域失败只写 Worker 兜底日志，后续领域继续。
+ * @param phase 日志里的维护阶段名（`startup` 或 `midnight`）。
+ */
+export async function runDiskIOMaintenanceTasks(
+  phase: "startup" | "midnight",
+  tasks: readonly DiskIOMaintenanceTask[]
 ): Promise<void> {
   for (const [domain, maintain] of tasks) {
     try {
       await maintain();
     } catch (error: unknown) {
-      console.error(`[diskIOWorker] midnight maintenance failed for ${domain}:`, error);
+      console.error(`[diskIOWorker] ${phase} maintenance failed for ${domain}:`, error);
     }
   }
 }
@@ -40,7 +50,7 @@ export function runDiskIOMidnightMaintenance(
   reply: DiskIOMaintenanceReplySink,
   day: string = getTokyoDateKey()
 ): Promise<void> {
-  return runTasksSequentially([
+  return runDiskIOMaintenanceTasks("midnight", [
     ["main thread", (): void => reply({ type: "midnightMaintenance", day })],
     ["luck", async (): Promise<void> => maintainLuckForDay(day)],
     ["logs", async (): Promise<void> => maintainLogRetention()],

@@ -1,4 +1,4 @@
-import type { DeferredCommandRuntime } from "../../types/deferredCommands";
+import type { CommandExecutorRuntime } from "../../types/commandExecutor";
 
 /**
  * Owner: 主线程。延迟命令执行器（commands/deferredCommands.ts），承载 `/h_image` 的抽图与
@@ -10,4 +10,4 @@ import type { DeferredCommandRuntime } from "../../types/deferredCommands";
  * 再在预算内排空；超时取消排队与在途任务。Worker 崩溃不影响本主线程 owner；进程重启从 null
  * 重新创建，不重放未完成的任务。
  */
-export const deferredCommandRuntime: { current: DeferredCommandRuntime | null } = { current: null };
+export const deferredCommandRuntime: { current: CommandExecutorRuntime | null } = { current: null };

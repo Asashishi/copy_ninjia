@@ -30,7 +30,6 @@ export function createStorageDatabase(path: string): void {
 
 /**
  * 给刚建出来的空库应用当前 schema；只有 createStorageDatabase 调用，生产启动不得调用。
- * 既有库的冷迁移在 scripts/ 的冷迁移脚本中对独立暂存副本执行，不经本函数。
  */
 function migrateStorageDatabaseSchema(database: StorageDatabase): void {
   migrate(database, { migrationsFolder: IDENTITY_DATABASE_MIGRATIONS_DIR });

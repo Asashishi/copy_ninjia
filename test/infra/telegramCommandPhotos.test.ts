@@ -6,7 +6,11 @@ const deleteMessageAfter = mock((..._args: unknown[]): void => {});
 const markSelfSent = mock((_chatId: number, _messageId: number): void => {});
 mock.module("../../packages/infra/telegram/mainClient", () => ({ bot: { api: { sendPhoto } } }));
 mock.module("../../packages/infra/telegram/actions/messageLifecycle", () => ({ deleteMessageAfter }));
-mock.module("../../packages/infra/selfSentTracker", () => ({ markSelfSent }));
+mock.module("../../packages/infra/selfSentTracker", () => ({
+  markSelfSent,
+  beginSelfSentSend: (): void => {},
+  endSelfSentSend: (): void => {},
+}));
 
 const { sendCommandPhoto } = await import("../../packages/infra/telegram/commandPhotos");
 const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../packages/consts/commands");

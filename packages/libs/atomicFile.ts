@@ -12,15 +12,66 @@ import {
 import { open, rename } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { TMP_FILE_SUFFIX } from "../consts/paths";
+import { bestEffortUnlink } from "./fileAccess";
 import { isErrno } from "./errno";
 import type { FileHandle } from "node:fs/promises";
 
-const UTF8_ENCODER: TextEncoder = new TextEncoder();
+/** 一次同步写请求；position 为 null 时从文件当前偏移写起并推进偏移。 */
+export interface SyncWriteRequest {
+  fd: number;
+  buffer: Uint8Array;
+  offset: number;
+  length: number;
+  position: number | null;
+}
+
+/** 同步写入一段字节并返回本次实际写入的字节数；形状同 node:fs 的 writeSync。 */
+export type SyncBufferWriter = (request: SyncWriteRequest) => number;
+
+/** writeBufferFullySync 的写入位置与可注入的写入实现。 */
+export interface WriteBufferFullyOptions {
+  /** 起始位置；null 表示从文件当前偏移写起。 */
+  position: number | null;
+  /** 仅供故障注入测试；生产使用 node:fs writeSync。 */
+  write?: SyncBufferWriter;
+}
+
+const nodeWriteBuffer: SyncBufferWriter = ({ fd, buffer, offset, length, position }: SyncWriteRequest): number =>
+  writeSync(fd, buffer, offset, length, position);
+
+/**
+ * write(2) 允许成功但只写一部分：循环到整段字节落下为止；任一次没有有效进展时抛错。
+ * 追加日文件与原子分块写共用。
+ */
+export function writeBufferFullySync(
+  fd: number,
+  buffer: Uint8Array,
+  { position, write = nodeWriteBuffer }: WriteBufferFullyOptions
+): void {
+  let offset: number = 0;
+  while (offset < buffer.length) {
+    const written: number = write({
+      fd,
+      buffer,
+      offset,
+      length: buffer.length - offset,
+      position: position === null ? null : position + offset,
+    });
+    if (!Number.isSafeInteger(written) || written <= 0 || written > buffer.length - offset) {
+      throw new Error(`Short write made no valid progress (${written} byte(s) reported).`);
+    }
+    offset += written;
+  }
+}
 
 /**
  * 可持久化的原子文件操作。写入遵循“同目录唯一临时文件 -> fsync -> rename ->
  * 父目录 fsync”，避免进程崩溃后留下半份目标文件，并保证目录项已落盘。
  */
+
+const UTF8_ENCODER: TextEncoder = new TextEncoder();
+
+/** path 同目录下的唯一临时文件路径：`.<basename>.<pid>.<uuid><TMP_FILE_SUFFIX>`。 */
 function temporaryPath(path: string): string {
   return join(
     dirname(path),
@@ -41,7 +92,7 @@ export async function syncDirectory(path: string): Promise<void> {
   }
 }
 
-/** rename 后同步涉及的目录项；用于把损坏文件持久隔离到同目录唯一路径。 */
+/** rename 后同步涉及的目录项；atomicWriteText 用它把临时文件发布到目标路径。 */
 async function durableRename(sourcePath: string, destinationPath: string): Promise<void> {
   await rename(sourcePath, destinationPath);
   await syncDirectory(destinationPath);
@@ -209,30 +260,26 @@ export function atomicWriteTextChunksSync(
     for (const chunk of chunks) {
       if (chunk.length === 0) continue;
       const buffer: Uint8Array = UTF8_ENCODER.encode(chunk);
-      let offset: number = 0;
-      while (offset < buffer.length) {
-        const written: number = writeSync(
-          fd,
-          buffer,
-          offset,
-          buffer.length - offset,
-          null
-        );
-        if (
-          !Number.isSafeInteger(written) ||
-          written <= 0 ||
-          written > buffer.length - offset
-        ) {
-          throw new Error(
-            `Atomic chunk write made no valid progress (${written} byte(s) reported).`
-          );
-        }
-        offset += written;
-        writtenBytes += written;
-      }
+      writeBufferFullySync(fd, buffer, { position: null });
+      writtenBytes += buffer.length;
     }
     return writtenBytes;
   }, mode);
+}
+
+/**
+ * 尽力删除目录里原子写中断留下的孤儿临时文件：名字以 TMP_FILE_SUFFIX 结尾，prefix 非空时
+ * 还须以它开头（`.<目标文件名>.`，见 temporaryPath）。删除失败留给下一次清理，不抛错。
+ * @param names 调用方已列出的目录项。
+ */
+export async function removeOrphanedTempFiles(
+  dir: string,
+  names: readonly string[],
+  prefix: string = ""
+): Promise<void> {
+  for (const name of names) {
+    if (name.endsWith(TMP_FILE_SUFFIX) && name.startsWith(prefix)) await bestEffortUnlink(join(dir, name));
+  }
 }
 
 /** 删除文件并同步父目录；文件已不存在视为成功。 */

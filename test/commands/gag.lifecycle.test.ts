@@ -115,21 +115,16 @@ describe("/gag 与 /ungag 状态机", () => {
     ]);
   });
 
-  test("权限、初始化和删除权限逐层 fail closed", async () => {
+  test("权限和删除权限逐层 fail closed", async () => {
     gagTestSwitches.permissionAllowed = false;
     await gag.handleGagCommand(commandContext());
     expect(resolveCommandTarget).not.toHaveBeenCalled();
 
     gagTestSwitches.permissionAllowed = true;
-    gagTestSwitches.initEnabled = false;
-    await gag.handleGagCommand(commandContext());
-    expect(resolveCommandTarget).not.toHaveBeenCalled();
-
-    gagTestSwitches.initEnabled = true;
     gagTestSwitches.canDeleteMessages = false;
     await gag.handleGagCommand(commandContext());
     expect(resolveCommandTarget).not.toHaveBeenCalled();
-    expect(sendCommandMessage).toHaveBeenCalledTimes(3);
+    expect(sendCommandMessage).toHaveBeenCalledTimes(2);
   });
 
   /**

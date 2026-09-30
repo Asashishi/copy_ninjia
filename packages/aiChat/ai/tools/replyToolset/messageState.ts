@@ -40,6 +40,12 @@ export interface SendDirectMessageParams {
   replyToMessageId?: number;
 }
 
+/**
+ * 发送一段纯文本并登记自录；本轮已作废时不发送并返回 undefined。正文总带触发话题：
+ * 不挂回复的正文没有回复关系可以带路，话题群里缺了它就会掉进 General；挂了回复也要带，
+ * 回复目标被删时不至于跟着掉出话题。
+ * @returns 发出的消息 id；未发送或发送失败时为 undefined。
+ */
 export async function sendDirectMessage({
   ctx,
   text,

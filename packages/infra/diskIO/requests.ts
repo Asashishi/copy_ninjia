@@ -107,10 +107,7 @@ export function settleDiskIOReply<TResult>({
   pending.resolve(payload);
 }
 
-/**
- * 向指定代际请求运势密钥。公开入口与恢复 scoped transport 共用同一套 waiter
- * 记账，Worker 崩溃或恢复失败时由宿主统一拒绝。
- */
+/** requestLuckSecretFromWorker 的入参。 */
 export interface RequestLuckSecretParams {
   worker: Worker;
   day: string;
@@ -118,6 +115,10 @@ export interface RequestLuckSecretParams {
   context: string;
 }
 
+/**
+ * 向指定代际请求运势密钥。公开入口与恢复 scoped transport 共用同一套 waiter
+ * 记账，Worker 崩溃或恢复失败时由宿主统一拒绝。
+ */
 export function requestLuckSecretFromWorker({
   worker,
   day,
@@ -137,7 +138,7 @@ export function requestLuckSecretFromWorker({
   });
 }
 
-/** 向当前可写代际按需读取本群滚动时间窗内的入群日志。 */
+/** requestJoinLogFromWorker 的入参。 */
 export interface RequestJoinLogParams {
   worker: Worker;
   chatId: number;
@@ -146,6 +147,7 @@ export interface RequestJoinLogParams {
   timeoutMs: number;
 }
 
+/** 向当前可写代际按需读取本群滚动时间窗内的入群日志。 */
 export function requestJoinLogFromWorker({
   worker,
   chatId,
@@ -167,13 +169,14 @@ export function requestJoinLogFromWorker({
   });
 }
 
-/** 向当前 Disk I/O 代际批量读取永久策略与临时广告免检累计表。 */
+/** requestIdentityPoliciesFromWorker 的入参。 */
 export interface RequestIdentityPoliciesParams {
   worker: Worker;
   ids: readonly number[];
   timeoutMs: number;
 }
 
+/** 向当前 Disk I/O 代际批量读取永久策略与临时广告免检累计表。 */
 export function requestIdentityPoliciesFromWorker({
   worker,
   ids,

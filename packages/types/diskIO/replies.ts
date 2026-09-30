@@ -11,8 +11,9 @@ import type {
 import type { BlocklistIdPage } from "../identityStorage";
 import type { StoredTemporaryAdBypassActivity } from "../temporaryAdBypass";
 /** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
- * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify，
- * 见 workers/diskIO/snapshotFiles.ts），供 hydrate 链路直接透传。 */
+ * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify；AI 记忆
+ * 见 database/interact/aiContext.ts，贴纸目录见 workers/diskIO/snapshotFiles.ts），
+ * 供 hydrate 链路直接透传。 */
 export interface LoadedReply {
   type: "loaded";
   /** /wed 已发言成员集合；DiskIO 校验时建立，经消息复制后由主线程直接接管。 */
@@ -136,7 +137,7 @@ export type IdentityPersistenceReply = (
 
 /**
  * flush 覆盖的落盘领域，回执按领域拆开：调用方（典型是 /block）只需要关心自己这条
- * 记录所在领域是否失败，不受无关领域影响（见 workers/diskIOWorker.ts 的 flushScope）。
+ * 记录所在领域是否失败，不受无关领域影响（见 workers/diskIO/domainFlush.ts 的 flushScope）。
  *
  * 入群日志占两格：`joinLog` 是追写，`joinLogPurge` 是群 teardown 的整群删除，
  * 两者分开领域各自独立失败。追写那一格只在停机等统一 flush 中回报；入群事实本身
@@ -157,6 +158,12 @@ export type DiskIODomain =
   | "chatQa"
   | "joinLog"
   | "joinLogPurge";
+
+/** 共用同一个 SQLite 事务提交的七个领域（含 AI 上下文）。 */
+export type StorageDatabaseDomain = Extract<
+  DiskIODomain,
+  "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
+>;
 
 /**
  * 单领域 flush 的结局，附带**发起这一次请求所收到的**失败领域名。

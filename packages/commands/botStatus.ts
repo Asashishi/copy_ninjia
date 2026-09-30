@@ -135,8 +135,8 @@ function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined, atmosph
 }
 
 /**
- * 权限快照的展示体：**只列这个群里已经拥有的权限位**，键沿用 Bot API 的英文字段
- * 名，值给该位的中文名。没有的位不出现——「有什么」才是这块要回答的问题，逐项列
+ * 权限快照的展示体：**只列这个群里已经拥有的权限位**，键沿用 BotChatPermissions 的
+ * 英文字段名，值给该位的中文名。没有的位不出现——「有什么」才是这块要回答的问题，逐项列
  * 出十八个「否」只会把真正有的那几条淹掉。
  *
  * 字段与顺序取自 BOT_CHAT_PERMISSION_KEYS（见 consts/botAdmin.ts），不另写一份

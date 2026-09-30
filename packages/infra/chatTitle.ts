@@ -26,10 +26,10 @@ import type { ChatState } from "../types/chatState";
  */
 
 /**
- * 记录一次确证的群名称，与已知值不同才写入并落盘（避免高频群消息把这里
- * 变成每条消息都触发一次写入）。未初始化的群（isInitEnabled !== true）不记录，
- * 同 infra/botAdmin.ts 的 recordBotChatPermissions——不能让只是被拉进去、
- * 从没人管过的群凭空在 `chat_states` 里长出条目。
+ * 把确证的群名称写入内存 ChatState；未初始化的群（isInitEnabled !== true）或与已知值
+ * 相同时不写并返回 false，同 infra/botAdmin.ts 的 recordBotChatPermissions——不能让
+ * 只是被拉进去、从没人管过的群凭空在 `chat_states` 里长出条目。
+ * @returns 是否改写了名称，调用方据此决定是否落盘。
  */
 function applyChatTitle(
   chatId: number,
@@ -42,6 +42,7 @@ function applyChatTitle(
   return true;
 }
 
+/** 名称有变化才后台落盘，避免高频群消息把这里变成每条消息都触发一次写入。 */
 function recordChatTitle(
   chatId: number,
   title: string,
@@ -94,9 +95,7 @@ export async function refreshAllChatTitles(
         try {
           const chat: ChatFullInfo = await bot.api.getChat(chatId, ...signalArgs(signal));
           if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
-            if (applyChatTitle(chatId, chat.title, getChatState(chatId))) {
-              saveChatStateInBackground(chatId, "chat title refresh");
-            }
+            recordChatTitle(chatId, chat.title, getChatState(chatId));
           }
         } catch (error: unknown) {
           if (!signal.aborted) {

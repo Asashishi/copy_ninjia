@@ -9,7 +9,7 @@ import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /**
  * 频道评论区留言的暂存：评论先到、入群更新后到时的关联缓冲，供
- * verificationRuntime.ts 的 handleJoin/handleTrackedMessage 消费。
+ * verificationEvents.ts 的 handleJoinEvent/handleTrackedMessageEvent 消费。
  */
 
 export interface RememberRecentCommentParams {

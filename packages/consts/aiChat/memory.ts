@@ -3,12 +3,16 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../storage";
 /** 冷消息压缩请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
 export const CHAT_SUMMARY_ERROR_LABEL: string = "AI summarize API";
 
-/** 冷消息压缩的领域参数。模型名、采样温度与输出 token 上限因供应商而异，
+/** HTTP 成功但摘要正文不可用时，两次业务重采样之间的退避。模型名、采样温度与输出 token 上限因供应商而异，
  *  分别放在 consts/aiChat/{gemini,openai}.ts。 */
-/** HTTP 成功但摘要正文不可用时，两次业务重采样之间的退避。 */
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 
-/** 压缩块 = 热窗口 = 镜像窗口；逐字上下文最多保留两块。 */
+/**
+ * 压缩块 = 热窗口 = 镜像窗口；逐字上下文最多保留两块（VERBATIM_CONTEXT_MAX）。
+ * 轮换：缓存首次攒满一块时把它作为镜像提交压缩；攒满两块时滑出最旧一块（即上一轮
+ * 镜像），先晋升它的摘要、再压缩留下的这一块作为新镜像（见 workers/aiChat/rollingMemory.ts
+ * 的 pushBufferedMessage 与 workers/aiChat/compaction.ts 的 scheduleRotation）。
+ */
 export const COMPACT_BATCH_SIZE: number = 128;
 /** 模型请求中保留的逐字消息最大数量。 */
 export const VERBATIM_CONTEXT_MAX: number = COMPACT_BATCH_SIZE * 2;

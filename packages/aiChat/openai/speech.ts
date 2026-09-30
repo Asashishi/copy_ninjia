@@ -28,7 +28,7 @@ import { getAgentDeploymentConfig } from "../../config/agent";
 import { logger } from "../../infra/logger";
 import { warnAiUsageUnavailable } from "../../infra/aiCacheUsage";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
-import { readSpeechBody } from "../ai/utils/speechPayload";
+import { readSpeechBody, speechFromDecoded, speechRequestFailed } from "../ai/utils/speechPayload";
 import { composeSpeechStyle } from "../ai/utils/speechStyle";
 import { getOpenAiClient } from "./client";
 import { synthesizeXAiSpeech } from "./xaiSpeech";
@@ -72,16 +72,9 @@ async function synthesizeAudioSpeech(
     );
     decoded = await readSpeechBody(response, OGG_OPUS_MIME_TYPE);
   } catch (error: unknown) {
-    // 调用方 signal 已中止表示本轮作废，静默收尾；合成超时仍记日志。
-    if (signal?.aborted === true) return null;
-    logger.error(`Error calling ${OPENAI_SPEECH_ERROR_LABEL}:`, error);
-    return null;
+    return speechRequestFailed(OPENAI_SPEECH_ERROR_LABEL, signal, error);
   }
-  if (!decoded.ok) {
-    logger.error(`${OPENAI_SPEECH_ERROR_LABEL} returned an unusable audio payload: ${decoded.reason}.`);
-    return null;
-  }
-  return decoded.speech;
+  return speechFromDecoded(OPENAI_SPEECH_ERROR_LABEL, decoded);
 }
 
 /** 读取本次请求的 tts 配置快照；读取失败或未选 OpenAI 协议时记日志并返回 null。 */

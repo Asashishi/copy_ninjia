@@ -61,6 +61,7 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
     fallback: false,
     signal,
     shouldLogError: logUnlessAborted,
+    selfSentChatId: session.chatId,
   });
 }
 

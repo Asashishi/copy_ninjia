@@ -51,7 +51,7 @@ declare const self: Worker;
  * 反刷群私密模式状态机（packages/states/lockdown.ts 与同名目录）的解释器：把每条投递翻译成
  * 状态机事件、同步落下一状态、管理恢复计时器、把返回的副作用列表逐个执行。
  * thresholdExceeded 的占位同步生效——recordJoin 调用 dispatchLockdown 后，
- * 同一批投递里紧随其后的入群立刻就能在 verificationRuntime.ts 的 handleJoin
+ * 同一批投递里紧随其后的入群立刻就能在 verificationEvents.ts 的 handleJoinEvent
  * 里看到 lockdownEntries 有记录。lockdown/unlock 事件回报主线程用于持久化 +
  * Worker 崩溃后的 adopt 重放，机制见 antiRaid/workerBridge/controller.ts；总体架构见
  * ../antiRaidWorker.ts 模块头。
@@ -253,8 +253,8 @@ export function deactivateLockdownChat(chatId: number): void {
 }
 
 /**
- * 记录一次已确认的新成员加入（由 verificationRuntime.ts 的 handleJoin 按
- * joinCreatesNewRecord 去重后调用）。滑动窗口：最近 JOIN_WINDOW_MS 内的
+ * 记录一次已确认的新成员加入（由 verificationEvents.ts 的 handleJoinEvent 按
+ * joinCreatesNewRecord 去重后调用，另由 blocklistEffects.ts 为黑名单秒踢补记）。滑动窗口：最近 JOIN_WINDOW_MS 内的
  * 入群人数超过阈值即触发临时私密模式——不用「首次入群起算、到点整体清零」
  * 的固定桶，是为了防住横跨桶边界的刷群（前桶尾 + 后桶头各塞半个阈值，
  * 固定桶永远数不满）。

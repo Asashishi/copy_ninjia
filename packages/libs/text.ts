@@ -9,8 +9,7 @@ import {
  * 中和可点击命令）、按字形簇切分，以及把 Telegram 的姓名字段拼成展示名。
  *
  * 消费方跨 AI 流水线（aiChat/ai/imageDescription.ts 等）、命令回执
- * （users/userLabel.ts）与消息转录（auto/message/facts.ts）；同一份规则只此一份，
- * 各处不再自己抄。
+ * （users/userLabel.ts）与消息转录（auto/message/facts.ts）；同一份规则只此一份。
  */
 
 import { neutralizeRenderableCommands } from "./renderableCommand";

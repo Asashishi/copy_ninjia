@@ -163,7 +163,7 @@ export function getCatalogEntry(fileUniqueId: string): StickerCatalogEntry | und
 }
 
 /** 把一个包的目录序列化成可落盘的快照 JSON 文本。stringify 只在这里做
- *  一次，此后全程以字符串流转（格式约定同 workers/aiChatWorker.ts
+ *  一次，此后全程以字符串流转（格式约定同 workers/aiChat/rollingMemory.ts
  *  的 buildMemorySnapshot）。 */
 function buildSnapshot(pack: string): string {
   const snapshot: StickerCatalogSnapshot = { version: 1, entries: Object.fromEntries(getPackMap(pack)), summary: packSummaries.get(pack) ?? null, savedAt: Date.now() };
@@ -322,9 +322,7 @@ export async function generatePackCatalog(pack: string, signal: AbortSignal = ai
         markEntryFailed(pack, sticker.file_unique_id);
         continue;
       }
-      // 白名单目录是常驻权威缓存，不把新条目再塞进 MEDIA_DESCRIPTION_CACHE_MAX
-      // 项的临时 LRU 媒体缓存；否则既挤占临时额度，也可能在对账删除后短暂
-      // 读到旧描述。
+      // 目录条目属于常驻权威缓存，不写入 transientDescriptionCache。
       const description: string | null = await callWithRetry(
         `Sticker catalog description (pack "${pack}", sticker ${sticker.file_unique_id})`,
         (): Promise<AiTextResult> => describeMediaForStickerCatalog(source.fileId, signal),

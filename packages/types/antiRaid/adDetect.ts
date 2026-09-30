@@ -84,8 +84,6 @@ export interface AdCandidateMessage {
   observedAt: number;
   /** 已清洗成单行的正文（文本或图片说明）。 */
   text: string;
-  /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
-  label: string;
   /**
    * Telegram 展示元数据（口径同 TelegramIdentityMetadata）；用户的 firstName、lastName
    * 同时参与当次广告检测。
@@ -130,6 +128,7 @@ export interface AdDetectedEvent {
   chatId: number;
   senderId: number;
   isChannel: boolean;
+  /** 处置播报里的展示标签，Worker 按 meta 与当前群氛围算好。 */
   label: string;
   meta: Readonly<TelegramIdentityMetadata>;
   /** 模型给出的简短理由，只进日志、播报与命中样本；不参与控制流。 */
@@ -178,9 +177,10 @@ export interface AdMessageBundle {
   chatId: number;
   /** 用户 id；频道马甲发言时是该频道的负数 id。 */
   senderId: number;
-  /** 处置播报里的展示标签，由主线程按可见发送者算好。 */
-  label: string;
-  /** 随候选冻结并在昵称变化时更新，用于主线程最终写入黑名单。 */
+  /**
+   * 随候选冻结并在昵称变化时更新，用于主线程最终写入黑名单；处置播报的展示标签也由它
+   * 现算（见 workers/antiRaid/adDetect/disposal.ts 的 adSenderLabel）。
+   */
   meta: Readonly<TelegramIdentityMetadata>;
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;

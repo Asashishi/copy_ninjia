@@ -1,29 +1,15 @@
 import type { CommandContext, Context } from "grammy";
-import type { User } from "grammy/types";
 import { logger } from "../infra/logger";
 import {
   getOrCreateChatState,
   persistChatState,
 } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import type { WhitelistPermissionKey } from "../types/identityPolicy";
 import type { CachedUser, ChatState } from "../types/chatState";
-import type { ToggleCommandTexts } from "../types/commands";
+import type { ToggleAction, ToggleCommandTexts } from "../types/commands";
 import { rejectUnlessPermitted, rejectUnlessSuperAdmin } from "./commandActor";
-
-/**
- * 发起人是否是 SUPER_ADMIN_USER_ID 本人。当前只有 /send 用它：它是唯一以
- * `ctx.from` 而非命令可见发起身份判定的入口——私聊里没有频道马甲，也不该让
- * sender_chat 参与。其余仅超管命令走 rejectUnlessSuperAdmin（见 commandActor.ts）。
- *
- * 校验不通过时的反应也刻意不收进这里：/send 只能私聊触发，对非本人的探测保持
- * 沉默、不确认这个指令存在（见 commands/send.ts 头注），与群聊指令「照样回嘴，
- * 只是不执行」的风格不同，不能共用同一个「校验+回复」的一体化函数。
- */
-export function isSuperAdmin(fromUser: User | undefined): boolean {
-  return fromUser?.id === SUPER_ADMIN_USER_ID;
-}
+import { parseToggleAction } from "./arguments";
 
 /** resolveSuperAdminToggleArg 的入参；只服务本文件那一个函数，不对外导出。 */
 interface SuperAdminToggleOptions {
@@ -117,7 +103,7 @@ export async function runChatToggleCommand({
   teardown,
   teardownFailedText,
 }: ChatToggleCommandParams): Promise<void> {
-  const arg: "enable" | "disable" | undefined =
+  const arg: ToggleAction | undefined =
     await resolveSuperAdminToggleArg(ctx, { texts, permission });
   if (arg === undefined) return;
 
@@ -157,7 +143,8 @@ export async function runChatToggleCommand({
 }
 
 /**
- * /ai_chat、/translate（开关分支）、/init、/ad_detect、/flood_control 共用的权限与参数校验。
+ * runChatToggleCommand 的五个调用方（/ad_detect、/ai_chat、/flood_control、/antiraid、/translate
+ * 开关分支）与 /init 共用的权限与参数校验。
  *
  * 提供 permission 时按该权限键授权；超级管理员恒持有全部权限键（见
  * whitelist.ts），因此不必也不该在这里再判一次身份。省略 permission 则是
@@ -167,7 +154,7 @@ export async function runChatToggleCommand({
 export async function resolveSuperAdminToggleArg(
   ctx: CommandContext<Context>,
   { texts, permission }: SuperAdminToggleOptions
-): Promise<"enable" | "disable" | undefined> {
+): Promise<ToggleAction | undefined> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
   const actor: CachedUser | undefined = permission === undefined
@@ -175,8 +162,8 @@ export async function resolveSuperAdminToggleArg(
     : await rejectUnlessPermitted(ctx, permission, texts.rejection);
   if (actor === undefined) return undefined;
 
-  const arg: string = ctx.match.trim().toLowerCase();
-  if (arg !== "enable" && arg !== "disable") {
+  const arg: ToggleAction | undefined = parseToggleAction(ctx.match.trim());
+  if (arg === undefined) {
     await sendCommandMessage({ chatId, text: texts.usage, replyToMessageId: messageId });
     return undefined;
   }

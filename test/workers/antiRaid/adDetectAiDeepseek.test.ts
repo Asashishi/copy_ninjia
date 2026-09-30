@@ -35,7 +35,7 @@ mock.module("openai", () => {
   return { default: FakeOpenAI, APIError: FakeAPIError };
 });
 
-const { requestOpenAiAdDetectJson } = await import("../../../packages/antiRaid/ai/openai");
+const { requestOpenAiAdDetectJson } = await import("../../../packages/workers/antiRaid/adDetect/ai/openai");
 const { adDetectOpenAiClientHolder } = await import("../../../packages/cache/workers/antiRaid/openai");
 const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
 import type { AiCacheUsage } from "../../../packages/types/aiCache";

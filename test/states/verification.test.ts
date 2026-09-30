@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  checkingInviterOf,
-  expellingOf,
   joinCreatesNewRecord,
   transitionVerification,
 } from "../../packages/states/verification";
+import { checkingInviterOf, expellingOf } from "../../packages/states/verification/shared";
 import type { JoinEvent, PendingState, VerificationState } from "../../packages/types/states/verification";
 import {
   ANTI_RAID_PER_MINUTE_LIMIT,

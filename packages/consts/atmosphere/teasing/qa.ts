@@ -8,7 +8,6 @@ export const QA_QUERY_PAGE_NEXT_TEXT: string = "下一页 ›";
 
 /** 群问答三个子命令的表单、查询与删除文案。 */
 export const QA_COMMAND_TEXTS: Readonly<{
-  notInitialized: string;
   rejected: (label: string) => string;
   full: string;
   formBusy: string;
@@ -29,7 +28,6 @@ export const QA_COMMAND_TEXTS: Readonly<{
   removed: (q: string) => string;
   removeMissing: (q: string) => string;
 }> = {
-  notInitialized: "本群还没让本天才接管呢，先 /init enable 再来说问答的事，杂鱼♡",
   rejected: (label: string): string =>
     `${label} 也想动本群的问答？没有 isCanControllQaPermission 就别伸手，杂鱼♡`,
   full: `本群问答已经满 ${CHAT_QA_MAX_PER_CHAT} 条了，先 /qa remove 掉一条再来，笨蛋♡`,

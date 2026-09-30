@@ -1,6 +1,7 @@
 /**
- * 部署配置可用性判定的共享类型（判定本身见 packages/config/readiness.ts，
- * 缓存 holder 见 packages/cache/perThread/config.ts）。
+ * 部署配置的共享类型：各部署文件的解析结果、热重载的读取与变更记录，以及配置可用性
+ * 判定（判定本身见 packages/config/readiness.ts，缓存 holder 见
+ * packages/cache/perThread/config.ts）。
  */
 
 import type { BotAtmosphere } from "./atmosphere";

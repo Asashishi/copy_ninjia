@@ -6,7 +6,7 @@ import { resetIdentityStorageCache } from "../../packages/cache/main/identitySto
 import { seedMissingIdentity } from "../helpers/identityStorage";
 import { recordTemporaryAdBypassActivity } from "../../packages/infra/identityPolicy/temporaryAdBypass";
 import { initDiskIO, postDiskIO, terminateDiskIO, loadPersistedData, readIdentityPolicies, flushDiskIO } from "../../packages/infra/diskIO";
-import { DISK_BUSINESS_MAX_RETAINED_BYTES } from "../../packages/consts/diskIO/business";
+import { DISK_BUSINESS_MAX_RETAINED_BYTES, STORAGE_PENDING_MAX_ENTRIES } from "../../packages/consts/diskIO/business";
 import type { DiskIOReply, TemporaryAdBypassWriteDiskMessage } from "../../packages/types/diskIO";
 import { emitSuccessfulDiskIOLoad, FakeDiskIOWorker, installFakeDiskIOWorker, crashDiskIOWorker } from "../helpers/diskIOWorkerHarness";
 
@@ -87,11 +87,12 @@ test("缺省贴纸配置在初始 load 与运行时恢复都明确发送 null", 
 });
 
 test("未 ACK 主键达到上限后不通过 LRU 淘汰释放持久化事实", (): void => {
-  for (let id: number = 1; id <= 8_192; id++) unacknowledgedTemporaryAdBypassWrites.set(id, { activity: null, revision: id });
-  seedMissingIdentity(9_000);
-  expect((): unknown => recordTemporaryAdBypassActivity(9_000)).toThrow("capacity");
-  expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(8_192);
-  expect(temporaryAdBypassActivityCache.peek(9_000)).toBeNull();
+  for (let id: number = 1; id <= STORAGE_PENDING_MAX_ENTRIES; id++) unacknowledgedTemporaryAdBypassWrites.set(id, { activity: null, revision: id });
+  const newcomer: number = STORAGE_PENDING_MAX_ENTRIES + 1;
+  seedMissingIdentity(newcomer);
+  expect((): unknown => recordTemporaryAdBypassActivity(newcomer)).toThrow("capacity");
+  expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(STORAGE_PENDING_MAX_ENTRIES);
+  expect(temporaryAdBypassActivityCache.peek(newcomer)).toBeNull();
   expect(temporaryAdBypassWriteRevision.current).toBe(0);
   expect(worker().operationBatches).toHaveLength(0);
 });

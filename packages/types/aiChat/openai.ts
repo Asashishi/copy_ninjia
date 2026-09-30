@@ -12,7 +12,6 @@ export type OpenAiRequestResult =
     ok: false;
     /** 端点在故障（网络/超时/408/429/5xx）或调用方主动取消；口径同 GeminiRequestResult。 */
     failureKind: "request";
-    diagnostic: string;
     finishReason?: undefined;
     response?: undefined;
   }
@@ -20,7 +19,6 @@ export type OpenAiRequestResult =
     ok: false;
     /** 端点以普通 4xx 拒绝了这一次请求的内容；口径同 GeminiRequestResult。 */
     failureKind: "rejected";
-    diagnostic: string;
     finishReason?: undefined;
     response?: undefined;
   }
@@ -28,7 +26,6 @@ export type OpenAiRequestResult =
     ok: false;
     /** 端点以确定性的 4xx 说明它不接受这种输入模态。 */
     failureKind: "unsupported";
-    diagnostic: string;
     finishReason?: undefined;
     response?: undefined;
   }
@@ -36,7 +33,6 @@ export type OpenAiRequestResult =
     ok: false;
     /** 端点以 404/405 表示这条 API 路径不可调用；口径同 GeminiRequestResult。 */
     failureKind: "misconfigured";
-    diagnostic: string;
     finishReason?: undefined;
     response?: undefined;
   }
@@ -44,7 +40,6 @@ export type OpenAiRequestResult =
     ok: false;
     /** HTTP 成功但模型结果不可用；可由无副作用调用方决定是否重新采样。 */
     failureKind: "response";
-    diagnostic: string;
     /** 归一化后的收尾原因，如 `incomplete:max_output_tokens`。 */
     finishReason?: string;
     /** 仅供异常分支做预算/重试判断；不得解析其中的正文或函数调用。 */

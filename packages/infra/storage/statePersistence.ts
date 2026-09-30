@@ -104,7 +104,7 @@ async function readExistingText(path: string): Promise<string | null> {
  * 复读状态与语音计数静默归零。只有叶子路径真正不存在才放行；由 loadCurrentGlobalState 在
  * 解码 memory/global/state.json 之前调用。
  */
-export async function assertLegacyStateFilesAbsent(): Promise<void> {
+async function assertLegacyStateFilesAbsent(): Promise<void> {
   for (const path of LEGACY_STATE_FILE_PATHS) {
     if (!await isMissingLeaf(path)) {
       invalidInput(path, "$", "absent; first upgrade with the preceding global-state migration release, then run migrate:global-state for the current format");
@@ -149,6 +149,8 @@ export class StateStore {
   private readonly writer: LatestValueRunner<StateWrite>;
 
   private dirtyWrite: StateWrite | null = null;
+  /** 最近一次交给 writer 的值；它仍在排队或写入时 flush 直接等待，不再重复投递。 */
+  private pushedWrite: StateWrite | null = null;
   private nextRevision: number = 1;
   private retryAttempt: number = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -156,7 +158,6 @@ export class StateStore {
   private observedWriterPromise: Promise<void> | null = null;
   private readonly persistenceWaiters: PersistenceWaiter[] = [];
   private quiescing: boolean = false;
-  private disposed: boolean = false;
   private fatalSignaled: boolean = false;
 
   constructor({
@@ -218,7 +219,7 @@ export class StateStore {
   }
 
   save(schema: GlobalState, options: StateSaveOptions = {}): Promise<void> {
-    if (this.quiescing || this.disposed) {
+    if (this.quiescing) {
       return Promise.reject(new Error("StateStore is quiescing and no longer accepts writes."));
     }
     let json: string;
@@ -254,7 +255,7 @@ export class StateStore {
     this.backgroundTimer = setTimeout((): void => {
       this.backgroundTimer = null;
       const write: StateWrite | null = this.dirtyWrite;
-      if (write === null || this.retryTimer !== null || this.quiescing || this.disposed) return;
+      if (write === null || this.retryTimer !== null || this.quiescing) return;
       void this.push(write);
     }, this.backgroundDelayMs);
     this.backgroundTimer.unref();
@@ -267,6 +268,7 @@ export class StateStore {
   }
 
   private push(write: StateWrite): Promise<void> {
+    this.pushedWrite = write;
     const run: Promise<void> = this.writer.push(write);
     if (this.observedWriterPromise !== run) {
       this.observedWriterPromise = run;
@@ -284,7 +286,7 @@ export class StateStore {
   }
 
   private handleWriteFailure(error: unknown): void {
-    if (this.quiescing || this.disposed) {
+    if (this.quiescing) {
       this.rejectPersistenceWaiters(error);
       return;
     }
@@ -326,12 +328,12 @@ export class StateStore {
   }
 
   private scheduleRetry(): void {
-    if (this.quiescing || this.disposed || this.dirtyWrite === null || this.retryTimer !== null) return;
+    if (this.quiescing || this.dirtyWrite === null || this.retryTimer !== null) return;
     const delay: number = this.retryDelaysMs[Math.min(this.retryAttempt - 1, this.retryDelaysMs.length - 1)]!;
     this.retryTimer = setTimeout((): void => {
       this.retryTimer = null;
       const write: StateWrite | null = this.dirtyWrite;
-      if (write === null || this.quiescing || this.disposed) return;
+      if (write === null || this.quiescing) return;
       void this.push(write);
     }, delay);
     this.retryTimer.unref();
@@ -348,7 +350,9 @@ export class StateStore {
     }
     this.clearBackgroundTimer();
     const write: StateWrite | null = this.dirtyWrite;
-    const run: Promise<void> | null = write === null
+    // 最新值已经在 writer 里排队或正在写：等它结算即可，再投一次只会把同一 revision 写两遍。
+    const alreadyQueued: boolean = write !== null && write === this.pushedWrite && this.observedWriterPromise !== null;
+    const run: Promise<void> | null = write === null || alreadyQueued
       ? this.observedWriterPromise
       : this.push(write);
     if (run === null) return Promise.resolve("flushed");
@@ -370,18 +374,6 @@ export class StateStore {
           clearTimeout(timer);
         });
     });
-  }
-
-  /** 测试/显式 dispose 用；不隐式落盘，调用方应先 flush。 */
-  dispose(): void {
-    this.quiescing = true;
-    this.disposed = true;
-    if (this.retryTimer !== null) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
-    }
-    this.clearBackgroundTimer();
-    this.rejectPersistenceWaiters(new Error("StateStore was disposed before persistence completed."));
   }
 
   setFatalHandler(handler: ((error: Error) => void) | undefined): void {

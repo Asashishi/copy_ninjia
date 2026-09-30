@@ -135,7 +135,7 @@ export async function requestOpenAiResult({
     );
   } catch (error: unknown) {
     if (signal?.aborted === true) {
-      return { ok: false, failureKind: "request", diagnostic: "request aborted" };
+      return { ok: false, failureKind: "request" };
     }
     if (error instanceof OpenAI.APIError) {
       const status: number | undefined = numericErrorStatus(error);
@@ -151,14 +151,14 @@ export async function requestOpenAiResult({
     } else {
       logger.error(`Error calling ${errorLabel}:`, error);
     }
-    return { ok: false, failureKind: "request", diagnostic: "request failed" };
+    return { ok: false, failureKind: "request" };
   }
 
   if (isTruncatedByTokenLimit(response)) {
-    // 被 max_output_tokens 腰斩即便带着「已经写出半句话」的部分正文，上层照样
-    // 会把这半句话当正常回复发出去，观感上就是消息突然断掉；推理型模型更容易
-    // 在思考阶段就烧光额度、正文为空。不管有没有部分正文都记一条，方便观测
-    // 这类「中途夭折」的频率。口径同 aiChat/gemini/client.ts 的 MAX_TOKENS 分支。
+    // 带 `status: "incomplete"` 的截断响应由下面的 abnormalResponseDiagnostic 判为不可用，
+    // 哪怕带着半句正文也整份丢弃；推理型模型更容易在思考阶段就烧光额度、正文为空。
+    // 不管有没有部分正文都额外记一条 token 诊断，方便观测这类「中途夭折」的频率。
+    // 口径同 aiChat/gemini/client.ts 的 MAX_TOKENS 分支。
     logger.error(
       `${errorLabel} response was truncated by max_output_tokens ` +
       `(hasPartialText=${responseOutputText(response).length > 0}, ` +
@@ -173,7 +173,6 @@ export async function requestOpenAiResult({
     return {
       ok: false,
       failureKind: "response",
-      diagnostic: abnormal,
       finishReason: normalizedFinishReason(response),
       response,
     };

@@ -166,11 +166,9 @@ async function checkSuccessfulReplacement(): Promise<void> {
   assertCondition(!result.output.includes(replacementToken), "安装输出不得回显 Telegram token");
   const calls: string = await Bun.file(fixture.callLog).text();
   const outbound: string = await Bun.file(fixture.outboundLog).text();
-  // install.sh 里那两行 chmod 是 consts/identityStorage.ts 两个常量的镜像：
-  // 建库本身在夹具里被替身接管，但收紧权限的 shell 语句照原样执行，因此这里核对
-  // 的是真正落到磁盘的模式。漂移若不在这里拦住，只会等到部署启动时由
-  // infra/storage/dataRoot.ts 的数据根校验 fail closed，那时故障点已经离改错的
-  // 地方很远了。目录带 setgid，按 0o7777 取位。
+  // scripts/install/start.sh 里那两行 chmod 是 consts/identityStorage.ts 两个常量的
+  // 镜像：建库本身在夹具里被替身接管，但收紧权限的 shell 语句照原样执行，因此这里
+  // 核对的是真正落到磁盘的模式。目录带 setgid，按 0o7777 取位。
   assertContains(calls, "database:create", "全新部署必须走建库分支");
   const databaseDirectory: string = join(fixture.runtimeRoot, "database");
   assertEqual(
@@ -212,7 +210,7 @@ async function checkFirstFillMode(): Promise<void> {
   }
 }
 
-/** 按夹具路径生成一次安装的环境覆盖项；值为 undefined 表示移除该变量。 */
+/** 一次安装的环境覆盖项；值为 undefined 表示移除该变量。 */
 type EnvironmentOverrides = Readonly<Record<string, string | undefined>>;
 
 async function checkServiceDataRoot(): Promise<void> {

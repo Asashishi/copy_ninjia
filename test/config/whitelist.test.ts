@@ -60,12 +60,12 @@ const {
   unacknowledgedWhitelistWrites,
   whitelistEntryCache,
 } = await import("../../packages/cache/main/identityStorage");
+const { confirmIdentityPolicyPersisted } = await import("../../packages/infra/identityStorage");
 const { temporaryAdBypassActivityCache } = await import(
   "../../packages/cache/main/temporaryAdBypass"
 );
 const {
   enableAllWhitelistPermissions,
-  confirmWhitelistEntryPersisted,
   getEffectiveWhitelistPermissions,
   getWhitelistPermissionQueryView,
   hasWhitelistPermission,
@@ -365,7 +365,7 @@ describe("落盘投递被拒收时不得回执成功", () => {
     acceptDiskMessages = true;
     const retry = setWhitelistMembership({ id: 7, enabled: true });
     expect(retry.changed).toBeFalse();
-    await expect(confirmWhitelistEntryPersisted(7, true)).resolves.toBeUndefined();
+    await expect(confirmIdentityPolicyPersisted("whitelist", 7, true)).resolves.toBeUndefined();
 
     expect(diskMessages).toHaveLength(2);
     expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("whitelist");

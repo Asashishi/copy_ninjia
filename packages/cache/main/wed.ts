@@ -1,5 +1,6 @@
 /** Owner: 主线程。/wed 的按钮会话与执行器。 */
-import type { WedChat, WedRuntime } from "../../types/wed";
+import type { CommandExecutorRuntime } from "../../types/commandExecutor";
+import type { WedChat } from "../../types/wed";
 
 /**
  * 已初始化群首次交互时填充，成员集合引用 wedMembers.ts 的 owner；每位发起人
@@ -16,4 +17,4 @@ export const wedChats: Map<number, WedChat> = new Map();
  * 每日成员复核至多一项登记到 tasks；quiesce 先取消复核，再等待结算并投递最终成员集合。
  * Worker 崩溃不影响本主线程 owner；进程重启不重放纯内存交互。
  */
-export const wedRuntime: { current: WedRuntime | null } = { current: null };
+export const wedRuntime: { current: CommandExecutorRuntime | null } = { current: null };

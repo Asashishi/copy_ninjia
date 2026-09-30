@@ -30,14 +30,14 @@ type OpenAiImageSize = NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming
  * 的推理消耗，换模型就得重新估。产出该多长由领域侧的字符上限约束。
  *
  * **这四个数不能照抄 Gemini 表**：Responses 的 `max_output_tokens` 同时封顶
- * reasoning token，而这四个模型全是 GPT-5 系推理模型，上限吃紧时模型会在思考
+ * reasoning token，而这四条流水线用的都是推理型模型（如 GPT-5 系），上限吃紧时模型会在思考
  * 阶段就把额度烧光、正文一个字都没产出，响应回
  * `status:"incomplete", incomplete_details.reason:"max_output_tokens"`，被
  * aiChat/openai/response.ts 判成不可用并标 `retryable: true`。上限只是天花板，
  * 模型写多少才付多少 token。
  *
- * 本包不提供采样温度：上面四个模型全是 GPT-5 系推理模型，官方端点只接受默认
- * 温度，请求里不带该参数（见模块头注）。回复这一档包含推理 token。
+ * 本包不提供采样温度：GPT-5 系推理模型的官方端点只接受默认温度，请求里不带
+ * 该参数（见模块头注）。回复这一档包含推理 token。
  */
 export const OPENAI_REPLY_MAX_TOKENS: number = 65_536;
 /** 冷消息压缩摘要请求的输出 token 上限（含推理 token）。 */
@@ -119,8 +119,9 @@ export const OPENAI_REQUEST_MAX_RETRIES: number = 5;
 /**
  * OpenAI 官方 gpt-image-2 任意尺寸协议的十档画幅。
  *
- * 每边都是 16 的倍数、比例都在官方允许的 1:3..3:1 内；非方形画幅尽量维持在
- * 原三档约 1.5MP 的载荷量级，避免为了比例精确无意放大成本和解码峰值。该协议
+ * 每边都是 16 的倍数、比例都在官方允许的 1:3..3:1 内；非方形画幅的像素量尽量
+ * 与 OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO 的 1536x1024（约 1.6 MP）同一
+ * 量级，避免为了比例精确无意放大成本和解码峰值。该协议
  * 不为不支持任意尺寸的模型兜底：部署者必须显式改用 `openai-standard`，不得
  * 靠请求失败后猜测重试。xAI 不读此表，改由 aiChat/openai/image.ts 发送
  * `aspect_ratio`。
@@ -178,8 +179,7 @@ export const XAI_IMAGE_RESOLUTION: string = "1k";
  * OpenAI 原生 images 接口支持 png/jpeg/webp，不钉就由模型/网关的默认值决定；
  * 而载荷校验（aiChat/ai/utils/imagePayload.ts）只认 PNG 与 JPEG 的字节签名，默认值一变
  * 成 WebP，每次生图都会在签名判定处落空——图照样计费，群里只收到一句失败。
- * 取 png 是因为它是官方文档给出的默认值，钉上去不改变当前行为，只是把它从
- * 「服务端说了算」变成「本仓说了算」。OpenAI generate 与 edit 两条分支都带；
+ * 取 png：官方文档给出的默认格式。OpenAI generate 与 edit 两条分支都带；
  * xAI 协议不接受这一扩展，改传 `response_format: "b64_json"`。
  */
 export const OPENAI_IMAGE_OUTPUT_FORMAT: NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming["output_format"]> = "png";
@@ -187,11 +187,11 @@ export const OPENAI_IMAGE_OUTPUT_FORMAT: NonNullable<OpenAI.Images.ImageGenerate
 /**
  * 生图的内容审核档位，取 SDK 允许的最低档 `low`（另一档是默认的 `auto`）。
  *
- * **只作用于 OpenAI 原生 generate 分支**：openai@6.49 的类型里 `moderation` 只声明在
+ * **只作用于 OpenAI 原生 generate 分支**：已安装 SDK 的类型里 `moderation` 只声明在
  * `ImageGenerateParamsBase`（node_modules/openai/resources/images.d.ts），
  * `ImageEditParamsBase` 上根本没有这个参数。因此有参考图的那条 edit 分支不带
  * 它——SDK 没声明的字段硬塞会被 TS 拒绝，绕过类型强塞则是对未声明字段的猜测。
- * 两条分支档位不对称是**已知且有意**的，不是漏改。
+ * 因此两条分支档位不对称。
  *
  * `agent.image.base_url` 指向兼容网关时仍按本能力档发送；不支持该字段的网关必须
  * 在部署配置层选择兼容能力，不做运行时探测或 400 后降级。

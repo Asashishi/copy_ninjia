@@ -5,7 +5,7 @@ import { storageMetadata } from "./metadata";
 import { pendingBlockedRemovals } from "./pendingRemoval";
 import { temporaryAdBypassEntries } from "./temporaryAdBypass";
 
-/** Drizzle 连接使用的完整共享存储 schema；各领域表声明仍保持独立。 */
+/** Drizzle 连接使用的完整共享存储 schema。 */
 export const storageDatabaseSchema: Readonly<{
   permissionList: typeof permissionList;
   blocklistEntries: typeof blocklistEntries;

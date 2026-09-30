@@ -4,8 +4,9 @@
  * parseCronConfig 只做形态、取值与路径的词法判定，不做 I/O；loadCronConfig 在读盘后
  * 再逐项核对 `payload.path` 指向的文件或目录存在且类型相符（跟随符号链接）。
  * 固定图片使用 1–10 项文件或 URL 数组，随机图片的 path 使用可选目录字符串；
- * 随机目录缺省时由发送侧读取 state 的专用图库，该路径按运行时数据根解析。
- * `payload.path` 写绝对路径，或相对项目根（PROJECT_ROOT）的路径，不限定目录。
+ * 随机目录缺省时由发送侧使用 config/dynamic/assets.json 的 `random_h_image_dir`（见
+ * config/assets.ts）。`payload.path` 写绝对路径，或相对运行时数据根（RUNTIME_DATA_ROOT）的
+ * 路径，不限定目录；相对路径基准与 assets.json 的本机路径一致。
  * `send_voice` 依赖 config/dynamic/agent.json 的 `agent.tts`：assertCronVoiceSupported 在启动总闸
  * （ensureCronConfig）与热重载（config/reload.ts）里按当时生效的 agent 配置核对。任何一处
  * 非法都整份拒绝：启动时拒绝启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含
@@ -28,7 +29,7 @@ import {
   CRON_TASK_KEYS,
   CRON_TASK_NAME_MAX_CHARS,
 } from "../consts/cron";
-import { CRON_CONFIG_PATH, PROJECT_ROOT } from "../consts/paths";
+import { CRON_CONFIG_PATH, RUNTIME_DATA_ROOT } from "../consts/paths";
 import { VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../consts/aiChat/voiceMessage";
 import { agentTtsConfig } from "./agent";
 import { sanitizeInline } from "../libs/text";
@@ -48,8 +49,7 @@ import type {
   CronTask,
 } from "../types/cron";
 
-/** 字段路径与诊断文件的组合，逐层下传。 */
-
+/** 以 context 的来源与字段路径抛出统一的输入错误。 */
 function fail(context: InputFieldContext, expected: string): never {
   return invalidInput(context.source, context.path, expected);
 }
@@ -58,19 +58,23 @@ function child(context: InputFieldContext, key: string): InputFieldContext {
   return { source: context.source, path: `${context.path}.${key}` };
 }
 
-/** 非空（去空白后）且不超过上限的字符串。 */
+/** 去掉首尾空白后非空且不超过上限的字符串；返回去空白后的值。 */
 function boundedText(value: unknown, context: InputFieldContext, maxChars: number): string {
-  if (typeof value !== "string" || value.trim().length === 0 || value.length > maxChars) {
+  const text: string = typeof value === "string" ? value.trim() : "";
+  if (text.length === 0 || text.length > maxChars) {
     return fail(context, `a non-empty string of at most ${maxChars} characters`);
   }
-  return value;
+  return text;
 }
 
-/** `"<min>-<max>"` 或单值（≡ `1m-<值>`），单位 m/h/d，落在 [1m, 24d] 且 min ≤ max。 */
+/**
+ * `"<min>-<max>"` 或单值（≡ `1m-<值>`），单位 m/h/d，落在 [1m, 24d] 且 min ≤ max；整串先去掉
+ * 首尾空白。
+ */
 function parseRandomInterval(value: unknown, context: InputFieldContext): CronRandomInterval {
   const expected: string = "\"<min>-<max>\" or \"<max>\" with m/h/d units, within 1m-24d and min <= max";
   if (typeof value !== "string") return fail(context, expected);
-  const parts: string[] = value.split("-");
+  const parts: string[] = value.trim().split("-");
   if (parts.length > 2) return fail(context, expected);
   const first: number | undefined = parseDurationTokenMs(parts[0]!);
   const second: number | undefined = parts.length === 2 ? parseDurationTokenMs(parts[1]!) : undefined;
@@ -85,12 +89,16 @@ function parseRandomInterval(value: unknown, context: InputFieldContext): CronRa
   return { minMs, maxMs };
 }
 
-/** 本机的文件或目录路径：绝对路径原样使用，相对路径按项目根解析；拒绝空串与 NUL，返回规范化后的绝对路径。 */
+/**
+ * 本机的文件或目录路径：去掉首尾空白后，绝对路径原样使用，相对路径按运行时数据根解析；拒绝空串与 NUL，
+ * 返回规范化后的绝对路径。
+ */
 function parseLocalPath(value: unknown, context: InputFieldContext): string {
-  if (typeof value !== "string" || value.trim().length === 0 || value.includes("\0")) {
-    return fail(context, "an absolute local path or a path relative to the project root");
+  const path: string = typeof value === "string" ? value.trim() : "";
+  if (path.length === 0 || path.includes("\0")) {
+    return fail(context, "an absolute local path or a path relative to the runtime data root");
   }
-  return resolve(PROJECT_ROOT, value);
+  return resolve(RUNTIME_DATA_ROOT, path);
 }
 
 /** 交给 Telegram 拉取的绝对 http(s) 地址；只校验形态。 */
@@ -102,7 +110,7 @@ function parseUrl(value: unknown, context: InputFieldContext): string {
   return parsed.href;
 }
 
-/** 非空（清洗成单行并去空白后）且原文不超过上限的字符串；返回清洗后的单行。 */
+/** 去掉首尾空白后非空且不超过上限、再清洗成单行的字符串；返回清洗后的单行。 */
 function boundedLine(value: unknown, context: InputFieldContext, maxChars: number): string {
   return sanitizeInline(boundedText(value, context, maxChars)).trim();
 }
@@ -229,19 +237,22 @@ interface CronScheduleFields {
   readonly timeZone: string;
 }
 
-/** 校验时区与表达式：两者都用 Bun.cron.parse 判定，且必须还有将来的触发时间。 */
+/**
+ * 校验时区与表达式（均去掉首尾空白）：两者都用 Bun.cron.parse 判定，且必须还有将来的触发时间。
+ */
 function parseSchedule(record: Record<string, unknown>, context: InputFieldContext): CronScheduleFields {
   // 只有键真正缺省才用默认时区；显式写出的非法值（含 null）照常拒绝。
-  const timeZone: unknown = record.time_zone === undefined ? CRON_DEFAULT_TIME_ZONE : record.time_zone;
-  if (typeof timeZone !== "string" || timeZone.length === 0) return fail(child(context, "time_zone"), "an IANA time zone name");
+  const rawTimeZone: unknown = record.time_zone === undefined ? CRON_DEFAULT_TIME_ZONE : record.time_zone;
+  const timeZone: string = typeof rawTimeZone === "string" ? rawTimeZone.trim() : "";
+  if (timeZone.length === 0) return fail(child(context, "time_zone"), "an IANA time zone name");
   try {
     Bun.cron.parse("0 0 * * *", Date.now(), { tz: timeZone });
   } catch {
     return fail(child(context, "time_zone"), "an IANA time zone name");
   }
-  const cron: unknown = record.cron;
   const expected: string = "a 5-field cron expression or @nickname with a future occurrence";
-  if (typeof cron !== "string") return fail(child(context, "cron"), expected);
+  if (typeof record.cron !== "string") return fail(child(context, "cron"), expected);
+  const cron: string = record.cron.trim();
   let next: Date | null;
   try {
     next = Bun.cron.parse(cron, Date.now(), { tz: timeZone });

@@ -6,7 +6,7 @@
  * 配置根顶层或另一子目录都是放错位置，按致命错误拒绝，不猜测哪一份才是部署方想要的。
  */
 
-import { lstat, stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { LEGACY_BOT_CONFIG_NAME } from "../consts/bot";
 import {
@@ -87,7 +87,7 @@ export async function assertNoMisplacedConfigFiles(root: string): Promise<void> 
 export async function assertDeploymentConfigLayout(): Promise<void> {
   await assertNoMisplacedConfigFiles(CONFIG_ROOT);
   try {
-    if ((await stat(DYNAMIC_CONFIG_DIR)).isDirectory()) return;
+    if ((await Bun.file(DYNAMIC_CONFIG_DIR).stat()).isDirectory()) return;
   } catch (error: unknown) {
     if (!isErrno(error, "ENOENT")) return invalidInput(DYNAMIC_CONFIG_DIR, "$", "an accessible directory");
   }

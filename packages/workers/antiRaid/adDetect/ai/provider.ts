@@ -1,10 +1,10 @@
 /** ad_detect 按配置选择 Google 或 OpenAI 兼容传输，不做运行时故障切换。 */
 
-import { getAdDetectAgentConfig } from "../../config/agent";
+import { getAdDetectAgentConfig } from "../../../../config/agent";
 import { requestOpenAiAdDetectJson } from "./openai";
 import { requestGoogleAdDetectJson } from "./google";
-import type { AdDetectJsonRequestParams } from "../../types/antiRaid/adDetect";
-import type { AgentProvider } from "../../types/config";
+import type { AdDetectJsonRequestParams } from "../../../../types/antiRaid/adDetect";
+import type { AgentProvider } from "../../../../types/config";
 
 type AdDetectRequest = (params: AdDetectJsonRequestParams) => Promise<string | null>;
 

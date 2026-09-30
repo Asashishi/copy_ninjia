@@ -46,8 +46,8 @@ export const AVATAR_FETCH_TIMEOUT_MS: number = 15_000;
 export const AVATAR_FETCH_MAX_ATTEMPTS: number = 3;
 /** 头像和公开主页分别采用独立硬上限，防止第三方响应导致无界内存占用。 */
 export const AVATAR_MAX_DOWNLOAD_BYTES: number = 10 * 1024 * 1024;
-/** 上传机器人头像时附带的文件名。Bot API 只按字节内容判格式，这个名字仅出现在
- *  multipart 的 filename 字段里；三条设置头像的路径共用同一个值，避免各写各的。 */
+/** 上传头像字节时附带的文件名（设置机器人头像、命令头像图与 /wed 结果图共用）。Bot API 只按字节内容
+ *  判格式，这个名字仅出现在 multipart 的 filename 字段里。 */
 export const BOT_PROFILE_PHOTO_FILE_NAME: string = "avatar.jpg";
 
 /** t.me 公开主页响应允许读入内存的最大字节数。 */
@@ -68,13 +68,10 @@ export const TELEGRAM_PUBLIC_ASSET_HOST_SUFFIXES: readonly string[] = [
 /** getUserProfilePhotos 单页最多能返回的张数，Bot API 本身的硬上限。 */
 export const USER_PROFILE_PHOTOS_LIMIT: number = 100;
 
-/** 踢人公告在被自动清理前保持可见的时长。 */
-export const KICK_NOTICE_AUTO_DELETE_MS: number = 30 * 1000;
-
 /**
  * 禁言一名成员时写给 `restrictChatMember` 的权限集：全部收走。
  *
- * 每一项都显式写出、不靠缺省：Bot API 对缺省字段确实按 false 处理，但这份
+ * 除 `can_edit_tag` 外每一项都显式写出、不靠缺省：Bot API 对缺省字段确实按 false 处理，但这份
  * 常量同时是「禁言到底关掉了什么」的唯一说明，漏写一项在代码里看不出来，
  * 只能靠翻 Telegram 文档倒推。`can_react_to_messages` 尤其不能省——它缺省
  * 跟随 `can_send_messages`，写出来才看得见它也被关了。
@@ -141,7 +138,7 @@ export const UNMUTED_CHAT_PERMISSIONS: Readonly<ChatPermissions> = {
  * 把媒体权限全部打开，管理员那边没有任何提示。带上它才是一次保真的读改写。
  *
  * 所属模块：packages/infra/telegram/lockdownPermissions.ts 与
- * packages/workers/antiRaid/lockdownRuntime.ts。
+ * packages/workers/antiRaid/lockdownApi.ts。
  */
 export const INDEPENDENT_CHAT_PERMISSIONS_OTHER: Readonly<{
   use_independent_chat_permissions: true;
@@ -228,8 +225,9 @@ export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 25;
 export const SELF_SENT_MESSAGE_TTL_MS: number = 15_000;
 
 /**
- * Worker 发信回执与频道 update 反向到达时，主线程等待自发标记的最长时间。
- * 只作用于频道帖子和关联讨论组自动转发，不进入普通群消息热路径。
+ * 频道 update 先于发送回执到达、且目标 chat 仍有在途自发发送时，等待自发标记的最长时间；
+ * 在途发送全部结算即提前按 false 结束。只作用于频道帖子和关联讨论组自动转发，不进入
+ * 普通群消息热路径。所属模块：infra/selfSentTracker.ts。
  */
 export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;
 
@@ -242,7 +240,7 @@ export const SELF_SENT_RENDEZVOUS_TIMEOUT_MS: number = 1_000;
  * 输入 inline 查询」，inline 模式对任何人开放，因此必须有硬顶；撑满时按最久未
  * 登记的发言身份淘汰，被淘汰只意味着它那条 inline 结果拿不到源文本、退回不判定。
  * 单条登记的正文上界为一次应答的全部结果内容（运势回执或至多 GAG_SESSION_MAX
- * 条、each 受 TELEGRAM_MESSAGE_MAX_CHARS 约束的 gag 文本），因此整表占用有界。
+ * 条、每条受 TELEGRAM_MESSAGE_MAX_CHARS 约束的 gag 文本），因此整表占用有界。
  */
 export const INLINE_RESULT_SOURCE_MAX_AUTHORS: number = 1_024;
 

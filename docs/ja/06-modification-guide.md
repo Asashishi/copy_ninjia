@@ -96,9 +96,9 @@
 ## AI ツールの追加
 
 1. **名前定数**：[`packages/consts/tools.ts`](../../packages/consts/tools.ts) にツール名を定義します。目に見える副作用がある場合は `ACTION_TOOL_NAMES` に含めるべきか確認します。
-2. **定義**：stateless な静的 query tool の `AiToolDefinition` は [`packages/aiChat/ai/tools/index.ts`](../../packages/aiChat/ai/tools/index.ts) に置きます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
+2. **定義**：stateless な静的 query tool の `AiToolDefinition` は [`packages/consts/tools.ts`](../../packages/consts/tools.ts) の `TOOL_DECLARATIONS` に加えます。chat context、動的 schema、round ごとの状態が必要な action tool は `packages/aiChat/ai/tools/replyToolset/` に definition builder を置きます。reply toolset orchestrator はドメイン定義を中立な `AiToolDefinition`（JSON Schema の parameters）へまとめ、各 provider パッケージの `replySession.ts` が各社の形へ写像します。ツールを追加しても vendor SDK の型に触れる必要はありません。
 3. **実装**：`packages/aiChat/ai/tools/` に実行 logic を実装します。Telegram 向けの副作用はメインスレッドのプロキシ経由で実行し、Worker が Bot instance を直接保持してはいけません。
-4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
+4. **登録**：静的 query tool は `packages/aiChat/ai/tools/index.ts` の `callTool` dispatch へ、action tool は `packages/aiChat/ai/tools/replyToolset/` の definitions、dispatch、round 状態へ接続します。
 5. **予算**：表示される副作用 tool は統一 action budget に含め、既定では per-tool call cap を追加しません。ドメイン固有の理由がある場合だけ独立制限を設けます。現在の対象はスタンプパック表示、サーバー側ウェブ検索、round ごとに各 1 回のスタンプ・リアクション・生成画像・ボイスです。custom function 全体の round 単位 loop guard は引き続き適用します。[04](04-invariants.md#worker-と状態の所有権) を参照してください。
 6. **Prompt**：必要なら `packages/consts/aiChat/prompts/` に利用規則を追加します。transcript 形式に関わる場合は `transcript.ts` の共通 template を再利用し、両側で同じ形式を手書きしません。
 7. **テスト + 文書**：`test/aiChat/ai/` または対応する feature／Worker パスにテストを追加し、必要なら3 言語の README 能力表を更新します。
@@ -154,7 +154,7 @@
 6. `meta` など変更しない項目は本番の解析器を共用します。入力バックアップを完全検証してから独立した出力を作成し、現形式の検証と入力ハッシュの再確認が成功した後だけ `ready.json` を書きます。
 7. 永続化は既存の write-through を再利用します：main thread が memory 上の最終値を publish し、Disk I/O Worker へ post、明示 transaction で commit、正確な revision を ACK、再構築後は memory から replay します。
 
-現在のコールド移行は `scripts/migrations/active.ts` に登録し、SQLite 権限・画像名・Bot 設定と画像ソースをそれぞれ扱います。規約は Release ではなく移行単位で数えます。同じデータを再移行するときは直前の移行出力から現形式への直接の辺だけを残し、以前の入口・テスト・登録を同時に置き換えます。`scripts/conventions/coldMigrations.ts` が登録と package scripts の一致を検査します。
+現在のコールド移行は `scripts/migrations/active.ts` に登録した 2 本の辺で、ランダム画像ライブラリのファイル名（uuidv7 → 内容 SHA-256、`migrate:random-image-names`）とグローバル状態（`memory/global/state.json` の音声合計回数 → `agentCount`/`reserveCount`、`migrate:global-state`）をそれぞれ扱います。規約は Release ではなく移行単位で数えます。同じデータを再移行するときは直前の移行出力から現形式への直接の辺だけを残し、以前の入口・テスト・登録を同時に置き換えます。`scripts/conventions/coldMigrations.ts` が登録と package scripts の一致を検査します。
 
 「edge は 1 本だけ」の規約が対象とするのは、deploy 済みデータを書き換える `scripts/` 配下の cold migration script、その test、`migrations/active.ts` の登録です。`schema/migrations/` の SQL ファイルと `meta/_journal.json` には適用せず、`0000` から欠かさず保持します。`createStorageDatabase` は新しい database を作るとき Drizzle migrator で全 entry を順に replay し、起動時には `packages/database/interact/inspection.ts` の `assertStorageDatabaseMigrationLineage` が `__drizzle_migrations` に完全な系譜があることを要求します。
 

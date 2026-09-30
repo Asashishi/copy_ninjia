@@ -4,7 +4,6 @@ import { loggerStub } from "../../helpers/loggerMock";
 import type { Message } from "grammy/types";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { ChatState } from "../../../packages/types/chatState";
-import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
@@ -12,7 +11,6 @@ import { chatStateOf } from "../../helpers/chatState";
 const chatStates = new Map<number, ChatState>();
 const getChatState = mock((chatId: number) => chatStates.get(chatId) ?? chatStateOf());
 const activeVerificationSnapshots = new Map<string, unknown>();
-const dispatched: RemoveBlockedMembersParams[][] = [];
 const errorLogs: string[] = [];
 const blockedIds = new Set<number>();
 const temporaryAdBypassIds = new Set<number>();
@@ -21,9 +19,6 @@ const confirmBlocklistPersisted = mock(async (): Promise<boolean> => true);
 const isUserBlocked = mock((userId: number): boolean => blockedIds.has(userId));
 const diskMessages: unknown[] = [];
 const postDiskIO = mock((message: unknown): boolean => (diskMessages.push(message), true));
-const dispatchBlockedRemovals = mock(async (removals: readonly RemoveBlockedMembersParams[]): Promise<void> => {
-  dispatched.push([...removals]);
-});
 let removalCounter: number = 0;
 const resweepRequests: number[] = [];
 const requestBlocklistResweep = mock((chatId: number): void => { resweepRequests.push(chatId); });
@@ -85,7 +80,6 @@ mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   hydrateTemporaryAdBypassActivities: (): void => {},
 }));
 mock.module("../../../packages/infra/blocklist/outbox", () => ({
-  dispatchBlockedRemovals,
   trackBlockedRemoval,
 }));
 mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
@@ -148,7 +142,6 @@ beforeEach(() => {
     botPermissions: botPermissions(),
   }));
   activeVerificationSnapshots.clear();
-  dispatched.length = 0;
   errorLogs.length = 0;
   removalCounter = 0;
   resweepRequests.length = 0;
@@ -173,7 +166,6 @@ beforeEach(() => {
   confirmBlocklistPersisted.mockClear();
   confirmBlocklistPersisted.mockImplementation(async (): Promise<boolean> => true);
   isUserBlocked.mockClear();
-  dispatchBlockedRemovals.mockClear();
   inFlightAdDisposals.clear();
   blocklistIdentityMutationQueues.clear();
   sendMessage.mockClear();
@@ -207,7 +199,6 @@ describe("广告检测投递门禁", () => {
       messageId: 10,
       observedAt: expect.any(Number),
       text: "加我微信",
-      label: "@spammer",
       firstName: "Spammer",
       lastName: "",
       username: "spammer",
@@ -263,30 +254,20 @@ describe("广告检测投递门禁", () => {
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
   });
 
-  test("候选标签使用消息上下文中的人设，与门禁共用同一份群状态", () => {
-    const candidateMessage: Message = message({ from: { id: 7, is_bot: false, first_name: "" } });
-    expect(buildAdCandidate(candidateMessage, 999, chatStateOf({ isAdDetectEnabled: true, aiPersona: "普通风格" }))?.label)
-      .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
-    chatStates.set(-1001, chatStateOf({ isAdDetectEnabled: true, aiPersona: "普通风格" }));
-    expect(buildAdCandidate(candidateMessage, 999, chatStateOf({ isAdDetectEnabled: true }))?.label)
-      .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
-  });
-
   test("受管群上限下连续构建广告候选复用现有状态，不产生群缓存回读或出站", () => {
-    const fixtures: { message: Message; state: ChatState; label: string }[] = [];
+    const fixtures: { message: Message; state: ChatState }[] = [];
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index++) {
       const plain: boolean = index % 2 === 0;
       fixtures.push({
         message: message({ chat: { id: -1001 - index, type: "supergroup", title: "群" }, from: { id: 7, is_bot: false, first_name: "" } }),
         state: chatStateOf({ isAdDetectEnabled: true, aiPersona: plain ? "自定义" : undefined }),
-        label: (plain ? ATMOSPHERE_TEXTS.plain : ATMOSPHERE_TEXTS.teasing).NOTICE_TEXTS.unknownUser,
       });
     }
     let matched: number = 0;
     for (let round: number = 0; round < 1_000; round++) {
       for (const fixture of fixtures) {
         const result = buildAdCandidate(fixture.message, 999, fixture.state);
-        if (result?.chatId === fixture.message.chat.id && result.label === fixture.label) matched++;
+        if (result?.chatId === fixture.message.chat.id) matched++;
       }
     }
     expect(matched).toBe(STATE_MANAGED_CHAT_LIMIT * 1_000);
@@ -722,6 +703,6 @@ describe("广告检测投递门禁", () => {
     );
     expect(candidate?.senderId).toBe(-1005);
     expect(candidate?.isChannel).toBe(true);
-    expect(candidate?.label).toBe("广告频道");
+    expect(candidate?.firstName).toBe("广告频道");
   });
 });

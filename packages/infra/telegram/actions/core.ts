@@ -3,6 +3,7 @@ import {
   currentUpdateAbortSignal,
   throwIfUpdateAborted,
 } from "../../updateContext";
+import { beginSelfSentSend, endSelfSentSend } from "../../selfSentTracker";
 import { logApiError } from "../client";
 import { telegramErrorDetails } from "../errors";
 
@@ -21,11 +22,16 @@ interface RunTelegramActionParams<T, R> {
     error: unknown,
     actionSignal: AbortSignal | undefined
   ) => boolean;
+  /**
+   * map 会对这个 chat 调用 `markSelfSent` 时传入：请求发出前登记在途发送，
+   * map 之后的同一同步段结算（见 infra/selfSentTracker.ts）。
+   */
+  selfSentChatId?: number;
 }
 
 /**
- * 把 Telegram 动作失败归一化成调用方约定的业务结果。map 也留在同一个错误
- * 边界内，保持既有语义：成功后的结果转换或本机自发消息登记失败时同样记录
+ * 把 Telegram 动作失败归一化成调用方约定的业务结果。map 也在同一个错误
+ * 边界内：成功后的结果转换或本机自发消息登记失败时同样记录
  * 对应动作并返回 fallback。这里不用 grammY 的 bot.catch：它处理的是
  * update/middleware 逃逸异常，且本项目会让该错误触发 update 重投；这些主动
  * API 调用失败属于可预期的业务结果，调用方还需要得到 false/undefined。
@@ -37,12 +43,14 @@ export async function runTelegramAction<T, R>({
   fallback,
   signal,
   shouldLogError,
+  selfSentChatId,
 }: RunTelegramActionParams<T, R>): Promise<R> {
   const updateSignal: AbortSignal | undefined =
     currentUpdateAbortSignal();
   const actionSignal: AbortSignal | undefined =
     combineWithUpdateAbortSignal(signal);
   throwIfUpdateAborted(updateSignal);
+  if (selfSentChatId !== undefined) beginSelfSentSend(selfSentChatId);
   try {
     const mapped: R = map(await execute(actionSignal));
     // 远端可能在 abort 竞态中已经提交成功；先做 map 中最小的 self-sent
@@ -57,17 +65,20 @@ export async function runTelegramAction<T, R>({
       logApiError(action, error);
     }
     return fallback;
+  } finally {
+    if (selfSentChatId !== undefined) endSelfSentSend(selfSentChatId);
   }
 }
 
 /**
  * 默认的 `shouldLogError`：停机 abort 造成的失败不记 API 错误——它不是远端故障。
  *
- * 提成模块级具名函数而不是在每个调用点现写一份同样的箭头函数：口径只有一条，
- * 六个发送入口（本文件的 runBooleanTelegramAction、actions/messages.ts 与
- * actions/mediaMessages.ts 的各个 send*）必须逐字一致，抄开就会有一处慢慢
- * 长出自己的判据。`actions/core.ts` 的权限感知版本另有 claimError 副作用，
- * **不**复用本函数。
+ * 只对带调用方 signal 的动作有意义（update 取消在判据之前已由统一边界上抛）：由
+ * runBooleanTelegramAction、actions/messages.ts、actions/mediaMessages.ts、actions/membership.ts、
+ * commandPhotos.ts、avatar/read.ts、cron/targets.ts、commands/wed/messages.ts 与
+ * commands/info.ts 的 runTelegramAction 调用共用；membership.ts 的 readPresentChatUser 在
+ * 分类后同样经过本函数。
+ * runPermissionAwareTelegramAction 的判据另带 claimError 副作用，不复用本函数。
  */
 export function logUnlessAborted(
   _error: unknown,
@@ -153,7 +164,7 @@ export async function runPermissionAwareTelegramAction({
   return succeeded ? "succeeded" : outcome;
 }
 
-/** 挂回复时 Telegram 要的那一段；三个发送入口共用同一份形状。 */
+/** 挂回复时 Telegram 要的那一段；各发送入口共用同一份形状。 */
 export interface TelegramReplyParameters {
   readonly message_id: number;
   readonly allow_sending_without_reply: true;
@@ -176,7 +187,7 @@ export function replyParametersFor(
   replyToMessageId: number | undefined
 ): TelegramReplyParameters | undefined {
   // 判真值而不是 `!== undefined`：Telegram 的 message_id 恒为正整数，0 不是
-  // 合法目标，挂上去只会让整条消息被拒收。与拆出本函数之前的判据逐字一致。
+  // 合法目标，挂上去只会让整条消息被拒收。
   return replyToMessageId ? { message_id: replyToMessageId, allow_sending_without_reply: true } : undefined;
 }
 

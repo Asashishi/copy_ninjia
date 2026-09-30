@@ -229,12 +229,21 @@ export async function sweepBlockedMembers(
     // canClaimSweep 判定不通过时提前返回，避免付出一次不必要的名单页读：
     // readBlocklistSweepPage 会先触发 Disk I/O Worker 的黑名单领域 flush（立即提交
     // 共享 SQLite 事务，不看攒批阈值，见 infra/identityStorage/sweep.ts 与
-    // workers/diskIOWorker.ts 的 flushDomain），再跨线程取一页主键。判据与
+    // workers/diskIO/domainFlush.ts 的 flushDomain），再跨线程取一页主键。判据与
     // prepareBlocklistSweep 同源，下方仍会复查一次。
     if (!canClaimSweep(blocklistSweepState.get(chatId), now)) return;
-    const page: BlocklistIdPage = hasAnyBlockedIdentity()
-      ? await readBlocklistSweepPage(null)
-      : { ids: [], nextCursor: null, done: true };
+    let page: BlocklistIdPage;
+    try {
+      page = hasAnyBlockedIdentity()
+        ? await readBlocklistSweepPage(null)
+        : { ids: [], nextCursor: null, done: true };
+    } catch (error: unknown) {
+      // 名单读不出来时同样按「这一轮没成」推进退避，口径同 deferManagedBlocklistSweeps；
+      // 否则每条 chat_member 都会重付一次 flush 加读取。
+      const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+      if (canClaimSweep(progress, now)) noteSweepAttemptFailed(chatId, progress?.failedSweeps ?? 0, now);
+      throw error;
+    }
     const sweep: PreparedBlocklistSweep | null = page.ids.length === 0
       ? null
       : prepareBlocklistSweep(chatId, now, page);
@@ -274,7 +283,7 @@ function hasClaimableManagedChat(now: number): boolean {
 }
 
 /**
- * 启动时补扫所有已 /init 且机器人管理员身份已确证的群。多群任务一次性交给
+ * 补扫所有已 /init 且机器人管理员身份已确证的群（启动时与定时器到点时调用）。多群任务一次性交给
  * durable 投递边界，避免逐群重写不断增长的 outbox；恢复出的在途 claim 会早退。
  */
 export async function sweepManagedBlocklistChats(

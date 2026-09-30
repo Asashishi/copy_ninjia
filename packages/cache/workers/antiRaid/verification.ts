@@ -15,8 +15,9 @@ import type { DeferredVerificationRecord } from
  * 填充：状态机每次转移到非 ABSENT 状态时写入（入群、秒踢、终态接管）。
  * 清理：转移回 ABSENT（验证通过、离群、终态结算完成、守卫关闭）时按 key 删除，
  * adopt 换代际时整表清空并重建。容量：不在这一层设淘汰——条目代表「这个人还
- * 欠一次处置」，按容量丢掉等于放过刷群者；硬顶在落盘侧由
- * VERIFICATION_RECORD_CAPACITY 挡住（见 workers/diskIO/verificationWrites.ts）。
+ * 欠一次处置」，按容量丢掉等于放过刷群者；硬顶由主线程 antiRaid/verificationMirror.ts
+ * 按 VERIFICATION_RECORD_CAPACITY 拒收新记录，落盘侧 workers/diskIO/verificationWrites.ts
+ * 再核一次。
  * Worker 崩溃重建：主线程 adopt 全量重放，见 states/verification/adopt.ts。
  */
 export const verificationEntries: Map<string, VerificationEntry> = new Map();

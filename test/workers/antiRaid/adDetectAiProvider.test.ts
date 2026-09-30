@@ -13,10 +13,10 @@ const requestOpenAiAdDetectJson = mock(
 mock.module("../../../packages/config/agent", () => ({
   getAdDetectAgentConfig: () => ({ provider }),
 }));
-mock.module("../../../packages/antiRaid/ai/google", () => ({ requestGoogleAdDetectJson }));
-mock.module("../../../packages/antiRaid/ai/openai", () => ({ requestOpenAiAdDetectJson }));
+mock.module("../../../packages/workers/antiRaid/adDetect/ai/google", () => ({ requestGoogleAdDetectJson }));
+mock.module("../../../packages/workers/antiRaid/adDetect/ai/openai", () => ({ requestOpenAiAdDetectJson }));
 
-const { requestAdDetectJson } = await import("../../../packages/antiRaid/ai/provider");
+const { requestAdDetectJson } = await import("../../../packages/workers/antiRaid/adDetect/ai/provider");
 
 const params: AdDetectJsonRequestParams = {
   model: "ad-model",

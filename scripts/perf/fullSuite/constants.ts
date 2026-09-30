@@ -133,6 +133,18 @@ export const CRON_VOICE_WARMUP_OPERATIONS: number = 4;
  */
 export const CHAIN_CRON_VOICE_PCM_BYTES: number = VOICE_SPEECH_MAX_BYTES / 16;
 
+/**
+ * cron.json 中途变更链路的计时次数。
+ *
+ * 一次 = 部署方改动满规格任务表（CRON_MAX_TASKS 个任务、每个 CRON_MAX_ACTIONS_PER_TASK 个
+ * 动作）里的一个任务后，主线程跑一轮热重载：读取并严格解析六份可热重载文件（含逐项核对
+ * cron 本地来源）、替换 holder、按任务名对账调度器。写文件属于部署方，不计时；不含任务执行。
+ */
+export const CHAIN_CRON_RELOAD_OPERATIONS: number = 24;
+
+/** cron.json 中途变更链路的预热次数；每次完整跑一轮热重载。 */
+export const CRON_RELOAD_WARMUP_OPERATIONS: number = 4;
+
 /** AI 回复链路的预热次数；每次完整执行一轮回复及生产拟人停顿。 */
 export const AI_REPLY_WARMUP_OPERATIONS: number = 8;
 

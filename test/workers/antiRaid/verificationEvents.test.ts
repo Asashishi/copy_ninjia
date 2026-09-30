@@ -38,15 +38,12 @@ test("触发私密模式的临界入群读取 recordJoin 建立的新占位", ()
   };
   let dispatched: VerificationEvent | null = null;
 
-  handleJoinEvent({
-    message,
-    dispatchVerification: (
-      _chatId: number,
-      _userId: number,
-      event: VerificationEvent
-    ): void => {
-      dispatched = event;
-    },
+  handleJoinEvent(message, (
+    _chatId: number,
+    _userId: number,
+    event: VerificationEvent
+  ): void => {
+    dispatched = event;
   });
 
   expect(recordJoin).toHaveBeenCalledTimes(1);

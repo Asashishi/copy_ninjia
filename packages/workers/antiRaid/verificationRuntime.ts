@@ -11,10 +11,7 @@ import {
 } from "../../cache/workers/antiRaid/verification";
 import type {
   AdoptVerificationsMessage,
-  NewMemberMessage,
-  TrackedChatMessage,
   VerificationPersistedMessage,
-  VerifyCallbackMessage,
 } from "../../types/antiRaid/protocol";
 import type {
   DeferredVerificationRecord,
@@ -41,11 +38,6 @@ import {
 } from "../../libs/verificationKey";
 import type { ParsedVerificationKey } from "../../libs/verificationKey";
 import { runVerificationEffects } from "./verificationEffects";
-import {
-  handleJoinEvent,
-  handleTrackedMessageEvent,
-} from "./verificationEvents";
-import { handleVerificationCallbackEvent } from "./verificationCallbacks";
 import {
   cancelReminderDelivery,
   clearReminderDeliveries,
@@ -384,19 +376,4 @@ export function stopVerificationRuntime(): void {
   verificationRevisions.clear();
   deferredVerificationRecords.clear();
   verificationGeneration.current = 0;
-}
-
-/** 保持 Worker 与测试使用的既有入口不变。 */
-export function handleJoin(message: NewMemberMessage): void {
-  handleJoinEvent({ message, dispatchVerification });
-}
-
-/** 保持 Worker 与测试使用的既有入口不变。 */
-export function handleTrackedMessage(message: TrackedChatMessage): void {
-  handleTrackedMessageEvent({ message, dispatchVerification });
-}
-
-/** 保持 Worker 与测试使用的既有入口不变。 */
-export function handleVerificationCallback(message: VerifyCallbackMessage): void {
-  handleVerificationCallbackEvent({ message, dispatchVerification });
 }

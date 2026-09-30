@@ -5,7 +5,7 @@ void ((toolset: ReplyToolset, action: PreparedReplyAction, chains: ReplyActionCh
   // @ts-expect-error 工具声明在整轮内不可替换。
   toolset.functions = [];
   // @ts-expect-error 接纳边界由工具集构造时固定。
-  toolset.execute = async (): Promise<string> => "";
+  toolset.execute = (): string => "";
   // @ts-expect-error 排空入口不可替换。
   toolset.settle = async (): Promise<void> => {};
   // @ts-expect-error 乐观回执在接纳后不可改写。
@@ -22,7 +22,7 @@ export async function executeAndSettle(
   name: string,
   argumentsJson: string
 ): Promise<string> {
-  const result: string = await toolset.execute(name, argumentsJson);
+  const result: string = toolset.execute(name, argumentsJson);
   await toolset.settle();
   return result;
 }

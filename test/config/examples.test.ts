@@ -31,10 +31,11 @@ import {
   CRON_CONFIG_PATH,
   GOOGLE_AUTH_FILE_PATH,
   MOOD_CONFIG_PATH,
-  PROJECT_ROOT,
+  RUNTIME_DATA_ROOT,
   STICKERS_CONFIG_PATH,
 } from "../../packages/consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
+import { CRON_RANDOM_INTERVAL_MIN_MS } from "../../packages/consts/cron";
 import { readJsonInput } from "../../packages/libs/inputValidation";
 import type { CronAction, CronConfig, CronTask } from "../../packages/types/cron";
 import type { BotAtmosphere } from "../../packages/types/atmosphere";
@@ -80,7 +81,7 @@ describe("config_example 与解析器保持同步", () => {
     ).toEqual({
       atmosphere: (raw as Readonly<{ atmosphere: BotAtmosphere }>).atmosphere,
       botToken: "123456789:example",
-      superAdminUserId: 123456789,
+      superAdminUserId: (raw as Readonly<{ super_admin_user_id: number }>).super_admin_user_id,
     });
   });
 
@@ -113,9 +114,9 @@ describe("config_example 与解析器保持同步", () => {
     expect([...targetKinds].sort()).toEqual(["all", "except", "list"]);
     expect(config.some((entry: CronTask): boolean =>
       entry.chatTargets.kind === "list" && entry.chatTargets.chatIds.length > 1)).toBe(true);
-    // 区间写法与单值写法（等于 1m-<值>）各一。
-    expect(config.some((entry: CronTask): boolean => entry.randomInterval !== undefined && entry.randomInterval.minMs > 60_000)).toBe(true);
-    expect(config.some((entry: CronTask): boolean => entry.randomInterval?.minMs === 60_000)).toBe(true);
+    // 区间写法与单值写法（下界取 CRON_RANDOM_INTERVAL_MIN_MS）各一。
+    expect(config.some((entry: CronTask): boolean => entry.randomInterval !== undefined && entry.randomInterval.minMs > CRON_RANDOM_INTERVAL_MIN_MS)).toBe(true);
+    expect(config.some((entry: CronTask): boolean => entry.randomInterval?.minMs === CRON_RANDOM_INTERVAL_MIN_MS)).toBe(true);
     // is_blurred 的显式写法至少一例。
     expect(config.some((entry: CronTask): boolean => entry.actions.some(
       (action: Readonly<CronAction>): boolean => action.type === "send_image" && action.isBlurred
@@ -124,16 +125,16 @@ describe("config_example 与解析器保持同步", () => {
     const pathForms: Set<string> = new Set<string>();
     for (const entry of config) {
       for (const action of entry.actions) {
-        // 本地路径的两种写法：相对项目根解析后落在项目根下，绝对路径在项目根之外。
+        // 本地路径的两种写法：相对运行时数据根解析后落在数据根下，绝对路径在数据根之外。
         if (action.type === "send_voice") {
           sources.add(action.tone === undefined ? "send_voice" : "send_voice:tone");
           continue;
         }
         if (action.type !== "send_message" && action.source.kind === "path") {
-          pathForms.add(action.source.path.startsWith(`${PROJECT_ROOT}${sep}`) ? "relative" : "absolute");
+          pathForms.add(action.source.path.startsWith(`${RUNTIME_DATA_ROOT}${sep}`) ? "relative" : "absolute");
         }
         if (action.type === "send_image" && action.source.kind === "paths") {
-          for (const path of action.source.paths) pathForms.add(path.startsWith(`${PROJECT_ROOT}${sep}`) ? "relative" : "absolute");
+          for (const path of action.source.paths) pathForms.add(path.startsWith(`${RUNTIME_DATA_ROOT}${sep}`) ? "relative" : "absolute");
         }
         if (action.type === "send_message") sources.add("send_message");
         else if (action.source.kind === "random") sources.add(`${action.type}:random:${action.source.directory === null ? "default" : "directory"}`);

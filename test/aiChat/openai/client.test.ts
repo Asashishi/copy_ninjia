@@ -121,7 +121,7 @@ describe("整次调用的 deadline", () => {
       buildBody,
       errorLabel: "AI test API",
       signal: controller.signal,
-    })).resolves.toMatchObject({ ok: false, diagnostic: "request aborted" });
+    })).resolves.toMatchObject({ ok: false, failureKind: "request" });
     expect(buildBody).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
     expect(loggerError).not.toHaveBeenCalled();
@@ -188,7 +188,7 @@ describe("失败分类", () => {
     controller.abort();
     const result: Awaited<ReturnType<typeof requestOpenAiResult>> = await pendingResult;
 
-    expect(result.ok === false && result.diagnostic).toBe("request aborted");
+    expect(result.ok === false && result.failureKind).toBe("request");
     expect(loggerError).not.toHaveBeenCalled();
     settleSdkTask({
       usage: { input_tokens: 7, output_tokens: 9 },

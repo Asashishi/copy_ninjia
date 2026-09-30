@@ -71,8 +71,8 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  * 滑动窗口限频 + 溢出排队补跑，aiChat/replyPipeline.ts）。发言/消息反应/
  * 应景贴纸与重媒体创作全部工具化（send_message / add_reaction /
  * view_sticker_pack + send_sticker / generate_image / send_voice，见
- * aiChat/ai/tools/replyToolset/）；生图只在直接触发轮按供应商能力挂载，语音按
- * 部署能力挂载、由模型按工具说明决定是否调用。主线程的 `/send` 代发 TTS 与 cron
+ * aiChat/ai/tools/replyToolset/）；生图与语音都按部署能力挂载、由模型按工具
+ * 说明决定是否调用。主线程的 `/send` 代发 TTS 与 cron
  * `send_voice` 经 synthesizeVoice 请求借用同一套合成实现（aiChat/voiceSynthesis.ts）。
  * 模型在同一次对话里自主决定可用工具的组合与顺序。发往 Telegram 的调用统一经双工能力请求回到主线程，
  * Worker 不持有独立 Telegram 网络客户端；机器人自己的账号身份改由主线程在
@@ -90,7 +90,7 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
  *
  * 心情系统：各群心情按随机寿命（几小时量级）自然到期轮换，到期后下次
- * 拼系统提示词时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
+ * 拼运行时状态区块时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
  * 的感觉；重抽时还按当前东京天气/时段微调各心情的概率，见 aiChat/ai/mood.ts；
  * 两个内存缓存（cache/workers/aiChat/mood.ts
  * 的 chatMoods/chatMoodExpiresAts）都不落盘，随 Worker 重启清空。天气

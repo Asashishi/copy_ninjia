@@ -17,7 +17,6 @@ import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 const requestGeminiResult = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => ({
   ok: false,
   failureKind: "request",
-  diagnostic: "request failed",
 }));
 
 mock.module("../../../packages/aiChat/gemini/client", () => ({ requestGeminiResult }));
@@ -80,7 +79,6 @@ beforeEach(() => {
   requestGeminiResult.mockImplementation(async (): Promise<GeminiRequestResult> => ({
     ok: false,
     failureKind: "request",
-    diagnostic: "request failed",
   }));
   acquireGeminiContextCache.mockReset();
   acquireGeminiContextCache.mockImplementation((): string | null => null);
@@ -148,7 +146,6 @@ describe("两套请求结构", () => {
     requestGeminiResult.mockImplementationOnce(respond({
       ok: false,
       failureKind: "misconfigured",
-      diagnostic: "endpoint or model is unavailable",
     }));
     requestGeminiResult.mockImplementationOnce(respond(okResult(modelContent(), "好")));
     const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
@@ -163,7 +160,7 @@ describe("两套请求结构", () => {
 
   test("端点故障不补发，也不释放缓存登记", async () => {
     acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
-    requestGeminiResult.mockImplementation(respond({ ok: false, failureKind: "request", diagnostic: "request failed" }));
+    requestGeminiResult.mockImplementation(respond({ ok: false, failureKind: "request" }));
     const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     const turn: AiReplyTurn = await session.request(REQUEST);
 
@@ -414,7 +411,6 @@ describe("Gemini 回复会话的对话记录累积", () => {
     requestGeminiResult.mockResolvedValueOnce({
       ok: false,
       failureKind: "response",
-      diagnostic: "finishReason=TOO_MANY_TOOL_CALLS",
       finishReason: "TOO_MANY_TOOL_CALLS",
       response: {
         candidates: [{ finishReason: "TOO_MANY_TOOL_CALLS", content: { role: "model", parts: [] } }],

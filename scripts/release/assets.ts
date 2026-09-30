@@ -6,7 +6,7 @@ import { checked } from "./command";
 import type { ReleaseCommand } from "./command";
 
 /** 安装器支持的平台名称；每次发布由 --platforms 明确选择，禁止静默缺项。 */
-export const RELEASE_PLATFORMS: readonly string[] = ["linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"];
+const RELEASE_PLATFORMS: readonly string[] = ["linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"];
 /** Release tag 与发行包版本使用同一种无前缀版本号。 */
 export const RELEASE_VERSION_PATTERN: RegExp = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 

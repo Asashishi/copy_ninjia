@@ -3,15 +3,15 @@ import type { CommandContext, Context } from "grammy";
 import type { ChatState } from "../types/chatState";
 import { clearChatStateField, getChatState, getOrCreateChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
-import { DURATION_UNIT_MS, QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES } from "../consts/commands";
+import { DURATION_UNIT_MS, QUIET_DEFAULT_MINUTES, QUIET_MAX_MINUTES, QUIET_MIN_MINUTES, QUIET_MINUTES_PATTERN } from "../consts/commands";
 import { isQuietUntilActive } from "../libs/chatState";
 
 /**
  * 处理 /quiet 指令：让机器人在本群安静一段时间——期间不触发 AI 随机插话、
  * 洗澡「看看」和随机复读这些主动刷存在感的行为；回复机器人 / @ 机器人的
  * AI 必回、各类指令、以及 /copy 锁定目标的复读均不受影响（对话缓存也照常
- * 攒，静默结束后 AI 不缺上下文）。时长参数为分钟数，缺省 3 分钟，超出
- * 1~15 的范围会被收敛到边界；静默期内不允许重复使用（不能续时/重新计时），
+ * 攒，静默结束后 AI 不缺上下文）。时长参数为十进制整数分钟数，缺省 3 分钟，其它形态
+ * 回用法提示；超出 1~15 的整数会被收敛到边界；静默期内不允许重复使用（不能续时/重新计时），
  * 想提前解除或重设时长要先 /unquiet。
  */
 export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<void> {
@@ -28,12 +28,11 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
   const arg: string = ctx.match.trim();
   let minutes: number = QUIET_DEFAULT_MINUTES;
   if (arg) {
-    const parsed: number = Number(arg);
-    if (!Number.isFinite(parsed)) {
+    if (!QUIET_MINUTES_PATTERN.test(arg)) {
       await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.quietUsage(QUIET_MIN_MINUTES, QUIET_MAX_MINUTES, QUIET_DEFAULT_MINUTES), replyToMessageId: messageId });
       return;
     }
-    minutes = Math.min(QUIET_MAX_MINUTES, Math.max(QUIET_MIN_MINUTES, Math.round(parsed)));
+    minutes = Math.min(QUIET_MAX_MINUTES, Math.max(QUIET_MIN_MINUTES, Number(arg)));
   }
 
   const state: ChatState = getOrCreateChatState(chatId);

@@ -65,7 +65,7 @@ export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
  * 上限带一分钟容差（QUIET_CLOCK_SKEW_TOLERANCE_MS）：`/quiet <上限分钟数>`
  * 写下的 `quietUntil - now` 恰好等于 QUIET_MAX_DURATION_MS，不留容差的话主机
  * 时钟往回跳 1 毫秒就让顶格静默当场失效。超出容差的大幅回拨由
- * normalizeChatState 收敛到上限——那条路径保留静默、只缩短它，不再删字段。
+ * normalizeChatState 收敛到上限——那条路径保留静默、只缩短它。
  */
 export function isQuietUntilActive(quietUntil: number | undefined, now: number = Date.now()): boolean {
   if (quietUntil === undefined || quietUntil <= now) return false;

@@ -168,8 +168,8 @@ export async function generateReply(
 
     const functionCalls: readonly AiFunctionCall[] = turn.functionCalls;
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
-      // 按模型顺序校验与接纳；发送回接纳结果（send_voice 最多等合成一个前台窗口再回），
-      // 查看与查询回真实数据。投递调用链和 Telegram 排队不参与本次模型往返的等待。
+      // 按模型顺序校验与接纳；动作回接纳结果，查看与查询回真实数据。拟人停顿、语音合成、
+      // 投递调用链和 Telegram 排队都不参与本次模型往返的等待。
       const outputs: AiToolOutput[] = [];
       for (const call of functionCalls) {
         if (!toolset.isActive()) return null;
@@ -179,7 +179,7 @@ export async function generateReply(
         const withinBudget: boolean = customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY;
         const toolResult: string = withinBudget
           ? toolset.has(call.name)
-            ? await toolset.execute(call.name, call.argumentsJson)
+            ? toolset.execute(call.name, call.argumentsJson)
             : callTool(call.name)
           : TOOL_BUDGET_EXHAUSTED_RESULT;
         outputs.push({ call, responseJson: toolResult });

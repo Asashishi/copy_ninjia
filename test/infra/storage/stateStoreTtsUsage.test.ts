@@ -18,9 +18,9 @@ describe("语音合成每日计数的持久化", () => {
     dir = mkdtempSync(join(tmpdir(), "state-tts-usage-test-"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalTtsUsageState.current = null;
-    stateStoreHolder.current?.dispose();
+    await stateStoreHolder.current?.flush(1_000, true);
     stateStoreHolder.current = null;
     rmSync(dir, { recursive: true, force: true });
   });
@@ -34,7 +34,6 @@ describe("语音合成每日计数的持久化", () => {
     await loadState();
     expect(getTtsUsage()).toEqual({ windowStartedAt: 5_000, agentCount: 7, reserveCount: 2 });
 
-    stateStoreHolder.current.dispose();
     const emptyPath: string = join(dir, "state-empty.json");
     await Bun.write(emptyPath, JSON.stringify({ copy: { copiedUser: null } }));
     stateStoreHolder.current = new StateStore({ stateFilePath: emptyPath });

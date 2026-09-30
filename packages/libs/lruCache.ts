@@ -19,20 +19,6 @@ export class LruCache<K, V> {
   private readonly map: Map<K, LruNode<K, V>> = new Map();
   private oldest: LruNode<K, V> | null = null;
   private newest: LruNode<K, V> | null = null;
-  /**
-   * 最近一次摘链的节点与它当时的后继，供**正停在该节点上的迭代器**继续前进。
-   *
-   * 只留一格、且挂在缓存上而不是节点上。假如改成逐节点存一个 `node.detached`：
-   * 一个还活着的条目会指着一个已被淘汰的节点，那个节点又指着下一个，长期运行下
-   * 拖出一条只增不减的死节点链——正是本类要避免的那类无界增长。单槽的代价是
-   * 「一次迭代推进之间摘了不止一条链」时让位信息会被覆盖，见 [Symbol.iterator]。
-   *
-   * 保留量的上界写死在这里：任何时刻至多多留住**一个**已删除节点连同它的取值
-   * （`delete` 之后、下一次摘链之前）。这两格随缓存生死，`clear` 一并归零。
-   */
-  private detachedNode: LruNode<K, V> | null = null;
-  private detachedSuccessor: LruNode<K, V> | null = null;
-
   constructor(private readonly maxEntries: number) {
     if (!Number.isSafeInteger(maxEntries) || maxEntries <= 0) {
       throw new RangeError("maxEntries must be a positive safe integer");
@@ -94,52 +80,11 @@ export class LruCache<K, V> {
     return true;
   }
 
-  /** 清空全部条目与迭代让位槽；用于 owner 整表重置（如 Disk I/O 重建后重新灌入计数时清空读取缓存）。 */
+  /** 清空全部条目；用于 owner 整表重置（如 Disk I/O 重建后重新灌入计数时清空读取缓存）。 */
   clear(): void {
     this.map.clear();
     this.oldest = null;
     this.newest = null;
-    this.detachedNode = null;
-    this.detachedSuccessor = null;
-  }
-
-  /**
-   * 按当前 LRU 顺序（最久未使用在前）迭代；不创建投影数组，也不改变条目热度。
-   *
-   * 追加、删除与 touch 尚未访问或已访问条目时按当前链表位置继续。改写**正停在
-   * 的那一条**时靠上方的让位单槽前进，不漏掉它后面的条目；该条目被移到最新端
-   * 后会在末尾再产出一次。
-   *
-   * **只有「每条至多被移到最新端一次」才保证终止**：每次产出都把当前条目重新
-   * 排到最新端时链表被持续重排，迭代不会结束，容量和条目数都保持不变，也不是
-   * 泄漏。要在遍历中反复重排，先取快照（`[...cache]`）。
-   *
-   * 让位槽只有一格，两种情形下会失效并让本次迭代提前结束：一次推进之间摘掉了
-   * 不止一条链（后者覆盖前者），以及在遍历体里又起一次对同一份缓存的嵌套遍历
-   * （内层会作废外层的让位）。真要在遍历中批量删除或嵌套遍历，同样先取快照
-   * ——全仓当前没有这样的调用点。
-   */
-  *[Symbol.iterator](): IterableIterator<[K, V]> {
-    let node: LruNode<K, V> | null = this.oldest;
-    while (node !== null) {
-      const current: LruNode<K, V> = node;
-      // 产出前先作废让位槽：它只对**本次产出之后**发生的摘链有效。留着上一次
-      // 操作写下的旧值会让迭代甩回一个更早的后继，绕成环。
-      this.detachedNode = null;
-      yield [current.key, current.value];
-      node = this.detachedNode === current ? this.detachedSuccessor : current.newer;
-    }
-  }
-
-  /** 按当前 LRU 顺序迭代主键；不改变条目热度，迭代期改写语义同 [Symbol.iterator]。 */
-  *keys(): IterableIterator<K> {
-    let node: LruNode<K, V> | null = this.oldest;
-    while (node !== null) {
-      const current: LruNode<K, V> = node;
-      this.detachedNode = null;
-      yield current.key;
-      node = this.detachedNode === current ? this.detachedSuccessor : current.newer;
-    }
   }
 
   /** 命中续命：已经在最新端时不做无效指针写入。 */
@@ -150,11 +95,11 @@ export class LruCache<K, V> {
   }
 
   /**
-   * 把节点从链上摘下来，并把它当时的后继留在让位槽里。
+   * 把节点从链上摘下来。
    *
    * **只能对仍在链上的节点调用。** 对已经摘过的节点再摘一次，它的
    * `newer`/`older` 都是 null，两个分支会把 `newest` 与 `oldest` 一起置空——
-   * Map 里条目还在，链却空了，此后迭代什么都不产出、淘汰也找不到最旧项，
+   * Map 里条目还在，链却空了，此后淘汰找不到最旧项，
    * 而且不报任何错。三个调用点都已经保证这一点：`delete` 先查 Map 决定要不要摘，
    * `touch` 摘完立刻重新挂上，容量淘汰摘的是 `this.oldest`。新增调用点必须自己
    * 先确认节点还在链上。这里不加运行期断言——它落在每次命中续命的路径上。
@@ -168,8 +113,6 @@ export class LruCache<K, V> {
     else older.newer = newer;
     node.newer = null;
     node.older = null;
-    this.detachedNode = node;
-    this.detachedSuccessor = newer;
   }
 
   private linkNewest(node: LruNode<K, V>): void {

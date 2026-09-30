@@ -69,8 +69,10 @@ const {
   chatStateCache,
   chatStateWriteRevision,
   resetChatStateCache,
+  unacknowledgedChatStateBytes,
   unacknowledgedChatStateWrites,
 } = await import("../../packages/cache/main/chatState");
+const { storageWriteCost } = await import("../../packages/libs/storageWriteBudget");
 const { diskIORuntime } = await import("../../packages/cache/main/diskIO");
 const {
   assertChatStateCapacity,
@@ -101,6 +103,31 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       `must contain at most ${STATE_MANAGED_CHAT_LIMIT} chats`
     );
     expect(() => assertChatStateCapacity(-1_001)).not.toThrow();
+  });
+
+  test("准入字节按差额记账：覆盖同一群只计最新载荷，精确 ACK 后扣回", async () => {
+    postAccepted = true;
+    acknowledgeFlush = false;
+    chatStateCache.set(-1001, chatStateOf({ isInitEnabled: true, title: "A" }));
+    chatStateCache.set(-1002, chatStateOf({ isInitEnabled: true, title: "B" }));
+    queueChatStateWrite(-1001);
+    queueChatStateWrite(-1002);
+    chatStateCache.get(-1001)!.title = "A longer title";
+    queueChatStateWrite(-1001);
+
+    const cost = (chatId: number): number => {
+      const message = diskMessages.findLast((entry: DiskBusinessMessage) =>
+        entry.type === "chatStateWrite" && entry.chatId === chatId);
+      if (message?.type !== "chatStateWrite") throw new Error("missing write");
+      return storageWriteCost(message.data) + storageWriteCost(message.aiPersona);
+    };
+    expect(unacknowledgedChatStateBytes.current).toBe(cost(-1001) + cost(-1002));
+    expect(unacknowledgedChatStateWrites.get(-1001)?.bytes).toBe(cost(-1001));
+    acknowledgeFlush = true;
+    await persistChatState(-1001, "ack");
+    await persistChatState(-1002, "ack");
+    expect(unacknowledgedChatStateWrites.size).toBe(0);
+    expect(unacknowledgedChatStateBytes.current).toBe(0);
   });
 
   test("启动恢复不再重复核对代理目标唯一性", () => {
@@ -253,7 +280,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     chatStateCache.set(-1001, chatStateOf({ title: "queued" }));
     postAccepted = false;
     const revision: number = queueChatStateWrite(-1001);
-    expect(unacknowledgedChatStateWrites.get(-1001)).toEqual({ revision, deleted: false });
+    expect(unacknowledgedChatStateWrites.get(-1001)).toMatchObject({ revision, deleted: false });
 
     const replayed: DiskBusinessMessage[] = [];
     const transport: DiskIORecoveryTransport = {
@@ -292,7 +319,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       aiPersona: null,
       revision,
     }]);
-    expect(unacknowledgedChatStateWrites.get(-1001)).toEqual({ revision, deleted: true });
+    expect(unacknowledgedChatStateWrites.get(-1001)).toMatchObject({ revision, deleted: true });
   });
 
   test("重放投递失败时报告失败", async () => {

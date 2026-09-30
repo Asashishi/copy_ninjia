@@ -1,6 +1,6 @@
 import { fileSha256 } from "./fileSha256";
 import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import type { Dirent, Stats } from "node:fs";
 import {
   RANDOM_IMAGE_CONTENT_NAME_PATTERN,
@@ -10,6 +10,7 @@ import {
 import { sniffImageFormat } from "../packages/infra/image";
 import { atomicWriteText, syncDirectory } from "../packages/libs/atomicFile";
 import { InputValidationError, invalidInput } from "../packages/libs/inputValidation";
+import { migrationPathContains } from "./migrations/files";
 
 /** 暂存目录仅当前账号可进入，部署权限由运维按清单手工恢复。 */
 const STAGING_DIRECTORY_MODE: number = 0o700;
@@ -108,11 +109,6 @@ async function saveExtension(directory: string, name: string): Promise<string> {
   return extension;
 }
 
-function isInside(parent: string, child: string): boolean {
-  const path: string = relative(parent, child);
-  return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith("../"));
-}
-
 /** 源文件名去掉扩展名之后是不是已经是内容哈希形态。 */
 function alreadyContentNamed(name: string, fileName: string): boolean {
   return name === fileName && RANDOM_IMAGE_CONTENT_NAME_PATTERN.test(name.slice(0, name.length - extname(name).length));
@@ -126,15 +122,15 @@ function alreadyContentNamed(name: string, fileName: string): boolean {
  * 一份（文件名就是内容摘要，重名即重复），合并明细写进 `ready.json` 的 duplicates。
  * 扩展名按文件头重判，因此 `.jpeg` 会落成 `.jpg`、名实不符的扩展名会被纠正。
  *
- * 部署方按 docs/cn/04-invariants.md 的持久化边界，在服务停止期间手工替换图库目录，
- * 并按 sourceFiles 恢复属主与权限。
+ * 部署方按 docs/cn/07-operations.md「随机图库文件名冷迁移」，在服务停止期间手工替换
+ * 图库目录，并按 sourceFiles 恢复属主与权限。
  */
 export async function prepareRandomImageNameMigration(
   { sourceDirectory, outputDirectory }: RandomImageNameMigrationOptions
 ): Promise<RandomImageNameMigrationResult> {
   const source: string = await realpath(sourceDirectory);
   const output: string = join(await realpath(dirname(resolve(outputDirectory))), basename(resolve(outputDirectory)));
-  if (isInside(source, output) || isInside(output, source)) {
+  if (migrationPathContains(source, output) || migrationPathContains(output, source)) {
     return invalidInput(output, "$path", "a new directory outside the source image library");
   }
   const names: readonly string[] = await sourceImageNames(source);

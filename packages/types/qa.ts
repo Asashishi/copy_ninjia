@@ -16,7 +16,7 @@ export interface QaEntry {
   readonly a: string;
 }
 
-/** `chat_qa.data` 的严格 JSON 结构；答案单独成字段，便于将来扩展而不再迁移。 */
+/** `chat_qa.data` 的严格 JSON 结构，目前只有答案 `a` 一个字段。 */
 export interface ChatQaEntryData {
   readonly a: string;
 }
@@ -74,4 +74,11 @@ export interface QaFormSession {
   a: string | undefined;
   /** 到期自动结算的 timer；结算或提前完成时清除。 */
   timer: ReturnType<typeof setTimeout> | null;
+}
+
+/** 一条已投给 Disk I/O、尚未收到精确 ACK 的问答写入。 */
+export interface UnacknowledgedChatQaWrite {
+  readonly revision: number;
+  /** 这次写入（问题加正文或墓碑）的准入估算字节，计入 unacknowledgedChatQaTotals。 */
+  readonly bytes: number;
 }

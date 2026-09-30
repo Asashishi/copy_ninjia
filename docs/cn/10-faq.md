@@ -39,7 +39,7 @@
 
 ## 定时任务为什么重启后又发一次？
 
-`just_once` 的执行记录只保存在内存里，重启后会重新登记；已完成的任务应从 `config/dynamic/cron.json` 删除。`rand_cron` 的等待也会重置，停机期间错过的触发不补发。固定图片必须写 1–10 项数组，随机图的 `path` 则是目录字符串；cron 相对路径按项目根解析，专用图库路径按数据根解析。配置示例见 [部署配置说明](../../config_example/README/zh.md#cronjson)。
+`just_once` 的执行记录只保存在内存里，重启后会重新登记；已完成的任务应从 `config/dynamic/cron.json` 删除。`rand_cron` 的等待也会重置，停机期间错过的触发不补发。固定图片必须写 1–10 项数组，随机图的 `path` 则是目录字符串；cron 相对路径与专用图库路径都按运行时数据根解析，cron 不要求 `./` 前缀。配置示例见 [部署配置说明](../../config_example/README/zh.md#cronjson)。
 
 ## 定时语音或 `/send` 语音为什么发不出来？
 

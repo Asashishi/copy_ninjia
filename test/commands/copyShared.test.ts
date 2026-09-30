@@ -50,11 +50,11 @@ const { DEFAULT_ASSET_CONFIG } = await import("../../packages/consts/ui/assets")
 const {
   drainAvatarUpdates,
   initAvatarUpdates,
+  queueAvatarUpdate,
   quiesceAvatarUpdates,
 } = await import("../../packages/copy/avatarQueue");
 const { avatarUpdateState } = await import("../../packages/cache/main/copy/avatar");
 const { COPY_COOLDOWN_MS } = await import("../../packages/consts/commands");
-const { STEAL_ICON_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/commands");
 const originalDateNow: () => number = Date.now;
 
 interface AvatarNoticeCase {
@@ -117,9 +117,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
       operation.mockImplementationOnce(() => pending);
       personas.set(-1001, { aiPersona: nextAtmosphere === "plain" ? undefined : "旧人设" });
       if (kind === "user") {
-        shared.stealAvatarInBackground({ chatId: -1001, target: { id: 7 }, source });
+        queueAvatarUpdate({ chatId: -1001, target: { kind: "user", user: { id: 7 } }, source });
       } else {
-        shared.restoreAvatarInBackground({ chatId: -1001, source });
+        queueAvatarUpdate({ chatId: -1001, target: { kind: "default" }, source });
       }
       expect(operation).toHaveBeenCalledTimes(1);
       expect(sendMessage).not.toHaveBeenCalled();
@@ -142,7 +142,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
   test("头像回执保留昵称原文，只按群配置选择模板", async () => {
     personas.set(-1001, { aiPersona: "普通风格" });
-    shared.stealAvatarInBackground({ chatId: -1001, target: { id: 7, first_name: "本天才♡" }, source: "icon" });
+    queueAvatarUpdate({ chatId: -1001, target: { kind: "user", user: { id: 7, first_name: "本天才♡" } }, source: "icon" });
     await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       text: ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.iconChanged("本天才♡"),
@@ -152,7 +152,7 @@ describe("copy 命令共享冷却与头像串行器", () => {
   test("头像回执落在提交它的 update 触发话题，执行槽已不在作用域内也不丢", async () => {
     const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
     await runWithUpdateAbortSignal(new AbortController().signal, async (): Promise<void> => {
-      shared.stealAvatarInBackground({ chatId: -1001, target: { id: 7, first_name: "话题里的人" }, source: "icon" });
+      queueAvatarUpdate({ chatId: -1001, target: { kind: "user", user: { id: 7, first_name: "话题里的人" } }, source: "icon" });
     }, { chatId: -1001, threadId: 42 });
     await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: -1001, messageThreadId: 42 }));
@@ -173,9 +173,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
       const signal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
       signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     }));
-    shared.stealAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1001,
-      target: { id: 7, first_name: "Alice" },
+      target: { kind: "user", user: { id: 7, first_name: "Alice" } },
       source: "icon",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
@@ -230,22 +230,6 @@ describe("copy 命令共享冷却与头像串行器", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("目标解析器原样转交调用方给的文案表，不再每次现造", async () => {
-    const ctx = { chat: { id: -1001 }, msg: { message_id: 9 }, me: { id: 999 }, match: "steal @alice" } as never;
-    await expect(
-      shared.resolveCopyCommandTarget(ctx, STEAL_ICON_TARGET_TEXTS, "@alice")
-    ).resolves.toEqual({ id: 7, first_name: "Alice" });
-    const params = resolveCommandTarget.mock.calls[0]![0] as {
-      rawArgument: string;
-      messages: { missingTarget: string; selfTarget: string };
-    };
-    expect(params.rawArgument).toBe("@alice");
-    expect(params.messages.missingTarget).toContain("/icon steal");
-    expect(params.messages.selfTarget).toContain("自己");
-    // 转交的必须就是那张模块级单例，不是每次调用现造的副本。
-    expect(params.messages).toBe(STEAL_ICON_TARGET_TEXTS);
-  });
-
   test("头像全局并发度为 1，运行中只保留最新待执行目标与最新战报", async () => {
     let resolveFirst!: (value: boolean) => void;
     copyUserProfilePhoto
@@ -255,19 +239,19 @@ describe("copy 命令共享冷却与头像串行器", () => {
     const secondTarget: CachedUser = { id: -2002, first_name: "Old Channel", username: "old_channel", isChannel: true };
     const latestTarget: CachedUser = { id: -3003, first_name: "Latest Channel", username: "latest_channel", isChannel: true };
 
-    shared.stealAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1001,
-      target: firstTarget,
+      target: { kind: "user", user: firstTarget },
       source: "icon",
     });
-    shared.stealAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1002,
-      target: secondTarget,
+      target: { kind: "user", user: secondTarget },
       source: "icon",
     });
-    shared.stealAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1003,
-      target: latestTarget,
+      target: { kind: "user", user: latestTarget },
       source: "icon",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
@@ -293,9 +277,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
   test("头像任务抛错由串行器记录，后续任务仍可继续", async () => {
     copyUserProfilePhoto.mockRejectedValueOnce(new Error("avatar failed"));
-    shared.stealAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1001,
-      target: { id: 7, first_name: "Alice" },
+      target: { kind: "user", user: { id: 7, first_name: "Alice" } },
       source: "icon",
     });
     await waitFor(() => loggerError.mock.calls.length === 1);
@@ -307,9 +291,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
       const signal = (args[2] as { signal?: AbortSignal } | undefined)?.signal;
       signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     }));
-    shared.stealAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1001,
-      target: { id: 7, first_name: "Alice" },
+      target: { kind: "user", user: { id: 7, first_name: "Alice" } },
       source: "icon",
     });
     await waitFor(() => copyUserProfilePhoto.mock.calls.length === 1);
@@ -324,8 +308,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
   test("复原任务与偷脸任务共用同一个执行槽，走 restoreDefaultProfilePhoto", async () => {
     assetConfigCache.current = { ...DEFAULT_ASSET_CONFIG, botDefaultAvatar: DEFAULT_AVATAR };
-    shared.restoreAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1001,
+      target: { kind: "default" },
       source: "icon",
     });
     await waitFor(() => restoreDefaultProfilePhoto.mock.calls.length === 1);
@@ -341,8 +326,9 @@ describe("copy 命令共享冷却与头像串行器", () => {
 
   test("复原失败时发失败战报", async () => {
     restoreDefaultProfilePhoto.mockImplementationOnce(async (): Promise<boolean> => false);
-    shared.restoreAvatarInBackground({
+    queueAvatarUpdate({
       chatId: -1001,
+      target: { kind: "default" },
       source: "icon",
     });
     await waitFor(() => restoreDefaultProfilePhoto.mock.calls.length === 1);

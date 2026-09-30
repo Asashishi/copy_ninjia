@@ -3,8 +3,11 @@ import type { AiSpeakerSnapshot } from "../../../types/aiChat/speaker";
 import { FALLBACK_SPEAKER_NAME } from "../../../consts/auto";
 import { COMPACT_BATCH_SIZE, TIER_BOUNDARY_ALIGNMENT } from "../../../consts/aiChat/memory";
 import {
+  COLD_MEMORY_BLOCK_HEADER,
+  EARLIER_VERBATIM_BLOCK_HEADER,
   FORWARD_ROSTER_BLOCK_NAME,
   forwardTagTemplate,
+  HOT_MEMORY_BLOCK_HEADER,
   messageNumberTag,
   REPLY_TARGET_EVICTED_TAG,
   replyPointerTemplate,
@@ -73,9 +76,6 @@ function formatReplyReference(reference: BufferedReplyReference, selfId: number 
  * buildTieredVerbatimTranscript。
  */
 export function formatBufferedMessageLine(message: BufferedMessage, selfId?: number): string {
-  // message_id 段直接写进最终模板，不先物化 messageIdTag 中间串。usernameTag /
-  // replyTag 仍留变量——它们是条件分支，
-  // 内联成三元反而让这行长到读不动，且省不掉那次物化。
   const isSelf: boolean = message.id === selfId;
   const usernameTag: string = !isSelf && message.username ? ` [username:@${stripLeadingAtSigns(message.username)}]` : "";
   const replyTag: string = message.replyTo ? formatReplyReference(message.replyTo, selfId) : "";
@@ -210,8 +210,7 @@ function buildRosterBlock(context: TranscriptContext): string {
  * 展平 rope；对应基准必须用 `charCodeAt(length - 1)` 强制物化，不能只读 `.length`，
  * 见 scripts/perf/hotPaths/transcriptScenarios.ts。
  *
- * `first` 用显式布尔而不是 `rendered === ""` 判空：后者把正确性绑在「任何一行都不会
- * 是空串」这个附带事实上，而布尔无条件成立。
+ * `first` 记录是否还没写出任何行，据此决定行前是否补换行。
  */
 function renderRange(
   messages: BufferedMessage[],
@@ -291,8 +290,7 @@ function formatCompactReplyTag(
  * 单起一行；消息号只给真的会被引用的行；被回复消息只留指针。名册排在全部逐字行
  * 之后：窗口里出现新发言人只改动区块末尾，两次块轮换之间逐字行对上一轮是纯追加，
  * 供应商的自动前缀缓存能一路命中到最新的变化点。
- * 各项对「认人 / 回复回溯」的影响在 88 道客观题上与全量格式打平，见
- * test/aiChat/ai/chatTranscript.test.ts 钉住的形状。
+ * 输出形状由 test/aiChat/ai/chatTranscript.test.ts 钉住。
  *
  * 本段只出数据和分层标注：行格式怎么读由 systemInstruction 里的
  * TRANSCRIPT_FORMAT_INSTRUCTION 交代（见 consts/aiChat/prompts/memory.ts）。
@@ -315,19 +313,18 @@ export function buildTieredVerbatimTranscript(
   // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐，不取 `length - COMPACT_BATCH_SIZE`
   // 的精确值：后者每来一条消息就把边界前移一条，整段【最热记忆】相对上一轮
   // 必然错位，自动前缀缓存从边界处就断掉。向上取整让【最热记忆】恒不超过
-  // COMPACT_BATCH_SIZE 条，与该区块标题写死的条数一致。
+  // COMPACT_BATCH_SIZE 条，与 HOT_MEMORY_BLOCK_HEADER 标题里的条数一致。
   const overflow: number = deduped.length - COMPACT_BATCH_SIZE;
   const hotStart: number = overflow <= 0
     ? 0
     : Math.ceil(overflow / TIER_BOUNDARY_ALIGNMENT) * TIER_BOUNDARY_ALIGNMENT;
   const text: string =
     (hotStart > 0
-      ? "【较早逐字记录（次要背景）】这些记录仍是原文，但判断当前话题和应答对象时应让位于下方最热记忆：\n" +
+      ? EARLIER_VERBATIM_BLOCK_HEADER +
         renderRange(deduped, context, { start: 0, end: hotStart }) +
         "\n\n"
       : "") +
-    `【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】这是滑动缓存里最新、最应优先关注的逐字消息。` +
-    "判断当前话题、人物指代、@对象、情绪和该回应谁时，必须优先依据本段；最后一条是最新消息：\n" +
+    HOT_MEMORY_BLOCK_HEADER +
     renderRange(deduped, context, { start: hotStart, end: deduped.length }) +
     "\n\n" + buildRosterBlock(context);
   return {
@@ -366,8 +363,7 @@ function dedupeByMessageId(messages: BufferedMessage[], duplicates: number): Buf
 export function buildColdMemoryBlock(summaries: string[]): string {
   if (summaries.length === 0) return "";
   return (
-    "【冷记忆（长期背景）】下列内容是更早对话的压缩摘要（按时间从旧到新），只用于理解长期话题、称呼、人物关系和前因后果，不用于判断当前状态；" +
-    "它与较新的逐字记录不一致时，只说明情况后来变了，当前状态以逐字记录为准：\n" +
+    COLD_MEMORY_BLOCK_HEADER +
     summaries.map((summary: string, index: number): string => `${index + 1}. ${summary}`).join("\n")
   );
 }

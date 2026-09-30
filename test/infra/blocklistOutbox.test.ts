@@ -23,7 +23,6 @@ const {
 } = await import("../helpers/blocklistSweepHarness");
 
 const {
-  dispatchBlockedRemovals,
   forgetChatBlocklistWork,
   forgetUserBlocklistRemovals,
   hydrateBlocklist,
@@ -344,12 +343,6 @@ describe("黑名单 outbox 的投递边界", () => {
     await expect(persistPendingBlockedRemovals()).rejects.toThrow(
       "Persistence Worker rejected the blocklist removal outbox snapshot."
     );
-  });
-
-  test("投递转交当前注册的执行 owner，并原样返回投出条数", async () => {
-    const batch = [{ chatId: -1001, userIds: [7], removalId: 21 }] as never;
-
-    await expect(dispatchBlockedRemovals(batch)).resolves.toBe(1);
   });
 });
 

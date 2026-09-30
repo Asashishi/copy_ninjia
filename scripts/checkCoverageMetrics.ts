@@ -7,7 +7,7 @@ import { parseCoverageSummary } from "./coverageSummary";
  * 现跑一次 `bun test --isolate --coverage`，核对仓库声明的覆盖率指标与真实读数一致。
  *
  * 与 `bun run check:conventions` 里那层的分工写在 conventions/coverageMetrics.ts
- * 的头注：那层只判 14 个位置彼此一致（无条件生效、零成本），管不了「14 处一起
+ * 的头注：那层只判各位置彼此一致（无条件生效、零成本），管不了「全部位置一起
  * 过期」；这一层判它们与真实读数一致，代价是整跑一遍测试，因此不进
  * `bun run check`，由 `bun run release:check` 与显式指令触发。
  *

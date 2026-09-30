@@ -209,7 +209,6 @@ export function enqueueAdCandidate(
   const bundle: AdMessageBundle = existing ?? {
     chatId: message.chatId,
     senderId: message.senderId,
-    label: message.label,
     meta: candidateIdentityMetadata(message),
     isChannel: message.isChannel,
     justJoined: message.justJoined,
@@ -221,7 +220,6 @@ export function enqueueAdCandidate(
   if (existing !== undefined) {
     // 昵称随时可改；播报要用最新的那个。元数据只在变化时重新组装，同一发送者的
     // 后续消息不为它分配对象。
-    bundle.label = message.label;
     if (
       bundle.meta.firstName !== message.firstName ||
       bundle.meta.lastName !== message.lastName ||
@@ -253,13 +251,14 @@ export function enqueueAdCandidate(
  *
  * **刻意不登记进 Worker 的在途任务集合**（trackAntiRaidTask）：那个集合是停机
  * drain 的等待对象，而 drain 的预算是 ANTI_RAID_DRAIN_TIMEOUT_MS 这一档的秒级
- * 数值，一次判定请求却可以耗到分钟级——两个 provider 的 30 秒请求超时都是每次
- * SDK 尝试各自的期限，还要乘上各自的 SDK 尝试次数与空正文重试。登记进去的话，
+ * 数值，一次判定请求却可以耗到分钟级——两个 provider 的请求超时
+ * （AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS、AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS）都是
+ * 每次 SDK 尝试各自的期限，还要乘上各自的 SDK 尝试次数与空正文重试。登记进去的话，
  * 凡是停机时恰好有一次判定在途，drain 必然超时——生命周期据此拒绝确认 Telegram
  * offset 并以非零状态退出，等于每次撞上都换来一次脏退出加一批 update 重投。
  * 判定是尽力而为的启发式，本来就不该扣着停机不放；真正不可丢的那一半
- * （拉黑 + 各群封禁登记）在主线程，由 drainAntiRaid 每轮等待
- * inFlightAdDisposals 收口（见 antiRaid/adCandidate.ts）。
+ * （拉黑 + 各群封禁登记）在主线程，由 drainAntiRaid 每轮经 drainAdDisposals 等待
+ * inFlightAdDisposals 收口（见 antiRaid/durableDelivery.ts、antiRaid/adDetect.ts）。
  * @returns 本批全部结算的 Promise；调用方（节拍与测试）自行决定要不要等。
  */
 export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
@@ -288,8 +287,8 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
       refreshAdDetectCapacitySaturation();
       continue;
     }
-    // 上一次判定还没回来（上一个节拍的请求超时了）：让它自己收尾并重新入队，
-    // 同一个人不并发送检两次。
+    // 防御性复核：requeueIfUnchecked 保证在途的键不会同时排在队列里，正常路径不会走到
+    // 这里；万一走到，让在途的那次自己收尾并重新入队，同一个人不并发送检两次。
     if (inFlightAdDetectKeys.has(key)) continue;
     // 整串都判过：这一拍没有要送检的内容。已判上下文留给 sweep 按窗口回收，
     // 期间新消息会自己重新排队。

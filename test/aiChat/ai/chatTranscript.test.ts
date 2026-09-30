@@ -15,10 +15,16 @@ import {
 } from "../../../packages/consts/aiChat/prompts/memory";
 import type { RenderedTranscript, TieredTranscriptOptions } from "../../../packages/aiChat/ai/utils/chatTranscript";
 import {
+  COLD_MEMORY_BLOCK_HEADER,
+  COLD_MEMORY_BLOCK_NAME,
   COMPACT_LINE_FORMAT_HINT,
+  EARLIER_VERBATIM_BLOCK_HEADER,
+  EARLIER_VERBATIM_BLOCK_NAME,
   FORWARD_ROSTER_BLOCK_NAME,
   FORWARD_TAG_HINT,
   forwardTagTemplate,
+  HOT_MEMORY_BLOCK_HEADER,
+  HOT_MEMORY_BLOCK_NAME,
   MESSAGE_NUMBER_HINT,
   messageNumberTag,
   REPLY_EVICTED_HINT,
@@ -179,14 +185,14 @@ describe("AI 群聊转录身份格式", () => {
     }));
     const transcript: string = renderTranscript(messages, { selfId: -1, triggerMessageId: COMPACT_BATCH_SIZE + 1 });
 
-    expect(transcript).toContain("【较早逐字记录（次要背景）】");
+    expect(transcript).toContain(EARLIER_VERBATIM_BLOCK_HEADER);
     expect(transcript).toContain("u1：消息 1");
-    expect(transcript).toContain(`【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】`);
+    expect(transcript).toContain(HOT_MEMORY_BLOCK_HEADER);
     // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐：超出一块 1 条时较早区就取满
     // 一个对齐格，第 33 条起才进最热区。
     expect(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT}：消息 ${TIER_BOUNDARY_ALIGNMENT}`))
-      .toBeLessThan(transcript.indexOf("【最热记忆"));
-    expect(transcript.indexOf("【最热记忆"))
+      .toBeLessThan(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER));
+    expect(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER))
       .toBeLessThan(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT + 1}`));
     // 最新一条是逐字行的最后一行，名册整段排在全部逐字行之后。
     expect(transcript).toContain(`u${COMPACT_BATCH_SIZE + 1}：消息 ${COMPACT_BATCH_SIZE + 1}\n\n${SPEAKER_ROSTER_BLOCK_NAME}`);
@@ -202,7 +208,7 @@ describe("AI 群聊转录身份格式", () => {
   test("分层边界按对齐粒度跳变：同一格内追加消息不移动边界", () => {
     // 同一格内追加消息不移动边界，本轮转录相对上一轮是纯追加。
     function hotLineCount(transcript: string): number {
-      return transcript.slice(transcript.indexOf("【最热记忆"))
+      return transcript.slice(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER))
         .split("\n")
         .filter((line: string): boolean => line.startsWith("[")).length;
     }
@@ -220,8 +226,8 @@ describe("AI 群聊转录身份格式", () => {
       const transcript: string = renderWithExtra(extra);
       // 整格之内较早区恒为一个对齐格：边界两侧的消息号逐条固定。
       expect(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT}：消息 ${TIER_BOUNDARY_ALIGNMENT}`))
-        .toBeLessThan(transcript.indexOf("【最热记忆"));
-      expect(transcript.indexOf("【最热记忆"))
+        .toBeLessThan(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER));
+      expect(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER))
         .toBeLessThan(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT + 1}`));
       // 向上取整的用处：最热区永远不超过标题里写死的那个条数。
       expect(hotLineCount(transcript)).toBeLessThanOrEqual(COMPACT_BATCH_SIZE);
@@ -230,8 +236,8 @@ describe("AI 群聊转录身份格式", () => {
     // 跨过一格就整格跳一次：较早区变成两个对齐格。
     const crossed: string = renderWithExtra(TIER_BOUNDARY_ALIGNMENT + 1);
     expect(crossed.indexOf(`u${TIER_BOUNDARY_ALIGNMENT * 2}：消息 ${TIER_BOUNDARY_ALIGNMENT * 2}`))
-      .toBeLessThan(crossed.indexOf("【最热记忆"));
-    expect(crossed.indexOf("【最热记忆"))
+      .toBeLessThan(crossed.indexOf(HOT_MEMORY_BLOCK_HEADER));
+    expect(crossed.indexOf(HOT_MEMORY_BLOCK_HEADER))
       .toBeLessThan(crossed.indexOf(`u${TIER_BOUNDARY_ALIGNMENT * 2 + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT * 2 + 1}`));
     expect(hotLineCount(crossed)).toBeLessThanOrEqual(COMPACT_BATCH_SIZE);
 
@@ -251,8 +257,8 @@ describe("AI 群聊转录身份格式", () => {
         text: `消息 ${index + 1}`,
       }));
       const transcript: string = renderTranscript(messages, TRANSCRIPT_OPTIONS);
-      expect(transcript).not.toContain("【较早逐字记录（次要背景）】");
-      expect(transcript).toContain(`【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】`);
+      expect(transcript).not.toContain(EARLIER_VERBATIM_BLOCK_HEADER);
+      expect(transcript).toContain(HOT_MEMORY_BLOCK_HEADER);
       expect(transcript).toContain(`u${count}：消息 ${count}`);
       // 逐行拼装不能在收尾多挂一个换行——转录按「一行 = 一条消息」读，
       // 空行会被当成一条空发言。
@@ -262,8 +268,8 @@ describe("AI 群聊转录身份格式", () => {
 
   test("空缓存也要给出可用转录：名册为空、最热区块为空，不抛也不留悬空换行", () => {
     const transcript: string = renderTranscript([], TRANSCRIPT_OPTIONS);
-    expect(transcript).not.toContain("【较早逐字记录（次要背景）】");
-    expect(transcript).toContain(`【最热记忆（重要判断标准，最新最多 ${COMPACT_BATCH_SIZE} 条）】`);
+    expect(transcript).not.toContain(EARLIER_VERBATIM_BLOCK_HEADER);
+    expect(transcript).toContain(HOT_MEMORY_BLOCK_HEADER);
     // 一个人都没有时不拼【转发来源名册】那一段，避免给模型一段空表。
     expect(transcript).not.toContain(FORWARD_ROSTER_BLOCK_NAME);
     expect(transcript.endsWith("\n")).toBe(true);
@@ -278,7 +284,7 @@ describe("AI 群聊转录身份格式", () => {
     const transcript: string = renderTranscript(messages, { selfId: 99, triggerMessageId: 3 });
 
     // 名册排在全部逐字行之后：新发言人只改动区块末尾，逐字行保持纯追加。
-    expect(transcript).toStartWith("【最热记忆");
+    expect(transcript).toStartWith(HOT_MEMORY_BLOCK_HEADER);
     expect(transcript.indexOf("] u1：群友再说一句")).toBeLessThan(transcript.indexOf(SPEAKER_ROSTER_BLOCK_NAME));
     expect(transcript).toContain("u1=[id:42] [username:@anon_tokyo] 千早 愛音");
     expect(transcript).toContain(`${SELF_ROSTER_CODE}=[id:99] ${SELF_SPEAKER_NAME}`);
@@ -339,7 +345,7 @@ describe("AI 群聊转录身份格式", () => {
     ];
     const transcript: string = renderTranscript(messages, { selfId: 99, triggerMessageId: 2 });
 
-    expect(transcript).toContain(`【转发来源名册】行内「${forwardTagTemplate("f…")}」对应的原始来源看这里：`);
+    expect(transcript).toContain(`${FORWARD_ROSTER_BLOCK_NAME}行内「${forwardTagTemplate("f…")}」对应的原始来源看这里：`);
     expect(transcript).toContain(`f1=${origin}`);
     expect(transcript).toContain(`u1${forwardTagTemplate("f1")}：转来的爆料`);
     // 同一个来源共用一个编号，来源全文在整段转录里只出现一次。
@@ -368,7 +374,7 @@ describe("AI 群聊转录身份格式", () => {
     expect(CHAT_MEMORY_PRIORITY_INSTRUCTION).toContain("不用于判断当前状态");
 
     const coldBlock: string = buildColdMemoryBlock(["较早摘要", "更近摘要"]);
-    expect(coldBlock).toStartWith("【冷记忆（长期背景）】");
+    expect(coldBlock).toStartWith(COLD_MEMORY_BLOCK_HEADER);
     expect(coldBlock).toContain("只用于理解长期话题");
     expect(coldBlock).toContain("当前状态以逐字记录为准");
     expect(coldBlock).toContain("1. 较早摘要\n2. 更近摘要");
@@ -377,9 +383,9 @@ describe("AI 群聊转录身份格式", () => {
   test("分层记忆只对内可见：禁止对群友复述分块名、机制细节，也不许被套话确认", () => {
     // 转录与冷记忆区块里真实出现的分块名逐个被禁言指令点到。
     for (const blockName of [
-      "【最热记忆】",
-      "【较早逐字记录】",
-      "【冷记忆】",
+      HOT_MEMORY_BLOCK_NAME,
+      EARLIER_VERBATIM_BLOCK_NAME,
+      COLD_MEMORY_BLOCK_NAME,
       SPEAKER_ROSTER_BLOCK_NAME,
       FORWARD_ROSTER_BLOCK_NAME,
     ]) {

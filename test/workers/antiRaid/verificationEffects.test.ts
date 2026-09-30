@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { applyWorkerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
 import { plainAtmosphereChats } from "../../../packages/cache/workers/antiRaid/atmosphere";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../packages/consts/commands";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
+import { formatMinSec } from "../../../packages/libs/time";
 
 import type {
   ExpelSnapshot,
@@ -54,6 +56,9 @@ const {
 
 const {
   VERIFICATION_TERMINAL_RETRY_MS,
+  VERIFICATION_TIMEOUT_MS,
+  VERIFY_APPROVE_CALLBACK_PREFIX,
+  VERIFY_SELF_CALLBACK_PREFIX,
 } = await import("../../../packages/consts/antiRaid/verification");
 
 const {
@@ -81,10 +86,16 @@ test("验证按钮应答按当前风格指向实际按钮，移除自定义人�
   setState(pendingState());
   applyWorkerAtmosphere(CHAT_ID, true);
   await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
-  expect(callbackTexts[0]).toBe("请点击「完成验证」完成本人的验证；「通过」仅供管理员代他人验证。");
+  expect(callbackTexts[0]).toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.verificationUseSelfButton(
+    ATMOSPHERE_TEXTS.plain.VERIFICATION_SELF_BUTTON_TEXT,
+    ATMOSPHERE_TEXTS.plain.VERIFICATION_APPROVE_BUTTON_TEXT
+  ));
   applyWorkerAtmosphere(CHAT_ID, false);
   await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
-  expect(callbackTexts[1]).toBe("笨蛋，想自己过验证就点「我是良民」，「通过」是给管理员代点的，别乱按♡");
+  expect(callbackTexts[1]).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationUseSelfButton(
+    ATMOSPHERE_TEXTS.teasing.VERIFICATION_SELF_BUTTON_TEXT,
+    ATMOSPHERE_TEXTS.teasing.VERIFICATION_APPROVE_BUTTON_TEXT
+  ));
 });
 
 describe("管理员拉人豁免的异步核查", () => {
@@ -220,15 +231,29 @@ describe("同步副作用的逐条执行", () => {
     const state: VerificationState = pendingState();
     setState(state);
     testState.nextSentMessageId = undefined;
+    const timeout: string = formatMinSec(VERIFICATION_TIMEOUT_MS);
     await run([{ kind: "sendReminder", label: "用户😀♡", isBot: false }]);
     await Bun.sleep(0);
-    expect(sentTexts[0]).toContain("杂鱼");
+    expect(sentTexts[0]).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationMemberReminder({
+      label: "用户😀♡",
+      timeout,
+      selfButton: ATMOSPHERE_TEXTS.teasing.VERIFICATION_SELF_BUTTON_TEXT,
+      approveButton: ATMOSPHERE_TEXTS.teasing.VERIFICATION_APPROVE_BUTTON_TEXT,
+    }));
     applyWorkerAtmosphere(CHAT_ID, true);
     testState.nextSentMessageId = 900;
     await run([{ kind: "sendReminder", label: "用户😀♡", isBot: false }]);
     await Bun.sleep(0);
-    expect(sentTexts[1]).toBe("用户😀♡，请在 3分钟 内点击下方「完成验证」完成验证，管理员也可点击「通过」代为通过；超时将被踢出。");
-    expect(sentKeyboards[1]?.inline_keyboard[0]?.[0]).toEqual({ text: "完成验证", callback_data: `verify:${USER_ID}` });
+    expect(sentTexts[1]).toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.verificationMemberReminder({
+      label: "用户😀♡",
+      timeout,
+      selfButton: ATMOSPHERE_TEXTS.plain.VERIFICATION_SELF_BUTTON_TEXT,
+      approveButton: ATMOSPHERE_TEXTS.plain.VERIFICATION_APPROVE_BUTTON_TEXT,
+    }));
+    expect(sentKeyboards[1]?.inline_keyboard[0]?.[0]).toEqual({
+      text: ATMOSPHERE_TEXTS.plain.VERIFICATION_SELF_BUTTON_TEXT,
+      callback_data: `${VERIFY_SELF_CALLBACK_PREFIX}${USER_ID}`,
+    });
     expect(reminderDeliveries.size).toBe(0);
   });
   test("真人、机器人和回复式验证提醒都明确给出三分钟", async () => {
@@ -236,13 +261,13 @@ describe("同步副作用的逐条执行", () => {
     await run([
       { kind: "sendReminder", label: "真人杂鱼", isBot: false },
     ]);
-    expect(sentTexts[0]).toContain("3分钟内");
+    expect(sentTexts[0]).toContain(`${formatMinSec(VERIFICATION_TIMEOUT_MS)}内`);
 
     setState(pendingState());
     await run([
       { kind: "sendReminder", label: "铁皮杂鱼", isBot: true },
     ]);
-    expect(sentTexts[1]).toContain("3分钟内");
+    expect(sentTexts[1]).toContain(`${formatMinSec(VERIFICATION_TIMEOUT_MS)}内`);
 
     setState(pendingState());
     await run([{
@@ -250,15 +275,15 @@ describe("同步副作用的逐条执行", () => {
       label: "话多杂鱼",
       targetMessageId: 7,
     }]);
-    expect(sentTexts[2]).toContain("3分钟内");
+    expect(sentTexts[2]).toContain(`${formatMinSec(VERIFICATION_TIMEOUT_MS)}内`);
   });
 
   test("真人提醒带「我是良民」与「通过」两颗按钮，机器人提醒只留「通过」", async () => {
     setState(pendingState());
     await run([{ kind: "sendReminder", label: "真人杂鱼", isBot: false }]);
     expect(sentKeyboards[0]?.inline_keyboard).toEqual([[
-      { text: "我是良民", callback_data: `verify:${USER_ID}` },
-      { text: "通过", callback_data: `approve:${USER_ID}` },
+      { text: ATMOSPHERE_TEXTS.teasing.VERIFICATION_SELF_BUTTON_TEXT, callback_data: `${VERIFY_SELF_CALLBACK_PREFIX}${USER_ID}` },
+      { text: ATMOSPHERE_TEXTS.teasing.VERIFICATION_APPROVE_BUTTON_TEXT, callback_data: `${VERIFY_APPROVE_CALLBACK_PREFIX}${USER_ID}` },
     ]]);
 
     const botState: VerificationState = pendingState();
@@ -266,7 +291,7 @@ describe("同步副作用的逐条执行", () => {
     setState(botState);
     await run([{ kind: "sendReminder", label: "铁皮杂鱼", isBot: true }]);
     expect(sentKeyboards[1]?.inline_keyboard).toEqual([[
-      { text: "通过", callback_data: `approve:${USER_ID}` },
+      { text: ATMOSPHERE_TEXTS.teasing.VERIFICATION_APPROVE_BUTTON_TEXT, callback_data: `${VERIFY_APPROVE_CALLBACK_PREFIX}${USER_ID}` },
     ]]);
     expect(sentTexts[1]).toContain("管理员");
     expect(sentTexts[1]).not.toContain("白名单");

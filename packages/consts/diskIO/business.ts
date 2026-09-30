@@ -1,3 +1,5 @@
+import type { StorageDatabaseDomain } from "../../types/diskIO/replies";
+
 /** Disk I/O 业务传输每批最多处理的消息数；单批确认后才继续投递。 */
 export const DISK_BUSINESS_BATCH_MAX_MESSAGES: number = 128;
 /** 磁盘通道为恢复标记与最终 flush 预留的控制消息槽位。 */
@@ -22,6 +24,20 @@ export const DISK_BUSINESS_MESSAGE_BASE_BYTES: number = 256;
 /** 磁盘操作总预算额外保留控制消息开销，业务满额后仍能排入最终 flush。 */
 export const DISK_OPERATION_MAX_RETAINED_BYTES: number = DISK_BUSINESS_MAX_RETAINED_BYTES +
   DISK_OPERATION_CONTROL_RESERVE * DISK_BUSINESS_MESSAGE_BASE_BYTES;
+
+/**
+ * 共享 SQLite 事务覆盖的七个领域，也是 all/business flush 回报其失败领域的顺序
+ * （workers/diskIO/storageDatabase/flush.ts 的 collectStorageDatabaseFailures）。
+ */
+export const STORAGE_DATABASE_DOMAINS: readonly StorageDatabaseDomain[] = [
+  "whitelist",
+  "blocklist",
+  "temporaryAdBypass",
+  "blocklistRemovalOutbox",
+  "chatState",
+  "chatQa",
+  "aiMemory",
+];
 
 /** SQLite 未 ACK 主键上限；主线程每领域独立检查，Worker 六表共用，超限拒收新事实。 */
 export const STORAGE_PENDING_MAX_ENTRIES: number = 8_192;

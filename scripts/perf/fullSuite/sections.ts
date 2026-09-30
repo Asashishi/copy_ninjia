@@ -65,9 +65,9 @@ export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
 /**
  * 生产选用的容器与算法，单独把容器本身的成本量出来。
  *
- * 只列线上真正在用的实现。滑动窗口线上有两套，都使用 `TimestampDeque`：普通
- * 配额窗口满时拒绝，反刷群入群窗口满时覆盖最早项并维持饱和标记。AI 滚动记忆
- * 缓冲使用 `BoundedDeque`。
+ * 只列线上真正在用的实现。滑动时间窗口的底层容器是 `TimestampDeque`：本表取普通
+ * 配额窗口（满时拒绝）与反刷群入群窗口（满时覆盖最早项并维持饱和标记）两种记账
+ * 方式；AI 滚动记忆缓冲使用 `BoundedDeque`。
  *
  * 与生产热路径分表：那张表量完整业务函数，这张表量容器原语。
  */
@@ -77,7 +77,7 @@ export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "bounded-rolling-buffer",
 ];
 
-/** 十条完整生产动作的固定出数顺序：七条落盘动作与三条用户可见流程。 */
+/** 十一条完整生产动作的固定出数顺序：七条落盘动作、三条用户可见流程与一条部署配置热重载。 */
 export const CHAIN_NAMES: readonly ChainName[] = [
   "join-log-append",
   "identity-policy-write",
@@ -89,6 +89,7 @@ export const CHAIN_NAMES: readonly ChainName[] = [
   "ad-detect-command",
   "ai-reply-command",
   "cron-send-voice",
+  "cron-config-reload",
 ];
 
 /**
@@ -99,12 +100,13 @@ export const CHAIN_NAMES: readonly ChainName[] = [
  */
 const JOIN_LOG_OPERATIONS: readonly string[] = ["snapshot", "capacity"];
 
-/** 冷启动分区：每个启动阶段一行，单位统一是毫秒。 */
+/** 冷启动分区的产出：分区表与旁注。 */
 export interface ColdStartSectionResult {
   readonly section: BenchmarkSection;
   readonly summary: ColdStartSummary;
 }
 
+/** 冷启动分区的行定义：每个启动阶段一行，单位统一是毫秒。 */
 const COLD_START_PHASES: readonly (readonly [
   string,
   (round: ColdStartRound) => number
@@ -251,7 +253,8 @@ export async function runStorageSection(
       context,
       {
         label: `storage:${operation}`,
-        // 只有写透那一项真的在数据根里读写；其余各自在 mock 根下建临时库。
+        // 只有写透那一项真的在数据根里读写；SQLite 冷热读写各自在 mock 根下建临时库；
+        // main-lru-read 只读进程内缓存、不落盘。
         seedMode: operation === "main-write-through-acked" ? "chain" : "none",
         args: [FULL_SUITE_ENTRY, "--child", "storage", operation],
       }
@@ -303,7 +306,7 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   },
 ];
 
-/** 完整流程分区：七条 durable 动作与三条本地命令流程的单次耗时及吞吐。 */
+/** 完整流程分区：七条 durable 动作、三条本地命令流程与 cron.json 中途变更的单次耗时及吞吐。 */
 export async function runChainSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {
@@ -353,7 +356,7 @@ const JOIN_LOG_METRICS: readonly MetricDefinition<JoinLogRound>[] = [
   },
 ];
 
-/** 入群日志 25 万容量线：复用既有子进程，只跑当前实现。 */
+/** 入群日志 25 万容量线：复用 scripts/perf/joinLog.ts 的子进程，只跑当前实现。 */
 export async function runJoinLogSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {

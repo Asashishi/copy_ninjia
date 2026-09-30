@@ -1,4 +1,4 @@
-/** 可选的 state/lock/logs/memory 数据根目录环境变量名。 */
+/** 可选的运行时数据根目录环境变量名；根下放 bot.lock、logs/、memory/ 与 database/，未设置时使用项目根目录。 */
 export const RUNTIME_DATA_ROOT_ENV: string = "COPY_NINJIA_DATA_ROOT";
 
 /** 可选的部署配置目录环境变量名；未设置时使用项目根目录下的 config/（其下分 static/ 与 dynamic/）。 */

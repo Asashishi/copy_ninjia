@@ -1,13 +1,13 @@
 import {
   aiMemoryDeletePersistedNotifier,
-  aiMemoryImmediateRevisions,
+  aiMemoryImmediateChats,
   aiMemoryPersistedNotifier,
 } from "../../../cache/workers/diskIO/snapshots";
 import { pendingAiContextWrites } from "../../../cache/workers/diskIO/storageDatabase";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import { assertTelegramChatId } from "../../../database/codec/chatState";
-import { decodeAiMemorySnapshot } from "../../../libs/persistedSnapshotCodec";
-import { parseJsonInput } from "../../../libs/inputValidation";
+import { aiContextSource } from "../../../database/interact/aiContext";
+import { parseAiMemorySnapshot } from "../../../libs/persistedSnapshotCodec";
 import type { PendingAiContextWrite } from "../../../types/identityStorage";
 
 /**
@@ -17,9 +17,9 @@ import type { PendingAiContextWrite } from "../../../types/identityStorage";
 
 /** 严格校验一群上下文快照；非法时按字段路径抛出，不触碰 SQLite。 */
 export function assertAiContextSnapshot(chatId: number, snapshot: string): void {
-  const source: string = `${IDENTITY_DATABASE_PATH}:chat_states[${chatId}].ai_context`;
+  const source: string = aiContextSource(IDENTITY_DATABASE_PATH, chatId);
   assertTelegramChatId(chatId, source);
-  decodeAiMemorySnapshot(parseJsonInput(snapshot, source), source);
+  parseAiMemorySnapshot(snapshot, source);
 }
 
 /**
@@ -40,7 +40,7 @@ export function hasUrgentAiContextWrites(): boolean {
     if (
       change.snapshot === null ||
       change.coveredDeleteRevision !== null ||
-      aiMemoryImmediateRevisions.has(chatId)
+      aiMemoryImmediateChats.has(chatId)
     ) return true;
   }
   return false;
@@ -66,8 +66,8 @@ export function settleAiContextPersisted(chatId: number, change: PendingAiContex
     });
     return;
   }
-  if (!aiMemoryImmediateRevisions.has(chatId)) return;
-  aiMemoryImmediateRevisions.delete(chatId);
+  if (!aiMemoryImmediateChats.has(chatId)) return;
+  aiMemoryImmediateChats.delete(chatId);
   aiMemoryPersistedNotifier.current({
     type: "aiMemoryPersisted",
     chatId,

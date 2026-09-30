@@ -140,7 +140,6 @@ function adDetectCommandChain(
         messageId: sequence + 1,
         observedAt: Date.now(),
         text: `性能基准广告文本 ${sequence}：加我微信 benchmark`,
-        label: `Member${sequence}`,
         firstName: `Member${sequence}`,
         lastName: "",
         username: "",
@@ -340,7 +339,7 @@ function cronSendVoiceChain(
       dependencies.ttsDailyUsage.current = null;
       const result: VoiceSynthesisResult = await dependencies.synthesizeVoiceMessage(
         lookup.synthesize,
-        { text: action.content, tone: action.tone, quota: "operator", quotaClaimed: false, signal: undefined },
+        { text: action.content, tone: action.tone, quota: "operator", signal: undefined },
         `benchmark ${sequence}`
       );
       if (!result.ok) throw new Error(`Cron voice ${sequence} produced no voice: ${result.reason}.`);
@@ -362,7 +361,7 @@ function cronSendVoiceChain(
   };
 }
 
-/** 返回命令链路定义；存储链路交给 storageChains。 */
+/** 返回命令链路定义；存储链路与配置链路分别交给 storageChains、configChains。 */
 export function createCommandChain(
   chain: ChainName,
   dependencies: CommandChainDependencies
@@ -371,6 +370,7 @@ export function createCommandChain(
     case "ad-detect-command": return adDetectCommandChain(dependencies);
     case "ai-reply-command": return aiReplyCommandChain(dependencies);
     case "cron-send-voice": return cronSendVoiceChain(dependencies);
+    case "cron-config-reload":
     case "join-log-append":
     case "identity-policy-write":
     case "temporary-whitelist-write":

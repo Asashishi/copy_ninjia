@@ -463,6 +463,22 @@ describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
     expect(changes.aiAgent).toBe(true);
     expect(cronConfigCache.current).toBe(baseline.cron);
   });
+
+  test("现行任务表已用 send_voice，同一轮里改任务表又去掉 tts：只拒绝 agent.json，新任务表照常生效", async () => {
+    await writeJson(CRON_CONFIG_PATH, VOICE_TASKS);
+    await reload();
+    const changedVoiceTasks: readonly Record<string, unknown>[] = [{ ...VOICE_TASKS[0], name: "voice-renamed" }];
+    await writeJson(CRON_CONFIG_PATH, changedVoiceTasks);
+    await writeAgentWithoutTts();
+
+    const changes: HotDeploymentConfigChanges = await reload();
+
+    expect(changes.rejections).toEqual([AGENT_REJECTION]);
+    expect(changes.aiAgent).toBe(false);
+    expect(changes.cron).toBe(true);
+    expect(cronConfigCache.current?.[0]?.name).toBe("voice-renamed");
+    expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+  });
 });
 
 describe("config/dynamic/assets.json 热重载", () => {

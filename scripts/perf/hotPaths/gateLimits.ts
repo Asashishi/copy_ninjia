@@ -116,8 +116,7 @@ export function createHotPathCalibrationStaleReport({
 /**
  * 默认场景与阈值表必须一一对应，禁止新场景漏报或死阈值滞留。
  *
- * @returns 场景 -> 已校验阈值，按场景声明顺序；门禁直接遍历，不再按场景名
- *   回表查询。
+ * @returns 场景 -> 已校验阈值，按场景声明顺序；门禁直接遍历该表。
  */
 export function assertHotPathMedianPolicyCoverage(
   scenarios: readonly string[],

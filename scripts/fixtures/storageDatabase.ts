@@ -31,7 +31,7 @@ type StorageDatabaseTransaction = Parameters<
 /**
  * 当前 schema 版本行，夹具与基准建库时的唯一来源。
  *
- * 生产建库由 install.sh 调 packages/database/interact/initialization.ts 的
+ * 生产建库由安装器（scripts/install/start.sh）调 packages/database/interact/initialization.ts 的
  * initializeStorageDatabase 写这一笔；夹具走 seedStorageDatabase，要和业务行
  * 在同一个事务里落。两条路写的必须是同一行，因此这里只留一份字面量，
  * 版本变更时不会漏改某个夹具。缺这一行时启动恢复会拒绝加载整个库。

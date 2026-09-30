@@ -21,7 +21,7 @@ import { botPermissions } from "../helpers/botPermissions";
 
 /**
  * 黑名单销号计数规则：回执驱动的 JSONB 计数、清零、满额解除与失败路径。
- * 顺序、淘汰与补扫 flush 窗口见 blocklistParticipantInvalidOrdering.test.ts。
+ * 顺序、淘汰与补扫分页读并发见 blocklistParticipantInvalidOrdering.test.ts。
  */
 
 mock.module("../../packages/infra/diskIO", participantInvalidDiskIO);

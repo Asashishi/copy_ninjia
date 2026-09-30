@@ -67,6 +67,7 @@ const {
   handleAntiRaidWorkerTelegramRequest,
 } = await import("../../packages/infra/telegram/workerRequests");
 const { isSelfSent } = await import("../../packages/infra/selfSentTracker");
+const { inFlightSelfSends } = await import("../../packages/cache/perThread/selfSentTracker");
 
 const CHAT_ID: number = -1001;
 
@@ -129,6 +130,21 @@ describe("Worker 拿到 id 之前，主线程已经登记了这条自发消息",
     await workerTelegramApi.sendMessage(CHAT_ID, "reply");
 
     expect(isSelfSent(CHAT_ID, 18)).toBeFalse();
+  });
+
+  test("产消息的请求在主线程漏斗里登记在途发送，结算后清零；非消息请求不登记", async (): Promise<void> => {
+    const observed: (number | undefined)[] = [];
+    mainThreadHandler = async (request: TelegramWorkerRequest, signal: AbortSignal): Promise<unknown> => {
+      const pending: Promise<unknown> = handleAiWorkerTelegramRequest(request, signal);
+      observed.push(inFlightSelfSends.get(CHAT_ID));
+      return pending;
+    };
+
+    await workerTelegramApi.sendMessage(CHAT_ID, "reply");
+    await workerTelegramApi.sendChatAction(CHAT_ID, "typing").catch((): undefined => undefined);
+
+    expect(observed).toEqual([1, undefined]);
+    expect(inFlightSelfSends.size).toBe(0);
   });
 
   test("代理客户端自己不登记：主线程不登记时上面的断言必然为假", async (): Promise<void> => {

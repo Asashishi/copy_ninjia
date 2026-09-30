@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { statSync } from "node:fs";
+import { getTableName } from "drizzle-orm";
+import { chatStates } from "../../../packages/database/schema/chatState";
+import { blocklistEntries, permissionList } from "../../../packages/database/schema/identityPolicy";
+import { pendingBlockedRemovals } from "../../../packages/database/schema/pendingRemoval";
+import { temporaryAdBypassEntries } from "../../../packages/database/schema/temporaryAdBypass";
 import {
   BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE,
   BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES,
@@ -73,6 +78,12 @@ const META: Readonly<{ firstName: string; lastName: string; username: string }> 
   username: "copy_ninjia_bot",
 };
 const acknowledgements: IdentityStoragePersistedReply[] = [];
+/** 诊断文案里的表名，取自 Drizzle schema 定义。 */
+const PERMISSION_LIST_TABLE: string = getTableName(permissionList);
+const BLOCKLIST_ENTRIES_TABLE: string = getTableName(blocklistEntries);
+const TEMPORARY_AD_BYPASS_TABLE: string = getTableName(temporaryAdBypassEntries);
+const PENDING_REMOVALS_TABLE: string = getTableName(pendingBlockedRemovals);
+const CHAT_STATES_TABLE: string = getTableName(chatStates);
 
 function reply(value: IdentityStoragePersistedReply): void {
   acknowledgements.push(value);
@@ -404,7 +415,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     resetStorageDatabaseCache();
     expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
       .toThrow(
-        `${IDENTITY_DATABASE_PATH}:pending_blocked_removals: ` +
+        `${IDENTITY_DATABASE_PATH}:${PENDING_REMOVALS_TABLE}: ` +
         `expected at most ${BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES} rows.`
       );
   });
@@ -430,7 +441,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     closeStorageDatabase(database);
 
     expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}:pending_blocked_removals.data: ` +
+      `${IDENTITY_DATABASE_PATH}:${PENDING_REMOVALS_TABLE}.data: ` +
       "expected a BLOB column containing only strict SQLite JSONB."
     );
   });
@@ -571,13 +582,13 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     handleIdentityPolicyWrite(blocklistWrite(11, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     expect((): void => handleIdentityPolicyWrite(whitelistWrite(11, 2), reply))
-      .toThrow("Identity 11 cannot exist in both permission_list and blocklist_entries.");
+      .toThrow(`Identity 11 cannot exist in both ${PERMISSION_LIST_TABLE} and ${BLOCKLIST_ENTRIES_TABLE}.`);
 
     // 反方向同样要拒绝：只查一张表的实现能过上面那半，过不了这半。
     handleIdentityPolicyWrite(whitelistWrite(12, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     expect((): void => handleIdentityPolicyWrite(blocklistWrite(12, 2), reply))
-      .toThrow("Identity 12 cannot exist in both permission_list and blocklist_entries.");
+      .toThrow(`Identity 12 cannot exist in both ${PERMISSION_LIST_TABLE} and ${BLOCKLIST_ENTRIES_TABLE}.`);
 
     resetStorageDatabaseCache();
     const restored = hydrateStorageDatabase();
@@ -588,10 +599,10 @@ describe("DiskIO Worker SQLite 身份存储", () => {
   test("同一窗口里尚未提交的跨表写同样互斥，被拒的写不进入待提交视图", () => {
     handleIdentityPolicyWrite(whitelistWrite(5, 1), reply);
     expect((): void => handleIdentityPolicyWrite(blocklistWrite(5, 2), reply))
-      .toThrow("Identity 5 cannot exist in both permission_list and blocklist_entries.");
+      .toThrow(`Identity 5 cannot exist in both ${PERMISSION_LIST_TABLE} and ${BLOCKLIST_ENTRIES_TABLE}.`);
     handleIdentityPolicyWrite(blocklistWrite(6, 1), reply);
     expect((): void => handleIdentityPolicyWrite(whitelistWrite(6, 2), reply))
-      .toThrow("Identity 6 cannot exist in both permission_list and blocklist_entries.");
+      .toThrow(`Identity 6 cannot exist in both ${PERMISSION_LIST_TABLE} and ${BLOCKLIST_ENTRIES_TABLE}.`);
     expect([...pendingWhitelistWrites.keys()]).toEqual([5]);
     expect([...pendingBlocklistWrites.keys()]).toEqual([6]);
 
@@ -619,10 +630,10 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     });
     handleTemporaryAdBypassWrite(bypass(21, 1), reply);
     expect((): void => handleIdentityPolicyWrite(blocklistWrite(21, 1), reply))
-      .toThrow("Identity 21 cannot exist in blocklist_entries and temporary_ad_bypass_entries.");
+      .toThrow(`Identity 21 cannot exist in ${BLOCKLIST_ENTRIES_TABLE} and ${TEMPORARY_AD_BYPASS_TABLE}.`);
     handleIdentityPolicyWrite(blocklistWrite(22, 1), reply);
     expect((): void => handleTemporaryAdBypassWrite(bypass(22, 1), reply))
-      .toThrow("Identity 22 cannot exist in temporary_ad_bypass_entries and blocklist_entries.");
+      .toThrow(`Identity 22 cannot exist in ${TEMPORARY_AD_BYPASS_TABLE} and ${BLOCKLIST_ENTRIES_TABLE}.`);
     expect(pendingBlocklistWrites.has(21)).toBeFalse();
     expect(pendingTemporaryAdBypassWrites.has(22)).toBeFalse();
 
@@ -647,7 +658,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     const restored = hydrateStorageDatabase();
     expect(restored.chatStates).toHaveLength(STATE_MANAGED_CHAT_LIMIT);
     expect(() => handleChatStateWrite(chatStateWrite(-9_999, 1), reply))
-      .toThrow("must contain at most 25 chats");
+      .toThrow(`must contain at most ${STATE_MANAGED_CHAT_LIMIT} chats`);
 
     handleChatStateWrite({ aiPersona: null,
       type: "chatStateWrite",
@@ -721,7 +732,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     });
     closeStorageDatabase(database);
     expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
-      .toThrow(`chat_states must contain at most ${STATE_MANAGED_CHAT_LIMIT} chats`);
+      .toThrow(`${CHAT_STATES_TABLE} must contain at most ${STATE_MANAGED_CHAT_LIMIT} chats`);
 
     clearBusinessTables();
     const second: StorageDatabase = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
@@ -737,7 +748,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     });
     closeStorageDatabase(second);
     expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
-      .toThrow("chat_states must contain at most one active proxy send target");
+      .toThrow(`${CHAT_STATES_TABLE} must contain at most one active proxy send target`);
   });
 
   test("启动严格解码身份策略并拒绝跨表交集", () => {
@@ -761,6 +772,6 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     closeStorageDatabase(database);
 
     expect((): ReturnType<typeof hydrateStorageDatabase> => hydrateStorageDatabase())
-      .toThrow("permission_list/blocklist_entries[$.id]: expected disjoint primary keys");
+      .toThrow(`${PERMISSION_LIST_TABLE}/${BLOCKLIST_ENTRIES_TABLE}[$.id]: expected disjoint primary keys`);
   });
 });

@@ -4,6 +4,7 @@ import {
   SELF_SENT_RENDEZVOUS_TIMEOUT_MS,
 } from "../consts/telegram";
 import {
+  inFlightSelfSends,
   pendingSelfSentWaiters,
   sentMessages,
 } from "../cache/perThread/selfSentTracker";
@@ -19,6 +20,10 @@ import type { SelfSentWaiter } from "../types/telegram";
  *
  * 各线程持有独立实例。Worker 的发送请求由主线程 workerRequests.ts 执行，
  * 成功后在主线程登记 markSelfSent，再向 Worker 返回回执。
+ *
+ * 会登记自发消息的出站请求在发出前 `beginSelfSentSend`、结算后 `endSelfSentSend`，
+ * 两者成对。频道回投只在目标 chat 确有在途发送时才进入 rendezvous：没有在途发送时，
+ * 机器人自己的帖子必然已经登记，未登记即判为外部消息。
  * @see ../../docs/cn/04-invariants.md
  *
  * **isBotOwnMessage 是每条群消息都要走的判定，且一条消息会走多次**：
@@ -48,6 +53,20 @@ function settleSelfSentWaiters(chatId: number, messageId: number): void {
   for (const waiter of waiters) {
     clearTimeout(waiter.timer);
     waiter.resolve(true);
+  }
+}
+
+/** 该 chat 的在途发送全部结算后，仍未等到登记的 waiter 一律判为外部消息。 */
+function settleUnmatchedSelfSentWaiters(chatId: number): void {
+  const byMessage: Map<number, Set<SelfSentWaiter>> | undefined =
+    pendingSelfSentWaiters.get(chatId);
+  if (byMessage === undefined) return;
+  pendingSelfSentWaiters.delete(chatId);
+  for (const waiters of byMessage.values()) {
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(false);
+    }
   }
 }
 
@@ -99,6 +118,26 @@ export function markSelfSent(chatId: number, messageId: number): void {
   settleSelfSentWaiters(chatId, messageId);
 }
 
+/** 一次会登记自发消息的出站请求即将发往 chatId；必须与 endSelfSentSend 成对。 */
+export function beginSelfSentSend(chatId: number): void {
+  inFlightSelfSends.set(chatId, (inFlightSelfSends.get(chatId) ?? 0) + 1);
+}
+
+/**
+ * 结算一次 beginSelfSentSend。成功时必须在 `markSelfSent` 之后的同一同步段调用；
+ * 该 chat 最后一次在途发送结算时，仍在等待的频道回投以 false 放行。
+ */
+export function endSelfSentSend(chatId: number): void {
+  const count: number | undefined = inFlightSelfSends.get(chatId);
+  if (count === undefined) return;
+  if (count > 1) {
+    inFlightSelfSends.set(chatId, count - 1);
+    return;
+  }
+  inFlightSelfSends.delete(chatId);
+  settleUnmatchedSelfSentWaiters(chatId);
+}
+
 /** 某条消息是否是机器人自己刚发出的。 */
 export function isSelfSent(chatId: number, messageId: number): boolean {
   // 本线程一条都没发过时连内层表都不必取；活跃线程则只多付一次整数键查找。
@@ -120,8 +159,9 @@ export function isBotOwnMessage(message: Message): boolean {
 }
 
 /**
- * 跨线程发送专用门禁：标记已到则立即返回；可能回投的频道消息最多等待一个
- * 有界窗口，期间 `markSelfSent` 会立即唤醒。普通群/私聊不创建 timer。
+ * 跨线程发送专用门禁：标记已到则立即返回；可能回投的频道消息只在目标 chat 有
+ * 在途发送时等待，最多一个有界窗口：`markSelfSent` 立即以 true 唤醒，该 chat 的
+ * 在途发送全部结算时以 false 唤醒。普通群/私聊与无在途发送的频道不创建 timer。
  */
 export function waitForBotOwnMessage(
   message: Message,
@@ -144,6 +184,7 @@ export function waitForBotOwnMessage(
     chatId = origin.chat.id;
     messageId = origin.message_id;
   }
+  if (!inFlightSelfSends.has(chatId)) return Promise.resolve(false);
   return new Promise((resolve: (matched: boolean) => void): void => {
     let byMessage: Map<number, Set<SelfSentWaiter>> | undefined =
       pendingSelfSentWaiters.get(chatId);
@@ -165,7 +206,5 @@ export function waitForBotOwnMessage(
     };
     waiter.timer.unref();
     waiters.add(waiter);
-    // 防御未来调用点在登记期间同步触发标记；即使时序改变也不丢唤醒。
-    if (isSelfSent(chatId, messageId)) settleSelfSentWaiters(chatId, messageId);
   });
 }

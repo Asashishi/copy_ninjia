@@ -4,8 +4,6 @@ export interface ColdMigrationEdge {
   readonly invocation: string;
   readonly entryPath: string;
   readonly bundledPath: string;
-  /** 本次直接迁移的状态范围，仅用于让声明可读可核对。 */
-  readonly scope: string;
 }
 
 /**
@@ -26,11 +24,9 @@ export const ACTIVE_COLD_MIGRATION_EDGES: readonly ColdMigrationEdge[] = [{
   invocation: "bun scripts/migrateRandomImageNames.ts",
   entryPath: "scripts/migrateRandomImageNames.ts",
   bundledPath: "scripts/migrations/migrateRandomImageNames.js",
-  scope: "random image library: uuidv7 file names → content SHA-256 file names",
 }, {
   command: "migrate:global-state",
   invocation: "bun scripts/migrateGlobalState.ts",
   entryPath: "scripts/migrateGlobalState.ts",
   bundledPath: "scripts/migrations/migrateGlobalState.js",
-  scope: "memory/global/state.json: total TTS count → agentCount and reserveCount",
 }];

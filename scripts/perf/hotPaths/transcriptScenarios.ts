@@ -1,8 +1,9 @@
 /**
  * AI 回复链路上的四条场景：逐字缓存条目构造、整段转录渲染、回复引用解析与提及判定。
  *
- * 与 scenarios.ts 分开：四条共用同一批 AI 记录夹具（RECORD_SOURCES/RECORD_TEXTS），
- * 而它们量的都是 aiChat 那一侧的读写形状，与容器/时间窗那批叶子场景无关。
+ * 与 scenarios.ts 分开：逐字缓存条目构造与整段转录渲染共用同一批 AI 记录夹具
+ * （RECORD_SOURCES/RECORD_TEXTS），四条量的都是 aiChat 那一侧的读写形状，与
+ * 容器/时间窗那批叶子场景无关。
  */
 
 import type { Message } from "grammy/types";
@@ -18,12 +19,7 @@ import { buildBufferedMessage } from "../../../packages/workers/aiChat/bufferedM
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
 import type { Scenario } from "./types";
 
-/**
- * 一条 AI 记录进入逐字缓存时的构造成本（workers/aiChat/bufferedMessage.ts）。
- *
- * 输入刻意混合四种「可选字段有没有」的组合：生产上正是这种混合让条件展开写法
- * 分裂出多个隐藏类。定形之后本场景量的是同一份工作在单一形状下的成本。
- */
+/** AI 记录输入表：混合「可选字段有没有」的四种组合（有无 username、forwardedFrom、replyTo），由 buffered-message-build 与 transcript-render 轮换取用。 */
 const RECORD_SOURCES: readonly AiRecordContext[] = [
   {
     chatId: BENCHMARK_CHAT_ID, senderId: 101, firstName: "Alice", lastName: "Chen",
@@ -55,6 +51,7 @@ const RECORD_TEXTS: readonly string[] = [
   "今天天气不错", "在吗 有人吗", "哈哈哈哈哈", "这个功能怎么用",
 ];
 
+/** 一条 AI 记录进入逐字缓存时的构造成本（workers/aiChat/bufferedMessage.ts）；输入轮换 RECORD_SOURCES 的四种组合。 */
 export function bufferedMessageBuildScenario(): Scenario {
   return {
     iterations: 500_000,
@@ -76,8 +73,9 @@ export function bufferedMessageBuildScenario(): Scenario {
 }
 
 /**
- * 一次 AI 回复要付的转录渲染：把整条热区（上限 COMPACT_BATCH_SIZE 档，这里取
- * 生产同量级的 150 条）逐行拼成提示词。
+ * 一次 AI 回复要付的转录渲染：把逐字缓存（生产上限 VERBATIM_CONTEXT_MAX，这里取
+ * 生产同量级的 150 条，含最新 COMPACT_BATCH_SIZE 条的最热分层与其之前的较早分层）
+ * 逐行拼成提示词。
  *
  * 这是 BufferedMessage 形状是否稳定的**读取侧**。缓存在场景构造时建好，采样
  * 只量渲染，不把构造成本混进来。

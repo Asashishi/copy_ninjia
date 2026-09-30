@@ -69,7 +69,6 @@ describe("StateStore", () => {
     const store = new StateStore();
     expect(() => store.flush(0)).toThrow("positive finite");
     expect(() => store.flush(Number.NaN)).toThrow("positive finite");
-    store.dispose();
   });
 
   test("注入 IO 后独立验证 schema 序列化与 latest-only 写入", async () => {
@@ -97,7 +96,6 @@ describe("StateStore", () => {
       "/virtual/state.json",
     ]);
     expect(JSON.parse(writes[1]!.content)).toEqual(schema(3));
-    store.dispose();
   });
 
   test("失败快照由退避计时器重试，成功后不依赖模块级全局状态", async () => {
@@ -120,7 +118,6 @@ describe("StateStore", () => {
     await expect(saved).resolves.toBeUndefined();
     expect(attempts).toBe(2);
     await store.flush(1_000);
-    store.dispose();
   });
 
   test("后台快照只排队重试，不为永久磁盘故障保留逐次持久化等待者", async () => {
@@ -139,7 +136,6 @@ describe("StateStore", () => {
     await waitUntil((): boolean => attempts > 1);
     expect(attempts).toBeGreaterThan(1);
     await expect(store.flush(20, true)).resolves.toBe("failed");
-    store.dispose();
   });
 
   test("后台写在合并窗口到期前不落盘，到期只写出窗口内的最新值", async () => {
@@ -159,7 +155,6 @@ describe("StateStore", () => {
     await waitUntil((): boolean => writes.length > 0);
     await Bun.sleep(30);
     expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(51)]);
-    store.dispose();
   });
 
   test("等待落盘的写入立即写出并取消后台窗口，窗口内的旧值不再单独落盘", async () => {
@@ -177,7 +172,6 @@ describe("StateStore", () => {
 
     await Bun.sleep(40);
     expect(writes).toHaveLength(1);
-    store.dispose();
   });
 
   test("失败重试排期期间后台窗口不另写，由重试按退避写出最新值", async () => {
@@ -204,7 +198,6 @@ describe("StateStore", () => {
     await waitUntil((): boolean => writes.length === 1);
     expect(attempts).toBe(2);
     expect(JSON.parse(writes[0]!)).toEqual(schema(81));
-    store.dispose();
   });
 
   test("flush 立即写出后台窗口内的最新值", async () => {
@@ -219,7 +212,26 @@ describe("StateStore", () => {
     await store.save(schema(70), { waitForPersistence: false });
     await expect(store.flush(1_000, true)).resolves.toBe("flushed");
     expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(70)]);
-    store.dispose();
+  });
+
+  test("写入进行中调用 flush 只等这次写入结算，不把同一 revision 再写一遍", async () => {
+    const writes: string[] = [];
+    const release: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const store = new StateStore({
+      writeText: async (_path, content) => {
+        writes.push(content);
+        await release.promise;
+      },
+    });
+
+    const saved: Promise<void> = store.save(schema(71));
+    await waitUntil((): boolean => writes.length === 1);
+    const flushed: Promise<unknown> = store.flush(1_000);
+    release.resolve();
+
+    await saved;
+    await expect(flushed).resolves.toBe("flushed");
+    expect(writes).toHaveLength(1);
   });
 
   test("权威写入用尽有限重试后 reject 等待者并只触发一次 fatal", async () => {
@@ -241,7 +253,6 @@ describe("StateStore", () => {
     expect(fatalErrors).toHaveLength(1);
     await expect(store.save(schema(42))).rejects.toThrow("quiescing");
     expect(fatalErrors).toHaveLength(1);
-    store.dispose();
   });
 
   test("load 通过当前严格 codec 解码，不存在文件返回 null", async () => {
@@ -251,8 +262,6 @@ describe("StateStore", () => {
     const expected = schema(5);
     const existing = new StateStore({ readText: async () => JSON.stringify(expected) });
     await expect(existing.load()).resolves.toEqual(expected);
-    missing.dispose();
-    existing.dispose();
   });
 
   test("文件写坏时拒绝启动，不隔离、不覆盖现场", async () => {
@@ -265,7 +274,6 @@ describe("StateStore", () => {
 
     await expect(store.load()).rejects.toThrow("/virtual/state.json: $ must be valid JSON.");
     expect(writes).toEqual([]);
-    store.dispose();
   });
 
   test("手改错的字段拒绝启动，诊断点名字段且不回显原值", async () => {
@@ -284,7 +292,6 @@ describe("StateStore", () => {
     );
     expect(failure?.message).toBe("/virtual/state.json: $.ttsUsage.agentCount must be a non-negative safe integer.");
     expect(failure?.message).not.toContain("-7");
-    store.dispose();
   });
 
   test("保存前拒绝严格 codec 无法重新加载的快照，不写入", async () => {
@@ -296,7 +303,6 @@ describe("StateStore", () => {
 
     await expect(store.save(invalid)).rejects.toThrow("unknownField");
     expect(paths).toEqual([]);
-    store.dispose();
   });
 
   test("默认写入边界在状态目录缺失时建出目录，并原子写入可重新加载的内容", async () => {
@@ -310,7 +316,6 @@ describe("StateStore", () => {
       expect(decodeGlobalStateFile(await Bun.file(statePath).json(), statePath)).toEqual(schema(59));
       expect(readdirSync(join(dir, "memory", "global"))).toEqual(["state.json"]);
     } finally {
-      store.dispose();
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -319,11 +324,10 @@ describe("StateStore", () => {
     const store = new StateStore({
       writeText: async () => await new Promise<void>(() => {}),
     });
-    const save = store.save(schema(6)).catch(() => undefined);
+    // writer 永不结算，这次 save 也就永不结算；用例只看 flush 的预算结论。
+    void store.save(schema(6)).catch(() => undefined);
 
     await expect(store.flush(1)).resolves.toBe("timedOut");
-    store.dispose();
-    await save;
   });
 
   test("退出 quiesce 后失败 writer 不会重新安排后台重试", async () => {
@@ -343,7 +347,6 @@ describe("StateStore", () => {
 
     expect(attemptsAfterFlush).toBeGreaterThan(0);
     expect(attempts).toBe(attemptsAfterFlush);
-    store.dispose();
     await save;
   });
 });
@@ -402,13 +405,9 @@ describe("StateStore 默认读取边界", () => {
       await Bun.write(statePath, bad);
       const store = storeAt();
 
-      try {
-        await expect(store.load()).rejects.toThrow(`${statePath}: $ must be a regular file readable as strictly valid UTF-8 text.`);
-        expect(writes).toEqual([]);
-        expect(Array.from(await Bun.file(statePath).bytes())).toEqual(Array.from(bad));
-      } finally {
-        store.dispose();
-      }
+      await expect(store.load()).rejects.toThrow(`${statePath}: $ must be a regular file readable as strictly valid UTF-8 text.`);
+      expect(writes).toEqual([]);
+      expect(Array.from(await Bun.file(statePath).bytes())).toEqual(Array.from(bad));
     });
   }
 
@@ -423,13 +422,9 @@ describe("StateStore 默认读取边界", () => {
       if (kind === "danglingLink") symlinkSync(join(dir, "absent-target"), statePath);
       const store = storeAt();
 
-      try {
-        await expect(store.load()).rejects.toThrow(`${statePath}: $ must be`);
-        expect(writes).toEqual([]);
-        expect(lstatSync(statePath).isSymbolicLink() || lstatSync(statePath).isDirectory()).toBeTrue();
-      } finally {
-        store.dispose();
-      }
+      await expect(store.load()).rejects.toThrow(`${statePath}: $ must be`);
+      expect(writes).toEqual([]);
+      expect(lstatSync(statePath).isSymbolicLink() || lstatSync(statePath).isDirectory()).toBeTrue();
     });
   }
 
@@ -444,7 +439,6 @@ describe("StateStore 默认读取边界", () => {
       expect(writes).toEqual([]);
     } finally {
       restore();
-      store.dispose();
     }
   });
 
@@ -460,30 +454,21 @@ describe("StateStore 默认读取边界", () => {
       expect(writes).toEqual([]);
     } finally {
       restore();
-      store.dispose();
     }
   });
 
   test("文件缺失时返回 null，不写盘", async () => {
     const store = storeAt();
-    try {
-      await expect(store.load()).resolves.toBeNull();
-      expect(writes).toEqual([]);
-    } finally {
-      store.dispose();
-    }
+    await expect(store.load()).resolves.toBeNull();
+    expect(writes).toEqual([]);
   });
 
   test("中文与 emoji 正常加载", async () => {
     await Bun.write(statePath, '{"copy":{"copiedUser":{"id":7,"first_name":"忍者🥷"},"copyChatId":-9}}');
     const store = storeAt();
-    try {
-      const loaded: DecodedGlobalState | null = await store.load();
-      expect(loaded?.copy.copiedUser?.first_name).toBe("忍者🥷");
-      expect(writes).toEqual([]);
-    } finally {
-      store.dispose();
-    }
+    const loaded: DecodedGlobalState | null = await store.load();
+    expect(loaded?.copy.copiedUser?.first_name).toBe("忍者🥷");
+    expect(writes).toEqual([]);
   });
 
   test("指向普通文件的软链接继续接受", async () => {
@@ -491,23 +476,15 @@ describe("StateStore 默认读取边界", () => {
     await Bun.write(target, legal);
     symlinkSync(target, statePath);
     const store = storeAt();
-    try {
-      await expect(store.load()).resolves.toEqual(decodeGlobalStateFile(JSON.parse(legal), "state.json"));
-      expect(writes).toEqual([]);
-    } finally {
-      store.dispose();
-    }
+    await expect(store.load()).resolves.toEqual(decodeGlobalStateFile(JSON.parse(legal), "state.json"));
+    expect(writes).toEqual([]);
   });
 
   test("UTF-8 BOM 被剥离后正常解析", async () => {
     await Bun.write(statePath, new TextEncoder().encode(`\uFEFF${legal}`));
     const store = storeAt();
-    try {
-      await expect(store.load()).resolves.toEqual(decodeGlobalStateFile(JSON.parse(legal), "state.json"));
-      expect(writes).toEqual([]);
-    } finally {
-      store.dispose();
-    }
+    await expect(store.load()).resolves.toEqual(decodeGlobalStateFile(JSON.parse(legal), "state.json"));
+    expect(writes).toEqual([]);
   });
 });
 
@@ -601,13 +578,13 @@ describe("全局状态的加载接线", () => {
     dir = mkdtempSync(join(tmpdir(), "state-load-test-"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     globalCopyState.copiedUser = null;
     globalCopyState.copyMode = undefined;
     globalCopyState.copyChatId = undefined;
     globalCopyState.lastCopyTime = undefined;
     chatStateCache.clear();
-    stateStoreHolder.current?.dispose();
+    await stateStoreHolder.current?.flush(1_000, true);
     stateStoreHolder.current = null;
     rmSync(dir, { recursive: true, force: true });
   });

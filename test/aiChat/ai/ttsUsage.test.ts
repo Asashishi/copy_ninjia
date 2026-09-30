@@ -9,8 +9,14 @@ import type { TtsDailyUsage, TtsQuotaScope } from "../../../packages/types/aiCha
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
 Object.defineProperty(globalThis, "self", { configurable: true, value: { postMessage } });
-const { aiTtsRemaining, claimTtsUsage, hydrateTtsUsage } = await import("../../../packages/aiChat/ai/ttsUsage");
-const { ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
+const {
+  aiTtsRemaining,
+  claimOperatorTtsUsage,
+  hydrateTtsUsage,
+  reserveAiTtsUsage,
+  settleAiTtsReservation,
+} = await import("../../../packages/aiChat/ai/ttsUsage");
+const { pendingAiTtsReservations, ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
 
 const NOW: number = 1_800_000_000_000;
 const FULL_LIMIT: number = 100;
@@ -30,8 +36,20 @@ function adoptTts(tts: AgentTtsCapabilityConfig | undefined): void {
 beforeEach(() => {
   postMessage.mockClear();
   ttsDailyUsage.current = null;
+  pendingAiTtsReservations.current = 0;
   adoptTts(ttsConfig(FULL_LIMIT, RESERVE_LIMIT));
 });
+
+/**
+ * 按口径登记一次成功的合成：`operator` 走门面的 claimOperatorTtsUsage；`ai` 走语音工具的
+ * 「准入预留 → TTS 成功结清」两步。
+ */
+function claim(scope: TtsQuotaScope, dailyLimit: number, now: number): boolean {
+  if (scope === "operator") return claimOperatorTtsUsage(dailyLimit, now);
+  if (!reserveAiTtsUsage(dailyLimit, now)) return false;
+  settleAiTtsReservation(true, now);
+  return true;
+}
 
 afterAll(() => {
   adoptAgentDeploymentConfig(null);
@@ -39,14 +57,14 @@ afterAll(() => {
   else Object.defineProperty(globalThis, "self", originalSelfDescriptor);
 });
 
-describe("claimTtsUsage", () => {
+describe("两个口径的登记", () => {
   test.each(["ai", "operator"] as const)("%s 先使用时，另一入口首次使用保留原窗口与计数", (first: TtsQuotaScope) => {
     const second: TtsQuotaScope = first === "ai" ? "operator" : "ai";
     const tts: AgentTtsCapabilityConfig = ttsConfig(FULL_LIMIT, RESERVE_LIMIT);
-    expect(claimTtsUsage(first, ttsQuotaLimit(tts, first), NOW)).toBeTrue();
+    expect(claim(first, ttsQuotaLimit(tts, first), NOW)).toBeTrue();
     const initial: TtsDailyUsage | null = ttsDailyUsage.current;
     expect(initial).toEqual({ windowStartedAt: NOW, agentCount: first === "ai" ? 1 : 0, reserveCount: first === "operator" ? 1 : 0 });
-    expect(claimTtsUsage(second, ttsQuotaLimit(tts, second), NOW + 5_000)).toBeTrue();
+    expect(claim(second, ttsQuotaLimit(tts, second), NOW + 5_000)).toBeTrue();
     expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 1, reserveCount: 1 });
     expect(initial).not.toBe(ttsDailyUsage.current);
     expect(postMessage.mock.calls).toEqual([
@@ -60,10 +78,10 @@ describe("claimTtsUsage", () => {
     const tts: AgentTtsCapabilityConfig = ttsConfig(FULL_LIMIT, RESERVE_LIMIT);
     for (const scope of scopes) {
       const limit: number = ttsQuotaLimit(tts, scope);
-      for (let index: number = 0; index < limit; index++) expect(claimTtsUsage(scope, limit, NOW + index)).toBeTrue();
+      for (let index: number = 0; index < limit; index++) expect(claim(scope, limit, NOW + index)).toBeTrue();
       const before: TtsDailyUsage | null = ttsDailyUsage.current;
       const events: number = postMessage.mock.calls.length;
-      expect(claimTtsUsage(scope, limit, NOW + FULL_LIMIT)).toBeFalse();
+      expect(claim(scope, limit, NOW + FULL_LIMIT)).toBeFalse();
       expect(ttsDailyUsage.current).toBe(before);
       expect(postMessage).toHaveBeenCalledTimes(events);
     }
@@ -74,9 +92,9 @@ describe("claimTtsUsage", () => {
   test.each(["ai", "operator"] as const)("满 24 小时后由 %s 开新窗口，两边同时重置", (scope: TtsQuotaScope) => {
     hydrateTtsUsage({ windowStartedAt: NOW, agentCount: AI_LIMIT, reserveCount: RESERVE_LIMIT });
     const limit: number = scope === "ai" ? AI_LIMIT : RESERVE_LIMIT;
-    expect(claimTtsUsage(scope, limit, NOW + TTS_USAGE_WINDOW_MS - 1)).toBeFalse();
+    expect(claim(scope, limit, NOW + TTS_USAGE_WINDOW_MS - 1)).toBeFalse();
     expect(aiTtsRemaining(NOW + TTS_USAGE_WINDOW_MS)).toBe(AI_LIMIT);
-    expect(claimTtsUsage(scope, limit, NOW + TTS_USAGE_WINDOW_MS)).toBeTrue();
+    expect(claim(scope, limit, NOW + TTS_USAGE_WINDOW_MS)).toBeTrue();
     expect(ttsDailyUsage.current).toEqual({
       windowStartedAt: NOW + TTS_USAGE_WINDOW_MS,
       agentCount: scope === "ai" ? 1 : 0,
@@ -86,7 +104,7 @@ describe("claimTtsUsage", () => {
 
   test("预留为零时拒绝 operator，不占 AI 次数、不创建窗口或回执", () => {
     adoptTts(ttsConfig(FULL_LIMIT, 0));
-    expect(claimTtsUsage("operator", 0, NOW)).toBeFalse();
+    expect(claim("operator", 0, NOW)).toBeFalse();
     expect(ttsDailyUsage.current).toBeNull();
     expect(postMessage).not.toHaveBeenCalled();
     expect(aiTtsRemaining(NOW)).toBe(FULL_LIMIT);
@@ -94,9 +112,52 @@ describe("claimTtsUsage", () => {
 
   test("恢复后的两项计数继续累加，配置调低只阻止对应入口", () => {
     hydrateTtsUsage({ windowStartedAt: NOW, agentCount: 7, reserveCount: 3 });
-    expect(claimTtsUsage("ai", 8, NOW + 1)).toBeTrue();
-    expect(claimTtsUsage("operator", 2, NOW + 1)).toBeFalse();
+    expect(claim("ai", 8, NOW + 1)).toBeTrue();
+    expect(claim("operator", 2, NOW + 1)).toBeFalse();
     expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 8, reserveCount: 3 });
+  });
+});
+
+describe("reserveAiTtsUsage / settleAiTtsReservation", () => {
+  test("准入只占预留、不改计数也不回传；TTS 成功时登记并回传，失败时只释放", () => {
+    hydrateTtsUsage({ windowStartedAt: NOW, agentCount: 3, reserveCount: 1 });
+    expect(reserveAiTtsUsage(AI_LIMIT, NOW + 1)).toBeTrue();
+    expect(reserveAiTtsUsage(AI_LIMIT, NOW + 1)).toBeTrue();
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 3, reserveCount: 1 });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(aiTtsRemaining(NOW + 1)).toBe(AI_LIMIT - 5);
+
+    settleAiTtsReservation(true, NOW + 2);
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 4, reserveCount: 1 });
+    expect(postMessage.mock.calls).toEqual([[{ type: "ttsUsage", usage: ttsDailyUsage.current }]]);
+    settleAiTtsReservation(false, NOW + 3);
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 4, reserveCount: 1 });
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(pendingAiTtsReservations.current).toBe(0);
+    expect(aiTtsRemaining(NOW + 3)).toBe(AI_LIMIT - 4);
+  });
+
+  test("已登记加在途预留达到上限时拒绝；释放一次预留后又能准入", () => {
+    hydrateTtsUsage({ windowStartedAt: NOW, agentCount: AI_LIMIT - 1, reserveCount: 0 });
+    expect(reserveAiTtsUsage(AI_LIMIT, NOW + 1)).toBeTrue();
+    expect(reserveAiTtsUsage(AI_LIMIT, NOW + 1)).toBeFalse();
+    expect(aiTtsRemaining(NOW + 1)).toBe(0);
+    settleAiTtsReservation(false, NOW + 2);
+    expect(reserveAiTtsUsage(AI_LIMIT, NOW + 2)).toBeTrue();
+    expect(pendingAiTtsReservations.current).toBe(1);
+  });
+
+  test("预留跨过窗口时，TTS 成功按登记时刻开新窗口", () => {
+    hydrateTtsUsage({ windowStartedAt: NOW, agentCount: AI_LIMIT - 1, reserveCount: RESERVE_LIMIT });
+    expect(reserveAiTtsUsage(AI_LIMIT, NOW + TTS_USAGE_WINDOW_MS - 1)).toBeTrue();
+    settleAiTtsReservation(true, NOW + TTS_USAGE_WINDOW_MS);
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW + TTS_USAGE_WINDOW_MS, agentCount: 1, reserveCount: 0 });
+  });
+
+  test("operator 口径不看 AI 预留", () => {
+    expect(reserveAiTtsUsage(1, NOW)).toBeTrue();
+    expect(claim("operator", RESERVE_LIMIT, NOW)).toBeTrue();
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 0, reserveCount: 1 });
   });
 });
 
@@ -125,7 +186,7 @@ describe("aiTtsRemaining", () => {
     hydrateTtsUsage({ windowStartedAt: NOW, agentCount: AI_LIMIT, reserveCount: RESERVE_LIMIT });
     expect(aiTtsRemaining(NOW)).toBe(0);
     expect(aiTtsRemaining(NOW - 1)).toBe(AI_LIMIT);
-    expect(claimTtsUsage("ai", AI_LIMIT, NOW - 1)).toBeTrue();
+    expect(claim("ai", AI_LIMIT, NOW - 1)).toBeTrue();
     expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW - 1, agentCount: 1, reserveCount: 0 });
   });
 

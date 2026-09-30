@@ -82,7 +82,7 @@
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
     `businessWorkerPort.ts`（2 つの業務 Worker が共用するスレッド端口：Telegram 代理、duplex 出口、受信ルーティング）、
     `aiChat/`、`antiRaid/verificationEffects/`、`diskIO/storageDatabase.ts` と `diskIO/storageDatabase/`、`diskIO/verification{Codec,Recovery,Writes}.ts`。
-- **`packages/aiChat/ai/` / `packages/antiRaid/ai/`**
+- **`packages/aiChat/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
   - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（音声合成の共通実装）、`ttsUsage.ts`（音声合成の 1 日あたりの回数）。AI chat の
@@ -92,12 +92,12 @@
     メッセージ束の整形、判定、命中時の処分を含む。
   - **代表的なファイル**：`queue.ts`（入口と tick）、`queueState.ts`（受理判定）、
     `verdict.ts`（判定と処分のオーケストレーション）、`bundle.ts`、`classifier.ts`、`disposal.ts`、
-    `config.ts`（main thread から届く設定 snapshot の取り込み）。
+    `config.ts`（main thread から届く設定 snapshot の取り込み）、`ai/`（`provider.ts` が `ad_detect.provider` に応じて `google.ts` か `openai.ts` の transport を選ぶ）。
 - **`packages/infra/`**
   - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
     logger、メインスレッド側 I/O proxy。
   - **代表的なファイル**：`telegram/`（`telegram/avatar/`、`telegram/actions/` を含む）、`diskIO.ts` と `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、
-    `supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker のモデル client がリクエストのキャッシュ使用量を報告する境界）、`geminiContextCache.ts`（Gemini 明示キャッシュの共有コア。返信と広告検出がそれぞれの scope を渡す）、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）。
+    `supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker のモデル client がリクエストのキャッシュ使用量を報告する境界）、`geminiContextCache.ts`（Gemini 明示キャッシュの共有コア。返信と広告検出がそれぞれの scope を渡す）、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）、`commandExecutor.ts`（`/wed` と遅延コマンドが共用する実行器の実行状態作成とタスク投入）。
 - **`packages/infra/identityPolicy/`**
   - **責務**：ホワイトリストの項目別権限、一時広告免除の累計、ブラックリストとの排他制御を担うメインスレッド側の読み取り境界。
   - **代表的なファイル**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。

@@ -21,7 +21,7 @@ export function clearChatMoodCache(chatId: number): void {
   chatMoodExpiresAts.delete(chatId);
 }
 
-/** Worker dispose 或测试隔离时清空全部群心情状态。 */
+/** 测试隔离时清空全部群心情状态。 */
 export function resetAiChatMoodCache(): void {
   chatMoods.clear();
   chatMoodExpiresAts.clear();

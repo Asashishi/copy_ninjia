@@ -11,3 +11,14 @@ import type { TtsDailyUsage } from "../../../types/aiChat/voiceMessage";
  * 两项一起重置，并换成以本次请求为起点的新窗口。容量恒为一个对象。
  */
 export const ttsDailyUsage: { current: TtsDailyUsage | null } = { current: null };
+
+/**
+ * AI 语音工具已准入、TTS 调用还没结束的 `ai` 口径预留数（见 aiChat/ai/ttsUsage.ts 的
+ * reserveAiTtsUsage）。它计入模型可见余量与准入判定，不进 agentCount、不落盘。
+ *
+ * 填充：send_voice 准入通过时加一。清理：同一次 TTS 调用结束时减一——成功时同时登记
+ * agentCount，失败、取消或意外异常时只释放（settleAiTtsReservation）。
+ * Worker 崩溃重建：新 isolate 从 0 起步，旧 isolate 里在途的合成随之终止，不需要重放。
+ * 容量：不超过同时在途的 send_voice 合成数（每轮回复至多 MAX_VOICES_PER_REPLY 条）。
+ */
+export const pendingAiTtsReservations: { current: number } = { current: 0 };

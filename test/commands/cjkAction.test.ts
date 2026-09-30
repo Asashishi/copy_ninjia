@@ -18,7 +18,7 @@ const {
   CJK_ACTION_RATE_LIMIT_WINDOW_MS,
 } = await import("../../packages/consts/commands");
 const { recentActionCallTimestamps } = await import("../../packages/cache/main/cjkAction");
-const { markSelfSent } = await import("../../packages/infra/selfSentTracker");
+const { beginSelfSentSend, endSelfSentSend, markSelfSent } = await import("../../packages/infra/selfSentTracker");
 const {
   resetSelfSentTracker,
 } = await import("../../packages/cache/perThread/selfSentTracker");
@@ -298,12 +298,15 @@ describe("动作命令的认领边界", () => {
   test("频道动作 update 先到时等待 sent 标记，不会抢在普通消息门禁前自问自答", async () => {
     const ctx: any = context("/咬");
     ctx.msg.chat = { id: -1001, type: "channel", title: "Channel" };
+    // 机器人向该频道的发帖仍在途：回投先到，登记随响应落地后才到。
+    beginSelfSentSend(-1001);
 
     const handling: Promise<void> = handleCjkActionCommand(ctx, next);
     await Promise.resolve();
     expect(resolveCommandTarget).not.toHaveBeenCalled();
 
     markSelfSent(-1001, 10);
+    endSelfSentSend(-1001);
     await handling;
 
     expect(nextCalls).toBe(1);

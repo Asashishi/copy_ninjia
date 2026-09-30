@@ -130,12 +130,11 @@ function ensureMemoryCapacity(excludeChatId: number): void {
   }
 }
 
-/** 把某群当前的滚动缓存 + 中期摘要 + 待晋升摘要序列化成一份可落盘的快照
- *  JSON 文本。stringify 只在这里做一次：此后「Worker -> 主线程 ->
- *  diskIOWorker」两跳 postMessage 克隆的都是字符串（近乎 memcpy，对象图
- *  则要走两次深克隆），落盘端原样写文件、不再重复序列化（见
- *  types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot）。缩进固定 2 空格，与磁盘
- *  文件历史格式逐字节一致。 */
+/** 把某群当前的滚动缓存 + 中期摘要 + 待晋升摘要序列化成一份紧凑的快照 JSON 文本。
+ *  stringify 只在这里做一次：此后「Worker -> 主线程 -> diskIOWorker」两跳
+ *  postMessage 克隆的都是字符串（近乎 memcpy，对象图则要走两次深克隆），落盘端
+ *  校验后写入 `chat_states.ai_context`，不再重复序列化（见 types/aiChat/protocol.ts
+ *  的 AiMemoryEvent.snapshot）。 */
 function buildMemorySnapshot(chatId: number): string {
   const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
   const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
@@ -146,7 +145,7 @@ function buildMemorySnapshot(chatId: number): string {
     pendingSummary: pendingSummaries.get(chatId) ?? null,
     savedAt: Date.now(),
   };
-  return JSON.stringify(snapshot, null, 2);
+  return JSON.stringify(snapshot);
 }
 
 /**
@@ -195,15 +194,15 @@ export function flushDirtyMemories(): void {
  * 数据的群生效——重启后本来就全空，天然成立，不会覆盖掉刚收到的新消息。
  *
  * buffer 只恢复最新 AI_MEMORY_HYDRATE_BUFFER_MAX（= VERBATIM_CONTEXT_MAX - 1）
- * 条：recordChatMessage 靠严格等值 `size === VERBATIM_CONTEXT_MAX` 触发轮换，
+ * 条：pushBufferedMessage 靠严格等值 `size === VERBATIM_CONTEXT_MAX` 触发轮换，
  * 若恰好灌回整 VERBATIM_CONTEXT_MAX 条，下一次 push 会先撞上 deque 的领域硬
  * 上限，也没有机会执行轮换。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size 已达到
  * 该值的群不再触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块
  * 摘要粒度略有漂移，可接受，不为此复刻轮换状态机。
  *
  * chatLastActivityTimes 以快照的 savedAt 近似播种，让恢复出来的群在 LRU
- * 淘汰排序里保持合理的新旧顺序；心情不落盘也不在这里播种，下次拼系统
- * 提示词时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
+ * 淘汰排序里保持合理的新旧顺序；心情不落盘也不在这里播种，下次拼运行时
+ * 状态区块时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
  *
  * 恢复完成后一次性回传各群占用量（memoryUsages 事件），播种主线程展示用的
  * 只读镜像（见 cache/main/aiChat.ts 的 aiMemoryUsages）。

@@ -1,11 +1,10 @@
-import { CANDIDATE_OWNER_PID_PATTERN, PROCESS_IDENTITY_PATTERN } from "../../consts/storage";
+import { CANDIDATE_OWNER_PID_PATTERN } from "../../consts/storage";
 import { readdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { GLOBAL_STATE_FILE_PATH, LOCK_FILE_PATH, TMP_FILE_SUFFIX } from "../../consts/paths";
 import { isErrno } from "../../libs/errno";
 import { logger } from "../logger";
-import { readLinuxProcessIdentity } from "./instanceLock";
-import type { ProcessIdentity } from "../../types/storage";
+import { isRecordedLockOwnerInactive, readLinuxProcessIdentity } from "./instanceLock";
 
 export interface StorageCleanupOptions {
   stateFilePath?: string;
@@ -32,25 +31,14 @@ async function hasDeadCandidateFilenameOwner(path: string): Promise<boolean> {
 
 async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
   const content: string = await Bun.file(path).text();
-  const match: RegExpExecArray | null = PROCESS_IDENTITY_PATTERN.exec(content);
-  if (!match) {
-    // 0 字节孤儿：candidate 先 `open(..., "wx")` 建空文件、再写身份行（见
-    // instanceLock.ts 的 acquirePidFileLock），中途被 SIGKILL/OOM/掉电打断会留下
-    // 这个形态。内容为空，属主 PID 写在文件名上，因此按文件名判定。非空却认不出
-    // 的内容不走这条路，仍按人工修复处理。
-    if (content.trim().length > 0) return false;
-    return await hasDeadCandidateFilenameOwner(path);
-  }
-  const owner: ProcessIdentity = {
-    pid: Number(match[1]),
-    startTimeTicks: match[2]!,
-    bootId: match[3]!,
-  };
-  if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) return false;
-  const active: ProcessIdentity | null = await readLinuxProcessIdentity(owner.pid);
-  return active?.pid !== owner.pid ||
-    active?.startTimeTicks !== owner.startTimeTicks ||
-    active?.bootId !== owner.bootId;
+  const inactive: boolean | undefined = await isRecordedLockOwnerInactive(content);
+  if (inactive !== undefined) return inactive;
+  // 0 字节孤儿：candidate 先 `open(..., "wx")` 建空文件、再写身份行（见
+  // instanceLock.ts 的 acquirePidFileLock），中途被 SIGKILL/OOM/掉电打断会留下
+  // 这个形态。内容为空，属主 PID 写在文件名上，因此按文件名判定。非空却认不出
+  // 的内容不走这条路，仍按人工修复处理。
+  if (content.trim().length > 0) return false;
+  return await hasDeadCandidateFilenameOwner(path);
 }
 
 /** 一个待清扫目录：只认其中这些目标文件的原子写临时件，lockFileName 非 null 时也认锁的辅助文件。 */

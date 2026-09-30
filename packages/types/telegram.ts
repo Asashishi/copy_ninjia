@@ -51,10 +51,10 @@ export type ReactionEmoji = ReactionTypeEmoji["emoji"];
 export type CopyableReaction = ReactionTypeEmoji | ReactionTypeCustomEmoji;
 
 /** 一条已成功发送的 Telegram 消息；repliedToMessageId 只在服务端实际挂上
- * 回复关系时存在，不能用请求参数推断。 */
+ * 回复关系时为被回复消息的 id，否则为 undefined，不能用请求参数推断。 */
 export interface TelegramSendResult {
   messageId: number;
-  repliedToMessageId?: number;
+  repliedToMessageId: number | undefined;
 }
 
 /** 图片发送结果：另带 Telegram 为这张图返回的视觉源（取档见 libs/telegramImage.ts 的 pickPhotoFile）。 */
@@ -108,9 +108,8 @@ export interface PendingMessageDeletion {
 /**
  * 机器人自己在某个群里的完整管理员权限快照。
  *
- * 这一份同时取代旧 `botIsAdmin` 布尔值与主线程独立权限 Map：权威副本就是
- * `ChatState.botPermissions`，`my_chat_member` 与按需 `getChatMember` 都只替换这一份
- * 快照。字段对齐当前锁定的 `grammy/types` 中 `ChatAdministratorRights`；
+ * 权威副本就是 `ChatState.botPermissions`，`my_chat_member` 与按需
+ * `getChatMember` 都只替换这一份快照。字段对齐当前锁定的 `grammy/types` 中 `ChatAdministratorRights`；
  * 可选的频道/论坛权限也显式收敛为布尔值，不让「API 没返回」与「已确认没有」
  * 在持久化状态里混用。
  */

@@ -99,7 +99,6 @@ mock.module("../../packages/infra/telegram", () => ({
 // whitelistPermissionsById（即已预热的 SQLite 白名单视图）里——照实模拟
 // packages/infra/identityPolicy/whitelist.ts 那层只读覆盖。
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
-  confirmWhitelistEntryPersisted,
   hasWhitelistPermission: (id: number): boolean => id === 1,
   enableAllWhitelistPermissions,
   getWhitelistPermissionQueryView,
@@ -124,6 +123,13 @@ const {
 } = await import("../../packages/cache/main/senderIdentity");
 const identityStorage = await import("../../packages/infra/identityStorage");
 const prefetchIdentityPolicies = spyOn(identityStorage, "prefetchIdentityPolicies");
+// 命令直接确认身份策略落盘；这里转记成「白名单这条身份 (id, 是否补投)」的视角。
+spyOn(identityStorage, "confirmIdentityPolicyPersisted").mockImplementation(
+  (table: string, id: number, retryUnacknowledged: boolean): Promise<void> => {
+    if (table !== "whitelist") throw new Error(`unexpected identity policy table ${table}`);
+    return confirmWhitelistEntryPersisted(id, retryUnacknowledged);
+  }
+);
 const { IDENTITY_POLICY_UNAVAILABLE_TEXT, IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT } = await import("../../packages/consts/atmosphere/teasing/commands");
 
 function context(

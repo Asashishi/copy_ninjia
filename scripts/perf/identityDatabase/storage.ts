@@ -15,11 +15,14 @@ import { readStoredIdentityPolicies } from
   "../../../packages/database/interact/identityPolicy";
 import { createStorageDatabase } from
   "../../../packages/database/interact/migration";
-import { commitStorageDatabaseChanges } from
-  "../../../packages/database/interact/transaction";
+import {
+  commitStorageDatabaseChanges,
+  prepareStorageDatabaseWriter,
+} from "../../../packages/database/interact/transaction";
 import type {
   StorageDatabase,
   StorageDatabaseChange,
+  StorageDatabaseWriter,
   StoredIdentityPolicyRow,
 } from "../../../packages/types/storageDatabase";
 import {
@@ -176,8 +179,9 @@ function runWriteBatches(
   batches: readonly ReadonlyMap<number, StorageDatabaseChange>[]
 ): number {
   let checksum: number = 0;
+  const writer: StorageDatabaseWriter = prepareStorageDatabaseWriter(database);
   for (const whitelist of batches) {
-    commitStorageDatabaseChanges(database, {
+    commitStorageDatabaseChanges(writer, {
       whitelist,
       blocklist: EMPTY_STORAGE_CHANGES,
       temporaryAdBypass: EMPTY_TEMPORARY_AD_BYPASS_CHANGES,
@@ -200,7 +204,7 @@ function runColdWriteBatches(
   for (const whitelist of batches) {
     const database: StorageDatabase = openStorageDatabase({ path });
     try {
-      commitStorageDatabaseChanges(database, {
+      commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
         whitelist,
         blocklist: EMPTY_STORAGE_CHANGES,
         temporaryAdBypass: EMPTY_TEMPORARY_AD_BYPASS_CHANGES,

@@ -1,5 +1,6 @@
 /**
- * 仓库根 `performance-result.json` 的唯一严格解析与回写边界。
+ * 仓库根 `performance-result.json` 中热路径门禁那一节（hotPathProfileGate）的严格解析边界；
+ * 回写经 performanceResult.ts 的共享写入边界。
  *
  * 校准记录包含 Bun 版本/revision、内存硬上限、逐场景 ns/op 软阈值与实测读数。
  * GC 来源读数独立保留；所有场景的 GC 硬上限按
@@ -28,7 +29,7 @@ export interface HotPathGateRuntimeCalibration {
   readonly bunRevision: string;
 }
 
-/** 门禁的硬上限；每一项都有 hotPathProfileGate.ts 里对应的 assert 分支。 */
+/** 门禁的硬上限；每一项都有 hotPaths/gateChild.ts 里对应的 assert 分支。 */
 export interface HotPathGateLimits {
   readonly minProfileSamples: number;
   readonly maxRssBytes: number;
@@ -36,19 +37,6 @@ export interface HotPathGateLimits {
   readonly maxRetainedHeapGrowthBytes: number;
   readonly maxRetainedExtraMemoryGrowthBytes: number;
   readonly maxRetainedObjectGrowth: number;
-}
-
-/**
- * 单个场景的软上报阈值及其来源读数。
- *
- * 不导出、也不进解析结果：门禁只消费下面派生出的阈值表，`measured` 的作用是让
- * 「阈值必须解释得了它自己」这条校验在解析期就能做（见 parseScenario）。把整张
- * 表再挂到返回值上，只会多一份没有生产消费者的出口。
- */
-interface HotPathGateScenarioCalibration {
-  readonly medianNsPerOpReportThreshold: number;
-  readonly slowestMedianNsPerOp: number;
-  readonly processes: number;
 }
 
 /** performance-result.json 中门禁只读的那一半。 */
@@ -233,10 +221,14 @@ function validateGcCalibration(value: unknown, path: string): void {
   }
 }
 
+/**
+ * 校验单个场景的软上报阈值及其来源读数，返回阈值。`measured` 只用于在解析期核对
+ * 「阈值必须解释得了它自己」，不进入解析结果。
+ */
 function parseScenario(
   value: unknown,
   path: string
-): HotPathGateScenarioCalibration {
+): number {
   if (!isPlainRecord(value)) fail(path, "must be an object");
   assertExactKeys(
     value,
@@ -281,11 +273,7 @@ function parseScenario(
     );
   }
   validateGcCalibration(value.gc, `${path}.gc`);
-  return {
-    medianNsPerOpReportThreshold: threshold,
-    slowestMedianNsPerOp,
-    processes,
-  };
+  return threshold;
 }
 
 /**
@@ -347,11 +335,10 @@ function parseCalibrationDocument(parsed: unknown): HotPathGateCalibration {
   );
   const thresholds: Record<string, number> = {};
   for (const name of Object.keys(scenarios)) {
-    const scenario: HotPathGateScenarioCalibration = parseScenario(
+    thresholds[name] = parseScenario(
       scenarios[name],
       `hotPathProfileGate.calibration.scenarios.${name}`
     );
-    thresholds[name] = scenario.medianNsPerOpReportThreshold;
   }
   if (Object.keys(thresholds).length === 0) {
     fail("hotPathProfileGate.calibration.scenarios", "must declare at least one scenario");

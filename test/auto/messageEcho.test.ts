@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
+import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 
 /**
  * 复读边界（packages/auto/message/echo.ts）的「不回显命令」这道闸。
@@ -84,13 +85,12 @@ describe("复读的话题落点", () => {
 
 describe("复读的命令守卫", () => {
   test("caption 是命令的媒体消息不复读", async () => {
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: mediaMessage("/batch_kick 1d"),
       mode: undefined,
     });
 
-    expect(echoed).toBeUndefined();
     expect(copyMessage).not.toHaveBeenCalled();
   });
 
@@ -122,18 +122,17 @@ describe("复读的命令守卫", () => {
   test("命令不在行首的 caption 同样不复读", async () => {
     // 带 bot_command 实体的消息拿不到 plainText，会落到 copyMessage 分支；
     // 因此入口必须检查整段 caption，而不能只检查开头或依赖变换后守卫。
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: mediaMessage("看这个 /batch_kick 1d"),
       mode: undefined,
     });
 
-    expect(echoed).toBeUndefined();
     expect(copyMessage).not.toHaveBeenCalled();
   });
 
   test("命令不在行首的带 entity 文本同样不复读", async () => {
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: {
         message_id: 7,
@@ -145,7 +144,6 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(echoed).toBeUndefined();
     expect(copyMessage).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -162,7 +160,7 @@ describe("复读的命令守卫", () => {
   });
 
   test("纯文本命令仍然不复读", async () => {
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: {
         message_id: 6,
@@ -173,7 +171,6 @@ describe("复读的命令守卫", () => {
       mode: undefined,
     });
 
-    expect(echoed).toBeUndefined();
     expect(copyMessage).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -193,45 +190,42 @@ describe("变换之后的文本同样要过命令守卫", () => {
   test("reverse 把普通文本倒成行首命令时整条丢弃", async () => {
     // 原文不以 `/` 开头，只对原文判定的守卫会放行；真正发出去的却是
     // `/batch_kick 1d`，Telegram 会把它渲染成可点击的批量踢人链接。
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: plainTextMessage("d1 kcik_hctab/"),
       mode: "reverse",
     });
 
-    expect(echoed).toBeUndefined();
     expect(sendMessage).not.toHaveBeenCalled();
     expect(copyMessage).not.toHaveBeenCalled();
   });
 
   test("命令被空白顶到第二位同样丢弃：bot_command 不只认行首", async () => {
     // 只判 startsWith("/") 的话，原文末尾多打一个空格就能绕过去。
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: plainTextMessage("d1 kcik_hctab/ "),
       mode: "reverse",
     });
 
-    expect(echoed).toBeUndefined();
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
   test("变换结果里的 `/` 不构成命令时照常发出", async () => {
     // 斜杠后面不是命令名的首字符，Telegram 不会渲染成命令。
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: plainTextMessage("b/a"),
       mode: "reverse",
     });
 
-    expect(echoed).toBe("a/b");
     expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: "a/b" });
   });
 });
 
 describe("文字与图注一律按字符串处理", () => {
   test("带链接与 @ 的文字照样变换，按字符串发送，不再原样复制；原消息的预览设置照搬", async () => {
-    const echoed: string | undefined = await echoMessage({
+    await echoMessage({
       chatId: CHAT_ID,
       message: {
         ...plainTextMessage("看 https://example.com @alice"),
@@ -241,7 +235,6 @@ describe("文字与图注一律按字符串处理", () => {
       mode: "nya",
       messageThreadId: 3,
     });
-    expect(echoed).toBe("看 https://example.com @alice 喵~");
     expect(copyMessage).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: CHAT_ID, text: "看 https://example.com @alice 喵~", messageThreadId: 3, linkPreviewOptions: { is_disabled: true },
@@ -249,7 +242,7 @@ describe("文字与图注一律按字符串处理", () => {
   });
 
   test("没有模式的纯文字同样按字符串重新发送", async () => {
-    expect(await echoMessage({ chatId: CHAT_ID, message: plainTextMessage("原样"), mode: undefined })).toBe("原样");
+    await echoMessage({ chatId: CHAT_ID, message: plainTextMessage("原样"), mode: undefined });
     expect(sendMessage).toHaveBeenCalledWith({ chatId: CHAT_ID, text: "原样" });
     expect(copyMessage).not.toHaveBeenCalled();
   });
@@ -301,8 +294,8 @@ describe("文字与图注一律按字符串处理", () => {
   });
 
   test("变换后超过正文或图注上限时整条丢弃", async () => {
-    expect(await echoMessage({ chatId: CHAT_ID, message: plainTextMessage("x".repeat(4094)), mode: "nya" })).toBeUndefined();
-    expect(await echoMessage({ chatId: CHAT_ID, message: mediaMessage("x".repeat(1022)), mode: "nya" })).toBeUndefined();
+    await echoMessage({ chatId: CHAT_ID, message: plainTextMessage("x".repeat(TELEGRAM_MESSAGE_MAX_CHARS)), mode: "nya" });
+    await echoMessage({ chatId: CHAT_ID, message: mediaMessage("x".repeat(TELEGRAM_CAPTION_MAX_CHARS)), mode: "nya" });
     expect(sendMessage).not.toHaveBeenCalled();
     expect(copyMessage).not.toHaveBeenCalled();
   });

@@ -19,7 +19,7 @@ export const compactionRunner: KeyedSerialTaskRunner<number> =
  * 容量与清理跟随 compactionChains，两张表覆盖同一批群。 */
 export const compactionPendingCounts: Map<number, number> = new Map();
 
-/** 仅在 Worker 已停止接收任务、或测试隔离时调用。 */
+/** 测试隔离时清空压缩链与计数。 */
 export function resetAiChatCompactionCache(): void {
   compactionChains.clear();
   compactionPendingCounts.clear();

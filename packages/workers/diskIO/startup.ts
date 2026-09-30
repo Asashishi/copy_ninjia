@@ -17,7 +17,7 @@ import {
   maintainLuckDay,
   maintainStickerCatalogFiles,
 } from "./snapshotFiles";
-import { inspectJoinLogFiles, maintainJoinLogFiles } from "./joinLogFiles";
+import { inspectJoinLogFiles, maintainJoinLogFiles } from "./joinLogRecovery";
 import { adoptLuckDay } from "./luckFiles";
 import { adoptLuckReceiptSecret, inspectLuckReceiptSecret } from "./luckSecretFile";
 import {
@@ -31,6 +31,7 @@ import {
   maintainTemporaryAdBypassActivities,
 } from "./storageDatabase";
 import { maintainAdSampleFiles } from "./adSampleFile";
+import { runDiskIOMaintenanceTasks } from "./midnightMaintenance";
 import {
   registerDiskIOMaintenanceCron,
   stopDiskIOMaintenanceCron,
@@ -52,7 +53,7 @@ import type {
   StickerCatalogRecoveryInspection,
 } from "./snapshotFiles";
 import type { LuckSecretRecoveryInspection } from "./luckSecretFile";
-import type { JoinLogRecoveryInspection } from "./joinLogFiles";
+import type { JoinLogRecoveryInspection } from "./joinLogRecovery";
 import type { VerificationRecoveryInspection } from "./verificationRecovery";
 import type { StorageDatabaseInspection } from "../../types/identityStorage";
 import { errorMessage } from "../../libs/errorMessage";
@@ -70,11 +71,11 @@ interface StartupMaintenanceInspections {
   readonly wedMembers: WedMemberInspection;
 }
 
-async function runMaintenance(
+function runMaintenance(
   inspections: StartupMaintenanceInspections,
   reply: DiskIOStartupReplySink
 ): Promise<void> {
-  const tasks: readonly (readonly [string, () => void | Promise<void>])[] = [
+  return runDiskIOMaintenanceTasks("startup", [
     ["logs", (): Promise<void> => maintainLogFiles(inspections.logs)],
     ["ai cache", (): Promise<void> => maintainAiCacheFile()],
     ["wed members", (): Promise<void> => maintainWedMemberFiles(inspections.wedMembers)],
@@ -84,14 +85,7 @@ async function runMaintenance(
     ["verifications", (): Promise<void> => maintainVerificationDay(inspections.verifications)],
     ["ad samples", (): Promise<void> => maintainAdSampleFiles()],
     ["temporary ad bypass", (): void => maintainTemporaryAdBypassActivities(reply)],
-  ];
-  for (const [domain, maintain] of tasks) {
-    try {
-      await maintain();
-    } catch (error: unknown) {
-      console.error(`[diskIOWorker] startup maintenance failed for ${domain}:`, error);
-    }
-  }
+  ]);
 }
 
 /**

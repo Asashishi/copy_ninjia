@@ -100,10 +100,9 @@ export type ProviderApiFailureKind =
  *    不推动模态退避。
  * 4. `endpointFailure`——408/429/5xx 与拿不到状态码的网络层失败。
  *
- * 本函数**不记日志**：三个调用点的日志各自带着不同的 errorLabel 与状态码渲染
- * 口径（gemini 的 `ApiError.status` 恒为 number，OpenAI 侧是 `number | undefined`
- * 且要渲染成 `?`），合并会改变已有的日志文本。返回值形态同理留在调用点，
- * 各自映射成自己的 `failureKind` / `mediaFailure`。
+ * 本函数**不记日志**：三个调用点各自带着自己的 errorLabel 与状态码口径（gemini 记
+ * `error.status error.message`，OpenAI 侧只记 `error.message`）。返回值形态同理留在
+ * 调用点，各自映射成自己的 `failureKind` / `mediaFailure`。
  *
  * @param isMediaCapability 本次请求是否属于媒体能力；只有它为真才可能得出 unsupported。
  */
@@ -129,15 +128,12 @@ export function classifyProviderApiFailure(
 export interface ProviderApiFailureResult {
   readonly ok: false;
   readonly failureKind: Exclude<ProviderApiFailureKind, "endpointFailure">;
-  readonly diagnostic: string;
 }
 
 /**
- * 把归因档位映射成两个模型客户端共用的失败结果。
- *
- * 诊断串是运维读日志时的唯一线索，也是三档结论对外的名字：抄在两个 client 里
- * 的话，改其中一处就会让同一档结论在两家供应商上写出两种说法。级联判定
- * （classifyProviderApiFailure）与这一步映射因此收在同一个叶子模块。
+ * 把归因档位映射成两个模型客户端共用的失败结果。级联判定
+ * （classifyProviderApiFailure）与这一步映射收在同一个叶子模块，两家供应商对同一档
+ * 结论返回同一个 `failureKind`。
  *
  * `endpointFailure` 不在这里映射：它不是一个可直接返回的结果，而是「继续走
  * 调用点自己的兜底路径」的信号（两个 client 都在那之后统一记一行日志并返回
@@ -151,11 +147,11 @@ export function providerApiFailureResult(
 ): ProviderApiFailureResult | undefined {
   switch (kind) {
     case "misconfigured":
-      return { ok: false, failureKind: kind, diagnostic: "endpoint or model is unavailable" };
+      return { ok: false, failureKind: kind };
     case "unsupported":
-      return { ok: false, failureKind: kind, diagnostic: "media input is unsupported" };
+      return { ok: false, failureKind: kind };
     case "rejected":
-      return { ok: false, failureKind: kind, diagnostic: "request was rejected" };
+      return { ok: false, failureKind: kind };
     case "endpointFailure":
       return undefined;
   }

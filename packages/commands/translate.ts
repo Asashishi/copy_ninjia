@@ -10,6 +10,7 @@ import { getChatState, persistChatState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { explicitReplyTo } from "../libs/forumTopic";
 import { isTelegramGroupChatId } from "../libs/telegramId";
+import { isTranslateLanguage } from "../translate/language";
 import { getTranslateState, setTranslateState, stopTranslation } from "../translate/state";
 import { formatUserLabel } from "../users/userLabel";
 import { refuseIfConfigBroken } from "./configGate";
@@ -93,7 +94,7 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
 
   const match: RegExpExecArray | null = TRANSLATE_ARGUMENT_PATTERN.exec(argument);
   const language: string | undefined = match?.[1]?.toLowerCase();
-  if (language !== "ja" && language !== "cn" && language !== "en" && language !== "uk" && language !== "ru") {
+  if (language === undefined || !isTranslateLanguage(language)) {
     await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).TRANSLATE_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }

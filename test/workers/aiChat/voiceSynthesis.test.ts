@@ -64,32 +64,32 @@ describe("公共实现", () => {
   });
 
   test("合成后编码成 OGG/Opus；合成失败、额度用尽、signal 已中止与编码失败各自归类", async () => {
-    const encoded = await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", tone: "小声で", quota: "ai", quotaClaimed: false }, "test");
+    const encoded = await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", tone: "小声で", quota: "ai" }, "test");
     expect(encoded.ok).toBeTrue();
     if (!encoded.ok) throw new Error("expected encoded voice");
     expect(new TextDecoder().decode(encoded.voice.bytes.subarray(0, 4))).toBe("OggS");
     expect(encoded.voice.durationSeconds).toBe(1);
-    expect(synthesizeSpeech).toHaveBeenCalledWith({ text: "hi", tone: "小声で", quota: "ai", quotaClaimed: false });
+    expect(synthesizeSpeech).toHaveBeenCalledWith({ text: "hi", tone: "小声で", quota: "ai" });
 
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({ ok: false, reason: "synthesis failed" }));
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai", quotaClaimed: false }, "test")).toEqual({ ok: false, reason: "synthesis failed" });
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai" }, "test")).toEqual({ ok: false, reason: "synthesis failed" });
 
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({ ok: false, reason: "daily limit reached" }));
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai", quotaClaimed: false }, "test")).toEqual({ ok: false, reason: "daily limit reached" });
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai" }, "test")).toEqual({ ok: false, reason: "daily limit reached" });
 
     const controller: AbortController = new AbortController();
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => {
       controller.abort();
       return { ok: true, speech: { bytes: sineWav(24_000, 0.5), mimeType: "audio/wav" } };
     });
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai", quotaClaimed: false, signal: controller.signal }, "test"))
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai", signal: controller.signal }, "test"))
       .toEqual({ ok: false, reason: "aborted" });
 
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => ({
       ok: true,
       speech: { bytes: new Uint8Array([1]), mimeType: "audio/mp3" },
     }));
-    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai", quotaClaimed: false }, "chat -1")).toEqual({ ok: false, reason: "unsupported speech mime type" });
+    expect(await synthesizeVoiceMessage(synthesizeSpeech, { text: "hi", quota: "ai" }, "chat -1")).toEqual({ ok: false, reason: "unsupported speech mime type" });
     expect(loggerError).toHaveBeenCalledWith("Voice message encoding failed (chat -1): unsupported speech mime type.");
   });
 });
@@ -104,7 +104,7 @@ describe("AI Worker 侧转交", () => {
     expect(typed.requestId).toBe(7);
     expect(typed.result.ok).toBeTrue();
     expect(transfer).toEqual([typed.result.voice.bytes.buffer]);
-    expect(synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ text: "おやすみ", tone: "眠そうに", quota: "operator", quotaClaimed: false });
+    expect(synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ text: "おやすみ", tone: "眠そうに", quota: "operator" });
     expect(voiceSynthesisRequests.size).toBe(0);
   });
 
@@ -148,6 +148,6 @@ describe("AI Worker 侧转交", () => {
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => { throw new Error("boom"); });
     handleSynthesizeVoice({ type: "synthesizeVoice", requestId: 5, text: "hi", tone: undefined });
     expect((await nextEvent())[0]).toEqual({ type: "voiceSynthesized", requestId: 5, result: { ok: false, reason: "synthesis failed" } });
-    expect(loggerError.mock.calls[0]![0]).toBe("Voice synthesis for main-thread request 5 threw:");
+    expect(loggerError.mock.calls[0]![0]).toBe("Voice synthesis failed unexpectedly (main-thread request 5):");
   });
 });

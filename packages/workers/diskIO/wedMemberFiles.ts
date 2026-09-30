@@ -13,7 +13,7 @@ import { TMP_FILE_SUFFIX, WED_MEMORY_DIR } from "../../consts/paths";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
 import { WED_MEMBER_LIMIT } from "../../consts/wed";
 import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
-import { assertFileReadableWritable, inspectOptionalDirectory } from "../../libs/fileAccess";
+import { assertFileReadableWritable, bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type {
@@ -68,10 +68,10 @@ export async function inspectWedMemberFiles(): Promise<WedMemberInspection> {
   return { snapshots, temporaryPaths };
 }
 
-/** 全域校验成功后创建目录并清除未提交的临时文件。 */
+/** 全域校验成功后创建目录并尽力清除未提交的临时文件，口径同其它领域的 *.tmp 清理。 */
 export async function maintainWedMemberFiles(inspection: WedMemberInspection): Promise<void> {
   mkdirSync(WED_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await Bun.file(path).delete();
+  for (const path of inspection.temporaryPaths) await bestEffortUnlink(path);
 }
 
 /** 唯一落盘边界；完整数组经现有 tmp、fsync、rename 实现原子替换，缺失文件自动创建。 */

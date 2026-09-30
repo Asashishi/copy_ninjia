@@ -117,7 +117,7 @@ export async function removeOldVerificationDays(
   );
 }
 
-/** rollover 独立扫描时只规划严格日期文件；未知资产仍按既有语义忽略。 */
+/** rollover 独立扫描时只规划严格日期文件；未知资产被忽略。 */
 async function removeOldVerificationDaysFromEntries(
   day: string,
   dir: string,
@@ -135,22 +135,17 @@ async function removeOldVerificationDaysFromEntries(
     }
     oldDays.push(entry.name);
   }
-  if (futureDays > 0) {
-    console.error(
-      `[diskIOWorker] kept ${futureDays} verification day file(s) dated after ${day}: ` +
-      "the host clock most likely stepped backwards, and these files hold pending " +
-      "verifications that this recovery refuses to merge."
-    );
-  }
-  oldDays.sort();
-  for (const name of oldDays) await Bun.file(join(dir, name)).delete();
+  await applyVerificationDirectoryRecoveryPlan(day, dir, { oldDayNames: oldDays, futureDayCount: futureDays });
 }
 
-/** 在领域文件全部校验成功后应用预先计算的计划；失败前不会删除任何旧日。 */
+/**
+ * 按计划删除严格早于 day 的旧日文件（从最旧到最新）；有晚于 day 的日文件时只告警、保留。
+ * 启动恢复在领域文件全部校验成功后才调用，失败前不会删除任何旧日；rollover 用自己扫出的计划。
+ */
 async function applyVerificationDirectoryRecoveryPlan(
   day: string,
   dir: string,
-  plan: VerificationDirectoryRecoveryPlan
+  plan: Pick<VerificationDirectoryRecoveryPlan, "oldDayNames" | "futureDayCount">
 ): Promise<void> {
   if (plan.futureDayCount > 0) {
     console.error(

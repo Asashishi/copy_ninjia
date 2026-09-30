@@ -11,9 +11,10 @@
  * 落盘线程，只由主线程启动这一个（若每个线程都自建落盘线程，多个实例按
  * 字节偏移并发追加同一个日志文件会互相踩踏写坏文件）。这里只是门面：主线程
  * 下 error 日志经 relayLogMessage 转投给它；Worker 线程里的 logger 处于「转发模式」：
- * error 日志经单批 ACK、有消息数与载荷字节硬顶的 ForwardedLogBatch 通道回主线程，由拥有该 Worker
- * 的主线程模块（见 aiChat/workerBridge.ts 与 antiRaid/workerBridge/controller.ts 的 onEvent）调用 relayLogMessage 转投唯一的
- * 落盘线程。
+ * error 日志经单批 ACK、有消息数与载荷字节硬顶的 ForwardedLogBatch 通道回主线程，由主线程的
+ * infra/supervisedWorker.ts（aiChat/workerBridge.ts 与 antiRaid/workerBridge/controller.ts
+ * 经 infra/supervisedDuplexWorker.ts 共用）识别该批次，逐条调用 relayLogMessage 转投唯一的
+ * 落盘线程并回 ACK。
  */
 
 import { relayLogMessage } from "./diskIO";
@@ -38,8 +39,6 @@ const isMainThread: boolean = Bun.isMainThread;
 /**
  * Worker 侧转发出口。整条协议（有界队列、单批 ACK、溢出汇总）住在
  * infra/logger/forwarding.ts；这里只把它接到本 isolate 的 postMessage 上。
- * 拆开的见那个文件的头注：isMainThread 是加载期常量，协议留在本文件里
- * 就永远只能在真 Worker 里执行，测不到。
  */
 const forwardToMainThread: ForwardedLogSink = (batch: ForwardedLogBatch): void => {
   self.postMessage(batch);

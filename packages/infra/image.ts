@@ -21,15 +21,7 @@ import {
 import type { VisionImage } from "../types/media";
 import type { ImageDimensions } from "../types/hImage";
 
-/**
- * 把任意支持的图片字节转成两家视觉接口都稳妥能收的格式：只认 jpg/jpeg 或 png
- * （官方文档明示，20MiB 上限另有护栏在调用方做）。本项目喂视觉模型的素材
- * 来源不只是 Telegram photo（本身就是 jpeg）——贴纸本体是 webp，GIF 若非
- * 走缩略图兜底、真 image/gif 本体也要转码，因此需要这一层按魔数嗅探格式、
- * 不支持的格式经 `Bun.Image` 转 png（webp 直转；gif 取第一帧）。编解码器随 Bun
- * 运行时静态链接，源码与二进制发行包都不依赖 node_modules 里的原生模块。
- */
-
+/** 魔数嗅探得到的图片格式；unknown 表示不属于 jpeg、png、webp、gif 中任何一种。 */
 export type SniffedImageFormat = "jpeg" | "png" | "webp" | "gif" | "unknown";
 
 /** 按文件头魔数嗅探格式，不依赖 Telegram 的 file_path 扩展名（贴纸/缩略图的
@@ -146,7 +138,8 @@ export function firstAnimatedWebpFrame(bytes: Uint8Array): Uint8Array | null {
  * （本项目没有抽帧能力，只能按封面帧分析；`Bun.Image` 只解静态 webp，动态 webp 先经
  * firstAnimatedWebpFrame 抽出首帧）。解码、编码在 Bun 的图像线程上执行，不阻塞调用线程；
  * 像素数超过 VISION_TRANSCODE_MAX_PIXELS 的图在分配像素缓冲前即被拒绝。不支持的格式、
- * 超限或转码失败均返回 null，调用方按「这条不解析」处理。
+ * 超限或转码失败均返回 null，调用方按「这条不解析」处理。编解码器随 Bun 运行时静态
+ * 链接，源码与二进制发行包都不依赖 node_modules 里的原生模块。
  */
 export async function prepareVisionImage(bytes: Uint8Array): Promise<VisionImage | null> {
   const format: SniffedImageFormat = sniffImageFormat(bytes);

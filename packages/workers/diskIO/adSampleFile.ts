@@ -13,7 +13,7 @@
  *   写失败整批丢弃（只 console.error），Worker 重建时未刷出的批次随 isolate 丢失。
  *   列进失败领域的话，一个纯诊断文件的写盘失败会让 `/block` 的落盘确认报失败，把运维
  *   引向一个其实没坏的东西；而这份样本本来就允许丢。
- * - **允许截断自愈**（repair=true）。断电撕裂了末尾那条就裁掉，同日志/运势；
+ * - **允许截断自愈**（repair=true）。断电撕裂了末尾那条就裁掉，同日志与 AI 用量统计；
  *   这里连「丢掉最后几条」都不构成正确性问题。
  *
  * 攒太多时按 AD_SAMPLE_FILE_MAX_BYTES 轮转成带日期的归档；归档按文件名中的
@@ -27,7 +27,8 @@ import type { Dirent } from "node:fs";
 import { basename, join } from "node:path";
 import type { AdSampleDiskMessage } from "../../types/diskIO/messages";
 import type { AppendOnlyFileState } from "../../types/diskIO/storage";
-import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
+import { AD_SAMPLE_FILE_PATH, AD_SAMPLE_MEMORY_DIR } from "../../consts/paths";
+import { removeOrphanedTempFiles } from "../../libs/atomicFile";
 import {
   AD_SAMPLE_ARCHIVE_FILENAME_PATTERN,
   AD_SAMPLE_ARCHIVE_RETENTION_DAYS,
@@ -96,16 +97,12 @@ function sampleKey(msg: AdSampleDiskMessage): string {
 async function sweepOrphanedTemps(): Promise<void> {
   if (adSampleTempsSwept.current) return;
   adSampleTempsSwept.current = true;
-  const prefix: string = `.${basename(AD_SAMPLE_FILE_PATH)}.`;
   try {
-    for (const name of readdirSync(AD_SAMPLE_MEMORY_DIR)) {
-      if (!name.startsWith(prefix) || !name.endsWith(TMP_FILE_SUFFIX)) continue;
-      try {
-        await Bun.file(join(AD_SAMPLE_MEMORY_DIR, name)).delete();
-      } catch (error: unknown) {
-        console.error(`[diskIOWorker] failed to remove orphaned ad sample temp ${name}:`, error);
-      }
-    }
+    await removeOrphanedTempFiles(
+      AD_SAMPLE_MEMORY_DIR,
+      readdirSync(AD_SAMPLE_MEMORY_DIR),
+      `.${basename(AD_SAMPLE_FILE_PATH)}.`
+    );
   } catch (error: unknown) {
     console.error("[diskIOWorker] failed to sweep orphaned ad sample temps:", error);
   }
@@ -232,7 +229,7 @@ function rotateIfOversized(state: AppendOnlyFileState): AppendOnlyFileState {
   if (state.size < AD_SAMPLE_FILE_MAX_BYTES) return state;
   const archive: AdSampleArchiveTarget = nextArchiveTarget();
   renameSync(AD_SAMPLE_FILE_PATH, archive.path);
-  // 只有 rename 成功才推进；失败时下轮仍复用同一个最小空缺，保持既有选名语义。
+  // 只有 rename 成功才推进；失败时下轮仍复用同一个最小空缺。
   adSampleArchiveCursor.current = { day: archive.day, nextIndex: archive.index + 1 };
   console.error(
     `[diskIOWorker] ad sample file reached ${state.size} bytes; archived it as ${basename(archive.path)}.`

@@ -158,7 +158,13 @@ export async function handleVerificationUpsert({
     trackedMessageTimes: [...msg.record.trackedMessageTimes],
   };
   verificationWorkerCache.set(key, snapshot);
-  verificationPendingChanges.set(key, { ...snapshot, value: snapshot });
+  verificationPendingChanges.set(key, {
+    chatId: snapshot.chatId,
+    userId: snapshot.userId,
+    generation: snapshot.generation,
+    revision: snapshot.revision,
+    value: snapshot,
+  });
   if (
     msg.critical ||
     verificationPendingChanges.size >= FLUSH_MAX_ENTRIES
@@ -194,7 +200,13 @@ export async function handleVerificationDelete({
   ) return;
 
   verificationWorkerCache.delete(key);
-  verificationPendingChanges.set(key, { ...msg, value: null });
+  verificationPendingChanges.set(key, {
+    chatId: msg.chatId,
+    userId: msg.userId,
+    generation: msg.generation,
+    revision: msg.revision,
+    value: null,
+  });
   await flushVerificationChanges(reply, dir, day);
 }
 

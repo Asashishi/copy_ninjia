@@ -1,10 +1,10 @@
-/** 一次性脚本夹具共用的目录树复制边界。 */
+/** 脚本共用的目录树复制边界：发行包暂存与测试夹具都用它。 */
 
 import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * 把夹具目录树复制到隔离目标；文件内容统一交给 Bun 原生 I/O，目录语义使用
+ * 把目录树复制到隔离目标；文件内容统一交给 Bun 原生 I/O，目录语义使用
  * Node 兼容接口。调用方必须先把目标约束在自己的临时根内。
  *
  * @param assertDestination 每个落点在建目录或写文件**之前**过一次的校验；目标树

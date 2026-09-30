@@ -28,6 +28,13 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const { handleQuietCommand, handleUnquietCommand } = await import("../../packages/commands/quiet");
+const {
+  DURATION_UNIT_MS,
+  QUIET_DEFAULT_MINUTES,
+  QUIET_MAX_MINUTES,
+  QUIET_MIN_MINUTES,
+} = await import("../../packages/consts/commands");
+const { ATMOSPHERE_TEXTS } = await import("../../packages/consts/atmosphere");
 const originalDateNow: () => number = Date.now;
 
 function context(argument: string): never {
@@ -46,24 +53,34 @@ afterEach(() => {
 });
 
 describe("/quiet 与 /unquiet", () => {
-  test("默认时长、四舍五入和上下限都写成确定截止时间", async () => {
+  test("默认时长、十进制整数和上下限都写成确定截止时间", async () => {
     await handleQuietCommand(context(""));
-    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + 3 * 60_000);
+    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + QUIET_DEFAULT_MINUTES * DURATION_UNIT_MS.m);
     expect(saveStateInBackground).toHaveBeenLastCalledWith("quiet set");
 
     states.clear();
-    await handleQuietCommand(context("99"));
-    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + 15 * 60_000);
+    await handleQuietCommand(context(String(QUIET_MAX_MINUTES + 1)));
+    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + QUIET_MAX_MINUTES * DURATION_UNIT_MS.m);
     states.clear();
-    await handleQuietCommand(context("1.6"));
-    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + 2 * 60_000);
+    await handleQuietCommand(context("0"));
+    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + QUIET_MIN_MINUTES * DURATION_UNIT_MS.m);
+    states.clear();
+    await handleQuietCommand(context("05"));
+    expect(states.get(-1001)?.quietUntil).toBe(1_000_000 + 5 * DURATION_UNIT_MS.m);
   });
 
-  test("非法参数和仍在静默期的重复调用不改状态", async () => {
-    await handleQuietCommand(context("NaN"));
+  test.each(["NaN", "1.6", "0x5", "1e1", "-3", "+5", "５", "Infinity"])("非十进制整数参数 %s 回用法提示，不改状态", async (argument: string) => {
+    await handleQuietCommand(context(argument));
     expect(states.size).toBe(0);
     expect(saveStateInBackground).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.quietUsage(QUIET_MIN_MINUTES, QUIET_MAX_MINUTES, QUIET_DEFAULT_MINUTES),
+      replyToMessageId: 8,
+    });
+  });
 
+  test("仍在静默期的重复调用不改状态", async () => {
     states.set(-1001, { quietUntil: 1_000_000 + 90_000 });
     await handleQuietCommand(context("10"));
     expect(states.get(-1001)?.quietUntil).toBe(1_090_000);

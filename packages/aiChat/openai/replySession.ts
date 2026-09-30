@@ -12,7 +12,7 @@
  * 不会以函数调用的形式抛回来——与 Gemini 的 googleSearch 是同一种服务端工具
  * 语义，因此上层的检索预算逻辑对两家通用。
  *
- * 已知与 Gemini 侧的第二处差异：请求不带采样温度，GPT-5 系推理模型只接受默认
+ * 与 Gemini 侧的差异：请求不带采样温度，GPT-5 系推理模型只接受默认
  * 值。中立契约的 `grounded` 因此在本包不影响采样，只有 Gemini 侧会据此降温。
  *
  * OpenAI 原生 Responses 在 `store:false` 时默认把可回放的
@@ -150,8 +150,9 @@ export function createOpenAiReplySession(
   // 上一次 request() 拿到的模型 output item，等 appendToolOutputs() 接回 input。
   let pendingModelItems: OpenAI.Responses.ResponseInputItem[] | undefined;
 
-  // prompt_cache_key 按工具形态记忆化：一轮回复里工具集合通常从头到尾不变（只有
-  // 动作预算或检索额度耗尽时才换一份），没必要每轮重算一次几十 KB 的 SHA-256。
+  // prompt_cache_key 按工具形态记忆化：一轮回复内 functions 与 systemPrompt 恒定，
+  // webSearchEnabled 只会在供应商报服务端工具调用超限后的降级重试里变化一次（见
+  // workers/aiChat/replyModel.ts 头注），没必要每轮重算一次几十 KB 的 SHA-256。
   // 指纹覆盖本端自动前缀缓存能复用的完整稳定段，包括参考记忆。
   let cacheKey: string | undefined;
   let keyedFunctions: readonly AiToolDefinition[] | undefined;

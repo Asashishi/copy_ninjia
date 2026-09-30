@@ -6,17 +6,20 @@
  * 互相踩坏。群状态也进入同一 SQLite；只有主线程持有的 `memory/global/state.json` 是明确
  * 例外，由主线程 StateStore 独立异步维护，本 Worker 不访问 memory/global/。
  *
- * 本文件只做消息路由与统一 flush 调度；启动恢复编排在 diskIO/startup.ts，
+ * 本文件只做消息路由；按领域与 scope 的统一 flush 在 diskIO/domainFlush.ts，启动恢复编排在
+ * diskIO/startup.ts，
  * 具体领域逻辑分别在
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryStorage.ts（AI 记忆）、
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
  * diskIO/verificationRecovery.ts 与 verificationWrites.ts（待验证按日增量）、
- * diskIO/storageDatabase.ts（黑白名单与未完成处置 outbox）、
+ * diskIO/storageDatabase.ts（共享 SQLite：黑白名单、临时广告免检、未完成处置 outbox、
+ * 群状态、群问答与 AI 上下文的事务提交）、
  * diskIO/joinLogFiles.ts 与 joinLogWrites.ts（滚动入群追写与命令按需读取）、
  * diskIO/wedMemberFiles.ts（每群已发言成员数组的启动校验与全量替换）、
- * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证数据
- * 共用 appendOnlyDayFile.ts 的按位置追加机制；SQLite 权威状态不启用截断修复。
+ * diskIO/snapshotFiles.ts（无状态的文件读写辅助）。日志、运势、待验证、入群日志、
+ * 广告样本与 AI 用量统计共用 appendOnlyDayFile.ts 的按位置追加机制；SQLite 权威状态
+ * 不启用截断修复。
  *
  * 原则：恢复型状态只在启动恢复（load）时读一次；此后
  * cache/workers/diskIO/ 下各领域 owner 是唯一事实源，写是「缓存 -> 磁盘」
@@ -26,68 +29,69 @@
  * 的日志落盘自己的错误，那是一场递归。
  */
 
-import { flushAdSampleBuffer, handleAdSampleMessage } from "./diskIO/adSampleFile";
+import { handleAdSampleMessage } from "./diskIO/adSampleFile";
 import {
-  configureStoragePersistenceReply,
-  flushStorageDatabase,
   handleChatQaWrite,
   handleChatStateWrite,
   handleIdentityPolicyWrite,
   handleTemporaryAdBypassWrite,
   handlePendingRemovalSnapshot,
-  pendingStorageDatabaseDomains,
   readBlocklistIdPage,
   readIdentityPolicies,
   setStorageFlushHold,
 } from "./diskIO/storageDatabase";
 import { flushLogBuffer, handleLogMessage } from "./diskIO/logFiles";
-import { flushAiCacheBuffer, handleAiCacheUsageMessage } from "./diskIO/aiCacheFile";
+import { handleAiCacheUsageMessage } from "./diskIO/aiCacheFile";
 import {
-  configureLuckAppendStalledReply,
   flushLuckAppends,
   handleLuckDrawMessage,
-  hydrateLuckDay,
+  replayDeferredLuckDraws,
+  switchLuckDay,
 } from "./diskIO/luckFiles";
 import { recoverLuckReceiptSecret } from "./diskIO/luckSecretFile";
 import {
-  flushJoinLogBuffer,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
-  purgeJoinLogDeletions,
   readJoinLog,
 } from "./diskIO/joinLogFiles";
 import {
-  flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
 } from "./diskIO/verificationWrites";
 import {
-  configureAiMemoryDeletePersistedReply,
-  configureAiMemoryPersistedReply,
   deleteAiMemorySnapshot,
   markAiMemorySnapshotDirty,
 } from "./diskIO/aiMemoryStorage";
 import {
-  flushStickerCatalogs,
   markStickerCatalogSnapshotDirty,
 } from "./diskIO/stickerCatalogFiles";
 import { handleDiskIOStartupLoad } from "./diskIO/startup";
 import {
-  flushWedMemberFiles,
   handleWedMembersDeleteMessage,
   handleWedMembersMessage,
 } from "./diskIO/wedMemberFiles";
 import { LOG_REOPEN_RETRY_MS } from "../consts/diskIO/appendOnly";
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../consts/diskIO/business";
-import { forgetAiMemoryChat } from "../cache/workers/diskIO/snapshots";
-import { luckWorkerCache } from "../cache/workers/diskIO/luck";
+import {
+  aiMemoryDeletePersistedNotifier,
+  aiMemoryPersistedNotifier,
+  forgetAiMemoryChat,
+} from "../cache/workers/diskIO/snapshots";
+import { luckAppendStalledNotifier, luckWorkerCache } from "../cache/workers/diskIO/luck";
+import {
+  noteVerificationWriteRejected,
+} from "../cache/workers/diskIO/verification";
 import { joinLogPersistedNotifier } from "../cache/workers/diskIO/joinLog";
-import { noteStorageWriteRejected, storageWriteFatalReply } from "../cache/workers/diskIO/storageDatabase";
+import {
+  noteStorageWriteRejected,
+  storagePersistenceReplyHolder,
+  storageWriteFatalReply,
+} from "../cache/workers/diskIO/storageDatabase";
 import { StorageWriteCapacityError } from "../libs/storageWriteBudget";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
-  DiskFlushScope,
   DiskIOMessage,
+  LuckDrawDiskMessage,
 } from "../types/diskIO/messages";
 import type {
   DiskFlushFailedReply,
@@ -99,11 +103,13 @@ import type {
   JoinLogReadReply,
   LuckSecretReply,
   RecoveryReplayFailedReply,
+  StorageDatabaseDomain,
 } from "../types/diskIO/replies";
 import type {
   JoinLogRecord,
 } from "../types/diskIO/storage";
 import { enqueueDiskIOOperation } from "./diskIO/operationQueue";
+import { flushScope } from "./diskIO/domainFlush";
 import { wedMemberDeletePersistedNotifier } from "../cache/workers/diskIO/wed";
 import { stickerCatalogPersistedNotifier } from "../cache/workers/diskIO/stickers";
 import { errorMessage } from "../libs/errorMessage";
@@ -113,85 +119,6 @@ declare const self: Worker;
 /** Worker → 主线程的唯一回执出口；参数类型把回执协议交给编译器核对。 */
 function postReply(reply: DiskIOReply): void {
   self.postMessage(reply);
-}
-
-/**
- * 把单个领域的缓冲立即落盘，失败时把该领域（SQLite 为本轮仍 dirty 或拒收的各表）记进
- * failedDomains。各自的窗口阈值在这里不生效——不管有没有攒够条数/等够时间，都立即刷。
- * 共享 SQLite 的七个领域（含 AI 上下文）共用一个事务，经任一领域名提交一次即覆盖全部表。
- */
-async function flushDomain(domain: DiskIODomain, failedDomains: DiskIODomain[]): Promise<void> {
-  switch (domain) {
-    case "log":
-      if (!await flushLogBuffer()) failedDomains.push("log");
-      return;
-    case "stickerCatalog":
-      if (!flushStickerCatalogs()) failedDomains.push("stickerCatalog");
-      return;
-    case "wedMembers":
-      if (!flushWedMemberFiles()) failedDomains.push("wedMembers");
-      return;
-    case "luck":
-      if (!await flushLuckAppends()) failedDomains.push("luck");
-      return;
-    case "verification":
-      if (!await flushVerificationChanges(postReply)) failedDomains.push("verification");
-      return;
-    case "whitelist":
-    case "blocklist":
-    case "temporaryAdBypass":
-    case "blocklistRemovalOutbox":
-    case "chatState":
-    case "chatQa":
-    case "aiMemory":
-      if (!flushStorageDatabase(postReply)) {
-        failedDomains.push(...pendingStorageDatabaseDomains());
-      }
-      return;
-    case "joinLog":
-      if (!await flushJoinLogBuffer()) failedDomains.push("joinLog");
-      return;
-    case "joinLogPurge":
-      // 整群删除单独占一格：一个已停管群删不掉的文件不能让入群追写那一格一起
-      // 判成未落盘（见 types/diskIO/replies.ts 的 DiskIODomain）。
-      if (!purgeJoinLogDeletions()) failedDomains.push("joinLogPurge");
-      return;
-    default: {
-      // 穷尽性断言：新增领域时这一行编译失败，必须在本 switch 里点名它的 flush 出口。
-      const unhandled: never = domain;
-      void unhandled;
-    }
-  }
-}
-
-/**
- * 按 scope 执行 flush（范围语义见 types/diskIO/messages.ts 的 DiskFlushScope）。单领域
- * 屏障只刷该领域；`all` 与 `business` 依次刷出全部业务领域，并刷出 AI 缓存用量统计与
- * 广告样本两类旁路数据，旁路失败不进回执。
- */
-async function flushScope(scope: DiskFlushScope): Promise<readonly DiskIODomain[]> {
-  const failedDomains: DiskIODomain[] = [];
-  if (scope !== "all" && scope !== "business") {
-    await flushDomain(scope, failedDomains);
-    return failedDomains;
-  }
-  // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
-  if (scope === "all") await flushDomain("log", failedDomains);
-  // 旁路统计与样本：照常刷出，失败只丢这一批并由各自模块记 console.error，
-  // 不计入失败领域，因此不会让等待业务落盘的调用方判为失败。
-  await flushAiCacheBuffer();
-  await flushAdSampleBuffer();
-  await flushDomain("stickerCatalog", failedDomains);
-  await flushDomain("wedMembers", failedDomains);
-  await flushDomain("luck", failedDomains);
-  await flushDomain("verification", failedDomains);
-  // 共享 SQLite 事务一次提交全部表与 AI 上下文。
-  await flushDomain("chatState", failedDomains);
-  await flushDomain("joinLog", failedDomains);
-  await flushDomain("joinLogPurge", failedDomains);
-  // 按领域回报而不是一个合取布尔：等自己那条记录落盘的调用方不该被无关领域
-  // 的失败误导，而那个领域的真实错误按设计只有 console.error。
-  return failedDomains;
 }
 
 /** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
@@ -214,7 +141,7 @@ export async function handleDiskIOWorkerMessage(
       let containsLog: boolean = false;
       for (const diagnostic of msg.messages) {
         if (diagnostic.type !== "log") continue;
-        await handleLogMessage(diagnostic);
+        handleLogMessage(diagnostic);
         containsLog = true;
       }
       if (containsLog && !await flushLogBuffer()) {
@@ -265,7 +192,7 @@ export async function handleDiskIOWorkerMessage(
     case "forgetAiMemory":
       // 主线程的 revision 计数器已在 teardown 归零，这里同步丢掉水位线，两侧
       // 的作用域才对得上；否则重新启用后的 revision 1 会被判成迟到消息丢弃
-      // （见 types/diskIO.ts 的 AiMemoryForgetDiskMessage）。
+      // （见 types/diskIO/messages.ts 的 AiMemoryForgetDiskMessage）。
       forgetAiMemoryChat(msg.chatId);
       break;
     case "stickerCatalog":
@@ -284,6 +211,7 @@ export async function handleDiskIOWorkerMessage(
       break;
     case "ensureLuckSecret": {
       let reply: LuckSecretReply;
+      let deferredDraws: LuckDrawDiskMessage[] | null = null;
       try {
         const currentLuckDay: string | undefined = luckWorkerCache.current?.day;
         if (currentLuckDay !== undefined && msg.day < currentLuckDay) {
@@ -291,7 +219,7 @@ export async function handleDiskIOWorkerMessage(
             `Refusing to move luck persistence backward from ${currentLuckDay} to ${msg.day}.`
           );
         }
-        // hydrateLuckDay 会重置当前 owner 的追加缓冲，因此跨日切换前必须先把
+        // 切换 owner 会重置当前 owner 的追加缓冲，因此跨日切换前必须先把
         // 旧日已确认结果刷盘。失败时拒绝切换，避免仅仅请求新日密钥就丢掉
         // 尚在正常批量窗口内的旧日结果；这也让新日结果与密钥的一致性检查
         // 始终建立在已完整提交的上一日 owner 之上。
@@ -301,7 +229,7 @@ export async function handleDiskIOWorkerMessage(
           }
           // 跨日请求必须先恢复目标日结果，再决定能否轮换密钥；否则不一致备份
           // 中“结果文件存在、密钥仍是旧日”的组合会被误当成安全的新一天。
-          await hydrateLuckDay(msg.day);
+          deferredDraws = await switchLuckDay(msg.day, true);
         }
         reply = {
           type: "luckSecret",
@@ -319,13 +247,19 @@ export async function handleDiskIOWorkerMessage(
         };
       }
       postReply(reply);
+      // 滞留抽签在密钥按磁盘上的确认结果恢复之后才补录，不计入 confirmedResultCount。
+      await replayDeferredLuckDraws(deferredDraws);
       break;
     }
     case "verificationUpsert":
-      await handleVerificationUpsert({ msg, reply: postReply });
+      await handleVerificationMessage(
+        (): Promise<void> => handleVerificationUpsert({ msg, reply: postReply })
+      );
       break;
     case "verificationDelete":
-      await handleVerificationDelete({ msg, reply: postReply });
+      await handleVerificationMessage(
+        (): Promise<void> => handleVerificationDelete({ msg, reply: postReply })
+      );
       break;
     // 共享 SQLite 写消息的非法输入就地拒收：handlePendingRemovalSnapshot 会在 removalId 重复、
     // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
@@ -410,7 +344,7 @@ export async function handleDiskIOWorkerMessage(
       await handleDiskIOStartupLoad(msg.stickerPacks, postReply);
       break;
     case "flush": {
-      const failedDomains: readonly DiskIODomain[] = await flushScope(msg.scope);
+      const failedDomains: readonly DiskIODomain[] = await flushScope(msg.scope, postReply);
       const reply: DiskFlushReply | DiskFlushFailedReply = failedDomains.length === 0
         ? { type: "flushed", flushedId: msg.flushId }
         : { type: "flushFailed", flushedId: msg.flushId, failedDomains };
@@ -420,7 +354,7 @@ export async function handleDiskIOWorkerMessage(
     default: {
       // 穷尽性断言：协议新增一条 main -> diskIO 消息时这一行编译失败，必须在本
       // switch 里点名它的 owner。落到这里的消息会被整条丢掉且没有任何回执，
-      // 请求方只能等到超时；运行期不可达，因此不改变任何现有分支的行为。
+      // 请求方只能等到超时；运行期不可达。
       const unhandled: never = msg;
       void unhandled;
       break;
@@ -439,6 +373,27 @@ export function queueDiskIOWorkerMessage(message: DiskIOMessage): Promise<void> 
 }
 
 /**
+ * 待验证写入的就地拒收边界（如容量超限）：异常只拖垮 verification 领域，不离开
+ * onmessage；留下拒收标记让下一次领域 flush 回报失败，重放区间内升级为 fatal，
+ * 口径同 handleIdentityMessage。
+ */
+async function handleVerificationMessage(apply: () => Promise<void>): Promise<void> {
+  try {
+    await apply();
+  } catch (error: unknown) {
+    noteVerificationWriteRejected();
+    console.error("[diskIOWorker] rejected a verification message:", error);
+    if (!diskIOReplayWindow.current) return;
+    const reply: RecoveryReplayFailedReply = {
+      type: "recoveryReplayFailed",
+      domain: "verification",
+      error: errorMessage(error),
+    };
+    postReply(reply);
+  }
+}
+
+/**
  * 身份 SQLite 消息的统一拒收边界：异常只拖垮它自己那个领域，不离开 onmessage。
  *
  * 恢复重放区间内额外升级为 fatal：那批消息对应的 update 早已被 Telegram 确认，
@@ -446,7 +401,7 @@ export function queueDiskIOWorkerMessage(message: DiskIOMessage): Promise<void> 
  * types/diskIO/messages.ts 的 RecoveryReplayRequest）。
  */
 function handleIdentityMessage(
-  domain: "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa",
+  domain: Exclude<StorageDatabaseDomain, "aiMemory">,
   apply: () => void
 ): void {
   try {
@@ -471,12 +426,12 @@ function startDiskIOWorker(): void {
   stickerCatalogPersistedNotifier.current = postReply;
   joinLogPersistedNotifier.current = postReply;
   storageWriteFatalReply.current = (): void => postReply({ type: "storageWriteStalled" });
-  configureStoragePersistenceReply(postReply);
-  configureAiMemoryDeletePersistedReply(postReply);
-  configureAiMemoryPersistedReply(postReply);
+  storagePersistenceReplyHolder.current = postReply;
+  aiMemoryDeletePersistedNotifier.current = postReply;
+  aiMemoryPersistedNotifier.current = postReply;
   // 运势追加持续失败时的兜底诊断出口：本线程的 console 可能被部署接到
   // /dev/null，这条会由主线程的运势 owner 记进统一 logs/（见 luckFiles.ts）。
-  configureLuckAppendStalledReply(postReply);
+  luckAppendStalledNotifier.current = postReply;
   self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
     void queueDiskIOWorkerMessage(event.data);
   };

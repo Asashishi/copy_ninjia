@@ -23,7 +23,7 @@ import { currentUpdateAbortSignal } from "../infra/updateContext";
 import { isTimeoutAbort, signalWithTimeout } from "../libs/abortSignal";
 import { forumTopicThreadId } from "../libs/forumTopic";
 import { signalArgs } from "../libs/telegramSignalArgs";
-import { sanitizeDisplayName } from "../libs/text";
+import { joinPersonName, sanitizeDisplayName } from "../libs/text";
 import type { AtmosphereTexts } from "../types/atmosphere";
 import type { CachedUser } from "../types/chatState";
 import type { InfoLookup, InfoProfile, InfoRequest } from "../types/info";
@@ -37,20 +37,14 @@ interface InfoMessage {
   readonly entities: readonly MessageEntity[];
 }
 
-/** first_name 与 last_name 用一个空格拼接；缺的部分不留空格。 */
-function joinName(firstName: string | undefined, lastName: string | undefined): string {
-  if (firstName === undefined || firstName.length === 0) return lastName ?? "";
-  return lastName === undefined || lastName.length === 0 ? firstName : `${firstName} ${lastName}`;
-}
-
 /** 用户资料与头像读取目标。 */
 function userLookup(user: User): InfoLookup {
-  return { profile: { id: user.id, name: joinName(user.first_name, user.last_name), username: user.username }, avatarTarget: user };
+  return { profile: { id: user.id, name: joinPersonName(user.first_name, user.last_name), username: user.username }, avatarTarget: user };
 }
 
 /** 现查失败时退回目标解析得到的身份；连名称和用户名都没有时为 undefined。 */
 function cachedLookup(target: CachedUser): InfoLookup | undefined {
-  const name: string = target.isChannel === true ? target.title ?? "" : joinName(target.first_name, target.last_name);
+  const name: string = target.isChannel === true ? target.title ?? "" : joinPersonName(target.first_name, target.last_name);
   if (name.length === 0 && target.username === undefined) return undefined;
   const avatarTarget: User | number | undefined = target.isChannel === true
     ? target.id
@@ -60,7 +54,7 @@ function cachedLookup(target: CachedUser): InfoLookup | undefined {
 
 /** 频道或群的资料；只有频道能读头像。 */
 function chatLookup(chat: ChatFullInfo): InfoLookup {
-  const name: string = "title" in chat && chat.title !== undefined ? chat.title : joinName(chat.first_name, chat.last_name);
+  const name: string = "title" in chat && chat.title !== undefined ? chat.title : joinPersonName(chat.first_name, chat.last_name);
   return {
     profile: { id: chat.id, name, username: chat.username },
     avatarTarget: chat.type === "channel" ? chat.id : undefined,

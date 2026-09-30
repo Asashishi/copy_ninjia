@@ -56,13 +56,9 @@ ensure_git_repository() {
   # 按**逐个 tag 比对内容**认版本，不按版本号猜：对上了才敢把 HEAD 指过去，
   # 那之后 `git status` 是干净的，更新就是一次普通的 fetch + checkout。
   #
-  # 刻意不用 `git add --all` + `write-tree` 求工作树哈希：`add` 会为每个未被
-  # .gitignore 排除的文件写一个 blob 进对象库，而这棵树里躺着 config/、
-  # g-auth.json、state.json 这些部署数据——一旦 .gitignore 有缺口，密钥就进了
-  # 仓库。`read-tree` 只读 tag 自带的对象，`diff-index` 只比该 tag 跟踪的那些
-  # 文件、完全无视未跟踪文件，两条都不会把部署数据收进来。
-  #
-  # 代价是每个 tag 要比一遍内容；发布 tag 数量有限，装一次多花几秒可以接受。
+  # 比对只用 `read-tree`（只读 tag 自带的对象）与 `diff-index`（只比该 tag 跟踪的
+  # 那些文件、无视未跟踪文件），不会把 config/、memory/、database/ 等部署数据写进
+  # 对象库。每个 tag 各比一遍内容，发布 tag 数量有限。
   local candidate="" matched="" head_commit=""
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue

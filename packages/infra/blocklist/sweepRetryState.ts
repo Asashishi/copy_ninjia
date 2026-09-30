@@ -68,7 +68,10 @@ export function noteSweepAttemptFailed(
   armBlocklistSweepScheduler();
 }
 
-/** 更新一次任务诊断；达到阈值只告警，不删除安全任务。 */
+/**
+ * 更新一次任务诊断，只改内存镜像、不排 durable 快照；达到阈值只告警，不删除安全任务。
+ * 需要按条件排快照的调用方用下面的 recordPendingRemovalFailure。
+ */
 export function updatePendingRemovalFailure(
   removalId: number,
   chatId: number,

@@ -98,7 +98,7 @@ function inspectPendingRemovalPages(
   }
 }
 
-/** 启动与冷迁移共用的完整只读校验；连接与快照生命周期由调用方持有。 */
+/** 启动恢复的完整只读校验（由 workers/diskIO/storageDatabase/hydration.ts 调用）；连接与快照生命周期由调用方持有。 */
 export function validateStorageDatabase(database: StorageDatabase, source: string): StorageDatabaseInspection {
   assertStorageDatabaseStartupJsonbStorage(database, source);
   // 版本判定必须排在读取业务行**之前**：当前 schema 才保证所有业务表存在，

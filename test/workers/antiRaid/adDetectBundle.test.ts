@@ -18,7 +18,6 @@ function bundle(entries: AdCandidateEntry[], checkedSeq: number): AdMessageBundl
   return {
     chatId: -1001,
     senderId: 42,
-    label: "@someone",
     meta: { firstName: "Someone", lastName: "", username: "someone" },
     isChannel: false,
     justJoined: false,

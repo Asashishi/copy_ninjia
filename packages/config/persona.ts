@@ -4,7 +4,7 @@ import { invalidInput, readUtf8TextInput } from "../libs/inputValidation";
 
 /**
  * 读取 AI 人设资源并拒绝缺失、不可读或空白内容。错误不得携带文件内容或底层
- * I/O 细节；主线程启动闸和 AI Worker 运行期兜底共用同一实现。
+ * I/O 细节；只由主线程启动预检（ensurePersona）调用，AI Worker 经初始化消息接管快照。
  */
 export async function loadPersona(path: string = PERSONA_PATH): Promise<string> {
   let content: string;

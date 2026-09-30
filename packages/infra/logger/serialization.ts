@@ -46,8 +46,8 @@ function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig 
  * agent loader 都把成功结果放在线程内 holder，logger 只读取已有快照，不反向
  * 触发同步文件 I/O。
  *
- * 结果按三个 holder 的对象身份记忆化（holder 见 cache/perThread/logger.ts 的
- * loggerSecretsMemo）。配置身份未变时不重建凭据数组；身份变化（热重载替换快照）
+ * 结果按三个 holder 的对象身份记忆化（三个 holder 见 cache/perThread/config.ts，记忆见
+ * cache/perThread/logger.ts 的 loggerSecretsMemo）。配置身份未变时不重建凭据数组；身份变化（热重载替换快照）
  * 时，上一份名单里不再生效的旧凭据排在当前凭据之后继续脱敏，覆盖旧客户端在途
  * 请求仍可能带出的凭据。总量受 LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃
  * 最早退役的。

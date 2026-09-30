@@ -6,8 +6,8 @@ import {
 } from "./environment";
 
 /**
- * 项目内所有文件/目录路径的集中定义。各模块统一从这里取，不再各自散落
- * join(import.meta.dir, ...)。源码以仓库为根；二进制以部署工作目录为根。
+ * 项目内所有文件/目录路径的集中定义，各模块统一从这里取。源码以仓库为根；
+ * 二进制以部署工作目录为根。
  */
 export const PROJECT_ROOT: string = Bun.isStandaloneExecutable
   ? process.cwd()
@@ -105,7 +105,7 @@ export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
  * 待验证当日增量（anti-raid/ 下只保留东京当天），以及滚动 24 小时入群事实
  * （joinlog/）和每群已发言成员集合（wed/），均由 diskIOWorker 落盘，见
  * packages/workers/diskIOWorker.ts；ai-daily-usage/ 下是模型请求的缓存用量统计，同样由 diskIOWorker
- * 落盘；global/ 下的全局状态由主线程落盘。每一类数据各占
+ * 落盘；ad-detected/ 是广告命中样本旁路（见 AD_SAMPLE_MEMORY_DIR）；global/ 下的全局状态由主线程落盘。每一类数据各占
  * 一个子目录，顶层不放单个文件。不进 git，与 logs/ 同级对待；部署时应按敏感数据保护。
  */
 export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
@@ -113,7 +113,7 @@ export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
  * 所有群共用的全局状态目录；与 memory/ 下 Disk I/O Worker 的各领域目录并列，由主线程
  * StateStore 独占写入（见 infra/storage/statePersistence.ts）。
  */
-export const GLOBAL_STATE_DIR: string = join(MEMORY_DIR, "global");
+const GLOBAL_STATE_DIR: string = join(MEMORY_DIR, "global");
 /** 全局状态文件：复读状态、冷却时钟与语音合成每日计数。 */
 export const GLOBAL_STATE_FILE_PATH: string = join(GLOBAL_STATE_DIR, "state.json");
 /**
@@ -145,7 +145,8 @@ export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
  */
 export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
 /**
- * 判定命中并触发封禁的原始样本，追加写入、永不读回。涨过
+ * 判定命中并触发封禁的原始样本，追加写入，进程不把其内容用于业务判断（追加游标
+ * 重建时的读回校验除外）。涨过
  * AD_SAMPLE_FILE_MAX_BYTES 时整份改名成 `sample.<东京日期>.json` 归档，
  * 归档只保留最近 15 个东京自然日。
  * 所属模块：workers/diskIO/adSampleFile.ts。

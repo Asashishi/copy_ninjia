@@ -376,7 +376,7 @@ function diagnosticLogChain(
   };
 }
 
-/** 返回存储链路定义；命令链路交给 commandChains。 */
+/** 返回存储链路定义；命令链路与配置链路分别交给 commandChains、configChains。 */
 export function createStorageChain(
   chain: ChainName,
   dependencies: StorageChainDependencies
@@ -392,6 +392,7 @@ export function createStorageChain(
     case "diagnostic-log": return diagnosticLogChain(dependencies);
     case "ad-detect-command":
     case "ai-reply-command":
-    case "cron-send-voice": return undefined;
+    case "cron-send-voice":
+    case "cron-config-reload": return undefined;
   }
 }

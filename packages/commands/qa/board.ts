@@ -54,8 +54,8 @@ function renderQaBoardPage(entries: readonly QaEntry[], atmosphere: AtmosphereTe
  * 把条目按 QA_QUERY_PAGE_MAX_ENTRIES 条一页装页。
  *
  * 条数固定，因此每页装多少与条目长短无关：短问答不会挤成一整屏、让翻页条
- * 整个消失。单页不会超出 Telegram 上限的依据写在该常量的 JSDoc 里，这里因此
- * 不再对整页做一次 `JSON.stringify` 试装。
+ * 整个消失。单页不会超出 Telegram 上限的依据写在 QA_QUERY_PAGE_MAX_ENTRIES 的
+ * JSDoc 里。
  */
 export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: AtmosphereTexts): readonly RichTextMessage[] {
   const pages: RichTextMessage[] = [];

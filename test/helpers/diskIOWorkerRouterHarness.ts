@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeEach, mock } from "bun:test";
+import type { DiskIODomain } from "../../packages/types/diskIO/replies";
 import type { DiskIOMessage } from "../../packages/types/diskIO/messages";
 
 export const handleLogMessage = mock((_message: unknown): void => {});
@@ -64,9 +65,11 @@ export const luckWorkerCache: {
 type HydratedLuckEntries = Map<string, { label: string; fortunePercent: number }>;
 /** 用例往里塞当日运势条目；每个用例前换成新的空表。 */
 export const hydratedLuckEntries: { current: HydratedLuckEntries } = { current: new Map() };
-export const hydrateLuckDay = mock((day: string): void => {
+export const switchLuckDay = mock((day: string, _recoverFromDisk: boolean): null => {
   luckWorkerCache.current = { day, entries: new Map(hydratedLuckEntries.current) };
+  return null;
 });
+export const replayDeferredLuckDraws = mock(async (_deferred: unknown): Promise<void> => {});
 export const inspectLuckDay = mock((day: string): {
   readonly day: string;
   readonly cache: { readonly day: string; readonly entries: HydratedLuckEntries };
@@ -92,7 +95,6 @@ export const maintainVerificationDay = mock((_inspection: unknown): void => {});
 export const flushLogBuffer = mock((): boolean => true);
 export const flushStickerCatalogs = mock((): boolean => true);
 export const flushLuckAppends = mock((): boolean => true);
-const configureLuckAppendStalledReply = mock((_notify: (reply: unknown) => void): void => {});
 export const flushVerificationChanges = mock((_reply: (reply: unknown) => void): boolean => true);
 export const maintainVerificationDayForToday = mock((
   _reply: (reply: unknown) => void,
@@ -101,9 +103,10 @@ export const maintainVerificationDayForToday = mock((
 export const maintainAdSampleFiles = mock((_today?: string): void => {});
 export const maintainTemporaryAdBypassActivities = mock((_reply: unknown, _now?: number): void => {});
 export const flushBlocklistRemovalOutbox = mock((): boolean => true);
-export const pendingStorageDatabaseDomains = mock((): readonly ["blocklistRemovalOutbox"] => [
-  "blocklistRemovalOutbox",
-]);
+export const collectStorageDatabaseFailures = mock((
+  _scope: DiskIODomain | null,
+  _failedDomains: DiskIODomain[]
+): void => {});
 export const flushJoinLogBuffer = mock((): boolean => true);
 export const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 export const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
@@ -139,18 +142,21 @@ mock.module("../../packages/workers/diskIO/logFiles", () => ({
 }));
 mock.module("../../packages/workers/diskIO/luckFiles", () => ({
   adoptLuckDay,
-  configureLuckAppendStalledReply,
   flushLuckAppends,
   handleLuckDrawMessage,
-  hydrateLuckDay,
   maintainLuckForDay,
+  replayDeferredLuckDraws,
+  switchLuckDay,
 }));
 mock.module("../../packages/workers/diskIO/luckSecretFile", () => ({
   adoptLuckReceiptSecret,
   inspectLuckReceiptSecret,
   recoverLuckReceiptSecret,
 }));
-mock.module("../../packages/cache/workers/diskIO/luck", () => ({ luckWorkerCache }));
+mock.module("../../packages/cache/workers/diskIO/luck", () => ({
+  luckWorkerCache,
+  luckAppendStalledNotifier: { current: null },
+}));
 mock.module("../../packages/workers/diskIO/verificationRecovery", () => ({
   adoptVerificationDay,
   inspectVerificationDay,
@@ -179,16 +185,16 @@ mock.module("../../packages/workers/diskIO/joinLogFiles", () => ({
   flushJoinLogBuffer,
   handleJoinLogDeleteMessage,
   handleJoinLogMessage,
-  purgeJoinLogDeletions,
-  inspectJoinLogFiles,
-  maintainJoinLogFiles,
   maintainJoinLogRetention,
   readJoinLog,
 }));
+mock.module("../../packages/workers/diskIO/joinLogRecovery", () => ({
+  inspectJoinLogFiles,
+  maintainJoinLogFiles,
+  purgeJoinLogDeletions,
+}));
 mock.module("../../packages/workers/diskIO/aiMemoryStorage", () => ({
   adoptAiMemorySnapshots,
-  configureAiMemoryDeletePersistedReply: (): void => {},
-  configureAiMemoryPersistedReply: (): void => {},
   deleteAiMemorySnapshot,
   markAiMemorySnapshotDirty,
 }));
@@ -205,7 +211,6 @@ mock.module("../../packages/workers/diskIO/snapshotFiles", () => ({
 }));
 mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   adoptStorageDatabase,
-  configureStoragePersistenceReply: (): void => {},
   flushStorageDatabase: flushBlocklistRemovalOutbox,
   handleIdentityPolicyWrite,
   handleChatStateWrite,
@@ -213,7 +218,7 @@ mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   handleTemporaryAdBypassWrite,
   handlePendingRemovalSnapshot: handleBlocklistRemovalsMessage,
   inspectStorageDatabase,
-  pendingStorageDatabaseDomains,
+  collectStorageDatabaseFailures,
   maintainTemporaryAdBypassActivities,
   readBlocklistIdPage: (message: { requestId: number; afterId: number | null }): unknown => ({
     type: "blocklistIdPageRead",
@@ -295,7 +300,7 @@ beforeEach(() => {
     maintainAdSampleFiles,
     maintainTemporaryAdBypassActivities,
     flushBlocklistRemovalOutbox,
-    pendingStorageDatabaseDomains,
+    collectStorageDatabaseFailures,
     flushJoinLogBuffer,
     purgeJoinLogDeletions,
     handleBlocklistRemovalsMessage,
@@ -304,7 +309,8 @@ beforeEach(() => {
     handleChatQaWrite,
     handleTemporaryAdBypassWrite,
     postMessage,
-    hydrateLuckDay,
+    switchLuckDay,
+    replayDeferredLuckDraws,
     inspectLuckDay,
     adoptLuckDay,
     maintainLuckDay,

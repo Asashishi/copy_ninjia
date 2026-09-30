@@ -38,7 +38,6 @@ interface EditedMessage {
   text: string;
 }
 const editMessageText = mock(async (_message: EditedMessage): Promise<boolean> => true);
-const chatStates = new Map<number, { isInitEnabled?: boolean }>();
 const permitted: Set<number> = new Set<number>();
 
 mock.module("../../packages/infra/telegram", () => ({
@@ -50,7 +49,7 @@ mock.module("../../packages/infra/telegram", () => ({
   logApiError: (): void => {},
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (chatId: number): { isInitEnabled?: boolean } => chatStates.get(chatId) ?? {},
+  getChatState: (): object => ({}),
 }));
 mock.module("../../packages/users/userLabel", () => ({
   // 与生产同构：解析不出发起人时退化为氛围文案里的「未知发起人」。
@@ -145,8 +144,6 @@ beforeEach((): void => {
   sendMessage.mockClear();
   deleteMessageWithOutcome.mockClear();
   editMessageText.mockClear();
-  chatStates.clear();
-  chatStates.set(CHAT_ID, { isInitEnabled: true });
   permitted.clear();
   permitted.add(OWNER);
   resetChatQaCache();
@@ -181,20 +178,6 @@ test("/qa REMOVE 的问题文本保持原样大小写", async () => {
 });
 
 describe("/qa set", () => {
-  test("未接管的群一律拒绝，三条命令同一句", async () => {
-    chatStates.set(CHAT_ID, {});
-
-    await handleQaCommand(context(OWNER, "set"));
-    await handleQaCommand(context(OWNER, "query"));
-    await handleQaCommand(context(OWNER, "remove x"));
-
-    expect(sendCommandMessage).toHaveBeenCalledTimes(3);
-    for (const call of sendCommandMessage.mock.calls) {
-      expect(call[0].text).toBe(QA_COMMAND_TEXTS.notInitialized);
-    }
-    expect(sendMessage).not.toHaveBeenCalled();
-  });
-
   test("持权限的频道身份也能开表单——命令侧与投递侧是同一个 sender_chat", async () => {
     permitted.add(CHANNEL_ID);
 
@@ -564,7 +547,6 @@ describe("落盘失败与容量拒绝的回执分流", () => {
   test("表单会话达到全局上限时当场说满，不顶掉别人正在填的那张", async () => {
     for (let index: number = 0; index < QA_FORM_SESSION_MAX; index++) {
       const otherChatId: number = -2000 - index;
-      chatStates.set(otherChatId, { isInitEnabled: true });
       await handleQaCommand(context(OWNER, "set", {
         chat: { id: otherChatId, type: "supergroup", title: "T" },
       }));

@@ -26,8 +26,8 @@ import type {
  * 崩溃重建时（onDiskIORespawn）同样整体重放给它补齐。
  *
  * 容量：不在本层设淘汰——条目代表「这个人还欠一次处置」，按容量丢掉等于放过
- * 刷群者；硬顶在落盘侧由 VERIFICATION_RECORD_CAPACITY 挡住（见
- * workers/diskIO/verificationWrites.ts），预算耗尽的终态改由
+ * 刷群者；硬顶由 antiRaid/verificationMirror.ts 按 VERIFICATION_RECORD_CAPACITY 拒收
+ * 新记录并请求受监督重启，落盘侧 workers/diskIO/verificationWrites.ts 再核一次；预算耗尽的终态改由
  * deferredVerificationRecords 以最小索引保留。
  */
 export const activeVerificationSnapshots: Map<string, VerificationSnapshot> = new Map();

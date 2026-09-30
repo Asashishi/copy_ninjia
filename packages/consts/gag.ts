@@ -78,7 +78,7 @@ export const GAG_FILLER_GAP_SPACE_PROBABILITY: number = 1 / 3;
 /** 六个点且每个点间都有空格时的最坏 UTF-16 长度，用于发送上限预检。 */
 export const GAG_FILLER_MAX_CHARS: number = GAG_FILLER_MAX_DOTS * 2 - 1;
 
-/** 25% 替换候选均匀抽取的字符；只替换原字形，不再追加到它后面。 */
+/** 25% 替换候选均匀抽取的字符；只替换原字形，不追加到它后面。 */
 export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
   "唔",
   "啊",
@@ -91,7 +91,7 @@ export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
 /**
  * 候选操作选择填充的概率；剩余概率走 GAG_REPLACEMENT_CHARACTERS 替换分支。
  * 两个分支由 gag/rendering.ts 的 `roll < GAG_FILL_OPERATION_PROBABILITY` 单条判定
- * 切分，不单列替换分支常量，避免两个常量各改各的漂移。连续操作闸门会挡住
+ * 切分。连续操作闸门会挡住
  * 部分候选，因此该值只描述抽样概率，不承诺最终文本中的填充占比。
  */
 export const GAG_FILL_OPERATION_PROBABILITY: number = 0.75;

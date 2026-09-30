@@ -5,11 +5,8 @@ export function verificationKey(chatId: number, userId: number): string {
 }
 
 /**
- * 某个群的键前缀，供「遍历整表挑出本群条目」的调用点做 `startsWith`。
- *
- * 刻意不提供 `isVerificationKeyOfChat(key, chatId)`：那些调用点都在遍历全表的
- * 循环里，逐键拼一次模板串等于每个键多一次分配。前缀由调用方提到循环外，
- * 格式仍然只有这一处定义。
+ * 某个群的键前缀，供「遍历整表挑出本群条目」的调用点做 `startsWith`；前缀由调用方
+ * 提到循环外，格式只有这一处定义。
  */
 export function verificationKeyPrefix(chatId: number): string {
   return `${chatId}${KEY_SEPARATOR}`;

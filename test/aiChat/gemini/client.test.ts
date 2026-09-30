@@ -178,7 +178,7 @@ describe("Gemini request safety settings", () => {
     };
 
     const result = await requestGeminiResult("summary", broken, "Gemini test");
-    expect(result).toMatchObject({ ok: false, failureKind: "request", diagnostic: "request failed" });
+    expect(result).toMatchObject({ ok: false, failureKind: "request" });
     // 请求根本没发出去，配额不该被记账。
     expect(generateContent).not.toHaveBeenCalled();
     expect(loggerError).toHaveBeenCalledWith("Error calling Gemini test:", expect.any(Error));
@@ -317,7 +317,7 @@ describe("Gemini request safety settings", () => {
       model: "gemini-test",
       contents: "hello",
       config: { abortSignal: controller.signal },
-    }), "Gemini test")).resolves.toMatchObject({ ok: false, diagnostic: "request aborted" });
+    }), "Gemini test")).resolves.toMatchObject({ ok: false, failureKind: "request" });
     expect(generateContent).not.toHaveBeenCalled();
     expect(loggerError).not.toHaveBeenCalled();
   });
@@ -360,7 +360,6 @@ describe("Gemini request safety settings", () => {
     await expect(pendingResult).resolves.toMatchObject({
       ok: false,
       failureKind: "request",
-      diagnostic: "request aborted",
     });
     expect(loggerError).not.toHaveBeenCalled();
     settleSdkTask(geminiResponse({

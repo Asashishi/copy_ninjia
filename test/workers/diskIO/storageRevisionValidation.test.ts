@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { getTableName } from "drizzle-orm";
+import { chatQa } from "../../../packages/database/schema/chatQa";
+import { chatStates } from "../../../packages/database/schema/chatState";
+import { permissionList } from "../../../packages/database/schema/identityPolicy";
+import { temporaryAdBypassEntries } from "../../../packages/database/schema/temporaryAdBypass";
 import { clearStorageBusinessTables } from
   "../../../scripts/fixtures/storageDatabase";
 import { resetStorageDatabaseCache } from
@@ -29,16 +34,16 @@ describe("Disk I/O Worker 写消息的 revision 闸", () => {
     for (const revision of INVALID_REVISIONS) {
       expect(() => handleChatStateWrite({
         type: "chatStateWrite", chatId: -1001, aiPersona: null, data: null, revision,
-      }, noReply)).toThrow(`${storageSource("chat_states", -1001)}: revision must be a positive safe integer.`);
+      }, noReply)).toThrow(`${storageSource(getTableName(chatStates), -1001)}: revision must be a positive safe integer.`);
       expect(() => handleChatQaWrite({
         type: "chatQaWrite", chatId: -1001, q: "怎么入群？", data: null, revision,
-      }, noReply)).toThrow(`${storageSource("chat_qa", -1001)}: revision must be a positive safe integer.`);
+      }, noReply)).toThrow(`${storageSource(getTableName(chatQa), -1001)}: revision must be a positive safe integer.`);
       expect(() => handleIdentityPolicyWrite({
         type: "identityPolicyWrite", table: "whitelist", id: 7, data: null, revision,
-      }, noReply)).toThrow(`${storageSource("whitelist_entries", 7)}: revision must be a positive safe integer.`);
+      }, noReply)).toThrow(`${storageSource(getTableName(permissionList), 7)}: revision must be a positive safe integer.`);
       expect(() => handleTemporaryAdBypassWrite({
         type: "temporaryAdBypassWrite", id: 7, activity: null, revision,
-      }, noReply)).toThrow(`${storageSource("temporary_ad_bypass_entries", 7)}: revision must be a positive safe integer.`);
+      }, noReply)).toThrow(`${storageSource(getTableName(temporaryAdBypassEntries), 7)}: revision must be a positive safe integer.`);
     }
   });
 });

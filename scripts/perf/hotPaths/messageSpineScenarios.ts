@@ -119,8 +119,9 @@ export function selfSentActiveScenario(): Scenario {
  * 每条群消息都要走的编排主干（`auto/message/index.ts` 的 handleIncomingMessageMiddleware）。
  *
  * 其余场景量的都是叶子工具，而叶子各自快不等于串起来快；这一条量的是真正跑在
- * 每条消息上的那串固定调用：getChatState → recordChatTitleFromChat → cacheSender
- * → observeGroupMessageForAiReply → activeCopyTargetIdIn → isQuietUntilActive →
+ * 每条消息上的那串固定调用：getChatState → recordChatTitleFromChat → isBotOwnMessage
+ * → cacheSender → observeGroupMessageForAiReply → activeCopyTargetIdIn →
+ * activeTranslateStateIn → resolveQaDirectAnswer → isQuietUntilActive →
  * isAiChatConfigured → handleProactiveMessageActions。
  *
  * **fixture 必须是「无可复制内容」的消息**，这是本场景零副作用的依据，不是随手
@@ -241,7 +242,7 @@ export function aiMediaDirectTriggerScenario(): Scenario {
         // 采样期确实跑在 DFG 稳态上，没被调用的函数满足不了它想证明的东西。
         const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
         // now 逐轮递增：生产里它是每条消息各自的 Date.now()，喂同一个字面量会让
-        // 整个循环体退化成常量表达式（同 scenarios.ts 里 AD_SAMPLE_TEXTS 那段的理由）。
+        // 整个循环体退化成常量表达式（同 hotPaths/adFixture.ts 里 AD_SAMPLE_TEXTS 那段的理由）。
         const context: MessageTriggerContext = createMessageTriggerContext({
           message,
           bot,

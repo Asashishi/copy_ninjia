@@ -1,4 +1,4 @@
-/** 当前冷迁移直接前序（14.x / schema v11）的非空数据库夹具；全局状态迁移不改数据库。 */
+/** 当前冷迁移直接前序（15.x / schema v11）的非空数据库夹具；两条冷迁移都不改数据库。 */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -19,7 +19,7 @@ const PRESERVED_TABLES: readonly string[] = [
 ];
 
 /** 夹具里已有 chat_states 行的群。 */
-export const MIGRATION_FIXTURE_CHAT_ID: number = -1001;
+const MIGRATION_FIXTURE_CHAT_ID: number = -1001;
 
 export interface MigrationDatabaseFixture {
   readonly preserved: ReadonlyMap<string, readonly unknown[]>;

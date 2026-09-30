@@ -24,8 +24,6 @@ import {
 } from "./verification/terminal";
 
 export { joinCreatesNewRecord };
-/** 终态构造：adopt 重建与状态机新建共用，保证两条路产出同一个对象形状。 */
-export { checkingInviterOf, expellingOf } from "./verification/shared";
 /** 落盘快照 → 内存状态的纯转换；解释器只负责计时器与补投。 */
 export { adoptVerificationState } from "./verification/adopt";
 

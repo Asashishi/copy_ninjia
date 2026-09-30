@@ -1,4 +1,4 @@
-/** 在独立临时部署中核对编译产物的安装校验、内置图片编解码、三个 Worker 与正常排空。 */
+/** 在独立临时部署中核对编译产物：无 source map 与 node_modules、版本一致、内置图片编解码、三个 Worker 与正常排空，并在无系统 Bun 下执行发行包携带的冷迁移与安装器（首次安装与迁移后升级）。 */
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

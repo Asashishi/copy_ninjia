@@ -190,8 +190,8 @@ function rollbackSuppression(chatId: number, userId: number, entry: FloodWindowE
  * 丢掉，而机器人此刻多半仍是 Telegram 管理员：禁得动、也发得出话。对不上还照做，
  * 就是在一个本进程已经不再管理的群里把成员按住三分钟、再公开说一句「本天才把你
  * 禁言 3 分钟」——一次没人负责的处置，而本模块不排恢复计时器。同种情形下
- * adDetect/queue.ts（`pendingAdMessages.get(key) !== bundle`）与 verificationEffects.ts
- * 的 stillCurrent 都是就地中止。
+ * adDetect/verdict.ts（`pendingAdMessages.get(key) !== bundle`）与
+ * verificationEffects/terminal.ts 的 stillCurrent 都是就地中止。
  *
  * 代价是 FLOOD_WINDOW_MAX_MEMBERS 的 LRU 淘汰恰好撞在这次往返上时会少判一次
  * 刷屏，与那个常量 JSDoc 的约定一致（sweepFloodWindows 不会碰它：

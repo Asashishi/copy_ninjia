@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { GrammyError } from "grammy";
 import { AVATAR_FETCH_MAX_ATTEMPTS } from "../../packages/consts/telegram";
-import { runAvatarFetchAttempts } from "../../packages/infra/telegram/avatar/shared";
+import { avatarFailureFor, runAvatarFetchAttempts } from "../../packages/infra/telegram/avatar/shared";
 import type {
   AvatarFetchAttemptsOutcome,
   AvatarOperationAttemptResult,
@@ -125,7 +126,7 @@ describe("Telegram 公开头像解析", () => {
 
   test("公开主页与头像下载都拒绝自动重定向，且保留原字节上限链路", async () => {
     const fetchCalls: { input: string; init: RequestInit | undefined }[] = [];
-    const avatarBytes: Uint8Array = new Uint8Array([1, 2, 3, 4]);
+    const avatarBytes: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
     const fetchMock = mock(async (
       input: string | URL | Request,
       init?: RequestInit
@@ -147,6 +148,35 @@ describe("Telegram 公开头像解析", () => {
     ]);
     expect(fetchCalls.every((call): boolean => call.init?.redirect === "error")).toBeTrue();
     expect(fetchCalls.every((call): boolean => call.init?.signal instanceof AbortSignal)).toBeTrue();
+  });
+
+  test("头像下载为空或不是 JPEG/PNG（如 HTML 插页）时不交给上传", async () => {
+    for (const body of [new Uint8Array(0), new TextEncoder().encode("<html>quota</html>")]) {
+      let calls: number = 0;
+      globalThis.fetch = mock(async (): Promise<Response> => {
+        calls++;
+        return calls === 1
+          ? new Response(`<img class="tgme_page_photo_image" src="${telegramCdnUrl}/avatar.jpg">`)
+          : new Response(body);
+      }) as unknown as typeof fetch;
+
+      await expect(fetchAvatarFromWebProfile("CopyNinjiaBot")).resolves.toBeNull();
+    }
+  });
+});
+
+describe("头像操作异常的重试分类", () => {
+  test("Telegram 400 按确定性失败，其余错误按瞬时失败", () => {
+    const telegramError = (errorCode: number): GrammyError => new GrammyError(
+      "call failed",
+      { ok: false, error_code: errorCode, description: "failed" },
+      "setMyProfilePhoto",
+      {}
+    );
+    expect(avatarFailureFor(telegramError(400))).toBe("permanent-failure");
+    expect(avatarFailureFor(telegramError(429))).toBe("transient-failure");
+    expect(avatarFailureFor(telegramError(500))).toBe("transient-failure");
+    expect(avatarFailureFor(new Error("socket hang up"))).toBe("transient-failure");
   });
 });
 

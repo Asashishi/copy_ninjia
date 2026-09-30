@@ -3,7 +3,6 @@ import { lstat } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { Stats } from "node:fs";
 import { invalidInput } from "../../packages/libs/inputValidation";
-import { isErrno } from "../../packages/libs/errno";
 
 /** 冷迁移清单里的一项：相对路径、哈希与权限元数据，不记录文件内容。 */
 export interface MigrationFileRecord {
@@ -15,7 +14,7 @@ export interface MigrationFileRecord {
 }
 
 /** 读取 root 下一个普通文件的清单项；符号链接与非普通文件一律拒绝。 */
-export async function readMigrationFileRecord(root: string, path: string): Promise<MigrationFileRecord> {
+async function readMigrationFileRecord(root: string, path: string): Promise<MigrationFileRecord> {
   const fullPath: string = join(root, path);
   const stats: Stats = await lstat(fullPath);
   if (!stats.isFile()) return invalidInput(fullPath, "$type", "a regular file without symbolic links");
@@ -28,23 +27,13 @@ export async function readMigrationFileRecord(root: string, path: string): Promi
   };
 }
 
-/**
- * 按顺序读取 root 下的清单项。optional 中的路径真正缺省时跳过；悬空链接、类型不符
- * 与读取失败一律拒绝。
- */
+/** 按顺序读取 root 下的清单项；缺失、悬空链接、类型不符与读取失败一律拒绝。 */
 export async function readMigrationFileRecords(
   root: string,
-  paths: readonly string[],
-  optional: ReadonlySet<string>
+  paths: readonly string[]
 ): Promise<readonly MigrationFileRecord[]> {
   const records: MigrationFileRecord[] = [];
-  for (const path of paths) {
-    try {
-      records.push(await readMigrationFileRecord(root, path));
-    } catch (error: unknown) {
-      if (!optional.has(path) || !isErrno(error, "ENOENT")) throw error;
-    }
-  }
+  for (const path of paths) records.push(await readMigrationFileRecord(root, path));
   return records;
 }
 

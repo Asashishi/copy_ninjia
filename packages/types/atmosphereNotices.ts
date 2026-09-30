@@ -5,10 +5,12 @@ export interface AtmosphereNotices {
   readonly statusContextUsage: (percent: string) => string;
   readonly blockAlreadyRecorded: (warning: string) => string;
   readonly blockKicked: (count: number) => string;
+  readonly blockConfirmedBanned: (count: number) => string;
   readonly unblockNotRecorded: (label: string) => string;
   readonly batchKickAborted: string;
   readonly gagChannelEntry: string;
   readonly adDetected: (label: string, reason: string) => string;
+  readonly adDefaultReason: string;
   readonly adNoManagedChat: (head: string) => string;
   readonly adPartialBan: (head: string, enforcedChats: number, failedChats: number) => string;
   readonly adBanned: (head: string) => string;
@@ -65,7 +67,6 @@ export interface AtmosphereNotices {
   readonly unknownActor: string;
   readonly gagRejected: (actorLabel: string, command: string) => string;
   readonly gagGroupOnly: string;
-  readonly gagNotInitialized: string;
   readonly gagMissingRights: (command: string, reason: string) => string;
   readonly gagToolTooLong: string;
   readonly gagCapacity: (capacity: number) => string;
@@ -152,6 +153,7 @@ export interface AtmosphereNotices {
   readonly adReferenceWarning: (label: string) => string;
   readonly floodMuted: (label: string, messageCount: number, minutes: number) => string;
   readonly lockdownInflux: (windowSeconds: number, joinCount: number) => string;
+  readonly lockdownInfluxUnknown: string;
   readonly lockdownStarted: (influx: string, durationMinutes: number) => string;
   readonly lockdownEnded: (durationMinutes: number) => string;
   readonly verificationCommentExempt: (targetLabel: string) => string;

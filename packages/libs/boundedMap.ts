@@ -1,4 +1,4 @@
-/** 向 Map 写入一项；新增键越过上限时淘汰最早插入项（FIFO，不刷新热度）。 */
+/** setBoundedMapValue 的入参。 */
 export interface SetBoundedMapValueParams<K, V> {
   map: Map<K, V>;
   key: K;
@@ -6,6 +6,7 @@ export interface SetBoundedMapValueParams<K, V> {
   maxEntries: number;
 }
 
+/** 向 Map 写入一项；新增键越过上限时淘汰最早插入项（FIFO，不刷新热度）。 */
 export function setBoundedMapValue<K, V>({
   map,
   key,

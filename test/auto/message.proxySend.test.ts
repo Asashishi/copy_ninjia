@@ -7,7 +7,7 @@ import type { TelegramSendResult } from "../../packages/types/telegram";
 
 const copyMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 42);
 const sendMessageMock = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-const sendVoiceWithResultMock = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({ messageId: 88 }));
+const sendVoiceWithResultMock = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({ messageId: 88, repliedToMessageId: undefined }));
 const VOICE_BYTES: Uint8Array<ArrayBuffer> = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
 const VOICE_FILE: string = "fixture-voice.mp3";
 const synthesizeVoiceMock = mock(async (..._args: unknown[]): Promise<VoiceSynthesisResult> => ({
@@ -166,7 +166,7 @@ describe("/send 代发的 TTS 请求", () => {
     copyMessageMock.mockClear();
     sendMessageMock.mockClear();
     sendVoiceWithResultMock.mockClear();
-    sendVoiceWithResultMock.mockImplementation(async (): Promise<TelegramSendResult | undefined> => ({ messageId: 88 }));
+    sendVoiceWithResultMock.mockImplementation(async (): Promise<TelegramSendResult | undefined> => ({ messageId: 88, repliedToMessageId: undefined }));
     synthesizeVoiceMock.mockClear();
     synthesizeVoiceMock.mockImplementation(async (): Promise<VoiceSynthesisResult> => ({
       ok: true,

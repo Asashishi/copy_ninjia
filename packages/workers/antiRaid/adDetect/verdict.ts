@@ -247,8 +247,7 @@ export async function detectOne(
   // requeueIfUnchecked 会立即把它排成下一批。
   bundle.checkedSeq = Math.max(bundle.checkedSeq, selection.checkedToSeq);
   if (outcome.kind === "notAd" || outcome.kind === "unknown") {
-    // 在途期间到达的新内容此刻才取得下一次入队认领，TTL 必须从结算时刻起算，
-    // 不能把 provider 往返时间从新一代认领里扣掉。
+    // 在途期间到达的新内容此刻才取得入队认领：水位推进后，有未判内容才会排队。
     requeueIfUnchecked(key, bundle);
     return;
   }
@@ -274,8 +273,8 @@ export async function detectOne(
       beginReferencedAdWarning(key);
     if (warningGeneration === undefined) return;
     // 判定已经离开上面的 finally，但警告尚未取得 message_id；这段网络往返仍是
-    // 同一个键的处置临界区。它只覆盖发送本身；广告消息删除已经拆成独立任务，
-    // 不再拿分类并发槽等待 deleteMessages 的 429 退避。
+    // 同一个键的处置临界区。它只覆盖发送本身；广告消息删除是独立任务（见
+    // deleteReferencedAdMessages），不占分类并发槽，也不等待 deleteMessages 的 429 退避。
     inFlightAdDetectKeys.add(key);
     try {
       let warningResult: TelegramWorkerTemporaryMessageResult | undefined;

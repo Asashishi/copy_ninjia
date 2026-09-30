@@ -61,23 +61,27 @@ import { failAllVoiceSynthesisWaiters, requestVoiceSynthesis, settleVoiceSynthes
 import type { VoiceSynthesisRequest } from "./voiceSynthesis";
 import type { VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
 
-/** 在途心情查询/重抽请求统一失败结算：Worker 崩溃重启/放弃/终止时，旧实例
- *  的回执不可能再到达，不结算会让命令处理器干等到超时。 */
-function rejectAllMoodRequestWaiters(reason: string): void {
-  for (const waiter of moodRequestWaiters.values()) {
+/** 取消一张等待表里全部等待者的超时并以同一原因拒绝，随后清空。 */
+function rejectAllWaiters(
+  waiters: Map<number, MoodRequestWaiter> | Map<number, AiChatInvalidateWaiter>,
+  reason: string
+): void {
+  for (const waiter of waiters.values()) {
     clearTimeout(waiter.timer);
     waiter.reject(new Error(reason));
   }
-  moodRequestWaiters.clear();
+  waiters.clear();
 }
 
-/** Worker 崩溃/终止时旧实例不可能再发送 invalidate 回执。 */
-function rejectAllAiChatInvalidateWaiters(reason: string): void {
-  for (const waiter of aiChatInvalidateWaiters.values()) {
-    clearTimeout(waiter.timer);
-    waiter.reject(new Error(reason));
-  }
-  aiChatInvalidateWaiters.clear();
+/**
+ * 旧实例的回执不可能再到达（崩溃重建、放弃自愈或停机）时统一失败结算全部在途等待者：
+ * 记忆 flush、心情查询/重抽、群失效与语音合成；不结算会让调用方干等到超时。
+ */
+function failAllAiChatWaiters(moodReason: string, invalidateReason: string): void {
+  aiMemoryFlushBarrier.settleAll("failed");
+  rejectAllWaiters(moodRequestWaiters, moodReason);
+  rejectAllWaiters(aiChatInvalidateWaiters, invalidateReason);
+  failAllVoiceSynthesisWaiters();
 }
 
 /**
@@ -203,10 +207,10 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     }
   },
   onRespawn: (postToNext: (message: AiChatWorkerMessage) => boolean): void => {
-    aiMemoryFlushBarrier.settleAll("failed");
-    rejectAllMoodRequestWaiters("AI Worker crashed before acknowledging the mood request.");
-    rejectAllAiChatInvalidateWaiters("AI Worker crashed before completing chat invalidation.");
-    failAllVoiceSynthesisWaiters();
+    failAllAiChatWaiters(
+      "AI Worker crashed before acknowledging the mood request.",
+      "AI Worker crashed before completing chat invalidation."
+    );
     settleAiMemoryTeardownWorker();
     // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
     // record/trigger 到达。重放的 init 带着主线程当前生效的配置快照（热重载由
@@ -239,10 +243,10 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     // 判断「这条线根本没起来，没什么可刷的」并直接返回 flushed。
     lastInitState.current = null;
     // 同 onRespawn/terminateAiChat：立即结算全部等待者，不留给定时器超时兜底。
-    aiMemoryFlushBarrier.settleAll("failed");
-    rejectAllMoodRequestWaiters("AI Worker gave up restarting before acknowledging the mood request.");
-    rejectAllAiChatInvalidateWaiters("AI Worker gave up before completing chat invalidation.");
-    failAllVoiceSynthesisWaiters();
+    failAllAiChatWaiters(
+      "AI Worker gave up restarting before acknowledging the mood request.",
+      "AI Worker gave up before completing chat invalidation."
+    );
     // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
     // pendingAiMemoryDeletes 由 Disk I/O durable 回执拥有，绝不能在这里清空。
     purgedAiMemoryChats.clear();
@@ -358,10 +362,10 @@ export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): P
 
 /** 停机时强制终止 AI Worker，保证它不会在 Disk I/O flush 后继续发布旧快照。 */
 export async function terminateAiChat(): Promise<void> {
-  aiMemoryFlushBarrier.settleAll("failed");
-  rejectAllMoodRequestWaiters("AI Worker is shutting down before acknowledging the mood request.");
-  rejectAllAiChatInvalidateWaiters("AI Worker is shutting down before completing chat invalidation.");
-  failAllVoiceSynthesisWaiters();
+  failAllAiChatWaiters(
+    "AI Worker is shutting down before acknowledging the mood request.",
+    "AI Worker is shutting down before completing chat invalidation."
+  );
   aiChatWorkerState.available = false;
   purgedAiMemoryChats.clear();
   postPurgeAiMemoryPersistRevisions.clear();

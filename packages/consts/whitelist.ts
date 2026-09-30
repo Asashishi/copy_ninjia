@@ -15,7 +15,7 @@ const DEFAULT_IS_CAN_VIEW_BOT_STATUS: boolean = true;
 const DEFAULT_IS_CAN_BLOCK: boolean = false;
 /** 白名单条目缺省不可移出永久黑名单。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_UNBLOCK: boolean = false;
-/** 白名单条目缺省不可代为新增其它白名单身份。所属模块：packages/commands/white.ts。 */
+/** 白名单条目缺省不可代为新增其它白名单身份。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_WHITE_OTHER: boolean = false;
 /** 白名单条目缺省不可重抽 AI 心情。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_SWITCH_MOOD: boolean = false;
@@ -71,7 +71,7 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
  *
  * `/permission query` 在同步白名单缓存没有目标条目时直接复用本对象，不创建、
  * 补齐或写入 SQLite 记录。字段顺序与 DEFAULT_WHITELIST_PERMISSIONS 保持一致，
- * 让三种查询视图拥有相同对象 shape。所属模块：packages/infra/identityPolicy/whitelist.ts。
+ * 让全部查询视图（超级管理员、永久条目、临时免检、非白名单）拥有相同对象 shape。所属模块：packages/infra/identityPolicy/whitelist.ts。
  */
 export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: false,
@@ -98,10 +98,11 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
 /**
  * 临时广告免检的固定权限：仅绕过广告检测，其余权限逐项为 false。
  *
- * 连续七个合格日只授予本视图，不创建永久白名单条目，也不提供防刷屏、命令、
- * 状态查看或入群验证权限。字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 一致，
- * 让消息热路径的逐项权限读取保持稳定对象 shape。所属模块：
- * packages/infra/identityPolicy/whitelist.ts。
+ * 没有永久白名单条目、但当日发言已越过阈值的成员读取到本视图；连续
+ * TEMPORARY_AD_BYPASS_REQUIRED_DAYS 个合格日后，promoteAdBypassWhitelistMembership
+ * 把本对象作为永久白名单条目的权限写入。两种情形都不提供防刷屏、命令、状态查看或
+ * 入群验证权限。字段顺序必须与 DEFAULT_WHITELIST_PERMISSIONS 一致，让消息热路径的
+ * 逐项权限读取保持稳定对象 shape。所属模块：packages/infra/identityPolicy/whitelist.ts。
  */
 export const TEMPORARY_AD_BYPASS_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanMute: false,

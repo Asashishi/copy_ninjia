@@ -5,10 +5,10 @@
  */
 
 /**
- * 服务端条目的存活时长（秒），即 Gemini 缓存 API 的默认 TTL。创建与续期都显式写入
- * 这个值；到期由 Google 自动删除。所属模块：infra/geminiContextCache.ts。
+ * 服务端条目的存活时长（秒），4 小时。创建与续期都显式写入这个值；到期由 Google
+ * 自动删除。所属模块：infra/geminiContextCache.ts。
  */
-export const GEMINI_CONTEXT_CACHE_TTL_SECONDS: number = 3_600;
+export const GEMINI_CONTEXT_CACHE_TTL_SECONDS: number = 14_400;
 
 /**
  * displayName 里两段指纹各自的形态：libs/prefixFingerprint.ts 产出的固定 43 字符
@@ -35,6 +35,19 @@ export const GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS: number = 30 * 60_000;
  * 未命中的请求走完整请求、命中的照常引用。所属模块：infra/geminiContextCache.ts。
  */
 export const GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS: number = 10 * 60_000;
+
+/**
+ * 同一槽的同一内容创建被端点以 400 拒绝的累计上限：未满时按
+ * GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS 冷却后再试，满额后不再创建，该内容一律走
+ * 完整请求。所属模块：infra/geminiContextCache.ts。
+ */
+export const GEMINI_CONTEXT_CACHE_MAX_REJECTIONS: number = 3;
+
+/**
+ * 创建被 400 拒绝、累计未满 GEMINI_CONTEXT_CACHE_MAX_REJECTIONS 次时，同一内容再次创建前的
+ * 冷却；期间未命中的请求走完整请求。所属模块：infra/geminiContextCache.ts。
+ */
+export const GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS: number = 5 * 60_000;
 
 /** 启动扫描 caches.list 的单页条数。所属模块：infra/geminiContextCache.ts。 */
 export const GEMINI_CONTEXT_CACHE_LIST_PAGE_SIZE: number = 100;

@@ -33,7 +33,8 @@ interface ParityNode {
 
 /**
  * 并行遍历两套文案：每一层键集相同、同名叶子种类相同、函数形参个数相同；两边每个函数
- * 按形参调用后都产出非空字符串，且不含 undefined、NaN 或 [object Object]。
+ * 按形参调用后都产出非空字符串，且不含 undefined、NaN 或 [object Object]；字符串叶子与
+ * 函数产出都不含字面量 `${`（普通引号里写了插值、没有替换成值）。
  */
 function assertParity({ plain, teasing, path, rendered }: ParityNode): void {
   expect(`${path}: ${kindOf(plain)}`).toBe(`${path}: ${kindOf(teasing)}`);
@@ -44,10 +45,16 @@ function assertParity({ plain, teasing, path, rendered }: ParityNode): void {
       expect(`${path}: ${typeof output}`).toBe(`${path}: string`);
       const text: string = output as string;
       expect(text.length).toBeGreaterThan(0);
-      expect(`${path}: ${text}`).not.toMatch(/undefined|NaN|\[object Object\]/);
+      expect(`${path}: ${text}`).not.toMatch(/undefined|NaN|\[object Object\]|\$\{/);
     }
     rendered.push(path);
     return;
+  }
+  for (const leaf of [plain, teasing]) {
+    const texts: readonly unknown[] = Array.isArray(leaf) ? leaf : [leaf];
+    for (const text of texts) {
+      if (typeof text === "string") expect(`${path}: ${text}`).not.toContain("${");
+    }
   }
   if (kindOf(plain) !== "object") return;
   const plainRecord: Record<string, unknown> = plain as Record<string, unknown>;

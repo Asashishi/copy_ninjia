@@ -1,3 +1,5 @@
+import { INLINE_RESULT_SOURCE_MAX_AUTHORS } from "../../consts/telegram";
+import { LruCache } from "../../libs/lruCache";
 import type { InlineResultSource } from "../../types/telegram";
 
 /** 主线程 inline 应答的源文本登记表；Worker 不得 import。 */
@@ -12,7 +14,9 @@ import type { InlineResultSource } from "../../types/telegram";
  * antiRaid/adCandidate.ts。
  *
  * 每个发言身份只占一条、整体覆盖，不留历史；容量硬顶
- * INLINE_RESULT_SOURCE_MAX_AUTHORS，撑满按最久未登记的发言身份淘汰。它不落盘，
- * 进程重启后随 isolate 一起消失，查不到只让那条消息退回「不判定」。
+ * INLINE_RESULT_SOURCE_MAX_AUTHORS，撑满按最久未登记的发言身份淘汰（登记用 set 刷新
+ * 顺位，查询只 peek，不算一次使用）。它不落盘，进程重启后随 isolate 一起消失，查不到
+ * 只让那条消息退回「不判定」。
  */
-export const inlineResultSources: Map<number, InlineResultSource> = new Map();
+export const inlineResultSources: LruCache<number, InlineResultSource> =
+  new LruCache<number, InlineResultSource>(INLINE_RESULT_SOURCE_MAX_AUTHORS);

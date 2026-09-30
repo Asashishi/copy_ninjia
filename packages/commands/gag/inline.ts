@@ -140,26 +140,20 @@ export function handleGagMessageIngress(
 
 /**
  * 认领判定的异步段；只有本群有会话、或消息带 gag 标记时才走到（普通群消息在
- * 上面那道同步守卫就返回了）。标记判定在这里重算一次：它是纯判定，而这条路
- * 本来就低频，重算换来的是守卫与本体各自只读自己需要的东西。
+ * 上面那道同步守卫就返回了），因此本群没有会话时这条消息必带 gag 标记。标记判定在
+ * 这里重算一次：它是纯判定，而这条路本来就低频，重算换来的是守卫与本体各自只读
+ * 自己需要的东西。
  */
 async function claimGagMessage(
   message: Message,
   botId: number
 ): Promise<boolean> {
-  const hasMarker: boolean = hasGagInlineMarker(message, botId);
-  // 本群没有会话时仍要拦下带标记的旧结果——那是跨群或已过期的 gag inline 结果。
-  if (gagSessionsByChat.size === 0) {
-    if (!hasMarker) return false;
-    await deleteMessageWithOutcome(message.chat.id, message.message_id);
-    return true;
-  }
   const sessions: GagSession[] | undefined =
     gagSessionsByChat.get(message.chat.id);
   const senderId: number | undefined =
     message.sender_chat?.id ?? message.from?.id;
+  // 本群没有会话时仍要拦下带标记的旧结果——那是跨群或已过期的 gag inline 结果。
   if (sessions === undefined) {
-    if (!hasMarker) return false;
     await deleteMessageWithOutcome(message.chat.id, message.message_id);
     return true;
   }
@@ -199,7 +193,7 @@ async function claimGagMessage(
     // 保证同一会话只有一条在途。
     if (due !== null) refreshDueGagSpeakNotices(due);
   }
-  const isCandidate: boolean = hasMarker || isGagInlineCandidate(
+  const isCandidate: boolean = hasGagInlineMarker(message, botId) || isGagInlineCandidate(
     message,
     botId,
     sessions

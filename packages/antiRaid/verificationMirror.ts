@@ -115,7 +115,7 @@ export function acceptVerificationDelete(
     deferredVerificationRecords.get(key) ?? pendingVerificationDeferrals.get(key);
   const pendingRevision: number = currentGenerationRevision(pendingVerificationDeletes.get(key));
   // 水位线同样只认同代际条目，见 currentGenerationRevision；`!current` 那半
-  // 边判的是「本来就没有活跃记录、也没有待确认墓碑」，与代际无关，保持原样。
+  // 边判的是「本来就没有活跃记录、也没有待确认墓碑」，与代际无关。
   if (
     (!current && deferred === undefined && pendingRevision === 0) ||
     event.revision <= Math.max(

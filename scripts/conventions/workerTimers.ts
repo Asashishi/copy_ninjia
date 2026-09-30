@@ -10,7 +10,7 @@ import ts from "typescript";
  * timer 不该单独扣住 isolate 的事件循环（约束见 docs/cn/04-invariants.md）。
  *
  * 判定按**句柄逐个**核对，而不是「函数体内出现过 unref 就算数」：
- * `startVerificationTimer` 装两个 timer、`runLockdownEffects` 装三个，后一种口径
+ * `startVerificationTimer` 在同一函数体里装 expiry 与 dedupe 两个 timer，后一种口径
  * 下漏掉其中一个的 unref 会被同函数里另一个的 unref 掩盖。
  *
  * 具体口径：取每次 `setTimeout`/`setInterval` 的赋值目标文本（`const t = …`、

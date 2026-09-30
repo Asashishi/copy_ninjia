@@ -64,19 +64,14 @@ export function answerVerificationCallback({
   }).finally((): void => { verificationCallbackReplies.current--; });
 }
 
-export interface HandleVerificationCallbackEventParams {
-  readonly message: VerifyCallbackMessage;
-  readonly dispatchVerification: VerificationDispatcher;
-}
-
 /**
  * 本人点击同步转移；代点查询有界受理，回投前同时核验 Worker 代际与验证实例。
  * 普通 pending 字段原地更新保持实例有效；leave/rejoin、adopt、停管或 stop 使旧结果失效。
  */
-export function handleVerificationCallbackEvent({
-  message,
-  dispatchVerification,
-}: HandleVerificationCallbackEventParams): void {
+export function handleVerificationCallbackEvent(
+  message: VerifyCallbackMessage,
+  dispatchVerification: VerificationDispatcher
+): void {
   const chatId: number | undefined = message.chatId;
   if (chatId === undefined) {
     const task: Promise<void> | undefined = answerVerificationCallback({ callbackQueryId: message.callbackQueryId });

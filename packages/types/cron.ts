@@ -1,7 +1,7 @@
 import type { LruCache } from "../libs/lruCache";
 import type { EncodedVoiceMessage } from "./aiChat/voiceMessage";
 
-/** send_file 的单个来源：Telegram 拉取的地址，或已按项目根解析成绝对路径的本机文件。 */
+/** send_file 的单个来源：Telegram 拉取的地址，或已按运行时数据根解析成绝对路径的本机文件。 */
 export type CronFileSource =
   | { readonly kind: "url"; readonly url: string }
   | { readonly kind: "path"; readonly path: string };
@@ -9,7 +9,7 @@ export type CronFileSource =
 /**
  * `send_image` 的来源；固定图片使用 1–10 项地址或文件数组，单张也使用数组。
  * `random` 从目录均匀抽一张（infra/randomImage.ts）；directory 为 null 时使用
- * config/dynamic/assets.json 的专用图库（getAssetConfig().randomHImageDirectory），显式目录已按项目根解析为绝对路径。
+ * config/dynamic/assets.json 的专用图库（getAssetConfig().randomHImageDirectory），显式目录已按运行时数据根解析为绝对路径。
  */
 export type CronImageSource =
   | { readonly kind: "urls"; readonly urls: readonly string[] }

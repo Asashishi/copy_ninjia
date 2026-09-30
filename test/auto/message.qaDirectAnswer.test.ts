@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 // 公共模块桩收在 helper 里；必须在下面的 await import 之前登记。
 import {
-  autoMessageChatState,
   generateAndSendReplyMock,
   recordChatMessageMock,
   resetAutoMessageMocks,
@@ -50,7 +49,6 @@ function mentioning(text: string): any {
 describe("问答直答在消息主干上的位置", () => {
   beforeEach(() => {
     resetAutoMessageMocks();
-    autoMessageChatState.isInitEnabled = true;
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
   });
 
@@ -81,15 +79,6 @@ describe("问答直答在消息主干上的位置", () => {
 
   test("文本对不上就照常进 AI，不被直答吞掉", async () => {
     await handleIncomingMessageMiddleware(mentioning("入群要怎么弄呀"));
-
-    expect(sendMessageMock).not.toHaveBeenCalled();
-    expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("没 /init enable 的群不直答——即使热表里有这条问答", async () => {
-    autoMessageChatState.isInitEnabled = false;
-
-    await handleIncomingMessageMiddleware(mentioning("怎么入群？"));
 
     expect(sendMessageMock).not.toHaveBeenCalled();
     expect(generateAndSendReplyMock).toHaveBeenCalledTimes(1);

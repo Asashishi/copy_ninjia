@@ -108,7 +108,7 @@ function handleAcceptedIncomingMessage(
       mode: activeCopyModeIn(chatId),
       expectedTargetId: copyTargetId,
       messageThreadId: forumTopicThreadId(message),
-    }).then((): void => undefined);
+    });
   }
 
   if (message.chat.type === "private") {
@@ -118,22 +118,21 @@ function handleAcceptedIncomingMessage(
   // 群问答直答：与登记问题一字不差时直接回答，不进 AI，也不受 @/回复/随机插话
   // 那套触发条件约束。必须排在下面的 AI 触发之前——用户明确要求「完全一致就
   // 直接查询返回」，走到 AI 就等于多付一次模型调用去回答一个已经写死的答案。
-  // 只对已接管的群生效；本群没登记过问答时 resolveQaDirectAnswer 在第一行返回。
-  if (state.isInitEnabled === true) {
-    // 同步判定：未命中就是一次 Map.get 返回 undefined，不分配 promise。
-    const qaAnswer: string | undefined = resolveQaDirectAnswer(
+  // 未接管的群已被 infra/updateGate.ts 的 shouldPassInitGate 挡在流水线之外；本群没
+  // 登记过问答时 resolveQaDirectAnswer 在第一行返回。
+  // 同步判定：未命中就是一次 Map.get 返回 undefined，不分配 promise。
+  const qaAnswer: string | undefined = resolveQaDirectAnswer(
+    chatId,
+    message,
+    botIdentity.username
+  );
+  if (qaAnswer !== undefined) {
+    return sendQaDirectAnswer({
       chatId,
-      message,
-      botIdentity.username
-    );
-    if (qaAnswer !== undefined) {
-      return sendQaDirectAnswer({
-        chatId,
-        replyToMessageId: message.message_id,
-        answer: qaAnswer,
-        messageThreadId: forumTopicThreadId(message),
-      }).then((): void => undefined);
-    }
+      replyToMessageId: message.message_id,
+      answer: qaAnswer,
+      messageThreadId: forumTopicThreadId(message),
+    }).then((): void => undefined);
   }
 
   const isQuiet: boolean = isQuietUntilActive(state.quietUntil, now);

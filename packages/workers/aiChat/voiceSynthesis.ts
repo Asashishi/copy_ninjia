@@ -11,7 +11,6 @@
 
 import { aiChatWorkerAbortController, aiChatWorkerQuiescing } from "../../cache/workers/aiChat/worker";
 import { voiceSynthesisRequests } from "../../cache/workers/aiChat/voiceSynthesis";
-import { logger } from "../../infra/logger";
 import { resolveSpeechSynthesizer, synthesizeVoiceMessage } from "../../aiChat/ai/voiceSynthesis";
 import type {
   AiCancelVoiceSynthesisMessage,
@@ -22,7 +21,7 @@ import type { SpeechSynthesizerLookup, VoiceSynthesisResult } from "../../types/
 
 declare const self: Worker;
 
-/** 取入口并合成；能力缺席与排空期间直接返回失败原因，意外异常记日志后按合成失败结算。 */
+/** 取入口并合成；能力缺席与排空期间直接返回失败原因，意外异常由 synthesizeVoiceMessage 按合成失败结算。 */
 async function synthesize(
   msg: AiSynthesizeVoiceMessage,
   controller: AbortController
@@ -30,22 +29,16 @@ async function synthesize(
   if (aiChatWorkerQuiescing.current) return { ok: false, reason: "worker unavailable" };
   const synthesizer: SpeechSynthesizerLookup = resolveSpeechSynthesizer();
   if (!synthesizer.ok) return { ok: false, reason: synthesizer.reason };
-  try {
-    return await synthesizeVoiceMessage(
-      synthesizer.synthesize,
-      {
-        text: msg.text,
-        tone: msg.tone,
-        quota: "operator",
-        quotaClaimed: false,
-        signal: AbortSignal.any([controller.signal, aiChatWorkerAbortController.current.signal]),
-      },
-      `main-thread request ${msg.requestId}`
-    );
-  } catch (error: unknown) {
-    logger.error(`Voice synthesis for main-thread request ${msg.requestId} threw:`, error);
-    return { ok: false, reason: "synthesis failed" };
-  }
+  return await synthesizeVoiceMessage(
+    synthesizer.synthesize,
+    {
+      text: msg.text,
+      tone: msg.tone,
+      quota: "operator",
+      signal: AbortSignal.any([controller.signal, aiChatWorkerAbortController.current.signal]),
+    },
+    `main-thread request ${msg.requestId}`
+  );
 }
 
 /** 接纳一次合成请求；结算后回执并摘除在途条目。 */

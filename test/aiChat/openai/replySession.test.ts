@@ -20,7 +20,6 @@ import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 const requestOpenAiResult = mock(async (..._args: unknown[]): Promise<OpenAiRequestResult> => ({
   ok: false,
   failureKind: "request",
-  diagnostic: "request failed",
 }));
 
 mock.module("../../../packages/aiChat/openai/client", () => ({ requestOpenAiResult }));

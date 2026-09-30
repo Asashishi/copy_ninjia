@@ -1,7 +1,4 @@
 import {
-  handleJoin,
-  handleTrackedMessage,
-  handleVerificationCallback,
   dispatchVerification,
   adoptVerifications,
   handleVerificationPersisted,
@@ -10,6 +7,8 @@ import {
   deleteDeferredVerification,
   stopVerificationRuntime,
 } from "./antiRaid/verificationRuntime";
+import { handleJoinEvent, handleTrackedMessageEvent } from "./antiRaid/verificationEvents";
+import { handleVerificationCallbackEvent } from "./antiRaid/verificationCallbacks";
 import { installAiCacheUsageSink } from "../infra/aiCacheUsage";
 import type { AiCacheUsage } from "../types/aiCache";
 import {
@@ -95,7 +94,7 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  * 入口：入群验证核心、事件翻译、副作用和提醒 owner 分别位于
  * antiRaid/verificationRuntime.ts、verificationEvents.ts、
  * verificationEffects.ts、verificationReminders.ts；私密模式位于
- * antiRaid/lockdownRuntime.ts。五类状态各自由 cache/workers/antiRaid/ 下的领域
+ * antiRaid/lockdownRuntime.ts。各类状态由 cache/workers/antiRaid/ 下的领域
  * 模块持有。本文件只剩消息路由与缓存 sweep 调度。
  * /block 黑名单的处置副作用（antiRaid/blocklistEffects.ts）也挂在本线程：
  * 它不带状态机，判定在主线程做完，这里只编排踢人这一步异步能力动作。
@@ -129,7 +128,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       adoptAdDetectConfigMessage(msg);
       break;
     case "join":
-      handleJoin(msg);
+      handleJoinEvent(msg, dispatchVerification);
       break;
     case "left":
       if (!deleteDeferredVerification(msg.chatId, msg.userId)) {
@@ -157,15 +156,15 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // 开关都关了，没人再会解开那把邀请权限的锁。
       //
       // 广告检测队列、刷屏窗口、权限与群类型镜像、在途黑名单补扫**都不动**：
-      // 那几样各有各的开关，见 types/antiRaid.ts 的 DeactivateJoinGuardMessage。
+      // 那几样各有各的开关，见 types/antiRaid/protocol.ts 的 DeactivateJoinGuardMessage。
       disableJoinGuardChat(msg.chatId);
       deactivateLockdownChat(msg.chatId);
       break;
     case "message":
-      handleTrackedMessage(msg);
+      handleTrackedMessageEvent(msg, dispatchVerification);
       break;
     case "callback":
-      handleVerificationCallback(msg);
+      handleVerificationCallbackEvent(msg, dispatchVerification);
       break;
     case "adopt":
       adoptLockdowns(msg.lockdowns);

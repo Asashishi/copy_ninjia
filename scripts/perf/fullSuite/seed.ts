@@ -99,8 +99,9 @@ async function runSeedChild(mode: SeedMode): Promise<SeededFixtureCounts> {
     if (mode === "chain") createEmptyBenchmarkDatabase();
     else createBenchmarkDatabase();
     // 与生产启动同序（见 coldStart.ts 的分段计时）：部署输入预检必须先于 Disk I/O
-    // 完成。贴纸配置快照由它填进本线程 holder，loadPersistedData 组装 load 请求时
-    // 要同步取用；缺了它 getStickerConfig 会按「预检未完成」当场拒绝。
+    // 完成。贴纸配置快照由它填进本线程 holder，loadPersistedData 组装 load 请求时经
+    // stickerPacksForRecovery 取用；缺了它，启动恢复会按「贴纸配置缺省」跳过目录
+    // 白名单对账，播种走的就不是生产那条恢复路径。
     await validateExistingDeploymentInputs();
     initDiskIO();
     try {

@@ -27,11 +27,12 @@ export function visibleSenderId(message: Message): number | undefined {
 /**
  * 频道身份的唯一构造点（`sender_chat`、频道帖或命令的频道发起人）。
  *
- * 与下面的 userIdentity 一起，是 CachedUser 两种形态在全仓的唯一字面量：
+ * 与下面的 userIdentity 一起，是 CachedUser 两种完整形态在全仓的唯一构造点：
  * users/senderIdentity.ts 的 resolveSenderIdentity（消息发送者）与
  * commands/commandActor.ts 的 resolveCommandActor（命令发起人）都构造同一对
  * 形状，各写一份就会在加字段时悄悄漂移成两种隐藏类。判定归属仍在各自调用方，
- * 这里只负责形状。
+ * 这里只负责形状。命令按 id 指定目标且缓存未命中时，resolveIdTarget 另给一份只带
+ * id（及频道标记）的最小身份，不进消息观察路径。
  */
 export function channelIdentity(senderChat: Chat): CachedUser {
   return {

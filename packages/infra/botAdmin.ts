@@ -68,11 +68,11 @@ async function completeAfterTeardown(
  * 2. 收到别人的 chat_member 更新本身就证明机器人是管理员；若快照
  *    尚未建立，markBotAdminObserved 会现查一次完整 ChatMember；
  * 3. 两者都没来过的群（快照缺失，比如状态里从未记下过权限位），首次判定
- *    时按需 getChatMember 现查一次并回填（resolveBotAdminStatus）。
+ *    时按需 getChatMember 现查一次并回填（botChatPermissionsIn）。
  *
- * 三条路径最终都经 recordBotChatPermissions 落盘。它同时是「机器人在这个群可以
- * 干活了」这个合取（是管理员 && 已 /init enable）的边沿：任一边发生变更、
- * 合取由不成立变为成立时，在那里补一次 /block 黑名单清扫。它只认已 /init enable 过
+ * 三条路径最终都经 recordBotChatPermissions 落盘。确证是管理员时，它还会调用
+ * sweepBlockedMembers 补一次 /block 黑名单清扫（是否真扫由 blocklistSweepState 记账
+ * 决定）。它只认已 /init enable 过
  * 的群：my_chat_member 更新会绕过 infra/updateGate.ts 的 isInitEnabled
  * 网关（机器人被拉进任何群，不管有没有人 /init，Telegram 都会推送），若
  * 不在这里把关，
@@ -87,7 +87,7 @@ async function completeAfterTeardown(
  * 光是被拉进一个群、还没人 /init enable，`chat_states` 就会凭空多出一条只有
  * botPermissions 的记录——先于任何超级管理员操作自己"写"进去了。用 getChatState
  * （只读）判定，不经过 getOrCreateChatState，未初始化的群连主线程 LRU
- * 条目都不建。群后续被 /init enable 后，resolveBotAdminStatus 的按需回填分支
+ * 条目都不建。群后续被 /init enable 后，botChatPermissionsIn 的按需回填分支
  * （见本文件顶部注释的第 3 条路径）会在真正需要时现查一次并正确落盘，
  * 这里的省略不损失任何信息。
  */
@@ -246,7 +246,7 @@ export async function markBotAdminObserved(chatId: number): Promise<void> {
   // 这一轮之内没人会读它：本函数的调用点（antiRaid/updateIngress.ts 的
   // handleChatMemberUpdate）此后只读 isAntiRaidEnabled 与成员状态，且这条路径按设计
   // **不做管理员门控**（收得到别人的 chat_member 就证明是管理员）。真正会看权限位的
-  // 是 Worker 侧的处置，而那边三个消费点一律只对**确证的 false** 短路，未知照常尝试、
+  // 是 Worker 侧的处置，而那边全部消费点一律只对**确证的 false** 短路，未知照常尝试、
   // 让 Telegram 当裁判（见 workers/antiRaid/botPermissions.ts）——所以晚一拍到达的
   // 镜像不会漏掉任何一次踢人或删消息。
   void botChatPermissionsIn(chatId).catch((): void => {
@@ -380,7 +380,8 @@ export function botCanDeleteMessagesIn(chatId: number): boolean | undefined {
  *
  * 职责是**先判后打**：踢人、禁言、删消息在缺权限时都只换回一句 400
  * `not enough rights`，而那句话与「目标本身是管理员」共用同一个错误码，事后
- * 看日志分不开（见 infra/telegram/actions.ts 的 banChatMemberWithOutcome）。
+ * 看日志分不开（见 infra/telegram/actions/core.ts 的 isPermissionDenied 与
+ * actions/moderation.ts 的 banChatMemberWithOutcome）。
  * 有了 State 里的这份唯一快照，绝大多数判定是一次 Map 查找，只有快照缺失的群
  * 才付一次现查——此后由 my_chat_member 近实时维护。
  * @returns 确证的完整权限快照；现查失败或结果已被失效作废时为 undefined。
@@ -415,7 +416,7 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
     if (botPermissionRequestTokens.get(chatId) !== requestToken) return undefined;
     // 现查在途期间 my_chat_member 先一步落地过：那条是权威信号，而这次响应
     // 反映的可能是它到达之前的旧快照，直接回填会把刚生效的权限改动顶掉。
-    // 同 resolveBotAdminStatus 的「权威信号已经赢了就采用它」。
+    // 权威快照已存在时采用它。
     const authoritative: BotChatPermissions | undefined = getChatState(chatId).botPermissions;
     if (authoritative !== undefined) return authoritative;
     const permissions: BotChatPermissions = readBotChatPermissions(member);

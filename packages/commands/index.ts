@@ -1,6 +1,8 @@
 /**
  * 指令处理入口：packages/commands/ 下各 /指令 处理器的统一出口，
- * app/registerHandlers.ts 只从这里接线，不直接触及内部模块。
+ * app/registerHandlers.ts 的命令与回调接线从这里导入；消息观察钩子（chatPersonaSync、
+ * wed/members）与生命周期入口（gag/runtime、wed/runtime、wed/persistence、wed/memberReview、
+ * deferredCommands）由 app/ 直接导入对应模块。
  */
 export { handleCjkActionCommand, handleCjkActionUsageCommand } from "./cjkAction";
 export { handleCopyCommand } from "./copy";

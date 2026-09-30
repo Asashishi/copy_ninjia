@@ -4,8 +4,8 @@ import { NYA_SUFFIX } from "../consts/copyModes";
 import { splitGraphemes } from "../libs/text";
 
 /**
- * 按 Unicode 扩展字形簇（grapheme cluster）反转字符串（若 Intl.Segmenter 不可用则
- * 退化为按码点反转），避免 emoji / 代理对 / 组合符号被拆散导致乱码。
+ * 按 Unicode 扩展字形簇（grapheme cluster）反转字符串，避免 emoji / 代理对 /
+ * 组合符号被拆散导致乱码。
  * @param text 待反转的文本。
  */
 function reverseText(text: string): string {
@@ -39,7 +39,7 @@ export function applyCopyModeTransform(text: string, mode: CopyMode | undefined)
 }
 
 /**
- * 为 /*_copy 的启动提示语描述该 copy mode 的效果，例如
+ * 为 `/copy reverse`、`/copy nya` 的启动提示语描述该 copy mode 的效果，例如
  * "，之后 TA 说的纯文字都会被本天才倒过来念"。没有模式时返回 ""。
  * @param mode 即将启动的 copy mode。
  */

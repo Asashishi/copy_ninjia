@@ -25,8 +25,9 @@ export const lockdownEntries: Map<number, LockdownEntry> = new Map();
  * 每群「暂停再次触发私密模式」的绝对截止时刻（ms）。
  *
  * 状态机判定一轮作废时（读不到原权限、intent 落不了盘）发 suppressRetrigger，
- * lockdownRuntime.ts 的 beginLockdownRetriggerCooldown 据此写入；recordJoin 在
- * 到期前不再投递 thresholdExceeded。三处清理：到期后被下一次 recordJoin 就地
+ * lockdownRuntime.ts 的 runLockdownEffects 交给 lockdownJoinWindow.ts 的
+ * beginLockdownRetriggerCooldown 写入；recordJoinWindow 在到期前不返回计数，
+ * recordJoin 因此不投递 thresholdExceeded。三处清理：到期后被下一次 recordJoin 就地
  * 删除、写入新条目时顺带扫掉所有已过期条目、群停用时按 chatId 删除（守卫都关
  * 了，重开不该背着旧冷却）；Worker 停止时随 stopLockdownRuntime 整体清空。
  * 条目只在作废路径产生，最多与机器人所在群数同阶。Worker 崩溃重建后为空 Map：

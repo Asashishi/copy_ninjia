@@ -17,8 +17,9 @@ const startChatActionHeartbeat = mock((_chatId: number) => ({
   settle: async (): Promise<void> => {},
   stop: heartbeatStop,
 }));
-const execute = mock(async (..._args: unknown[]): Promise<string> => JSON.stringify({ success: true }));
+const execute = mock((..._args: unknown[]): string => JSON.stringify({ success: true }));
 const settleActions = mock(async (): Promise<void> => {});
+const afterModel = mock((): void => {});
 let actionsUsed: number = 1;
 let capturedContext: ReplyToolContext | null = null;
 const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyToolset> => {
@@ -29,7 +30,7 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
     webSearch: true,
     has: (): boolean => true,
     beforeModelRequest: (): void => {},
-    afterModel: (): void => {},
+    afterModel,
     execute,
     actionsUsed: (): number => actionsUsed,
     settle: settleActions,
@@ -97,6 +98,46 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   expect(predicate()).toBe(true);
 }
 
+/**
+ * 跑一轮直接轮并按发生顺序记下：兜底发送（带工具名）、收回模型期状态、模型阶段结束通知、
+ * 等发送链收尾、停心跳与整轮收尾；前四项附上当时本群的并发位计数，用来区分模型阶段内外。
+ */
+async function runRoundRecordingOrder(): Promise<string[]> {
+  const order: string[] = [];
+  const active = (): number => activeReplyCounts.get(-1001) ?? 0;
+  execute.mockImplementation((name: unknown): string => {
+    order.push(`${String(name)} active=${active()}`);
+    actionsUsed = 1;
+    return JSON.stringify({ success: true });
+  });
+  afterModel.mockImplementation((): void => {
+    order.push(`afterModel active=${active()}`);
+  });
+  settleActions.mockImplementation(async (): Promise<void> => {
+    order.push(`settle active=${active()}`);
+  });
+  heartbeatStop.mockImplementationOnce(async (): Promise<void> => {
+    order.push("heartbeatStop");
+  });
+  const finished: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+  expect(startReplyRound({
+    chatId: -1001,
+    triggerSenderId: 7,
+    replyToMessageId: 10,
+    messageThreadId: undefined,
+    imageGenerationRequested: false,
+    isRandomTrigger: false,
+  }, (): void => {
+    order.push("finished");
+    finished.resolve();
+  }, (): void => {
+    order.push(`modelFinished active=${active()}`);
+  })).toBe(true);
+  await finished.promise;
+  for (const tasks of replyGenerationTasks.values()) await Promise.allSettled(tasks);
+  return order;
+}
+
 beforeEach(() => {
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
@@ -109,7 +150,8 @@ beforeEach(() => {
   createReplyToolset.mockClear();
   execute.mockClear();
   settleActions.mockReset().mockResolvedValue();
-  execute.mockImplementation(async (): Promise<string> => JSON.stringify({ success: true }));
+  afterModel.mockReset();
+  execute.mockImplementation((): string => JSON.stringify({ success: true }));
   generateReply.mockClear();
   generateReply.mockImplementation(async (): Promise<string | null> => "最终正文");
   buildReplyPromptSections.mockClear();
@@ -206,7 +248,7 @@ describe("AI 单轮回复生命周期", () => {
 
   test("模型只返回最终正文时统一走 send_message 兜底，并成对释放资源", async () => {
     actionsUsed = 0;
-    execute.mockImplementationOnce(async (): Promise<string> => {
+    execute.mockImplementationOnce((): string => {
       actionsUsed = 1;
       return JSON.stringify({ success: true });
     });
@@ -229,6 +271,43 @@ describe("AI 单轮回复生命周期", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  test("直接轮只拿到最终正文时，先在模型阶段内兜底 send_message，再收回模型期状态、结束模型阶段，最后等发送链收尾", async () => {
+    actionsUsed = 0;
+
+    const order: string[] = await runRoundRecordingOrder();
+
+    // 空闲群里的第一轮是直接轮。
+    expect(capturedContext?.direct).toBe(true);
+    expect(order).toEqual([
+      `${SEND_MESSAGE_TOOL} active=1`,
+      "afterModel active=1",
+      "modelFinished active=0",
+      "settle active=0",
+      "heartbeatStop",
+      "finished",
+    ]);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      SEND_MESSAGE_TOOL,
+      JSON.stringify({ text: "最终正文", reply_to_trigger: true })
+    );
+  });
+
+  test("已接纳过动作时不兜底，模型阶段仍按收回状态 → 结束模型阶段 → 等发送链收尾的顺序结束", async () => {
+    actionsUsed = 1;
+
+    const order: string[] = await runRoundRecordingOrder();
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(order).toEqual([
+      "afterModel active=1",
+      "modelFinished active=0",
+      "settle active=0",
+      "heartbeatStop",
+      "finished",
+    ]);
+  });
+
   test("零落地只在模型给出正文时记一行；模型侧已记原因的空结果不重复记", async () => {
     const zeroActionLogs = (): unknown[][] =>
       logError.mock.calls.filter((call: unknown[]): boolean => String(call[0]).includes("zero actions"));
@@ -237,7 +316,7 @@ describe("AI 单轮回复生命周期", () => {
     await runRound();
     expect(zeroActionLogs()).toEqual([]);
 
-    execute.mockImplementationOnce(async (): Promise<string> => JSON.stringify({ error: "send failed" }));
+    execute.mockImplementationOnce((): string => JSON.stringify({ error: "send failed" }));
     await runRound();
     expect(zeroActionLogs()).toEqual([[
       "AI reply round ended with zero actions (chat -1001, trigger=direct, finalText=unsent).",

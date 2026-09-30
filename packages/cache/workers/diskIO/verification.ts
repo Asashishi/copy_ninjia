@@ -49,7 +49,25 @@ export const verificationRolloverRetryTimer: {
   timer: ReturnType<typeof setTimeout> | null;
 } = { timer: null };
 
-/** Worker 恢复/停止时取消两个 timer 并清空镜像、增量和文件游标。 */
+/**
+ * 本轮是否拒收过待验证写入（容量超限等非法输入）；下一次覆盖 verification 领域的 flush
+ * 取走并按失败回报，取走即清除。容量为一个布尔值，Worker 重建时由 reset 清除。
+ */
+const verificationWriteRejected: { current: boolean } = { current: false };
+
+/** 记下一次待验证写入拒收。 */
+export function noteVerificationWriteRejected(): void {
+  verificationWriteRejected.current = true;
+}
+
+/** 取走拒收标记；返回取走前是否有过拒收。 */
+export function takeVerificationWriteRejection(): boolean {
+  const rejected: boolean = verificationWriteRejected.current;
+  verificationWriteRejected.current = false;
+  return rejected;
+}
+
+/** Worker 恢复/停止时取消两个 timer 并清空镜像、增量、文件游标与拒收标记。 */
 export function resetVerificationPersistenceCache(): void {
   if (verificationFlushTimer.timer !== null) clearTimeout(verificationFlushTimer.timer);
   if (verificationRolloverRetryTimer.timer !== null) {
@@ -62,4 +80,5 @@ export function resetVerificationPersistenceCache(): void {
   verificationFileState.current = null;
   verificationFileState.appendedEntries = 0;
   verificationFileState.appendedBytes = 0;
+  verificationWriteRejected.current = false;
 }

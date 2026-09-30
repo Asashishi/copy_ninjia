@@ -10,7 +10,7 @@ import {
 /**
  * 按需拉取的各群非匿名管理员 ID 表。
  *
- * 填充：首次需要判定时整群拉一次，此后按 my_chat_member 增量更新。
+ * 填充：首次需要判定时整群拉一次，此后按 chat_member 更新经 adminsChanged 增量更新。
  * 清理：读时按 ADMIN_CACHE_TTL_MS 回收过期快照，周期 sweep 清死记录，
  * resetAdminCache 整表清空。容量：setBoundedMapValue 限制为
  * ANTI_RAID_CHAT_CACHE_MAX 项，满载淘汰最早写入的群。

@@ -139,8 +139,10 @@ const PROCESS_REPLACEMENTS: Readonly<Record<string, string>> = {
 };
 
 /**
- * 核对生产模块、脚本或测试文件的 Node 兼容 import。未登记模块、namespace/default
- * import 与未登记符号都拒绝；第三方依赖不进入本检查。
+ * 核对生产模块、脚本或测试文件的 Node 兼容用法：静态 import（未登记模块、namespace/
+ * default import 与未登记符号都拒绝）、动态 import/require/process.getBuiltinModule 与
+ * 再导出、`Buffer` 全局方法白名单，以及 process.argv/execPath/hrtime/nextTick 的
+ * 替换提示；第三方依赖不进入本检查。
  */
 export function collectNodeCompatibilityProblems(
   projectRoot: string,

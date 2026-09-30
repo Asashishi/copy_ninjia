@@ -6,15 +6,18 @@ import type { StickerPackCandidate } from "../../../../types/stickers/tools";
  *
  * 菜单的两个输入——贴纸集合缓存（cache/workers/aiChat/stickers/sets.ts）与画面描述目录/整包简介
  * （cache/workers/aiChat/stickers/catalog.ts）——都是无 TTL 的进程内缓存，稳态下根本不变；
- * `createReplyToolset` 每轮回复都取一份菜单（每群最多 5 轮并发），版本号一致时直接复用
+ * `createReplyToolset` 每轮回复都取一份菜单（每群同时存在的回复轮数受
+ * REPLY_ROUND_MAX_CONCURRENT 加直接轮 1 轮限制），版本号一致时直接复用
  * 上次构建结果，不重跑 `Promise.allSettled`。
+ *
+ * 填充：取菜单时版本号与缓存不一致就重建一次，构建期间版本没再变才写回缓存。
+ * 清理：版本号只增不减；旧版本的缓存留到下一次重建时被整体覆盖，在途条目在构建结算后清空。
+ * 容量：菜单缓存与在途条目各至多一份，不设淘汰。
  */
 
 /**
- * 菜单输入的版本号：贴纸集合缓存新增条目、目录条目增删、整包简介写入时各 +1。
- *
- * 用独立计数器而不是复用 `dirtyPacks`：那张表由 `flushDirtyStickerCatalogs` 上报
- * 完就清空，拿它当失效信号会在上报之后立刻把菜单判成「没变过」。
+ * 菜单输入的版本号：贴纸集合缓存新增条目、目录条目增删、整包简介写入时各 +1
+ * （经 invalidateStickerMenu）。
  */
 export const stickerMenuRevision: { current: number } = { current: 0 };
 

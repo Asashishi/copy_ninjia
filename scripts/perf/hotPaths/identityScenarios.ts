@@ -40,7 +40,7 @@ import type {
 const IDENTITY_BASE: number = 7_000_000_000;
 /** 一个活跃群里反复发言的身份数；其余条目是历史上见过的负缓存。 */
 const WORKING_SET: number = 500;
-/** 固定取键序列的长度，取 2 的幂便于用位与取模。 */
+/** 固定取键序列的下标掩码：序列长度为 KEY_SEQUENCE_MASK + 1（2 的幂），便于用位与取模。 */
 const KEY_SEQUENCE_MASK: number = 65_535;
 
 const BENCHMARK_META: WhitelistEntryData["meta"] = {

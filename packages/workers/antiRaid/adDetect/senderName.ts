@@ -3,8 +3,8 @@ import { sanitizeInline, truncateInline } from "../../../libs/text";
 import type { TelegramIdentityMetadata } from "../../../types/identityPolicy";
 
 /**
- * 从当次候选的姓名字段取得送检姓名（调用方直接传 AdCandidateMessage）；只生成送检数据，
- * 不读取 owner 或查询 Telegram。
+ * 从候选消息自带的 firstName、lastName 生成送检姓名（调用方直接传 AdCandidateMessage）；
+ * 纯函数，不读缓存，不查询 Telegram。
  */
 export function formatAdSenderName(
   meta: Readonly<Pick<TelegramIdentityMetadata, "firstName" | "lastName">>

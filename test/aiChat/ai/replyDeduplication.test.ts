@@ -6,6 +6,7 @@ import type { TelegramSendResult } from "../../../packages/types/telegram";
 let nextMessageId: number = 100;
 const sendMessage = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
   messageId: nextMessageId++,
+  repliedToMessageId: undefined,
 }));
 const realTelegram = await import("../../../packages/infra/telegram");
 mock.module("../../../packages/infra/telegram", () => ({
@@ -52,7 +53,7 @@ function context(): ReplyToolContext {
 beforeEach(() => {
   nextMessageId = 100;
   sendMessage.mockReset();
-  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => ({ messageId: nextMessageId++ }));
+  sendMessage.mockImplementation(async (): Promise<TelegramSendResult> => ({ messageId: nextMessageId++, repliedToMessageId: undefined }));
 });
 
 describe("单轮回复静默去重", () => {

@@ -69,7 +69,7 @@ interface BenchmarkResult {
   /** getrusage/JSC 的生命周期高水位；可能包含 exec 前启动峰值，只作诊断。 */
   processPeakRssBytes: number;
   samplingProfile: HotPathSamplingProfileSummary | null;
-  /** 采样结束时各热函数的 JSC 分层状态；键与 Scenario.probes 一致。 */
+  /** 采样结束时各热函数的 JSC 分层状态；键为 Scenario.probes 的键加固定的 `scenario.run`。 */
   jit: Record<string, JitTierStats>;
   /** 预热结束时的原始 JSC 分层计数。 */
   jitAfterWarmup: Record<string, JitTierCounts>;
@@ -306,10 +306,8 @@ async function runBenchmark(
    * 同步场景的采样驱动。
    *
    * **分层统计按栈顶帧归属，因此 profile 的回调里不能出现只跑几次的 async 壳。**
-   * 那种壳永远进不了 DFG/FTL，用它驱动同步场景时本该记在生产帧上的样本会整段
-   * 落到壳自己身上，把「热路径 99% FTL」报成「99% LLInt」——同一份代码换成同步
-   * 驱动即为 99% FTL，两者逐样本耗时一致，可见差的只是归属而不是速度。
-   * 同步场景一律走本函数，异步场景没有这个选择，其分层读数只作参考。
+   * 那种壳永远进不了 DFG/FTL，样本会落在壳自己身上而不是生产帧上。同步场景一律
+   * 走本函数，异步场景的分层读数只作参考。
    */
   function sampleScenarioSync(): void {
     const gcStartedAt: number = steadyProfile ? beginGcProfileWindow() : 0;

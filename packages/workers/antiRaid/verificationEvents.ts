@@ -47,15 +47,10 @@ function memberLabel(member: AntiRaidMember, chatId: number): string {
   }, workerAtmosphere(chatId));
 }
 
-export interface HandleJoinEventParams {
-  message: NewMemberMessage;
-  dispatchVerification: VerificationDispatcher;
-}
-
-export function handleJoinEvent({
-  message,
-  dispatchVerification,
-}: HandleJoinEventParams): void {
+export function handleJoinEvent(
+  message: NewMemberMessage,
+  dispatchVerification: VerificationDispatcher
+): void {
   const { chatId, member }: NewMemberMessage = message;
   const key: string = verificationKey(chatId, member.id);
   // 本进程预算已耗尽的终态只能由下一次完整进程启动恢复；同 key 再入群不能
@@ -217,15 +212,10 @@ function confirmThreadComment({
   });
 }
 
-export interface HandleTrackedMessageEventParams {
-  message: TrackedChatMessage;
-  dispatchVerification: VerificationDispatcher;
-}
-
-export function handleTrackedMessageEvent({
-  message,
-  dispatchVerification,
-}: HandleTrackedMessageEventParams): void {
+export function handleTrackedMessageEvent(
+  message: TrackedChatMessage,
+  dispatchVerification: VerificationDispatcher
+): void {
   const observedAt: number = Date.now();
   if (message.repliesToChannelPost === true) {
     rememberOrDispatchConfirmedComment({

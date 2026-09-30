@@ -1,8 +1,8 @@
 import * as diskIO from "../diskIO";
 import {
   blocklistEntryCache,
-  blocklistSweepFlushWindows,
   identityEntryCounts,
+  identityWriteRevision,
   unacknowledgedBlocklistWrites,
 } from "../../cache/main/identityStorage";
 import { BLOCKLIST_SWEEP_PAGE_SIZE } from
@@ -55,52 +55,35 @@ function validateBlocklistIdPage(
   return page;
 }
 
-function closeBlocklistSweepFlushWindow(generation: number): void {
-  if (blocklistSweepFlushWindows.generation !== generation) return;
-  blocklistSweepFlushWindows.open--;
-  if (blocklistSweepFlushWindows.open !== 0) return;
-  const closed: PromiseWithResolvers<void> | null = blocklistSweepFlushWindows.closed;
-  blocklistSweepFlushWindows.closed = null;
-  closed?.resolve();
+/** revision 不晚于 coveredRevision、仍未收到 durable ACK 的黑名单写入条数。 */
+function countUnacknowledgedBlocklistWritesThrough(coveredRevision: number): number {
+  let count: number = 0;
+  for (const write of unacknowledgedBlocklistWrites.values()) {
+    if (write.revision <= coveredRevision) count++;
+  }
+  return count;
 }
 
 /**
- * 群级补扫读取一页稳定主键；读取前提交黑名单事务并确认本地 revision 已 ACK。
- * flush 请求到核对结束之间登记为打开的窗口，见 writeOutsideBlocklistSweepFlushWindows。
+ * 群级补扫读取一页稳定主键；读取前提交黑名单事务，并确认 flush 发出前已登记的
+ * 本地 revision 均已 ACK。flush 期间新排入的写（如并发 `/block`、回执驱动的销号计数）
+ * 不属于这一批、不参与核对，由之后的读取叠加本地最终值覆盖。
  */
 export async function readBlocklistSweepPage(
   afterId: number | null
 ): Promise<BlocklistIdPage> {
-  const generation: number = blocklistSweepFlushWindows.generation;
-  blocklistSweepFlushWindows.open++;
-  try {
-    const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("blocklist");
-    if (outcome.result !== "flushed") {
-      throw new Error(`Blocklist sweep flush ${outcome.result}.`);
-    }
-    if (unacknowledgedBlocklistWrites.size !== 0) {
-      throw new Error(
-        `Blocklist sweep flush left ${unacknowledgedBlocklistWrites.size} unacknowledged write(s).`
-      );
-    }
-  } finally {
-    closeBlocklistSweepFlushWindow(generation);
+  const coveredRevision: number = identityWriteRevision.current;
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("blocklist");
+  if (outcome.result !== "flushed") {
+    throw new Error(`Blocklist sweep flush ${outcome.result}.`);
+  }
+  const unacknowledged: number = countUnacknowledgedBlocklistWritesThrough(coveredRevision);
+  if (unacknowledged !== 0) {
+    throw new Error(
+      `Blocklist sweep flush left ${unacknowledged} unacknowledged write(s).`
+    );
   }
   return validateBlocklistIdPage(await diskIO.readBlocklistIdPage(afterId), afterId);
-}
-
-/**
- * 等到没有补扫分页读处在 flush 与未 ACK 核对之间，再在确认窗口关闭的同一同步
- * 片段内执行 write；之后开始的分页读由自己的 flush 覆盖 write 投递的黑名单写入。
- */
-export async function writeOutsideBlocklistSweepFlushWindows<T>(
-  write: () => T
-): Promise<T> {
-  while (blocklistSweepFlushWindows.open > 0) {
-    blocklistSweepFlushWindows.closed ??= Promise.withResolvers<void>();
-    await blocklistSweepFlushWindows.closed.promise;
-  }
-  return write();
 }
 
 /**

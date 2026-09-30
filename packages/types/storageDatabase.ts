@@ -110,6 +110,35 @@ export interface StoredIdentityIdLookup {
   ) => StoredIdentityIdRow | undefined;
 }
 
+/**
+ * 一条预编译写语句；只用到按占位符执行这一种调用。占位符表照 Drizzle 的
+ * `prepare().run()` 原样写成 `Record<string, unknown>`（同 StoredIdentityIdLookup）。
+ */
+export interface StorageWriteStatement {
+  readonly run: (values: Record<string, unknown>) => unknown;
+}
+
+/**
+ * 统一事务提交用的整套预编译写语句，随连接一起存活：各业务表一条 upsert 与一条按主键
+ * 删除，另有一条只改 `chat_states.ai_context` 的更新。
+ */
+export interface StorageDatabaseWriter {
+  readonly database: StorageDatabase;
+  readonly upsertWhitelist: StorageWriteStatement;
+  readonly deleteWhitelist: StorageWriteStatement;
+  readonly upsertBlocklist: StorageWriteStatement;
+  readonly deleteBlocklist: StorageWriteStatement;
+  readonly upsertTemporaryAdBypass: StorageWriteStatement;
+  readonly deleteTemporaryAdBypass: StorageWriteStatement;
+  readonly upsertRemoval: StorageWriteStatement;
+  readonly deleteRemoval: StorageWriteStatement;
+  readonly upsertChatState: StorageWriteStatement;
+  readonly deleteChatState: StorageWriteStatement;
+  readonly upsertChatQa: StorageWriteStatement;
+  readonly deleteChatQa: StorageWriteStatement;
+  readonly updateAiContext: StorageWriteStatement;
+}
+
 /** 三张身份关系各一条预编译语句，随连接一起存活。 */
 export interface StoredIdentityIdLookups {
   readonly whitelist: StoredIdentityIdLookup;

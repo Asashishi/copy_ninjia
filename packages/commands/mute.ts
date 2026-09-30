@@ -17,7 +17,8 @@ import {
   formatDurationCn,
   parseDurationTokenMs,
 } from "../libs/durationToken";
-import { commandArgumentTokens } from "./arguments";
+import { splitTrailingToken } from "./arguments";
+import type { TrailingTokenSplit } from "./arguments";
 import { resolveCommandTarget } from "./targetResolution";
 import { rejectUnlessPermitted } from "./commandActor";
 
@@ -134,7 +135,7 @@ async function rejectUnrestrictableTarget(
  * 群里的非功能性提示统一由那道边界回收，操作回执也在其内（见
  * docs/cn/04-invariants.md）。长期保留是需要显式授权的例外，`/mute`
  * 不在其中——`preserveInGroup: true` 只出现在获授权的调用点（`/permission help`
- * 与 `/permission query` 的权限看板，以及成功的中文动作命令）。禁言期内
+ * 与 `/permission query` 的权限看板、`/qa query` 的问答看板，以及成功的中文动作命令）。禁言期内
  * 「TA 为什么不说话」由 Telegram 自己的成员
  * 权限界面回答，不靠一条常驻群里的机器人消息。
  */
@@ -147,8 +148,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
   // 时长永远取最后一个 token：前面剩下的整段是目标参数（可以为空，此时目标
   // 来自回复）。先验时长再解析目标——时长格式错误时目标是谁根本无关紧要，
   // 一句用法提示比「@x 不合法」更接近用户真正打错的地方。
-  const tokens: string[] = commandArgumentTokens(ctx.match);
-  const durationToken: string | undefined = tokens.at(-1);
+  const { last: durationToken, rest: targetArgument }: TrailingTokenSplit = splitTrailingToken(ctx.match);
   const durationMs: number | undefined = durationToken === undefined ? undefined : parseMuteDurationMs(durationToken);
   if (durationMs === undefined) {
     await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).MUTE_USAGE_TEXT, replyToMessageId: messageId });
@@ -159,7 +159,7 @@ export async function handleMuteCommand(ctx: CommandContext<Context>): Promise<v
     chatId,
     message: ctx.msg,
     botUserId: ctx.me.id,
-    rawArgument: tokens.slice(0, -1).join(" "),
+    rawArgument: targetArgument,
     // 禁言可逆，但目标照样用 id 指定最准（同 /block：用户名会被释放后
     // 重新注册）；时长 token 带单位字母，纯数字的 id 不会被它接住。
     acceptUserId: true,

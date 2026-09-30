@@ -9,8 +9,7 @@ import { assertDequeCapacities } from "./dequeCapacity";
  * 持久化格式或跨线程共享。
  *
  * **容量是会抛错的硬顶**：只承载配额本身就封住长度的窗口（构造时把容量取成那个
- * 配额上限即可）。没有上界的窗口用 libs/linkedQueue.ts，见
- * libs/slidingWindowRateLimit.ts 的头注。
+ * 配额上限即可）。没有上界的任务队列见 libs/linkedQueue.ts 的头注。
  *
  * 与 libs/boundedDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
  * 共用校验见 libs/dequeCapacity.ts 的头注。
@@ -127,9 +126,9 @@ export class TimestampDeque {
    *
    * **全仓滑动窗口的边界定义就是这里**，调用方不要各自手写
    * `while (peek() < cutoff) shift()`：`<` / `<=` / `>=` 的写法差一个刻度，
-   * 同样的窗口长度会因为读的是哪份副本而得出不同结论。另外两种形态
-   * 要随快照落盘的 `trimSlidingWindowArray` 位于
-   * libs/slidingWindowRateLimit.ts，必须与本方法逐字一致；该约束由
+   * 同样的窗口长度会因为读的是哪份副本而得出不同结论。另外两种数组形态
+   * （`trimSlidingWindowArray` 与 `trimSlidingWindowArrayInPlace`，用于要随快照落盘的
+   * 窗口）位于 libs/slidingWindowRateLimit.ts，必须与本方法逐字一致；该约束由
    * test/libs/slidingWindowBoundary.test.ts 的同输入对拍锁住。
    *
    * 两件事：

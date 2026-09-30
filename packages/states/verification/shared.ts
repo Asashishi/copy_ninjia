@@ -78,7 +78,7 @@ export interface PersistedExpelNotices {
 /**
  * 建立 checkingInviter 终态。
  *
- * 全部字段在这里按声明顺序一次写齐，Worker 本地幂等门显式置 undefined：状态
+ * 全部字段在这里按声明顺序一次写齐，Worker 本地幂等门 executionStarted 显式置 false：状态
  * 对象活到整个终态结算结束，期间 verificationSnapshot 与解释器要反复读它，
  * 各构造点少写一个字段就多出一个 hidden class（见 AGENTS.md「性能、内存与
  * Bun/JSC JIT」）。新建与 adopt 重建共用本函数，两条路产出同一个形状。

@@ -44,11 +44,12 @@ export interface LogEnvelope extends LogMessage {
 
 /** 主线程 -> diskIOWorker：覆盖式写入某群的 AI 记忆快照。snapshot 是
  * AiMemorySnapshot 序列化后的 JSON 文本（源头一次 stringify、全程字符串
- * 流转，见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），落盘端原样写文件。 */
+ * 流转，见 types/aiChat/protocol.ts 的 AiMemoryEvent.snapshot），落盘端校验后原样排入共享
+ * SQLite 事务缓冲（`chat_states.ai_context`）。 */
 export interface AiMemoryDiskMessage {
   type: "aiMemory";
   chatId: number;
-  /** 进程内按 chat 单调递增；只用于消息竞态，不改变快照文件 schema。 */
+  /** 进程内按 chat 单调递增；只用于消息竞态与 durable 回执，不写入快照文本。 */
   revision: number;
   snapshot: string;
   /** purge 后首份新快照；绕过普通批量窗口，并在 durable 后回执 revision。 */
@@ -119,7 +120,7 @@ export interface LuckDrawDiskMessage {
   /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier（见 commands/luckChallenge/cache.ts）。 */
   label: string;
   /** 该次抽签在 tier.fortunePercentRange 内浮动出的行大运具体数值（%，两位小数）。
-   * 不再能从 label 反查得出（区间是浮动的），必须随 label 一起落盘，见 LuckDrawRecord。 */
+   * 区间内浮动，无法从 label 反查，必须随 label 一起落盘，见 LuckDrawRecord。 */
   fortunePercent: number;
 }
 
@@ -181,7 +182,7 @@ export interface ChatStateWriteDiskMessage {
  * 主线程 -> Disk I/O Worker：一条群问答最终值；`data` 为 null 表示删除这条问答。
  *
  * 主键是 (chatId, q) 复合键，因此两者都要随消息过去；`q` 由主线程 trim 后作为
- * 落库主键，Worker 不再做归一化——两侧对同一条问答必须指的是同一个键。
+ * 落库主键，Worker 不做归一化——两侧对同一条问答必须指的是同一个键。
  */
 export interface ChatQaWriteDiskMessage {
   type: "chatQaWrite";
@@ -417,7 +418,7 @@ export type DiskIORequestMessage =
 /**
  * 落盘线程 mailbox 收得到的全部消息 = 诊断 + 业务 + 逐条回执请求 + 生命周期。
  *
- * 前两组直接复用 DiskBusinessMessage 与 DiskIORequestMessage；新增消息必须先归入
+ * 业务与逐条回执请求两组直接复用 DiskBusinessMessage 与 DiskIORequestMessage；新增消息必须先归入
  * 对应领域联合类型，路由与可重放清单由同一事实源展开。
  */
 export type DiskIOOperationMessage =

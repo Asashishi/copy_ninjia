@@ -20,8 +20,8 @@ export interface BufferedReplyReference extends AiSpeakerSnapshot {
 
 /**
  * 逐字缓存里的一条消息。字段顺序即构造顺序，可选字段同样是 `T | undefined`
- * ——这一族对象在缓存里长期存活，每次拼提示词都要被 formatBufferedMessageLine
- * 读满一整轮（上限 150 条），形状发散的代价按每次回复计。
+ * ——这一族对象在缓存里长期存活，每次拼回复转录都要读满整个逐字缓存（上限
+ * VERBATIM_CONTEXT_MAX 条），形状发散的代价按每次回复计。
  */
 export interface BufferedMessage extends AiSpeakerSnapshot {
   /** Telegram message_id；当前格式中的每条热区消息都必须可索引。 */

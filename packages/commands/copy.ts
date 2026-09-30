@@ -11,8 +11,9 @@ import { sendCommandMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
-import { claimCopyCooldownOrReject, releaseCopyCooldownClaim, resolveCopyCommandTarget, restoreAvatarInBackground, stealAvatarInBackground } from "./copyShared";
-import { peekCommandTarget } from "./targetResolution";
+import { queueAvatarUpdate } from "../copy/avatarQueue";
+import { claimCopyCooldownOrReject, releaseCopyCooldownClaim } from "./copyShared";
+import { peekCommandTarget, resolveCommandTarget } from "./targetResolution";
 import { resolveCommandActor } from "./commandActor";
 
 /** 按复读模式选取包含对应 /copy 参数的目标提示。 */
@@ -73,7 +74,13 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     cooldownClaim = await claimCopyCooldownOrReject(resolveCommandActor(ctx), chatId, messageId);
     if (cooldownClaim.rejected) return;
 
-    targetUser = await resolveCopyCommandTarget(ctx, copyTargetTextsForMode(mode, chatAtmosphere(chatId)), targetArgument);
+    targetUser = await resolveCommandTarget({
+      chatId,
+      message: ctx.msg,
+      botUserId: ctx.me.id,
+      rawArgument: targetArgument,
+      messages: copyTargetTextsForMode(mode, chatAtmosphere(chatId)),
+    });
     if (!targetUser) return;
 
     adoptCopyTarget(targetUser, mode, chatId);
@@ -94,11 +101,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
   await sendCommandMessage({ chatId, text: startText, replyToMessageId: messageId });
 
   // 头像复制放在后台执行：copiedUser 已经写入，复读逻辑立即生效。
-  stealAvatarInBackground({
-    chatId,
-    target: targetUser,
-    source: "copy",
-  });
+  queueAvatarUpdate({ chatId, target: { kind: "user", user: targetUser }, source: "copy" });
 }
 
 /**
@@ -125,18 +128,14 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).NOTICE_TEXTS.copyStopped, replyToMessageId: messageId });
 
   // /copy stop 不占全局冷却；仅在停止活动复读后预约恢复默认头像。
-  restoreAvatarInBackground({
-    chatId,
-    source: "copy",
-  });
+  queueAvatarUpdate({ chatId, target: { kind: "default" }, source: "copy" });
 }
 
 /** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */
-function stopCopyOwnedByChat(chatId: number): boolean {
+function stopCopyOwnedByChat(chatId: number): void {
   const globalCopy: Readonly<GlobalCopyState> = getGlobalCopyState();
-  if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return false;
+  if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return;
   clearCopyTarget();
-  return true;
 }
 
-registerChatTeardown("copy", (chatId: number): void => { stopCopyOwnedByChat(chatId); });
+registerChatTeardown("copy", stopCopyOwnedByChat);

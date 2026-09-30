@@ -70,6 +70,25 @@ describe("黑名单主键读失败的降级边界", () => {
     quiesceBlocklistSweepScheduler();
   });
 
+  test("单群补扫读失败按退避记账：下一次调用在退避截止前不再重付 flush 与读取", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
+    let reads: number = 0;
+    setBlocklistIdReads((): Promise<readonly number[]> => {
+      reads++;
+      return Promise.reject(new Error("Persistence Worker is unavailable; cannot read blocklist IDs."));
+    });
+
+    await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("cannot read blocklist IDs");
+    const nextRetryAt: number | undefined = blocklistSweepState.get(-1001)?.nextRetryAt;
+    expect(nextRetryAt).toBeGreaterThan(1_000);
+    expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(1);
+
+    await expect(sweepBlockedMembers(-1001, 1_001)).resolves.toBeUndefined();
+    expect(reads).toBe(1);
+    quiesceBlocklistSweepScheduler();
+  });
+
   test("退避未到期时连名单页都不读：那一次读是跨线程的黑名单领域 flush", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });

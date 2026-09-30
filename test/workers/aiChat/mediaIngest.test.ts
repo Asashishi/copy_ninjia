@@ -144,7 +144,8 @@ describe("AI 媒体触发的生图参考图", () => {
     await Promise.resolve();
 
     expect(generateAndSendReply).toHaveBeenCalledTimes(1);
-    expect(generateAndSendReply.mock.calls[0]?.[0]).not.toHaveProperty("imageGenerationReference");
+    // 字段固定写出，随机评价时取值为 undefined。
+    expect(generateAndSendReply.mock.calls[0]?.[0]).toHaveProperty("imageGenerationReference", undefined);
   });
 
   test("识别开始前已准入占位，直接触发失败提供兜底，随机评价失败完成空占位", async () => {

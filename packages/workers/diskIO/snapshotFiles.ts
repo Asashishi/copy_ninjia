@@ -1,4 +1,4 @@
-/** 贴纸与每日运势的严格文件恢复、校验与落盘；AI 上下文由 SQLite 持久化。 */
+/** 贴纸目录快照与每日运势的严格文件恢复、校验与落盘。 */
 
 import { mkdirSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -279,15 +279,13 @@ export async function recoverLuckDay(
  * 把一批新确认的运势条目追加到当天文件末尾（按位置追加，不整文件重写，
  * 机制见 appendOnlyDayFile.ts）。fileState 由调用方（cache/workers/diskIO/luck.ts）
  * 持有并传入：为 null 或 day 对不上（本次运行第一次写、
- * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 为空是防御性早退
- * ——调用方按 dirty 判断只在非空时才会调用，这里不该真的走到。
+ * 或刚跨天）时，先探测/接管一次对应日期的文件。pending 必须非空。
  */
 export async function appendLuckEntries(
   day: string,
   fileState: LuckFileStateHolder,
   pending: LuckPendingEntry[]
 ): Promise<void> {
-  if (pending.length === 0) return;
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
   if (fileState.current?.day !== day) {
     fileState.current = await openDayFile(LUCK_MEMORY_DIR, day, PERSISTED_FILE_MODE);

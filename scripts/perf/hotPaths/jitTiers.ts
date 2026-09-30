@@ -1,8 +1,9 @@
+/** JSC 分层计数的采集与做差；判读口径见 types.ts 上的 JitTierCounts/JitTierStats。 */
+
 import { numberOfDFGCompiles, reoptimizationRetryCount } from "bun:jsc";
 import type { JitProbe, JitTierCounts, JitTierStats, Scenario } from "./types";
 
-/** JSC 分层计数的采集与做差；判读口径见 types.ts 上的 JitTierCounts/JitTierStats。 */
-
+/** 按原型上的方法名建立探针表：键为 `<label>.<方法名>`，值为原型上的该方法。 */
 export function prototypeProbes<T extends object>(
   label: string,
   prototype: T,
@@ -15,14 +16,14 @@ export function prototypeProbes<T extends object>(
   return probes;
 }
 
-export /**
+/**
  * 读取各热函数此刻的分层计数。这两个数由 JSC 挂在函数的 executable 上累计，
  * 只增不减，也不随堆快照或 GC 归零，因此可以在不同时刻取两次做差。
  *
  * 固定包含 `scenario.run`——它是承载整个计时循环的闭包，若它自己都没进 DFG，
  * 本次 ns/op 量的就不是优化后的稳态，其余探针数值也不必细看。
  */
-function collectJitTiers(scenario: Scenario): Record<string, JitTierCounts> {
+export function collectJitTiers(scenario: Scenario): Record<string, JitTierCounts> {
   const tiers: Record<string, JitTierCounts> = {
     "scenario.run": {
       dfgCompiles: numberOfDFGCompiles(scenario.run),

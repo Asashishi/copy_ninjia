@@ -4,7 +4,7 @@
  */
 
 import { signalWithTimeout } from "../../libs/abortSignal";
-import { readBoundedResponseBytes } from "../../libs/boundedResponse";
+import { discardResponseBody, readBoundedResponseBytes } from "../../libs/boundedResponse";
 import type { BoundedResponseResult } from "../../libs/boundedResponse";
 import type { TelegramFileDownloadResult } from "../../types/telegram";
 import { bot } from "./mainClient";
@@ -49,7 +49,7 @@ export async function downloadTelegramFileBytes({
     }),
   });
   if (!response.ok) {
-    void response.body?.cancel().catch((): undefined => undefined);
+    void discardResponseBody(response);
     return { status: "httpError", httpStatus: response.status };
   }
   const download: BoundedResponseResult = await readBoundedResponseBytes(response, maxBytes);

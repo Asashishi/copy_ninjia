@@ -83,7 +83,6 @@ export const answerInlineQuery = mock(async (
 /** 开关由用例直接改写；mock 出口在每次调用时读取当前值。 */
 export const gagTestSwitches: {
   permissionAllowed: boolean;
-  initEnabled: boolean;
   /** false 时机器人权限快照查不到（`botChatPermissionsIn` 给 undefined）。 */
   botPermissionsKnown: boolean;
   /** false 时快照确证机器人不是本群管理员，此时各权限位恒为 false。 */
@@ -93,7 +92,6 @@ export const gagTestSwitches: {
   aiPersona: string | undefined;
 } = {
   permissionAllowed: true,
-  initEnabled: true,
   botPermissionsKnown: true,
   botIsAdministrator: true,
   canDeleteMessages: true,
@@ -119,8 +117,7 @@ mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub(),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (): Readonly<{ isInitEnabled: boolean; aiPersona: string | undefined }> => ({
-    isInitEnabled: gagTestSwitches.initEnabled,
+  getChatState: (): Readonly<{ aiPersona: string | undefined }> => ({
     aiPersona: gagTestSwitches.aiPersona,
   }),
   getGagThumbnailUrl: (): string => GAG_THUMBNAIL_URL,
@@ -316,7 +313,6 @@ export function installGagTestHooks(): void {
   beforeEach(() => {
     resetGagTestState();
     gagTestSwitches.permissionAllowed = true;
-    gagTestSwitches.initEnabled = true;
     gagTestSwitches.botPermissionsKnown = true;
     gagTestSwitches.botIsAdministrator = true;
     gagTestSwitches.canDeleteMessages = true;

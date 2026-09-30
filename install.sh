@@ -57,6 +57,7 @@ for install_argument in "$@"; do
 done
 case "$INSTALL_MODE" in ''|source|binary) ;; *) die "COPY_NINJIA_INSTALL_MODE 必须是 source 或 binary。" ;; esac
 
+# 以 root 直接执行，否则借 sudo；两者都没有时返回 127，由调用方决定怎么办。
 run_privileged() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -104,7 +105,7 @@ verify_service_target() {
   esac
 }
 
-# 用系统包管理器补齐基础工具。装不了就把该跑的命令原样打出来，不猜、不硬来。
+# 用系统包管理器补齐基础工具。没有可用的包管理器，或安装失败时返回非零，由调用方决定 die 还是降级；不猜、不硬来。
 install_system_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     run_privileged apt-get update -y && run_privileged apt-get install -y "$@"

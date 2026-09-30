@@ -11,8 +11,6 @@ import type { MigrationFileRecord } from "./migrations/files";
 const STATE_PATH: string = "memory/global/state.json";
 /** 源文件与产物共用的相对路径清单。 */
 const STATE_FILES: readonly string[] = [STATE_PATH];
-/** 全局状态主文件必须存在。 */
-const OPTIONAL_SOURCE_FILES: ReadonlySet<string> = new Set();
 /** 暂存目录仅当前账号可进入，部署权限由运维按清单手工恢复。 */
 const STAGING_DIRECTORY_MODE: number = 0o700;
 /** 产物与校验清单只允许当前账号读写。 */
@@ -84,7 +82,7 @@ export async function prepareGlobalStateMigration({
   if (migrationPathContains(source, output) || migrationPathContains(output, source)) {
     return invalidInput(output, "$path", "a new directory outside the source backup");
   }
-  const sourceFiles: readonly MigrationFileRecord[] = await readMigrationFileRecords(source, STATE_FILES, OPTIONAL_SOURCE_FILES);
+  const sourceFiles: readonly MigrationFileRecord[] = await readMigrationFileRecords(source, STATE_FILES);
   const primaryPath: string = join(source, STATE_PATH);
   const state: Readonly<Record<string, unknown>> =
     splitUsage(parseJsonInput(await Bun.file(primaryPath).text(), primaryPath), primaryPath, agentCount);
@@ -94,10 +92,10 @@ export async function prepareGlobalStateMigration({
   await mkdir(dirname(target), { recursive: true, mode: STAGING_DIRECTORY_MODE });
   await atomicWriteText(target, `${JSON.stringify(state, null, JSON_INDENT)}\n`, STAGING_FILE_MODE);
   decodeGlobalStateFile(parseJsonInput(await Bun.file(target).text(), target), target);
-  if (JSON.stringify(await readMigrationFileRecords(source, STATE_FILES, OPTIONAL_SOURCE_FILES)) !== JSON.stringify(sourceFiles)) {
+  if (JSON.stringify(await readMigrationFileRecords(source, STATE_FILES)) !== JSON.stringify(sourceFiles)) {
     return invalidInput(source, "$snapshot", "an unchanged cold backup including metadata");
   }
-  const outputFiles: readonly MigrationFileRecord[] = await readMigrationFileRecords(output, STATE_FILES, OPTIONAL_SOURCE_FILES);
+  const outputFiles: readonly MigrationFileRecord[] = await readMigrationFileRecords(output, STATE_FILES);
   const result: GlobalStateMigrationResult = { sourceRoot: source, outputRoot: output, sourceFiles, outputFiles };
   await atomicWriteText(join(output, "ready.json"), `${JSON.stringify(result, null, JSON_INDENT)}\n`, STAGING_FILE_MODE);
   await Bun.file(join(output, "incomplete.json")).delete();
