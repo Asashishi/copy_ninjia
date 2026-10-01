@@ -21,8 +21,7 @@ describe("日志敏感值脱敏", () => {
 
 describe("日志中的地址收敛", () => {
   test("只留 origin 与 pathname：预签名参数不落进 logs/", () => {
-    // 上面那条脱敏只认已登记的 env 密钥，部署方在 state.json 里配的预签名地址
-    // 不在其列——所以拼接日志正文时就得把 query 去掉。
+    // 地址标签与统一日志边界均移除部署素材 URL 的查询串。
     const presigned = "https://bucket.example/faces/bot.png?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600";
 
     expect(redactUrlForLog(presigned)).toBe("https://bucket.example/faces/bot.png");

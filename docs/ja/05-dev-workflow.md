@@ -69,7 +69,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5539 tests / 481 files / 263075 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.51%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5558 tests / 483 files / 263136 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.51%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -87,6 +87,8 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 `bun test --isolate test/infra/aiCacheUsagePipeline.test.ts test/workers/antiRaid/verificationCallback.test.ts test/workers/antiRaid/recentComments.test.ts test/infra/selfSentTracker.test.ts` は、6 種の usage を provider mock から Worker 転送、診断 ACK、永続化、日次集計まで検証します。コールバックの instance/generation、照会と応答の同時停滞、コメントの順序逆転・時計逆行、reset による waiter の false 決着も対象です。usage pipeline と認証コールバックは `test:fault-injection` にも含まれます。データは独立した一時 root、外部送信は mock を使います。
 
 `bun test --isolate test/aiChat/ai/mediaAdmission.test.ts test/aiChat/ai/imageDescription.test.ts test/libs/sharedResult.test.ts test/infra/telegramWorkerCapabilities.test.ts` は、追加枠を消費しない LRU ヒット、共有実行枠と cold wait 枠、取り消し後の補充、購読の解放、追い出し後のタスク同一性、modality probe、設定世代を検証します。Worker テストは method × owner の許可・拒否表と、実際の受信側・outbound gate を通る proxy 経路を検証し、メッセージ、upload、CDN download、429 再試行、topic、自発メッセージ登録を含みます。`telegramWorkerCapabilities.test.ts` は障害注入スイートにも含まれます。network は mock に置き換え、独立した一時 data root を使用します。
+
+`test/infra/loggerSecurity.test.ts` は実際の logger serialization で署名 URL、JSON escape を含む資格情報、snapshot の再入、退役済み資格情報を検証します。`test/aiChat/ai/imageGenerationCancellation.test.ts` は実際の媒体実行器と動作 chain を使用し、download、model、Telegram 出力のみを mock に置き換え、queue 内取消後の resource 精算と出力呼び出しがゼロであることを確認し、`test:fault-injection` に含めます。`test/app/updateFetcher.test.ts` は mock API で 429 の共通予算と取消を確認します。`test/scripts/releaseFlow.test.ts` は実際の一時 tar package を構築し、manifest の版、entry の種類、実行 bit、権限記録の対応、依存の隔離を検証します。
 
 `test/scripts/installMigration.test.ts` は合計回数形式の mock バックアップを `migrate:global-state`、手動配置、ソースインストール、実起動へ通し、業務データ、両回数、復唱状態、素材設定の保持を確認します。旧 identity 入口やデータルート直下の状態は段階的アップグレードが必要です。`scripts/checkBinary.ts` は同梱移行とバイナリ起動を同様に検証します。両者は `scripts/fixtures/migrationDeployment.ts` を共用し、database の合法な系譜、非空 WAL、業務テーブル、設定、ソースのハッシュ・mode・所有者・リンク構成を確認します。
 
@@ -214,7 +216,7 @@ build 間の差をコード最適化の効果として扱いません。失敗�
 
 1. remote tag を同期し、`gh release list` で現在の Latest Release tag を取得します。tag は `v` prefix を付けない `MAJOR.MINOR.PATCH` 形式に限定します。変更セット全体で最も高い semantic impact に従い、breaking change は `MAJOR`（`1.0.9` → `2.0.0`）、後方互換の新機能は `MINOR`（`1.0.9` → `1.1.0`）、修正・性能改善・refactoring・documentation のみの場合は `PATCH`（`1.0.9` → `1.0.10`）を増やします。
 2. コードと今回のベンチマーク結果をコミット後、クリーンな `dev` で `release:build` を実行し、Release tag を `--version` で明示します。既定値やソース manifest の版は使わず、指定値をパッケージ内の `package.json` と `binary.json` に書き込み、実行ファイルの `--version` 出力との一致を検証します。宣言する各プラットフォームのアーキテクチャ・libc に対応する環境で、同一の Git tree と Bun version/revision を使ってネイティブ構築します。ビルドでは版、`.map` ファイルと `node_modules` がないこと、3 つの Worker、内蔵の画像コーデック、バイナリ用インストーラーを検証します。正式な公開資産は最終コミット後に生成します。
-3. 各プラットフォームの `.tar.gz` と `.tar.gz.sha256` を集め、`release:verify` を実行します。対応する名前は `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl` です。`--platforms` は今回必要な全プラットフォームの一覧で、資産が不足すれば失敗します。既定では `dist/` を読み、別の集約先は `--directory` で指定します。`binary.json` の版、プラットフォーム、Git tree、Bun version/revision と実際の SHA-256 を照合し、未コミットの作業ツリーから作った資産は拒否します。
+3. 各プラットフォームの `.tar.gz` と `.tar.gz.sha256` を集め、`release:verify` を実行します。対応する名前は `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl` です。`--platforms` は今回必要な全プラットフォームの一覧で、資産が不足すれば失敗します。既定では `dist/` を読み、別の集約先は `--directory` で指定します。`binary.json` の版、プラットフォーム、Git tree、Bun version/revision と実際の SHA-256 を照合し、未コミットの作業ツリーから作った資産は拒否します。`package.json` の版も一致する必要があります。実行ファイル、installer、installer の runtime 入口、現在の移行ツールはそれぞれ一意な通常ファイルとし、実行ファイルの所有者実行 bit を保持します。権限記録は tar の一覧順に各 entry と対応させます。`node_modules` を含む package は拒否します。
 4. リポジトリとデプロイの保護手順に従って `master` へ squash merge し、構築時と Git tree が一致することを確認します。`master` を push 後、そのコミットの annotated version tag を作成して個別に push します。既存 tag の上書き、移動、再利用は禁止です。
 5. 前回の Latest tag から現在の `master` までの差分だけを英語で説明し、Highlights、Compatibility / Migration Notes、Validation を含めます。互換性の説明に提供するバイナリのプラットフォームを列挙し、gate の数値には今回の実測値を使います。`release:publish` はローカル・リモートの `master` と annotated tag を照合してから草稿を作り、資産をアップロードしてダウンロード内容を検証します。全検証の通過後に Latest として公開し、ダウンロード内容とリモート参照を再確認します。移行用添付ファイルが必要な場合は、同じ説明文の草稿を先に作って添付し、スクリプトでバイナリ資産を追加できます。
 6. 作成・アップロード・確認に失敗した場合は状態を保ち、同じ版で再試行します。草稿には不足資産だけを追加し、同名の既存資産はダウンロード内容を照合して上書きしません。公開済み Release の資産不足は変更せず拒否します。Release、Latest、資産、Git 参照をすべて確認してから `git diff dev master --quiet` を実行し、[`AGENTS.md`](../../AGENTS.md) に従って `dev` を揃えて push します。最後にローカル・リモート両方の 2 ブランチが同じコミットを指すことを確認します。公開スクリプトはこれらの Git 操作を行いません。

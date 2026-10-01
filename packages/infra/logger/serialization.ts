@@ -17,7 +17,7 @@ import {
   LOGGER_SERIALIZATION_LIMIT_VALUE,
   LOGGER_UNSERIALIZABLE_VALUE,
 } from "../../consts/logger";
-import { redactSensitiveFieldsInText, safeStringify } from "./redaction";
+import { createLogRedactionReplacer, redactSensitiveFieldsInText, safeStringify } from "./redaction";
 import { redactSecretsInText } from "../../libs/redaction";
 import { jsonSerializedBytes } from "../../libs/jsonBytes";
 import type {
@@ -27,11 +27,13 @@ import type {
   AgentTtsCapabilityConfig,
   BotConfig,
 } from "../../types/config";
+import type { LogRedactionSecrets, LoggerSecretsSnapshot } from "../../types/logger";
 
 /** 一次 emit 内共享的展开预算，调用结束即丢弃，不保存到线程缓存。 */
 interface SerializationBudget {
   errors: number;
   items: number;
+  readonly secrets: LogRedactionSecrets;
 }
 
 /** 一项能力的凭据：api_key，以及 google provider headers 的每个值。 */
@@ -46,21 +48,22 @@ function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig 
  * agent loader 都把成功结果放在线程内 holder，logger 只读取已有快照，不反向
  * 触发同步文件 I/O。
  *
- * 结果按三个 holder 的对象身份记忆化（三个 holder 见 cache/perThread/config.ts，记忆见
- * cache/perThread/logger.ts 的 loggerSecretsMemo）。配置身份未变时不重建凭据数组；身份变化（热重载替换快照）
+ * 文本凭据、JSON 转义片段与遍历回调按三个 holder 的对象身份记忆化（三个 holder 见
+ * cache/perThread/config.ts，记忆见 cache/perThread/logger.ts 的 loggerSecretsMemo）。
+ * 配置身份未变时复用只读快照；身份变化（热重载替换快照）
  * 时，上一份名单里不再生效的旧凭据排在当前凭据之后继续脱敏，覆盖旧客户端在途
  * 请求仍可能带出的凭据。总量受 LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃
  * 最早退役的。
  */
-function currentSecrets(): readonly string[] {
+function currentSecrets(): LogRedactionSecrets {
   const telegram: BotConfig | null = botConfigCache.current;
   const adDetect: AdDetectAgentConfig | null = adDetectAgentConfigCache.current;
   const agent: AgentDeploymentConfig | null = agentDeploymentConfigCache.current;
+  const previous: LoggerSecretsSnapshot | null = loggerSecretsMemo.current;
   if (
-    loggerSecretsMemo.telegram === telegram &&
-    loggerSecretsMemo.adDetect === adDetect &&
-    loggerSecretsMemo.agent === agent
-  ) return loggerSecretsMemo.value;
+    previous !== null && previous.telegram === telegram &&
+    previous.adDetect === adDetect && previous.agent === agent
+  ) return previous;
 
   const secrets: string[] = [];
   const telegramToken: string | undefined = telegram?.botToken;
@@ -73,15 +76,19 @@ function currentSecrets(): readonly string[] {
     if (agent.image !== undefined) pushCapabilitySecrets(secrets, agent.image);
     if (agent.tts !== undefined) pushCapabilitySecrets(secrets, agent.tts);
   }
-  for (const previous of loggerSecretsMemo.value) {
-    if (secrets.length >= LOGGER_MAX_REDACTED_SECRETS) break;
-    if (!secrets.includes(previous)) secrets.push(previous);
+  if (previous !== null) {
+    for (const secret of previous.text) {
+      if (secrets.length >= LOGGER_MAX_REDACTED_SECRETS) break;
+      if (!secrets.includes(secret)) secrets.push(secret);
+    }
   }
-  loggerSecretsMemo.telegram = telegram;
-  loggerSecretsMemo.adDetect = adDetect;
-  loggerSecretsMemo.agent = agent;
-  loggerSecretsMemo.value = secrets;
-  return secrets;
+  const jsonSecrets: string[] = [];
+  for (const secret of secrets) jsonSecrets.push(JSON.stringify(secret).slice(1, -1));
+  const snapshot: LoggerSecretsSnapshot = {
+    text: secrets, json: jsonSecrets, replacer: createLogRedactionReplacer(secrets), telegram, adDetect, agent,
+  };
+  loggerSecretsMemo.current = snapshot;
+  return snapshot;
 }
 
 /**
@@ -91,14 +98,13 @@ function currentSecrets(): readonly string[] {
  *
  * Bun 的 fetch 网络异常会把完整请求 URL 放进 Error 的可枚举 path 字段；
  * Telegram 文件下载 URL 内嵌 BOT_TOKEN。展开后的整棵结构整体序列化成稳定 JSON，
- * 字段名脱敏由 replacer 覆盖每一层，再对整份文本做值级脱敏，确保任一层嵌套 Error
- * 的 message/stack/path/cause 都不会漏。
+ * 字段名、原文凭据及 URL 脱敏由快照回调覆盖每一层，再用 JSON 转义后的凭据片段
+ * 匹配整份 JSON，覆盖对象键中的已登记凭据。
  */
-function serializeArg(arg: unknown, secrets: readonly string[], budget: SerializationBudget): unknown {
-  // 字符串参数直接脱敏，不经过 stringify -> 脱敏 -> parse 往返：敏感值本身
-  // 含 JSON 转义字符时，往返路径会因转义后不再字面匹配而漏脱敏。
+function serializeArg(arg: unknown, budget: SerializationBudget): unknown {
+  const secrets: LogRedactionSecrets = budget.secrets;
   if (typeof arg === "string") {
-    return redactSecretsInText(redactSensitiveFieldsInText(arg), secrets);
+    return redactSensitiveFieldsInText(redactSecretsInText(arg, secrets.text));
   }
 
   const error: Error | null = asError(arg);
@@ -106,8 +112,8 @@ function serializeArg(arg: unknown, secrets: readonly string[], budget: Serializ
     ? serializeError(error, null, budget)
     : arg;
 
-  const redacted: string = redactSecretsInText(safeStringify(serializable), secrets);
-  // 脱敏是对整份 JSON 文本做字面替换；敏感值本身是 JSON 结构字符（如 `"`、`,`）
+  const redacted: string = redactSecretsInText(safeStringify(serializable, secrets.replacer), secrets.json);
+  // 脱敏是对整份 JSON 文本做字面替换；敏感值本身是 JSON 结构字符（如 `,`）
   // 时，替换结果可能不再是合法 JSON。解析失败就退化为脱敏后的文本，不向上抛出。
   try {
     return JSON.parse(redacted);
@@ -182,8 +188,8 @@ function serializeError(
  * 不可枚举的 `cause` 与 AggregateError 的 `errors`。只读取数据描述符，不执行 getter。
  * 值为 Error 的字段、`cause` 与 `errors` 数组中的 Error 元素经 serializeNestedError
  * 递归展开；其余值逐个属性独立降级，某个值不可序列化（循环引用、BigInt）时只让它
- * 自己退化成字符串，不连累整条记录。不能用 `{...JSON.parse(safeStringify({...arg}))}`：
- * safeStringify 走 `String(value)` 兜底时返回字符串，展开进对象字面量会变成
+ * 自己退化成字符串，不连累整条记录。safeStringify 走 `String(value)` 兜底时返回字符串，
+ * 因此逐属性处理，不把降级结果展开进对象；字符串展开会变成
  * `{"0":"[","1":"o",...}` 的下标键，覆盖掉 code/path 等真实字段。
  *
  * 累加对象必须用 `Object.create(null)`（无原型）：键名为 `__proto__` 时，向普通
@@ -222,7 +228,7 @@ function ownErrorProperties(
     if (value === undefined) continue;
     const nested: Error | null = asError(value);
     if (nested === null && !aggregateErrors) {
-      own[key] = JSON.parse(safeStringify(value));
+      own[key] = JSON.parse(safeStringify(value, budget.secrets.replacer));
       continue;
     }
     frame ??= {
@@ -262,7 +268,7 @@ function serializeNestedError(nested: Error, owner: ErrorExpansionFrame, budget:
  */
 function serializeAggregateErrors(value: unknown, owner: ErrorExpansionFrame, budget: SerializationBudget): unknown {
   try {
-    if (!Array.isArray(value)) return JSON.parse(safeStringify(value));
+    if (!Array.isArray(value)) return JSON.parse(safeStringify(value, budget.secrets.replacer));
     const length: number = value.length;
     const serialized: unknown[] = [];
     for (let index: number = 0; index < length; index++) {
@@ -285,7 +291,7 @@ function serializeAggregateErrors(value: unknown, owner: ErrorExpansionFrame, bu
       const nested: Error | null = asError(element);
       serialized[index] = nested !== null
         ? serializeNestedError(nested, owner, budget)
-        : JSON.parse(safeStringify(element));
+        : JSON.parse(safeStringify(element, budget.secrets.replacer));
     }
     return serialized;
   } catch {
@@ -296,11 +302,10 @@ function serializeAggregateErrors(value: unknown, owner: ErrorExpansionFrame, bu
 /** 单个参数的任何意外失败都只降级该参数，不能替换调用方正在汇报的异常。 */
 function serializeArgSafely(
   arg: unknown,
-  secrets: readonly string[],
   budget: SerializationBudget
 ): unknown {
   try {
-    return serializeArg(arg, secrets, budget);
+    return serializeArg(arg, budget);
   } catch {
     return LOGGER_UNSERIALIZABLE_VALUE;
   }
@@ -308,8 +313,8 @@ function serializeArgSafely(
 
 /** 每次 emit 共用配置快照与展开预算，输出只包含已脱敏值及显式截断标记。 */
 export function serializeLogArgs(args: readonly unknown[]): unknown[] {
-  const secrets: readonly string[] = currentSecrets();
-  const budget: SerializationBudget = { errors: LOGGER_MAX_ERROR_NODES, items: LOGGER_MAX_SERIALIZED_ITEMS };
+  const secrets: LogRedactionSecrets = currentSecrets();
+  const budget: SerializationBudget = { errors: LOGGER_MAX_ERROR_NODES, items: LOGGER_MAX_SERIALIZED_ITEMS, secrets };
   const serialized: unknown[] = [];
   // 为数组括号、最后一个逗号和截断标记预留空间。
   let remainingBytes: number = LOGGER_MAX_SERIALIZED_BYTES -
@@ -320,7 +325,7 @@ export function serializeLogArgs(args: readonly unknown[]): unknown[] {
       break;
     }
     budget.items--;
-    const value: unknown = serializeArgSafely(arg, secrets, budget);
+    const value: unknown = serializeArgSafely(arg, budget);
     const bytes: number = jsonSerializedBytes(value) + 1;
     if (bytes > remainingBytes) {
       serialized.push(LOGGER_SERIALIZATION_LIMIT_VALUE);

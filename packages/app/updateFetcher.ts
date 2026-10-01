@@ -16,7 +16,7 @@ import type { TelegramAllowedUpdates } from "../types/lifecycle";
 /**
  * 每个 runner 独占一个取数闭包；请求与全部退避继承本次取数的取消信号。
  * 失败退避从 UPDATE_POLL_INITIAL_RETRY_MS 起翻倍，封顶 UPDATE_POLL_MAX_RETRY_MS，
- * 累计超出 UPDATE_POLL_RETRY_WINDOW_MS 前抛出最后一次错误。
+ * 指数退避与 429 等待共用 UPDATE_POLL_RETRY_WINDOW_MS，等待达到或超过剩余预算时抛出最后错误。
  * 返回的 offset 只在下次调用时发送，调用方须先完成本条 middleware。
  * @see ../../docs/cn/04-invariants.md
  */
@@ -52,7 +52,9 @@ export function createAcknowledgedUpdateFetcher(
           if (error.error_code === 429 && "parameters" in error &&
             typeof error.parameters === "object" && error.parameters !== null &&
             "retry_after" in error.parameters && typeof error.parameters.retry_after === "number") {
-            await sleep(error.parameters.retry_after * 1_000, signal);
+            const retryAfterMs: number = error.parameters.retry_after * 1_000;
+            if (retryAfterMs >= remainingMonotonicTime(retryDeadline)) throw error;
+            await sleep(retryAfterMs, signal);
           }
         }
         if (delay >= remainingMonotonicTime(retryDeadline)) throw error;

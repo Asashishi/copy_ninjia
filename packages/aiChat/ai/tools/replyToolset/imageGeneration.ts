@@ -151,6 +151,7 @@ function coolingDownError(retryAfterMs: number): string {
   });
 }
 
+/** 接纳时认领群冷却；参考图排队继承本轮取消信号，未发起模型请求时释放认领。生命周期见 docs/cn/04-invariants.md。 */
 export function createGenerateImageExecutor(
   ctx: ReplyToolContext,
   state: RoundMessageState,
@@ -227,7 +228,7 @@ export function createGenerateImageExecutor(
                 fileId: referenceFileId,
                 logLabel: "image generation reference",
                 signal: ctx.signal,
-              })) ?? undefined;
+              }), ctx.signal) ?? undefined;
               referenceUnavailable = referenceImage === undefined;
             }
             if (referenceUnavailable) {

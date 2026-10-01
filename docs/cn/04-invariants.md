@@ -92,7 +92,7 @@
 
   分发只走现有 Worker 协议：AI 闲聊 Worker 收 `configReload`（只带变化的领域），主线程投递前先把 `lastInitState` 改写成当前快照；Anti-Raid Worker 收 `agentConfig`。投递被拒绝时由 Worker 重建重放补齐；Worker 未启动或已放弃重启时只更新主线程 holder。Worker 侧先整体替换 holder，再失效从旧快照派生的状态，在途请求继续持有旧门面与旧客户端直至结算：AI 闲聊丢弃能力门面与两家 SDK 客户端，保留协议、端点与凭据仍被新快照引用的配额 lane、摘除其余 lane，`media` 能力变化时重置输入模态探测，并重记一次「配了但没实现」的诊断；心情按档位名换成新快照、已删除档位的群下次读取时重抽；贴纸白名单替换后为新加入的包启动目录对账（停机排空期间不启动），移出白名单的包不再出现在贴纸工具中，其目录留到 Disk I/O 恢复按白名单对账。Anti-Raid 丢弃广告检测的两家 SDK 客户端，示例清单替换时清空 system prompt 缓存。
 
-  每条线程的 logger 值级脱敏名单保留被热重载替换下来的旧凭据，当前凭据（Telegram token、各能力 api_key 与 google provider 每个 headers 值）全部保留并排在前面，与旧凭据合计最多 `LOGGER_MAX_REDACTED_SECRETS`（128）项，超出时丢弃最早退役的旧凭据。
+  每条线程通过 `cache/perThread/logger.ts` 的 `current` holder 保存完整只读凭据快照。首次使用或任一配置对象身份变化时，同步构造原文名单、JSON 转义片段与遍历回调，再整体替换；每次 emit 捕获同一快照，序列化重入不改写外层快照。当前凭据（Telegram token、各能力 api_key 与 google provider 每个 headers 值）全部排在退役凭据之前，合计最多 `LOGGER_MAX_REDACTED_SECRETS`（128）项，超出时丢弃最早退役的旧凭据；Worker 重建后按本线程配置重新填充。
 
 ### 数据根与后台任务
 
@@ -273,7 +273,7 @@
 
   **媒体识别仅在 LRU 未命中后检查新任务容量。** 每次调用只查询一次 LRU；已完成结果直接返回，在途结果合并订阅，两者都不新增执行或等待额度。未命中且无容量时直接返回 `null` 描述，不插入失败条目，也不触发有效缓存淘汰。模态关闭、退避及已取消请求的入口检查仍先于缓存读取。
 
-  聊天识别、贴纸目录描述和生图参考文件下载共用 `cache/workers/aiChat/mediaTasks.ts` 的执行器：真实执行最多 `MEDIA_DESCRIPTION_MAX_CONCURRENCY`（32）个，执行器排队与两种模态的冷探测等待合计最多 `MEDIA_DESCRIPTION_MAX_PENDING`（256）个。未知模态各自只执行一个探测；等待转执行或重新探测时先释放等待位，再在同一同步段内接纳后续任务。已有空闲执行槽时可直接启动无需冷等待的任务。
+  聊天识别、贴纸目录描述和生图参考文件下载共用 `cache/workers/aiChat/mediaTasks.ts` 的执行器：真实执行最多 `MEDIA_DESCRIPTION_MAX_CONCURRENCY`（32）个，执行器排队与两种模态的冷探测等待合计最多 `MEDIA_DESCRIPTION_MAX_PENDING`（256）个。未知模态各自只执行一个探测；等待转执行或重新探测时先释放等待位，再在同一同步段内接纳后续任务。已有空闲执行槽时可直接启动无需冷等待的任务。生图参考下载把同一取消信号传给执行器与下载器；排队中取消立即摘除等待项，未开始模型请求时释放该动作的冷却占位，并由动作链的 finally 结算资源。
 
   `libs/sharedResult.ts` 为共享任务保存可摘除订阅：取消立即移除等待记录和 abort 监听，正常结算清空全部订阅。单个消费者取消不影响其他消费者；最后一个可取消消费者离开且没有无信号消费者时，中止底层任务并按 Promise 身份摘除 LRU 条目。冷等待取消后的结算释放等待额度；LRU 淘汰不撤销仍有消费者的任务，旧任务清理不得删除同键的新任务。Worker 重建后执行器、等待计数与订阅一并清空。
 
@@ -562,7 +562,7 @@
 - 素材直链的合法性在解码期判定：非空、去首尾空白、可解析的绝对地址，读回的是 WHATWG 归一化后的 `href` 而不是原串（`trim` 只管首尾，URL 构造器还会吃掉字符串内部的 tab/LF/CR 并对空格做百分号编码，留着原串等于让一个「构造器认、Telegram 不认」的地址通过校验）。**不限定图床**，但限定协议：三张缩略图由 Telegram 客户端去取，只认 `https`；只有由本进程自己抓取的 `pathOrUrl.bot_default_avatar` 允许明文 `http`，走不走 TLS 是配置者的决定。本机路径只收绝对路径或 `./`、`../` 开头的显式相对路径（不含 NUL），相对路径按运行时数据根解析；`bot_default_avatar` 命中本机路径形态即解析为本机文件来源（`DefaultAvatarSource` 的 `path`），否则按直链判定。`parseAssetConfig` 只做词法判定、不做 I/O；本机头像文件由 `loadAssetConfig`（启动总闸与热重载共用）核对为存在的普通文件（跟随符号链接）、不超过 `AVATAR_MAX_DOWNLOAD_BYTES`、字节签名为 JPEG 或 PNG，最多读上限加一个字节。写坏一律拒绝整份文件而不是静默回退常量——少写 scheme 时 Telegram 只是不显示这张图，与「图挂了」在群里看不出区别。
 - 复原默认头像那条 fetch **跟随重定向**（`redirect: "follow"`）：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google Drive 链接即是）。逼配置者自己解析出终点只会把一个必然踩到的坑变成必须写进文档的注意事项。`/copy`、`/icon steal` 那三条禁用 redirect 属于[出站请求与消息安全](#出站请求与消息安全)那条约束——那些地址来自 Bot API 的 `file_path` 与 t.me 主页的 HTML，受 Telegram 自有资产域 allowlist 管，与本项不是一回事。`AVATAR_MAX_DOWNLOAD_BYTES` 的有界读取和上传前的字节签名校验防的是「拿回来的根本不是图片」（Drive 的配额/病毒扫描 HTML 插页是典型），与跳不跳转无关。本机文件来源每次尝试都按同一上限重新有界读取并校验字节签名；读不到、超限或不是 JPEG/PNG 属确定性失败，不重试。
 - 本机文件来源的失败日志点名解析后的绝对路径。直链来源的四条失败日志都点名生效的地址，才能区分「`assets.json` 写错了」和「随版本发布的兜底常量烂了」；但**只打 `origin + pathname`**（`libs/redaction.ts` 的 `redactUrlForLog`），查询串、fragment 与 userinfo 一律丢掉。这一项由部署方配置，可能是 S3/OSS 的预签名地址，而 `logs/<day>.json` 的 mode 是 `0644` 且属于备份对象，同文件里的 `redactSecretsInText` 只脱敏已加载配置中的凭据、不看 query。取图仍用完整地址——削掉签名这张图就取不回来了。
-- 统一 logger 在写入 journal、Worker 信封与 `logs/` **之前**同时执行两层脱敏：已加载配置中的凭据（含 google provider 的每个 `headers` 值）按值替换；SDK/HTTP 错误对象中的 `authorization`、`cookie`、`set-cookie`、API key、token、secret 与 password 等凭据字段按键替换，原始 header tuple 形态同样覆盖。后一层不能只靠 配置凭据清单——xAI/Cloudflare 响应 Cookie 不是本进程配置值。实现必须复用既有 JSON 序列化遍历，不得为每条错误日志深拷贝对象；request id、限流余量与 token 数量等非凭据诊断必须保留。
+- 统一 logger 在写入 journal、Worker 信封与 `logs/` **之前**先按原文替换已加载配置中的凭据（含 google provider 每个 `headers` 值），再将字符串中的 HTTP(S) URL 收敛为 origin 与 pathname，移除 userinfo、查询串和 fragment；路径中的单引号属于 URL。SDK/HTTP 错误对象中的 `authorization`、`cookie`、`set-cookie`、API key、token、secret 与 password 等凭据字段按键替换，原始 header tuple 同样覆盖。JSON 转义后的凭据片段还用于匹配序列化结果中的对象键。遍历回调随配置快照缓存，复用既有 JSON 序列化与展开预算，不为每次 emit 创建回调或深拷贝对象；request id、限流余量与 token 数量等非凭据诊断保留。
 
 - logger 在输出前展开 `cause`、`AggregateError.errors` 和 Error 类型的自有可枚举字段，逐层脱敏。单次 emit 共享最多 64 个 Error、256 个参数/属性/数组元素的展开预算，最大嵌套层级为 5，参数 JSON 不超过 64 KiB；循环、深度或预算超限使用静态占位符。
 - **`normalizeChatState` 只回收「真的到点」的字段，「读数看起来不合理」一律收敛而不是删除**：`quietUntil` 的上限判定（`isQuietUntilActive`）是为墙钟回拨设的，而 `/quiet <上限分钟数>` 写下的 `quietUntil - now` 恰好等于 `QUIET_MAX_DURATION_MS`，不留容差的话时钟往回跳 1 毫秒就让顶格静默失效。因此判定带 `QUIET_CLOCK_SKEW_TOLERANCE_MS` 的容差吸收常见 NTP step；超出容差的大幅回拨由这个 normalizer 把值收敛到 `now + QUIET_MAX_DURATION_MS`——静默继续有效且保证不晚于上限结束，正是那条上限本来的意思。删字段不行：这个 normalizer 每次 `saveState()` 都对每个群跑一遍，一删就是把静默从内存和 SQLite `chat_states` 一并抹掉，时钟回正也找不回来（同 `libs/slidingWindowRateLimit.ts` 对回拨「只丢越界项、绝不整窗清空」的取舍）。
@@ -935,7 +935,7 @@
 
   **停机时被放弃的那一条同样算数**：取数循环在停机信号到达后不再等待在途 middleware（它可能悬挂，排空交给生命周期按 size() 有界完成），因此随后失败的 update 只能由 runner 的显式标记表达——它在 handleUpdate 抛错的同一个同步段里写下，`size()` 归零时必然已经生效。生命周期必须在确认最终 offset 前读它，为真时不确认 offset 并以非零状态退出，让 Telegram 在重启后重投；只看 `task()` 是否正常 resolve 会把一条从未成功处理的 update 一并确认掉。
 - runner 的每次 `getUpdates` 固定 `limit: 1`，本条 middleware 成功后才发起带更高 offset 的下一次取数。这样后一条失败时，前一条非幂等副作用已经在独立确认边界内落定，不会因“兄弟 update”一起重投；取数端若违反 limit 返回多条，必须在执行任何 handler 前 fail closed。失败后不得 fetch 下一条或推进 offset。
-- `app/updateFetcher.ts` 通过公开 `api.getUpdates` 取数，长轮询为 30 秒，单次取数保留 15 小时重试窗口、100 ms 起步并封顶 30 秒（`UPDATE_POLL_MAX_RETRY_MS`）的指数退避，以及 429 的 `retry_after` 等待；断网恢复后最多再等一个封顶退避就重新取数；401/409 直接失败。请求和全部退避继承同一取消信号。runner 只保存当前 middleware 的停机等待者，完成后摘除；`stop()` 结束取数，`size()` 与 `abortActive()` 负责在途排空边界。
+- `app/updateFetcher.ts` 通过公开 `api.getUpdates` 取数，长轮询为 30 秒，单次取数保留 15 小时重试窗口、100 ms 起步并封顶 30 秒（`UPDATE_POLL_MAX_RETRY_MS`）的指数退避，以及 429 的 `retry_after` 等待；断网恢复后最多再等一个封顶退避就重新取数；401/409 直接失败。请求和全部退避继承同一取消信号。runner 只保存当前 middleware 的停机等待者，完成后摘除；`stop()` 结束取数，`size()` 与 `abortActive()` 负责在途排空边界。指数退避与 429 等待共用单次取数的单调时钟预算；`retry_after` 大于等于剩余预算时直接抛出最近一次错误，不创建等待。
 - 关联频道查询使用 15 秒取消信号，经 Telegram 双工代理取消在途请求并结算 waiter。失败或超时仍返回 `undefined`，不写缓存、不授予豁免；同群去重、缓存 TTL 与代际隔离保持各自边界。
 - 最终 offset 的 `getUpdates(timeout: 0)` 仍是一次网络请求，且可能被服务端挂起：它的 offset 与在途长轮询相同，同一 offset 在上一次 `getUpdates` 开始后 3 秒内再次请求时，Bot API 服务端把 `timeout` 提到 3 秒（`TELEGRAM_REPEATED_OFFSET_MIN_WAIT_MS`）。本地截止 `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` 为这段等待再加 5 秒（共 8 秒），经 `AbortSignal` 同时约束 DNS、建连与响应读取。确认失败、超时，或因 runner/维护/落盘任一前置未完成而跳过时，生命周期要把这道 gate 永久记为失败并非零退出；
 

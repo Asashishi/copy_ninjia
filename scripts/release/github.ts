@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { checked, verifyReleaseReferences } from "./command";
 import type { CommandResult, ReleaseCommand } from "./command";
 import { fileSha256 } from "../fileSha256";
-import { RELEASE_VERSION_PATTERN } from "./assets";
+import { RELEASE_VERSION_PATTERN } from "../../packages/consts/release";
 import type { ReleaseAsset } from "./assets";
 
 /** 发布仓库固定为安装器下载来源，显式主机避免 GH_REPO/GH_HOST 改变目标。 */

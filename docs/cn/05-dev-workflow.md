@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5539 tests / 481 files / 263075 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.51%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5558 tests / 483 files / 263136 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.51%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -87,6 +87,8 @@
 `bun test --isolate test/infra/aiCacheUsagePipeline.test.ts test/workers/antiRaid/verificationCallback.test.ts test/workers/antiRaid/recentComments.test.ts test/infra/selfSentTracker.test.ts` 核对六类用量从供应商 mock 到 Worker 转发、诊断 ACK、落盘和跨日汇总，以及回调实例/代际、查询与回执同时挂起、评论乱序/回拨、reset 以 false 结算等待者。用量闭环与验证回调同时进入 `test:fault-injection`；所有数据使用独立临时根，出站使用 mock。
 
 `bun test --isolate test/aiChat/ai/mediaAdmission.test.ts test/aiChat/ai/imageDescription.test.ts test/libs/sharedResult.test.ts test/infra/telegramWorkerCapabilities.test.ts` 验证媒体 LRU 命中不新增额度、共享执行与冷等待容量、取消补位、订阅回收、淘汰后的任务身份、模态探测及配置代次；Worker 测试覆盖方法 × owner 的允许/拒绝矩阵，以及代理经真实接收端和出站闸的消息、上传、CDN 下载、429 重试、话题与自发登记。`telegramWorkerCapabilities.test.ts` 同时进入故障注入套件；网络由 mock 接管，使用独立临时数据根。
+
+`test/infra/loggerSecurity.test.ts` 通过真实 logger 序列化核对签名 URL、含 JSON 转义字符的凭据、凭据快照重入与退役名单；`test/aiChat/ai/imageGenerationCancellation.test.ts` 使用真实媒体执行器与动作链，仅 mock 下载、模型和 Telegram 出站，断言排队取消后资源结算且出站调用为零，并纳入 `test:fault-injection`。`test/app/updateFetcher.test.ts` 用 mock API 核对 429 共享预算及取消；`test/scripts/releaseFlow.test.ts` 构造真实临时 tar 包，核对清单版本、条目类型、执行位、权限记录对应与依赖隔离。
 
 `test/scripts/installMigration.test.ts` 验证总计数格式的 mock 备份经过 `migrate:global-state` 拆分、按清单手工放置、源码安装与真实启动，保留业务数据、两项计数、复读状态及素材配置。仍使用旧身份入口或数据根旧状态路径的部署必须先分阶段升级。`scripts/checkBinary.ts` 对包内迁移工具和二进制启动执行同类检查；两者复用 `scripts/fixtures/migrationDeployment.ts`，核对数据库合法谱系、非空 WAL、业务表、配置与源文件的哈希、权限、属主和链接拓扑。
 
@@ -213,7 +215,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # 函数/行覆盖率
 
 1. 同步远端 tags，并通过 `gh release list` 读取当前 Latest Release tag。tag 严格使用不带 `v` 的 `MAJOR.MINOR.PATCH`；按本次完整改动的最高语义影响选择版本：破坏兼容升 `MAJOR`（`1.0.9` → `2.0.0`），向后兼容的新增功能升 `MINOR`（`1.0.9` → `1.1.0`），只有修复、性能、重构或文档时才升 `PATCH`（`1.0.9` → `1.0.10`）。
 2. 在代码与本次基准结果提交后，从干净的 `dev` 执行 `release:build`，通过 `--version` 显式传入本次 Release tag。版本不提供默认值，不读取源码 manifest 的版本；传入值同时写入包内 `package.json`、`binary.json`，可执行文件的 `--version` 输出必须一致。本次声明的每个平台分别使用同一 Git tree、同一 Bun version/revision，在对应架构和 libc 的环境原生构建。构建会验证版本、无 `.map` 文件、不含 `node_modules`、三个 Worker、内置图片编解码和二进制安装器；正式发行包必须在最终提交后生成。
-3. 汇总各平台的 `.tar.gz` 与 `.tar.gz.sha256`，执行 `release:verify`。支持的平台名为 `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl`；`--platforms` 是本次必须提供的完整清单，缺项即失败。默认读取 `dist/`，也可用 `--directory` 指定汇总目录。包内 `binary.json` 的版本、平台、Git tree、Bun version/revision 和实际 SHA-256 必须一致；未提交工作树的产物拒绝发布。
+3. 汇总各平台的 `.tar.gz` 与 `.tar.gz.sha256`，执行 `release:verify`。支持的平台名为 `linux-x64`、`linux-arm64`、`linux-x64-musl`、`linux-arm64-musl`；`--platforms` 是本次必须提供的完整清单，缺项即失败。默认读取 `dist/`，也可用 `--directory` 指定汇总目录。包内 `binary.json` 的版本、平台、Git tree、Bun version/revision 和实际 SHA-256 必须一致；未提交工作树的产物拒绝发布。`package.json` 的版本也必须匹配；主程序、安装器、安装运行时入口与当前迁移工具必须各为唯一普通文件，主程序保留属主执行位，权限记录按 tar 条目顺序对应；包含 `node_modules` 的包拒绝发布。
 4. 按仓库与部署保护流程 squash 合入 `master`，确认 Git tree 与构建时一致，推送 `master` 后为该提交创建、单独推送 annotated version tag。已有 tag 不得覆盖、移动或复用。
 5. 准备英文 Release notes，仅描述上一个 Latest tag 到当前 `master` 的增量，包含 Highlights、Compatibility / Migration Notes、Validation。兼容性说明列出本次提供的二进制平台；门禁数值来自本次真实输出。执行 `release:publish`：脚本先验证本地和远端 `master`、annotated tag，再创建草稿、上传资产并下载核对内容，全部通过后才公开为 Latest，最后再次确认下载内容和远端引用。需要迁移附件时，可先创建说明一致的草稿并上传附件，再由脚本补齐二进制资产。
 6. 创建、上传或确认失败时保留现场，重试同一版本。草稿只补传缺失资产，已有同名资产须下载核对且绝不覆盖；已公开 Release 缺包时拒绝修改。只有 Release、Latest、资产和 Git 引用全部确认后，才执行 `git diff dev master --quiet`，并按 [`AGENTS.md`](../../AGENTS.md) 对齐、推送 `dev`，最终确认本地和远端的两条分支指向同一提交。发布脚本不会替代这些 Git 操作。

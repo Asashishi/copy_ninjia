@@ -2,7 +2,8 @@
 import { join, resolve } from "node:path";
 import { checked, createReleaseCommand, readBuildSourceTree } from "./release/command";
 import type { ReleaseCommand } from "./release/command";
-import { RELEASE_VERSION_PATTERN, verifyReleaseAssets } from "./release/assets";
+import { verifyReleaseAssets } from "./release/assets";
+import { RELEASE_VERSION_PATTERN } from "../packages/consts/release";
 import type { ReleaseAsset } from "./release/assets";
 import { publishRelease } from "./release/github";
 

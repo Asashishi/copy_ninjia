@@ -51,10 +51,7 @@ describe("logger persistence routing boundary", () => {
   // 脱敏名单会保留热重载替换下来的旧凭据；每条用例从空名单起步，前一条用例
   // 装进 holder 的替身值不得带进下一条。
   beforeEach((): void => {
-    loggerSecretsMemo.telegram = null;
-    loggerSecretsMemo.adDetect = null;
-    loggerSecretsMemo.agent = null;
-    loggerSecretsMemo.value = [];
+    loggerSecretsMemo.current = null;
   });
 
   test("初始化前只写控制台，完整恢复成功后 error 才转投唯一落盘 Worker", async () => {
@@ -581,11 +578,10 @@ describe("logger persistence routing boundary", () => {
 
   test("密钥恰好是 JSON 结构字符时，脱敏后解析不了也不能让 logger 自己抛出去", () => {
     const originalConfig: AdDetectAgentConfig | null = adDetectAgentConfigCache.current;
-    // `"` 是一个能通过非空配置校验的配错值：它会把整份
-    // 序列化文本里的每个引号都换成 [REDACTED]，产物不再是合法 JSON。
+    // 逗号既可作为非空凭据值，也参与 JSON 结构；整份文本脱敏后允许退化为字符串。
     adDetectAgentConfigCache.current = {
       provider: "openai",
-      apiKey: "\"",
+      apiKey: ",",
       baseUrl: "https://api.deepseek.com",
       headers: undefined,
       model: "ad",

@@ -6,7 +6,7 @@ import { ACTIVE_COLD_MIGRATION_EDGES } from "./migrations/active";
 import { copyFixtureTree } from "./fixtures/copyTree";
 import { createReleaseCommand, readBuildSourceTree } from "./release/command";
 import { fileSha256 } from "./fileSha256";
-import { RELEASE_VERSION_PATTERN } from "./release/assets";
+import { RELEASE_VERSION_PATTERN } from "../packages/consts/release";
 import type { ReleaseCommand } from "./release/command";
 
 interface PackageManifest {

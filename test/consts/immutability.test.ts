@@ -7,6 +7,20 @@ import {
 } from "../../packages/consts/auto";
 import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { RELEASE_PLATFORMS, RELEASE_REQUIRED_FILES, RELEASE_VERSION_PATTERN } from "../../packages/consts/release";
+import { LOGGER_HTTP_URL_PATTERN } from "../../packages/consts/logger";
+
+function assertReleaseAndLogConstantsReadonly(): void {
+  // @ts-expect-error 发行平台表禁止调用方增删。
+  RELEASE_PLATFORMS.push("mock-platform");
+  // @ts-expect-error 必需入口表禁止调用方增删。
+  RELEASE_REQUIRED_FILES.push("mock-entry");
+  // @ts-expect-error 版本表达式的游标禁止调用方改写。
+  RELEASE_VERSION_PATTERN.lastIndex = 1;
+  // @ts-expect-error 日志 URL 表达式的游标禁止调用方改写。
+  LOGGER_HTTP_URL_PATTERN.lastIndex = 1;
+}
+void assertReleaseAndLogConstantsReadonly;
 
 function assertAtmosphereReadonly(): void {
   // @ts-expect-error 调用方不能替换风格表。

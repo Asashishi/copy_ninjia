@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReleaseCommand, readBuildSourceTree } from "../../scripts/release/command";
@@ -19,7 +19,8 @@ const roots: string[] = [];
 
 async function fixture(
   overrides: Readonly<Record<string, unknown>> = {},
-  migrationPaths: readonly string[] = ACTIVE_COLD_MIGRATION_EDGES.map((edge): string => edge.bundledPath)
+  migrationPaths: readonly string[] = ACTIVE_COLD_MIGRATION_EDGES.map((edge): string => edge.bundledPath),
+  defect?: string
 ): Promise<{ root: string; notes: string }> {
   const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-release-test-"));
   roots.push(root);
@@ -28,9 +29,27 @@ async function fixture(
   await Bun.write(join(content, "binary.json"), JSON.stringify({
     version: VERSION, platform: "linux-x64", bun: Bun.version, bunRevision: Bun.revision, sourceTree: TREE, ...overrides,
   }));
+  await Bun.write(join(content, "package.json"), JSON.stringify({ version: defect === "manifest-version" ? "0.0.0" : VERSION }));
+  if (defect === "mode-decoy") {
+    const source: string = join(root, "decoy-executable");
+    await Bun.write(source, "mock executable; never executed\n");
+    await Bun.write(join(content, "decoy copy-ninjia/copy-ninjia"), Bun.file(source), { mode: 0o700 });
+  }
+  if (defect !== "missing-executable" && defect !== "directory-executable" && defect !== "symlink-executable") {
+    const source: string = join(root, "mock-executable");
+    await Bun.write(source, "mock executable; never executed\n");
+    await Bun.write(join(content, "copy-ninjia"), Bun.file(source), { mode: defect === "non-executable" || defect === "mode-decoy" ? 0o600 : 0o700 });
+  }
+  if (defect === "directory-executable") mkdirSync(join(content, "copy-ninjia"));
+  if (defect === "symlink-executable") symlinkSync("binary.json", join(content, "copy-ninjia"));
+  if (defect !== "missing-installer") await Bun.write(join(content, "install.sh"), "# mock installer\n");
+  if (defect !== "missing-runtime") await Bun.write(join(content, "scripts/install/runtime.js"), "export {};\n");
+  if (defect === "node-modules") await Bun.write(join(content, "node_modules/mock/index.js"), "export {};\n");
   for (const path of migrationPaths) await Bun.write(join(content, path), "export {};\n");
   const archive: string = join(root, "copy-ninjia-linux-x64.tar.gz");
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({ cmd: ["tar", "-czf", archive, "copy-ninjia"], cwd: join(root, "content"), stdout: "pipe", stderr: "pipe" });
+  const members: readonly string[] = defect === "duplicate-executable" ? ["copy-ninjia", "copy-ninjia/copy-ninjia"]
+    : defect === "mode-decoy" ? ["copy-ninjia/decoy copy-ninjia", "copy-ninjia"] : ["copy-ninjia"];
+  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({ cmd: ["tar", "-czf", archive, ...members], cwd: join(root, "content"), stdout: "pipe", stderr: "pipe" });
   expect(result.exitCode).toBe(0);
   await Bun.write(`${archive}.sha256`, `${await fileSha256(archive)}  copy-ninjia-linux-x64.tar.gz\n`);
   const notes: string = join(root, "release notes.md");
@@ -127,6 +146,17 @@ describe("发布资产与谱系", (): void => {
     expect(assets).toHaveLength(2);
     expect(assets[0]!.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
+  test.each([
+    "manifest-version", "missing-executable", "non-executable", "directory-executable", "symlink-executable",
+    "duplicate-executable", "mode-decoy", "node-modules", "missing-installer", "missing-runtime",
+  ])(
+    "独立拒绝发行包结构缺口：%s", async (defect: string): Promise<void> => {
+      const { root }: { root: string } = await fixture({}, undefined, defect);
+      const expectation: string = defect === "manifest-version" ? "package.json must match"
+        : defect === "node-modules" ? "must not contain node_modules" : "must be a unique regular file";
+      await expect(verifiedAssets(root)).rejects.toThrow(expectation);
+    }
+  );
   test.each([{ version: "development" }, { platform: "linux-arm64" }, { sourceTree: null }, { sourceTree: "f".repeat(40) }, { bun: "1.0.0" }, { bunRevision: "different" }])(
     "拒绝错误构建元数据：%j", async (overrides): Promise<void> => {
       const { root } = await fixture(overrides);

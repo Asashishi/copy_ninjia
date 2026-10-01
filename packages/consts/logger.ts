@@ -1,6 +1,9 @@
 /** logger 无法安全读取或序列化某个值时使用的静态占位符；不得调用故障对象的方法生成兜底。 */
 export const LOGGER_UNSERIALIZABLE_VALUE: string = "[unserializable value]";
 
+/** 日志字符串中的 HTTP(S) URL 边界；统一移除查询串、fragment 与 userinfo，所属模块：infra/logger/redaction.ts。 */
+export const LOGGER_HTTP_URL_PATTERN: Readonly<RegExp> = /https?:\/\/[^\s"<>]+/giu;
+
 /**
  * 日志序列化展开嵌套 Error（`cause`、`AggregateError.errors`、值为 Error 的自有可枚举字段）
  * 的最大层数；顶层 Error 为第 0 层，更深的 Error 以 LOGGER_NESTED_ERROR_DEPTH_EXCEEDED_VALUE

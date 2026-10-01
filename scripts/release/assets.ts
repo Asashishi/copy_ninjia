@@ -4,11 +4,7 @@ import type { ColdMigrationEdge } from "../migrations/active";
 import { join } from "node:path";
 import { checked } from "./command";
 import type { ReleaseCommand } from "./command";
-
-/** 安装器支持的平台名称；每次发布由 --platforms 明确选择，禁止静默缺项。 */
-const RELEASE_PLATFORMS: readonly string[] = ["linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl"];
-/** Release tag 与发行包版本使用同一种无前缀版本号。 */
-export const RELEASE_VERSION_PATTERN: RegExp = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+import { RELEASE_PLATFORMS, RELEASE_REQUIRED_FILES, RELEASE_VERSION_PATTERN } from "../../packages/consts/release";
 
 export interface ReleaseAsset {
   readonly name: string;
@@ -25,7 +21,7 @@ export interface VerifyAssetsOptions {
   readonly command: ReleaseCommand;
 }
 
-/** 同时核对文件对、内容哈希、包内版本、平台、Bun 构建和 squash 前后相同的 Git tree。 */
+/** 核对哈希、两份清单版本、必需普通文件、主程序执行位、依赖隔离及构建谱系。 */
 export async function verifyReleaseAssets({ directory, version, platforms, sourceTree, command }: VerifyAssetsOptions): Promise<readonly ReleaseAsset[]> {
   if (!RELEASE_VERSION_PATTERN.test(version) || !/^[a-f0-9]{40}$/.test(sourceTree)) throw new Error("Release version and source tree must be explicit.");
   if (platforms.length === 0 || new Set(platforms).size !== platforms.length || platforms.some((value: string): boolean => !RELEASE_PLATFORMS.includes(value))) {
@@ -52,6 +48,24 @@ export async function verifyReleaseAssets({ directory, version, platforms, sourc
       entries.some((entry: string): boolean => entry.endsWith(".map") ||
         (/^copy-ninjia\/scripts\/(?:migrations\/)?migrate[^/]*\.js$/.test(entry) && !migrations.includes(entry)))) {
       throw new Error(`${name}: package must contain exactly the active migration bundles and no source maps.`);
+    }
+    if (entries.some((entry: string): boolean => entry.includes("/node_modules/") || entry.startsWith("node_modules/") || entry.endsWith("/node_modules") || entry === "node_modules")) {
+      throw new Error(`${name}: package must not contain node_modules.`);
+    }
+    const details: readonly string[] = checked(command, ["tar", "-tvzf", path]).split("\n");
+    if (details.length !== entries.length) throw new Error(`${name}: tar entry and mode listings must align.`);
+    for (const required of [...RELEASE_REQUIRED_FILES, ...migrations]) {
+      let occurrences: number = 0;
+      for (const entry of entries) if (entry === required) occurrences++;
+      const detail: string | undefined = details[entries.indexOf(required)];
+      if (occurrences !== 1 || detail?.[0] !== "-" || !detail.endsWith(` ${required}`) ||
+        (required === "copy-ninjia/copy-ninjia" && detail[3] !== "x")) {
+        throw new Error(`${name}: ${required} must be a unique regular file; the executable must retain its owner execute bit.`);
+      }
+    }
+    const manifest: unknown = JSON.parse(checked(command, ["tar", "-xOf", path, "copy-ninjia/package.json"])) as unknown;
+    if (manifest === null || typeof manifest !== "object" || !("version" in manifest) || manifest.version !== version) {
+      throw new Error(`${name}: package.json must match the release version.`);
     }
     assets.push({ name, path, sha256: checksum, size: Bun.file(path).size });
     assets.push({ name: `${name}.sha256`, path: checksumPath, sha256: await fileSha256(checksumPath), size: Bun.file(checksumPath).size });

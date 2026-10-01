@@ -1,6 +1,8 @@
 /** 日志结构化字段脱敏与独立值的安全 JSON 编码。 */
-import { LOGGER_UNSERIALIZABLE_VALUE } from "../../consts/logger";
+import { LOGGER_HTTP_URL_PATTERN, LOGGER_UNSERIALIZABLE_VALUE } from "../../consts/logger";
 import { REDACTED_SECRET } from "../../consts/redaction";
+import { redactSecretsInText, redactUrlForLog } from "../../libs/redaction";
+import type { LogRedactionReplacer } from "../../types/logger";
 
 /**
  * 判断一个 JSON 字段名是否直接承载凭据。
@@ -151,6 +153,7 @@ function findStructuredLogValueEnd(text: string, start: number): number {
  * 脱敏已经被 SDK/代理拼进字符串的凭据字段，例如错误 message 内嵌的
  * `{"set-cookie":[...]}`。未命中时原样返回且不建立中间数组；命中后仅构造最终
  * 字符串。结构化对象仍由下方 stringify replacer 处理，两条路径共用字段名判定。
+ * 带查询串、fragment 或 userinfo 的 HTTP(S) URL 统一保留 origin 与 pathname。
  */
 export function redactSensitiveFieldsInText(text: string): string {
   let searchFrom: number = 0;
@@ -177,45 +180,43 @@ export function redactSensitiveFieldsInText(text: string): string {
     copyFrom = valueEnd;
     searchFrom = valueEnd;
   }
-  return redacted === null ? text : redacted + text.slice(copyFrom);
+  const sanitized: string = redacted === null ? text : redacted + text.slice(copyFrom);
+  return sanitized.includes("://") && (sanitized.includes("?") || sanitized.includes("#") || sanitized.includes("@"))
+    ? sanitized.replace(LOGGER_HTTP_URL_PATTERN, redactUrlForLog) : sanitized;
 }
 
 /**
- * JSON.stringify 的无状态脱敏 replacer。
+ * 为一份只读凭据快照创建 JSON.stringify 遍历回调，由线程缓存复用。
  *
  * 除对象字段外，也覆盖二元 header tuple 与 Node 风格扁平 rawHeaders；字符串值
  * 继续检查 SDK 已经预格式化进去的字段。全部复用既有序列化遍历，避免为每条错误
- * 日志深拷贝整棵 SDK 错误对象。函数不闭包捕获本次调用数据，调用 shape 固定，也
- * 没有可增长的敏感字段注册表。
+ * 日志深拷贝整棵 SDK 错误对象。已登记凭据在 URL 规范化前按原文替换；回调只捕获
+ * 本份快照的名单，不读取后续替换的配置，也不捕获每次 emit 的展开状态。
  */
-function redactSensitiveLogField(
-  this: unknown,
-  key: string,
-  value: unknown
-): unknown {
-  if (isSensitiveLogField(key)) return REDACTED_SECRET;
-  if (key.length > 0 && Array.isArray(this)) {
-    const index: number = Number(key);
-    if (Number.isInteger(index) && index > 0 && (index & 1) === 1) {
-      const headerKey: unknown = this[index - 1];
-      if (typeof headerKey === "string" && isSensitiveLogField(headerKey)) {
-        return REDACTED_SECRET;
+export function createLogRedactionReplacer(secrets: readonly string[]): LogRedactionReplacer {
+  return function redactSensitiveLogField(this: unknown, key: string, value: unknown): unknown {
+    if (isSensitiveLogField(key)) return REDACTED_SECRET;
+    if (key.length > 0 && Array.isArray(this)) {
+      const index: number = Number(key);
+      if (Number.isInteger(index) && index > 0 && (index & 1) === 1) {
+        const headerKey: unknown = this[index - 1];
+        if (typeof headerKey === "string" && isSensitiveLogField(headerKey)) {
+          return REDACTED_SECRET;
+        }
       }
     }
-  }
-  if (typeof value === "string") {
-    const redacted: string = redactSensitiveFieldsInText(value);
-    return redacted;
-  }
-  return value;
+    return typeof value === "string"
+      ? redactSensitiveFieldsInText(redactSecretsInText(value, secrets)) : value;
+  };
 }
 
-export function safeStringify(value: unknown): string {
+/** 使用本次 emit 的快照回调编码；原值编码失败时仍使用同一回调处理字符串兜底。 */
+export function safeStringify(value: unknown, replacer: LogRedactionReplacer): string {
   try {
-    return JSON.stringify(value, redactSensitiveLogField) ?? "null";
+    return JSON.stringify(value, replacer) ?? "null";
   } catch {
     try {
-      return JSON.stringify(String(value), redactSensitiveLogField);
+      return JSON.stringify(String(value), replacer);
     } catch {
       // 最后一层必须是静态文本：再次读取 value 只会让 logger 重演原始异常。
       return JSON.stringify(LOGGER_UNSERIALIZABLE_VALUE);

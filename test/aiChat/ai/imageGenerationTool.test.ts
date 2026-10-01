@@ -265,7 +265,7 @@ describe("generate_image 工具执行器", () => {
       logLabel: "image generation reference",
     });
     expect(runMediaTask).toHaveBeenCalledTimes(1);
-    expect(runMediaTask).toHaveBeenCalledWith("interactive", expect.any(Function));
+    expect(runMediaTask).toHaveBeenCalledWith("interactive", expect.any(Function), ctx.signal);
     expect(generateChatImage).toHaveBeenCalledWith({
       prompt: "把原图改成油画",
       aspectRatio: "16:9",

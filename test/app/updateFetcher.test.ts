@@ -81,7 +81,6 @@ const scenarios: readonly FetchScenario[] = [
   { name: "409 不重试", results: [{ error_code: 409 }] },
   { name: "429 先等待 retry_after 再指数退避", results: [{ error_code: 429, parameters: { retry_after: 0.125 } }, [{ update_id: 10 }]] },
   { name: "无 retry_after 的 429", results: [{ error_code: 429 }, [{ update_id: 10 }]] },
-  { name: "retry_after 超过重试预算", results: [{ error_code: 429, parameters: { retry_after: 54_100 } }] },
 ];
 for (const scenario of scenarios) {
   test(scenario.name, async (): Promise<void> => {
@@ -90,6 +89,46 @@ for (const scenario of scenarios) {
     expect(candidate).toEqual(original);
   });
 }
+
+test.each([UPDATE_POLL_RETRY_WINDOW_MS, UPDATE_POLL_RETRY_WINDOW_MS + 1_000])(
+  "429 等待达到或超过重试预算时不创建等待：%d", async (retryAfterMs: number): Promise<void> => {
+    const error: Readonly<{ error_code: number; parameters: Readonly<{ retry_after: number }> }> = {
+      error_code: 429, parameters: { retry_after: retryAfterMs / 1_000 },
+    };
+    const result: FetchTrace = await trace(true, [error]);
+    expect(result.delays).toEqual([]);
+    expect(result.requests).toHaveLength(1);
+    expect(result.outputs).toEqual([error]);
+  }
+);
+
+test("连续失败后的 429 等待共用剩余重试预算", async (): Promise<void> => {
+  const errors: readonly unknown[] = [new Error("network"), {
+    error_code: 429, parameters: { retry_after: UPDATE_POLL_RETRY_WINDOW_MS / 1_000 },
+  }];
+  const result: FetchTrace = await trace(true, errors);
+  expect(result.delays).toEqual([UPDATE_POLL_INITIAL_RETRY_MS]);
+  expect(result.requests).toHaveLength(errors.length);
+  expect(result.outputs).toEqual([errors[1]]);
+});
+
+test("429 等待期间取消会撤回定时器并传播取消原因", async (): Promise<void> => {
+  const controller: AbortController = new AbortController();
+  const reason: Error = new Error("cancel polling");
+  const stderr = spyOn(console, "error").mockImplementation((): void => {});
+  const timers = spyOn(globalThis, "setTimeout").mockImplementation(((_callback: () => void): number => {
+    queueMicrotask((): void => { controller.abort(reason); });
+    return 1;
+  }) as never);
+  const clearing = spyOn(globalThis, "clearTimeout").mockImplementation((): void => {});
+  const api: { getUpdates(): Promise<never> } = {
+    getUpdates: async (): Promise<never> => { throw { error_code: 429, parameters: { retry_after: 1 } }; },
+  };
+  try {
+    await expect(createAcknowledgedUpdateFetcher(api, ["message"])(controller.signal)).rejects.toBe(reason);
+    expect(clearing).toHaveBeenCalledWith(1);
+  } finally { clearing.mockRestore(); timers.mockRestore(); stderr.mockRestore(); }
+});
 
 test("持续失败时退避翻倍后封顶，并在重试窗口内抛出最后一次错误", async (): Promise<void> => {
   const { delays, outputs, requests }: FetchTrace = await trace(true, [new Error("persistent")]);
