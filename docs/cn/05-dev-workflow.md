@@ -69,7 +69,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5558 tests / 483 files / 263136 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.51%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**5558 tests / 483 files / 263109 次 `expect()`**；全源码**函数覆盖率 98.06% / 行覆盖率 98.52%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ## 测试隔离机制
 
@@ -101,6 +101,7 @@
 - 目录镜像 `packages/`：`packages/foo/bar.ts` 的用例放 `test/foo/`。文件名不强求逐字对应——一个模块的用例按主题拆成几个文件是常态（`packages/commands/gag.ts` → `test/commands/gag.lifecycle.test.ts`、`gag.ingress.test.ts`…），子目录里的模块也可以按命令族并到一个文件（`packages/commands/hImage/add.ts` → `test/commands/hImageAdd.test.ts`）。已经逼近 1000 行硬上限的测试文件一律新增到新文件，不要继续往里塞。
 - 跨领域共用的替身、夹具与 harness 放 `test/helpers/`，与领域无关的通用小工具放 `test/libs/helpers.ts`；不要在测试间共享可变模块状态（隔离机制会掩盖这类错误直到有人不用 `--isolate` 运行）。
 - 触发真实文件 I/O 的测试可以放心写——preload 的临时数据根兜底；但涉及 `infra/storage` 的测试注意 mock 边界（只 mock `infra/diskIO` 而漏掉 `infra/storage` 会调到真实 `saveStateInBackground`，这正是 [`AGENTS.md`](../../AGENTS.md) 要求先备份运行时文件的场景）。
+- 测试与夹具运行外部命令统一用 `scripts/fixtures/subprocess.ts` 的 `runCapturedCommand`（异步 `Bun.spawn`，先读 stdout/stderr 再等退出），不要写 `Bun.spawnSync`。Bun 1.4.2 的 `Bun.spawnSync` 在长时间运行的测试进程里会偶发丢失子进程退出（子进程留成僵尸），等待循环单核空转到用例超时后仍不返回，整轮门禁随之卡住，日志只留下 `killed 1 dangling process`。上游问题见 [oven-sh/bun#34069](https://github.com/oven-sh/bun/issues/34069)，修复 PR [oven-sh/bun#40078](https://github.com/oven-sh/bun/pull/40078) 截至 2026-10-01 尚未合入。发布工具 `createReleaseCommand` 的同步 `ReleaseCommand` 契约不在此列，`test/scripts/releaseFlow.test.ts` 经它运行的 tar 仍是同步调用。
 
 ## 故障注入套件
 

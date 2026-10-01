@@ -4,6 +4,8 @@ import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import { createFixture, writeText, cleanupFixtures } from "../../scripts/installIsolation/fixture";
 import type { InstallerFixture } from "../../scripts/installIsolation/fixture";
+import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
+import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 afterEach(cleanupFixtures);
 
@@ -72,7 +74,8 @@ test("空环境 bootstrap 安装并启动真实应用，系统操作与网络由
     '[ "$#" = 1 ] && [ "$1" = "${FAKE_WORKTREE%/*}/systemd/copy-ninjia.service" ] || exit 94',
     'cat > "$FAKE_RUNTIME_ROOT/unit-preview"',
   ].join("\n") + "\n", 0o700);
-  const child: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync(["script", "-qefc", "umask 022; bash ./install.sh --source", "/dev/null"], {
+  const child: CapturedCommandResult = await runCapturedCommand({
+    cmd: ["script", "-qefc", "umask 022; bash ./install.sh --source", "/dev/null"],
     cwd: bootstrap,
     env: {
       PATH: `${fixture.binRoot}:/usr/bin:/bin`, HOME: join(fixture.root, "home"), LANG: "C.UTF-8", TERM: "xterm-256color",
@@ -85,9 +88,9 @@ test("空环境 bootstrap 安装并启动真实应用，系统操作与网络由
       FAKE_SERVICE_LOAD_STATE: "not-found", FAKE_SEED: seed,
       BASH_ENV: bashEnvironment,
     },
-    stdin: new TextEncoder().encode("123456789:audit_mock_token\n123456789\nn\n"), stdout: "pipe", stderr: "pipe", timeout: 30_000,
+    stdin: new TextEncoder().encode("123456789:audit_mock_token\n123456789\nn\n"), timeout: 30_000,
   });
-  const output: string = (new TextDecoder().decode(child.stdout) + new TextDecoder().decode(child.stderr)).replaceAll("123456789:audit_mock_token", "[mock-token]");
+  const output: string = (child.stdout + child.stderr).replaceAll("123456789:audit_mock_token", "[mock-token]");
   expect(output).not.toContain("Unhandled error");
   expect(output).not.toContain("Shutdown drain/flush results:");
   const calls: string = await Bun.file(fixture.callLog).text();

@@ -98,7 +98,7 @@ try {
     'cat > "$FAKE_RUNTIME_ROOT/unit-preview"',
     "",
   ].join("\n"), 0o700);
-  const installed: InstallerRunResult = runInstaller(fixture, [
+  const installed: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "Telegram bot token", reply: "123456789:binary_test_token", secret: true },
     { prompt: "超级管理员用户 ID", reply: "123456789" },
     { prompt: "现在配置 AI 能力", reply: "n" },
@@ -116,7 +116,7 @@ try {
   rmSync(join(fixture.runtimeRoot, "database"), { recursive: true });
   for (const name of ["service-started", "service-observed"]) rmSync(join(fixture.runtimeRoot, name), { force: true });
   await deployMigratedFixture(migrated, fixture.configRoot, fixture.runtimeRoot);
-  const upgraded: InstallerRunResult = runInstaller(fixture, [
+  const upgraded: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" }, { prompt: "覆盖它？", reply: "y" },
   ]);
   if (upgraded.exitCode !== 0 || !upgraded.output.includes("配置校验通过") || upgraded.output.includes("/translate 翻译不可用") ||

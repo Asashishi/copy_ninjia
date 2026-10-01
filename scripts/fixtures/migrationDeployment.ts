@@ -17,6 +17,8 @@ import { createMigrationDatabase, assertMigratedDatabase } from "./migrationData
 import type { MigrationDatabaseFixture } from "./migrationDatabase";
 import { readMigrationFileSnapshot } from "./migrationFiles";
 import type { MigrationFileSnapshot } from "./migrationFiles";
+import { runCapturedCommand } from "./subprocess";
+import type { CapturedCommandResult } from "./subprocess";
 import type { RandomImageNameMigrationResult } from "../migrateRandomImageNames";
 import type { GlobalStateMigrationResult } from "../migrateGlobalState";
 
@@ -149,14 +151,14 @@ export async function prepareMigratedDeployment({
     'globalThis.fetch = () => { throw new Error("MIGRATION_NETWORK_BLOCKED"); };',
     'globalThis.Worker = class { constructor() { throw new Error("MIGRATION_WORKER_BLOCKED"); } };',
   ].join("\n"));
-  function run(args: readonly string[], success: boolean): string {
-    const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  async function run(args: readonly string[], success: boolean): Promise<string> {
+    const result: CapturedCommandResult = await runCapturedCommand({
       cmd: [binary ? join(packageRoot, "copy-ninjia") : Bun.argv[0]!, "--preload", guard, ...args],
       cwd: root,
       env: { PATH: "/usr/bin:/bin", HOME: root, BUN_BE_BUN: "1", COPY_NINJIA_DATA_ROOT: data, COPY_NINJIA_CONFIG_ROOT: join(root, "absent-config") },
-      stdout: "pipe", stderr: "pipe", timeout: 30_000, killSignal: "SIGKILL",
+      timeout: 30_000, killSignal: "SIGKILL",
     });
-    const output: string = new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr);
+    const output: string = result.stdout + result.stderr;
     expect(result.exitCode === 0, output).toBe(success);
     expect(output).not.toMatch(/MIGRATION_(NETWORK|WORKER)_BLOCKED/);
     return output;
@@ -168,16 +170,16 @@ export async function prepareMigratedDeployment({
   const outputs: Map<string, string> = new Map();
   for (const edge of ACTIVE_COLD_MIGRATION_EDGES) {
     const script: string = join(packageRoot, binary ? edge.bundledPath : edge.entryPath);
-    expect(run([script, "--help"], true)).toContain(edge.command);
-    run([script, "--unknown"], false);
+    expect(await run([script, "--help"], true)).toContain(edge.command);
+    await run([script, "--unknown"], false);
     const output: string = join(root, edge.command.replaceAll(":", "-"));
     const outputFlag: string = edge.command === "migrate:random-image-names" ? "--output-directory" : "--output-root";
     const args: readonly string[] = [script, ...argumentsByCommand[edge.command]!, outputFlag, output];
-    run(args, true);
+    await run(args, true);
     const ready: MigrationFileSnapshot | null = await readMigrationFileSnapshot(join(output, "ready.json"));
     if (ready === null) throw new Error(`Missing migration output: ${edge.command}`);
     expect(await Bun.file(join(output, "incomplete.json")).exists()).toBeFalse();
-    run(args, false);
+    await run(args, false);
     expect(await readMigrationFileSnapshot(ready.path)).toEqual(ready);
     outputs.set(edge.command, output);
   }

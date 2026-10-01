@@ -44,7 +44,7 @@ async function checkTelegramRollback(): Promise<void> {
   const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   const original: string = validTelegram();
   await writeText(telegramPath, original, 0o640);
-  const result: InstallerRunResult = runInstaller(fixture, [
+  const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
     { prompt: "Telegram bot token", reply: "987654321:new_test_token", secret: true },
     { prompt: "超级管理员用户 ID", reply: "987654321" },
@@ -80,7 +80,7 @@ async function checkTelegramRollback(): Promise<void> {
 
 async function checkStagingPermissionFailureCleanup(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
-  const result: InstallerRunResult = runInstaller(
+  const result: InstallerRunResult = await runInstaller(
     fixture,
     [],
     { FAKE_STAGING_CHMOD_FAIL: "1" }
@@ -96,7 +96,7 @@ async function checkInterruptedResume(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
   await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
-  const interrupted: InstallerRunResult = runInstaller(fixture, [
+  const interrupted: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" },
     { prompt: "现在配置 AI 能力", close: true },
   ]);
@@ -106,7 +106,7 @@ async function checkInterruptedResume(): Promise<void> {
     "步骤 6 中断不得物化 agent 示例"
   );
 
-  const resumed: InstallerRunResult = runInstaller(fixture, [
+  const resumed: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" },
     { prompt: "现在配置 AI 能力", reply: "n" },
     systemdPrompt(),
@@ -136,7 +136,7 @@ async function checkSuccessfulReplacement(): Promise<void> {
   }), 0o640);
   const originalOwner: ReturnType<typeof statSync> = statSync(telegramPath);
   const replacementToken: string = "987654321:replacement_test_token";
-  const result: InstallerRunResult = runInstaller(fixture, [
+  const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
     { prompt: "Telegram bot token", reply: replacementToken, secret: true },
     { prompt: "超级管理员用户 ID", reply: "987654321" },
@@ -198,7 +198,7 @@ async function checkFirstFillMode(): Promise<void> {
         placeholderMode
       );
     }
-    const result: InstallerRunResult = runInstaller(fixture, [
+    const result: InstallerRunResult = await runInstaller(fixture, [
       { prompt: "Telegram bot token", reply: "987654321:first_fill_test_token", secret: true },
       { prompt: "超级管理员用户 ID", reply: "987654321" },
       { prompt: "现在配置 AI 能力", reply: "n" },
@@ -247,7 +247,7 @@ async function checkServiceDataRoot(): Promise<void> {
     mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     const telegram: string = validTelegram();
     await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), telegram, 0o600);
-    const result: InstallerRunResult = runInstaller(fixture, [], environment(fixture));
+    const result: InstallerRunResult = await runInstaller(fixture, [], environment(fixture));
     assertCondition(result.exitCode !== 0, "既有 unit 与安装环境的数据根不一致时必须失败");
     assertContains(result.output, "COPY_NINJIA_DATA_ROOT", "拒绝信息必须点名数据根环境项");
     assertEqual(await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).text(), telegram, "拒绝时不得修改配置");
@@ -261,7 +261,7 @@ async function checkServiceDataRoot(): Promise<void> {
   }
 
   const missingRoot: InstallerFixture = await createFixture();
-  const unsetResult: InstallerRunResult = runInstaller(missingRoot, [], { COPY_NINJIA_DATA_ROOT: undefined });
+  const unsetResult: InstallerRunResult = await runInstaller(missingRoot, [], { COPY_NINJIA_DATA_ROOT: undefined });
   assertContains(
     unsetResult.output,
     "Environment.COPY_NINJIA_DATA_ROOT 与安装环境必须同时缺省或显式解析为同一数据根",
@@ -285,7 +285,7 @@ async function checkServiceDataRoot(): Promise<void> {
     const fixture: InstallerFixture = await createFixture();
     mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
-    const result: InstallerRunResult = runInstaller(fixture, [
+    const result: InstallerRunResult = await runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "n" },
       { prompt: "现在配置 AI 能力", reply: "n" },
       systemdPrompt(),
@@ -304,7 +304,7 @@ async function checkSymlinkTopologyPreserved(): Promise<void> {
   await writeText(realTelegramPath, validTelegram(), 0o640);
   symlinkSync(realTelegramPath, telegramPath);
   const replacementToken: string = "987654321:symlink_test_token";
-  const result: InstallerRunResult = runInstaller(fixture, [
+  const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
     { prompt: "Telegram bot token", reply: replacementToken, secret: true },
     { prompt: "超级管理员用户 ID", reply: "987654321" },
@@ -327,7 +327,7 @@ async function checkUnverifiedJournalBackupRetention(): Promise<void> {
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
   const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   await writeText(telegramPath, validTelegram(), 0o600);
-  const result: InstallerRunResult = runInstaller(fixture, [
+  const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
     { prompt: "Telegram bot token", reply: "987654321:journal_test_token", secret: true },
     { prompt: "超级管理员用户 ID", reply: "987654321" },
@@ -347,7 +347,7 @@ async function checkCredentialIsolation(): Promise<void> {
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
   await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
   const apiKey: string = "test key with spaces, quote-\" and 日本語";
-  const result: InstallerRunResult = runInstaller(fixture, [
+  const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" },
     { prompt: "现在配置 AI 能力", reply: "y" },
     { prompt: "配置 ad_detect？", reply: "y" },
@@ -415,7 +415,7 @@ async function checkServiceProtection(): Promise<void> {
     mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     const telegram: string = validTelegram();
     await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), telegram, 0o600);
-    const result: InstallerRunResult = runInstaller(fixture, [], environment);
+    const result: InstallerRunResult = await runInstaller(fixture, [], environment);
     assertCondition(result.exitCode !== 0, "运行中、未知状态或路径不符时必须失败");
     assertEqual(await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).text(), telegram, "拒绝时不得修改配置");
     assertEqual(readdirSync(fixture.configRoot).length, 1, "拒绝时不得创建配置");
@@ -461,7 +461,7 @@ async function checkServiceObservation(): Promise<void> {
     if (scenario.fresh === true) rmSync(join(fixture.root, "systemd/copy-ninjia.service"));
     mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
-    const result: InstallerRunResult = runInstaller(fixture, [
+    const result: InstallerRunResult = await runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "y" },
       { prompt: "Telegram bot token", reply: "987654321:observation_test_token", secret: true },
       { prompt: "超级管理员用户 ID", reply: "987654321" },

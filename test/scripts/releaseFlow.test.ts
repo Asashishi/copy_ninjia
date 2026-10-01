@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReleaseCommand, readBuildSourceTree } from "../../scripts/release/command";
@@ -9,6 +9,8 @@ import { fileSha256 } from "../../scripts/fileSha256";
 import { verifyReleaseAssets } from "../../scripts/release/assets";
 import type { ReleaseAsset } from "../../scripts/release/assets";
 import { publishRelease } from "../../scripts/release/github";
+import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
+import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 const TREE: string = "a".repeat(40);
 const HEAD: string = "b".repeat(40);
@@ -49,7 +51,7 @@ async function fixture(
   const archive: string = join(root, "copy-ninjia-linux-x64.tar.gz");
   const members: readonly string[] = defect === "duplicate-executable" ? ["copy-ninjia", "copy-ninjia/copy-ninjia"]
     : defect === "mode-decoy" ? ["copy-ninjia/decoy copy-ninjia", "copy-ninjia"] : ["copy-ninjia"];
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({ cmd: ["tar", "-czf", archive, ...members], cwd: join(root, "content"), stdout: "pipe", stderr: "pipe" });
+  const result: CapturedCommandResult = await runCapturedCommand({ cmd: ["tar", "-czf", archive, ...members], cwd: join(root, "content") });
   expect(result.exitCode).toBe(0);
   await Bun.write(`${archive}.sha256`, `${await fileSha256(archive)}  copy-ninjia-linux-x64.tar.gz\n`);
   const notes: string = join(root, "release notes.md");
@@ -122,8 +124,7 @@ function github(assets: readonly ReleaseAsset[], options: {
       for (const asset of assets) {
         if (!arguments_.includes(asset.name)) continue;
         if (!state.release?.assets.some((entry) => entry.name === asset.name)) return { exitCode: 1, stdout: "" };
-        const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({ cmd: ["cp", "--", options.corrupt ? assets[1]!.path : asset.path, join(directory, asset.name)], stdout: "pipe", stderr: "pipe" });
-        expect(result.exitCode).toBe(0);
+        cpSync(options.corrupt ? assets[1]!.path : asset.path, join(directory, asset.name));
       }
       return ok();
     }

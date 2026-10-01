@@ -69,7 +69,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5558 tests / 483 files / 263136 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.51%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**5558 tests / 483 files / 263109 `expect()` calls**。全ソースコードの**関数カバレッジは 98.06%、行カバレッジは 98.52%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ## テスト分離
 
@@ -101,6 +101,7 @@ installer 隔離検査は unit data root の欠落・不一致、`EnvironmentFil
 - `packages/` のディレクトリ構成を反映します：`packages/foo/bar.ts` のテストは `test/foo/` に置きます。ファイル名は 1 対 1 でなくて構いません。1 つのモジュールのテストを主題ごとに複数ファイルへ分けるのは普通です（`packages/commands/gag.ts` → `test/commands/gag.lifecycle.test.ts`、`gag.ingress.test.ts` など）。サブディレクトリ内のモジュールをコマンド族でまとめることもあります（`packages/commands/hImage/add.ts` → `test/commands/hImageAdd.test.ts`）。1000 行のハード上限に近いテストファイルには新しいケースを足さず、新規ファイルを作ってください。
 - domain をまたいで共用する test double・fixture・harness は `test/helpers/` に、domain に依存しない汎用ユーティリティは `test/libs/helpers.ts` に置きます。テスト間で可変なモジュール状態を共有しないでください。分離機構によって、`--isolate` なしで実行されるまで問題が隠れる可能性があります。
 - 実ファイル I/O を行うテストも、preload の一時データルートによって安全です。ただし `infra/storage` 周辺の mock 境界には注意してください。`infra/diskIO` だけを mock して `infra/storage` を実物のままにすると、実際の `saveStateInBackground` に到達する可能性があります。これは [`AGENTS.md`](../../AGENTS.md) が実行時ファイルの事前バックアップを求める状況です。
+- テストと fixture が外部コマンドを実行するときは `scripts/fixtures/subprocess.ts` の `runCapturedCommand`（stdout と stderr の読み取りを始めてから終了を待つ非同期 `Bun.spawn`）を使い、`Bun.spawnSync` は書かないでください。Bun 1.4.2 の `Bun.spawnSync` は長時間動くテストプロセスの中で子プロセスの終了をまれに取りこぼし（子プロセスは zombie のまま残ります）、待機ループがテストのタイムアウトまで、さらにその後も CPU コアを 1 つ使い切って回り続け、ゲート全体が止まります。ログには `killed 1 dangling process` だけが残ります。上流の issue は [oven-sh/bun#34069](https://github.com/oven-sh/bun/issues/34069)、修正 PR [oven-sh/bun#40078](https://github.com/oven-sh/bun/pull/40078) は 2026-10-01 時点で未マージです。リリースツール `createReleaseCommand` の同期 `ReleaseCommand` 契約は対象外で、`test/scripts/releaseFlow.test.ts` がこれを通じて実行する tar は同期呼び出しのままです。
 
 ## Fault injection suite
 

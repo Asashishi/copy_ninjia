@@ -93,7 +93,7 @@ describe("install.sh 到真实应用启动", () => {
     }), 0o640);
     symlinkSync(target, entry);
     const original: ReturnType<typeof statSync> = statSync(target);
-    const result: InstallerRunResult = runInstaller(fixture, [
+    const result: InstallerRunResult = await runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "y" },
       { prompt: "Telegram bot token", reply: "987654321:replacement_test_token", secret: true },
       { prompt: "超级管理员用户 ID", reply: "987654321" },
@@ -114,7 +114,7 @@ describe("install.sh 到真实应用启动", () => {
 
   test.each([false, true])("新安装、正常配置与重启（AI=%s）", async (ai: boolean): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
-    const first = runInstaller(fixture, firstInstallPrompts(ai));
+    const first = await runInstaller(fixture, firstInstallPrompts(ai));
     expect(first.exitCode, first.output).toBe(0);
     await assertInstalledStartup(fixture, first.output, ai);
 
@@ -129,7 +129,7 @@ describe("install.sh 到真实应用启动", () => {
     const prompts: PromptReply[] = [{ prompt: "是否重新填写？", reply: "n" }];
     if (!ai) prompts.push({ prompt: "现在配置 AI 能力", reply: "n" });
     prompts.push(systemdPrompt());
-    const second = runInstaller(fixture, prompts);
+    const second = await runInstaller(fixture, prompts);
     expect(second.exitCode, second.output).toBe(0);
     await assertInstalledStartup(fixture, second.output, ai);
     expect(second.output).toContain("Restored state for 1 chat(s).");
@@ -140,7 +140,7 @@ describe("install.sh 到真实应用启动", () => {
   test("存在但非法的可选配置在启动之前拒绝", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
     await writeText(join(fixture.configRoot, DYNAMIC_CONFIG_DIR_NAME, "stickers.json"), "{}\n");
-    const result = runInstaller(fixture, firstInstallPrompts(false));
+    const result = await runInstaller(fixture, firstInstallPrompts(false));
     expect(result.exitCode).not.toBe(0);
     expect(result.output).toContain("stickers.json: $ must be");
     expect(result.output).not.toContain("INSTALL_API");

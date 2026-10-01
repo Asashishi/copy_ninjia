@@ -11,6 +11,8 @@ import {
 } from "../../scripts/installIsolation/fixture";
 import type { InstallerFixture, InstallerRunResult } from "../../scripts/installIsolation/fixture";
 import { expandedInstallSource } from "../../scripts/installSources";
+import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
+import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 const INSTALL_SCRIPT: string = await expandedInstallSource(join(import.meta.dir, "../.."));
 const MANIFEST: { readonly packageManager: string } = await Bun.file(
@@ -27,21 +29,19 @@ function scriptRange(startMarker: string, endMarker: string): string {
   return INSTALL_SCRIPT.slice(start, end);
 }
 
-function runFragment(
+async function runFragment(
   fixture: InstallerFixture,
   source: string,
   environment: Readonly<Record<string, string>> = {}
-): { readonly exitCode: number; readonly output: string } {
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+): Promise<{ readonly exitCode: number; readonly output: string }> {
+  const result: CapturedCommandResult = await runCapturedCommand({
     cmd: ["/bin/bash", "-c", `set -Eeuo pipefail\n${source}`],
     cwd: fixture.worktree,
     env: { PATH: "/usr/bin:/bin", INSTALL_MODE: "source", ...environment },
-    stdout: "pipe",
-    stderr: "pipe",
   });
   return {
     exitCode: result.exitCode,
-    output: new TextDecoder().decode(result.stdout) + new TextDecoder().decode(result.stderr),
+    output: result.stdout + result.stderr,
   };
 }
 
@@ -63,7 +63,7 @@ describe("安装器精确运行时边界", () => {
     const modulePath: string = join(fixture.worktree, "scripts/install/configure.sh");
     if (kind === "missing") await Bun.file(modulePath).delete();
     else await writeText(modulePath, "if then\n");
-    const result: InstallerRunResult = runInstaller(fixture, []);
+    const result: InstallerRunResult = await runInstaller(fixture, []);
     expect(result.exitCode).not.toBe(0);
     expect(result.output).toContain("scripts/install/configure.sh");
     expect(await installationCalls(fixture)).toBe("");
@@ -75,7 +75,7 @@ describe("安装器精确运行时边界", () => {
     "拒绝不匹配的 Bun %s，并在依赖安装和配置写入前退出",
     async (version: string): Promise<void> => {
       const fixture: InstallerFixture = await createFixture();
-      const result: InstallerRunResult = runInstaller(fixture, [], { FAKE_BUN_VERSION: version });
+      const result: InstallerRunResult = await runInstaller(fixture, [], { FAKE_BUN_VERSION: version });
       expect(result.exitCode).not.toBe(0);
       expect(result.output).toContain(`需要 Bun ${REQUIRED_VERSION}`);
       expect(await installationCalls(fixture)).toBe("");
@@ -94,7 +94,7 @@ describe("安装器精确运行时边界", () => {
   ])("拒绝漂移或非法 manifest：%s", async (manifest: string): Promise<void> => {
     const fixture: InstallerFixture = await createFixture();
     await writeText(join(fixture.worktree, "package.json"), manifest);
-    const result: InstallerRunResult = runInstaller(fixture, []);
+    const result: InstallerRunResult = await runInstaller(fixture, []);
     expect(result.exitCode).not.toBe(0);
     expect(await installationCalls(fixture)).toBe("manifest:check\n");
     await expectReadOnlyServiceQueries(fixture);
@@ -104,7 +104,7 @@ describe("安装器精确运行时边界", () => {
   test("匹配时先核对 manifest，再进入原有安装流程", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture();
     await writeText(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json"), validTelegram(), 0o600);
-    const result: InstallerRunResult = runInstaller(fixture, [
+    const result: InstallerRunResult = await runInstaller(fixture, [
       { prompt: "是否重新填写？", reply: "n" },
       { prompt: "现在配置 AI 能力", reply: "n" },
       systemdPrompt(),
@@ -120,7 +120,7 @@ describe("安装器精确运行时边界", () => {
       "if ! command -v bun >/dev/null 2>&1 && [ -x",
       'step "4/8 安装依赖"'
     );
-    const result: InstallerRunResult = runFragment(fixture, [
+    const result: InstallerRunResult = await runFragment(fixture, [
       "info() { :; }",
       'die() { printf "%s\\n" "$1" >&2; exit 1; }',
       "require_command() { :; }",
@@ -157,7 +157,7 @@ describe("下载入口转交目标工作树", () => {
       const fixture: InstallerFixture = await createFixture();
       const locateWorktree: string = scriptRange('SCRIPT_DIRECTORY=""', "\n# 下载入口只负责定位工作树");
       const repositoryProbe: string = scriptRange("is_repository_root() {", "\n# 只从同一 Release");
-      const result: InstallerRunResult = runFragment(fixture, [
+      const result: InstallerRunResult = await runFragment(fixture, [
         "info() { :; }",
         'die() { printf "%s\\n" "$1" >&2; exit 1; }',
         "worktree_version_suffix() { :; }",
@@ -179,7 +179,7 @@ describe("下载入口转交目标工作树", () => {
     async (sourceDirectory: string): Promise<void> => {
       const fixture: InstallerFixture = await createFixture();
       await writeText(join(fixture.worktree, "install.sh"), 'printf "target-installer\\n"\nexit 23\n');
-      const result: InstallerRunResult = runFragment(fixture, `${handoff}\nprintf "outer-installer\\n"`, {
+      const result: InstallerRunResult = await runFragment(fixture, `${handoff}\nprintf "outer-installer\\n"`, {
         SCRIPT_DIRECTORY: sourceDirectory,
       });
       expect(result).toEqual({ exitCode: 23, output: "target-installer\n" });
@@ -188,7 +188,7 @@ describe("下载入口转交目标工作树", () => {
 
   test("已在目标工作树运行时不递归重入", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture();
-    const result: InstallerRunResult = runFragment(fixture, `${handoff}\nprintf "continue\\n"`, {
+    const result: InstallerRunResult = await runFragment(fixture, `${handoff}\nprintf "continue\\n"`, {
       SCRIPT_DIRECTORY: fixture.worktree,
     });
     expect(result).toEqual({ exitCode: 0, output: "continue\n" });
@@ -197,7 +197,7 @@ describe("下载入口转交目标工作树", () => {
   test("目标缺失安装器时拒绝继续", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture();
     await Bun.file(join(fixture.worktree, "install.sh")).unlink();
-    const result: InstallerRunResult = runFragment(fixture, [
+    const result: InstallerRunResult = await runFragment(fixture, [
       'die() { printf "%s\\n" "$1" >&2; exit 1; }',
       handoff,
       'printf "unexpected\\n"',

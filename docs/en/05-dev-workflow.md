@@ -69,7 +69,7 @@ After a runtime update, performance calibration must be measured again with the 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **5558 tests / 483 files / 263136 `expect()` calls**; full-source **function coverage 98.06% / line coverage 98.51%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **5558 tests / 483 files / 263109 `expect()` calls**; full-source **function coverage 98.06% / line coverage 98.52%**. The Coverage badge in each project README displays line coverage.
 
 ## Test Isolation
 
@@ -101,6 +101,7 @@ Direct `bun test` runs are acceptable for debugging a single file, but the compl
 - Mirror `packages/` directories: tests for `packages/foo/bar.ts` live under `test/foo/`. File names need not correspond one to one — splitting one module's tests across several files by topic is normal (`packages/commands/gag.ts` → `test/commands/gag.lifecycle.test.ts`, `gag.ingress.test.ts`, …), and modules inside a subdirectory may be grouped by command family (`packages/commands/hImage/add.ts` → `test/commands/hImageAdd.test.ts`). Test files already close to the 1000-line hard limit take no new cases; start a new file instead.
 - Cross-domain doubles, fixtures and harnesses belong in `test/helpers/`; domain-agnostic utilities belong in `test/libs/helpers.ts`. Do not share mutable module state across tests; isolation can conceal such mistakes until someone runs without `--isolate`.
 - Tests that exercise real file I/O are safe because the preload provides a temporary data root. Still, watch mock boundaries around `infra/storage`: mocking only `infra/diskIO` while leaving `infra/storage` real can reach the real `saveStateInBackground`, which is exactly the situation where [`AGENTS.md`](../../AGENTS.md) requires backing up runtime files first.
+- Tests and fixtures run external commands through `runCapturedCommand` in `scripts/fixtures/subprocess.ts` (an asynchronous `Bun.spawn` that starts reading stdout and stderr before awaiting exit); do not call `Bun.spawnSync`. In Bun 1.4.2, `Bun.spawnSync` inside a long-running test process occasionally loses the child's exit (the child stays a zombie), and its wait loop spins a core until the test times out and keeps spinning afterwards, stalling the whole gate with only `killed 1 dangling process` in the log. The upstream issue is [oven-sh/bun#34069](https://github.com/oven-sh/bun/issues/34069); the fix, [oven-sh/bun#40078](https://github.com/oven-sh/bun/pull/40078), was not merged as of 2026-10-01. The synchronous `ReleaseCommand` contract of the release tool `createReleaseCommand` is outside this rule, so the tar commands that `test/scripts/releaseFlow.test.ts` runs through it are still synchronous.
 
 ## Fault-Injection Suite
 

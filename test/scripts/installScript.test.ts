@@ -8,6 +8,8 @@ import {
 } from "../../packages/consts/agent";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { expandedInstallSource } from "../../scripts/installSources";
+import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
+import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 const INSTALL_SCRIPT_PATH: string = join(import.meta.dir, "..", "..", "install.sh");
 const INSTALL_SCRIPT: string = await expandedInstallSource(dirname(INSTALL_SCRIPT_PATH));
@@ -31,13 +33,9 @@ function extractShellScalar(name: string): string {
 }
 
 describe("install.sh 静态 systemd 数据根边界", () => {
-  test("脚本通过 bash 语法检查", () => {
-    const result: Bun.SyncSubprocess<"ignore", "pipe"> = Bun.spawnSync({
-      cmd: ["bash", "-n", INSTALL_SCRIPT_PATH],
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    expect(new TextDecoder().decode(result.stderr)).toBe("");
+  test("脚本通过 bash 语法检查", async (): Promise<void> => {
+    const result: CapturedCommandResult = await runCapturedCommand({ cmd: ["bash", "-n", INSTALL_SCRIPT_PATH] });
+    expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
     expect(INSTALL_SCRIPT).toContain(
       '"./scripts/install/runtime";'
@@ -116,21 +114,19 @@ describe("systemd 可执行路径", (): void => {
     ["/srv/copy bot/copy-ninjia", '":/srv/copy bot/copy-ninjia"'],
     ["/srv/$BOT/%n/copy-ninjia", '":/srv/$BOT/%%n/copy-ninjia"'],
     ['/srv/a"b\\c/copy-ninjia', '":/srv/a\\"b\\\\c/copy-ninjia"'],
-  ])("可执行路径保持为单个参数并禁止环境展开：%s", (path: string, expected: string): void => {
-    const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  ])("可执行路径保持为单个参数并禁止环境展开：%s", async (path: string, expected: string): Promise<void> => {
+    const result: CapturedCommandResult = await runCapturedCommand({
       cmd: ["bash", "-c", `set -Eeuo pipefail\n${extractShellFunctions(["systemd_exec_path"])}\nsystemd_exec_path "$1"`, "--", path],
-      stdout: "pipe", stderr: "pipe",
     });
     expect(result.exitCode).toBe(0);
-    expect(new TextDecoder().decode(result.stdout)).toBe(expected);
+    expect(result.stdout).toBe(expected);
   });
-  test.each(["relative/copy-ninjia", "/srv/bad\npath/copy-ninjia"])("拒绝无效 unit 入口：%s", (path: string): void => {
-    const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  test.each(["relative/copy-ninjia", "/srv/bad\npath/copy-ninjia"])("拒绝无效 unit 入口：%s", async (path: string): Promise<void> => {
+    const result: CapturedCommandResult = await runCapturedCommand({
       cmd: ["bash", "-c", `set -Eeuo pipefail\ndie() { exit 1; }\n${extractShellFunctions(["systemd_exec_path"])}\nsystemd_exec_path "$1"`, "--", path],
-      stdout: "pipe", stderr: "pipe",
     });
     expect(result.exitCode).not.toBe(0);
-    expect(new TextDecoder().decode(result.stdout)).toBe("");
+    expect(result.stdout).toBe("");
   });
 });
 
@@ -157,28 +153,26 @@ async function fakeJournalDirectory(): Promise<string> {
 }
 
 /** 在 install.sh 同样的 `set -Eeuo pipefail` 下执行一段用到上述函数的脚本。 */
-function runWithInstallFunctions(
+async function runWithInstallFunctions(
   body: string,
   environment: Readonly<Record<string, string>> = {}
-): { readonly stdout: string; readonly exitCode: number | null } {
+): Promise<{ readonly stdout: string; readonly exitCode: number }> {
   const functions: string = extractShellFunctions([
     "run_privileged",
     "service_journal_cursor",
     "service_journal_since",
     "journal_nonzero_exit_lines",
   ]);
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  const result: CapturedCommandResult = await runCapturedCommand({
     cmd: [
       "bash",
       "-c",
       `set -Eeuo pipefail\nreadonly SERVICE_NAME="copy-ninjia"\n${functions}\n${body}`,
     ],
     env: { ...process.env, ...environment },
-    stdout: "pipe",
-    stderr: "pipe",
   });
   return {
-    stdout: new TextDecoder().decode(result.stdout),
+    stdout: result.stdout,
     exitCode: result.exitCode,
   };
 }
@@ -250,14 +244,14 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     expect(INSTALL_SCRIPT).toContain("在观察窗口内记录了非零退出");
   });
 
-  test("非零退出与信号死亡都算，status=0 与普通日志不算", () => {
+  test("非零退出与信号死亡都算，status=0 与普通日志不算", async (): Promise<void> => {
     const body: string = [
       "Started Copy Ninjia Telegram Bot.",
       "copy-ninjia.service: Main process exited, code=exited, status=0/SUCCESS",
       "copy-ninjia.service: Deactivated successfully.",
       "本天才上线啦♡",
     ].join("\n");
-    expect(runWithInstallFunctions(
+    expect(await runWithInstallFunctions(
       `printf '%s\\n' "$BODY" | journal_nonzero_exit_lines`,
       { BODY: body }
     )).toEqual({ stdout: "", exitCode: 0 });
@@ -268,7 +262,7 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
       "copy-ninjia.service: Main process exited, code=killed, status=9/KILL",
       "copy-ninjia.service: Main process exited, code=dumped, status=11/SEGV",
     ]) {
-      const result = runWithInstallFunctions(
+      const result = await runWithInstallFunctions(
         `printf '%s\\n' "$BODY" | journal_nonzero_exit_lines`,
         { BODY: `Started Copy Ninjia.\n${failing}` }
       );
@@ -277,15 +271,15 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     }
   });
 
-  test("空输入不命中，也不因为 grep 没匹配就把脚本判失败", () => {
-    expect(runWithInstallFunctions(
+  test("空输入不命中，也不因为 grep 没匹配就把脚本判失败", async (): Promise<void> => {
+    expect(await runWithInstallFunctions(
       `printf '' | journal_nonzero_exit_lines; echo "survived"`
     )).toEqual({ stdout: "survived\n", exitCode: 0 });
   });
 
   test("取得游标后只读它之后的条目", async () => {
     const path: string = `${await fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
-    const result = runWithInstallFunctions(
+    const result = await runWithInstallFunctions(
       `CURSOR="$(service_journal_cursor)"; echo "cursor=$CURSOR"; service_journal_since "$CURSOR" "2026-09-06 04:00:00 UTC"`,
       { PATH: path, FAKE_JOURNAL_CURSOR: "s=abc;i=7", FAKE_JOURNAL_BODY: "after-cursor line" }
     );
@@ -295,7 +289,7 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
 
   test("journalctl 失败时游标为空且脚本存活——不能被 set -e 打死", async () => {
     const path: string = `${await fakeJournalDirectory()}:${process.env["PATH"] ?? ""}`;
-    const result = runWithInstallFunctions(
+    const result = await runWithInstallFunctions(
       `CURSOR="$(service_journal_cursor)"; echo "cursor=[$CURSOR]"; ` +
       `if service_journal_since "$CURSOR" "2026-09-06 04:00:00 UTC" >/dev/null; then echo read-ok; else echo unavailable; fi`,
       { PATH: path, FAKE_JOURNAL_FAIL: "1" }
@@ -304,16 +298,16 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     expect(result.stdout).toBe("cursor=[]\nunavailable\n");
   });
 
-  test("机器上没有 journalctl 时读取函数返回失败", () => {
-    const result = runWithInstallFunctions(
+  test("机器上没有 journalctl 时读取函数返回失败", async (): Promise<void> => {
+    const result = await runWithInstallFunctions(
       `PATH=/nonexistent; if service_journal_since "" "2026-09-06 04:00:00 UTC" >/dev/null 2>&1; then echo read-ok; else echo unavailable; fi`
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("unavailable\n");
   });
 
-  test("没有 journal 游标时按本次观察开始时间查询", (): void => {
-    const result: ReturnType<typeof runWithInstallFunctions> = runWithInstallFunctions(
+  test("没有 journal 游标时按本次观察开始时间查询", async (): Promise<void> => {
+    const result: Awaited<ReturnType<typeof runWithInstallFunctions>> = await runWithInstallFunctions(
       'journalctl() { printf "%s\\n" "$@"; }; service_journal_since "" "2026-09-06 04:00:00 UTC"'
     );
     expect(result.exitCode).toBe(0);
@@ -373,7 +367,7 @@ async function runServiceDataRootCheck(options: {
   chmodSync(join(bin, "systemctl"), 0o755);
   const functions: string = extractShellFunctions(["resolve_runtime_data_root", "verify_service_data_root"])
     .replaceAll("/run/systemd/system", systemdRoot);
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  const result: CapturedCommandResult = await runCapturedCommand({
     cmd: [
       "bash",
       "-c",
@@ -397,13 +391,10 @@ async function runServiceDataRootCheck(options: {
       FAKE_UNSET_ENVIRONMENT: options.unsetEnvironment ?? "",
       INSTALLER_ROOT: options.installerRoot,
     },
-    stdout: "pipe",
-    stderr: "pipe",
   });
-  const decoder: TextDecoder = new TextDecoder();
   return {
     exitCode: result.exitCode,
-    output: decoder.decode(result.stdout) + decoder.decode(result.stderr),
+    output: result.stdout + result.stderr,
   };
 }
 

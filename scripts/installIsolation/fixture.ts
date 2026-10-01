@@ -9,6 +9,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { copyFixtureTree } from "../fixtures/copyTree";
+import { runCapturedCommand } from "../fixtures/subprocess";
+import type { CapturedCommandResult } from "../fixtures/subprocess";
 import { readInstallScripts } from "../installSources";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
@@ -276,17 +278,12 @@ async function installSystemGuards(fixture: InstallerFixture): Promise<void> {
   ]);
 }
 
-function validateGuardScripts(fixture: InstallerFixture): void {
-  const decoder: TextDecoder = new TextDecoder();
+async function validateGuardScripts(fixture: InstallerFixture): Promise<void> {
   for (const name of readdirSync(fixture.binRoot)) {
     const path: string = join(fixture.binRoot, name);
-    const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
-      cmd: ["/bin/bash", "-n", path],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result: CapturedCommandResult = await runCapturedCommand({ cmd: ["/bin/bash", "-n", path] });
     if (result.exitCode !== 0) {
-      throw new Error(`invalid guard ${name}: ${decoder.decode(result.stderr)}`);
+      throw new Error(`invalid guard ${name}: ${result.stderr}`);
     }
   }
 }
@@ -337,7 +334,7 @@ export async function createFixture(realRuntime: boolean = false): Promise<Insta
   await installBunGuard(fixture);
   await installGitGuard(fixture);
   await installSystemGuards(fixture);
-  validateGuardScripts(fixture);
+  await validateGuardScripts(fixture);
   return fixture;
 }
 
@@ -374,29 +371,26 @@ function installerEnvironment(
   return environment;
 }
 
-export function runInstaller(
+export async function runInstaller(
   fixture: InstallerFixture,
   prompts: readonly PromptReply[],
   extraEnvironment: Readonly<Record<string, string | undefined>> = {}
-): InstallerRunResult {
-  const decoder: TextDecoder = new TextDecoder();
+): Promise<InstallerRunResult> {
   const inputLines: string[] = [];
   for (const prompt of prompts) {
     if (prompt.close === true) break;
     inputLines.push(prompt.reply ?? "");
   }
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  const result: CapturedCommandResult = await runCapturedCommand({
     cmd: ["script", "-qefc", "umask 022; bash ./install.sh", "/dev/null"],
     cwd: fixture.worktree,
     env: installerEnvironment(fixture, extraEnvironment),
     stdin: new TextEncoder().encode(inputLines.join("\n") + "\n"),
-    stdout: "pipe",
-    stderr: "pipe",
     maxBuffer: 2 * 1024 * 1024,
     timeout: 30_000,
     killSignal: "SIGKILL",
   });
-  const rawOutput: string = decoder.decode(result.stdout) + decoder.decode(result.stderr);
+  const rawOutput: string = result.stdout + result.stderr;
   // 真实应用夹具已自行完成 SIGTERM 排空，下次安装从已停止状态开始。
   if (fixture.realRuntime) {
     rmSync(join(fixture.runtimeRoot, "service-started"), { force: true });

@@ -16,7 +16,7 @@ test("仍是 12.1.0 身份入口时安装器拒绝启动并指向 13.x 分阶段
   const path: string = join(fixture.configRoot, "telegram.json");
   await Bun.write(path, JSON.stringify({ bot_token: "123456789:old_test_token", super_admin_user_id: 123456789 }));
   const before: MigrationFileSnapshot | null = await readMigrationFileSnapshot(path);
-  const result: InstallerRunResult = runInstaller(fixture, []);
+  const result: InstallerRunResult = await runInstaller(fixture, []);
   expect(result.exitCode).not.toBe(0);
   expect(result.output).toContain("先安装 13.x 发行版");
   expect(result.output).not.toContain("INSTALL_API");
@@ -31,7 +31,7 @@ test.each(["state.json", "state.json.bak"])("数据根仍有 14.x 的 %s 时安�
   const path: string = join(fixture.runtimeRoot, name);
   await Bun.write(path, JSON.stringify({ global: { copy: { copiedUser: null } } }));
   const before: MigrationFileSnapshot | null = await readMigrationFileSnapshot(path);
-  const result: InstallerRunResult = runInstaller(fixture, []);
+  const result: InstallerRunResult = await runInstaller(fixture, []);
   expect(result.exitCode).not.toBe(0);
   expect(result.output).toContain("migrate:global-state");
   expect(result.output).not.toContain("INSTALL_API");
@@ -45,7 +45,7 @@ test("memory/global/state.json 仍是总计数 ttsUsage 时安装器在启动前
   const path: string = join(fixture.runtimeRoot, "memory/global/state.json");
   await Bun.write(path, JSON.stringify({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1_000, count: 10 } }));
   const before: MigrationFileSnapshot | null = await readMigrationFileSnapshot(path);
-  const result: InstallerRunResult = runInstaller(fixture, []);
+  const result: InstallerRunResult = await runInstaller(fixture, []);
   expect(result.exitCode).not.toBe(0);
   expect(result.output).toContain("memory/global/state.json: $.ttsUsage.count must be absent");
   expect(result.output).toContain("migrate:global-state");
@@ -63,7 +63,7 @@ test.each([false, true])("总计数 mock 备份经源码冷迁移、安装与真
   });
   await deployMigratedFixture(migrated, fixture.configRoot, fixture.runtimeRoot);
   const path: string = join(fixture.runtimeRoot, "database/storage.sqlite");
-  const result: InstallerRunResult = runInstaller(fixture, [
+  const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "n" }, systemdPrompt(),
   ]);
   expect(result.exitCode, result.output).toBe(0);

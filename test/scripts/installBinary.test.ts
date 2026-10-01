@@ -2,10 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
+import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 const roots: string[] = [];
 const source: string = await Bun.file(join(import.meta.dir, "../../install.sh")).text();
-const decoder: TextDecoder = new TextDecoder();
 
 async function executable(path: string, script: string): Promise<void> {
   await Bun.write(path, `#!/usr/bin/env bash\nset -Eeuo pipefail\n${script}\n`);
@@ -25,7 +26,7 @@ interface BinaryFixtureOptions {
 }
 
 async function fixture(options: BinaryFixtureOptions = {}): Promise<{
-  root: string; target: string; result: Bun.SyncSubprocess<"pipe", "pipe">; calls: string;
+  root: string; target: string; result: CapturedCommandResult; calls: string;
 }> {
   const root: string = mkdtempSync(join(tmpdir(), "copy-ninjia-binary-download-"));
   roots.push(root);
@@ -41,8 +42,8 @@ async function fixture(options: BinaryFixtureOptions = {}): Promise<{
   if (options.symlink) symlinkSync("/outside-deployment", join(packageRoot, "escape"));
   const assetName: string = `copy-ninjia-${platform}.tar.gz`;
   const archive: string = join(root, assetName);
-  const tar: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
-    cmd: ["tar", "-czf", archive, "copy-ninjia"], cwd: join(root, "assets"), stdout: "pipe", stderr: "pipe",
+  const tar: CapturedCommandResult = await runCapturedCommand({
+    cmd: ["tar", "-czf", archive, "copy-ninjia"], cwd: join(root, "assets"),
   });
   expect(tar.exitCode).toBe(0);
   const hash: string = new Bun.CryptoHasher("sha256").update(await Bun.file(archive).arrayBuffer()).digest("hex");
@@ -73,7 +74,7 @@ esac`);
     .replace("/etc/systemd/system/${SERVICE_NAME}.service", join(root, "absent.service")));
   const callLog: string = join(root, "calls");
   await Bun.write(callLog, "");
-  const result: Bun.SyncSubprocess<"pipe", "pipe"> = Bun.spawnSync({
+  const result: CapturedCommandResult = await runCapturedCommand({
     cmd: ["script", "-qefc", "bash ./install.sh --binary", "/dev/null"], cwd: root,
     env: {
       PATH: `${bin}:/usr/bin:/bin`, HOME: root, TMPDIR: root, COPY_NINJIA_DIR: target,
@@ -81,7 +82,7 @@ esac`);
       MISSING_ASSET: options.missing ? "1" : "0", ARCHITECTURE: options.architecture ?? "x86_64",
       STREAMED_LATEST: options.streamedLatest === true ? "1" : "0",
     },
-    stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 10_000, killSignal: "SIGKILL",
+    timeout: 10_000, killSignal: "SIGKILL",
   });
   return { root, target, result, calls: await Bun.file(callLog).text() };
 }
@@ -91,8 +92,8 @@ afterEach((): void => { for (const root of roots.splice(0)) rmSync(root, { recur
 describe("二进制下载安装", (): void => {
   test.each([false, true])("直接下载并校验 Release 包，交给包内安装器，不执行 git 或系统 Bun（musl=%s）", async (musl: boolean): Promise<void> => {
     const { target, result, calls } = await fixture({ musl });
-    expect(decoder.decode(result.stderr)).toBe("");
-    expect(decoder.decode(result.stdout)).toContain("PACKAGE_INSTALLER --binary");
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("PACKAGE_INSTALLER --binary");
     expect(result.exitCode).toBe(0);
     expect(calls).toContain("/releases/latest");
     expect(calls).toContain(`/99.0.0/copy-ninjia-linux-x64${musl ? "-musl" : ""}.tar.gz.sha256`);
@@ -103,8 +104,8 @@ describe("二进制下载安装", (): void => {
 
   test("releases/latest 返回分段到达的多行 JSON 时照常取到 tag 并完成下载", async (): Promise<void> => {
     const { target, result, calls } = await fixture({ streamedLatest: true });
-    expect(decoder.decode(result.stdout)).toContain("Latest Release 是 99.0.0");
-    expect(decoder.decode(result.stdout)).toContain("PACKAGE_INSTALLER --binary");
+    expect(result.stdout).toContain("Latest Release 是 99.0.0");
+    expect(result.stdout).toContain("PACKAGE_INSTALLER --binary");
     expect(result.exitCode).toBe(0);
     expect(calls).toContain("/99.0.0/copy-ninjia-linux-x64.tar.gz.sha256");
     expect(existsSync(join(target, "copy-ninjia"))).toBe(true);
@@ -116,7 +117,7 @@ describe("二进制下载安装", (): void => {
   ])("下载或元数据校验失败时不创建部署：%j", async (options): Promise<void> => {
     const { target, result, calls } = await fixture(options);
     expect(result.exitCode).not.toBe(0);
-    expect(decoder.decode(result.stdout)).not.toContain("PACKAGE_INSTALLER");
+    expect(result.stdout).not.toContain("PACKAGE_INSTALLER");
     expect(existsSync(target)).toBe(false);
     expect(calls).not.toContain("FORBIDDEN");
   });
