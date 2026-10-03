@@ -1,5 +1,5 @@
 import { and, inArray, isNull, lt, or } from "drizzle-orm";
-import { DAY_MS } from "../../consts/diskIO/common";
+import { getDayStartTimestamp } from "../../libs/time";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../consts/identityStorage";
 import { temporaryAdBypassEntries } from "../schema/temporaryAdBypass";
 import type { StorageDatabase } from "../../types/storageDatabase";
@@ -20,7 +20,7 @@ export function readStoredTemporaryAdBypassActivities(
     .where(inArray(temporaryAdBypassEntries.id, ids)).all();
 }
 
-/** 删除不属于当天、也未在刚结束的东京日达标的累计行。 */
+/** 删除不属于当天、也未在刚结束的配置时区自然日达标的累计行。 */
 export function deleteStaleTemporaryAdBypassActivities(
   database: StorageDatabase,
   currentDayStart: number,
@@ -30,9 +30,11 @@ export function deleteStaleTemporaryAdBypassActivities(
     !Number.isSafeInteger(currentDayStart) ||
     !Number.isSafeInteger(previousDayStart) ||
     previousDayStart < 0 ||
-    currentDayStart - previousDayStart !== DAY_MS
+    currentDayStart <= previousDayStart ||
+    getDayStartTimestamp(currentDayStart) !== currentDayStart ||
+    getDayStartTimestamp(currentDayStart - 1) !== previousDayStart
   ) {
-    throw new RangeError("Temporary ad bypass cleanup day bounds must be increasing non-negative safe integers.");
+    throw new RangeError("Temporary ad bypass cleanup day bounds must be adjacent local day starts as non-negative safe integers.");
   }
   database.delete(temporaryAdBypassEntries)
     .where(and(

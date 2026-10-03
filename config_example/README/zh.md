@@ -2,12 +2,9 @@
 
 # 部署配置说明
 
-本目录只保存可提交到 Git 的结构示例。机器人实际读取的是项目根目录下 Git 忽略的
-`config/`；示例中的 token、API key、用户 ID、模型名和端点都需要按部署环境确认，
-不能直接用于生产。
+本目录保存可提交到 Git 的结构示例。机器人实际读取的是项目根目录下受 Git 忽略的 `config/` 目录。示例中的 token、API key、用户 ID、模型名和端点都需要按实际部署环境填写，**不能直接用于生产**。
 
-首次部署可以只补齐不存在的 JSON 文件；`g-auth.json` 示例只示意结构，`cron.json` 示例只示意
-定时任务的写法，两者都不要复制：
+首次部署可以只复制不存在的 JSON 文件；`g-auth.json` 示例只示意结构，`cron.json` 示例只示意定时任务写法，两者都不要直接复制：
 
 ```bash
 mkdir -p config/static config/dynamic
@@ -19,392 +16,526 @@ for example in config_example/static/*.json config_example/dynamic/*.json; do
 done
 ```
 
-不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。
-`config/` 中包含凭据，建议只允许服务账号读取。`config/` 按生效方式分成两个子目录：
+> [!CAUTION]
+> 不要使用会覆盖已有文件的复制命令，也不要把 `config_example/` 当作部署配置的备份。`config/` 包含凭据，建议仅开放服务账号读取权限。
 
-- `config/static/`：`bot.json`、`g-auth.json`，修改后必须重启。
-- `config/dynamic/`：`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
-  `cron.json`，运行中修改会热重载，详见下文「运行中修改」。
+`config/` 严格按生效机制拆分为两个子目录：
+- `config/static/`：`bot.json`、`g-auth.json`，修改后**必须重启服务**生效。
+- `config/dynamic/`：`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`，运行中修改会自动热重载生效。
 
-`config/dynamic/` 必须存在（可以为空）；任一文件放在 `config/` 顶层或另一个子目录下都会拒绝启动。
+`config/dynamic/` 目录必须存在（可以为空）；任一配置文件放在 `config/` 顶层或放错子目录均会拒绝启动。白名单、黑名单和群状态保存在运行时数据根的 `database/storage.sqlite` 中，不属于配置文件。
 
-白名单、黑名单和待完成处置不属于部署配置，统一保存在运行时数据根的
-`database/storage.sqlite`，只通过命令和显式迁移脚本修改。
+所有 JSON 文件均执行严格 schema 校验：未知字段、拼写错误、类型不符、非法枚举或越界取值都会在启动阶段或热重载时被拒绝，**绝不静默修正或忽略**。
 
-所有 JSON 都按严格 schema 解析：文件只要存在，未知字段、拼错的字段、错误类型、
-非法枚举或越界值都会在连接 Telegram 和启动 Worker 前导致启动失败，不会静默修正、
-回退或忽略。真正缺省的可选能力按下面的功能边界处理。
+---
 
-## 文件与启动边界
+## 配置文件概览
 
-| 文件 | 配置内容 | 缺失时的行为 |
-| --- | --- | --- |
-| `static/bot.json` | Telegram Bot token、唯一超级管理员与可选通知语气 | 始终拒绝启动 |
-| `dynamic/agent.json` | 各项 AI 能力自己的 provider、凭据、端点和模型 | 由能力决定，见下文 |
-| `dynamic/stickers.json` | AI 可使用的贴纸包 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `dynamic/mood.json` | AI 心情、基础概率和天气/时段倍率 | AI 对话不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `dynamic/ad_samples.json` | 广告分类器的正例参考 | 广告检测不能启用；已启用的群静默停摆，但不拒绝启动 |
-| `dynamic/cron.json` | 定时发送任务（文字、图片、文件、语音） | 没有定时任务 |
-| `dynamic/assets.json` | `/h_image` 专用图库目录、默认头像（本机文件或直链）与内联结果缩略图直链 | 全部取内置缺省 |
-| `static/g-auth.json` | `/translate` 使用的 Google Cloud 服务账号密钥；示例只有占位值，真实密钥由部署方带外放入 `config/static/` | 翻译不能开启；已开启的翻译会话不处理消息，但不拒绝启动 |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="22%" align="left">配置文件</th>
+    <th width="16%" align="left">生效机制</th>
+    <th width="36%" align="left">主要配置内容</th>
+    <th width="26%" align="left">缺失时的运行行为</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><code>static/bot.json</code></td>
+    <td><nobr>静态（需重启）</nobr></td>
+    <td>Telegram Bot Token、唯一超级管理员、默认语气与时区</td>
+    <td><b>拒绝启动（致命错误）</b></td>
+  </tr>
+  <tr>
+    <td><code>dynamic/agent.json</code></td>
+    <td><nobr>动态（热重载）</nobr></td>
+    <td>各项 AI 模型的调用协议、凭据、端点与参数</td>
+    <td>缺核心三项时 AI 闲聊停摆；缺可选时工具关闭</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/stickers.json</code></td>
+    <td><nobr>动态（热重载）</nobr></td>
+    <td>供 AI 发送的 Telegram 贴纸包 short name 列表</td>
+    <td>AI 对话停摆（但不拒绝启动）</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/mood.json</code></td>
+    <td><nobr>动态（热重载）</nobr></td>
+    <td>AI 心情列表、抽取基础权重与环境倍率</td>
+    <td>AI 对话停摆（但不拒绝启动）</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/ad_samples.json</code></td>
+    <td><nobr>动态（热重载）</nobr></td>
+    <td>广告分类判定用的正例参考样本</td>
+    <td>广告检测停摆（但不拒绝启动）</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/cron.json</code></td>
+    <td><nobr>动态（热重载）</nobr></td>
+    <td>定时发送任务表（文字、图片、文件、语音、摘要）</td>
+    <td>无定时任务调度</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/assets.json</code></td>
+    <td><nobr>动态（热重载）</nobr></td>
+    <td><code>/h_image</code> 专用图库路径、默认头像与缩略图直链</td>
+    <td>全部取内置默认值</td>
+  </tr>
+  <tr>
+    <td><code>static/g-auth.json</code></td>
+    <td><nobr>静态（需重启）</nobr></td>
+    <td>Google Cloud 翻译服务账号密钥（RSA PEM）</td>
+    <td>翻译功能停摆（但不拒绝启动）</td>
+  </tr>
+</tbody>
+</table>
 
-AI 对话还依赖不在本目录的 `prompt/persona.md`。任一可选配置文件已经存在但内容非法时，
-即使对应功能当前关闭也会拒绝启动。
+> [!NOTE]
+> AI 人设默认使用内置的雌小鬼人设；项目根目录下可放置不受版本控制的 `prompt/persona.md` 自定义人设。全群通知与菜单优先采用显式 `atmosphere`；未配置时，自定义人设使用普通文案，内置人设使用雌小鬼文案。
 
-## 运行中修改
+---
 
-机器人只监听 `config/dynamic/`。`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、
-`cron.json` 最后一次保存约 0.5 秒后，按启动时同一套严格 schema 重新解析：
+## 运行中修改（热重载）
 
-- 解析通过且内容有变化：替换快照并投给相关 Worker，日志记一行
-  `Reloaded deployment config <路径>.`；在途的模型请求按旧配置完成。
-- 解析失败：整份改动被拒绝，日志记一条带文件路径、字段路径与期望形态的错误，机器人
-  继续使用上一份已生效配置。文件若一直不修，下次重启时启动总闸会拒绝启动。
-- 新增或删除 `ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`，在 `agent.json`
-  里整段增删 `ad_detect`，或增删 `text`、`summary`、`media` 中任一项，直接改变对应功能的可用性：缺了前提的 AI 闲聊或广告检测
-  立即停用并在日志记一行原因，群开关保持原值；补齐后自动恢复，无需重启。删除文件时日志
-  记 `Deployment config <路径> was removed.`。`image`、`tts` 的增删直接生效。
-- `cron.json` 的 `send_voice` 依赖 `agent.json` 的 `tts`（连同 `text`、`summary`、`media`）：
-  新任务表用到 `send_voice` 而当时没有可用的 `tts` 时，整份 `cron.json` 改动被拒绝；任务表仍在
-  用 `send_voice` 时，去掉 `tts`（或删掉整份 `agent.json`、对话核心能力）的 `agent.json` 改动
-  同样整份被拒绝。两种拒绝都沿用上一份已生效配置并记错误日志；启动时出现同样的组合直接拒绝启动。
-- `stickers.json` 新加入的贴纸包立即开始生成目录；移出的包不再供 AI 使用，其目录在
-  下次重启时按白名单清理。
-- `mood.json` 中仍然存在的心情对各群立即生效；当前心情已被删除的群在下次用到时重抽。
-- `assets.json` 改动后，内联结果缩略图与默认头像从下一次使用起生效；删除文件等于全部恢复
-  内置缺省。`onlyPath.random_h_image_dir` 指向新目录时，先按启动时同一口径建出并检查新目录，检查失败则整份
-  `assets.json` 改动被拒绝，继续使用原目录。
-- `cron.json` 按任务名对账：内容没变的任务保留原有计时；改动或删除的任务停止调度，正在
-  执行的那一轮在下一个动作前停下；新增的任务开始调度。删除文件等于清空全部任务。
+机器人持续监听 `config/dynamic/` 目录。修改并保存文件后约 0.5 秒触发严格 schema 解析与热重载：
 
-`config/static/` 下的 `bot.json`、`g-auth.json` 与 `prompt/persona.md` 不热重载，修改后须重启。
+1. **热替换与优雅生效**：解析通过且配置产生变化时，立即更新快照并投递给各 Worker，在途请求平稳按旧配置完成。
+2. **校验失败保护**：解析失败时整份变更被拒绝，日志记录具体错误位置（文件路径、字段路径与期望形态），系统继续沿用上一份已生效配置，不中断运行。
+3. **功能联动**：
+   - 增删 `ad_samples.json` 或 `agent.json` 的 `ad_detect` 段，自动启停广告检测。
+   - 增删 `agent.json` 核心三项（`text` / `summary` / `media`）或 `mood.json` / `stickers.json`，自动启停 AI 闲聊。
+   - 可选能力（`image`、`tts`、`web_search`）的变更即时生效。
+4. **跨配置依赖校验**：
+   - `cron.json` 中的 `send_voice` 强依赖 `agent.tts`：未配 `tts` 时含语音的 cron 配置整份拒绝；正在执行语音任务时移除 `agent.tts` 同样会被拒绝。
+   - `send_web_digest` 强依赖对话核心能力，校验口径相同。
+5. **贴纸与图库**：
+   - `stickers.json` 新增贴纸包立即开始异步索引建库；移出的贴纸包不再使用。
+   - `assets.json` 中 `random_h_image_dir` 改换路径时若新目录无效，整份变更拒绝。
+6. **定时任务增量对账**：`cron.json` 按任务名 diff，未变动任务保持原有计时，修改或删除的任务平稳停止，新任务开始调度。
+
+---
 
 ## `bot.json`
+
+静态配置文件，路径为 `config/static/bot.json`。修改后必须重启服务生效。
+
+### 配置案例
 
 ```json
 {
   "bot_token": "replace-with-telegram-bot-token",
-  "super_admin_user_id": 123456789,
-  "atmosphere": "mesugaki"
+  "super_admin_user_id": 987654321,
+  "atmosphere": "mesugaki",
+  "time_zone": "Asia/Tokyo"
 }
 ```
 
-- `bot_token`：BotFather 发放的非空 Bot API token，属于敏感凭据。
-- `super_admin_user_id`：唯一超级管理员的正安全整数 Telegram 用户 ID，不是用户名。
-  该身份天然拥有全部可授予权限，不需要也不应再写入 SQLite 白名单表。
+### 键说明
 
-`atmosphere` 可选，只接受 `"mesugaki"`（雌小鬼）或 `"normal"`（普通），缺省为雌小鬼。已配置自定义 AI 人设的群仍优先使用普通文案；其他群的通知与菜单采用该配置。没有目标群上下文的 inline 运势也使用 Bot 配置语气。修改后重启生效。安装器重新填写身份时保留合法风格。配置目录中仍有 `telegram.json`（包括与 `bot.json` 并存）时拒绝启动和安装，先按冷迁移步骤处理。
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `bot_token` | `string` | **必填** | 非空字符串，不能等于示例占位符 | BotFather 发放的 Telegram Bot API Token，形如 `123456:ABC...`，属于核心敏感凭据 |
+| `super_admin_user_id` | `number` | **必填** | 正安全整数（`> 0`） | 唯一超级管理员的 Telegram 用户数字 ID（非用户名），天生拥有全部可授予权限，无需写入数据库 |
+| `atmosphere` | `string` | 可选 | `"mesugaki"` 或 `"normal"`；首尾空白去掉后严格校验，缺省按是否配置自定义人设选择 | 机器人系统通知与命令回执的语气风格；显式配置优先（`mesugaki` 雌小鬼，`normal` 普通）。未配置时，存在 `prompt/persona.md` 使用普通风格，否则使用雌小鬼风格；不改变 AI 人设 |
+| `time_zone` | `string` | 可选 | IANA 时区名，缺省 `"Asia/Tokyo"`；首尾空白去掉后严格校验 | 默认日历时区：运势、日志、广告累计、AI 时间、每日维护与未指定时区的 cron 共用；仅为 `Asia/Tokyo`（含缺省）时注册东京天气工具；非法值拒绝启动 |
+
+---
 
 ## `agent.json`
 
-顶层只能有一个 `agent` 对象。每项能力独立选择协议、API key、端点和模型；不同能力
-可以使用不同供应商，也可以重复填写同一把 key，但不存在跨能力继承或故障回退。
+动态配置文件，路径为 `config/dynamic/agent.json`。顶层仅包含一个 `agent` 对象，按能力划分，而非按厂商划分。
 
-| 能力 | 实际用途 | 配置要求 |
-| --- | --- | --- |
-| `ad_detect` | 对消息束做广告判定 | 可选；缺失只阻止广告检测 |
-| `text` | 生成群聊正文并执行工具调用 | AI 对话核心，必须与 `summary`、`media` 同时存在 |
-| `summary` | 压缩长期对话记忆、生成贴纸包简介 | AI 对话核心，必须存在 |
-| `media` | 识图、描述贴纸和转写语音 | AI 对话核心，必须存在 |
-| `image` | 为 AI 注册生图工具 | 可选；缺失只移除生图工具 |
-| `tts` | 语音合成：AI 语音工具（日语台词合成后以语音消息发出）、`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 共用 | 可选；缺失或实现不支持时移除语音工具、`/send` TTS 请求报错；`cron.json` 用到 `send_voice` 时必须存在 |
+### 能力清单与依赖
 
-普通能力使用下面的字段：
+| 能力名称 | 角色类型 | 功能说明 | 依赖要求 |
+| --- | --- | --- | --- |
+| `text` | **核心必备** | 主群聊回复生成、工具调用调度 | 必须与 `summary`、`media` 同时存在 |
+| `summary` | **核心必备** | 压缩长期对话记忆、生成贴纸包自然语言摘要 | 必须存在 |
+| `media` | **核心必备** | 图像理解、贴纸图像描述、语音消息识别转写 | 必须存在（多模态能力） |
+| `ad_detect` | 可选能力 | 广告消息判定分类器；刷屏禁言由独立的计数规则处理 | 缺省时广告检测停摆，不影响刷屏禁言 |
+| `image` | 可选能力 | 注册 AI 生图工具（如 Grok Imagine、Imagen） | 缺省时 AI 对话不挂载生图工具 |
+| `tts` | 可选能力 | AI 语音回复、`/send` 代发语音与 cron 定时语音合成 | 缺省时 AI 语音工具关闭；`cron` 包含 `send_voice` 时强依赖此项 |
+| `web_search` | 可选能力 | 独立联网搜索工具（由专属模型执行内建检索） | 缺省时使用 `text` 模型自带的内建搜索 |
 
-| 字段 | 含义 |
-| --- | --- |
-| `provider` | 调用协议，只能是 `google` 或 `openai`；它不是模型品牌名 |
-| `api_key` | 这一项能力自己的非空 API key |
-| `base_url` | 可选的绝对 `https` 端点；省略时使用对应 SDK 的官方端点。明文 `http` 只允许 `localhost`、`127.0.0.1`、`::1`（本机代理），其余一律拒绝启动——这个字段旁边就是同一项能力的 `api_key`。URL 里不得带用户名/密码，也不得带 `#` 片段 |
-| `model` | 端点实际接受的非空模型标识，不由程序猜测或改写 |
-| `headers` | 可选，只在 `provider` 为 `google` 时允许：附加到该能力每个请求上的请求头对象，用于三方网关（如 Cloudflare AI Gateway 的 `cf-aig-authorization`）鉴权等。1～8 个；名必须是合法 HTTP 头名、忽略大小写不重复，且不得是 `x-goog-api-key`（Google key 只写在 `api_key`）；值去掉首尾空白后必须是非空的可打印 ASCII。每个值都按凭据在日志中脱敏。`openai` 能力写了这个字段会拒绝启动。写法见表后示例 |
-
-Google 能力只填 `provider`、`api_key` 和 `model` 时直连 Google 官方端点，[`config_example/dynamic/agent.json`](../dynamic/agent.json) 就是这种写法。经 Cloudflare AI Gateway 转发时再加上网关的 `base_url` 和鉴权用的 `headers`，`agent` 段里的 `media` 例如：
+### 完整配置案例
 
 ```json
 {
-  "media": {
-    "provider": "google",
-    "api_key": "replace-with-google-api-key",
-    "base_url": "https://gateway.ai.cloudflare.com/v1/replace-with-account-id/replace-with-gateway-id/google-ai-studio",
-    "headers": {
-      "cf-aig-authorization": "Bearer replace-with-cloudflare-ai-gateway-token"
+  "agent": {
+    "text": {
+      "provider": "google",
+      "api_key": "replace-with-google-api-key",
+      "model": "gemini-3.5-flash-lite"
     },
-    "model": "gemini-3.5-flash-lite"
+    "summary": {
+      "provider": "anthropic",
+      "api_key": "replace-with-anthropic-api-key",
+      "model": "claude-haiku-4-5"
+    },
+    "media": {
+      "provider": "google",
+      "api_key": "replace-with-google-api-key",
+      "base_url": "https://gateway.ai.cloudflare.com/v1/your-account-id/your-gateway/google-ai-studio",
+      "headers": {
+        "cf-aig-authorization": "Bearer <replace-with-cloudflare-ai-gateway-token>"
+      },
+      "model": "gemini-3.5-flash-lite"
+    },
+    "ad_detect": {
+      "provider": "openai",
+      "api_key": "replace-with-deepseek-api-key",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash"
+    },
+    "image": {
+      "provider": "openai",
+      "api_key": "replace-with-xai-api-key",
+      "base_url": "https://api.x.ai/v1",
+      "model": "grok-imagine-image",
+      "image_protocol": "xai"
+    },
+    "tts": {
+      "provider": "google",
+      "api_key": "replace-with-google-api-key",
+      "model": "gemini-3.8-flash-lite-tts",
+      "voice": "en-us-nika",
+      "style": "いたずらすきそうな音調が高い小恶魔の甘く、弾むようなツンデレ音色",
+      "daily_limit": 100,
+      "daily_reserve_quota": 25
+    },
+    "web_search": {
+      "provider": "anthropic",
+      "api_key": "replace-with-anthropic-api-key",
+      "model": "claude-haiku-4-5",
+      "max_calls_per_use": 5
+    }
   }
 }
 ```
 
-OpenAI 兼容服务（例如使用 xAI 或其他兼容网关）仍填写 `provider: "openai"`，并在该
-能力自己的 `base_url` 和 `model` 中写明端点与模型。`provider` 只决定请求协议和 SDK，
-不会根据模型名或 URL 自动切换。
+### 通用键说明
 
-`image` 在 `provider: "openai"` 时还必须配置 `image_protocol`，明确生图请求体：
+适用于所有能力（`text`、`summary`、`media`、`ad_detect`、`image`、`tts`、`web_search`）：
 
-- `openai`：OpenAI `gpt-image-2` 任意尺寸协议。
-- `openai-standard`：GPT Image 系列共同支持的标准尺寸协议。
-- `xai`：xAI 的 JSON 与画幅协议。
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `provider` | `string` | **必填** | `"google"`、`"openai"` 或 `"anthropic"` | 调用协议与 SDK 类型（**注意**：`image` 与 `tts` 仅支持 `"google"` 或 `"openai"`）。兼容 OpenAI 接口的模型（如 DeepSeek、xAI）均填 `"openai"` |
+| `api_key` | `string` | **必填** | 非空字符串，不能是示例占位符 | 该能力专属的 API 密钥 |
+| `base_url` | `string` | 可选 | 绝对 HTTPS URL（仅 `localhost`、`127.0.0.1`、`::1` 本地回环允许 HTTP） | 自定义端点地址。不能包含用户名/密码，不能包含 `#` 片段。缺省时直连对应官方 API |
+| `model` | `string` | **必填**（xAI TTS 除外） | 非空字符串 | 端点实际接受的模型名称 |
+| `headers` | `object` | 可选 | 1–8 个键值对（**仅 `provider: "google"` 时允许**） | 附加 HTTP 请求头，用于第三方网关鉴权（如 Cloudflare AI Gateway）。键名不能是 `x-goog-api-key`，键值必须为 ASCII 字符串 |
 
-`image.provider` 为 `google` 时禁止填写 `image_protocol`。
+### 生图专属键说明（`agent.image`）
 
-`tts` 在通用字段之外还必须配置非空 `voice`，原样作为合成请求的音色：Google 可以是预置音色名
-（示例中的 `Nika`），也可以是 AI Studio Voice design 生成的 `voice_` 音色 ID，OpenAI 与 xAI 为各自的
-音色名。设计音色归属该 `api_key` 所在的项目，且会在一年后过期；程序只校验它是非空字符串，音色是否
-存在由第一次合成请求决定。`tts.provider` 为 `openai` 时必须声明 `speech_protocol`（`google` 禁止该字段）：
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `image_protocol` | `string` | **OpenAI 必填** | `"openai"`、`"openai-standard"` 或 `"xai"` | 生图请求体协议类型。`provider: "google"` 时**严禁**配置此键 |
 
-- `"openai"`：OpenAI 兼容 audio/speech，字段为 `provider`、`api_key`、`base_url?`、`model`、
-  `speech_protocol`、`voice`、`style?` 与两个额度字段；请求 `opus`（OGG/Opus），端点须支持该格式。
-- `"xai"`：xAI（Grok）`/v1/tts`，`base_url` 缺省为 `https://api.x.ai/v1`；端点没有模型名与风格指令，
-  出现 `model` 或 `style` 即拒绝；可选 `language`（BCP-47 代码或 `auto`，缺省 `auto`），`voice` 作为
-  `voice_id` 发送；请求 `mp3`（24 kHz、64 kbps），本句语气不发送。
+### 语音合成专属键说明（`agent.tts`）
 
-Google 的写法见 [`config_example/dynamic/agent.json`](../dynamic/agent.json)。另外两种写法，`agent` 段里的
-`tts` 例如：
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `speech_protocol` | `string` | **OpenAI 必填** | `"openai"`（audio/speech）或 `"xai"`（POST /tts） | 语音合成协议。`provider: "google"` 时**严禁**配置此键 |
+| `voice` | `string` | **必填** | 非空字符串 | 发音音色标识。Google 可以是内置音色名（如 `en-us-nika`）或 Voice Design ID；OpenAI/xAI 为对应音色名（如 `coral`、`ara`） |
+| `style` | `string` | 可选 | 非空字符串，xAI 协议**禁止**配置 | 基础朗读风格提示词。缺省使用内置ツンデレ风格：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
+| `language` | `string` | 可选 | BCP-47 语言代码或 `"auto"`，**仅 xAI 协议允许** | 合成语言，缺省为 `"auto"` |
+| `daily_limit` | `number` | 可选 | 正安全整数，缺省 `100` | 每日（24 小时滚动窗口）总语音合成预算次数 |
+| `daily_reserve_quota` | `number` | 可选 | 整数，范围 `0` ～ `daily_limit - 1`，缺省 `25` | 预留给 `/send` 和 `cron` 语音任务的独立额度。AI 对话独立使用剩余的 `daily_limit - daily_reserve_quota` 次 |
 
-```json
-{
-  "tts": {
-    "provider": "openai",
-    "api_key": "replace-with-openai-api-key",
-    "model": "gpt-4o-mini-tts",
-    "speech_protocol": "openai",
-    "voice": "coral"
-  }
-}
-```
+### 独立联网检索专属键说明（`agent.web_search`）
 
-```json
-{
-  "tts": {
-    "provider": "openai",
-    "api_key": "replace-with-xai-api-key",
-    "base_url": "https://api.x.ai/v1",
-    "speech_protocol": "xai",
-    "voice": "ara",
-    "language": "ja"
-  }
-}
-```
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `max_calls_per_use` | `number` | 可选 | 正安全整数（`≥ 1`），缺省 `5` | 每轮对话回复最多调用本地 `web_search` 函数的次数；不限制一次调用内供应商的检索次数，也不作用于 cron 摘要 |
 
-OpenAI 写法省略 `base_url` 时走 OpenAI 官方端点，换成兼容服务时填它的端点；可选 `style` 与 Google 相同。
-xAI 写法的 `base_url` 可省略，`language` 省略时为 `auto`。两种写法都可再加 `daily_limit` 与
-`daily_reserve_quota`。
-
-OpenAI 与 xAI 返回的 OGG/Opus、MP3 是 Telegram 语音能直接收的格式，只校验容器、算出时长后原样发送；
-Gemini 返回的 WAV 在本地编码成 OGG/Opus。AI 语音工具、`/send` 与 `cron.json` 的语音都在
-AI Worker 上合成，因此还需要 AI 对话的其余前提（`stickers.json`、`mood.json`、
-`prompt/persona.md`）齐备，否则合成按「Worker 不可用」失败。
-
-`agent.tts.style` 是可选的基础朗读风格（`speech_protocol: "xai"` 不接受），必须是 trim 后非空的字符串；`null`、空白或其他类型均拒绝。缺省使用 `TTS_DEFAULT_STYLE`：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`。三个语音入口共用此配置；热重载后新请求使用新值，已发起请求保留原配置快照，删除字段恢复默认。单次请求的 `tone` 仍按 `<基础风格>; 细节: <语气>` 拼接，Gemini 作为 `speech_metadata.style`、OpenAI 作为 `instructions` 发送。
-
-`tts` 另有两个可选的每日额度字段，AI 与预留额度独立计数：
-
-| 字段 | 含义 |
-| --- | --- |
-| `daily_limit` | 每个窗口分配给 AI 与预留额度的总预算，正整数，缺省 100 |
-| `daily_reserve_quota` | `/send` 与 cron 共用的独立额度，整数，0 ～ `daily_limit - 1`，缺省 25。AI 独立使用剩余的 `daily_limit - daily_reserve_quota` 次，互不借用；设为 0 时 `/send` 与 cron 不合成语音 |
-
-计数窗口从窗口内第一次请求起算，满 24 小时后以下一次请求为起点重新计数；窗口与次数存在
-运行时数据根 `memory/global/state.json` 的 `ttsUsage`（`windowStartedAt`、`agentCount`、`reserveCount`），重启后延续。两项计数共用窗口，到期读取按零用量计算，下次登记请求时一起重置。一次合成调用计一次，SDK 内部重试不另计。
-额度用尽后不再发起请求：AI 不发语音、也不在群里提起；`/send` 回一句额度提示；cron 记一条
-`daily limit reached` 错误日志且不重试。两个字段热重载即生效，已用次数不清零；调低后已用次数
-超过新上限时按用尽处理。
-
-`media` 的视觉与语音输入支持度分别在第一次真实请求时探测和缓存。明确不支持后，
-当前 Worker 生命周期内不再下载该类媒体；成功后记为支持；网络等瞬时错误保持未知，
-后续媒体仍可再探测。普通 Google/OpenAI HTTP 请求最多在首次失败后重试五次；`media`
-被热重载替换或 Worker/进程重建后会重新探测。
-
-## 撤掉凭据之前先关掉功能
-
-某项能力在群里还开着，却把它的 API key 或配置撤掉了——进程**照常启动**，那个 `true` 也照常恢复，
-但该功能在唯一判定入口上被判为不可用：启动时就缺前提则 AI 闲聊的 Worker 根本不启动（磁盘快照
-原样留着），运行中撤掉则热重载后 Worker 闲置；`/translate` 会话停止处理消息，广告检测不再送检。
-群里看到的就是机器人从那一刻（或那次重启）起再也不干活，痕迹只有 `logs/` 里的一行。正确顺序是
-先在群里 `/ai_chat disable`、`/ad_detect disable` 或 `/translate disable`，再撤掉配置；或者把前提
-补回去——AI 闲聊与广告检测会经热重载自动恢复，`g-auth.json` 补回后要重启。
-
-**注意方向**：这只适用于文件**真的不存在**。文件还在但内容非法时，启动总闸照旧拒绝启动——
-哪怕对应功能当前是关的。
-
-## 身份策略与群状态不在 `config/`
-
-白名单、黑名单、待完成处置和**每群状态**（功能开关、静默、锁定记录、机器人权限快照、
-群名、中转标记）的权威源都是运行时数据根下的 `database/storage.sqlite`。群状态存放在
-`chat_states` 表，最多 25 个群，超出时 `/init enable` 会以一句回执拒绝。`/white`、`/permission`、`/block … enable` 与 `/block … disable` 通过
-Disk I/O Worker 事务写入；普通部署不应直接编辑数据库。权限键与默认值以
-`/permission help` 为准，数据库 schema 非法、版本不匹配或两张名单存在交集都会在
-联网前拒绝启动。旧 JSON 部署按 [运维文档](../../docs/cn/07-operations.md) 的一次性
-迁移流程处理，不要把旧文件复制回 `config/`。
+---
 
 ## `assets.json`
 
-可选文件。顶层按字段能接受的来源分成 `onlyPath`、`pathOrUrl`、`onlyUrl` 三组；每组和组内每个字段都可选，
-缺省的字段取内置缺省。只写需要改的项，例如：
+动态配置文件，路径为 `config/dynamic/assets.json`。可选文件，所有分组与字段缺省时均取内置默认值。
+
+### 配置案例
 
 ```json
 {
   "onlyPath": {
-    "random_h_image_dir": "./images"
+    "random_h_image_dir": "./h_image"
   },
   "pathOrUrl": {
-    "bot_default_avatar": "./avatar/default.png"
+    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci"
   },
   "onlyUrl": {
-    "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+    "fortune_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
+    "probability_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
+    "gag_thumbnail_url": "https://drive.google.com/uc?export=view&id=1AhvfdbcwQnUBBk86yEafb_G3gZOWXim2"
   }
 }
 ```
 
-| 分组 | 字段 | 用途 | 形态 |
-| --- | --- | --- | --- |
-| `onlyPath` | `random_h_image_dir` | `/h_image` 与 cron 随机图片的专用图库，缺省 `./h_image` | 本机目录路径 |
-| `pathOrUrl` | `bot_default_avatar` | `/icon reset`、`/copy stop` 复原机器人头像时使用的图片 | 本机文件路径，或绝对 http/https URL |
-| `onlyUrl` | `fortune_thumbnail_url` | 「未卜先知」内联结果的缩略图 | 绝对 https URL |
-| `onlyUrl` | `probability_thumbnail_url` | 「概率论」内联结果的缩略图 | 绝对 https URL |
-| `onlyUrl` | `gag_thumbnail_url` | gag 发言内联结果的缩略图 | 绝对 https URL |
+### 键说明
 
-本机路径只接受绝对路径或 `./`、`../` 开头的显式相对路径，相对路径以运行时数据根为基准；裸名与 `~/…` 无效。
-`bot_default_avatar` 写本机路径时，该文件必须是存在的普通文件（可经符号链接）、不超过 10 MiB、内容为 JPEG 或 PNG，
-启动与热重载时即核对，每次复原头像时重新读取。三张缩略图由 Telegram 拉取，只接受 https 直链。
+| 分组 | 键名 | 类型 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `onlyPath` | `random_h_image_dir` | `string` | 绝对路径或 `./`、`../` 开头的目录路径，缺省 `./h_image` | `/h_image` 命令与 cron 随机抽图的图库目录，基于运行时数据根解析 |
+| `pathOrUrl` | `bot_default_avatar` | `string` | 本机图片文件路径，或绝对 HTTP/HTTPS URL | `/icon reset` 与 `/copy stop` 复原机器人头像时使用的源图。若为本地文件，体积必须 `≤ 10 MiB` 且为 JPG/PNG |
+| `onlyUrl` | `fortune_thumbnail_url` | `string` | 绝对 HTTPS URL | 「未卜先知」inline 结果卡片展示的缩略图直链 |
+| `onlyUrl` | `probability_thumbnail_url` | `string` | 绝对 HTTPS URL | 「概率论」inline 结果卡片展示的缩略图直链 |
+| `onlyUrl` | `gag_thumbnail_url` | `string` | 绝对 HTTPS URL | gag 口球发言 inline 结果卡片展示的缩略图直链 |
 
-字符串的首尾空白会被去掉；未知分组、组内不属于该组的字段、去掉空白后为空的串和不符合形态的值都会拒绝启动（运行中则拒绝这次改动）。
-[`config_example/dynamic/assets.json`](../dynamic/assets.json) 按内置缺省写全了三组五个字段，可以整份复制后只改需要的项。
-旧版平铺格式按 [07 运维与排障](../../docs/cn/07-operations.md#assets-groups) 手工迁移。
+---
 
 ## `stickers.json`
 
-`packs` 是允许 AI 使用的 Telegram 贴纸包 short name 数组，不是 `t.me` 链接。最多
-配置 5 个，不能重复；空数组表示 AI 不使用配置贴纸包。Bot 必须能读取这些贴纸包。
+动态配置文件，路径为 `config/dynamic/stickers.json`。定义允许 AI 闲聊时发送的 Telegram 贴纸包。
+
+### 配置案例
+
+```json
+{
+  "packs": [
+    "MikuCat4",
+    "kawaiikipfel_by_moe_sticker_bot",
+    "mmjojuniori_by_favorite_stickers_bot"
+  ]
+}
+```
+
+### 键说明
+
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `packs` | `string[]` | **必填** | 数组长度 `0 ～ 5`，元素互不重复 | Telegram 贴纸包的 short name 列表（即添加贴纸链接 `t.me/addstickers/<name>` 中的 name 部分，**不要写完整 URL**）。配置为空数组 `[]` 表示 AI 对话不使用贴纸包 |
+
+---
 
 ## `mood.json`
 
-`moods` 必须是非空数组，每项含：
+动态配置文件，路径为 `config/dynamic/mood.json`。定义 AI 对话的心情状态机、基础抽取权重及环境倍率。
 
-- `name`：唯一的非空心情名。
-- `weight`：正整数基础权重；所有心情的 `weight` 总和必须恰好为 100，可直接按百分比理解。
-- `instruction`：该心情注入 AI 的非空行为说明。
-- `weatherMultipliers`：可选天气倍率；键只允许 `clear`、`cloudy`、`rain`、`snow`、
-  `storm`、`fog`。
-- `timeMultipliers`：可选东京时段倍率；键只允许 `lateNight`、`morning`、`daytime`、
-  `evening`、`night`。
+### 配置案例
 
-倍率省略时按 `1` 计算，存在时必须是大于 0 且不超过 100 的有限数。倍率只调整当次
-抽取概率，不改变基础权重总和必须为 100 的约束。
+```json
+{
+  "moods": [
+    {
+      "name": "开心",
+      "weight": 25,
+      "instruction": "你现在心情很好，元气满满：吐槽照旧但明显带着笑意、不真的伤人，更爱主动撒娇邀功、得意炫耀，「喵」「にゃ」尾音比平时更爱往外冒。",
+      "weatherMultipliers": {
+        "clear": 1.5,
+        "rain": 0.6,
+        "storm": 0.5,
+        "fog": 0.7
+      },
+      "timeMultipliers": {
+        "morning": 0.8,
+        "daytime": 2,
+        "night": 0.8,
+        "lateNight": 0.4
+      }
+    },
+    {
+      "name": "摆烂",
+      "weight": 10,
+      "instruction": "你现在彻底摆烂，什么都懒得管：能一个字打发的绝不多打，吐槽也变得敷衍随口，「随便啦」「哦」挂在嘴边，平时那股嚣张劲儿都提不起来，谁撩你都懒得理，纯纯划水。",
+      "weatherMultipliers": {
+        "cloudy": 1.2,
+        "rain": 1.5,
+        "snow": 1.2,
+        "fog": 1.5
+      },
+      "timeMultipliers": {
+        "evening": 1.5,
+        "night": 1.5
+      }
+    },
+    {
+      "name": "发情",
+      "weight": 25,
+      "instruction": "你现在处于发情状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
+      "timeMultipliers": {
+        "morning": 0.7,
+        "daytime": 0.8,
+        "evening": 1.5,
+        "night": 2,
+        "lateNight": 1.5
+      }
+    },
+    {
+      "name": "困",
+      "weight": 40,
+      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，经常打哈欠说『好困……』『别吵……让我睡会儿』，声音软绵绵没精神，需要被哄着照顾和宠着睡。",
+      "weatherMultipliers": {
+        "rain": 1.5,
+        "snow": 1.3
+      },
+      "timeMultipliers": {
+        "morning": 1.5,
+        "daytime": 0.5,
+        "lateNight": 2.5
+      }
+    }
+  ]
+}
+```
+
+### 键说明
+
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `moods` | `object[]` | **必填** | 非空对象数组 | 心情档位列表 |
+| `moods[].name` | `string` | **必填** | 非空字符串，全数组唯一 | 心情名称标识（如 `"开心"`、`"发情"`、`"困"`） |
+| `moods[].weight` | `number` | **必填** | 正整数，**所有项之和必须严格等于 100** | 基础抽取权重（可直接视为百分比） |
+| `moods[].instruction` | `string` | **必填** | 非空字符串 | 该心情注入 AI Prompt 的人格与行为指导指令 |
+| `moods[].weatherMultipliers` | `object` | 可选 | 键仅限 `clear`、`cloudy`、`rain`、`snow`、`storm`、`fog`；值必须为 `0 < x ≤ 100` 的正数 | 天气影响倍率，缺省乘数为 `1.0` |
+| `moods[].timeMultipliers` | `object` | 可选 | 键仅限 `lateNight`、`morning`、`daytime`、`evening`、`night`；值必须为 `0 < x ≤ 100` 的正数 | 默认配置时区的时段倍率，缺省乘数为 `1.0` |
+
+---
 
 ## `ad_samples.json`
 
-顶层直接是字符串数组，每条是“应当被判为广告”的正例原文，用来给 `ad_detect` 模型
-定义部署方的广告口径，不是命中词黑名单。最多 500 条；每条去除并合并空白后必须
-非空、不重复且不超过 1,024 个字符。应使用去标识化样本，不要放入无关个人信息或
-真实凭据。
+动态配置文件，路径为 `config/dynamic/ad_samples.json`。顶层为纯文本字符串数组，提供给广告分类模型作为判定正例参考。
 
-`agent.ad_detect` 使用 Google 协议时，判定规则与这些样本拼成的系统指令会建成
-Gemini 显式缓存（存活 1 小时，被使用时自动续期）：创建按全价计一次输入 token，
-另按小时收取存储费。内容低于所用模型的显式缓存下限（例如样本很少）时创建会被拒绝，
-之后照常不带缓存判定。
+### 配置案例
+
+```json
+[
+  "博彩平台首充送58，提款秒到，无视风控，联系 @xxxxxx",
+  "招聘日结兼职，手机就能做，日入三百起，加微信 xxxxxx",
+  "长期收u出u，价格美丽，秒结，飞机 @xxxxxx",
+  "出售TG老号 白号 API号 协议号，价格优惠，私聊"
+]
+```
+
+### 键说明
+
+| 结构 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| 顶层数组 | `string[]` | **必填** | 数组长度 `1 ～ 500`，元素互不重复 | 广告正例文本样本数组。每条样本去除前后空白后必须非空且长度 `≤ 1024` 个字符。使用 `provider: "google"` 时，系统会自动将这些样本构建为 Gemini 显式上下文缓存（TTL 1 小时，每次调用自动续期） |
+
+---
 
 ## `g-auth.json`
 
-示例与 GCP 控制台下载的服务账号密钥文件同形，只用于对照结构；占位私钥无法解析，
-原样放进 `config/static/` 会拒绝启动。需要翻译时把真实密钥文件存为 `config/static/g-auth.json`；
-不需要翻译就不要放这个文件。`client_email` 必须非空，`private_key` 必须是可解析的
-RSA PEM 私钥；`type` 存在时只能是 `service_account`；`private_key_id`、`project_id`、
-`quota_project_id`、`universe_domain` 存在时必须是非空字符串；其余官方字段原样交给
-SDK。安装器不会从示例生成这个文件。
+静态配置文件，路径为 `config/static/g-auth.json`。用于 Google Cloud 翻译服务账号认证。修改后必须重启服务生效。
+
+### 服务账号文件
+
+将从 Google Cloud 下载的服务账号 JSON 放在 `config/static/g-auth.json`，不要将凭据提交到版本控制。
+
+### 键说明
+
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `client_email` | `string` | **必填** | 非空字符串 | GCP 服务账号邮箱地址 |
+| `private_key` | `string` | **必填** | 必须为合法的 RSA PEM 私钥（RS256） | 服务账号私钥文本（包含 `BEGIN/END` 标头） |
+| `type` | `string` | 可选 | 固定为 `"service_account"` | 服务账号凭据类型 |
+| `project_id` | `string` | 可选 | 非空字符串 | GCP 项目 ID |
+| `private_key_id` | `string` | 可选 | 非空字符串 | 私钥 ID 标识 |
+| 其他字段 | `string` | 可选 | 遵循 GCP 官方格式 | `client_id`、`auth_uri`、`token_uri` 等标准字段由 Google SDK 消费 |
+
+---
 
 ## `cron.json`
 
-顶层是任务数组，缺省或 `[]` 表示没有定时任务。严格 JSON，不能写注释。
+动态配置文件，路径为 `config/dynamic/cron.json`。顶层为任务对象数组，定义定时任务。
 
-[`config_example/dynamic/cron.json`](../dynamic/cron.json) 收录了覆盖全部写法的示例任务：工作日发纯文字；显式写出
-时区，依次发文字、网址图片和网址文件；按相对运行时数据根的路径发送本地图片、按绝对路径发送本地文件；
-`rand_cron` 区间从默认图库抽图；`@daily` 加单值 `rand_cron` 从指定目录抽图；带语气与不带语气的
-`send_voice`；以及 `just_once`。示例里的会话 id、地址和
-本地路径都是假的，原样放进 `config/dynamic/` 会因本地文件不存在而拒绝启动；按需挑任务、改成真实的会话 id
-与路径后写进 `config/dynamic/cron.json`。安装器不会从示例生成这个文件。
+### 配置案例
 
 ```json
 [
   {
-    "name": "daily-greeting",
+    "name": "weekday-morning-greeting",
     "chat_id": [-1001234567890],
-    "cron": "0 9 * * *",
+    "cron": "0 9 * * 1-5",
     "time_zone": "Asia/Tokyo",
-    "rand_cron": "6h-24h",
     "actions": [
-      { "type": "send_message", "payload": { "content": "早上好" } },
-      { "type": "send_image", "payload": { "content": "今日图", "rand_image": true } },
-      { "type": "send_image", "payload": { "url": ["https://example.com/a.png", "https://example.com/b.png"], "is_blurred": true } },
-      { "type": "send_file", "payload": { "content": "周报", "path": "/srv/copy-ninjia/reports/weekly.pdf" } },
-      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おはよう、今日もがんばろうね" } }
+      { "type": "send_message", "payload": { "content": "早上好，今天也要打起精神来喵~" } }
+    ]
+  },
+  {
+    "name": "evening-digest",
+    "chat_id": [-1001234567890, -1009876543210],
+    "cron": "30 18 * * *",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "今日汇总来啦" } },
+      { "type": "send_image", "payload": { "content": "今日配图", "url": ["https://example.com/daily/cover.png"] } },
+      { "type": "send_file", "payload": { "content": "今日日报", "url": "https://example.com/daily/report.pdf" } }
+    ]
+  },
+  {
+    "name": "random-gallery-image",
+    "chat_id": ["all"],
+    "cron": "@daily",
+    "rand_cron": "6h-12h",
+    "actions": [
+      { "type": "send_image", "payload": { "rand_image": true, "content": "每日随机涩图", "is_blurred": true } }
+    ]
+  },
+  {
+    "name": "nightly-voice",
+    "chat_id": [-1001234567890],
+    "cron": "0 23 * * *",
+    "actions": [
+      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おやすみ、また明日ね" } }
+    ]
+  },
+  {
+    "name": "morning-news-digest",
+    "chat_id": [-1001234567890],
+    "cron": "0 8 * * *",
+    "actions": [
+      { "type": "send_web_digest", "payload": { "topic": "今日科技新闻", "language": "zh", "max_items": 5 } }
     ]
   }
 ]
 ```
 
-| 字段 | 必填 | 规则 |
+### 任务级键说明
+
+| 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
+| --- | --- | --- | --- | --- |
+| `name` | `string` | **必填** | 非空，`≤ 64` 字符，全文件唯一 | 任务唯一标识名。修改任务名等同于删除旧任务并注册新任务 |
+| `chat_id` | `array` | **必填** | 详见下方「目标群投递模式」 | 目标投递群组 ID 列表 |
+| `cron` | `string` | **必填** | 标准 5 段 Cron 表达式或 `@daily` 等预设宏 | 定时触发调度表达式 |
+| `time_zone` | `string` | 可选 | IANA 时区名，缺省继承 `bot.json` 的 `time_zone` | 触发时间的计算时区（如 `"Asia/Shanghai"`） |
+| `rand_cron` | `string` | 可选 | 格式 `"<min>-<max>"` 或 `"<max>"`，单位 `m`/`h`/`d`，范围 `1m ～ 24d` | 随机浮动执行模式：每次按 cron 触发后，在区间内随机取一分钟作为实际执行时刻 |
+| `just_once` | `boolean` | 可选 | `true` 或 `false`，缺省 `false`（**不能与 `rand_cron` 同时使用**） | 是否仅触发执行一次。**注意：执行记录保存在内存中，重启后清零** |
+| `actions` | `object[]` | **必填** | 包含 1 ～ 16 个动作对象 | 触发时按声明顺序依次执行的动作序列，相邻动作间隔 1 秒 |
+
+#### 目标群投递模式（`chat_id`）
+
+- **显式列表**（如 `[-1001234567890, -1009876543210]`）：逐个群顺序投递，最多 64 个群。
+- **全体纳管群**（`["all"]`）：投递给所有已 `/init enable` 的群。执行前会自动检查机器人当前在群内的发信权限（文本/图片/文件/语音），权限不满足时整群跳过。
+- **排除列表**（如 `["except", -1001234567890]`）：在 `all` 候选群的基础上排除指定群。
+
+### 动作类型与 Payload 说明（`actions`）
+
+| 动作类型 (`type`) | 动作说明 | Payload 结构与键说明 |
 | --- | --- | --- |
-| `name` | 是 | 非空、不超过 64 字符、全文件唯一；是任务身份，改名等于新任务 |
-| `chat_id` | 是 | 会话 id 数组：逐个列出（非零整数，不重复，最多 64 个），或 `["all"]`（所有能发送的已启用群），或 `["except", <id>, ...]`（`all` 减去这些会话），见下文 |
-| `cron` | 是 | 5 段表达式或 `@daily` 这类写法；必须还有将来的触发时间 |
-| `time_zone` | 否 | IANA 时区名（如 `Asia/Shanghai`），缺省 `Asia/Tokyo` |
-| `rand_cron` | 否 | `"<最短>-<最长>"` 或单值（等于 `1m-<值>`），单位 m/h/d，范围 1m–24d；首次按 `cron` 触发，之后每轮结束再在区间内随机等待 |
-| `just_once` | 否 | `true` 时只执行一次，重启后才会再次登记；不能与 `rand_cron` 同时使用。**执行记录只在内存，重启后清零**：任务跑完就该从 `cron.json` 里删掉，否则下一次重启后它还会再播一遍，因此不要用它发「今晚 22:00 停机」这类与重启强相关的内容 |
-| `actions` | 是 | 1–16 个动作，按顺序执行，相邻两个间隔 1 秒 |
+| `send_message` | 发送纯文本消息 | • `content` (`string`, 必填)：消息正文，最长 4096 字符 |
+| `send_image` | 发送单图、相册或随机图 | • `content` (`string`, 可选)：配图文字说明，最长 1024 字符<br>• `is_blurred` (`boolean`, 可选)：是否为图片添加剧透遮罩（Spoiler），缺省 `false`<br>• **固定图片模式**：`url`（1–10 个图片直链数组）或 `path`（1–10 个本地文件路径数组），单张也必须写为数组<br>• **随机抽图模式**：`rand_image: true`，禁止配置 `url` 与多文件数组；`path` 可选指定特定目录，缺省使用 `assets.json` 的 `random_h_image_dir` |
+| `send_file` | 发送通用文件/文档 | • `content` (`string`, 可选)：说明文字，最长 1024 字符<br>• `url` (`string`, 互斥必填)：远程文件下载直链（Telegram 限制 20 MB）<br>• `path` (`string`, 互斥必填)：本地文件路径（本地上传限制 50 MB） |
+| `send_voice` | 发送合成语音消息 | • `content` (`string`, 必填)：要念的台词正文，最长 256 字符<br>• `tone` (`string`, 可选)：本句的说话语气修饰，最长 64 字符（拼在基础风格之后）<br>*注：强依赖 `agent.tts` 配置，单轮多群投递复用首次合成音频* |
+| `send_web_digest` | 检索并生成主题汇总 | • `topic` (`string`, 必填)：简短检索主题，最长 200 字符<br>• `language` (`string`, 可选)：摘要语言，`"zh"`（缺省）、`"ja"` 或 `"en"`<br>• `max_items` (`number`, 可选)：条目数量上限（1–15，缺省 5）<br>• `instructions` (`string`, 可选)：检索与组稿共用的任务规则，最长 500 字符；每个平台独占一行等格式要求写在这里，条目正文支持 JSON 的 `\n` 换行<br>*注：需要对话核心能力；检索优先用 `agent.web_search`，未配置时用 `agent.text` 内建检索；未调用搜索时直接发送带警示的模型正文* |
 
-动作的 `type` 与 `payload`：
-
-- `send_message`：`content` 必填，最长 4096 字符。
-- `send_image`：`content` 是一份可选文字（最长 1024 字符）。固定图片来源只能二选一：`url` 数组或 `path` 文件数组，长度 1–10；单张也必须写数组，如 `"url": ["https://example.com/a.jpg"]`。此时 `rand_image` 只能省略或为 `false`。一张用单图发送，2–10 张用一次相册请求，只有第一张带 caption，不另发文字；相册有多个 Telegram 消息 ID。`is_blurred: true` 对全部图片加剧透遮罩，缺省或 `false` 不加。
-  `rand_image: true` 每次只随机一张：禁止 `url` 与文件数组，`path` 只能是目录字符串；省略时使用 `assets.json` 的 `onlyPath.random_h_image_dir`，指定其他目录时不要求 SHA-256 命名。
-- `send_file`：`content` 可选（最长 1024 字符），来源恰好一个 `url` 或 `path`。
-- `send_voice`：`content` 必填，是要念的台词（最长 256 字符）；`tone` 可选，是这一句的说话语气
-  （最长 64 字符），拼在固定的基础声线之后，省略则只用基础声线。两者换行合并成空格、去掉首尾空白
-  后不能为空。台词经 `agent.json` 的 `tts` 合成后以语音气泡发出；必须配置 `tts`，见上文「运行中修改」。
-  同一轮里这句语音只合成一次，重试和发往后续群都复用同一段语音；第一次发送成功后改用 Telegram 返回的 `file_id`，
-  不再重复上传。
-
-`path` 写绝对路径，或相对运行时数据根的路径（`COPY_NINJIA_DATA_ROOT`；未设置时是项目根：源码运行时为仓库根，
-二进制运行时为服务的工作目录），与 `assets.json` 本机路径同一基准，但不要求 `./` 前缀，裸相对路径同样接受；
-可以指向本机任何位置的文件或目录（符号链接按指向的对象判定）；加载时就
-检查它是否存在、类型是否相符。服务账号能读到的文件都能被发进群里，不要指向 `config/`、`.env`
-这类含凭据的文件。`url` 原样交给 Telegram 去拉取，本机
-不下载：按地址发送时 Telegram 限制图片 5 MB、其它文件 20 MB，发送文件时只保证 PDF、ZIP、
-GIF 可用，其余类型发不出去属于配置问题。本地上传的上限是图片 10 MB、文件 50 MB。
-
-执行语义：
-
-- 同一任务的两轮不会重叠；停机期间错过的触发不补发。`just_once` 的执行记录与 `rand_cron`
-  的随机等待都只在内存里，重启后重新开始。
-- 某个动作因网络、Telegram 5xx、出站闸重试后仍返回的 429 或出站队列满失败时，按 2、4、8 秒退避最多重试 3 次；
-  `send_voice` 的合成没交回音频、等待超时或 AI Worker 暂不可用同样按此重试。
-  其余失败（如 Telegram 4xx、机器人被移出群、本地文件被删、`tts` 未配置或实现不支持、当日语音额度用尽、音频编码或格式校验失败）不重试。最终失败时日志记一条
-  `Cron task "<name>" action #<n> ...`，并跳过本轮剩下的动作。超时但 Telegram 实际已收到时，
-  重试会重复发送一条。
-- 定时消息长期保留，不做 30 秒删除；不带论坛话题，开了话题的群里发到 General。全部请求照常经过
-  机器人的发送限速与 429 退避。
-- 不要求目标群已 `/init`；机器人被移出目标群后，每次触发都会记一条错误日志。
-- `chat_id` 逐个列出会话（如 `[-1001234567890, -1009876543210]`）时，按书写顺序逐个投递，不查发送
-  权限，会话之间间隔 1 秒；某个会话最终失败只跳过它剩下的动作，随后继续下一个。列出多个会话时
-  失败日志写明是哪个会话。
-- `chat_id: ["all"]`：每一轮开始时，对所有已 `/init enable` 的群逐个现查机器人此刻的发送权限
-  （群主、管理员直接可发；被限制时看它自己的发送权限；普通成员看群的默认成员权限）。文字要能
-  发消息、图片要能发图片、文件要能发文件、语音要能发语音消息，本任务用到的缺任何一项，整群跳过，不会只收到半套。
-  可发送的群按 chat id 从小到大逐个执行整套动作，群与群之间同样间隔 1 秒；某个群最终失败只跳过
-  该群剩下的动作，日志写明群 id，然后继续下一个群。有群被跳过时，本轮结束记一行
-  `Cron task "<name>" skipped <n> chat(s) without send permission.`。随机图每个群各抽一张。
-- `chat_id: ["except", <id>, ...]`：口径与 `["all"]` 完全一致，只是先把列出的会话从候选里剔除；
-  被剔除的群不查询，也不计入 skipped。首项必须是 `"except"`，后面至少要有一个会话 id。
+---
 
 ## 专用图库与路径基准
 
-| 路径字段 | 相对路径的基准 | 形态 |
+| 路径字段 | 相对路径解析基准 | 取值形态规范 |
 | --- | --- | --- |
-| `assets.json` 的 `onlyPath.random_h_image_dir` | 运行时数据根 | 绝对路径或 `./`、`../` 开头的目录路径 |
-| `assets.json` 的 `pathOrUrl.bot_default_avatar`（写本机路径时） | 运行时数据根 | 绝对路径或 `./`、`../` 开头的文件路径 |
-| cron 固定图片 `payload.path` | 运行时数据根 | 1–10 个文件路径的数组（绝对路径或任意相对路径） |
-| cron 随机图片 `payload.path` | 运行时数据根 | 可选目录字符串（绝对路径或任意相对路径）；省略才使用上述专用图库 |
-| cron 文件 `payload.path` | 运行时数据根 | 单个文件路径字符串（绝对路径或任意相对路径） |
+| `assets.json` 的 `onlyPath.random_h_image_dir` | 运行时数据根 | 绝对路径或以 `./`、`../` 开头的目录路径 |
+| `assets.json` 的 `pathOrUrl.bot_default_avatar` | 运行时数据根 | 绝对路径或以 `./`、`../` 开头的文件路径 |
+| cron 固定图片 `payload.path` | 运行时数据根 | 1–10 个文件路径数组（绝对路径或相对路径） |
+| cron 随机抽图 `payload.path` | 运行时数据根 | 目录路径字符串（绝对路径或相对路径）；省略时使用专用图库 |
+| cron 文件发送 `payload.path` | 运行时数据根 | 单个文件路径字符串（绝对路径或相对路径） |
 
-`assets.json` 的 `onlyPath.random_h_image_dir` 是 `/h_image` 色图功能专用目录，默认 `./h_image`。绝对路径（如 `/h_image`）与显式相对路径（`./h_image`、`../h_image`）都支持，相对路径以运行时数据根为基准。不要随意放置其他功能的图片；应通过 `/h_image add` 入库，手工放置必须自行以内容 SHA-256 的 64 位小写十六进制摘要命名，扩展名为 jpg/jpeg/png/webp。启动在 Worker 和外部连接之前异步检查命名及条目类型；非法文件、子目录、文件链接和残留临时文件均报错拒绝启动。启动不重算全库内容哈希，手工文件名与真实摘要的对应关系由部署方负责。cron 显式目录独立使用，无此命名要求。文件与目录内容读取、预检和上传均为异步；本地相册只持有可重开的文件流，不预读全部图片。
+- **专用图库目录**：`assets.json` 中配置的 `random_h_image_dir`（默认 `./h_image`）。
+- **文件命名规范**：
+  - 专用图库中的图片必须使用其内容的 **64 位小写十六进制 SHA-256 哈希** 命名，扩展名仅限 `.jpg`、`.jpeg`、`.png`、`.webp`。
+  - 通过 `/h_image add` 上传的文件会自动按哈希命名入库。启动时会严格核对图库文件合规性。
+  - `cron.json` 随机图片中由 `path` 指定的自定义目录不受 SHA-256 命名限制。
+- **权限与安全**：服务账号能读取的本地文件均可发送，**严禁将路径指向 `config/` 或 `.env` 等包含敏感凭据的文件**。

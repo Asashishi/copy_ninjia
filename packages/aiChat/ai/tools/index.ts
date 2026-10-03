@@ -1,5 +1,7 @@
 import { weatherCache } from "../../../cache/workers/aiChat/weather";
+import { getTimeZone } from "../../../config/time";
 import { GET_TOKYO_WEATHER_TOOL, unknownToolError } from "../../../consts/tools";
+import { TOKYO_TIME_ZONE } from "../../../consts/time";
 import { toolError } from "../utils/toolResult";
 import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
 
@@ -14,10 +16,11 @@ import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
  * 不在静态清单里；它们依赖 chatId、逐轮状态或动态能力，并由 replyToolset/ 按轮组装。
  */
 
-/** 按名字执行一个工具调用，返回喂回模型的字符串结果。 */
+/** 按名字执行静态查询；东京天气仅在启动时区为东京时可用，未挂载的名称返回未知工具错误。 */
 export function callTool(name: string): string {
   switch (name) {
     case GET_TOKYO_WEATHER_TOOL: {
+      if (getTimeZone() !== TOKYO_TIME_ZONE) return toolError(unknownToolError(name));
       // 只读现有缓存，不在这里发请求——真正的刷新由 aiChat/ai/weather.ts 的后台
       // 定时循环负责，见该文件模块头注。
       const result: TokyoWeatherResult | null = weatherCache.current;

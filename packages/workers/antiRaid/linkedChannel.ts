@@ -1,6 +1,6 @@
+import { telegramSignal } from "../../libs/telegramSignal";
 import { logger } from "../../infra/logger";
 import { telegramApi } from "../../infra/telegram";
-import { signalArgs } from "../../libs/telegramSignalArgs";
 import {
   LINKED_CHANNEL_FETCH_TIMEOUT_MS,
   LINKED_CHANNEL_TTL_MS,
@@ -31,7 +31,7 @@ export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined 
 export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | undefined> {
   const generation: number = linkedChannelCacheGeneration.current;
   const task: Promise<boolean | undefined> = getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
-    telegramApi.getChat(chatId, ...signalArgs(AbortSignal.timeout(LINKED_CHANNEL_FETCH_TIMEOUT_MS)))
+    telegramApi.getChat(chatId, telegramSignal(AbortSignal.timeout(LINKED_CHANNEL_FETCH_TIMEOUT_MS)))
       .then((chat: ChatFullInfo): void => {
         if (!isCurrentLinkedChannelCacheGeneration(generation)) return;
         cacheLinkedChannel(chatId, "linked_chat_id" in chat && chat.linked_chat_id !== undefined);

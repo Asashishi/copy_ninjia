@@ -36,7 +36,10 @@ export function optionalBooleanField(
   return field;
 }
 
-/** 读取对象上的可选字符串字段：缺省为 undefined，存在但不是字符串即拒绝。 */
+/**
+ * 读取对象上的可选字符串字段：缺省为 undefined，存在但不是字符串即拒绝；字符串原样返回，
+ * 空字符串与首尾空白均保留。
+ */
 export function optionalStringField(
   value: Readonly<Record<string, unknown>>,
   key: string,

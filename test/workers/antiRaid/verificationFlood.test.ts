@@ -1,10 +1,12 @@
 import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessageWorkerMock";
 installTemporaryMessageWorkerMock();
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { Mock } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { waitUntil } from "../../helpers/waitUntil";
 import { ANTI_RAID_PER_MINUTE_LIMIT } from
   "../../../packages/consts/antiRaid/lockdown";
+import { VERIFICATION_TERMINAL_RETRY_MS } from "../../../packages/consts/antiRaid/verification";
 import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
 import type { VerificationSnapshot } from "../../../packages/types/antiRaid/verification";
 
@@ -208,22 +210,32 @@ describe("Anti-Raid pending-member flood handling", () => {
       joinedAt: Date.now(),
       expiresAt: Date.now(),
     };
-    runtime.adoptVerifications({
-      type: "adoptVerifications",
-      generation: 1,
-      verifications: [record],
-      resumePersistedTerminals: true,
-    });
-    await Bun.sleep(0);
+    let retryCallback: (() => void) | undefined;
+    const originalTimeout: typeof setTimeout = globalThis.setTimeout;
+    const timeoutSpy: Mock<typeof setTimeout> = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((callback: () => void, delayMs?: number): ReturnType<typeof setTimeout> => {
+        if (delayMs === VERIFICATION_TERMINAL_RETRY_MS) retryCallback = callback;
+        return originalTimeout(callback, delayMs);
+      }) as typeof setTimeout
+    );
+    try {
+      runtime.adoptVerifications({
+        type: "adoptVerifications",
+        generation: 1,
+        verifications: [record],
+        resumePersistedTerminals: true,
+      });
+      await Bun.sleep(0);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
 
     expect(verificationEntries.get("-1002:43")?.state.kind).toBe("expelling");
     expect(verificationEntries.get("-1002:43")?.timer).toBeDefined();
     expect(workerEvents.some((event) => event.type === "verificationDelete")).toBeFalse();
 
     kickSucceeds = true;
-    // 「踢不动」那条告警置位时会发布一次新 revision（告警不自删，必须落盘，
-    // 见 ExpellingState.failureNoticeSent）。重试要认的是那一版的落盘回执，
-    // 旧 revision 已经过期。
+    // 告警发送记账以新 revision 落盘；回执只确认记账，不提前绕过终态退避。
     const failurePersist = workerEvents.findLast((event) =>
       event.type === "verificationUpsert" &&
       event.record.chatId === -1002 &&
@@ -237,6 +249,12 @@ describe("Anti-Raid pending-member flood handling", () => {
       generation: failurePersist.record.generation,
       revision: failurePersist.record.revision,
     });
+    await Bun.sleep(0);
+    expect(actions.filter((action: string): boolean => action === "kick")).toHaveLength(1);
+    if (retryCallback === undefined) throw new Error("missing terminal retry callback");
+    const retryTimer: ReturnType<typeof setTimeout> | undefined = verificationEntries.get("-1002:43")?.timer;
+    if (retryTimer !== undefined) clearTimeout(retryTimer);
+    retryCallback();
     await Bun.sleep(0);
 
     const successPersist = workerEvents.findLast((event) =>

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser } from "../../packages/types/chatState";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
 import type { AvatarNoticeSource } from "../../packages/types/copy/avatar";
 import type { Atmosphere } from "../../packages/types/atmosphere";
 import type { DefaultAvatarSource } from "../../packages/types/config";
@@ -13,18 +14,15 @@ const saveStateInBackground = mock((..._args: unknown[]): void => {});
 const resolveCommandTarget = mock(async (..._args: unknown[]): Promise<CachedUser | undefined> => ({ id: 7, first_name: "Alice" }));
 const loggerError = mock((..._args: unknown[]): void => {});
 const globalCopyState: { lastCopyTime?: number } = {};
-const personas = new Map<number, { aiPersona?: string }>();
 const DEFAULT_AVATAR: DefaultAvatarSource = { kind: "path", path: "/srv/bot/default-face.png" };
 
-mock.module("../../packages/config/bot", () => ({
-  BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 100 }));
+mock.module("../../packages/config/bot", () => ({ SUPER_ADMIN_USER_ID: 100 }));
 mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/telegram/avatar/copy", () => ({ copyUserProfilePhoto }));
 mock.module("../../packages/infra/telegram/avatar/restore", () => ({ restoreDefaultProfilePhoto }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (chatId: number): { aiPersona?: string } => personas.get(chatId) ?? {},
   getGlobalCopyState: () => globalCopyState,
   // 与生产同构的冷却写入边界：占位返回原值，回滚只在起点仍是本次占位时生效（见 stateStore.ts）。
   claimCopyCooldown: (claimedAt: number): number | undefined => {
@@ -72,8 +70,10 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error("Timed out waiting for background avatar task");
 }
 
+/** preload 接管的本进程风格；改写它的用例结束后还原。 */
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
+
 beforeEach(() => {
-  personas.clear();
   delete globalCopyState.lastCopyTime;
   Date.now = (): number => 1_000_000;
   for (const mocked of [
@@ -96,6 +96,7 @@ beforeEach(() => {
 
 afterEach(() => {
   Date.now = originalDateNow;
+  botAtmosphereState.current = PRELOADED_ATMOSPHERE;
 });
 
 describe("copy 命令共享冷却与头像串行器", () => {
@@ -109,13 +110,13 @@ describe("copy 命令共享冷却与头像串行器", () => {
     { source: "icon", kind: "default", updated: true, nextAtmosphere: "plain" },
     { source: "icon", kind: "default", updated: false, nextAtmosphere: "teasing" },
   ] satisfies AvatarNoticeCase[])(
-    "$source $kind 结果 $updated 在发送时使用新切换的 $nextAtmosphere 氛围",
+    "$source $kind 结果 $updated 在发送时使用本进程 $nextAtmosphere 氛围",
     async ({ source, kind, updated, nextAtmosphere }) => {
       let finish!: (value: boolean) => void;
       const pending = new Promise<boolean>((resolve) => { finish = resolve; });
       const operation = kind === "user" ? copyUserProfilePhoto : restoreDefaultProfilePhoto;
       operation.mockImplementationOnce(() => pending);
-      personas.set(-1001, { aiPersona: nextAtmosphere === "plain" ? undefined : "旧人设" });
+      botAtmosphereState.current = nextAtmosphere;
       if (kind === "user") {
         queueAvatarUpdate({ chatId: -1001, target: { kind: "user", user: { id: 7 } }, source });
       } else {
@@ -123,7 +124,6 @@ describe("copy 命令共享冷却与头像串行器", () => {
       }
       expect(operation).toHaveBeenCalledTimes(1);
       expect(sendMessage).not.toHaveBeenCalled();
-      personas.set(-1001, { aiPersona: nextAtmosphere === "plain" ? "新的人设" : undefined });
       finish(updated);
       await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
 
@@ -140,8 +140,8 @@ describe("copy 命令共享冷却与头像串行器", () => {
     }
   );
 
-  test("头像回执保留昵称原文，只按群配置选择模板", async () => {
-    personas.set(-1001, { aiPersona: "普通风格" });
+  test("头像回执保留昵称原文，只按本进程文案风格选择模板", async () => {
+    botAtmosphereState.current = "plain";
     queueAvatarUpdate({ chatId: -1001, target: { kind: "user", user: { id: 7, first_name: "本天才♡" } }, source: "icon" });
     await expect(drainAvatarUpdates(1_000)).resolves.toBe("flushed");
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({

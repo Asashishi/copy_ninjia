@@ -1,4 +1,3 @@
-import { chatPersonas } from "../../cache/workers/aiChat/persona";
 import { getPersona } from "../../config/persona";
 import {
   MAX_CUSTOM_TOOL_CALLS_PER_REPLY,
@@ -14,13 +13,13 @@ import {
   TRANSCRIPT_FORMAT_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../consts/aiChat/prompts/agent";
-import { WEB_SEARCH_INSTRUCTION } from "../../consts/aiChat/prompts/search";
+import { WEB_SEARCH_FUNCTION_INSTRUCTION, WEB_SEARCH_INSTRUCTION } from "../../consts/aiChat/prompts/search";
 import { REPLY_ACTION_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { logger } from "../../infra/logger";
 import { textAiProvider } from "../../aiChat/provider";
-import { TOOL_BUDGET_EXHAUSTED_RESULT } from "../../consts/tools";
+import { TOOL_BUDGET_EXHAUSTED_RESULT, WEB_SEARCH_TOOL } from "../../consts/tools";
 import { callTool } from "../../aiChat/ai/tools";
-import type { ReplyPromptSections, ReplyToolset } from "../../types/aiChat/replies";
+import type { ReplyPromptSections, ReplyToolset, WebSearchToolOutcome } from "../../types/aiChat/replies";
 import type {
   AiFunctionCall,
   AiReplySession,
@@ -31,17 +30,17 @@ import { buildRuntimeStateBlock } from "./runtimeState";
 
 /**
  * 一轮 AI 回复的模型往返编排。收发本身由当前选中的供应商实现包负责（见
- * aiChat/provider.ts 与两个实现包的 replySession.ts），本文件只管与供应商
+ * aiChat/provider.ts 与各供应商实现包的 replySession.ts），本文件只管与供应商
  * 无关的那部分：系统提示词分段拼装、整轮函数调用预算、检索额度记账、
  * 工具轮数硬顶，以及每一轮把函数结果喂回会话。
  *
- * **一轮回复内 `functions` 与 `webSearchEnabled` 逐字恒定**：两家供应商的前缀
+ * **一轮回复内 `functions` 与 `webSearchEnabled` 逐字恒定**：各家供应商的前缀
  * 缓存都按 `systemInstruction/instructions → tools → 输入` 的顺序比对，工具形态
  * 中途改一次，从 tools 往后的整段（参考记忆、转录、运行时状态、本轮已累积的全部
  * 工具往返）就在剩余轮次里全部落空——而那正是上下文最长、最贵的时刻。因此各类
  * 上限一律只在执行侧兑现：动作硬顶由 toolset.execute 返回错误（见
  * aiChat/ai/tools/replyToolset/orchestrator.ts），整轮函数调用预算由本文件按调用
- * 逐次回「预算耗尽」，检索额度退化为写进提示词的软限制、只记账不摘工具。唯一的
+ * 逐次回「预算耗尽」，内建检索的额度退化为写进提示词的软限制、只记账不摘工具。唯一的
  * 例外是供应商报服务端工具调用超限后的那一次降级重试（见 toolCallLimitHit 分支）：
  * 那一轮的响应本来就不可用，缓存已经无从谈起。
  *
@@ -49,7 +48,9 @@ import { buildRuntimeStateBlock } from "./runtimeState";
  * 行动工具（发言、反应、两层贴纸、问答查询，部署配置了时的生图与语音）。工具清单
  * 跨回复同样恒定：按轮变化的可用性写进运行时状态区块的本轮工具状态
  * （toolset.toolStatus），执行器在调用时兜底拒绝。可见副作用在接纳后的独立调用链内
- * 发生。服务端检索工具由 toolset.webSearch 单独声明，并由供应商执行。
+ * 发生。联网检索二选一：没配 web_search 能力时由 toolset.webSearch 声明 text 模型的服务端
+ * 检索、由供应商执行；配了时 `web_search` 是本地函数工具，由本文件 await toolset.searchWeb
+ * 取得结果后再喂回模型（执行器自带每轮次数硬顶，见 aiChat/ai/tools/webSearch.ts）。
  *
  * 查时间不走工具：当前时间、今天的心情与本轮工具状态拼进 user 内容的运行时状态区块
  * （见 runtimeState.ts），转录行也自带每条消息的发送时间（见
@@ -83,20 +84,21 @@ export async function generateReply(
   toolset: ReplyToolset
 ): Promise<string | null> {
   if (!toolset.isActive()) return null;
-  // 每轮开始固定本群当前人设；后续工具往返复用同一系统提示词。
+  // 人设是 init 接管的本进程快照；后续工具往返复用同一系统提示词。
   const staticSystemPrompt: string =
-    `${chatPersonas.get(chatId) ?? getPersona()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
+    `${getPersona()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
     `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
     `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n` +
     // 上下文结构后依次声明转录格式、两层仲裁与直接唤起的读取顺序。
     `${TRANSCRIPT_FORMAT_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n` +
     `${DIRECT_INVOCATION_READING_INSTRUCTION}\n${MEMORY_MECHANISM_SILENCE_INSTRUCTION}\n\n` +
     `## 行动与停止\n${REPLY_ACTION_INSTRUCTION}\n\n` +
-    `## 联网查证\n${WEB_SEARCH_INSTRUCTION}`;
+    `## 联网查证\n${toolset.searchWeb === null ? WEB_SEARCH_INSTRUCTION : WEB_SEARCH_FUNCTION_INSTRUCTION}`;
 
   // 稳定区块只有参考记忆：它跨轮回复逐字不变，能延长供应商自动缓存的公共前缀。
   // 其余三段每轮都变，其中运行时状态在回复开始时读取一次，同一回复的工具
-  // 往返复用同一个字符串（时间因此在一轮内自洽，不会逐轮跳秒）。
+  // 往返复用同一个字符串（时间因此在一轮内自洽，不会逐轮跳秒）。转录已定切点
+  // 随当前会话一起交给实现包，只有在区块边界命中缓存的实现会用它。
   const session: AiReplySession = textAiProvider().createReplySession({
     stableBlocks: [promptSections.referenceMemory],
     volatileBlocks: [
@@ -104,6 +106,7 @@ export async function generateReply(
       buildRuntimeStateBlock(chatId, toolset.toolStatus),
       promptSections.replyTask,
     ],
+    conversationSettledOffsets: promptSections.currentConversationSettledOffsets,
     signal: toolset.signal,
   });
 
@@ -155,7 +158,7 @@ export async function generateReply(
     if (turn.webSearchCalls > 0) {
       const previousCalls: number = webSearchCalls;
       webSearchCalls += turn.webSearchCalls;
-      // 检索额度是写进提示词的软限制（见 consts/aiChat/prompts/search.ts）：超了
+      // text 内建检索额度是写进提示词的软限制（见 consts/aiChat/prompts/search.ts）：超了
       // 只记账、不摘工具——服务端检索工具排在 tools 数组首位，中途摘掉会让整段
       // 前缀从第一个字节起就对不上。只在跨过阈值的那一次点名，不逐轮刷屏。
       if (previousCalls <= MAX_WEB_SEARCH_CALLS_PER_REPLY && webSearchCalls > MAX_WEB_SEARCH_CALLS_PER_REPLY) {
@@ -177,11 +180,20 @@ export async function generateReply(
         const perNameCalls: number = (customToolCallsByName.get(call.name) ?? 0) + 1;
         customToolCallsByName.set(call.name, perNameCalls);
         const withinBudget: boolean = customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY;
-        const toolResult: string = withinBudget
-          ? toolset.has(call.name)
+        let toolResult: string;
+        if (!withinBudget) {
+          toolResult = TOOL_BUDGET_EXHAUSTED_RESULT;
+        } else if (call.name === WEB_SEARCH_TOOL && toolset.searchWeb !== null) {
+          // 唯一要等结果的工具：检索结论喂回模型后它才能接着说；本地检索计入 grounded。
+          const outcome: WebSearchToolOutcome = await toolset.searchWeb(call.argumentsJson);
+          if (!toolset.isActive()) return null;
+          webSearchCalls += outcome.searchCalls;
+          toolResult = outcome.result;
+        } else {
+          toolResult = toolset.has(call.name)
             ? toolset.execute(call.name, call.argumentsJson)
-            : callTool(call.name)
-          : TOOL_BUDGET_EXHAUSTED_RESULT;
+            : callTool(call.name);
+        }
         outputs.push({ call, responseJson: toolResult });
       }
       // 供应商交不出可续接的模型轮次时到此为止：再发一次请求只会让对话记录

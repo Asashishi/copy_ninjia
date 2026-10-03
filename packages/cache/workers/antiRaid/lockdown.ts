@@ -1,12 +1,11 @@
-import { createKeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
-import type { KeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
-import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal";
-
-/**
- * owner: workers/antiRaid。私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts
+/** owner: workers/antiRaid。私密模式状态机（packages/workers/antiRaid/lockdownRuntime.ts
  * 及同目录的 lockdownApi.ts、lockdownPersistence.ts）的内存状态；verificationEvents.ts
  * 只读取 lockdownEntries 判断当前是否处于私密模式。
  */
+
+import { createKeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
+import type { KeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
+import type { JoinWindow, LockdownEntry } from "../../../types/antiRaid/internal";
 
 /**
  * 每群最近入群滑窗；每条最多 JOIN_WINDOW_CAPACITY 个 number 和一个 timer。

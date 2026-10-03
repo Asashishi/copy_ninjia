@@ -127,12 +127,12 @@ async function checkInterruptedResume(): Promise<void> {
   );
 }
 
-async function checkSuccessfulReplacement(): Promise<void> {
+async function checkSuccessfulReplacement(atmosphere?: string): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
   const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   await writeText(telegramPath, JSON.stringify({
-    bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere: "normal",
+    bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere, time_zone: "UTC",
   }), 0o640);
   const originalOwner: ReturnType<typeof statSync> = statSync(telegramPath);
   const replacementToken: string = "987654321:replacement_test_token";
@@ -146,8 +146,9 @@ async function checkSuccessfulReplacement(): Promise<void> {
 
   assertEqual(result.exitCode, 0, "Telegram 配置原子替换与后续核验必须成功");
   assertContains(await Bun.file(telegramPath).text(), replacementToken, "提交后必须读取到完整新配置");
-  const replacement: { atmosphere: string } = await Bun.file(telegramPath).json() as { atmosphere: string };
-  assertEqual(replacement.atmosphere, "normal", "重新填写身份必须保留普通风格");
+  const replacement: { atmosphere?: string; time_zone: string } = await Bun.file(telegramPath).json() as { atmosphere?: string; time_zone: string };
+  assertEqual(replacement.atmosphere, atmosphere, "重新填写身份必须保留显式风格或未配置状态");
+  assertEqual(replacement.time_zone, "UTC", "重新填写身份必须保留配置时区");
   const replacementStats: ReturnType<typeof statSync> = statSync(telegramPath);
   assertEqual(replacementStats.mode & 0o777, 0o640, "重新填写既有配置必须沿用原权限");
   assertEqual(replacementStats.uid, originalOwner.uid, "原子替换必须保持既有配置属主");
@@ -360,6 +361,7 @@ async function checkCredentialIsolation(): Promise<void> {
     { prompt: "配置 media？", reply: "n" },
     { prompt: "配置 image？", reply: "n" },
     { prompt: "配置 tts？", reply: "n" },
+    { prompt: "配置 web_search？", reply: "n" },
     systemdPrompt(),
   ]);
 
@@ -502,7 +504,9 @@ try {
   await checkStagingPermissionFailureCleanup();
   await checkTelegramRollback();
   await checkInterruptedResume();
-  await checkSuccessfulReplacement();
+  for (const atmosphere of [undefined, "mesugaki", "normal"]) {
+    await checkSuccessfulReplacement(atmosphere);
+  }
   await checkFirstFillMode();
   await checkSymlinkTopologyPreserved();
   await checkUnverifiedJournalBackupRetention();

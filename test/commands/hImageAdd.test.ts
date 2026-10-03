@@ -60,7 +60,7 @@ const SKEWED: Uint8Array = await new Bun.Image(imageFixture(2_100, 100)).png().b
 /** 临界值：长宽比恰好 20（宽高之和 2100 也在门槛内），应照收。
  *  两条门槛的逐像素边界另在 test/libs/telegramImage.test.ts 直接钉纯判定。 */
 const AT_LIMIT: Uint8Array = await new Bun.Image(imageFixture(2_000, 100)).png().bytes();
-const texts = chatAtmosphere(CHAT_ID).H_IMAGE_TEXTS;
+const texts = chatAtmosphere().H_IMAGE_TEXTS;
 const directory: string = getAssetConfig().randomHImageDirectory;
 /** 收图写下的文件名：内容 SHA-256 加保存扩展名。 */
 const CONTENT_NAME: RegExp = /^[0-9a-f]{64}\.(?:jpg|png|webp)$/;

@@ -213,7 +213,7 @@ function runLockdownEffects(chatId: number, effects: readonly LockdownEffect[]):
             purpose: "notice",
             deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
             chatId,
-            text: workerAtmosphere(chatId).NOTICE_TEXTS.lockdownEnded(LOCKDOWN_MS / 60_000),
+            text: workerAtmosphere().NOTICE_TEXTS.lockdownEnded(LOCKDOWN_MS / 60_000),
           }),
         });
         break;

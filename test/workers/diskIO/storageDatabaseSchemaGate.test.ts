@@ -3,6 +3,14 @@ import { DEFAULT_WHITELIST_PERMISSIONS } from
   "../../../packages/consts/whitelist";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
 import {
+  IDENTITY_DATABASE_METADATA_KEYS,
+  IDENTITY_DATABASE_SCHEMA_KEY,
+  IDENTITY_DATABASE_SCHEMA_VERSION,
+  IDENTITY_DATABASE_TIME_ZONE_KEY,
+} from "../../../packages/consts/identityStorage";
+import { getTimeZone } from "../../../packages/config/time";
+import { storageMetadataRows } from "../../../packages/database/interact/initialization";
+import {
   encodeBlocklistEntryData,
   encodePendingBlockedRemovalData,
   encodeWhitelistEntryData,
@@ -19,18 +27,6 @@ import { resetStorageDatabaseCache, storageDatabaseHandle } from
 import type { StorageDatabase } from "../../../packages/types/storageDatabase";
 import type { PendingBlockedRemoval } from "../../../packages/types/blocklist";
 
-interface MigrationSnapshot {
-  readonly hash: string;
-  readonly createdAt: number;
-}
-
-/** 还原当前已迁移 schema（IDENTITY_DATABASE_SCHEMA_VERSION）所需的原始 DDL、migration 记录与版本行。 */
-interface SchemaSnapshot {
-  readonly temporaryAdBypassDdl: string;
-  readonly migrations: readonly MigrationSnapshot[];
-  readonly versionText: string;
-}
-
 function withDatabase<T>(run: (database: StorageDatabase) => T): T {
   resetStorageDatabaseCache();
   const database: StorageDatabase = openStorageDatabase({
@@ -45,72 +41,7 @@ function withDatabase<T>(run: (database: StorageDatabase) => T): T {
   }
 }
 
-/** 还原信息必须在任何破坏性 DDL 之前读齐，否则中途失败就无法复原本文件的库。 */
-function readSchemaSnapshot(database: StorageDatabase): SchemaSnapshot {
-  const ddl: { sql: string } | null = database.$client
-    .query<{ sql: string }, []>(
-      "SELECT sql FROM sqlite_master " +
-      "WHERE type = 'table' AND name = 'temporary_ad_bypass_entries';"
-    ).get();
-  const migrations: MigrationSnapshot[] = database.$client
-    .query<{ hash: string; createdAt: number }, []>(
-      "SELECT hash, created_at AS createdAt FROM __drizzle_migrations " +
-      "ORDER BY created_at DESC LIMIT 3;"
-    ).all().reverse();
-  const version: { text: string } | null = database.$client
-    .query<{ text: string }, []>(
-      "SELECT json(data) AS text FROM storage_metadata WHERE key = 'schema-version';"
-    ).get();
-  if (ddl === null || migrations.length !== 3 || version === null) {
-    throw new Error("test fixture expects a fully migrated v8 database");
-  }
-  return {
-    temporaryAdBypassDdl: ddl.sql,
-    migrations,
-    versionText: version.text,
-  };
-}
-
-let snapshot: SchemaSnapshot | null = null;
-
-/** 把本文件的测试库改成上一版 release 的 v5 形态：无临时广告免检表。 */
-function degradeToSchemaV5(): void {
-  withDatabase((database: StorageDatabase): void => {
-    // 先登记还原信息再破坏：赋值排在 DDL 之前，任何一步失败 afterEach 都能收拾。
-    snapshot = readSchemaSnapshot(database);
-    database.$client.run("DROP TABLE temporary_ad_bypass_entries;");
-    database.$client.run(
-      "DELETE FROM __drizzle_migrations WHERE created_at >= ?;",
-      [snapshot.migrations[0]!.createdAt]
-    );
-    database.$client.run(
-      "UPDATE storage_metadata SET data = jsonb(?) WHERE key = 'schema-version';",
-      ['{"version":5}']
-    );
-  });
-}
-
-function restoreSchemaV8(restored: SchemaSnapshot): void {
-  withDatabase((database: StorageDatabase): void => {
-    // DDL 取自 sqlite_master，逐字写回本库自己的建表语句。
-    database.$client.run(restored.temporaryAdBypassDdl);
-    for (const migration of restored.migrations) {
-      database.$client.run(
-        "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?);",
-        [migration.hash, migration.createdAt]
-      );
-    }
-    database.$client.run(
-      "UPDATE storage_metadata SET data = jsonb(?) WHERE key = 'schema-version';",
-      [restored.versionText]
-    );
-  });
-}
-
 afterEach((): void => {
-  const pending: SchemaSnapshot | null = snapshot;
-  snapshot = null;
-  if (pending !== null) restoreSchemaV8(pending);
   withDatabase((database: StorageDatabase): void => {
     database.$client.run("DELETE FROM pending_blocked_removals;");
     database.$client.run("DELETE FROM permission_list;");
@@ -118,8 +49,24 @@ afterEach((): void => {
     database.$client.run("DELETE FROM chat_states;");
     database.$client.run("DELETE FROM chat_qa;");
     database.$client.run("DELETE FROM temporary_ad_bypass_entries;");
+    database.$client.run("DELETE FROM storage_metadata;");
+    for (const row of storageMetadataRows(getTimeZone())) {
+      database.$client.run("INSERT INTO storage_metadata (key, data) VALUES (?1, jsonb(?2));", [row.key, row.data]);
+    }
   });
 });
+
+/** 夹具自选的、与本进程配置时区不同的合法时区。 */
+function otherTimeZone(): string {
+  return getTimeZone() === "UTC" ? "Asia/Seoul" : "UTC";
+}
+
+function setTimeZoneMarker(database: StorageDatabase, data: string): void {
+  database.$client.run(
+    "UPDATE storage_metadata SET data = jsonb(?1) WHERE key = ?2;",
+    [data, IDENTITY_DATABASE_TIME_ZONE_KEY]
+  );
+}
 
 function identityMeta(): {
   readonly firstName: string;
@@ -151,17 +98,7 @@ function insertJsonbRow({
 }
 
 describe("共享存储库的启动 schema 闸", () => {
-  test("未迁移的 v5 库报 schema 版本，而不是临时广告免检缺表", () => {
-    degradeToSchemaV5();
-
-    // 版本判定必须先于任何按版本才存在的表：报错须是 schema-version 不符，
-    // 而不是临时广告免检缺表。
-    expect(() => hydrateStorageDatabase()).toThrow(
-      `${IDENTITY_DATABASE_PATH}: storage_metadata schema-version must be {"version":11}.`
-    );
-  });
-
-  test("当前 v11 库照常 hydrate", () => {
+  test("当前 schema 库照常 hydrate", () => {
     expect(hydrateStorageDatabase()).toEqual({
       blocklistEntryCount: 0,
       permissionEntryCount: 0,
@@ -328,6 +265,72 @@ describe("共享存储库的启动 schema 闸", () => {
     );
   });
 
+  test("数据根时区标记不等于配置时区时拒绝启动，点名字段与期望值", () => {
+    withDatabase((database: StorageDatabase): void => {
+      setTimeZoneMarker(database, JSON.stringify({ timeZone: otherTimeZone() }));
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      `${IDENTITY_DATABASE_PATH}: storage_metadata.${IDENTITY_DATABASE_TIME_ZONE_KEY} must be ${JSON.stringify({ timeZone: getTimeZone() })}.`
+    );
+    expect(storageDatabaseHandle.current).toBeNull();
+  });
+
+  test("时区标记大小写非规范时按非法值拒绝", () => {
+    withDatabase((database: StorageDatabase): void => {
+      setTimeZoneMarker(database, JSON.stringify({ timeZone: getTimeZone().toUpperCase() }));
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      `${IDENTITY_DATABASE_PATH}:storage_metadata[${IDENTITY_DATABASE_TIME_ZONE_KEY}].data: $.timeZone must be`
+    );
+  });
+
+  test("缺时区标记或多出 metadata 键时拒绝启动", () => {
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run("DELETE FROM storage_metadata WHERE key = ?1;", [IDENTITY_DATABASE_TIME_ZONE_KEY]);
+    });
+    expect(() => inspectStorageDatabase()).toThrow(`storage_metadata must contain exactly one ${IDENTITY_DATABASE_TIME_ZONE_KEY} row.`);
+
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run(
+        "INSERT INTO storage_metadata (key, data) VALUES (?1, jsonb(?2)), ('extra', jsonb('{}'));",
+        [IDENTITY_DATABASE_TIME_ZONE_KEY, JSON.stringify({ timeZone: getTimeZone() })]
+      );
+    });
+    expect(() => inspectStorageDatabase()).toThrow(
+      `storage_metadata must contain only the ${IDENTITY_DATABASE_METADATA_KEYS.join(" and ")} rows.`
+    );
+  });
+
+  test("旧版本库缺时区标记时先报版本诊断", () => {
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run("DELETE FROM storage_metadata WHERE key = ?1;", [IDENTITY_DATABASE_TIME_ZONE_KEY]);
+      database.$client.run(
+        "UPDATE storage_metadata SET data = jsonb(?1) WHERE key = ?2;",
+        [JSON.stringify({ version: IDENTITY_DATABASE_SCHEMA_VERSION - 1 }), IDENTITY_DATABASE_SCHEMA_KEY]
+      );
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(
+      `storage_metadata schema-version must be ${JSON.stringify({ version: IDENTITY_DATABASE_SCHEMA_VERSION })}.`
+    );
+  });
+
+  test("时区标记先于免检行的同日约束：换时区只报标记", () => {
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run(
+        "INSERT INTO temporary_ad_bypass_entries " +
+        "(id, ad_bypass, ad_bypass_granted_at, qualified_days, send_count, " +
+        "counted_at, qualified_at) VALUES (?1, 1, ?3, 1, 8, ?2, ?3);",
+        [23, 90_000_000, 1_000]
+      );
+      setTimeZoneMarker(database, JSON.stringify({ timeZone: otherTimeZone() }));
+    });
+
+    expect(() => inspectStorageDatabase()).toThrow(`storage_metadata.${IDENTITY_DATABASE_TIME_ZONE_KEY} must be`);
+  });
+
   test("migration 谱系 hash 被改写时拒绝启动", () => {
     let originalHash: string = "";
     withDatabase((database: StorageDatabase): void => {
@@ -344,7 +347,7 @@ describe("共享存储库的启动 schema 闸", () => {
       );
     });
     try {
-      expect(() => inspectStorageDatabase()).toThrow(/exact supported schema v11 migration lineage/);
+      expect(() => inspectStorageDatabase()).toThrow(`exact supported schema v${IDENTITY_DATABASE_SCHEMA_VERSION} migration lineage`);
     } finally {
       withDatabase((database: StorageDatabase): void => {
         database.$client.run(

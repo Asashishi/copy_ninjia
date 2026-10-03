@@ -5,167 +5,215 @@
 </p>
 
 <p align="center">
-  <a href="content-table.md">📚 Developer Docs Home</a> · <a href="05-dev-workflow.md">← Prev: 05 Workflow</a> · <a href="07-operations.md">Next: 07 Operations →</a>
+  <a href="content-table.md">📚 Developer Docs Home</a> · <a href="05-dev-workflow.md">← Prev: 05 Dev Workflow</a> · <a href="07-operations.md">Next: 07 Operations →</a>
 </p>
 
 ---
 
-Each recipe names the files to touch and the order to follow. The universal prerequisites are: read [`AGENTS.md`](../../AGENTS.md) before editing; back up runtime data such as `memory/global/state.json` and the rest of `memory/`, and `bot.lock`, before changing it or exercising a code path that may write it indirectly; finish with a green `bun run check`; and update the root README when needed.
+Each recipe specifies the files to touch and the implementation sequence.
+
+> [!IMPORTANT]
+> **Universal Prerequisites**:
+> - Read [`AGENTS.md`](../../AGENTS.md) before making modifications.
+> - Before changing deployment configuration or runtime data, or running a production entry point that may write real deployment data, back up the affected files. Ordinary source edits and tests with an isolated temporary data root do not trigger the deployment backup process.
+> - Before committing, run `bun run lint && bun run typecheck` or the full `bun run check`. Before merging into `master`, `bun run check` must pass. Update documentation, READMEs, or metrics only when the user explicitly requests it.
+
+---
 
 ## Adding a Concurrent Batch
 
-- Fixed independent Promises use `Promise.allSettled`, wait for every result, and handle every rejection; settlement is not an error sink.
-- When the input can grow, reuse [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts), set an explicit concurrency ceiling, and trace failures with the returned `item/index/attempt`. Do not `map` the whole input into Promises before waiting.
-- Configure finite backoff only when the domain can classify transient failures. Use `shouldRetry` to constrain the error class and `onRetry` to record every delay. Do not layer retries over a lower owner that already retries, especially for non-idempotent side effects.
-- A drain snapshot of already registered tasks does not need a new worker pool, provided taking the snapshot starts no work and every task already owns its error handling.
+- **Deterministic Settlement**: Use `Promise.allSettled` to wait for fixed, independent Promises, and handle each rejection individually. **Never use settlement to silently swallow errors**.
+- **Dynamic Input Rate Limiting**: When the input scale can grow dynamically, reuse [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts). Define an explicit concurrency ceiling and identify failures via `item/index/attempt` from the results. Never `map` the entire input into an array of Promises before awaiting.
+- **Finite Backoff**: Configure finite backoff only when the domain can distinguish transient errors. Constrain error classes and record delays via `shouldRetry` and `onRetry`. Never layer retries over underlying layers that already retry, and strictly forbid retrying non-idempotent side effects.
+- **Drain Waiting**: Taking a snapshot solely to drain already registered tasks does not require a worker pool, provided the snapshot initiates no new tasks and all tasks possess built-in error isolation.
+
+---
 
 ## Adding a Slash Command
 
-1. **Handler**: export `handleXxxCommand` from `packages/commands/` with an explicit return type. Use `rejectUnlessPermitted(ctx, key, rejection)` for delegated permissions and `rejectUnlessSuperAdmin(ctx, rejection)` for owner-only operations (both in `commands/commandActor.ts`; they send the rejection reply and return the resolved actor when allowed), and `send.ts` for private-chat handling. Put fixed copy and formatters in matching domain files under `packages/consts/atmosphere/{teasing,plain}/`, sharing one type. Main-thread callers select `chatAtmosphere(chatId)`; interpolate names, prompts, and questions without replacing text after rendering. Pass one local `AtmosphereTexts` reference to label, body, and button formatters in a rendering phase; select again after persona changes, for subsequent interactions, or during background execution. Message hot paths that already have `chatState` select from its `aiPersona` without another cache lookup.
-2. **Export**: add it to `packages/commands/index.ts`.
-3. **Registration**: add `commands.command("xxx", ...)` on the `commands` sub-chain in [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts). **Never register directly on `bot`**—every command lives behind the shared `bot.on(":entities:bot_command")` sub-chain (see “Command registration” in [02 Architecture Overview](02-architecture.md#the-journey-of-a-message)), and `test/app/registerHandlers.test.ts` rejects any command registered straight on `bot`. Registration occurs after the init gateway, per-chat serialization, private-chat gateway, and join-verification middleware, so new commands inherit those semantics. Do not duplicate gateway checks in the handler.
-4. **Private-chat gateway**: if the new command must work in private chats, also update [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) and add gateway tests. At present, only `/send` is explicitly allowed as a slash command in private chats; registering a handler alone will not reach it. Group-only commands need no change here.
-5. **Menu**: add the same command name to both `BOT_COMMANDS` arrays in `packages/consts/atmosphere/{teasing,plain}/commands.ts`. Hidden commands such as `/send` stay out. `packages/app/commandMenu.ts` registers the configured Bot style for all groups and ordinary overrides for custom-persona groups.
-6. **Parameter constants**: cooldowns, thresholds, and similar values belong in `packages/consts/commands.ts` or the relevant domain constants, with Chinese JSDoc.
-7. **Tests**: add `test/commands/xxx.test.ts`, covering at least authorization rejection, argument parsing, and the main path.
-8. **Documentation**: add an entry to the command tables in `docs/{cn,en,ja}/08-commands.md`, and describe the interactions and permission boundaries.
+1. **Implement Handler**:
+   - Export `handleXxxCommand` from `packages/commands/` with an explicit return type.
+   - Permission validation: Use `rejectUnlessPermitted(ctx, key, rejection)` for permission-key authorization; use `rejectUnlessSuperAdmin(ctx, rejection)` for superadmin-only operations (see `commands/commandActor.ts`).
+   - Copywriting system: Place static notices and formatting functions in matching domain files under `packages/consts/atmosphere/{teasing,plain}/`, sharing the same TypeScript interface. The main thread reads process-wide copy via `chatAtmosphere()`.
+2. **Export Module**: Add the export to `packages/commands/index.ts`.
+3. **Register Command**:
+   - In [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts), append `commands.command("xxx", ...)` to the `commands` sub-chain.
+   - **Never register directly on `bot`**: Commands must strictly be attached behind the `bot.on(":entities:bot_command")` sub-chain. The registration point sits behind the init gateway, per-chat serialization, private-chat gateway, and join-verification middleware, automatically inheriting these front-line security boundaries.
+4. **Private Chat Gateway Configuration**: If the command is permitted in private chats, update [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) accordingly; currently, private chat only explicitly allows `/send`. Group-only commands require no changes.
+5. **Menu Configuration**: Add the command description to both `BOT_COMMANDS` lists in `packages/consts/atmosphere/{teasing,plain}/commands.ts`.
+6. **Parameter Constants**: Place cooldowns, thresholds, and numeric constants in `packages/consts/commands.ts` or the matching `packages/consts/<domain>.ts`, with Chinese JSDoc.
+7. **Automated Tests**: Write `test/commands/xxx.test.ts`, covering at least authorization rejection, argument parsing, and the primary execution path.
+8. **Documentation Update**: Register the command entry and its permission boundaries in the command tables across all three languages in `docs/{cn,en,ja}/09-commands.md`.
 
 ### Non-ASCII Command Names
 
-CJK action commands such as `/咬` and `/贴贴` (whose action word is one or two Chinese characters) take a different route. Reference implementation: [`cjkAction.ts`](../../packages/commands/cjkAction.ts).
+For Chinese action commands (e.g., `/咬`, `/贴贴`, where action words consist of 1–2 Chinese characters), refer to the dedicated implementation path in [`cjkAction.ts`](../../packages/commands/cjkAction.ts):
 
-- **Match with `bot.hears` instead.** Telegram only emits `bot_command` entities for ASCII commands, so `bot.command` can never match them. Use `hears(regex, ...)` against the raw message text, registered on the `cjkActions` child Composer behind the "raw text starts with `/`" gate in `app/registerHandlers.ts` (the regex must start with `^\/` so the gate stays a strict superset); that gate sits before the message fallback, otherwise the command falls into the AI/copy pipeline as an ordinary message.
-- **Target resolution takes a different entry point.** Such a handler receives a plain `Context` rather than a `CommandContext`, so it passes `ResolveCommandTargetParams` directly to `resolveCommandTarget` in [`targetResolution.ts`](../../packages/commands/targetResolution.ts). Forms the handler does not claim (`/咬@OtherBot`, caption-only messages, malformed messages) must call `next()` instead of silently swallowing the update.
-- **Match `message.text` only.** `bot.hears` matches both text and captions, but claiming a media message means it no longer reaches `handleIncomingMessageMiddleware`, so the photo never enters AI rolling memory or the vision pipeline.
-- **Reproduce the pipeline's prerequisites yourself.** The handler is registered *before* the automatic pipeline, so it is not covered by that pipeline's self-sent guard or its `cacheSender` call. It must call `isBotOwnMessage` itself to skip the bot's own messages (otherwise a channel bounce turns into a self-replying flood loop) and must record the sender identity itself.
-- **Mark retention semantics explicitly.** A successful action result is user-authorized retained content and must pass `preserveInGroup: true` to `sendCommandMessage`. Missing-target, invalid-argument, and `/x` usage hints stay on the default path and self-delete 30 seconds after a successful group send.
-- **These names cannot go into the `BOT_COMMANDS` menu.** BotFather also accepts ASCII command names only (Latin letters, digits, underscores, up to 32 characters). `setMyCommands` submits the whole list at once, so one invalid name fails the entire menu with `BOT_COMMAND_INVALID`, and since a failed registration is only logged and never blocks startup, the menu disappears silently. To advertise the syntax in the menu, add an ASCII placeholder entry (the existing `/x`) and put the syntax in its description.
-- **The placeholder still needs a handler.** Tapping a menu entry actually sends the command, so without a registered handler it reaches the catch-all and enters the AI/copy pipeline as an ordinary message — while a handler that does nothing at all leaves whoever tapped the menu with complete silence. Answer with a usage hint and terminate the chain there.
-- **Carry your own global rate limit.** These commands have no command-menu constraint behind them; anyone can invent an action word on the spot. Window and ceiling go in `packages/consts/commands.ts`, the timestamp queue goes in `packages/cache/main/<domain>.ts`, and the decision reuses [`libs/slidingWindowRateLimit.ts`](../../packages/libs/slidingWindowRateLimit.ts) — a pure function that mutates the caller-owned queue in place and holds no state of its own.
+- **Match via `bot.hears`**: Telegram only generates `bot_command` entities for ASCII commands. Non-ASCII commands must match raw message text using `hears(regex, ...)`, registered on the `cjkActions` child Composer (starting with `^\/`) placed before ordinary message fallbacks.
+- **Dedicated Target Resolution**: Pass `ResolveCommandTargetParams` directly to `resolveCommandTarget`. Any unmatched patterns must call `next()` to yield control instead of swallowing the update.
+- **Match `message.text` Only**: Media-captioned messages must not enter this path, preventing them from bypassing the photo vision pipeline and AI memory.
+- **Complete Upstream Pipeline Prerequisites**: Because registration precedes the automatic pipeline, manually invoke `isBotOwnMessage` to filter out the bot's own messages and actively record the sender in the username cache.
+- **Explicit Retention Semantics**: Successful action outputs are retained long-term by explicitly passing `preserveInGroup: true` to `sendCommandMessage`; parameter validation failures still undergo 30-second self-deletion.
+- **Menu and Placeholder Entry**: Telegram's command menu only accepts ASCII characters. Use an ASCII placeholder `/x` in the menu to display syntax, and register a handler that outputs usage hints to prevent it from dropping into message fallback.
+- **Global Sliding-Window Rate Limit**: Lacking Telegram menu constraints, Chinese action commands must be governed by a sliding-window rate limit (e.g., 450 requests per 90 seconds, reusing `libs/slidingWindowRateLimit.ts`).
+
+---
 
 ## Adding Links or Formatting to a Reply
 
-`sendMessage` never sets `parse_mode` — markup characters inside display names or message content must never get a chance to become formatting or links. When rich text is genuinely needed, the caller assembles the text segment by segment, computes the `entities` offsets itself, and passes them to `sendMessage` (see [`infra/telegram/actions.ts`](../../packages/infra/telegram/actions.ts)). Offsets use Telegram's UTF-16 code unit convention, which is exactly JavaScript's `String#length`, so an emoji (surrogate pair) in a display name naturally counts as 2 with no extra conversion. A zero-length entity makes Telegram reject the whole message, so never attach an entity to an empty segment. See `buildActionMessage` in `cjkAction.ts`.
+Choose between rich text and plain text (`entities` and `parseMode` are mutually exclusive in the type system; see [`packages/infra/telegram/actions.ts`](../../packages/infra/telegram/actions.ts)):
+
+- **MarkdownV2 Mode**:
+  - Pass `parseMode: MARKDOWN_V2_PARSE_MODE` to `sendMessage` or `sendCommandMessage`.
+  - Escape and construct the **entire body** using [`libs/telegramMarkdown.ts`](../../packages/libs/telegramMarkdown.ts) (plain text via `escapeMarkdownV2`, bold/code/links via matching helper functions).
+  - Dynamic nicknames, model output, and fixed text **must never bypass escaping**; omitting even a single reserved character causes Telegram to reject the entire message.
+  - Unit tests must verify parsing output against the reference parser in `test/helpers/markdownV2.ts`.
+- **Explicit Entities Annotation**:
+  - The caller constructs text segments and calculates UTF-16 code unit offsets for `entities`.
+  - Surrogate pairs (such as emoji) consume 2 code units; zero-length entities cause Telegram to reject the entire message.
+
+---
 
 ## Switching Languages: No i18n Here — Fork It
 
-Fixed user-facing copy is Simplified Chinese. `packages/consts/atmosphere/` provides teasing and ordinary styles. `atmosphere` in `config/static/bot.json` chooses the Bot's default notice style; a custom group AI persona takes priority for ordinary notices. Notice style does not rewrite the AI persona and is independent of client language.
+User-facing static copy is Simplified Chinese. `packages/consts/atmosphere/` provides teasing and plain styles.
 
-- Text tables contain fixed strings and formatters. Telegram `entities` use UTF-16 offsets computed from the rendered text. Names, questions, prompts, and model output are not rewritten for tone.
-- Action commands such as `/咬` use one or two Chinese characters; command parsing and display copy are maintained separately.
-- A group's custom AI persona takes priority; an unset persona uses `prompt/persona.md`.
+- Text tables maintain static strings and formatters; Telegram entity offsets are computed from rendered text.
+- Action command parsing and display copy (e.g., for `/咬`) are maintained separately.
+- AI persona defaults to `packages/consts/aiChat/prompts/persona.ts`; if `prompt/persona.md` exists, the custom file takes precedence.
+- To support other languages, fork the repository and fully replace the text modules and configuration mentioned above.
 
-Fork the project for another language and update `packages/consts/atmosphere/`, other Chinese copy, interactions, `prompt/persona.md` and deployment configuration together. Run `bun run check` after changes.
+---
 
 ## Adjusting Behavioral Parameters
 
-All parameters are centralized under `packages/consts/`, so changing a value does not require editing business logic. Common locations:
+All business parameters are centralized under `packages/consts/`; tuning parameters requires no changes to business logic:
 
-| What you want to tune | File |
+| What to Adjust | Corresponding File |
 | :--- | :--- |
 | AI trigger probability, rate limits, concurrency, queue | `packages/consts/aiChat/rateLimit.ts` |
-| AI memory capacity, snapshot interval, summarization backpressure | `packages/consts/aiChat/memory.ts` |
-| Media-description length, execution slots, LRU capacity | `packages/consts/aiChat/media.ts` |
-| Image-generation cooldown and byte limit | `packages/consts/aiChat/imageGeneration.ts` |
-| Mood duration and command timeout | `packages/consts/aiChat/mood.ts` |
-| Tool action/lookup limits, typing and typo pacing | `packages/consts/aiChat/tools.ts` |
-| Voice transcription duration/size limits and placeholders | `packages/consts/aiChat/voice.ts` |
-| Voice tool per-round cap, line/tone length, daily quota defaults and counting window, Opus encoding parameters | `packages/consts/aiChat/voiceMessage.ts` |
-| Request timeouts, retry counts, sampling and safety tiers, speech-synthesis temperature and per-protocol parameters (the default base style lives in `packages/consts/aiChat/voiceMessage.ts`) | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
-| **Models, providers, keys, endpoints** | Not constants: configured per capability in `config/dynamic/agent.json`; see [01-getting-started](01-getting-started.md) |
-| OAI-compatible image wire protocol / size profile | Required `agent.image.image_protocol` in `config/dynamic/agent.json`; a new profile also requires synchronized types, fixed canvas tables, exhaustive dispatch, and tests |
+| AI memory capacity, snapshot interval, compression backpressure | `packages/consts/aiChat/memory.ts` |
+| Media description length, execution slots, LRU capacity | `packages/consts/aiChat/media.ts` |
+| Image generation cooldown and byte limits | `packages/consts/aiChat/imageGeneration.ts` |
+| Mood duration and toggle timeout | `packages/consts/aiChat/mood.ts` |
+| Tool action/query limits, typing and typo pacing | `packages/consts/aiChat/tools.ts` |
+| Voice transcription duration/size limits and placeholder copy | `packages/consts/aiChat/voice.ts` |
+| Voice tool per-round limits, lines/tone lengths, daily quota | `packages/consts/aiChat/voiceMessage.ts` |
+| Request timeouts, retries, sampling, and safety tiers | `packages/consts/aiChat/gemini.ts`, `packages/consts/aiChat/openai.ts` |
+| **Model names, providers, keys, endpoints** | **Not constants**: configured per capability in `config/dynamic/agent.json` |
+| OAI-compatible image protocol / size tiers | `config/dynamic/agent.json` via `agent.image.image_protocol` |
 | Verification window, spam threshold, append/compaction policy | `packages/consts/antiRaid/` |
-| Copy cooldown, `/quiet` range, username rules, action-command rate limit | `packages/consts/commands.ts` |
-| Random-trigger cooldown per sender | `packages/consts/auto.ts` |
+| Copy cooldown, `/quiet` range, action command rate limit | `packages/consts/commands.ts` |
+| Speaker cooldown for random triggers | `packages/consts/auto.ts` |
 
-Procedure: change the constant → update its Chinese JSDoc, including changed invariants → check whether the root READMEs quote the value and synchronize them → run `bun run check`.
+**Modification Procedure**: Modify the constant → Update its Chinese JSDoc → Run the pre-commit gate. When the user explicitly requests documentation updates, synchronize affected README references. Run `bun run check` before merging into `master`.
 
 > [!WARNING]
-> **Capacity constants may be coupled to disk data.** Before reducing values such as `AI_MEMORY_HYDRATE_BUFFER_MAX` or `MAX_SUMMARY_ROUNDS`, rewrite existing `chat_states.ai_context` snapshots in a SQLite transaction after stopping the old process, as required by [04 Authoritative Runtime Invariants](04-invariants.md#persistence). Check that section before changing any capacity value.
+> **Capacity Constants May Be Coupled to Disk Data**:
+> Before reducing capacity constants such as `AI_MEMORY_HYDRATE_BUFFER_MAX` or `MAX_SUMMARY_ROUNDS`, existing `chat_states.ai_context` snapshots must be rewritten via SQLite transactions while the service is stopped, as mandated by [04 Runtime Invariants](04-invariants.md#persistence). Otherwise, starting the new version will reject old-format data.
+
+---
 
 ## Adding an Optional Provider Capability
 
-The contract is split into five minimal per-capability interfaces (`AiTextProvider`, `AiSummaryProvider`, `AiMediaProvider`, `AiImageProvider`, `AiSpeechProvider`); `AiChatProvider` is their composition. An implementation package still exports that one complete object, but every capability resolver in `aiChat/provider.ts` hands out only the matching slice, so a cross-capability call fails to **compile** (see the `@ts-expect-error` assertions in `test/aiChat/provider.test.ts`). Within each interface, members are still required or optional: the required ones (reply session, plain text, vision description, image generation) exist on every provider, while the optional ones (currently `transcribeVoice` and `synthesizeSpeech`) exist only on the providers that implement them.
+The capability contract is partitioned into 6 independent minimal interfaces (`AiTextProvider`, `AiSummaryProvider`, `AiMediaProvider`, `AiImageProvider`, `AiSpeechProvider`, `AiWebSearchProvider`), aggregated under `AiChatProvider`:
 
-1. **Contract**: declare it as an **optional member** in [`packages/types/aiChat/provider.ts`](../../packages/types/aiChat/provider.ts), with an explicit `this: void` — an optional member has to be pulled into a variable and null-checked before use, and a method signature with an implicit `this` loses its receiver the moment you do that.
-2. **Implementation**: add it only in the implementation package that supports it, and wire it up in that package's `index.ts`. In the package that does not support it, **omit the key entirely**: writing `undefined` is type-equivalent, but a reader will take it for an unfinished slot.
-3. **Detection**: call sites always write `provider.someCapability === undefined`, **never** `provider.name !== "gemini"`. Testing the name makes every call site carry its own "who supports what" table, and the day a third provider appears — or one of them gains the capability — whichever site was missed shows up only at runtime, as a tool that should not be there.
-4. **Decide what absence means**: if it can degrade quietly (voice transcription), leave a fallback placeholder plus one log line and **never switch providers for it**; if it cannot (speech synthesis), simply do not mount the tool — a tool the model cannot see is never called; callers outside the tool (`/send` TTS requests, cron `send_voice`) get an explicit failure reason from the same `resolveSpeechSynthesizer` decision, and configuration validation blocks them first at startup and on hot reload. Do not leave "throw an unsupported error at runtime" as the only line of defence.
-5. **Capability omitted**: toolsets are assembled per round; when `image`/`tts` configuration or an implementation member is absent, both the declaration and executor must be omitted.
+1. **Contract Declaration**: Declare optional members in [`packages/types/aiChat/provider.ts`](../../packages/types/aiChat/provider.ts) with explicit `this: void`.
+2. **Implementation Injection**: Add and export the capability only in supporting implementation packages (`index.ts`). Unsupported providers **must not declare the key at all** (keep it undefined).
+3. **Capability Detection**: Callers must always detect capability via `provider.someCapability === undefined`, **never by provider name** (e.g., `provider.name !== "gemini"`).
+4. **Absence & Degradation Policy**: For features that can degrade (e.g., voice transcription), keep placeholders and log records; strictly avoid switching cross-provider calls dynamically. For features that cannot degrade (e.g., speech synthesis), do not mount the tool at all.
+5. **Dynamic Mounting & Detachment**: Tools are assembled per round. If corresponding capability configurations or implementations are absent, both definitions and executors must be stripped simultaneously.
+
+---
 
 ## Adding an AI Tool
 
-1. **Name constant**: define the tool name in [`packages/consts/tools.ts`](../../packages/consts/tools.ts). If it has visible side effects, determine whether it belongs in `ACTION_TOOL_NAMES`.
-2. **Definition**: add stateless static-query `AiToolDefinition` values to `TOOL_DECLARATIONS` in [`packages/consts/tools.ts`](../../packages/consts/tools.ts). For action tools that need chat context, dynamic schemas, or per-round state, provide a definition builder under `packages/aiChat/ai/tools/replyToolset/`. The reply-toolset orchestrator collects these domain definitions into neutral `AiToolDefinition` values (JSON Schema parameters); each provider package's `replySession.ts` then maps them to its own shape, so adding a tool never touches any vendor SDK type.
-3. **Implementation**: implement execution under `packages/aiChat/ai/tools/`. Telegram-facing side effects run through main-thread proxies; the Worker must not hold a Bot instance directly.
-4. **Registration**: connect static query tools to the `callTool` dispatch in `packages/aiChat/ai/tools/index.ts`; connect action tools to definitions, dispatch, and per-round state under `packages/aiChat/ai/tools/replyToolset/`.
-5. **Budgets**: visible side-effect tools belong in the unified action budget; do not add a per-tool call limit by default. Create an independent limit only for a domain-specific reason—the current cases are sticker-pack viewing, server-side web search, and one sticker, reaction, generated image, or voice message per round. The whole-round custom-function loop guard still applies; see [04](04-invariants.md#worker-and-state-ownership).
-6. **Prompt**: add usage rules under `packages/consts/aiChat/prompts/` if needed. Anything coupled to transcript format must reuse shared templates from `transcript.ts`; never hand-write the same format on both sides.
-7. **Tests + docs**: add tests under `test/aiChat/ai/` or the corresponding feature/Worker path, and update the feature tables in all three READMEs when relevant.
+1. **Name Constant**: Declare the tool name in [`packages/consts/tools.ts`](../../packages/consts/tools.ts); register side-effect tools in `ACTION_TOOL_NAMES`.
+2. **Tool Definition**: Add static query tools to `TOOL_DECLARATIONS`; provide definition builders under `packages/aiChat/ai/tools/replyToolset/` for action tools. Neutral `AiToolDefinition` structures are converted to vendor-specific schemas on demand by implementation packages.
+3. **Execution Logic**: Implement execution logic under `packages/aiChat/ai/tools/`; Telegram-facing side effects are proxied through the main thread.
+4. **Dispatch & Registration**: Connect static tools to `callTool` in `tools/index.ts`; connect action tools to the definitions and dispatch pipelines in `replyToolset/`.
+5. **Budget Control**: Visible side-effect tools fall under the unified action budget (hard cap of 11); independent per-round caps apply only to explicit domain constraints (e.g., stickers, image generation, and voice messages capped at 1 per round).
+6. **Prompt Specifications**: Add rules under `packages/consts/aiChat/prompts/`; transcript formatting must reuse `transcript.ts`.
+7. **Verification & Documentation**: Add unit tests under `test/aiChat/ai/` and update tool descriptions across the trilingual documentation.
+
+---
 
 ## Adding a Generic JSON API Call
 
-1. Add the exact HTTPS origin explicitly to `JSON_API_ALLOWED_ORIGINS` in [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts). Do not broaden it to arbitrary hosts, HTTP, or credential-bearing URLs.
-2. Reuse the bounded JSON reader in [`packages/infra/httpFetch.ts`](../../packages/infra/httpFetch.ts). Keep redirects disabled and preserve response-body and error-log limits.
-3. Add tests for origins, redirects, oversized responses, and failure logging. Telegram avatar downloads are a separate media path: both the Bot API `file.getUrl()` primary path and the `t.me` page/image fallback must keep redirects disabled and reads bounded; do not reroute that path merely to add a JSON API.
+1. Explicitly whitelist the allowed HTTPS origin in `JSON_API_ALLOWED_ORIGINS` in [`packages/consts/httpFetch.ts`](../../packages/consts/httpFetch.ts). Never broaden to arbitrary hosts or HTTP protocols.
+2. Reuse the bounded JSON reader in [`packages/infra/httpFetch.ts`](../../packages/infra/httpFetch.ts); keep redirects disabled and strictly bound response bodies and error log lengths.
+3. Add unit tests covering origin validation, redirect blocking, response limit enforcement, and error handling.
 
-## Changing the Persona or JSON Configuration
+---
 
-- Persona: edit [`prompt/persona.md`](../../prompt/persona.md); changes take effect after restart. Runtime interaction rules coupled to transcript formatting and identity/recipient markers are injected by code and do not belong in the persona file.
-- Edit only the Git-ignored deployment `config/`; `config_example/` is the clean-deployment template and changes only when the schema or defaults change. `bot.json` loads strictly before network access; `stickers.json`, `mood.json`, and other feature inputs validate at their enablement boundaries. Runtime edits to `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, and `cron.json` under `config/dynamic/` hot-reload, with the rejection rules in [04 Runtime Invariants](04-invariants.md); `bot.json` and `g-auth.json` under `config/static/` and every other deployment input require a restart after a change. A new deployment file must first be assigned its subdirectory and registered in the placement table of `packages/config/layout.ts`. The permanent allowlist, blocklist, temporary-ad-bypass activity, and removal outbox are not deployment configuration: their authority is `database/storage.sqlite`. For identity-structure changes, update `packages/database/schema/`, the matching `packages/database/codec/` module, domain types, and strict validation first, then provide a stopped-service migration script and fault-injection coverage. Never reintroduce JSON compatibility reads.
-- The emoji available to the AI `add_reaction` tool are fixed in `AI_REACTION_EMOJIS` in [`packages/consts/aiChat/reactions.ts`](../../packages/consts/aiChat/reactions.ts); its element type is restricted to Telegram standard reactions, and changes ship with the code.
+## Changing Persona and JSON Configuration
+
+- **Persona Maintenance**: The built-in persona resides in `packages/consts/aiChat/prompts/persona.ts`; place custom persona files at `prompt/persona.md` in the project root. Custom personas take effect globally upon restart. Notices prioritize explicit `atmosphere` and use plain copy for a custom persona when that setting is omitted.
+- **Configuration Files**: Only edit git-ignored `config/` during development; `config_example/` serves purely as templates.
+  - `config/dynamic/` supports hot-reloading (`assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, `cron.json`).
+  - `config/static/` requires a restart to take effect (`bot.json`, `g-auth.json`).
+- **Emojis & Allow/Blocklists**: Reaction emojis are restricted by `AI_REACTION_EMOJIS`. Allowlist and blocklist authorities reside in SQLite, not JSON.
+
+---
 
 ## Adding Deployment JSON Configuration
 
-1. Declare and strictly parse it in `packages/config/<domain>.ts`, including required/optional fields, format validation, and rejection of unknown keys. Parsing failure must block startup.
-2. Add a structure-only example without real credentials under `config_example/<domain>.json`, and document its fields in [`config_example/README/en.md`](../../config_example/README/en.md).
-3. If the file must take effect while running, add it to the reads and decisions in [`packages/config/reload.ts`](../../packages/config/reload.ts), hand the new snapshot to the threads holding a copy through the existing Worker protocols, and invalidate caches derived from the old snapshot on the Worker side.
-4. Synchronize the quick-start sections in all three READMEs, setup guides and `config_example/README/` configuration references.
+1. Declare a strict parser in `packages/config/<domain>.ts` (validating required/optional fields, ranges, and rejecting unknown keys).
+2. Provide a sanitized template under `config_example/static/` or `config_example/dynamic/` and update all three `config_example/README/` guides.
+3. If hot-reloading is required, register parsing and snapshot broadcasting in `packages/config/reload.ts`.
+4. Synchronize setup guides across all three languages.
+
+---
 
 ## Adding a Runtime Cache
 
-1. Put it in `packages/cache/<owning thread>/<domain>` (thread directories are listed in [03 Directory Map](03-directory-map.md#cache-partitioned-by-owning-thread)), with a file header naming the owner module. Use a holder object such as `{ current: T | null }` for mutable singletons.
-2. Give every export lifecycle JSDoc: when it is populated, when it is cleared, and how it is rebuilt after a Worker crash and restart.
-3. Define a capacity bound and cleanup policy, then verify the long-lived-container requirements in [04 Authoritative Runtime Invariants](04-invariants.md#worker-and-state-ownership): bounded, owned, and reconstructible.
-4. If it must flush or settle during shutdown, use `packages/libs/flushBarrier.ts`; do not create another resolver Map.
+1. Place under `packages/cache/<owning thread>/<domain>.ts` and start the file with `/** owner: <main|perThread|workers/<thread>>。…` matching the directory (verified by `bun run check:conventions`); use `{ current: T | null }` for mutable singletons.
+2. Document each export with JSDoc: explain lifecycle, population timing, eviction policies, and Worker crash rebuild strategies.
+3. Explicitly define capacity bounds, adhering to the bounded, owned, and reconstructible invariant requirements.
+4. Channel shutdown flushes through `packages/libs/flushBarrier.ts`.
+
+---
 
 ## Changing a Persistence Schema
 
-The hard rule from [`AGENTS.md`](../../AGENTS.md) and [04](04-invariants.md#persistence) is: **the code retains no old-format compatibility logic and performs no automatic runtime migration**. Incompatible input blocks startup. Therefore:
+> [!CAUTION]
+> **Absolute Rule**: **No legacy compatibility logic or automatic runtime migrations are permitted in code**. Illegal formats will unconditionally fail startup.
 
-1. Change the persisted types under `packages/types/` and their validators, implementing strict validation for the new format.
-2. Add or update tests under `test/infra/storage/`, `test/workers/diskIO/`, and related paths, then run `bun run test:fault-injection`.
-3. **Stop the old process** and confirm `bot.lock` has been released.
-4. Manually migrate `memory/global/state.json` and the other affected snapshots under `memory/` to the new format. Copy backups before migration.
-5. Deploy and start the new version. If the global state file is reported invalid, the migration is incomplete. The program does not modify the originals; fix them before restarting.
-6. Verify deployment hashes and strict parsing, then confirm active/running status for at least two restart intervals, no increase in NRestarts, and no new non-zero exits in the journal before deleting temporary backups.
+1. Modify persistence types and strict validation logic under `packages/types/`.
+2. Add and update tests, and execute `bun run test:fault-injection`.
+3. **Stop the old process** and verify `bot.lock` is released.
+4. Create an external backup, then manually migrate existing `memory/global/state.json` and related files to the new schema.
+5. Launch the new version to verify. If validation fails, diagnose and fix missing or malformed fields.
+6. Observe service stability across at least two supervisor restart cycles before removing temporary backups.
 
-**Adding an optional block can skip steps 3–4**, provided "missing" is defined precisely: the decoder accepts an absent block, and the accessors collapse the default into a single fallback value. The worked example is `ttsUsage` in `memory/global/state.json` (`globalTtsUsage` in `libs/stateFileCodec.ts`): an absent block means never used, so files without it decode directly; an existing old `count` block requires a cold migration to `agentCount` and `reserveCount`. Knobs meant to be hand-edited by the deployment do not belong in runtime state; put them under `config/` (such as `config/dynamic/assets.json`), where the matching parser supplies the built-in defaults and the bot never writes back. Conversely, **any change that makes an existing file fail to decode still goes through the full steps 3–4**.
+---
 
 ## Adding a SQLite Table
 
-One constraint harder than editing `memory/global/state.json`: **the runtime never migrates automatically** and refuses to start when the database version does not match, so every new table needs an offline cold migration. In order:
+The runtime does not perform automatic database migrations; schema mismatches reject startup:
 
-1. Declare the table in `packages/database/schema/<domain>.ts` and register it in `schema/storage.ts`; the `data` column uses `jsonbText` plus `jsonDataCheck`, the same shape as every other business table.
-2. Write `schema/migrations/000N_<name>.sql` and add its entry to `migrations/meta/_journal.json`.
-3. **Measure the hash, do not compute it**: create a throwaway database, run the migration once, read `created_at` and `hash` back from `__drizzle_migrations`, and write those into `packages/consts/identityStorage.ts`. Bump `IDENTITY_DATABASE_SCHEMA_VERSION` at the same time.
-4. Write the cold-migration script, replace the preceding edge for the same data in `scripts/migrations/active.ts`, and delete the replaced script and tests. Reject unknown lineage; deployments older than the direct input format must upgrade in stages first.
-5. Validation **before** the migration must use that version's historical shape. If this change alters a table's closed field set (adding a permission key, for instance), the production decoder cannot be used beforehand: it already requires the new field, so every pending deployment would be condemned as corrupt before the migration starts, naming a field its operator never wrote. Freeze the historical key list inside the migration script rather than deriving it from the current constant — deriving would silently rewrite this historical edge the next time a key is added.
-6. Reuse production parsers for unchanged fields such as `meta`. Fully validate the source backup before creating separate output; write `ready.json` only after current-format output validation and source-hash verification succeed.
-7. Persistence reuses the existing write-through: the main thread publishes the in-memory final value, posts it to the Disk I/O Worker, an explicit transaction commits, an exact revision is acknowledged, and a rebuilt worker replays from memory.
+1. Declare table structures in `packages/database/schema/<domain>.ts` and connect them to `schema/storage.ts`.
+2. Write `schema/migrations/000N_<name>.sql` and update `migrations/meta/_journal.json`.
+3. Execute the migration against a temporary database, extract the actual `created_at` and `hash` from `__drizzle_migrations`, insert them into `packages/consts/identityStorage.ts`, and increment `IDENTITY_DATABASE_SCHEMA_VERSION` by 1.
+4. Write an offline cold migration script, register the new migration edge in `scripts/migrations/active.ts`, and remove obsolete edges.
+5. Migration scripts must strictly use the corresponding historical schema version to decode data.
+6. Validate the output with bidirectional hash checks before generating `ready.json`.
+7. Persist data following the Write-Through transaction flow.
 
-`scripts/migrations/active.ts` declares two active edges, each covering its own data: random image library file names (uuidv7 → content SHA-256, `migrate:random-image-names`) and global state (the total speech count in `memory/global/state.json` → `agentCount`/`reserveCount`, `migrate:global-state`). The rule counts migrations independently of releases: when the same data migrates again, retain only the direct edge from the preceding migration's output to the current format, replacing the old entry, tests and declaration together. `scripts/conventions/coldMigrations.ts` checks the declaration against package scripts.
-
-The single-edge rule governs the cold-migration script under `scripts/` that rewrites deployed data, its tests, and its `migrations/active.ts` registration. It does not apply to the SQL files in `schema/migrations/` or to `meta/_journal.json`, which must be kept complete from `0000`: `createStorageDatabase` replays every entry through the Drizzle migrator when it builds a new database, and at startup `assertStorageDatabaseMigrationLineage` in `packages/database/interact/inspection.ts` requires `__drizzle_migrations` to carry the full lineage.
+---
 
 ## Changing an Inter-Worker Protocol
 
-`packages/types/` owns cross-thread message protocols. Update three places together: the type definition, the main-thread proxy in the corresponding `packages/infra/` or `packages/cache/main/` module, and the Worker-side handler under `packages/workers/<domain>/`. Request/acknowledgement interactions follow the waiter-before-dispatch and unified timeout/crash-settlement pattern in [04](04-invariants.md#worker-and-state-ownership); the shared `/mood query` and `/mood switch` mood handshake is the reference implementation.
+Cross-thread message protocols are owned by `packages/types/`. When updating protocols, synchronize three locations:
+1. `packages/types/` type definitions.
+2. Main-thread proxies (`packages/infra/` or `packages/cache/main/`).
+3. Worker-side handlers (`packages/workers/<domain>/`).
+Request/acknowledgement workflows must follow the pre-registered Waiter pattern with unified timeout and crash settlements.
 
 ---
 
 <div align="center">
 
-[← Prev: 05 Workflow](05-dev-workflow.md) · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#06-common-modification-recipes) · [Next: 07 Operations →](07-operations.md)
+[← Prev: 05 Dev Workflow](05-dev-workflow.md) · [📚 Developer Docs Home](content-table.md) · [⬆️ Back to Top](#06-common-modification-recipes) · [Next: 07 Operations →](07-operations.md)
 
 </div>

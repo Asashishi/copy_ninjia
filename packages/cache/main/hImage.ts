@@ -1,7 +1,7 @@
+/** owner: main。`/h_image`（packages/commands/hImage.ts）的内存状态。 */
+
 import { H_IMAGE_RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../consts/hImage";
 import { TimestampDeque } from "../../libs/timestampDeque";
-
-/** Owner: 主线程。`/h_image`（packages/commands/hImage.ts）的内存状态。 */
 
 /**
  * `/h_image` 的全局滑动窗口频率限制：最近 H_IMAGE_RATE_LIMIT_WINDOW_MS（1 秒）内各次

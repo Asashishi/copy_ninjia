@@ -48,7 +48,7 @@ export const RUNTIME_DATA_ROOT: string = CONFIGURED_DATA_ROOT === undefined
 
 /**
  * 14.x 放在数据根的全局状态文件与其备份副本。当前格式不读取它们：任一存在即拒绝启动，
- * 须先经 migrate:global-state 冷迁移并由运维移走（见 infra/storage/stateStore.ts 的 loadState）。
+ * 须先升级到 16.3.2 完成其迁移并由运维移走（见 infra/storage/statePersistence.ts 的 assertLegacyStateFilesAbsent）。
  */
 export const LEGACY_STATE_FILE_PATHS: readonly string[] = [
   join(RUNTIME_DATA_ROOT, "state.json"),
@@ -57,7 +57,10 @@ export const LEGACY_STATE_FILE_PATHS: readonly string[] = [
 /** 数据目录单实例 owner 锁文件路径。 */
 export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
 
-/** AI 闲聊人设文本（Markdown，修改人设不需要碰代码）。 */
+/**
+ * 可选的自定义 AI 人设（Markdown）。存在时启动总闸接管其正文，缺省时使用内置人设
+ * DEFAULT_AI_PERSONA；通知风格优先级见 docs/cn/04-invariants.md。人设文件不受版本控制。
+ */
 export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
 
 /**
@@ -100,9 +103,9 @@ export const CRON_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "cron.json");
 export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
 
 /**
- * memory/ 落盘目录：每日运势缓存（luck/ 下按东京日期一个文件，只留当天）、白名单贴纸包的目录快照
+ * memory/ 落盘目录：每日运势缓存（luck/ 下按配置时区的日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 aiChat/ai/stickers/catalog.ts）、
- * 待验证当日增量（anti-raid/ 下只保留东京当天），以及滚动 24 小时入群事实
+ * 待验证当日增量（anti-raid/ 下只保留配置时区的当天），以及滚动 24 小时入群事实
  * （joinlog/）和每群已发言成员集合（wed/），均由 diskIOWorker 落盘，见
  * packages/workers/diskIOWorker.ts；ai-daily-usage/ 下是模型请求的缓存用量统计，同样由 diskIOWorker
  * 落盘；ad-detected/ 是广告命中样本旁路（见 AD_SAMPLE_MEMORY_DIR）；global/ 下的全局状态由主线程落盘。每一类数据各占
@@ -120,7 +123,7 @@ export const GLOBAL_STATE_FILE_PATH: string = join(GLOBAL_STATE_DIR, "state.json
  * SQLite 运行时数据库目录；与 memory/ 平级，只由 Disk I/O Worker 和显式迁移脚本访问。
  */
 export const DATABASE_DIR: string = join(RUNTIME_DATA_ROOT, "database");
-/** 权限、封禁、群状态、AI 上下文及群人设共用的 SQLite 数据库文件。 */
+/** 权限、封禁、群状态与 AI 上下文共用的 SQLite 数据库文件。 */
 export const IDENTITY_DATABASE_PATH: string = join(DATABASE_DIR, "storage.sqlite");
 /** /wed 已发言成员集合目录；Disk I/O Worker 按 <chatId>.json 原子替换数字数组。 */
 export const WED_MEMORY_DIR: string = join(MEMORY_DIR, "wed");
@@ -130,11 +133,11 @@ export const LUCK_MEMORY_DIR: string = join(MEMORY_DIR, "luck");
 export const LUCK_RECEIPT_SECRET_PATH: string = join(LUCK_MEMORY_DIR, "receipt-secret.json");
 /** 白名单贴纸包视觉目录快照目录。 */
 export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
-/** Anti-Raid 待验证增量文件目录；按东京日期命名，只保留当天文件。 */
+/** Anti-Raid 待验证增量文件目录；按配置时区的日期命名，只保留当天文件。 */
 export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
 /**
- * 群成员滚动入群日志目录；按 `<chatId>.<东京日期>.json` 追写，保留最近三个
- * 东京自然日以覆盖跨午夜在途查询；启动时校验保留窗口，
+ * 群成员滚动入群日志目录；按 `<chatId>.<配置时区的日期>.json` 追写，至少保留最近三个
+ * 自然日，并覆盖前一日命令的滚动 24 小时窗口；启动时校验保留窗口，
  * `/batch_kick` 查询和新入群事件再按需建立有界缓存。
  */
 export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
@@ -147,16 +150,16 @@ export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
 /**
  * 判定命中并触发封禁的原始样本，追加写入，进程不把其内容用于业务判断（追加游标
  * 重建时的读回校验除外）。涨过
- * AD_SAMPLE_FILE_MAX_BYTES 时整份改名成 `sample.<东京日期>.json` 归档，
- * 归档只保留最近 15 个东京自然日。
+ * AD_SAMPLE_FILE_MAX_BYTES 时整份改名成 `sample.<配置时区的日期>.json` 归档，
+ * 归档只保留最近 15 个配置时区的自然日。
  * 所属模块：workers/diskIO/adSampleFile.ts。
  */
 export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.json");
 /** AI 缓存使用统计目录；只由 Disk I/O Worker 写入，见 workers/diskIO/aiCacheFile.ts。 */
 export const AI_CACHE_MEMORY_DIR: string = join(MEMORY_DIR, "ai-daily-usage");
 /**
- * AI 缓存使用统计文件：顶部 `summary` 是最近一个已结束东京日的汇总，其余键是尚未汇总的
- * 逐条用量记录。每日东京 0 点把前一天的记录并入汇总后删除。
+ * AI 缓存使用统计文件：顶部 `summary` 是最近一个已结束的配置时区自然日的汇总，其余键是尚未汇总的
+ * 逐条用量记录。每日配置时区 0 点把前一天的记录并入汇总后删除。
  */
 export const AI_CACHE_FILE_PATH: string = join(AI_CACHE_MEMORY_DIR, "usage.json");
 

@@ -1,5 +1,5 @@
 /**
- * OpenAI 侧的纯文本生成、视觉描述与语音转写。文本与视觉共用 client.ts 的
+ * OpenAI 侧的纯文本生成、结构化 JSON 生成、视觉描述与语音转写。文本与视觉共用 client.ts 的
  * requestOpenAiTextResult，差别只在请求体：文本走一段 user 文本，视觉改喂
  * 一份 data URI 图片；语音转写直接调 audio.transcriptions 并自行归因（见
  * transcribeOpenAiVoice）。
@@ -17,9 +17,10 @@
 import OpenAI, { toFile } from "openai";
 import type { Uploadable } from "openai";
 import {
+  OPENAI_JSON_MAX_TOKENS,
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
-  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
+  OPENAI_REQUEST_TIMEOUTS_MS,
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
   OPENAI_STORE_RESPONSES,
 } from "../../consts/aiChat/openai";
@@ -37,6 +38,7 @@ import {
 import type { ProviderApiFailureKind } from "../ai/utils/mediaSupportError";
 import { getOpenAiClient, requestOpenAiTextResult } from "./client";
 import type {
+  AiJsonRequest,
   AiTextRequest,
   AiTextResult,
   AiVisionRequest,
@@ -59,6 +61,27 @@ export function generateOpenAiText(request: AiTextRequest): Promise<AiTextResult
     }),
     errorLabel: request.errorLabel,
     normalize: request.normalize,
+    signal: request.signal,
+  });
+}
+
+/**
+ * text 能力的一次结构化 JSON 生成：不挂工具，要求端点只输出 JSON 对象（`json_object`，
+ * DeepSeek 等兼容端点只支持这一档；Schema 由调用方写进提示词，解码与校验也由调用方负责）。
+ */
+export function generateOpenAiJson(request: AiJsonRequest): Promise<AiTextResult> {
+  return requestOpenAiTextResult({
+    capability: "text",
+    buildBody: (): OpenAI.Responses.ResponseCreateParamsNonStreaming => ({
+      model: getAgentDeploymentConfig().text.model,
+      instructions: request.systemPrompt,
+      input: request.userContent,
+      text: { format: { type: "json_object" } },
+      max_output_tokens: OPENAI_JSON_MAX_TOKENS,
+      store: OPENAI_STORE_RESPONSES,
+    }),
+    errorLabel: request.errorLabel,
+    normalize: (text: string): string => text.trim(),
     signal: request.signal,
   });
 }
@@ -114,7 +137,7 @@ export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<Ai
     if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };
     const requestSignal: AbortSignal = signalWithTimeout(
       request.signal,
-      OPENAI_MEDIA_REQUEST_TIMEOUT_MS
+      OPENAI_REQUEST_TIMEOUTS_MS.media
     );
     requestSignal.throwIfAborted();
     const response: OpenAI.Audio.Transcriptions.TranscriptionCreateResponse =

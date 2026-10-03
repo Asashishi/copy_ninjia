@@ -119,7 +119,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       const message = diskMessages.findLast((entry: DiskBusinessMessage) =>
         entry.type === "chatStateWrite" && entry.chatId === chatId);
       if (message?.type !== "chatStateWrite") throw new Error("missing write");
-      return storageWriteCost(message.data) + storageWriteCost(message.aiPersona);
+      return storageWriteCost(message.data);
     };
     expect(unacknowledgedChatStateBytes.current).toBe(cost(-1001) + cost(-1002));
     expect(unacknowledgedChatStateWrites.get(-1001)?.bytes).toBe(cost(-1001));
@@ -249,13 +249,13 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     };
     expect(await respawnListeners[0]!(transport)).toBeTrue();
     expect(replayed).toEqual([
-      { aiPersona: null,
+      {
         type: "chatStateWrite",
         chatId: -1001,
         data: JSON.stringify({ title: "after" }),
         revision: latestRevision,
       },
-      { aiPersona: null,
+      {
         type: "chatStateWrite",
         chatId: -1002,
         data: null,
@@ -316,7 +316,6 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       type: "chatStateWrite",
       chatId: -1001,
       data: null,
-      aiPersona: null,
       revision,
     }]);
     expect(unacknowledgedChatStateWrites.get(-1001)).toMatchObject({ revision, deleted: true });

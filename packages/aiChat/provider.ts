@@ -1,36 +1,32 @@
 /**
  * AI agent 按能力选择 SDK 实现的唯一入口。
  *
- * config/dynamic/agent.json 的 text、summary、media、image、tts 各自声明 provider；这里
- * 只把 google/openai 映射到实现包，不做运行时故障切换，也不从模型名或 base_url
+ * config/dynamic/agent.json 的 text、summary、media、image、tts、web_search 各自声明 provider；这里
+ * 只把 google/openai/anthropic 映射到实现包，不做运行时故障切换，也不从模型名或 base_url
  * 猜供应商。api_key 与端点同样来自该能力配置；启动总闸会在建立外部连接前完成
  * 严格校验。跨模块与生命周期约束见 docs/cn/04-invariants.md。
  *
- * 归属 AI 闲聊 Worker：所有调用方都在该线程上。
+ * 归属 AI 闲聊 Worker：所有调用方都在该线程上。各能力门面经 aiChat/providerLanes.ts 的配额 lane
+ * 排队。
  */
 
 import { claimOperatorTtsUsage } from "./ai/ttsUsage";
 import { ttsQuotaLimit } from "./ai/utils/ttsUsageWindow";
+import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
 import { openAiProvider } from "./openai";
 import {
   aiProviderFacades,
-  aiProviderQuotaLanes,
   resetAiProviderFacades,
 } from "../cache/workers/aiChat/providerScheduler";
 import { geminiClientCache } from "../cache/workers/aiChat/gemini";
 import { textGeminiContextCache } from "../cache/workers/aiChat/geminiContextCache";
 import { resetMediaInputSupport } from "../cache/workers/aiChat/mediaInputSupport";
 import { openAiClientCache } from "../cache/workers/aiChat/openai";
-import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../config/agent";
-import {
-  AI_PROVIDER_BACKGROUND_MAX_PENDING,
-  AI_PROVIDER_INTERACTIVE_BURST,
-  AI_PROVIDER_MAX_CONCURRENT,
-  AI_PROVIDER_MAX_PENDING,
-} from "../consts/aiChat/provider";
+import { anthropicClientCache } from "../cache/workers/aiChat/anthropic";
+import { adoptAgentDeploymentConfig, getAgentDeploymentConfig, requireAgentCapabilityConfig } from "../config/agent";
 import { logger } from "../infra/logger";
-import { createPrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
+import { pruneQuotaLanes, quotaRunnerFor } from "./providerLanes";
 import type {
   AgentDeploymentConfig,
   AgentCapabilityConfig,
@@ -56,8 +52,13 @@ import type {
   AiTextProvider,
   AiVisionRequest,
   AiVoiceRequest,
+  AiJsonRequest,
+  AiStructuredTextProvider,
+  AiWebSearchCapability,
+  AiWebSearchFacade,
+  AiWebSearchRequest,
+  AiWebSearchResult,
 } from "../types/aiChat/provider";
-import type { AiProviderQuotaLane } from "../types/aiChat/providerScheduler";
 import type { GeneratedChatImage } from "../types/aiChat/imageGeneration";
 import type { SpeechSynthesisAttempt, SynthesizedSpeech } from "../types/aiChat/voiceMessage";
 import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
@@ -66,50 +67,8 @@ import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTas
 const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiChatProvider>> = {
   google: geminiProvider,
   openai: openAiProvider,
+  anthropic: anthropicProvider,
 };
-
-/**
- * 读取 text、summary、media 三项必备能力的部署配置；未配置时抛错，不做凭据或故障回退。
- */
-function capabilityConfig(capability: "text" | "summary" | "media"): AgentCapabilityConfig {
-  const config: AgentCapabilityConfig | undefined = getAgentDeploymentConfig()[capability];
-  if (config === undefined) {
-    throw new Error(`Agent capability "${capability}" is not configured.`);
-  }
-  return config;
-}
-
-/** 配额归属只看的三项：供应商协议、端点与凭据；各能力配置（含 xai 语音协议）都带这三项。 */
-type QuotaLaneIdentity = Pick<AiProviderQuotaLane, "provider" | "baseUrl" | "apiKey">;
-
-/**
- * 以供应商协议、端点与凭据识别真实配额归属。模型名刻意不参与：同一账号下的
- * 多模型通常仍共享项目级额度，拆开会让总并发悄悄倍增。
- */
-function isQuotaLaneOf(lane: AiProviderQuotaLane, config: QuotaLaneIdentity): boolean {
-  return lane.provider === config.provider &&
-    lane.baseUrl === config.baseUrl &&
-    lane.apiKey === config.apiKey;
-}
-
-function quotaRunnerFor(config: QuotaLaneIdentity): PrioritizedBoundedTaskRunner {
-  for (const lane of aiProviderQuotaLanes) {
-    if (isQuotaLaneOf(lane, config)) return lane.runner;
-  }
-  const lane: AiProviderQuotaLane = {
-    provider: config.provider,
-    baseUrl: config.baseUrl,
-    apiKey: config.apiKey,
-    runner: createPrioritizedBoundedTaskRunner({
-      maxConcurrent: AI_PROVIDER_MAX_CONCURRENT,
-      maxPending: AI_PROVIDER_MAX_PENDING,
-      maxBackgroundPending: AI_PROVIDER_BACKGROUND_MAX_PENDING,
-      interactiveBurst: AI_PROVIDER_INTERACTIVE_BURST,
-    }),
-  };
-  aiProviderQuotaLanes.push(lane);
-  return lane.runner;
-}
 
 function queueRejectedReplyTurn(): AiReplyTurn {
   return {
@@ -268,10 +227,57 @@ function createSpeechFacade(
   };
 }
 
+/** createWebSearchFacade 的入参。 */
+interface WebSearchFacadeParams {
+  readonly provider: AiChatProvider;
+  /** 绑定的能力；配额 lane 按它的配置归属。 */
+  readonly capability: AiWebSearchCapability;
+  readonly config: AgentCapabilityConfig;
+  readonly priority: AiProviderTaskPriority;
+}
+
+/**
+ * 联网检索门面：绑定能力后经配额闸门排队；队列已满或排队期间被取消时按一次都没检索的
+ * 失败结算。
+ */
+function createWebSearchFacade({ provider, capability, config, priority }: WebSearchFacadeParams): AiWebSearchFacade {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  return {
+    name: provider.name,
+    async searchWeb(request: AiWebSearchRequest): Promise<AiWebSearchResult> {
+      const result: AiWebSearchResult | undefined = await runner.run(
+        priority,
+        (): Promise<AiWebSearchResult> => provider.searchWeb(capability, request),
+        request.signal
+      );
+      return result ?? { ok: false, searchCalls: 0 };
+    },
+  };
+}
+
+/** text 能力的结构化 JSON 生成门面：按后台优先级排队，队列已满或被取消时按不可重试失败返回。 */
+function createStructuredTextFacade(
+  provider: AiChatProvider,
+  config: AgentCapabilityConfig
+): AiStructuredTextProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
+  return {
+    name: provider.name,
+    async generateJson(request: AiJsonRequest): Promise<AiTextResult> {
+      const result: AiTextResult | undefined = await runner.run(
+        "background",
+        (): Promise<AiTextResult> => provider.generateJson(request),
+        request.signal
+      );
+      return result ?? { ok: false, retryable: false };
+    },
+  };
+}
+
 /** 带工具往返的群聊正文能力；真实模型请求经过交互优先的配额闸门。 */
 export function textAiProvider(): AiTextProvider {
   if (aiProviderFacades.text !== undefined) return aiProviderFacades.text;
-  const config: AgentCapabilityConfig = capabilityConfig("text");
+  const config: AgentCapabilityConfig = requireAgentCapabilityConfig("text");
   const facade: AiTextProvider = createTextFacade(AI_CHAT_PROVIDERS[config.provider], config);
   aiProviderFacades.text = facade;
   return facade;
@@ -280,7 +286,7 @@ export function textAiProvider(): AiTextProvider {
 /** 记忆压缩与贴纸包简介的无状态摘要能力；固定使用后台等待额度。 */
 export function summaryAiProvider(): AiSummaryProvider {
   if (aiProviderFacades.summary !== undefined) return aiProviderFacades.summary;
-  const config: AgentCapabilityConfig = capabilityConfig("summary");
+  const config: AgentCapabilityConfig = requireAgentCapabilityConfig("summary");
   const facade: AiSummaryProvider = createSummaryFacade(AI_CHAT_PROVIDERS[config.provider], config);
   aiProviderFacades.summary = facade;
   return facade;
@@ -294,7 +300,7 @@ export function mediaAiProvider(
     ? aiProviderFacades.media
     : aiProviderFacades.mediaBackground;
   if (cached !== undefined) return cached;
-  const config: AgentCapabilityConfig = capabilityConfig("media");
+  const config: AgentCapabilityConfig = requireAgentCapabilityConfig("media");
   const facade: AiMediaProvider = createMediaFacade(
     AI_CHAT_PROVIDERS[config.provider],
     config,
@@ -306,8 +312,8 @@ export function mediaAiProvider(
 }
 
 /** optionalCapabilityFacade 的入参。 */
-interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts", TFacade> {
-  /** 部署配置里的能力键，也是记忆化槽位名。 */
+interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts" | "webSearch", TFacade> {
+  /** AgentDeploymentConfig 上的能力字段名，也是记忆化槽位名。 */
   readonly capability: TCapability;
   /** 当前缓存值；`undefined` 专表「还没问过」。 */
   readonly cached: TFacade | null | undefined;
@@ -318,10 +324,10 @@ interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts", TF
 }
 
 /**
- * 可缺席能力（image、tts）的门面记忆化：缺配置时把 `null` 也缓存下来。
+ * 可缺席能力（image、tts、web_search）的门面记忆化：缺配置时把 `null` 也缓存下来。
  * `undefined` 专表「还没问过」，`null` 表「问过、没配」，两者严格分开缓存。
  */
-function optionalCapabilityFacade<TCapability extends "image" | "tts", TFacade>({
+function optionalCapabilityFacade<TCapability extends "image" | "tts" | "webSearch", TFacade>({
   capability,
   cached,
   create,
@@ -361,6 +367,47 @@ export function ttsAiProvider(): AiSpeechFacade | null {
 }
 
 /**
+ * web_search 能力的联网检索执行器（交互优先：回复在等它）；未配置时回复改挂 text 模型的内建
+ * 检索，cron 摘要改用 textWebSearchAiProvider。
+ */
+export function webSearchAiProvider(): AiWebSearchFacade | null {
+  return optionalCapabilityFacade<"webSearch", AiWebSearchFacade>({
+    capability: "webSearch",
+    cached: aiProviderFacades.webSearch,
+    create: (config: AgentCapabilityConfig): AiWebSearchFacade => createWebSearchFacade({
+      provider: AI_CHAT_PROVIDERS[config.provider],
+      capability: "web_search",
+      config,
+      priority: "interactive",
+    }),
+    store: (facade: AiWebSearchFacade | null): void => { aiProviderFacades.webSearch = facade; },
+  });
+}
+
+/** 用 text 模型执行的联网检索（后台优先级）：没配 web_search 时 cron 摘要的检索段用它。 */
+export function textWebSearchAiProvider(): AiWebSearchFacade {
+  if (aiProviderFacades.textWebSearch !== undefined) return aiProviderFacades.textWebSearch;
+  const config: AgentCapabilityConfig = requireAgentCapabilityConfig("text");
+  const facade: AiWebSearchFacade = createWebSearchFacade({
+    provider: AI_CHAT_PROVIDERS[config.provider],
+    capability: "text",
+    config,
+    priority: "background",
+  });
+  aiProviderFacades.textWebSearch = facade;
+  return facade;
+}
+
+/** text 能力的结构化 JSON 生成（cron 摘要组稿）。 */
+export function structuredTextAiProvider(): AiStructuredTextProvider {
+  if (aiProviderFacades.structuredText !== undefined) return aiProviderFacades.structuredText;
+  const config: AgentCapabilityConfig = requireAgentCapabilityConfig("text");
+  const facade: AiStructuredTextProvider = createStructuredTextFacade(AI_CHAT_PROVIDERS[config.provider], config);
+  aiProviderFacades.structuredText = facade;
+  return facade;
+}
+
+/**
  * 启动诊断：能力配置齐全、结构校验也过了，但选中的那一家**根本没有**这项能力
  * （工具不挂、语音不转写）。这不是错误配置，不拒绝启动。
  *
@@ -383,19 +430,10 @@ export function reportUnimplementedAgentCapabilities(): void {
   }
 }
 
-/** lane 仍被新快照的某项能力引用时保留。 */
-function isQuotaLaneInUse(lane: AiProviderQuotaLane, config: AgentDeploymentConfig): boolean {
-  return isQuotaLaneOf(lane, config.text) ||
-    isQuotaLaneOf(lane, config.summary) ||
-    isQuotaLaneOf(lane, config.media) ||
-    (config.image !== undefined && isQuotaLaneOf(lane, config.image)) ||
-    (config.tts !== undefined && isQuotaLaneOf(lane, config.tts));
-}
-
 /**
  * 接管主线程热重载投递的 agent 对话能力快照（见 workers/aiChat/configReload.ts）。
  *
- * 整体替换本线程 holder 后丢弃按旧快照建立的能力门面与两家 SDK 客户端，下一次
+ * 整体替换本线程 holder 后丢弃按旧快照建立的能力门面与三家 SDK 客户端，下一次
  * 取用按新快照重建；在途请求继续持有旧门面与旧客户端直至结算。同一协议、端点
  * 与凭据的配额 lane 原样保留，并发额度跨重载延续；不再被任何能力引用的 lane
  * 从表中摘除。media 能力变化时两种输入模态回到未探测状态；text 能力变化时丢弃
@@ -409,12 +447,9 @@ export function reloadAgentDeploymentConfig(config: AgentDeploymentConfig): void
   resetAiProviderFacades();
   geminiClientCache.current = null;
   openAiClientCache.current = null;
+  anthropicClientCache.current = null;
   if (!Bun.deepEquals(previousText, config.text)) textGeminiContextCache.current = null;
-  let kept: number = 0;
-  for (const lane of aiProviderQuotaLanes) {
-    if (isQuotaLaneInUse(lane, config)) aiProviderQuotaLanes[kept++] = lane;
-  }
-  aiProviderQuotaLanes.length = kept;
+  pruneQuotaLanes(config);
   if (!Bun.deepEquals(previousMedia, config.media)) resetMediaInputSupport();
   reportUnimplementedAgentCapabilities();
 }

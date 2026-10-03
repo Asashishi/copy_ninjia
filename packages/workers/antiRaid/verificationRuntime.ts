@@ -3,11 +3,13 @@ import {
   LOCKDOWN_KICK_DEDUPE_MS,
 } from "../../consts/antiRaid/verification";
 import {
+  canAdmitVerificationRevision,
   deferredVerificationRecords,
   threadCommentConfirmations,
   verificationEntries,
   verificationGeneration,
   verificationRevisions,
+  verificationRevisionCapacityFatalState,
 } from "../../cache/workers/antiRaid/verification";
 import type {
   AdoptVerificationsMessage,
@@ -19,6 +21,7 @@ import type {
 import type {
   VerificationDeleteEvent,
   VerificationDeferredEvent,
+  VerificationRevisionCapacityExceededEvent,
   VerificationUpsertEvent,
 } from "../../types/antiRaid/events";
 import {
@@ -52,6 +55,16 @@ import {
 import { isTerminalVerificationPhase } from "../../states/verification/shared";
 
 declare const self: Worker;
+
+/** 新 key 满额时只报告一次，主线程按现有业务 Worker fatal 边界停止服务。 */
+function reportVerificationRevisionCapacity(): void {
+  if (verificationRevisionCapacityFatalState.current) return;
+  verificationRevisionCapacityFatalState.current = true;
+  self.postMessage({
+    type: "verificationRevisionCapacityExceeded",
+    generation: verificationGeneration.current,
+  } satisfies VerificationRevisionCapacityExceededEvent);
+}
 
 /**
  * 入群验证状态机（packages/states/verification.ts）的核心解释器。
@@ -99,6 +112,10 @@ export function dispatchVerification(
   event: VerificationEvent
 ): void {
   const key: string = verificationKey(chatId, userId);
+  if (event.type === "join" && !canAdmitVerificationRevision(key)) {
+    reportVerificationRevisionCapacity();
+    return;
+  }
   const entry: VerificationEntry | undefined = verificationEntries.get(key);
   const previousWasPersisted: boolean =
     isPersistedVerificationState(entry?.state);
@@ -147,7 +164,7 @@ export function dispatchVerification(
   }
 }
 
-/** 预算耗尽只发布最小延后索引；不得递增 revision 或写删除墓碑。 */
+/** 预算耗尽或许可无法确认时只发布最小延后索引，不递增 revision 或写删除墓碑。 */
 function publishVerificationDeferred(chatId: number, userId: number): void {
   if (verificationGeneration.current <= 0) return;
   const key: string = verificationKey(chatId, userId);
@@ -228,6 +245,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     }
     verificationEntries.clear();
     verificationRevisions.clear();
+    verificationRevisionCapacityFatalState.current = false;
     deferredVerificationRecords.clear();
     threadCommentConfirmations.clear();
     clearReminderDeliveries();
@@ -238,6 +256,10 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
   for (const record of message.deferredVerifications ?? []) {
     if (record.generation !== message.generation) continue;
     const key: string = verificationKey(record.chatId, record.userId);
+    if (!canAdmitVerificationRevision(key)) {
+      reportVerificationRevisionCapacity();
+      return;
+    }
     deferredVerificationRecords.set(key, { ...record });
     verificationRevisions.set(key, {
       revision: record.revision,
@@ -247,6 +269,10 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
 
   for (const record of message.verifications) {
     const key: string = verificationKey(record.chatId, record.userId);
+    if (!canAdmitVerificationRevision(key)) {
+      reportVerificationRevisionCapacity();
+      return;
+    }
     if ((verificationRevisions.get(key)?.revision ?? 0) >= record.revision) {
       continue;
     }
@@ -303,9 +329,11 @@ export function handleVerificationPersisted(
   if (parsed === null) return;
   const chatId: number = parsed.chatId;
   const userId: number = parsed.userId;
-  const state: VerificationState | undefined =
-    verificationEntries.get(message.key)?.state;
+  const entry: VerificationEntry | undefined = verificationEntries.get(message.key);
+  const state: VerificationState | undefined = entry?.state;
   if (state === undefined || !isTerminalVerificationPhase(state.kind)) return;
+  // 成功播报的落盘回执立即收尾；其它重复回执不得绕过当前终态的退避 timer。
+  if (!(state.kind === "expelling" && state.successNoticeSent === true) && entry?.timer !== undefined) return;
   dispatchVerification(
     chatId,
     userId,
@@ -374,6 +402,7 @@ export function stopVerificationRuntime(): void {
   }
   verificationEntries.clear();
   verificationRevisions.clear();
+  verificationRevisionCapacityFatalState.current = false;
   deferredVerificationRecords.clear();
   verificationGeneration.current = 0;
 }

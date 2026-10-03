@@ -4,6 +4,7 @@
  * GC 暂停由父进程从本进程 stderr 的唯一测量窗口解析。
  */
 import { COMPACT_BATCH_SIZE } from "../../../packages/consts/aiChat/memory";
+import "../../../packages/config/bot";
 import { sanitizeInline } from "../../../packages/libs/text";
 import { buildBufferedMessage } from "../../../packages/workers/aiChat/bufferedMessage";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
@@ -11,7 +12,7 @@ import { snapshotHeap } from "../heapSnapshot";
 import type { HeapSnapshot } from "../heapSnapshot";
 import { beginGcProfileWindow, endGcProfileWindow } from "../hotPaths/gcProfile";
 import { collectJitTiers, diffJitTiers } from "../hotPaths/jitTiers";
-import { readProcessMemoryUsage } from "../hotPaths/liveMemory";
+import { readInterruptibleMemory } from "../hotPaths/liveMemory";
 import type { JitTierCounts, JitTierStats, Scenario } from "../hotPaths/types";
 import { median } from "../statistics";
 import { findTextReviewScenario, textReviewInputs, textReviewIterations } from "./textFixture";
@@ -63,7 +64,7 @@ function runSanitize(count: number): number {
 function runMessage(count: number): number {
   for (let index: number = 0; index < count; index++) {
     const input: TextReviewInput = inputs[index % inputs.length]!;
-    // 不传时刻：计入生产默认的 Date.now() 与东京时间格式化。
+    // 不传时刻：计入生产默认的 Date.now() 与配置时区的时间格式化。
     const value: BufferedMessage | null = buildBufferedMessage(input.source, input.text);
     if (value === null) throw new Error(`${definition.name}: fixture message was discarded.`);
     retainedWindow[index % COMPACT_BATCH_SIZE] = value;
@@ -103,7 +104,7 @@ while (stableSamples < REQUIRED_STABLE_WARMUP_SAMPLES && warmupSamples < MAX_WAR
   sampleNsPerOp();
   // 与正式样本做同样的内存读取：进程内首次 process.memoryUsage() 会让已编译的
   // 热函数重新编译，必须落在预热内，稳定判定才对正式采样成立。
-  readProcessMemoryUsage();
+  readInterruptibleMemory(process.memoryUsage);
   warmupSamples++;
   const next: Record<string, JitTierCounts> = collectJitTiers(scenario);
   stableSamples = tiersAreStable(tiersAfterWarmup, next) ? stableSamples + 1 : 0;
@@ -113,14 +114,14 @@ if (stableSamples < REQUIRED_STABLE_WARMUP_SAMPLES) {
   throw new Error(`${definition.name}: JIT probes did not stabilize before formal sampling.`);
 }
 
-const before: NodeJS.MemoryUsage = readProcessMemoryUsage();
+const before: NodeJS.MemoryUsage = readInterruptibleMemory(process.memoryUsage);
 let peakHeapUsed: number = before.heapUsed;
 let peakRss: number = before.rss;
 const samplesNsPerOp: number[] = [];
 const gcWindowStartedAt: number = beginGcProfileWindow();
 for (let sample: number = 0; sample < SAMPLE_COUNT; sample++) {
   samplesNsPerOp.push(sampleNsPerOp());
-  const memory: NodeJS.MemoryUsage = readProcessMemoryUsage();
+  const memory: NodeJS.MemoryUsage = readInterruptibleMemory(process.memoryUsage);
   peakHeapUsed = Math.max(peakHeapUsed, memory.heapUsed);
   peakRss = Math.max(peakRss, memory.rss);
 }

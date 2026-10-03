@@ -25,6 +25,7 @@ import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { FlushResult } from "../../types/lifecycle";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 import { stickerPacksForRecovery } from "../../config/stickers";
+import { getTimeZone } from "../../config/time";
 import {
   pauseDiskIODiagnosticChannel,
   resumeDiskIODiagnosticChannel,
@@ -265,6 +266,7 @@ function beginRuntimeRecovery(worker: Worker): void {
   diskIORuntime.runtimeRecoveryTimer.unref();
   const request: LoadRequest = {
     type: "load",
+    timeZone: getTimeZone(),
     stickerPacks: stickerPacksForRecovery(),
   };
   if (!safePostDiskIO(worker, request, "runtime load request")) {

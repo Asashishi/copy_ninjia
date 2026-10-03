@@ -1,8 +1,9 @@
-/** ad_detect 按配置选择 Google 或 OpenAI 兼容传输，不做运行时故障切换。 */
+/** ad_detect 按配置选择 Google、OpenAI 兼容或 Anthropic 传输，不做运行时故障切换。 */
 
 import { getAdDetectAgentConfig } from "../../../../config/agent";
 import { requestOpenAiAdDetectJson } from "./openai";
 import { requestGoogleAdDetectJson } from "./google";
+import { requestAnthropicAdDetectJson } from "./anthropic";
 import type { AdDetectJsonRequestParams } from "../../../../types/antiRaid/adDetect";
 import type { AgentProvider } from "../../../../types/config";
 
@@ -12,6 +13,7 @@ type AdDetectRequest = (params: AdDetectJsonRequestParams) => Promise<string | n
 const AD_DETECT_PROVIDERS: Readonly<Record<AgentProvider, AdDetectRequest>> = {
   google: requestGoogleAdDetectJson,
   openai: requestOpenAiAdDetectJson,
+  anthropic: requestAnthropicAdDetectJson,
 };
 
 /** 按 ad_detect.provider 发起一次结构化判定请求。 */

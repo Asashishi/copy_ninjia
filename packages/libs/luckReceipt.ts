@@ -8,8 +8,7 @@ import {
 import type { LuckReceiptSecret } from "../types/diskIO/storage";
 
 /**
- * cache key 的编解码器在模块级复用，处理方式同 libs/text.ts 的 GRAPHEME_SEGMENTER 与
- * libs/time.ts 的 TOKYO_FULL_TIME_FORMATTER：这两个类在 Bun 上恒可用、构造不会失败。
+ * cache key 的 UTF-8 编解码器在模块级复用。
  *
  * 解码器带 `fatal: true`：非法 UTF-8 必须抛出而不是替换成 U+FFFD，否则伪造的
  * cache key 会被悄悄改写成另一个合法字符串。抛出后实例仍可继续使用——每次
@@ -75,7 +74,7 @@ function signature(secret: LuckReceiptSecret, unsignedReceipt: string): Uint8Arr
     .digest();
 }
 
-/** 自描述签名回执：版本、东京日期、cache key 与完整 HMAC。 */
+/** 自描述签名回执：版本、配置时区的日期、cache key 与完整 HMAC。 */
 export function createLuckReceipt(secret: LuckReceiptSecret, cacheKey: string): string {
   assertValidCacheKey(cacheKey);
   const unsigned: string = `luck:v1:${secret.day}:${encodeCacheKey(cacheKey)}`;

@@ -130,7 +130,7 @@ function inspectStaleLuckFiles(
       return invalidInput(path, "$filename", "a canonical calendar date");
     }
     if (day > todayKey) {
-      return invalidInput(path, "$filename", "a date no later than the current Tokyo day");
+      return invalidInput(path, "$filename", "a date no later than the current configured local day");
     }
     if (day < todayKey) stalePaths.push(path);
   }

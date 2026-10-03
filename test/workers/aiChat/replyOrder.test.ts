@@ -49,7 +49,7 @@ mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
 mock.module("../../../packages/workers/aiChat/promptContext", () => ({
   buildReplyPromptSections: (_chat: number, _self: unknown, options: UserContentOptions): ReplyPromptSections => {
     contexts.set(options.triggerMessageId, options);
-    return { referenceMemory: "", currentConversation: "", replyTask: String(options.triggerMessageId) };
+    return { referenceMemory: "", currentConversation: "", currentConversationSettledOffsets: [], replyTask: String(options.triggerMessageId) };
   },
 }));
 mock.module("../../../packages/workers/aiChat/replyModel", () => ({

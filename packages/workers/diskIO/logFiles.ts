@@ -1,15 +1,16 @@
 /**
  * 日志落盘逻辑：接收 diskIOWorker.ts 从诊断批路由来的日志消息，先进入内存 buffer，
  * 每个诊断批消费完、每日维护或收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
- * JSON 对象，键为「东京日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
+ * JSON 对象，键为「配置时区的日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
  * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
  * 一致。
  *
- * 键按时间单调递增，新条目永远位于对象末尾，因此落盘不整文件重写——具体的
+ * 键包含记录时的本地时间与独立 UUID，新条目追加到对象末尾；夏令时回拨时本地时间可重复。
+ * 落盘不整文件重写——具体的
  * 按位置追加/损坏修复机制见 diskIO/appendOnlyDayFile.ts。
  * 仅保留 RETENTION_DAYS 天内的文件（见 consts/diskIO/appendOnly.ts），跨天写入
- * 与每日维护都会清理过期文件。日期与 key 前缀按东京时区划分（libs/time.ts 的
- * getTokyoDateKey、formatTokyoLogTimestamp），与部署机器的系统时区无关。
+ * 与每日维护都会清理过期文件。日期与 key 前缀按配置时区划分（libs/time.ts 的
+ * getDateKey、formatLogTimestamp），与部署机器的系统时区无关。
  */
 
 import { mkdirSync, readdirSync } from "node:fs";
@@ -22,9 +23,8 @@ import {
   LOG_REOPEN_RETRY_MS,
   RETENTION_DAYS,
 } from "../../consts/diskIO/appendOnly";
-import { DAY_MS } from "../../consts/diskIO/common";
 import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
-import { formatTokyoLogTimestamp, getTokyoDateKey } from "../../libs/time";
+import { formatLogTimestamp, getDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
 import { bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
@@ -50,14 +50,14 @@ function assertLogFileSchema(path: string, parsed: unknown): void {
   if (!isPlainRecord(parsed)) {
     throw new AppendOnlyFileFormatError(path, "must contain a top-level JSON object.");
   }
-  for (const [key, value] of Object.entries(parsed)) {
+  for (const [index, value] of Object.values(parsed).entries()) {
     if (
       !isPlainRecord(value) ||
       typeof value.level !== "string" ||
       typeof value.message !== "string" ||
       (value.args !== undefined && !Array.isArray(value.args))
     ) {
-      throw new AppendOnlyFileFormatError(path, `contains an invalid log record for key ${key}.`);
+      throw new AppendOnlyFileFormatError(path, `entry[${index}] must be a log record with string level and message and optional array args.`);
     }
   }
 }
@@ -122,7 +122,8 @@ function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)):
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
 async function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
-  const oldestKept: string = getTokyoDateKey(Date.now() - (RETENTION_DAYS - 1) * DAY_MS);
+  const oldestKept: string = Temporal.PlainDate.from(getDateKey())
+    .subtract({ days: RETENTION_DAYS - 1 }).toString();
   for (const name of names) {
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     // 删除失败不影响写入，下次跨天再试。
@@ -171,7 +172,7 @@ export interface LogFilesInspection {
 /** 跨域启动第一阶段：只读校验当前日志，并预计算必要的规范化内容。 */
 export async function inspectLogFiles(): Promise<LogFilesInspection> {
   const names: string[] = inspectOptionalDirectory(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
-  return { names, day: await inspectLogDay(getTokyoDateKey()) };
+  return { names, day: await inspectLogDay(getDateKey()) };
 }
 
 /** 全域 inspect 成功后接管日志游标；可修复尾部只在这一阶段原子发布。 */
@@ -234,9 +235,9 @@ export function handleLogMessage(msg: LogMessage): void {
     message: stringArgs.join(" "),
     args: hasStructuredArgs ? msg.args : undefined,
   };
-  // key 按东京日期时间前缀排序，uuid 段只区分同一毫秒内的多条日志。
+  // key 以配置时区的日期时间为前缀，uuid 区分重复本地时间与同一毫秒内的日志。
   markLogDirty({
-    day: getTokyoDateKey(msg.timestamp),
-    text: serializeDayFileEntry(`${formatTokyoLogTimestamp(msg.timestamp)}_${crypto.randomUUID()}`, record),
+    day: getDateKey(msg.timestamp),
+    text: serializeDayFileEntry(`${formatLogTimestamp(msg.timestamp)}_${crypto.randomUUID()}`, record),
   });
 }

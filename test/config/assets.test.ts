@@ -200,23 +200,34 @@ describe("parseAssetConfig", () => {
 
   test("未知分组、平铺在顶层的字段与放错组的字段都拒绝整份文件", () => {
     expect(() => parse({ fortuneThumbnailUrl: "https://cdn.example/f.png" }))
-      .toThrow("assets.json: $.fortuneThumbnailUrl must be absent (not part of the current assets schema).");
+      .toThrow("assets.json: $.<key> must be absent (not part of the current assets schema).");
     expect(() => parse({ gag_thumbnail_url: "https://cdn.example/g.png" }))
-      .toThrow("assets.json: $.gag_thumbnail_url must be absent (not part of the current assets schema).");
+      .toThrow("assets.json: $.<key> must be absent (not part of the current assets schema).");
     expect(() => parse(pathOrUrl({ gag_thumbnail_url: "https://cdn.example/g.png" }))).toThrow(
-      `assets.json: $.${ASSET_PATH_OR_URL_GROUP}.gag_thumbnail_url must be absent (not part of the current assets schema).`
+      `assets.json: $.${ASSET_PATH_OR_URL_GROUP}.<key> must be absent (not part of the current assets schema).`
     );
     expect(() => parse(pathOrUrl({ random_h_image_dir: "./images" }))).toThrow(
-      `assets.json: $.${ASSET_PATH_OR_URL_GROUP}.random_h_image_dir must be absent (not part of the current assets schema).`
+      `assets.json: $.${ASSET_PATH_OR_URL_GROUP}.<key> must be absent (not part of the current assets schema).`
     );
     expect(() => parse(onlyPath({ bot_default_avatar: "./face.png" }))).toThrow(
-      `assets.json: $.${ASSET_ONLY_PATH_GROUP}.bot_default_avatar must be absent (not part of the current assets schema).`
+      `assets.json: $.${ASSET_ONLY_PATH_GROUP}.<key> must be absent (not part of the current assets schema).`
     );
     expect(() => parse(pathOrUrl({ bot_default_avatar_url: "https://cdn.example/face.png" }))).toThrow(
-      `assets.json: $.${ASSET_PATH_OR_URL_GROUP}.bot_default_avatar_url must be absent (not part of the current assets schema).`
+      `assets.json: $.${ASSET_PATH_OR_URL_GROUP}.<key> must be absent (not part of the current assets schema).`
     );
     expect(() => parse(onlyUrl({ bot_default_avatar: "https://cdn.example/face.png" })))
-      .toThrow(`assets.json: ${onlyUrlField("bot_default_avatar")} must be absent (not part of the current assets schema).`);
+      .toThrow(`assets.json: $.${ASSET_ONLY_URL_GROUP}.<key> must be absent (not part of the current assets schema).`);
+  });
+
+  test("未知字段名包含敏感文本时，错误只给固定字段路径", () => {
+    const secret: string = "private-token-marker";
+    try {
+      parse(pathOrUrl({ [secret]: "value" }));
+      throw new Error("expected rejection");
+    } catch (error: unknown) {
+      expect((error as Error).message).toContain(`$.${ASSET_PATH_OR_URL_GROUP}.<key>`);
+      expect((error as Error).message).not.toContain(secret);
+    }
   });
 
   test("内置缺省直链本身能通过同一道校验且归一化后不变", () => {

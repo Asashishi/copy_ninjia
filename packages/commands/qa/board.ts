@@ -120,7 +120,7 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   const stored: ReadonlyMap<string, string> | undefined = chatQaEntries.get(chatId);
   const entries: QaEntry[] = [];
   if (stored !== undefined) for (const [q, a] of stored) entries.push({ q, a });
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const pages: readonly RichTextMessage[] = buildQaBoardPages(entries, atmosphere);
   if (pages.length === 0) {
     // 看板还挂着，条目却已经被删光：就地收敛成「空空如也」并收走翻页条，

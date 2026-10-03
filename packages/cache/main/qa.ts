@@ -1,4 +1,4 @@
-/** Owner: 主线程。群问答的权威热缓存与 `/qa set` 表单会话。 */
+/** owner: main。群问答的权威热缓存与 `/qa set` 表单会话。 */
 
 import type { QaFormSession, UnacknowledgedChatQaWrite } from "../../types/qa";
 

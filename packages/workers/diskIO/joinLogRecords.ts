@@ -54,8 +54,8 @@ export function assertJoinLogSchema(
 }
 
 /**
- * 由一个 YYYY-MM-DD 锚点生成包含锚点在内的前 N 个日期。这里只对固定 UTC+9
- * 的东京自然日使用 DAY_MS，不把这套算法推广到有夏令时的时区。
+ * 由 YYYY-MM-DD 锚点生成包含锚点在内的前 N 个公历日期。
+ * 日期串映射到 UTC 后按 DAY_MS 回退，不计算配置时区的实际日长。
  */
 export function recentJoinLogDayKeys(
   day: string,
@@ -72,7 +72,7 @@ export function recentJoinLogDayKeys(
 }
 
 /**
- * 判断目标日是否落在锚点及其之前的 N 个东京自然日内。高频单条写入用此函数，
+ * 判断目标日是否落在锚点及其之前的 N 个配置时区的自然日内。高频单条写入用此函数，
  * 避免只为一次 contains 判断分配临时 Set。
  */
 export function isRecentJoinLogDay(

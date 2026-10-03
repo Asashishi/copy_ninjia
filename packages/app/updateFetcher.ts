@@ -9,7 +9,7 @@ import {
 } from "../consts/updateRunner";
 import { logger } from "../infra/logger";
 import { createMonotonicDeadline, remainingMonotonicTime } from "../libs/monotonicDeadline";
-import { signalArgs } from "../libs/telegramSignalArgs";
+import { telegramSignal } from "../libs/telegramSignal";
 import { sleep } from "../libs/sleep";
 import type { TelegramAllowedUpdates } from "../types/lifecycle";
 
@@ -40,7 +40,7 @@ export function createAcknowledgedUpdateFetcher(
       signal.throwIfAborted();
       try {
         // SDK 声明引用 abort-controller shim；运行时只传递 Bun 原生信号。
-        const updates: Update[] = await api.getUpdates(payload, ...signalArgs(signal));
+        const updates: Update[] = await api.getUpdates(payload, telegramSignal(signal));
         const last: Update | undefined = updates[updates.length - 1];
         if (last !== undefined) offset = last.update_id + 1;
         return updates;

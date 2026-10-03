@@ -1,8 +1,5 @@
 import type { CronAllChats, CronExceptChats } from "../types/cron";
 
-/** cron.json 任务缺省的 IANA 时区，属 packages/config/cron.ts；与 Disk I/O 每日维护一致，不继承宿主机时区。 */
-export const CRON_DEFAULT_TIME_ZONE: string = "Asia/Tokyo";
-
 /**
  * cron.json 任务 `chat_id` 数组的「所有群」写法，属 packages/config/cron.ts：
  * 写成 `["all"]` 时每一轮向所有已启用、且机器人此刻能发出全部动作的群逐个发送。
@@ -33,11 +30,20 @@ export const CRON_TASK_NAME_MAX_CHARS: number = 64;
 /** `rand_cron` 区间允许的最小等待毫秒数（1 分钟），属 packages/config/cron.ts。 */
 export const CRON_RANDOM_INTERVAL_MIN_MS: number = 60_000;
 
-/**
- * `rand_cron` 区间允许的最大等待毫秒数（24 天），属 packages/config/cron.ts；低于单个
- * JavaScript timer 能表达的上限（约 24.8 天），随机等待只需一个 setTimeout。
- */
+/** `rand_cron` 区间允许的最大等待毫秒数（24 天），属 packages/config/cron.ts。 */
 export const CRON_RANDOM_INTERVAL_MAX_MS: number = 24 * 24 * 60 * 60_000;
+
+/**
+ * cron 表达式的时间粒度（1 分钟）毫秒数，属 packages/cron/scheduler.ts：`rand_cron` 的随机
+ * 时刻向上取整到它的整数倍，再写成只匹配那一分钟的表达式。
+ */
+export const CRON_MINUTE_MS: number = 60_000;
+
+/**
+ * `rand_cron` 随机时刻所注册的一次性 cron 的时区，属 packages/cron/scheduler.ts；表达式按
+ * UTC 字段写出，与任务自己的 `time_zone` 无关。
+ */
+export const CRON_RANDOM_FIRE_TIME_ZONE: string = "UTC";
 
 /**
  * `chat_id: ["all"]` 交给目标解析的空排除表，属 packages/cron/run.ts；

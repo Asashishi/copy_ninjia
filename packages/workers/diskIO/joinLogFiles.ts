@@ -17,11 +17,10 @@ import {
 } from "../../consts/diskIO/appendOnly";
 import {
   JOIN_LOG_ACCEPTED_EVENT_DAYS,
-  JOIN_LOG_FILE_RETENTION_DAYS,
   JOIN_LOG_REOPEN_RETRY_MS,
 } from "../../consts/diskIO/joinLog";
 import { DAY_MS } from "../../consts/diskIO/common";
-import { getTokyoDateKey } from "../../libs/time";
+import { getDateKey } from "../../libs/time";
 import type {
   JoinLogDeleteDiskMessage,
   JoinLogDiskMessage,
@@ -34,11 +33,11 @@ import type {
 } from "../../types/diskIO/storage";
 import {
   isRecentJoinLogDay,
-  recentJoinLogDayKeys,
 } from "./joinLogRecords";
 import {
   cleanupExpiredJoinLogDays,
   purgeChatJoinLogFiles,
+  retainedJoinLogDayKeys,
 } from "./joinLogRecovery";
 import {
   dayOfFileKey,
@@ -58,7 +57,7 @@ async function ensureCurrentDayPrepared(today: string): Promise<void> {
     // 群写失败就整体拒绝跨日准备的话，每日维护与 `/batch_kick` 读取都会卡在同一个
     // 检查上，而清理动的是保留窗口**之外**的文件，与它们毫无关系。
     const retainedDays: ReadonlySet<string> =
-      recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
+      retainedJoinLogDayKeys(today);
     for (const key of failedKeys) {
       if (!retainedDays.has(dayOfFileKey(key))) return;
     }
@@ -68,7 +67,7 @@ async function ensureCurrentDayPrepared(today: string): Promise<void> {
 
 /** 每日维护先提交跨日前缓冲，再清理入群日志保留窗口外的文件。 */
 export async function maintainJoinLogRetention(
-  today: string = getTokyoDateKey()
+  today: string = getDateKey()
 ): Promise<void> {
   await ensureCurrentDayPrepared(today);
   if (joinLogCleanupDay.current !== today) {
@@ -112,7 +111,7 @@ async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
     publishJoinLogPersisted();
     return new Set<string>();
   }
-  const today: string = getTokyoDateKey();
+  const today: string = getDateKey();
   const entries: BufferedJoinLogEntry[] = joinLogBuffer.entries;
   joinLogBuffer.entries = [];
   let aheadEntries: BufferedJoinLogEntry[] | null = null;
@@ -159,7 +158,7 @@ async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
     joinLogBuffer.entries = aheadEntries === null
       ? failedEntries.concat(joinLogBuffer.entries)
       : failedEntries.concat(aheadEntries, joinLogBuffer.entries);
-    // 领先条目只需等东京日期追上；失败分组在各自退避期内由 writeFileEntries 直接跳过。
+    // 领先条目只需等配置时区的日期追上；失败分组在各自退避期内由 writeFileEntries 直接跳过。
     armDiskIOFlushTimer(
       joinLogBuffer,
       aheadEntries === null ? JOIN_LOG_REOPEN_RETRY_MS : FLUSH_INTERVAL_MS,
@@ -203,15 +202,20 @@ export function handleJoinLogDeleteMessage(msg: JoinLogDeleteDiskMessage): void 
  * - **过旧**（停机后 Telegram 重投的几天前入群）是**有意静默丢弃**。滚动 24 小时
  *   窗口本来就用不上它；缓冲为空时立即发出处置回执，免得这类事实占住主线程镜像。
  * - **领先**（事件日期比本 Worker 的今天还晚）是事件时间与宿主时钟对不上，典型是
- *   Telegram 先跨过东京零点。它照常进缓冲，由 flush 留到本 Worker 的日期追上后再写：
+ *   Telegram 先跨过配置时区的零点。它照常进缓冲，由 flush 留到本 Worker 的日期追上后再写：
  *   提前建出未来日期文件会让下一次启动恢复拒绝启动。
  */
 export async function handleJoinLogMessage(
   msg: JoinLogDiskMessage
 ): Promise<void> {
-  const today: string = getTokyoDateKey();
-  // YYYY-MM-DD 定宽零填充，字典序即日期序。
-  if (msg.day <= today && !isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS)) {
+  const now: number = Date.now();
+  const today: string = getDateKey(now);
+  // 日期窗口外仍可能落在夏令时短日跨越的滚动 24 小时内。
+  if (
+    msg.day <= today &&
+    !isRecentJoinLogDay(msg.day, today, JOIN_LOG_ACCEPTED_EVENT_DAYS) &&
+    msg.day < getDateKey(now - DAY_MS)
+  ) {
     joinLogBuffer.receivedThrough = msg.sequence;
     if (joinLogBuffer.entries.length === 0) publishJoinLogPersisted();
     return;
@@ -241,7 +245,7 @@ export async function handleJoinLogMessage(
 
 /**
  * 按命令读取本群滚动窗口。先刷 FIFO 中更早到达的入群消息，再读取窗口覆盖的
- * 一至两个东京日期；同一用户多次重入只返回最后一次。
+ * 全部配置时区日期；同一用户多次重入只返回最后一次。
  */
 export async function readJoinLog(
   request: ReadJoinLogRequest
@@ -255,15 +259,18 @@ export async function readJoinLog(
   ) {
     throw new RangeError("Join log read window must be a safe rolling interval of at most 24 hours.");
   }
-  const today: string = getTokyoDateKey();
+  const today: string = getDateKey();
   await ensureCurrentDayPrepared(today);
   const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
 
-  const firstDay: string = getTokyoDateKey(request.since);
-  const lastDay: string = getTokyoDateKey(request.now);
-  const requestedDays: string[] =
-    firstDay === lastDay ? [firstDay] : [firstDay, lastDay];
-  // 只认本群、本窗口这一两个文件的落盘结果：别的群写不动与这次读取无关，
+  const lastDay: Temporal.PlainDate = Temporal.PlainDate.from(getDateKey(request.now));
+  const requestedDays: string[] = [];
+  for (
+    let day: Temporal.PlainDate = Temporal.PlainDate.from(getDateKey(request.since));
+    Temporal.PlainDate.compare(day, lastDay) <= 0;
+    day = day.add({ days: 1 })
+  ) requestedDays.push(day.toString());
+  // 只认本群、本窗口文件的落盘结果：别的群写不动与这次读取无关，
   // 用全局判据会让日志完好的群也收到「入群日志暂时读不了」。
   for (const day of requestedDays) {
     if (failedKeys.has(fileKey(request.chatId, day))) {
@@ -273,8 +280,9 @@ export async function readJoinLog(
     }
   }
   const latestByUser: Map<number, JoinLogRecord> = new Map();
+  const retainedDays: ReadonlySet<string> = retainedJoinLogDayKeys(today);
   for (const day of requestedDays) {
-    if (!isRecentJoinLogDay(day, today, JOIN_LOG_FILE_RETENTION_DAYS)) {
+    if (!retainedDays.has(day)) {
       continue;
     }
     const path: string = joinLogPath(request.chatId, day);

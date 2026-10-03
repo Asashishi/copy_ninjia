@@ -17,7 +17,7 @@
  *   这里连「丢掉最后几条」都不构成正确性问题。
  *
  * 攒太多时按 AD_SAMPLE_FILE_MAX_BYTES 轮转成带日期的归档；归档按文件名中的
- * 东京日期保留最近 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 个自然日。轮转是为了读回
+ * 配置时区的日期保留最近 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 个自然日。轮转是为了读回
  * 成本：追加游标在 Worker 重建后与每次追加失败后都作废，下一批样本要对整份
  * 文件重跑一次异步读 + parse，仍由唯一的串行 I/O owner 排队。
  */
@@ -44,7 +44,7 @@ import {
   adSampleFileState,
   adSampleTempsSwept,
 } from "../../cache/workers/diskIO/adSample";
-import { getTokyoDateKey } from "../../libs/time";
+import { getDateKey } from "../../libs/time";
 import { appendToAppendOnlyFile, openAppendOnlyFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
@@ -128,7 +128,7 @@ function archiveDayFromName(name: string): string | null {
   return day;
 }
 
-/** 今天在内最近 N 个自然日的首日；东京没有夏令时，按固定 DAY_MS 回退安全。 */
+/** 今天在内最近 N 个公历日期的首日；日期串映射到 UTC 后按 DAY_MS 回退。 */
 function earliestRetainedArchiveDay(today: string): string {
   const todayMs: number = Date.parse(`${today}T00:00:00.000Z`);
   return new Date(
@@ -137,7 +137,7 @@ function earliestRetainedArchiveDay(today: string): string {
 }
 
 /**
- * 按归档名里的东京日期清理过期普通文件。清扫和单文件删除都 best effort；
+ * 按归档名里的配置时区的日期清理过期普通文件。清扫和单文件删除都 best effort；
  * 日期先记账，保证失败不会让后续每条样本反复扫描目录。
  */
 export async function sweepExpiredAdSampleArchives({
@@ -193,7 +193,7 @@ export async function sweepExpiredAdSampleArchives({
  * 已存在样本目录时清理孤儿临时文件与过期归档；目录尚未使用时保持按需创建语义。
  */
 export async function maintainAdSampleFiles(
-  today: string = getTokyoDateKey()
+  today: string = getDateKey()
 ): Promise<void> {
   if (!existsSync(AD_SAMPLE_MEMORY_DIR)) return;
   await sweepOrphanedTemps();
@@ -201,11 +201,11 @@ export async function maintainAdSampleFiles(
 }
 
 /**
- * 给这次轮转挑一个没被占用的归档名：`sample.<东京日期>.json`，同一天再轮转
+ * 给这次轮转挑一个没被占用的归档名：`sample.<配置时区的日期>.json`，同一天再轮转
  * 就往后加序号；保留期清理由 sweepExpiredAdSampleArchives 独立负责。
  */
 function nextArchiveTarget(): AdSampleArchiveTarget {
-  const day: string = getTokyoDateKey();
+  const day: string = getDateKey();
   const base: string = join(AD_SAMPLE_MEMORY_DIR, `sample.${day}`);
   let index: number = adSampleArchiveCursor.current?.day === day
     ? adSampleArchiveCursor.current.nextIndex
@@ -251,7 +251,7 @@ export async function flushAdSampleBuffer(): Promise<void> {
     // 可能发生在部署后的任何时候。recursive 让它幂等。
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     await sweepOrphanedTemps();
-    await sweepExpiredAdSampleArchives({ today: getTokyoDateKey() });
+    await sweepExpiredAdSampleArchives({ today: getDateKey() });
     adSampleFileState.current ??= await openAppendOnlyFile(
       AD_SAMPLE_FILE_PATH,
       PERSISTED_FILE_MODE,

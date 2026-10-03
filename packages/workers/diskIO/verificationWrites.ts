@@ -17,7 +17,7 @@ import {
   verificationRolloverRetryTimer,
   verificationWorkerCache,
 } from "../../cache/workers/diskIO/verification";
-import { getTokyoDateKey } from "../../libs/time";
+import { getDateKey } from "../../libs/time";
 import { verificationKey } from "../../libs/verificationKey";
 import type { VerificationSnapshot } from
   "../../types/antiRaid/verification";
@@ -77,7 +77,7 @@ async function rolloverVerificationDay(
   acknowledge(changes, reply);
 }
 
-/** 装轮换失败后的唯一重试 timer；到点按当时的东京日期重新维护。 */
+/** 装轮换失败后的唯一重试 timer；到点按当时的配置时区的日期重新维护。 */
 function scheduleVerificationRolloverRetry(
   reply: VerificationReplySink,
   dir: string
@@ -85,17 +85,17 @@ function scheduleVerificationRolloverRetry(
   armDiskIOFlushTimer(
     verificationRolloverRetryTimer,
     VERIFICATION_ROLLOVER_RETRY_MS,
-    (): Promise<void> => maintainVerificationDayForToday(reply, getTokyoDateKey(), dir)
+    (): Promise<void> => maintainVerificationDayForToday(reply, getDateKey(), dir)
   );
 }
 
 /**
- * 发布目标东京日 active 快照并清理旧日；失败时保留镜像并安装唯一 unref 重试。
+ * 发布目标配置时区自然日的 active 快照并清理旧日；失败时保留镜像并安装唯一 unref 重试。
  * 正常的每日调用由 Disk I/O Worker 统一维护 cron 负责。
  */
 export async function maintainVerificationDayForToday(
   reply: VerificationReplySink,
-  day: string = getTokyoDateKey(),
+  day: string = getDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
 ): Promise<void> {
   cancelDiskIOFlushTimer(verificationFlushTimer);
@@ -133,7 +133,7 @@ export async function handleVerificationUpsert({
   msg,
   reply,
   dir = VERIFICATION_MEMORY_DIR,
-  day = getTokyoDateKey(),
+  day = getDateKey(),
 }: HandleVerificationUpsertParams): Promise<void> {
   const key: string = verificationKey(msg.record.chatId, msg.record.userId);
   const pending: VerificationFileChange | undefined =
@@ -187,7 +187,7 @@ export async function handleVerificationDelete({
   msg,
   reply,
   dir = VERIFICATION_MEMORY_DIR,
-  day = getTokyoDateKey(),
+  day = getDateKey(),
 }: HandleVerificationDeleteParams): Promise<void> {
   const key: string = verificationKey(msg.chatId, msg.userId);
   const pending: VerificationFileChange | undefined =
@@ -214,7 +214,7 @@ export async function handleVerificationDelete({
 export async function flushVerificationChanges(
   reply: VerificationReplySink,
   dir: string = VERIFICATION_MEMORY_DIR,
-  day: string = getTokyoDateKey()
+  day: string = getDateKey()
 ): Promise<boolean> {
   cancelDiskIOFlushTimer(verificationFlushTimer);
 

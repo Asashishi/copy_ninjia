@@ -5,13 +5,15 @@
  *
  * 四项必备能力之外，本包还实现语音转写与语音合成。音频转写走 OpenAI 兼容 audio
  * transcriptions；所配 media 模型/端点是否支持由第一次真实请求确认并缓存。语音合成按
- * `agent.tts.speech_protocol` 分派到 OpenAI audio/speech 或 xAI `/tts`（见 ./speech.ts）。
+ * `agent.tts.speech_protocol` 分派到 OpenAI audio/speech 或 xAI `/tts`（见 ./speech.ts）。联网检索
+ * 执行器挂 hosted `web_search`（见 ./search.ts）。
  */
 
 import { generateOpenAiImage } from "./image";
 import { createOpenAiReplySession } from "./replySession";
+import { searchOpenAiWeb } from "./search";
 import { synthesizeOpenAiSpeech } from "./speech";
-import { describeOpenAiVision, generateOpenAiText, transcribeOpenAiVoice } from "./text";
+import { describeOpenAiVision, generateOpenAiJson, generateOpenAiText, transcribeOpenAiVoice } from "./text";
 import type { AiChatProvider } from "../../types/aiChat/provider";
 
 /** OpenAI 协议实现；每项能力的认证与端点来自 config/dynamic/agent.json。 */
@@ -23,4 +25,6 @@ export const openAiProvider: AiChatProvider = {
   generateImage: generateOpenAiImage,
   transcribeVoice: transcribeOpenAiVoice,
   synthesizeSpeech: synthesizeOpenAiSpeech,
+  searchWeb: searchOpenAiWeb,
+  generateJson: generateOpenAiJson,
 };

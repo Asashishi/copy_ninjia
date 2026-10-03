@@ -10,9 +10,9 @@ import { afterEach, expect, test } from "bun:test";
 import type { RawApi, Transformer } from "grammy";
 import {
   telegramOutboundAbortController,
-  telegramOutboundAccepting,
   telegramOutboundGateState,
 } from "../../packages/cache/main/telegram";
+import { resetTelegramOutboundGateState } from "../helpers/telegramOutboundGate";
 import {
   runTelegramCategorizedRequest,
   telegramOutboundGate,
@@ -22,39 +22,13 @@ import { drainTelegramOutbound } from
 import { enqueueRetryJob } from "../../packages/infra/telegram/outboundQueue";
 import type {
   TelegramOutboundJob,
-  TelegramRetryCategory,
   TelegramRetryLane,
 } from "../../packages/types/telegramOutbound";
 import { waitUntil } from "../helpers/waitUntil";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
 
-function resetLane(lane: TelegramRetryLane): void {
-  lane.head = null;
-  lane.tail = null;
-  lane.activeCount = 0;
-  lane.pendingCount = 0;
-  lane.retryAt = 0;
-  if (lane.retryTimer !== null) clearTimeout(lane.retryTimer);
-  lane.retryTimer = null;
-  lane.recoveryLimit = 1;
-  lane.recoveryActive = 0;
-  lane.recovering = false;
-}
-
-afterEach((): void => {
-  telegramOutboundAbortController.current = new AbortController();
-  telegramOutboundAccepting.current = true;
-  telegramOutboundGateState.activeCount = 0;
-  telegramOutboundGateState.retryPendingCount = 0;
-  telegramOutboundGateState.aborting = false;
-  telegramOutboundGateState.activeJobs.clear();
-  for (const category of Object.keys(telegramOutboundGateState.lanes) as TelegramRetryCategory[]) {
-    resetLane(telegramOutboundGateState.lanes[category]);
-  }
-  for (const waiter of telegramOutboundGateState.drainWaiters) clearTimeout(waiter.timer);
-  telegramOutboundGateState.drainWaiters.clear();
-});
+afterEach((): void => resetTelegramOutboundGateState());
 
 /** 一份带 body 的响应与它的释放观测。 */
 interface ObservableResponse {

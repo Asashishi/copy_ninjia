@@ -1,6 +1,6 @@
-import type { TtsDailyUsage } from "../../../types/aiChat/voiceMessage";
-
 /** owner: workers/aiChat。语音合成每日计数（packages/aiChat/ai/ttsUsage.ts）的权威值。 */
+
+import type { TtsDailyUsage } from "../../../types/aiChat/voiceMessage";
 
 /**
  * AI 与预留额度的共同窗口及各自计数；null 表示从没发起过合成请求。

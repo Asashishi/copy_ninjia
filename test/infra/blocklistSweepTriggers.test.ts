@@ -1,8 +1,6 @@
 /** 「是管理员 && 已初始化」成立那一刻的补扫触发边界。 */
 
-import { describe, expect, mock, test } from "bun:test";
-mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: (): void => {} }));
-mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: async (): Promise<void> => {} }));
+import { describe, expect, test } from "bun:test";
 import { botPermissions } from "../helpers/botPermissions";
 import { settleBackgroundWork } from "../libs/helpers";
 const {
@@ -44,17 +42,10 @@ const {
 } = await import("../../packages/consts/antiRaid/blocklist");
 
 const {
-  handleMyChatMemberUpdate: routeMyChatMemberUpdate,
+  handleMyChatMemberUpdate,
   markBotAdminObserved,
   resolveBotAdminStatus,
 } = await import("../../packages/infra/botAdmin");
-const { syncChatPersonaSurfaces } =
-  await import("../../packages/commands/chatPersonaSync");
-
-/** 三处人设同步在生产里由 app/registerHandlers.ts 注入；本文件按同一份实现驱动。 */
-function handleMyChatMemberUpdate(ctx: never): Promise<void> {
-  return routeMyChatMemberUpdate(ctx, syncChatPersonaSurfaces);
-}
 
 const {
   blocklistSweepPages,

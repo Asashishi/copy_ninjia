@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../../packages/config/time";
 /** Anti-Raid 主线程镜像的启动恢复、adopt 与 Worker 重建重放。 */
 
 import { describe, expect, test } from "bun:test";
@@ -33,7 +34,8 @@ const {
 type FlushResult = "flushed" | "timedOut" | "failed";
 
 const antiRaid = await import("../../../packages/antiRaid");
-const { syncAntiRaidAgentConfig, syncAntiRaidAtmosphere } = await import("../../../packages/antiRaid/workerBridge/controller");
+const { syncAntiRaidAgentConfig } = await import("../../../packages/antiRaid/workerBridge/controller");
+const { botAtmosphereState } = await import("../../../packages/cache/main/atmosphere");
 
 const { grantVerificationAttempt } = await import("../../../packages/antiRaid/verificationAttempts");
 
@@ -43,24 +45,22 @@ installAntiRaidMirrorHooks({
 });
 
 describe("Anti-Raid main-thread persistence mirror", () => {
-  test("风格在业务接管前重放，变更增量推送，重建和删除以当前群状态为准", async () => {
+  test("本进程通知风格随首条 agentConfig 在业务接管前注入，重建重放同一启动快照", async () => {
     await resetAntiRaidTestState();
-    chatStates.set(-1001, { aiPersona: "自定义", isAIChatEnabled: false });
-    chatStates.set(-1002, { isInitEnabled: true });
-    antiRaid.initAntiRaid();
-    const firstStyle: number = workerPosts.findIndex((message) => message.type === "atmosphere");
-    expect(workerPosts[firstStyle]).toEqual({ type: "atmosphere", chatId: -1001, plain: true });
-    expect(firstStyle).toBeLessThan(workerPosts.findIndex((message) => message.type === "adoptVerifications"));
-    workerPosts.length = 0;
-    chatStates.delete(-1001);
-    syncAntiRaidAtmosphere(-1001);
-    expect(workerPosts).toEqual([{ type: "atmosphere", chatId: -1001, plain: false }]);
-    chatStates.set(-1002, { aiPersona: "另一群" });
-    const replay: AntiRaidWorkerMessage[] = [];
-    workerHooks.supervisorOptions!.onRespawn((message: AntiRaidWorkerMessage): boolean => { replay.push(message); return true; });
-    expect(replay.filter((message) => message.type === "atmosphere")).toEqual([{ type: "atmosphere", chatId: -1002, plain: true }]);
-    expect(replay.findIndex((message) => message.type === "atmosphere"))
-      .toBeLessThan(replay.findIndex((message) => message.type === "adoptVerifications"));
+    const preloaded: typeof botAtmosphereState.current = botAtmosphereState.current;
+    botAtmosphereState.current = "plain";
+    try {
+      chatStates.set(-1002, { isInitEnabled: true });
+      antiRaid.initAntiRaid();
+      expect(workerPosts[0]).toMatchObject({ type: "agentConfig", timeZone: getTimeZone(), atmosphere: "plain" });
+      const replay: AntiRaidWorkerMessage[] = [];
+      workerHooks.supervisorOptions!.onRespawn((message: AntiRaidWorkerMessage): boolean => { replay.push(message); return true; });
+      expect(replay[0]).toMatchObject({ type: "agentConfig", timeZone: getTimeZone(), atmosphere: "plain" });
+      expect(replay.findIndex((message) => message.type === "agentConfig"))
+        .toBeLessThan(replay.findIndex((message) => message.type === "adoptVerifications"));
+    } finally {
+      botAtmosphereState.current = preloaded;
+    }
   });
   test("热重载后投递主线程当前广告检测快照，重建重放的也是这一份", async () => {
     await resetAntiRaidTestState();
@@ -76,8 +76,8 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       adoptAdDetectAgentConfig(reloadedAdDetect);
       adoptAdSampleConfig(["热重载后的示例"]);
       syncAntiRaidAgentConfig();
-      const expected: AntiRaidWorkerMessage = { defaultAtmosphere: "teasing",
-        type: "agentConfig",
+      const expected: AntiRaidWorkerMessage = { atmosphere: "teasing",
+        type: "agentConfig", timeZone: getTimeZone(),
         adDetect: reloadedAdDetect,
         adSamples: ["热重载后的示例"],
       };
@@ -252,8 +252,8 @@ describe("Anti-Raid main-thread persistence mirror", () => {
 
     // 配置快照永远排在第一条：广告判定逐条候选取模型名与凭据（见
     // types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
-    expect(workerPosts[0]).toEqual({ defaultAtmosphere: "teasing",
-      type: "agentConfig",
+    expect(workerPosts[0]).toEqual({ atmosphere: "teasing",
+      type: "agentConfig", timeZone: getTimeZone(),
       adDetect: adDetectAgentConfigSnapshot(),
       adSamples: getAdSampleConfig(),
     });
@@ -275,8 +275,8 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     ]);
     expect(respawnPosts).toEqual([
       // 重生同样先投配置快照，且投的是主线程那份唯一快照，不重新读盘。
-      { defaultAtmosphere: "teasing",
-        type: "agentConfig",
+      { atmosphere: "teasing",
+        type: "agentConfig", timeZone: getTimeZone(),
         adDetect: adDetectAgentConfigSnapshot(),
         adSamples: getAdSampleConfig(),
       },

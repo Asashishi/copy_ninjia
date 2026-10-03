@@ -8,7 +8,7 @@ import { DOC_PAGE_TARGETS } from "../perf/fullSuite/docPage";
 /**
  * 全量基准的两种呈现必须描述同一次运行。
  *
- * `bun run perf:full -- --write-doc` 同时写三份 `09-performance.md` 的基准区块与
+ * `bun run perf:full -- --write-doc` 同时写三份 `10-performance.md` 的基准区块与
  * `performance-result.json` 的 `fullSuite.lastRun`。三份文档时间戳必须一致，
  * `lastRun.generatedAt` 必须存在且与该时间戳相同；缺失、null 或单侧更新均失败。
  */
@@ -58,7 +58,7 @@ export async function collectPerformanceRecordProblems(
   const distinct: ReadonlySet<string> = new Set(present);
   if (distinct.size > 1) {
     problems.push(
-      "docs/{cn,en,ja}/09-performance.md benchmark blocks come from different runs; " +
+      "docs/{cn,en,ja}/10-performance.md benchmark blocks come from different runs; " +
       "all three must be rewritten by the same bun run perf:full -- --write-doc"
     );
   }
@@ -100,7 +100,7 @@ export async function collectPerformanceRecordProblems(
   }
   if (distinct.size === 1 && !distinct.has(generatedAt)) {
     problems.push(
-      "performance-result.json $.fullSuite.lastRun and the 09-performance.md benchmark " +
+      "performance-result.json $.fullSuite.lastRun and the 10-performance.md benchmark " +
       "blocks describe different runs; both are written by the same " +
       "bun run perf:full -- --write-doc and must never be updated separately"
     );

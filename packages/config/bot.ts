@@ -1,16 +1,16 @@
-/** Bot 身份、超级管理员身份与默认通知风格的严格部署配置。 */
+/** Bot 身份、超级管理员身份、默认通知风格与时区的严格部署配置。 */
 
-import { BOT_ATMOSPHERES } from "../consts/bot";
-import type { Atmosphere } from "../types/atmosphere";
 import { botConfigCache } from "../cache/perThread/config";
 import { BOT_CONFIG_PATH } from "../consts/paths";
 import { loadBotConfig } from "./botInput";
 import { assertDeploymentConfigLayout } from "./layout";
 import type { BotConfig } from "../types/config";
+import { adoptTimeZone } from "./time";
 
 await assertDeploymentConfigLayout();
 const INITIAL_BOT_CONFIG: BotConfig = await loadBotConfig();
 botConfigCache.current = INITIAL_BOT_CONFIG;
+adoptTimeZone(INITIAL_BOT_CONFIG.timeZone);
 
 /** 读取异步模块初始化已经严格校验的 Bot 配置。 */
 export function getBotConfig(): BotConfig {
@@ -20,9 +20,6 @@ export function getBotConfig(): BotConfig {
   }
   return config;
 }
-
-/** 本进程生效的默认文案表键；重建 Worker 时仍重放本启动快照。 */
-export const BOT_ATMOSPHERE: Atmosphere = BOT_ATMOSPHERES[INITIAL_BOT_CONFIG.atmosphere];
 
 /** Telegram Bot API token；来自 config/static/bot.json。 */
 export const BOT_TOKEN: string = INITIAL_BOT_CONFIG.botToken;

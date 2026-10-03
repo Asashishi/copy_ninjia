@@ -1,5 +1,3 @@
-import { BOT_ATMOSPHERE } from "../config/bot";
-import { atmosphereOf } from "../libs/atmosphere";
 /**
  * 刷屏禁言在主线程侧的那一半：只有投递。
  *
@@ -11,6 +9,7 @@ import { atmosphereOf } from "../libs/atmosphere";
  * 为每条群消息加一道跨线程屏障换不来任何恢复能力。
  */
 
+import { chatAtmosphere } from "../infra/atmosphere";
 import { formatUserLabel } from "../users/userLabel";
 import { visibleSenderChat } from "../users/visibleSender";
 import { canBypassFloodControl } from "./memberFacts";
@@ -61,12 +60,12 @@ export function buildFloodCandidate({
     userId: sender.id,
     observedAt: now,
     // 昵称是用户可控内容，清洗与退化都收在 formatUserLabel 里；Worker 侧只把
-    // 它当纯文本拼进通知，出站消息一律不设 parse_mode（见 docs/cn/04-invariants.md）。
+    // 它当纯文本拼进通知，刷屏公告不设 parse_mode（见 docs/cn/04-invariants.md）。
     //
     // 直接把 `sender` 交进去，不现造一个 `{ id, username, first_name }` 投影：
     // formatUserLabel 只读 username / isChannel / title / first_name，grammY 的
     // `User` 在这四项上与 CachedUser 逐字兼容（没有 isChannel 即按真人分支走），
     // 而这条路跑在每条计入刷屏窗口的群消息上，投影对象是一次纯浪费的分配。
-    label: formatUserLabel(sender, atmosphereOf(chatState, BOT_ATMOSPHERE)),
+    label: formatUserLabel(sender, chatAtmosphere()),
   };
 }

@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { expect, mock, test } from "bun:test";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
@@ -34,7 +35,7 @@ test("可选贴纸文件缺省时真实预检与恢复握手通过，生命周�
       loadPersistedData: async (): Promise<Awaited<ReturnType<typeof loadPersistedData>>> => {
         const loading: ReturnType<typeof loadPersistedData> = loadPersistedData();
         const worker: FakeDiskIOWorker = FakeDiskIOWorker.instances[0]!;
-        expect(worker.messages[0]).toEqual({ type: "load", stickerPacks: null });
+        expect(worker.messages[0]).toEqual({ type: "load", timeZone: getTimeZone(), stickerPacks: null });
         emitSuccessfulDiskIOLoad(worker);
         return await loading;
       },

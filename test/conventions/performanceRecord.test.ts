@@ -114,7 +114,7 @@ describe("全量性能记录约定", () => {
       result: MATCHING_RESULT,
     });
     expect(await collectPerformanceRecordProblems(root)).toEqual([
-      "docs/{cn,en,ja}/09-performance.md benchmark blocks come from different runs; " +
+      "docs/{cn,en,ja}/10-performance.md benchmark blocks come from different runs; " +
       "all three must be rewritten by the same bun run perf:full -- --write-doc",
     ]);
   });
@@ -125,7 +125,7 @@ describe("全量性能记录约定", () => {
       result: JSON.stringify({ fullSuite: { lastRun: { generatedAt: "2026-08-28T00:00:00Z" } } }),
     });
     expect(await collectPerformanceRecordProblems(root)).toEqual([
-      "performance-result.json $.fullSuite.lastRun and the 09-performance.md benchmark " +
+      "performance-result.json $.fullSuite.lastRun and the 10-performance.md benchmark " +
       "blocks describe different runs; both are written by the same " +
       "bun run perf:full -- --write-doc and must never be updated separately",
     ]);
@@ -138,7 +138,7 @@ describe("全量性能记录约定", () => {
     });
     expect(await collectPerformanceRecordProblems(root)).toEqual([
       `${DOC_PAGE_TARGETS[0]!.path}: ${BLOCK_PROBLEM_SUFFIX}`,
-      expect.stringContaining("performance-result.json $.fullSuite.lastRun and the 09-performance.md benchmark blocks describe different runs"),
+      expect.stringContaining("performance-result.json $.fullSuite.lastRun and the 10-performance.md benchmark blocks describe different runs"),
     ]);
   });
 

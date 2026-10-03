@@ -1,14 +1,13 @@
 import type { InlineQueryResultArticle, ChosenInlineResult, InlineQuery, User } from "grammy/types";
 import type { Context } from "grammy";
-import { ATMOSPHERE_TEXTS } from "../../consts/atmosphere";
-import { BOT_ATMOSPHERE } from "../../config/bot";
+import { telegramSignal } from "../../libs/telegramSignal";
+import { chatAtmosphere } from "../../infra/atmosphere";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";
 import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
 import { logApiError } from "../../infra/telegram";
 import { isTelegramRequestRejected } from "../../infra/telegram/errors";
-import { signalArgs } from "../../libs/telegramSignalArgs";
 import { logger } from "../../infra/logger";
 import {
   currentUpdateAbortSignal,
@@ -56,7 +55,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
       await ctx.answerInlineQuery(
         [buildRateLimitedResult()],
         { cache_time: 1, is_personal: true },
-        ...signalArgs(currentUpdateAbortSignal())
+        telegramSignal(currentUpdateAbortSignal())
       );
     } catch (error: unknown) {
       throwIfUpdateAborted();
@@ -72,12 +71,12 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     return;
   }
   const fromUser: User = inlineQuery.from;
-  // inline 查询没有目标群上下文，使用本进程生效的 Bot 配置。
+  // inline 查询没有目标群上下文，与群通知同用本进程生效的文案风格。
   const userLabel: string = formatUserLabel({
     id: fromUser.id,
     username: fromUser.username,
     first_name: fromUser.first_name,
-  }, ATMOSPHERE_TEXTS[BOT_ATMOSPHERE]);
+  }, chatAtmosphere());
   const text: string = inlineQuery.query.trim();
   const cacheKey: string = luckCacheKey(fromUser.id, text || undefined);
   const draw: LuckDraw = getOrDrawLuck(cacheKey);
@@ -91,7 +90,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     await ctx.answerInlineQuery(
       results,
       { cache_time: 0, is_personal: true },
-      ...signalArgs(currentUpdateAbortSignal())
+      telegramSignal(currentUpdateAbortSignal())
     );
   } catch (error: unknown) {
     throwIfUpdateAborted();

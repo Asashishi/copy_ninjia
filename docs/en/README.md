@@ -8,9 +8,11 @@
   <img alt="Copy Ninjia Banner" src="../../public/banner_light.jpg" width="100%">
 </picture>
 
+<a id="copy-ninjia"></a>
+
 <h1>
   <a href="https://t.me/copy_ninjia_bot" title="Click the avatar to open the example bot"><img src="https://t.me/i/userpic/320/copy_ninjia_bot.jpg" width="44" height="44" alt="Copy Ninjia example bot avatar"></a>
-  Copy Ninjia
+  <img src="../../public/wordmark.svg" width="236" height="44" alt="Copy Ninjia">
 </h1>
 
 <p><sub>Click the avatar to open the example bot: <a href="https://t.me/copy_ninjia_bot">@copy_ninjia_bot</a></sub></p>
@@ -24,19 +26,20 @@
 **A pure-AI development project whose production code, tests, and documentation are written entirely by AI** — the human designs the architecture and reviews every commit together with AI
 
 <p align="center">
-  <a href="https://bun.sh/"><img src="https://img.shields.io/badge/Bun-v1.4+-f9f1e1?style=flat-square&logo=bun&logoColor=000000" alt="Bun"></a>
-  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-Strict-3178c6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript"></a>
-  <a href="https://www.sqlite.org/"><img src="https://img.shields.io/badge/Database-SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite"></a>
-  <a href="https://grammy.dev/"><img src="https://img.shields.io/badge/Telegram-grammY-26a5e4?style=flat-square&logo=telegram&logoColor=white" alt="grammY"></a>
-  <a href="https://ai.google.dev/"><img src="https://img.shields.io/badge/AI-Gemini-8e75ff?style=flat-square&logo=googlegemini&logoColor=white" alt="Gemini"></a>
+  <a href="https://bun.sh/"><img src="../../public/bun_badge.svg" alt="Bun"></a>
+  <a href="https://www.typescriptlang.org/"><img src="../../public/typescript_badge.svg" alt="TypeScript"></a>
+  <a href="https://www.sqlite.org/"><img src="../../public/sqlite_badge.svg" alt="SQLite"></a>
+  <a href="https://grammy.dev/"><img src="../../public/grammy_badge.svg" alt="grammY"></a>
+  <a href="https://www.anthropic.com/"><img src="../../public/anthropic_badge.svg" alt="Anthropic"></a>
   <a href="https://platform.openai.com/docs/"><img src="../../public/openai_badge.svg" alt="OpenAI"></a>
+  <a href="https://ai.google.dev/"><img src="../../public/gemini_badge.svg" alt="Gemini"></a>
 </p>
 
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5558_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.52%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5920_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.54%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -44,7 +47,7 @@ Message copying and personality mimicry are only the surface. Underneath is a mu
 
 ---
 
-🧬 [Pure AI Development](#-pure-ai-development) • ✨ [Features](#-features) • 🎮 [Commands and Permissions](#-commands-and-permissions) • 🚀 [Quick Start](#-quick-start) • 🤖 [BotFather Setup](#botfather-setup) • ❓ [FAQ](10-faq.md) • 📚 [Developer Docs](content-table.md)
+🧬 [Pure AI Development](#-pure-ai-development) • ✨ [Features](#-features) • 🎮 [Commands and Permissions](#-commands-and-permissions) • 🚀 [Quick Start](#-quick-start) • 🤖 [BotFather Setup](#botfather-setup) • ❓ [FAQ](11-faq.md) • 📚 [Developer Docs](content-table.md)
 
 </div>
 
@@ -52,18 +55,46 @@ Message copying and personality mimicry are only the surface. Underneath is a mu
 
 ## 🧬 Pure AI Development
 
-Every line of production code, every test case, and this README itself was written by AI; the table below lists who does what.
+Every line of production code, every test case, and this README itself was written by AI:
 
 <table width="100%">
-<tr><th width="18%" align="left">Stage</th><th width="32%" align="left">Who</th><th width="50%" align="left">What they do</th></tr>
-<tr><td>📐&nbsp;Architecture</td><td><b>Asashishi</b></td><td>Designs and decides system boundaries, Worker decomposition, persistence, and recovery strategy</td></tr>
-<tr><td>⌨️&nbsp;Implementation</td><td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td><td>Writes 100% of production code, tests, and documentation</td></tr>
-<tr><td>🧾&nbsp;Commit&nbsp;review</td><td><b>Asashishi</b> × AI</td><td>Every commit is reviewed jointly by human and AI before entering the repository</td></tr>
-<tr><td>🔬&nbsp;Repository&nbsp;audits</td><td><b>GPT</b> · <b>Claude</b></td><td>Conduct multiple cross-reviews of the entire codebase; findings become hardening commits</td></tr>
-<tr><td>🛰️&nbsp;Safety&nbsp;exercises</td><td>The same frontier models</td><td>Review production scenarios such as crash recovery, concurrency races, hostile input, and resource exhaustion</td></tr>
+<thead>
+  <tr>
+    <th width="20%" align="left">Stage</th>
+    <th width="30%" align="left">Who</th>
+    <th width="50%" align="left">What they do</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>📐 <b>Architecture</b></nobr></td>
+    <td><b>Asashishi</b></td>
+    <td>Designs and decides system boundaries, Worker decomposition, persistence, and recovery strategies</td>
+  </tr>
+  <tr>
+    <td><nobr>⌨️ <b>Implementation</b></nobr></td>
+    <td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td>
+    <td>Writes 100% of production code, tests, and documentation</td>
+  </tr>
+  <tr>
+    <td><nobr>🧾 <b>Commit review</b></nobr></td>
+    <td><nobr><b>Asashishi</b> × AI</nobr></td>
+    <td>Every commit is reviewed jointly by human and AI before entering the repository</td>
+  </tr>
+  <tr>
+    <td><nobr>🔬 <b>Repository audits</b></nobr></td>
+    <td><b>GPT</b> · <b>Claude</b></td>
+    <td>Conduct multiple cross-reviews of the entire codebase; findings become hardening commits</td>
+  </tr>
+  <tr>
+    <td><nobr>🛰️ <b>Safety exercises</b></nobr></td>
+    <td>The same frontier models</td>
+    <td>Review production scenarios: crash recovery, concurrency races, hostile input, and resource exhaustion</td>
+  </tr>
+</tbody>
 </table>
 
-Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI review, repeated full-repository audits, and safety exercises flow back into new constraints.
+From commit-by-commit human/AI co-review to repeated full-repository audits and safety simulations, every finding directly informs new authoritative constraints.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -73,11 +104,11 @@ Review is not a one-time ceremony. Conclusions from commit-by-commit human/AI re
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5558 tests passed, 483 test files, 263,109 expect() calls, 98.06% function coverage, 98.52% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 5920 tests passed, 502 test files, 320,978 expect() calls, 98.14% function coverage, 98.54% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
-Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chain latency) live in **[📊 09 Performance Benchmark](09-performance.md)**.
+Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chain latency) live in **[📊 10 Performance Benchmark](10-performance.md)**.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -165,7 +196,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 Personas &amp; Notice Styles</b><br>
-  <sub>Set an AI persona per group and choose teasing or ordinary Bot notices; custom-persona groups use ordinary notices.</sub></p>
+  <sub>A built-in teasing persona that <code>prompt/persona.md</code> can replace; explicit Bot notice style takes priority; when omitted, custom personas use ordinary notices and the built-in persona uses teasing notices.</sub></p>
 </td>
 </tr>
 <tr>
@@ -198,71 +229,117 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </tr>
 </table>
 
+### AI Prompt Cache Rates (Conservative Estimates Informed by Measurements)
+
+| Model provider | Conservative reference range |
+| --- | --- |
+| Gemini | 60%–70% |
+| OpenAI | 80%–90% |
+| Claude | 80%–90% |
+
+- **Gemini**: Misses include expiration of the service's implicit cache and an unwarmed implicit cache on the first request. When available, each reply's first request reuses the fixed prefix through explicit caching; subsequent requests use implicit caching to mitigate misses. Sporadic zero cache usage also occurs with an approximately 8% probability, unrelated to the project implementation.
+- **Claude**: Misses mainly occur when the 5 minute cache lifetime expires.
+- **OpenAI**: No known cache defects are currently identified. Initial population, prefix changes, and new dynamic content can still cause normal misses.
+
 ### Voice, images, and memory
 
-| Capability | Behavior |
-| :--- | :--- |
-| AI voice | Configurable voice and per-line tone; one voice per round, up to 64 UTF-16 code units; remembers the line after a successful send |
-| Operator and scheduled voice | `/send` and cron share TTS with a 256 UTF-16 code-unit limit; cron synthesizes once per round and reuses the Telegram `file_id` |
-| Image memory | Generated images are described; `/wed`, `/h_image`, and scheduled images start as placeholders and are described when someone replies |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="24%" align="left">Capability</th>
+    <th width="76%" align="left">Current Behavior & Specifications</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>🎙️ <b>AI Voice</b></nobr></td>
+    <td>Supports configurable voice and tone; at most 1 line per turn up to 64 UTF-16 code units; persists line to memory on delivery.</td>
+  </tr>
+  <tr>
+    <td><nobr>📢 <b>Admin & Cron Voice</b></nobr></td>
+    <td><code>/send</code> and cron share TTS resources with a 256 code-unit limit; cron synthesizes once per round and reuses Telegram <code>file_id</code>.</td>
+  </tr>
+  <tr>
+    <td><nobr>🖼️ <b>Multimodal Memory</b></nobr></td>
+    <td>AI-generated images record actual visuals; <code>/wed</code>, <code>/h_image</code>, and cron images record placeholders until replied to.</td>
+  </tr>
+</tbody>
+</table>
 
-Voice requires explicit `agent.tts` configuration (Google, or with `provider: "openai"` a `speech_protocol` choosing OpenAI-compatible audio/speech or xAI (Grok) `/v1/tts`; Google can be called through a third-party gateway with `base_url` and `headers`). `daily_limit` (default 100) is split into the AI quota (total minus reserve) and `daily_reserve_quota` (default 25) shared by `/send` and cron. They use separate `agentCount` and `reserveCount` counters, never consume each other's quota, and reset together after the 24-hour window. `/send` copies and voice, and scheduled text and voice, are not automatically added to AI memory. Image self-recording requires AI to be enabled in the chat with no active copy session. Configuration, errors, and limits: [FAQ](10-faq.md).
+- **TTS Configuration**: Requires explicit `agent.tts` in `config/dynamic/agent.json` (supports Google, OpenAI-compatible `audio/speech`, and xAI Grok `/v1/tts`; Google supports `base_url` and `headers` for third-party gateways).
+- **Quota Isolation**: `daily_reserve_quota` (default 25) is reserved from `daily_limit` (default 100) for admin and cron calls; AI voice uses the remainder. Both counters are independent and reset together 24 hours after the first counted request in the window.
+- **Context Recording Rules**: Messages copied by `/send` and scheduled text/voice do not enter AI memory. Automatic image recording requires AI chat to be enabled in the group and not in copying mode. Details: [11 FAQ](11-faq.md).
 
-> [!IMPORTANT]
-> [TTS count cold migration and staged upgrades](07-operations.md#upgrade-15)
-
-Behavior details, configuration and boundaries for each feature live in the **[📚 developer docs](content-table.md)**.
+Behavior details, configuration, and constraints for each feature live in the **[📚 Developer Documentation](content-table.md)**.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
 ## 🎮 Commands and Permissions
 
-Command access follows the entry point: **group members** can use copy, translation, action commands, quiet mode, `/info`, `/wed`, `/h_image` and more. **Identity permission keys** (`isCanXxx`) control `/bot_status`, `/prompt`, `/mute`, `/gag`, `/block`, `/h_image add` and each feature switch. **`SUPER_ADMIN_USER_ID` only** operations include `/init`, permission changes, allowlist removal, and `/batch_kick`; `/send` requires the super administrator in private chat.
+Commands are authorized by entry point and role:
 
-Image-library and `config/dynamic/cron.json` fields and rules are in [deployment configuration](../../config_example/README/en.md); source and binary cold migrations are in the [operations guide](07-operations.md).
+- **Group Members**: Basic chat features such as copying, translation, actions, `/info`, `/wed`, and `/h_image`.
+- **Identity Permissions (`isCanXxx`)**: Administrative commands including `/bot_status`, `/mute` / `/unmute`, `/gag`, `/block`, `/h_image add`, and feature toggles.
+- **Super Administrator (`SUPER_ADMIN_USER_ID`)**: `/init`, `/permission` edits, `/white disable`, `/batch_kick` for recent joins in the current group, and private `/send` relays. An allowlisted identity with `isCanWhiteOther` may also use `/white enable` to add a member with default permissions.
 
-The full command table, permission semantics and per-command behaviour live in **[📖 08 Command and Behaviour Reference](08-commands.md)**.
+Image library and cron task configuration and usage are documented in [08 Images and Scheduled Tasks](08-images-and-cron.md); cold migration steps live in the [Operations Manual](07-operations.md).
+
+The full command reference and permission matrix are documented in **[📖 09 Command and Behaviour Reference](09-commands.md)**.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
 ## 🚀 Quick Start
 
-You need Linux (with a readable `/proc`; the instance lock fails closed elsewhere), a Bot token and a super-admin user ID. Source installations require Bun 1.4.2; binary packages include the runtime. Enabled AI capabilities each need their provider's API key, and `/translate` additionally needs a Google Cloud service-account JSON. Hardware guidance is in [07 Operations](07-operations.md#hardware-guidance).
+### Prerequisites
 
-One-shot install (installs whatever is missing, asks for config, then starts):
+- **OS**: Linux with a readable `/proc` directory (the instance lock fails closed on other platforms).
+- **Telegram Credentials**: A Bot Token from BotFather and your Telegram user ID as super administrator.
+- **Runtime**: [Bun](https://bun.sh/) 1.4.2 for source installs; binary releases bundle the runtime.
+- **External Services**: API keys for enabled AI capabilities; Google Cloud service-account JSON for `/translate`. Hardware guidance: [07 Operations](07-operations.md#hardware-guidance).
+
+### One-Shot Installation
 
 ```bash
+# Automatically detects environment and guides through interactive setup
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
+
+# Or select mode explicitly: --binary (recommended) or --source (git clone)
+curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --binary
 ```
 
-New installations prompt for source or binary mode; replace the final `bash` with `bash -s -- --binary` or `bash -s -- --source` to select it explicitly. Binary mode downloads the platform package and SHA-256 file from **GitHub's Latest Release**, without checking out or building source on the installation host. Source mode obtains that tag and installs locked dependencies. Existing deployments keep their current version. Both modes run the target directory's installer, ask for Telegram and AI configuration, initialize a missing identity database, and register or reuse a systemd unit with startup observation; without systemd they run in the foreground. Configuration replacement requires an explicit request and uses backup, validation, and atomic replacement. See [Getting Started](01-getting-started.md) for platforms, directory options, and backup retention.
+> [!TIP]
+> - **Install Mode**: Interactive prompt by default. Pass `--binary` to download the platform package without system Bun or git; pass `--source` to clone the source, with the installer attempting to install missing git and Bun.
+> - **Interactive Setup**: The wizard configures credentials, initializes the SQLite database, and registers a systemd background service. Existing deployments preserve current versions without overwriting.
 
-Manual install:
+### Manual Source Installation
 
 ```bash
+# 1. Clone repository and install dependencies
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 bun install
+
+# 2. Prepare configuration directories and copy templates (skips existing files)
 mkdir -p config/static config/dynamic
-for example in config_example/static/*.json config_example/dynamic/*.json; do   # copy missing examples only; g-auth.json and cron.json are illustrative
+for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in g-auth.json | cron.json) ;; *) cp -n "$example" "config/${example#config_example/}" ;; esac
-done                                       # fill in bot_token and super_admin_user_id in bot.json
+done
+
+# 3. Edit config/static/bot.json with bot_token and super_admin_user_id
 ```
 
-With a manual install, before the first start you also initialise the identity database and, on the
-BotFather side, turn Privacy Mode off and Inline Mode on (full list in [BotFather & Group Rights Setup](#botfather-setup)). Field-by-field meanings, required combinations and the strict
-validation rules are in [`config_example/README/en.md`](../../config_example/README/en.md); the full
-walkthrough (runtime data root, asset configuration, migration commands) is in
-[01 Getting Started](01-getting-started.md).
+Before your first run, disable Privacy Mode and enable Inline Mode in BotFather (see [BotFather Setup](#botfather-setup)). Configuration specifications are in [`config_example/README/en.md`](../../config_example/README/en.md); complete setup instructions live in [01 Getting Started](01-getting-started.md).
 
-After initializing identity storage and completing configuration, run:
+Once configured, verify quality gates and start the bot:
 
 ```bash
-bun run check                          # conventions + ESLint + strict TypeScript + coverage + hot-path gate
-bun run start                          # start long polling
+bun run check                          # Runs conventions, ESLint, TypeScript, and tests
+bun run start                          # Starts long polling
 ```
 
-Once the bot has joined a group, `SUPER_ADMIN_USER_ID` runs there:
+### Initializing Group Management
+
+Add the bot to your group and run the following commands as `SUPER_ADMIN_USER_ID`:
 
 ```text
 /init enable
@@ -270,8 +347,8 @@ Once the bot has joined a group, `SUPER_ADMIN_USER_ID` runs there:
 /antiraid enable
 ```
 
-> **On languages**: user-facing copy is Simplified Chinese only and the repository maintains no i18n
-> layer. The reasoning and the way to change it are in [06 Modification Guide](06-modification-guide.md).
+> [!NOTE]
+> All user-facing bot copy is in Simplified Chinese. For customization guidance, see [06 Modification Guide](06-modification-guide.md).
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -279,17 +356,72 @@ Once the bot has joined a group, `SUPER_ADMIN_USER_ID` runs there:
 
 Comprehensive architecture overviews, module maps, authoritative runtime invariants, test workflows, and operation manuals live in the **[Developer Documentation Index](content-table.md)**:
 
-| Topic | Description & Contents | Direct Link |
-| :--- | :--- | :---: |
-| 🏗️ **Architecture** | Main thread + 3 Workers topology, message journey, startup & shutdown order | [📖 02 Architecture](02-architecture.md) |
-| 🗺️ **Directory Map** | Responsibilities of the `packages/` subdomains and the code-placement decision tree | [📖 03 Directory Map](03-directory-map.md) |
-| ⚡ **Invariants** | Cross-module state isolation, concurrency limits, atomic storage contracts | [📖 04 Invariants](04-invariants.md) |
-| 🧪 **Development** | `bun run check` quality gates, test isolation & fault injection suite | [📖 05 Workflow](05-dev-workflow.md) |
-| 🛠️ **Recipes** | Guides for commands, parameter tuning, AI tools & schema migration | [📖 06 Recipes](06-modification-guide.md) |
-| 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup & troubleshooting | [📖 07 Operations](07-operations.md) |
-| 🎮 **Commands** | Every command, permission semantics and behavioural details | [📖 08 Commands](08-commands.md) |
-| 📊 **Performance** | Cold/hot paths, throughput, I/O and chain latency, rerun on every release | [📖 09 Performance](09-performance.md) |
-| ❓ **FAQ** | Checklist for a running bot that does not reply | [📖 10 FAQ](10-faq.md) |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="24%" align="left">Scenario</th>
+    <th width="44%" align="left">Recommended Path</th>
+    <th width="32%" align="center">Direct Link</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>🚀 <b>First Run</b></nobr></td>
+    <td>Environment setup, deployment configuration, Telegram API options, first run</td>
+    <td align="center"><nobr><a href="01-getting-started.md">📖 01 Setup</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🏗️ <b>Architecture</b></nobr></td>
+    <td>Main thread + 3 Workers model, message lifecycle, recovery</td>
+    <td align="center"><nobr><a href="02-architecture.md">📖 02 Architecture</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🗺️ <b>Code Placement</b></nobr></td>
+    <td>Module map, code structure, placement decision rules</td>
+    <td align="center"><nobr><a href="03-directory-map.md">📖 03 Directory Map</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>⚡ <b>Invariants</b></nobr></td>
+    <td>Cross-module constraints, concurrency safety, invariant rules</td>
+    <td align="center"><nobr><a href="04-invariants.md">📖 04 Invariants</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🧪 <b>Development</b></nobr></td>
+    <td><code>bun run check</code> pipeline, test isolation, coverage rules</td>
+    <td align="center"><nobr><a href="05-dev-workflow.md">📖 05 Workflow</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛠️ <b>Modifications</b></nobr></td>
+    <td>Step-by-step recipes for commands, AI tools, and schema edits</td>
+    <td align="center"><nobr><a href="06-modification-guide.md">📖 06 Recipes</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛡️ <b>Operations</b></nobr></td>
+    <td>systemd deployment, hardware guidance, <code>COPY_NINJIA_DATA_ROOT</code>, backup, debugging</td>
+    <td align="center"><nobr><a href="07-operations.md">📖 07 Operations</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🖼️ <b>Images and scheduled tasks</b></nobr></td>
+    <td>Collection, content deduplication, albums, scheduled voice, time zones and path bases</td>
+    <td align="center"><nobr><a href="08-images-and-cron.md">📖 08 Images and Scheduled Tasks</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🎮 <b>Look up a command</b></nobr></td>
+    <td>Every command, permission semantics and behavioural details (the root README keeps only a summary)</td>
+    <td align="center"><nobr><a href="09-commands.md">📖 09 Commands</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>📊 <b>Read the numbers</b></nobr></td>
+    <td>Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency</td>
+    <td align="center"><nobr><a href="10-performance.md">📖 10 Performance</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>❓ <b>Bot not replying</b></nobr></td>
+    <td>Checklist for a running bot that stays silent</td>
+    <td align="center"><nobr><a href="11-faq.md">📖 11 FAQ</a></nobr></td>
+  </tr>
+</tbody>
+</table>
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -299,30 +431,76 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
 
 ### BotFather Settings
 
-| Setting | In @BotFather | Used for |
-| :--- | :--- | :--- |
-| Disable group privacy | `/setprivacy` → Disable | Receiving ordinary group messages; copying, translation, AI memory and interjections, and chat Q&A all depend on it. After changing it, remove the bot from the group and add it back; a bot that is a group administrator already receives every message |
-| Enable Inline Mode | `/setinline` | Daily fortune `@bot requested topic`, and the "speak" button of `/gag` targets |
-| Inline feedback at 100% | `/setinlinefeedback` | The primary path for confirming and persisting fortune draws |
-| Allow groups | `/setjoingroups` → Enable (on by default) | Adding the bot to groups |
-| Bot-to-Bot Communication Mode (optional) | Enable it in the bot's settings | Needed when the target of `/translate` or `/copy` is another bot; see the note below |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="26%" align="left">Setting</th>
+    <th width="32%" align="left">In @BotFather</th>
+    <th width="42%" align="left">Purpose & Notes</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr><b>Disable Group Privacy</b></nobr></td>
+    <td><kbd>/setprivacy</kbd> → <b>Disable</b></td>
+    <td>Allows receiving normal group messages (copying, translation, AI interjections depend on this).<br><sub>*Note: Remove and re-add bot after changing; unnecessary if bot is group admin.*</sub></td>
+  </tr>
+  <tr>
+    <td><nobr><b>Enable Inline Mode</b></nobr></td>
+    <td><kbd>/setinline</kbd></td>
+    <td>Supports daily fortunes (<code>@bot query</code>) and <code>/gag</code> speaking buttons.</td>
+  </tr>
+  <tr>
+    <td><nobr><b>Inline Feedback 100%</b></nobr></td>
+    <td><kbd>/setinlinefeedback</kbd> → <b>100%</b></td>
+    <td>Primary confirmation pipeline for persisting fortune results.</td>
+  </tr>
+  <tr>
+    <td><nobr><b>Allow Joining Groups</b></nobr></td>
+    <td><kbd>/setjoingroups</kbd> → <b>Enable</b></td>
+    <td>Permits adding the bot to group chats (enabled by default).</td>
+  </tr>
+  <tr>
+    <td><nobr><b>Bot-to-Bot Communication</b></nobr><br><sub>(Optional Mode)</sub></td>
+    <td>Bot Settings → Bot-to-Bot</td>
+    <td>Required when <code>/translate</code> or <code>/copy</code> targets another bot.</td>
+  </tr>
+</tbody>
+</table>
 
-There is no need to run `/setcommands` in BotFather: the bot registers the menu in its configured notice style at startup, with plain menus for chats with a custom persona. The menu appears only in group chats; private chats accept only the super administrator's `/send`, so they show no menu.
+There is no need to run `/setcommands` manually in BotFather: the bot automatically registers its command menu at startup using its configured notice style (the standard menu applies when notice style is omitted and a custom persona is deployed). Menus are shown only in group chats; private chats accept only the super administrator's `/send` and do not display a general menu.
 
-> **About Bot-to-Bot**: by default Telegram does not deliver other bots' messages to this bot. Even when the other bot has the mode on, only its replies to this bot and `/command@thisbot` messages arrive, which is why translating another bot works only intermittently. Once this bot enables the mode, it receives every message from other bots in chats where it is an administrator or has privacy disabled, and AI interjections, copying, ad detection and flood counting do not distinguish bot senders. If a chat contains a bot that answers automatically, the two bots may keep replying to each other, so check before enabling it.
+> [!WARNING]
+> **Bot-to-Bot Communication Mode Details**:
+> When enabled, this bot can receive ordinary messages from other bots in groups where it is an administrator or has privacy mode disabled. Incoming messages from other bots pass through a global ingress limit: the first 15 messages from each bot during continuous activity enter business handlers; messages from the 16th onward are silently ignored. The count resets after 90 minutes without a message. At most 512 other bots are tracked; when full, messages from new bot IDs are ignored. This bot's own messages are neither counted nor blocked by this gate. See the [dispatch invariants](04-invariants.md).
 
 ### Administrator Rights in the Group
 
-Make the bot a group administrator and grant the rights for the features you use:
+Promote the bot to a group administrator and grant permissions based on required capabilities:
 
-| Administrator right | Features that use it |
-| :--- | :--- |
-| Delete messages | `/gag`, deleting ads found by ad detection, deleting messages from blocklisted channel identities |
-| Restrict and ban members | Kicking unverified members, Anti-Raid private mode, `/block enable\|disable`, `/mute`, `/unmute`, `/batch_kick`, flood muting, bans from ad detection |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="28%" align="left">Administrator Right</th>
+    <th width="72%" align="left">Relevant Capabilities</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>🗑️ <b>Delete Messages</b></nobr></td>
+    <td><code>/gag</code> speech moderation, automatic ad deletion, and removing messages from blocklisted channel identities.</td>
+  </tr>
+  <tr>
+    <td><nobr>🚫 <b>Restrict & Ban Members</b></nobr></td>
+    <td>Kicking unverified members, Anti-Raid private mode lockdown, <code>/block enable|disable</code>, <code>/mute</code> / <code>/unmute</code>, <code>/batch_kick</code>, flood muting, and ad bans.</td>
+  </tr>
+</tbody>
+</table>
 
-Join verification also depends on the administrator status itself: Telegram sends member join and leave events only to administrator bots. When a right is missing, the bot's notice names that right; identities holding `isCanViewBotStatus` can run `/bot_status` to see the rights granted in the current chat.
-
-If the bot is running but does not reply, work through [10 FAQ](10-faq.md).
+> [!TIP]
+> - **Join Event Dependency**: Verification relies on group administrator status (Telegram only delivers member join/leave events to admin bots).
+> - **Diagnostic Feedback**: If permissions are missing, the bot explicitly reports which right is needed. Members holding `isCanViewBotStatus` can run `/bot_status` to view the chat's current permission snapshot.
+> - If the bot is running but produces no responses, consult [11 FAQ](11-faq.md).
 
 ---
 

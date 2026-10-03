@@ -267,6 +267,3 @@ export const DISABLED_LINK_PREVIEW: Readonly<{ is_disabled: true }> = { is_disab
 
 /** Telegram 编辑边界识别目标内容已经相同的拒绝语。 */
 export const MESSAGE_NOT_MODIFIED: string = "message is not modified";
-
-/** Telegram 信号适配边界在无信号时共享的只读空元组。 */
-export const NO_SIGNAL_ARGS: readonly [] = [];

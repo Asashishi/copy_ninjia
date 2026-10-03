@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { collectFaultInjectionSuiteProblems, FAULT_INJECTION_BOUNDARIES } from "../../scripts/conventions/faultInjectionSuite";
+import { ACTIVE_COLD_MIGRATION_EDGES } from "../../scripts/migrations/active";
 
 const roots: string[] = [];
 
@@ -51,6 +52,11 @@ afterEach((): void => {
 });
 
 describe("fault-injection 清单门禁", (): void => {
+  test("全部当前冷迁移入口都由同一清单生成故障注入边界", (): void => {
+    for (const edge of ACTIVE_COLD_MIGRATION_EDGES) {
+      expect(FAULT_INJECTION_BOUNDARIES.some((boundary): boolean => boundary.path === edge.entryPath)).toBeTrue();
+    }
+  });
   test.each([
     'import { marker } from "../../packages/workers/aiChat/replyDelivery";',
     'const { marker } = await import("../../packages/workers/aiChat/replyDelivery");',

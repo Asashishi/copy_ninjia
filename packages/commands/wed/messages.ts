@@ -18,7 +18,7 @@ import {
   replyParametersFor,
   runTelegramAction,
 } from "../../infra/telegram/actions/core";
-import { signalArgs } from "../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../libs/telegramSignal";
 import { isMessageNotModified } from "../../infra/telegram/actions/messages";
 import type { RichTextMessage } from "../../types/telegram";
 import type { WedCandidate, WedSession } from "../../types/wed";
@@ -36,7 +36,7 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
   return runTelegramAction({
     action: "send wed result",
     execute: (requestSignal?: AbortSignal): Promise<Message.PhotoMessage> => {
-      const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+      const atmosphere: AtmosphereTexts = chatAtmosphere();
       const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity, atmosphere);
       return bot.api.sendPhoto(
         session.chatId,
@@ -48,7 +48,7 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
           reply_parameters: replyParametersFor(replyToMessageId),
           message_thread_id: session.messageThreadId,
         },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       );
     },
     map: (sent: Message.PhotoMessage): boolean => {
@@ -70,7 +70,7 @@ export function replaceWedResult(session: WedSession, candidate: WedCandidate, s
   return runTelegramAction({
     action: "replace wed result",
     execute: (requestSignal?: AbortSignal): ReturnType<typeof bot.api.editMessageMedia> => {
-      const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+      const atmosphere: AtmosphereTexts = chatAtmosphere();
       const caption: RichTextMessage = renderWedCaption(session.actor, candidate.identity, atmosphere);
       return bot.api.editMessageMedia(
         session.chatId,
@@ -82,7 +82,7 @@ export function replaceWedResult(session: WedSession, candidate: WedCandidate, s
           caption_entities: [...caption.entities],
         },
         { reply_markup: buildWedKeyboard(session.actor.id, candidate.identity.id, { atmosphere }) },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       );
     },
     map: (edited: Message | true): boolean => {
@@ -106,8 +106,8 @@ export function confirmWedResult(session: WedSession, signal: AbortSignal): Prom
     execute: async (requestSignal?: AbortSignal): Promise<void> => {
       try {
         await bot.api.editMessageReplyMarkup(session.chatId, session.messageId!, {
-          reply_markup: buildWedKeyboard(session.actor.id, session.targetId!, { confirmed: true, atmosphere: chatAtmosphere(session.chatId) }),
-        }, ...signalArgs(requestSignal));
+          reply_markup: buildWedKeyboard(session.actor.id, session.targetId!, { confirmed: true, atmosphere: chatAtmosphere() }),
+        }, telegramSignal(requestSignal));
       } catch (error: unknown) {
         if (!isMessageNotModified(error)) throw error;
       }

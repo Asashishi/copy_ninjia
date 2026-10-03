@@ -79,6 +79,7 @@ describe("config_example 与解析器保持同步", () => {
         path
       )
     ).toEqual({
+      timeZone: (raw as Readonly<{ time_zone: string }>).time_zone,
       atmosphere: (raw as Readonly<{ atmosphere: BotAtmosphere }>).atmosphere,
       botToken: "123456789:example",
       superAdminUserId: (raw as Readonly<{ super_admin_user_id: number }>).super_admin_user_id,
@@ -130,6 +131,10 @@ describe("config_example 与解析器保持同步", () => {
           sources.add(action.tone === undefined ? "send_voice" : "send_voice:tone");
           continue;
         }
+        if (action.type === "send_web_digest") {
+          sources.add(action.instructions === undefined ? "send_web_digest" : "send_web_digest:options");
+          continue;
+        }
         if (action.type !== "send_message" && action.source.kind === "path") {
           pathForms.add(action.source.path.startsWith(`${RUNTIME_DATA_ROOT}${sep}`) ? "relative" : "absolute");
         }
@@ -151,12 +156,14 @@ describe("config_example 与解析器保持同步", () => {
       "send_message",
       "send_voice",
       "send_voice:tone",
+      "send_web_digest",
+      "send_web_digest:options",
     ]);
     expect([...pathForms].sort()).toEqual(["absolute", "relative"]);
   });
 
-  test("agent.json 示例的六项能力形状被解析器接受", async () => {
-    // 六份占位凭据各自被拒绝这一点由 test/config/agent.test.ts 覆盖；这里只
+  test("agent.json 示例的七项能力形状被解析器接受", async () => {
+    // 七份占位凭据各自被拒绝这一点由 test/config/agent.test.ts 覆盖；这里只
     // 补它没覆盖的另一半——示例自身的键集合与字段形态仍然合法。
     const { parseAgentDeploymentConfig } = await import("../../packages/config/agent");
     const raw: Readonly<{ agent: Readonly<Record<string, unknown>> }> =

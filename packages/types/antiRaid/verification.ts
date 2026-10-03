@@ -96,7 +96,7 @@ export type VerificationSnapshot =
   | CheckingInviterVerificationSnapshot
   | ExpellingVerificationSnapshot;
 
-/** 本进程已耗尽终态执行预算、但仍保留在磁盘中的验证最小索引。 */
+/** 本进程因预算耗尽或许可无法确认而延后、且仍保留磁盘快照的验证最小索引。 */
 export interface DeferredVerificationRecord {
   chatId: number;
   userId: number;
@@ -104,4 +104,23 @@ export interface DeferredVerificationRecord {
   generation: number;
   /** 延后时最后一份已持久化快照的 revision。 */
   revision: number;
+}
+
+/**
+ * 踢出终态一轮的成员处置结果：踢成、本来不在群、成员或群类型未能确认、请求失败，或等待期间
+ * 状态已被替换（stale，调用方直接放弃本轮）。
+ */
+export type ExpelRemovalOutcome =
+  | "kicked"
+  | "absent"
+  | "unconfirmed"
+  | "kindUnknown"
+  | "failed"
+  | "stale";
+
+/** 踢出终态一轮的验证消息清理结果：去重后的消息数、未删掉的条数，以及是否被拒绝删除。 */
+export interface VerificationCleanupResult {
+  readonly total: number;
+  readonly missed: number;
+  readonly permissionDenied: boolean;
 }

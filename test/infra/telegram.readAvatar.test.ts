@@ -130,6 +130,31 @@ test("频道身份查询失败或返回不符时不猜测用户名，也不下�
   expect(download).not.toHaveBeenCalled();
 });
 
+test("裸 ID 的 getChat 明确找不到私聊时单独归类，其他 400 仍按临时失败", async (): Promise<void> => {
+  const signal: AbortSignal = new AbortController().signal;
+  getChat.mockImplementationOnce(async (): Promise<never> => {
+    throw Object.assign(new Error("chat not found"), { error_code: 400, description: "Bad Request: chat not found" });
+  });
+  expect(await readCurrentAvatar(user.id, signal)).toEqual({ status: "chat-not-found" });
+  expect(logError).not.toHaveBeenCalled();
+  expect(getUserProfilePhotos).not.toHaveBeenCalled();
+  expect(download).not.toHaveBeenCalled();
+  expect(web).not.toHaveBeenCalled();
+
+  getChat.mockImplementationOnce(async (): Promise<never> => {
+    throw Object.assign(new Error("chat not found"), { error_code: 400, description: "Bad Request: chat not found" });
+  });
+  expect(await readCurrentAvatar(user, signal)).toEqual({ status: "ok", identity: user, photo: new Uint8Array([4, 5]) });
+  expect(web).toHaveBeenCalledWith(user.username, signal);
+  expect(logError).toHaveBeenCalledTimes(1);
+
+  getChat.mockImplementationOnce(async (): Promise<never> => {
+    throw Object.assign(new Error("another 400"), { error_code: 400, description: "Bad Request: another error" });
+  });
+  expect(await readCurrentAvatar(user.id, signal)).toEqual(FAILED);
+  expect(logError).toHaveBeenCalledTimes(2);
+});
+
 test("历史头像未匹配当前身份时只下载当前头像", async (): Promise<void> => {
   getUserProfilePhotos.mockImplementationOnce(async (): Promise<UserProfilePhotos> => ({
     total_count: 1, photos: [[{ file_id: "old", file_unique_id: "old-unique", width: 640, height: 640 }]],

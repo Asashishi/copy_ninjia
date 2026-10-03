@@ -3,12 +3,11 @@ import type { RawApi, Transformer } from "grammy";
 import { settleTestBatch } from "../libs/helpers";
 import {
   telegramOutboundAbortController,
-  telegramOutboundAccepting,
   telegramOutboundGateState,
 } from "../../packages/cache/main/telegram";
+import { resetTelegramOutboundGateState } from "../helpers/telegramOutboundGate";
 import type {
   TelegramOutboundJob,
-  TelegramRetryCategory,
   TelegramRetryLane,
 } from "../../packages/types/telegramOutbound";
 import {
@@ -47,36 +46,7 @@ function deferredApiResponse(): DeferredApiResponse {
   };
 }
 
-function resetLane(lane: TelegramRetryLane): void {
-  lane.head = null;
-  lane.tail = null;
-  lane.activeCount = 0;
-  lane.pendingCount = 0;
-  lane.retryAt = 0;
-  if (lane.retryTimer !== null) clearTimeout(lane.retryTimer);
-  lane.retryTimer = null;
-  lane.recoveryLimit = 1;
-  lane.recoveryActive = 0;
-  lane.recovering = false;
-}
-
-function resetGateState(): void {
-  telegramOutboundAbortController.current = new AbortController();
-  telegramOutboundAccepting.current = true;
-  telegramOutboundGateState.activeCount = 0;
-  telegramOutboundGateState.retryPendingCount = 0;
-  telegramOutboundGateState.aborting = false;
-  telegramOutboundGateState.activeJobs.clear();
-  for (const category of Object.keys(
-    telegramOutboundGateState.lanes
-  ) as TelegramRetryCategory[]) {
-    resetLane(telegramOutboundGateState.lanes[category]);
-  }
-  for (const waiter of telegramOutboundGateState.drainWaiters) clearTimeout(waiter.timer);
-  telegramOutboundGateState.drainWaiters.clear();
-}
-
-afterEach((): void => resetGateState());
+afterEach((): void => resetTelegramOutboundGateState());
 
 describe("Telegram 主线程出站总闸", () => {
   test("正常请求不进入 429 队列，也没有普通消息占满并发位后饿死踢人的问题", async () => {
@@ -306,7 +276,7 @@ describe("Telegram 主线程出站总闸", () => {
       expect(initTelegramOutbound).toThrow(
         "Cannot initialize Telegram outbound while the previous lifecycle is unsettled."
       );
-      resetGateState();
+      resetTelegramOutboundGateState();
     }
   });
 

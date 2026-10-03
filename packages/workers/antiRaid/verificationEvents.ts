@@ -39,12 +39,12 @@ import {
  * 这里预计算管理员、lockdown 与评论区线索，状态转移仍由 dispatcher 统一执行。
  */
 
-function memberLabel(member: AntiRaidMember, chatId: number): string {
+function memberLabel(member: AntiRaidMember): string {
   return formatUserLabel({
     id: member.id,
     username: member.username,
     first_name: member.first_name,
-  }, workerAtmosphere(chatId));
+  }, workerAtmosphere());
 }
 
 export function handleJoinEvent(
@@ -65,7 +65,7 @@ export function handleJoinEvent(
   const event: JoinEvent = {
     type: "join",
     memberId: member.id,
-    label: memberLabel(member, chatId),
+    label: memberLabel(member),
     isBot: member.isBot === true,
     announcementMessageId: message.announcementMessageId,
     actorId,

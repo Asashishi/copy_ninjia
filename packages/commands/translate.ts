@@ -24,7 +24,7 @@ function refuseUnavailableTranslation(chatId: number, messageId: number | undefi
     chatId,
     messageId,
     feature: "Translation",
-    text: (file: string): string => chatAtmosphere(chatId).NOTICE_TEXTS.translateConfigInvalid(file),
+    text: (file: string): string => chatAtmosphere().NOTICE_TEXTS.translateConfigInvalid(file),
   });
 }
 
@@ -55,7 +55,7 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (keyword === "enable" || keyword === "disable") {
     await runChatToggleCommand({
       ctx,
-      texts: chatAtmosphere(chatId).TRANSLATE_TOGGLE_TEXTS,
+      texts: chatAtmosphere().TRANSLATE_TOGGLE_TEXTS,
       permission: "isCanControllTranslatePermission",
       persistReason: "translation toggled",
       runtimeLabel: "translation runtime",
@@ -71,17 +71,17 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (stopMatch !== null) {
     if (stopMatch[1] === undefined && explicitReplyTo(ctx.msg) === undefined && ctx.msg.external_reply === undefined) {
       await stopTranslation(chatId);
-      await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).TRANSLATE_STOP_ALL_TEXT, replyToMessageId: messageId });
+      await sendCommandMessage({ chatId, text: chatAtmosphere().TRANSLATE_STOP_ALL_TEXT, replyToMessageId: messageId });
       return;
     }
     const target: CachedUser | undefined = await resolveCommandTarget({
       chatId, message: ctx.msg, botUserId: ctx.me.id, rawArgument: stopMatch[1] ?? "",
-      messages: chatAtmosphere(chatId).TRANSLATE_TARGET_TEXTS, acceptUserId: true, acceptChatId: true,
+      messages: chatAtmosphere().TRANSLATE_TARGET_TEXTS, acceptUserId: true, acceptChatId: true,
     });
     if (target === undefined) return;
     const current: TranslateState | undefined = getTranslateState(chatId, target.id);
     await stopTranslation(chatId, target.id);
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: current === undefined
@@ -95,14 +95,14 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   const match: RegExpExecArray | null = TRANSLATE_ARGUMENT_PATTERN.exec(argument);
   const language: string | undefined = match?.[1]?.toLowerCase();
   if (language === undefined || !isTranslateLanguage(language)) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).TRANSLATE_USAGE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere().TRANSLATE_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }
   if (await refuseUnavailableTranslation(chatId, messageId)) return;
   if (getChatState(chatId).isTranslationEnabled !== true) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).TRANSLATE_DISABLED_TEXT,
+      text: chatAtmosphere().TRANSLATE_DISABLED_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -113,12 +113,12 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: match?.[2] ?? "",
-    messages: chatAtmosphere(chatId).TRANSLATE_TARGET_TEXTS,
+    messages: chatAtmosphere().TRANSLATE_TARGET_TEXTS,
   });
   if (target === undefined) return;
   const current: TranslateState | undefined = getTranslateState(chatId, target.id);
   if (current !== undefined) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: atmosphere.NOTICE_TEXTS.translateAlreadyRunning(formatUserLabel(current.translatedUser, atmosphere), TRANSLATE_LANGUAGE_LABELS[current.language]),
@@ -130,13 +130,13 @@ export async function handleTranslateCommand(ctx: CommandContext<Context>): Prom
   if (!setTranslateState(chatId, { translatedUser: target, language })) {
     await sendCommandMessage({
       chatId,
-      text: getChatState(chatId).translate !== undefined ? chatAtmosphere(chatId).TRANSLATE_CHAT_CAPACITY_TEXT : chatAtmosphere(chatId).TRANSLATE_CAPACITY_TEXT,
+      text: getChatState(chatId).translate !== undefined ? chatAtmosphere().TRANSLATE_CHAT_CAPACITY_TEXT : chatAtmosphere().TRANSLATE_CAPACITY_TEXT,
       replyToMessageId: messageId,
     });
     return;
   }
   await persistChatState(chatId, "translation started");
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   await sendCommandMessage({
     chatId,
     text: atmosphere.NOTICE_TEXTS.translateStarted(formatUserLabel(target, atmosphere), TRANSLATE_LANGUAGE_LABELS[language]),

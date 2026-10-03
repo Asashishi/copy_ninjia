@@ -67,7 +67,7 @@ export function handleTerminalPersisted(
 }
 
 /**
- * 本进程执行预算耗尽后卸载终态，但明确保留最后一份磁盘快照。
+ * 本进程执行预算耗尽或当前执行许可无法确认时卸载终态，保留最后一份磁盘快照。
  *
  * 这不是处置成功：解释器必须据 retainPersistedSnapshot 跳过 tombstone，下一次
  * 完整进程启动仍会从持久化记录恢复。非终态收到迟到事件时保持原状态。

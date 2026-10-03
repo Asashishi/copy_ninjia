@@ -12,7 +12,6 @@ import {
   confirmLuckDraw,
   handleAdDetectCommand,
   handleAiChatCommand,
-  handlePromptCommand,
   handleBatchKickCommand,
   handleBlockCommand,
   handleHImageCommand,
@@ -52,10 +51,10 @@ import {
   handleVerificationCallback,
 } from "../antiRaid";
 import { handleMyChatMemberUpdate } from "../infra/botAdmin";
-import { syncChatPersonaSurfaces } from "../commands/chatPersonaSync";
 import { observeWedMemberDeparture, observeWedMembers } from "../commands/wed/members";
 import { CJK_ACTION_COMMAND_PATTERN, SLASH_CHAR_CODE } from "../consts/commands";
 import { logger } from "../infra/logger";
+import { shouldPassBotMessage } from "../infra/botMessageGate";
 import {
   isIdentityPolicyCached,
   prefetchIdentityPolicies,
@@ -116,6 +115,11 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     if (ctx.update.update_id > lastSeenUpdateId) lastSeenUpdateId = ctx.update.update_id;
     return next();
   });
+
+  // 收到其他机器人的 message 时在接收链前段计数；超额更新不进入回执、初始化、
+  // 身份预热或业务分发。频道身份与本机器人自己的发言不计数。
+  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
+    shouldPassBotMessage(ctx.message, ctx.me.id) ? next() : undefined);
 
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 `shouldPassInitGate` 网关前检查。
@@ -266,7 +270,6 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("info", handleInfoCommand);
   commands.command("block", handleBlockCommand);
   commands.command("batch_kick", handleBatchKickCommand);
-  commands.command("prompt", handlePromptCommand);
   commands.command("ai_chat", handleAiChatCommand);
   commands.command("clear_context", handleClearContextCommand);
   commands.command("ad_detect", handleAdDetectCommand);
@@ -308,9 +311,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     (ctx.message ?? ctx.channelPost) === undefined ? next() : handleIncomingMessageMiddleware(ctx));
   bot.on("message_reaction", handleReaction);
   bot.on("chat_member", handleChatMemberUpdate);
-  // 群人设三处同步由这里注入：botAdmin 属 infra，不得静态依赖 commands/、AI
-  // 与 Anti-Raid 业务模块（见 docs/cn/04-invariants.md）。
-  bot.on("my_chat_member", (ctx: Filter<Context, "my_chat_member">): Promise<void> => handleMyChatMemberUpdate(ctx, syncChatPersonaSurfaces));
+  bot.on("my_chat_member", handleMyChatMemberUpdate);
   // /wed 结果和 /qa query 翻页按钮排在入群验证之前：前缀各自独立，认领了就
   // 不再往下走，没认领的原样交给验证按钮。
   bot.on("callback_query:data", async (

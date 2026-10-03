@@ -64,7 +64,7 @@ interface DisposalMessageIdsParams {
 }
 
 /**
- * 处置播报里的展示标签：按冻结的可见发送者元数据与当前群氛围现算，口径同
+ * 处置播报里的展示标签：按冻结的可见发送者元数据与本进程氛围现算，口径同
  * users/userLabel.ts 的 formatUserLabel（频道的 firstName 即频道标题）。
  */
 function adSenderLabel(bundle: AdMessageBundle, atmosphere: AtmosphereTexts): string {
@@ -84,7 +84,7 @@ function adSenderLabel(bundle: AdMessageBundle, atmosphere: AtmosphereTexts): st
 export function warnReferencedAdSender(
   bundle: AdMessageBundle
 ): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
-  const atmosphere: AtmosphereTexts = workerAtmosphere(bundle.chatId);
+  const atmosphere: AtmosphereTexts = workerAtmosphere();
   return sendTemporaryMessageFromMain({
     purpose: "adWarning",
     chatId: bundle.chatId,
@@ -230,7 +230,7 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
     chatId: bundle.chatId,
     senderId: bundle.senderId,
     isChannel: bundle.isChannel,
-    label: adSenderLabel(bundle, workerAtmosphere(bundle.chatId)),
+    label: adSenderLabel(bundle, workerAtmosphere()),
     meta: bundle.meta,
     reason: verdict.reason,
     // 判定依据的整串原样带回主线程写进命中样本（见 diskIO/adSampleFile.ts）：

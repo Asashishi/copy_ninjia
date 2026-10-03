@@ -21,6 +21,7 @@
 
 import type OpenAI from "openai";
 import type { ImageGenerationAspectRatio } from "../../types/aiChat/imageGeneration";
+import type { AgentCapability } from "../../types/config";
 
 /** OpenAI SDK images generate/edit 共用的尺寸参数。 */
 type OpenAiImageSize = NonNullable<OpenAI.Images.ImageGenerateParamsNonStreaming["size"]>;
@@ -52,6 +53,12 @@ export const OPENAI_CHAT_SUMMARY_MAX_TOKENS: number = 49_152;
 export const OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS: number = 16_384;
 /** 单次媒体描述请求的输出 token 上限（含推理 token）。 */
 export const OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 16_384;
+/** text 能力结构化 JSON 生成（aiChat/openai/text.ts 的 generateOpenAiJson）的输出 token 上限（含推理 token）。 */
+export const OPENAI_JSON_MAX_TOKENS: number = 16_384;
+/** 联网检索执行器（aiChat/openai/search.ts）单次请求的输出 token 上限（含推理 token）。 */
+export const OPENAI_WEB_SEARCH_MAX_TOKENS: number = 16_384;
+/** 联网检索执行器在错误日志里的调用名。所属模块：aiChat/openai/search.ts。 */
+export const OPENAI_WEB_SEARCH_ERROR_LABEL: string = "OpenAI web search";
 
 /**
  * `prompt_cache_key` 的命名空间前缀。
@@ -95,21 +102,25 @@ export const OPENAI_REPLY_ERROR_LABEL: string = "OpenAI API";
 export const OPENAI_IMAGE_ERROR_LABEL: string = "OpenAI image generation API";
 
 /**
- * text（闲聊回复）与 summary（冷消息压缩、贴纸整包简介）两档能力的 per-attempt
- * 超时上限；与 Gemini 侧同口径。media 与 image 各有独立档位，见下两个常量。
- */
-export const OPENAI_REQUEST_TIMEOUT_MS: number = 180_000;
-/**
- * media 能力（视觉描述与语音转写）的独立超时，宽于纯文本往返：服务端需先把
- * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/dynamic/agent.json
- * 的 `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
- */
-export const OPENAI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
-/**
  * 生图请求的独立超时：gpt-image 的一次 1024px 生成常年跑到分钟级，套用聊天
  * 那份预算会在模型还在画的时候把连接掐掉。
  */
 export const OPENAI_IMAGE_REQUEST_TIMEOUT_MS: number = 300_000;
+/**
+ * 按能力取 SDK 每次尝试的超时上限，requestOpenAiResult 同时以它作整次调用的 deadline；与
+ * Gemini 侧同口径。media（视觉描述与语音转写）宽一档：服务端需先把整份图片或整段音频解码进
+ * 上下文才开始出字；视觉与语音共用 `agent.media`，因此共用同一档，语音转写也按这一档设
+ * deadline。web_search 由交互式检索与 cron 摘要共用。image 与 tts 分别由 aiChat/openai/image.ts
+ * 与 aiChat/openai/speech.ts 在每次请求上另行覆盖。所属模块：aiChat/openai/client.ts、aiChat/openai/text.ts。
+ */
+export const OPENAI_REQUEST_TIMEOUTS_MS: Readonly<Record<AgentCapability, number>> = {
+  text: 180_000,
+  summary: 180_000,
+  media: 240_000,
+  image: 180_000,
+  tts: 180_000,
+  web_search: 180_000,
+};
 /**
  * SDK 对 408/429/5xx 的重试次数（不含首次请求，语义同 OpenAI SDK 的
  * maxRetries）；所有调用方不得再重试这类请求失败。

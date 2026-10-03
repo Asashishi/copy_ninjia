@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { diskIORuntime } from "../../packages/cache/main/diskIO";
 import { defaultStickerConfigCache } from "../../packages/cache/perThread/config";
@@ -79,10 +80,10 @@ test("缺省贴纸配置在初始 load 与运行时恢复都明确发送 null", 
   defaultStickerConfigCache.current = null;
   try {
     const loading: Promise<unknown> = loadPersistedData();
-    expect(worker().messages.at(-1)).toEqual({ type: "load", stickerPacks: null });
+    expect(worker().messages.at(-1)).toEqual({ type: "load", timeZone: getTimeZone(), stickerPacks: null });
     emitSuccessfulDiskIOLoad(worker()); await loading;
     const replacement: FakeDiskIOWorker = crashDiskIOWorker(worker());
-    expect(replacement.messages[0]).toEqual({ type: "load", stickerPacks: null });
+    expect(replacement.messages[0]).toEqual({ type: "load", timeZone: getTimeZone(), stickerPacks: null });
   } finally { defaultStickerConfigCache.current = previous; }
 });
 

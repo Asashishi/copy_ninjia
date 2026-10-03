@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { adoptTimeZone, getTimeZone } from "../../packages/config/time";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { DiskIOMessage, DiskIOOperationMessage, AdSampleDiskMessage } from "../../packages/types/diskIO/messages";
 import type { DiskIODomain } from "../../packages/types/diskIO/replies";
+
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
 import {
   adoptAiMemorySnapshots,
@@ -61,6 +63,9 @@ import {
   route,
 } from "../helpers/diskIOWorkerRouterHarness";
 import type { StickerInspection } from "../helpers/diskIOWorkerRouterHarness";
+
+const INITIAL_TIME_ZONE: string = getTimeZone();
+afterEach((): void => { adoptTimeZone(INITIAL_TIME_ZONE); });
 
 describe("Disk I/O Worker protocol router", () => {
   test("把各业务消息准确交给唯一领域 owner", async () => {
@@ -312,7 +317,7 @@ describe("Disk I/O Worker protocol router", () => {
         throw new Error("chat QA write rejected");
       });
     }
-    const stateMessage: DiskIOMessage = { aiPersona: null,
+    const stateMessage: DiskIOMessage = {
       type: "chatStateWrite",
       chatId: -1,
       data: "{}",
@@ -509,11 +514,12 @@ describe("Disk I/O Worker protocol router", () => {
     });
   });
 
-  test("启动恢复先加载当天结果，再把确认数交给密钥一致性检查", async () => {
+  test("启动恢复先接管时区并加载当天结果，再把确认数交给密钥一致性检查", async () => {
     hydratedLuckEntries.current.set("confirmed", { label: "大吉", fortunePercent: 99 });
 
-    await route({ type: "load", stickerPacks: ["pack_a"] });
+    await route({ type: "load", timeZone: "UTC", stickerPacks: ["pack_a"] });
 
+    expect(getTimeZone()).toBe("UTC");
     expect(inspectLuckDay).toHaveBeenCalledTimes(1);
     expect(inspectLuckReceiptSecret).toHaveBeenLastCalledWith({
       day: expect.any(String),
@@ -527,13 +533,13 @@ describe("Disk I/O Worker protocol router", () => {
   });
 
   test("主线程已校验的贴纸白名单快照原样用于恢复 inspect", async () => {
-    await route({ type: "load", stickerPacks: ["pack_b"] });
+    await route({ type: "load", timeZone: getTimeZone(), stickerPacks: ["pack_b"] });
 
     expect(inspectStickerCatalogs).toHaveBeenCalledWith(["pack_b"]);
   });
 
   test("白名单可读时先只读 inspect，成功回执后才执行孤儿维护", async () => {
-    await route({ type: "load", stickerPacks: ["pack_a"] });
+    await route({ type: "load", timeZone: getTimeZone(), stickerPacks: ["pack_a"] });
 
     expect(inspectStickerCatalogs).toHaveBeenCalledWith(["pack_a"]);
     expect(inspectJoinLogFiles).toHaveBeenCalledTimes(1);
@@ -558,7 +564,7 @@ describe("Disk I/O Worker protocol router", () => {
     );
 
     const load: Promise<void> = queueDiskIOWorkerMessage({
-      type: "load",
+      type: "load", timeZone: getTimeZone(),
       stickerPacks: ["pack_a"],
     });
     const write: Promise<void> = queueDiskIOWorkerMessage({
@@ -591,7 +597,7 @@ describe("Disk I/O Worker protocol router", () => {
       entered.resolve();
       await maintenance.promise;
     });
-    const load: Promise<void> = queueDiskIOWorkerMessage({ type: "load", stickerPacks: [] });
+    const load: Promise<void> = queueDiskIOWorkerMessage({ type: "load", timeZone: getTimeZone(), stickerPacks: [] });
     const write: Promise<void> = queueDiskIOWorkerMessage({
       type: "joinLog", sequence: 1, chatId: -1, userId: 42, joinedAt: 1_000, day: "1970-01-01",
     });
@@ -622,7 +628,7 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      await route({ type: "load", stickerPacks: ["pack_a"] });
+      await route({ type: "load", timeZone: getTimeZone(), stickerPacks: ["pack_a"] });
     } finally {
       console.error = originalConsoleError;
     }
@@ -651,7 +657,7 @@ describe("Disk I/O Worker protocol router", () => {
     const originalConsoleError = console.error;
     console.error = consoleError as unknown as typeof console.error;
     try {
-      await route({ type: "load", stickerPacks: ["pack_a"] });
+      await route({ type: "load", timeZone: getTimeZone(), stickerPacks: ["pack_a"] });
     } finally {
       console.error = originalConsoleError;
     }

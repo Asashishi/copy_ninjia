@@ -20,19 +20,72 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
 
 ## 🧭 Developer Quick Navigation
 
-| Scenario | Recommended Path | Direct Link |
-| :--- | :--- | :---: |
-| 🚀 **First Run** | Environment setup, deployment configuration, Telegram API options, first run | [📖 01 Setup](01-getting-started.md) |
-| 🏗️ **Architecture** | Main thread + 3 Workers model, message lifecycle, recovery | [📖 02 Architecture](02-architecture.md) |
-| 🗺️ **Code Placement** | Module map, code structure, placement decision rules | [📖 03 Directory Map](03-directory-map.md) |
-| ⚡ **Invariants** | Cross-module constraints, concurrency safety, invariant rules | [📖 04 Invariants](04-invariants.md) |
-| 🧪 **Development** | `bun run check` pipeline, test isolation, coverage rules | [📖 05 Workflow](05-dev-workflow.md) |
-| 🛠️ **Modifications** | Step-by-step recipes for commands, AI tools, and schema edits | [📖 06 Recipes](06-modification-guide.md) |
-| 🛡️ **Operations** | systemd deployment, hardware guidance, `COPY_NINJIA_DATA_ROOT`, backup, debugging | [📖 07 Operations](07-operations.md) |
-| 🎮 **Look up a command** | Every command, permission semantics and behavioural details (the root README keeps only a summary) | [📖 08 Commands](08-commands.md) |
-| 🖼️ **Images and scheduled tasks** | Collection, content deduplication, albums, scheduled voice, time zones and path bases | [📖 Configuration](../../config_example/README/en.md) |
-| 📊 **Read the numbers** | Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency | [📖 09 Performance](09-performance.md) |
-| ❓ **Bot not replying** | Checklist for a running bot that stays silent | [📖 10 FAQ](10-faq.md) |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="24%" align="left">Scenario</th>
+    <th width="44%" align="left">Recommended Path</th>
+    <th width="32%" align="center">Direct Link</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>🚀 <b>First Run</b></nobr></td>
+    <td>Environment setup, deployment configuration, Telegram API options, first run</td>
+    <td align="center"><nobr><a href="01-getting-started.md">📖 01 Setup</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🏗️ <b>Architecture</b></nobr></td>
+    <td>Main thread + 3 Workers model, message lifecycle, recovery</td>
+    <td align="center"><nobr><a href="02-architecture.md">📖 02 Architecture</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🗺️ <b>Code Placement</b></nobr></td>
+    <td>Module map, code structure, placement decision rules</td>
+    <td align="center"><nobr><a href="03-directory-map.md">📖 03 Directory Map</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>⚡ <b>Invariants</b></nobr></td>
+    <td>Cross-module constraints, concurrency safety, invariant rules</td>
+    <td align="center"><nobr><a href="04-invariants.md">📖 04 Invariants</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🧪 <b>Development</b></nobr></td>
+    <td><code>bun run check</code> pipeline, test isolation, coverage rules</td>
+    <td align="center"><nobr><a href="05-dev-workflow.md">📖 05 Workflow</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛠️ <b>Modifications</b></nobr></td>
+    <td>Step-by-step recipes for commands, AI tools, and schema edits</td>
+    <td align="center"><nobr><a href="06-modification-guide.md">📖 06 Recipes</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛡️ <b>Operations</b></nobr></td>
+    <td>systemd deployment, hardware guidance, <code>COPY_NINJIA_DATA_ROOT</code>, backup, debugging</td>
+    <td align="center"><nobr><a href="07-operations.md">📖 07 Operations</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🖼️ <b>Images and scheduled tasks</b></nobr></td>
+    <td>Collection, content deduplication, albums, scheduled voice, time zones and path bases</td>
+    <td align="center"><nobr><a href="08-images-and-cron.md">📖 08 Images and Scheduled Tasks</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🎮 <b>Look up a command</b></nobr></td>
+    <td>Every command, permission semantics and behavioural details (the root README keeps only a summary)</td>
+    <td align="center"><nobr><a href="09-commands.md">📖 09 Commands</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>📊 <b>Read the numbers</b></nobr></td>
+    <td>Release benchmark for cold/hot paths, total throughput and I/O, and end-to-end chain latency</td>
+    <td align="center"><nobr><a href="10-performance.md">📖 10 Performance</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>❓ <b>Bot not replying</b></nobr></td>
+    <td>Checklist for a running bot that stays silent</td>
+    <td align="center"><nobr><a href="11-faq.md">📖 11 FAQ</a></nobr></td>
+  </tr>
+</tbody>
+</table>
 
 ---
 
@@ -78,17 +131,22 @@ Comprehensive multi-page developer guide: from setup, architecture, and coding s
    - Backup and recovery (`memory/luck/receipt-secret.json` key consistency)
    - Common startup failures and `bot.lock` troubleshooting
 
-8. **[08 Command and Behaviour Reference](08-commands.md)**
+8. **[08 Image Library and Scheduled Tasks](08-images-and-cron.md)**
+   - Dedicated library setup, image collection and content deduplication
+   - Scheduled single images, albums, random pictures and voice
+   - Time zones, target groups and relative path bases
+
+9. **[09 Command and Behaviour Reference](09-commands.md)**
    - Copy modes and how a target is specified
    - The permission tier of every command (permission key / super admin / group member)
    - Behavioural details for `/gag`, `/block`, `/batch_kick`, ad detection and join verification
 
-9. **[09 Performance Benchmark](09-performance.md)**
-   - What the six sections of `bun run perf:full` measure: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, containers and algorithms, join-log capacity line
-   - Three independent rounds per item, reported as a mean with min, max and coefficient of variation
-   - Total throughput, total I/O and mock data-root footprint per round
+10. **[10 Performance Benchmark](10-performance.md)**
+    - What the six sections of `bun run perf:full` measure: cold start, production hot paths, end-to-end persistence chains, SQLite and main-thread caches, containers and algorithms, join-log capacity line
+    - Three independent rounds per item, reported as a mean with min, max and coefficient of variation
+    - Total throughput, total I/O and mock data-root footprint per round
 
-10. **[10 FAQ](10-faq.md)**
+11. **[11 FAQ](11-faq.md)**
     - A running bot that does not reply: initialisation, privacy, AI triggers, private chats, auto-deleted notices, Inline Mode, Bot-to-Bot, protections that are off by default, and the process state
 
 ---

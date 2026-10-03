@@ -1,4 +1,4 @@
-/** owner：Disk I/O Worker（packages/workers/diskIO/timedFlush.ts）。 */
+/** owner: workers/diskIO。定时 flush 合并（packages/workers/diskIO/timedFlush.ts）的进程内状态。 */
 
 import type { TimedDiskIOOperation } from "../../../types/diskIO/storage";
 

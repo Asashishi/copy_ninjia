@@ -1,7 +1,3 @@
-import {
-  IDENTITY_DATABASE_SCHEMA_DATA,
-  IDENTITY_DATABASE_SCHEMA_KEY,
-} from "../../packages/consts/identityStorage";
 import { chatQa } from "../../packages/database/schema/chatQa";
 import { chatStates } from "../../packages/database/schema/chatState";
 import {
@@ -28,19 +24,6 @@ type StorageDatabaseTransaction = Parameters<
   Parameters<StorageDatabase["transaction"]>[0]
 >[0];
 
-/**
- * 当前 schema 版本行，夹具与基准建库时的唯一来源。
- *
- * 生产建库由安装器（scripts/install/start.sh）调 packages/database/interact/initialization.ts 的
- * initializeStorageDatabase 写这一笔；夹具走 seedStorageDatabase，要和业务行
- * 在同一个事务里落。两条路写的必须是同一行，因此这里只留一份字面量，
- * 版本变更时不会漏改某个夹具。缺这一行时启动恢复会拒绝加载整个库。
- */
-export const CURRENT_STORAGE_METADATA_ROWS: readonly Readonly<StoredStorageMetadataRow>[] = [{
-  key: IDENTITY_DATABASE_SCHEMA_KEY,
-  data: IDENTITY_DATABASE_SCHEMA_DATA,
-}];
-
 export interface SeedStorageDatabaseOptions {
   readonly metadata: readonly StoredStorageMetadataRow[];
   readonly whitelist: readonly StoredIdentityPolicyRow[];
@@ -51,7 +34,11 @@ export interface SeedStorageDatabaseOptions {
   readonly temporaryAdBypass?: readonly StoredTemporaryAdBypassActivity[];
 }
 
-/** 测试与性能夹具在一个 Drizzle 事务内写入全部初始行。 */
+/**
+ * 测试与性能夹具在一个 Drizzle 事务内写入全部初始行。当前格式的 metadata 用
+ * packages/database/interact/initialization.ts 的 storageMetadataRows 构造（与安装器建库同源），
+ * 其时区必须等于读这份库的进程所接管的配置时区，否则启动恢复会拒绝加载整个库。
+ */
 export function seedStorageDatabase(
   database: StorageDatabase,
   {
@@ -78,7 +65,7 @@ export function seedStorageDatabase(
       transaction.insert(pendingBlockedRemovals).values([...removals]).run();
     }
     if (storedChatStates.length > 0) {
-      transaction.insert(chatStates).values(storedChatStates.map((row: StoredChatStateRow): typeof chatStates.$inferInsert => ({ chatId: row.chatId, status: row.data, aiPersona: row.aiPersona }))).run();
+      transaction.insert(chatStates).values(storedChatStates.map((row: StoredChatStateRow): typeof chatStates.$inferInsert => ({ chatId: row.chatId, status: row.data }))).run();
     }
     if (storedChatQa.length > 0) {
       transaction.insert(chatQa).values([...storedChatQa]).run();

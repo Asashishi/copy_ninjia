@@ -10,13 +10,13 @@ import { installAiCacheUsageSink } from "../infra/aiCacheUsage";
 import type { AiCacheUsage } from "../types/aiCache";
 import { adoptStickerConfig, getStickerConfig } from "../config/stickers";
 import { adoptMoodConfig } from "../config/mood";
-import { chatPersonas } from "../cache/workers/aiChat/persona";
 import { adoptPersona } from "../config/persona";
 import { adoptAgentDeploymentConfig } from "../config/agent";
 import { reportUnimplementedAgentCapabilities } from "../aiChat/provider";
 import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/weather";
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
-import { botInfoState, superAdminUserIdState, defaultAtmosphereState } from "../cache/workers/aiChat/identity";
+import { botInfoState, superAdminUserIdState, atmosphereState } from "../cache/workers/aiChat/identity";
+import { adoptTimeZone } from "../config/time";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
 import {
@@ -34,6 +34,7 @@ import {
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
 import { handleCancelVoiceSynthesis, handleSynthesizeVoice } from "./aiChat/voiceSynthesis";
+import { handleCancelWebDigest, handleComposeWebDigest } from "./aiChat/webDigest";
 import { hydrateTtsUsage } from "../aiChat/ai/ttsUsage";
 import { recordBotImage, resolveRepliedBotImage } from "./aiChat/botImages";
 import type { BufferedMessage } from "../types/aiChat/memory";
@@ -73,7 +74,8 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  * view_sticker_pack + send_sticker / generate_image / send_voice，见
  * aiChat/ai/tools/replyToolset/）；生图与语音都按部署能力挂载、由模型按工具
  * 说明决定是否调用。主线程的 `/send` 代发 TTS 与 cron
- * `send_voice` 经 synthesizeVoice 请求借用同一套合成实现（aiChat/voiceSynthesis.ts）。
+ * `send_voice` 经 synthesizeVoice 请求借用同一套合成实现（aiChat/voiceSynthesis.ts），cron
+ * `send_web_digest` 经 composeWebDigest 请求在这里检索并组稿（aiChat/webDigest.ts）。
  * 模型在同一次对话里自主决定可用工具的组合与顺序。发往 Telegram 的调用统一经双工能力请求回到主线程，
  * Worker 不持有独立 Telegram 网络客户端；机器人自己的账号身份改由主线程在
  * bot.init() 后经 init 消息注入，见 cache/workers/aiChat/identity.ts 的 botInfoState）。
@@ -91,7 +93,7 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  *
  * 心情系统：各群心情按随机寿命（几小时量级）自然到期轮换，到期后下次
  * 拼运行时状态区块时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
- * 的感觉；重抽时还按当前东京天气/时段微调各心情的概率，见 aiChat/ai/mood.ts；
+ * 的感觉；重抽时还按当前东京天气与配置时区时段微调各心情的概率，见 aiChat/ai/mood.ts；
  * 两个内存缓存（cache/workers/aiChat/mood.ts
  * 的 chatMoods/chatMoodExpiresAts）都不落盘，随 Worker 重启清空。天气
  * 数据由 aiChat/ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
@@ -160,6 +162,7 @@ async function flushAiChatWorker(flushId: number): Promise<void> {
 export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
     case "init":
+      adoptTimeZone(msg.timeZone);
       // 配置必须先于任何会调模型的动作落定：紧随其后的 ensureStickerCatalogs
       // 就会去取 media 能力的模型名与凭据。本线程从不读 agent.json，运行期
       // 变化只经 configReload 消息到达，崩溃重建时主线程重放带着当前快照的
@@ -173,7 +176,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       reportUnimplementedAgentCapabilities();
       botInfoState.current = msg.botInfo;
       superAdminUserIdState.current = msg.superAdminUserId;
-      defaultAtmosphereState.current = msg.defaultAtmosphere;
+      atmosphereState.current = msg.atmosphere;
       // 白名单贴纸包的目录生成后台启动，不阻塞后续 record/trigger 的处理，
       // 见 aiChat/ai/stickers/catalog.ts 的 ensureStickerCatalogs；下一条 FIFO 消息
       // （若有）通常是 hydrateStickerCatalog，异步生成天然会先看到已恢复
@@ -182,10 +185,6 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       break;
     case "configReload":
       applyAiChatConfigReload(msg);
-      break;
-    case "persona":
-      if (msg.persona === null) chatPersonas.delete(msg.chatId);
-      else chatPersonas.set(msg.chatId, msg.persona);
       break;
     case "record": {
       if (aiChatWorkerQuiescing.current) break;
@@ -253,6 +252,12 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
     case "cancelVoiceSynthesis":
       handleCancelVoiceSynthesis(msg);
       break;
+    case "composeWebDigest":
+      handleComposeWebDigest(msg);
+      break;
+    case "cancelWebDigest":
+      handleCancelWebDigest(msg);
+      break;
     case "hydrateTtsUsage":
       hydrateTtsUsage(msg.usage);
       break;
@@ -308,7 +313,6 @@ export function stopAiChatWorker(): void {
   }
   stopWeatherRefreshLoop();
   installAiCacheUsageSink(null);
-  chatPersonas.clear();
   resetWorkerDuplex("AI Worker stopped before the main-thread request completed.");
   self.onmessage = null;
   process.off("exit", stopAiChatWorker);

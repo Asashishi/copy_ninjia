@@ -2,7 +2,7 @@ import {
   TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD,
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
 } from "../consts/temporaryAdBypass";
-import { getTokyoDayIndex } from "../libs/time";
+import { getDayIndex } from "../libs/time";
 import type { TemporaryAdBypassActivity } from "../types/states/temporaryAdBypass";
 
 /**
@@ -19,12 +19,12 @@ export function isTemporaryAdBypassActivityRetained(
   if (!Number.isSafeInteger(now) || now < 0) {
     throw new RangeError("Temporary ad bypass activity time must be a non-negative safe integer.");
   }
-  const currentDay: number = getTokyoDayIndex(now);
-  const countedDay: number = getTokyoDayIndex(activity.countedAt);
+  const currentDay: number = getDayIndex(now);
+  const countedDay: number = getDayIndex(activity.countedAt);
   if (currentDay <= countedDay) return true;
   return currentDay === countedDay + 1 &&
     activity.qualifiedAt !== null &&
-    getTokyoDayIndex(activity.qualifiedAt) === countedDay;
+    getDayIndex(activity.qualifiedAt) === countedDay;
 }
 
 /** 当前记录是否仍提供临时广告检测豁免；`now` 由调用方给出，理由同上。 */
@@ -79,7 +79,7 @@ function restartActivityAfterClockRollback(
 
 /**
  * 计入一条跨群发言：首个合格日即时授予临时广告免检，单日只累计一次；
- * 连续第 7 个合格日把计数推进到自动永久免检门槛。上一东京日未达标或中间
+ * 连续第 7 个合格日把计数推进到自动永久免检门槛。配置时区的上一自然日未达标或中间
  * 跳日时从当前发言重新建立记录，不沿用旧成员关系或发言累计。
  *
  * 当天已达标后原样返回入参对象：`sendCount` 与 `countedAt` 不再进入任何保留、
@@ -99,14 +99,14 @@ export function advanceTemporaryAdBypassActivity(
   if (current === null) {
     return firstActivity(now);
   }
-  const currentDay: number = getTokyoDayIndex(now);
-  const countedDay: number = getTokyoDayIndex(current.countedAt);
+  const currentDay: number = getDayIndex(now);
+  const countedDay: number = getDayIndex(current.countedAt);
   if (now < current.countedAt) {
     return restartActivityAfterClockRollback(current, now);
   }
   if (currentDay === countedDay + 1) {
     const previousDayQualified: boolean = current.qualifiedAt !== null &&
-      getTokyoDayIndex(current.qualifiedAt) === countedDay;
+      getDayIndex(current.qualifiedAt) === countedDay;
     if (!previousDayQualified) return firstActivity(now);
     return {
       adBypass: current.adBypass,

@@ -1,6 +1,6 @@
 import type { AtmosphereNotices } from "../../../types/atmosphereNotices";
 
-/** 雌小鬼风格通知表；Bot 配置为 mesugaki 且群没有自定义 AI 人设时使用。 */
+/** 雌小鬼风格通知表；显式 mesugaki 或风格缺省且使用内置人设时使用。 */
 export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   verificationCallbackPassed: "哼，算你过关啦，杂鱼♡",
   verificationCallbackExpired: "啧，验证早就失效啦，杂鱼重新进群再试试吧♡",

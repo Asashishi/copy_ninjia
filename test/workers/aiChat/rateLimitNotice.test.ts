@@ -2,7 +2,6 @@ import { installTemporaryMessageWorkerMock } from "../../helpers/temporaryMessag
 installTemporaryMessageWorkerMock();
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
-import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { SELF_SPEAKER_NAME } from "../../../packages/consts/aiChat/prompts/transcript";
 
@@ -21,7 +20,7 @@ mock.module("../../../packages/infra/telegram", () => ({ sendMessage }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 
 const { notifyRateLimited } = await import("../../../packages/workers/aiChat/replyState");
-const { botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { atmosphereState, botInfoState } = await import("../../../packages/cache/workers/aiChat/identity");
 const {
   cachedReplyGeneration,
   invalidateChatReplyCache,
@@ -35,7 +34,7 @@ const CHAT_ID: number = -1001;
 const NOW: number = 1_700_000_000_000;
 
 beforeEach(() => {
-  chatPersonas.clear();
+  atmosphereState.current = null;
   resetAiChatReplyCache();
   botInfoState.current = { id: 99, first_name: "Ninja", username: "ninja_bot" };
   nextSentMessageId = 501;
@@ -46,21 +45,17 @@ beforeEach(() => {
 afterAll(() => {
   resetAiChatReplyCache();
   botInfoState.current = null;
+  atmosphereState.current = null;
 });
 
 describe("AI 限频提示", () => {
-  test("普通提示的发送和自录使用同一份正文，不受发送期间的人设变化影响", async () => {
-    chatPersonas.set(CHAT_ID, "自定义");
-    sendMessage.mockImplementationOnce(async (): Promise<number> => {
-      chatPersonas.delete(CHAT_ID);
-      return 501;
-    });
+  test("普通风格的提示发送和自录使用同一份正文", async () => {
+    atmosphereState.current = "plain";
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });
     await Bun.sleep(0);
     const text: string = ATMOSPHERE_TEXTS.plain.RATE_LIMIT_NOTICE_TEXT;
     expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text }));
     expect(recordChatMessage).toHaveBeenCalledWith(expect.objectContaining({ text }));
-    expect(chatPersonas.size).toBe(0);
   });
   test("首次触发发送提示并写入滚动记忆", async () => {
     notifyRateLimited({ chatId: CHAT_ID, now: NOW, messageThreadId: undefined });

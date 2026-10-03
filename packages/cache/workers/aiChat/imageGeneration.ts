@@ -1,3 +1,11 @@
+/** owner: workers/aiChat。AI 生图工具冷却占位（packages/aiChat/ai/tools/replyToolset/imageGeneration.ts）的
+ * 内存状态；aiChatWorker.ts 只驱动周期性 sweepImageGenerationCache 维护。
+ * owner: AI 闲聊 Worker 线程（packages/workers/aiChatWorker.ts）。
+ *
+ * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，实现
+ * 「先占位、失败按 token 撤销」语义；本文件只持有生图那张表。
+ */
+
 import { IMAGE_GENERATION_COOLDOWN_MS } from "../../../consts/aiChat/imageGeneration";
 import {
   claimCooldown,
@@ -7,15 +15,6 @@ import {
 } from "../../../libs/cooldownClaim";
 import type { CooldownClaimStore } from "../../../libs/cooldownClaim";
 import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../../types/aiChat/imageGeneration";
-
-/**
- * AI 生图工具冷却占位（packages/aiChat/ai/tools/replyToolset/imageGeneration.ts）的
- * 内存状态；aiChatWorker.ts 只驱动周期性 sweepImageGenerationCache 维护。
- * owner: AI 闲聊 Worker 线程（packages/workers/aiChatWorker.ts）。
- *
- * 判定本身在 libs/cooldownClaim.ts —— 那是一个不持有任何缓存的叶子模块，实现
- * 「先占位、失败按 token 撤销」语义；本文件只持有生图那张表。
- */
 
 /**
  * 每群最近一次普通用户生图占位时间；独立于 AI 回复触发限频且不落盘。

@@ -53,6 +53,7 @@ import { AcknowledgedBatchQueue } from "../libs/acknowledgedBatchQueue";
 import { diskIOMessageCost } from "../libs/diskIOMessageCost";
 import { DISK_OPERATION_CONTROL_RESERVE, DISK_BUSINESS_BATCH_MAX_MESSAGES, DISK_OPERATION_MAX_RETAINED_BYTES } from "../consts/diskIO/business";
 import { stickerPacksForRecovery } from "../config/stickers";
+import { getTimeZone } from "../config/time";
 export {
   onDiskIOGiveUp,
   onDiskIOReply,
@@ -205,7 +206,7 @@ export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<
   if (!worker) {
     return Promise.reject(new Error("Persistence Worker is unavailable; refusing to start with empty persisted state."));
   }
-  const request: LoadRequest = { type: "load", stickerPacks: stickerPacksForRecovery() };
+  const request: LoadRequest = { type: "load", timeZone: getTimeZone(), stickerPacks: stickerPacksForRecovery() };
   return new Promise((resolve: (value: LoadedData | PromiseLike<LoadedData>) => void, reject: (reason?: unknown) => void): void => {
     const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
       pendingLoad.resolve = null;
@@ -276,7 +277,7 @@ function requestFromWritableWorker<T>({
   return request(worker);
 }
 
-/** 东京日期切换后，经唯一 Disk I/O Worker 原子加载或轮换日级运势密钥。 */
+/** 配置时区的日期切换后，经唯一 Disk I/O Worker 原子加载或轮换日级运势密钥。 */
 export function ensureLuckReceiptSecret(
   day: string,
   timeoutMs: number = LOAD_TIMEOUT_MS

@@ -132,16 +132,27 @@ describe("收尾原因归一与截断判定", () => {
 });
 
 describe("产出抽取", () => {
-  test("按 web_search_call item 统计服务端检索次数", () => {
+  test("只计已完成的搜索，不把打开页面、页内查找或缺失动作当作搜索", () => {
     expect(countWebSearchCalls(response({
       output: [
-        { type: "web_search_call" },
+        { type: "web_search_call", action: { type: "search", queries: ["q1", "q2"] }, status: "completed" },
         { type: "message" },
-        { type: "web_search_call" },
+        { type: "web_search_call", action: { type: "open_page", url: "https://example.com" }, status: "completed" },
+        { type: "web_search_call", action: { type: "find_in_page", pattern: "p" }, status: "completed" },
+        { type: "web_search_call", action: { type: "search" }, status: "completed" },
+        { type: "web_search_call", status: "completed" },
       ],
     }))).toBe(2);
     expect(countWebSearchCalls(response({ output: [{ type: "message" }] }))).toBe(0);
   });
+
+  test.each(["in_progress", "searching", "failed", "incomplete", undefined])(
+    "搜索状态 %s 不计作已完成检索",
+    (status: string | undefined) => {
+      expect(countWebSearchCalls(response({ output: [{ type: "web_search_call", action: { type: "search" }, status }] })))
+        .toBe(0);
+    }
+  );
 
   test("只抽出带 call_id 的函数调用，并保留原始入参字符串", () => {
     expect(extractFunctionCalls(response({

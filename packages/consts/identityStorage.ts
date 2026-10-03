@@ -44,7 +44,7 @@ export const IDENTITY_WRITE_FLUSH_INTERVAL_MS: number = 30_000;
 export const CHAT_QA_WRITE_BATCH_MAX_ENTRIES: number = 32;
 
 /** SQLite 当前唯一受支持的 schema 版本。 */
-export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 11;
+export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 13;
 
 /** 历史文本初始 migration 的时间戳；用于核验当前库的已发布谱系。 */
 export const IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT: number =
@@ -119,13 +119,29 @@ export const IDENTITY_DATABASE_JSONB_VALIDATION_FLAG: number = 0x04;
 /** 启动校验逐行确认内容是严格 SQLite JSONB 的标志位。 */
 export const IDENTITY_DATABASE_JSONB_STRICT_VALIDATION_FLAG: number = 0x08;
 
-/** storage_metadata 的唯一 schema 版本值；写入边界会把它转换为 JSONB。 */
+/** storage_metadata 中 schema-version 行的当前值；写入边界会把它转换为 JSONB。 */
 export const IDENTITY_DATABASE_SCHEMA_DATA: string = JSON.stringify(
   { version: IDENTITY_DATABASE_SCHEMA_VERSION }
 );
 
 /** storage_metadata 中记录 schema 版本的固定主键。 */
 export const IDENTITY_DATABASE_SCHEMA_KEY: string = "schema-version";
+
+/**
+ * storage_metadata 中记录数据根绑定时区的固定主键；值形如 `{"timeZone":"<规范 IANA 名>"}`
+ * （StorageTimeZoneMetadata）。建库时写入配置时区，启动与安装器只读比对，运行期不改写。
+ * 所属模块：database/interact/initialization.ts、database/validation/storageRows.ts。
+ */
+export const IDENTITY_DATABASE_TIME_ZONE_KEY: string = "time-zone";
+
+/**
+ * 当前格式 storage_metadata 的完整主键集合：恰为 schema 版本与时区标记两行，缺项或多余键都拒绝启动。
+ * 所属模块：database/validation/storageRows.ts。
+ */
+export const IDENTITY_DATABASE_METADATA_KEYS: readonly string[] = [
+  IDENTITY_DATABASE_SCHEMA_KEY,
+  IDENTITY_DATABASE_TIME_ZONE_KEY,
+];
 
 /** SQLite 目录权限；setgid 保证旁路文件继承部署数据根的协作组。 */
 export const IDENTITY_DATABASE_DIRECTORY_MODE: number = 0o2770;
@@ -151,9 +167,23 @@ export const CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT: number = 20_260_915_
 export const CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH: string =
   "50aefd0c0916b681cae8914a589b7d50e212f368551551c186813299cde8242d";
 
-/** 新增 `/h_image add` 权限迁移的时间戳；当前数据库必须以此条目结尾。所属模块：数据库谱系校验。 */
+/** 新增 `/h_image add` 权限迁移的时间戳；当前数据库必须紧接其后包含移除群人设迁移。所属模块：数据库谱系校验。 */
 export const H_IMAGE_ADD_PERMISSION_MIGRATION_CREATED_AT: number = 20_260_920_000_000;
 
 /** `/h_image add` 权限迁移的 SHA-256；SQL 变更必须同步更新，启动据此核验当前谱系。 */
 export const H_IMAGE_ADD_PERMISSION_MIGRATION_HASH: string =
   "699c8bfe967c8c2b6d88963f3b8f59725c2743ce417211ffdbf76d7c94ad5226";
+
+/** 移除群人设列与 `/prompt` 权限迁移的时间戳；当前数据库必须紧接其后包含时区标记迁移。所属模块：数据库谱系校验。 */
+export const CHAT_PERSONA_REMOVAL_MIGRATION_CREATED_AT: number = 20_261_001_000_000;
+
+/** 移除群人设列与 `/prompt` 权限迁移的 SHA-256；SQL 变更必须同步更新，启动据此核验当前谱系。 */
+export const CHAT_PERSONA_REMOVAL_MIGRATION_HASH: string =
+  "86b4dee97dbd407b3acefcb93f6dc848c90bbee8a52ef0be4d832fc264807eef";
+
+/** 写入 Asia/Tokyo 时区标记并升到 schema v13 的迁移时间戳；当前数据库必须以此条目结尾。所属模块：数据库谱系校验。 */
+export const TIME_ZONE_MARKER_MIGRATION_CREATED_AT: number = 20_261_003_000_000;
+
+/** 时区标记迁移的 SHA-256；SQL 变更必须同步更新，启动与冷迁移据此核验当前谱系。 */
+export const TIME_ZONE_MARKER_MIGRATION_HASH: string =
+  "0691bf88adb273181fd8e0365b8dddd1aa69b173c2a10534db6e43c6679741d1";

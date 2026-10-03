@@ -4,7 +4,7 @@ import {
   bufferedReplyReferenceFixture,
 } from "../../helpers/aiMemoryFixtures";
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
-import { COMPACT_BATCH_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
+import { COMPACT_BATCH_SIZE, TRANSCRIPT_SETTLED_SEGMENT_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
 import { REPLY_ACTION_INSTRUCTION, TOOL_STATUS_BLOCK_LABEL } from "../../../packages/consts/aiChat/prompts/tools";
 import { REPLY_TARGET_EVICTED_TAG } from "../../../packages/consts/aiChat/prompts/transcript";
@@ -69,8 +69,19 @@ test("直接唤起在回复任务开头声明唤起者完整身份，不再另�
   expect(sections.currentConversation).toContain(`u1：最热区里的唤起者消息 ${total}`);
   expect(sections.currentConversation).toContain("较早区里的唤起者消息");
   expect(sections.currentConversation).toContain(`其他人的最热消息 ${total - 2}`);
-  // 区块数恒定为三段，不再按触发类型多插一个 Part。
-  expect(Object.keys(sections)).toEqual(["referenceMemory", "currentConversation", "replyTask"]);
+  // 区块数恒定为三段（另附当前会话内的转录已定切点），不再按触发类型多插一个 Part。
+  expect(Object.keys(sections)).toEqual(["referenceMemory", "currentConversation", "currentConversationSettledOffsets", "replyTask"]);
+  // 切点平移到当前会话区块内：最新消息所在格之前每格一个，紧跟上一格最后一条正文。
+  const transcriptStart: number = sections.currentConversation.indexOf("\n", sections.currentConversation.indexOf(
+    REPLY_CONTEXT_SECTION_TEXT.currentConversation.header
+  )) + 1;
+  expect(sections.currentConversationSettledOffsets).toHaveLength(Math.floor((total - 1) / TRANSCRIPT_SETTLED_SEGMENT_SIZE));
+  for (const offset of sections.currentConversationSettledOffsets) {
+    expect(offset).toBeGreaterThan(transcriptStart);
+    expect(sections.currentConversation[offset]).toBe("\n");
+  }
+  expect(sections.currentConversation.slice(0, sections.currentConversationSettledOffsets[0]))
+    .toEndWith(`其他人的最热消息 ${TRANSCRIPT_SETTLED_SEGMENT_SIZE}`);
   // 跨任务相同的行动总则只在 system prompt 出现，动态任务只保留触发语义。
   expect(sections.replyTask).not.toContain(REPLY_ACTION_INSTRUCTION);
   // 按轮变化的工具状态只在运行时状态区块，回复任务里没有。

@@ -1,11 +1,11 @@
+/** owner: main。抽签命令（packages/commands/luckChallenge/）的内存状态。 */
+
 import { RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../consts/luckChallenge";
 import { TimestampDeque } from "../../libs/timestampDeque";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { LuckDraw } from "../../types/luckChallenge";
 
-/** owner: main。抽签命令（packages/commands/luckChallenge/）的内存状态。 */
-
-/** 每日结果缓存：dayKey 记录当前缓存对应的东京时间日期，跟今天不一致就整体清空重开。
+/** 每日结果缓存：dayKey 记录当前缓存对应的配置时区的时间日期，跟今天不一致就整体清空重开。
  * 只存"已确认"的抽签结果——即用户真的把它选中发了出来（chosen_inline_result
  * 见 commands/luckChallenge/telegramAdapter.ts，签名回执认领见
  * commands/luckChallenge/receipt.ts）。确认时同步经 postDiskIO 落盘到
@@ -32,7 +32,7 @@ export const dailyLuckCacheSaturated: { current: boolean } = { current: false };
  * 进程重启不恢复：未确认的预览本来就不算「今天测过」。 */
 export const pendingLuckDraws: Map<string, LuckDraw> = new Map();
 
-/** 当前东京日期的持久化密钥；启动恢复后才允许生成预览。 */
+/** 当前配置时区日期的持久化密钥；启动恢复后才允许生成预览。 */
 export const luckReceiptSecretState: { current: LuckReceiptSecret | null } = { current: null };
 
 /** 日期轮换、Worker 重建监听与跨日 fail-closed 判定的主线程运行态。 */

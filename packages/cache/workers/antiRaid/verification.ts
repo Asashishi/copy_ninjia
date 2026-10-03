@@ -1,4 +1,6 @@
-import { VERIFICATION_REVISION_RETENTION_MS } from "../../../consts/antiRaid/verification";
+/** owner: workers/antiRaid。入群验证状态机（packages/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
+
+import { VERIFICATION_REVISION_CAPACITY, VERIFICATION_REVISION_RETENTION_MS } from "../../../consts/antiRaid/verification";
 import type {
   ReminderDelivery,
   ThreadCommentConfirmation,
@@ -6,8 +8,6 @@ import type {
 } from "../../../types/antiRaid/internal";
 import type { DeferredVerificationRecord } from
   "../../../types/antiRaid/verification";
-
-/** owner: workers/antiRaid。入群验证状态机（packages/workers/antiRaid/verificationRuntime.ts）的内存状态。 */
 
 /**
  * 以 "chatId:userId" 为键，同一个人在不同群里独立追踪。
@@ -28,13 +28,24 @@ export const verificationGeneration: { current: number } = { current: 0 };
  *
  * 填充：每次发布快照或接管 adopt 记录时更新。清理：终结项标记 retiredAt 后由
  * sweepVerificationRevisionCache 按 VERIFICATION_REVISION_RETENTION_MS 回收，
- * adopt 换代际时整表清空。容量：活跃 key 数 + 保留期内的终结 key 数，与
- * verificationEntries 同阶。Worker 崩溃重建：随 adopt 全量重放。
+ * adopt 换代际时整表清空。容量上限为 VERIFICATION_REVISION_CAPACITY，满额拒收
+ * 新 key 并请求主线程按 fatal 边界停机；未过期墓碑不淘汰。Worker 崩溃后由
+ * 主线程重放活跃与延后记录；旧代际墓碑不重放，迟到消息由代际过滤。
  */
 export const verificationRevisions: Map<string, { revision: number; retiredAt?: number }> = new Map();
+/** revision 容量 fatal 每代际只发一次；换代际或停止时清零，满额后的新 key 不接管。 */
+export const verificationRevisionCapacityFatalState: { current: boolean } = { current: false };
+
+/** 新 revision key 满额时先扫过期墓碑；已有 key 的更新和终结始终允许。 */
+export function canAdmitVerificationRevision(key: string): boolean {
+  if (verificationRevisions.size < VERIFICATION_REVISION_CAPACITY) return true;
+  if (verificationRevisions.has(key)) return true;
+  sweepVerificationRevisionCache();
+  return verificationRevisions.size < VERIFICATION_REVISION_CAPACITY;
+}
 
 /**
- * owner：Anti-Raid Worker。主线程在 adopt 时全量推送的本进程延后索引；预算耗尽
+ * 主线程在 adopt 时全量推送的本进程延后索引；预算耗尽
  * 或 adopt 时填充，明确离群、功能关闭、群停管或 Worker 停止时清理。主线程是
  * 权威，Worker 崩溃后由主线程全量重放；容量不超过主线程延后索引，缺少条目表示
  * 本 isolate 未接管该延后闩锁，不得沿用旧代际结论。

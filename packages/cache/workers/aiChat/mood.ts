@@ -1,7 +1,7 @@
-import type { MoodOption } from "../../../types/aiChat/mood";
-
 /** owner: workers/aiChat。AI 心情抽取与到期（packages/aiChat/ai/mood.ts）的内存状态；容量等于仍有当前
  * 心情的群数，群 teardown 与到期路径同步删除。 */
+
+import type { MoodOption } from "../../../types/aiChat/mood";
 
 /**
  * 心情及其到期时刻都不落盘，随 Worker 重启清空、下次拼提示词时重抽。

@@ -256,6 +256,7 @@ export type VerificationEvent =
   | { type: "adminCheckResolved" }
   | VerifyTimeoutEvent
   | { type: "terminalPersisted" }
+  /** 本进程执行预算耗尽或当前执行许可无法确认；保留磁盘快照并延后至进程重启。 */
   | { type: "terminalAttemptBudgetExhausted" }
   | TimeoutInviterVerdictEvent
   | { type: "expelSettled" }

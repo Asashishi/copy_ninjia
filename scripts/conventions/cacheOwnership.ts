@@ -125,3 +125,41 @@ export function collectStaleCacheExemptionProblems({
   }
   return problems;
 }
+
+/**
+ * cache 文件头注里声明的 owner：`packages/cache/` 下第一层目录名（`main`、`perThread`），
+ * `workers/` 下再取一层（`workers/aiChat` 等）。不在这些目录下时为 null，由
+ * collectCacheOwnershipProblems 报目录问题。
+ */
+export function expectedCacheOwnerHeader(relativePath: string): string | null {
+  const parts: readonly string[] = relativePath.split("/");
+  if (parts[0] !== "packages" || parts[1] !== "cache" || parts.length < 4) return null;
+  if (parts[2] === "main" || parts[2] === "perThread") return parts[2];
+  if (parts[2] === "workers" && parts.length >= 5) return `workers/${parts[3]!}`;
+  return null;
+}
+
+export interface CollectCacheOwnerHeaderProblemsParams {
+  readonly projectRoot: string;
+  /** cache 文件绝对路径 → 文件首行。 */
+  readonly firstLines: ReadonlyMap<string, string>;
+}
+
+/**
+ * 每个 cache 文件首行必须以 `/** owner: <owner>。` 起头（只有 owner 时写成
+ * `/** owner: <owner>。 *\/`），owner 与所在目录一致；头注其余内容不做判定。
+ */
+export function collectCacheOwnerHeaderProblems({
+  projectRoot,
+  firstLines,
+}: CollectCacheOwnerHeaderProblemsParams): readonly string[] {
+  const problems: string[] = [];
+  for (const [path, firstLine] of firstLines) {
+    const relativePath: string = relative(projectRoot, path);
+    const owner: string | null = expectedCacheOwnerHeader(relativePath);
+    if (owner === null) continue;
+    if (firstLine.startsWith(`/** owner: ${owner}。`)) continue;
+    problems.push(`${relativePath} must start with the cache owner header "/** owner: ${owner}。"`);
+  }
+  return problems;
+}

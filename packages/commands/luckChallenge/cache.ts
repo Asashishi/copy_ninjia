@@ -13,7 +13,7 @@ import {
 } from "../../consts/luckChallenge";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { logger } from "../../infra/logger";
-import { getTokyoDateKey } from "../../libs/time";
+import { getDateKey } from "../../libs/time";
 import type { DiskIORecoveryTransport } from "../../types/diskIO/messages";
 import type { LuckAppendStalledReply } from "../../types/diskIO/replies";
 import type { LuckDayCache, LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -23,8 +23,8 @@ import { ensureLuckReceiptSecret, onDiskIORespawn, onDiskIOReply, postDiskIO } f
 import { setBoundedMapValue } from "../../libs/boundedMap";
 
 /**
- * 采用某个东京日的持久化密钥，并清空日缓存与 pending。换日采用时置
- * luckRuntimeState.daySwitchedInProcess，标记进程内已跨过东京零点（见
+ * 采用某个配置时区自然日的持久化密钥，并清空日缓存与 pending。换日采用时置
+ * luckRuntimeState.daySwitchedInProcess，标记进程内已跨过配置时区的零点（见
  * promotePendingDraw：此后 pending 未命中不允许重建派生）。
  */
 function adoptLuckSecret(secret: LuckReceiptSecret): void {
@@ -52,7 +52,7 @@ function admitDailyLuckEntry(cacheKey: string, draw: LuckDraw): boolean {
       dailyLuckCacheSaturated.current = true;
       logger.error(
         `Daily luck cache reached its ${DAILY_LUCK_CACHE_MAX}-entry ceiling for ${luckCacheState.dayKey}; ` +
-        "further confirmed draws will not be remembered or persisted until the Tokyo day rolls over."
+        "further confirmed draws will not be remembered or persisted until the configured local day rolls over."
       );
     }
     return false;
@@ -78,7 +78,7 @@ async function rotateLuckCache(
     if (secret.day !== targetDay) {
       throw new Error(`Disk I/O Worker returned luck secret for ${secret.day}, expected ${targetDay}`);
     }
-    const currentDay: string = getTokyoDateKey();
+    const currentDay: string = getDateKey();
     if (currentDay === targetDay) {
       adoptLuckSecret(secret);
       return;
@@ -92,7 +92,7 @@ async function ensureLuckCacheFresh({
   retryAfterSharedFailure,
 }: EnsureLuckCacheFreshOptions): Promise<void> {
   for (;;) {
-    const todayKey: string = getTokyoDateKey();
+    const todayKey: string = getDateKey();
     if (
       todayKey === luckCacheState.dayKey &&
       luckReceiptSecretState.current?.day === todayKey
@@ -125,7 +125,7 @@ async function ensureLuckCacheFresh({
   }
 }
 
-/** 跨东京零点时向唯一磁盘线程取得新日密钥，并整体切换日缓存。 */
+/** 跨配置时区的零点时向唯一磁盘线程取得新日密钥，并整体切换日缓存。 */
 export function ensureLuckCacheFreshForToday(): Promise<void> {
   return ensureLuckCacheFresh({
     loadSecret: ensureLuckReceiptSecret,
@@ -163,7 +163,7 @@ export function getOrDrawLuck(cacheKey: string): LuckDraw {
  *
  * pending 未命中时的重建派生（deriveLuckDraw 是确定性的）只对「同一天丢了
  * 内存」的场景成立：进程重启后确认信号迟到（pending 全丢、密钥同日），
- * 重建结果与用户看到的完全一致。而进程内一旦跨过东京零点，未命中的主因
+ * 重建结果与用户看到的完全一致。而进程内一旦跨过配置时区的零点，未命中的主因
  * 就是旧日 pending 被 adoptLuckSecret 整体清空——用新一天的密钥重派生出来
  * 的是用户根本没见过的另一个结果，不能落盘「确认」，除非调用方能证明确认
  * 属于当天（签名回执自带发放当天的密钥、验签即证明，见 receipt.ts 的
@@ -241,9 +241,9 @@ function initializeRespawnRecovery(): void {
 /** 启动时接管当天密钥与已确认缓存，并显式安装 diskIO Worker 重建重放。 */
 export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache | null): void {
   initializeRespawnRecovery();
-  const todayKey: string = getTokyoDateKey();
+  const todayKey: string = getDateKey();
   if (secret.day !== todayKey) {
-    // 进程恰好卡在东京 00:00 前后启动：Disk I/O Worker 在启动边界算出的
+    // 进程恰好卡在配置时区 00:00 前后启动：Disk I/O Worker 在启动边界算出的
     // 是 D，主线程等到 load 回执时已经是 D+1。这不是坏数据，只是这套「两个线程
     // 各算一次日期」天然带的竞态窗口。在这里抛错的话异常会逸出
     // ApplicationLifecycle.init()（调用点没有 try/catch），run() 记一行日志并以
@@ -258,7 +258,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
     // loaded 一并丢弃：它属于 secret.day 那一天，磁盘上那份也会被 Worker 侧的
     // cleanupStaleLuckFiles 按新日期清掉。
     logger.error(
-      `Loaded luck receipt secret is for ${secret.day} but the Tokyo day already rolled over to ${todayKey}; ` +
+      `Loaded luck receipt secret is for ${secret.day} but the configured local day already rolled over to ${todayKey}; ` +
       "discarding it and re-deriving today's secret on first use."
     );
     luckRuntimeState.daySwitchedInProcess = true;

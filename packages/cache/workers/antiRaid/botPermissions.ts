@@ -1,6 +1,6 @@
-import type { BotActionPermissions } from "../../../types/telegram";
+/** owner: workers/antiRaid。机器人自身权限位的 Worker 侧镜像（packages/workers/antiRaid/botPermissions.ts）。 */
 
-/** 机器人自身权限位的 Worker 侧镜像（packages/workers/antiRaid/botPermissions.ts）。 */
+import type { BotActionPermissions } from "../../../types/telegram";
 
 /**
  * 机器人在各群持有的破坏性动作权限位，由主线程按变更镜像过来。

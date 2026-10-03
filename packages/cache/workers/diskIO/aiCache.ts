@@ -1,7 +1,4 @@
-import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
-
-/**
- * Owner: Disk I/O Worker。AI 缓存用量统计（packages/workers/diskIO/aiCacheFile.ts）的内存状态。
+/** owner: workers/diskIO。AI 缓存用量统计（packages/workers/diskIO/aiCacheFile.ts）的内存状态。
  *
  * - aiCacheFileState：统计文件的追加游标。启动恢复 adopt 时填充；追加失败置 null，按
  *   aiCacheReopenState 退避后由下一次 flush 重新探测；每日汇总整份重写后更新。
@@ -10,6 +7,8 @@ import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
  *   直接丢弃，因此容量不超过 FLUSH_MAX_ENTRIES 条。
  * - Worker 重建后随 isolate 清空，由新 Worker 的启动恢复重新 adopt；主线程不镜像这些状态。
  */
+
+import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
 
 /** 统计文件的追加游标；null 表示需要重新探测文件。 */
 export const aiCacheFileState: { current: AppendOnlyFileState | null } = { current: null };

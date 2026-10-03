@@ -107,8 +107,8 @@ beforeEach((): void => {
       [32, { data: encodePendingBlockedRemovalData({ params: { chatId: CHAT_ID, probeMembership: true, removalId: 32 }, createdAt: 1, attempts: 0, lastFailure: null }).text }],
     ]),
     chatStates: new Map([
-      [CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
-      [OTHER_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
+      [CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })) }],
+      [OTHER_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })) }],
     ]),
     chatQa: qaChange([
       [CHAT_ID, "怎么入群？", "看置顶"],
@@ -128,8 +128,8 @@ test("AI 上下文排在群状态之后：同批新建的群写得进，同批�
   commitStorageDatabaseChanges(prepareStorageDatabaseWriter(database), {
     ...NO_CHANGES,
     chatStates: new Map([
-      [NEW_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })), aiPersona: null }],
-      [OTHER_CHAT_ID, { data: null, aiPersona: null }],
+      [NEW_CHAT_ID, { data: encodeChatStateData(chatStateOf({ isAIChatEnabled: true })) }],
+      [OTHER_CHAT_ID, { data: null }],
     ]),
     aiContexts: new Map([
       [NEW_CHAT_ID, { snapshot: AI_CONTEXT }],
@@ -195,7 +195,7 @@ test("待踢 outbox、临时免检与群状态的删除各自只命中一行", (
     ...NO_CHANGES,
     removals: new Map([[31, { data: null }]]),
     temporaryAdBypass: new Map([[21, { activity: null, revision: 2 }]]),
-    chatStates: new Map([[CHAT_ID, { data: null, aiPersona: null }]]),
+    chatStates: new Map([[CHAT_ID, { data: null }]]),
   });
 
   expect(readStorageDatabasePendingRemovalPage(database, null).map((row: { removalId: number }): number => row.removalId)).toEqual([32]);
@@ -218,6 +218,6 @@ test("临时免检读取与清理的入参守卫：空批直接返回，超批�
     [2 * DAY_MS, 0],
   ] as const) {
     expect(() => deleteStaleTemporaryAdBypassActivities(database, currentDayStart, previousDayStart))
-      .toThrow("day bounds must be increasing non-negative safe integers");
+      .toThrow("day bounds must be adjacent local day starts as non-negative safe integers");
   }
 });

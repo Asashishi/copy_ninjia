@@ -4,10 +4,10 @@ import { diskIOMaintenanceCron } from
   "../../cache/workers/diskIO/maintenance";
 import {
   DISK_IO_MAINTENANCE_CRON,
-  DISK_IO_MAINTENANCE_TIME_ZONE,
 } from "../../consts/diskIO/maintenance";
 import { runDiskIOMidnightMaintenance } from "./midnightMaintenance";
 import { enqueueDiskIOOperation } from "./operationQueue";
+import { getTimeZone } from "../../config/time";
 import type { DiskIOMaintenanceReplySink } from "./midnightMaintenance";
 
 /** 停止并清空当前维护 cron；未注册时幂等。 */
@@ -17,7 +17,7 @@ export function stopDiskIOMaintenanceCron(): void {
   diskIOMaintenanceCron.current = null;
 }
 
-/** 启动恢复成功后注册唯一、不会阻止 Worker 退出的东京午夜维护 cron。 */
+/** 启动恢复成功后注册唯一、不会阻止 Worker 退出的配置时区午夜维护 cron。 */
 export function registerDiskIOMaintenanceCron(
   reply: DiskIOMaintenanceReplySink
 ): void {
@@ -30,6 +30,6 @@ export function registerDiskIOMaintenanceCron(
         async (): Promise<void> => runDiskIOMidnightMaintenance(reply)
       );
     },
-    { tz: DISK_IO_MAINTENANCE_TIME_ZONE }
+    { tz: getTimeZone() }
   ).unref();
 }

@@ -56,7 +56,7 @@ export function grantVerificationAttempt(
 }
 
 /**
- * 接收 Worker 的预算耗尽事件：只把完整快照移出本进程活动镜像，不写 tombstone。
+ * 接收 Worker 的精确延后事件：预算耗尽或许可无法确认时移出活动镜像，不写 tombstone。
  */
 export function acceptVerificationDeferred(
   event: VerificationDeferredEvent

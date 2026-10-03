@@ -7,6 +7,7 @@ import {
 } from "../../packages/cache/perThread/selfSentTracker";
 import { sentMessageCount } from "../helpers/selfSentCount";
 import { MUTED_CHAT_PERMISSIONS, UNMUTED_CHAT_PERMISSIONS } from "../../packages/consts/telegram";
+import { MARKDOWN_V2_PARSE_MODE } from "../../packages/consts/telegramMarkdown";
 import {
   deleteEphemeralMessageWithOutcome,
   editMessageText,
@@ -48,7 +49,7 @@ describe("Telegram 常规动作封装", () => {
     expect(sent).toEqual({ messageId: 77, repliedToMessageId: 42 });
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "hello", {
       reply_parameters: { message_id: 42, allow_sending_without_reply: true },
-    });
+    }, undefined);
     expect(isSelfSent(-1001, 77)).toBe(true);
   });
 
@@ -83,7 +84,7 @@ describe("Telegram 常规动作封装", () => {
 
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "随机插话", {
       message_thread_id: 77,
-    });
+    }, undefined);
   });
 
   test("挂了回复也照样带话题：目标被删时 allow_sending_without_reply 会退化成普通发送", async () => {
@@ -101,7 +102,7 @@ describe("Telegram 常规动作封装", () => {
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "回一句", {
       message_thread_id: 77,
       reply_parameters: { message_id: 42, allow_sending_without_reply: true },
-    });
+    }, undefined);
   });
 
   test("非论坛群（messageThreadId 为 undefined）不带这个参数", async () => {
@@ -115,7 +116,7 @@ describe("Telegram 常规动作封装", () => {
       messageThreadId: undefined,
     });
 
-    expect(sendMessageMock).toHaveBeenCalledWith(-1001, "普通群", {});
+    expect(sendMessageMock).toHaveBeenCalledWith(-1001, "普通群", {}, undefined);
   });
 
   test("目标专属临时消息透传 Bot API 10.3 嵌套字段且不登记 message_id 0", async () => {
@@ -144,7 +145,7 @@ describe("Telegram 常规动作封装", () => {
     expect(sendMessageMock).toHaveBeenCalledWith(-1001, "只给目标看的入口", {
       ephemeral_message_parameters: { receiver_user_id: 7, callback_query_id: "callback-id" },
       reply_markup: keyboard,
-    });
+    }, undefined);
     expect(sentMessageCount()).toBe(0);
   });
 
@@ -205,7 +206,7 @@ describe("Telegram 常规动作封装", () => {
       chatId: -1001,
       receiverUserId: 7,
       ephemeralMessageId: 71,
-    });
+    }, undefined);
   });
 
   test("目标专属临时消息已不存在时按清理完成结算", async () => {
@@ -236,21 +237,42 @@ describe("Telegram 常规动作封装", () => {
   test("显式 entities 原样进入 payload，空数组则整个字段不出现", async () => {
     const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 88 }));
     const api = { sendMessage: sendMessageMock } as unknown as TelegramApi;
-    // 富文本只能靠调用方算好的 entities 表达，绝不通过 parse_mode，
-    // 见 docs/cn/04-invariants.md 的出站消息约束。
     const entities = [{ type: "text_link" as const, offset: 0, length: 3, url: "https://t.me/foo" }];
 
     await sendMessageWithResult({ chatId: -1001, text: "abc def", entities, api });
-    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", { entities });
+    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", { entities }, undefined);
     // 传入的只读数组不能被后续改动波及，payload 必须是自己的副本。
     expect((sendMessageMock.mock.calls[0]![2] as { entities: unknown[] }).entities).not.toBe(entities);
 
     await sendMessageWithResult({ chatId: -1001, text: "abc def", entities: [], api });
-    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", {});
-    // 任何一条路径都不得设置 parse_mode。
+    expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", {}, undefined);
+    // 没有显式给 parseMode 的路径一律不带 parse_mode。
     for (const call of sendMessageMock.mock.calls) {
-      expect(call[2]).not.toHaveProperty("parse_mode");
+      expect((call[2] as { parse_mode?: string }).parse_mode).toBeUndefined();
     }
+  });
+
+  test("只有显式给出 parseMode 才设置 parse_mode，且类型上与 entities 互斥", async () => {
+    const sendMessageMock = mock(async (..._args: unknown[]) => ({ message_id: 89 }));
+    const api = { sendMessage: sendMessageMock } as unknown as TelegramApi;
+
+    await sendMessageWithResult({ chatId: -1001, text: "*喵*", parseMode: MARKDOWN_V2_PARSE_MODE, api });
+    const other = sendMessageMock.mock.calls[0]![2] as { parse_mode?: string; entities?: unknown };
+    expect(other.parse_mode).toBe(MARKDOWN_V2_PARSE_MODE);
+    expect(other.entities).toBeUndefined();
+
+    // Bot API 规定两者互斥，同时给出必须在编译期被拒绝。
+    function assertFormatsExclusive(): void {
+      void sendMessageWithResult({
+        chatId: -1001,
+        text: "x",
+        // @ts-expect-error entities 与 parseMode 不能同时给出
+        entities: [{ type: "bold", offset: 0, length: 1 }],
+        parseMode: MARKDOWN_V2_PARSE_MODE,
+        api,
+      });
+    }
+    void assertFormatsExclusive;
   });
 
   test("回复目标已删除时仍发送文字，但结果不伪造回复关系", async () => {
@@ -290,7 +312,7 @@ describe("Telegram 常规动作封装", () => {
       fileName: "generated.png",
     }, {
       reply_parameters: { message_id: 42, allow_sending_without_reply: true },
-    });
+    }, undefined);
     expect(isSelfSent(-1001, 78)).toBe(true);
   });
 
@@ -313,7 +335,7 @@ describe("Telegram 常规动作封装", () => {
       fileName: "generated.jpg",
     }, {
       caption: "照着你说的画了一张 <b>不该被解析</b>",
-    });
+    }, undefined);
   });
 
   test("只有 hasSpoiler 为 true 时才带 has_spoiler，缺省时请求里没有该字段", async () => {
@@ -355,7 +377,7 @@ describe("Telegram 常规动作封装", () => {
       message_thread_id: 7,
       duration: 2,
       reply_parameters: { message_id: 42, allow_sending_without_reply: true },
-    });
+    }, undefined);
     expect(isSelfSent(-1001, 93)).toBe(true);
   });
 
@@ -432,7 +454,7 @@ describe("Telegram 常规动作封装", () => {
     telegramApiState.current = { getChatMember } as unknown as InstalledTelegramApi;
     try {
       expect(await readChatMemberUser({ chatId: -1001, userId: 9 })).toEqual(user);
-      expect(getChatMember).toHaveBeenCalledWith(-1001, 9);
+      expect(getChatMember).toHaveBeenCalledWith(-1001, 9, undefined);
 
       getChatMember.mockImplementationOnce(async (): Promise<never> => {
         throw new Error("member lookup failed");
@@ -471,7 +493,7 @@ describe("Telegram 常规动作封装", () => {
     // 绝对时刻，排到它距当下不足 30 秒时 Bot API 会当成永久限制，而两条禁言
     // 路径都不排恢复计时器。到期必须放弃，并归到可重试的 failed 一档。
     //
-    // 替身照生产形态消费最后那个 signal：真实链路上它由 signalArgs 交给 grammY，
+    // 替身照生产形态消费最后那个 signal：真实链路上它直接交给 grammY，
     // 再由出站总闸挂成 job 的 abort 监听（infra/telegram/outboundGate.ts 的
     // createOutboundJob），排在 429 队列里的那一份因此会被取消而不是一直等下去。
     const api = {
@@ -537,8 +559,7 @@ describe("Telegram 常规动作封装", () => {
 
     expect(await unmuteChatMemberWithOutcome({ chatId: -1001, userId: 7, api })).toBe("unmuted");
     // 第四个实参必须是空 other：带上 until_date 会把「恢复」又变成一次限时限制。
-    // 这条路径没有派发截止，不传 signal 时 signalArgs 也不补位，实参恰好四个。
-    expect(restrictMock).toHaveBeenCalledWith(-1001, 7, UNMUTED_CHAT_PERMISSIONS, {});
+    expect(restrictMock).toHaveBeenCalledWith(-1001, 7, UNMUTED_CHAT_PERMISSIONS, {}, undefined);
 
     // 调用方给了 signal 就必须一路下传到真实请求，否则 429 车道里排队的那一份
     // 不会因停机或 update 取消被撤销。
@@ -673,7 +694,7 @@ describe("就地改写已发出的消息", () => {
     // 不传 keyboard 即**清空**按钮：问答看板据此在只剩一页时收走翻页条。
     expect(calls).toHaveBeenCalledWith(-1001, 9, "第 2 页", {
       reply_markup: { inline_keyboard: [] },
-    });
+    }, undefined);
   });
 
   test("带 entities 与新按钮时原样透传", async () => {
@@ -693,7 +714,7 @@ describe("就地改写已发出的消息", () => {
     expect(calls).toHaveBeenCalledWith(-1001, 9, "看板", {
       entities,
       reply_markup: keyboard,
-    });
+    }, undefined);
   });
 
   test("「内容没有变化」仍报 true——调用方要的是「现在显示的是这一页」", async () => {

@@ -48,7 +48,6 @@ export interface PendingRemovalWrite {
 
 /** Disk I/O Worker 同一群主键在事务提交前保留的最新最终值。 */
 export interface PendingChatStateWrite {
-  readonly aiPersona: string | null;
   readonly data: string | null;
   readonly revision: number;
 }
@@ -71,7 +70,7 @@ export interface PendingChatQaWrite {
 export interface UnacknowledgedChatStateWrite {
   readonly revision: number;
   readonly deleted: boolean;
-  /** 这次写入载荷（状态正文与人设）的准入估算字节，计入 unacknowledgedChatStateBytes。 */
+  /** 这次写入状态正文的准入估算字节，计入 unacknowledgedChatStateBytes。 */
   readonly bytes: number;
 }
 

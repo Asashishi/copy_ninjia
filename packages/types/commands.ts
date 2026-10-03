@@ -1,4 +1,3 @@
-import type { Api } from "grammy";
 import type { AtmosphereTexts } from "./atmosphere";
 
 /**
@@ -22,7 +21,7 @@ export interface CommandTargetMessages {
 }
 
 /**
- * 权限闸的拒绝文案：拿发起人标签与本群氛围文案拼出整句。
+ * 权限闸的拒绝文案：拿发起人标签与本进程氛围文案拼出整句。
  * 调用方见 packages/commands/commandActor.ts 的 rejectUnlessPermitted。
  */
 export type CommandRejectionText = (actorLabel: string, atmosphere: AtmosphereTexts) => string;
@@ -52,12 +51,3 @@ export interface ToggleCommandTexts {
   /** 本来就关着，本次没有改变状态。 */
   readonly alreadyDisabled: string;
 }
-
-/**
- * 群人设三处对外表现的同步边界（实现在 packages/commands/chatPersonaSync.ts）。
- *
- * 声明成独立类型是为了让 `packages/infra/botAdmin.ts` 能在参数上标注它而不静态
- * 依赖 `commands/`——那条禁令见 docs/cn/04-invariants.md 的 chat runtime teardown 一节。
- * 注入由 `packages/app/registerHandlers.ts` 完成。
- */
-export type ChatPersonaSurfaceSync = (api: Api, chatId: number) => Promise<void>;

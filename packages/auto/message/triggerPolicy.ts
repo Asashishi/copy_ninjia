@@ -7,7 +7,6 @@ import {
   USER_REPLY_TRIGGER_COOLDOWN_MS,
 } from "../../consts/auto";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
-import { verificationKey } from "../../libs/verificationKey";
 
 /** 文本和四类媒体（photo/sticker/animation/voice）共用的随机搭话/评价掷骰条件。 */
 export function shouldAttemptRandomTrigger(context: MessageTriggerContext): boolean {
@@ -57,18 +56,22 @@ export function mediaTriggerHandled(
  */
 export function sweepUserReplyTriggerTimes(now: number = Date.now()): void {
   let earliest: number = Number.POSITIVE_INFINITY;
-  for (const [key, claimedAt] of userReplyTriggerTimes) {
-    if (
-      claimedAt > now ||
-      now - claimedAt >= USER_REPLY_TRIGGER_COOLDOWN_MS
-    ) {
-      userReplyTriggerTimes.delete(key);
-    } else if (claimedAt < earliest) {
-      earliest = claimedAt;
+  for (const [chatId, users] of userReplyTriggerTimes) {
+    for (const [userId, claimedAt] of users) {
+      if (
+        claimedAt > now ||
+        now - claimedAt >= USER_REPLY_TRIGGER_COOLDOWN_MS
+      ) {
+        users.delete(userId);
+        userReplyTriggerSweepState.size--;
+      } else if (claimedAt < earliest) {
+        earliest = claimedAt;
+      }
     }
+    if (users.size === 0) userReplyTriggerTimes.delete(chatId);
   }
   userReplyTriggerSweepState.validFrom = now;
-  userReplyTriggerSweepState.validUntil = userReplyTriggerTimes.size >= USER_REPLY_TRIGGER_CACHE_MAX
+  userReplyTriggerSweepState.validUntil = userReplyTriggerSweepState.size >= USER_REPLY_TRIGGER_CACHE_MAX
     ? earliest + USER_REPLY_TRIGGER_COOLDOWN_MS
     : Number.NEGATIVE_INFINITY;
 }
@@ -77,16 +80,18 @@ export function sweepUserReplyTriggerTimes(now: number = Date.now()): void {
 function scheduleUserReplyTriggerSweep(now: number): void {
   if (
     userReplyTriggerSweepState.timer !== null ||
-    userReplyTriggerTimes.size === 0
+    userReplyTriggerSweepState.size === 0
   ) {
     return;
   }
   let earliestExpiry: number = Number.POSITIVE_INFINITY;
-  for (const claimedAt of userReplyTriggerTimes.values()) {
-    earliestExpiry = Math.min(
-      earliestExpiry,
-      claimedAt + USER_REPLY_TRIGGER_COOLDOWN_MS
-    );
+  for (const users of userReplyTriggerTimes.values()) {
+    for (const claimedAt of users.values()) {
+      earliestExpiry = Math.min(
+        earliestExpiry,
+        claimedAt + USER_REPLY_TRIGGER_COOLDOWN_MS
+      );
+    }
   }
   if (!Number.isFinite(earliestExpiry)) return;
   const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
@@ -104,28 +109,34 @@ function scheduleUserReplyTriggerSweep(now: number): void {
  * 交互不经过这里，由 Worker 的有界直接触发队列承接。
  */
 export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now: number = Date.now()): boolean {
-  // 所有「群 × 身份」键都由 libs/verificationKey 生成，广告检测队列也复用同一格式。
-  const key: string = verificationKey(chatId, speakerId);
-  const lastTime: number | undefined = userReplyTriggerTimes.get(key);
+  let users: Map<number, number> | undefined = userReplyTriggerTimes.get(chatId);
+  const lastTime: number | undefined = users?.get(speakerId);
   // 时钟回拨时旧冷却点位于未来；先失效它，再从新时间轴计时。
   if (lastTime !== undefined) {
     if (lastTime <= now && now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
-    userReplyTriggerTimes.delete(key);
+    users!.delete(speakerId);
+    userReplyTriggerSweepState.size--;
     // 满表中的条目已换代，旧有效区间不能在后续时钟回拨时复用。
-    if (userReplyTriggerTimes.size === USER_REPLY_TRIGGER_CACHE_MAX - 1) {
+    if (userReplyTriggerSweepState.size === USER_REPLY_TRIGGER_CACHE_MAX - 1) {
       userReplyTriggerSweepState.validUntil = Number.NEGATIVE_INFINITY;
     }
   }
 
   // 正常到期由唯一 timer 清理；只有逼近硬顶时在热路径补扫一次，避免每次
   // 随机命中都 O(n)。仍满说明所有现存冷却都有效，fail closed 放弃本次随机回复。
-  if (userReplyTriggerTimes.size >= USER_REPLY_TRIGGER_CACHE_MAX) {
+  if (userReplyTriggerSweepState.size >= USER_REPLY_TRIGGER_CACHE_MAX) {
     if (now >= userReplyTriggerSweepState.validFrom && now < userReplyTriggerSweepState.validUntil) return false;
     sweepUserReplyTriggerTimes(now);
-    if (userReplyTriggerTimes.size >= USER_REPLY_TRIGGER_CACHE_MAX) return false;
+    if (userReplyTriggerSweepState.size >= USER_REPLY_TRIGGER_CACHE_MAX) return false;
+    users = userReplyTriggerTimes.get(chatId);
   }
 
-  userReplyTriggerTimes.set(key, now);
+  if (users === undefined) {
+    users = new Map();
+    userReplyTriggerTimes.set(chatId, users);
+  }
+  users.set(speakerId, now);
+  userReplyTriggerSweepState.size++;
   scheduleUserReplyTriggerSweep(now);
   return true;
 }
@@ -137,5 +148,6 @@ export function clearUserReplyTriggerTimes(): void {
     userReplyTriggerSweepState.timer = null;
   }
   userReplyTriggerTimes.clear();
+  userReplyTriggerSweepState.size = 0;
   userReplyTriggerSweepState.validUntil = Number.NEGATIVE_INFINITY;
 }

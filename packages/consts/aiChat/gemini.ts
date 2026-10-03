@@ -7,12 +7,13 @@
  * 与可选 base_url，代码不持有任何模型默认值（见 config/agent.ts）。
  *
  * 与供应商无关的预算（工具轮数、动作上限）留在 consts/aiChat/tools.ts 与各领域 consts
- * 里——换供应商时那些数不该跟着动；采样温度与输出 token 上限属于供应商能力，两家各自定义。
+ * 里——换供应商时那些数不该跟着动；采样温度与输出 token 上限属于供应商能力，各家各自定义。
  * 所属模块：packages/aiChat/gemini/。
  */
 
 import { HarmBlockThreshold, HarmCategory } from "@google/genai";
 import type { SafetySetting, ToolConfig } from "@google/genai";
+import type { AgentCapability } from "../../types/config";
 
 /** 生图请求固定的分辨率档位；该模型只支持这一档，不做成可变参数。 */
 export const GEMINI_IMAGE_SIZE: string = "1K";
@@ -45,6 +46,12 @@ export const GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 8_192;
  * 加上思考消耗后体量明显更大。
  */
 export const GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS: number = 16_384;
+/** text 能力结构化 JSON 生成（aiChat/gemini/text.ts 的 generateGeminiJson）的输出 token 上限（含思考 token）。 */
+export const GEMINI_JSON_MAX_TOKENS: number = 16_384;
+/** 联网检索执行器（aiChat/gemini/search.ts）单次请求的输出 token 上限（含思考 token）。 */
+export const GEMINI_WEB_SEARCH_MAX_TOKENS: number = 16_384;
+/** 联网检索执行器在错误日志里的调用名。所属模块：aiChat/gemini/search.ts。 */
+export const GEMINI_WEB_SEARCH_ERROR_LABEL: string = "Gemini web search";
 
 /** 回复往返在错误日志里的调用名，用于区分是哪条流水线出的错。 */
 export const GEMINI_REPLY_ERROR_LABEL: string = "Gemini API";
@@ -66,17 +73,20 @@ export const GEMINI_SPEECH_REQUEST_ATTEMPTS: number = 3;
 export const GEMINI_SPEECH_TEMPERATURE: number = 1;
 
 /**
- * text（闲聊回复）、summary（冷消息压缩、贴纸整包简介）与 image（生图）三档能力的
- * per-attempt 超时上限。media 有独立档位，见下一个常量；语音合成另见
- * GEMINI_SPEECH_REQUEST_TIMEOUT_MS。
+ * 按能力取 SDK 每次尝试的超时上限，requestGeminiResult 同时以它作整次调用的 deadline。
+ * media（视觉描述与语音转写）宽一档：服务端需先把整份图片或整段音频解码进上下文才开始出字；
+ * 视觉与语音共用 config/dynamic/agent.json 的 `agent.media`，是同一个多模态模型的两种输入模态，
+ * 因此共用同一档。web_search 由交互式检索与 cron 摘要共用。语音合成由 aiChat/gemini/speech.ts
+ * 在每次调用上另行覆盖（GEMINI_SPEECH_REQUEST_TIMEOUT_MS）。所属模块：aiChat/gemini/client.ts。
  */
-export const GEMINI_REQUEST_TIMEOUT_MS: number = 180_000;
-/**
- * media 能力（视觉描述与语音转写）的独立超时，宽于纯文本往返：服务端需先把
- * 整份图片或整段音频解码进上下文才开始出字。视觉与语音共用 config/dynamic/agent.json
- * 的 `agent.media`，是同一个多模态模型的两种输入模态，因此共用同一档。
- */
-export const GEMINI_MEDIA_REQUEST_TIMEOUT_MS: number = 240_000;
+export const GEMINI_REQUEST_TIMEOUTS_MS: Readonly<Record<AgentCapability, number>> = {
+  text: 180_000,
+  summary: 180_000,
+  media: 240_000,
+  image: 180_000,
+  tts: 180_000,
+  web_search: 180_000,
+};
 /**
  * Gemini SDK 对 408/429/5xx 的总尝试次数（首次加最多五次重试）；显式传入才能
  * 启用 SDK 的 retryOptions，所有调用方不得再重试这类请求失败。
@@ -116,10 +126,11 @@ export const GEMINI_SERVER_TOOL_CONFIG: Readonly<ToolConfig> = {
 export const GEMINI_TEXT_CACHE_DISPLAY_NAME_PREFIX: string = "copy-ninjia:text:";
 
 /**
- * 回复共用显式缓存同时登记的分槽上限。一个槽对应一份系统提示词（默认人设一槽，设了
- * 自定义人设的群各一槽）；超出时删掉最久未用的槽。所属模块：aiChat/gemini/contextCache.ts。
+ * 回复共用显式缓存同时登记的分槽上限。一个槽对应一份系统提示词；人设由启动总闸接管、
+ * 进程内恒定，全群只用一槽，启动扫描接管的其它槽超出时按最久未用删除。所属模块：
+ * aiChat/gemini/contextCache.ts。
  */
-export const GEMINI_TEXT_CACHE_MAX_SLOTS: number = 4;
+export const GEMINI_TEXT_CACHE_MAX_SLOTS: number = 1;
 
 /** 回复共用显式缓存的创建、续期、删除与扫描在日志里的调用名。所属模块：aiChat/gemini/contextCache.ts。 */
 export const GEMINI_TEXT_CACHE_ERROR_LABEL: string = "Gemini context cache API";

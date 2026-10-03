@@ -23,13 +23,14 @@ export interface CurrentAvatar {
 }
 
 /**
- * 当前头像读取结局，划分与 AvatarDownloadResult 一致：permanent-failure 表示
+ * 当前头像读取结局：permanent-failure 表示
  * 确认没有可用头像，transient-failure 表示这次没查成、调用方可以另找候选或重试。
- * 两者不得混用——/wed 的抽取配额只由前者消耗，见 commands/wed/draw.ts。
+ * /wed 的抽取配额由 permanent-failure 和 chat-not-found 消耗，见 commands/wed/draw.ts。
+ * chat-not-found 仅表示按裸 ID 查询 getChat 时 Telegram 确认找不到该私聊。
  */
 export type CurrentAvatarResult =
   | (CurrentAvatar & { readonly status: "ok" })
-  | { readonly status: "permanent-failure" | "transient-failure" };
+  | { readonly status: "permanent-failure" | "transient-failure" | "chat-not-found" };
 
 /**
  * 本项目会发出的 Telegram 聊天状态取值。
@@ -40,6 +41,12 @@ export type CurrentAvatarResult =
  * 另一个状态。
  */
 export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "record_voice";
+
+/**
+ * 本项目允许设置的 `parse_mode`：全仓只用 MarkdownV2 一种，拼进正文的动态文字一律
+ * 经 libs/telegramMarkdown.ts 转义（见 docs/cn/04-invariants.md）。
+ */
+export type TelegramParseMode = "MarkdownV2";
 
 /** Telegram Bot API 标准 emoji 反应的精确联合。 */
 export type ReactionEmoji = ReactionTypeEmoji["emoji"];

@@ -171,7 +171,7 @@ test("真实工具循环在发送挂起时继续请求模型，发送回执和 v
   const toolset = await createReplyToolset(ctx);
   try {
     expect(await generateReply(ctx.chatId, {
-      referenceMemory: "参考记忆", currentConversation: "有人打招呼", replyTask: "自然回应",
+      referenceMemory: "参考记忆", currentConversation: "有人打招呼", currentConversationSettledOffsets: [], replyTask: "自然回应",
     }, toolset)).toBeNull();
     expect(request).toHaveBeenCalledTimes(2);
     const outputs: readonly AiToolOutput[] = append.mock.calls[0]![0];
@@ -545,7 +545,7 @@ test("直接轮：真实工具循环在第一条发送挂起时继续请求模�
   const toolset = await createReplyToolset(ctx);
   try {
     expect(await generateReply(ctx.chatId, {
-      referenceMemory: "参考记忆", currentConversation: "有人打招呼", replyTask: "自然回应",
+      referenceMemory: "参考记忆", currentConversation: "有人打招呼", currentConversationSettledOffsets: [], replyTask: "自然回应",
     }, toolset)).toBeNull();
     // 模型已经被请求了三次，第一句的发送仍挂着：拟人停顿与发送都不挡模型往返，第二句排在它之后。
     expect(request).toHaveBeenCalledTimes(3);

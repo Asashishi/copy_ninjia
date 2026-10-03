@@ -1,7 +1,7 @@
+/** owner: main。主线程群状态热读副本与未 ACK revision；跨线程只通过 Disk I/O 消息同步。 */
+
 import type { ChatState } from "../../types/chatState";
 import type { UnacknowledgedChatStateWrite } from "../../types/identityStorage";
-
-/** 主线程群状态热读副本与未 ACK revision；跨线程只通过 Disk I/O 消息同步。 */
 
 /**
  * SQLite `chat_states` 的唯一主线程热读副本；容量上界 STATE_MANAGED_CHAT_LIMIT（25）。

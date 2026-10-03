@@ -1,3 +1,5 @@
+import type { AgentProvider } from "../types/config";
+
 /**
  * `config/dynamic/agent.json` 的 `agent` 段允许出现的全部能力名，顺序与
  * `config_example/dynamic/agent.json` 一致。
@@ -16,6 +18,7 @@ export const AGENT_CAPABILITY_NAMES: readonly string[] = [
   "media",
   "image",
   "tts",
+  "web_search",
 ];
 
 /**
@@ -31,8 +34,28 @@ export const AGENT_AI_CHAT_REQUIRED_CAPABILITIES: readonly string[] = [
   "media",
 ];
 
+/**
+ * agent 段 provider 的完整闭集；部署配置解析（config/agentCapability.ts）与 AI 用量文件解码
+ * （workers/diskIO/aiCacheDocument.ts）共用。新增 provider 时同步 AgentProvider、
+ * AGENT_PROVIDER_LABELS 与 aiChat/provider.ts 的实现包映射。所属模块：AI 能力部署配置。
+ */
+export const AGENT_PROVIDERS: readonly AgentProvider[] = ["google", "openai", "anthropic"];
+
+/** 判断字符串是否属于 AGENT_PROVIDERS；调用方先完成首尾空白规范化。所属模块：AI 能力部署配置。 */
+export function isAgentProvider(value: string): value is AgentProvider {
+  return (AGENT_PROVIDERS as readonly string[]).includes(value);
+}
+
+/** 各 provider 在错误文案里的名称（SDK 客户端未按能力配置时）。所属模块：aiChat/capabilityClient.ts。 */
+export const AGENT_PROVIDER_LABELS: Readonly<Record<AgentProvider, string>> = {
+  google: "Google",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+
 /** Agent 部署示例实际使用的占位凭据；严格解析只拒绝这些已知无效值。 */
 export const AGENT_API_KEY_PLACEHOLDERS: readonly string[] = [
+  "replace-with-anthropic-api-key",
   "replace-with-deepseek-api-key",
   "replace-with-google-api-key",
   "replace-with-openai-api-key",
@@ -49,10 +72,13 @@ export const EXPECTED_BASE_URL: string =
 
 /**
  * google provider 能力的 headers 最多条数。每个值都进日志值级脱敏名单，
- * 六项能力按上限配满时名单仍在 LOGGER_MAX_REDACTED_SECRETS 之内。
+ * 七项能力按上限配满时名单仍在 LOGGER_MAX_REDACTED_SECRETS 之内。
  * 所属模块：AI 能力部署配置。
  */
 export const AGENT_HEADERS_MAX_ENTRIES: number = 8;
+
+/** web_search 缺省的每轮函数调用上限；由配置解析补齐，与 text 内建搜索预算独立。所属模块：AI 能力部署配置。 */
+export const WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE: number = 5;
 
 /**
  * headers 里禁止出现的请求头名（小写）：Google 凭据只走 api_key，由 SDK 写进

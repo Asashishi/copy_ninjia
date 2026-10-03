@@ -22,7 +22,7 @@ export function readStoredChatStates(
   database: StorageDatabase
 ): readonly StoredChatStateRow[] {
   return database
-    .select({ chatId: chatStates.chatId, data: jsonbTextProjection(chatStates.status), aiPersona: chatStates.aiPersona })
+    .select({ chatId: chatStates.chatId, data: jsonbTextProjection(chatStates.status) })
     .from(chatStates)
     .all();
 }

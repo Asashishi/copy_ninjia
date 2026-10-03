@@ -260,7 +260,7 @@ export async function handleBatchKickCommand(
   if (ctx.chat.type !== "supergroup") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.batchKickSupergroupOnly,
+      text: chatAtmosphere().NOTICE_TEXTS.batchKickSupergroupOnly,
       replyToMessageId: messageId,
     });
     return;
@@ -272,7 +272,7 @@ export async function handleBatchKickCommand(
   if (durationMs === undefined) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).BATCH_KICK_USAGE_TEXT,
+      text: chatAtmosphere().BATCH_KICK_USAGE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -281,8 +281,8 @@ export async function handleBatchKickCommand(
   // 窗口的「现在」取本条命令自带的 Telegram 时间戳，不是宿主的 Date.now()：
   // 库里那些 joinedAt 全都来自 `update.date`（见 antiRaid/updateIngress.ts），
   // 两个时钟直接相减的话，窗口边界会整体漂移出它们之间的偏差——`readJoinLog`
-  // 既拿 since/now 逐条比 joinedAt，也拿它们算该读哪一两个日文件（那些文件名
-  // 同样是按 joinedAt 的东京日期起的）。同源之后这两步与写入侧用的是同一把尺。
+  // 既拿 since/now 逐条比 joinedAt，也拿它们算窗口覆盖的日文件（那些文件名
+  // 同样是按 joinedAt 的配置时区的日期起的）。同源之后这两步与写入侧用的是同一把尺。
   //
   // 文件保留期那侧仍按宿主时钟判（见 readJoinLog 里的 today）：那问的是「盘上
   // 还剩哪几天」，由 Worker 自己的跨日清理决定，与事件时间无关。
@@ -301,7 +301,7 @@ export async function handleBatchKickCommand(
     );
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.joinLogUnavailable,
+      text: chatAtmosphere().NOTICE_TEXTS.joinLogUnavailable,
       replyToMessageId: messageId,
     });
     return;
@@ -310,7 +310,7 @@ export async function handleBatchKickCommand(
   if (records.length === 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.batchKickEmpty(formatDurationCn(durationMs)),
+      text: chatAtmosphere().NOTICE_TEXTS.batchKickEmpty(formatDurationCn(durationMs)),
       replyToMessageId: messageId,
     });
     return;
@@ -320,7 +320,7 @@ export async function handleBatchKickCommand(
   if (stats.aborted && stats.scanned === 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      text: chatAtmosphere().IDENTITY_POLICY_UNAVAILABLE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -344,7 +344,7 @@ export async function handleBatchKickCommand(
       );
     }
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   await sendCommandMessage({
     chatId,
     text:

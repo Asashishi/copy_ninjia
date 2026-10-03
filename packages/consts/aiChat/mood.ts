@@ -50,5 +50,5 @@ const TIME_BUCKET_FLAGS: Readonly<Record<TimeBucket, true>> = {
   evening: true,
   night: true,
 };
-/** 部署配置允许使用的全部东京时段桶。 */
+/** 部署配置允许使用的全部配置时区时段桶。 */
 export const TIME_BUCKETS: readonly TimeBucket[] = Object.keys(TIME_BUCKET_FLAGS) as TimeBucket[];

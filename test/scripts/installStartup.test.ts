@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { lstatSync, mkdirSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { AGENT_CAPABILITY_NAMES } from "../../packages/consts/agent";
 import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
+import { Database } from "bun:sqlite";
 import { openStorageDatabase } from "../../packages/database/interact/connection";
+import { storageMetadataRows } from "../../packages/database/interact/initialization";
 import { seedStorageDatabase } from "../../scripts/fixtures/storageDatabase";
 import {
   cleanupFixtures,
@@ -22,7 +25,7 @@ function firstInstallPrompts(ai: boolean): PromptReply[] {
     { prompt: "现在配置 AI 能力", reply: ai ? "y" : "n" },
   ];
   if (ai) {
-    for (const capability of ["ad_detect", "text", "summary", "media", "image", "tts"]) {
+    for (const capability of AGENT_CAPABILITY_NAMES) {
       const enabled: boolean = ["text", "summary", "media", "tts"].includes(capability);
       prompts.push({ prompt: `配置 ${capability}？`, reply: enabled ? "y" : "n" });
       if (capability === "tts") {
@@ -81,7 +84,7 @@ async function assertInstalledStartup(fixture: InstallerFixture, output: string,
 }
 
 describe("install.sh 到真实应用启动", () => {
-  test("重填 Bot 身份时保留指向外部 telegram.json 的链接、权限和普通语气", async (): Promise<void> => {
+  test("重填 Bot 身份时保留外部配置链接、权限、普通语气与默认时区", async (): Promise<void> => {
     const fixture: InstallerFixture = await createFixture(true);
     mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
     const external: string = join(fixture.root, "external-secrets");
@@ -89,7 +92,7 @@ describe("install.sh 到真实应用启动", () => {
     const target: string = join(external, "telegram.json");
     const entry: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
     await writeText(target, JSON.stringify({
-      bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere: "normal",
+      bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere: "normal", time_zone: "UTC",
     }), 0o640);
     symlinkSync(target, entry);
     const original: ReturnType<typeof statSync> = statSync(target);
@@ -102,9 +105,15 @@ describe("install.sh 到真实应用启动", () => {
     ]);
     expect(result.exitCode, result.output).toBe(0);
     await assertInstalledStartup(fixture, result.output, false);
+    // 新库绑定 bot.json 的时区，真实启动按同一时区通过时区闸。
+    const client: Database = new Database(join(fixture.runtimeRoot, "database/storage.sqlite"), { readonly: true });
+    try {
+      expect<readonly unknown[]>(client.query("SELECT key, json(data) AS data FROM storage_metadata ORDER BY key").all())
+        .toEqual(storageMetadataRows("UTC"));
+    } finally { client.close(true); }
     expect(lstatSync(entry).isSymbolicLink()).toBeTrue();
     expect(await Bun.file(target).json()).toEqual({
-      bot_token: "987654321:replacement_test_token", super_admin_user_id: 987654321, atmosphere: "normal",
+      bot_token: "987654321:replacement_test_token", super_admin_user_id: 987654321, atmosphere: "normal", time_zone: "UTC",
     });
     const replaced: ReturnType<typeof statSync> = statSync(target);
     expect(replaced.mode).toBe(original.mode);
@@ -123,7 +132,7 @@ describe("install.sh 到真实应用启动", () => {
     try {
       seedStorageDatabase(database, {
         metadata: [], whitelist: [], blocklist: [], removals: [],
-        chatStates: [{ chatId: -1001, data: JSON.stringify({ isInitEnabled: true, isAIChatEnabled: ai }), aiPersona: "fixture persona" }],
+        chatStates: [{ chatId: -1001, data: JSON.stringify({ isInitEnabled: true, isAIChatEnabled: ai }) }],
       });
     } finally { database.$client.close(true); }
     const prompts: PromptReply[] = [{ prompt: "是否重新填写？", reply: "n" }];

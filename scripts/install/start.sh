@@ -16,13 +16,19 @@ IDENTITY_DATABASE_FILE="$(bun -e '
 IDENTITY_DATABASE_DIR="$(dirname -- "$IDENTITY_DATABASE_FILE")"
 
 if [ -e "$IDENTITY_DATABASE_FILE" ]; then
+  # 数据根一经写入就绑定建库时的时区；只读比对，不符时在注册服务之前拒绝。
+  bun -e '
+    import { assertStorageDatabaseTimeZone, loadInstallerBotConfig } from "./scripts/install/runtime";
+    const config = await loadInstallerBotConfig("config/static/bot.json");
+    assertStorageDatabaseTimeZone(config.timeZone);
+  ' || die "database/storage.sqlite 绑定的时区与 config/static/bot.json 的 time_zone 不一致（期望值见上）：已有数据根不支持更换时区，请把 time_zone 改回数据库记录的时区后重跑。"
   info "${IDENTITY_DATABASE_FILE} 已存在，不动它。"
 else
   mkdir -p -- "$IDENTITY_DATABASE_DIR"
   # 运行时按设计不会凭缺失数据库猜出一份空名单，所以全新部署必须显式建库。
   # 直接复用生产建库入口，不另写一份建表逻辑。
   #
-  # createStorageDatabase 只建表；当前 schema-version 由初始化边界另写一笔。
+  # createStorageDatabase 只建表；schema-version 与 bot.json 的时区标记由初始化边界另写一笔。
   bun -e '
     import {
       closeStorageDatabase,
@@ -30,12 +36,14 @@ else
       enableStorageDatabaseWal,
       IDENTITY_DATABASE_PATH,
       initializeStorageDatabase,
+      loadInstallerBotConfig,
       openStorageDatabase,
     } from "./scripts/install/runtime";
+    const config = await loadInstallerBotConfig("config/static/bot.json");
     createStorageDatabase(IDENTITY_DATABASE_PATH);
     const database = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
     try {
-      initializeStorageDatabase(database);
+      initializeStorageDatabase(database, config.timeZone);
     } finally {
       closeStorageDatabase(database);
     }

@@ -302,7 +302,7 @@ function renderColdStartCaption(
 /**
  * 渲染一份语言的完整区块，含首尾标记。
  *
- * 区块直接嵌进 `docs/<lang>/09-performance.md`：页标题、语言切换和上下页导航都
+ * 区块直接嵌进 `docs/<lang>/10-performance.md`：页标题、语言切换和上下页导航都
  * 是那一页手写的部分，生成块只负责标记之间的读数，重跑基准时按标记整块替换。
  */
 export function renderBenchmarkBlock(

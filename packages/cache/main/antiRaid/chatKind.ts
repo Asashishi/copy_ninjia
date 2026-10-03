@@ -1,4 +1,4 @@
-/** 群类型观测（packages/antiRaid/chatKind.ts）的主线程内存状态。 */
+/** owner: main。群类型观测（packages/antiRaid/chatKind.ts）的主线程内存状态。 */
 
 /**
  * 各群是不是超级群，纯内存、不落盘。

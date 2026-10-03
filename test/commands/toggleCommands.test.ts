@@ -1,11 +1,5 @@
-const syncAtmosphere = mock((_chatId: number): void => {});
 const postAntiRaid = mock((_message: unknown): boolean => true);
-mock.module("../../packages/antiRaid/workerBridge/controller", () => ({
-  syncAntiRaidAtmosphere: syncAtmosphere,
-  postAntiRaid,
-}));
-const syncMenu = mock(async (): Promise<void> => {});
-mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: syncMenu }));
+mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ postAntiRaid }));
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
   ANTI_RAID_DISABLE_TEARDOWN_FAILED_TEXT,
@@ -22,8 +16,6 @@ import { chatStateOf } from "../helpers/chatState";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const invalidateAiChat = mock((..._args: unknown[]): void => {});
-const syncAiChatPersona = mock((_chatId: number): void => {});
-mock.module("../../packages/aiChat/workerBridge", () => ({ syncAiChatPersona }));
 const teardownChatRuntime = mock(async (_chatId: number, _reason: unknown): Promise<void> => {});
 const invalidateBotAdminStatus = mock((chatId: number): void => {
   delete states.get(chatId)?.botPermissions;
@@ -99,7 +91,6 @@ beforeEach(() => {
   delegatedPermissions.clear();
   sendMessage.mockClear();
   invalidateAiChat.mockClear();
-  syncAiChatPersona.mockReset();
   teardownChatRuntime.mockClear();
   // 模拟 Anti-Raid teardown 对群类型镜像的清理。
   teardownChatRuntime.mockImplementation(async (chatId: number): Promise<void> => {
@@ -408,7 +399,6 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.botPermissions).toBeUndefined();
     expect(saveStateInBackground).toHaveBeenCalledWith("init toggled");
     expect(saveStateInBackground).not.toHaveBeenCalledWith("init teardown settled");
-    expect(syncAiChatPersona).not.toHaveBeenCalled();
     expect(lastReplyText(sendMessage)).toBe(INIT_DISABLE_TEARDOWN_FAILED_TEXT);
   });
 
@@ -423,17 +413,13 @@ describe("超级管理员开关命令", () => {
     // teardownChatRuntime 里有不可逆的持久化动作（aiChat owner 的 durable 记忆
     // 删除、translate owner 的会话删除）；口径同 superAdminToggle.ts 的 runChatToggleCommand。
     const order: string[] = [];
-    states.set(-1001, chatStateOf({ isInitEnabled: true, botPermissions: botPermissions(), aiPersona: "本群人设" }));
+    states.set(-1001, chatStateOf({ isInitEnabled: true, botPermissions: botPermissions() }));
     persistChatState.mockImplementation(async (_chatId: number, context: string): Promise<void> => {
       order.push(`persist:${context}`);
       saveStateInBackground(context);
     });
     teardownChatRuntime.mockImplementationOnce(async (): Promise<void> => {
       order.push("teardown");
-    });
-    syncAiChatPersona.mockImplementation((chatId: number): void => {
-      expect(states.get(chatId)?.aiPersona).toBeUndefined();
-      order.push("persona removed");
     });
 
     await handleInitCommand(context("disable"));
@@ -443,8 +429,8 @@ describe("超级管理员开关命令", () => {
       "persist:init toggled",
       "teardown",
       "persist:init teardown settled",
-      "persona removed",
     ]);
+    expect(states.has(-1001)).toBeFalse();
   });
 
   test("拆完无条件补一次落盘，把整行删除与 teardown 清掉的 isProxySendEnabled 一起写下去", async () => {

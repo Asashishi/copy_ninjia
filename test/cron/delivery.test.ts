@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { HttpError, InputFile } from "grammy";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { CronAction, CronDeliveryOutcome, CronRoundVoices } from "../../packages/types/cron";
+import type { CronAction, CronDeliveryOutcome, CronRoundDigests, CronRoundVoices } from "../../packages/types/cron";
+import type { WebDigestCompositionResult, WebDigestRequest } from "../../packages/types/webDigest";
 import type { VoiceSynthesisResult } from "../../packages/types/aiChat/voiceMessage";
 import type { RandomImagePick } from "../../packages/types/randomImage";
 
@@ -64,8 +65,12 @@ function voiceResult(): VoiceSynthesisResult {
   return { ok: true, voice: { bytes: new Uint8Array([0xFF, 0xF3, 0x84, 0xC4, 1, 2]), durationSeconds: 3, fileName: "fixture-voice.mp3" } };
 }
 const synthesizeVoice = mock(async (..._args: unknown[]): Promise<VoiceSynthesisResult> => voiceResult());
+/** 组稿替身交回的 MarkdownV2 原文。 */
+const DIGEST_TEXT: string = "*今日新闻*";
+const composeWebDigest = mock(async (_request: WebDigestRequest, _signal: AbortSignal): Promise<WebDigestCompositionResult> =>
+  ({ ok: true, text: DIGEST_TEXT }));
 const realWorkerBridge = await import("../../packages/aiChat/workerBridge");
-mock.module("../../packages/aiChat/workerBridge", () => ({ ...realWorkerBridge, synthesizeVoice }));
+mock.module("../../packages/aiChat/workerBridge", () => ({ ...realWorkerBridge, synthesizeVoice, composeWebDigest }));
 
 const { deliverCronAction } = await import("../../packages/cron/delivery");
 const { TEST_DATA_ROOT } = await import("../preloadEnv");
@@ -74,13 +79,21 @@ const FILES_ROOT: string = join(TEST_DATA_ROOT, "cron-delivery-files");
 const { getAssetConfig } = await import("../../packages/config/assets");
 const { TelegramRetryQueueFullError } = await import("../../packages/infra/telegram/outboundRetryPolicy");
 const { TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } = await import("../../packages/consts/telegram");
+const { MARKDOWN_V2_PARSE_MODE } = await import("../../packages/consts/telegramMarkdown");
+const { WEB_DIGEST_UNSEARCHED_WARNING } = await import("../../packages/consts/webDigest");
+
+/** 一次投递的轮次上下文；省略的项按新的一轮补齐。 */
+interface DeliverRound {
+  readonly signal?: AbortSignal;
+  readonly voices?: CronRoundVoices;
+  readonly digests?: CronRoundDigests;
+}
 
 function deliver(
   action: CronAction,
-  signal: AbortSignal = new AbortController().signal,
-  voices: CronRoundVoices = new Map()
+  { signal = new AbortController().signal, voices = new Map(), digests = new Map() }: DeliverRound = {}
 ): Promise<CronDeliveryOutcome> {
-  return deliverCronAction({ chatId: -1001, action, signal, voices });
+  return deliverCronAction({ chatId: -1001, action, signal, voices, digests });
 }
 
 beforeEach(() => {
@@ -91,6 +104,8 @@ beforeEach(() => {
   recordBotImage.mockClear();
   synthesizeVoice.mockClear();
   synthesizeVoice.mockImplementation(async (): Promise<VoiceSynthesisResult> => voiceResult());
+  composeWebDigest.mockClear();
+  composeWebDigest.mockImplementation(async (): Promise<WebDigestCompositionResult> => ({ ok: true, text: DIGEST_TEXT }));
   mkdirSync(FILES_ROOT, { recursive: true });
 });
 
@@ -189,7 +204,7 @@ describe("cron 发送边界", () => {
     const controller: AbortController = new AbortController();
     controller.abort();
     nextFailure = new Error("aborted");
-    expect(await deliver({ type: "send_message", content: "hi" }, controller.signal)).toEqual({ kind: "aborted" });
+    expect(await deliver({ type: "send_message", content: "hi" }, { signal: controller.signal })).toEqual({ kind: "aborted" });
   });
 });
 
@@ -236,7 +251,7 @@ test("抽图异步返回前取消，停止后不提交发送", async () => {
     controller.abort();
     return { status: "ok", bytes: new Uint8Array([1]), fileName: "a.png", mimeType: "image/png" };
   });
-  expect(await deliver({ type: "send_image", content: undefined, isBlurred: false, source: { kind: "random", directory: null } }, controller.signal))
+  expect(await deliver({ type: "send_image", content: undefined, isBlurred: false, source: { kind: "random", directory: null } }, { signal: controller.signal }))
     .toEqual({ kind: "aborted" });
   expect(calls).toEqual([]);
 });
@@ -246,7 +261,7 @@ describe("send_voice", () => {
 
   test("台词与语气交给公共合成实现，以 OGG 语音气泡发送并登记自发消息", async () => {
     const signal: AbortSignal = new AbortController().signal;
-    expect(await deliver(VOICE, signal)).toEqual({ kind: "sent" });
+    expect(await deliver(VOICE, { signal })).toEqual({ kind: "sent" });
     expect(synthesizeVoice).toHaveBeenCalledWith({ text: "おやすみ", tone: "眠そうに", signal });
     expect(calls).toHaveLength(1);
     const [chatId, upload, options] = calls[0]!.args as [number, InputFile, { duration: number }];
@@ -262,11 +277,11 @@ describe("send_voice", () => {
   test("同一轮只合成一次；首次发送成功前的重试重新上传，成功后后续会话改用 file_id", async () => {
     const voices: CronRoundVoices = new Map();
     nextFailure = Object.assign(new Error("Bad Gateway"), { error_code: 502, description: "Bad Gateway" });
-    expect(await deliver(VOICE, undefined, voices)).toEqual({ kind: "retryable", detail: "502 Bad Gateway" });
+    expect(await deliver(VOICE, { voices })).toEqual({ kind: "retryable", detail: "502 Bad Gateway" });
     expect(voices.get(VOICE)?.fileId).toBeUndefined();
-    expect(await deliver(VOICE, undefined, voices)).toEqual({ kind: "sent" });
+    expect(await deliver(VOICE, { voices })).toEqual({ kind: "sent" });
     expect(voices.get(VOICE)?.fileId).toBe("voice-file");
-    expect(await deliverCronAction({ chatId: -1002, action: VOICE, signal: new AbortController().signal, voices }))
+    expect(await deliverCronAction({ chatId: -1002, action: VOICE, signal: new AbortController().signal, voices, digests: new Map() }))
       .toEqual({ kind: "sent" });
     expect(synthesizeVoice).toHaveBeenCalledTimes(1);
     expect(voices.get(VOICE)?.voice.durationSeconds).toBe(3);
@@ -292,7 +307,7 @@ describe("send_voice", () => {
   ] as const)("合成失败 %s 按 %s 返回，不发送也不登记", async (reason, kind) => {
     const voices: CronRoundVoices = new Map();
     synthesizeVoice.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => ({ ok: false, reason }));
-    expect(await deliver(VOICE, undefined, voices)).toEqual({ kind, detail: `speech synthesis failed: ${reason}` });
+    expect(await deliver(VOICE, { voices })).toEqual({ kind, detail: `speech synthesis failed: ${reason}` });
     expect(calls).toEqual([]);
     expect(voices.size).toBe(0);
   });
@@ -303,9 +318,100 @@ describe("send_voice", () => {
       controller.abort();
       return voiceResult();
     });
-    expect(await deliver(VOICE, controller.signal)).toEqual({ kind: "aborted" });
+    expect(await deliver(VOICE, { signal: controller.signal })).toEqual({ kind: "aborted" });
     synthesizeVoice.mockImplementationOnce(async (): Promise<VoiceSynthesisResult> => ({ ok: false, reason: "aborted" }));
     expect(await deliver(VOICE)).toEqual({ kind: "aborted" });
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("cron send_web_digest", () => {
+  const DIGEST: Extract<CronAction, { type: "send_web_digest" }> = {
+    type: "send_web_digest",
+    topic: "今日科技新闻",
+    language: "zh",
+    maxItems: 5,
+    instructions: undefined,
+  };
+
+  test("按动作参数组稿，以 MarkdownV2 发出一条消息，不传链接预览设置；同一轮只组稿一次", async () => {
+    const digests: CronRoundDigests = new Map();
+    expect(await deliver(DIGEST, { digests })).toEqual({ kind: "sent" });
+    expect(composeWebDigest).toHaveBeenCalledWith(
+      { topic: DIGEST.topic, language: DIGEST.language, maxItems: DIGEST.maxItems, instructions: undefined },
+      expect.any(AbortSignal)
+    );
+    expect(calls).toEqual([{
+      method: "sendMessage",
+      args: [-1001, DIGEST_TEXT, { parse_mode: MARKDOWN_V2_PARSE_MODE }, expect.any(AbortSignal)],
+    }]);
+    expect(markSelfSent).toHaveBeenCalledWith(-1001, 77);
+    expect(await deliverCronAction({ chatId: -1002, action: DIGEST, signal: new AbortController().signal, voices: new Map(), digests }))
+      .toEqual({ kind: "sent" });
+    expect(composeWebDigest).toHaveBeenCalledTimes(1);
+  });
+
+  test("Telegram 拒收（含 MarkdownV2 解析失败）不重试，也不降级成纯文本", async () => {
+    nextFailure = Object.assign(new Error("Bad Request"), { error_code: 400, description: "Bad Request: can't parse entities" });
+    expect(await deliver(DIGEST)).toEqual({ kind: "permanent", detail: "400 Bad Request: can't parse entities" });
+    expect(calls).toHaveLength(1);
+  });
+
+  test.each([
+    ["worker unavailable", "retryable"],
+    ["timed out", "retryable"],
+    ["search failed", "retryable"],
+    ["compose failed", "retryable"],
+    ["ai unconfigured", "permanent"],
+    ["no sources", "permanent"],
+    ["invalid digest", "permanent"],
+    ["too long", "permanent"],
+  ] as const)("组稿失败 %s 按 %s 返回，不发送也不登记", async (reason, kind) => {
+    const digests: CronRoundDigests = new Map();
+    composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => ({ ok: false, reason }));
+    expect(await deliver(DIGEST, { digests })).toEqual({ kind, detail: `web digest composition failed: ${reason}` });
+    expect(calls).toEqual([]);
+    expect(digests.size).toBe(0);
+  });
+
+  test("带警示的未检索正文按成功结果发送并在本轮缓存", async () => {
+    const digests: CronRoundDigests = new Map();
+    const warned: string = `${WEB_DIGEST_UNSEARCHED_WARNING}\n\n正文`;
+    composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => ({ ok: true, text: warned }));
+    expect(await deliver(DIGEST, { digests })).toEqual({ kind: "sent" });
+    expect(composeWebDigest).toHaveBeenCalledTimes(1);
+    expect(digests.get(DIGEST)).toBe(warned);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args[1]).toBe(warned);
+  });
+
+  test.each([true, false])("已搜索=%s 的摘要生成失败后可重试，发送重试复用完整正文", async (searched: boolean) => {
+    const digests: CronRoundDigests = new Map();
+    const text: string = searched ? DIGEST_TEXT : `${WEB_DIGEST_UNSEARCHED_WARNING}\n\n正文`;
+    composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => ({ ok: false, reason: "search failed" }));
+    composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => ({ ok: true, text }));
+    expect(await deliver(DIGEST, { digests })).toEqual({
+      kind: "retryable", detail: "web digest composition failed: search failed",
+    });
+    expect(digests.size).toBe(0);
+    expect(calls).toHaveLength(0);
+
+    nextFailure = Object.assign(new Error("Bad Gateway"), { error_code: 502, description: "Bad Gateway" });
+    expect(await deliver(DIGEST, { digests })).toEqual({ kind: "retryable", detail: "502 Bad Gateway" });
+    expect(digests.get(DIGEST)).toBe(text);
+    expect(await deliver(DIGEST, { digests })).toEqual({ kind: "sent" });
+    expect(composeWebDigest).toHaveBeenCalledTimes(2);
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.method).toBe("sendMessage");
+      expect(call.args[1]).toBe(text);
+      expect(call.args[2]).toEqual({ parse_mode: MARKDOWN_V2_PARSE_MODE });
+    }
+  });
+
+  test("组稿期间取消按 aborted 返回，不发送", async () => {
+    composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => ({ ok: false, reason: "aborted" }));
+    expect(await deliver(DIGEST)).toEqual({ kind: "aborted" });
     expect(calls).toEqual([]);
   });
 });

@@ -156,7 +156,7 @@ function chatStateWrite(
   revision: number,
   proxyEnabled: boolean = false
 ): ChatStateWriteDiskMessage {
-  return { aiPersona: null,
+  return {
     type: "chatStateWrite",
     chatId,
     data: encodeChatStateData(chatStateOf({
@@ -660,7 +660,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(() => handleChatStateWrite(chatStateWrite(-9_999, 1), reply))
       .toThrow(`must contain at most ${STATE_MANAGED_CHAT_LIMIT} chats`);
 
-    handleChatStateWrite({ aiPersona: null,
+    handleChatStateWrite({
       type: "chatStateWrite",
       chatId: -1_000,
       data: null,
@@ -682,7 +682,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
 
     expect(() => handleChatStateWrite(chatStateWrite(-1_002, 1, true), reply))
       .toThrow("at most one active proxy send target");
-    handleChatStateWrite({ aiPersona: null,
+    handleChatStateWrite({
       type: "chatStateWrite",
       chatId: -1_001,
       data: null,
@@ -724,7 +724,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       removals: [],
       chatStates: Array.from(
         { length: STATE_MANAGED_CHAT_LIMIT + 1 },
-        (_value: unknown, index: number) => ({ aiPersona: null,
+        (_value: unknown, index: number) => ({
           chatId: -2_000 - index,
           data: encodeChatStateData(chatStateOf({ isInitEnabled: true })),
         })
@@ -742,8 +742,8 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       blocklist: [],
       removals: [],
       chatStates: [
-        { aiPersona: null, chatId: -3_001, data: encodeChatStateData(chatStateOf({ isProxySendEnabled: true })) },
-        { aiPersona: null, chatId: -3_002, data: encodeChatStateData(chatStateOf({ isProxySendEnabled: true })) },
+        { chatId: -3_001, data: encodeChatStateData(chatStateOf({ isProxySendEnabled: true })) },
+        { chatId: -3_002, data: encodeChatStateData(chatStateOf({ isProxySendEnabled: true })) },
       ],
     });
     closeStorageDatabase(second);

@@ -27,6 +27,7 @@ import { collectRuntimeCalibrationProblems } from "./perf/hotPaths/gateRuntime";
 import {
   CACHE_OWNER_BY_PREFIX,
   CACHE_OWNER_EXEMPTIONS,
+  collectCacheOwnerHeaderProblems,
   collectCacheOwnershipProblems,
   collectStaleCacheExemptionProblems,
   THREAD_ENTRY_PATHS,
@@ -285,6 +286,11 @@ for (const [thread, closure] of threadClosures) {
 }
 
 const cacheFiles: readonly string[] = sourceFilesUnder(CACHE_ROOT);
+const cacheFirstLines: Map<string, string> = new Map();
+for (const path of cacheFiles) {
+  cacheFirstLines.set(path, (await Bun.file(path).text()).split("\n", 1)[0] ?? "");
+}
+failures.push(...collectCacheOwnerHeaderProblems({ projectRoot: PROJECT_ROOT, firstLines: cacheFirstLines }));
 failures.push(...collectStaleCacheExemptionProblems({
   projectRoot: PROJECT_ROOT,
   cacheFiles,

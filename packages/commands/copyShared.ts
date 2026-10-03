@@ -55,7 +55,7 @@ export async function claimCopyCooldownOrReject(
     if (elapsed >= 0 && elapsed < COPY_COOLDOWN_MS) {
       await sendCommandMessage({
         chatId,
-        text: chatAtmosphere(chatId).NOTICE_TEXTS.copyCooldown(formatMinSec(COPY_COOLDOWN_MS - elapsed)),
+        text: chatAtmosphere().NOTICE_TEXTS.copyCooldown(formatMinSec(COPY_COOLDOWN_MS - elapsed)),
         replyToMessageId: messageId,
       });
       return { rejected: true };

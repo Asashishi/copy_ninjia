@@ -201,6 +201,25 @@ describe("config/dynamic/ 热重载判定", () => {
     expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
   });
 
+  test("独立 web_search 的调用上限可重载；非法上限拒绝整份配置并保留已校验快照", async () => {
+    const document = await readAgentDocument();
+    document.agent.web_search!.max_calls_per_use = 7;
+    await writeJson(AGENT_CONFIG_PATH, document);
+    const accepted: HotDeploymentConfigChanges = await reload();
+    expect(accepted.aiAgent).toBe(true);
+    expect(accepted.rejections).toEqual([]);
+    expect(agentDeploymentConfigCache.current?.webSearch?.maxCallsPerUse).toBe(7);
+    const snapshot: AgentDeploymentConfig | null = agentDeploymentConfigCache.current;
+
+    document.agent.web_search!.max_calls_per_use = 0;
+    await writeJson(AGENT_CONFIG_PATH, document);
+    const rejected: HotDeploymentConfigChanges = await reload();
+    expect(rejected.aiAgent).toBe(false);
+    expect(rejected.rejections).toHaveLength(1);
+    expect(rejected.rejections[0]).toBe(`${AGENT_CONFIG_PATH}: $.agent.web_search.max_calls_per_use must be a positive safe integer.`);
+    expect(agentDeploymentConfigCache.current).toBe(snapshot);
+  });
+
   test("tts 切到 xai 协议仍带 model 或 style 时整份拒绝，provider 不切换；去掉后照常生效", async () => {
     const document = await readAgentDocument();
     const apiKey: string = "xai-reload-test-key";
@@ -396,7 +415,7 @@ describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
     actions: [{ type: "send_message", payload: { content: "hi" } }],
   }];
   const CRON_REJECTION: string =
-    `${CRON_CONFIG_PATH}: $[0].actions[0].type must be send_message, send_image or send_file ` +
+    `${CRON_CONFIG_PATH}: $[0].actions[0].type must be a type other than send_voice ` +
     "unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media.";
   const AGENT_REJECTION: string = `${AGENT_CONFIG_PATH}: $.agent must be configured with text, summary, media and tts while config/dynamic/cron.json uses send_voice.`;
 
@@ -478,6 +497,62 @@ describe("cron.json 的 send_voice 与 agent.json 的 agent.tts", () => {
     expect(changes.cron).toBe(true);
     expect(cronConfigCache.current?.[0]?.name).toBe("voice-renamed");
     expect(agentDeploymentConfigCache.current).toBe(baseline.agent);
+  });
+});
+
+describe("cron.json 的 send_web_digest 与 agent.json 的对话核心能力", () => {
+  const DIGEST_TASKS: readonly Record<string, unknown>[] = [{
+    name: "digest",
+    chat_id: [-1001],
+    cron: "0 9 * * *",
+    actions: [{ type: "send_web_digest", payload: { topic: "今日新闻" } }],
+  }];
+  const CRON_REJECTION: string =
+    `${CRON_CONFIG_PATH}: $[0].actions[0].type must be a type other than send_web_digest ` +
+    "unless config/dynamic/agent.json configures $.agent.text, summary and media.";
+  const AGENT_REJECTION: string =
+    `${AGENT_CONFIG_PATH}: $.agent must be configured with text, summary and media while config/dynamic/cron.json uses send_web_digest.`;
+
+  test("对话核心能力在时 send_web_digest 照常生效，不要求 tts 或 web_search；任务表仍用它时删掉 agent.json 整份拒绝", async () => {
+    const document = await readAgentDocument();
+    delete document.agent.tts;
+    delete document.agent.web_search;
+    await writeJson(AGENT_CONFIG_PATH, document);
+    await writeJson(CRON_CONFIG_PATH, DIGEST_TASKS);
+    expect((await reload()).rejections).toEqual([]);
+    expect(cronConfigCache.current?.[0]?.actions[0]?.type).toBe("send_web_digest");
+
+    const adopted = agentDeploymentConfigCache.current;
+    rmSync(AGENT_CONFIG_PATH);
+    const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.rejections).toEqual([AGENT_REJECTION]);
+    expect(changes.aiAgent).toBe(false);
+    expect(agentDeploymentConfigCache.current).toBe(adopted);
+  });
+
+  test("同一轮里新增 send_web_digest 又删掉 agent.json：拒绝 cron.json，agent.json 的删除照常生效", async () => {
+    await writeJson(CRON_CONFIG_PATH, DIGEST_TASKS);
+    rmSync(AGENT_CONFIG_PATH);
+
+    const changes: HotDeploymentConfigChanges = await reload();
+
+    expect(changes.rejections).toEqual([CRON_REJECTION]);
+    expect(changes.cron).toBe(false);
+    expect(changes.aiAgent).toBe(true);
+    expect(agentDeploymentConfigCache.current).toBeNull();
+    expect(cronConfigCache.current).toBe(baseline.cron);
+  });
+
+  test("现行配置没有对话核心能力时新增 send_web_digest 的 cron.json 整份拒绝", async () => {
+    const document = await readAgentDocument();
+    await writeJson(AGENT_CONFIG_PATH, { agent: { ad_detect: document.agent.ad_detect } });
+    expect((await reload()).rejections).toEqual([]);
+    expect(agentDeploymentConfigCache.current).toBeNull();
+
+    await writeJson(CRON_CONFIG_PATH, DIGEST_TASKS);
+    const changes: HotDeploymentConfigChanges = await reload();
+    expect(changes.rejections).toEqual([CRON_REJECTION]);
+    expect(changes.cron).toBe(false);
   });
 });
 

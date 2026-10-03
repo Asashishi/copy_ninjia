@@ -1,21 +1,26 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { NON_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { chatStateCache } from "../../packages/cache/main/chatState";
-import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
-
-interface SentMessageEntity {
-  type: string;
-  offset: number;
-  length: number;
-  language?: string;
-}
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
+import { MARKDOWN_V2_PARSE_MODE } from "../../packages/consts/telegramMarkdown";
+import { parseMarkdownV2 } from "../helpers/markdownV2";
+import type { ParsedMarkdownV2, ParsedMarkdownV2Entity } from "../helpers/markdownV2";
 
 interface SentMessage {
   text: string;
-  entities?: readonly SentMessageEntity[];
+  parseMode?: string;
   preserveInGroup?: boolean;
+}
+
+/** 按 Telegram 的解析口径还原一条回执：MarkdownV2 正文解析成可见文字与实体，纯文本原样返回。 */
+function rendered(message: SentMessage | undefined): ParsedMarkdownV2 {
+  if (message === undefined) return { text: "", entities: [] };
+  return message.parseMode === MARKDOWN_V2_PARSE_MODE
+    ? parseMarkdownV2(message.text)
+    : { text: message.text, entities: [] };
 }
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
@@ -48,7 +53,6 @@ function permissions(
     isCanBypassAdDetection: true,
     isCanBypassFloodControl: true,
     isCanControllAIPermission: false,
-    isCanConfigAiPrompt: false,
     isCanClearContext: false,
     isCanControllAdDetectPermission: false,
     isCanControllFloodControlPermission: false,
@@ -72,7 +76,6 @@ function allEnabledPermissions(): Record<string, boolean> {
     isCanWhiteOther: true,
     isCanSwitchMood: true,
     isCanControllAIPermission: true,
-    isCanConfigAiPrompt: true,
     isCanClearContext: true,
     isCanControllAdDetectPermission: true,
     isCanControllFloodControlPermission: true,
@@ -159,13 +162,17 @@ function lastQueriedPermissions(): Record<string, boolean> {
   const message: SentMessage | undefined = sendMessage.mock.calls.at(-1)?.[0] as
     | SentMessage
     | undefined;
-  const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
-  const text: string = message?.text ?? "";
+  const codeEntity: ParsedMarkdownV2Entity | undefined = rendered(message).entities[0];
+  const text: string = rendered(message).text;
   return JSON.parse(text.slice(
     codeEntity?.offset ?? 0,
     (codeEntity?.offset ?? 0) + (codeEntity?.length ?? 0)
   )) as Record<string, boolean>;
 }
+
+/** preload 接管的本进程风格；改写它的用例结束后还原。 */
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
+afterEach(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
 
 beforeEach(() => {
   chatStateCache.clear();
@@ -194,23 +201,24 @@ beforeEach(() => {
 });
 
 describe("/permission", () => {
-  test("自定义人设群的 help 和 query 使用普通版，JSON 实体仍完整且长期保留", async () => {
+  test("普通通知风格的 help 和 query 使用普通版，JSON 实体仍完整且长期保留", async () => {
     const ctx = context(2, "help");
-    const chatId: number = (ctx as unknown as { chat: { id: number } }).chat.id;
-    getOrCreateChatState(chatId).aiPersona = "普通助手";
+    botAtmosphereState.current = "plain";
     await handlePermissionCommand(ctx);
     let sent = sendMessage.mock.calls.at(-1)?.[0] as SentMessage;
-    let entity = sent.entities?.[0];
+    let view: ParsedMarkdownV2 = rendered(sent);
+    let entity = view.entities[0];
     expect(entity).toBeDefined();
-    expect(sent.text).toStartWith(ATMOSPHERE_TEXTS.plain.PERMISSION_COMMAND_TEXTS.helpPrefix);
-    expect(JSON.parse(sent.text.slice(entity!.offset, entity!.offset + entity!.length)))
+    expect(view.text).toStartWith(ATMOSPHERE_TEXTS.plain.PERMISSION_COMMAND_TEXTS.helpPrefix);
+    expect(JSON.parse(view.text.slice(entity!.offset, entity!.offset + entity!.length)))
       .toEqual(ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP);
     expect(sent.preserveInGroup).toBeTrue();
     await handlePermissionCommand(context(2, "query"));
     sent = sendMessage.mock.calls.at(-1)?.[0] as SentMessage;
-    entity = sent.entities?.[0];
-    expect(sent.text).toContain("true 表示已授权，false 表示未授权");
-    expect(JSON.parse(sent.text.slice(entity!.offset, entity!.offset + entity!.length))).toEqual(NON_WHITELIST_PERMISSIONS);
+    view = rendered(sent);
+    entity = view.entities[0];
+    expect(view.text).toContain("true 表示已授权，false 表示未授权");
+    expect(JSON.parse(view.text.slice(entity!.offset, entity!.offset + entity!.length))).toEqual(NON_WHITELIST_PERMISSIONS);
     expect(sent.preserveInGroup).toBeTrue();
   });
   test("权限键大小写不敏感，布尔值只接受 true/false", () => {
@@ -256,8 +264,8 @@ describe("/permission", () => {
     const message: SentMessage | undefined = sendMessage.mock.calls[0]?.[0] as
       | SentMessage
       | undefined;
-    const text: string = message?.text ?? "";
-    const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
+    const text: string = rendered(message).text;
+    const codeEntity: ParsedMarkdownV2Entity | undefined = rendered(message).entities[0];
     expect(message?.preserveInGroup).toBeTrue();
     expect(codeEntity).toMatchObject({
       type: "pre",
@@ -296,8 +304,8 @@ describe("/permission", () => {
     const message: SentMessage | undefined = sendMessage.mock.calls[0]?.[0] as
       | SentMessage
       | undefined;
-    const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
-    const text: string = message?.text ?? "";
+    const codeEntity: ParsedMarkdownV2Entity | undefined = rendered(message).entities[0];
+    const text: string = rendered(message).text;
     const permissionJson: string = text.slice(
       codeEntity?.offset ?? 0,
       (codeEntity?.offset ?? 0) + (codeEntity?.length ?? 0)
@@ -329,8 +337,8 @@ describe("/permission", () => {
     const message: SentMessage | undefined = sendMessage.mock.calls[0]?.[0] as
       | SentMessage
       | undefined;
-    const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
-    const text: string = message?.text ?? "";
+    const codeEntity: ParsedMarkdownV2Entity | undefined = rendered(message).entities[0];
+    const text: string = rendered(message).text;
     expect(JSON.parse(text.slice(
       codeEntity?.offset ?? 0,
       (codeEntity?.offset ?? 0) + (codeEntity?.length ?? 0)
@@ -381,6 +389,33 @@ describe("/permission", () => {
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
   });
 
+  test("help 与 query 看板设 MarkdownV2，昵称里的标记字符按字面显示，不形成格式或链接", async () => {
+    await handlePermissionCommand(context(2, "help"));
+    expect((sendMessage.mock.calls.at(-1)?.[0] as SentMessage).parseMode).toBe(MARKDOWN_V2_PARSE_MODE);
+
+    const hostileName: string = "*Al_ice* [x](https://evil.example) ~>`|{}#+-=.!\\";
+    await handlePermissionCommand(context(
+      2,
+      "query",
+      {
+        message_id: 9,
+        chat: { id: -1001, type: "supergroup", title: "Test Group" },
+        date: 1,
+        from: { id: 100, is_bot: false, first_name: hostileName },
+      }
+    ));
+    const message: SentMessage = sendMessage.mock.calls.at(-1)?.[0] as SentMessage;
+    expect(message.parseMode).toBe(MARKDOWN_V2_PARSE_MODE);
+    const view: ParsedMarkdownV2 = rendered(message);
+    expect(view.text).toContain(hostileName);
+    expect(view.entities).toEqual([expect.objectContaining({ type: "pre", language: "json" })]);
+  });
+
+  test("修改结果、用法提示等无格式回执仍按纯文本发送", async () => {
+    await handlePermissionCommand(context(100, "100 isCanMute true"));
+    expect((sendMessage.mock.calls.at(-1)?.[0] as SentMessage).parseMode).toBeUndefined();
+  });
+
   test("query 与授权分支同一道解析口径：频道 id 必须能读回来", async () => {
     // 授权分支开着 acceptChatId，query 分支缺了它的话，resolveArgumentTarget 会
     // 跳过 parseChatIdArgument，而 USERNAME_ARG_PATTERN 匹配不了前导 `-`，于是
@@ -402,8 +437,8 @@ describe("/permission", () => {
     const message: SentMessage | undefined = sendMessage.mock.calls[0]?.[0] as
       | SentMessage
       | undefined;
-    const codeEntity: SentMessageEntity | undefined = message?.entities?.[0];
-    const text: string = message?.text ?? "";
+    const codeEntity: ParsedMarkdownV2Entity | undefined = rendered(message).entities[0];
+    const text: string = rendered(message).text;
     const parsed: Record<string, boolean> = JSON.parse(text.slice(
       codeEntity?.offset ?? 0,
       (codeEntity?.offset ?? 0) + (codeEntity?.length ?? 0)

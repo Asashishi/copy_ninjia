@@ -38,6 +38,7 @@ import { requestVerificationAttemptPermit } from "./verificationAttemptPermit";
 import type { VerificationAttemptPermitResult } from
   "../../types/antiRaid/protocol";
 import { isTerminalVerificationPhase } from "../../states/verification/shared";
+import { antiRaidDispatchAbort } from "../../cache/workers/antiRaid/tasks";
 
 export type VerificationAttemptRequester = (
   key: string,
@@ -87,18 +88,31 @@ export async function runVerificationEffects({
     const generation: number = verificationGeneration.current;
     const revision: number | undefined = verificationRevisions.get(key)?.revision;
     if (generation <= 0 || revision === undefined) return;
-    const permit: VerificationAttemptPermitResult = await requestTerminalAttempt(
-      key,
-      generation,
-      revision
-    );
-    if (verificationEntries.get(key)?.state !== transitionState) return;
+    let permit: VerificationAttemptPermitResult;
+    try {
+      permit = await requestTerminalAttempt(key, generation, revision);
+    } catch (error: unknown) {
+      if (
+        verificationEntries.get(key)?.state !== transitionState ||
+        verificationGeneration.current !== generation ||
+        verificationRevisions.get(key)?.revision !== revision ||
+        antiRaidDispatchAbort.current?.signal.aborted === true
+      ) return;
+      logger.error(`Failed to acquire verification terminal attempt permit for ${key}:`, error);
+      // 当前许可无法确认时卸载运行态，沿既有延后边界保留磁盘快照；
+      // 主线程接管延后闩锁，完整进程重启后再恢复，不消耗本地 Telegram 重试计数。
+      dispatchVerification(chatId, userId, { type: "terminalAttemptBudgetExhausted" });
+      return;
+    }
+    if (
+      verificationEntries.get(key)?.state !== transitionState ||
+      verificationGeneration.current !== generation ||
+      verificationRevisions.get(key)?.revision !== revision ||
+      antiRaidDispatchAbort.current?.signal.aborted === true
+    ) return;
     if (permit.status !== "granted") {
-      if (permit.status === "exhausted") {
-        dispatchVerification(chatId, userId, {
-          type: "terminalAttemptBudgetExhausted",
-        });
-      }
+      // stale 只对仍精确匹配的当前 token 收口，不能触碰已经换代或更新的记录。
+      dispatchVerification(chatId, userId, { type: "terminalAttemptBudgetExhausted" });
       return;
     }
     grantedAttempt = permit.attempt;
@@ -164,12 +178,12 @@ export async function runVerificationEffects({
       case "sendWelcome": {
         const welcomeText: string =
           effect.variant === "channelComment"
-            ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationCommentExempt(effect.targetLabel)
+            ? workerAtmosphere().NOTICE_TEXTS.verificationCommentExempt(effect.targetLabel)
             : effect.variant === "vouchedBot"
-              ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationBotApproved(effect.fromLabel, effect.targetLabel)
+              ? workerAtmosphere().NOTICE_TEXTS.verificationBotApproved(effect.fromLabel, effect.targetLabel)
               : effect.variant === "approved"
-                ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationMemberApproved(effect.fromLabel, effect.targetLabel)
-                : workerAtmosphere(chatId).NOTICE_TEXTS.verificationSelfPassed(effect.fromLabel);
+                ? workerAtmosphere().NOTICE_TEXTS.verificationMemberApproved(effect.fromLabel, effect.targetLabel)
+                : workerAtmosphere().NOTICE_TEXTS.verificationSelfPassed(effect.fromLabel);
         await runBooleanTelegramAction(
           "send message",
           (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
@@ -184,7 +198,7 @@ export async function runVerificationEffects({
         break;
       }
       case "answerCallback":
-        await answerVerificationCallback({ chatId, callbackQueryId: effect.callbackQueryId, reply: effect.reply });
+        await answerVerificationCallback({ callbackQueryId: effect.callbackQueryId, reply: effect.reply });
         break;
       case "startAdminCheck":
         startAdminCheck({

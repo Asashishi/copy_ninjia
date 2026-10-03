@@ -1,6 +1,6 @@
-import type { GagSession } from "../../types/gag";
+/** owner: main。主线程 command/gag 的运行时状态；Worker 不得 import。 */
 
-/** 主线程 command/gag 的运行时状态；Worker 不得 import。 */
+import type { GagSession } from "../../types/gag";
 
 /**
  * 主线程权威 gag 表：chatId 定位小型目标列表，同群可同时管教多个身份，

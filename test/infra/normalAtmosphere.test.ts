@@ -1,47 +1,38 @@
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, expect, mock, test } from "bun:test";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
-import { defaultAtmosphereState as aiAtmosphere, resetAiChatIdentityCache } from "../../packages/cache/workers/aiChat/identity";
-import { defaultAtmosphereState as raidAtmosphere, plainAtmosphereChats } from "../../packages/cache/workers/antiRaid/atmosphere";
-import { chatPersonas } from "../../packages/cache/workers/aiChat/persona";
+import { BOT_ATMOSPHERES, DEFAULT_BOT_ATMOSPHERE } from "../../packages/consts/bot";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import { atmosphereState as aiAtmosphere, resetAiChatIdentityCache } from "../../packages/cache/workers/aiChat/identity";
+import { atmosphereState as raidAtmosphere } from "../../packages/cache/workers/antiRaid/atmosphere";
 import { aiChatAtmosphere } from "../../packages/workers/aiChat/atmosphere";
 import { workerAtmosphere } from "../../packages/workers/antiRaid/atmosphere";
 import type { Atmosphere } from "../../packages/types/atmosphere";
-import type { ChatState } from "../../packages/types/chatState";
 import type { Context } from "grammy";
 import type { InlineQueryResultArticle } from "grammy/types";
-import type * as BotModule from "../../packages/config/bot";
-import type * as StateStoreModule from "../../packages/infra/storage/stateStore";
 import { LUCK_TIERS, RATE_LIMIT_MAX_CALLS_PER_WINDOW } from "../../packages/consts/luckChallenge";
-import { getTokyoDateKey } from "../../packages/libs/time";
+import { getDateKey } from "../../packages/libs/time";
 import { dailyLuckCache, luckCacheState, luckReceiptSecretState, recentCallTimestamps } from "../../packages/cache/main/luckChallenge";
-import { chatStateOf } from "../helpers/chatState";
+import { chatAtmosphere } from "../../packages/infra/atmosphere";
+import { registerCommandMenu } from "../../packages/app/commandMenu";
+import { handleLuckChallengeInlineQuery } from "../../packages/commands/luckChallenge/telegramAdapter";
 
-const config: typeof BotModule = { ...await import("../../packages/config/bot") };
-mock.module("../../packages/config/bot", () => ({ ...config, BOT_ATMOSPHERE: "plain" }));
-const stateStore: typeof StateStoreModule = { ...await import("../../packages/infra/storage/stateStore") };
-const states = new Map<number, ChatState>([[-1, chatStateOf({ aiPersona: "custom" })], [-2, chatStateOf()]]);
-mock.module("../../packages/infra/storage/stateStore", () => ({
-  ...stateStore,
-  getChatState: (id: number): ChatState => states.get(id) ?? chatStateOf(),
-  getChatStateCache: (): ReadonlyMap<number, ChatState> => states,
-}));
-const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
-const { registerCommandMenu, syncChatCommandMenu } = await import("../../packages/app/commandMenu");
-const { handleLuckChallengeInlineQuery } = await import("../../packages/commands/luckChallenge/telegramAdapter");
+// 本组使用启动总闸已确定的普通通知风格；跑完还原 preload 接管的值。
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
+botAtmosphereState.current = "plain";
 
 afterEach(() => {
+  botAtmosphereState.current = "plain";
   resetAiChatIdentityCache();
   raidAtmosphere.current = null;
-  plainAtmosphereChats.clear();
-  chatPersonas.clear();
   dailyLuckCache.clear();
   luckCacheState.dayKey = "";
   luckReceiptSecretState.current = null;
   recentCallTimestamps.clear();
 });
+afterAll(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
 
-test("inline 运势的称呼、评语和限频提示使用 Bot 普通语气", async (): Promise<void> => {
-  const day: string = getTokyoDateKey();
+test("inline 运势的称呼、评语和限频提示使用本进程普通语气", async (): Promise<void> => {
+  const day: string = getDateKey();
   luckCacheState.dayKey = day;
   luckReceiptSecretState.current = {
     version: 1,
@@ -66,31 +57,26 @@ test("inline 运势的称呼、评语和限频提示使用 Bot 普通语气", as
   expect(results[0]!.title).toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.inlineRateLimitTitle);
 });
 
-test("普通风格下主线程与群菜单一致，人设移除后回落到全群普通菜单", async () => {
-  expect(chatAtmosphere(-1)).toBe(ATMOSPHERE_TEXTS.plain);
-  expect(chatAtmosphere(-2)).toBe(ATMOSPHERE_TEXTS.plain);
+test("普通风格下主线程文案与全群命令菜单一致，不再注册单群作用域", async () => {
+  expect(chatAtmosphere()).toBe(ATMOSPHERE_TEXTS.plain);
   const setMyCommands = mock(async (): Promise<true> => true);
   const deleteMyCommands = mock(async (): Promise<true> => true);
-  const api = { setMyCommands, deleteMyCommands };
-  await registerCommandMenu({ api } as never);
+  await registerCommandMenu({ api: { setMyCommands, deleteMyCommands } } as never);
+  expect(setMyCommands).toHaveBeenCalledTimes(1);
   expect(setMyCommands).toHaveBeenCalledWith(ATMOSPHERE_TEXTS.plain.BOT_COMMANDS, { scope: { type: "all_group_chats" } });
-  await syncChatCommandMenu(api, -2);
-  expect(deleteMyCommands).toHaveBeenLastCalledWith({ scope: { type: "chat", chat_id: -2 } });
+  expect(deleteMyCommands).toHaveBeenCalledTimes(1);
+  expect(deleteMyCommands).toHaveBeenCalledWith();
 });
 
-test("两个 Worker 读取初始化默认风格，自定义人设仍优先普通文案", () => {
+test("两个 Worker 读取初始化载荷注入的本进程风格，未注入时使用配置缺省风格", () => {
   for (const style of ["teasing", "plain"] as readonly Atmosphere[]) {
     aiAtmosphere.current = style;
     raidAtmosphere.current = style;
-    chatPersonas.set(-1, "custom");
-    plainAtmosphereChats.add(-1);
-    expect(aiChatAtmosphere(-1)).toBe(ATMOSPHERE_TEXTS.plain);
-    expect(workerAtmosphere(-1)).toBe(ATMOSPHERE_TEXTS.plain);
-    expect(aiChatAtmosphere(-2)).toBe(ATMOSPHERE_TEXTS[style]);
-    expect(workerAtmosphere(-2)).toBe(ATMOSPHERE_TEXTS[style]);
-    chatPersonas.delete(-1);
-    plainAtmosphereChats.delete(-1);
-    expect(aiChatAtmosphere(-1)).toBe(ATMOSPHERE_TEXTS[style]);
-    expect(workerAtmosphere(-1)).toBe(ATMOSPHERE_TEXTS[style]);
+    expect(aiChatAtmosphere()).toBe(ATMOSPHERE_TEXTS[style]);
+    expect(workerAtmosphere()).toBe(ATMOSPHERE_TEXTS[style]);
   }
+  aiAtmosphere.current = null;
+  raidAtmosphere.current = null;
+  expect(aiChatAtmosphere()).toBe(ATMOSPHERE_TEXTS[BOT_ATMOSPHERES[DEFAULT_BOT_ATMOSPHERE]]);
+  expect(workerAtmosphere()).toBe(ATMOSPHERE_TEXTS[BOT_ATMOSPHERES[DEFAULT_BOT_ATMOSPHERE]]);
 });

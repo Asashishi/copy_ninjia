@@ -1,4 +1,4 @@
-/** Owner：AntiRaid Worker；主线程只能通过 floodCandidate 消息间接写入。 */
+/** owner: workers/antiRaid。主线程只能通过 floodCandidate 消息间接写入。 */
 
 import type {
   FloodWindowCacheState,

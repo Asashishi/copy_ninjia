@@ -109,7 +109,7 @@ export interface AdoptVerificationsMessage {
   type: "adoptVerifications";
   generation: number;
   verifications: VerificationSnapshot[];
-  /** 本进程已耗尽预算的最小索引；同 key 新事件不得重新创建验证运行态。 */
+  /** 本进程因预算耗尽或许可无法确认而延后的最小索引；同 key 新事件不得重建运行态。 */
   deferredVerifications?: DeferredVerificationRecord[];
   /** 进程启动恢复来自磁盘，可直接续跑终态；Worker 内重建则重新等待落盘回执。 */
   resumePersistedTerminals?: boolean;
@@ -231,7 +231,10 @@ export interface ChatKindChangedMessage {
  */
 export interface AntiRaidAgentConfigMessage {
   type: "agentConfig";
-  readonly defaultAtmosphere: Atmosphere;
+  /** 主线程已校验的默认时区；每次投递取同一启动快照。 */
+  readonly timeZone: string;
+  /** 主线程启动总闸确定的本进程群通知风格；每次投递取同一启动快照。 */
+  readonly atmosphere: Atmosphere;
   adDetect: AdDetectAgentConfig | null;
   adSamples: AdSampleConfig | null;
 }
@@ -250,7 +253,6 @@ export interface AntiRaidDrainMessage {
 
 /** 主线程投递给 Anti-Raid Worker 的完整协议。 */
 export type AntiRaidWorkerMessage =
-  | { readonly type: "atmosphere"; readonly chatId: number; readonly plain: boolean }
   | AntiRaidAgentConfigMessage
   | NewMemberMessage
   | MemberLeftMessage

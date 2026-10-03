@@ -5,6 +5,8 @@ import {
   installAiCacheUsageSink,
   reportAiCacheUsage,
   reportAiCostUsage,
+  reportAiSearchUsage,
+  reportAnthropicUsage,
   reportGeminiUsage,
   reportGeminiInteractionUsage,
   reportXAiUsage,
@@ -111,6 +113,83 @@ test("用量诊断按固定维度去重、不回显模型或异常，重装出�
   } finally {
     warning.mockRestore();
   }
+});
+
+test("Anthropic 用量的输入含缓存写入与命中两项，命中取 cache_read；缓存字段为 null 时按 0 与未给出处理", () => {
+  install();
+  reportAnthropicUsage({ capability: "text", model: "m", usage: { input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: 30, cache_read_input_tokens: 60 } as never });
+  reportAnthropicUsage({ capability: "text", model: "m", usage: { input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: null, cache_read_input_tokens: null } as never });
+  expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+    { kind: "tokens", capability: "text", provider: "anthropic", model: "m", inputTokens: 100, cachedInputTokens: 60, outputTokens: 2 },
+    { kind: "tokens", capability: "text", provider: "anthropic", model: "m", inputTokens: 10, cachedInputTokens: null, outputTokens: 2 },
+  ]);
+});
+
+test("独立检索次数只在大于 0 时上报为 search 记录", () => {
+  install();
+  reportAiSearchUsage({ capability: "web_search", provider: "google", model: "m", searchCalls: 0 });
+  reportAiSearchUsage({ capability: "text", provider: "openai", model: "m", searchCalls: 3 });
+  expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+    { kind: "search", capability: "text", provider: "openai", model: "m", searchCalls: 3 },
+  ]);
+});
+
+test("一次响应的 token 与检索次数合并上报；token 缺失或非法时只保留检索次数", () => {
+  install();
+  for (const inputTokens of [12, undefined, -1]) {
+    reportAiCacheUsage({ capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens,
+      cachedInputTokens: 4, outputTokens: 3, searchCalls: 8 });
+  }
+  expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+    { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 12,
+      cachedInputTokens: 4, outputTokens: 3, searchCalls: 8 },
+    { kind: "search", capability: "web_search", provider: "openai", model: "grok-4.7", searchCalls: 8 },
+    { kind: "search", capability: "web_search", provider: "openai", model: "grok-4.7", searchCalls: 8 },
+  ]);
+});
+
+test("Gemini 与 Anthropic 的缺失或畸形 token 用量保留有效检索次数", () => {
+  install();
+  for (const usage of [undefined, null, { input_tokens: -1, cache_creation_input_tokens: 2 }]) {
+    reportAnthropicUsage({ capability: "web_search", model: "a", usage: usage as never, searchCalls: 2 });
+  }
+  for (const usage of [undefined, null, { promptTokenCount: 12, cachedContentTokenCount: 13, candidatesTokenCount: 1 }]) {
+    reportGeminiUsage({ capability: "web_search", model: "g", usage: usage as never, searchCalls: 3 });
+  }
+  expect(reported).toHaveLength(6);
+  expect(reported).toEqual([
+    ...Array.from({ length: 3 }, (): ReturnType<typeof expect.objectContaining> => expect.objectContaining({ kind: "search", provider: "anthropic", searchCalls: 2 })),
+    ...Array.from({ length: 3 }, (): ReturnType<typeof expect.objectContaining> => expect.objectContaining({ kind: "search", provider: "google", searchCalls: 3 })),
+  ]);
+});
+
+test("检索次数非法时诊断且不上报，不把无法恢复的数值交给持久化线程", () => {
+  install();
+  const warning = spyOn(logger, "warn").mockImplementation((): void => {});
+  try {
+    for (const searchCalls of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+      reportAiSearchUsage({ capability: "web_search", provider: "anthropic", model: "private-model", searchCalls });
+    }
+    expect(reported).toEqual([]);
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning.mock.calls[0]?.[0]).toBe("AI token usage unavailable: capability=web_search, provider=anthropic, reason=invalid.");
+  } finally {
+    warning.mockRestore();
+  }
+});
+
+test("Anthropic 用量逐项校验后相加；畸形对象、非法分量与总量溢出均不上报", () => {
+  install();
+  for (const usage of [null, [], "invalid",
+    { input_tokens: -1, cache_creation_input_tokens: 2, output_tokens: 1 },
+    { input_tokens: 2, cache_creation_input_tokens: -1, output_tokens: 1 },
+    { input_tokens: 0.5, cache_creation_input_tokens: 0.5, output_tokens: 1 },
+    { input_tokens: 2, cache_read_input_tokens: -1, output_tokens: 1 },
+    { input_tokens: Number.MAX_SAFE_INTEGER, cache_creation_input_tokens: 1, output_tokens: 1 },
+  ]) {
+    expect(() => reportAnthropicUsage({ capability: "text", model: "fixture", usage: usage as never })).not.toThrow();
+  }
+  expect(reported).toEqual([]);
 });
 
 describe("只给费用的计量与 xAI 用量口径", () => {

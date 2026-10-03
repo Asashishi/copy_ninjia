@@ -1,3 +1,4 @@
+import { telegramSignal } from "../../../libs/telegramSignal";
 import type { ReactionTypeEmoji } from "grammy/types";
 import { telegramApi } from "../client";
 import {
@@ -16,7 +17,6 @@ import {
   runBooleanTelegramAction,
   runTelegramAction,
 } from "./core";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type {
   CopyableReaction,
   PendingMessageDeletion,
@@ -72,7 +72,7 @@ export async function setMessageReaction({
           emoji: emoji as ReactionTypeEmoji["emoji"],
         }],
         {},
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     signal
   );
@@ -94,7 +94,7 @@ export async function setMessageReactions({
         messageId,
         reactions,
         {},
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     signal
   );
@@ -162,7 +162,7 @@ export function deleteEphemeralMessageWithOutcome(
   return runDeletion(
     "delete ephemeral message",
     (signal?: AbortSignal): Promise<true> =>
-      api.deleteEphemeralMessage({ chatId, receiverUserId, ephemeralMessageId }, ...signalArgs(signal))
+      api.deleteEphemeralMessage({ chatId, receiverUserId, ephemeralMessageId }, signal)
   );
 }
 
@@ -174,7 +174,7 @@ export function deleteMessageWithOutcome(
 ): Promise<DeleteMessageOutcome> {
   return runDeletion(
     "delete message",
-    (signal?: AbortSignal): Promise<true> => api.deleteMessage(chatId, messageId, ...signalArgs(signal))
+    (signal?: AbortSignal): Promise<true> => api.deleteMessage(chatId, messageId, telegramSignal(signal))
   );
 }
 
@@ -205,7 +205,7 @@ export async function deleteMessages(
       api.deleteMessages(
         chatId,
         [...messageIds],
-        ...signalArgs(signal)
+        telegramSignal(signal)
       )
   );
 }

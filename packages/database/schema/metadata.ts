@@ -3,7 +3,7 @@ import { jsonbText, jsonDataCheck } from "./jsonb";
 import type { JsonDataTable } from "./jsonb";
 import type { CheckBuilder } from "drizzle-orm/sqlite-core";
 
-/** 数据库自身元数据；当前只记录严格 schema 版本。 */
+/** 数据库自身元数据；当前格式恰为 schema 版本与数据根绑定时区两行。 */
 // Drizzle 需要保留列 builder 的字面量泛型；显式宽化会让查询结果丢失列类型。
 // eslint-disable-next-line @typescript-eslint/typedef
 export const storageMetadata = sqliteTable("storage_metadata", {

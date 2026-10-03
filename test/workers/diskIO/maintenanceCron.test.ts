@@ -1,7 +1,7 @@
+import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import {
   DISK_IO_MAINTENANCE_CRON,
-  DISK_IO_MAINTENANCE_TIME_ZONE,
 } from "../../../packages/consts/diskIO/maintenance";
 import type { DiskIOMaintenanceReplySink } from "../../../packages/workers/diskIO/midnightMaintenance";
 import { diskIOOperationTail } from
@@ -25,6 +25,7 @@ const { diskIOMaintenanceCron } = await import(
 
 const BEFORE_MIDNIGHT_MS: number =
   Date.parse("2026-08-30T23:59:59+09:00");
+const INITIAL_TIME_ZONE: string = getTimeZone();
 
 function reply(
   _value: Parameters<DiskIOMaintenanceReplySink>[0]
@@ -38,10 +39,23 @@ beforeEach((): void => {
 
 afterEach((): void => {
   stopDiskIOMaintenanceCron();
+  adoptTimeZone(INITIAL_TIME_ZONE);
   jest.useRealTimers();
 });
 
 describe("Disk I/O Worker 统一维护 cron", (): void => {
+  test("维护任务随配置时区的午夜触发", async (): Promise<void> => {
+    adoptTimeZone("UTC");
+    const beforeMidnight: number = Date.parse("2026-08-30T23:59:59Z");
+    jest.useFakeTimers({ now: beforeMidnight });
+    registerDiskIOMaintenanceCron(reply);
+    expect(Bun.cron.parse(DISK_IO_MAINTENANCE_CRON, beforeMidnight, { tz: getTimeZone() })?.getTime())
+      .toBe(beforeMidnight + 1_000);
+    jest.advanceTimersByTime(1_050);
+    await diskIOOperationTail.current;
+    expect(runDiskIOMidnightMaintenance).toHaveBeenCalledTimes(1);
+  });
+
   test("按东京零点触发同一个 Bun 原生进程内任务", async (): Promise<void> => {
     registerDiskIOMaintenanceCron(reply);
     const cron: Bun.CronJob | null = diskIOMaintenanceCron.current;
@@ -50,7 +64,7 @@ describe("Disk I/O Worker 统一维护 cron", (): void => {
     expect(Bun.cron.parse(
       DISK_IO_MAINTENANCE_CRON,
       BEFORE_MIDNIGHT_MS,
-      { tz: DISK_IO_MAINTENANCE_TIME_ZONE }
+      { tz: getTimeZone() }
     )?.getTime()).toBe(BEFORE_MIDNIGHT_MS + 1_000);
 
     jest.advanceTimersByTime(1_050);

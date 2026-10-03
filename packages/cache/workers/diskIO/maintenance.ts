@@ -1,4 +1,4 @@
-/** Owner: Disk I/O Worker。统一持有每日维护 cron 的进程内句柄。 */
+/** owner: workers/diskIO。统一持有每日维护 cron 的进程内句柄。 */
 
 /**
  * 运势、日志、入群日志、广告样本、待验证与临时广告免检共用的每日维护 cron。

@@ -33,7 +33,7 @@ describe("Disk I/O Worker 写消息的 revision 闸", () => {
   test("四个身份 SQLite 领域都以行来源路径拒绝非正安全整数 revision", () => {
     for (const revision of INVALID_REVISIONS) {
       expect(() => handleChatStateWrite({
-        type: "chatStateWrite", chatId: -1001, aiPersona: null, data: null, revision,
+        type: "chatStateWrite", chatId: -1001, data: null, revision,
       }, noReply)).toThrow(`${storageSource(getTableName(chatStates), -1001)}: revision must be a positive safe integer.`);
       expect(() => handleChatQaWrite({
         type: "chatQaWrite", chatId: -1001, q: "怎么入群？", data: null, revision,

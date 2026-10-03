@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../../packages/config/time";
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -54,7 +55,7 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/config/bot", () => ({
   BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 1,
-  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 }),
+  getBotConfig: (): BotConfig => ({ timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 }),
 }));
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。

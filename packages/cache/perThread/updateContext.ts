@@ -1,8 +1,4 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import type { UpdateScope } from "../../types/lifecycle";
-
-/**
- * update 取消上下文（packages/infra/updateContext.ts）的逐线程存储。
+/** owner: perThread。update 取消上下文（packages/infra/updateContext.ts）的逐线程存储。
  *
  * perThread：infra/telegram/actions/core.ts 经 infra/updateContext.ts 引入本模块，
  * 主线程、AI 闲聊 Worker 与 Anti-Raid Worker 各持一份互不相关的实例。只有主线程填入
@@ -11,6 +7,9 @@ import type { UpdateScope } from "../../types/lifecycle";
  * 在淘汰群会话时以 /wed 停机信号运行清理；Worker 内的实例从不填入，读取恒为「不在
  * update 作用域内」。
  */
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { UpdateScope } from "../../types/lifecycle";
 
 /**
  * 本线程唯一的 AsyncLocalStorage 实例；模块加载时创建，进程或 Worker 重建时随

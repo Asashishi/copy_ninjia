@@ -107,7 +107,7 @@ async function readExistingText(path: string): Promise<string | null> {
 async function assertLegacyStateFilesAbsent(): Promise<void> {
   for (const path of LEGACY_STATE_FILE_PATHS) {
     if (!await isMissingLeaf(path)) {
-      invalidInput(path, "$", "absent; first upgrade with the preceding global-state migration release, then run migrate:global-state for the current format");
+      invalidInput(path, "$", "absent; first upgrade to 16.3.2 and complete its migrations");
     }
   }
 }

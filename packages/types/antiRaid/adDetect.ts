@@ -128,7 +128,7 @@ export interface AdDetectedEvent {
   chatId: number;
   senderId: number;
   isChannel: boolean;
-  /** 处置播报里的展示标签，Worker 按 meta 与当前群氛围算好。 */
+  /** 处置播报里的展示标签，Worker 按 meta 与本进程氛围算好。 */
   label: string;
   meta: Readonly<TelegramIdentityMetadata>;
   /** 模型给出的简短理由，只进日志、播报与命中样本；不参与控制流。 */

@@ -111,7 +111,7 @@ export interface WedMembersDiskMessage {
 /** 主线程 -> diskIOWorker：一次抽签结果的增量写入。 */
 export interface LuckDrawDiskMessage {
   type: "luckDraw";
-  /** 抽签发生时刻的东京日期（YYYY-MM-DD），由主线程算好带过来，见 commands/luckChallenge/cache.ts。 */
+  /** 抽签发生时刻的配置时区的日期（YYYY-MM-DD），由主线程算好带过来，见 commands/luckChallenge/cache.ts。 */
   day: string;
   /** 缓存 key："<userId>" 或 "<userId>:<text 的 sha256 十六进制摘要>"，与
    *  dailyLuckCache 的 key 一致（原文本不直接进 key，见
@@ -170,7 +170,6 @@ export interface TemporaryAdBypassWriteDiskMessage {
 
 /** 主线程 -> Disk I/O Worker：一群最终状态；null 表示删除该主键。 */
 export interface ChatStateWriteDiskMessage {
-  readonly aiPersona: string | null;
   type: "chatStateWrite";
   chatId: number;
   data: string | null;
@@ -207,7 +206,7 @@ export interface AdSampleDiskMessage {
   senderId: number;
   /** 处置播报里的展示标签，人翻样本时用来认人。 */
   label: string;
-  /** 命中时刻的东京时间「YYYY/MM/DD HH:mm:ss」，由主线程算好带过来。 */
+  /** 命中时刻的配置时区的时间「YYYY/MM/DD HH:mm:ss」，由主线程算好带过来。 */
   detectedAt: string;
   /** 模型给出的判定理由。 */
   reason: string;
@@ -236,7 +235,7 @@ export interface DiskDiagnosticBatchRequest {
 
 /**
  * 主线程 -> diskIOWorker：一条权威 `chat_member` 入群事实。
- * Worker 先进内存批次，再按群、按东京日期追写；启动恢复不读取这类日志。
+ * Worker 先进内存批次，再按群、按配置时区的日期追写；启动恢复不读取这类日志。
  */
 export interface JoinLogDiskMessage {
   type: "joinLog";
@@ -248,14 +247,14 @@ export interface JoinLogDiskMessage {
   chatId: number;
   userId: number;
   joinedAt: number;
-  /** joinedAt 对应的东京日期，避免 Worker 重新解释事件时区。 */
+  /** joinedAt 对应的配置时区的日期，避免 Worker 重新解释事件时区。 */
   day: string;
 }
 
 /**
  * 主线程 -> diskIOWorker：删除某群保留窗口内的全部入群日志文件。
  *
- * 起因与 WedMembersDeleteDiskMessage 相同。落盘端按 `<chatId>.<东京日期>.json`
+ * 起因与 WedMembersDeleteDiskMessage 相同。落盘端按 `<chatId>.<配置时区的日期>.json`
  * 前缀匹配整群删除，并丢掉该群仍在缓冲里的待写事实——那些事实属于一个已经不再
  * 接管的群，写进去只会在下一次跨日清理前一直留着。
  */
@@ -323,6 +322,8 @@ export interface VerificationFileChange {
 /** 主线程 -> diskIOWorker：启动恢复（也用于本 Worker 崩溃重建后的自动重跑）。 */
 export interface LoadRequest {
   type: "load";
+  /** 主线程已校验的默认时区；必须先接管，再解释按日持久化数据。 */
+  readonly timeZone: string;
   /** null 表示可选配置缺省；仍校验目录内容，但不判定孤儿文件。 */
   stickerPacks: readonly string[] | null;
 }
@@ -357,7 +358,7 @@ export interface StorageFlushHoldRequest {
   active: boolean;
 }
 
-/** 主线程跨东京日期后要求唯一 Disk I/O Worker 加载或原子轮换日级密钥。 */
+/** 主线程跨配置时区自然日期后要求唯一 Disk I/O Worker 加载或原子轮换日级密钥。 */
 export interface EnsureLuckSecretRequest {
   type: "ensureLuckSecret";
   requestId: number;

@@ -37,13 +37,13 @@ function operationSignal(session: WedSession): AbortSignal {
  * 预算耗尽是普通业务失败，照常回执；群 teardown 与停机取消保持静默——群要没了、
  * 进程要停了，此时再发消息是错的。两者由 libs/abortSignal.ts 的 isTimeoutAbort 区分。
  */
-function failureNotice(signal: AbortSignal, chatId: number): string | undefined {
-  return signal.aborted && !isTimeoutAbort(signal) ? undefined : chatAtmosphere(chatId).WED_TEXTS.failed;
+function failureNotice(signal: AbortSignal): string | undefined {
+  return signal.aborted && !isTimeoutAbort(signal) ? undefined : chatAtmosphere().WED_TEXTS.failed;
 }
 
 /** 抽取落空后的回执：跑完配额确认没有可用头像才是 unavailable，被取消时按取消来源判定。 */
-function drawMissNotice(signal: AbortSignal, chatId: number): string | undefined {
-  return signal.aborted ? failureNotice(signal, chatId) : chatAtmosphere(chatId).WED_TEXTS.unavailable;
+function drawMissNotice(signal: AbortSignal): string | undefined {
+  return signal.aborted ? failureNotice(signal) : chatAtmosphere().WED_TEXTS.unavailable;
 }
 
 /** 发送阶段回执；文本为 undefined 表示本次保持静默。 */
@@ -82,21 +82,21 @@ export async function handleWedCommand(ctx: CommandContext<Context>): Promise<vo
   const actor: User | undefined = ctx.from;
   if ((ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") ||
     ctx.msg.sender_chat !== undefined || actor === undefined || actor.is_bot) {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).WED_TEXTS.groupOnly, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere().WED_TEXTS.groupOnly, replyToMessageId: ctx.msgId });
     return;
   }
   if (ctx.match.trim().length > 0) {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).WED_TEXTS.usage, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere().WED_TEXTS.usage, replyToMessageId: ctx.msgId });
     return;
   }
   const chat: WedChat | undefined = getOrCreateWedChat(ctx.chat.id);
   const previous: WedSession | undefined = chat?.sessions.get(actor.id);
-  const rejected: string | undefined = previous?.busy ? chatAtmosphere(ctx.chat.id).WED_TEXTS.busy
-    : chat === undefined || (previous === undefined && chat.sessions.size >= WED_SESSION_LIMIT) ? chatAtmosphere(ctx.chat.id).WED_TEXTS.full
-    : chat.members.size === 0 || (chat.members.size === 1 && chat.members.has(actor.id)) ? chatAtmosphere(ctx.chat.id).WED_TEXTS.empty
+  const rejected: string | undefined = previous?.busy ? chatAtmosphere().WED_TEXTS.busy
+    : chat === undefined || (previous === undefined && chat.sessions.size >= WED_SESSION_LIMIT) ? chatAtmosphere().WED_TEXTS.full
+    : chat.members.size === 0 || (chat.members.size === 1 && chat.members.has(actor.id)) ? chatAtmosphere().WED_TEXTS.empty
     : undefined;
   if (rejected !== undefined || chat === undefined) {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: rejected ?? chatAtmosphere(ctx.chat.id).WED_TEXTS.full, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: rejected ?? chatAtmosphere().WED_TEXTS.full, replyToMessageId: ctx.msgId });
     return;
   }
   const session: WedSession = {
@@ -116,25 +116,25 @@ export async function handleWedCommand(ctx: CommandContext<Context>): Promise<vo
     const candidate: WedCandidate | undefined = await drawWedCandidate(session, chat, drawSignal);
     if (session.controller.signal.aborted) return;
     if (candidate === undefined) {
-      await sendWedNotice(session, drawMissNotice(drawSignal, session.chatId), ctx.msgId);
+      await sendWedNotice(session, drawMissNotice(drawSignal), ctx.msgId);
       return;
     }
     // 投递预算必须在删除上一张结果**之前**判定：此刻已被取消就原样留着旧结果。
     const deliverySignal: AbortSignal = operationSignal(session);
     if (deliverySignal.aborted) {
-      await sendWedNotice(session, failureNotice(deliverySignal, session.chatId), ctx.msgId);
+      await sendWedNotice(session, failureNotice(deliverySignal), ctx.msgId);
       return;
     }
     if (previous !== undefined) {
       if (!await removeWedResult(previous)) {
-        await sendWedNotice(session, failureNotice(deliverySignal, session.chatId), ctx.msgId);
+        await sendWedNotice(session, failureNotice(deliverySignal), ctx.msgId);
         return;
       }
       previous.controller.abort();
       replacedPrevious = true;
     }
     if (!await sendWedResult({ session, candidate, replyToMessageId: ctx.msgId, signal: deliverySignal })) {
-      await sendWedNotice(session, failureNotice(deliverySignal, session.chatId), ctx.msgId);
+      await sendWedNotice(session, failureNotice(deliverySignal), ctx.msgId);
     }
   } finally {
     session.busy = false;
@@ -164,11 +164,11 @@ export async function handleWedCallback(ctx: Context): Promise<boolean> {
   const rejected: string | undefined = parts.length !== 3 || actorId === undefined || targetId === undefined ||
     (action !== "remove" && action !== "marry" && action !== "change") ||
     message === undefined || message.date === 0 || session?.messageId !== message.message_id
-    ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.expired : query.from.id !== session.actor.id ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.ownerOnly
-    : session.targetId !== targetId ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.updated
-    : session.busy ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.busy : undefined;
+    ? chatAtmosphere().WED_TEXTS.expired : query.from.id !== session.actor.id ? chatAtmosphere().WED_TEXTS.ownerOnly
+    : session.targetId !== targetId ? chatAtmosphere().WED_TEXTS.updated
+    : session.busy ? chatAtmosphere().WED_TEXTS.busy : undefined;
   if (rejected !== undefined || session === undefined || chat === undefined) {
-    await answerCallbackQuery({ callbackQueryId: query.id, text: rejected ?? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.expired });
+    await answerCallbackQuery({ callbackQueryId: query.id, text: rejected ?? chatAtmosphere().WED_TEXTS.expired });
     return true;
   }
   session.busy = true;
@@ -176,9 +176,9 @@ export async function handleWedCallback(ctx: Context): Promise<boolean> {
     // 第一份预算覆盖按钮应答与本动作的第一步：移除、确认或抽取。
     const signal: AbortSignal = operationSignal(session);
     await answerCallbackQuery({ callbackQueryId: query.id,
-      text: action === "marry" && session.confirmed ? chatAtmosphere(ctx.chat?.id ?? 0).WED_TEXTS.confirmed : undefined });
+      text: action === "marry" && session.confirmed ? chatAtmosphere().WED_TEXTS.confirmed : undefined });
     if (signal.aborted) {
-      await sendWedNotice(session, failureNotice(signal, session.chatId), session.messageId);
+      await sendWedNotice(session, failureNotice(signal), session.messageId);
       return true;
     }
     let succeeded: boolean;
@@ -197,13 +197,13 @@ export async function handleWedCallback(ctx: Context): Promise<boolean> {
       const candidate: WedCandidate | undefined = await drawWedCandidate(session, chat, signal);
       if (session.controller.signal.aborted) return true;
       if (candidate === undefined) {
-        await sendWedNotice(session, drawMissNotice(signal, session.chatId), session.messageId);
+        await sendWedNotice(session, drawMissNotice(signal), session.messageId);
         return true;
       }
       deliverySignal = operationSignal(session);
       succeeded = await replaceWedResult(session, candidate, deliverySignal);
     }
-    if (!succeeded) await sendWedNotice(session, failureNotice(deliverySignal, session.chatId), session.messageId);
+    if (!succeeded) await sendWedNotice(session, failureNotice(deliverySignal), session.messageId);
   } finally {
     session.busy = false;
     if (session.controller.signal.aborted) await removeWedResult(session);

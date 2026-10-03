@@ -1,4 +1,4 @@
-/** Owner: workers/aiChat；天气缓存和刷新生命周期随 isolate 创建与销毁。 */
+/** owner: workers/aiChat。天气缓存和刷新生命周期随 isolate 创建与销毁。 */
 import type { TokyoWeatherResult } from "../../../types/aiChat/weather";
 
 /**

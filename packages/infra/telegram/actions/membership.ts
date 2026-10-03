@@ -2,7 +2,7 @@ import type { ChatMember, User } from "grammy/types";
 import { isAdminStatus, isPresentMember } from "../../../libs/chatMember";
 import { telegramApi } from "../client";
 import { isChatMemberQueryDenied, isParticipantIdInvalid, logUnlessAborted, runTelegramAction } from "./core";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import type { ChatMemberPresence } from "../../../types/telegram";
 import type { TelegramApi } from "../../../types/telegramWorker";
 
@@ -26,7 +26,7 @@ function getChatMember({
   userId,
   signal,
 }: GetChatMemberOptions): Promise<ChatMember> {
-  return api.getChatMember(chatId, userId, ...signalArgs(signal));
+  return api.getChatMember(chatId, userId, telegramSignal(signal));
 }
 
 /** 查询失败按非成员处理，避免在未确认时生成“已踢出”的错误战报。 */

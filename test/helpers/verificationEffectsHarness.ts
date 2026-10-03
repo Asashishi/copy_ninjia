@@ -21,8 +21,8 @@ import type {
 /**
  * 副作用解释器里两条「踢人前先确认拉人者身份」的异步分支：管理员拉人豁免的
  * 异步核查（startAdminCheck）与超时踢人前的最终复核（recheckInviter）。两者都
- * 只在状态对象仍是同一引用时回投事件，核查失败按「非管理员」兜底而不是跳过
- * 处置——约束见 docs/cn/04-invariants.md。
+ * 只在状态对象仍是同一引用时回投事件；身份未知不授权踢人，超时终核保留快照
+ * 并沿终态执行预算退避。约束见 docs/cn/04-invariants.md。
  */
 
 export const dispatched: { userId: number; event: VerificationEvent }[] = [];

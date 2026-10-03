@@ -46,7 +46,7 @@ export async function deliverRandomImage(request: HImageRequest): Promise<void> 
     await sendHImageResult({ ...request, pick });
     return;
   }
-  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere(request.chatId).H_IMAGE_TEXTS;
+  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere().H_IMAGE_TEXTS;
   const text: string = pick.status === "missingDirectory"
     ? texts.missingDirectory
     : pick.status === "empty" ? texts.empty : texts.tooLarge(pick.fileName);

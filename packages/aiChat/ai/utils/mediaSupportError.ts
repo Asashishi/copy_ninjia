@@ -120,7 +120,7 @@ export function classifyProviderApiFailure(
 }
 
 /**
- * 两个模型客户端共用的失败结果形态。
+ * 各模型客户端共用的失败结果形态。
  *
  * `GeminiRequestResult` 与 `OpenAiRequestResult` 的这三个 `ok: false` 成员逐字段
  * 同构（其余字段都是可选的 `undefined` 占位），因此同一个对象对两个联合都可赋值。
@@ -131,8 +131,8 @@ export interface ProviderApiFailureResult {
 }
 
 /**
- * 把归因档位映射成两个模型客户端共用的失败结果。级联判定
- * （classifyProviderApiFailure）与这一步映射收在同一个叶子模块，两家供应商对同一档
+ * 把归因档位映射成各模型客户端共用的失败结果。级联判定
+ * （classifyProviderApiFailure）与这一步映射收在同一个叶子模块，各家供应商对同一档
  * 结论返回同一个 `failureKind`。
  *
  * `endpointFailure` 不在这里映射：它不是一个可直接返回的结果，而是「继续走

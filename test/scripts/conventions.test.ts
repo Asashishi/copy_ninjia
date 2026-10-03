@@ -12,6 +12,8 @@ import {
 import { createModuleGraphReader } from "../../scripts/conventions/moduleGraph";
 import type { ModuleGraphReader } from "../../scripts/conventions/moduleGraph";
 import { collectColdMigrationProblems } from "../../scripts/conventions/coldMigrations";
+import { ACTIVE_COLD_MIGRATION_EDGES } from "../../scripts/migrations/active";
+import type { ColdMigrationEdge } from "../../scripts/migrations/active";
 import { collectCommentReferenceProblems } from "../../scripts/conventions/commentReferences";
 import { collectWorkerTimerProblems } from "../../scripts/conventions/workerTimers";
 import { collectTelegramMessageProblems } from "../../scripts/conventions/telegramMessages";
@@ -296,35 +298,29 @@ describe("project convention collectors", () => {
   test("package.json 只允许当前声明的冷迁移边并要求入口都存在", async () => {
     const root: string = temporaryRoot("copy-ninjia-conventions-");
     mkdirSync(join(root, "scripts"), { recursive: true });
-    const active: Readonly<Record<string, string>> = {
-      "migrate:random-image-names": "bun scripts/migrateRandomImageNames.ts",
-      "migrate:global-state": "bun scripts/migrateGlobalState.ts",
-    };
+    const active: Readonly<Record<string, string>> = Object.fromEntries(ACTIVE_COLD_MIGRATION_EDGES.map(
+      (edge: ColdMigrationEdge): readonly [string, string] => [edge.command, edge.invocation]
+    ));
+    const declared: string = "package.json must expose exactly the declared active cold migration commands " +
+      ACTIVE_COLD_MIGRATION_EDGES.map((edge: ColdMigrationEdge): string => edge.command).sort().join(", ");
 
     await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: active }));
     expect(await collectColdMigrationProblems(root)).toContainEqual(expect.stringContaining("active cold migration entry does not exist"));
-    for (const entry of ["scripts/migrateRandomImageNames.ts", "scripts/migrateGlobalState.ts"]) {
-      await Bun.write(join(root, entry), "export {};\n");
-    }
+    for (const edge of ACTIVE_COLD_MIGRATION_EDGES) await Bun.write(join(root, edge.entryPath), "export {};\n");
     expect(await collectColdMigrationProblems(root)).toEqual([]);
 
     // 少一条声明过的边同样要报，不只是多出来的那种。
-    await Bun.write(join(root, "package.json"), JSON.stringify({
-      scripts: { "migrate:global-state": active["migrate:global-state"]! },
-    }));
+    await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: {} }));
     expect(await collectColdMigrationProblems(root)).toEqual([
-      expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:global-state, migrate:random-image-names"
-      ),
-      expect.stringContaining("migrate:random-image-names must invoke"),
+      expect.stringContaining(declared),
+      ...ACTIVE_COLD_MIGRATION_EDGES.map((edge: ColdMigrationEdge): unknown => expect.stringContaining(`${edge.command} must invoke`)),
     ]);
 
-    await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: { ...active, "migrate:legacy": "bun scripts/legacy.ts" } }));
-    expect(await collectColdMigrationProblems(root)).toEqual([
-      expect.stringContaining(
-        "package.json must expose exactly the declared active cold migration commands migrate:global-state, migrate:random-image-names"
-      ),
-    ]);
+    // 已移除的旧边重新暴露在 package.json 里同样要报。
+    for (const legacy of ["migrate:global-state", "migrate:random-image-names"]) {
+      await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: { ...active, [legacy]: "bun scripts/legacy.ts" } }));
+      expect(await collectColdMigrationProblems(root)).toEqual([expect.stringContaining(declared)]);
+    }
   });
 });
 

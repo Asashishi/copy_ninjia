@@ -1,8 +1,7 @@
 /** 踢人前的拉人者身份核查，以及同步副作用的逐条执行。 */
 
 import { beforeEach, describe, expect, test } from "bun:test";
-import { applyWorkerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
-import { plainAtmosphereChats } from "../../../packages/cache/workers/antiRaid/atmosphere";
+import { atmosphereState } from "../../../packages/cache/workers/antiRaid/atmosphere";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../packages/consts/commands";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { formatMinSec } from "../../../packages/libs/time";
@@ -80,17 +79,17 @@ installVerificationEffectsHooks({
   resetWorkerBotPermissions,
   resetWorkerChatKind,
 });
-beforeEach(() => { plainAtmosphereChats.clear(); });
+beforeEach(() => { atmosphereState.current = null; });
 
-test("验证按钮应答按当前风格指向实际按钮，移除自定义人设后恢复默认", async () => {
+test("验证按钮应答按注入的本进程风格指向实际按钮", async () => {
   setState(pendingState());
-  applyWorkerAtmosphere(CHAT_ID, true);
+  atmosphereState.current = "plain";
   await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
   expect(callbackTexts[0]).toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.verificationUseSelfButton(
     ATMOSPHERE_TEXTS.plain.VERIFICATION_SELF_BUTTON_TEXT,
     ATMOSPHERE_TEXTS.plain.VERIFICATION_APPROVE_BUTTON_TEXT
   ));
-  applyWorkerAtmosphere(CHAT_ID, false);
+  atmosphereState.current = "teasing";
   await run([{ kind: "answerCallback", callbackQueryId: "callback", reply: "useSelfButton" }]);
   expect(callbackTexts[1]).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationUseSelfButton(
     ATMOSPHERE_TEXTS.teasing.VERIFICATION_SELF_BUTTON_TEXT,
@@ -187,19 +186,32 @@ describe("超时踢人前的拉人者最终复核", () => {
     ]);
   });
 
-  test("复核请求失败按非管理员兜底，绝不把成员永久挂在终态里", async () => {
+  test("复核身份未知时保留终态并退避，不把请求失败当作非管理员", async (): Promise<void> => {
     const expelSnapshot: ExpelSnapshot = snapshot();
-    setState(checkingInviterState(expelSnapshot));
+    const state: VerificationState = setState(checkingInviterState(expelSnapshot));
     getChatAdministrators.mockRejectedValueOnce(new Error("getChatAdministrators failed"));
+    const delays: number[] = [];
+    const restore: () => void = recordScheduledDelays(delays);
 
-    await run([{ kind: "recheckInviter", inviterId: INVITER_ID, snapshot: expelSnapshot }]);
+    try {
+      await run([{ kind: "recheckInviter", inviterId: INVITER_ID, snapshot: expelSnapshot }]);
 
-    expect(dispatched).toEqual([
-      { userId: USER_ID, event: { type: "timeoutInviterVerdict", inviterIsAdmin: false } },
-    ]);
-    expect(loggedErrors[0]).toContain(
-      `Error rechecking admin-invite exemption before expiring verification in chat ${CHAT_ID}`
-    );
+      expect(dispatched).toEqual([]);
+      expect(kickedUserIds).toEqual([]);
+      expect(verificationEntries.get(KEY)?.state).toBe(state);
+      expect(state).toMatchObject({ kind: "checkingInviter", executionStarted: false });
+      expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
+      expect(loggedErrors[0]).toContain("Failed to check admin exemption for verification inviter");
+
+      getChatAdministrators.mockResolvedValueOnce([{ user: { id: INVITER_ID }, is_anonymous: false }]);
+      await run([{ kind: "recheckInviter", inviterId: INVITER_ID, snapshot: expelSnapshot }]);
+      expect(dispatched).toEqual([
+        { userId: USER_ID, event: { type: "timeoutInviterVerdict", inviterIsAdmin: true } },
+      ]);
+      expect(kickedUserIds).toEqual([]);
+    } finally {
+      restore();
+    }
   });
 
   test("复核期间状态被换掉时不回投判定", async () => {
@@ -240,7 +252,7 @@ describe("同步副作用的逐条执行", () => {
       selfButton: ATMOSPHERE_TEXTS.teasing.VERIFICATION_SELF_BUTTON_TEXT,
       approveButton: ATMOSPHERE_TEXTS.teasing.VERIFICATION_APPROVE_BUTTON_TEXT,
     }));
-    applyWorkerAtmosphere(CHAT_ID, true);
+    atmosphereState.current = "plain";
     testState.nextSentMessageId = 900;
     await run([{ kind: "sendReminder", label: "用户😀♡", isBot: false }]);
     await Bun.sleep(0);

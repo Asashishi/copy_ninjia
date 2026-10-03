@@ -10,7 +10,9 @@ export type HotPathProfileScenarioName =
   | "join-timestamp-window"
   | "mention-facts-plain"
   | "ad-capacity-reject"
-  | "identity-permission-read";
+  | "identity-permission-read"
+  | "buffered-message-build"
+  | "temporary-whitelist-activity";
 
 /** 按进程可用 CPU 数匹配的热路径 GC 暂停预算。 */
 export interface HotPathGcCpuBudget {

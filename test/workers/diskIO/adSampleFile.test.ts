@@ -19,7 +19,7 @@ import {
 } from "../../../packages/workers/diskIO/adSampleFile";
 import type { AdSampleArchiveEntry } from "../../../packages/workers/diskIO/adSampleFile";
 import type { AdSampleDiskMessage } from "../../../packages/types/diskIO";
-import { getTokyoDateKey } from "../../../packages/libs/time";
+import { getDateKey } from "../../../packages/libs/time";
 
 function sample(overrides: Partial<AdSampleDiskMessage> = {}): AdSampleDiskMessage {
   return {
@@ -126,7 +126,7 @@ describe("广告命中样本旁路", () => {
     await appendSample(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
 
     expect(Object.keys(await readSamples())).toEqual(["-1001:99"]);
-    // 新归档落在 15 个东京自然日保留窗口内，内容应原样保留。
+    // 新归档落在 15 个配置时区的自然日保留窗口内，内容应原样保留。
     const archives: string[] = readdirSync(AD_SAMPLE_MEMORY_DIR)
       .filter((name: string): boolean => name !== "sample.json");
     expect(archives).toHaveLength(1);
@@ -135,7 +135,7 @@ describe("广告命中样本旁路", () => {
 
   test("目录扫描缓存最小空缺归档序号，仍保持既有选名规则", async () => {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     await Bun.write(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.json`), "{}");
     await Bun.write(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.3.json`), "{}");
     await Bun.write(AD_SAMPLE_FILE_PATH, "{}");
@@ -148,7 +148,7 @@ describe("广告命中样本旁路", () => {
     expect(existsSync(join(AD_SAMPLE_MEMORY_DIR, `sample.${today}.2.json`))).toBeTrue();
   });
 
-  test("归档只按严格文件名保留最近 15 个东京自然日，不误删当前文件、未知项或目录", async () => {
+  test("归档只按严格文件名保留最近 15 个配置时区的自然日，不误删当前文件、未知项或目录", async () => {
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     const removedNames: string[] = [
       "sample.2026-07-13.json",
@@ -183,7 +183,7 @@ describe("广告命中样本旁路", () => {
   });
 
   test("归档清扫每天至多一次，单文件删除失败会继续且不阻塞样本追加", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const entries: AdSampleArchiveEntry[] = [
       { name: "sample.2000-01-01.json", isFile: true },
       { name: "sample.2000-01-01.2.json", isFile: true },
@@ -214,7 +214,7 @@ describe("广告命中样本旁路", () => {
   });
 
   test("目录扫描失败也只记录一次，不阻塞同日样本追加", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const logError = spyOn(console, "error").mockImplementation((): void => {});
 
     await sweepExpiredAdSampleArchives({

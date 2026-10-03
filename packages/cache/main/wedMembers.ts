@@ -1,9 +1,10 @@
-/** Owner: 主线程。/wed 已发言成员集合与合并落盘窗口。 */
+/** owner: main。/wed 已发言成员集合与合并落盘窗口。 */
 import type { WedMemberState } from "../../types/wed";
 import type { WedMembersDeleteDiskMessage } from "../../types/diskIO/messages";
 
 /**
- * init 从 DiskIO 严格校验的快照恢复；实际个人发言新增，退群或每日复核确认离群时移除。
+ * init 从 DiskIO 严格校验的快照恢复；实际个人发言新增，退群、每日复核确认离群或
+ * getChat 明确找不到私聊时从所有群奖池移除；查询期间新发言的群保留。
  * 每群最多 WED_MEMBER_LIMIT 个 number，群数受 STATE_MANAGED_CHAT_LIMIT 限制；满额拒绝新增。
  * 进程初始化清空后从文件恢复。
  *

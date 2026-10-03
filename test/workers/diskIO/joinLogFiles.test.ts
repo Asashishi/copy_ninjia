@@ -1,9 +1,12 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import type { Mock } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import type { JoinLogDiskMessage } from "../../../packages/types/diskIO/messages";
+import type { JoinLogDiskMessage, ReadJoinLogRequest } from "../../../packages/types/diskIO/messages";
 import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
 import { FLUSH_MAX_ENTRIES } from "../../../packages/consts/diskIO/appendOnly";
+import { DAY_MS } from "../../../packages/consts/diskIO/common";
+import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
 import {
   joinLogDir,
   UTF8_ENCODER,
@@ -33,7 +36,7 @@ import {
   JOIN_LOG_MAX_RETRY_FILES,
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
-  getTokyoDateKey,
+  getDateKey,
   joinMessage,
   currentFile,
   datedFile,
@@ -89,10 +92,10 @@ describe("diskIO/joinLogFiles", () => {
     expect(await Bun.file(invalidDayPath).text()).toBe("{}");
 
     rmSync(invalidDayPath);
-    const futureDay: string = getTokyoDateKey(todayAt() + 2 * 24 * 60 * 60_000);
+    const futureDay: string = getDateKey(todayAt() + 2 * 24 * 60 * 60_000);
     const futurePath: string = datedFile(-1001, futureDay);
     await Bun.write(futurePath, "{}");
-    await expect(recoverJoinLogFiles()).rejects.toThrow("a date no later than the current Tokyo day");
+    await expect(recoverJoinLogFiles()).rejects.toThrow("a date no later than the current configured local day");
     expect(await Bun.file(futurePath).text()).toBe("{}");
   });
 
@@ -128,7 +131,7 @@ describe("diskIO/joinLogFiles", () => {
   test("每日维护先提交缓冲，再按目标东京日清理过期文件", async () => {
     await recoverJoinLogFiles();
     const now: number = todayAt();
-    const tomorrow: string = getTokyoDateKey(now + 24 * 60 * 60_000);
+    const tomorrow: string = getDateKey(now + 24 * 60 * 60_000);
     const stalePath: string = datedFile(-1001, "2000-01-01");
     await Bun.write(stalePath, "{}");
     await handleJoinLogMessage(joinMessage(-1001, 42, now));
@@ -142,7 +145,7 @@ describe("diskIO/joinLogFiles", () => {
 
   test("临时与过期文件删不掉时静默跳过，保留其缓存，其余照删", async () => {
     await recoverJoinLogFiles();
-    const tomorrow: string = getTokyoDateKey(todayAt() + 24 * 60 * 60_000);
+    const tomorrow: string = getDateKey(todayAt() + 24 * 60 * 60_000);
     const stuckTempPath: string = join(joinLogDir, "stuck.json.tmp");
     const stuckStalePath: string = datedFile(-1001, "2000-01-02");
     const stalePath: string = datedFile(-1001, "2000-01-01");
@@ -207,15 +210,45 @@ describe("diskIO/joinLogFiles", () => {
     ]);
     expect(existsSync(datedFile(
       -1001,
-      getTokyoDateKey(beforeMidnight)
+      getDateKey(beforeMidnight)
     ))).toBeTrue();
     expect(existsSync(currentFile(-1001))).toBeTrue();
   });
 
+  test("夏令时短日的滚动窗口补记并读取三个日期，跨日排队后仍保留全部窗口文件", async (): Promise<void> => {
+    const initialTimeZone: string = getTimeZone();
+    adoptTimeZone("America/New_York");
+    const now: number = Date.parse("2026-03-09T04:30:00Z");
+    const since: number = now - DAY_MS;
+    const middle: number = Date.parse("2026-03-08T16:00:00Z");
+    const clock: Mock<() => number> = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      await handleJoinLogMessage(joinMessage(-1001, 42, since));
+      await handleJoinLogMessage(joinMessage(-1001, 43, middle));
+      await handleJoinLogMessage(joinMessage(-1001, 44, now));
+      expect(joinLogBuffer.entries).toHaveLength(3);
+      expect(await flushJoinLogBuffer()).toBeTrue();
+      const expected: readonly { userId: number; joinedAt: number }[] = [
+        { userId: 42, joinedAt: since },
+        { userId: 43, joinedAt: middle },
+        { userId: 44, joinedAt: now },
+      ];
+      const request: ReadJoinLogRequest = { type: "readJoinLog", requestId: 1, chatId: -1001, since, now };
+      expect(await readJoinLog(request)).toEqual(expected);
+      clock.mockReturnValue(Date.parse("2026-03-10T04:00:00Z"));
+      await maintainJoinLogRetention();
+      expect(await readJoinLog(request)).toEqual(expected);
+      expect(existsSync(datedFile(-1001, getDateKey(since)))).toBeTrue();
+    } finally {
+      clock.mockRestore();
+      adoptTimeZone(initialTimeZone);
+    }
+  });
+
   test("首次写入或命令读取保留最近三个自然日并清理更旧日志与孤儿临时文件", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const twoDaysAgo: string =
-      getTokyoDateKey(todayAt() - 2 * 24 * 60 * 60_000);
+      getDateKey(todayAt() - 2 * 24 * 60 * 60_000);
     mkdirSync(joinLogDir, { recursive: true });
     const stalePath: string = join(joinLogDir, "-1001.2000-01-01.json");
     const retainedPath: string =
@@ -279,12 +312,12 @@ describe("diskIO/joinLogFiles", () => {
     expect(joinLogBuffer.entries).toEqual([{
       sequence: 1,
       chatId: -1001,
-      day: getTokyoDateKey(aheadAt),
+      day: getDateKey(aheadAt),
       record: { userId: 42, joinedAt: aheadAt },
     }]);
     expect(joinLogBuffer.timer).not.toBeNull();
     expect(existsSync(currentFile(-1002))).toBeTrue();
-    expect(existsSync(datedFile(-1001, getTokyoDateKey(aheadAt)))).toBeFalse();
+    expect(existsSync(datedFile(-1001, getDateKey(aheadAt)))).toBeFalse();
     // 序号 2 已落盘可释放，序号 1 仍在缓冲里，回执把它列为待写。
     expect(persistedReplies).toEqual([{ type: "joinLogPersisted", through: 2, pending: [1] }]);
   });
@@ -301,7 +334,7 @@ describe("diskIO/joinLogFiles", () => {
 
     expect(await Bun.file(currentFile(-1001)).text()).toBe(firstContent);
     const cache: JoinLogFileCache | undefined =
-      joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
+      joinLogFileCaches.get(`-1001:${getDateKey()}`);
     expect(cache).toBeDefined();
     if (cache === undefined) throw new Error("Join log cache was not built.");
     expect(cache.snapshotBytes).toBe(
@@ -345,7 +378,7 @@ describe("diskIO/joinLogFiles", () => {
       .toBeLessThan(written - JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES);
     // 压实后计数归零，下一段增量重新累计。
     const cache: JoinLogFileCache | undefined =
-      joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
+      joinLogFileCaches.get(`-1001:${getDateKey()}`);
     expect(cache?.appendedBytesSinceCompaction).toBe(0);
     expect(cache?.redundantEntries).toBe(0);
     expect(cache?.state.size).toBe(UTF8_ENCODER.encode(content).byteLength);
@@ -358,7 +391,7 @@ describe("diskIO/joinLogFiles", () => {
     const before: string = await Bun.file(currentFile(-1001)).text();
 
     const cache: JoinLogFileCache | undefined =
-      joinLogFileCaches.get(`-1001:${getTokyoDateKey()}`);
+      joinLogFileCaches.get(`-1001:${getDateKey()}`);
     expect(cache).toBeDefined();
     cache!.redundantEntries = JOIN_LOG_COMPACT_REDUNDANT_ENTRIES;
     cache!.appendedBytesSinceCompaction = JOIN_LOG_COMPACT_CHECK_BYTES;
@@ -384,7 +417,7 @@ describe("diskIO/joinLogFiles", () => {
       expect(joinLogBuffer.entries).toEqual([{
         sequence: 1,
         chatId: -1001,
-        day: getTokyoDateKey(),
+        day: getDateKey(),
         record: { userId: 42, joinedAt: now },
       }]);
       expect(joinLogBuffer.timer).not.toBeNull();
@@ -516,7 +549,7 @@ describe("diskIO/joinLogFiles", () => {
 
   test("群日索引使用 LRU 并始终受硬顶约束", async () => {
     const now: number = todayAt();
-    const day: string = getTokyoDateKey();
+    const day: string = getDateKey();
     mkdirSync(joinLogDir, { recursive: true });
     for (
       let index: number = 0;
@@ -571,7 +604,7 @@ describe("diskIO/joinLogFiles", () => {
         chatId: -1001,
         since: now - 20_000,
         now,
-      })).rejects.toThrow(`Failed to flush pending join logs for chat -1001 on ${getTokyoDateKey()} before reading.`);
+      })).rejects.toThrow(`Failed to flush pending join logs for chat -1001 on ${getDateKey()} before reading.`);
     } finally {
       error.mockRestore();
       rmSync(brokenPath, { recursive: true, force: true });
@@ -651,7 +684,7 @@ describe("diskIO/joinLogFiles", () => {
   test("单群单日超出容量线时原子重写权威文件，并只告警一次", async () => {
     // 端到端造满 25 万人太贵，这里直接把 Worker 独占的 latest-by-user 索引预填到
     // 容量线，再投一条新用户——走的仍是 writeFileEntries 里真正的溢出分支。
-    const day: string = getTokyoDateKey();
+    const day: string = getDateKey();
     const key: string = `-1001:${day}`;
     const path: string = currentFile(-1001);
     const base: number = todayMidnight();
@@ -734,7 +767,7 @@ describe("diskIO/joinLogFiles", () => {
   }, 30_000);
 
   test("同一用户当日重复入群走追加路径并记入 redundantEntries", async () => {
-    const day: string = getTokyoDateKey();
+    const day: string = getDateKey();
     const key: string = `-1001:${day}`;
     const first: number = todayAt();
     await handleJoinLogMessage(joinMessage(-1001, 42, first));
@@ -763,8 +796,8 @@ describe("diskIO/joinLogFiles", () => {
   });
 
   test("整群删除清掉本群保留窗口内外的全部日志、接管游标与待写事实", async () => {
-    const today: string = getTokyoDateKey();
-    const yesterday: string = getTokyoDateKey(todayAt(-24 * 60 * 60_000));
+    const today: string = getDateKey();
+    const yesterday: string = getDateKey(todayAt(-24 * 60 * 60_000));
     await handleJoinLogMessage(joinMessage(-1001, 42, todayAt()));
     await flushJoinLogBuffer();
     mkdirSync(joinLogDir, { recursive: true });

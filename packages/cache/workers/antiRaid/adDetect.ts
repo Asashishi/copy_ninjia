@@ -1,3 +1,11 @@
+/** owner: workers/antiRaid。广告检测流水线（入群守卫线程 packages/workers/antiRaid/adDetect/）的内存状态。
+ *
+ * 全部随 Worker isolate 生死：崩溃重建后队列与消息串一起清空，主线程不做镜像
+ * ——判定本身是尽力而为的启发式，丢掉几条待检消息不影响任何安全边界，而真正
+ * 不可丢的处置（拉黑 + 各群封禁）在判定命中后由主线程接管，走 /block 那条
+ * durable 路径（见 docs/cn/04-invariants.md）。
+ */
+
 import { LinkedQueue } from "../../../libs/linkedQueue";
 import type {
   AdDetectedEvent,
@@ -6,15 +14,6 @@ import type {
   ReferencedAdWarningState,
   AdVerdictTrueEvent,
 } from "../../../types/antiRaid/adDetect";
-
-/**
- * 广告检测流水线（入群守卫线程 packages/workers/antiRaid/adDetect/）的内存状态。
- *
- * 全部随 Worker isolate 生死：崩溃重建后队列与消息串一起清空，主线程不做镜像
- * ——判定本身是尽力而为的启发式，丢掉几条待检消息不影响任何安全边界，而真正
- * 不可丢的处置（拉黑 + 各群封禁）在判定命中后由主线程接管，走 /block 那条
- * durable 路径（见 docs/cn/04-invariants.md）。
- */
 
 /**
  * 待检发言者的键队列，元素是 `chatId:senderId`（verificationKey）。队列只排键、

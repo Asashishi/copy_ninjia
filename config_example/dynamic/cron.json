@@ -72,6 +72,15 @@
     ]
   },
   {
+    "name": "morning-tech-digest",
+    "chat_id": [-1001234567890],
+    "cron": "0 8 * * *",
+    "actions": [
+      { "type": "send_web_digest", "payload": { "topic": "今日科技新闻" } },
+      { "type": "send_web_digest", "payload": { "topic": "AI industry news", "language": "en", "max_items": 3, "instructions": "Use primary sources; keep each item body to one sentence." } }
+    ]
+  },
+  {
     "name": "one-time-welcome-notice",
     "chat_id": [-1009876543210],
     "cron": "0 20 * * *",

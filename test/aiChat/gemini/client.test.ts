@@ -8,9 +8,8 @@ import type {
 } from "@google/genai";
 import { geminiResponse } from "../../helpers/geminiResponse";
 import {
-  GEMINI_MEDIA_REQUEST_TIMEOUT_MS,
   GEMINI_REQUEST_RETRY_ATTEMPTS,
-  GEMINI_REQUEST_TIMEOUT_MS,
+  GEMINI_REQUEST_TIMEOUTS_MS,
 } from "../../../packages/consts/aiChat/gemini";
 
 const generateContent = mock(async (..._args: GenerateContentParameters[]): Promise<GenerateContentResponse> => geminiResponse({
@@ -42,6 +41,7 @@ mock.module("../../../packages/config/agent", () => ({
     summary: { provider: "google", apiKey: "summary-key", baseUrl: "https://google.example", model: "summary" },
     media: { provider: "google", apiKey: "media-key", baseUrl: "https://google.example", model: "media" },
     image: { provider: "google", apiKey: "image-key", baseUrl: "https://image.example", model: "image", imageProtocol: undefined },
+    webSearch: { provider: "google", apiKey: "search-key", baseUrl: "https://search.example", model: "search" },
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -55,7 +55,9 @@ const {
 } = await import("../../../packages/aiChat/gemini/client");
 const { geminiClientCache } = await import("../../../packages/cache/workers/aiChat/gemini");
 const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
+const { searchGeminiWeb } = await import("../../../packages/aiChat/gemini/search");
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
+import type { AiWebSearchResult } from "../../../packages/types/aiChat/provider";
 
 describe("Gemini request safety settings", () => {
   beforeEach(() => {
@@ -80,7 +82,7 @@ describe("Gemini request safety settings", () => {
     expect(createdClientOptions[0]?.apiKey).toBe("summary-key");
     expect(createdClientOptions[0]?.httpOptions).toEqual({
       baseUrl: "https://google.example",
-      timeout: GEMINI_REQUEST_TIMEOUT_MS,
+      timeout: GEMINI_REQUEST_TIMEOUTS_MS.text,
       retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
     });
     const request: GenerateContentParameters = generateContent.mock.calls[0]![0]!;
@@ -94,7 +96,7 @@ describe("Gemini request safety settings", () => {
   });
 
   test("media 客户端按更宽的一档构造，text/summary 走通用档", async () => {
-    expect(GEMINI_MEDIA_REQUEST_TIMEOUT_MS).toBeGreaterThan(GEMINI_REQUEST_TIMEOUT_MS);
+    expect(GEMINI_REQUEST_TIMEOUTS_MS.media).toBeGreaterThan(GEMINI_REQUEST_TIMEOUTS_MS.text);
 
     await requestGeminiResponse("media", (): GenerateContentParameters => ({
       model: "gemini-test",
@@ -102,7 +104,7 @@ describe("Gemini request safety settings", () => {
     }), "Gemini test");
 
     expect(createdClientOptions).toHaveLength(1);
-    expect(createdClientOptions[0]?.httpOptions?.timeout).toBe(GEMINI_MEDIA_REQUEST_TIMEOUT_MS);
+    expect(createdClientOptions[0]?.httpOptions?.timeout).toBe(GEMINI_REQUEST_TIMEOUTS_MS.media);
   });
 
   test("拿到响应即上报用量：没有 cachedContentTokenCount 按 0 计，输出含思考", async () => {
@@ -138,6 +140,25 @@ describe("Gemini request safety settings", () => {
     const request: GenerateContentParameters = generateContent.mock.calls[0]![0]!;
     expect(request.config?.systemInstruction).toBe("系统提示词");
     expect(request.contents).toBe("hello");
+  });
+
+  test("网页搜索完整链路合并 token 与检索次数，截断响应同样记账", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    try {
+      for (const finishReason of [FinishReason.STOP, FinishReason.MAX_TOKENS]) {
+        generateContent.mockImplementationOnce(async (): Promise<GenerateContentResponse> => geminiResponse({
+          candidates: [{ finishReason, content: { role: "model", parts: [{ text: "结论" }] }, groundingMetadata: { webSearchQueries: ["a", "b"] } }],
+          usageMetadata: { promptTokenCount: 30, cachedContentTokenCount: 12, candidatesTokenCount: 5, thoughtsTokenCount: 2 },
+        }));
+        const result: AiWebSearchResult = await searchGeminiWeb("web_search", { instruction: "i", query: "q" });
+        expect(result).toMatchObject({ ok: finishReason === FinishReason.STOP, searchCalls: 2 });
+      }
+      expect(reported).toHaveLength(2);
+      for (const usage of reported) expect(usage).toMatchObject({ kind: "tokens", capability: "web_search", provider: "google", model: "search", inputTokens: 30, cachedInputTokens: 12, outputTokens: 7, searchCalls: 2 });
+    } finally {
+      installAiCacheUsageSink(null);
+    }
   });
 
   test("SDK API 错误和普通异常都返回 null，并保留可诊断日志", async () => {

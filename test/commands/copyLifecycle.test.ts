@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser, CopyMode } from "../../packages/types/chatState";
 import { COPY_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/commands";
 import { COPY_USAGE_TEXT, ICON_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/commandUsage";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
 import type { AvatarUpdateRequest } from "../../packages/types/copy/avatar";
 import type { ResolveCommandTargetParams } from "../../packages/commands/targetResolution";
 
@@ -14,7 +16,6 @@ const stealAvatarInBackground = mock((..._args: unknown[]): void => {});
 const restoreAvatarInBackground = mock((..._args: unknown[]): void => {});
 let cooldownRejected: boolean = false;
 let target: CachedUser | undefined;
-const persona: { aiPersona?: string } = {};
 const claim = { rejected: false as const, previousLastCopyTime: undefined, claimedAt: 123 };
 const globalCopy: {
   copiedUser: CachedUser | null;
@@ -35,7 +36,6 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (): { aiPersona?: string } => persona,
   getGlobalCopyState: () => globalCopy,
   // 与生产同构的两个写入边界：三元组整体写、整体清（见 stateStore.ts）。
   adoptCopyTarget: (copiedUser: CachedUser, copyMode: CopyMode | undefined, copyChatId: number): void => {
@@ -98,8 +98,11 @@ function context(chatId: number = -1001, replyToUserId?: number, argument: strin
   } as never;
 }
 
+/** preload 接管的本进程风格；改写它的用例结束后还原。 */
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
+afterEach(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
+
 beforeEach(() => {
-  persona.aiPersona = undefined;
   cooldownRejected = false;
   target = { id: 7, first_name: "Alice", username: "alice" };
   jaReadiness = { ok: true };
@@ -119,11 +122,9 @@ beforeEach(() => {
 });
 
 describe("copy 类命令生命周期", () => {
-  test("/icon 目标解析完成后使用当前氛围渲染开始提示", async () => {
-    resolveCopyCommandTarget.mockImplementationOnce(async () => {
-      persona.aiPersona = "新的人设";
-      return { id: 7 };
-    });
+  test("/icon 开始提示使用本进程文案风格", async () => {
+    botAtmosphereState.current = "plain";
+    resolveCopyCommandTarget.mockImplementationOnce(async () => ({ id: 7 }));
     await handleIconCommand(context(-1001, undefined, "steal"));
     expect(sendMessage).toHaveBeenCalledWith({
       chatId: -1001,

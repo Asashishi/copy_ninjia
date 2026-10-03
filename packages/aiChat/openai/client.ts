@@ -1,11 +1,12 @@
 /**
  * OpenAI Responses API 的底层收发与响应分类。本实现包（packages/aiChat/openai/）
- * 的回复会话、文本生成与视觉描述全部经由这里发请求（生图走 images 接口，
+ * 的回复会话、文本生成、结构化 JSON、视觉描述与独立检索全部经由这里发请求（生图走 images 接口，
  * 见同目录 image.ts；openai 语音协议走 audio/speech，见同目录 speech.ts；两者共用同一套
  * 按能力缓存的客户端。xai 语音协议不经 SDK，见 xaiSpeech.ts）。
  *
  * 收发走官方 openai SDK：超时与瞬时失败重试由 SDK 内建。客户端是线程内单例，
  * Worker 崩溃重建后由 cache/workers/aiChat/openai.ts 的空 holder 重新构造。
+ * token 与检索次数经 infra/aiCacheUsage.ts 按同一响应上报。
  *
  * 使用 Responses API：回复流水线的联网查证依赖 hosted 的 web_search 内建工具，
  * 它只在 Responses 上提供。
@@ -13,13 +14,12 @@
 
 import OpenAI from "openai";
 import { openAiClientCache } from "../../cache/workers/aiChat/openai";
-import { getAgentDeploymentConfig } from "../../config/agent";
+import { capabilityClient } from "../capabilityClient";
 import { logger } from "../../infra/logger";
 import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
 import {
-  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
   OPENAI_REQUEST_MAX_RETRIES,
-  OPENAI_REQUEST_TIMEOUT_MS,
+  OPENAI_REQUEST_TIMEOUTS_MS,
 } from "../../consts/aiChat/openai";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
@@ -31,44 +31,31 @@ import {
 import type { ProviderApiFailureResult } from "../ai/utils/mediaSupportError";
 import {
   abnormalResponseDiagnostic,
+  countWebSearchCalls,
   isTruncatedByTokenLimit,
   normalizedFinishReason,
   responseOutputText,
 } from "./response";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type { AiTextResult } from "../../types/aiChat/provider";
-import type { AgentCapability, AgentDeploymentConfig } from "../../types/config";
-
-/**
- * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
- * 其余能力走通用档。image 与 tts 分别由 aiChat/openai/image.ts 与 aiChat/openai/speech.ts
- * 在每次请求上另行覆盖。
- */
-function openAiRequestTimeoutMs(capability: AgentCapability): number {
-  return capability === "media" ? OPENAI_MEDIA_REQUEST_TIMEOUT_MS : OPENAI_REQUEST_TIMEOUT_MS;
-}
+import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
 
 /**
  * 按能力取得 OpenAI 客户端。每项能力的 api_key/base_url 独立，避免同端点但不同
  * 凭据时复用错误的认证状态；timeout/maxRetries 是每次请求各自的预算。
  */
 export function getOpenAiClient(capability: AgentCapability): OpenAI {
-  const config: AgentDeploymentConfig[AgentCapability] = getAgentDeploymentConfig()[capability];
-  if (config?.provider !== "openai") {
-    throw new Error(`Agent capability "${capability}" is not configured for the OpenAI provider.`);
-  }
-  const clients: Map<AgentCapability, OpenAI> = openAiClientCache.current ??=
-    new Map<AgentCapability, OpenAI>();
-  const cached: OpenAI | undefined = clients.get(capability);
-  if (cached !== undefined) return cached;
-  const client: OpenAI = new OpenAI({
-    apiKey: config.apiKey,
-    baseURL: config.baseUrl,
-    timeout: openAiRequestTimeoutMs(capability),
-    maxRetries: OPENAI_REQUEST_MAX_RETRIES,
+  return capabilityClient({
+    provider: "openai",
+    capability,
+    holder: openAiClientCache,
+    create: (config: ProviderCapabilityConfig<"openai">): OpenAI => new OpenAI({
+      apiKey: config.apiKey,
+      baseURL: config.baseUrl,
+      timeout: OPENAI_REQUEST_TIMEOUTS_MS[capability],
+      maxRetries: OPENAI_REQUEST_MAX_RETRIES,
+    }),
   });
-  clients.set(capability, client);
-  return client;
 }
 
 /**
@@ -117,7 +104,7 @@ export async function requestOpenAiResult({
     // SDK 的 timeout 是每次尝试各自的期限。同一份合成 signal 同时交给
     // SDK 与外层等待：网络层据此停止后续尝试，调用方则在整轮 deadline
     // 到期或上游取消时立即结算，不受 SDK 内部退避计时器影响。
-    const requestSignal: AbortSignal = signalWithTimeout(signal, openAiRequestTimeoutMs(capability));
+    const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_REQUEST_TIMEOUTS_MS[capability]);
     requestSignal.throwIfAborted();
     const model: string = String(body.model);
     response = await raceAbortOrThrow(
@@ -128,6 +115,7 @@ export async function requestOpenAiResult({
             inputTokens: result.usage?.input_tokens,
             cachedInputTokens: responsesCachedTokens(result.usage),
             outputTokens: result.usage?.output_tokens,
+            searchCalls: countWebSearchCalls(result),
           });
           return result;
         }),
@@ -182,7 +170,7 @@ export async function requestOpenAiResult({
 
 /** OpenAI 无状态文本调用参数。 */
 export interface OpenAiTextRequestOptions {
-  readonly capability: "summary" | "media";
+  readonly capability: "summary" | "media" | "text";
   readonly buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming;
   readonly errorLabel: string;
   readonly normalize: (text: string) => string;

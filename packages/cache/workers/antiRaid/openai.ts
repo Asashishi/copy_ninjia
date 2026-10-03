@@ -1,3 +1,5 @@
+/** owner: workers/antiRaid。 */
+
 import type OpenAI from "openai";
 
 /**

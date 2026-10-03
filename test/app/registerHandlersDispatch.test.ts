@@ -57,7 +57,6 @@ const COMMAND_HANDLERS: Readonly<Record<string, string>> = {
   block: "handleBlockCommand",
   batch_kick: "handleBatchKickCommand",
   ai_chat: "handleAiChatCommand",
-  prompt: "handlePromptCommand",
   clear_context: "handleClearContextCommand",
   ad_detect: "handleAdDetectCommand",
   flood_control: "handleFloodControlCommand",
@@ -125,11 +124,6 @@ mock.module("../../packages/antiRaid", () => ({
 }));
 mock.module("../../packages/infra/botAdmin", () => ({
   handleMyChatMemberUpdate: record("handleMyChatMemberUpdate"),
-}));
-// 路由用例只关心「哪条 update 交给了谁」；人设同步在这里只是被注入的一个
-// 依赖，替身挡住它就不必把 AI / Anti-Raid 的整张模块图拉进本文件。
-mock.module("../../packages/commands/chatPersonaSync", () => ({
-  syncChatPersonaSurfaces: async (): Promise<void> => {},
 }));
 mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub(),

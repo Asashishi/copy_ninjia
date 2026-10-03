@@ -2,6 +2,10 @@ import { asc, count, gt } from "drizzle-orm";
 import { BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE } from
   "../../consts/antiRaid/blocklist";
 import {
+  TIME_ZONE_MARKER_MIGRATION_CREATED_AT,
+  TIME_ZONE_MARKER_MIGRATION_HASH,
+  CHAT_PERSONA_REMOVAL_MIGRATION_CREATED_AT,
+  CHAT_PERSONA_REMOVAL_MIGRATION_HASH,
   CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT,
   CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH,
   H_IMAGE_ADD_PERMISSION_MIGRATION_CREATED_AT,
@@ -222,8 +226,8 @@ function hasSchemaV5MigrationLineage(
 }
 
 /**
- * 当前 v11 必须包含完整谱系，并依次以 AI 上下文、清理上下文权限、`/h_image add` 权限
- * 三条迁移结尾，不接受缺项或额外项。
+ * 当前 v13 必须包含完整谱系，并依次以 AI 上下文、清理上下文权限、`/h_image add` 权限、
+ * 移除群人设、时区标记五条迁移结尾，不接受缺项或额外项。
  */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,
@@ -231,12 +235,14 @@ export function assertStorageDatabaseMigrationLineage(
 ): void {
   const journal: readonly StorageDatabaseMigrationJournalEntry[] =
     readStorageDatabaseMigrationJournal(database, source);
-  if (!isMigrationEntry(journal.at(-1), H_IMAGE_ADD_PERMISSION_MIGRATION_CREATED_AT, H_IMAGE_ADD_PERMISSION_MIGRATION_HASH) ||
-    !isMigrationEntry(journal.at(-2), CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT, CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH) ||
-    !isMigrationEntry(journal.at(-3), AI_CONTEXT_MIGRATION_CREATED_AT, AI_CONTEXT_MIGRATION_HASH)) {
-    throw new Error(`${source}: expected the exact supported schema v11 migration lineage.`);
+  if (!isMigrationEntry(journal.at(-1), TIME_ZONE_MARKER_MIGRATION_CREATED_AT, TIME_ZONE_MARKER_MIGRATION_HASH) ||
+    !isMigrationEntry(journal.at(-2), CHAT_PERSONA_REMOVAL_MIGRATION_CREATED_AT, CHAT_PERSONA_REMOVAL_MIGRATION_HASH) ||
+    !isMigrationEntry(journal.at(-3), H_IMAGE_ADD_PERMISSION_MIGRATION_CREATED_AT, H_IMAGE_ADD_PERMISSION_MIGRATION_HASH) ||
+    !isMigrationEntry(journal.at(-4), CLEAR_CONTEXT_PERMISSION_MIGRATION_CREATED_AT, CLEAR_CONTEXT_PERMISSION_MIGRATION_HASH) ||
+    !isMigrationEntry(journal.at(-5), AI_CONTEXT_MIGRATION_CREATED_AT, AI_CONTEXT_MIGRATION_HASH)) {
+    throw new Error(`${source}: expected the exact supported schema v13 migration lineage.`);
   }
-  const rows: readonly StorageDatabaseMigrationJournalEntry[] = journal.slice(0, -3);
+  const rows: readonly StorageDatabaseMigrationJournalEntry[] = journal.slice(0, -5);
   if (
     rows.length < 7 ||
     !isMigrationEntry(
@@ -250,7 +256,7 @@ export function assertStorageDatabaseMigrationLineage(
       IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH
     )
   ) {
-    throw new Error(`${source}: expected the exact supported schema v11 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v13 migration lineage.`);
   }
   const v6Rows: readonly StorageDatabaseMigrationJournalEntry[] =
     rows.slice(0, -2);
@@ -263,7 +269,7 @@ export function assertStorageDatabaseMigrationLineage(
     ) ||
     !hasSchemaV5MigrationLineage(v6Rows.slice(0, -1))
   ) {
-    throw new Error(`${source}: expected the exact supported schema v11 migration lineage.`);
+    throw new Error(`${source}: expected the exact supported schema v13 migration lineage.`);
   }
 }
 
@@ -357,7 +363,7 @@ export function assertStoredIdentityPolicies(
 }
 
 /**
- * 生产启动的版本前置闸只扫描单行 metadata；版本通过后再检查当前六表与正文。
+ * 生产启动的版本前置闸只扫描 storage_metadata；版本与时区通过后再检查当前各表与正文。
  */
 export function assertStorageDatabaseStartupJsonbStorage(
   database: StorageDatabase,
@@ -371,8 +377,8 @@ export function assertStorageDatabaseStartupJsonbStorage(
 }
 
 /**
- * 只读 schema 版本那一行。启动必须先确认版本、再查询当前版本的业务表，避免
- * 旧库先以缺表错误失败而掩盖明确的版本诊断。
+ * 只读 storage_metadata（当前格式为 schema 版本与时区标记两行）。启动必须先确认版本与
+ * 时区、再查询当前版本的业务表，避免旧库先以缺表错误失败而掩盖明确的版本诊断。
  */
 export function readStorageDatabaseSchemaMetadata(
   database: StorageDatabase

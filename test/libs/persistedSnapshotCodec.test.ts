@@ -82,7 +82,7 @@ for (const pendingImage of [
 }
 
 for (const at of ["", "2026-09-01T00:59:59Z", "2026/02/29 00:00:00", "2026/09/31 00:00:00", "2026/01/01 24:00:00", "2026/01/01 00:60:00", "2026/01/01 00:00:60"]) {
-  test("时间必须是当前东京本地格式且日历有效", (): void => {
+  test("时间必须是当前本地日历格式且日历有效", (): void => {
     expect((): AiMemorySnapshot => parseAiMemorySnapshot(bytes({ ...base, at }), source)).toThrow("$.buffer[0].at must be");
   });
 }

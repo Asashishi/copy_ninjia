@@ -1,9 +1,8 @@
-import type { PendingMessageDeletion } from "../../types/telegram";
-
-/**
- * Telegram 延迟删除的 per-thread 状态。主线程和各 Worker 各持一份，不能跨线程
+/** owner: perThread。Telegram 延迟删除的 per-thread 状态。主线程和各 Worker 各持一份，不能跨线程
  * 共享 Api 句柄；主线程实例由应用生命周期排空，Worker 实例随各自生命周期处理。
  */
+
+import type { PendingMessageDeletion } from "../../types/telegram";
 
 /**
  * 尚未到期的删除任务。发送成功后登记，到期或停机提前兑现时删除；容量等于一个

@@ -1,14 +1,13 @@
+/** owner: workers/aiChat。媒体下载/转码/视觉解析共用执行器的内存状态；调用方为
+ * aiChat/ai/imageDescription.ts 与 aiChat/ai/tools/replyToolset/imageGeneration.ts。
+ */
+
 import {
   MEDIA_DESCRIPTION_MAX_CONCURRENCY,
   MEDIA_DESCRIPTION_MAX_PENDING,
 } from "../../../consts/aiChat/media";
 import { createPrioritizedBoundedTaskRunner } from "../../../libs/prioritizedBoundedTaskRunner";
 import type { PrioritizedBoundedTaskRunner, TaskPriority } from "../../../libs/prioritizedBoundedTaskRunner";
-
-/**
- * Owner：AI 闲聊 Worker。媒体下载/转码/视觉解析共用执行器的内存状态；调用方为
- * aiChat/ai/imageDescription.ts 与 aiChat/ai/tools/replyToolset/imageGeneration.ts。
- */
 
 /**
  * 媒体下载、转码与视觉解析共用的全局有界执行器。模块加载时创建，进程退出

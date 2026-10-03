@@ -16,8 +16,8 @@
  * 的内容键与累计次数，只记 warn；未满 GEMINI_CONTEXT_CACHE_MAX_REJECTIONS 次时
  * GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS 后再试，满额后同一内容不再创建。其余创建失败、
  * 续期失败以及引用被拒后的释放，都在 GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS 内不再重发同一种
- * 请求（两种冷却遇墙钟回拨都按已结束处理，见 libs/clockWindow.ts）。续期报 404（条目已不存在）
- * 时静默摘掉本地登记。
+ * 请求（两种冷却遇墙钟回拨都按已结束处理，见 libs/clockWindow.ts）。删除或续期报本凭据已访问
+ * 不到该条目（404 或 403，见 isGeminiContextCacheGone）时不记错误，续期还会静默摘掉本地登记。
  *
  * 服务端条目 TTL 为 GEMINI_CONTEXT_CACHE_TTL_SECONDS，到期由 Google 自动删除；本模块在换
  * 内容、新建后发现接管以来从未用过的条目、超出槽数上限时主动删除。创建时的输入 token
@@ -127,14 +127,22 @@ function parseDisplayName(prefix: string, displayName: string | undefined): Pars
   return { slotKey, contentKey };
 }
 
-/** 后台删除一个服务端条目；已经不存在（404）或停机取消时静默。 */
+/**
+ * 删除或续期的报错是否表示本凭据已访问不到该条目：404，或 Gemini 对「不存在或无权访问」
+ * 统一返回的 403（"CachedContent not found (or permission denied)"）。
+ */
+function isGeminiContextCacheGone(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.status === 403);
+}
+
+/** 后台删除一个服务端条目；本凭据已访问不到该条目（见 isGeminiContextCacheGone）或停机取消时静默。 */
 function deleteRemote(scope: Readonly<GeminiContextCacheScope>, registry: GeminiContextCacheRegistry, name: string): void {
   const signal: AbortSignal = scope.signal();
   void (async (): Promise<void> => {
     try {
       await registry.client.caches.delete({ name, config: { abortSignal: signal } });
     } catch (error: unknown) {
-      if (signal.aborted || (error instanceof ApiError && error.status === 404)) return;
+      if (signal.aborted || isGeminiContextCacheGone(error)) return;
       logger.error(`${scope.errorLabel} delete failed:`, error);
     }
   })();
@@ -300,8 +308,8 @@ function forgetSlot(registry: GeminiContextCacheRegistry, slot: GeminiContextCac
 }
 
 /**
- * 后台把条目续期回完整 TTL；同一条目同时只续一次。失败记下时刻，404 说明条目已不在
- * 服务端，直接摘掉本地登记。
+ * 后台把条目续期回完整 TTL；同一条目同时只续一次。失败记下时刻；本凭据已访问不到该条目（见
+ * isGeminiContextCacheGone）时直接摘掉本地登记，下一次按未命中重建。
  */
 function renewSlot(
   scope: Readonly<GeminiContextCacheScope>,
@@ -320,7 +328,7 @@ function renewSlot(
       slot.renewFailedAt = 0;
     } catch (error: unknown) {
       if (signal.aborted) return;
-      if (error instanceof ApiError && error.status === 404) {
+      if (isGeminiContextCacheGone(error)) {
         forgetSlot(registry, slot);
         return;
       }

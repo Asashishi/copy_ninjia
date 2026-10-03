@@ -212,7 +212,7 @@ export async function resolveCommandTarget({
   // 处置或发权限的命令传 currentChatTargetText 打开下面那道闸。
   const prefetched: boolean = await prefetchIdentityPolicies([targetUser.id]);
   if (!prefetched && requireIdentityPolicies) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere().IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });
     return undefined;
   }
   if (currentChatTargetText !== undefined && targetUser.isChannel === true && targetUser.id === chatId) {

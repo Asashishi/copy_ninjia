@@ -33,7 +33,7 @@ import {
 } from "../consts/lifecycle";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../consts/aiChat/mood";
 import type { FlushResult } from "../types/lifecycle";
-import { adoptTtsUsage, getChatStateCache, getChatState, getTtsUsage } from "../infra/storage/stateStore";
+import { adoptTtsUsage, getTtsUsage } from "../infra/storage/stateStore";
 import type {
   AiBotInfo,
   AiChatWorkerEvent,
@@ -42,7 +42,9 @@ import type {
   AiInitMessage,
 } from "../types/aiChat/protocol";
 import type { HotDeploymentConfigChanges } from "../types/config";
-import { BOT_ATMOSPHERE, SUPER_ADMIN_USER_ID } from "../config/bot";
+import { SUPER_ADMIN_USER_ID } from "../config/bot";
+import { getTimeZone } from "../config/time";
+import { botAtmosphere } from "../infra/atmosphere";
 import type {
   AiChatInvalidateWaiter,
   AiMemoryTeardown,
@@ -60,6 +62,8 @@ import { activeStickerCatalogs, mirrorStickerCatalog, pruneStickerCatalogMirror 
 import { failAllVoiceSynthesisWaiters, requestVoiceSynthesis, settleVoiceSynthesis } from "./voiceSynthesis";
 import type { VoiceSynthesisRequest } from "./voiceSynthesis";
 import type { VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
+import { failAllWebDigestWaiters, requestWebDigest, settleWebDigest } from "./webDigest";
+import type { WebDigestCompositionResult, WebDigestRequest } from "../types/webDigest";
 
 /** 取消一张等待表里全部等待者的超时并以同一原因拒绝，随后清空。 */
 function rejectAllWaiters(
@@ -75,13 +79,14 @@ function rejectAllWaiters(
 
 /**
  * 旧实例的回执不可能再到达（崩溃重建、放弃自愈或停机）时统一失败结算全部在途等待者：
- * 记忆 flush、心情查询/重抽、群失效与语音合成；不结算会让调用方干等到超时。
+ * 记忆 flush、心情查询/重抽、群失效、语音合成与摘要组稿；不结算会让调用方干等到超时。
  */
 function failAllAiChatWaiters(moodReason: string, invalidateReason: string): void {
   aiMemoryFlushBarrier.settleAll("failed");
   rejectAllWaiters(moodRequestWaiters, moodReason);
   rejectAllWaiters(aiChatInvalidateWaiters, invalidateReason);
   failAllVoiceSynthesisWaiters();
+  failAllWebDigestWaiters();
 }
 
 /**
@@ -197,6 +202,9 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
       case "voiceSynthesized":
         settleVoiceSynthesis(event);
         break;
+      case "webDigestComposed":
+        settleWebDigest(event);
+        break;
       case "ttsUsage":
         adoptTtsUsage(event.usage);
         break;
@@ -221,9 +229,6 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     // 语音合成每日计数：新 Worker 从空值起步，凭主线程持有的最新回执恢复，
     // 排在任何 trigger/synthesizeVoice 之前到达。
     if (lastInitState.current && !postToNext({ type: "hydrateTtsUsage", usage: getTtsUsage() })) return;
-    for (const [chatId, state] of getChatStateCache()) {
-      if (state.aiPersona !== undefined && !postToNext({ type: "persona", chatId, persona: state.aiPersona })) return;
-    }
     // 记忆镜像同样要重放：新 Worker 内存全空，凭上一实例上报过的最新快照
     // 补齐（见模块头注）。
     if (latestAiMemories.size > 0) {
@@ -267,7 +272,7 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
 }
 
 /**
- * 启动 AI Worker 并注入身份与主线程当前生效的配置快照，再补发语音合成每日计数与各群人设。FIFO
+ * 启动 AI Worker 并注入身份、本进程人设与通知风格及主线程当前生效的配置快照，再补发语音合成每日计数。FIFO
  * 保证 init 先于一切 record/trigger 到达；Worker 靠它在转录里认出自己并自录自己
  * 发的消息。投递全部成功后才记 lastInitState 并发布可用标记：Worker 崩溃重启要
  * 重放这条消息，投递失败时两者都保持原值。调用方负责确认 AI 前提的 holder 已齐
@@ -278,9 +283,10 @@ export function startAiChatWorker(botInfo: AiBotInfo): void {
   initAiChatWorker();
   const message: AiInitMessage = {
     type: "init",
+    timeZone: getTimeZone(),
     botInfo,
     superAdminUserId: SUPER_ADMIN_USER_ID,
-    defaultAtmosphere: BOT_ATMOSPHERE,
+    atmosphere: botAtmosphere(),
     agent: getAgentDeploymentConfig(),
     mood: getMoodConfig(),
     stickers: getStickerConfig(),
@@ -288,9 +294,6 @@ export function startAiChatWorker(botInfo: AiBotInfo): void {
   };
   postAiChatOrThrow(message);
   postAiChatOrThrow({ type: "hydrateTtsUsage", usage: getTtsUsage() });
-  for (const [chatId, state] of getChatStateCache()) {
-    if (state.aiPersona !== undefined) postAiChatOrThrow({ type: "persona", chatId, persona: state.aiPersona });
-  }
   lastInitState.current = message;
   aiChatWorkerState.available = true;
 }
@@ -425,6 +428,17 @@ export function synthesizeVoice(request: VoiceSynthesisRequest): Promise<VoiceSy
 }
 
 /**
+ * cron `send_web_digest` 的摘要入口：把主题与组稿参数交给 AI Worker 生成摘要，拿回 MarkdownV2
+ * 原文；等待、取消与结算见 aiChat/webDigest.ts。AI Worker 没在运行时按「worker unavailable」返回。
+ */
+export function composeWebDigest(request: WebDigestRequest, signal: AbortSignal): Promise<WebDigestCompositionResult> {
+  return requestWebDigest(request, signal, {
+    post,
+    workerAvailable: aiChatWorkerState.available && lastInitState.current !== null,
+  });
+}
+
+/**
  * 使某群当前回复代数失效、清空等候队列并删除该群的 AI 记忆。/ai_chat disable、
  * /clear_context 与群级 teardown 共用这一条路；在途请求返回后也会因代数失配而
  * 停止发送和记忆回填。
@@ -486,9 +500,3 @@ registerChatTeardown("aiChat", async (chatId: number): Promise<void> => {
     finishAiMemoryTeardown(chatId);
   }
 });
-
-/** 人设配置或群状态删除 durable 后发布最终值；AI 未配置时由下次初始化恢复。 */
-export function syncAiChatPersona(chatId: number): void {
-  if (!aiChatWorkerState.available) return;
-  postAiChatOrThrow({ type: "persona", chatId, persona: getChatState(chatId).aiPersona ?? null });
-}

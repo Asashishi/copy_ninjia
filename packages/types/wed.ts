@@ -18,6 +18,11 @@ export interface WedSession {
   busy: boolean;
 }
 
+/** 在途头像查询；按群记录新发言，防止旧查询结论删除新观察到的候选。 */
+export interface WedAvatarProbe {
+  readonly observedChats: Set<number>;
+}
+
 /** 每群结果会话为纯内存；成员集合引用主线程持久化 owner。 */
 export interface WedChat {
   readonly controller: AbortController;

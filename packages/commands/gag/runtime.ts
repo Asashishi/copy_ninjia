@@ -267,7 +267,7 @@ export async function finishGag(
     const cleaned: boolean = await deleteGagNotices(session);
     try {
       if (reason !== "teardown") {
-        const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+        const atmosphere: AtmosphereTexts = chatAtmosphere();
         const reasonText: string = reason === "timeout"
           ? atmosphere.NOTICE_TEXTS.gagExpired
           : atmosphere.NOTICE_TEXTS.gagRemoved;

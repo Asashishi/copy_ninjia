@@ -1,3 +1,5 @@
+/** owner: main。黑名单群级处置状态；身份热查询与未 ACK 写入由 cache/main/identityStorage.ts 持有。 */
+
 import type {
   BlockedMemberRemover,
   BlocklistSweepPageState,
@@ -5,8 +7,6 @@ import type {
   BlocklistSweepSchedulerState,
   PendingBlockedRemoval,
 } from "../../types/blocklist";
-/** owner: main。黑名单群级处置状态；身份热查询与未 ACK 写入由 cache/main/identityStorage.ts 持有。 */
-
 /**
  * 白名单成员关系与动态黑名单新增共用的主线程串行链。
  *

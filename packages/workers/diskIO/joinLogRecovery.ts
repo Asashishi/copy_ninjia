@@ -17,10 +17,12 @@ import {
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
 } from "../../consts/diskIO/joinLog";
 import { JOIN_LOG_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
+import { DAY_MS } from "../../consts/diskIO/common";
+import { getTimeZone } from "../../config/time";
 import { invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import {
-  getTokyoDateKey,
+  getDateKey,
   isCanonicalDateKey,
 } from "../../libs/time";
 import type { JoinLogRecord } from "../../types/diskIO/storage";
@@ -35,6 +37,18 @@ import {
 export interface ValidatedJoinLogFile {
   readonly content: string;
   readonly parsed: Record<string, JoinLogRecord>;
+}
+
+/** 保留至少三个公历日期，并覆盖前一日任意命令的滚动 24 小时窗口；短日时扩展日文件范围。 */
+export function retainedJoinLogDayKeys(today: string): ReadonlySet<string> {
+  const current: Temporal.PlainDate = Temporal.PlainDate.from(today);
+  const previousStart: number = current.subtract({ days: 1 })
+    .toZonedDateTime(getTimeZone()).epochMilliseconds;
+  const oldest: Temporal.PlainDate = Temporal.PlainDate.from(getDateKey(previousStart - DAY_MS));
+  return recentJoinLogDayKeys(today, Math.max(
+    JOIN_LOG_FILE_RETENTION_DAYS,
+    oldest.until(current).days + 1
+  ));
 }
 
 /** 读取并严格校验一份已存在的入群日志文件。 */
@@ -61,7 +75,7 @@ export async function cleanupExpiredJoinLogDays(
   mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
   const names: readonly string[] = knownNames ?? readdirSync(JOIN_LOG_MEMORY_DIR);
   const retainedDays: ReadonlySet<string> =
-    recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
+    retainedJoinLogDayKeys(today);
   for (const name of names) {
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);
     // 删除失败不阻断当天记录与窗口内事实；下一次跨日清理仍会重试。
@@ -140,10 +154,10 @@ export interface JoinLogRecoveryInspection {
 
 /** 启动第一阶段：只读扫描保留窗口，不填充常驻 LRU 或删除文件。 */
 export async function inspectJoinLogFiles(
-  today: string = getTokyoDateKey()
+  today: string = getDateKey()
 ): Promise<JoinLogRecoveryInspection> {
   const retainedDays: ReadonlySet<string> =
-    recentJoinLogDayKeys(today, JOIN_LOG_FILE_RETENTION_DAYS);
+    retainedJoinLogDayKeys(today);
   const names: string[] = inspectOptionalDirectory(JOIN_LOG_MEMORY_DIR)
     ? readdirSync(JOIN_LOG_MEMORY_DIR)
     : [];
@@ -171,7 +185,7 @@ export async function inspectJoinLogFiles(
       return invalidInput(path, "$filename", "a canonical calendar date");
     }
     if (day > today) {
-      return invalidInput(path, "$filename", "a date no later than the current Tokyo day");
+      return invalidInput(path, "$filename", "a date no later than the current configured local day");
     }
     if (!retainedDays.has(day)) continue;
     const { content, parsed }: ValidatedJoinLogFile =

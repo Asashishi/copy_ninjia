@@ -25,7 +25,7 @@
 - **`packages/commands/`**
   - **責務**：明示的なコマンドを機能ごとにまとめ、同じ入口のサブコマンドをその領域内で分岐します。トグル系コマンドが
     共有する権限・設定ゲートは別ファイル。
-  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`prompt.ts`、`qa.ts`、`block.ts`、`hImage.ts` と `hImage/`（抽選と追加）、`info.ts`、`deferredCommands.ts`（抽選・追加・`/info` が共用する遅延コマンド実行器）、`mute.ts`、`batchKick.ts`、
+  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` と `hImage/`（抽選と追加）、`info.ts`、`deferredCommands.ts`（抽選・追加・`/info` が共用する遅延コマンド実行器）、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`。inline の運勢 domain も同様に
     `luckChallenge/`（`cache.ts`、`draw.ts`、`key.ts`、`rateLimit.ts`、`receipt.ts`、`rendering.ts`、
     `telegramAdapter.ts`。`index.ts` は薄い入口だけ）へ分割します。規模の大きい gag domain は command admission を
@@ -37,10 +37,10 @@
   - **代表的なファイル**：`message/`（`triggerPolicy.ts` を含む）、`reactionSync.ts`。
 - **`packages/aiChat/`**
   - **責務**：AI chat のメインスレッド代理と model capability。Worker 監督、
-    memory mirror、起動時と hot reload 時の状態投入、availability、provider 実装パッケージ（`gemini/`、`openai/`）と選択、sticker、tool、media を含む。
+    memory mirror、起動時と hot reload 時の状態投入、availability、provider 実装パッケージ（`gemini/`、`openai/`、`anthropic/`）と選択、sticker、tool、media を含む。
   - **代表的なファイル**：`workerBridge.ts`、`hydration.ts`、`messageIngress.ts`、`botImages.ts`（コマンドと定時タスクが送った画像のプレースホルダー自己記録の入口）、
-    `voiceSynthesis.ts`（`/send` と cron が AI Worker に音声合成を依頼する際の待機と決着）、
-    `memoryMirror.ts`、`availability.ts`、`provider.ts`、`gemini/`、`openai/`、`ai/`。
+    `voiceSynthesis.ts`（`/send` と cron が AI Worker に音声合成を依頼する際の待機と決着）、`webDigest.ts`（cron が AI Worker にダイジェスト生成を依頼する際の待機と決着）、
+    `memoryMirror.ts`、`availability.ts`、`provider.ts`（capability ごとに実装パッケージを選ぶファサード）、`providerLanes.ts`（プロトコル・エンドポイント・認証情報ごとのクォータ lane）、`capabilityClient.ts`（3 社共通の capability 別 SDK client 骨格）、`gemini/`、`openai/`、`anthropic/`、`ai/`。
     `index.ts` は薄い公開入口だけを提供。
 - **`packages/antiRaid/`**
   - **責務**：Anti-Raid のメインスレッド代理と広告 model capability。Worker 監督、
@@ -49,7 +49,7 @@
     `observers.ts`、`replay.ts`）、`durableDelivery.ts`、`updateIngress.ts`、
     `adCandidate.ts`、`ai/`。`index.ts` は薄い公開入口だけを提供。
 - **`packages/cron/`**
-  - **責務**：`cron.json` 定時タスクの主スレッドでのスケジュール（Bun ネイティブ cron、just_once、rand_cron のランダム待ち）、1 回分の動作の順次実行と再試行、唯一の Telegram 送信境界。
+  - **責務**：`cron.json` 定時タスクの主スレッドでのスケジュール（Bun ネイティブ cron、just_once、rand_cron が各回の後に登録し直すランダムな時刻）、1 回分の動作の順次実行と再試行、唯一の Telegram 送信境界。
   - **代表的なファイル**：`scheduler.ts`、`run.ts`、`delivery.ts`、`targets.ts`（`chat_id: ["all"]` と `["except", ...]` の送信権限の確認）。解析は `packages/config/cron.ts`、状態は `packages/cache/main/cron.ts`。
 - **`packages/copy/`**
   - **責務**：通常コピー、テキスト変換、アバター更新キュー。
@@ -76,7 +76,9 @@
     ドメイン非依存の基盤。
   - **代表的なファイル**：`flushBarrier.ts`、`linkedQueue.ts`、`acknowledgedBatchQueue.ts`、
     `boundedResponse.ts`、`boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`、
-    `errorMessage.ts`（catch した `unknown` を文面または Error に正規化する唯一の境界）。
+    `errorMessage.ts`（catch した `unknown` を文面または Error に正規化する唯一の境界）、
+    `telegramMarkdown.ts`（Telegram MarkdownV2 のエスケープと組み立ての唯一の境界）、`webDigest.ts` と
+    `webDigestMarkdown.ts`（cron ウェブダイジェスト JSON の厳密なデコードと MarkdownV2 描画）、`webDigestUrls.ts`（ダイジェスト作成の出典 URL 許可リスト）。
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
@@ -85,8 +87,8 @@
 - **`packages/aiChat/ai/`**
   - **責務**：model transport と capability を owner feature 配下に置き、
     thread と lifecycle の所有境界を明確化。
-  - **代表的なファイル**：`tools/replyToolset/`、`utils/`、`provider.ts`、`voiceSynthesis.ts`（音声合成の共通実装）、`ttsUsage.ts`（音声合成の 1 日あたりの回数）。AI chat の
-    model 送受信はここではなく、vendor ごとの `packages/aiChat/{gemini,openai}/` にあります。
+  - **代表的なファイル**：`tools/replyToolset/`、`tools/webSearch.ts`（`web_search` 関数 tool の実行器）、`webDigest.ts`（cron ダイジェスト生成、検索後の組み立てと未検索の警告）、`utils/`、`provider.ts`、`voiceSynthesis.ts`（音声合成の共通実装）、`ttsUsage.ts`（音声合成の 1 日あたりの回数）。AI chat の
+    model 送受信はここではなく、vendor ごとの `packages/aiChat/{gemini,openai,anthropic}/` にあります。
 - **`packages/workers/antiRaid/adDetect/`**
   - **責務**：provider routed 広告検出パイプライン。バッチキュー、送信者ごとの
     メッセージ束の整形、判定、命中時の処分を含む。
@@ -94,10 +96,17 @@
     `verdict.ts`（判定と処分のオーケストレーション）、`bundle.ts`、`classifier.ts`、`disposal.ts`、
     `config.ts`（main thread から届く設定 snapshot の取り込み）、`ai/`（`provider.ts` が `ad_detect.provider` に応じて `google.ts` か `openai.ts` の transport を選ぶ）。
 - **`packages/infra/`**
-  - **責務**：main thread 唯一の Telegram client と outbound gate、duplex Worker host、
-    logger、メインスレッド側 I/O proxy。
-  - **代表的なファイル**：`telegram/`（`telegram/avatar/`、`telegram/actions/` を含む）、`diskIO.ts` と `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）、`identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）、`logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）、
-    `supervisedWorker.ts`、`workerSupervisor.ts`、`aiCacheUsage.ts`（AI/Anti-Raid Worker のモデル client がリクエストのキャッシュ使用量を報告する境界）、`geminiContextCache.ts`（Gemini 明示キャッシュの共有コア。返信と広告検出がそれぞれの scope を渡す）、`randomImage.ts`（ランダム画像ディレクトリの準備・抽選・追加画像の書き込み）、`mediaGroups.ts`（アルバムキャッシュの読み書き境界）、`telegram/fileDownload.ts`（共有の Telegram ファイルダウンロード）、`telegram/commandPhotos.ts`（画像付きの 30 秒コマンド返答）、`commandExecutor.ts`（`/wed` と遅延コマンドが共用する実行器の実行状態作成とタスク投入）。
+  - **責務**：メインスレッド唯一の Telegram クライアントと出站ゲート、Worker 双方向ホスト、システムログ、メインスレッド I/O プロキシ、およびランダム画像ディレクトリ・ファイル管理。
+  - **代表的なファイルとサブディレクトリ**：
+    - `telegram/`（`telegram/avatar/`、`telegram/actions/` を含む）
+    - `diskIO.ts` と `diskIO/`（`businessWrite.ts`、`diagnosticChannel.ts`、`fatal.ts`、`host.ts`、`observers.ts`、`recovery.ts`、`requests.ts`、`storageAdmission.ts`、`transport.ts`）
+    - `identityStorage.ts` と `identityStorage/`（`read.ts`、`shared.ts`、`sweep.ts`、`write.ts`）
+    - `logger.ts` と `logger/`（`forwarding.ts`、`redaction.ts`、`serialization.ts`）
+    - `supervisedWorker.ts`、`workerSupervisor.ts`
+    - `aiCacheUsage.ts`（モデルクライアントによる Prompt キャッシュ使用量報告）
+    - `geminiContextCache.ts`（Gemini 明示的キャッシュ再利用コア）
+    - `randomImage.ts`、`mediaGroups.ts`
+    - `telegram/fileDownload.ts`、`telegram/commandPhotos.ts`、`commandExecutor.ts`
 - **`packages/infra/identityPolicy/`**
   - **責務**：ホワイトリストの項目別権限、一時広告免除の累計、ブラックリストとの排他制御を担うメインスレッド側の読み取り境界。
   - **代表的なファイル**：`whitelist.ts`、`temporaryAdBypass.ts`、`coordination.ts`。
@@ -125,12 +134,12 @@
   - **代表的なファイル**：`test/commands/copyShared.test.ts`。
 - **`scripts/`**
   - **インストーラー**：`install.sh` は対象ワークツリーを特定し、そのバージョンの入口へ処理を渡します。`scripts/install/` の repository、service、config、runtime、configure、start の各 shell モジュールの可読性と構文を一括確認してから順に読み込みます。`installSources.ts` は構文検査と隔離フィクスチャへ同じモジュール一覧を提供します。
-  - **Cold migration**：`migrateGlobalState.ts` は停止時バックアップの `memory/global/state.json` を厳密に読み、明示した AI 回数で合計 `count` を `agentCount` と `reserveCount` に分割します。窓の起点と復唱状態を維持し、独立出力と検証一覧を作成します。`migrateRandomImageNames.ts` は旧画像名を内容 SHA-256 名に変換します。両者はソースを変更せず、`ready.json` を完了マーカーとします。`migrations/files.ts` は一覧とパス判定を共用し、起動依存グラフには入りません。
+  - **Cold migration**：`migrateChatPersonaRemoval.ts` は 16.3.2 が出力した schema v11 の停止時バックアップだけを受け付け、database の複製を v13 へ移行し、`chat_states.ai_persona` と `isCanConfigAiPrompt` を削除して `Asia/Tokyo` のタイムゾーンマーカーを書き込みます。ソースを変更せず、`ready.json` を完了マーカーとします。`migrations/files.ts` は一覧とパス判定を、`migrations/cli.ts` は `--source-root`/`--output-root` の解析を共用し、起動依存グラフには入りません。
   - **ファイル要約値**：`fileSha256.ts` は `Bun.file(path).stream()` と `Bun.CryptoHasher` で SHA-256 の 16 進要約値を逐次計算し、リリース検証、cold migration、移行 snapshot fixture で共用します。ファイル種別、symlink、path、権限、移行 manifest の検証は各 caller が担当します。
   - **責務**：リポジトリ自己検査、性能 benchmark、停止中だけ実行する明示 data migration。
   - **代表的なファイル**：`checkProjectConventions.ts` と `conventions/`、`checkCoverageMetrics.ts` と `coverageSummary.ts`、`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` の gate 節の厳格 parse）、`perf/performanceResult.ts`（同 file の共有書き込み境界。各 benchmark は自分の枠だけを差し替える）、リリース時のみ実行する全量 benchmark の `perf/fullSuite.ts` と `perf/fullSuite/`、および 2 つの benchmark ルートが共用する `fixtures/copyTree.ts`（ディレクトリツリーの複製）と `fixtures/pathBoundary.ts`（書き込み境界の実パス構成要素の検査）。
 
-`scripts/migrations/active.ts` はビルド・配布検証・規約チェック共通の移行一覧です。バイナリには 2 本のエッジの CLI が含まれ、`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` で実行します。配置手順は [07 運用手順](07-operations.md) を参照してください。
+`scripts/migrations/active.ts` はビルド・配布検証・規約チェック共通の移行一覧です。バイナリにはこの唯一のエッジの CLI が含まれ、`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<入口>.js` で実行します。配置手順は [07 運用手順](07-operations.md) を参照してください。
 
 `botInput.ts` は installer と runtime が共用する厳密な読み取り・解析入口で、import 時には deployment file の読み取りや cache への格納を行いません。`bot.ts` は runtime snapshot を担当し、読む前に `layout.ts` で `config/static/` と `config/dynamic/` の構成を検査します。`libs/inflight.ts` は実行中 task の有界待機を共通化し、受理・取消・予算 0 の方針は各 domain owner が保持します。`infra/backgroundTasks.ts` は背景 task のエラー記録と完了後の除去を担当します。グループの切り替えコマンドは `commands/superAdminToggle.ts` の認可、設定 gate、更新、永続化、応答の順序を共用します。
 
@@ -161,12 +170,12 @@
     （`main/aiChat.ts`、`main/antiRaid/`）。
 - **`workers/aiChat/`**
   - **所有者**：AI 雑談 Worker。
-  - **内容**：ローリングメモリ、返信の受理判定、Bot 画像への返信時の画像説明補完の登録、機嫌、ステッカーカタログとセット、メインスレッドから受け取った進行中の音声合成、
-    音声合成の 1 日あたりの回数、および両 provider のクライアント singleton。
+  - **内容**：ローリングメモリ、返信の受理判定、Bot 画像への返信時の画像説明補完の登録、機嫌、ステッカーカタログとセット、メインスレッドから受け取った進行中の音声合成とダイジェストの組み立て、
+    音声合成の 1 日あたりの回数、および 3 つの provider のクライアント singleton。
 - **`workers/antiRaid/`**
   - **所有者**：Anti-Raid Worker。
   - **内容**：認証/ロックダウンの状態機械、連投ウィンドウ、広告検出キュー、
-    Google/OpenAI 広告検出クライアント。
+    Google/OpenAI/Anthropic 広告検出クライアント。
 - **`workers/diskIO/`**
   - **所有者**：Disk I/O Worker。
   - **内容**：各ドメインの書き込みバッファ、index、dirty マーカー、および期限到来した定時 flush をまとめる集合（`timedFlush.ts`）。

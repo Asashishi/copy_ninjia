@@ -113,6 +113,7 @@ import { flushScope } from "./diskIO/domainFlush";
 import { wedMemberDeletePersistedNotifier } from "../cache/workers/diskIO/wed";
 import { stickerCatalogPersistedNotifier } from "../cache/workers/diskIO/stickers";
 import { errorMessage } from "../libs/errorMessage";
+import { adoptTimeZone } from "../config/time";
 
 declare const self: Worker;
 
@@ -341,6 +342,7 @@ export async function handleDiskIOWorkerMessage(
       postReply(readBlocklistIdPage(msg));
       break;
     case "load":
+      adoptTimeZone(msg.timeZone);
       await handleDiskIOStartupLoad(msg.stickerPacks, postReply);
       break;
     case "flush": {

@@ -1,14 +1,4 @@
-import type {
-  AdDetectAgentConfig,
-  AdSampleConfig,
-  AgentDeploymentConfig,
-  MoodConfig,
-  StickerConfig,
-  BotConfig,
-} from "../../types/config";
-
-/**
- * 部署配置快照的线程内 holder：defaultMoodConfigCache 属 packages/config/mood.ts、
+/** owner: perThread。部署配置快照的线程内 holder：defaultMoodConfigCache 属 packages/config/mood.ts、
  * defaultStickerConfigCache 属 packages/config/stickers.ts、defaultAdSampleConfigCache
  * 属 packages/config/adSamples.ts、personaCache 属 packages/config/persona.ts、
  * botConfigCache 属 packages/config/bot.ts；adDetectAgentConfigCache 与
@@ -27,6 +17,15 @@ import type {
  * cache/main/configReadiness.ts。
  */
 
+import type {
+  AdDetectAgentConfig,
+  AdSampleConfig,
+  AgentDeploymentConfig,
+  MoodConfig,
+  StickerConfig,
+  BotConfig,
+} from "../../types/config";
+
 /**
  * 默认心情配置快照。主线程由启动总闸填充、热重载整体替换；AI 闲聊 Worker 由
  * init 与 configReload 消息填充。自定义路径加载不进入缓存。
@@ -39,12 +38,15 @@ export const defaultStickerConfigCache: { current: StickerConfig | null } = { cu
  * 由 agentConfig 消息填充。
  */
 export const defaultAdSampleConfigCache: { current: AdSampleConfig | null } = { current: null };
-/** persona.md 的单份文本快照；主线程启动总闸填充，AI Worker 由 init 消息填充，不热重载。 */
+/**
+ * 本进程 AI 人设的单份文本快照：主线程启动总闸填充（prompt/persona.md 存在时为其正文，
+ * 缺省时为内置人设），AI Worker 由 init 消息填充，不热重载。
+ */
 export const personaCache: { current: string | null } = { current: null };
 
 /**
  * config/static/bot.json 的主线程只读快照；Bot 配置模块启动时读盘填充，进程重启后重建。
- * Worker 不加载 Bot 配置，本 holder 保持 null；通知风格随初始化载荷单独注入。
+ * Worker 不加载 Bot 配置，本 holder 保持 null；通知风格与默认时区随初始化载荷单独注入。
  * 不热重载，容量至多一个对象且无需淘汰；线程边界见 docs/cn/04-invariants.md。
  */
 export const botConfigCache: { current: BotConfig | null } = { current: null };

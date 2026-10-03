@@ -1,3 +1,5 @@
+/** owner: perThread。 */
+
 import {
   LOGGER_FORWARD_BATCH_MAX_MESSAGES,
   LOGGER_FORWARD_MAX_PENDING_MESSAGES,
@@ -8,7 +10,7 @@ import type { LogMessage } from "../../types/diskIO/messages";
 import type { LoggerSecretsSnapshot } from "../../types/logger";
 
 /**
- * owner：每个业务 Worker isolate。
+ * 持有方：每个业务 Worker isolate。
  *
  * logger.error 填充，主线程的 __logBatchAccepted 回执逐批排空；整个 Worker
  * isolate 销毁后随堆释放，重建 isolate 从空队列开始。
@@ -24,7 +26,7 @@ export const forwardedLogQueue: AcknowledgedBatchQueue<LogMessage> =
   });
 
 /**
- * owner：每个业务 Worker isolate。转发队列溢出时累计，汇总成功入队后清零；
+ * 持有方：每个业务 Worker isolate。转发队列溢出时累计，汇总成功入队后清零；
  * isolate 销毁时随堆释放。容量恒为两个 number，不随错误数量增长。
  */
 export const forwardedLogDropState: {
@@ -40,7 +42,7 @@ export const forwardedLogDropState: {
 };
 
 /**
- * owner：每条线程各持一份（同 cache/perThread/config.ts 的三个凭据 holder）。
+ * 每条线程各持一份（同 cache/perThread/config.ts 的三个凭据 holder）。
  *
  * `infra/logger/serialization.ts` 的 currentSecrets 按三个配置 holder 的对象身份缓存
  * 文本凭据、JSON 转义片段与遍历回调；配置在启动与 config/dynamic/ 热重载时整体替换。

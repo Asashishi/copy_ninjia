@@ -87,8 +87,8 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
     // 匿名管理员以当前群组身份发言时，Telegram 只提供 sender_chat=当前群，
     // 不会暴露皮套背后的真实用户。该身份在 /copy 中必须保留用于头像和复读；
     // 但 /block 若继续执行，只会尝试封禁整个群组身份，不能踢出那名管理员。
-    currentChatTargetText: chatAtmosphere(chatId).NOTICE_TEXTS.blockCurrentChat,
-    messages: chatAtmosphere(chatId).BLOCK_TARGET_TEXTS,
+    currentChatTargetText: chatAtmosphere().NOTICE_TEXTS.blockCurrentChat,
+    messages: chatAtmosphere().BLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
 
@@ -109,7 +109,7 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
     }
   );
   if (admission.protected) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: atmosphere.NOTICE_TEXTS.blockProtected(formatTargetLabel(targetUser, atmosphere)),
@@ -135,7 +135,7 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
 
   // 无跨群操作时直接渲染本次落盘结果。
   if (targetChatIds.length === 0) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
     const persistWarning: string = persisted ? "" : atmosphere.NOTICE_TEXTS.blockPersistFailed;
     await sendCommandMessage({
@@ -186,7 +186,7 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
   // 权限恢复后由下一次管理员身份观测把这些群重扫一遍，不用管理员再跑一次 /block。
   for (const resweepChatId of resweepChatIds) requestBlocklistResweep(resweepChatId);
 
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
   const persistWarning: string = persisted ? "" : atmosphere.NOTICE_TEXTS.blockPersistFailed;
   const bannedCount: number = kickedCount + confirmedBannedCount;
@@ -235,7 +235,7 @@ export async function handleBlockCommand(ctx: CommandContext<Context>): Promise<
   if (action === undefined) {
     await sendCommandMessage({
       chatId: ctx.chat.id,
-      text: chatAtmosphere(ctx.chat.id).NOTICE_TEXTS.blockUsage,
+      text: chatAtmosphere().NOTICE_TEXTS.blockUsage,
       replyToMessageId: ctx.msgId,
     });
     return;

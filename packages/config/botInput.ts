@@ -1,19 +1,20 @@
 /** 安装器与运行时共用的 Bot 配置解码；导入时不读盘、不填充线程缓存。 */
 
-import { DEFAULT_BOT_ATMOSPHERE } from "../consts/bot";
+import { DEFAULT_BOT_TIME_ZONE } from "../consts/bot";
 import { BOT_CONFIG_PATH } from "../consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../consts/telegram";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../libs/record";
 import type { BotConfig } from "../types/config";
+import { parseTimeZone } from "./timeZoneInput";
 
-/** 解码 config/static/bot.json；未知字段、空 token 与非法 ID 一律拒绝。 */
+/** 解码 config/static/bot.json；风格缺省保持未配置，未知字段及非法身份、风格和时区一律拒绝。 */
 export function parseBotConfig(
   value: unknown,
   sourcePath: string = BOT_CONFIG_PATH
 ): BotConfig {
-  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["bot_token", "super_admin_user_id", "atmosphere"])) {
-    return invalidInput(sourcePath, "$", "{ bot_token, super_admin_user_id, atmosphere?: mesugaki | normal }");
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["bot_token", "super_admin_user_id", "atmosphere", "time_zone"])) {
+    return invalidInput(sourcePath, "$", "{ bot_token, super_admin_user_id, atmosphere?: mesugaki | normal, time_zone?: IANA time zone }");
   }
   if (
     typeof value.bot_token !== "string" ||
@@ -29,13 +30,15 @@ export function parseBotConfig(
   ) {
     return invalidInput(sourcePath, "$.super_admin_user_id", "a positive safe integer");
   }
-  if (value.atmosphere !== undefined && value.atmosphere !== "mesugaki" && value.atmosphere !== "normal") {
+  const atmosphere: unknown = typeof value.atmosphere === "string" ? value.atmosphere.trim() : value.atmosphere;
+  if (atmosphere !== undefined && atmosphere !== "mesugaki" && atmosphere !== "normal") {
     return invalidInput(sourcePath, "$.atmosphere", "mesugaki or normal");
   }
   return {
-    atmosphere: value.atmosphere ?? DEFAULT_BOT_ATMOSPHERE,
+    atmosphere,
     botToken: value.bot_token.trim(),
     superAdminUserId: value.super_admin_user_id,
+    timeZone: parseTimeZone(value.time_zone === undefined ? DEFAULT_BOT_TIME_ZONE : value.time_zone, sourcePath, "$.time_zone"),
   };
 }
 

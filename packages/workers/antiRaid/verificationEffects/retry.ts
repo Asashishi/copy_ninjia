@@ -39,7 +39,16 @@ export function scheduleTerminalRetry({
     VERIFICATION_TERMINAL_RETRY_MAX_MS
   );
   entry.terminalRetries += 1;
-  entry.timer = setTimeout((): void => dispatchVerification(chatId, userId, event), delayMs);
-  entry.timer.unref();
+  const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
+    if (
+      verificationEntries.get(verificationKey(chatId, userId)) !== entry ||
+      entry.state !== state ||
+      entry.timer !== timer
+    ) return;
+    entry.timer = undefined;
+    dispatchVerification(chatId, userId, event);
+  }, delayMs);
+  entry.timer = timer;
+  timer.unref();
   return true;
 }

@@ -25,6 +25,7 @@ import {
   AD_DETECT_GOOGLE_REQUEST_ATTEMPTS,
   AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS,
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
+  AD_DETECT_JSON_SCHEMA,
 } from "../../../../consts/antiRaid/adDetect";
 import { logger } from "../../../../infra/logger";
 import { reportGeminiUsage } from "../../../../infra/aiCacheUsage";
@@ -100,15 +101,7 @@ function generateAdDetectContent(
       systemInstruction: cachedContent === null ? instructions : undefined,
       maxOutputTokens,
       responseMimeType: "application/json",
-      responseJsonSchema: {
-        type: "object",
-        properties: {
-          ad: { type: "boolean" },
-          reason: { type: "string" },
-        },
-        required: ["ad", "reason"],
-        additionalProperties: false,
-      },
+      responseJsonSchema: AD_DETECT_JSON_SCHEMA,
     },
   });
 }

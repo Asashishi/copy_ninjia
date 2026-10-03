@@ -31,7 +31,7 @@ export interface BufferedMessage extends AiSpeakerSnapshot {
   replyTo: BufferedReplyReference | undefined;
   /** 当前消息本身是转发时的来源标注（预格式化身份文本）；非转发为 undefined。 */
   forwardedFrom: string | undefined;
-  /** 已格式化的东京时间。 */
+  /** 已格式化的配置时区的时间。 */
   at: string;
   /**
    * 机器人自发图片尚未写入画面内容时的占位状态；普通消息与已有内容的图片为 undefined。

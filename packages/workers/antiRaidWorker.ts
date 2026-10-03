@@ -82,8 +82,8 @@ import {
   resetWorkerDuplex,
   setWorkerDuplexRequestSignal,
 } from "../libs/workerDuplex";
-import { applyWorkerAtmosphere } from "./antiRaid/atmosphere";
-import { plainAtmosphereChats, defaultAtmosphereState } from "../cache/workers/antiRaid/atmosphere";
+import { atmosphereState } from "../cache/workers/antiRaid/atmosphere";
+import { adoptTimeZone } from "../config/time";
 import { installBusinessWorkerPort } from "./businessWorkerPort";
 
 /**
@@ -122,9 +122,10 @@ declare const self: Worker;
 export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
   switch (msg.type) {
     case "agentConfig":
+      adoptTimeZone(msg.timeZone);
       // 主线程投给本线程的第一条消息，config/dynamic/ 热重载替换广告检测配置时再投一次
       // （见 types/antiRaid/protocol.ts 的 AntiRaidAgentConfigMessage）。
-      defaultAtmosphereState.current = msg.defaultAtmosphere;
+      atmosphereState.current = msg.atmosphere;
       adoptAdDetectConfigMessage(msg);
       break;
     case "join":
@@ -216,9 +217,6 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
     case "botPermissionsChanged":
       applyBotPermissionsChange(msg.chatId, msg.permissions);
       break;
-    case "atmosphere":
-      applyWorkerAtmosphere(msg.chatId, msg.plain);
-      break;
     case "chatKind":
       applyChatKindChange(msg.chatId, msg.isSupergroup);
       break;
@@ -299,8 +297,7 @@ export function stopAntiRaidWorker(): void {
   resetFloodWindows();
   resetGenericMessageDeletions();
   resetWorkerBotPermissions();
-  plainAtmosphereChats.clear();
-  defaultAtmosphereState.current = null;
+  atmosphereState.current = null;
   resetWorkerChatKind();
   resetAntiRaidTaskTracker();
   resetWorkerDuplex("Anti-Raid Worker stopped before the main-thread request completed.");

@@ -145,7 +145,7 @@
 - 全量基准不设失败阈值、不改退出码；热路径的 GC/RSS/JIT 硬门禁使用 `bun run perf:hot-path-gate`。
 - 分区固定为冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线；每项在独立子进程里跑三轮，报告平均值、最小值、最大值与变异系数。
 - 全部数据写在仓库根的 `performance/`，配置读 `config_example/`，每轮跑完删除整棵目录；运行结束后 `performance/` 下不得有残留目录。
-- `--write-doc` 同时写两处：三份 `09-performance.md` 的基准区块，以及仓库根 `performance-result.json` 的 `fullSuite.lastRun`（结构化报告全文）。两者是同一次运行的两种呈现，必须由这一个开关一起写出，不得拆成两个 flag。该文件的另一节 `hotPathProfileGate` 由热路径门禁写，两侧都只换自己那一格，见 `scripts/perf/performanceResult.ts`。
+- `--write-doc` 同时写两处：三份 `10-performance.md` 的基准区块，以及仓库根 `performance-result.json` 的 `fullSuite.lastRun`（结构化报告全文）。两者是同一次运行的两种呈现，必须由这一个开关一起写出，不得拆成两个 flag。该文件的另一节 `hotPathProfileGate` 由热路径门禁写，两侧都只换自己那一格，见 `scripts/perf/performanceResult.ts`。
 - 父进程与 `scripts/perf/fullSuite/` 下除 `fixture.ts`、`seed.ts`、`coldStart.ts`、`chain.ts`、`storage.ts` 以外的模块，只能 import 纯常量与 `import type`，不得 import `packages/` 下的实现模块。
 - 新增被测项复用 `scripts/perf/` 已有实现与生产入口；不得为基准另写生产逻辑、落盘格式或夹具规模，夹具规模引用生产常量。
 - 完整命令链路（`ad-detect-command`、`ai-reply-command`、`cron-send-voice`）只在**基准侧**替换出站：模型客户端使用 `packages/cache/` 已有的 holder，Telegram 使用 `scripts/perf/outboundGuard.ts` 的罐头应答，并在 `installOutboundGuards` 之后安装到最外层。`packages/` 不得包含基准专用分支；基准不得发起真实请求。
@@ -210,7 +210,7 @@
 
 - 每次发布必须按以下顺序完整执行：
   1. 在 `dev` 完成开发和门禁。
-  2. 在 `dev` 上运行 `bun run perf:full -- --write-doc`，把三份 `09-performance.md` 的基准区块与 `performance-result.json` 的 `fullSuite.lastRun` 更新到本次发布的读数，并与代码改动一起提交。
+  2. 在 `dev` 上运行 `bun run perf:full -- --write-doc`，把三份 `10-performance.md` 的基准区块与 `performance-result.json` 的 `fullSuite.lastRun` 更新到本次发布的读数，并与代码改动一起提交。
   3. 在干净、已提交的 `dev` 上，为本次声明的每个平台原生执行 `bun run release:build -- --version <tag>`，收集发行包和 SHA-256 文件，并执行 `bun run release:verify -- --version <tag> --platforms <平台列表>`。
   4. 以 `git merge --squash` 合入 `master` 并创建单次提交，确认 Git tree 与构建时一致。
   5. 推送 `master`。
@@ -226,8 +226,8 @@
 - 基准使用默认三轮，与上一次发布同机器、同 Bun 构建；`--rounds` 只用于本地排查，非默认轮数的读数不得写进文档。
 - 跑基准前停掉机器上的其它重负载，包括本仓库的服务进程和其它门禁。
 - 全量基准与 `bun run check` 不得连着跑；等机器空下来再跑后一个，热路径软上报按空载读数判定。
-- 基准区块由脚本按 `<!-- performance-benchmark:start -->` 与 `<!-- performance-benchmark:end -->` 标记整块替换，写入 `docs/{cn,en,ja}/09-performance.md`；区块内容不得手工编辑，三种语言必须同批更新。
-- 三份 README 只保留指向 `09-performance.md` 的链接，不得放入基准读数。
+- 基准区块由脚本按 `<!-- performance-benchmark:start -->` 与 `<!-- performance-benchmark:end -->` 标记整块替换，写入 `docs/{cn,en,ja}/10-performance.md`；区块内容不得手工编辑，三种语言必须同批更新。
+- 三份 README 只保留指向 `10-performance.md` 的链接，不得放入基准读数。
 - 基准跑失败或读数异常时停止发布，查清原因后重跑。
 - Release 确认成功前不得同步 `dev`，不得在只推送 `master` 后结束发布。
 - 发布前必须同步远端 tags，并通过 `gh release list` 读取 GitHub Latest Release。

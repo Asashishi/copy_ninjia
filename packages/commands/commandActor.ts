@@ -31,7 +31,7 @@ export function resolveCommandActor(ctx: CommandContext<Context>): CachedUser | 
 /**
  * 按白名单权限键放行群命令。发起身份只解析一次：持有 permission 时原样返回它；
  * 否则（含解析不出发起身份）在本群回复命令消息发一条拒绝，文案由 rejection 按
- * 发起人标签与本群氛围文案拼出，走 sendCommandMessage 的默认 30 秒清理，并返回
+ * 发起人标签与本进程氛围文案拼出，走 sendCommandMessage 的默认 30 秒清理，并返回
  * undefined。超级管理员恒持有全部权限键（见 whitelist.ts）。
  */
 export async function rejectUnlessPermitted(
@@ -66,7 +66,7 @@ async function replyCommandRejection(
   rejection: CommandRejectionText
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   await sendCommandMessage({
     chatId,
     text: rejection(formatActorLabel(actor, atmosphere), atmosphere),

@@ -12,7 +12,7 @@ import {
   JOIN_LOG_COMPACT_CHECK_BYTES,
   JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES,
   JOIN_LOG_COMPACT_REDUNDANT_ENTRIES,
-  getTokyoDateKey,
+  getDateKey,
   joinMessage,
   currentFile,
   todayAt,
@@ -22,7 +22,7 @@ import {
 
 describe("入群日志压缩故障", () => {
   test("追加后压缩在 rename 前失败：本批照常报落盘、不退避，沿用 cache 并重新累计", async () => {
-    const key: string = `-1001:${getTokyoDateKey()}`;
+    const key: string = `-1001:${getDateKey()}`;
     const written: number =
       await writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES * 2);
     const now: number = todayAt();
@@ -61,7 +61,7 @@ describe("入群日志压缩故障", () => {
   });
 
   test.each([false, true])("压缩时目录 fsync 失败：持续失败=%s，补齐同步前不能确认后续追加", async (persistent: boolean) => {
-    const key: string = `-1001:${getTokyoDateKey()}`;
+    const key: string = `-1001:${getDateKey()}`;
     await writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES * 2);
     const now: number = todayAt();
     await handleJoinLogMessage(joinMessage(-1001, 41, now));
@@ -105,7 +105,7 @@ describe("入群日志压缩故障", () => {
   });
 
   test("追加后压缩在 rename 后失败：本批照常报落盘、不退避，丢弃旧游标并按新快照重开", async () => {
-    const key: string = `-1001:${getTokyoDateKey()}`;
+    const key: string = `-1001:${getDateKey()}`;
     await writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES * 2);
     const now: number = todayAt();
     await handleJoinLogMessage(joinMessage(-1001, 41, now));
@@ -138,7 +138,7 @@ describe("入群日志压缩故障", () => {
   });
 
   test("接管时压缩失败不阻止接管：rename 前失败沿用原文件，rename 后失败按新快照再接管", async () => {
-    const key: string = `-1001:${getTokyoDateKey()}`;
+    const key: string = `-1001:${getDateKey()}`;
     const now: number = todayAt();
     const error = spyOn(console, "error").mockImplementation((): void => {});
     try {

@@ -42,6 +42,7 @@ mock.module("../../../packages/config/agent", () => ({
     summary: { provider: "openai", apiKey: "summary-key", baseUrl: "https://gateway.invalid/v1", model: "summary-model" },
     media: { provider: "openai", apiKey: "media-key", baseUrl: "https://gateway.invalid/v1", model: "media-model" },
     image: { provider: "openai", apiKey: "image-key", baseUrl: "https://image.invalid/v1", model: "image-model", imageProtocol: "openai-standard" },
+    webSearch: { provider: "openai", apiKey: "search-key", baseUrl: "https://search.invalid/v1", model: "grok-4.7" },
   }),
 }));
 mock.module("../../../packages/infra/logger", () => ({
@@ -55,11 +56,11 @@ const {
 } = await import("../../../packages/aiChat/openai/client");
 const { openAiClientCache } = await import("../../../packages/cache/workers/aiChat/openai");
 const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
+const { searchOpenAiWeb } = await import("../../../packages/aiChat/openai/search");
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
 const {
   OPENAI_REQUEST_MAX_RETRIES,
-  OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
-  OPENAI_REQUEST_TIMEOUT_MS,
+  OPENAI_REQUEST_TIMEOUTS_MS,
 } = await import("../../../packages/consts/aiChat/openai");
 
 const BODY = { model: "test-model", input: "hi" } as unknown as OpenAI.Responses.ResponseCreateParamsNonStreaming;
@@ -89,7 +90,7 @@ afterEach(() => {
 describe("客户端构造", () => {
   test("超时与重试次数由 consts 固定，baseURL 取自 config/dynamic/agent.json 的对应能力", () => {
     // media 比纯文本往返宽一档。
-    expect(OPENAI_MEDIA_REQUEST_TIMEOUT_MS).toBeGreaterThan(OPENAI_REQUEST_TIMEOUT_MS);
+    expect(OPENAI_REQUEST_TIMEOUTS_MS.media).toBeGreaterThan(OPENAI_REQUEST_TIMEOUTS_MS.summary);
     getOpenAiClient("summary");
     // 每项能力独立持有认证；即使端点相同也不能误用另一项的 key。
     getOpenAiClient("media");
@@ -98,13 +99,13 @@ describe("客户端构造", () => {
     expect(createdOptions[0]).toEqual({
       apiKey: "summary-key",
       baseURL: "https://gateway.invalid/v1",
-      timeout: OPENAI_REQUEST_TIMEOUT_MS,
+      timeout: OPENAI_REQUEST_TIMEOUTS_MS.summary,
       maxRetries: OPENAI_REQUEST_MAX_RETRIES,
     });
     expect(createdOptions[1]).toEqual({
       apiKey: "media-key",
       baseURL: "https://gateway.invalid/v1",
-      timeout: OPENAI_MEDIA_REQUEST_TIMEOUT_MS,
+      timeout: OPENAI_REQUEST_TIMEOUTS_MS.media,
       maxRetries: OPENAI_REQUEST_MAX_RETRIES,
     });
   });
@@ -261,6 +262,29 @@ describe("失败分类", () => {
     const result = await requestOpenAiResult({ capability: "summary", buildBody: () => BODY, errorLabel: "AI test API" });
     expect(result.ok).toBe(true);
     expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  test("网页搜索完整链路按一条记录保存 token 与八次检索，失败产出仍记账，缺 token 时只记检索", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    const output: unknown[] = Array.from({ length: 8 }, (): unknown => ({ type: "web_search_call", action: { type: "search" }, status: "completed" }));
+    const usage: Pick<OpenAI.Responses.ResponseUsage, "input_tokens" | "input_tokens_details" | "output_tokens"> =
+      { input_tokens: 1_000, input_tokens_details: { cached_tokens: 600, cache_write_tokens: 0 }, output_tokens: 20 };
+    try {
+      respondWith({ output, output_text: "结论", usage });
+      expect(await searchOpenAiWeb("web_search", { instruction: "i", query: "q" })).toMatchObject({ ok: true, searchCalls: 8 });
+      respondWith({ output, status: "incomplete", usage });
+      expect(await searchOpenAiWeb("web_search", { instruction: "i", query: "q" })).toEqual({ ok: false, searchCalls: 8 });
+      respondWith({ output, output_text: "结论" });
+      await searchOpenAiWeb("web_search", { instruction: "i", query: "q" });
+      expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+        { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 1_000, cachedInputTokens: 600, outputTokens: 20, searchCalls: 8 },
+        { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 1_000, cachedInputTokens: 600, outputTokens: 20, searchCalls: 8 },
+        { kind: "search", capability: "web_search", provider: "openai", model: "grok-4.7", searchCalls: 8 },
+      ]);
+    } finally {
+      installAiCacheUsageSink(null);
+    }
   });
 
   test("请求体构造抛错（config/dynamic/agent.json 写坏）归类成请求失败，而不是掀给调用方", async () => {

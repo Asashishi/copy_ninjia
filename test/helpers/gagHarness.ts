@@ -31,6 +31,7 @@ import {
   gagSessionsByChat,
 } from "../../packages/cache/main/gag";
 import { inlineResultSources } from "../../packages/cache/main/inlineResultSources";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
 
 export {
   activeGagSessionCount,
@@ -88,14 +89,11 @@ export const gagTestSwitches: {
   /** false 时快照确证机器人不是本群管理员，此时各权限位恒为 false。 */
   botIsAdministrator: boolean;
   canDeleteMessages: boolean;
-  /** 非 undefined 时模拟本群配置了自定义人设，命令改用普通版文案。 */
-  aiPersona: string | undefined;
 } = {
   permissionAllowed: true,
   botPermissionsKnown: true,
   botIsAdministrator: true,
   canDeleteMessages: true,
-  aiPersona: undefined,
 };
 
 mock.module("../../packages/infra/botAdmin", () => ({
@@ -117,9 +115,7 @@ mock.module("../../packages/infra/logger", () => ({
   logger: loggerStub(),
 }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
-  getChatState: (): Readonly<{ aiPersona: string | undefined }> => ({
-    aiPersona: gagTestSwitches.aiPersona,
-  }),
+  getChatState: (): Readonly<Record<string, never>> => ({}),
   getGagThumbnailUrl: (): string => GAG_THUMBNAIL_URL,
 }));
 mock.module("../../packages/infra/telegram", () => ({
@@ -310,13 +306,15 @@ export function resetGagTestState(): void {
  * Date.now 替身与 mock 实现会跨用例泄漏。
  */
 export function installGagTestHooks(): void {
+  const preloadedAtmosphere: typeof botAtmosphereState.current = botAtmosphereState.current;
   beforeEach(() => {
     resetGagTestState();
     gagTestSwitches.permissionAllowed = true;
     gagTestSwitches.botPermissionsKnown = true;
     gagTestSwitches.botIsAdministrator = true;
     gagTestSwitches.canDeleteMessages = true;
-    gagTestSwitches.aiPersona = undefined;
+    // 普通通知风格的用例自行改成 plain；每个用例从雌小鬼语气起步。
+    botAtmosphereState.current = "teasing";
     Date.now = (): number => 1_000_000;
     for (const mocked of [
       deleteEphemeralMessageWithOutcome,
@@ -344,5 +342,6 @@ export function installGagTestHooks(): void {
   afterEach(() => {
     resetGagTestState();
     Date.now = originalDateNow;
+    botAtmosphereState.current = preloadedAtmosphere;
   });
 }

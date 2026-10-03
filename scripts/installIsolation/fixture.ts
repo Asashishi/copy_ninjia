@@ -113,8 +113,20 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "if [[ \"$inline_source\" == *\"assertStateFilesMigrated\"* ]]; then",
     "  COPY_NINJIA_DATA_ROOT=\"${COPY_NINJIA_DATA_ROOT:-$FAKE_RUNTIME_ROOT}\" exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); await runtime.assertStateFilesMigrated();' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
     "fi",
-    "if [[ \"$inline_source\" == *\"loadInstallerBotAtmosphere\"* ]]; then",
-    "  exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); console.log(await runtime.loadInstallerBotAtmosphere(\"config/static/bot.json\"));' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
+    "if [[ \"$inline_source\" == *\"assertStorageDatabaseMigrated\"* ]]; then",
+    "  COPY_NINJIA_DATA_ROOT=\"${COPY_NINJIA_DATA_ROOT:-$FAKE_RUNTIME_ROOT}\" exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); await runtime.assertStorageDatabaseMigrated();' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
+    "fi",
+    "if [[ \"$inline_source\" == *\"assertStorageDatabaseTimeZone\"* ]]; then",
+    "  COPY_NINJIA_DATA_ROOT=\"${COPY_NINJIA_DATA_ROOT:-$FAKE_RUNTIME_ROOT}\" exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); const config = await runtime.loadInstallerBotConfig(\"config/static/bot.json\"); runtime.assertStorageDatabaseTimeZone(config.timeZone);' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
+    "fi",
+    "if [[ \"$inline_source\" == *\"createStorageDatabase\"* ]]; then",
+    "  mkdir -p -- \"$(dirname -- \"$FAKE_IDENTITY_DATABASE\")\"",
+    "  : > \"$FAKE_IDENTITY_DATABASE\"",
+    "  printf 'database:create\\n' >> \"$FAKE_CALL_LOG\"",
+    "  exit 0",
+    "fi",
+    "if [[ \"$inline_source\" == *\"loadInstallerBotConfig\"* ]]; then",
+    "  exec \"$REAL_BUN_PATH\" -e 'const runtime = await import(Bun.argv[1]); const config = await runtime.loadInstallerBotConfig(\"config/static/bot.json\"); console.log(config.atmosphere ?? \"\"); console.log(config.timeZone);' \"$FAKE_INSTALL_RUNTIME_MODULE\"",
     "fi",
     "if [[ \"$inline_source\" == *\"validateStagedBotConfig\"* ]]; then",
     "  printf 'validate:telegram\\n' >> \"$FAKE_CALL_LOG\"",
@@ -124,12 +136,6 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "if [[ \"$inline_source\" == *\"validateAgentDeploymentConfig\"* ]]; then",
     "  printf 'validate:agent\\n' >> \"$FAKE_CALL_LOG\"",
     "  exec \"$REAL_BUN_PATH\" -e 'JSON.parse(await Bun.file(Bun.argv[1]).text())' \"${3:?}\"",
-    "fi",
-    "if [[ \"$inline_source\" == *\"createStorageDatabase\"* ]]; then",
-    "  mkdir -p -- \"$(dirname -- \"$FAKE_IDENTITY_DATABASE\")\"",
-    "  : > \"$FAKE_IDENTITY_DATABASE\"",
-    "  printf 'database:create\\n' >> \"$FAKE_CALL_LOG\"",
-    "  exit 0",
     "fi",
     "if [[ \"$inline_source\" == *\"IDENTITY_DATABASE_PATH\"* ]]; then",
     "  printf '%s' \"$FAKE_IDENTITY_DATABASE\"",
@@ -321,7 +327,7 @@ export async function createFixture(realRuntime: boolean = false): Promise<Insta
   await Bun.write(join(fixture.worktree, "package.json"), Bun.file(join(PROJECT_ROOT, "package.json")));
   await writeText(join(fixture.worktree, "index.ts"), "");
   if (realRuntime) {
-    for (const relativePath of ["packages", "prompt", "index.ts", "tsconfig.json", "bun.lock", "scripts/install/runtime.ts"]) {
+    for (const relativePath of ["packages", "index.ts", "tsconfig.json", "bun.lock", "scripts/install/runtime.ts"]) {
       await copyFixtureTree(join(PROJECT_ROOT, relativePath), join(fixture.worktree, relativePath));
     }
     symlinkSync(join(PROJECT_ROOT, "node_modules"), join(fixture.worktree, "node_modules"));

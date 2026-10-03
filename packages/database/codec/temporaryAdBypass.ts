@@ -3,12 +3,13 @@ import {
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
 } from "../../consts/temporaryAdBypass";
 import { invalidInput } from "../../libs/inputValidation";
-import { getTokyoDayIndex } from "../../libs/time";
+import { MAX_EPOCH_MILLISECONDS } from "../../consts/time";
+import { getDayIndex } from "../../libs/time";
 import type { TemporaryAdBypassActivity } from "../../types/states/temporaryAdBypass";
 
 function assertTimestamp(value: number, source: string, path: string): void {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    return invalidInput(source, path, "a non-negative safe integer epoch-millisecond timestamp");
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_EPOCH_MILLISECONDS) {
+    return invalidInput(source, path, "a non-negative safe integer epoch-millisecond timestamp within the calendar API range");
   }
 }
 
@@ -62,14 +63,14 @@ export function assertTemporaryAdBypassActivity(
       value.sendCount <= TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD ||
       value.qualifiedDays < 1 ||
       value.qualifiedAt > value.countedAt ||
-      getTokyoDayIndex(value.qualifiedAt) !==
-        getTokyoDayIndex(value.countedAt)
+      getDayIndex(value.qualifiedAt) !==
+        getDayIndex(value.countedAt)
     )
   ) {
     return invalidInput(
       source,
       "$.qualified_at",
-      "in the counted_at Tokyo day after the daily threshold is exceeded"
+      "in the counted_at configured local day after the daily threshold is exceeded"
     );
   }
   if (

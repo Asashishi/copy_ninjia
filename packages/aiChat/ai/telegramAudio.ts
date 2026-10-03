@@ -3,7 +3,7 @@
  *
  * 与 telegramImage.ts 的两处刻意差别：
  * 1. **不转码。** voice note 恒为 OGG/Opus，而多模态理解接口本来就收 audio/ogg；
- *    图片那侧要转码是因为两家视觉接口只认 jpg/png，这里没有对等约束。
+ *    图片那侧要转码是因为各家视觉接口统一按 jpg/png 收图，这里没有对等约束。
  * 2. **上限更小。** 音频同样 base64 内联进模型请求，编码后涨 4/3，受同一份内联
  *    请求预算约束；语音另按 Worker 内存取更小的上限（见 consts/aiChat/voice.ts 的
  *    VOICE_MAX_DOWNLOAD_BYTES 与 consts/aiChat/media.ts 的 MEDIA_INLINE_REQUEST_MAX_BYTES）。

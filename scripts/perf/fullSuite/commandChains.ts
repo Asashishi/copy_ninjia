@@ -350,6 +350,7 @@ function cronSendVoiceChain(
         action,
         signal: new AbortController().signal,
         voices,
+        digests: new Map(),
       });
       if (outcome.kind !== "sent") {
         throw new Error(`Cron voice ${sequence} was not delivered: ${outcome.kind}.`);

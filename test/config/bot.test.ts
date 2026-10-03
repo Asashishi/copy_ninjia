@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   BOT_TOKEN,
@@ -9,7 +10,7 @@ import { BOT_CONFIG_PATH } from "../../packages/consts/paths";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 import { botConfigCache } from "../../packages/cache/perThread/config";
 import type { BotConfig } from "../../packages/types/config";
-import { DEFAULT_BOT_ATMOSPHERE } from "../../packages/consts/bot";
+import { DEFAULT_BOT_TIME_ZONE } from "../../packages/consts/bot";
 
 afterEach((): void => {
   botConfigCache.current = null;
@@ -27,7 +28,7 @@ describe("config/static/bot.json", () => {
       { bot_token: "  token:secret  ", super_admin_user_id: 123 },
       "telegram.test.json"
     );
-    expect(parsed).toEqual({ atmosphere: DEFAULT_BOT_ATMOSPHERE, botToken: "token:secret", superAdminUserId: 123 });
+    expect(parsed).toEqual({ timeZone: DEFAULT_BOT_TIME_ZONE, atmosphere: undefined, botToken: "token:secret", superAdminUserId: 123 });
   });
 
   test("示例 token 在启动前拒绝且错误不回显原值", () => {
@@ -53,6 +54,8 @@ describe("config/static/bot.json", () => {
       config.superAdminUserId = 456;
       // @ts-expect-error 通知风格属于本次启动的只读配置。
       config.atmosphere = "normal";
+      // @ts-expect-error 默认时区属于本次启动的只读配置。
+      config.timeZone = "UTC";
     };
     expect(assertReadonly).toBeDefined();
   });
@@ -69,7 +72,7 @@ describe("config/static/bot.json", () => {
   });
 
   test("快照就位后读取原样交回同一份对象，不重新解析", () => {
-    const snapshot: BotConfig = { atmosphere: "mesugaki", botToken: "token:snapshot", superAdminUserId: 7 };
+    const snapshot: BotConfig = { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "token:snapshot", superAdminUserId: 7 };
     botConfigCache.current = snapshot;
     expect(getBotConfig()).toBe(snapshot);
   });
@@ -91,13 +94,43 @@ describe("config/static/bot.json", () => {
   });
 });
 
-test("通知风格只在真正缺省时默认雌小鬼", () => {
+test("通知风格缺省保持未配置，显式值 trim 后保留且非法值拒绝", () => {
   for (const atmosphere of [undefined, "mesugaki", "normal"] as const) {
     expect(parseBotConfig({ bot_token: "secret", super_admin_user_id: 7, atmosphere }).atmosphere)
-      .toBe(atmosphere ?? DEFAULT_BOT_ATMOSPHERE);
+      .toBe(atmosphere);
   }
-  for (const atmosphere of [null, "plain", "teasing", "", 1, [], {}]) {
+  for (const atmosphere of ["mesugaki", "normal"] as const) {
+    expect(parseBotConfig({ bot_token: "secret", super_admin_user_id: 7, atmosphere: ` ${atmosphere} ` }).atmosphere)
+      .toBe(atmosphere);
+  }
+  for (const atmosphere of [null, "plain", "teasing", "", "  ", 1, [], {}]) {
     expect(() => parseBotConfig({ bot_token: "secret", super_admin_user_id: 7, atmosphere }, "bot.fixture.json"))
       .toThrow("bot.fixture.json: $.atmosphere must be mesugaki or normal");
+  }
+});
+
+test("默认时区缺省使用 Bot 默认值，配置值 trim 后保留", () => {
+  const identity: Readonly<Record<string, unknown>> = { bot_token: "secret", super_admin_user_id: 7 };
+  expect(parseBotConfig(identity).timeZone).toBe(DEFAULT_BOT_TIME_ZONE);
+  for (const timeZone of ["UTC", "Asia/Shanghai", "America/New_York", "Asia/Kathmandu"]) {
+    expect(parseBotConfig({ ...identity, time_zone: ` ${timeZone} ` }).timeZone).toBe(timeZone);
+  }
+});
+
+test("默认时区按 Temporal 规范化大小写，别名不折叠", () => {
+  const identity: Readonly<Record<string, unknown>> = { bot_token: "secret", super_admin_user_id: 7 };
+  for (const [input, canonical] of [
+    ["asia/tokyo", "Asia/Tokyo"], ["ASIA/TOKYO", "Asia/Tokyo"], ["utc", "UTC"],
+    ["europe/london", "Europe/London"], ["Japan", "Japan"], ["Asia/Calcutta", "Asia/Calcutta"],
+  ] as const) {
+    expect(parseBotConfig({ ...identity, time_zone: input }).timeZone).toBe(canonical);
+  }
+});
+
+test("存在但非法的默认时区拒绝，错误只包含文件、字段与期望", () => {
+  for (const timeZone of [null, "", "  ", "secret-invalid-zone", "+09:00", 9, true, [], {}]) {
+    expect((): BotConfig => parseBotConfig({
+      bot_token: "secret", super_admin_user_id: 7, time_zone: timeZone,
+    }, "bot.fixture.json")).toThrow("bot.fixture.json: $.time_zone must be an IANA time zone name.");
   }
 });

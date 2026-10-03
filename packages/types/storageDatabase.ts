@@ -33,7 +33,6 @@ export interface StoredPendingRemovalStartupRow {
 
 /** 群状态 JSONB 经 SQLite `json()` 规范化后的文本行。 */
 export interface StoredChatStateRow {
-  readonly aiPersona: string | null;
   readonly chatId: number;
   readonly data: string;
 }
@@ -53,10 +52,15 @@ export interface StoredStorageMetadataRow {
   readonly data: string;
 }
 
+/** storage_metadata 中 time-zone 行的 JSON 正文；timeZone 为 Temporal 规范化后的 IANA 名。 */
+export interface StorageTimeZoneMetadata {
+  readonly timeZone: string;
+}
+
 /**
  * 生产启动恢复载荷；名单只取计数，群状态只恢复正文而不执行启动正确性校验。
  *
- * 不含 schema 元数据：版本判定必须早于当前业务表的读取，因此那一行由
+ * 不含 storage_metadata：版本与时区判定必须早于当前业务表的读取，因此元数据由
  * readStorageDatabaseSchemaMetadata 单独取，不从这里回传。
  */
 export interface StorageDatabaseStartupRows {
@@ -69,11 +73,6 @@ export interface StorageDatabaseStartupRows {
 /** 事务缓冲中一项主键的最终 JSON 文本；null 表示删除。 */
 export interface StorageDatabaseChange {
   readonly data: string | null;
-}
-
-/** 群状态与人设由主线程以同一 revision 提交；上下文由 AI owner 以 StorageAiContextChange 另行排入。 */
-export interface StorageChatStateChange extends StorageDatabaseChange {
-  readonly aiPersona: string | null;
 }
 
 /** 一群 AI 上下文在事务缓冲中的最终快照文本；null 表示清空 `ai_context`。 */

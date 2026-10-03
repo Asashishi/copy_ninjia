@@ -66,12 +66,13 @@ export const VERIFICATION_TERMINAL_RETRY_MAX_MS: number = 30 * 60 * 1000;
  */
 export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
 /**
- * 单进程允许同时保留的验证记录 key 总数，覆盖 active、延后终态与尚待落盘确认的
- * tombstone。达到上限时主线程拒绝新 key 并触发受监督停机；启动恢复超过上限也
- * 直接拒绝，不淘汰、不截断安全状态。
+ * 单进程允许同时保留的持久化验证记录 key 总数，覆盖 active、延后终态与尚待
+ * 落盘确认的 tombstone。达到上限时主线程拒绝新 key 并触发受监督停机；启动恢复
+ * 超过上限也直接拒绝，不淘汰、不截断安全状态。
  *
- * 主线程镜像与 Disk I/O Worker 的 Map 使用同一硬上限；Anti-Raid Worker 的运行态
- * 不设独立上限，硬顶由主线程镜像与落盘侧挡住。所属模块：antiRaid/verificationMirror.ts、
+ * 主线程镜像与 Disk I/O Worker 的 Map 使用同一硬上限；Anti-Raid Worker 的
+ * revision Map 另以 VERIFICATION_REVISION_CAPACITY 约束活跃与保留期终结键。
+ * 所属模块：antiRaid/verificationMirror.ts、
  * antiRaid/workerBridge/controller.ts、workers/diskIO/verificationWrites.ts、
  * workers/diskIO/verificationRecovery.ts。
  *
@@ -81,6 +82,8 @@ export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
  * 其余余量留给私密模式未能生效（冷却期或缺少改权限的权限）时的溢出。
  */
 export const VERIFICATION_RECORD_CAPACITY: number = 15_000;
+/** Worker 当前代际的活跃与保留期终结 revision 共用的硬上限；新键满额时请求主线程停机。 */
+export const VERIFICATION_REVISION_CAPACITY: number = VERIFICATION_RECORD_CAPACITY;
 /**
  * 冷启动恢复终态时，Worker 并发反查群类型的硬顶。请求按群复用，超过时保留终态
  * 等下一轮退避，避免大量历史群同时恢复时无界创建 getChat Promise。

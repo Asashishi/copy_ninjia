@@ -42,7 +42,6 @@ import {
   resetVerificationAttemptRuntime,
 } from "../verificationAttempts";
 import { canBypassAdDetection } from "../memberFacts";
-import { getChatState } from "../../infra/storage/stateStore";
 import { handleAntiRaidWorkerEvent } from "./events";
 import { registerAntiRaidBridgeObservers } from "./observers";
 import {
@@ -56,7 +55,6 @@ import {
   replayAdDetectAgentConfig,
   replayBotPermissions,
   replayChatKinds,
-  replayChatAtmospheres,
 } from "./replay";
 import { isTerminalVerificationPhase } from "../../states/verification/shared";
 
@@ -124,7 +122,6 @@ const {
       if (!replayAdDetectAgentConfig(postToNext)) return;
       if (!replayBotPermissions(postToNext)) return;
       if (!replayChatKinds(postToNext)) return;
-      if (!replayChatAtmospheres(postToNext)) return;
       if (!postToNext(buildAdoptVerificationsMessage(generation))) return;
 
       for (const [key, record] of activeVerificationSnapshots) {
@@ -182,12 +179,6 @@ export function syncAntiRaidAgentConfig(): void {
   }
 }
 
-/** 群人设写入和删除完成后推送风格；不可用的 Worker 在重建时重放当前群状态。 */
-export function syncAntiRaidAtmosphere(chatId: number): void {
-  if (!antiRaidRuntimeState.initialized) return;
-  postAntiRaid({ type: "atmosphere", chatId, plain: getChatState(chatId).aiPersona !== undefined });
-}
-
 function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
   if (postAntiRaid(message)) return;
   throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
@@ -217,9 +208,6 @@ export function initAntiRaid(): void {
     }
     if (!replayChatKinds(postAntiRaid)) {
       throw new WorkerUndeliveredError("Anti-Raid Worker rejected the chat kind snapshot.");
-    }
-    if (!replayChatAtmospheres(postAntiRaid)) {
-      throw new WorkerUndeliveredError("Anti-Raid Worker rejected the atmosphere snapshot.");
     }
     postAntiRaidOrThrow(buildAdoptVerificationsMessage(generation, true));
     replayPendingBlockedRemovals(false);

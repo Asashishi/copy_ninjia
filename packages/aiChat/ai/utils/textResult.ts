@@ -1,5 +1,5 @@
 /**
- * 文本生成结果的收尾判定，两家实现包共用。
+ * 文本生成结果的收尾判定，各家实现包共用。
  *
  * 纯函数叶子模块，不接触任何缓存与 SDK 类型（见 AGENTS.md 的「缓存与线程归属」）。
  */
@@ -7,7 +7,7 @@
 import type { AiTextResult } from "../../../types/aiChat/provider";
 
 /**
- * 两家实现包共用的请求失败归因。名字与各自 `RequestResult.failureKind` 一致：
+ * 各家实现包共用的请求失败归因。名字与各自 `RequestResult.failureKind` 一致：
  * 那是同一套业务语义，不该在收窄成 AiTextResult 时各写一份映射。
  */
 export type AiRequestFailureKind =
@@ -35,7 +35,7 @@ export type AiRequestFailureKind =
  */
 export function classifyAiTextFailure(
   failureKind: AiRequestFailureKind,
-  capability: "summary" | "media"
+  capability: "summary" | "media" | "text"
 ): AiTextResult {
   if (failureKind === "response") return { ok: false, retryable: true };
   if (capability !== "media" || failureKind === "rejected") return { ok: false, retryable: false };

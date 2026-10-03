@@ -1,18 +1,35 @@
 import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildBotStatusMessage,
   formatBotMemory,
   formatBotUptime,
 } from "../../packages/commands/botStatus";
-import type {
-  BotStatusMessage,
-  BotStatusSnapshot,
-} from "../../packages/commands/botStatus";
+import type { BotStatusSnapshot } from "../../packages/commands/botStatus";
 import { BOT_CHAT_PERMISSION_KEYS } from "../../packages/consts/botAdmin";
 import { BOT_STATUS_FEATURE_KEYS } from "../../packages/consts/botStatus";
 import { botPermissions } from "../helpers/botPermissions";
 import { chatStateOf } from "../helpers/chatState";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
+import { parseMarkdownV2 } from "../helpers/markdownV2";
+import type { ParsedMarkdownV2 } from "../helpers/markdownV2";
+
+/** 按 Telegram 的 MarkdownV2 解析口径还原回执的可见正文与实体；原文会被拒收时直接抛错。 */
+function renderStatus(snapshot: BotStatusSnapshot): ParsedMarkdownV2 {
+  return parseMarkdownV2(buildBotStatusMessage(snapshot).text);
+}
+
+/** 在指定的本进程文案风格下执行，结束后还原 preload 接管的值。 */
+function withAtmosphere<T>(atmosphere: Atmosphere, run: () => T): T {
+  const previous: Atmosphere | null = botAtmosphereState.current;
+  botAtmosphereState.current = atmosphere;
+  try {
+    return run();
+  } finally {
+    botAtmosphereState.current = previous;
+  }
+}
 
 function statusSnapshot(): BotStatusSnapshot {
   return {
@@ -65,7 +82,6 @@ function statusSnapshot(): BotStatusSnapshot {
     chatState: chatStateOf({
       isInitEnabled: true,
       isAIChatEnabled: true,
-      aiPersona: "secret-persona\n本群的自定义提示词正文",
       isAdDetectEnabled: true,
       isAntiRaidEnabled: true,
       botPermissions: botPermissions({ canDeleteMessages: true }),
@@ -88,27 +104,36 @@ function statusSnapshot(): BotStatusSnapshot {
 }
 
 describe("/bot_status", () => {
-  test("只展示模型路由、总闸状态和本群开启项，不泄漏密钥或端点", () => {
-    const text: string = buildBotStatusMessage(statusSnapshot()).text;
+  // 除点名语气的用例外，本组使用普通通知文案。
+  const preloaded: Atmosphere | null = botAtmosphereState.current;
+  beforeEach(() => { botAtmosphereState.current = "plain"; });
+  afterEach(() => { botAtmosphereState.current = preloaded; });
+
+  test("只展示已配置的模型名和本群开启项，不泄漏密钥或端点", () => {
+    const text: string = renderStatus(statusSnapshot()).text;
 
     expect(text).toStartWith("机器人状态");
     expect(text).toContain("全局模型能力：");
-    expect(text).toContain("群聊正文：已配置 · gpt-status\n");
-    expect(text).toContain("图片生成：未配置");
-    expect(text).toContain("语音合成：已配置 · gemini-tts\n");
-    expect(text).toContain("广告检测：已配置 · ad-model\n");
+    expect(text).toContain("群聊正文：gpt-status\n");
+    expect(text).toContain("记忆摘要：gemini-summary\n");
+    expect(text).toContain("媒体理解：gemini-media\n");
+    expect(text).toContain("语音合成：gemini-tts\n");
+    expect(text).toContain("广告检测：ad-model\n");
+    expect(text).not.toContain("图片生成：");
+    expect(text).not.toContain("联网检索：");
+    expect(text).not.toContain("已配置");
+    expect(text).not.toContain("未配置");
     expect(text).toContain("Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/81920");
-    expect(text).not.toContain("本群的自定义提示词正文");
     expect(text).not.toContain("openai");
     expect(text).not.toContain("google");
-    // 本群一组：id 在前，提示词状态在最后。
+    // 本群一组：id 在前，翻译会话占用在最后，不再展示提示词状态。
     expect(text).toContain(
       "• 本群 ID：-1001234567890\n" +
       "• AI 上下文利用率：47.86%\n" +
       "• 当前 gag 会话：3/5\n" +
-      "• 本群翻译人数：2/5 人\n" +
-      "• 本群自定义提示词：已设置\n"
+      "• 本群翻译人数：2/5 人\n\n"
     );
+    expect(text).not.toContain("提示词");
     expect(text).toContain("本机进程：");
     expect(text).toContain("Bot 运行时长：2 天 03:04:05");
     expect(text).toContain("CPU：12.35% (6 Core)");
@@ -125,9 +150,55 @@ describe("/bot_status", () => {
     expect(text).not.toContain("冷记忆摘要");
   });
 
+  test("配置了 web_search 时联网检索行展示它的模型名，不显示余量", () => {
+    const snapshot: BotStatusSnapshot = statusSnapshot();
+    const text: string = renderStatus({
+      ...snapshot,
+      aiConfig: {
+        ...snapshot.aiConfig!,
+        webSearch: {
+          provider: "openai",
+          apiKey: "secret-search-key",
+          baseUrl: undefined,
+          headers: undefined,
+          model: "openai/gpt-search",
+          maxCallsPerUse: 7,
+        },
+      },
+    }).text;
+    expect(text).toContain("语音合成：gemini-tts\n• 联网检索：gpt-search\n");
+    expect(text).not.toContain("secret-search-key");
+  });
+
+  test("可选生图已配置时展示模型，未配置的语音与广告检测不占行", () => {
+    const snapshot: BotStatusSnapshot = statusSnapshot();
+    const text: string = renderStatus({
+      ...snapshot,
+      aiConfig: {
+        ...snapshot.aiConfig!,
+        image: {
+          provider: "google",
+          apiKey: "secret-image-key",
+          baseUrl: undefined,
+          headers: undefined,
+          model: "google/imagen-status",
+          imageProtocol: undefined,
+        },
+        tts: undefined,
+      },
+      adDetectReady: false,
+      adDetectConfig: null,
+    }).text;
+
+    expect(text).toContain("图片生成：imagen-status\n");
+    expect(text).not.toContain("语音合成：");
+    expect(text).not.toContain("广告检测：");
+    expect(text).not.toContain("secret-image-key");
+  });
+
   test("xai 语音协议没有模型名，语音合成行展示音色", () => {
     const snapshot: BotStatusSnapshot = statusSnapshot();
-    const text: string = buildBotStatusMessage({
+    const text: string = renderStatus({
       ...snapshot,
       aiConfig: {
         ...snapshot.aiConfig!,
@@ -146,12 +217,12 @@ describe("/bot_status", () => {
         },
       },
     }).text;
-    expect(text).toContain("语音合成：已配置 · ara\n");
+    expect(text).toContain("语音合成：ara\n");
     expect(text).not.toContain("secret-xai-key");
   });
 
-  test("部署能力不可用和群功能全关时给出明确状态", () => {
-    const text: string = buildBotStatusMessage({
+  test("部署能力不可用时省略模型能力段，群功能仍完整展示", () => {
+    const text: string = withAtmosphere("teasing", (): string => renderStatus({
       ...statusSnapshot(),
       aiReady: false,
       aiConfig: null,
@@ -161,17 +232,18 @@ describe("/bot_status", () => {
       telegramActive: 0,
       telegramPending: 0,
       aiContextUsage: undefined,
-    }).text;
+    }).text);
 
-    expect(text).toContain("AI 对话能力：不可用（部署配置未就绪）");
-    expect(text).toContain("广告检测：不可用（部署配置未就绪）");
+    expect(text).not.toContain("全局模型能力");
+    expect(text).not.toContain("AI 对话能力：");
+    expect(text).not.toContain("广告检测：");
+    expect(text).toContain("Telegram 出站：");
     // 镜像没有条目就是「此刻没有可展示的上下文」，按 0 展示而不是沿用旧值。
     expect(text).toContain(
       "• 本群 ID：-1001234567890\n" +
       "• 猫娘大脑利用率：0.00%\n" +
       "• 正在被本天才调教的杂鱼：3/5\n" +
-      "• 本群正赖着本天才翻译的杂鱼：2/5♡\n" +
-      "• 本群专属提示词：未设置，本天才就用默认人设啦，笨蛋♡\n"
+      "• 本群正赖着本天才翻译的杂鱼：2/5♡\n\n"
     );
     expect(text).toEndWith(
       "本群的开关都摆这儿了，连这个都记不住吗，笨蛋♡：\n" +
@@ -187,9 +259,20 @@ describe("/bot_status", () => {
     );
   });
 
+  test("对话能力不可用但广告检测可用时只列广告模型", () => {
+    const text: string = renderStatus({
+      ...statusSnapshot(),
+      aiReady: false,
+      aiConfig: null,
+    }).text;
+
+    expect(text).toContain("全局模型能力：\n• 广告检测：ad-model\n");
+    expect(text).not.toContain("群聊正文：");
+    expect(text).not.toContain("AI 对话能力：");
+  });
+
   test("本群权限块只列已经拥有的位，键给英文字段名、值给中文名", () => {
-    // 发送边界不设 parse_mode，围栏只会原样显示；范围必须由实体标出。
-    const message: BotStatusMessage = buildBotStatusMessage(statusSnapshot());
+    const message: ParsedMarkdownV2 = renderStatus(statusSnapshot());
     const entity = message.entities[1]!;
     expect(message.entities).toHaveLength(3);
     expect(entity.type).toBe("pre");
@@ -218,7 +301,7 @@ describe("/bot_status", () => {
 
   test("一位权限都没有时给出空对象，仍是一个完整的 JSON 块", () => {
     const snapshot: BotStatusSnapshot = statusSnapshot();
-    const message: BotStatusMessage = buildBotStatusMessage({
+    const message: ParsedMarkdownV2 = renderStatus({
       ...snapshot,
       chatState: {
         ...snapshot.chatState,
@@ -233,9 +316,9 @@ describe("/bot_status", () => {
     expect(message.text).toContain("机器人在本群的权限：\n{}");
   });
 
-  test("权限尚未确证时不出 JSON 块，也不留下空的 pre 实体", () => {
+  test("权限尚未确证时不出 JSON 块，也不留下空的代码块", () => {
     const snapshot: BotStatusSnapshot = statusSnapshot();
-    const message: BotStatusMessage = buildBotStatusMessage({
+    const message: ParsedMarkdownV2 = renderStatus({
       ...snapshot,
       chatState: { ...snapshot.chatState, botPermissions: undefined },
     });
@@ -248,7 +331,7 @@ describe("/bot_status", () => {
   });
 
   test("功能块逐项给出本群开关的真假，键与顺序随 BOT_STATUS_FEATURE_KEYS", () => {
-    const message: BotStatusMessage = buildBotStatusMessage(statusSnapshot());
+    const message: ParsedMarkdownV2 = renderStatus(statusSnapshot());
     const entity = message.entities[2]!;
     expect(entity.type).toBe("pre");
     expect(entity).toMatchObject({ language: "json" });
@@ -268,13 +351,9 @@ describe("/bot_status", () => {
     });
   });
 
-  test("本群 id 用 code 实体恰好框住，两种语气下偏移都按 UTF-16 计", () => {
-    for (const aiPersona of [undefined, "自定义人设"]) {
-      const snapshot: BotStatusSnapshot = statusSnapshot();
-      const message: BotStatusMessage = buildBotStatusMessage({
-        ...snapshot,
-        chatState: { ...snapshot.chatState, aiPersona },
-      });
+  test("本群 id 是恰好框住 id 的内联代码，两种语气下都能被 Telegram 解析", () => {
+    for (const atmosphere of ["teasing", "plain"] as readonly Atmosphere[]) {
+      const message: ParsedMarkdownV2 = withAtmosphere(atmosphere, (): ParsedMarkdownV2 => renderStatus(statusSnapshot()));
       const code = message.entities[0]!;
       expect(code.type).toBe("code");
       expect(message.text.slice(code.offset, code.offset + code.length)).toBe("-1001234567890");
@@ -283,9 +362,21 @@ describe("/bot_status", () => {
     }
   });
 
+  test("模型名里的 MarkdownV2 保留字符按字面显示，不形成格式或链接", () => {
+    const snapshot: BotStatusSnapshot = statusSnapshot();
+    const model: string = "m*o_d[e](l)~`>#+-=|{}.!";
+    const message: ParsedMarkdownV2 = renderStatus({
+      ...snapshot,
+      aiConfig: { ...snapshot.aiConfig!, text: { ...snapshot.aiConfig!.text, model } },
+    });
+
+    expect(message.text).toContain(`群聊正文：${model}\n`);
+    expect(message.entities.map((entity) => entity.type)).toEqual(["code", "pre", "pre"]);
+  });
+
   test("模型名中的换行被收敛且超长标签受限", () => {
     const snapshot: BotStatusSnapshot = statusSnapshot();
-    const text: string = buildBotStatusMessage({
+    const text: string = renderStatus({
       ...snapshot,
       aiConfig: {
         ...snapshot.aiConfig!,
@@ -306,7 +397,7 @@ describe("/bot_status", () => {
     expect(formatBotMemory(512)).toBe("512 B");
     expect(formatBotMemory(2_048)).toBe("2.00 KiB");
 
-    const text: string = buildBotStatusMessage({
+    const text: string = renderStatus({
       ...statusSnapshot(),
       processStatus: {
         uptimeSeconds: 0,
@@ -323,7 +414,7 @@ describe("/bot_status", () => {
 
   test("无法采样当前内存占用时显示不可用，其他状态仍完整展示", () => {
     const snapshot: BotStatusSnapshot = statusSnapshot();
-    const text: string = buildBotStatusMessage({
+    const text: string = renderStatus({
       ...snapshot,
       processStatus: { ...snapshot.processStatus, memoryFootprintBytes: null },
     }).text;

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../packages/consts/configLayout";
 import { checkBinaryMigrations } from "./checkBinaryMigrations";
-import { assertMigrationSourcesUnchanged, deployMigratedFixture } from "./fixtures/migrationDeployment";
+import { PRESERVED_MIGRATION_CONFIG_FILES, assertMigrationSourcesUnchanged, deployMigratedFixture } from "./fixtures/migrationDeployment";
 import type { MigratedDeployment } from "./fixtures/migrationDeployment";
 import { copyFixtureTree } from "./fixtures/copyTree";
 import { cleanupFixtures, createFixture, runInstaller, writeText } from "./installIsolation/fixture";
@@ -56,10 +56,11 @@ try {
   run(["-e", `
     import { createStorageDatabase, openStorageDatabase, initializeStorageDatabase,
       closeStorageDatabase, enableStorageDatabaseWal, IDENTITY_DATABASE_PATH,
-      validateExistingDeploymentInputs } from "./scripts/install/runtime.js";
+      loadInstallerBotConfig, validateExistingDeploymentInputs } from "./scripts/install/runtime.js";
+    const config = await loadInstallerBotConfig("config/static/bot.json");
     createStorageDatabase(IDENTITY_DATABASE_PATH);
     const db = openStorageDatabase({ path: IDENTITY_DATABASE_PATH });
-    try { initializeStorageDatabase(db); } finally { closeStorageDatabase(db); }
+    try { initializeStorageDatabase(db, config.timeZone); } finally { closeStorageDatabase(db); }
     enableStorageDatabaseWal(IDENTITY_DATABASE_PATH);
     await validateExistingDeploymentInputs();
     // 视觉转码只依赖运行时内置的 Bun.Image：gif 与由它编码的 webp 都要能转成 png。
@@ -138,11 +139,7 @@ try {
     migratedOutput.includes("Shutdown drain/flush results:") || existsSync(join(fixture.runtimeRoot, "bot.lock"))) {
     throw new Error(`Migrated binary startup failed:\n${migratedOutput}`);
   }
-  for (const name of [
-    ...["agent.json", "ad_samples.json", "mood.json", "stickers.json", "assets.json"].map((file: string): string => join(DYNAMIC_CONFIG_DIR_NAME, file)),
-    join(STATIC_CONFIG_DIR_NAME, "g-auth.json"),
-    "reactions.json",
-  ]) {
+  for (const name of PRESERVED_MIGRATION_CONFIG_FILES) {
     if (await Bun.file(join(fixture.configRoot, name)).text() !== await Bun.file(join(migrated.config, name)).text()) {
       throw new Error(`Binary installer changed a preserved configuration: ${name}`);
     }

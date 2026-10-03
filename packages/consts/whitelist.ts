@@ -56,7 +56,6 @@ export const DEFAULT_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassAdDetection: DEFAULT_IS_CAN_BYPASS_AD_DETECTION,
   isCanBypassFloodControl: DEFAULT_IS_CAN_BYPASS_FLOOD_CONTROL,
   isCanControllAIPermission: DEFAULT_IS_CAN_CONTROLL_AI_PERMISSION,
-  isCanConfigAiPrompt: false,
   isCanClearContext: false,
   isCanControllAdDetectPermission: DEFAULT_IS_CAN_CONTROLL_AD_DETECT_PERMISSION,
   isCanControllFloodControlPermission: DEFAULT_IS_CAN_CONTROLL_FLOOD_CONTROL_PERMISSION,
@@ -85,7 +84,6 @@ export const NON_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassAdDetection: false,
   isCanBypassFloodControl: false,
   isCanControllAIPermission: false,
-  isCanConfigAiPrompt: false,
   isCanClearContext: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
@@ -116,7 +114,6 @@ export const TEMPORARY_AD_BYPASS_PERMISSIONS: Readonly<WhitelistPermissions> = {
   isCanBypassAdDetection: true,
   isCanBypassFloodControl: false,
   isCanControllAIPermission: false,
-  isCanConfigAiPrompt: false,
   isCanClearContext: false,
   isCanControllAdDetectPermission: false,
   isCanControllFloodControlPermission: false,
@@ -157,7 +154,6 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
   isCanBypassAdDetection: true,
   isCanBypassFloodControl: true,
   isCanControllAIPermission: true,
-  isCanConfigAiPrompt: true,
   isCanClearContext: true,
   isCanControllAdDetectPermission: true,
   isCanControllFloodControlPermission: true,
@@ -180,7 +176,6 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanBypassAdDetection",
   "isCanBypassFloodControl",
   "isCanControllAIPermission",
-  "isCanConfigAiPrompt",
   "isCanClearContext",
   "isCanControllAdDetectPermission",
   "isCanControllFloodControlPermission",
@@ -213,3 +208,7 @@ export const WHITELIST_PERMISSION_HELP_COMMAND: string = "help";
 export const WHITELIST_PERMISSION_QUERY_COMMAND: string = "query";
 /** /permission 全开已有身份权限的子命令。所属模块：packages/commands/permission.ts。 */
 export const WHITELIST_PERMISSION_ALL_COMMAND: string = "all";
+/** /permission query 看板里 JSON 代码块的缩进空格数。所属模块：packages/commands/permission.ts。 */
+export const WHITELIST_PERMISSION_JSON_INDENT: number = 2;
+/** /permission help 与 query 看板里 JSON 代码块的语言标注。所属模块：packages/commands/permission.ts。 */
+export const WHITELIST_PERMISSION_JSON_LANGUAGE: string = "json";

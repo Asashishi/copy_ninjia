@@ -10,7 +10,7 @@
 
 ---
 
-本页讲「系统长什么样、一条消息怎么流过去、进程怎么起来怎么停」。这里是叙述性的导览；可执行的精确约束（谁拥有什么状态、什么顺序不可颠倒）以 [04 运行时权威约束](04-invariants.md) 为准。
+本页系统化介绍系统架构拓扑、消息处理流水线以及进程的启动与停机生命周期。关于精确的执行约束与状态归属契约，请以 [04 运行时权威约束](04-invariants.md) 为准。
 
 ## 拓扑：主线程 + 三个 Worker
 
@@ -19,45 +19,98 @@ flowchart TD
     classDef main stroke:#8e75ff,stroke-width:2.5px;
     classDef worker stroke:#3b82f6,stroke-width:2px;
 
-    MAIN["🧵 主线程<br/>确认式 update runner（逐条串行取数）<br/>唯一 Telegram 客户端 + 出站总闸<br/>state 门面 + StateStore（memory/global/state.json）"]:::main
-    AI["🤖 AI Worker<br/>多轮工具调用（可替换 provider）<br/>滚动记忆 · 摘要压缩 · 心情"]:::worker
-    RAID["🛡️ Anti-Raid Worker<br/>验证与锁定状态机 / 黑名单处置 / 广告检测"]:::worker
-    DISK["💾 Disk I/O Worker<br/>日志 / 记忆快照 / 身份数据库 / 运势 / 验证文件 / 入群日志 / wed 成员"]:::worker
+    MAIN["🧵 主线程 (Main Thread)<br/>• 确认式 update runner（全局逐条串行）<br/>• 唯一真实 Telegram 客户端 + 统一出站总闸<br/>• state 门面 + StateStore（memory/global/state.json）"]:::main
+    AI["🤖 AI Worker<br/>• 多轮工具调用（多供应商可选）<br/>• 滚动逐字记忆 · 摘要压缩 · 心情状态机"]:::worker
+    RAID["🛡️ Anti-Raid Worker<br/>• 验证与锁定状态机<br/>• 全网黑名单处置 · 广告模型判定"]:::worker
+    DISK["💾 Disk I/O Worker<br/>• storage.sqlite 事务持久化<br/>• 日志 / 记忆快照 / 运势 / 验证 / wed 成员串行写"]:::worker
 
     MAIN <-->|双工消息| AI
     MAIN <-->|双工消息| RAID
-    MAIN --> DISK
+    MAIN -->|单向/带回执写| DISK
 ```
 
-分工原则是**状态独占**：每份运行时状态只有一个 owner，跨线程只传消息不共享内存。
+系统的核心设计原则是**状态独占（Single Ownership）**：每份运行时状态在同一时刻有且仅有一个权威宿主线程，跨线程仅通过结构化消息通信，**严禁共享可变内存**。
 
-- **主线程**持有 Telegram runner、唯一真实 grammY Bot、Telegram 出站总闸、三个 Worker 的监督句柄，以及权威内存镜像：`cache/main/storage.ts` 的 `memory/global/state.json` 全局镜像（copy 状态与语音合成每日计数）、`cache/main/assets.ts` 的 `config/dynamic/assets.json` 素材快照，以及 `cache/main/chatState.ts` 的 `chat_states` 群状态热读副本（群开关、锁定记录、权限快照、群名、中转标记与翻译会话，容量恰为 25）。AI/Anti-Raid Worker 只通过受监督双工消息请求 Telegram 能力；Bot API 和 Telegram 文件下载最终都由主线程发起。`stateStore.ts` 负责业务访问与快照，`statePersistence.ts` 中的 `StateStore` 负责严格恢复和落盘生命周期。
-- **AI Worker** 独占群聊记忆、回复准入、媒体描述流水线、群心情与贴纸目录的运行时状态。
-- **Anti-Raid Worker** 独占验证/锁定状态机与对应计时器；主线程只保留可恢复镜像。Worker 解释踢人、查询、禁言和删除等动作，但网络请求经双工边界回到主线程，并分别进入独立的 429 退避类别。未收到落地回执的黑名单处置批次同时保存在主线程镜像与 SQLite `pending_blocked_removals` 表；验证踢人则以 `kickPending` 复用每日验证快照：Worker 重建时内存重投，完整进程重建时从磁盘恢复。
-- **Disk I/O Worker** 独占 `database/storage.sqlite`、`logs/`，以及 `memory/` 下 `stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`ai-daily-usage/`、`joinlog/`、`wed/` 七个领域目录的串行读写；`memory/global/state.json` 由主线程通过业务门面调用 `StateStore` 原子写。各持久化形态、恢复与保留职责见 [07 数据根](07-operations.md#数据根)。
+### 四大线程分工
 
-[`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 都只是稳定公开面的薄显式导出，不持有实现或状态。AI 的监督生命周期与跨线程代理归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，每消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 的监督生命周期归 [`workerBridge/controller.ts`](../../packages/antiRaid/workerBridge/controller.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)，update 路由归 [`updateIngress.ts`](../../packages/antiRaid/updateIngress.ts)。广告检测继续按「主线程投递门禁与候选字段投影、Worker 判定与副作用、不可丢的拉黑与封禁回主线程」分工，候选构造见 [`adCandidate.ts`](../../packages/antiRaid/adCandidate.ts)，投递与排空见 [`adDetect.ts`](../../packages/antiRaid/adDetect.ts)，Worker 流水线见 [`packages/workers/antiRaid/adDetect/`](../../packages/workers/antiRaid/adDetect/)。
+- **🧵 主线程 (Main Thread)**
+  - **网络与分发**：持有 Telegram runner、唯一真实 grammY Bot 实例、出站请求总闸与三个 Worker 的监督句柄。
+  - **内存镜像**：
+    - `cache/main/storage.ts`：`memory/global/state.json` 全局镜像（复读状态与语音每日计数）。
+    - `cache/main/assets.ts`：`config/dynamic/assets.json` 素材与图库快照。
+    - `cache/main/chatState.ts`：`chat_states` 群状态热读副本（托管上限 25 群：开关、锁定记录、权限快照、群名、中转会话与翻译会话）。
+  - **数据写入门面**：通过 `stateStore.ts` 业务门面调用 `StateStore` 原子写 `state.json`。
+  - **Telegram 代理执行**：Telegram API 操作与需要 Bot 身份的媒体下载由主线程出站边界执行；AI 与 Anti-Raid Worker 各自直接调用所配模型服务。
 
-验证领域仍由同一个 dispatcher 与 revision 入口保证单一权威，但纯状态转移已按 join、pending、terminal 与 disable 生命周期拆到 [`packages/states/verification/`](../../packages/states/verification/)，[`packages/states/verification.ts`](../../packages/states/verification.ts) 只保留完整事件路由；Worker 的 Telegram 副作用进一步把踢人与终态处置拆到 [`packages/workers/antiRaid/verificationEffects/`](../../packages/workers/antiRaid/verificationEffects/)。私密模式的纯状态转移按同一模式拆到 [`packages/states/lockdown/`](../../packages/states/lockdown/)（加锁、落盘、恢复、公告与重启接管五段），[`packages/states/lockdown.ts`](../../packages/states/lockdown.ts) 只保留状态图与完整事件路由。lockdown 恢复与验证镜像接收分别由 [`lockdownMirror.ts`](../../packages/antiRaid/lockdownMirror.ts) 和 [`verificationMirror.ts`](../../packages/antiRaid/verificationMirror.ts) 承担。
+- **🤖 AI Worker**
+  - **独占状态**：群聊记忆（逐字热区 + 摘要冷区）、回复准入计数、媒体描述流水线、群心情挡位及贴纸包白名单目录。
+  - **职责**：多轮模型交互、工具调用调度、拟人化动作编排及记忆滚动压缩。
 
-Worker 崩溃都会节流自愈，但宿主实现分成两条：AI/Anti-Raid 共用 [`packages/infra/supervisedWorker.ts`](../../packages/infra/supervisedWorker.ts)，Disk I/O 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) 内维护独立的 console-only 自愈逻辑。重建后由主线程镜像或磁盘快照重放恢复；Disk I/O 在恢复 load、各领域镜像重放与恢复窗口 FIFO 排空全部成功前保持不可写，任一步失败都会终止该代际并触发 fatal 停机。重启预算耗尽再由 [`packages/infra/workerSupervisor.ts`](../../packages/infra/workerSupervisor.ts) 等 fatal 边界通知生命周期停机。
+- **🛡️ Anti-Raid Worker**
+  - **独占状态**：入群验证状态机、私密模式锁定状态机及其对应计时器。
+  - **职责**：执行入群判定、超时踢人编排、广告识别流水线与黑名单处置。网络动作经双工边界交回主线程出站，并按独立 429 分类退避。
+  - **自愈与重放**：Worker 重建时通过主线程可恢复镜像重建内存状态；进程级重启则从磁盘日志恢复。
+
+- **💾 Disk I/O Worker**
+  - **独占持久化**：独占操作 `database/storage.sqlite`、`logs/`，以及 `memory/` 下的 7 个领域目录（`stickers/`、`luck/`、`anti-raid/`、`ad-detected/`、`ai-daily-usage/`、`joinlog/`、`wed/`）的串行读写。
+  - **事务提交**：通过 write-through、攒批事务与精准 revision ACK 保证数据耐久性。
+
+### 模块边界与 Worker 监督
+
+- **公开面解耦**：[`packages/aiChat/index.ts`](../../packages/aiChat/index.ts) 与 [`packages/antiRaid/index.ts`](../../packages/antiRaid/index.ts) 均为薄公开导出，不持有实现状态。AI 监督归 [`workerBridge.ts`](../../packages/aiChat/workerBridge.ts)，消息入口归 [`messageIngress.ts`](../../packages/aiChat/messageIngress.ts)；Anti-Raid 监督归 [`workerBridge/controller.ts`](../../packages/antiRaid/workerBridge/controller.ts)，durable 投递归 [`durableDelivery.ts`](../../packages/antiRaid/durableDelivery.ts)。
+- **纯状态转移分离**：验证状态转移拆分为 join、pending、terminal、disable 阶段（位于 `packages/states/verification/`）；锁定状态机拆分为 apply、persistence、restore、announcement、adopt 五阶段（位于 `packages/states/lockdown/`）。
+- **故障自愈机制**：
+  - AI/Anti-Raid Worker 共用 [`packages/infra/supervisedWorker.ts`](../../packages/infra/supervisedWorker.ts)，发生崩溃时在重启预算内节流拉起，并由主线程重放最新镜像。
+  - Disk I/O Worker 因自身不能依赖落盘 logger，在 [`packages/infra/diskIO.ts`](../../packages/infra/diskIO.ts) 内自持 console-only 自愈逻辑。Disk I/O 在恢复阶段完成数据加载、镜像重放与 FIFO 排空前保持只读不可写；任一步失败直接 fatal 停机。
+
+---
 
 ## 一条消息的旅程
 
-更新链在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 一次性显式安装，middleware 顺序即语义。链上**没有** `sequentialize`：顺序保证来自取数侧的确认式 runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)），它每次只取一条 update，且该条的 middleware 完成前不再调用 `getUpdates`——因此保证比「按群串行」更强，是全局逐条串行。反应同步在当前 middleware 内等待统一 Telegram 动作边界结算，成功、失败与取消都属于本条 update 的确认边界。
+所有消息中间件在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 中显式装配。
+链路中**没有使用** `sequentialize`，全局消息顺序由取数侧的确认式 runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)）保证：**每次仅拉取一条 update，且在该条中间件链路完全结算前不发起下一次 `getUpdates`**，实现全局逐条串行。
 
-1. **update_id 追踪**——记录已进入处理的最大 `update_id`，停机时用于确认 Telegram offset。
-2. **运势签名回执确认**——在一切网关之前，转发副本也有效。
-3. **init 网关**——未 `/init enable` 的群，其普通业务 update 在这里终止；`my_chat_member`、自身 `via_bot` 消息与超级管理员的 `/init` 等显式例外由 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) 放行。
-4. **私聊网关**——私聊只放行 `/send` 入口与进行中的中转会话；中转消息短路进消息流水线，避免文本被当成命令。整条代码块形式的 TTS 请求在中转里改为合成语音后发到目标群。
-5. **入群验证**——必须早于命令处理，否则待验证用户发的命令不会被追踪清理。整条链路（验证 + 防冲群私密模式）按群缺省关闭，由 `/antiraid enable` 打开；关着的群在这一步就不投递任何入群事件。
-6. **命令注册**——所有命令都注册在同一条 `bot.on(":entities:bot_command")` 子链上，不逐条挂到 `bot`，见 [06 常见修改配方](06-modification-guide.md#新增一个斜杠命令)。这层外闸是承重的：grammY 的 `command` 经 `filter → branch → lazy` 注册，每条注册都要在**每条** update 上 `await` 一次工厂、建一个数组并 `new` 一个 Composer；平铺注册等于每条普通群消息为它一次都用不上的命令层白付这笔开销。外闸判据与 `Context.has.command()` 自己的第一步完全相同，因此命中集合、相对顺序与「命中即终止」的语义都不变。其中 `/x` 是菜单占位项：它只为曝光中文动作命令的用法，收到时回一句用法说明并就此终止链路。
-7. **中文动作命令**——`/咬`、`/贴贴` 这类命令（动作词收 1~2 个中文字）拿不到 Telegram 的 `bot_command` 实体，`bot.command` 匹配不到，只能用 `bot.hears` 按消息原文匹配（见 [`packages/commands/cjkAction.ts`](../../packages/commands/cjkAction.ts)）。**必须排在下一步的消息兜底之前**——排在后面就会被当成普通消息进入 AI/复读流水线，整个特性静默失效。因为它排在自动流水线之前，那条流水线的自发消息门禁对它无效，handler 自己要跳过机器人自己的消息；也因为被它认领的消息不再往下走，handler 要自己补上发送者身份缓存。不认领的形态（`/咬@OtherBot`、caption 形态、消息形态异常）一律 `next()` 放行。
-8. **自动消息流水线**——[`packages/auto/`](../../packages/auto) 处理复读、AI 转录与触发判定、反应同步等非命令行为。
+```text
+[Telegram Update]
+       │
+       ▼
+ 1. update_id 追踪       ── 记录最大已处理 update_id，停机时确立 offset
+       │
+       ▼
+ 2. 运势签名回执确认    ── 优先结算内联抽签落地回执（转发副本同样有效）
+       │
+       ▼
+ 3. /init 门禁          ── 未 /init enable 的群拦截普通业务；超管 /init 等显式放行
+       │
+       ▼
+ 4. 私聊网关            ── 仅放行超管 /send 入口与活跃中转会话
+       │
+       ▼
+ 5. 入群验证 Ingress     ── 早于命令处理，待验证成员的所有发言在此被捕获与追踪
+       │
+       ▼
+ 6. gag 禁言 Ingress     ── 被 gag 用户的发言在此被捕获并删除，直接终止链路
+       │
+       ▼
+ 7. /qa 表单 Ingress    ── 捕获并认领正在填写的「问题:」「回答:」表单消息
+       │
+       ▼
+ 8. 命令子链 (:entities:bot_command)
+       │                 ── 外闸过滤，不含命令实体的消息单次跳过整组命令
+       ├─ /permission, /white, /copy, /translate, /wed, /block, /ai_chat ...
+       └─ /x (菜单占位项，引导中文动作命令用法)
+       │
+       ▼
+ 9. 中文动作命令 (hears) ── 匹配 /咬、/贴贴 等 1~2 字动作词；在消息兜底前截获
+       │
+       ▼
+10. 自动消息流水线       ── auto/ 处理复读、AI 触发与转录、表情反应同步等
+```
 
-AI 触发后的旅程：主线程按活跃度概率/直接触发判定 → 投递 AI Worker → Worker 组装四段式模型输入（参考记忆 / 当前会话 / 本轮运行时状态 / 本轮任务）→ 多轮工具调用（发消息、贴纸、反应、语音，以及直接触发轮可用的生图，全部经主线程代理执行）→ 结果写回滚动记忆 → 周期快照落盘。活跃度概率只是一道**随机主动搭话闸门**：按群观察近期消息，冷群保持低触发率，同群越活跃触发率越高但有硬上限；@、回复机器人等直接触发不由这道概率闸决定。
+> [!NOTE]
+> `bot.catch` 捕获未处理异常后**必须继续向上抛出**：静默吞掉异常会导致 Telegram 误认为该 update 已成功消费，进程重启后 Telegram 将不会重投，进而产生数据丢失隐患。
 
-`bot.catch` 记录未处理错误后**继续抛出**——吞掉异常会让失败的 update 被确认，进程重启后 Telegram 不再重投（含持久化失败的场景）。
+---
 
 ## AI 消息处理流水线
 
@@ -68,76 +121,111 @@ flowchart TD
     classDef ai stroke:#10b981,stroke-width:2px;
     classDef action stroke:#a855f7,stroke-width:1.5px;
 
-    U(["📨 Telegram update"]):::input --> TXT["文本"]:::process
+    U(["📨 Telegram update"]):::input --> TXT["文本消息"]:::process
     U --> MED["图片 / 贴纸 / GIF"]:::process
-    U --> VOC["语音"]:::process
-    MED -- 异步视觉描述 --> MEM["AI Worker 滚动记忆"]:::ai
-    VOC -- 异步语音转写 --> MEM
-    TXT --> MEM
-    MEM --> G["模型 provider + 服务端联网检索 + 自定义工具"]:::ai
+    U --> VOC["语音消息"]:::process
 
-    G --> A1["💬 发文字消息"]:::action
-    G --> A2["👍 添加反应"]:::action
-    G --> A3["🔍 查看贴纸包"]:::action
-    G --> A4["🎟️ 发送贴纸"]:::action
-    G --> A5["🎨 生成图片"]:::action
-    G --> A6["🎙️ 发送语音"]:::action
+    TXT --> MEM["AI Worker 滚动记忆"]:::ai
+    MED -- 异步视觉模型描述 --> MEM
+    VOC -- 异步语音模型转写 --> MEM
+
+    MEM --> G["四段式模型输入<br/>(参考记忆 + 当前会话 + 本轮状态 + 本轮任务)"]:::ai
+
+    G --> T1["🌐 web_search (联网检索)"]:::action
+    G --> T2["❓ group_qa_query / answer (群问答)"]:::action
+    G --> T3["⛅ get_tokyo_weather (天气查询)"]:::action
+    G --> A1["💬 send_message (发送文字)"]:::action
+    G --> A2["👍 add_reaction (添加反应)"]:::action
+    G --> A3["🔍 view_sticker_pack (查看贴纸包)"]:::action
+    G --> A4["🎟️ send_sticker (发送贴纸)"]:::action
+    G --> A5["🎨 generate_image (生成图片)"]:::action
+    G --> A6["🎙️ send_voice (发送语音)"]:::action
 ```
 
-一条消息先按类型分流，再统一汇入 AI Worker 的滚动记忆：
+### 1. 媒体分流与占位管线
 
-- **文本**以占位文本形式即时入队，保住其在对话时序中的位置。
-- **图片 / 贴纸 / GIF** 同样先占位入队，再异步下载并调用视觉模型生成描述，解析完成后原地回填同一条目的文本字段；命中贴纸白名单目录时跳过异步解析，直接写入目录里的现成描述。
-- **语音**走同一条占位—回填管线，只是把视觉描述换成逐字转写（使用 `config/dynamic/agent.json` 的 `media` 能力）。转录行由 `[语音]` 变成 `[语音：<原话>]`。超过时长或体积上限的语音在下载之前就被拦掉；视觉与语音支持度分别由首次真实请求探测：明确不支持、或端点以 404/405 表明模型/路径不存在（记一行指向 `$.agent.media` 的诊断）之后都不再下载该模态；超时、429、5xx 这类端点故障只按连续次数做有限指数退避，退避期内直接降级为占位、不下载也不占执行器槽位，一次成功即清零。单份媒体自身的问题不改变模态结论。
+- **文本**：以占位文本形式即时入队，锁定在对话上下文中的物理时序。
+- **图片 / 贴纸 / GIF**：先占位入队，后台异步下载并调用视觉模型生成描述，解析完毕后原地回填；命中本地贴纸白名单目录时直接填入现成描述。
+- **语音**：走占位—回填管线，异步调用音频模型逐字转写（转写行标记为 `[语音：<原话>]`）。超长或超大语音在下载前拦截；模态支持度由首次真实请求探测决定。
 
-触发回复时，滚动记忆被组装成上一节所述的四段式模型输入，随服务端联网检索工具与自定义工具一并发给 `agent.text` 配置的 provider；摘要、媒体、生图与语音合成各自读取自己的能力配置，不做运行时故障切换。检索在 provider 服务端执行（Gemini 的 `googleSearch` / OpenAI 的 hosted `web_search`）；同一回复始终使用固定的联网规则，每轮次数上限作为软限制写在那份规则里；真实调用数由回复循环记账并在跨过上限时点名，但检索工具在一轮内恒挂（见 [04 运行时权威约束](04-invariants.md)）。模型在一轮内可发起多次工具调用。工具清单每轮恒定，与触发类型、本群问答和手滑抽签无关；本轮能不能用（生图资格与群冷却、语音余量、本群问答条数）写在运行时状态区块的【本轮工具状态】里，执行侧在调用时再做同样的硬性判定。发送类工具在调用时完成校验、冷却占位与额度预占并当场返回接纳回执，停顿、语音合成的等待、主线程 Telegram 代理和真实发送回调由本轮串行动作链按调用顺序持有；动作的「正在输入 / 选择贴纸 / 录音 / 发送图片」这些聊天状态也只由链上正在执行的那一步切换，按工具顺序依次出现；模型可继续查询、调用其它工具或结束。工具返回错误表示动作没有发生，模型不对失败本身单独作反应。查看与查询直接返回真实数据，不等待发送队列：
+### 2. 回复触发与四段式上下文
 
-- 💬 **发文字消息**——正文必须由模型显式调用发送工具；仅当整轮零接纳动作时，系统才会兜底发送。
-- 👍 **添加反应**——从白名单 emoji 中选择，一轮最多接纳一次。
-- 🔍 **查看贴纸包**——同步返回本轮真实贴纸清单，调用次数独立计数，发送必须先查看对应包。
-- 🎟️ **发送贴纸**——一轮最多接纳一次。
-- 🎨 **生成图片**——配置了生图能力就每轮挂进工具集；只有群友直接 @/回复机器人或用媒体直接唤起时才可用，随机插话与非直接媒体评价在本轮工具状态里标为不可用，调用时执行侧直接拒绝。群冷却剩余秒数同样写在工具状态里。一轮最多接纳一次。图片发出后先按提示词写回记忆，再识图把那一条换成实际画面。
-- 🎙️ **发送语音**——配置了 `agent.tts` 且所选实现具备语音合成时每轮都挂进工具集，与触发类型无关，是否调用由模型按工具说明判断。模型写一两句日语台词（`text`），可附一句本句语气（`tone`，xAI 协议没有风格字段、不发送）；Gemini 返回的 WAV 在 AI Worker 本地编码成 OGG/Opus，OpenAI（请求 `opus`）与 xAI（请求 `mp3`）直接返回 Telegram 语音格式，只校验容器、算出时长后原样使用，以 Telegram 语音消息发到触发所在的话题，可选择回复触发消息。调用时当场交回接纳回执，模型不等合成；合成与编码在后台开始，与模型后续请求及前面待发的消息并行，投递按调用顺序排进串行动作链。链上轮到语音时最多等合成到调用后 25 秒，到点仍未完成就转入后台，合成成功后排到链尾补发；合成失败不发送，只记日志，模型不会得知。每条语音发送前都按音频时长模拟「正在录音」，与之前等合成亮过多久无关。一轮最多接纳一次，计入统一动作预算。「文本 + 语气 → 语音」这一段是公共实现（[`packages/aiChat/ai/voiceSynthesis.ts`](../../packages/aiChat/ai/voiceSynthesis.ts)）；`/send` 代发的 TTS 请求与 `cron.json` 的 `send_voice` 从主线程经 `synthesizeVoice` 请求交给 AI Worker 走同一条链，拿回编码好的语音后由各自的发送边界发出。工具声明与用法只属于 AI。每日预算拆为两份独立额度：AI 使用 `daily_limit - daily_reserve_quota`，只累加 `agentCount`；`/send` 与 cron 共用 `daily_reserve_quota`，只累加 `reserveCount`，两边互不借用。默认总预算 100、预留 25，因此 AI 75 次、运维入口合计 25 次。两边共用从首次合成请求起算的 24 小时固定窗口；满 24 小时后读取余量按零用量计算，下次登记请求才重置两项计数并更新窗口起点。`memory/global/state.json` 的 `ttsUsage` 保存 `{ windowStartedAt, agentCount, reserveCount }`。模型通过本轮工具状态里的语音行读取 AI 的独立余量；AI 在工具调用时预留一次额度（用尽时当场拒绝，并要求模型不在群里提起），TTS 调用成功时才登记 `agentCount`，失败或成功前被取消只释放预留。
+AI 触发由两套机制决定：
+- **直接触发**：群友 @ 机器人、回复机器人消息或发送直接唤起媒体。
+- **随机主动插话**：按群近期活跃度动态计算概率，冷群保持低概率，活跃群概率随之提升（受硬上限保护）；`/quiet` 期间静默。
 
-AI 回复的AI 回复的文字、贴纸、图片与语音只在真实发送成功后写回滚动记忆，并按策略周期性快照落盘；`/wed`、`/h_image` 与定时任务发出的图片以「发送了一张图片」的占位写入，有人回复这张图时才识图回填；单轮动作次数上限与防循环规则见 [04 运行时权威约束](04-invariants.md)。
+触发后，AI Worker 组装四段式模型输入：
+1. **参考记忆**：从冷记忆摘要与长期画像提取。
+2. **当前会话**：近期多模态滚动逐字对话记录。
+3. **本轮运行时状态**：包含工具可用性、生图冷却、语音剩余额度、群问答状态等。
+4. **本轮任务**：包含模型人设、语气约束、手滑错字要求（若抽中）等。
 
-群里没有任何在途轮次时来的那一轮是直接轮，其余为有序并行轮：有序并行轮同时跑模型最多 `REPLY_ROUND_MAX_CONCURRENT`（5）轮，直接轮在模型阶段独立多占 1 轮，Telegram 发送高压时同群合计 1 轮；未启动直接触发进入最多 `REPLY_TRIGGER_QUEUE_MAX`（15）项的 FIFO。每轮在媒体识别和模型处理前按入站顺序预留发送位置；从预留到真实发送及资源收尾，全部代际共同受单群 32、Worker 总计 128 的存活容量限制。模型完成即释放模型位，发送仍按顺位执行：两种轮次的动作都在调用时接纳并回接纳回执，拟人停顿与发送由本轮串行动作链执行，模型不等它们。直接轮是队首，占位即放行，动作接纳后立即由链执行，边生成边发；有序并行轮在自己的模型完成、且前面的轮（含直接轮）都发完后才发送。聊天状态随动作逐个出现，动作的状态只由串行动作链切换；直接轮另在链空闲时亮请求期间的状态：还没接纳过动作的模型请求亮「正在输入」、看过贴纸包后挑贴纸的那次请求亮「正在选择贴纸」，链忙时等链排空再亮。相邻两段状态之间至少静默 `CHAT_ACTION_REST_MS`（0.5 秒）。容量满时暂停启动，直接触发有限排队，随机触发丢弃；全局容量释放后推动等待群补跑。失效不提前归还旧任务的预算，旧轮真正收尾后才释放。详细生命周期见 [04 运行时权威约束](04-invariants.md)。
+### 3. 工具调用体系与动作预算
+
+模型一轮内可执行多次工具调用。工具清单在单轮内严格保持不变，执行侧对各项操作施加硬性准入校验：
+
+| 工具名称 | 类型 | 额度限制与行为规则 |
+| :--- | :--- | :--- |
+| **`send_message`** | 动作 | 发送文字消息。仅当整轮未接纳任何可见动作时，系统才会自动兜底发送。 |
+| **`add_reaction`** | 动作 | 从白名单 emoji 中选取并添加反应；每轮最多接纳 1 次。 |
+| **`view_sticker_pack`** | 查询 | 查看指定贴纸包内的贴纸清单；不消耗可见动作预算，发送前必须先查看。 |
+| **`send_sticker`** | 动作 | 发送指定贴纸；每轮最多接纳 1 次。 |
+| **`generate_image`** | 动作 | 生成并发送图片。仅限直接触发轮可用；每轮最多接纳 1 次，受群冷却约束。 |
+| **`send_voice`** | 动作 | 日语台词语音合成。后台异步合成并由动作链排队发送；每轮最多接纳 1 次。 |
+| **`web_search`** | 查询 | 本地联网检索工具（配了 `agent.web_search` 时挂载）；受 `max_calls_per_use` 约束。 |
+| **`group_qa_query`** | 查询 | 查询本群已登记的问题列表；不计入动作预算。 |
+| **`group_qa_answer`** | 查询 | 依据精确问题原文检索登记答案；由模型根据语义自律调用。 |
+| **`get_tokyo_weather`** | 查询 | 查询东京当日天气与温度；仅在 `bot.json.time_zone` 为 `Asia/Tokyo`（含缺省）时挂载。 |
+
+> [!TIP]
+> **动作链与聊天状态**：
+> - 发送类工具在调用时当场校验并预占额度，立即向模型交回接纳回执；拟人停顿、语音合成等待与真实 Telegram 发送由本轮**串行动作链**按调用顺序依次执行。
+> - Telegram 聊天状态（输入中、录音中、选贴纸中、发图中）严格由动作链上正在执行的步骤驱动，步骤结束后静默 500 ms 切回空闲，避免状态重叠。
+
+---
 
 ## 启动顺序
 
-入口 [`index.ts`](../../index.ts) 只组装 [`packages/app/lifecycle.ts`](../../packages/app/lifecycle.ts) 的 `ApplicationLifecycle`；生产模块 import 不启动 Worker、计时器、网络请求或共享目录写入，一切运行时初始化都显式发生：
+入口 [`index.ts`](../../index.ts) 仅装配 [`ApplicationLifecycle`](../../packages/app/lifecycle.ts)。生产模块 import 不产生任何副作用，系统生命周期按严格步骤依次执行：
 
-`index.ts` 只导出一个 `application`（`ApplicationLifecycle` 实例），并在 `import.meta.main` 为真时调用 `application.run("main")`。`"main"` 模式安装进程信号/异常 handler，并把未处理的运行错误记录为非零退出。测试或嵌入式宿主显式调用 `application.run("test")`：该模式不接管进程 handler，并在完成 `dispose()` 后把启动/轮询异常原样交还调用方。两种模式共用同一条 `init()` → `wait()` → `dispose()` 边界，普通 import 仍无副作用。
+0. **配置布局检查**：导入 `bot.ts` 时由 `layout.ts` 检查 `config/` 目录结构；严禁顶层散落部署文件，`config/dynamic/` 必须存在。随后严格读取 `bot.json`。
+1. **数据根预检**：递归创建数据根，预检写文件、文件 fsync、同目录 hard link、原子 rename 及目录 fsync；任一失败直接 fail-closed 退出。
+2. **获取实例锁**：取得 `bot.lock` 单实例文件锁（基于 `/proc/<pid>/stat` 与 boot ID）。
+3. **全局状态与配置预检**：
+   - 清理顶层孤儿临时文件；拒绝数据根下遗留的 14.x `state.json`/`state.json.bak`。
+   - 严格恢复 `memory/global/state.json`，业务门面填充权威内存。
+   - 预检所有已存在的部署配置文件；缺失项由功能 readiness 处理，存在但写坏直接退出。
+   - 检查并准备 `h_image` 专用图库目录（校验 SHA-256 文件名与权限）。
+4. **初始化 Disk I/O Worker**：
+   - 全领域只读 inspect（数据库、日志、AI 记忆、贴纸、运势、验证记录、wed 成员等）并严格解码。
+   - 验证通过后 adopt owner，按 `bot.json` 的 `time_zone` 注册零点维护 cron，初始化主线程 Telegram 客户端并核验超管身份。
+5. **注册 Handlers & 握手**：安装全局中间件、注册命令菜单，执行 `bot.init()` 与 Telegram 网关握手。
+6. **初始化业务 Workers & 调度**：
+   - 初始化 AI Worker（仅在 AI 凭据可用时启动，只 hydrate 启用了 AI 的群）。
+   - 初始化 Anti-Raid Worker，恢复验证与锁定镜像。
+   - 启动 `cron.json` 定时任务调度器与 `config/dynamic/` 目录热重载文件监听。
+   - 执行黑名单全网补扫。
+7. **启动 Update Runner**：启动逐条串行 runner，最后开启低优先级群标题异步回填。
 
-0. 导入 [`packages/config/bot.ts`](../../packages/config/bot.ts) 时（早于下列任何初始化）先经 [`packages/config/layout.ts`](../../packages/config/layout.ts) 检查 `config/` 布局：部署文件放在顶层或放错子目录、或 `config/dynamic/` 不存在即拒绝启动；随后严格读取 `config/static/bot.json`。
-1. 递归创建并**预检数据根**：写入、文件 fsync、同目录 hard link、原子 rename、目录 fsync，任一失败带路径拒绝启动。
-2. 取得 **`bot.lock`** 单实例锁（格式与清理规则见 [07 运维与排障](07-operations.md#botlock-拒绝启动)）。
-3. **恢复 state 持久化边界与校验已存在的部署输入**：清理顶层孤儿临时文件；数据根下仍有 14.x 的 `state.json` 或 `state.json.bak` 时拒绝启动，然后严格校验并恢复 `memory/global/state.json`（缺失按从未使用处理），再由业务门面填充权威内存；`bot.json` 是进程级必填，其余可选输入**只要文件存在就必须严格解析通过**，缺省则交给各功能自己的 readiness 判定（见 [`packages/config/readiness.ts`](../../packages/config/readiness.ts) 的 `validateExistingDeploymentInputs`）。SQLite `chat_states` 里的群开关不参与这道核对，只在下一步的持久化恢复边界解码。随后按已校验的 `config/dynamic/assets.json` 的 `onlyPath.random_h_image_dir`（缺省 `./h_image`）准备专用图库（[`packages/infra/randomImage.ts`](../../packages/infra/randomImage.ts)）：创建缺失目录，核对访问权限、SHA-256 文件名与条目类型，失败拒绝启动。
-4. 初始化 **Disk I/O Worker**。日志、AI、贴纸、运势、待验证、入群日志、wed 成员与 `database/storage.sqlite` 先完成全域只读 inspect 和严格解码；全部成功后才统一 adopt owner，成功回执之后再清理临时/孤儿/过期文件、执行 compact，并注册一个显式使用 `Asia/Tokyo` 的 Bun 原生零点维护 cron。该 cron 先经 `midnightMaintenance` 通知主线程接纳 `/wed` 每日成员复核，再维护运势、日志、入群日志、广告样本归档、待验证日文件和临时广告免检累计；各领域原有的启动或业务事件触发清理继续作为兜底，待验证轮换失败只保留不阻止退出的一秒重试 timer。任何 inspect 失败都保留所有领域现场，不 chmod、rewrite、unlink，也不留下维护 cron。主线程接管 wed 成员集合，并接收 `chat_states`、永久名单计数和未完成处置，不复制永久白名单、黑名单或临时广告免检活动整表。随后初始化 Telegram 客户端，并断言超级管理员不在黑名单内。
-5. 注册 handler、设置命令菜单并执行 `bot.init()`。
-6. 初始化 **AI Worker**（AI 配置不可用时不启动 Worker、只记一行日志，恢复出的记忆与贴纸目录只写进主线程镜像，等热重载补齐配置后再启动），只 hydrate `chat_states` 中明确启用 AI 的群；随后恢复贴纸目录、运势与待验证镜像，初始化 **Anti-Raid Worker**，按 `cron.json` 启动定时任务调度（[`packages/cron/scheduler.ts`](../../packages/cron/scheduler.ts)），开始监听 `config/dynamic/` 热重载，再初始化黑名单补扫调度，并对已托管的群补扫一轮黑名单。
-7. 启动 acknowledgement-safe runner，最后才起**低优先级群标题回填**（受并发上限约束，不会无界占用 query 类请求与连接）。
-
-失败与退出统一由 `ApplicationLifecycle` 收口：只有已取得的资源才会释放或 flush。
+---
 
 ## 停机顺序
 
-正常与异常停机由同一个生命周期收口，顺序固定：
+停机由 `ApplicationLifecycle` 统一收口，无论正常退出或异常终止均按串行屏障优雅关停：
 
-1. **Quiesce**：停下标题、头像、翻译、gag 与 wed 新预约、延迟命令（`/h_image` 抽图与收图、`/info` 查询）接纳、cron 定时任务、blocklist 补扫调度器和 `config/dynamic/` 热重载监听，并停止 runner。九个 quiesce 入口各自失败隔离——任一入口抛错仍须尝试其余入口。**「已经 quiesce 过」不得被缓存**：`init()` 会把这九个 owner 重新武装，启动期到达的停止信号若把成功记成一次性完成，此后每一次 quiesce 都会被短路，owner 整个停机期间继续收活，而停机结果照报成功。九次调用都是幂等的，重复执行没有代价。
-2. **有界 drain**：排空各队列与 mailbox。runner 为每个 update 持有独立取消 signal；在途 handler 超过 drain 期限时 abort 这些 signal 并给最后一段有界收敛时间，仍不收敛的 handler 会阻止最终 offset 确认，并在最佳努力 dispose 后强制非零退出。
-3. **Flush 与 dispose**：正常路径先排空 Anti-Raid、gag 提示与统一延迟删除，再 flush AI、排空 Telegram 出站、flush Disk I/O 与 StateStore；最终 dispose 固定按同一维护排空顺序，再执行「flush AI → 终止 AI → 排空 Telegram 出站 → flush Disk I/O → 终止 Anti-Raid/Disk I/O → flush StateStore → 释放实例锁」。
-
-生命周期、Anti-Raid drain 与 getUpdates 重试窗口的进程内耗时预算统一通过 [`packages/libs/monotonicDeadline.ts`](../../packages/libs/monotonicDeadline.ts) 和 `performance.now()` 计算，系统时钟回拨不能延长关停或排空期限；业务状态与持久化所需的绝对时间戳仍使用 `Date.now()`。
-
-失败语义：
-
-- 任一关键 quiesce、drain、flush 或锁释放失败都会阻止最终 offset 确认，并以非零状态退出，让 Telegram 重投未确认的 update、或由运维处理仍被持有的锁。
-- 普通 dispose 已在途时若又发生致命异常，异常路径复用同一 Promise，但由独立的 15 秒绝对 deadline 保证最终强制退出。时间预算耗尽时先 abort 在途请求再结算未开始的工作，abort 之后不再发送任何消息。
-- 异常退出路径的维护预算恰好为 0，drain 不再等待，直接 abort 并立即结算。
-- dispose 的每个 owner 各自失败隔离：单点抛错只记为 `failed`，不会跳过后续 owner、`flushStateToDisk` 与实例锁处置。
-
-各步骤的完整不变量（哪些失败必须 fatal、哪些顺序不可交换）见 [04 运行时权威约束](04-invariants.md)。
+1. **Quiesce（入口关闸）**：
+   - 立即停止群标题回填、头像队列、翻译、gag、wed 预约、延迟命令、定时任务调度器、黑名单补扫与配置热重载监听。
+   - 关停 Telegram runner，停止接纳新的 update。
+2. **有界 Drain（队列排空）**：
+   - 为在途 update handler 赋予带超时的取消 signal。
+   - 在限定时间内等待在途任务收敛；若超时则 abort 请求并阻止最终 offset 提交，确保重启后 Telegram 可重新派发。
+3. **Flush & Dispose（落盘与释放）**：
+   - 排空 Anti-Raid 任务与统一延迟删除队列。
+   - Flush AI 滚动记忆快照至磁盘。
+   - 排空主线程 Telegram 统一出站队列。
+   - Flush Disk I/O Worker 全部待写缓冲，终止业务 Worker。
+   - Flush `StateStore` 全局状态。
+   - 释放 `bot.lock` 实例锁并退出进程。
 
 ---
 

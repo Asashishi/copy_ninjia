@@ -1,7 +1,7 @@
-import type { ChatActionHeartbeatEntry } from "../../../types/aiChat/chatAction";
-
-/** owner：AI Chat Worker。聊天状态心跳（packages/aiChat/ai/chatActionHeartbeat.ts）的内存状态；
+/** owner: workers/aiChat。聊天状态心跳（packages/aiChat/ai/chatActionHeartbeat.ts）的内存状态；
  * 容量不超过同时存在回复轮的群数，Worker 重建后从空表开始。 */
+
+import type { ChatActionHeartbeatEntry } from "../../../types/aiChat/chatAction";
 
 /**
  * chatId -> 共享聊天状态心跳；每个条目由同群全部在途回复轮引用计数。

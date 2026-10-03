@@ -1,7 +1,10 @@
 import type { Atmosphere, BotAtmosphere } from "../types/atmosphere";
 
-/** Bot 配置缺省通知风格；自定义群人设仍优先使用普通文案。 */
+/** Bot 未配置风格且使用内置人设时的默认通知风格；启动规则见 docs/cn/04-invariants.md。 */
 export const DEFAULT_BOT_ATMOSPHERE: BotAtmosphere = "mesugaki";
+
+/** Bot 默认 IANA 时区；仅在 bot.json 未配置 time_zone 时使用，不继承宿主机时区。 */
+export const DEFAULT_BOT_TIME_ZONE: string = "Asia/Tokyo";
 
 /** 部署枚举到 Atmosphere 通知表的只读映射，初始化时转换一次。 */
 export const BOT_ATMOSPHERES: Readonly<Record<BotAtmosphere, Atmosphere>> = {

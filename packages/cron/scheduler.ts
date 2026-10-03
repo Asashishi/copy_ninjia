@@ -5,19 +5,20 @@
  * 返回本轮 Promise，Bun 在它结算之后才排下一次，同一任务不会重叠：
  * - 普通任务：每次触发跑一轮；
  * - just_once：首次触发先停掉 cron、登记执行记录，再跑一轮；
- * - rand_cron：首次按 cron 触发后停掉 cron，此后每轮结束再用一个 unref 的 setTimeout
- *   在 [min, max] 内均匀随机等待。
+ * - rand_cron：首次按 cron 触发后停掉 cron；此后每轮结束在 [min, max] 内均匀随机取一个
+ *   时刻、向上取整到整分钟，重新注册一个只在那一分钟匹配的 Bun 原生 cron（按 UTC
+ *   解释，unref），触发时同样先停掉它。
  *
- * 热重载按任务名对账（reconcileCronSchedule）：深相等的任务保留句柄与随机计时；变更
+ * 热重载按任务名对账（reconcileCronSchedule）：深相等的任务保留句柄（含随机时刻）；变更
  * 或删除的任务停止调度并标记撤销，在途一轮在下一个动作、重试或群之前停下；新增的任务
  * 登记。just_once 记录只在任务仍是 just_once 时保留，转为周期任务即清除；删除后同名
- * 加回仍按已执行处理。停机期间错过的触发不补发；记录与随机计时都不持久化。
+ * 加回仍按已执行处理。停机期间错过的触发不补发；记录与随机时刻都不持久化。
  * 所有 handler 自行吞掉异常：Bun.cron 的 reject 会成为 unhandledRejection 触发紧急退出。
  */
 
 import { cronRuntime } from "../cache/main/cron";
 import { getCronConfig } from "../config/cron";
-import { CRON_JUST_ONCE_RECORD_MAX } from "../consts/cron";
+import { CRON_JUST_ONCE_RECORD_MAX, CRON_MINUTE_MS, CRON_RANDOM_FIRE_TIME_ZONE } from "../consts/cron";
 import { logger } from "../infra/logger";
 import { assertTimeoutMs, drainTrackedTasks } from "../libs/inflight";
 import { LruCache } from "../libs/lruCache";
@@ -25,13 +26,11 @@ import { runCronRound } from "./run";
 import type { CronConfig, CronRuntime, CronTask, CronTaskSchedule } from "../types/cron";
 import type { FlushResult } from "../types/lifecycle";
 
-/** 停掉一个调度的 cron 与随机 timer，并标记撤销。 */
+/** 停掉一个调度的 cron，并标记撤销。 */
 function cancelSchedule(schedule: CronTaskSchedule): void {
   schedule.cancelled = true;
   schedule.job?.stop();
   schedule.job = null;
-  if (schedule.timer !== null) clearTimeout(schedule.timer);
-  schedule.timer = null;
 }
 
 /** 跑一轮并登记到在途集合，结算自摘除；轮内异常只记日志。 */
@@ -47,20 +46,31 @@ async function trackRound(runtime: CronRuntime, schedule: CronTaskSchedule): Pro
   }
 }
 
-/** rand_cron：本轮结束后在区间内均匀随机等待，再触发下一轮。 */
-function armRandomTimer(runtime: CronRuntime, schedule: CronTaskSchedule): void {
+/**
+ * 只在一个整分钟匹配的 cron 表达式：取 `instantMs` 所在或之后的第一个整分钟，按 UTC 写成
+ * 「分 时 日 月 *」。表达式不含年份，调用方保证该时刻在一年之内，并在首次触发时停掉任务。
+ */
+function cronExpressionAt(instantMs: number): string {
+  const fireAt: Date = new Date(Math.ceil(instantMs / CRON_MINUTE_MS) * CRON_MINUTE_MS);
+  return `${fireAt.getUTCMinutes()} ${fireAt.getUTCHours()} ${fireAt.getUTCDate()} ${fireAt.getUTCMonth() + 1} *`;
+}
+
+/**
+ * rand_cron：本轮结束后在区间内均匀随机取一个时刻，重新注册只在那一分钟触发的 Bun 原生
+ * cron。实际间隔落在 [min, max + 1 分钟) 内。
+ */
+function armRandomCron(runtime: CronRuntime, schedule: CronTaskSchedule): void {
   const interval: CronTask["randomInterval"] = schedule.task.randomInterval;
   if (interval === undefined || !runtime.accepting || schedule.cancelled) return;
   const delayMs: number = interval.minMs + Math.floor(Math.random() * (interval.maxMs - interval.minMs + 1));
-  const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-    schedule.timer = null;
-    void fireCronTask(schedule);
-  }, delayMs);
-  timer.unref();
-  schedule.timer = timer;
+  schedule.job = Bun.cron(
+    cronExpressionAt(Date.now() + delayMs),
+    (): Promise<void> => fireCronTask(schedule),
+    { tz: CRON_RANDOM_FIRE_TIME_ZONE }
+  ).unref();
 }
 
-/** 一次触发（cron 或随机 timer）；不抛出。 */
+/** 一次触发（按 `cron` 表达式或 rand_cron 的随机时刻）；不抛出。 */
 async function fireCronTask(schedule: CronTaskSchedule): Promise<void> {
   const runtime: CronRuntime | null = cronRuntime.current;
   if (runtime === null || !runtime.accepting || schedule.cancelled) return;
@@ -71,12 +81,12 @@ async function fireCronTask(schedule: CronTaskSchedule): Promise<void> {
   }
   if (task.justOnce) runtime.justOnceRecords.set(task.name, true);
   await trackRound(runtime, schedule);
-  armRandomTimer(runtime, schedule);
+  armRandomCron(runtime, schedule);
 }
 
 /** 为一个任务注册 Bun 原生 cron。 */
 function registerSchedule(task: Readonly<CronTask>): CronTaskSchedule {
-  const schedule: CronTaskSchedule = { task, job: null, timer: null, cancelled: false };
+  const schedule: CronTaskSchedule = { task, job: null, cancelled: false };
   schedule.job = Bun.cron(task.cron, (): Promise<void> => fireCronTask(schedule), { tz: task.timeZone }).unref();
   return schedule;
 }
@@ -126,7 +136,7 @@ export function startCronScheduler(): void {
   reconcileCronSchedule();
 }
 
-/** 停机关闭接纳并停掉全部 cron 与随机 timer；在途轮次交给 drainCronScheduler。可重复调用。 */
+/** 停机关闭接纳并停掉全部 cron；在途轮次交给 drainCronScheduler。可重复调用。 */
 export function quiesceCronScheduler(): void {
   const runtime: CronRuntime | null = cronRuntime.current;
   if (runtime === null) return;

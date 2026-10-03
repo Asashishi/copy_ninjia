@@ -35,20 +35,23 @@ import {
   validateAgentDeploymentConfig,
 } from "./agent";
 import { ensureCronConfig } from "./cron";
-import { ensurePersona } from "./persona";
+import { adoptPersona, loadPersona } from "./persona";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
   translateConfigReadinessCache,
 } from "../cache/main/configReadiness";
+import { botAtmosphereState } from "../cache/main/atmosphere";
 import {
   adDetectAgentConfigCache,
   agentDeploymentConfigCache,
   defaultAdSampleConfigCache,
   defaultMoodConfigCache,
   defaultStickerConfigCache,
-  personaCache,
 } from "../cache/perThread/config";
+import { DEFAULT_AI_PERSONA } from "../consts/aiChat/prompts/persona";
+import { BOT_ATMOSPHERES, DEFAULT_BOT_ATMOSPHERE } from "../consts/bot";
+import type { BotAtmosphere } from "../types/atmosphere";
 import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
@@ -107,7 +110,8 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
 }
 
 /**
- * AI 闲聊要读的部署配置：贴纸白名单、心情表、人设与 agent 段必检。
+ * AI 闲聊要读的部署配置：贴纸白名单、心情表与 agent 段必检。人设不在此列：
+ * prompt/persona.md 缺省时由启动总闸接管内置人设（见 ensurePersona）。
  *
  * 前两份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
  * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
@@ -122,7 +126,6 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
 const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
   { file: "config/dynamic/stickers.json", load: ensureStickerConfig },
   { file: "config/dynamic/mood.json", load: ensureMoodConfig },
-  { file: "prompt/persona.md", load: ensurePersona },
   { file: "config/dynamic/agent.json", load: ensureAgentDeploymentConfig },
 ];
 
@@ -152,7 +155,7 @@ function unavailable(file: string, message: string): ConfigReadiness {
  *
  * 顺序与 AI_CHAT_PROBES 一致，报第一份缺失的文件。启动总闸之后 holder 为空只可能
  * 是文件或 agent.json 的对话核心能力段缺省（存在但非法的输入已拒绝启动或被热重载
- * 拒绝），与启动时 probeAll 的判据相同。persona 不热重载，启动时缺省则一直为空。
+ * 拒绝），与启动时 probeAll 的判据相同。
  */
 export function aiChatReadinessFromHolders(): ConfigReadiness {
   if (defaultStickerConfigCache.current === null) {
@@ -160,9 +163,6 @@ export function aiChatReadinessFromHolders(): ConfigReadiness {
   }
   if (defaultMoodConfigCache.current === null) {
     return unavailable("config/dynamic/mood.json", new InputValidationError(MOOD_CONFIG_PATH, "$", "a readable valid JSON document").message);
-  }
-  if (personaCache.current === null) {
-    return unavailable("prompt/persona.md", new InputValidationError(PERSONA_PATH, "$", "a readable non-empty UTF-8 text file").message);
   }
   if (agentDeploymentConfigCache.current === null) {
     return unavailable(
@@ -233,8 +233,25 @@ export async function deploymentInputExists(path: string): Promise<boolean> {
 }
 
 /**
+ * 启动总闸接管 AI 人设与本进程群通知风格，两者同批填充、不热重载。prompt/persona.md
+ * 存在时严格读取其正文，缺省时使用内置人设。显式 atmosphere 优先；风格缺省时自定义人设
+ * 使用普通文案，内置人设使用默认风格。已接管时只读 holder，不再读盘。
+ */
+async function ensurePersona(): Promise<void> {
+  if (botAtmosphereState.current !== null) return;
+  const hasCustomPersona: boolean = await deploymentInputExists(PERSONA_PATH);
+  const persona: string = hasCustomPersona ? await loadPersona() : DEFAULT_AI_PERSONA;
+  const atmosphere: BotAtmosphere | undefined = getBotConfig().atmosphere;
+  adoptPersona(persona);
+  botAtmosphereState.current = atmosphere !== undefined
+    ? BOT_ATMOSPHERES[atmosphere]
+    : hasCustomPersona ? "plain" : BOT_ATMOSPHERES[DEFAULT_BOT_ATMOSPHERE];
+}
+
+/**
  * 启动阶段校验所有已经存在的可选部署输入。文件真正缺省时由功能 readiness
  * 决定能否开启；文件一旦存在，就不能因相应功能当前关闭而掩盖非法内容。
+ * 人设缺省不影响任何功能，由 ensurePersona 接管内置人设。
  */
 export async function validateExistingDeploymentInputs(): Promise<void> {
   // Telegram 身份是进程级必填配置，不受任何功能开关控制。
@@ -245,13 +262,13 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
     { path: AD_SAMPLES_CONFIG_PATH, load: ensureAdSampleConfig },
     { path: AGENT_CONFIG_PATH, load: validateAgentDeploymentConfig },
     { path: GOOGLE_AUTH_FILE_PATH, load: validateAndCacheGoogleServiceAccountKey },
-    { path: PERSONA_PATH, load: ensurePersona },
     { path: CRON_CONFIG_PATH, load: ensureCronConfig },
     { path: ASSETS_CONFIG_PATH, load: ensureAssetConfig },
   ];
   for (const probe of probes) {
     if (await deploymentInputExists(probe.path)) await probe.load();
   }
+  await ensurePersona();
   aiChatConfigReadinessCache.current = await probeAll(AI_CHAT_PROBES);
   adDetectConfigReadinessCache.current = await probeAll(AD_DETECT_PROBES);
   translateConfigReadinessCache.current ??= {

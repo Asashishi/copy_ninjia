@@ -26,10 +26,10 @@ import {
   DATABASE_DIR,
   IDENTITY_DATABASE_PATH,
 } from "../../../packages/consts/paths";
-import {
-  CURRENT_STORAGE_METADATA_ROWS,
-  seedStorageDatabase,
-} from "../../fixtures/storageDatabase";
+import { seedStorageDatabase } from "../../fixtures/storageDatabase";
+import { storageMetadataRows } from
+  "../../../packages/database/interact/initialization";
+import { getTimeZone } from "../../../packages/config/time";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,
@@ -46,7 +46,7 @@ import { encodePendingBlockedRemovalData } from
   "../../../packages/database/codec/identity";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { createChatState } from "../../../packages/libs/chatState";
-import { formatTokyoTime, getTokyoDateKey } from "../../../packages/libs/time";
+import { formatLocalTime, getDateKey } from "../../../packages/libs/time";
 import { BLACK_DATA, WHITE_DATA } from "../identityDatabase/fixtures";
 import type { ChatState } from "../../../packages/types/chatState";
 import type { PendingBlockedRemoval } from
@@ -113,7 +113,7 @@ function buildChatState(index: number): ChatState {
 
 /** 一份撑满生产恢复上限的 AI 记忆快照；正文长度随下标变化，避免整表同形。 */
 export function buildAiMemorySnapshot(chatIndex: number): string {
-  const at: string = formatTokyoTime(FIXTURE_EPOCH_MS);
+  const at: string = formatLocalTime(FIXTURE_EPOCH_MS);
   const buffer: BufferedMessage[] = new Array<BufferedMessage>(
     COLD_START_AI_MEMORY_MESSAGES
   );
@@ -165,7 +165,7 @@ function chatStateRows(): readonly StoredChatStateRow[] {
     COLD_START_CHAT_STATE_ROWS
   );
   for (let index: number = 0; index < COLD_START_CHAT_STATE_ROWS; index += 1) {
-    rows[index] = { aiPersona: null,
+    rows[index] = {
       chatId: benchmarkChatId(index),
       data: encodeChatStateData(buildChatState(index)),
     };
@@ -247,7 +247,7 @@ function createDatabase(rows: SeedStorageDatabaseOptions): void {
 /** 满库：冷启动分区要量的是「读到一份生产量级的部署数据」的成本。 */
 export function createBenchmarkDatabase(): void {
   createDatabase({
-    metadata: CURRENT_STORAGE_METADATA_ROWS,
+    metadata: storageMetadataRows(getTimeZone()),
     whitelist: identityRows(WHITE_DATA, 1),
     blocklist: identityRows(BLACK_DATA, BENCHMARK_BLOCKLIST_ID_BASE),
     removals: removalRows(),
@@ -256,10 +256,10 @@ export function createBenchmarkDatabase(): void {
   });
 }
 
-/** 空库，只带 schema 元数据；链路分区从零开始写，不受 fixture 体量干扰。 */
+/** 空库，只带 storage_metadata（schema 版本与本进程配置时区）；链路分区从零开始写，不受 fixture 体量干扰。 */
 export function createEmptyBenchmarkDatabase(): void {
   createDatabase({
-    metadata: CURRENT_STORAGE_METADATA_ROWS,
+    metadata: storageMetadataRows(getTimeZone()),
     whitelist: [],
     blocklist: [],
     removals: [],
@@ -293,7 +293,7 @@ export function joinLogEvent(index: number): JoinLogDiskMessage {
     chatId: benchmarkChatId(index % COLD_START_CHAT_STATE_ROWS),
     userId: benchmarkUserId(index),
     joinedAt,
-    day: getTokyoDateKey(joinedAt),
+    day: getDateKey(joinedAt),
   };
 }
 

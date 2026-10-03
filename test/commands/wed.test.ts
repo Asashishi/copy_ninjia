@@ -1,4 +1,4 @@
-import { resetWedMemberStates } from "../../packages/cache/main/wedMembers";
+import { resetWedMemberStates, wedMemberStates } from "../../packages/cache/main/wedMembers";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
@@ -6,6 +6,7 @@ import type { Chat, User } from "grammy/types";
 import { GrammyError } from "grammy";
 import type { Mock } from "bun:test";
 import type { CurrentAvatarResult } from "../../packages/types/telegram";
+import type { WedChat } from "../../packages/types/wed";
 
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub() }));
 const avatar: Mock<(target: User | number, signal: AbortSignal) => Promise<CurrentAvatarResult>> =
@@ -37,8 +38,10 @@ const { bot } = await import("../../packages/infra/telegram/mainClient");
 const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
 const { pendingMessageDeletions } = await import("../../packages/cache/perThread/messageDeletion");
 const { resetPendingMessageDeletions } = await import("../../packages/infra/telegram/actions/messageLifecycle");
-const { wedChats } = await import("../../packages/cache/main/wed");
+const { wedAvatarProbes, wedChats } = await import("../../packages/cache/main/wed");
 const { getOrCreateWedChat } = await import("../../packages/commands/wed/chats");
+const { observeWedMembers } = await import("../../packages/commands/wed/members");
+const { getOrCreateChatState } = await import("../../packages/infra/storage/stateStore");
 const { handleWedCommand, handleWedCallback, teardownWedInChat } = await import("../../packages/commands/wed");
 const { WED_BUTTON_TEXTS, WED_TEXTS } = await import("../../packages/consts/atmosphere/teasing/wed");
 const { WED_DRAW_TRANSIENT_LIMIT, WED_MEMBER_LIMIT, WED_OPERATION_TIMEOUT_MS, WED_SESSION_LIMIT } = await import("../../packages/consts/wed");
@@ -197,7 +200,7 @@ describe("/wed 图片和按钮交互", () => {
     expect(pendingMessageDeletions.size).toBe(0);
     expect(setProfile).not.toHaveBeenCalled();
     await handleWedCallback(callback("remove"));
-    expect(remove).toHaveBeenCalledWith(chat.id, 101);
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
     expect(wedChats.get(chat.id)!.sessions.size).toBe(0);
   });
 
@@ -230,14 +233,14 @@ describe("/wed 图片和按钮交互", () => {
     expect(wedChats.get(chat.id)!.sessions.get(1)!.confirmed).toBeFalse();
     expect(photo).toHaveBeenCalledTimes(1);
     await handleWedCallback(callback("remove"));
-    expect(remove).toHaveBeenCalledWith(chat.id, 101);
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
     expect(wedChats.get(chat.id)!.sessions.size).toBe(0);
   });
 
   test("再次 /wed 重抽，旧结果删除，新图片回复新命令", async () => {
     await handleWedCommand(command());
     await handleWedCommand(command({ msgId: 11 }));
-    expect(remove).toHaveBeenCalledWith(chat.id, 101);
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
     expect(photo).toHaveBeenCalledTimes(2);
     expect(photo.mock.calls[1]![2].reply_parameters.message_id).toBe(11);
     expect(wedChats.get(chat.id)!.sessions.size).toBe(1);
@@ -301,7 +304,7 @@ describe("/wed 图片和按钮交互", () => {
     expect(await handleWedCallback({ callbackQuery: { data: "qa:next" } } as never)).toBeFalse();
   });
 
-  test("不存在替换候选时保留图片；无可用头像不发错误图片，离群不回写集合", async () => {
+  test("不存在替换候选时保留图片；无可用头像不发错误图片，普通头像失败不回写集合", async () => {
     await handleWedCommand(command());
     await handleWedCallback(callback("change"));
     expect(edit).not.toHaveBeenCalled();
@@ -392,7 +395,7 @@ describe("/wed 图片和按钮交互", () => {
     await teardownWedInChat(chat.id, "lostAuthority");
     finish({ message_id: 200, chat, date: 1, photo: [] });
     await pending;
-    expect(remove).toHaveBeenCalledWith(chat.id, 200);
+    expect(remove).toHaveBeenCalledWith(chat.id, 200, undefined);
     expect(wedChats.has(chat.id)).toBeFalse();
   });
 
@@ -410,7 +413,7 @@ describe("/wed 图片和按钮交互", () => {
     finish({ status: "ok", identity: privateChat(nextPartner), photo: new Uint8Array([2]) });
     await pending;
     expect(edit).not.toHaveBeenCalled();
-    expect(remove).toHaveBeenCalledWith(chat.id, 101);
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
   });
 
   test("头像查询故障不回写集合；不可用头像探测次数有界且不重复抽同一个人", async () => {
@@ -426,6 +429,66 @@ describe("/wed 图片和按钮交互", () => {
     expect(new Set(avatar.mock.calls.map((call) => call[0])).size).toBe(8);
   });
 
+  test("找不到私聊时移除所有群的候选，重复命令不再查询，重新发言后可再次入池", async () => {
+    const state: WedChat = wedChats.get(chat.id)!;
+    const otherChat: Chat.SupergroupChat = { ...chat, id: -2000 };
+    const otherState: WedChat = getOrCreateWedChat(otherChat.id)!;
+    seed(otherState.members, partner);
+    avatar.mockImplementation(async (): Promise<CurrentAvatarResult> => ({ status: "chat-not-found" }));
+    await handleWedCommand(command());
+    expect(state.members.has(partner.id)).toBeFalse();
+    expect(otherState.members.has(partner.id)).toBeFalse();
+    expect(wedMemberStates.get(chat.id)?.dirty).toBeTrue();
+    expect(wedMemberStates.get(otherChat.id)?.dirty).toBeTrue();
+    expect(avatar).toHaveBeenCalledTimes(1);
+    await handleWedCommand(command());
+    expect(avatar).toHaveBeenCalledTimes(1);
+    getOrCreateChatState(chat.id).isInitEnabled = true;
+    observeWedMembers({ chat, message: { chat, from: partner, text: "hi" } } as never);
+    expect(state.members.has(partner.id)).toBeTrue();
+    expect(otherState.members.has(partner.id)).toBeFalse();
+    avatar.mockImplementation(async (target: User | number): Promise<CurrentAvatarResult> =>
+      ({ status: "ok", identity: privateChat(target), photo: new Uint8Array([1]) }));
+    await handleWedCommand(command());
+    expect(avatar).toHaveBeenCalledTimes(2);
+    expect(photo).toHaveBeenCalledTimes(1);
+  });
+
+  test("查询期间的新发言阻止迟到的私聊不可访问结论删除该候选", async () => {
+    const state: WedChat = wedChats.get(chat.id)!;
+    const otherChat: Chat.SupergroupChat = { ...chat, id: -2000 };
+    const otherState: WedChat = getOrCreateWedChat(otherChat.id)!;
+    seed(otherState.members, partner);
+    const pending: PromiseWithResolvers<CurrentAvatarResult> = Promise.withResolvers<CurrentAvatarResult>();
+    avatar.mockImplementationOnce((): Promise<CurrentAvatarResult> => pending.promise);
+    const task: Promise<void> = handleWedCommand(command());
+    for (let i: number = 0; i < 50 && avatar.mock.calls.length === 0; i++) await Promise.resolve();
+    expect(wedAvatarProbes.get(partner.id)?.size).toBe(1);
+    getOrCreateChatState(otherChat.id).isInitEnabled = true;
+    observeWedMembers({ chat: otherChat, message: { chat: otherChat, from: partner, text: "hi" } } as never);
+    pending.resolve({ status: "chat-not-found" });
+    await task;
+    expect(state.members.has(partner.id)).toBeFalse();
+    expect(otherState.members.has(partner.id)).toBeTrue();
+    expect(wedAvatarProbes.size).toBe(0);
+  });
+
+  test("群关闭后迟到的私聊不可访问结论不清理其他群候选", async () => {
+    const otherChat: Chat.SupergroupChat = { ...chat, id: -2000 };
+    const otherState: WedChat = getOrCreateWedChat(otherChat.id)!;
+    seed(otherState.members, partner);
+    const pending: PromiseWithResolvers<CurrentAvatarResult> = Promise.withResolvers<CurrentAvatarResult>();
+    avatar.mockImplementationOnce((): Promise<CurrentAvatarResult> => pending.promise);
+    const task: Promise<void> = handleWedCommand(command());
+    for (let i: number = 0; i < 50 && avatar.mock.calls.length === 0; i++) await Promise.resolve();
+    expect(wedAvatarProbes.get(partner.id)?.size).toBe(1);
+    await teardownWedInChat(chat.id, "lostAuthority");
+    pending.resolve({ status: "chat-not-found" });
+    await task;
+    expect(otherState.members.has(partner.id)).toBeTrue();
+    expect(wedAvatarProbes.size).toBe(0);
+  });
+
   test("普通 teardown 删除结果；会话满额不淘汰别人的按钮", async () => {
     await handleWedCommand(command());
     const state = wedChats.get(chat.id)!;
@@ -436,7 +499,7 @@ describe("/wed 图片和按钮交互", () => {
     state.sessions.clear();
     state.sessions.set(1, session);
     await teardownWedInChat(chat.id, "lostAuthority");
-    expect(remove).toHaveBeenCalledWith(chat.id, 101);
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
   });
 
   test("抽取阶段预算耗尽回执操作失败，不误报没有可用头像", async () => {

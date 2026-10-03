@@ -1,11 +1,12 @@
 import type { Context } from "grammy";
 import type { Chat, ChatMember, Message } from "grammy/types";
 import { WED_MEMBER_LIMIT } from "../../consts/wed";
+import { wedAvatarProbes } from "../../cache/main/wed";
 import { noteWedMemberPresence } from "../../cache/main/wedMemberReview";
 import { isPresentMember } from "../../libs/chatMember";
 import { getOrCreateWedMemberState, markWedMembersDirty, removeWedMember } from "./persistence";
 import { getChatState } from "../../infra/storage/stateStore";
-import type { WedMemberState } from "../../types/wed";
+import type { WedAvatarProbe, WedMemberState } from "../../types/wed";
 
 /**
  * 退群清理已有集合，在群更新保护在途复核；初始化网关也可调用，不建立群状态。
@@ -46,6 +47,8 @@ export function observeWedMembers(ctx: Context): void {
   // 首次 /init 也能通过前置网关，但必须等实际启用后才开始记录发言成员。
   if (getChatState(chat.id).isInitEnabled !== true) return;
   noteWedMemberPresence(chat.id, message.from.id);
+  const probes: Set<WedAvatarProbe> | undefined = wedAvatarProbes.get(message.from.id);
+  if (probes !== undefined) for (const probe of probes) probe.observedChats.add(chat.id);
   const state: WedMemberState | undefined = getOrCreateWedMemberState(chat.id);
   if (state === undefined || state.members.has(message.from.id) || state.members.size >= WED_MEMBER_LIMIT) return;
   state.members.add(message.from.id);

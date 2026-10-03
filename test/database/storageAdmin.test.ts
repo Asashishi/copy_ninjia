@@ -14,6 +14,8 @@ import {
 } from "../../packages/database/interact/connection";
 import { initializeStorageDatabase } from
   "../../packages/database/interact/initialization";
+import { getTimeZone } from "../../packages/config/time";
+import { IDENTITY_DATABASE_METADATA_KEYS } from "../../packages/consts/identityStorage";
 import { createStorageDatabase } from
   "../../packages/database/interact/migration";
 import type { StorageDatabase } from "../../packages/types/storageDatabase";
@@ -37,7 +39,7 @@ describe("共享数据库夹具辅助函数", () => {
   test("播种和清理覆盖全部业务表", () => {
     const database: StorageDatabase = createFixture();
     try {
-      initializeStorageDatabase(database);
+      initializeStorageDatabase(database, getTimeZone());
       seedStorageDatabase(database, {
         metadata: [],
         whitelist: [],
@@ -83,7 +85,7 @@ describe("共享数据库夹具辅助函数", () => {
           "SELECT COUNT(*) AS count FROM storage_metadata;"
         )
         .get();
-      expect(metadata?.count).toBe(1);
+      expect(metadata?.count).toBe(IDENTITY_DATABASE_METADATA_KEYS.length);
     } finally {
       closeStorageDatabase(database);
     }

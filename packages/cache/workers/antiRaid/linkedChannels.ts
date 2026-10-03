@@ -1,12 +1,12 @@
+/** owner: workers/antiRaid。关联频道按需缓存（packages/workers/antiRaid/linkedChannel.ts）的内存状态；Worker
+ * 重建后从空表开始，由下一次按需查询重新填充。 */
+
 import type { LinkedChannelCache } from "../../../types/antiRaid/internal";
 import { ANTI_RAID_CHAT_CACHE_MAX, LINKED_CHANNEL_TTL_MS } from "../../../consts/antiRaid/cache";
 import {
   setBoundedMapValue,
   sweepExpiredSnapshots,
 } from "../../../libs/boundedMap";
-
-/** 关联频道按需缓存（packages/workers/antiRaid/linkedChannel.ts）的内存状态；Worker
- * 重建后从空表开始，由下一次按需查询重新填充。 */
 
 /**
  * 各群是否有关联频道的按需 TTL 缓存。

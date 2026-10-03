@@ -9,7 +9,7 @@ import { InputFile } from "grammy";
 import type { Message, MessageEntity } from "grammy/types";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { BOT_PROFILE_PHOTO_FILE_NAME } from "../../consts/telegram";
-import { signalArgs } from "../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../libs/telegramSignal";
 import { markSelfSent } from "../selfSentTracker";
 import { logUnlessAborted, replyParametersFor, runTelegramAction } from "./actions/core";
 import { deleteMessageAfter } from "./actions/messageLifecycle";
@@ -58,7 +58,7 @@ export function sendCommandPhoto({
         reply_parameters: replyParametersFor(replyToMessageId),
         message_thread_id: messageThreadId ?? updateTopicThreadIdFor(chatId),
       },
-      ...signalArgs(requestSignal)
+      telegramSignal(requestSignal)
     ),
     map: (sent: Message.PhotoMessage): number => {
       markSelfSent(chatId, sent.message_id);

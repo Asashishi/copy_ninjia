@@ -7,7 +7,7 @@ import {
 import { logger } from "../../logger";
 import { logApiError } from "../client";
 import { bot } from "../mainClient";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import { downloadAvatarFile } from "./download";
 import type { AvatarDownloadResult } from "../../../types/telegram";
 import { avatarFailureFor, runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
@@ -32,7 +32,7 @@ async function resolvePublicUsernameFromChat(
   signal?: AbortSignal
 ): Promise<PublicUsernameLookupResult> {
   try {
-    const chat: ChatFullInfo = await bot.api.getChat(targetId, ...signalArgs(signal));
+    const chat: ChatFullInfo = await bot.api.getChat(targetId, telegramSignal(signal));
     return { username: extractPublicUsername(chat), failed: false };
   } catch (error: unknown) {
     if (signal?.aborted) return { failed: true };
@@ -58,7 +58,7 @@ async function attemptCopyUserProfilePhoto(
     if (signal?.aborted) return "permanent-failure";
     let fileId: string;
     if (isChannel) {
-      const chat: ChatFullInfo = await bot.api.getChat(targetId, ...signalArgs(signal));
+      const chat: ChatFullInfo = await bot.api.getChat(targetId, telegramSignal(signal));
       if (!chat.photo) {
         logger.error(`Channel ${targetId} has no chat photo visible to the bot`);
         return "permanent-failure";
@@ -69,8 +69,8 @@ async function attemptCopyUserProfilePhoto(
       // 缩短这条用户可见路径的往返延迟。用 allSettled 等两边都落定，任一
       // 失败再抛出原因，由外层 catch 按 avatarFailureFor 分类。
       const [chatResult, photosResult]: [PromiseSettledResult<ChatFullInfo>, PromiseSettledResult<UserProfilePhotos>] = await Promise.allSettled([
-        bot.api.getChat(targetId, ...signalArgs(signal)),
-        bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }, ...signalArgs(signal)),
+        bot.api.getChat(targetId, telegramSignal(signal)),
+        bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }, telegramSignal(signal)),
       ]);
       if (chatResult.status === "rejected") throw chatResult.reason;
       if (photosResult.status === "rejected") throw photosResult.reason;

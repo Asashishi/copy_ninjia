@@ -16,9 +16,10 @@ export interface PermissionSetReplyParams {
 /**
  * /permission 的全部对外文案。
  *
- * help 与 query 两条回执都要在正文里嵌一个 JSON 代码块，实体偏移按前缀的
- * UTF-16 长度计算，因此 helpPrefix / queryPrefix **必须以换行结尾**：少了那个
- * 换行，代码块会从开场白的最后一个字符开始，Telegram 渲染出来是错位的。
+ * help 与 query 两条回执都要在正文里嵌一个 JSON 代码块，代码块紧接在开场白
+ * 之后，因此 helpPrefix / queryPrefix **必须以换行结尾**：少了那个换行，代码块
+ * 会紧贴在开场白的最后一个字符后面，Telegram 渲染出来是错位的。文案按
+ * MarkdownV2 发送前整段转义（见 commands/permission.ts），这里写的是显示原文。
  * 具体文案表见 packages/consts/atmosphere/ 下各风格的 whitelist.ts。
  */
 export interface PermissionCommandTexts {

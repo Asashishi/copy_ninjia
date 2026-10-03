@@ -1,4 +1,4 @@
-import { IDENTITY_META_KEYS, WHITELIST_DATA_KEYS, BLOCKLIST_DATA_KEYS, TOKYO_TIMESTAMP_PATTERN } from "../../consts/storageSchema";
+import { IDENTITY_META_KEYS, WHITELIST_DATA_KEYS, BLOCKLIST_DATA_KEYS, LOCAL_TIMESTAMP_PATTERN } from "../../consts/storageSchema";
 import {
   BLOCKLIST_PARTICIPANT_INVALID_LIMIT,
   BLOCKLIST_REMOVAL_ENTRY_KEYS,
@@ -102,7 +102,7 @@ export function decodeBlocklistEntryData(
   }
   if (
     typeof value.blockedAt !== "string" ||
-    !TOKYO_TIMESTAMP_PATTERN.test(value.blockedAt)
+    !LOCAL_TIMESTAMP_PATTERN.test(value.blockedAt)
   ) {
     return invalidInput(source, "$.blockedAt", "a YYYY/MM/DD HH:mm:ss string");
   }

@@ -8,7 +8,7 @@
 import { CRON_MAX_ACTIONS_PER_TASK, CRON_MAX_TASKS } from "../../../packages/consts/cron";
 import type { SectionId } from "./types";
 
-/** 性能文档的三种语言；对应 docs/{cn,en,ja}/09-performance.md。 */
+/** 性能文档的三种语言；对应 docs/{cn,en,ja}/10-performance.md。 */
 export type Language = "zh" | "en" | "ja";
 
 /** 一份语言的完整文案。 */

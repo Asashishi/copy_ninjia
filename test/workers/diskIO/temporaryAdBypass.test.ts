@@ -4,6 +4,7 @@ import {
   IDENTITY_WRITE_FLUSH_INTERVAL_MS,
 } from "../../../packages/consts/identityStorage";
 import { DAY_MS } from "../../../packages/consts/diskIO/common";
+import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
 import {
   pendingTemporaryAdBypassWrites,
@@ -36,6 +37,7 @@ import type { StoredTemporaryAdBypassActivity } from
   "../../../packages/types/temporaryAdBypass";
 
 const NOW: number = new Date("2026-08-30T00:00:00+09:00").getTime();
+const INITIAL_TIME_ZONE: string = getTimeZone();
 const acknowledgements: IdentityStoragePersistedReply[] = [];
 
 function reply(value: IdentityStoragePersistedReply): void {
@@ -96,9 +98,29 @@ afterEach((): void => {
   resetStorageDatabaseCache();
   storagePersistenceReplyHolder.current = null;
   jest.useRealTimers();
+  adoptTimeZone(INITIAL_TIME_ZONE);
 });
 
 describe("临时广告免检 SQLite 合并写与过期清理", () => {
+  test("夏令时回拨后的午夜保留刚结束自然日最早达标的累计", (): void => {
+    adoptTimeZone("America/New_York");
+    const previousStart: number = Date.parse("2026-11-01T04:00:00Z");
+    const nextStart: number = Date.parse("2026-11-02T05:00:00Z");
+    jest.setSystemTime(previousStart);
+    handleTemporaryAdBypassWrite(activityWrite(7, 1, {
+      countedAt: previousStart,
+      adBypass: true,
+    }), reply);
+    handleTemporaryAdBypassWrite(activityWrite(8, 1, {
+      countedAt: previousStart,
+    }), reply);
+    expect(flushStorageDatabase(reply)).toBeTrue();
+    jest.setSystemTime(nextStart);
+    maintainTemporaryAdBypassActivities(reply, nextStart);
+    expect(readStoredTemporaryAdBypassActivities(requireStorageDatabaseFixture(), [7, 8])
+      .map((row: StoredTemporaryAdBypassActivity): number => row.id)).toEqual([7]);
+  });
+
   test("同一主键在 30 秒窗口内只落最新最终值与 revision", (): void => {
     storagePersistenceReplyHolder.current = reply;
 

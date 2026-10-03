@@ -12,7 +12,6 @@ const {
   defaultAdSampleConfigCache,
   defaultMoodConfigCache,
   defaultStickerConfigCache,
-  personaCache,
 } = await import("../../packages/cache/perThread/config");
 const {
   adDetectReadinessFromHolders,
@@ -25,7 +24,6 @@ const PRESENT: never = {} as never;
 function fillAll(): void {
   defaultStickerConfigCache.current = PRESENT;
   defaultMoodConfigCache.current = PRESENT;
-  personaCache.current = "人设";
   agentDeploymentConfigCache.current = PRESENT;
   defaultAdSampleConfigCache.current = PRESENT;
   adDetectAgentConfigCache.current = PRESENT;
@@ -38,21 +36,18 @@ function failedFile(readiness: ConfigReadiness): string | undefined {
 afterEach(() => {
   defaultStickerConfigCache.current = null;
   defaultMoodConfigCache.current = null;
-  personaCache.current = null;
   agentDeploymentConfigCache.current = null;
   defaultAdSampleConfigCache.current = null;
   adDetectAgentConfigCache.current = null;
 });
 
 describe("按 holder 重算功能可用性", () => {
-  test("AI 闲聊按 stickers → mood → persona → agent 的顺序报第一份缺失", () => {
+  test("AI 闲聊按 stickers → mood → agent 的顺序报第一份缺失", () => {
     fillAll();
     expect(aiChatReadinessFromHolders()).toEqual({ ok: true });
 
     agentDeploymentConfigCache.current = null;
     expect(failedFile(aiChatReadinessFromHolders())).toBe("config/dynamic/agent.json");
-    personaCache.current = null;
-    expect(failedFile(aiChatReadinessFromHolders())).toBe("prompt/persona.md");
     defaultMoodConfigCache.current = null;
     expect(failedFile(aiChatReadinessFromHolders())).toBe("config/dynamic/mood.json");
     defaultStickerConfigCache.current = null;
@@ -72,7 +67,7 @@ describe("按 holder 重算功能可用性", () => {
     fillAll();
     expect(adDetectReadinessFromHolders()).toEqual({ ok: true });
 
-    personaCache.current = null;
+    defaultMoodConfigCache.current = null;
     expect(adDetectReadinessFromHolders()).toEqual({ ok: true });
 
     adDetectAgentConfigCache.current = null;

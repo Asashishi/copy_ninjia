@@ -19,7 +19,7 @@ export async function handleMoodCommand(ctx: CommandContext<Context>): Promise<v
   } else if (argument === "switch") {
     await switchMood(ctx);
   } else {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).MOOD_USAGE_TEXT, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere().MOOD_USAGE_TEXT, replyToMessageId: ctx.msgId });
   }
 }
 
@@ -73,8 +73,8 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
     chatId,
     messageId,
     feature: "AI mood query",
-    brokenConfigText: (file: string): string => chatAtmosphere(chatId).NOTICE_TEXTS.moodQueryConfigInvalid(file),
-    disabledText: chatAtmosphere(chatId).NOTICE_TEXTS.moodQueryDisabled,
+    brokenConfigText: (file: string): string => chatAtmosphere().NOTICE_TEXTS.moodQueryConfigInvalid(file),
+    disabledText: chatAtmosphere().NOTICE_TEXTS.moodQueryDisabled,
   });
   if (!available) return;
 
@@ -85,7 +85,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
     logger.error(`Failed to confirm AI mood query for chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.moodQueryFailed,
+      text: chatAtmosphere().NOTICE_TEXTS.moodQueryFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -93,7 +93,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
 
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(chatId).NOTICE_TEXTS.moodCurrent(moodName),
+    text: chatAtmosphere().NOTICE_TEXTS.moodCurrent(moodName),
     replyToMessageId: messageId,
   });
 }
@@ -120,8 +120,8 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
     chatId,
     messageId,
     feature: "AI mood switch",
-    brokenConfigText: (file: string): string => chatAtmosphere(chatId).NOTICE_TEXTS.moodSwitchConfigInvalid(file),
-    disabledText: chatAtmosphere(chatId).NOTICE_TEXTS.moodSwitchDisabled,
+    brokenConfigText: (file: string): string => chatAtmosphere().NOTICE_TEXTS.moodSwitchConfigInvalid(file),
+    disabledText: chatAtmosphere().NOTICE_TEXTS.moodSwitchDisabled,
   });
   if (!available) return;
 
@@ -132,7 +132,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
     logger.error(`Failed to confirm AI mood switch for chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.moodSwitchFailed,
+      text: chatAtmosphere().NOTICE_TEXTS.moodSwitchFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -142,7 +142,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
   // 伪装成重抽失败；让 grammY 的统一错误边界按 update 失败处理。
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(chatId).NOTICE_TEXTS.moodSwitched(moodName),
+    text: chatAtmosphere().NOTICE_TEXTS.moodSwitched(moodName),
     replyToMessageId: messageId,
   });
 }

@@ -1,5 +1,6 @@
-import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
-import { getPersona } from "../../../packages/config/persona";
+import { adoptPersona, getPersona } from "../../../packages/config/persona";
+import { personaCache } from "../../../packages/cache/perThread/config";
+import { DEFAULT_AI_PERSONA } from "../../../packages/consts/aiChat/prompts/persona";
 /**
  * 回复循环的供应商中立行为：提示词分段、上下文区块顺序、整轮函数调用预算、
  * 联网检索软额度记账、工具轮往返与收尾。
@@ -7,12 +8,13 @@ import { getPersona } from "../../../packages/config/persona";
  * 贯穿全文件的一条不变量：**一轮回复里 functions 与 webSearchEnabled 逐字恒定**，
  * 任何预算都不得改变工具形态（唯一例外是 toolCallLimitHit 的一次降级重试）。
  *
- * 这里把供应商整个 mock 掉——循环只该认 AiReplySession 契约。两家实现包各自
+ * 这里把供应商整个 mock 掉——循环只该认 AiReplySession 契约。各供应商实现包分别
  * 把中立请求映射成自家请求体的部分，由 test/aiChat/gemini/replySession.test.ts
  * 与 test/aiChat/openai/replySession.test.ts 分别覆盖。
  */
 
 import { beforeEach, expect, mock, test } from "bun:test";
+import type { Mock } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/agent";
 import {
@@ -27,7 +29,7 @@ import {
   MAX_WEB_SEARCH_CALLS_PER_REPLY,
   MAX_TOOL_ROUNDS,
 } from "../../../packages/consts/aiChat/tools";
-import { WEB_SEARCH_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/search";
+import { WEB_SEARCH_FUNCTION_INSTRUCTION, WEB_SEARCH_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/search";
 import {
   COLD_MEMORY_BLOCK_NAME,
   FORWARD_ROSTER_BLOCK_NAME,
@@ -35,15 +37,15 @@ import {
   SPEAKER_ROSTER_BLOCK_NAME,
 } from "../../../packages/consts/aiChat/prompts/transcript";
 import { REPLY_ACTION_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/tools";
-import { PERSONA_PATH } from "../../../packages/consts/paths";
 import {
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
   VIEW_STICKER_PACK_TOOL,
+  WEB_SEARCH_TOOL,
 } from "../../../packages/consts/tools";
-import type { ReplyPromptSections, ReplyToolset } from "../../../packages/types/aiChat/replies";
+import type { ReplyPromptSections, ReplyToolset, WebSearchToolOutcome } from "../../../packages/types/aiChat/replies";
 import type {
   AiFunctionCall,
   AiReplySession,
@@ -140,6 +142,7 @@ function toolset(overrides: Partial<ReplyToolset> = {}): ReplyToolset {
     functions: [],
     toolStatus: "",
     webSearch: false,
+    searchWeb: null,
     has: (): boolean => false,
     beforeModelRequest: (): void => {},
     afterModel: (): void => {},
@@ -156,12 +159,16 @@ function promptSections(label: string): ReplyPromptSections {
   return {
     referenceMemory: `${label}：参考记忆`,
     currentConversation: `${label}：当前会话`,
+    currentConversationSettledOffsets: [4],
     replyTask: `${label}：回复任务`,
   };
 }
 
+/** init 接管的本进程人设；改写它的用例结束后还原。 */
+const PRELOADED_PERSONA: string | null = personaCache.current;
+
 beforeEach(() => {
-  chatPersonas.clear();
+  personaCache.current = PRELOADED_PERSONA;
   turns.length = 0;
   requests.length = 0;
   appendedOutputs.length = 0;
@@ -198,6 +205,8 @@ test("直接触发按序传四个上下文区块，工具结果回喂后续跑",
   expect(sessionParams?.volatileBlocks?.[1]).toContain("叠加在基础人设上的今日状态");
   expect(sessionParams?.volatileBlocks?.[1]).toContain("当前实际时间：");
   expect(sessionParams?.volatileBlocks?.[2]).toBe(sections.replyTask);
+  // 转录已定切点随当前会话原样交给实现包。
+  expect(sessionParams?.conversationSettledOffsets).toBe(sections.currentConversationSettledOffsets);
 
   const first: AiReplyTurnRequest = requests[0]!;
   expect(first.functions.map((definition: AiToolDefinition): string => definition.name)).toEqual([SEND_MESSAGE_TOOL]);
@@ -265,6 +274,7 @@ test("非直接触发同样只传四个区块，区块数与触发类型无关",
   const sections: ReplyPromptSections = {
     referenceMemory: "参考记忆",
     currentConversation: "当前会话",
+    currentConversationSettledOffsets: [],
     replyTask: "回复任务",
   };
 
@@ -293,15 +303,14 @@ test("同一轮回复的多次工具往返复用同一个运行时状态区块�
   expect(sessionParams?.volatileBlocks?.[1]).toContain("当前实际时间：");
 });
 
-test("agent 身份权限边界与上下文协议由代码注入，不混入可编辑的人设文件", async () => {
+test("agent 身份权限边界与上下文协议由代码注入，不混入内置人设", async () => {
   expect(AI_CHAT_AGENT_ROLE_INSTRUCTION).toContain("只以普通群友身份参与闲聊");
   expect(AI_CHAT_AGENT_ROLE_INSTRUCTION).toContain("不具备直接调度、授予、撤销或修改任何权限的能力");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("[username:@用户名]");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("消息明确回复了你发出的某条消息");
   expect(CHAT_INTERACTION_INSTRUCTION).toContain("别把别人互相 at 错认成在叫你");
-  const persona: string = await Bun.file(PERSONA_PATH).text();
-  expect(persona).not.toContain("## Agent 身份与权限边界");
-  expect(persona).not.toContain("## 上下文与互动规则");
+  expect(DEFAULT_AI_PERSONA).not.toContain("## Agent 身份与权限边界");
+  expect(DEFAULT_AI_PERSONA).not.toContain("## 上下文与互动规则");
 });
 
 test("检索额度跑满后检索工具仍然挂着：次数只是写进提示词的软限制", async () => {
@@ -376,6 +385,24 @@ test("已经产生外部副作用后遇到工具调用超限不做降级重试",
     actionsUsed: (): number => 1,
   }))).resolves.toBeNull();
   expect(requestMock).toHaveBeenCalledTimes(1);
+});
+
+test("配置了独立 web_search 时，服务端工具调用超限不会触发关闭内建搜索的降级重试", async () => {
+  turns.push(failTurn({ finishReason: "TOO_MANY_TOOL_CALLS", toolCallLimitHit: true }));
+  const searchWeb: Mock<(argumentsJson: string) => Promise<WebSearchToolOutcome>> = mock(async (_argumentsJson: string): Promise<WebSearchToolOutcome> =>
+    ({ result: JSON.stringify({ result: "资料" }), searchCalls: 1 }));
+
+  await expect(generateReply(-1001, promptSections("上下文"), toolset({
+    functions: [declaration(WEB_SEARCH_TOOL)],
+    webSearch: false,
+    searchWeb,
+  }))).resolves.toBeNull();
+
+  expect(requestMock).toHaveBeenCalledTimes(1);
+  expect(requests[0]!.webSearchEnabled).toBe(false);
+  expect(requests[0]!.functions.map((definition: AiToolDefinition): string => definition.name)).toContain(WEB_SEARCH_TOOL);
+  expect(searchWeb).not.toHaveBeenCalled();
+  expect(loggerErrorMock).not.toHaveBeenCalledWith(expect.stringContaining("retrying once with web search disabled"));
 });
 
 test("同一模型响应中的多个行动工具严格按返回顺序逐个接纳", async () => {
@@ -592,34 +619,68 @@ test("最后一轮才遇到工具调用超限时，降级重试没有剩余轮�
   expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("retrying once with web search disabled"));
 });
 
-test("群级人设隔离，删除后使用默认 persona.md", async () => {
-  chatPersonas.set(-1001, "本群专用人设");
+test("所有群共用 init 接管的本进程人设，系统前缀逐群逐字相同", async () => {
+  adoptPersona("部署方自定义人设");
   turns.push(okTurn({ text: "response" }));
   await generateReply(-1001, promptSections("context"), toolset());
-  expect(requests.at(-1)?.systemPrompt).toStartWith("本群专用人设");
   turns.push(okTurn({ text: "response" }));
   await generateReply(-1002, promptSections("context"), toolset());
-  expect(requests.at(-1)?.systemPrompt).toStartWith(getPersona());
-  chatPersonas.delete(-1001);
-  turns.push(okTurn({ text: "response" }));
-  await generateReply(-1001, promptSections("context"), toolset());
-  expect(requests.at(-1)?.systemPrompt).toStartWith(getPersona());
+  expect(requests[0]!.systemPrompt).toStartWith(`${getPersona()}\n\n## Agent 身份与权限边界`);
+  expect(getPersona()).toBe("部署方自定义人设");
+  expect(requests[1]!.systemPrompt).toBe(requests[0]!.systemPrompt);
 });
 
-test("工具往返期间修改人设只影响下一轮回复，当前轮系统前缀恒定", async () => {
-  chatPersonas.set(-1001, "本轮人设");
+test("工具往返复用本轮系统提示词，前缀恒定", async () => {
   turns.push(okTurn({ calls: [call(SEND_MESSAGE_TOOL)] }), okTurn({ text: "本轮完成" }));
   await expect(generateReply(-1001, promptSections("当前轮"), toolset({
     has: (): boolean => true,
-    execute: (): string => {
-      chatPersonas.set(-1001, "下一轮人设");
-      return "{}";
-    },
+    execute: (): string => "{}",
   }))).resolves.toBe("本轮完成");
   expect(requests).toHaveLength(2);
-  expect(requests[0]!.systemPrompt).toStartWith("本轮人设");
+  expect(requests[0]!.systemPrompt).toStartWith(DEFAULT_AI_PERSONA);
   expect(requests[1]!.systemPrompt).toBe(requests[0]!.systemPrompt);
-  turns.push(okTurn({ text: "下一轮完成" }));
-  await generateReply(-1001, promptSections("下一轮"), toolset());
-  expect(requests[2]!.systemPrompt).toStartWith("下一轮人设");
+});
+
+test("配置了 web_search：系统提示词换函数工具口径，调用由回复循环等结果后喂回，检索后的轮次按已查证处理", async () => {
+  turns.push(
+    okTurn({ calls: [call(WEB_SEARCH_TOOL, { query: "东京天气" }), call(SEND_MESSAGE_TOOL, { text: "稍等" })] }),
+    okTurn({ text: "收尾" })
+  );
+  const searchWeb = mock(async (_argumentsJson: string): Promise<WebSearchToolOutcome> =>
+    ({ result: JSON.stringify({ result: "晴" }), searchCalls: 1 }));
+  const execute = mock((..._args: unknown[]): string => JSON.stringify({ success: true }));
+
+  await expect(generateReply(-1001, promptSections("检索"), toolset({
+    functions: [declaration(WEB_SEARCH_TOOL), declaration(SEND_MESSAGE_TOOL)],
+    webSearch: false,
+    searchWeb,
+    has: (name: string): boolean => name === SEND_MESSAGE_TOOL,
+    execute,
+  }))).resolves.toBe("收尾");
+
+  expect(requests[0]!.systemPrompt).toContain(WEB_SEARCH_FUNCTION_INSTRUCTION);
+  expect(requests[0]!.webSearchEnabled).toBe(false);
+  expect(searchWeb).toHaveBeenCalledWith(JSON.stringify({ query: "东京天气" }));
+  // web_search 不经同步的 execute，也不落到静态查询工具。
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(callToolMock).not.toHaveBeenCalled();
+  expect(appendedOutputs[0]!.map((output: AiToolOutput) => output.responseJson)).toEqual([
+    JSON.stringify({ result: "晴" }),
+    JSON.stringify({ success: true }),
+  ]);
+  expect(requests[0]!.grounded).toBe(false);
+  expect(requests[1]!.grounded).toBe(true);
+});
+
+test("等检索结果期间本轮作废时不再喂回结果", async () => {
+  let active: boolean = true;
+  turns.push(okTurn({ calls: [call(WEB_SEARCH_TOOL, { query: "q" })] }));
+  await expect(generateReply(-1001, promptSections("作废"), toolset({
+    searchWeb: async (): Promise<WebSearchToolOutcome> => {
+      active = false;
+      return { result: "{}", searchCalls: 1 };
+    },
+    isActive: (): boolean => active,
+  }))).resolves.toBeNull();
+  expect(appendedOutputs).toHaveLength(0);
 });

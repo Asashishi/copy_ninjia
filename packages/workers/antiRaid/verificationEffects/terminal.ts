@@ -3,7 +3,6 @@ import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegr
 import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
 import { verificationEntries } from "../../../cache/workers/antiRaid/verification";
-import { VERIFICATION_TIMEOUT_MS } from "../../../consts/antiRaid/verification";
 import { logger } from "../../../infra/logger";
 import {
   deleteMessageWithOutcome,
@@ -11,7 +10,6 @@ import {
   probeChatMembership,
   telegramApi,
 } from "../../../infra/telegram";
-import { formatMinSec } from "../../../libs/time";
 import { verificationKey } from "../../../libs/verificationKey";
 import type { VerificationDispatcher } from "../../../types/antiRaid/internal";
 import type {
@@ -24,10 +22,12 @@ import type {
   DeleteMessageOutcome,
   KickChatMemberOutcome,
 } from "../../../infra/telegram";
-import { fetchAdminIds, freshAdminIds } from "../adminCache";
+import { isChatAdmin } from "../adminCache";
 import { botCanDeleteIn, botCanRestrictIn } from "../botPermissions";
 import { resolveChatIsSupergroup } from "../chatKind";
 import { scheduleTerminalRetry } from "./retry";
+import { expelNoticeText } from "./expelNotice";
+import type { ExpelRemovalOutcome, VerificationCleanupResult } from "../../../types/antiRaid/verification";
 
 /** 终态原地标记变化后发布新 revision 的边界。 */
 export type VerificationChangePublisher = (
@@ -170,7 +170,7 @@ interface RecheckInviterThenSettleParams {
   dispatchVerification: VerificationDispatcher;
 }
 
-/** 超时踢人前最终核对拉人者身份，避免管理员缓存过期造成误踢。 */
+/** 超时踢人前核对拉人者身份；未知时保留终态并按既有执行预算退避。 */
 async function recheckInviterThenSettle({
   chatId,
   userId,
@@ -178,24 +178,20 @@ async function recheckInviterThenSettle({
   expectedState,
   dispatchVerification,
 }: RecheckInviterThenSettleParams): Promise<void> {
-  const cachedAdmins: Set<number> | undefined = freshAdminIds(chatId);
-  let inviterIsAdmin: boolean = cachedAdmins?.has(inviterId) === true;
-  if (cachedAdmins === undefined) {
-    try {
-      inviterIsAdmin = (await fetchAdminIds(chatId)).has(inviterId);
-    } catch (error: unknown) {
-      logger.error(
-        `Error rechecking admin-invite exemption before expiring verification in chat ${chatId}:`,
-        error
-      );
-    }
-  }
-  if (verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState) {
-    dispatchVerification(chatId, userId, {
-      type: "timeoutInviterVerdict",
-      inviterIsAdmin,
+  const inviterIsAdmin: boolean | undefined = await isChatAdmin(chatId, inviterId, "verification inviter");
+  if (verificationEntries.get(verificationKey(chatId, userId))?.state !== expectedState) return;
+  if (inviterIsAdmin === undefined) {
+    expectedState.executionStarted = false;
+    scheduleTerminalRetry({
+      chatId,
+      userId,
+      state: expectedState,
+      event: { type: "terminalPersisted" },
+      dispatchVerification,
     });
+    return;
   }
+  dispatchVerification(chatId, userId, { type: "timeoutInviterVerdict", inviterIsAdmin });
 }
 
 interface ExpelMemberParams {
@@ -211,14 +207,6 @@ interface ExpelMemberParams {
   expectedState: VerificationTerminalState & { kind: "expelling" };
   publishVerificationChange: VerificationChangePublisher;
 }
-
-type ExpelRemovalOutcome =
-  | "kicked"
-  | "absent"
-  | "unconfirmed"
-  | "kindUnknown"
-  | "failed"
-  | "stale";
 
 /**
  * 跨落盘重放的终态在踢人前重新确认成员仍在群里。查询失败不等于不在群，
@@ -249,6 +237,62 @@ async function kickPresentMember(
   return "failed";
 }
 
+interface DeleteVerificationMessagesOptions {
+  readonly chatId: number;
+  readonly userId: number;
+  readonly snapshot: ExpelSnapshot;
+  /** 状态对象同一性检查；每次删除前调用，拒绝替换后的迟到处理。 */
+  readonly isCurrent: () => boolean;
+}
+
+/**
+ * 删除机器人/Telegram 制造的验证消息（入群公告、提醒、回复提醒，去重），不删除成员自己的发言。
+ * 确证没有删除权限时不发请求、整批记为未删；有未删的消息时按是否被拒绝记一条错误日志。
+ * 删除途中状态被替换时返回 null。
+ */
+async function deleteVerificationMessages({
+  chatId,
+  userId,
+  snapshot,
+  isCurrent,
+}: DeleteVerificationMessagesOptions): Promise<VerificationCleanupResult | null> {
+  const messageIds: number[] = [];
+  for (const messageId of [
+    snapshot.announcementMessageId,
+    snapshot.reminderMessageId,
+    snapshot.replyReminderMessageId,
+  ]) {
+    if (messageId !== undefined && !messageIds.includes(messageId)) {
+      messageIds.push(messageId);
+    }
+  }
+  let missed: number = 0;
+  let permissionDenied: boolean = false;
+  if (messageIds.length > 0 && botCanDeleteIn(chatId) === false) {
+    missed = messageIds.length;
+    permissionDenied = true;
+  } else {
+    for (const messageId of messageIds) {
+      if (!isCurrent()) return null;
+      const outcome: DeleteMessageOutcome =
+        await deleteMessageWithOutcome(chatId, messageId, telegramApi);
+      if (outcome === "deleted" || outcome === "gone") continue;
+      missed++;
+      if (outcome === "forbidden") permissionDenied = true;
+    }
+  }
+  if (missed > 0) {
+    logger.error(
+      `Verification expel could not delete ${missed} of ${messageIds.length} ` +
+      `verification-owned message(s) for user ${userId} in chat ${chatId}: ` +
+      (permissionDenied
+        ? "Telegram denied the deletion, so the bot most likely lacks can_delete_messages."
+        : "the deletions failed without a permission error, so this is most likely transient.")
+    );
+  }
+  return { total: messageIds.length, missed, permissionDenied };
+}
+
 /** 清理机器人验证痕迹并按现查结果踢出，成功播报先写入新 revision 再收尾。 */
 async function expelMember({
   chatId,
@@ -269,45 +313,11 @@ async function expelMember({
     removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
     if (removalOutcome === "stale") return false;
   }
-
-  // 只清理机器人/Telegram 制造的验证痕迹，不删除成员自己的发言。
-  const cleanupMessageIds: number[] = [];
-  for (const messageId of [
-    snapshot.announcementMessageId,
-    snapshot.reminderMessageId,
-    snapshot.replyReminderMessageId,
-  ]) {
-    if (messageId !== undefined && !cleanupMessageIds.includes(messageId)) {
-      cleanupMessageIds.push(messageId);
-    }
-  }
-  let missedCleanup: number = 0;
-  let permissionDenied: boolean = false;
-  if (cleanupMessageIds.length > 0 && botCanDeleteIn(chatId) === false) {
-    missedCleanup = cleanupMessageIds.length;
-    permissionDenied = true;
-  } else {
-    for (const messageId of cleanupMessageIds) {
-      if (!stillCurrent()) return false;
-      const outcome: DeleteMessageOutcome =
-        await deleteMessageWithOutcome(chatId, messageId, telegramApi);
-      if (outcome === "deleted" || outcome === "gone") continue;
-      missedCleanup++;
-      if (outcome === "forbidden") permissionDenied = true;
-    }
-  }
-  const cleanupCleared: boolean = missedCleanup === 0;
+  const cleanup: VerificationCleanupResult | null =
+    await deleteVerificationMessages({ chatId, userId, snapshot, isCurrent: stillCurrent });
+  if (cleanup === null) return false;
   // 只在真的一条不剩时置位；欠着账就留给下一轮重试（见 ExpellingState.cleanupSettled）。
-  if (cleanupCleared) expectedState.cleanupSettled = true;
-  if (!cleanupCleared) {
-    logger.error(
-      `Verification expel could not delete ${missedCleanup} of ${cleanupMessageIds.length} ` +
-      `verification-owned message(s) for user ${userId} in chat ${chatId}: ` +
-      (permissionDenied
-        ? "Telegram denied the deletion, so the bot most likely lacks can_delete_messages."
-        : "the deletions failed without a permission error, so this is most likely transient.")
-    );
-  }
+  if (cleanup.missed === 0) expectedState.cleanupSettled = true;
   if (!stillCurrent()) return false;
   if (reason === "timeout" && canRestrict) {
     removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
@@ -320,29 +330,13 @@ async function expelMember({
   const kicked: boolean = removalOutcome === "kicked" ||
     (removalOutcome === "absent" && expectedState.removalConfirmed === true);
   if (removalOutcome === "absent" && !kicked) return stillCurrent();
-  const noticeText: string = !kicked
-    ? removalOutcome === "unconfirmed"
-      ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationMembershipUnknown(snapshot.label)
-      : removalOutcome === "kindUnknown"
-        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationChatKindUnknown(snapshot.label)
-      : reason === "flood"
-        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationFloodKickFailed(snapshot.label)
-        : workerAtmosphere(chatId).NOTICE_TEXTS.verificationTimeoutKickFailed(snapshot.label)
-    : !cleanupCleared
-      ? permissionDenied
-        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationCleanupForbidden(snapshot.label, cleanupMessageIds.length, missedCleanup)
-        : workerAtmosphere(chatId).NOTICE_TEXTS.verificationCleanupFailed(snapshot.label, missedCleanup)
-      : reason === "flood"
-        ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationFloodKicked(snapshot.label)
-        : snapshot.isBot
-          ? workerAtmosphere(chatId).NOTICE_TEXTS.verificationBotTimeout(formatMinSec(VERIFICATION_TIMEOUT_MS), snapshot.label)
-          : workerAtmosphere(chatId).NOTICE_TEXTS.verificationMemberTimeout(snapshot.label, formatMinSec(VERIFICATION_TIMEOUT_MS));
   if (!stillCurrent()) return false;
 
   // 三类诊断分别持久化，成员/群类型探测失败不能占掉权限失败的唯一告警名额。
+  const unconfirmed: boolean = removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown";
   const shouldSendNotice: boolean = kicked
     ? expectedState.successNoticeSent !== true
-    : removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown"
+    : unconfirmed
       ? expectedState.unconfirmedNoticeSent !== true
       : expectedState.failureNoticeSent !== true;
   const notice: TelegramWorkerTemporaryMessageResult | undefined = shouldSendNotice
@@ -350,12 +344,20 @@ async function expelMember({
       purpose: "notice",
       deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       chatId,
-      text: noticeText,
+      text: expelNoticeText({
+        texts: workerAtmosphere().NOTICE_TEXTS,
+        reason,
+        removalOutcome,
+        kicked,
+        cleanup,
+        label: snapshot.label,
+        isBot: snapshot.isBot,
+      }),
     })
     : undefined;
   const noticeMessageId: number | undefined = notice !== undefined && "messageId" in notice ? notice.messageId : undefined;
   if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
-    if (removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown") {
+    if (unconfirmed) {
       expectedState.unconfirmedNoticeSent = true;
     } else expectedState.failureNoticeSent = true;
     publishVerificationChange(chatId, userId, true);

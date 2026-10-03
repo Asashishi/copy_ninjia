@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../../packages/config/time";
 import type { TtsDailyUsage } from "../../../packages/types/aiChat/voiceMessage";
 import { pendingStickerCatalogRevisions, stickerCatalogRevisionCounter } from "../../../packages/cache/main/stickers";
 import { diskIOReplyStub, diskIOStub } from "../../helpers/diskIOMock";
@@ -8,7 +9,10 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
-import { getPersona } from "../../../packages/config/persona";
+import { adoptPersona, getPersona } from "../../../packages/config/persona";
+import { personaCache } from "../../../packages/cache/perThread/config";
+import { botAtmosphereState } from "../../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../../packages/types/atmosphere";
 import { adoptStickerConfig, getStickerConfig } from "../../../packages/config/stickers";
 import { SUPER_ADMIN_USER_ID } from "../../../packages/config/bot";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
@@ -76,15 +80,14 @@ mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   onDiskIOGiveUp: (callback: () => void): void => { diskGaveUp = callback; },
   relayLogMessage: (): boolean => true,
 })));
-// 主线程群状态缓存同时提供 AI 开关和可选人设。
+// 主线程群状态缓存提供 AI 开关。
 const knownChats = new Set<number>();
-const personas = new Map<number, string>();
 // 主线程 `global.ttsUsage` 镜像：启动与重建时灌回 Worker，ttsUsage 回执写入。
 const ttsUsageMirror: { current: TtsDailyUsage | null } = { current: null };
 mock.module("../../../packages/infra/storage/stateStore", () => ({
-  getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId), aiPersona: personas.get(chatId) }),
+  getChatState: (chatId: number) => ({ isAIChatEnabled: aiEnabledChats.has(chatId) }),
   getChatStateCache: (): Map<number, unknown> =>
-    new Map([...aiEnabledChats, ...knownChats, ...personas.keys()].map((chatId: number): [number, unknown] => [chatId, { aiPersona: personas.get(chatId) }])),
+    new Map([...aiEnabledChats, ...knownChats].map((chatId: number): [number, unknown] => [chatId, {}])),
   activeCopyTargetIdIn: (): undefined => undefined,
   getTtsUsage: (): TtsDailyUsage | null => ttsUsageMirror.current,
   adoptTtsUsage: (usage: TtsDailyUsage): void => { ttsUsageMirror.current = usage; },
@@ -146,7 +149,6 @@ beforeEach(() => {
   aiChatWorkerState.available = false;
   aiEnabledChats.clear();
   knownChats.clear();
-  personas.clear();
   workerPostAccepted = true;
 });
 afterEach((): void => { jest.useRealTimers(); });
@@ -300,7 +302,7 @@ describe("AI 配置热重载分发", () => {
       aiChat.syncAiChatConfig(changes);
 
       expect(workerPosts).toEqual([{ type: "configReload", agent: undefined, mood: reloadedMood, stickers: undefined }]);
-      expect(lastInitState.current).toMatchObject({ type: "init", mood: reloadedMood });
+      expect(lastInitState.current).toMatchObject({ type: "init", timeZone: getTimeZone(), mood: reloadedMood });
 
       // 投递被拒绝时，重建重放的 init 已经带着新快照。
       workerPostAccepted = false;
@@ -312,7 +314,7 @@ describe("AI 配置热重载分发", () => {
         replay.push(message);
         return true;
       });
-      expect(replay[0]).toMatchObject({ type: "init", agent: reloadedAgent, mood: reloadedMood });
+      expect(replay[0]).toMatchObject({ type: "init", timeZone: getTimeZone(), agent: reloadedAgent, mood: reloadedMood });
     } finally {
       adoptAgentDeploymentConfig(originalAgent);
       adoptMoodConfig(originalMood);
@@ -336,7 +338,7 @@ describe("AI 可用性经热重载恢复", () => {
       stickers: getStickerConfig(),
     }]);
     expect(lastInitState.current).not.toBe(initialInit);
-    expect(lastInitState.current).toMatchObject({ defaultAtmosphere: "teasing", type: "init", botInfo: { id: 99 } });
+    expect(lastInitState.current).toMatchObject({ atmosphere: "teasing", type: "init", timeZone: getTimeZone(), botInfo: { id: 99 } });
   });
 });
 
@@ -363,8 +365,8 @@ describe("AI main-thread persistence mirror", () => {
 
     expect(initWorker).toHaveBeenCalledTimes(1);
     expect(aiRespawnPosts).toEqual([
-      { defaultAtmosphere: "teasing",
-        type: "init",
+      { atmosphere: "teasing",
+        type: "init", timeZone: getTimeZone(),
         botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
         superAdminUserId: SUPER_ADMIN_USER_ID,
         // 重放的 init 带着主线程当前生效的配置快照，新 isolate 不自己读盘。
@@ -815,37 +817,21 @@ describe("AI main-thread persistence mirror", () => {
   });
 });
 
-test("群人设由 states 缓存重放，变更及移除只发送该群最终值", async () => {
-  const { syncAiChatPersona } = await import("../../../packages/aiChat/workerBridge");
-  personas.set(-1001, "原人设");
-  aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-  expect(workerPosts).toContainEqual({ type: "persona", chatId: -1001, persona: "原人设" });
-  personas.set(-1001, "新人设");
-  syncAiChatPersona(-1001);
-  expect(workerPosts.at(-1)).toEqual({ type: "persona", chatId: -1001, persona: "新人设" });
-  const replay: AiChatWorkerMessage[] = [];
-  supervisorOptions!.onRespawn((message): boolean => { replay.push(message); return true; });
-  expect(replay).toContainEqual({ type: "persona", chatId: -1001, persona: "新人设" });
-  personas.delete(-1001);
-  syncAiChatPersona(-1001);
-  expect(workerPosts.at(-1)).toEqual({ type: "persona", chatId: -1001, persona: null });
-});
-
-test("撤管理员的 AI teardown 清空记忆但保留群人设，重建仍重放当前人设", async () => {
-  personas.set(-1001, "本群人设");
-  aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-  workerPosts.length = 0;
-  const teardown: Promise<void> = teardownRegisteredChat("aiChat", -1001, "lostAuthority");
-  const invalidation: AiChatWorkerMessage | undefined = workerPosts.find(
-    (message: AiChatWorkerMessage): boolean => message.type === "invalidateChat"
-  );
-  if (invalidation?.type !== "invalidateChat") throw new Error("Expected chat invalidation");
-  supervisorOptions!.onEvent({ type: "chatInvalidated", chatId: -1001, requestId: invalidation.requestId });
-  diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: pendingAiMemoryDeletes.get(-1001)! });
-  await teardown;
-  expect(workerPosts.some((message: AiChatWorkerMessage): boolean => message.type === "persona")).toBeFalse();
-  expect(personas.get(-1001)).toBe("本群人设");
-  const replay: AiChatWorkerMessage[] = [];
-  supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => { replay.push(message); return true; });
-  expect(replay).toContainEqual({ type: "persona", chatId: -1001, persona: "本群人设" });
+test("init 与重建一并重放自定义人设和已确定的普通通知风格，不逐群投递人设", async () => {
+  const preloadedPersona: string | null = personaCache.current;
+  const preloadedAtmosphere: Atmosphere | null = botAtmosphereState.current;
+  adoptPersona("部署方自定义人设");
+  botAtmosphereState.current = "plain";
+  try {
+    knownChats.add(-1001);
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    expect(workerPosts.map((message: AiChatWorkerMessage): string => message.type)).toEqual(["init", "hydrateTtsUsage"]);
+    expect(workerPosts[0]).toMatchObject({ type: "init", timeZone: getTimeZone(), atmosphere: "plain", persona: "部署方自定义人设" });
+    const replay: AiChatWorkerMessage[] = [];
+    supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => { replay.push(message); return true; });
+    expect(replay[0]).toBe(workerPosts[0]);
+  } finally {
+    personaCache.current = preloadedPersona;
+    botAtmosphereState.current = preloadedAtmosphere;
+  }
 });

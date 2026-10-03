@@ -18,7 +18,6 @@ export interface WhitelistPermissions {
   isCanBypassAdDetection: boolean;
   isCanBypassFloodControl: boolean;
   isCanControllAIPermission: boolean;
-  isCanConfigAiPrompt: boolean;
   isCanClearContext: boolean;
   isCanControllAdDetectPermission: boolean;
   isCanControllFloodControlPermission: boolean;
@@ -39,7 +38,7 @@ export interface WhitelistEntryData {
 
 /** 黑名单表 data 列的严格 JSON 结构。 */
 export interface BlocklistEntryData {
-  /** 东京时间字符串「YYYY/MM/DD HH:mm:ss」。 */
+  /** 配置时区的时间字符串「YYYY/MM/DD HH:mm:ss」。 */
   readonly blockedAt: string;
   readonly meta: Readonly<TelegramIdentityMetadata>;
   /**

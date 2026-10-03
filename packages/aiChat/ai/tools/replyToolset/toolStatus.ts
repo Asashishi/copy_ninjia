@@ -1,14 +1,15 @@
 /**
  * 本轮工具状态：运行时状态区块里按轮变化的工具可用性，每个有条件的工具一行，只写事实
- * （能不能用、是否冷却、还剩几次）。模型据此怎么做由系统提示词里的
+ * （能不能用、是否冷却、还剩几次、独立检索的调用上限）。模型据此怎么做由系统提示词里的
  * REPLY_ACTION_INSTRUCTION 与各工具说明规定；工具清单本身每轮恒定。
  *
  * createReplyToolset 在组装工具的同一时刻取一次快照，同一回复的工具往返复用同一个
  * 字符串。快照在回复过程中可能过期（另一轮刚占了生图冷却或用掉最后一次语音），
  * 此时以各执行器在调用时的判定为准。
  *
- * 行序固定为生图 → 语音 → 问答。部署没有生图或语音能力时对应工具不挂，也不出这一行；
- * 问答两件恒挂，问答行恒出现。整段位于稳定前缀之后，写进冷却秒数与余量不影响
+ * 行序固定为生图 → 语音 → 问答 → 独立检索。部署没有生图或语音能力时对应工具不挂，也不出这一行；
+ * 问答两件恒挂，问答行恒出现；独立检索只在配置了该能力时给出调用上限。
+ * 整段位于稳定前缀之后，写进冷却秒数、余量与检索上限不影响
  * 供应商缓存（前缀约束见 docs/cn/04-invariants.md）。
  */
 
@@ -21,6 +22,7 @@ import {
   imageToolStatusCoolingDown,
   TOOL_STATUS_BLOCK_LABEL,
   voiceToolStatus,
+  webSearchToolStatus,
 } from "../../../../consts/aiChat/prompts/tools";
 import { agentTtsConfig } from "../../../../config/agent";
 import { getImageGenerationAvailability } from "../../../../cache/workers/aiChat/imageGeneration";
@@ -37,13 +39,15 @@ export type ToolStatusContext = Pick<
   "chatId" | "chatQa" | "mediaToolsRequested" | "imageGenerationReference" | "bypassMediaToolCooldown"
 >;
 
-/** buildToolStatusBlock 的入参：上下文子集加部署级的两项能力。 */
+/** buildToolStatusBlock 的入参：上下文子集、媒体能力与独立检索的本轮配置上限。 */
 export interface ToolStatusParams {
   readonly ctx: ToolStatusContext;
   /** 部署配置了生图能力，generate_image 恒挂。 */
   readonly imageEnabled: boolean;
   /** 部署配置了语音合成且实现具备这项能力，send_voice 恒挂。 */
   readonly voiceEnabled: boolean;
+  /** 配置了独立 web_search 时为其调用上限；缺省表示使用 text 内建检索，不出独立检索行。 */
+  readonly webSearchMaxCallsPerUse?: number;
 }
 
 /** 生图行：先看触发资格，再看群冷却，都通过才给参考素材说明。 */
@@ -69,9 +73,11 @@ function voiceStatusLine(): string {
 }
 
 /** 拼出本轮工具状态段（含段首标签），交给运行时状态区块。 */
-export function buildToolStatusBlock({ ctx, imageEnabled, voiceEnabled }: ToolStatusParams): string {
+export function buildToolStatusBlock({ ctx, imageEnabled, voiceEnabled, webSearchMaxCallsPerUse }: ToolStatusParams): string {
   let block: string = TOOL_STATUS_BLOCK_LABEL;
   if (imageEnabled) block += "\n" + imageStatusLine(ctx);
   if (voiceEnabled) block += "\n" + voiceStatusLine();
-  return block + "\n" + groupQaToolStatus(ctx.chatQa?.size ?? 0);
+  block += "\n" + groupQaToolStatus(ctx.chatQa?.size ?? 0);
+  if (webSearchMaxCallsPerUse !== undefined) block += "\n" + webSearchToolStatus(webSearchMaxCallsPerUse);
+  return block;
 }

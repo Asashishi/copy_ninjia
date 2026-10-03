@@ -5,6 +5,7 @@ import type { AiHydrateStickerCatalogMessage, AiStickerCatalogEvent } from "../s
 import type { AiMemoryUsage } from "./memory";
 import type { AiSpeakerSnapshot } from "./speaker";
 import type { TtsDailyUsage, VoiceSynthesisResult } from "./voiceMessage";
+import type { WebDigestCompositionResult, WebDigestRequest } from "../webDigest";
 import type {
   AgentDeploymentConfig,
   MoodConfig,
@@ -32,13 +33,17 @@ export type AiDirectTriggerReason = "reply" | "mention";
  */
 export interface AiInitMessage {
   type: "init";
+  /** 主线程已校验的默认时区；初始化及 Worker 重建时随启动快照重放。 */
+  readonly timeZone: string;
   botInfo: AiBotInfo;
   /** 主线程从 config/static/bot.json 读取后注入；Worker 不直接加载 Bot 部署配置。 */
   superAdminUserId: number;
-  defaultAtmosphere: Atmosphere;
+  /** 主线程启动总闸确定的本进程群通知风格（见 cache/main/atmosphere.ts）。 */
+  atmosphere: Atmosphere;
   agent: AgentDeploymentConfig;
   mood: MoodConfig;
   stickers: StickerConfig;
+  /** 主线程启动总闸确定的本进程人设：prompt/persona.md 正文或内置人设。 */
   persona: string;
 }
 
@@ -207,13 +212,6 @@ export interface AiTriggerMessage {
   messageThreadId: number | undefined;
 }
 
-/** 主线程群状态变更的人设最终值；null 表示恢复默认提示词。 */
-export interface AiPersonaMessage {
-  type: "persona";
-  chatId: number;
-  persona: string | null;
-}
-
 export interface AiHydrateMessage {
   type: "hydrate";
   memories: Map<number, string>;
@@ -277,6 +275,23 @@ export interface AiCancelVoiceSynthesisMessage {
 }
 
 /**
+ * cron `send_web_digest` 转交的一次摘要组稿（见 aiChat/webDigest.ts）。Worker 经
+ * aiChat/ai/webDigest.ts 检索并组稿，再以同 requestId 的 webDigestComposed 回执带回结果。
+ */
+export interface AiComposeWebDigestMessage {
+  type: "composeWebDigest";
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 webDigestRequestCounter）。 */
+  requestId: number;
+  request: WebDigestRequest;
+}
+
+/** 主线程撤回一次仍在途的组稿（调用方取消或等待超时）；语义同 AiCancelVoiceSynthesisMessage。 */
+export interface AiCancelWebDigestMessage {
+  type: "cancelWebDigest";
+  requestId: number;
+}
+
+/**
  * 语音合成每日计数的恢复值：startAiChatWorker 在 init 之后投递 memory/global/state.json
  * 恢复出的 `ttsUsage`，Worker 崩溃重建时 onRespawn 重放主线程持有的最新 ttsUsage 回执
  * （见 aiChat/workerBridge.ts）。null 表示从没用过。
@@ -287,7 +302,6 @@ export interface AiHydrateTtsUsageMessage {
 }
 
 export type AiChatWorkerMessage =
-  | AiPersonaMessage
   | AiInitMessage
   | AiConfigReloadMessage
   | AiRecordMessage
@@ -302,6 +316,8 @@ export type AiChatWorkerMessage =
   | AiSwitchMoodMessage
   | AiSynthesizeVoiceMessage
   | AiCancelVoiceSynthesisMessage
+  | AiComposeWebDigestMessage
+  | AiCancelWebDigestMessage
   | AiHydrateTtsUsageMessage;
 
 export interface AiMemoryEvent {
@@ -375,6 +391,13 @@ export interface AiVoiceSynthesizedEvent {
   result: VoiceSynthesisResult;
 }
 
+/** composeWebDigest 的回执，主线程凭 requestId 结算等待者。 */
+export interface AiWebDigestComposedEvent {
+  type: "webDigestComposed";
+  requestId: number;
+  result: WebDigestCompositionResult;
+}
+
 /**
  * Worker 登记一次语音合成请求后的全量计数（见 aiChat/ai/ttsUsage.ts）：主线程据此
  * 替换全局状态的 `ttsUsage` 并落盘，作为 Worker 重建时的重放来源。
@@ -399,6 +422,7 @@ export type AiChatWorkerEvent =
   | AiMoodQueriedEvent
   | AiMoodSwitchedEvent
   | AiVoiceSynthesizedEvent
+  | AiWebDigestComposedEvent
   | AiTtsUsageEvent
   | AiCacheUsageEvent
   | AiStickerCatalogEvent;

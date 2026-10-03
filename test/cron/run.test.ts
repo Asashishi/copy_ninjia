@@ -45,7 +45,6 @@ function schedule(
       actions,
     },
     job: null,
-    timer: null,
     cancelled: false,
   };
 }

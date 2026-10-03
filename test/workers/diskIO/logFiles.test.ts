@@ -9,7 +9,7 @@ import {
   resetLogCache,
 } from "../../../packages/cache/workers/diskIO/logs";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
-import { getTokyoDateKey } from "../../../packages/libs/time";
+import { getDateKey } from "../../../packages/libs/time";
 import {
   adoptLogFiles,
   flushLogBuffer,
@@ -44,7 +44,7 @@ afterEach(() => {
 
 describe("diskIO/logFiles 启动恢复", () => {
   test("成功初始化会接管当天文件并清理旧日志和孤儿临时文件", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const tempPath: string = join(LOGS_DIR, `orphan${TMP_FILE_SUFFIX}`);
     await Bun.write(stalePath, "{}");
@@ -58,7 +58,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   });
 
   test("inspect 不规范化或清理，adopt 与 maintenance 分阶段生效", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const tempPath: string = join(LOGS_DIR, `orphan${TMP_FILE_SUFFIX}`);
@@ -83,7 +83,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   });
 
   test("当前日志文件结构不兼容时阻止接管并保留原文件及旧日日志", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const original: string = "[{\"bad\":\"shape\"}]";
@@ -97,23 +97,33 @@ describe("diskIO/logFiles 启动恢复", () => {
   });
 
   test("当前日志记录 schema 不兼容时阻止接管且不规范化原文件", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const stalePath: string = join(LOGS_DIR, "2000-01-01.json");
     const original: string = '{"entry":{"level":"error","message":42}}';
     await Bun.write(todayPath, original);
     await Bun.write(stalePath, "{}");
 
-    await expect(initLogFiles()).rejects.toThrow("contains an invalid log record for key entry");
+    await expect(initLogFiles()).rejects.toThrow("entry[0] must be a log record");
     expect(await Bun.file(todayPath).text()).toBe(original);
     expect(existsSync(stalePath)).toBeTrue();
     expect(loggerFileState.current).toBeNull();
   });
 
+  test("非法日志条目的敏感键不进入异常", async () => {
+    const today: string = getDateKey();
+    const secret: string = "private-token-marker";
+    await Bun.write(join(LOGS_DIR, `${today}.json`), JSON.stringify({ [secret]: { level: "error", message: 42 } }));
+    const error: unknown = await inspectLogFiles().catch((caught: unknown): unknown => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("entry[0]");
+    expect((error as Error).message).not.toContain(secret);
+  });
+
   test("日志先进入内存批次，显式 flush 落盘并保留结构化参数", async () => {
     await initLogFiles();
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
-    const day: string = getTokyoDateKey(timestamp);
+    const day: string = getDateKey(timestamp);
 
     handleLogMessage({ timestamp, level: "error", args: ["request failed", { code: 503 }, "retrying"] });
     expect(flushBuffer.entries).toHaveLength(1);
@@ -137,7 +147,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   test("参数全是字符串时记录里不写 args 键", async () => {
     await initLogFiles();
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
-    const day: string = getTokyoDateKey(timestamp);
+    const day: string = getDateKey(timestamp);
 
     handleLogMessage({ timestamp, level: "info", args: ["bot", "started"] });
     expect(await flushLogBuffer()).toBeTrue();
@@ -160,7 +170,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     await maintainLogRetention();
 
     expect(flushBuffer.entries).toHaveLength(0);
-    expect(existsSync(join(LOGS_DIR, `${getTokyoDateKey(timestamp)}.json`))).toBeTrue();
+    expect(existsSync(join(LOGS_DIR, `${getDateKey(timestamp)}.json`))).toBeTrue();
     expect(existsSync(stalePath)).toBeFalse();
     expect(existsSync(tempPath)).toBeFalse();
   });
@@ -186,7 +196,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   });
 
   test("批次写入遇到不兼容文件时失败并重置游标，原文件保持不变", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const original: string = "[]";
     await Bun.write(todayPath, original);
@@ -202,7 +212,7 @@ describe("diskIO/logFiles 启动恢复", () => {
   });
 
   test("追加失败后按退避间隔才重开日文件，而不是每次 flush 都整文件重读", async () => {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     await Bun.write(todayPath, "[]");
     markLogDirty({ day: today, text: serializeDayFileEntry("a", { level: "error", message: "boom" }) });

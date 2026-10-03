@@ -1,7 +1,9 @@
 /**
  * config/dynamic/agent.json 里单项 AI 能力的严格解码（纯函数，不读盘、不接触缓存）：通用字段
- * provider、api_key、base_url、model，google provider 独有的 headers，image 的
- * image_protocol，以及 tts 的 speech_protocol、voice、style、language 与每日额度两项。
+ * provider、api_key、base_url、model（provider 为 google、openai 或 anthropic；anthropic 不支持
+ * image 与 tts，那两项拒绝它），google provider 独有的 headers，image 的
+ * image_protocol、tts 的 speech_protocol、voice、style、language 与每日额度两项，
+ * 以及 web_search 的 max_calls_per_use。
  * 文件级加载、分段快照与 holder 在 config/agent.ts。报错只写来源路径、字段路径与期望形态，
  * 不回显配置值。
  */
@@ -16,6 +18,8 @@ import {
   AGENT_HEADER_VALUE_PATTERN,
   AGENT_HEADERS_MAX_ENTRIES,
   AGENT_RESERVED_HEADER_NAMES,
+  WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE,
+  isAgentProvider,
 } from "../consts/agent";
 import {
   TTS_DEFAULT_DAILY_LIMIT,
@@ -30,6 +34,7 @@ import type {
   AgentImageCapabilityConfig,
   AgentProvider,
   AgentTtsCapabilityConfig,
+  AgentWebSearchCapabilityConfig,
   OpenAiImageProtocol,
   OpenAiSpeechProtocol,
 } from "../types/config";
@@ -62,7 +67,7 @@ function requiredApiKey(value: unknown, context: string, sourcePath: string): st
  * 读的是 api_key 与 headers 的值），又会被 SDK 原样拼进每一次请求 URL，一旦进日志就是
  * 明文。供应商凭据走 api_key，三方网关鉴权走 google provider 的 headers。
  *
- * fragment 一律拒绝：两家 SDK 都把 base_url 当路径前缀拼接，`#` 之后的部分不会
+ * fragment 一律拒绝：三家 SDK 都把 base_url 当路径前缀拼接，`#` 之后的部分不会
  * 被发到服务端。留着它只会让人以为自己配了一个能生效的端点。
  */
 function optionalBaseUrl(value: unknown, context: string, sourcePath: string): string | undefined {
@@ -84,7 +89,15 @@ function optionalBaseUrl(value: unknown, context: string, sourcePath: string): s
 
 /** 解码 provider；Gemini 是模型家族名，对外协议名统一为 google。 */
 function requiredProvider(value: unknown, context: string, sourcePath: string): AgentProvider {
-  if (value === "google" || value === "openai") return value;
+  const provider: string = typeof value === "string" ? value.trim() : "";
+  if (isAgentProvider(provider)) return provider;
+  return invalidInput(sourcePath, context, '"google", "openai" or "anthropic"');
+}
+
+/** 解码生图与语音合成的 provider：这两项只有 google 与 openai 的实现，anthropic 一律拒绝。 */
+function requiredMediaProvider(value: unknown, context: string, sourcePath: string): "google" | "openai" {
+  const provider: string = typeof value === "string" ? value.trim() : "";
+  if (provider === "google" || provider === "openai") return provider;
   return invalidInput(sourcePath, context, '"google" or "openai"');
 }
 
@@ -94,7 +107,8 @@ function requiredImageProtocol(
   context: string,
   sourcePath: string
 ): OpenAiImageProtocol {
-  if (value === "openai" || value === "openai-standard" || value === "xai") return value;
+  const protocol: string = typeof value === "string" ? value.trim() : "";
+  if (protocol === "openai" || protocol === "openai-standard" || protocol === "xai") return protocol;
   return invalidInput(sourcePath, context, '"openai", "openai-standard", or "xai"');
 }
 
@@ -104,7 +118,8 @@ function requiredSpeechProtocol(
   context: string,
   sourcePath: string
 ): OpenAiSpeechProtocol {
-  if (value === "openai" || value === "xai") return value;
+  const protocol: string = typeof value === "string" ? value.trim() : "";
+  if (protocol === "openai" || protocol === "xai") return protocol;
   return invalidInput(sourcePath, context, '"openai" or "xai"');
 }
 
@@ -168,12 +183,13 @@ function parseCapabilityFields(
   const provider: AgentProvider = requiredProvider(value.provider, `${context}.provider`, sourcePath);
   const apiKey: string = requiredApiKey(value.api_key, `${context}.api_key`, sourcePath);
   const baseUrl: string | undefined = optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath);
+  const model: string = requiredString(value.model, `${context}.model`, sourcePath);
   if (provider === "google") {
     const headers: Readonly<Record<string, string>> | undefined =
       optionalHeaders(value.headers, `${context}.headers`, sourcePath);
-    return { provider, apiKey, baseUrl, headers, model: requiredString(value.model, `${context}.model`, sourcePath) };
+    return { provider, apiKey, baseUrl, headers, model };
   }
-  return { provider, apiKey, baseUrl, headers: undefined, model: requiredString(value.model, `${context}.model`, sourcePath) };
+  return { provider, apiKey, baseUrl, headers: undefined, model };
 }
 
 /** 能力值必须是普通对象；字段集由调用方在解出 provider 后按 capabilityKeys 核对。 */
@@ -200,20 +216,42 @@ export function parseCapability(
   return parseCapabilityFields(record, context, sourcePath);
 }
 
-/** 解码生图能力；只有 OpenAI 协议分支接受并要求 image_protocol。 */
+/** 解码独立联网检索能力；max_calls_per_use 缺省补齐，存在时必须是正安全整数。 */
+export function parseWebSearchCapability(value: unknown, sourcePath: string): AgentWebSearchCapabilityConfig {
+  const context: string = "$.agent.web_search";
+  const record: Readonly<Record<string, unknown>> = capabilityRecord(value, context, sourcePath);
+  const provider: AgentProvider = requiredProvider(record.provider, `${context}.provider`, sourcePath);
+  if (!hasOnlyKeys(record, capabilityKeys(provider, ["max_calls_per_use"]))) {
+    return invalidInput(sourcePath, context, capabilityShape(provider, ", max_calls_per_use?"));
+  }
+  const fields: AgentCapabilityConfig = parseCapabilityFields(record, context, sourcePath);
+  const maxCallsPerUse: number = optionalQuotaInteger({
+    value: record.max_calls_per_use,
+    context: `${context}.max_calls_per_use`,
+    sourcePath,
+    fallback: WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE,
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+    expected: "a positive safe integer",
+  });
+  return { ...fields, maxCallsPerUse };
+}
+
+/** 解码生图能力；只有 OpenAI 协议分支接受并要求 image_protocol，anthropic 不受理。 */
 export function parseImageCapability(
   value: unknown,
   sourcePath: string
 ): AgentImageCapabilityConfig {
   const context: string = "$.agent.image";
   const record: Readonly<Record<string, unknown>> = capabilityRecord(value, context, sourcePath);
-  const provider: AgentProvider = requiredProvider(record.provider, `${context}.provider`, sourcePath);
+  const provider: "google" | "openai" = requiredMediaProvider(record.provider, `${context}.provider`, sourcePath);
   const extraKeys: readonly string[] = provider === "openai" ? ["image_protocol"] : [];
   if (!hasOnlyKeys(record, capabilityKeys(provider, extraKeys))) {
     return invalidInput(sourcePath, context, capabilityShape(provider, provider === "openai" ? ", image_protocol" : ""));
   }
   const fields: AgentCapabilityConfig = parseCapabilityFields(record, context, sourcePath);
   if (fields.provider === "google") return { ...fields, imageProtocol: undefined };
+  if (fields.provider === "anthropic") return invalidInput(sourcePath, `${context}.provider`, '"google" or "openai"');
   return {
     ...fields,
     imageProtocol: requiredImageProtocol(record.image_protocol, `${context}.image_protocol`, sourcePath),
@@ -233,7 +271,7 @@ interface QuotaIntegerOptions {
 }
 
 /**
- * 解码语音合成每日额度的一个整数字段：存在时必须是 min～max 的整数；缺省时取 fallback，
+ * 解码语音每日额度或检索调用上限的整数字段：存在时必须是 min～max 的安全整数；缺省时取 fallback，
  * fallback 落在区间外同样按 expected 拒绝。
  */
 function optionalQuotaInteger({ value, context, sourcePath, fallback, min, max, expected }: QuotaIntegerOptions): number {
@@ -334,7 +372,7 @@ function parseXAiTtsCapability(
  *   取 `xai` 时见 parseXAiTtsCapability。
  *
  * style 缺省使用 TTS_DEFAULT_STYLE；三种协议都接受可选的 daily_limit 与 daily_reserve_quota
- * （见 parseTtsDailyQuota）。字段集之外的键一律拒绝。
+ * （见 parseTtsDailyQuota）。字段集之外的键一律拒绝；anthropic 不受理。
  */
 export function parseTtsCapability(
   value: unknown,
@@ -342,7 +380,7 @@ export function parseTtsCapability(
 ): AgentTtsCapabilityConfig {
   const context: string = "$.agent.tts";
   const record: Readonly<Record<string, unknown>> = capabilityRecord(value, context, sourcePath);
-  const provider: AgentProvider = requiredProvider(record.provider, `${context}.provider`, sourcePath);
+  const provider: "google" | "openai" = requiredMediaProvider(record.provider, `${context}.provider`, sourcePath);
   if (provider === "openai") {
     const speechProtocol: OpenAiSpeechProtocol =
       requiredSpeechProtocol(record.speech_protocol, `${context}.speech_protocol`, sourcePath);

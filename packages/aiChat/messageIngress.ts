@@ -16,7 +16,8 @@ import {
   AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
 } from "../consts/aiChat/provider";
 import { chatQaEntries } from "../cache/main/qa";
-import { telegramOutboundStats } from "../infra/telegram/outboundLifecycle";
+import { telegramOutboundGateState } from "../cache/main/telegram";
+import type { TelegramRetryLane } from "../types/telegramOutbound";
 import { postAiChatOrThrow } from "./workerBridge";
 
 /**
@@ -51,9 +52,9 @@ function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage | AiRe
  * 带过去的这份快照（见 docs/cn/04-invariants.md 的「AI 闲聊运行时」）。
  */
 function isTelegramReplyBackpressured(): boolean {
-  const telegramStats: ReturnType<typeof telegramOutboundStats> = telegramOutboundStats();
-  return telegramStats.messageActive >= AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER ||
-    telegramStats.messageRetryPending >= AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
+  const messageLane: TelegramRetryLane = telegramOutboundGateState.lanes.message;
+  return messageLane.activeCount >= AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER ||
+    messageLane.pendingCount >= AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
 }
 
 /**

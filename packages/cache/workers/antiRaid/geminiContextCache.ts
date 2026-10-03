@@ -1,4 +1,4 @@
-/** Owner: Anti-Raid Worker。ad_detect 显式缓存（Gemini cachedContent）的本地登记与内容指纹。 */
+/** owner: workers/antiRaid。ad_detect 显式缓存（Gemini cachedContent）的本地登记与内容指纹。 */
 
 import type { GeminiContextCacheContent, GeminiContextCacheRegistry } from "../../../types/geminiContextCache";
 

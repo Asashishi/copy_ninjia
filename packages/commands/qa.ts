@@ -60,7 +60,7 @@ export async function handleQaCommand(ctx: CommandContext<Context>): Promise<voi
   } else if (subcommand === "remove") {
     await removeQa(ctx, argument);
   } else {
-    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere(ctx.chat.id).QA_USAGE_TEXT, replyToMessageId: ctx.msgId });
+    await sendCommandMessage({ chatId: ctx.chat.id, text: chatAtmosphere().QA_USAGE_TEXT, replyToMessageId: ctx.msgId });
   }
 }
 
@@ -89,7 +89,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
   if ((chatQaEntries.get(chatId)?.size ?? 0) >= CHAT_QA_MAX_PER_CHAT) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.full,
+      text: chatAtmosphere().QA_COMMAND_TEXTS.full,
       replyToMessageId: messageId,
     });
     return;
@@ -100,7 +100,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
   if (existing !== undefined && existing.openedById !== openedById) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.formTaken,
+      text: chatAtmosphere().QA_COMMAND_TEXTS.formTaken,
       replyToMessageId: messageId,
     });
     return;
@@ -114,7 +114,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
   if (session === null) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.formBusy,
+      text: chatAtmosphere().QA_COMMAND_TEXTS.formBusy,
       replyToMessageId: messageId,
     });
     return;
@@ -122,7 +122,7 @@ async function setQa(ctx: CommandContext<Context>): Promise<void> {
   try {
     const formMessageId: number | undefined = await sendQaForm({
       chatId,
-      text: renderQaFormPrompt(undefined, undefined, chatAtmosphere(chatId)),
+      text: renderQaFormPrompt(undefined, undefined, chatAtmosphere()),
       replyToMessageId: messageId,
       messageThreadId: forumTopicThreadId(ctx.msg),
       // 拿到 id 的同步时点就登记：停机 abort 会丢掉返回值，但不能丢掉这条
@@ -158,14 +158,14 @@ async function settleQaForm(session: QaFormSession, q: string, a: string): Promi
       logger.error(`Failed to record the qa entry for chat ${chatId}:`, error);
       await sendCommandMessage({
         chatId,
-        text: error instanceof ChatQaCapacityError ? chatAtmosphere(chatId).QA_COMMAND_TEXTS.full : chatAtmosphere(chatId).QA_COMMAND_TEXTS.persistFailed,
+        text: error instanceof ChatQaCapacityError ? chatAtmosphere().QA_COMMAND_TEXTS.full : chatAtmosphere().QA_COMMAND_TEXTS.persistFailed,
         replyToMessageId: formMessageId,
       });
       return;
     }
     await sendCommandMessage({
       chatId,
-      text: outcome === "replaced" ? chatAtmosphere(chatId).QA_COMMAND_TEXTS.replaced : chatAtmosphere(chatId).QA_COMMAND_TEXTS.created,
+      text: outcome === "replaced" ? chatAtmosphere().QA_COMMAND_TEXTS.replaced : chatAtmosphere().QA_COMMAND_TEXTS.created,
       replyToMessageId: formMessageId,
     });
   } finally {
@@ -196,14 +196,14 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
   // 都没变，就不为一次「内容没有变化」的改写多跑一趟 Telegram。
   if (claimed.questionTooLong || claimed.answerTooLong) {
     if (claimed.accepted.q !== undefined || claimed.accepted.a !== undefined) {
-      await editQaForm(session, renderQaFormPrompt(session.q, session.a, chatAtmosphere(session.chatId)));
+      await editQaForm(session, renderQaFormPrompt(session.q, session.a, chatAtmosphere()));
     }
     if (qaFormSessions.get(chatId) !== session) return true;
     await sendCommandMessage({
       chatId,
       text: claimed.questionTooLong
-        ? chatAtmosphere(chatId).QA_COMMAND_TEXTS.questionTooLong
-        : chatAtmosphere(chatId).QA_COMMAND_TEXTS.answerTooLong,
+        ? chatAtmosphere().QA_COMMAND_TEXTS.questionTooLong
+        : chatAtmosphere().QA_COMMAND_TEXTS.answerTooLong,
       // 回复到表单上：话题群里 bot 主动发的消息没有 message_thread_id 就会落进
       // General，而表单在话题里——回执必须跟表单待在同一个话题。
       replyToMessageId: session.formMessageId,
@@ -216,13 +216,13 @@ async function claimQaFormDelivery(message: Message): Promise<boolean> {
   if (q === undefined || a === undefined) {
     // 还差一项：表单先跟上，再告诉用户已经收下哪一样。回执 30 秒后就自删，
     // 之后只有表单还说得出这张单子填到了哪（见 qa/notices.ts 的 editQaForm）。
-    await editQaForm(session, renderQaFormPrompt(q, a, chatAtmosphere(session.chatId)));
+    await editQaForm(session, renderQaFormPrompt(q, a, chatAtmosphere()));
     if (qaFormSessions.get(chatId) !== session) return true;
     await sendCommandMessage({
       chatId,
       text: claimed.accepted.q !== undefined
-        ? chatAtmosphere(chatId).QA_COMMAND_TEXTS.questionSaved
-        : chatAtmosphere(chatId).QA_COMMAND_TEXTS.answerSaved,
+        ? chatAtmosphere().QA_COMMAND_TEXTS.questionSaved
+        : chatAtmosphere().QA_COMMAND_TEXTS.answerSaved,
       replyToMessageId: session.formMessageId,
     });
     return true;
@@ -239,7 +239,7 @@ async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<vo
   if (entries === undefined || entries.size === 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.queryEmpty,
+      text: chatAtmosphere().QA_COMMAND_TEXTS.queryEmpty,
       replyToMessageId: messageId,
     });
     return;
@@ -250,7 +250,7 @@ async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<vo
     if (answer === undefined) {
       await sendCommandMessage({
         chatId,
-        text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.queryMissing(wanted),
+        text: chatAtmosphere().QA_COMMAND_TEXTS.queryMissing(wanted),
         replyToMessageId: messageId,
       });
       return;
@@ -259,7 +259,7 @@ async function queryQa(ctx: CommandContext<Context>, wanted: string): Promise<vo
   } else {
     for (const [q, a] of entries) selected.push({ q, a });
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const pages: readonly RichTextMessage[] = buildQaBoardPages(selected, atmosphere);
   const first: RichTextMessage | undefined = pages[0];
   if (first === undefined) return;
@@ -285,7 +285,7 @@ async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<v
   if (wanted.length === 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.removeUsage,
+      text: chatAtmosphere().QA_COMMAND_TEXTS.removeUsage,
       replyToMessageId: messageId,
     });
     return;
@@ -297,7 +297,7 @@ async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<v
     logger.error(`Failed to remove the qa entry for chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).QA_COMMAND_TEXTS.persistFailed,
+      text: chatAtmosphere().QA_COMMAND_TEXTS.persistFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -306,8 +306,8 @@ async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<v
     chatId,
     // 回执必须如实：没删到就说没这条，不能一律回「删好了」让人以为生效了。
     text: removed
-      ? chatAtmosphere(chatId).QA_COMMAND_TEXTS.removed(wanted)
-      : chatAtmosphere(chatId).QA_COMMAND_TEXTS.removeMissing(wanted),
+      ? chatAtmosphere().QA_COMMAND_TEXTS.removed(wanted)
+      : chatAtmosphere().QA_COMMAND_TEXTS.removeMissing(wanted),
     replyToMessageId: messageId,
   });
 }

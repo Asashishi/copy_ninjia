@@ -1,4 +1,4 @@
-/** Owner: 主线程。临时广告免检读取 LRU 与尚未收到 SQLite ACK 的最终值。 */
+/** owner: main。临时广告免检读取 LRU 与尚未收到 SQLite ACK 的最终值。 */
 
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../consts/identityStorage";
 import { LruCache } from "../../libs/lruCache";

@@ -48,7 +48,7 @@ export async function handleHImageCommand(ctx: CommandContext<Context>): Promise
   if (!tryConsumeHImageRateLimit()) return;
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere(chatId).H_IMAGE_TEXTS;
+  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere().H_IMAGE_TEXTS;
   // 子命令词不区分大小写，口径同 `/copy`、`/qa`、`/icon`、`/translate`。
   const argument: string = ctx.match.trim().toLowerCase();
   if (argument === H_IMAGE_ADD_ARGUMENT) {

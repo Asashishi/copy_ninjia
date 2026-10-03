@@ -2,6 +2,9 @@ import { afterEach, expect, test } from "bun:test";
 import { rmSync, mkdirSync, statSync } from "node:fs";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
+import { STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
+import { storageMetadataRows } from "../../packages/database/interact/initialization";
 import { createFixture, writeText, cleanupFixtures } from "../../scripts/installIsolation/fixture";
 import type { InstallerFixture } from "../../scripts/installIsolation/fixture";
 import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
@@ -115,4 +118,12 @@ test("空环境 bootstrap 安装并启动真实应用，系统操作与网络由
   const unit: string = await Bun.file(join(fixture.runtimeRoot, "unit-preview")).text();
   expect(unit).toContain(fixture.worktree);
   expect(unit).toContain(fixture.runtimeRoot);
+  // 空环境新建的库是当前 schema，并绑定安装时写下的 bot.json 时区。
+  const bot: { readonly time_zone: string } =
+    await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).json() as { readonly time_zone: string };
+  const client: Database = new Database(join(fixture.runtimeRoot, "database/storage.sqlite"), { readonly: true });
+  try {
+    expect<readonly unknown[]>(client.query("SELECT key, json(data) AS data FROM storage_metadata ORDER BY key").all())
+      .toEqual(storageMetadataRows(bot.time_zone));
+  } finally { client.close(true); }
 }, 30_000);

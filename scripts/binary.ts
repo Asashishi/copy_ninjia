@@ -1,4 +1,4 @@
-/** 二进制命令入口；部署工作目录包含配置、prompt 与运行时数据。 */
+/** 二进制命令入口；部署工作目录包含配置、可选的 prompt/persona.md 与运行时数据。 */
 import type * as ApplicationEntry from "../index";
 const arguments_: readonly string[] = Bun.argv.slice(2);
 if (arguments_.length === 1 && arguments_[0] === "--help") {

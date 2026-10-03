@@ -159,14 +159,13 @@ export function extractFunctionCalls(response: OpenAI.Responses.Response): reado
 }
 
 /**
- * 统计一次响应中服务端已执行的联网检索调用。web_search 是 hosted 工具，
- * 检索在 OpenAI 侧自动执行、结果直接体现在最终正文里，只以
- * `web_search_call` item 的形式留下调用记录。
+ * 统计一次响应中已完成的 search 动作；打开网页、页内查找和未完成的调用不计入检索次数。
+ * web_search 是 hosted 工具，调用记录在 `web_search_call` item 的 action 与 status 中。
  */
 export function countWebSearchCalls(response: OpenAI.Responses.Response): number {
   let calls: number = 0;
   for (const item of responseOutputItems(response)) {
-    if (item.type === "web_search_call") calls++;
+    if (item.type === "web_search_call" && item.action?.type === "search" && item.status === "completed") calls++;
   }
   return calls;
 }

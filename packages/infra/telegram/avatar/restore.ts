@@ -11,6 +11,7 @@ import type { SniffedImageFormat } from "../../image";
 import { redactUrlForLog } from "../../../libs/redaction";
 import { logger } from "../../logger";
 import { logApiError } from "../client";
+import { runTelegramCategorizedRequest } from "../outboundGate";
 import { avatarFailureFor, runAvatarFetchAttempts, setBotProfilePhoto } from "./shared";
 import type {
   AvatarFetchAttemptsOutcome,
@@ -22,37 +23,16 @@ import type { DefaultAvatarSource } from "../../../types/config";
 type DefaultAvatarBytes = Uint8Array | "transient-failure" | "permanent-failure";
 
 /**
- * 把机器人头像复原成 `source` 指向的那张默认脸。
+ * 按配置来源恢复机器人默认头像；调用方在主线程 copy/avatarQueue.ts 读取素材配置。
  *
- * 来源由调用方传入：它来自 config/dynamic/assets.json 的 `pathOrUrl.bot_default_avatar`，缺省为
- * consts/ui/assets.ts 的 BOT_DEFAULT_AVATAR_URL（见 config/assets.ts 的 getAssetConfig）。
- * 头像入口只由主线程加载，但仍不读取素材快照：取值留在同一 owner 的
- * copy/avatarQueue.ts，让本模块只负责一次有界读取与头像恢复动作（见 docs/cn/04-invariants.md 的缓存线程归属）。
+ * `url` 来源允许配置的 HTTP/HTTPS 地址并跟随重定向。请求进入主线程 download 类
+ * 出站闸，等待与 429 重放共用本次下载的超时预算，取消信号传到实际 fetch。
+ * `path` 来源每次尝试都重新读取经 config/assets.ts 校验的绝对路径；读取失败不重试。
  *
- * `url` 来源**对图床不做任何限定**：任意能直出图片字节的地址都成立，图床、对象存储、自建
- * 静态资源都行，代码里不认哪一家；这一项也是唯一允许明文 http 的素材直链——它由
- * 本进程自己抓取，走不走 TLS 是配置者的决定（见 config/assets.ts 的 defaultAvatarSource）。
- *
- * 这条下载**跟随重定向**：地址是部署配置的一部分，跳到哪儿由配置者选定的图床决定，
- * 而「直链先 302 到实际存储域名」正是图床与对象存储的常态（内置缺省那条 Google
- * Drive 链接就是如此）。
- *
- * /copy、/icon steal 那三条禁用 redirect 是另一条约束，不是这一条的强化版：那些
- * 地址来自 Bot API 的 file_path 与 t.me 主页的 HTML，归 Telegram 自有资产域
- * allowlist 管（见 docs/cn/04-invariants.md 的「出站请求与消息安全」），本函数不在其列。
- *
- * `path` 来源每次尝试都重新读本机文件（绝对路径，启动与热重载时已由 config/assets.ts 核对过）；
- * 读不到按确定性失败处理。
- *
- * 两种来源都按 AVATAR_MAX_DOWNLOAD_BYTES 有界读取，并在上传前校验字节签名，防的是
- * 「拿回来的根本不是图片」，与跳不跳转无关。
- *
- * 与 copyUserProfilePhoto 共用 runAvatarFetchAttempts 的有界重试，也与它一样
- * **区分永久与瞬时失败**：对端偶发 5xx 与限流值得重试，而「拿回来的根本不是
- * 图片」「Telegram 判定这张图不合规」重试多少次都是同一个结果，只会白烧头像
- * 接口的调用额度——那正是本函数的重试本想规避的 flood 限制。
- * @returns 复原成功为 true；下载或读文件失败、超限、载荷不是图片或
- *   setMyProfilePhoto 失败为 false（均已记日志）。
+ * 两种来源都按 AVATAR_MAX_DOWNLOAD_BYTES 有界读取，并在上传前校验 JPEG/PNG 签名。
+ * runAvatarFetchAttempts 仅对瞬时失败执行有界重试；超限、非图片和 Telegram 400
+ * 属确定性失败。跨模块约束见 docs/cn/04-invariants.md 的「出站请求与消息安全」。
+ * @returns 恢复成功为 true；读取、校验或上传失败以及取消为 false。
  */
 export async function restoreDefaultProfilePhoto(
   source: Readonly<DefaultAvatarSource>,
@@ -87,13 +67,15 @@ async function attemptRestoreDefaultProfilePhoto(
   }
 }
 
-/** 下载 `url` 来源：非 2xx 属瞬时失败，超限与非 JPEG/PNG 属确定性失败；网络异常原样上抛。 */
+/** 下载 `url` 来源：429 由统一出站闸重放，其余非 2xx 属瞬时失败；超限与非图片不重试。 */
 async function downloadDefaultAvatar(url: string, attempt: number, signal?: AbortSignal): Promise<DefaultAvatarBytes> {
-  const response: Response = await fetch(url, {
-    // 跟随重定向：地址是部署配置，而图床与对象存储的直链先跳一次到存储域名是
-    // 常态（见 restoreDefaultProfilePhoto）。
-    redirect: "follow",
+  const response: Response = await runTelegramCategorizedRequest({
+    category: "download",
     signal: signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS),
+    execute: (requestSignal: AbortSignal): Promise<Response> => fetch(url, {
+      redirect: "follow",
+      signal: requestSignal,
+    }),
   });
   if (!response.ok) {
     void discardResponseBody(response);
@@ -102,16 +84,9 @@ async function downloadDefaultAvatar(url: string, attempt: number, signal?: Abor
   }
   const download: BoundedResponseResult = await readBoundedResponseBytes(response, AVATAR_MAX_DOWNLOAD_BYTES);
   if (!download.ok) {
-    // 超限是确定性失败：同一个链接重试多少次都是这么大，点名字节数便于换图。
     logger.error(`The default avatar at ${redactUrlForLog(url)} exceeded the download limit (${download.observedBytes} bytes)`);
     return "permanent-failure";
   }
-  // 上传前必须认一遍字节，与图床是哪一家无关：拿 **HTTP 200** 回一段 HTML 是
-  // 这类链接的通病（Drive 的 uc?export=download 在配额超限/病毒扫描警告时如此，
-  // 需要登录或已过期的分享链接同理）——response.ok 为真、有界读取成功，于是那段
-  // HTML 被当作静态图片交给 Telegram，换来一次确定性拒绝。响应体为 null 时
-  // readBoundedResponseBytes 会以零长 buffer 报 ok，同样在这里被挡下
-  // （长度不足以匹配任何签名）。
   const format: SniffedImageFormat = sniffImageFormat(download.bytes);
   if (format !== "jpeg" && format !== "png") {
     logger.error(
@@ -126,7 +101,7 @@ async function downloadDefaultAvatar(url: string, attempt: number, signal?: Abor
 
 /**
  * 读 `path` 来源：最多读 AVATAR_MAX_DOWNLOAD_BYTES 加一个字节。读不到、超限与非 JPEG/PNG
- * 都属确定性失败——文件内容不会因重试而改变。
+ * 都属确定性失败。
  */
 async function readDefaultAvatarFile(path: string): Promise<DefaultAvatarBytes> {
   let bytes: Uint8Array;

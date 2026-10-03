@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   StateStore,
+  adoptCopyTarget,
   activeCopyModeIn,
   activeCopyTargetIdIn,
   clearChatStateField,
@@ -301,7 +302,7 @@ describe("StateStore", () => {
     });
     const invalid = { copy: { copiedUser: null }, unknownField: true } as unknown as GlobalState;
 
-    await expect(store.save(invalid)).rejects.toThrow("unknownField");
+    await expect(store.save(invalid)).rejects.toThrow("$.<key> must be absent");
     expect(paths).toEqual([]);
   });
 
@@ -560,7 +561,7 @@ describe("群级状态门面", () => {
     state.quietUntil = Date.now() + 60_000;
     state.title = "群名";
 
-    expect(clearChatStateField(-1002, "aiPersona")).toBeFalse();
+    expect(clearChatStateField(-1002, "translate")).toBeFalse();
     expect(clearChatStateField(-1002, "quietUntil")).toBeTrue();
     expect(chatStateCache.get(-1002)?.quietUntil).toBeUndefined();
 
@@ -587,6 +588,12 @@ describe("全局状态的加载接线", () => {
     await stateStoreHolder.current?.flush(1_000, true);
     stateStoreHolder.current = null;
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("写入复读目标时身份原样保留，空字符串名称不被改写或省略", () => {
+    const user = { id: 42, first_name: "", last_name: " Target " };
+    adoptCopyTarget(user, "nya", -1001);
+    expect(getGlobalCopyState().copiedUser).toBe(user);
   });
 
   test("复读目标、模式、所属群与冷却时间按判别联合完整恢复", async () => {
@@ -620,7 +627,7 @@ describe("全局状态的加载接线", () => {
       const logged = spyOn(logger, "error").mockImplementation((): void => {});
       try {
         await expect(loadState()).rejects.toThrow(
-          `${legacyPath}: $ must be absent; first upgrade with the preceding global-state migration release, then run migrate:global-state for the current format.`
+          `${legacyPath}: $ must be absent; first upgrade to 16.3.2 and complete its migrations.`
         );
         expect(globalCopyState.lastCopyTime).toBeUndefined();
         expect(await Bun.file(legacyPath).text()).toBe("{\"global\":{}}");

@@ -1,14 +1,14 @@
 /**
- * Gemini 显式缓存（cachedContent）共用核心的常量，与能力无关；text 与 ad_detect 两个
- * scope 共用同一组存活、续期与冷却口径。各 scope 自己的 displayName 前缀、槽数上限与
+ * Gemini 显式缓存（cachedContent）共用核心的常量；text 与 ad_detect 两个
+ * scope 共用存活时长、续期阈值与冷却口径。各 scope 自己的 displayName 前缀、槽数上限与
  * 错误标签在 consts/aiChat/gemini.ts 与 consts/antiRaid/adDetect.ts。
  */
 
 /**
- * 服务端条目的存活时长（秒），4 小时。创建与续期都显式写入这个值；到期由 Google
+ * 服务端条目的存活时长（秒），24 小时。创建与续期都显式写入这个值；到期由 Google
  * 自动删除。所属模块：infra/geminiContextCache.ts。
  */
-export const GEMINI_CONTEXT_CACHE_TTL_SECONDS: number = 14_400;
+export const GEMINI_CONTEXT_CACHE_TTL_SECONDS: number = 86_400;
 
 /**
  * displayName 里两段指纹各自的形态：libs/prefixFingerprint.ts 产出的固定 43 字符

@@ -5,7 +5,7 @@
  * 的 `joinLog` owner 发起（本模块在加载时反向注册那个 owner）。
  */
 
-import { getTokyoDateKey } from "../libs/time";
+import { getDateKey } from "../libs/time";
 import { purgesChatData } from "../libs/chatTeardown";
 import { joinLogSequence, unacknowledgedJoinLogs } from "../cache/main/joinLog";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../consts/diskIO/common";
@@ -46,7 +46,7 @@ export function recordJoinLog({
     chatId,
     userId,
     joinedAt,
-    day: getTokyoDateKey(joinedAt),
+    day: getDateKey(joinedAt),
   };
   if (!diskIO.postDiskIO(message)) return false;
   joinLogSequence.current = message.sequence;

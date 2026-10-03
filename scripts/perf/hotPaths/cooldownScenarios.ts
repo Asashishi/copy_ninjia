@@ -1,11 +1,12 @@
 import { clearUserReplyTriggerTimes, tryClaimUserReplyTrigger } from "../../../packages/auto/message/triggerPolicy";
 import { USER_REPLY_TRIGGER_CACHE_MAX, USER_REPLY_TRIGGER_COOLDOWN_MS } from "../../../packages/consts/auto";
+import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS } from "./fixtures";
 import type { Scenario } from "./types";
 
 type CooldownMode = "hit" | "renew" | "growth" | "saturated" | "expiry";
 
-/** 固定生产容量与冷却窗口，分别测量命中、续期、建表、满载拒绝和整批到期。 */
+/** 按生产群数分布固定容量，测量冷却命中、续期、建表、满载拒绝和整批到期。 */
 export function cooldownScenario(mode: CooldownMode): Scenario {
   let now: number = BENCHMARK_EPOCH_MS;
   let offset: number = 0;
@@ -21,7 +22,8 @@ export function cooldownScenario(mode: CooldownMode): Scenario {
     prepare: (): void => {
       const size: number = mode === "growth" ? 0 : mode === "renew" ? 1 : USER_REPLY_TRIGGER_CACHE_MAX;
       for (let userId: number = 1; userId <= size; userId++) {
-        if (!tryClaimUserReplyTrigger(BENCHMARK_CHAT_ID, userId, now)) throw new Error("Cooldown fixture seed failed.");
+        const chatId: number = BENCHMARK_CHAT_ID - userId % STATE_MANAGED_CHAT_LIMIT;
+        if (!tryClaimUserReplyTrigger(chatId, userId, now)) throw new Error("Cooldown fixture seed failed.");
       }
     },
     run: (iterations: number): number => {
@@ -38,7 +40,8 @@ export function cooldownScenario(mode: CooldownMode): Scenario {
           : mode === "growth" ? index + 1
           : mode === "expiry" ? offset + 1 + index % USER_REPLY_TRIGGER_CACHE_MAX
           : 1 + (index & 255);
-        if (tryClaimUserReplyTrigger(BENCHMARK_CHAT_ID, userId, now)) claimed++;
+        const chatId: number = BENCHMARK_CHAT_ID - userId % STATE_MANAGED_CHAT_LIMIT;
+        if (tryClaimUserReplyTrigger(chatId, userId, now)) claimed++;
       }
       const expected: number = mode === "hit" || mode === "saturated" ? 0 : iterations;
       if (claimed !== expected) throw new Error(`Cooldown ${mode} decisions differ from fixture expectations.`);

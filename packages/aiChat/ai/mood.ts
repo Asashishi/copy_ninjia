@@ -3,7 +3,7 @@ import { getMoodConfig } from "../../config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../consts/aiChat/mood";
 import { MOOD_LABEL_NAME } from "../../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../consts/weather";
-import { getTokyoHour } from "../../libs/time";
+import { getLocalHour } from "../../libs/time";
 import { weatherCache } from "../../cache/workers/aiChat/weather";
 import type { MoodOption, TimeBucket, WeatherBucket } from "../../types/aiChat/mood";
 
@@ -53,7 +53,7 @@ export function classifyWeatherCodeBucket(code: number): WeatherBucket {
   return "storm";
 }
 
-/** 按东京时区小时数（0~23）归类到粗粒度时段桶。导出仅为可测试性。 */
+/** 按配置时区小时数（0~23）归类到粗粒度时段桶。导出仅为可测试性。 */
 export function classifyTimeBucket(hour: number): TimeBucket {
   if (hour < 5) return "lateNight";
   if (hour < 9) return "morning";
@@ -87,7 +87,7 @@ export function computeAdjustedWeight(mood: MoodOption, weather: WeatherBucket |
  */
 function pickMood(): MoodOption {
   const weather: WeatherBucket | null = currentWeatherBucket();
-  const time: TimeBucket = classifyTimeBucket(getTokyoHour());
+  const time: TimeBucket = classifyTimeBucket(getLocalHour());
   const weighted: WeightedMood[] = getMoodConfig().moods.map((mood: MoodOption): WeightedMood => ({
     mood,
     weight: computeAdjustedWeight(mood, weather, time),

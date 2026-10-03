@@ -97,7 +97,7 @@ export interface AiReplyTurnRequest {
   /**
    * 系统提示词。**只含逐字恒定的段落**（人设 + 固定指令），不含当前时间、
    * 心情这类运行时状态——那些走 AiReplySessionParams.volatileBlocks 进 user
-   * 内容。这条约束是缓存前提：混进每秒都变的时间戳会从系统提示词处切断两家
+   * 内容。这条约束是缓存前提：混进每秒都变的时间戳会从系统提示词处切断各家
    * 供应商的自动前缀缓存。
    */
   readonly systemPrompt: string;
@@ -218,6 +218,38 @@ export interface AiSpeechRequest {
   readonly signal?: AbortSignal;
 }
 
+/** 一次联网检索请求（web_search 能力的执行器）。 */
+export interface AiWebSearchRequest {
+  /** 系统提示词：要求模型先检索、再按调用方的口径写结论。 */
+  readonly instruction: string;
+  /** 检索问题；工具与 cron 会在问题后附上本次配置时区基准时间。 */
+  readonly query: string;
+  readonly signal?: AbortSignal;
+}
+
+/** 检索结果引用的一条来源。 */
+export interface AiWebSearchSource {
+  readonly title: string;
+  /** 供应商交回的来源地址，原样保留。 */
+  readonly url: string;
+}
+
+/**
+ * 一次联网检索的结果。`searchCalls` 是供应商在这次请求里实际执行的检索次数，两种结果都带：
+ * 请求成功但一次都没检索（端点忽略了检索工具）时 ok 仍为 true、searchCalls 为 0，由调用方
+ * 按调用场景决定是否放行。ok=false 表示请求失败、超时、被取消或正文不可用（已记日志）。
+ */
+export type AiWebSearchResult =
+  | {
+    readonly ok: true;
+    /** 模型据检索结果写出的结论正文，未裁剪。 */
+    readonly text: string;
+    /** 供应商交回的来源，按出现顺序，未去重、未裁剪。 */
+    readonly sources: readonly AiWebSearchSource[];
+    readonly searchCalls: number;
+  }
+  | { readonly ok: false; readonly searchCalls: number };
+
 /**
  * 经 tts 门面发起的语音合成请求：在供应商请求之外带上本调用方的额度口径。
  * AI 语音工具传 `ai`：每日计数由调用方在工具调用时预留（超限当场回给模型）、TTS 调用成功时
@@ -234,8 +266,9 @@ export interface AiMeteredSpeechRequest extends AiSpeechRequest {
  * 区块按「跨轮回复是否逐字不变」分成两组，而不是按语义分。这条分界是给供应商
  * 缓存用的：稳定组连同系统提示词与工具声明构成同一个群反复重发的那段前缀，
  * 两组都进请求的 user 内容，按 stable→volatile 的顺序。稳定组排在前面是为了让
- * 两家的自动前缀缓存有机会接住它：Gemini 的隐式缓存与 OpenAI 的 Responses 前缀
- * 缓存都只认「从头开始逐字相同」的那一段。
+ * 各家的前缀缓存有机会接住它：Gemini 的隐式缓存、OpenAI 的 Responses 前缀缓存与 Anthropic
+ * 在最后一个稳定区块打的缓存断点都只认「从头开始逐字相同」的那一段。Anthropic 只在区块边界
+ * 命中，另按 conversationSettledOffsets 把当前会话切开，接住转录里跨轮重现的前缀。
  */
 export interface AiReplySessionParams {
   /**
@@ -249,11 +282,17 @@ export interface AiReplySessionParams {
    * 混进稳定组：其中的当前时间精确到秒，混进去等于让公共缓存前缀每秒变化一次。
    */
   readonly volatileBlocks: readonly string[];
+  /**
+   * volatileBlocks[0]（当前会话）内的转录已定切点（UTF-16 下标，升序，均落在区块内部），
+   * 见 ReplyPromptSections.currentConversationSettledOffsets。只有在区块边界命中缓存的实现
+   * （Anthropic）据此把该区块切成多个文本块，其余实现不读，请求内容不变。缺省按没有切点处理。
+   */
+  readonly conversationSettledOffsets?: readonly number[];
   readonly signal?: AbortSignal;
 }
 
 /**
- * 五项能力各自的最小契约。
+ * 各项能力的最小契约。
  *
  * 按**编译期边界**拆开：config/dynamic/agent.json 按能力独立选 provider，一次
  * summary 路由拿到的实现只应该被用来生成摘要。若各处都拿着完整的
@@ -293,6 +332,48 @@ export interface AiMediaProvider {
   transcribeVoice?(this: void, request: AiVoiceRequest): Promise<AiTextResult>;
 }
 
+/**
+ * 执行一次带内建检索的单轮请求的能力：`web_search` 用部署字段 `web_search` 的模型（回复的
+ * `web_search` 工具与 cron 摘要），`text` 用对话模型（没配 web_search 时 cron 摘要的检索）。
+ */
+export type AiWebSearchCapability = "web_search" | "text";
+
+/** 联网检索执行器：实现包交出的供应商契约，按调用方指定的能力取模型、凭据与端点。 */
+export interface AiWebSearchProvider {
+  readonly name: AgentProvider;
+  searchWeb(capability: AiWebSearchCapability, request: AiWebSearchRequest): Promise<AiWebSearchResult>;
+}
+
+/**
+ * 联网检索门面（aiChat/provider.ts 的 webSearchAiProvider / textWebSearchAiProvider）：能力已经
+ * 绑定，请求经配额闸门排队。web_search 缺配置时 webSearchAiProvider 返回 null。
+ */
+export interface AiWebSearchFacade {
+  readonly name: AgentProvider;
+  searchWeb(request: AiWebSearchRequest): Promise<AiWebSearchResult>;
+}
+
+/**
+ * 结构化 JSON 生成请求（text 能力，不挂工具，cron 摘要组稿用）。实现包按自己的协议要求端点
+ * 只输出 JSON：OpenAI 兼容端点用 `json_object`（提示词里须出现 JSON 一词），Gemini 另把
+ * jsonSchema 交给 `responseJsonSchema`。不使用 Gemini 显式缓存。
+ */
+export interface AiJsonRequest {
+  readonly systemPrompt: string;
+  readonly userContent: string;
+  /** 期望输出的 JSON Schema；解码与校验仍由调用方负责。 */
+  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  readonly signal?: AbortSignal;
+  /** 出现在错误日志里的调用名（英文）。 */
+  readonly errorLabel: string;
+}
+
+/** text 能力的结构化 JSON 生成；返回的是未解析的正文。 */
+export interface AiStructuredTextProvider {
+  readonly name: AgentProvider;
+  generateJson(request: AiJsonRequest): Promise<AiTextResult>;
+}
+
 /** 生图能力；能力缺配置时由路由返回 null，不挂 generate_image。 */
 export interface AiImageProvider {
   readonly name: AgentProvider;
@@ -322,15 +403,17 @@ export interface AiSpeechFacade {
 /**
  * 一家供应商对 AI 闲聊全部模型能力的实现；实现包导出的就是这一个对象。
  *
- * 选取按 text、summary、media、image、tts 五项能力拆分，见 aiChat/provider.ts：
+ * 选取按 text、summary、media、image、tts、web_search 六项能力拆分，见 aiChat/provider.ts：
  * 路由持有完整实现，交给调用方的却只有上面对应的那一份最小契约。每项只读取
- * config/dynamic/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此两家
+ * config/dynamic/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此各家
  * 客户端可以在同一条 Worker 线程上同时存在，并按能力持有各自实例
- * （见 cache/workers/aiChat/{gemini,openai}.ts）。
+ * （见 cache/workers/aiChat/{gemini,openai,anthropic}.ts）。
  */
 export interface AiChatProvider extends
   AiTextProvider,
   AiSummaryProvider,
   AiMediaProvider,
   AiImageProvider,
-  AiSpeechProvider {}
+  AiSpeechProvider,
+  AiWebSearchProvider,
+  AiStructuredTextProvider {}

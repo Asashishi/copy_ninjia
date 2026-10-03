@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { BotConfig } from "../../packages/types/config";
@@ -13,7 +14,7 @@ const states = new Map<number, Record<string, unknown>>();
 mock.module("../../packages/config/bot", () => ({
   BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 100,
-  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 100 }),
+  getBotConfig: (): BotConfig => ({ timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 100 }),
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/infra/identityPolicy/whitelist.ts 的
 // getEffectiveWhitelistPermissions），命令层不再单独判身份。

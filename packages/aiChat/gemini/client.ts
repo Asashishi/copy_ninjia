@@ -1,14 +1,15 @@
 /**
  * Gemini generateContent 的底层收发与响应分类。本实现包（packages/aiChat/gemini/）
- * 的回复会话、文本生成、视觉描述与生图全部经由这里发请求。
+ * 的回复会话、文本生成、结构化 JSON、视觉描述、生图与独立检索全部经由这里发请求。
  *
  * 收发走官方 @google/genai SDK：SDK 自带每次请求的超时（httpOptions.timeout）与
  * 瞬时失败（网络错误/5xx/429）的自动重试（显式限制为首次加最多 5 次重试）。
  * 视觉输入（inlineData）与多轮函数调用往返均由同一 SDK 处理。
  *
- * 本文件负责发请求、按业务结果分类并记录错误日志；正文与函数调用直接读取
- * SDK 的 text/functionCalls 访问器，应用侧只在 aiChat/gemini/response.ts 补充
- * 异常结束诊断与搜索调用计数。
+ * 本文件负责发请求、按业务结果分类并记录错误日志；函数调用直接读取
+ * SDK 的 functionCalls 访问器；正文按 SDK 的文本拼接语义由 aiChat/gemini/response.ts
+ * 读取，该模块同时提供异常结束诊断与搜索调用计数。
+ * token 与检索次数经 infra/aiCacheUsage.ts 按同一响应上报。
  */
 
 import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";
@@ -16,11 +17,10 @@ import type { Candidate, GenerateContentParameters, GenerateContentResponse } fr
 import { geminiClientCache } from "../../cache/workers/aiChat/gemini";
 import { logger } from "../../infra/logger";
 import { reportGeminiUsage } from "../../infra/aiCacheUsage";
-import { getAgentDeploymentConfig } from "../../config/agent";
+import { capabilityClient } from "../capabilityClient";
 import {
   GEMINI_REQUEST_RETRY_ATTEMPTS,
-  GEMINI_MEDIA_REQUEST_TIMEOUT_MS,
-  GEMINI_REQUEST_TIMEOUT_MS,
+  GEMINI_REQUEST_TIMEOUTS_MS,
   GEMINI_SAFETY_SETTINGS,
 } from "../../consts/aiChat/gemini";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
@@ -30,18 +30,10 @@ import {
   providerApiFailureResult,
 } from "../ai/utils/mediaSupportError";
 import type { ProviderApiFailureResult } from "../ai/utils/mediaSupportError";
-import { abnormalFinishDiagnostic, responseText } from "./response";
+import { abnormalFinishDiagnostic, countGoogleSearchCalls, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
-import type { AgentCapability, AgentDeploymentConfig } from "../../types/config";
-
-/**
- * 该能力单次请求的超时预算：media（视觉描述与语音转写）比纯文本往返宽一档，
- * 其余能力走通用档。语音合成由 aiChat/gemini/speech.ts 在每次调用上另行覆盖。
- */
-function geminiRequestTimeoutMs(capability: AgentCapability): number {
-  return capability === "media" ? GEMINI_MEDIA_REQUEST_TIMEOUT_MS : GEMINI_REQUEST_TIMEOUT_MS;
-}
+import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
 
 /**
  * 取得线程内唯一 Gemini 客户端。timeout 是每次 SDK 尝试各自的预算，重试总数
@@ -54,25 +46,20 @@ function geminiRequestTimeoutMs(capability: AgentCapability): number {
  * 不得 import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
  */
 export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
-  const config: AgentDeploymentConfig[AgentCapability] = getAgentDeploymentConfig()[capability];
-  if (config?.provider !== "google") {
-    throw new Error(`Agent capability "${capability}" is not configured for the Google provider.`);
-  }
-  const clients: Map<AgentCapability, GoogleGenAI> = geminiClientCache.current ??=
-    new Map<AgentCapability, GoogleGenAI>();
-  const cached: GoogleGenAI | undefined = clients.get(capability);
-  if (cached !== undefined) return cached;
-  const client: GoogleGenAI = new GoogleGenAI({
-    apiKey: config.apiKey,
-    httpOptions: {
-      baseUrl: config.baseUrl,
-      headers: config.headers,
-      timeout: geminiRequestTimeoutMs(capability),
-      retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
-    },
+  return capabilityClient({
+    provider: "google",
+    capability,
+    holder: geminiClientCache,
+    create: (config: ProviderCapabilityConfig<"google">): GoogleGenAI => new GoogleGenAI({
+      apiKey: config.apiKey,
+      httpOptions: {
+        baseUrl: config.baseUrl,
+        headers: config.headers,
+        timeout: GEMINI_REQUEST_TIMEOUTS_MS[capability],
+        retryOptions: { attempts: GEMINI_REQUEST_RETRY_ATTEMPTS },
+      },
+    }),
   });
-  clients.set(capability, client);
-  return client;
 }
 
 /**
@@ -102,7 +89,7 @@ export async function requestGeminiResult(
     body.config?.abortSignal?.throwIfAborted();
     const requestSignal: AbortSignal = signalWithTimeout(
       body.config?.abortSignal,
-      geminiRequestTimeoutMs(capability)
+      GEMINI_REQUEST_TIMEOUTS_MS[capability]
     );
     requestSignal.throwIfAborted();
     const model: string = String(body.model);
@@ -119,7 +106,7 @@ export async function requestGeminiResult(
         abortSignal: requestSignal,
       },
     }).then((response: GenerateContentResponse): GenerateContentResponse => {
-      reportGeminiUsage({ capability, model, usage: response.usageMetadata });
+      reportGeminiUsage({ capability, model, usage: response.usageMetadata, searchCalls: countGoogleSearchCalls(response) });
       return response;
     }), requestSignal);
   } catch (error: unknown) {
@@ -187,7 +174,7 @@ export async function requestGeminiResponse(
 
 /** Google 无状态文本调用参数。 */
 export interface GeminiTextRequestOptions {
-  readonly capability: "summary" | "media";
+  readonly capability: "summary" | "media" | "text";
   readonly buildBody: () => GenerateContentParameters;
   readonly errorLabel: string;
   readonly normalize: (text: string) => string;

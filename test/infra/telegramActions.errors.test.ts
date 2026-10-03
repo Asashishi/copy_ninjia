@@ -268,7 +268,7 @@ describe("Telegram 动作适配层失败归一化", () => {
       expect(unref).toHaveBeenCalledTimes(1);
       scheduled!();
       await Promise.resolve();
-      expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 44);
+      expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 44, undefined);
     } finally {
       globalThis.setTimeout = originalSetTimeout;
     }
@@ -280,7 +280,7 @@ describe("Telegram 动作适配层失败归一化", () => {
 
     expect(api.deleteMessage).not.toHaveBeenCalled();
     await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
-    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 45);
+    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 45, undefined);
   });
 
   test("timer 已认领的删除仍进入在途集合，Worker flush 不会漏等", async () => {
@@ -339,12 +339,12 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(api.deleteMessages).toHaveBeenNthCalledWith(
       1,
       -1001,
-      Array.from({ length: 100 }, (_value: unknown, index: number): number => index + 1)
+      Array.from({ length: 100 }, (_value: unknown, index: number): number => index + 1), undefined
     );
-    expect(api.deleteMessages).toHaveBeenNthCalledWith(2, -1001, [101]);
-    expect(api.deleteMessages).toHaveBeenNthCalledWith(3, -2002, [201]);
+    expect(api.deleteMessages).toHaveBeenNthCalledWith(2, -1001, [101], undefined);
+    expect(api.deleteMessages).toHaveBeenNthCalledWith(3, -2002, [201], undefined);
     expect(api.deleteMessage).toHaveBeenCalledTimes(1);
-    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 301);
+    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 301, undefined);
   });
 
   test("延迟删除失败走统一 Telegram 错误日志，但不阻止停机", async () => {
@@ -370,7 +370,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     actions.deleteMessageAfter({ chatId: -1001, messageId: 48, delayMs: 30_000, api });
 
     await expect(actions.drainPendingMessageDeletions(5)).resolves.toBe("timedOut");
-    expect(deleteMessage).toHaveBeenCalledWith(-1001, 48);
+    expect(deleteMessage).toHaveBeenCalledWith(-1001, 48, undefined);
     expect(loggerError.mock.calls).toEqual([[
       "Delayed Telegram message deletion drain timed out with 0 pending and 1 in flight.",
     ]]);
@@ -392,11 +392,11 @@ describe("解除封禁必须带 only_if_banned", () => {
     const api: Api = { unbanChatMember } as unknown as Api;
 
     await actions.unbanChatMemberIfBanned(-1001, 7, api);
-    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true });
+    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, { only_if_banned: true }, undefined);
 
     await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api });
     // 空 options 与不传等价，关键是**没有** only_if_banned。
-    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, {});
+    expect(unbanChatMember).toHaveBeenLastCalledWith(-1001, 7, {}, undefined);
   });
 });
 
@@ -436,7 +436,7 @@ describe("黑名单封禁结果归一化", () => {
     const api: Api = { banChatMember } as unknown as Api;
 
     await actions.banChatMember(-1001, 7, api);
-    expect(banChatMember).toHaveBeenLastCalledWith(-1001, 7, { revoke_messages: true });
+    expect(banChatMember).toHaveBeenLastCalledWith(-1001, 7, { revoke_messages: true }, undefined);
   });
 });
 

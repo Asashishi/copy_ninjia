@@ -1,4 +1,4 @@
-import type { AiToolDefinition } from "../../../../types/aiChat/provider";
+import type { AiToolDefinition, AiWebSearchFacade } from "../../../../types/aiChat/provider";
 import { HARD_MAX_ACTIONS_PER_REPLY } from "../../../../consts/aiChat/tools";
 import {
   ACTION_TOOL_NAMES,
@@ -6,6 +6,7 @@ import {
   TOOL_DECLARATIONS,
   ADD_REACTION_TOOL,
   GENERATE_IMAGE_TOOL,
+  GET_TOKYO_WEATHER_TOOL,
   GROUP_QA_ANSWER_TOOL,
   GROUP_QA_QUERY_TOOL,
   SEND_MESSAGE_TOOL,
@@ -13,6 +14,7 @@ import {
   SEND_VOICE_TOOL,
   unknownToolError,
   VIEW_STICKER_PACK_TOOL,
+  WEB_SEARCH_TOOL_DECLARATION,
 } from "../../../../consts/tools";
 import type {
   DirectReplyPacing,
@@ -21,6 +23,7 @@ import type {
   ReplyToolExecution,
   ReplyToolset,
   RoundMessageState,
+  WebSearchToolExecutor,
 } from "../../../../types/aiChat/replies";
 import type { StickerPackCandidate, StickerRoundState } from "../../../../types/stickers/tools";
 import {
@@ -47,14 +50,18 @@ import {
   executeGroupQaQuery,
 } from "./groupQa";
 import { parseToolResult, toolError } from "../../utils/toolResult";
-import { imageAiProvider } from "../../../provider";
+import { imageAiProvider, webSearchAiProvider } from "../../../provider";
+import { createWebSearchExecutor } from "../webSearch";
 import { createReplyActionChains } from "./actionChains";
 import { createDirectPacing } from "./pacing";
+import { getAgentDeploymentConfig } from "../../../../config/agent";
+import { getTimeZone } from "../../../../config/time";
+import { TOKYO_TIME_ZONE } from "../../../../consts/time";
 
 /**
  * 组装工具定义、领域执行器和整轮共享的总动作预算。
  *
- * 工具清单只随部署能力变化（生图、语音是否配置，贴纸菜单），与触发类型、本群问答、
+ * 工具清单只随部署能力与启动时区变化（生图、语音、联网检索、贴纸菜单与东京天气），与触发类型、本群问答、
  * 手滑抽签无关，同一部署同一人设下每轮逐字相同；按轮变化的可用性写进
  * buildToolStatusBlock 产出的本轮工具状态，执行器在调用时再做同样的硬性判定。
  */
@@ -75,6 +82,9 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   // 本轮工具状态，由执行器在调用时兜底拒绝，不摘挂工具。
   const imageEnabled: boolean = imageAiProvider() !== null;
   const voiceEnabled: boolean = isSendVoiceAvailable();
+  // 配置了 web_search 能力：挂本地函数工具、不挂 text 模型的内建检索；没配时反之。
+  const webSearchProvider: AiWebSearchFacade | null = webSearchAiProvider();
+  const webSearchMaxCallsPerUse: number | undefined = getAgentDeploymentConfig().webSearch?.maxCallsPerUse;
   const declarations: AiToolDefinition[] = [
     buildSendMessageToolDefinition(),
   ];
@@ -85,11 +95,20 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
   // 问答两件恒挂；本群有没有登记写在本轮工具状态里，没登记时执行器返回空清单。
   declarations.push(...buildGroupQaToolDefinitions());
-  // 只登记本轮现组装的行动工具：静态查询工具由 callTool 兜底分发，不进
-  // 这份名单（见 workers/aiChat/replyModel.ts 的 toolset.has 分支）。
+  // 只登记本轮现组装的行动工具：静态查询工具由 callTool 兜底分发，web_search 由回复循环
+  // 异步分发，都不进这份名单（见 workers/aiChat/replyModel.ts 的 toolset.has 分支）。
   const names: Set<string> = new Set<string>();
   for (const declaration of declarations) names.add(declaration.name);
-  const functions: readonly AiToolDefinition[] = [...TOOL_DECLARATIONS, ...declarations];
+  const functions: AiToolDefinition[] = [];
+  const tokyoWeatherEnabled: boolean = getTimeZone() === TOKYO_TIME_ZONE;
+  for (const declaration of TOOL_DECLARATIONS) {
+    if (declaration.name !== GET_TOKYO_WEATHER_TOOL || tokyoWeatherEnabled) functions.push(declaration);
+  }
+  if (webSearchProvider !== null) functions.push(WEB_SEARCH_TOOL_DECLARATION);
+  functions.push(...declarations);
+  const searchWeb: WebSearchToolExecutor | null = webSearchProvider === null
+    ? null
+    : createWebSearchExecutor(webSearchProvider, webSearchMaxCallsPerUse!, ctx.signal);
 
   const executeSendMessage: (argumentsJson: string) => ReplyToolExecution = createSendMessageExecutor(ctx, messageState, (): number => actionsUsed);
   const executeAddReaction: (argumentsJson: string) => ReplyToolExecution = createAddReactionExecutor(ctx);
@@ -158,10 +177,12 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     functions,
     // 与 declarations 同一时刻取快照，交给运行时状态区块渲染（见 toolStatus.ts 与
     // workers/aiChat/runtimeState.ts）；前缀缓存约束见 docs/cn/04-invariants.md。
-    toolStatus: buildToolStatusBlock({ ctx, imageEnabled, voiceEnabled }),
-    // 服务端联网检索恒开，挂载约束见 docs/cn/04-invariants.md；回复循环只记账并在
-    // 超出软限制时点名（见 workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
-    webSearch: true,
+    toolStatus: buildToolStatusBlock({ ctx, imageEnabled, voiceEnabled, webSearchMaxCallsPerUse }),
+    // 没配 web_search 能力时 text 模型的服务端联网检索恒开，挂载约束见
+    // docs/cn/04-invariants.md；回复循环只记账并在超出软限制时点名（见
+    // workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
+    webSearch: webSearchProvider === null,
+    searchWeb,
     has: (name: string): boolean => names.has(name),
     // 直接轮从请求模型起亮状态（串行链忙时由链上的步骤掌管，排空后再亮）。还没接纳过动作的请求亮
     // 「正在输入」，交回的第一条文字直接发出；刚看过贴纸包的那次请求是在挑贴纸，亮「正在选择贴纸」；

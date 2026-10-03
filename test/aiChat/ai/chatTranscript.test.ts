@@ -5,7 +5,7 @@ import {
   formatBufferedMessageLine,
   formatSpeakerIdentity,
 } from "../../../packages/aiChat/ai/utils/chatTranscript";
-import { COMPACT_BATCH_SIZE, TIER_BOUNDARY_ALIGNMENT } from
+import { COMPACT_BATCH_SIZE, TIER_BOUNDARY_ALIGNMENT, TRANSCRIPT_SETTLED_SEGMENT_SIZE } from
   "../../../packages/consts/aiChat/memory";
 import {
   CHAT_MEMORY_PRIORITY_INSTRUCTION,
@@ -548,5 +548,44 @@ describe("AI 群聊转录的前缀稳定性", () => {
     const unchangedPrefix: string = before.slice(0, before.indexOf("#2"));
     expect(after.startsWith(unchangedPrefix)).toBeTrue();
     expect(after.indexOf(SPEAKER_ROSTER_BLOCK_NAME)).toBeGreaterThan(after.indexOf("新来的人说话"));
+  });
+
+  /** 第 index 条（从 0 计）消息正文唯一可查，按条数渲染一段窗口。 */
+  function renderNumbered(count: number): RenderedTranscript {
+    const messages: BufferedMessage[] = Array.from({ length: count }, (_, index: number) => ({
+      ...message,
+      messageId: index + 1,
+      id: index + 1,
+      text: `正文${index}。`,
+    }));
+    return buildTieredVerbatimTranscript(messages, { selfId: -1, triggerMessageId: count });
+  }
+
+  test("已定切点按格宽对齐，只切最新消息所在格之前的格边界，切点紧跟上一格最后一条正文", () => {
+    // 格宽整除分层对齐粒度，分层边界才恒落在格边界上。
+    expect(TIER_BOUNDARY_ALIGNMENT % TRANSCRIPT_SETTLED_SEGMENT_SIZE).toBe(0);
+    for (let count: number = 1; count <= TRANSCRIPT_SETTLED_SEGMENT_SIZE * 3; count += 1) {
+      const rendered: RenderedTranscript = renderNumbered(count);
+      const cells: number = Math.floor((count - 1) / TRANSCRIPT_SETTLED_SEGMENT_SIZE);
+      expect(rendered.settledOffsets).toHaveLength(cells);
+      for (let cell: number = 1; cell <= cells; cell += 1) {
+        const lastOfCell: string = `正文${cell * TRANSCRIPT_SETTLED_SEGMENT_SIZE - 1}。`;
+        const offset: number = rendered.settledOffsets[cell - 1]!;
+        expect(rendered.text.slice(offset - lastOfCell.length, offset)).toBe(lastOfCell);
+        expect(rendered.text[offset]).toBe("\n");
+      }
+    }
+  });
+
+  test("分层边界处的切点落在空行与【最热记忆】标题之前，边界后移一格时同一下标仍是切点", () => {
+    const beforeShift: RenderedTranscript = renderNumbered(COMPACT_BATCH_SIZE + TIER_BOUNDARY_ALIGNMENT);
+    const afterShift: RenderedTranscript = renderNumbered(COMPACT_BATCH_SIZE + TIER_BOUNDARY_ALIGNMENT + 1);
+    const boundary: number = beforeShift.text.indexOf(HOT_MEMORY_BLOCK_HEADER) - 2;
+    expect(beforeShift.text.slice(boundary, boundary + 2)).toBe("\n\n");
+    expect(beforeShift.settledOffsets).toContain(boundary);
+    // 后移一格后同一格边界落进【较早逐字记录】内部：下标不变，切点之前的文字逐字相同。
+    expect(afterShift.text.indexOf(HOT_MEMORY_BLOCK_HEADER)).toBeGreaterThan(boundary);
+    expect(afterShift.settledOffsets).toContain(boundary);
+    expect(afterShift.text.slice(0, boundary)).toBe(beforeShift.text.slice(0, boundary));
   });
 });

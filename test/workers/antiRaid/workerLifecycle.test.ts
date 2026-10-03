@@ -1,11 +1,15 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
 import type { AntiRaidWorkerMessage } from "../../../packages/types/antiRaid/protocol";
 import type { AdDetectAgentConfig } from "../../../packages/types/config";
 import { workerDuplexRequestSignal } from "../../../packages/cache/perThread/workerDuplex";
 import { workerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
-import { plainAtmosphereChats, defaultAtmosphereState } from "../../../packages/cache/workers/antiRaid/atmosphere";
+import { atmosphereState } from "../../../packages/cache/workers/antiRaid/atmosphere";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
+
+const INITIAL_TIME_ZONE: string = getTimeZone();
+afterEach((): void => { adoptTimeZone(INITIAL_TIME_ZONE); });
 
 const calls: string[] = [];
 const workerEvents: AntiRaidWorkerEvent[] = [];
@@ -150,19 +154,15 @@ beforeEach(() => {
 });
 
 describe("Anti-Raid Worker lifecycle", () => {
-  test("风格镜像只响应变更消息，失权保留，移除和 Worker 停止清理", () => {
+  test("时区与通知风格随 agentConfig 注入，失权不改风格，Worker 停止时清空风格", () => {
     worker.startAntiRaidWorker();
-    worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: true });
-    expect(workerAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
-    expect(workerAtmosphere(-1002)).toBe(ATMOSPHERE_TEXTS.teasing);
+    worker.handleAntiRaidWorkerMessage({ type: "agentConfig", timeZone: "UTC", atmosphere: "plain", adDetect: null, adSamples: null });
+    expect(workerAtmosphere()).toBe(ATMOSPHERE_TEXTS.plain);
+    expect(getTimeZone()).toBe("UTC");
     worker.handleAntiRaidWorkerMessage({ type: "deactivateChat", chatId: -1001, cleanupVerificationMessages: false });
-    expect(workerAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
-    worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: false });
-    expect(plainAtmosphereChats.size).toBe(0);
-    worker.handleAntiRaidWorkerMessage({ type: "atmosphere", chatId: -1001, plain: true });
+    expect(workerAtmosphere()).toBe(ATMOSPHERE_TEXTS.plain);
     worker.stopAntiRaidWorker();
-    expect(plainAtmosphereChats.size).toBe(0);
-    expect(defaultAtmosphereState.current).toBeNull();
+    expect(atmosphereState.current).toBeNull();
   });
   test("stop/start 作废旧关联频道在途槽，旧 settle 不破坏新代去重", async () => {
     let resolveStale!: () => void;
@@ -232,7 +232,7 @@ describe("Anti-Raid Worker lifecycle", () => {
     expect(workerSelf.onmessage).not.toBeNull();
 
     const messages: AntiRaidWorkerMessage[] = [
-      { defaultAtmosphere: "teasing", type: "agentConfig", adDetect: injectedAdDetectConfig, adSamples: [] },
+      { atmosphere: "teasing", type: "agentConfig", timeZone: getTimeZone(), adDetect: injectedAdDetectConfig, adSamples: [] },
       {
         type: "join",
         chatId: -1001,

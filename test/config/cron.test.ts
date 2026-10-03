@@ -1,9 +1,11 @@
+import { DEFAULT_BOT_TIME_ZONE } from "../../packages/consts/bot";
+import { adoptTimeZone, getTimeZone } from "../../packages/config/time";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, symlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
-  assertCronVoiceSupported,
-  cronConfigUsesVoice,
+  assertCronAgentSupported,
+  cronAgentShortfall,
   ensureCronConfig,
   getCronConfig,
   adoptCronConfig,
@@ -16,7 +18,6 @@ import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../pack
 import { CRON_CONFIG_PATH, PROJECT_ROOT, RUNTIME_DATA_ROOT } from "../../packages/consts/paths";
 import {
   CRON_ALL_CHATS,
-  CRON_DEFAULT_TIME_ZONE,
   CRON_EXCEPT_CHATS,
   CRON_MAX_ACTIONS_PER_TASK,
   CRON_MAX_CHAT_IDS_PER_TASK,
@@ -27,6 +28,14 @@ import {
   CRON_TASK_NAME_MAX_CHARS,
 } from "../../packages/consts/cron";
 import { DURATION_UNIT_MS } from "../../packages/consts/commands";
+import {
+  WEB_DIGEST_DEFAULT_LANGUAGE,
+  WEB_DIGEST_DEFAULT_MAX_ITEMS,
+  WEB_DIGEST_INSTRUCTIONS_MAX_CHARS,
+  WEB_DIGEST_MAX_ITEMS,
+  WEB_DIGEST_MIN_ITEMS,
+  WEB_DIGEST_TOPIC_MAX_CHARS,
+} from "../../packages/consts/webDigest";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 import type { CronConfig } from "../../packages/types/cron";
 import { TEST_DATA_ROOT } from "../preloadEnv";
@@ -76,8 +85,9 @@ describe("send_voice", () => {
       { type: "send_voice", content: "おやすみ また明日", tone: "眠そうに 小声で" },
       { type: "send_voice", content: "おはよう", tone: undefined },
     ]);
-    expect(cronConfigUsesVoice(config)).toBe(true);
-    expect(cronConfigUsesVoice(parseCronConfig([task()], PATH))).toBe(false);
+    expect(cronAgentShortfall(config, agentWith(undefined))).toEqual({ taskIndex: 0, actionIndex: 0, need: "tts" });
+    expect(cronAgentShortfall(config, agentWith(TTS))).toBeNull();
+    expect(cronAgentShortfall(parseCronConfig([task()], PATH), null)).toBeNull();
   });
 
   test("键、类型与长度严格判定，诊断写明字段路径", () => {
@@ -100,11 +110,12 @@ describe("send_voice", () => {
         { type: "send_voice", payload: { content: "おやすみ" } },
       ] }),
     ], PATH);
-    expect(() => assertCronVoiceSupported(config, undefined, PATH)).toThrow(
-      `${PATH}: $[1].actions[1].type must be send_message, send_image or send_file unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media`
+    expect(() => assertCronAgentSupported(config, agentWith(undefined), PATH)).toThrow(
+      `${PATH}: $[1].actions[1].type must be a type other than send_voice unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media`
     );
-    expect(() => assertCronVoiceSupported(config, TTS, PATH)).not.toThrow();
-    expect(() => assertCronVoiceSupported(parseCronConfig([task()], PATH), undefined, PATH)).not.toThrow();
+    expect(() => assertCronAgentSupported(config, null, PATH)).toThrow("$[1].actions[1].type");
+    expect(() => assertCronAgentSupported(config, agentWith(TTS), PATH)).not.toThrow();
+    expect(() => assertCronAgentSupported(parseCronConfig([task()], PATH), null, PATH)).not.toThrow();
   });
 
   test("启动总闸按已校验的 agent 配置核对：没配 tts 拒绝启动，配了才接管", async () => {
@@ -120,14 +131,65 @@ describe("send_voice", () => {
   });
 });
 
+describe("send_web_digest", () => {
+  test("topic 必填并清洗成单行；language、max_items、instructions 可省并按缺省填齐", () => {
+    const config: CronConfig = parseCronConfig([task({
+      actions: [
+        { type: "send_web_digest", payload: { topic: " 今日\n科技新闻 " } },
+        { type: "send_web_digest", payload: { topic: "AI", language: " ja ", max_items: WEB_DIGEST_MAX_ITEMS, instructions: " 本文は一文にする " } },
+      ],
+    })], PATH);
+    expect(config[0]!.actions).toEqual([
+      { type: "send_web_digest", topic: "今日 科技新闻", language: WEB_DIGEST_DEFAULT_LANGUAGE, maxItems: WEB_DIGEST_DEFAULT_MAX_ITEMS, instructions: undefined },
+      { type: "send_web_digest", topic: "AI", language: "ja", maxItems: WEB_DIGEST_MAX_ITEMS, instructions: "本文は一文にする" },
+    ]);
+  });
+
+  test("键、取值与长度严格判定，诊断写明字段路径", () => {
+    const digest = (payload: Record<string, unknown>): unknown => [task({ actions: [{ type: "send_web_digest", payload }] })];
+    rejects(digest({}), "$[0].actions[0].payload.topic");
+    rejects(digest({ topic: "\u0085" }), "$[0].actions[0].payload.topic");
+    rejects(digest({ topic: "x".repeat(WEB_DIGEST_TOPIC_MAX_CHARS + 1) }), `at most ${WEB_DIGEST_TOPIC_MAX_CHARS} characters`);
+    rejects(digest({ topic: "t", language: "fr" }), "$[0].actions[0].payload.language");
+    rejects(digest({ topic: "t", max_items: WEB_DIGEST_MIN_ITEMS - 1 }), "$[0].actions[0].payload.max_items");
+    rejects(digest({ topic: "t", max_items: WEB_DIGEST_MAX_ITEMS + 1 }), "$[0].actions[0].payload.max_items");
+    rejects(digest({ topic: "t", max_items: 2.5 }), "$[0].actions[0].payload.max_items");
+    rejects(digest({ topic: "t", instructions: "x".repeat(WEB_DIGEST_INSTRUCTIONS_MAX_CHARS + 1) }), "$[0].actions[0].payload.instructions");
+    rejects(digest({ topic: "t", content: "x" }), "{ topic, language?, max_items?, instructions? }");
+  });
+
+  test("用到 send_web_digest 而没有对话核心能力时按它的字段路径拒绝；有了即可，不要求 tts 或 web_search", () => {
+    const config: CronConfig = parseCronConfig([task({ actions: [
+      { type: "send_message", payload: { content: "hi" } },
+      { type: "send_web_digest", payload: { topic: "t" } },
+    ] })], PATH);
+    expect(() => assertCronAgentSupported(config, null, PATH)).toThrow(
+      `${PATH}: $[0].actions[1].type must be a type other than send_web_digest unless config/dynamic/agent.json configures $.agent.text, summary and media`
+    );
+    expect(cronAgentShortfall(config, null)).toEqual({ taskIndex: 0, actionIndex: 1, need: "text" });
+    expect(cronAgentShortfall(config, agentWith(undefined))).toBeNull();
+  });
+});
+
 describe("parseCronConfig", () => {
+  test("未指定任务时区时继承 Bot 时区，显式时区保留", (): void => {
+    const original: string = getTimeZone();
+    try {
+      adoptTimeZone("America/New_York");
+      expect(parseCronConfig([task()], PATH)[0]?.timeZone).toBe(getTimeZone());
+      expect(parseCronConfig([task({ time_zone: " UTC " })], PATH)[0]?.timeZone).toBe("UTC");
+    } finally {
+      adoptTimeZone(original);
+    }
+  });
+
   test("空数组合法；可选字段缺省按从没设过填齐", () => {
     expect(parseCronConfig([], PATH)).toEqual([]);
     expect(parseCronConfig([task()], PATH)).toEqual([{
       name: "daily",
       chatTargets: { kind: "list", chatIds: [-1001] },
       cron: "0 9 * * *",
-      timeZone: CRON_DEFAULT_TIME_ZONE,
+      timeZone: DEFAULT_BOT_TIME_ZONE,
       randomInterval: undefined,
       justOnce: false,
       actions: [{ type: "send_message", content: "hi" }],
@@ -229,23 +291,27 @@ describe("parseCronConfig", () => {
     rejects([task({ message_thread_id: 12 })], "$[0] must be { name, chat_id, cron, time_zone?, rand_cron?, just_once?, actions }");
     rejects([task({ actions: [] })], `$[0].actions must be a non-empty array with at most ${CRON_MAX_ACTIONS_PER_TASK} actions`);
     rejects([task({ actions: Array.from({ length: CRON_MAX_ACTIONS_PER_TASK + 1 }, () => ({ type: "send_message", payload: { content: "x" } })) })], "$[0].actions must be");
-    rejects([task({ actions: [{ type: "send_video", payload: {} }] })], "$[0].actions[0].type must be send_message, send_image, send_file or send_voice");
+    rejects([task({ actions: [{ type: "send_video", payload: {} }] })], "$[0].actions[0].type must be send_message, send_image, send_file, send_voice or send_web_digest");
     rejects([task({ actions: [{ type: "send_message", payload: { content: "" } }] })], "$[0].actions[0].payload.content must be");
     rejects([task({ actions: [{ type: "send_message", payload: { content: "x".repeat(TELEGRAM_MESSAGE_MAX_CHARS + 1) } }] })], `$[0].actions[0].payload.content must be a non-empty string of at most ${TELEGRAM_MESSAGE_MAX_CHARS} characters`);
     rejects([task({ actions: [{ type: "send_file", payload: { content: "x".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1), url: "https://e.com/f" } }] })], `$[0].actions[0].payload.content must be a non-empty string of at most ${TELEGRAM_CAPTION_MAX_CHARS} characters`);
   });
 
-  test("字符串字段按首尾空白规范化后校验并保存：名称、正文、路径、时区与表达式", () => {
+  test("字符串字段按首尾空白规范化后校验并保存：名称、动作、会话标记、正文、路径、时区与表达式", () => {
     const config: CronConfig = parseCronConfig([task({
       name: " daily ",
       cron: " 0 9 * * * ",
-      time_zone: ` ${CRON_DEFAULT_TIME_ZONE} `,
+      time_zone: ` ${DEFAULT_BOT_TIME_ZONE} `,
+      chat_id: [` ${CRON_ALL_CHATS} `],
       actions: [
-        { type: "send_message", payload: { content: "\n hi \n" } },
+        { type: " send_message ", payload: { content: "\n hi \n" } },
         { type: "send_file", payload: { content: " caption ", path: " a.png " } },
       ],
     })], PATH);
-    expect(config[0]).toMatchObject({ name: "daily", cron: "0 9 * * *", timeZone: CRON_DEFAULT_TIME_ZONE });
+    expect(config[0]).toMatchObject({ name: "daily", cron: "0 9 * * *", timeZone: DEFAULT_BOT_TIME_ZONE });
+    expect(config[0]!.chatTargets).toEqual({ kind: "all" });
+    expect(parseCronConfig([task({ chat_id: [` ${CRON_EXCEPT_CHATS} `, -100] })], PATH)[0]!.chatTargets)
+      .toEqual({ kind: "except", chatIds: [-100] });
     expect(config[0]!.actions).toEqual([
       { type: "send_message", content: "hi" },
       { type: "send_file", content: "caption", source: { kind: "path", path: join(RUNTIME_DATA_ROOT, "a.png") } },

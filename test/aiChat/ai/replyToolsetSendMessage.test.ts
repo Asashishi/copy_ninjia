@@ -13,6 +13,7 @@ import {
   sleepMock,
 } from "../../helpers/replyToolsetMocks";
 import { executeAndSettle } from "../../helpers/replyToolExecution";
+import { replyToolContextFixture } from "../../helpers/replyToolContext";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 const { SEND_MESSAGE_TOOL } = await import("../../../packages/consts/tools");
@@ -31,24 +32,7 @@ describe("send_message typo correction", () => {
     sleepMock.mockImplementationOnce(async (): Promise<void> => {
       active = false;
     });
-    const toolset = await createReplyToolset({
-      chatId: -100800,
-      replyToMessageId: 10,
-      messageThreadId: undefined,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: false,
-      direct: false,
-      chatAction: {
-        set: mock((..._args: unknown[]): number => 0),
-        settle: mock(async (): Promise<void> => {}),
-      },
-      roundHasTypo: false,
-      isActive: () => active,
-      onMessageSent: mock((..._args: unknown[]): void => {}),
-      onStickerSent: mock((..._args: unknown[]): void => {}),
-      onImageSent: mock((..._args: unknown[]): void => {}),
-      onVoiceSent: mock((..._args: unknown[]): void => {}),
-    });
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, isActive: () => active }));
 
     const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "不该发出" })));
     expect(result.queued).toBe(true);
@@ -115,24 +99,7 @@ describe("send_message typo correction", () => {
     Math.random = () => 0;
     try {
       const onMessageSent = mock((..._args: unknown[]): void => {});
-      const toolset = await createReplyToolset({
-        chatId: -100800,
-        replyToMessageId: 10,
-        messageThreadId: undefined,
-        mediaToolsRequested: true,
-        bypassMediaToolCooldown: false,
-        direct: false,
-        chatAction: {
-          set: mock((..._args: unknown[]): number => 0),
-          settle: mock(async (): Promise<void> => {}),
-        },
-        roundHasTypo: false,
-        isActive: () => true,
-        onMessageSent,
-        onStickerSent: mock((..._args: unknown[]): void => {}),
-        onImageSent: mock((..._args: unknown[]): void => {}),
-        onVoiceSent: mock((..._args: unknown[]): void => {}),
-      });
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, onMessageSent }));
 
       const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
@@ -155,24 +122,7 @@ describe("send_message typo correction", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      const toolset = await createReplyToolset({
-        chatId: -100800,
-        replyToMessageId: 10,
-        messageThreadId: undefined,
-        mediaToolsRequested: true,
-        bypassMediaToolCooldown: false,
-        direct: false,
-        chatAction: {
-          set: mock((..._args: unknown[]): number => 0),
-          settle: mock(async (): Promise<void> => {}),
-        },
-        roundHasTypo: true,
-        isActive: () => true,
-        onMessageSent: mock((..._args: unknown[]): void => {}),
-        onStickerSent: mock((..._args: unknown[]): void => {}),
-        onImageSent: mock((..._args: unknown[]): void => {}),
-        onVoiceSent: mock((..._args: unknown[]): void => {}),
-      });
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, roundHasTypo: true }));
 
       const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
@@ -203,24 +153,7 @@ describe("send_message typo correction", () => {
         active = false;
       });
     try {
-      const toolset = await createReplyToolset({
-        chatId: -100800,
-        replyToMessageId: 10,
-        messageThreadId: undefined,
-        mediaToolsRequested: true,
-        bypassMediaToolCooldown: false,
-        direct: false,
-        chatAction: {
-          set: mock((..._args: unknown[]): number => 0),
-          settle: mock(async (): Promise<void> => {}),
-        },
-        roundHasTypo: true,
-        isActive: () => active,
-        onMessageSent: mock((..._args: unknown[]): void => {}),
-        onStickerSent: mock((..._args: unknown[]): void => {}),
-        onImageSent: mock((..._args: unknown[]): void => {}),
-        onVoiceSent: mock((..._args: unknown[]): void => {}),
-      });
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, roundHasTypo: true, isActive: () => active }));
 
       const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
@@ -239,29 +172,8 @@ describe("send_message typo correction", () => {
 });
 
 describe("send_message 重复消息去重", () => {
-  function buildContext(roundHasTypo: boolean) {
-    return {
-      chatId: -100800,
-      replyToMessageId: 10,
-      messageThreadId: undefined,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: false,
-      direct: false,
-      chatAction: {
-        set: mock((..._args: unknown[]): number => 0),
-        settle: mock(async (): Promise<void> => {}),
-      },
-      roundHasTypo,
-      isActive: () => true,
-      onMessageSent: mock((..._args: unknown[]): void => {}),
-      onStickerSent: mock((..._args: unknown[]): void => {}),
-      onImageSent: mock((..._args: unknown[]): void => {}),
-      onVoiceSent: mock((..._args: unknown[]): void => {}),
-    };
-  }
-
   test("同一轮内容完全相同的第二次调用静默跳过，不重复发送", async () => {
-    const toolset = await createReplyToolset(buildContext(false));
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
 
     const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
     const second = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({ text: "笨蛋" })));
@@ -273,7 +185,7 @@ describe("send_message 重复消息去重", () => {
   });
 
   test("用文字伪造一次动作会被拒发，动作预算也不消耗", async () => {
-    const toolset = await createReplyToolset(buildContext(false));
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
 
     const forgedImage = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "（参考上传的素材生成并发送了一张图片：橙色云朵弧线加蓝色光纤流光）",
@@ -304,7 +216,7 @@ describe("send_message 重复消息去重", () => {
   });
 
   test("括号外只是提到这两个词的正常回答不算伪造", async () => {
-    const toolset = await createReplyToolset(buildContext(false));
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
 
     const answer = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "本天才才没有生成并发送了一张图片呢，笨蛋♡",
@@ -318,7 +230,7 @@ describe("send_message 重复消息去重", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      const toolset = await createReplyToolset(buildContext(true));
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, roundHasTypo: true }));
 
       const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
@@ -344,7 +256,7 @@ describe("send_message 重复消息去重", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      const toolset = await createReplyToolset(buildContext(true));
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, roundHasTypo: true }));
 
       await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
@@ -364,7 +276,7 @@ describe("send_message 重复消息去重", () => {
     const originalRandom = Math.random;
     Math.random = () => (TYPO_QUICK_CORRECTION_PROBABILITY + 1) / 2;
     try {
-      const toolset = await createReplyToolset(buildContext(true));
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, roundHasTypo: true }));
 
       const first = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "天气",
@@ -388,29 +300,8 @@ describe("send_message 重复消息去重", () => {
 });
 
 describe("send_message 可点击命令守卫", () => {
-  function buildContext(roundHasTypo: boolean) {
-    return {
-      chatId: -100800,
-      replyToMessageId: 10,
-      messageThreadId: undefined,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: false,
-      direct: false,
-      chatAction: {
-        set: mock((..._args: unknown[]): number => 0),
-        settle: mock(async (): Promise<void> => {}),
-      },
-      roundHasTypo,
-      isActive: () => true,
-      onMessageSent: mock((..._args: unknown[]): void => {}),
-      onStickerSent: mock((..._args: unknown[]): void => {}),
-      onImageSent: mock((..._args: unknown[]): void => {}),
-      onVoiceSent: mock((..._args: unknown[]): void => {}),
-    };
-  }
-
   test("正文里出现 `/xxx` 时拒发：那是机器人自己发出的可点击命令", async () => {
-    const toolset = await createReplyToolset(buildContext(false));
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
 
     const atStart = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "/batch_kick 1d",
@@ -426,7 +317,7 @@ describe("send_message 可点击命令守卫", () => {
   });
 
   test("斜杠不构成命令的正常正文照发", async () => {
-    const toolset = await createReplyToolset(buildContext(false));
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
 
     const answer = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
       text: "要么 a/b 要么 c，笨蛋♡",
@@ -443,7 +334,7 @@ describe("send_message 可点击命令守卫", () => {
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {
-      const toolset = await createReplyToolset(buildContext(true));
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true, roundHasTypo: true }));
 
       const result = JSON.parse(await executeAndSettle(toolset, SEND_MESSAGE_TOOL, JSON.stringify({
         text: "喵 xbatch_kick",

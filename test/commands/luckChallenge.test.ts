@@ -45,8 +45,8 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   ensureLuckReceiptSecret: ensureLuckReceiptSecretMock,
 })));
 
-// 跨东京零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
-// 时 getTokyoDateKey 走真实实现，其余测试完全不受影响。
+// 跨配置时区的零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
+// 时 getDateKey 走真实实现，其余测试完全不受影响。
 // 两个坑（都是本 bun 版本 mock.module 的行为）决定了必须写成这个形状：
 // 1. 真实模块必须先展开成普通对象快照再 mock——mock.module 之后，已经取得的
 //    模块命名空间引用会被追溯重绑定到 mock 本身，工厂里引用它会在加载期
@@ -57,9 +57,9 @@ let mockTodayOverride: string | null = null;
 const realTime = { ...(await import("../../packages/libs/time")) };
 mock.module("../../packages/libs/time", () => ({
   ...realTime,
-  getTokyoDateKey: (timestampMs?: number): string =>
+  getDateKey: (timestampMs?: number): string =>
     (mockTodayOverride === null || timestampMs !== undefined
-      ? realTime.getTokyoDateKey(timestampMs)
+      ? realTime.getDateKey(timestampMs)
       : mockTodayOverride),
 }));
 
@@ -72,11 +72,11 @@ const {
   LUCK_TIERS,
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
 } = await import("../../packages/consts/luckChallenge");
-const { getTokyoDateKey } = await import("../../packages/libs/time");
+const { getDateKey } = await import("../../packages/libs/time");
 const luckCache = await import("../../packages/commands/luckChallenge/cache");
 const TEST_SECRET = {
   version: 1 as const,
-  day: getTokyoDateKey(),
+  day: getDateKey(),
   key: new Uint8Array(32).fill(7).toBase64({ alphabet: "base64url", omitPadding: true }),
 };
 
@@ -183,7 +183,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     // 长度 ≡ 1 (mod 4)，使 `Uint8Array.fromBase64` 对它抛 SyntaxError。
     const signaturePart: string = new Uint8Array(32).fill(0xab)
       .toBase64({ alphabet: "base64url", omitPadding: true });
-    const receipt: string = `luck:v1:${getTokyoDateKey()}:AAAAA.${signaturePart}`;
+    const receipt: string = `luck:v1:${getDateKey()}:AAAAA.${signaturePart}`;
     const receiptHash: string = new Uint8Array(32).fill(0xab).toHex();
     const body: string = "随便一段正文";
     const text: string = `${body}\n防伪标记: ${receiptHash}`;
@@ -666,7 +666,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("restoreLuckState 灌回的记录，用户当天再预览拿到的是同一个结果（不会重新滚动）", async () => {
-    const today = getTokyoDateKey();
+    const today = getDateKey();
     const tier = LUCK_TIERS[0]!;
     const restoredPercent: number = tier.fortunePercentRange[0];
     luckChallenge.restoreLuckState(TEST_SECRET, {
@@ -685,7 +685,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
   // beforeEach 把进程级日切状态恢复成新进程初值；随机顺序下也不能把这条
   // fail-closed 闩锁泄漏给依赖「同日重启后重建派生」的其它用例。
-  test("进程内跨东京零点后：迟到确认 fail closed，当天新流程与带当日证明的回执不受影响", async () => {
+  test("进程内跨配置时区的零点后：迟到确认 fail closed，当天新流程与带当日证明的回执不受影响", async () => {
     const luckDrawCalls = (): unknown[] =>
       postDiskIOMock.mock.calls.filter((call) => (call[0] as { type?: string }).type === "luckDraw");
     try {
@@ -702,7 +702,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       const oldResult = ctx.results[0];
       postDiskIOMock.mockClear();
 
-      // 东京零点翻页：下一次确认路径进入时整体切换日缓存、清空 pending。
+      // 配置时区的零点翻页：下一次确认路径进入时整体切换日缓存、清空 pending。
       mockTodayOverride = "2030-01-02";
       const registration: unknown[] | undefined = onDiskIORespawnMock.mock.calls
         .find((call: unknown[]): boolean => call[0] === "daily luck");
@@ -900,7 +900,7 @@ describe("运势日缓存的跨日轮换、共享刷新与 Worker 重建重放",
     }
   });
 
-  test("取密钥期间又跨过东京零点时继续取下一天，最终采用当前日期", async () => {
+  test("取密钥期间又跨过配置时区的零点时继续取下一天，最终采用当前日期", async () => {
     mockTodayOverride = "2030-01-04";
     ensureLuckReceiptSecretMock.mockImplementationOnce(async (day: string) => {
       mockTodayOverride = "2030-01-05";

@@ -63,8 +63,8 @@ export async function handleBlockDisable(ctx: CommandContext<Context>, targetArg
     // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
     requireIdentityPolicies: true,
     // 拒绝当前群自己的身份，覆盖匿名管理员回复与裸会话 id；约束见 docs/cn/04-invariants.md。
-    currentChatTargetText: chatAtmosphere(chatId).NOTICE_TEXTS.unblockCurrentChat,
-    messages: chatAtmosphere(chatId).UNBLOCK_TARGET_TEXTS,
+    currentChatTargetText: chatAtmosphere().NOTICE_TEXTS.unblockCurrentChat,
+    messages: chatAtmosphere().UNBLOCK_TARGET_TEXTS,
   });
   if (!targetUser) return;
 
@@ -78,7 +78,7 @@ export async function handleBlockDisable(ctx: CommandContext<Context>, targetArg
     (): Promise<UnblockExecutionOutcome> => executeUnblock(targetUser, chatId)
   );
   // 未收到持久化确认时附加警告；名单无变更时不等待 ACK。
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
   const persistWarning: string = persisted
     ? ""

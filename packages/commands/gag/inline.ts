@@ -5,6 +5,7 @@ import type {
   MessageEntity,
 } from "grammy/types";
 import { InlineQueryResultBuilder } from "grammy";
+import { telegramSignal } from "../../libs/telegramSignal";
 import type { Context } from "grammy";
 import { gagSessionsByChat } from "../../cache/main/gag";
 import {
@@ -12,7 +13,6 @@ import {
   GAG_INLINE_QUERY_PREFIX,
 } from "../../consts/gag";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
-import { signalArgs } from "../../libs/telegramSignalArgs";
 import { getAssetConfig } from "../../config/assets";
 import {
   deleteMessageWithOutcome,
@@ -312,7 +312,7 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
         cache_time: 0,
         is_personal: true,
       },
-      ...signalArgs(currentUpdateAbortSignal())
+      telegramSignal(currentUpdateAbortSignal())
     );
   } catch (error: unknown) {
     throwIfUpdateAborted();

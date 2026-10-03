@@ -60,7 +60,7 @@ function readAssetGroup(
   if (!isPlainRecord(value)) return invalidInput(sourcePath, `$.${name}`, "an object");
   for (const key of Object.keys(value)) {
     if (!keys.has(key)) {
-      return invalidInput(sourcePath, `$.${name}.${key}`, "absent (not part of the current assets schema)");
+      return invalidInput(sourcePath, `$.${name}.<key>`, "absent (not part of the current assets schema)");
     }
   }
   return { name, entries: value, sourcePath };
@@ -163,7 +163,7 @@ export function parseAssetConfig(value: unknown, sourcePath: string = ASSETS_CON
   if (!isPlainRecord(value)) return invalidInput(sourcePath, "$", "an object");
   for (const key of Object.keys(value)) {
     if (!ASSET_CONFIG_GROUPS.has(key)) {
-      return invalidInput(sourcePath, `$.${key}`, "absent (not part of the current assets schema)");
+      return invalidInput(sourcePath, "$.<key>", "absent (not part of the current assets schema)");
     }
   }
   const onlyPath: AssetGroup = readAssetGroup(value, {

@@ -11,7 +11,6 @@ import type {
   StorageDatabase,
   StorageDatabaseChange,
   StorageDatabaseWriter,
-  StorageChatStateChange,
 } from "../../types/storageDatabase";
 import type { PendingTemporaryAdBypassWrite } from
   "../../types/temporaryAdBypass";
@@ -21,7 +20,7 @@ export interface CommitStorageDatabaseChangesOptions {
   readonly blocklist: ReadonlyMap<number, StorageDatabaseChange>;
   readonly temporaryAdBypass: ReadonlyMap<number, PendingTemporaryAdBypassWrite>;
   readonly removals: ReadonlyMap<number, StorageDatabaseChange>;
-  readonly chatStates: ReadonlyMap<number, StorageChatStateChange>;
+  readonly chatStates: ReadonlyMap<number, StorageDatabaseChange>;
   /** 群问答按 (chatId, q) 复合主键变更；外层键为 chatId，内层键为问题文本 q。 */
   readonly chatQa: ReadonlyMap<number, ReadonlyMap<string, StorageDatabaseChange>>;
   /** AI 上下文按群主键只更新 `ai_context` 列；排在群状态之后，群行不存在时不插入。 */
@@ -94,10 +93,10 @@ export function prepareStorageDatabaseWriter(database: StorageDatabase): Storage
     deleteRemoval: database.delete(pendingBlockedRemovals)
       .where(eq(pendingBlockedRemovals.removalId, sql.placeholder("id"))).prepare(),
     upsertChatState: database.insert(chatStates)
-      .values({ chatId: sql.placeholder("id"), status: jsonbPlaceholder("data"), aiPersona: sql.placeholder("aiPersona") })
+      .values({ chatId: sql.placeholder("id"), status: jsonbPlaceholder("data") })
       .onConflictDoUpdate({
         target: chatStates.chatId,
-        set: { status: excluded(chatStates.status), aiPersona: excluded(chatStates.aiPersona) },
+        set: { status: excluded(chatStates.status) },
       })
       .prepare(),
     deleteChatState: database.delete(chatStates)
@@ -162,7 +161,7 @@ export function commitStorageDatabaseChanges(
     }
     for (const [chatId, change] of chatStateChanges) {
       if (change.data === null) writer.deleteChatState.run({ id: chatId });
-      else writer.upsertChatState.run({ id: chatId, data: change.data, aiPersona: change.aiPersona });
+      else writer.upsertChatState.run({ id: chatId, data: change.data });
     }
     for (const [chatId, questions] of chatQaChanges) {
       for (const [q, change] of questions) {

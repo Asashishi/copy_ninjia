@@ -15,14 +15,13 @@ import { DAY_MS } from "../../packages/consts/diskIO/common";
 import * as diskIO from "../../packages/infra/diskIO";
 import { logger } from "../../packages/infra/logger";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
-import * as monotonic from "../../packages/libs/monotonicDeadline";
 
 const DAY: string = "2026-09-07";
 const MIDNIGHT: number = Date.parse(`${DAY}T00:00:00+09:00`);
 const probe = mock(async (_chatId: number, userId: number, _signal?: AbortSignal): Promise<ChatMember> => member(userId));
 const post = spyOn(diskIO, "postDiskIO");
 const errorLog = spyOn(logger, "error");
-const now = spyOn(monotonic, "monotonicNow");
+const now = spyOn(performance, "now");
 const gates: ReturnType<typeof Promise.withResolvers<ChatMember>>[] = [];
 
 function member(userId: number, status: ChatMember["status"] = "member", present: boolean = true): ChatMember {

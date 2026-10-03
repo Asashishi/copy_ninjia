@@ -29,7 +29,7 @@ import { runChatToggleCommand } from "./superAdminToggle";
 export async function handleAntiRaidCommand(
   ctx: CommandContext<Context>
 ): Promise<void> {
-  const atmosphere: AtmosphereTexts = chatAtmosphere(ctx.chat.id);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   await runChatToggleCommand({
     ctx,
     texts: atmosphere.ANTI_RAID_TOGGLE_TEXTS,

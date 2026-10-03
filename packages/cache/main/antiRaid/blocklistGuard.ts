@@ -1,4 +1,4 @@
-/** 黑名单入群秒踢主线程侧代理（packages/antiRaid/blocklistGuard.ts）的内存状态。 */
+/** owner: main。黑名单入群秒踢主线程侧代理（packages/antiRaid/blocklistGuard.ts）的内存状态。 */
 
 /**
  * 最近已经替哪些 `(chatId, userId)` 的入群记过反刷群计数（键 → 记账时刻）。

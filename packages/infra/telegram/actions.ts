@@ -11,6 +11,8 @@ export type {
   EditMessageTextParams,
   SendChatActionParams,
   SendEphemeralMessageParams,
+  SendMessageBaseParams,
+  SendMessageFormat,
   SendMessageParams,
 } from "./actions/messages";
 

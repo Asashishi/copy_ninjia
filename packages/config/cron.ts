@@ -7,8 +7,9 @@
  * 随机目录缺省时由发送侧使用 config/dynamic/assets.json 的 `random_h_image_dir`（见
  * config/assets.ts）。`payload.path` 写绝对路径，或相对运行时数据根（RUNTIME_DATA_ROOT）的
  * 路径，不限定目录；相对路径基准与 assets.json 的本机路径一致。
- * `send_voice` 依赖 config/dynamic/agent.json 的 `agent.tts`：assertCronVoiceSupported 在启动总闸
- * （ensureCronConfig）与热重载（config/reload.ts）里按当时生效的 agent 配置核对。任何一处
+ * `send_voice` 依赖 config/dynamic/agent.json 的 `agent.tts`，`send_web_digest` 依赖对话核心能力
+ * （text、summary、media）：assertCronAgentSupported 在启动总闸（ensureCronConfig）与热重载
+ * （config/reload.ts）里按当时生效的 agent 配置核对。任何一处
  * 非法都整份拒绝：启动时拒绝启动，热重载时沿用上一份（见 config/reload.ts）。诊断只含
  * 文件路径、字段路径与期望形态。
  */
@@ -18,7 +19,6 @@ import { resolve } from "node:path";
 import { cronConfigCache } from "../cache/main/cron";
 import {
   CRON_ALL_CHATS,
-  CRON_DEFAULT_TIME_ZONE,
   CRON_EXCEPT_CHATS,
   CRON_MAX_ACTIONS_PER_TASK,
   CRON_MAX_IMAGES,
@@ -31,16 +31,29 @@ import {
 } from "../consts/cron";
 import { CRON_CONFIG_PATH, RUNTIME_DATA_ROOT } from "../consts/paths";
 import { VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../consts/aiChat/voiceMessage";
-import { agentTtsConfig } from "./agent";
+import {
+  WEB_DIGEST_DEFAULT_LANGUAGE,
+  WEB_DIGEST_DEFAULT_MAX_ITEMS,
+  WEB_DIGEST_INSTRUCTIONS_MAX_CHARS,
+  WEB_DIGEST_LANGUAGES,
+  WEB_DIGEST_MAX_ITEMS,
+  WEB_DIGEST_MIN_ITEMS,
+  WEB_DIGEST_TOPIC_MAX_CHARS,
+} from "../consts/webDigest";
+import { agentDeploymentConfigSnapshot } from "./agent";
+import { getTimeZone } from "./time";
+import { parseTimeZone } from "./timeZoneInput";
 import { sanitizeInline } from "../libs/text";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
 import { parseDurationTokenMs } from "../libs/durationToken";
 import { invalidInput, optionalBooleanField, readJsonInput } from "../libs/inputValidation";
 import type { InputFieldContext } from "../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../libs/record";
-import type { AgentTtsCapabilityConfig } from "../types/config";
+import type { AgentDeploymentConfig } from "../types/config";
+import type { WebDigestLanguage } from "../types/webDigest";
 import type {
   CronAction,
+  CronAgentShortfall,
   CronChatTargets,
   CronConfig,
   CronFileSource,
@@ -110,9 +123,11 @@ function parseUrl(value: unknown, context: InputFieldContext): string {
   return parsed.href;
 }
 
-/** 去掉首尾空白后非空且不超过上限、再清洗成单行的字符串；返回清洗后的单行。 */
+/** 去掉首尾空白后不超过上限，清洗成单行后仍须非空；返回清洗后的单行。 */
 function boundedLine(value: unknown, context: InputFieldContext, maxChars: number): string {
-  return sanitizeInline(boundedText(value, context, maxChars)).trim();
+  const text: string = sanitizeInline(boundedText(value, context, maxChars)).trim();
+  if (text.length === 0) return fail(context, `a non-empty string of at most ${maxChars} characters`);
+  return text;
 }
 
 function optionalCaption(value: unknown, context: InputFieldContext): string | undefined {
@@ -147,13 +162,33 @@ function parseImageSources(payload: Record<string, unknown>, context: InputField
   return isUrl ? { kind: "urls", urls: sources } : { kind: "paths", paths: sources };
 }
 
+/** 摘要语言：缺省 WEB_DIGEST_DEFAULT_LANGUAGE，出现时必须是 WEB_DIGEST_LANGUAGES 之一。 */
+function parseDigestLanguage(value: unknown, context: InputFieldContext): WebDigestLanguage {
+  if (value === undefined) return WEB_DIGEST_DEFAULT_LANGUAGE;
+  const language: string = typeof value === "string" ? value.trim() : "";
+  for (const candidate of WEB_DIGEST_LANGUAGES) {
+    if (candidate === language) return candidate;
+  }
+  return fail(context, WEB_DIGEST_LANGUAGES.map((name: string): string => `"${name}"`).join(", "));
+}
+
+/** 条目总数上限：缺省 WEB_DIGEST_DEFAULT_MAX_ITEMS，出现时必须是区间内的整数。 */
+function parseDigestMaxItems(value: unknown, context: InputFieldContext): number {
+  if (value === undefined) return WEB_DIGEST_DEFAULT_MAX_ITEMS;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < WEB_DIGEST_MIN_ITEMS || value > WEB_DIGEST_MAX_ITEMS) {
+    return fail(context, `an integer from ${WEB_DIGEST_MIN_ITEMS} to ${WEB_DIGEST_MAX_ITEMS}`);
+  }
+  return value;
+}
+
 function parseAction(value: unknown, context: InputFieldContext): CronAction {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, ["type", "payload"]) || !isPlainRecord(value.payload)) {
     return fail(context, "{ type, payload: object }");
   }
   const payload: Record<string, unknown> = value.payload;
   const payloadContext: InputFieldContext = child(context, "payload");
-  switch (value.type) {
+  const type: string = typeof value.type === "string" ? value.type.trim() : "";
+  switch (type) {
     case "send_message":
       if (!hasOnlyKeys(payload, ["content"])) return fail(payloadContext, "{ content }");
       return {
@@ -192,8 +227,21 @@ function parseAction(value: unknown, context: InputFieldContext): CronAction {
           ? undefined
           : boundedLine(payload.tone, child(payloadContext, "tone"), VOICE_TONE_MAX_CHARS),
       };
+    case "send_web_digest":
+      if (!hasOnlyKeys(payload, ["topic", "language", "max_items", "instructions"])) {
+        return fail(payloadContext, "{ topic, language?, max_items?, instructions? }");
+      }
+      return {
+        type: "send_web_digest",
+        topic: boundedLine(payload.topic, child(payloadContext, "topic"), WEB_DIGEST_TOPIC_MAX_CHARS),
+        language: parseDigestLanguage(payload.language, child(payloadContext, "language")),
+        maxItems: parseDigestMaxItems(payload.max_items, child(payloadContext, "max_items")),
+        instructions: payload.instructions === undefined
+          ? undefined
+          : boundedText(payload.instructions, child(payloadContext, "instructions"), WEB_DIGEST_INSTRUCTIONS_MAX_CHARS),
+      };
     default:
-      return fail(child(context, "type"), "send_message, send_image, send_file or send_voice");
+      return fail(child(context, "type"), "send_message, send_image, send_file, send_voice or send_web_digest");
   }
 }
 
@@ -201,18 +249,19 @@ function parseAction(value: unknown, context: InputFieldContext): CronAction {
  * `chat_id` 数组：`["all"]`、`["except", ...会话 id]`，或直接列出会话 id。
  *
  * 三种写法都必须是数组，且都至少要有一个元素；`"all"` 只能单独出现，`"except"` 只能作为
- * 首项。会话 id 是非零安全整数且不得重复，最多 CRON_MAX_CHAT_IDS_PER_TASK 个。
+ * 首项；字符串标记去掉首尾空白。会话 id 是非零安全整数且不得重复，最多 CRON_MAX_CHAT_IDS_PER_TASK 个。
  */
 function parseChatTargets(value: unknown, context: InputFieldContext): CronChatTargets {
   const expected: string =
     `["${CRON_ALL_CHATS}"], ["${CRON_EXCEPT_CHATS}", <chat id>, ...] or a list of at most ` +
     `${CRON_MAX_CHAT_IDS_PER_TASK} unique non-zero safe integer chat ids`;
   if (!Array.isArray(value) || value.length === 0) return fail(context, expected);
-  if (value[0] === CRON_ALL_CHATS) {
+  const first: unknown = typeof value[0] === "string" ? value[0].trim() : value[0];
+  if (first === CRON_ALL_CHATS) {
     if (value.length !== 1) return fail(context, expected);
     return { kind: "all" };
   }
-  const except: boolean = value[0] === CRON_EXCEPT_CHATS;
+  const except: boolean = first === CRON_EXCEPT_CHATS;
   const offset: number = except ? 1 : 0;
   if (value.length - offset === 0 || value.length - offset > CRON_MAX_CHAT_IDS_PER_TASK) {
     return fail(context, expected);
@@ -238,18 +287,13 @@ interface CronScheduleFields {
 }
 
 /**
- * 校验时区与表达式（均去掉首尾空白）：两者都用 Bun.cron.parse 判定，且必须还有将来的触发时间。
+ * 校验时区与表达式（均去掉首尾空白）；缺省时区来自 Bot 启动配置，表达式必须还有将来的触发时间。
  */
 function parseSchedule(record: Record<string, unknown>, context: InputFieldContext): CronScheduleFields {
   // 只有键真正缺省才用默认时区；显式写出的非法值（含 null）照常拒绝。
-  const rawTimeZone: unknown = record.time_zone === undefined ? CRON_DEFAULT_TIME_ZONE : record.time_zone;
-  const timeZone: string = typeof rawTimeZone === "string" ? rawTimeZone.trim() : "";
-  if (timeZone.length === 0) return fail(child(context, "time_zone"), "an IANA time zone name");
-  try {
-    Bun.cron.parse("0 0 * * *", Date.now(), { tz: timeZone });
-  } catch {
-    return fail(child(context, "time_zone"), "an IANA time zone name");
-  }
+  const timeZone: string = record.time_zone === undefined
+    ? getTimeZone()
+    : parseTimeZone(record.time_zone, context.source, `${context.path}.time_zone`);
   const expected: string = "a 5-field cron expression or @nickname with a future occurrence";
   if (typeof record.cron !== "string") return fail(child(context, "cron"), expected);
   const cron: string = record.cron.trim();
@@ -328,7 +372,7 @@ export async function loadCronConfig(path: string = CRON_CONFIG_PATH): Promise<C
     const actions: readonly Readonly<CronAction>[] = config[taskIndex]!.actions;
     for (let actionIndex: number = 0; actionIndex < actions.length; actionIndex++) {
       const action: Readonly<CronAction> = actions[actionIndex]!;
-      if (action.type === "send_message" || action.type === "send_voice") continue;
+      if (action.type === "send_message" || action.type === "send_voice" || action.type === "send_web_digest") continue;
       const context: InputFieldContext = { source: path, path: `$[${taskIndex}].actions[${actionIndex}].payload.path` };
       if (action.source.kind === "path") await verifyLocalSource(action.source.path, "file", context);
       else if (action.source.kind === "paths") {
@@ -344,37 +388,43 @@ export async function loadCronConfig(path: string = CRON_CONFIG_PATH): Promise<C
 }
 
 /**
- * `send_voice` 要用 config/dynamic/agent.json 的 `agent.tts` 合成语音：任务表里出现 send_voice 而
- * tts 缺省时，按第一个 send_voice 动作的字段路径拒绝整份文件。
- * @param tts 与这份任务表同时生效的 tts 配置；启动时是刚校验的 agent 配置，热重载时是
- *   本轮对账后生效的那一份。
+ * 任务表与给定 agent 配置同时生效时第一个缺依赖的动作：`send_voice` 要 `agent.tts` 合成语音，
+ * `send_web_digest` 要对话核心能力（text 检索与组稿）。都满足时为 null。
+ * @param agent 与这份任务表同时生效的对话能力配置；null 表示文件或对话核心能力段缺省。
  */
-export function assertCronVoiceSupported(
+export function cronAgentShortfall(
   config: CronConfig,
-  tts: AgentTtsCapabilityConfig | undefined,
-  sourcePath: string = CRON_CONFIG_PATH
-): void {
-  if (tts !== undefined) return;
+  agent: Readonly<AgentDeploymentConfig> | null
+): CronAgentShortfall | null {
   for (let taskIndex: number = 0; taskIndex < config.length; taskIndex++) {
     const actions: readonly Readonly<CronAction>[] = config[taskIndex]!.actions;
     for (let actionIndex: number = 0; actionIndex < actions.length; actionIndex++) {
-      if (actions[actionIndex]!.type !== "send_voice") continue;
-      fail(
-        { source: sourcePath, path: `$[${taskIndex}].actions[${actionIndex}].type` },
-        "send_message, send_image or send_file unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media"
-      );
+      const type: CronAction["type"] = actions[actionIndex]!.type;
+      if (type === "send_voice" && agent?.tts === undefined) return { taskIndex, actionIndex, need: "tts" };
+      if (type === "send_web_digest" && agent === null) return { taskIndex, actionIndex, need: "text" };
     }
   }
+  return null;
 }
 
-/** 任务表里是否有 send_voice 动作；热重载据此判断 agent.json 能否去掉 tts。 */
-export function cronConfigUsesVoice(config: CronConfig): boolean {
-  for (const task of config) {
-    for (const action of task.actions) {
-      if (action.type === "send_voice") return true;
-    }
-  }
-  return false;
+/**
+ * 按第一个缺依赖的动作的字段路径拒绝整份任务表（见 cronAgentShortfall）。
+ * @param agent 与这份任务表同时生效的对话能力配置；启动时是刚校验的 agent 配置，热重载时是
+ *   本轮对账后生效的那一份。
+ */
+export function assertCronAgentSupported(
+  config: CronConfig,
+  agent: Readonly<AgentDeploymentConfig> | null,
+  sourcePath: string = CRON_CONFIG_PATH
+): void {
+  const shortfall: CronAgentShortfall | null = cronAgentShortfall(config, agent);
+  if (shortfall === null) return;
+  fail(
+    { source: sourcePath, path: `$[${shortfall.taskIndex}].actions[${shortfall.actionIndex}].type` },
+    shortfall.need === "tts"
+      ? "a type other than send_voice unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media"
+      : "a type other than send_web_digest unless config/dynamic/agent.json configures $.agent.text, summary and media"
+  );
 }
 
 /** 接管已严格校验的任务表：启动总闸或 config/dynamic/ 热重载；null 表示文件已删除或缺省。 */
@@ -383,12 +433,12 @@ export function adoptCronConfig(config: CronConfig | null): void {
 }
 
 /**
- * 启动总闸：文件存在时加载、核对 send_voice 与 `agent.tts` 后接管。须排在 agent.json 的
+ * 启动总闸：文件存在时加载、核对动作对 agent 能力的依赖后接管。须排在 agent.json 的
  * 校验之后（见 config/readiness.ts 的 validateExistingDeploymentInputs）。
  */
 export async function ensureCronConfig(): Promise<void> {
   const config: CronConfig = await loadCronConfig();
-  assertCronVoiceSupported(config, agentTtsConfig());
+  assertCronAgentSupported(config, agentDeploymentConfigSnapshot());
   adoptCronConfig(config);
 }
 

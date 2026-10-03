@@ -1,10 +1,4 @@
-import type {
-  EmergencyLockdownRecovery,
-  PersistedLockdownFingerprint,
-} from "../../../types/antiRaid/internal";
-
-/**
- * 私密模式的主线程侧镜像与紧急恢复状态（owner 是
+/** owner: main。私密模式的主线程侧镜像与紧急恢复状态（owner 是
  * packages/antiRaid/lockdownMirror.ts，落盘对账循环在
  * packages/antiRaid/workerBridge/events.ts 的 persistCurrentLockdown）。
  *
@@ -12,6 +6,11 @@ import type {
  * lockdown 状态机没有任何共享：真正的私密模式状态在 ChatState.lockdown
  * （stateStore 持有），本模块只记「哪一份意图已经确认落盘」。
  */
+
+import type {
+  EmergencyLockdownRecovery,
+  PersistedLockdownFingerprint,
+} from "../../../types/antiRaid/internal";
 
 /**
  * 记录某群当前 lockdown 记录是否已确认落盘，而非 lockdown 本身——真正的

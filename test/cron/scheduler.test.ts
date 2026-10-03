@@ -124,23 +124,60 @@ describe("cron 调度", () => {
     expect(rounds).toEqual(["daily", "daily", "daily"]);
   });
 
-  test("rand_cron 首次按 cron 触发，之后在区间内按随机等待循环", async () => {
-    const random = spyOn(Math, "random").mockReturnValue(0.5);
+  test("rand_cron 首次按 cron 触发，之后每轮重新注册只匹配随机时刻那一分钟的 cron", async () => {
+    const random = spyOn(Math, "random").mockReturnValue(0.25);
     try {
       cronConfigCache.current = [task({ cron: "0 9 * * *", randomInterval: { minMs: MINUTE_MS, maxMs: 3 * MINUTE_MS } })];
       startCronScheduler();
+      const schedule: CronTaskSchedule = runtime().schedules.get("daily")!;
+      const first: Bun.CronJob = schedule.job!;
       await advance(1_050);
       expect(rounds).toEqual(["daily"]);
-      const schedule: CronTaskSchedule = runtime().schedules.get("daily")!;
-      expect(schedule.job).toBeNull();
-      expect(schedule.timer).not.toBeNull();
 
-      // 0.5 落在 [1m, 3m] 的正中：第一轮在 09:00:00 结束，2 分钟后第二轮。
-      // 此刻假时钟停在 09:00:00.050。
+      // 0.25 在 [1m, 3m] 里取到 1.5 分钟：第一轮在 09:00:00 触发并结束，随机时刻 09:01:30
+      // 向上取整到 09:02:00，写成 UTC 字段的一次性表达式。
+      const second: Bun.CronJob = schedule.job!;
+      expect(second).not.toBe(first);
+      expect(second.cron).toBe("2 0 20 9 *");
+      expect(Bun.cron.parse(second.cron, Date.now(), { tz: "UTC" })?.getTime())
+        .toBe(Date.parse("2026-09-20T09:02:00+09:00"));
+
       await advance(2 * MINUTE_MS - 60);
       expect(rounds).toHaveLength(1);
       await advance(20);
       expect(rounds).toHaveLength(2);
+      // 第二轮触发时先停掉那个一次性 cron，结束后换上下一个随机时刻（09:03:30 取整到 09:04）。
+      expect(schedule.job).not.toBe(second);
+      expect(schedule.job!.cron).toBe("4 0 20 9 *");
+
+      quiesceCronScheduler();
+      expect(schedule.job).toBeNull();
+      await advance(10 * MINUTE_MS);
+      expect(rounds).toHaveLength(2);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  test("rand_cron 的随机时刻与任务时区无关：按 UTC 字段写出，跨年也落在同一绝对时刻", async () => {
+    const random = spyOn(Math, "random").mockReturnValue(0);
+    try {
+      jest.setSystemTime(Date.parse("2026-12-31T23:57:30Z"));
+      cronConfigCache.current = [task({
+        cron: "58 18 31 12 *",
+        timeZone: "America/New_York",
+        randomInterval: { minMs: 2 * MINUTE_MS, maxMs: 2 * MINUTE_MS },
+      })];
+      startCronScheduler();
+      // 纽约 12-31 18:58 即 UTC 12-31 23:58；两分钟后的 UTC 已是次年 01-01 00:00，纽约仍在 12-31。
+      await advance(30_050);
+      expect(rounds).toEqual(["daily"]);
+      const job: Bun.CronJob = runtime().schedules.get("daily")!.job!;
+      expect(job.cron).toBe("0 0 1 1 *");
+      expect(Bun.cron.parse(job.cron, Date.now(), { tz: "UTC" })?.getTime())
+        .toBe(Date.parse("2027-01-01T00:00:00Z"));
+      await advance(2 * MINUTE_MS);
+      expect(rounds).toEqual(["daily", "daily"]);
     } finally {
       random.mockRestore();
     }

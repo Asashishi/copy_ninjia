@@ -2,10 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { IDENTITY_WRITE_BATCH_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import {
-  CURRENT_STORAGE_METADATA_ROWS,
   clearStorageBusinessTables,
   seedStorageDatabase,
 } from "../../fixtures/storageDatabase";
+import { storageMetadataRows } from
+  "../../../packages/database/interact/initialization";
+import { DEFAULT_BOT_TIME_ZONE } from "../../../packages/consts/bot";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,
@@ -65,7 +67,7 @@ function createFixture(mockRoot: string): DatabaseFixture {
   enableStorageDatabaseWal(path);
   const database: StorageDatabase = openStorageDatabase({ path });
   seedStorageDatabase(database, {
-    metadata: CURRENT_STORAGE_METADATA_ROWS,
+    metadata: storageMetadataRows(DEFAULT_BOT_TIME_ZONE),
     whitelist: [],
     blocklist: [],
     removals: [],

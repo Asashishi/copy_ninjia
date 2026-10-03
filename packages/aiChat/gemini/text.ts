@@ -1,5 +1,5 @@
 /**
- * Gemini 侧的纯文本生成、视觉描述与语音转写。三者共用 client.ts 的
+ * Gemini 侧的纯文本生成、结构化 JSON 生成、视觉描述与语音转写。三者共用 client.ts 的
  * requestGeminiTextResult，差别只在请求体：文本走一段 user 文本，视觉多挂一份
  * inlineData 图片字节，语音则挂一份 inlineData 音频字节。
  *
@@ -11,6 +11,7 @@
  */
 
 import {
+  GEMINI_JSON_MAX_TOKENS,
   GEMINI_CHAT_SUMMARY_MAX_TOKENS,
   GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS,
   GEMINI_STICKER_PACK_SUMMARY_MAX_TOKENS,
@@ -21,6 +22,7 @@ import { getAgentDeploymentConfig } from "../../config/agent";
 import { requestGeminiTextResult } from "./client";
 import type { GenerateContentParameters } from "@google/genai";
 import type {
+  AiJsonRequest,
   AiTextRequest,
   AiTextResult,
   AiVisionRequest,
@@ -45,6 +47,30 @@ export function generateGeminiText(request: AiTextRequest): Promise<AiTextResult
     }),
     errorLabel: request.errorLabel,
     normalize: request.normalize,
+    signal: request.signal,
+  });
+}
+
+/**
+ * text 能力的一次结构化 JSON 生成：不挂工具、不引用显式缓存，按 `responseJsonSchema` 约束输出；
+ * 解码与校验仍由调用方负责。
+ */
+export function generateGeminiJson(request: AiJsonRequest): Promise<AiTextResult> {
+  return requestGeminiTextResult({
+    capability: "text",
+    buildBody: (): GenerateContentParameters => ({
+      model: getAgentDeploymentConfig().text.model,
+      contents: [{ role: "user", parts: [{ text: request.userContent }] }],
+      config: {
+        systemInstruction: request.systemPrompt,
+        abortSignal: request.signal,
+        responseMimeType: "application/json",
+        responseJsonSchema: request.jsonSchema,
+        maxOutputTokens: GEMINI_JSON_MAX_TOKENS,
+      },
+    }),
+    errorLabel: request.errorLabel,
+    normalize: (text: string): string => text.trim(),
     signal: request.signal,
   });
 }

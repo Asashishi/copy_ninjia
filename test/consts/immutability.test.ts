@@ -5,7 +5,6 @@ import {
   OTHER_MENTION_FACTS,
   RANDOM_ECHO_MODES,
 } from "../../packages/consts/auto";
-import { PROMPT_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/prompt";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { RELEASE_PLATFORMS, RELEASE_REQUIRED_FILES, RELEASE_VERSION_PATTERN } from "../../packages/consts/release";
 import { LOGGER_HTTP_URL_PATTERN } from "../../packages/consts/logger";
@@ -32,7 +31,7 @@ function assertAtmosphereReadonly(): void {
   // @ts-expect-error 文案格式化函数不可替换。
   ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.copyAlreadyRunning = (): string => "changed";
   // @ts-expect-error 权限说明表不可修改。
-  ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanConfigAiPrompt = "changed";
+  ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanMute = "changed";
   // @ts-expect-error 清理上下文权限说明不可修改。
   ATMOSPHERE_TEXTS.plain.WHITELIST_PERMISSION_HELP.isCanClearContext = "changed";
   // @ts-expect-error 嵌套目标提示不可修改。
@@ -100,7 +99,6 @@ import {
   EMPTY_MESSAGE_ENTITIES,
   MUTED_CHAT_PERMISSIONS,
   DISABLED_LINK_PREVIEW,
-  NO_SIGNAL_ARGS,
 } from "../../packages/consts/telegram";
 import { QA_ANSWER_LABELS, QA_QUESTION_LABELS } from "../../packages/consts/qa";
 import { DEFAULT_CHAT_STATE, adoptChatState, createChatState, isEmptyChatState } from "../../packages/libs/chatState";
@@ -114,7 +112,7 @@ import { BOT_CHAT_PERMISSION_LABELS } from "../../packages/consts/botAdmin";
 import { getChatState } from "../../packages/infra/storage/stateStore";
 
 import * as Media from "../../packages/consts/aiChat/media";
-import { EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
+import { AD_DETECT_JSON_SCHEMA, EMPTY_AD_CANDIDATE_ENTRIES } from "../../packages/consts/antiRaid/adDetect";
 import {
   CHANNEL_COMMENT_JOIN_EXEMPTION,
   IDENTITY_JOIN_EXEMPTION,
@@ -184,13 +182,11 @@ test("准入、媒体、Telegram 固定载荷和各领域空列表均不可写",
     Media.INITIAL_MEDIA_INPUT_STATE.support = "supported";
     // @ts-expect-error 禁用链接预览的共享载荷必须只读。
     DISABLED_LINK_PREVIEW.is_disabled = true;
-    // @ts-expect-error 信号适配的共享空元组不得追加。
-    NO_SIGNAL_ARGS.push(undefined);
     // @ts-expect-error 广告候选的共享空列表不得追加。
     EMPTY_AD_CANDIDATE_ENTRIES.push({});
     // @ts-expect-error OpenAI 输出的共享空列表不得追加。
     EMPTY_OUTPUT_ITEMS.push({});
-    // @ts-expect-error 两家供应商共用的无工具调用空列表不得追加。
+    // @ts-expect-error 各供应商共用的无工具调用空列表不得追加。
     EMPTY_FUNCTION_CALLS.push({});
     // @ts-expect-error 贴纸共享空菜单不得追加。
     EMPTY_STICKER_MENU.push({});
@@ -424,7 +420,6 @@ test("默认群状态单例与新建状态同形状：形状不一致会让热�
   // （字段全是可选的，TS 不会替 createChatState 检查遗漏）；运行期再比一次键
   // 顺序，抓 createChatState 少写或写错顺序的那一档。
   const shape: Record<keyof ChatState, true> = {
-    aiPersona: true,
     quietUntil: true,
     lockdown: true,
     isAIChatEnabled: true,
@@ -442,14 +437,13 @@ test("默认群状态单例与新建状态同形状：形状不一致会让热�
   expect(Object.keys(DEFAULT_CHAT_STATE)).toEqual(Object.keys(shape));
   // 恢复路径逐字段抄写，键顺序必须落回同一个隐藏类。
   expect(Object.keys(adoptChatState(DEFAULT_CHAT_STATE))).toEqual(Object.keys(shape));
-  // 持久化字段闭集 = 规范形状减去独立落 ai_persona 列的那一个。
-  expect([...CHAT_STATE_KEYS]).toEqual(Object.keys(shape).filter((key: string): boolean => key !== "aiPersona"));
+  // 持久化字段闭集与规范形状逐键同序。
+  expect([...CHAT_STATE_KEYS]).toEqual(Object.keys(shape));
 });
 
-test("isEmptyChatState 必须认得全部 13 个字段：漏掉一个就会把有状态的群当成空条目回收", () => {
+test("isEmptyChatState 必须认得全部 12 个字段：漏掉一个就会把有状态的群当成空条目回收", () => {
   // 回收判定漏一个字段，那个群的状态会在下一次保存时连同条目一起消失。
   const values: Readonly<Record<keyof ChatState, unknown>> = {
-    aiPersona: "人设",
     quietUntil: 1,
     lockdown: { phase: "applying", intentId: 1, originalPermissions: {}, announced: false, expiresAt: 1 },
     isAIChatEnabled: true,
@@ -494,12 +488,6 @@ test("常量表内容本身仍可正常读取", () => {
   expect(SUPER_ADMIN_WHITELIST_PERMISSIONS.isCanControllFloodControlPermission).toBe(true);
 });
 
-function assertPromptTextsReadonly(): void {
-  // @ts-expect-error 提示词命令文案由常量模块持有，调用方不可修改。
-  PROMPT_COMMAND_TEXTS.usage = "changed";
-}
-void assertPromptTextsReadonly;
-
 function assertMentionFactsReadonly(): void {
   // @ts-expect-error 未提及任何人时共享的提及事实不可修改。
   NO_MENTION_FACTS.isMentioned = true;
@@ -538,11 +526,45 @@ function assertDefaultAssetConfigReadonly(): void {
 }
 void assertDefaultAssetConfigReadonly;
 
-import { TOOL_DECLARATIONS } from "../../packages/consts/tools";
+import { TOOL_DECLARATIONS, WEB_SEARCH_TOOL_DECLARATION } from "../../packages/consts/tools";
 function assertToolDeclarationsReadonly(): void {
   // @ts-expect-error 静态查询工具清单不能由调用方增删。
   TOOL_DECLARATIONS.push(TOOL_DECLARATIONS[0]!);
   // @ts-expect-error 工具声明的字段同样只读，不能就地改名。
   TOOL_DECLARATIONS[0]!.name = "changed";
+  // @ts-expect-error 检索工具声明不可修改。
+  WEB_SEARCH_TOOL_DECLARATION.name = "changed";
 }
 void assertToolDeclarationsReadonly;
+
+import {
+  WEB_DIGEST_JSON_SCHEMA,
+  WEB_DIGEST_LANGUAGES,
+  WEB_DIGEST_RESEARCH_URL_PATTERN,
+  WEB_DIGEST_RESEARCH_URL_TRAILING_PUNCTUATION_PATTERN,
+  WEB_DIGEST_SOURCE_LABELS,
+} from "../../packages/consts/webDigest";
+import { WEB_DIGEST_LANGUAGE_NAMES } from "../../packages/consts/aiChat/prompts/webDigest";
+function assertWebDigestConstantsReadonly(): void {
+  // @ts-expect-error 组稿 JSON Schema 不可修改。
+  WEB_DIGEST_JSON_SCHEMA.type = "array";
+  // @ts-expect-error 摘要语言清单不可增删。
+  WEB_DIGEST_LANGUAGES.push("fr");
+  // @ts-expect-error 来源标签表不可修改。
+  WEB_DIGEST_SOURCE_LABELS.zh = "changed";
+  // @ts-expect-error 正文链接表达式的游标不可修改。
+  WEB_DIGEST_RESEARCH_URL_PATTERN.lastIndex = 1;
+  // @ts-expect-error 链接句读表达式的游标不可修改。
+  WEB_DIGEST_RESEARCH_URL_TRAILING_PUNCTUATION_PATTERN.lastIndex = 1;
+  // @ts-expect-error 语言称呼表不可修改。
+  WEB_DIGEST_LANGUAGE_NAMES.en = "changed";
+}
+void assertWebDigestConstantsReadonly;
+
+function assertAdDetectSchemaReadonly(): void {
+  // @ts-expect-error 广告检测 Schema 的字段形态不可修改。
+  AD_DETECT_JSON_SCHEMA.properties.ad.type = "boolean";
+  // @ts-expect-error 广告检测 Schema 的必填字段清单不可扩容。
+  AD_DETECT_JSON_SCHEMA.required.push("extra");
+}
+void assertAdDetectSchemaReadonly;

@@ -1,5 +1,4 @@
-/**
- * Owner: perThread。主线程填入真实 Bot API 适配器，AI/Anti-Raid Worker 填入
+/** owner: perThread。主线程填入真实 Bot API 适配器，AI/Anti-Raid Worker 填入
  * 双工代理；各 isolate 独立持有，不共享引用。
  */
 

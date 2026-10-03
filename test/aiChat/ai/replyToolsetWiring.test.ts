@@ -14,9 +14,15 @@ import {
   setMessageReactionMock,
 } from "../../helpers/replyToolsetMocks";
 import { executeAndSettle } from "../../helpers/replyToolExecution";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { replyToolContextFixture } from "../../helpers/replyToolContext";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { Mock } from "bun:test";
 import { cartesianProduct } from "../../../packages/libs/cartesianProduct";
 import type { TelegramSendResult } from "../../../packages/types/telegram";
+import type { AgentDeploymentConfig } from "../../../packages/types/config";
+import type { AiWebSearchResult } from "../../../packages/types/aiChat/provider";
+import type { ReplyToolset } from "../../../packages/types/aiChat/replies";
+import type * as AiProviderModule from "../../../packages/aiChat/provider";
 
 const {
   ADD_REACTION_TOOL,
@@ -25,7 +31,10 @@ const {
   SEND_MESSAGE_TOOL,
   SEND_STICKER_TOOL,
   VIEW_STICKER_PACK_TOOL,
+  WEB_SEARCH_TOOL,
 } = await import("../../../packages/consts/tools");
+const { adoptAgentDeploymentConfig, getAgentDeploymentConfig } = await import("../../../packages/config/agent");
+const { resetAiProviderFacades } = await import("../../../packages/cache/workers/aiChat/providerScheduler");
 const {
   AI_MAX_ACTIONS_PER_REPLY,
   HARD_MAX_ACTIONS_PER_REPLY,
@@ -36,62 +45,75 @@ const {
   SEND_VOICE_TOOL_INSTRUCTION,
   TOOL_STATUS_BLOCK_LABEL,
   groupQaToolStatus,
+  webSearchToolStatus,
 } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createReplyToolset } = await import("../../../packages/aiChat/ai/tools/replyToolset/orchestrator");
+const providerModule: typeof AiProviderModule = await import("../../../packages/aiChat/provider");
 const { stickerMenuCache, stickerMenuRevision } =
   await import("../../../packages/cache/workers/aiChat/stickers/menu");
 
 beforeEach(resetReplyToolsetMocks);
 
-test("工具集真实挂载服务端联网检索，并同时提供函数行动工具", async () => {
-  const toolset = await createReplyToolset({
-    chatId: -100800,
-    replyToMessageId: 10,
-    messageThreadId: undefined,
-    mediaToolsRequested: true,
-    bypassMediaToolCooldown: false,
-    direct: false,
-    chatAction: {
-      set: mock((..._args: unknown[]): number => 0),
-      settle: mock(async (): Promise<void> => {}),
-    },
-    roundHasTypo: false,
-    isActive: () => true,
-    onMessageSent: mock((..._args: unknown[]): void => {}),
-    onStickerSent: mock((..._args: unknown[]): void => {}),
-    onImageSent: mock((..._args: unknown[]): void => {}),
-    onVoiceSent: mock((..._args: unknown[]): void => {}),
-  });
+test("配置了 web_search 时挂本地检索函数工具、不挂内建检索；去掉后反之，两种都同时提供函数行动工具", async () => {
+  const configured: AgentDeploymentConfig = getAgentDeploymentConfig();
+  expect(configured.webSearch).toBeDefined();
+  const local = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
+  expect(local.webSearch).toBe(false);
+  expect(local.searchWeb).not.toBeNull();
+  expect(local.toolStatus).toContain(webSearchToolStatus(configured.webSearch!.maxCallsPerUse));
+  expect(local.functions.map((definition) => definition.name)).toContain(WEB_SEARCH_TOOL);
+  // 异步分派只走回复循环，不进同步的 has / execute 名单。
+  expect(local.has(WEB_SEARCH_TOOL)).toBe(false);
+  expect(local.has(SEND_MESSAGE_TOOL)).toBe(true);
 
-  expect(toolset.webSearch).toBe(true);
-  expect(toolset.functions.length).toBeGreaterThan(0);
-  expect(toolset.has("delete_own_message")).toBe(false);
+  adoptAgentDeploymentConfig({ ...configured, webSearch: undefined });
+  resetAiProviderFacades();
+  try {
+    const builtIn = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
+    expect(builtIn.webSearch).toBe(true);
+    expect(builtIn.searchWeb).toBeNull();
+    expect(builtIn.toolStatus).not.toContain(webSearchToolStatus(configured.webSearch!.maxCallsPerUse));
+    expect(builtIn.functions.map((definition) => definition.name)).not.toContain(WEB_SEARCH_TOOL);
+    expect(builtIn.has("delete_own_message")).toBe(false);
+  } finally {
+    adoptAgentDeploymentConfig(configured);
+    resetAiProviderFacades();
+  }
+});
+
+test("独立 web_search 按本轮配置快照允许七次调用；改配置后新轮取新上限，声明保持相同", async () => {
+  const configured: AgentDeploymentConfig = getAgentDeploymentConfig();
+  const maxCallsPerUse: number = 7;
+  const searchWeb: Mock<() => Promise<AiWebSearchResult>> = mock(async (): Promise<AiWebSearchResult> => ({ ok: true, text: "资料", sources: [], searchCalls: 1 }));
+  const providerMock: Mock<typeof providerModule.webSearchAiProvider> = spyOn(providerModule, "webSearchAiProvider")
+    .mockReturnValue({ name: configured.webSearch!.provider, searchWeb });
+  try {
+    adoptAgentDeploymentConfig({ ...configured, webSearch: { ...configured.webSearch!, maxCallsPerUse } });
+    const first: ReplyToolset = await createReplyToolset(replyToolContextFixture());
+    expect(first.toolStatus).toContain(webSearchToolStatus(maxCallsPerUse));
+    adoptAgentDeploymentConfig({ ...configured, webSearch: { ...configured.webSearch!, maxCallsPerUse: 1 } });
+    const second: ReplyToolset = await createReplyToolset(replyToolContextFixture());
+    expect(second.toolStatus).toContain(webSearchToolStatus(1));
+    expect(second.functions).toEqual(first.functions);
+    for (let index: number = 0; index < maxCallsPerUse; index++) {
+      expect((await first.searchWeb!(JSON.stringify({ query: `q${index}` }))).searchCalls).toBe(1);
+    }
+    expect((await first.searchWeb!(JSON.stringify({ query: "over" }))).searchCalls).toBe(0);
+    expect((await second.searchWeb!(JSON.stringify({ query: "q" }))).searchCalls).toBe(1);
+    expect((await second.searchWeb!(JSON.stringify({ query: "over" }))).searchCalls).toBe(0);
+    expect(searchWeb).toHaveBeenCalledTimes(maxCallsPerUse + 1);
+    await first.settle();
+    await second.settle();
+  } finally {
+    providerMock.mockRestore();
+    adoptAgentDeploymentConfig(configured);
+    resetAiProviderFacades();
+  }
 });
 
 describe("add_reaction 成功动作计数", () => {
-  function buildContext() {
-    return {
-      chatId: -100800,
-      replyToMessageId: 10,
-      messageThreadId: undefined,
-      mediaToolsRequested: true,
-      bypassMediaToolCooldown: false,
-      direct: false,
-      chatAction: {
-        set: mock((..._args: unknown[]): number => 0),
-        settle: mock(async (): Promise<void> => {}),
-      },
-      roundHasTypo: false,
-      isActive: () => true,
-      onMessageSent: mock((..._args: unknown[]): void => {}),
-      onStickerSent: mock((..._args: unknown[]): void => {}),
-      onImageSent: mock((..._args: unknown[]): void => {}),
-      onVoiceSent: mock((..._args: unknown[]): void => {}),
-    };
-  }
-
   test("反应接纳时占动作，真实完成后计入已完成动作", async () => {
-    const toolset = await createReplyToolset(buildContext());
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
 
     const result = JSON.parse(await executeAndSettle(toolset, ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
 
@@ -102,7 +124,7 @@ describe("add_reaction 成功动作计数", () => {
 
   test("反应发送失败不再让模型重投，预占限额保持有效", async () => {
     setMessageReactionMock.mockImplementationOnce(async (): Promise<boolean> => false);
-    const toolset = await createReplyToolset(buildContext());
+    const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested: true }));
     const accepted = JSON.parse(await executeAndSettle(toolset, ADD_REACTION_TOOL, JSON.stringify({ emoji: "👍" })));
     expect(accepted.queued).toBe(true);
     expect(toolset.actionsUsed()).toBe(1);
@@ -136,24 +158,7 @@ test("模型提示按 AI_MAX_ACTIONS_PER_REPLY 限制动作数，执行侧留余
   expect(REPLY_ACTION_INSTRUCTION).toContain(`最多 ${AI_MAX_ACTIONS_PER_REPLY} 个`);
   expect(REPLY_ACTION_INSTRUCTION).not.toContain(`最多 ${HARD_MAX_ACTIONS_PER_REPLY} 个`);
 
-  const toolset = await createReplyToolset({
-    chatId: -100800,
-    replyToMessageId: 10,
-    messageThreadId: undefined,
-    mediaToolsRequested: false,
-    bypassMediaToolCooldown: false,
-    direct: false,
-    chatAction: {
-      set: mock((..._args: unknown[]): number => 0),
-      settle: mock(async (): Promise<void> => {}),
-    },
-    roundHasTypo: false,
-    isActive: () => true,
-    onMessageSent: mock((..._args: unknown[]): void => {}),
-    onStickerSent: mock((..._args: unknown[]): void => {}),
-    onImageSent: mock((..._args: unknown[]): void => {}),
-    onVoiceSent: mock((..._args: unknown[]): void => {}),
-  });
+  const toolset = await createReplyToolset(replyToolContextFixture());
 
   for (let action: number = 1; action <= HARD_MAX_ACTIONS_PER_REPLY; action++) {
     const result = JSON.parse(await executeAndSettle(toolset,
@@ -175,24 +180,7 @@ test("模型提示按 AI_MAX_ACTIONS_PER_REPLY 限制动作数，执行侧留余
 test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回复关系", async () => {
   sendMessageMock.mockImplementationOnce(async (): Promise<TelegramSendResult> => ({ messageId: 100, repliedToMessageId: undefined }));
   const onMessageSent = mock((..._args: unknown[]): void => {});
-  const toolset = await createReplyToolset({
-    chatId: -100800,
-    replyToMessageId: 10,
-    messageThreadId: undefined,
-    mediaToolsRequested: false,
-    bypassMediaToolCooldown: false,
-    direct: false,
-    chatAction: {
-      set: mock((..._args: unknown[]): number => 0),
-      settle: mock(async (): Promise<void> => {}),
-    },
-    roundHasTypo: false,
-    isActive: () => true,
-    onMessageSent,
-    onStickerSent: mock((..._args: unknown[]): void => {}),
-    onImageSent: mock((..._args: unknown[]): void => {}),
-    onVoiceSent: mock((..._args: unknown[]): void => {}),
-  });
+  const toolset = await createReplyToolset(replyToolContextFixture({ onMessageSent }));
 
   const result = JSON.parse(await executeAndSettle(toolset,
     SEND_MESSAGE_TOOL,
@@ -208,24 +196,7 @@ test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不
   // reply_to_trigger=false 时不挂回复，因此没有 reply_parameters 带路，
   // 话题落点只能靠 messageThreadId。
   sendMessageMock.mockImplementationOnce(async (): Promise<TelegramSendResult> => ({ messageId: 101, repliedToMessageId: undefined }));
-  const toolset = await createReplyToolset({
-    chatId: -100800,
-    replyToMessageId: 10,
-    messageThreadId: 77,
-    mediaToolsRequested: false,
-    bypassMediaToolCooldown: false,
-    direct: false,
-    chatAction: {
-      set: mock((..._args: unknown[]): number => 0),
-      settle: mock(async (): Promise<void> => {}),
-    },
-    roundHasTypo: false,
-    isActive: () => true,
-    onMessageSent: mock((..._args: unknown[]): void => {}),
-    onStickerSent: mock((..._args: unknown[]): void => {}),
-    onImageSent: mock((..._args: unknown[]): void => {}),
-    onVoiceSent: mock((..._args: unknown[]): void => {}),
-  });
+  const toolset = await createReplyToolset(replyToolContextFixture({ messageThreadId: 77 }));
 
   const result = JSON.parse(await executeAndSettle(toolset,
     SEND_MESSAGE_TOOL,
@@ -241,28 +212,6 @@ test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不
   });
 });
 
-/** 只填必填项的最小上下文；各用例按需覆盖。 */
-function baseToolContext(): Record<string, unknown> {
-  return {
-    chatId: -100800,
-    replyToMessageId: 10,
-    messageThreadId: undefined,
-    mediaToolsRequested: false,
-    bypassMediaToolCooldown: false,
-    direct: false,
-    chatAction: {
-      set: mock((..._args: unknown[]): number => 0),
-      settle: mock(async (): Promise<void> => {}),
-    },
-    roundHasTypo: false,
-    isActive: () => true,
-    onMessageSent: mock((..._args: unknown[]): void => {}),
-    onStickerSent: mock((..._args: unknown[]): void => {}),
-    onImageSent: mock((..._args: unknown[]): void => {}),
-    onVoiceSent: mock((..._args: unknown[]): void => {}),
-  };
-}
-
 describe("工具清单恒定", () => {
   test("触发类型、本群问答与手滑抽签都不改变工具声明的任何一个字节", async () => {
     const shapes: string[] = [];
@@ -271,12 +220,7 @@ describe("工具清单恒定", () => {
       roundHasTypo: [false, true],
       chatQa: [undefined, new Map([["怎么入群？", "点置顶那条链接"]])],
     })) {
-      const toolset = await createReplyToolset({
-        ...baseToolContext(),
-        mediaToolsRequested,
-        roundHasTypo,
-        chatQa,
-      } as never);
+      const toolset = await createReplyToolset(replyToolContextFixture({ mediaToolsRequested, roundHasTypo, chatQa }));
       shapes.push(JSON.stringify(toolset.functions));
       expect(toolset.toolStatus).toStartWith(TOOL_STATUS_BLOCK_LABEL);
     }
@@ -296,7 +240,7 @@ describe("工具清单恒定", () => {
 
 describe("群问答工具在按次工具集里的接线", () => {
   test("本群没有问答时两个工具照样挂着，查询如实返回空清单，工具状态写明没有登记", async () => {
-    const toolset = await createReplyToolset(baseToolContext() as never);
+    const toolset = await createReplyToolset(replyToolContextFixture());
 
     expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(true);
     expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
@@ -305,10 +249,7 @@ describe("群问答工具在按次工具集里的接线", () => {
   });
 
   test("本群有问答时两个工具都挂上，且 dispatch 真的走到执行器", async () => {
-    const toolset = await createReplyToolset({
-      ...baseToolContext(),
-      chatQa: new Map([["怎么入群？", "点置顶那条链接"]]),
-    } as never);
+    const toolset = await createReplyToolset(replyToolContextFixture({ chatQa: new Map([["怎么入群？", "点置顶那条链接"]]) }));
 
     expect(toolset.has(GROUP_QA_QUERY_TOOL)).toBe(true);
     expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
@@ -328,10 +269,7 @@ describe("群问答工具在按次工具集里的接线", () => {
   });
 
   test("问答工具不消耗整轮可见动作预算", async () => {
-    const toolset = await createReplyToolset({
-      ...baseToolContext(),
-      chatQa: new Map([["a", "1"]]),
-    } as never);
+    const toolset = await createReplyToolset(replyToolContextFixture({ chatQa: new Map([["a", "1"]]) }));
 
     // 先把动作预算打到硬顶之上，验证查询工具此时仍不受预算限制。
     for (let index: number = 0; index < HARD_MAX_ACTIONS_PER_REPLY + 1; index++) {
@@ -370,32 +308,11 @@ describe("工具分派", () => {
     };
   }
 
-  function stickerContext() {
-    return {
-      chatId: -100800,
-      replyToMessageId: 10,
-      messageThreadId: undefined,
-      mediaToolsRequested: false,
-      bypassMediaToolCooldown: false,
-      direct: false,
-      chatAction: {
-        set: mock((..._args: unknown[]): number => 0),
-        settle: mock(async (): Promise<void> => {}),
-      },
-      roundHasTypo: false,
-      isActive: () => true,
-      onMessageSent: mock((..._args: unknown[]): void => {}),
-      onStickerSent: mock((..._args: unknown[]): void => {}),
-      onImageSent: mock((..._args: unknown[]): void => {}),
-      onVoiceSent: mock((..._args: unknown[]): void => {}),
-    };
-  }
-
   test("两个贴纸工具都从分派表接到本轮共享的菜单与状态", async () => {
     // 看包与发贴纸必须落在同一份菜单和同一份轮内状态上：分派时各建一份的话，
     // 模型按 view 返回的编号去发，发出去的会是另一份菜单里的同号贴纸。
     seedStickerMenu();
-    const context = stickerContext();
+    const context = replyToolContextFixture();
     const toolset = await createReplyToolset(context);
 
     const viewed = JSON.parse(await executeAndSettle(toolset,
@@ -418,7 +335,7 @@ describe("工具分派", () => {
 
   test("没看过包就直接发贴纸会被本轮状态拦下", async () => {
     seedStickerMenu();
-    const toolset = await createReplyToolset(stickerContext());
+    const toolset = await createReplyToolset(replyToolContextFixture());
 
     const sent = JSON.parse(await executeAndSettle(toolset,
       SEND_STICKER_TOOL,
@@ -431,7 +348,7 @@ describe("工具分派", () => {
 
   test("未知工具名走统一错误，不消耗动作预算", async () => {
     seedStickerMenu();
-    const toolset = await createReplyToolset(stickerContext());
+    const toolset = await createReplyToolset(replyToolContextFixture());
 
     const result = JSON.parse(await executeAndSettle(toolset, "no_such_tool", "{}"));
 

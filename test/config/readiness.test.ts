@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -50,10 +51,9 @@ mock.module("../../packages/consts/paths", () => ({
   PERSONA_PATH: personaPath,
 }));
 mock.module("../../packages/config/bot", () => ({
-  BOT_ATMOSPHERE: "teasing",
   getBotConfig: (): BotConfig => {
     if (telegramFailure !== null) throw new Error(telegramFailure);
-    return { atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 };
+    return { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 };
   },
 }));
 mock.module("../../packages/config/stickers", () => ({
@@ -80,9 +80,8 @@ mock.module("../../packages/config/agent", () => ({
   },
 }));
 mock.module("../../packages/config/persona", () => ({
-  ensurePersona: async (): Promise<void> => {
-    countCall("persona");
-  },
+  adoptPersona: (): void => {},
+  loadPersona: loaderOf("persona", (): string | null => null),
 }));
 
 const {
@@ -173,7 +172,6 @@ describe("deployment config readiness", () => {
     // 热路径每条群消息都会问一次；命中缓存的那一路不得重新探测任何一份文件。
     expect(loaderCalls.get("stickers")).toBe(1);
     expect(loaderCalls.get("mood")).toBe(1);
-    expect(loaderCalls.get("persona")).toBe(1);
     expect(loaderCalls.get("agent")).toBe(1);
     expect(loaderCalls.get("adSamples")).toBe(1);
     expect(loaderCalls.get("agent.ad_detect")).toBe(1);
@@ -184,8 +182,7 @@ describe("deployment config readiness", () => {
     await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     expect(verdict.ok).toBe(false);
-    // 探测在第二份就停下，人设与 agent 段这一轮不该被读到。
-    expect(loaderCalls.get("persona")).toBeUndefined();
+    // 探测在第二份就停下，agent 段这一轮不该被读到。
     expect(loaderCalls.get("agent")).toBeUndefined();
 
     moodFailure = null;

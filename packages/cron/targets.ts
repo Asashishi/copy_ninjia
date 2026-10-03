@@ -14,7 +14,7 @@ import type { ChatFullInfo, ChatMember, ChatPermissions } from "grammy/types";
 import { getChatStateCache } from "../infra/storage/stateStore";
 import { logUnlessAborted, runTelegramAction } from "../infra/telegram/actions/core";
 import { bot } from "../infra/telegram/mainClient";
-import { signalArgs } from "../libs/telegramSignalArgs";
+import { telegramSignal } from "../libs/telegramSignal";
 import type { CronAction, CronGroupTargets, CronSendNeeds, CronTaskSchedule } from "../types/cron";
 
 /** 汇总任务动作需要的发送权限。 */
@@ -26,6 +26,7 @@ export function sendNeedsOf(actions: readonly Readonly<CronAction>[]): CronSendN
   for (const action of actions) {
     switch (action.type) {
       case "send_message":
+      case "send_web_digest":
         text = true;
         break;
       case "send_image":
@@ -76,7 +77,7 @@ async function canSendIn(chatId: number, needs: CronSendNeeds, signal: AbortSign
   const member: ChatMember | undefined = await runTelegramAction({
     action: `read the bot's membership for cron in chat ${chatId}`,
     execute: (requestSignal?: AbortSignal): Promise<ChatMember> =>
-      bot.api.getChatMember(chatId, bot.botInfo.id, ...signalArgs(requestSignal)),
+      bot.api.getChatMember(chatId, bot.botInfo.id, telegramSignal(requestSignal)),
     map: (value: ChatMember): ChatMember => value,
     fallback: undefined,
     signal,
@@ -88,7 +89,7 @@ async function canSendIn(chatId: number, needs: CronSendNeeds, signal: AbortSign
   const defaults: ChatPermissions | undefined = await runTelegramAction({
     action: `read the default member permissions for cron in chat ${chatId}`,
     execute: (requestSignal?: AbortSignal): Promise<ChatFullInfo> =>
-      bot.api.getChat(chatId, ...signalArgs(requestSignal)),
+      bot.api.getChat(chatId, telegramSignal(requestSignal)),
     map: (chat: ChatFullInfo): ChatPermissions | undefined => chat.permissions,
     fallback: undefined,
     signal,

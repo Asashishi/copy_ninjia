@@ -178,7 +178,10 @@ export function assertPersistableLockdown(
   decodeLockdown(record, source, "$.lockdown");
 }
 
-/** 翻译目标身份：非零安全整数 id，其余字段可选且类型严格；按固定字段顺序构造。 */
+/**
+ * 翻译目标身份：非零安全整数 id，可选字符串字段按 Telegram 给出的原样保留（名称与群名可以是空字符串）；
+ * 按固定字段顺序构造。
+ */
 function decodeTranslatedUser(value: unknown, context: InputFieldContext): CachedUser {
   if (!isPlainRecord(value) || !hasOnlyKeys(value, CACHED_USER_KEYS)) {
     return invalidInput(context.source, context.path, "an object containing only id, username, first_name, last_name, title and isChannel");
@@ -227,11 +230,9 @@ function decodeTranslateSessions(value: unknown, source: string): readonly Trans
 }
 
 /**
- * 合并并严格解码 status 与 ai_persona；未知字段、状态与人设同时为空的行均拒绝。
- * 缺省的开关解码为 false。
+ * 严格解码 status；未知字段与空状态对象均拒绝。缺省的开关解码为 false。
  */
-export function decodeChatStateData(text: string, source: string, aiPersona: string | null = null): ChatState {
-  const persona: string | undefined = decodeAiPersona(aiPersona, source);
+export function decodeChatStateData(text: string, source: string): ChatState {
   const value: unknown = parseJsonInput(text, source);
   if (!isPlainRecord(value) || !hasOnlyKeys(value, CHAT_STATE_KEYS)) {
     return invalidInput(source, "$", "an object containing only supported chat-state fields");
@@ -242,7 +243,6 @@ export function decodeChatStateData(text: string, source: string, aiPersona: str
   }
   const rootContext: InputFieldContext = { source, path: "$" };
   const state: ChatState = {
-    aiPersona: persona,
     quietUntil: optionalTimestampField(value, "quietUntil", rootContext),
     lockdown: value.lockdown === undefined
       ? undefined
@@ -260,7 +260,7 @@ export function decodeChatStateData(text: string, source: string, aiPersona: str
     isProxySendEnabled: optionalBooleanField(value, "isProxySendEnabled", rootContext) === true,
     translate: value.translate === undefined ? undefined : decodeTranslateSessions(value.translate, source),
   };
-  if (persona === undefined && Object.keys(value).length === 0) {
+  if (Object.keys(value).length === 0) {
     return invalidInput(source, "$", "a non-empty chat-state object");
   }
   return state;
@@ -273,7 +273,7 @@ function enabledOrOmitted(enabled: boolean): true | undefined {
 
 /**
  * 编码前走同一严格解码器，非法内存状态不得进入 SQLite。字段顺序与
- * createChatState 一致；aiPersona 另存 ai_persona 列，不进入状态载荷。
+ * createChatState 一致。
  */
 export function encodeChatStateData(
   state: Readonly<ChatState>,
@@ -293,15 +293,6 @@ export function encodeChatStateData(
     isProxySendEnabled: enabledOrOmitted(state.isProxySendEnabled),
     translate: state.translate,
   });
-  decodeChatStateData(text, source, state.aiPersona ?? null);
+  decodeChatStateData(text, source);
   return text;
-}
-
-/** SQL NULL 表示缺省；显式空白或非法类型拒绝使用。 */
-export function decodeAiPersona(value: unknown, source: string): string | undefined {
-  if (value === null) return undefined;
-  if (typeof value !== "string" || value.trim().length === 0) {
-    return invalidInput(source, "$.ai_persona", "SQL NULL or a non-blank string");
-  }
-  return value;
 }

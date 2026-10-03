@@ -9,6 +9,8 @@ import { assertPersistableLockdown } from "../../database/codec/chatState";
 import { recordBlocklistParticipantReadability } from "../../infra/blocklist/participantInvalid";
 import { settleBlockedRemoval } from "../../infra/blocklist/sweep";
 import { logger } from "../../infra/logger";
+import { signalBusinessWorkerFatal } from "../../infra/workerSupervisor";
+import { VERIFICATION_REVISION_CAPACITY } from "../../consts/antiRaid/verification";
 import { relayAiCacheUsage } from "../../infra/aiCacheUsageRelay";
 import {
   clearChatStateField,
@@ -184,6 +186,14 @@ export function handleAntiRaidWorkerEvent(
       break;
     case "verificationDeferred":
       if (acceptVerificationDeferred(event)) antiRaidRuntimeState.persistenceVersion++;
+      break;
+    case "verificationRevisionCapacityExceeded":
+      if (event.generation === antiRaidRuntimeState.generation) {
+        signalBusinessWorkerFatal(new Error(
+          `Anti-Raid verification revision capacity (${VERIFICATION_REVISION_CAPACITY}) exceeded; ` +
+          "refusing new verification state and requiring a supervised restart."
+        ));
+      }
       break;
     case "blockedMembersRemoved":
       settleBlockedRemoval(event);

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 import { InputValidationError } from "../../../packages/libs/inputValidation";
-import { getTokyoDateKey } from "../../../packages/libs/time";
+import { getDateKey } from "../../../packages/libs/time";
 
 const root: string = mkdtempSync(join(TEST_DATA_ROOT, "recovery-topology-"));
 const realPaths = await import("../../../packages/consts/paths");
@@ -23,8 +23,8 @@ const { inspectStickerCatalogs, inspectLuckDay } = await import("../../../packag
 const { inspectJoinLogFiles } = await import("../../../packages/workers/diskIO/joinLogRecovery");
 const { inspectWedMemberFiles } = await import("../../../packages/workers/diskIO/wedMemberFiles");
 const { openAppendOnlyFile, openValidatedAppendOnlyFile } = await import("../../../packages/workers/diskIO/appendOnlyDayFile");
-const today: string = getTokyoDateKey();
-const yesterday: string = getTokyoDateKey(Date.now() - 86_400_000);
+const today: string = getDateKey();
+const yesterday: string = getDateKey(Date.now() - 86_400_000);
 const domains: readonly Readonly<{ name: string; path: string; inspect: () => unknown }>[] = [
   { name: "verification today", path: join(paths.VERIFICATION_MEMORY_DIR, `${today}.json`), inspect: () => inspectVerificationDay(today) },
   { name: "verification prior", path: join(paths.VERIFICATION_MEMORY_DIR, `${yesterday}.json`), inspect: () => inspectVerificationDay(today) },
@@ -91,5 +91,44 @@ test("跨域恢复遇到路径异常时不发布 owner、不生成密钥也不�
     expect(await Bun.file(temporary).text()).toBe("keep temporary bytes");
   } finally {
     adoptAi.mockRestore(); adoptLogs.mockRestore(); adoptSecret.mockRestore(); report.mockRestore();
+  }
+});
+
+test("SQLite 时区闸排在第一个 inspect：换时区先于未来日期的日文件报错", async () => {
+  const { handleDiskIOStartupLoad } = await import("../../../packages/workers/diskIO/startup");
+  const { getTimeZone } = await import("../../../packages/config/time");
+  const { IDENTITY_DATABASE_TIME_ZONE_KEY } = await import("../../../packages/consts/identityStorage");
+  const { DAY_MS } = await import("../../../packages/consts/diskIO/common");
+  const { openStorageDatabase, closeStorageDatabase } = await import("../../../packages/database/interact/connection");
+  const setMarker = (timeZone: string): void => {
+    const database = openStorageDatabase({ path: realPaths.IDENTITY_DATABASE_PATH });
+    try {
+      database.$client.run(
+        "UPDATE storage_metadata SET data = jsonb(?1) WHERE key = ?2;",
+        [JSON.stringify({ timeZone }), IDENTITY_DATABASE_TIME_ZONE_KEY]
+      );
+    } finally { closeStorageDatabase(database); }
+  };
+  const report = spyOn(console, "error").mockImplementation((): void => {});
+  const tomorrow: string = getDateKey(Date.now() + DAY_MS);
+  const configured: string = getTimeZone();
+  try {
+    await Bun.write(join(paths.LUCK_MEMORY_DIR, `${tomorrow}.json`), "{}");
+    const control: Parameters<Parameters<typeof handleDiskIOStartupLoad>[1]>[0][] = [];
+    await handleDiskIOStartupLoad(null, (reply): void => { control.push(reply); });
+    expect(control[0]).toMatchObject({ type: "loaded", error: expect.stringContaining(`${tomorrow}.json: $filename`) });
+
+    setMarker(configured === "UTC" ? "Asia/Seoul" : "UTC");
+    const replies: Parameters<Parameters<typeof handleDiskIOStartupLoad>[1]>[0][] = [];
+    await handleDiskIOStartupLoad(null, (reply): void => { replies.push(reply); });
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      type: "loaded",
+      error: expect.stringContaining(`storage_metadata.${IDENTITY_DATABASE_TIME_ZONE_KEY} must be ${JSON.stringify({ timeZone: configured })}`),
+    });
+    expect(replies[0]).not.toMatchObject({ error: expect.stringContaining("$filename") });
+  } finally {
+    setMarker(configured);
+    report.mockRestore();
   }
 });

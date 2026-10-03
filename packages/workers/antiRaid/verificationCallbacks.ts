@@ -19,7 +19,6 @@ import { trackAntiRaidTask } from "./taskTracker";
 
 export interface AnswerVerificationCallbackOptions {
   readonly callbackQueryId: string;
-  readonly chatId?: number;
   readonly reply?: Extract<VerificationEffect, { kind: "answerCallback" }>["reply"];
 }
 
@@ -29,7 +28,6 @@ export interface AnswerVerificationCallbackOptions {
  */
 export function answerVerificationCallback({
   callbackQueryId,
-  chatId,
   reply,
 }: AnswerVerificationCallbackOptions): Promise<void> | undefined {
   if (verificationCallbackReplies.current >= VERIFICATION_CALLBACK_REPLY_MAX) {
@@ -39,7 +37,7 @@ export function answerVerificationCallback({
     }
     return undefined;
   }
-  const atmosphere: AtmosphereTexts = workerAtmosphere(chatId ?? 0);
+  const atmosphere: AtmosphereTexts = workerAtmosphere();
   const text: string | undefined = reply === undefined
     ? undefined
     : reply === "ok"
@@ -86,7 +84,7 @@ export function handleVerificationCallbackEvent(
   const needsAdminCheck: boolean = message.action === "approve" && !isSelf && expectedEntry?.state.kind === "pending";
   if (needsAdminCheck && verificationCallbackChecks.current >= VERIFICATION_CALLBACK_CHECK_MAX) {
     const task: Promise<void> | undefined = answerVerificationCallback({
-      chatId, callbackQueryId: message.callbackQueryId, reply: "approverUnknown",
+      callbackQueryId: message.callbackQueryId, reply: "approverUnknown",
     });
     if (task !== undefined) void trackAntiRaidTask({ task });
     return;
@@ -95,7 +93,7 @@ export function handleVerificationCallbackEvent(
     id: message.from.id,
     username: message.from.username,
     first_name: message.from.first_name,
-  }, workerAtmosphere(chatId));
+  }, workerAtmosphere());
   if (!needsAdminCheck) {
     dispatchVerification(chatId, targetUserId, {
       type: "callback", callbackQueryId: message.callbackQueryId,
@@ -108,7 +106,7 @@ export function handleVerificationCallbackEvent(
     task: isChatAdmin(chatId, message.from.id, "verification approver")
       .then((isAdmin: boolean | undefined): void | Promise<void> => {
         if (generation !== verificationGeneration.current || verificationEntries.get(key) !== expectedEntry) {
-          return answerVerificationCallback({ chatId, callbackQueryId: message.callbackQueryId, reply: "invalid" });
+          return answerVerificationCallback({ callbackQueryId: message.callbackQueryId, reply: "invalid" });
         }
         dispatchVerification(chatId, targetUserId, {
           type: "callback", callbackQueryId: message.callbackQueryId,

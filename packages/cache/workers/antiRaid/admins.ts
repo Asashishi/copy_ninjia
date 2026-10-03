@@ -1,11 +1,11 @@
+/** owner: workers/antiRaid。非匿名管理员邀请豁免表（packages/workers/antiRaid/adminCache.ts）的内存状态。 */
+
 import type { ChatAdminCache } from "../../../types/antiRaid/internal";
 import { ADMIN_CACHE_TTL_MS, ANTI_RAID_CHAT_CACHE_MAX } from "../../../consts/antiRaid/cache";
 import {
   setBoundedMapValue,
   sweepExpiredSnapshots,
 } from "../../../libs/boundedMap";
-
-/** owner: workers/antiRaid。非匿名管理员邀请豁免表（packages/workers/antiRaid/adminCache.ts）的内存状态。 */
 
 /**
  * 按需拉取的各群非匿名管理员 ID 表。

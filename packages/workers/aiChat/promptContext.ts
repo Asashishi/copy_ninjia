@@ -122,7 +122,7 @@ export interface UserContentOptions {
  * user/model 历史轮次。
  * @param chatId 群聊 ID。
  * @param selfInfo 机器人自己的账号身份（见 cache/workers/aiChat/identity.ts 的 botInfoState），用于转录里的自我认知。
- * @returns 拼好的三个区块；缓存为空时返回 null。
+ * @returns 拼好的三个区块与当前会话内的转录已定切点；缓存为空时返回 null。
  */
 export function buildReplyPromptSections(
   chatId: number,
@@ -216,13 +216,17 @@ export function buildReplyPromptSections(
     (summaryBlock || REPLY_CONTEXT_SECTION_TEXT.referenceMemory.emptyContent) +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]`;
-  const currentConversation: string =
+  const conversationHead: string =
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]\n` +
     REPLY_CONTEXT_SECTION_TEXT.currentConversation.header +
-    "\n" +
+    "\n";
+  const currentConversation: string =
+    conversationHead +
     rendered.text +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`;
+  const currentConversationSettledOffsets: number[] = [];
+  for (const offset of rendered.settledOffsets) currentConversationSettledOffsets.push(conversationHead.length + offset);
   // 唤起者声明是本轮「正在跟你说话的是谁」的唯一可信来源；热区读取、身份定位
   // 与同名/转发边界由系统提示词的 DIRECT_INVOCATION_READING_INSTRUCTION 规定。
   // 随机插话与随机媒体评价没有唤起者，整句不出现，模型据此判断本轮无人叫它。
@@ -248,5 +252,5 @@ export function buildReplyPromptSections(
     (roundHasTypo ? "\n\n" + TYPO_REQUIRED_INSTRUCTION : "") +
     "\n" +
     `[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`;
-  return { referenceMemory, currentConversation, replyTask };
+  return { referenceMemory, currentConversation, currentConversationSettledOffsets, replyTask };
 }

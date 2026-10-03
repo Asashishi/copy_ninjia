@@ -1,10 +1,15 @@
-import { IDENTITY_DATABASE_SCHEMA_KEY } from "../../consts/identityStorage";
+import {
+  IDENTITY_DATABASE_METADATA_KEYS,
+  IDENTITY_DATABASE_SCHEMA_KEY,
+  IDENTITY_DATABASE_TIME_ZONE_KEY,
+} from "../../consts/identityStorage";
 import { CHAT_QA_MAX_PER_CHAT } from "../../consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
+import { parseTimeZone } from "../../config/timeZoneInput";
 import { assertChatQaQuestion, decodeChatQaData } from "../codec/chatQa";
 import { assertTelegramChatId, decodeChatStateData } from "../codec/chatState";
 import { decodePendingBlockedRemovalData } from "../codec/identity";
-import { parseJsonInput } from "../../libs/inputValidation";
+import { invalidInput, parseJsonInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 import type { Statement } from "bun:sqlite";
 import type { PendingBlockedRemoval } from "../../types/blocklist";
@@ -32,24 +37,41 @@ export function storageRowSource(
   return `${row}.${table === "chat_states" ? "status" : table === "permission_list" ? "policy" : "data"}`;
 }
 
-/** schema-version 解码只接收预先投影出的 metadata 行。 */
-export interface ReadStorageSchemaVersionParams {
+/** storage_metadata 解码只接收预先投影出的 metadata 行。 */
+export interface ReadStorageMetadataParams {
   readonly metadata: readonly StoredStorageMetadataRow[];
 }
 
-/** 严格读取唯一 schema-version 元数据行，版本范围由调用生命周期决定。 */
+/** 按主键取恰好一行 metadata；缺失与重复都拒绝。 */
+function readOnlyMetadataRow(
+  rows: ReadStorageMetadataParams,
+  key: string,
+  source: string
+): StoredStorageMetadataRow {
+  const matches: readonly StoredStorageMetadataRow[] =
+    rows.metadata.filter((row: StoredStorageMetadataRow): boolean => row.key === key);
+  const found: StoredStorageMetadataRow | undefined = matches[0];
+  if (found === undefined || matches.length !== 1) {
+    throw new Error(`${source}: storage_metadata must contain exactly one ${key} row.`);
+  }
+  return found;
+}
+
+/**
+ * 严格读取 schema-version 行，版本范围由调用生命周期决定。只认该主键、不核对其余行：
+ * 版本不符的库（例如缺时区标记的 v12）必须先得到版本诊断。
+ */
 export function readStorageSchemaVersion(
-  rows: ReadStorageSchemaVersionParams,
+  rows: ReadStorageMetadataParams,
   source: string
 ): number {
-  if (
-    rows.metadata.length !== 1 ||
-    rows.metadata[0]?.key !== IDENTITY_DATABASE_SCHEMA_KEY
-  ) {
-    throw new Error(`${source}: storage_metadata must contain exactly one schema-version row.`);
-  }
+  const row: StoredStorageMetadataRow = readOnlyMetadataRow(
+    rows,
+    IDENTITY_DATABASE_SCHEMA_KEY,
+    source
+  );
   const value: unknown = parseJsonInput(
-    rows.metadata[0].data,
+    row.data,
     storageRowSource(source, "storage_metadata", IDENTITY_DATABASE_SCHEMA_KEY)
   );
   if (
@@ -62,6 +84,47 @@ export function readStorageSchemaVersion(
     );
   }
   return value.version as number;
+}
+
+/**
+ * 当前格式的数据根时区闸：主键集合恰为 IDENTITY_DATABASE_METADATA_KEYS，time-zone 行恰为
+ * `{"timeZone":<规范 IANA 名>}`，且等于 timeZone（本进程已规范化的配置时区）。
+ * 调用方须先用 readStorageSchemaVersion 确认当前版本，再在读取任何日历相关数据之前调用。
+ */
+export function assertStorageTimeZone(
+  rows: ReadStorageMetadataParams,
+  source: string,
+  timeZone: string
+): void {
+  const row: StoredStorageMetadataRow = readOnlyMetadataRow(
+    rows,
+    IDENTITY_DATABASE_TIME_ZONE_KEY,
+    source
+  );
+  for (const metadata of rows.metadata) {
+    if (!IDENTITY_DATABASE_METADATA_KEYS.includes(metadata.key)) {
+      throw new Error(
+        `${source}: storage_metadata must contain only the ` +
+        `${IDENTITY_DATABASE_METADATA_KEYS.join(" and ")} rows.`
+      );
+    }
+  }
+  const path: string = storageRowSource(source, "storage_metadata", IDENTITY_DATABASE_TIME_ZONE_KEY);
+  const value: unknown = parseJsonInput(row.data, path);
+  if (
+    !isPlainRecord(value) ||
+    !hasExactKeys(value, ["timeZone"]) ||
+    parseTimeZone(value.timeZone, path, "$.timeZone") !== value.timeZone
+  ) {
+    return invalidInput(path, "$.timeZone", "a canonical IANA time zone name");
+  }
+  if (value.timeZone !== timeZone) {
+    return invalidInput(
+      source,
+      `storage_metadata.${IDENTITY_DATABASE_TIME_ZONE_KEY}`,
+      JSON.stringify({ timeZone })
+    );
+  }
 }
 
 /** 待踢行校验结果同时保留规范文本，供 Worker 快照 diff 避免重复编码。 */
@@ -149,7 +212,7 @@ export function decodeStoredChatStates(
     if (chatStates.has(row.chatId)) {
       throw new Error(`${path}: duplicate chat primary key.`);
     }
-    const state: ChatState = decodeChatStateData(row.data, path, row.aiPersona);
+    const state: ChatState = decodeChatStateData(row.data, path);
     if (state.isProxySendEnabled === true) {
       if (proxyTargetChatId !== undefined) {
         throw new Error(

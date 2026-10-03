@@ -29,13 +29,6 @@ export function readInterruptibleMemory<T>(read: () => T): T {
   }
 }
 
-/** process.memoryUsage() 的具名入口；语义同 readInterruptibleMemory。 */
-export function readProcessMemoryUsage(
-  readMemoryUsage: () => NodeJS.MemoryUsage = process.memoryUsage
-): NodeJS.MemoryUsage {
-  return readInterruptibleMemory(readMemoryUsage);
-}
-
 function isInterruptedMemoryError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const systemError: MemoryUsageSystemError = error;

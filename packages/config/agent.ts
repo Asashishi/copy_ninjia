@@ -9,24 +9,31 @@ import {
 import { AGENT_CONFIG_PATH } from "../consts/paths";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "../libs/record";
-import { parseCapability, parseImageCapability, parseTtsCapability } from "./agentCapability";
+import { parseCapability, parseImageCapability, parseTtsCapability, parseWebSearchCapability } from "./agentCapability";
 import type {
   AdDetectAgentConfig,
+  AgentCapability,
+  AgentCapabilityConfig,
   AgentConfigSnapshots,
+  AgentDeploymentCapabilityConfig,
   AgentDeploymentConfig,
+  AgentGeneralCapability,
   AgentImageCapabilityConfig,
   AgentTtsCapabilityConfig,
+  AgentWebSearchCapabilityConfig,
 } from "../types/config";
 
 /**
  * config/dynamic/agent.json：所有 AI 能力的统一部署配置。
  *
- * 顶层只含 agent；其下按能力而不是按 SDK 分组。ad_detect、text、summary、media、image、tts 各自声明
+ * 顶层只含 agent；其下按能力而不是按 SDK 分组。ad_detect、text、summary、media、image、tts、web_search 各自声明
  * provider、api_key、model 与可选 base_url；google provider 另可声明 headers，给每个请求附加
- * 请求头（三方网关鉴权等），openai provider 不接受该字段。provider 只表示调用协议，目前只接受 google
- * 与 openai；模型品牌不受枚举限制，因此 Grok 等 OpenAI 兼容模型使用 openai
- * provider 加对应端点。text、summary、media 是对话核心能力；ad_detect、image、tts
- * 均可缺省，由对应功能门禁或工具装配单独处理。非法或未知字段在
+ * 请求头（三方网关鉴权等），openai 与 anthropic provider 不接受该字段。provider 只表示调用协议，接受
+ * google、openai 与 anthropic；模型品牌不受枚举限制，因此 Grok 等 OpenAI 兼容模型使用 openai
+ * provider 加对应端点。text、summary、media 是对话核心能力；ad_detect、image、tts、web_search
+ * 均可缺省，由对应功能门禁或工具装配单独处理。web_search 由它的模型执行带内建检索的单轮请求，
+ * 可选 max_calls_per_use 指定每轮回复最多调用该函数的次数，缺省使用 WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE。
+ * 非法或未知字段在
  * 建立外部连接前直接拒绝启动。
  *
  * image 额外要求 OpenAI 侧显式给 image_protocol；Google 侧禁止该字段。请求体差异
@@ -75,7 +82,7 @@ export function parseAgentDeploymentConfig(
     return invalidInput(
       sourcePath,
       "$.agent",
-      "exactly { ad_detect?, text, summary, media, image?, tts? }"
+      "exactly { ad_detect?, text, summary, media, image?, tts?, web_search? }"
     );
   }
   let tts: AgentTtsCapabilityConfig | undefined;
@@ -85,12 +92,16 @@ export function parseAgentDeploymentConfig(
   const image: AgentImageCapabilityConfig | undefined = value.image === undefined
     ? undefined
     : parseImageCapability(value.image, sourcePath);
+  const webSearch: AgentWebSearchCapabilityConfig | undefined = value.web_search === undefined
+    ? undefined
+    : parseWebSearchCapability(value.web_search, sourcePath);
   return {
     text: parseCapability(value.text, "$.agent.text", sourcePath),
     summary: parseCapability(value.summary, "$.agent.summary", sourcePath),
     media: parseCapability(value.media, "$.agent.media", sourcePath),
     image,
     tts,
+    webSearch,
   };
 }
 
@@ -124,7 +135,7 @@ export async function loadAgentConfigSnapshots(
     return invalidInput(
       path,
       "$.agent",
-      "only { ad_detect?, text?, summary?, media?, image?, tts? }"
+      "only { ad_detect?, text?, summary?, media?, image?, tts?, web_search? }"
     );
   }
   const adDetectConfig: AdDetectAgentConfig | undefined = record.ad_detect === undefined
@@ -137,6 +148,7 @@ export async function loadAgentConfigSnapshots(
   if (record.tts !== undefined) {
     parseTtsCapability(record.tts, path);
   }
+  if (record.web_search !== undefined) parseWebSearchCapability(record.web_search, path);
   const hasAiChatCore: boolean = AGENT_AI_CHAT_REQUIRED_CAPABILITIES.every(
     (key: string): boolean => Object.hasOwn(record, key)
   );
@@ -202,6 +214,14 @@ export function adDetectAgentConfigSnapshot(): AdDetectAgentConfig | null {
 }
 
 /**
+ * 本 isolate 当前的对话能力快照；null 表示明确未配置（文件或对话核心能力段缺省），语义同
+ * adDetectAgentConfigSnapshot。cron.json 的启动核对据此判断依赖 agent 的动作能否生效。
+ */
+export function agentDeploymentConfigSnapshot(): AgentDeploymentConfig | null {
+  return agentDeploymentConfigCache.current;
+}
+
+/**
  * 接管已严格校验的 ad_detect 快照：Worker 侧来自主线程的初始化、重建与热重载
  * 消息，主线程侧来自 config/reload.ts。
  *
@@ -244,6 +264,29 @@ export function getAgentDeploymentConfig(): AgentDeploymentConfig {
       `AI chat agent configuration is unavailable in this thread; ${AGENT_CONFIG_PATH} $.agent was never delivered.`
     );
   }
+  return config;
+}
+
+/**
+ * 按能力名读取本 isolate 的能力配置；`web_search` 对应 AgentDeploymentConfig.webSearch，其余
+ * 能力名与字段名相同。可缺省的能力没配时为 undefined。只读 holder，不读盘；各家 SDK 客户端
+ * 缓存据此按能力取凭据与端点。
+ */
+export function agentCapabilityConfig(capability: AgentCapability): AgentDeploymentCapabilityConfig | undefined {
+  const config: AgentDeploymentConfig = getAgentDeploymentConfig();
+  return capability === "web_search" ? config.webSearch : config[capability];
+}
+
+/**
+ * 按能力名读取三项对话核心能力或独立检索 `web_search` 的配置；未配置时抛错，不做凭据或故障
+ * 回退。只读 holder，不读盘；回复、摘要、视觉与检索的请求体据此取模型。
+ */
+export function requireAgentCapabilityConfig(capability: AgentGeneralCapability): AgentCapabilityConfig {
+  const deployment: AgentDeploymentConfig = getAgentDeploymentConfig();
+  const config: AgentCapabilityConfig | undefined = capability === "web_search"
+    ? deployment.webSearch
+    : deployment[capability];
+  if (config === undefined) throw new Error(`Agent capability "${capability}" is not configured.`);
   return config;
 }
 

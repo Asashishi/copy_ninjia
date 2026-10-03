@@ -110,7 +110,7 @@ async function collectImage({
 
 /** 先列一遍图库目录，再在总预算内逐张收图，最后回一句汇总。 */
 async function addRandomImages(request: HImageAddRequest): Promise<void> {
-  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere(request.chatId).H_IMAGE_TEXTS;
+  const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere().H_IMAGE_TEXTS;
   const directory: string = getAssetConfig().randomHImageDirectory;
   if (!await isRandomImageDirectory(directory)) {
     await sendCommandMessage({ chatId: request.chatId, text: texts.missingDirectory, replyToMessageId: request.messageId });
@@ -144,7 +144,7 @@ async function addRandomImages(request: HImageAddRequest): Promise<void> {
 export async function handleHImageAddCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = atmosphere.H_IMAGE_TEXTS;
   const actor: CachedUser | undefined = await rejectUnlessPermitted(
     ctx,

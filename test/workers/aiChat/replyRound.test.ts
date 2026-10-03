@@ -28,6 +28,7 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
     functions: [],
     toolStatus: "",
     webSearch: true,
+    searchWeb: null,
     has: (): boolean => true,
     beforeModelRequest: (): void => {},
     afterModel,
@@ -42,6 +43,7 @@ const generateReply = mock(async (..._args: unknown[]): Promise<string | null> =
 const defaultPromptSections = (): ReplyPromptSections => ({
   referenceMemory: "参考记忆",
   currentConversation: "当前会话",
+  currentConversationSettledOffsets: [],
   replyTask: "回复任务",
 });
 let builtPromptSections: ReplyPromptSections | null = defaultPromptSections();

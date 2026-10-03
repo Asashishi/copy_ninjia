@@ -16,8 +16,9 @@ const requestGeminiTextResult = mock(async (..._args: unknown[]): Promise<AiText
 
 mock.module("../../../packages/aiChat/gemini/client", () => ({ requestGeminiTextResult }));
 
-const { describeGeminiVision, generateGeminiText, transcribeGeminiVoice } = await import("../../../packages/aiChat/gemini/text");
+const { describeGeminiVision, generateGeminiJson, generateGeminiText, transcribeGeminiVoice } = await import("../../../packages/aiChat/gemini/text");
 const {
+  GEMINI_JSON_MAX_TOKENS,
   GEMINI_CHAT_SUMMARY_MAX_TOKENS,
   GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS,
   GEMINI_STICKER_PACK_SUMMARY_MAX_TOKENS,
@@ -27,6 +28,32 @@ const {
 
 beforeEach(() => {
   requestGeminiTextResult.mockClear();
+});
+
+describe("结构化 JSON 生成", () => {
+  test("用 text 能力的模型，按 responseJsonSchema 约束 JSON 输出，不挂工具", async () => {
+    const signal: AbortSignal = new AbortController().signal;
+    const schema: Readonly<Record<string, unknown>> = { type: "object" };
+    await generateGeminiJson({ systemPrompt: "只输出 JSON", userContent: "资料", jsonSchema: schema, signal, errorLabel: "fixture" });
+    const options = requestGeminiTextResult.mock.calls[0]![0] as {
+      capability: string;
+      buildBody: () => GenerateContentParameters;
+      normalize: (text: string) => string;
+    };
+    expect(options.capability).toBe("text");
+    expect(options.buildBody()).toEqual({
+      model: getAgentDeploymentConfig().text.model,
+      contents: [{ role: "user", parts: [{ text: "资料" }] }],
+      config: {
+        systemInstruction: "只输出 JSON",
+        abortSignal: signal,
+        responseMimeType: "application/json",
+        responseJsonSchema: schema,
+        maxOutputTokens: GEMINI_JSON_MAX_TOKENS,
+      },
+    });
+    expect(options.normalize("  {}\n")).toBe("{}");
+  });
 });
 
 describe("纯文本生成", () => {

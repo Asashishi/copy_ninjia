@@ -9,12 +9,11 @@ import { QUIET_CLOCK_SKEW_TOLERANCE_MS, QUIET_MAX_DURATION_MS } from "../consts/
  * 隐藏类（antiRaid/updateIngress.ts、antiRaid/floodControl.ts、antiRaid/adCandidate.ts、
  * auto/message/index.ts、aiChat/availability.ts 为主要读取方）。
  *
- * 持久化时状态编码器只写入已设置的字段与为 true 的开关，aiPersona 独立写入
- * ai_persona 列（见 database/codec/chatState.ts）。
+ * 持久化时状态编码器只写入已设置的字段与为 true 的开关（见
+ * database/codec/chatState.ts）。
  */
 export function createChatState(): ChatState {
   return {
-    aiPersona: undefined,
     quietUntil: undefined,
     lockdown: undefined,
     isAIChatEnabled: false,
@@ -43,7 +42,6 @@ export const DEFAULT_CHAT_STATE: Readonly<ChatState> = createChatState();
  */
 export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
   const chatState: ChatState = createChatState();
-  chatState.aiPersona = decoded.aiPersona;
   chatState.quietUntil = decoded.quietUntil;
   chatState.lockdown = decoded.lockdown;
   chatState.isAIChatEnabled = decoded.isAIChatEnabled;
@@ -94,8 +92,7 @@ export function normalizeChatState(chatState: ChatState, now: number = Date.now(
  * 「没查过」不同（见 types/chatState.ts）。
  */
 export function isEmptyChatState(chatState: ChatState): boolean {
-  return chatState.aiPersona === undefined &&
-    chatState.quietUntil === undefined &&
+  return chatState.quietUntil === undefined &&
     chatState.lockdown === undefined &&
     !chatState.isAIChatEnabled &&
     !chatState.isTranslationEnabled &&

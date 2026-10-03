@@ -84,6 +84,7 @@ export function getActiveProxySendTarget(): number | undefined {
 /**
  * 锁定复读目标：三元组整体写，不留「有目标但还没记群」的中间态。启动恢复与
  * `/copy` 系命令共用这一个写入边界（见 cache/main/storage.ts 的 globalCopyState）。
+ * 目标身份按 Telegram 给出的原样保存，空字符串名称同样保留。
  */
 export function adoptCopyTarget(copiedUser: CachedUser, copyMode: CopyMode | undefined, copyChatId: number): void {
   globalCopyState.copiedUser = copiedUser;

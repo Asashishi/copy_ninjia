@@ -124,8 +124,8 @@ describe("广告处置副作用", () => {
     expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
   });
 
-  test("播报标签按冻结的元数据与本群氛围现算：频道念标题，缺名字时按氛围兜底", async () => {
-    const { applyWorkerAtmosphere } = await import("../../../packages/workers/antiRaid/atmosphere");
+  test("播报标签按冻结的元数据与本进程氛围现算：频道念标题，缺名字时按氛围兜底", async () => {
+    const { atmosphereState } = await import("../../../packages/cache/workers/antiRaid/atmosphere");
     const events: AdDetectedEvent[] = [];
     adDetectPublishHolder.current = (event: AdDetectedEvent): void => { events.push(event); };
     const anonymous: AdMessageBundle = { ...bundle(), meta: { firstName: "", lastName: "", username: "" } };
@@ -135,12 +135,12 @@ describe("广告处置副作用", () => {
       isChannel: true,
       meta: { firstName: "广告频道", lastName: "", username: "" },
     };
-    applyWorkerAtmosphere(-1001, true);
+    atmosphereState.current = "plain";
     try {
       await disposeAdSender({ bundle: anonymous, judged: anonymous.entries, verdict: { isAd: true, reason: "" } });
       await disposeAdSender({ bundle: channel, judged: channel.entries, verdict: { isAd: true, reason: "" } });
     } finally {
-      applyWorkerAtmosphere(-1001, false);
+      atmosphereState.current = null;
     }
 
     expect(events.map((event: AdDetectedEvent): string => event.label)).toEqual([

@@ -47,6 +47,11 @@ export interface QueuedReplyTrigger {
 export interface ReplyPromptSections {
   readonly referenceMemory: string;
   readonly currentConversation: string;
+  /**
+   * currentConversation 内的转录已定切点（UTF-16 下标，升序），即
+   * RenderedTranscript.settledOffsets 平移区块开头标签与段首标注之后的位置。
+   */
+  readonly currentConversationSettledOffsets: readonly number[];
   readonly replyTask: string;
 }
 
@@ -121,18 +126,35 @@ export interface SentGeneratedImage {
 }
 
 /** 一轮 AI 回复的函数工具集与执行状态。 */
+/** 一次 web_search 函数工具调用的结果（aiChat/ai/tools/webSearch.ts）。 */
+export interface WebSearchToolOutcome {
+  /** 交回模型的工具结果 JSON。 */
+  readonly result: string;
+  /** 这次调用里供应商实际执行的检索次数；失败时同样如实给出。 */
+  readonly searchCalls: number;
+}
+
+/** 一轮回复的 web_search 执行器；入参是模型给出的原始参数 JSON。 */
+export type WebSearchToolExecutor = (argumentsJson: string) => Promise<WebSearchToolOutcome>;
+
 export interface ReplyToolset {
   /** 本轮全部自定义函数声明（静态查询工具 + 行动工具）。中立 JSON Schema 表达，
-   *  两家供应商实现包各自转成自家形状；同一部署同一人设下每轮逐字相同。 */
+   *  各供应商实现包各自转成自家形状；同一部署同一人设下每轮逐字相同。 */
   readonly functions: readonly AiToolDefinition[];
   /** 本轮工具状态段（含段首标签），拼进运行时状态区块（见
    *  aiChat/ai/tools/replyToolset/toolStatus.ts）。按轮变化的可用性（直接触发资格、
    *  群冷却、参考素材、语音余量、问答条数）只写在这里，不进工具声明，免得打散
    *  供应商侧缓存的稳定前缀。 */
   readonly toolStatus: string;
-  /** 本轮是否挂载供应商的服务端联网检索工具（Gemini 的 googleSearch /
-   *  OpenAI 的 hosted web_search）。 */
+  /** 本轮是否挂载 text 模型的服务端联网检索工具（Gemini 的 googleSearch /
+   *  OpenAI 的 hosted web_search）；配置了 web_search 能力时恒为 false。 */
   readonly webSearch: boolean;
+  /**
+   * 配置了 web_search 能力时的本地 `web_search` 函数工具执行器（声明已在 functions 里）；
+   * 没配时为 null。它是唯一异步执行的工具，由 workers/aiChat/replyModel.ts 单独分发，
+   * 不经 has / execute。
+   */
+  readonly searchWeb: WebSearchToolExecutor | null;
   readonly has: (name: string) => boolean;
   /**
    * 每次请求模型前调用：直接轮在还没接纳过动作时亮「正在输入」，刚看过贴纸包时亮「正在选择贴纸」，

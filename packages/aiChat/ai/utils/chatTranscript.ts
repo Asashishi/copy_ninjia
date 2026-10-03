@@ -1,7 +1,11 @@
 import type { BufferedMessage, BufferedReplyReference } from "../../../types/aiChat/memory";
 import type { AiSpeakerSnapshot } from "../../../types/aiChat/speaker";
 import { FALLBACK_SPEAKER_NAME } from "../../../consts/auto";
-import { COMPACT_BATCH_SIZE, TIER_BOUNDARY_ALIGNMENT } from "../../../consts/aiChat/memory";
+import {
+  COMPACT_BATCH_SIZE,
+  TIER_BOUNDARY_ALIGNMENT,
+  TRANSCRIPT_SETTLED_SEGMENT_SIZE,
+} from "../../../consts/aiChat/memory";
 import {
   COLD_MEMORY_BLOCK_HEADER,
   EARLIER_VERBATIM_BLOCK_HEADER,
@@ -107,10 +111,16 @@ interface TranscriptContext {
   readonly duplicates: number;
 }
 
-/** renderRange 要渲染的半开区间 [start, end)。 */
+/** renderRange 要渲染的半开区间 [start, end) 与已定切点的记录位置。 */
 interface TranscriptRange {
   readonly start: number;
   readonly end: number;
+  /** 本区间渲染结果的第一个字符在整段转录里的下标。 */
+  readonly offset: number;
+  /** 最新消息所在格的起始序号；序号不超过它的格边界才记切点。 */
+  readonly settledEnd: number;
+  /** 切点按整段转录内的下标升序追加到这里。 */
+  readonly settledOffsets: number[];
 }
 
 /**
@@ -125,6 +135,13 @@ export interface RenderedTranscript {
   readonly codeOf: ReadonlyMap<number, string>;
   /** 转录之外引用某条被回复消息时的紧凑写法：在窗口内就给指针，否则退回内嵌快照。 */
   readonly replyReference: (reference: BufferedReplyReference) => string;
+  /**
+   * 已定切点：text 内的 UTF-16 下标，升序。窗口按消息序号每 TRANSCRIPT_SETTLED_SEGMENT_SIZE
+   * 条一格，只取最新消息所在格之前的格边界；切点紧跟上一格最后一条消息的正文，落在其后的
+   * 换行、日期行与分层标题之前，因此分层边界移动前后同一格边界的下标不变。两次块轮换之间，
+   * 切点之前的文字在下一轮通常逐字重现；切分只影响供应商侧的区块边界，拼回去与 text 逐字相同。
+   */
+  readonly settledOffsets: readonly number[];
 }
 
 export interface TieredTranscriptOptions {
@@ -210,18 +227,22 @@ function buildRosterBlock(context: TranscriptContext): string {
  * 展平 rope；对应基准必须用 `charCodeAt(length - 1)` 强制物化，不能只读 `.length`，
  * 见 scripts/perf/hotPaths/transcriptScenarios.ts。
  *
- * `first` 记录是否还没写出任何行，据此决定行前是否补换行。
+ * `first` 记录是否还没写出任何行，据此决定行前是否补换行。区间内部的格边界在写出该条消息的
+ * 换行与日期行之前记切点；区间起点不在这里记（分层边界由调用方记，窗口起点不切）。
  */
 function renderRange(
   messages: BufferedMessage[],
   context: TranscriptContext,
-  { start, end }: TranscriptRange
+  { start, end, offset, settledEnd, settledOffsets }: TranscriptRange
 ): string {
   let rendered: string = "";
   let first: boolean = true;
   let lastDate: string = "";
   for (let index: number = start; index < end; index += 1) {
     const message: BufferedMessage = messages[index]!;
+    if (index > start && index <= settledEnd && index % TRANSCRIPT_SETTLED_SEGMENT_SIZE === 0) {
+      settledOffsets.push(offset + rendered.length);
+    }
     // `at` 由记录侧统一格式化成「YYYY/MM/DD HH:MM:SS」；万一没有空格就整串当
     // 时间用、不发日期行，宁可少一条分隔也不要把整段转录切坏。
     const at: string = message.at;
@@ -289,7 +310,8 @@ function formatCompactReplyTag(
  * 行本身走紧凑渲染：身份、转发来源各出一次名册，行内只写编号；日期只在变化时
  * 单起一行；消息号只给真的会被引用的行；被回复消息只留指针。名册排在全部逐字行
  * 之后：窗口里出现新发言人只改动区块末尾，两次块轮换之间逐字行对上一轮是纯追加，
- * 供应商的自动前缀缓存能一路命中到最新的变化点。
+ * 供应商的自动前缀缓存能一路命中到最新的变化点。只在区块边界命中缓存的供应商另用
+ * settledOffsets 把转录切成按消息序号对齐的多段，切分不改变 text。
  * 输出形状由 test/aiChat/ai/chatTranscript.test.ts 钉住。
  *
  * 本段只出数据和分层标注：行格式怎么读由 systemInstruction 里的
@@ -318,19 +340,41 @@ export function buildTieredVerbatimTranscript(
   const hotStart: number = overflow <= 0
     ? 0
     : Math.ceil(overflow / TIER_BOUNDARY_ALIGNMENT) * TIER_BOUNDARY_ALIGNMENT;
+  // 最新消息所在格的起点；窗口为空时为负，不记任何切点。
+  const settledEnd: number =
+    Math.floor((deduped.length - 1) / TRANSCRIPT_SETTLED_SEGMENT_SIZE) * TRANSCRIPT_SETTLED_SEGMENT_SIZE;
+  const settledOffsets: number[] = [];
+  const earlierLines: string = hotStart > 0
+    ? renderRange(deduped, context, {
+      start: 0,
+      end: hotStart,
+      offset: EARLIER_VERBATIM_BLOCK_HEADER.length,
+      settledEnd,
+      settledOffsets,
+    })
+    : "";
+  // 分层边界是 TIER_BOUNDARY_ALIGNMENT 的整数倍，恒为格边界。切点同样紧跟上一条消息的正文、
+  // 落在空行与【最热记忆】标题之前：边界后移一格时，这个位置在下一轮仍是同一个切点。
+  if (hotStart > 0 && hotStart <= settledEnd) {
+    settledOffsets.push(EARLIER_VERBATIM_BLOCK_HEADER.length + earlierLines.length);
+  }
+  const earlier: string = hotStart > 0 ? EARLIER_VERBATIM_BLOCK_HEADER + earlierLines + "\n\n" : "";
   const text: string =
-    (hotStart > 0
-      ? EARLIER_VERBATIM_BLOCK_HEADER +
-        renderRange(deduped, context, { start: 0, end: hotStart }) +
-        "\n\n"
-      : "") +
+    earlier +
     HOT_MEMORY_BLOCK_HEADER +
-    renderRange(deduped, context, { start: hotStart, end: deduped.length }) +
+    renderRange(deduped, context, {
+      start: hotStart,
+      end: deduped.length,
+      offset: earlier.length + HOT_MEMORY_BLOCK_HEADER.length,
+      settledEnd,
+      settledOffsets,
+    }) +
     "\n\n" + buildRosterBlock(context);
   return {
     text,
     codeOf: context.speakers,
     replyReference: (reference: BufferedReplyReference): string => formatCompactReplyTag(reference, context),
+    settledOffsets,
   };
 }
 

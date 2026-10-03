@@ -255,8 +255,8 @@ export const SCRIPT_NODE_IMPORTS: Readonly<Record<string, NodeImportAllowance>> 
     purpose: "synchronous metadata, permission, directory, atomic rename, and isolated temporary-root operations",
   },
   "node:fs/promises": {
-    symbols: ["lstat", "mkdir", "readdir", "readlink", "realpath"],
-    purpose: "asynchronous metadata, directory creation, directory enumeration with entry types, and canonical filesystem path resolution",
+    symbols: ["lstat", "mkdir", "readlink", "realpath"],
+    purpose: "asynchronous metadata, directory creation, symbolic-link target reads, and canonical filesystem path resolution",
   },
   "node:os": {
     symbols: ["arch", "availableParallelism", "cpus", "platform", "release", "tmpdir", "totalmem"],

@@ -1,5 +1,6 @@
 import type { LruCache } from "../libs/lruCache";
 import type { EncodedVoiceMessage } from "./aiChat/voiceMessage";
+import type { WebDigestLanguage } from "./webDigest";
 
 /** send_file 的单个来源：Telegram 拉取的地址，或已按运行时数据根解析成绝对路径的本机文件。 */
 export type CronFileSource =
@@ -20,7 +21,8 @@ export type CronImageSource =
  * cron.json 的一个动作；`content` 缺省为 undefined（图片与文件不带附加文字）。
  * `send_image` 的 `isBlurred` 取自 `is_blurred`，缺省 false；为 true 时给全部图片加剧透遮罩。
  * 多图共用一份 content，只作为相册首图的 caption。`send_voice` 的 content 是要念的台词、
- * tone 是拼在基础朗读风格之后的语气（缺省 undefined），两者已清洗成单行。
+ * tone 是拼在基础朗读风格之后的语气（缺省 undefined），两者已清洗成单行。`send_web_digest`
+ * 由 AI Worker 生成一条 MarkdownV2 摘要；未调用搜索时给正文加警示（见 cron/delivery.ts）。
  */
 export type CronAction =
   | { readonly type: "send_message"; readonly content: string }
@@ -31,7 +33,17 @@ export type CronAction =
     readonly isBlurred: boolean;
   }
   | { readonly type: "send_file"; readonly content: string | undefined; readonly source: CronFileSource }
-  | { readonly type: "send_voice"; readonly content: string; readonly tone: string | undefined };
+  | { readonly type: "send_voice"; readonly content: string; readonly tone: string | undefined }
+  | {
+    readonly type: "send_web_digest";
+    /** 摘要主题，已清洗成单行。 */
+    readonly topic: string;
+    readonly language: WebDigestLanguage;
+    /** 条目总数上限（cron.json 的 max_items）。 */
+    readonly maxItems: number;
+    /** 检索与组稿共用的任务规则；缺省为 undefined。 */
+    readonly instructions: string | undefined;
+  };
 
 /** 任务 `chat_id` 数组的「所有群」写法（consts/cron.ts 的 CRON_ALL_CHATS）。 */
 export type CronAllChats = "all";
@@ -52,7 +64,7 @@ export type CronChatTargets =
   | { readonly kind: "all" }
   | { readonly kind: "except"; readonly chatIds: readonly number[] };
 
-/** `rand_cron` 区间：每轮结束后在 [minMs, maxMs] 内均匀随机等待。 */
+/** `rand_cron` 区间：每轮结束后在 [minMs, maxMs] 内均匀随机取下一次触发的时刻。 */
 export interface CronRandomInterval {
   readonly minMs: number;
   readonly maxMs: number;
@@ -79,10 +91,11 @@ export type CronConfig = readonly Readonly<CronTask>[];
 /** 一个任务的调度句柄（cache/main/cron.ts）。 */
 export interface CronTaskSchedule {
   readonly task: Readonly<CronTask>;
-  /** 按 `cron` 表达式触发的 Bun 原生任务；just_once 或 rand_cron 首次触发后置 null。 */
+  /**
+   * 当前生效的 Bun 原生 cron：先按 `cron` 表达式注册；rand_cron 之后换成只匹配下一个随机
+   * 时刻的一次性任务。just_once 与 rand_cron 每次触发时置 null。
+   */
   job: Bun.CronJob | null;
-  /** rand_cron 的下一次随机等待。 */
-  timer: ReturnType<typeof setTimeout> | null;
   /** 已被对账撤销或停机关闭；在途一轮在下一个动作或下一次重试前据此停下。 */
   cancelled: boolean;
 }
@@ -131,6 +144,24 @@ export interface CronRoundVoice {
  * 轮次结束即丢弃）。同一轮的重试与后续会话直接复用，不再重新合成；合成失败不登记。
  */
 export type CronRoundVoices = Map<Readonly<CronAction>, CronRoundVoice>;
+
+/**
+ * 一轮里已生成的 `send_web_digest` 摘要（MarkdownV2 原文），按动作对象身份索引
+ * （packages/cron/run.ts 每轮新建、轮次结束即丢弃）。同一轮的重试与后续会话直接复用，
+ * 不再重新生成；生成失败不登记。
+ */
+export type CronRoundDigests = Map<Readonly<CronAction>, string>;
+
+/**
+ * 任务表与某份 agent 配置同时生效时缺的那一项（packages/config/cron.ts 的
+ * cronAgentShortfall）：`tts` 是 send_voice 缺 `agent.tts`，`text` 是 send_web_digest 缺对话
+ * 核心能力。下标指向第一个缺依赖的动作。
+ */
+export interface CronAgentShortfall {
+  readonly taskIndex: number;
+  readonly actionIndex: number;
+  readonly need: "tts" | "text";
+}
 
 /** 一次动作投递的结果（packages/cron/delivery.ts），决定是否重试。 */
 export type CronDeliveryOutcome =

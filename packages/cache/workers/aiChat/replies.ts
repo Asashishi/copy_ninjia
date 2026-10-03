@@ -1,13 +1,4 @@
-import type { LinkedQueue } from "../../../libs/linkedQueue";
-import type { TimestampDeque } from "../../../libs/timestampDeque";
-import {
-  RATE_LIMIT_LONG_WINDOW_MS,
-  RATE_LIMIT_NOTICE_COOLDOWN_MS,
-} from "../../../consts/aiChat/rateLimit";
-import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiChat/replies";
-
-/**
- * owner：AI Worker。回复调度的内存状态由本线程的回复流水线共同驱动：
+/** owner: workers/aiChat。回复调度的内存状态由本线程的回复流水线共同驱动：
  * packages/workers/aiChat/replyQueue.ts（排队/溢出提示消费）、replyRound.ts
  * （并发位与长窗口触发时刻）、replyPipeline.ts（在途计数读取/溢出提示登记）、
  * replyDelivery.ts（发送顺位桶）、replyState.ts（限频提示冷却）；回复轮、限频提示、
@@ -15,6 +6,14 @@ import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiC
  * isCachedReplyGenerationCurrent 核对代际；失效与整体重置经
  * cache/workers/aiChat/index.ts 的门面函数，由 replyGeneration.ts 与 rollingMemory.ts 调用。
  */
+
+import type { LinkedQueue } from "../../../libs/linkedQueue";
+import type { TimestampDeque } from "../../../libs/timestampDeque";
+import {
+  RATE_LIMIT_LONG_WINDOW_MS,
+  RATE_LIMIT_NOTICE_COOLDOWN_MS,
+} from "../../../consts/aiChat/rateLimit";
+import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiChat/replies";
 
 /**
  * 每群当前的唯一回复 epoch。首次接纳该群的异步工作时分配；群失效时删除，Worker
@@ -49,7 +48,7 @@ export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
  */
 export const activeReplyCounts: Map<number, number> = new Map();
 /**
- * owner：AI Worker。群里没有在途轮次时由直接轮创建并占据队首（directModelActive 记它是否仍在
+ * 群里没有在途轮次时由直接轮创建并占据队首（directModelActive 记它是否仍在
  * 模型阶段），之后的有序并行轮按入站顺位占位；桶数为 REPLY_ROUND_MAX_CONCURRENT。
  * 每桶可持有多轮；存活轮次受单群与 Worker 容量闸限制，模型并发独立计数。
  * 完成项按入站顺位回收，全部排空时删除；群失效或 reset 清空，Worker 重建从空表开始。
@@ -57,14 +56,14 @@ export const activeReplyCounts: Map<number, number> = new Map();
  */
 export const replyDeliveryWindows: Map<number, ReplyDeliveryWindow> = new Map();
 /**
- * owner：AI Worker。各群全部代际尚未按序回收的发送槽位数；reserve 填充、
+ * 各群全部代际尚未按序回收的发送槽位数；reserve 填充、
  * advanceDelivery 逐项释放并在归零时删除。invalidate/reset 不提前清空，
  * Worker 销毁后自然释放；容量上界为 REPLY_DELIVERY_MAX_TOTAL（每群至少占一个
  * 存活轮次才会有条目），不设淘汰。
  */
 export const replyDeliveryCounts: Map<number, number> = new Map();
 /**
- * owner：AI Worker。reserve 增加、按序释放时减少的全线程存活轮次；
+ * reserve 增加、按序释放时减少的全线程存活轮次；
  * 上限 REPLY_DELIVERY_MAX_TOTAL。reset 保留仍存活的任务记账，Worker 重建从零开始。
  */
 export const replyDeliveryTotal: { current: number } = { current: 0 };

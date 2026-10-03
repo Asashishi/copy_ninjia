@@ -1,4 +1,4 @@
-/** /block 黑名单处置（packages/workers/antiRaid/blocklistEffects.ts）的入群守卫线程侧状态。 */
+/** owner: workers/antiRaid。/block 黑名单处置（packages/workers/antiRaid/blocklistEffects.ts）的入群守卫线程侧状态。 */
 
 /**
  * 各群的处置世代。群被停管（/init disable、机器人被移出或撤管理员，都收敛到

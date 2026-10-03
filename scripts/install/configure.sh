@@ -7,10 +7,15 @@ step "6/8 填写配置"
 
 # 首次填写（含仍是示例占位值的文件）固定 0600；重新填写已填过的文件沿用原 mode。
 CONFIGURE_TELEGRAM=1
-BOT_ATMOSPHERE="$(bun -e '
-  import { loadInstallerBotAtmosphere } from "./scripts/install/runtime";
-  console.log(await loadInstallerBotAtmosphere("config/static/bot.json"));
+BOT_CONFIG_SETTINGS="$(bun -e '
+  import { loadInstallerBotConfig } from "./scripts/install/runtime";
+  const config = await loadInstallerBotConfig("config/static/bot.json");
+  console.log(config.atmosphere ?? "");
+  console.log(config.timeZone);
 ')" || die "config/static/bot.json 严格校验未通过，原文件未改动。"
+BOT_ATMOSPHERE="${BOT_CONFIG_SETTINGS%%$'\n'*}"
+BOT_TIME_ZONE="${BOT_CONFIG_SETTINGS#*$'\n'}"
+unset BOT_CONFIG_SETTINGS
 BOT_CONFIG_MODE_POLICY=new
 if [ -e config/static/bot.json ] &&
    ! grep -q 'replace-with-telegram-bot-token' config/static/bot.json; then
@@ -40,14 +45,19 @@ if [ "$CONFIGURE_TELEGRAM" -eq 1 ]; then
   BOT_CONFIG_TARGET_PATH=""
   resolve_config_target_path config/static/bot.json BOT_CONFIG_TARGET_PATH
   create_config_staging_path "$BOT_CONFIG_TARGET_PATH" BOT_CONFIG_STAGING_PATH
+  BOT_ATMOSPHERE_FIELD=""
+  if [ -n "$BOT_ATMOSPHERE" ]; then
+    BOT_ATMOSPHERE_FIELD="  \"atmosphere\": \"${BOT_ATMOSPHERE}\","
+  fi
   cat > "$BOT_CONFIG_STAGING_PATH" <<JSON
 {
   "bot_token": "${BOT_TOKEN}",
   "super_admin_user_id": ${SUPER_ADMIN_USER_ID},
-  "atmosphere": "${BOT_ATMOSPHERE}"
+${BOT_ATMOSPHERE_FIELD}
+  "time_zone": "${BOT_TIME_ZONE}"
 }
 JSON
-  unset BOT_TOKEN SUPER_ADMIN_USER_ID BOT_ATMOSPHERE
+  unset BOT_TOKEN SUPER_ADMIN_USER_ID BOT_ATMOSPHERE BOT_ATMOSPHERE_FIELD BOT_TIME_ZONE
   backup_deployment_config "$BOT_CONFIG_TARGET_PATH"
   validate_staged_telegram_config "$BOT_CONFIG_STAGING_PATH" ||
     die "候选 config/static/bot.json 严格校验未通过，原文件未改动。"
@@ -60,7 +70,7 @@ fi
 
 if [ -e config/dynamic/agent.json ]; then
   info "保留既有 config/dynamic/agent.json，未改动。"
-elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语音）？不配也能启动。" n; then
+elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语音、联网检索）？不配也能启动。" n; then
   CONFIGURED_CAPABILITIES=()
   AGENT_CONFIG_NAMES=()
   AGENT_CONFIG_PROVIDERS=()
@@ -77,11 +87,20 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
       continue
     fi
     provider=""
-    while true; do
-      ask provider "  ${capability} 的 provider（google 或 openai）："
-      case "$provider" in google|openai) break ;; esac
-      warn "只接受 google 或 openai。"
-    done
+    # image 与 tts 只有 google、openai 的实现；其余能力另可选 anthropic。
+    if [ "$capability" = "image" ] || [ "$capability" = "tts" ]; then
+      while true; do
+        ask provider "  ${capability} 的 provider（google 或 openai）："
+        case "$provider" in google|openai) break ;; esac
+        warn "只接受 google 或 openai。"
+      done
+    else
+      while true; do
+        ask provider "  ${capability} 的 provider（google、openai 或 anthropic）："
+        case "$provider" in google|openai|anthropic) break ;; esac
+        warn "只接受 google、openai 或 anthropic。"
+      done
+    fi
     api_key=""
     while [ -z "$api_key" ]; do
       ask_secret api_key "  ${capability} 的 api_key（输入不回显）："
@@ -106,7 +125,7 @@ elif confirm "现在配置 AI 能力（AI 闲聊、广告检测、生图、语�
     base_url=""
     image_protocol=""
     voice=""
-    if [ "$provider" = "openai" ]; then
+    if [ "$provider" = "openai" ] || [ "$provider" = "anthropic" ]; then
       ask base_url "  ${capability} 的 base_url（可留空用官方端点；只接受 https，明文 http 仅限本机）："
       if [ "$capability" = "image" ]; then
         while true; do

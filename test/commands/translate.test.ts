@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { CachedUser, GlobalCopyState } from "../../packages/types/chatState";
 import type { TranslateLanguage, TranslateState } from "../../packages/types/translate";
 import type { SendCommandMessageParams } from "../../packages/infra/telegram/commandMessages";
@@ -10,6 +10,8 @@ import {
 } from "../../packages/consts/atmosphere/plain/translate";
 import { teardownRegisteredChat } from "../../packages/infra/chatTeardownRegistry";
 import { loggerStub } from "../helpers/loggerMock";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
 
 const sendCommandMessage = mock(async (..._args: unknown[]): Promise<number> => 1);
 const persistChatState = mock(async (..._args: unknown[]): Promise<void> => {});
@@ -18,15 +20,14 @@ const updateCachedIdentity = mock((..._args: unknown[]): void => {});
 let target: CachedUser | undefined = { id: 7, first_name: "Target" };
 let configured: boolean = true;
 let allowed: boolean = true;
-const state: { isTranslationEnabled?: boolean; aiPersona?: string } = {};
+const state: { isTranslationEnabled?: boolean } = {};
 
 interface TestChatState {
   translate: readonly TranslateState[] | undefined;
   isTranslationEnabled: boolean | undefined;
-  readonly aiPersona: string | undefined;
 }
 
-/** 翻译会话按群存放；开关与人设统一读写共享的 state。 */
+/** 翻译会话按群存放；开关统一读写共享的 state。 */
 const chatStates = new Map<number, TestChatState>();
 
 function createTestChatState(): TestChatState {
@@ -34,7 +35,6 @@ function createTestChatState(): TestChatState {
     translate: undefined,
     get isTranslationEnabled(): boolean | undefined { return state.isTranslationEnabled; },
     set isTranslationEnabled(value: boolean | undefined) { state.isTranslationEnabled = value; },
-    get aiPersona(): string | undefined { return state.aiPersona; },
   };
 }
 
@@ -95,10 +95,13 @@ function context(argument: string, chatId: number = -1001): never {
   } as never;
 }
 
+/** preload 接管的本进程风格；改写它的用例结束后还原。 */
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
+afterEach(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
+
 beforeEach(() => {
   chatStates.clear();
   state.isTranslationEnabled = true;
-  state.aiPersona = undefined;
   target = { id: 7, first_name: "Target" };
   configured = true;
   allowed = true;
@@ -111,6 +114,11 @@ beforeEach(() => {
 });
 
 describe("/translate 独立命令", () => {
+  test("写入翻译目标时身份原样保留，空字符串名称不被改写或省略", async () => {
+    target = { id: 7, first_name: "", last_name: " Alice " };
+    await handleTranslateCommand(context("en"));
+    expect(translateStates.get(-1001)?.[0]?.translatedUser).toBe(target);
+  });
   test("每群最多五个目标，第六人拒绝且不影响既有会话", async () => {
     for (let id: number = 1; id <= 5; id++) {
       target = { id };
@@ -319,8 +327,8 @@ describe("/translate 独立命令", () => {
     expect(state.isTranslationEnabled).toBe(false);
   });
 
-  test("自定义人设群使用普通版目标与开关拒绝文案", async () => {
-    state.aiPersona = "温和助手";
+  test("普通通知风格使用普通版目标与开关拒绝文案", async () => {
+    botAtmosphereState.current = "plain";
 
     await handleTranslateCommand(context("ja"));
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({

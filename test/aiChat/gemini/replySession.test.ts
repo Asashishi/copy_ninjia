@@ -13,6 +13,8 @@ import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition 
 import { DUPLICATE_REPLY_RESULT } from "../../../packages/consts/aiChat/tools";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
+import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 
 const requestGeminiResult = mock(async (..._args: unknown[]): Promise<GeminiRequestResult> => ({
   ok: false,
@@ -274,6 +276,31 @@ describe("Gemini 回复会话的请求映射", () => {
 
     const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
     expect(body.config?.tools).toEqual([]);
+  });
+});
+
+describe("Gemini 回复会话的检索计量", () => {
+  test("失败分支仍交回已执行的检索次数，会话不重复上报用量", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    try {
+      requestGeminiResult.mockImplementation(respond({
+        ok: false,
+        failureKind: "response",
+        finishReason: "MAX_TOKENS",
+        response: {
+          candidates: [{ finishReason: "MAX_TOKENS", groundingMetadata: { webSearchQueries: ["a", "b"] } }],
+        } as never,
+      } as GeminiRequestResult));
+      const session: AiReplySession = createGeminiReplySession({ stableBlocks: [], volatileBlocks: ["区块"] });
+      const turn: AiReplyTurn = await session.request({
+        systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: true, grounded: false,
+      });
+      expect(turn.webSearchCalls).toBe(2);
+      expect(reported).toEqual([]);
+    } finally {
+      installAiCacheUsageSink(null);
+    }
   });
 });
 

@@ -58,10 +58,16 @@ export interface VerificationDeleteEvent {
   revision: number;
 }
 
-/** Worker -> 主线程：预算耗尽，仅卸载运行态并保留磁盘终态。 */
+/** Worker -> 主线程：预算耗尽或许可无法确认，仅卸载运行态并保留磁盘终态。 */
 export interface VerificationDeferredEvent {
   type: "verificationDeferred";
   record: DeferredVerificationRecord;
+}
+
+/** Worker -> 主线程：当前代际 revision 已满，保留现有墓碑并停止接管新 key。 */
+export interface VerificationRevisionCapacityExceededEvent {
+  type: "verificationRevisionCapacityExceeded";
+  generation: number;
 }
 
 /** Worker -> 主线程：barrier 之前的消息均已完成同步路由和镜像发布。 */
@@ -89,6 +95,7 @@ export type AntiRaidWorkerEvent =
   | VerificationUpsertEvent
   | VerificationDeleteEvent
   | VerificationDeferredEvent
+  | VerificationRevisionCapacityExceededEvent
   | BlockedMembersRemovedEvent
   | AdDetectionEvent
   | AntiRaidBarrierCompleteEvent

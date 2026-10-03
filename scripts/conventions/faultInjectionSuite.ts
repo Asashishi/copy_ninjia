@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import type ts from "typescript";
 import { parseSourceFile, runtimeModuleReferences, sourceFilesUnder } from "./sourceAnalysis";
+import { ACTIVE_COLD_MIGRATION_EDGES } from "../migrations/active";
+import type { ColdMigrationEdge } from "../migrations/active";
 import type { RuntimeModuleReference } from "./sourceAnalysis";
 
 /**
@@ -21,7 +23,7 @@ import type { RuntimeModuleReference } from "./sourceAnalysis";
  * 按 AGENTS.md 的「涉及持久化、停机或 Worker 生命周期」自行判断。
  */
 
-/** 受约束的恢复和生命周期边界，包含生产模块及测试 harness。 */
+/** 受约束的持久化校验、恢复和生命周期边界，包含生产模块及测试 harness。 */
 interface FaultInjectionBoundary {
   /** 仓库相对路径；缺失即判失败，避免改名后判定静默失效。 */
   readonly path: string;
@@ -36,7 +38,7 @@ interface ProjectPackageJson {
 }
 
 /**
- * 判定所依据的恢复和生命周期边界清单。
+ * 判定所依据的持久化校验、恢复和生命周期边界清单。
  *
  * 只收「主题就是持久化 / 停机 / Worker 生命周期」的那几个。刻意不收
  * `verificationEffectsHarness`（验证副作用解释器，主题是踢人与删消息）和
@@ -45,7 +47,11 @@ interface ProjectPackageJson {
  * 进这套套件只会拖长发布前的必跑面而换不到恢复能力。
  */
 export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
-  { path: "scripts/migrateGlobalState.ts", purpose: "global state cold migration integrity and interruption recovery" },
+  ...ACTIVE_COLD_MIGRATION_EDGES.map((edge: ColdMigrationEdge): FaultInjectionBoundary => ({
+    path: edge.entryPath,
+    purpose: `${edge.command} cold migration integrity and interruption recovery`,
+  })),
+  { path: "scripts/removeWebSearchUsage.ts", purpose: "cold web search usage removal integrity and interruption recovery" },
   {
     path: "test/helpers/diskIOWorkerHarness.ts",
     purpose: "Disk I/O Worker initialization, backpressure, diagnostic restart and give-up",
@@ -64,9 +70,11 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   },
   { path: "packages/workers/diskIO/luckSecretFile.ts", purpose: "luck secret atomic publication and recovery" },
   { path: "packages/workers/diskIO/snapshotFiles.ts", purpose: "snapshot inspect, adoption and recovery maintenance" },
+  { path: "packages/database/validation/storageRows.ts", purpose: "strict SQLite startup row validation" },
   { path: "packages/workers/aiChat/replyPipeline.ts", purpose: "reply admission, draining and cancellation" },
   { path: "packages/workers/aiChat/replyRound.ts", purpose: "reply model, action and resource lifecycle" },
   { path: "packages/workers/aiChat/replyDelivery.ts", purpose: "reply delivery capacity and generation cleanup" },
+  { path: "packages/workers/aiChat/webDigest.ts", purpose: "web digest composition draining, cancellation and settlement" },
   { path: "packages/workers/antiRaid/lockdownRuntime.ts", purpose: "lockdown durable acknowledgements, restore and teardown" },
   { path: "packages/workers/antiRaid/lockdownApi.ts", purpose: "lockdown API ownership and permission compensation" },
   { path: "packages/states/lockdown.ts", purpose: "lockdown recovery and durable state transitions" },

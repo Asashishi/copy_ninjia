@@ -44,7 +44,7 @@ export function notifyRateLimited({
   if (now - lastNoticeTime < RATE_LIMIT_NOTICE_COOLDOWN_MS) return;
   rateLimitNoticeTimes.set(chatId, now);
   const signal: AbortSignal = replyGenerationSignal(chatId, generation);
-  const text: string = aiChatAtmosphere(chatId).RATE_LIMIT_NOTICE_TEXT;
+  const text: string = aiChatAtmosphere().RATE_LIMIT_NOTICE_TEXT;
   const task: Promise<void> = sendTemporaryMessageFromMain({
     purpose: "notice",
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,

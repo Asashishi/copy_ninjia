@@ -1,8 +1,11 @@
-import { chatPersonas } from "../../../packages/cache/workers/aiChat/persona";
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import type { AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type { AgentDeploymentConfig } from "../../../packages/types/config";
+
+const INITIAL_TIME_ZONE: string = getTimeZone();
+afterEach((): void => { adoptTimeZone(INITIAL_TIME_ZONE); });
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
@@ -97,9 +100,9 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 
 const worker = await import("../../../packages/workers/aiChatWorker");
-const { botInfoState, superAdminUserIdState, defaultAtmosphereState } = await import("../../../packages/cache/workers/aiChat/identity");
+const { botInfoState, superAdminUserIdState, atmosphereState } = await import("../../../packages/cache/workers/aiChat/identity");
 const { stickerMenuRevision } = await import("../../../packages/cache/workers/aiChat/stickers/menu");
-const { agentDeploymentConfigCache } = await import("../../../packages/cache/perThread/config");
+const { agentDeploymentConfigCache, personaCache } = await import("../../../packages/cache/perThread/config");
 const { aiCacheUsageSink } = await import("../../../packages/cache/perThread/aiCacheUsage");
 
 /** 主线程投递过来的那一代快照；断言 Worker 原样收进 holder，不另行读盘。 */
@@ -165,8 +168,8 @@ afterAll(() => {
 describe("AI Chat Worker lifecycle", () => {
   test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", async () => {
     const messages: AiChatWorkerMessage[] = [
-      { defaultAtmosphere: "plain",
-        type: "init",
+      { atmosphere: "plain",
+        type: "init", timeZone: "UTC",
         botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
         superAdminUserId: 1,
         agent: injectedAgentConfig,
@@ -247,7 +250,10 @@ describe("AI Chat Worker lifecycle", () => {
 
     expect(botInfoState.current?.id).toBe(99);
     expect(superAdminUserIdState.current).toBe(1);
-    expect(defaultAtmosphereState.current).toBe("plain");
+    expect(atmosphereState.current).toBe("plain");
+    expect(getTimeZone()).toBe("UTC");
+    // 本进程人设随 init 接管，所有群共用这一份。
+    expect(personaCache.current).toBe("测试人设");
     // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
     expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
@@ -300,8 +306,8 @@ describe("AI Chat Worker lifecycle", () => {
   });
 
   test("configReload 只替换变化的领域并失效各自的派生状态", () => {
-    worker.handleAiChatWorkerMessage({ defaultAtmosphere: "plain",
-      type: "init",
+    worker.handleAiChatWorkerMessage({ atmosphere: "plain",
+      type: "init", timeZone: getTimeZone(),
       botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
       superAdminUserId: 1,
       agent: injectedAgentConfig,
@@ -512,16 +518,4 @@ describe("AI Chat Worker lifecycle", () => {
       globalThis.setInterval = originalSetInterval;
     }
   });
-});
-
-test("人设协议按群更新只读使用侧镜像，null 删除群级覆盖", async () => {
-  const { handleAiChatWorkerMessage } = await import("../../../packages/workers/aiChatWorker");
-  chatPersonas.clear();
-  handleAiChatWorkerMessage({ type: "persona", chatId: -1001, persona: "人设一" });
-  handleAiChatWorkerMessage({ type: "persona", chatId: -1002, persona: "人设二" });
-  expect(chatPersonas.get(-1001)).toBe("人设一");
-  handleAiChatWorkerMessage({ type: "persona", chatId: -1001, persona: null });
-  expect(chatPersonas.has(-1001)).toBeFalse();
-  expect(chatPersonas.get(-1002)).toBe("人设二");
-  chatPersonas.clear();
 });

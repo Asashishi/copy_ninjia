@@ -81,7 +81,7 @@ describe("cron.json 中途变更链路", () => {
   function fakeDependencies(overrides: Partial<ConfigChainDependencies>): ConfigChainDependencies {
     const schedules: Map<string, CronTaskSchedule> = new Map<string, CronTaskSchedule>();
     const runtime: { current: CronRuntime | null } = { current: null };
-    const newSchedule = (): CronTaskSchedule => ({ task: {} as CronTask, job: null, timer: null, cancelled: false });
+    const newSchedule = (): CronTaskSchedule => ({ task: {} as CronTask, job: null, cancelled: false });
     return {
       ...productionDependencies(new Map()),
       readHotDeploymentConfigs: async () => ({}) as never,
@@ -127,7 +127,7 @@ describe("cron.json 中途变更链路", () => {
       reconcileCronSchedule: (): void => {
         const schedules: Map<string, CronTaskSchedule> = dependencies.cronRuntime.current!.schedules;
         for (const name of [...schedules.keys()]) {
-          schedules.set(name, { task: {} as CronTask, job: null, timer: null, cancelled: false });
+          schedules.set(name, { task: {} as CronTask, job: null, cancelled: false });
         }
       },
     })!;

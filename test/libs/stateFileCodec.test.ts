@@ -35,16 +35,16 @@ describe("decodeGlobalStateFile", () => {
     expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 0, reserveCount: 0 } }))
       .toThrow("state.json: $.ttsUsage must be at least one positive usage count.");
     expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, count: 1 } }))
-      .toThrow("state.json: $.ttsUsage.count must be absent (not part of the current state schema).");
+      .toThrow("state.json: $.ttsUsage.<key> must be absent (not part of the current state schema).");
     expect(() => decode({ copy: { copiedUser: null }, ttsUsage: { windowStartedAt: 1, agentCount: 1, reserveCount: 0, day: 1 } }))
-      .toThrow("state.json: $.ttsUsage.day must be absent (not part of the current state schema).");
+      .toThrow("state.json: $.ttsUsage.<key> must be absent (not part of the current state schema).");
     expect(() => decode({ copy: { copiedUser: null }, ttsUsage: null }))
       .toThrow("state.json: $.ttsUsage must be an object.");
   });
 
   test("未知字段和失配的复读组合均拒绝", () => {
     expect(() => decode({ copy: { copiedUser: null }, version: 1 }))
-      .toThrow("state.json: $.version must be absent (not part of the current state schema).");
+      .toThrow("state.json: $.<key> must be absent (not part of the current state schema).");
     expect(() => decode({ copy: { copiedUser: null, copyChatId: -1001 } }))
       .toThrow("free of copyMode and copyChatId when copiedUser is null");
   });
@@ -58,10 +58,10 @@ describe("decodeGlobalStateFile", () => {
   test("14.x 的 global 包装、assets、translate 与 model 都不属于当前 schema", () => {
     // 结构变更只做冷迁移：兼容分支会让复读状态被静默读成空，而群里看不出区别。
     expect(() => decode({ global: { copy: { copiedUser: null } } }))
-      .toThrow("state.json: $.global must be absent (not part of the current state schema).");
+      .toThrow("state.json: $.<key> must be absent (not part of the current state schema).");
     for (const key of ["assets", "translate", "model", "chats"]) {
       expect(() => decode({ copy: { copiedUser: null }, [key]: {} }))
-        .toThrow(`state.json: $.${key} must be absent (not part of the current state schema).`);
+        .toThrow("state.json: $.<key> must be absent (not part of the current state schema).");
     }
   });
 
@@ -69,6 +69,23 @@ describe("decodeGlobalStateFile", () => {
     expect(() => decode({})).toThrow("state.json: $.copy must be present.");
     for (const value of [null, [], "x"]) {
       expect(() => decode(value)).toThrow("state.json: $ must be an object.");
+    }
+  });
+
+  test("用户字符串原样保留（含空字符串与首尾空白），非字符串与敏感未知键不会被接纳或回显", () => {
+    const copiedUser: unknown = decode({ copy: {
+      copiedUser: { id: 42, first_name: "", last_name: " 目标 ", title: "  " }, copyChatId: -1001,
+    } }).copy.copiedUser;
+    expect(copiedUser).toMatchObject({ first_name: "", last_name: " 目标 ", title: "  " });
+    expect(() => decode({ copy: { copiedUser: { id: 42, first_name: 1 }, copyChatId: -1001 } }))
+      .toThrow("state.json: $.copy.copiedUser.first_name must be a string.");
+    const secret: string = "private-token-marker";
+    try {
+      decode({ copy: { copiedUser: null, [secret]: true } });
+      throw new Error("expected rejection");
+    } catch (error: unknown) {
+      expect((error as Error).message).toContain("$.copy.<key>");
+      expect((error as Error).message).not.toContain(secret);
     }
   });
 });

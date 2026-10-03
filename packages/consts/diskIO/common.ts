@@ -36,7 +36,7 @@ export const DISK_IO_RESPAWN_PRIORITIES: Readonly<{
   JOIN_LOG: 600,
 };
 
-/** 公历日的固定毫秒数；只与固定 UTC+9 偏移配合，不用于有夏令时的时区。 */
+/** 公历日序与 UTC 日期算术的固定毫秒数；不代表配置时区每个自然日的实际长度。 */
 export const DAY_MS: number = 24 * 60 * 60 * 1_000;
 
 /**
@@ -50,7 +50,7 @@ export const DAY_MS: number = 24 * 60 * 60 * 1_000;
 export const AD_SAMPLE_FILE_MAX_BYTES: number = 8 * 1_024 * 1_024;
 
 /**
- * 广告样本归档保留的东京自然日数量，包含当天。
+ * 广告样本归档保留的配置时区的自然日数量，包含当天。
  * 所属模块：workers/diskIO/adSampleFile.ts。
  */
 export const AD_SAMPLE_ARCHIVE_RETENTION_DAYS: number = 15;

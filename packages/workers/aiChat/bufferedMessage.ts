@@ -1,6 +1,6 @@
 import { REPLY_REFERENCE_MAX_CHARS } from "../../consts/aiChat/memory";
 import { sanitizeInline, stripLeadingAtSigns, truncateInline } from "../../libs/text";
-import { formatTokyoTime } from "../../libs/time";
+import { formatLocalTime } from "../../libs/time";
 import type { BufferedMessage, BufferedReplyReference, PendingBotImage } from "../../types/aiChat/memory";
 import type { AiRecordContext, AiReplyReference } from "../../types/aiChat/protocol";
 
@@ -53,7 +53,7 @@ export function buildBufferedMessage(
     text: sanitizedText,
     replyTo: source.replyTo ? sanitizeReplyReference(source.replyTo) : undefined,
     forwardedFrom: sanitizedForwardedFrom ? sanitizedForwardedFrom : undefined,
-    at: formatTokyoTime(now),
+    at: formatLocalTime(now),
     pendingImage: undefined,
   };
 }

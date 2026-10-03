@@ -21,7 +21,7 @@ export interface TelegramVisionSource {
   height: number;
 }
 
-/** 已转成两家供应商视觉接口都能直接接收的 JPEG/PNG 字节。 */
+/** 已转成各家供应商视觉接口都能直接接收的 JPEG/PNG 字节。 */
 export interface VisionImage {
   bytes: Uint8Array;
   mime: "image/jpeg" | "image/png";
@@ -32,7 +32,7 @@ export interface VisionImage {
  *
  * **不转码**：Telegram 的 voice note 固定是 OGG/Opus，而 Gemini 的多模态理解本来
  * 就收 `audio/ogg`（见 consts/aiChat/voice.ts 的 VOICE_MIME_TYPES）。图片那条线要
- * 转码是因为两家视觉接口只认 jpg/png，这里没有对等约束，转一道只会白烧 CPU 并
+ * 转码是因为各家视觉接口统一按 jpg/png 收图，这里没有对等约束，转一道只会白烧 CPU 并
  * 引入一层可能失败的依赖。
  */
 export interface VoiceClip {

@@ -10,7 +10,7 @@
  * 联网查证走 OpenAI 内建的 hosted `web_search` 工具：检索在服务端自动执行，
  * 结果直接体现在最终正文里，只以 `web_search_call` item 的形式留下调用记录，
  * 不会以函数调用的形式抛回来——与 Gemini 的 googleSearch 是同一种服务端工具
- * 语义，因此上层的检索预算逻辑对两家通用。
+ * 语义，因此上层的检索预算逻辑对各家通用。
  *
  * 与 Gemini 侧的差异：请求不带采样温度，GPT-5 系推理模型只接受默认
  * 值。中立契约的 `grounded` 因此在本包不影响采样，只有 Gemini 侧会据此降温。
@@ -234,6 +234,7 @@ export function createOpenAiReplySession(
       // 预算等于让后续轮次继续白送额度。
       const response: OpenAI.Responses.Response | undefined = result.response;
       const webSearchCalls: number = response === undefined ? 0 : countWebSearchCalls(response);
+
       // 成功与失败两条分支按同一顺序初始化同一组字段，同
       // aiChat/gemini/replySession.ts 的同名分支。
       if (!result.ok) {

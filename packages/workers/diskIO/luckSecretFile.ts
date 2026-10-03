@@ -115,7 +115,7 @@ export async function inspectLuckReceiptSecret(
 
   const secret: LuckReceiptSecret = decodeLuckReceiptSecret(await readJsonInput(path), path);
   if (secret.day > day) {
-    return invalidInput(path, "$.day", "no later than the current Tokyo day");
+    return invalidInput(path, "$.day", "no later than the current configured local day");
   }
   if (secret.day < day) {
     assertSecretCanBeCreated(confirmedResultCount, path);

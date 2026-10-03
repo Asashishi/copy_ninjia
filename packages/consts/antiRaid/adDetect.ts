@@ -167,6 +167,12 @@ export const AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS: number = 60_000;
 /** OpenAI SDK 的重试次数（不含首次）；请求异常只由 SDK 重试，业务层不重试。 */
 export const AD_DETECT_OPENAI_REQUEST_MAX_RETRIES: number = 2;
 
+/** Anthropic 广告检测每次 SDK 尝试的超时；所属模块：workers/antiRaid/adDetect/ai/anthropic.ts。 */
+export const AD_DETECT_ANTHROPIC_REQUEST_TIMEOUT_MS: number = 60_000;
+
+/** Anthropic SDK 的重试次数（不含首次）；所属模块：workers/antiRaid/adDetect/ai/anthropic.ts。 */
+export const AD_DETECT_ANTHROPIC_REQUEST_MAX_RETRIES: number = 2;
+
 /** Google 广告检测请求每次 SDK 尝试的超时；所属模块：workers/antiRaid/adDetect/ai/google.ts。 */
 export const AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS: number = 60_000;
 
@@ -188,8 +194,21 @@ export const AD_DETECT_GEMINI_CACHE_MAX_SLOTS: number = 2;
 /** ad_detect 显式缓存的创建、续期、删除与扫描在日志里的调用名。所属模块：workers/antiRaid/adDetect/ai/google.ts。 */
 export const AD_DETECT_GEMINI_CACHE_ERROR_LABEL: string = "Gemini ad detection cache API";
 
-/** 模型成功响应但正文不可用时的总尝试次数（含首次），两种 provider 共用。 */
+/** 模型成功响应但正文不可用时的总尝试次数（含首次），三种 provider 共用。 */
 export const AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS: number = 2;
+
+/** Google 与 Anthropic 广告检测的结构化输出 Schema；只允许 ad 与 reason。所属模块：workers/antiRaid/adDetect/ai/。 */
+export const AD_DETECT_JSON_SCHEMA: Readonly<{
+  type: "object";
+  properties: Readonly<{ ad: Readonly<{ type: "boolean" }>; reason: Readonly<{ type: "string" }> }>;
+  required: readonly string[];
+  additionalProperties: false;
+}> = {
+  type: "object",
+  properties: { ad: { type: "boolean" }, reason: { type: "string" } },
+  required: ["ad", "reason"],
+  additionalProperties: false,
+};
 
 /** config/dynamic/ad_samples.json 允许的最大条数。 */
 export const MAX_CONFIGURED_AD_SAMPLES: number = 500;
@@ -309,7 +328,7 @@ const AD_DETECT_ESTABLISHED_FACT: string =
   `${AD_DETECT_FACT_LABEL}该发送者不在入群验证窗口内，不是刚进群的新成员。`;
 
 /**
- * 拼出判定规则与部署示例段（不含系统事实），两家传输共用、逐字相同。示例为空时
+ * 拼出判定规则与部署示例段（不含系统事实），各家传输共用、逐字相同。示例为空时
  * 不追加示例段——空清单下多写一句「以下是示例：」只会让模型去猜一个并不存在的口径。
  * @param samples 已校验的部署者广告示例（config/dynamic/ad_samples.json）。
  */

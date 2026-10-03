@@ -12,7 +12,7 @@ import { installOutboundGuards } from "./outboundGuard";
 import { median } from "./statistics";
 import { beginGcProfileWindow, endGcProfileWindow } from "./hotPaths/gcProfile";
 import { collectJitTiers, diffJitTiers } from "./hotPaths/jitTiers";
-import { readInterruptibleMemory, readProcessMemoryUsage } from "./hotPaths/liveMemory";
+import { readInterruptibleMemory } from "./hotPaths/liveMemory";
 import { createScenario } from "./hotPaths/scenarioRegistry";
 import type { HeapSnapshot } from "./heapSnapshot";
 import type { JitTierCounts, JitTierStats, Scenario, ScenarioName } from "./hotPaths/types";
@@ -94,7 +94,7 @@ function readProcessPeakRssKb(): number {
 function snapshotLiveMemory(): LiveMemorySnapshot {
   // 三次读取都要包：只护住其中一次的话，另外两次照样能被同一个信号打断，
   // 而它们抛出来的效果与第一次完全一样——整轮 profile 白跑。
-  const processMemory: NodeJS.MemoryUsage = readProcessMemoryUsage();
+  const processMemory: NodeJS.MemoryUsage = readInterruptibleMemory(process.memoryUsage);
   const jscMemory: ReturnType<typeof jscMemoryUsage> =
     readInterruptibleMemory(jscMemoryUsage);
   const resourcePeakRssBytes: number =

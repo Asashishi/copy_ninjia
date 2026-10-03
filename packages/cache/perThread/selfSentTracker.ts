@@ -1,7 +1,6 @@
-/**
- * 机器人自发消息回环识别（packages/infra/selfSentTracker.ts）的内存状态。
+/** owner: perThread。机器人自发消息回环识别（packages/infra/selfSentTracker.ts）的内存状态。
  *
- * perThread：发消息的主线程在发送成功时登记，Worker 通过主线程请求发送。
+ * 填充方：发消息的主线程在发送成功时登记，Worker 通过主线程请求发送。
  * 各 isolate 不共享此表；入站回环判定读取主线程拥有的发送结果。
  *
  * sentMessages 与 pendingSelfSentWaiters 按 chatId 分层、内层才是 messageId，按两次整数键

@@ -10,7 +10,7 @@
  * @see ../../../docs/cn/04-invariants.md
  */
 
-import { formatTokyoTime } from "../../libs/time";
+import { formatLocalTime } from "../../libs/time";
 import { MANAGED_CHAT_BATCH_CONCURRENCY } from "../../consts/commands";
 import { runBoundedSettledBatch } from "../../libs/boundedSettledBatch";
 import type {
@@ -146,7 +146,7 @@ export function blockUser(
   meta: Readonly<TelegramIdentityMetadata>
 ): boolean {
   if (isUserBlocked(userId)) return false;
-  const blockedAt: string = formatTokyoTime(Date.now());
+  const blockedAt: string = formatLocalTime(Date.now());
   if (!clearTemporaryAdBypassActivity(userId)) {
     throw new Error(
       `Temporary ad bypass reset for identity ${userId} was rejected by the persistence Worker.`

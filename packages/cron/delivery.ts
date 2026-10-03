@@ -2,23 +2,29 @@
  * cron 动作的唯一 Telegram 发送边界（`check:conventions` 禁止 packages/cron/ 其它文件发送）。
  *
  * cron 消息是用户授权的长期保留例外（见 AGENTS.md「Telegram 提示留存」），不挂固定
- * 延迟删除；不带话题（落在 General），不设 `parse_mode`。全部请求都经主线程
+ * 延迟删除；不带话题（落在 General）。只有 `send_web_digest` 设 `parse_mode: "MarkdownV2"`，
+ * 其余动作不设。全部请求都经主线程
  * grammY 客户端，因此照常经过发送类 throttler 与 429 分类出站闸；成功后登记自发消息。
  * 单图调用 sendPhoto，多图调用一次 sendMediaGroup，只有首图携带 caption；
  * 相册逐项应用遮罩并登记所有返回消息 ID；发出的每张图都写一条 AI 记忆占位态自录。
  * `send_voice` 先经 AI Worker 的语音合成公共实现（aiChat/voiceSynthesis.ts）把台词与语气
  * 合成成 Telegram 语音（OGG/Opus 或 MP3），再按其文件名调用 sendVoice；合成结果登记进本轮的 CronRoundVoices，重试与后续
  * 会话复用同一段语音。本轮首次发送成功后记下 Telegram 交回的 file_id，之后改为引用它，
- * 不再重复上传。每次调用只投递一次，失败按 CronDeliveryOutcome 分类交给 cron/run.ts
- * 决定是否重试，本边界不记日志。
+ * 不再重复上传。`send_web_digest` 经 AI Worker 生成摘要（未搜索时为加警示的模型正文），拿回
+ * MarkdownV2 原文登记进本轮的 CronRoundDigests，重试与后续会话复用；不传 link_preview_options，
+ * 由 Telegram 为正文第一个链接生成预览。每次调用只投递一次，失败按 CronDeliveryOutcome 分类
+ * 交给 cron/run.ts 决定是否重试，本边界不记日志；Telegram 拒收（4xx，含 MarkdownV2 解析失败）
+ * 不重试，也不降级成纯文本。
  */
 
 import { HttpError, InputFile } from "grammy";
+import { telegramSignal } from "../libs/telegramSignal";
 import type { InputMediaPhoto, Message } from "grammy/types";
 import type { Stats } from "node:fs";
 import { basename } from "node:path";
 import { TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES, TELEGRAM_PHOTO_UPLOAD_MAX_BYTES } from "../consts/telegram";
-import { recordBotImage, synthesizeVoice } from "../aiChat";
+import { composeWebDigest, recordBotImage, synthesizeVoice } from "../aiChat";
+import { MARKDOWN_V2_PARSE_MODE } from "../consts/telegramMarkdown";
 import { pickRandomImage } from "../infra/randomImage";
 import { getAssetConfig } from "../config/assets";
 import { runTelegramAction } from "../infra/telegram/actions/core";
@@ -26,15 +32,16 @@ import { toTelegramSendResult } from "../infra/telegram/actions/sendResult";
 import { telegramErrorDetails } from "../infra/telegram/errors";
 import { bot } from "../infra/telegram/mainClient";
 import { TelegramRetryQueueFullError } from "../infra/telegram/outboundRetryPolicy";
-import { signalArgs } from "../libs/telegramSignalArgs";
 import type {
   CronAction,
   CronDeliveryOutcome,
   CronFileSource,
   CronImageSource,
+  CronRoundDigests,
   CronRoundVoice,
   CronRoundVoices,
 } from "../types/cron";
+import type { WebDigestCompositionResult, WebDigestFailure } from "../types/webDigest";
 import type { EncodedVoiceMessage, VoiceSynthesisFailure, VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
 import type { RandomImagePick } from "../types/randomImage";
 import { errorMessage } from "../libs/errorMessage";
@@ -192,6 +199,43 @@ async function roundVoice(
   return entry;
 }
 
+/**
+ * 组稿失败的分类：Worker 暂不可用、等待超时、检索或组稿请求失败可重试；
+ * 没有对话能力、没有来源与重试后仍不合格不重试。分类只依据失败原因，不读取搜索次数。
+ */
+function classifyDigestFailure(reason: WebDigestFailure): CronDeliveryOutcome {
+  switch (reason) {
+    case "aborted":
+      return { kind: "aborted" };
+    case "worker unavailable":
+    case "timed out":
+    case "search failed":
+    case "compose failed":
+      return { kind: "retryable", detail: `web digest composition failed: ${reason}` };
+    default:
+      return { kind: "permanent", detail: `web digest composition failed: ${reason}` };
+  }
+}
+
+/** 取本轮已生成的摘要，没有时生成一次并登记；失败返回分类结果。 */
+async function roundDigest(
+  action: Readonly<Extract<CronAction, { readonly type: "send_web_digest" }>>,
+  digests: CronRoundDigests,
+  signal: AbortSignal
+): Promise<string | CronDeliveryOutcome> {
+  const cached: string | undefined = digests.get(action);
+  if (cached !== undefined) return cached;
+  const result: WebDigestCompositionResult = await composeWebDigest({
+    topic: action.topic,
+    language: action.language,
+    maxItems: action.maxItems,
+    instructions: action.instructions,
+  }, signal);
+  if (!result.ok) return classifyDigestFailure(result.reason);
+  digests.set(action, result.text);
+  return result.text;
+}
+
 /** 发一条语音：已有本轮 file_id 时引用它，否则上传字节并在成功后记下交回的 file_id。 */
 async function sendRoundVoice(
   chatId: number,
@@ -203,7 +247,7 @@ async function sendRoundVoice(
     chatId,
     entry.fileId ?? new InputFile(voice.bytes, voice.fileName),
     { duration: voice.durationSeconds },
-    ...signalArgs(requestSignal)
+    telegramSignal(requestSignal)
   );
   entry.fileId ??= message.voice?.file_id;
   return message;
@@ -217,17 +261,21 @@ export interface DeliverCronActionOptions {
   readonly signal: AbortSignal;
   /** 本轮已合成的语音；send_voice 从这里复用或登记。 */
   readonly voices: CronRoundVoices;
+  /** 本轮已组稿的摘要；send_web_digest 从这里复用或登记。 */
+  readonly digests: CronRoundDigests;
 }
 
 /**
  * 向一个会话投递一个动作一次。`rand_image` 每次调用都重新抽取；抽不出或本地文件不可用
  * 按不可重试失败返回。`send_voice` 本轮首次投递时合成，之后复用；首次发送成功后改用 file_id。
+ * `send_web_digest` 本轮首次投递时生成摘要，之后复用同一段 MarkdownV2 原文。
  */
 export async function deliverCronAction({
   chatId,
   action,
   signal,
   voices,
+  digests,
 }: DeliverCronActionOptions): Promise<CronDeliveryOutcome> {
   if (signal.aborted) return { kind: "aborted" };
   switch (action.type) {
@@ -236,7 +284,7 @@ export async function deliverCronAction({
         chatId,
         action.content,
         undefined,
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ), signal);
     case "send_image": {
       const photos: (string | InputFile)[] | CronDeliveryOutcome = await imageInputs(action.source, signal);
@@ -253,14 +301,14 @@ export async function deliverCronAction({
           });
         }
         return send(chatId, (requestSignal?: AbortSignal): Promise<Message[]> => bot.api.sendMediaGroup(
-          chatId, media, undefined, ...signalArgs(requestSignal)
+          chatId, media, undefined, telegramSignal(requestSignal)
         ), signal);
       }
       return send(chatId, (requestSignal?: AbortSignal): Promise<Message> => bot.api.sendPhoto(
         chatId,
         photos[0]!,
         { caption: action.content, has_spoiler: action.isBlurred ? true : undefined },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ), signal);
     }
     case "send_file": {
@@ -271,7 +319,7 @@ export async function deliverCronAction({
         chatId,
         document,
         { caption: action.content },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ), signal);
     }
     case "send_voice": {
@@ -280,6 +328,17 @@ export async function deliverCronAction({
       if ("kind" in entry) return entry;
       return send(chatId, (requestSignal?: AbortSignal): Promise<Message> =>
         sendRoundVoice(chatId, entry, requestSignal), signal);
+    }
+    case "send_web_digest": {
+      const text: string | CronDeliveryOutcome = await roundDigest(action, digests, signal);
+      if (signal.aborted) return { kind: "aborted" };
+      if (typeof text !== "string") return text;
+      return send(chatId, (requestSignal?: AbortSignal): Promise<Message> => bot.api.sendMessage(
+        chatId,
+        text,
+        { parse_mode: MARKDOWN_V2_PARSE_MODE },
+        telegramSignal(requestSignal)
+      ), signal);
     }
   }
 }

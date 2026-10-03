@@ -1,11 +1,12 @@
 import type { ChatFullInfo, ChatPhoto, User, UserProfilePhotos } from "grammy/types";
 import { USER_PROFILE_PHOTOS_LIMIT } from "../../../consts/telegram";
 import { bot } from "../mainClient";
+import { telegramErrorDetails } from "../errors";
 import {
   logUnlessAborted,
   runTelegramAction,
 } from "../actions/core";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import { downloadAvatarFile } from "./download";
 import type { AvatarDownloadResult, AvatarIdentity, CurrentAvatarResult } from "../../../types/telegram";
 import { fetchAvatarFromWebProfile } from "./webProfile";
@@ -14,15 +15,19 @@ import { fetchAvatarFromWebProfile } from "./webProfile";
 interface CurrentAvatarProbe {
   readonly photo: string | Uint8Array | undefined;
   readonly transient: boolean;
+  readonly chatNotFound?: boolean;
 }
 
 /** 确认没有可用头像：身份不符、当前没有 ChatPhoto，或下载确定性失败。 */
 const AVATAR_PROBE_ABSENT: CurrentAvatarProbe = { photo: undefined, transient: false };
 /** 这次没查成：请求抛错、中途取消，或下载偶发失败。 */
 const AVATAR_PROBE_FAILED: CurrentAvatarProbe = { photo: undefined, transient: true };
+/** 裸 ID 对应的私聊无法访问；/wed 可从所有已管理群的候选集合移除该 ID。 */
+const AVATAR_PROBE_CHAT_NOT_FOUND: CurrentAvatarProbe = { photo: undefined, transient: false, chatNotFound: true };
 
 /** 没拿到发送源时按本轮探测结论归一化对外结果。 */
 function missingAvatar(probe: CurrentAvatarProbe): CurrentAvatarResult {
+  if (probe.chatNotFound === true) return { status: "chat-not-found" };
   return { status: probe.transient ? "transient-failure" : "permanent-failure" };
 }
 
@@ -33,7 +38,7 @@ function readReusableUserAvatar(targetId: number, current: ChatPhoto, signal?: A
     execute: (requestSignal?: AbortSignal): Promise<UserProfilePhotos> => bot.api.getUserProfilePhotos(
       targetId,
       { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT },
-      ...signalArgs(requestSignal)
+      telegramSignal(requestSignal)
     ),
     map: (photos: UserProfilePhotos): string | undefined => {
       for (const sizes of photos.photos) {
@@ -54,7 +59,7 @@ function readReusableUserAvatar(targetId: number, current: ChatPhoto, signal?: A
  * getChat 核实身份，频道得到 ChannelChat，用户得到私聊资料 PrivateChat，不另发成员查询，
  * 因此不要求机器人是群管理员。
  * 用户优先复用匹配的 PhotoSize.file_id；ChatPhoto ID 只用于下载，网页兜底复用抓取边界。
- * 结果分三态：调用方据此区分「确认没有可用头像」与「这次没查成」，见
+ * 结果区分「确认没有可用头像」「这次没查成」与裸 ID 的「私聊无法访问」，见
  * types/telegram.ts 的 CurrentAvatarResult。
  */
 export async function readCurrentAvatar(target: User | number, signal: AbortSignal): Promise<CurrentAvatarResult> {
@@ -64,7 +69,15 @@ export async function readCurrentAvatar(target: User | number, signal: AbortSign
   const probe: CurrentAvatarProbe = await runTelegramAction({
     action: `read current avatar (identity ${targetId})`,
     execute: async (requestSignal?: AbortSignal): Promise<CurrentAvatarProbe> => {
-      const chat: ChatFullInfo = await bot.api.getChat(targetId, ...signalArgs(requestSignal));
+      let chat: ChatFullInfo;
+      try {
+        chat = await bot.api.getChat(targetId, telegramSignal(requestSignal));
+      } catch (error: unknown) {
+        const details: Readonly<{ errorCode: number; description: string }> | undefined = telegramErrorDetails(error);
+        if (typeof target === "number" && targetId > 0 && details?.errorCode === 400 &&
+          /^Bad Request: chat not found$/i.test(details.description)) return AVATAR_PROBE_CHAT_NOT_FOUND;
+        throw error;
+      }
       if (typeof target === "number") {
         if (chat.id !== targetId || (chat.type !== "channel" && chat.type !== "private")) return AVATAR_PROBE_ABSENT;
         identity = chat;

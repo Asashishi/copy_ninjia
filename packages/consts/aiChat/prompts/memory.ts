@@ -70,13 +70,13 @@ export const REPLY_CONTEXT_SECTION_TEXT: Readonly<ReplyContextSectionText> = {
 /**
  * 群聊转录的行格式说明。整段由编译期常量拼成，与消息内容无关，放在
  * systemInstruction 而非转录区块头部（进入人设之后、心情之前的可缓存前缀，
- * 避免随每轮变化的转录数据一起落在两家供应商自动前缀缓存命中不到的部分）。
+ * 避免随每轮变化的转录数据一起落在各家供应商前缀缓存命中不到的部分）。
  * 开头显式点名讲的是哪个 Part；三种占位形态仍从 prompts/transcript.ts 的模板
  * 代入生成，与拼装侧同源。
  */
 export const TRANSCRIPT_FORMAT_INSTRUCTION: string =
   `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}] 的读法：` +
-  `先是转录，每行形如 ${COMPACT_LINE_FORMAT_HINT}——方括号里只有时分秒，那一行属于它上方最近一条「${transcriptDateHeader("年/月/日")}」分隔行标出的日期（东京时间 UTC+9）。` +
+  `先是转录，每行形如 ${COMPACT_LINE_FORMAT_HINT}——方括号里只有时分秒，那一行属于它上方最近一条「${transcriptDateHeader("年/月/日")}」分隔行标出的日期（与本轮当前时间相同的时区）。` +
   `转录之后、区块末尾是${SPEAKER_ROSTER_BLOCK_NAME}，每条形如 ${rosterEntryTemplate("u1", TRANSCRIPT_IDENTITY_FORMAT_HINT)}，把编号对应到具体的人；「${SELF_ROSTER_CODE}」这个编号就是你自己。有转发时名册后面还有一段${FORWARD_ROSTER_BLOCK_NAME}，把 f1、f2 这类编号对应到原始来源。` +
   `发言人一律只写编号，要知道是谁、有没有公开用户名，回名册查；同名的人在名册里以 [id:] 区分，正文里的 @用户名也用名册里的 [username:@] 标记映射回具体的人。` +
   `${MESSAGE_NUMBER_HINT} 是消息号，只有被本段里别人回复过的消息、以及本轮触发消息才带，其余行没有消息号是正常的。` +
@@ -161,7 +161,7 @@ export const MEMORY_MECHANISM_SILENCE_INSTRUCTION: string =
   "记得住的事正常聊；记不住时只用日常说法表达（如「太久了记不清」「忘了」「没印象」），不得解释成分层、压缩、清理或窗口滑出。";
 
 /** 与转录身份标记和回复关系强耦合的运行时协议。它必须由代码随上下文
- * 结构一同注入，不能放进可独立编辑的 persona.md，否则格式演进时容易漂移。 */
+ * 结构一同注入，不能放进部署方可替换的人设（prompt/persona.md），否则格式演进时容易漂移。 */
 export const CHAT_INTERACTION_INSTRUCTION: string =
   "## 上下文与互动规则\n" +
   "群聊转录里每个人的身份写在转录末尾的名册里：[id:用户ID]、名字，有公开 Telegram 用户名的还有 [username:@用户名]；转录行内只出现名册编号。同名的人以 id 区分身份，正文里的 @用户名要用名册里的 username 标记映射回具体的人，别把别人互相 at 错认成在叫你；你发出的消息里绝对不能出现 [id:...]、[username:...] 或名册编号这类内部标记。\n\n" +
@@ -174,7 +174,7 @@ export const CHAT_INTERACTION_INSTRUCTION: string =
 /** 冷历史压缩请求使用的固定系统提示。 */
 export const SUMMARY_SYSTEM_PROMPT: string =
   `你是一个群聊记录压缩器。用户会给你一段群聊转录，每行格式为${TRANSCRIPT_LINE_FORMAT_HINT}，其中 message_id/username 标记在没有对应信息时省略。` +
-  "行首方括号里是那条消息的发送时间（东京时间），同名的人以 id 区分；[message_id:] 标记只用于和回复标注互相对应，摘要里不需要保留它；正文里出现的 @用户名要用 username 标记映射回具体的人。" +
+  "行首方括号里是那条消息的发送时间（配置时区的时间），同名的人以 id 区分；[message_id:] 标记只用于和回复标注互相对应，摘要里不需要保留它；正文里出现的 @用户名要用 username 标记映射回具体的人。" +
   `名字后若有「${REPLY_TAG_HINT}」标注，表示这条消息明确回复的对象和原文。必须按标注所在层级判断转发归属：直接紧跟当前发言人名字、位于回复标注外层的「${FORWARD_TAG_HINT}」，表示当前正文是该发言人转发来的；出现在回复标注内部、紧跟「的消息」之后的「${FORWARD_TAG_HINT}」，只表示被回复的原消息是转发内容，当前正文仍是当前发言人自己写的。摘要里不要把任何转发正文当成转发者自己的话，也不要把被回复原消息的转发来源误套到当前正文。` +
   "请把这段记录压缩成一段简洁的摘要，只挑最要紧的信息，保留：这段对话大致发生的时间（如「7月16日晚」）、聊过的话题及走向、谁说过的关键信息（人名后带 [id:xxx] 标注以免混淆；有 username 的关键人物再保留 [username:@xxx]，供后续识别 @ 提及）、达成的约定、出现的梗和称呼、人物关系或情绪的变化。" +
   `摘要正文不得超过 ${SUMMARY_MAX_CHARS} 字，不要展开细节、不要逐条复述。只输出摘要正文本身，不要任何前缀、解释、列表符号或代码块，不要输出思考过程。`;

@@ -60,7 +60,7 @@ export async function handleWhiteCommand(
   if (action === undefined) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.usage,
+      text: chatAtmosphere().WHITE_COMMAND_TEXTS.usage,
       replyToMessageId: messageId,
     });
     return;
@@ -68,7 +68,7 @@ export async function handleWhiteCommand(
   if (!actorIsSuperAdmin && action === "disable") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.delegatedDisableRejection,
+      text: chatAtmosphere().WHITE_COMMAND_TEXTS.delegatedDisableRejection,
       replyToMessageId: messageId,
     });
     return;
@@ -91,8 +91,8 @@ export async function handleWhiteCommand(
     // 永久拉黑一律豁免，见 antiRaid/memberFacts.ts），随后 /permission <群 id> all
     // 还能把 /block、/mute 和各功能开关交给这个群的任意匿名管理员。开了
     // acceptChatId 之后这道闸同时守住「把本群 id 直接粘进参数」那种手滑。
-    currentChatTargetText: chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.currentChatTarget,
-    messages: chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.target,
+    currentChatTargetText: chatAtmosphere().WHITE_COMMAND_TEXTS.currentChatTarget,
+    messages: chatAtmosphere().WHITE_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
 
@@ -106,7 +106,7 @@ export async function handleWhiteCommand(
   if (enabled && isSuperAdminTarget) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.superAdminEnable,
+      text: chatAtmosphere().WHITE_COMMAND_TEXTS.superAdminEnable,
       replyToMessageId: messageId,
     });
     return;
@@ -146,13 +146,13 @@ export async function handleWhiteCommand(
     );
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.mutationFailed,
+      text: chatAtmosphere().WHITE_COMMAND_TEXTS.mutationFailed,
       replyToMessageId: messageId,
     });
     return;
   }
   if (outcome.kind === "unauthorized") {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: atmosphere.WHITE_COMMAND_TEXTS.rejection(formatActorLabel(actor, atmosphere)),
@@ -161,7 +161,7 @@ export async function handleWhiteCommand(
     return;
   }
   if (outcome.kind === "blocked") {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: atmosphere.WHITE_COMMAND_TEXTS.blocked(formatTargetLabel(target, atmosphere)),
@@ -170,7 +170,7 @@ export async function handleWhiteCommand(
     return;
   }
   const result: SetWhitelistMembershipResult = outcome.result;
-  const targetLabel: string = formatTargetLabel(target, chatAtmosphere(chatId));
+  const targetLabel: string = formatTargetLabel(target, chatAtmosphere());
   // 超级管理员只可能走到 disable 这一支（enable 上面已经拒了）。它删掉的只是
   // 表里的历史残留：isWhitelisted 与 getEffectiveWhitelistPermissions 对
   // SUPER_ADMIN_USER_ID 是无条件的（见 whitelist.ts），删完再
@@ -178,15 +178,15 @@ export async function handleWhiteCommand(
   // 「已经从白名单里踢出去啦」。
   const replyText: string = isSuperAdminTarget
     ? result.changed
-      ? chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.superAdminDisableCleared
-      : chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.superAdminDisableNoEntry
+      ? chatAtmosphere().WHITE_COMMAND_TEXTS.superAdminDisableCleared
+      : chatAtmosphere().WHITE_COMMAND_TEXTS.superAdminDisableNoEntry
     : enabled
       ? result.changed
-        ? chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.enabled(targetLabel)
-        : chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.alreadyEnabled(targetLabel)
+        ? chatAtmosphere().WHITE_COMMAND_TEXTS.enabled(targetLabel)
+        : chatAtmosphere().WHITE_COMMAND_TEXTS.alreadyEnabled(targetLabel)
       : result.changed
-        ? chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.disabled(targetLabel)
-        : chatAtmosphere(chatId).WHITE_COMMAND_TEXTS.alreadyDisabled(targetLabel);
+        ? chatAtmosphere().WHITE_COMMAND_TEXTS.disabled(targetLabel)
+        : chatAtmosphere().WHITE_COMMAND_TEXTS.alreadyDisabled(targetLabel);
   await sendCommandMessage({
     chatId,
     text: replyText,

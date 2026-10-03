@@ -77,7 +77,7 @@ const {
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
 } = await import("../../../packages/consts/diskIO/joinLog");
-const { getTokyoDateKey } = await import("../../../packages/libs/time");
+const { getDateKey } = await import("../../../packages/libs/time");
 import type { JoinLogDiskMessage, JoinLogPersistedReply } from "../../../packages/types/diskIO";
 import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
 
@@ -98,12 +98,12 @@ function joinMessage(
     chatId,
     userId,
     joinedAt,
-    day: getTokyoDateKey(joinedAt),
+    day: getDateKey(joinedAt),
   };
 }
 
 function currentFile(chatId: number): string {
-  return join(joinLogDir, `${chatId}.${getTokyoDateKey()}.json`);
+  return join(joinLogDir, `${chatId}.${getDateKey()}.json`);
 }
 
 function datedFile(chatId: number, day: string): string {
@@ -112,11 +112,11 @@ function datedFile(chatId: number, day: string): string {
 
 /** 取东京当天中午，避免用 Date.now()-偏移量时在午夜附近跨日造成测试偶发失败。 */
 function todayAt(offsetMs: number = 0): number {
-  return Date.parse(`${getTokyoDateKey()}T12:00:00+09:00`) + offsetMs;
+  return Date.parse(`${getDateKey()}T12:00:00+09:00`) + offsetMs;
 }
 
 function todayMidnight(): number {
-  return Date.parse(`${getTokyoDateKey()}T00:00:00+09:00`);
+  return Date.parse(`${getDateKey()}T00:00:00+09:00`);
 }
 
 /**
@@ -125,7 +125,7 @@ function todayMidnight(): number {
  */
 async function recoverJoinLogFiles(today?: string): Promise<void> {
   const inspection = today === undefined
-    ? await inspectJoinLogFiles(getTokyoDateKey())
+    ? await inspectJoinLogFiles(getDateKey())
     : await inspectJoinLogFiles(today);
   await maintainJoinLogFiles(inspection);
 }
@@ -183,7 +183,7 @@ async function expectFileMatchesCache(
   const content: string = await Bun.file(currentFile(chatId)).text();
   const parsed: Record<string, { userId: number; joinedAt: number }> = JSON.parse(content);
   const cache: JoinLogFileCache | undefined =
-    joinLogFileCaches.get(`${chatId}:${getTokyoDateKey()}`);
+    joinLogFileCaches.get(`${chatId}:${getDateKey()}`);
   expect(cache?.state.size).toBe(UTF8_ENCODER.encode(content).byteLength);
   return parsed;
 }
@@ -220,7 +220,7 @@ export {
   JOIN_LOG_MAX_RETRY_FILES,
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
   JOIN_LOG_SNAPSHOT_CHUNK_BYTES,
-  getTokyoDateKey,
+  getDateKey,
   joinMessage,
   currentFile,
   datedFile,

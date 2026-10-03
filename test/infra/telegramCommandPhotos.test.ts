@@ -32,7 +32,7 @@ describe("sendCommandPhoto", () => {
       caption_entities: entities,
       reply_parameters: { message_id: 7, allow_sending_without_reply: true },
       message_thread_id: 3,
-    });
+    }, undefined);
     expect(markSelfSent).toHaveBeenCalledWith(-1001, 55);
     expect(deleteMessageAfter).toHaveBeenCalledWith({ chatId: -1001, messageId: 55, delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS });
   });

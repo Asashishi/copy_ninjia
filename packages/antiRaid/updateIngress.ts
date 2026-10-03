@@ -423,7 +423,7 @@ export async function handleVerificationCallback(
   ) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
+      text: chatAtmosphere().VERIFICATION_GUARD_DISABLED_CALLBACK_TEXT,
       showAlert: true,
     });
     return;
@@ -438,7 +438,7 @@ export async function handleVerificationCallback(
   if (targetUserId === undefined) {
     await answerCallbackQuery({
       callbackQueryId: query.id,
-      text: chatAtmosphere(ctx.chat?.id ?? 0).VERIFICATION_INVALID_CALLBACK_TEXT,
+      text: chatAtmosphere().VERIFICATION_INVALID_CALLBACK_TEXT,
       showAlert: true,
     });
     return;

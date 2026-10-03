@@ -16,6 +16,8 @@ import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/config";
 import type { AgentDeploymentConfig, OpenAiAgentCapabilityConfig } from "../../../packages/types/config";
 import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
+import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
+import type { AiCacheUsage } from "../../../packages/types/aiCache";
 
 const requestOpenAiResult = mock(async (..._args: unknown[]): Promise<OpenAiRequestResult> => ({
   ok: false,
@@ -51,6 +53,9 @@ function capturedBody(index: number): ResponseBody {
 }
 
 /** 一份带 reasoning、web_search_call 与 function_call 的模型输出。 */
+/** OpenAI hosted 检索工具在请求体里的形态。 */
+const HOSTED_WEB_SEARCH_TOOL: OpenAI.Responses.Tool = { type: "web_search" };
+
 function modelOutput(): unknown[] {
   return [
     { type: "reasoning", id: "rs-1", summary: [], encrypted_content: "encrypted-reasoning" },
@@ -235,7 +240,7 @@ describe("OpenAI 回复会话的请求映射", () => {
 
     const body: ResponseBody = capturedBody(0);
     expect(body.tools).toEqual([
-      { type: "web_search" },
+      HOSTED_WEB_SEARCH_TOOL,
       {
         type: "function",
         name: SEND_MESSAGE.name,
@@ -277,6 +282,23 @@ describe("OpenAI 回复会话的产出解析", () => {
     ]);
     // OpenAI 没有「服务端工具调用过多」的对等信号。
     expect(turn.toolCallLimitHit).toBe(false);
+  });
+
+  test("内建检索次数交回预算，会话不重复上报用量", async () => {
+    const reported: AiCacheUsage[] = [];
+    installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
+    try {
+      requestOpenAiResult.mockImplementationOnce(async (...args: unknown[]): Promise<OpenAiRequestResult> => {
+        (args[0] as { buildBody: () => unknown }).buildBody();
+        return okResult(modelOutput(), "正文");
+      });
+      const session: AiReplySession = createOpenAiReplySession({ stableBlocks: [], volatileBlocks: ["区块"] });
+      const turn: AiReplyTurn = await session.request(baseRequest({ webSearchEnabled: true }));
+      expect(turn.webSearchCalls).toBe(1);
+      expect(reported).toEqual([]);
+    } finally {
+      installAiCacheUsageSink(null);
+    }
   });
 
   test("空 arguments 归一成空对象，调用方只需处理一种形状", async () => {

@@ -9,12 +9,16 @@ const requestGoogleAdDetectJson = mock(
 const requestOpenAiAdDetectJson = mock(
   async (_params: AdDetectJsonRequestParams): Promise<string | null> => "openai"
 );
+const requestAnthropicAdDetectJson = mock(
+  async (_params: AdDetectJsonRequestParams): Promise<string | null> => "anthropic"
+);
 
 mock.module("../../../packages/config/agent", () => ({
   getAdDetectAgentConfig: () => ({ provider }),
 }));
 mock.module("../../../packages/workers/antiRaid/adDetect/ai/google", () => ({ requestGoogleAdDetectJson }));
 mock.module("../../../packages/workers/antiRaid/adDetect/ai/openai", () => ({ requestOpenAiAdDetectJson }));
+mock.module("../../../packages/workers/antiRaid/adDetect/ai/anthropic", () => ({ requestAnthropicAdDetectJson }));
 
 const { requestAdDetectJson } = await import("../../../packages/workers/antiRaid/adDetect/ai/provider");
 
@@ -33,9 +37,19 @@ beforeEach((): void => {
   provider = "google";
   requestGoogleAdDetectJson.mockClear();
   requestOpenAiAdDetectJson.mockClear();
+  requestAnthropicAdDetectJson.mockClear();
 });
 
 describe("广告检测 provider 分派", () => {
+  test("Anthropic 配置只调用 Anthropic 传输", async () => {
+    provider = "anthropic";
+
+    await expect(requestAdDetectJson(params)).resolves.toBe("anthropic");
+    expect(requestAnthropicAdDetectJson).toHaveBeenCalledWith(params);
+    expect(requestGoogleAdDetectJson).not.toHaveBeenCalled();
+    expect(requestOpenAiAdDetectJson).not.toHaveBeenCalled();
+  });
+
   test("Google 配置只调用 Google 传输并原样转发请求", async () => {
     await expect(requestAdDetectJson(params)).resolves.toBe("google");
     expect(requestGoogleAdDetectJson).toHaveBeenCalledWith(params);

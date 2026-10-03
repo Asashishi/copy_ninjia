@@ -27,7 +27,10 @@ const {
   reportUnimplementedAgentCapabilities,
   summaryAiProvider,
   textAiProvider,
+  structuredTextAiProvider,
+  textWebSearchAiProvider,
   ttsAiProvider,
+  webSearchAiProvider,
 } = await import("../../packages/aiChat/provider");
 const { geminiClientCache } = await import("../../packages/cache/workers/aiChat/gemini");
 const { textGeminiContextCache } = await import("../../packages/cache/workers/aiChat/geminiContextCache");
@@ -41,6 +44,7 @@ const {
 } = await import("../../packages/cache/workers/aiChat/mediaInputSupport");
 const { geminiProvider } = await import("../../packages/aiChat/gemini");
 const { openAiProvider } = await import("../../packages/aiChat/openai");
+const { anthropicProvider } = await import("../../packages/aiChat/anthropic");
 const { aiProviderQuotaLanes, resetAiProviderSchedulerCache } =
   await import("../../packages/cache/workers/aiChat/providerScheduler");
 const {
@@ -100,12 +104,73 @@ test("image 缺省时明确不提供生图实现", () => {
   expect(imageAiProvider()).toBeNull();
 });
 
-test("两家实现都装配齐五项能力", () => {
+test("Google 与 OpenAI 装配齐对话、摘要、媒体、生图、检索与 JSON 能力", () => {
   for (const provider of [geminiProvider, openAiProvider] as const) {
     expect(typeof provider.createReplySession).toBe("function");
     expect(typeof provider.generateText).toBe("function");
     expect(typeof provider.describeVision).toBe("function");
     expect(typeof provider.generateImage).toBe("function");
+    expect(typeof provider.searchWeb).toBe("function");
+    expect(typeof provider.generateJson).toBe("function");
+  }
+});
+
+test("web_search 缺省时明确不提供检索执行器；配置时按它自己的 provider 路由，并按端点与凭据归入配额 lane", async () => {
+  expect(webSearchAiProvider()).toBeNull();
+  agentConfig = {
+    ...agentConfig,
+    webSearch: { provider: "openai", apiKey: "openai-summary-key", baseUrl: "https://openai.example/v1", headers: undefined, model: "gpt-search", maxCallsPerUse: 7 },
+  };
+  resetAiProviderSchedulerCache();
+  summaryAiProvider();
+  const lanes: number = aiProviderQuotaLanes.length;
+  const searchWeb = spyOn(openAiProvider, "searchWeb")
+    .mockImplementation(async () => ({ ok: true, text: "结论", sources: [], searchCalls: 1 }));
+  try {
+    expect(webSearchAiProvider()?.name).toBe("openai");
+    expect(webSearchAiProvider()).toBe(webSearchAiProvider());
+    expect(aiProviderQuotaLanes).toHaveLength(lanes);
+    await expect(webSearchAiProvider()?.searchWeb({ instruction: "i", query: "q" }))
+      .resolves.toEqual({ ok: true, text: "结论", sources: [], searchCalls: 1 });
+    expect(searchWeb).toHaveBeenCalledTimes(1);
+  } finally {
+    searchWeb.mockRestore();
+  }
+});
+
+test("cron 摘要的 text 检索与结构化 JSON 门面都按 text 配置路由，检索把绑定的能力名交给实现", async () => {
+  const searchWeb = spyOn(geminiProvider, "searchWeb")
+    .mockImplementation(async () => ({ ok: true, text: "要点", sources: [], searchCalls: 1 }));
+  const generateJson = spyOn(geminiProvider, "generateJson")
+    .mockImplementation(async () => ({ ok: true, text: "{}" }));
+  try {
+    expect(textWebSearchAiProvider().name).toBe("google");
+    expect(textWebSearchAiProvider()).toBe(textWebSearchAiProvider());
+    await textWebSearchAiProvider().searchWeb({ instruction: "i", query: "q" });
+    expect(searchWeb).toHaveBeenCalledWith("text", { instruction: "i", query: "q" });
+    expect(structuredTextAiProvider()).toBe(structuredTextAiProvider());
+    await expect(structuredTextAiProvider().generateJson({ systemPrompt: "s", userContent: "u", jsonSchema: {}, errorLabel: "e" }))
+      .resolves.toEqual({ ok: true, text: "{}" });
+  } finally {
+    searchWeb.mockRestore();
+    generateJson.mockRestore();
+  }
+});
+
+test("检索门面排队期间被取消时按一次都没检索的失败结算，不发起请求", async () => {
+  agentConfig = {
+    ...agentConfig,
+    webSearch: { provider: "google", apiKey: "google-text-key", baseUrl: undefined, headers: undefined, model: "gemini-search", maxCallsPerUse: 7 },
+  };
+  const searchWeb = spyOn(geminiProvider, "searchWeb");
+  try {
+    const aborted: AbortController = new AbortController();
+    aborted.abort();
+    await expect(webSearchAiProvider()?.searchWeb({ instruction: "i", query: "q", signal: aborted.signal }))
+      .resolves.toEqual({ ok: false, searchCalls: 0 });
+    expect(searchWeb).not.toHaveBeenCalled();
+  } finally {
+    searchWeb.mockRestore();
   }
 });
 
@@ -145,6 +210,24 @@ function withoutOpenAiSpeech(run: () => void): void {
     holder.synthesizeSpeech = synthesizeSpeech;
   }
 }
+
+test("anthropic 没有生图能力：generateImage 只为满足契约，恒交回 null", async () => {
+  await expect(anthropicProvider.generateImage({} as never)).resolves.toBeNull();
+});
+
+test("media 选 anthropic 时语音转写缺席，只在启动时记一次诊断；正文、检索与结构化 JSON 照常路由到它", () => {
+  const anthropic = { provider: "anthropic", apiKey: "anthropic-key", baseUrl: undefined, headers: undefined, model: "claude-test" } as const;
+  agentConfig = { ...agentConfig, text: anthropic, media: anthropic, webSearch: { ...anthropic, maxCallsPerUse: 7 } };
+  expect(anthropicProvider.transcribeVoice).toBeUndefined();
+  expect(anthropicProvider.synthesizeSpeech).toBeUndefined();
+  expect(textAiProvider().name).toBe("anthropic");
+  expect(mediaAiProvider().transcribeVoice).toBeUndefined();
+  expect(webSearchAiProvider()?.name).toBe("anthropic");
+  expect(structuredTextAiProvider().name).toBe("anthropic");
+  reportUnimplementedAgentCapabilities();
+  expect(loggerError).toHaveBeenCalledTimes(1);
+  expect(String(loggerError.mock.calls[0]![0])).toContain("$.agent.media");
+});
 
 test("配了但这一家没实现的可选能力，只在启动时记一次诊断", () => {
   agentConfig = {
@@ -189,7 +272,7 @@ test("OpenAI 两种语音协议都经 tts 门面进入 OpenAI 实现包，xai �
   }
 });
 
-test("两家都实现的能力不刷诊断", () => {
+test("已实现的能力不刷诊断", () => {
   reportUnimplementedAgentCapabilities();
   expect(loggerError).not.toHaveBeenCalled();
 });

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Bot, Context } from "grammy";
 
 /**
- * 身份预热中间件的两条路径（`app/registerHandlers.ts` 的第 4 条 `bot.use`）：
+ * 身份预热中间件的两条路径（`app/registerHandlers.ts` 的第 5 条 `bot.use`）：
  * 全热 update 直接返回 `next()`，有冷身份时先等预热完成再进入下游。
  */
 
@@ -32,7 +32,7 @@ const { registerHandlers } = await import("../../packages/app/registerHandlers")
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => Promise<void>;
 
-/** 装一次链路，取出身份预热那一条（第 4 个 `bot.use`）。 */
+/** 装一次链路，取出身份预热那一条（第 5 个 `bot.use`）。 */
 function identityPrefetchMiddleware(): TestMiddleware {
   const middleware: TestMiddleware[] = [];
   const noop = (): unknown => fakeBot;
@@ -47,7 +47,7 @@ function identityPrefetchMiddleware(): TestMiddleware {
     catch: noop,
   };
   registerHandlers(fakeBot as unknown as Bot);
-  const prefetchMiddleware: TestMiddleware | undefined = middleware[3];
+  const prefetchMiddleware: TestMiddleware | undefined = middleware[4];
   if (prefetchMiddleware === undefined) throw new Error("identity prefetch middleware is missing");
   return prefetchMiddleware;
 }

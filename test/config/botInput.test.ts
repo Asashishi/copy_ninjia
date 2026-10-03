@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../preloadEnv";
 import { loadBotConfig } from "../../packages/config/botInput";
-import { loadInstallerBotAtmosphere, validateStagedBotConfig } from "../../scripts/install/runtime";
+import { loadInstallerBotConfig, validateStagedBotConfig } from "../../scripts/install/runtime";
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from "../../packages/consts/telegram";
 
 let root: string;
@@ -15,19 +15,36 @@ test("当前配置异步加载，普通风格保留；缺少 bot 文件即拒绝
   const path: string = join(root, "bot.json");
   await Bun.write(path, JSON.stringify({ ...identity, atmosphere: "normal" }));
   expect((await loadBotConfig(path)).atmosphere).toBe("normal");
-  expect(await loadInstallerBotAtmosphere(path)).toBe("normal");
+  expect((await loadInstallerBotConfig(path)).atmosphere).toBe("normal");
   await Bun.file(path).delete();
   await expect(loadBotConfig(path)).rejects.toThrow(`${path}: $ must be a readable valid JSON document`);
+});
+
+test("加载配置保留显式时区，非法时区在启动配置读取时拒绝", async (): Promise<void> => {
+  const path: string = join(root, "bot.json");
+  await Bun.write(path, JSON.stringify({ ...identity, time_zone: " UTC " }));
+  expect((await loadBotConfig(path)).timeZone).toBe("UTC");
+  expect((await loadInstallerBotConfig(path)).timeZone).toBe("UTC");
+  await Bun.write(path, JSON.stringify({ ...identity, time_zone: "invalid-secret-time-zone" }));
+  await expect(loadBotConfig(path)).rejects.toThrow(`${path}: $.time_zone must be an IANA time zone name.`);
+});
+
+test("运行时和安装器加载均保留风格未配置状态", async (): Promise<void> => {
+  const path: string = join(root, "bot.json");
+  await Bun.write(path, JSON.stringify(identity));
+  expect((await loadBotConfig(path)).atmosphere).toBeUndefined();
+  expect((await loadInstallerBotConfig(path)).atmosphere).toBeUndefined();
+  await expect(validateStagedBotConfig(path)).resolves.toBeUndefined();
 });
 
 test("安装问卷允许示例 token 待填写，同时严格保留或拒绝已有风格", async () => {
   const path: string = join(root, "bot.json");
   await Bun.write(path, JSON.stringify({ ...identity, bot_token: TELEGRAM_BOT_TOKEN_PLACEHOLDER, atmosphere: "normal" }));
-  expect(await loadInstallerBotAtmosphere(path)).toBe("normal");
+  expect((await loadInstallerBotConfig(path)).atmosphere).toBe("normal");
   await expect(loadBotConfig(path)).rejects.toThrow("non-placeholder");
   for (const value of [{ ...identity, atmosphere: null }, { ...identity, bot_token: "" }, null]) {
     await Bun.write(path, JSON.stringify(value));
-    await expect(loadInstallerBotAtmosphere(path)).rejects.toThrow();
+    await expect(loadInstallerBotConfig(path)).rejects.toThrow();
   }
 });
 

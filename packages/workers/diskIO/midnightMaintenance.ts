@@ -1,5 +1,5 @@
 /**
- * Disk I/O Worker 的逐领域维护编排：启动（diskIO/startup.ts）与东京午夜维护共用
+ * Disk I/O Worker 的逐领域维护编排：启动（diskIO/startup.ts）与配置时区的午夜维护共用
  * runDiskIOMaintenanceTasks，逐领域执行并隔离失败。
  */
 
@@ -12,7 +12,7 @@ import { maintainTemporaryAdBypassActivities } from "./storageDatabase";
 import {
   maintainVerificationDayForToday,
 } from "./verificationWrites";
-import { getTokyoDateKey } from "../../libs/time";
+import { getDateKey } from "../../libs/time";
 import type {
   IdentityStoragePersistedReply,
   MidnightMaintenanceReply,
@@ -48,7 +48,7 @@ export async function runDiskIOMaintenanceTasks(
 /** 先通知主线程接纳日级任务，再依次维护七个磁盘领域；不等待主线程复核。 */
 export function runDiskIOMidnightMaintenance(
   reply: DiskIOMaintenanceReplySink,
-  day: string = getTokyoDateKey()
+  day: string = getDateKey()
 ): Promise<void> {
   return runDiskIOMaintenanceTasks("midnight", [
     ["main thread", (): void => reply({ type: "midnightMaintenance", day })],

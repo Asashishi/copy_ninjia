@@ -1,5 +1,4 @@
-/**
- * Anti-Raid Worker 异步副作用排空（packages/workers/antiRaid/taskTracker.ts）的内存状态，以及
+/** owner: workers/antiRaid。Anti-Raid Worker 异步副作用排空（packages/workers/antiRaid/taskTracker.ts）的内存状态，以及
  * 停机取消信号的取用入口 antiRaidDispatchSignal。
  */
 

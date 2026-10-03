@@ -46,7 +46,6 @@ import type { UnacknowledgedChatStateWrite } from "../types/identityStorage";
 interface EncodedChatStateWrite {
   readonly data: string | null;
   readonly deleted: boolean;
-  readonly aiPersona: string | null;
 }
 
 interface QueuedChatStateWrite {
@@ -79,21 +78,12 @@ export function assertChatStateCapacity(chatId: number): void {
   }
 }
 
-/** 一次群状态写入载荷的准入估算字节：状态正文加人设。 */
-function encodedChatStateCost(encoded: EncodedChatStateWrite): number {
-  return storageWriteCost(encoded.data) + storageWriteCost(encoded.aiPersona);
-}
-
 function encodeCurrentChatState(chatId: number): EncodedChatStateWrite {
   const state: ChatState | undefined = chatStateCache.get(chatId);
-  if (state === undefined) return { data: null, deleted: true, aiPersona: null };
+  if (state === undefined) return { data: null, deleted: true };
   normalizeChatState(state);
-  if (isEmptyChatState(state)) return { data: null, deleted: true, aiPersona: null };
-  return {
-    data: encodeChatStateData(state, `chat state ${chatId}`),
-    deleted: false,
-    aiPersona: state.aiPersona ?? null,
-  };
+  if (isEmptyChatState(state)) return { data: null, deleted: true };
+  return { data: encodeChatStateData(state, `chat state ${chatId}`), deleted: false };
 }
 
 /** 把一群当前最终值排进 SQLite；返回本次 revision 供 durability barrier 核对。 */
@@ -108,10 +98,9 @@ export function queueChatStateWrite(chatId: number): number {
     type: "chatStateWrite",
     chatId,
     data: encoded.data,
-    aiPersona: encoded.aiPersona,
     revision,
   };
-  const cost: number = encodedChatStateCost(encoded);
+  const cost: number = storageWriteCost(encoded.data);
   const previous: UnacknowledgedChatStateWrite | undefined = unacknowledgedChatStateWrites.get(chatId);
   const bytes: number = unacknowledgedChatStateBytes.current + cost - (previous?.bytes ?? 0);
   assertStorageAdmission(unacknowledgedChatStateWrites.size + (previous === undefined ? 1 : 0), bytes);
@@ -181,7 +170,7 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
     const current: UnacknowledgedChatStateWrite | undefined =
       unacknowledgedChatStateWrites.get(write.chatId);
     if (current?.revision !== write.revision) continue;
-    const cost: number = encodedChatStateCost(encoded);
+    const cost: number = storageWriteCost(encoded.data);
     if (current.deleted !== encoded.deleted || current.bytes !== cost) {
       unacknowledgedChatStateWrites.set(write.chatId, {
         revision: current.revision,
@@ -194,7 +183,6 @@ function replayChatStateWrites(transport: DiskIORecoveryTransport): boolean {
       type: "chatStateWrite",
       chatId: write.chatId,
       data: encoded.data,
-      aiPersona: encoded.aiPersona,
       revision: write.revision,
     };
     if (!postWithTransport(message, transport)) return false;

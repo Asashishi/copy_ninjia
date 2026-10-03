@@ -1,7 +1,5 @@
-import { BOT_ATMOSPHERE } from "../config/bot";
 import type { AtmosphereTexts } from "../types/atmosphere";
-import { atmosphereOf } from "../libs/atmosphere";
-import type { MessageEntity } from "grammy/types";
+import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { activeGagSessionCount } from "../cache/main/gag";
 import { TRANSLATE_CHAT_USER_LIMIT } from "../consts/translate";
@@ -11,6 +9,8 @@ import { BOT_CHAT_PERMISSION_KEYS, BOT_CHAT_PERMISSION_LABELS } from "../consts/
 import { BOT_STATUS_BYTES_PER_GIB, BOT_STATUS_BYTES_PER_KIB, BOT_STATUS_BYTES_PER_MIB, BOT_STATUS_COLD_MEMORY_WEIGHT, BOT_STATUS_DECIMAL_PLACES, BOT_STATUS_FEATURE_KEYS, BOT_STATUS_HOT_MEMORY_WEIGHT, BOT_STATUS_JSON_INDENT, BOT_STATUS_JSON_LANGUAGE, BOT_STATUS_PERCENT_SCALE, BOT_STATUS_SECONDS_PER_DAY, BOT_STATUS_SECONDS_PER_HOUR, BOT_STATUS_SECONDS_PER_MINUTE } from "../consts/botStatus";
 
 import { BOT_STATUS_CAPABILITY_LABEL_MAX_CHARS } from "../consts/commands";
+import { MARKDOWN_V2_PARSE_MODE } from "../consts/telegramMarkdown";
+import { escapeMarkdownV2, markdownV2InlineCode, markdownV2Pre } from "../libs/telegramMarkdown";
 import { MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../consts/aiChat/memory";
 import { aiMemoryUsages } from "../cache/main/aiChat";
 import { GAG_SESSION_MAX } from "../consts/gag";
@@ -29,10 +29,9 @@ import type {
 } from "../types/config";
 import { rejectUnlessPermitted } from "./commandActor";
 
-/** `/bot_status` 的完整回执：正文加上本群 id 的 `code` 实体与权限块、功能块各自的 `pre` 实体。 */
+/** `/bot_status` 的完整回执：一段 MarkdownV2 正文。 */
 export interface BotStatusMessage {
   readonly text: string;
-  readonly entities: readonly MessageEntity[];
 }
 
 export interface BotStatusSnapshot {
@@ -62,17 +61,14 @@ function statusLabel(value: string): string {
 /**
  * 只展示模型名：不带 provider，并去掉模型 id 里最后一个 `/` 之前的厂商命名空间
  * （`openai/gpt-6-luna` 展示为 `gpt-6-luna`）。
- * @param model 该能力展示用的名字；undefined 表示该能力未配置。
  */
-function capabilityLine(label: string, model: string | undefined): string {
-  if (model === undefined) return `• ${label}：未配置`;
+function capabilityLine(label: string, model: string): string {
   const modelName: string = model.slice(model.lastIndexOf("/") + 1);
-  return `• ${label}：已配置 · ${statusLabel(modelName)}`;
+  return `• ${label}：${statusLabel(modelName)}`;
 }
 
-/** 语音合成行展示的名字：xai 协议没有模型名，展示音色；未配置时为 undefined。 */
-function ttsStatusName(tts: AgentTtsCapabilityConfig | undefined): string | undefined {
-  if (tts === undefined) return undefined;
+/** 语音合成行展示的名字：xai 协议没有模型名，展示音色。 */
+function ttsStatusName(tts: AgentTtsCapabilityConfig): string {
   return tts.speechProtocol === "xai" ? tts.voice : tts.model;
 }
 
@@ -166,15 +162,14 @@ function featuresJson(chatState: Readonly<ChatState>): string {
 }
 
 /**
- * 模型能力只展示模型名（xai 语音协议没有模型名，展示音色），不输出 provider、api_key、base_url
- * 或配置失败细节。
+ * 模型能力只列当前可用的模型名（xai 语音协议没有模型名，展示音色）；没有可列项时
+ * 省略整段，不输出 provider、api_key、base_url 或配置失败细节。
  *
- * 本群 id 用 `code` 实体，权限块与功能块用 `pre` 实体标出范围，而不是拼反引号：本项目的发送
- * 边界一律不设 parse_mode（见 infra/telegram/actions/messages.ts），反引号只会原样显示。
- * 实体按出现顺序排列，偏移按 UTF-16 码元计算，与 Telegram 对 entities 的口径一致。
+ * 正文按 MarkdownV2 拼装（见 libs/telegramMarkdown.ts）：本群 id 是内联代码，权限块与功能块
+ * 是 json 代码块，其余各段整段转义——模型名、文案里的 `.`、`-`、`(` 都是保留字符。
  */
 export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMessage {
-  const atmosphere: AtmosphereTexts = atmosphereOf(snapshot.chatState, BOT_ATMOSPHERE);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const lines: string[] = [
     atmosphere.NOTICE_TEXTS.statusTitle,
     "",
@@ -189,74 +184,57 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
         `${formatBotMemory(snapshot.processStatus.memoryLimitBytes)}` +
         `（${formatPercent(snapshot.processStatus.memoryPercent)}）`
       : `• 当前内存占用：${formatBotMemory(snapshot.processStatus.memoryFootprintBytes)}（本机上限不可用）`,
-    "",
-    atmosphere.NOTICE_TEXTS.statusModels,
   ];
-  if (!snapshot.aiReady || snapshot.aiConfig === null) {
-    lines.push("• AI 对话能力：不可用（部署配置未就绪）");
-  } else {
-    lines.push(capabilityLine("群聊正文", snapshot.aiConfig.text.model));
-    lines.push(capabilityLine("记忆摘要", snapshot.aiConfig.summary.model));
-    lines.push(capabilityLine("媒体理解", snapshot.aiConfig.media.model));
-    lines.push(capabilityLine("图片生成", snapshot.aiConfig.image?.model));
-    lines.push(capabilityLine("语音合成", ttsStatusName(snapshot.aiConfig.tts)));
+  const modelLines: string[] = [];
+  if (snapshot.aiReady && snapshot.aiConfig !== null) {
+    modelLines.push(capabilityLine("群聊正文", snapshot.aiConfig.text.model));
+    modelLines.push(capabilityLine("记忆摘要", snapshot.aiConfig.summary.model));
+    modelLines.push(capabilityLine("媒体理解", snapshot.aiConfig.media.model));
+    if (snapshot.aiConfig.image !== undefined) {
+      modelLines.push(capabilityLine("图片生成", snapshot.aiConfig.image.model));
+    }
+    if (snapshot.aiConfig.tts !== undefined) {
+      modelLines.push(capabilityLine("语音合成", ttsStatusName(snapshot.aiConfig.tts)));
+    }
+    if (snapshot.aiConfig.webSearch !== undefined) {
+      modelLines.push(capabilityLine("联网检索", snapshot.aiConfig.webSearch.model));
+    }
   }
-  lines.push(
-    snapshot.adDetectReady && snapshot.adDetectConfig !== null
-      ? capabilityLine("广告检测", snapshot.adDetectConfig.model)
-      : "• 广告检测：不可用（部署配置未就绪）"
-  );
+  if (snapshot.adDetectReady && snapshot.adDetectConfig !== null) {
+    modelLines.push(capabilityLine("广告检测", snapshot.adDetectConfig.model));
+  }
+  if (modelLines.length > 0) lines.push("", atmosphere.NOTICE_TEXTS.statusModels, ...modelLines);
   lines.push(
     "",
     "Telegram 出站：",
     `• 处理中 ${snapshot.telegramActive}`,
     `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
-    ""
+    "",
+    atmosphere.NOTICE_TEXTS.statusChatIdLabel
   );
-  // 本群一组：id 在前（code 实体，点一下即可复制），人设行在最后。
-  const chatId: string = String(snapshot.chatId);
-  const entities: MessageEntity[] = [{
-    type: "code",
-    offset: `${lines.join("\n")}\n${atmosphere.NOTICE_TEXTS.statusChatIdLabel}`.length,
-    length: chatId.length,
-  }];
-  lines.push(
-    `${atmosphere.NOTICE_TEXTS.statusChatIdLabel}${chatId}`,
+  // 本群一组：id 在前（内联代码，点一下即可复制），其后是上下文、禁言与翻译会话占用。
+  const chatGroup: string = [
+    "",
     contextCapacityLine(snapshot.aiContextUsage, atmosphere),
     atmosphere.NOTICE_TEXTS.statusGag(snapshot.activeGagSessions, GAG_SESSION_MAX),
     atmosphere.NOTICE_TEXTS.statusTranslate(snapshot.activeTranslateSessions, TRANSLATE_CHAT_USER_LIMIT),
-    snapshot.chatState.aiPersona === undefined
-      ? atmosphere.BOT_STATUS_PERSONA_DEFAULT
-      : atmosphere.BOT_STATUS_PERSONA_CONFIGURED,
     "",
-    atmosphere.NOTICE_TEXTS.statusPermissions
-  );
-  const permissions: BotChatPermissions | undefined =
-    snapshot.chatState.botPermissions;
-  if (permissions === undefined) {
-    // undefined 只表示尚未确证（见 types/chatState.ts）：确认不是管理员时快照仍在，
-    // 只是全 false，那种情况照常出 JSON。
-    lines.push(atmosphere.NOTICE_TEXTS.statusPermissionsUnknown);
-  } else {
-    const json: string = permissionsJson(permissions);
-    entities.push({
-      type: "pre",
-      offset: `${lines.join("\n")}\n`.length,
-      length: json.length,
-      language: BOT_STATUS_JSON_LANGUAGE,
-    });
-    lines.push(json);
-  }
-  lines.push("", atmosphere.NOTICE_TEXTS.statusFeatures);
-  const features: string = featuresJson(snapshot.chatState);
-  entities.push({
-    type: "pre",
-    offset: `${lines.join("\n")}\n`.length,
-    length: features.length,
-    language: BOT_STATUS_JSON_LANGUAGE,
-  });
-  lines.push(features);
-  return { text: lines.join("\n"), entities };
+    atmosphere.NOTICE_TEXTS.statusPermissions,
+    "",
+  ].join("\n");
+  // undefined 只表示尚未确证（见 types/chatState.ts）：确认不是管理员时快照仍在，
+  // 只是全 false，那种情况照常出 JSON。
+  const permissions: BotChatPermissions | undefined = snapshot.chatState.botPermissions;
+  const text: string =
+    escapeMarkdownV2(lines.join("\n")) +
+    markdownV2InlineCode(String(snapshot.chatId)) +
+    escapeMarkdownV2(chatGroup) +
+    (permissions === undefined
+      ? escapeMarkdownV2(atmosphere.NOTICE_TEXTS.statusPermissionsUnknown)
+      : markdownV2Pre(permissionsJson(permissions), BOT_STATUS_JSON_LANGUAGE)) +
+    escapeMarkdownV2(`\n\n${atmosphere.NOTICE_TEXTS.statusFeatures}\n`) +
+    markdownV2Pre(featuresJson(snapshot.chatState), BOT_STATUS_JSON_LANGUAGE);
+  return { text };
 }
 
 /** 处理群内 `/bot_status`；命令正文与其它群命令一致在 30 秒后统一清理。 */
@@ -290,7 +268,7 @@ export async function handleBotStatusCommand(
   await sendCommandMessage({
     chatId: ctx.chat.id,
     text: message.text,
-    entities: message.entities,
+    parseMode: MARKDOWN_V2_PARSE_MODE,
     replyToMessageId: ctx.msgId,
   });
 }

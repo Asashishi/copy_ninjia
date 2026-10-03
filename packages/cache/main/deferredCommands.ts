@@ -1,7 +1,9 @@
+/** owner: main。 */
+
 import type { CommandExecutorRuntime } from "../../types/commandExecutor";
 
 /**
- * Owner: 主线程。延迟命令执行器（commands/deferredCommands.ts），承载 `/h_image` 的抽图与
+ * 延迟命令执行器（commands/deferredCommands.ts），承载 `/h_image` 的抽图与
  * 收图、`/info` 这些要等待目录、下载或上传的命令任务。
  *
  * 启动时由 initDeferredCommandRuntime 创建：最多 DEFERRED_COMMAND_MAX_CONCURRENT 个在途任务、

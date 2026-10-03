@@ -263,7 +263,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
   await sendTemporaryMessageFromMain({
     purpose: "notice",
     chatId: message.chatId,
-    text: formatFloodMuteNotice(message.label, workerAtmosphere(message.chatId)),
+    text: formatFloodMuteNotice(message.label, workerAtmosphere()),
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     signal: signalWithTimeout(dispatchAbort, FLOOD_NOTICE_DISPATCH_TIMEOUT_MS),
   });

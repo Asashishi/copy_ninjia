@@ -1,4 +1,4 @@
-/** owner：Disk I/O Worker（packages/workers/diskIOWorker.ts）。 */
+/** owner: workers/diskIO。主线程恢复重放与操作队列（packages/workers/diskIOWorker.ts）的进程内状态。 */
 
 /**
  * 当前是否正处在主线程恢复缓冲的重放区间内。
@@ -23,5 +23,5 @@ export const diskIOOperationTail: { current: Promise<void> } = {
   current: Promise.resolve(),
 };
 
-/** Owner: Disk I/O Worker。入队自增、结算递减，上限见 DISK_WORKER_MAX_QUEUED_OPERATIONS；isolate 重建从零开始。 */
+/** 入队自增、结算递减，上限见 DISK_WORKER_MAX_QUEUED_OPERATIONS；isolate 重建从零开始。 */
 export const diskIOOperationCount: { current: number } = { current: 0 };

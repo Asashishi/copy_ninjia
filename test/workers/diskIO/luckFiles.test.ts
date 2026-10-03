@@ -196,7 +196,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     rmSync(invalidPath);
     const futurePath: string = join(luckDir, "2026-07-17.json");
     await Bun.write(futurePath, "{}");
-    await expect(recoverLuckDay(DAY)).rejects.toThrow("a date no later than the current Tokyo day");
+    await expect(recoverLuckDay(DAY)).rejects.toThrow("a date no later than the current configured local day");
     expect(await Bun.file(futurePath).text()).toBe("{}");
   });
 

@@ -2,13 +2,13 @@ import {
   deleteMessageAfter,
   sendMessage,
 } from "./actions";
-import type { SendMessageParams } from "./actions";
+import type { SendMessageBaseParams, SendMessageFormat, SendMessageParams } from "./actions";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import type { TelegramApi } from "../../types/telegramWorker";
 import { updateTopicThreadIdFor } from "../updateContext";
 
 /**
- * 命令文本发送参数。群聊默认自动清理；`preserveInGroup` 只允许用于用户明确授权
+ * 命令文本除正文格式以外的发送参数。群聊默认自动清理；`preserveInGroup` 只允许用于用户明确授权
  * 长期保留的内容，当前是 `/permission help`、`/permission query` 的权限看板、
  * `/qa query` 的问答看板，以及成功的中文动作命令结果。
  * gag 开始提示属于会话状态，直接走 sendMessage，不进入此命令清理边界。
@@ -17,10 +17,13 @@ import { updateTopicThreadIdFor } from "../updateContext";
  * infra/updateContext.ts 的 updateTopicThreadIdFor）；不在 update 作用域内发送的
  * 调用方必须显式传入。
  */
-export interface SendCommandMessageParams extends Omit<SendMessageParams, "api"> {
+export interface SendCommandMessageBaseParams extends Omit<SendMessageBaseParams, "api"> {
   api?: Pick<TelegramApi, "sendMessage" | "deleteMessage" | "deleteMessages">;
   preserveInGroup?: boolean;
 }
+
+/** 命令文本发送参数；正文格式（entities 或 parseMode）原样透传给 sendMessage。 */
+export type SendCommandMessageParams = SendCommandMessageBaseParams & SendMessageFormat;
 
 /**
  * 发送命令相关文本。Telegram 群组、超级群和频道的 chat id 都是负数；在这些

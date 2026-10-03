@@ -6,9 +6,11 @@ import {
   RUNTIME_DATA_ROOT_ENV,
 } from "../../../packages/consts/environment";
 import {
-  CURRENT_STORAGE_METADATA_ROWS,
   seedStorageDatabase,
 } from "../../fixtures/storageDatabase";
+import { storageMetadataRows } from
+  "../../../packages/database/interact/initialization";
+import { DEFAULT_BOT_TIME_ZONE } from "../../../packages/consts/bot";
 import {
   closeStorageDatabase,
   enableStorageDatabaseWal,
@@ -99,6 +101,7 @@ export function removeMockRoot(root: string): void {
   rmSync(root, { recursive: true, force: true });
 }
 
+/** 建出主线程写透子进程的数据根；时区标记取默认时区，子进程接管同一时区后加载。 */
 export function createMainBenchmarkRoot(mockRoot: string): string {
   assertMockRoot(mockRoot);
   const temporaryRoot: string = mkdtempSync(
@@ -113,7 +116,7 @@ export function createMainBenchmarkRoot(mockRoot: string): string {
     const database: StorageDatabase = openStorageDatabase({ path });
     try {
       seedStorageDatabase(database, {
-        metadata: CURRENT_STORAGE_METADATA_ROWS,
+        metadata: storageMetadataRows(DEFAULT_BOT_TIME_ZONE),
         whitelist: [],
         blocklist: [],
         removals: [],

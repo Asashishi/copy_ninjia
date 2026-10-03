@@ -18,7 +18,7 @@ import type {
   ShutdownOutcome,
   ShutdownResults,
 } from "../types/lifecycle";
-import { signalArgs } from "../libs/telegramSignalArgs";
+import { telegramSignal } from "../libs/telegramSignal";
 import { lifecycleDependencies } from "./lifecycleDependencies";
 import type { ApplicationLifecycleDependencies } from "./lifecycleDependencies";
 import {
@@ -273,7 +273,7 @@ export class ApplicationLifecycle {
       try {
         await this.dependencies.bot.api.getUpdates(
           { offset: lastSeenUpdateId + 1, limit: 1, timeout: 0 },
-          ...signalArgs(AbortSignal.timeout(FINAL_OFFSET_CONFIRM_TIMEOUT_MS))
+          telegramSignal(AbortSignal.timeout(FINAL_OFFSET_CONFIRM_TIMEOUT_MS))
         );
       } catch (error: unknown) {
         this.finalOffsetGateSucceeded = false;

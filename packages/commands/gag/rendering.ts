@@ -30,7 +30,7 @@ export function gagSpeechPrefix(tool: string): string {
  * 放进 InlineQuery，任何追加值也无法证明实际输入群；群绑定必须留给隐藏 marker
  * 和落群后的 from.id/sender_chat.id、message.chat.id 校验。无前缀查询进入运势。
  */
-export function buildGagSpeakKeyboard(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId)): InlineKeyboard {
+export function buildGagSpeakKeyboard(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere()): InlineKeyboard {
   return new InlineKeyboard().switchInlineCurrent(
     atmosphere.GAG_INLINE_SPEAK_BUTTON_TEXT,
     `${GAG_INLINE_QUERY_PREFIX}${session.targetId} `
@@ -155,14 +155,14 @@ export function renderGagSpeech({
 }
 
 /** 群内公开状态文案；普通用户无按钮，频道入口直接附在这条消息上。 */
-export function renderGagPublicNotice(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId)): string {
+export function renderGagPublicNotice(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere()): string {
   return atmosphere.NOTICE_TEXTS.gagPublicNotice({ targetLabel: session.targetLabel, tool: session.tool, durationMinutes: session.durationMinutes, channelEntry: (session.targetId < 0
       ? atmosphere.NOTICE_TEXTS.gagChannelEntry
       : "") });
 }
 
 /** 发言入口随目标身份选择公开频道文案或仅用户可见的短提示。 */
-export function renderGagSpeakNotice(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId)): string {
+export function renderGagSpeakNotice(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere()): string {
   return session.targetId < 0
     ? renderGagPublicNotice(session, atmosphere)
     : atmosphere.NOTICE_TEXTS.gagSpeakNotice(session.targetLabel);

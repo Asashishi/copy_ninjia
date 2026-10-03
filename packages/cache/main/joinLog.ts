@@ -1,4 +1,4 @@
-/** Owner: 主线程。入群事实的未确认落盘镜像与投递序号。 */
+/** owner: main。入群事实的未确认落盘镜像与投递序号。 */
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { JoinLogDiskMessage } from "../../types/diskIO/messages";
 

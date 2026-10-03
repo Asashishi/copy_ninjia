@@ -1,6 +1,6 @@
-/** Owner: 主线程。/wed 的按钮会话与执行器。 */
+/** owner: main。/wed 的按钮会话、在途头像探测与执行器。 */
 import type { CommandExecutorRuntime } from "../../types/commandExecutor";
-import type { WedChat } from "../../types/wed";
+import type { WedAvatarProbe, WedChat } from "../../types/wed";
 
 /**
  * 已初始化群首次交互时填充，成员集合引用 wedMembers.ts 的 owner；每位发起人
@@ -10,6 +10,13 @@ import type { WedChat } from "../../types/wed";
  * Worker 崩溃不影响本表；进程重启清空交互，旧按钮提示重新 /wed。
  */
 export const wedChats: Map<number, WedChat> = new Map();
+
+/**
+ * 抽取时按用户 ID 填充，实际个人发言记下群 ID；查询结算时释放。
+ * 最多 WED_MAX_CONCURRENT 个在途探测，进程初始化清空；Worker 重建不影响主线程探测。
+ * 无条目表示当前没有该 ID 的头像查询。
+ */
+export const wedAvatarProbes: Map<number, Set<WedAvatarProbe>> = new Map();
 
 /**
  * 启动时创建 /wed 执行器，最多 WED_MAX_CONCURRENT 个在途交互和 WED_MAX_PENDING

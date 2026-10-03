@@ -1,6 +1,6 @@
 import type { AiTextResult } from "./../../types/aiChat/provider";
 import type { MediaInputEffect, MediaInputModalityState } from "../../types/states/mediaInputSupport";
-/** 媒体视觉描述请求在错误日志里的调用名；供应商中立，两家实现包共用。 */
+/** 媒体视觉描述请求在错误日志里的调用名；供应商中立，各家实现包共用。 */
 export const MEDIA_DESCRIPTION_ERROR_LABEL: string = "AI image understanding API";
 
 /** 供应商错误中属于单份媒体格式或内容的证据；错误分类器遇到这些词不形成模态结论。 */
@@ -39,7 +39,8 @@ export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
 export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
 /**
  * 内联媒体请求的整体字节预算：Gemini 官方规定内联数据的整个请求（提示词、system
- * 指令与 base64 字节合计）不超过 20 MB。两家实现共用同一份媒体字节，按更严的这家取。
+ * 指令与 base64 字节合计）不超过 20 MB，各家实现共用同一份媒体字节、按这一上限取。Anthropic 的单图
+ * 上限更低，超出的那一份由端点按单份媒体拒绝，不改变模态结论。
  * 所属模块：本文件与 consts/aiChat/voice.ts 的字节上限推导。
  */
 export const MEDIA_INLINE_REQUEST_MAX_BYTES: number = 20_000_000;

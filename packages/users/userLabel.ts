@@ -20,7 +20,7 @@ export function formatUserLabel(user: CachedUser, atmosphere: AtmosphereTexts): 
  * 命令回执里的发起人标签。解析不出发起人（匿名管理员、频道身份或缓存缺失）
  * 时退化为氛围文案里的「未知发起人」措辞，其余情况与 formatUserLabel 一致。
  * @param actor 已解析的发起人；未解析出来时传 undefined。
- * @param atmosphere 当前群的氛围文案。
+ * @param atmosphere 本进程的氛围文案。
  */
 export function formatActorLabel(actor: CachedUser | undefined, atmosphere: AtmosphereTexts): string {
   return actor === undefined ? atmosphere.NOTICE_TEXTS.unknownActor : formatUserLabel(actor, atmosphere);

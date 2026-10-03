@@ -59,7 +59,7 @@ async function capture(
 
 describe("grammY 丢弃值为 undefined 的出站字段", () => {
   test("JSON 路径：定形 payload 与省略写法产出同一请求体", async () => {
-    // 五个可选字段恒定出现，缺席用 undefined 表达。
+    // 六个可选字段恒定出现，缺席用 undefined 表达。
     const fixedShape: CapturedRequest = await capture((api: Api): Promise<unknown> =>
       api.raw.sendMessage({
         chat_id: -100_123,
@@ -68,6 +68,7 @@ describe("grammY 丢弃值为 undefined 的出站字段", () => {
         reply_parameters: undefined,
         reply_markup: undefined,
         entities: undefined,
+        parse_mode: undefined,
         link_preview_options: undefined,
       }));
     // 对照写法：这些键在对象字面量里整个不出现。
@@ -90,6 +91,7 @@ describe("grammY 丢弃值为 undefined 的出站字段", () => {
         reply_parameters: { message_id: 5, allow_sending_without_reply: true },
         reply_markup: undefined,
         entities: undefined,
+        parse_mode: "MarkdownV2",
         link_preview_options: { is_disabled: true },
       }));
 
@@ -98,6 +100,7 @@ describe("grammY 丢弃值为 undefined 的出站字段", () => {
       text: "喵",
       message_thread_id: 77,
       reply_parameters: { message_id: 5, allow_sending_without_reply: true },
+      parse_mode: "MarkdownV2",
       link_preview_options: { is_disabled: true },
     });
   });

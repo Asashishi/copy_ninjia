@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { describe, expect, test } from "bun:test";
 import {
   diskIOMessageCost,
@@ -102,7 +103,7 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
   },
   chatStateWrite: {
     // data 为 null 的墓碑写：载荷按 0 计，只留 base。
-    message: { aiPersona: null, type: "chatStateWrite", chatId: -1001, data: null, revision: 4 },
+    message: { type: "chatStateWrite", chatId: -1001, data: null, revision: 4 },
     payloadBytes: 0,
     business: true,
   },
@@ -148,8 +149,8 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     business: false,
   },
   load: {
-    message: { type: "load", stickerPacks: ["one", "two"] },
-    payloadBytes: ("one".length + "two".length) * 2,
+    message: { type: "load", timeZone: getTimeZone(), stickerPacks: ["one", "two"] },
+    payloadBytes: (getTimeZone().length + "one".length + "two".length) * 2,
     business: false,
   },
   ensureLuckSecret: {
@@ -249,9 +250,9 @@ describe("Disk I/O 消息计价", () => {
     expect(diskIOMessageCost(CASES.recoveryReplay.message)).toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES);
   });
 
-  test("stickerPacks 缺省的 load 不计载荷", () => {
-    expect(diskIOMessageCost({ type: "load", stickerPacks: null }))
-      .toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES);
+  test("stickerPacks 缺省的 load 仍计入时区载荷", () => {
+    expect(diskIOMessageCost({ type: "load", timeZone: getTimeZone(), stickerPacks: null }))
+      .toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES + getTimeZone().length * 2);
   });
 
   test("只有业务事实进恢复 FIFO，诊断、读取与生命周期都不进", () => {

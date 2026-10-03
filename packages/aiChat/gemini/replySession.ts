@@ -201,6 +201,7 @@ export function createGeminiReplySession(
       // 预算等于让后续轮次继续白送额度。
       const response: GenerateContentResponse | undefined = result.response;
       const webSearchCalls: number = response === undefined ? 0 : countGoogleSearchCalls(response);
+
       // 成功与失败两条分支按同一顺序初始化同一组字段：这个对象会流进
       // 回复循环里同一批读取点，shape 分叉会把那些访问点变成多态的
       // （见 AGENTS.md 的「性能、内存与 Bun/JSC JIT」一节）。

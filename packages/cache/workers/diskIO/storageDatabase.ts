@@ -1,4 +1,4 @@
-/** Owner: Disk I/O Worker。独占的 SQLite 连接与业务表写缓冲。 */
+/** owner: workers/diskIO。独占的 SQLite 连接与业务表写缓冲。 */
 
 import { closeStorageDatabase } from "../../../database/interact/connection";
 import { StorageWriteBudget } from "../../../libs/storageWriteBudget";
@@ -19,19 +19,18 @@ import type {
 import type { PendingTemporaryAdBypassWrite } from
   "../../../types/temporaryAdBypass";
 
-/** Owner: Disk I/O Worker。六表共同的条目与字节预算；写前预约、事务成功清空，重建由主线程重放。 */
+/** 六表共同的条目与字节预算；写前预约、事务成功清空，重建由主线程重放。 */
 export const storagePendingBudget: StorageWriteBudget = new StorageWriteBudget();
 
-/** Owner: Disk I/O Worker。连续失败与重试截止；成功或重建复位，达到失败上限通知宿主一次。 */
+/** 连续失败与重试截止；成功或重建复位，达到失败上限通知宿主一次。 */
 export const storageWriteRetry: { failures: number; retryAt: number; signaled: boolean } = {
   failures: 0, retryAt: 0, signaled: false,
 };
 
-/** Owner: Disk I/O Worker。启动安装的容量/持续失败通知；容量一项，isolate 销毁后重新安装。 */
+/** 启动安装的容量/持续失败通知；容量一项，isolate 销毁后重新安装。 */
 export const storageWriteFatalReply: { current: (() => void) | null } = { current: null };
 
 /**
- * Owner: Disk I/O Worker。
  *
  * 每条连接三条预编译的主键存在性语句（永久白/黑名单与临时广告免检各一），首次由
  * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调用
@@ -49,7 +48,6 @@ export const storedIdentityIdLookups: WeakMap<
 > = new WeakMap<StorageDatabase, StoredIdentityIdLookups>();
 
 /**
- * Owner: Disk I/O Worker。
  *
  * 每条连接一整套统一事务提交用的预编译写语句，首次提交时由
  * workers/diskIO/storageDatabase/flush.ts 建好放进来，同一连接的每次提交复用。容量、清理与

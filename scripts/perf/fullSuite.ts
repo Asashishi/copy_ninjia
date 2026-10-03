@@ -15,7 +15,7 @@
  * 用法：
  *   bun run perf:full                  跑完把 JSON 报告打到 stdout
  *   bun run perf:full -- --markdown    再附带打印简体中文 Markdown 区块
- *   bun run perf:full -- --write-doc     跑完把三语区块写回 docs/<lang>/09-performance.md，
+ *   bun run perf:full -- --write-doc     跑完把三语区块写回 docs/<lang>/10-performance.md，
  *                                        并把结构化报告记进仓库根 performance-result.json
  */
 

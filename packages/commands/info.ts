@@ -22,7 +22,7 @@ import { bot } from "../infra/telegram/mainClient";
 import { currentUpdateAbortSignal } from "../infra/updateContext";
 import { isTimeoutAbort, signalWithTimeout } from "../libs/abortSignal";
 import { forumTopicThreadId } from "../libs/forumTopic";
-import { signalArgs } from "../libs/telegramSignalArgs";
+import { telegramSignal } from "../libs/telegramSignal";
 import { joinPersonName, sanitizeDisplayName } from "../libs/text";
 import type { AtmosphereTexts } from "../types/atmosphere";
 import type { CachedUser } from "../types/chatState";
@@ -71,7 +71,7 @@ async function lookUp(request: InfoRequest, signal: AbortSignal): Promise<InfoLo
   }
   const chat: ChatFullInfo | undefined = await runTelegramAction({
     action: `read chat ${target.id} for /info`,
-    execute: (requestSignal?: AbortSignal): Promise<ChatFullInfo> => bot.api.getChat(target.id, ...signalArgs(requestSignal)),
+    execute: (requestSignal?: AbortSignal): Promise<ChatFullInfo> => bot.api.getChat(target.id, telegramSignal(requestSignal)),
     map: (value: ChatFullInfo): ChatFullInfo => value,
     fallback: undefined,
     signal,
@@ -95,7 +95,7 @@ function buildInfoMessage(profile: InfoProfile, texts: AtmosphereTexts["INFO_TEX
 
 /** 出队后查资料与头像并回执。 */
 async function deliverInfo(request: InfoRequest): Promise<void> {
-  const texts: AtmosphereTexts["INFO_TEXTS"] = chatAtmosphere(request.chatId).INFO_TEXTS;
+  const texts: AtmosphereTexts["INFO_TEXTS"] = chatAtmosphere().INFO_TEXTS;
   const signal: AbortSignal = signalWithTimeout(currentUpdateAbortSignal(), INFO_TASK_BUDGET_MS);
   const lookup: InfoLookup | undefined = await lookUp(request, signal);
   if (signal.aborted && !isTimeoutAbort(signal)) return;
@@ -134,7 +134,7 @@ async function deliverInfo(request: InfoRequest): Promise<void> {
 export async function handleInfoCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const target: CachedUser | undefined = await resolveCommandTarget({
     chatId,
     message: ctx.msg,

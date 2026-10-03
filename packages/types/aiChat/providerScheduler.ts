@@ -3,8 +3,10 @@ import type {
   AiImageProvider,
   AiMediaProvider,
   AiSpeechFacade,
+  AiStructuredTextProvider,
   AiSummaryProvider,
   AiTextProvider,
+  AiWebSearchFacade,
 } from "./provider";
 import type { AgentProvider } from "../config";
 
@@ -29,4 +31,10 @@ export interface AiProviderFacadeCache {
   image: AiImageProvider | null | undefined;
   /** undefined 表示尚未解析，null 表示部署未配置该能力。 */
   tts: AiSpeechFacade | null | undefined;
+  /** undefined 表示尚未解析，null 表示部署未配置该能力。 */
+  webSearch: AiWebSearchFacade | null | undefined;
+  /** 用 text 模型执行的联网检索（cron 摘要在没配 web_search 时用）。 */
+  textWebSearch: AiWebSearchFacade | undefined;
+  /** text 能力的结构化 JSON 生成（cron 摘要组稿）。 */
+  structuredText: AiStructuredTextProvider | undefined;
 }

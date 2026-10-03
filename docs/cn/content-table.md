@@ -20,19 +20,72 @@
 
 ## 🧭 开发者快速导航
 
-| 目标场景 | 推荐路径 | 直达链接 |
-| :--- | :--- | :---: |
-| 🚀 **首次运行** | 依赖安装、部署配置、Telegram API 权限及首次启动 | [📖 01 环境搭建](01-getting-started.md) |
-| 🏗️ **理解架构** | 主线程与 3 个 Worker 协作模型、消息生命周期及持久化恢复 | [📖 02 架构总览](02-architecture.md) |
-| 🗺️ **查找代码** | 模块职责分工、源码目录映射及新代码放置约定 | [📖 03 目录导览](03-directory-map.md) |
-| ⚡ **遵守不变量** | 跨模块权威约束、并发防护与全局状态机规则 | [📖 04 权威约束](04-invariants.md) |
-| 🧪 **开发与测试** | `bun run check` 质量门禁、测试隔离机制与覆盖率口径 | [📖 05 开发流程](05-dev-workflow.md) |
-| 🛠️ **新增/修改功能** | 添加命令、调参、新增 AI 工具及 schema 变更的分步指南 | [📖 06 修改配方](06-modification-guide.md) |
-| 🛡️ **生产运维** | systemd 部署、硬件参考、`COPY_NINJIA_DATA_ROOT`、备份与故障排查 | [📖 07 运维手册](07-operations.md) |
-| 🎮 **查命令** | 全部命令、权限口径与行为细节（根 README 只留概述） | [📖 08 命令参考](08-commands.md) |
-| 🖼️ **图库与定时任务** | 收图、内容去重、单图与相册发送、定时语音、时区与路径基准 | [📖 配置说明](../../config_example/README/zh.md) |
-| 📊 **看性能读数** | 冷热路径、总吞吐与总读写、端到端链路耗时的发布基准 | [📖 09 性能基准](09-performance.md) |
-| ❓ **排查没有回复** | 机器人在运行却不回应时的逐条排查清单 | [📖 10 常见问题](10-faq.md) |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="24%" align="left">目标场景</th>
+    <th width="44%" align="left">推荐路径</th>
+    <th width="32%" align="center">直达链接</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>🚀 <b>首次运行</b></nobr></td>
+    <td>依赖安装、部署配置、Telegram API 权限及首次启动</td>
+    <td align="center"><nobr><a href="01-getting-started.md">📖 01 环境搭建</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🏗️ <b>理解架构</b></nobr></td>
+    <td>主线程与 3 个 Worker 协作模型、消息生命周期及持久化恢复</td>
+    <td align="center"><nobr><a href="02-architecture.md">📖 02 架构总览</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🗺️ <b>查找代码</b></nobr></td>
+    <td>模块职责分工、源码目录映射及新代码放置约定</td>
+    <td align="center"><nobr><a href="03-directory-map.md">📖 03 目录导览</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>⚡ <b>遵守不变量</b></nobr></td>
+    <td>跨模块权威约束、并发防护与全局状态机规则</td>
+    <td align="center"><nobr><a href="04-invariants.md">📖 04 权威约束</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🧪 <b>开发与测试</b></nobr></td>
+    <td><code>bun run check</code> 质量门禁、测试隔离机制与覆盖率口径</td>
+    <td align="center"><nobr><a href="05-dev-workflow.md">📖 05 开发流程</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛠️ <b>新增/修改功能</b></nobr></td>
+    <td>添加命令、调参、新增 AI 工具及 schema 变更的分步指南</td>
+    <td align="center"><nobr><a href="06-modification-guide.md">📖 06 修改配方</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛡️ <b>生产运维</b></nobr></td>
+    <td>systemd 部署、硬件参考、<code>COPY_NINJIA_DATA_ROOT</code>、备份与故障排查</td>
+    <td align="center"><nobr><a href="07-operations.md">📖 07 运维手册</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🖼️ <b>图库与定时任务</b></nobr></td>
+    <td>收图、内容去重、单图与相册发送、定时语音、时区与路径基准</td>
+    <td align="center"><nobr><a href="08-images-and-cron.md">📖 08 图库与定时任务</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🎮 <b>查命令</b></nobr></td>
+    <td>全部命令、权限口径与行为细节（根 README 只留概述）</td>
+    <td align="center"><nobr><a href="09-commands.md">📖 09 命令参考</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>📊 <b>看性能读数</b></nobr></td>
+    <td>冷热路径、总吞吐与总读写、端到端链路耗时的发布基准</td>
+    <td align="center"><nobr><a href="10-performance.md">📖 10 性能基准</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>❓ <b>排查没有回复</b></nobr></td>
+    <td>机器人在运行却不回应时的逐条排查清单</td>
+    <td align="center"><nobr><a href="11-faq.md">📖 11 常见问题</a></nobr></td>
+  </tr>
+</tbody>
+</table>
 
 ---
 
@@ -78,17 +131,22 @@
    - 备份与恢复（`memory/luck/receipt-secret.json` 密钥一致性）
    - 常见启动失败与 `bot.lock` 单实例锁故障排查
 
-8. **[08 命令与行为参考](08-commands.md)**
+8. **[08 图库与定时任务](08-images-and-cron.md)**
+   - 专用图库准备、图片收录与内容去重
+   - 定时单图、相册、随机图与语音的配置
+   - 时区、目标群与相对路径基准
+
+9. **[09 命令与行为参考](09-commands.md)**
    - 复读模式与目标指定方式
    - 全部命令的权限口径（权限键 / 超级管理员 / 群成员）
    - `/gag`、`/block`、`/batch_kick`、广告检测、入群验证等的行为细节
 
-9. **[09 性能基准](09-performance.md)**
-   - `bun run perf:full` 六个分区的口径：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线
-   - 每项三轮取平均，附最小值、最大值与变异系数
-   - 每轮的总吞吐、总读写与 mock 数据根落盘量
+10. **[10 性能基准](10-performance.md)**
+    - `bun run perf:full` 六个分区的口径：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、入群日志容量线
+    - 每项三轮取平均，附最小值、最大值与变异系数
+    - 每轮的总吞吐、总读写与 mock 数据根落盘量
 
-10. **[10 常见问题](10-faq.md)**
+11. **[11 常见问题](11-faq.md)**
     - 机器人在运行却没有回复：初始化、隐私模式、AI 触发条件、私聊、提示自动删除、Inline Mode、Bot-to-Bot、默认关闭的防护功能与进程状态
 
 ---

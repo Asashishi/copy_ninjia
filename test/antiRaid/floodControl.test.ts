@@ -11,6 +11,7 @@ import { temporaryAdBypassActivityCache } from
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
 import { TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD, TEMPORARY_AD_BYPASS_REQUIRED_DAYS } from "../../packages/consts/temporaryAdBypass";
 import { chatStateOf } from "../helpers/chatState";
 
@@ -83,12 +84,17 @@ describe("刷屏计数的主线程投递门禁", () => {
     expect(named?.label).toBe("@noisy");
   });
 
-  test("无名发送者的标签兜底随本群人设切换文案风格", () => {
+  test("无名发送者的标签兜底随本进程文案风格切换", () => {
     const nameless: Message = groupMessage({ from: { id: 7, is_bot: false, first_name: "" } } as Partial<Message>);
     expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true }))?.label)
       .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
-    expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true, aiPersona: "温柔的助手" }))?.label)
-      .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
+    botAtmosphereState.current = "plain";
+    try {
+      expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true }))?.label)
+        .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
+    } finally {
+      botAtmosphereState.current = "teasing";
+    }
   });
 
   test("只认超级群：restrictChatMember 在普通群和私聊里根本不适用", () => {

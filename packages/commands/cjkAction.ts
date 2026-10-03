@@ -108,7 +108,7 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
   if (chatId === undefined) return;
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(chatId).NOTICE_TEXTS.actionUsage,
+    text: chatAtmosphere().NOTICE_TEXTS.actionUsage,
     replyToMessageId: ctx.msg?.message_id,
   });
 }
@@ -174,19 +174,19 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
     botUserId: ctx.me.id,
     rawArgument: command.rawArgument,
     messages: {
-      missingTarget: chatAtmosphere(chatId).NOTICE_TEXTS.actionMissingTarget(actionWord, actionWord),
+      missingTarget: chatAtmosphere().NOTICE_TEXTS.actionMissingTarget(actionWord, actionWord),
       invalidUsername: (rawArgument: string): string =>
-        chatAtmosphere(chatId).NOTICE_TEXTS.actionInvalidTarget(rawArgument, actionWord),
+        chatAtmosphere().NOTICE_TEXTS.actionInvalidTarget(rawArgument, actionWord),
       unknownUsername: (rawUsername: string): string =>
-        chatAtmosphere(chatId).NOTICE_TEXTS.actionUnknownTarget(rawUsername, actionWord),
+        chatAtmosphere().NOTICE_TEXTS.actionUnknownTarget(rawUsername, actionWord),
       conflictingTarget: (rawArgument: string): string =>
-        chatAtmosphere(chatId).NOTICE_TEXTS.actionConflictingTarget(rawArgument, actionWord),
-      selfTarget: chatAtmosphere(chatId).NOTICE_TEXTS.actionSelfTarget(actionWord),
+        chatAtmosphere().NOTICE_TEXTS.actionConflictingTarget(rawArgument, actionWord),
+      selfTarget: chatAtmosphere().NOTICE_TEXTS.actionSelfTarget(actionWord),
     },
   });
   if (!target) return;
 
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const { text, entities }: ActionMessage = buildActionMessage([
     { text: formatFullName(actor, atmosphere), url: formatProfileUrl(actor) },
     { text: ` ${actionWord}了 `, url: undefined },

@@ -13,7 +13,7 @@ import {
   resetWorkerDuplex,
   setWorkerDuplexRequestSignal,
 } from "../../../packages/libs/workerDuplex";
-import { applyWorkerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
+import { atmosphereState } from "../../../packages/cache/workers/antiRaid/atmosphere";
 import type { PendingMessageDeletion } from "../../../packages/types/telegram";
 import type { TelegramApi, TelegramWorkerRequest } from "../../../packages/types/telegramWorker";
 import type { VerificationEffect } from "../../../packages/types/states/verification";
@@ -81,11 +81,12 @@ beforeEach((): void => {
   outbound.length = 0;
   telegramRequest.mockReset().mockImplementation(answerTelegram);
   logError.mockReset().mockImplementation((..._args: unknown[]): void => {});
-  applyWorkerAtmosphere(-1001, true);
+  atmosphereState.current = "plain";
   startTransport();
 });
 
 afterEach((): void => {
+  atmosphereState.current = null;
   resetWorkerDuplex("test cleanup");
   resetPendingMessageDeletions();
 });

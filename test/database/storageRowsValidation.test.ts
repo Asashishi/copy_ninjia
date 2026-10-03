@@ -1,9 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { IDENTITY_DATABASE_SCHEMA_KEY, IDENTITY_DATABASE_SCHEMA_VERSION } from
-  "../../packages/consts/identityStorage";
+import {
+  IDENTITY_DATABASE_METADATA_KEYS,
+  IDENTITY_DATABASE_SCHEMA_KEY,
+  IDENTITY_DATABASE_SCHEMA_VERSION,
+  IDENTITY_DATABASE_TIME_ZONE_KEY,
+} from "../../packages/consts/identityStorage";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { encodeChatStateData } from "../../packages/database/codec/chatState";
+import { storageMetadataRows } from "../../packages/database/interact/initialization";
 import {
+  assertStorageTimeZone,
   decodeStoredChatStates,
   readStorageSchemaVersion,
 } from "../../packages/database/validation/storageRows";
@@ -26,6 +32,10 @@ import { chatStateOf } from "../helpers/chatState";
 
 const SOURCE: string = "database/storage.sqlite";
 const CHAT_ID: number = -1_001;
+/** 夹具自选的配置时区；assertStorageTimeZone 由参数接收它，不读部署配置。 */
+const CONFIGURED_TIME_ZONE: string = "Asia/Tokyo";
+/** 与 CONFIGURED_TIME_ZONE 不同的另一个合法时区。 */
+const OTHER_TIME_ZONE: string = "America/New_York";
 
 function metadataRows(data: string): { readonly metadata: readonly StoredStorageMetadataRow[] } {
   const metadata: readonly StoredStorageMetadataRow[] = [
@@ -35,7 +45,7 @@ function metadataRows(data: string): { readonly metadata: readonly StoredStorage
 }
 
 function chatStateRow(chatId: number, state: Readonly<ChatState>): StoredChatStateRow {
-  return { aiPersona: null, chatId, data: encodeChatStateData(state) };
+  return { chatId, data: encodeChatStateData(state) };
 }
 
 describe("schema 版本行", () => {
@@ -46,7 +56,7 @@ describe("schema 版本行", () => {
     )).toBe(IDENTITY_DATABASE_SCHEMA_VERSION);
   });
 
-  test("元数据不是恰好一行时拒绝", () => {
+  test("schema-version 行缺失或重复时拒绝", () => {
     expect(() => readStorageSchemaVersion({ metadata: [] }, SOURCE))
       .toThrow(/exactly one schema-version row/);
     expect(() => readStorageSchemaVersion({
@@ -55,6 +65,13 @@ describe("schema 版本行", () => {
         { key: IDENTITY_DATABASE_SCHEMA_KEY, data: JSON.stringify({ version: 5 }) },
       ],
     }, SOURCE)).toThrow(/exactly one schema-version row/);
+  });
+
+  test("当前格式的时区标记行不影响版本读取", () => {
+    expect(readStorageSchemaVersion(
+      { metadata: storageMetadataRows(CONFIGURED_TIME_ZONE) },
+      SOURCE
+    )).toBe(IDENTITY_DATABASE_SCHEMA_VERSION);
   });
 
   test("键名不对时拒绝，不去猜它想表达哪一行", () => {
@@ -85,6 +102,86 @@ describe("schema 版本行", () => {
     let message: string = "";
     try {
       readStorageSchemaVersion(metadataRows(JSON.stringify({ version: secret })), SOURCE);
+    } catch (error: unknown) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain(SOURCE);
+    expect(message).not.toContain(secret);
+  });
+});
+
+/** schema 版本行加上一行自定正文的 time-zone 行。 */
+function timeZoneRows(data: string): { readonly metadata: readonly StoredStorageMetadataRow[] } {
+  return {
+    metadata: [
+      { key: IDENTITY_DATABASE_SCHEMA_KEY, data: JSON.stringify({ version: IDENTITY_DATABASE_SCHEMA_VERSION }) },
+      { key: IDENTITY_DATABASE_TIME_ZONE_KEY, data },
+    ],
+  };
+}
+
+describe("数据根时区标记", () => {
+  test("恰为两行且标记等于配置时区时通过", () => {
+    expect(() => assertStorageTimeZone(
+      { metadata: storageMetadataRows(CONFIGURED_TIME_ZONE) },
+      SOURCE,
+      CONFIGURED_TIME_ZONE
+    )).not.toThrow();
+  });
+
+  test("缺时区行或时区行重复时拒绝", () => {
+    const [schema] = storageMetadataRows(CONFIGURED_TIME_ZONE);
+    expect(() => assertStorageTimeZone({ metadata: [schema!] }, SOURCE, CONFIGURED_TIME_ZONE))
+      .toThrow(`${SOURCE}: storage_metadata must contain exactly one ${IDENTITY_DATABASE_TIME_ZONE_KEY} row.`);
+    const rows: readonly StoredStorageMetadataRow[] = storageMetadataRows(CONFIGURED_TIME_ZONE);
+    expect(() => assertStorageTimeZone({ metadata: [...rows, rows[1]!] }, SOURCE, CONFIGURED_TIME_ZONE))
+      .toThrow(`${SOURCE}: storage_metadata must contain exactly one ${IDENTITY_DATABASE_TIME_ZONE_KEY} row.`);
+  });
+
+  test("多余的 metadata 键拒绝", () => {
+    expect(() => assertStorageTimeZone({
+      metadata: [...storageMetadataRows(CONFIGURED_TIME_ZONE), { key: "extra", data: "{}" }],
+    }, SOURCE, CONFIGURED_TIME_ZONE)).toThrow(
+      `${SOURCE}: storage_metadata must contain only the ${IDENTITY_DATABASE_METADATA_KEYS.join(" and ")} rows.`
+    );
+  });
+
+  test.each([
+    ["非对象", JSON.stringify(CONFIGURED_TIME_ZONE)],
+    ["缺键", JSON.stringify({})],
+    ["多余键", JSON.stringify({ timeZone: CONFIGURED_TIME_ZONE, extra: 1 })],
+    ["非字符串", JSON.stringify({ timeZone: 9 })],
+    ["未知时区", JSON.stringify({ timeZone: "Mars/Olympus" })],
+    ["大小写非规范", JSON.stringify({ timeZone: CONFIGURED_TIME_ZONE.toLowerCase() })],
+    ["带首尾空白", JSON.stringify({ timeZone: ` ${CONFIGURED_TIME_ZONE}` })],
+  ])("标记值%s时按非法值拒绝", (_kind: string, data: string) => {
+    expect(() => assertStorageTimeZone(timeZoneRows(data), SOURCE, CONFIGURED_TIME_ZONE))
+      .toThrow(`${SOURCE}:storage_metadata[${IDENTITY_DATABASE_TIME_ZONE_KEY}].data: $.timeZone must be`);
+  });
+
+  test("不等于配置时区时拒绝，报错写明字段路径与期望形态", () => {
+    expect(() => assertStorageTimeZone(
+      { metadata: storageMetadataRows(OTHER_TIME_ZONE) },
+      SOURCE,
+      CONFIGURED_TIME_ZONE
+    )).toThrow(
+      `${SOURCE}: storage_metadata.${IDENTITY_DATABASE_TIME_ZONE_KEY} must be ${JSON.stringify({ timeZone: CONFIGURED_TIME_ZONE })}.`
+    );
+  });
+
+  test("别名不折叠：Japan 与 Asia/Tokyo 按不同值拒绝", () => {
+    expect(() => assertStorageTimeZone(
+      { metadata: storageMetadataRows("Japan") },
+      SOURCE,
+      "Asia/Tokyo"
+    )).toThrow(`${SOURCE}: storage_metadata.${IDENTITY_DATABASE_TIME_ZONE_KEY} must be`);
+  });
+
+  test("拒绝文案不回显行内容", () => {
+    const secret: string = "s3cret-zone-value";
+    let message: string = "";
+    try {
+      assertStorageTimeZone(timeZoneRows(JSON.stringify({ timeZone: secret })), SOURCE, CONFIGURED_TIME_ZONE);
     } catch (error: unknown) {
       message = error instanceof Error ? error.message : String(error);
     }

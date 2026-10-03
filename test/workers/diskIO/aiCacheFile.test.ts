@@ -19,8 +19,8 @@ import {
   LOG_REOPEN_RETRY_MS,
 } from "../../../packages/consts/diskIO/appendOnly";
 import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
-import { TOKYO_UTC_OFFSET_MS } from "../../../packages/consts/time";
-import { formatTokyoLogTimestamp } from "../../../packages/libs/time";
+import { getTimeZone } from "../../../packages/config/time";
+import { formatLogTimestamp } from "../../../packages/libs/time";
 import {
   adoptAiCacheFile,
   flushAiCacheBuffer,
@@ -30,11 +30,11 @@ import {
   summarizeAiCache,
 } from "../../../packages/workers/diskIO/aiCacheFile";
 import type { AiCacheUsageDiskMessage } from "../../../packages/types/diskIO/messages";
-import type { AiTokenUsage } from "../../../packages/types/aiCache";
+import type { AiCacheSummary, AiTokenUsage } from "../../../packages/types/aiCache";
 
-/** 东京某日中午的时间戳；只用于把记录归到指定东京日期。 */
+/** 东京某日中午的时间戳；只用于把记录归到指定配置时区的日期。 */
 function tokyoNoon(day: string): number {
-  return Date.parse(`${day}T12:00:00Z`) - TOKYO_UTC_OFFSET_MS;
+  return Temporal.PlainDateTime.from(`${day}T12:00:00`).toZonedDateTime(getTimeZone()).epochMilliseconds;
 }
 
 /** 按生产常量的小数位数算出期望命中率；分母为 0 时为 null。 */
@@ -44,7 +44,7 @@ function expectedHitRate(cachedInputTokens: number, reportedInputTokens: number)
   return Math.round(cachedInputTokens / reportedInputTokens * scale) / scale;
 }
 
-/** 记录键里的东京日期（第 1 组捕获）；不是记录键时为 undefined。 */
+/** 记录键里的配置时区的日期（第 1 组捕获）；不是记录键时为 undefined。 */
 function rowKeyDay(key: string): string | undefined {
   return AI_CACHE_ROW_KEY_PATTERN.exec(key)?.[1];
 }
@@ -80,6 +80,19 @@ function costUsage(day: string, costInUsdTicks: number): AiCacheUsageDiskMessage
   };
 }
 
+/** 一条没有有效 token 用量的联网检索次数记录。 */
+function searchUsage(day: string, searchCalls: number): AiCacheUsageDiskMessage {
+  return {
+    type: "aiCacheUsage",
+    kind: "search",
+    timestamp: tokyoNoon(day),
+    capability: "web_search",
+    provider: "google",
+    model: "gemini-search",
+    searchCalls,
+  };
+}
+
 async function readDocument(): Promise<Record<string, unknown>> {
   return await Bun.file(AI_CACHE_FILE_PATH).json() as Record<string, unknown>;
 }
@@ -99,7 +112,7 @@ afterEach(() => {
 });
 
 describe("diskIO/aiCacheFile 缓冲与追加", () => {
-  test("记录先进内存缓冲，flush 后追加成合法 JSON，键带东京时间", async () => {
+  test("记录先进内存缓冲，flush 后追加成合法 JSON，键带配置时区的时间", async () => {
     await initAiCache();
     await handleAiCacheUsageMessage(usage("2026-09-26"));
     await handleAiCacheUsageMessage(usage("2026-09-26", { cachedInputTokens: null, provider: "google", model: "gemini" }));
@@ -111,7 +124,7 @@ describe("diskIO/aiCacheFile 缓冲与追加", () => {
     const keys: string[] = Object.keys(document);
     expect(keys).toHaveLength(2);
     expect(keys[0]).toMatch(AI_CACHE_ROW_KEY_PATTERN);
-    expect(keys[0]!.startsWith(`${formatTokyoLogTimestamp(tokyoNoon("2026-09-26"))}_`)).toBeTrue();
+    expect(keys[0]!.startsWith(`${formatLogTimestamp(tokyoNoon("2026-09-26"))}_`)).toBeTrue();
     expect(Object.values(document)).toEqual([
       { capability: "text", provider: "openai", model: "deepseek-flash", inputTokens: 1_000, cachedInputTokens: 800, outputTokens: 50 },
       { capability: "text", provider: "google", model: "gemini", inputTokens: 1_000, cachedInputTokens: null, outputTokens: 50 },
@@ -275,6 +288,50 @@ describe("diskIO/aiCacheFile 每日汇总", () => {
     expect((await readDocument())[AI_CACHE_SUMMARY_KEY]).toMatchObject({ requests: 4, costInUsdTicks: 500_000_001 });
   });
 
+  test("token 与检索次数同条落盘并恢复，汇总只计一次请求；缺 token 的检索只累加次数", async () => {
+    await initAiCache();
+    await handleAiCacheUsageMessage(usage("2026-09-25", { capability: "web_search", provider: "google", model: "gemini-search", searchCalls: 2 }));
+    await handleAiCacheUsageMessage(usage("2026-09-25"));
+    expect(await flushAiCacheBuffer()).toBeTrue();
+    expect(Object.values(await readDocument())[0]).toEqual(
+      { capability: "web_search", provider: "google", model: "gemini-search", inputTokens: 1_000, cachedInputTokens: 800, outputTokens: 50, searchCalls: 2 }
+    );
+    resetAiCacheState();
+    await initAiCache();
+    await summarizeAiCache("2026-09-26");
+    const summary: Record<string, unknown> = (await readDocument())[AI_CACHE_SUMMARY_KEY] as Record<string, unknown>;
+    expect(summary).toMatchObject({ requests: 2, inputTokens: 2_000, cachedInputTokens: 1_600, outputTokens: 100, searchCalls: 2 });
+    expect(summary).not.toHaveProperty("costInUsdTicks");
+    const byModel: Record<string, Record<string, unknown>> = summary.byModel as Record<string, Record<string, unknown>>;
+    expect(byModel["web_search/google/gemini-search"]).toMatchObject({ requests: 1, searchCalls: 2 });
+    expect(byModel["text/openai/deepseek-flash"]).not.toHaveProperty("searchCalls");
+
+    // 同日的新响应与已有汇总合并；缺少缓存口径的输入不增加命中率分母。
+    resetAiCacheState();
+    await initAiCache();
+    await handleAiCacheUsageMessage(usage("2026-09-25", {
+      capability: "web_search", provider: "google", model: "gemini-search",
+      inputTokens: 400, cachedInputTokens: null, outputTokens: 10, searchCalls: 4,
+    }));
+    await handleAiCacheUsageMessage(searchUsage("2026-09-25", 1));
+    await summarizeAiCache("2026-09-26");
+    const merged: AiCacheSummary | null = (await inspectAiCacheFile()).document.summary;
+    expect(merged).toMatchObject({
+      requests: 3, inputTokens: 2_400, reportedInputTokens: 2_000, cachedInputTokens: 1_600,
+      outputTokens: 110, searchCalls: 7, cacheHitRate: expectedHitRate(1_600, 2_000),
+      byModel: {
+        "web_search/google/gemini-search": {
+          requests: 2, inputTokens: 1_400, reportedInputTokens: 1_000, cachedInputTokens: 800,
+          outputTokens: 60, searchCalls: 7, cacheHitRate: expectedHitRate(800, 1_000),
+        },
+      },
+    });
+    await summarizeAiCache("2026-09-26");
+    resetAiCacheState();
+    await initAiCache();
+    expect((await inspectAiCacheFile()).document.summary).toEqual(merged);
+  });
+
   test("费用为 0 的请求仍算有过费用请求，汇总照写费用键", async () => {
     await initAiCache();
     await handleAiCacheUsageMessage(costUsage("2026-09-25", 0));
@@ -283,6 +340,30 @@ describe("diskIO/aiCacheFile 每日汇总", () => {
     expect(summary).toMatchObject({ requests: 1, costInUsdTicks: 0 });
     expect((summary.byModel as Record<string, unknown>)["image/openai/grok-image"]).toMatchObject({ costInUsdTicks: 0 });
   });
+
+  test.each(["inputTokens", "outputTokens", "costInUsdTicks", "searchCalls"] as const)(
+    "汇总 %s 溢出时保留逐条记录和追加游标，不发布非法汇总",
+    async (field: "inputTokens" | "outputTokens" | "costInUsdTicks" | "searchCalls") => {
+      await initAiCache();
+      const first: AiCacheUsageDiskMessage = field === "costInUsdTicks"
+        ? costUsage("2026-09-25", Number.MAX_SAFE_INTEGER)
+        : field === "searchCalls" ? searchUsage("2026-09-25", Number.MAX_SAFE_INTEGER)
+          : usage("2026-09-25", { [field]: Number.MAX_SAFE_INTEGER, cachedInputTokens: null });
+      const second: AiCacheUsageDiskMessage = { ...first, model: "another-model" };
+      await handleAiCacheUsageMessage(first);
+      await handleAiCacheUsageMessage(second);
+      expect(await flushAiCacheBuffer()).toBeTrue();
+      const content: string = await Bun.file(AI_CACHE_FILE_PATH).text();
+      const size: number | undefined = aiCacheFileState.current?.size;
+      await expect(summarizeAiCache("2026-09-26")).rejects.toThrow(`contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`);
+      expect(await Bun.file(AI_CACHE_FILE_PATH).text()).toBe(content);
+      expect(aiCacheFileState.current?.size).toBe(size);
+      expect((await inspectAiCacheFile()).document.rows.size).toBe(2);
+      await handleAiCacheUsageMessage(usage("2026-09-26"));
+      expect(await flushAiCacheBuffer()).toBeTrue();
+      expect((await inspectAiCacheFile()).document.rows.size).toBe(3);
+    }
+  );
 
   test("汇总只保留最近一天：更早的记录与旧汇总被替换，同日汇总相加", async () => {
     await initAiCache();
@@ -333,21 +414,59 @@ describe("diskIO/aiCacheFile 每日汇总", () => {
 });
 
 /** 严格解码用例共用的合法夹具；各用例只改其中一处。 */
-const ROW_KEY: string = `${formatTokyoLogTimestamp(tokyoNoon("2026-09-26"))}_00000000-0000-4000-8000-000000000000`;
+const ROW_KEY: string = `${formatLogTimestamp(tokyoNoon("2026-09-26"))}_00000000-0000-4000-8000-000000000000`;
 const ROW = { capability: "text", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 4, outputTokens: 1 } as const;
 const TOTALS = {
   requests: 1, inputTokens: 10, reportedInputTokens: 10, cachedInputTokens: 4, outputTokens: 1, cacheHitRate: expectedHitRate(4, 10),
-  costInUsdTicks: undefined,
+  costInUsdTicks: undefined, searchCalls: undefined,
 } as const;
 const SUMMARY = { day: "2026-09-25", ...TOTALS, byModel: { "text/openai/m": TOTALS } } as const;
 
 describe("diskIO/aiCacheFile 严格解码", () => {
+  test("未知顶层键和分组键中的敏感文本不进入异常", async () => {
+    mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });
+    const secret: string = "private-token-marker";
+    for (const document of [
+      { [secret]: ROW },
+      { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, byModel: { [secret]: TOTALS } } },
+      { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, byModel: { [`text/openai/${secret}`]: { ...TOTALS, requests: -1 } } } },
+    ]) {
+      await Bun.write(AI_CACHE_FILE_PATH, JSON.stringify(document));
+      const error: unknown = await inspectAiCacheFile().catch((caught: unknown): unknown => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain(secret);
+    }
+  });
+  test.each(["2026-02-30 12:00:00.000", "2026-13-01 12:00:00.000", "2026-09-26 24:00:00.000", "2026-09-26 12:60:00.000", "2026-09-26 12:00:60.000"])(
+    "非法配置时区的时间键 %s 拒绝接管并保留原字节",
+    async (timestamp: string) => {
+      mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });
+      const key: string = `${timestamp}_${ROW_KEY.slice(24)}`;
+      const content: string = JSON.stringify({ [key]: ROW });
+      await Bun.write(AI_CACHE_FILE_PATH, content);
+      await expect(inspectAiCacheFile()).rejects.toThrow("entry[0] key must be");
+      expect(await Bun.file(AI_CACHE_FILE_PATH).text()).toBe(content);
+    }
+  );
+
+  test("anthropic 记录与分组键被接管", async () => {
+    mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });
+    const anthropicRow = { ...ROW, provider: "anthropic" };
+    const summary = { ...SUMMARY, byModel: { "text/anthropic/m": TOTALS } };
+    await Bun.write(AI_CACHE_FILE_PATH, JSON.stringify({ [AI_CACHE_SUMMARY_KEY]: summary, [ROW_KEY]: anthropicRow }, null, DAY_FILE_JSON_INDENT));
+    const inspection = await inspectAiCacheFile();
+    expect(inspection.document.rows.get(ROW_KEY) as unknown).toEqual(anthropicRow);
+    expect(Object.keys(inspection.document.summary!.byModel)).toEqual(["text/anthropic/m"]);
+  });
+
   test("合法的汇总与记录被接管", async () => {
     mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });
-    await Bun.write(AI_CACHE_FILE_PATH, JSON.stringify({ [AI_CACHE_SUMMARY_KEY]: SUMMARY, [ROW_KEY]: ROW }, null, DAY_FILE_JSON_INDENT));
+    const paddedRow = { ...ROW, capability: ` ${ROW.capability} `, provider: ` ${ROW.provider} `, model: ` ${ROW.model} ` };
+    await Bun.write(AI_CACHE_FILE_PATH, JSON.stringify({ [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, day: ` ${SUMMARY.day} ` }, [ROW_KEY]: paddedRow }, null, DAY_FILE_JSON_INDENT));
     const inspection = await inspectAiCacheFile();
     expect(inspection.document.summary).toEqual(SUMMARY);
     expect([...inspection.document.rows.keys()]).toEqual([ROW_KEY]);
+    expect(inspection.document.rows.get(ROW_KEY)).toEqual(ROW);
   });
 
   test("撕裂的尾部被裁掉后接管，完整记录保留", async () => {
@@ -355,7 +474,7 @@ describe("diskIO/aiCacheFile 严格解码", () => {
     await handleAiCacheUsageMessage(usage("2026-09-26"));
     await flushAiCacheBuffer();
     const content: string = await Bun.file(AI_CACHE_FILE_PATH).text();
-    const tornKey: string = `${formatTokyoLogTimestamp(tokyoNoon("2026-09-26") + 1_000)}_torn`;
+    const tornKey: string = `${formatLogTimestamp(tokyoNoon("2026-09-26") + 1_000)}_torn`;
     await Bun.write(AI_CACHE_FILE_PATH, `${content.slice(0, -2)},\n${" ".repeat(DAY_FILE_JSON_INDENT)}"${tornKey}`);
     resetAiCacheState();
 
@@ -365,18 +484,33 @@ describe("diskIO/aiCacheFile 严格解码", () => {
   });
 
   test.each([
-    ["未知键", { other: 1 }, "contains an unknown key other."],
+    ["未知键", { other: 1 }, "entry[0] key must be"],
     ["非法记录", { [ROW_KEY]: { capability: "text" } }, "contains an invalid usage record"],
+    ["非对象记录", { [ROW_KEY]: null }, "expected a usage object"],
     ["命中超过输入的记录", { [ROW_KEY]: { ...ROW, cachedInputTokens: 11 } }, "contains an invalid usage record"],
     ["记录多出字段", { [ROW_KEY]: { ...ROW, extra: 1 } }, "contains an invalid usage record"],
     ["费用记录费用为负", { [ROW_KEY]: { capability: "image", provider: "openai", model: "m", costInUsdTicks: -1 } }, "contains an invalid usage record"],
     ["记录同时带 token 与费用", { [ROW_KEY]: { ...ROW, costInUsdTicks: 1 } }, "contains an invalid usage record"],
+    ["未知 provider", { [ROW_KEY]: { ...ROW, provider: "claude" } }, "contains an invalid usage record"],
+    ["空白模型名", { [ROW_KEY]: { ...ROW, model: "  " } }, "contains an invalid usage record"],
+    ["检索次数为 0", { [ROW_KEY]: { capability: "web_search", provider: "google", model: "m", searchCalls: 0 } }, "contains an invalid usage record"],
+    ["token 记录检索次数为 0", { [ROW_KEY]: { ...ROW, searchCalls: 0 } }, "contains an invalid usage record"],
+    ["token 记录检索次数为小数", { [ROW_KEY]: { ...ROW, searchCalls: 0.5 } }, "contains an invalid usage record"],
+    ["token 记录检索次数为 null", { [ROW_KEY]: { ...ROW, searchCalls: null } }, "contains an invalid usage record"],
+    ["汇总检索次数非法", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, searchCalls: -1 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["汇总费用非法", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, costInUsdTicks: 1.5 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["非法汇总日期", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, day: "2026-02-30" } }, `contains an invalid ${AI_CACHE_SUMMARY_KEY}.day.`],
     ["汇总多出字段", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, extra: 1 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["命中率与合计不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, cacheHitRate: expectedHitRate(9, 10) } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["命中超过有口径输入", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, cachedInputTokens: 11, cacheHitRate: expectedHitRate(11, 10) } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
-    ["非法分组键", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, byModel: { "chat/openai/m": TOTALS } } }, `contains an invalid ${AI_CACHE_SUMMARY_KEY}.byModel key chat/openai/m.`],
+    ["非法分组键", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, byModel: { "chat/openai/m": TOTALS } } }, `contains an invalid ${AI_CACHE_SUMMARY_KEY}.byModel key at entry[0]`],
+    ["空白分组模型名", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, byModel: { "text/openai/  ": TOTALS } } }, `contains an invalid ${AI_CACHE_SUMMARY_KEY}.byModel key`],
+    ["非对象汇总", { [AI_CACHE_SUMMARY_KEY]: null }, "expected a summary object"],
+    ["总请求数与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, requests: 2 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.requests.`],
+    ["总输入与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, inputTokens: 11 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.inputTokens.`],
+    ["总输出与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, outputTokens: 2 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.outputTokens.`],
+    ["总检索次数与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, searchCalls: 1 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.searchCalls.`],
+    ["总费用与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, costInUsdTicks: 1 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.costInUsdTicks.`],
     ["汇总不在首位", { [ROW_KEY]: ROW, [AI_CACHE_SUMMARY_KEY]: SUMMARY }, `must put ${AI_CACHE_SUMMARY_KEY} first.`],
   ])("%s 拒绝接管并保留原字节", async (_label: string, document: unknown, message: string) => {
     mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });

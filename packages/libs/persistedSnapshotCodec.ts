@@ -11,7 +11,6 @@ import type {
   BotImageOrigin,
   BufferedMessage,
 } from "../types/aiChat/memory";
-import { formatTokyoTime } from "./time";
 import type {
   StickerCatalogEntry,
   StickerCatalogSnapshot,
@@ -79,11 +78,16 @@ function validateBufferedMessage(value: unknown, source: string, field: string):
   if (value.replyTo !== undefined) validateReplyReference(value.replyTo, source, `${field}.replyTo`);
   if (value.pendingImage !== undefined) validatePendingBotImage(value.pendingImage, source, `${field}.pendingImage`);
   if (typeof value.at !== "string" || !AI_MEMORY_TIME_PATTERN.test(value.at)) {
-    invalidInput(source, `${field}.at`, "a valid Tokyo local time in YYYY/MM/DD HH:mm:ss format");
+    invalidInput(source, `${field}.at`, "a valid local calendar time in YYYY/MM/DD HH:mm:ss format");
   }
-  const timestamp: number = Date.parse(value.at.replaceAll("/", "-").replace(" ", "T") + "+09:00");
-  if (!Number.isFinite(timestamp) || formatTokyoTime(timestamp) !== value.at) {
-    invalidInput(source, `${field}.at`, "a valid Tokyo local time in YYYY/MM/DD HH:mm:ss format");
+  try {
+    const normalized: string = value.at.replaceAll("/", "-").replace(" ", "T");
+    const local: Temporal.PlainDateTime = Temporal.PlainDateTime.from(normalized, { overflow: "reject" });
+    if (local.toString({ fractionalSecondDigits: 0 }) !== normalized) {
+      invalidInput(source, `${field}.at`, "a valid local calendar time in YYYY/MM/DD HH:mm:ss format");
+    }
+  } catch (_error: unknown) {
+    invalidInput(source, `${field}.at`, "a valid local calendar time in YYYY/MM/DD HH:mm:ss format");
   }
 }
 

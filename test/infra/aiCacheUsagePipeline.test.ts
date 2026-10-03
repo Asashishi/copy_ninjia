@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { rmSync } from "node:fs";
-import type { GoogleGenAI } from "@google/genai";
+import type { GenerateContentParameters, GenerateContentResponse, GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
 import { loggerStub } from "../helpers/loggerMock";
 import { geminiResponse } from "../helpers/geminiResponse";
@@ -51,7 +51,7 @@ afterEach(() => {
   rmSync(AI_CACHE_MEMORY_DIR, { recursive: true, force: true });
 });
 
-test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，重建及日汇总不漏计或重复", async () => {
+test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，token 与检索同条保存，重建及日汇总不漏计或重复", async () => {
   expect(AI_CACHE_MEMORY_DIR.startsWith(TEST_DATA_ROOT)).toBeTrue();
   rmSync(AI_CACHE_MEMORY_DIR, { recursive: true, force: true });
   const clock = spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-26T03:00:00Z"));
@@ -83,8 +83,9 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，�
   const google = { provider: "google", apiKey: "fixture", baseUrl: undefined, headers: undefined, model: "fixture-google" } as const;
   const openai = { provider: "openai", apiKey: "fixture", baseUrl: undefined, headers: undefined, model: "fixture-openai" } as const;
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
-  const generateContent = mock(async () => geminiResponse({
-    candidates: [{ finishReason: "STOP" as any, content: { role: "model", parts: [{ text: "ok" }, { inlineData: { data: png.toBase64(), mimeType: "image/png" } }] } }],
+  const generateContent = mock(async (params: GenerateContentParameters): Promise<GenerateContentResponse> => geminiResponse({
+    candidates: [{ finishReason: "STOP" as any, content: { role: "model", parts: [{ text: "ok" }, { inlineData: { data: png.toBase64(), mimeType: "image/png" } }] },
+      groundingMetadata: params.contents === "fixture-search" ? { webSearchQueries: ["a", "b"] } : undefined }],
     usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 3, thoughtsTokenCount: 2, cachedContentTokenCount: 4 },
   }));
   const fakeGoogle = {
@@ -105,7 +106,7 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，�
     adoptAiCacheFile(await inspectAiCacheFile());
     installAiCacheUsageSink(fromWorker);
     for (const capability of ["text", "summary", "media"] as const) {
-      expect(await requestGeminiResponse(capability, () => ({ model: google.model, contents: "fixture" }), "fixture")).not.toBeNull();
+      expect(await requestGeminiResponse(capability, () => ({ model: google.model, contents: capability === "text" ? "fixture-search" : "fixture" }), "fixture")).not.toBeNull();
     }
     expect(await generateGeminiImage({ prompt: "fixture", aspectRatio: "1:1" })).not.toBeNull();
     expect(await synthesizeGeminiSpeech({ text: "fixture" })).not.toBeNull();
@@ -126,8 +127,10 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，�
       readonly capability: string;
       readonly inputTokens: number;
       readonly outputTokens: number;
+      readonly searchCalls?: number;
     }[];
     expect(rows).toHaveLength(10);
+    expect(rows.find((row) => row.capability === "text")).toMatchObject({ inputTokens: 10, outputTokens: 5, searchCalls: 2 });
     expect(rows.filter((row) => row.capability === "ad_detect")).toHaveLength(3);
     expect(new Set(rows.map((row) => row.capability))).toEqual(new Set(["text", "summary", "media", "image", "tts", "ad_detect"]));
     expect(rows.reduce((sum, row) => sum + row.inputTokens, 0)).toBe(180);
@@ -149,7 +152,7 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，�
     await summarizeAiCache("2026-09-27");
     const document = await Bun.file(AI_CACHE_FILE_PATH).json();
     expect(Object.keys(document)).toEqual(["summary"]);
-    expect(document.summary).toMatchObject({ day: "2026-09-26", requests: 11, inputTokens: 230, outputTokens: 86 });
+    expect(document.summary).toMatchObject({ day: "2026-09-26", requests: 11, inputTokens: 230, outputTokens: 86, searchCalls: 2 });
     expect(document.summary.byModel["ad_detect/openai/ad-fixture"].requests).toBe(3);
   } finally {
     clock.mockRestore();

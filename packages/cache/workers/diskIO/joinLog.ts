@@ -1,3 +1,9 @@
+/** owner: workers/diskIO。入群日志落盘的 Worker 独占状态：
+ * joinLogFileCaches 与 joinLogRetryAt 由 packages/workers/diskIO/joinLogWrites.ts
+ * 填充与清理，joinLogBuffer 与 joinLogCleanupDay 由 joinLogFiles.ts 持有，
+ * joinLogPersistedNotifier 由 workers/diskIOWorker.ts 启动时安装。
+ */
+
 import {
   JOIN_LOG_MAX_CACHED_FILES,
   JOIN_LOG_MAX_RETRY_FILES,
@@ -8,13 +14,6 @@ import type {
   BufferedJoinLogEntry,
   JoinLogFileCache,
 } from "../../../types/diskIO/storage";
-
-/**
- * 入群日志落盘的 Worker 独占状态。owner 线程是 Disk I/O Worker：
- * joinLogFileCaches 与 joinLogRetryAt 由 packages/workers/diskIO/joinLogWrites.ts
- * 填充与清理，joinLogBuffer 与 joinLogCleanupDay 由 joinLogFiles.ts 持有，
- * joinLogPersistedNotifier 由 workers/diskIOWorker.ts 启动时安装。
- */
 
 /**
  * 每个已打开群日文件的追加游标与 latest-by-user 索引。权威副本只存在于
@@ -35,7 +34,7 @@ export const joinLogFileCaches: LruCache<string, JoinLogFileCache> =
 export const joinLogRetryAt: LruCache<string, number> =
   new LruCache<string, number>(JOIN_LOG_MAX_RETRY_FILES);
 
-/** 最近一次完成跨日清理的东京日期；null 表示本 Worker 尚未接触该目录。 */
+/** 最近一次完成跨日清理的配置时区的日期；null 表示本 Worker 尚未接触该目录。 */
 export const joinLogCleanupDay: { current: string | null } = { current: null };
 
 /**

@@ -35,7 +35,7 @@ function schedule(actions: readonly CronAction[], cancelled: boolean = false): C
     justOnce: false,
     actions,
   };
-  return { task, job: null, timer: null, cancelled };
+  return { task, job: null, cancelled };
 }
 
 beforeEach(() => {
@@ -55,6 +55,8 @@ describe("chat_id: [\"all\"] 与 [\"except\", ...] 的发送权限", () => {
     ])).toEqual({ text: false, photos: true, documents: true, voiceNotes: false });
     expect(sendNeedsOf([{ type: "send_voice", content: "おやすみ", tone: undefined }]))
       .toEqual({ text: false, photos: false, documents: false, voiceNotes: true });
+    expect(sendNeedsOf([{ type: "send_web_digest", topic: "t", language: "zh", maxItems: 5, instructions: undefined }]))
+      .toEqual(TEXT_ONLY);
   });
 
   test("按机器人的成员身份判定：群主、管理员、被限制、离开与被踢", () => {

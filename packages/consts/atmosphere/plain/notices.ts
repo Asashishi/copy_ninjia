@@ -1,6 +1,6 @@
 import type { AtmosphereNotices } from "../../../types/atmosphereNotices";
 
-/** 普通风格通知表；Bot 配置为 normal 或群设置了自定义 AI 人设时使用。 */
+/** 普通风格通知表；显式 normal 或风格缺省且部署自定义人设时使用。 */
 export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   verificationCallbackPassed: "验证已通过。",
   verificationCallbackExpired: "验证已失效，请重新加入群后再试。",

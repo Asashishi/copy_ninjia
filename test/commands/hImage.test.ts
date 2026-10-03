@@ -55,7 +55,7 @@ function context(match: string = "", topic: number | undefined = undefined): nev
   } as never;
 }
 
-const texts = chatAtmosphere(CHAT_ID).H_IMAGE_TEXTS;
+const texts = chatAtmosphere().H_IMAGE_TEXTS;
 
 /** 发一次 `/h_image`；这一组只测执行器的容量与结果，因此每次都让出全局限流配额。 */
 async function submitHImage(ctx: never): Promise<void> {

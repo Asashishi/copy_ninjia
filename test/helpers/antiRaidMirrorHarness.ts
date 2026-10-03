@@ -29,7 +29,6 @@ export const workerHooks: {
   persistedAck: ((reply: VerificationPersistedReply) => void) | undefined;
 } = { supervisorOptions: undefined, diskRespawn: undefined, persistedAck: undefined };
 export const chatStates = new Map<number, {
-  aiPersona?: string;
   isAIChatEnabled?: boolean;
   isInitEnabled?: boolean;
   isAntiRaidEnabled?: boolean;

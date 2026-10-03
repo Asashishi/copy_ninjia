@@ -1,3 +1,5 @@
+/** owner: perThread。 */
+
 import type { AiCacheUsage, AiUsageWarningKey } from "../../types/aiCache";
 
 /**

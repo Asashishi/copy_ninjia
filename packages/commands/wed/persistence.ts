@@ -97,10 +97,17 @@ export async function purgeWedMembers(chatId: number): Promise<void> {
   if (pendingWedMemberDeletes.get(chatId) === message) pendingWedMemberDeletes.delete(chatId);
 }
 
-/** 先删除集合中的 ID，再登记落盘；退群事件与每日复核共用此边界。 */
+/** 先删除集合中的 ID，再登记落盘；退群、每日复核和私聊不可访问探测共用此边界。 */
 export function removeWedMember(chatId: number, userId: number): void {
   const state: WedMemberState | undefined = wedMemberStates.get(chatId);
   if (state?.members.delete(userId)) markWedMembersDirty(state);
+}
+
+/** 私聊 ID 无法访问时从所有群奖池移除；查询期间再次发言的群保留新观察。 */
+export function removeWedMemberFromAllChats(userId: number, observedChats: ReadonlySet<number>): void {
+  for (const chatId of wedMemberStates.keys()) {
+    if (!observedChats.has(chatId)) removeWedMember(chatId, userId);
+  }
 }
 
 /** DiskIO 重建时重放待删责任与最终集合；恢复层仅覆盖重放时 FIFO 中的同群旧操作。 */

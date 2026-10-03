@@ -11,7 +11,7 @@ import {
   replyParametersFor,
   runTelegramAction,
 } from "./core";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import { pickPhotoFile } from "../../../libs/telegramImage";
 import { toTelegramSendResult } from "./sendResult";
 
@@ -44,7 +44,7 @@ export async function sendSticker({
         chatId,
         fileId,
         { message_thread_id: messageThreadId },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     map: (sent: Message.StickerMessage): number | undefined => {
       markSelfSent(chatId, sent.message_id);
@@ -102,7 +102,7 @@ export async function sendPhotoWithResult({
         chatId,
         { bytes, fileName: `generated.${extension}` },
         other,
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       );
     },
     map: (sent: Message.PhotoMessage): TelegramPhotoSendResult => {
@@ -161,7 +161,7 @@ export async function sendVoiceWithResult({
         chatId,
         { bytes, fileName },
         other,
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       );
     },
     map: (sent: Message.VoiceMessage): TelegramSendResult | undefined =>
@@ -211,7 +211,7 @@ export async function copyMessage({
           show_caption_above_media: showCaptionAboveMedia,
           video_start_timestamp: videoStartTimestamp,
         },
-        ...signalArgs(signal)
+        telegramSignal(signal)
       ),
     map: (copied: MessageId): number | undefined => {
       markSelfSent(chatId, copied.message_id);

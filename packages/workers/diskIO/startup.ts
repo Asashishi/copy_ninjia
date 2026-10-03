@@ -36,7 +36,7 @@ import {
   registerDiskIOMaintenanceCron,
   stopDiskIOMaintenanceCron,
 } from "./maintenanceCron";
-import { getTokyoDateKey } from "../../libs/time";
+import { getDateKey } from "../../libs/time";
 import type { PendingBlockedRemoval } from "../../types/blocklist";
 import type { ChatState } from "../../types/chatState";
 import type { VerificationSnapshot } from "../../types/antiRaid/verification";
@@ -91,6 +91,7 @@ function runMaintenance(
 /**
  * 所有持久化域先只读严格解码；任一失败都不 adopt、chmod、rewrite、unlink 或
  * 启动维护 cron。全部成功后统一发布 owner，发送成功回执，再执行可重试维护。
+ * SQLite 排在第一个 inspect：它的版本与数据根时区闸必须先于按「今天」校验的日文件报错。
  */
 export async function handleDiskIOStartupLoad(
   stickerPacks: readonly string[] | null,
@@ -108,7 +109,8 @@ export async function handleDiskIOStartupLoad(
   let luckReceiptSecret: LuckReceiptSecret | null = null;
   let maintenanceInspections: StartupMaintenanceInspections | null = null;
   try {
-    const today: string = getTokyoDateKey();
+    const today: string = getDateKey();
+    const storage: StorageDatabaseInspection = inspectStorageDatabase();
     const logs: LogFilesInspection = await inspectLogFiles();
     const aiCache: AiCacheInspection = await inspectAiCacheFile();
     const stickerCatalogs: StickerCatalogRecoveryInspection =
@@ -121,7 +123,6 @@ export async function handleDiskIOStartupLoad(
     });
     const verificationState: VerificationRecoveryInspection =
       await inspectVerificationDay(today);
-    const storage: StorageDatabaseInspection = inspectStorageDatabase();
     const wedMembers: WedMemberInspection = await inspectWedMemberFiles();
 
     // 可写 SQLite 连接先接管；文件 adopt 才可能创建或规范化内容。

@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../../packages/config/time";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { GoogleGenAI } from "@google/genai";
 import type OpenAI from "openai";
@@ -57,7 +58,7 @@ describe("Anti-Raid Worker 接管广告检测配置", () => {
     seedDerivedState();
     const samples: AdSampleConfig = ["新的广告示例"];
 
-    adoptAdDetectConfigMessage({ defaultAtmosphere: "teasing", type: "agentConfig", adDetect: reloadedAdDetect, adSamples: samples });
+    adoptAdDetectConfigMessage({ atmosphere: "teasing", type: "agentConfig", timeZone: getTimeZone(), adDetect: reloadedAdDetect, adSamples: samples });
 
     expect(adDetectAgentConfigCache.current).toBe(reloadedAdDetect);
     expect(defaultAdSampleConfigCache.current).toBe(samples);
@@ -71,7 +72,7 @@ describe("Anti-Raid Worker 接管广告检测配置", () => {
     adDetectAgentConfigCache.current = { ...reloadedAdDetect };
     const registry: GeminiContextCacheRegistry = seedDerivedState();
 
-    adoptAdDetectConfigMessage({ defaultAtmosphere: "teasing", type: "agentConfig", adDetect: reloadedAdDetect, adSamples: ["新的广告示例"] });
+    adoptAdDetectConfigMessage({ atmosphere: "teasing", type: "agentConfig", timeZone: getTimeZone(), adDetect: reloadedAdDetect, adSamples: ["新的广告示例"] });
 
     expect(adDetectGeminiContextCache.current).toBe(registry);
     expect(adDetectPrompts.current).toBeNull();
@@ -81,7 +82,7 @@ describe("Anti-Raid Worker 接管广告检测配置", () => {
     adDetectAgentConfigCache.current = { ...reloadedAdDetect };
     seedDerivedState();
 
-    adoptAdDetectConfigMessage({ defaultAtmosphere: "teasing", type: "agentConfig", adDetect: null, adSamples: null });
+    adoptAdDetectConfigMessage({ atmosphere: "teasing", type: "agentConfig", timeZone: getTimeZone(), adDetect: null, adSamples: null });
 
     expect(adDetectAgentConfigCache.current).toBeNull();
     expect(defaultAdSampleConfigCache.current).toBe(originalSamples);

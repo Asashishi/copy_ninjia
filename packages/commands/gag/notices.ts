@@ -37,7 +37,7 @@ export async function sendGagSpeakNotice({
   replyToMessageId,
   onSent,
 }: SendGagSpeakNoticeOptions): Promise<number | undefined> {
-  const atmosphere: AtmosphereTexts = chatAtmosphere(session.chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const text: string = renderGagSpeakNotice(session, atmosphere);
   const keyboard: ReturnType<typeof buildGagSpeakKeyboard> =
     buildGagSpeakKeyboard(session, atmosphere);

@@ -19,7 +19,7 @@ import {
 } from "../../cache/workers/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
 import { invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
-import { getTokyoDateKey, isCanonicalDateKey } from "../../libs/time";
+import { getDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { VerificationSnapshot } from
   "../../types/antiRaid/verification";
 import { VERIFICATION_RECORD_CAPACITY } from "../../consts/antiRaid/verification";
@@ -180,9 +180,9 @@ export function compactVerificationDay(
   verificationFileState.appendedBytes = 0;
 }
 
-/** 启动第一阶段：只读校验东京当天及最新旧日，构造接管与维护计划。 */
+/** 启动第一阶段：只读校验配置时区的当天及最新旧日，构造接管与维护计划。 */
 export async function inspectVerificationDay(
-  day: string = getTokyoDateKey(),
+  day: string = getDateKey(),
   dir: string = VERIFICATION_MEMORY_DIR
 ): Promise<VerificationRecoveryInspection> {
   const entries: readonly Dirent<string>[] = inspectOptionalDirectory(dir)

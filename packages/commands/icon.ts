@@ -19,7 +19,7 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   const match: RegExpExecArray | null = ICON_SUBCOMMAND_PATTERN.exec(ctx.match.trim());
   const subcommand: string | undefined = match?.[1]?.toLowerCase();
   if (match === null || (subcommand === "reset" && match[2] !== undefined)) {
-    await sendCommandMessage({ chatId, text: chatAtmosphere(chatId).ICON_USAGE_TEXT, replyToMessageId: messageId });
+    await sendCommandMessage({ chatId, text: chatAtmosphere().ICON_USAGE_TEXT, replyToMessageId: messageId });
     return;
   }
 
@@ -33,7 +33,7 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   if (subcommand === "reset") {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.iconRestoring,
+      text: chatAtmosphere().NOTICE_TEXTS.iconRestoring,
       replyToMessageId: messageId,
     });
     queueAvatarUpdate({ chatId, target: { kind: "default" }, source: "icon" });
@@ -45,13 +45,13 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
     message: ctx.msg,
     botUserId: ctx.me.id,
     rawArgument: match[2] ?? "",
-    messages: chatAtmosphere(chatId).STEAL_ICON_TARGET_TEXTS,
+    messages: chatAtmosphere().STEAL_ICON_TARGET_TEXTS,
   });
   if (!targetUser) {
     await releaseCopyCooldownClaim(cooldownClaim);
     return;
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   const targetLabel: string = formatUserLabel(targetUser, atmosphere);
   await sendCommandMessage({
     chatId,

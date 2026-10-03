@@ -1,7 +1,8 @@
 import { getCurrentTime } from "../../libs/time";
+import type { CurrentTimeResult } from "../../types/time";
 
 /**
- * 「当前实际时间：...（东京时间 UTC+9）。」——runtimeState.ts 的
+ * 「当前实际时间：...（配置的 IANA 时区名）。」——runtimeState.ts 的
  * buildRuntimeStateBlock 与 compaction.ts 的 summarizeBatch 共用同一句措辞，
  * 由本函数统一生成；每次调用现查时间，不缓存。
  *
@@ -11,5 +12,6 @@ import { getCurrentTime } from "../../libs/time";
  * 与动态内容的顺序约束见 docs/cn/04-invariants.md「AI 提示词与转录」。
  */
 export function currentTimeSentence(): string {
-  return `当前实际时间：${getCurrentTime().formatted}（东京时间 UTC+9）。`;
+  const now: CurrentTimeResult = getCurrentTime();
+  return `当前实际时间：${now.formatted}（${now.timezone}）。`;
 }

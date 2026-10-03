@@ -1,6 +1,5 @@
 import type { AtmosphereTexts } from "../types/atmosphere";
 import { chatAtmosphere } from "../infra/atmosphere";
-import type { MessageEntity } from "grammy/types";
 import type { CommandContext, Context } from "grammy";
 import type { CachedUser } from "../types/chatState";
 import type {
@@ -10,7 +9,7 @@ import type {
 import type { SetWhitelistPermissionResult } from "../infra/identityPolicy/whitelist";
 import { explicitReplyTo, forumTopicThreadId } from "../libs/forumTopic";
 import { commandArgumentTokens } from "./arguments";
-import { WHITELIST_PERMISSION_ALL_COMMAND, WHITELIST_PERMISSION_HELP_COMMAND, WHITELIST_PERMISSION_KEY_BY_LOWERCASE, WHITELIST_PERMISSION_KEYS, WHITELIST_PERMISSION_QUERY_COMMAND } from "../consts/whitelist";
+import { WHITELIST_PERMISSION_ALL_COMMAND, WHITELIST_PERMISSION_HELP_COMMAND, WHITELIST_PERMISSION_JSON_INDENT, WHITELIST_PERMISSION_JSON_LANGUAGE, WHITELIST_PERMISSION_KEY_BY_LOWERCASE, WHITELIST_PERMISSION_KEYS, WHITELIST_PERMISSION_QUERY_COMMAND } from "../consts/whitelist";
 
 import {
   enableAllWhitelistPermissions,
@@ -19,6 +18,8 @@ import {
   setWhitelistPermission,
 } from "../infra/identityPolicy/whitelist";
 import { SUPER_ADMIN_USER_ID } from "../config/bot";
+import { MARKDOWN_V2_PARSE_MODE } from "../consts/telegramMarkdown";
+import { escapeMarkdownV2, markdownV2Pre } from "../libs/telegramMarkdown";
 
 import { confirmIdentityPolicyPersisted, prefetchIdentityPolicies } from "../infra/identityStorage";
 import { logger } from "../infra/logger";
@@ -27,60 +28,19 @@ import { formatActorLabel, formatTargetLabel } from "../users/userLabel";
 import { resolveCommandActor } from "./commandActor";
 import { resolveCommandTarget } from "./targetResolution";
 
-interface PermissionHelpMessage {
-  text: string;
-  entities: readonly MessageEntity[];
-}
-
 /**
- * 前缀 + JSON 代码块 + 可选后缀。
- *
- * 三段都用具名字段而不是位置参数：它们同为 string，位置写反不会报错，只会让
- * 下面那对 offset/length 指到错误的区间。
+ * 把权限键与说明渲染为 MarkdownV2：转义后的开场白、可复制的 JSON 代码块与用法清单。
+ * 开场白、用法清单与 JSON 各按所在上下文转义（见 libs/telegramMarkdown.ts）。
  */
-export interface FormatJsonBlockMessageParams {
-  prefix: string;
-  /** 要渲染成 `pre` 代码块的那一段；offset/length 按它算。 */
-  permissionJson: string;
-  /** 代码块之后追加的说明；query 回执不需要，传空串。 */
-  suffix: string;
+function formatPermissionHelpMessage(atmosphere: AtmosphereTexts): string {
+  return escapeMarkdownV2(atmosphere.PERMISSION_COMMAND_TEXTS.helpPrefix) +
+    markdownV2Pre(atmosphere.WHITELIST_PERMISSION_HELP_JSON, WHITELIST_PERMISSION_JSON_LANGUAGE) +
+    escapeMarkdownV2(`\n${atmosphere.PERMISSION_COMMAND_TEXTS.helpSuffix}`);
 }
 
 /**
- * 前缀 + JSON 代码块的统一渲染。
- *
- * help 与 query 共用这一处实体构造；offset/length 必须按 **UTF-16 code unit**
- * 计算，否则 Telegram 会错误渲染或拒绝整段代码块。
- */
-function formatJsonBlockMessage({
-  prefix,
-  permissionJson,
-  suffix,
-}: FormatJsonBlockMessageParams): PermissionHelpMessage {
-  return {
-    text: `${prefix}${permissionJson}${suffix}`,
-    entities: [
-      {
-        type: "pre",
-        offset: prefix.length,
-        length: permissionJson.length,
-        language: "json",
-      },
-    ],
-  };
-}
-
-/** 把权限键与说明渲染为可复制的 JSON 代码块，实体偏移按 UTF-16 code unit 计算。 */
-function formatPermissionHelpMessage(atmosphere: AtmosphereTexts): PermissionHelpMessage {
-  return formatJsonBlockMessage({
-    prefix: atmosphere.PERMISSION_COMMAND_TEXTS.helpPrefix,
-    permissionJson: atmosphere.WHITELIST_PERMISSION_HELP_JSON,
-    suffix: `\n${atmosphere.PERMISSION_COMMAND_TEXTS.helpSuffix}`,
-  });
-}
-
-/**
- * 把目标身份的完整权限渲染为 JSON 代码块。
+ * 把目标身份的完整权限渲染为 MarkdownV2：转义后的开场白加 JSON 代码块。开场白里的
+ * 目标昵称是用户可控内容，随开场白整段转义，不会形成格式或链接。
  *
  * 与 `help` 一样长期保留：这份回执是一张要照着逐项核对的权限看板，30 秒清理会
  * 在人读完之前把它收走，于是只能反复重发同一条命令。用户已明确授权这条例外，
@@ -90,12 +50,9 @@ function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>,
   targetLabel: string,
   atmosphere: AtmosphereTexts
-): PermissionHelpMessage {
-  return formatJsonBlockMessage({
-    prefix: atmosphere.PERMISSION_COMMAND_TEXTS.queryPrefix(targetLabel),
-    permissionJson: JSON.stringify(permissions, null, 2),
-    suffix: "",
-  });
+): string {
+  return escapeMarkdownV2(atmosphere.PERMISSION_COMMAND_TEXTS.queryPrefix(targetLabel)) +
+    markdownV2Pre(JSON.stringify(permissions, null, WHITELIST_PERMISSION_JSON_INDENT), WHITELIST_PERMISSION_JSON_LANGUAGE);
 }
 
 /** 大小写不敏感地还原为配置中的规范权限键。 */
@@ -151,7 +108,7 @@ async function reportWhitelistMutationFailure({
   );
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.mutationFailed,
+    text: chatAtmosphere().PERMISSION_COMMAND_TEXTS.mutationFailed,
     replyToMessageId: messageId,
   });
 }
@@ -185,11 +142,10 @@ export async function handlePermissionCommand(
     tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_QUERY_COMMAND;
 
   if (isHelp) {
-    const helpMessage: PermissionHelpMessage = formatPermissionHelpMessage(chatAtmosphere(chatId));
     await sendCommandMessage({
       chatId,
-      text: helpMessage.text,
-      entities: helpMessage.entities,
+      text: formatPermissionHelpMessage(chatAtmosphere()),
+      parseMode: MARKDOWN_V2_PARSE_MODE,
       replyToMessageId: messageId,
       preserveInGroup: true,
       // 长期保留的看板必须自己带话题，见 SendMessageParams.messageThreadId。
@@ -213,14 +169,14 @@ export async function handlePermissionCommand(
         // 于是 `/permission query -100…` 被回成「不是合法用户名」——刚用
         // `/permission -100… isCanBlock true` 授过权的频道身份反而读不回来。
         acceptChatId: true,
-        messages: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.target,
+        messages: chatAtmosphere().PERMISSION_COMMAND_TEXTS.target,
       });
     }
     if (target === undefined) return;
     if (!await prefetchIdentityPolicies([target.id])) {
       await sendCommandMessage({
         chatId,
-        text: chatAtmosphere(chatId).IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
+        text: chatAtmosphere().IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
         replyToMessageId: messageId,
       });
       return;
@@ -230,16 +186,11 @@ export async function handlePermissionCommand(
     // 不为一次查询创建或写入数据库条目。超级管理员则由配置边界返回全开视图。
     const permissions: Readonly<WhitelistPermissions> =
       getWhitelistPermissionQueryView(target.id);
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
-    const queryMessage: PermissionHelpMessage = formatPermissionQueryMessage(
-      permissions,
-      formatTargetLabel(target, atmosphere),
-      atmosphere
-    );
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
-      text: queryMessage.text,
-      entities: queryMessage.entities,
+      text: formatPermissionQueryMessage(permissions, formatTargetLabel(target, atmosphere), atmosphere),
+      parseMode: MARKDOWN_V2_PARSE_MODE,
       replyToMessageId: messageId,
       // 与上面的 help 同一口径的长期保留例外；见
       // formatPermissionQueryMessage 的 JSDoc。目标解析失败、修改拒绝与用法
@@ -251,7 +202,7 @@ export async function handlePermissionCommand(
   }
 
   if (!actorIsSuperAdmin) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: atmosphere.PERMISSION_COMMAND_TEXTS.mutationRejection(formatActorLabel(actor, atmosphere)),
@@ -264,7 +215,7 @@ export async function handlePermissionCommand(
   if (!isEnableAll && tokens.length < 2) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.usage,
+      text: chatAtmosphere().PERMISSION_COMMAND_TEXTS.usage,
       replyToMessageId: messageId,
     });
     return;
@@ -280,7 +231,7 @@ export async function handlePermissionCommand(
     if (key === undefined || value === undefined) {
       await sendCommandMessage({
         chatId,
-        text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.usageWithKeys(
+        text: chatAtmosphere().PERMISSION_COMMAND_TEXTS.usageWithKeys(
           WHITELIST_PERMISSION_KEYS.join(", ")
         ),
         replyToMessageId: messageId,
@@ -306,8 +257,8 @@ export async function handlePermissionCommand(
     // targetResolution.ts 的 currentChatTargetText）。这里必须拒绝——给它逐项发
     // 权限，等于把 /block、/mute 与各功能开关交给这个群的任意匿名管理员，而
     // Telegram 从不告诉本进程皮套底下是谁。
-    currentChatTargetText: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.currentChatTarget,
-    messages: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.target,
+    currentChatTargetText: chatAtmosphere().PERMISSION_COMMAND_TEXTS.currentChatTarget,
+    messages: chatAtmosphere().PERMISSION_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
   // 超级管理员的权限来自身份本身、恒为全开，永远不落进 SQLite 白名单表
@@ -317,13 +268,13 @@ export async function handlePermissionCommand(
   if (target.id === SUPER_ADMIN_USER_ID) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).PERMISSION_COMMAND_TEXTS.superAdminTarget,
+      text: chatAtmosphere().PERMISSION_COMMAND_TEXTS.superAdminTarget,
       replyToMessageId: messageId,
     });
     return;
   }
   if (!isWhitelisted(target.id)) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     await sendCommandMessage({
       chatId,
       text: atmosphere.PERMISSION_COMMAND_TEXTS.targetNotWhitelisted(formatTargetLabel(target, atmosphere)),
@@ -341,7 +292,7 @@ export async function handlePermissionCommand(
       await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
       return;
     }
-    const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
     const replyText: string = result.changed
       ? atmosphere.PERMISSION_COMMAND_TEXTS.allEnabled(formatTargetLabel(target, atmosphere))
       : atmosphere.PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(formatTargetLabel(target, atmosphere));
@@ -364,7 +315,7 @@ export async function handlePermissionCommand(
     await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
     return;
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere(chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   await sendCommandMessage({
     chatId,
     text: atmosphere.PERMISSION_COMMAND_TEXTS.permissionSet({

@@ -75,6 +75,7 @@ function currentSecrets(): LogRedactionSecrets {
     pushCapabilitySecrets(secrets, agent.media);
     if (agent.image !== undefined) pushCapabilitySecrets(secrets, agent.image);
     if (agent.tts !== undefined) pushCapabilitySecrets(secrets, agent.tts);
+    if (agent.webSearch !== undefined) pushCapabilitySecrets(secrets, agent.webSearch);
   }
   if (previous !== null) {
     for (const secret of previous.text) {

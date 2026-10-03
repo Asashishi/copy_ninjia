@@ -5,13 +5,14 @@
  *
  * 四项必备能力（回复会话、纯文本、视觉、生图）之外，本包还实现语音转写与语音合成。
  * OpenAI 侧同样实现这两项；调用方一律按「这个成员在不在」判断，不按供应商名字判断，
- * 见 types/aiChat/provider.ts 的模块头注。
+ * 见 types/aiChat/provider.ts 的模块头注。联网检索执行器挂 `googleSearch`（见 ./search.ts）。
  */
 
 import { generateGeminiImage } from "./image";
 import { createGeminiReplySession } from "./replySession";
+import { searchGeminiWeb } from "./search";
 import { synthesizeGeminiSpeech } from "./speech";
-import { describeGeminiVision, generateGeminiText, transcribeGeminiVoice } from "./text";
+import { describeGeminiVision, generateGeminiJson, generateGeminiText, transcribeGeminiVoice } from "./text";
 import type { AiChatProvider } from "../../types/aiChat/provider";
 
 /** Google GenAI 协议实现；每项能力的认证与端点来自 config/dynamic/agent.json。 */
@@ -23,4 +24,6 @@ export const geminiProvider: AiChatProvider = {
   generateImage: generateGeminiImage,
   transcribeVoice: transcribeGeminiVoice,
   synthesizeSpeech: synthesizeGeminiSpeech,
+  searchWeb: searchGeminiWeb,
+  generateJson: generateGeminiJson,
 };

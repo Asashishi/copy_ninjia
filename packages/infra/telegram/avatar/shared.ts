@@ -3,7 +3,7 @@ import {
   AVATAR_FETCH_MAX_ATTEMPTS,
   BOT_PROFILE_PHOTO_FILE_NAME,
 } from "../../../consts/telegram";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import { bot } from "../mainClient";
 
 /** 单次头像操作的结果：区分可重试故障与确定性失败。 */
@@ -58,6 +58,6 @@ export async function setBotProfilePhoto(
 ): Promise<void> {
   await bot.api.setMyProfilePhoto(
     { type: "static", photo: new InputFile(bytes, BOT_PROFILE_PHOTO_FILE_NAME) },
-    ...signalArgs(signal)
+    telegramSignal(signal)
   );
 }

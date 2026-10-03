@@ -16,6 +16,12 @@ import {
 import { adoptAdSampleConfig, parseAdSampleConfig } from "../packages/config/adSamples";
 import { adoptMoodConfig, parseMoodConfig } from "../packages/config/mood";
 import { adoptPersona } from "../packages/config/persona";
+import { parseBotConfig } from "../packages/config/botInput";
+import type { BotConfig } from "../packages/types/config";
+import { adoptTimeZone } from "../packages/config/time";
+import { botAtmosphereState } from "../packages/cache/main/atmosphere";
+import { DEFAULT_AI_PERSONA } from "../packages/consts/aiChat/prompts/persona";
+import { BOT_ATMOSPHERES, DEFAULT_BOT_ATMOSPHERE } from "../packages/consts/bot";
 import { adoptStickerConfig, parseStickerConfig } from "../packages/config/stickers";
 import { adoptCronConfig, parseCronConfig } from "../packages/config/cron";
 import {
@@ -33,39 +39,18 @@ import {
   AD_SAMPLES_CONFIG_PATH,
   AGENT_CONFIG_PATH,
   CRON_CONFIG_PATH,
+  BOT_CONFIG_PATH,
   MOOD_CONFIG_PATH,
-  PERSONA_PATH,
   STICKERS_CONFIG_PATH,
 } from "../packages/consts/paths";
-import {
-  CURRENT_STORAGE_METADATA_ROWS,
-  seedStorageDatabase,
-} from "../scripts/fixtures/storageDatabase";
+import { seedStorageDatabase } from "../scripts/fixtures/storageDatabase";
 import {
   closeStorageDatabase,
   openStorageDatabase,
 } from "../packages/database/interact/connection";
+import { storageMetadataRows } from "../packages/database/interact/initialization";
 import { createStorageDatabase } from "../packages/database/interact/migration";
 import type { StorageDatabase } from "../packages/types/storageDatabase";
-
-// 每个测试进程用独立数据根创建空库；生产运行期仍只接受迁移脚本建好的数据库。
-mkdirSync(DATABASE_DIR, {
-  recursive: true,
-  mode: IDENTITY_DATABASE_DIRECTORY_MODE,
-});
-chmodSync(DATABASE_DIR, IDENTITY_DATABASE_DIRECTORY_MODE);
-createStorageDatabase(IDENTITY_DATABASE_PATH);
-const identityDatabase: StorageDatabase = openStorageDatabase({
-  path: IDENTITY_DATABASE_PATH,
-});
-seedStorageDatabase(identityDatabase, {
-  metadata: CURRENT_STORAGE_METADATA_ROWS,
-  whitelist: [],
-  blocklist: [],
-  removals: [],
-});
-closeStorageDatabase(identityDatabase);
-chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 
 // 部署配置快照只由主线程读盘：真实进程里主线程解析后，再经 AI Worker 的
 // init/configReload 与 Anti-Raid Worker 的 agentConfig 消息投递给两条业务
@@ -83,7 +68,33 @@ adoptAdDetectAgentConfig(parseAdDetectAgentConfig(agentDocument.agent.ad_detect)
 adoptAdSampleConfig(parseAdSampleConfig(JSON.parse(await Bun.file(AD_SAMPLES_CONFIG_PATH).text())));
 adoptMoodConfig(parseMoodConfig(JSON.parse(await Bun.file(MOOD_CONFIG_PATH).text())));
 adoptStickerConfig(parseStickerConfig(JSON.parse(await Bun.file(STICKERS_CONFIG_PATH).text())));
-adoptPersona((await Bun.file(PERSONA_PATH).text()).trim());
+// 人设与本进程通知风格成对接管：内置人设加 Bot 显式语气，缺省时使用默认风格。
+// 启动总闸见到已接管的风格即短路，不读开发机工作树里的 prompt/persona.md。
+adoptPersona(DEFAULT_AI_PERSONA);
+const botConfig: BotConfig = parseBotConfig(await Bun.file(BOT_CONFIG_PATH).json());
+botAtmosphereState.current = BOT_ATMOSPHERES[botConfig.atmosphere ?? DEFAULT_BOT_ATMOSPHERE];
+adoptTimeZone(botConfig.timeZone);
+
+// 每个测试进程用独立数据根创建空库，时区标记取本 isolate 刚接管的配置时区；
+// 生产运行期仍只接受迁移脚本建好的数据库。
+mkdirSync(DATABASE_DIR, {
+  recursive: true,
+  mode: IDENTITY_DATABASE_DIRECTORY_MODE,
+});
+chmodSync(DATABASE_DIR, IDENTITY_DATABASE_DIRECTORY_MODE);
+createStorageDatabase(IDENTITY_DATABASE_PATH);
+const identityDatabase: StorageDatabase = openStorageDatabase({
+  path: IDENTITY_DATABASE_PATH,
+});
+seedStorageDatabase(identityDatabase, {
+  metadata: storageMetadataRows(botConfig.timeZone),
+  whitelist: [],
+  blocklist: [],
+  removals: [],
+});
+closeStorageDatabase(identityDatabase);
+chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
+
 adoptCronConfig(parseCronConfig(JSON.parse(await Bun.file(CRON_CONFIG_PATH).text())));
 aiChatConfigReadinessCache.current = { ok: true };
 adDetectConfigReadinessCache.current = { ok: true };

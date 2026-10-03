@@ -20,14 +20,14 @@ mock.module("../../../packages/consts/diskIO/joinLog", () => ({
 
 const { inspectJoinLogFiles } = await import("../../../packages/workers/diskIO/joinLogRecovery");
 const { serializeJoinLogSnapshotEntry } = await import("../../../packages/workers/diskIO/joinLogRecords");
-const { getTokyoDateKey } = await import("../../../packages/libs/time");
+const { getDateKey } = await import("../../../packages/libs/time");
 
 afterAll((): void => {
   rmSync(testRoot, { recursive: true, force: true });
 });
 
 test("同一用户重复入群按最新一条计，独立用户数越过上限才拒绝启动且不改文件", async () => {
-  const today: string = getTokyoDateKey();
+  const today: string = getDateKey();
   const baseAt: number = Date.parse(`${today}T00:00:00+09:00`);
   const path: string = join(joinLogDir, `-1001.${today}.json`);
   mkdirSync(joinLogDir, { recursive: true });

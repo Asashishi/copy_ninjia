@@ -15,8 +15,8 @@ export const BLOCKLIST_DATA_KEYS: readonly string[] = [
   "participantInvalidCount",
 ];
 
-/** 身份记录的东京时间戳格式，不接受其他日期表示。 */
-export const TOKYO_TIMESTAMP_PATTERN: Readonly<RegExp> =
+/** 身份记录的配置时区的时间戳格式，不接受其他日期表示。 */
+export const LOCAL_TIMESTAMP_PATTERN: Readonly<RegExp> =
   /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/;
 
 /** 群状态持久化字段闭集，用于拒绝未知字段。 */

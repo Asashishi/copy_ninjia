@@ -1,11 +1,11 @@
-import type { StickerCatalogEntry } from "../../../../types/stickers/catalog";
-
-/** owner：aiChat Worker。白名单贴纸包画面描述目录的权威内存状态。
+/** owner: workers/aiChat。白名单贴纸包画面描述目录的权威内存状态。
  * 仅 aiChat/ai/stickers/catalog.ts 写入；除 packSummaries 由贴纸工具只读外，其它领域
  * 不得绕过其公开生命周期 API。
  * 每包容量由 Telegram 当前贴纸集合自然约束，不另设 TTL；目录快照持久化到
  * memory/stickers/，Worker 重建时接收主线程镜像并启动目录对账。dirty、失败
  * 与生成中集合只属于本次 Worker 生命周期，重启后清空重建。 */
+
+import type { StickerCatalogEntry } from "../../../../types/stickers/catalog";
 
 /**
  * pack short name -> (贴纸自身 file_unique_id -> 目录条目)。

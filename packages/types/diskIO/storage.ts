@@ -39,7 +39,7 @@ export interface JoinLogRecord {
   joinedAt: number;
 }
 
-/** 一条尚未刷盘的日志序列化文本及其东京日期。 */
+/** 一条尚未刷盘的日志序列化文本及其配置时区的日期。 */
 export interface BufferedLogEntry {
   day: string;
   text: string;

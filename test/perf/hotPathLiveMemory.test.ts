@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HOT_PATH_PROFILE_MEMORY_USAGE_MAX_ATTEMPTS } from "../../packages/consts/performance";
-import { readInterruptibleMemory, readProcessMemoryUsage } from "../../scripts/perf/hotPaths/liveMemory";
+import { readInterruptibleMemory } from "../../scripts/perf/hotPaths/liveMemory";
 
 const MEMORY_USAGE: NodeJS.MemoryUsage = {
   rss: 1,
@@ -30,7 +30,7 @@ describe("热路径进程内存采样", () => {
       return MEMORY_USAGE;
     };
 
-    expect(readProcessMemoryUsage(readMemoryUsage)).toEqual(MEMORY_USAGE);
+    expect(readInterruptibleMemory(readMemoryUsage)).toEqual(MEMORY_USAGE);
     expect(attempts).toBe(2);
   });
 
@@ -48,7 +48,7 @@ describe("热路径进程内存采样", () => {
 
     let thrown: unknown;
     try {
-      readProcessMemoryUsage(readMemoryUsage);
+      readInterruptibleMemory(readMemoryUsage);
     } catch (error: unknown) {
       thrown = error;
     }
@@ -64,7 +64,7 @@ describe("热路径进程内存采样", () => {
       throw error;
     };
 
-    expect((): NodeJS.MemoryUsage => readProcessMemoryUsage(readMemoryUsage)).toThrow(error);
+    expect((): NodeJS.MemoryUsage => readInterruptibleMemory(readMemoryUsage)).toThrow(error);
     expect(attempts).toBe(1);
   });
 
@@ -79,7 +79,7 @@ describe("热路径进程内存采样", () => {
       return MEMORY_USAGE;
     };
 
-    expect(readProcessMemoryUsage(readMemoryUsage)).toEqual(MEMORY_USAGE);
+    expect(readInterruptibleMemory(readMemoryUsage)).toEqual(MEMORY_USAGE);
     expect(attempts).toBe(2);
   });
 

@@ -1,3 +1,5 @@
+/** owner: main。 */
+
 /**
  * 广告判定回投后，主线程侧后台任务的在途集合（owner 是 packages/antiRaid/adDetect.ts 的
  * handleAdDetected 与 handleAdVerdictTrue）。

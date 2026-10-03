@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="236" height="44" viewBox="0 0 236 44" role="img" aria-label="Copy Ninjia">
+  <title>Copy Ninjia</title>
+  <desc>原创圆角几何字形，紫蓝渐变，透明背景。</desc>
+  <!-- 原创字形直接使用矢量路径绘制，随项目 MIT 许可证分发。 -->
+  <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="236" y2="44" gradientUnits="userSpaceOnUse">
+      <stop class="violet" offset="0" stop-color="#7c3aed"/>
+      <stop class="blue" offset="1" stop-color="#0284c7"/>
+    </linearGradient>
+  </defs>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .violet { stop-color: #a78bfa; }
+      .blue { stop-color: #38bdf8; }
+    }
+  </style>
+  <g transform="translate(0 1)" fill="none" stroke="url(#ink)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M23 9C20.5 6.5 18 6 14 6C7.5 6 4 10.5 4 18S7.5 30 14 30C18 30 20.5 29.5 23 27"/>
+    <path d="M41 14C35 14 32 17 32 22S35 30 41 30S50 27 50 22S47 14 41 14Z"/>
+    <path d="M59 14V38M59 22C59 17 62 14 67.5 14S76 17 76 22S73 30 67.5 30S59 27 59 22"/>
+    <path d="M84 14L92 30M102 14L92 34C90.5 37 89 38 85 38"/>
+    <path d="M122 30V6L141 30V6"/>
+    <path d="M152 14V30"/>
+    <path d="M162 30V14M162 22C162 17 165 14 170 14S179 17 179 22V30"/>
+    <path d="M190 14V31C190 36 188 38 183 38"/>
+    <path d="M201 14V30"/>
+    <path d="M229 14V30M229 22C229 17 226 14 221 14S212 17 212 22S215 30 221 30S229 27 229 22"/>
+    <g fill="url(#ink)" stroke="none">
+      <circle cx="152" cy="7" r="2.5"/>
+      <circle cx="190" cy="7" r="2.5"/>
+      <circle cx="201" cy="7" r="2.5"/>
+    </g>
+  </g>
+</svg>

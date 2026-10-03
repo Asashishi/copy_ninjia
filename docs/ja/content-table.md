@@ -20,19 +20,72 @@
 
 ## 🧭 開発者クイックナビゲーション
 
-| シナリオ | おすすめパス | 直接リンク |
-| :--- | :--- | :---: |
-| 🚀 **初回実行** | 依存関係、deployment 設定、Telegram API 権限および初回起動 | [📖 01 環境構築](01-getting-started.md) |
-| 🏗️ **アーキテクチャ理解** | メインスレッドと 3 つの Worker モデル、メッセージ処理のライフサイクルと復元 | [📖 02 アーキテクチャ](02-architecture.md) |
-| 🗺️ **コード検索** | モジュール役割分担、ソース構造マップおよび配置規約 | [📖 03 ディレクトリマップ](03-directory-map.md) |
-| ⚡ **不変条件** | モジュール横断の正式な制約、並行性保護と状態規約 | [📖 04 正式な不変条件](04-invariants.md) |
-| 🧪 **開発とテスト** | `bun run check` 品質ゲート、テスト隔離機構とカバレッジ | [📖 05 開発フロー](05-dev-workflow.md) |
-| 🛠️ **機能の追加・変更** | コマンド追加、パラメータ調整、AI ツール追加および schema 変更のレシピ | [📖 06 変更レシピ](06-modification-guide.md) |
-| 🛡️ **本番運用** | systemd デプロイ、ハードウェアの目安、`COPY_NINJIA_DATA_ROOT`、バックアップと障害対応 | [📖 07 運用マニュアル](07-operations.md) |
-| 🎮 **コマンドを調べる** | 全コマンド、権限の読み方、挙動の詳細（ルート README には概要だけ） | [📖 08 コマンドリファレンス](08-commands.md) |
-| 🖼️ **画像庫と定時タスク** | 画像収集・内容重複判定・アルバム・定時ボイス・時区・パス基準 | [📖 設定説明](../../config_example/README/ja.md) |
-| 📊 **計測値を見る** | コールド/ホットパス、総スループットと総 I/O、エンドツーエンドのチェーン遅延のリリースベンチマーク | [📖 09 パフォーマンス](09-performance.md) |
-| ❓ **返信がないとき** | Bot が動いているのに反応しないときの確認リスト | [📖 10 よくある質問](10-faq.md) |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="24%" align="left">シナリオ</th>
+    <th width="44%" align="left">おすすめパス</th>
+    <th width="32%" align="center">直接リンク</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><nobr>🚀 <b>初回実行</b></nobr></td>
+    <td>依存関係、deployment 設定、Telegram API 権限および初回起動</td>
+    <td align="center"><nobr><a href="01-getting-started.md">📖 01 環境構築</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🏗️ <b>アーキテクチャ理解</b></nobr></td>
+    <td>メインスレッドと 3 つの Worker モデル、メッセージ処理のライフサイクルと復元</td>
+    <td align="center"><nobr><a href="02-architecture.md">📖 02 アーキテクチャ</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🗺️ <b>コード検索</b></nobr></td>
+    <td>モジュール役割分担、ソース構造マップおよび配置規約</td>
+    <td align="center"><nobr><a href="03-directory-map.md">📖 03 ディレクトリマップ</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>⚡ <b>不変条件</b></nobr></td>
+    <td>モジュール横断の正式な制約、並行性保護と状態規約</td>
+    <td align="center"><nobr><a href="04-invariants.md">📖 04 正式な不変条件</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🧪 <b>開発とテスト</b></nobr></td>
+    <td><code>bun run check</code> 品質ゲート、テスト隔離機構とカバレッジ</td>
+    <td align="center"><nobr><a href="05-dev-workflow.md">📖 05 開発フロー</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛠️ <b>機能の追加・変更</b></nobr></td>
+    <td>コマンド追加、パラメータ調整、AI ツール追加および schema 変更のレシピ</td>
+    <td align="center"><nobr><a href="06-modification-guide.md">📖 06 変更レシピ</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🛡️ <b>本番運用</b></nobr></td>
+    <td>systemd デプロイ、ハードウェアの目安、<code>COPY_NINJIA_DATA_ROOT</code>、バックアップと障害対応</td>
+    <td align="center"><nobr><a href="07-operations.md">📖 07 運用マニュアル</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🖼️ <b>画像庫と定時タスク</b></nobr></td>
+    <td>画像収集・内容重複判定・アルバム・定時ボイス・タイムゾーン・パス基準</td>
+    <td align="center"><nobr><a href="08-images-and-cron.md">📖 08 画像ライブラリと定時タスク</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>🎮 <b>コマンドを調べる</b></nobr></td>
+    <td>全コマンド、権限の読み方、挙動の詳細（ルート README には概要だけ）</td>
+    <td align="center"><nobr><a href="09-commands.md">📖 09 コマンドリファレンス</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>📊 <b>計測値を見る</b></nobr></td>
+    <td>コールド/ホットパス、総スループットと総 I/O、エンドツーエンドのチェーン遅延のリリースベンチマーク</td>
+    <td align="center"><nobr><a href="10-performance.md">📖 10 パフォーマンス</a></nobr></td>
+  </tr>
+  <tr>
+    <td><nobr>❓ <b>返信がないとき</b></nobr></td>
+    <td>Bot が動いているのに反応しないときの確認リスト</td>
+    <td align="center"><nobr><a href="11-faq.md">📖 11 よくある質問</a></nobr></td>
+  </tr>
+</tbody>
+</table>
 
 ---
 
@@ -78,17 +131,22 @@
    - バックアップと復元（`memory/luck/receipt-secret.json` 鍵の一貫性）
    - よくある起動失敗と `bot.lock` のトラブルシューティング
 
-8. **[08 コマンドと挙動リファレンス](08-commands.md)**
+8. **[08 画像ライブラリと定時タスク](08-images-and-cron.md)**
+   - 専用ライブラリの準備、画像収集と内容の重複判定
+   - 定時の単画像・アルバム・ランダム画像・音声の設定
+   - タイムゾーン、対象グループと相対パスの基準
+
+9. **[09 コマンドと挙動リファレンス](09-commands.md)**
    - Copy モードと対象の指定方法
    - 全コマンドの権限段階（権限キー / スーパー管理者 / グループメンバー）
    - `/gag`、`/block`、`/batch_kick`、広告検出、参加認証などの挙動の詳細
 
-9. **[09 パフォーマンスベンチマーク](09-performance.md)**
-   - `bun run perf:full` の 6 セクションの計測対象：コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、コンテナとアルゴリズム、参加ログ容量線
-   - 各項目を独立 3 ラウンド実行し、平均・最小・最大・変動係数を報告
-   - 1 ラウンドあたりの総スループット、総 I/O、モックデータルートの使用量
+10. **[10 パフォーマンスベンチマーク](10-performance.md)**
+    - `bun run perf:full` の 6 セクションの計測対象：コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、コンテナとアルゴリズム、参加ログ容量線
+    - 各項目を独立 3 ラウンド実行し、平均・最小・最大・変動係数を報告
+    - 1 ラウンドあたりの総スループット、総 I/O、モックデータルートの使用量
 
-10. **[10 よくある質問](10-faq.md)**
+11. **[11 よくある質問](11-faq.md)**
     - Bot が動いているのに返信しない場合：初期化、プライバシーモード、AI の反応条件、個人チャット、通知の自動削除、Inline Mode、Bot-to-Bot、既定で無効な保護機能、プロセスの状態
 
 ---

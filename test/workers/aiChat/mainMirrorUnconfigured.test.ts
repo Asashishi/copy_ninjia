@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../../packages/config/time";
 import type { TtsDailyUsage } from "../../../packages/types/aiChat/voiceMessage";
 import { diskIOStub } from "../../helpers/diskIOMock";
 /**
@@ -146,8 +147,8 @@ describe("AI main-thread proxy with unavailable agent config", () => {
       "hydrate",
       "hydrateStickerCatalog",
     ]);
-    expect(workerPosts[0]).toMatchObject({ defaultAtmosphere: "teasing",
-      type: "init",
+    expect(workerPosts[0]).toMatchObject({ atmosphere: "teasing",
+      type: "init", timeZone: getTimeZone(),
       botInfo: { id: 99, username: "ninja_bot", first_name: "Ninja" },
     });
     expect(workerPosts[1]).toEqual({ type: "hydrateTtsUsage", usage: null });

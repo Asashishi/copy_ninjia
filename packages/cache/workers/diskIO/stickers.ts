@@ -1,7 +1,7 @@
-import type { StickerCatalogPersistedReply } from "../../../types/diskIO/replies";
-
-/** 贴纸目录落盘（packages/workers/diskIO/stickerCatalogFiles.ts）的内存状态；Worker
+/** owner: workers/diskIO。贴纸目录落盘（packages/workers/diskIO/stickerCatalogFiles.ts）的内存状态；Worker
  * 重建时由磁盘快照重新填充，恢复前保持空表。 */
+
+import type { StickerCatalogPersistedReply } from "../../../types/diskIO/replies";
 
 /**
  * 贴纸目录快照、dirty 集合及其 flush timer 的唯一 owner。

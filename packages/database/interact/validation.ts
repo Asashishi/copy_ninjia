@@ -1,4 +1,5 @@
 import { readStoredAiContexts } from "./aiContext";
+import { getTimeZone } from "../../config/time";
 import { IDENTITY_DATABASE_SCHEMA_VERSION } from "../../consts/identityStorage";
 import {
   BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE,
@@ -16,6 +17,7 @@ import {
 } from "./inspection";
 import {
   assertPendingRemovalBlocklistReferences,
+  assertStorageTimeZone,
   decodeStoredChatStates,
   decodeStoredPendingRemovals,
   readStorageSchemaVersion,
@@ -98,7 +100,10 @@ function inspectPendingRemovalPages(
   }
 }
 
-/** 启动恢复的完整只读校验（由 workers/diskIO/storageDatabase/hydration.ts 调用）；连接与快照生命周期由调用方持有。 */
+/**
+ * 启动恢复的完整只读校验（由 workers/diskIO/storageDatabase/hydration.ts 调用）；连接与快照生命周期由调用方持有。
+ * 时区标记按本线程已接管的配置时区（getTimeZone）比对。
+ */
 export function validateStorageDatabase(database: StorageDatabase, source: string): StorageDatabaseInspection {
   assertStorageDatabaseStartupJsonbStorage(database, source);
   // 版本判定必须排在读取业务行**之前**：当前 schema 才保证所有业务表存在，
@@ -115,6 +120,8 @@ export function validateStorageDatabase(database: StorageDatabase, source: strin
       "{\"version\":" + String(IDENTITY_DATABASE_SCHEMA_VERSION) + "}."
     );
   }
+  // 时区标记紧随版本闸、先于一切按日校验：换时区重启只报这一处，不落到免检行的同日约束上。
+  assertStorageTimeZone({ metadata }, source, getTimeZone());
   assertStorageDatabaseIntegrity(database, source);
   assertStorageDatabaseMigrationLineage(database, source);
   assertStorageDatabaseJsonbStorage(database, source);

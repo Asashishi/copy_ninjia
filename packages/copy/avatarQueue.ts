@@ -13,7 +13,7 @@ import type { AtmosphereTexts } from "../types/atmosphere";
 import type { AvatarUpdateRequest, AvatarUpdateTask } from "../types/copy/avatar";
 
 function renderAvatarNotice(task: AvatarUpdateTask, updated: boolean): string {
-  const atmosphere: AtmosphereTexts = chatAtmosphere(task.chatId);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
   if (task.target.kind === "default") {
     if (task.source === "copy") {
       return updated ? atmosphere.NOTICE_TEXTS.copyAvatarRestored : atmosphere.NOTICE_TEXTS.copyAvatarRestoreFailed;

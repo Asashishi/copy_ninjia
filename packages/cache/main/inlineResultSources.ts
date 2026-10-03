@@ -1,8 +1,8 @@
+/** owner: main。主线程 inline 应答的源文本登记表；Worker 不得 import。 */
+
 import { INLINE_RESULT_SOURCE_MAX_AUTHORS } from "../../consts/telegram";
 import { LruCache } from "../../libs/lruCache";
 import type { InlineResultSource } from "../../types/telegram";
-
-/** 主线程 inline 应答的源文本登记表；Worker 不得 import。 */
 
 /**
  * 发言身份 id（结果落群后的发送者：gag 会话目标或运势查询者）→ 它最近一次

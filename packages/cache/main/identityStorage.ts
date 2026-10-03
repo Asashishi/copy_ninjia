@@ -1,4 +1,4 @@
-/** Owner: Main thread。身份策略 LRU 与未 ACK 写入；跨线程只通过 Disk I/O 消息同步。 */
+/** owner: main。身份策略 LRU 与未 ACK 写入；跨线程只通过 Disk I/O 消息同步。 */
 
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../consts/identityStorage";
 import { LruCache } from "../../libs/lruCache";

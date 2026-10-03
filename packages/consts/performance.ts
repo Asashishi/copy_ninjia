@@ -77,4 +77,6 @@ export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] =
   "mention-facts-plain",
   "ad-capacity-reject",
   "identity-permission-read",
+  "buffered-message-build",
+  "temporary-whitelist-activity",
 ];

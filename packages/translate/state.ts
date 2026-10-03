@@ -26,7 +26,7 @@ export function getTranslateState(chatId: number, userId: number): TranslateStat
 
 /**
  * 创建或替换本群一个目标的会话；同步检查群状态容量与每群人数，不淘汰其他目标。
- * 调用方随后经 persistChatState 落盘。
+ * 调用方随后经 persistChatState 落盘；目标身份按 Telegram 给出的原样保存，空字符串名称同样保留。
  */
 export function setTranslateState(chatId: number, state: TranslateState): boolean {
   if (!isTelegramGroupChatId(chatId)) throw new Error("Translation chat ID must be a negative safe integer.");

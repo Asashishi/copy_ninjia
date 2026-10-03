@@ -71,6 +71,20 @@
       "when": 20260920000000,
       "tag": "0009_h_image_add_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 20261001000000,
+      "tag": "0010_remove_chat_persona",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 20261003000000,
+      "tag": "0011_time_zone_marker",
+      "breakpoints": true
     }
   ]
 }

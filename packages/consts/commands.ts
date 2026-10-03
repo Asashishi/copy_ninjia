@@ -140,7 +140,7 @@ export const MUTE_MAX_DURATION_MS: number = 365 * 24 * 60 * 60_000;
 /** `/batch_kick` 最短回溯窗口，避免零长度或秒级误操作。 */
 export const BATCH_KICK_MIN_DURATION_MS: number = 60_000;
 
-/** `/batch_kick` 最长回溯窗口；查询最多合并两个东京自然日。 */
+/** `/batch_kick` 最长回溯窗口；查询最多合并两个配置时区的自然日。 */
 export const BATCH_KICK_MAX_DURATION_MS: number = 24 * 60 * 60_000;
 
 /**

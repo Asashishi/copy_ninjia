@@ -1,4 +1,4 @@
-/** Owner: Disk I/O Worker。/wed 全量替换的待写快照。 */
+/** owner: workers/diskIO。/wed 全量替换的待写快照。 */
 import type { WedMembersDeletedPersistedReply } from "../../../types/diskIO/replies";
 
 /**

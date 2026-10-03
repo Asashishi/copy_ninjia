@@ -86,7 +86,7 @@ export function hydrateStickerCatalog(catalogs: Map<string, string>): void {
  *
  * - Worker 已在运行（启动时可用、之后前提缺失而闲置）：按主线程当前快照改写
  *   lastInitState 并投递完整 configReload。
- * - Worker 从未启动（启动时就不可用）：按启动恢复同一顺序投递 init、各群人设、
+ * - Worker 从未启动（启动时就不可用）：按启动恢复同一顺序投递 init、语音合成计数、
  *   记忆与贴纸目录镜像。
  */
 export function resumeAiChat(): void {

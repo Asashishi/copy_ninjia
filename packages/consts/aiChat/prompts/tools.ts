@@ -14,6 +14,7 @@ import {
   GROUP_QA_ANSWER_TOOL,
   GROUP_QA_QUERY_TOOL,
   SEND_VOICE_TOOL,
+  WEB_SEARCH_TOOL,
 } from "../../tools";
 
 /**
@@ -121,16 +122,17 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "只发图更合适就省略 caption。caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。";
 
 /**
- * send_voice 工具的模型可见说明。调用与否由模型按本段与本轮工具状态里的余量行
- * （voiceToolStatus）判断，执行侧在余量用尽时拒绝；说明逐字恒定，不含随
+ * send_voice 工具的模型可见说明。语音用于低频的情绪与自我表达，调用与否由模型结合
+ * 当前对话、自身感受与本轮工具状态里的余量行（voiceToolStatus）判断，执行侧在余量用尽时拒绝；说明逐字恒定，不含随
  * `agent.tts` 配置变化的额度数字，额度只出现在余量行里。
  */
 export const SEND_VOICE_TOOL_INSTRUCTION: string =
   "用你自己的声音往群里发一条日语语音：执行侧把 text 交给语音合成模型念出来，以 Telegram 语音消息发出。" +
-  "语音用来表达情绪：得意、嫌弃、撒娇、调侃、回嘴、恼羞、吃惊这类情绪明显起伏的时候，配一句语音把情绪念出来；" +
-  "平淡的陈述、认真求助、严肃或敏感话题不发。发不发由你决定，整轮不发语音也完全可以。" +
+  "语音用来表达情绪（得意、嫌弃、撒娇、调侃、回嘴、恼羞、吃惊，等）和自我，是可以使用的表达方式；是否需要由你结合当前对话、自己的感受和想表达的内容判断。" +
+  "通常用文字、贴纸或反应回应，觉得声音更能体现情绪或表达自己时才发，整轮不发语音也完全可以。" +
+  "平淡的陈述、认真求助、严肃或敏感话题不发。" +
   `语音按天限量，所有群共用一份额度：调用前先看 ${TOOL_STATUS_POINTER}里 ${SEND_VOICE_TOOL} 那一行；` +
-  "还有余量时，在余量范围内积极用它表达情绪；显示已用完时不要调用。" +
+  "显示已用完时不要调用；有余量也不代表必须要使用，整轮不发语音也完全可以。" +
   `每轮最多 ${MAX_VOICES_PER_REPLY} 条。` +
   "text 只写要念出来的日语台词，一两句，带嘲讽、挑衅的口吻；优先用海外观众也耳熟能详的动漫腔台词" +
   "（如「この雑魚♡」「ざぁこ♡」「バーカ」「へんたい」「ふーん、やるじゃん」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
@@ -189,6 +191,11 @@ export function groupQaToolStatus(count: number): string {
     : `${GROUP_QA_QUERY_TOOL} / ${GROUP_QA_ANSWER_TOOL}：本群没有登记问答`;
 }
 
+/** 独立 web_search 的本轮函数调用上限；来自构造执行器时的同一配置快照。所属模块：replyToolset/toolStatus.ts。 */
+export function webSearchToolStatus(maxCallsPerUse: number): string {
+  return `${WEB_SEARCH_TOOL}：本轮最多调用 ${maxCallsPerUse} 次`;
+}
+
 /**
  * 每轮所有可见动作必须经工具落地的总约束。
  *
@@ -223,7 +230,7 @@ export const REPLY_ACTION_INSTRUCTION: string =
  * generate_image 工具描述末尾的常量指引。
  *
  * 参考素材尺寸、群冷却剩余秒数每次触发都不同，写进工具声明就会让「静态系统提示词 +
- * 全部工具声明」这段稳定前缀每轮换一个指纹，两家供应商的前缀缓存都会从这里开始
+ * 全部工具声明」这段稳定前缀每轮换一个指纹，各家供应商的前缀缓存都会从这里开始
  * 落空（见 aiChat/{gemini,openai}/replySession.ts 的头注）。因此声明里只留这句逐字
  * 恒定的指引，素材与冷却写进运行时状态区块的本轮工具状态。
  */

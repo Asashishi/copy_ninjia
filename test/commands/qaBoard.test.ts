@@ -1,11 +1,12 @@
 import type { InlineKeyboardButton } from "grammy/types";
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { CHAT_QA_ANSWER_MAX_CHARS, CHAT_QA_QUESTION_MAX_CHARS, QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../packages/consts/qa";
 import { QA_QUERY_PAGE_NEXT_TEXT, QA_QUERY_PAGE_PREV_TEXT, QA_COMMAND_TEXTS } from "../../packages/consts/atmosphere/teasing/qa";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../../packages/consts/telegram";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { chatStateCache } from "../../packages/cache/main/chatState";
-import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
 
 interface EditCall {
   chatId: number;
@@ -59,6 +60,10 @@ function buttonTexts(keyboard: { inline_keyboard: InlineKeyboardButton[][] } | u
     (button: InlineKeyboardButton): string => button.text
   );
 }
+
+/** preload 接管的本进程风格；改写它的用例结束后还原。 */
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
+afterEach(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
 
 beforeEach((): void => {
   chatStateCache.clear();
@@ -193,9 +198,8 @@ describe("翻页条", () => {
 });
 
 describe("翻页回调", () => {
-  test("配置变更后的翻页正文和按钮使用同一版，空看板也按消息所属群选择", async () => {
-    const state = getOrCreateChatState(CHAT_ID);
-    state.aiPersona = "普通风格";
+  test("翻页正文和按钮随本进程文案风格使用同一版，空看板也一致", async () => {
+    botAtmosphereState.current = "plain";
     chatQaEntries.set(CHAT_ID, new Map(Array.from({ length: 5 }, (_, index) => [`问题${index}`, "答案"])));
     await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}1`));
     let call: EditCall = editMessageText.mock.calls.at(-1)![0];
@@ -206,7 +210,7 @@ describe("翻页回调", () => {
     await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}0`));
     expect(editMessageText.mock.calls.at(-1)![0].text).toBe(ATMOSPHERE_TEXTS.plain.QA_COMMAND_TEXTS.queryEmpty);
 
-    state.aiPersona = undefined;
+    botAtmosphereState.current = "teasing";
     chatQaEntries.set(CHAT_ID, new Map(Array.from({ length: 5 }, (_, index) => [`问题${index}`, "答案"])));
     await handleQaBoardCallback(callbackContext(`${QA_QUERY_PAGE_CALLBACK_PREFIX}1`));
     call = editMessageText.mock.calls.at(-1)![0];

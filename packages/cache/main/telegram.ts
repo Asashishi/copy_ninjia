@@ -1,7 +1,6 @@
-/**
- * 主线程唯一的 Telegram 客户端与按类别 429 退避运行态。
+/** owner: main。主线程唯一的 Telegram 客户端与按类别 429 退避运行态。
  *
- * owner：main。正常请求不排队；Telegram 返回 429 后，请求及同类别后来者进入
+ * 正常请求不排队；Telegram 返回 429 后，请求及同类别后来者进入
  * 对应侵入式 FIFO。全类别合计最多 TELEGRAM_429_RETRY_QUEUE_MAX 条，超出即拒绝；
  * Worker 崩溃时其代际 signal 会 O(1) 摘除。进程重启从空队列开始，安全动作由 verification 快照和
  * blocklist outbox 重放，退避层不复制持久化权威。客户端初始化与首次 429 分别

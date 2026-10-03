@@ -5,10 +5,11 @@ import {
   deferredVerificationRecords,
   pendingVerificationDeferrals,
 } from "../../cache/main/antiRaid/verificationMirror";
-import { BOT_ATMOSPHERE } from "../../config/bot";
 import { adDetectAgentConfigSnapshot } from "../../config/agent";
 import { getAdSampleConfig } from "../../config/adSamples";
 import { adDetectConfigReadiness } from "../../config/readiness";
+import { botAtmosphere } from "../../infra/atmosphere";
+import { getTimeZone } from "../../config/time";
 import { logger } from "../../infra/logger";
 import { projectBotActionPermissions } from "../../libs/chatMember";
 import {
@@ -60,7 +61,8 @@ export function replayAdDetectAgentConfig(
 ): boolean {
   return postTo({
     type: "agentConfig",
-    defaultAtmosphere: BOT_ATMOSPHERE,
+    timeZone: getTimeZone(),
+    atmosphere: botAtmosphere(),
     adDetect: adDetectAgentConfigSnapshot(),
     adSamples: adDetectConfigReadiness().ok ? getAdSampleConfig() : null,
   });
@@ -88,16 +90,6 @@ export function replayChatKinds(
 ): boolean {
   for (const [chatId, isSupergroup] of chatIsSupergroupById) {
     if (!postTo({ type: "chatKind", chatId, isSupergroup })) return false;
-  }
-  return true;
-}
-
-/** 人设风格在接管验证和私密模式之前全量重放；新 Worker 无条目即使用默认风格。 */
-export function replayChatAtmospheres(
-  postTo: (message: AntiRaidWorkerMessage) => boolean
-): boolean {
-  for (const [chatId, state] of getChatStateCache()) {
-    if (state.aiPersona !== undefined && !postTo({ type: "atmosphere", chatId, plain: true })) return false;
   }
   return true;
 }

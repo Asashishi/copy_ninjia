@@ -1,7 +1,4 @@
-/**
- * Owner: AI Chat Worker。
- *
- * media 模型视觉/语音输入支持度的 holder 与探测登记。四档状态机本身是纯函数，
+/** owner: workers/aiChat。media 模型视觉/语音输入支持度的 holder 与探测登记。四档状态机本身是纯函数，
  * 在 states/mediaInputSupport.ts；本文件只持有状态、执行它给出的效果，并把
  * 「哪一次探测正在进行」这类线程独占的运行态收在一起。
  *

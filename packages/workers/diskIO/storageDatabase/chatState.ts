@@ -8,7 +8,6 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../../../consts/storage";
 import {
   assertTelegramChatId,
   decodeChatStateData,
-  decodeAiPersona,
 } from "../../../database/codec/chatState";
 import {
   readStoredChatStateIds,
@@ -43,10 +42,10 @@ function effectiveChatStateIds(): Set<number> {
 function effectiveChatStateData(): Map<number, ChatState> {
   const rows: readonly StoredChatStateRow[] = readStoredChatStates(requireStorageDatabase());
   const values: Map<number, ChatState> = new Map();
-  for (const row of rows) values.set(row.chatId, decodeChatStateData(row.data, storageSource("chat_states", row.chatId), row.aiPersona));
+  for (const row of rows) values.set(row.chatId, decodeChatStateData(row.data, storageSource("chat_states", row.chatId)));
   for (const [chatId, pending] of pendingChatStateWrites) {
     if (pending.data === null) values.delete(chatId);
-    else values.set(chatId, decodeChatStateData(pending.data, storageSource("chat_states", chatId), pending.aiPersona));
+    else values.set(chatId, decodeChatStateData(pending.data, storageSource("chat_states", chatId)));
   }
   return values;
 }
@@ -58,13 +57,12 @@ export function handleChatStateWrite(
 ): void {
   const rowSource: string = storageSource("chat_states", message.chatId);
   assertTelegramChatId(message.chatId, rowSource);
-  decodeAiPersona(message.aiPersona, rowSource);
   assertPositiveRevision(message.revision, rowSource);
   // 解码结果留着用：下面的唯一代理目标判定只关心「这次写有没有把 isProxySendEnabled
   // 打开」，重新解一遍纯属白付一次完整校验。
   const incoming: ChatState | null = message.data === null
     ? null
-    : decodeChatStateData(message.data, rowSource, message.aiPersona);
+    : decodeChatStateData(message.data, rowSource);
   const current: PendingChatStateWrite | undefined = pendingChatStateWrites.get(
     message.chatId
   );
@@ -93,11 +91,9 @@ export function handleChatStateWrite(
       }
     }
   }
-  if (message.data === null && message.aiPersona !== null) throw new Error(`${rowSource}: $.ai_persona: expected SQL NULL for deleted status.`);
-  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) + storageWriteCost(message.aiPersona) - (current === undefined ? 0 : storageWriteCost(current.data) + storageWriteCost(current.aiPersona)));
+  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) - (current === undefined ? 0 : storageWriteCost(current.data)));
   pendingChatStateWrites.set(message.chatId, {
     data: message.data,
-    aiPersona: message.aiPersona,
     revision: message.revision,
   });
   flushIfStorageFull(reply);

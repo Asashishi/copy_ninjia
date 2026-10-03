@@ -14,6 +14,7 @@ import {
   loadAgentDeploymentConfig,
   parseAdDetectAgentConfig,
   parseAgentDeploymentConfig,
+  requireAgentCapabilityConfig,
   validateAgentDeploymentConfig,
 } from "../../packages/config/agent";
 import {
@@ -21,10 +22,10 @@ import {
   agentDeploymentConfigCache,
 } from "../../packages/cache/perThread/config";
 import { AGENT_CONFIG_PATH, CONFIG_ROOT } from "../../packages/consts/paths";
-import { AGENT_HEADERS_MAX_ENTRIES } from "../../packages/consts/agent";
+import { AGENT_CAPABILITY_NAMES, AGENT_HEADERS_MAX_ENTRIES, WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE } from "../../packages/consts/agent";
 import { TTS_DEFAULT_DAILY_LIMIT, TTS_DEFAULT_DAILY_RESERVE_QUOTA, TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { XAI_SPEECH_DEFAULT_LANGUAGE } from "../../packages/consts/aiChat/openai";
-import type { AdDetectAgentConfig, AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
+import type { AdDetectAgentConfig, AgentDeploymentConfig, AgentTtsCapabilityConfig, AgentWebSearchCapabilityConfig } from "../../packages/types/config";
 
 const AD_DETECT: Readonly<Record<string, string>> = {
   provider: "openai",
@@ -74,6 +75,22 @@ afterEach((): void => {
 });
 
 describe("agent capability config", () => {
+  test("provider 和协议枚举去掉首尾空白，规范化后仍严格核对取值", () => {
+    const capability: Readonly<{ provider: string; api_key: string; model: string }> =
+      { provider: " anthropic ", api_key: "key", model: "m" };
+    const parsed: AgentDeploymentConfig = parseAgentDeploymentConfig({
+      ...AGENT, text: capability,
+      image: { provider: " openai ", api_key: "key", model: "m", image_protocol: " xai " },
+      tts: { provider: " openai ", api_key: "key", speech_protocol: " xai ", voice: "v" },
+      web_search: capability,
+    }, "agent.json");
+    expect(parsed.text.provider).toBe("anthropic");
+    expect(parsed.webSearch?.provider).toBe("anthropic");
+    expect(parsed.image?.imageProtocol).toBe("xai");
+    expect(parsed.tts?.provider === "openai" && parsed.tts.speechProtocol).toBe("xai");
+    expect(() => parseAdDetectAgentConfig({ ...capability, provider: " invalid " }, "agent.json"))
+      .toThrow('$.agent.ad_detect.provider must be "google", "openai" or "anthropic"');
+  });
   test("按能力保留 provider、api_key、model 与各自 base_url", () => {
     const parsed: AgentDeploymentConfig = parseAgentDeploymentConfig(AGENT, "agent.json");
     expect(parsed).toEqual({
@@ -92,13 +109,27 @@ describe("agent capability config", () => {
     });
   });
 
-  test("provider 只接受 google 与 openai", () => {
-    for (const provider of ["gemini", "gpt", "xai", ""] as const) {
+  test("provider 只接受 google、openai 与 anthropic", () => {
+    for (const provider of ["gemini", "gpt", "xai", "claude", ""] as const) {
       expect(() => parseAgentDeploymentConfig({
         ...AGENT,
         text: { provider, api_key: "key", model: "m" },
-      }, "agent.json")).toThrow(/agent\.text\.provider must be "google" or "openai"/);
+      }, "agent.json")).toThrow(/agent\.text\.provider must be "google", "openai" or "anthropic"/);
     }
+  });
+
+  test("anthropic 按通用字段解码，不接受 headers；image 与 tts 不受理 anthropic", () => {
+    const anthropic = { provider: "anthropic", api_key: "anthropic-key", base_url: "https://proxy.example/anthropic", model: "claude-test" };
+    expect(parseAgentDeploymentConfig({ ...AGENT, text: anthropic, web_search: anthropic }, "agent.json")).toMatchObject({
+      text: { provider: "anthropic", apiKey: "anthropic-key", baseUrl: "https://proxy.example/anthropic", headers: undefined, model: "claude-test" },
+      webSearch: { provider: "anthropic", model: "claude-test" },
+    });
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, text: { ...anthropic, headers: { "x-a": "b" } } }, "agent.json"))
+      .toThrow(/agent\.text must be exactly \{ provider, api_key, base_url\?, model \} when provider is anthropic/);
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, image: { ...anthropic, image_protocol: "openai" } }, "agent.json"))
+      .toThrow(/agent\.image\.provider must be "google" or "openai"/);
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...anthropic, voice: "v" } }, "agent.json"))
+      .toThrow(/agent\.tts\.provider must be "google" or "openai"/);
   });
 
   test("三项对话必备能力不能缺，image 与 tts 可缺省", () => {
@@ -106,13 +137,36 @@ describe("agent capability config", () => {
       const value: Record<string, unknown> = { ...AGENT };
       delete value[missing];
       expect(() => parseAgentDeploymentConfig(value, "agent.json"))
-        .toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, tts\? \}/);
+        .toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, tts\?, web_search\? \}/);
     }
     const withoutOptional: Record<string, unknown> = { ...AGENT };
     delete withoutOptional.image;
     expect(parseAgentDeploymentConfig(withoutOptional, "agent.json").image).toBeUndefined();
     delete withoutOptional.tts;
     expect(parseAgentDeploymentConfig(withoutOptional, "agent.json").tts).toBeUndefined();
+  });
+
+  test("web_search 可缺省；配置时严格解码并补齐函数调用上限", () => {
+    expect(parseAgentDeploymentConfig(AGENT, "agent.json").webSearch).toBeUndefined();
+    expect(parseAgentDeploymentConfig({
+      ...AGENT,
+      web_search: { provider: "openai", api_key: "search-key", base_url: "https://search.example/v1", model: "search-model" },
+    }, "agent.json").webSearch).toEqual({
+      provider: "openai",
+      apiKey: "search-key",
+      baseUrl: "https://search.example/v1",
+      headers: undefined,
+      model: "search-model",
+      maxCallsPerUse: WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE,
+    });
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      web_search: { provider: "openai", api_key: "key", model: "m", voice: "Leda" },
+    }, "agent.json")).toThrow(/agent\.web_search must be exactly \{ provider, api_key, base_url\?, model, max_calls_per_use\? \} when provider is openai/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      web_search: { provider: "google", api_key: "replace-with-google-api-key", model: "m" },
+    }, "agent.json")).toThrow(/agent\.web_search\.api_key must be a configured non-placeholder string/);
   });
 
   test("模型、端点与未知键严格校验", () => {
@@ -135,11 +189,12 @@ describe("agent capability config", () => {
   });
 
   test("所有能力只拒绝示例中的实际占位凭据，且错误不回显凭据", async () => {
-    for (const capability of ["ad_detect", "text", "summary", "media", "image", "tts"] as const) {
+    for (const capability of AGENT_CAPABILITY_NAMES) {
       const exampleCapability: Readonly<Record<string, unknown>> | undefined = AGENT_EXAMPLE[capability];
       const placeholder: unknown = exampleCapability?.api_key;
       if (typeof placeholder !== "string") throw new Error(`missing example api_key for ${capability}`);
-      const capabilityConfig: Readonly<Record<string, unknown>> = AGENT[capability] as Readonly<Record<string, unknown>>;
+      // 夹具里没有的可选能力（web_search）借用 text 的合法字段，只换 api_key。
+      const capabilityConfig: Readonly<Record<string, unknown>> = (AGENT[capability] ?? AGENT.text) as Readonly<Record<string, unknown>>;
       const value: Readonly<Record<string, unknown>> = {
         ...AGENT,
         [capability]: { ...capabilityConfig, api_key: placeholder },
@@ -245,7 +300,7 @@ describe("agent capability config", () => {
     expect(() => parseAgentDeploymentConfig({
       ...AGENT,
       song: { provider: "google", api_key: "key", model: "lyria" },
-    }, "agent.json")).toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, tts\? \}/);
+    }, "agent.json")).toThrow(/agent must be exactly \{ ad_detect\?, text, summary, media, image\?, tts\?, web_search\? \}/);
   });
 });
 
@@ -527,6 +582,18 @@ describe("unified agent.json loading", () => {
     expect(() => getAgentDeploymentConfig()).toThrow(/was never delivered/);
     // 拒绝时不得回显任何凭据。
     expect(() => getAgentDeploymentConfig()).not.toThrow(/google-text-key/);
+  });
+
+  test("按能力名取通用能力配置：web_search 对应 webSearch 字段，未配置时抛错", () => {
+    const agentValue: AgentDeploymentConfig = parseAgentDeploymentConfig(AGENT, "agent.json");
+    adoptAgentDeploymentConfig({ ...agentValue, webSearch: undefined });
+    expect(requireAgentCapabilityConfig("text")).toBe(agentValue.text);
+    expect(requireAgentCapabilityConfig("summary")).toBe(agentValue.summary);
+    expect(requireAgentCapabilityConfig("media")).toBe(agentValue.media);
+    expect(() => requireAgentCapabilityConfig("web_search")).toThrow('Agent capability "web_search" is not configured.');
+    const webSearch: AgentWebSearchCapabilityConfig = { ...agentValue.text, maxCallsPerUse: WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE };
+    adoptAgentDeploymentConfig({ ...agentValue, webSearch });
+    expect(requireAgentCapabilityConfig("web_search")).toBe(webSearch);
   });
 
   test("readiness 探测入口在 holder 已填时不再解析", async () => {

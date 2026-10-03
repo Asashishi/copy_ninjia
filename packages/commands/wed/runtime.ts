@@ -1,4 +1,4 @@
-import { wedChats, wedRuntime } from "../../cache/main/wed";
+import { wedAvatarProbes, wedChats, wedRuntime } from "../../cache/main/wed";
 import { WED_MAX_CONCURRENT, WED_MAX_PENDING } from "../../consts/wed";
 import { createCommandExecutorRuntime, submitCommandExecutorTask } from "../../infra/commandExecutor";
 import { assertTimeoutMs, drainTrackedTasks } from "../../libs/inflight";
@@ -9,7 +9,7 @@ import { resetWedMemberStates } from "../../cache/main/wedMembers";
 import { flushWedMembers } from "./persistence";
 import { initWedMemberReview, stopWedMemberReview } from "./memberReview";
 
-/** 启动时创建唯一执行器；上一代还有任务时禁止重建。 */
+/** 启动时创建唯一执行器并清空旧探测；上一代还有任务时禁止重建。 */
 export function initWedRuntime(): void {
   const previous: CommandExecutorRuntime | null = wedRuntime.current;
   if (previous !== null && previous.tasks.size > 0) {
@@ -19,6 +19,7 @@ export function initWedRuntime(): void {
   initWedMemberReview();
   for (const [, chat] of wedChats) chat.controller.abort();
   wedChats.clear();
+  wedAvatarProbes.clear();
   resetWedMemberStates();
   wedRuntime.current = createCommandExecutorRuntime({
     maxConcurrent: WED_MAX_CONCURRENT,

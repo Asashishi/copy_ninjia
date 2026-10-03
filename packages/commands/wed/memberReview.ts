@@ -9,7 +9,6 @@ import { trackBackgroundTask } from "../../infra/backgroundTasks";
 import { signalWithTimeout } from "../../libs/abortSignal";
 import { onDiskIOReply } from "../../infra/diskIO/observers";
 import { readPresentChatUser } from "../../infra/telegram/actions/membership";
-import { monotonicNow } from "../../libs/monotonicDeadline";
 import { sleep } from "../../libs/sleep";
 import type { MidnightMaintenanceReply } from "../../types/diskIO/replies";
 import type { ChatMemberPresence } from "../../types/telegram";
@@ -36,10 +35,10 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
         if (review.controller.signal.aborted) return;
         if (wedMemberStates.get(chatId) !== state) break;
         if (!state.members.has(userId)) continue;
-        let delay: number = nextCheckAt - monotonicNow();
+        let delay: number = nextCheckAt - performance.now();
         while (delay > 0) {
           await sleep(Math.ceil(delay), review.controller.signal);
-          delay = nextCheckAt - monotonicNow();
+          delay = nextCheckAt - performance.now();
         }
         if (review.controller.signal.aborted) return;
         if (wedMemberStates.get(chatId) !== state) break;
@@ -47,7 +46,7 @@ async function reviewWedMembers(review: WedMemberReview): Promise<void> {
         review.chatId = chatId;
         review.userId = userId;
         review.observed = false;
-        nextCheckAt = monotonicNow() + WED_MEMBER_REVIEW_INTERVAL_MS;
+        nextCheckAt = performance.now() + WED_MEMBER_REVIEW_INTERVAL_MS;
         const signal: AbortSignal =
           signalWithTimeout(review.controller.signal, WED_OPERATION_TIMEOUT_MS);
         const presence: ChatMemberPresence = await readPresentChatUser({ chatId, userId, signal });

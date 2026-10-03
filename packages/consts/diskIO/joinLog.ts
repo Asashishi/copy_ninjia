@@ -8,7 +8,7 @@
 import { FLUSH_MAX_ENTRIES } from "./appendOnly";
 
 /**
- * 按群、按东京日期命名的入群日志文件。
+ * 按群、按配置时区的日期命名的入群日志文件。
  * 捕获组 1 是群 ID，捕获组 2 是 YYYY-MM-DD 日期。
  */
 export const JOIN_LOG_FILE_PATTERN: RegExp =
@@ -21,14 +21,14 @@ export const JOIN_LOG_FILE_PATTERN: RegExp =
 export const JOIN_LOG_REOPEN_RETRY_MS: number = 5 * 60_000;
 
 /**
- * 入群文件保留的东京自然日数。滚动窗口最多 24 小时，本来只需今天与昨天；
- * 第三天专门覆盖 23:59 发起、跨过午夜才进入 Worker 的在途查询。
+ * 入群文件至少保留的配置时区自然日数，同时覆盖前一日命令的滚动 24 小时窗口；
+ * 夏令时短日使窗口跨越更多日期时，由保留边界额外纳入这些日文件。
  */
 export const JOIN_LOG_FILE_RETENTION_DAYS: number = 3;
 
 /**
- * 允许补记的事件日期数：当前东京日与上一东京日。更旧事件已不可能进入最长
- * 24 小时查询窗口，重投也不应重新制造历史文件。
+ * 固定接纳的事件日期数：配置时区当天与前一天。更旧日期仅在仍可能属于滚动
+ * 24 小时窗口时接纳，以覆盖夏令时短日；窗口外重投不重新制造历史文件。
  */
 export const JOIN_LOG_ACCEPTED_EVENT_DAYS: number = 2;
 
@@ -37,8 +37,8 @@ export const JOIN_LOG_MAX_USERS_PER_CHAT_DAY: number = 250_000;
 
 /**
  * Disk I/O Worker 内最多常驻的群日索引数。入群日志只为受管群写入（初始化网关），
- * 写入集合为 STATE_MANAGED_CHAT_LIMIT × JOIN_LOG_ACCEPTED_EVENT_DAYS = 50 份，
- * 64 在此之上为 `/batch_kick` 的跨日查询留出余量；第三个保留日只在查询时打开。
+ * 常态写入集合覆盖当天与前一天；夏令时短日补记和 `/batch_kick` 跨日查询也会接管
+ * 更早的日文件。缓存上限独立于日文件保留窗口。
  * 超出后按 LRU 丢弃可从磁盘重建的索引，不改变权威文件。
  *
  * 内存上界：单份索引满载 JOIN_LOG_MAX_USERS_PER_CHAT_DAY 条时约 21 MiB

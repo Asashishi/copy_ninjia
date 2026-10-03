@@ -1,13 +1,12 @@
+/** owner: workers/diskIO。AI 记忆的 revision 水位线与回执出口；快照最终值排入共享 SQLite
+ * 事务缓冲（cache/workers/diskIO/storageDatabase.ts 的 pendingAiContextWrites），由
+ * aiMemoryStorage.ts 按 revision 接管。
+ */
+
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
 } from "../../../types/diskIO/replies";
-
-/**
- * owner: workers/diskIO。AI 记忆的 revision 水位线与回执出口；快照最终值排入共享 SQLite
- * 事务缓冲（cache/workers/diskIO/storageDatabase.ts 的 pendingAiContextWrites），由
- * aiMemoryStorage.ts 按 revision 接管。
- */
 
 /**
  * diskIOWorker 运行时按 chat 观察到的最新 revision（迟到消息的水位线）。

@@ -35,7 +35,7 @@ function knownKeys(value: Record<string, unknown>, allowed: readonly string[], c
   const keys: Set<string> = new Set(allowed);
   for (const key of Object.keys(value)) {
     if (!keys.has(key)) {
-      invalidInput(context.source, `${context.path}.${key}`, "absent (not part of the current state schema)");
+      invalidInput(context.source, `${context.path}.<key>`, "absent (not part of the current state schema)");
     }
   }
 }
@@ -50,6 +50,7 @@ function copyMode(value: unknown, context: InputFieldContext): CopyMode | undefi
   return invalidInput(context.source, context.path, "one of reverse or nya");
 }
 
+/** 复读目标身份：可选字符串字段按 Telegram 给出的原样保留（名称与群名可以是空字符串）。 */
 function cachedUser(value: unknown, context: InputFieldContext): CachedUser {
   const raw: Record<string, unknown> = record(value, context);
   knownKeys(raw, ["id", "username", "first_name", "last_name", "title", "isChannel"], context);

@@ -2,14 +2,9 @@
 
 # Deployment Configuration Reference
 
-This directory contains structure examples that are safe to commit to Git. The bot reads the
-Git-ignored `config/` directory at the project root. Replace every example token, API key, user
-ID, model, and endpoint with values verified for the deployment; the placeholders are not usable
-production settings.
+This directory contains configuration structure examples that are safe to commit to Git. The bot reads the Git-ignored `config/` directory at the project root. Replace every example token, API key, user ID, model name, and endpoint with values verified for your actual deployment environment; **placeholders cannot be used in production**.
 
-On a fresh deployment, copy only JSON files that do not already exist; the `g-auth.json` example
-only shows the structure and the `cron.json` example only shows how scheduled tasks are written, so
-neither may be copied:
+On a fresh deployment, copy only JSON files that do not already exist; `g-auth.json` only demonstrates the credentials structure, and `cron.json` only illustrates how scheduled tasks are written—neither should be copied blindly:
 
 ```bash
 mkdir -p config/static config/dynamic
@@ -21,465 +16,526 @@ for example in config_example/static/*.json config_example/dynamic/*.json; do
 done
 ```
 
-Never use a copy command that overwrites existing files, and never treat `config_example/` as a
-deployment backup. Files under `config/` contain credentials and should be readable only by the
-service account. `config/` is split into two subdirectories by how changes take effect:
+> [!CAUTION]
+> Never use a copy command that overwrites existing files, and never treat `config_example/` as a deployment backup. Files under `config/` contain credentials and should be readable only by the service account.
 
-- `config/static/`: `bot.json` and `g-auth.json`; a change requires a restart.
-- `config/dynamic/`: `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`,
-  and `cron.json`; runtime edits are hot-reloaded (see "Editing While Running" below).
+`config/` is strictly split into two subdirectories based on how changes take effect:
+- `config/static/`: `bot.json`, `g-auth.json`; changes **require a service restart**.
+- `config/dynamic/`: `assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, `cron.json`; changes are automatically hot-reloaded at runtime.
 
-`config/dynamic/` must exist (it may be empty). Startup fails if any of these files sits at the top
-level of `config/` or in the other subdirectory.
+The `config/dynamic/` directory must exist (it may be empty). Placing any configuration file at the root of `config/` or in the wrong subdirectory will refuse startup. Allowlist, blocklist, and per-group state live in `database/storage.sqlite` and are not deployment configuration.
 
-Allowlist, blocklist, and pending-removal state are runtime data rather than deployment
-configuration; they live together in `database/storage.sqlite` and change only through commands
-or an explicit migration script.
+Every JSON file is parsed under a strict schema: unknown keys, typos, type mismatches, invalid enums, or out-of-range values abort startup immediately or are rejected during hot reload—**the bot never repairs or silently ignores invalid configurations**.
 
-Every JSON file uses a strict schema. If a file exists, unknown or misspelled fields, wrong types,
-invalid enum values, conflicts, and out-of-range values abort startup before Telegram connections
-or Workers are created. The process never repairs, ignores, or silently falls back from invalid
-configuration. Truly absent optional capabilities follow the feature boundaries below.
+---
 
-## Files and Startup Boundaries
+## Configuration Files Overview
 
-| File | What it configures | Behavior when absent |
-| --- | --- | --- |
-| `static/bot.json` | Telegram Bot token and sole super administrator | Startup always fails |
-| `dynamic/agent.json` | Per-capability AI provider, credential, endpoint, and model | Depends on the capability; see below |
-| `dynamic/stickers.json` | Sticker packs available to AI chat | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
-| `dynamic/mood.json` | AI moods, base probabilities, and weather/time multipliers | AI chat cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
-| `dynamic/ad_samples.json` | Positive reference examples for ad classification | Ad detection cannot be enabled; chats that already had it on go quiet, but startup still succeeds |
-| `dynamic/cron.json` | Scheduled sends (text, pictures, files, voice) | No scheduled tasks |
-| `dynamic/assets.json` | The dedicated `/h_image` library directory, the default avatar (local file or URL), and the URLs of inline-result thumbnails | Every value uses its built-in default |
-| `static/g-auth.json` | Google Cloud service-account key for `/translate`; the example holds placeholders only, and the operator places the real key in `config/static/` out of band | Translation cannot be enabled; active translation sessions stop handling messages, but startup still succeeds |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="22%" align="left">Configuration File</th>
+    <th width="18%" align="left">Lifecycle</th>
+    <th width="34%" align="left">Core Contents</th>
+    <th width="26%" align="left">Behavior When Missing</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><code>static/bot.json</code></td>
+    <td><nobr>Static (Restart required)</nobr></td>
+    <td>Telegram Bot Token, sole super administrator, default atmosphere and time zone</td>
+    <td><b>Startup refused (Fatal error)</b></td>
+  </tr>
+  <tr>
+    <td><code>dynamic/agent.json</code></td>
+    <td><nobr>Dynamic (Hot reloaded)</nobr></td>
+    <td>Protocol, credentials, endpoints, and models for each AI capability</td>
+    <td>Missing core 3 disables AI chat; missing optional disables tool</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/stickers.json</code></td>
+    <td><nobr>Dynamic (Hot reloaded)</nobr></td>
+    <td>Telegram sticker pack short names available for AI chat</td>
+    <td>AI chat halts (startup succeeds)</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/mood.json</code></td>
+    <td><nobr>Dynamic (Hot reloaded)</nobr></td>
+    <td>AI moods list, base extraction weights, and environmental multipliers</td>
+    <td>AI chat halts (startup succeeds)</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/ad_samples.json</code></td>
+    <td><nobr>Dynamic (Hot reloaded)</nobr></td>
+    <td>Positive reference samples for spam and advertisement detection</td>
+    <td>Ad detection halts (startup succeeds)</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/cron.json</code></td>
+    <td><nobr>Dynamic (Hot reloaded)</nobr></td>
+    <td>Scheduled send tasks (text, images, files, voice, news digest)</td>
+    <td>No scheduled tasks scheduled</td>
+  </tr>
+  <tr>
+    <td><code>dynamic/assets.json</code></td>
+    <td><nobr>Dynamic (Hot reloaded)</nobr></td>
+    <td><code>/h_image</code> library path, default avatar, inline thumbnails</td>
+    <td>Uses built-in defaults</td>
+  </tr>
+  <tr>
+    <td><code>static/g-auth.json</code></td>
+    <td><nobr>Static (Restart required)</nobr></td>
+    <td>Google Cloud service account key for translation (RSA PEM)</td>
+    <td>Translation halts (startup succeeds)</td>
+  </tr>
+</tbody>
+</table>
 
-AI chat also needs `prompt/persona.md`, which does not belong in this directory. An optional file
-that exists but is invalid aborts startup even when its feature is currently disabled.
+> [!NOTE]
+> AI persona defaults to the built-in teasing persona. An optional, untracked `prompt/persona.md` placed in the project root overrides it. Explicit `atmosphere` takes priority for notices and menus; when omitted, a custom persona uses plain copy and the built-in persona uses teasing copy.
 
-## Editing While Running
+---
 
-The bot watches only `config/dynamic/`. About 0.5 seconds after the last save of `assets.json`, `ad_samples.json`,
-`agent.json`, `mood.json`, `stickers.json`, or `cron.json`, it re-parses the file with the same
-strict schema used at startup:
+## Editing While Running (Hot Reload)
 
-- Valid content that differs from the current snapshot replaces it and is handed to the Workers
-  that use it; the log records `Reloaded deployment config <path>.`. In-flight model requests
-  finish with the old configuration.
-- A change that fails to parse is rejected as a whole; the log records one error naming the file
-  path, field path, and expected shape, and the bot keeps the last applied configuration. A file
-  left invalid still aborts the next startup.
-- Adding or deleting `ad_samples.json`, `agent.json`, `mood.json`, or `stickers.json`, or adding
-  or removing the whole `ad_detect` section
-  or any of `text`, `summary`, and `media` in `agent.json`, changes the matching feature's
-  availability directly: AI chat or ad detection stops as soon as a prerequisite is missing and
-  logs one line with the reason, per-chat switches keep their values, and the feature resumes
-  automatically once the prerequisite is back, with no restart. Deleting a file logs
-  `Deployment config <path> was removed.`. Adding or removing `image` or `tts` takes effect
-  directly.
-- `send_voice` in `cron.json` depends on `tts` in `agent.json` (together with `text`, `summary`,
-  and `media`): a new task list that uses `send_voice` while no usable `tts` is configured rejects
-  the whole `cron.json` change; while the task list still uses `send_voice`, an `agent.json` change
-  that removes `tts` (or deletes the whole `agent.json` or a chat core capability) is rejected as a
-  whole too. Both rejections keep the last applied configuration and log an error; the same
-  combination at startup refuses startup.
-- Packs newly added to `stickers.json` start building their catalogs immediately; removed packs
-  are no longer offered to the AI, and their catalogs are cleaned up against the whitelist at the
-  next restart.
-- Moods that still exist in `mood.json` take effect for every chat immediately; a chat whose
-  current mood was removed draws a new one the next time it is used.
-- `assets.json` changes take effect for thumbnails and the default avatar from their next use;
-  deleting the file restores every built-in default. When `onlyPath.random_h_image_dir` points to a new
-  directory, that directory is created and checked with the same rules as startup first; if the
-  check fails the whole `assets.json` change is rejected and the previous directory stays in use.
-- `cron.json` is reconciled by task name: unchanged tasks keep their timing, changed or removed
-  tasks stop being scheduled (a run in progress stops before its next action), and new tasks
-  start. Deleting the file removes every task.
+The bot watches `config/dynamic/` continuously. Saving changes triggers strict schema validation and hot reload in approximately 0.5 seconds:
 
-`bot.json` and `g-auth.json` under `config/static/`, and `prompt/persona.md`, are not
-hot-reloaded and require a restart after a change.
+1. **Hot Replacement**: Valid changes update the in-memory snapshot and are immediately dispatched to relevant Workers. In-flight requests finish cleanly with the previous configuration.
+2. **Rejection & Fail-Safe**: Invalid configurations are rejected as a whole. Detailed error locations (file path, field path, expected shape) are logged, and the bot continues running using the previous valid snapshot.
+3. **Availability Linkage**:
+   - Adding or removing `ad_samples.json` or `ad_detect` in `agent.json` directly enables or disables ad detection.
+   - Adding or removing the chat core capabilities (`text`, `summary`, `media`) or `mood.json` / `stickers.json` immediately halts AI chat. Per-chat database toggles maintain their state and resume automatically once prerequisites are restored.
+   - Adding or removing optional tools (`image`, `tts`, `web_search`) takes effect on the fly.
+4. **Cross-File Dependency Validation**:
+   - `send_voice` in `cron.json` strictly requires `agent.tts`: task tables with voice actions are rejected if `tts` is absent; removing `tts` while an active cron task uses `send_voice` rejects the `agent.json` modification.
+   - `send_web_digest` requires the core dialogue capabilities, following the same rejection rules.
+5. **Stickers & Media**:
+   - Newly added packs in `stickers.json` begin indexing immediately; removed packs are withdrawn from AI access.
+   - `assets.json` updates take effect on next use. If `onlyPath.random_h_image_dir` points to an invalid directory, the modification is rejected.
+6. **Incremental Task Reconciliation**: `cron.json` diffs by task name: unchanged tasks maintain their schedules, modified or deleted tasks stop cleanly, and new tasks start scheduling.
+
+---
 
 ## `bot.json`
+
+Static configuration file located at `config/static/bot.json`. Requires a process restart to take effect.
+
+### Configuration Example
 
 ```json
 {
   "bot_token": "replace-with-telegram-bot-token",
-  "super_admin_user_id": 123456789,
-  "atmosphere": "mesugaki"
+  "super_admin_user_id": 987654321,
+  "atmosphere": "mesugaki",
+  "time_zone": "Asia/Tokyo"
 }
 ```
 
-- `bot_token`: the non-empty Bot API token issued by BotFather. It is a secret.
-- `super_admin_user_id`: the sole super administrator's positive safe-integer Telegram user ID,
-  not a username. This identity inherently has every grantable permission and should not also be
-  added to the SQLite allowlist table.
+### Key Reference
 
-Optional `atmosphere` accepts only `"mesugaki"` (teasing, the default) or `"normal"` (ordinary). A group with a custom AI persona still uses ordinary notices; other groups and their command menus use this setting. Inline fortunes also use the Bot setting because they have no target chat context. Restart to apply it. The installer preserves a valid style when changing identity. Any remaining `telegram.json`, including one beside `bot.json`, blocks installation and startup until explicit cold migration.
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `bot_token` | `string` | **Required** | Non-empty string, not equal to placeholder | Telegram Bot API token issued by BotFather (`123456:ABC...`). Core secret credential |
+| `super_admin_user_id` | `number` | **Required** | Positive safe integer (`> 0`) | Telegram numeric user ID of the sole super administrator (not @username). Inherent holder of all permissions |
+| `atmosphere` | `string` | Optional | `"mesugaki"` or `"normal"`; trimmed and strictly validated; omission selects by custom-persona presence | Global notification tone; explicit configuration takes priority (`mesugaki` teasing, `normal` plain). When omitted, use plain if `prompt/persona.md` exists, otherwise teasing; does not change the AI persona |
+| `time_zone` | `string` | Optional | IANA name, default `"Asia/Tokyo"`; trimmed and strictly validated | Default calendar zone for fortune, logs, ad activity, AI clocks, daily maintenance, and cron tasks without an explicit zone; the Tokyo weather tool is registered only for `Asia/Tokyo`, including the omitted default; invalid values refuse startup |
+
+---
 
 ## `agent.json`
 
-The top level may contain only one `agent` object. Every capability independently selects its
-protocol, API key, endpoint, and model. Capabilities may use different services or repeat the same
-key, but credentials and failures never fall back across capabilities.
+Dynamic configuration file located at `config/dynamic/agent.json`. The root contains a single `agent` object partitioned by capability rather than by vendor.
 
-| Capability | Runtime purpose | Requirement |
-| --- | --- | --- |
-| `ad_detect` | Classifies message bundles as advertising | Optional; absence blocks only ad detection |
-| `text` | Generates group-chat replies and performs tool calls | AI-chat core; must exist with `summary` and `media` |
-| `summary` | Compacts long-term conversation memory and summarizes sticker packs | AI-chat core; required |
-| `media` | Describes images/stickers and transcribes voice | AI-chat core; required |
-| `image` | Registers the image-generation tool | Optional; absence removes only this tool |
-| `tts` | Speech synthesis shared by the AI voice tool (Japanese lines synthesized and sent as voice messages), `/send` relay TTS requests, and `send_voice` in `cron.json` | Optional; absence or an unsupported implementation removes the voice tool and makes `/send` TTS requests fail; required when `cron.json` uses `send_voice` |
+### Capabilities & Requirements
 
-Ordinary capabilities accept these fields:
+| Capability | Role | Function | Dependency Requirement |
+| --- | --- | --- | --- |
+| `text` | **Core Essential** | Group chat replies generation, tool call dispatch | Must coexist with `summary` and `media` |
+| `summary` | **Core Essential** | Compressing long-term memory, generating sticker pack summaries | Must exist |
+| `media` | **Core Essential** | Image understanding, sticker description, speech-to-text | Must exist (multimodal model) |
+| `ad_detect` | Optional | Advertisement classification; flood-control muting uses separate message-count rules | Halts ad detection when missing; flood control is unaffected |
+| `image` | Optional | AI image generation tool registration (e.g., Grok Imagine, Imagen) | Omits image tool when missing |
+| `tts` | Optional | AI voice replies, `/send` voice forwarding, cron voice messages | Omits voice tool when missing; required if `cron` uses `send_voice` |
+| `web_search` | Optional | Dedicated web search tool (executed by specialized model) | Falls back to `text` model's built-in search when missing |
 
-| Field | Meaning |
-| --- | --- |
-| `provider` | Request protocol: only `google` or `openai`; this is not the model's brand |
-| `api_key` | Non-empty API key owned by this capability |
-| `base_url` | Optional absolute `https` endpoint; omit it to use the selected SDK's official endpoint. Plain `http` is accepted only for `localhost`, `127.0.0.1`, and `::1` (a local proxy); anything else refuses startup, because this field sits right next to the same capability's `api_key`. The URL must carry no userinfo and no `#` fragment |
-| `model` | Non-empty model identifier accepted by that endpoint; the program never guesses or rewrites it |
-| `headers` | Optional, allowed only when `provider` is `google`: an object of request headers attached to every request of this capability, for third-party gateway authentication and similar (for example `cf-aig-authorization` for Cloudflare AI Gateway). 1 to 8 entries; each name must be a valid HTTP header name, unique case-insensitively, and must not be `x-goog-api-key` (the Google key goes only in `api_key`); each value, after trimming leading and trailing whitespace, must be non-empty printable ASCII. Every value is redacted in logs as a credential. An `openai` capability with this field refuses startup. See the example after this table |
-
-A Google capability with only `provider`, `api_key`, and `model` talks to Google's official endpoint directly; [`config_example/dynamic/agent.json`](../dynamic/agent.json) uses that form. To route through Cloudflare AI Gateway, add the gateway `base_url` and the authentication `headers`; `media` inside the `agent` section, for example:
+### Complete Configuration Example
 
 ```json
 {
-  "media": {
-    "provider": "google",
-    "api_key": "replace-with-google-api-key",
-    "base_url": "https://gateway.ai.cloudflare.com/v1/replace-with-account-id/replace-with-gateway-id/google-ai-studio",
-    "headers": {
-      "cf-aig-authorization": "Bearer replace-with-cloudflare-ai-gateway-token"
+  "agent": {
+    "text": {
+      "provider": "google",
+      "api_key": "replace-with-google-api-key",
+      "model": "gemini-3.5-flash-lite"
     },
-    "model": "gemini-3.5-flash-lite"
+    "summary": {
+      "provider": "anthropic",
+      "api_key": "replace-with-anthropic-api-key",
+      "model": "claude-haiku-4-5"
+    },
+    "media": {
+      "provider": "google",
+      "api_key": "replace-with-google-api-key",
+      "base_url": "https://gateway.ai.cloudflare.com/v1/your-account-id/your-gateway/google-ai-studio",
+      "headers": {
+        "cf-aig-authorization": "Bearer <replace-with-cloudflare-ai-gateway-token>"
+      },
+      "model": "gemini-3.5-flash-lite"
+    },
+    "ad_detect": {
+      "provider": "openai",
+      "api_key": "replace-with-deepseek-api-key",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash"
+    },
+    "image": {
+      "provider": "openai",
+      "api_key": "replace-with-xai-api-key",
+      "base_url": "https://api.x.ai/v1",
+      "model": "grok-imagine-image",
+      "image_protocol": "xai"
+    },
+    "tts": {
+      "provider": "google",
+      "api_key": "replace-with-google-api-key",
+      "model": "gemini-3.8-flash-lite-tts",
+      "voice": "en-us-nika",
+      "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
+      "daily_limit": 100,
+      "daily_reserve_quota": 25
+    },
+    "web_search": {
+      "provider": "anthropic",
+      "api_key": "replace-with-anthropic-api-key",
+      "model": "claude-haiku-4-5",
+      "max_calls_per_use": 5
+    }
   }
 }
 ```
 
-For an OpenAI-compatible service such as xAI or another compatible gateway, use
-`provider: "openai"` and set that capability's `base_url` and `model`. `provider` selects the SDK
-and wire protocol; the program never infers it from the URL or model name.
+### General Key Reference
 
-When `image.provider` is `openai`, `image_protocol` is also mandatory and selects the image request
-shape:
+Applies to all capabilities (`text`, `summary`, `media`, `ad_detect`, `image`, `tts`, `web_search`):
 
-- `openai`: OpenAI `gpt-image-2` arbitrary-size protocol.
-- `openai-standard`: standard sizes shared by the GPT Image family.
-- `xai`: xAI JSON and aspect-ratio protocol.
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `provider` | `string` | **Required** | `"google"`, `"openai"`, or `"anthropic"` | Underlying protocol and SDK (**Note**: `image` and `tts` only support `"google"` or `"openai"`). Compatible services (DeepSeek, xAI) use `"openai"` |
+| `api_key` | `string` | **Required** | Non-empty string, not equal to placeholder | Dedicated API key for this capability |
+| `base_url` | `string` | Optional | Absolute HTTPS URL (`http` only allowed for loopback `127.0.0.1`, `localhost`) | Custom endpoint URL. Must not contain userinfo credentials or `#` fragments |
+| `model` | `string` | **Required** (except xAI TTS) | Non-empty string | Actual model name accepted by the endpoint |
+| `headers` | `object` | Optional | 1–8 key-value pairs (**Only allowed when `provider: "google"`**) | Custom HTTP request headers for third-party gateway authentication (e.g. Cloudflare AI Gateway). Keys cannot be `x-goog-api-key`; values must be printable ASCII |
 
-`image_protocol` is forbidden when `image.provider` is `google`.
+### Image Generation Keys (`agent.image`)
 
-Besides the common fields, `tts` requires a non-empty `voice`, passed verbatim as the synthesis voice:
-for Google either a prebuilt voice name (`Nika` in the example) or a `voice_` ID created with AI
-Studio Voice design, and for OpenAI and xAI their own voice names. A designed voice belongs to the
-project of that `api_key` and expires after one year; the program only checks that it is a
-non-empty string, and whether the voice exists is decided by the first synthesis request. With
-`tts.provider: "openai"`, `speech_protocol` is required (`google` rejects it):
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `image_protocol` | `string` | **OpenAI Required** | `"openai"`, `"openai-standard"`, or `"xai"` | Request payload protocol format. **Strictly forbidden** when `provider: "google"` |
 
-- `"openai"`: OpenAI-compatible audio/speech with `provider`, `api_key`, `base_url?`, `model`,
-  `speech_protocol`, `voice`, `style?` and the two quota fields; it requests `opus` (OGG/Opus), which
-  the endpoint must support.
-- `"xai"`: xAI (Grok) `/v1/tts`, with `base_url` defaulting to `https://api.x.ai/v1`. The endpoint has
-  no model name or style instruction, so `model` and `style` are rejected; `language` is optional
-  (a BCP-47 code or `auto`, default `auto`) and `voice` is sent as `voice_id`. It requests `mp3`
-  (24 kHz, 64 kbps) and does not send the per-line tone.
+### Speech Synthesis Keys (`agent.tts`)
 
-The Google form is shown in [`config_example/dynamic/agent.json`](../dynamic/agent.json). The other two
-forms look like this for `tts` inside the `agent` section:
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `speech_protocol` | `string` | **OpenAI Required** | `"openai"` (audio/speech) or `"xai"` (POST /tts) | Voice wire protocol format. **Strictly forbidden** when `provider: "google"` |
+| `voice` | `string` | **Required** | Non-empty string | Voice timbre identifier. Google built-in name (e.g. `en-us-nika`) or Voice Design ID; OpenAI/xAI voice name (e.g. `coral`, `ara`) |
+| `style` | `string` | Optional | Non-empty string, **forbidden for xAI protocol** | Base reading style prompt. Defaults to built-in tsundere prompt: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
+| `language` | `string` | Optional | BCP-47 code or `"auto"`, **only allowed for xAI** | Synthesis language, default `"auto"` |
+| `daily_limit` | `number` | Optional | Positive safe integer, default `100` | Total daily voice synthesis budget across all callers in rolling 24h window |
+| `daily_reserve_quota` | `number` | Optional | Integer, range `0` to `daily_limit - 1`, default `25` | Dedicated quota reserved for `/send` and cron tasks. AI chat independently consumes remaining `daily_limit - daily_reserve_quota` |
 
-```json
-{
-  "tts": {
-    "provider": "openai",
-    "api_key": "replace-with-openai-api-key",
-    "model": "gpt-4o-mini-tts",
-    "speech_protocol": "openai",
-    "voice": "coral"
-  }
-}
-```
+### Web Search Keys (`agent.web_search`)
 
-```json
-{
-  "tts": {
-    "provider": "openai",
-    "api_key": "replace-with-xai-api-key",
-    "base_url": "https://api.x.ai/v1",
-    "speech_protocol": "xai",
-    "voice": "ara",
-    "language": "ja"
-  }
-}
-```
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `max_calls_per_use` | `number` | Optional | Positive safe integer (`≥ 1`), default `5` | Maximum local `web_search` function invocations per reply; does not limit provider searches within one invocation or cron digests |
 
-Without `base_url` the OpenAI form uses OpenAI's official endpoint; set it to a compatible service's
-endpoint otherwise, and the optional `style` works as for Google. In the xAI form `base_url` may be
-omitted and `language` defaults to `auto`. Both forms also accept `daily_limit` and
-`daily_reserve_quota`.
-
-The OGG/Opus and MP3 returned by OpenAI and xAI are formats Telegram voice messages accept
-directly, so they are only container-checked and timed before being sent as is; Gemini's WAV is
-encoded to OGG/Opus locally. The AI voice tool, `/send` and `cron.json` voice all synthesize on
-the AI Worker, so the remaining AI-chat prerequisites (`stickers.json`, `mood.json`,
-`prompt/persona.md`) must also be in place; otherwise synthesis fails as "Worker unavailable".
-
-`agent.tts.style` is an optional base speech style (rejected with `speech_protocol: "xai"`). It must be a non-empty string after trimming; null, whitespace-only strings and other types are rejected. When omitted it uses `TTS_DEFAULT_STYLE`: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色`. All three voice entry points share this setting. Hot reload applies to new requests; requests already issued retain their configuration snapshot. Removing the field restores the default. A request-specific `tone` is still appended as `<base style>; 细节: <tone>`, sent as `speech_metadata.style` to Gemini and as `instructions` to OpenAI.
-
-`tts` has two optional daily quota fields, with independent AI and reserve counts:
-
-| Field | Meaning |
-| --- | --- |
-| `daily_limit` | Total budget split between AI and reserve quotas per window; a positive integer, default 100 |
-| `daily_reserve_quota` | Independent quota shared by `/send` and cron; an integer from 0 to `daily_limit - 1`, default 25. AI independently uses `daily_limit - daily_reserve_quota`; neither borrows from the other. Zero disables operator synthesis |
-
-The counting window starts at the first request in it; once 24 hours have passed, the next request
-starts a new window. The window and count live in `ttsUsage` in `memory/global/state.json` under the runtime data root and carry over
-across restarts as `{ windowStartedAt, agentCount, reserveCount }`. Both counts share the window: expired reads use zero, and the next recorded request resets both. One synthesis call counts once; SDK-internal retries are not counted separately.
-Once the quota is used up no further requests are issued: the AI sends no voice and does not
-mention it in the group; `/send` replies with a quota notice; cron logs a `daily limit reached`
-error and does not retry. Both fields take effect on hot reload without resetting the used count;
-after lowering them, a used count above the new limit is treated as exhausted.
-
-Vision and voice support for `media` are probed and cached separately on the first real request.
-After an explicit unsupported result, that Worker no longer downloads that media type. Success
-marks it supported; transient network errors leave support unknown so later media can probe again.
-Ordinary Google/OpenAI HTTP requests retry at most five times after the initial failure. A hot
-reload that replaces `media`, or a Worker or process rebuild, clears the probe result.
-
-## Disable a Feature Before Removing Its Credential
-
-If a capability is still switched on in some chat and you remove its API key or configuration, the
-process **still starts** and that `true` is restored as usual, but the capability is judged
-unavailable at its single decision entry point: when the prerequisite is missing at startup the AI
-chat Worker never starts (the on-disk snapshots stay untouched), and when it is removed at runtime the
-Worker goes idle after the hot reload; `/translate` sessions stop processing messages, and ad
-detection stops submitting bundles. The chat simply sees the bot stop working from that moment (or
-that restart) onward, with a single line in `logs/` as the only trace. The correct order is
-`/ai_chat disable`, `/ad_detect disable` or `/translate disable` in the chat first, then remove the
-configuration — or restore the prerequisite: AI chat and ad detection resume automatically through
-hot reload, while a restored `g-auth.json` needs a restart.
-
-**Note the direction**: this applies only when the file is **genuinely absent**. A file that is
-still there but invalid refuses startup at the gate as before, even when the matching feature is
-currently off.
-
-## Identity Policies and Chat State Are Not Configuration Files
-
-The authoritative allowlist, blocklist, pending-removal state and **per-chat state** (feature
-switches, quiet mode, lockdown records, the bot's permission snapshot, title and relay flag) all live
-in `database/storage.sqlite` under the runtime data root. Chat state sits in the `chat_states` table,
-capped at 25 chats; over the limit `/init enable` refuses with a one-line reply. `/white`, `/permission`, and
-`/block … enable|disable` persist changes transactionally through the Disk I/O Worker; ordinary deployments
-should not edit the database directly. `/permission help` is the current permission-key and
-default reference. An invalid schema, unsupported version, or overlap between the two policy
-tables aborts before network access. Migrate legacy JSON deployments once by following
-[Operations](../../docs/en/07-operations.md); do not copy those files back into `config/`.
+---
 
 ## `assets.json`
 
-The file is optional. The top level groups fields by the sources they accept into `onlyPath`,
-`pathOrUrl` and `onlyUrl`; every group and every field is optional, and an absent field uses its
-built-in default. Write only the values you change, for example:
+Dynamic configuration file located at `config/dynamic/assets.json`. Optional file; omitted groups and fields use built-in defaults.
+
+### Configuration Example
 
 ```json
 {
   "onlyPath": {
-    "random_h_image_dir": "./images"
+    "random_h_image_dir": "./h_image"
   },
   "pathOrUrl": {
-    "bot_default_avatar": "./avatar/default.png"
+    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci"
   },
   "onlyUrl": {
-    "gag_thumbnail_url": "https://cdn.example.com/gag.png"
+    "fortune_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
+    "probability_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
+    "gag_thumbnail_url": "https://drive.google.com/uc?export=view&id=1AhvfdbcwQnUBBk86yEafb_G3gZOWXim2"
   }
 }
 ```
 
-| Group | Field | Purpose | Form |
-| --- | --- | --- | --- |
-| `onlyPath` | `random_h_image_dir` | Dedicated library for `/h_image` and cron random pictures, default `./h_image` | Local directory path |
-| `pathOrUrl` | `bot_default_avatar` | Picture used when `/icon reset` or `/copy stop` restores the bot avatar | Local file path, or absolute http/https URL |
-| `onlyUrl` | `fortune_thumbnail_url` | Thumbnail of the "未卜先知" inline result | Absolute https URL |
-| `onlyUrl` | `probability_thumbnail_url` | Thumbnail of the "概率论" inline result | Absolute https URL |
-| `onlyUrl` | `gag_thumbnail_url` | Thumbnail of the gag speech inline result | Absolute https URL |
+### Key Reference
 
-A local path must be absolute or an explicit `./` / `../` path; relative paths resolve against the
-runtime data root, and bare names and `~/…` are invalid. When `bot_default_avatar` is a local path,
-the file must be an existing regular file (a symlink to one is fine), at most 10 MiB, and a JPEG or
-PNG image; it is checked at startup and on hot reload and read again on every avatar restore. The
-three thumbnails are fetched by Telegram and accept only https URLs.
+| Group | Key | Type | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `onlyPath` | `random_h_image_dir` | `string` | Absolute path or explicit relative path (`./`, `../`), default `./h_image` | Image directory for `/h_image` commands and cron random draws, resolved against runtime data root |
+| `pathOrUrl` | `bot_default_avatar` | `string` | Local image file path or absolute HTTP/HTTPS URL | Image used to reset avatar in `/icon reset` and `/copy stop`. Local files must be `≤ 10 MiB` and JPEG/PNG |
+| `onlyUrl` | `fortune_thumbnail_url` | `string` | Absolute HTTPS URL | Thumbnail URL displayed on "Fortune" inline result card |
+| `onlyUrl` | `probability_thumbnail_url` | `string` | Absolute HTTPS URL | Thumbnail URL displayed on "Probability" inline result card |
+| `onlyUrl` | `gag_thumbnail_url` | `string` | Absolute HTTPS URL | Thumbnail URL displayed on "Gag" inline speech result card |
 
-Leading and trailing whitespace in strings is trimmed; unknown groups, fields placed outside their
-group, strings that are empty after trimming and values of the wrong form abort startup (or reject
-the change while running).
-[`config_example/dynamic/assets.json`](../dynamic/assets.json) spells out all three groups and five fields with their built-in defaults;
-copy it whole and change only what you need. Migrate the previous flat format by hand as described in
-[Operations](../../docs/en/07-operations.md#assets-groups).
+---
 
 ## `stickers.json`
 
-`packs` contains Telegram sticker-pack short names, not `t.me` links. It accepts at most five
-unique entries. An empty array disables configured sticker packs. The Bot must be able to read
-every listed pack.
+Dynamic configuration file located at `config/dynamic/stickers.json`. Specifies Telegram sticker packs accessible to AI chat.
+
+### Configuration Example
+
+```json
+{
+  "packs": [
+    "MikuCat4",
+    "kawaiikipfel_by_moe_sticker_bot",
+    "mmjojuniori_by_favorite_stickers_bot"
+  ]
+}
+```
+
+### Key Reference
+
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `packs` | `string[]` | **Required** | Array with `0` to `5` unique entries | List of Telegram sticker pack short names (the name segment in `t.me/addstickers/<name>`, **not the full URL**). An empty array `[]` disables sticker usage in AI chat |
+
+---
 
 ## `mood.json`
 
-`moods` must be a non-empty array. Every entry contains:
+Dynamic configuration file located at `config/dynamic/mood.json`. Defines AI mood state transitions, base extraction weights, and environmental multipliers.
 
-- `name`: unique non-empty mood name.
-- `weight`: positive integer base weight; all mood weights must sum to exactly 100.
-- `instruction`: non-empty behavioral instruction injected into the AI.
-- `weatherMultipliers`: optional multipliers keyed only by `clear`, `cloudy`, `rain`, `snow`,
-  `storm`, or `fog`.
-- `timeMultipliers`: optional Tokyo-time multipliers keyed only by `lateNight`, `morning`,
-  `daytime`, `evening`, or `night`.
+### Configuration Example
 
-An omitted multiplier is `1`. A present multiplier must be finite, greater than 0, and no greater
-than 100. Multipliers adjust the current draw probability; they do not change the requirement that
-base weights sum to 100.
+```json
+{
+  "moods": [
+    {
+      "name": "开心",
+      "weight": 25,
+      "instruction": "你现在心情很好，元气满满：吐槽照旧但明显带着笑意、不真的伤人，更爱主动撒娇邀功、得意炫耀，「喵」「にゃ」尾音比平时更爱往外冒。",
+      "weatherMultipliers": {
+        "clear": 1.5,
+        "rain": 0.6,
+        "storm": 0.5,
+        "fog": 0.7
+      },
+      "timeMultipliers": {
+        "morning": 0.8,
+        "daytime": 2,
+        "night": 0.8,
+        "lateNight": 0.4
+      }
+    },
+    {
+      "name": "摆烂",
+      "weight": 10,
+      "instruction": "你现在彻底摆烂，什么都懒得管：能一个字打发的绝不多打，吐槽也变得敷衍随口，「随便啦」「哦」挂在嘴边，平时那股嚣张劲儿都提不起来，谁撩你都懒得理，纯纯划水。",
+      "weatherMultipliers": {
+        "cloudy": 1.2,
+        "rain": 1.5,
+        "snow": 1.2,
+        "fog": 1.5
+      },
+      "timeMultipliers": {
+        "evening": 1.5,
+        "night": 1.5
+      }
+    },
+    {
+      "name": "发情",
+      "weight": 25,
+      "instruction": "你现在处于发情状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
+      "timeMultipliers": {
+        "morning": 0.7,
+        "daytime": 0.8,
+        "evening": 1.5,
+        "night": 2,
+        "lateNight": 1.5
+      }
+    },
+    {
+      "name": "困",
+      "weight": 40,
+      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，经常打哈欠说『好困……』『别吵……让我睡会儿』，声音软绵绵没精神，需要被哄着照顾和宠着睡。",
+      "weatherMultipliers": {
+        "rain": 1.5,
+        "snow": 1.3
+      },
+      "timeMultipliers": {
+        "morning": 1.5,
+        "daytime": 0.5,
+        "lateNight": 2.5
+      }
+    }
+  ]
+}
+```
+
+### Key Reference
+
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `moods` | `object[]` | **Required** | Non-empty array of objects | Mood definitions list |
+| `moods[].name` | `string` | **Required** | Non-empty string, unique across list | Mood identifier name (e.g. `"Happy"`, `"Sleepy"`) |
+| `moods[].weight` | `number` | **Required** | Positive integer, **sum of all items must equal exactly 100** | Base selection weight percentage |
+| `moods[].instruction` | `string` | **Required** | Non-empty string | Persona behavioral prompt injected into AI context |
+| `moods[].weatherMultipliers` | `object` | Optional | Keys restricted to `clear`, `cloudy`, `rain`, `snow`, `storm`, `fog`; values `0 < x ≤ 100` | Weather adjustment multipliers (default multiplier is `1.0`) |
+| `moods[].timeMultipliers` | `object` | Optional | Keys restricted to `lateNight`, `morning`, `daytime`, `evening`, `night`; values `0 < x ≤ 100` | Default configured time-of-day multipliers (default multiplier is `1.0`) |
+
+---
 
 ## `ad_samples.json`
 
-The top level is a string array. Each entry is a positive example of content that should be
-classified as advertising; it defines the deployment's classification policy and is not a keyword
-blocklist. The file accepts at most 500 entries. After whitespace normalization, every entry must
-be non-empty, unique, and no longer than 1,024 characters. Use de-identified samples and never put
-unrelated personal information or real credentials here.
+Dynamic configuration file located at `config/dynamic/ad_samples.json`. Root is an array of plain text strings used as positive reference examples for advertisement classification.
 
-When `agent.ad_detect` uses the Google protocol, the system instruction built from the
-classification rules and these samples is stored as a Gemini explicit cache (lives for one hour and
-is renewed automatically while in use): creating it bills its input tokens once at the full rate,
-and storage is billed per hour. If the content is below the model's minimum for explicit caching
-(for example, very few samples), the creation is rejected and classification keeps running without
-the cache.
+### Configuration Example
+
+```json
+[
+  "博彩平台首充送58，提款秒到，无视风控，联系 @xxxxxx",
+  "招聘日结兼职，手机就能做，日入三百起，加微信 xxxxxx",
+  "长期收u出u，价格美丽，秒结，飞机 @xxxxxx",
+  "出售TG老号 白号 API号 协议号，价格优惠，私聊"
+]
+```
+
+### Key Reference
+
+| Structure | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| Root Array | `string[]` | **Required** | Array with `1` to `500` unique entries | Positive ad message examples. Each entry must be non-empty after trimming and `≤ 1024` characters. Under `provider: "google"`, these samples are automatically compiled into a Gemini explicit context cache (1h TTL, refreshed on turn) |
+
+---
 
 ## `g-auth.json`
 
-The example has the same shape as a service-account key file downloaded from the GCP console and
-exists only for comparison; its placeholder private key cannot be parsed, so copying it into
-`config/static/` unchanged aborts startup. To use translation, save the real key file as
-`config/static/g-auth.json`; otherwise leave the file out. `client_email` must be non-empty and
-`private_key` a parseable RSA PEM private key; `type`, when present, must be `service_account`;
-`private_key_id`, `project_id`, `quota_project_id`, and `universe_domain`, when present, must be
-non-empty strings; the remaining official fields are passed to the SDK as they are. The installer
-never creates this file from the example.
+Static configuration file located at `config/static/g-auth.json`. Used for Google Cloud Translation service account authentication. Requires a service restart to take effect.
+
+### Service Account File
+
+Place the service account JSON downloaded from Google Cloud at `config/static/g-auth.json`. Keep credentials out of version control.
+
+### Key Reference
+
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `client_email` | `string` | **Required** | Non-empty string | GCP service account email |
+| `private_key` | `string` | **Required** | Valid RSA PEM private key (RS256) | Service account private key string (with headers) |
+| `type` | `string` | Optional | Fixed to `"service_account"` | Service account credential type |
+| `project_id` | `string` | Optional | Non-empty string | GCP project ID |
+| `private_key_id` | `string` | Optional | Non-empty string | Private key identifier |
+| Other fields | `string` | Optional | Standard GCP format | `client_id`, `auth_uri`, `token_uri` consumed by Google Cloud SDK |
+
+---
 
 ## `cron.json`
 
-The top level is an array of tasks; a missing file or `[]` means no scheduled tasks. It is strict
-JSON, so comments are not allowed.
+Dynamic configuration file located at `config/dynamic/cron.json`. Root is an array of scheduled task objects.
 
-[`config_example/dynamic/cron.json`](../dynamic/cron.json) holds example tasks that cover every form: plain weekday
-text; a task that spells out its time zone and sends text, then an image and a file by URL; a local
-image by a path relative to the runtime data root and a local file by absolute path; a `rand_cron`
-range drawing from the default image library; `@daily`
-with a single-value `rand_cron` drawing from a given directory; `send_voice` with and without a
-tone; and `just_once`. The chat ids, URLs
-and local paths in it are fake, and an unedited copy in `config/dynamic/` refuses startup because the local
-files do not exist. Pick the tasks you need, replace the chat ids and paths with real ones, and write
-them into `config/dynamic/cron.json`. The installer never creates this file from the example.
+### Configuration Example
 
 ```json
 [
   {
-    "name": "daily-greeting",
+    "name": "weekday-morning-greeting",
     "chat_id": [-1001234567890],
-    "cron": "0 9 * * *",
+    "cron": "0 9 * * 1-5",
     "time_zone": "Asia/Tokyo",
-    "rand_cron": "6h-24h",
     "actions": [
-      { "type": "send_message", "payload": { "content": "Good morning" } },
-      { "type": "send_image", "payload": { "content": "Picture of the day", "rand_image": true } },
-      { "type": "send_image", "payload": { "url": ["https://example.com/a.png", "https://example.com/b.png"], "is_blurred": true } },
-      { "type": "send_file", "payload": { "content": "Weekly report", "path": "/srv/copy-ninjia/reports/weekly.pdf" } },
-      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おはよう、今日もがんばろうね" } }
+      { "type": "send_message", "payload": { "content": "Good morning! Let's do our best today~" } }
+    ]
+  },
+  {
+    "name": "evening-digest",
+    "chat_id": [-1001234567890, -1009876543210],
+    "cron": "30 18 * * *",
+    "actions": [
+      { "type": "send_message", "payload": { "content": "Here is today's summary:" } },
+      { "type": "send_image", "payload": { "content": "Daily visual", "url": ["https://example.com/daily/cover.png"] } },
+      { "type": "send_file", "payload": { "content": "Daily report", "url": "https://example.com/daily/report.pdf" } }
+    ]
+  },
+  {
+    "name": "random-gallery-image",
+    "chat_id": ["all"],
+    "cron": "@daily",
+    "rand_cron": "6h-12h",
+    "actions": [
+      { "type": "send_image", "payload": { "rand_image": true, "content": "Daily random gallery image", "is_blurred": true } }
+    ]
+  },
+  {
+    "name": "nightly-voice",
+    "chat_id": [-1001234567890],
+    "cron": "0 23 * * *",
+    "actions": [
+      { "type": "send_voice", "payload": { "tone": "眠そうに小声で", "content": "おやすみ、また明日ね" } }
+    ]
+  },
+  {
+    "name": "morning-news-digest",
+    "chat_id": [-1001234567890],
+    "cron": "0 8 * * *",
+    "actions": [
+      { "type": "send_web_digest", "payload": { "topic": "Tech industry news", "language": "en", "max_items": 5 } }
     ]
   }
 ]
 ```
 
-| Field | Required | Rules |
+### Task-Level Key Reference
+
+| Key | Type | Required | Constraints & Values | Description |
+| --- | --- | --- | --- | --- |
+| `name` | `string` | **Required** | Non-empty, `≤ 64` characters, unique across file | Unique task name. Renaming a task is equivalent to deleting the old task and registering a new one |
+| `chat_id` | `array` | **Required** | See "Chat Target Delivery Modes" below | Target destination chat IDs |
+| `cron` | `string` | **Required** | Standard 5-field cron expression or `@daily` macro | Schedule trigger expression |
+| `time_zone` | `string` | Optional | IANA name; inherits `bot.json.time_zone` when omitted | Time zone used to evaluate trigger times (e.g. `"America/New_York"`) |
+| `rand_cron` | `string` | Optional | Format `"<min>-<max>"` or `"<max>"` in `m`/`h`/`d` within `1m` to `24d` | Random floating interval: after cron fires, picks a random minute within interval for execution |
+| `just_once` | `boolean` | Optional | `true` or `false`, default `false` (**cannot be used with `rand_cron`**) | Whether to run only once. **Note: execution flag is memory-only and resets on restart** |
+| `actions` | `object[]` | **Required** | Array of 1 to 16 action objects | Sequence of actions executed sequentially with 1-second interval |
+
+#### Chat Target Delivery Modes (`chat_id`)
+
+- **Explicit list** (e.g. `[-1001234567890, -1009876543210]`): Sent sequentially to listed chats (up to 64 chats).
+- **All managed chats** (`["all"]`): Sent to all chats enabled with `/init enable`. Verifies the bot's sending permissions (text/images/files/voice) beforehand; skips chats lacking any required permission.
+- **Exclusion list** (e.g. `["except", -1001234567890]`): Subtracts specified chat IDs from the `all` candidate list.
+
+### Action Types & Payload Reference (`actions`)
+
+| Action Type (`type`) | Action Purpose | Payload Structure & Keys |
 | --- | --- | --- |
-| `name` | Yes | Non-empty, at most 64 characters, unique in the file; it is the task identity, so renaming makes a new task |
-| `chat_id` | Yes | Array of chat ids: listed explicitly (non-zero integers, no duplicates, at most 64), `["all"]` for every enabled group the bot can send to, or `["except", <id>, ...]` for `all` minus those chats, see below |
-| `cron` | Yes | 5-field expression or a nickname such as `@daily`; it must still have a future occurrence |
-| `time_zone` | No | IANA time zone name (such as `Asia/Shanghai`), default `Asia/Tokyo` |
-| `rand_cron` | No | `"<min>-<max>"` or a single value (meaning `1m-<value>`), m/h/d units, within 1m–24d; the first run follows `cron`, and after each run the next one waits a random time in the range |
-| `just_once` | No | `true` runs the task once; it is scheduled again only after a restart. Cannot be combined with `rand_cron`. **The record lives only in memory and is cleared by a restart**: delete the task from `cron.json` once it has run, or the next restart posts it again — so do not use it for restart-sensitive content such as “going down at 22:00 tonight” |
-| `actions` | Yes | 1–16 actions, run in order with one second between consecutive actions |
+| `send_message` | Send plain text | • `content` (`string`, Required): Message body, up to 4096 characters |
+| `send_image` | Send image(s), album, or random draw | • `content` (`string`, Optional): Caption text, up to 1024 characters<br>• `is_blurred` (`boolean`, Optional): Add spoiler blur to image(s), default `false`<br>• **Fixed image mode**: `url` (array of 1–10 URLs) or `path` (array of 1–10 local file paths), single items must still be an array<br>• **Random draw mode**: `rand_image: true`, forbids `url` and multi-file array; `path` optionally specifies custom directory, defaults to `assets.json`'s `random_h_image_dir` |
+| `send_file` | Send document / file | • `content` (`string`, Optional): Caption text, up to 1024 characters<br>• `url` (`string`, Mutually exclusive Required): Remote file URL (Telegram limit 20 MB)<br>• `path` (`string`, Mutually exclusive Required): Local file path (Local upload limit 50 MB) |
+| `send_voice` | Send synthesized voice message | • `content` (`string`, Required): Lines to speak, up to 256 characters<br>• `tone` (`string`, Optional): Timbre tone modifier, up to 64 characters (appended to base style)<br>*Note: Strictly requires `agent.tts`; synthesized once per turn and reused across chats* |
+| `send_web_digest` | Research and summarize a topic | • `topic` (`string`, Required): Short research description, up to 200 characters<br>• `language` (`string`, Optional): Digest language, `"zh"`, `"ja"`, or `"en"` (default `"zh"`)<br>• `max_items` (`number`, Optional): Maximum items (1–15, default 5)<br>• `instructions` (`string`, Optional): Task rules shared by research and composition, up to 500 characters; put formatting rules here, including separate lines per platform using JSON `\n` in item bodies<br>*Note: Requires core dialogue capabilities; prefers `agent.web_search`, otherwise uses built-in `agent.text` search; a model response without search is sent with a warning* |
 
-Action `type` and `payload`:
+---
 
-- `send_message`: `content` is required, at most 4096 characters.
-- `send_image`: one optional `content` string (up to 1024 characters). Fixed images require exactly one array: `url` or file `path`, with 1–10 entries; even one image uses an array, such as `"url": ["https://example.com/a.jpg"]`. `rand_image` must be absent or `false`. One image uses a photo request; 2–10 use one album request with the caption on the first item only and no separate text message. An album has multiple Telegram message IDs. `is_blurred: true` adds a spoiler to every item; absent or `false` omits it.
-  `rand_image: true` draws one image: `url` and file arrays are forbidden, and optional `path` must be a directory string. Without it the source is `onlyPath.random_h_image_dir` in `assets.json`; an explicit other directory has no SHA-256 naming requirement.
-- `send_file`: `content` is optional (at most 1024 characters); exactly one of `url` or `path`.
-- `send_voice`: `content` is required and is the line to speak (at most 256 characters); `tone` is
-  optional and sets how this line is spoken (at most 64 characters), appended after the fixed base
-  voice style; without it only the base style is used. After line breaks are merged into spaces and
-  surrounding whitespace is trimmed, neither may be empty. The line is synthesized through `tts` in
-  `agent.json` and sent as a voice bubble; `tts` must be configured, see "Editing While Running"
-  above. Within one run the line is synthesized only once, and retries and later groups reuse the
-  same audio; after the first successful send they reference the `file_id` Telegram returned
-  instead of uploading it again.
+## Dedicated Gallery and Path Baselines
 
-`path` is either absolute or relative to the runtime data root (`COPY_NINJIA_DATA_ROOT`; when unset, the project root:
-the repository root when running from source, the service's working directory for the binary), the same base as
-local paths in `assets.json`, except that no `./` prefix is required and bare relative paths are accepted; it may point to a file or directory
-anywhere on the host (a symbolic link
-is judged by what it points to). It must exist and have the right type when the configuration is
-loaded. Any file the service account can read can be sent into a chat, so never point it at
-`config/`, `.env` or other files holding credentials. `url` is handed to Telegram as-is and never
-downloaded by the bot:
-Telegram limits URL sends to 5 MB for pictures and 20 MB for other files, and only PDF, ZIP, and
-GIF are guaranteed for files sent by URL — any other type failing is a configuration issue. Local
-uploads are limited to 10 MB for pictures and 50 MB for files.
-
-Runtime behavior:
-
-- Two runs of the same task never overlap, and triggers missed while the bot is down are not
-  made up. `just_once` records and `rand_cron` waits live only in memory and start over after a
-  restart.
-- An action that fails with a network error, a Telegram 5xx, a 429 remaining after outbound-gate retries, or a full outbound queue is retried
-  up to 3 times with 2, 4, and 8 second back-off; for `send_voice`, synthesis that returns no
-  audio, a wait that times out, or a temporarily unavailable AI Worker is retried the same way.
-  Other failures (Telegram 4xx, the bot removed from the chat, a deleted local file, `tts` not
-  configured or unsupported by the implementation, the daily voice quota used up, an audio encoding or format-check failure) are not retried. A final failure logs one
-  `Cron task "<name>" action #<n> ...` line and skips the rest of that run. When a request times
-  out but Telegram did receive it, the retry sends a duplicate.
-- Scheduled messages stay; they are not deleted after 30 seconds. They carry no forum topic, so in a
-  group with topics they land in General. Every request goes through the bot's usual send
-  throttling and 429 back-off.
-- The target chat does not need `/init`; once the bot has been removed from it, each trigger logs
-  an error.
-- Explicitly listed chats (for example `[-1001234567890, -1009876543210]`) receive the run in the
-  written order without any permission lookup, with the same 1-second gap between chats. A final
-  failure in one chat only skips the rest of that chat's actions and moves on to the next one; with
-  more than one chat listed, the failure log names the chat.
-- `chat_id: ["all"]`: at the start of each run the bot checks its current send permission in every
-  group with `/init enable`, one by one (owner and administrators can send; when restricted, its own
-  send permissions count; as a plain member, the group's default member permissions count). Text
-  needs permission to send messages, pictures to send photos, files to send documents, voice to
-  send voice notes; a group
-  missing any permission the task needs is skipped entirely, so no group gets half a run. The
-  groups that can receive run the whole action list one by one in ascending chat id order, with
-  the same 1-second gap between groups. A final failure in one group only skips the rest of that
-  group's actions, logs the chat id, and moves on to the next group. When groups were skipped, the
-  run ends with one `Cron task "<name>" skipped <n> chat(s) without send permission.` line. Random
-  pictures are drawn separately for each group.
-- `chat_id: ["except", <id>, ...]`: exactly the `["all"]` semantics, except that the listed chats are
-  removed from the candidates first; excluded groups are never queried and never counted as skipped.
-  `"except"` must be the first element and at least one chat id must follow it.
-
-## Dedicated Library and Path Bases
-
-| Path field | Relative-path base | Shape |
+| Path Key | Relative Path Resolution Baseline | Value Specification |
 | --- | --- | --- |
-| `onlyPath.random_h_image_dir` in `assets.json` | Runtime data root | Absolute directory or explicit `./` / `../` path |
-| `pathOrUrl.bot_default_avatar` in `assets.json` (when a local path) | Runtime data root | Absolute file path or explicit `./` / `../` path |
-| cron fixed-image `payload.path` | Runtime data root | Array of 1–10 file paths (absolute or any relative path) |
-| cron random-image `payload.path` | Runtime data root | Optional directory string (absolute or any relative path); omission selects the dedicated library |
-| cron file `payload.path` | Runtime data root | One file-path string (absolute or any relative path) |
+| `assets.json` `onlyPath.random_h_image_dir` | Runtime Data Root | Absolute path or relative path starting with `./` or `../` |
+| `assets.json` `pathOrUrl.bot_default_avatar` | Runtime Data Root | Absolute path or relative path starting with `./` or `../` |
+| cron fixed image `payload.path` | Runtime Data Root | Array of 1–10 file paths (absolute or relative) |
+| cron random draw `payload.path` | Runtime Data Root | Directory path string (absolute or relative); omitted defaults to dedicated library |
+| cron file send `payload.path` | Runtime Data Root | Single file path string (absolute or relative) |
 
-`onlyPath.random_h_image_dir` in `assets.json` is reserved for `/h_image`, defaulting to `./h_image`. Both absolute paths such as `/h_image` and explicit relative paths such as `./h_image` or `../h_image` are accepted; relative paths resolve against the runtime data root. Keep unrelated pictures elsewhere. Add images with `/h_image add`; manual additions must use the content SHA-256 as a 64-character lowercase hexadecimal basename with a jpg/jpeg/png/webp extension. Before Workers or external connections, startup asynchronously checks names and entry types. Invalid files, subdirectories, file symlinks and leftover temporary files abort startup. It does not rehash every image; operators are responsible for matching manual names to content. Explicit cron directories have no such naming requirement. Local content reads, preflight checks and uploads are asynchronous; albums retain reopenable streams rather than preloading every image.
+- **Dedicated Library Directory**: `random_h_image_dir` configured in `assets.json` (defaults to `./h_image`).
+- **File Naming Conventions**:
+  - Images in the dedicated library must be named with the **64-character lowercase hexadecimal SHA-256 hash** of their content, with extensions restricted to `.jpg`, `.jpeg`, `.png`, `.webp`.
+  - Files uploaded via `/h_image add` are automatically named and hashed upon storage. Library integrity is strictly verified at startup.
+  - Custom directories specified via `path` in `cron.json` random image actions are not subject to the SHA-256 naming requirement.
+- **Permissions and Security**: Any local file readable by the service account can be transmitted. **Never point paths to files containing sensitive credentials, such as `config/` or `.env`**.

@@ -45,8 +45,6 @@ export const RANDOM_IMAGE_TEMP_PREFIX: string = ".h_image-add-";
  * 文件名上：重名就是重复，收图直接报「已有」，写盘也永远不会盖掉不同的内容。名字里
  * 不含任何用户可控片段，拼不出目录分隔符或上级路径。
  *
- * 启动时仅校验名称形态；入库去重与冷迁移计算内容摘要。冷迁移
- * scripts/migrateRandomImageNames.ts 用它判断一个文件是否已是目标形态，测试用它断言
- * 收图写下的文件名形态。
+ * 启动时仅校验名称形态；入库去重计算内容摘要。测试用它断言收图写下的文件名形态。
  */
 export const RANDOM_IMAGE_CONTENT_NAME_PATTERN: RegExp = /^[0-9a-f]{64}$/;

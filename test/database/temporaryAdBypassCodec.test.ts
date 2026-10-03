@@ -4,7 +4,8 @@ import {
   TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD,
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
 } from "../../packages/consts/temporaryAdBypass";
-import { getTokyoDayIndex } from "../../packages/libs/time";
+import { getDayIndex } from "../../packages/libs/time";
+import { MAX_EPOCH_MILLISECONDS } from "../../packages/consts/time";
 import { InputValidationError } from "../../packages/libs/inputValidation";
 import type { TemporaryAdBypassActivity } from "../../packages/types/states/temporaryAdBypass";
 
@@ -89,7 +90,7 @@ describe("临时广告免检关系列的严格校验", () => {
     expectRejected({ ...validActivity(), sendCount: 2.5 }, "$.send_count");
   });
 
-  test("三个时间列都必须是非负安全整数毫秒", () => {
+  test("三个时间列都必须是原生日期范围内的非负安全整数毫秒", () => {
     expectRejected({ ...validActivity(), countedAt: -1 }, "$.counted_at");
     expectRejected({ ...validActivity(), countedAt: 1.5 }, "$.counted_at");
     expectRejected({ ...validActivity(), adBypassGrantedAt: -1 }, "$.ad_bypass_granted_at");
@@ -97,6 +98,9 @@ describe("临时广告免检关系列的严格校验", () => {
       { ...validActivity(), qualifiedAt: Number.NaN },
       "$.qualified_at"
     );
+    expectRejected({ ...unqualifiedActivity(), countedAt: MAX_EPOCH_MILLISECONDS + 1 }, "$.counted_at");
+    expectRejected({ ...validActivity(), adBypassGrantedAt: MAX_EPOCH_MILLISECONDS + 1 }, "$.ad_bypass_granted_at");
+    expectRejected({ ...validActivity(), qualifiedAt: MAX_EPOCH_MILLISECONDS + 1 }, "$.qualified_at");
   });
 
   test("ad_bypass 与 ad_bypass_granted_at 必须同真同假", () => {
@@ -148,7 +152,7 @@ describe("临时广告免检关系列的严格校验", () => {
     // 达标时刻必须落在 counted_at 所属的那个东京日里：跨日就说明这一行的
     // 「当日累计」和「当日达标」指的不是同一天，连续日计数不再可信。
     const previousDay: number = NOW - 48 * 60 * 60 * 1000;
-    expect(getTokyoDayIndex(previousDay)).not.toBe(getTokyoDayIndex(NOW));
+    expect(getDayIndex(previousDay)).not.toBe(getDayIndex(NOW));
     expectRejected(
       { ...validActivity(), qualifiedAt: previousDay, adBypassGrantedAt: previousDay },
       "$.qualified_at"

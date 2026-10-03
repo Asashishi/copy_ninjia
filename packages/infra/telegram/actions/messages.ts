@@ -1,4 +1,5 @@
 import { DISABLED_LINK_PREVIEW, MESSAGE_NOT_MODIFIED } from "../../../consts/telegram";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import type {
   InlineKeyboardMarkup,
   LinkPreviewOptions,
@@ -13,9 +14,9 @@ import {
   runBooleanTelegramAction,
   runTelegramAction,
 } from "./core";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
 import type {
   TelegramChatAction,
+  TelegramParseMode,
   TelegramSendResult,
 } from "../../../types/telegram";
 import type { TelegramApi } from "../../../types/telegramWorker";
@@ -26,15 +27,14 @@ type EditMessageTextApi = Pick<TelegramApi, "editMessageText">;
 type SendChatActionApi = Pick<TelegramApi, "sendChatAction">;
 type AnswerCallbackQueryApi = Pick<TelegramApi, "answerCallbackQuery">;
 
-export interface SendMessageParams {
+/** 文本消息除正文格式以外的发送参数；正文格式由 SendMessageFormat 二选一给出。 */
+export interface SendMessageBaseParams {
   chatId: number;
   text: string;
   replyToMessageId?: number;
   api?: SendMessageApi;
   keyboard?: InlineKeyboardMarkup;
   signal?: AbortSignal;
-  /** 由调用方自行算好偏移的富文本实体；空数组按未提供处理，不设置 parse_mode。 */
-  entities?: readonly MessageEntity[];
   /** 是否关闭 Telegram 为正文中第一个 URL 自动生成的预览卡片。 */
   disableLinkPreview?: boolean;
   /** 原样沿用的链接预览设置（复读、翻译照搬原消息的预览）；给出时优先于 disableLinkPreview。 */
@@ -63,8 +63,29 @@ export interface SendMessageParams {
 }
 
 /**
- * 发送纯文本消息并返回 Telegram 实际建立的回复关系；不设置 parse_mode，
- * 避免用户内容形成格式或链接注入。
+ * 正文格式：调用方算好偏移的 `entities` 与 `parseMode` 二选一（Bot API 规定两者互斥）。
+ * 都不给就是纯文本。
+ */
+export type SendMessageFormat =
+  | {
+    /** 由调用方自行算好偏移的富文本实体；空数组按未提供处理。 */
+    entities?: readonly MessageEntity[];
+    parseMode?: undefined;
+  }
+  | {
+    entities?: undefined;
+    /**
+     * 正文按 MarkdownV2 解析；拼进正文的动态文字必须已经过 libs/telegramMarkdown.ts
+     * 转义（见 docs/cn/04-invariants.md）。解析失败按普通发送失败处理，不降级成纯文本。
+     */
+    parseMode: TelegramParseMode;
+  };
+
+export type SendMessageParams = SendMessageBaseParams & SendMessageFormat;
+
+/**
+ * 发送文本消息并返回 Telegram 实际建立的回复关系。只有显式给出 parseMode 时才设置
+ * parse_mode，否则正文按纯文本发出、富文本只由 entities 表达。
  */
 export async function sendMessageWithResult({
   chatId,
@@ -74,6 +95,7 @@ export async function sendMessageWithResult({
   keyboard,
   signal,
   entities,
+  parseMode,
   disableLinkPreview,
   linkPreviewOptions,
   messageThreadId,
@@ -85,7 +107,7 @@ export async function sendMessageWithResult({
       requestSignal?: AbortSignal
     ): Promise<Message.TextMessage> => {
       // 定形一次初始化：字段齐、顺序固定，缺席用 undefined 表达。条件展开会为
-      // 每个可选字段造一个一次性 {} 并让同一个 payload 类型长出 2^5 种 shape，
+      // 每个可选字段造一个一次性 {} 并让同一个 payload 类型长出 2^6 种 shape，
       // 而 grammY 两条序列化路径都丢弃 undefined，产出的请求体逐字节相同
       // （对拍见 test/infra/telegramSendPayload.test.ts）。
       const other: Parameters<SendMessageApi["sendMessage"]>[2] = {
@@ -93,13 +115,14 @@ export async function sendMessageWithResult({
         reply_parameters: replyParametersFor(replyToMessageId),
         reply_markup: keyboard,
         entities: entities && entities.length > 0 ? [...entities] : undefined,
+        parse_mode: parseMode,
         link_preview_options: linkPreviewOptions ?? (disableLinkPreview ? DISABLED_LINK_PREVIEW : undefined),
       };
       return api.sendMessage(
         chatId,
         text,
         other,
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       );
     },
     map: (
@@ -116,7 +139,7 @@ export async function sendMessageWithResult({
   });
 }
 
-/** 发送纯文本消息，只返回 Telegram message_id。 */
+/** 发送文本消息，只返回 Telegram message_id。 */
 export async function sendMessage(
   params: SendMessageParams
 ): Promise<number | undefined> {
@@ -179,7 +202,7 @@ export async function sendEphemeralMessage({
         chatId,
         text,
         other,
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     map: (sent: Message.TextMessage): number => {
       const ephemeralMessageId: number | undefined =
@@ -232,7 +255,7 @@ export async function sendChatAction({
         chatId,
         action,
         { message_thread_id: messageThreadId },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     signal
   );
@@ -248,7 +271,7 @@ export interface EditMessageTextParams {
   messageId: number;
   text: string;
   api?: EditMessageTextApi;
-  /** 由调用方自行算好偏移的富文本实体，语义同 SendMessageParams.entities。 */
+  /** 由调用方自行算好偏移的富文本实体，语义同 SendMessageFormat.entities。 */
   entities?: readonly MessageEntity[];
   /** 新的按钮；不传即**清空**原有按钮，翻页看板据此在只剩一页时收走翻页条。 */
   keyboard?: InlineKeyboardMarkup;
@@ -256,7 +279,7 @@ export interface EditMessageTextParams {
 }
 
 /**
- * 就地改写一条已发出的文本消息；不设置 parse_mode，同 sendMessageWithResult。
+ * 就地改写一条已发出的文本消息；富文本只由 entities 表达，不设置 parse_mode。
  *
  * @returns 是否已让远端处于目标状态。内容本就相同时同样为 true——调用方要的是
  *   「这条消息现在显示的是这一页」，而不是「本次真的发生了改写」。
@@ -285,7 +308,7 @@ export async function editMessageText({
             entities: entities && entities.length > 0 ? [...entities] : undefined,
             reply_markup: keyboard ?? { inline_keyboard: [] },
           },
-          ...signalArgs(requestSignal)
+          telegramSignal(requestSignal)
         );
       } catch (error: unknown) {
         if (!isMessageNotModified(error)) throw error;
@@ -315,7 +338,7 @@ export async function answerCallbackQuery({
       api.answerCallbackQuery(
         callbackQueryId,
         { text, show_alert: showAlert },
-        ...signalArgs(signal)
+        telegramSignal(signal)
       ),
     map: (): undefined => undefined,
     fallback: undefined,

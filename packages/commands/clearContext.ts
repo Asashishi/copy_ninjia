@@ -17,7 +17,7 @@ import { rejectUnlessPermitted } from "./commandActor";
  * 还会递增本群回复代数：在途那一轮的上下文此刻已经不存在，它的回复不该再发出去。
  *
  * 发起身份必须持有 isCanClearContext；超级管理员由统一权限边界直授。
- * 只操作命令所在群，保留自定义人设，不接受指定其它群的参数。
+ * 只操作命令所在群，不接受指定其它群的参数。
  *
  * **前提不齐也照样执行**，口径同 `/ai_chat disable` 的关闭方向：部署配置写坏或
  * AI Worker 没起来时，磁盘上的记忆仍要能清干净，durable 删除本来就不经 Worker。
@@ -38,7 +38,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
   if (ctx.match.trim().length > 0) {
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).CLEAR_CONTEXT_USAGE_TEXT,
+      text: chatAtmosphere().CLEAR_CONTEXT_USAGE_TEXT,
       replyToMessageId: messageId,
     });
     return;
@@ -50,7 +50,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
     logger.error(`Failed to clear the AI chat context of chat ${chatId}:`, error);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere(chatId).NOTICE_TEXTS.clearContextFailed,
+      text: chatAtmosphere().NOTICE_TEXTS.clearContextFailed,
       replyToMessageId: messageId,
     });
     return;
@@ -58,7 +58,7 @@ export async function handleClearContextCommand(ctx: CommandContext<Context>): P
 
   await sendCommandMessage({
     chatId,
-    text: chatAtmosphere(chatId).NOTICE_TEXTS.clearContextDone,
+    text: chatAtmosphere().NOTICE_TEXTS.clearContextDone,
     replyToMessageId: messageId,
   });
 }

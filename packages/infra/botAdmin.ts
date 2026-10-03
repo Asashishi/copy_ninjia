@@ -1,7 +1,7 @@
 import type { Context } from "grammy";
+import { telegramSignal } from "../libs/telegramSignal";
 import { logger } from "./logger";
 import { bot } from "./telegram/mainClient";
-import { signalArgs } from "../libs/telegramSignalArgs";
 import {
   clearChatStateField,
   getChatState,
@@ -29,7 +29,6 @@ import {
   sweepBlockedMembers,
 } from "./blocklist/sweep";
 import { teardownChatRuntime } from "./chatTeardown";
-import type { ChatPersonaSurfaceSync } from "../types/commands";
 import type { ChatState } from "../types/chatState";
 import type { BotChatPermissions } from "../types/telegram";
 import type { ChatMember, ChatMemberUpdated } from "grammy/types";
@@ -149,10 +148,7 @@ async function recordBotChatPermissions(
  * 必须显式列进 allowed_updates 才会送达（见 app/lifecycle.ts）。
  * 非管理员 -> 管理员的那一跳会经 recordBotChatPermissions 触发一次黑名单清扫。
  */
-export async function handleMyChatMemberUpdate(
-  ctx: Context,
-  syncChatPersonaSurfaces: ChatPersonaSurfaceSync
-): Promise<void> {
+export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
   const update: ChatMemberUpdated | undefined = ctx.myChatMember;
   if (!update) return;
   // 私聊没有管理员概念，频道里机器人不做任何守卫/踢人，都不记录。
@@ -175,7 +171,6 @@ export async function handleMyChatMemberUpdate(
           update.chat.id,
           `chat ${update.chat.id} state pruned after bot left/kicked`
         );
-        await syncChatPersonaSurfaces(bot.api, update.chat.id);
       },
       `Failed to complete departure transition for chat ${update.chat.id}.`
     );
@@ -403,7 +398,7 @@ export async function botChatPermissionsIn(chatId: number): Promise<BotChatPermi
   const request: Promise<BotChatPermissions | undefined> = (async (): Promise<BotChatPermissions | undefined> => {
     let member: ChatMember;
     try {
-      member = await bot.api.getChatMember(chatId, bot.botInfo.id, ...signalArgs(signal));
+      member = await bot.api.getChatMember(chatId, bot.botInfo.id, telegramSignal(signal));
     } catch (error: unknown) {
       // update 已被取消时不记日志、原样上抛，与其余 Telegram 调用同一约定。
       throwIfUpdateAborted(signal);

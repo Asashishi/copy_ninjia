@@ -89,7 +89,7 @@ async function sendProxyTtsNotice(privateChatId: number, text: string): Promise<
  * `agent.tts` 已被热重载移除则按未配置提示。
  */
 function synthesisFailureNotice(targetChatId: number, reason: VoiceSynthesisFailure): string {
-  const notices: AtmosphereNotices = chatAtmosphere(targetChatId).NOTICE_TEXTS;
+  const notices: AtmosphereNotices = chatAtmosphere().NOTICE_TEXTS;
   if (reason === "tts unconfigured") return notices.proxyTtsUnconfigured;
   if (reason !== "daily limit reached") return notices.proxyTtsFailed(targetChatId);
   const tts: AgentTtsCapabilityConfig | undefined = agentTtsConfig();
@@ -115,7 +115,7 @@ async function deliverProxyTts({ privateChatId, targetChatId, text, tone }: Prox
     duration: result.voice.durationSeconds,
   });
   if (sent !== undefined || signal?.aborted === true) return;
-  await sendProxyTtsNotice(privateChatId, chatAtmosphere(targetChatId).NOTICE_TEXTS.proxyTtsFailed(targetChatId));
+  await sendProxyTtsNotice(privateChatId, chatAtmosphere().NOTICE_TEXTS.proxyTtsFailed(targetChatId));
 }
 
 /**
@@ -131,12 +131,12 @@ export async function handleProxyTtsRequest(
   if (request.kind === "invalid") {
     await sendProxyTtsNotice(
       privateChatId,
-      chatAtmosphere(targetChatId).NOTICE_TEXTS.proxyTtsUsage(VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS)
+      chatAtmosphere().NOTICE_TEXTS.proxyTtsUsage(VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS)
     );
     return;
   }
   if (agentTtsConfig() === undefined) {
-    await sendProxyTtsNotice(privateChatId, chatAtmosphere(targetChatId).NOTICE_TEXTS.proxyTtsUnconfigured);
+    await sendProxyTtsNotice(privateChatId, chatAtmosphere().NOTICE_TEXTS.proxyTtsUnconfigured);
     return;
   }
   const delivery: ProxyTtsDelivery = { privateChatId, targetChatId, text: request.text, tone: request.tone };
@@ -145,5 +145,5 @@ export async function handleProxyTtsRequest(
     (): Promise<void> => deliverProxyTts(delivery),
     "Unexpected error while processing a /send TTS request:"
   );
-  if (!accepted) await sendProxyTtsNotice(privateChatId, chatAtmosphere(targetChatId).NOTICE_TEXTS.proxyTtsBusy);
+  if (!accepted) await sendProxyTtsNotice(privateChatId, chatAtmosphere().NOTICE_TEXTS.proxyTtsBusy);
 }

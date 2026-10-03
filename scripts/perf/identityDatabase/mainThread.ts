@@ -22,6 +22,8 @@ import {
   queueIdentityPolicyWrite,
 } from "../../../packages/infra/identityStorage";
 import { ensureStickerConfig } from "../../../packages/config/stickers";
+import { adoptTimeZone } from "../../../packages/config/time";
+import { DEFAULT_BOT_TIME_ZONE } from "../../../packages/consts/bot";
 import type { LoadedData } from "../../../packages/types/diskIO";
 import type { WhitelistEntryData } from
   "../../../packages/types/identityPolicy";
@@ -141,8 +143,10 @@ export async function runMainWriteThroughChild(
     );
   }
   // 本基准显式采用 config_example 的贴纸清单执行目录对账；其他可选功能
-  // 不参与身份写透，配置预热只读取贴纸文件。
+  // 不参与身份写透，配置预热只读取贴纸文件。时区接管与 createMainBenchmarkRoot
+  // 建库标记相同的默认时区。
   await ensureStickerConfig();
+  adoptTimeZone(DEFAULT_BOT_TIME_ZONE);
   initDiskIO();
   try {
     const loaded: LoadedData = await loadPersistedData(120_000);

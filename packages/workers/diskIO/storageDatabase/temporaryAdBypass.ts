@@ -10,7 +10,7 @@ import { assertTemporaryAdBypassActivity } from
 import {
   deleteStaleTemporaryAdBypassActivities,
 } from "../../../database/interact/temporaryAdBypass";
-import { getTokyoDayStartTimestamp } from "../../../libs/time";
+import { getDayStartTimestamp } from "../../../libs/time";
 import { isTemporaryAdBypassActivityRetained } from
   "../../../states/temporaryAdBypass";
 import type {
@@ -57,7 +57,7 @@ export function handleTemporaryAdBypassWrite(
   flushIfStorageFull(reply);
 }
 
-/** 提交在途最终值后，清理未在刚结束东京日达标的旧累计。 */
+/** 提交在途最终值后，清理未在刚结束的配置时区自然日达标的旧累计。 */
 export function maintainTemporaryAdBypassActivities(
   reply: IdentityPersistenceReply,
   now: number = Date.now()
@@ -65,9 +65,9 @@ export function maintainTemporaryAdBypassActivities(
   if (!Number.isSafeInteger(now) || now < 0) {
     throw new RangeError("Temporary ad bypass cleanup time must be a current safe integer.");
   }
-  const currentDayStart: number = getTokyoDayStartTimestamp(now);
+  const currentDayStart: number = getDayStartTimestamp(now);
   if (currentDayStart < DAY_MS) {
-    throw new RangeError("Temporary ad bypass cleanup time must include a previous Tokyo day.");
+    throw new RangeError("Temporary ad bypass cleanup time must include a previous configured local day.");
   }
   flushStorageDatabase(reply);
   if (pendingTemporaryAdBypassWrites.size > 0) {
@@ -76,6 +76,6 @@ export function maintainTemporaryAdBypassActivities(
   deleteStaleTemporaryAdBypassActivities(
     requireStorageDatabase(),
     currentDayStart,
-    currentDayStart - DAY_MS
+    getDayStartTimestamp(currentDayStart - 1)
   );
 }

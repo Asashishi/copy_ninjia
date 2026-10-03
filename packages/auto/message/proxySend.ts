@@ -39,6 +39,6 @@ export async function handlePrivateProxySend(message: Message): Promise<void> {
   await persistChatState(targetChatId, "proxy send failed");
   await sendMessage({
     chatId: message.chat.id,
-    text: chatAtmosphere(targetChatId).NOTICE_TEXTS.proxyFailed(targetChatId),
+    text: chatAtmosphere().NOTICE_TEXTS.proxyFailed(targetChatId),
   });
 }

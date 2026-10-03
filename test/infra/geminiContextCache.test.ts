@@ -13,6 +13,7 @@ import type {
   GeminiContextCacheContent,
   GeminiContextCacheRegistry,
   GeminiContextCacheScope,
+  GeminiContextCacheSlot,
 } from "../../packages/types/geminiContextCache";
 
 interface CacheCreateParameters {
@@ -27,13 +28,13 @@ const create = mock(async (params: CacheCreateParameters): Promise<CachedContent
   return {
     name: `cachedContents/created-${createdCount}`,
     displayName: String(params.config.displayName),
-    expireTime: new Date(Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000).toISOString(),
+    expireTime: new Date(Date.now() + Number.parseInt(String(params.config.ttl), 10) * 1_000).toISOString(),
     usageMetadata: { totalTokenCount: 6_864 },
   };
 });
-const update = mock(async (params: { name: string }): Promise<CachedContent> => ({
+const update = mock(async (params: { name: string; config: { ttl: string } }): Promise<CachedContent> => ({
   name: params.name,
-  expireTime: new Date(Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000).toISOString(),
+  expireTime: new Date(Date.now() + Number.parseInt(params.config.ttl, 10) * 1_000).toISOString(),
 }));
 const remove = mock(async (..._args: unknown[]): Promise<object> => ({}));
 const list = mock(async (..._args: unknown[]): Promise<AsyncIterable<CachedContent>> => ({
@@ -172,13 +173,13 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       return {
         name: `cachedContents/created-${createdCount}`,
         displayName: String(params.config.displayName),
-        expireTime: new Date(Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000).toISOString(),
+        expireTime: new Date(Date.now() + Number.parseInt(String(params.config.ttl), 10) * 1_000).toISOString(),
         usageMetadata: { totalTokenCount: 6_864 },
       };
     });
-    update.mockImplementation(async (params: { name: string }): Promise<CachedContent> => ({
+    update.mockImplementation(async (params: { name: string; config: { ttl: string } }): Promise<CachedContent> => ({
       name: params.name,
-      expireTime: new Date(Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000).toISOString(),
+      expireTime: new Date(Date.now() + Number.parseInt(params.config.ttl, 10) * 1_000).toISOString(),
     }));
     remove.mockImplementation(async (): Promise<object> => ({}));
     list.mockImplementation(async (): Promise<AsyncIterable<CachedContent>> => ({
@@ -331,6 +332,26 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       expect(update).not.toHaveBeenCalled();
     });
 
+    test("服务端未返回过期时刻时，创建与续期按共用 TTL 登记", async () => {
+      create.mockImplementationOnce(async (params: CacheCreateParameters): Promise<CachedContent> => ({
+        name: "cachedContents/without-expire-time",
+        displayName: String(params.config.displayName),
+      }));
+      const createdAt: number = Date.now();
+      const slotKey: string = await createDefault();
+      const slot: GeminiContextCacheSlot = registry().slots.get(slotKey)!;
+      expect(slot.expireAt).toBeGreaterThanOrEqual(createdAt + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000);
+      expect(slot.expireAt).toBeLessThanOrEqual(Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000);
+
+      update.mockImplementationOnce(async (): Promise<CachedContent> => ({ name: slot.name }));
+      slot.expireAt = Date.now() + GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS - 1;
+      const renewedAt: number = Date.now();
+      expect(acquireGeminiContextCache(scope, content())).toBe(slot.name);
+      expect(await waitUntil((): boolean => !slot.renewing)).toBe(true);
+      expect(slot.expireAt).toBeGreaterThanOrEqual(renewedAt + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000);
+      expect(slot.expireAt).toBeLessThanOrEqual(Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000);
+    });
+
     test("释放后摘掉本地登记并删除服务端条目，冷却期内不重建，过了冷却期再按未命中重建", async () => {
       await createDefault();
       const start: number = Date.now();
@@ -357,9 +378,12 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       expect(remove).not.toHaveBeenCalled();
     });
 
-    test("删除一个已不存在的条目（404）不记错误日志", async () => {
+    test.each([
+      [404, "not found"],
+      [403, "CachedContent not found (or permission denied)"],
+    ])("删除一个已不存在的条目（%i）不记错误日志", async (status: number, message: string) => {
       remove.mockImplementationOnce(async (): Promise<object> => {
-        throw new ApiError({ message: "not found", status: 404 });
+        throw new ApiError({ message, status });
       });
       await createDefault();
       releaseGeminiContextCache(scope, "cachedContents/created-1");
@@ -546,7 +570,7 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
 
     test("续期失败后冷却期内命中不再续期，过了冷却期再续", async () => {
       update.mockImplementation(async (): Promise<CachedContent> => {
-        throw new ApiError({ message: "permission denied", status: 403 });
+        throw new ApiError({ message: "unavailable", status: 503 });
       });
       const slotKey: string = await createDefault();
       const start: number = Date.now();
@@ -605,9 +629,12 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
       expect(update).toHaveBeenCalledTimes(2);
     });
 
-    test("续期报 404 时静默摘掉本地登记，下一次按未命中重建", async () => {
+    test.each([
+      [404, "not found"],
+      [403, "CachedContent not found (or permission denied)"],
+    ])("续期报条目已不在（%i）时静默摘掉本地登记，下一次按未命中重建", async (status: number, message: string) => {
       update.mockImplementationOnce(async (): Promise<CachedContent> => {
-        throw new ApiError({ message: "not found", status: 404 });
+        throw new ApiError({ message, status });
       });
       const slotKey: string = await createDefault();
       registry().slots.get(slotKey)!.expireAt = Date.now() + GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS - 1;

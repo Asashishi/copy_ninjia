@@ -1,11 +1,13 @@
 import { DAY_MS } from "../consts/diskIO/common";
-import { TOKYO_TIME_ZONE, TOKYO_UTC_OFFSET_MS } from "../consts/time";
+import {
+  FORMAT_MAX_TIMESTAMP_MS,
+  FORMAT_MIN_TIMESTAMP_MS,
+  MAX_EPOCH_MILLISECONDS,
+} from "../consts/time";
+import { getTimeZone, getTimeZoneState } from "../config/time";
+import type { CurrentTimeResult, TimeZoneState } from "../types/time";
 
-/**
- * 把毫秒数格式化成中文时长文案，如 90_000 -> "1分30秒"，30_000 -> "30秒"。
- * 秒数向上取整：调用方多是「还要等多久」的倒计时/时限文案，宁可报多一点，
- * 也不要在还剩几百毫秒时报出「0秒」。整千毫秒的常量不受影响。
- */
+/** 秒数向上取整的中文时长文案；用于倒计时与时限提示。 */
 export function formatMinSec(ms: number): string {
   const totalSeconds: number = Math.ceil(ms / 1000);
   const minutes: number = Math.floor(totalSeconds / 60);
@@ -23,25 +25,55 @@ export function isCanonicalDateKey(value: string): boolean {
 }
 
 /**
- * 非负 epoch 毫秒对应的东京自然日序号；用于每消息日期比较，不分配 Date 或进入 ICU。
- * 商与余数分开偏移，避免接近安全整数上限时直接相加溢出。
+ * 毫秒时间戳对应的配置时区日历；时区规则与夏令时由 Bun/JSC 原生 Temporal 处理。
+ * 只服务偏移区段未命中时的重建与 getDayStartTimestamp，不在每次日历运算里调用。
  */
-export function getTokyoDayIndex(timestampMs: number): number {
-  if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
-    throw new RangeError("Tokyo day timestamp must be a non-negative safe integer.");
-  }
-  const wholeDays: number = Math.floor(timestampMs / DAY_MS);
-  const shiftedRemainder: number = timestampMs % DAY_MS + TOKYO_UTC_OFFSET_MS;
-  return wholeDays + Math.floor(shiftedRemainder / DAY_MS);
+function localDateTime(timestampMs: number): Temporal.ZonedDateTime {
+  return Temporal.Instant.fromEpochMilliseconds(timestampMs).toZonedDateTimeISO(getTimeZone());
 }
 
-/** 时间戳所在东京自然日的 UTC 起点；取余计算避免安全整数上界附近的乘法溢出。 */
-export function getTokyoDayStartTimestamp(timestampMs: number): number {
-  if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) {
-    throw new RangeError("Tokyo day timestamp must be a non-negative safe integer.");
+/** 按日判定只接受非负、安全整数且处于原生时间 API 有效范围内的 epoch 毫秒。 */
+function validateDayTimestamp(timestampMs: number): void {
+  if (!Number.isSafeInteger(timestampMs) || timestampMs < 0 || timestampMs > MAX_EPOCH_MILLISECONDS) {
+    throw new RangeError("Day timestamp must be a non-negative safe integer within the Temporal range.");
   }
-  const shiftedRemainder: number = timestampMs % DAY_MS + TOKYO_UTC_OFFSET_MS;
-  return timestampMs - shiftedRemainder % DAY_MS;
+}
+
+/** getLocalHour 只做整数运算，接受原生时间 API 范围内的整数 epoch 毫秒（可为负）。 */
+function validateCalendarTimestamp(timestampMs: number): void {
+  if (!Number.isInteger(timestampMs) || timestampMs < -MAX_EPOCH_MILLISECONDS || timestampMs > MAX_EPOCH_MILLISECONDS) {
+    throw new RangeError("Calendar timestamp must be an integer within the Temporal range.");
+  }
+}
+
+/** 三个文本格式化函数只接受公元 1000–9999 年的整数 epoch 毫秒。 */
+function validateFormatTimestamp(timestampMs: number): void {
+  if (!Number.isInteger(timestampMs) || timestampMs < FORMAT_MIN_TIMESTAMP_MS || timestampMs > FORMAT_MAX_TIMESTAMP_MS) {
+    throw new RangeError("Formatted timestamp must be an integer within years 1000 to 9999.");
+  }
+}
+
+/**
+ * 配置时区在该时刻的 UTC 偏移（毫秒）。偏移在相邻两次时区规则转换之间恒定：命中本线程缓存的
+ * 区段时只做两次比较；未命中时由 Temporal 取该时刻的偏移与前后转换点并替换区段。固定偏移时区
+ * 的区段无界，夏令时时区的区段以转换点为界，日历运算因此不必逐次进入 Temporal。
+ */
+function localOffsetMs(timestampMs: number): number {
+  const state: TimeZoneState = getTimeZoneState();
+  if (timestampMs >= state.offsetStartMs && timestampMs < state.offsetEndMs) return state.offsetMs;
+  const local: Temporal.ZonedDateTime = localDateTime(timestampMs);
+  const previous: Temporal.ZonedDateTime | null = local.getTimeZoneTransition("previous");
+  const next: Temporal.ZonedDateTime | null = local.getTimeZoneTransition("next");
+  // previous 是严格早于该时刻的最近转换点；紧随其后的转换点（没有 previous 时取该时区的首个
+  // 转换点）若恰好落在该时刻，区段自该时刻起，否则自 previous 起。
+  const startedHere: Temporal.ZonedDateTime | null =
+    (previous ?? localDateTime(-MAX_EPOCH_MILLISECONDS)).getTimeZoneTransition("next");
+  state.offsetMs = local.offsetNanoseconds / 1_000_000;
+  state.offsetStartMs = startedHere !== null && startedHere.epochMilliseconds <= timestampMs
+    ? startedHere.epochMilliseconds
+    : previous === null ? Number.NEGATIVE_INFINITY : previous.epochMilliseconds;
+  state.offsetEndMs = next === null ? Number.POSITIVE_INFINITY : next.epochMilliseconds;
+  return state.offsetMs;
 }
 
 /** 0~99 的两位零填充串定表；只服务本文件的固定宽度时间串，模块加载时建一次。 */
@@ -54,7 +86,7 @@ const TWO_DIGIT_STRINGS: readonly string[] = ((): readonly string[] => {
 })();
 
 /**
- * 东京自然日序号（自 1970-01-01 起，1970 之前为负）→ `YYYY{separator}MM{separator}DD`。
+ * 自 1970-01-01 起的本地日序号（1970 之前为负）→ `YYYY{separator}MM{separator}DD`。
  * Howard Hinnant 的 civil_from_days：纯整数运算，不建 Date 也不进 ICU。以 3 月为年首
  * （shiftedMonth 0=3 月 … 11=2 月），闰日落在年末，月份换回 1~12 时 1、2 月归入下一年。
  * era 与 shiftedDays 在 1970 之前可为负，用 Math.floor；其余商的被除数非负，用 `| 0` 截断。
@@ -76,116 +108,67 @@ function formatCivilDate(days: number, separator: string): string {
   return `${year}${separator}${TWO_DIGIT_STRINGS[month]!}${separator}${TWO_DIGIT_STRINGS[day]!}`;
 }
 
-/** 东京当日已过的秒数 → `HH:mm:ss`。 */
+/** 当日已过的秒数 → `HH:mm:ss`。 */
 function formatSecondOfDay(secondOfDay: number): string {
   return `${TWO_DIGIT_STRINGS[(secondOfDay / 3_600) | 0]!}:` +
     `${TWO_DIGIT_STRINGS[((secondOfDay / 60) | 0) % 60]!}:${TWO_DIGIT_STRINGS[secondOfDay % 60]!}`;
 }
 
-/*
- * 本文件的东京日历函数统一按固定 UTC+9 算术产出，不走 Intl，也不建 Date。
- * 成立的前提是只格式化本进程当下附近的时刻：日本 1948-1951 实行过夏令时，那段时间
- * 算术结果比 Intl 早一小时（1950-07-01 03:00 UTC：Intl 给 13:00、算术给 12:00）。
- * 除 libs/persistedSnapshotCodec.ts 对存档时间串的往返比对（两侧同为固定 UTC+9 算术）外，
- * 调用点传的都是 `Date.now()` 派生值；格式化用户提供的历史时间必须改用 Intl。
- * `test/libs/time.test.ts` 用 Intl 参照实现逐字符对拍 1970-2100 的采样与边界。
- */
-
-/**
- * 毫秒时间戳（缺省当前时刻）对应的东京日期串（YYYY-MM-DD）。
- * 日志、入群日志、运势、广告样本与验证恢复的按天分文件共用这一个日期划分。
- */
-export function getTokyoDateKey(timestampMs: number = Date.now()): string {
-  return formatCivilDate(Math.floor((timestampMs + TOKYO_UTC_OFFSET_MS) / DAY_MS), "-");
+/** 配置时区的自然日序号；相邻公历日期相差一，即使两日间实际相差 23 或 25 小时。 */
+export function getDayIndex(timestampMs: number): number {
+  validateDayTimestamp(timestampMs);
+  return Math.floor((timestampMs + localOffsetMs(timestampMs)) / DAY_MS);
 }
 
-/**
- * 毫秒时间戳 → 东京时区的「2026/07/16 21:35:04」。AI 对话缓存条目
- * （BufferedMessage.at）在记录时格式化一次、直接以此形态落盘/入转录行，
- * 每条进滚动记忆的群消息调用一次（workers/aiChat/bufferedMessage.ts）。
- */
-export function formatTokyoTime(timestampMs: number): string {
-  const shifted: number = timestampMs + TOKYO_UTC_OFFSET_MS;
-  // Math.floor 对 1970 前的负值同样向下取整，余数恒落在 [0, DAY_MS)。
+/** 所在配置时区自然日的首个真实时刻；按时区规则处理零点偏移与夏令时。 */
+export function getDayStartTimestamp(timestampMs: number): number {
+  validateDayTimestamp(timestampMs);
+  return localDateTime(timestampMs).startOfDay().epochMilliseconds;
+}
+
+/** 配置时区日期串 YYYY-MM-DD；日志、运势、广告样本与验证恢复共用此日界。 */
+export function getDateKey(timestampMs: number = Date.now()): string {
+  validateFormatTimestamp(timestampMs);
+  return formatCivilDate(Math.floor((timestampMs + localOffsetMs(timestampMs)) / DAY_MS), "-");
+}
+
+/** 配置时区的 YYYY/MM/DD HH:mm:ss；记录时格式化，供 AI 转录与持久化条目使用。 */
+export function formatLocalTime(timestampMs: number): string {
+  validateFormatTimestamp(timestampMs);
+  const shifted: number = timestampMs + localOffsetMs(timestampMs);
   const days: number = Math.floor(shifted / DAY_MS);
-  const secondOfDay: number = ((shifted - days * DAY_MS) / 1_000) | 0;
-  // 与 formatCivilDate 同一算法，在本函数内展开，整串只做一次拼接。
-  const shiftedDays: number = days + 719_468;
-  const era: number = Math.floor(shiftedDays / 146_097);
-  const dayOfEra: number = shiftedDays - era * 146_097;
-  const yearOfEra: number =
-    ((dayOfEra - ((dayOfEra / 1_460) | 0) + ((dayOfEra / 36_524) | 0) -
-      ((dayOfEra / 146_096) | 0)) / 365) | 0;
-  const dayOfYear: number = dayOfEra -
-    (365 * yearOfEra + ((yearOfEra / 4) | 0) - ((yearOfEra / 100) | 0));
-  const shiftedMonth: number = ((5 * dayOfYear + 2) / 153) | 0;
-  const day: number = dayOfYear - (((153 * shiftedMonth + 2) / 5) | 0) + 1;
-  const month: number = shiftedMonth < 10 ? shiftedMonth + 3 : shiftedMonth - 9;
-  const year: number = yearOfEra + era * 400 + (month <= 2 ? 1 : 0);
-  return `${year}/${TWO_DIGIT_STRINGS[month]!}/` +
-    `${TWO_DIGIT_STRINGS[day]!} ${TWO_DIGIT_STRINGS[(secondOfDay / 3_600) | 0]!}:` +
-    `${TWO_DIGIT_STRINGS[((secondOfDay / 60) | 0) % 60]!}:${TWO_DIGIT_STRINGS[secondOfDay % 60]!}`;
+  return `${formatCivilDate(days, "/")} ${formatSecondOfDay(((shifted - days * DAY_MS) / 1_000) | 0)}`;
 }
 
-/**
- * 毫秒时间戳 → 东京时区的「2026-07-16 21:35:04.123」。落盘日志条目的 key 前缀，
- * 每条日志调用一次（workers/diskIO/logFiles.ts）。
- */
-export function formatTokyoLogTimestamp(timestampMs: number): string {
-  const shifted: number = timestampMs + TOKYO_UTC_OFFSET_MS;
+/** 配置时区的 YYYY-MM-DD HH:mm:ss.SSS；用于落盘日志条目的 key 前缀。 */
+export function formatLogTimestamp(timestampMs: number): string {
+  validateFormatTimestamp(timestampMs);
+  const shifted: number = timestampMs + localOffsetMs(timestampMs);
   const days: number = Math.floor(shifted / DAY_MS);
   const millisecondOfDay: number = shifted - days * DAY_MS;
   const millisecond: number = millisecondOfDay % 1_000;
   const millisecondText: string = millisecond < 10
     ? `00${millisecond}`
     : millisecond < 100 ? `0${millisecond}` : `${millisecond}`;
-  return `${formatCivilDate(days, "-")} ` +
-    `${formatSecondOfDay((millisecondOfDay / 1_000) | 0)}.${millisecondText}`;
+  return `${formatCivilDate(days, "-")} ${formatSecondOfDay((millisecondOfDay / 1_000) | 0)}.${millisecondText}`;
+}
+
+/** 配置时区小时数 0~23；供心情系统按时段分档。 */
+export function getLocalHour(timestampMs: number = Date.now()): number {
+  validateCalendarTimestamp(timestampMs);
+  return Math.floor(((timestampMs + localOffsetMs(timestampMs)) % DAY_MS + DAY_MS) % DAY_MS / 3_600_000);
 }
 
 /**
- * 东京时区的小时数（0~23），心情系统按时段分档用（见 aiChat/ai/mood.ts）。
- * timestampMs 缺省取当前时刻；1970 之前的负值取余为负，加一轮 24 归一。
- */
-export function getTokyoHour(timestampMs: number = Date.now()): number {
-  const hour: number = Math.floor((timestampMs + TOKYO_UTC_OFFSET_MS) / 3_600_000) % 24;
-  return hour < 0 ? hour + 24 : hour;
-}
-
-export interface CurrentTimeResult {
-  iso: string;
-  timezone: string;
-  formatted: string;
-}
-
-/** getCurrentTime 的格式器：模块加载时构造一次，每次模型请求复用；
- *  长格式带星期等本地化词汇，由 Intl 产出。 */
-const TOKYO_FULL_TIME_FORMATTER: Intl.DateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: TOKYO_TIME_ZONE,
-  dateStyle: "full",
-  timeStyle: "medium",
-});
-
-/**
- * 获取当前时间。统一用东京时区（UTC+9），与天气工具及群里日常报时口径
- * 保持一致。不是 function calling 工具——当前时间恒定拼进每次模型请求，
- * 模型不需要自己判断要不要查。两条链路经 workers/aiChat/timeSentence.ts
- * 共用同一句措辞，但**落点不同**：
- *
- * - 回复链路拼进 **user 内容**的运行时状态区块（workers/aiChat/runtimeState.ts
- *   的 buildRuntimeStateBlock）。**不得挪回 systemInstruction**：那一段连同
- *   人设与工具声明必须逐字恒定，掺进一个精确到秒的串就等于让稳定前缀每秒
- *   换一次指纹，两家供应商的自动前缀缓存从此全程落空（见
- *   workers/aiChat/replyModel.ts 的头注与 runtimeState.ts 的模块注释）。
- * - 冷历史压缩拼进 **userContent 末尾**、整批转录之后（workers/aiChat/compaction.ts
- *   的 summarizeBatch）。那条路的 systemPrompt 是逐字恒定的 SUMMARY_SYSTEM_PROMPT，
- *   也是该请求唯一可被隐式缓存的前缀段，同样不得掺进这个精确到秒的串。
+ * 取当前时刻并用本线程配置时区格式化；AI 回复、冷历史压缩与联网检索共用。
+ * 动态时间只拼入 user 内容或检索 query；提示词顺序见 docs/cn/04-invariants.md。
  */
 export function getCurrentTime(): CurrentTimeResult {
   const now: Date = new Date();
+  const state: TimeZoneState = getTimeZoneState();
   return {
     iso: now.toISOString(),
-    timezone: TOKYO_TIME_ZONE,
-    formatted: TOKYO_FULL_TIME_FORMATTER.format(now),
+    timezone: state.timeZone,
+    formatted: state.fullTimeFormatter.format(now),
   };
 }

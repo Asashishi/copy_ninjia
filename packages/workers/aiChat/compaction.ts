@@ -162,7 +162,7 @@ function promotePendingSummary(chatId: number): void {
  * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
  *
  * systemPrompt 只放逐字恒定的 SUMMARY_SYSTEM_PROMPT，当前时间拼在 userContent
- * **末尾**、整批转录之后。两家供应商都按 systemInstruction/instructions → 输入
+ * **末尾**、整批转录之后。各家供应商都按系统提示词 → 输入
  * 的顺序比对前缀，这一段常量因此是本请求唯一可被隐式缓存的前缀；时间精确到秒，
  * 放进 systemPrompt 或 userContent 开头都会让它从第一个字节起每次都对不上。
  * 转录行自带每条消息的发送时间（见 chatTranscript.ts 的 formatBufferedMessageLine），

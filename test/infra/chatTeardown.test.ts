@@ -4,8 +4,6 @@ import { botPermissions } from "../helpers/botPermissions";
 
 const calls: string[] = [];
 const states = new Map<number, Record<string, unknown>>();
-mock.module("../../packages/antiRaid/workerBridge/controller", () => ({ syncAntiRaidAtmosphere: (): void => {} }));
-mock.module("../../packages/app/commandMenu", () => ({ syncChatCommandMenu: async (): Promise<void> => {} }));
 const saveStateInBackground = mock((context: string): void => { calls.push(`save:${context}`); });
 const getChatMember = mock(async (): Promise<{ status: string }> => ({ status: "administrator" }));
 
@@ -65,8 +63,6 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 
 const botAdmin = await import("../../packages/infra/botAdmin");
-const { syncChatPersonaSurfaces } =
-  await import("../../packages/commands/chatPersonaSync");
 const botAdminCache = await import("../../packages/cache/main/botAdmin");
 const chatTeardown = await import("../../packages/infra/chatTeardown");
 const chatTeardownRegistry = await import("../../packages/infra/chatTeardownRegistry");
@@ -207,7 +203,7 @@ describe("chat runtime teardown", () => {
       reasons.push(reason);
     });
 
-    await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"), syncChatPersonaSurfaces);
+    await botAdmin.handleMyChatMemberUpdate(memberContext("kicked"));
     // 离群按 departed 派发：人已经不在这个群里，本群的记忆、奖池、入群日志与
     // 问答一并删除；被撤管理员那一路仍是 lostAuthority，一条数据都不动。
     expect(reasons).toEqual(["departed"]);
@@ -240,7 +236,7 @@ describe("chat runtime teardown", () => {
     });
     chatTeardownRegistry.registerChatTeardown("antiRaid", async (): Promise<void> => { throw teardownError; });
 
-    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"), syncChatPersonaSurfaces)
+    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("left"))
       .catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AggregateError);
@@ -260,7 +256,7 @@ describe("chat runtime teardown", () => {
       botPermissions: botPermissions(),
       isProxySendEnabled: true,
     });
-    await botAdmin.handleMyChatMemberUpdate(memberContext("member"), syncChatPersonaSurfaces);
+    await botAdmin.handleMyChatMemberUpdate(memberContext("member"));
     expect(reasons).toEqual(["lostAuthority"]);
     expect(calls.slice(0, 7)).toEqual([
       "disable:isProxySendEnabled",
@@ -283,7 +279,7 @@ describe("chat runtime teardown", () => {
     });
     chatTeardownRegistry.registerChatTeardown("aiChat", async (): Promise<void> => { throw teardownError; });
 
-    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"), syncChatPersonaSurfaces)
+    const error = await botAdmin.handleMyChatMemberUpdate(memberContext("member"))
       .catch((reason: unknown) => reason);
 
     expect(error).toBeInstanceOf(AggregateError);

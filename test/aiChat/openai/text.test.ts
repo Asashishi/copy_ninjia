@@ -30,10 +30,13 @@ mock.module("../../../packages/infra/logger", () => ({
 
 const {
   describeOpenAiVision,
+  generateOpenAiJson,
   generateOpenAiText,
   transcribeOpenAiVoice,
 } = await import("../../../packages/aiChat/openai/text");
 const {
+  OPENAI_JSON_MAX_TOKENS,
+  OPENAI_STORE_RESPONSES,
   OPENAI_CHAT_SUMMARY_MAX_TOKENS,
   OPENAI_MEDIA_DESCRIPTION_MAX_TOKENS,
   OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
@@ -77,6 +80,29 @@ beforeEach(() => {
   getOpenAiClient.mockClear();
   loggerError.mockClear();
   createTranscription.mockImplementation(async (): Promise<{ text: string }> => ({ text: "  你好\n世界  " }));
+});
+
+describe("结构化 JSON 生成", () => {
+  test("用 text 能力的模型，要求 json_object 输出，不挂工具", async () => {
+    const signal: AbortSignal = new AbortController().signal;
+    await generateOpenAiJson({ systemPrompt: "只输出 JSON", userContent: "资料", jsonSchema: { type: "object" }, signal, errorLabel: "fixture" });
+    const options = requestOpenAiTextResult.mock.calls[0]![0] as {
+      capability: string;
+      signal?: AbortSignal;
+      normalize: (text: string) => string;
+    };
+    expect(options.capability).toBe("text");
+    expect(options.signal).toBe(signal);
+    expect(capturedBody()).toEqual({
+      model: getAgentDeploymentConfig().text.model,
+      instructions: "只输出 JSON",
+      input: "资料",
+      text: { format: { type: "json_object" } },
+      max_output_tokens: OPENAI_JSON_MAX_TOKENS,
+      store: OPENAI_STORE_RESPONSES,
+    });
+    expect(options.normalize("  {}\n")).toBe("{}");
+  });
 });
 
 describe("纯文本生成", () => {

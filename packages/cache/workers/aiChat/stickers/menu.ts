@@ -1,7 +1,4 @@
-import type { StickerPackCandidate } from "../../../../types/stickers/tools";
-
-/**
- * 贴纸包菜单（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）的记忆化状态。
+/** owner: workers/aiChat。贴纸包菜单（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）的记忆化状态。
  * 只由该文件读写；随 AI 闲聊 Worker isolate 生死，崩溃重启后从 0 重建。
  *
  * 菜单的两个输入——贴纸集合缓存（cache/workers/aiChat/stickers/sets.ts）与画面描述目录/整包简介
@@ -14,6 +11,8 @@ import type { StickerPackCandidate } from "../../../../types/stickers/tools";
  * 清理：版本号只增不减；旧版本的缓存留到下一次重建时被整体覆盖，在途条目在构建结算后清空。
  * 容量：菜单缓存与在途条目各至多一份，不设淘汰。
  */
+
+import type { StickerPackCandidate } from "../../../../types/stickers/tools";
 
 /**
  * 菜单输入的版本号：贴纸集合缓存新增条目、目录条目增删、整包简介写入时各 +1

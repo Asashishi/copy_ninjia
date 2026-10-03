@@ -7,26 +7,18 @@ export interface ColdMigrationEdge {
 }
 
 /**
- * 当前唯一受支持的那**一组**直接冷迁移边。
+ * 当前唯一受支持的直接冷迁移边，只接受上一次迁移（16.3.2）产出的格式：
+ * database/storage.sqlite 的 schema v11 经 migrate:chat-persona-removal 直接删除
+ * chat_states.ai_persona 列与 isCanConfigAiPrompt 权限位，并写入 Asia/Tokyo 时区标记，升到 schema v13。
+ * 其余持久化数据在 16.3.2 与当前版本之间格式不变，原样沿用。
  *
- * 两条边各自对应独立的持久化数据，互不替代：
- * - 随机图库目录：`<uuidv7>[-<file_unique_id>]<扩展名>` 的旧文件名经
- *   migrate:random-image-names 生成按内容 SHA-256 命名的独立产物。
- * - memory/global/state.json 的总计数格式：经 migrate:global-state 按明确提供的 AI
- *   次数拆为 agentCount 与 reserveCount，保留窗口起点与复读状态。
- *
- * 各边的共同约束：源文件不变，中断后保留现场并向新目录重跑；ready.json 是唯一完成
- * 标记；产物由运维在停服期间手工替换。同一份数据被多次迁移时只保留最近那一次的边，
- * 迁移边、版本契约和对应测试整体维护，不追加更早版本的兼容入口。
+ * 源文件不变，中断后保留现场并向新目录重跑；ready.json 是唯一完成标记；产物由运维在停服期间
+ * 手工替换。落后于 16.3.2 的部署先分阶段升级到 16.3.2 并完成其迁移；迁移边、版本契约和对应
+ * 测试整体维护，不追加更早版本的兼容入口。
  */
 export const ACTIVE_COLD_MIGRATION_EDGES: readonly ColdMigrationEdge[] = [{
-  command: "migrate:random-image-names",
-  invocation: "bun scripts/migrateRandomImageNames.ts",
-  entryPath: "scripts/migrateRandomImageNames.ts",
-  bundledPath: "scripts/migrations/migrateRandomImageNames.js",
-}, {
-  command: "migrate:global-state",
-  invocation: "bun scripts/migrateGlobalState.ts",
-  entryPath: "scripts/migrateGlobalState.ts",
-  bundledPath: "scripts/migrations/migrateGlobalState.js",
+  command: "migrate:chat-persona-removal",
+  invocation: "bun scripts/migrateChatPersonaRemoval.ts",
+  entryPath: "scripts/migrateChatPersonaRemoval.ts",
+  bundledPath: "scripts/migrations/migrateChatPersonaRemoval.js",
 }];

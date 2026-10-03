@@ -1,8 +1,9 @@
 /**
  * 模型请求用量的上报边界：各供应商客户端在拿到响应后调用 reportAiCacheUsage（token 口径）、
- * reportGeminiUsage / reportGeminiInteractionUsage（Gemini 响应适配）或 reportXAiUsage
- * （xAI 响应适配，无 token 时经 reportAiCostUsage 按费用口径计入），本线程装了出口
- * （cache/perThread/aiCacheUsage.ts）才发出。只读取响应的 usage 字段，SDK 返回有效用量即计入，包括取消后迟到、正文为空或
+ * reportGeminiUsage / reportGeminiInteractionUsage（Gemini 响应适配）、reportAnthropicUsage（Anthropic
+ * 响应适配）或 reportXAiUsage（xAI 响应适配，无 token 时经 reportAiCostUsage 按费用口径计入）。
+ * 检索次数并入同一响应的 token 记录，没有有效 token 时经 reportAiSearchUsage 单独记录。
+ * 本线程装了出口（cache/perThread/aiCacheUsage.ts）才发出。SDK 返回有效用量即计入，包括取消后迟到、正文为空或
  * 解码失败的响应；不改变业务结果。缺失、非法或无法投递时丢弃，并按能力/供应商/原因
  * 给出有界诊断。
  */
@@ -13,6 +14,7 @@ import { isPlainRecord } from "../libs/record";
 import type { AiCacheCapability, AiCacheUsage, AiUsageUnavailableReason, AiUsageWarningKey } from "../types/aiCache";
 import type { AgentProvider } from "../types/config";
 import type { GenerateContentResponseUsageMetadata, Interactions } from "@google/genai";
+import type Anthropic from "@anthropic-ai/sdk";
 
 /** reportAiCacheUsage 的入参；token 数按供应商原样传入，由本函数校验。 */
 export interface AiCacheUsageReport {
@@ -23,6 +25,8 @@ export interface AiCacheUsageReport {
   /** undefined 表示供应商没有给出缓存用量。 */
   readonly cachedInputTokens: unknown;
   readonly outputTokens: unknown;
+  /** 同一响应的实际检索次数；缺省表示没有检索。 */
+  readonly searchCalls?: number;
 }
 
 function isTokenCount(value: unknown): value is number {
@@ -63,16 +67,21 @@ export function reportAiCacheUsage({
   inputTokens,
   cachedInputTokens,
   outputTokens,
+  searchCalls = 0,
 }: AiCacheUsageReport): void {
+  if (!isTokenCount(searchCalls)) warnAiUsageUnavailable(capability, provider, "invalid");
+  const searches: number | undefined = isTokenCount(searchCalls) && searchCalls > 0 ? searchCalls : undefined;
   if (!isTokenCount(inputTokens) || !isTokenCount(outputTokens)) {
     warnAiUsageUnavailable(capability, provider,
       inputTokens === undefined || outputTokens === undefined ? "missing" : "invalid");
+    if (searches !== undefined) reportAiSearchUsage({ capability, provider, model, searchCalls: searches });
     return;
   }
   let cached: number | null = null;
   if (cachedInputTokens !== undefined) {
     if (!isTokenCount(cachedInputTokens) || cachedInputTokens > inputTokens) {
       warnAiUsageUnavailable(capability, provider, "invalid");
+      if (searches !== undefined) reportAiSearchUsage({ capability, provider, model, searchCalls: searches });
       return;
     }
     cached = cachedInputTokens;
@@ -86,6 +95,7 @@ export function reportAiCacheUsage({
     inputTokens,
     cachedInputTokens: cached,
     outputTokens,
+    searchCalls: searches,
   });
 }
 
@@ -130,6 +140,32 @@ export function reportAiCostUsage({ capability, provider, model, costInUsdTicks 
   });
 }
 
+/** reportAiSearchUsage 的入参；检索次数由调用方按响应计好。 */
+export interface AiSearchUsageReport {
+  readonly capability: AiCacheCapability;
+  readonly provider: AgentProvider;
+  readonly model: string;
+  /** 这次请求里供应商实际执行的联网检索次数。 */
+  readonly searchCalls: number;
+}
+
+/** 无有效 token 时单独上报检索次数；非法值诊断后丢弃，0 次不记，投递失败不改变业务结果。 */
+export function reportAiSearchUsage({ capability, provider, model, searchCalls }: AiSearchUsageReport): void {
+  if (!isTokenCount(searchCalls)) {
+    warnAiUsageUnavailable(capability, provider, "invalid");
+    return;
+  }
+  if (searchCalls === 0) return;
+  deliverAiUsage({
+    kind: "search",
+    timestamp: Date.now(),
+    capability,
+    provider,
+    model,
+    searchCalls,
+  });
+}
+
 /** reportXAiUsage 的入参：xAI 响应的 usage 对象原样传入。 */
 export interface XAiUsageReport {
   readonly capability: AiCacheCapability;
@@ -165,24 +201,66 @@ export function reportXAiUsage({ capability, model, usage }: XAiUsageReport): vo
   reportAiCostUsage({ capability, provider: "openai", model, costInUsdTicks: usage?.cost_in_usd_ticks });
 }
 
+/** reportAnthropicUsage 的入参：Messages 响应的 usage 原样传入。 */
+export interface AnthropicUsageReport {
+  readonly capability: AiCacheCapability;
+  readonly model: string;
+  readonly usage: Anthropic.Usage | undefined;
+  readonly searchCalls?: number;
+}
+
+/**
+ * 上报一次 Anthropic Messages 的用量。`input_tokens` 不含缓存部分，而统一口径要求输入是总量、
+ * 命中不超过输入，因此输入记 `input + cache_creation + cache_read`，命中记 `cache_read`
+ * （两项缓存字段为 null 时按 0 与「未给出」处理）。
+ */
+export function reportAnthropicUsage({ capability, model, usage, searchCalls = 0 }: AnthropicUsageReport): void {
+  if (usage !== undefined && (usage === null || typeof usage !== "object" || Array.isArray(usage))) {
+    warnAiUsageUnavailable(capability, "anthropic", "invalid");
+    reportAiSearchUsage({ capability, provider: "anthropic", model, searchCalls });
+    return;
+  }
+  const input: number | undefined = usage?.input_tokens;
+  const creation: number = usage?.cache_creation_input_tokens ?? 0;
+  const read: number | null | undefined = usage?.cache_read_input_tokens;
+  if ((input !== undefined && !isTokenCount(input)) || !isTokenCount(creation) ||
+    (read !== undefined && read !== null && !isTokenCount(read))) {
+    warnAiUsageUnavailable(capability, "anthropic", "invalid");
+    reportAiSearchUsage({ capability, provider: "anthropic", model, searchCalls });
+    return;
+  }
+  reportAiCacheUsage({
+    capability,
+    provider: "anthropic",
+    model,
+    inputTokens: typeof input === "number" ? input + creation + (read ?? 0) : input,
+    cachedInputTokens: read ?? undefined,
+    outputTokens: usage?.output_tokens,
+    searchCalls,
+  });
+}
+
 /** reportGeminiUsage 的入参：generateContent 响应的 usageMetadata 原样传入。 */
 export interface GeminiUsageReport {
   readonly capability: AiCacheCapability;
   readonly model: string;
   readonly usage: GenerateContentResponseUsageMetadata | undefined;
+  readonly searchCalls?: number;
 }
 
 /**
  * 上报一次 Gemini generateContent 的用量。隐式缓存没有命中时响应不带
  * cachedContentTokenCount，此时按 0 计；输出计入正文与思考两部分。
  */
-export function reportGeminiUsage({ capability, model, usage }: GeminiUsageReport): void {
+export function reportGeminiUsage({ capability, model, usage, searchCalls = 0 }: GeminiUsageReport): void {
   if (usage === undefined) {
     warnAiUsageUnavailable(capability, "google", "missing");
+    reportAiSearchUsage({ capability, provider: "google", model, searchCalls });
     return;
   }
   if (usage === null || typeof usage !== "object" || Array.isArray(usage) || usage.cachedContentTokenCount === null) {
     warnAiUsageUnavailable(capability, "google", "invalid");
+    reportAiSearchUsage({ capability, provider: "google", model, searchCalls });
     return;
   }
   reportAiCacheUsage({
@@ -192,6 +270,7 @@ export function reportGeminiUsage({ capability, model, usage }: GeminiUsageRepor
     inputTokens: usage.promptTokenCount,
     cachedInputTokens: usage.cachedContentTokenCount ?? 0,
     outputTokens: geminiOutputTokens(usage.candidatesTokenCount, usage.thoughtsTokenCount),
+    searchCalls,
   });
 }
 

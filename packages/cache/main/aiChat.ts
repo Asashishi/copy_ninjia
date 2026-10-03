@@ -1,3 +1,5 @@
+/** owner: main。AI 闲聊主线程侧代理（packages/aiChat/，公开入口 index.ts，主体在 workerBridge.ts）的内存状态。 */
+
 import { AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../consts/lifecycle";
 import { createFlushBarrier } from "../../libs/flushBarrier";
 import type { AiMemoryUsage } from "../../types/aiChat/memory";
@@ -8,9 +10,8 @@ import type {
   AiMemoryTeardown,
   MoodRequestWaiter,
   VoiceSynthesisWaiter,
+  WebDigestWaiter,
 } from "../../types/aiChat/waiters";
-
-/** AI 闲聊主线程侧代理（packages/aiChat/，公开入口 index.ts，主体在 workerBridge.ts）的内存状态。 */
 
 /**
  * AI Worker 记忆回传 barrier。模块加载时创建，Worker 终止时统一结算等待者；
@@ -151,6 +152,15 @@ export const moodRequestCounter: { current: number } = { current: 0 };
 export const voiceSynthesisWaiters: Map<number, VoiceSynthesisWaiter> = new Map();
 /** 本进程内已分配的最高语音合成 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
 export const voiceSynthesisRequestCounter: { current: number } = { current: 0 };
+/**
+ * requestId → 摘要组稿等待者（cron `send_web_digest`，见 aiChat/webDigest.ts）。发出
+ * composeWebDigest 前登记；回执、等待超时、调用方取消、Worker 崩溃重建、放弃或终止时结算并删除，
+ * Worker 重建不重放：旧实例的回执不可能再到达，一律按「worker unavailable」结算。容量等于同时
+ * 在途的组稿请求数，上界为 cron 同时在途的轮数；不设淘汰。
+ */
+export const webDigestWaiters: Map<number, WebDigestWaiter> = new Map();
+/** 本进程内已分配的最高摘要组稿 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
+export const webDigestRequestCounter: { current: number } = { current: 0 };
 /**
  * requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算并删除，
  * 四条路径都会清空条目，没有别的保留方。Worker 重建不重放：旧实例的回执不可能

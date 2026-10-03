@@ -43,6 +43,13 @@ describe("chat_states 里的翻译会话", () => {
     expect(decoded?.[2]?.translatedUser.last_name).toBe("Lee");
   });
 
+  test("身份字符串原样解码（含空字符串与首尾空白），非字符串拒绝", () => {
+    expect(decodeSessions([{ translatedUser: { id: 7, first_name: "", last_name: " Alice ", title: "  " }, language: "en" }])?.[0]?.translatedUser)
+      .toMatchObject({ first_name: "", last_name: " Alice ", title: "  " });
+    expect(() => decodeSessions([{ translatedUser: { id: 7, first_name: 1 }, language: "en" }]))
+      .toThrow(`${SOURCE}: $.translate[0].translatedUser.first_name must be a string.`);
+  });
+
   test.each([
     null,
     {},
@@ -68,7 +75,7 @@ describe("全局状态文件不保存翻译会话", () => {
   test("顶层 translate 块一律拒绝", () => {
     for (const translate of [{}, { "-1001": [{ translatedUser: { id: 7 }, language: "ja" }] }]) {
       expect(() => decodeGlobalStateFile({ copy: { copiedUser: null }, translate }, "state.json"))
-        .toThrow("state.json: $.translate must be absent (not part of the current state schema).");
+        .toThrow("state.json: $.<key> must be absent (not part of the current state schema).");
     }
   });
 });

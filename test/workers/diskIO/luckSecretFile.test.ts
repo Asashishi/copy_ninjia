@@ -47,7 +47,7 @@ describe("daily luck receipt secret file", () => {
       [JSON.stringify({ version: 2, day: "2026-07-19", key }), `${path}: $.version must be 1.`],
       [JSON.stringify({ version: 1, day: "2026-02-30", key }), `${path}: $.day must be a canonical YYYY-MM-DD date.`],
       [JSON.stringify({ version: 1, day: "2026-07-19", key: "short" }), `${path}: $.key must be a canonical base64url encoding of 32 bytes.`],
-      [JSON.stringify({ version: 1, day: "2026-07-20", key }), `${path}: $.day must be no later than the current Tokyo day.`],
+      [JSON.stringify({ version: 1, day: "2026-07-20", key }), `${path}: $.day must be no later than the current configured local day.`],
     ];
     for (const [content, message] of invalidContents) {
       await Bun.write(path, content);

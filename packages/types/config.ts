@@ -25,14 +25,16 @@ export interface MoodConfig {
  */
 export type AdSampleConfig = readonly string[];
 
-/** Bot 身份、超级管理员身份与默认通知风格的进程级部署配置。 */
+/** Bot 身份、超级管理员身份、默认通知风格与时区的进程级部署配置。 */
 export interface BotConfig {
   /** BotFather 发放的 Bot API token。 */
   readonly botToken: string;
   /** 唯一超级管理员的正安全整数 Telegram 用户 ID。 */
   readonly superAdminUserId: number;
-  /** 没有自定义群人设时采用的通知风格。 */
-  readonly atmosphere: BotAtmosphere;
+  /** 显式通知风格；缺省时由启动总闸按是否部署自定义人设选择。 */
+  readonly atmosphere?: BotAtmosphere;
+  /** 默认 IANA 时区，用于报时、日界与未单独指定时区的任务。 */
+  readonly timeZone: string;
 }
 
 /** Google 翻译 SDK 实际消费的服务账号字段；官方密钥的其它元数据由 SDK 保留。 */
@@ -66,11 +68,24 @@ export type AdDetectAgentConfig = AgentCapabilityConfig;
  */
 export type OpenAiImageProtocol = "openai" | "openai-standard" | "xai";
 
-/** agent 能力可选的两种 SDK 协议；模型品牌不在这里枚举。 */
-export type AgentProvider = "google" | "openai";
+/**
+ * agent 能力可选的 SDK 协议；模型品牌不在这里枚举。anthropic 不支持 image 与 tts，
+ * 那两项在配置解析时拒绝它（见 config/agentCapability.ts）。
+ */
+export type AgentProvider = "google" | "openai" | "anthropic";
 
-/** agent 配置中的能力名；每项分别选择 provider、模型与端点。 */
-export type AgentCapability = "text" | "summary" | "media" | "image" | "tts";
+/**
+ * agent 配置中的能力名（与 agent.json 的键一致）；每项分别选择 provider、模型与端点。
+ * `web_search` 在 AgentDeploymentConfig 上对应 `webSearch` 字段（见 config/agent.ts 的
+ * agentCapabilityConfig）。
+ */
+export type AgentCapability = "text" | "summary" | "media" | "image" | "tts" | "web_search";
+
+/**
+ * 配置类型为通用能力配置（AgentCapabilityConfig）的四项能力：三项对话核心能力与独立检索
+ * `web_search`；按名取配置见 config/agent.ts 的 requireAgentCapabilityConfig。
+ */
+export type AgentGeneralCapability = Extract<AgentCapability, "text" | "summary" | "media" | "web_search">;
 
 /** Google GenAI SDK 承载的一项能力配置。 */
 export interface GoogleAgentCapabilityConfig {
@@ -97,8 +112,28 @@ export interface OpenAiAgentCapabilityConfig {
   readonly model: string;
 }
 
+/** Anthropic SDK（Messages API）承载的一项能力配置。 */
+export interface AnthropicAgentCapabilityConfig {
+  readonly provider: "anthropic";
+  readonly apiKey: string;
+  /** 留空表示走 Anthropic SDK 的官方端点。 */
+  readonly baseUrl: string | undefined;
+  /** Anthropic 协议不接受 headers，恒为 undefined。 */
+  readonly headers: undefined;
+  readonly model: string;
+}
+
 /** 不涉及生图请求体差异的通用能力配置。 */
-export type AgentCapabilityConfig = GoogleAgentCapabilityConfig | OpenAiAgentCapabilityConfig;
+export type AgentCapabilityConfig =
+  | GoogleAgentCapabilityConfig
+  | OpenAiAgentCapabilityConfig
+  | AnthropicAgentCapabilityConfig;
+
+/** 独立联网检索能力；函数调用次数按每轮回复计数，与供应商内部执行的检索次数分开。 */
+export type AgentWebSearchCapabilityConfig = AgentCapabilityConfig & {
+  /** 部署字段 max_calls_per_use；每轮回复最多调用 web_search 函数的次数。 */
+  readonly maxCallsPerUse: number;
+};
 
 /** Google 生图配置；Google SDK 自己定义请求体，不接受 OpenAI 协议档位。 */
 export interface GoogleAgentImageCapabilityConfig extends GoogleAgentCapabilityConfig {
@@ -180,10 +215,22 @@ export type AgentImageCapabilityConfig =
   | GoogleAgentImageCapabilityConfig
   | OpenAiAgentImageCapabilityConfig;
 
+/** agent 段任一能力的配置；按能力名取用（config/agent.ts 的 agentCapabilityConfig）时的类型。 */
+export type AgentDeploymentCapabilityConfig =
+  | AgentCapabilityConfig
+  | AgentImageCapabilityConfig
+  | AgentTtsCapabilityConfig
+  | AgentWebSearchCapabilityConfig;
+
+/** 某一 provider 名下的能力配置；各实现包按能力构造 SDK 客户端时使用（aiChat/capabilityClient.ts）。 */
+export type ProviderCapabilityConfig<TProvider extends AgentProvider> =
+  Extract<AgentDeploymentCapabilityConfig, { readonly provider: TProvider }>;
+
 /**
  * config/dynamic/agent.json 的 agent 段；三项对话核心能力必填且各自独立路由。
  * `text` 是带工具往返的群聊回复，`summary` 是无状态纯文本摘要，`media` 是视觉
- * 描述与语音转写，`image` 是生图，`tts` 是语音合成。
+ * 描述与语音转写，`image` 是生图，`tts` 是语音合成，`webSearch`（部署字段 `web_search`）
+ * 是回复与 cron 摘要共用的联网检索执行器。
  */
 export interface AgentDeploymentConfig {
   readonly text: AgentCapabilityConfig;
@@ -193,6 +240,11 @@ export interface AgentDeploymentConfig {
   readonly image?: AgentImageCapabilityConfig;
   /** 缺省表示不提供语音工具；实现不支持时同样不会注册对应工具。 */
   readonly tts?: AgentTtsCapabilityConfig;
+  /**
+   * 部署字段 `web_search`。配置时回复改挂本地函数工具 `web_search`，由这一项的模型执行
+   * 带内建检索的单轮请求；调用上限来自 maxCallsPerUse。缺省时回复挂 text 模型自己的内建检索。
+   */
+  readonly webSearch?: AgentWebSearchCapabilityConfig;
 }
 
 /**

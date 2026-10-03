@@ -29,7 +29,7 @@ import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../consts/commands";
 import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
 import { trackBackgroundTask } from "../infra/backgroundTasks";
 import { settleWithinBudget } from "../libs/inflight";
-import { formatTokyoTime } from "../libs/time";
+import { formatLocalTime } from "../libs/time";
 import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
@@ -66,7 +66,7 @@ function recordAdSample(event: AdDetectedEvent): void {
     chatId: event.chatId,
     senderId: event.senderId,
     label: event.label,
-    detectedAt: formatTokyoTime(Date.now()),
+    detectedAt: formatLocalTime(Date.now()),
     reason: event.reason,
     messages: event.messages,
   } satisfies AdSampleDiskMessage);
@@ -266,7 +266,7 @@ async function announceAdDisposal(
 ): Promise<void> {
   await sendTemporaryMessageOnMain({
     chatId: event.chatId,
-    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats, atmosphere: chatAtmosphere(event.chatId) }),
+    text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats, atmosphere: chatAtmosphere() }),
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   });
 }

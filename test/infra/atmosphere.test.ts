@@ -1,35 +1,23 @@
-import { beforeEach, expect, mock, test } from "bun:test";
-import type { ChatState } from "../../packages/types/chatState";
+import { afterEach, expect, test } from "bun:test";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
-import { chatStateOf } from "../helpers/chatState";
+import { botAtmosphere, chatAtmosphere } from "../../packages/infra/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
 
-const states: Map<number, ChatState> = new Map<number, ChatState>();
-const empty: Readonly<ChatState> = chatStateOf();
-const readState = mock((chatId: number): Readonly<ChatState> => states.get(chatId) ?? empty);
-mock.module("../../packages/infra/storage/stateStore", () => ({ getChatState: readState }));
-const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
+// preload 已按部署缺省接管本进程风格；本文件临时改写 holder，跑完必须还原。
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
 
-beforeEach(() => { states.clear(); readState.mockClear(); });
+afterEach(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
 
-test("群人设配置决定语气，AI 开关不改变选择，读取复用常量表", () => {
-  states.set(-1001, chatStateOf({ aiPersona: "温和回答", isAIChatEnabled: false }));
-  states.set(-1002, chatStateOf({ isAIChatEnabled: true }));
-  expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
-  expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
-  expect(chatAtmosphere(-1002)).toBe(ATMOSPHERE_TEXTS.teasing);
-  expect(chatAtmosphere(-1003)).toBe(ATMOSPHERE_TEXTS.teasing);
-  expect(readState).toHaveBeenCalledTimes(4);
-  expect(states.size).toBe(2);
+test("主线程按启动总闸接管的本进程风格选文案，读取复用常量表", () => {
+  for (const atmosphere of ["teasing", "plain"] as readonly Atmosphere[]) {
+    botAtmosphereState.current = atmosphere;
+    expect(botAtmosphere()).toBe(atmosphere);
+    expect(chatAtmosphere()).toBe(ATMOSPHERE_TEXTS[atmosphere]);
+  }
 });
 
-test("人设修改和群状态删除即时切换，不保留另一份主线程风格缓存", () => {
-  const state: ChatState = chatStateOf({ aiPersona: "自定义" });
-  states.set(-1001, state);
-  expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
-  state.aiPersona = undefined;
-  expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.teasing);
-  state.aiPersona = "另一个人设";
-  expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.plain);
-  states.delete(-1001);
-  expect(chatAtmosphere(-1001)).toBe(ATMOSPHERE_TEXTS.teasing);
+test("启动总闸完成前读取风格是接线错误，不回退到任何缺省风格", () => {
+  botAtmosphereState.current = null;
+  expect(() => chatAtmosphere()).toThrow("Bot atmosphere was not initialized by the deployment input preflight.");
 });

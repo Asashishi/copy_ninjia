@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../packages/config/time";
 import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
@@ -116,7 +117,7 @@ describe("logger persistence routing boundary", () => {
   test("字符串参数与 Error 可枚举字段里的敏感值都被脱敏后才进控制台与落盘", () => {
     const originalTelegram: BotConfig | null = botConfigCache.current;
     const token: string = "logger-telegram-token";
-    botConfigCache.current = { atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
+    botConfigCache.current = { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     try {
       // 字符串走的是不经 JSON 往返的快路径；对象/Error 仍走序列化后整份脱敏。
@@ -155,7 +156,7 @@ describe("logger persistence routing boundary", () => {
       expect(consoleError.mock.calls.at(-1)![0]).toBe("no-config-yet");
 
       const token: string = "late-arriving-telegram-token";
-      botConfigCache.current = { atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
+      botConfigCache.current = { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
       logger.error(`now with token ${token}`);
       const stringArg: unknown = consoleError.mock.calls.at(-1)![0];
       expect(stringArg).toBe(`now with token ${REDACTED_SECRET}`);
@@ -163,7 +164,7 @@ describe("logger persistence routing boundary", () => {
 
       // 换成另一份配置同样要立刻生效（测试替身、启动总闸与热重载都是整体替换 holder）。
       const rotated: string = "rotated-telegram-token";
-      botConfigCache.current = { atmosphere: "mesugaki", botToken: rotated, superAdminUserId: 1 };
+      botConfigCache.current = { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: rotated, superAdminUserId: 1 };
       logger.error(`rotated ${rotated} but old ${token}`);
       const afterRotate: string = String(consoleError.mock.calls.at(-1)![0]);
       expect(afterRotate).not.toContain(rotated);
@@ -188,7 +189,7 @@ describe("logger persistence routing boundary", () => {
       for (let index: number = 0; index <= LOGGER_MAX_REDACTED_SECRETS; index++) {
         const token: string = `retired-telegram-token-${String(index).padStart(3, "0")}`;
         tokens.push(token);
-        botConfigCache.current = { atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
+        botConfigCache.current = { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
         logger.error("rotate");
       }
       logger.error(tokens.join(" "));
@@ -213,7 +214,7 @@ describe("logger persistence routing boundary", () => {
       "normalized-gemini-key",
       "normalized-deepseek-key",
     ];
-    botConfigCache.current = { atmosphere: "mesugaki",
+    botConfigCache.current = { timeZone: getTimeZone(), atmosphere: "mesugaki",
       botToken: normalizedSecrets[0],
       superAdminUserId: 1,
     };
@@ -476,7 +477,7 @@ describe("logger persistence routing boundary", () => {
   test("cause、AggregateError.errors 与值为 Error 的字段递归展开，嵌套层同样脱敏", () => {
     const originalTelegram: BotConfig | null = botConfigCache.current;
     const token: string = "nested-cause-telegram-token";
-    botConfigCache.current = { atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
+    botConfigCache.current = { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: token, superAdminUserId: 1 };
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     try {
       const fetchFailure = Object.assign(new TypeError("fetch failed"), {

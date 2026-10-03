@@ -40,7 +40,7 @@ const {
   VERBATIM_CONTEXT_MAX,
 } = await import("../../../packages/consts/aiChat/memory");
 const { truncateInline } = await import("../../../packages/libs/text");
-const { formatTokyoTime } = await import("../../../packages/libs/time");
+const { formatLocalTime } = await import("../../../packages/libs/time");
 
 function entry(text: string): BufferedMessage {
   return bufferedMessageFixture({ messageId: 1, id: 1, firstName: "Alice", lastName: "", text, at: "00:00" });
@@ -149,7 +149,7 @@ describe("AI rolling-memory capacity", () => {
           quote: truncateInline(reference(quote), REPLY_REFERENCE_MAX_CHARS),
         }),
         forwardedFrom: layout === "canonical" ? undefined : "转发 来源",
-        at: formatTokyoTime(fixedNow),
+        at: formatLocalTime(fixedNow),
       });
       if (layout === "canonical") expected.firstName = "群聊成员";
       expect(built).toEqual(expected);

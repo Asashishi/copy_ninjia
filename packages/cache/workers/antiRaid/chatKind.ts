@@ -1,4 +1,4 @@
-/** 群类型的 Worker 侧镜像（packages/workers/antiRaid/chatKind.ts）。 */
+/** owner: workers/antiRaid。群类型的 Worker 侧镜像（packages/workers/antiRaid/chatKind.ts）。 */
 
 /**
  * 各群是不是超级群，由主线程按变更镜像过来。

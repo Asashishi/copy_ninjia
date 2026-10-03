@@ -8,19 +8,16 @@ import {
   AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER,
 } from "../../packages/consts/aiChat/provider";
 import type { AiChatWorkerMessage } from "../../packages/types/aiChat/protocol";
+import type { TelegramRetryLane } from "../../packages/types/telegramOutbound";
+import { telegramOutboundGateState } from "../../packages/cache/main/telegram";
 
 const workerPosts: AiChatWorkerMessage[] = [];
-let messageActive: number = 0;
-let messageRetryPending: number = 0;
+const messageLane: TelegramRetryLane = telegramOutboundGateState.lanes.message;
 const postAiChatOrThrow = mock((message: AiChatWorkerMessage): void => {
   workerPosts.push(message);
 });
-const telegramOutboundStats = mock(() => ({ messageActive, messageRetryPending }));
 
 mock.module("../../packages/aiChat/workerBridge", () => ({ postAiChatOrThrow }));
-mock.module("../../packages/infra/telegram/outboundLifecycle", () => ({
-  telegramOutboundStats,
-}));
 
 const {
   generateAndSendReply,
@@ -36,10 +33,13 @@ const {
 
 beforeEach((): void => {
   workerPosts.length = 0;
-  messageActive = 0;
-  messageRetryPending = 0;
+  messageLane.activeCount = 0;
+  messageLane.pendingCount = 0;
+  telegramOutboundGateState.activeCount = 0;
+  telegramOutboundGateState.retryPendingCount = 0;
+  telegramOutboundGateState.lanes.inline.activeCount = 0;
+  telegramOutboundGateState.lanes.inline.pendingCount = 0;
   postAiChatOrThrow.mockClear();
-  telegramOutboundStats.mockClear();
   postAiChatOrThrow.mockImplementation((message: AiChatWorkerMessage): void => {
     workerPosts.push(message);
   });
@@ -50,6 +50,19 @@ beforeEach((): void => {
 });
 
 describe("AI 主线程消息入口", () => {
+  test("其他发送类别高压不会压制 message 回复准入", (): void => {
+    telegramOutboundGateState.lanes.inline.activeCount = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
+    telegramOutboundGateState.lanes.inline.pendingCount = AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
+    telegramOutboundGateState.activeCount = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
+    telegramOutboundGateState.retryPendingCount = AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
+    const message: ReturnType<typeof aiRecordMediaMessageFixture> =
+      aiRecordMediaMessageFixture({ replyTelegramBackpressured: false });
+
+    recordChatMedia(message);
+
+    expect(message.replyTelegramBackpressured).toBeFalse();
+    expect(workerPosts).toEqual([message]);
+  });
   test("文字与媒体记录都会清除 purge 标记并保持最终载荷对象", () => {
     purgedAiMemoryChats.add(-1001);
     const textMessage = aiRecordMessageFixture({ chatId: -1001 });
@@ -87,7 +100,7 @@ describe("AI 主线程消息入口", () => {
   });
 
   test("触发载荷冻结发送背压快照，并显式写出所有缺省字段", () => {
-    messageActive = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
+    messageLane.activeCount = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
     generateAndSendReply({
       chatId: -1001,
       triggerSenderId: 7,
@@ -97,8 +110,8 @@ describe("AI 主线程消息入口", () => {
       imageGenerationReference: undefined,
     });
 
-    messageActive = 0;
-    messageRetryPending = AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
+    messageLane.activeCount = 0;
+    messageLane.pendingCount = AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER;
     generateAndSendReply({
       chatId: -1002,
       triggerSenderId: 8,
@@ -109,7 +122,7 @@ describe("AI 主线程消息入口", () => {
       isRandomTrigger: true,
     });
 
-    messageRetryPending = 0;
+    messageLane.pendingCount = 0;
     generateAndSendReply({
       chatId: -1003,
       triggerSenderId: 9,
@@ -163,8 +176,8 @@ describe("AI 主线程消息入口", () => {
       [0, AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER],
       [AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER - 1, AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER - 1],
     ] as const) {
-      messageActive = active;
-      messageRetryPending = retryPending;
+      messageLane.activeCount = active;
+      messageLane.pendingCount = retryPending;
       const message = aiRecordMediaMessageFixture({ replyTelegramBackpressured: false });
       recordChatMedia(message);
       expect(workerPosts.at(-1)).toBe(message);
@@ -172,17 +185,15 @@ describe("AI 主线程消息入口", () => {
     }
 
     expect(snapshots).toEqual([true, true, false]);
-    expect(telegramOutboundStats).toHaveBeenCalledTimes(3);
   });
 
   test("不发起回复的媒体不读取发送面，快照保持 undefined", () => {
-    messageActive = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
+    messageLane.activeCount = AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER;
     const message = aiRecordMediaMessageFixture({ replyTelegramBackpressured: undefined });
 
     recordChatMedia(message);
 
     expect(workerPosts).toEqual([message]);
     expect(message.replyTelegramBackpressured).toBeUndefined();
-    expect(telegramOutboundStats).not.toHaveBeenCalled();
   });
 });

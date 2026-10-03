@@ -56,7 +56,7 @@ beforeEach(() => {
   resetStorageDatabaseCache();
   resetAiMemoryCache();
   storageDatabaseHandle.current = database;
-  database.insert(chatStates).values({ chatId, status: '{"isInitEnabled":true}', aiPersona: "群人设" }).run();
+  database.insert(chatStates).values({ chatId, status: '{"isInitEnabled":true}' }).run();
   storagePersistenceReplyHolder.current = noReply;
   persistedReplies.length = 0;
   deleteReplies.length = 0;
@@ -77,19 +77,19 @@ test("快照先进共享事务缓冲并挂定时提交，提交时以 JSONB 写�
 
   expect(flushStorageDatabase(noReply)).toBeTrue();
   expect(pendingAiContextWrites.size).toBe(0);
-  const stored = database.$client.query("SELECT typeof(ai_context) AS kind, json(status) AS status, ai_persona AS persona FROM chat_states").get();
-  expect(stored).toEqual({ kind: "blob", status: '{"isInitEnabled":true}', persona: "群人设" });
+  const stored = database.$client.query("SELECT typeof(ai_context) AS kind, json(status) AS status FROM chat_states").get();
+  expect(stored).toEqual({ kind: "blob", status: '{"isInitEnabled":true}' });
   // 普通快照不发即时回执。
   expect(persistedReplies).toEqual([]);
 
-  handleChatStateWrite({ type: "chatStateWrite", chatId, data: '{"isInitEnabled":true,"isAIChatEnabled":true}', aiPersona: "新人设", revision: 1 }, noReply);
+  handleChatStateWrite({ type: "chatStateWrite", chatId, data: '{"isInitEnabled":true,"isAIChatEnabled":true}', revision: 1 }, noReply);
   expect(flushStorageDatabase(noReply)).toBeTrue();
   expect(storedContexts().get(chatId)).toBe(snapshot);
-  expect(decodeStoredChatStates(readStoredChatStates(database), IDENTITY_DATABASE_PATH).get(chatId)?.aiPersona).toBe("新人设");
+  expect(decodeStoredChatStates(readStoredChatStates(database), IDENTITY_DATABASE_PATH).get(chatId)?.isAIChatEnabled).toBeTrue();
 });
 
 test("新增群的状态与首份上下文在同一事务里先建行再写上下文", () => {
-  handleChatStateWrite({ type: "chatStateWrite", chatId: -1002, data: '{"isInitEnabled":true}', aiPersona: null, revision: 1 }, noReply);
+  handleChatStateWrite({ type: "chatStateWrite", chatId: -1002, data: '{"isInitEnabled":true}', revision: 1 }, noReply);
   markAiMemorySnapshotDirty({ chatId: -1002, revision: 1, snapshot });
   expect(flushStorageDatabase(noReply)).toBeTrue();
   expect(storedContexts().get(-1002)).toBe(snapshot);
@@ -117,14 +117,14 @@ test("purge 后首份快照立即提交；事务失败时保留且不回执，�
   }
 });
 
-test("删除立即提交并回执，只清空上下文，人设保留", () => {
+test("删除立即提交并回执，只清空上下文，群状态保留", () => {
   markAiMemorySnapshotDirty({ chatId, revision: 1, snapshot });
   expect(flushStorageDatabase(noReply)).toBeTrue();
 
   deleteAiMemorySnapshot(chatId, 2);
 
   expect(storedContexts().size).toBe(0);
-  expect(readStoredChatStates(database)[0]?.aiPersona).toBe("群人设");
+  expect(readStoredChatStates(database)).toEqual([{ chatId, data: '{"isInitEnabled":true}' }]);
   expect(deleteReplies).toEqual([{ type: "aiMemoryDeletedPersisted", chatId, revision: 2 }]);
   expect(pendingAiContextWrites.size).toBe(0);
 });
@@ -141,7 +141,7 @@ test("迟到的旧 revision 删除只回执、不写库", () => {
 });
 
 test("同批删除的群不被迟到快照复活", () => {
-  handleChatStateWrite({ type: "chatStateWrite", chatId, data: null, aiPersona: null, revision: 1 }, noReply);
+  handleChatStateWrite({ type: "chatStateWrite", chatId, data: null, revision: 1 }, noReply);
   markAiMemorySnapshotDirty({ chatId, revision: 1, snapshot });
   markAiMemorySnapshotDirty({ chatId: -9999, revision: 1, snapshot });
   expect(flushStorageDatabase(noReply)).toBeTrue();

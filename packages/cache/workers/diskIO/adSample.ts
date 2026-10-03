@@ -1,12 +1,11 @@
-import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
-
-/**
- * Owner: Disk I/O Worker。广告命中样本文件（packages/workers/diskIO/adSampleFile.ts）的
+/** owner: workers/diskIO。广告命中样本文件（packages/workers/diskIO/adSampleFile.ts）的
  * 落盘线程内存状态。
  *
  * 样本是纯旁路素材：批次写失败就丢，不进统一 flush 的失败领域、不占重试预算
  * （见 adSampleFile.ts 的文件头）。
  */
+
+import type { AppendOnlyFileState } from "../../../types/diskIO/storage";
 
 /**
  * 待追加的已序列化样本与负责刷出它们的 timer。handleAdSampleMessage 填充，累计
@@ -35,7 +34,7 @@ export const adSampleFileState: { current: AppendOnlyFileState | null } = { curr
 export const adSampleTempsSwept: { current: boolean } = { current: false };
 
 /**
- * 最近完成或尝试过归档保留期清扫的东京日期。只有日期严格前进时才再扫，避免
+ * 最近完成或尝试过归档保留期清扫的配置时区的日期。只有日期严格前进时才再扫，避免
  * 每条样本触发 readdir，也避免系统时钟回拨后同一自然日重复扫描。Worker 重建后
  * 回到 null，可安全重扫一次；清扫失败也记录日期，失败本身不能拖累旁路追加。
  */
@@ -43,7 +42,7 @@ export const adSampleArchiveSweepDay: { current: string | null } = { current: nu
 
 /** 每日归档选名的最小有界游标；完整生命周期见 adSampleArchiveCursor。 */
 export interface AdSampleArchiveCursor {
-  /** 当前索引所属的东京日期。 */
+  /** 当前索引所属的配置时区的日期。 */
   readonly day: string;
   /** 按既有命名规则应当从哪个正整数候选继续碰撞检查；1 表示无序号文件。 */
   readonly nextIndex: number;

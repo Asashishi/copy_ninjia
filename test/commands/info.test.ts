@@ -31,7 +31,7 @@ const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
 
 const CHAT_ID: number = -1001;
 const BOT: User = { id: 999, is_bot: true, first_name: "Copy", last_name: "Ninjia", username: "copy_ninjia_bot" };
-const texts = chatAtmosphere(CHAT_ID).INFO_TEXTS;
+const texts = chatAtmosphere().INFO_TEXTS;
 
 function context(match: string = ""): never {
   return {

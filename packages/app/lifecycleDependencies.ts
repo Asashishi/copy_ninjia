@@ -49,7 +49,6 @@ import {
 import { drainTelegramOutbound } from "../infra/telegram/outboundLifecycle";
 import { bot, initTelegramClients } from "../infra/telegram/mainClient";
 import { sleep } from "../libs/sleep";
-import { monotonicNow } from "../libs/monotonicDeadline";
 import { updateCachedIdentity } from "../users/senderIdentity";
 import { hydrateIdentityStorageCounts } from "../infra/identityStorage";
 import { validateExistingDeploymentInputs } from "../config/readiness";
@@ -112,7 +111,7 @@ export const lifecycleDependencies = {
   loadPersistedData,
   loadState,
   logger,
-  monotonicNow,
+  monotonicNow: (): number => performance.now(),
   validateExistingDeploymentInputs,
   prepareRandomImageDirectory: (): Promise<void> => ensureRandomImageDirectory(getAssetConfig().randomHImageDirectory),
   refreshAllChatTitles,

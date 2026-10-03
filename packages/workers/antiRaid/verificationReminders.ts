@@ -99,7 +99,7 @@ function attemptReminderDelivery(
   }
 
   delivery.inFlight = true;
-  const atmosphere: AtmosphereTexts = workerAtmosphere(delivery.chatId);
+  const atmosphere: AtmosphereTexts = workerAtmosphere();
   const verifyKeyboard: InlineKeyboardMarkup = buildVerificationKeyboard(
     delivery.userId,
     delivery.expectedState.isBot,

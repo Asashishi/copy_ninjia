@@ -8,7 +8,7 @@ import {
   runBooleanTelegramAction,
   runPermissionAwareTelegramAction,
 } from "./core";
-import { signalArgs } from "../../../libs/telegramSignalArgs";
+import { telegramSignal } from "../../../libs/telegramSignal";
 import { signalWithTimeout } from "../../../libs/abortSignal";
 import type { PermissionAwareOutcome } from "./core";
 import { isTelegramRetryPreconditionChanged } from "../errors";
@@ -78,7 +78,7 @@ export async function muteChatMemberWithOutcome({
         userId,
         MUTED_CHAT_PERMISSIONS,
         { until_date: Math.ceil(mutedUntil / 1000) },
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     signal: signalWithTimeout(signal, dispatchTimeoutMs),
   });
@@ -113,7 +113,7 @@ export async function unmuteChatMemberWithOutcome({
         userId,
         UNMUTED_CHAT_PERMISSIONS,
         {},
-        ...signalArgs(requestSignal)
+        telegramSignal(requestSignal)
       ),
     signal,
   });
@@ -164,13 +164,13 @@ export async function kickChatMemberWithOutcome({
           chatId,
           userId,
           {},
-          ...signalArgs(signal)
+          telegramSignal(signal)
         )
         : api.unbanChatMember(
           chatId,
           userId,
           {},
-          ...signalArgs(signal)
+          telegramSignal(signal)
         ),
     // 「目标已经不在群」不是故障，也不该被解释成权限拒绝：认领掉它，既不记
     // API 错误，也不让调用方按可重试失败退避。
@@ -205,7 +205,7 @@ export async function banChatMemberWithOutcome(
         chatId,
         userId,
         { revoke_messages: true },
-        ...signalArgs(signal)
+        telegramSignal(signal)
       ),
   });
   if (outcome === "succeeded") return "banned";
@@ -240,7 +240,7 @@ export async function unbanChatMemberIfBanned(
         chatId,
         userId,
         { only_if_banned: true },
-        ...signalArgs(signal)
+        telegramSignal(signal)
       )
   );
 }
@@ -254,7 +254,7 @@ export async function banChatSenderChatWithOutcome(
   const outcome: PermissionAwareOutcome = await runPermissionAwareTelegramAction({
     action: `ban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
     execute: (signal?: AbortSignal): Promise<true> =>
-      api.banChatSenderChat(chatId, senderChatId, ...signalArgs(signal)),
+      api.banChatSenderChat(chatId, senderChatId, telegramSignal(signal)),
   });
   if (outcome === "succeeded") return "banned";
   return outcome === "forbidden" ? "forbidden" : "failed";
@@ -280,6 +280,6 @@ export async function unbanChatSenderChat(
   return runBooleanTelegramAction(
     `unban sender chat (chat ${chatId}, sender chat ${senderChatId})`,
     (signal?: AbortSignal): Promise<true> =>
-      api.unbanChatSenderChat(chatId, senderChatId, ...signalArgs(signal))
+      api.unbanChatSenderChat(chatId, senderChatId, telegramSignal(signal))
   );
 }

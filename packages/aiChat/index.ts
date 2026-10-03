@@ -3,6 +3,7 @@ export {
   flushAiMemory,
   initAiChat,
   invalidateAiChat,
+  composeWebDigest,
   requestAiMood,
   synthesizeVoice,
   syncAiChatConfig,

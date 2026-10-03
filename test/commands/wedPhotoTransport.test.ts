@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { Api } from "grammy";
 import type { PhotoSize, User } from "grammy/types";
@@ -9,7 +9,8 @@ import type { CurrentAvatarResult } from "../../packages/types/telegram";
 import type { WedCandidate, WedSession } from "../../packages/types/wed";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { chatStateCache } from "../../packages/cache/main/chatState";
-import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";
+import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import type { Atmosphere } from "../../packages/types/atmosphere";
 
 interface RecordedRequest {
   readonly method: string;
@@ -64,7 +65,10 @@ const { readCurrentAvatar }: typeof AvatarReader =
 const { sendWedResult, replaceWedResult }: typeof WedMessages =
   await import("../../packages/commands/wed/messages");
 
+/** preload 接管的本进程风格；改写它的用例结束后还原。 */
+const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
 beforeEach(() => { requests.length = 0; chatStateCache.clear(); recordBotImage.mockClear(); });
+afterEach(() => { botAtmosphereState.current = PRELOADED_ATMOSPHERE; });
 
 test("抽取与更换均按当前人设同时渲染无名身份称呼和按钮", async () => {
   const actor: User = { id: 1, first_name: "", is_bot: false };
@@ -75,8 +79,7 @@ test("抽取与更换均按当前人设同时渲染无名身份称呼和按钮",
     confirmed: false, busy: true,
   };
   const candidate: WedCandidate = { identity: target, photo: current.file_id };
-  const state = getOrCreateChatState(session.chatId);
-  state.aiPersona = "普通风格";
+  botAtmosphereState.current = "plain";
   expect(await sendWedResult({ session, candidate, replyToMessageId: 50, signal: session.controller.signal })).toBeTrue();
   expect(requests[0]?.body).toMatchObject({
     caption: `${ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser}，你的群友老婆是 ${ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser}!`,
@@ -86,7 +89,7 @@ test("抽取与更换均按当前人设同时渲染无名身份称呼和按钮",
       { text: ATMOSPHERE_TEXTS.plain.WED_BUTTON_TEXTS.change },
     ]] },
   });
-  state.aiPersona = undefined;
+  botAtmosphereState.current = "teasing";
   expect(await replaceWedResult(session, candidate, session.controller.signal)).toBeTrue();
   expect(requests[1]?.body).toMatchObject({
     media: { caption: `${ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser}，你的群友老婆是 ${ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser}!` },

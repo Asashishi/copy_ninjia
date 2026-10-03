@@ -3,8 +3,9 @@ import { PERSONA_PATH } from "../consts/paths";
 import { invalidInput, readUtf8TextInput } from "../libs/inputValidation";
 
 /**
- * 读取 AI 人设资源并拒绝缺失、不可读或空白内容。错误不得携带文件内容或底层
- * I/O 细节；只由主线程启动预检（ensurePersona）调用，AI Worker 经初始化消息接管快照。
+ * 读取已存在的自定义人设并拒绝不可读、非法 UTF-8 或空白内容，返回去掉首尾空白的正文。
+ * 错误不得携带文件内容或底层 I/O 细节；文件是否存在由主线程启动总闸（config/readiness.ts
+ * 的 ensurePersona）先行判定，真正缺省时不调用本函数。
  */
 export async function loadPersona(path: string = PERSONA_PATH): Promise<string> {
   let content: string;
@@ -20,22 +21,16 @@ export async function loadPersona(path: string = PERSONA_PATH): Promise<string> 
   return persona;
 }
 
-/** 接管启动预检或 Worker 初始化消息已经严格校验的人设快照。 */
+/** 接管启动总闸或 Worker 初始化消息已经确定的人设快照。 */
 export function adoptPersona(persona: string): void {
   personaCache.current = persona;
 }
 
-/** 启动预检填充默认路径快照；重复调用只读 holder。 */
-export async function ensurePersona(): Promise<void> {
-  if (personaCache.current !== null) return;
-  adoptPersona(await loadPersona());
-}
-
-/** 默认人设只读当前线程已校验的快照，不在运行期回退读盘。 */
+/** 人设只读当前线程已接管的快照，不在运行期回退读盘。 */
 export function getPersona(): string {
   const persona: string | null = personaCache.current;
   if (persona === null) {
-    throw new Error(`Persona configuration was not initialized from ${PERSONA_PATH}.`);
+    throw new Error("Persona was not initialized by the deployment input preflight.");
   }
   return persona;
 }

@@ -278,14 +278,9 @@ describe("chat_states codec 的拒绝分支", () => {
   });
 });
 
-test("人设独立于 status，空白和非法类型不回退默认", () => {
-  const status = encodeChatStateData(chatStateOf({ isInitEnabled: true, aiPersona: "群人设" }));
-  expect(JSON.parse(status)).toEqual({ isInitEnabled: true });
-  expect(decodeChatStateData(status, "chat_states[-1001]", "群人设").aiPersona).toBe("群人设");
-  expect(decodeChatStateData(status, "chat_states[-1001]", null).aiPersona).toBeUndefined();
-  for (const invalid of ["", " ", "\n", 1, true, {}]) {
-    expect(() => decodeChatStateData(status, "chat_states[-1001]", invalid as string)).toThrow("ai_persona");
-  }
+test("群人设不是当前状态字段，出现在 status 里一律拒绝", () => {
+  expect(() => decodeChatStateData(JSON.stringify({ isInitEnabled: true, aiPersona: "群人设" }), "chat_states[-1001]"))
+    .toThrow("chat_states[-1001]: $ must be an object containing only supported chat-state fields");
 });
 
 describe("chat_states 开关的持久化表示", () => {

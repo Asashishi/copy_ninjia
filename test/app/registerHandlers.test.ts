@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { Bot, Context } from "grammy";
 import { registerHandlers } from "../../packages/app/registerHandlers";
+import { botMessageActivity } from "../../packages/cache/main/botMessage";
+import { BOT_MESSAGE_ACTIVITY_LIMIT } from "../../packages/consts/botMessage";
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 
@@ -17,7 +19,7 @@ interface FakeBot extends FakeComposer {
 
 /** 只带 update 类型字段的最小上下文；ingress 外闸只读 message / channelPost。 */
 function nonMessageContext(): Context {
-  return { update: { update_id: 1 }, message: undefined, channelPost: undefined } as unknown as Context;
+  return { update: { update_id: 1 }, message: undefined, channelPost: undefined, me: { id: 999 } } as unknown as Context;
 }
 
 describe("application handler registration", () => {
@@ -74,8 +76,8 @@ describe("application handler registration", () => {
     expect(middleware).toHaveLength(0);
     const registration = registerHandlers(fakeBot as unknown as Bot);
 
-    // 5 条前置 + Anti-Raid / gag / qa 三条 ingress + 中文动作命令外闸 + 消息兜底。
-    expect(middleware).toHaveLength(10);
+    // 6 条前置 + Anti-Raid / gag / qa 三条 ingress + 中文动作命令外闸 + 消息兜底。
+    expect(middleware).toHaveLength(11);
     expect(commands).toEqual([
       "permission",
       "white",
@@ -87,7 +89,6 @@ describe("application handler registration", () => {
       "info",
       "block",
       "batch_kick",
-      "prompt",
       "ai_chat",
       "clear_context",
       "ad_detect",
@@ -108,23 +109,22 @@ describe("application handler registration", () => {
     ]);
     expect(directCommands).toEqual([]);
     expect(directHears).toEqual([]);
-    // use:3 是 init 与私聊命令门禁；use:6/7/8 依次是 Anti-Raid、gag、/qa set 表单
-    // 三条 ingress（见 antiRaid/updateIngress.ts 的函数头）；use:9 是中文动作命令的
-    // 「/」外闸，须早于 use:10 的消息兜底。
+    // use:2 是机器人发言限流；use:4 是 init 与私聊命令门禁；use:7/8/9 依次是
+    // Anti-Raid、gag、/qa set 表单三条 ingress；use:10 的「/」外闸早于 use:11 的消息兜底。
     const commandGroupIndex: number =
       registrationOrder.indexOf(`on:${JSON.stringify(":entities:bot_command")}`);
-    expect(registrationOrder.slice(0, 8)).toEqual([
-      "use:1", "use:2", "use:3", "use:4", "use:5", "use:6", "use:7", "use:8",
+    expect(registrationOrder.slice(0, 9)).toEqual([
+      "use:1", "use:2", "use:3", "use:4", "use:5", "use:6", "use:7", "use:8", "use:9",
     ]);
-    expect(commandGroupIndex).toBe(8);
+    expect(commandGroupIndex).toBe(9);
     for (const command of commands) {
       expect(registrationOrder.indexOf(`command:${command}`)).toBeGreaterThan(commandGroupIndex);
-      expect(registrationOrder.indexOf(`command:${command}`)).toBeLessThan(registrationOrder.indexOf("use:9"));
+      expect(registrationOrder.indexOf(`command:${command}`)).toBeLessThan(registrationOrder.indexOf("use:10"));
     }
-    expect(registrationOrder.indexOf("use:9")).toBeLessThan(registrationOrder.indexOf("use:10"));
+    expect(registrationOrder.indexOf("use:10")).toBeLessThan(registrationOrder.indexOf("use:11"));
     // 两条 callback_query:data：/qa query 翻页先认领（未认领时 next()），
     // 未认领的交给入群验证（不调 next()）。
-    expect(registrationOrder.slice(registrationOrder.indexOf("use:10") + 1)).toEqual([
+    expect(registrationOrder.slice(registrationOrder.indexOf("use:11") + 1)).toEqual([
       `on:${JSON.stringify("message_reaction")}`,
       `on:${JSON.stringify("chat_member")}`,
       `on:${JSON.stringify("my_chat_member")}`,
@@ -137,9 +137,9 @@ describe("application handler registration", () => {
     expect(updates).toHaveLength(8);
     expect(catchCount).toBe(1);
 
-    // 三条 ingress、「/」外闸与消息兜底对非消息 update 一律原样放行，且直接返回
-    // next 的 Promise。
-    for (let index: number = 5; index < 10; index++) {
+    // 发言限流、三条 ingress、「/」外闸与消息兜底对非消息 update 一律原样放行，
+    // 且直接返回 next 的 Promise。
+    for (const index of [1, 6, 7, 8, 9, 10]) {
       const nextResult: Promise<void> = Promise.resolve();
       let nextCalls: number = 0;
       const result: unknown = middleware[index]!(nonMessageContext(), (): Promise<void> => {
@@ -158,7 +158,7 @@ describe("application handler registration", () => {
     // 普通消息回执检查必须直接返回 next 的 Promise，不能重新包一层微任务。
     let receiptNextCalled: boolean = false;
     const receiptNextResult: Promise<void> = Promise.resolve();
-    const receiptMiddlewareResult: unknown = middleware[1]!({
+    const receiptMiddlewareResult: unknown = middleware[2]!({
       update: { update_id: 11 },
     } as Context, (): Promise<void> => {
       receiptNextCalled = true;
@@ -166,6 +166,23 @@ describe("application handler registration", () => {
     });
     expect(receiptNextCalled).toBeTrue();
     expect(receiptMiddlewareResult).toBe(receiptNextResult);
+
+    // 第二道 middleware 必须在回执和业务分发之前截断超额 bot 消息。
+    const botMessage: Context = {
+      me: { id: 999 }, message: { from: { id: 42, is_bot: true } },
+    } as Context;
+    let passedBotMessages: number = 0;
+    for (let index: number = 0; index <= BOT_MESSAGE_ACTIVITY_LIMIT; index += 1) {
+      middleware[1]!(botMessage, (): Promise<void> => {
+        passedBotMessages += 1;
+        return Promise.resolve();
+      });
+    }
+    expect(passedBotMessages).toBe(BOT_MESSAGE_ACTIVITY_LIMIT);
+    for (const activity of botMessageActivity.values()) {
+      if (activity.timer !== null) clearTimeout(activity.timer);
+    }
+    botMessageActivity.clear();
 
     const durabilityError = new Error("durability barrier failed");
     expect(() => caughtHandler!({

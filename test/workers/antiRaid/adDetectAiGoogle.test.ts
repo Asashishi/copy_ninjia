@@ -20,7 +20,7 @@ interface FakeCache {
 let createdCount: number = 0;
 /** caches.create 的入参里本测试关心的字段。 */
 interface FakeCreateParams {
-  readonly config: { readonly displayName: string; readonly abortSignal?: AbortSignal };
+  readonly config: { readonly displayName: string; readonly ttl: string; readonly abortSignal?: AbortSignal };
 }
 
 const cacheCreate = mock(async (params: FakeCreateParams): Promise<FakeCache> => {
@@ -28,7 +28,7 @@ const cacheCreate = mock(async (params: FakeCreateParams): Promise<FakeCache> =>
   return {
     name: `cachedContents/ad-${createdCount}`,
     displayName: params.config.displayName,
-    expireTime: new Date(Date.now() + 3_600_000).toISOString(),
+    expireTime: new Date(Date.now() + Number.parseInt(params.config.ttl, 10) * 1_000).toISOString(),
   };
 });
 const cacheDelete = mock(async (..._args: unknown[]): Promise<object> => ({}));
@@ -75,6 +75,7 @@ const {
 const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
 const { quiesceAntiRaidDispatch } = await import("../../../packages/workers/antiRaid/taskTracker");
 const { antiRaidDispatchAbort } = await import("../../../packages/cache/workers/antiRaid/tasks");
+const { GEMINI_CONTEXT_CACHE_TTL_SECONDS } = await import("../../../packages/consts/geminiContextCache");
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
 const {
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
@@ -220,6 +221,7 @@ describe("ad_detect 显式缓存", () => {
     const created = cacheCreate.mock.calls[0]![0] as unknown as { model: string; config: Record<string, unknown> };
     expect(created.model).toBe(params.model);
     expect(created.config.systemInstruction).toBe(params.instructions);
+    expect(created.config.ttl).toBe(`${GEMINI_CONTEXT_CACHE_TTL_SECONDS}s`);
     expect(created.config.tools).toBeUndefined();
     expect(created.config.toolConfig).toBeUndefined();
     expect(String(created.config.displayName).startsWith(AD_DETECT_GEMINI_CACHE_DISPLAY_NAME_PREFIX)).toBe(true);

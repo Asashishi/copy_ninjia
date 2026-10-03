@@ -1,3 +1,4 @@
+import { getTimeZone } from "../../../packages/config/time";
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
@@ -50,7 +51,7 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/config/bot", () => ({
   BOT_ATMOSPHERE: "teasing",
   SUPER_ADMIN_USER_ID: 1,
-  getBotConfig: (): BotConfig => ({ atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 }),
+  getBotConfig: (): BotConfig => ({ timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 }),
 }));
 // 1 是超级管理员：SQLite 没有其白名单记录，但由 packages/infra/identityPolicy/whitelist.ts
 // 的读取边界直接算进白名单边界并持有全部权限，这里的 mock 照实模拟那层结论。
@@ -257,10 +258,9 @@ describe("广告检测投递门禁", () => {
   test("受管群上限下连续构建广告候选复用现有状态，不产生群缓存回读或出站", () => {
     const fixtures: { message: Message; state: ChatState }[] = [];
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index++) {
-      const plain: boolean = index % 2 === 0;
       fixtures.push({
         message: message({ chat: { id: -1001 - index, type: "supergroup", title: "群" }, from: { id: 7, is_bot: false, first_name: "" } }),
-        state: chatStateOf({ isAdDetectEnabled: true, aiPersona: plain ? "自定义" : undefined }),
+        state: chatStateOf({ isAdDetectEnabled: true }),
       });
     }
     let matched: number = 0;

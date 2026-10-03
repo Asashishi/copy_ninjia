@@ -13,7 +13,7 @@ export interface DownloadTelegramVisionImageParams {
 }
 
 /**
- * 通过 Telegram file_id 现取一张图片并规范成两家视觉接口都能接收的 jpeg/png。
+ * 通过 Telegram file_id 现取一张图片并规范成各家视觉接口都能接收的 jpeg/png。
  * getFile 与下载均由主线程能力边界完成，Worker 只收到受上限约束的字节；
  * 下载与转码后的体积由 MEDIA_MAX_DOWNLOAD_BYTES 统一约束。
  */
