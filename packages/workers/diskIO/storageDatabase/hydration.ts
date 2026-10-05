@@ -1,5 +1,4 @@
 import {
-  removalSnapshot,
   removalSnapshotData,
   resetStorageDatabaseCache,
   storageDatabaseHandle,
@@ -34,15 +33,8 @@ export function adoptStorageDatabase(
     requireWritableAccess: true,
   });
   storageDatabaseHandle.current = database;
-  for (const [removalId, pending] of inspection.hydration.pendingBlockedRemovals) {
-    removalSnapshot.set(removalId, pending);
-  }
   for (const [removalId, data] of inspection.pendingRemovalData) {
     removalSnapshotData.set(removalId, data);
   }
-  return {
-    ...inspection.hydration,
-    // LoadedReply 直接交出 owner 快照；同一 Worker 消息轮内不会并发修改。
-    pendingBlockedRemovals: removalSnapshot,
-  };
+  return inspection.hydration;
 }

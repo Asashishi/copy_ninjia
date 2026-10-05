@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
-import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../../packages/consts/telegram";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../packages/consts/storage";
 import { chatStateOf } from "../helpers/chatState";
 import type { ChatState } from "../../packages/types/chatState";
@@ -68,8 +67,10 @@ describe("chat title maintenance", () => {
     expect(saveStateInBackground).toHaveBeenCalledTimes(1);
   });
 
-  test("25 个受管 chat 使用固定小并发池并全部独立结算", async () => {
-    for (let chatId: number = 1; chatId <= STATE_MANAGED_CHAT_LIMIT; chatId++) {
+  test("每群各查一次、并发不超过受管群上限，全部独立结算", async () => {
+    // 群数取上限的两倍，并发上限才真正起作用。
+    const total: number = STATE_MANAGED_CHAT_LIMIT * 2;
+    for (let chatId: number = 1; chatId <= total; chatId++) {
       states.set(chatId, chatStateOf({ isInitEnabled: true }));
     }
     let active: number = 0;
@@ -84,11 +85,11 @@ describe("chat title maintenance", () => {
 
     await refreshAllChatTitles();
 
-    expect(getChat).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT);
-    expect(maxActive).toBeLessThanOrEqual(CHAT_TITLE_REFRESH_CONCURRENCY);
+    expect(getChat).toHaveBeenCalledTimes(total);
+    expect(maxActive).toBe(STATE_MANAGED_CHAT_LIMIT);
     // 每条标题只编码本群并入 Worker 事务缓冲，不再重复序列化全量群快照。
-    expect(saveStateInBackground).toHaveBeenCalledTimes(STATE_MANAGED_CHAT_LIMIT);
-    expect(loggerInfo).toHaveBeenCalledWith(expect.stringContaining(`${STATE_MANAGED_CHAT_LIMIT}/${STATE_MANAGED_CHAT_LIMIT}`));
+    expect(saveStateInBackground).toHaveBeenCalledTimes(total);
+    expect(loggerInfo).toHaveBeenCalledWith(expect.stringContaining(`${total}/${total}`));
   });
 
   test("标题没变化的群不触发落盘", async () => {

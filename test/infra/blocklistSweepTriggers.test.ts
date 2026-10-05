@@ -1,6 +1,6 @@
 /** 「是管理员 && 已初始化」成立那一刻的补扫触发边界。 */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { botPermissions } from "../helpers/botPermissions";
 import { settleBackgroundWork } from "../helpers/common";
 const {
@@ -36,6 +36,8 @@ const {
 const {
   WorkerUndeliveredError,
 } = await import("../../packages/libs/workerDelivery");
+
+const { logger } = await import("../../packages/infra/logger");
 
 const {
   BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS,
@@ -261,28 +263,50 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
     // 补建的是最小记录：这个群从来没被完整扫过，那一次照旧欠着。
     expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
+    // 缺权限的指名批次直接销账，不在 outbox 里等权限。
+    expect(pendingBlockedRemovals.has(params.removalId)).toBeFalse();
     replayPendingBlockedRemovals();
     await Bun.sleep(0);
     expect(remover).not.toHaveBeenCalled();
 
-    // 解锁边沿照常能打开它。
+    // 解锁边沿照常能打开它，并由一轮当前全名单补扫清出仍在群里的黑名单成员。
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     await handleMyChatMemberUpdate(promotion("administrator", "administrator", true));
     expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeFalse();
-    // 先重放原 frozen 批次，再补一轮当前全名单；两者各自按 removalId 回执。
-    expect(remover).toHaveBeenCalledTimes(2);
+    expect(remover).toHaveBeenCalledTimes(1);
     expect(remover.mock.calls[0]?.[0]).toEqual([
-      expect.objectContaining({
-        removalId: params.removalId,
-        probeMembership: false,
-      }),
-    ]);
-    expect(remover.mock.calls[1]?.[0]).toEqual([
       expect.objectContaining({ probeMembership: true }),
     ]);
   });
 
-  test("权限恢复重放同群 frozen 批次，各批只按自己的 complete 回执销账", async () => {
+  test("缺封禁权限的群里反复入群或广告处置不在 outbox 累积，错误日志只在闩锁边沿记一次", () => {
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions({ canRestrictMembers: false }) });
+    const errors = spyOn(logger, "error").mockImplementation((): void => undefined);
+    try {
+      for (let index: number = 0; index < 50; index++) {
+        const userId: number = 1_000 + index;
+        blockedUserIds.set(userId, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+        const params = trackBlockedRemoval({ chatId: -1001, userIds: [userId], probeMembership: false });
+        settleBlockedRemoval({
+          type: "blockedMembersRemoved",
+          participantInvalidUserIds: [],
+          settledUserIds: [],
+          chatId: -1001,
+          removalId: params.removalId,
+          complete: false,
+          permissionDenied: true,
+        });
+      }
+      expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+      expect(pendingBlockedRemovals.size).toBe(0);
+      expect(errors.mock.calls.filter((call: unknown[]): boolean =>
+        String(call[0]).includes("missing ban rights"))).toHaveLength(1);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("权限恢复时重放同群仍在途的指名批次；缺权限的那批已销账，各批只按自己的 complete 回执销账", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/07/26 00:00:01" });
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
@@ -311,8 +335,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
       promotion("administrator", "administrator", true)
     );
 
+    expect(pendingBlockedRemovals.has(first.removalId)).toBeFalse();
     expect(remover.mock.calls[0]?.[0]).toEqual([
-      expect.objectContaining({ removalId: first.removalId }),
       expect.objectContaining({ removalId: second.removalId }),
     ]);
     const sweepRemovalId: number =
@@ -325,20 +349,16 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
       removalId: sweepRemovalId,
       complete: false,
     });
-    expect(pendingBlockedRemovals.has(first.removalId)).toBeTrue();
     expect(pendingBlockedRemovals.has(second.removalId)).toBeTrue();
 
-    for (const removalId of [first.removalId, second.removalId]) {
-      settleBlockedRemoval({
-        type: "blockedMembersRemoved",
-        participantInvalidUserIds: [],
-        settledUserIds: [],
-        chatId: -1001,
-        removalId,
-        complete: true,
-      });
-    }
-    expect(pendingBlockedRemovals.has(first.removalId)).toBeFalse();
+    settleBlockedRemoval({
+      type: "blockedMembersRemoved",
+      participantInvalidUserIds: [],
+      settledUserIds: [],
+      chatId: -1001,
+      removalId: second.removalId,
+      complete: true,
+    });
     expect(pendingBlockedRemovals.has(second.removalId)).toBeFalse();
     expect(pendingBlockedRemovals.has(sweepRemovalId)).toBeTrue();
   });
@@ -505,6 +525,26 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     await markBotAdminObserved(-1001);
     await settleBackgroundWork();
     expect(remover).not.toHaveBeenCalled();
+  });
+
+  test("chat_member 复用缓存快照时不解开缺封禁权限的闩锁，也不重放批次", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    // 快照仍写着能封，Worker 的实际回执却是缺封禁权限。
+    states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions({ canRestrictMembers: true }) });
+    await sweepBlockedMembers(-1001, 1_000);
+    settleLastAsForbidden();
+    expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+    remover.mockClear();
+    const logs = spyOn(logger, "log");
+    try {
+      await markBotAdminObserved(-1001);
+      await settleBackgroundWork();
+      expect(blocklistSweepState.get(-1001)?.permissionBlocked).toBeTrue();
+      expect(remover).not.toHaveBeenCalled();
+      expect(logs.mock.calls.some((call: unknown[]): boolean => String(call[0]).includes("Ban rights restored"))).toBeFalse();
+    } finally {
+      logs.mockRestore();
+    }
   });
 
   test("被撤管理员时不清扫：合取由成立变为不成立", async () => {

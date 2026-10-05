@@ -15,8 +15,9 @@
 import type { StickerPackCandidate } from "../../../../types/stickers/tools";
 
 /**
- * 菜单输入的版本号：贴纸集合缓存新增条目、目录条目增删、整包简介写入时各 +1
- * （经 invalidateStickerMenu）。
+ * 菜单输入的版本号（经 invalidateStickerMenu 递增）：贴纸集合缓存写入、目录 hydrate、
+ * 目录条目剪枝或整包移除、配置重载时当场 +1；一次包对账新写入的描述与整包简介在该包
+ * 结算时合计 +1。
  */
 export const stickerMenuRevision: { current: number } = { current: 0 };
 

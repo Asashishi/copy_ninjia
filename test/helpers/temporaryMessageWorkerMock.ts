@@ -14,7 +14,7 @@ export function installTemporaryMessageWorkerMock(): void {
         replyToMessageId: params.replyToMessageId,
       });
       if (messageId === undefined) return undefined;
-      telegram.deleteMessageAfter?.({ chatId: params.chatId, messageId, delayMs: params.deleteAfterMs, api: telegram.telegramApi, batchOnFlush: true });
+      telegram.deleteMessageAfter?.({ chatId: params.chatId, messageId, delayMs: params.deleteAfterMs, api: telegram.telegramApi });
       return { messageId, sentAt: Date.now() };
     },
   }));

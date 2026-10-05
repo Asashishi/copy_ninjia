@@ -5,8 +5,9 @@ import {
   isDiskBusinessMessage,
 } from "../../packages/libs/diskIOMessageCost";
 import { DISK_BUSINESS_MESSAGE_BASE_BYTES } from "../../packages/consts/diskIO/business";
+import { BLOCKLIST_REMOVAL_FAILURE_TYPES } from "../../packages/consts/antiRaid/blocklist";
 import type { DiskIOOperationMessage } from "../../packages/types/diskIO/messages";
-import type { VerificationSnapshot } from "../../packages/types/antiRaid/verification";
+import type { VerificationSnapshot, VerificationSnapshotBase } from "../../packages/types/antiRaid/verification";
 import type { PendingBlockedRemoval } from "../../packages/types/blocklist";
 
 /**
@@ -21,6 +22,8 @@ interface MessageCase {
   readonly payloadBytes: number;
   /** 期望的 isDiskBusinessMessage 分类。 */
   readonly business: boolean;
+  /** true 表示按结构上界计价：payloadBytes 是实际 JSON 字节，计价只须不低于它。 */
+  readonly upperBound?: true;
 }
 
 /** 与生产实现同口径的 JSON 字节数；不引 Buffer，测试侧用 TextEncoder 等价计算。 */
@@ -65,7 +68,7 @@ const VERIFICATION_UPSERT: DiskIOOperationMessage = {
 const DIAGNOSTIC_BATCH: DiskIOOperationMessage = {
   type: "diagnosticBatch",
   batchId: 4,
-  messages: [{ type: "log", timestamp: 1_700_000_000_000, level: "error", args: ["boom"] }],
+  messages: [{ type: "log", id: "log-1", timestamp: 1_700_000_000_000, level: "error", args: ["boom"] }],
 };
 
 const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
@@ -137,11 +140,13 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     message: BLOCKLIST_REMOVALS,
     payloadBytes: serializedBytes(BLOCKLIST_REMOVALS) * 2,
     business: true,
+    upperBound: true,
   },
   verificationUpsert: {
     message: VERIFICATION_UPSERT,
     payloadBytes: serializedBytes(VERIFICATION_UPSERT) * 2,
     business: true,
+    upperBound: true,
   },
   diagnosticBatch: {
     message: DIAGNOSTIC_BATCH,
@@ -238,10 +243,106 @@ describe("Disk I/O 消息计价", () => {
   test("每个变体的计价口径与分类逐条固定", () => {
     for (const [type, expectation] of Object.entries(CASES)) {
       expect(expectation.message.type).toBe(type as DiskIOOperationMessage["type"]);
-      expect(diskIOMessageCost(expectation.message)).toBe(
-        DISK_BUSINESS_MESSAGE_BASE_BYTES + expectation.payloadBytes
-      );
+      if (expectation.upperBound === true) {
+        expect(diskIOMessageCost(expectation.message)).toBeGreaterThanOrEqual(
+          DISK_BUSINESS_MESSAGE_BASE_BYTES + expectation.payloadBytes
+        );
+      } else {
+        expect(diskIOMessageCost(expectation.message)).toBe(
+          DISK_BUSINESS_MESSAGE_BASE_BYTES + expectation.payloadBytes
+        );
+      }
       expect(isDiskBusinessMessage(expectation.message)).toBe(expectation.business);
+    }
+  });
+
+  test("outbox 快照的结构上界覆盖最长整数、全部可选字段与每种失败分类，典型行不超过实际 1.5 倍", () => {
+    const removals: [number, PendingBlockedRemoval][] = [];
+    for (const lastFailure of [null, ...BLOCKLIST_REMOVAL_FAILURE_TYPES]) {
+      const removalId: number = Number.MIN_SAFE_INTEGER + removals.length;
+      removals.push([removalId, {
+        params: {
+          chatId: Number.MIN_SAFE_INTEGER,
+          probeMembership: false,
+          userIds: [Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
+          removalId,
+          joinedAt: Number.MIN_SAFE_INTEGER,
+          announcementMessageId: Number.MIN_SAFE_INTEGER,
+        },
+        createdAt: Number.MIN_SAFE_INTEGER,
+        attempts: Number.MIN_SAFE_INTEGER,
+        lastFailure,
+      }]);
+      removals.push([removalId - 1, {
+        params: { chatId: Number.MIN_SAFE_INTEGER, probeMembership: true, removalId: removalId - 1 },
+        createdAt: Number.MIN_SAFE_INTEGER,
+        attempts: Number.MIN_SAFE_INTEGER,
+        lastFailure,
+      }]);
+    }
+    const worst: DiskIOOperationMessage = { type: "blocklistRemovals", removals, revision: Number.MIN_SAFE_INTEGER };
+    expect(diskIOMessageCost(worst)).toBeGreaterThanOrEqual(DISK_BUSINESS_MESSAGE_BASE_BYTES + serializedBytes(worst) * 2);
+
+    const typicalRows: [number, PendingBlockedRemoval][] = [];
+    for (let index: number = 1; index <= 64; index++) {
+      typicalRows.push([index, {
+        params: {
+          chatId: -1_001_234_567_890 - index,
+          probeMembership: false,
+          userIds: [7_000_000_000 + index],
+          removalId: index,
+          joinedAt: 1_790_000_000_000 + index,
+          announcementMessageId: 50_000 + index,
+        },
+        createdAt: 1_790_000_000_000 + index,
+        attempts: index % 3,
+        lastFailure: null,
+      }]);
+    }
+    const typical: DiskIOOperationMessage = { type: "blocklistRemovals", removals: typicalRows, revision: 64 };
+    const typicalJson: number = serializedBytes(typical) * 2;
+    const typicalPayload: number = diskIOMessageCost(typical) - DISK_BUSINESS_MESSAGE_BASE_BYTES;
+    expect(typicalPayload).toBeGreaterThanOrEqual(typicalJson);
+    expect(typicalPayload).toBeLessThanOrEqual(typicalJson * 1.5);
+  });
+
+  test("验证快照的结构上界覆盖每个 phase 的全部可选字段、需转义的 label 与消息时间戳", () => {
+    const label: string = "\u0001\"\\测试😀\ud800";
+    const base: VerificationSnapshotBase = {
+      chatId: Number.MIN_SAFE_INTEGER,
+      userId: Number.MIN_SAFE_INTEGER,
+      generation: Number.MIN_SAFE_INTEGER,
+      revision: Number.MIN_SAFE_INTEGER,
+      label,
+      isBot: false,
+      announcementMessageId: Number.MIN_SAFE_INTEGER,
+      trackedMessageTimes: [Number.MIN_SAFE_INTEGER, Number.MIN_SAFE_INTEGER],
+      invitedBy: Number.MIN_SAFE_INTEGER,
+      reminderMessageId: Number.MIN_SAFE_INTEGER,
+      replyReminderMessageId: Number.MIN_SAFE_INTEGER,
+      replyReminderRequested: false,
+      welcomeAnchorMessageId: Number.MIN_SAFE_INTEGER,
+      reminderSuperseded: false,
+      joinedAt: Number.MIN_SAFE_INTEGER,
+      expiresAt: Number.MIN_SAFE_INTEGER,
+    };
+    const records: readonly VerificationSnapshot[] = [
+      { ...base, phase: "pending" },
+      { ...base, phase: "kickPending", requestedAt: Number.MIN_SAFE_INTEGER, countedJoinAt: Number.MIN_SAFE_INTEGER },
+      { ...base, phase: "checkingInviter", terminalInviterId: Number.MIN_SAFE_INTEGER },
+      {
+        ...base,
+        phase: "expelling",
+        expelReason: "timeout",
+        successNoticeSent: false,
+        failureNoticeSent: false,
+        unconfirmedNoticeSent: false,
+        removalConfirmed: false,
+      },
+    ];
+    for (const record of records) {
+      const message: DiskIOOperationMessage = { type: "verificationUpsert", record, critical: false };
+      expect(diskIOMessageCost(message)).toBeGreaterThanOrEqual(DISK_BUSINESS_MESSAGE_BASE_BYTES + serializedBytes(message) * 2);
     }
   });
 

@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { waitUntil } from "../helpers/waitUntil";
 import type { ChatState, LockdownRecord } from "../../packages/types/chatState";
+import type { EmergencyLockdownRecovery } from "../../packages/types/antiRaid/internal";
 
 /**
  * 主线程紧急恢复遍历群状态热读副本的契约。
@@ -44,6 +45,7 @@ const {
   recoverAbandonedLockdowns,
   stopEmergencyLockdownRecoveries,
 } = await import("../../packages/antiRaid/lockdownMirror");
+const { RESTORE_RETRY_MS } = await import("../../packages/consts/antiRaid/lockdown");
 const {
   emergencyLockdownRecoveries,
   emergencyLockdownRecoveryRuntime,
@@ -128,6 +130,34 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
       loggerError.mockImplementation((): void => {});
+    }
+  });
+
+  test("重试到点时意图已换代：不再还原权限，直接收尾并保留新一轮记录", async () => {
+    jest.useFakeTimers();
+    try {
+      restoreLockdownInvitePermission.mockImplementation(async (): Promise<void> => {
+        throw new Error("restore failed");
+      });
+      const chatId: number = chatIds[0]!;
+      for (const otherChatId of chatIds.slice(1)) chatStates.delete(otherChatId);
+
+      recoverAbandonedLockdowns();
+      const recovery: EmergencyLockdownRecovery = emergencyLockdownRecoveries.get(chatId)!;
+      await recovery.inFlight;
+      expect(recovery.retryTimer).not.toBeNull();
+
+      const newer: LockdownRecord = lockdown(999);
+      chatStates.get(chatId)!.lockdown = newer;
+      jest.advanceTimersByTime(RESTORE_RETRY_MS);
+
+      expect(emergencyLockdownRecoveries.has(chatId)).toBeFalse();
+      expect(recovery.retryTimer).toBeNull();
+      expect(restoreLockdownInvitePermission).toHaveBeenCalledTimes(1);
+      expect(chatStates.get(chatId)?.lockdown).toBe(newer);
+      expect(saveChatStateInBackground).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
     }
   });
 

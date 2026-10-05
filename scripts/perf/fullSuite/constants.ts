@@ -155,10 +155,6 @@ export const AI_REPLY_SETTLE_ATTEMPTS: number = 500;
 /** 单条广告命令等待处置排空的预算；超时按失败处理，不接受半截链路。 */
 export const AD_DETECT_DRAIN_BUDGET_MS: number = 30_000;
 
-/** 等待机器人权限快照落位的轮询步长与次数上限（计时窗口之外）。 */
-export const BOT_PERMISSION_WAIT_STEP_MS: number = 10;
-export const BOT_PERMISSION_WAIT_ATTEMPTS: number = 200;
-
 /** 各链路正式计时前的预热次数，让 Worker 侧文件句柄与 JIT 进入稳态。 */
 export const CHAIN_WARMUP_OPERATIONS: number = 64;
 

@@ -1,5 +1,5 @@
 import {
-  storagePendingBudget,
+  storagePendingBudgets,
   pendingChatStateWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
@@ -91,7 +91,7 @@ export function handleChatStateWrite(
       }
     }
   }
-  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) - (current === undefined ? 0 : storageWriteCost(current.data)));
+  storagePendingBudgets.chatState.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) - (current === undefined ? 0 : storageWriteCost(current.data)));
   pendingChatStateWrites.set(message.chatId, {
     data: message.data,
     revision: message.revision,

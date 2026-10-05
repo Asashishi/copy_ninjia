@@ -1,10 +1,15 @@
 import type { Message } from "grammy/types";
 import { translateConfigReadiness } from "../config/readiness";
 import { TELEGRAM_MESSAGE_MAX_CHARS } from "../consts/telegram";
+import { TRANSLATE_CHAT_BACKLOG_MAX } from "../consts/translate";
 import { getChatState } from "../infra/storage/stateStore";
 import { sendMessage } from "../infra/telegram";
+import { translateMessageBacklogs, translateMessageRunner, translateRuntime } from "../cache/main/translate";
+import { logger } from "../infra/logger";
+import { isAbortError } from "../libs/abortSignal";
+import { trackInflight } from "../libs/inflight";
 import { containsRenderableCommand } from "../libs/renderableCommand";
-import type { TranslateState } from "../types/translate";
+import type { TranslateMessageBacklog, TranslateState } from "../types/translate";
 import { translateText } from "./client";
 import { needsNoTranslation } from "./language";
 import { getTranslateState } from "./state";
@@ -50,4 +55,43 @@ export async function translateMessage(params: TranslateMessageParams): Promise<
   if (translated === null || translated === source || translated.length > TELEGRAM_MESSAGE_MAX_CHARS) return;
   if (containsRenderableCommand(translated)) return;
   await sendMessage({ chatId, text: translated, messageThreadId, linkPreviewOptions: message.link_preview_options });
+}
+
+/**
+ * 把一条翻译目标的消息交给按群串行的后台链后立即返回：串行的 update 循环不等 Google RPC 与
+ * 译文发送，同群译文仍按收到顺序发出。本群积压（含正在执行的那条）已达
+ * TRANSLATE_CHAT_BACKLOG_MAX 时本条不翻译，同一段积压只记一次日志。任务登记在
+ * translateRuntime.tasks，由停机 drainTranslate 等待；失败只记日志，update 取消导致的中止不记。
+ */
+export function queueTranslateMessage(params: TranslateMessageParams): void {
+  const chatId: number = params.chatId;
+  let backlog: TranslateMessageBacklog | undefined = translateMessageBacklogs.get(chatId);
+  if (backlog === undefined) {
+    backlog = { count: 0, overflowLogged: false };
+    translateMessageBacklogs.set(chatId, backlog);
+  } else if (backlog.count >= TRANSLATE_CHAT_BACKLOG_MAX) {
+    if (!backlog.overflowLogged) {
+      backlog.overflowLogged = true;
+      logger.error(
+        `Translation backlog in chat ${chatId} reached ${TRANSLATE_CHAT_BACKLOG_MAX} messages; ` +
+        "new messages are not translated while it stays full."
+      );
+    }
+    return;
+  }
+  backlog.count++;
+  const entry: TranslateMessageBacklog = backlog;
+  void trackInflight(
+    translateRuntime.tasks,
+    translateMessageRunner.run(chatId, async (): Promise<void> => {
+      try {
+        await translateMessage(params);
+      } catch (error: unknown) {
+        if (!isAbortError(error)) logger.error(`Failed to translate a message in chat ${chatId}:`, error);
+      } finally {
+        entry.count--;
+        if (entry.count === 0 && translateMessageBacklogs.get(chatId) === entry) translateMessageBacklogs.delete(chatId);
+      }
+    })
+  );
 }

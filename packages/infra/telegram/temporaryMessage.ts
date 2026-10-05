@@ -39,7 +39,6 @@ export async function sendTemporaryMessageOnMain({
         chatId,
         messageId: sentMessageId,
         delayMs: deleteAfterMs,
-        batchOnFlush: true,
       });
       result = { messageId: sentMessageId, sentAt };
     },

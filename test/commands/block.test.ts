@@ -1,6 +1,7 @@
 import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { waitUntil } from "../helpers/waitUntil";
 import { loggerStub } from "../helpers/loggerMock";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { BotChatPermissions } from "../../packages/types/telegram";
@@ -329,13 +330,7 @@ describe("/block 跨群封禁与黑名单", () => {
     });
 
     const command: Promise<void> = handleBlockCommand(context());
-    for (
-      let step: number = 0;
-      step < 10 && banChatMember.mock.calls.length < MANAGED_CHAT_BATCH_CONCURRENCY;
-      step++
-    ) {
-      await Promise.resolve();
-    }
+    await waitUntil((): boolean => banChatMember.mock.calls.length >= MANAGED_CHAT_BATCH_CONCURRENCY);
     expect(banChatMember).toHaveBeenCalledTimes(MANAGED_CHAT_BATCH_CONCURRENCY);
     expect(peak).toBe(MANAGED_CHAT_BATCH_CONCURRENCY);
 
@@ -343,6 +338,33 @@ describe("/block 跨群封禁与黑名单", () => {
     await command;
     expect(banChatMember).toHaveBeenCalledTimes(MANAGED_CHAT_BATCH_CONCURRENCY + 4);
     expect(peak).toBe(MANAGED_CHAT_BATCH_CONCURRENCY);
+  });
+
+  test("跨群封禁与战报交给延迟命令执行器后台档：update 不等封禁，战报内容不变", async () => {
+    const { drainDeferredCommandRuntime, initDeferredCommandRuntime } = await import("../../packages/commands/deferredCommands");
+    initDeferredCommandRuntime();
+    try {
+      chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
+      const banGate: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
+      banChatMember.mockImplementationOnce(async (): Promise<boolean> => banGate.promise);
+
+      await handleBlockCommand(context());
+
+      // handler 已返回：名单已写入，封禁仍在后台等待，战报还没发。
+      expect(blockedUserIds.has(7)).toBeTrue();
+      await waitUntil((): boolean => banChatMember.mock.calls.length > 0);
+      expect(banChatMember).toHaveBeenCalledTimes(1);
+      expect(sendMessage).not.toHaveBeenCalled();
+      banGate.resolve(true);
+      expect(await drainDeferredCommandRuntime(1_000)).toBe("flushed");
+      expect(sendMessage).toHaveBeenLastCalledWith({
+        chatId: -1001,
+        text: expect.stringContaining(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.blockConfirmedBanned(1)),
+        replyToMessageId: 10,
+      });
+    } finally {
+      await drainDeferredCommandRuntime(0);
+    }
   });
 
   test("重复 /block 仍实时查询成员并重新封禁", async () => {
@@ -374,7 +396,7 @@ describe("/block 跨群封禁与黑名单", () => {
 
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringMatching(/在 1 个群确认封禁/),
+      text: expect.stringContaining(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.blockConfirmedBanned(1)),
       replyToMessageId: 10,
     });
     expect((sendMessage.mock.calls.at(-1)?.[0] as { text: string }).text)

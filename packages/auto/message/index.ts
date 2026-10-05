@@ -15,7 +15,7 @@ import type { AiBotInfo } from "../../types/aiChat/protocol";
 import type { AiTriggerPayload, MessageTriggerContext } from "../../types/auto";
 import type { ChatState } from "../../types/chatState";
 import type { TranslateState } from "../../types/translate";
-import { activeTranslateStateIn, translateMessage } from "../../translate/message";
+import { activeTranslateStateIn, queueTranslateMessage } from "../../translate/message";
 import { cacheSender } from "../../users/senderIdentity";
 import { handleAnimationMessage } from "./animation";
 import { observeGroupMessageForAiReply } from "./aiReplyActivity";
@@ -91,14 +91,16 @@ function handleAcceptedIncomingMessage(
   const copyTargetId: number | undefined = activeCopyTargetIdIn(chatId);
   const translation: TranslateState | undefined = senderId === undefined ? undefined : activeTranslateStateIn(chatId, senderId);
   // 生效的翻译目标只走翻译：同时是 copy 目标也不复读、不复制媒体；翻译整条不发送时
-  // （同语种、没有文字等）这条消息同样不再往下处理。
+  // （同语种、没有文字等）这条消息同样不再往下处理。译文在按群串行的后台链里生成并发出，
+  // 本条 update 不等它。
   if (translation !== undefined) {
-    return translateMessage({
+    queueTranslateMessage({
       chatId,
       message,
       state: translation,
       messageThreadId: forumTopicThreadId(message),
     });
+    return undefined;
   }
   if (copyTargetId !== undefined && senderId === copyTargetId) {
     return echoMessage({

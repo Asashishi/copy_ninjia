@@ -36,9 +36,9 @@ describe("延迟命令执行器", () => {
       for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
         const blocker = gate();
         blockers.push(blocker);
-        submitDeferredCommand("interactive", (): Promise<void> => blocker.promise, "test:");
+        submitDeferredCommand({ priority: "interactive", task: (): Promise<void> => blocker.promise, errorLabel: "test:" });
       }
-      submitDeferredCommand("interactive", async (): Promise<void> => { topics.push(currentUpdateTopic()); }, "test:");
+      submitDeferredCommand({ priority: "interactive", task: async (): Promise<void> => { topics.push(currentUpdateTopic()); }, errorLabel: "test:" });
     }, { chatId: -1001, threadId: 42 });
     expect(topics).toEqual([]);
     for (const blocker of blockers) blocker.open();
@@ -51,13 +51,13 @@ describe("延迟命令执行器", () => {
     expect(DEFERRED_COMMAND_MAX_BACKGROUND_PENDING).toBeLessThan(DEFERRED_COMMAND_MAX_PENDING);
     const blocker = gate();
     for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
-      expect(submitDeferredCommand("interactive", (): Promise<void> => blocker.promise, "test:")).toBe(true);
+      expect(submitDeferredCommand({ priority: "interactive", task: (): Promise<void> => blocker.promise, errorLabel: "test:" })).toBe(true);
     }
     for (let index: number = 0; index < DEFERRED_COMMAND_MAX_BACKGROUND_PENDING; index++) {
-      expect(submitDeferredCommand("background", async (): Promise<void> => {}, "test:")).toBe(true);
+      expect(submitDeferredCommand({ priority: "background", task: async (): Promise<void> => {}, errorLabel: "test:" })).toBe(true);
     }
-    expect(submitDeferredCommand("background", async (): Promise<void> => {}, "test:")).toBe(false);
-    expect(submitDeferredCommand("interactive", async (): Promise<void> => {}, "test:")).toBe(true);
+    expect(submitDeferredCommand({ priority: "background", task: async (): Promise<void> => {}, errorLabel: "test:" })).toBe(false);
+    expect(submitDeferredCommand({ priority: "interactive", task: async (): Promise<void> => {}, errorLabel: "test:" })).toBe(true);
     blocker.open();
     expect(await drainDeferredCommandRuntime(5_000)).toBe("flushed");
   });
@@ -66,13 +66,44 @@ describe("延迟命令执行器", () => {
     const blocker = gate();
     const started: string[] = [];
     for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
-      submitDeferredCommand("interactive", (): Promise<void> => blocker.promise, "test:");
+      submitDeferredCommand({ priority: "interactive", task: (): Promise<void> => blocker.promise, errorLabel: "test:" });
     }
-    submitDeferredCommand("background", async (): Promise<void> => { started.push("background"); }, "test:");
-    submitDeferredCommand("interactive", async (): Promise<void> => { started.push("interactive"); }, "test:");
+    submitDeferredCommand({ priority: "background", task: async (): Promise<void> => { started.push("background"); }, errorLabel: "test:" });
+    submitDeferredCommand({ priority: "interactive", task: async (): Promise<void> => { started.push("interactive"); }, errorLabel: "test:" });
     blocker.open();
     expect(await drainDeferredCommandRuntime(5_000)).toBe("flushed");
     expect(started).toEqual(["interactive", "background"]);
+  });
+
+  test("onSkipped 只在已接纳的任务没开跑就被撤销时调用，开跑过的任务不调用", async () => {
+    const blocker = gate();
+    const skipped: string[] = [];
+    for (let index: number = 0; index < DEFERRED_COMMAND_MAX_CONCURRENT; index++) {
+      submitDeferredCommand({
+        priority: "interactive",
+        task: (): Promise<void> => blocker.promise,
+        errorLabel: "test:",
+        onSkipped: (): void => { skipped.push("running"); },
+      });
+    }
+    // 执行器在微任务里开跑任务；先让占位任务真正开跑，排空时它们才算在途而不是撤销。
+    await Bun.sleep(0);
+    let queuedRan: boolean = false;
+    expect(submitDeferredCommand({
+      priority: "background",
+      task: async (): Promise<void> => { queuedRan = true; },
+      errorLabel: "test:",
+      onSkipped: (): void => { skipped.push("queued"); },
+    })).toBeTrue();
+
+    expect(await drainDeferredCommandRuntime(0)).toBe("timedOut");
+    await Bun.sleep(0);
+    expect(skipped).toEqual(["queued"]);
+    blocker.open();
+    await Bun.sleep(0);
+    await Bun.sleep(0);
+    expect(queuedRan).toBeFalse();
+    expect(skipped).toEqual(["queued"]);
   });
 
   test("非法停机预算在关闭接纳之前拒绝", async () => {
@@ -86,9 +117,9 @@ describe("延迟命令执行器", () => {
 
   test("未启动或已停止接纳时拒绝", () => {
     deferredCommandRuntime.current = null;
-    expect(submitDeferredCommand("interactive", async (): Promise<void> => {}, "test:")).toBe(false);
+    expect(submitDeferredCommand({ priority: "interactive", task: async (): Promise<void> => {}, errorLabel: "test:" })).toBe(false);
     initDeferredCommandRuntime();
     deferredCommandRuntime.current!.accepting = false;
-    expect(submitDeferredCommand("background", async (): Promise<void> => {}, "test:")).toBe(false);
+    expect(submitDeferredCommand({ priority: "background", task: async (): Promise<void> => {}, errorLabel: "test:" })).toBe(false);
   });
 });

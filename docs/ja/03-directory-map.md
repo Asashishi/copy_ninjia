@@ -25,7 +25,7 @@
 - **`packages/commands/`**
   - **責務**：明示的なコマンドを機能ごとにまとめ、同じ入口のサブコマンドをその領域内で分岐します。トグル系コマンドが
     共有する権限・設定ゲートは別ファイル。
-  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` と `hImage/`（抽選と追加）、`info.ts`、`deferredCommands.ts`（抽選・追加・`/info`・`/batch_kick` が共用する遅延コマンド実行器）、`mute.ts`、`batchKick.ts`、
+  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` と `hImage/`（抽選と追加）、`info.ts`、`deferredCommands.ts`（抽選・追加・`/info`・`/batch_kick`・`/block enable` のチャット横断 BAN が共用する遅延コマンド実行器）、`blocklistFanOut.ts`（`/block enable` のチャット横断 BAN の fan-out）、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`。inline の運勢 domain も同様に
     `luckChallenge/`（`cache.ts`、`draw.ts`、`key.ts`、`rateLimit.ts`、`receipt.ts`、`rendering.ts`、
     `telegramAdapter.ts`。`index.ts` は薄い入口だけ）へ分割します。規模の大きい gag domain は command admission を

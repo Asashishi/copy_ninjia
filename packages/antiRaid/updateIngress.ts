@@ -2,6 +2,7 @@ import { chatAtmosphere } from "../infra/atmosphere";
 import type { Context } from "grammy";
 import type {
   CallbackQuery,
+  Chat,
   ChatMemberUpdated,
   Message,
   User,
@@ -11,7 +12,6 @@ import { recordJoinLog } from "../infra/joinLog";
 import { answerCallbackQuery } from "../infra/telegram/actions";
 import {
   cachedBotAdminStatus,
-  ensureBotChatPermissions,
   resolveBotAdminStatus,
   markBotAdminObserved,
 } from "../infra/botAdmin";
@@ -21,9 +21,11 @@ import { isAdminStatus, isPresentMember } from "../libs/chatMember";
 import { verificationKey } from "../libs/verificationKey";
 import { hasUserMessageContent } from "../users/messageContent";
 import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
+import { adCandidatePostRejected } from "../cache/main/antiRaid/proxy";
 import { getChatState } from "../infra/storage/stateStore";
 import { updateNow } from "../infra/updateContext";
-import { buildAdCandidate } from "./adCandidate";
+import { adDetectionSenderId, buildAdCandidate } from "./adCandidate";
+import { visibleSenderChat } from "../users/visibleSender";
 import { observeChatKind } from "./chatKind";
 import {
   claimBlockedJoiner,
@@ -214,6 +216,26 @@ function isSwallowedJoinAnnouncement(message: Message): boolean {
 }
 
 /**
+ * 广告候选投递结果的边沿日志：Worker 重建或已放弃自愈期间每条开着广告检测的群消息都会
+ * 被拒，只在由收转拒时记一行错误、由拒转收时记一行恢复（见 adCandidatePostRejected）。
+ */
+function noteAdCandidatePost(chatId: number, posted: boolean): void {
+  if (posted) {
+    if (adCandidatePostRejected.current) {
+      adCandidatePostRejected.current = false;
+      logger.log("Anti-Raid Worker accepts ad detection candidates again.");
+    }
+    return;
+  }
+  if (adCandidatePostRejected.current) return;
+  adCandidatePostRejected.current = true;
+  logger.error(
+    `Anti-Raid Worker rejected an ad detection candidate from chat ${chatId}; ` +
+    "further rejections are not logged until a candidate is accepted again."
+  );
+}
+
+/**
  * 已确证机器人是本群管理员之后的那一段。黑名单频道消息在这里就地删除；
  * 常态下它同步返回 false，只有真要删一条消息时才产生 Promise。
  */
@@ -301,26 +323,28 @@ function ingestAdmittedMessage(
   // 临时广告免检累计先于候选构建：本条消息恰好让成员获权时，
   // buildAdCandidate 必须立即读到临时广告绕过权限，不得再把这条送检。
   // 投递仍是尽力而为：Worker 重建时待检队列本来就会随 isolate 清空。
+  // 两者共同的前置判定（开关、配置、自动转发、自发消息与展示身份）只做一次。
   let adCandidate: AdCandidateMessage | undefined;
   if (chatState.isAdDetectEnabled === true) {
-    const adContext: AdDetectionMessageContext = {
-      message,
-      botId,
-      chatState,
-      // 与自动流水线主干共用本条 update 唯一的一次时钟读取；两条 middleware
-      // 判定同一条消息，本来就该落在同一时刻（见 infra/updateContext.ts）。
-      now: updateNow(),
-    };
-    if (hasUserMessageContent(message)) {
-      recordEligibleTemporaryAdBypassActivity(adContext);
+    const senderChat: Chat | undefined = visibleSenderChat(message);
+    const adSenderId: number | undefined = adDetectionSenderId(message, botId, senderChat);
+    if (adSenderId !== undefined) {
+      const adContext: AdDetectionMessageContext = {
+        message,
+        botId,
+        // 与自动流水线主干共用本条 update 唯一的一次时钟读取；两条 middleware
+        // 判定同一条消息，本来就该落在同一时刻（见 infra/updateContext.ts）。
+        now: updateNow(),
+        senderId: adSenderId,
+        senderChat,
+      };
+      if (hasUserMessageContent(message)) {
+        recordEligibleTemporaryAdBypassActivity(adContext);
+      }
+      adCandidate = buildAdCandidate(adContext);
     }
-    adCandidate = buildAdCandidate(adContext);
   }
-  if (adCandidate !== undefined && !postAntiRaid(adCandidate)) {
-    logger.error(
-      `Anti-Raid Worker rejected an ad detection candidate from chat ${message.chat.id}.`
-    );
-  }
+  if (adCandidate !== undefined) noteAdCandidatePost(message.chat.id, postAntiRaid(adCandidate));
 
   // 刷屏计数投递：与广告检测同一形态，主线程只做同步门禁 + 一次尽力而为的
   // post，窗口与禁言都在 Worker 侧（见 workers/antiRaid/floodControl.ts）。排在
@@ -333,9 +357,6 @@ function ingestAdmittedMessage(
       ? buildFloodCandidate({ message, botId, now, chatState })
       : undefined;
   if (floodCandidate !== undefined) {
-    // 顺手把这个群的权限位补齐一次（已知或已在途时是一次 Map 查找）：Worker 侧
-    // 的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程生命周期内到过。
-    ensureBotChatPermissions(floodCandidate.chatId);
     // 投递被拒不记日志，与广告检测那条刻意不同：那一路只在 /ad_detect enable 的
     // 群上跑，而这一路每条群消息都走。post 返回 false 只有「Worker 正在重建」与
     // 「已放弃重建」两种成因，前者是亚秒级的、后者在 supervisor 那里已经带着
@@ -355,37 +376,38 @@ function ingestAdmittedMessage(
   const mayPrecedeJoinInCommentThread: boolean =
     message.reply_to_message?.is_automatic_forward === true ||
     isCommentThreadReply;
+  if (userId === undefined) return false;
+  // 先看表空不空再拼键：待验证镜像绝大多数时候是空的（没人正在验证），
+  // 而 `${chatId}:${userId}` 是每条群消息都要现造的一个短命字符串。
+  // `has()` 在空表上恒为 false，这道前置判断不改变任何结果。
+  const senderPending: boolean =
+    activeVerificationSnapshots.size > 0 &&
+    activeVerificationSnapshots.has(verificationKey(message.chat.id, userId));
   if (
-    userId !== undefined &&
-    (
-      // 先看表空不空再拼键：待验证镜像绝大多数时候是空的（没人正在验证），
-      // 而 `${chatId}:${userId}` 是每条群消息都要现造的一个短命字符串。
-      // `has()` 在空表上恒为 false，这道前置判断不改变任何结果。
-      (
-        activeVerificationSnapshots.size > 0 &&
-        activeVerificationSnapshots.has(
-          verificationKey(message.chat.id, userId)
-        )
-      ) ||
-      mayPrecedeJoinInCommentThread
-    ) &&
+    !(senderPending || mayPrecedeJoinInCommentThread) ||
     // 排在最后：守卫开着的群才需要这条投递，而上面两个判定比一次 Map 取值更
     // 便宜（空表恒 false）。关着的群没有窗口，评论区线索也无处可用。
-    chatState.isAntiRaidEnabled === true
+    chatState.isAntiRaidEnabled !== true
   ) {
-    // 附带频道评论区的识别线索：评论与楼中楼回复都代表 TA 已实际参与讨论，
-    // Worker 据此免除验证且不计入刷群窗口。没有任何评论区消息的普通入群
-    // 照常验证，超时仍会被踢出。
-    return postAntiRaidDurably([{
-      type: "message",
-      chatId: message.chat.id,
-      userId,
-      messageId: message.message_id,
-      repliesToChannelPost:
-        message.reply_to_message?.is_automatic_forward === true,
-      isThreadReply: isCommentThreadReply,
-    }]).then((): boolean => false);
+    return false;
   }
+  // 附带频道评论区的识别线索：评论与楼中楼回复都代表 TA 已实际参与讨论，
+  // Worker 据此免除验证且不计入刷群窗口。没有任何评论区消息的普通入群
+  // 照常验证，超时仍会被踢出。
+  const workerMessage: AntiRaidWorkerMessage = {
+    type: "message",
+    chatId: message.chat.id,
+    userId,
+    messageId: message.message_id,
+    repliesToChannelPost:
+      message.reply_to_message?.is_automatic_forward === true,
+    isThreadReply: isCommentThreadReply,
+  };
+  // 待验证成员的消息会改写验证镜像，必须经 durable 投递落盘后才确认本条 update。
+  if (senderPending) return postAntiRaidDurably([workerMessage]).then((): boolean => false);
+  // 其余只是评论区线索：Worker 只记进内存，barrier 换不来持久性；端口 FIFO 已保证它
+  // 先于之后的入群消息到达。投递被拒不记日志，口径同上面的刷屏计数。
+  postAntiRaid(workerMessage);
   return false;
 }
 

@@ -40,6 +40,11 @@ export interface ForwardedLogBatchAccepted {
 /** 主线程/转发 -> diskIOWorker：落盘一条日志。 */
 export interface LogEnvelope extends LogMessage {
   type: "log";
+  /**
+   * 日文件条目键的唯一后缀，主线程入队时生成。整批重投（跨零点批次第二天写失败等）
+   * 沿用同一后缀，已写入的条目再次追加时键相同，解析时合并为一条。
+   */
+  id: string;
 }
 
 /** 主线程 -> diskIOWorker：覆盖式写入某群的 AI 记忆快照。snapshot 是

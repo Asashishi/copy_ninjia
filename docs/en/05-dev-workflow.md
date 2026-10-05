@@ -98,7 +98,7 @@ Tests must run through `bun run test` (which invokes `bun test --isolate`), prot
 - **Installation and upgrade tests**: `test/scripts/installStartup.test.ts`, `test/scripts/installMigration.test.ts` verify install scripts, new database initialization, and major-version upgrades.
 - **Cold migration tests**: `test/scripts/migrateChatPersonaRemoval.test.ts` verifies that only the 16.3.2 schema v11 lineages are accepted, the v11 → v13 database migration (including the Asia/Tokyo time-zone marker), and production startup validation before and after migration.
 - **Media and outbound tests**: `test/aiChat/ai/mediaAdmission.test.ts`, `test/aiChat/ai/imageDescription.test.ts`, and `test/infra/telegramWorkerCapabilities.test.ts` verify multimodal recognition and Telegram duplex outbound gates.
-- **Unified outbound integration tests**: `test/infra/telegramOutboundIntegration.test.ts` uses real client initialization, throttling, and outbound gates, replacing only the innermost network responses. It verifies same-chat FIFO across the main thread, contexts, both Workers, and cron; category-local 429 replays; target queries; shared backoff for default-avatar and file downloads; cancellation; and shutdown drains.
+- **Unified outbound integration tests**: `test/infra/telegramOutboundIntegration.test.ts` uses real client initialization, the outbound gate, and the per-chat send scheduler, replacing only the innermost network responses. It verifies same-chat FIFO across the main thread, contexts, both Workers, and cron; category-local 429 replays; target queries; shared backoff for default-avatar and file downloads; cancellation; and shutdown drains.
 - **Security and logger tests**: `test/infra/loggerSecurity.test.ts` verifies credential redaction.
 
 ---

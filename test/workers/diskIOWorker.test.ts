@@ -4,6 +4,7 @@ import type { DiskIOMessage, DiskIOOperationMessage, AdSampleDiskMessage } from 
 import type { DiskIODomain } from "../../packages/types/diskIO/replies";
 
 import { DISK_BUSINESS_BATCH_MAX_MESSAGES } from "../../packages/consts/diskIO/business";
+import { LOG_REOPEN_RETRY_MS } from "../../packages/consts/diskIO/appendOnly";
 import {
   adoptAiMemorySnapshots,
   adoptLogFiles,
@@ -72,7 +73,7 @@ describe("Disk I/O Worker protocol router", () => {
     await route({
       type: "diagnosticBatch",
       batchId: 7,
-      messages: [{ type: "log", timestamp: 1, level: "error", args: ["boom"] }],
+      messages: [{ type: "log", id: "log-boom", timestamp: 1, level: "error", args: ["boom"] }],
     });
     await route({
       type: "aiMemory",
@@ -175,13 +176,13 @@ describe("Disk I/O Worker protocol router", () => {
     await route({
       type: "diagnosticBatch",
       batchId: 9,
-      messages: [{ type: "log", timestamp: 1, level: "error", args: ["retry"] }],
+      messages: [{ type: "log", id: "log-retry", timestamp: 1, level: "error", args: ["retry"] }],
     });
 
     expect(postMessage).toHaveBeenCalledWith({
       type: "diagnosticBatchRetry",
       batchId: 9,
-      retryAfterMs: 300_000,
+      retryAfterMs: LOG_REOPEN_RETRY_MS,
     });
     expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({
       type: "diagnosticBatchAccepted",
@@ -201,14 +202,14 @@ describe("Disk I/O Worker protocol router", () => {
     const batch: DiskIOMessage = {
       type: "diagnosticBatch",
       batchId: 12,
-      messages: [sample, { type: "log", timestamp: 1, level: "error", args: ["retry"] }],
+      messages: [sample, { type: "log", id: "log-retry", timestamp: 1, level: "error", args: ["retry"] }],
     };
     flushLogBuffer.mockReturnValueOnce(false);
 
     await route(batch);
     expect(handleLogMessage).toHaveBeenCalledTimes(1);
     expect(handleAdSampleMessage).not.toHaveBeenCalled();
-    expect(postMessage).toHaveBeenCalledWith({ type: "diagnosticBatchRetry", batchId: 12, retryAfterMs: 300_000 });
+    expect(postMessage).toHaveBeenCalledWith({ type: "diagnosticBatchRetry", batchId: 12, retryAfterMs: LOG_REOPEN_RETRY_MS });
 
     await route(batch);
     expect(handleLogMessage).toHaveBeenCalledTimes(2);

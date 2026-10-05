@@ -98,7 +98,7 @@
 - **安装与升级测试**：`test/scripts/installStartup.test.ts`、`test/scripts/installMigration.test.ts` 验证安装脚本、新库初始化与跨大版本升级流程。
 - **冷迁移测试**：`test/scripts/migrateChatPersonaRemoval.test.ts` 验证只接受 16.3.2 的 schema v11 谱系、v11 → v13 数据库迁移（含 Asia/Tokyo 时区标记），以及生产启动校验对迁移前后数据库的判定。
 - **媒体与出站测试**：`test/aiChat/ai/mediaAdmission.test.ts`、`test/aiChat/ai/imageDescription.test.ts` 与 `test/infra/telegramWorkerCapabilities.test.ts` 验证多模态识别与 Telegram 双工出站闸。
-- **统一出站集成测试**：`test/infra/telegramOutboundIntegration.test.ts` 使用真实客户端初始化、throttler 与出站闸，仅替换最内层网络响应；验证主线程、上下文、两类 Worker 与 cron 的同群 FIFO、分类 429 重放、目标查询、默认头像与文件下载共享退避，以及取消和停机排空。
+- **统一出站集成测试**：`test/infra/telegramOutboundIntegration.test.ts` 使用真实客户端初始化、出站闸与每聊天发送调度器，仅替换最内层网络响应；验证主线程、上下文、两类 Worker 与 cron 的同群 FIFO、分类 429 重放、目标查询、默认头像与文件下载共享退避，以及取消和停机排空。
 - **安全与日志测试**：`test/infra/loggerSecurity.test.ts` 验证凭据脱敏。
 
 ---

@@ -63,7 +63,7 @@ export async function sendGagSpeakNotice({
 }
 
 /** 按入口身份精确删除；相同数字 id 在不同接收者之间不会互相串删。 */
-export function deleteGagSpeakNotice(
+function deleteGagSpeakNotice(
   session: GagSession,
   noticeMessageId: number
 ): Promise<DeleteMessageOutcome> {

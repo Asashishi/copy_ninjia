@@ -3,8 +3,6 @@ import { loggerStub } from "../helpers/loggerMock";
 
 const botUse = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
-const apiThrottler = mock((..._args: unknown[]) => ({ kind: "throttler" }));
-const OVERFLOW_STRATEGY: number = 3;
 const hydrateFiles = mock((token: string) => ({ kind: "files", token }));
 const telegramOutboundGate = mock(() => ({ kind: "outbound-gate" }));
 const initTelegramOutbound = mock((): void => {});
@@ -70,10 +68,6 @@ mock.module("grammy", () => ({
   GrammyError: FakeGrammyError,
   InputFile: FakeInputFile,
 }));
-mock.module("@grammyjs/transformer-throttler", () => ({
-  apiThrottler,
-  BottleneckStrategy: { OVERFLOW: OVERFLOW_STRATEGY },
-}));
 mock.module("@grammyjs/files", () => ({ hydrateFiles }));
 mock.module("../../packages/infra/telegram/outboundGate", () => ({
   telegramOutboundGate,
@@ -90,6 +84,7 @@ mock.module("../../packages/infra/logger", () => ({
 const client = await import("../../packages/infra/telegram/client");
 const botConstructionsAfterFacadeImport: number = botConstructions;
 const mainClient = await import("../../packages/infra/telegram/mainClient");
+const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
 
 describe("Telegram 客户端初始化", () => {
   test("共享门面导入不读取 token 或构造 grammY Bot", () => {
@@ -97,40 +92,19 @@ describe("Telegram 客户端初始化", () => {
     expect(botConstructions).toBe(1);
   });
 
-  test("唯一客户端安装文件增强、消息节流和分类型 429 闸门，重复初始化幂等", () => {
+  test("唯一客户端安装文件增强与出站闸（发送按聊天控速、其余分类型 429 退避），重复初始化幂等", () => {
     mainClient.initTelegramClients();
     mainClient.initTelegramClients();
 
-    expect(botUse).toHaveBeenCalledTimes(3);
+    expect(botUse).toHaveBeenCalledTimes(2);
     expect(botUse).toHaveBeenNthCalledWith(1, { kind: "files", token: "token:secret" });
-    expect(botUse).toHaveBeenNthCalledWith(2, expect.any(Function));
-    expect(botUse).toHaveBeenNthCalledWith(3, { kind: "outbound-gate" });
-    expect(apiThrottler).toHaveBeenCalledTimes(1);
-    expect(apiThrottler).toHaveBeenCalledWith({
-      global: expect.objectContaining({
-        reservoir: 30,
-        reservoirRefreshAmount: 30,
-        reservoirRefreshInterval: 1_000,
-        highWater: 8_192,
-        strategy: OVERFLOW_STRATEGY,
-      }),
-      group: {
-        maxConcurrent: 1,
-        highWater: 128,
-        strategy: OVERFLOW_STRATEGY,
-      },
-      out: {
-        maxConcurrent: 1,
-        highWater: 256,
-        strategy: OVERFLOW_STRATEGY,
-      },
-    });
+    expect(botUse).toHaveBeenNthCalledWith(2, { kind: "outbound-gate" });
     expect(telegramOutboundGate).toHaveBeenCalledTimes(1);
     expect(initTelegramOutbound).toHaveBeenCalledTimes(1);
     expect(hydrateFiles).toHaveBeenCalledTimes(1);
     expect(hydrateFiles).toHaveBeenCalledWith("token:secret");
     expect((mainClient.bot as unknown as FakeBot).token).toBe("token:secret");
-    expect(client.currentTelegramApi()).not.toBe(mainClient.bot.api);
+    expect(telegramApiState.current).not.toBe(mainClient.bot.api);
     expect(client.telegramApi).not.toBe(mainClient.bot.api);
   });
 

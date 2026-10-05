@@ -36,6 +36,7 @@ import {
 } from "../../cache/workers/antiRaid/flood";
 import { signalWithTimeout } from "../../libs/abortSignal";
 import { TimestampDeque } from "../../libs/timestampDeque";
+import { sanitizeDisplayName } from "../../libs/text";
 import { botCanRestrictIn } from "./botPermissions";
 import { isChatAdmin } from "./adminCache";
 import { antiRaidDispatchSignal } from "../../cache/workers/antiRaid/tasks";
@@ -263,10 +264,19 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
   await sendTemporaryMessageFromMain({
     purpose: "notice",
     chatId: message.chatId,
-    text: formatFloodMuteNotice(message.label, workerAtmosphere()),
+    text: floodMuteNoticeText(message.name, workerAtmosphere()),
     deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     signal: signalWithTimeout(dispatchAbort, FLOOD_NOTICE_DISPATCH_TIMEOUT_MS),
   });
+}
+
+/**
+ * 禁言通知正文：展示名原文经 sanitizeDisplayName 清洗，空时退化为本进程风格的 unknownUser，
+ * 与 users/userLabel.ts 的 formatUserLabel 对同一身份的结果逐字一致。昵称是用户可控内容，
+ * 刷屏公告不设 parse_mode（见 docs/cn/04-invariants.md）。
+ */
+function floodMuteNoticeText(name: string, atmosphere: AtmosphereTexts): string {
+  return formatFloodMuteNotice(sanitizeDisplayName(name) || atmosphere.NOTICE_TEXTS.unknownUser, atmosphere);
 }
 
 /**

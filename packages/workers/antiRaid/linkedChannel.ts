@@ -7,15 +7,15 @@ import {
 } from "../../consts/antiRaid/cache";
 import {
   cacheLinkedChannel,
-  getOrCreateLinkedChannelFetch,
-  isCurrentLinkedChannelCacheGeneration,
   linkedChannelCacheGeneration,
+  linkedChannelFetches,
   linkedChannels,
 } from "../../cache/workers/antiRaid/linkedChannels";
 import type { LinkedChannelCache } from "../../types/antiRaid/internal";
 import type { ChatFullInfo } from "grammy/types";
 import { trackAntiRaidTask } from "./taskTracker";
 import { isRecordedWithin } from "../../libs/clockWindow";
+import { getOrCreateKeyedTask } from "../../libs/keyedTask";
 
 /** 只读取未过期缓存。undefined 表示必须异步确认，不能据此豁免。 */
 export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined {
@@ -30,10 +30,10 @@ export function cachedChatHasLinkedChannel(chatId: number): boolean | undefined 
  */
 export function fetchChatHasLinkedChannel(chatId: number): Promise<boolean | undefined> {
   const generation: number = linkedChannelCacheGeneration.current;
-  const task: Promise<boolean | undefined> = getOrCreateLinkedChannelFetch(chatId, (): Promise<void> =>
+  const task: Promise<boolean | undefined> = getOrCreateKeyedTask(linkedChannelFetches, chatId, (): Promise<void> =>
     telegramApi.getChat(chatId, telegramSignal(AbortSignal.timeout(LINKED_CHANNEL_FETCH_TIMEOUT_MS)))
       .then((chat: ChatFullInfo): void => {
-        if (!isCurrentLinkedChannelCacheGeneration(generation)) return;
+        if (linkedChannelCacheGeneration.current !== generation) return;
         cacheLinkedChannel(chatId, "linked_chat_id" in chat && chat.linked_chat_id !== undefined);
       })
       .catch((error: unknown): void => {

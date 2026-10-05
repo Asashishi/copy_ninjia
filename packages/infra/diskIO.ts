@@ -5,7 +5,7 @@
  * 由主线程经 infra/storage/stateStore.ts 门面交给 statePersistence.ts 独立异步读写与 flush。
  *
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建与回执路由在
- * infra/diskIO/host.ts，逐请求通道在 infra/diskIO/requests.ts，业务与请求的传输队列在
+ * infra/diskIO/host.ts，逐请求投递与回执结算在 infra/diskIO/requests.ts，业务与请求的传输队列在
  * infra/diskIO/transport.ts，诊断 FIFO 在 infra/diskIO/diagnosticChannel.ts，恢复握手、
  * 镜像重放与崩溃自愈的重启节流在 infra/diskIO/recovery.ts。
  * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
@@ -21,9 +21,11 @@
  */
 
 import {
-  DISK_IO_REQUEST_CHANNELS,
+  blocklistIdPageReadRequests,
   diskIOFlushBarrier,
   diskIORuntime,
+  identityPolicyReadRequests,
+  joinLogReadRequests,
   pendingFlushFailedDomains,
   pendingLoad,
 } from "../cache/main/diskIO";
@@ -32,10 +34,8 @@ import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
 import { createDiskIOWorker } from "./diskIO/host";
 import { clearRuntimeRecoveryTimer, stopWorkerAfterLoadFailure } from "./diskIO/recovery";
 import {
-  rejectPendingDiskIORequests,
-  requestBlocklistIdPageFromWorker,
-  requestIdentityPoliciesFromWorker,
-  requestJoinLogFromWorker,
+  rejectAllPendingDiskIORequests,
+  requestDiskIO,
   requestLuckSecretFromWorker,
 } from "./diskIO/requests";
 import {
@@ -69,6 +69,9 @@ import type {
   AdSampleDiskMessage,
   AiCacheUsageDiskMessage,
   LogMessage,
+  ReadBlocklistIdPageRequest,
+  ReadIdentityPoliciesRequest,
+  ReadJoinLogRequest,
 } from "../types/diskIO/messages";
 import type {
   DiskIODomain,
@@ -153,7 +156,7 @@ export function relayLogMessage(message: LogMessage): boolean {
   // 可能永远等不到消费者的进程级积压。业务 Worker 只会在 DiskIO 初始化完成后
   // 启动，因此运行期转发不经过这个分支。
   if (!diskIORuntime.initialized) return false;
-  return enqueueDiskIODiagnostic({ type: "log", ...message });
+  return enqueueDiskIODiagnostic({ type: "log", id: crypto.randomUUID(), ...message });
 }
 
 /**
@@ -316,8 +319,12 @@ export function readJoinLog({
     timeoutMs,
     timeoutLabel: "Join log read timeout",
     action: "read join logs",
-    request: (worker: Worker): Promise<readonly JoinLogRecord[]> =>
-      requestJoinLogFromWorker({ worker, chatId, since, now, timeoutMs }),
+    request: (worker: Worker): Promise<readonly JoinLogRecord[]> => requestDiskIO({
+      worker,
+      channel: joinLogReadRequests,
+      timeoutMs,
+      buildRequest: (requestId: number): ReadJoinLogRequest => ({ type: "readJoinLog", requestId, chatId, since, now }),
+    }),
   });
 }
 
@@ -330,8 +337,12 @@ export function readIdentityPolicies(
     timeoutMs,
     timeoutLabel: "Identity policy read timeout",
     action: "read identity policies",
-    request: (worker: Worker): Promise<IdentityPolicyRawReadResult> =>
-      requestIdentityPoliciesFromWorker({ worker, ids, timeoutMs }),
+    request: (worker: Worker): Promise<IdentityPolicyRawReadResult> => requestDiskIO({
+      worker,
+      channel: identityPolicyReadRequests,
+      timeoutMs,
+      buildRequest: (requestId: number): ReadIdentityPoliciesRequest => ({ type: "readIdentityPolicies", requestId, ids }),
+    }),
   });
 }
 
@@ -344,8 +355,12 @@ export function readBlocklistIdPage(
     timeoutMs,
     timeoutLabel: "Blocklist ID read timeout",
     action: "read a blocklist ID page",
-    request: (worker: Worker): Promise<BlocklistIdPage> =>
-      requestBlocklistIdPageFromWorker(worker, afterId, timeoutMs),
+    request: (worker: Worker): Promise<BlocklistIdPage> => requestDiskIO({
+      worker,
+      channel: blocklistIdPageReadRequests,
+      timeoutMs,
+      buildRequest: (requestId: number): ReadBlocklistIdPageRequest => ({ type: "readBlocklistIdPage", requestId, afterId }),
+    }),
   });
 }
 
@@ -439,18 +454,15 @@ export function terminateDiskIO(): Promise<void> {
   diskIORuntime.consecutiveDiagnosticRebuilds = 0;
   diskIORuntime.pendingBusinessMessages.clear();
   resetDiskIODiagnosticChannel();
-  for (const channel of DISK_IO_REQUEST_CHANNELS) channel.nextRequestId = 1;
   diskIOFlushBarrier.settleAll("failed");
   pendingFlushFailedDomains.clear();
-  const terminationError: Error = new Error("Persistence Worker terminated before the request completed.");
+  const terminationMessage: string = "Persistence Worker terminated before the request completed.";
   if (pendingLoad.timer !== null) clearTimeout(pendingLoad.timer);
   pendingLoad.timer = null;
   pendingLoad.resolve = null;
-  pendingLoad.reject?.(terminationError);
+  pendingLoad.reject?.(new Error(terminationMessage));
   pendingLoad.reject = null;
-  for (const channel of DISK_IO_REQUEST_CHANNELS) {
-    rejectPendingDiskIORequests(channel, terminationError);
-  }
+  rejectAllPendingDiskIORequests((): string => terminationMessage);
   if (worker === null) return Promise.resolve();
   try {
     worker.terminate();

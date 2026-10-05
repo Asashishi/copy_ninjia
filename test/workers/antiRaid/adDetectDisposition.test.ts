@@ -360,7 +360,6 @@ describe("广告判定命中后的处置", () => {
       chatId: -1001,
       messageId: NOTICE_MESSAGE_ID,
       delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
-      batchOnFlush: true,
     }));
   });
 
@@ -440,7 +439,6 @@ describe("广告判定命中后的处置", () => {
       chatId: -1001,
       messageId: NOTICE_MESSAGE_ID,
       delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
-      batchOnFlush: true,
     }));
   });
 

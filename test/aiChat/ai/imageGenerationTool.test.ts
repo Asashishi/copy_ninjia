@@ -14,21 +14,10 @@ import {
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const GENERATED_PHOTO: TelegramVisionSource = { fileId: "sent-photo", fileUniqueId: "sent-photo-u", width: 1024, height: 768 };
-const generateChatImage = mock(async (..._args: unknown[]): Promise<{
+const generateImage = mock(async (..._args: unknown[]): Promise<{
   bytes: Uint8Array;
   mimeType: "image/png";
 } | null> => ({ bytes: generatedBytes, mimeType: "image/png" }));
-/** 宽高比归一的桩实现；beforeEach 的 mockReset 之后按这一份原样装回。 */
-function normalizeAspectRatioStub(
-  requested: string | undefined
-): "1:1" | "4:3" | "16:9" | null {
-  if (requested === undefined || requested.trim() === "") return "1:1";
-  if (requested === "7:5") return "4:3";
-  if (requested === "1600:900") return "16:9";
-  if (requested === "16:9") return "16:9";
-  return null;
-}
-const normalizeImageAspectRatio = mock(normalizeAspectRatioStub);
 const referenceVisionImage = { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), mime: "image/jpeg" as const };
 const downloadTelegramVisionImage = mock(async (..._args: unknown[]): Promise<typeof referenceVisionImage | null> => referenceVisionImage);
 /** 媒体执行器的 run 桩；beforeEach 的 mockReset 之后按这一份原样装回。 */
@@ -51,15 +40,16 @@ const sendMessageWithResult = mock(async (..._args: unknown[]): Promise<Telegram
 /** 拟人停顿的桩实现；beforeEach 的 mockReset 之后按这一份原样装回。 */
 async function sleepStub(..._args: unknown[]): Promise<void> {}
 const sleepMock = mock(sleepStub);
-const realImageGeneration = await import("../../../packages/aiChat/ai/imageGeneration");
+const realProvider = await import("../../../packages/aiChat/provider");
+/** 当前生图供应商；用例置 null 模拟 agent.json 没有配置 image 能力。 */
+const imageProvider: { current: { name: "gemini"; generateImage: typeof generateImage } | null } = { current: null };
 const realTelegram = await import("../../../packages/infra/telegram");
 
 mock.module("../../../packages/libs/sleep", () => ({ sleep: sleepMock }));
 
-mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({
-  ...realImageGeneration,
-  generateChatImage,
-  normalizeImageAspectRatio,
+mock.module("../../../packages/aiChat/provider", () => ({
+  ...realProvider,
+  imageAiProvider: () => imageProvider.current,
 }));
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult, sendMessageWithResult }));
 mock.module("../../../packages/aiChat/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
@@ -137,10 +127,9 @@ function buildReferenceContext(chatId: number = -1001, bypass: boolean = false):
 // 队列、调用记录和实现一起清掉，因此下面每个桩都必须在这里重新装回实现。
 beforeEach(() => {
   resetImageGenerationCache();
-  generateChatImage.mockReset();
-  generateChatImage.mockResolvedValue({ bytes: generatedBytes, mimeType: "image/png" });
-  normalizeImageAspectRatio.mockReset();
-  normalizeImageAspectRatio.mockImplementation(normalizeAspectRatioStub);
+  imageProvider.current = { name: "gemini", generateImage };
+  generateImage.mockReset();
+  generateImage.mockResolvedValue({ bytes: generatedBytes, mimeType: "image/png" });
   downloadTelegramVisionImage.mockReset();
   downloadTelegramVisionImage.mockResolvedValue(referenceVisionImage);
   runMediaTask.mockReset();
@@ -217,7 +206,7 @@ describe("generate_image 工具执行器", () => {
     expect(result.retry_after_seconds).toBeGreaterThan(0);
     expect(result.retryable).toBe(false);
     expect(result.required_action).toContain(SEND_MESSAGE_TOOL);
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
   });
 
   test("不是直接回复/@ 的触发由执行侧拒绝，且不消耗冷却", async () => {
@@ -228,7 +217,7 @@ describe("generate_image 工具执行器", () => {
 
     expect(result.error).toContain("not authorized");
     expect(result.retryable).toBe(false);
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
     expect(deniedContext.chatAction.set).not.toHaveBeenCalled();
     expect(JSON.parse(await buildExecutor(buildContext(-1001))(JSON.stringify({ prompt: "明确请求" }))).success).toBe(true);
   });
@@ -243,7 +232,7 @@ describe("generate_image 工具执行器", () => {
     // xAI 走 aspect_ratio/resolution、Gemini 固定 1K，供应商侧的画幅/分辨率细节
     // 都不进 generate_image 的工具结果。
     expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", actions_used: 1 });
-    expect(generateChatImage).toHaveBeenCalledWith({
+    expect(generateImage).toHaveBeenCalledWith({
       prompt: "日落下的纸飞机",
       aspectRatio: "4:3",
       referenceImage: undefined,
@@ -271,7 +260,7 @@ describe("generate_image 工具执行器", () => {
     });
     expect(runMediaTask).toHaveBeenCalledTimes(1);
     expect(runMediaTask).toHaveBeenCalledWith("interactive", expect.any(Function), ctx.signal);
-    expect(generateChatImage).toHaveBeenCalledWith({
+    expect(generateImage).toHaveBeenCalledWith({
       prompt: "把原图改成油画",
       aspectRatio: "16:9",
       referenceImage: referenceVisionImage,
@@ -291,7 +280,7 @@ describe("generate_image 工具执行器", () => {
     })));
 
     expect(result.aspect_ratio).toBe("4:3");
-    expect(generateChatImage).toHaveBeenCalledWith({
+    expect(generateImage).toHaveBeenCalledWith({
       prompt: "把原图改成油画",
       aspectRatio: "4:3",
       referenceImage: referenceVisionImage,
@@ -306,7 +295,7 @@ describe("generate_image 工具执行器", () => {
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({ prompt: "无法读取原图" })));
 
     expect(result.error).toContain("reference image");
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
     expect(ctx.chatAction.set).toHaveBeenNthCalledWith(1, "upload_photo");
     expect(ctx.chatAction.set).toHaveBeenNthCalledWith(2, "idle");
     expect(ctx.chatAction.settle).toHaveBeenCalledTimes(1);
@@ -320,7 +309,7 @@ describe("generate_image 工具执行器", () => {
 
     expect(result.error).toContain("reference image");
     expect(downloadTelegramVisionImage).not.toHaveBeenCalled();
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
   });
 
   test("参考图前置阶段失败时回滚群冷却，本轮仍保留接纳限额", async () => {
@@ -332,7 +321,7 @@ describe("generate_image 工具执行器", () => {
 
     expect(failed.error).toContain("reference image");
     expect(retried.error).toContain("Image limit reached");
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
   });
 
   test("Telegram 发送失败不登记图片记忆", async () => {
@@ -495,7 +484,7 @@ describe("generate_image 工具执行器", () => {
     expect(result.error).toContain("must not narrate an action");
     expect(result.error).toContain(`"${marker}"`);
     expect(result.retryable).toBe(false);
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
     // 冷却没被消耗：改掉图注可以立即重试。
     expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "改好了" }))).success).toBe(true);
   });
@@ -525,7 +514,7 @@ describe("generate_image 工具执行器", () => {
 
     expect(result).toEqual({ success: true, skipped: "duplicate", actions_used: 0 });
     expect(sendPhotoWithResult).not.toHaveBeenCalled();
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
     expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "换一句" }))).success).toBe(true);
   });
 
@@ -536,7 +525,7 @@ describe("generate_image 工具执行器", () => {
     })));
 
     expect(result.error).toContain("slash command");
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
     expect(JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "改好了" }))).success).toBe(true);
   });
 
@@ -556,7 +545,7 @@ describe("generate_image 工具执行器", () => {
       caption: 123,
     })));
     expect(wrongType.error).toContain("caption must be a string");
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
 
     // caption: null 与清洗后为空串都按「没写图注」放行，不报参数错误；三段各用
     // 不同群，避免前一次成功生图占掉后一次的群冷却。
@@ -608,7 +597,7 @@ describe("generate_image 工具执行器", () => {
         }),
       },
     };
-    generateChatImage.mockImplementationOnce(async () => {
+    generateImage.mockImplementationOnce(async () => {
       events.push("generated");
       return { bytes: generatedBytes, mimeType: "image/png" };
     });
@@ -637,7 +626,7 @@ describe("generate_image 工具执行器", () => {
         }),
       },
     };
-    generateChatImage.mockImplementationOnce(async () => {
+    generateImage.mockImplementationOnce(async () => {
       events.push("failed");
       return null;
     });
@@ -662,11 +651,23 @@ describe("generate_image 工具执行器", () => {
     expect(limited.required_action).toContain("必须使用 send_message 明确告诉群友当前暂时不能使用生图");
     expect(limited.required_action).toContain("本轮不要再次调用 generate_image");
     expect(JSON.parse(await otherChat(JSON.stringify({ prompt: "third" }))).success).toBe(true);
-    expect(generateChatImage).toHaveBeenCalledTimes(2);
+    expect(generateImage).toHaveBeenCalledTimes(2);
+  });
+
+  test("部署没有生图供应商时按生成失败结算：不发图、不重试，仍占冷却", async () => {
+    imageProvider.current = null;
+    const execute = buildExecutor(buildContext(-1001));
+
+    const result = JSON.parse(await execute(JSON.stringify({ prompt: "没有供应商" })));
+
+    expect(result.error).toBe("Image generation failed or returned no usable image");
+    expect(result.retryable).toBe(false);
+    expect(sendPhotoWithResult).not.toHaveBeenCalled();
+    expect(JSON.parse(await execute(JSON.stringify({ prompt: "retry" }))).error).toContain("Image limit reached");
   });
 
   test("失败尝试仍占冷却，superAdmin 绕过冷却但每轮仍只能成功发送一张", async () => {
-    generateChatImage.mockResolvedValueOnce(null);
+    generateImage.mockResolvedValueOnce(null);
     const normal = buildExecutor(buildContext(-1001));
     expect(JSON.parse(await normal(JSON.stringify({ prompt: "failed" }))).error).toContain("failed");
     expect(JSON.parse(await normal(JSON.stringify({ prompt: "retry" }))).error).toContain("Image limit reached");
@@ -676,11 +677,11 @@ describe("generate_image 工具执行器", () => {
     const limited = JSON.parse(await superAdmin(JSON.stringify({ prompt: "admin two" })));
     expect(limited.error).toContain("at most 1 generated image");
     expect(limited.retryable).toBe(false);
-    expect(generateChatImage).toHaveBeenCalledTimes(2);
+    expect(generateImage).toHaveBeenCalledTimes(2);
   });
 
   test("superAdmin 接纳一次后本轮不再生成，失败也不重投", async () => {
-    generateChatImage
+    generateImage
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
     const execute = buildExecutor(buildContext(-1001, true));
@@ -690,6 +691,6 @@ describe("generate_image 工具执行器", () => {
     const stopped = JSON.parse(await execute(JSON.stringify({ prompt: "must not call upstream" })));
     expect(stopped.error).toContain("Image limit reached");
     expect(stopped.retryable).toBe(false);
-    expect(generateChatImage).toHaveBeenCalledTimes(1);
+    expect(generateImage).toHaveBeenCalledTimes(1);
   });
 });

@@ -69,7 +69,6 @@ mock.module("../../packages/infra/botAdmin", () => ({
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
-  ensureBotChatPermissions: (): void => {},
   botCanDeleteMessagesIn: (): true => true,
 }));
 mock.module("../../packages/infra/supervisedWorker", () => ({
@@ -346,7 +345,7 @@ describe("入群守卫开关（主线程投递侧）", () => {
         chatId: -1001,
         userId: 42,
         observedAt: now,
-        label: "Zako",
+        name: "Zako",
       });
     } finally {
       nowSpy.mockRestore();

@@ -405,8 +405,8 @@ describe("supervised Worker", () => {
       emitSuccessfulDiskIOLoad(diskWorker);
       await loaded;
       expect(lastDiskIOMessage(diskWorker, "diagnosticBatch").messages).toEqual([
-        { type: "log", ...first },
-        { type: "log", ...second },
+        { type: "log", id: expect.any(String), ...first },
+        { type: "log", id: expect.any(String), ...second },
       ]);
 
       original.onerror!({ message: "boom" } as ErrorEvent);

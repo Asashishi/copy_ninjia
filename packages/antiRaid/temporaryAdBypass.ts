@@ -1,5 +1,3 @@
-import type { Chat } from "grammy/types";
-import { adDetectConfigReadiness } from "../config/readiness";
 import {
   clearTemporaryAdBypassActivity,
   hasActiveTemporaryAdBypassAt,
@@ -10,8 +8,6 @@ import {
   promoteAdBypassWhitelistMembership,
 } from "../infra/identityPolicy/whitelist";
 import { logger } from "../infra/logger";
-import { isBotOwnMessage } from "../infra/selfSentTracker";
-import { visibleSenderChat } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
 import { shouldPromoteToPermanentBypass } from "../states/temporaryAdBypass";
 import { postAntiRaid } from "./workerBridge/controller";
@@ -23,7 +19,8 @@ import type { TemporaryAdBypassActivity } from
   "../types/states/temporaryAdBypass";
 
 /**
- * 广告检测有效群的一条普通发言计入跨群身份累计；服务消息由调用方先行排除。
+ * 广告检测有效群的一条普通发言计入跨群身份累计；服务消息由调用方先行排除，前置判定
+ * 由调用方经 antiRaid/adCandidate.ts 的 adDetectionSenderId 完成。
  * 黑名单身份与黑名单视图冷缺失的身份由 `recordTemporaryAdBypassActivity` 拒绝累计，
  * 不会走到下方的授予边沿与永久晋升。
  * @returns 本条发言是否计入了累计。
@@ -31,26 +28,12 @@ import type { TemporaryAdBypassActivity } from
 export function recordEligibleTemporaryAdBypassActivity(
   {
     message,
-    botId,
-    chatState,
     now,
+    senderId,
+    senderChat,
   }: AdDetectionMessageContext
 ): boolean {
-  if (
-    chatState.isAdDetectEnabled !== true ||
-    !adDetectConfigReadiness().ok ||
-    message.is_automatic_forward === true ||
-    isBotOwnMessage(message)
-  ) return false;
-
-  const senderChat: Chat | undefined = visibleSenderChat(message);
-  const senderId: number | undefined = senderChat?.id ?? message.from?.id;
-  if (
-    senderId === undefined ||
-    senderId === botId ||
-    senderChat?.id === message.chat.id ||
-    isWhitelisted(senderId)
-  ) return false;
+  if (isWhitelisted(senderId)) return false;
   const wasActive: boolean = hasActiveTemporaryAdBypassAt(senderId, now);
   const activity: Readonly<TemporaryAdBypassActivity> | undefined =
     recordTemporaryAdBypassActivity(senderId, now);

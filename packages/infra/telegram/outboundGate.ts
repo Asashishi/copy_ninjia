@@ -27,7 +27,13 @@ import {
   removeRetryJob,
   takeRetryHead,
 } from "./outboundQueue";
-import { discardResponseBody } from "../../libs/boundedResponse";
+import {
+  abortReason,
+  detachAbortListener,
+  releaseResponseBody,
+  settleDrainWaitersIfIdle,
+} from "./outboundSettle";
+import { abortSendJob, admitSendJob } from "./sendScheduler";
 import { toErrorOr } from "../../libs/errorMessage";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
@@ -76,29 +82,6 @@ async function revalidateUnbanKickRetry(
     default:
       throw new Error("Telegram kick retry returned an unknown member status.");
   }
-}
-
-function settleDrainWaitersIfIdle(): void {
-  if (telegramOutboundGateState.aborting) return;
-  if (
-    telegramOutboundGateState.activeCount !== 0 ||
-    telegramOutboundGateState.retryPendingCount !== 0
-  ) return;
-  for (const waiter of telegramOutboundGateState.drainWaiters) {
-    clearTimeout(waiter.timer);
-    waiter.resolve(true);
-  }
-  telegramOutboundGateState.drainWaiters.clear();
-}
-
-function detachAbortListener(job: TelegramOutboundJob): void {
-  if (job.abortListener === undefined) return;
-  job.signal.removeEventListener("abort", job.abortListener);
-  job.abortListener = undefined;
-}
-
-export function abortReason(): Error {
-  return new DOMException("Telegram outbound request was aborted.", "AbortError");
 }
 
 /** 把调用方取消与当前出站 owner 代际合并，并把生命周期信号传到真实网络层。 */
@@ -228,8 +211,15 @@ function rejectActiveJob(job: TelegramOutboundJob, error: unknown): void {
   settleDrainWaitersIfIdle();
 }
 
-/** 从 created/active/retryQueued 任一阶段只结算一次取消；只有后两个阶段占着队列或并发计数。 */
+/**
+ * 从任一阶段只结算一次取消；非发送类只有 active/retryQueued 占着队列或并发计数，已接纳的
+ * 发送类交给发送调度器。
+ */
 export function abortJob(job: TelegramOutboundJob): void {
+  if (job.sendLane !== null) {
+    abortSendJob(job);
+    return;
+  }
   if (job.state === "settled") return;
   const lane: TelegramRetryLane = laneFor(job.category);
   if (job.state === "retryQueued") removeRetryJob(job);
@@ -240,21 +230,6 @@ export function abortJob(job: TelegramOutboundJob): void {
   if (!telegramOutboundGateState.aborting) pumpRetryLane(lane);
   resetRecoveryIfIdle(lane);
   settleDrainWaitersIfIdle();
-}
-
-/**
- * 释放不再交给调用方的响应体。
- *
- * `telegramRetryAfterMilliseconds` 只读 header，不消费 body；被它判成 429 之后
- * 又不往外交的那些响应，如果就这么丢掉，body 会一直占着连接与缓冲——正是
- * telegram/fileDownload.ts 里「非 2xx 响应不读错误页，并显式释放响应体」防的那件事。
- * 只有 fetch 那条路（媒体下载、头像抓取）拿得到真正的 Response；grammY
- * transformer 那条路返回的是已解析的 Bot API 对象，这里恒为 no-op。
- */
-function releaseResponseBody(response: unknown): void {
-  if (response instanceof Response) {
-    void discardResponseBody(response);
-  }
 }
 
 function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void {
@@ -394,6 +369,8 @@ function createOutboundJob({
     category,
     state: "created",
     fromRetryQueue: false,
+    sendLane: null,
+    sendCost: 0,
     abortListener: undefined,
     beforeRetry,
     call,
@@ -442,9 +419,9 @@ export function runTelegramCategorizedRequest<T>(
 }
 
 /**
- * 主线程唯一 Telegram 429 闸门。正常请求直接执行，不猜固定速率；某一类别真实
- * 收到 429 后，仅该类别按 retry_after 排队并渐进恢复。发送类仍由下游 grammY
- * throttler 先执行 Telegram 官方公开的主动限流。
+ * 主线程唯一 Telegram 出站闸门。发送类（isTelegramMessageRequest）交给每聊天发送调度器
+ * （./sendScheduler.ts）按 Telegram 公开限额主动控速、按聊天冻结 429；其余请求直接执行，
+ * 不猜固定速率，某一类别真实收到 429 后，仅该类别按 retry_after 排队并渐进恢复。
  */
 export function telegramOutboundGate(): Transformer<RawApi> {
   // grammY 的 transformer 固定为四参数泛型回调，参数类型由 Transformer 完整约束。
@@ -459,7 +436,7 @@ export function telegramOutboundGate(): Transformer<RawApi> {
     // resolve 的实际泛型由上面的 Transformer 上下文给出，grammY 未公开 Payload。
     // eslint-disable-next-line @typescript-eslint/typedef
     return new Promise((resolve, reject): void => {
-      enqueueOrStart(createOutboundJob({
+      const job: TelegramOutboundJob = createOutboundJob({
         signal: jobSignal,
         category,
         beforeRetry: method === "unbanChatMember" &&
@@ -474,7 +451,9 @@ export function telegramOutboundGate(): Transformer<RawApi> {
           previous(method, payload, requestSignal as never),
         resolve: resolve as (value: unknown) => void,
         reject,
-      }));
+      });
+      if (category === "message") admitSendJob(job, method, payload);
+      else enqueueOrStart(job);
     });
   };
   return transformer;

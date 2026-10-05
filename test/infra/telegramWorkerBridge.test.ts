@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../packages/consts/commands";
 import { InputFile } from "grammy";
 import type {
   TelegramMemoryFile,
@@ -260,7 +261,7 @@ describe("Telegram Worker 双工代理", () => {
       chatId: -1001,
       identityId: 7,
       text: "temporary",
-      deleteAfterMs: 30_000,
+      deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       signal,
     });
 
@@ -272,7 +273,7 @@ describe("Telegram Worker 双工代理", () => {
         chatId: -1001,
         identityId: 7,
         text: "temporary",
-        deleteAfterMs: 30_000,
+        deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       },
       signal,
       transfer: undefined,
@@ -432,7 +433,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
       chatId: -1001,
       identityId: 7,
       text: "warning",
-      deleteAfterMs: 30_000,
+      deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     }, signal)).resolves.toEqual({
       messageId: 88,
       sentAt: expect.any(Number),
@@ -447,8 +448,7 @@ describe("主线程 Telegram Worker 能力边界", () => {
     expect(deleteMessageAfter).toHaveBeenCalledWith({
       chatId: -1001,
       messageId: 88,
-      delayMs: 30_000,
-      batchOnFlush: true,
+      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     });
   });
 
@@ -628,13 +628,13 @@ test("AI 普通群提示带话题进入主线程清理，广告豁免能力仍�
   const signal: AbortSignal = new AbortController().signal;
   await expect(handleAiWorkerTelegramRequest({
     operation: "sendTemporaryMessage", purpose: "notice", category: "message",
-    chatId: -1001, text: "限频", messageThreadId: 23, deleteAfterMs: 30_000,
+    chatId: -1001, text: "限频", messageThreadId: 23, deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   }, signal)).resolves.toEqual({ messageId: 88, sentAt: expect.any(Number) });
   expect(actionSendMessage).toHaveBeenCalledWith(expect.objectContaining({ messageThreadId: 23 }));
   expect(deleteMessageAfter).toHaveBeenCalledTimes(1);
   await expect(handleAiWorkerTelegramRequest({
     operation: "sendTemporaryMessage", purpose: "adWarning", category: "message",
-    chatId: -1001, identityId: 7, text: "广告", deleteAfterMs: 30_000,
+    chatId: -1001, identityId: 7, text: "广告", deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   }, signal)).rejects.toThrow("unsupported Telegram capability");
 });
 
@@ -643,7 +643,7 @@ test("远端发送成功后取消结果仍保留删除任务，发送失败不�
   actionSendMessage.mockImplementationOnce(async (params: { onSent?: (id: number) => void }): Promise<number> => {
     params.onSent?.(88); controller.abort(); return 88;
   });
-  const request: TelegramWorkerRequest = { operation: "sendTemporaryMessage", purpose: "notice", category: "message", chatId: -1001, text: "操作回执", deleteAfterMs: 30_000 };
+  const request: TelegramWorkerRequest = { operation: "sendTemporaryMessage", purpose: "notice", category: "message", chatId: -1001, text: "操作回执", deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS };
   await handleAntiRaidWorkerTelegramRequest(request, controller.signal).catch((): undefined => undefined);
   expect(deleteMessageAfter).toHaveBeenCalledTimes(1);
   deleteMessageAfter.mockClear();

@@ -6,6 +6,7 @@ import {
   telegramOutboundGateState,
 } from "../../packages/cache/main/telegram";
 import { resetTelegramOutboundGateState } from "../helpers/telegramOutboundGate";
+import { sendChatLanes } from "../../packages/cache/main/telegramSend";
 import type {
   TelegramOutboundJob,
   TelegramRetryLane,
@@ -20,7 +21,6 @@ import {
 import {
   drainTelegramOutbound,
   initTelegramOutbound,
-  quiesceTelegramOutbound,
   telegramOutboundStats,
 } from "../../packages/infra/telegram/outboundLifecycle";
 import {
@@ -210,7 +210,8 @@ describe("Telegram 主线程出站总闸", () => {
 
   test("quiesce 后拒绝新工作，显式初始化以新代际恢复接纳", async () => {
     let calls: number = 0;
-    quiesceTelegramOutbound();
+    // 没有在途工作时，排空入口关闭接纳后立即结算。
+    expect(await drainTelegramOutbound(0)).toBe("flushed");
     await expect(runTelegramCategorizedRequest({
       category: "query",
       execute: (_signal: AbortSignal): Promise<unknown> => {
@@ -348,25 +349,33 @@ describe("Telegram 主线程出站总闸", () => {
       "sendMessage",
       { chat_id: -1001, text: "active" }
     ) as Promise<unknown>;
+    // 同群第二条发送排在在途那条之后；另有一条查询命中 429 进入类别退避队列。
+    const sendQueued: Promise<unknown> = transform(
+      ((): Promise<unknown> => new Promise<unknown>(() => {})) as PreviousCall,
+      "sendMessage",
+      { chat_id: -1001, text: "send queued" }
+    ) as Promise<unknown>;
     const queued: Promise<unknown> = transform(
       ((): Promise<unknown> => Promise.resolve({
         ok: false,
         error_code: 429,
         parameters: { retry_after: 60 },
       })) as PreviousCall,
-      "sendMessage",
-      { chat_id: -1001, text: "queued" }
+      "getChat",
+      { chat_id: -1001 }
     ) as Promise<unknown>;
     const outcomes: Promise<unknown>[] = [
       active.catch((error: unknown): unknown => error),
+      sendQueued.catch((error: unknown): unknown => error),
       queued.catch((error: unknown): unknown => error),
     ];
     await Promise.resolve();
     await Promise.resolve();
-    const messageLane: TelegramRetryLane = telegramOutboundGateState.lanes.message;
-    expect(telegramOutboundGateState.activeJobs.size).toBe(1);
-    expect(messageLane.head).not.toBeNull();
-    expect(messageLane.retryTimer).not.toBeNull();
+    const queryLane: TelegramRetryLane = telegramOutboundGateState.lanes.query;
+    expect(telegramOutboundGateState.activeJobs.size).toBe(2);
+    expect(sendChatLanes.get(-1001)?.queued).toBe(1);
+    expect(queryLane.head).not.toBeNull();
+    expect(queryLane.retryTimer).not.toBeNull();
 
     // 换代生命周期信号：旧任务不再挂在当前 controller 上，停机只能靠逐条遍历
     // 队列与在途集合把它们取消掉。
@@ -380,12 +389,14 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramOutboundGateState.activeCount).toBe(0);
     expect(telegramOutboundGateState.retryPendingCount).toBe(0);
     expect(telegramOutboundGateState.activeJobs.size).toBe(0);
-    expect(messageLane.head).toBeNull();
-    expect(messageLane.tail).toBeNull();
-    expect(messageLane.pendingCount).toBe(0);
-    expect(messageLane.retryTimer).toBeNull();
-    expect(messageLane.recovering).toBeFalse();
-    expect(messageLane.recoveryLimit).toBe(1);
+    expect(queryLane.head).toBeNull();
+    expect(queryLane.tail).toBeNull();
+    expect(queryLane.pendingCount).toBe(0);
+    expect(queryLane.retryTimer).toBeNull();
+    expect(queryLane.recovering).toBeFalse();
+    expect(queryLane.recoveryLimit).toBe(1);
+    expect(telegramOutboundGateState.lanes.message.activeCount).toBe(0);
+    expect(sendChatLanes.size).toBe(0);
   });
 
   test("状态快照读的是真实闸门计数与普通消息类别", async () => {
@@ -411,6 +422,7 @@ describe("Telegram 主线程出站总闸", () => {
       messageRetryPending: 0,
     });
 
+    // 另一个群的发送命中 429：只冻结那个群，计入 429 等待。
     const queued: Promise<unknown> = transform(
       ((): Promise<unknown> => Promise.resolve({
         ok: false,
@@ -418,7 +430,7 @@ describe("Telegram 主线程出站总闸", () => {
         parameters: { retry_after: 60 },
       })) as PreviousCall,
       "sendMessage",
-      { chat_id: -1001, text: "queued" }
+      { chat_id: -1002, text: "queued" }
     ) as Promise<unknown>;
     const outcomes: Promise<unknown>[] = [
       active.catch((error: unknown): unknown => error),
@@ -526,7 +538,7 @@ describe("Telegram 主线程出站总闸", () => {
     const transform: Transformer<RawApi> = telegramOutboundGate();
     const requests: Promise<unknown>[] = ["A", "B", "C", "D"].map(
       (text: string): Promise<unknown> =>
-        transform(previous, "sendMessage", { chat_id: -1001, text }) as Promise<unknown>
+        transform(previous, "getChat", { chat_id: -1001, text } as never) as Promise<unknown>
     );
 
     for (let tick: number = 0; tick < 500 && deferred.size < 2; tick++) {
@@ -535,7 +547,7 @@ describe("Telegram 主线程出站总闸", () => {
       });
     }
     expect([...deferred.keys()].sort()).toEqual(["B#2", "C#2"]);
-    expect(telegramOutboundGateState.lanes.message.recoveryActive).toBe(2);
+    expect(telegramOutboundGateState.lanes.query.recoveryActive).toBe(2);
     deferred.get("C#2")!(tooManyRequests);
     await Promise.resolve();
     await Promise.resolve();

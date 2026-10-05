@@ -39,11 +39,17 @@ export const STORAGE_DATABASE_DOMAINS: readonly StorageDatabaseDomain[] = [
   "aiMemory",
 ];
 
-/** SQLite 未 ACK 主键上限；主线程每领域独立检查，Worker 六表共用，超限拒收新事实。 */
+/** SQLite 未 ACK 主键上限；主线程与 Worker 都按领域独立检查，超限拒收新事实。 */
 export const STORAGE_PENDING_MAX_ENTRIES: number = 8_192;
 
-/** SQLite 未 ACK 字节上限；主线程每领域与 Worker 六表总预算在失败期间同样生效。 */
+/** SQLite 未 ACK 字节上限；主线程与 Worker 逐领域检查，失败期间同样生效。 */
 export const STORAGE_PENDING_MAX_BYTES: number = 32 * 1_024 * 1_024;
 
 /** SQLite 连续事务失败的重试上限；到达后通知宿主停止新业务。 */
 export const STORAGE_WRITE_MAX_FAILURES: number = 3;
+
+/**
+ * 字符串每个 UTF-16 码元在 JSON 里最多占的 UTF-8 字节：控制字符与孤立代理转义为
+ * `\uXXXX`（6 字节）。libs/diskIOMessageCost.ts 按它给验证快照的 label 定价上界。
+ */
+export const DISK_JSON_STRING_UNIT_MAX_BYTES: number = 6;

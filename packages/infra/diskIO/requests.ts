@@ -1,80 +1,67 @@
-/** Disk I/O 主线程逐请求通道：发号、超时、投递与回执结算。 */
+/** Disk I/O 主线程逐请求通道：投递、结局解包与回执结算，等待表机制见 libs/workerRequestTable.ts。 */
 
 import {
   DISK_IO_REQUEST_CHANNELS,
-  blocklistIdPageReadRequests,
-  identityPolicyReadRequests,
-  joinLogReadRequests,
   luckSecretRequests,
 } from "../../cache/main/diskIO";
-import type { DiskIORequestChannel, PendingDiskIORequest } from "../../cache/main/diskIO";
-import type {
-  DiskIORequestMessage,
-  EnsureLuckSecretRequest,
-  ReadBlocklistIdPageRequest,
-  ReadIdentityPoliciesRequest,
-  ReadJoinLogRequest,
-} from "../../types/diskIO/messages";
-import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
-import type { BlocklistIdPage, IdentityPolicyRawReadResult } from "../../types/identityStorage";
+import type { DiskIORequestChannel } from "../../cache/main/diskIO";
+import { beginWorkerRequest, failAllWorkerRequests, settleWorkerRequest } from "../../libs/workerRequestTable";
+import { DISK_IO_REQUEST_REJECTED, DISK_IO_REQUEST_TIMED_OUT } from "../../consts/diskIO/common";
+import type { DiskIORequestMessage, EnsureLuckSecretRequest } from "../../types/diskIO/messages";
+import type { DiskIORequestOutcome } from "../../types/diskIO/replies";
+import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import { safePostDiskIO } from "./transport";
-
-/** 结算一条通道上的全部等待者；Worker 代际失效与 terminate 共用。 */
-export function rejectPendingDiskIORequests<TResult>(
-  channel: DiskIORequestChannel<TResult>,
-  error: Error
-): void {
-  for (const pending of channel.pending.values()) {
-    clearTimeout(pending.timer);
-    pending.reject(error);
-  }
-  channel.pending.clear();
-}
 
 /** 一次结算全部通道；漏掉任何一类等待者都会让调用方干等到自己的超时。 */
 export function rejectAllPendingDiskIORequests(describe: (label: string) => string): void {
   for (const channel of DISK_IO_REQUEST_CHANNELS) {
-    rejectPendingDiskIORequests(channel, new Error(describe(channel.label)));
+    failAllWorkerRequests<DiskIORequestOutcome<never>>(channel.table, {
+      ok: false,
+      failure: "error",
+      message: describe(channel.label),
+    });
   }
 }
 
-interface RequestDiskIOParams<TResult, TRequest extends DiskIORequestMessage> {
+/** requestDiskIO 的入参。 */
+export interface RequestDiskIOParams<TResult> {
   worker: Worker;
   channel: DiskIORequestChannel<TResult>;
   timeoutMs: number;
-  /** 用通道发出的 requestId 组装信封；调用方不自行编号。 */
-  buildRequest: (requestId: number) => TRequest;
+  /** 用等待表发出的 requestId 组装信封；调用方不自行编号。 */
+  buildRequest: (requestId: number) => DiskIORequestMessage;
   /** 覆盖文案里的领域名；恢复握手用它区分「恢复期的那一次请求」。 */
   context?: string;
 }
 
 /**
- * main -> diskIO 的统一 request/reply 发起点：发号、登记等待者、装超时、投递，
- * 同步拒收时立刻摘除并结算等待者。四个领域只提供信封与文案。
+ * main -> diskIO 的统一 request/reply 发起点：登记等待者、装超时、投递，同步拒收时
+ * 立刻结算。失败结局在这里按领域名组装成 Error 抛给调用方。
  */
-function requestDiskIO<TResult, TRequest extends DiskIORequestMessage>({
+export async function requestDiskIO<TResult>({
   worker,
   channel,
   timeoutMs,
   buildRequest,
   context,
-}: RequestDiskIOParams<TResult, TRequest>): Promise<TResult> {
+}: RequestDiskIOParams<TResult>): Promise<TResult> {
   const label: string = context ?? channel.label;
-  const requestId: number = channel.nextRequestId++;
-  return new Promise((
-    resolve: (value: TResult | PromiseLike<TResult>) => void,
-    reject: (reason?: unknown) => void
-  ): void => {
-    const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-      channel.pending.delete(requestId);
-      reject(new Error(`[diskIO] ${label} request timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-    channel.pending.set(requestId, { resolve, reject, timer });
-    if (safePostDiskIO(worker, buildRequest(requestId), `${label} request`)) return;
-    channel.pending.delete(requestId);
-    clearTimeout(timer);
-    reject(new Error(`[diskIO] persistence Worker rejected the ${label} request.`));
+  const outcome: DiskIORequestOutcome<TResult> = await beginWorkerRequest<DiskIORequestOutcome<TResult>>({
+    table: channel.table,
+    timeoutMs,
+    post: (requestId: number): boolean => safePostDiskIO(worker, buildRequest(requestId), `${label} request`),
+    timedOut: DISK_IO_REQUEST_TIMED_OUT,
+    rejected: DISK_IO_REQUEST_REJECTED,
   });
+  if (outcome.ok) return outcome.value;
+  switch (outcome.failure) {
+    case "timedOut":
+      throw new Error(`[diskIO] ${label} request timed out after ${timeoutMs}ms.`);
+    case "rejected":
+      throw new Error(`[diskIO] persistence Worker rejected the ${label} request.`);
+    case "error":
+      throw new Error(outcome.message);
+  }
 }
 
 interface SettleDiskIOReplyParams<TResult> {
@@ -96,15 +83,13 @@ export function settleDiskIOReply<TResult>({
   error,
   payload,
 }: SettleDiskIOReplyParams<TResult>): void {
-  const pending: PendingDiskIORequest<TResult> | undefined = channel.pending.get(requestId);
-  if (pending === undefined) return;
-  channel.pending.delete(requestId);
-  clearTimeout(pending.timer);
-  if (error !== undefined || payload === undefined) {
-    pending.reject(new Error(error ?? channel.missingPayload));
-    return;
-  }
-  pending.resolve(payload);
+  settleWorkerRequest<DiskIORequestOutcome<TResult>>(
+    channel.table,
+    requestId,
+    error !== undefined || payload === undefined
+      ? { ok: false, failure: "error", message: error ?? channel.missingPayload }
+      : { ok: true, value: payload }
+  );
 }
 
 /** requestLuckSecretFromWorker 的入参。 */
@@ -125,7 +110,7 @@ export function requestLuckSecretFromWorker({
   timeoutMs,
   context,
 }: RequestLuckSecretParams): Promise<LuckReceiptSecret> {
-  return requestDiskIO<LuckReceiptSecret, EnsureLuckSecretRequest>({
+  return requestDiskIO<LuckReceiptSecret>({
     worker,
     channel: luckSecretRequests,
     timeoutMs,
@@ -134,80 +119,6 @@ export function requestLuckSecretFromWorker({
       type: "ensureLuckSecret",
       requestId,
       day,
-    }),
-  });
-}
-
-/** requestJoinLogFromWorker 的入参。 */
-export interface RequestJoinLogParams {
-  worker: Worker;
-  chatId: number;
-  since: number;
-  now: number;
-  timeoutMs: number;
-}
-
-/** 向当前可写代际按需读取本群滚动时间窗内的入群日志。 */
-export function requestJoinLogFromWorker({
-  worker,
-  chatId,
-  since,
-  now,
-  timeoutMs,
-}: RequestJoinLogParams): Promise<readonly JoinLogRecord[]> {
-  return requestDiskIO<readonly JoinLogRecord[], ReadJoinLogRequest>({
-    worker,
-    channel: joinLogReadRequests,
-    timeoutMs,
-    buildRequest: (requestId: number): ReadJoinLogRequest => ({
-      type: "readJoinLog",
-      requestId,
-      chatId,
-      since,
-      now,
-    }),
-  });
-}
-
-/** requestIdentityPoliciesFromWorker 的入参。 */
-export interface RequestIdentityPoliciesParams {
-  worker: Worker;
-  ids: readonly number[];
-  timeoutMs: number;
-}
-
-/** 向当前 Disk I/O 代际批量读取永久策略与临时广告免检累计表。 */
-export function requestIdentityPoliciesFromWorker({
-  worker,
-  ids,
-  timeoutMs,
-}: RequestIdentityPoliciesParams): Promise<IdentityPolicyRawReadResult> {
-  return requestDiskIO<IdentityPolicyRawReadResult, ReadIdentityPoliciesRequest>({
-    worker,
-    channel: identityPolicyReadRequests,
-    timeoutMs,
-    buildRequest: (requestId: number): ReadIdentityPoliciesRequest => ({
-      type: "readIdentityPolicies",
-      requestId,
-      ids,
-    }),
-  });
-}
-
-/** 向当前 Disk I/O 代际按稳定主键游标读取一页黑名单。 */
-export function requestBlocklistIdPageFromWorker(
-  worker: Worker,
-  afterId: number | null,
-  timeoutMs: number
-): Promise<BlocklistIdPage> {
-  return requestDiskIO<BlocklistIdPage, ReadBlocklistIdPageRequest>({
-    worker,
-    channel: blocklistIdPageReadRequests,
-    timeoutMs,
-    buildRequest: (requestId: number): ReadBlocklistIdPageRequest => ({
-      type: "readBlocklistIdPage",
-      requestId,
-      afterId,
     }),
   });
 }

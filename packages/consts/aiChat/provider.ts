@@ -22,13 +22,14 @@ export const AI_PROVIDER_BACKGROUND_MAX_PENDING: number = 32;
 export const AI_PROVIDER_INTERACTIVE_BURST: number = 8;
 
 /**
- * Telegram 发送请求在 grammY 下游累计到该数量后，AI 回复进入软背压。它不拒绝
+ * 已接纳、未结算的 Telegram 发送请求（message 类 activeCount，含发送调度器里等额度的）
+ * 累计到该数量后，AI 回复进入软背压。它不拒绝
  * 真人请求，只把同群生成并发降为一并暂停随机插话。
  */
 export const AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER: number = 64;
 
 /**
- * Telegram message 域一旦已有真实 429 等待项就立即触发 AI 软背压；429 比普通
- * throttler 等待更强，没必要再等队列增长。
+ * Telegram message 域一旦已有真实 429 等待项就立即触发 AI 软背压；429 比发送调度器里的
+ * 常规额度等待更强，没必要再等队列增长。
  */
 export const AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER: number = 1;

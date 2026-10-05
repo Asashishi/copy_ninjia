@@ -58,10 +58,9 @@ mock.module("../../../packages/aiChat/ai/tools/stickers", () => ({
   buildStickerPackMenu: async (): Promise<readonly StickerPackCandidate[]> => menu,
 }));
 mock.module("../../../packages/libs/sleep", () => ({ sleep }));
-mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({ generateChatImage: generateImage }));
 mock.module("../../../packages/aiChat/provider", () => ({
   ...realProvider,
-  imageAiProvider: () => ({}),
+  imageAiProvider: () => ({ name: "gemini", generateImage }),
   ttsAiProvider: () => ({ synthesizeSpeech }),
   textAiProvider: () => ({ createReplySession: (): AiReplySession => session }),
 }));

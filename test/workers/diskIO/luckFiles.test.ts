@@ -32,7 +32,7 @@ const {
   luckFlushTimer,
   luckPendingAppends,
   luckWorkerCache,
-  resetLuckCache,
+  hydrateLuckCache,
 } = await import("../../../packages/cache/workers/diskIO/luck");
 const {
   FLUSH_MAX_ENTRIES,
@@ -65,12 +65,12 @@ async function readDayFile(day: string = DAY): Promise<Record<string, unknown>> 
 
 beforeEach(() => {
   rmSync(luckDir, { recursive: true, force: true });
-  resetLuckCache();
+  hydrateLuckCache(null);
   luckAppendStalledNotifier.current = null;
 });
 
 afterEach(() => {
-  resetLuckCache();
+  hydrateLuckCache(null);
   luckAppendStalledNotifier.current = null;
 });
 
@@ -269,7 +269,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
   test("恢复当天文件后重放昨日消息会丢弃旧消息，不倒退缓存或误删当天文件", async () => {
     await handleLuckDrawMessage(luckMsg({ key: "222", label: "小凶", fortunePercent: 39.99, day: DAY }));
     expect(await flushLuckAppends()).toBeTrue();
-    resetLuckCache();
+    hydrateLuckCache(null);
     await hydrateLuckDay(DAY);
 
     await handleLuckDrawMessage(luckMsg({

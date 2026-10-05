@@ -9,7 +9,9 @@ import {
   saveChatStateInBackground,
 } from "./storage/stateStore";
 import { chatTitleRefreshRuntime } from "../cache/main/chatTitle";
-import { CHAT_TITLE_REFRESH_CONCURRENCY } from "../consts/telegram";
+import { STATE_MANAGED_CHAT_LIMIT } from "../consts/storage";
+import { runBoundedSettledBatch } from "../libs/boundedSettledBatch";
+import type { BoundedBatchExecution } from "../libs/boundedSettledBatch";
 import type { ChatState } from "../types/chatState";
 
 /**
@@ -71,8 +73,8 @@ export function recordChatTitleFromChat(
  * bot 启动主流程——这纯粹是方便人核对数据库的锦上添花，慢一点或个别
  * 群查询失败都不影响机器人正常运行。app/lifecycle.ts 会追踪该任务，并在
  * 最终持久化 flush 前等待它完成，避免刷新任务在 flush 后继续改状态。共享的 bot.api
- * 客户端会把 429 请求退回主线程 query 类别队列；本 owner 仍使用固定小并发池，
- * 避免历史群一次性占满启动期的查询在途与同类别退避 FIFO。
+ * 客户端会把 429 请求退回主线程 query 类别队列。群状态只覆盖受管群，并发上限取
+ * STATE_MANAGED_CHAT_LIMIT，即每个受管群各查一次。
  */
 export async function refreshAllChatTitles(
   signal: AbortSignal = chatTitleRefreshRuntime.controller.signal
@@ -81,39 +83,28 @@ export async function refreshAllChatTitles(
   const chatIds: number[] = [...getChatStateCache().keys()];
   const total: number = chatIds.length;
   const startedAt: number = Date.now();
-  let nextIndex: number = 0;
   let completed: number = 0;
-  logger.info(`Chat title refresh started: total=${total}, concurrency=${CHAT_TITLE_REFRESH_CONCURRENCY}.`);
-
-  const workers: Promise<void>[] = Array.from(
-    { length: Math.min(CHAT_TITLE_REFRESH_CONCURRENCY, total) },
-    async (): Promise<void> => {
-      while (!signal.aborted) {
-        const index: number = nextIndex++;
-        if (index >= total) return;
-        const chatId: number = chatIds[index]!;
-        try {
-          const chat: ChatFullInfo = await bot.api.getChat(chatId, telegramSignal(signal));
-          if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
-            recordChatTitle(chatId, chat.title, getChatState(chatId));
-          }
-        } catch (error: unknown) {
-          if (!signal.aborted) {
-            // 单个群查询失败不该中断其它群的回填。
-            logger.error(`Failed to refresh chat title for chat ${chatId}:`, error);
-          }
-        } finally {
-          completed++;
-          if (completed === total || completed % 50 === 0) {
-            logger.info(
-              `Chat title refresh progress: ${completed}/${total}, elapsed=${Date.now() - startedAt}ms.`
-            );
-          }
+  logger.info(`Chat title refresh started: total=${total}.`);
+  await runBoundedSettledBatch<number, void>({
+    items: chatIds,
+    maxConcurrent: STATE_MANAGED_CHAT_LIMIT,
+    execute: async ({ item: chatId }: BoundedBatchExecution<number>): Promise<void> => {
+      if (signal.aborted) return;
+      try {
+        const chat: ChatFullInfo = await bot.api.getChat(chatId, telegramSignal(signal));
+        if (!signal.aborted && (chat.type === "group" || chat.type === "supergroup")) {
+          recordChatTitle(chatId, chat.title, getChatState(chatId));
         }
+      } catch (error: unknown) {
+        if (!signal.aborted) {
+          // 单个群查询失败不该中断其它群的回填。
+          logger.error(`Failed to refresh chat title for chat ${chatId}:`, error);
+        }
+      } finally {
+        completed++;
       }
-    }
-  );
-  await Promise.allSettled(workers);
+    },
+  });
   logger.info(
     `Chat title refresh ${signal.aborted ? "aborted" : "completed"}: ` +
     `${completed}/${total}, elapsed=${Date.now() - startedAt}ms.`

@@ -39,7 +39,6 @@ import {
 import {
   applyBotPermissionsChange,
   botCanRestrictIn,
-  forgetWorkerBotPermissions,
   resetWorkerBotPermissions,
 } from "./antiRaid/botPermissions";
 import {
@@ -149,7 +148,7 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // 刷屏计数与权限镜像一并丢掉：重新接管时主线程会重新观测并镜像过来，
       // 计数也该从零开始，不能拿停管之前攒的窗口在新一轮里凑出一次禁言。
       clearChatFloodWindows(msg.chatId);
-      forgetWorkerBotPermissions(msg.chatId);
+      applyBotPermissionsChange(msg.chatId, undefined);
       forgetWorkerChatKind(msg.chatId);
       break;
     case "deactivateJoinGuard":

@@ -366,15 +366,15 @@ describe("Anti-Raid mirror persistence barriers", () => {
   });
 
   test("没有 lockdown 记录时收到 unlock：不排后台保存，也不推进持久化版本", () => {
-    const version: number = antiRaidRuntimeState.persistenceVersion;
+    const version: number = antiRaidRuntimeState.lockdownVersion;
 
     workerHooks.supervisorOptions!.onEvent({ type: "unlock", chatId: -2012 });
 
     expect(saveStateInBackground).not.toHaveBeenCalled();
-    expect(antiRaidRuntimeState.persistenceVersion).toBe(version);
+    expect(antiRaidRuntimeState.lockdownVersion).toBe(version);
   });
 
-  test("chat_member update 必须依次跨过 Worker barrier 与两个领域屏障后才结算", async () => {
+  test("chat_member update 必须依次跨过 Worker barrier 与变化镜像的领域屏障后才结算；只有验证变化时不刷 chatState", async () => {
     workerPosts.length = 0;
     flushDiskIODomain.mockClear();
     const verificationGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
@@ -408,17 +408,15 @@ describe("Anti-Raid mirror persistence barriers", () => {
       workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
     await Bun.sleep(0);
-    // 只刷 Anti-Raid 镜像所在的两个领域，其它领域的攒批窗口不受影响。
+    // 只刷变化过的验证镜像领域：chatState 屏障会提交整个共享 SQLite 事务。
     expect(flushDiskIODomain.mock.calls.map((call: unknown[]): unknown => call[0]))
-      .toEqual(["verification", "chatState"]);
+      .toEqual(["verification"]);
     expect(settled).toBe(false);
 
     verificationGate.resolve("flushed");
-    await Bun.sleep(0);
-    expect(settled).toBe(false);
-    chatStateGate.resolve("flushed");
     await handled;
     expect(settled).toBe(true);
+    chatStateGate.resolve("flushed");
   });
 
   test("匿名模式切换会更新邀请者豁免，但匿名管理员本人仍按管理员身份免验证", async () => {
@@ -610,46 +608,35 @@ describe("Anti-Raid mirror persistence barriers", () => {
     );
   });
 
-  test("入群事件晚到时仍转交直属评论与楼中楼线索，普通非待验证消息不进入 Worker", async () => {
+  test("入群事件晚到时仍转交直属评论与楼中楼线索；非待验证发送者只同步投递、不加投 barrier，普通消息不进入 Worker", async () => {
     workerPosts.length = 0;
-    const comment = antiRaid.handleAntiRaidMessageIngress({
+    // 评论线索只进 Worker 内存，barrier 换不来持久性：同步返回 false，不分配 Promise。
+    expect(antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 88 },
       message_id: 55,
       reply_to_message: { is_automatic_forward: true },
-    } as never, 99);
-    await Bun.sleep(0);
-    const barrier = workerPosts.at(-1);
-    expect(workerPosts[0]).toMatchObject({
+    } as never, 99)).toBeFalse();
+    expect(workerPosts).toEqual([expect.objectContaining({
       type: "message",
       chatId: -4001,
       userId: 88,
       repliesToChannelPost: true,
-    });
-    if (barrier?.type === "barrier") {
-      workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
-    }
-    await comment;
+    })]);
 
     workerPosts.length = 0;
-    const threadReply = antiRaid.handleAntiRaidMessageIngress({
+    expect(antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 89 },
       message_id: 56,
       message_thread_id: 55,
-    } as never, 99);
-    await Bun.sleep(0);
-    const threadBarrier = workerPosts.at(-1);
-    expect(workerPosts[0]).toMatchObject({
+    } as never, 99)).toBeFalse();
+    expect(workerPosts).toEqual([expect.objectContaining({
       type: "message",
       chatId: -4001,
       userId: 89,
       isThreadReply: true,
-    });
-    if (threadBarrier?.type === "barrier") {
-      workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: threadBarrier.barrierId });
-    }
-    await threadReply;
+    })]);
 
     workerPosts.length = 0;
     await antiRaid.handleAntiRaidMessageIngress({
@@ -658,6 +645,27 @@ describe("Anti-Raid mirror persistence barriers", () => {
       message_id: 57,
     } as never, 99);
     expect(workerPosts).toHaveLength(0);
+  });
+
+  test("待验证发送者的评论区消息仍走 durable 投递：先投消息再加投 barrier", async () => {
+    activeVerificationSnapshots.set("-4001:93", { ...record(1, 1), chatId: -4001, userId: 93 });
+    workerPosts.length = 0;
+    const pending = antiRaid.handleAntiRaidMessageIngress({
+      chat: { id: -4001 },
+      from: { id: 93 },
+      message_id: 60,
+      message_thread_id: 55,
+    } as never, 99);
+    expect(pending).toBeInstanceOf(Promise);
+    await Bun.sleep(0);
+    expect(workerPosts[0]).toMatchObject({ type: "message", chatId: -4001, userId: 93, isThreadReply: true });
+    const barrier = workerPosts.at(-1);
+    expect(barrier?.type).toBe("barrier");
+    if (barrier?.type === "barrier") {
+      workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
+    }
+    expect(await pending).toBeFalse();
+    activeVerificationSnapshots.delete("-4001:93");
   });
 
   test("论坛话题消息不是评论区候选：不投递、不加投 barrier", async () => {

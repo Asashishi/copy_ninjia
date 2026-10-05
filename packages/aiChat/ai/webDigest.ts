@@ -33,7 +33,8 @@ import { renderWebDigestMarkdown } from "../../libs/webDigestMarkdown";
 import { researchSourceUrls } from "../../libs/webDigestUrls";
 import { escapeMarkdownV2 } from "../../libs/telegramMarkdown";
 import { truncateInline } from "../../libs/text";
-import { currentWebSearchTime } from "./webSearchTime";
+import { currentTimeSentence } from "./timeSentence";
+import { WEB_SEARCH_TIME_LABEL } from "../../consts/aiChat/prompts/researchTime";
 import type {
   AiTextResult,
   AiWebSearchFacade,
@@ -162,7 +163,7 @@ export async function composeWebDigest(
   request: WebDigestRequest,
   signal: AbortSignal
 ): Promise<WebDigestCompositionResult> {
-  const referenceTime: string = currentWebSearchTime();
+  const referenceTime: string = currentTimeSentence(WEB_SEARCH_TIME_LABEL);
   const searcher: AiWebSearchFacade = webSearchAiProvider() ?? textWebSearchAiProvider();
   const instruction: string = researchInstruction(request);
   const query: string = request.instructions === undefined

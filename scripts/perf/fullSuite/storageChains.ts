@@ -165,15 +165,6 @@ function temporaryAdBypassWriteChain(
   const chatId: number = dependencies.benchmarkChatId(0);
   const totalOperations: number = dependencies.chainWarmupOperations +
     dependencies.chainTemporaryAdBypassWrites;
-  const chatState: Readonly<ChatState> = {
-    isAIChatEnabled: false,
-    isTranslationEnabled: false,
-    isAdDetectEnabled: true,
-    isFloodControlEnabled: false,
-    isAntiRaidEnabled: false,
-    isInitEnabled: false,
-    isProxySendEnabled: false,
-  };
   return {
     chain: "temporary-whitelist-write",
     operations: dependencies.chainTemporaryAdBypassWrites,
@@ -200,8 +191,9 @@ function temporaryAdBypassWriteChain(
       if (!dependencies.recordEligibleTemporaryAdBypassActivity({
         message,
         botId: 1,
-        chatState,
         now: 1_800_000_000_000 + sequence,
+        senderId: id,
+        senderChat: undefined,
       })) {
         throw new Error(
           `Temporary-whitelist activity ${sequence} was rejected before reaching the Worker.`

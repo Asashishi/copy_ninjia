@@ -551,6 +551,27 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     }]);
   });
 
+  test("判定在途期间该群被清空又重开：旧串结算时放弃本次判定，替期间新建的串补排一次", async () => {
+    let release!: (verdict: AdVerdict) => void;
+    classifyAdText.mockImplementationOnce((): Promise<AdVerdict> => new Promise<AdVerdict>((resolve) => {
+      release = resolve;
+    }));
+    enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
+    const running: Promise<void> = runAdDetectBatch(1_000);
+
+    clearChatAdDetect(-1001);
+    enqueueAdCandidate(candidate({ messageId: 2 }), 1_100);
+    // 同一个键仍在途：新串只登记，不排第二个位置。
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
+
+    release({ isAd: false, reason: "" });
+    await running;
+    expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
+    expectQueueOwnershipConsistent();
+    await runAdDetectBatch(1_100);
+    expect(classifyAdText).toHaveBeenCalledTimes(2);
+  });
+
   test("获得临时广告豁免时跨群清理该身份的待检串", () => {
     enqueueAdCandidate(candidate({ chatId: -1001, senderId: 7, messageId: 1 }), 1_000);
     enqueueAdCandidate(candidate({ chatId: -1002, senderId: 7, messageId: 2 }), 1_000);

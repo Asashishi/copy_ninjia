@@ -5,13 +5,13 @@ import {
   trackBlockedRemoval,
 } from "../infra/blocklist/outbox";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
-import {
-  botCanDeleteMessagesIn,
-  ensureBotChatPermissions,
-} from "../infra/botAdmin";
+import { botCanDeleteMessagesIn } from "../infra/botAdmin";
 import { logger } from "../infra/logger";
 import { deleteMessageWithOutcome } from "../infra/telegram/actions";
-import { recentBlockedJoinCounts } from "../cache/main/antiRaid/blocklistGuard";
+import {
+  blockedSenderChatDeleteDeniedChats,
+  recentBlockedJoinCounts,
+} from "../cache/main/antiRaid/blocklistGuard";
 import { verificationKey } from "../libs/verificationKey";
 import { BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES } from "../consts/antiRaid/blocklist";
 import { JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
@@ -50,16 +50,20 @@ export function deleteBlockedSenderChatMessage(message: Message): boolean | Prom
     return false;
   }
 
-  // 稳定态是一次 Map 命中；冷缓存只在后台补齐。未知时仍发删除请求，让 Telegram
-  // 作最终裁判，不能把「尚未观测」折算成「明确没有权限」。
-  ensureBotChatPermissions(chatId);
+  // 调用方已确证机器人是本群管理员，权限快照必然在手。未知时仍发删除请求，让
+  // Telegram 作最终裁判，不能把「尚未观测」折算成「明确没有权限」。
   if (botCanDeleteMessagesIn(chatId) === false) {
-    logger.error(
-      `Blocked sender chat message ${message.message_id} in chat ${chatId} could not be deleted: ` +
-      "the bot is known to lack can_delete_messages."
-    );
+    // 按消息量放大的错误只在该群进入缺权限状态时记一次（见 blockedSenderChatDeleteDeniedChats）。
+    if (!blockedSenderChatDeleteDeniedChats.has(chatId)) {
+      blockedSenderChatDeleteDeniedChats.add(chatId);
+      logger.error(
+        `Blocked sender chat message ${message.message_id} in chat ${chatId} could not be deleted: ` +
+        "the bot is known to lack can_delete_messages; further messages there are not logged."
+      );
+    }
     return true;
   }
+  blockedSenderChatDeleteDeniedChats.delete(chatId);
 
   return deleteMessageWithOutcome(chatId, message.message_id).then(
     (outcome: DeleteMessageOutcome): boolean => {

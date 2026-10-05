@@ -14,7 +14,6 @@ export const warnReferencedAdSender = mock(async (): Promise<TelegramWorkerTempo
   sentAt: warningNow,
 }));
 export const deleteReferencedAdMessages = mock((..._args: unknown[]): void => {});
-export const deleteStaleReferencedAdWarning = mock((..._args: unknown[]): void => {});
 export const deleteStragglerAdMessage = mock((_chatId: number, _messageId: number): void => {});
 export const classifiedTexts: string[] = [];
 export const classifiedFacts: boolean[] = [];
@@ -38,11 +37,14 @@ mock.module("../../packages/workers/antiRaid/adDetect/classifier", () => ({
     return classifyAdText(params.text);
   },
 }));
+/** 迟到警告的定向撤回：verdict 直接走 infra/telegram 的 deleteMessage。 */
+export const deleteMessage = mock(async (..._args: unknown[]): Promise<boolean> => true);
+const realTelegram = await import("../../packages/infra/telegram");
+mock.module("../../packages/infra/telegram", () => ({ ...realTelegram, deleteMessage }));
 mock.module("../../packages/workers/antiRaid/adDetect/disposal", () => ({
   disposeAdSender,
   warnReferencedAdSender,
   deleteReferencedAdMessages,
-  deleteStaleReferencedAdWarning,
   deleteStragglerAdMessage,
 }));
 mock.module("../../packages/workers/antiRaid/adminCache", () => ({
@@ -106,7 +108,7 @@ export function resetAdDetectQueueHarness(stopAdDetectQueue: () => void): void {
     sentAt: warningNow,
   }));
   deleteReferencedAdMessages.mockClear();
-  deleteStaleReferencedAdWarning.mockClear();
+  deleteMessage.mockClear();
   deleteStragglerAdMessage.mockClear();
   fetchAdminIds.mockClear();
   cachedAdmins.clear();

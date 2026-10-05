@@ -16,7 +16,7 @@ workerGlobal.postMessage = (...args: unknown[]): void => {
 
 const { installBusinessWorkerPort } = await import("../../packages/workers/businessWorkerPort");
 const { requestMainThread } = await import("../../packages/libs/workerDuplex");
-const { currentTelegramApi } = await import("../../packages/infra/telegram/client");
+const { telegramApiState } = await import("../../packages/cache/perThread/telegramApi");
 const { workerTelegramApi } = await import("../../packages/infra/telegram/workerClient");
 
 const handled: unknown[] = [];
@@ -47,7 +47,7 @@ afterAll((): void => {
 });
 
 test("安装经主线程代理的 Telegram 能力面", () => {
-  expect(currentTelegramApi()).toBe(workerTelegramApi);
+  expect(telegramApiState.current).toBe(workerTelegramApi);
 });
 
 test("双工请求没有转移列表时只传消息本身，有转移列表时原样传给 postMessage", async () => {

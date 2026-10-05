@@ -5,7 +5,7 @@ import type { ReplyDeliverySlot, ReplyDeliveryTurn, ReplyDeliveryWindow } from "
 
 /** 跳过已完成项；队首仍是占位时等待，链就绪后只放行这一轮。 */
 function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
-  while (window.size > 0) {
+  while (window.queue.size > 0) {
     const slot: ReplyDeliverySlot | undefined = window.queue.peek();
     if (!slot) throw new Error("AI reply delivery slot missing.");
     if (slot.state !== "done") {
@@ -13,7 +13,6 @@ function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
       return;
     }
     window.queue.shift();
-    window.size--;
     const remaining: number = (replyDeliveryCounts.get(chatId) ?? 0) - 1;
     if (remaining > 0) replyDeliveryCounts.set(chatId, remaining);
     else replyDeliveryCounts.delete(chatId);
@@ -21,6 +20,14 @@ function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
     slot.released.resolve();
   }
   if (replyDeliveryWindows.get(chatId) === window) replyDeliveryWindows.delete(chatId);
+}
+
+/**
+ * 本群是否还有存活轮次（任一代际已预留发送占位、尚未按序回收）。每个存活轮次收尾时都会
+ * 回调 onFinished，因此为 false 时不会再有收尾推力到来。
+ */
+export function hasLiveReplyRounds(chatId: number): boolean {
+  return replyDeliveryCounts.has(chatId);
 }
 
 /**
@@ -38,7 +45,6 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
   if (!window) {
     window = {
       queue: new LinkedQueue<ReplyDeliverySlot>(),
-      size: 0,
       directModelActive: true,
     };
     replyDeliveryWindows.set(chatId, window);
@@ -51,7 +57,6 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
   };
   if (direct) slot.ready.resolve();
   window.queue.push(slot);
-  window.size++;
   replyDeliveryCounts.set(chatId, (replyDeliveryCounts.get(chatId) ?? 0) + 1);
   replyDeliveryTotal.current++;
   return {

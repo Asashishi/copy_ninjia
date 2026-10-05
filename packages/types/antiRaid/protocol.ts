@@ -190,8 +190,12 @@ export interface FloodCandidateMessage {
    * 「本条消息统一的现在」，也同样省掉 Worker 侧的逐条时钟读取。
    */
   observedAt: number;
-  /** 禁言通知里的展示标签。 */
-  label: string;
+  /**
+   * 禁言通知里展示名的原文：有公开用户名时为 `@username`，否则为未清洗的 first_name。
+   * Worker 只在真的禁言时经 sanitizeDisplayName 清洗，清洗后为空退化为本进程风格的
+   * unknownUser（与 users/userLabel.ts 的 formatUserLabel 结果逐字一致）。
+   */
+  name: string;
 }
 
 /** 主线程 -> Worker：关闭防刷屏后清除该群全部发言窗口。 */

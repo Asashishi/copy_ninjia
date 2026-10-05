@@ -291,6 +291,40 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
   });
 
+  test("确证没有封禁权限时不发封禁与管理员探测，整批按权限受阻回执，入群计数与公告清理照常", async () => {
+    applyBotPermissionsChange(-1001, { canRestrictMembers: false, canDeleteMessages: true });
+    const joinedAt: number = Date.now();
+
+    handleRemoveBlockedMembers({
+      msg: {
+        type: "removeBlockedMembers",
+        chatId: -1001,
+        userIds: [7, 8],
+        probeMembership: false,
+        removalId: 62,
+        joinedAt,
+        announcementMessageId: 89,
+      },
+      publish,
+    });
+    await settle();
+
+    expect(banChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(probeChatAdmin).not.toHaveBeenCalled();
+    expect(recordJoin).toHaveBeenCalledTimes(1);
+    expect(deleteMessage).toHaveBeenCalledWith(-1001, 89, guardApi);
+    expect(events).toEqual([{
+      type: "blockedMembersRemoved",
+      chatId: -1001,
+      removalId: 62,
+      complete: false,
+      permissionDenied: true,
+      targetIsAdmin: false,
+      participantInvalidUserIds: [],
+      settledUserIds: [],
+    }]);
+  });
+
   test("权限未观测到时照常尝试删除，由 Telegram 当裁判", async () => {
     // 三态里只拦确证的 false：撤管理员、离群、/init 切换和现查失败发的都是同
     // 一条「权限未知」，把它折算成「没有权限」等于在一个权限齐全的群里白白留着

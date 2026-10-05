@@ -283,6 +283,9 @@ export function retryIncompleteStickerCatalogs(packs: readonly string[], now: nu
  * 生产代码路径统一走 ensureStickerCatalogs。
  */
 export async function generatePackCatalog(pack: string, signal: AbortSignal = aiChatWorkerAbortController.current.signal): Promise<void> {
+  // 剪枝当场让菜单失效；新增描述与整包简介只在本包结算时（finally）失效一次，
+  // 逐枚描述期间（可达数分钟）各轮回复的工具声明保持不变。
+  let menuChanged: boolean = false;
   try {
     const set: StickerSet | null = await getStickerSet(pack, undefined, signal);
     if (!set || signal.aborted) return;
@@ -300,9 +303,9 @@ export async function generatePackCatalog(pack: string, signal: AbortSignal = ai
         transientDescriptionCache.delete(fileUniqueId);
         entriesChanged = true;
         dirtyPacks.add(pack);
-        invalidateStickerMenu();
       }
     }
+    if (entriesChanged) invalidateStickerMenu();
     // 失败记录同样按线上集合剪枝：贴纸被移出包后，它的失败记录留着只会
     // 白占内存（该 id 不会再出现在补齐循环里），一并清掉。
     const failed: Map<string, number> | undefined = failedEntries.get(pack);
@@ -337,7 +340,7 @@ export async function generatePackCatalog(pack: string, signal: AbortSignal = ai
       transientDescriptionCache.delete(sticker.file_unique_id);
       entriesChanged = true;
       dirtyPacks.add(pack);
-      invalidateStickerMenu();
+      menuChanged = true;
     }
 
     // 包内容有增删或缺少简介时生成整包简介；失败保留已有简介，缺失简介由维护节拍重试。
@@ -351,14 +354,15 @@ export async function generatePackCatalog(pack: string, signal: AbortSignal = ai
       if (summary) {
         packSummaries.set(pack, summary);
         dirtyPacks.add(pack);
-        invalidateStickerMenu();
+        menuChanged = true;
       } else {
         logger.error(`Failed to generate pack summary for sticker pack "${pack}" after retries; layer-1 sticker tool will show a placeholder until next reconcile.`);
       }
     }
   } catch (error: unknown) {
-    if (signal.aborted) return;
-    logger.error(`Error reconciling sticker catalog for pack "${pack}":`, error);
+    if (!signal.aborted) logger.error(`Error reconciling sticker catalog for pack "${pack}":`, error);
+  } finally {
+    if (menuChanged) invalidateStickerMenu();
   }
 }
 

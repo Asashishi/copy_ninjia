@@ -23,7 +23,8 @@ import {
   WEB_SEARCH_SOURCES_HEADING,
 } from "../../../consts/aiChat/tools";
 import { WEB_SEARCH_EXECUTOR_INSTRUCTION } from "../../../consts/aiChat/prompts/search";
-import { currentWebSearchTime } from "../webSearchTime";
+import { currentTimeSentence } from "../timeSentence";
+import { WEB_SEARCH_TIME_LABEL } from "../../../consts/aiChat/prompts/researchTime";
 import { logger } from "../../../infra/logger";
 import { isPlainRecord } from "../../../libs/record";
 import { sanitizeInline, truncateAtClauseBoundary, truncateInline } from "../../../libs/text";
@@ -104,7 +105,7 @@ export function createWebSearchExecutor(
     if (query === null) return failed("the arguments were not a valid query", 0);
     const response: AiWebSearchResult = await provider.searchWeb({
       instruction: WEB_SEARCH_EXECUTOR_INSTRUCTION,
-      query: `${query}\n${currentWebSearchTime()}`,
+      query: `${query}\n${currentTimeSentence(WEB_SEARCH_TIME_LABEL)}`,
       signal,
     });
     if (!response.ok) return failed("the search request failed", response.searchCalls);

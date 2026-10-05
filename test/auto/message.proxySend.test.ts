@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import type { SubmitDeferredCommandOptions } from "../../packages/commands/deferredCommands";
 
 import type { MessageEntity } from "grammy/types";
 import type { AgentDeploymentConfig } from "../../packages/types/config";
@@ -17,7 +18,7 @@ const synthesizeVoiceMock = mock(async (..._args: unknown[]): Promise<VoiceSynth
 /** 延迟执行器替身：接纳的任务收进队列，由用例显式执行。 */
 const deferredTasks: (() => Promise<void>)[] = [];
 let deferredAccepting: boolean = true;
-const submitDeferredCommandMock = mock((_priority: string, task: () => Promise<void>, _label: string): boolean => {
+const submitDeferredCommandMock = mock(({ task }: SubmitDeferredCommandOptions): boolean => {
   if (!deferredAccepting) return false;
   deferredTasks.push(task);
   return true;
@@ -189,7 +190,7 @@ describe("/send 代发的 TTS 请求", () => {
 
     expect(copyMessageMock).not.toHaveBeenCalled();
     expect(submitDeferredCommandMock).toHaveBeenCalledTimes(1);
-    expect(submitDeferredCommandMock.mock.calls[0]![0]).toBe("interactive");
+    expect(submitDeferredCommandMock.mock.calls[0]![0].priority).toBe("interactive");
     expect(deferredTasks).toHaveLength(1);
     await deferredTasks[0]!();
 

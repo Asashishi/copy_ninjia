@@ -14,9 +14,24 @@ export const antiRaidBarrier: ReturnType<typeof createFlushBarrier> = createFlus
 /**
  * Anti-Raid 主线程代理的代际与初始化状态。容量固定为一个对象，随进程生死；
  * Worker 重建时由 antiRaid/workerBridge/controller.ts 递增 generation，不重置本对象。
+ * 两个镜像版本号分别在待验证镜像（`verification` 领域）与 lockdown 记录（`chatState`
+ * 领域）变化时递增，durable 投递据此只刷变化过的领域；initAntiRaid 归零。
  */
-export const antiRaidRuntimeState: { generation: number; initialized: boolean; persistenceVersion: number } = {
+export const antiRaidRuntimeState: {
+  generation: number;
+  initialized: boolean;
+  verificationVersion: number;
+  lockdownVersion: number;
+} = {
   generation: 0,
   initialized: false,
-  persistenceVersion: 0,
+  verificationVersion: 0,
+  lockdownVersion: 0,
 };
+
+/**
+ * 广告候选投递是否处在「被 Worker 拒收」的状态。Worker 重建或已放弃自愈期间每条开着
+ * 广告检测的群消息都会被拒，错误日志只在由收转拒的边沿记一行、由拒转收时记一行恢复。
+ * 容量固定为一个布尔值，随进程生死。
+ */
+export const adCandidatePostRejected: { current: boolean } = { current: false };

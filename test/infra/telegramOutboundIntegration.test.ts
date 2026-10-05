@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, mock, test } from "bun:test";
 import type { Context, RawApi, Transformer } from "grammy";
 import type { Update } from "grammy/types";
 import { bot, initTelegramClients } from "../../packages/infra/telegram/mainClient";
@@ -22,6 +22,7 @@ import { chatStateCache } from "../../packages/cache/main/chatState";
 import { chatStateOf } from "../helpers/chatState";
 import { isSelfSent } from "../../packages/infra/selfSentTracker";
 import { waitUntil } from "../helpers/waitUntil";
+import { TELEGRAM_SEND_CHAT_BURST, TELEGRAM_SEND_CHAT_REFILL_MS } from "../../packages/consts/telegram";
 
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub() }));
 
@@ -92,7 +93,17 @@ afterEach(async (): Promise<void> => {
   chatStateCache.clear();
 });
 
-test("主线程、两类 Worker、ctx.reply 与 cron 共用同群发送队列，排空等待包含插件排队", async (): Promise<void> => {
+test("主线程、两类 Worker、ctx.reply 与 cron 共用同群发送队列，突发额度用完后按秒放行，排空等待包含排队", async (): Promise<void> => {
+  jest.useFakeTimers();
+  try {
+    await sharedChatQueueScenario();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+/** 六路发送同群排队：先按顺序串行，前 TELEGRAM_SEND_CHAT_BURST 条连发，其余每隔一个补充周期放行一条。 */
+async function sharedChatQueueScenario(): Promise<void> {
   const started: PromiseWithResolvers<void> = Promise.withResolvers();
   const release: PromiseWithResolvers<void> = Promise.withResolvers();
   const contextEntered: PromiseWithResolvers<void> = Promise.withResolvers();
@@ -125,26 +136,39 @@ test("主线程、两类 Worker、ctx.reply 与 cron 共用同群发送队列，
     chatId: -1001, action: { type: "send_message", content: "cron" },
     signal: new AbortController().signal, voices: new Map(), digests: new Map(),
   });
-  const settled: Promise<PromiseSettledResult<unknown>[]> = Promise.allSettled([main, ai, antiRaid, context, raw, cron]);
+  const requests: readonly Promise<unknown>[] = [main, ai, antiRaid, context, raw, cron];
+  let settledCount: number = 0;
+  for (const request of requests) void request.finally((): void => { settledCount++; });
+  const settled: Promise<PromiseSettledResult<unknown>[]> = Promise.allSettled(requests);
   let drained: boolean = false;
-  const drain: Promise<unknown> = drainTelegramOutbound(2_000).then((result: unknown): unknown => {
+  const totalSends: number = requests.length;
+  const drain: Promise<unknown> = drainTelegramOutbound(
+    (totalSends + 1) * TELEGRAM_SEND_CHAT_REFILL_MS
+  ).then((result: unknown): unknown => {
     drained = true;
     return result;
   });
   try {
     expect(calls.map((call: OutboundCall): unknown => call.payload.text)).toEqual(["main"]);
-    expect(telegramOutboundStats().messageActive).toBe(6);
+    expect(telegramOutboundStats().messageActive).toBe(totalSends);
     expect(drained).toBe(false);
   } finally {
     release.resolve();
+  }
+  // 突发额度内的几条在 main 结算后立即连发，不用推进时钟。
+  for (let tick: number = 0; tick < 50 && calls.length < TELEGRAM_SEND_CHAT_BURST; tick++) await Promise.resolve();
+  expect(calls).toHaveLength(TELEGRAM_SEND_CHAT_BURST);
+  for (let step: number = 0; step < totalSends && settledCount < totalSends; step++) {
+    jest.advanceTimersByTime(TELEGRAM_SEND_CHAT_REFILL_MS);
+    for (let tick: number = 0; tick < 50; tick++) await Promise.resolve();
   }
   expect((await settled).every((result: PromiseSettledResult<unknown>): boolean => result.status === "fulfilled")).toBe(true);
   await expect(drain).resolves.toBe("flushed");
   expect(calls.map((call: OutboundCall): unknown => call.payload.text)).toEqual(["main", "ai", "antiRaid", "context", "raw", "cron"]);
   expect(telegramOutboundStats().active).toBe(0);
-});
+}
 
-test("cron 全部发送类型在统一 message 队列等待 429 重放，成功后登记自发消息", async (): Promise<void> => {
+test("cron 全部发送类型在所属聊天的发送队列等待 429 重放，成功后登记自发消息", async (): Promise<void> => {
   const voice: CronAction = { type: "send_voice", content: "voice", tone: undefined };
   const digest: CronAction = { type: "send_web_digest", topic: "news", language: "zh", maxItems: 1, instructions: undefined };
   const voices: CronRoundVoices = new Map([[voice, {
@@ -159,7 +183,9 @@ test("cron 全部发送类型在统一 message 队列等待 429 重放，成功�
     { action: voice, method: "sendVoice" },
     { action: digest, method: "sendMessage" },
   ];
-  for (const { action, method } of cases) {
+  // 每种发送各用一个群：429 让本群进入保守档，换群避免前一种的保守档拖慢下一种。
+  for (const [index, { action, method }] of cases.entries()) {
+    const chatId: number = -1001 - index;
     calls.length = 0;
     let first: boolean = true;
     respond = async (call: OutboundCall): Promise<any> => {
@@ -170,7 +196,7 @@ test("cron 全部发送类型在统一 message 队列等待 429 重放，成功�
       return successResponse(call);
     };
     const delivery: Promise<unknown> = deliverCronAction({
-      chatId: -1001, action, signal: new AbortController().signal, voices, digests,
+      chatId, action, signal: new AbortController().signal, voices, digests,
     });
     await waitUntil((): boolean => telegramOutboundStats().messageRetryPending === 1);
     expect(telegramOutboundStats().messageRetryPending).toBe(1);
@@ -178,7 +204,7 @@ test("cron 全部发送类型在统一 message 队列等待 429 重放，成功�
     await expect(delivery).resolves.toEqual({ kind: "sent" });
     expect(calls.map((call: OutboundCall): string => call.method)).toEqual([method, method]);
     expect(calls.every((call: OutboundCall): boolean => call.payload.message_thread_id === undefined)).toBe(true);
-    expect(isSelfSent(-1001, messageId)).toBe(true);
+    expect(isSelfSent(chatId, messageId)).toBe(true);
   }
 });
 

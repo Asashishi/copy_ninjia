@@ -679,6 +679,13 @@ describe("diskIO/joinLogFiles", () => {
     expect(isRecentJoinLogDay("2026-07-31", "2026-07-31", 2)).toBeTrue();
     expect(isRecentJoinLogDay("2026-07-30", "2026-07-31", 2)).toBeTrue();
     expect(isRecentJoinLogDay("2026-07-29", "2026-07-31", 2)).toBeFalse();
+    expect(isRecentJoinLogDay("2026-08-01", "2026-07-31", 2)).toBeFalse();
+    expect(isRecentJoinLogDay("2026-02-28", "2026-03-01", 2)).toBeTrue();
+    expect(isRecentJoinLogDay("2025-12-30", "2026-01-01", 3)).toBeTrue();
+    expect(isRecentJoinLogDay("2025-12-29", "2026-01-01", 3)).toBeFalse();
+    expect(isRecentJoinLogDay("2026-07-31", "2026-07-31", 1)).toBeTrue();
+    expect(isRecentJoinLogDay("2026-07-30", "2026-07-31", 1)).toBeFalse();
+    expect(isRecentJoinLogDay("2026-07-31", "2026-07-31", 0)).toBeFalse();
   });
 
   test("单群单日超出容量线时原子重写权威文件，并只告警一次", async () => {

@@ -1,6 +1,7 @@
 import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
+import { TOKYO_TIME_ZONE } from "../../../packages/consts/time";
 import type { AiChatWorkerMessage } from "../../../packages/types/aiChat/protocol";
 import type { AgentDeploymentConfig } from "../../../packages/types/config";
 
@@ -185,6 +186,16 @@ describe("AI Chat Worker lifecycle", () => {
     for (const message of messages) worker.handleAiChatWorkerMessage(message);
     await Bun.sleep(0);
   }
+
+  test("只有启动时区为东京时 init 才启动东京天气刷新", async () => {
+    startWeatherRefreshLoop.mockClear();
+    await routeAfterInit([]);
+    expect(startWeatherRefreshLoop).not.toHaveBeenCalled();
+
+    worker.handleAiChatWorkerMessage({ ...INIT_MESSAGE, timeZone: TOKYO_TIME_ZONE });
+    expect(startWeatherRefreshLoop).toHaveBeenCalledTimes(1);
+    worker.handleAiChatWorkerMessage({ ...INIT_MESSAGE, timeZone: "UTC" });
+  });
 
   test("init 接管身份、时区、人设与主线程投来的配置快照，并按贴纸白名单补目录", async () => {
     await routeAfterInit([]);
@@ -511,7 +522,7 @@ describe("AI Chat Worker lifecycle", () => {
       .toBeLessThan(flushDirtyStickerCatalogs.mock.invocationCallOrder[0]!);
   });
 
-  test("显式启动只安装双工 handler、维护 timer 与天气刷新，不初始化 Telegram 客户端", () => {
+  test("显式启动只安装双工 handler 与维护 timer，不初始化 Telegram 客户端，天气刷新留给 init", () => {
     const originalSetInterval: typeof setInterval = globalThis.setInterval;
     let maintenance: (() => void) | null = null;
     globalThis.setInterval = ((handler: (...args: unknown[]) => void): ReturnType<typeof setInterval> => {
@@ -522,7 +533,7 @@ describe("AI Chat Worker lifecycle", () => {
       worker.startAiChatWorker();
       worker.startAiChatWorker();
       expect(initTelegramClients).not.toHaveBeenCalled();
-      expect(startWeatherRefreshLoop).toHaveBeenCalledTimes(1);
+      expect(startWeatherRefreshLoop).not.toHaveBeenCalled();
       expect(workerSelf.onmessage).not.toBeNull();
       expect(maintenance).not.toBeNull();
 

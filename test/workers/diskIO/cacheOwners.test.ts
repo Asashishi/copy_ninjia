@@ -15,7 +15,6 @@ import {
   luckPendingAppends,
   luckWorkerCache,
   markLuckDirty,
-  resetLuckCache,
 } from "../../../packages/cache/workers/diskIO/luck";
 import {
   resetVerificationPersistenceCache,
@@ -28,7 +27,7 @@ import {
 
 afterEach(() => {
   resetLogCache();
-  resetLuckCache();
+  hydrateLuckCache(null);
   resetVerificationPersistenceCache();
   resetJoinLogCache();
 });

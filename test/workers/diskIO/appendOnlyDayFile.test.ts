@@ -203,10 +203,73 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
       },
     })).rejects.toThrow("injected fsync failure");
 
+    // 回滚的 fsync 同样失败，走重新探测；回滚已把页缓存里的字节截回追加前。
     expect(state.size).toBe(statSync(join(dir, "2026-07-16.json")).size);
     expect(() => writeSync(capturedFd!, new TextEncoder().encode("x"), 0, 1, 0)).toThrow();
     await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("C", 3) });
-    expect(await readDay("2026-07-16")).toEqual({ A: 1, B: 2, C: 3 });
+    expect(await readDay("2026-07-16")).toEqual({ A: 1, C: 3 });
+  });
+
+  test("不允许自愈的领域追加到一半失败：原位回滚并抛原始错误，文件可再次打开并继续追加", async () => {
+    const state: DayFileState = await openDayFile(dir, "2026-07-16");
+    await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", { label: "大吉" }) });
+    const before: string = await Bun.file(join(dir, "2026-07-16.json")).text();
+    const sizeBefore: number = state.size;
+    const diskFull: Error = Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    let call: number = 0;
+
+    let thrown: unknown;
+    try {
+      await appendToDayFile({
+        dir,
+        state,
+        chunk: serializeDayFileEntry("B", { label: "吉" }),
+        write: ({ fd, buffer, offset, length, position }) => {
+          call++;
+          if (call === 2) throw diskFull;
+          return writeSync(fd, buffer, offset, call === 1 ? Math.min(10, length) : length, position);
+        },
+      });
+    } catch (error: unknown) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(diskFull);
+    expect(state.size).toBe(sizeBefore);
+    expect(state.empty).toBe(false);
+    expect(await Bun.file(join(dir, "2026-07-16.json")).text()).toBe(before);
+    const reopened: DayFileState = await openDayFile(dir, "2026-07-16");
+    expect(reopened.size).toBe(sizeBefore);
+    await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("B", { label: "吉" }) });
+    expect(await readDay("2026-07-16")).toEqual({ A: { label: "大吉" }, B: { label: "吉" } });
+  });
+
+  test("回滚也失败且不允许自愈时，抛出同时带追加错误与探测错误的 AggregateError", async () => {
+    const state: DayFileState = await openDayFile(dir, "2026-07-16");
+    await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("A", 1) });
+    const diskFull: Error = new Error("injected ENOSPC");
+    let call: number = 0;
+
+    let thrown: unknown;
+    try {
+      await appendToDayFile({
+        dir,
+        state,
+        chunk: serializeDayFileEntry("B", 2),
+        write: ({ fd, buffer, offset, length, position }) => {
+          call++;
+          if (call > 1) throw diskFull;
+          return writeSync(fd, buffer, offset, Math.min(10, length), position);
+        },
+      });
+    } catch (error: unknown) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const errors: readonly unknown[] = (thrown as AggregateError).errors;
+    expect(errors[0]).toBe(diskFull);
+    expect(errors[1]).toBeInstanceOf(AppendOnlyFileFormatError);
   });
 
   test("零字节写显式失败，不虚增 offset，并关闭文件描述符", async () => {

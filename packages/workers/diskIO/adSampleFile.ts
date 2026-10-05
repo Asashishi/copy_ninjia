@@ -33,7 +33,6 @@ import {
   AD_SAMPLE_ARCHIVE_FILENAME_PATTERN,
   AD_SAMPLE_ARCHIVE_RETENTION_DAYS,
   AD_SAMPLE_FILE_MAX_BYTES,
-  DAY_MS,
   PERSISTED_FILE_MODE,
 } from "../../consts/diskIO/common";
 import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO/appendOnly";
@@ -44,7 +43,7 @@ import {
   adSampleFileState,
   adSampleTempsSwept,
 } from "../../cache/workers/diskIO/adSample";
-import { getDateKey } from "../../libs/time";
+import { getDateKey, isCanonicalDateKey, shiftDateKey } from "../../libs/time";
 import { appendToAppendOnlyFile, openAppendOnlyFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
@@ -122,18 +121,7 @@ function listAdSampleArchiveEntries(): AdSampleArchiveEntry[] {
 function archiveDayFromName(name: string): string | null {
   const matched: RegExpExecArray | null = AD_SAMPLE_ARCHIVE_FILENAME_PATTERN.exec(name);
   const day: string | undefined = matched?.[1];
-  if (day === undefined) return null;
-  const parsed: Date = new Date(`${day}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== day) return null;
-  return day;
-}
-
-/** 今天在内最近 N 个公历日期的首日；日期串映射到 UTC 后按 DAY_MS 回退。 */
-function earliestRetainedArchiveDay(today: string): string {
-  const todayMs: number = Date.parse(`${today}T00:00:00.000Z`);
-  return new Date(
-    todayMs - (AD_SAMPLE_ARCHIVE_RETENTION_DAYS - 1) * DAY_MS
-  ).toISOString().slice(0, 10);
+  return day !== undefined && isCanonicalDateKey(day) ? day : null;
 }
 
 /**
@@ -148,7 +136,8 @@ export async function sweepExpiredAdSampleArchives({
   const previousDay: string | null = adSampleArchiveSweepDay.current;
   if (previousDay !== null && today <= previousDay) return;
   adSampleArchiveSweepDay.current = today;
-  const earliestRetainedDay: string = earliestRetainedArchiveDay(today);
+  // 今天在内最近 N 个公历日期的首日。
+  const earliestRetainedDay: string = shiftDateKey(today, 1 - AD_SAMPLE_ARCHIVE_RETENTION_DAYS);
   let entries: AdSampleArchiveEntry[];
   try {
     entries = listEntries();

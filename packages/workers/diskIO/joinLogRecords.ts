@@ -1,7 +1,6 @@
 /** 入群日志记录的纯校验、折叠、序列化与容量裁剪算法。 */
 
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
-import { DAY_MS } from "../../consts/diskIO/common";
 import {
   JOIN_LOG_EMPTY_SNAPSHOT_BYTES,
   JOIN_LOG_ENTRY_SEPARATOR_BYTES,
@@ -14,6 +13,7 @@ import type {
 } from "../../types/diskIO/storage";
 import { invalidInput } from "../../libs/inputValidation";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
+import { shiftDateKey } from "../../libs/time";
 
 /** 条目一级缩进，宽度与通用追加格式的 DAY_FILE_JSON_INDENT 一致；模块初始化一次后供热序列化路径复用。 */
 const ENTRY_INDENT: string = " ".repeat(DAY_FILE_JSON_INDENT);
@@ -54,39 +54,32 @@ export function assertJoinLogSchema(
 }
 
 /**
- * 由 YYYY-MM-DD 锚点生成包含锚点在内的前 N 个公历日期。
- * 日期串映射到 UTC 后按 DAY_MS 回退，不计算配置时区的实际日长。
+ * 由 YYYY-MM-DD 锚点生成包含锚点在内的前 N 个公历日期（shiftDateKey 口径，
+ * 不计算配置时区的实际日长）。
  */
 export function recentJoinLogDayKeys(
   day: string,
   count: number
 ): ReadonlySet<string> {
-  const anchorMs: number = Date.parse(`${day}T00:00:00.000Z`);
   const days: Set<string> = new Set<string>();
   for (let offset: number = 0; offset < count; offset++) {
-    days.add(
-      new Date(anchorMs - offset * DAY_MS).toISOString().slice(0, 10)
-    );
+    days.add(shiftDateKey(day, -offset));
   }
   return days;
 }
 
 /**
- * 判断目标日是否落在锚点及其之前的 N 个配置时区的自然日内。高频单条写入用此函数，
- * 避免只为一次 contains 判断分配临时 Set。
+ * 判断规范日期键是否落在锚点及其之前的 N 个公历日期内。每次入群事件调用：等于锚点
+ * 直接命中，其余按字典序与最早保留日比较，不分配临时 Set。
  */
 export function isRecentJoinLogDay(
   candidate: string,
   anchor: string,
   count: number
 ): boolean {
-  const anchorMs: number = Date.parse(`${anchor}T00:00:00.000Z`);
-  for (let offset: number = 0; offset < count; offset += 1) {
-    const day: string =
-      new Date(anchorMs - offset * DAY_MS).toISOString().slice(0, 10);
-    if (candidate === day) return true;
-  }
-  return false;
+  if (candidate === anchor) return count >= 1;
+  if (candidate > anchor || count <= 1) return false;
+  return candidate >= shiftDateKey(anchor, 1 - count);
 }
 
 /** 把一个文件中的物理历史条目折叠成每用户最后一次入群。 */

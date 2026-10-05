@@ -80,6 +80,8 @@ function injectQueryRetryJob({
       category: "query",
       state: "created",
       fromRetryQueue: false,
+      sendLane: null,
+      sendCost: 0,
       abortListener: undefined,
       beforeRetry,
       call,

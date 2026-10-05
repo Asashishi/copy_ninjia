@@ -33,6 +33,7 @@ function enqueueDiskIODiagnosticDropSummary(): void {
   const droppedBytes: number = diskIORuntime.diagnosticDroppedSerializedBytes;
   const summary: DiskDiagnosticMessage = {
     type: "log",
+    id: crypto.randomUUID(),
     timestamp: Date.now(),
     level: "error",
     args: [

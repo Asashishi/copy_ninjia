@@ -46,7 +46,7 @@ Targets can be specified by "replying to their message" or via `@username`:
 
 ## 🌐 Per-Group Translation
 
-Translation processes text and captions independently of global copy targets, 5-minute cooldowns, and avatar operations. An identity with `isCanControllTranslatePermission` must first execute `/translate enable` (disabled by default) and supply a valid `g-auth.json`. To receive another bot's ordinary messages for translation, enable Bot-to-Bot Communication Mode for this bot in @BotFather. Received messages remain subject to the [bot-message ingress limit](04-invariants.md) (see [01 Getting Started](01-getting-started.md)).
+Translation processes text and captions independently of global copy targets, 5-minute cooldowns, and avatar operations. An identity with `isCanControllTranslatePermission` must first execute `/translate enable` (disabled by default) and supply a valid `g-auth.json`. To receive another bot's ordinary messages for translation, enable Bot-to-Bot Communication Mode for this bot in @BotFather. Received messages remain subject to the [bot-message ingress limit](04-invariants.md) (see [01 Getting Started](01-getting-started.md)). Translations are sent in the background, one at a time per group, without slowing down the handling of other messages; when too many messages in one group are waiting to be translated, new messages are not translated until the backlog shrinks.
 
 | Command | Behavior |
 | :--- | :--- |
@@ -204,6 +204,7 @@ Translation processes text and captions independently of global copy targets, 5-
 #### 6. Blacklist: `/block`
 - **Operation Syntax**: `/block <target> enable` to blacklist, `/block <target> disable` to unban. Targets support replies, `@username`, user ID (positive integer), and negative channel IDs (unban only).
 - **Scope of Effect**: Written to authoritative SQLite blacklist, instantly kicking/banning across all managed groups. When the bot gains admin rights and initializes a group, it sweeps existing blacklisted members.
+- **Execution**: After `enable` confirms the blacklist entry is persisted, the cross-group bans and the report run in the background, and the report is sent a little later; successive commands for the same target take effect in arrival order. `disable` removes the target from the blacklist and unbans it group by group within the command, then replies.
 - **Deleted Account Cleanup**: If banning a target returns `PARTICIPANT_ID_INVALID` 5 consecutive times across sweeps, the account is deemed deleted and automatically removed from the blacklist.
 
 #### 7. Ad Detection and Anti-Raid

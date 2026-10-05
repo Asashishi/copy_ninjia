@@ -202,9 +202,10 @@ const THREAD_ENTRIES: Readonly<Record<string, string>> = Object.fromEntries(
  */
 const WORKER_TELEGRAM_FORBIDDEN_MODULES: readonly string[] = [
   join(PROJECT_ROOT, "packages", "cache", "main", "telegram.ts"),
+  join(PROJECT_ROOT, "packages", "cache", "main", "telegramSend.ts"),
   join(PROJECT_ROOT, "packages", "infra", "telegram", "mainClient.ts"),
-  join(PROJECT_ROOT, "packages", "infra", "telegram", "messageThrottler.ts"),
   join(PROJECT_ROOT, "packages", "infra", "telegram", "outboundGate.ts"),
+  join(PROJECT_ROOT, "packages", "infra", "telegram", "sendScheduler.ts"),
   join(PROJECT_ROOT, "packages", "infra", "telegram", "workerRequests.ts"),
 ];
 

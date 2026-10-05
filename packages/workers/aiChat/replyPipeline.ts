@@ -21,13 +21,14 @@ import {
   triggerKindFor,
 } from "./replyQueue";
 import { startReplyRound } from "./replyRound";
-import { hasReplyDeliveryCapacity, isDirectReplyModelActive } from "./replyDelivery";
+import { hasLiveReplyRounds, hasReplyDeliveryCapacity, isDirectReplyModelActive } from "./replyDelivery";
 import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
 
 /**
  * AI 回复准入编排。并发闸决定立即执行、排队或丢弃；滑动窗口计数和单轮
  * 工具生命周期分别由 replyRound.ts 管理，队列快照与 FIFO 由 replyQueue.ts
- * 管理。本文件保留 Worker 对外调用入口，并在模型完成时补跑、发送完成时结算提示。
+ * 管理。本文件保留 Worker 对外调用入口，并在模型完成时补跑、发送完成时结算提示；
+ * 溢出提示登记时本群没有存活轮次则当场发出。
  */
 
 /**
@@ -218,6 +219,8 @@ export function generateAndSendReply({
       // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。话题一并记下：
       // 提示是对这条被丢掉的触发的回应，得落回它所在的话题。
       pendingOverflowNotices.set(chatId, messageThreadId);
+      // 队列因限频窗口满而积压、群里却没有存活轮次时，不会有收尾推力来补发：当场发出。
+      if (!hasLiveReplyRounds(chatId)) flushOverflowNotice(chatId);
       break;
     case "dropSilently":
       break;

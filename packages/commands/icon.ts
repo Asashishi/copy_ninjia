@@ -30,34 +30,40 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   );
   if (cooldownClaim.rejected) return;
 
-  if (subcommand === "reset") {
+  // 头像任务提交即算已开始；提交前因目标解析落空或 update 取消而中止时退还冷却，
+  // 否则停机后 Telegram 重投这条命令会撞上自己留下的冷却（口径同 /copy）。
+  let avatarQueued: boolean = false;
+  try {
+    if (subcommand === "reset") {
+      await sendCommandMessage({
+        chatId,
+        text: chatAtmosphere().NOTICE_TEXTS.iconRestoring,
+        replyToMessageId: messageId,
+      });
+      queueAvatarUpdate({ chatId, target: { kind: "default" }, source: "icon" });
+      avatarQueued = true;
+      return;
+    }
+
+    const targetUser: CachedUser | undefined = await resolveCommandTarget({
+      chatId,
+      message: ctx.msg,
+      botUserId: ctx.me.id,
+      rawArgument: match[2] ?? "",
+      messages: chatAtmosphere().STEAL_ICON_TARGET_TEXTS,
+    });
+    if (!targetUser) return;
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
+    const targetLabel: string = formatUserLabel(targetUser, atmosphere);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere().NOTICE_TEXTS.iconRestoring,
+      text: atmosphere.NOTICE_TEXTS.iconStarting(targetLabel),
       replyToMessageId: messageId,
     });
-    queueAvatarUpdate({ chatId, target: { kind: "default" }, source: "icon" });
-    return;
+    // 后台换头像：不阻塞本命令，完成后按结果发战报（见 copy/avatarQueue.ts）。
+    queueAvatarUpdate({ chatId, target: { kind: "user", user: targetUser }, source: "icon" });
+    avatarQueued = true;
+  } finally {
+    if (!avatarQueued) await releaseCopyCooldownClaim(cooldownClaim);
   }
-
-  const targetUser: CachedUser | undefined = await resolveCommandTarget({
-    chatId,
-    message: ctx.msg,
-    botUserId: ctx.me.id,
-    rawArgument: match[2] ?? "",
-    messages: chatAtmosphere().STEAL_ICON_TARGET_TEXTS,
-  });
-  if (!targetUser) {
-    await releaseCopyCooldownClaim(cooldownClaim);
-    return;
-  }
-  const atmosphere: AtmosphereTexts = chatAtmosphere();
-  const targetLabel: string = formatUserLabel(targetUser, atmosphere);
-  await sendCommandMessage({
-    chatId,
-    text: atmosphere.NOTICE_TEXTS.iconStarting(targetLabel),
-    replyToMessageId: messageId,
-  });
-  // 后台换头像：不阻塞本命令，完成后按结果发战报（见 copy/avatarQueue.ts）。
-  queueAvatarUpdate({ chatId, target: { kind: "user", user: targetUser }, source: "icon" });
 }

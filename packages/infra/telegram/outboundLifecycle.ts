@@ -12,12 +12,16 @@ import type {
 } from "../../types/telegramOutbound";
 import {
   abortJob,
-  abortReason,
   resetRecoveryIfIdle,
 } from "./outboundGate";
 import { laneFor } from "./outboundQueue";
+import { abortReason } from "./outboundSettle";
+import { resetSendScheduler } from "./sendScheduler";
 
-/** 为新一轮应用生命周期重新武装 Telegram 出站 owner。 */
+/**
+ * 为新一轮应用生命周期重新武装 Telegram 出站 owner。上一轮的发送任务已全部结算，残留的
+ * 空闲发送车道与额度窗口一并清空。
+ */
 export function initTelegramOutbound(): void {
   let hasRetryTimer: boolean = false;
   for (const lane of Object.values(telegramOutboundGateState.lanes)) {
@@ -34,13 +38,14 @@ export function initTelegramOutbound(): void {
       "Cannot initialize Telegram outbound while the previous lifecycle is unsettled."
     );
   }
+  resetSendScheduler();
   telegramOutboundAbortController.current = new AbortController();
   telegramOutboundGateState.aborting = false;
   telegramOutboundAccepting.current = true;
 }
 
 /** 停止接纳新出站任务；已接纳任务仍可在 drain 预算内完成或重试。 */
-export function quiesceTelegramOutbound(): void {
+function quiesceTelegramOutbound(): void {
   telegramOutboundAccepting.current = false;
 }
 
@@ -59,7 +64,10 @@ function settleAllDrainWaiters(drained: boolean): void {
   telegramOutboundGateState.drainWaiters.clear();
 }
 
-/** 预算耗尽后的全局取消：网络、429 timer、队列和调用方 promise 一并结算。 */
+/**
+ * 预算耗尽后的全局取消：网络、429 timer、队列和调用方 promise 一并结算。发送类任务由各自的
+ * abort 监听随生命周期信号结算，随后清空发送调度器的车道与定时器。
+ */
 function abortTelegramOutbound(): void {
   quiesceTelegramOutbound();
   if (telegramOutboundGateState.aborting) return;
@@ -81,6 +89,7 @@ function abortTelegramOutbound(): void {
   for (const active of [...telegramOutboundGateState.activeJobs]) {
     abortJob(active);
   }
+  resetSendScheduler();
   telegramOutboundGateState.aborting = false;
   settleAllDrainWaiters(false);
 }

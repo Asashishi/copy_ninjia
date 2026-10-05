@@ -1,4 +1,4 @@
-import type { AiToolDefinition } from "../../../../types/aiChat/provider";
+import type { AiImageProvider, AiToolDefinition } from "../../../../types/aiChat/provider";
 import { parseToolArguments } from "../../utils/toolArgs";
 import {
   claimImageGeneration,
@@ -36,7 +36,7 @@ import type {
   ImageGenerationClaim,
 } from "../../../../types/aiChat/imageGeneration";
 import type { TelegramPhotoSendResult } from "../../../../types/telegram";
-import { generateChatImage } from "../../imageGeneration";
+import { imageAiProvider } from "../../../provider";
 import { normalizeImageAspectRatio } from "../../utils/aspectRatio";
 import { downloadTelegramVisionImage } from "../../telegramImage";
 import { mediaTaskRunner } from "../../../../cache/workers/aiChat/mediaTasks";
@@ -238,7 +238,9 @@ export function createGenerateImageExecutor(
                 return toolError(REPLY_INVALIDATED_TOOL_ERROR);
               }
               modelRequestStarted = true;
-              image = await generateChatImage({
+              // 生图只走 agent.json 的 image 能力（见 aiChat/provider.ts）；未配置时按失败结算。
+              const provider: AiImageProvider | null = imageAiProvider();
+              image = provider === null ? null : await provider.generateImage({
                 prompt: parsed.prompt,
                 aspectRatio: parsed.aspectRatio,
                 referenceImage,

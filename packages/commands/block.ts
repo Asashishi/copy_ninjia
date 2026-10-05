@@ -30,6 +30,7 @@ import {
 } from "../infra/blocklist/membership";
 import type { ManagedChatOutcome } from "../infra/blocklist/membership";
 import { requestBlocklistResweep } from "../infra/blocklist/sweep";
+import { runBlocklistFanOut } from "./blocklistFanOut";
 
 type PerChatBlockOutcome = "kicked" | "confirmedBanned" | "failed";
 
@@ -47,6 +48,9 @@ interface BlockAdmission {
  * 各群 ChatState.botPermissions.isAdministrator（见 infra/botAdmin.ts）。机器人在发起命令的这个群
  * 里不是管理员时，本群自然踢不了，但对其它管理的群的连坐封禁照常执行，只在
  * 回复里说明本群没踢；一个管理的群都没有才整体拒绝。
+ *
+ * 名单写入与落盘确认在本条 update 内完成；跨群封禁与战报交给延迟命令执行器的后台档
+ * （见 ./blocklistFanOut.ts），update runner 不等各群的 Telegram 请求。
  *
  * 黑名单先于封禁写入，且即使一个群都没封成也照样保留：这两件事解决的不是
  * 同一个问题——封禁只覆盖此刻已知且有管理权的群，黑名单覆盖的是「以后」，
@@ -146,6 +150,46 @@ async function blockTarget(ctx: CommandContext<Context>, targetArgument: string)
     return;
   }
 
+  // 跨群封禁与战报交给延迟命令执行器的后台档（见 ./blocklistFanOut.ts）。
+  await runBlocklistFanOut({
+    identityId: targetUser.id,
+    errorLabel: "Unexpected error while banning a /block target across chats:",
+    fanOut: (): Promise<void> => banEverywhereAndReport({
+      chatId,
+      messageId,
+      targetUser,
+      targetChatIds,
+      herePermissions,
+      isAdminHere,
+      newlyBlocked,
+      persisted,
+    }),
+  });
+}
+
+/** banEverywhereAndReport 的入参：handler 已完成校验与名单落盘后的全部事实。 */
+interface BanEverywhereParams {
+  readonly chatId: number;
+  readonly messageId: number | undefined;
+  readonly targetUser: CachedUser;
+  readonly targetChatIds: readonly number[];
+  readonly herePermissions: BotChatPermissions | undefined;
+  readonly isAdminHere: boolean;
+  readonly newlyBlocked: boolean;
+  readonly persisted: boolean;
+}
+
+/** 在全部受管群封禁目标，失败群重新欠一次补扫，最后在发起群发战报。 */
+async function banEverywhereAndReport({
+  chatId,
+  messageId,
+  targetUser,
+  targetChatIds,
+  herePermissions,
+  isAdminHere,
+  newlyBlocked,
+  persisted,
+}: BanEverywhereParams): Promise<void> {
   // 频道马甲（sender_chat）没有「成员」这个概念，banChatSenderChat 本来就
   // 只是拉黑发言权，不存在「把它踢出去」一说，一律算封禁，不查成员状态。
   let kickedCount: number = 0;

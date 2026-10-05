@@ -4,6 +4,7 @@ import {
   telegramOutboundGateState,
 } from "../../packages/cache/main/telegram";
 import type { TelegramRetryCategory, TelegramRetryLane } from "../../packages/types/telegramOutbound";
+import { resetSendScheduler } from "../../packages/infra/telegram/sendScheduler";
 
 function resetLane(lane: TelegramRetryLane): void {
   lane.head = null;
@@ -18,8 +19,12 @@ function resetLane(lane: TelegramRetryLane): void {
   lane.recovering = false;
 }
 
-/** 把主线程 Telegram 出站闸恢复到初始态：新的取消源、接受新工作、各类别退避 lane 与排空等待者清空。 */
+/**
+ * 把主线程 Telegram 出站闸恢复到初始态：新的取消源、接受新工作、各类别退避 lane、发送调度器的
+ * 车道与额度窗口、排空等待者清空。
+ */
 export function resetTelegramOutboundGateState(): void {
+  resetSendScheduler();
   telegramOutboundAbortController.current = new AbortController();
   telegramOutboundAccepting.current = true;
   telegramOutboundGateState.activeCount = 0;

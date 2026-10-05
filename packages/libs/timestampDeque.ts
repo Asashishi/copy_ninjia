@@ -92,6 +92,15 @@ export class TimestampDeque {
     return this.count === 0 ? undefined : this.values[this.head];
   }
 
+  /** 查看从最早算起第 offset 个时间戳（0 为最早）但不移除；越界返回 undefined。 */
+  peekAt(offset: number): number | undefined {
+    if (offset < 0 || offset >= this.count) return undefined;
+    const length: number = this.values.length;
+    let index: number = this.head + offset;
+    if (index >= length) index -= length;
+    return this.values[index];
+  }
+
   /**
    * 移除第一个与 value 全等的时间戳；窗口容量很小且撤销属于低频异步路径，
    * 因此原地移动后续数字，避免为按值撤销保留链表节点或临时数组。

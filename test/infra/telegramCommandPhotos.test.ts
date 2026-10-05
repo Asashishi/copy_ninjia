@@ -13,6 +13,7 @@ mock.module("../../packages/infra/selfSentTracker", () => ({
 }));
 
 const { sendCommandPhoto } = await import("../../packages/infra/telegram/commandPhotos");
+const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
 const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../packages/consts/commands");
 
 beforeEach(() => {
@@ -35,6 +36,16 @@ describe("sendCommandPhoto", () => {
     }, undefined);
     expect(markSelfSent).toHaveBeenCalledWith(-1001, 55);
     expect(deleteMessageAfter).toHaveBeenCalledWith({ chatId: -1001, messageId: 55, delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS });
+  });
+
+  test("没有话题键时沿用同群触发话题；显式传 undefined 表示 General", async () => {
+    await runWithUpdateAbortSignal(new AbortController().signal, async (): Promise<void> => {
+      await sendCommandPhoto({ chatId: -1001, photo: "file-id", caption: "x", captionEntities: [] });
+      await sendCommandPhoto({ chatId: -1001, photo: "file-id", caption: "x", captionEntities: [], messageThreadId: undefined });
+    }, { chatId: -1001, threadId: 5 });
+    const threadOf = (index: number): unknown =>
+      (sendPhoto.mock.calls[index]![2] as { message_thread_id?: number }).message_thread_id;
+    expect([threadOf(0), threadOf(1)]).toEqual([5, undefined]);
   });
 
   test("字节按上传文件发送；私聊不挂删除", async () => {

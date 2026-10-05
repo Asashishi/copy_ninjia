@@ -26,8 +26,9 @@ export interface SendCommandPhotoParams {
   readonly captionEntities: readonly MessageEntity[];
   readonly replyToMessageId?: number;
   /**
-   * 论坛群的话题标识；省略时沿用当前 update 触发消息所在的话题（仅限同群，见
-   * infra/updateContext.ts 的 updateTopicThreadIdFor）。
+   * 论坛群的话题标识；参数里没有这个键时沿用当前 update 触发消息所在的话题（仅限同群，见
+   * infra/updateContext.ts 的 updateTopicThreadIdFor）。显式传 undefined 表示不带话题
+   * （General），不按作用域补齐。
    */
   readonly messageThreadId?: number;
   readonly signal?: AbortSignal;
@@ -38,15 +39,11 @@ export interface SendCommandPhotoParams {
  * 远端成功后 update 即使随即被取消，已发出的回执也不会漏删；发送失败不创建删除任务。
  * @returns 已发送的 message id；失败时为 undefined（错误由统一动作边界记录）。
  */
-export function sendCommandPhoto({
-  chatId,
-  photo,
-  caption,
-  captionEntities,
-  replyToMessageId,
-  messageThreadId,
-  signal,
-}: SendCommandPhotoParams): Promise<number | undefined> {
+export function sendCommandPhoto(params: SendCommandPhotoParams): Promise<number | undefined> {
+  const { chatId, photo, caption, captionEntities, replyToMessageId, signal }: SendCommandPhotoParams = params;
+  const messageThreadId: number | undefined = "messageThreadId" in params
+    ? params.messageThreadId
+    : updateTopicThreadIdFor(chatId);
   return runTelegramAction({
     action: "send command photo",
     execute: (requestSignal?: AbortSignal): Promise<Message.PhotoMessage> => bot.api.sendPhoto(
@@ -56,7 +53,7 @@ export function sendCommandPhoto({
         caption,
         caption_entities: captionEntities.length > 0 ? [...captionEntities] : undefined,
         reply_parameters: replyParametersFor(replyToMessageId),
-        message_thread_id: messageThreadId ?? updateTopicThreadIdFor(chatId),
+        message_thread_id: messageThreadId,
       },
       telegramSignal(requestSignal)
     ),

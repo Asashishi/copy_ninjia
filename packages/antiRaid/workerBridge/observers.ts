@@ -1,4 +1,5 @@
 import { chatIsSupergroupById } from "../../cache/main/antiRaid/chatKind";
+import { blockedSenderChatDeleteDeniedChats } from "../../cache/main/antiRaid/blocklistGuard";
 import {
   activeVerificationSnapshots,
   pendingVerificationDeletes,
@@ -71,6 +72,7 @@ export function registerAntiRaidBridgeObservers({
   ): void => {
     deactivateChat(chatId, reason === "explicitDisable");
     chatIsSupergroupById.delete(chatId);
+    blockedSenderChatDeleteDeniedChats.delete(chatId);
   });
 
   onDiskIORespawn(

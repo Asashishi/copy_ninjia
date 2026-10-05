@@ -55,7 +55,6 @@ import {
 } from "./verificationSnapshot";
 import { isTerminalVerificationPhase } from "../../states/verification/shared";
 import {
-  admitVerificationJoin,
   reportVerificationRevisionCapacity,
   reportVerificationRuntimeCapacity,
 } from "./verificationAdmission";
@@ -100,8 +99,8 @@ function startVerificationTimer(
 
 /**
  * 把事件喂给某成员的状态机并同步落地结果；网络副作用异步执行，不阻塞
- * Worker mailbox 中后续投递。新 join 先核对运行态与 revision 容量，满额不执行
- * 状态转移或副作用；已有 key 保留更新和解除责任。
+ * Worker mailbox 中后续投递。join 事件只由 verificationEvents.ts 的 handleJoinEvent
+ * 在 admitVerificationJoin 准入之后派发，运行态与 revision 容量满额时不会到达这里。
  */
 export function dispatchVerification(
   chatId: number,
@@ -109,7 +108,6 @@ export function dispatchVerification(
   event: VerificationEvent
 ): void {
   const key: string = verificationKey(chatId, userId);
-  if (event.type === "join" && !admitVerificationJoin(key)) return;
   const entry: VerificationEntry | undefined = verificationEntries.get(key);
   const previousWasPersisted: boolean =
     isPersistedVerificationState(entry?.state);

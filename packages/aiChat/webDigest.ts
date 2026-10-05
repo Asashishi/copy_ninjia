@@ -2,25 +2,21 @@
  * 主线程借用 AI Worker 的摘要生成（aiChat/ai/webDigest.ts）：cron `send_web_digest` 经这里把主题与
  * 组稿参数交给 Worker，拿回可直接按 MarkdownV2 发送的原文，再由 cron/delivery.ts 发出。
  *
- * 一次请求在 cache/main/aiChat.ts 的 webDigestRequests 登记一个等待者再投递 composeWebDigest；等待与
- * 结算见 libs/workerRequestTable.ts，等待上限为 WEB_DIGEST_REQUEST_TIMEOUT_MS。超时与取消会再投一条
- * cancelWebDigest 让 Worker 中止在途组稿。结算一律交回 WebDigestCompositionResult，不抛错。投递函数由
+ * 一次请求经 aiChat/workerJob.ts 在 cache/main/aiChat.ts 的 webDigestRequests 登记一个等待者再投递
+ * composeWebDigest，等待上限为 WEB_DIGEST_REQUEST_TIMEOUT_MS；超时与取消会再投一条 cancelWebDigest 让
+ * Worker 中止在途组稿。结算一律交回 WebDigestCompositionResult，不抛错。投递函数由
  * aiChat/workerBridge.ts 注入，本模块不反向导入 bridge。
  */
 
 import { agentDeploymentConfigSnapshot } from "../config/agent";
 import { WEB_DIGEST_REQUEST_TIMEOUT_MS } from "../consts/webDigest";
+import { AI_WORKER_JOB_UNAVAILABLE } from "../consts/aiChat/workerJob";
 import { webDigestRequests } from "../cache/main/aiChat";
-import { beginWorkerRequest, failAllWorkerRequests, settleWorkerRequest } from "../libs/workerRequestTable";
+import { failAllWorkerRequests, settleWorkerRequest } from "../libs/workerRequestTable";
 import type { AiChatWorkerMessage, AiWebDigestComposedEvent } from "../types/aiChat/protocol";
+import type { AiWorkerJobTransport } from "../types/aiChat/workerJob";
 import type { WebDigestCompositionResult, WebDigestRequest } from "../types/webDigest";
-
-/** requestWebDigest 的注入项：投递函数与 Worker 此刻是否可用。 */
-export interface WebDigestTransport {
-  /** 向当前 AI Worker 投递；返回 false 表示同步拒绝。 */
-  readonly post: (message: AiChatWorkerMessage) => boolean;
-  readonly workerAvailable: boolean;
-}
+import { requestAiWorkerJob } from "./workerJob";
 
 /**
  * 请 AI Worker 生成一份摘要。没有对话核心能力配置时直接返回「ai unconfigured」，Worker
@@ -30,21 +26,16 @@ export interface WebDigestTransport {
 export function requestWebDigest(
   request: WebDigestRequest,
   signal: AbortSignal,
-  { post, workerAvailable }: WebDigestTransport
+  transport: AiWorkerJobTransport
 ): Promise<WebDigestCompositionResult> {
   if (agentDeploymentConfigSnapshot() === null) return Promise.resolve({ ok: false, reason: "ai unconfigured" });
-  if (!workerAvailable) return Promise.resolve({ ok: false, reason: "worker unavailable" });
-  if (signal.aborted) return Promise.resolve({ ok: false, reason: "aborted" });
-  return beginWorkerRequest<WebDigestCompositionResult>({
+  return requestAiWorkerJob<WebDigestCompositionResult>({
     table: webDigestRequests,
     timeoutMs: WEB_DIGEST_REQUEST_TIMEOUT_MS,
-    post: (requestId: number): boolean => post({ type: "composeWebDigest", requestId, request }),
-    cancel: (requestId: number): void => {
-      post({ type: "cancelWebDigest", requestId });
-    },
-    abort: { signal, result: { ok: false, reason: "aborted" } },
-    timedOut: { ok: false, reason: "timed out" },
-    rejected: { ok: false, reason: "worker unavailable" },
+    transport,
+    signal,
+    start: (requestId: number): AiChatWorkerMessage => ({ type: "composeWebDigest", requestId, request }),
+    cancel: (requestId: number): AiChatWorkerMessage => ({ type: "cancelWebDigest", requestId }),
   });
 }
 
@@ -55,5 +46,5 @@ export function settleWebDigest(event: AiWebDigestComposedEvent): void {
 
 /** Worker 崩溃重建、放弃或终止：旧实例的回执不可能再到达，全部按不可用结算。 */
 export function failAllWebDigestWaiters(): void {
-  failAllWorkerRequests<WebDigestCompositionResult>(webDigestRequests, { ok: false, reason: "worker unavailable" });
+  failAllWorkerRequests<WebDigestCompositionResult>(webDigestRequests, AI_WORKER_JOB_UNAVAILABLE);
 }

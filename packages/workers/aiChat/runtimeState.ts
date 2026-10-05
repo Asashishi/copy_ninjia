@@ -1,11 +1,12 @@
 import { currentMoodInstruction } from "../../aiChat/ai/mood";
 import {
+  CURRENT_TIME_LABEL,
   REPLY_CONTEXT_SECTION_NAMES,
   REPLY_CONTEXT_SECTION_TEXT,
   TIME_AWARENESS_INSTRUCTION,
 } from "../../consts/aiChat/prompts/memory";
 import { MOOD_STATE_PRECEDENCE_INSTRUCTION } from "../../consts/aiChat/prompts/mood";
-import { currentTimeSentence } from "./timeSentence";
+import { currentTimeSentence } from "../../aiChat/ai/timeSentence";
 
 /**
  * 本轮运行时状态区块：今天的心情、当前实际时间与本轮工具状态，拼在转录之后、回复
@@ -31,7 +32,7 @@ export function buildRuntimeStateBlock(toolStatus: string): string {
     "\n" +
     currentMoodInstruction() +
     "\n" +
-    currentTimeSentence() +
+    currentTimeSentence(CURRENT_TIME_LABEL) +
     TIME_AWARENESS_INSTRUCTION +
     "\n" +
     toolStatus +

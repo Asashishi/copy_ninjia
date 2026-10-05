@@ -165,6 +165,9 @@ export type StorageDatabaseDomain = Extract<
   "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
 >;
 
+/** 计入未 ACK 写入预算的六个 SQLite 领域；aiMemory 每群至多一项，不计预算。 */
+export type BudgetedStorageDomain = Exclude<StorageDatabaseDomain, "aiMemory">;
+
 /**
  * 单领域 flush 的结局，附带**发起这一次请求所收到的**失败领域名。
  *
@@ -355,3 +358,12 @@ export type DiskIOReply =
   | AiMemoryPersistedReply
   | AiMemoryDeletedPersistedReply
   | LuckAppendStalledReply;
+
+/**
+ * main -> diskIO 逐请求等待表里的结局（libs/workerRequestTable.ts）。超时与投递被拒
+ * 只记原因，Worker 报错、缺载荷与代际失效只记文案；发起方解包时才按领域名构造 Error。
+ */
+export type DiskIORequestOutcome<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly failure: "timedOut" | "rejected" }
+  | { readonly ok: false; readonly failure: "error"; readonly message: string };

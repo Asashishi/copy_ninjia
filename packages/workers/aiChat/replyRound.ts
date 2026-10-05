@@ -231,7 +231,8 @@ export function startReplyRound(
   // 回拨时仅裁掉未来时间戳，保留仍在窗口内的已用配额。
   longTimes.trim(RATE_LIMIT_LONG_WINDOW_MS, now);
   if (isReplyRoundRateLimited(longTimes.size)) {
-    notifyRateLimited({ chatId, now, generation, messageThreadId });
+    // 只有被人直接唤起时才回限频提示；随机插话与随机媒体评价没人在等，静默放弃。
+    if (directInvokerId !== undefined) notifyRateLimited({ chatId, now, generation, messageThreadId });
     return false;
   }
 

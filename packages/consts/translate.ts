@@ -1,7 +1,14 @@
 import type { TranslateLanguage } from "../types/translate";
+import { TELEGRAM_MESSAGE_GROUP_PENDING_MAX } from "./telegram";
 
 /** 翻译模块每群的同时翻译人数上限；按可见身份 ID 去重，不淘汰活动目标。 */
 export const TRANSLATE_CHAT_USER_LIMIT: number = 5;
+
+/**
+ * 每群后台译文链允许积压的条数（含正在执行的那条），与单群发送排队上限相同；满额时新消息
+ * 不翻译。所属模块：translate/message.ts。
+ */
+export const TRANSLATE_CHAT_BACKLOG_MAX: number = TELEGRAM_MESSAGE_GROUP_PENDING_MAX;
 
 /** 翻译模块的语言标签；命令回执和列表覆盖所有支持正则判断的方向。 */
 export const TRANSLATE_LANGUAGE_LABELS: Readonly<Record<TranslateLanguage, string>> = {

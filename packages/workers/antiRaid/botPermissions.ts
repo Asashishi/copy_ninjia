@@ -15,7 +15,10 @@
 import { workerBotChatPermissions } from "../../cache/workers/antiRaid/botPermissions";
 import type { BotActionPermissions } from "../../types/telegram";
 
-/** 应用一条主线程镜像过来的权限变化；permissions 为 undefined 表示此刻未知。 */
+/**
+ * 应用一条主线程镜像过来的权限变化；permissions 为 undefined 表示此刻未知。停管、
+ * `/init disable` 与群 teardown 也以 undefined 丢掉这个群的权限镜像。
+ */
 export function applyBotPermissionsChange(chatId: number, permissions: BotActionPermissions | undefined): void {
   if (permissions === undefined) {
     workerBotChatPermissions.delete(chatId);
@@ -39,11 +42,6 @@ export function botCanRestrictIn(chatId: number): boolean | undefined {
 /** 机器人此刻能不能在这个群删别人的消息；三态语义同 botCanRestrictIn。 */
 export function botCanDeleteIn(chatId: number): boolean | undefined {
   return workerBotChatPermissions.get(chatId)?.canDeleteMessages;
-}
-
-/** 停管/`/init disable`/群 teardown：丢掉这个群的权限镜像。 */
-export function forgetWorkerBotPermissions(chatId: number): void {
-  workerBotChatPermissions.delete(chatId);
 }
 
 /** Worker stop/测试隔离时清空整表；重建后由主线程重放。 */

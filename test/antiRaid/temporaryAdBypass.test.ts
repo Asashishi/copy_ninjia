@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Message } from "grammy/types";
-import type { ChatState } from "../../packages/types/chatState";
 import type { AntiRaidWorkerMessage } from "../../packages/types/antiRaid";
 import { TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD, TEMPORARY_AD_BYPASS_REQUIRED_DAYS } from "../../packages/consts/temporaryAdBypass";
 
@@ -60,9 +59,19 @@ const { recordEligibleTemporaryAdBypassActivity } = await import(
   "../../packages/antiRaid/temporaryAdBypass"
 );
 
-const ENABLED_CHAT_STATE: Readonly<ChatState> = {
-  isAdDetectEnabled: true,
-} as Readonly<ChatState>;
+/**
+ * 以通过共同前置判定的消息事实调用累计入口；展示身份按夹具自己的 sender_chat / from 取，
+ * 前置判定本身的用例在 test/workers/antiRaid/adDetectMain.test.ts。
+ */
+function record(input: Message, now: number): boolean {
+  return recordEligibleTemporaryAdBypassActivity({
+    message: input,
+    botId: 999,
+    now,
+    senderId: input.sender_chat?.id ?? input.from!.id,
+    senderChat: input.sender_chat,
+  });
+}
 
 function message(overrides: Partial<Message> = {}): Message {
   return {
@@ -88,20 +97,10 @@ beforeEach((): void => {
 
 describe("临时广告免检发言入口", () => {
   test("用户与频道马甲跨群都按实际展示身份计数", () => {
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeTrue();
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message({
-        sender_chat: { id: -2_001, type: "channel", title: "频道" },
-      }),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 2_000,
-    })).toBeTrue();
+    expect(record(message(), 1_000)).toBeTrue();
+    expect(record(message({
+      sender_chat: { id: -2_001, type: "channel", title: "频道" },
+    }), 2_000)).toBeTrue();
 
     expect(recorded).toEqual([
       { id: 7, now: 1_000 },
@@ -113,12 +112,7 @@ describe("临时广告免检发言入口", () => {
     grantOnRecord = true;
     promoteOnRecord = true;
 
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 7_000,
-    })).toBeTrue();
+    expect(record(message(), 7_000)).toBeTrue();
 
     expect(promotions).toEqual([{
       id: 7,
@@ -131,18 +125,8 @@ describe("临时广告免检发言入口", () => {
   test("刚进入临时广告免检时只推一次 Worker 旧状态清理", () => {
     grantOnRecord = true;
 
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeTrue();
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 2_000,
-    })).toBeTrue();
+    expect(record(message(), 1_000)).toBeTrue();
+    expect(record(message(), 2_000)).toBeTrue();
 
     expect(workerPosts).toEqual([{
       type: "temporaryAdBypassGranted",
@@ -150,56 +134,9 @@ describe("临时广告免检发言入口", () => {
     }]);
   });
 
-  test("功能未就绪、自动转发、机器人自身与永久白名单均不累计", () => {
-    readinessOk = false;
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeFalse();
-
-    readinessOk = true;
+  test("永久白名单身份不累计", () => {
     permanentIds.add(7);
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeFalse();
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message({ from: { id: 999, is_bot: true, first_name: "Bot" } }),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeFalse();
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message({
-        is_automatic_forward: true,
-        sender_chat: { id: -2_001, type: "channel", title: "频道" },
-      }),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeFalse();
-    expect(recorded).toEqual([]);
-  });
-
-  test("匿名管理员的本群身份与未开启广告检测的群不累计", () => {
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message({
-        sender_chat: { id: -1_001, type: "supergroup", title: "群" },
-      }),
-      botId: 999,
-      chatState: ENABLED_CHAT_STATE,
-      now: 1_000,
-    })).toBeFalse();
-    expect(recordEligibleTemporaryAdBypassActivity({
-      message: message(),
-      botId: 999,
-      chatState: {} as Readonly<ChatState>,
-      now: 1_000,
-    })).toBeFalse();
+    expect(record(message(), 1_000)).toBeFalse();
     expect(recorded).toEqual([]);
   });
 });

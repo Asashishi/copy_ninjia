@@ -10,7 +10,6 @@ import type { Api, Context } from "grammy";
 import { telegramClientInitialization } from "../../cache/main/telegram";
 import { BOT_TOKEN } from "../../config/bot";
 import { installTelegramApi } from "./client";
-import { telegramMessageThrottler } from "./messageThrottler";
 import {
   telegramOutboundGate,
 } from "./outboundGate";
@@ -115,7 +114,7 @@ const mainTelegramApi: TelegramApi = {
 };
 
 /**
- * 集中安装文件增强、发送类节流与分类型 429 退避。主进程须在取得 bot.lock
+ * 集中安装文件增强与出站闸（发送类按聊天控速、其余分类型 429 退避）。主进程须在取得 bot.lock
  * 后调用；模块导入本身不创建计时器或网络请求，重复调用幂等。
  */
 export function initTelegramClients(): void {
@@ -125,7 +124,6 @@ export function initTelegramClients(): void {
   if (telegramClientInitialization.current) return;
   initTelegramOutbound();
   bot.api.config.use(hydrateFiles(bot.token));
-  bot.api.config.use(telegramMessageThrottler());
   bot.api.config.use(telegramOutboundGate());
   installTelegramApi(mainTelegramApi);
   telegramClientInitialization.current = true;

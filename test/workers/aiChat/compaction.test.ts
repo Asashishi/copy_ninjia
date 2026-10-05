@@ -18,7 +18,7 @@ mock.module("../../../packages/libs/sleep", () => ({ sleep }));
 mock.module("../../../packages/infra/logger", () => ({
   logger: loggerStub({ error: logError }),
 }));
-mock.module("../../../packages/workers/aiChat/timeSentence", () => ({
+mock.module("../../../packages/aiChat/ai/timeSentence", () => ({
   currentTimeSentence: (): string => "当前实际时间：测试。",
 }));
 

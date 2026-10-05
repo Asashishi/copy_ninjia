@@ -140,10 +140,10 @@ export async function handleProxyTtsRequest(
     return;
   }
   const delivery: ProxyTtsDelivery = { privateChatId, targetChatId, text: request.text, tone: request.tone };
-  const accepted: boolean = submitDeferredCommand(
-    "interactive",
-    (): Promise<void> => deliverProxyTts(delivery),
-    "Unexpected error while processing a /send TTS request:"
-  );
+  const accepted: boolean = submitDeferredCommand({
+    priority: "interactive",
+    task: (): Promise<void> => deliverProxyTts(delivery),
+    errorLabel: "Unexpected error while processing a /send TTS request:",
+  });
   if (!accepted) await sendProxyTtsNotice(privateChatId, chatAtmosphere().NOTICE_TEXTS.proxyTtsBusy);
 }

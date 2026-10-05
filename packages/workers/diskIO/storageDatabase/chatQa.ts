@@ -1,5 +1,5 @@
 import {
-  storagePendingBudget,
+  storagePendingBudgets,
   pendingChatQaEntryCount,
   pendingChatQaWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
@@ -74,7 +74,7 @@ export function handleChatQaWrite(
     );
   }
 
-  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data, message.q) - (current === undefined ? 0 : storageWriteCost(current.data, message.q)));
+  storagePendingBudgets.chatQa.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data, message.q) - (current === undefined ? 0 : storageWriteCost(current.data, message.q)));
   questions.set(message.q, { data: message.data, revision: message.revision });
   if (current === undefined) pendingChatQaEntryCount.current++;
   pendingChatQaWrites.set(message.chatId, questions);

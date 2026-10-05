@@ -113,7 +113,12 @@ async function addRandomImages(request: HImageAddRequest): Promise<void> {
   const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere().H_IMAGE_TEXTS;
   const directory: string = getAssetConfig().randomHImageDirectory;
   if (!await isRandomImageDirectory(directory)) {
-    await sendCommandMessage({ chatId: request.chatId, text: texts.missingDirectory, replyToMessageId: request.messageId });
+    await sendCommandMessage({
+      chatId: request.chatId,
+      text: texts.missingDirectory,
+      replyToMessageId: request.messageId,
+      messageThreadId: request.messageThreadId,
+    });
     return;
   }
   const library: RandomImageLibrary = await readRandomImageLibrary(directory);
@@ -137,6 +142,7 @@ async function addRandomImages(request: HImageAddRequest): Promise<void> {
     chatId: request.chatId,
     text: texts.addResult({ added, librarySize: library.size, existing, invalidDimensions, failed }),
     replyToMessageId: request.messageId,
+    messageThreadId: request.messageThreadId,
   });
 }
 
@@ -163,10 +169,10 @@ export async function handleHImageAddCommand(ctx: CommandContext<Context>): Prom
     return;
   }
   const request: HImageAddRequest = { chatId, messageId, messageThreadId: forumTopicThreadId(ctx.msg), candidates };
-  const accepted: boolean = submitDeferredCommand(
-    "background",
-    (): Promise<void> => addRandomImages(request),
-    "Unexpected error while processing /h_image add:"
-  );
+  const accepted: boolean = submitDeferredCommand({
+    priority: "background",
+    task: (): Promise<void> => addRandomImages(request),
+    errorLabel: "Unexpected error while processing /h_image add:",
+  });
   if (!accepted) await sendCommandMessage({ chatId, text: texts.busy, replyToMessageId: messageId });
 }

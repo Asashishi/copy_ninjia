@@ -9,18 +9,17 @@ import {
   bufferAdminChangeDuringFetch,
   cacheAdminIds,
   chatAdmins,
-  getOrCreateAdminFetch,
   pendingAdminChangesDuringFetch,
   resetAdminCache,
   takePendingAdminChanges,
 } from "../../../packages/cache/workers/antiRaid/admins";
 import {
   cacheLinkedChannel,
-  getOrCreateLinkedChannelFetch,
   linkedChannelFetches,
   linkedChannels,
   resetLinkedChannelCache,
 } from "../../../packages/cache/workers/antiRaid/linkedChannels";
+import { getOrCreateKeyedTask } from "../../../packages/libs/keyedTask";
 import {
   joinWindows,
   lockdownApiChains,
@@ -28,6 +27,7 @@ import {
   lockdownRetriggerCooldowns,
 } from "../../../packages/cache/workers/antiRaid/lockdown";
 import {
+  ANTI_RAID_PER_MINUTE_LIMIT,
   JOIN_WINDOW_CAPACITY,
   JOIN_WINDOW_MS,
   LOCKDOWN_RETRIGGER_COOLDOWN_MS,
@@ -164,8 +164,8 @@ describe("Anti-Raid cache owners", () => {
       return new Promise((resolve) => { resolveFetch = resolve; });
     };
 
-    const first = getOrCreateAdminFetch(-1001, create);
-    const second = getOrCreateAdminFetch(-1001, create);
+    const first = getOrCreateKeyedTask(adminFetches, -1001, create);
+    const second = getOrCreateKeyedTask(adminFetches, -1001, create);
     expect(second).toBe(first);
     expect(createCalls).toBe(1);
 
@@ -279,8 +279,8 @@ describe("Anti-Raid cache owners", () => {
       return new Promise((resolve) => { resolveFetch = resolve; });
     };
 
-    const first = getOrCreateLinkedChannelFetch(-1001, create);
-    const second = getOrCreateLinkedChannelFetch(-1001, create);
+    const first = getOrCreateKeyedTask(linkedChannelFetches, -1001, create);
+    const second = getOrCreateKeyedTask(linkedChannelFetches, -1001, create);
     expect(second).toBe(first);
     expect(createCalls).toBe(1);
     expect(linkedChannelFetches.has(-1001)).toBeTrue();
@@ -344,11 +344,11 @@ describe("Lockdown write-ahead runtime", () => {
     const chatId = -1001;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
     // 公告必须先于任何权限写落地：从占位那一刻起入群就被直接请出去了。
-    expect(sentMessages[0]?.text).toContain("60 秒内冲进来了 46 个");
+    expect(sentMessages[0]?.text).toContain(`冲进来了 ${ANTI_RAID_PER_MINUTE_LIMIT + 1} 个`);
     const applying = lockdownEvents.find((event) => event.type === "lockdown");
     expect(applying).toMatchObject({
       type: "lockdown",
@@ -401,7 +401,7 @@ describe("Lockdown write-ahead runtime", () => {
     const chatId = -1011;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
     const applying = lockdownEvents.find((event) =>
       event.type === "lockdown" && event.chatId === chatId
@@ -418,7 +418,7 @@ describe("Lockdown write-ahead runtime", () => {
 
     // 冷却是暂停不是永久关闭：过了这段时间，同样的刷群必须能再次锁上。
     const afterCooldown = Date.now() + LOCKDOWN_RETRIGGER_COOLDOWN_MS + 1;
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, afterCooldown);
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, afterCooldown);
     await settleLockdownCalls();
 
     expect(lockdownEntries.has(chatId)).toBeTrue();
@@ -429,7 +429,7 @@ describe("Lockdown write-ahead runtime", () => {
     const chatId = -1012;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
     const applying = lockdownEvents.find((event) =>
       event.type === "lockdown" && event.chatId === chatId
@@ -447,7 +447,7 @@ describe("Lockdown write-ahead runtime", () => {
     lockdownRuntime.deactivateLockdownChat(chatId);
     expect(lockdownRetriggerCooldowns.has(chatId)).toBeFalse();
 
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
     expect(lockdownEntries.has(chatId)).toBeTrue();
   });
@@ -456,7 +456,7 @@ describe("Lockdown write-ahead runtime", () => {
     const chatId = -1009;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
     const applying = lockdownEvents.find((event) =>
@@ -569,7 +569,7 @@ describe("Lockdown write-ahead runtime", () => {
     const chatId = -1008;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
     const applying = lockdownEvents.find((event) =>
@@ -594,7 +594,7 @@ describe("Lockdown write-ahead runtime", () => {
 
     // 冷却期内继续刷群也不再重来一轮公告与 API 往返。
     sentMessages.length = 0;
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
     expect(lockdownEntries.has(chatId)).toBeFalse();
     expect(sentMessages).toEqual([]);
@@ -640,7 +640,7 @@ describe("Lockdown write-ahead runtime", () => {
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
     getChat.mockResolvedValueOnce({});
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     expect(lockdownEntries.get(chatId)?.state).toMatchObject({ kind: "applying", stage: "preparing" });
     await settleLockdownCalls();
 
@@ -660,7 +660,7 @@ describe("Lockdown write-ahead runtime", () => {
     ]);
 
     // 冷却期内继续刷群不再发公告，也不再读权限。
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
     expect(lockdownEntries.has(chatId)).toBeFalse();
     expect(getChat).toHaveBeenCalledTimes(1);
@@ -673,7 +673,7 @@ describe("Lockdown write-ahead runtime", () => {
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
     getChat.mockRejectedValueOnce(failure);
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     expect(lockdownEntries.get(chatId)?.state).toMatchObject({ kind: "applying", stage: "preparing" });
     await settleLockdownCalls();
 
@@ -696,7 +696,7 @@ describe("Lockdown write-ahead runtime", () => {
     const chatId = -1005;
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await Bun.sleep(0);
 
     const applying = lockdownEvents.find((event) => event.type === "lockdown");
@@ -721,7 +721,7 @@ describe("Lockdown write-ahead runtime", () => {
     const failure = new Error("getChat failed before committing lockdown");
     currentPermissions = { can_invite_users: true, can_send_messages: true };
     cacheAdminIds(chatId, new Set(), Date.now());
-    for (let index = 0; index < 46; index++) lockdownRuntime.recordJoin(chatId, Date.now());
+    for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
     const applying = lockdownEvents.find((event) =>

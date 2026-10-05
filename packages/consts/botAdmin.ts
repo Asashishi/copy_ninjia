@@ -72,8 +72,8 @@ export const BOT_ACTION_PERMISSION_KEYS: readonly (keyof BotActionPermissions)[]
 /**
  * 一次没能确证权限位的现查之后，同一个群多久才允许再现查一次。
  *
- * 权限位的按需补齐挂在群消息热路径上（见 `ensureBotChatPermissions`）：成功一次
- * 就写入 State 快照，此后由 `my_chat_member` 维护，正常情况下这道退避不会触发；
+ * 入群洪流上的管理员身份观测会在快照缺失时后台现查（见 `markBotAdminObserved`）：成功
+ * 一次就写入 State 快照，此后由 `my_chat_member` 维护，正常情况下这道退避不会触发；
  * 它只在状态快照缺失或 `getChatMember` 持续失败时限制现查频率。
  */
 export const BOT_PERMISSION_PROBE_RETRY_MS: number = 5 * 60_000;

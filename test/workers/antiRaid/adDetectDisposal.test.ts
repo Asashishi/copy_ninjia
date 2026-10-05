@@ -31,12 +31,12 @@ const {
   deleteReferencedAdMessages,
   deleteStragglerAdMessage,
   disposeAdSender,
-  deleteStaleReferencedAdWarning,
   warnReferencedAdSender,
 } = await import("../../../packages/workers/antiRaid/adDetect/disposal");
 const { adDetectPublishHolder, inFlightReferencedAdCleanupTasks } =
   await import("../../../packages/cache/workers/antiRaid/adDetect");
 const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../../packages/consts/commands");
+const { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } = await import("../../../packages/consts/telegram");
 const { AD_DETECT_MAX_IN_FLIGHT } = await import(
   "../../../packages/consts/antiRaid/adDetect"
 );
@@ -210,13 +210,14 @@ describe("广告处置副作用", () => {
     );
 
     adDetectPublishHolder.current = (): void => {};
+    const totalIds: number = live.pendingDeleteIds.length + live.entries.length;
     await disposeAdSender({ bundle: live, judged: live.entries, verdict: { isAd: true, reason: "引流" } });
 
-    // deleteMessages 只有整体成败：一次带满 152 条会让整批被拒、一条都删不掉，
+    // deleteMessages 只有整体成败：一次带满全部 id 会让整批被拒、一条都删不掉，
     // 比不转存那些 id 还糟。
     expect(deleteMessages).toHaveBeenCalledTimes(2);
-    expect((deleteMessages.mock.calls[0]?.[1] as number[]).length).toBe(100);
-    expect((deleteMessages.mock.calls[1]?.[1] as number[]).length).toBe(52);
+    expect((deleteMessages.mock.calls[0]?.[1] as number[]).length).toBe(TELEGRAM_DELETE_MESSAGES_BATCH_MAX);
+    expect((deleteMessages.mock.calls[1]?.[1] as number[]).length).toBe(totalIds - TELEGRAM_DELETE_MESSAGES_BATCH_MAX);
   });
 
   test("已确证没有删消息权限时仍回投拉黑，但不发送注定失败的删除请求", async (): Promise<void> => {
@@ -397,13 +398,4 @@ describe("广告处置副作用", () => {
     expect(inFlightReferencedAdCleanupTasks.size).toBe(0);
   });
 
-  test("迟到警告可立即撤回，不改动广告消息", () => {
-    deleteStaleReferencedAdWarning(-1001, 555);
-    expect(deleteMessage).toHaveBeenCalledWith(
-      -1001,
-      555,
-      { kind: "guard-api" }
-    );
-    expect(deleteMessages).not.toHaveBeenCalled();
-  });
 });

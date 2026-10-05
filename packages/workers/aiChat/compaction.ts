@@ -11,7 +11,7 @@ import {
   SUMMARY_MAX_CHARS,
   SUMMARY_RETRY_DELAYS_MS,
 } from "../../consts/aiChat/memory";
-import { SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
+import { CURRENT_TIME_LABEL, SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
 import { SELF_SPEAKER_NAME } from "../../consts/aiChat/prompts/transcript";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/workers/aiChat/memory";
@@ -22,7 +22,7 @@ import {
 } from "../../cache/workers/aiChat/replies";
 import type { BufferedMessage } from "../../types/aiChat/memory";
 import type { AiTextResult } from "../../types/aiChat/provider";
-import { currentTimeSentence } from "./timeSentence";
+import { currentTimeSentence } from "../../aiChat/ai/timeSentence";
 import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGeneration";
 
 /**
@@ -182,7 +182,7 @@ async function summarizeBatch(batch: BufferedMessage[], signal: AbortSignal): Pr
   return summaryAiProvider().generateText({
     purpose: "chatSummary",
     systemPrompt: SUMMARY_SYSTEM_PROMPT,
-    userContent: selfNote + batch.map((message: BufferedMessage): string => formatBufferedMessageLine(message, selfId)).join("\n") + "\n\n" + currentTimeSentence(),
+    userContent: selfNote + batch.map((message: BufferedMessage): string => formatBufferedMessageLine(message, selfId)).join("\n") + "\n\n" + currentTimeSentence(CURRENT_TIME_LABEL),
     signal,
     errorLabel: CHAT_SUMMARY_ERROR_LABEL,
     normalize: (text: string): string => {

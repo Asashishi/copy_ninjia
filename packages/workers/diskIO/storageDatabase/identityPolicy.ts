@@ -1,5 +1,5 @@
 import {
-  storagePendingBudget,
+  storagePendingBudgets,
   pendingBlocklistWrites,
   pendingWhitelistWrites,
   storedIdentityIdLookups,
@@ -213,7 +213,7 @@ export function handleIdentityPolicyWrite(
   const current: PendingIdentityPolicyWrite | undefined = pending.get(message.id);
   if (current !== undefined && current.revision >= message.revision) return;
   assertOppositePolicyAbsent(message);
-  storagePendingBudget.reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) - (current === undefined ? 0 : storageWriteCost(current.data)));
+  storagePendingBudgets[message.table].reserve(current === undefined ? 1 : 0, storageWriteCost(message.data) - (current === undefined ? 0 : storageWriteCost(current.data)));
   pending.set(message.id, { data: message.data, revision: message.revision });
   flushIfStorageFull(reply);
 }

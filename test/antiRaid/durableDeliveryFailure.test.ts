@@ -24,6 +24,8 @@ let deliverable: boolean = true;
 /** 屏障回执；不是 flushed 时按「收到了但没落定」处理。 */
 let barrierResult: FlushResult = "flushed";
 const loggerErrors: unknown[][] = [];
+/** durable 投递依次请求的领域屏障。 */
+const flushedDomains: string[] = [];
 
 const realDiskIO = await import("../../packages/infra/diskIO");
 mock.module("../../packages/infra/diskIO", () => ({
@@ -33,7 +35,8 @@ mock.module("../../packages/infra/diskIO", () => ({
     return diskResult;
   },
   // durable 投递只经 verification 与 chatState 两个领域屏障；两者共用同一份结局。
-  flushDiskIODomain: async (): Promise<FlushResult> => {
+  flushDiskIODomain: async (domain: string): Promise<FlushResult> => {
+    flushedDomains.push(domain);
     if (diskResult instanceof Error) throw diskResult;
     return diskResult;
   },
@@ -53,7 +56,7 @@ mock.module("../../packages/antiRaid/workerBridge/controller", () => ({
   postAntiRaid: (message: AntiRaidWorkerMessage): boolean => {
     if (!deliverable) return false;
     if (message.type === "drain") {
-      if (bumpPersistenceOnDrain) antiRaidRuntimeState.persistenceVersion++;
+      if (bumpPersistenceOnDrain) antiRaidRuntimeState.verificationVersion++;
       antiRaidBarrier.settle(message.drainId, barrierResult);
     }
     if (message.type === "barrier") antiRaidBarrier.settle(message.barrierId, barrierResult);
@@ -73,8 +76,10 @@ beforeEach((): void => {
   deliverable = true;
   barrierResult = "flushed";
   loggerErrors.length = 0;
+  flushedDomains.length = 0;
   antiRaidRuntimeState.initialized = true;
-  antiRaidRuntimeState.persistenceVersion = 0;
+  antiRaidRuntimeState.verificationVersion = 0;
+  antiRaidRuntimeState.lockdownVersion = 0;
 });
 
 afterEach((): void => { antiRaidRuntimeState.initialized = false; });
@@ -99,16 +104,32 @@ test("屏障没落定时是普通错误，调用方据此知道 Worker 已经收
 });
 
 test("落盘边界拒绝时聚合原因，同样不是投递失败", async () => {
-  antiRaidRuntimeState.persistenceVersion = 0;
   diskResult = new Error("disk boom");
   const posted: Promise<number> = postAntiRaidDurably([NOTICE]);
-  antiRaidRuntimeState.persistenceVersion = 1;
+  antiRaidRuntimeState.verificationVersion = 1;
+  antiRaidRuntimeState.lockdownVersion = 1;
 
   const error: unknown = await posted.catch((thrown: unknown): unknown => thrown);
   expect(error).toBeInstanceOf(AggregateError);
   expect(error).not.toBeInstanceOf(WorkerUndeliveredError);
   expect((error as AggregateError).errors.map((reason: unknown): string => String(reason)))
     .toEqual(["Error: disk boom", "Error: disk boom"]);
+});
+
+test("只刷变化过的镜像领域：验证变化只刷 verification，lockdown 变化只刷 chatState，都没变不刷", async () => {
+  expect(await postAntiRaidDurably([NOTICE])).toBe(1);
+  expect(flushedDomains).toEqual([]);
+
+  let posted: Promise<number> = postAntiRaidDurably([NOTICE]);
+  antiRaidRuntimeState.verificationVersion++;
+  expect(await posted).toBe(1);
+  expect(flushedDomains).toEqual(["verification"]);
+
+  flushedDomains.length = 0;
+  posted = postAntiRaidDurably([NOTICE]);
+  antiRaidRuntimeState.lockdownVersion++;
+  expect(await posted).toBe(1);
+  expect(flushedDomains).toEqual(["chatState"]);
 });
 
 test("排空在上限轮数内不收敛时按 failed 收场并记录", async () => {

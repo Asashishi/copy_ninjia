@@ -7,11 +7,15 @@ import { waitUntil } from "../../helpers/waitUntil";
 import type { ReplyActionChains, ReplyToolContext, ReplyToolExecution } from "../../../packages/types/aiChat/replies";
 
 const downloadTelegramVisionImage = mock(async (): Promise<null> => null);
-const generateChatImage = mock(async (): Promise<null> => null);
+const generateImage = mock(async (): Promise<null> => null);
 const sendPhotoWithResult = mock(async (): Promise<undefined> => undefined);
 const realTelegram = await import("../../../packages/infra/telegram");
+const realProvider = await import("../../../packages/aiChat/provider");
 mock.module("../../../packages/aiChat/ai/telegramImage", () => ({ downloadTelegramVisionImage }));
-mock.module("../../../packages/aiChat/ai/imageGeneration", () => ({ generateChatImage }));
+mock.module("../../../packages/aiChat/provider", () => ({
+  ...realProvider,
+  imageAiProvider: () => ({ name: "gemini", generateImage }),
+}));
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendPhotoWithResult }));
 
 const { createGenerateImageExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/imageGeneration");
@@ -57,7 +61,7 @@ test("满载媒体队列中的参考生图取消后立即排空动作链并释�
     });
     expect(mediaTaskRunner.activeCount).toBe(MEDIA_DESCRIPTION_MAX_CONCURRENCY);
     expect(downloadTelegramVisionImage).not.toHaveBeenCalled();
-    expect(generateChatImage).not.toHaveBeenCalled();
+    expect(generateImage).not.toHaveBeenCalled();
     expect(sendPhotoWithResult).not.toHaveBeenCalled();
   } finally {
     controller.abort();

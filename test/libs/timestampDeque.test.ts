@@ -51,6 +51,20 @@ describe("TimestampDeque", () => {
     expect(contents(queue)).toEqual([2, 3, 4]);
   });
 
+  test("peekAt 按从最早算起的偏移读取且不移除，回绕后仍正确，越界返回 undefined", () => {
+    const queue = new TimestampDeque(4, 4);
+    for (const value of [1, 2, 3, 4]) queue.push(value);
+    expect(queue.shift()).toBe(1);
+    expect(queue.shift()).toBe(2);
+    queue.push(5);
+    queue.push(6);
+
+    expect([0, 1, 2, 3].map((offset: number): number | undefined => queue.peekAt(offset))).toEqual([3, 4, 5, 6]);
+    expect(queue.peekAt(-1)).toBeUndefined();
+    expect(queue.peekAt(4)).toBeUndefined();
+    expect(queue.size).toBe(4);
+  });
+
   test("按值撤销在回绕前后保持顺序", () => {
     const queue = new TimestampDeque(4, 4);
     for (const value of [1, 2, 3, 4]) queue.push(value);

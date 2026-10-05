@@ -1,6 +1,6 @@
 import { STORAGE_DATABASE_DOMAINS, STORAGE_WRITE_MAX_FAILURES } from "../../../consts/diskIO/business";
 import {
-  storagePendingBudget,
+  resetStoragePendingBudgets,
   storageWriteRetry,
   storageWriteFatalReply,
   pendingAiContextWrites,
@@ -129,21 +129,9 @@ export function flushIfStorageFull(reply: IdentityPersistenceReply): void {
  * @returns true 表示本轮全部变化已 durable 或本来无变化。
  */
 export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
-  if (!hasPendingStorageWrites()) {
-    const removalRevision: number | null = pendingRemovalSnapshotRevision.current;
-    if (removalRevision !== null) {
-      pendingRemovalSnapshotRevision.current = null;
-      reply({
-        type: "identityStoragePersisted",
-        writes: [],
-        temporaryAdBypassWrites: [],
-        chatStateWrites: [],
-        chatQaWrites: [],
-        removalSnapshotRevision: removalRevision,
-      });
-    }
-    return true;
-  }
+  // outbox 快照 revision 只与待写行一同挂起（没有行变化时当场确认，见 pendingRemoval.ts），
+  // 待写缓冲只在提交成功或整表复位时清空，两处都同时清掉 revision：无待写即无待确认的 revision。
+  if (!hasPendingStorageWrites()) return true;
   if (storageWriteFlushTimer.current !== null) {
     clearTimeout(storageWriteFlushTimer.current);
     storageWriteFlushTimer.current = null;
@@ -172,7 +160,7 @@ export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
     scheduleStorageCommit();
     return false;
   }
-  storagePendingBudget.reset();
+  resetStoragePendingBudgets();
   storageWriteRetry.failures = 0;
   storageWriteRetry.retryAt = 0;
   storageWriteRetry.signaled = false;

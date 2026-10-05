@@ -7,7 +7,7 @@
  *
  * prev.then(task, task) 让上一项失败或成功都能推进链；task 须自行 try/catch 到底、
  * 不得 reject（调用方：workers/antiRaid/lockdownApi.ts 的 runLockdownApiCall、
- * workers/aiChat/compaction.ts 的 scheduleRotation）。
+ * workers/aiChat/compaction.ts 的 scheduleRotation、translate/message.ts 的 queueTranslateMessage）。
  */
 export interface KeyedSerialTaskRunner<K> {
   /**

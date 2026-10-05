@@ -7,6 +7,8 @@ import {
   getDateKey,
   getDayStartTimestamp,
   getLocalHour,
+  isCanonicalDateKey,
+  shiftDateKey,
 } from "../../packages/libs/time";
 import type { CurrentTimeResult } from "../../packages/types/time";
 import { adoptTimeZone, getTimeZone } from "../../packages/config/time";
@@ -387,5 +389,22 @@ describe("libs/time UTC 偏移区段缓存", () => {
     adoptTimeZone("Asia/Tokyo");
     expect(getLocalHour(timestampMs)).toBe(5);
     expect(getDayIndex(timestampMs)).toBe(Math.floor((timestampMs + 9 * 3_600_000) / DAY_MS));
+  });
+});
+
+describe("libs/time shiftDateKey 与 isCanonicalDateKey", () => {
+  test("按公历日跨月、跨年、闰日前后平移，结果仍是规范日期键", () => {
+    expect(shiftDateKey("2026-03-01", -1)).toBe("2026-02-28");
+    expect(shiftDateKey("2024-03-01", -1)).toBe("2024-02-29");
+    expect(shiftDateKey("2025-12-31", 1)).toBe("2026-01-01");
+    expect(shiftDateKey("2026-10-05", 0)).toBe("2026-10-05");
+    expect(shiftDateKey("2026-10-05", -30)).toBe("2026-09-05");
+    expect(isCanonicalDateKey(shiftDateKey("2024-02-28", 1))).toBeTrue();
+  });
+
+  test("拒绝格式不符与会被归一化的日期", () => {
+    expect(isCanonicalDateKey("2026-02-28")).toBeTrue();
+    expect(isCanonicalDateKey("2026-02-30")).toBeFalse();
+    expect(isCanonicalDateKey("2026-2-28")).toBeFalse();
   });
 });

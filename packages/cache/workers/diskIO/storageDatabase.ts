@@ -2,8 +2,11 @@
 
 import { closeStorageDatabase } from "../../../database/interact/connection";
 import { StorageWriteBudget } from "../../../libs/storageWriteBudget";
-import type { PendingBlockedRemoval } from "../../../types/blocklist";
-import type { IdentityPersistenceReply, StorageDatabaseDomain } from "../../../types/diskIO/replies";
+import type {
+  BudgetedStorageDomain,
+  IdentityPersistenceReply,
+  StorageDatabaseDomain,
+} from "../../../types/diskIO/replies";
 import type {
   StorageDatabase,
   StorageDatabaseWriter,
@@ -19,8 +22,24 @@ import type {
 import type { PendingTemporaryAdBypassWrite } from
   "../../../types/temporaryAdBypass";
 
-/** 六表共同的条目与字节预算；写前预约、事务成功清空，重建由主线程重放。 */
-export const storagePendingBudget: StorageWriteBudget = new StorageWriteBudget();
+/**
+ * 六表各自的未 ACK 条目与字节预算，上限与主线程逐领域准入一致，保证 Worker 重建时
+ * 主线程重放的已接纳写入一定装得下。写前预约、事务成功由 resetStoragePendingBudgets
+ * 全部清空；容量固定六项；Worker 重建后为新 isolate 的初值，由主线程重放重新预约。
+ */
+export const storagePendingBudgets: Readonly<Record<BudgetedStorageDomain, StorageWriteBudget>> = {
+  whitelist: new StorageWriteBudget(),
+  blocklist: new StorageWriteBudget(),
+  temporaryAdBypass: new StorageWriteBudget(),
+  blocklistRemovalOutbox: new StorageWriteBudget(),
+  chatState: new StorageWriteBudget(),
+  chatQa: new StorageWriteBudget(),
+};
+
+/** 统一事务成功或 Worker 重置时清空全部领域预算。 */
+export function resetStoragePendingBudgets(): void {
+  for (const budget of Object.values(storagePendingBudgets)) budget.reset();
+}
 
 /** 连续失败与重试截止；成功或重建复位，达到失败上限通知宿主一次。 */
 export const storageWriteRetry: { failures: number; retryAt: number; signaled: boolean } = {
@@ -110,7 +129,7 @@ export const pendingChatStateWrites: Map<number, PendingChatStateWrite> = new Ma
 /**
  * 群问答未提交最终值，外层按群、内层按问题文本。
  *
- * 活跃问答受群数和每群容量限制；删除墓碑与正文共同占用 storagePendingBudget，
+ * 活跃问答受群数和每群容量限制；删除墓碑与正文共同占用 chatQa 领域预算，
  * 超限拒收新事实，提交成功后才释放，Worker 重建由主线程重放未 ACK 最终值。
  * 一群的最后一条被提交或删除后，外层那一项随之移除，空 Map 不留存。
  */
@@ -128,26 +147,19 @@ export const pendingChatQaEntryCount: { current: number } = { current: 0 };
  * AI 上下文未提交最终值，按群一份；事务内排在群状态之后按主键更新 `ai_context`，
  * 群行不存在时不插入。填充：aiMemoryStorage.ts 按 revision 接受 upsert 或删除时覆盖；
  * 清理：提交成功后由 flush 摘除，失败保留重试，resetStorageDatabaseCache 清空。容量：
- * 每群至多一项，上界 AI_MEMORY_MAX_CHATS，不计入 storagePendingBudget。Worker 重建后为空，
+ * 每群至多一项，上界 AI_MEMORY_MAX_CHATS，不计入 storagePendingBudgets。Worker 重建后为空，
  * 主线程重放最新快照与未确认删除墓碑。
  */
 export const pendingAiContextWrites: Map<number, PendingAiContextWrite> = new Map();
 
 /**
- * Worker 当前待踢成员权威快照。启动从 SQLite 恢复，之后由主线程完整快照替换；
- * 只用于计算行级 diff，容量受 outbox 业务硬顶
+ * Worker 当前待踢成员权威快照的已编码规范文本，按 removalId 索引，只用于计算
+ * 行级 diff。启动从 SQLite 恢复，之后由主线程完整快照替换；容量受 outbox 业务硬顶
  * （BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES）约束。
  *
  * 清理：每次主线程快照整体替换时按 diff 删除消失的行，
  * resetStorageDatabaseCache 整表清空。Worker 重建：从 SQLite 重新 hydrate，
  * 随后主线程重放最新 outbox 快照。
- */
-export const removalSnapshot: Map<number, PendingBlockedRemoval> = new Map();
-
-/**
- * 与 removalSnapshot 逐主键对齐的已编码规范文本，只用于行级变更比较。
- * hydrate、快照替换与删除路径必须让两张 Map 同增同删，容量与清理因此逐字
- * 跟随 removalSnapshot。
  */
 export const removalSnapshotData: Map<number, string> = new Map();
 
@@ -185,7 +197,7 @@ export function noteStorageWriteRejected(domain: StorageDatabaseDomain): void {
 
 /** Worker load/重建前重置同 isolate 状态，避免重复显式 hydrate 污染。 */
 export function resetStorageDatabaseCache(): void {
-  storagePendingBudget.reset();
+  resetStoragePendingBudgets();
   storageWriteRetry.failures = 0;
   storageWriteRetry.retryAt = 0;
   storageWriteRetry.signaled = false;
@@ -201,7 +213,6 @@ export function resetStorageDatabaseCache(): void {
   pendingChatQaWrites.clear();
   pendingChatQaEntryCount.current = 0;
   pendingAiContextWrites.clear();
-  removalSnapshot.clear();
   removalSnapshotData.clear();
   pendingRemovalSnapshotRevision.current = null;
   latestRemovalSnapshotRevision.current = 0;

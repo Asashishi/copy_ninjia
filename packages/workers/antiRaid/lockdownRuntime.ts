@@ -21,6 +21,7 @@ import {
   lastLockdownIntentId,
   lockdownApiChains,
   lockdownEntries,
+  lockdownRetriggerCooldowns,
 } from "../../cache/workers/antiRaid/lockdown";
 import type { UnlockEvent } from
   "../../types/antiRaid/events";
@@ -42,7 +43,6 @@ import { trackAntiRaidTask } from "./taskTracker";
 import {
   beginLockdownRetriggerCooldown,
   clearJoinWindow,
-  clearJoinWindowCooldown,
   recordJoinWindow,
   stopJoinWindowRuntime,
 } from "./lockdownJoinWindow";
@@ -276,7 +276,7 @@ export function handleLockdownPersisted(msg: LockdownPersistedMessage): void {
 export function deactivateLockdownChat(chatId: number): void {
   clearJoinWindow(chatId);
   // 守卫都关了，重新开启时不该背着上一次的作废冷却继续不设防。
-  clearJoinWindowCooldown(chatId);
+  lockdownRetriggerCooldowns.delete(chatId);
   dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
 }
 

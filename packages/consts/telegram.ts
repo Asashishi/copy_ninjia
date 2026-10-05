@@ -186,36 +186,59 @@ export const TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES: number = 50 * 1024 * 1024;
  */
 export const TELEGRAM_DELETE_MESSAGES_BATCH_MAX: number = 100;
 
-/** grammY 全局发送桶允许等待的消息上限；与 TELEGRAM_429_RETRY_QUEUE_MAX 分开计数。 */
+/**
+ * 发送调度器全部聊天合计允许排队的发送请求数（不含各聊天在途的那一条）；超出即拒绝新请求。
+ * 与 TELEGRAM_429_RETRY_QUEUE_MAX 分开计数。所属模块：infra/telegram/sendScheduler.ts。
+ */
 export const TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX: number = 8_192;
 /**
  * 全部 Telegram 429 退避域合计允许保留的任务数，正常在途请求不计入。
  *
- * 取 TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX 的 4 倍：message 类进入 429 队列之前已被
- * grammY 全局桶限在其以内，其余 13 个类别不经过任何发送桶。本值只是内存硬顶，
+ * 取 TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX 的 4 倍：发送类不进入这些队列，由发送调度器
+ * 按聊天排队并限在其以内，其余 13 个类别不经过任何发送限流。本值只是内存硬顶，
  * 超出即拒绝并交还领域 owner，不承担持久化。所属模块：infra/telegram/outboundQueue.ts。
  */
 export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 4 * TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX;
-/** grammY 全局发送桶每个刷新周期放行的发送请求数（插件默认的每秒 30 次）；所属模块：infra/telegram/messageThrottler.ts。 */
-export const TELEGRAM_MESSAGE_GLOBAL_RESERVOIR: number = 30;
-/** grammY 全局发送桶的刷新周期；所属模块：infra/telegram/messageThrottler.ts。 */
-export const TELEGRAM_MESSAGE_GLOBAL_REFRESH_INTERVAL_MS: number = 1_000;
 /**
- * grammY 单群发送桶允许等待的消息上限；超出即拒绝新消息。单群只串行保序、不设
- * 独立速率，积压的排空时长取决于全局桶、请求往返与 429 退避。
+ * 单个群类聊天（负数 id 或 `@username`）允许排队的发送请求数；超出即拒绝新请求。
+ * 所属模块：infra/telegram/sendScheduler.ts。
  */
 export const TELEGRAM_MESSAGE_GROUP_PENDING_MAX: number = 128;
-/** grammY 单私聊发送桶允许等待的消息上限；防止单一目标无限占用内存。 */
+/** 单个私聊允许排队的发送请求数；防止单一目标无限占用内存。所属模块：infra/telegram/sendScheduler.ts。 */
 export const TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX: number = 256;
+/**
+ * 全局滑动窗口内最多放行的发送条数，对应 Telegram FAQ「not able to broadcast more than
+ * about 30 messages per second」；所有聊天共用。所属模块：infra/telegram/sendScheduler.ts。
+ */
+export const TELEGRAM_SEND_GLOBAL_LIMIT: number = 30;
+/** 全局发送窗口长度。所属模块：infra/telegram/sendScheduler.ts。 */
+export const TELEGRAM_SEND_GLOBAL_WINDOW_MS: number = 1_000;
+/**
+ * 单聊天令牌桶的正常突发容量：安静一段时间后可连发这么多条，之后按
+ * TELEGRAM_SEND_CHAT_REFILL_MS 每条补一个（Telegram FAQ：单聊天约每秒 1 条，允许短突发）。
+ * 所属模块：infra/telegram/sendScheduler.ts。
+ */
+export const TELEGRAM_SEND_CHAT_BURST: number = 3;
+/** 单聊天令牌桶补一个令牌的间隔。所属模块：infra/telegram/sendScheduler.ts。 */
+export const TELEGRAM_SEND_CHAT_REFILL_MS: number = 1_000;
+/**
+ * 聊天收到 429 后，冻结结束起算的保守档时长：期间突发容量降为 1，再次 429 则顺延。
+ * 所属模块：infra/telegram/sendScheduler.ts。
+ */
+export const TELEGRAM_SEND_CHAT_CAUTIOUS_MS: number = 60_000;
+/**
+ * 群类聊天滑动窗口内最多发送的条数，对应 Telegram FAQ「In a group, bots are not be able
+ * to send more than 20 messages per minute」。所属模块：infra/telegram/sendScheduler.ts。
+ */
+export const TELEGRAM_SEND_GROUP_LIMIT: number = 20;
+/** 群类聊天发送窗口长度，也是空闲车道的保留时长。所属模块：infra/telegram/sendScheduler.ts。 */
+export const TELEGRAM_SEND_GROUP_WINDOW_MS: number = 60_000;
 /** 429 缺失合法 retry_after 时采用的保守短退避；后续响应仍以服务端值为准。 */
 export const TELEGRAM_429_FALLBACK_RETRY_MS: number = 1_000;
 /** 429 冷却后的单类别恢复并发上限；窗口从 1 起，仅在真实成功后逐步增长。 */
 export const TELEGRAM_429_RECOVERY_MAX_CONCURRENT: number = 32;
 /** 单个 JavaScript timer 可安全表达的最大毫秒延迟，超长 retry_after 分段等待。 */
 export const TELEGRAM_TIMER_MAX_DELAY_MS: number = 2_147_483_647;
-
-/** 标题回填的最大并发 getChat 数，限制低优先级维护占用 Telegram 总闸。 */
-export const CHAT_TITLE_REFRESH_CONCURRENCY: number = 25;
 
 /**
  * 自发消息登记表（见 infra/selfSentTracker.ts）的存活时长：只需覆盖「发送 →

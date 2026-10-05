@@ -6,7 +6,6 @@ import type { RemoveBlockedMembersParams } from "../../packages/types/blocklist"
 const blockedIds = new Set<number>();
 const errorLogs: string[] = [];
 const requestBlocklistResweep = mock((_chatId: number, _nextRetryAt?: number): void => {});
-const ensureBotChatPermissions = mock((_chatId: number): void => {});
 const deleteMessageWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "deleted");
 let removalCounter: number = 0;
 let trackFails: boolean = false;
@@ -33,7 +32,6 @@ mock.module("../../packages/infra/blocklist/outbox", () => ({
 mock.module("../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
 mock.module("../../packages/infra/botAdmin", () => ({
   botCanDeleteMessagesIn: (): boolean | undefined => canDeleteMessages,
-  ensureBotChatPermissions,
 }));
 mock.module("../../packages/infra/telegram/actions", () => ({ deleteMessageWithOutcome }));
 
@@ -51,7 +49,6 @@ beforeEach(() => {
   errorLogs.length = 0;
   recentBlockedJoinCounts.clear();
   requestBlocklistResweep.mockClear();
-  ensureBotChatPermissions.mockClear();
   deleteMessageWithOutcome.mockClear();
   deleteMessageWithOutcome.mockImplementation(async (): Promise<string> => "deleted");
   removalCounter = 0;
@@ -73,7 +70,6 @@ describe("已拉黑频道身份的漏网消息", () => {
 
     expect(await deleteBlockedSenderChatMessage(senderChatMessage())).toBeTrue();
 
-    expect(ensureBotChatPermissions).toHaveBeenCalledWith(-1001);
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 77);
   });
 

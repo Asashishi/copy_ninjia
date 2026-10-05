@@ -240,6 +240,45 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     expect(transientDescriptionCache.has("new-uid")).toBe(false);
   });
 
+  test("整包生成只在结算时让贴纸菜单失效一次，生成途中工具声明保持不变", async () => {
+    getStickerSetMock.mockImplementationOnce(async () => ({
+      title: "新包",
+      stickers: [sticker("menu-a", "😂"), sticker("menu-b", "😭"), sticker("menu-c", "😡")],
+    }));
+    const revisions: number[] = [];
+    describeMediaForStickerCatalogMock.mockImplementation(async () => {
+      revisions.push(stickerMenuRevision.current);
+      return generatedText("一张贴纸");
+    });
+    generateTextMock.mockImplementationOnce(async () => generatedText("一包表情"));
+    const before: number = stickerMenuRevision.current;
+
+    await generatePackCatalog("pack_menu_once");
+
+    expect(revisions).toEqual([before, before, before]);
+    expect(stickerMenuRevision.current).toBe(before + 1);
+  });
+
+  test("剪枝当场让贴纸菜单失效，新增描述仍只在结算时再失效一次", async () => {
+    hydrateStickerCatalogs(persisted("pack_prune_menu", { "gone-uid": { emoji: "😭", description: "已被移出包的贴纸" } }));
+    getStickerSetMock.mockImplementationOnce(async () => ({
+      title: "剪枝包",
+      stickers: [sticker("added-a", "😂"), sticker("added-b", "😡")],
+    }));
+    const revisions: number[] = [];
+    describeMediaForStickerCatalogMock.mockImplementation(async () => {
+      revisions.push(stickerMenuRevision.current);
+      return generatedText("一张贴纸");
+    });
+    generateTextMock.mockImplementationOnce(async () => generatedText("一包表情"));
+    const before: number = stickerMenuRevision.current;
+
+    await generatePackCatalog("pack_prune_menu");
+
+    expect(revisions).toEqual([before + 1, before + 1]);
+    expect(stickerMenuRevision.current).toBe(before + 2);
+  });
+
   test("目录有、线上已经没有的剪：不再出现在线上列表的条目被删除", async () => {
     hydrateStickerCatalogs(persisted("pack_prune", { "stale-uid": { emoji: "😭", description: "已经不存在的贴纸" } }));
     expect(getCatalogEntry("stale-uid")).toBeDefined();

@@ -124,7 +124,6 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 const {
   botCanDeleteMessagesIn,
   botChatPermissionsIn,
-  ensureBotChatPermissions,
   forgetBotChatPermissions,
   handleMyChatMemberUpdate,
   invalidateBotAdminStatus,
@@ -138,7 +137,6 @@ const {
   botPermissionRequestTokens,
 } =
   await import("../../packages/cache/main/botAdmin");
-const { BOT_PERMISSION_PROBE_RETRY_MS } = await import("../../packages/consts/botAdmin");
 
 const CHAT_ID: number = -1001;
 /** 观察者收到的每一次广播，供断言镜像内容与次数。 */
@@ -451,57 +449,17 @@ describe("机器人自身权限 State 快照", () => {
     expect(statePermissions()).toEqual(botPermissions({ canRestrictMembers: true }));
   });
 
-  test("按需补齐只现查一次，随后是纯内存命中", async () => {
-    observe();
-    ensureBotChatPermissions(CHAT_ID);
-    ensureBotChatPermissions(CHAT_ID);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(getChatMemberCalls).toBe(1);
-    expect(broadcasts).toHaveLength(1);
-    ensureBotChatPermissions(CHAT_ID);
-    expect(getChatMemberCalls).toBe(1);
-  });
-
-  test("补齐失败后退避，不让一场刷屏换来每条消息一次注定失败的现查", async () => {
-    getChatMemberFails = true;
-    ensureBotChatPermissions(CHAT_ID, 1_000);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(getChatMemberCalls).toBe(1);
-
-    // 退避窗口内不再重试。
-    ensureBotChatPermissions(CHAT_ID, 1_000 + BOT_PERMISSION_PROBE_RETRY_MS - 1);
-    expect(getChatMemberCalls).toBe(1);
-
-    getChatMemberFails = false;
-    ensureBotChatPermissions(CHAT_ID, 1_000 + BOT_PERMISSION_PROBE_RETRY_MS);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(getChatMemberCalls).toBe(2);
-    // 成功之后退避记录一并清掉，不留历史群条目。
-    expect(botPermissionProbeBackoff.has(CHAT_ID)).toBeFalse();
-  });
-
-  test("探测发现非管理员时写入全 false 快照，后续消息不再重查", async () => {
+  test("现查发现非管理员时写入全 false 快照，后续读取不再重查", async () => {
     member = completeMember({ status: "member" });
 
-    ensureBotChatPermissions(CHAT_ID, 1_000);
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await botChatPermissionsIn(CHAT_ID);
     expect(getChatMemberCalls).toBe(1);
-    expect(botPermissionProbeBackoff.has(CHAT_ID)).toBeFalse();
     expect(statePermissions()).toEqual(botPermissions({
       isAdministrator: false,
       canManageChat: false,
     }));
 
-    // State 快照命中，不依赖退避节流。
-    ensureBotChatPermissions(CHAT_ID, 1_000);
-    expect(getChatMemberCalls).toBe(1);
-    ensureBotChatPermissions(CHAT_ID, 1_000 + BOT_PERMISSION_PROBE_RETRY_MS);
+    await botChatPermissionsIn(CHAT_ID);
     expect(getChatMemberCalls).toBe(1);
   });
 

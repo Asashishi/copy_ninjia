@@ -109,14 +109,16 @@ export async function drainAntiRaid(
     const receiptBarrier: FlushResult =
       await barrierAntiRaidMailbox(remainingMonotonicTime(deadline));
     if (receiptBarrier !== "flushed") return receiptBarrier;
-    const persistenceVersionBeforeTasks: number =
-      antiRaidRuntimeState.persistenceVersion;
+    const verificationVersionBeforeTasks: number =
+      antiRaidRuntimeState.verificationVersion;
+    const lockdownVersionBeforeTasks: number =
+      antiRaidRuntimeState.lockdownVersion;
     const taskResult: FlushResult =
       await drainAntiRaidWorkerTasks(remainingMonotonicTime(deadline));
     if (taskResult !== "flushed") return taskResult;
     if (
-      antiRaidRuntimeState.persistenceVersion ===
-      persistenceVersionBeforeTasks
+      antiRaidRuntimeState.verificationVersion === verificationVersionBeforeTasks &&
+      antiRaidRuntimeState.lockdownVersion === lockdownVersionBeforeTasks
     ) {
       return "flushed";
     }
@@ -135,22 +137,30 @@ function containsBlockedRemoval(messages: readonly AntiRaidWorkerMessage[]): boo
   return false;
 }
 
+/** 本次 durable 投递期间哪些 Anti-Raid 镜像发生了变化。 */
+interface ChangedAntiRaidMirrors {
+  readonly verification: boolean;
+  readonly lockdown: boolean;
+}
+
 /**
  * Anti-Raid 镜像的领域落盘屏障：待验证镜像在 `verification` 领域，锁定记录随群状态
- * 在共享 SQLite 的 `chatState` 领域。两道屏障各自只刷自己那一格，其它领域的攒批
- * 窗口不受影响；停机排空仍走统一 flush（见 drainAntiRaid）。
+ * 在共享 SQLite 的 `chatState` 领域。只刷发生变化的那一格：`chatState` 屏障会提交
+ * 整个共享 SQLite 事务，验证镜像变化不需要它；其它领域的攒批窗口不受影响，停机排空
+ * 仍走统一 flush（见 drainAntiRaid）。未变化的领域按已刷新结算。
  */
 function flushAntiRaidMirrors(
+  changed: ChangedAntiRaidMirrors,
   timeoutMs: number
 ): Promise<[PromiseSettledResult<FlushResult>, PromiseSettledResult<FlushResult>]> {
   return Promise.allSettled([
-    flushDiskIODomain("verification", timeoutMs),
-    flushDiskIODomain("chatState", timeoutMs),
+    changed.verification ? flushDiskIODomain("verification", timeoutMs) : "flushed",
+    changed.lockdown ? flushDiskIODomain("chatState", timeoutMs) : "flushed",
   ]);
 }
 
 /**
- * update 安全交接：处理 mailbox 后，仅在镜像变化时经领域屏障落盘 Anti-Raid 镜像。
+ * update 安全交接：处理 mailbox 后，仅为变化过的 Anti-Raid 镜像经对应领域屏障落盘。
  * @returns 真正投给 Worker 的消息条数。durable 对账可能把整批
  *   removeBlockedMembers 扣下（见 prepareDurableAntiRaidMessages），此时本函数
  *   正常 resolve 但一条都没投出去——调用方若把「没抛错」当成「已投递」就会
@@ -171,8 +181,8 @@ export async function postAntiRaidDurably(
   }
   if (messagesToPost.length === 0) return 0;
   const postedCount: number = messagesToPost.length;
-  const persistenceVersionBefore: number =
-    antiRaidRuntimeState.persistenceVersion;
+  const verificationVersionBefore: number = antiRaidRuntimeState.verificationVersion;
+  const lockdownVersionBefore: number = antiRaidRuntimeState.lockdownVersion;
   for (const message of messagesToPost) {
     // 只有这一条路径代表「Worker 压根没收到」。下面的屏障失败与落盘失败都
     // 意味着它已经收下并在后台执行；两者仍要保留 durable 镜像，但错误类型
@@ -186,15 +196,15 @@ export async function postAntiRaidDurably(
   if (barrierResult !== "flushed") {
     throw new Error(`Anti-Raid Worker barrier ${barrierResult}.`);
   }
-  if (
-    antiRaidRuntimeState.persistenceVersion === persistenceVersionBefore
-  ) {
-    return postedCount;
-  }
+  const changed: ChangedAntiRaidMirrors = {
+    verification: antiRaidRuntimeState.verificationVersion !== verificationVersionBefore,
+    lockdown: antiRaidRuntimeState.lockdownVersion !== lockdownVersionBefore,
+  };
+  if (!changed.verification && !changed.lockdown) return postedCount;
   const persistenceResults: [
     PromiseSettledResult<FlushResult>,
     PromiseSettledResult<FlushResult>
-  ] = await flushAntiRaidMirrors(ANTI_RAID_BARRIER_TIMEOUT_MS);
+  ] = await flushAntiRaidMirrors(changed, ANTI_RAID_BARRIER_TIMEOUT_MS);
   const failures: unknown[] = persistenceResults
     .filter(
       (

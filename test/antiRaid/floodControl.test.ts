@@ -10,8 +10,6 @@ import { temporaryAdBypassActivityCache } from
   "../../packages/cache/main/temporaryAdBypass";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
-import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
-import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
 import { TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD, TEMPORARY_AD_BYPASS_REQUIRED_DAYS } from "../../packages/consts/temporaryAdBypass";
 import { chatStateOf } from "../helpers/chatState";
 
@@ -74,27 +72,20 @@ describe("刷屏计数的主线程投递门禁", () => {
       chatId: -1001,
       userId: 7,
       observedAt: OBSERVED_AT,
-      label: "刷屏怪",
+      name: "刷屏怪",
     });
 
     // 有公开用户名时优先用 @username，与其它播报同源（users/userLabel.ts）。
     const named: FloodCandidateMessage | undefined = candidate(
       groupMessage({ from: { id: 7, is_bot: false, first_name: "刷屏怪", username: "noisy" } } as Partial<Message>)
     );
-    expect(named?.label).toBe("@noisy");
+    expect(named?.name).toBe("@noisy");
   });
 
-  test("无名发送者的标签兜底随本进程文案风格切换", () => {
-    const nameless: Message = groupMessage({ from: { id: 7, is_bot: false, first_name: "" } } as Partial<Message>);
-    expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true }))?.label)
-      .toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser);
-    botAtmosphereState.current = "plain";
-    try {
-      expect(candidate(nameless, chatStateOf({ isFloodControlEnabled: true }))?.label)
-        .toBe(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.unknownUser);
-    } finally {
-      botAtmosphereState.current = "teasing";
-    }
+  test("昵称原样交给 Worker，清洗与兜底称呼只在真的禁言时做", () => {
+    const raw: string = "\u202e刷屏  怪 ";
+    expect(candidate(groupMessage({ from: { id: 7, is_bot: false, first_name: raw } } as Partial<Message>))?.name).toBe(raw);
+    expect(candidate(groupMessage({ from: { id: 7, is_bot: false, first_name: "" } } as Partial<Message>))?.name).toBe("");
   });
 
   test("只认超级群：restrictChatMember 在普通群和私聊里根本不适用", () => {

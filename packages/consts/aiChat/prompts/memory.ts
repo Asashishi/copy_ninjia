@@ -183,3 +183,9 @@ export const SUMMARY_SYSTEM_PROMPT: string =
 export const TIME_AWARENESS_INSTRUCTION: string =
   `聊天记录每行行首方括号里只有那条消息的时分秒，它属于哪一天看它上方最近一条「${transcriptDateHeader("年/月/日")}」分隔行；` +
   "回答时间/日期相关的问题、或判断某句话是多久之前说的，都要把这两半合起来当作真实时间，不要只看时分秒、也不要默认所有消息都是今天的，更不要编造。";
+
+/**
+ * 运行时状态区块与压缩批末尾的当前时间句前缀。所属模块：aiChat/ai/timeSentence.ts
+ * （调用方 workers/aiChat/runtimeState.ts、compaction.ts）。
+ */
+export const CURRENT_TIME_LABEL: string = "当前实际时间";

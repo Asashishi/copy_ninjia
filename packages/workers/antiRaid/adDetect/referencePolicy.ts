@@ -88,11 +88,6 @@ export function hasActiveReferencedAdWarning(key: string, receivedAt: number): b
   return false;
 }
 
-/** 引用类广告升级为 block 后清掉旧警告，避免无用途地占着容量。 */
-export function clearReferencedAdWarning(key: string): void {
-  referencedAdWarningStates.delete(key);
-}
-
 /** 停管或关闭广告检测时清掉该群的全部发送中/已警告状态。 */
 export function clearChatReferencedAdWarnings(chatId: number): void {
   const prefix: string = verificationKeyPrefix(chatId);

@@ -153,10 +153,10 @@ export async function handleInfoCommand(ctx: CommandContext<Context>): Promise<v
     target,
     selfUser: target.id === ctx.me.id ? ctx.me : undefined,
   };
-  const accepted: boolean = submitDeferredCommand(
-    "interactive",
-    (): Promise<void> => deliverInfo(request),
-    "Unexpected error while processing /info:"
-  );
+  const accepted: boolean = submitDeferredCommand({
+    priority: "interactive",
+    task: (): Promise<void> => deliverInfo(request),
+    errorLabel: "Unexpected error while processing /info:",
+  });
   if (!accepted) await sendCommandMessage({ chatId, text: atmosphere.INFO_TEXTS.busy, replyToMessageId: messageId });
 }

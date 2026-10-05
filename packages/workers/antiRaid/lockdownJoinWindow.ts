@@ -30,11 +30,6 @@ export function clearJoinWindow(chatId: number): void {
   joinWindows.delete(chatId);
 }
 
-/** 删除某群的重触发冷却；群停用后重新开启时不得继承旧冷却。 */
-export function clearJoinWindowCooldown(chatId: number): void {
-  lockdownRetriggerCooldowns.delete(chatId);
-}
-
 /**
  * 每群只保留一个静默清理 timer。持续入群只更新 expiresAt；旧 timer 到点后若
  * 仍未静默，再按剩余时间续排，避免每条入群创建并立即丢弃 timer 与闭包。

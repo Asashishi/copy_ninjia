@@ -26,7 +26,7 @@ export const FLOOD_MUTE_DURATION_MS: number = 3 * 60_000;
  * 禁言请求从「算好 until_date」到「真的发出去」的容忍上限；超过就放弃这次禁言
  * （抑制位回滚，下一个满窗口重来）。
  *
- * until_date 是**入队前**算好的绝对时刻。restrict 请求不走消息 throttler，
+ * until_date 是**入队前**算好的绝对时刻。restrict 请求不进发送调度器，
  * 但若 Telegram 返回 429，它仍会在 restrict 类独立车道按 retry_after 等待；
  * 排到 until_date 距当下不足 30 秒时，Bot API 把它当成**永久限制**，而本模块
  * 明确不排恢复计时器、也不落盘，那个人就被无声地永久禁言了，只能人工解除。
@@ -40,9 +40,9 @@ export const FLOOD_MUTE_DISPATCH_TIMEOUT_MS: number = FLOOD_MUTE_DURATION_MS - 6
  * 禁言公告从「禁言已落地」到「真的发出去」的容忍上限；超过就不发这条公告，
  * 但禁言本身仍然照做——被按住的人到点自行恢复，不依赖这条公告。
  *
- * 公告与欢迎语、验证提醒等聊天消息共用 grammY 的同群发送桶；超时的公告被丢弃
- * 时，也给验证提醒等功能性消息腾出了发送位。kick/restrict 走独立 429 域，不受
- * 这个消息桶影响。
+ * 公告与欢迎语、验证提醒等聊天消息排在发送调度器里本群的同一条发送车道；超时的公告
+ * 被丢弃时，也给验证提醒等功能性消息让出了排队位置与额度。kick/restrict 走独立 429 域，
+ * 不受这条发送车道影响。
  */
 export const FLOOD_NOTICE_DISPATCH_TIMEOUT_MS: number = 30_000;
 

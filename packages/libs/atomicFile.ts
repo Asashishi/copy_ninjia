@@ -92,13 +92,6 @@ export async function syncDirectory(path: string): Promise<void> {
   }
 }
 
-/** rename 后同步涉及的目录项；atomicWriteText 用它把临时文件发布到目标路径。 */
-async function durableRename(sourcePath: string, destinationPath: string): Promise<void> {
-  await rename(sourcePath, destinationPath);
-  await syncDirectory(destinationPath);
-  if (dirname(sourcePath) !== dirname(destinationPath)) await syncDirectory(sourcePath);
-}
-
 /** 同步 path 所在目录的目录项，供唯一的磁盘 I/O Worker 使用。 */
 export function syncDirectorySync(path: string): void {
   const fd: number = openSync(dirname(path), "r");
@@ -231,7 +224,9 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
   }
 
   try {
-    await durableRename(tmpPath, path);
+    // 临时文件与目标同目录（见 temporaryPath），rename 后只需同步这一个目录项。
+    await rename(tmpPath, path);
+    await syncDirectory(path);
   } catch (error: unknown) {
     await Bun.file(tmpPath).delete().catch((): undefined => undefined);
     throw error;

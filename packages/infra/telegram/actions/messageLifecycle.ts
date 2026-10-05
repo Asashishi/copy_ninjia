@@ -206,8 +206,6 @@ export interface DeleteMessageAfterParams {
   messageId: number;
   delayMs: number;
   api?: TelegramMessageDeletionApi;
-  /** 停机提前兑现时按客户端与群合批；正常到期仍只删除本条。 */
-  batchOnFlush?: boolean;
 }
 
 /** 认领一条待删消息并启动统一 Telegram 删除；timer 与停机 drain 只会成功一次。 */
@@ -250,13 +248,11 @@ export function deleteMessageAfter({
   messageId,
   delayMs,
   api = telegramApi,
-  batchOnFlush = false,
 }: DeleteMessageAfterParams): void {
   const entry: PendingMessageDeletion = {
     chatId,
     messageId,
     api,
-    batchOnFlush,
     timer: setTimeout((): void => startMessageDeletion(entry), delayMs),
   };
   entry.timer.unref();
@@ -264,16 +260,13 @@ export function deleteMessageAfter({
 }
 
 /**
- * 立即认领全部未到期条目，并返回本线程当前所有在途删除句柄。Worker 可把这些
+ * 立即认领全部未到期条目，按客户端与群合批（每批不超过 TELEGRAM_DELETE_MESSAGES_BATCH_MAX）
+ * 发 deleteMessages，并返回本线程当前所有在途删除句柄。正常到期仍逐条删除。Worker 可把这些
  * Promise 接入自己的 task tracker；主线程 drain 也复用它，避免两套兑现逻辑。
  */
 export function flushPendingMessageDeletions(): readonly Promise<void>[] {
   const batches: Map<TelegramMessageDeletionApi, Map<number, PendingMessageDeletion[]>> = new Map();
-  for (const entry of [...pendingMessageDeletions]) {
-    if (!entry.batchOnFlush) {
-      startMessageDeletion(entry);
-      continue;
-    }
+  for (const entry of pendingMessageDeletions) {
     let byChat: Map<number, PendingMessageDeletion[]> | undefined =
       batches.get(entry.api);
     if (byChat === undefined) {

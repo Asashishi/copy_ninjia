@@ -60,10 +60,10 @@ export async function handleHImageCommand(ctx: CommandContext<Context>): Promise
     return;
   }
   const request: HImageRequest = { chatId, messageId, messageThreadId: forumTopicThreadId(ctx.msg) };
-  const accepted: boolean = submitDeferredCommand(
-    "interactive",
-    (): Promise<void> => deliverRandomImage(request),
-    "Unexpected error while processing /h_image request:"
-  );
+  const accepted: boolean = submitDeferredCommand({
+    priority: "interactive",
+    task: (): Promise<void> => deliverRandomImage(request),
+    errorLabel: "Unexpected error while processing /h_image request:",
+  });
   if (!accepted) await sendCommandMessage({ chatId, text: texts.busy, replyToMessageId: messageId });
 }

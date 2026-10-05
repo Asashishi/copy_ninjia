@@ -2,10 +2,11 @@ import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { STORAGE_PENDING_MAX_ENTRIES, STORAGE_PENDING_MAX_BYTES, STORAGE_WRITE_MAX_FAILURES } from "../../../packages/consts/diskIO/business";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
 import { IDENTITY_WRITE_BATCH_MAX_ENTRIES, IDENTITY_WRITE_FLUSH_INTERVAL_MS } from "../../../packages/consts/identityStorage";
-import { pendingTemporaryAdBypassWrites, resetStorageDatabaseCache, storageDatabaseHandle, storageWriteFatalReply, storageWriteRetry } from "../../../packages/cache/workers/diskIO/storageDatabase";
+import { pendingBlocklistWrites, pendingTemporaryAdBypassWrites, resetStorageDatabaseCache, storageDatabaseHandle, storageWriteFatalReply, storageWriteRetry } from "../../../packages/cache/workers/diskIO/storageDatabase";
 import { openStorageDatabase } from "../../../packages/database/interact/connection";
 import { clearStorageBusinessTables } from "../../../scripts/fixtures/storageDatabase";
 import { handleTemporaryAdBypassWrite } from "../../../packages/workers/diskIO/storageDatabase/temporaryAdBypass";
+import { handleIdentityPolicyWrite } from "../../../packages/workers/diskIO/storageDatabase/identityPolicy";
 import { flushStorageDatabase } from "../../../packages/workers/diskIO/storageDatabase/flush";
 import { StorageWriteBudget, storageWriteCost } from "../../../packages/libs/storageWriteBudget";
 import type { IdentityStoragePersistedReply } from "../../../packages/types/diskIO/replies";
@@ -35,6 +36,20 @@ test("SQLite 只读时容量内输入只触发一次自动提交；容量拒绝�
   expect(flushStorageDatabase(reply)).toBeTrue();
   expect(acks[0]!.temporaryAdBypassWrites).toHaveLength(STORAGE_PENDING_MAX_ENTRIES);
   expect(pendingTemporaryAdBypassWrites.size).toBe(0);
+});
+
+test("预算按领域独立：一个领域满额时其它领域的未 ACK 写入照常接纳，事务成功后全部释放", (): void => {
+  storageDatabaseHandle.current!.$client.run("PRAGMA query_only = ON");
+  for (let id: number = 1; id <= STORAGE_PENDING_MAX_ENTRIES; id++) {
+    handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id, activity: null, revision: id }, reply);
+  }
+  expect((): void => handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id: STORAGE_PENDING_MAX_ENTRIES + 1, activity: null, revision: 1 }, reply)).toThrow("capacity");
+  handleIdentityPolicyWrite({ type: "identityPolicyWrite", table: "blocklist", id: 1, data: null, revision: 1 }, reply);
+  expect(pendingBlocklistWrites.get(1)?.revision).toBe(1);
+  storageDatabaseHandle.current!.$client.run("PRAGMA query_only = OFF");
+  expect(flushStorageDatabase(reply)).toBeTrue();
+  handleTemporaryAdBypassWrite({ type: "temporaryAdBypassWrite", id: STORAGE_PENDING_MAX_ENTRIES + 1, activity: null, revision: 1 }, reply);
+  expect(pendingTemporaryAdBypassWrites.size).toBe(1);
 });
 
 test("同步事务 ACK 回调创建的新写入属于下一批", (): void => {

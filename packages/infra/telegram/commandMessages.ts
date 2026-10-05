@@ -13,9 +13,9 @@ import { updateTopicThreadIdFor } from "../updateContext";
  * `/qa query` 的问答看板，以及成功的中文动作命令结果。
  * gag 开始提示属于会话状态，直接走 sendMessage，不进入此命令清理边界。
  *
- * `messageThreadId` 省略时沿用当前 update 触发消息所在的论坛话题（仅限同群，见
- * infra/updateContext.ts 的 updateTopicThreadIdFor）；不在 update 作用域内发送的
- * 调用方必须显式传入。
+ * 参数里没有 `messageThreadId` 这个键时沿用当前 update 触发消息所在的论坛话题（仅限同群，见
+ * infra/updateContext.ts 的 updateTopicThreadIdFor）；显式传 undefined 表示不带话题（General），
+ * 不按作用域补齐。不在 update 作用域内发送的调用方必须显式传入。
  */
 export interface SendCommandMessageBaseParams extends Omit<SendMessageBaseParams, "api"> {
   api?: Pick<TelegramApi, "sendMessage" | "deleteMessage" | "deleteMessages">;
@@ -34,7 +34,7 @@ export async function sendCommandMessage({
   preserveInGroup = false,
   ...params
 }: SendCommandMessageParams): Promise<number | undefined> {
-  params.messageThreadId ??= updateTopicThreadIdFor(params.chatId);
+  if (!("messageThreadId" in params)) params.messageThreadId = updateTopicThreadIdFor(params.chatId);
   if (params.chatId >= 0 || preserveInGroup) return sendMessage(params);
   const callerOnSent: SendMessageParams["onSent"] = params.onSent;
   return sendMessage({

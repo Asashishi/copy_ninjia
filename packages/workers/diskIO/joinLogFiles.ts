@@ -20,7 +20,7 @@ import {
   JOIN_LOG_REOPEN_RETRY_MS,
 } from "../../consts/diskIO/joinLog";
 import { DAY_MS } from "../../consts/diskIO/common";
-import { getDateKey } from "../../libs/time";
+import { getDateKey, shiftDateKey } from "../../libs/time";
 import type {
   JoinLogDeleteDiskMessage,
   JoinLogDiskMessage,
@@ -263,13 +263,13 @@ export async function readJoinLog(
   await ensureCurrentDayPrepared(today);
   const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
 
-  const lastDay: Temporal.PlainDate = Temporal.PlainDate.from(getDateKey(request.now));
+  const lastDay: string = getDateKey(request.now);
   const requestedDays: string[] = [];
   for (
-    let day: Temporal.PlainDate = Temporal.PlainDate.from(getDateKey(request.since));
-    Temporal.PlainDate.compare(day, lastDay) <= 0;
-    day = day.add({ days: 1 })
-  ) requestedDays.push(day.toString());
+    let day: string = getDateKey(request.since);
+    day <= lastDay;
+    day = shiftDateKey(day, 1)
+  ) requestedDays.push(day);
   // 只认本群、本窗口文件的落盘结果：别的群写不动与这次读取无关，
   // 用全局判据会让日志完好的群也收到「入群日志暂时读不了」。
   for (const day of requestedDays) {

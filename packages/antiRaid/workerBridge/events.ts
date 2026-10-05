@@ -167,25 +167,25 @@ export function handleAntiRaidWorkerEvent(
       getOrCreateChatState(event.chatId).lockdown = expected;
       persistedLockdownFingerprints.delete(event.chatId);
       persistCurrentLockdown(event.chatId, postToWorker);
-      antiRaidRuntimeState.persistenceVersion++;
+      antiRaidRuntimeState.lockdownVersion++;
       break;
     }
     case "unlock": {
       persistedLockdownFingerprints.delete(event.chatId);
       if (clearChatStateField(event.chatId, "lockdown")) {
         saveChatStateInBackground(event.chatId, "anti-raid unlock");
-        antiRaidRuntimeState.persistenceVersion++;
+        antiRaidRuntimeState.lockdownVersion++;
       }
       break;
     }
     case "verificationUpsert":
-      if (acceptVerificationUpsert(event)) antiRaidRuntimeState.persistenceVersion++;
+      if (acceptVerificationUpsert(event)) antiRaidRuntimeState.verificationVersion++;
       break;
     case "verificationDelete":
-      if (acceptVerificationDelete(event)) antiRaidRuntimeState.persistenceVersion++;
+      if (acceptVerificationDelete(event)) antiRaidRuntimeState.verificationVersion++;
       break;
     case "verificationDeferred":
-      if (acceptVerificationDeferred(event)) antiRaidRuntimeState.persistenceVersion++;
+      if (acceptVerificationDeferred(event)) antiRaidRuntimeState.verificationVersion++;
       break;
     case "verificationRevisionCapacityExceeded":
       if (event.generation === antiRaidRuntimeState.generation) {

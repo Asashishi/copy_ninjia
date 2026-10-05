@@ -62,8 +62,8 @@ export function classifyTimeBucket(hour: number): TimeBucket {
   return "night";
 }
 
-/** 当前天气分桶：直接读 weatherCache.current，缓存为空
- *  （还没到第一次定时刷新）时返回 null，视为「没有天气影响」。 */
+/** 当前天气分桶：直接读 weatherCache.current，缓存为空（还没到第一次定时刷新，
+ *  或启动时区不是东京、刷新循环不启动）时返回 null，视为「没有天气影响」。 */
 function currentWeatherBucket(): WeatherBucket | null {
   const condition: string | undefined = weatherCache.current?.currentCondition;
   return condition ? WEATHER_DESCRIPTION_TO_BUCKET[condition] ?? null : null;

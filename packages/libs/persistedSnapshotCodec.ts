@@ -92,7 +92,7 @@ function validateBufferedMessage(value: unknown, source: string, field: string):
 }
 
 /** 解码已经解析的当前 version=1 AI 记忆快照；非法输入只报告来源与期望。 */
-export function decodeAiMemorySnapshot(
+function decodeAiMemorySnapshot(
   parsed: unknown,
   source: string
 ): AiMemorySnapshot {

@@ -4,7 +4,46 @@ import {
   TELEGRAM_429_RETRY_QUEUE_MAX,
 } from "../../consts/telegram";
 import type { TelegramRetryCategory } from "../../types/telegramOutbound";
-import { isTelegramMessageRequest } from "./messageThrottler";
+
+/**
+ * 识别官方明确会由机器人向目标聊天产生消息、媒体或文件的 Bot API 方法；这些请求归 message 类，
+ * 由每聊天发送调度器（./sendScheduler.ts）控速。chat action、inline query 应答、编辑、删除和
+ * 管理请求都不属于此集合。
+ */
+export function isTelegramMessageRequest(method: keyof RawApi): boolean {
+  switch (method) {
+    case "copyMessage":
+    case "copyMessages":
+    case "forwardMessage":
+    case "forwardMessages":
+    case "sendAnimation":
+    case "sendAudio":
+    case "sendChecklist":
+    case "sendContact":
+    case "sendDice":
+    case "sendDocument":
+    case "sendGame":
+    case "sendInvoice":
+    case "sendLivePhoto":
+    case "sendLocation":
+    case "sendMediaGroup":
+    case "sendMessage":
+    case "sendMessageDraft":
+    case "sendPaidMedia":
+    case "sendPhoto":
+    case "sendPoll":
+    case "sendRichMessage":
+    case "sendRichMessageDraft":
+    case "sendSticker":
+    case "sendVenue":
+    case "sendVideo":
+    case "sendVideoNote":
+    case "sendVoice":
+      return true;
+    default:
+      return false;
+  }
+}
 
 /** 429 退避队列拒绝错误；安全动作的 durable owner 收到后保留原任务并重投。 */
 export class TelegramRetryQueueFullError extends Error {

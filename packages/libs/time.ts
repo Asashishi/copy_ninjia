@@ -25,6 +25,14 @@ export function isCanonicalDateKey(value: string): boolean {
 }
 
 /**
+ * 规范 YYYY-MM-DD 日期键按公历日前后平移 deltaDays。日期串映射到 UTC 后按 DAY_MS 计算，
+ * 与配置时区的实际日长无关。规范日期键可直接按字典序比较先后。
+ */
+export function shiftDateKey(day: string, deltaDays: number): string {
+  return new Date(Date.parse(`${day}T00:00:00.000Z`) + deltaDays * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
  * 毫秒时间戳对应的配置时区日历；时区规则与夏令时由 Bun/JSC 原生 Temporal 处理。
  * 只服务偏移区段未命中时的重建与 getDayStartTimestamp，不在每次日历运算里调用。
  */

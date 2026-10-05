@@ -13,10 +13,10 @@
 import { classifyAdText } from "./classifier";
 import {
   deleteReferencedAdMessages,
-  deleteStaleReferencedAdWarning,
   disposeAdSender,
   warnReferencedAdSender,
 } from "./disposal";
+import { deleteMessage, telegramApi } from "../../../infra/telegram";
 import { isChatAdmin } from "../adminCache";
 import { logger } from "../../../infra/logger";
 import {
@@ -24,6 +24,7 @@ import {
   adDetectStopping,
   inFlightAdDetectKeys,
   recentlyDisposedAdKeys,
+  referencedAdWarningStates,
 } from "../../../cache/workers/antiRaid/adDetect";
 import {
   AD_DETECT_MAX_PENDING_SENDERS,
@@ -40,7 +41,6 @@ import {
 import {
   beginReferencedAdWarning,
   cancelReferencedAdWarning,
-  clearReferencedAdWarning,
   completeReferencedAdWarning,
 } from "./referencePolicy";
 import {
@@ -233,8 +233,13 @@ export async function detectOne(
     });
   }
   // 期间这个群可能被停管/关开关，整串已被丢弃或换成了新对象；旧引用对不上就
-  // 放弃（同本线程其余异步回调的「状态对象同一性」惯例）。
-  if (pendingAdBundle(bundle.chatId, bundle.senderId) !== bundle) return;
+  // 放弃本次判定（同本线程其余异步回调的「状态对象同一性」惯例）。判定在途时新串
+  // 不会排队，这里替它补排一次，不让期间到达的内容等到下一轮清扫。
+  const current: AdMessageBundle | undefined = pendingAdBundle(bundle.chatId, bundle.senderId);
+  if (current !== bundle) {
+    if (current !== undefined) requeueIfUnchecked(key, current);
+    return;
+  }
   // 只推到本次真正送检的最后一条。预算装不下的那部分仍是未判内容，当前批结算后
   // requeueIfUnchecked 会立即把它排成下一批。
   bundle.checkedSeq = Math.max(bundle.checkedSeq, selection.checkedToSeq);
@@ -316,7 +321,8 @@ export async function detectOne(
         )
       ) {
         cancelReferencedAdWarning(key, warningGeneration);
-        deleteStaleReferencedAdWarning(bundle.chatId, warning.messageId);
+        // 清群或停机使警告回执过期：立即撤掉已经发出的迟到提示，不再动用户消息。
+        void deleteMessage(bundle.chatId, warning.messageId, telegramApi);
         return;
       }
       deleteReferencedAdMessages({
@@ -354,6 +360,7 @@ export async function detectOne(
     value: performance.now(),
     maxEntries: AD_DETECT_MAX_PENDING_SENDERS,
   });
-  clearReferencedAdWarning(key);
+  // 升级为 block 后旧警告失去用途，不再占着容量。
+  referencedAdWarningStates.delete(key);
   await disposeAdSender({ bundle, verdict: outcome.verdict, judged });
 }

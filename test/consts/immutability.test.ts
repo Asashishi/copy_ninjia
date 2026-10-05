@@ -8,6 +8,7 @@ import {
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { RELEASE_PLATFORMS, RELEASE_REQUIRED_FILES, RELEASE_VERSION_PATTERN } from "../../packages/consts/release";
 import { LOGGER_HTTP_URL_PATTERN } from "../../packages/consts/logger";
+import { AI_WORKER_JOB_ABORTED, AI_WORKER_JOB_TIMED_OUT, AI_WORKER_JOB_UNAVAILABLE } from "../../packages/consts/aiChat/workerJob";
 import { VOICE_LANGUAGE_PROMPTS } from "../../packages/consts/aiChat/prompts/tools";
 import { TTS_BOT_LANGUAGES } from "../../packages/consts/aiChat/voiceMessage";
 import type { PreparedReplyAction, ReplyActionChains, ReplyToolset } from "../../packages/types/aiChat/replies";
@@ -23,6 +24,24 @@ function assertReleaseAndLogConstantsReadonly(): void {
   LOGGER_HTTP_URL_PATTERN.lastIndex = 1;
 }
 void assertReleaseAndLogConstantsReadonly;
+
+function assertDiskIORequestOutcomesReadonly(): void {
+  // @ts-expect-error 共用的超时结局禁止调用方改写。
+  DISK_IO_REQUEST_TIMED_OUT.ok = true;
+  // @ts-expect-error 共用的拒收结局禁止调用方改写。
+  DISK_IO_REQUEST_REJECTED.ok = true;
+}
+void assertDiskIORequestOutcomesReadonly;
+
+function assertAiWorkerJobFailuresReadonly(): void {
+  // @ts-expect-error 共用的不可用结局禁止调用方改写。
+  AI_WORKER_JOB_UNAVAILABLE.reason = "aborted";
+  // @ts-expect-error 共用的取消结局禁止调用方改写。
+  AI_WORKER_JOB_ABORTED.reason = "timed out";
+  // @ts-expect-error 共用的超时结局禁止调用方改写。
+  AI_WORKER_JOB_TIMED_OUT.ok = true;
+}
+void assertAiWorkerJobFailuresReadonly;
 
 /** 回复工具集、已接纳动作与调用链 owner 是构造后只读的句柄。 */
 function assertReplyToolHandlesReadonly(
@@ -83,7 +102,11 @@ void assertAtmosphereReadonly;
 import { TRANSLATE_LANGUAGE_CODES, TRANSLATE_LANGUAGE_LABELS } from "../../packages/consts/translate";
 import { TRANSLATE_TARGET_TEXTS, TRANSLATE_TOGGLE_TEXTS } from "../../packages/consts/atmosphere/teasing/translate";
 import { expect, test } from "bun:test";
-import { DISK_IO_RESPAWN_PRIORITIES } from "../../packages/consts/diskIO/common";
+import {
+  DISK_IO_REQUEST_REJECTED,
+  DISK_IO_REQUEST_TIMED_OUT,
+  DISK_IO_RESPAWN_PRIORITIES,
+} from "../../packages/consts/diskIO/common";
 import { HOT_PATH_GC_CPU_BUDGETS } from "../../packages/consts/performance";
 
 function assertGcCpuBudgetsReadonly(): void {

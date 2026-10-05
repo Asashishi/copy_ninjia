@@ -1,3 +1,5 @@
+import type { DiskIORequestOutcome } from "../../types/diskIO/replies";
+
 /** Disk I/O Worker 创建/接管的 JSON 统一为普通系统用户可读、仅属主可写。 */
 export const PERSISTED_FILE_MODE: number = 0o644;
 
@@ -62,3 +64,11 @@ export const AD_SAMPLE_ARCHIVE_RETENTION_DAYS: number = 15;
  */
 export const AD_SAMPLE_ARCHIVE_FILENAME_PATTERN: Readonly<RegExp> =
   /^sample\.(\d{4}-\d{2}-\d{2})(?:\.([1-9]\d*))?\.json$/;
+
+/**
+ * main -> Disk I/O 逐请求等待表（infra/diskIO/requests.ts）的超时与投递被拒结局。所有请求共用
+ * 这两个只读对象，Error 在发起方解包时才按领域名构造。
+ */
+export const DISK_IO_REQUEST_TIMED_OUT: Readonly<DiskIORequestOutcome<never>> = { ok: false, failure: "timedOut" };
+/** 同 DISK_IO_REQUEST_TIMED_OUT，投递被 Worker 同步拒收时的结局。 */
+export const DISK_IO_REQUEST_REJECTED: Readonly<DiskIORequestOutcome<never>> = { ok: false, failure: "rejected" };

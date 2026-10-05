@@ -332,6 +332,20 @@ describe("copy 类命令生命周期", () => {
     expect(saveStateInBackground).not.toHaveBeenCalled();
   });
 
+  test.each(["reset", "steal"])("/icon %s 在头像任务提交前被取消时退还冷却，提交后不退", async (argument: string) => {
+    sendMessage.mockImplementationOnce(async (): Promise<number | undefined> => {
+      throw new DOMException("update aborted", "AbortError");
+    });
+    await expect(handleIconCommand(context(-1001, undefined, argument))).rejects.toThrow("update aborted");
+    expect(releaseCopyCooldownClaim).toHaveBeenCalledWith(claim);
+    expect(stealAvatarInBackground).not.toHaveBeenCalled();
+    expect(restoreAvatarInBackground).not.toHaveBeenCalled();
+
+    releaseCopyCooldownClaim.mockClear();
+    await handleIconCommand(context(-1001, undefined, argument));
+    expect(releaseCopyCooldownClaim).not.toHaveBeenCalled();
+  });
+
   test("/icon reset 被冷却挡住时不换脸：它和 /icon steal 抢同一份限流资源", async () => {
     cooldownRejected = true;
     await handleIconCommand(context(-1001, undefined, "reset"));

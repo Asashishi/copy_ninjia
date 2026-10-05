@@ -2,7 +2,7 @@ import { getTimeZone } from "../../../packages/config/time";
 import { diskIOStub } from "../../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import type { Message } from "grammy/types";
+import type { Chat, Message } from "grammy/types";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { ChatState } from "../../../packages/types/chatState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
@@ -94,9 +94,10 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => chatStates,
   getChatState,
 }));
-const { buildAdCandidate: buildAdCandidateFromContext } = await import(
+const { adDetectionSenderId, buildAdCandidate: buildAdCandidateFromContext } = await import(
   "../../../packages/antiRaid/adCandidate"
 );
+const { visibleSenderChat } = await import("../../../packages/users/visibleSender");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 const { blocklistIdentityMutationQueues } = await import("../../../packages/cache/main/blocklist");
 const { inlineResultSources } = await import("../../../packages/cache/main/inlineResultSources");
@@ -134,8 +135,13 @@ function buildAdCandidate(
   botId: number,
   chatState: Readonly<ChatState> = chatStates.get(candidateMessage.chat.id) ?? chatStateOf()
 ): ReturnType<typeof buildAdCandidateFromContext> {
+  // 与生产 ingress 同一组合：群开关、共同前置判定，再构建候选。
+  if (chatState.isAdDetectEnabled !== true) return undefined;
+  const senderChat: Chat | undefined = visibleSenderChat(candidateMessage);
+  const senderId: number | undefined = adDetectionSenderId(candidateMessage, botId, senderChat);
+  if (senderId === undefined) return undefined;
   return buildAdCandidateFromContext({
-    message: candidateMessage, botId, chatState, now: OBSERVED_AT_MS,
+    message: candidateMessage, botId, now: OBSERVED_AT_MS, senderId, senderChat,
   });
 }
 beforeEach(() => {

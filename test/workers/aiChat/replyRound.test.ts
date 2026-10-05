@@ -621,6 +621,28 @@ describe("AI 单轮回复生命周期", () => {
     expect(longTriggerTimes.get(-1001)?.size).toBe(RATE_LIMIT_LONG_MAX_TRIGGERS);
   });
 
+  test("随机插话撞上滑动窗口上限时静默放弃，不发限频提示", () => {
+    const now: number = Date.now();
+    const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
+    for (let index: number = 0; index < RATE_LIMIT_LONG_MAX_TRIGGERS; index++) times.push(now);
+    longTriggerTimes.set(-1001, times);
+    const finished = mock((_chatId: number): void => {});
+
+    expect(startReplyRound({
+      chatId: -1001,
+      triggerSenderId: 7,
+      replyToMessageId: 10,
+      messageThreadId: undefined,
+      imageGenerationRequested: false,
+      isRandomTrigger: true,
+    }, finished)).toBe(false);
+
+    // 提示冷却没有被占用，说明本轮没有走 notifyRateLimited。
+    expect(rateLimitNoticeTimes.has(-1001)).toBe(false);
+    expect(finished).not.toHaveBeenCalled();
+    expect(activeReplyCounts.has(-1001)).toBe(false);
+  });
+
   test("长窗口在上限时遇到时钟回拨，清空旧时间轴并正常开启新轮", async () => {
     const now: number = Date.now();
     const times = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);

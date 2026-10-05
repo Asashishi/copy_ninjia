@@ -3,6 +3,7 @@ import { chatAtmosphere } from "../../infra/atmosphere";
 import {
   gagBackgroundTasks,
   gagRuntimeAccepting,
+  gagSessionCount,
   gagSessionsByChat,
 } from "../../cache/main/gag";
 import {
@@ -55,9 +56,7 @@ export function reserveGagSession(
   if (findGagSession(session.chatId, session.targetId) !== undefined) {
     return "duplicate";
   }
-  let count: number = 0;
-  for (const sessions of gagSessionsByChat.values()) count += sessions.length;
-  if (count >= GAG_SESSION_MAX) return "full";
+  if (gagSessionCount() >= GAG_SESSION_MAX) return "full";
   const sessions: GagSession[] | undefined =
     gagSessionsByChat.get(session.chatId);
   if (sessions === undefined) gagSessionsByChat.set(session.chatId, [session]);

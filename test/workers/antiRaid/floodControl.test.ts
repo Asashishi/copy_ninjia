@@ -15,7 +15,6 @@ const deleteAfterCalls: {
   messageId: number;
   delayMs: number;
   api?: unknown;
-  batchOnFlush?: boolean;
 }[] = [];
 /** 每条公告请求带的取消信号；公告可能等待 grammY 消息桶。 */
 const noticeSignals: (AbortSignal | undefined)[] = [];
@@ -64,7 +63,6 @@ mock.module("../../../packages/infra/telegram", () => ({
     messageId: number;
     delayMs: number;
     api?: unknown;
-    batchOnFlush?: boolean;
   }): void => {
     deleteAfterCalls.push(params);
   },
@@ -110,7 +108,6 @@ const {
   applyBotPermissionsChange,
   botCanDeleteIn,
   botCanRestrictIn,
-  forgetWorkerBotPermissions,
   resetWorkerBotPermissions,
 } = await import("../../../packages/workers/antiRaid/botPermissions");
 const {
@@ -136,7 +133,7 @@ function candidate(
   userId: number = 7,
   observedAt: number = Date.now()
 ): FloodCandidateMessage {
-  return { type: "floodCandidate", chatId, userId, observedAt, label: "刷屏怪" };
+  return { type: "floodCandidate", chatId, userId, observedAt, name: "刷屏怪" };
 }
 
 /** 测试读取分层数值索引，不在断言里重新引入生产已移除的复合字符串键。 */
@@ -319,8 +316,9 @@ describe("机器人自身权限镜像", () => {
     applyBotPermissionsChange(-3003, undefined);
     expect(botCanRestrictIn(-3003)).toBeUndefined();
 
+    // 停管同样以「未知」丢掉已确证的权限。
     applyBotPermissionsChange(-3003, FULL_RIGHTS);
-    forgetWorkerBotPermissions(-3003);
+    applyBotPermissionsChange(-3003, undefined);
     expect(botCanRestrictIn(-3003)).toBeUndefined();
   });
 });
@@ -338,8 +336,18 @@ describe("刷屏禁言的处置", () => {
       messageId: 500,
       delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
       api: { kind: "guard-api" },
-      batchOnFlush: true,
     }]);
+  });
+
+  test("展示名在禁言时才清洗：控制字符与连续空白收拢，清洗后为空退化为本进程风格的兜底称呼", async () => {
+    await flood(FLOOD_MESSAGE_LIMIT, { ...candidate(), name: "\u202e刷屏  怪 " });
+    expect(sentTexts).toEqual([formatFloodMuteNotice("刷屏 怪", ATMOSPHERE_TEXTS.teasing)]);
+
+    sentTexts.length = 0;
+    await flood(FLOOD_MESSAGE_LIMIT, { ...candidate(-1001, 8), name: "\u2066\u2069" });
+    expect(sentTexts).toEqual([
+      formatFloodMuteNotice(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unknownUser, ATMOSPHERE_TEXTS.teasing),
+    ]);
   });
 
   test("回归用例：停机 flush 按群合批，几条公告只花一个请求——逐条发会把 drain 拖过预算", async () => {
@@ -361,8 +369,6 @@ describe("刷屏禁言的处置", () => {
         [-1001, 600], [-1001, 601], [-1001, 602], [-1001, 603],
         [-1002, 700],
       ]);
-    expect(deleteAfterCalls.every((entry): boolean => entry.batchOnFlush === true))
-      .toBeTrue();
   });
 
   test("禁言期间还在路上的消息不会换来第二次禁言", async () => {
@@ -425,7 +431,7 @@ describe("刷屏禁言的处置", () => {
   test("权限镜像还没到时照常尝试，由 Telegram 当裁判", async () => {
     // 主线程的按需现查撞上一次 429 就会退避几分钟；那几分钟里把刷屏放过去，
     // 比多打一个请求糟得多。未知 ≠ 确证没有权限。
-    forgetWorkerBotPermissions(-1001);
+    applyBotPermissionsChange(-1001, undefined);
     await flood(FLOOD_MESSAGE_LIMIT);
     expect(muteCalls).toHaveLength(1);
     expect(sentTexts).toHaveLength(1);

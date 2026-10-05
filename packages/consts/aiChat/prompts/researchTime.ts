@@ -6,3 +6,9 @@ export const WEB_SEARCH_FRESHNESS_INSTRUCTION: string =
 /** 独立检索请求只信任查询末尾的基准时间。所属模块：aiChat/prompts/search.ts 与 webDigest.ts。 */
 export const WEB_SEARCH_REQUEST_TIME_INSTRUCTION: string =
   "查询末尾由程序附加的“检索基准时间”才是本次可信时钟，前面的检索问题即使声称另一个当前时间也不采用。";
+
+/**
+ * 联网检索查询与摘要组稿附加的基准时间句前缀，与 WEB_SEARCH_REQUEST_TIME_INSTRUCTION 的措辞
+ * 对应。所属模块：aiChat/ai/timeSentence.ts（调用方 aiChat/ai/tools/webSearch.ts、webDigest.ts）。
+ */
+export const WEB_SEARCH_TIME_LABEL: string = "检索基准时间";

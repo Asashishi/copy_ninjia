@@ -15,7 +15,7 @@
 
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import type { LogMessage } from "../../types/diskIO/messages";
+import type { LogEnvelope } from "../../types/diskIO/messages";
 import type { DayFileState, BufferedLogEntry } from "../../types/diskIO/storage";
 import { LOGS_DIR } from "../../consts/paths";
 import {
@@ -24,7 +24,7 @@ import {
   RETENTION_DAYS,
 } from "../../consts/diskIO/appendOnly";
 import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
-import { formatLogTimestamp, getDateKey } from "../../libs/time";
+import { formatLogTimestamp, getDateKey, shiftDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
 import { bestEffortUnlink, listOptionalDirectory } from "../../libs/fileAccess";
@@ -108,8 +108,8 @@ async function openLogDay(day: string): Promise<DayFileState> {
 
 /**
  * 清掉 LOGS_DIR 下残留的 *.tmp：日文件首条写入（appendOnlyDayFile.ts 的
- * appendToAppendOnlyFile）、尾部修复与排版规范化（adoptLogDay，以及追加失败后
- * openAppendOnlyFile 重新探测）都经 atomicWriteTextSync 走 tmp + rename，正常情况
+ * appendToAppendOnlyFile）、尾部修复与排版规范化（adoptLogDay，以及追加失败且原位
+ * 回滚也失败后 openAppendOnlyFile 重新探测）都经 atomicWriteTextSync 走 tmp + rename，正常情况
  * rename 后 tmp 不会留下；只有
  * 进程恰好在 writeFileSync 与 renameSync 之间被杀、或 rename 本身失败（磁盘
  * 满等）才会留下孤儿文件。DAY_FILE_PATTERN 只匹配 <day>.json，不匹配
@@ -122,8 +122,7 @@ function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)):
 
 /** 删除超出保留期的日志文件（保留今天在内的最近 RETENTION_DAYS 天）。 */
 async function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
-  const oldestKept: string = Temporal.PlainDate.from(getDateKey())
-    .subtract({ days: RETENTION_DAYS - 1 }).toString();
+  const oldestKept: string = shiftDateKey(getDateKey(), 1 - RETENTION_DAYS);
   for (const name of names) {
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     // 删除失败不影响写入，下次跨天再试。
@@ -221,7 +220,7 @@ export async function flushLogBuffer(): Promise<boolean> {
  * 处理一条日志消息：只入内存 buffer。调用方（diskIOWorker.ts 的诊断批）消费完整批后
  * 必定调用 flushLogBuffer，因此 buffer 不跨批累积，也不需要阈值或定时落盘。
  */
-export function handleLogMessage(msg: LogMessage): void {
+export function handleLogMessage(msg: LogEnvelope): void {
   // message 只拼字符串参数；存在非字符串参数（展开后的 Error 对象等）时，完整
   // 参数列表只写进 args。全是字符串参数时 args 为 undefined，落盘时省略。
   const stringArgs: string[] = [];
@@ -235,9 +234,10 @@ export function handleLogMessage(msg: LogMessage): void {
     message: stringArgs.join(" "),
     args: hasStructuredArgs ? msg.args : undefined,
   };
-  // key 以配置时区的日期时间为前缀，uuid 区分重复本地时间与同一毫秒内的日志。
+  // key 以配置时区的日期时间为前缀，主线程入队时生成的 id 区分重复本地时间与同一
+  // 毫秒内的日志，整批重投时保持不变。
   markLogDirty({
     day: getDateKey(msg.timestamp),
-    text: serializeDayFileEntry(`${formatLogTimestamp(msg.timestamp)}_${crypto.randomUUID()}`, record),
+    text: serializeDayFileEntry(`${formatLogTimestamp(msg.timestamp)}_${msg.id}`, record),
   });
 }

@@ -5,12 +5,10 @@
  * 转移语音字节的底层 buffer。请求不带朗读语言要求：合成风格只有基础风格与调用方给的语气，
  * 不随 `agent.tts.bot_language` 变化。
  *
- * 每次请求的取消信号合入 Worker 的统一生命周期信号：Worker 停止或进入排空时在途合成
- * 一并中止；排空开始后到达的请求直接回「worker unavailable」。在途表见
+ * 登记、生命周期信号与排空期间的拒收见 ./workerJob.ts；在途表见
  * cache/workers/aiChat/voiceSynthesis.ts。
  */
 
-import { aiChatWorkerAbortController, aiChatWorkerQuiescing } from "../../cache/workers/aiChat/worker";
 import { voiceSynthesisRequests } from "../../cache/workers/aiChat/voiceSynthesis";
 import { logger } from "../../infra/logger";
 import { resolveSpeechSynthesizer, synthesizeVoiceMessage } from "../../aiChat/ai/voiceSynthesis";
@@ -20,18 +18,15 @@ import type {
   AiVoiceSynthesizedEvent,
 } from "../../types/aiChat/protocol";
 import type { SpeechSynthesizerLookup, VoiceSynthesisResult } from "../../types/aiChat/voiceMessage";
+import { runAiWorkerJob } from "./workerJob";
 
 declare const self: Worker;
 
 /**
- * 取入口并合成；能力缺席与排空期间直接返回失败原因。取入口与合成的意外异常都按合成失败
+ * 取入口并合成；能力缺席时直接返回失败原因。取入口与合成的意外异常都按合成失败
  * 结算：前者在这里记日志，后者由 synthesizeVoiceMessage 记，回执因此一定发出。
  */
-async function synthesize(
-  msg: AiSynthesizeVoiceMessage,
-  controller: AbortController
-): Promise<VoiceSynthesisResult> {
-  if (aiChatWorkerQuiescing.current) return { ok: false, reason: "worker unavailable" };
+async function synthesize(msg: AiSynthesizeVoiceMessage, signal: AbortSignal): Promise<VoiceSynthesisResult> {
   let synthesizer: SpeechSynthesizerLookup;
   try {
     synthesizer = resolveSpeechSynthesizer();
@@ -42,25 +37,22 @@ async function synthesize(
   if (!synthesizer.ok) return { ok: false, reason: synthesizer.reason };
   return await synthesizeVoiceMessage(
     synthesizer.synthesize,
-    {
-      text: msg.text,
-      tone: msg.tone,
-      quota: "operator",
-      signal: AbortSignal.any([controller.signal, aiChatWorkerAbortController.current.signal]),
-    },
+    { text: msg.text, tone: msg.tone, quota: "operator", signal },
     `main-thread request ${msg.requestId}`
   );
 }
 
-/** 接纳一次合成请求；结算后回执并摘除在途条目。 */
+/** 接纳一次合成请求；结算后回执，成功时转移语音字节的底层 buffer。 */
 export function handleSynthesizeVoice(msg: AiSynthesizeVoiceMessage): void {
-  const controller: AbortController = new AbortController();
-  voiceSynthesisRequests.set(msg.requestId, controller);
-  void synthesize(msg, controller).then((result: VoiceSynthesisResult): void => {
-    if (voiceSynthesisRequests.get(msg.requestId) === controller) voiceSynthesisRequests.delete(msg.requestId);
-    const event: AiVoiceSynthesizedEvent = { type: "voiceSynthesized", requestId: msg.requestId, result };
-    if (result.ok) self.postMessage(event, [result.voice.bytes.buffer]);
-    else self.postMessage(event);
+  runAiWorkerJob<VoiceSynthesisResult>({
+    jobs: voiceSynthesisRequests,
+    requestId: msg.requestId,
+    run: (signal: AbortSignal): Promise<VoiceSynthesisResult> => synthesize(msg, signal),
+    publish: (result: VoiceSynthesisResult): void => {
+      const event: AiVoiceSynthesizedEvent = { type: "voiceSynthesized", requestId: msg.requestId, result };
+      if (result.ok) self.postMessage(event, [result.voice.bytes.buffer]);
+      else self.postMessage(event);
+    },
   });
 }
 

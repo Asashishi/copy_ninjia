@@ -183,7 +183,7 @@ function runEmergencyLockdownRecovery(
       persistedLockdownFingerprints.delete(chatId);
       if (clearChatStateField(chatId, "lockdown")) {
         saveChatStateInBackground(chatId, "emergency anti-raid unlock");
-        antiRaidRuntimeState.persistenceVersion++;
+        antiRaidRuntimeState.lockdownVersion++;
       }
       logger.log(`Emergency anti-raid permission restore completed for chat ${chatId}.`);
       finishEmergencyLockdownRecovery(chatId, recovery);

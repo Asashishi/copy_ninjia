@@ -4,7 +4,7 @@
  * cron 消息是用户授权的长期保留例外（见 AGENTS.md「Telegram 提示留存」），不挂固定
  * 延迟删除；不带话题（落在 General）。只有 `send_web_digest` 设 `parse_mode: "MarkdownV2"`，
  * 其余动作不设。全部请求都经主线程
- * grammY 客户端，因此照常经过发送类 throttler 与 429 分类出站闸；成功后登记自发消息。
+ * grammY 客户端，因此照常经过出站闸（发送类进所属聊天的发送调度器车道）；成功后登记自发消息。
  * 单图调用 sendPhoto，多图调用一次 sendMediaGroup，只有首图携带 caption；
  * 相册逐项应用遮罩并登记所有返回消息 ID；发出的每张图都写一条 AI 记忆占位态自录。
  * `send_voice` 先经 AI Worker 的语音合成公共实现（aiChat/voiceSynthesis.ts）把台词与语气

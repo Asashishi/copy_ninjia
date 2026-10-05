@@ -127,8 +127,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/appendOnlyDayFile.ts": {
     "node:fs": {
-      symbols: ["closeSync", "fsyncSync", "openSync", "statSync"],
-      purpose: "append-only descriptor metadata and fsync",
+      symbols: ["closeSync", "fsyncSync", "ftruncateSync", "openSync", "statSync"],
+      purpose: "append-only descriptor metadata, torn-append rollback and fsync",
     },
   },
   "packages/workers/diskIO/joinLogWrites.ts": {

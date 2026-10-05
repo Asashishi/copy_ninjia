@@ -115,7 +115,7 @@ for (const welcome of welcomes) {
     }));
     expect(pendingMessageDeletions.size).toBe(1);
     const entry: PendingMessageDeletion = [...pendingMessageDeletions][0]!;
-    expect(entry).toMatchObject({ chatId: -1001, messageId: 912, batchOnFlush: true });
+    expect(entry).toMatchObject({ chatId: -1001, messageId: 912 });
     expect(entry.timer.hasRef()).toBeFalse();
     reply(envelope, result);
     await completion;

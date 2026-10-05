@@ -9,3 +9,11 @@ export interface TranslateState {
   readonly translatedUser: Readonly<CachedUser>;
   readonly language: TranslateLanguage;
 }
+
+/** 一个群的后台译文积压（cache/main/translate.ts 的 translateMessageBacklogs）。 */
+export interface TranslateMessageBacklog {
+  /** 已入队、尚未结束的译文条数。 */
+  count: number;
+  /** 本段积压是否已因满额记过日志；积压排空、条目删除时随之重置。 */
+  overflowLogged: boolean;
+}

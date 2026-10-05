@@ -105,7 +105,7 @@ mock.module("../../../packages/aiChat/provider", () => ({
 mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMoodInstruction: (): string => "当前心情测试" }));
 mock.module("../../../packages/aiChat/ai/tools", () => ({ callTool: callToolMock }));
 mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerErrorMock }) }));
-mock.module("../../../packages/workers/aiChat/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
+mock.module("../../../packages/aiChat/ai/timeSentence", () => ({ currentTimeSentence: (): string => "当前实际时间：测试。" }));
 
 const { generateReply } = await import("../../../packages/workers/aiChat/replyModel");
 

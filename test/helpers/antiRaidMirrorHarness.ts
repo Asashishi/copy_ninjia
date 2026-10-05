@@ -108,7 +108,6 @@ mock.module("../../packages/infra/botAdmin", () => ({
   // 权限位镜像的注册与按需补齐；本文件不触发，但整份模块被替换掉时缺了
   // 会在 import 阶段就报 Export not found。
   registerBotPermissionObserver: (): void => {},
-  ensureBotChatPermissions: (): void => {},
   botCanDeleteMessagesIn: (): undefined => undefined,
 }));
 mock.module("../../packages/infra/supervisedWorker", () => ({
@@ -227,7 +226,8 @@ export async function resetAntiRaidTestState(): Promise<void> {
   emergencyLockdownRecoveryRuntime.stopped = true;
   antiRaidRuntimeState.generation = 0;
   antiRaidRuntimeState.initialized = false;
-  antiRaidRuntimeState.persistenceVersion = 0;
+  antiRaidRuntimeState.verificationVersion = 0;
+  antiRaidRuntimeState.lockdownVersion = 0;
 
   saveState.mockReset();
   saveState.mockImplementation(async (): Promise<void> => {});

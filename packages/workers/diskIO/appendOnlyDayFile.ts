@@ -18,7 +18,7 @@
  * 统计的只读探测共用 inspectRepairableAppendOnlyFile（允许在内存里裁掉撕裂的末尾残片）。
  */
 
-import { closeSync, fsyncSync, openSync, statSync } from "node:fs";
+import { closeSync, fsyncSync, ftruncateSync, openSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AppendOnlyFileState, DayFileState } from "../../types/diskIO/storage";
 import { DAY_FILE_JSON_INDENT } from "../../consts/diskIO/appendOnly";
@@ -30,6 +30,8 @@ import { inspectOptionalFile } from "../../libs/fileAccess";
 import { toErrorOr } from "../../libs/errorMessage";
 
 const UTF8_ENCODER: TextEncoder = new TextEncoder();
+/** 追加前文件结尾的两字节；回滚撕裂的追加时原位写回。 */
+const APPEND_ONLY_TAIL: Uint8Array = UTF8_ENCODER.encode("\n}");
 
 // serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
 // （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
@@ -317,7 +319,11 @@ export interface AppendToDayFileParams extends Omit<AppendToAppendOnlyFileParams
   state: DayFileState;
 }
 
-/** 把一段已序列化好的条目文本追加到文件末尾（覆写结尾的「\n}」）。 */
+/**
+ * 把一段已序列化好的条目文本追加到文件末尾（覆写结尾的「\n}」）。写入或 fsync
+ * 失败时先在原 fd 上回滚到追加前的字节，回滚成功则 state 不变、原样抛出追加错误；
+ * 回滚失败才按 repair 重新探测，探测也失败时抛出含两者的 AggregateError。
+ */
 export async function appendToAppendOnlyFile({
   path,
   state,
@@ -339,6 +345,7 @@ export async function appendToAppendOnlyFile({
   const data: Uint8Array = UTF8_ENCODER.encode(`,\n${chunk}\n}`);
   const fd: number = openSync(path, "r+");
   let failure: unknown = null;
+  let restored: boolean = false;
   try {
     writeBufferFullySync(fd, data, { position: state.size - 2, write });
     // write/close 只保证字节进入内核页缓存；验证 persisted 与统一 flushed
@@ -346,6 +353,7 @@ export async function appendToAppendOnlyFile({
     sync(fd);
   } catch (error: unknown) {
     failure = error;
+    restored = restoreAppendTail(fd, state.size, { write, sync });
   }
   try {
     closeSync(fd);
@@ -353,15 +361,48 @@ export async function appendToAppendOnlyFile({
     failure ??= error;
   }
   if (failure !== null) {
-    // 可能已有前缀落盘，旧 size 与物理文件都不再可信。fd 已关闭后重新
-    // 探测并尽力裁掉残片；绝不能按完整 data 的长度推进游标。不允许自愈的
-    // 领域这里会再抛一次，调用方据此把游标作废、条目留在缓冲里等人工恢复。
-    const recovered: AppendOnlyFileState = await openAppendOnlyFile(path, mode, repair);
+    const appendFailure: Error = toErrorOr(failure, "Append failed with a non-Error value.");
+    // 已在原 fd 上回滚并 fsync：文件与 state 都停在追加前，原样抛出追加错误。
+    if (restored) throw appendFailure;
+    // 回滚失败或 close 失败：可能已有前缀落盘，旧 size 与物理文件都不再可信。
+    // fd 已关闭后重新探测；允许自愈的领域裁掉残片，绝不能按完整 data 的长度
+    // 推进游标。不允许自愈的领域探测再失败时，调用方据此把游标作废、条目
+    // 留在缓冲里等人工恢复。
+    let recovered: AppendOnlyFileState;
+    try {
+      recovered = await openAppendOnlyFile(path, mode, repair);
+    } catch (error: unknown) {
+      throw new AggregateError(
+        [appendFailure, error],
+        `${path} append failed and could not be restored.`,
+        { cause: error }
+      );
+    }
     state.size = recovered.size;
     state.empty = recovered.empty;
-    throw toErrorOr(failure, "Append failed with a non-Error value.");
+    throw appendFailure;
   }
   state.size = state.size - 2 + data.length;
+}
+
+interface RestoreAppendTailOptions {
+  write: SyncBufferWriter | undefined;
+  sync: SyncFile;
+}
+
+/**
+ * 追加失败后在仍打开的 fd 上把文件恢复成追加前的字节：截回追加前的 size，
+ * 在原结尾位置写回「\n}」并 fsync。任一步失败返回 false，由调用方重新探测。
+ */
+function restoreAppendTail(fd: number, size: number, { write, sync }: RestoreAppendTailOptions): boolean {
+  try {
+    ftruncateSync(fd, size);
+    writeBufferFullySync(fd, APPEND_ONLY_TAIL, { position: size - 2, write });
+    sync(fd);
+    return true;
+  } catch (_error: unknown) {
+    return false;
+  }
 }
 
 /** appendToAppendOnlyFile 在 `<dir>/<day>.json` 命名约定上的薄封装。 */

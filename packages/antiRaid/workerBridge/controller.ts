@@ -191,7 +191,8 @@ function postAntiRaidOrThrow(message: AntiRaidWorkerMessage): void {
 export function initAntiRaid(): void {
   if (antiRaidRuntimeState.initialized) return;
   antiRaidRuntimeState.initialized = true;
-  antiRaidRuntimeState.persistenceVersion = 0;
+  antiRaidRuntimeState.verificationVersion = 0;
+  antiRaidRuntimeState.lockdownVersion = 0;
   emergencyLockdownRecoveryRuntime.stopped = false;
   seedPersistedLockdownFingerprints();
   const generation: number = nextAntiRaidGeneration();

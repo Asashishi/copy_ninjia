@@ -276,7 +276,6 @@ export interface ReplyDeliverySlot {
  */
 export interface ReplyDeliveryWindow {
   readonly queue: LinkedQueue<ReplyDeliverySlot>;
-  size: number;
   /** 本窗口的直接轮仍在模型阶段；为 true 时有序并行轮之外另放行这 1 轮。 */
   directModelActive: boolean;
 }

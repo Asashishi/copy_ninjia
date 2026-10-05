@@ -13,8 +13,6 @@ import {
   AD_DETECT_DRAIN_BUDGET_MS,
   AI_REPLY_SETTLE_ATTEMPTS,
   AI_REPLY_WARMUP_OPERATIONS,
-  BOT_PERMISSION_WAIT_ATTEMPTS,
-  BOT_PERMISSION_WAIT_STEP_MS,
   CHAIN_AD_DETECT_COMMANDS,
   CHAIN_AI_MEMORY_SNAPSHOTS,
   CHAIN_AI_REPLY_COMMANDS,
@@ -83,7 +81,7 @@ import { recordEligibleTemporaryAdBypassActivity } from
   "../../../packages/antiRaid/temporaryAdBypass";
 import { drainAdDisposals, handleAdDetected } from
   "../../../packages/antiRaid/adDetect";
-import { ensureBotChatPermissions } from
+import { botChatPermissionsIn } from
   "../../../packages/infra/botAdmin";
 import {
   ensureAdDetectAgentConfig,
@@ -176,8 +174,6 @@ const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   aiReplyWarmupOperations: AI_REPLY_WARMUP_OPERATIONS,
   aiReplySettleAttempts: AI_REPLY_SETTLE_ATTEMPTS,
   adDetectDrainBudgetMs: AD_DETECT_DRAIN_BUDGET_MS,
-  botPermissionWaitAttempts: BOT_PERMISSION_WAIT_ATTEMPTS,
-  botPermissionWaitStepMs: BOT_PERMISSION_WAIT_STEP_MS,
   stateManagedChatLimit: STATE_MANAGED_CHAT_LIMIT,
   benchmarkChatId,
   benchmarkUserId,
@@ -185,7 +181,7 @@ const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   ensureAgentDeploymentConfig,
   handleAdDetected,
   drainAdDisposals,
-  ensureBotChatPermissions,
+  botChatPermissionsIn,
   getOrCreateChatState,
   cacheAdminIds,
   enqueueAdCandidate,

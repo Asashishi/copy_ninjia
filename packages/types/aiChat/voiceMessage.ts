@@ -10,6 +10,7 @@
 import type { AgentProvider } from "../config";
 import type { Base64PayloadDecodeFailure } from "./payload";
 import type { AiMeteredSpeechRequest } from "./provider";
+import type { AiWorkerJobFailureReason } from "./workerJob";
 
 /**
  * 已校验大小的合成语音：容器字节与 MIME。Gemini 为响应声明的 `audio/wav`；OpenAI 与 xAI
@@ -130,9 +131,7 @@ export type VoiceSynthesisFailure =
   | "tts unsupported"
   | "synthesis failed"
   | "daily limit reached"
-  | "aborted"
-  | "worker unavailable"
-  | "timed out"
+  | AiWorkerJobFailureReason
   | VoiceEncodeFailure;
 
 /** 语音合成公共实现的结果（aiChat/ai/voiceSynthesis.ts 与主线程转交 aiChat/voiceSynthesis.ts）。 */

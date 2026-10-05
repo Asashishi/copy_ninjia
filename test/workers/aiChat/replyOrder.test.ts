@@ -163,7 +163,7 @@ test.each(["drain", "invalidate", "quiesce"] as const)("跨四个限频窗口的
         models.delete(id); toolsets.delete(id); contexts.delete(id);
       }
       expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
-      expect(replyDeliveryWindows.get(-1001)?.size).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
+      expect(replyDeliveryWindows.get(-1001)?.queue.size).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
       expect(replyDeliveryTotal.current).toBe(REPLY_DELIVERY_MAX_PER_CHAT);
       expect(activeReplyCounts.has(-1001)).toBe(false);
       expect(sent).toEqual(["回复1"]);
@@ -276,7 +276,7 @@ test("直接轮发送挂起时模型阶段照常结束并交还独立并发位�
   try {
     await waitUntil(() => models.size === running);
     const window = replyDeliveryWindows.get(-1001)!;
-    expect(window.size).toBe(running);
+    expect(window.queue.size).toBe(running);
     expect(activeReplyCounts.get(-1001)).toBe(running);
     expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
     expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(running + 1);
@@ -299,14 +299,14 @@ test("直接轮发送挂起时模型阶段照常结束并交还独立并发位�
     await waitUntil(() => !activeReplyCounts.has(-1001));
     expect(pendingReplyTriggers.has(-1001)).toBe(false);
     // 有序并行轮全部排在挂住的直接轮之后。
-    expect(window.size).toBe(total);
+    expect(window.queue.size).toBe(total);
     expect(sent).toEqual(["回复1"]);
     expect([...replyGenerationTasks.values()][0]?.size).toBe(total);
     trigger(total + 1);
     await waitUntil(() => models.has(total + 1));
     models.get(total + 1)!.resolve(`回复${total + 1}`);
     await waitUntil(() => !activeReplyCounts.has(-1001));
-    expect(window.size).toBe(total + 1);
+    expect(window.queue.size).toBe(total + 1);
     pending.resolve({ messageId: 1, repliedToMessageId: undefined });
     await settleTasks();
     expect(sent).toEqual(Array.from({ length: total + 1 }, (_, i) => `回复${i + 1}`));
@@ -387,7 +387,7 @@ test.each([false, true])("待处理队列按上限截断，直接轮另计的模
   expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
   expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(maxConcurrent + 1);
   expect([...pendingReplyTriggers.get(-1001)!.values()].at(-1)?.replyToMessageId).toBe(maxConcurrent + REPLY_TRIGGER_QUEUE_MAX);
-  expect(replyDeliveryWindows.get(-1001)?.size).toBe(maxConcurrent);
+  expect(replyDeliveryWindows.get(-1001)?.queue.size).toBe(maxConcurrent);
 });
 
 test("排队媒体仍先于后到文字，补跑使用解析正文和入站快照", async () => {

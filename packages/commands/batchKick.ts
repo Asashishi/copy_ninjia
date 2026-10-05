@@ -424,11 +424,11 @@ export async function handleBatchKickCommand(
   const acknowledged: PromiseWithResolvers<void> = Promise.withResolvers<void>();
   // 先登记再提交：执行器可能在提交的同步段里就启动任务。
   batchKickChats.add(chatId);
-  const accepted: boolean = submitDeferredCommand(
-    "background",
-    (): Promise<void> => deliverBatchKick({ chatId, messageId, durationMs, records, acknowledged: acknowledged.promise }),
-    "Unexpected error while processing /batch_kick:"
-  );
+  const accepted: boolean = submitDeferredCommand({
+    priority: "background",
+    task: (): Promise<void> => deliverBatchKick({ chatId, messageId, durationMs, records, acknowledged: acknowledged.promise }),
+    errorLabel: "Unexpected error while processing /batch_kick:",
+  });
   if (!accepted) {
     batchKickChats.delete(chatId);
     await sendCommandMessage({

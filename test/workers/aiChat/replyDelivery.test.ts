@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { hasReplyDeliveryCapacity, isDirectReplyModelActive, reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
+import { hasLiveReplyRounds, hasReplyDeliveryCapacity, isDirectReplyModelActive, reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import { invalidateChatReplyCache, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows, resetAiChatReplyCache } from "../../../packages/cache/workers/aiChat/replies";
 import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat/rateLimit";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
@@ -60,7 +60,7 @@ test("同窗容纳多轮链，直接轮当即放行，后轮先就绪也必须�
     void turn.ready.then(() => { order.push(i); });
   }
   const window = replyDeliveryWindows.get(1)!;
-  expect(window.size).toBe(total);
+  expect(window.queue.size).toBe(total);
   expect(replyDeliveryCounts.get(1)).toBe(total);
   for (let i: number = turns.length - 1; i > 0; i--) turns[i]!.commit();
   await Promise.resolve();
@@ -74,7 +74,7 @@ test("同窗容纳多轮链，直接轮当即放行，后轮先就绪也必须�
     expect(replyDeliveryTotal.current).toBe(total - i - 1);
   }
   expect(replyDeliveryWindows.size).toBe(0);
-  expect(window.size).toBe(0);
+  expect(window.queue.size).toBe(0);
 });
 
 test("空轮提前完成不放行更晚回复，轮到完成项时直接跳过", async () => {
@@ -111,7 +111,7 @@ test("群里没有在途轮次时是直接轮：占位即放行，commit 交还�
   expect(parallel.direct).toBe(false);
   let parallelReady: boolean = false;
   void parallel.ready.then(() => { parallelReady = true; });
-  expect(replyDeliveryWindows.get(1)?.size).toBe(2);
+  expect(replyDeliveryWindows.get(1)?.queue.size).toBe(2);
   // 有序并行轮的完整链已就绪，直接轮也结束了模型阶段，但直接轮没发完：并行轮继续等。
   parallel.commit();
   direct.commit();
@@ -188,4 +188,14 @@ test("顺位句柄在编译期不可替换", async () => {
   };
   void assertReadonly;
   await turn.finish();
+});
+
+test("存活轮次判定覆盖预留到按序回收的全程，回收完毕即为 false", async () => {
+  expect(hasLiveReplyRounds(1)).toBe(false);
+  const turn = reserveReplyDelivery(1)!;
+  expect(hasLiveReplyRounds(1)).toBe(true);
+  turn.commit();
+  expect(hasLiveReplyRounds(1)).toBe(true);
+  await turn.finish();
+  expect(hasLiveReplyRounds(1)).toBe(false);
 });

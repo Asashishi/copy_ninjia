@@ -28,6 +28,7 @@ mock.module("../../packages/infra/logger", () => ({
 const actions = await import("../../packages/infra/telegram/actions");
 const { probeChatMembershipWithOutcome } = await import("../../packages/infra/telegram/actions/membership");
 const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
+const { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } = await import("../../packages/consts/telegram");
 
 function apiWithSuccesses(): TelegramApi {
   return {
@@ -309,9 +310,9 @@ describe("Telegram 动作适配层失败归一化", () => {
     const api: TelegramApi = apiWithSuccesses();
     actions.deleteMessageAfter({ chatId: -1001, messageId: 45, delayMs: 30_000, api });
 
-    expect(api.deleteMessage).not.toHaveBeenCalled();
+    expect(api.deleteMessages).not.toHaveBeenCalled();
     await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
-    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 45, undefined);
+    expect(api.deleteMessages).toHaveBeenCalledWith(-1001, [45], undefined);
   });
 
   test("timer 已认领的删除仍进入在途集合，Worker flush 不会漏等", async () => {
@@ -340,7 +341,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     }
   });
 
-  test("停机 flush 仅合批显式条目，并按 deleteMessages 的 100 条上限分片", async () => {
+  test("停机 flush 按客户端与群合批，并按 deleteMessages 的 100 条上限分片", async () => {
     const api: TelegramApi = apiWithSuccesses();
     for (let messageId: number = 1; messageId <= 101; messageId++) {
       actions.deleteMessageAfter({
@@ -348,7 +349,6 @@ describe("Telegram 动作适配层失败归一化", () => {
         messageId,
         delayMs: 30_000,
         api,
-        batchOnFlush: true,
       });
     }
     actions.deleteMessageAfter({
@@ -356,7 +356,6 @@ describe("Telegram 动作适配层失败归一化", () => {
       messageId: 201,
       delayMs: 30_000,
       api,
-      batchOnFlush: true,
     });
     actions.deleteMessageAfter({
       chatId: -1001,
@@ -370,12 +369,11 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(api.deleteMessages).toHaveBeenNthCalledWith(
       1,
       -1001,
-      Array.from({ length: 100 }, (_value: unknown, index: number): number => index + 1), undefined
+      Array.from({ length: TELEGRAM_DELETE_MESSAGES_BATCH_MAX }, (_value: unknown, index: number): number => index + 1), undefined
     );
-    expect(api.deleteMessages).toHaveBeenNthCalledWith(2, -1001, [101], undefined);
+    expect(api.deleteMessages).toHaveBeenNthCalledWith(2, -1001, [101, 301], undefined);
     expect(api.deleteMessages).toHaveBeenNthCalledWith(3, -2002, [201], undefined);
-    expect(api.deleteMessage).toHaveBeenCalledTimes(1);
-    expect(api.deleteMessage).toHaveBeenCalledWith(-1001, 301, undefined);
+    expect(api.deleteMessage).not.toHaveBeenCalled();
   });
 
   test("延迟删除失败走统一 Telegram 错误日志，但不阻止停机", async () => {
@@ -383,7 +381,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     actions.deleteMessageAfter({ chatId: -1001, messageId: 46, delayMs: 30_000, api });
 
     await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
-    expect(logApiError).toHaveBeenCalledWith("delete message", expect.any(Error));
+    expect(logApiError).toHaveBeenCalledWith("delete messages", expect.any(Error));
   });
 
   test("零预算不启动新的 Telegram 删除请求", async () => {
@@ -396,12 +394,12 @@ describe("Telegram 动作适配层失败归一化", () => {
 
   test("在途删除超出排空预算：返回 timedOut 并记一行带待删与在途计数的错误日志", async () => {
     const pending: PromiseWithResolvers<true> = Promise.withResolvers<true>();
-    const deleteMessage = mock(async (..._args: unknown[]): Promise<true> => pending.promise);
-    const api: Api = { deleteMessage } as unknown as Api;
+    const deleteMessages = mock(async (..._args: unknown[]): Promise<true> => pending.promise);
+    const api: Api = { deleteMessages } as unknown as Api;
     actions.deleteMessageAfter({ chatId: -1001, messageId: 48, delayMs: 30_000, api });
 
     await expect(actions.drainPendingMessageDeletions(5)).resolves.toBe("timedOut");
-    expect(deleteMessage).toHaveBeenCalledWith(-1001, 48, undefined);
+    expect(deleteMessages).toHaveBeenCalledWith(-1001, [48], undefined);
     expect(loggerError.mock.calls).toEqual([[
       "Delayed Telegram message deletion drain timed out with 0 pending and 1 in flight.",
     ]]);
@@ -409,7 +407,7 @@ describe("Telegram 动作适配层失败归一化", () => {
     // 超时只放弃等待，不取消请求：它结算后下一次排空立即完成。
     pending.resolve(true);
     await expect(actions.drainPendingMessageDeletions(1_000)).resolves.toBe("flushed");
-    expect(deleteMessage).toHaveBeenCalledTimes(1);
+    expect(deleteMessages).toHaveBeenCalledTimes(1);
     expect(loggerError).toHaveBeenCalledTimes(1);
   });
 });

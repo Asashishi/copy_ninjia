@@ -35,6 +35,7 @@ const initWorker = mock((): void => {});
 const teardownFatal = mock((_error: Error): void => {});
 mock.module("../../../packages/infra/diskIO/fatal", () => ({ signalDiskIOFatal: teardownFatal }));
 let workerPostAccepted: boolean = true;
+let diskPostAccepted: boolean = true;
 let supervisorOptions: {
   onEvent: (event: AiChatWorkerEvent) => void;
   onRespawn: (post: (message: AiChatWorkerMessage) => boolean) => void;
@@ -61,7 +62,7 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
   },
 }));
 mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
-  postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return true; },
+  postDiskIO: (message: DiskBusinessMessage): boolean => { diskPosts.push(message); return diskPostAccepted; },
   postDiskIODiagnostic: (message: AdSampleDiskMessage | AiCacheUsageDiskMessage): boolean => {
     diagnosticPosts.push(message);
     return true;
@@ -148,6 +149,7 @@ beforeEach(() => {
   aiEnabledChats.clear();
   knownChats.clear();
   workerPostAccepted = true;
+  diskPostAccepted = true;
 });
 afterEach((): void => { jest.useRealTimers(); });
 
@@ -763,6 +765,33 @@ describe("AI main-thread persistence mirror", () => {
     );
     expect(aiMemoryDeleteWaiters.size).toBe(0);
     expect(aiChatInvalidateRequests.waiters.size).toBe(0);
+  });
+
+  test("Disk I/O 拒收删除投递时只立刻结算本 revision 的等待者，旧 revision 照常等回执", async () => {
+    const errorLog = spyOn(logger, "error").mockImplementation((): void => {});
+    try {
+      const first: Promise<unknown> = aiChat.invalidateAiChat(-1001).catch((error: unknown): unknown => error);
+      const firstRevision: number = pendingAiMemoryDeletes.get(-1001)!;
+      // 镜像里又有了快照，下一次删除必须换新 revision。
+      latestAiMemories.set(-1001, "new-memory");
+      diskPostAccepted = false;
+
+      const second: unknown = await aiChat.invalidateAiChat(-1001).catch((error: unknown): unknown => error);
+      const secondRevision: number = pendingAiMemoryDeletes.get(-1001)!;
+      expect(secondRevision).toBeGreaterThan(firstRevision);
+      expect(second).toBeInstanceOf(Error);
+      expect((second as Error).message).toBe("Persistence Worker rejected AI memory deletion for chat -1001.");
+      // 拒收的墓碑留在 pendingAiMemoryDeletes 里，由 Disk I/O 重建时重放。
+      expect(aiMemoryDeleteWaiters.get(-1001)?.map((waiter): number => waiter.revision)).toEqual([firstRevision]);
+
+      diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: firstRevision });
+      expect(await first).toBeUndefined();
+      expect(aiMemoryDeleteWaiters.size).toBe(0);
+      expect(pendingAiMemoryDeletes.get(-1001)).toBe(secondRevision);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test("还有在途状态时不发 forgetAiMemory：水位线要挡住迟到的 upsert", async () => {

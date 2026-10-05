@@ -15,7 +15,6 @@ type TestDiskMessage = DiskBusinessMessage | AdSampleDiskMessage | AiCacheUsageD
 
 const workerPosts: AntiRaidWorkerMessage[] = [];
 /** 被要求补齐权限位的群，验证刷屏投递顺手触发了那次按需现查。 */
-const ensuredPermissionChats: number[] = [];
 /** 在主线程入口被黑名单频道守卫删除的已知消息。 */
 const deletedMessages: { chatId: number; messageId: number }[] = [];
 const diskPosts: TestDiskMessage[] = [];
@@ -68,7 +67,6 @@ mock.module("../../../packages/infra/botAdmin", () => ({
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
-  ensureBotChatPermissions: (chatId: number): void => { ensuredPermissionChats.push(chatId); },
   botCanDeleteMessagesIn: (): true => true,
 }));
 mock.module("../../../packages/infra/supervisedWorker", () => ({
@@ -152,7 +150,6 @@ function joins(): AntiRaidWorkerMessage[] {
 
 beforeEach(() => {
   workerPosts.length = 0;
-  ensuredPermissionChats.length = 0;
   deletedMessages.length = 0;
   diskPosts.length = 0;
   deliveryOrder.length = 0;
@@ -416,11 +413,8 @@ describe("刷屏计数的主线程投递接线", () => {
     } as never, 999);
 
     expect(floodCandidates()).toEqual([
-      { type: "floodCandidate", chatId: -1001, userId: 7, observedAt: expect.any(Number), label: "@noisy" },
+      { type: "floodCandidate", chatId: -1001, userId: 7, observedAt: expect.any(Number), name: "@noisy" },
     ]);
-    // Worker 侧的禁言闸只认镜像过去的权限，而 my_chat_member 未必在本进程
-    // 生命周期内到过这个群。
-    expect(ensuredPermissionChats).toEqual([-1001]);
   });
 
   test("入群公告不是谁的「发言」，不进任何人的窗口", async () => {
@@ -433,7 +427,6 @@ describe("刷屏计数的主线程投递接线", () => {
     } as never, 999);
 
     expect(floodCandidates()).toBeEmpty();
-    expect(ensuredPermissionChats).toBeEmpty();
   });
 
   test("离群公告同理不计数", async () => {

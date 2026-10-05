@@ -17,6 +17,7 @@ import { startWeatherRefreshLoop, stopWeatherRefreshLoop } from "../aiChat/ai/we
 import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState, superAdminUserIdState, atmosphereState } from "../cache/workers/aiChat/identity";
 import { adoptTimeZone } from "../config/time";
+import { TOKYO_TIME_ZONE } from "../consts/time";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
 import { clearChatMemoryCache } from "../cache/workers/aiChat/memory";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
@@ -94,12 +95,11 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  *
  * 心情系统：全 Worker 只有一份心情、所有群共用，按随机寿命（几小时量级）自然到期
  * 轮换，到期后下次任一群拼运行时状态区块时重抽叠加进去，与群是否活跃无关，模拟真人
- * 聊天号状态会变的感觉；重抽时还按当前东京天气与配置时区时段微调各心情的概率，见
- * aiChat/ai/mood.ts；当前心情与到期时刻（cache/workers/aiChat/mood.ts 的
- * currentMoodState）都不落盘，随 Worker 重启清空。天气
- * 数据由 aiChat/ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
- * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只
- * 读现有缓存、不各自发请求。
+ * 聊天号状态会变的感觉；重抽时还按当前东京天气（仅配置时区为东京时有）与配置时区时段
+ * 微调各心情的概率，见 aiChat/ai/mood.ts；当前心情与到期时刻（cache/workers/aiChat/mood.ts 的
+ * currentMoodState）都不落盘，随 Worker 重启清空。天气数据由 aiChat/ai/weather.ts 统一维护，
+ * 配置时区为东京时每小时自动刷新（见 init 分支的 startWeatherRefreshLoop 调用），
+ * get_tokyo_weather 工具与心情系统都只读现有缓存、不各自发请求。
  */
 
 declare const self: Worker;
@@ -164,6 +164,11 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
   switch (msg.type) {
     case "init":
       adoptTimeZone(msg.timeZone);
+      // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与
+      // 心情系统（aiChat/ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
+      // 读不发请求。只有启动时区为东京时才挂载天气工具，其它时区不刷新，心情也就
+      // 没有天气加权。重复启动不会叠加定时器，停止时同时取消在途请求。
+      if (msg.timeZone === TOKYO_TIME_ZONE) startWeatherRefreshLoop();
       // 配置必须先于任何会调模型的动作落定：紧随其后的 ensureStickerCatalogs
       // 就会去取 media 能力的模型名与凭据。本线程从不读 agent.json，运行期
       // 变化只经 configReload 消息到达，崩溃重建时主线程重放带着当前快照的
@@ -295,10 +300,6 @@ export function startAiChatWorker(): void {
   });
   aiChatMaintenanceTimer.current = setInterval(runAiChatWorkerMaintenance, AI_SNAPSHOT_INTERVAL_MS);
   aiChatMaintenanceTimer.current.unref();
-  // 东京天气的后台定时刷新（见 aiChat/ai/weather.ts）：get_tokyo_weather 工具与
-  // 心情系统（aiChat/ai/mood.ts）共用这一份缓存，全进程只在这里发起，二者都只
-  // 读不发请求。重复启动不会叠加定时器，停止时同时取消在途请求。
-  startWeatherRefreshLoop();
   process.once("exit", stopAiChatWorker);
 }
 

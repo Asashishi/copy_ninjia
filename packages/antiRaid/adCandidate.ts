@@ -26,7 +26,7 @@ import type {
 } from "../types/antiRaid/adDetect";
 import type { TelegramIdentityMetadata } from "../types/identityPolicy";
 import { messageOriginIdentityId } from "../users/messageOrigin";
-import { visibleSenderChat, visibleSenderId } from "../users/visibleSender";
+import { visibleSenderId } from "../users/visibleSender";
 import { messageIdentityMetadata } from "../users/identityMetadata";
 import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { canBypassAdDetection } from "./memberFacts";
@@ -123,26 +123,37 @@ function buildSampleContext(
 }
 
 /**
- * 收敛一条待判定消息。配置未就绪、功能未开启、受保护身份和机器人自己的消息
- * 均返回 undefined；频道黑名单落地空档仍投递，以便 Worker 删除漏网消息。
+ * 广告累计与候选构建共同的前置判定，每条群消息只做一次；调用方已确认本群开着广告检测，
+ * senderChat 为 visibleSenderChat(message)。判定广告检测配置就绪、不是自动转发或机器人
+ * 自己的消息、有展示身份且不是机器人自己或本群的群身份。
+ * @returns 通过时返回展示身份 id（频道马甲优先，否则 from.id），否则 undefined。
+ */
+export function adDetectionSenderId(
+  message: Message,
+  botId: number,
+  senderChat: Chat | undefined
+): number | undefined {
+  if (message.chat.type === "private" || !adDetectConfigReadiness().ok) return undefined;
+  if (message.is_automatic_forward === true || isBotOwnMessage(message)) return undefined;
+  const senderId: number | undefined = senderChat?.id ?? message.from?.id;
+  if (senderId === undefined || senderId === botId || senderChat?.id === message.chat.id) return undefined;
+  return senderId;
+}
+
+/**
+ * 收敛一条已通过 adDetectionSenderId 前置判定的待判定消息。受保护身份返回 undefined；
+ * 频道黑名单落地空档仍投递，以便 Worker 删除漏网消息。
  */
 export function buildAdCandidate(
   {
     message,
     botId,
-    chatState,
     now,
+    senderId,
+    senderChat,
   }: AdDetectionMessageContext
 ): AdCandidateMessage | undefined {
   const chatId: number = message.chat.id;
-  if (message.chat.type === "private") return undefined;
-  if (!adDetectConfigReadiness().ok) return undefined;
-  if (chatState.isAdDetectEnabled !== true) return undefined;
-  if (message.is_automatic_forward === true || isBotOwnMessage(message)) return undefined;
-
-  const senderChat: Chat | undefined = visibleSenderChat(message);
-  const senderId: number | undefined = senderChat?.id ?? message.from?.id;
-  if (senderId === undefined || senderId === botId || senderChat?.id === chatId) return undefined;
   if (canBypassAdDetection(senderId, now)) return undefined;
   const blocked: boolean = isUserBlocked(senderId);
   if (blocked && senderChat === undefined) return undefined;

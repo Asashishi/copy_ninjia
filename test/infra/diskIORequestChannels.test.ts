@@ -170,7 +170,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         records: [{ userId: 42, joinedAt: 456 }],
       } } as unknown as MessageEvent<DiskIOReply>);
       await expect(readPromise).resolves.toEqual([{ userId: 42, joinedAt: 456 }]);
-      expect(joinLogReadRequests.pending.size).toBe(0);
+      expect(joinLogReadRequests.table.waiters.size).toBe(0);
 
       const pendingRead = diskIO.readJoinLog({
         chatId: -1001,
@@ -178,10 +178,10 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         now: 789,
         timeoutMs: 60_000,
       }).then(() => null, (error: unknown) => error);
-      expect(joinLogReadRequests.pending.size).toBe(1);
+      expect(joinLogReadRequests.table.waiters.size).toBe(1);
       await diskIO.terminateDiskIO();
       expect(await pendingRead).toBeInstanceOf(Error);
-      expect(joinLogReadRequests.pending.size).toBe(0);
+      expect(joinLogReadRequests.table.waiters.size).toBe(0);
     } finally {
       await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;
@@ -221,7 +221,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         blocklist: [[43, "{\"reason\":\"spam\"}"]],
         temporaryAdBypass: [],
       });
-      expect(identityPolicyReadRequests.pending.size).toBe(0);
+      expect(identityPolicyReadRequests.table.waiters.size).toBe(0);
 
       const pagePromise: Promise<BlocklistIdPage> =
         diskIO.readBlocklistIdPage(43, 1_000);
@@ -243,7 +243,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
         nextCursor: 45,
         done: false,
       });
-      expect(blocklistIdPageReadRequests.pending.size).toBe(0);
+      expect(blocklistIdPageReadRequests.table.waiters.size).toBe(0);
 
       const incompletePromise: Promise<IdentityPolicyRawReadResult> =
         diskIO.readIdentityPolicies([99], 1_000);
@@ -259,12 +259,12 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       await expect(incompletePromise).rejects.toThrow(
         "Disk I/O Worker returned no identity policy rows."
       );
-      expect(identityPolicyReadRequests.pending.size).toBe(0);
+      expect(identityPolicyReadRequests.table.waiters.size).toBe(0);
 
       await expect(diskIO.readBlocklistIdPage(null, 1)).rejects.toThrow(
         "blocklist ID page read request timed out"
       );
-      expect(blocklistIdPageReadRequests.pending.size).toBe(0);
+      expect(blocklistIdPageReadRequests.table.waiters.size).toBe(0);
     } finally {
       await diskIO.terminateDiskIO();
       globalThis.Worker = originalWorker;
@@ -353,7 +353,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       worker.rejectedTypes.add("ensureLuckSecret");
       await expect(diskIO.ensureLuckReceiptSecret("2026-07-21", 60_000))
         .rejects.toThrow("rejected the luck receipt secret request");
-      expect(luckSecretRequests.pending.size).toBe(0);
+      expect(luckSecretRequests.table.waiters.size).toBe(0);
 
       worker.rejectedTypes.add("flush");
       await expect(diskIO.flushDiskIO(60_000)).resolves.toBe("failed");

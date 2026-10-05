@@ -82,9 +82,10 @@ mock.module("../../../packages/workers/antiRaid/floodControl", () => ({
 /** 镜像里此前是否确证能限制成员；botPermissionsChanged 只在它从否变为是时提前私密模式重试。 */
 let couldRestrict: boolean = false;
 mock.module("../../../packages/workers/antiRaid/botPermissions", () => ({
-  applyBotPermissionsChange(): void { calls.push("botPermissionsChanged"); },
+  applyBotPermissionsChange(_chatId: number, permissions: unknown): void {
+    calls.push(permissions === undefined ? "botPermissionsUnknown" : "botPermissionsChanged");
+  },
   botCanRestrictIn(): boolean { return couldRestrict; },
-  forgetWorkerBotPermissions(): void { calls.push("forgetBotPermissions"); },
   resetWorkerBotPermissions(): void { calls.push("resetBotPermissions"); },
 }));
 mock.module("../../../packages/workers/antiRaid/chatKind", () => ({
@@ -113,10 +114,10 @@ const {
   chatAdmins,
 } = await import("../../../packages/cache/workers/antiRaid/admins");
 const {
-  getOrCreateLinkedChannelFetch,
   linkedChannelFetches,
   linkedChannels,
 } = await import("../../../packages/cache/workers/antiRaid/linkedChannels");
+const { getOrCreateKeyedTask } = await import("../../../packages/libs/keyedTask");
 const { verificationRevisions } = await import("../../../packages/cache/workers/antiRaid/verification");
 const {
   blocklistRemovalEpochs,
@@ -172,7 +173,8 @@ describe("Anti-Raid Worker lifecycle", () => {
     let resolveStale!: () => void;
     let resolveFresh!: () => void;
     worker.startAntiRaidWorker();
-    const stale: Promise<void> = getOrCreateLinkedChannelFetch(
+    const stale: Promise<void> = getOrCreateKeyedTask(
+      linkedChannelFetches,
       -1001,
       (): Promise<void> => new Promise((resolve: () => void): void => {
         resolveStale = resolve;
@@ -181,7 +183,8 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     worker.stopAntiRaidWorker();
     worker.startAntiRaidWorker();
-    const fresh: Promise<void> = getOrCreateLinkedChannelFetch(
+    const fresh: Promise<void> = getOrCreateKeyedTask(
+      linkedChannelFetches,
       -1001,
       (): Promise<void> => new Promise((resolve: () => void): void => {
         resolveFresh = resolve;
@@ -262,7 +265,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
       { type: "adCandidate", chatId: -1001, senderId: 1, messageId: 11, observedAt: 1, text: "买号加我", firstName: "Spam", lastName: "", username: "spam", isChannel: false, isForwarded: false, blocked: false, justJoined: true, linkUrls: undefined, sampleQuote: undefined, sampleReplyTo: undefined },
       { type: "clearAdDetect", chatId: -1001 },
-      { type: "floodCandidate", chatId: -1001, userId: 1, observedAt: 1, label: "@noisy" },
+      { type: "floodCandidate", chatId: -1001, userId: 1, observedAt: 1, name: "@noisy" },
       { type: "clearFloodControl", chatId: -1001 },
       { type: "temporaryAdBypassGranted", identityId: 1 },
       { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
@@ -278,7 +281,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       // 停管连待检的广告消息串一起丢：不再替这个群判定，也不再在那里删消息。
       "clearAdDetect",
       // 刷屏计数与权限镜像同理：重新接管时主线程会重新镜像，计数从零开始。
-      "clearFloodWindows", "forgetBotPermissions", "forgetChatKind",
+      "clearFloodWindows", "botPermissionsUnknown", "forgetChatKind",
       // `/antiraid disable` 只收入群这一条链路：验证经状态机收摊、私密模式解锁，
       // 广告队列、刷屏窗口、权限与群类型镜像一个都不动（各有各的开关）。
       "disableJoinGuard", "deactivateLockdown",

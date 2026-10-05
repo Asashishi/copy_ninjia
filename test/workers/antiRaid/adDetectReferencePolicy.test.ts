@@ -10,7 +10,7 @@ import {
   classifiedTexts,
   classifyAdText,
   deleteReferencedAdMessages,
-  deleteStaleReferencedAdWarning,
+  deleteMessage,
   deleteStragglerAdMessage,
   disposeAdSender,
   errorLogs,
@@ -20,6 +20,7 @@ import {
   warnReferencedAdSender,
 } from "../../helpers/adDetectQueueHarness";
 
+const { telegramApi } = await import("../../../packages/infra/telegram");
 const {
   clearChatAdDetect,
   enqueueAdCandidate,
@@ -293,7 +294,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     expect(pendingAdBundle(-1001, 7) !== undefined).toBeFalse();
     expect(queuedAdDetectKeys.has("-1001:7")).toBeFalse();
     expect(deleteReferencedAdMessages).not.toHaveBeenCalled();
-    expect(deleteStaleReferencedAdWarning).not.toHaveBeenCalled();
+    expect(deleteMessage).not.toHaveBeenCalled();
     expect(disposeAdSender).not.toHaveBeenCalled();
   });
 
@@ -319,7 +320,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     await running;
 
     expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
-    expect(deleteStaleReferencedAdWarning).toHaveBeenCalledWith(-1001, 555);
+    expect(deleteMessage).toHaveBeenCalledWith(-1001, 555, telegramApi);
     expect(deleteReferencedAdMessages).not.toHaveBeenCalled();
   });
 

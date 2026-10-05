@@ -24,7 +24,7 @@
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
   - **职责**：显式命令按命令族组织，同一入口的子命令在该领域内分派；开关命令共用的权限与配置门禁另成文件。
-  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` 与 `hImage/`（抽图、收图）、`info.ts`、`deferredCommands.ts`（抽图、收图、`/info` 与 `/batch_kick` 共用的延迟命令执行器）、`mute.ts`、`batchKick.ts`、
+  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` 与 `hImage/`（抽图、收图）、`info.ts`、`deferredCommands.ts`（抽图、收图、`/info`、`/batch_kick` 与 `/block enable` 跨群封禁共用的延迟命令执行器）、`blocklistFanOut.ts`（`/block enable` 跨群封禁扇出）、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染；
     inline 抽签同理由 `luckChallenge/` 承接（`cache.ts`、`draw.ts`、`key.ts`、`rateLimit.ts`、

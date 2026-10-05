@@ -1,5 +1,5 @@
 import {
-  storagePendingBudget,
+  storagePendingBudgets,
   pendingTemporaryAdBypassWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
@@ -49,7 +49,7 @@ export function handleTemporaryAdBypassWrite(
   const current: PendingTemporaryAdBypassWrite | undefined =
     pendingTemporaryAdBypassWrites.get(message.id);
   if (current !== undefined && current.revision >= message.revision) return;
-  storagePendingBudget.reserve(current === undefined ? 1 : 0, current === undefined ? storageWriteCost(null) : 0);
+  storagePendingBudgets.temporaryAdBypass.reserve(current === undefined ? 1 : 0, current === undefined ? storageWriteCost(null) : 0);
   pendingTemporaryAdBypassWrites.set(message.id, {
     activity,
     revision: message.revision,

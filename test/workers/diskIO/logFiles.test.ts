@@ -19,6 +19,7 @@ import {
   maintainLogRetention,
 } from "../../../packages/workers/diskIO/logFiles";
 import { serializeDayFileEntry } from "../../../packages/workers/diskIO/appendOnlyDayFile";
+import type { LogEnvelope } from "../../../packages/types/diskIO/messages";
 
 /**
  * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
@@ -125,7 +126,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
     const day: string = getDateKey(timestamp);
 
-    handleLogMessage({ timestamp, level: "error", args: ["request failed", { code: 503 }, "retrying"] });
+    handleLogMessage({ type: "log", id: crypto.randomUUID(), timestamp, level: "error", args: ["request failed", { code: 503 }, "retrying"] });
     expect(flushBuffer.entries).toHaveLength(1);
 
     expect(await flushLogBuffer()).toBeTrue();
@@ -144,12 +145,28 @@ describe("diskIO/logFiles 启动恢复", () => {
     });
   });
 
+  test("整批重投时同一条日志沿用主线程生成的 id，已写入的条目解析后仍只有一条", async () => {
+    await initLogFiles();
+    const timestamp: number = Date.UTC(2026, 6, 23, 23, 59, 59, 999);
+    const day: string = getDateKey(timestamp);
+    const envelope: LogEnvelope = { type: "log", id: crypto.randomUUID(), timestamp, level: "error", args: ["crossing midnight"] };
+
+    handleLogMessage(envelope);
+    expect(await flushLogBuffer()).toBeTrue();
+    handleLogMessage(envelope);
+    expect(await flushLogBuffer()).toBeTrue();
+
+    const parsed = JSON.parse(await Bun.file(join(LOGS_DIR, `${day}.json`)).text()) as Record<string, object>;
+    expect(Object.keys(parsed)).toHaveLength(1);
+    expect(Object.keys(parsed)[0]!.endsWith(`_${envelope.id}`)).toBeTrue();
+  });
+
   test("参数全是字符串时记录里不写 args 键", async () => {
     await initLogFiles();
     const timestamp: number = Date.UTC(2026, 6, 23, 12, 34, 56, 789);
     const day: string = getDateKey(timestamp);
 
-    handleLogMessage({ timestamp, level: "info", args: ["bot", "started"] });
+    handleLogMessage({ type: "log", id: crypto.randomUUID(), timestamp, level: "info", args: ["bot", "started"] });
     expect(await flushLogBuffer()).toBeTrue();
     const parsed = JSON.parse(await Bun.file(join(LOGS_DIR, `${day}.json`)).text()) as Record<string, object>;
     const records = Object.values(parsed);
@@ -165,7 +182,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     await Bun.write(stalePath, "{}");
     await Bun.write(tempPath, "partial");
     const timestamp: number = Date.now();
-    handleLogMessage({ timestamp, level: "error", args: ["daily maintenance"] });
+    handleLogMessage({ type: "log", id: crypto.randomUUID(), timestamp, level: "error", args: ["daily maintenance"] });
 
     await maintainLogRetention();
 

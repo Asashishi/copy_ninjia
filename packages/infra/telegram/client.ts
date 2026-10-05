@@ -4,7 +4,7 @@ import { telegramErrorDetails } from "./errors";
 import type { TelegramApi, InstalledTelegramApi } from "../../types/telegramWorker";
 
 /** 读取当前线程已经安装的 Telegram 能力实现；未初始化时拒绝旁路联网。 */
-export function currentTelegramApi(): InstalledTelegramApi {
+function currentTelegramApi(): InstalledTelegramApi {
   const current: InstalledTelegramApi | null = telegramApiState.current;
   if (current === null) {
     throw new Error("Telegram API capability has not been installed for this thread.");

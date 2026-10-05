@@ -6,15 +6,15 @@ import {
   bufferAdminChangeDuringFetch,
   cacheAdminIds,
   chatAdmins,
-  discardPendingAdminChanges,
-  getOrCreateAdminFetch,
-  isCurrentAdminCacheGeneration,
+  adminFetches,
+  pendingAdminChangesDuringFetch,
   takePendingAdminChanges,
 } from "../../cache/workers/antiRaid/admins";
 import type { ChatAdminCache } from "../../types/antiRaid/internal";
 import type { ChatMemberAdministrator, ChatMemberOwner } from "grammy/types";
 import { trackAntiRaidTask } from "./taskTracker";
 import { isRecordedWithin } from "../../libs/clockWindow";
+import { getOrCreateKeyedTask } from "../../libs/keyedTask";
 
 /**
  * 各群非匿名管理员邀请豁免缓存：按需全量拉取 + TTL 缓存 + 拉取在途期间
@@ -45,7 +45,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
   // 记下启动时的整表世代号：resetAdminCache() 会在拉取在途时把 chatAdmins 与
   // pendingAdminChangesDuringFetch 一起清空，此后这次拉取的一切写回都是过期的。
   const generation: number = adminCacheGeneration.current;
-  const task: Promise<Set<number>> = getOrCreateAdminFetch(chatId, (): Promise<Set<number>> =>
+  const task: Promise<Set<number>> = getOrCreateKeyedTask(adminFetches, chatId, (): Promise<Set<number>> =>
     telegramApi
       .getChatAdministrators(chatId)
       .then((admins: (ChatMemberOwner | ChatMemberAdministrator)[]): Set<number> => {
@@ -57,7 +57,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
         // 进刚清空的表，等于让那段窗口里的管理员降权静默消失——被降权者会在
         // 整个 ADMIN_CACHE_TTL_MS 内继续留在邀请人豁免集合里，他拉进来的人
         // 全部免入群验证。
-        if (!isCurrentAdminCacheGeneration(generation)) return adminIds;
+        if (adminCacheGeneration.current !== generation) return adminIds;
         // 拉取在途期间到达的增量变化比这份快照更新（chat_member 更新是
         // 近实时的权威信号），重放在其上，不能被这次 resolve 覆盖掉——见
         // pendingAdminChangesDuringFetch 注释。
@@ -76,7 +76,7 @@ export function fetchAdminIds(chatId: number): Promise<Set<number>> {
         // 权威快照；继续留着只会让失败过的群永久占住这张 Map。
         // 同样要比对世代：整表清空之后这张 Map 里躺的是**新**一轮拉取积累的
         // 增量，陈旧拉取的失败不该把它们一并丢掉。
-        if (isCurrentAdminCacheGeneration(generation)) discardPendingAdminChanges(chatId);
+        if (adminCacheGeneration.current === generation) pendingAdminChangesDuringFetch.delete(chatId);
         throw error;
       })
   );

@@ -58,6 +58,7 @@ const { applyChatKindChange, resetWorkerChatKind } = await import(
   "../../../packages/workers/antiRaid/chatKind"
 );
 const { resetAdminCache } = await import("../../../packages/cache/workers/antiRaid/admins");
+const { joinWindows } = await import("../../../packages/cache/workers/antiRaid/lockdown");
 const { scheduleTerminalRetry } = await import("../../../packages/workers/antiRaid/verificationEffects/retry");
 const { VERIFICATION_REVISION_CAPACITY, VERIFICATION_REVISION_RETENTION_MS, VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS } = await import(
   "../../../packages/consts/antiRaid/verification"
@@ -395,6 +396,28 @@ describe("Anti-Raid Worker verification attempt budget", (): void => {
     expect(verificationRevisions.size).toBe(VERIFICATION_REVISION_CAPACITY);
     expect(workerEvents.filter((event: AntiRaidWorkerEvent): boolean => event.type === "verificationRevisionCapacityExceeded")).toHaveLength(1);
   });
+  test("revision 满额时新成员入群在准入处拒收：不建运行态、不记入群窗口，只报告一次", () => {
+    runtime.adoptVerifications({ type: "adoptVerifications", generation: 1, verifications: [] });
+    const retiredAt: number = Date.now();
+    for (let userId: number = 1; userId <= VERIFICATION_REVISION_CAPACITY; userId++) {
+      verificationRevisions.set(`-1001:${userId}`, { revision: 1, retiredAt });
+    }
+    // 换一个本文件其它用例不碰的群，入群滑窗的断言不受用例顺序影响。
+    const chatId: number = -1777;
+    for (let attempt: number = 0; attempt < 2; attempt++) {
+      handleJoinEvent({
+        type: "join",
+        chatId,
+        member: { id: 42, first_name: "Newcomer" },
+      }, runtime.dispatchVerification);
+    }
+    expect(verificationEntries.has(`${chatId}:42`)).toBeFalse();
+    expect(verificationRevisions.has(`${chatId}:42`)).toBeFalse();
+    expect(joinWindows.has(chatId)).toBeFalse();
+    expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
+    expect(workerEvents).toEqual([{ type: "verificationRevisionCapacityExceeded", generation: 1 }]);
+  });
+
   test("耗尽转移卸载运行态但不发 tombstone，并阻止同 key 再入群重建", () => {
     runtime.adoptVerifications({
       type: "adoptVerifications",

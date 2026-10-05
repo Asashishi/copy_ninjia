@@ -141,11 +141,6 @@ export function deleteReferencedAdMessages({
   });
 }
 
-/** 清群或停机使警告回执过期时，立即撤掉已经发出的迟到提示。 */
-export function deleteStaleReferencedAdWarning(chatId: number, messageId: number): void {
-  void deleteMessage(chatId, messageId, telegramApi);
-}
-
 /**
  * 这次处置要删的消息 id：判定依据 ∪ 此刻串里还剩的 ∪ 挤出去时转存的。三边都
  * 不能少——只删第一份会放过往返期间抢发的后续广告，只删第二份会漏掉被单 key

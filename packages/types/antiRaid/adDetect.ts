@@ -1,14 +1,19 @@
 /** 广告检测流水线的跨线程协议与 Worker 内部纯数据形状。 */
-import type { Message } from "grammy/types";
-import type { ChatState } from "../chatState";
+import type { Chat, Message } from "grammy/types";
 import type { TelegramIdentityMetadata } from "../identityPolicy";
 
-/** 同一条群消息的广告累计与候选构建共用事实；构造后保持固定 shape。 */
+/**
+ * 同一条群消息的广告累计与候选构建共用事实；构造后保持固定 shape。只为通过
+ * antiRaid/adCandidate.ts 的 adDetectionSenderId 前置判定的消息构造。
+ */
 export interface AdDetectionMessageContext {
   readonly message: Message;
   readonly botId: number;
-  readonly chatState: Readonly<ChatState>;
   readonly now: number;
+  /** adDetectionSenderId 判出的展示身份 id（频道马甲优先，否则 from.id）。 */
+  readonly senderId: number;
+  /** 消息的可见频道身份（见 users/visibleSender.ts）；普通用户发言为 undefined。 */
+  readonly senderChat: Chat | undefined;
 }
 
 /**

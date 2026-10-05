@@ -61,10 +61,12 @@ describe("sendCommandMessage", () => {
       await sendCommandMessage({ chatId: -1002, text: "别的群" });
       await sendCommandMessage({ chatId: -1001, text: "显式话题", messageThreadId: 9 });
       await sendCommandMessage({ chatId: -1001, text: "长期保留", preserveInGroup: true });
+      // 显式传 undefined 表示 General：后台任务沿用旧 update 作用域时不得被补成别的话题。
+      await sendCommandMessage({ chatId: -1001, text: "显式 General", messageThreadId: undefined });
     }, { chatId: -1001, threadId: 5 });
     await sendCommandMessage({ chatId: -1001, text: "作用域之外" });
 
-    expect([0, 1, 2, 3, 4].map(threadOf)).toEqual([5, undefined, 9, 5, undefined]);
+    expect([0, 1, 2, 3, 4, 5].map(threadOf)).toEqual([5, undefined, 9, 5, undefined, undefined]);
   });
 
   test("私聊提示保持原有留存行为", async () => {

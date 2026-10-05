@@ -5,6 +5,8 @@
  * 且非空，仅条目正文允许非空的多行。
  */
 
+import type { AiWorkerJobFailureReason } from "./aiChat/workerJob";
+
 /** 摘要语言；决定组稿要求与来源行的标签。 */
 export type WebDigestLanguage = "zh" | "ja" | "en";
 
@@ -69,9 +71,7 @@ export interface WebDigestRequest {
  */
 export type WebDigestFailure =
   | "ai unconfigured"
-  | "worker unavailable"
-  | "timed out"
-  | "aborted"
+  | AiWorkerJobFailureReason
   | "search failed"
   | "no sources"
   | "compose failed"

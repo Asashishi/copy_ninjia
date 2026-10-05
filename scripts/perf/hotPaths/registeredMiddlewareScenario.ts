@@ -33,7 +33,7 @@ import type { Scenario } from "./types";
  *
  * 管理员身份下这条路径仍然同步、零副作用：`sender_chat` 缺席让黑名单门禁第一行返回
  * false；`isAdDetectEnabled` 与 `isFloodControlEnabled` 都保持缺省关闭，两个候选都是
- * `undefined`（因此也不碰 `ensureBotChatPermissions` 与任何跨线程投递）；待验证镜像为
+ * `undefined`（因此也不碰任何跨线程投递）；待验证镜像为
  * 空表，键都不拼。改 fixture 前必须重新验证这几条。
  */
 export function registeredMiddlewareScenario(): Scenario {

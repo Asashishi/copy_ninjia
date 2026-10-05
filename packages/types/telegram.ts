@@ -107,8 +107,6 @@ export interface PendingMessageDeletion {
   readonly chatId: number;
   readonly messageId: number;
   readonly api: TelegramMessageDeletionApi;
-  /** 停机提前兑现时是否允许与同客户端、同群条目合成 deleteMessages。 */
-  readonly batchOnFlush: boolean;
   readonly timer: ReturnType<typeof setTimeout>;
 }
 

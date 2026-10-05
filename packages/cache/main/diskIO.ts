@@ -30,8 +30,10 @@ import type {
 import type {
   DiskIODomain,
   DiskIOReplyListeners,
+  DiskIORequestOutcome,
   LoadedReply,
 } from "../../types/diskIO/replies";
+import type { WorkerRequestTable } from "../../types/workerRequest";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
 import type { IdentityPolicyRawReadResult, BlocklistIdPage } from "../../types/identityStorage";
 
@@ -46,35 +48,27 @@ export const pendingLoad: {
   timer: ReturnType<typeof setTimeout> | null;
 } = { resolve: null, reject: null, timer: null };
 
-/** 一条在途 main -> diskIO 请求的等待者。 */
-export interface PendingDiskIORequest<TResult> {
-  resolve: (value: TResult) => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 /**
- * 一条 main -> diskIO 的 request/reply 通道：等待表、发号器与两句领域文案。
+ * 一条 main -> diskIO 的 request/reply 通道：共享等待表与两句领域文案。
  *
- * 运势密钥、入群日志、身份策略、黑名单主键四个领域各声明一个通道对象；统一
- * 请求、回执路由与 Worker 代际失效结算按通道表工作。
+ * 运势密钥、入群日志、身份策略、黑名单主键四个领域各声明一个通道对象；等待表的
+ * 填充与结算只由 infra/diskIO/requests.ts 经 libs/workerRequestTable.ts 完成，
+ * 回执、超时、投递被拒、Worker 代际失效与 terminate 都会摘除等待者。容量为同时
+ * 在途的请求数，由各调用方的串行或批量边界封住。
  */
 export interface DiskIORequestChannel<TResult> {
-  /** 超时与拒收文案里的领域名，例如 `identity policy read`。 */
+  /** 超时、拒收与代际失效文案里的领域名，例如 `identity policy read`。 */
   readonly label: string;
   /** Worker 回执缺少载荷时的错误文案；各领域点名自己缺的东西。 */
   readonly missingPayload: string;
-  /** 逐请求等待表；只由 infra/diskIO/requests.ts 填充与结算。 */
-  readonly pending: Map<number, PendingDiskIORequest<TResult>>;
-  /** 本代际发号器；terminateDiskIO 归零。 */
-  nextRequestId: number;
+  readonly table: WorkerRequestTable<DiskIORequestOutcome<TResult>>;
 }
 
 function createDiskIORequestChannel<TResult>(
   label: string,
   missingPayload: string
 ): DiskIORequestChannel<TResult> {
-  return { label, missingPayload, pending: new Map(), nextRequestId: 1 };
+  return { label, missingPayload, table: { waiters: new Map(), counter: { current: 0 } } };
 }
 
 /** ensureLuckReceiptSecret 的请求通道。 */
@@ -95,7 +89,7 @@ export const blocklistIdPageReadRequests: DiskIORequestChannel<BlocklistIdPage> 
 
 /**
  * 全部请求通道。Worker 代际失效、恢复失败与 terminate 都按表结算所有等待者。
- * 元素的 TResult 各不相同，统一失败路径只需要 reject 与 timer，故按最小结构擦除。
+ * 元素的 TResult 各不相同，统一失败路径只写入失败结局，故按 never 擦除。
  */
 export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = [
   luckSecretRequests,

@@ -19,3 +19,12 @@
  * （Worker 侧的 joinWindows）本来也是空的，重新计数是正确的。
  */
 export const recentBlockedJoinCounts: Map<string, number> = new Map();
+
+/**
+ * 已记过「已拉黑频道身份的消息因缺删消息权限删不掉」错误的群。命中后该群的同类消息
+ * 不再逐条记错误；之后某条同类消息不再确证缺删消息权限（照常发删除请求）时移除，
+ * 再次确证缺权限时重新记一次。群 teardown 时由 antiRaid/workerBridge/observers.ts
+ * 删除；只收录已确证机器人是管理员的已接管群，上界 STATE_MANAGED_CHAT_LIMIT
+ * （见 consts/storage.ts）。主线程状态，与 Worker 重建无关，进程重启后清空。
+ */
+export const blockedSenderChatDeleteDeniedChats: Set<number> = new Set();

@@ -98,7 +98,7 @@
 - **インストールとアップグレードテスト**：`test/scripts/installStartup.test.ts`、`test/scripts/installMigration.test.ts` がインストールスクリプト、空データベース初期化、メジャーバージョン間アップグレードを検証。
 - **コールド移行テスト**：`test/scripts/migrateChatPersonaRemoval.test.ts` が 16.3.2 の schema v11 系譜だけを受け付けること、v11 → v13 のデータベース移行（Asia/Tokyo のタイムゾーンマーカーを含む）、移行前後の本番起動検証を確認。
 - **メディアと出站テスト**：`test/aiChat/ai/mediaAdmission.test.ts`、`test/aiChat/ai/imageDescription.test.ts`、`test/infra/telegramWorkerCapabilities.test.ts` がマルチモーダル認識と Telegram 双方向出站ゲートを検証。
-- **統一送信の統合テスト**：`test/infra/telegramOutboundIntegration.test.ts` は実際の client 初期化、throttler、送信 gate を使い、最内層の network response だけを置き換えます。メインスレッド、context、両 Worker、cron の同一 chat FIFO、category ごとの 429 再送、対象権限の問い合わせ、デフォルトアバターとファイル download の共有 backoff、cancel、停止時の drain を検証します。
+- **統一送信の統合テスト**：`test/infra/telegramOutboundIntegration.test.ts` は実際の client 初期化、送信 gate、chat ごとの送信スケジューラを使い、最内層の network response だけを置き換えます。メインスレッド、context、両 Worker、cron の同一 chat FIFO、category ごとの 429 再送、対象権限の問い合わせ、デフォルトアバターとファイル download の共有 backoff、cancel、停止時の drain を検証します。
 - **セキュリティとログテスト**：`test/infra/loggerSecurity.test.ts` が認証情報のマスキングを検証。
 
 ---

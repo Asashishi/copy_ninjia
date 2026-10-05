@@ -63,13 +63,29 @@ export function initBlocklistSweepScheduler(): void {
 }
 
 /**
- * 记下缺封禁权限，并把对应 outbox 批次标成 missing-permission；标记变化时同步排入
- * durable outbox 快照，重启后由 hydrateBlocklist 恢复闩锁。没有既有 sweep
- * 记录时也建立最小闩锁，确保 Worker 重建不会反复重投同一批注定失败的任务。
+ * 记下缺封禁权限并闩住这个群。补扫批次标成 missing-permission 留在 outbox，标记变化时
+ * 同步排入 durable 快照，重启后由 hydrateBlocklist 恢复闩锁；秒踢与广告等指名批次直接
+ * 销账：权限恢复时 noteBanPermissionObserved 重新武装的全名单补扫会清出仍在群里的
+ * 黑名单成员，留着它们只会让缺权限群的批次随每次入群或广告处置在 outbox 里累积。
+ * 没有既有 sweep 记录时也建立最小闩锁，确保 Worker 重建不会反复重投注定失败的任务。
+ * 错误日志只在闩锁由开到关的边沿记一次。
  */
 function notePermissionBlocked(chatId: number, removalId: number): void {
-  recordPendingRemovalFailure(removalId, chatId, "missing-permission");
   const progress: BlocklistSweepRecord | undefined = blocklistSweepState.get(chatId);
+  if (progress?.permissionBlocked !== true) {
+    logger.error(
+      `Blocklist removal ${removalId} for chat ${chatId} is blocked by missing ban rights; ` +
+      "removals there wait for the bot's permissions to change."
+    );
+  }
+  if (pendingBlockedRemovals.get(removalId)?.params.probeMembership === false) {
+    pendingBlockedRemovals.delete(removalId);
+    if (!queuePendingBlockedRemovalsSnapshot()) {
+      logger.error(`Failed to queue permission-blocked blocklist removal cleanup ${removalId}.`);
+    }
+  } else {
+    recordPendingRemovalFailure(removalId, chatId, "missing-permission");
+  }
   blocklistSweepState.set(chatId, progress === undefined
     ? {
       removalId: null,
@@ -104,10 +120,10 @@ export function noteBanPermissionObserved(chatId: number, canRestrict: boolean):
     permissionBlocked: false,
   });
   armBlocklistSweepScheduler();
-  // frozen 秒踢/广告批次各自还带着独立 removalId，新的全名单补扫不会替它们
-  // 回执销账。权限边沿到达时先整批重新交给 Worker，让各批按自己的 complete
-  // 回执收敛；随后 recordBotChatPermissions 仍会调用 sweepBlockedMembers，覆盖
-  // `/block` 直接封禁失败但从未建立 frozen pending 的成员。
+  // 闩锁期间仍在途、尚未回执的秒踢/广告批次各自带着独立 removalId，新的全名单补扫
+  // 不会替它们回执销账。权限边沿到达时先整批重新交给 Worker，让各批按自己的
+  // complete 回执收敛；随后 recordBotChatPermissions 仍会调用 sweepBlockedMembers，
+  // 覆盖因缺权限而销账的指名批次与 `/block` 直接封禁失败的成员。
   replayPendingBlockedRemovalsForChat(chatId);
 }
 
@@ -388,9 +404,9 @@ async function continueBlocklistSweep(
 }
 
 /**
- * Worker 回执：complete 才销 durable 镜像并允许 sweptAt 落地；未落定任务永久
- * 留在 outbox，直到完成或权威状态取消。任务与补扫记录都已被
- * forgetChatBlocklistWork 撤销（群不再受管）时，迟到回执直接丢弃。
+ * Worker 回执：complete 才销 durable 镜像并允许 sweptAt 落地；未落定任务留在
+ * outbox，直到完成或权威状态取消，缺封禁权限的指名批次例外（见 notePermissionBlocked）。
+ * 任务与补扫记录都已被 forgetChatBlocklistWork 撤销（群不再受管）时，迟到回执直接丢弃。
  */
 export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
   const page: BlocklistSweepPageState | undefined =
@@ -454,10 +470,6 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
       logger.error(`Failed to queue completed blocklist removal cleanup ${event.removalId}.`);
     }
   } else if (event.permissionDenied === true) {
-    logger.error(
-      `Blocklist removal ${event.removalId} for chat ${event.chatId} is blocked by missing ban rights; ` +
-      "it stays pending until the bot's permissions there change."
-    );
     notePermissionBlocked(event.chatId, event.removalId);
   } else {
     const message: string =

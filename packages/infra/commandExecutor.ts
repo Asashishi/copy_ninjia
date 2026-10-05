@@ -35,12 +35,14 @@ export interface SubmitCommandExecutorTaskOptions {
   readonly errorLabel: string;
   /** 只撤销尚未开始的任务的额外取消信号（如 `/wed` 的群取消）；在途任务不受它影响。 */
   readonly queueSignal?: AbortSignal;
+  /** 已接纳的任务没有开跑就被撤销（停机、update 取消或 queueSignal）时调用一次；开跑过的任务不调用。 */
+  readonly onSkipped?: () => void;
 }
 
 /**
  * 同步提交一个任务：合入运行时停止信号与接纳时的 update 取消上下文，任务在自己的取消上下文与
  * 触发话题里运行，不继承释放槽位的另一条任务的上下文；停机取消后的异常不再上报。接纳时
- * update 已取消则返回 false。
+ * update 已取消则返回 false。接纳后没有开跑就被撤销的任务在结算时调用 onSkipped。
  * @see ../../docs/cn/04-invariants.md
  */
 export function submitCommandExecutorTask({
@@ -49,16 +51,26 @@ export function submitCommandExecutorTask({
   task,
   errorLabel,
   queueSignal,
+  onSkipped,
 }: SubmitCommandExecutorTaskOptions): boolean {
   const taskSignal: AbortSignal = combineWithUpdateAbortSignal(runtime.controller.signal)!;
   if (taskSignal.aborted) return false;
   const queuedSignal: AbortSignal = queueSignal === undefined ? taskSignal : AbortSignal.any([taskSignal, queueSignal]);
   const topic: UpdateTopic | undefined = currentUpdateTopic();
-  const completion: Promise<unknown> = runtime.runner.run(priority, (): Promise<unknown> =>
-    runWithUpdateAbortSignal(taskSignal, task, topic), queuedSignal)
+  let started: boolean = false;
+  const completion: Promise<unknown> = runtime.runner.run(priority, (): Promise<unknown> => {
+    started = true;
+    return runWithUpdateAbortSignal(taskSignal, task, topic);
+  }, queuedSignal)
     .catch((error: unknown): void => {
       if (!taskSignal.aborted) throw error;
     });
   trackBackgroundTask(runtime.tasks, completion, errorLabel);
+  if (onSkipped !== undefined) {
+    // 只有开跑过的任务才可能拒绝，拒绝由 trackBackgroundTask 上报；这条派生链只看是否开跑。
+    void completion.then((): void => {
+      if (!started) onSkipped();
+    }, (): void => undefined);
+  }
   return true;
 }

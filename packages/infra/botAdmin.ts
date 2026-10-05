@@ -195,15 +195,12 @@ export async function handleMyChatMemberUpdate(ctx: Context): Promise<void> {
  * 现查闸：放行时就地武装退避窗口并返回 true，退避期内返回 false。
  *
  * `getChatMember` 一次没能确证权限位之后，`botChatPermissionsIn` 按约定不落任何
- * 快照（见它的 @returns）。因此**每一处会因「快照缺失」而现查的入口都必须先过这道
- * 闸**，否则那种群里每一条触发它的更新都换一次注定失败的现查。目前是两处：热路径的
- * 按需补齐（ensureBotChatPermissions）与入群洪流上的身份观测（markBotAdminObserved）。
- *
- * 取钟保持惰性：调用方早退时不得执行 Date.now()。调用方注入的值原样生效，
- * 退避语义不变。
+ * 快照（见它的 @returns）。因此**每一处会因「快照缺失」而在后台现查的入口都必须先过这道
+ * 闸**，否则那种群里每一条触发它的更新都换一次注定失败的现查。目前只有入群洪流上的
+ * 身份观测（markBotAdminObserved）。
  */
-function admitBotPermissionProbe(chatId: number, now?: number): boolean {
-  const observedAt: number = now ?? Date.now();
+function admitBotPermissionProbe(chatId: number): boolean {
+  const observedAt: number = Date.now();
   const retryAt: number | undefined = botPermissionProbeBackoff.get(chatId);
   if (retryAt !== undefined && observedAt < retryAt) return false;
   botPermissionProbeBackoff.set(chatId, observedAt + BOT_PERMISSION_PROBE_RETRY_MS);
@@ -212,7 +209,7 @@ function admitBotPermissionProbe(chatId: number, now?: number): boolean {
 
 /**
  * 收到一条别人的 chat_member 更新即证明机器人此刻是该群管理员（Telegram
- * 只向管理员机器人推送这类更新）。已有完整管理员快照时只复用；缺失或
+ * 只向管理员机器人推送这类更新）。已有完整管理员快照时只复用它补一次黑名单清扫；缺失或
  * 与这条事实冲突时才现查机器人自身的完整 ChatMember，不把一个不完整的
  * 「是管理员」布尔值写回 State。
  *
@@ -223,14 +220,21 @@ function admitBotPermissionProbe(chatId: number, now?: number): boolean {
  * 而且发生在唯一必须跑得快的那条路上。退避期内直接返回：本来也拿不到可写的
  * 确证快照，下游读到的仍是「未知」，与现查失败时同义。
  *
- * 现查也**不 await**（同 ensureBotChatPermissions）：本条 update 不等 getChatMember
+ * 现查也**不 await**：本条 update 不等 getChatMember
  * 往返与 durable 落盘（app/updateRunner.ts 严格串行，等待会顺延整条 ingress）。
  * 这一轮读到的仍是「未知」，与退避命中时同义；快照到达后由下一条更新读到。
  */
 export async function markBotAdminObserved(chatId: number): Promise<void> {
   const known: BotChatPermissions | undefined = getChatState(chatId).botPermissions;
   if (known?.isAdministrator === true) {
-    await recordBotChatPermissions(chatId, known);
+    // 复用的是缓存快照，不是新的确证权限观测：只补一次黑名单清扫，不经
+    // recordBotChatPermissions 的 noteBanPermissionObserved——缺封禁权限的闩锁只认
+    // my_chat_member 或现查得到的快照解开，快照与 Worker 实际回执不符时这里必须保持卡住。
+    try {
+      await sweepBlockedMembers(chatId);
+    } catch (error: unknown) {
+      logger.error(`Failed to sweep blocklisted members from chat ${chatId} after an admin observation:`, error);
+    }
     return;
   }
   // 顺序不能反：forgetBotChatPermissions 会清掉退避窗口（丢掉一份权威值之后本就
@@ -307,7 +311,7 @@ export function forgetBotChatPermissions(chatId: number): void {
   // （离群、/init 两条路），唯独 markBotAdminObserved 那条不是——它 forget 之后
   // 现查，而 getChatMember 失败时按约定什么都不记，这一轮就这么带着分歧结束。
   // 重启后 hydrateChatStateCache 把旧快照读回来，因为「!== undefined」，
-  // ensureBotChatPermissions 直接早退、resolveBotAdminStatus 恒为 false，/block 与
+  // botChatPermissionsIn 直接返回陈旧快照、resolveBotAdminStatus 恒为 false，/block 与
   // 各处 managed 群清扫都会跳过这个群，尽管机器人在那儿是好好的管理员。
   //
   // 用后台写，不走 persistChatState：这个函数会被 teardown 路径反复调用，不该在
@@ -341,24 +345,6 @@ function notifyBotPermissionObserver(chatId: number, permissions: BotChatPermiss
   } catch (error: unknown) {
     logger.error(`Failed to publish the bot's permission change for chat ${chatId}:`, error);
   }
-}
-
-/**
- * 保证这个群的权限位已经被观测过一次，供热路径在不 await 的前提下调用。
- *
- * 已知（State 快照命中）或已有现查在途时立即返回，因此稳定状态下就是一次 Map 查找。
- * 只有从未观测过的群才在后台现查一次，结果经上面的广播抵达 Worker。**必须带
- * 退避**：`getChatMember` 持续失败时，`botChatPermissionsIn` 按约定不落快照，
- * 没有退避就等于那种群里每条消息
- * 都换一次注定失败的现查。
- */
-export function ensureBotChatPermissions(chatId: number, now?: number): void {
-  if (getChatState(chatId).botPermissions !== undefined || botPermissionRequestTokens.has(chatId)) return;
-  if (!admitBotPermissionProbe(chatId, now)) return;
-  void botChatPermissionsIn(chatId).catch((): void => {
-    // 现查内部已经记过日志；这里只是不让后台补齐变成未处理的 rejection
-    // （update 取消时它会以 abort 形式抛出）。
-  });
 }
 
 /**

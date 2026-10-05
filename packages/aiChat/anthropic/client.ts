@@ -30,7 +30,7 @@ import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
 
 /** 按能力取得 Anthropic 客户端；每项能力的 api_key/base_url 独立。 */
-export function getAnthropicClient(capability: AgentCapability): Anthropic {
+function getAnthropicClient(capability: AgentCapability): Anthropic {
   return capabilityClient({
     provider: "anthropic",
     capability,

@@ -32,7 +32,7 @@ import type { BanChatMemberOutcome } from "../../infra/telegram";
 import { probeChatMembershipWithOutcome } from "../../infra/telegram/actions/membership";
 import type { ChatMembershipProbeOutcome } from "../../infra/telegram/actions/membership";
 import { logger } from "../../infra/logger";
-import { botCanDeleteIn } from "./botPermissions";
+import { botCanDeleteIn, botCanRestrictIn } from "./botPermissions";
 import { recordJoin } from "./lockdownRuntime";
 import { currentBlocklistRemovalEpoch } from "../../cache/workers/antiRaid/blocklist";
 import {
@@ -162,6 +162,9 @@ function applyRemovalOutcome({ chatId, userId, outcome, result }: ApplyRemovalOu
   } else if (outcome === "forbidden") {
     result.complete = false;
     result.permissionDenied = true;
+    logger.error(
+      `Blocklist removal in chat ${chatId} is blocked by missing ban rights; stopping this batch.`
+    );
     // 机器人在这个群根本封不了人，剩下的 id 只会一个个撞上同一句 400。补扫
     // 可能有几千个 id，每个两次注定失败的请求外加分批暂停，全压在与验证超时
     // 踢人共用的 kick 类别上——发现这件事的这一次补扫本身就是要避免的风暴。
@@ -191,16 +194,14 @@ interface FinishRemovalBatchParams {
   readonly epoch: number;
   readonly announcementMessageId: number | undefined;
   readonly removed: number;
-  readonly result: RemoveBatchResult;
 }
 
-/** 批次收尾：删掉入群公告，记下移除人数与权限受阻。 */
+/** 批次收尾：删掉入群公告，记下移除人数。 */
 async function finishRemovalBatch({
   chatId,
   epoch,
   announcementMessageId,
   removed,
-  result,
 }: FinishRemovalBatchParams): Promise<void> {
   // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
   //
@@ -218,12 +219,6 @@ async function finishRemovalBatch({
     await deleteMessage(chatId, announcementMessageId, telegramApi);
   }
   if (removed > 0) logger.log(`Removed ${removed} blocklisted member(s) from chat ${chatId}.`);
-  if (result.permissionDenied) {
-    logger.error(
-      `Blocklist removal in chat ${chatId} is blocked by missing ban rights; ` +
-      "it will stay pending until the bot's permissions there change."
-    );
-  }
 }
 
 /**
@@ -264,6 +259,15 @@ async function removeBlockedMembers({
     participantInvalidUserIds: [],
     settledUserIds: [],
   };
+  // 镜像已确证缺封禁权限（三态里只认确证的 false，见 ./botPermissions.ts）：每个 id 都只会
+  // 换来一次注定失败的封禁加一次管理员探测，整批直接按权限受阻回执，由主线程闩住
+  // 这个群并记日志；入群计数与入群公告清理照常。
+  if (botCanRestrictIn(chatId) === false) {
+    result.complete = false;
+    result.permissionDenied = true;
+    await finishRemovalBatch({ chatId, epoch, announcementMessageId, removed });
+    return result;
+  }
   for (let index: number = 0; index < userIds.length; index++) {
     // 群已被停管：整批放弃，且不算完成——重新接管后会有新的边沿再扫一次。
     if (currentBlocklistRemovalEpoch(chatId) !== epoch) {
@@ -291,7 +295,7 @@ async function removeBlockedMembers({
     if (outcome === "removed") removed++;
     if (!applyRemovalOutcome({ chatId, userId, outcome, result })) break;
   }
-  await finishRemovalBatch({ chatId, epoch, announcementMessageId, removed, result });
+  await finishRemovalBatch({ chatId, epoch, announcementMessageId, removed });
   return result;
 }
 

@@ -2,11 +2,10 @@ import type { PendingRemovalWrite } from "../../../types/identityStorage";
 import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../../consts/antiRaid/blocklist";
 import { IDENTITY_DATABASE_PATH } from "../../../consts/paths";
 import {
-  storagePendingBudget,
+  storagePendingBudgets,
   latestRemovalSnapshotRevision,
   pendingRemovalSnapshotRevision,
   pendingRemovalWrites,
-  removalSnapshot,
   removalSnapshotData,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
@@ -33,17 +32,6 @@ import {
 interface EncodedPendingRemovalRow {
   readonly pending: PendingBlockedRemoval;
   readonly data: string;
-}
-
-function clonePendingRemoval(pending: PendingBlockedRemoval): PendingBlockedRemoval {
-  return {
-    params: pending.params.probeMembership
-      ? { ...pending.params }
-      : { ...pending.params, userIds: [...pending.params.userIds] },
-    createdAt: pending.createdAt,
-    attempts: pending.attempts,
-    lastFailure: pending.lastFailure,
-  };
 }
 
 /** 完整 outbox 快照转成按主键合并的 SQLite 行变化。 */
@@ -97,7 +85,7 @@ export function handlePendingRemovalSnapshot(
   }
   let entryDelta: number = 0;
   let byteDelta: number = 0;
-  for (const removalId of removalSnapshot.keys()) {
+  for (const removalId of removalSnapshotData.keys()) {
     if (next.has(removalId)) continue;
     const previous: PendingRemovalWrite | undefined = pendingRemovalWrites.get(removalId);
     if (previous === undefined) entryDelta++;
@@ -109,22 +97,17 @@ export function handlePendingRemovalSnapshot(
     if (previous === undefined) entryDelta++;
     byteDelta += storageWriteCost(data) - (previous === undefined ? 0 : storageWriteCost(previous.data));
   }
-  storagePendingBudget.reserve(entryDelta, byteDelta);
-  for (const removalId of removalSnapshot.keys()) {
-    if (!next.has(removalId)) pendingRemovalWrites.set(removalId, { data: null });
+  storagePendingBudgets.blocklistRemovalOutbox.reserve(entryDelta, byteDelta);
+  for (const removalId of removalSnapshotData.keys()) {
+    if (next.has(removalId)) continue;
+    pendingRemovalWrites.set(removalId, { data: null });
+    // 迭代中删除当前键是 Map 迭代器允许的操作，不会跳过后续键。
+    removalSnapshotData.delete(removalId);
   }
-  for (const [removalId, { pending, data }] of next) {
-    if (removalSnapshotData.get(removalId) !== data) {
-      pendingRemovalWrites.set(removalId, { data });
-    }
-    removalSnapshot.set(removalId, clonePendingRemoval(pending));
+  for (const [removalId, { data }] of next) {
+    if (removalSnapshotData.get(removalId) === data) continue;
+    pendingRemovalWrites.set(removalId, { data });
     removalSnapshotData.set(removalId, data);
-  }
-  for (const removalId of [...removalSnapshot.keys()]) {
-    if (!next.has(removalId)) {
-      removalSnapshot.delete(removalId);
-      removalSnapshotData.delete(removalId);
-    }
   }
   latestRemovalSnapshotRevision.current = message.revision;
   pendingRemovalSnapshotRevision.current = message.revision;

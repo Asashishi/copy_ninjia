@@ -7,7 +7,7 @@ import type {
   drainAdDisposals,
   handleAdDetected,
 } from "../../../packages/antiRaid/adDetect";
-import type { ensureBotChatPermissions } from
+import type { botChatPermissionsIn } from
   "../../../packages/infra/botAdmin";
 import type { getOrCreateChatState } from
   "../../../packages/infra/storage/stateStore";
@@ -57,8 +57,6 @@ export interface CommandChainDependencies {
   readonly aiReplyWarmupOperations: number;
   readonly aiReplySettleAttempts: number;
   readonly adDetectDrainBudgetMs: number;
-  readonly botPermissionWaitAttempts: number;
-  readonly botPermissionWaitStepMs: number;
   readonly stateManagedChatLimit: number;
   readonly benchmarkChatId: (index: number) => number;
   readonly benchmarkUserId: (index: number) => number;
@@ -66,7 +64,7 @@ export interface CommandChainDependencies {
   readonly ensureAgentDeploymentConfig: typeof ensureAgentDeploymentConfig;
   readonly handleAdDetected: typeof handleAdDetected;
   readonly drainAdDisposals: typeof drainAdDisposals;
-  readonly ensureBotChatPermissions: typeof ensureBotChatPermissions;
+  readonly botChatPermissionsIn: typeof botChatPermissionsIn;
   readonly getOrCreateChatState: typeof getOrCreateChatState;
   readonly cacheAdminIds: typeof cacheAdminIds;
   readonly enqueueAdCandidate: typeof enqueueAdCandidate;
@@ -116,15 +114,7 @@ function adDetectCommandChain(
       const state: ChatState = dependencies.getOrCreateChatState(chatId);
       state.isAdDetectEnabled = true;
       state.isInitEnabled = true;
-      dependencies.ensureBotChatPermissions(chatId, Date.now());
-      for (
-        let attempt: number = 0;
-        state.botPermissions === undefined &&
-          attempt < dependencies.botPermissionWaitAttempts;
-        attempt += 1
-      ) {
-        await Bun.sleep(dependencies.botPermissionWaitStepMs);
-      }
+      await dependencies.botChatPermissionsIn(chatId);
       if (state.botPermissions?.isAdministrator !== true) {
         throw new Error(
           "Benchmark bot permissions never resolved to administrator."

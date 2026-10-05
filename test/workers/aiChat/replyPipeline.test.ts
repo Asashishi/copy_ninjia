@@ -28,7 +28,8 @@ const botInfo = { id: 1, username: "copy_ninjia_bot", first_name: "Ninjia" };
 const botInfoState: { current: typeof botInfo | null } = { current: botInfo };
 const hasReplyDeliveryCapacity = mock((_chatId: number): boolean => true);
 const isDirectReplyModelActive = mock((_chatId: number): boolean => false);
-mock.module("../../../packages/workers/aiChat/replyDelivery", () => ({ hasReplyDeliveryCapacity, isDirectReplyModelActive }));
+const hasLiveReplyRounds = mock((_chatId: number): boolean => true);
+mock.module("../../../packages/workers/aiChat/replyDelivery", () => ({ hasLiveReplyRounds, hasReplyDeliveryCapacity, isDirectReplyModelActive }));
 
 mock.module("../../../packages/cache/workers/aiChat/identity", () => ({ botInfoState }));
 mock.module("../../../packages/cache/workers/aiChat/replies", () => ({
@@ -71,6 +72,7 @@ beforeEach(() => {
   longTriggerTimes.clear();
   hasReplyDeliveryCapacity.mockReset().mockReturnValue(true);
   isDirectReplyModelActive.mockReset().mockReturnValue(false);
+  hasLiveReplyRounds.mockReset().mockReturnValue(true);
   startReplyRound.mockReset().mockReturnValue(true);
   for (const fn of [
     admitTrigger,
@@ -148,11 +150,27 @@ describe("AI reply admission pipeline", () => {
     decision = "enqueueOverflow";
     generateAndSendReply(baseRequest);
     expect(pendingOverflowNotices.has(-1001)).toBeTrue();
+    expect(flushOverflowNotice).not.toHaveBeenCalled();
 
     decision = "dropSilently";
     generateAndSendReply(baseRequest);
     expect(startReplyRound).not.toHaveBeenCalled();
     expect(pushReplyTrigger).toHaveBeenCalledTimes(1);
+  });
+
+  test("溢出时群里没有存活轮次就当场发出提示，不等永远不会到来的收尾推力", () => {
+    decision = "enqueueOverflow";
+    hasLiveReplyRounds.mockReturnValue(false);
+    // 发出时读到的话题必须是这条被丢掉的触发所在的话题。
+    let flushedTopic: number | undefined;
+    flushOverflowNotice.mockImplementationOnce((chatId: number): void => {
+      flushedTopic = pendingOverflowNotices.get(chatId);
+      pendingOverflowNotices.delete(chatId);
+    });
+    generateAndSendReply({ ...baseRequest, messageThreadId: 42 });
+    expect(flushOverflowNotice).toHaveBeenCalledWith(-1001);
+    expect(flushedTopic).toBe(42);
+    expect(pendingOverflowNotices.has(-1001)).toBeFalse();
   });
 
   test("排空队列时按原样启动排队触发，并在该轮结束后继续排空同群队列", () => {
@@ -232,9 +250,9 @@ describe("AI reply admission pipeline", () => {
   });
 
   test("维护节拍在限频窗口空出来后补跑积压，窗口仍满时不空转", () => {
-    // 队列的常规推力只有轮次结束的 onFinished，而限频闸拒绝时那一轮根本没建
-    // 任务、也就永远不会有那次回调：没有这道兜底，撞上 5 分钟窗口上限的群会把
-    // 最多 25 条 @提及连同快照无限期扣在内存里。
+    // 队列的常规推力来自模型完成、轮次结束与新触发入队，而限频闸拒绝时那一轮根本没建
+    // 任务、也就永远不会有完成回调：没有这道兜底，撞上长窗口上限的群会把最多
+    // REPLY_TRIGGER_QUEUE_MAX 条 @提及连同快照无限期扣在内存里。
     pendingReplyTriggers.set(-1001, { size: 3 });
     const times: TimestampDeque = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(900);
@@ -242,7 +260,7 @@ describe("AI reply admission pipeline", () => {
 
     roundRateLimited = true;
     drainPendingReplyQueues(1_000);
-    // 空转一次就等于每分钟往群里刷一条限频提示（提示自带 60 秒冷却）。
+    // 空转一次就等于每个 RATE_LIMIT_NOTICE_COOLDOWN_MS 冷却周期往群里刷一条限频提示。
     expect(drainQueuedReplies).not.toHaveBeenCalled();
 
     roundRateLimited = false;
@@ -250,10 +268,35 @@ describe("AI reply admission pipeline", () => {
     expect(drainQueuedReplies).toHaveBeenCalledWith(-1001, expect.any(Function));
   });
 
+  test("维护节拍补跑后仍有积压的群移到末尾，排空或没补出的群保持原位，每群只推一次", () => {
+    const queues = new Map<number, { size: number }>([
+      [-1001, { size: 3 }],
+      [-1002, { size: 3 }],
+      [-1003, { size: 3 }],
+    ]);
+    for (const [chatId, queue] of queues) pendingReplyTriggers.set(chatId, queue);
+    drainQueuedReplies.mockImplementation((chatId: number): void => {
+      const queue: { size: number } = queues.get(chatId)!;
+      // -1001 补出一条后仍有积压；-1002 一次排空；-1003 没拿到全局空位，一条没补出。
+      if (chatId === -1001) queue.size--;
+      if (chatId === -1002) queue.size = 0;
+    });
+
+    try {
+      drainPendingReplyQueues(1_000);
+
+      expect(drainQueuedReplies.mock.calls.map(([chatId]): number => chatId)).toEqual([-1001, -1002, -1003]);
+      expect([...pendingReplyTriggers.keys()]).toEqual([-1002, -1003, -1001]);
+    } finally {
+      drainQueuedReplies.mockImplementation((): void => {});
+    }
+  });
+
   test("轮次结束的推力同样设闸：窗口仍满时只补溢出提示，不空转队列", () => {
-    // 三处推力必须都过闸。轮次结束这一处不设闸的话，撞满 5 分钟窗口且队列非空的
-    // 群里每一轮结束都会空转一次 startReplyRound，被限频闸拒绝时它自己会发一条
-    // 限频提示（自带 60 秒冷却）——整个饱和期每分钟往群里刷一句。
+    // 模型完成、轮次结束、新触发入队与维护节拍四处推力必须都过闸。轮次结束这一处不设闸的话，
+    // 撞满长窗口且队列非空的群里每一轮结束都会空转一次 startReplyRound，被限频闸拒绝时
+    // 它自己会发一条限频提示（自带 RATE_LIMIT_NOTICE_COOLDOWN_MS 冷却）——整个饱和期
+    // 每个冷却周期往群里刷一句。
     pendingReplyTriggers.set(-1001, { size: 3 });
     const times: TimestampDeque = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(900);

@@ -48,7 +48,7 @@
 
 ## 🌐 按群翻译
 
-翻译处理文字与图注，独立于全局 copy 目标、5 分钟冷却和头像操作。先由拥有 `isCanControllTranslatePermission` 的身份执行 `/translate enable`（默认关闭），并提供有效的 `g-auth.json`。翻译目标是另一个机器人时，需要在 @BotFather 为本机器人开启 Bot-to-Bot Communication Mode，才能接收对方的普通消息；收到后仍受[其他 Bot 消息入口限流](04-invariants.md)约束（见 [01 环境搭建](01-getting-started.md)）。
+翻译处理文字与图注，独立于全局 copy 目标、5 分钟冷却和头像操作。先由拥有 `isCanControllTranslatePermission` 的身份执行 `/translate enable`（默认关闭），并提供有效的 `g-auth.json`。翻译目标是另一个机器人时，需要在 @BotFather 为本机器人开启 Bot-to-Bot Communication Mode，才能接收对方的普通消息；收到后仍受[其他 Bot 消息入口限流](04-invariants.md)约束（见 [01 环境搭建](01-getting-started.md)）。译文在后台按群依次发出，不拖慢其它消息的处理；同一群积压的待翻译消息过多时，新消息不再翻译，直到积压减少。
 
 | 命令 | 行为 |
 | :--- | :--- |
@@ -206,6 +206,7 @@
 #### 6. 黑名单：`/block`
 - **操作语法**：`/block <目标> enable` 拉黑，`/block <目标> disable` 解除。目标支持回复、`@username`、用户 ID（正整数）以及频道负数 ID（仅解封支持）。
 - **生效范围**：拉黑后写入权威 SQLite 黑名单，并在所有已纳管群中秒踢/封禁。Bot 获得管理权限且群初始化时会自动补扫群内黑名单成员。
+- **执行方式**：`enable` 确认名单落盘后，跨群封禁与战报在后台执行，战报稍后发出；同一目标的先后命令按到达顺序生效。`disable` 在命令内完成移出名单与逐群解封后回执。
 - **销号清理**：若目标在群内封禁时连续 5 次返回 `PARTICIPANT_ID_INVALID`，判定为已销号，自动移出黑名单。
 
 #### 7. 广告检测与防冲群

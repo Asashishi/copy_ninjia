@@ -19,8 +19,9 @@ import {
  */
 export const chatAdmins: Map<number, ChatAdminCache> = new Map();
 /**
- * 进行中的全量管理员拉取，按 chatId 去重。
- * 清理：请求结算（成功或失败）时删除，resetAdminCache 整表清空。
+ * 进行中的全量管理员拉取，按 chatId 去重（libs/keyedTask.ts 的 getOrCreateKeyedTask：
+ * resetAdminCache 在拉取在途时清空整张表后，陈旧拉取结算不会删掉新登记的槽位）。
+ * 清理：请求结算（成功或失败）时删除自己的槽位，resetAdminCache 整表清空。
  * 容量：同时在途的群数，上界为受管群数；Worker 崩溃后旧 Promise 随 isolate 消失。
  */
 export const adminFetches: Map<number, Promise<Set<number>>> = new Map();
@@ -42,11 +43,6 @@ export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> =
  */
 export const adminCacheGeneration: { current: number } = { current: 0 };
 
-/** 某次拉取启动时记下的世代号是否仍然有效（其间没有发生过整表清空）。 */
-export function isCurrentAdminCacheGeneration(generation: number): boolean {
-  return adminCacheGeneration.current === generation;
-}
-
 /** 在 500 群硬顶内落一份非匿名管理员豁免快照。 */
 export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: number = Date.now()): void {
   setBoundedMapValue({
@@ -55,25 +51,6 @@ export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: 
     value: { adminIds, fetchedAt },
     maxEntries: ANTI_RAID_CHAT_CACHE_MAX,
   });
-}
-
-/**
- * 获取或创建同群唯一一次全量拉取；settle 后释放**自己那个**在途槽位。
- *
- * 释放前必须比对身份（主线程侧的同类表 botPermissionFetches
- * 都做了这道比对）：`resetAdminCache()` 会在拉取在途时清空整张表，随后新的
- * `fetchAdminIds` 会为同一个群登记一条全新的 fetch。陈旧 fetch 结算时若无条件
- * delete，删掉的是**新 fetch** 的槽位，去重随之失效——下一个调用者会在入群
- * 验证使用的 query 类别 429 FIFO 上发起第三次全量拉取。
- */
-export function getOrCreateAdminFetch(chatId: number, create: () => Promise<Set<number>>): Promise<Set<number>> {
-  const existing: Promise<Set<number>> | undefined = adminFetches.get(chatId);
-  if (existing) return existing;
-  const inFlight: Promise<Set<number>> = create().finally((): void => {
-    if (adminFetches.get(chatId) === inFlight) adminFetches.delete(chatId);
-  });
-  adminFetches.set(chatId, inFlight);
-  return inFlight;
 }
 
 /** 若全量拉取正在进行，合并记录一条比快照更新的邀请豁免资格变化。 */
@@ -96,11 +73,6 @@ export function takePendingAdminChanges(chatId: number): Map<number, boolean> | 
   const pending: Map<number, boolean> | undefined = pendingAdminChangesDuringFetch.get(chatId);
   pendingAdminChangesDuringFetch.delete(chatId);
   return pending;
-}
-
-/** 拉取失败或群失效时丢弃该群尚未重放的管理员增量。 */
-export function discardPendingAdminChanges(chatId: number): void {
-  pendingAdminChangesDuringFetch.delete(chatId);
 }
 
 /** 淘汰过期快照；仍在拉取的群保留旧快照供同步快路径使用。 */
