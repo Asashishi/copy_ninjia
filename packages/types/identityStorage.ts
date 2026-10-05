@@ -66,7 +66,7 @@ export interface PendingChatQaWrite {
   readonly revision: number;
 }
 
-/** 主线程保留到 SQLite ACK 的最小群状态恢复元数据；正文只存在于 LRU。 */
+/** 主线程保留到 SQLite ACK 的最小群状态恢复元数据；正文只存在于群状态热读副本 chatStateCache。 */
 export interface UnacknowledgedChatStateWrite {
   readonly revision: number;
   readonly deleted: boolean;

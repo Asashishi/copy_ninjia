@@ -52,6 +52,12 @@ export interface LockdownEntry {
   retryTimer: ReturnType<typeof setTimeout> | undefined;
   /** ACTIVE/RECONCILING 共用的绝对恢复截止时间；与 restoreTimer 同步更新。 */
   restoreAt: number | undefined;
+  /**
+   * 解除权限连续因权限被拒失败的次数，条目构造时为 0；其它结局清零。只调节本地日志级别
+   * 与重试节奏（见 RESTORE_PERMANENT_FAILURE_LOG_LIMIT），不进入状态机或持久化快照；
+   * 条目删除即消失，Worker 重建后从头计数。
+   */
+  restorePermanentFailures: number;
 }
 
 /** 一条验证状态机条目：纯状态 + 解释器持有的活动计时器。 */

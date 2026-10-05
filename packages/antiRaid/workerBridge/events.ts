@@ -10,7 +10,7 @@ import { recordBlocklistParticipantReadability } from "../../infra/blocklist/par
 import { settleBlockedRemoval } from "../../infra/blocklist/sweep";
 import { logger } from "../../infra/logger";
 import { signalBusinessWorkerFatal } from "../../infra/workerSupervisor";
-import { VERIFICATION_REVISION_CAPACITY } from "../../consts/antiRaid/verification";
+import { VERIFICATION_REVISION_CAPACITY, VERIFICATION_RUNTIME_CAPACITY } from "../../consts/antiRaid/verification";
 import { relayAiCacheUsage } from "../../infra/aiCacheUsageRelay";
 import {
   clearChatStateField,
@@ -191,6 +191,14 @@ export function handleAntiRaidWorkerEvent(
       if (event.generation === antiRaidRuntimeState.generation) {
         signalBusinessWorkerFatal(new Error(
           `Anti-Raid verification revision capacity (${VERIFICATION_REVISION_CAPACITY}) exceeded; ` +
+          "refusing new verification state and requiring a supervised restart."
+        ));
+      }
+      break;
+    case "verificationRuntimeCapacityExceeded":
+      if (event.generation === antiRaidRuntimeState.generation) {
+        signalBusinessWorkerFatal(new Error(
+          `Anti-Raid verification runtime capacity (${VERIFICATION_RUNTIME_CAPACITY}) exceeded; ` +
           "refusing new verification state and requiring a supervised restart."
         ));
       }

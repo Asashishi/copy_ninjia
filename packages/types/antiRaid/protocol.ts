@@ -92,7 +92,7 @@ export interface AdoptableLockdown {
   announced: boolean;
   /** 上一代留下的封锁公告消息 ID；接管方解除时按它删除，缺省即不删。 */
   announcementMessageId?: number;
-  /** false 表示仅存在主线程 LRU 最终值，必须继续等待 SQLite 的落盘回执。 */
+  /** false 表示最终值仅存在于主线程群状态热读副本，必须继续等待 SQLite 的落盘回执。 */
   persisted: boolean;
   /** 距离应当恢复原始权限还剩多久。 */
   remainingMs: number;

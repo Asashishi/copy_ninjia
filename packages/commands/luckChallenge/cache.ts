@@ -257,7 +257,7 @@ export function restoreLuckState(secret: LuckReceiptSecret, loaded: LuckDayCache
     // 根本没恢复过来，用新一天的密钥重派生出的是用户没见过的另一个结果。
     // loaded 一并丢弃：它属于 secret.day 那一天，磁盘上那份也会被 Worker 侧的
     // cleanupStaleLuckFiles 按新日期清掉。
-    logger.error(
+    logger.warn(
       `Loaded luck receipt secret is for ${secret.day} but the configured local day already rolled over to ${todayKey}; ` +
       "discarding it and re-deriving today's secret on first use."
     );

@@ -1,6 +1,7 @@
 /**
  * 语音编码：WAV → OGG/Opus 用真实 libopus WASM 编码，核对 OGG 页结构、OpusHead 声明的
- * 原始采样率与收尾页的 granule 时长；OGG/Opus 与 MP3 校验后原样透传（独占字节副本、时长、
+ * 48 kHz 输入采样率与收尾页的 granule 时长，分块编码的音频页与整段一次编码逐字节相同，块间
+ * 让出事件循环；OGG/Opus 与 MP3 校验后原样透传（独占字节副本、时长、
  * 文件名）；不支持的 MIME、WAV 解析与容器校验失败原样带回原因；编码器抛错时记原始错误并
  * 归一成失败原因。
  */
@@ -17,7 +18,16 @@ const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 
 const { encodeVoiceMessage } = await import("../../../packages/aiChat/ai/voiceEncoding");
-const { VOICE_MP3_FILE_NAME, VOICE_OGG_FILE_NAME } = await import("../../../packages/consts/aiChat/voiceMessage");
+const { decodeWavPcm } = await import("../../../packages/aiChat/ai/utils/wavPcm");
+const {
+  VOICE_MP3_FILE_NAME,
+  VOICE_OGG_FILE_NAME,
+  VOICE_OPUS_APPLICATION,
+  VOICE_OPUS_BITRATE_KBPS,
+  VOICE_OPUS_COMPLEXITY,
+  VOICE_OPUS_ENCODE_CHUNK_SECONDS,
+} = await import("../../../packages/consts/aiChat/voiceMessage");
+const { OPUS_RATE } = await import("@audio/encode-opus/core");
 const { MP3_MIME_TYPE, OGG_OPUS_MIME_TYPE } = await import("../../../packages/consts/audio");
 
 interface OggPage {
@@ -65,13 +75,60 @@ describe("encodeVoiceMessage", () => {
     expect(new TextDecoder().decode(head.subarray(0, 8))).toBe(OPUS_HEAD_MAGIC);
     expect(head[9]).toBe(1);
     const headView: DataView = new DataView(head.buffer, head.byteOffset, head.byteLength);
-    expect(headView.getUint32(12, true)).toBe(24_000);
+    expect(headView.getUint32(12, true)).toBe(OPUS_RATE);
     expect(new TextDecoder().decode(pages[1]!.body.subarray(0, 8))).toBe("OpusTags");
 
     const last: OggPage = pages.at(-1)!;
     expect(last.headerType & 0x04).toBe(0x04);
     const preSkip: number = headView.getUint16(10, true);
     expect(Number(last.granule) - preSkip).toBe(1.5 * 48_000);
+  });
+
+  test.each([24_000, 22_050, 16_000])(
+    "%i Hz 分块重采样编码的音频页与整段一次编码逐字节相同，只差 OpusHead",
+    async (sampleRate: number) => {
+      const bytes: Uint8Array = sineWav(sampleRate, VOICE_OPUS_ENCODE_CHUNK_SECONDS * 3.3);
+      const pcm = decodeWavPcm(bytes);
+      if (!pcm.ok) throw new Error(pcm.reason);
+      // 整段一次交给依赖、按原始采样率由它自己重采样，是分块之前的编码方式。
+      const realOpus: typeof opus = (await import("@audio/encode-opus")).default;
+      const encoder = await realOpus({
+        sampleRate,
+        channels: 1,
+        bitrate: VOICE_OPUS_BITRATE_KBPS,
+        application: VOICE_OPUS_APPLICATION,
+        complexity: VOICE_OPUS_COMPLEXITY,
+      });
+      const whole: Uint8Array = encoder.encode([pcm.samples]);
+      const tail: Uint8Array = encoder.flush();
+      encoder.free();
+      const reference: Uint8Array = new Uint8Array(whole.byteLength + tail.byteLength);
+      reference.set(whole);
+      reference.set(tail, whole.byteLength);
+
+      const result: VoiceEncodeResult = await encodeVoiceMessage({ bytes, mimeType: "audio/wav" });
+      if (!result.ok) throw new Error(result.reason);
+
+      const audioPages = (pages: OggPage[]): readonly [bigint, number, Uint8Array][] =>
+        pages.slice(1).map((page: OggPage): [bigint, number, Uint8Array] => [page.granule, page.headerType, page.body]);
+      expect(audioPages(oggPages(result.voice.bytes))).toEqual(audioPages(oggPages(reference)));
+    }
+  );
+
+  test("多块编码期间让出事件循环", async () => {
+    const order: string[] = [];
+    setImmediate((): void => {
+      order.push("immediate");
+    });
+    const encoding: Promise<VoiceEncodeResult> = encodeVoiceMessage({
+      bytes: sineWav(24_000, VOICE_OPUS_ENCODE_CHUNK_SECONDS * 3),
+      mimeType: "audio/wav",
+    }).then((result: VoiceEncodeResult): VoiceEncodeResult => {
+      order.push("encoded");
+      return result;
+    });
+    expect((await encoding).ok).toBe(true);
+    expect(order).toEqual(["immediate", "encoded"]);
   });
 
   test("MIME 带参数与大小写差异时按类型本体判定", async () => {

@@ -17,7 +17,9 @@ import {
   sweepBlockedMembers,
 } from "../infra/blocklist/sweep";
 import { readJoinLog } from "../infra/diskIO";
+import { getChatState } from "../infra/storage/stateStore";
 import { currentUpdateAbortSignal, throwIfUpdateAborted } from "../infra/updateContext";
+import { batchKickChats } from "../cache/main/batchKick";
 import { logger } from "../infra/logger";
 import { readIdentityPolicyVerdicts } from "../infra/identityStorage";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../consts/identityStorage";
@@ -38,7 +40,8 @@ import type {
   BoundedBatchResult,
 } from "../libs/boundedSettledBatch";
 import { rejectUnlessSuperAdmin } from "./commandActor";
-import type { CachedUser } from "../types/chatState";
+import { submitDeferredCommand } from "./deferredCommands";
+import type { CachedUser, ChatState } from "../types/chatState";
 import type { IdentityPolicyVerdicts } from "../types/identityStorage";
 
 interface BatchKickStats {
@@ -59,6 +62,8 @@ interface BatchKickStats {
   scanned: number;
   /** 是否因为身份冷读失败提前中断；true 时剩余记录一个都没动过。 */
   aborted: boolean;
+  /** 批次途中本群不再受管而停止；true 时不发战报。 */
+  unmanaged: boolean;
 }
 
 /** 把 `/batch_kick` 的单个 m/h/d 参数严格换算为一天以内的毫秒数。 */
@@ -72,6 +77,16 @@ export function parseBatchKickDurationMs(token: string): number | undefined {
     return undefined;
   }
   return durationMs;
+}
+
+/**
+ * 本群此刻是否仍归本命令处置：已初始化，且没有确证失去管理员身份。批次在后台与其它
+ * update 交错执行，`/init disable`、机器人离群（purge 后不再是已初始化）与被撤管理员
+ * 都会让它变为 false。
+ */
+function isBatchKickChatManaged(chatId: number): boolean {
+  const state: Readonly<ChatState> = getChatState(chatId);
+  return state.isInitEnabled === true && state.botPermissions?.isAdministrator !== false;
 }
 
 interface ProcessJoinRecordParams {
@@ -178,8 +193,9 @@ interface RunBatchKickParams {
  * 普通成员踢出去。冷读失败不能按「不在白名单」处置，只能就地中断，剩余记录
  * 一条都不碰。
  *
- * 停机取消本条 update 后，尚未开始的记录不再处理，在途记录因取消而失败的结果不计入
- * 战报也不记日志；每块开始前与结束后各检查一次，取消即向上解开整条命令。
+ * 停机取消本条任务后，尚未开始的记录不再处理，在途记录因取消而失败的结果不计入
+ * 战报也不记日志；每块开始前与结束后各检查一次，取消即向上解开整条任务。本群途中
+ * 不再受管时同样不再处理尚未开始的记录，标记 `unmanaged` 后返回。
  */
 async function runBatchKick({
   chatId,
@@ -195,6 +211,7 @@ async function runBatchKick({
     blockedHandoffs: 0,
     scanned: 0,
     aborted: false,
+    unmanaged: false,
   };
   const updateSignal: AbortSignal | undefined = currentUpdateAbortSignal();
   for (
@@ -203,6 +220,10 @@ async function runBatchKick({
     offset += IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
   ) {
     throwIfUpdateAborted(updateSignal);
+    if (!isBatchKickChatManaged(chatId)) {
+      stats.unmanaged = true;
+      return stats;
+    }
     const chunk: readonly JoinLogRecord[] = records.slice(
       offset,
       offset + IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
@@ -221,23 +242,94 @@ async function runBatchKick({
         execute: async ({
           item: record,
         }: BoundedBatchExecution<JoinLogRecord>): Promise<void> => {
-          if (updateSignal?.aborted === true) return;
+          if (updateSignal?.aborted === true || !isBatchKickChatManaged(chatId)) return;
           await processJoinRecord({ chatId, record, stats, verdicts });
         },
       });
     throwIfUpdateAborted(updateSignal);
+    if (!isBatchKickChatManaged(chatId)) {
+      stats.unmanaged = true;
+      return stats;
+    }
     stats.scanned += chunk.length;
     for (const result of results) {
       if (result.status === "fulfilled") continue;
       stats.failed++;
       logger.error(
         `Unexpected /batch_kick failure for chat ${chatId}, user ${result.item.userId}, ` +
-        `record ${offset + result.index}, attempt ${result.attempt}:`,
+        `record ${offset + result.index}:`,
         result.reason
       );
     }
   }
   return stats;
+}
+
+interface DeliverBatchKickParams {
+  readonly chatId: number;
+  readonly messageId: number | undefined;
+  readonly durationMs: number;
+  readonly records: readonly JoinLogRecord[];
+  /** 「已受理」回执发完（或发送结束）后兑现；批次在它之后开始，保证战报排在回执之后。 */
+  readonly acknowledged: Promise<void>;
+}
+
+/**
+ * 延迟命令执行器里的批次任务：逐条处置、交回黑名单、按 NOTICE_TEXTS.batchKickResult 发战报。
+ * 本群途中不再受管时静默结束，不发战报；停机取消由执行器吞掉。结束时摘除单飞标记。
+ */
+async function deliverBatchKick({
+  chatId,
+  messageId,
+  durationMs,
+  records,
+  acknowledged,
+}: DeliverBatchKickParams): Promise<void> {
+  try {
+    await acknowledged;
+    const stats: BatchKickStats = await runBatchKick({ chatId, records });
+    if (stats.unmanaged) return;
+    if (stats.aborted && stats.scanned === 0) {
+      await sendCommandMessage({
+        chatId,
+        text: chatAtmosphere().IDENTITY_POLICY_UNAVAILABLE_TEXT,
+        replyToMessageId: messageId,
+      });
+      return;
+    }
+    // 命中黑名单就直接早退的那几条，processJoinRecord 一步都没做——不探测、不移除，
+    // 回执却渲染成「黑名单交回封禁 N」。不在这里真的交回去，那句话就是空的：管理员
+    // 据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在。典型成因正是更早
+    // 的封禁批次在限流下被判 complete 而实际没生效，人还坐在群里。
+    // 只看 blockedHandoffs：并发拉黑后补封成功那条路已经把人按住了，不必再惊动清扫。
+    // 整批只派发一次：prepareBlocklistSweep 自带 claim 与 nextRetryAt 闸门，逐条
+    // 调用只是空转，还要在命令的固定小并发池里排队。
+    if (stats.blockedHandoffs > 0) {
+      requestBlocklistResweep(chatId);
+      try {
+        await sweepBlockedMembers(chatId);
+      } catch (error: unknown) {
+        // durable outbox 已经保留重放依据；战报照常发出，原因留在日志里。
+        logger.error(
+          `Failed to dispatch the blocklist sweep after /batch_kick in chat ${chatId}:`,
+          error
+        );
+      }
+    }
+    throwIfUpdateAborted();
+    if (!isBatchKickChatManaged(chatId)) return;
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
+    await sendCommandMessage({
+      chatId,
+      text:
+        atmosphere.NOTICE_TEXTS.batchKickResult({ duration: formatDurationCn(durationMs), recordCount: records.length, scanned: stats.scanned, kicked: stats.kicked, absent: stats.absent, protected: stats.protected, blocked: stats.blocked, forbidden: stats.forbidden, failed: stats.failed, abortedNotice: (stats.aborted
+          ? atmosphere.NOTICE_TEXTS.batchKickAborted
+          : "") }),
+      replyToMessageId: messageId,
+    });
+  } finally {
+    batchKickChats.delete(chatId);
+  }
 }
 
 /**
@@ -246,6 +338,9 @@ async function runBatchKick({
  * 按需读取本群滚动 24 小时入群追写日志，并踢出回溯窗口内仍在群的人。
  * 本命令不新增黑名单持久化；与并发 `/block` 冲突、或日志里的人本来就在黑名单上
  * 时，本命令不自己处置，而是在整批结束后请一次补扫，把他们真正交回封禁流程。
+ *
+ * update runner 严格串行，handler 只做校验与读日志：有记录时同群单飞，交给延迟命令执行器的
+ * background 档后回「已受理」，批次与战报在后台任务里完成（见 deliverBatchKick）。
  */
 export async function handleBatchKickCommand(
   ctx: CommandContext<Context>
@@ -273,6 +368,16 @@ export async function handleBatchKickCommand(
     await sendCommandMessage({
       chatId,
       text: chatAtmosphere().BATCH_KICK_USAGE_TEXT,
+      replyToMessageId: messageId,
+    });
+    return;
+  }
+
+  // 同群单飞在读日志之前判定：上一批还在后台跑时不读盘，也不占住串行的 update runner。
+  if (batchKickChats.has(chatId)) {
+    await sendCommandMessage({
+      chatId,
+      text: chatAtmosphere().NOTICE_TEXTS.batchKickRunning,
       replyToMessageId: messageId,
     });
     return;
@@ -316,41 +421,33 @@ export async function handleBatchKickCommand(
     return;
   }
 
-  const stats: BatchKickStats = await runBatchKick({ chatId, records });
-  if (stats.aborted && stats.scanned === 0) {
+  const acknowledged: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+  // 先登记再提交：执行器可能在提交的同步段里就启动任务。
+  batchKickChats.add(chatId);
+  const accepted: boolean = submitDeferredCommand(
+    "background",
+    (): Promise<void> => deliverBatchKick({ chatId, messageId, durationMs, records, acknowledged: acknowledged.promise }),
+    "Unexpected error while processing /batch_kick:"
+  );
+  if (!accepted) {
+    batchKickChats.delete(chatId);
     await sendCommandMessage({
       chatId,
-      text: chatAtmosphere().IDENTITY_POLICY_UNAVAILABLE_TEXT,
+      text: chatAtmosphere().NOTICE_TEXTS.batchKickBusy,
       replyToMessageId: messageId,
     });
     return;
   }
-  // 命中黑名单就直接早退的那几条，processJoinRecord 一步都没做——不探测、不移除，
-  // 回执却渲染成「黑名单交回封禁 N」。不在这里真的交回去，那句话就是空的：管理员
-  // 据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在。典型成因正是更早
-  // 的封禁批次在限流下被判 complete 而实际没生效，人还坐在群里。
-  // 只看 blockedHandoffs：并发拉黑后补封成功那条路已经把人按住了，不必再惊动清扫。
-  // 整批只派发一次：prepareBlocklistSweep 自带 claim 与 nextRetryAt 闸门，逐条
-  // 调用只是空转，还要在命令的固定小并发池里排队。
-  if (stats.blockedHandoffs > 0) {
-    requestBlocklistResweep(chatId);
-    try {
-      await sweepBlockedMembers(chatId);
-    } catch (error: unknown) {
-      // durable outbox 已经保留重放依据；战报照常发出，原因留在日志里。
-      logger.error(
-        `Failed to dispatch the blocklist sweep after /batch_kick in chat ${chatId}:`,
-        error
-      );
-    }
+  try {
+    await sendCommandMessage({
+      chatId,
+      text: chatAtmosphere().NOTICE_TEXTS.batchKickAccepted({
+        duration: formatDurationCn(durationMs),
+        recordCount: records.length,
+      }),
+      replyToMessageId: messageId,
+    });
+  } finally {
+    acknowledged.resolve();
   }
-  const atmosphere: AtmosphereTexts = chatAtmosphere();
-  await sendCommandMessage({
-    chatId,
-    text:
-      atmosphere.NOTICE_TEXTS.batchKickResult({ duration: formatDurationCn(durationMs), recordCount: records.length, scanned: stats.scanned, kicked: stats.kicked, absent: stats.absent, protected: stats.protected, blocked: stats.blocked, forbidden: stats.forbidden, failed: stats.failed, abortedNotice: (stats.aborted
-        ? atmosphere.NOTICE_TEXTS.batchKickAborted
-        : "") }),
-    replyToMessageId: messageId,
-  });
 }

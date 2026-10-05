@@ -260,7 +260,7 @@ describe("gag 发言入口刷新", () => {
       await gag.handleGagCommand(commandContext());
       const session: GagSession = sessionFor(-1001)!;
       if (ending === "ungag") await gag.handleUngagCommand(commandContext());
-      else if (ending === "teardown") await gag.teardownGagInChat(-1001);
+      else if (ending === "teardown") await gag.teardownGagInChat(-1001, "explicitDisable");
       else expect(await gag.drainGagRuntime(1_000)).toBe("flushed");
       expect(session.speakNoticeRefreshTimer).toBeNull();
       expect(sessionFor(-1001)).toBeUndefined();

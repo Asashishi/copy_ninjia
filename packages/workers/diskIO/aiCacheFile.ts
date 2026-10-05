@@ -19,7 +19,7 @@
  * （未知键或缺字段、summary 不在首位、合计之间不自洽）则拒绝接管并保留原字节。
  */
 
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { basename } from "node:path";
 import {
   aiCacheBuffer,
@@ -36,7 +36,7 @@ import {
 } from "../../consts/diskIO/appendOnly";
 import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR } from "../../consts/paths";
 import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
-import { inspectOptionalDirectory } from "../../libs/fileAccess";
+import { listOptionalDirectory } from "../../libs/fileAccess";
 import { formatLogTimestamp, getDateKey } from "../../libs/time";
 import type { AiCacheDocument, AiCacheRow, AiCacheSummary } from "../../types/aiCache";
 import type { AiCacheUsageDiskMessage } from "../../types/diskIO/messages";
@@ -90,13 +90,11 @@ export function adoptAiCacheFile(inspection: AiCacheInspection): void {
 
 /** 启动成功后清掉原子重写留下的孤儿临时文件，并补做错过的每日汇总。 */
 export async function maintainAiCacheFile(): Promise<void> {
-  if (inspectOptionalDirectory(AI_CACHE_MEMORY_DIR)) {
-    await removeOrphanedTempFiles(
-      AI_CACHE_MEMORY_DIR,
-      readdirSync(AI_CACHE_MEMORY_DIR),
-      `.${basename(AI_CACHE_FILE_PATH)}.`
-    );
-  }
+  await removeOrphanedTempFiles(
+    AI_CACHE_MEMORY_DIR,
+    listOptionalDirectory(AI_CACHE_MEMORY_DIR),
+    `.${basename(AI_CACHE_FILE_PATH)}.`
+  );
   await summarizeAiCache();
 }
 

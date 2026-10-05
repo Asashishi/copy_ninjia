@@ -1,7 +1,7 @@
 /** owner: workers/aiChat。回复调度的内存状态由本线程的回复流水线共同驱动：
  * packages/workers/aiChat/replyQueue.ts（排队/溢出提示消费）、replyRound.ts
  * （并发位与长窗口触发时刻）、replyPipeline.ts（在途计数读取/溢出提示登记）、
- * replyDelivery.ts（发送顺位桶）、replyState.ts（限频提示冷却）；回复轮、限频提示、
+ * replyDelivery.ts（发送顺位 FIFO）、replyState.ts（限频提示冷却）；回复轮、限频提示、
  * 媒体描述与记忆压缩的发起方直接调用 cachedReplyGeneration 读取代际、调用
  * isCachedReplyGenerationCurrent 核对代际；失效与整体重置经
  * cache/workers/aiChat/index.ts 的门面函数，由 replyGeneration.ts 与 rollingMemory.ts 调用。
@@ -49,8 +49,8 @@ export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
 export const activeReplyCounts: Map<number, number> = new Map();
 /**
  * 群里没有在途轮次时由直接轮创建并占据队首（directModelActive 记它是否仍在
- * 模型阶段），之后的有序并行轮按入站顺位占位；桶数为 REPLY_ROUND_MAX_CONCURRENT。
- * 每桶可持有多轮；存活轮次受单群与 Worker 容量闸限制，模型并发独立计数。
+ * 模型阶段），之后的有序并行轮按入站顺位追加到同一个 FIFO。
+ * 存活轮次受单群与 Worker 容量闸限制，模型并发独立计数。
  * 完成项按入站顺位回收，全部排空时删除；群失效或 reset 清空，Worker 重建从空表开始。
  * 旧代迟到收尾不得删除新代条目，入站限频与 Telegram 控流各自生效。
  */
@@ -84,19 +84,19 @@ export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> 
  */
 export const pendingOverflowNotices: Map<number, number | undefined> = new Map();
 /**
- * 每个 chat:generation 的取消控制器。回复轮或限频提示开始时创建，invalidate
- * 同步 abort 旧代；该代任务全部 settle 后删除。
+ * 每个 generation 的取消控制器（generation 在本 isolate 内唯一，见 cachedReplyGeneration）。
+ * 回复轮或限频提示开始时创建，invalidate 同步 abort 旧代；该代任务全部 settle 后删除。
  * 容量：同时存活的代际数，被 replyDeliveryTotal 的 REPLY_DELIVERY_MAX_TOTAL
  * 与每群并发闸共同兜住；不设淘汰——丢掉一个控制器等于让那一代永远取消不掉。
  */
-export const replyAbortControllers: Map<string, AbortController> = new Map();
+export const replyAbortControllers: Map<number, AbortController> = new Map();
 /**
- * 每个 chat:generation 尚未 settle 的回复及其发送链、提示、媒体描述与记忆压缩任务。
+ * 每个 generation 尚未 settle 的回复及其发送链、提示、媒体描述与记忆压缩任务。
  * 清理：每个 Promise settle 时从内层 Set 移除，Set 空了删外层键；群失效与
  * resetAiChatReplyCache 整表清空。容量与淘汰口径同 replyAbortControllers，
- * 两张表覆盖同一批 chat:generation 键。
+ * 两张表覆盖同一批 generation 键。
  */
-export const replyGenerationTasks: Map<string, Set<Promise<void>>> = new Map();
+export const replyGenerationTasks: Map<number, Set<Promise<void>>> = new Map();
 
 /** 读取某群当前回复 epoch；未登记时分配一个本 isolate 内唯一的新值。 */
 export function cachedReplyGeneration(chatId: number): number {

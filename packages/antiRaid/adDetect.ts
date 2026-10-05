@@ -34,7 +34,7 @@ import {
   runBlocklistIdentityMutation,
   runProtectedIdentityMutation,
 } from "../infra/identityPolicy/coordination";
-import { clearTemporaryAdBypassActivity } from
+import { clearTemporaryAdBypassActivityOrThrow } from
   "../infra/identityPolicy/temporaryAdBypass";
 import type {
   AdDetectedEvent,
@@ -112,11 +112,7 @@ async function disposeDetectedAdLocked(event: AdDetectedEvent): Promise<void> {
       // 即使白名单成员显式关掉广告绕过，模型也只能处理本批消息，
       // 不得把成员写入永久黑名单。本检查同样要在临时累计删除之前完成。
       if (isWhitelisted(event.senderId)) return null;
-      if (!clearTemporaryAdBypassActivity(event.senderId)) {
-        throw new Error(
-          `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`
-        );
-      }
+      clearTemporaryAdBypassActivityOrThrow(event.senderId);
       recordAdSample(event);
       return blockUser(event.senderId, event.meta);
     }
@@ -292,10 +288,7 @@ async function clearAdVerdictActivity(event: AdVerdictTrueEvent): Promise<void> 
   await runProtectedIdentityMutation((): void => {
     // 判定回投时以当前权限为准：已获临时广告豁免的成员不能被旧候选撤权。
     if (canBypassAdDetection(event.senderId)) return;
-    if (clearTemporaryAdBypassActivity(event.senderId)) return;
-    throw new Error(
-      `Temporary ad bypass reset for identity ${event.senderId} was rejected by the persistence Worker.`
-    );
+    clearTemporaryAdBypassActivityOrThrow(event.senderId);
   });
 }
 

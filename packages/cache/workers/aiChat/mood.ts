@@ -1,28 +1,18 @@
-/** owner: workers/aiChat。AI 心情抽取与到期（packages/aiChat/ai/mood.ts）的内存状态；容量等于仍有当前
- * 心情的群数，群 teardown 与到期路径同步删除。 */
+/** owner: workers/aiChat。AI 心情抽取与到期（packages/aiChat/ai/mood.ts）的内存状态；全 Worker 只有
+ * 一份心情，所有群共用。 */
 
-import type { MoodOption } from "../../../types/aiChat/mood";
+import type { CurrentMood } from "../../../types/aiChat/mood";
 
 /**
- * 心情及其到期时刻都不落盘，随 Worker 重启清空、下次拼提示词时重抽。
- * 容量：仍有当前心情的群数，上界为受管群数（STATE_MANAGED_CHAT_LIMIT）；
- * 不设淘汰——条目由 clearChatMoodCache（群 teardown）与到期重抽路径回收。
+ * 当前心情档位与到期时刻；null 表示尚未抽取（Worker 刚启动）或热重载后原档位已从配置删除，下次读取时重抽。
+ * 填充：switchMood 在首次读取、到期重抽与 /mood switch 时整体写入；refreshMood 在 mood.json 热重载后
+ * 换成同名新档位（保留到期时刻）或清空。
+ * 不落盘：Worker 崩溃重建换新 isolate 后为 null，下次拼提示词时重抽。
+ * 容量：恒为单个槽位，不随群 teardown 清理。
  */
-export const chatMoods: Map<number, MoodOption> = new Map();
-/**
- * 各群当前心情到期时刻；与 chatMoods 同步填充和删除，Worker 重建后清空。
- * 容量与清理逐字跟随 chatMoods，两张表始终成对增删。
- */
-export const chatMoodExpiresAts: Map<number, number> = new Map();
+export const currentMoodState: { current: CurrentMood | null } = { current: null };
 
-/** 群 teardown 时同步删除心情与到期时刻。 */
-export function clearChatMoodCache(chatId: number): void {
-  chatMoods.delete(chatId);
-  chatMoodExpiresAts.delete(chatId);
-}
-
-/** 测试隔离时清空全部群心情状态。 */
+/** 测试隔离时清空当前心情（经 resetAiChatWorkerCache）。 */
 export function resetAiChatMoodCache(): void {
-  chatMoods.clear();
-  chatMoodExpiresAts.clear();
+  currentMoodState.current = null;
 }

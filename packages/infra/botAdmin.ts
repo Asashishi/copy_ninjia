@@ -85,8 +85,8 @@ async function completeAfterTeardown(
  * 送到这里，若不设防，
  * 光是被拉进一个群、还没人 /init enable，`chat_states` 就会凭空多出一条只有
  * botPermissions 的记录——先于任何超级管理员操作自己"写"进去了。用 getChatState
- * （只读）判定，不经过 getOrCreateChatState，未初始化的群连主线程 LRU
- * 条目都不建。群后续被 /init enable 后，botChatPermissionsIn 的按需回填分支
+ * （只读）判定，不经过 getOrCreateChatState，未初始化的群连主线程群状态
+ * 热读副本的条目都不建。群后续被 /init enable 后，botChatPermissionsIn 的按需回填分支
  * （见本文件顶部注释的第 3 条路径）会在真正需要时现查一次并正确落盘，
  * 这里的省略不损失任何信息。
  */
@@ -302,7 +302,7 @@ export function forgetBotChatPermissions(chatId: number): void {
   // 下面两件事都只在真的丢掉了一份已知值时做：teardown 路径会对同一个群反复调用，
   // 无条件执行就是白写一次盘、再往 Worker mailbox 里灌一条重复消息。
   if (!had) return;
-  // 落盘不能省。botPermissions 是持久字段：只清 LRU 的话，内存说「未知」而
+  // 落盘不能省。botPermissions 是持久字段：只清热读副本的话，内存说「未知」而
   // SQLite 还留着刚被判定为陈旧的那份快照。多数调用点后面跟着 persistChatState
   // （离群、/init 两条路），唯独 markBotAdminObserved 那条不是——它 forget 之后
   // 现查，而 getChatMember 失败时按约定什么都不记，这一轮就这么带着分歧结束。

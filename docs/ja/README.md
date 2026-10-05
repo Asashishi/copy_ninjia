@@ -38,8 +38,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5920_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.54%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6117_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.69%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -106,7 +106,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5920 件のテストが全て成功 / テストファイル 502 件 / expect() 呼び出し 320,978 回 / 関数カバレッジ 98.14% / 行カバレッジ 98.54%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 6117 件のテストが全て成功 / テストファイル 515 件 / expect() 呼び出し 436,787 回 / 関数カバレッジ 98.24% / 行カバレッジ 98.69%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -200,7 +200,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 人設と通知の口調</b><br>
-  <sub>内蔵の雌小鬼人設を <code>prompt/persona.md</code> で置き換え可能。Bot の通知は明示設定を優先し、省略時はカスタム人設なら普通、内蔵人設なら雌小鬼の口調を使います。</sub></p>
+  <sub>内蔵の雌小鬼人設を <code>prompt/persona.md</code> で置き換え可能（<a href="../../prompt_example/persona.md">例</a>）。Bot の通知は明示設定を優先し、省略時はカスタム人設なら普通、内蔵人設なら雌小鬼の口調を使います。</sub></p>
 </td>
 </tr>
 <tr>
@@ -270,7 +270,7 @@
 </tbody>
 </table>
 
-- **TTS 音声設定**：`config/dynamic/agent.json` で `agent.tts` の明示設定が必要です（Google、OpenAI 互換 `audio/speech`、xAI Grok `/v1/tts` に対応。Google は `base_url` と `headers` によるゲートウェイ経由も可能）。
+- **TTS 音声設定**：`config/dynamic/agent.json` で `agent.tts` の明示設定が必要です（Google、OpenAI 互換 `audio/speech`、xAI Grok `/v1/tts` に対応。Google は `base_url` と `headers` によるゲートウェイ経由も可能）。任意の `bot_language`（`en` / `zh` / `ja`、既定 `ja`）で AI ボイスのセリフの言語を指定できます。プロジェクトルートの `prompt/voice_tool.md` で AI `send_voice` のツール説明全体を置き換えられます（再起動後に反映。例は [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)）。AI 返信の合成には `bot_language` に従って読み上げ言語指定が自動で追加されます。`style` は `/send`・cron と共用で声質だけを書きます。`bot_language` を変えるときは `style` と `voice_tool.md` も同じ言語に変えることを推奨します。
 - **枠の独立管理**：`daily_limit`（既定 100）のうち `daily_reserve_quota`（既定 25）を管理者と cron 用に予約し、残りを AI 音声に割り当てます。両方の回数は独立して数え、ウィンドウ内で最初に計上したリクエストから 24 時間後にまとめてリセットします。
 - **コンテキスト記録規則**：`/send` による中継メッセージや定時テキスト/音声は AI 記憶に自動記録されません。画像の自動記録は、グループで AI が有効かつ非復唱状態の場合に動作します。詳細は [11 よくある質問](11-faq.md)。
 

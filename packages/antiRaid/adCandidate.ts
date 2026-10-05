@@ -106,14 +106,16 @@ function buildSampleContext(
   ) {
     return undefined;
   }
+  // 截断可能停在空格后面；去掉末尾空白，交给 Worker 的就是清洗完成的单行文本，
+  // Worker 侧只再收一次长度（见 workers/antiRaid/adDetect/bundle.ts 的 boundSampleContext）。
   const quote: string = truncateInline(
     sanitizeInline(rawQuote ?? ""),
     AD_SAMPLE_CONTEXT_MAX_CHARS
-  );
+  ).trimEnd();
   const replyTo: string = truncateInline(
     sanitizeInline(rawReplyTo ?? ""),
     AD_SAMPLE_CONTEXT_MAX_CHARS
-  );
+  ).trimEnd();
   if (quote.length === 0 && replyTo.length === 0) return undefined;
   if (quote.length === 0) return { replyTo };
   if (replyTo.length === 0) return { quote };

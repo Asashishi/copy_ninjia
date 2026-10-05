@@ -61,6 +61,8 @@ test("普通版 gag 与 translate 的动态文案函数保留参数，且与默�
       assertPlainStrings(plainText.replaceAll(argument, ""));
     }
   }
-  expect(plain.TRANSLATE_TOGGLE_TEXTS.rejection(argument)).toBe(`${argument} 没有管理本群翻译功能的权限。`);
+  const plainRejection: string = plain.TRANSLATE_TOGGLE_TEXTS.rejection(argument);
+  expect(plainRejection).toContain(argument);
+  assertPlainStrings(plainRejection.replaceAll(argument, ""));
   expect(plain.TRANSLATE_TOGGLE_TEXTS.rejection(argument)).not.toBe(teasing.TRANSLATE_TOGGLE_TEXTS.rejection(argument));
 });

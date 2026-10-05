@@ -57,7 +57,8 @@ async function sendWedNotice(
 }
 
 /**
- * 群关闭先同步关闸，再删除状态机拥有的结果；重启不恢复这些会话。
+ * 群关闭先同步关闸，再删除状态机拥有的结果（机器人已离群时不删，见 teardownWedChat）；
+ * 重启不恢复这些会话。
  *
  * 交互缓存与长期成员集合是两份状态，收场也不同：前者只在本进程有过交互、且没被
  * 先前的 teardown 收掉时才存在，后者只要这个群发过言就一直在。因此**成员集合的
@@ -72,7 +73,7 @@ export async function teardownWedInChat(
   const chat: WedChat | undefined = wedChats.get(chatId);
   if (chat !== undefined) {
     wedChats.delete(chatId);
-    await teardownWedChat(chat);
+    await teardownWedChat(chatId, chat, reason);
   }
   if (purgesChatData(reason)) await purgeWedMembers(chatId);
 }
@@ -140,7 +141,7 @@ export async function handleWedCommand(ctx: CommandContext<Context>): Promise<vo
     session.busy = false;
     if (session.controller.signal.aborted) {
       await removeWedResult(session);
-      if (previous !== undefined) await removeWedResult(previous);
+      if (previous !== undefined && !chat.departed) await removeWedResult(previous);
     } else if (session.messageId === undefined) {
       if (previous !== undefined && !replacedPrevious) chat.sessions.set(session.actor.id, previous);
       else chat.sessions.delete(session.actor.id);

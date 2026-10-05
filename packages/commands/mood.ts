@@ -62,7 +62,7 @@ async function isMoodAvailable({
 }
 
 /**
- * 处理 /mood query 指令：任意群成员均可查询本群 AI 当前有效心情。主线程
+ * 处理 /mood query 指令：任意群成员均可查询 AI 当前有效心情（全局一份，所有群共用）。主线程
  * 只向 AI Worker 投递 queryMood 并等待 moodQueried 回执；不经过权限系统，
  * 也不强制重抽尚未自然到期的心情。
  */
@@ -80,7 +80,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
 
   let moodName: string;
   try {
-    moodName = await requestAiMood(chatId, "queryMood");
+    moodName = await requestAiMood("queryMood");
   } catch (error: unknown) {
     logger.error(`Failed to confirm AI mood query for chat ${chatId}:`, error);
     await sendCommandMessage({
@@ -99,7 +99,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
 }
 
 /**
- * 处理 /mood switch 指令：立即重抽本群 AI 的当前心情并回复结果。心情缓存
+ * 处理 /mood switch 指令：立即重抽 AI 的当前心情并回复结果，新心情对所有群同时生效。心情缓存
  * 在 AI Worker 线程内（cache/workers/aiChat/mood.ts），主线程只 post 一条 switchMood
  * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/workerBridge.ts 的 requestAiMood），
  * 回复固定从这里发出，不走 AI 回复流水线。仅持有 isCanSwitchMood 的身份可用；
@@ -127,7 +127,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
 
   let moodName: string;
   try {
-    moodName = await requestAiMood(chatId, "switchMood");
+    moodName = await requestAiMood("switchMood");
   } catch (error: unknown) {
     logger.error(`Failed to confirm AI mood switch for chat ${chatId}:`, error);
     await sendCommandMessage({

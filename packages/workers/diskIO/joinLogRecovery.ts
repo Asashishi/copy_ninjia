@@ -1,5 +1,5 @@
 import { durableUnlinkSync } from "../../libs/atomicFile";
-import { bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
+import { bestEffortUnlink, listOptionalDirectory } from "../../libs/fileAccess";
 import {
   mkdirSync,
   readdirSync,
@@ -158,9 +158,7 @@ export async function inspectJoinLogFiles(
 ): Promise<JoinLogRecoveryInspection> {
   const retainedDays: ReadonlySet<string> =
     retainedJoinLogDayKeys(today);
-  const names: string[] = inspectOptionalDirectory(JOIN_LOG_MEMORY_DIR)
-    ? readdirSync(JOIN_LOG_MEMORY_DIR)
-    : [];
+  const names: string[] = listOptionalDirectory(JOIN_LOG_MEMORY_DIR);
   for (const name of names) {
     if (name.endsWith(TMP_FILE_SUFFIX)) continue;
     const path: string = join(JOIN_LOG_MEMORY_DIR, name);

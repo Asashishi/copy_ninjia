@@ -1,4 +1,5 @@
 import { telegramSignal } from "../../../libs/telegramSignal";
+import { isMessageDeletionSettled } from "../../../libs/messageDeletion";
 import type { ReactionTypeEmoji } from "grammy/types";
 import { telegramApi } from "../client";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./core";
 import type {
   CopyableReaction,
+  DeleteMessageOutcome,
   PendingMessageDeletion,
   TelegramMessageDeletionApi,
 } from "../../../types/telegram";
@@ -100,17 +102,6 @@ export async function setMessageReactions({
   );
 }
 
-/**
- * 一次删除尝试的结局。`gone` 与 `failed` 必须分开：调用方拿删除结果去写群内
- * 文案或错误日志时，「这条消息已经不在了」和「本机器人删不动它」是两件相反的
- * 事，混成一个布尔会冤枉权限配置正确的管理员。
- */
-export type DeleteMessageOutcome =
-  | "deleted"
-  | "gone"
-  | "forbidden"
-  | "failed";
-
 /** Telegram 是否明确说了「这条消息不存在或不可删」，而不是拒绝权限或偶发失败。 */
 function isMessageGone(error: unknown): boolean {
   const details: Readonly<{ errorCode: number; description: string }> | undefined =
@@ -125,8 +116,8 @@ function isMessageGone(error: unknown): boolean {
 
 /**
  * 执行一次删除并归入 deleted/gone/forbidden/failed 四态；普通删除与目标专属消息删除共用。
- * 「消息已经不在了」不是故障（删痕迹这条路上它甚至是常态），不记 API 错误；停机取消由统一边界
- * 直接上抛。
+ * 「消息已经不在了」不是故障（删痕迹这条路上它甚至是常态），不记 API 错误；update 取消由统一边界
+ * 直接上抛，其余取消由 runTelegramAction 统一不记。
  */
 async function runDeletion(
   action: string,
@@ -186,7 +177,7 @@ export async function deleteMessage(
   const outcome: DeleteMessageOutcome =
     await deleteMessageWithOutcome(chatId, messageId, api);
   // 「消息已经不在了」对只看成败的调用方就是成功。
-  return outcome === "deleted" || outcome === "gone";
+  return isMessageDeletionSettled(outcome);
 }
 
 /**

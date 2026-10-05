@@ -11,6 +11,7 @@ import type { Message } from "grammy/types";
 import { BOT_PROFILE_PHOTO_FILE_NAME } from "../../consts/telegram";
 import { bot } from "../../infra/telegram/mainClient";
 import { deleteMessageWithOutcome } from "../../infra/telegram";
+import { isMessageDeletionSettled } from "../../libs/messageDeletion";
 import { markSelfSent } from "../../infra/selfSentTracker";
 import { recordBotImage } from "../../aiChat";
 import {
@@ -125,9 +126,7 @@ export function confirmWedResult(session: WedSession, signal: AbortSignal): Prom
 /** 删除失败保留消息 ID 和会话，允许原发起人再次点击移除。 */
 export async function removeWedResult(session: WedSession): Promise<boolean> {
   if (session.messageId === undefined) return true;
-  const outcome: Awaited<ReturnType<typeof deleteMessageWithOutcome>> =
-    await deleteMessageWithOutcome(session.chatId, session.messageId);
-  if (outcome !== "deleted" && outcome !== "gone") return false;
+  if (!isMessageDeletionSettled(await deleteMessageWithOutcome(session.chatId, session.messageId))) return false;
   session.messageId = undefined;
   return true;
 }

@@ -31,17 +31,17 @@ export function grantVerificationAttempt(
   if (request.generation !== antiRaidRuntimeState.generation) {
     return { status: "stale", attempt: currentAttempt };
   }
-  if (deferredVerificationRecords.has(request.key)) {
-    return { status: "exhausted", attempt: currentAttempt };
-  }
-  if (pendingVerificationDeferrals.has(request.key)) {
+  if (
+    deferredVerificationRecords.has(request.key) ||
+    pendingVerificationDeferrals.has(request.key)
+  ) {
     return { status: "exhausted", attempt: currentAttempt };
   }
   const snapshot: VerificationSnapshot | undefined =
     activeVerificationSnapshots.get(request.key);
   if (
     snapshot === undefined ||
-    !isTerminalVerificationPhase(snapshot?.phase) ||
+    !isTerminalVerificationPhase(snapshot.phase) ||
     snapshot.generation !== request.generation ||
     snapshot.revision !== request.revision
   ) {

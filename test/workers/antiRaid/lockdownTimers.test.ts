@@ -9,7 +9,12 @@
 
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import type { ChatPermissions } from "grammy/types";
-import { RESTORE_RETRY_MS } from "../../../packages/consts/antiRaid/lockdown";
+import {
+  RESTORE_PERMANENT_FAILURE_LOG_LIMIT,
+  RESTORE_PERMANENT_RETRY_MAX_MS,
+  RESTORE_RETRY_MS,
+} from "../../../packages/consts/antiRaid/lockdown";
+import { loggerStub } from "../../helpers/loggerMock";
 import type { LockdownEntry } from "../../../packages/types/antiRaid/internal";
 import type { LockdownState } from "../../../packages/types/states/lockdown";
 
@@ -20,9 +25,26 @@ const ORIGINAL_PERMISSIONS: ChatPermissions = { can_send_messages: true, can_inv
 
 /** 每次 publishLockdownState 的 chatId，用于确认 persistState 副作用真的跑了。 */
 const persisted: number[] = [];
-/** 恢复权限调用的结局队列；出队为空时按成功处理。 */
-const restoreOutcomes: boolean[] = [];
+/**
+ * 恢复权限调用的结局队列：false 是普通失败，"denied" 是 Telegram 403，"aborted" 是 Worker 停机
+ * 撤销的请求；出队为空时按成功处理。
+ */
+const restoreOutcomes: (false | "denied" | "aborted")[] = [];
 const restoreCalls: number[] = [];
+const loggerError = mock((..._args: unknown[]): void => {});
+const loggerWarn = mock((..._args: unknown[]): void => {});
+
+/** 与跨线程回传的 Telegram 错误同形：带错误码与描述。 */
+function deniedError(): Error {
+  return Object.assign(new Error("Forbidden: bot was kicked from the supergroup chat"), {
+    telegramErrorCode: 403,
+    telegramDescription: "Forbidden: bot was kicked from the supergroup chat",
+  });
+}
+
+mock.module("../../../packages/infra/logger", () => ({
+  logger: loggerStub({ error: loggerError, warn: loggerWarn }),
+}));
 
 mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
   fetchAdminIds: (): Promise<ReadonlySet<number>> => Promise.resolve(new Set<number>()),
@@ -34,7 +56,10 @@ mock.module("../../../packages/workers/antiRaid/lockdownPersistence", () => ({
 mock.module("../../../packages/infra/telegram/lockdownPermissions", () => ({
   restoreLockdownInvitePermission: (): Promise<void> => {
     restoreCalls.push(CHAT_ID);
-    return restoreOutcomes.shift() === false
+    const outcome: false | "denied" | "aborted" | undefined = restoreOutcomes.shift();
+    if (outcome === "denied") return Promise.reject(deniedError());
+    if (outcome === "aborted") return Promise.reject(new DOMException("Worker request aborted", "AbortError"));
+    return outcome === false
       ? Promise.reject(new Error("restore failed"))
       : Promise.resolve();
   },
@@ -56,6 +81,7 @@ const { lockdownApiChains, lockdownEntries } =
 const {
   adoptLockdowns,
   handleLockdownPersisted,
+  retryDeniedLockdownRestore,
   stopLockdownRuntime,
 } = await import("../../../packages/workers/antiRaid/lockdownRuntime");
 
@@ -85,6 +111,8 @@ beforeEach((): void => {
   persisted.length = 0;
   restoreCalls.length = 0;
   restoreOutcomes.length = 0;
+  loggerError.mockClear();
+  loggerWarn.mockClear();
   // reportUnlock 走 `self.postMessage`；基准线程没有 Worker 通道，替掉即可。
   spyOn(globalThis, "postMessage").mockImplementation((): void => undefined);
 });
@@ -147,5 +175,119 @@ describe("私密模式 timer 接线", (): void => {
     expect(restoreCalls).toEqual([CHAT_ID, CHAT_ID]);
     // 第二次成功：状态机收摊，条目连同两颗 timer 一起消失。
     expect(lockdownEntries.has(CHAT_ID)).toBeFalse();
+  });
+
+  /** 走到 restoring 并确认落盘，让第一次解除权限调用开始。 */
+  async function enterRestoring(): Promise<LockdownEntry> {
+    adoptActiveLockdown();
+    jest.advanceTimersByTime(REMAINING_MS);
+    const entry: LockdownEntry = lockdownEntries.get(CHAT_ID)!;
+    const restoring: LockdownState = entry.state;
+    if (restoring.kind !== "restoring") throw new Error("restore timer did not enter restoring");
+    handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId: CHAT_ID,
+      phase: "restoring",
+      intentId: restoring.intentId,
+    });
+    await drainLockdownApiChain();
+    return entry;
+  }
+
+  test("连续权限被拒超过上限后降为 warn，重试间隔翻倍封顶，记录照旧保留", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    const extra: number = 12;
+    for (let index: number = 0; index < RESTORE_PERMANENT_FAILURE_LOG_LIMIT + extra; index++) restoreOutcomes.push("denied");
+    const entry: LockdownEntry = await enterRestoring();
+
+    for (let attempt: number = 1; attempt < RESTORE_PERMANENT_FAILURE_LOG_LIMIT + extra; attempt++) {
+      expect(restoreCalls).toHaveLength(attempt);
+      const over: number = attempt - RESTORE_PERMANENT_FAILURE_LOG_LIMIT;
+      const delayMs: number = over <= 0
+        ? RESTORE_RETRY_MS
+        : Math.min(RESTORE_RETRY_MS * 2 ** over, RESTORE_PERMANENT_RETRY_MAX_MS);
+      jest.advanceTimersByTime(delayMs - 1);
+      await drainLockdownApiChain();
+      expect(restoreCalls).toHaveLength(attempt);
+      jest.advanceTimersByTime(1);
+      await drainLockdownApiChain();
+    }
+
+    expect(loggerError).toHaveBeenCalledTimes(RESTORE_PERMANENT_FAILURE_LOG_LIMIT);
+    expect(loggerWarn).toHaveBeenCalledTimes(extra);
+    expect(entry.restorePermanentFailures).toBe(RESTORE_PERMANENT_FAILURE_LOG_LIMIT + extra);
+    expect(entry.state.kind).toBe("restoring");
+    expect(lockdownEntries.get(CHAT_ID)).toBe(entry);
+  });
+
+  test("普通失败清零连续被拒计数，之后回到固定间隔并记错误", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    for (let index: number = 0; index <= RESTORE_PERMANENT_FAILURE_LOG_LIMIT; index++) restoreOutcomes.push("denied");
+    restoreOutcomes.push(false);
+    const entry: LockdownEntry = await enterRestoring();
+    for (let index: number = 0; index < RESTORE_PERMANENT_FAILURE_LOG_LIMIT; index++) {
+      jest.advanceTimersByTime(RESTORE_RETRY_MS);
+      await drainLockdownApiChain();
+    }
+    expect(loggerWarn).toHaveBeenCalledTimes(1);
+    jest.advanceTimersByTime(RESTORE_RETRY_MS * 2);
+    await drainLockdownApiChain();
+
+    expect(restoreCalls).toHaveLength(RESTORE_PERMANENT_FAILURE_LOG_LIMIT + 2);
+    expect(entry.restorePermanentFailures).toBe(0);
+    expect(loggerError).toHaveBeenCalledTimes(RESTORE_PERMANENT_FAILURE_LOG_LIMIT + 1);
+    jest.advanceTimersByTime(RESTORE_RETRY_MS - 1);
+    await drainLockdownApiChain();
+    expect(restoreCalls).toHaveLength(RESTORE_PERMANENT_FAILURE_LOG_LIMIT + 2);
+    jest.advanceTimersByTime(1);
+    await drainLockdownApiChain();
+    expect(lockdownEntries.has(CHAT_ID)).toBeFalse();
+  });
+
+  test("Worker 停机撤销的恢复请求不记错误，也不改连续被拒计数", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    restoreOutcomes.push("denied", "aborted");
+    const entry: LockdownEntry = await enterRestoring();
+    expect(entry.restorePermanentFailures).toBe(1);
+    expect(loggerError).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(RESTORE_RETRY_MS);
+    await drainLockdownApiChain();
+
+    expect(restoreCalls).toHaveLength(2);
+    expect(entry.restorePermanentFailures).toBe(1);
+    expect(loggerError).toHaveBeenCalledTimes(1);
+    expect(loggerWarn).not.toHaveBeenCalled();
+    expect(entry.state.kind).toBe("restoring");
+  });
+
+  test("重新确证能限制成员时，被拒拉长的重试提前到现在", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    for (let index: number = 0; index <= RESTORE_PERMANENT_FAILURE_LOG_LIMIT; index++) restoreOutcomes.push("denied");
+    await enterRestoring();
+    for (let index: number = 0; index < RESTORE_PERMANENT_FAILURE_LOG_LIMIT; index++) {
+      jest.advanceTimersByTime(RESTORE_RETRY_MS);
+      await drainLockdownApiChain();
+    }
+    expect(restoreCalls).toHaveLength(RESTORE_PERMANENT_FAILURE_LOG_LIMIT + 1);
+
+    retryDeniedLockdownRestore(CHAT_ID);
+    jest.advanceTimersByTime(0);
+    await drainLockdownApiChain();
+
+    expect(restoreCalls).toHaveLength(RESTORE_PERMANENT_FAILURE_LOG_LIMIT + 2);
+    expect(lockdownEntries.has(CHAT_ID)).toBeFalse();
+  });
+
+  test("没有被拒记录时提前重试是 no-op", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    restoreOutcomes.push(false);
+    const entry: LockdownEntry = await enterRestoring();
+    const timer: LockdownEntry["retryTimer"] = entry.retryTimer;
+
+    retryDeniedLockdownRestore(CHAT_ID);
+
+    expect(entry.retryTimer).toBe(timer);
+    expect(restoreCalls).toHaveLength(1);
   });
 });

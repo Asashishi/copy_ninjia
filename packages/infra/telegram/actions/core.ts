@@ -4,6 +4,7 @@ import {
   throwIfUpdateAborted,
 } from "../../updateContext";
 import { beginSelfSentSend, endSelfSentSend } from "../../selfSentTracker";
+import { isAbortError } from "../../../libs/abortSignal";
 import { logApiError } from "../client";
 import { telegramErrorDetails } from "../errors";
 
@@ -35,6 +36,9 @@ interface RunTelegramActionParams<T, R> {
  * 对应动作并返回 fallback。这里不用 grammY 的 bot.catch：它处理的是
  * update/middleware 逃逸异常，且本项目会让该错误触发 update 重投；这些主动
  * API 调用失败属于可预期的业务结果，调用方还需要得到 false/undefined。
+ *
+ * 失败本身是取消（isAbortError，例如 Worker 停机 drain 撤销的双工请求）时不记
+ * API 错误；`shouldLogError` 仍会被调用，供调用方完成结局分类。
  */
 export async function runTelegramAction<T, R>({
   action,
@@ -61,7 +65,7 @@ export async function runTelegramAction<T, R>({
     if (updateSignal?.aborted === true) {
       throwIfUpdateAborted(updateSignal);
     }
-    if (shouldLogError?.(error, actionSignal) !== false) {
+    if (shouldLogError?.(error, actionSignal) !== false && !isAbortError(error)) {
       logApiError(action, error);
     }
     return fallback;
@@ -71,14 +75,14 @@ export async function runTelegramAction<T, R>({
 }
 
 /**
- * 默认的 `shouldLogError`：停机 abort 造成的失败不记 API 错误——它不是远端故障。
+ * 默认的 `shouldLogError`：调用方 signal 已中止时的失败不记 API 错误——它不是远端故障。
  *
- * 只对带调用方 signal 的动作有意义（update 取消在判据之前已由统一边界上抛）：由
+ * 只对带调用方 signal 的动作有意义（update 取消在判据之前已由统一边界上抛，
+ * 取消形状的失败由 runTelegramAction 统一不记）：由
  * runBooleanTelegramAction、actions/messages.ts、actions/mediaMessages.ts、actions/membership.ts、
  * commandPhotos.ts、avatar/read.ts、cron/targets.ts、commands/wed/messages.ts 与
- * commands/info.ts 的 runTelegramAction 调用共用；membership.ts 的 readPresentChatUser 在
- * 分类后同样经过本函数。
- * runPermissionAwareTelegramAction 的判据另带 claimError 副作用，不复用本函数。
+ * commands/info.ts 的 runTelegramAction 调用共用；membership.ts 的 readPresentChatUser 与
+ * runPermissionAwareTelegramAction 在分类后同样经过本函数。
  */
 export function logUnlessAborted(
   _error: unknown,
@@ -131,7 +135,7 @@ export interface RunPermissionAwareTelegramActionParams {
  * 不关心 `participantInvalid` 的调用方把它归入 `failed`。
  * 闩锁必须覆盖整次动作，避免把永久的 403 归类为值得退避重试的偶发失败。
  *
- * 停机 abort 造成的失败不记 API 错误——它不是远端故障，口径与
+ * 取消造成的失败不记 API 错误——它不是远端故障，口径与
  * runBooleanTelegramAction 一致。
  */
 export async function runPermissionAwareTelegramAction({
@@ -158,7 +162,7 @@ export async function runPermissionAwareTelegramAction({
       outcome = isPermissionDenied(error)
         ? "forbidden"
         : isParticipantIdInvalid(error) ? "participantInvalid" : "failed";
-      return actionSignal?.aborted !== true;
+      return logUnlessAborted(error, actionSignal);
     },
   });
   return succeeded ? "succeeded" : outcome;

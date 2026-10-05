@@ -1,4 +1,4 @@
-import { Composer, GrammyError } from "grammy";
+import { Composer, GrammyError, matchFilter } from "grammy";
 import type {
   Bot,
   BotError,
@@ -106,24 +106,29 @@ function claimOrContinue(
 /**
  * 显式安装完整的 grammY 更新链。模块导入本身不修改 Bot；调用一次本函数才
  * 注册 middleware、命令和各类 update handler。
+ *
+ * 从 update_id 记账到消息兜底的前置链按顺序收进一个数组，通过 `bot.use(...preamble)`
+ * 一次登记，由 grammY 执行链调度和 next 约束；其余按 update 类型分发的 handler
+ * 通过 `bot.on` 登记。
  */
 export function registerHandlers(bot: Bot): HandlerRegistration {
   let lastSeenUpdateId: number = 0;
+  const preamble: MiddlewareFn<Context>[] = [];
 
   // 追踪已进入处理的最大 update_id，停机时用于确认 Telegram offset。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> => {
     if (ctx.update.update_id > lastSeenUpdateId) lastSeenUpdateId = ctx.update.update_id;
     return next();
   });
 
   // 收到其他机器人的 message 时在接收链前段计数；超额更新不进入回执、初始化、
   // 身份预热或业务分发。频道身份与本机器人自己的发言不计数。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined =>
     shouldPassBotMessage(ctx.message, ctx.me.id) ? next() : undefined);
 
   // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
   // 因此必须在 `shouldPassInitGate` 网关前检查。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> => {
     // `ctx.msg` 是每次求值的 getter 链（grammy/out/context.js 的 `get msg()` 串
     // 八个 update 字段），本条链上凡是要多次读取的地方一律先取成局部变量：
     // `ctx.update` 在一条 update 的处理期内不可变，派生值读一次即可。
@@ -139,7 +144,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // 验证、命令与 AI 链路。群内只有首次 /init 与 my_chat_member 等网关自身
   // 明确放行的更新能越过初始化状态；私聊只接受超级管理员的 /send。
   // 网关拒绝时仍摘除已保存的退群成员，不新增候选或放行业务处理。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     if (!shouldPassInitGate(ctx)) {
       observeWedMemberDeparture(ctx, ctx.chat);
       return undefined;
@@ -155,7 +160,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   //
   // **不写成 async**：全热 update 的 ids 恒为 null，不应为每条 update 无条件创建
   // promise 与 async 帧；只有冷读分支返回实际 Promise。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> => {
     // 成员集合只消费通过初始化网关的主线程更新，实际增删由 wed owner 合并落盘。
     observeWedMembers(ctx);
     // 同上：`ctx.msg` 与它的 `reply_to_message` 在本段里各要读七八次，先各取一次。
@@ -212,18 +217,18 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
 
   // 私聊命令已在前置网关统一收口；活动中的 /send 中转会话只把非命令消息
   // 直接短路到消息流水线。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     if (shouldRoutePrivateProxyMessage(ctx)) return handleIncomingMessageMiddleware(ctx);
     return next();
   });
 
-  // message / channel_post 上的 ingress 与消息兜底一律直接挂 bot.use，在 middleware
+  // message / channel_post 上的 ingress 与消息兜底一律收进前置链，在 middleware
   // 内自行判定 update 类型。判据与 on("message")、on(["message", "channel_post"])
   // 相同（allowed_updates 不含 edited_*，消息类 update 只有 message 与 channel_post 两种），
   // 命中集合、顺序与认领语义一致。
 
   // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message;
     return message === undefined
       ? next()
@@ -233,7 +238,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // gag 同样要覆盖命令消息，因此必须位于全部 bot.command 之前；Anti-Raid 先看
   // 原始消息，才能让广告/刷屏/待验证追踪按原始消息计数。被 gag 的消息即使
   // Telegram 删除失败也在这里终止，不得继续喂给 AI、copy 或命令处理器。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message;
     return message === undefined
       ? next()
@@ -243,7 +248,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // /qa set 表单投递同样要覆盖命令消息，且必须终止本条 update：那条投递消息
   // 已经被认领并删除，再放进 AI、复读或命令链路只会处理一个不存在的东西。
   // 必须同时覆盖 channel_post：频道里的「问题:」「回答:」是频道帖。
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined => {
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message ?? ctx.channelPost;
     return message === undefined ? next() : claimOrContinue(handleQaMessageIngress(message), next);
   });
@@ -258,8 +263,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // Context.has.command() 自己的第一步完全相同（都是 `:entities:bot_command`），
   // 因此它是每条命令判据的严格超集，不带 bot_command 实体的消息一次跳过整组。
   // 中文动作命令拿不到 bot_command 实体，因此由下面的「/」外闸单独承接。
-  const commands: Composer<Filter<Context, ":entities:bot_command">> =
-    bot.on(":entities:bot_command");
+  const commands: Composer<Filter<Context, ":entities:bot_command">> = new Composer();
   commands.command("permission", handlePermissionCommand);
   commands.command("white", handleWhiteCommand);
   commands.command("copy", handleCopyCommand);
@@ -291,6 +295,12 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
   // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
   commands.command("x", handleCjkActionUsageCommand);
+  // 外闸直接用 grammY 的 matchFilter，与 `bot.on(":entities:bot_command")` 同一个判据。
+  const isBotCommand: (ctx: Context) => ctx is Filter<Context, ":entities:bot_command"> =
+    matchFilter(":entities:bot_command");
+  const commandMiddleware: MiddlewareFn<Filter<Context, ":entities:bot_command">> = commands.middleware();
+  preamble.push((ctx: Context, next: NextFunction): unknown =>
+    isBotCommand(ctx) ? commandMiddleware(ctx, next) : next());
 
   // `/咬`、`/贴贴` 这类中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
   // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
@@ -300,15 +310,16 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   const cjkActions: Composer<Context> = new Composer();
   cjkActions.hears(CJK_ACTION_COMMAND_PATTERN, handleCjkActionCommand);
   const cjkActionMiddleware: MiddlewareFn<Context> = cjkActions.middleware();
-  bot.use((ctx: Context, next: NextFunction): unknown => {
+  preamble.push((ctx: Context, next: NextFunction): unknown => {
     const message: Message | undefined = ctx.message ?? ctx.channelPost;
     const text: string | undefined = message?.text ?? message?.caption;
     return text?.charCodeAt(0) === SLASH_CHAR_CODE
       ? cjkActionMiddleware(ctx, next)
       : next();
   });
-  bot.use((ctx: Context, next: NextFunction): Promise<void> | undefined =>
+  preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined =>
     (ctx.message ?? ctx.channelPost) === undefined ? next() : handleIncomingMessageMiddleware(ctx));
+  bot.use(...preamble);
   bot.on("message_reaction", handleReaction);
   bot.on("chat_member", handleChatMemberUpdate);
   bot.on("my_chat_member", handleMyChatMemberUpdate);

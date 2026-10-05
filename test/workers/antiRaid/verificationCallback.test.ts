@@ -4,6 +4,7 @@ import type { VerificationSnapshot } from "../../../packages/types/antiRaid";
 import { VERIFICATION_CALLBACK_CHECK_MAX, VERIFICATION_CALLBACK_REPLY_MAX } from "../../../packages/consts/antiRaid/verification";
 import { verificationCallbackChecks, verificationCallbackReplies } from "../../../packages/cache/workers/antiRaid/verificationCallbacks";
 import { antiRaidInFlightTasks } from "../../../packages/cache/workers/antiRaid/tasks";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 
 const loggerErrorMock = mock((_message: unknown, _error?: unknown): void => {});
 const answerCallbackQueryMock = mock(async (_params: { callbackQueryId: string; text?: string }): Promise<boolean> => true);
@@ -255,7 +256,7 @@ describe("verification callback ownership", () => {
     click({ callbackQueryId: "ordinary-approve", targetUserId: 45, action: "approve", fromId: 46 });
     await drainAntiRaidTasks();
     expect(verificationEntries.get(`${CHAT_ID}:45`)?.state.kind).toBe("pending");
-    expect(answeredText("ordinary-approve")).toContain("管理员的特权");
+    expect(answeredText("ordinary-approve")).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationAdminOnly);
 
     click({ callbackQueryId: "admin-approve", targetUserId: 45, action: "approve", fromId: ADMIN_ID });
     await drainAntiRaidTasks();
@@ -300,7 +301,7 @@ describe("verification callback ownership", () => {
     await drainAntiRaidTasks();
 
     expect(verificationEntries.get(`${CHAT_ID}:49`)?.state.kind).toBe("pending");
-    expect(answeredText("fetch-failed")).toContain("稍后再点一次");
+    expect(answeredText("fetch-failed")).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationAdminUnknown);
     expect(loggerErrorMock).toHaveBeenCalledTimes(1);
   });
 

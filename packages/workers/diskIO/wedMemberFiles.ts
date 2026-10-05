@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
   deletedWedChats,
@@ -9,11 +9,11 @@ import {
 } from "../../cache/workers/diskIO/wed";
 import { FLUSH_INTERVAL_MS } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
-import { TMP_FILE_SUFFIX, WED_MEMORY_DIR } from "../../consts/paths";
+import { WED_MEMORY_DIR } from "../../consts/paths";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
 import { WED_MEMBER_LIMIT } from "../../consts/wed";
-import { atomicWriteTextSync, durableUnlinkSync } from "../../libs/atomicFile";
-import { assertFileReadableWritable, bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
+import { atomicWriteTextSync, durableUnlinkSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
+import { assertFileReadableWritable, listOptionalDirectory } from "../../libs/fileAccess";
 import { invalidInput, readJsonInput } from "../../libs/inputValidation";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type {
@@ -24,24 +24,17 @@ import { flushDirtyEntries } from "./dirtyFlush";
 
 export interface WedMemberInspection {
   readonly snapshots: ReadonlyMap<number, Set<number>>;
-  readonly temporaryPaths: readonly string[];
+  /** 目录项全集，供启动维护清理 *.tmp 残留。 */
+  readonly names: readonly string[];
 }
 
 /** 启动只读门禁：文件名、数字 ID、唯一性、每群容量和群总数均严格验证。 */
 export async function inspectWedMemberFiles(): Promise<WedMemberInspection> {
   const snapshots: Map<number, Set<number>> = new Map();
-  const temporaryPaths: string[] = [];
-  if (!inspectOptionalDirectory(WED_MEMORY_DIR)) return { snapshots, temporaryPaths };
-  let names: readonly string[];
-  try {
-    names = readdirSync(WED_MEMORY_DIR);
-  } catch {
-    return invalidInput(WED_MEMORY_DIR, "$", "a readable directory");
-  }
+  const names: readonly string[] = listOptionalDirectory(WED_MEMORY_DIR);
   for (const name of names) {
-    const path: string = join(WED_MEMORY_DIR, name);
-    if (name.endsWith(TMP_FILE_SUFFIX)) { temporaryPaths.push(path); continue; }
     if (!name.endsWith(".json")) continue;
+    const path: string = join(WED_MEMORY_DIR, name);
     const chatIdText: string = name.slice(0, -".json".length);
     const chatId: number = Number(chatIdText);
     if (!isTelegramGroupChatId(chatId) || String(chatId) !== chatIdText) {
@@ -65,13 +58,13 @@ export async function inspectWedMemberFiles(): Promise<WedMemberInspection> {
     }
     snapshots.set(chatId, ids);
   }
-  return { snapshots, temporaryPaths };
+  return { snapshots, names };
 }
 
 /** 全域校验成功后创建目录并尽力清除未提交的临时文件，口径同其它领域的 *.tmp 清理。 */
 export async function maintainWedMemberFiles(inspection: WedMemberInspection): Promise<void> {
   mkdirSync(WED_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await bestEffortUnlink(path);
+  await removeOrphanedTempFiles(WED_MEMORY_DIR, inspection.names);
 }
 
 /** 唯一落盘边界；完整数组经现有 tmp、fsync、rename 实现原子替换，缺失文件自动创建。 */

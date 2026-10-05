@@ -171,32 +171,61 @@ describe("explicit Worker initialization", () => {
     }
   });
 
-  test("imports are inert; init, handshakes, stale guards, and respawn replay are deterministic", async () => {
+  /** FakeWorker 上的 diskIO 运行期；结束时终止 Worker、还原全局 Worker 与恢复监听器。 */
+  async function withDiskIORuntime(
+    body: (fatalErrors: Error[]) => Promise<void>
+  ): Promise<void> {
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;
     const error = spyOn(console, "error").mockImplementation(() => {});
     const fatalErrors: Error[] = [];
     const respawnListenerCount: number = diskIORuntime.respawnListeners.length;
     try {
+      await body(fatalErrors);
+    } finally {
+      diskIORuntime.respawnListeners.length = respawnListenerCount;
+      await diskIO.terminateDiskIO();
+      error.mockRestore();
+      globalThis.Worker = originalWorker;
+    }
+  }
+
+  /** 让 Worker 完成一次带给定 AI 记忆与贴纸目录的成功 load。 */
+  function emitLoaded(
+    worker: FakeWorker,
+    aiMemories: Map<number, string> = new Map<number, string>(),
+    stickerCatalogs: Map<string, string> = new Map<string, string>()
+  ): void {
+    worker.onmessage!({ data: {
+      type: "loaded",
+      aiMemories,
+      stickerCatalogs,
+      luckDay: null,
+      luckReceiptSecret,
+      verifications: new Map(),
+      pendingBlockedRemovals: new Map(),
+      blocklistEntryCount: 0,
+      permissionEntryCount: 0,
+    } } as MessageEvent<DiskIOReply>);
+  }
+
+  test("模块导入不启动 Worker；重复 initDiskIO 只建一个", async () => {
+    await withDiskIORuntime(async (fatalErrors: Error[]): Promise<void> => {
       expect(FakeWorker.instances).toHaveLength(0);
       diskIO.initDiskIO({ onFatal: (fatal) => { fatalErrors.push(fatal); } });
       diskIO.initDiskIO();
       expect(FakeWorker.instances).toHaveLength(1);
+    });
+  });
+
+  test("load、运势密钥与 flush 握手按请求 id 结算，领域屏障只回报本次请求的失败领域", async () => {
+    await withDiskIORuntime(async (): Promise<void> => {
+      diskIO.initDiskIO();
       const first: FakeWorker = FakeWorker.instances[0]!;
 
       const loadedPromise = diskIO.loadPersistedData(1_000);
       expect(first.messages.at(-1)).toEqual(expect.objectContaining({ type: "load" }));
-      first.onmessage!({ data: {
-        type: "loaded",
-        aiMemories: new Map([[1, "memory"]]),
-        stickerCatalogs: new Map([["pack", "catalog"]]),
-        luckDay: null,
-        luckReceiptSecret,
-        verifications: new Map(),
-        pendingBlockedRemovals: new Map(),
-        blocklistEntryCount: 0,
-        permissionEntryCount: 0,
-      } } as MessageEvent<DiskIOReply>);
+      emitLoaded(first, new Map([[1, "memory"]]), new Map([["pack", "catalog"]]));
       expect(await loadedPromise).toMatchObject({
         aiMemories: new Map([[1, "memory"]]),
         stickerCatalogs: new Map([["pack", "catalog"]]),
@@ -224,24 +253,24 @@ describe("explicit Worker initialization", () => {
       expect(failedFlush.type).toBe("flush");
       // 回执按领域回报失败，让 /block 这类只关心自己那个领域的调用方不被
       // 无关领域误导（见 workers/diskIO/domainFlush.ts 的 flushScope）。
-      const failedReply: DiskIOReply = {
+      const failedFlushReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: failedFlush.type === "flush" ? failedFlush.flushId : -1,
         failedDomains: ["aiMemory"],
       };
-      first.onmessage!({ data: failedReply } as MessageEvent<DiskIOReply>);
+      first.onmessage!({ data: failedFlushReply } as MessageEvent<DiskIOReply>);
       expect(await failedFlushPromise).toBe("failed");
 
       // 领域屏障只请求自己那一格，回执只带该领域自己的失败。
       const targetDomainFlushPromise = diskIO.flushDiskIODomain("blocklist", 1_000);
       const targetDomainFlush = first.messages.at(-1)!;
       expect(targetDomainFlush).toMatchObject({ type: "flush", scope: "blocklist" });
-      const targetDomainReply: DiskIOReply = {
+      const targetDomainFlushReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: targetDomainFlush.type === "flush" ? targetDomainFlush.flushId : -1,
         failedDomains: ["blocklist"],
       };
-      first.onmessage!({ data: targetDomainReply } as MessageEvent<DiskIOReply>);
+      first.onmessage!({ data: targetDomainFlushReply } as MessageEvent<DiskIOReply>);
       expect(await targetDomainFlushPromise).toBe("failed");
 
       // 带回执的出口把领域名一并带出，且只带**本次请求**回执里的那一份：
@@ -250,16 +279,24 @@ describe("explicit Worker initialization", () => {
       const outcomePromise = diskIO.flushDiskIODomainOutcome("blocklist", 1_000);
       const outcomeFlush = first.messages.at(-1)!;
       expect(outcomeFlush).toMatchObject({ type: "flush", scope: "blocklist" });
-      const outcomeReply: DiskIOReply = {
+      const outcomeFlushReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: outcomeFlush.type === "flush" ? outcomeFlush.flushId : -1,
         failedDomains: ["blocklist", "whitelist"],
       };
-      first.onmessage!({ data: outcomeReply } as MessageEvent<DiskIOReply>);
+      first.onmessage!({ data: outcomeFlushReply } as MessageEvent<DiskIOReply>);
       expect(await outcomePromise).toEqual({
         result: "failed",
         failedDomains: ["blocklist", "whitelist"],
       });
+    });
+  });
+
+  test("持久化回执路由到登记的监听器；重建后旧 Worker 的迟到回执被丢弃", async () => {
+    await withDiskIORuntime(async (): Promise<void> => {
+      diskIO.initDiskIO();
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      emitLoaded(first);
 
       const persisted: VerificationPersistedReply[] = [];
       diskIO.onDiskIOReply("verificationPersisted", (reply) => { persisted.push(reply); });
@@ -283,11 +320,24 @@ describe("explicit Worker initialization", () => {
       first.onmessage!({ data: aiMemoryAck } as MessageEvent<DiskIOReply>);
       expect(aiMemoryPersisted).toEqual([aiMemoryAck]);
 
+      first.onerror!({ message: "boom" } as ErrorEvent);
+      emitLoaded(FakeWorker.instances[1]!);
+      first.onmessage!({ data: { ...ack, revision: 99 } } as MessageEvent<DiskIOReply>);
+      expect(persisted).toEqual([ack]);
+    });
+  });
+
+  test("Worker 崩溃后新实例 load 成功才重放镜像，先挂起满批提交", async () => {
+    await withDiskIORuntime(async (): Promise<void> => {
+      diskIO.initDiskIO();
+      const first: FakeWorker = FakeWorker.instances[0]!;
+      emitLoaded(first);
       let respawns: number = 0;
       diskIO.onDiskIORespawn("test mirror", 1_000, (transport: DiskIORecoveryTransport): boolean => {
         respawns++;
         return transport.post(luckDraw);
       });
+
       first.onerror!({ message: "boom" } as ErrorEvent);
       expect(FakeWorker.instances).toHaveLength(2);
       const second: FakeWorker = FakeWorker.instances[1]!;
@@ -295,17 +345,7 @@ describe("explicit Worker initialization", () => {
       expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
 
       // load 完整成功前镜像不重放；成功回执后才进入 writable。
-      second.onmessage!({ data: {
-        type: "loaded",
-        aiMemories: new Map(),
-        stickerCatalogs: new Map(),
-        luckDay: null,
-        luckReceiptSecret,
-        verifications: new Map(),
-        pendingBlockedRemovals: new Map(),
-        blocklistEntryCount: 0,
-        permissionEntryCount: 0,
-      } } as MessageEvent<DiskIOReply>);
+      emitLoaded(second);
       expect(respawns).toBe(1);
       // 镜像 listener 同步投递完成；关闭提交暂缓的标记在其后的微任务里发出。
       expect(second.messages).toEqual([
@@ -313,16 +353,24 @@ describe("explicit Worker initialization", () => {
         { type: "storageFlushHold", active: true },
         luckDraw,
       ]);
+    });
+  });
 
-      first.onmessage!({ data: { ...ack, revision: 99 } } as MessageEvent<DiskIOReply>);
-      expect(persisted).toEqual([ack]);
+  test("运行期恢复失败：不重放、不写入、flush 失败，并上报 fatal", async () => {
+    await withDiskIORuntime(async (fatalErrors: Error[]): Promise<void> => {
+      diskIO.initDiskIO({ onFatal: (fatal) => { fatalErrors.push(fatal); } });
+      emitLoaded(FakeWorker.instances[0]!);
+      let respawns: number = 0;
+      diskIO.onDiskIORespawn("test mirror", 1_000, (transport: DiskIORecoveryTransport): boolean => {
+        respawns++;
+        return transport.post(luckDraw);
+      });
 
-      // 运行时恢复失败时不得重放、flush 或继续写入部分缓存。
-      second.onerror!({ message: "boom again" } as ErrorEvent);
-      const third: FakeWorker = FakeWorker.instances[2]!;
+      FakeWorker.instances[0]!.onerror!({ message: "boom" } as ErrorEvent);
+      const second: FakeWorker = FakeWorker.instances[1]!;
       diskIO.postDiskIO(luckDraw);
-      expect(third.messages).toEqual([expect.objectContaining({ type: "load" })]);
-      third.onmessage!({ data: {
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
+      second.onmessage!({ data: {
         type: "loaded",
         aiMemories: new Map(),
         stickerCatalogs: new Map(),
@@ -335,29 +383,26 @@ describe("explicit Worker initialization", () => {
         error: "verification file is corrupt",
       } } as MessageEvent<DiskIOReply>);
       await Promise.resolve();
-      expect(respawns).toBe(1);
-      expect(third.messages).toEqual([expect.objectContaining({ type: "load" })]);
-      expect(third.terminated).toBe(true);
+      expect(respawns).toBe(0);
+      expect(second.messages).toEqual([expect.objectContaining({ type: "load" })]);
+      expect(second.terminated).toBe(true);
       expect(await diskIO.flushDiskIO(1_000)).toBe("failed");
       expect(fatalErrors).toHaveLength(1);
       expect(fatalErrors[0]?.message).toContain("verification file is corrupt");
+    });
+  });
 
-      let supervisedConstructed: number = FakeWorker.instances.length;
+  test("superviseWorker 构造不启动 Worker，重复 init 只建一个，terminate 终止它", async () => {
+    await withDiskIORuntime(async (): Promise<void> => {
       const handle = superviseWorker({ url: "fake-worker.ts", label: "fake", giveUpConsequence: "none" });
-      expect(FakeWorker.instances.length).toBe(supervisedConstructed);
+      expect(FakeWorker.instances).toHaveLength(0);
       handle.init();
-      supervisedConstructed++;
       handle.init();
-      expect(FakeWorker.instances.length).toBe(supervisedConstructed);
+      expect(FakeWorker.instances).toHaveLength(1);
       const supervised: FakeWorker = FakeWorker.instances.at(-1)!;
       await handle.terminate();
       expect(supervised.terminated).toBe(true);
-    } finally {
-      diskIORuntime.respawnListeners.length = respawnListenerCount;
-      await diskIO.terminateDiskIO();
-      error.mockRestore();
-      globalThis.Worker = originalWorker;
-    }
+    });
   });
 
   test("异步镜像完成前保持不可写，完成后先重放镜像再排空业务缓冲", async () => {

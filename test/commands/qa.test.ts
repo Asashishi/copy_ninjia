@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import type { Mock } from "bun:test";
-import type { DeleteMessageOutcome } from "../../packages/infra/telegram/actions/messageLifecycle";
+import type { DeleteMessageOutcome } from "../../packages/types/telegram";
 import type { QaFormSession } from "../../packages/types/qa";
 import { runWithUpdateAbortSignal, throwIfUpdateAborted } from "../../packages/infra/updateContext";
 import { CHAT_QA_MAX_PER_CHAT, CHAT_QA_QUESTION_MAX_CHARS, QA_FORM_SESSION_MAX, QA_FORM_SESSION_TTL_MS } from "../../packages/consts/qa";
@@ -64,6 +64,7 @@ mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
 }));
 
 const {
+  drainQaForms,
   handleQaMessageIngress,
   handleQaCommand,
   teardownQaInChat,
@@ -368,6 +369,18 @@ describe("群 teardown 对已登记问答的处置", () => {
     }
   );
 
+  test("机器人离群时关闭表单但不发删除请求；其余起因删掉表单消息", async () => {
+    await handleQaCommand(context(OWNER, "set"));
+    teardownQaInChat(CHAT_ID, "departed");
+    expect(qaFormSessions.size).toBe(0);
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+
+    await handleQaCommand(context(OWNER, "set"));
+    teardownQaInChat(CHAT_ID, "lostAuthority");
+    expect(qaFormSessions.size).toBe(0);
+    expect(deleteMessageWithOutcome.mock.calls).toEqual([[CHAT_ID, 55]]);
+  });
+
   test("失权停管保留问答：权限加回来之后直答要照旧生效", () => {
     chatQaEntries.set(CHAT_ID, new Map([["怎么入群？", "点置顶"]]));
 
@@ -375,6 +388,43 @@ describe("群 teardown 对已登记问答的处置", () => {
 
     expect(chatQaEntries.get(CHAT_ID)?.get("怎么入群？")).toBe("点置顶");
     expect(postDiskIO).not.toHaveBeenCalled();
+  });
+});
+
+describe("停机排空未完成表单", () => {
+  test("没有表单时直接 flushed，不发任何请求", async () => {
+    await expect(drainQaForms(1_000)).resolves.toBe("flushed");
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
+  });
+
+  test("收走全部表单并删掉表单消息，之后的格式消息不再被认领", async () => {
+    await handleQaCommand(context(OWNER, "set"));
+    const session: QaFormSession | undefined = qaFormSessions.get(CHAT_ID);
+    expect(session?.timer).not.toBeNull();
+
+    await expect(drainQaForms(1_000)).resolves.toBe("flushed");
+
+    expect(qaFormSessions.size).toBe(0);
+    expect(session?.timer).toBeNull();
+    expect(deleteMessageWithOutcome.mock.calls).toEqual([[CHAT_ID, 55]]);
+    expect(handleQaMessageIngress(delivered("问题:\n怎么入群？"))).toBe(false);
+  });
+
+  test("删除请求超出预算时返回 timedOut，表单会话照样收走", async () => {
+    await handleQaCommand(context(OWNER, "set"));
+    deleteMessageWithOutcome.mockImplementationOnce(
+      (): Promise<DeleteMessageOutcome> => new Promise<DeleteMessageOutcome>((): void => {})
+    );
+
+    await expect(drainQaForms(20)).resolves.toBe("timedOut");
+    expect(qaFormSessions.size).toBe(0);
+  });
+
+  test("零预算不发起新的删除请求", async () => {
+    await handleQaCommand(context(OWNER, "set"));
+
+    await expect(drainQaForms(0)).resolves.toBe("timedOut");
+    expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
   });
 });
 

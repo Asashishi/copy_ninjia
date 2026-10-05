@@ -106,6 +106,8 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   },
   { path: "packages/infra/storage/instanceLock.ts", purpose: "single-instance lock acquisition, stale-owner recovery and release" },
   { path: "packages/app/lifecycle/shutdown.ts", purpose: "application shutdown ordering, drain budgets and final flush" },
+  { path: "packages/antiRaid/durableDelivery.ts", purpose: "Anti-Raid durable delivery barriers and shutdown drain budget" },
+  { path: "packages/antiRaid/workerBridge/controller.ts", purpose: "Anti-Raid Worker initialization and rebuild replay" },
 ];
 
 /** 该引用是否触及边界：未限定导出的边界按整模块计，无法确定取用范围的引用同样计入。 */

@@ -4,9 +4,9 @@
  * xAI TTS 的请求体与 OpenAI audio/speech 不兼容（`text`、`voice_id`、`language`、
  * `output_format`，没有模型名与风格指令），因此不经 OpenAI SDK，认证只用 api_key 的
  * Bearer 头。部署配置在 xai 协议下不接受 model 与 style（见 config/agentCapability.ts），
- * 本句语气（tone）没有对应字段，不发送。`output_format` 钉为 XAI_SPEECH_CODEC（MP3）、
- * XAI_SPEECH_SAMPLE_RATE 与 XAI_SPEECH_BIT_RATE；响应体按 MP3_MIME_TYPE 交回，由编码侧校验帧
- * 结构后原样发送。
+ * 朗读语言要求（languageStyle）与本句语气（tone）没有对应字段，不发送。`output_format` 钉为
+ * XAI_SPEECH_CODEC（MP3）、XAI_SPEECH_SAMPLE_RATE 与 XAI_SPEECH_BIT_RATE；响应体按 MP3_MIME_TYPE
+ * 交回，由编码侧校验帧结构后原样发送。
  *
  * 整次调用受 OPENAI_SPEECH_REQUEST_TIMEOUT_MS 的 deadline 约束：网络错误与 408/429/5xx
  * 在 deadline 内最多尝试 OPENAI_SPEECH_REQUEST_ATTEMPTS 次，退避从
@@ -107,7 +107,7 @@ async function requestXAiSpeech(
 /**
  * 按 xai 协议把一句台词合成为 MP3 语音；请求失败或响应体超限时返回 null。
  * @param tts 调用方从同一份配置快照取出的 xai 协议配置。
- * @param request 台词与调用方 signal；tone 在本协议下不发送。
+ * @param request 台词与调用方 signal；languageStyle 与 tone 在本协议下不发送。
  */
 export async function synthesizeXAiSpeech(
   tts: XAiAgentTtsCapabilityConfig,

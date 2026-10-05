@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../../helpers/loggerMock";
-import { settleTestBatch } from "../../../libs/helpers";
+import { settleTestBatch } from "../../../helpers/common";
 
 /**
  * 贴纸包菜单的记忆化（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）。

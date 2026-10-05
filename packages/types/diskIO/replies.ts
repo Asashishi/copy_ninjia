@@ -29,7 +29,7 @@ export interface LoadedReply {
   blocklistEntryCount: number;
   /** 白名单总条目数；主线程只保留计数与有界 LRU，不恢复整表。 */
   permissionEntryCount: number;
-  /** 当前格式的全部群状态；主线程据此建立同容量 LRU，不重复启动正确性校验。 */
+  /** 当前格式的全部群状态；主线程据此填满群状态热读副本，不重复启动正确性校验。 */
   chatStates: Map<number, ChatState>;
   /** 全部群问答；整表恒定不超过 375 行，主线程据此建立直答热表。 */
   chatQa: Map<number, ReadonlyMap<string, string>>;

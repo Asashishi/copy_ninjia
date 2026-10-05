@@ -33,6 +33,7 @@ const prefetchIdentityPolicies = mock(async (): Promise<boolean> =>
 
 /** superviseDuplexWorker 收到的 options；用来直接驱动 handleRequest 等回调。 */
 const captured: { options?: Record<string, any> } = {};
+const terminateWorker = mock(async (): Promise<void> => {});
 
 mock.module("../../packages/infra/supervisedDuplexWorker", () => ({
   superviseDuplexWorker: (options: Record<string, any>) => {
@@ -44,7 +45,7 @@ mock.module("../../packages/infra/supervisedDuplexWorker", () => ({
         workerPosts.push(message);
         return true;
       },
-      terminate: async (): Promise<void> => {},
+      terminate: terminateWorker,
     };
   },
 }));
@@ -293,8 +294,11 @@ describe("Anti-Raid 初始化与重建重放", () => {
   test("任一重放被拒时 initAntiRaid 回滚 initialized，不把半接管的状态留着", () => {
     delivery.accepts = false;
 
+    terminateWorker.mockClear();
     expect(() => initAntiRaid()).toThrow("Anti-Raid Worker");
     expect(antiRaidRuntimeState.initialized).toBeFalse();
+    // 生命周期不会替半途失败的初始化终止 Worker，失败分支自己收掉。
+    expect(terminateWorker).toHaveBeenCalledTimes(1);
   });
 
   test.each([

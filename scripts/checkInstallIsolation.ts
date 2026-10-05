@@ -41,9 +41,9 @@ function assertContains(value: string, expected: string, message: string): void 
 async function checkTelegramRollback(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
-  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
+  const botConfigPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
   const original: string = validTelegram();
-  await writeText(telegramPath, original, 0o640);
+  await writeText(botConfigPath, original, 0o640);
   const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
     { prompt: "Telegram bot token", reply: "987654321:new_test_token", secret: true },
@@ -54,8 +54,8 @@ async function checkTelegramRollback(): Promise<void> {
   });
 
   assertCondition(result.exitCode !== 0, "Telegram 候选配置校验失败时安装器必须失败");
-  assertEqual(await Bun.file(telegramPath).text(), original, "Telegram 原配置不得改变");
-  assertEqual(statSync(telegramPath).mode & 0o777, 0o640, "Telegram 原权限不得改变");
+  assertEqual(await Bun.file(botConfigPath).text(), original, "Telegram 原配置不得改变");
+  assertEqual(statSync(botConfigPath).mode & 0o777, 0o640, "Telegram 原权限不得改变");
   const backupDirectories: readonly string[] = readdirSync(fixture.backupRoot);
   assertEqual(backupDirectories.length, 1, "必须生成一份外部配置备份");
   const backupName: string | undefined = backupDirectories[0];
@@ -130,11 +130,11 @@ async function checkInterruptedResume(): Promise<void> {
 async function checkSuccessfulReplacement(atmosphere?: string): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
-  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
-  await writeText(telegramPath, JSON.stringify({
+  const botConfigPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
+  await writeText(botConfigPath, JSON.stringify({
     bot_token: "123456789:existing_test_token", super_admin_user_id: 123456789, atmosphere, time_zone: "UTC",
   }), 0o640);
-  const originalOwner: ReturnType<typeof statSync> = statSync(telegramPath);
+  const originalOwner: ReturnType<typeof statSync> = statSync(botConfigPath);
   const replacementToken: string = "987654321:replacement_test_token";
   const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
@@ -145,11 +145,11 @@ async function checkSuccessfulReplacement(atmosphere?: string): Promise<void> {
   ]);
 
   assertEqual(result.exitCode, 0, "Telegram 配置原子替换与后续核验必须成功");
-  assertContains(await Bun.file(telegramPath).text(), replacementToken, "提交后必须读取到完整新配置");
-  const replacement: { atmosphere?: string; time_zone: string } = await Bun.file(telegramPath).json() as { atmosphere?: string; time_zone: string };
+  assertContains(await Bun.file(botConfigPath).text(), replacementToken, "提交后必须读取到完整新配置");
+  const replacement: { atmosphere?: string; time_zone: string } = await Bun.file(botConfigPath).json() as { atmosphere?: string; time_zone: string };
   assertEqual(replacement.atmosphere, atmosphere, "重新填写身份必须保留显式风格或未配置状态");
   assertEqual(replacement.time_zone, "UTC", "重新填写身份必须保留配置时区");
-  const replacementStats: ReturnType<typeof statSync> = statSync(telegramPath);
+  const replacementStats: ReturnType<typeof statSync> = statSync(botConfigPath);
   assertEqual(replacementStats.mode & 0o777, 0o640, "重新填写既有配置必须沿用原权限");
   assertEqual(replacementStats.uid, originalOwner.uid, "原子替换必须保持既有配置属主");
   assertEqual(replacementStats.gid, originalOwner.gid, "原子替换必须保持既有配置属组");
@@ -190,11 +190,11 @@ async function checkSuccessfulReplacement(atmosphere?: string): Promise<void> {
 async function checkFirstFillMode(): Promise<void> {
   for (const placeholderMode of [undefined, 0o644]) {
     const fixture: InstallerFixture = await createFixture();
-    const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
+    const botConfigPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
     if (placeholderMode !== undefined) {
       mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
       await writeText(
-        telegramPath,
+        botConfigPath,
         await Bun.file(join(fixture.worktree, "config_example", STATIC_CONFIG_DIR_NAME, "bot.json")).text(),
         placeholderMode
       );
@@ -207,7 +207,7 @@ async function checkFirstFillMode(): Promise<void> {
     ]);
     assertEqual(result.exitCode, 0, "首次填写 Telegram 配置必须成功");
     assertCondition(!result.output.includes("是否重新填写？"), "占位配置不得询问是否重新填写");
-    assertEqual(statSync(telegramPath).mode & 0o777, 0o600, "首次填写的 Telegram 配置权限必须为 0600");
+    assertEqual(statSync(botConfigPath).mode & 0o777, 0o600, "首次填写的 Telegram 配置权限必须为 0600");
   }
 }
 
@@ -300,10 +300,10 @@ async function checkSymlinkTopologyPreserved(): Promise<void> {
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
   const linkedDirectory: string = join(fixture.root, "linked-config");
   mkdirSync(linkedDirectory);
-  const realTelegramPath: string = join(linkedDirectory, "telegram.json");
-  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
-  await writeText(realTelegramPath, validTelegram(), 0o640);
-  symlinkSync(realTelegramPath, telegramPath);
+  const realBotConfigPath: string = join(linkedDirectory, "bot.json");
+  const botConfigPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
+  await writeText(realBotConfigPath, validTelegram(), 0o640);
+  symlinkSync(realBotConfigPath, botConfigPath);
   const replacementToken: string = "987654321:symlink_test_token";
   const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
@@ -314,9 +314,9 @@ async function checkSymlinkTopologyPreserved(): Promise<void> {
   ]);
 
   assertEqual(result.exitCode, 0, "软链接配置的原子替换必须成功");
-  assertCondition(lstatSync(telegramPath).isSymbolicLink(), "配置软链接拓扑不得被替换");
-  assertContains(await Bun.file(realTelegramPath).text(), replacementToken, "软链接实际目标必须更新");
-  assertEqual(statSync(realTelegramPath).mode & 0o777, 0o640, "软链接实际目标必须沿用原权限");
+  assertCondition(lstatSync(botConfigPath).isSymbolicLink(), "配置软链接拓扑不得被替换");
+  assertContains(await Bun.file(realBotConfigPath).text(), replacementToken, "软链接实际目标必须更新");
+  assertEqual(statSync(realBotConfigPath).mode & 0o777, 0o640, "软链接实际目标必须沿用原权限");
   assertCondition(
     !(await Bun.file(fixture.outboundLog).text()).includes(":blocked"),
     "软链接实测不得调用真实外部命令"
@@ -326,8 +326,8 @@ async function checkSymlinkTopologyPreserved(): Promise<void> {
 async function checkUnverifiedJournalBackupRetention(): Promise<void> {
   const fixture: InstallerFixture = await createFixture();
   mkdirSync(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME), { recursive: true });
-  const telegramPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
-  await writeText(telegramPath, validTelegram(), 0o600);
+  const botConfigPath: string = join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json");
+  await writeText(botConfigPath, validTelegram(), 0o600);
   const result: InstallerRunResult = await runInstaller(fixture, [
     { prompt: "是否重新填写？", reply: "y" },
     { prompt: "Telegram bot token", reply: "987654321:journal_test_token", secret: true },

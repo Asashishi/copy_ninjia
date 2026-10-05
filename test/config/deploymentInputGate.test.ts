@@ -2,7 +2,8 @@ import { getTimeZone } from "../../packages/config/time";
 /**
  * 启动总闸的「存在即校验」路径：每一份可选部署输入都用真实 loader 跑一遍，
  * 确认文件存在但非法时以拒绝启动收场，并覆盖 deploymentInputExists 对
- * 「真正缺省」与「已配置但读不到」的区分，以及人设缺省时接管内置人设。
+ * 「真正缺省」与「已配置但读不到」的区分，以及人设缺省时接管内置人设、send_voice 说明缺省时
+ * 保持 null。
  */
 
 import { afterAll, beforeEach, expect, mock, test } from "bun:test";
@@ -25,6 +26,7 @@ const AD_SAMPLES_PATH: string = join(testRoot, "ad_samples.json");
 const AGENT_PATH: string = join(testRoot, "agent.json");
 const AUTH_PATH: string = join(testRoot, "g-auth.json");
 const PERSONA_FILE_PATH: string = join(testRoot, "persona.md");
+const VOICE_TOOL_PROMPT_FILE_PATH: string = join(testRoot, "voice_tool.md");
 const CRON_PATH: string = join(testRoot, "cron.json");
 
 const TEST_PRIVATE_KEY: string = generateKeyPairSync("rsa", {
@@ -41,6 +43,7 @@ mock.module("../../packages/consts/paths", () => ({
   AGENT_CONFIG_PATH: AGENT_PATH,
   GOOGLE_AUTH_FILE_PATH: AUTH_PATH,
   PERSONA_PATH: PERSONA_FILE_PATH,
+  VOICE_TOOL_PROMPT_PATH: VOICE_TOOL_PROMPT_FILE_PATH,
   CRON_CONFIG_PATH: CRON_PATH,
   BOT_CONFIG_PATH: join(testRoot, "bot.json"),
 }));
@@ -51,6 +54,8 @@ mock.module("../../packages/config/bot", () => ({
 }));
 /** 夹具里部署方自定义的人设正文；首尾空白在接管时去掉。 */
 const CUSTOM_PERSONA: string = "部署方自定义的温和人设";
+/** 夹具里部署方自定义的 send_voice 说明；首尾空白在接管时去掉。 */
+const CUSTOM_VOICE_TOOL_PROMPT: string = "部署方自定义的语音工具说明";
 
 const { deploymentInputExists, validateExistingDeploymentInputs } =
   await import("../../packages/config/readiness");
@@ -66,13 +71,16 @@ const {
   defaultMoodConfigCache,
   defaultStickerConfigCache,
   personaCache,
+  voiceToolPromptCache,
 } = await import("../../packages/cache/perThread/config");
 const { cronConfigCache } = await import("../../packages/cache/main/cron");
 const { botAtmosphereState } = await import("../../packages/cache/main/atmosphere");
 const PRELOADED_PERSONA: string | null = personaCache.current;
+const PRELOADED_VOICE_TOOL_PROMPT: string | null = voiceToolPromptCache.current;
 const PRELOADED_ATMOSPHERE: Atmosphere | null = botAtmosphereState.current;
 afterAll((): void => {
   personaCache.current = PRELOADED_PERSONA;
+  voiceToolPromptCache.current = PRELOADED_VOICE_TOOL_PROMPT;
   botAtmosphereState.current = PRELOADED_ATMOSPHERE;
 });
 const { googleServiceAccountKey } = await import("../../packages/cache/main/translate");
@@ -84,6 +92,7 @@ beforeEach(async (): Promise<void> => {
     await Bun.write(join(testRoot, name), Bun.file(join(TEST_CONFIG_ROOT, DYNAMIC_CONFIG_DIR_NAME, name)));
   }
   await Bun.write(PERSONA_FILE_PATH, `\n${CUSTOM_PERSONA}  \n`);
+  await Bun.write(VOICE_TOOL_PROMPT_FILE_PATH, `\n${CUSTOM_VOICE_TOOL_PROMPT}  \n`);
   await Bun.write(AUTH_PATH, JSON.stringify({
     type: "service_account",
     client_email: "bot@example.iam.gserviceaccount.com",
@@ -98,18 +107,20 @@ beforeEach(async (): Promise<void> => {
   defaultMoodConfigCache.current = null;
   defaultStickerConfigCache.current = null;
   personaCache.current = null;
+  voiceToolPromptCache.current = null;
   botAtmosphereState.current = null;
   cronConfigCache.current = null;
   googleServiceAccountKey.current = null;
 });
 
-test("七份可选部署输入齐备且合法时启动总闸放行，自定义人设使用显式通知风格", async () => {
+test("八份可选部署输入齐备且合法时启动总闸放行，自定义人设使用显式通知风格", async () => {
   await validateExistingDeploymentInputs();
   expect(defaultMoodConfigCache.current).not.toBeNull();
   expect(defaultStickerConfigCache.current).not.toBeNull();
   expect(defaultAdSampleConfigCache.current).not.toBeNull();
   expect(agentDeploymentConfigCache.current).not.toBeNull();
   expect(personaCache.current).toBe(CUSTOM_PERSONA);
+  expect(voiceToolPromptCache.current).toBe(CUSTOM_VOICE_TOOL_PROMPT);
   expect(botAtmosphereState.current).toBe(BOT_ATMOSPHERES[BOT_CONFIG.atmosphere ?? DEFAULT_BOT_ATMOSPHERE]);
   expect(cronConfigCache.current).not.toBeNull();
   expect(googleServiceAccountKey.current).not.toBeNull();
@@ -121,6 +132,25 @@ test("persona.md 真正缺省时接管内置人设并沿用 Bot 配置语气，A
   expect(personaCache.current).toBe(DEFAULT_AI_PERSONA);
   expect(botAtmosphereState.current).toBe(BOT_ATMOSPHERES[BOT_CONFIG.atmosphere ?? DEFAULT_BOT_ATMOSPHERE]);
   expect(aiChatConfigReadinessCache.current).toEqual({ ok: true });
+});
+
+test("voice_tool.md 真正缺省时 send_voice 说明保持 null，人设与 AI 可用性不受影响", async () => {
+  voiceToolPromptCache.current = "上一轮遗留的说明";
+  rmSync(VOICE_TOOL_PROMPT_FILE_PATH, { force: true });
+  await validateExistingDeploymentInputs();
+  expect(voiceToolPromptCache.current).toBeNull();
+  expect(personaCache.current).toBe(CUSTOM_PERSONA);
+  expect(aiChatConfigReadinessCache.current).toEqual({ ok: true });
+});
+
+test("没有配置 agent.tts 时已存在的 voice_tool.md 照样严格校验", async () => {
+  const agentDocument: { agent: Record<string, unknown> } = await Bun.file(AGENT_PATH).json();
+  delete agentDocument.agent.tts;
+  await Bun.write(AGENT_PATH, JSON.stringify(agentDocument));
+  await Bun.write(VOICE_TOOL_PROMPT_FILE_PATH, " \n\t ");
+  await expect(validateExistingDeploymentInputs()).rejects.toThrow(
+    `${VOICE_TOOL_PROMPT_FILE_PATH}: $ must be a readable non-empty UTF-8 text file`
+  );
 });
 
 const ATMOSPHERE_CASES: readonly (readonly [boolean, BotAtmosphere | undefined, Atmosphere])[] = [
@@ -159,6 +189,7 @@ const INVALID_INPUTS: readonly Readonly<{ label: string; path: string; content: 
   { label: "agent.json", path: AGENT_PATH, content: JSON.stringify({ agent: 7 }) },
   { label: "g-auth.json", path: AUTH_PATH, content: JSON.stringify({ client_email: "", private_key: "" }) },
   { label: "persona.md", path: PERSONA_FILE_PATH, content: "   \n" },
+  { label: "voice_tool.md", path: VOICE_TOOL_PROMPT_FILE_PATH, content: "   \n" },
   { label: "cron.json", path: CRON_PATH, content: JSON.stringify({ tasks: [] }) },
 ];
 

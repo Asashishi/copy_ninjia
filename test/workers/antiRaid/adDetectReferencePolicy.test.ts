@@ -32,7 +32,7 @@ const {
   adDetectQueue,
   adVerdictTruePublishHolder,
   inFlightAdDetectKeys,
-  pendingAdMessages,
+  pendingAdBundleCount,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
   referencedAdWarningGeneration,
@@ -55,6 +55,8 @@ const {
  * 任何一条之前，因此复位必须放在顶层 beforeEach，不能只放在它所在的 describe 里——
  * 这是测试自己的隔离需要，不改变生产语义。
  */
+const { pendingAdBundle } =
+  await import("../../../packages/workers/antiRaid/adDetect/queueState");
 beforeEach((): void => {
   resetAdDetectQueueHarness(stopAdDetectQueue);
   referencedAdWarningGeneration.current = 0;
@@ -93,7 +95,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
       warnedAt: 1_000,
       expiresAt: 1_000 + AD_REFERENCE_WARNING_WINDOW_MS,
     });
-    expect(pendingAdMessages.has("-1001:7")).toBe(false);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(false);
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
 
     enqueueAdCandidate(candidate({
@@ -147,8 +149,8 @@ describe("引用类广告的警告升级与处置抑制", () => {
     await running;
 
     expect(inFlightAdDetectKeys.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.get("-1001:7")?.entries.map((entry) => entry.messageId)).toEqual([556, 557]);
-    expect(pendingAdMessages.get("-1001:7")?.entries[0]?.text)
+    expect(pendingAdBundle(-1001, 7)?.entries.map((entry) => entry.messageId)).toEqual([556, 557]);
+    expect(pendingAdBundle(-1001, 7)?.entries[0]?.text)
       .toContain("日入过千 加V same");
     expect(adDetectQueue.size).toBe(1);
 
@@ -248,6 +250,30 @@ describe("引用类广告的警告升级与处置抑制", () => {
     expect(deleteReferencedAdMessages).toHaveBeenCalledTimes(1);
   });
 
+  test("公开警告发送抛错时记错误，不开启升级窗口但仍删除引用广告", async () => {
+    classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
+      isAd: text.includes("日入过千"),
+      reason: "引用内容引流",
+    }));
+    warnReferencedAdSender.mockImplementationOnce(async (): Promise<never> => {
+      throw new Error("warning send exploded");
+    });
+    enqueueAdCandidate(candidate({
+      text: "看看",
+      sampleQuote: "日入过千 加V xxx996",
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(errorLogs.some((line: string): boolean =>
+      line.includes("failed to send referenced-ad warning")
+    )).toBeTrue();
+    expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
+    expect(inFlightAdDetectKeys.has("-1001:7")).toBe(false);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(deleteReferencedAdMessages).toHaveBeenCalledTimes(1);
+  });
+
   test("主线程发现临时广告豁免时不警告、不删消息并丢弃旧待检串", async () => {
     classifyAdText.mockImplementation(async (text: string): Promise<AdVerdict> => ({
       isAd: text.includes("日入过千"),
@@ -264,7 +290,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     await runAdDetectBatch(1_000);
 
     expect(referencedAdWarningStates.has("-1001:7")).toBeFalse();
-    expect(pendingAdMessages.has("-1001:7")).toBeFalse();
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBeFalse();
     expect(queuedAdDetectKeys.has("-1001:7")).toBeFalse();
     expect(deleteReferencedAdMessages).not.toHaveBeenCalled();
     expect(deleteStaleReferencedAdWarning).not.toHaveBeenCalled();
@@ -327,7 +353,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     // 封禁还没落地时他还能再说几句；重判只会换来第二次完全相同的处置。
     const stragglerAt: number = Date.now() + 500;
     enqueueAdCandidate(candidate({ messageId: 2, text: "还有名额" }), stragglerAt);
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
     await runAdDetectBatch(stragglerAt);
     expect(disposeAdSender).toHaveBeenCalledTimes(1);
 
@@ -350,7 +376,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({ senderId: -1005, isChannel: true, messageId: 2, text: "还有名额" }), stragglerAt);
     expect(deleteStragglerAdMessage).toHaveBeenCalledWith(-1001, 2);
     // 仍然不重判、不重新处置：那一套只该走一次。
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
     expect(disposeAdSender).toHaveBeenCalledTimes(1);
 
     // 真人目标走 revoke_messages，不需要这条补删。
@@ -378,7 +404,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     releaseAdDetectDedupKey(-1001, 7);
 
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
-    expect(pendingAdMessages.has("-1001:7")).toBe(true);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(true);
   });
 
   test("已拉黑的频道马甲跨窗口照样删，不占判定额度", () => {
@@ -397,7 +423,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     }), 2_000);
 
     expect(deleteStragglerAdMessage).toHaveBeenCalledWith(-1001, 4);
-    expect(pendingAdMessages.has("-1001:-1006")).toBe(false);
+    expect(pendingAdBundle(-1001, -1006) !== undefined).toBe(false);
     expect(adDetectQueue.size).toBe(0);
   });
 
@@ -410,7 +436,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
 
     await runAdDetectBatch(1_000);
     expect(disposeAdSender).not.toHaveBeenCalled();
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
   });
 
   test("管理员表查不出来时保守放过，不赌一次不可逆处置", async () => {
@@ -425,13 +451,13 @@ describe("引用类广告的警告升级与处置抑制", () => {
   test("缓存已知的管理员连送检都不送，不白烧额度", async () => {
     cachedAdmins.set(-1001, new Set([7]));
     enqueueAdCandidate(candidate({ messageId: 1, text: "加我微信" }), 1_000);
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
 
     await runAdDetectBatch(1_000);
     expect(classifyAdText).not.toHaveBeenCalled();
     // 缓存里的普通成员照常入队。
     enqueueAdCandidate(candidate({ senderId: 8, messageId: 2 }), 1_000);
-    expect(pendingAdMessages.size).toBe(1);
+    expect(pendingAdBundleCount.current).toBe(1);
   });
 
   /**
@@ -442,7 +468,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
    */
   test("中途被提为管理员：新消息被忽略，既有消息串原样不动", async () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "先说一句正常的" }), 1_000);
-    expect(pendingAdMessages.get("-1001:7")?.entries).toHaveLength(1);
+    expect(pendingAdBundle(-1001, 7)?.entries).toHaveLength(1);
 
     cachedAdmins.set(-1001, new Set([7]));
     enqueueAdCandidate(candidate({
@@ -453,7 +479,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     }), 1_100);
 
     // 既不新增条目，也不改写既有条目——提前返回不得顺手动到别人的串。
-    const bundle = pendingAdMessages.get("-1001:7");
+    const bundle = pendingAdBundle(-1001, 7);
     expect(bundle?.entries).toHaveLength(1);
     expect(bundle?.entries[0]?.messageId).toBe(1);
     expect(bundle?.nextSeq).toBe(2);
@@ -470,7 +496,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
       text: "换汇加我",
     }), 1_000);
 
-    expect(pendingAdMessages.has("-1001:-1005")).toBe(true);
+    expect(pendingAdBundle(-1001, -1005) !== undefined).toBe(true);
   });
 
   test("已拉黑的管理员按用户身份忽略，不走频道尾随删除", async () => {
@@ -478,17 +504,18 @@ describe("引用类广告的警告升级与处置抑制", () => {
     enqueueAdCandidate(candidate({ blocked: true, messageId: 1, text: "加我微信" }), 1_000);
 
     expect(deleteStragglerAdMessage).not.toHaveBeenCalled();
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
   });
 
   test("管理员的空白正文与普通空白正文结局一致，都不入队", () => {
+    // 主线程清洗后的空白正文就是空串（见 antiRaid/adCandidate.ts）。
     cachedAdmins.set(-1001, new Set([7]));
-    enqueueAdCandidate(candidate({ messageId: 1, text: "   " }), 1_000);
-    expect(pendingAdMessages.size).toBe(0);
+    enqueueAdCandidate(candidate({ messageId: 1, text: "" }), 1_000);
+    expect(pendingAdBundleCount.current).toBe(0);
 
     cachedAdmins.clear();
-    enqueueAdCandidate(candidate({ messageId: 2, text: "   " }), 1_000);
-    expect(pendingAdMessages.size).toBe(0);
+    enqueueAdCandidate(candidate({ messageId: 2, text: "" }), 1_000);
+    expect(pendingAdBundleCount.current).toBe(0);
   });
 });
 

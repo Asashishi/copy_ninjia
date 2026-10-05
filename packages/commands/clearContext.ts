@@ -11,8 +11,8 @@ import { rejectUnlessPermitted } from "./commandActor";
 /**
  * 处理 /clear_context：清空本群 AI 上下文记忆，从零重新累计。
  *
- * 清掉的是 AI Worker 里这个群的滚动逐字缓存、中期摘要、待晋升摘要与心情，以及
- * 磁盘上的 chat_states.ai_context——两件事由 aiChat/workerBridge.ts 的
+ * 清掉的是 AI Worker 里这个群的滚动逐字缓存、中期摘要与待晋升摘要，以及
+ * 磁盘上的 chat_states.ai_context（心情全 Worker 共用一份，不随单群清理）——两件事由 aiChat/workerBridge.ts 的
  * invalidateAiChat(chatId) 一并完成，本命令不另写一条清理路径。同一次调用
  * 还会递增本群回复代数：在途那一轮的上下文此刻已经不存在，它的回复不该再发出去。
  *

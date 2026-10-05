@@ -19,7 +19,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "flood_control", description: "enable/disable 开关本群防刷屏禁言；需要防刷屏管理权限" },
   { command: "antiraid", description: "enable/disable 开关本群入群验证和防冲群私密模式；需要防冲群管理权限" },
   { command: "bot_status", description: "查看进程、模型能力、Telegram 出站、本群权限和功能状态" },
-  { command: "mood", description: "query 查看本群 AI 当前心情；switch 重新抽取，需要心情切换权限" },
+  { command: "mood", description: "query 查看 AI 当前心情（各群共用）；switch 重新抽取，需要心情切换权限" },
   { command: "init", description: "enable/disable 开关本群机器人监听；仅超级管理员可用" },
   { command: "quiet", description: "暂停机器人自动回复 1~15 分钟，默认 3 分钟" },
   { command: "unquiet", description: "提前解除 /quiet，恢复自动回复" },

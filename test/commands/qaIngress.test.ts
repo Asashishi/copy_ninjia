@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Mock } from "bun:test";
 import type { QaFormIngressResult, QaFormSession } from "../../packages/types/qa";
 import type * as QaSession from "../../packages/commands/qa/session";
-import type { DeleteMessageOutcome } from "../../packages/infra/telegram/actions/messageLifecycle";
+import type { DeleteMessageOutcome } from "../../packages/types/telegram";
 import {
   CHAT_QA_ANSWER_MAX_CHARS,
   CHAT_QA_QUESTION_MAX_CHARS,

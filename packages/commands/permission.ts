@@ -113,103 +113,87 @@ async function reportWhitelistMutationFailure({
   });
 }
 
-/**
- * 处理 /permission：所有身份都可查看说明并查询自身或指定用户的权限；仅超级
- * 管理员可修改已经存在的白名单条目。
- *
- * 新增/删除成员由 /white 负责；其中持有 isCanWhiteOther 的普通成员只能新增
- * 默认权限条目，删除和本命令的逐项授权仍仅限超级管理员，避免把权限委托继续
- * 扩大成可传递的管理边界。
- *
- * 超级管理员在这条命令里出现在两个位置，语义相反：作为**发起人**他是唯一能改
- * 权限的人；作为**目标**则一律被拒——他的权限来自身份、恒为全开，写进配置文件
- * 的条目永远不会被读到（见 whitelist.ts 的 getEffectiveWhitelistPermissions）。
- */
-export async function handlePermissionCommand(
-  ctx: CommandContext<Context>
+/** `/permission help`：长期保留的权限说明看板。 */
+async function sendPermissionHelp(ctx: CommandContext<Context>): Promise<void> {
+  await sendCommandMessage({
+    chatId: ctx.chat.id,
+    text: formatPermissionHelpMessage(chatAtmosphere()),
+    parseMode: MARKDOWN_V2_PARSE_MODE,
+    replyToMessageId: ctx.msgId,
+    preserveInGroup: true,
+    // 长期保留的看板必须自己带话题，见 SendMessageParams.messageThreadId。
+    messageThreadId: forumTopicThreadId(ctx.msg),
+  });
+}
+
+/** `/permission query [目标]`：查询自身或指定身份的权限，渲染长期保留的权限看板。 */
+async function handlePermissionQuery(
+  ctx: CommandContext<Context>,
+  tokens: readonly string[],
+  actor: CachedUser | undefined
 ): Promise<void> {
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
-  const actor: CachedUser | undefined = resolveCommandActor(ctx);
-  // 直接比对上面已经解析出来的发起身份，不再重解析一遍：
-  // resolveCommandActor 对同一个 ctx 是纯函数，第二次调用只多造一个 CachedUser。
-  const actorIsSuperAdmin: boolean = actor?.id === SUPER_ADMIN_USER_ID;
-  const tokens: string[] = commandArgumentTokens(ctx.match);
-  const isHelp: boolean =
-    tokens.length === 1 &&
-    tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_HELP_COMMAND;
-  const isQuery: boolean =
-    tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_QUERY_COMMAND;
-
-  if (isHelp) {
-    await sendCommandMessage({
+  const rawTargetArgument: string = tokens.slice(1).join(" ");
+  let target: CachedUser | undefined = actor;
+  if (rawTargetArgument.length > 0 || explicitReplyTo(ctx.msg) !== undefined) {
+    target = await resolveCommandTarget({
       chatId,
-      text: formatPermissionHelpMessage(chatAtmosphere()),
-      parseMode: MARKDOWN_V2_PARSE_MODE,
-      replyToMessageId: messageId,
-      preserveInGroup: true,
-      // 长期保留的看板必须自己带话题，见 SendMessageParams.messageThreadId。
-      messageThreadId: forumTopicThreadId(ctx.msg),
+      message: ctx.msg,
+      botUserId: ctx.me.id,
+      rawArgument: rawTargetArgument,
+      acceptUserId: true,
+      // 与授权分支保持同一道解析口径。缺了它，`resolveArgumentTarget`
+      // 跳过 parseChatIdArgument，而 USERNAME_ARG_PATTERN 匹配不了前导 `-`，
+      // 于是 `/permission query -100…` 被回成「不是合法用户名」——刚用
+      // `/permission -100… isCanBlock true` 授过权的频道身份反而读不回来。
+      acceptChatId: true,
+      messages: chatAtmosphere().PERMISSION_COMMAND_TEXTS.target,
     });
-    return;
   }
-
-  if (isQuery) {
-    const rawTargetArgument: string = tokens.slice(1).join(" ");
-    let target: CachedUser | undefined = actor;
-    if (rawTargetArgument.length > 0 || explicitReplyTo(ctx.msg) !== undefined) {
-      target = await resolveCommandTarget({
-        chatId,
-        message: ctx.msg,
-        botUserId: ctx.me.id,
-        rawArgument: rawTargetArgument,
-        acceptUserId: true,
-        // 与下面的授权分支保持同一道解析口径。缺了它，`resolveArgumentTarget`
-        // 跳过 parseChatIdArgument，而 USERNAME_ARG_PATTERN 匹配不了前导 `-`，
-        // 于是 `/permission query -100…` 被回成「不是合法用户名」——刚用
-        // `/permission -100… isCanBlock true` 授过权的频道身份反而读不回来。
-        acceptChatId: true,
-        messages: chatAtmosphere().PERMISSION_COMMAND_TEXTS.target,
-      });
-    }
-    if (target === undefined) return;
-    if (!await prefetchIdentityPolicies([target.id])) {
-      await sendCommandMessage({
-        chatId,
-        text: chatAtmosphere().IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
-        replyToMessageId: messageId,
-      });
-      return;
-    }
-
-    // 这里只读预热后的主线程 LRU；非白名单身份复用逐项 false 的静态视图，
-    // 不为一次查询创建或写入数据库条目。超级管理员则由配置边界返回全开视图。
-    const permissions: Readonly<WhitelistPermissions> =
-      getWhitelistPermissionQueryView(target.id);
-    const atmosphere: AtmosphereTexts = chatAtmosphere();
+  if (target === undefined) return;
+  if (!await prefetchIdentityPolicies([target.id])) {
     await sendCommandMessage({
       chatId,
-      text: formatPermissionQueryMessage(permissions, formatTargetLabel(target, atmosphere), atmosphere),
-      parseMode: MARKDOWN_V2_PARSE_MODE,
-      replyToMessageId: messageId,
-      // 与上面的 help 同一口径的长期保留例外；见
-      // formatPermissionQueryMessage 的 JSDoc。目标解析失败、修改拒绝与用法
-      // 提示仍走默认 30 秒清理，本例外只覆盖成功渲染出的那张权限看板。
-      preserveInGroup: true,
-      messageThreadId: forumTopicThreadId(ctx.msg),
-    });
-    return;
-  }
-
-  if (!actorIsSuperAdmin) {
-    const atmosphere: AtmosphereTexts = chatAtmosphere();
-    await sendCommandMessage({
-      chatId,
-      text: atmosphere.PERMISSION_COMMAND_TEXTS.mutationRejection(formatActorLabel(actor, atmosphere)),
+      text: chatAtmosphere().IDENTITY_POLICY_QUERY_UNAVAILABLE_TEXT,
       replyToMessageId: messageId,
     });
     return;
   }
+
+  // 这里只读预热后的主线程 LRU；非白名单身份复用逐项 false 的静态视图，
+  // 不为一次查询创建或写入数据库条目。超级管理员则由配置边界返回全开视图。
+  const permissions: Readonly<WhitelistPermissions> =
+    getWhitelistPermissionQueryView(target.id);
+  const atmosphere: AtmosphereTexts = chatAtmosphere();
+  await sendCommandMessage({
+    chatId,
+    text: formatPermissionQueryMessage(permissions, formatTargetLabel(target, atmosphere), atmosphere),
+    parseMode: MARKDOWN_V2_PARSE_MODE,
+    replyToMessageId: messageId,
+    // 与 help 同一口径的长期保留例外；见 formatPermissionQueryMessage 的 JSDoc。
+    // 目标解析失败、修改拒绝与用法提示仍走默认 30 秒清理，本例外只覆盖成功渲染
+    // 出的那张权限看板。
+    preserveInGroup: true,
+    messageThreadId: forumTopicThreadId(ctx.msg),
+  });
+}
+
+/** 一次权限修改：全部开启，或把某一项设为给定值。 */
+type PermissionMutation =
+  | { readonly kind: "all" }
+  | { readonly kind: "set"; readonly key: WhitelistPermissionKey; readonly value: boolean };
+
+/**
+ * 超级管理员修改已在白名单里的身份：`/permission [目标] all` 全部开启，
+ * `/permission [目标] <权限名> <true|false>` 设置单项。
+ */
+async function handlePermissionMutation(
+  ctx: CommandContext<Context>,
+  tokens: readonly string[]
+): Promise<void> {
+  const chatId: number = ctx.chat.id;
+  const messageId: number | undefined = ctx.msgId;
   const isEnableAll: boolean =
     tokens.at(-1)?.toLowerCase() === WHITELIST_PERMISSION_ALL_COMMAND;
   if (!isEnableAll && tokens.length < 2) {
@@ -221,13 +205,10 @@ export async function handlePermissionCommand(
     return;
   }
 
-  let key: WhitelistPermissionKey | undefined;
-  let value: boolean | undefined;
+  let mutation: PermissionMutation = { kind: "all" };
   if (!isEnableAll) {
-    const rawValue: string = tokens.at(-1)!;
-    const rawKey: string = tokens.at(-2)!;
-    key = parseWhitelistPermissionKey(rawKey);
-    value = parsePermissionBoolean(rawValue);
+    const key: WhitelistPermissionKey | undefined = parseWhitelistPermissionKey(tokens.at(-2)!);
+    const value: boolean | undefined = parsePermissionBoolean(tokens.at(-1)!);
     if (key === undefined || value === undefined) {
       await sendCommandMessage({
         chatId,
@@ -238,6 +219,7 @@ export async function handlePermissionCommand(
       });
       return;
     }
+    mutation = { kind: "set", key, value };
   }
 
   const targetArgument: string = tokens
@@ -283,47 +265,67 @@ export async function handlePermissionCommand(
     return;
   }
 
-  if (isEnableAll) {
-    let result: SetWhitelistPermissionResult;
-    try {
-      result = enableAllWhitelistPermissions(target.id);
-      await confirmIdentityPolicyPersisted("whitelist", target.id, !result.changed);
-    } catch (error: unknown) {
-      await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
-      return;
-    }
-    const atmosphere: AtmosphereTexts = chatAtmosphere();
-    const replyText: string = result.changed
-      ? atmosphere.PERMISSION_COMMAND_TEXTS.allEnabled(formatTargetLabel(target, atmosphere))
-      : atmosphere.PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(formatTargetLabel(target, atmosphere));
-    await sendCommandMessage({
-      chatId,
-      text: replyText,
-      replyToMessageId: messageId,
-    });
-    return;
-  }
-  if (key === undefined || value === undefined) {
-    throw new Error("Permission mutation reached execution without a parsed key and value");
-  }
-
   let result: SetWhitelistPermissionResult;
   try {
-    result = setWhitelistPermission({ id: target.id, key, value });
+    result = mutation.kind === "all"
+      ? enableAllWhitelistPermissions(target.id)
+      : setWhitelistPermission({ id: target.id, key: mutation.key, value: mutation.value });
     await confirmIdentityPolicyPersisted("whitelist", target.id, !result.changed);
   } catch (error: unknown) {
     await reportWhitelistMutationFailure({ chatId, messageId, targetId: target.id, error });
     return;
   }
   const atmosphere: AtmosphereTexts = chatAtmosphere();
-  await sendCommandMessage({
-    chatId,
-    text: atmosphere.PERMISSION_COMMAND_TEXTS.permissionSet({
-      targetLabel: formatTargetLabel(target, atmosphere),
-      key,
-      value,
+  const targetLabel: string = formatTargetLabel(target, atmosphere);
+  let replyText: string;
+  if (mutation.kind === "all") {
+    replyText = result.changed
+      ? atmosphere.PERMISSION_COMMAND_TEXTS.allEnabled(targetLabel)
+      : atmosphere.PERMISSION_COMMAND_TEXTS.allAlreadyEnabled(targetLabel);
+  } else {
+    replyText = atmosphere.PERMISSION_COMMAND_TEXTS.permissionSet({
+      targetLabel,
+      key: mutation.key,
+      value: mutation.value,
       changed: result.changed,
-    }),
-    replyToMessageId: messageId,
-  });
+    });
+  }
+  await sendCommandMessage({ chatId, text: replyText, replyToMessageId: messageId });
+}
+
+/**
+ * 处理 /permission：所有身份都可查看说明并查询自身或指定用户的权限；仅超级
+ * 管理员可修改已经存在的白名单条目。
+ *
+ * 新增/删除成员由 /white 负责；其中持有 isCanWhiteOther 的普通成员只能新增
+ * 默认权限条目，删除和本命令的逐项授权仍仅限超级管理员，避免把权限委托继续
+ * 扩大成可传递的管理边界。
+ *
+ * 超级管理员在这条命令里出现在两个位置，语义相反：作为**发起人**他是唯一能改
+ * 权限的人；作为**目标**则一律被拒——他的权限来自身份、恒为全开，写进配置文件
+ * 的条目永远不会被读到（见 whitelist.ts 的 getEffectiveWhitelistPermissions）。
+ */
+export async function handlePermissionCommand(
+  ctx: CommandContext<Context>
+): Promise<void> {
+  const actor: CachedUser | undefined = resolveCommandActor(ctx);
+  const tokens: string[] = commandArgumentTokens(ctx.match);
+  if (tokens.length === 1 && tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_HELP_COMMAND) {
+    await sendPermissionHelp(ctx);
+    return;
+  }
+  if (tokens[0]?.toLowerCase() === WHITELIST_PERMISSION_QUERY_COMMAND) {
+    await handlePermissionQuery(ctx, tokens, actor);
+    return;
+  }
+  if (actor?.id !== SUPER_ADMIN_USER_ID) {
+    const atmosphere: AtmosphereTexts = chatAtmosphere();
+    await sendCommandMessage({
+      chatId: ctx.chat.id,
+      text: atmosphere.PERMISSION_COMMAND_TEXTS.mutationRejection(formatActorLabel(actor, atmosphere)),
+      replyToMessageId: ctx.msgId,
+    });
+    return;
+  }
+  await handlePermissionMutation(ctx, tokens);
 }

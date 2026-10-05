@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { BOT_CHAT_PERMISSION_LABELS } from "../../packages/consts/botAdmin";
 import { describeBotPermissionGap } from "../../packages/libs/botPermissionGap";
 import type { AtmosphereNotices } from "../../packages/types/atmosphereNotices";
 import type { BotChatPermissions } from "../../packages/types/telegram";
@@ -22,7 +23,7 @@ describe("describeBotPermissionGap", () => {
     for (const texts of Object.values(ATMOSPHERE_TEXTS)) {
       const reason: string | undefined =
         describeBotPermissionGap(botPermissions(), "canRestrictMembers", texts.NOTICE_TEXTS);
-      expect(reason).toBe(texts.NOTICE_TEXTS.botMissingPermission("限制与封禁成员"));
+      expect(reason).toBe(texts.NOTICE_TEXTS.botMissingPermission(BOT_CHAT_PERMISSION_LABELS.canRestrictMembers));
       expect(reason).not.toContain("不是管理员");
     }
   });

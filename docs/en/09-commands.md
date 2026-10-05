@@ -14,7 +14,7 @@ The complete command table, permission specifications, and behavioral details fo
 
 ## 🎭 Copy Modes
 
-The copy target is globally unique: a single instance can only "become" one target at any given time, although copying occurs solely within the group where the command was initiated. `/copy stop` can stop the active copy state from any group.
+The copy target is globally unique: a single instance can only "become" one target at any given time, although copying occurs solely within the group where the command was initiated. `/copy stop` can stop the active copy state from any group. When the group that started the copy is disabled with `/init disable`, the bot leaves it, or the bot loses admin rights there, the copy stops and is persisted at once, and the avatar is quietly restored to the default in the background without posting in the group.
 
 | Command | Behavior |
 | :---: | :--- |
@@ -118,9 +118,9 @@ Translation processes text and captions independently of global copy targets, 5-
 | `/block … enable` | `isCanBlock` | Blacklist: record in permanent blacklist and ban target across all bot-managed groups; target specified by reply, `@username`, or user ID |
 | `/block … disable` | `isCanUnBlock` | Transactionally remove target from authoritative SQLite blacklist and lift bans across all bot-managed groups; targets match `/block … enable` plus negative channel IDs, rejecting current group ID |
 | `/ai_chat enable\|disable` | `isCanControllAIPermission` | Toggle AI chat for this group |
-| `/clear_context` | `isCanClearContext` | Clear this group's AI context memory: in-Worker rolling verbatim buffer, medium-term summaries, pending summaries, and mood, setting `chat_states.ai_context` to NULL; invalidates in-flight reply generation. Takes no arguments; works even with broken deployment config or unavailable AI Worker |
-| `/mood query` | Group member | Query current effective AI mood for this group without rerolling |
-| `/mood switch` | `isCanSwitchMood` | Immediately reroll AI mood for this group, replying with new mood name upon Worker acknowledgement |
+| `/clear_context` | `isCanClearContext` | Clear this group's AI context memory: in-Worker rolling verbatim buffer, medium-term summaries, and pending summaries, setting `chat_states.ai_context` to NULL; invalidates in-flight reply generation. Takes no arguments; works even with broken deployment config or unavailable AI Worker |
+| `/mood query` | Group member | Query the current effective AI mood (one global mood shared by all groups) without rerolling |
+| `/mood switch` | `isCanSwitchMood` | Immediately reroll the AI mood (applies to all groups), replying with new mood name upon Worker acknowledgement |
 | `/ad_detect enable\|disable` | `isCanControllAdDetectPermission` | Toggle ad detection for this group; non-protected hits disposed with same authority as `/block` |
 | `/flood_control enable\|disable` | `isCanControllFloodControlPermission` | Toggle flood muting for this group (disabled by default) |
 | `/antiraid enable\|disable` | `isCanControllAntiRaidPermission` | Toggle join verification and anti-raid private mode for this group (disabled by default) |
@@ -199,6 +199,7 @@ Translation processes text and captions independently of global copy targets, 5-
 - **Heartbeat and Refresh Mechanism**:
   - Entry refreshed every **7 group messages**.
   - User-specific entries wait **30 seconds** after initial activation and each refresh before resending; if target remains silent for **45 seconds**, their next message triggers an immediate resend.
+- **When the group stops being managed**: `/init disable` or losing admin rights quietly ends every gag in the group and deletes its notices; if the bot has left the group, the sessions and their slots are released at once without attempting deletions.
 
 #### 6. Blacklist: `/block`
 - **Operation Syntax**: `/block <target> enable` to blacklist, `/block <target> disable` to unban. Targets support replies, `@username`, user ID (positive integer), and negative channel IDs (unban only).
@@ -209,7 +210,7 @@ Translation processes text and captions independently of global copy targets, 5-
 - **`/ad_detect`**: Bundles messages per sender (`chatId:senderId`), processed every second by the `agent.ad_detect` model. Hits are disposed with the same authority as `/block`, broadcasting ban reasons in the group (30-second self-deletion). Pure proxy links (`vless://`, `vmess://`, `trojan://`, `ss://`) without promotional copy are not judged as ads.
 - **`/flood_control` (Anti-Flood)**: If a user sends 15 messages within 1 minute in a supergroup, they are muted for 3 minutes with an in-group notice (30-second self-deletion). Admins and channel identities are excluded; bypass governed by `isCanBypassFloodControl`.
 - **`/antiraid`**: Toggles join verification and anti-raid private mode. Disabling stops all events from both pipelines and immediately recalls verification reminders. Ad detection, anti-flood, and blacklists remain unaffected.
-- **`/batch_kick`**: Superadmin only; kicks new members who joined within a rolling window (`30m`, `2h`, `1d`, ≤ 24 hours) based on join logs; kicks without blacklisting, skipping allowlisted and blacklisted identities.
+- **`/batch_kick`**: Superadmin only; kicks new members who joined within a rolling window (`30m`, `2h`, `1d`, ≤ 24 hours) based on join logs; kicks without blacklisting, skipping allowlisted and blacklisted identities. When records exist it first replies that the request was accepted (record count and window), kicks in the background and posts the report when done; only one batch runs per chat at a time, so a second request during a running batch is told it is still in progress, and a full background queue yields a busy reply; if the chat stops being managed mid-batch (`/init disable`, the bot leaving, or losing admin rights) the batch stops silently without a report.
 
 #### 8. Private Chat Relay and Voice Delegation: `/send`
 - Probes target group reachability before opening; relays every superadmin private chat message to target group.

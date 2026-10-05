@@ -69,7 +69,8 @@ adoptAdSampleConfig(parseAdSampleConfig(JSON.parse(await Bun.file(AD_SAMPLES_CON
 adoptMoodConfig(parseMoodConfig(JSON.parse(await Bun.file(MOOD_CONFIG_PATH).text())));
 adoptStickerConfig(parseStickerConfig(JSON.parse(await Bun.file(STICKERS_CONFIG_PATH).text())));
 // 人设与本进程通知风格成对接管：内置人设加 Bot 显式语气，缺省时使用默认风格。
-// 启动总闸见到已接管的风格即短路，不读开发机工作树里的 prompt/persona.md。
+// 启动总闸见到已接管的风格即短路，不读开发机工作树里的 prompt/persona.md 与 prompt/voice_tool.md；
+// send_voice 说明 holder 保持 null，按 bot_language 取内置文案。
 adoptPersona(DEFAULT_AI_PERSONA);
 const botConfig: BotConfig = parseBotConfig(await Bun.file(BOT_CONFIG_PATH).json());
 botAtmosphereState.current = BOT_ATMOSPHERES[botConfig.atmosphere ?? DEFAULT_BOT_ATMOSPHERE];

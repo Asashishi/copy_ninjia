@@ -1,20 +1,18 @@
 import { replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows } from "../../cache/workers/aiChat/replies";
-import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT } from "../../consts/aiChat/rateLimit";
+import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL } from "../../consts/aiChat/rateLimit";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { ReplyDeliverySlot, ReplyDeliveryTurn, ReplyDeliveryWindow } from "../../types/aiChat/replies";
 
 /** 跳过已完成项；队首仍是占位时等待，链就绪后只放行这一轮。 */
 function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
   while (window.size > 0) {
-    const bucket: LinkedQueue<ReplyDeliverySlot> | undefined = window.slots[window.head];
-    const slot: ReplyDeliverySlot | undefined = bucket?.peek();
-    if (!bucket || !slot) throw new Error("AI reply delivery slot missing.");
+    const slot: ReplyDeliverySlot | undefined = window.queue.peek();
+    if (!slot) throw new Error("AI reply delivery slot missing.");
     if (slot.state !== "done") {
       if (slot.state === "ready") slot.ready.resolve();
       return;
     }
-    bucket.shift();
-    window.head = (window.head + 1) % window.slots.length;
+    window.queue.shift();
     window.size--;
     const remaining: number = (replyDeliveryCounts.get(chatId) ?? 0) - 1;
     if (remaining > 0) replyDeliveryCounts.set(chatId, remaining);
@@ -27,7 +25,7 @@ function advanceDelivery(chatId: number, window: ReplyDeliveryWindow): void {
 
 /**
  * 同步按入站顺序追加发送占位；媒体解析和模型请求均在占位后进行。
- * 固定数组只决定桶数，每桶用 FIFO 追加多轮；存活容量独立于模型并发计数。
+ * 每个窗口用一个 FIFO 追加多轮；存活容量独立于模型并发计数。
  * 群里没有在途轮次（没有窗口）时本轮是直接轮：占位即就绪，ready 当即放行，动作接纳后立即由串行链执行、边生成边发送；
  * 它仍是发送链的队首，后续有序并行轮等它 finish 后才按入站顺位放行。直接轮在模型阶段独立占
  * 1 个并发位，commit（模型阶段结束）时交还。有序并行轮的 commit 标记完整动作链就绪，finish
@@ -39,9 +37,7 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
   const direct: boolean = window === undefined;
   if (!window) {
     window = {
-      slots: Array.from({ length: REPLY_ROUND_MAX_CONCURRENT }, (): LinkedQueue<ReplyDeliverySlot> => new LinkedQueue<ReplyDeliverySlot>()),
-      head: 0,
-      tail: 0,
+      queue: new LinkedQueue<ReplyDeliverySlot>(),
       size: 0,
       directModelActive: true,
     };
@@ -54,10 +50,7 @@ export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefi
     state: direct ? "ready" : "pending",
   };
   if (direct) slot.ready.resolve();
-  const bucket: LinkedQueue<ReplyDeliverySlot> | undefined = window.slots[window.tail];
-  if (!bucket) throw new Error("AI reply delivery bucket missing.");
-  bucket.push(slot);
-  window.tail = (window.tail + 1) % window.slots.length;
+  window.queue.push(slot);
   window.size++;
   replyDeliveryCounts.set(chatId, (replyDeliveryCounts.get(chatId) ?? 0) + 1);
   replyDeliveryTotal.current++;

@@ -180,8 +180,14 @@ The code block is parsed as JSONC, so comments and trailing commas are accepted.
 - **Voice and Style**:
   - Voice is configured via `agent.tts.voice`.
   - Base style is configured via optional `agent.tts.style` (supports hot reload), defaulting to built-in `TTS_DEFAULT_STYLE`.
-  - Automatically joined upon sending as `<base style>; 细节: <tone>`.
+  - Automatically joined upon sending as `<base style>; 细节: <tone>`; AI reply synthesis inserts the speaking-language requirement between them (see Line Language below).
   - `speech_protocol: "xai"` does not support `style`, nor does it send tone.
+- **Line Language**: The language of AI `send_voice` lines is set by optional `agent.tts.bot_language` (`en` / `zh` / `ja`, default `ja`; supports hot reload and takes effect from the next reply). It switches the `send_voice` and `send_message` tool instructions and the voice de-duplication rule in the system prompt, and appends that language's speaking-language requirement to the base style in AI reply synthesis requests (`<base style>; <speaking language>; 细节: <tone>`, registered as `speechLanguageStyle` in `VOICE_LANGUAGE_PROMPTS`); it does not change `style` and does not affect `/send` or cron lines or their synthesis requests. For the xai protocol, the synthesis language sent to the API is still set by `language`.
+- **What to Change Together with the Line Language**: The speaking-language requirement of AI replies is appended automatically by `bot_language`; `voice`, `style` and `prompt/voice_tool.md` do not follow it. When changing `bot_language`:
+  - Rewrite `style` as a voice description written in that language (the default `TTS_DEFAULT_STYLE` is written in Japanese). `style` is shared with `/send` and cron, so it describes only the voice, not the speaking language; when `/send` or cron needs a language, put it in their own tone. If the result is still off after changing `style`, switch to a voice (`voice`) designed for that language.
+  - If `prompt/voice_tool.md` is deployed, switch its line language, line examples and tone examples to that language; the file requires a restart after editing.
+  - The xai protocol has no style field, so neither the speaking-language requirement nor the tone is sent; change `language` instead.
+- **Custom Voice Tool Instruction**: After placing `prompt/voice_tool.md` in the project root, a restart replaces the whole `send_voice` tool instruction with its text regardless of `bot_language`; the `text` / `tone` parameter descriptions and the voice de-duplication rules still follow `bot_language`. Empty or non-UTF-8 content refuses startup; the file does not hot reload.
 - **Sampling Temperature**: Gemini speech sampling temperature is fixed by source constant `GEMINI_SPEECH_TEMPERATURE` (currently `1`).
 
 ---

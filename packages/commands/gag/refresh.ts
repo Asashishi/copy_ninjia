@@ -4,7 +4,7 @@ import {
   GAG_SPEAK_NOTICE_REFRESH_INTERVAL_MS,
 } from "../../consts/gag";
 import type { GagSession } from "../../types/gag";
-import { deleteGagSpeakNotice, sendGagSpeakNotice } from "./notices";
+import { releaseGagNoticeSlot, sendGagSpeakNotice } from "./notices";
 import { findGagSession, trackGagBackgroundTask } from "./owner";
 
 /** 发送与每个异步结算点都核对 owner、停机闸门与绝对到期时间。 */
@@ -45,27 +45,13 @@ export function scheduleGagSpeakNoticeRefresh(session: GagSession): void {
   session.speakNoticeRefreshTimer.unref();
 }
 
-/** deleted/gone 都表示该入口不再可见，可以安全释放其唯一 id 槽位。 */
-function gagNoticeDeletionFinished(
-  outcome: Awaited<ReturnType<typeof deleteGagSpeakNotice>>
-): boolean {
-  return outcome === "deleted" || outcome === "gone";
-}
-
 /** 删除上一次换新遗留的旧入口；失败时保留固定单槽位，禁止继续堆新入口。 */
 async function retryRetiredGagSpeakNotice(
   session: GagSession
 ): Promise<boolean> {
   const retiredId: number = session.retiredSpeakNoticeMessageId;
   if (retiredId === 0) return true;
-  const outcome: Awaited<ReturnType<typeof deleteGagSpeakNotice>> =
-    await deleteGagSpeakNotice(session, retiredId);
-  const finished: boolean = gagNoticeDeletionFinished(outcome);
-  if (
-    finished &&
-    session.retiredSpeakNoticeMessageId === retiredId
-  ) session.retiredSpeakNoticeMessageId = 0;
-  return finished;
+  return releaseGagNoticeSlot(session, "retiredSpeakNoticeMessageId", retiredId);
 }
 
 /**

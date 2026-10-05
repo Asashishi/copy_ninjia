@@ -13,7 +13,7 @@ import {
   parseCronConfig,
 } from "../../packages/config/cron";
 import { adoptAgentDeploymentConfig } from "../../packages/config/agent";
-import { TTS_DEFAULT_STYLE, VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_BOT_LANGUAGE, TTS_DEFAULT_STYLE, VOICE_OPERATOR_TEXT_MAX_CHARS, VOICE_TONE_MAX_CHARS } from "../../packages/consts/aiChat/voiceMessage";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../packages/types/config";
 import { CRON_CONFIG_PATH, PROJECT_ROOT, RUNTIME_DATA_ROOT } from "../../packages/consts/paths";
 import {
@@ -66,7 +66,7 @@ afterEach(() => {
   adoptCronConfig(null);
 });
 
-const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, headers: undefined, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 };
+const TTS: AgentTtsCapabilityConfig = { provider: "google", apiKey: "k", model: "tts-model", baseUrl: undefined, headers: undefined, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, botLanguage: TTS_DEFAULT_BOT_LANGUAGE, dailyLimit: 100, dailyReserveQuota: 25 };
 
 /** 只关心 tts 段的 agent 快照；对话核心能力段在这些用例里不被读取。 */
 function agentWith(tts: AgentTtsCapabilityConfig | undefined): AgentDeploymentConfig {

@@ -38,6 +38,8 @@ mock.module("../../../packages/infra/logger", () => ({ logger: loggerStub({ erro
 mock.module("../../../packages/libs/sleep", () => ({ sleep: async (): Promise<void> => {} }));
 
 const { createSendVoiceExecutor } = await import("../../../packages/aiChat/ai/tools/replyToolset/voiceMessage");
+const { VOICE_LANGUAGE_PROMPTS } = await import("../../../packages/consts/aiChat/prompts/tools");
+const { TTS_DEFAULT_BOT_LANGUAGE } = await import("../../../packages/consts/aiChat/voiceMessage");
 const { createSimulatedPause } = await import("../../../packages/aiChat/ai/tools/replyToolset/pacing");
 const { aiTtsRemaining } = await import("../../../packages/aiChat/ai/ttsUsage");
 const { ttsQuotaLimit } = await import("../../../packages/aiChat/ai/utils/ttsUsageWindow");
@@ -116,7 +118,7 @@ function idleChains(): ReplyActionChains {
 
 /** 调用一次 send_voice 并要求准入通过，交回回执与投递步骤。 */
 function admitVoice(ctx: ReplyToolContext): PreparedReplyAction {
-  const execution: ReplyToolExecution = createSendVoiceExecutor(ctx, idleChains())(JSON.stringify({ text: "バカ" }));
+  const execution: ReplyToolExecution = createSendVoiceExecutor(ctx, idleChains(), VOICE_LANGUAGE_PROMPTS[TTS_DEFAULT_BOT_LANGUAGE].speechLanguageStyle)(JSON.stringify({ text: "バカ" }));
   if (typeof execution === "string") throw new Error(`expected an accepted voice, got ${execution}`);
   return execution;
 }

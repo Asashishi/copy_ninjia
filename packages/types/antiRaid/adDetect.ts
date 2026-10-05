@@ -174,6 +174,11 @@ export type ReferencedAdWarningState =
 
 /** 某个发言者在一个群里累积的待检消息串（队列里只排它的键）。 */
 export interface AdMessageBundle {
+  /**
+   * 本串的 `chatId:senderId` 键（verificationKey），建串时算一次；队列、在途、处置抑制与
+   * 引用警告几张表都以它为键，同一发送者的后续消息直接取用、不重新拼键。
+   */
+  readonly key: string;
   chatId: number;
   /** 用户 id；频道马甲发言时是该频道的负数 id。 */
   senderId: number;

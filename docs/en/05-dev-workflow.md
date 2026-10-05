@@ -31,7 +31,7 @@
 | `bun run perf:hot-path-gate` | **Hot-path performance gate** | Memory/GC/JIT hard gate over 12 selected hot-path scenarios (included in `check`) |
 | `bun run perf:join-log` | Join-log performance benchmark | Standalone process benchmark for 250k join-log capacity/snapshot/append accounting |
 | `bun run perf:identity-database` | Identity database benchmark | Standalone process benchmark for 6 cold/hot read and write operations in identity database |
-| `bun run perf:full` | Full performance benchmark suite | 6 sections × 3 rounds in independent child processes (`--write-doc` writes back to 09 benchmark doc) |
+| `bun run perf:full` | Full performance benchmark suite | 6 sections × 3 rounds in independent child processes (`--write-doc` updates all three 10 performance pages and `performance-result.json`) |
 | `bun run perf:review` | Targeted performance review | Covers hot spots, AI reply/payload/voice encoding, full command chains, and Disk I/O Worker pressure |
 | `bun run build -- --version <tag>` | Build binary package | Requires explicit version with no prefix; produces `dist/` archive and SHA-256 |
 | `bun run release:check -- --version <tag>` | Pre-release full validation | frozen lockfile + check + coverage check + fault injection + binary build verification |
@@ -54,7 +54,7 @@
   - **Structure and links**: Checks code placement, local Markdown links, existence of files listed in directory maps, and execution permissions of tracked files.
   - **Boundary isolation**: Verifies constant and cache ownership (`packages/cache/<owner>/` thread-single-property boundary), and validates Worker and Telegram capability isolation against the real module graph.
   - **Call safety**: Every timer in `packages/workers/` must be `unref()`ed; verifies Node API compatibility modules and `Buffer` allowlists; enforces `Bun.argv` for argument reading.
-  - **Gate reconciliation**: Statically verifies Telegram prompt cleanup exemptions, active cold migration entries, fault-injection suite manifests, direct dependencies in `package.json`, 14 declared coverage metric locations, and performance records. Numeric constant assertions in tests cannot compare against raw literals.
+  - **Gate reconciliation**: Statically verifies Telegram prompt cleanup exemptions, active cold migration entries, fault-injection suite manifests, direct dependencies in `package.json`, 14 declared coverage metric locations, and performance records. Tests may not compare uppercase constants against numeric literals; matcher arguments may not spell out a literal equal to a `packages/consts` string constant, nor copy a fragment of its text containing six or more CJK characters (take the expectation from the constant or from the fixed parts of a rendered template constant, see `test/helpers/templateText.ts`). Prompt-contract tests that assert the prompt wording itself are listed by file and test name in `CONSTANT_TEXT_CONTRACT_EXEMPTIONS` in `scripts/conventions/testAssertionFragments.ts`, and an exemption no hit uses is reported as well.
 
 ---
 
@@ -80,7 +80,7 @@ Dependency installation always uses the 7-day release-age gate in `bunfig.toml` 
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **5920 tests / 502 files / 320978 `expect()` calls**; full-source **function coverage 98.14% / line coverage 98.54%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **6117 tests / 515 files / 436787 `expect()` calls**; full-source **function coverage 98.24% / line coverage 98.69%**. The Coverage badge in each project README displays line coverage.
 
 ---
 
@@ -191,7 +191,7 @@ bun run test:coverage 2>&1 | grep 'All files'  # function/line coverage
 Every release creates a GitHub Release with binary assets in this order:
 
 1. **Version and gates**: Synchronize remote tags and read the Latest Release with `gh release list`. Choose an unused `MAJOR.MINOR.PATCH` tag without a `v` prefix. Finish development on `dev` and pass `bun run check`; also run `bun run test:fault-injection` when persistence, shutdown, or Worker lifecycles change.
-2. **Benchmark readings**: Stop this repository's service process and other heavy workloads on the machine. After the gate finishes and the machine is idle, run `bun run perf:full -- --write-doc`. Commit the readings in all three 09 performance pages and `performance-result.json` together with the code on `dev`.
+2. **Benchmark readings**: Stop this repository's service process and other heavy workloads on the machine. After the gate finishes and the machine is idle, run `bun run perf:full -- --write-doc`. Commit the readings in all three 10 performance pages and `performance-result.json` together with the code on `dev`.
 3. **Native build for each platform**: On **each platform declared for this release**, use the same Git tree and Bun version/revision, and run `bun run release:build -- --version <tag>` on clean, committed `dev`. Each run produces only that host platform's archive and `.sha256` file. Collect them in one directory.
 4. **Verify collected assets**: On a clean checkout of the same Git tree, verify the complete list of declared platforms. Stop if an asset for any declared platform is missing:
    ```bash

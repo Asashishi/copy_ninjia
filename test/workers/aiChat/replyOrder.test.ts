@@ -276,7 +276,7 @@ test("直接轮发送挂起时模型阶段照常结束并交还独立并发位�
   try {
     await waitUntil(() => models.size === running);
     const window = replyDeliveryWindows.get(-1001)!;
-    expect(window.slots).toHaveLength(REPLY_ROUND_MAX_CONCURRENT);
+    expect(window.size).toBe(running);
     expect(activeReplyCounts.get(-1001)).toBe(running);
     expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
     expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(running + 1);
@@ -306,7 +306,6 @@ test("直接轮发送挂起时模型阶段照常结束并交还独立并发位�
     await waitUntil(() => models.has(total + 1));
     models.get(total + 1)!.resolve(`回复${total + 1}`);
     await waitUntil(() => !activeReplyCounts.has(-1001));
-    expect(window.slots).toHaveLength(REPLY_ROUND_MAX_CONCURRENT);
     expect(window.size).toBe(total + 1);
     pending.resolve({ messageId: 1, repliedToMessageId: undefined });
     await settleTasks();

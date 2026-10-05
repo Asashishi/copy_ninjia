@@ -13,6 +13,7 @@ const testRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "copy-ninjia-readiness
 const authFilePath: string = join(testRoot, "g-auth.json");
 afterAll((): void => { rmSync(testRoot, { recursive: true, force: true }); });
 const personaPath: string = join(testRoot, "unused-persona.md");
+const voiceToolPromptPath: string = join(testRoot, "unused-voice-tool.md");
 const testPrivateKey: string = generateKeyPairSync("rsa", {
   modulusLength: 2_048,
   privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -49,6 +50,7 @@ mock.module("../../packages/consts/paths", () => ({
   MOOD_CONFIG_PATH: join(testRoot, "unused-mood.json"),
   AD_SAMPLES_CONFIG_PATH: join(testRoot, "unused-ad-samples.json"),
   PERSONA_PATH: personaPath,
+  VOICE_TOOL_PROMPT_PATH: voiceToolPromptPath,
 }));
 mock.module("../../packages/config/bot", () => ({
   getBotConfig: (): BotConfig => {
@@ -81,7 +83,6 @@ mock.module("../../packages/config/agent", () => ({
 }));
 mock.module("../../packages/config/persona", () => ({
   adoptPersona: (): void => {},
-  loadPersona: loaderOf("persona", (): string | null => null),
 }));
 
 const {

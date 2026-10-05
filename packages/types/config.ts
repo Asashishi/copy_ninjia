@@ -154,7 +154,13 @@ export interface OpenAiAgentImageCapabilityConfig extends OpenAiAgentCapabilityC
  */
 export type OpenAiSpeechProtocol = "openai" | "xai";
 
-/** 三种语音合成配置共有的音色与每日额度。 */
+/**
+ * `agent.tts.bot_language` 的取值闭集：AI 语音台词所用的语言，`en` 为英语、`zh` 为中文、`ja` 为日语。
+ * 每个取值在 consts/aiChat/prompts/tools.ts 的 VOICE_LANGUAGE_PROMPTS 里各有一份语音相关提示词。
+ */
+export type TtsBotLanguage = "en" | "zh" | "ja";
+
+/** 三种语音合成配置共有的音色、台词语言与每日额度。 */
 interface AgentTtsVoiceQuota {
   /**
    * 原样交给实现包的音色：Google 为预置音色名或 AI Studio Voice design 生成的 `voice_` 音色 ID
@@ -162,6 +168,12 @@ interface AgentTtsVoiceQuota {
    * voice，xAI 为 `voice_id`。
    */
   readonly voice: string;
+  /**
+   * 部署字段 bot_language：AI 回复按它从 VOICE_LANGUAGE_PROMPTS 取 send_voice、send_message 与
+   * 「行动与停止」段的语音相关文案；缺省时为 TTS_DEFAULT_BOT_LANGUAGE。prompt/voice_tool.md 存在时
+   * send_voice 的工具说明改用其正文，其余文案仍按本字段选取。只作用于模型可见提示词，不随合成请求发送。
+   */
+  readonly botLanguage: TtsBotLanguage;
   /** 每个窗口拆分给 AI 与预留额度的总预算，正整数；缺省时为 TTS_DEFAULT_DAILY_LIMIT。 */
   readonly dailyLimit: number;
   /**

@@ -93,7 +93,7 @@ Every JSON file is parsed under a strict schema: unknown keys, typos, type misma
 </table>
 
 > [!NOTE]
-> AI persona defaults to the built-in teasing persona. An optional, untracked `prompt/persona.md` placed in the project root overrides it. Explicit `atmosphere` takes priority for notices and menus; when omitted, a custom persona uses plain copy and the built-in persona uses teasing copy.
+> AI persona defaults to the built-in teasing persona. An optional, untracked `prompt/persona.md` placed in the project root overrides it, and an optional `prompt/voice_tool.md` replaces the whole AI `send_voice` tool instruction; both take effect after a restart. See the examples [`prompt_example/persona.md`](../../prompt_example/persona.md) and [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md). Explicit `atmosphere` takes priority for notices and menus; when omitted, a custom persona uses plain copy and the built-in persona uses teasing copy.
 
 ---
 
@@ -241,6 +241,7 @@ Applies to all capabilities (`text`, `summary`, `media`, `ad_detect`, `image`, `
 | `voice` | `string` | **Required** | Non-empty string | Voice timbre identifier. Google built-in name (e.g. `en-us-nika`) or Voice Design ID; OpenAI/xAI voice name (e.g. `coral`, `ara`) |
 | `style` | `string` | Optional | Non-empty string, **forbidden for xAI protocol** | Base reading style prompt. Defaults to built-in tsundere prompt: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
 | `language` | `string` | Optional | BCP-47 code or `"auto"`, **only allowed for xAI** | Synthesis language, default `"auto"` |
+| `bot_language` | `string` | Optional | `"en"`, `"zh"` or `"ja"`; trimmed and strictly validated; default `"ja"` | Language of AI voice lines: switches the model-facing voice tool instruction and de-duplication rules, and appends that language's speaking-language requirement to the base style in AI reply synthesis requests (not sent under the xAI protocol; `/send` and cron do not get it). Neither `style` nor `prompt/voice_tool.md` follows it; switch them to the same language when changing it |
 | `daily_limit` | `number` | Optional | Positive safe integer, default `100` | Total daily voice synthesis budget across all callers in rolling 24h window |
 | `daily_reserve_quota` | `number` | Optional | Integer, range `0` to `daily_limit - 1`, default `25` | Dedicated quota reserved for `/send` and cron tasks. AI chat independently consumes remaining `daily_limit - daily_reserve_quota` |
 

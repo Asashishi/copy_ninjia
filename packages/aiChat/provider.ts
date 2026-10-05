@@ -10,7 +10,7 @@
  * 排队。
  */
 
-import { claimOperatorTtsUsage } from "./ai/ttsUsage";
+import { claimOperatorTtsUsage, refundOperatorTtsUsage } from "./ai/ttsUsage";
 import { ttsQuotaLimit } from "./ai/utils/ttsUsageWindow";
 import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
@@ -60,7 +60,7 @@ import type {
   AiWebSearchResult,
 } from "../types/aiChat/provider";
 import type { GeneratedChatImage } from "../types/aiChat/imageGeneration";
-import type { SpeechSynthesisAttempt, SynthesizedSpeech } from "../types/aiChat/voiceMessage";
+import type { SpeechSynthesisAttempt, SynthesizedSpeech, TtsOperatorClaim } from "../types/aiChat/voiceMessage";
 import type { PrioritizedBoundedTaskRunner } from "../libs/prioritizedBoundedTaskRunner";
 
 /** provider 到实现包的穷举映射；扩展 AgentProvider 时编译器会要求同步补项。 */
@@ -70,6 +70,7 @@ const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiCh
   anthropic: anthropicProvider,
 };
 
+/** 下列 queueRejected* 是配额 lane 没有执行任务（队列已满或排队期间被取消）时各能力的结算值。 */
 function queueRejectedReplyTurn(): AiReplyTurn {
   return {
     ok: false,
@@ -82,6 +83,40 @@ function queueRejectedReplyTurn(): AiReplyTurn {
   };
 }
 
+function queueRejectedTextResult(): AiTextResult {
+  return { ok: false, retryable: false };
+}
+
+/** 生图按「这次没做出来」结算。 */
+function queueRejectedImage(): null {
+  return null;
+}
+
+function queueRejectedSpeechAttempt(): SpeechSynthesisAttempt {
+  return { ok: false, reason: "synthesis failed" };
+}
+
+/** 一次都没检索。 */
+function queueRejectedWebSearchResult(): AiWebSearchResult {
+  return { ok: false, searchCalls: 0 };
+}
+
+/** runScheduled 的入参。 */
+interface ScheduledRunParams<T> {
+  readonly runner: PrioritizedBoundedTaskRunner;
+  readonly priority: AiProviderTaskPriority;
+  readonly signal: AbortSignal | undefined;
+  /** 队列已满或排队期间被取消、任务没有执行时构造结算值。 */
+  readonly fallback: () => T;
+  readonly task: () => Promise<T>;
+}
+
+/** 把一次供应商调用交给配额 lane 排队；没轮到执行时按 fallback 结算，不把 undefined 泄漏给调用方。 */
+async function runScheduled<T>({ runner, priority, signal, fallback, task }: ScheduledRunParams<T>): Promise<T> {
+  const result: T | undefined = await runner.run(priority, task, signal);
+  return result ?? fallback();
+}
+
 function createTextFacade(
   provider: AiChatProvider,
   config: AgentCapabilityConfig
@@ -92,13 +127,14 @@ function createTextFacade(
     createReplySession(params: AiReplySessionParams): AiReplySession {
       const session: AiReplySession = provider.createReplySession(params);
       return {
-        async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
-          const result: AiReplyTurn | undefined = await runner.run(
-            "interactive",
-            (): Promise<AiReplyTurn> => session.request(request),
-            params.signal
-          );
-          return result ?? queueRejectedReplyTurn();
+        request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
+          return runScheduled({
+            runner,
+            priority: "interactive",
+            signal: params.signal,
+            fallback: queueRejectedReplyTurn,
+            task: (): Promise<AiReplyTurn> => session.request(request),
+          });
         },
         appendToolOutputs: session.appendToolOutputs.bind(session),
       };
@@ -113,13 +149,14 @@ function createSummaryFacade(
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   return {
     name: provider.name,
-    async generateText(request: AiTextRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await runner.run(
-        "background",
-        (): Promise<AiTextResult> => provider.generateText(request),
-        request.signal
-      );
-      return result ?? { ok: false, retryable: false };
+    generateText(request: AiTextRequest): Promise<AiTextResult> {
+      return runScheduled({
+        runner,
+        priority: "background",
+        signal: request.signal,
+        fallback: queueRejectedTextResult,
+        task: (): Promise<AiTextResult> => provider.generateText(request),
+      });
     },
   };
 }
@@ -131,73 +168,57 @@ function createMediaFacade(
 ): AiMediaProvider {
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   const transcribeVoice: AiMediaProvider["transcribeVoice"] = provider.transcribeVoice;
-  const describeVision: AiMediaProvider["describeVision"] = async (
+  const describeVision: AiMediaProvider["describeVision"] = (
     request: AiVisionRequest
-  ): Promise<AiTextResult> => {
-    const result: AiTextResult | undefined = await runner.run(
-      priority,
-      (): Promise<AiTextResult> => provider.describeVision(request),
-      request.signal
-    );
-    return result ?? { ok: false, retryable: false };
-  };
+  ): Promise<AiTextResult> => runScheduled({
+    runner,
+    priority,
+    signal: request.signal,
+    fallback: queueRejectedTextResult,
+    task: (): Promise<AiTextResult> => provider.describeVision(request),
+  });
   if (transcribeVoice === undefined) return { name: provider.name, describeVision };
   return {
     name: provider.name,
     describeVision,
-    async transcribeVoice(request: AiVoiceRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await runner.run(
+    transcribeVoice(request: AiVoiceRequest): Promise<AiTextResult> {
+      return runScheduled({
+        runner,
         priority,
-        (): Promise<AiTextResult> => transcribeVoice(request),
-        request.signal
-      );
-      return result ?? { ok: false, retryable: false };
+        signal: request.signal,
+        fallback: queueRejectedTextResult,
+        task: (): Promise<AiTextResult> => transcribeVoice(request),
+      });
     },
   };
 }
 
-/**
- * 把一次「生成一件媒体」的调用裹进交互优先的配额闸门。
- *
- * 队列满时 runner 返回 undefined，这里统一归一成 `null`——生图调用方按「这次没做出来」
- * 处理，不能把队列拒绝泄漏成一个 undefined 让工具层再猜一次。
- */
-function scheduleMediaGeneration<
-  TRequest extends { readonly signal?: AbortSignal },
-  TResult
->(
-  runner: PrioritizedBoundedTaskRunner,
-  generate: (request: TRequest) => Promise<TResult | null>
-): (request: TRequest) => Promise<TResult | null> {
-  return async (request: TRequest): Promise<TResult | null> => {
-    const result: TResult | null | undefined = await runner.run(
-      "interactive",
-      (): Promise<TResult | null> => generate(request),
-      request.signal
-    );
-    return result ?? null;
-  };
-}
-
+/** 生图门面：交互优先排队；队列已满或被取消时按「这次没做出来」结算为 `null`。 */
 function createImageFacade(
   provider: AiChatProvider,
   config: AgentCapabilityConfig
 ): AiImageProvider {
+  const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   return {
     name: provider.name,
-    generateImage: scheduleMediaGeneration<AiImageRequest, GeneratedChatImage>(
-      quotaRunnerFor(config),
-      (request: AiImageRequest): Promise<GeneratedChatImage | null> =>
-        provider.generateImage(request)
-    ),
+    generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null> {
+      return runScheduled<GeneratedChatImage | null>({
+        runner,
+        priority: "interactive",
+        signal: request.signal,
+        fallback: queueRejectedImage,
+        task: (): Promise<GeneratedChatImage | null> => provider.generateImage(request),
+      });
+    },
   };
 }
 
 /**
  * 语音合成门面：请求经交互优先的配额闸门排队。`operator` 口径的请求在轮到执行、紧挨着
  * 发起供应商请求时登记每日计数（aiChat/ai/ttsUsage.ts 的 claimOperatorTtsUsage），超出本门面
- * 所属 `agent.tts` 配置的 operator 上限时不发请求，排队期间被取消或队列已满的不计数；`ai`
- * 口径由调用方自行预留与登记，门面直接合成。
+ * 所属 `agent.tts` 配置的 operator 上限时不发请求，排队期间被取消或队列已满的不计数；供应商
+ * 没给出音频（返回 null 或抛错）时凭登记凭据退还这一次。`ai` 口径由调用方自行预留与登记，
+ * 门面直接合成。
  */
 function createSpeechFacade(
   provider: AiChatProvider,
@@ -208,21 +229,29 @@ function createSpeechFacade(
   if (synthesizeSpeech === undefined) return { name: provider.name };
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   const synthesize = async (request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> => {
-    if (request.quota === "operator" && !claimOperatorTtsUsage(ttsQuotaLimit(config, "operator"))) {
-      return { ok: false, reason: "daily limit reached" };
+    let claim: TtsOperatorClaim | null = null;
+    if (request.quota === "operator") {
+      claim = claimOperatorTtsUsage(ttsQuotaLimit(config, "operator"));
+      if (claim === null) return { ok: false, reason: "daily limit reached" };
     }
-    const speech: SynthesizedSpeech | null = await synthesizeSpeech(request);
+    let speech: SynthesizedSpeech | null = null;
+    try {
+      speech = await synthesizeSpeech(request);
+    } finally {
+      if (speech === null && claim !== null) refundOperatorTtsUsage(claim);
+    }
     return speech === null ? { ok: false, reason: "synthesis failed" } : { ok: true, speech };
   };
   return {
     name: provider.name,
-    async synthesizeSpeech(request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> {
-      const result: SpeechSynthesisAttempt | undefined = await runner.run(
-        "interactive",
-        (): Promise<SpeechSynthesisAttempt> => synthesize(request),
-        request.signal
-      );
-      return result ?? { ok: false, reason: "synthesis failed" };
+    synthesizeSpeech(request: AiMeteredSpeechRequest): Promise<SpeechSynthesisAttempt> {
+      return runScheduled({
+        runner,
+        priority: "interactive",
+        signal: request.signal,
+        fallback: queueRejectedSpeechAttempt,
+        task: (): Promise<SpeechSynthesisAttempt> => synthesize(request),
+      });
     },
   };
 }
@@ -244,13 +273,14 @@ function createWebSearchFacade({ provider, capability, config, priority }: WebSe
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   return {
     name: provider.name,
-    async searchWeb(request: AiWebSearchRequest): Promise<AiWebSearchResult> {
-      const result: AiWebSearchResult | undefined = await runner.run(
+    searchWeb(request: AiWebSearchRequest): Promise<AiWebSearchResult> {
+      return runScheduled({
+        runner,
         priority,
-        (): Promise<AiWebSearchResult> => provider.searchWeb(capability, request),
-        request.signal
-      );
-      return result ?? { ok: false, searchCalls: 0 };
+        signal: request.signal,
+        fallback: queueRejectedWebSearchResult,
+        task: (): Promise<AiWebSearchResult> => provider.searchWeb(capability, request),
+      });
     },
   };
 }
@@ -263,13 +293,14 @@ function createStructuredTextFacade(
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   return {
     name: provider.name,
-    async generateJson(request: AiJsonRequest): Promise<AiTextResult> {
-      const result: AiTextResult | undefined = await runner.run(
-        "background",
-        (): Promise<AiTextResult> => provider.generateJson(request),
-        request.signal
-      );
-      return result ?? { ok: false, retryable: false };
+    generateJson(request: AiJsonRequest): Promise<AiTextResult> {
+      return runScheduled({
+        runner,
+        priority: "background",
+        signal: request.signal,
+        fallback: queueRejectedTextResult,
+        task: (): Promise<AiTextResult> => provider.generateJson(request),
+      });
     },
   };
 }
@@ -409,7 +440,7 @@ export function structuredTextAiProvider(): AiStructuredTextProvider {
 
 /**
  * 启动诊断：能力配置齐全、结构校验也过了，但选中的那一家**根本没有**这项能力
- * （工具不挂、语音不转写）。这不是错误配置，不拒绝启动。
+ * （工具不挂、语音不转写）。这不是错误配置，不拒绝启动，只记 warn。
  *
  * 在 AI Worker 初始化与每次 agent 配置热重载后各调用一次，逐轮回复不重复记录。
  */
@@ -417,13 +448,13 @@ export function reportUnimplementedAgentCapabilities(): void {
   const config: AgentDeploymentConfig = getAgentDeploymentConfig();
   const tts: AgentTtsCapabilityConfig | undefined = config.tts;
   if (tts !== undefined && AI_CHAT_PROVIDERS[tts.provider].synthesizeSpeech === undefined) {
-    logger.error(
+    logger.warn(
       `Speech synthesis stays unavailable: $.agent.tts selects the "${tts.provider}" provider, ` +
       "which does not implement it. The send_voice tool will not be registered."
     );
   }
   if (AI_CHAT_PROVIDERS[config.media.provider].transcribeVoice === undefined) {
-    logger.error(
+    logger.warn(
       `Voice transcription stays unavailable: $.agent.media selects the "${config.media.provider}" provider, ` +
       "which does not implement it. Voice messages will fall back to a placeholder in the transcript."
     );

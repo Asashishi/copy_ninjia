@@ -8,8 +8,10 @@ import {
 } from "../../packages/consts/telegram";
 
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
+const loggerWarnMock = mock((..._args: unknown[]): void => {});
+const loggerLogMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
-  logger: loggerStub({ error: loggerErrorMock }),
+  logger: loggerStub({ error: loggerErrorMock, warn: loggerWarnMock, log: loggerLogMock }),
 }));
 
 const realFetch = globalThis.fetch;
@@ -36,6 +38,8 @@ function urlOf(input: FetchInput): string {
 describe("copyUserProfilePhoto t.me 兜底", () => {
   beforeEach(() => {
     loggerErrorMock.mockClear();
+    loggerWarnMock.mockClear();
+    loggerLogMock.mockClear();
     getChatMock.mockClear();
     setMyProfilePhotoMock.mockClear();
     // 另一组用例会把上传改成持久拒绝；mockClear 不重置实现，这里显式恢复成功。
@@ -73,8 +77,10 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
 
     expect(result).toBe(true);
     expect(getChatMock).toHaveBeenCalledTimes(2);
-    expect(loggerErrorMock).toHaveBeenCalledWith("Channel -1003952764805 has no chat photo visible to the bot");
-    expect(loggerErrorMock).toHaveBeenCalledWith("Falling back to t.me web profile scrape for @YunaSakagami");
+    // Bot API 查不到头像是第一层未命中，随后的网页兜底是正常流程：都只记 log。
+    expect(loggerLogMock).toHaveBeenCalledWith("Channel -1003952764805 has no chat photo visible to the bot");
+    expect(loggerLogMock).toHaveBeenCalledWith("Falling back to t.me web profile scrape for @YunaSakagami");
+    expect(loggerErrorMock).not.toHaveBeenCalled();
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
     expect((setMyProfilePhotoMock.mock.calls[0]![0] as any).type).toBe("static");
   });
@@ -96,10 +102,11 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
 
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(loggerErrorMock).toHaveBeenCalledWith("Could not check channel -1003952764805 public username via getChat: 403 Forbidden (chat is not accessible to the bot)");
-    expect(loggerErrorMock).toHaveBeenCalledWith(
+    expect(loggerWarnMock).toHaveBeenCalledWith("Could not check channel -1003952764805 public username via getChat: 403 Forbidden (chat is not accessible to the bot)");
+    expect(loggerWarnMock).toHaveBeenCalledWith(
       "Skipping t.me web profile scrape fallback: getChat lookup for channel -1003952764805 failed"
     );
+    expect(loggerErrorMock).not.toHaveBeenCalled();
   });
 
   test("调用方给的 username 只进日志，抓取目标一律以 getChat 现查的为准", async () => {
@@ -120,7 +127,7 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
     expect(result).toBe(true);
     // 现查了一次，而且抓的是现查回来的那个 handle，不是调用方给的。
     expect(getChatMock).toHaveBeenCalledTimes(2);
-    expect(loggerErrorMock).toHaveBeenCalledWith("Falling back to t.me web profile scrape for @YunaSakagami");
+    expect(loggerLogMock).toHaveBeenCalledWith("Falling back to t.me web profile scrape for @YunaSakagami");
   });
 
   test("现查不到 username 时不拿调用方给的顶上，只把它写进日志", async () => {
@@ -134,7 +141,8 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
 
     expect(result).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(loggerErrorMock).toHaveBeenCalledWith(
+    expect(loggerErrorMock).not.toHaveBeenCalled();
+    expect(loggerWarnMock).toHaveBeenCalledWith(
       "Skipping t.me web profile scrape fallback: channel -1003952764805 has no public username" +
       " (command context suggested @StaleHandle, not used because it cannot be proven to still belong to this id)"
     );

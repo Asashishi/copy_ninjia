@@ -155,6 +155,11 @@ export interface ReplyToolset {
    * 不经 has / execute。
    */
   readonly searchWeb: WebSearchToolExecutor | null;
+  /**
+   * 系统提示词「行动与停止」段：组装工具时按 `agent.tts.bot_language` 从 VOICE_LANGUAGE_PROMPTS 取的
+   * 同一份文案，与 functions 里 send_message、send_voice 的声明语言一致（见 replyToolset/orchestrator.ts）。
+   */
+  readonly replyActionInstruction: string;
   readonly has: (name: string) => boolean;
   /**
    * 每次请求模型前调用：直接轮在还没接纳过动作时亮「正在输入」，刚看过贴纸包时亮「正在选择贴纸」，
@@ -259,7 +264,7 @@ export interface ReplyDeliveryTurn {
   readonly finish: () => Promise<void>;
 }
 
-/** 发送桶中的入站占位；完成项按顺位回收，不占模型并发位。 */
+/** 发送 FIFO 中的入站占位；完成项按顺位回收，不占模型并发位。 */
 export interface ReplyDeliverySlot {
   readonly ready: PromiseWithResolvers<void>;
   readonly released: PromiseWithResolvers<void>;
@@ -267,13 +272,10 @@ export interface ReplyDeliverySlot {
 }
 
 /**
- * 单群定长发送桶数组；head/tail 按入站顺位循环，队首可能是本窗口的直接轮。存活轮次由
- * 跨代际容量计数约束。
+ * 单群发送 FIFO；队首可能是本窗口的直接轮。存活轮次由跨代际容量计数约束。
  */
 export interface ReplyDeliveryWindow {
-  readonly slots: readonly LinkedQueue<ReplyDeliverySlot>[];
-  head: number;
-  tail: number;
+  readonly queue: LinkedQueue<ReplyDeliverySlot>;
   size: number;
   /** 本窗口的直接轮仍在模型阶段；为 true 时有序并行轮之外另放行这 1 轮。 */
   directModelActive: boolean;

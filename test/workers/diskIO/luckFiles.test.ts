@@ -286,6 +286,19 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(existsSync(join(luckDir, "2026-07-15.json"))).toBe(false);
   });
 
+  test("启动 inspect 只列出 *.tmp 残留，maintainLuckDay 才删除", async () => {
+    mkdirSync(luckDir, { recursive: true });
+    const temporaryPath: string = join(luckDir, `.${DAY}.json.partial.tmp`);
+    await Bun.write(temporaryPath, "partial");
+
+    const inspection = await snapshotFiles.inspectLuckDay(DAY);
+    expect(inspection.cache).toBeNull();
+    expect(existsSync(temporaryPath)).toBeTrue();
+
+    await snapshotFiles.maintainLuckDay(DAY, inspection);
+    expect(existsSync(temporaryPath)).toBeFalse();
+  });
+
   test("flush 后 cleanupStaleLuckFiles 顺带删除非当日文件", async () => {
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12, day: "2026-07-15" }));
     await flushLuckAppends();

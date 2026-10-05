@@ -31,6 +31,7 @@ const {
 } = await import("../../../packages/aiChat/ai/tools/stickers");
 const { REPLY_INVALIDATED_TOOL_ERROR, SEND_STICKER_TOOL, VIEW_STICKER_PACK_TOOL } = await import("../../../packages/consts/tools");
 const { MAX_STICKER_PACK_VIEWS_PER_REPLY, STICKER_INTENT_MAX_CHARS } = await import("../../../packages/consts/aiChat/stickers");
+const { VIEW_STICKER_PACK_TOOL_INSTRUCTION } = await import("../../../packages/consts/aiChat/prompts/tools");
 const { createDirectPacing, createSimulatedPause } = await import("../../../packages/aiChat/ai/tools/replyToolset/pacing");
 
 function candidate(fileId: string, emoji: string, description: string): any {
@@ -137,7 +138,7 @@ describe("aiChat/ai/stickers 工具定义组装", () => {
     expect(def?.name).toBe(VIEW_STICKER_PACK_TOOL);
     expect(def?.description).toContain("1. 「猫猫包」（2 枚）：一包搞笑猫猫");
     expect(def?.description).toContain("2. 「狗狗包」（1 枚）：一包卖萌狗狗");
-    expect(def?.description).toContain(`最多查看 ${MAX_STICKER_PACK_VIEWS_PER_REPLY} 个不同贴纸包，每个包只能查看一次`);
+    expect(def?.description).toContain(VIEW_STICKER_PACK_TOOL_INSTRUCTION);
     const schema = def?.parametersJsonSchema as { required?: string[]; properties?: Record<string, unknown> } | undefined;
     expect(schema?.required).toEqual(["pack_index", "intent"]);
     expect((schema?.properties?.intent as { maxLength?: number }).maxLength).toBe(STICKER_INTENT_MAX_CHARS);

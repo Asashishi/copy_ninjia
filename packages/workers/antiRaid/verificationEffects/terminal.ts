@@ -11,6 +11,7 @@ import {
   telegramApi,
 } from "../../../infra/telegram";
 import { verificationKey } from "../../../libs/verificationKey";
+import { isMessageDeletionSettled } from "../../../libs/messageDeletion";
 import type { VerificationDispatcher } from "../../../types/antiRaid/internal";
 import type {
   ExpelSnapshot,
@@ -18,10 +19,8 @@ import type {
   VerificationState,
   VerificationTerminalState,
 } from "../../../types/states/verification";
-import type {
-  DeleteMessageOutcome,
-  KickChatMemberOutcome,
-} from "../../../infra/telegram";
+import type { KickChatMemberOutcome } from "../../../infra/telegram";
+import type { DeleteMessageOutcome } from "../../../types/telegram";
 import { isChatAdmin } from "../adminCache";
 import { botCanDeleteIn, botCanRestrictIn } from "../botPermissions";
 import { resolveChatIsSupergroup } from "../chatKind";
@@ -61,6 +60,34 @@ export async function runRecheckInviterEffect({
     userId,
     inviterId: effect.inviterId,
     expectedState,
+    dispatchVerification,
+  });
+}
+
+/** retryTerminalLater 的入参。 */
+interface RetryTerminalLaterParams {
+  readonly chatId: number;
+  readonly userId: number;
+  readonly state: VerificationTerminalState;
+  readonly dispatchVerification: VerificationDispatcher;
+}
+
+/**
+ * 终态动作这一轮没有结算：重新允许权威豁免替换 token，再按条目的退避序列排一次
+ * terminalPersisted 重试（见 retry.ts 的 scheduleTerminalRetry）。
+ */
+function retryTerminalLater({
+  chatId,
+  userId,
+  state,
+  dispatchVerification,
+}: RetryTerminalLaterParams): void {
+  state.executionStarted = false;
+  scheduleTerminalRetry({
+    chatId,
+    userId,
+    state,
+    event: { type: "terminalPersisted" },
     dispatchVerification,
   });
 }
@@ -116,14 +143,7 @@ export async function runExpelEffect({
     expectedState.failureNoticeSent === true &&
     expectedState.cleanupSettled === true
   ) {
-    expectedState.executionStarted = false;
-    scheduleTerminalRetry({
-      chatId,
-      userId,
-      state: expectedState,
-      event: { type: "terminalPersisted" },
-      dispatchVerification,
-    });
+    retryTerminalLater({ chatId, userId, state: expectedState, dispatchVerification });
     return;
   }
   if (permissionBlocked) {
@@ -152,14 +172,7 @@ export async function runExpelEffect({
   ) return;
 
   // 成功播报已发送时等待落盘回执；只有未结算处置才进入本地指数退避。
-  expectedState.executionStarted = false;
-  scheduleTerminalRetry({
-    chatId,
-    userId,
-    state: expectedState,
-    event: { type: "terminalPersisted" },
-    dispatchVerification,
-  });
+  retryTerminalLater({ chatId, userId, state: expectedState, dispatchVerification });
 }
 
 interface RecheckInviterThenSettleParams {
@@ -181,14 +194,7 @@ async function recheckInviterThenSettle({
   const inviterIsAdmin: boolean | undefined = await isChatAdmin(chatId, inviterId, "verification inviter");
   if (verificationEntries.get(verificationKey(chatId, userId))?.state !== expectedState) return;
   if (inviterIsAdmin === undefined) {
-    expectedState.executionStarted = false;
-    scheduleTerminalRetry({
-      chatId,
-      userId,
-      state: expectedState,
-      event: { type: "terminalPersisted" },
-      dispatchVerification,
-    });
+    retryTerminalLater({ chatId, userId, state: expectedState, dispatchVerification });
     return;
   }
   dispatchVerification(chatId, userId, { type: "timeoutInviterVerdict", inviterIsAdmin });
@@ -276,7 +282,7 @@ async function deleteVerificationMessages({
       if (!isCurrent()) return null;
       const outcome: DeleteMessageOutcome =
         await deleteMessageWithOutcome(chatId, messageId, telegramApi);
-      if (outcome === "deleted" || outcome === "gone") continue;
+      if (isMessageDeletionSettled(outcome)) continue;
       missed++;
       if (outcome === "forbidden") permissionDenied = true;
     }

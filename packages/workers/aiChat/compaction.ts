@@ -55,7 +55,7 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
   // 登记进 replyAbortControllers，而登记项只由 trackReplyGenerationTask 的 finally
   // （需要已跟踪任务）或整代失效清理摘除。放在判定之前的话，持续溢出且长期不被
   // 作废的群会一路累积用不上的 controller。
-  const signal: AbortSignal = replyGenerationSignal(chatId, generation);
+  const signal: AbortSignal = replyGenerationSignal(generation);
   compactionPendingCounts.set(chatId, pendingCount + 1);
   const next: Promise<void> = compactionRunner.run(chatId, (): Promise<void> => rotateCompaction({
     chatId,
@@ -134,7 +134,7 @@ async function summarizeBatchWithRetry(
     if (result.ok) return result.text;
     if (!result.retryable || attempt >= SUMMARY_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = SUMMARY_RETRY_DELAYS_MS[attempt]!;
-    logger.error(`AI compaction attempt ${attempt + 1} returned no usable summary for chat ${chatId}; resampling in ${delayMs} ms.`);
+    logger.warn(`AI compaction attempt ${attempt + 1} returned no usable summary for chat ${chatId}; resampling in ${delayMs} ms.`);
     await sleep(delayMs, signal);
   }
 }

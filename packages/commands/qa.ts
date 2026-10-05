@@ -25,6 +25,7 @@ import {
   ChatQaCapacityError,
 } from "../infra/qaStore";
 import { forumTopicThreadId } from "../libs/forumTopic";
+import { settleWithinBudget } from "../libs/inflight";
 import { logger } from "../infra/logger";
 import { throwIfUpdateAborted } from "../infra/updateContext";
 import { sendCommandMessage } from "../infra/telegram";
@@ -33,6 +34,7 @@ import { purgesChatData } from "../libs/chatTeardown";
 import { rejectUnlessPermitted } from "./commandActor";
 import type { CachedUser } from "../types/chatState";
 import type { ChatTeardownReason } from "../types/chatTeardown";
+import type { FlushResult } from "../types/lifecycle";
 import type { QaEntry, QaFormIngressResult, QaFormSession } from "../types/qa";
 import type { RichTextMessage } from "../types/telegram";
 import { buildQaBoardKeyboard, buildQaBoardPages } from "./qa/board";
@@ -312,17 +314,39 @@ async function removeQa(ctx: CommandContext<Context>, wanted: string): Promise<v
   });
 }
 
+/** 机器人已离群：表单消息删不掉，关闭会话后直接作废消息 id，不发删除请求。 */
+function abandonQaForm(session: QaFormSession): void {
+  session.formMessageId = undefined;
+}
+
 /**
  * 群 teardown / `/init disable`：收走该群全部未完成表单，并在要删数据时删掉已登记的问答。
  *
- * 表单一律收走；问答只在本次 teardown 要删数据时删（见 libs/chatTeardown.ts 的
- * purgesChatData）。被撤管理员那一路只是暂时干不了活，问答必须原样留着——权限
- * 加回来之后直答要照旧生效；而 `/init disable` 与离群的语义是「本天才不再管这个
- * 群」，本群的数据一样不留。
+ * 表单一律收走，表单消息只在机器人仍在群里时删除；问答只在本次 teardown 要删数据时删
+ * （见 libs/chatTeardown.ts 的 purgesChatData）。被撤管理员那一路只是暂时干不了活，问答
+ * 必须原样留着——权限加回来之后直答要照旧生效；而 `/init disable` 与离群的语义是「本天才
+ * 不再管这个群」，本群的数据一样不留。
  */
 export function teardownQaInChat(chatId: number, reason: ChatTeardownReason): void {
-  closeQaFormSessionsInChat(chatId, discardQaForm);
+  closeQaFormSessionsInChat(chatId, reason === "departed" ? abandonQaForm : discardQaForm);
   if (purgesChatData(reason)) removeAllChatQa(chatId);
+}
+
+/**
+ * 停机在 Telegram 总闸关闭前收走全部未完成表单，并在预算内等删除请求结算。
+ *
+ * 表单不挂固定延迟删除、TTL timer 不扣住进程退出，不在这里收走的话重启后就无人删除。
+ * 零预算不发起新请求；发送仍在途的表单由迟到的 onSent 回调接手删除。
+ */
+export async function drainQaForms(timeoutMs: number): Promise<FlushResult> {
+  if (qaFormSessions.size === 0) return "flushed";
+  if (timeoutMs <= 0) return "timedOut";
+  const deletions: Promise<void>[] = [];
+  for (const session of [...qaFormSessions.values()]) {
+    closeQaFormSession(session);
+    deletions.push(deleteQaForm(session));
+  }
+  return await settleWithinBudget(deletions, timeoutMs) ? "flushed" : "timedOut";
 }
 
 registerChatTeardown("qa", teardownQaInChat);

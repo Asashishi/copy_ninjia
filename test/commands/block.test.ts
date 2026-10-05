@@ -413,7 +413,7 @@ describe("/block 跨群封禁与黑名单", () => {
     expect(isChatMember).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("不会告诉本天才皮套底下是谁"),
+      text: expect.stringContaining(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.blockCurrentChat),
       replyToMessageId: 10,
     });
   });
@@ -476,7 +476,7 @@ describe("/block 的黑名单落盘", () => {
     expect(banChatMember).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("早就在小本本上了"),
+      text: expect.stringContaining(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.blockAlreadyRecorded("")),
       replyToMessageId: 10,
     });
   });
@@ -490,7 +490,7 @@ describe("/block 的黑名单落盘", () => {
 
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("没能写进硬盘"),
+      text: expect.stringContaining(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.blockPersistFailed),
       replyToMessageId: 10,
     });
   });
@@ -561,7 +561,7 @@ describe("/block 的黑名单落盘", () => {
     expect(blockedUserIds.has(7)).toBeTrue();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("没能写进硬盘"),
+      text: expect.stringContaining(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.blockPersistFailed),
       replyToMessageId: 10,
     });
   });

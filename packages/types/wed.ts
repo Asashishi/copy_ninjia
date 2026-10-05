@@ -28,6 +28,8 @@ export interface WedChat {
   readonly controller: AbortController;
   readonly members: Set<number>;
   readonly sessions: Map<number, WedSession>;
+  /** 机器人已离群：收尾置位后，正在重抽的会话不再删除被它替换的旧结果。 */
+  departed: boolean;
 }
 
 /** 主线程拥有的成员集合；修订号只用于进程内恢复定序，不写入 JSON。 */

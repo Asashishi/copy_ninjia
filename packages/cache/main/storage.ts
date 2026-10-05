@@ -34,7 +34,7 @@ export const globalCopyState: GlobalCopyState = {
  * 全局状态 `ttsUsage` 的窗口与两项独立计数的持久化镜像；权威值在 AI Worker（cache/workers/aiChat/ttsUsage.ts）。
  *
  * 启动恢复时从 memory/global/state.json 填充（缺省为 null，表示从没用过），此后每收到一次
- * Worker 的 ttsUsage 回执就整体替换为那一份全量计数并在后台落盘（见
+ * Worker 的 ttsUsage 回执就整体替换为那一份全量计数（退还到两项皆 0 时为 null）并在后台落盘（见
  * infra/storage/stateStore.ts 的 adoptTtsUsage）。主线程只读它来落盘与重放：AI Worker
  * 启动时在 init 之后投递、崩溃重建时由 aiChat/workerBridge.ts 的 onRespawn 重放
  * hydrateTtsUsage。null 表示没有任何计数，Worker 按从没用过处理。容量恒为一个对象。

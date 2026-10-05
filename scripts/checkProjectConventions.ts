@@ -54,6 +54,12 @@ import {
   collectStringConstantAssertionProblems,
 } from "./conventions/testAssertions";
 import {
+  collectConstantTextFragmentAssertionProblems,
+  collectConstantTextFragments,
+  collectUnusedConstantTextExemptionProblems,
+  constantTextCorpus,
+} from "./conventions/testAssertionFragments";
+import {
   collectEnvironmentAccessProblems,
   collectFullSuiteImportProblems,
   collectInfraLayeringProblems,
@@ -314,6 +320,10 @@ const constsSourceFiles: ReadonlySet<string> = new Set(sourceFilesUnder(CONSTS_R
 const declaredPackages: ReadonlySet<string> = await readDeclaredPackages(PROJECT_ROOT);
 /** packages/consts 导出的字符串常量表（取值 → 常量名），逐文件判定时顺带收集，供测试断言规则比对。 */
 const exportedStringConstants: Map<string, string[]> = new Map();
+/** packages/consts 全部字符串字面量与模板静态片段，供测试断言的文案片段规则做子串比对。 */
+const constantTextFragments: string[] = [];
+/** 文案片段规则本次用到的提示词契约豁免（`路径::用例名`），跑完后核对有无闲置条目。 */
+const usedConstantTextExemptions: Set<string> = new Set<string>();
 /** 注释交叉引用按 basename 兜底解析时的候选集合；生产源码与入口一份就够。 */
 const referenceResolutionFiles: readonly string[] = [
   ...sourceFilesUnder(SOURCE_ROOT),
@@ -343,6 +353,7 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   if (constsSourceFiles.has(path)) {
     for (const problem of collectConstantProblems(params)) failures.push(problem);
     collectExportedStringConstants(source, exportedStringConstants);
+    collectConstantTextFragments(source, constantTextFragments);
   }
   for (const problem of collectObjectFreezeProblems(params)) failures.push(problem);
   if (!path.startsWith(CACHE_ROOT) && !path.startsWith(CONSTS_ROOT)) {
@@ -373,6 +384,7 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
 
 // Node 兼容 import、依赖声明与全量基准 import 边界同时约束 scripts/ 与 test/，测试断言
 // 取值口径只约束 test/，其余判定只针对 packages/。
+const constantTextCorpusText: string = constantTextCorpus(constantTextFragments);
 for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_ROOT)]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   for (const problem of collectNodeCompatibilityProblems(PROJECT_ROOT, path, source)) {
@@ -389,8 +401,16 @@ for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_
       source,
       constants: exportedStringConstants,
     }));
+    failures.push(...collectConstantTextFragmentAssertionProblems({
+      projectRoot: PROJECT_ROOT,
+      path,
+      source,
+      corpus: constantTextCorpusText,
+      usedExemptions: usedConstantTextExemptions,
+    }));
   }
 }
+failures.push(...collectUnusedConstantTextExemptionProblems(usedConstantTextExemptions));
 failures.push(...collectUnusedNodeAllowanceProblems(nodeImportUsage));
 
 for (const problem of await collectTelegramMessageProblems(

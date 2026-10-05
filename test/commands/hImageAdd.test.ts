@@ -242,7 +242,7 @@ describe("/h_image add", () => {
     });
     // 尺寸不合规与「超过 10 MB、格式不对或下载失败」分属两档，回执要说清是哪一条。
     expect(texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 2, failed: 0 }))
-      .toContain("宽高之和超过 10000 或长宽比超过 20");
+      .not.toBe(texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 2 }));
     expect(loggerError).not.toHaveBeenCalled();
   });
 

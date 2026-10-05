@@ -1,7 +1,9 @@
 /**
  * config/dynamic/ 部署配置热重载的主线程 owner（状态见 cache/main/configReload.ts）。
  *
- * 只监听 config/dynamic/（config/static/ 下的文件修改后须重启）。目录级 `fs.watch` 覆盖原地写入、临时文件改名替换、删除与重建；任何事件只重新
+ * 只监听 config/dynamic/（config/static/ 下的文件修改后须重启）。目录级 `fs.watch` 覆盖原地写入、临时文件改名替换、删除与重建；
+ * 目录自身被改名、删除或整体替换时旧 watcher 收不到新目录的事件，因此按目录名的改名事件
+ * 关闭旧 watcher 并重新监听，目录暂缺时有界退避重试、只记一次错误日志。任何事件只重新
  * 武装一次防抖 timer，到期后由最新值执行器串行跑一轮：config/reload.ts 读取并
  * 严格解析六份可热重载文件（assets.json 切换随机图片目录时先准备新目录）→ 同步替换
  * 主线程 holder → 按 holder 重算广告检测与 AI 闲聊的可用性 → 把变化投给持有副本的
@@ -18,7 +20,8 @@
  */
 
 import { watch } from "node:fs";
-import type { FSWatcher } from "node:fs";
+import type { FSWatcher, WatchEventType } from "node:fs";
+import { basename } from "node:path";
 import { resumeAiChat, syncAiChatConfig } from "../aiChat";
 import { syncAntiRaidAgentConfig } from "../antiRaid";
 import { reconcileCronSchedule } from "../cron/scheduler";
@@ -32,7 +35,7 @@ import {
   aiChatReadinessFromHolders,
 } from "../config/readiness";
 import { applyHotDeploymentConfigs, readHotDeploymentConfigs } from "../config/reload";
-import { CONFIG_RELOAD_DEBOUNCE_MS } from "../consts/configReload";
+import { CONFIG_RELOAD_DEBOUNCE_MS, CONFIG_RELOAD_REWATCH_RETRY_DELAYS_MS } from "../consts/configReload";
 import { DYNAMIC_CONFIG_DIR } from "../consts/paths";
 import { logger } from "../infra/logger";
 import { createLatestValueRunner } from "../libs/latestValueRunner";
@@ -121,11 +124,75 @@ function scheduleConfigReload(): void {
   configReloadRuntime.debounceTimer = timer;
 }
 
+/**
+ * 目录事件入口。事件文件名等于被监听目录自身的名字，说明目录被改名、删除或整体替换，
+ * 另排一次重建监听；与目录内同名文件的事件无法区分，那时多重建一次也无害。
+ */
+function handleConfigDirectoryEvent(event: WatchEventType, filename: string | null): void {
+  if (event === "rename" && filename === basename(DYNAMIC_CONFIG_DIR)) {
+    scheduleConfigRewatch(CONFIG_RELOAD_DEBOUNCE_MS);
+  }
+  scheduleConfigReload();
+}
+
+/** 排一次重建监听；已有待执行的重建时不重复排。 */
+function scheduleConfigRewatch(delayMs: number): void {
+  if (!configReloadRuntime.accepting || configReloadRuntime.rewatchTimer !== null) return;
+  const timer: ReturnType<typeof setTimeout> = setTimeout(rewatchConfigDirectory, delayMs);
+  timer.unref();
+  configReloadRuntime.rewatchTimer = timer;
+}
+
+/**
+ * 关闭旧 watcher 后重新监听同一路径（Bun 不会为仍挂着旧 watcher 的路径建立新监听）。
+ * 成功后立即对账一轮，补上目录缺席期间的变化；目录暂缺时按退避表重排，只有首次失败记错误。
+ */
+function rewatchConfigDirectory(): void {
+  configReloadRuntime.rewatchTimer = null;
+  if (!configReloadRuntime.accepting) return;
+  configReloadRuntime.watcher?.close();
+  configReloadRuntime.watcher = null;
+  let watcher: FSWatcher;
+  try {
+    watcher = watch(DYNAMIC_CONFIG_DIR, handleConfigDirectoryEvent);
+  } catch (error: unknown) {
+    const attempt: number = configReloadRuntime.rewatchAttempts;
+    if (attempt === 0) {
+      logger.error("Deployment config directory is unavailable after it was replaced; retrying the watcher with backoff:", error);
+    }
+    const lastIndex: number = CONFIG_RELOAD_REWATCH_RETRY_DELAYS_MS.length - 1;
+    if (attempt < lastIndex) configReloadRuntime.rewatchAttempts = attempt + 1;
+    scheduleConfigRewatch(CONFIG_RELOAD_REWATCH_RETRY_DELAYS_MS[Math.min(attempt, lastIndex)]!);
+    return;
+  }
+  configReloadRuntime.rewatchAttempts = 0;
+  installConfigWatcher(watcher);
+  logger.log(`Re-attached the deployment config watcher to ${DYNAMIC_CONFIG_DIR}.`);
+  runConfigReload();
+}
+
 /** watcher 自身失效后关闭它；本进程余下时间不再热重载，重启后恢复。 */
 function handleWatcherError(error: unknown): void {
   logger.error("Deployment config watcher failed; runtime config reload stays off until restart:", error);
+  clearConfigRewatch();
   configReloadRuntime.watcher?.close();
   configReloadRuntime.watcher = null;
+}
+
+/** 撤销待执行的重建监听并清零连续失败次数。 */
+function clearConfigRewatch(): void {
+  if (configReloadRuntime.rewatchTimer !== null) {
+    clearTimeout(configReloadRuntime.rewatchTimer);
+    configReloadRuntime.rewatchTimer = null;
+  }
+  configReloadRuntime.rewatchAttempts = 0;
+}
+
+/** 新 watcher 统一挂错误处理并 unref 后登记。 */
+function installConfigWatcher(watcher: FSWatcher): void {
+  watcher.on("error", handleWatcherError);
+  watcher.unref();
+  configReloadRuntime.watcher = watcher;
 }
 
 /**
@@ -138,26 +205,25 @@ export function startConfigReload(): void {
   if (configReloadRuntime.watcher !== null) return;
   let watcher: FSWatcher;
   try {
-    watcher = watch(DYNAMIC_CONFIG_DIR, scheduleConfigReload);
+    watcher = watch(DYNAMIC_CONFIG_DIR, handleConfigDirectoryEvent);
   } catch (error: unknown) {
     logger.error("Deployment config watcher could not start; runtime config reload stays off until restart:", error);
     return;
   }
   configReloadRuntime.runner ??= createLatestValueRunner<null>(reconcileDeploymentConfigs);
   configReloadRuntime.accepting = true;
-  watcher.on("error", handleWatcherError);
-  watcher.unref();
-  configReloadRuntime.watcher = watcher;
+  installConfigWatcher(watcher);
   runConfigReload();
 }
 
-/** 停机维护关闸：停止接纳事件、清除防抖 timer 并关闭 watcher；可重复调用。 */
+/** 停机维护关闸：停止接纳事件、清除防抖与重建监听 timer 并关闭 watcher；可重复调用。 */
 export function quiesceConfigReload(): void {
   configReloadRuntime.accepting = false;
   if (configReloadRuntime.debounceTimer !== null) {
     clearTimeout(configReloadRuntime.debounceTimer);
     configReloadRuntime.debounceTimer = null;
   }
+  clearConfigRewatch();
   configReloadRuntime.watcher?.close();
   configReloadRuntime.watcher = null;
 }

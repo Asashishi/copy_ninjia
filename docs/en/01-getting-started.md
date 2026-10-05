@@ -161,10 +161,17 @@ config/
 
 ### Core Configuration Files Explained
 
-- **`prompt/persona.md`** (optional, project root)
+- **`prompt/persona.md`** (optional, project root; [example](../../prompt_example/persona.md))
   - **Content**: Custom AI chat persona.
   - **Behavior**: Uses the built-in persona ([`persona.ts`](../../packages/consts/aiChat/prompts/persona.ts)) by default; when present, replaces the persona with the file text. Notices use explicit `atmosphere` first and ordinary copy when that setting is omitted.
   - **Validation**: Plain text; empty or non-UTF-8 content refuses startup. Changes require a restart.
+  - **Example**: [`prompt_example/persona.md`](../../prompt_example/persona.md) is a calm, dependable "senior student" persona, split into the sections who you are / core personality / trait arbitration order / speaking style / never fabricate facts / language rules. Copy it with `mkdir -p prompt && cp -n prompt_example/persona.md prompt/` (`-n` never overwrites an existing file), adjust it, and restart. The file text, trimmed of surrounding whitespace, is handed to the model verbatim as the persona, so do not put notes meant for the operator in it.
+
+- **`prompt/voice_tool.md`** (optional, project root; [example](../../prompt_example/voice_tool.md))
+  - **Content**: Custom AI `send_voice` tool instruction.
+  - **Behavior**: When absent, the built-in `en` / `zh` / `ja` instruction is chosen by `agent.tts.bot_language` (`VOICE_LANGUAGE_PROMPTS` in [`tools.ts`](../../packages/consts/aiChat/prompts/tools.ts)); when present, the file text replaces the whole instruction regardless of `bot_language`. The `text` / `tone` parameter descriptions and the voice de-duplication rules in `send_message` and the action-and-stop section still follow `bot_language`. The file must state the execution contract of the built-in instruction itself: check the `send_voice` quota line in this round's tool status, the per-round count and the `text` / `tone` length limits, and how to handle accepted and error receipts.
+  - **Validation**: Plain text; empty or non-UTF-8 content refuses startup, also when `agent.tts` is not configured. Changes require a restart.
+  - **Example**: [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) pairs with the persona example above: its lines are gentle everyday Japanese, and it spells out the whole execution contract above. The per-round count and the `text` / `tone` length limits in the example match the current limits in code; keep them consistent when editing. The example is written for `bot_language: "ja"` (the value in the [`agent.json` example](../../config_example/dynamic/agent.json)); for another line language, switch the opening sentence and line language, the line and tone examples, and the de-duplication note to that language. When using the pair, you can also change `agent.tts.style` to a matching voice description. Copy it the same way: `mkdir -p prompt && cp -n prompt_example/voice_tool.md prompt/`.
 
 - **`config/static/bot.json`** ([Example](../../config_example/static/bot.json))
   - Declares `bot_token`, `super_admin_user_id`, and optional `atmosphere` and `time_zone`. Strictly validated before networking; unknown keys or invalid types refuse startup.
@@ -186,7 +193,7 @@ config/
        - `media`: Vision and audio transcription model; probes multimodal capabilities on the first request with endpoint backoff.
     2. **Extended Generation Capabilities** (absence removes the corresponding tool):
        - `image`: Image generation. OpenAI-compatible protocols must declare `image_protocol` (`openai` | `openai-standard` | `xai`).
-       - `tts`: Speech synthesis. Must specify `voice`; OpenAI-compatible endpoints declare `speech_protocol` (`openai` | `xai`). Optional `daily_limit` (default 100) and `daily_reserve_quota` (default 25, reserved for `/send` and cron).
+       - `tts`: Speech synthesis. Must specify `voice`; OpenAI-compatible endpoints declare `speech_protocol` (`openai` | `xai`). Optional `bot_language` (`en` | `zh` | `ja`, default `ja`) sets the language of AI voice lines (`prompt/voice_tool.md` can replace the whole `send_voice` tool instruction). `bot_language` switches the model-facing prompts and appends that language's speaking-language requirement to the base style in AI reply synthesis requests (`/send` and cron synthesis do not get it); neither `style` nor `prompt/voice_tool.md` follows it. `style` is shared with `/send` and cron, so it describes only the voice, not the speaking language; when changing `bot_language`, prefer a voice description written in that language (the default `TTS_DEFAULT_STYLE` is written in Japanese), and if `voice_tool.md` is deployed, switch its line language and examples to that language as well. Optional `daily_limit` (default 100) and `daily_reserve_quota` (default 25, reserved for `/send` and cron).
     3. **Search and Risk Control Capabilities**:
        - `web_search`: Local function tool for web search; supports `max_calls_per_use` (default 5). If omitted, falls back to the `text` model's server-side search.
        - `ad_detect`: Inbound message ad detection model. If omitted, ad detection is disabled.

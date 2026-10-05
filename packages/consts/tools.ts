@@ -61,7 +61,8 @@ export const ADD_REACTION_TOOL: string = "add_reaction";
 export const GENERATE_IMAGE_TOOL: string = "generate_image";
 
 /**
- * send_voice 工具名：把一句日语台词合成语音并以 Telegram 语音消息发送到当前群。
+ * send_voice 工具名：把一句台词（语言由 `agent.tts.bot_language` 决定）合成语音并以 Telegram 语音消息
+ * 发送到当前群。
  *
  * 只在 `agent.tts` 已配置且所选实现具备语音合成能力时进本轮工具集（见
  * aiChat/ai/tools/replyToolset/orchestrator.ts）；调用与否由模型按工具说明判断，

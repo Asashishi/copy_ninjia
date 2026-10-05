@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { sleep } from "../../packages/libs/sleep";
+import { sleep, sleepUnlessAborted } from "../../packages/libs/sleep";
 
 describe("abortable sleep", () => {
   test("abort 会立即拒绝并清理真实的长时 referenced timer", async () => {
@@ -70,5 +70,19 @@ describe("abortable sleep", () => {
     } finally {
       globalThis.setTimeout = originalSetTimeout;
     }
+  });
+});
+
+describe("sleepUnlessAborted", () => {
+  test("睡满返回 true；已中止或等待期间中止返回 false 且不抛错；非法时长照常抛出", async () => {
+    const controller: AbortController = new AbortController();
+    expect(await sleepUnlessAborted(1, controller.signal)).toBe(true);
+
+    const pending: Promise<boolean> = sleepUnlessAborted(60_000, controller.signal);
+    controller.abort();
+    expect(await pending).toBe(false);
+    expect(await sleepUnlessAborted(1, controller.signal)).toBe(false);
+
+    await expect(sleepUnlessAborted(-1, new AbortController().signal)).rejects.toBeInstanceOf(RangeError);
   });
 });

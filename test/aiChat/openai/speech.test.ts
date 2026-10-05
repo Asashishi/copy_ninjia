@@ -48,7 +48,7 @@ const {
   XAI_SPEECH_RETRY_BASE_DELAY_MS,
   XAI_SPEECH_SAMPLE_RATE,
 } = await import("../../../packages/consts/aiChat/openai");
-const { TTS_TONE_SEPARATOR, VOICE_SPEECH_MAX_BYTES } = await import("../../../packages/consts/aiChat/voiceMessage");
+const { TTS_LANGUAGE_SEPARATOR, TTS_TONE_SEPARATOR, VOICE_SPEECH_MAX_BYTES } = await import("../../../packages/consts/aiChat/voiceMessage");
 const { MP3_MIME_TYPE, OGG_OPUS_MIME_TYPE } = await import("../../../packages/consts/audio");
 
 /** 响应体替身；容器结构由编码侧校验，这里只核对字节原样交回。 */
@@ -127,6 +127,13 @@ describe("openai 协议（audio/speech）", () => {
     expect(String(loggerWarn.mock.calls[0]![0])).toContain("capability=tts, provider=openai, reason=missing");
   });
 
+  test("带朗读语言要求时依次拼在基础风格之后、本句语气之前", async () => {
+    tts = openAiTts({ style: "base style" });
+    await synthesizeOpenAiSpeech({ text: "Idiot", languageStyle: "Speak in English", tone: "teasing" });
+    expect((speechCreate.mock.calls[0]![0] as { instructions: string }).instructions)
+      .toBe(`${tts.style}${TTS_LANGUAGE_SEPARATOR}Speak in English${TTS_TONE_SEPARATOR}teasing`);
+  });
+
   test("请求失败记错误日志返回 null；调用方取消静默返回 null", async () => {
     tts = openAiTts();
     speechCreate.mockRejectedValueOnce(new Error("503 upstream"));
@@ -166,7 +173,11 @@ describe("openai 协议（audio/speech）", () => {
 describe("xai 协议（POST /tts，fetch）", () => {
   test("缺省端点、Bearer 认证、不跟随重定向；请求体只有台词、音色、语言与 MP3 输出格式", async () => {
     tts = xAiTts();
-    const speech: SynthesizedSpeech | null = await synthesizeOpenAiSpeech({ text: "バカ", tone: "鼻で笑うように" });
+    const speech: SynthesizedSpeech | null = await synthesizeOpenAiSpeech({
+      text: "バカ",
+      languageStyle: "自然な日本語で話す",
+      tone: "鼻で笑うように",
+    });
 
     expect(speechCreate).not.toHaveBeenCalled();
     const { url, init, body } = fetchCall(0);

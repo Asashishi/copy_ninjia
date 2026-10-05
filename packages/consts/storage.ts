@@ -33,7 +33,7 @@ export const STATE_BACKGROUND_SAVE_DELAY_MS: number = 5_000;
  * 超出时必须由部署方删除不再管理的群后重新启动。
  *
  * 这一个数同时封住两处存储和一道命令闸，改动必须同批复核：
- * - SQLite `chat_states`：主线程 LRU 容量与建新记录的硬闸
+ * - SQLite `chat_states`：主线程热读副本的容量上界与建新记录的硬闸
  *   （cache/main/chatState.ts、infra/chatStateStorage.ts 的 assertChatStateCapacity），
  *   以及启动期的行数校验（database/validation/storageRows.ts）。按群翻译会话保存在
  *   同一行里，translate/state.ts 新建群状态前按同一上限判定。

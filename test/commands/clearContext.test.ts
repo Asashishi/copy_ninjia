@@ -58,7 +58,7 @@ describe("/clear_context", () => {
     expect(invalidateAiChat).toHaveBeenCalledWith(-1001);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("一句都不记得"),
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.clearContextDone,
       replyToMessageId: 7,
     });
   });

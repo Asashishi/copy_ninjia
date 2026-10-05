@@ -5,8 +5,13 @@ import {
 } from "../../helpers/aiMemoryFixtures";
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
 import { COMPACT_BATCH_SIZE, TRANSCRIPT_SETTLED_SEGMENT_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
-import { REPLY_CONTEXT_SECTION_NAMES, REPLY_CONTEXT_SECTION_TEXT } from "../../../packages/consts/aiChat/prompts/memory";
-import { REPLY_ACTION_INSTRUCTION, TOOL_STATUS_BLOCK_LABEL } from "../../../packages/consts/aiChat/prompts/tools";
+import {
+  REPLY_CONTEXT_SECTION_NAMES,
+  REPLY_CONTEXT_SECTION_TEXT,
+  directInvokerSentence,
+} from "../../../packages/consts/aiChat/prompts/memory";
+import { longestTemplatePart } from "../../helpers/templateText";
+import { TOOL_STATUS_BLOCK_LABEL, VOICE_LANGUAGE_PROMPTS } from "../../../packages/consts/aiChat/prompts/tools";
 import { REPLY_TARGET_EVICTED_TAG } from "../../../packages/consts/aiChat/prompts/transcript";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
@@ -83,7 +88,9 @@ test("直接唤起在回复任务开头声明唤起者完整身份，不再另�
   expect(sections.currentConversation.slice(0, sections.currentConversationSettledOffsets[0]))
     .toEndWith(`其他人的最热消息 ${TRANSCRIPT_SETTLED_SEGMENT_SIZE}`);
   // 跨任务相同的行动总则只在 system prompt 出现，动态任务只保留触发语义。
-  expect(sections.replyTask).not.toContain(REPLY_ACTION_INSTRUCTION);
+  for (const prompts of Object.values(VOICE_LANGUAGE_PROMPTS)) {
+    expect(sections.replyTask).not.toContain(prompts.replyActionInstruction);
+  }
   // 按轮变化的工具状态只在运行时状态区块，回复任务里没有。
   expect(sections.replyTask).not.toContain(TOOL_STATUS_BLOCK_LABEL);
   expect(sections.replyTask).toEndWith(`[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`);
@@ -180,7 +187,9 @@ test("随机插话不声明唤起者", () => {
   )!;
 
   // 「有没有这句话」就是模型判断本轮有没有人叫它的依据，随机插话必须一个字都不带。
-  expect(sections.replyTask).not.toContain("明确 @ 或回复你而唤起");
+  expect(sections.replyTask).not.toContain(
+    longestTemplatePart((invoker: string): string => directInvokerSentence(invoker, ""))
+  );
   expect(sections.replyTask).toStartWith(
     `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n${REPLY_CONTEXT_SECTION_TEXT.replyTask.header}\n群里最新这条消息并没有人在叫你`
   );

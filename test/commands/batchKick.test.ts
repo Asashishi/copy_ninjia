@@ -6,8 +6,11 @@ import type { IdentityPolicyVerdicts } from "../../packages/types/identityStorag
 import { diskIOStub } from "../helpers/diskIOMock";
 import { lastReplyText } from "../helpers/replies";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { IDENTITY_POLICY_UNAVAILABLE_TEXT } from "../../packages/consts/atmosphere/teasing/commands";
 import { BATCH_KICK_CONCURRENCY } from "../../packages/consts/commands";
 import { runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
+import { formatDurationCn } from "../../packages/libs/durationToken";
+import { botPermissions } from "../helpers/botPermissions";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const probeChatMembership = mock(
@@ -60,6 +63,57 @@ const {
   handleBatchKickCommand,
   parseBatchKickDurationMs,
 } = await import("../../packages/commands/batchKick");
+const { initDeferredCommandRuntime } = await import("../../packages/commands/deferredCommands");
+const { deferredCommandRuntime } = await import("../../packages/cache/main/deferredCommands");
+const { batchKickChats } = await import("../../packages/cache/main/batchKick");
+const { getOrCreateChatState } = await import("../../packages/infra/storage/stateStore");
+
+/** 等延迟命令执行器里已接纳的任务（含排队中的）全部结算。 */
+async function settleDeferredCommands(): Promise<void> {
+  const tasks: Set<Promise<void>> | undefined = deferredCommandRuntime.current?.tasks;
+  while (tasks !== undefined && tasks.size > 0) await Promise.allSettled([...tasks]);
+}
+
+/** 30 分钟窗口的「已受理」回执。 */
+/** 本文件默认通知风格下的群提示文案表。 */
+const NOTICES = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS;
+
+/** 战报的统计项；缺省为 0、未中断。 */
+interface ResultStats {
+  readonly recordCount: number;
+  readonly scanned: number;
+  readonly kicked?: number;
+  readonly aborted?: boolean;
+}
+
+/** 按本用例的实际统计用常量渲染完整战报，窗口与 context() 缺省的 30m 一致。 */
+function resultText({ recordCount, scanned, kicked = 0, aborted = false }: ResultStats): string {
+  return NOTICES.batchKickResult({
+    duration: formatDurationCn(30 * 60_000),
+    recordCount,
+    scanned,
+    kicked,
+    absent: 0,
+    protected: 0,
+    blocked: 0,
+    forbidden: 0,
+    failed: 0,
+    abortedNotice: aborted ? NOTICES.batchKickAborted : "",
+  });
+}
+
+function acceptedText(recordCount: number): string {
+  return ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.batchKickAccepted({
+    duration: formatDurationCn(30 * 60_000),
+    recordCount,
+  });
+}
+
+/** 处理命令并等后台批次结束：战报是最后一条回复。 */
+async function runCommand(ctx: never): Promise<void> {
+  await handleBatchKickCommand(ctx);
+  await settleDeferredCommands();
+}
 
 interface ContextOverrides {
   userId?: number;
@@ -85,7 +139,13 @@ function context({
   } as never;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  await settleDeferredCommands();
+  initDeferredCommandRuntime();
+  batchKickChats.clear();
+  const chatState = getOrCreateChatState(-1001);
+  chatState.isInitEnabled = true;
+  chatState.botPermissions = undefined;
   for (const mocked of [
     sendMessage,
     probeChatMembership,
@@ -135,14 +195,14 @@ describe("parseBatchKickDurationMs", () => {
 
 describe("/batch_kick", () => {
   test("非超级管理员、非超级群和非法参数都在读盘前拒绝", async () => {
-    await handleBatchKickCommand(context({ userId: 2 }));
+    await runCommand(context({ userId: 2 }));
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.batchKickRejected,
       replyToMessageId: 10,
     });
-    await handleBatchKickCommand(context({ chatType: "group" }));
-    await handleBatchKickCommand(context({ match: "2d" }));
+    await runCommand(context({ chatType: "group" }));
+    await runCommand(context({ match: "2d" }));
 
     expect(readJoinLog).not.toHaveBeenCalled();
     expect(probeChatMembership).not.toHaveBeenCalled();
@@ -150,7 +210,7 @@ describe("/batch_kick", () => {
     expect(sendMessage).toHaveBeenCalledTimes(3);
     const groupReply: string =
       (sendMessage.mock.calls[1]?.[0] as { text: string }).text;
-    expect(groupReply).toContain("只能在超级群");
+    expect(groupReply).toBe(NOTICES.batchKickSupergroupOnly);
     expect(groupReply).not.toContain("初始化");
     expect(lastReplyText(sendMessage)).toContain("只踢人");
   });
@@ -159,7 +219,7 @@ describe("/batch_kick", () => {
     const failure: Error = new Error("disk offline");
     readJoinLog.mockRejectedValueOnce(failure);
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(loggerError).toHaveBeenCalledWith(
       "Failed to read join logs for /batch_kick in chat -1001:",
@@ -167,14 +227,14 @@ describe("/batch_kick", () => {
     );
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText(sendMessage)).toContain("一个人都没动");
+    expect(lastReplyText(sendMessage)).toBe(NOTICES.joinLogUnavailable);
   });
 
   test("回溯窗口按命令消息自带的 Telegram 时间戳算，不掺宿主时钟", async () => {
     // 库里的 joinedAt 全部来自 `update.date`（见 antiRaid/updateIngress.ts）。这里
     // 若用 Date.now()，两个时钟直接相减，窗口边界就整体漂移出它们之间的偏差——
     // readJoinLog 既拿 since/now 逐条比 joinedAt，也拿它们算该读哪一两个日文件。
-    await handleBatchKickCommand(context({ match: "2h" }));
+    await runCommand(context({ match: "2h" }));
 
     const now: number = COMMAND_DATE_SECONDS * 1_000;
     expect(readJoinLog).toHaveBeenCalledWith({
@@ -185,12 +245,12 @@ describe("/batch_kick", () => {
   });
 
   test("空窗口明确报告未踢人、未写黑名单", async () => {
-    await handleBatchKickCommand(context({ match: "2h" }));
+    await runCommand(context({ match: "2h" }));
 
     expect(readJoinLog).toHaveBeenCalledTimes(1);
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText(sendMessage)).toContain("没有写入黑名单");
+    expect(lastReplyText(sendMessage)).toBe(NOTICES.batchKickEmpty(formatDurationCn(2 * 60 * 60_000)));
   });
 
   test("保护自己人，先查仍在群，再只踢确认在群的普通成员", async () => {
@@ -218,7 +278,7 @@ describe("/batch_kick", () => {
       }
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(probeChatMembership.mock.calls.map((call) => call[1]))
       .toEqual([2, 3, 4, 5, 6]);
@@ -244,7 +304,7 @@ describe("/batch_kick", () => {
       }
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     expect(kickChatMemberWithOutcome).toHaveBeenCalledWith({
@@ -253,14 +313,14 @@ describe("/batch_kick", () => {
       isSupergroup: true,
     });
     expect(loggerError).toHaveBeenCalledWith(
-      expect.stringMatching(/chat -1001, user 7, record 0, attempt 1/),
+      expect.stringMatching(/chat -1001, user 7, record 0:/),
       expect.any(Error)
     );
     expect(lastReplyText(sendMessage)).toContain("踢出 1");
     expect(lastReplyText(sendMessage)).toContain("查询或请求失败 1");
   });
 
-  test("停机取消后不再处理剩余记录，在途失败不记日志，整条命令以取消解开", async () => {
+  test("停机取消后不再处理剩余记录，在途失败不记日志，也不发战报", async () => {
     const records: { userId: number; joinedAt: number }[] = [];
     for (let index: number = 0; index < IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES + 3; index++) {
       records.push({ userId: 2_000 + index, joinedAt: 1 });
@@ -272,24 +332,112 @@ describe("/batch_kick", () => {
       throw controller.signal.reason;
     });
 
-    await expect(runWithUpdateAbortSignal(
+    await runWithUpdateAbortSignal(
       controller.signal,
       (): Promise<void> => handleBatchKickCommand(context())
-    )).rejects.toThrow("shutdown");
+    );
+    await settleDeferredCommands();
 
     // 只有取消前已经开始的那一轮并发探测，之后的记录与下一块一概不碰。
     expect(probeChatMembership.mock.calls.length).toBeLessThanOrEqual(BATCH_KICK_CONCURRENCY);
     expect(readIdentityPolicyVerdicts).toHaveBeenCalledTimes(1);
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(loggerError).not.toHaveBeenCalled();
-    expect(sendMessage).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(lastReplyText(sendMessage)).toBe(acceptedText(records.length));
+    expect(batchKickChats.size).toBe(0);
+  });
+
+  test("有记录时先回已受理（带记录数与时长），后台批次结束后战报逐字照旧", async () => {
+    readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }, { userId: 43, joinedAt: 2 }]);
+
+    await handleBatchKickCommand(context());
+    expect(lastReplyText(sendMessage)).toBe(acceptedText(2));
+    expect(batchKickChats.has(-1001)).toBeTrue();
+    await settleDeferredCommands();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage.mock.calls[1]?.[0]).toEqual({
+      chatId: -1001,
+      text: ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.batchKickResult({
+        duration: formatDurationCn(30 * 60_000),
+        recordCount: 2,
+        scanned: 2,
+        kicked: 2,
+        absent: 0,
+        protected: 0,
+        blocked: 0,
+        forbidden: 0,
+        failed: 0,
+        abortedNotice: "",
+      }),
+      replyToMessageId: 10,
+    });
+    expect(batchKickChats.size).toBe(0);
+  });
+
+  test("后台等待位满时回忙，不登记批次也不动任何人", async () => {
+    readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
+    deferredCommandRuntime.current!.accepting = false;
+
+    await runCommand(context());
+
+    expect(lastReplyText(sendMessage)).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.batchKickBusy);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(probeChatMembership).not.toHaveBeenCalled();
+    expect(batchKickChats.size).toBe(0);
+  });
+
+  test("同群上一批未结束时回仍在处理；结束后可以再跑", async () => {
+    readJoinLog.mockResolvedValue([{ userId: 42, joinedAt: 1 }]);
+    const release: PromiseWithResolvers<boolean | undefined> = Promise.withResolvers<boolean | undefined>();
+    probeChatMembership.mockImplementationOnce((): Promise<boolean | undefined> => release.promise);
+
+    await handleBatchKickCommand(context());
+    await handleBatchKickCommand(context());
+    expect(lastReplyText(sendMessage)).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.batchKickRunning);
+    // 上一批还在跑时第二条命令不读日志。
+    expect(readJoinLog).toHaveBeenCalledTimes(1);
+
+    release.resolve(true);
+    await settleDeferredCommands();
+    expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(1);
+    await runCommand(context());
+    expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([
+    ["/init disable", (): void => { getOrCreateChatState(-1001).isInitEnabled = false; }],
+    ["被撤管理员", (): void => {
+      getOrCreateChatState(-1001).botPermissions = botPermissions({ isAdministrator: false });
+    }],
+  ] as const)("批次途中%s后不再处置剩余记录，也不发战报", async (_label: string, unmanage: () => void) => {
+    readJoinLog.mockResolvedValueOnce([
+      { userId: 42, joinedAt: 1 },
+      { userId: 43, joinedAt: 2 },
+      { userId: 44, joinedAt: 3 },
+      { userId: 45, joinedAt: 4 },
+      { userId: 46, joinedAt: 5 },
+      { userId: 47, joinedAt: 6 },
+    ]);
+    probeChatMembership.mockImplementationOnce(async (): Promise<boolean | undefined> => {
+      unmanage();
+      return true;
+    });
+
+    await runCommand(context());
+
+    expect(probeChatMembership.mock.calls.length).toBeLessThanOrEqual(BATCH_KICK_CONCURRENCY);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(lastReplyText(sendMessage)).toBe(acceptedText(6));
+    expect(batchKickChats.size).toBe(0);
   });
 
   test("429 等待期间目标已离群时按 absent 结算，不误报请求失败", async () => {
     readJoinLog.mockResolvedValueOnce([{ userId: 42, joinedAt: 1 }]);
     kickChatMemberWithOutcome.mockResolvedValueOnce("absent");
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(lastReplyText(sendMessage)).toContain("已不在群 1");
     expect(lastReplyText(sendMessage)).toContain("查询或请求失败 0");
@@ -301,7 +449,7 @@ describe("/batch_kick", () => {
     ]);
     isUserBlocked.mockImplementation((userId: number): boolean => userId === 42);
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
@@ -325,7 +473,7 @@ describe("/batch_kick", () => {
       }
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42);
     expect(requestBlocklistResweep).not.toHaveBeenCalled();
@@ -346,11 +494,56 @@ describe("/batch_kick", () => {
       }
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42);
     expect(lastReplyText(sendMessage)).toContain("黑名单交回封禁 1");
     expect(lastReplyText(sendMessage)).toContain("查询或请求失败 0");
+  });
+
+  test("成员查询期间并发拉黑：不执行只踢，交回封禁并只请求一次补扫", async () => {
+    let blocked: boolean = false;
+    readJoinLog.mockResolvedValueOnce([
+      { userId: 42, joinedAt: 1 },
+    ]);
+    isUserBlocked.mockImplementation((): boolean => blocked);
+    probeChatMembership.mockImplementationOnce(async (): Promise<boolean | undefined> => {
+      blocked = true;
+      return true;
+    });
+
+    await runCommand(context());
+
+    expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(banChatMemberWithOutcome).not.toHaveBeenCalled();
+    expect(requestBlocklistResweep).toHaveBeenCalledTimes(1);
+    expect(sweepBlockedMembers).toHaveBeenCalledTimes(1);
+    expect(lastReplyText(sendMessage)).toContain("黑名单交回封禁 1");
+  });
+
+  test("补封失败且补扫派发也抛错时记日志、命令不抛，战报按失败结算", async () => {
+    let blocked: boolean = false;
+    readJoinLog.mockResolvedValueOnce([
+      { userId: 42, joinedAt: 1 },
+    ]);
+    isUserBlocked.mockImplementation((): boolean => blocked);
+    kickChatMemberWithOutcome.mockImplementation(
+      async (): Promise<string> => {
+        blocked = true;
+        return "kicked";
+      }
+    );
+    banChatMemberWithOutcome.mockResolvedValueOnce("failed");
+    sweepBlockedMembers.mockRejectedValueOnce(new Error("sweep dispatch failed"));
+
+    await runCommand(context());
+
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to dispatch the blocklist repair after /batch_kick in chat -1001"),
+      expect.any(Error)
+    );
+    expect(lastReplyText(sendMessage)).toContain("踢出 0");
+    expect(lastReplyText(sendMessage)).toContain("查询或请求失败 1");
   });
 
   test("并发拉黑的补封失败时请求补扫且不报告踢出成功", async () => {
@@ -367,7 +560,7 @@ describe("/batch_kick", () => {
     );
     banChatMemberWithOutcome.mockResolvedValueOnce("failed");
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
     expect(sweepBlockedMembers).toHaveBeenCalledWith(-1001);
@@ -392,13 +585,17 @@ describe("身份结论按块直接冷读并与消费交错", () => {
       }
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(readIdentityPolicyVerdicts).toHaveBeenCalledTimes(2);
     expect(readAtCall[0]).toBe(0);
     // 第二次冷读发生在第一块**已经消费完**之后，而不是一开始就全部取完。
     expect(readAtCall[1]).toBe(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
-    expect(lastReplyText(sendMessage)).toContain(`的 ${records.length} 条入群记录中的 ${records.length} 条`);
+    expect(lastReplyText(sendMessage)).toBe(resultText({
+      recordCount: records.length,
+      scanned: records.length,
+      kicked: records.length,
+    }));
   });
 
   test("局部结论为白名单时即使实时缓存已冷也不踢", async () => {
@@ -411,7 +608,7 @@ describe("身份结论按块直接冷读并与消费交错", () => {
       })
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
@@ -426,7 +623,7 @@ describe("身份结论按块直接冷读并与消费交错", () => {
       })
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(requestBlocklistResweep).toHaveBeenCalledWith(-1001);
@@ -438,12 +635,12 @@ describe("身份结论按块直接冷读并与消费交错", () => {
       async (): Promise<IdentityPolicyVerdicts | null> => null
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     // 缺正/负结论时不能按「不在白名单」处置：那正是白名单管理员被误踢的路径。
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
-    expect(lastReplyText(sendMessage)).toContain("一个人都没动");
+    expect(lastReplyText(sendMessage)).toBe(IDENTITY_POLICY_UNAVAILABLE_TEXT);
   });
 
   test("中途冷读失败时只报已扫描的部分，并说明剩余没动", async () => {
@@ -460,14 +657,16 @@ describe("身份结论按块直接冷读并与消费交错", () => {
       }
     );
 
-    await handleBatchKickCommand(context());
+    await runCommand(context());
 
     expect(kickChatMemberWithOutcome).toHaveBeenCalledTimes(
       IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES
     );
-    expect(lastReplyText(sendMessage)).toContain(
-      `的 ${records.length} 条入群记录中的 ${IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES} 条`
-    );
-    expect(lastReplyText(sendMessage)).toContain("剩下的记录一条都没动");
+    expect(lastReplyText(sendMessage)).toBe(resultText({
+      recordCount: records.length,
+      scanned: IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
+      kicked: IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES,
+      aborted: true,
+    }));
   });
 });

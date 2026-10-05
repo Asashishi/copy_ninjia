@@ -174,18 +174,19 @@ function isExpectChain(node: ts.Expression): boolean {
 }
 
 /** 调用是否是匹配器调用：被调者是 `expect(...)` 属性链上的一个方法。 */
-function isMatcherCall(node: ts.Node): node is ts.CallExpression & { readonly expression: ts.PropertyAccessExpression } {
+export function isMatcherCall(node: ts.Node): node is ts.CallExpression & { readonly expression: ts.PropertyAccessExpression } {
   return ts.isCallExpression(node) &&
     ts.isPropertyAccessExpression(node.expression) &&
     isExpectChain(node.expression.expression);
 }
 
-function isStringLiteralNode(node: ts.Node): node is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral {
+/** 节点是否是字符串字面量或无插值模板字面量。 */
+export function isStringLiteralNode(node: ts.Node): node is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral {
   return ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
 }
 
 /** 匹配器实参之外出现的全部字符串字面量取值：测试自造的夹具输入。 */
-function fixtureLiterals(source: ts.SourceFile): ReadonlySet<string> {
+export function fixtureLiterals(source: ts.SourceFile): ReadonlySet<string> {
   const literals: Set<string> = new Set();
   const visit = (node: ts.Node): void => {
     if (isMatcherCall(node)) {

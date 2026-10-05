@@ -157,31 +157,22 @@ function createRecoveryTransportScope(worker: Worker, revisions: DiskIORecoveryR
 }
 
 /**
- * 开合重放区间标记。投递失败按 fatal 处理：开标记确保区间内写失败升级为停机，
- * 关标记确保恢复完成后的在线写回到常规失败语义。
+ * 开合一对恢复区间标记，投递失败按 fatal 处理：
+ * - recoveryReplay：重放区间，开标记确保区间内写失败升级为停机，关标记确保恢复完成后的在线写
+ *   回到常规失败语义。
+ * - storageFlushHold：镜像重放区间，区间内 Worker 暂缓共享 SQLite 的满批与定时提交，关标记后
+ *   按批次阈值一次提交（见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）。
+ * @param noun 日志里的标记名（如 `recovery replay mark`）。
  */
-function postRecoveryReplayMark(worker: Worker, active: boolean): boolean {
-  const request: RecoveryReplayRequest = { type: "recoveryReplay", active };
-  if (safePostDiskIO(worker, request, `recovery replay mark (${active ? "open" : "close"})`)) return true;
+function postRecoveryMarker(
+  worker: Worker,
+  request: RecoveryReplayRequest | StorageFlushHoldRequest,
+  noun: string
+): boolean {
+  if (safePostDiskIO(worker, request, `${noun} (${request.active ? "open" : "close"})`)) return true;
   stopWorkerAfterLoadFailure(
     worker,
-    `Worker rejected the ${active ? "opening" : "closing"} recovery replay mark`,
-    true
-  );
-  return false;
-}
-
-/**
- * 开合镜像重放区间标记。区间内 Worker 暂缓共享 SQLite 的满批与定时提交，关标记后
- * 按批次阈值一次提交（见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）。
- * 投递失败按 fatal 处理。
- */
-function postStorageFlushHold(worker: Worker, active: boolean): boolean {
-  const request: StorageFlushHoldRequest = { type: "storageFlushHold", active };
-  if (safePostDiskIO(worker, request, `storage flush hold (${active ? "open" : "close"})`)) return true;
-  stopWorkerAfterLoadFailure(
-    worker,
-    `Worker rejected the ${active ? "opening" : "closing"} storage flush hold`,
+    `Worker rejected the ${request.active ? "opening" : "closing"} ${noun}`,
     true
   );
   return false;
@@ -189,12 +180,15 @@ function postStorageFlushHold(worker: Worker, active: boolean): boolean {
 
 export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolean): Promise<void> {
   if (diskIORuntime.worker !== worker) return;
+  // 镜像重放走运行期恢复的 owner 判定，首次加载只认当前 Worker。
+  const stillOwner = (): boolean =>
+    replayMirrors ? isCurrentRecoveryWorker(worker) : diskIORuntime.worker === worker;
   const revisions: DiskIORecoveryRevisions = new DiskIORecoveryRevisions();
   if (replayMirrors) {
     // 按显式优先级等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
     // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。各领域镜像全部投递
     // 完成前共享 SQLite 不做满批提交。
-    if (!postStorageFlushHold(worker, true)) return;
+    if (!postRecoveryMarker(worker, { type: "storageFlushHold", active: true }, "storage flush hold")) return;
     for (const registration of diskIORuntime.respawnListeners) {
       const scope: RecoveryTransportScope = createRecoveryTransportScope(worker, revisions);
       let replayed: boolean;
@@ -221,16 +215,15 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
         return;
       }
     }
-    if (!postStorageFlushHold(worker, false)) return;
+    if (!postRecoveryMarker(worker, { type: "storageFlushHold", active: false }, "storage flush hold")) return;
   }
   // 重放区间要圈起来告诉 Worker：区间内的写失败没有任何后续 flush 会去问，
   // 只能按 fatal 停机处理（见 types/diskIO/messages.ts 的 RecoveryReplayRequest）。整段
   // 排空是同步的，中间不会插进在线消息，因此这对标记框住的恰好是重放的那一批。
   if (diskIORuntime.pendingBusinessMessages.size > 0) {
-    if (!postRecoveryReplayMark(worker, true)) return;
+    if (!postRecoveryMarker(worker, { type: "recoveryReplay", active: true }, "recovery replay mark")) return;
     while (diskIORuntime.pendingBusinessMessages.size > 0) {
-      if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
-      if (!replayMirrors && diskIORuntime.worker !== worker) return;
+      if (!stillOwner()) return;
       const message: DiskBusinessMessage = diskIORuntime.pendingBusinessMessages.peek()!;
       if (revisions.covers(message)) {
         diskIORuntime.pendingBusinessMessages.shift();
@@ -242,10 +235,9 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
         return;
       }
     }
-    if (!postRecoveryReplayMark(worker, false)) return;
+    if (!postRecoveryMarker(worker, { type: "recoveryReplay", active: false }, "recovery replay mark")) return;
   }
-  if (replayMirrors && !isCurrentRecoveryWorker(worker)) return;
-  if (!replayMirrors && diskIORuntime.worker !== worker) return;
+  if (!stillOwner()) return;
   clearRuntimeRecoveryTimer();
   diskIORuntime.runtimeRecoveryWorker = null;
   diskIORuntime.writable = true;

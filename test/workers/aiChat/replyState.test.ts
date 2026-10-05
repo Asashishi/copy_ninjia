@@ -24,7 +24,7 @@ import { typingHeartbeats } from "../../../packages/cache/workers/aiChat/heartbe
 import { resetAiChatWorkerCache } from "../../../packages/cache/workers/aiChat/index";
 import { botInfoState } from "../../../packages/cache/workers/aiChat/identity";
 import { chatBuffers, chatLastActivityTimes, dirtyMemoryChats } from "../../../packages/cache/workers/aiChat/memory";
-import { chatMoodExpiresAts, chatMoods } from "../../../packages/cache/workers/aiChat/mood";
+import { currentMoodState } from "../../../packages/cache/workers/aiChat/mood";
 import { compactionChains, compactionPendingCounts } from "../../../packages/cache/workers/aiChat/compaction";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
 import { LinkedQueue } from "../../../packages/libs/linkedQueue";
@@ -90,7 +90,7 @@ describe("AI 回复代际状态", () => {
   test("失效先中止旧代信号，并等待该代全部 generation-sensitive 任务 settle", async () => {
     const chatId: number = -1006;
     const generation: number = cachedReplyGeneration(chatId);
-    const signal: AbortSignal = replyGenerationSignal(chatId, generation);
+    const signal: AbortSignal = replyGenerationSignal(generation);
     let settleTask: (() => void) | undefined;
     const task: Promise<void> = new Promise<void>((resolve: () => void): void => {
       settleTask = resolve;
@@ -171,8 +171,8 @@ describe("AI 回复代际状态", () => {
   test("Worker 排空会中止全部代次并等待所有 generation-sensitive 任务", async () => {
     const firstGeneration: number = cachedReplyGeneration(-1008);
     const secondGeneration: number = cachedReplyGeneration(-1009);
-    const firstSignal: AbortSignal = replyGenerationSignal(-1008, firstGeneration);
-    const secondSignal: AbortSignal = replyGenerationSignal(-1009, secondGeneration);
+    const firstSignal: AbortSignal = replyGenerationSignal(firstGeneration);
+    const secondSignal: AbortSignal = replyGenerationSignal(secondGeneration);
     let settleFirst: (() => void) | undefined;
     let settleSecond: (() => void) | undefined;
     trackReplyGenerationTask(-1008, firstGeneration, new Promise<void>((resolve: () => void): void => {
@@ -208,8 +208,10 @@ describe("AI 回复代际状态", () => {
     messages.push(bufferedMessageFixture({ messageId: 2, id: 2, firstName: "Alice", lastName: "", text: "hi", at: "" }));
     chatBuffers.set(-1002, messages);
     dirtyMemoryChats.add(-1002);
-    chatMoods.set(-1002, { name: "平静", weight: 1, instruction: "保持平静" });
-    chatMoodExpiresAts.set(-1002, Date.now() + 60_000);
+    currentMoodState.current = {
+      mood: { name: "平静", weight: 1, instruction: "保持平静" },
+      expiresAt: Date.now() + 60_000,
+    };
     chatLastActivityTimes.set(-1002, Date.now());
     compactionChains.set(-1002, Promise.resolve());
     compactionPendingCounts.set(-1002, 1);
@@ -237,8 +239,7 @@ describe("AI 回复代际状态", () => {
     expect(botInfoState.current).toBeNull();
     expect(chatBuffers.size).toBe(0);
     expect(dirtyMemoryChats.size).toBe(0);
-    expect(chatMoods.size).toBe(0);
-    expect(chatMoodExpiresAts.size).toBe(0);
+    expect(currentMoodState.current).toBeNull();
     expect(chatLastActivityTimes.size).toBe(0);
     expect(compactionChains.size).toBe(0);
     expect(compactionPendingCounts.size).toBe(0);

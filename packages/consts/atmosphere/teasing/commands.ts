@@ -21,7 +21,7 @@ export const BOT_COMMANDS: readonly Readonly<BotCommand>[] = [
   { command: "flood_control", description: "用 enable/disable 开关本群防刷屏禁言，只有获授权者配碰，刷屏杂鱼可别手抖哦♡" },
   { command: "antiraid", description: "用 enable/disable 开关本群入群验证与防冲群私密模式，只有获授权者配碰，关掉就没人替你拦僵尸了哦杂鱼♡" },
   { command: "bot_status", description: "查看本机进程、全局模型能力、Telegram 出站、本群权限与已开启功能，连本天才会什么都记不住吗，笨蛋♡" },
-  { command: "mood", description: "query 偷看本群 AI 当前心情，群成员都能问；switch 重抽心情，只有获授权者配左右本天才，杂鱼别得意♡" },
+  { command: "mood", description: "query 偷看本天才当前心情（各群共用一份），群成员都能问；switch 重抽心情，只有获授权者配左右本天才，杂鱼别得意♡" },
   { command: "init", description: "用 enable/disable 开关本群机器人监听/初始化，只有超级管理员配决定本天才管不管，杂鱼♡" },
   { command: "quiet", description: "让本天才安静 1~15 分钟，默认 3 分钟；嫌吵就自己说清楚呀，笨蛋♡" },
   { command: "unquiet", description: "提前解除 /quiet，让本天才重新开口；这么快就想我了吗，杂鱼♡" },

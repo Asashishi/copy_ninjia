@@ -4,11 +4,19 @@ import type { LockdownDispatcher, LockdownEntry } from "../../types/antiRaid/int
 import { deleteMessage, sendMessage, telegramApi } from "../../infra/telegram";
 import { restoreLockdownInvitePermission } from "../../infra/telegram/lockdownPermissions";
 import { INDEPENDENT_CHAT_PERMISSIONS_OTHER } from "../../consts/telegram";
+import { RESTORE_PERMANENT_FAILURE_LOG_LIMIT } from "../../consts/antiRaid/lockdown";
+import { isPermissionDenied } from "../../infra/telegram/actions/core";
 import { lastLockdownIntentId, lockdownApiRunner, lockdownEntries } from "../../cache/workers/antiRaid/lockdown";
 import { normalizeChatPermissions } from "../../libs/chatPermissions";
+import { isAbortError } from "../../libs/abortSignal";
 import { logger } from "../../infra/logger";
 import { trackAntiRaidTask } from "./taskTracker";
 import { lockdownAnnouncementText } from "./lockdownJoinWindow";
+
+/** Worker 停机 drain 撤销的请求不是远端故障，不记错误日志（口径同 runTelegramAction）。 */
+function logLockdownApiError(message: string, error: unknown): void {
+  if (!isAbortError(error)) logger.error(message, error);
+}
 
 /** 在当前 Worker 内分配单调 intent；持久化与恢复约束见 docs/cn/04-invariants.md。 */
 export function nextLockdownIntentId(): number {
@@ -50,7 +58,7 @@ export function beginLockdownAnnouncement(chatId: number, joinCount: number | un
       });
       if (sentMessageId !== undefined) messageId = sentMessageId;
     } catch (error: unknown) {
-      logger.error(`Error sending anti-raid lockdown announcement for chat ${chatId}:`, error);
+      logLockdownApiError(`Error sending anti-raid lockdown announcement for chat ${chatId}:`, error);
     }
     if (lockdownEntries.get(chatId) !== entry) {
       if (messageId !== undefined) deleteLockdownAnnouncement(chatId, messageId);
@@ -72,7 +80,7 @@ export function deleteLockdownAnnouncement(chatId: number, messageId: number): v
     try {
       await deleteMessage(chatId, messageId, telegramApi);
     } catch (error: unknown) {
-      logger.error(
+      logLockdownApiError(
         `Error deleting the anti-raid lockdown announcement in chat ${chatId}:`,
         error
       );
@@ -107,7 +115,7 @@ export function prepareApplyLockdown(chatId: number, dispatchLockdown: LockdownD
         intentId: nextLockdownIntentId(),
       });
     } catch (error: unknown) {
-      logger.error("Error preparing anti-raid lockdown:", error);
+      logLockdownApiError("Error preparing anti-raid lockdown:", error);
       if (isCurrent()) dispatchLockdown(chatId, { type: "applyPreparationFailed" });
     }
   });
@@ -139,7 +147,7 @@ export function commitApplyLockdown(chatId: number, dispatchLockdown: LockdownDi
       }
       currentPermissions = chat.permissions;
     } catch (error: unknown) {
-      logger.error(
+      logLockdownApiError(
         "Error refreshing chat permissions before anti-raid lockdown; abandoning unapplied intent:",
         error
       );
@@ -154,13 +162,19 @@ export function commitApplyLockdown(chatId: number, dispatchLockdown: LockdownDi
       );
       if (isCurrent()) dispatchLockdown(chatId, { type: "applyResult", ok: true });
     } catch (error: unknown) {
-      logger.error("Error applying anti-raid lockdown; scheduling a restorative reconciliation:", error);
+      logLockdownApiError("Error applying anti-raid lockdown; scheduling a restorative reconciliation:", error);
       if (isCurrent()) dispatchLockdown(chatId, { type: "applyResult", ok: false, restoreIntentId: nextLockdownIntentId() });
     }
   });
 }
 
-/** 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。 */
+/**
+ * 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。
+ *
+ * 权限被拒的失败计入条目的 restorePermanentFailures，超过 RESTORE_PERMANENT_FAILURE_LOG_LIMIT
+ * 后降为 warn（重试退避见 lockdownRuntime.ts 的 scheduleRestoreRetry）；Worker 停机撤销的请求
+ * 不改计数、不记日志，其它结局清零。
+ */
 export function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions, dispatchLockdown: LockdownDispatcher): void {
   runLockdownApiCall(chatId, async (): Promise<void> => {
     try {
@@ -169,9 +183,29 @@ export function beginRestoreLockdown(chatId: number, originalPermissions: ChatPe
         originalPermissions,
         api: telegramApi,
       });
+      const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+      if (entry !== undefined) entry.restorePermanentFailures = 0;
       dispatchLockdown(chatId, { type: "restoreResult", ok: true });
     } catch (error: unknown) {
-      logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
+      if (isAbortError(error)) {
+        dispatchLockdown(chatId, { type: "restoreResult", ok: false });
+        return;
+      }
+      const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+      let failures: number = 0;
+      if (entry !== undefined) {
+        entry.restorePermanentFailures = isPermissionDenied(error) ? entry.restorePermanentFailures + 1 : 0;
+        failures = entry.restorePermanentFailures;
+      }
+      if (failures <= RESTORE_PERMANENT_FAILURE_LOG_LIMIT) {
+        logger.error(`Failed to restore chat permissions for ${chatId}, retrying shortly:`, error);
+      } else {
+        logger.warn(
+          `Restoring chat permissions for ${chatId} was denied ${failures} times in a row; ` +
+          "keeping the lockdown record and retrying with backoff:",
+          error
+        );
+      }
       dispatchLockdown(chatId, { type: "restoreResult", ok: false });
     }
   });
@@ -198,7 +232,7 @@ export function reapplyLockdownRestriction(chatId: number, dispatchLockdown: Loc
       );
       if (isCurrent()) dispatchLockdown(chatId, { type: "reapplyResult", ok: true });
     } catch (error: unknown) {
-      logger.error(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded; retrying shortly:`, error);
+      logLockdownApiError(`Error reapplying anti-raid restriction for chat ${chatId} after a stale restore succeeded; retrying shortly:`, error);
       if (isCurrent()) dispatchLockdown(chatId, { type: "reapplyResult", ok: false });
     }
   });

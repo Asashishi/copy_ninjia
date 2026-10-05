@@ -23,8 +23,8 @@
 ## 並行 batch の追加
 
 - **決定論的セトルメント**：固定かつ相互に依存しない Promise は `Promise.allSettled` ですべての完了を待ち、各 rejection を個別に処理します。**セトルメントをエラーの握りつぶしに使うことは固く禁止**します。
-- **動的入力の流量制御**：入力規模が動的に増加する可能性がある場合は、[`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts) を再利用し、明示的な並行ハード上限を設けたうえで、返却される `item/index/attempt` から失敗した identity を記録します。入力全体をあらかじめ `map` して一括 Promise 化することは禁止します。
-- **有限バックオフ**：ドメインが一時的エラーを識別できる場合にのみ有限バックオフを設定し、`shouldRetry` と `onRetry` によりエラー種別を限定してバックオフを記録します。下位レイヤーですでに再試行されているロジックを重複して重ねてはならず、非冪等な副作用を再試行することは厳禁です。
+- **動的入力の流量制御**：入力規模が動的に増加する可能性がある場合は、[`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts) を再利用し、明示的な並行ハード上限を設けたうえで、返却される `item/index` から失敗した identity を記録します。入力全体をあらかじめ `map` して一括 Promise 化することは禁止します。
+- **有限バックオフ**：ドメインが一時的エラーを識別できる場合にのみ、そのドメインの owner 内で有限バックオフを設定し、エラー種別を限定して各バックオフを記録します。`runBoundedSettledBatch` は各項目を 1 回だけ実行し、再試行は担いません。下位レイヤーですでに再試行されているロジックを重複して重ねてはならず、非冪等な副作用を再試行することは厳禁です。
 - **Drain 待機**：登録済みタスクの drain を待つためだけのスナップショット取得であれば、タスクプールの導入は不要です。ただし、スナップショット自体が新規タスクを開始せず、各タスクにエラー隔離が組み込まれていることが前提です。
 
 ---
@@ -38,7 +38,7 @@
 2. **モジュールのエクスポート**：`packages/commands/index.ts` に追加。
 3. **コマンドの登録**：
    - [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) の `commands` サブチェーンに `commands.command("xxx", ...)` を追加。
-   - **`bot` へ直接登録することは厳禁**：コマンドはすべて `bot.on(":entities:bot_command")` サブチェーンの背後に収めます。登録位置は init ゲート、グループ別直列化、プライベートチャットゲート、参加認証ミドルウェアの後方に位置し、これら先行セキュリティ境界を自動的に継承します。
+   - **`bot` へ直接登録することは厳禁**：コマンドはすべて前置チェーンの `:entities:bot_command` ゲートの後ろにある子 Composer に登録します（`app/registerHandlers.ts`）。登録位置は init ゲート、グループ別直列化、プライベートチャットゲート、参加認証ミドルウェアの後方に位置し、これら先行セキュリティ境界を自動的に継承します。
 4. **プライベートチャットゲート設定**：コマンドをプライベートチャットでも許可する場合は、[`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) を同期調整する必要があります。現在、プライベートチャットコマンドは `/send` のみが明示的に許可されています。グループ専用コマンドの場合は変更不要です。
 5. **メニュー設定**：`packages/consts/atmosphere/{teasing,plain}/commands.ts` の両方の `BOT_COMMANDS` にコマンド説明を追加。
 6. **パラメータ定数**：クールダウン、しきい値などの定数は `packages/consts/commands.ts` または対応する `packages/consts/<domain>.ts` に配置し、中国語 JSDoc を付与。
@@ -81,6 +81,7 @@
 - 文案テーブルは固定文字列とフォーマッター関数を保持し、Telegram entities オフセットは最終レンダリングテキストから計算します。
 - `/咬` などのアクションコマンドの解析文案と表示文案は個別に管理します。
 - AI ペルソナはデフォルトで `packages/consts/aiChat/prompts/persona.ts` を使用し、`prompt/persona.md` が存在する場合はカスタムファイルを採用します。
+- `send_voice` のツール説明はデフォルトで `agent.tts.bot_language` に応じて `packages/consts/aiChat/prompts/tools.ts` の `VOICE_LANGUAGE_PROMPTS` を使用し、`prompt/voice_tool.md` が存在する場合はカスタムファイルを採用します。
 - 他言語をサポートしたい場合は、リポジトリを自ら fork し、上記の文案モジュールと設定を完全に差し替えることを推奨します。
 
 ---
@@ -148,7 +149,9 @@
 
 ## ペルソナまたは JSON 設定の変更
 
-- **ペルソナ管理**：内蔵人設は `packages/consts/aiChat/prompts/persona.ts` に配置。カスタム人設はプロジェクトルートに `prompt/persona.md` を配置することで、再起動後にグローバルに適用されます。通知は明示した `atmosphere` を優先し、省略時はカスタム人設で通常版を使います。
+- **ペルソナ管理**：内蔵人設は `packages/consts/aiChat/prompts/persona.ts` に配置。カスタム人設はプロジェクトルートに `prompt/persona.md`（例は [`prompt_example/persona.md`](../../prompt_example/persona.md)）を配置することで、再起動後にグローバルに適用されます。通知は明示した `atmosphere` を優先し、省略時はカスタム人設で通常版を使います。
+- **ボイスツール説明の管理**：内蔵説明は `packages/consts/aiChat/prompts/tools.ts` の `VOICE_LANGUAGE_PROMPTS`（`en` / `zh` / `ja` 各 1 份）に配置。プロジェクトルートに `prompt/voice_tool.md` を配置すると、再起動後にその本文で `send_voice` の説明全体を置き換えます。引数の説明とその他のボイス関連文言は引き続き `bot_language` で選ばれます。例は [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) を参照。
+- **プロンプト例の管理**：`prompt_example/` はリリースパッケージに同梱されます。`test/config/promptExamples.test.ts` は、2 つの例が `loadPromptFile` を通ること、`voice_tool.md` の残量案内・1 ターンの件数・`text` / `tone` の長さ上限がコード定数と一致すること、セリフ言語が `config_example/dynamic/agent.json` の `bot_language` と一致することを要求します。`MAX_VOICES_PER_REPLY`、`VOICE_TEXT_MAX_CHARS`、`VOICE_TONE_MAX_CHARS` または例の `bot_language` を変えるときは例も合わせて更新します。
 - **設定ファイル**：開発時は Git 除外対象の `config/` のみを編集。`config_example/` はテンプレートとしてのみ使用。
   - `config/dynamic/` はホットリロードに対応（`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`）。
   - `config/static/` は再起動後に反映（`bot.json`、`g-auth.json`）。

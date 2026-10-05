@@ -8,21 +8,20 @@ import { isAiChatConfigured } from "./availability";
 import { getAgentDeploymentConfig } from "../config/agent";
 import { getMoodConfig } from "../config/mood";
 import { getPersona } from "../config/persona";
+import { voiceToolPromptCache } from "../cache/perThread/config";
 import { getStickerConfig } from "../config/stickers";
 import { beginAiMemoryTeardown, finishAiMemoryTeardown, nextAiMemoryRevision, requestAiMemoryDelete, settleAiMemoryTeardownWorker } from "./memoryMirror";
 import {
   aiChatBotInfo,
   aiChatWorkerState,
-  aiChatInvalidateRequestCounter,
-  aiChatInvalidateWaiters,
+  aiChatInvalidateRequests,
   aiMemoryFlushBarrier,
   aiMemoryUsages,
   lastInitState,
   latestAiMemories,
   latestAiMemoryRevisions,
   latestStickerCatalogs,
-  moodRequestCounter,
-  moodRequestWaiters,
+  moodRequests,
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
   pendingAiMemoryTeardowns,
@@ -45,11 +44,9 @@ import type { HotDeploymentConfigChanges } from "../types/config";
 import { SUPER_ADMIN_USER_ID } from "../config/bot";
 import { getTimeZone } from "../config/time";
 import { botAtmosphere } from "../infra/atmosphere";
-import type {
-  AiChatInvalidateWaiter,
-  AiMemoryTeardown,
-  MoodRequestWaiter,
-} from "../types/aiChat/waiters";
+import type { AiMemoryTeardown } from "../types/aiChat/waiters";
+import type { WorkerRequestOutcome } from "../types/workerRequest";
+import { beginWorkerRequest, failAllWorkerRequests, settleWorkerRequest } from "../libs/workerRequestTable";
 import type { SupervisedWorkerHandle } from "../infra/supervisedWorker";
 import type { WorkerDuplexInbound } from "../types/workerDuplex";
 import type { TelegramWorkerRequest } from "../types/telegramWorker";
@@ -57,7 +54,6 @@ import {
   handleAiWorkerTelegramRequest,
   telegramWorkerResponseTransfer,
 } from "../infra/telegram/workerRequests";
-import { toError } from "../libs/errorMessage";
 import { activeStickerCatalogs, mirrorStickerCatalog, pruneStickerCatalogMirror } from "./stickerMirror";
 import { failAllVoiceSynthesisWaiters, requestVoiceSynthesis, settleVoiceSynthesis } from "./voiceSynthesis";
 import type { VoiceSynthesisRequest } from "./voiceSynthesis";
@@ -65,16 +61,10 @@ import type { VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
 import { failAllWebDigestWaiters, requestWebDigest, settleWebDigest } from "./webDigest";
 import type { WebDigestCompositionResult, WebDigestRequest } from "../types/webDigest";
 
-/** 取消一张等待表里全部等待者的超时并以同一原因拒绝，随后清空。 */
-function rejectAllWaiters(
-  waiters: Map<number, MoodRequestWaiter> | Map<number, AiChatInvalidateWaiter>,
-  reason: string
-): void {
-  for (const waiter of waiters.values()) {
-    clearTimeout(waiter.timer);
-    waiter.reject(new Error(reason));
-  }
-  waiters.clear();
+/** 心情与群失效请求的结局：成功交回值，失败把 Error 抛给调用方。 */
+function unwrapWorkerRequestOutcome<T>(outcome: WorkerRequestOutcome<T>): T {
+  if (outcome.ok) return outcome.value;
+  throw outcome.error;
 }
 
 /**
@@ -83,8 +73,11 @@ function rejectAllWaiters(
  */
 function failAllAiChatWaiters(moodReason: string, invalidateReason: string): void {
   aiMemoryFlushBarrier.settleAll("failed");
-  rejectAllWaiters(moodRequestWaiters, moodReason);
-  rejectAllWaiters(aiChatInvalidateWaiters, invalidateReason);
+  failAllWorkerRequests<WorkerRequestOutcome<string>>(moodRequests, { ok: false, error: new Error(moodReason) });
+  failAllWorkerRequests<WorkerRequestOutcome<undefined>>(
+    aiChatInvalidateRequests,
+    { ok: false, error: new Error(invalidateReason) }
+  );
   failAllVoiceSynthesisWaiters();
   failAllWebDigestWaiters();
 }
@@ -174,31 +167,13 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
           teardown.workerSettled = true;
           finishAiMemoryTeardown(event.chatId);
         }
-        const waiter: AiChatInvalidateWaiter | undefined =
-          aiChatInvalidateWaiters.get(event.requestId);
-        if (!waiter) break;
-        aiChatInvalidateWaiters.delete(event.requestId);
-        clearTimeout(waiter.timer);
-        if (waiter.chatId !== event.chatId) {
-          waiter.reject(new Error("AI Worker returned a mismatched chat invalidate receipt."));
-        } else {
-          waiter.resolve();
-        }
+        settleWorkerRequest(aiChatInvalidateRequests, event.requestId, { ok: true, value: undefined });
         break;
       }
       case "moodQueried":
-      case "moodSwitched": {
-        const waiter: MoodRequestWaiter | undefined = moodRequestWaiters.get(event.requestId);
-        if (!waiter) break;
-        moodRequestWaiters.delete(event.requestId);
-        clearTimeout(waiter.timer);
-        if (waiter.chatId !== event.chatId || waiter.expectedEventType !== event.type) {
-          waiter.reject(new Error("AI Worker returned a mismatched mood receipt."));
-        } else {
-          waiter.resolve(event.moodName);
-        }
+      case "moodSwitched":
+        settleWorkerRequest(moodRequests, event.requestId, { ok: true, value: event.moodName });
         break;
-      }
       case "voiceSynthesized":
         settleVoiceSynthesis(event);
         break;
@@ -272,10 +247,11 @@ export function postAiChatOrThrow(message: AiChatWorkerMessage): void {
 }
 
 /**
- * 启动 AI Worker 并注入身份、本进程人设与通知风格及主线程当前生效的配置快照，再补发语音合成每日计数。FIFO
+ * 启动 AI Worker 并注入身份、本进程人设、send_voice 说明与通知风格及主线程当前生效的配置快照，再补发语音合成每日计数。FIFO
  * 保证 init 先于一切 record/trigger 到达；Worker 靠它在转录里认出自己并自录自己
  * 发的消息。投递全部成功后才记 lastInitState 并发布可用标记：Worker 崩溃重启要
- * 重放这条消息，投递失败时两者都保持原值。调用方负责确认 AI 前提的 holder 已齐
+ * 重放这条消息，投递失败时两者都保持原值，并终止已经建好的 Worker 后上抛（启动与
+ * 热重载恢复都不会再替它终止）。调用方负责确认 AI 前提的 holder 已齐
  * （启动走 readiness，热重载走 config/readiness.ts 的 aiChatReadinessFromHolders）。
  */
 export function startAiChatWorker(botInfo: AiBotInfo): void {
@@ -291,9 +267,17 @@ export function startAiChatWorker(botInfo: AiBotInfo): void {
     mood: getMoodConfig(),
     stickers: getStickerConfig(),
     persona: getPersona(),
+    voiceToolPrompt: voiceToolPromptCache.current,
   };
-  postAiChatOrThrow(message);
-  postAiChatOrThrow({ type: "hydrateTtsUsage", usage: getTtsUsage() });
+  try {
+    postAiChatOrThrow(message);
+    postAiChatOrThrow({ type: "hydrateTtsUsage", usage: getTtsUsage() });
+  } catch (error: unknown) {
+    void terminateAiChatWorker().catch((terminateError: unknown): void => {
+      logger.error("Failed to terminate the AI Worker after its initialization failed:", terminateError);
+    });
+    throw error;
+  }
   lastInitState.current = message;
   aiChatWorkerState.available = true;
 }
@@ -377,42 +361,27 @@ export async function terminateAiChat(): Promise<void> {
 }
 
 /**
- * 向 aiChatWorker 查询或重抽某群心情，并等待带 requestId 的结果回执。两类
+ * 向 aiChatWorker 查询或重抽全局唯一的心情，并等待带 requestId 的结果回执。两类
  * 请求共用等待表、编号空间与超时生命周期；Worker 不发 Telegram 消息。
  *
  * - `queryMood`（/mood query）：读取当前有效心情；自然到期仍由 Worker 的 currentMood
  *   统一处理，不强制切换尚未到期的心情。
  * - `switchMood`（/mood switch）：要求 Worker 无视剩余寿命立即重抽，并带回新心情名。
  */
-export function requestAiMood(
-  chatId: number,
-  requestType: "queryMood" | "switchMood"
-): Promise<string> {
-  return new Promise((resolve: (value: string | PromiseLike<string>) => void, reject: (reason?: unknown) => void): void => {
-    const requestId: number = ++moodRequestCounter.current;
-    const deadlineAt: number = Date.now() + MOOD_REQUEST_TIMEOUT_MS;
-    const waiter: MoodRequestWaiter = {
-      chatId,
-      expectedEventType: requestType === "queryMood" ? "moodQueried" : "moodSwitched",
-      resolve,
-      reject,
-      timer: setTimeout((): void => {
-        moodRequestWaiters.delete(requestId);
-        reject(new Error(
-          `AI ${requestType} request for chat ${chatId} timed out after ${MOOD_REQUEST_TIMEOUT_MS}ms.`
-        ));
-      }, MOOD_REQUEST_TIMEOUT_MS),
-    };
-    // 等待项在 post 之前登记，同步回执也不会丢（同 libs/flushBarrier.ts 的顺序约定）。
-    moodRequestWaiters.set(requestId, waiter);
-    try {
-      postAiChatOrThrow({ type: requestType, chatId, requestId, deadlineAt });
-    } catch (error: unknown) {
-      moodRequestWaiters.delete(requestId);
-      clearTimeout(waiter.timer);
-      reject(toError(error));
-    }
-  });
+export async function requestAiMood(requestType: "queryMood" | "switchMood"): Promise<string> {
+  const deadlineAt: number = Date.now() + MOOD_REQUEST_TIMEOUT_MS;
+  return unwrapWorkerRequestOutcome(await beginWorkerRequest<WorkerRequestOutcome<string>>({
+    table: moodRequests,
+    timeoutMs: MOOD_REQUEST_TIMEOUT_MS,
+    // 同 postAiChatOrThrow：同步拒绝时关闭可用标记。
+    post: (requestId: number): boolean => {
+      if (post({ type: requestType, requestId, deadlineAt })) return true;
+      aiChatWorkerState.available = false;
+      return false;
+    },
+    timedOut: { ok: false, error: new Error(`AI ${requestType} request timed out after ${MOOD_REQUEST_TIMEOUT_MS}ms.`) },
+    rejected: { ok: false, error: new Error("AI Worker is unavailable.") },
+  }));
 }
 
 /**
@@ -448,28 +417,20 @@ export async function invalidateAiChat(chatId: number): Promise<void> {
   const persistedDelete: Promise<void> = requestAiMemoryDelete(chatId, true);
   let workerInvalidated: Promise<void> | undefined;
   if (aiChatWorkerState.available) {
-    const requestId: number = ++aiChatInvalidateRequestCounter.current;
-    const teardown: AiMemoryTeardown | undefined = pendingAiMemoryTeardowns.get(chatId);
-    if (teardown !== undefined) teardown.requestId = requestId;
-    workerInvalidated = new Promise(
-      (resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
-        const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-          aiChatInvalidateWaiters.delete(requestId);
-          reject(new Error(
-            `AI chat invalidation for chat ${chatId} timed out after ${AI_CHAT_INVALIDATE_TIMEOUT_MS}ms.`
-          ));
-        }, AI_CHAT_INVALIDATE_TIMEOUT_MS);
-        aiChatInvalidateWaiters.set(requestId, { chatId, resolve, reject, timer });
-      }
-    );
-    if (!post({ type: "invalidateChat", chatId, requestId })) {
-      const waiter: AiChatInvalidateWaiter | undefined = aiChatInvalidateWaiters.get(requestId);
-      aiChatInvalidateWaiters.delete(requestId);
-      if (waiter !== undefined) {
-        clearTimeout(waiter.timer);
-        waiter.reject(new Error("AI Worker is unavailable while invalidating chat runtime."));
-      }
-    }
+    workerInvalidated = beginWorkerRequest<WorkerRequestOutcome<undefined>>({
+      table: aiChatInvalidateRequests,
+      timeoutMs: AI_CHAT_INVALIDATE_TIMEOUT_MS,
+      post: (requestId: number): boolean => {
+        const teardown: AiMemoryTeardown | undefined = pendingAiMemoryTeardowns.get(chatId);
+        if (teardown !== undefined) teardown.requestId = requestId;
+        return post({ type: "invalidateChat", chatId, requestId });
+      },
+      timedOut: {
+        ok: false,
+        error: new Error(`AI chat invalidation for chat ${chatId} timed out after ${AI_CHAT_INVALIDATE_TIMEOUT_MS}ms.`),
+      },
+      rejected: { ok: false, error: new Error("AI Worker is unavailable while invalidating chat runtime.") },
+    }).then(unwrapWorkerRequestOutcome);
   }
   const settlements: PromiseSettledResult<void>[] = await Promise.allSettled([
     persistedDelete,

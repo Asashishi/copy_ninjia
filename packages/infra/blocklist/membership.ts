@@ -21,6 +21,7 @@ import { getChatStateCache } from "../storage/stateStore";
 import { isManagedAdminChat } from "./sweepEligibility";
 import { flushDiskIODomainOutcome } from "../diskIO";
 import { logger } from "../logger";
+import { throwIfUpdateAborted } from "../updateContext";
 import { forgetUserBlocklistRemovals } from "./outbox";
 import type { DomainFlushOutcome } from "../../types/diskIO/replies";
 import {
@@ -30,7 +31,7 @@ import {
   queueIdentityPolicyWrite,
 } from "../identityStorage";
 import { IDENTITY_DATABASE_PATH } from "../../consts/paths";
-import { clearTemporaryAdBypassActivity } from
+import { clearTemporaryAdBypassActivityOrThrow } from
   "../identityPolicy/temporaryAdBypass";
 import type { TelegramIdentityMetadata } from "../../types/identityPolicy";
 
@@ -72,7 +73,7 @@ export interface RunManagedChatBatchParams<T> {
 /**
  * 对 `managedAdminChatIds` 的清单做有界并发处置（并发度 `MANAGED_CHAT_BATCH_CONCURRENCY`）。
  * 结果数组与输入同序结算，与并发度无关；单群失败（意外异常或调用方判定的业务失败）
- * 不中断其余群的处置。
+ * 不中断其余群的处置。update 已取消时等全部群结算后上抛取消，不逐群记意外错误。
  */
 export async function runManagedChatBatch<T>({
   chatIds,
@@ -87,13 +88,15 @@ export async function runManagedChatBatch<T>({
       execute: ({ item: targetChatId }: BoundedBatchExecution<number>): Promise<T> =>
         execute(targetChatId),
     });
+  // update 被取消时各群的 rejection 都是取消本身：先上抛，不逐群记意外错误。
+  throwIfUpdateAborted();
   const outcomes: ManagedChatOutcome<T>[] = [];
   for (const settlement of settlements) {
     if (settlement.status === "rejected") {
       // 常规 API 错误已在适配层归一化成业务结果；这里只处理意外 rejection。
       logger.error(
         `Unexpected error while running ${action} in chat ${settlement.item} ` +
-        `(batch index ${settlement.index}, attempt ${settlement.attempt}):`,
+        `(batch index ${settlement.index}):`,
         settlement.reason
       );
     }
@@ -147,11 +150,7 @@ export function blockUser(
 ): boolean {
   if (isUserBlocked(userId)) return false;
   const blockedAt: string = formatLocalTime(Date.now());
-  if (!clearTemporaryAdBypassActivity(userId)) {
-    throw new Error(
-      `Temporary ad bypass reset for identity ${userId} was rejected by the persistence Worker.`
-    );
-  }
+  clearTemporaryAdBypassActivityOrThrow(userId);
   queueIdentityPolicyWrite("blocklist", userId, { blockedAt, meta });
   return true;
 }

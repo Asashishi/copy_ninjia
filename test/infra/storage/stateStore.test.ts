@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import { waitUntil } from "../../helpers/waitUntil";
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +35,11 @@ import type {
 } from "../../../packages/types/chatState";
 import { botPermissions } from "../../helpers/botPermissions";
 import { chatStateOf } from "../../helpers/chatState";
+
+/** 假时钟下推进 timer 后，让 timer 回调里排出的 Promise 链跑完；条件成立即提前返回。 */
+async function settleMicrotasks(condition: () => boolean = (): boolean => false): Promise<void> {
+  for (let turn: number = 0; turn < 100 && !condition(); turn++) await Promise.resolve();
+}
 
 /**
  * 让某一条路径的 stat 或 bytes 以给定 errno 失败，其余路径走真实 Bun.file。
@@ -139,66 +144,84 @@ describe("StateStore", () => {
     await expect(store.flush(20, true)).resolves.toBe("failed");
   });
 
-  test("后台写在合并窗口到期前不落盘，到期只写出窗口内的最新值", async () => {
-    const writes: string[] = [];
-    const store = new StateStore({
-      backgroundDelayMs: 20,
-      writeText: async (_path, content) => {
-        writes.push(content);
-      },
+  /**
+   * 下面三条按合并窗口与重试退避的先后关系断言，用假时钟逐毫秒推进，不依赖事件循环
+   * 在这台机器上恰好多快：真实 timer 下，一次超过窗口的卡顿就会让「到期前不写」读到已写。
+   */
+  describe("后台合并窗口（假时钟）", () => {
+    beforeEach((): void => { jest.useFakeTimers(); });
+    afterEach((): void => { jest.useRealTimers(); });
+
+    test("后台写在合并窗口到期前不落盘，到期只写出窗口内的最新值", async () => {
+      const writes: string[] = [];
+      const store = new StateStore({
+        backgroundDelayMs: 20,
+        writeText: async (_path, content) => {
+          writes.push(content);
+        },
+      });
+
+      await store.save(schema(50), { waitForPersistence: false });
+      await store.save(schema(51), { waitForPersistence: false });
+      jest.advanceTimersByTime(19);
+      await settleMicrotasks();
+      expect(writes).toHaveLength(0);
+
+      jest.advanceTimersByTime(1);
+      await settleMicrotasks((): boolean => writes.length > 0);
+      jest.advanceTimersByTime(20);
+      await settleMicrotasks();
+      expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(51)]);
     });
 
-    await store.save(schema(50), { waitForPersistence: false });
-    await store.save(schema(51), { waitForPersistence: false });
-    await Bun.sleep(0);
-    expect(writes).toHaveLength(0);
+    test("等待落盘的写入立即写出并取消后台窗口，窗口内的旧值不再单独落盘", async () => {
+      const writes: string[] = [];
+      const store = new StateStore({
+        backgroundDelayMs: 20,
+        writeText: async (_path, content) => {
+          writes.push(content);
+        },
+      });
 
-    await waitUntil((): boolean => writes.length > 0);
-    await Bun.sleep(30);
-    expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(51)]);
-  });
+      await store.save(schema(60), { waitForPersistence: false });
+      await store.save(schema(61));
+      expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(61)]);
 
-  test("等待落盘的写入立即写出并取消后台窗口，窗口内的旧值不再单独落盘", async () => {
-    const writes: string[] = [];
-    const store = new StateStore({
-      backgroundDelayMs: 20,
-      writeText: async (_path, content) => {
-        writes.push(content);
-      },
+      jest.advanceTimersByTime(40);
+      await settleMicrotasks();
+      expect(writes).toHaveLength(1);
     });
 
-    await store.save(schema(60), { waitForPersistence: false });
-    await store.save(schema(61));
-    expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(61)]);
+    test("失败重试排期期间后台窗口不另写，由重试按退避写出最新值", async () => {
+      const writes: string[] = [];
+      let attempts: number = 0;
+      const store = new StateStore({
+        retryDelaysMs: [60],
+        backgroundDelayMs: 1,
+        onRetryError: () => {},
+        writeText: async (_path, content) => {
+          attempts++;
+          if (attempts === 1) throw new Error("disk hiccup");
+          writes.push(content);
+        },
+      });
 
-    await Bun.sleep(40);
-    expect(writes).toHaveLength(1);
-  });
+      await store.save(schema(80), { waitForPersistence: false });
+      jest.advanceTimersByTime(1);
+      // 排空到失败结算、重试 timer 排期之后，再制造窗口期内的后台变化。
+      await settleMicrotasks();
+      expect(attempts).toBe(1);
+      await store.save(schema(81), { waitForPersistence: false });
+      jest.advanceTimersByTime(59);
+      await settleMicrotasks();
+      // 退避未到期：后台变化没有触发额外写入。
+      expect(attempts).toBe(1);
 
-  test("失败重试排期期间后台窗口不另写，由重试按退避写出最新值", async () => {
-    const writes: string[] = [];
-    let attempts: number = 0;
-    const store = new StateStore({
-      retryDelaysMs: [60],
-      backgroundDelayMs: 1,
-      onRetryError: () => {},
-      writeText: async (_path, content) => {
-        attempts++;
-        if (attempts === 1) throw new Error("disk hiccup");
-        writes.push(content);
-      },
+      jest.advanceTimersByTime(1);
+      await settleMicrotasks((): boolean => writes.length === 1);
+      expect(attempts).toBe(2);
+      expect(JSON.parse(writes[0]!)).toEqual(schema(81));
     });
-
-    await store.save(schema(80), { waitForPersistence: false });
-    await waitUntil((): boolean => attempts === 1);
-    await store.save(schema(81), { waitForPersistence: false });
-    await Bun.sleep(20);
-    // 退避未到期：后台变化没有触发额外写入。
-    expect(attempts).toBe(1);
-
-    await waitUntil((): boolean => writes.length === 1);
-    expect(attempts).toBe(2);
-    expect(JSON.parse(writes[0]!)).toEqual(schema(81));
   });
 
   test("flush 立即写出后台窗口内的最新值", async () => {

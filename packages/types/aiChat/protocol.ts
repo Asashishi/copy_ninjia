@@ -45,6 +45,8 @@ export interface AiInitMessage {
   stickers: StickerConfig;
   /** 主线程启动总闸确定的本进程人设：prompt/persona.md 正文或内置人设。 */
   persona: string;
+  /** 主线程启动总闸确定的 send_voice 说明：prompt/voice_tool.md 正文，未放置时为 null。 */
+  readonly voiceToolPrompt: string | null;
 }
 
 /**
@@ -229,22 +231,20 @@ export interface AiInvalidateChatMessage {
 }
 
 /** /mood switch 的重抽请求：未过 deadlineAt 时 Worker 调 aiChat/ai/mood.ts 的
- *  switchMood，再以同 requestId 的 moodSwitched 回执带回结果；过期请求
- *  不得产生副作用，回复由主线程命令处理器发出。 */
+ *  switchMood 重抽全局唯一的心情，再以同 requestId 的 moodSwitched 回执带回结果；
+ *  过期请求不得产生副作用，回复由主线程命令处理器发出。 */
 export interface AiSwitchMoodMessage {
   type: "switchMood";
-  chatId: number;
-  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 moodRequestCounter）。 */
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 moodRequests）。 */
   requestId: number;
-  /** 请求的绝对截止时刻；Worker 收到时已过期则不得再改写群心情。 */
+  /** 请求的绝对截止时刻；Worker 收到时已过期则不得再改写心情。 */
   deadlineAt: number;
 }
 
-/** /mood query 的查询请求：未过 deadlineAt 时 Worker 读取本群当前有效心情，
+/** /mood query 的查询请求：未过 deadlineAt 时 Worker 读取全局唯一的当前有效心情，
  * 再以同 requestId 的 moodQueried 回执带回结果；不得强制重抽未到期心情。 */
 export interface AiQueryMoodMessage {
   type: "queryMood";
-  chatId: number;
   /** 主线程分配的单调递增回执关联 id（与 switchMood 共用编号空间）。 */
   requestId: number;
   /** 请求的绝对截止时刻；Worker 收到时已过期则不再查询。 */
@@ -258,7 +258,7 @@ export interface AiQueryMoodMessage {
  */
 export interface AiSynthesizeVoiceMessage {
   type: "synthesizeVoice";
-  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 voiceSynthesisRequestCounter）。 */
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 voiceSynthesisRequests）。 */
   requestId: number;
   text: string;
   /** 拼在基础朗读风格之后的本句语气；键恒发，未给出时为 undefined。 */
@@ -280,7 +280,7 @@ export interface AiCancelVoiceSynthesisMessage {
  */
 export interface AiComposeWebDigestMessage {
   type: "composeWebDigest";
-  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 webDigestRequestCounter）。 */
+  /** 主线程分配的单调递增回执关联 id（见 cache/main/aiChat.ts 的 webDigestRequests）。 */
   requestId: number;
   request: WebDigestRequest;
 }
@@ -366,7 +366,6 @@ export interface AiChatInvalidatedEvent {
 /** switchMood 请求的回执：带回重抽结果，主线程凭 requestId 结算等待者。 */
 export interface AiMoodSwitchedEvent {
   type: "moodSwitched";
-  chatId: number;
   requestId: number;
   /** 新抽中的心情档位名（config/dynamic/mood.json 的 name 字段）。 */
   moodName: string;
@@ -375,7 +374,6 @@ export interface AiMoodSwitchedEvent {
 /** queryMood 请求的回执：带回当前有效心情，主线程凭 requestId 结算等待者。 */
 export interface AiMoodQueriedEvent {
   type: "moodQueried";
-  chatId: number;
   requestId: number;
   /** 当前有效心情档位名（config/dynamic/mood.json 的 name 字段）。 */
   moodName: string;
@@ -399,12 +397,13 @@ export interface AiWebDigestComposedEvent {
 }
 
 /**
- * Worker 登记一次语音合成请求后的全量计数（见 aiChat/ai/ttsUsage.ts）：主线程据此
- * 替换全局状态的 `ttsUsage` 并落盘，作为 Worker 重建时的重放来源。
+ * Worker 登记或退还一次语音合成请求后的全量计数（见 aiChat/ai/ttsUsage.ts）：主线程据此
+ * 替换全局状态的 `ttsUsage` 并落盘，作为 Worker 重建时的重放来源。退还到两项计数都为 0 时
+ * 为 null，等同从没用过，落盘时不写该键。
  */
 export interface AiTtsUsageEvent {
   type: "ttsUsage";
-  usage: TtsDailyUsage;
+  usage: TtsDailyUsage | null;
 }
 
 /** Worker -> 主线程：一次模型请求的缓存用量，主线程经诊断通道转投 memory/ai-daily-usage/。 */

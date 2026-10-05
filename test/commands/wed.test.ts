@@ -66,6 +66,7 @@ const photo = mock(async (..._args: any[]): Promise<any> => ({ message_id: ++sen
 const edit = mock(async (..._args: any[]): Promise<any> => true);
 const markup = mock(async (..._args: any[]): Promise<any> => true);
 const remove = mock(async (..._args: any[]): Promise<any> => true);
+const removeMany = mock(async (..._args: any[]): Promise<any> => true);
 const notice = mock(async (..._args: any[]): Promise<any> => ({ message_id: ++sentId, chat, date: 1 }));
 const answer = mock(async (..._args: any[]): Promise<any> => true);
 const setProfile = mock(async (..._args: any[]): Promise<any> => true);
@@ -94,14 +95,14 @@ beforeEach(() => {
   resetWedMemberStates();
   resetPendingMessageDeletions();
   sentId = 100;
-  for (const fn of [member, avatar, photo, edit, markup, remove, notice, answer, setProfile]) fn.mockClear();
+  for (const fn of [member, avatar, photo, edit, markup, remove, removeMany, notice, answer, setProfile]) fn.mockClear();
   avatar.mockImplementation(async (target: User | number): Promise<CurrentAvatarResult> =>
     ({ status: "ok", identity: privateChat(target), photo: new Uint8Array([1, 2, 3]) }));
   photo.mockImplementation(async (): Promise<any> => ({ message_id: ++sentId, chat, date: 1, photo: [] }));
   edit.mockImplementation(async (): Promise<any> => true);
   remove.mockImplementation(async (): Promise<any> => true);
   Object.assign(bot.api, { getChatMember: member, sendPhoto: photo, editMessageMedia: edit,
-    editMessageReplyMarkup: markup, deleteMessage: remove, sendMessage: notice, answerCallbackQuery: answer,
+    editMessageReplyMarkup: markup, deleteMessage: remove, deleteMessages: removeMany, sendMessage: notice, answerCallbackQuery: answer,
     setMyProfilePhoto: setProfile });
   telegramApiState.current = bot.api as never;
   const state = getOrCreateWedChat(chat.id)!;
@@ -499,7 +500,7 @@ describe("/wed 图片和按钮交互", () => {
     state.sessions.clear();
     state.sessions.set(1, session);
     await teardownWedInChat(chat.id, "lostAuthority");
-    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
+    expect(removeMany).toHaveBeenCalledWith(chat.id, [101], undefined);
   });
 
   test("抽取阶段预算耗尽回执操作失败，不误报没有可用头像", async () => {

@@ -64,8 +64,8 @@ function runSanitize(count: number): number {
 function runMessage(count: number): number {
   for (let index: number = 0; index < count; index++) {
     const input: TextReviewInput = inputs[index % inputs.length]!;
-    // 不传时刻：计入生产默认的 Date.now() 与配置时区的时间格式化。
-    const value: BufferedMessage | null = buildBufferedMessage(input.source, input.text);
+    // 与生产 recordChatMessage 一样现读一次时钟，计入 Date.now() 与配置时区的时间格式化。
+    const value: BufferedMessage | null = buildBufferedMessage(input.source, input.text, Date.now());
     if (value === null) throw new Error(`${definition.name}: fixture message was discarded.`);
     retainedWindow[index % COMPACT_BATCH_SIZE] = value;
     checksum = (checksum + value.text.length + value.firstName.length + value.at.length +

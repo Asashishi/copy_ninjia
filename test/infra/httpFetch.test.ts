@@ -6,7 +6,7 @@ import {
   JSON_API_MAX_RESPONSE_BYTES,
 } from "../../packages/consts/httpFetch";
 import { WEATHER_API_URL } from "../../packages/consts/weather";
-import { chunkedResponse } from "../libs/helpers";
+import { chunkedResponse } from "../helpers/common";
 
 const loggerError = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({

@@ -14,7 +14,6 @@ import {
 } from "../../consts/aiChat/prompts/memory";
 import { AI_CHAT_AGENT_ROLE_INSTRUCTION } from "../../consts/aiChat/prompts/agent";
 import { WEB_SEARCH_FUNCTION_INSTRUCTION, WEB_SEARCH_INSTRUCTION } from "../../consts/aiChat/prompts/search";
-import { REPLY_ACTION_INSTRUCTION } from "../../consts/aiChat/prompts/tools";
 import { logger } from "../../infra/logger";
 import { textAiProvider } from "../../aiChat/provider";
 import { TOOL_BUDGET_EXHAUSTED_RESULT, WEB_SEARCH_TOOL } from "../../consts/tools";
@@ -63,10 +62,68 @@ function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
     .map(([name, count]: [string, number]): string => `${name}:${count}`).join(",") || "none";
 }
 
+/** 拼装一轮回复的系统提示词；同一回复的全部工具往返复用这一份字符串。 */
+function buildReplySystemPrompt(toolset: ReplyToolset): string {
+  // 人设是 init 接管的本进程快照，「行动与停止」段取自组装工具时的同一份台词语言快照。
+  return `${getPersona()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
+    `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
+    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n` +
+    // 上下文结构后依次声明转录格式、两层仲裁与直接唤起的读取顺序。
+    `${TRANSCRIPT_FORMAT_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n` +
+    `${DIRECT_INVOCATION_READING_INSTRUCTION}\n${MEMORY_MECHANISM_SILENCE_INSTRUCTION}\n\n` +
+    `## 行动与停止\n${toolset.replyActionInstruction}\n\n` +
+    `## 联网查证\n${toolset.searchWeb === null ? WEB_SEARCH_INSTRUCTION : WEB_SEARCH_FUNCTION_INSTRUCTION}`;
+}
+
+/** 一轮回复内跨工具轮累积的调用计数，只在 generateReply 与 runFunctionCalls 之间传递。 */
+interface ReplyCallCounters {
+  /** 计入 grounded 与检索软额度的次数：服务端内建检索加本地 web_search 函数的实际检索。 */
+  webSearchCalls: number;
+  /** 本轮函数调用总数，含超出整轮预算、只拿到「预算耗尽」的调用。 */
+  customToolCalls: number;
+  /** 按函数名的调用次数，只用于诊断日志。 */
+  readonly customToolCallsByName: Map<string, number>;
+}
+
+/**
+ * 按模型顺序校验与接纳一轮函数调用，返回逐条喂回模型的结果；动作回接纳结果，查看与查询
+ * 回真实数据。拟人停顿、语音合成、投递调用链和 Telegram 排队都不参与本次模型往返的等待。
+ * 每次调用前与 await 检索之后复核 toolset.isActive()，本轮作废时返回 null。
+ */
+async function runFunctionCalls(
+  functionCalls: readonly AiFunctionCall[],
+  toolset: ReplyToolset,
+  counters: ReplyCallCounters
+): Promise<AiToolOutput[] | null> {
+  const outputs: AiToolOutput[] = [];
+  for (const call of functionCalls) {
+    if (!toolset.isActive()) return null;
+    counters.customToolCalls++;
+    const perNameCalls: number = (counters.customToolCallsByName.get(call.name) ?? 0) + 1;
+    counters.customToolCallsByName.set(call.name, perNameCalls);
+    const withinBudget: boolean = counters.customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY;
+    let toolResult: string;
+    if (!withinBudget) {
+      toolResult = TOOL_BUDGET_EXHAUSTED_RESULT;
+    } else if (call.name === WEB_SEARCH_TOOL && toolset.searchWeb !== null) {
+      // 唯一要等结果的工具：检索结论喂回模型后它才能接着说；本地检索计入 grounded。
+      const outcome: WebSearchToolOutcome = await toolset.searchWeb(call.argumentsJson);
+      if (!toolset.isActive()) return null;
+      counters.webSearchCalls += outcome.searchCalls;
+      toolResult = outcome.result;
+    } else {
+      toolResult = toolset.has(call.name)
+        ? toolset.execute(call.name, call.argumentsJson)
+        : callTool(call.name);
+    }
+    outputs.push({ call, responseJson: toolResult });
+  }
+  return outputs;
+}
+
 /**
  * 跑完一轮回复对话。
- * @param chatId 群聊 ID，用于取该群当前的心情（见 runtimeState.ts 的
- *   buildRuntimeStateBlock）。
+ * @param chatId 群聊 ID，仅用于诊断日志。
  * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话与本轮
  *   回复任务；这三段恒定出现，直接触发只体现为回复任务开头多一句唤起者声明。
  *   本文件在转录与回复任务之间补上第四段运行时状态（心情、当前时间与本轮工具状态）。
@@ -84,16 +141,7 @@ export async function generateReply(
   toolset: ReplyToolset
 ): Promise<string | null> {
   if (!toolset.isActive()) return null;
-  // 人设是 init 接管的本进程快照；后续工具往返复用同一系统提示词。
-  const staticSystemPrompt: string =
-    `${getPersona()}\n\n## Agent 身份与权限边界\n${AI_CHAT_AGENT_ROLE_INSTRUCTION}\n\n` +
-    `${CHAT_INTERACTION_INSTRUCTION}\n\n` +
-    `## 上下文区块与记忆\n${REPLY_CONTEXT_STRUCTURE_INSTRUCTION}\n` +
-    // 上下文结构后依次声明转录格式、两层仲裁与直接唤起的读取顺序。
-    `${TRANSCRIPT_FORMAT_INSTRUCTION}\n${CHAT_MEMORY_PRIORITY_INSTRUCTION}\n` +
-    `${DIRECT_INVOCATION_READING_INSTRUCTION}\n${MEMORY_MECHANISM_SILENCE_INSTRUCTION}\n\n` +
-    `## 行动与停止\n${REPLY_ACTION_INSTRUCTION}\n\n` +
-    `## 联网查证\n${toolset.searchWeb === null ? WEB_SEARCH_INSTRUCTION : WEB_SEARCH_FUNCTION_INSTRUCTION}`;
+  const staticSystemPrompt: string = buildReplySystemPrompt(toolset);
 
   // 稳定区块只有参考记忆：它跨轮回复逐字不变，能延长供应商自动缓存的公共前缀。
   // 其余三段每轮都变，其中运行时状态在回复开始时读取一次，同一回复的工具
@@ -103,16 +151,18 @@ export async function generateReply(
     stableBlocks: [promptSections.referenceMemory],
     volatileBlocks: [
       promptSections.currentConversation,
-      buildRuntimeStateBlock(chatId, toolset.toolStatus),
+      buildRuntimeStateBlock(toolset.toolStatus),
       promptSections.replyTask,
     ],
     conversationSettledOffsets: promptSections.currentConversationSettledOffsets,
     signal: toolset.signal,
   });
 
-  let webSearchCalls: number = 0;
-  let customToolCalls: number = 0;
-  const customToolCallsByName: Map<string, number> = new Map();
+  const counters: ReplyCallCounters = {
+    webSearchCalls: 0,
+    customToolCalls: 0,
+    customToolCallsByName: new Map<string, number>(),
+  };
   // 只由 toolCallLimitHit 的降级重试置位；除它以外本轮的工具形态恒定。置位后
   // webSearchEnabled 恒为假，那条分支不会再进来，因此它同时就是「只降级一次」的闸。
   let searchDisabledByFallback: boolean = false;
@@ -131,14 +181,14 @@ export async function generateReply(
       // 只给语义，不给温度：已经查证过的轮次该怎么压低采样随机性由各实现包
       // 决定（OpenAI 侧的推理模型根本不接受该参数）。搜索与首次成文发生在
       // 同一次请求里，那一轮无法预知，因此仍按未查证处理。
-      grounded: webSearchCalls > 0,
+      grounded: counters.webSearchCalls > 0,
     });
     if (!toolset.isActive()) return null;
 
     if (!turn.ok) {
       logger.error(
         `AI reply unusable response for chat ${chatId}: round=${round}, ` +
-        `custom_calls=${customToolCalls}, per_tool=${toolCountsDiagnostic(customToolCallsByName)}, ` +
+        `custom_calls=${counters.customToolCalls}, per_tool=${toolCountsDiagnostic(counters.customToolCallsByName)}, ` +
         `server_tool_invocations=${turn.webSearchCalls}, finish_reason=${turn.finishReason ?? "?"}, ` +
         `finish_message=${JSON.stringify((turn.finishMessage ?? "").slice(0, 500))}, side_effects=${toolset.actionsUsed()}.`
       );
@@ -156,52 +206,29 @@ export async function generateReply(
     }
 
     if (turn.webSearchCalls > 0) {
-      const previousCalls: number = webSearchCalls;
-      webSearchCalls += turn.webSearchCalls;
+      const previousCalls: number = counters.webSearchCalls;
+      counters.webSearchCalls += turn.webSearchCalls;
       // text 内建检索额度是写进提示词的软限制（见 consts/aiChat/prompts/search.ts）：超了
       // 只记账、不摘工具——服务端检索工具排在 tools 数组首位，中途摘掉会让整段
       // 前缀从第一个字节起就对不上。只在跨过阈值的那一次点名，不逐轮刷屏。
-      if (previousCalls <= MAX_WEB_SEARCH_CALLS_PER_REPLY && webSearchCalls > MAX_WEB_SEARCH_CALLS_PER_REPLY) {
+      if (previousCalls <= MAX_WEB_SEARCH_CALLS_PER_REPLY && counters.webSearchCalls > MAX_WEB_SEARCH_CALLS_PER_REPLY) {
         logger.error(
           `AI reply exceeded the soft web search budget for chat ${chatId}: ` +
-          `${webSearchCalls} server-side call(s) against a budget of ${MAX_WEB_SEARCH_CALLS_PER_REPLY}.`
+          `${counters.webSearchCalls} server-side call(s) against a budget of ${MAX_WEB_SEARCH_CALLS_PER_REPLY}.`
         );
       }
     }
 
     const functionCalls: readonly AiFunctionCall[] = turn.functionCalls;
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
-      // 按模型顺序校验与接纳；动作回接纳结果，查看与查询回真实数据。拟人停顿、语音合成、
-      // 投递调用链和 Telegram 排队都不参与本次模型往返的等待。
-      const outputs: AiToolOutput[] = [];
-      for (const call of functionCalls) {
-        if (!toolset.isActive()) return null;
-        customToolCalls++;
-        const perNameCalls: number = (customToolCallsByName.get(call.name) ?? 0) + 1;
-        customToolCallsByName.set(call.name, perNameCalls);
-        const withinBudget: boolean = customToolCalls <= MAX_CUSTOM_TOOL_CALLS_PER_REPLY;
-        let toolResult: string;
-        if (!withinBudget) {
-          toolResult = TOOL_BUDGET_EXHAUSTED_RESULT;
-        } else if (call.name === WEB_SEARCH_TOOL && toolset.searchWeb !== null) {
-          // 唯一要等结果的工具：检索结论喂回模型后它才能接着说；本地检索计入 grounded。
-          const outcome: WebSearchToolOutcome = await toolset.searchWeb(call.argumentsJson);
-          if (!toolset.isActive()) return null;
-          webSearchCalls += outcome.searchCalls;
-          toolResult = outcome.result;
-        } else {
-          toolResult = toolset.has(call.name)
-            ? toolset.execute(call.name, call.argumentsJson)
-            : callTool(call.name);
-        }
-        outputs.push({ call, responseJson: toolResult });
-      }
+      const outputs: AiToolOutput[] | null = await runFunctionCalls(functionCalls, toolset, counters);
+      if (outputs === null) return null;
       // 供应商交不出可续接的模型轮次时到此为止：再发一次请求只会让对话记录
       // 与模型实际看到的历史错位。
       if (!session.appendToolOutputs(outputs)) {
         logger.error(
           `AI reply session could not continue after tool outputs for chat ${chatId}: round=${round}, ` +
-          `custom_calls=${customToolCalls}, side_effects=${toolset.actionsUsed()}.`
+          `custom_calls=${counters.customToolCalls}, side_effects=${toolset.actionsUsed()}.`
         );
         return null;
       }

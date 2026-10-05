@@ -1,4 +1,4 @@
-import { TTS_DEFAULT_STYLE } from "../../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_BOT_LANGUAGE, TTS_DEFAULT_STYLE } from "../../../packages/consts/aiChat/voiceMessage";
 /**
  * send_voice 行动工具：工具声明逐字恒定与本轮工具状态的语音余量行；准入闸（本轮作废、单轮限额、
  * 实现缺席、参数校验、按 `ai` 口径预留每日额度）在调用时同步判定，拒绝时在回执里当场返回错误，
@@ -51,6 +51,7 @@ const {
 } = await import("../../../packages/aiChat/ai/tools/replyToolset/voiceMessage");
 const { buildToolStatusBlock } = await import("../../../packages/aiChat/ai/tools/replyToolset/toolStatus");
 const {
+  TTS_BOT_LANGUAGES,
   TTS_USAGE_WINDOW_MS,
   VOICE_FOREGROUND_WAIT_MS,
   VOICE_OGG_FILE_NAME,
@@ -59,7 +60,9 @@ const {
 } = await import("../../../packages/consts/aiChat/voiceMessage");
 const { pendingAiTtsReservations, ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
 const { SEND_VOICE_DAILY_LIMIT_TOOL_ERROR } = await import("../../../packages/consts/tools");
-const { SEND_VOICE_TOOL_INSTRUCTION, TOOL_STATUS_POINTER, voiceToolStatus } = await import("../../../packages/consts/aiChat/prompts/tools");
+const { TOOL_STATUS_POINTER, VOICE_LANGUAGE_PROMPTS, voiceToolStatus } = await import("../../../packages/consts/aiChat/prompts/tools");
+/** 执行器按默认台词语言拿到的朗读语言要求；每次合成请求都应原样带上。 */
+const LANGUAGE_STYLE: string = VOICE_LANGUAGE_PROMPTS[TTS_DEFAULT_BOT_LANGUAGE].speechLanguageStyle;
 const { adoptAgentDeploymentConfig } = await import("../../../packages/config/agent");
 const { encodeVoiceMessage } = await import("../../../packages/aiChat/ai/voiceEncoding");
 const { createSimulatedPause } = await import("../../../packages/aiChat/ai/tools/replyToolset/pacing");
@@ -69,7 +72,7 @@ const CAPABILITY = { provider: "google", apiKey: "key", baseUrl: undefined, head
 
 /** 只有 tts 段参与本文件的余量计算；其余能力只为满足配置形态。 */
 function adoptTtsQuota(dailyLimit: number, dailyReserveQuota: number): void {
-  const tts: AgentTtsCapabilityConfig = { ...CAPABILITY, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit, dailyReserveQuota };
+  const tts: AgentTtsCapabilityConfig = { ...CAPABILITY, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, botLanguage: TTS_DEFAULT_BOT_LANGUAGE, dailyLimit, dailyReserveQuota };
   const config: AgentDeploymentConfig = { text: CAPABILITY, summary: CAPABILITY, media: CAPABILITY, tts };
   adoptAgentDeploymentConfig(config);
 }
@@ -124,7 +127,7 @@ function preparedVoice(execution: ReplyToolExecution): PreparedReplyAction {
 
 /** 按空闲串行链执行一次调用：准入通过后立即执行交回的投递步骤；被拒时 result 同回执。 */
 async function runVoice(ctx: ReplyToolContext, args: Record<string, unknown>): Promise<{ accepted: string; result: string }> {
-  const execution: ReplyToolExecution = createSendVoiceExecutor(ctx, recordedChains())(JSON.stringify(args));
+  const execution: ReplyToolExecution = createSendVoiceExecutor(ctx, recordedChains(), LANGUAGE_STYLE)(JSON.stringify(args));
   if (typeof execution === "string") return { accepted: execution, result: execution };
   return { accepted: execution.result, result: await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)) };
 }
@@ -168,22 +171,28 @@ beforeEach(() => {
 });
 
 describe("send_voice 声明", () => {
-  test("工具声明逐字恒定，说明按情绪与余量使用、允许不发", () => {
-    const definition = buildSendVoiceToolDefinition();
-    expect(definition.name).toBe(SEND_VOICE_TOOL);
-    expect(definition.description).toBe(SEND_VOICE_TOOL_INSTRUCTION);
-    expect(definition.parametersJsonSchema).toMatchObject({
-      required: ["text"],
-      properties: { text: { maxLength: VOICE_TEXT_MAX_CHARS }, tone: { type: "string", maxLength: VOICE_TONE_MAX_CHARS } },
-    });
-    expect(JSON.stringify(buildSendVoiceToolDefinition())).toBe(JSON.stringify(definition));
-    expect(definition.description).toContain("语音用来表达情绪");
-    expect(definition.description).toContain("整轮不发语音也完全可以");
-    expect(definition.description).toContain(TOOL_STATUS_POINTER);
-    // 额度数字只出现在余量行里，改 agent.tts 不改工具声明。
-    expect(definition.description).not.toMatch(/\d+ 次/);
-    adoptTtsQuota(10, 4);
-    expect(buildSendVoiceToolDefinition().description).toBe(definition.description);
+  test("工具声明按台词语言取注册文案、同一语言逐字恒定，说明按情绪与余量使用、允许不发", () => {
+    for (const language of TTS_BOT_LANGUAGES) {
+      const prompts = VOICE_LANGUAGE_PROMPTS[language];
+      const definition = buildSendVoiceToolDefinition(prompts);
+      expect(definition.name).toBe(SEND_VOICE_TOOL);
+      expect(definition.description).toBe(prompts.sendVoiceInstruction);
+      expect(definition.parametersJsonSchema).toMatchObject({
+        required: ["text"],
+        properties: {
+          text: { maxLength: VOICE_TEXT_MAX_CHARS, description: prompts.voiceTextDescription },
+          tone: { type: "string", maxLength: VOICE_TONE_MAX_CHARS, description: prompts.voiceToneDescription },
+        },
+      });
+      expect(JSON.stringify(buildSendVoiceToolDefinition(prompts))).toBe(JSON.stringify(definition));
+      expect(definition.description).toContain("语音用来表达情绪");
+      expect(definition.description).toContain("整轮不发语音也完全可以");
+      expect(definition.description).toContain(TOOL_STATUS_POINTER);
+      expect(definition.description).toContain(`不超过 ${VOICE_TEXT_MAX_CHARS} `);
+      expect(definition.description).toContain(`不超过 ${VOICE_TONE_MAX_CHARS} `);
+      // 额度数字只出现在余量行里，改 agent.tts 的额度不改工具声明。
+      expect(definition.description).not.toMatch(/\d+ 次/);
+    }
   });
 
   test("本轮工具状态的语音行按 75 次口径计算；部署没有语音能力时不出这一行", () => {
@@ -219,7 +228,7 @@ describe("send_voice 接纳闸", () => {
   });
 
   test("单轮只接纳一条", () => {
-    const execute = createSendVoiceExecutor(buildContext(), recordedChains());
+    const execute = createSendVoiceExecutor(buildContext(), recordedChains(), LANGUAGE_STYLE);
     expect(JSON.parse(preparedVoice(execute(JSON.stringify({ text: "バカ" }))).result).success).toBe(true);
     const second: ReplyToolExecution = execute(JSON.stringify({ text: "ざぁこ" }));
     expect(typeof second === "string" && errorOf(second)).toContain("Voice limit reached");
@@ -227,8 +236,8 @@ describe("send_voice 接纳闸", () => {
 
   test("调用时同步预留额度：两轮回复抢最后一次额度，后调用的当场拿到超限错误；TTS 成功后才登记计数", async () => {
     ttsDailyUsage.current = { windowStartedAt: Date.now() - 1_000, agentCount: 74, reserveCount: 0 };
-    const first = createSendVoiceExecutor(buildContext(), recordedChains())(JSON.stringify({ text: "バカ" }));
-    const second = createSendVoiceExecutor(buildContext(), recordedChains())(JSON.stringify({ text: "ざぁこ" }));
+    const first = createSendVoiceExecutor(buildContext(), recordedChains(), LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" }));
+    const second = createSendVoiceExecutor(buildContext(), recordedChains(), LANGUAGE_STYLE)(JSON.stringify({ text: "ざぁこ" }));
 
     expect(typeof second === "string" && JSON.parse(second)).toEqual({ error: SEND_VOICE_DAILY_LIMIT_TOOL_ERROR, retryable: false });
     expect(JSON.parse(preparedVoice(first).result)).toMatchObject({ success: true, voice_remaining_today: 0 });
@@ -289,7 +298,7 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains, LANGUAGE_STYLE)(
       JSON.stringify({ text: "  この雑魚♡\nバーカ ", reply_to_trigger: true })
     ));
     // 合成还没结束，回执已经交回并预占一个动作。
@@ -305,6 +314,7 @@ describe("send_voice 投递", () => {
     expect(chains.deferred).toHaveLength(0);
     expect(synthesizeSpeech.mock.calls[0]![0]).toStrictEqual({
       text: "この雑魚♡ バーカ",
+      languageStyle: LANGUAGE_STYLE,
       tone: undefined,
       quota: "ai",
       signal: undefined,
@@ -330,7 +340,7 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce(async (): Promise<SpeechSynthesisAttempt> => spoken(ogg.voice.bytes, OGG_OPUS_MIME_TYPE));
     const ctx: ReplyToolContext = buildContext();
     const events: string[] = recordEvents(ctx);
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, recordedChains())(JSON.stringify({ text: "バカ" })));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, recordedChains(), LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" })));
     expect(JSON.parse(execution.result).success).toBe(true);
     await Bun.sleep(0);
     expect(JSON.parse(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ success: true, message_id: 77, actions_used: 1, voice_remaining_today: 74 });
@@ -348,7 +358,7 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains, LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" })));
     expect(JSON.parse(execution.result)).toEqual({ success: true, queued: true, actions_used: 1, voice_remaining_today: 74 });
     const step: Promise<string> = execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS - 1);
@@ -379,7 +389,7 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains, LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" })));
     const step: Promise<string> = execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS);
     expect(JSON.parse(await step)).toEqual({ synthesis: "background" });
@@ -401,7 +411,7 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains, LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" })));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS);
     expect(JSON.parse(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toEqual({ synthesis: "background" });
     expect(events).toEqual([]);
@@ -421,7 +431,7 @@ describe("send_voice 投递", () => {
     synthesizeSpeech.mockImplementationOnce((): Promise<SpeechSynthesisAttempt> => synthesis.promise);
     const chains: RecordedChains = recordedChains();
 
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains)(JSON.stringify({ text: "バカ" })));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, chains, LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" })));
     jest.advanceTimersByTime(VOICE_FOREGROUND_WAIT_MS);
     jest.useRealTimers();
     synthesis.resolve(spoken(ogg.voice.bytes, OGG_OPUS_MIME_TYPE));
@@ -438,6 +448,7 @@ describe("send_voice 投递", () => {
     await runVoice(buildContext(), { text: "バカ", tone: " 鼻で笑うように\n小声で " });
     expect(synthesizeSpeech.mock.calls[0]![0]).toStrictEqual({
       text: "バカ",
+      languageStyle: LANGUAGE_STYLE,
       tone: "鼻で笑うように 小声で",
       quota: "ai",
       signal: undefined,
@@ -446,7 +457,7 @@ describe("send_voice 投递", () => {
     for (const tone of [null, "   "]) {
       synthesizeSpeech.mockClear();
       await runVoice(buildContext(), { text: "バカ", tone });
-      expect(synthesizeSpeech.mock.calls[0]![0]).toStrictEqual({ text: "バカ", tone: undefined, quota: "ai", signal: undefined });
+      expect(synthesizeSpeech.mock.calls[0]![0]).toStrictEqual({ text: "バカ", languageStyle: LANGUAGE_STYLE, tone: undefined, quota: "ai", signal: undefined });
     }
   });
 
@@ -507,7 +518,7 @@ describe("send_voice 投递", () => {
   test("合成完成后、投递前作废时投递步骤直接返回作废错误", async () => {
     let active: boolean = true;
     const ctx: ReplyToolContext = buildContext({ isActive: () => active });
-    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, recordedChains())(JSON.stringify({ text: "バカ" })));
+    const execution: PreparedReplyAction = preparedVoice(createSendVoiceExecutor(ctx, recordedChains(), LANGUAGE_STYLE)(JSON.stringify({ text: "バカ" })));
     expect(JSON.parse(execution.result).success).toBe(true);
     active = false;
     expect(errorOf(await execution.run(ctx.chatAction, createSimulatedPause(ctx.chatAction)))).toBe(REPLY_INVALIDATED_TOOL_ERROR);

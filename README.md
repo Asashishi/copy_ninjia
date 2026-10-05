@@ -38,8 +38,8 @@
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5920_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.54%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6117_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.69%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -104,7 +104,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
-    <img alt="bun run test:coverage：5920 项测试全部通过 / 502 个测试文件 / 320,978 次 expect() 调用 / 函数覆盖率 98.14% / 行覆盖率 98.54%" src="public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：6117 项测试全部通过 / 515 个测试文件 / 436,787 次 expect() 调用 / 函数覆盖率 98.24% / 行覆盖率 98.69%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -196,7 +196,7 @@
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 人设与通知语气</b><br>
-  <sub>内置雌小鬼人设，可用 <code>prompt/persona.md</code> 替换；Bot 通知优先使用显式配置；未配置时，自定义人设使用普通语气，内置人设使用雌小鬼语气。</sub></p>
+  <sub>内置雌小鬼人设，可用 <code>prompt/persona.md</code> 替换（<a href="prompt_example/persona.md">示例</a>）；Bot 通知优先使用显式配置；未配置时，自定义人设使用普通语气，内置人设使用雌小鬼语气。</sub></p>
 </td>
 </tr>
 <tr>
@@ -266,7 +266,7 @@
 </tbody>
 </table>
 
-- **TTS 语音配置**：需要在 `config/dynamic/agent.json` 中配置 `agent.tts`（支持 Google 原生、OpenAI 兼容 `audio/speech` 及 xAI Grok `/v1/tts`；Google 支持配置 `base_url` 与 `headers` 走网关代理）。
+- **TTS 语音配置**：需要在 `config/dynamic/agent.json` 中配置 `agent.tts`（支持 Google 原生、OpenAI 兼容 `audio/speech` 及 xAI Grok `/v1/tts`；Google 支持配置 `base_url` 与 `headers` 走网关代理）。可选 `bot_language`（`en` / `zh` / `ja`，默认 `ja`）指定 AI 语音台词的语言；项目根的 `prompt/voice_tool.md` 可整份替换 AI `send_voice` 的工具说明（重启生效，示例见 [`prompt_example/voice_tool.md`](prompt_example/voice_tool.md)）。AI 回复的合成会按 `bot_language` 自动追加朗读语言要求；`style` 与 `/send`、cron 共用，只写声线，更换 `bot_language` 时建议把 `style` 与 `voice_tool.md` 一并改成对应语言。
 - **配额独立隔离**：`daily_limit`（默认 100 次）中预留 `daily_reserve_quota`（默认 25 次）给 `/send` 和 cron，AI 使用剩余额度；两边独立计数，从首次计数起满 24 小时后一起重置。
 - **记忆准入规则**：`/send` 复制消息与定时语音不写入 AI 上下文；图片自录需要群内已启用 AI 且未处于复读状态。详见 [11 常见问题](docs/cn/11-faq.md)。
 

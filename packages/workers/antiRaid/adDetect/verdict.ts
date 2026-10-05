@@ -23,7 +23,6 @@ import {
   adVerdictTruePublishHolder,
   adDetectStopping,
   inFlightAdDetectKeys,
-  pendingAdMessages,
   recentlyDisposedAdKeys,
 } from "../../../cache/workers/antiRaid/adDetect";
 import {
@@ -45,6 +44,8 @@ import {
   completeReferencedAdWarning,
 } from "./referencePolicy";
 import {
+  deletePendingAdBundle,
+  pendingAdBundle,
   refreshAdDetectCapacitySaturation,
   requeueIfUnchecked,
 } from "./queueState";
@@ -137,18 +138,12 @@ async function classifyAdBundle(
   }
 }
 
-/** 本次真正推进水位的最后一条消息在入队时冻结的警告窗口事实。 */
-function selectedWithinReferencedWarning(
-  selection: AdBundleSelection,
-  previousCheckedSeq: number
-): boolean {
-  for (let index: number = selection.entries.length - 1; index >= 0; index--) {
-    const entry: AdCandidateEntry | undefined = selection.entries[index];
-    if (entry !== undefined && entry.seq > previousCheckedSeq) {
-      return entry.withinReferencedWarning;
-    }
-  }
-  return false;
+/**
+ * 本次真正推进水位的最后一条消息在入队时冻结的警告窗口事实。送检前已确认至少有一条未判消息，
+ * selectAdBundleEntries 把未判消息排在已判上下文之后，因此清单末尾就是这条消息。
+ */
+function selectedWithinReferencedWarning(selection: AdBundleSelection): boolean {
+  return selection.entries.at(-1)?.withinReferencedWarning === true;
 }
 
 /**
@@ -158,7 +153,6 @@ function selectedWithinReferencedWarning(
  * 同时按实际到达时刻冻结是否仍在五分钟内。
  */
 function retainPostWarningContent(
-  key: string,
   bundle: AdMessageBundle,
   warning: TelegramWorkerTemporaryMessageSentResult
 ): void {
@@ -193,7 +187,7 @@ function retainPostWarningContent(
     bundle.entries.length === 0 &&
     bundle.pendingDeleteIds.length === 0
   ) {
-    pendingAdMessages.delete(key);
+    deletePendingAdBundle(bundle.chatId, bundle.senderId);
     refreshAdDetectCapacitySaturation();
   }
 }
@@ -210,11 +204,9 @@ export async function detectOne(
   // 活对象，这次往返期间新消息会并进同一个 entries 数组、裁剪也可能从头部去掉几条。
   // 拿处置时的现场当「判定依据」写进样本，复现出来的就是模型没读过的一串；水位同理
   // ——按结算时的 latestSeq 推进，就会把这期间新说的话一并记成判过。
-  const previousCheckedSeq: number = bundle.checkedSeq;
   const selection: AdBundleSelection = selectAdBundleEntries(bundle);
   const judged: readonly AdCandidateEntry[] = selection.entries;
-  const withinReferencedWarning: boolean =
-    selectedWithinReferencedWarning(selection, previousCheckedSeq);
+  const withinReferencedWarning: boolean = selectedWithinReferencedWarning(selection);
   let outcome: AdDetectionOutcome;
   let isAdmin: boolean | undefined;
   try {
@@ -242,7 +234,7 @@ export async function detectOne(
   }
   // 期间这个群可能被停管/关开关，整串已被丢弃或换成了新对象；旧引用对不上就
   // 放弃（同本线程其余异步回调的「状态对象同一性」惯例）。
-  if (pendingAdMessages.get(key) !== bundle) return;
+  if (pendingAdBundle(bundle.chatId, bundle.senderId) !== bundle) return;
   // 只推到本次真正送检的最后一条。预算装不下的那部分仍是未判内容，当前批结算后
   // requeueIfUnchecked 会立即把它排成下一批。
   bundle.checkedSeq = Math.max(bundle.checkedSeq, selection.checkedToSeq);
@@ -261,7 +253,7 @@ export async function detectOne(
     // 确认是管理员就把整串丢掉：留着只会把同样的内容再判一次。查询失败则只把
     // 本批记成已检，期间新到的未判内容仍须重新排队。
     if (isAdmin === true) {
-      pendingAdMessages.delete(key);
+      deletePendingAdBundle(bundle.chatId, bundle.senderId);
       refreshAdDetectCapacitySaturation();
     } else {
       requeueIfUnchecked(key, bundle);
@@ -292,8 +284,8 @@ export async function detectOne(
         "suppressed" in warningResult
       ) {
         cancelReferencedAdWarning(key, warningGeneration);
-        if (pendingAdMessages.get(key) === bundle) {
-          pendingAdMessages.delete(key);
+        if (pendingAdBundle(bundle.chatId, bundle.senderId) === bundle) {
+          deletePendingAdBundle(bundle.chatId, bundle.senderId);
           refreshAdDetectCapacitySaturation();
         }
         return;
@@ -304,7 +296,7 @@ export async function detectOne(
         cancelReferencedAdWarning(key, warningGeneration);
         if (
           !adDetectStopping.current &&
-          pendingAdMessages.get(key) === bundle
+          pendingAdBundle(bundle.chatId, bundle.senderId) === bundle
         ) {
           deleteReferencedAdMessages({
             bundle,
@@ -316,7 +308,7 @@ export async function detectOne(
       }
       if (
         adDetectStopping.current ||
-        pendingAdMessages.get(key) !== bundle ||
+        pendingAdBundle(bundle.chatId, bundle.senderId) !== bundle ||
         !completeReferencedAdWarning(
           key,
           warningGeneration,
@@ -332,14 +324,14 @@ export async function detectOne(
         judged,
         messageIdThrough: warning.messageId,
       });
-      retainPostWarningContent(key, bundle, warning);
+      retainPostWarningContent(bundle, warning);
     } finally {
       inFlightAdDetectKeys.delete(key);
       if (!adDetectStopping.current) {
         // message_id 晚于警告的新消息已经从旧串里保留下来，但在发送临界区里不会排队；
         // 警告结算后立刻补排。发送失败时旧 bundle 仍在，但本批水位已经推进，
         // 只有期间真有未检内容才会排，避免把 Telegram 故障放大成警告重试风暴。
-        const current: AdMessageBundle | undefined = pendingAdMessages.get(key);
+        const current: AdMessageBundle | undefined = pendingAdBundle(bundle.chatId, bundle.senderId);
         if (current !== undefined) {
           requeueIfUnchecked(key, current);
         }
@@ -352,7 +344,7 @@ export async function detectOne(
   // 次完全相同的拉黑与各群封禁登记（每一次都要整份 outbox 落盘，见
   // docs/cn/04-invariants.md）。该 key TTL 到期时记录会删除，那时主线程黑名单
   // 门禁早已接管。
-  pendingAdMessages.delete(key);
+  deletePendingAdBundle(bundle.chatId, bundle.senderId);
   refreshAdDetectCapacitySaturation();
   // 硬顶与待检 key 同源：这张表只由处置路径写入，没有独立入口闸，因此写入时
   // 直接限制容量；撑满时淘汰最早处置的键，其后续消息由主线程黑名单门禁接管。

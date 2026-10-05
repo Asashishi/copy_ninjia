@@ -18,7 +18,7 @@ import { JOIN_WINDOW_MS } from "../consts/antiRaid/lockdown";
 import { visibleSenderChat } from "../users/visibleSender";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid/protocol";
 import type { RemoveBlockedMembersParams } from "../types/blocklist";
-import type { DeleteMessageOutcome } from "../infra/telegram/actions";
+import type { DeleteMessageOutcome } from "../types/telegram";
 
 /**
  * /block 黑名单在入群守卫主线程侧的那一半：判定与投递。真正的探测/封禁在

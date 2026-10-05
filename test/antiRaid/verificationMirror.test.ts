@@ -87,6 +87,13 @@ describe("antiRaid/verificationMirror 的 revision 水位线", () => {
     expect(fatalErrors).toHaveLength(1);
     expect(fatalErrors[0]?.message).toContain("verification revision capacity");
   });
+  test("只接受当前代际的 Worker 运行态满额信号并交给受监督停机", () => {
+    handleAntiRaidWorkerEvent({ type: "verificationRuntimeCapacityExceeded", generation: 0 }, (): void => {});
+    expect(fatalErrors).toHaveLength(0);
+    handleAntiRaidWorkerEvent({ type: "verificationRuntimeCapacityExceeded", generation: 1 }, (): void => {});
+    expect(fatalErrors).toHaveLength(1);
+    expect(fatalErrors[0]?.message).toContain("verification runtime capacity");
+  });
   test("同代际内仍然按 revision 拒绝迟到的 upsert 与 delete", () => {
     expect(acceptVerificationUpsert({ type: "verificationUpsert", record: record(1, 5) })).toBeTrue();
     expect(acceptVerificationUpsert({ type: "verificationUpsert", record: record(1, 4) })).toBeFalse();

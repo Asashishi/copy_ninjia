@@ -57,13 +57,18 @@ import { createDirectPacing } from "./pacing";
 import { getAgentDeploymentConfig } from "../../../../config/agent";
 import { getTimeZone } from "../../../../config/time";
 import { TOKYO_TIME_ZONE } from "../../../../consts/time";
+import { VOICE_LANGUAGE_PROMPTS } from "../../../../consts/aiChat/prompts/tools";
+import { TTS_DEFAULT_BOT_LANGUAGE } from "../../../../consts/aiChat/voiceMessage";
+import type { AgentDeploymentConfig } from "../../../../types/config";
+import type { VoiceLanguagePrompts } from "../../../../types/aiChat/voiceMessage";
 
 /**
  * 组装工具定义、领域执行器和整轮共享的总动作预算。
  *
- * 工具清单只随部署能力与启动时区变化（生图、语音、联网检索、贴纸菜单与东京天气），与触发类型、本群问答、
- * 手滑抽签无关，同一部署同一人设下每轮逐字相同；按轮变化的可用性写进
- * buildToolStatusBlock 产出的本轮工具状态，执行器在调用时再做同样的硬性判定。
+ * 工具清单只随部署能力、台词语言、prompt/voice_tool.md 与启动时区变化（生图、语音及其
+ * `agent.tts.bot_language`、联网检索、贴纸菜单与东京天气），与触发类型、本群问答、手滑抽签无关，
+ * 同一部署同一人设下每轮逐字相同；按轮变化的可用性写进 buildToolStatusBlock 产出的本轮工具状态，
+ * 执行器在调用时再做同样的硬性判定。
  */
 export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: Promise<void>): Promise<ReplyToolset> {
   const menu: readonly StickerPackCandidate[] = await buildStickerPackMenu(ctx.signal);
@@ -84,12 +89,17 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   const voiceEnabled: boolean = isSendVoiceAvailable();
   // 配置了 web_search 能力：挂本地函数工具、不挂 text 模型的内建检索；没配时反之。
   const webSearchProvider: AiWebSearchFacade | null = webSearchAiProvider();
-  const webSearchMaxCallsPerUse: number | undefined = getAgentDeploymentConfig().webSearch?.maxCallsPerUse;
+  const deployment: AgentDeploymentConfig = getAgentDeploymentConfig();
+  const webSearchMaxCallsPerUse: number | undefined = deployment.webSearch?.maxCallsPerUse;
+  // 台词语言只取这一次：send_message、send_voice 的声明、系统提示词「行动与停止」段与 send_voice 的
+  // 合成请求同用这一份；tts 段缺省时按 TTS_DEFAULT_BOT_LANGUAGE。
+  const voicePrompts: Readonly<VoiceLanguagePrompts> =
+    VOICE_LANGUAGE_PROMPTS[deployment.tts?.botLanguage ?? TTS_DEFAULT_BOT_LANGUAGE];
   const declarations: AiToolDefinition[] = [
-    buildSendMessageToolDefinition(),
+    buildSendMessageToolDefinition(voicePrompts.sendMessageInstruction),
   ];
   if (imageEnabled) declarations.push(buildGenerateImageToolDefinition());
-  if (voiceEnabled) declarations.push(buildSendVoiceToolDefinition());
+  if (voiceEnabled) declarations.push(buildSendVoiceToolDefinition(voicePrompts));
   declarations.push(buildAddReactionToolDefinition());
   if (viewDefinition !== null) declarations.push(viewDefinition);
   if (sendStickerDefinition !== null) declarations.push(sendStickerDefinition);
@@ -118,7 +128,7 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
   // 语音执行器只与已挂载的工具一同创建；未挂载的名称按未知工具处理。准入通过后在后台开始合成，
   // 交回接纳回执与投递步骤；窗口到点仍在合成时，投递步骤经 chains.defer 转入后台（见 voiceMessage.ts）。
   const executeSendVoice: ((argumentsJson: string) => ReplyToolExecution) | null =
-    voiceEnabled ? createSendVoiceExecutor(ctx, chains) : null;
+    voiceEnabled ? createSendVoiceExecutor(ctx, chains, voicePrompts.speechLanguageStyle) : null;
 
   /** 记下一次执行的回执：动作工具按回执占额度，接纳的动作交给串行链投递。 */
   function accept(name: string, isActionTool: boolean, execution: ReplyToolExecution): string {
@@ -183,6 +193,7 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     // workers/aiChat/replyModel.ts 与 consts/aiChat/tools.ts）。
     webSearch: webSearchProvider === null,
     searchWeb,
+    replyActionInstruction: voicePrompts.replyActionInstruction,
     has: (name: string): boolean => names.has(name),
     // 直接轮从请求模型起亮状态（串行链忙时由链上的步骤掌管，排空后再亮）。还没接纳过动作的请求亮
     // 「正在输入」，交回的第一条文字直接发出；刚看过贴纸包的那次请求是在挑贴纸，亮「正在选择贴纸」；

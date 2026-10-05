@@ -16,19 +16,20 @@ import { currentTimeSentence } from "./timeSentence";
  *
  * 区块标签与段落文案同 promptContext.ts 的另外三段同源（见
  * consts/aiChat/prompts/memory.ts），防注入总规则只在 systemInstruction 声明一次。
- * 本区块只写事实：据工具状态怎么做由系统提示词里的 REPLY_ACTION_INSTRUCTION 规定。
+ * 本区块只写事实：据工具状态怎么做由系统提示词「行动与停止」段（ReplyToolset.replyActionInstruction）规定。
  *
- * @param chatId 群聊 ID；心情按群维护，读取时顺带处理到期重抽（见 aiChat/ai/mood.ts）。
+ * 心情全 Worker 共用一份，读取时顺带处理到期重抽（见 aiChat/ai/mood.ts）。
+ *
  * @param toolStatus createReplyToolset 取好的本轮工具状态段（见
  *   aiChat/ai/tools/replyToolset/toolStatus.ts）。
  */
-export function buildRuntimeStateBlock(chatId: number, toolStatus: string): string {
+export function buildRuntimeStateBlock(toolStatus: string): string {
   return `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.runtimeState}]\n` +
     REPLY_CONTEXT_SECTION_TEXT.runtimeState.header +
     "\n" +
     MOOD_STATE_PRECEDENCE_INSTRUCTION +
     "\n" +
-    currentMoodInstruction(chatId) +
+    currentMoodInstruction() +
     "\n" +
     currentTimeSentence() +
     TIME_AWARENESS_INSTRUCTION +

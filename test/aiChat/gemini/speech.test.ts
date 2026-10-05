@@ -25,7 +25,7 @@ const {
   GEMINI_SPEECH_REQUEST_TIMEOUT_MS,
   GEMINI_SPEECH_TEMPERATURE,
 } = await import("../../../packages/consts/aiChat/gemini");
-const { TTS_DEFAULT_STYLE, TTS_TONE_SEPARATOR } = await import("../../../packages/consts/aiChat/voiceMessage");
+const { TTS_DEFAULT_STYLE, TTS_LANGUAGE_SEPARATOR, TTS_TONE_SEPARATOR } = await import("../../../packages/consts/aiChat/voiceMessage");
 
 const WAV_BYTES: Uint8Array = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4]);
 const INITIAL_CONFIG = getAgentDeploymentConfig();
@@ -118,6 +118,20 @@ describe("Gemini 语音合成适配器", () => {
     };
     expect(body.input[0]!.content[0]!.annotations[0]!.style)
       .toBe(`${getAgentDeploymentConfig().tts?.style}${TTS_TONE_SEPARATOR}鼻で笑うように`);
+  });
+
+  test("带朗读语言要求时依次拼在基础风格之后、本句语气之前", async () => {
+    await synthesizeGeminiSpeech({ text: "Idiot", languageStyle: "Speak in English", tone: "teasing" });
+    await synthesizeGeminiSpeech({ text: "Idiot", languageStyle: "Speak in English" });
+    const styles: string[] = create.mock.calls.map((call: unknown[]): string =>
+      (call[0] as { input: readonly { content: readonly { annotations: readonly { style: string }[] }[] }[] })
+        .input[0]!.content[0]!.annotations[0]!.style
+    );
+    const base: string | undefined = getAgentDeploymentConfig().tts?.style;
+    expect(styles).toEqual([
+      `${base}${TTS_LANGUAGE_SEPARATOR}Speak in English${TTS_TONE_SEPARATOR}teasing`,
+      `${base}${TTS_LANGUAGE_SEPARATOR}Speak in English`,
+    ]);
   });
 
   test("每次调用显式带超时、重试次数与合成后的 signal", async () => {

@@ -1,6 +1,6 @@
 import { ensureStickerCatalogs, pruneStickerCatalogs } from "../../aiChat/ai/stickers/catalog";
 import { pruneStickerSets } from "../../aiChat/ai/stickers/sets";
-import { refreshChatMoods } from "../../aiChat/ai/mood";
+import { refreshMood } from "../../aiChat/ai/mood";
 import { reloadAgentDeploymentConfig } from "../../aiChat/provider";
 import { invalidateStickerMenu } from "../../cache/workers/aiChat/stickers/menu";
 import { aiChatWorkerQuiescing } from "../../cache/workers/aiChat/worker";
@@ -22,7 +22,7 @@ export function applyAiChatConfigReload(msg: AiConfigReloadMessage): void {
   if (msg.agent !== undefined) reloadAgentDeploymentConfig(msg.agent);
   if (msg.mood !== undefined) {
     adoptMoodConfig(msg.mood);
-    refreshChatMoods();
+    refreshMood();
   }
   if (msg.stickers !== undefined) {
     adoptStickerConfig(msg.stickers);

@@ -34,6 +34,14 @@ export interface TtsDailyUsage {
 }
 
 /**
+ * 一次 `operator` 口径登记的凭据：登记时所在计数窗口的起点。供应商失败时凭它退还这一次，
+ * 窗口已经换代则不退（见 aiChat/ai/ttsUsage.ts 的 refundOperatorTtsUsage）。
+ */
+export interface TtsOperatorClaim {
+  readonly windowStartedAt: number;
+}
+
+/**
  * 一次合成请求所用的独立每日额度：`operator`（`/send` 与 cron）使用 daily_reserve_quota，
  * `ai`（AI 语音工具）使用 daily_limit - daily_reserve_quota；两者互不借用额度。
  */
@@ -149,3 +157,27 @@ export type SpeechSynthesizerLookup =
     readonly reason: "tts unconfigured" | "tts unsupported";
     readonly providerName: AgentProvider | undefined;
   };
+
+/**
+ * 随 `agent.tts.bot_language` 切换的一份语音相关文案（consts/aiChat/prompts/tools.ts 的
+ * VOICE_LANGUAGE_PROMPTS 按 TtsBotLanguage 各注册一份）：回复模型可见的提示词，以及 AI 语音合成
+ * 请求追加的朗读语言要求。replyToolset/orchestrator.ts 每轮取一份，工具声明、系统提示词与本轮
+ * send_voice 的合成请求同用这一份。
+ */
+export interface VoiceLanguagePrompts {
+  /** send_voice 的内置工具说明；prompt/voice_tool.md 存在时由其正文整份替换（见 replyToolset/voiceMessage.ts）。 */
+  readonly sendVoiceInstruction: string;
+  /** send_voice 参数 text 的说明。 */
+  readonly voiceTextDescription: string;
+  /** send_voice 参数 tone 的说明。 */
+  readonly voiceToneDescription: string;
+  /** send_message 的工具说明，含语音台词与文字的去重规则。 */
+  readonly sendMessageInstruction: string;
+  /** 系统提示词「行动与停止」段，含语音台词与文字的去重规则。 */
+  readonly replyActionInstruction: string;
+  /**
+   * send_voice 合成请求在基础朗读风格之后追加的朗读语言要求，用该台词语言本身写成；只交给语音合成
+   * 模型，不进回复模型的提示词，`/send` 与 cron 的合成不带它。
+   */
+  readonly speechLanguageStyle: string;
+}

@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../packages/config/agent";
-import { voiceSynthesisWaiters } from "../../packages/cache/main/aiChat";
+import { voiceSynthesisRequests } from "../../packages/cache/main/aiChat";
 import { VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS } from "../../packages/consts/aiChat/voiceMessage";
 import {
   failAllVoiceSynthesisWaiters,
@@ -67,7 +67,7 @@ describe("requestVoiceSynthesis", () => {
     expect(posts).toEqual([{ type: "synthesizeVoice", requestId, text: "おやすみ", tone: "眠そうに" }]);
     settleVoiceSynthesis({ type: "voiceSynthesized", requestId, result: { ok: false, reason: "synthesis failed" } });
     await expect(pending).resolves.toEqual({ ok: false, reason: "synthesis failed" });
-    expect(voiceSynthesisWaiters.size).toBe(0);
+    expect(voiceSynthesisRequests.waiters.size).toBe(0);
     controller.abort();
     expect(posts).toHaveLength(1);
   });
@@ -80,7 +80,7 @@ describe("requestVoiceSynthesis", () => {
     await expect(pending).resolves.toEqual({ ok: false, reason: "aborted" });
     expect(posts.at(-1)).toEqual({ type: "cancelVoiceSynthesis", requestId });
     settleVoiceSynthesis({ type: "voiceSynthesized", requestId, result: { ok: false, reason: "aborted" } });
-    expect(voiceSynthesisWaiters.size).toBe(0);
+    expect(voiceSynthesisRequests.waiters.size).toBe(0);
   });
 
   test("等待超时按 timed out 结算并撤回合成", async () => {
@@ -98,10 +98,10 @@ describe("requestVoiceSynthesis", () => {
     accepting = true;
     const first: Promise<VoiceSynthesisResult> = request();
     const second: Promise<VoiceSynthesisResult> = request();
-    expect(voiceSynthesisWaiters.size).toBe(2);
+    expect(voiceSynthesisRequests.waiters.size).toBe(2);
     failAllVoiceSynthesisWaiters();
     await expect(first).resolves.toEqual({ ok: false, reason: "worker unavailable" });
     await expect(second).resolves.toEqual({ ok: false, reason: "worker unavailable" });
-    expect(voiceSynthesisWaiters.size).toBe(0);
+    expect(voiceSynthesisRequests.waiters.size).toBe(0);
   });
 });

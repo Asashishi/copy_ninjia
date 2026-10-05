@@ -1,10 +1,10 @@
 /** AI 与预留额度独立计数，共同过期，恢复与配置变动保持已用次数。 */
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { TTS_DEFAULT_STYLE, TTS_USAGE_WINDOW_MS } from "../../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_BOT_LANGUAGE, TTS_DEFAULT_STYLE, TTS_USAGE_WINDOW_MS } from "../../../packages/consts/aiChat/voiceMessage";
 import { adoptAgentDeploymentConfig } from "../../../packages/config/agent";
 import { ttsQuotaLimit } from "../../../packages/aiChat/ai/utils/ttsUsageWindow";
 import type { AgentDeploymentConfig, AgentTtsCapabilityConfig } from "../../../packages/types/config";
-import type { TtsDailyUsage, TtsQuotaScope } from "../../../packages/types/aiChat/voiceMessage";
+import type { TtsDailyUsage, TtsOperatorClaim, TtsQuotaScope } from "../../../packages/types/aiChat/voiceMessage";
 
 const originalSelfDescriptor: PropertyDescriptor | undefined = Object.getOwnPropertyDescriptor(globalThis, "self");
 const postMessage = mock((..._args: unknown[]): void => {});
@@ -13,9 +13,11 @@ const {
   aiTtsRemaining,
   claimOperatorTtsUsage,
   hydrateTtsUsage,
+  refundOperatorTtsUsage,
   reserveAiTtsUsage,
   settleAiTtsReservation,
 } = await import("../../../packages/aiChat/ai/ttsUsage");
+const { decodeGlobalStateFile } = await import("../../../packages/libs/stateFileCodec");
 const { pendingAiTtsReservations, ttsDailyUsage } = await import("../../../packages/cache/workers/aiChat/ttsUsage");
 
 const NOW: number = 1_800_000_000_000;
@@ -25,7 +27,7 @@ const AI_LIMIT: number = FULL_LIMIT - RESERVE_LIMIT;
 const CAPABILITY = { provider: "google", apiKey: "key", baseUrl: undefined, headers: undefined, model: "m" } as const;
 
 function ttsConfig(dailyLimit: number, dailyReserveQuota: number): AgentTtsCapabilityConfig {
-  return { ...CAPABILITY, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit, dailyReserveQuota };
+  return { ...CAPABILITY, voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, botLanguage: TTS_DEFAULT_BOT_LANGUAGE, dailyLimit, dailyReserveQuota };
 }
 
 function adoptTts(tts: AgentTtsCapabilityConfig | undefined): void {
@@ -45,7 +47,7 @@ beforeEach(() => {
  * 「准入预留 → TTS 成功结清」两步。
  */
 function claim(scope: TtsQuotaScope, dailyLimit: number, now: number): boolean {
-  if (scope === "operator") return claimOperatorTtsUsage(dailyLimit, now);
+  if (scope === "operator") return claimOperatorTtsUsage(dailyLimit, now) !== null;
   if (!reserveAiTtsUsage(dailyLimit, now)) return false;
   settleAiTtsReservation(true, now);
   return true;
@@ -115,6 +117,53 @@ describe("两个口径的登记", () => {
     expect(claim("ai", 8, NOW + 1)).toBeTrue();
     expect(claim("operator", 2, NOW + 1)).toBeFalse();
     expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 8, reserveCount: 3 });
+  });
+});
+
+describe("refundOperatorTtsUsage", () => {
+  test("退还把 reserveCount 减回登记前并回传全量计数", () => {
+    hydrateTtsUsage({ windowStartedAt: NOW, agentCount: 2, reserveCount: 3 });
+    const ticket: TtsOperatorClaim | null = claimOperatorTtsUsage(RESERVE_LIMIT, NOW + 1);
+    expect(ticket).toEqual({ windowStartedAt: NOW });
+    postMessage.mockClear();
+
+    refundOperatorTtsUsage(ticket!, NOW + 2);
+
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 2, reserveCount: 3 });
+    expect(postMessage.mock.calls).toEqual([[{ type: "ttsUsage", usage: ttsDailyUsage.current }]]);
+  });
+
+  test("两项都减到 0 时回传 null，等同从没用过", () => {
+    const ticket: TtsOperatorClaim | null = claimOperatorTtsUsage(RESERVE_LIMIT, NOW);
+    postMessage.mockClear();
+
+    refundOperatorTtsUsage(ticket!, NOW + 1);
+
+    expect(ttsDailyUsage.current).toBeNull();
+    expect(postMessage.mock.calls).toEqual([[{ type: "ttsUsage", usage: null }]]);
+  });
+
+  test("窗口已翻转或已换代时不退", () => {
+    const ticket: TtsOperatorClaim | null = claimOperatorTtsUsage(RESERVE_LIMIT, NOW);
+    postMessage.mockClear();
+    refundOperatorTtsUsage(ticket!, NOW + TTS_USAGE_WINDOW_MS);
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW, agentCount: 0, reserveCount: 1 });
+
+    expect(claimOperatorTtsUsage(RESERVE_LIMIT, NOW + TTS_USAGE_WINDOW_MS)).toEqual({ windowStartedAt: NOW + TTS_USAGE_WINDOW_MS });
+    postMessage.mockClear();
+    refundOperatorTtsUsage(ticket!, NOW + TTS_USAGE_WINDOW_MS + 1);
+    expect(ttsDailyUsage.current).toEqual({ windowStartedAt: NOW + TTS_USAGE_WINDOW_MS, agentCount: 0, reserveCount: 1 });
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  test("退还后的计数按持久化格式编码再解码不报错（模拟重启）", () => {
+    hydrateTtsUsage({ windowStartedAt: NOW, agentCount: 1, reserveCount: 0 });
+    const ticket: TtsOperatorClaim | null = claimOperatorTtsUsage(RESERVE_LIMIT, NOW + 1);
+    refundOperatorTtsUsage(ticket!, NOW + 2);
+    for (const usage of [ttsDailyUsage.current, null]) {
+      const file: unknown = JSON.parse(JSON.stringify({ copy: { copiedUser: null }, ttsUsage: usage ?? undefined }));
+      expect(decodeGlobalStateFile(file, "state.json").ttsUsage).toEqual(usage ?? undefined);
+    }
   });
 });
 

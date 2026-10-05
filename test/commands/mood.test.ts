@@ -6,8 +6,8 @@ import { MOOD_USAGE_TEXT } from "../../packages/consts/atmosphere/teasing/comman
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
-const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
-const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
+const queryAiMood = mock(async (): Promise<string> => "平静");
+const switchAiMood = mock(async (): Promise<string> => "开心");
 const loggerError = mock((..._args: unknown[]): void => {});
 const states = new Map<number, Record<string, unknown>>();
 
@@ -25,8 +25,8 @@ mock.module("../../packages/infra/telegram", () => ({
   sendCommandMessage: sendMessage,
 }));
 mock.module("../../packages/aiChat", () => ({
-  requestAiMood: (chatId: number, requestType: "queryMood" | "switchMood"): Promise<string> =>
-    requestType === "queryMood" ? queryAiMood(chatId) : switchAiMood(chatId),
+  requestAiMood: (requestType: "queryMood" | "switchMood"): Promise<string> =>
+    requestType === "queryMood" ? queryAiMood() : switchAiMood(),
 }));
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/infra/storage/stateStore", () => ({
@@ -51,9 +51,9 @@ beforeEach(() => {
   sendMessage.mockClear();
   sendMessage.mockImplementation(async (..._args: unknown[]): Promise<number | undefined> => 1);
   queryAiMood.mockClear();
-  queryAiMood.mockImplementation(async (_chatId: number): Promise<string> => "平静");
+  queryAiMood.mockImplementation(async (): Promise<string> => "平静");
   switchAiMood.mockClear();
-  switchAiMood.mockImplementation(async (_chatId: number): Promise<string> => "开心");
+  switchAiMood.mockImplementation(async (): Promise<string> => "开心");
   loggerError.mockClear();
 });
 
@@ -69,14 +69,14 @@ test.each(["", "unknown", "query extra", "switch extra", "query switch", "QUERY 
 test.each(["Query", "QUERY", "qUeRy"])("/mood %s 照常发起查询", async (argument) => {
   states.set(-1001, { isAIChatEnabled: true });
   await handleMoodCommand(context(argument, 101));
-  expect(queryAiMood).toHaveBeenCalledWith(-1001);
+  expect(queryAiMood).toHaveBeenCalledTimes(1);
 });
 
 test.each(["Switch", "SWITCH"])("/mood %s 照常发起重抽", async (argument) => {
   states.set(-1001, { isAIChatEnabled: true });
   // 重抽只认超级管理员，这里用缺省的 100。
   await handleMoodCommand(context(argument));
-  expect(switchAiMood).toHaveBeenCalledWith(-1001);
+  expect(switchAiMood).toHaveBeenCalledTimes(1);
 });
 
 describe("mood commands: /mood query", () => {
@@ -84,7 +84,7 @@ describe("mood commands: /mood query", () => {
     states.set(-1001, { isAIChatEnabled: true });
     await handleMoodCommand(context("  query\n", 101));
 
-    expect(queryAiMood).toHaveBeenCalledWith(-1001);
+    expect(queryAiMood).toHaveBeenCalledTimes(1);
     expect(switchAiMood).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
@@ -162,7 +162,7 @@ describe("mood commands: /mood switch", () => {
     states.set(-1001, { isAIChatEnabled: true });
     await handleMoodCommand(context("switch"));
 
-    expect(switchAiMood).toHaveBeenCalledWith(-1001);
+    expect(switchAiMood).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       text: expect.stringContaining("「开心」"),
@@ -193,7 +193,7 @@ describe("mood commands: /mood switch", () => {
 
     await expect(handleMoodCommand(context("switch"))).rejects.toBe(failure);
 
-    expect(switchAiMood).toHaveBeenCalledWith(-1001);
+    expect(switchAiMood).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(loggerError).not.toHaveBeenCalled();
   });

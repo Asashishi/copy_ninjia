@@ -10,6 +10,8 @@ import type {
   VerificationState,
 } from "../../../packages/types/states/verification";
 import type { VerificationAttemptPermitResult } from "../../../packages/types/antiRaid/protocol";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
+import { expectTemplateRendered, longestTemplatePart } from "../../helpers/templateText";
 
 const {
   CHAT_ID,
@@ -267,7 +269,7 @@ describe("踢人失败时的权限告警", () => {
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
 
-    expect(sentTexts[0]).toContain("没给本天才封禁权限");
+    expectTemplateRendered(sentTexts[0]!, ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationTimeoutKickFailed);
     expect(state.failureNoticeSent).toBeTrue();
     expect(testState.publishedChanges).toBe(1);
   });
@@ -353,8 +355,10 @@ describe("踢人失败时的权限告警", () => {
 
     await run([{ kind: "expel", snapshot: state.snapshot }]);
 
-    expect(sentTexts[0]).toContain("还有 1 条没清掉");
-    expect(sentTexts[0]).not.toContain("删消息的权限");
+    expectTemplateRendered(sentTexts[0]!, (label: string): string => ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationCleanupFailed(label, 1));
+    expect(sentTexts[0]).not.toContain(
+      longestTemplatePart((label: string): string => ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.verificationCleanupForbidden(label, 3, 1))
+    );
     // 线索仍要留，但不能指向一个没被证伪的权限。
     expect(loggedErrors.some((line: string): boolean => line.includes("1 of 3"))).toBeTrue();
     expect(loggedErrors.some((line: string): boolean => line.includes("can_delete_messages"))).toBeFalse();

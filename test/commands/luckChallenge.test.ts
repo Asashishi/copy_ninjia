@@ -18,6 +18,7 @@ const onLuckAppendStalledMock = mock((..._args: unknown[]): void => {});
 const relayLogMessageMock = mock((..._args: unknown[]): boolean => true);
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
+const loggerWarnMock = mock((..._args: unknown[]): void => {});
 let ensureLuckReceiptSecretError: unknown = null;
 
 const ensureLuckReceiptSecretMock = mock(async (day: string) => {
@@ -34,7 +35,7 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 
 mock.module("../../packages/infra/logger", () => ({
-  logger: loggerStub({ error: loggerErrorMock }),
+  logger: loggerStub({ error: loggerErrorMock, warn: loggerWarnMock }),
 }));
 
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
@@ -771,6 +772,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       cache.luckReceiptSecretState.current = null;
       cache.luckRuntimeState.daySwitchedInProcess = false;
       loggerErrorMock.mockClear();
+      loggerWarnMock.mockClear();
 
       expect((): void => {
         luckChallenge.restoreLuckState(
@@ -790,7 +792,9 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
       expect(cache.dailyLuckCache.size).toBe(0);
       // 跨过了日界：没有当日证明的迟到确认此后一律 fail closed。
       expect(cache.luckRuntimeState.daySwitchedInProcess).toBeTrue();
-      expect(loggerErrorMock).toHaveBeenCalled();
+      // 日切竞态不是坏数据，只记 warn。
+      expect(loggerWarnMock).toHaveBeenCalledTimes(1);
+      expect(loggerErrorMock).not.toHaveBeenCalled();
 
       // 首次用到运势时照常向 Worker 取当天密钥，功能不降级。
       ensureLuckReceiptSecretMock.mockClear();

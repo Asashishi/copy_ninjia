@@ -52,6 +52,7 @@ mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({
   handleLockdownPersisted(): void { calls.push("lockdownPersisted"); },
   handleLockdownPersistFailed(): void { calls.push("lockdownPersistFailed"); },
   deactivateLockdownChat(): void { calls.push("deactivateLockdown"); },
+  retryDeniedLockdownRestore(): void { calls.push("retryDeniedLockdownRestore"); },
   stopLockdownRuntime(): void { calls.push("stopLockdown"); },
 }));
 mock.module("../../../packages/workers/antiRaid/adminCache", () => ({
@@ -78,8 +79,11 @@ mock.module("../../../packages/workers/antiRaid/floodControl", () => ({
   sweepFloodWindows(): number { calls.push("sweepFloodWindows"); return 0; },
   resetFloodWindows(): void { calls.push("resetFloodWindows"); },
 }));
+/** 镜像里此前是否确证能限制成员；botPermissionsChanged 只在它从否变为是时提前私密模式重试。 */
+let couldRestrict: boolean = false;
 mock.module("../../../packages/workers/antiRaid/botPermissions", () => ({
   applyBotPermissionsChange(): void { calls.push("botPermissionsChanged"); },
+  botCanRestrictIn(): boolean { return couldRestrict; },
   forgetWorkerBotPermissions(): void { calls.push("forgetBotPermissions"); },
   resetWorkerBotPermissions(): void { calls.push("resetBotPermissions"); },
 }));
@@ -262,6 +266,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       { type: "clearFloodControl", chatId: -1001 },
       { type: "temporaryAdBypassGranted", identityId: 1 },
       { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: true, canDeleteMessages: true } },
+      { type: "botPermissionsChanged", chatId: -1001, permissions: { canRestrictMembers: false, canDeleteMessages: true } },
       { type: "chatKind", chatId: -1001, isSupergroup: true },
       { type: "barrier", barrierId: 99 },
     ];
@@ -281,11 +286,22 @@ describe("Anti-Raid Worker lifecycle", () => {
       "adopt", "lockdownPersisted", "lockdownPersistFailed", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
       "floodCandidate", "clearFloodWindows", "clearIdentityAdDetect",
-      "botPermissionsChanged", "chatKindChanged",
+      // 限制成员权限从没有变成确证有时才提前被拒的私密模式解除重试。
+      "botPermissionsChanged", "retryDeniedLockdownRestore", "botPermissionsChanged", "chatKindChanged",
     ]);
     // 配置消息不产生业务副作用，只把快照写进 holder：本线程此后不读 agent.json。
     expect(adDetectAgentConfigCache.current).toBe(injectedAdDetectConfig);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
+    // 镜像里本来就确证能限制成员时，再来一次同样的确证不提前重试。
+    couldRestrict = true;
+    calls.length = 0;
+    workerSelf.onmessage!({ data: {
+      type: "botPermissionsChanged",
+      chatId: -1001,
+      permissions: { canRestrictMembers: true, canDeleteMessages: true },
+    } } as MessageEvent<AntiRaidWorkerMessage>);
+    expect(calls).toEqual(["botPermissionsChanged"]);
+    couldRestrict = false;
     await Bun.sleep(0);
 
     worker.stopAntiRaidWorker();

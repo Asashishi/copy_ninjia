@@ -1,4 +1,4 @@
-import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_BOT_LANGUAGE, TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildBotStatusMessage,
@@ -8,11 +8,13 @@ import {
 import type { BotStatusSnapshot } from "../../packages/commands/botStatus";
 import { BOT_CHAT_PERMISSION_KEYS } from "../../packages/consts/botAdmin";
 import { BOT_STATUS_FEATURE_KEYS } from "../../packages/consts/botStatus";
+import { TELEGRAM_429_RETRY_QUEUE_MAX } from "../../packages/consts/telegram";
 import { botPermissions } from "../helpers/botPermissions";
 import { chatStateOf } from "../helpers/chatState";
 import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
 import type { Atmosphere } from "../../packages/types/atmosphere";
 import { parseMarkdownV2 } from "../helpers/markdownV2";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import type { ParsedMarkdownV2 } from "../helpers/markdownV2";
 
 /** 按 Telegram 的 MarkdownV2 解析口径还原回执的可见正文与实体；原文会被拒收时直接抛错。 */
@@ -67,6 +69,7 @@ function statusSnapshot(): BotStatusSnapshot {
         voice: "Leda",
         style: TTS_DEFAULT_STYLE,
         language: undefined,
+        botLanguage: TTS_DEFAULT_BOT_LANGUAGE,
         dailyLimit: 100,
         dailyReserveQuota: 25,
       },
@@ -88,7 +91,7 @@ function statusSnapshot(): BotStatusSnapshot {
     }),
     telegramActive: 7,
     telegramPending: 1_024,
-    telegramCapacity: 81_920,
+    telegramCapacity: TELEGRAM_429_RETRY_QUEUE_MAX,
     activeGagSessions: 3,
     activeTranslateSessions: 2,
     aiContextUsage: { bufferedCount: 128, summaryCount: 3 },
@@ -112,8 +115,8 @@ describe("/bot_status", () => {
   test("只展示已配置的模型名和本群开启项，不泄漏密钥或端点", () => {
     const text: string = renderStatus(statusSnapshot()).text;
 
-    expect(text).toStartWith("机器人状态");
-    expect(text).toContain("全局模型能力：");
+    expect(text).toStartWith(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusTitle);
+    expect(text).toContain(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusModels);
     expect(text).toContain("群聊正文：gpt-status\n");
     expect(text).toContain("记忆摘要：gemini-summary\n");
     expect(text).toContain("媒体理解：gemini-media\n");
@@ -123,7 +126,7 @@ describe("/bot_status", () => {
     expect(text).not.toContain("联网检索：");
     expect(text).not.toContain("已配置");
     expect(text).not.toContain("未配置");
-    expect(text).toContain("Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/81920");
+    expect(text).toContain(`Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/${TELEGRAM_429_RETRY_QUEUE_MAX}`);
     expect(text).not.toContain("openai");
     expect(text).not.toContain("google");
     // 本群一组：id 在前，翻译会话占用在最后，不再展示提示词状态。
@@ -212,6 +215,7 @@ describe("/bot_status", () => {
           voice: "ara",
           style: undefined,
           language: "auto",
+          botLanguage: TTS_DEFAULT_BOT_LANGUAGE,
           dailyLimit: 100,
           dailyReserveQuota: 25,
         },
@@ -234,7 +238,7 @@ describe("/bot_status", () => {
       aiContextUsage: undefined,
     }).text);
 
-    expect(text).not.toContain("全局模型能力");
+    expect(text).not.toContain(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.statusModels);
     expect(text).not.toContain("AI 对话能力：");
     expect(text).not.toContain("广告检测：");
     expect(text).toContain("Telegram 出站：");
@@ -421,6 +425,6 @@ describe("/bot_status", () => {
     expect(text).toContain("当前内存占用：不可用");
     expect(text).not.toContain("RSS");
     expect(text).toContain("Bot 运行时长");
-    expect(text).toContain("全局模型能力");
+    expect(text).toContain(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusModels);
   });
 });

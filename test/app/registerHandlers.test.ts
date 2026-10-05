@@ -1,19 +1,22 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import type { Mock } from "bun:test";
+import { Composer } from "grammy";
 import type { Bot, Context } from "grammy";
-import { registerHandlers } from "../../packages/app/registerHandlers";
 import { botMessageActivity } from "../../packages/cache/main/botMessage";
 import { BOT_MESSAGE_ACTIVITY_LIMIT } from "../../packages/consts/botMessage";
+const composerUseAtImport: Mock<Composer<Context>["use"]> = spyOn(Composer.prototype, "use");
+const { registerHandlers } = await import("../../packages/app/registerHandlers");
+/** 显式注册之前调用 SDK use 的次数；模块导入不安装任何中间件。 */
+const SDK_REGISTRATIONS_AFTER_IMPORT: number = composerUseAtImport.mock.calls.length;
+composerUseAtImport.mockRestore();
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 
-interface FakeComposer {
-  command(command: string, handler: unknown): FakeComposer;
-}
-
-interface FakeBot extends FakeComposer {
-  use(handler: TestMiddleware): FakeBot;
+interface FakeBot {
+  use(...handlers: TestMiddleware[]): FakeBot;
+  command(command: string, handler: unknown): FakeBot;
   hears(trigger: RegExp, handler: unknown): FakeBot;
-  on(update: unknown, handler?: unknown): FakeBot | FakeComposer;
+  on(update: unknown, handler?: unknown): FakeBot;
   catch(handler: unknown): FakeBot;
 }
 
@@ -22,62 +25,84 @@ function nonMessageContext(): Context {
   return { update: { update_id: 1 }, message: undefined, channelPost: undefined, me: { id: 999 } } as unknown as Context;
 }
 
+/** 一次 registerHandlers 在假 bot 上留下的全部登记。 */
+interface Registration {
+  readonly registration: ReturnType<typeof registerHandlers>;
+  readonly used: readonly (readonly TestMiddleware[])[];
+  /** 直接挂在 bot 上的命令与 hears，必须恒为空（见 app/registerHandlers.ts）。 */
+  readonly directCommands: readonly string[];
+  readonly directHears: readonly RegExp[];
+  readonly updates: readonly unknown[];
+  /** use 与 on 记在同一条有序流水里，钉住承重的相对顺序。 */
+  readonly registrationOrder: readonly string[];
+  readonly catchHandlers: readonly ((error: { ctx: Context; error: unknown }) => void)[];
+  /** 子 Composer 上按注册顺序登记的命令名。 */
+  readonly commands: readonly unknown[];
+  readonly middleware: readonly TestMiddleware[];
+}
+
+function registerOnFakeBot(): Registration {
+  const used: TestMiddleware[][] = [];
+  const directCommands: string[] = [];
+  const directHears: RegExp[] = [];
+  const updates: unknown[] = [];
+  const registrationOrder: string[] = [];
+  const catchHandlers: ((error: { ctx: Context; error: unknown }) => void)[] = [];
+  const fakeBot: FakeBot = {
+    use(...handlers: TestMiddleware[]): FakeBot {
+      used.push(handlers);
+      registrationOrder.push("use");
+      return fakeBot;
+    },
+    command(command: string, _handler: unknown): FakeBot {
+      directCommands.push(command);
+      registrationOrder.push(`command:${command}`);
+      return fakeBot;
+    },
+    hears(trigger: RegExp, _handler: unknown): FakeBot {
+      directHears.push(trigger);
+      registrationOrder.push("hears");
+      return fakeBot;
+    },
+    on(update: unknown, _handler?: unknown): FakeBot {
+      updates.push(update);
+      registrationOrder.push(`on:${JSON.stringify(update)}`);
+      return fakeBot;
+    },
+    catch(handler: unknown): FakeBot {
+      catchHandlers.push(handler as (error: { ctx: Context; error: unknown }) => void);
+      return fakeBot;
+    },
+  };
+  const composerCommands = spyOn(Composer.prototype, "command");
+  try {
+    const registration: ReturnType<typeof registerHandlers> = registerHandlers(fakeBot as unknown as Bot);
+    return {
+      registration,
+      used,
+      directCommands,
+      directHears,
+      updates,
+      registrationOrder,
+      catchHandlers,
+      commands: composerCommands.mock.calls.map((call: unknown[]): unknown => call[0]),
+      middleware: used[0] ?? [],
+    };
+  } finally {
+    composerCommands.mockRestore();
+  }
+}
+
 describe("application handler registration", () => {
-  test("导入不注册；显式调用一次后安装完整更新链并追踪最大 update_id", async () => {
-    const middleware: TestMiddleware[] = [];
-    const commands: string[] = [];
-    // 直接挂在 bot 上的命令与 hears，必须恒为空：命令注册在 :entities:bot_command
-    // 子链上，中文动作命令收在「/」外闸后的子 Composer 里（见 app/registerHandlers.ts）。
-    const directCommands: string[] = [];
-    const directHears: RegExp[] = [];
-    const updates: unknown[] = [];
-    // use、on 与 command 记在同一条有序流水里，钉住承重的相对顺序。
-    const registrationOrder: string[] = [];
-    let catchCount: number = 0;
-    let caughtHandler: ((error: { ctx: Context; error: unknown }) => void) | undefined;
-    const fakeCommandGroup: FakeComposer = {
-      command(command: string, _handler: unknown): FakeComposer {
-        commands.push(command);
-        registrationOrder.push(`command:${command}`);
-        return fakeCommandGroup;
-      },
-    };
-    const fakeBot: FakeBot = {
-      use(handler: TestMiddleware): FakeBot {
-        middleware.push(handler);
-        registrationOrder.push(`use:${middleware.length}`);
-        return fakeBot;
-      },
-      command(command: string, _handler: unknown): FakeBot {
-        directCommands.push(command);
-        commands.push(command);
-        registrationOrder.push(`command:${command}`);
-        return fakeBot;
-      },
-      hears(trigger: RegExp, _handler: unknown): FakeBot {
-        directHears.push(trigger);
-        registrationOrder.push("hears");
-        return fakeBot;
-      },
-      on(update: unknown, _handler?: unknown): FakeBot | FakeComposer {
-        updates.push(update);
-        registrationOrder.push(`on:${JSON.stringify(update)}`);
-        // 不带 handler 的 on 是在取一条子链；命令组就是这样挂的，返回一个只认
-        // command 的记录器，避免它被误当成 bot 本体继续注册别的东西。
-        return _handler === undefined ? fakeCommandGroup : fakeBot;
-      },
-      catch(handler: unknown): FakeBot {
-        catchCount++;
-        caughtHandler = handler as typeof caughtHandler;
-        return fakeBot;
-      },
-    };
+  test("导入不注册；显式调用后整条前置链只挂一次 bot.use，命令全部收在外闸后的子 Composer", () => {
+    expect(SDK_REGISTRATIONS_AFTER_IMPORT).toBe(0);
+    const { used, middleware, commands, directCommands, directHears }: Registration = registerOnFakeBot();
 
-    expect(middleware).toHaveLength(0);
-    const registration = registerHandlers(fakeBot as unknown as Bot);
-
-    // 6 条前置 + Anti-Raid / gag / qa 三条 ingress + 中文动作命令外闸 + 消息兜底。
-    expect(middleware).toHaveLength(11);
+    // 6 条前置 + Anti-Raid / gag / qa 三条 ingress + 命令外闸 + 中文动作命令外闸 + 消息兜底，
+    // 按这个顺序收在同一个数组里。
+    expect(used).toHaveLength(1);
+    expect(middleware).toHaveLength(12);
+    expect(used[0]).toBe(middleware);
     expect(commands).toEqual([
       "permission",
       "white",
@@ -109,22 +134,14 @@ describe("application handler registration", () => {
     ]);
     expect(directCommands).toEqual([]);
     expect(directHears).toEqual([]);
-    // use:2 是机器人发言限流；use:4 是 init 与私聊命令门禁；use:7/8/9 依次是
-    // Anti-Raid、gag、/qa set 表单三条 ingress；use:10 的「/」外闸早于 use:11 的消息兜底。
-    const commandGroupIndex: number =
-      registrationOrder.indexOf(`on:${JSON.stringify(":entities:bot_command")}`);
-    expect(registrationOrder.slice(0, 9)).toEqual([
-      "use:1", "use:2", "use:3", "use:4", "use:5", "use:6", "use:7", "use:8", "use:9",
-    ]);
-    expect(commandGroupIndex).toBe(9);
-    for (const command of commands) {
-      expect(registrationOrder.indexOf(`command:${command}`)).toBeGreaterThan(commandGroupIndex);
-      expect(registrationOrder.indexOf(`command:${command}`)).toBeLessThan(registrationOrder.indexOf("use:10"));
-    }
-    expect(registrationOrder.indexOf("use:10")).toBeLessThan(registrationOrder.indexOf("use:11"));
+  });
+
+  test("非消息 update 在前置链之后按固定顺序登记，错误处理器只装一个", () => {
+    const { registrationOrder, updates, catchHandlers }: Registration = registerOnFakeBot();
     // 两条 callback_query:data：/qa query 翻页先认领（未认领时 next()），
     // 未认领的交给入群验证（不调 next()）。
-    expect(registrationOrder.slice(registrationOrder.indexOf("use:11") + 1)).toEqual([
+    expect(registrationOrder).toEqual([
+      "use",
       `on:${JSON.stringify("message_reaction")}`,
       `on:${JSON.stringify("chat_member")}`,
       `on:${JSON.stringify("my_chat_member")}`,
@@ -133,13 +150,14 @@ describe("application handler registration", () => {
       `on:${JSON.stringify("inline_query")}`,
       `on:${JSON.stringify("chosen_inline_result")}`,
     ]);
-    // 7 条非消息 update handler + 命令组那条只取子链的 on。
-    expect(updates).toHaveLength(8);
-    expect(catchCount).toBe(1);
+    expect(updates).toHaveLength(7);
+    expect(catchHandlers).toHaveLength(1);
+  });
 
-    // 发言限流、三条 ingress、「/」外闸与消息兜底对非消息 update 一律原样放行，
-    // 且直接返回 next 的 Promise。
-    for (const index of [1, 6, 7, 8, 9, 10]) {
+  test("消息类外闸对非消息 update 原样放行，并直接返回 next 的 Promise", () => {
+    const { middleware }: Registration = registerOnFakeBot();
+    // 发言限流、三条 ingress、命令外闸、「/」外闸与消息兜底。
+    for (const index of [1, 6, 7, 8, 9, 10, 11]) {
       const nextResult: Promise<void> = Promise.resolve();
       let nextCalls: number = 0;
       const result: unknown = middleware[index]!(nonMessageContext(), (): Promise<void> => {
@@ -150,12 +168,7 @@ describe("application handler registration", () => {
       expect(result).toBe(nextResult);
     }
 
-    const next = async (): Promise<void> => undefined;
-    await middleware[0]!({ update: { update_id: 12 } } as Context, next);
-    await middleware[0]!({ update: { update_id: 8 } } as Context, next);
-    expect(registration.getLastSeenUpdateId()).toBe(12);
-
-    // 普通消息回执检查必须直接返回 next 的 Promise，不能重新包一层微任务。
+    // 普通消息回执检查同样不能重新包一层微任务。
     let receiptNextCalled: boolean = false;
     const receiptNextResult: Promise<void> = Promise.resolve();
     const receiptMiddlewareResult: unknown = middleware[2]!({
@@ -166,26 +179,42 @@ describe("application handler registration", () => {
     });
     expect(receiptNextCalled).toBeTrue();
     expect(receiptMiddlewareResult).toBe(receiptNextResult);
+  });
 
-    // 第二道 middleware 必须在回执和业务分发之前截断超额 bot 消息。
+  test("第一道前置追踪见过的最大 update_id", async () => {
+    const { middleware, registration }: Registration = registerOnFakeBot();
+    const next = async (): Promise<void> => undefined;
+    await middleware[0]!({ update: { update_id: 12 } } as Context, next);
+    await middleware[0]!({ update: { update_id: 8 } } as Context, next);
+    expect(registration.getLastSeenUpdateId()).toBe(12);
+  });
+
+  test("第二道前置在回执和业务分发之前截断超额 bot 消息", () => {
+    const { middleware }: Registration = registerOnFakeBot();
     const botMessage: Context = {
       me: { id: 999 }, message: { from: { id: 42, is_bot: true } },
     } as Context;
     let passedBotMessages: number = 0;
-    for (let index: number = 0; index <= BOT_MESSAGE_ACTIVITY_LIMIT; index += 1) {
-      middleware[1]!(botMessage, (): Promise<void> => {
-        passedBotMessages += 1;
-        return Promise.resolve();
-      });
+    try {
+      for (let index: number = 0; index <= BOT_MESSAGE_ACTIVITY_LIMIT; index += 1) {
+        middleware[1]!(botMessage, (): Promise<void> => {
+          passedBotMessages += 1;
+          return Promise.resolve();
+        });
+      }
+      expect(passedBotMessages).toBe(BOT_MESSAGE_ACTIVITY_LIMIT);
+    } finally {
+      for (const activity of botMessageActivity.values()) {
+        if (activity.timer !== null) clearTimeout(activity.timer);
+      }
+      botMessageActivity.clear();
     }
-    expect(passedBotMessages).toBe(BOT_MESSAGE_ACTIVITY_LIMIT);
-    for (const activity of botMessageActivity.values()) {
-      if (activity.timer !== null) clearTimeout(activity.timer);
-    }
-    botMessageActivity.clear();
+  });
 
+  test("错误处理器把错误原样抛回 runner", () => {
+    const { catchHandlers }: Registration = registerOnFakeBot();
     const durabilityError = new Error("durability barrier failed");
-    expect(() => caughtHandler!({
+    expect(() => catchHandlers[0]!({
       ctx: { update: { update_id: 13 } } as Context,
       error: durabilityError,
     })).toThrow(durabilityError);

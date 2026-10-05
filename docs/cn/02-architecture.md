@@ -43,7 +43,7 @@ flowchart TD
   - **Telegram 代理执行**：Telegram API 操作与需要 Bot 身份的媒体下载由主线程出站边界执行；AI 与 Anti-Raid Worker 各自直接调用所配模型服务。
 
 - **🤖 AI Worker**
-  - **独占状态**：群聊记忆（逐字热区 + 摘要冷区）、回复准入计数、媒体描述流水线、群心情挡位及贴纸包白名单目录。
+  - **独占状态**：群聊记忆（逐字热区 + 摘要冷区）、回复准入计数、媒体描述流水线、全局唯一的当前心情及贴纸包白名单目录。
   - **职责**：多轮模型交互、工具调用调度、拟人化动作编排及记忆滚动压缩。
 
 - **🛡️ Anti-Raid Worker**
@@ -67,7 +67,7 @@ flowchart TD
 
 ## 一条消息的旅程
 
-所有消息中间件在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 中显式装配。
+所有消息中间件在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 中显式装配：下图 1–10 的前置链按顺序收进一个数组，通过 `bot.use(...preamble)` 批量注册，由 grammY 管理顺序、认领与 next 契约；反应、成员变更、回调与 inline 等非消息 update 随后各自 `bot.on` 注册。
 链路中**没有使用** `sequentialize`，全局消息顺序由取数侧的确认式 runner（[`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)）保证：**每次仅拉取一条 update，且在该条中间件链路完全结算前不发起下一次 `getUpdates`**，实现全局逐条串行。
 
 ```text
@@ -171,7 +171,7 @@ AI 触发由两套机制决定：
 | **`view_sticker_pack`** | 查询 | 查看指定贴纸包内的贴纸清单；不消耗可见动作预算，发送前必须先查看。 |
 | **`send_sticker`** | 动作 | 发送指定贴纸；每轮最多接纳 1 次。 |
 | **`generate_image`** | 动作 | 生成并发送图片。仅限直接触发轮可用；每轮最多接纳 1 次，受群冷却约束。 |
-| **`send_voice`** | 动作 | 日语台词语音合成。后台异步合成并由动作链排队发送；每轮最多接纳 1 次。 |
+| **`send_voice`** | 动作 | 按 `agent.tts.bot_language`（默认 `ja`）的语言合成台词语音；工具说明可由 `prompt/voice_tool.md` 整份覆盖。后台异步合成并由动作链排队发送；每轮最多接纳 1 次。 |
 | **`web_search`** | 查询 | 本地联网检索工具（配了 `agent.web_search` 时挂载）；受 `max_calls_per_use` 约束。 |
 | **`group_qa_query`** | 查询 | 查询本群已登记的问题列表；不计入动作预算。 |
 | **`group_qa_answer`** | 查询 | 依据精确问题原文检索登记答案；由模型根据语义自律调用。 |

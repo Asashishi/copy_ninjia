@@ -34,12 +34,12 @@ type TestMiddleware = (ctx: Context, next: () => Promise<void>) => unknown;
 /** 前置网关会读 ctx.me；本用例只关心预热收集，给一个最小 bot 身份即可。 */
 const botContext: Record<string, unknown> = { me: { id: 999, username: "test_bot" } };
 
-/** 只收集 bot.use 注册的中间件；命令与 update handler 本用例不关心。 */
+/** 只取前置链的中间件；命令与 update handler 本用例不关心。 */
 function collectMiddleware(): TestMiddleware[] {
   const middleware: TestMiddleware[] = [];
   const fakeBot: Record<string, unknown> = {
-    use(handler: TestMiddleware): unknown {
-      middleware.push(handler);
+    use(...handlers: TestMiddleware[]): unknown {
+      middleware.push(...handlers);
       return fakeBot;
     },
     command(): unknown { return fakeBot; },
@@ -52,7 +52,7 @@ function collectMiddleware(): TestMiddleware[] {
 }
 
 /**
- * 预热中间件是唯一一个会调用 prefetchIdentityPolicies 的 bot.use；按行为定位而
+ * 预热中间件是前置链里唯一一个会调用 prefetchIdentityPolicies 的；按行为定位而
  * 不是按下标，前面插一道无关中间件时本用例不会悄悄测到别的东西。
  */
 async function runPrefetchMiddleware(ctx: Record<string, unknown>): Promise<void> {

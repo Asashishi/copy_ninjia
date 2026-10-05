@@ -93,7 +93,7 @@ done
 </table>
 
 > [!NOTE]
-> AI 人設は既定で組み込みのメスガキ風人設を使用します。プロジェクトルートにバージョン管理外の `prompt/persona.md` を配置することで上書きできます。全グループの通知とメニューは明示した `atmosphere` を優先し、省略時はカスタム人設なら通常、内蔵人設ならメスガキ風を使います。
+> AI 人設は既定で組み込みのメスガキ風人設を使用します。プロジェクトルートにバージョン管理外の `prompt/persona.md` を配置することで上書きできます。AI `send_voice` のツール説明も `prompt/voice_tool.md` で全体を置き換えられ、いずれも再起動後に反映されます。例は [`prompt_example/persona.md`](../../prompt_example/persona.md) と [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) を参照してください。全グループの通知とメニューは明示した `atmosphere` を優先し、省略時はカスタム人設なら通常、内蔵人設ならメスガキ風を使います。
 
 ---
 
@@ -241,6 +241,7 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。フ
 | `voice` | `string` | **必須** | 非空文字列 | 発音音声識別子。Google 組み込み名（例：`en-us-nika`）や Voice Design ID、OpenAI/xAI の音声名（例：`coral`、`ara`） |
 | `style` | `string` | 任意 | 非空文字列、xAI プロトコル時は**設定不可** | 朗読スタイルのベースプロンプト。既定は組み込みツンデレ風：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
 | `language` | `string` | 任意 | BCP-47 コードまたは `"auto"`、**xAI プロトコル時のみ許可** | 合成言語。既定 `"auto"` |
+| `bot_language` | `string` | 任意 | `"en"`、`"zh"` または `"ja"`。前後の空白を除いて厳格に検証。既定 `"ja"` | AI ボイスのセリフの言語。モデル向けのボイスツール説明と重複規則を切り替え、AI 返信の合成リクエストでは基本スタイルの後ろにその言語の読み上げ言語指定を追加します（xAI プロトコルでは送信しない。`/send` と cron には追加しない）。`style` と `prompt/voice_tool.md` は追従しないため、変更時は同じ言語に合わせてください |
 | `daily_limit` | `number` | 任意 | 正の安全な整数、既定 `100` | 24 時間ローリングウィンドウにおける全音声合成の上限予算 |
 | `daily_reserve_quota` | `number` | 任意 | 整数、範囲 `0` 〜 `daily_limit - 1`、既定 `25` | `/send` および cron 音声タスク用に予約される独立枠。AI 雑談は残りの `daily_limit - daily_reserve_quota` 回を独立消費 |
 

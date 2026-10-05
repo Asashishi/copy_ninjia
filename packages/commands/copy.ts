@@ -5,10 +5,12 @@ import type { CommandContext, Context } from "grammy";
 import { COPY_SUBCOMMAND_PATTERN } from "../consts/copyModes";
 
 import type { CachedUser, CopyMode, GlobalCopyState } from "../types/chatState";
+import type { ChatTeardownReason } from "../types/chatTeardown";
 import type { CommandTargetMessages } from "../types/commands";
 import { adoptCopyTarget, clearCopyTarget, getGlobalCopyState, persistGlobalState } from "../infra/storage/stateStore";
 import { sendCommandMessage } from "../infra/telegram";
 import { registerChatTeardown } from "../infra/chatTeardownRegistry";
+import { logger } from "../infra/logger";
 import { describeCopyModeEffect } from "../copy/copyModes";
 import { formatUserLabel } from "../users/userLabel";
 import { queueAvatarUpdate } from "../copy/avatarQueue";
@@ -131,11 +133,17 @@ async function stopCopy(ctx: CommandContext<Context>): Promise<void> {
   queueAvatarUpdate({ chatId, target: { kind: "default" }, source: "copy" });
 }
 
-/** teardown 专用：只停止由指定源群持有的全局 copy，不在这里单独落盘。 */
-function stopCopyOwnedByChat(chatId: number): void {
+/**
+ * teardown 专用：只停止由指定源群持有的全局 copy。与 /copy stop 一样清状态、等落盘、
+ * 再复原默认头像，但复原静默进行：群已不再受管，不在群里发任何消息。
+ */
+async function stopCopyOwnedByChat(chatId: number, reason: ChatTeardownReason): Promise<void> {
   const globalCopy: Readonly<GlobalCopyState> = getGlobalCopyState();
   if (globalCopy.copiedUser === null || globalCopy.copyChatId !== chatId) return;
   clearCopyTarget();
+  await persistGlobalState("copy teardown");
+  logger.log(`Stopped the copy owned by chat ${chatId} after teardown (${reason}).`);
+  queueAvatarUpdate({ chatId, target: { kind: "default" }, source: "copy", silent: true });
 }
 
 registerChatTeardown("copy", stopCopyOwnedByChat);

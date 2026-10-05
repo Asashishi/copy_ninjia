@@ -69,8 +69,10 @@ export const readBlocklistIdPage = mock(
   }
 );
 
+export const loggerError = mock((..._args: unknown[]): void => {});
+export const loggerLog = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
-  logger: loggerStub(),
+  logger: loggerStub({ error: loggerError, log: loggerLog }),
 }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: { botInfo: { id: 99 }, api: { getChatMember } },
@@ -219,6 +221,8 @@ export function installBlocklistSweepHooks(injected: BlocklistSweepDeps): void {
     injected.blocklistSweepState.clear();
     injected.pendingBlockedRemovals.clear();
     remover.mockClear();
+    loggerError.mockClear();
+    loggerLog.mockClear();
     readBlocklistIdPage.mockClear();
     postDiskIO.mockClear();
     getChatMember.mockClear();

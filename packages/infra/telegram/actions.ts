@@ -44,7 +44,6 @@ export {
 export type {
   DeleteEphemeralMessageParams,
   DeleteMessageAfterParams,
-  DeleteMessageOutcome,
   SetMessageReactionParams,
   SetMessageReactionsParams,
 } from "./actions/messageLifecycle";

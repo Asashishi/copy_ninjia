@@ -16,8 +16,8 @@ import type {
 } from "../../../types/antiRaid/adDetect";
 
 /**
- * 待检发言者的键队列，元素是 `chatId:senderId`（verificationKey）。队列只排键、
- * 不排内容：同一个人在等待期间新说的话直接并进 pendingAdMessages 里的同一串，
+ * 待检发言者的键队列，元素是 `chatId:senderId`（verificationKey，即 AdMessageBundle.key）。
+ * 队列只排键、不排内容：同一个人在等待期间新说的话直接并进 pendingAdMessages 里的同一串，
  * 不会让他在队列里占多个位置。每个节拍取走队首至多 AD_DETECT_BATCH_SIZE 个。
  *
  * 清理：派发时出队、停管与关开关时按群摘键、Worker 停止时整体丢弃。
@@ -70,11 +70,21 @@ export const referencedAdWarningStates: Map<string, ReferencedAdWarningState> =
 export const referencedAdWarningGeneration: { current: number } = { current: 0 };
 
 /**
- * 键 -> 该发言者累积的判定上下文。容量由 AD_DETECT_MAX_PENDING_SENDERS 兜住：
- * 满载后拒绝新的不同 key，不淘汰已经接纳的旧 key。未消费条目没有等待 TTL；
- * 已消费上下文在去重窗口外由 Worker sweep 回收。
+ * 群 id -> 发言者 id -> 该发言者累积的判定上下文。两层数字键，同一发送者的后续消息
+ * 查表不拼复合键；内层表空了随即删除外层项。增删只经 workers/antiRaid/adDetect/queueState.ts
+ * 的访问函数（sweep 只读遍历），条数记在 pendingAdBundleCount。
+ *
+ * 容量由 AD_DETECT_MAX_PENDING_SENDERS 兜住（按 pendingAdBundleCount 判）：满载后拒绝新的
+ * 不同发送者，不淘汰已经接纳的旧串。未消费条目没有等待 TTL；已消费上下文在去重窗口外由
+ * Worker sweep 回收。停管与关开关按群整层删除，Worker 停止时整表清空，崩溃后随 isolate 重建。
  */
-export const pendingAdMessages: Map<string, AdMessageBundle> = new Map();
+export const pendingAdMessages: Map<number, Map<number, AdMessageBundle>> = new Map();
+
+/**
+ * pendingAdMessages 两层合计的消息串条数；随访问函数的增删同步维护，容量判定因此 O(1)。
+ * 清空 pendingAdMessages 时一并归零。
+ */
+export const pendingAdBundleCount: { current: number } = { current: 0 };
 
 /**
  * 按当前广告示例快照拼好的判定提示词：规则与示例段，以及两个系统事实变体的完整系统提示词。

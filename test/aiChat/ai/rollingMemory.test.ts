@@ -44,7 +44,7 @@ test("AI 群记忆按 savedAt 恢复最新配置数量，并在新群到来时�
     lastName: "",
     text: "新消息",
     at: "2026/07/18 00:00:01",
-  }));
+  }), Date.now());
   expect(memoryCache.chatBuffers.size).toBe(AI_MEMORY_MAX_CHATS);
   expect(memoryCache.chatBuffers.has(-2)).toBe(false);
   expect(memoryCache.chatBuffers.has(-999)).toBe(true);
@@ -145,5 +145,5 @@ test("hydrate 以快照 savedAt 播种 chatLastActivityTimes 供 LRU 淘汰排�
 
   hydrateMemories(memories);
   expect(memoryCache.chatLastActivityTimes.get(-42)).toBe(1752800000000);
-  expect(moodCache.chatMoods.size).toBe(0);
+  expect(moodCache.currentMoodState.current).toBeNull();
 });

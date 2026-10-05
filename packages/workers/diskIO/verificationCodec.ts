@@ -53,29 +53,24 @@ function hasCurrentVerificationKeys(value: Record<string, unknown>): boolean {
   return true;
 }
 
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
 /**
- * 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。
- *
- * 只服务同文件的 decodeVerificationDay，不导出：单条记录的合法性判据依附于
- * 「整份日文件要么全收、要么整份拒绝」这条语义，单独拿出去用会得到一个把
- * 畸形记录悄悄读成 null 的入口。
+ * 校验各 phase 共有的字段与记录键，返回公共部分；任一项不合法返回 null。本 phase 不允许的
+ * 字段已由 hasCurrentVerificationKeys 的白名单拒绝（JSON 解析结果不含 undefined 值，键在即值在）。
  */
-function decodeVerificationSnapshot(
+function decodeVerificationBase(
   key: string,
-  value: unknown
-): VerificationSnapshot | null {
-  if (!isPlainRecord(value)) return null;
+  value: Record<string, unknown>
+): VerificationSnapshotBase | null {
   if (
-    !hasCurrentVerificationKeys(value) ||
     value.version !== VERIFICATION_FILE_VERSION ||
     !isTelegramGroupChatId(value.chatId) ||
     !isPositiveId(value.userId) ||
     !isPositiveId(value.generation) ||
     !isPositiveId(value.revision) ||
-    (value.phase !== "pending" &&
-      value.phase !== "kickPending" &&
-      value.phase !== "checkingInviter" &&
-      value.phase !== "expelling") ||
     typeof value.label !== "string" ||
     value.label.length === 0 ||
     value.label.length > VERIFICATION_LABEL_MAX_CHARS ||
@@ -93,52 +88,9 @@ function decodeVerificationSnapshot(
     !isSafeTimestamp(value.joinedAt) ||
     !isSafeTimestamp(value.expiresAt) ||
     value.expiresAt < value.joinedAt ||
-    (value.phase === "kickPending" && (
-      !isSafeTimestamp(value.requestedAt) ||
-      !isOptionalSafeTimestamp(value.countedJoinAt) ||
-      value.joinedAt !== value.requestedAt ||
-      value.expiresAt !== value.requestedAt ||
-      value.terminalInviterId !== undefined ||
-      value.expelReason !== undefined ||
-      value.successNoticeSent !== undefined ||
-      value.failureNoticeSent !== undefined ||
-      value.unconfirmedNoticeSent !== undefined ||
-      value.removalConfirmed !== undefined
-    )) ||
-    (value.phase === "checkingInviter" && (
-      value.requestedAt !== undefined ||
-      value.countedJoinAt !== undefined ||
-      !isPositiveId(value.terminalInviterId) ||
-      value.expelReason !== undefined ||
-      value.successNoticeSent !== undefined ||
-      value.failureNoticeSent !== undefined ||
-      value.unconfirmedNoticeSent !== undefined ||
-      value.removalConfirmed !== undefined
-    )) ||
-    (value.phase === "expelling" && (
-      value.requestedAt !== undefined ||
-      value.countedJoinAt !== undefined ||
-      (value.expelReason !== "timeout" && value.expelReason !== "flood") ||
-      value.terminalInviterId !== undefined ||
-      (value.successNoticeSent !== undefined && typeof value.successNoticeSent !== "boolean") ||
-      (value.failureNoticeSent !== undefined && typeof value.failureNoticeSent !== "boolean") ||
-      (value.unconfirmedNoticeSent !== undefined && typeof value.unconfirmedNoticeSent !== "boolean") ||
-      (value.removalConfirmed !== undefined && typeof value.removalConfirmed !== "boolean")
-    )) ||
-    (value.phase === "pending" && (
-      value.requestedAt !== undefined ||
-      value.countedJoinAt !== undefined ||
-      value.terminalInviterId !== undefined ||
-      value.expelReason !== undefined ||
-      value.successNoticeSent !== undefined ||
-      value.failureNoticeSent !== undefined ||
-      value.unconfirmedNoticeSent !== undefined ||
-      value.removalConfirmed !== undefined
-    )) ||
     key !== verificationKey(value.chatId, value.userId)
   ) return null;
-
-  const base: VerificationSnapshotBase = {
+  return {
     chatId: value.chatId,
     userId: value.userId,
     generation: value.generation,
@@ -156,33 +108,88 @@ function decodeVerificationSnapshot(
     joinedAt: value.joinedAt,
     expiresAt: value.expiresAt,
   };
-  if (value.phase === "kickPending") {
-    return {
-      ...base,
-      phase: "kickPending",
-      requestedAt: value.requestedAt as number,
-      countedJoinAt: value.countedJoinAt as number | undefined,
-    };
+}
+
+/** kickPending：本次入群的动作时刻同时是入群与到期时刻。 */
+function decodeKickPending(
+  base: VerificationSnapshotBase,
+  value: Record<string, unknown>
+): VerificationSnapshot | null {
+  const requestedAt: unknown = value.requestedAt;
+  const countedJoinAt: unknown = value.countedJoinAt;
+  if (
+    !isSafeTimestamp(requestedAt) ||
+    !isOptionalSafeTimestamp(countedJoinAt) ||
+    base.joinedAt !== requestedAt ||
+    base.expiresAt !== requestedAt
+  ) return null;
+  return { ...base, phase: "kickPending", requestedAt, countedJoinAt };
+}
+
+/** checkingInviter：带最终核查对象。 */
+function decodeCheckingInviter(
+  base: VerificationSnapshotBase,
+  value: Record<string, unknown>
+): VerificationSnapshot | null {
+  const terminalInviterId: unknown = value.terminalInviterId;
+  if (!isPositiveId(terminalInviterId)) return null;
+  return { ...base, phase: "checkingInviter", terminalInviterId };
+}
+
+/** expelling：处置原因与四个可选的播报/确认标志。 */
+function decodeExpelling(
+  base: VerificationSnapshotBase,
+  value: Record<string, unknown>
+): VerificationSnapshot | null {
+  const expelReason: unknown = value.expelReason;
+  const successNoticeSent: unknown = value.successNoticeSent;
+  const failureNoticeSent: unknown = value.failureNoticeSent;
+  const unconfirmedNoticeSent: unknown = value.unconfirmedNoticeSent;
+  const removalConfirmed: unknown = value.removalConfirmed;
+  if (
+    (expelReason !== "timeout" && expelReason !== "flood") ||
+    !isOptionalBoolean(successNoticeSent) ||
+    !isOptionalBoolean(failureNoticeSent) ||
+    !isOptionalBoolean(unconfirmedNoticeSent) ||
+    !isOptionalBoolean(removalConfirmed)
+  ) return null;
+  return {
+    ...base,
+    phase: "expelling",
+    expelReason,
+    successNoticeSent,
+    failureNoticeSent,
+    unconfirmedNoticeSent,
+    removalConfirmed,
+  };
+}
+
+/**
+ * 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。
+ *
+ * 只服务同文件的 decodeVerificationDay，不导出：单条记录的合法性判据依附于
+ * 「整份日文件要么全收、要么整份拒绝」这条语义，单独拿出去用会得到一个把
+ * 畸形记录悄悄读成 null 的入口。
+ */
+function decodeVerificationSnapshot(
+  key: string,
+  value: unknown
+): VerificationSnapshot | null {
+  if (!isPlainRecord(value) || !hasCurrentVerificationKeys(value)) return null;
+  const base: VerificationSnapshotBase | null = decodeVerificationBase(key, value);
+  if (base === null) return null;
+  switch (value.phase) {
+    case "pending":
+      return { ...base, phase: "pending" };
+    case "kickPending":
+      return decodeKickPending(base, value);
+    case "checkingInviter":
+      return decodeCheckingInviter(base, value);
+    case "expelling":
+      return decodeExpelling(base, value);
+    default:
+      return null;
   }
-  if (value.phase === "checkingInviter") {
-    return {
-      ...base,
-      phase: "checkingInviter",
-      terminalInviterId: value.terminalInviterId as number,
-    };
-  }
-  if (value.phase === "expelling") {
-    return {
-      ...base,
-      phase: "expelling",
-      expelReason: value.expelReason as "timeout" | "flood",
-      successNoticeSent: value.successNoticeSent as boolean | undefined,
-      failureNoticeSent: value.failureNoticeSent as boolean | undefined,
-      unconfirmedNoticeSent: value.unconfirmedNoticeSent as boolean | undefined,
-      removalConfirmed: value.removalConfirmed as boolean | undefined,
-    };
-  }
-  return { ...base, phase: "pending" };
 }
 
 /** 把内存快照转成带格式版本的日文件值。 */

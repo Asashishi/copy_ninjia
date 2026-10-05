@@ -24,7 +24,6 @@ export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;
  * AI 回复同群最多同时处理的有序并行模型轮数；完整链就绪即释放，发送等待不计入。直接轮（群里没有在途
  * 轮次时启动、边生成边发送的发送链队首）独立于这个上限，在模型阶段另占 1 轮，同群合计最多
  * REPLY_ROUND_MAX_CONCURRENT + 1 轮（见 states/replyAdmission.ts 的 replyRoundConcurrencyLimit）。
- * 发送桶数组用此值定长，每桶可接入多轮。
  */
 export const REPLY_ROUND_MAX_CONCURRENT: number = 5;
 /** 单群尚未按序回收的回复轮次硬顶，包含已取消但仍存活的旧代；独立于模型并发与时间窗口。 */

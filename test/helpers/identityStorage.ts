@@ -13,8 +13,8 @@ interface BlockedTestRecord {
   readonly blockedAt: string;
 }
 
-/** 旧黑名单单测迁到新 LRU 时使用的无敏感字段 meta。 */
-export const TEST_IDENTITY_META: Readonly<{
+/** 本模块写入测试身份时附带的无敏感字段 meta。 */
+const TEST_IDENTITY_META: Readonly<{
   firstName: string;
   lastName: string;
   username: string;

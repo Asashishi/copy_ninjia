@@ -10,6 +10,7 @@ import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
 } from "../../../packages/consts/aiChat/memory";
+import { BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES } from "../../../packages/consts/antiRaid/blocklist";
 import { IDENTITY_READ_CACHE_MAX_ENTRIES } from "../../../packages/consts/identityStorage";
 import { CHAT_QA_MAX_PER_CHAT } from "../../../packages/consts/qa";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
@@ -54,8 +55,8 @@ export const COLD_START_CHAT_STATE_ROWS: number = STATE_MANAGED_CHAT_LIMIT;
 export const COLD_START_CHAT_QA_ROWS: number =
   STATE_MANAGED_CHAT_LIMIT * CHAT_QA_MAX_PER_CHAT;
 
-/** 冷启动 fixture 的待踢成员 outbox 行数。 */
-export const COLD_START_REMOVAL_ROWS: number = 512;
+/** 冷启动 fixture 的待踢成员 outbox 行数；直接顶满生产 outbox 硬顶测最坏情况。 */
+export const COLD_START_REMOVAL_ROWS: number = BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES;
 
 /** 冷启动 fixture 的 AI 记忆快照群数；每群一行 chat_states.ai_context。 */
 export const COLD_START_AI_MEMORY_CHATS: number = STATE_MANAGED_CHAT_LIMIT;

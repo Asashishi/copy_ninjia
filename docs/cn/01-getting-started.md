@@ -161,10 +161,17 @@ config/
 
 ### 核心配置文件详解
 
-- **`prompt/persona.md`**（可选，项目根目录）
+- **`prompt/persona.md`**（可选，项目根目录；[示例](../../prompt_example/persona.md)）
   - **内容**：自定义 AI 闲聊人设。
   - **行为**：缺省使用代码内置人设（[`persona.ts`](../../packages/consts/aiChat/prompts/persona.ts)）；存在时以文件正文替换人设；通知优先采用显式 `atmosphere`，风格未配置时使用普通文案。
   - **校验**：纯文本格式；若存在但为空白或非合法 UTF-8 则拒绝启动。修改后须重启。
+  - **示例**：[`prompt_example/persona.md`](../../prompt_example/persona.md) 是一份温和可靠的「学姐」人设，按「你是谁 / 核心性格 / 特质仲裁顺序 / 说话方式 / 绝不编造事实 / 语言规范」分段。以 `mkdir -p prompt && cp -n prompt_example/persona.md prompt/` 复制（`-n` 不覆盖已有文件）后按需修改并重启。文件正文去掉首尾空白后原样作为人设交给模型，不要在其中写给部署方看的注释。
+
+- **`prompt/voice_tool.md`**（可选，项目根目录；[示例](../../prompt_example/voice_tool.md)）
+  - **内容**：自定义 AI `send_voice` 工具说明。
+  - **行为**：缺省时按 `agent.tts.bot_language` 使用内置的 `en` / `zh` / `ja` 说明（[`tools.ts`](../../packages/consts/aiChat/prompts/tools.ts) 的 `VOICE_LANGUAGE_PROMPTS`）；存在时以文件正文整份替换说明，不论 `bot_language` 取何值。`text` / `tone` 参数说明与 `send_message`、「行动与停止」段里的语音去重规则仍按 `bot_language` 选取。文件需自行写明内置说明里的执行约定：先看本轮工具状态里的 `send_voice` 余量行、每轮条数与 `text` / `tone` 长度上限、接纳与 error 回执的处理。
+  - **校验**：纯文本格式；若存在但为空白或非合法 UTF-8 则拒绝启动，未配置 `agent.tts` 时同样校验。修改后须重启。
+  - **示例**：[`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) 与上面的人设示例配套，台词改为温柔的日常日语，并写全上述执行约定；示例里的每轮条数与 `text` / `tone` 长度上限对应代码当前的限制，修改时保持一致。示例按 `bot_language: "ja"`（[`agent.json` 示例](../../config_example/dynamic/agent.json) 的取值）编写；使用其它台词语言时，把首句与台词语言、台词与语气示例、去重说明一并改成对应语言。配套使用时可把 `agent.tts.style` 换成相应的声线描述。复制方式同上：`mkdir -p prompt && cp -n prompt_example/voice_tool.md prompt/`。
 
 - **`config/static/bot.json`**（[示例](../../config_example/static/bot.json)）
   - 声明 `bot_token`、`super_admin_user_id` 与可选的 `atmosphere`、`time_zone`。启动前严格校验，未知键或非法类型均拒绝启动。
@@ -186,7 +193,7 @@ config/
        - `media`：视觉与语音转写模型。支持多模态首次请求探测与端点退避。
     2. **扩展生成能力**（缺省时仅摘除对应工具）：
        - `image`：生图能力。OpenAI 兼容协议必须显式声明 `image_protocol`（`openai` | `openai-standard` | `xai`）。
-       - `tts`：语音合成能力。必须指定 `voice` 音色；OpenAI 需声明 `speech_protocol`（`openai` | `xai`）。可选 `daily_limit`（默认 100）与 `daily_reserve_quota`（默认 25，分配给 `/send` 与 cron）。
+       - `tts`：语音合成能力。必须指定 `voice` 音色；OpenAI 需声明 `speech_protocol`（`openai` | `xai`）。可选 `bot_language`（`en` | `zh` | `ja`，默认 `ja`）指定 AI 语音台词的语言（`send_voice` 的工具说明可由 `prompt/voice_tool.md` 整份覆盖）。`bot_language` 切换模型可见的提示词，并在 AI 回复的合成请求里给基础风格追加该语言的朗读语言要求（`/send` 与 cron 的合成不追加）；`style` 与 `prompt/voice_tool.md` 都不随它切换：`style` 同时用于 `/send` 与 cron，只写声线、不写朗读语言，更换 `bot_language` 时建议改用对应语言写的声线描述（缺省的 `TTS_DEFAULT_STYLE` 是日语描述），部署了 `voice_tool.md` 的也把其中的台词语言与示例改成对应语言。可选 `daily_limit`（默认 100）与 `daily_reserve_quota`（默认 25，分配给 `/send` 与 cron）。
     3. **检索与风控能力**：
        - `web_search`：本地联网检索工具能力。支持 `max_calls_per_use`（默认 5）限制单轮调用次数。未配置时回退使用 `text` 模型的服务端内建检索。
        - `ad_detect`：进群消息广告识别能力。未配置时阻止广告检测。

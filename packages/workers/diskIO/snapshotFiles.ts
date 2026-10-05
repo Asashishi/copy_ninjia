@@ -9,7 +9,6 @@ import {
   LUCK_MEMORY_DIR,
   LUCK_RECEIPT_SECRET_PATH,
   STICKER_MEMORY_DIR,
-  TMP_FILE_SUFFIX,
 } from "../../consts/paths";
 import { DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
@@ -22,25 +21,25 @@ import {
   openValidatedAppendOnlyFile,
   serializeDayFileEntry,
 } from "./appendOnlyDayFile";
-import { atomicWriteTextSync } from "../../libs/atomicFile";
+import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
 import { invalidInput, readJsonInput, readUtf8TextInput } from "../../libs/inputValidation";
 import {
   decodeStickerCatalogSnapshot,
 } from "../../libs/persistedSnapshotCodec";
 import { hasExactKeys, isPlainRecord } from "../../libs/record";
 import { isCanonicalDateKey } from "../../libs/time";
-import { assertFileReadableWritable, bestEffortUnlink, inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
+import { assertFileReadableWritable, bestEffortUnlink, inspectOptionalFile, listOptionalDirectory } from "../../libs/fileAccess";
 
-/** 贴纸目录快照的 inspect 结果：待载入的快照、孤儿快照与 *.tmp 残留三类路径。 */
+/** 贴纸目录快照的 inspect 结果：待载入的快照、孤儿快照路径与供清理 *.tmp 残留的目录项。 */
 export interface StickerCatalogRecoveryInspection {
   readonly snapshots: Map<string, string>;
   readonly orphanPaths: readonly string[];
-  readonly temporaryPaths: readonly string[];
+  readonly names: readonly string[];
 }
 
 /**
  * 跨域启动第一阶段（只读）：严格校验 memory/stickers/ 下每个贴纸包的目录快照
- * （孤儿快照同样先严格解码），把它们归类成待载入快照、孤儿快照与临时文件残留。
+ * （孤儿快照同样先严格解码），把它们归类成待载入快照与孤儿快照，并交回目录项供清理临时文件残留。
  * 本函数不写盘、不删除。机制与其它快照领域基本一致，只是文件名使用 pack short
  * name；多一步 activePacks 对账——config/dynamic/stickers.json 的白名单已经不包含的包
  * 记为孤儿，不载入内存，也就不会让 aiChat/ai/stickers/catalog.ts 的
@@ -56,17 +55,10 @@ export async function inspectStickerCatalogs(
   const activePackSet: Set<string> | null = activePacks === null ? null : new Set(activePacks);
   const result: Map<string, string> = new Map();
   const orphanPaths: string[] = [];
-  const temporaryPaths: string[] = [];
-  const names: readonly string[] = inspectOptionalDirectory(STICKER_MEMORY_DIR)
-    ? readdirSync(STICKER_MEMORY_DIR)
-    : [];
+  const names: readonly string[] = listOptionalDirectory(STICKER_MEMORY_DIR);
   for (const name of names) {
-    const path: string = join(STICKER_MEMORY_DIR, name);
-    if (name.endsWith(TMP_FILE_SUFFIX)) {
-      temporaryPaths.push(path);
-      continue;
-    }
     if (!name.endsWith(".json")) continue;
+    const path: string = join(STICKER_MEMORY_DIR, name);
     const pack: string = name.slice(0, -".json".length);
     if (!STICKER_PACK_NAME_PATTERN.test(pack)) {
       return invalidInput(path, "$filename", "the canonical <stickerPackShortName>.json form");
@@ -80,7 +72,7 @@ export async function inspectStickerCatalogs(
     }
     result.set(pack, JSON.stringify(snapshot, null, 2));
   }
-  return { snapshots: result, orphanPaths, temporaryPaths };
+  return { snapshots: result, orphanPaths, names };
 }
 
 /** 全域校验成功后清理临时文件与已退出白名单的严格合法快照。 */
@@ -88,7 +80,7 @@ export async function maintainStickerCatalogFiles(
   inspection: StickerCatalogRecoveryInspection
 ): Promise<void> {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await bestEffortUnlink(path);
+  await removeOrphanedTempFiles(STICKER_MEMORY_DIR, inspection.names);
   for (const path of inspection.orphanPaths) await bestEffortUnlink(path);
 }
 
@@ -153,12 +145,11 @@ export interface LuckDayRecoveryInspection {
   readonly cache: LuckDayCache | null;
   readonly fileState: DayFileState | null;
   readonly names: readonly string[];
-  readonly temporaryPaths: readonly string[];
 }
 
 /**
- * 跨域启动第一阶段（只读）：恢复当天结果与追加游标。收集 memory/luck/ 下的
- * *.tmp 残留路径，校验按日文件名（非规范的 *.json 或晚于 todayKey 的日期文件
+ * 跨域启动第一阶段（只读）：恢复当天结果与追加游标。列出 memory/luck/ 的目录项
+ * （供维护阶段清理 *.tmp 残留与过期日），校验按日文件名（非规范的 *.json 或晚于 todayKey 的日期文件
  * 拒绝启动），只载入今天那份（不存在时 cache 与 fileState 为 null）。先严格
  * 校验 JSON、领域 schema 与容量，再接管追加游标；任何不规范内容都阻止启动并
  * 保留原文件，等待人工处理。本函数不建目录、不删除，清理由 maintainLuckDay 执行。
@@ -166,19 +157,11 @@ export interface LuckDayRecoveryInspection {
 export async function inspectLuckDay(
   todayKey: string
 ): Promise<LuckDayRecoveryInspection> {
-  const names: string[] = inspectOptionalDirectory(LUCK_MEMORY_DIR)
-    ? readdirSync(LUCK_MEMORY_DIR)
-    : [];
-  const temporaryPaths: string[] = [];
-  for (const name of names) {
-    if (name.endsWith(TMP_FILE_SUFFIX)) {
-      temporaryPaths.push(join(LUCK_MEMORY_DIR, name));
-    }
-  }
+  const names: string[] = listOptionalDirectory(LUCK_MEMORY_DIR);
   inspectStaleLuckFiles(todayKey, names);
   const todayPath: string = join(LUCK_MEMORY_DIR, `${todayKey}.json`);
   if (!inspectOptionalFile(todayPath)) {
-    return { day: todayKey, cache: null, fileState: null, names, temporaryPaths };
+    return { day: todayKey, cache: null, fileState: null, names };
   }
   let content: string;
   let parsed: unknown;
@@ -250,7 +233,6 @@ export async function inspectLuckDay(
     cache: { day: todayKey, entries },
     fileState: opened,
     names,
-    temporaryPaths,
   };
 }
 
@@ -260,7 +242,7 @@ export async function maintainLuckDay(
   inspection: LuckDayRecoveryInspection
 ): Promise<void> {
   mkdirSync(LUCK_MEMORY_DIR, { recursive: true });
-  for (const path of inspection.temporaryPaths) await bestEffortUnlink(path);
+  await removeOrphanedTempFiles(LUCK_MEMORY_DIR, inspection.names);
   await cleanupStaleLuckFiles(todayKey, inspection.names);
 }
 

@@ -202,7 +202,7 @@ describe("AI rolling-memory capacity", () => {
   });
 
   test("purge 后首份新记忆可按群立即上报，并从普通 dirty 批次移除", () => {
-    pushBufferedMessage(-1001, entry("post-purge"));
+    pushBufferedMessage(-1001, entry("post-purge"), Date.now());
 
     flushMemorySnapshot(-1001, true);
 
@@ -220,9 +220,9 @@ describe("AI rolling-memory capacity", () => {
   });
 
   test("周期 flush 按普通批次上报全部 dirty 群并清空标记；没有 dirty 群时不上报", () => {
-    pushBufferedMessage(-1001, entry("first"));
-    pushBufferedMessage(-1002, entry("second"));
-    pushBufferedMessage(-1002, entry("third"));
+    pushBufferedMessage(-1001, entry("first"), Date.now());
+    pushBufferedMessage(-1002, entry("second"), Date.now());
+    pushBufferedMessage(-1002, entry("third"), Date.now());
 
     flushDirtyMemories();
 
@@ -261,7 +261,7 @@ describe("AI rolling-memory capacity", () => {
     const oldestIdleChatId: number = -10_001;
     activeReplyCounts.set(activeOldestChatId, 1);
 
-    pushBufferedMessage(-20_000, entry("new chat"));
+    pushBufferedMessage(-20_000, entry("new chat"), Date.now());
 
     expect(chatBuffers.has(activeOldestChatId)).toBe(true);
     expect(chatBuffers.has(oldestIdleChatId)).toBe(false);
@@ -276,22 +276,22 @@ describe("AI rolling-memory capacity", () => {
       chatLastActivityTimes.set(chatId, index);
     }
     // 最老的两个群都建过本代控制器；-10_000 的任务已结算，-10_001 的仍在途。
-    const idleKey: string = `-10000:${cachedReplyGeneration(-10_000)}`;
-    replyGenerationSignal(-10_000, cachedReplyGeneration(-10_000));
+    const idleKey: number = cachedReplyGeneration(-10_000);
+    replyGenerationSignal(idleKey);
     const busyGeneration: number = cachedReplyGeneration(-10_001);
-    const busyKey: string = `-10001:${busyGeneration}`;
-    replyGenerationSignal(-10_001, busyGeneration);
+    const busyKey: number = busyGeneration;
+    replyGenerationSignal(busyGeneration);
     const pending = Promise.withResolvers<void>();
     trackReplyGenerationTask(-10_001, busyGeneration, pending.promise);
 
-    pushBufferedMessage(-20_000, entry("new chat"));
+    pushBufferedMessage(-20_000, entry("new chat"), Date.now());
     expect(chatBuffers.has(-10_000)).toBe(false);
     expect(replyAbortControllers.has(idleKey)).toBe(false);
 
     // 其余候选全都在途时才按原始 LRU 淘汰在途群：控制器保留到任务结算。
     for (let index: number = 2; index < AI_MEMORY_MAX_CHATS; index++) activeReplyCounts.set(-10_000 - index, 1);
     activeReplyCounts.set(-20_000, 1);
-    pushBufferedMessage(-20_001, entry("another chat"));
+    pushBufferedMessage(-20_001, entry("another chat"), Date.now());
     expect(chatBuffers.has(-10_001)).toBe(false);
     expect(replyAbortControllers.get(busyKey)?.signal.aborted).toBe(false);
     pending.resolve();
@@ -310,12 +310,12 @@ describe("AI rolling-memory capacity", () => {
     trackReplyGenerationTask(-10_000, cachedReplyGeneration(-10_000), pending.promise);
     try {
       expect(activeReplyCounts.has(-10_000)).toBe(false);
-      pushBufferedMessage(-20_000, entry("new chat"));
+      pushBufferedMessage(-20_000, entry("new chat"), Date.now());
       expect(chatBuffers.has(-10_000)).toBe(true);
       expect(chatBuffers.has(-10_001)).toBe(false);
       pending.resolve();
       await pending.promise;
-      pushBufferedMessage(-20_001, entry("another chat"));
+      pushBufferedMessage(-20_001, entry("another chat"), Date.now());
       expect(chatBuffers.has(-10_000)).toBe(false);
     } finally {
       pending.resolve();
@@ -334,7 +334,7 @@ describe("AI rolling-memory capacity", () => {
       activeReplyCounts.set(chatId, 1);
     }
 
-    pushBufferedMessage(-40_000, entry("fallback"));
+    pushBufferedMessage(-40_000, entry("fallback"), Date.now());
 
     expect(chatBuffers.has(-30_000)).toBe(false);
     expect(chatBuffers.has(-40_000)).toBe(true);

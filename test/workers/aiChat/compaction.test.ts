@@ -29,7 +29,8 @@ const { chatSummaries, dirtyMemoryChats, pendingSummaries } = await import("../.
 const { replyAbortControllers, resetAiChatReplyCache } = await import("../../../packages/cache/workers/aiChat/replies");
 const { resetAiChatCompactionCache } = await import("../../../packages/cache/workers/aiChat/compaction");
 const { resetAiChatMemoryCache } = await import("../../../packages/cache/workers/aiChat/memory");
-const { COMPACTION_MAX_PENDING_PER_CHAT } = await import("../../../packages/consts/aiChat/memory");
+const { COMPACTION_MAX_PENDING_PER_CHAT, MAX_SUMMARY_ROUNDS, SUMMARY_MAX_CHARS } =
+  await import("../../../packages/consts/aiChat/memory");
 const { SUMMARY_SYSTEM_PROMPT } = await import("../../../packages/consts/aiChat/prompts/memory");
 const { invalidateChatReplies } = await import("../../../packages/workers/aiChat/replyGeneration");
 
@@ -125,6 +126,35 @@ describe("AI 中期记忆压缩", () => {
     expect(dirtyMemoryChats.has(-1001)).toBe(true);
     expect(compactionPendingCounts.has(-1001)).toBe(false);
     expect(compactionChains.has(-1001)).toBe(false);
+  });
+
+  test("中期记忆队列只保留最新 MAX_SUMMARY_ROUNDS 条摘要", async () => {
+    const rounds: number = MAX_SUMMARY_ROUNDS + 2;
+    for (let round: number = 1; round <= rounds; round++) responses.push(response(`摘要 ${round}`));
+
+    for (let round: number = 1; round <= rounds; round++) {
+      scheduleRotation(-1001, batch, round > 1);
+      await waitForRotation(-1001);
+    }
+
+    // 最后一轮的摘要仍是待晋升项；已晋升的是第 1…rounds-1 轮里最新的 MAX_SUMMARY_ROUNDS 条。
+    const expected: string[] = [];
+    for (let round: number = rounds - MAX_SUMMARY_ROUNDS; round < rounds; round++) expected.push(`摘要 ${round}`);
+    expect(chatSummaries.get(-1001)?.last(MAX_SUMMARY_ROUNDS + 1)).toEqual(expected);
+    expect(pendingSummaries.get(-1001)).toBe(`摘要 ${rounds}`);
+  });
+
+  test("摘要入记忆前的 normalize：压成单行、空白为空串、超长按子句边界截到上限", async () => {
+    responses.push(response("摘要"));
+    scheduleRotation(-1001, batch, false);
+    await waitForRotation(-1001);
+    const request = generateText.mock.calls[0]![0] as { normalize: (text: string) => string };
+
+    expect(request.normalize("第一行\n  第二行")).toBe("第一行 第二行");
+    expect(request.normalize(" \n ")).toBe("");
+    const truncated: string = request.normalize("群友在讨论测试。".repeat(200));
+    expect(truncated.length).toBeGreaterThan(0);
+    expect(truncated.length).toBeLessThanOrEqual(SUMMARY_MAX_CHARS);
   });
 
   test("成功请求中的空响应按退避策略重采样，随后正常保存", async () => {

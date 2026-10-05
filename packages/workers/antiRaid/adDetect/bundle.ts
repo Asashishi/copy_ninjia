@@ -154,7 +154,7 @@ function entriesClaimContextPart(
  *
  * 与正文重复的段落跳过，最常见的就是「引用了所回复消息的一个片段」——quote 与
  * replyTo 此时高度重合，原样接两遍只是白烧送检预算。
- * 上限在这里再收一次而不是只信主线程：跨线程消息的形状由本侧兜底。
+ * context 来自 boundSampleContext，上限已在入队时由本侧收过一次，这里直接使用。
  *
  * **去重要跨整串算，不能只在这一条里算**（entries 就是为此传进来的）。合并送检
  * 的全部意义在于把拆开发的「加我 / 微 信 / xxx996」凑到同一份清单里判——而这种
@@ -174,7 +174,7 @@ export function claimSampleContextParts(
   context: AdSampleContext,
   entries: readonly AdCandidateEntry[]
 ): string {
-  let quote: string = sanitizeInline(context.quote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  let quote: string = context.quote ?? "";
   if (
     quote.length === 0 ||
     text.includes(quote) ||
@@ -182,7 +182,7 @@ export function claimSampleContextParts(
   ) {
     quote = "";
   }
-  let replyTo: string = sanitizeInline(context.replyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  let replyTo: string = context.replyTo ?? "";
   if (
     replyTo.length === 0 ||
     text.includes(replyTo) ||
@@ -210,7 +210,8 @@ export function claimSampleContextParts(
  * 把候选平铺的两段样本上下文（AdCandidateMessage 的 sampleQuote、sampleReplyTo）收成
  * AdSampleContext，并在 Worker 侧再收一次长度，同 appendLinkUrls：跨线程消息的
  * 形状由本侧兜底。原样展开的话这两个字段是整条流水线上唯一没有 Worker 侧上界
- * 的部分，而它们跟着每条 entry 常驻内存，条数按待检表容量放大。
+ * 的部分，而它们跟着每条 entry 常驻内存，条数按待检表容量放大。两段文本已由唯一的
+ * 生产者（antiRaid/adCandidate.ts）清洗成单行，这里只收长度。
  *
  * 判定文本那一份由 claimSampleContextParts 另行接进 text；这里保留的独立字段只
  * 服务命中样本——人回头看「这条为什么被判成广告」时，需要分得清哪一段是他自己
@@ -222,8 +223,8 @@ export function boundSampleContext(
   rawReplyTo: string | undefined
 ): AdSampleContext | undefined {
   if (rawQuote === undefined && rawReplyTo === undefined) return undefined;
-  const quote: string = sanitizeInline(rawQuote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
-  const replyTo: string = sanitizeInline(rawReplyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  const quote: string = (rawQuote ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
+  const replyTo: string = (rawReplyTo ?? "").slice(0, AD_SAMPLE_CONTEXT_MAX_CHARS);
   if (quote.length === 0 && replyTo.length === 0) return undefined;
   if (quote.length === 0) return { replyTo };
   if (replyTo.length === 0) return { quote };

@@ -35,7 +35,8 @@ import {
   validateAgentDeploymentConfig,
 } from "./agent";
 import { ensureCronConfig } from "./cron";
-import { adoptPersona, loadPersona } from "./persona";
+import { adoptPersona } from "./persona";
+import { loadPromptFile } from "./promptFile";
 import {
   adDetectConfigReadinessCache,
   aiChatConfigReadinessCache,
@@ -48,6 +49,7 @@ import {
   defaultAdSampleConfigCache,
   defaultMoodConfigCache,
   defaultStickerConfigCache,
+  voiceToolPromptCache,
 } from "../cache/perThread/config";
 import { DEFAULT_AI_PERSONA } from "../consts/aiChat/prompts/persona";
 import { BOT_ATMOSPHERES, DEFAULT_BOT_ATMOSPHERE } from "../consts/bot";
@@ -61,6 +63,7 @@ import {
   MOOD_CONFIG_PATH,
   PERSONA_PATH,
   STICKERS_CONFIG_PATH,
+  VOICE_TOOL_PROMPT_PATH,
 } from "../consts/paths";
 import { isErrno } from "../libs/errno";
 import { InputValidationError, invalidInput } from "../libs/inputValidation";
@@ -110,8 +113,8 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
 }
 
 /**
- * AI 闲聊要读的部署配置：贴纸白名单、心情表与 agent 段必检。人设不在此列：
- * prompt/persona.md 缺省时由启动总闸接管内置人设（见 ensurePersona）。
+ * AI 闲聊要读的部署配置：贴纸白名单、心情表与 agent 段必检。prompt/ 下的提示词不在此列：
+ * 缺省时由启动总闸接管内置人设与内置 send_voice 说明（见 ensurePromptFiles）。
  *
  * 前两份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
  * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
@@ -233,16 +236,22 @@ export async function deploymentInputExists(path: string): Promise<boolean> {
 }
 
 /**
- * 启动总闸接管 AI 人设与本进程群通知风格，两者同批填充、不热重载。prompt/persona.md
- * 存在时严格读取其正文，缺省时使用内置人设。显式 atmosphere 优先；风格缺省时自定义人设
- * 使用普通文案，内置人设使用默认风格。已接管时只读 holder，不再读盘。
+ * 启动总闸接管 AI 人设、send_voice 说明与本进程群通知风格，三者同批填充、不热重载。
+ * prompt/persona.md 存在时严格读取其正文，缺省时使用内置人设；prompt/voice_tool.md 存在时严格
+ * 读取其正文，缺省时为 null（按 `agent.tts.bot_language` 取内置说明），是否配置 `agent.tts`
+ * 都同样校验。显式 atmosphere 优先；风格缺省时自定义人设使用普通文案，内置人设使用默认风格。
+ * 已接管时只读 holder，不再读盘。
  */
-async function ensurePersona(): Promise<void> {
+async function ensurePromptFiles(): Promise<void> {
   if (botAtmosphereState.current !== null) return;
   const hasCustomPersona: boolean = await deploymentInputExists(PERSONA_PATH);
-  const persona: string = hasCustomPersona ? await loadPersona() : DEFAULT_AI_PERSONA;
+  const persona: string = hasCustomPersona ? await loadPromptFile(PERSONA_PATH) : DEFAULT_AI_PERSONA;
+  const voiceToolPrompt: string | null = await deploymentInputExists(VOICE_TOOL_PROMPT_PATH)
+    ? await loadPromptFile(VOICE_TOOL_PROMPT_PATH)
+    : null;
   const atmosphere: BotAtmosphere | undefined = getBotConfig().atmosphere;
   adoptPersona(persona);
+  voiceToolPromptCache.current = voiceToolPrompt;
   botAtmosphereState.current = atmosphere !== undefined
     ? BOT_ATMOSPHERES[atmosphere]
     : hasCustomPersona ? "plain" : BOT_ATMOSPHERES[DEFAULT_BOT_ATMOSPHERE];
@@ -251,7 +260,7 @@ async function ensurePersona(): Promise<void> {
 /**
  * 启动阶段校验所有已经存在的可选部署输入。文件真正缺省时由功能 readiness
  * 决定能否开启；文件一旦存在，就不能因相应功能当前关闭而掩盖非法内容。
- * 人设缺省不影响任何功能，由 ensurePersona 接管内置人设。
+ * prompt/ 下的提示词缺省不影响任何功能，由 ensurePromptFiles 接管内置文案。
  */
 export async function validateExistingDeploymentInputs(): Promise<void> {
   // Telegram 身份是进程级必填配置，不受任何功能开关控制。
@@ -268,7 +277,7 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
   for (const probe of probes) {
     if (await deploymentInputExists(probe.path)) await probe.load();
   }
-  await ensurePersona();
+  await ensurePromptFiles();
   aiChatConfigReadinessCache.current = await probeAll(AI_CHAT_PROBES);
   adDetectConfigReadinessCache.current = await probeAll(AD_DETECT_PROBES);
   translateConfigReadinessCache.current ??= {

@@ -1,11 +1,11 @@
-import { chatMoodExpiresAts, chatMoods } from "../../cache/workers/aiChat/mood";
+import { currentMoodState } from "../../cache/workers/aiChat/mood";
 import { getMoodConfig } from "../../config/mood";
 import { MOOD_REROLL_MAX_MS, MOOD_REROLL_MIN_MS } from "../../consts/aiChat/mood";
 import { MOOD_LABEL_NAME } from "../../consts/aiChat/prompts/mood";
 import { WEATHER_CODE_DESCRIPTIONS } from "../../consts/weather";
 import { getLocalHour } from "../../libs/time";
 import { weatherCache } from "../../cache/workers/aiChat/weather";
-import type { MoodOption, TimeBucket, WeatherBucket } from "../../types/aiChat/mood";
+import type { CurrentMood, MoodOption, TimeBucket, WeatherBucket } from "../../types/aiChat/mood";
 
 /** 按当前天气/时段调整过权重的候选心情，仅用于 pickMood 的一次抽选。 */
 interface WeightedMood {
@@ -14,13 +14,13 @@ interface WeightedMood {
 }
 
 /**
- * 各群「心情」系统：心情只随时间自然轮换——抽到一个心情后带一个随机
- * 寿命（区间见 consts/aiChat/mood.ts），到期后下次拼提示词时重抽，与群里
- * 是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
+ * 「心情」系统：全 Worker 只有一份心情，所有群共用。心情只随时间自然轮换——
+ * 抽到一个心情后带一个随机寿命（区间见 consts/aiChat/mood.ts），到期后下次任一群
+ * 拼提示词时重抽，与群里是否有人说话无关。重抽时按当前天气/时段微调各心情的抽中概率（大晴天
  * 更容易开心、雨天雷雨天更容易忧郁伤心、深夜更容易犯困，等等）。心情档位
  * 的文案、base weight 与倍率来自部署配置 config/dynamic/mood.json（严格解码见
- * config/mood.ts，主进程启动时严格解析、Worker 经初始化与热重载消息接管快照）。两个内存缓存
- * （chatMoods/chatMoodExpiresAts，见 cache/workers/aiChat/mood.ts）都不落盘，
+ * config/mood.ts，主进程启动时严格解析、Worker 经初始化与热重载消息接管快照）。当前心情与到期时刻
+ * （currentMoodState，见 cache/workers/aiChat/mood.ts）都不落盘，
  * 随 Worker 重启清空、下次用到时重抽。
  *
  * 天气数据直接读 cache/workers/aiChat/weather.ts 的 weatherCache.current——这里只读现有
@@ -103,63 +103,46 @@ function pickMood(): MoodOption {
 }
 
 /**
- * 立即重抽某群的心情并写回缓存：无视剩余寿命强制换一次，给新心情掷一个
- * 新的随机寿命。自然到期重抽（下方 currentMood）与 /mood switch
- * 手动切换（aiChatWorker.ts 的 switchMood 消息路由）共用这一条路径。
- * 读写 Worker 内的 chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
- * @param chatId 群聊 ID。
+ * 立即重抽心情并写回缓存：无视剩余寿命强制换一次，给新心情掷一个新的随机寿命。
+ * 自然到期重抽（下方 currentMood）与 /mood switch 手动切换（aiChatWorker.ts 的
+ * switchMood 消息路由）共用这一条路径。写 Worker 内的 currentMoodState
+ * （见 cache/workers/aiChat/mood.ts）。
  */
-export function switchMood(
-  chatId: number
-): MoodOption {
+export function switchMood(): MoodOption {
   const mood: MoodOption = pickMood();
-  chatMoods.set(chatId, mood);
-  chatMoodExpiresAts.set(chatId, Date.now() + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS));
+  currentMoodState.current = {
+    mood,
+    expiresAt: Date.now() + MOOD_REROLL_MIN_MS + Math.random() * (MOOD_REROLL_MAX_MS - MOOD_REROLL_MIN_MS),
+  };
   return mood;
 }
 
 /**
- * 读取某群当前有效心情。心情缺失（本群第一次用到、或 Worker 重启后缓存
- * 清空）或已过寿命时按自然轮换规则现场重抽；未到期时绝不强制切换。
- * 读写 Worker 内的 chatMoods/chatMoodExpiresAts（见 cache/workers/aiChat/mood.ts）。
- * @param chatId 群聊 ID。
+ * 读取当前有效心情。心情缺失（Worker 启动后第一次用到、或热重载删掉了原档位）或已过
+ * 寿命时按自然轮换规则现场重抽；未到期时绝不强制切换。
  */
-export function currentMood(
-  chatId: number
-): MoodOption {
-  const now: number = Date.now();
-  let mood: MoodOption | undefined = chatMoods.get(chatId);
-  if (!mood || now >= (chatMoodExpiresAts.get(chatId) ?? 0)) {
-    mood = switchMood(chatId);
-  }
-  return mood;
+export function currentMood(): MoodOption {
+  const current: CurrentMood | null = currentMoodState.current;
+  if (current === null || Date.now() >= current.expiresAt) return switchMood();
+  return current.mood;
 }
 
 /**
  * 拼进运行时状态区块的当前心情指令；当前档位及自然到期语义统一由 currentMood
  * 维护，避免查询命令与提示词拼装各自实现一遍缓存读取。
  */
-export function currentMoodInstruction(
-  chatId: number
-): string {
-  const mood: MoodOption = currentMood(chatId);
+export function currentMoodInstruction(): string {
+  const mood: MoodOption = currentMood();
   return `【${MOOD_LABEL_NAME}：${mood.name}】${mood.instruction}`;
 }
 
 /**
- * mood.json 热重载后调用：各群当前心情换成新快照里的同名档位（文案、权重与倍率
- * 随之更新），剩余寿命不变；新快照里已不存在的档位连同到期时刻一起删除，下次
- * 读取时按新表重抽。
+ * mood.json 热重载后调用：当前心情换成新快照里的同名档位（文案、权重与倍率随之更新），
+ * 剩余寿命不变；新快照里已不存在该档位时整体清空，下次读取时按新表重抽。
  */
-export function refreshChatMoods(): void {
-  const options: readonly MoodOption[] = getMoodConfig().moods;
-  for (const [chatId, mood] of chatMoods) {
-    const next: MoodOption | undefined = options.find((option: MoodOption): boolean => option.name === mood.name);
-    if (next === undefined) {
-      chatMoods.delete(chatId);
-      chatMoodExpiresAts.delete(chatId);
-    } else {
-      chatMoods.set(chatId, next);
-    }
-  }
+export function refreshMood(): void {
+  const current: CurrentMood | null = currentMoodState.current;
+  if (current === null) return;
+  const next: MoodOption | undefined = getMoodConfig().moods.find((option: MoodOption): boolean => option.name === current.mood.name);
+  currentMoodState.current = next === undefined ? null : { mood: next, expiresAt: current.expiresAt };
 }

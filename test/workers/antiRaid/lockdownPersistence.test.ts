@@ -8,7 +8,7 @@ const CHAT_ID: number = -1001;
 const posted: unknown[] = [];
 
 function entry(state: LockdownState, restoreAt: number | undefined): LockdownEntry {
-  return { state, restoreTimer: undefined, retryTimer: undefined, restoreAt };
+  return { state, restoreTimer: undefined, retryTimer: undefined, restoreAt, restorePermanentFailures: 0 };
 }
 
 const ACTIVE: LockdownState = {

@@ -37,6 +37,7 @@ const {
   adDetectTickTimer,
   inFlightAdDetectKeys,
   inFlightReferencedAdCleanupTasks,
+  pendingAdBundleCount,
   pendingAdMessages,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
@@ -47,10 +48,13 @@ const {
   AD_DETECT_JUDGED_RETENTION_WINDOW_MS,
   AD_DETECT_MAX_IN_FLIGHT,
   AD_DETECT_MAX_MESSAGES_PER_SENDER,
+  AD_DETECT_MAX_PENDING_DELETE_IDS,
   AD_DETECT_MAX_PENDING_SENDERS,
   AD_DETECT_MESSAGE_MAX_CHARS,
 } = await import("../../../packages/consts/antiRaid/adDetect");
 
+const { deletePendingAdBundle, pendingAdBundle, pendingAdBundleForKey } =
+  await import("../../../packages/workers/antiRaid/adDetect/queueState");
 beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
 
 /**
@@ -65,8 +69,69 @@ function expectQueueOwnershipConsistent(): void {
   expect(new Set<string>(queued).size).toBe(queued.length);
   expect(queuedAdDetectKeys.size).toBe(queued.length);
   for (const key of queued) expect(queuedAdDetectKeys.has(key)).toBe(true);
-  expect(queuedAdDetectKeys.size).toBeLessThanOrEqual(pendingAdMessages.size);
+  expect(queuedAdDetectKeys.size).toBeLessThanOrEqual(pendingAdBundleCount.current);
 }
+
+/** 两层待检表的结构不变量：计数等于各群条数之和、不留空的群表、串的键与位置一致。 */
+function expectPendingIndexConsistent(): void {
+  let count: number = 0;
+  for (const [chatId, bundles] of pendingAdMessages) {
+    expect(bundles.size).toBeGreaterThan(0);
+    for (const [senderId, bundle] of bundles) {
+      expect(bundle.chatId).toBe(chatId);
+      expect(bundle.senderId).toBe(senderId);
+      expect(bundle.key).toBe(`${chatId}:${senderId}`);
+      count++;
+    }
+  }
+  expect(pendingAdBundleCount.current).toBe(count);
+}
+
+describe("广告判定队列：两层待检索引", () => {
+  test("随机的入队、判定、处置、清群、清身份与 sweep 序列下，索引、计数与队列始终一致", async () => {
+    let seed: number = 20_261_004;
+    const random = (bound: number): number => {
+      seed = (seed + 0x6D2B79F5) | 0;
+      let mixed: number = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+      return ((mixed ^ (mixed >>> 14)) >>> 0) % bound;
+    };
+    for (const chatId of [-1001, -1002, -1003]) fetchedAdmins.set(chatId, new Set<number>([12]));
+    classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => {
+      const roll: number = random(4);
+      return roll === 3 ? null : { isAd: roll === 1, reason: "" };
+    });
+    let messageId: number = 1;
+    let now: number = 1_000;
+    for (let step: number = 0; step < 3_000; step++) {
+      const operation: number = random(100);
+      now += random(5_000);
+      if (operation < 60) {
+        const senderId: number = 1 + random(14);
+        enqueueAdCandidate(candidate({
+          chatId: -1001 - random(3),
+          senderId,
+          messageId: messageId++,
+          text: random(6) === 0 ? "" : `消息 ${random(50)}`,
+          isChannel: senderId > 12,
+          blocked: random(25) === 0,
+          sampleQuote: random(5) === 0 ? `引用 ${random(5)}` : undefined,
+        }), now);
+      } else if (operation < 85) {
+        await runAdDetectBatch(now);
+      } else if (operation < 90) {
+        clearChatAdDetect(-1001 - random(3));
+      } else if (operation < 95) {
+        clearIdentityAdDetect(1 + random(14));
+      } else {
+        sweepAdDetect(now);
+      }
+      expectPendingIndexConsistent();
+      expectQueueOwnershipConsistent();
+    }
+    expect(disposeAdSender).toHaveBeenCalled();
+  });
+});
 
 describe("广告判定队列：排队、调度与位置所有权", () => {
   test("管理员被模型明确判为广告时不处置，但仍回投累计清零事件", async () => {
@@ -99,7 +164,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     try {
       enqueueAdCandidate(message);
       expect(nowSpy).not.toHaveBeenCalled();
-      expect(pendingAdMessages.get("-1001:7")?.entries[0]?.receivedAt).toBe(observedAt);
+      expect(pendingAdBundle(-1001, 7)?.entries[0]?.receivedAt).toBe(observedAt);
     } finally {
       nowSpy.mockRestore();
     }
@@ -112,14 +177,14 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     expect(adDetectQueue.size).toBe(2);
     expect([...queuedAdDetectKeys]).toEqual(["-1001:7", "-1001:8"]);
-    expect(pendingAdMessages.get("-1001:7")?.entries.map((entry) => entry.messageId)).toEqual([1, 2]);
+    expect(pendingAdBundle(-1001, 7)?.entries.map((entry) => entry.messageId)).toEqual([1, 2]);
   });
 
   test("justJoined 在消息串里取并集，后续消息不能把它洗掉", () => {
     // 验证会在窗口内通过：先发广告、后点验证的人不该因此洗白。
     enqueueAdCandidate(candidate({ messageId: 1, justJoined: true }), 1_000);
     enqueueAdCandidate(candidate({ messageId: 2, justJoined: false }), 1_100);
-    expect(pendingAdMessages.get("-1001:7")?.justJoined).toBe(true);
+    expect(pendingAdBundle(-1001, 7)?.justJoined).toBe(true);
   });
 
   test("送检时把 justJoined 一起交给判定器", async () => {
@@ -129,16 +194,17 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("空正文不入队，超长正文按上限截断", () => {
-    enqueueAdCandidate(candidate({ text: "   " }));
-    expect(pendingAdMessages.size).toBe(0);
+    // 主线程清洗后的空白正文就是空串（见 antiRaid/adCandidate.ts）。
+    enqueueAdCandidate(candidate({ text: "" }));
+    expect(pendingAdBundleCount.current).toBe(0);
 
     enqueueAdCandidate(candidate({ text: "x".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 50) }));
-    expect(pendingAdMessages.get("-1001:7")?.entries[0]?.text).toHaveLength(AD_DETECT_MESSAGE_MAX_CHARS);
+    expect(pendingAdBundle(-1001, 7)?.entries[0]?.text).toHaveLength(AD_DETECT_MESSAGE_MAX_CHARS);
   });
 
   test("自身去重 TTL 外已消费的旧上下文会裁掉，新消息仍算未判定", () => {
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
-    const bundle = pendingAdMessages.get("-1001:7")!;
+    const bundle = pendingAdBundle(-1001, 7)!;
     bundle.checkedSeq = 1;
 
     enqueueAdCandidate(candidate({ messageId: 2 }), 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1);
@@ -162,7 +228,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     const late: number = 1_100 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
     enqueueAdCandidate(candidate({ messageId: 3, text: "加我微信" }), late);
     enqueueAdCandidate(candidate({ messageId: 4, text: "带你上岸" }), late);
-    const bundle = pendingAdMessages.get("-1001:7")!;
+    const bundle = pendingAdBundle(-1001, 7)!;
     expect(bundle.entries.map((entry) => entry.messageId)).toEqual([1, 2, 3, 4]);
 
     release({ isAd: false, reason: "" });
@@ -175,22 +241,41 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     expect(classifiedTexts[1]).toBe("1. 加我微信\n2. 带你上岸");
   });
 
+  test("从未判过的爆发挤满待删 id 上限后丢最旧的 id，两类溢出各只记一次", () => {
+    const total: number = AD_DETECT_MAX_MESSAGES_PER_SENDER + AD_DETECT_MAX_PENDING_DELETE_IDS + 1;
+    for (let index: number = 0; index < total; index++) {
+      enqueueAdCandidate(candidate({ messageId: index + 1 }), 1_000 + index);
+    }
+    const bundle = pendingAdBundle(-1001, 7)!;
+    expect(bundle.entries).toHaveLength(AD_DETECT_MAX_MESSAGES_PER_SENDER);
+    expect(bundle.pendingDeleteIds).toHaveLength(AD_DETECT_MAX_PENDING_DELETE_IDS);
+    // 被挤掉的是 1…(total-15)，其中最旧的 1 号因待删表满而丢弃。
+    expect(bundle.pendingDeleteIds[0]).toBe(2);
+    expect(bundle.pendingDeleteIds.at(-1)).toBe(total - AD_DETECT_MAX_MESSAGES_PER_SENDER);
+    expect(errorLogs.filter((line: string): boolean =>
+      line.includes("dropped never-judged message text")
+    )).toHaveLength(1);
+    expect(errorLogs.filter((line: string): boolean =>
+      line.includes("pending-delete list")
+    )).toHaveLength(1);
+  });
+
   test("单个键的消息条数与键总数都有上界", () => {
     for (let index: number = 0; index <= AD_DETECT_MAX_MESSAGES_PER_SENDER; index++) {
       enqueueAdCandidate(candidate({ messageId: index + 1 }), 1_000 + index);
     }
-    const entries = pendingAdMessages.get("-1001:7")!.entries;
+    const entries = pendingAdBundle(-1001, 7)!.entries;
     expect(entries).toHaveLength(AD_DETECT_MAX_MESSAGES_PER_SENDER);
     expect(entries[0]?.messageId).toBe(2);
-    expect(pendingAdMessages.get("-1001:7")?.pendingDeleteIds).toEqual([1]);
+    expect(pendingAdBundle(-1001, 7)?.pendingDeleteIds).toEqual([1]);
 
     for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS + 5; index++) {
       enqueueAdCandidate(candidate({ senderId: 1_000 + index }));
     }
-    expect(pendingAdMessages.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+    expect(pendingAdBundleCount.current).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(adDetectQueue.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(queuedAdDetectKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
-    expect(pendingAdMessages.has(`-1001:${1_000 + AD_DETECT_MAX_PENDING_SENDERS + 4}`)).toBe(false);
+    expect(pendingAdBundle(-1001, 1_000 + AD_DETECT_MAX_PENDING_SENDERS + 4) !== undefined).toBe(false);
   });
 
   test("已接纳 key 等待超过去重窗口仍会获得首次判定", async () => {
@@ -199,7 +284,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     await runAdDetectBatch(1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1);
 
     expect(classifiedTexts).toEqual(["1. 排队中的广告"]);
-    expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
+    expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
   });
 
   test("判定抛错按「本次没判定」结算：记一行日志、推进水位，不静默死循环", async () => {
@@ -218,7 +303,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     expect(errorLogs.some((line: string): boolean => line.includes("failed to classify sender 7 in chat -1001"))).toBeTrue();
     // 与「模型抽风、响应形状不对」同一档：本次记成已检，不重试成请求风暴。
-    expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
+    expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
     // in-flight 标记照常释放，这个键不会被永久钉住。
     expect(inFlightAdDetectKeys.size).toBe(0);
     expect(disposeAdSender).not.toHaveBeenCalled();
@@ -273,7 +358,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     expect(classifiedTexts).toEqual(["1. 在吗"]);
     expect(adDetectQueue.size).toBe(0);
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
+    expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
 
     // 同一串没有新内容时不该被重复判定，否则每一拍都在重烧同一条消息。
     await runAdDetectBatch(1_000);
@@ -332,7 +417,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     const [{ bundle, verdict }] = disposeAdSender.mock.calls[0] as [{ bundle: { senderId: number }; verdict: AdVerdict }];
     expect(bundle.senderId).toBe(7);
     expect(verdict).toEqual({ isAd: true, reason: "引流" });
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
     expect(adDetectQueue.size).toBe(0);
   });
 
@@ -379,6 +464,28 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     )).toBeTrue();
   });
 
+  test("直接正文归因请求抛错时按未知处理并记错误，不处置也不警告", async () => {
+    let classifyCount: number = 0;
+    classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => {
+      classifyCount++;
+      if (classifyCount === 1) return { isAd: true, reason: "整串命中" };
+      throw new Error("direct classifier exploded");
+    });
+    enqueueAdCandidate(candidate({
+      text: "加V direct",
+      sampleQuote: "转发来的广告",
+    }), 1_000);
+
+    await runAdDetectBatch(1_000);
+
+    expect(classifyCount).toBe(2);
+    expect(disposeAdSender).not.toHaveBeenCalled();
+    expect(warnReferencedAdSender).not.toHaveBeenCalled();
+    expect(errorLogs.some((line: string): boolean =>
+      line.includes("failed to attribute referenced content")
+    )).toBeTrue();
+  });
+
   test("判定失败当作本次没判定，但不无限重试同一批", async () => {
     classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => null);
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
@@ -386,7 +493,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     await runAdDetectBatch(1_000);
     expect(disposeAdSender).not.toHaveBeenCalled();
     // 失败也推进判定进度：DeepSeek 侧故障时重排就是每秒一批的请求风暴。
-    expect(pendingAdMessages.get("-1001:7")?.checkedSeq).toBe(1);
+    expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
     expect(adDetectQueue.size).toBe(0);
   });
 
@@ -429,8 +536,8 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     const running: Promise<void> = runAdDetectBatch(1_000);
 
     clearChatAdDetect(-1001);
-    expect(pendingAdMessages.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.has("-1002:9")).toBe(true);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(false);
+    expect(pendingAdBundle(-1002, 9) !== undefined).toBe(true);
 
     release({ isAd: true, reason: "引流" });
     await running;
@@ -451,9 +558,9 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     clearIdentityAdDetect(7);
 
-    expect(pendingAdMessages.has("-1001:7")).toBeFalse();
-    expect(pendingAdMessages.has("-1002:7")).toBeFalse();
-    expect(pendingAdMessages.get("-1001:8")?.entries.map((entry) => entry.messageId))
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBeFalse();
+    expect(pendingAdBundle(-1002, 7) !== undefined).toBeFalse();
+    expect(pendingAdBundle(-1001, 8)?.entries.map((entry) => entry.messageId))
       .toEqual([3]);
     expect(queuedAdDetectKeys).toEqual(new Set(["-1001:8"]));
   });
@@ -466,9 +573,9 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     enqueueAdCandidate(candidate({ senderId: 8, messageId: 3 }), late);
 
     sweepAdDetect(late);
-    expect(pendingAdMessages.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.has("-1001:8")).toBe(true);
-    expect(pendingAdMessages.get("-1001:8")?.entries.map((entry) => entry.messageId)).toEqual([3]);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(false);
+    expect(pendingAdBundle(-1001, 8) !== undefined).toBe(true);
+    expect(pendingAdBundle(-1001, 8)?.entries.map((entry) => entry.messageId)).toEqual([3]);
   });
 
   test("容量满载拒绝新 key，不淘汰已接纳或正在送检的 key", async () => {
@@ -485,11 +592,11 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS + 5; index++) {
       enqueueAdCandidate(candidate({ senderId: 1_000 + index }), 1_000);
     }
-    expect(pendingAdMessages.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
-    expect(pendingAdMessages.has("-1001:7")).toBe(true);
+    expect(pendingAdBundleCount.current).toBe(AD_DETECT_MAX_PENDING_SENDERS);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(true);
     expect(adDetectQueue.size).toBe(AD_DETECT_MAX_PENDING_SENDERS - 1);
     expect(queuedAdDetectKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS - 1);
-    expect(pendingAdMessages.has(`-1001:${1_000 + AD_DETECT_MAX_PENDING_SENDERS + 4}`)).toBe(false);
+    expect(pendingAdBundle(-1001, 1_000 + AD_DETECT_MAX_PENDING_SENDERS + 4) !== undefined).toBe(false);
 
     let payloadReads: number = 0;
     const unreadAtCapacity: AdCandidateMessage = candidate({
@@ -530,8 +637,8 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     // 留着只会让重新开启开关后的头一个窗口白白哑火。
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
     expect(queuedAdDetectKeys.has("-1002:9")).toBe(true);
-    expect(pendingAdMessages.has("-1001:7")).toBe(false);
-    expect(pendingAdMessages.has("-1002:9")).toBe(true);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(false);
+    expect(pendingAdBundle(-1002, 9) !== undefined).toBe(true);
     expect(referencedAdWarningStates.has("-1001:7")).toBe(false);
     expect(referencedAdWarningStates.has("-1002:9")).toBe(true);
     expect([...queuedAdDetectKeys]).toEqual(["-1002:9"]);
@@ -554,7 +661,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     quiesceAdDetectQueue();
     expect(adDetectTickTimer.current).toBeNull();
     // 状态原样留着：它随 isolate 一起消失，退出路径上不必多做清理。
-    expect(pendingAdMessages.size).toBe(1);
+    expect(pendingAdBundleCount.current).toBe(1);
 
     release({ isAd: false, reason: "" });
     await running;
@@ -598,7 +705,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     });
     stopAdDetectQueue();
     expect(adDetectPublishHolder.current).toBeNull();
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
     expect(queuedAdDetectKeys.size).toBe(0);
     expect(recentlyDisposedAdKeys.size).toBe(0);
     expect(referencedAdWarningStates.size).toBe(0);
@@ -613,7 +720,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     // 出口一：消息串已经不在了（清群之类）。
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
-    pendingAdMessages.delete(key);
+    deletePendingAdBundle(-1001, 7);
     await runAdDetectBatch(1_000);
     expect(queuedAdDetectKeys.has(key)).toBe(false);
     expectQueueOwnershipConsistent();
@@ -621,9 +728,9 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     // 出口二：裁剪之后整串空了，pending 一并摘掉。
     resetAdDetectQueueHarness(stopAdDetectQueue);
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
-    pendingAdMessages.get(key)!.entries.length = 0;
+    pendingAdBundle(-1001, 7)!.entries.length = 0;
     await runAdDetectBatch(1_000);
-    expect(pendingAdMessages.has(key)).toBe(false);
+    expect(pendingAdBundle(-1001, 7)).toBeUndefined();
     expect(queuedAdDetectKeys.has(key)).toBe(false);
     expectQueueOwnershipConsistent();
 
@@ -639,7 +746,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     // 出口四：整串都判过，这一拍没有要送检的内容。
     resetAdDetectQueueHarness(stopAdDetectQueue);
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
-    pendingAdMessages.get(key)!.checkedSeq = 1;
+    pendingAdBundle(-1001, 7)!.checkedSeq = 1;
     await runAdDetectBatch(1_000);
     expect(classifyAdText).not.toHaveBeenCalled();
     expect(queuedAdDetectKeys.has(key)).toBe(false);
@@ -651,12 +758,12 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     for (let round: number = 0; round < 32; round++) {
       const at: number = 1_000 + round;
       enqueueAdCandidate(candidate({ senderId: round, messageId: round + 1 }), at);
-      pendingAdMessages.get(`-1001:${round}`)!.entries.length = 0;
+      pendingAdBundle(-1001, round)!.entries.length = 0;
       await runAdDetectBatch(at);
       expectQueueOwnershipConsistent();
     }
     expect(queuedAdDetectKeys.size).toBe(0);
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
   });
 
   test("处置抑制按单调时钟到期，不受墙钟回拨影响", () => {
@@ -681,7 +788,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     try {
       enqueueAdCandidate(candidate({ messageId: 1, text: "换个号继续" }), 9_000);
       expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(false);
-      expect(pendingAdMessages.has("-1001:7")).toBe(true);
+      expect(pendingAdBundle(-1001, 7) !== undefined).toBe(true);
     } finally {
       monotonic.mockRestore();
     }
@@ -715,7 +822,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     }
 
     expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(true);
-    expect(pendingAdMessages.has("-1001:7")).toBe(false);
+    expect(pendingAdBundle(-1001, 7) !== undefined).toBe(false);
     expect(adDetectQueue.size).toBe(0);
   });
 
@@ -731,7 +838,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
       monotonic.mockReturnValue(200_001);
       enqueueAdCandidate(candidate({ messageId: 2, observedAt: observedAt + 120_001 }));
       expect(recentlyDisposedAdKeys.has("-1001:7")).toBeTrue();
-      expect(pendingAdMessages.has("-1001:7")).toBeFalse();
+      expect(pendingAdBundle(-1001, 7) !== undefined).toBeFalse();
       expect(adDetectQueue.size).toBe(0);
     } finally {
       monotonic.mockRestore();
@@ -745,7 +852,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     // 这种串没有任何其它力量会把它排回去。
     adDetectQueue.clear();
     queuedAdDetectKeys.clear();
-    expect(pendingAdMessages.get("-1001:7")!.entries.length).toBe(1);
+    expect(pendingAdBundle(-1001, 7)!.entries.length).toBe(1);
 
     sweepAdDetect(1_500);
 
@@ -756,7 +863,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
   test("sweep 不给已经判完的串白排一次判定", () => {
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
-    pendingAdMessages.get("-1001:7")!.checkedSeq = 1;
+    pendingAdBundle(-1001, 7)!.checkedSeq = 1;
     adDetectQueue.clear();
     queuedAdDetectKeys.clear();
 
@@ -843,7 +950,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     }), afterWindow);
 
     expect(adDetectQueue.size).toBe(queuedBefore);
-    expect(pendingAdMessages.get(backlogKey)!.entries).toHaveLength(2);
+    expect(pendingAdBundleForKey(backlogKey)!.entries).toHaveLength(2);
     expectQueueOwnershipConsistent();
   });
 

@@ -20,7 +20,7 @@ export const QA_USAGE_TEXT: string =
 
 /** /mood 只接受 query 或 switch，所有用法提示走统一命令消息清理。 */
 export const MOOD_USAGE_TEXT: string =
-  "使用 /mood query 查看本群当前心情，/mood switch 重新抽取心情；不接受其他参数。";
+  "使用 /mood query 查看 AI 当前心情（各群共用），/mood switch 重新抽取心情；不接受其他参数。";
 
 /** /clear_context 不接受任何参数。 */
 export const CLEAR_CONTEXT_USAGE_TEXT: string =

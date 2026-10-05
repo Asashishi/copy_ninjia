@@ -14,13 +14,19 @@ import type { DeferredVerificationRecord } from
  *
  * 填充：状态机每次转移到非 ABSENT 状态时写入（入群、秒踢、终态接管）。
  * 清理：转移回 ABSENT（验证通过、离群、终态结算完成、守卫关闭）时按 key 删除，
- * adopt 换代际时整表清空并重建。容量：不在这一层设淘汰——条目代表「这个人还
- * 欠一次处置」，按容量丢掉等于放过刷群者；硬顶由主线程 antiRaid/verificationMirror.ts
- * 按 VERIFICATION_RECORD_CAPACITY 拒收新记录，落盘侧 workers/diskIO/verificationWrites.ts
- * 再核一次。
+ * adopt 换代际时整表清空并重建。全部运行态共用 VERIFICATION_RUNTIME_CAPACITY，
+ * 满额拒收新 key、报告一次 fatal，已有条目继续更新和解除；恢复优先接管持久责任，
+ * 必要时只释放 exempt/kicked 去重并锁住新 key 准入。持久阶段另受主线程与 Disk I/O
+ * 的 VERIFICATION_RECORD_CAPACITY 约束，运行态不淘汰持久责任。
  * Worker 崩溃重建：主线程 adopt 全量重放，见 states/verification/adopt.ts。
  */
 export const verificationEntries: Map<string, VerificationEntry> = new Map();
+/**
+ * 运行态满额的拒收闩锁；首次超限置 true 并报告 fatal，已有 key 不受影响。
+ * 容量固定一个布尔值；仅下一代 adopt 或 stop 复位，释放去重或 TTL 到期不复位。
+ * Worker 崩溃后新 isolate 为 false，由持久镜像重建当前责任。
+ */
+export const verificationRuntimeCapacityFatalState: { current: boolean } = { current: false };
 /** 当前主线程分配的 Worker 代际；0 表示尚未收到 adoptVerifications。 */
 export const verificationGeneration: { current: number } = { current: 0 };
 /**

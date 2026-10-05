@@ -4,6 +4,8 @@ import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "../helpers/botPermissions";
 import { lastReplyText } from "../helpers/replies";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { BOT_CHAT_PERMISSION_LABELS } from "../../packages/consts/botAdmin";
+import { expectTemplateRendered } from "../helpers/templateText";
 import {
   MUTE_DISPATCH_MIN_REMAINING_MS,
   MUTE_MAX_DURATION_MS,
@@ -213,14 +215,16 @@ describe("/mute 手动禁言", () => {
 
     botChatPermissionsIn.mockResolvedValueOnce(botPermissions());
     await handleMuteCommand(context({ match: "10m" }));
-    expect(lastReplyText(sendMessage)).toContain("是管理员，可没被勾上「限制与封禁成员」权限");
+    expect(lastReplyText(sendMessage)).toContain(
+      ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.botMissingPermission(BOT_CHAT_PERMISSION_LABELS.canRestrictMembers)
+    );
     expect(lastReplyText(sendMessage)).not.toContain("不是管理员");
     expect(lastReplyText(sendMessage)).not.toContain("要么");
 
     botChatPermissionsIn.mockResolvedValueOnce(botPermissions({ isAdministrator: false, canManageChat: false }));
     await handleMuteCommand(context({ match: "10m" }));
-    expect(lastReplyText(sendMessage)).toContain("还不是管理员");
-    expect(lastReplyText(sendMessage)).toContain("「限制与封禁成员」");
+    expectTemplateRendered(lastReplyText(sendMessage), ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.botNotAdministrator);
+    expect(lastReplyText(sendMessage)).toContain(BOT_CHAT_PERMISSION_LABELS.canRestrictMembers);
 
     // 查不到快照或该位齐全时，两种成因都说给管理员听。
     botChatPermissionsIn.mockResolvedValueOnce(undefined);
@@ -287,7 +291,9 @@ describe("/unmute 解除禁言", () => {
     botChatPermissionsIn.mockResolvedValueOnce(botPermissions());
     await handleUnmuteCommand(context({}));
     expect(lastReplyText(sendMessage)).toContain("松不开");
-    expect(lastReplyText(sendMessage)).toContain("是管理员，可没被勾上「限制与封禁成员」权限");
+    expect(lastReplyText(sendMessage)).toContain(
+      ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.botMissingPermission(BOT_CHAT_PERMISSION_LABELS.canRestrictMembers)
+    );
     expect(botChatPermissionsIn).toHaveBeenCalledWith(-1001);
   });
 });

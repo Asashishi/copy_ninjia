@@ -228,18 +228,13 @@ function rejectActiveJob(job: TelegramOutboundJob, error: unknown): void {
   settleDrainWaitersIfIdle();
 }
 
-/** 从 created/active/retryQueued 任一阶段只结算一次取消。 */
+/** 从 created/active/retryQueued 任一阶段只结算一次取消；只有后两个阶段占着队列或并发计数。 */
 export function abortJob(job: TelegramOutboundJob): void {
   if (job.state === "settled") return;
   const lane: TelegramRetryLane = laneFor(job.category);
-  if (job.state === "retryQueued") {
-    removeRetryJob(job);
-  } else if (job.state === "active") {
-    releaseActiveJob(job);
-    job.state = "settled";
-  } else {
-    job.state = "settled";
-  }
+  if (job.state === "retryQueued") removeRetryJob(job);
+  else if (job.state === "active") releaseActiveJob(job);
+  job.state = "settled";
   detachAbortListener(job);
   job.reject(abortReason());
   if (!telegramOutboundGateState.aborting) pumpRetryLane(lane);
@@ -310,6 +305,10 @@ function executeActiveJob(job: TelegramOutboundJob): void {
   );
 }
 
+/**
+ * 把任务切成 active 并发起尝试。两个调用方（enqueueOrStart、pumpRetryLane）都在同一个
+ * 同步片段里确认过 job 信号未取消，这里不复判；之后的取消由 abort 监听结算。
+ */
 function startJob(job: TelegramOutboundJob, fromRetryQueue: boolean): void {
   const lane: TelegramRetryLane = laneFor(job.category);
   job.state = "active";
@@ -318,16 +317,6 @@ function startJob(job: TelegramOutboundJob, fromRetryQueue: boolean): void {
   lane.activeCount++;
   telegramOutboundGateState.activeJobs.add(job);
   if (fromRetryQueue) lane.recoveryActive++;
-  if (job.signal.aborted) {
-    releaseActiveJob(job);
-    job.state = "settled";
-    detachAbortListener(job);
-    job.reject(abortReason());
-    pumpRetryLane(lane);
-    resetRecoveryIfIdle(lane);
-    settleDrainWaitersIfIdle();
-    return;
-  }
   if (fromRetryQueue && job.beforeRetry !== undefined) {
     let precondition: Promise<void>;
     try {
@@ -363,19 +352,12 @@ function pumpRetryLane(lane: TelegramRetryLane): void {
   settleDrainWaitersIfIdle();
 }
 
-function enqueueOrStart(
-  job: TelegramOutboundJob,
-  allowDuringQuiesce: boolean = false
-): void {
-  if (
-    (!telegramOutboundAccepting.current && !allowDuringQuiesce) ||
-    job.signal.aborted
-  ) {
-    detachAbortListener(job);
-    job.state = "settled";
-    job.reject(abortReason());
-    return;
-  }
+/**
+ * 新接纳的任务：所在类别正在退避或已有积压时按接纳序号排进 429 FIFO，否则直接开始。
+ * 调用方（runTelegramCategorizedRequestInternal、telegramOutboundGate）在构造 job 前的
+ * 同一个同步片段里已判过接纳状态与信号，这里不复判。
+ */
+function enqueueOrStart(job: TelegramOutboundJob): void {
   const lane: TelegramRetryLane = laneFor(job.category);
   if (
     lane.retryTimer !== null ||
@@ -445,7 +427,7 @@ function runTelegramCategorizedRequestInternal<T>({
       call: execute,
       resolve: resolve as (value: unknown) => void,
       reject,
-    }), allowDuringQuiesce);
+    }));
   });
 }
 

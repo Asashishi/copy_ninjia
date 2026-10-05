@@ -93,7 +93,7 @@ done
 </table>
 
 > [!NOTE]
-> AI 人设默认使用内置的雌小鬼人设；项目根目录下可放置不受版本控制的 `prompt/persona.md` 自定义人设。全群通知与菜单优先采用显式 `atmosphere`；未配置时，自定义人设使用普通文案，内置人设使用雌小鬼文案。
+> AI 人设默认使用内置的雌小鬼人设；项目根目录下可放置不受版本控制的 `prompt/persona.md` 自定义人设，AI `send_voice` 的工具说明同样可用 `prompt/voice_tool.md` 整份替换，两者修改后须重启；示例见 [`prompt_example/persona.md`](../../prompt_example/persona.md) 与 [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)。全群通知与菜单优先采用显式 `atmosphere`；未配置时，自定义人设使用普通文案，内置人设使用雌小鬼文案。
 
 ---
 
@@ -241,6 +241,7 @@ done
 | `voice` | `string` | **必填** | 非空字符串 | 发音音色标识。Google 可以是内置音色名（如 `en-us-nika`）或 Voice Design ID；OpenAI/xAI 为对应音色名（如 `coral`、`ara`） |
 | `style` | `string` | 可选 | 非空字符串，xAI 协议**禁止**配置 | 基础朗读风格提示词。缺省使用内置ツンデレ风格：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
 | `language` | `string` | 可选 | BCP-47 语言代码或 `"auto"`，**仅 xAI 协议允许** | 合成语言，缺省为 `"auto"` |
+| `bot_language` | `string` | 可选 | `"en"`、`"zh"` 或 `"ja"`；首尾空白去掉后严格校验，缺省 `"ja"` | AI 语音台词的语言：切换模型可见的语音工具说明与去重规则，并在 AI 回复的合成请求里给基础风格追加该语言的朗读语言要求（xAI 协议不发送；`/send` 与 cron 不追加）。`style` 与 `prompt/voice_tool.md` 不随它切换，更换时建议一并改成对应语言 |
 | `daily_limit` | `number` | 可选 | 正安全整数，缺省 `100` | 每日（24 小时滚动窗口）总语音合成预算次数 |
 | `daily_reserve_quota` | `number` | 可选 | 整数，范围 `0` ～ `daily_limit - 1`，缺省 `25` | 预留给 `/send` 和 `cron` 语音任务的独立额度。AI 对话独立使用剩余的 `daily_limit - daily_reserve_quota` 次 |
 

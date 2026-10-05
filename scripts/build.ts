@@ -77,7 +77,7 @@ try {
     });
     if (!migration.success) throw new AggregateError(migration.logs, `Migration compilation failed: ${edge.command}`);
   }
-  for (const relative of ["install.sh", "config_example", "LICENSES", "packages/database/schema/migrations"]) {
+  for (const relative of ["install.sh", "config_example", "prompt_example", "LICENSES", "packages/database/schema/migrations"]) {
     await copyFixtureTree(join(projectRoot, relative), join(packageRoot, relative));
   }
   for await (const file of new Bun.Glob("*.sh").scan(join(projectRoot, "scripts/install"))) {

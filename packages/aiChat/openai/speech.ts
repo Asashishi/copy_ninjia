@@ -2,14 +2,15 @@
  * OpenAI 实现包的语音合成：按 `agent.tts.speech_protocol` 分派到两种线协议。
  *
  * - `openai`：官方 SDK 的 audio/speech（`client.audio.speech.create`）。台词走 `input`，
- *   音色走 `voice`，配置的基础风格与本句语气由 ai/utils/speechStyle.ts 拼成
+ *   音色走 `voice`，配置的基础风格与朗读语言、本句语气由 ai/utils/speechStyle.ts 拼成
  *   `instructions`。响应格式钉为 OPENAI_SPEECH_RESPONSE_FORMAT（OGG/Opus），按
  *   OGG_OPUS_MIME_TYPE 交回，由编码侧校验容器后原样发送；兼容端点按同一请求形状发送，须支持
  *   该格式。
  *   SDK 的每次尝试超时与整次调用 deadline 都是 OPENAI_SPEECH_REQUEST_TIMEOUT_MS，
  *   重试次数按 OPENAI_SPEECH_REQUEST_ATTEMPTS 显式传入。响应不带用量，收到响应时按
  *   missing 记一次有界诊断。
- * - `xai`：xAI `POST /tts`，请求体与 SDK 不兼容，由 ./xaiSpeech.ts 以 fetch 发送。
+ * - `xai`：xAI `POST /tts`，请求体与 SDK 不兼容，由 ./xaiSpeech.ts 以 fetch 发送；没有风格字段，
+ *   朗读语言与语气都不发送，合成语言由配置的 `language` 决定。
  *
  * 模型、音色、风格与协议取自同一份 tts 配置快照。失败一律返回 null 并记一行英文错误
  * 日志；调用方 signal 已中止时静默返回 null，绝不抛错。新增协议必须扩展
@@ -44,7 +45,7 @@ import type {
 /** 按 openai 协议（audio/speech）把一句台词合成为 OGG/Opus 语音。 */
 async function synthesizeAudioSpeech(
   tts: OpenAiAgentTtsCapabilityConfig,
-  { text, tone, signal }: AiSpeechRequest
+  { text, languageStyle, tone, signal }: AiSpeechRequest
 ): Promise<SynthesizedSpeech | null> {
   const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_SPEECH_REQUEST_TIMEOUT_MS);
   let decoded: SynthesizedSpeechDecodeResult;
@@ -56,7 +57,7 @@ async function synthesizeAudioSpeech(
           model: tts.model,
           voice: tts.voice,
           input: text,
-          instructions: composeSpeechStyle(tts.style, tone),
+          instructions: composeSpeechStyle(tts.style, languageStyle, tone),
           response_format: OPENAI_SPEECH_RESPONSE_FORMAT,
         },
         {

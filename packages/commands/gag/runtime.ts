@@ -12,14 +12,11 @@ import {
 import { registerChatTeardown } from "../../infra/chatTeardownRegistry";
 import { logger } from "../../infra/logger";
 import { settleWithinBudget } from "../../libs/inflight";
-import {
-  deleteMessageWithOutcome,
-  sendCommandMessage,
-} from "../../infra/telegram";
-import type { DeleteMessageOutcome } from "../../infra/telegram";
+import { sendCommandMessage } from "../../infra/telegram";
 import type { FlushResult } from "../../types/lifecycle";
+import type { ChatTeardownReason } from "../../types/chatTeardown";
 import type { GagSession } from "../../types/gag";
-import { deleteGagSpeakNotice } from "./notices";
+import { releaseGagNoticeSlot } from "./notices";
 import { findGagSession, trackGagBackgroundTask } from "./owner";
 import {
   clearGagSpeakNoticeRefreshTimer,
@@ -88,10 +85,6 @@ function claimGagEnd(session: GagSession): boolean {
   return true;
 }
 
-function deletionFinished(outcome: DeleteMessageOutcome): boolean {
-  return outcome === "deleted" || outcome === "gone";
-}
-
 async function deleteGagNotices(session: GagSession): Promise<boolean> {
   if (session.noticePending) return false;
   const refreshTask: Promise<void> | null = session.speakNoticeRefreshTask;
@@ -106,46 +99,22 @@ async function deleteGagNotices(session: GagSession): Promise<boolean> {
   }
   let publicFinished: boolean = true;
   if (session.publicNoticeMessageId !== 0) {
-    const noticeMessageId: number = session.publicNoticeMessageId;
-    const publicOutcome: DeleteMessageOutcome = await deleteMessageWithOutcome(
-      session.chatId,
-      noticeMessageId
-    );
-    publicFinished = deletionFinished(publicOutcome);
-    if (
-      publicFinished &&
-      session.publicNoticeMessageId === noticeMessageId
-    ) session.publicNoticeMessageId = 0;
+    publicFinished = await releaseGagNoticeSlot(session, "publicNoticeMessageId", session.publicNoticeMessageId);
   }
+  // 每个槽位先 await 删除、再并进结论：任一槽位删除失败都不得跳过后面槽位的删除。
   let speakFinished: boolean = true;
   const currentSpeakNoticeId: number = session.speakNoticeMessageId;
   if (currentSpeakNoticeId !== 0) {
-    const currentOutcome: DeleteMessageOutcome = await deleteGagSpeakNotice(
-      session,
-      currentSpeakNoticeId
-    );
-    const currentFinished: boolean = deletionFinished(currentOutcome);
-    speakFinished = speakFinished && currentFinished;
-    if (
-      currentFinished &&
-      session.speakNoticeMessageId === currentSpeakNoticeId
-    ) session.speakNoticeMessageId = 0;
+    speakFinished = await releaseGagNoticeSlot(session, "speakNoticeMessageId", currentSpeakNoticeId);
   }
   const pendingSpeakNoticeId: number = session.pendingSpeakNoticeMessageId;
   if (
     pendingSpeakNoticeId !== 0 &&
     pendingSpeakNoticeId !== currentSpeakNoticeId
   ) {
-    const pendingOutcome: DeleteMessageOutcome = await deleteGagSpeakNotice(
-      session,
-      pendingSpeakNoticeId
-    );
-    const pendingFinished: boolean = deletionFinished(pendingOutcome);
+    const pendingFinished: boolean =
+      await releaseGagNoticeSlot(session, "pendingSpeakNoticeMessageId", pendingSpeakNoticeId);
     speakFinished = speakFinished && pendingFinished;
-    if (
-      pendingFinished &&
-      session.pendingSpeakNoticeMessageId === pendingSpeakNoticeId
-    ) session.pendingSpeakNoticeMessageId = 0;
   } else if (pendingSpeakNoticeId === currentSpeakNoticeId) {
     session.pendingSpeakNoticeMessageId = session.speakNoticeMessageId;
   }
@@ -155,16 +124,9 @@ async function deleteGagNotices(session: GagSession): Promise<boolean> {
     retiredSpeakNoticeId !== currentSpeakNoticeId &&
     retiredSpeakNoticeId !== pendingSpeakNoticeId
   ) {
-    const retiredOutcome: DeleteMessageOutcome = await deleteGagSpeakNotice(
-      session,
-      retiredSpeakNoticeId
-    );
-    const retiredFinished: boolean = deletionFinished(retiredOutcome);
+    const retiredFinished: boolean =
+      await releaseGagNoticeSlot(session, "retiredSpeakNoticeMessageId", retiredSpeakNoticeId);
     speakFinished = speakFinished && retiredFinished;
-    if (
-      retiredFinished &&
-      session.retiredSpeakNoticeMessageId === retiredSpeakNoticeId
-    ) session.retiredSpeakNoticeMessageId = 0;
   } else if (
     retiredSpeakNoticeId === currentSpeakNoticeId ||
     retiredSpeakNoticeId === pendingSpeakNoticeId
@@ -380,11 +342,23 @@ export async function commitGagNotices(session: GagSession): Promise<void> {
   await retryGagCleanup(session);
 }
 
-/** 群停管、机器人离群或降权时静默结束 gag，并重试遗留的 ending 提示。 */
-export async function teardownGagInChat(chatId: number): Promise<void> {
+/**
+ * 群停管、机器人离群或降权时静默结束 gag，并重试遗留的 ending 提示。
+ *
+ * 机器人已离群（`departed`）时出站 API 一条也发不出，提示删除注定失败：直接释放
+ * 会话与 timer，不占用全局槽位，也不留给停机排空。
+ */
+export async function teardownGagInChat(
+  chatId: number,
+  reason: ChatTeardownReason
+): Promise<void> {
   const sessions: GagSession[] | undefined = gagSessionsByChat.get(chatId);
   if (sessions === undefined) return;
   const snapshot: GagSession[] = [...sessions];
+  if (reason === "departed") {
+    for (const session of snapshot) removeGagSession(session);
+    return;
+  }
   for (const session of snapshot) {
     if (session.phase === "ending") await retryGagCleanup(session);
     else await finishGag(session, "teardown");

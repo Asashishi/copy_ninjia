@@ -12,8 +12,8 @@ const persistChatState = mock(async (..._args: unknown[]): Promise<void> => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const clearAdDetection = mock((..._args: unknown[]): void => {});
 const handleCopyCommand = mock(async (..._args: unknown[]): Promise<void> => {});
-const queryAiMood = mock(async (_chatId: number): Promise<string> => "平静");
-const switchAiMood = mock(async (_chatId: number): Promise<string> => "开心");
+const queryAiMood = mock(async (): Promise<string> => "平静");
+const switchAiMood = mock(async (): Promise<string> => "开心");
 const states = new Map<number, Record<string, unknown>>();
 
 function broken(file: string): ConfigReadiness {
@@ -39,8 +39,8 @@ mock.module("../../packages/infra/telegram", () => ({
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: loggerError }) }));
 mock.module("../../packages/aiChat", () => ({
   invalidateAiChat: mock((): void => {}),
-  requestAiMood: (chatId: number, requestType: "queryMood" | "switchMood"): Promise<string> =>
-    requestType === "queryMood" ? queryAiMood(chatId) : switchAiMood(chatId),
+  requestAiMood: (requestType: "queryMood" | "switchMood"): Promise<string> =>
+    requestType === "queryMood" ? queryAiMood() : switchAiMood(),
 }));
 mock.module("../../packages/antiRaid", () => ({ clearAdDetection }));
 mock.module("../../packages/commands/copy", () => ({ handleCopyCommand }));

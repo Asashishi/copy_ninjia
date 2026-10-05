@@ -218,7 +218,7 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
 
     const photoUrl: string | undefined = extractAvatarUrlFromProfileHtml(html, username);
     if (!photoUrl) {
-      logger.error(`No profile photo found on t.me page for @${username}`);
+      logger.warn(`No profile photo found on t.me page for @${username}`);
       return null;
     }
 

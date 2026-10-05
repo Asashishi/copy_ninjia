@@ -43,6 +43,7 @@ const drainAntiRaid = mock(async (): Promise<FlushResult> => { calls.push("drain
 const drainAvatarUpdates = mock(async (): Promise<FlushResult> => { calls.push("drainAvatar"); return "flushed"; });
 const drainGagRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainGag"); return "flushed"; });
 const drainWedRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainWed"); return "flushed"; });
+const drainQaForms = mock(async (): Promise<FlushResult> => { calls.push("drainQaForms"); return "flushed"; });
 const drainDeferredCommandRuntime = mock(async (): Promise<FlushResult> => { calls.push("drainDeferredCommands"); return "flushed"; });
 const drainCronScheduler = mock(async (): Promise<FlushResult> => { calls.push("drainCron"); return "flushed"; });
 const drainTranslate = mock(async (): Promise<FlushResult> => { calls.push("drainTranslate"); return "flushed"; });
@@ -144,6 +145,7 @@ const testDependencies = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
+  drainQaForms,
   drainWedRuntime,
   drainDeferredCommandRuntime,
   drainCronScheduler,
@@ -273,6 +275,7 @@ export function installLifecycleFixtureHooks(): void {
       drainAntiRaid,
       drainAvatarUpdates,
       drainGagRuntime,
+      drainQaForms,
       drainWedRuntime,
       drainDeferredCommandRuntime,
       drainCronScheduler,
@@ -342,6 +345,7 @@ export function installLifecycleFixtureHooks(): void {
     drainDeferredCommandRuntime.mockImplementation(async () => { calls.push("drainDeferredCommands"); return "flushed" as const; });
     drainCronScheduler.mockImplementation(async () => { calls.push("drainCron"); return "flushed" as const; });
     drainGagRuntime.mockImplementation(async () => { calls.push("drainGag"); return "flushed" as const; });
+    drainQaForms.mockImplementation(async () => { calls.push("drainQaForms"); return "flushed" as const; });
     drainTranslate.mockImplementation(async () => { calls.push("drainTranslate"); return "flushed" as const; });
     drainPendingMessageDeletions.mockImplementation(async () => {
       calls.push("drainMessageDeletions");
@@ -380,6 +384,7 @@ export const lifecycleFixture = {
   drainAntiRaid,
   drainAvatarUpdates,
   drainGagRuntime,
+  drainQaForms,
   drainWedRuntime,
   drainDeferredCommandRuntime,
   drainCronScheduler,

@@ -16,17 +16,16 @@ import { settleWithinBudget } from "../../libs/inflight";
  * 使用 cache/workers/aiChat/replies.ts 的 cachedReplyGeneration 与
  * isCachedReplyGenerationCurrent。回复轮、限频提示、媒体描述和记忆压缩都必须在
  * 本模块登记；群失效时同步撤销旧 epoch，再等待该 epoch 的任务 settle。
+ *
+ * epoch 由 cachedReplyGeneration 在本 isolate 内单调分配、绝不复用，取消控制器与任务表因此
+ * 直接以 epoch 为键，不拼群 id。
  */
-
-function generationKey(chatId: number, generation: number): string {
-  return `${chatId}:${generation}`;
-}
 
 /** 记忆淘汰优先保护在途模型和当前代际尚未结算的任务，包含独立发送链。 */
 export function hasActiveAiChatTasks(chatId: number): boolean {
   if ((activeReplyCounts.get(chatId) ?? 0) > 0) return true;
   const generation: number | undefined = replyGenerations.get(chatId);
-  return generation !== undefined && (replyGenerationTasks.get(generationKey(chatId, generation))?.size ?? 0) > 0;
+  return generation !== undefined && (replyGenerationTasks.get(generation)?.size ?? 0) > 0;
 }
 
 /**
@@ -38,17 +37,15 @@ export function evictChatReplyGeneration(chatId: number): void {
   const generation: number | undefined = replyGenerations.get(chatId);
   invalidateChatRuntimeCache(chatId);
   if (generation === undefined) return;
-  const key: string = generationKey(chatId, generation);
-  if (!replyGenerationTasks.has(key)) replyAbortControllers.delete(key);
+  if (!replyGenerationTasks.has(generation)) replyAbortControllers.delete(generation);
 }
 
 /** 取得本轮 generation 的唯一取消信号。 */
-export function replyGenerationSignal(chatId: number, generation: number): AbortSignal {
-  const key: string = generationKey(chatId, generation);
-  let controller: AbortController | undefined = replyAbortControllers.get(key);
+export function replyGenerationSignal(generation: number): AbortSignal {
+  let controller: AbortController | undefined = replyAbortControllers.get(generation);
   if (controller === undefined) {
     controller = new AbortController();
-    replyAbortControllers.set(key, controller);
+    replyAbortControllers.set(generation, controller);
   }
   return controller.signal;
 }
@@ -59,20 +56,19 @@ export function trackReplyGenerationTask(
   generation: number,
   task: Promise<void>
 ): void {
-  const key: string = generationKey(chatId, generation);
-  let tasks: Set<Promise<void>> | undefined = replyGenerationTasks.get(key);
+  let tasks: Set<Promise<void>> | undefined = replyGenerationTasks.get(generation);
   if (tasks === undefined) {
     tasks = new Set();
-    replyGenerationTasks.set(key, tasks);
+    replyGenerationTasks.set(generation, tasks);
   }
   tasks.add(task);
   void task.finally((): void => {
-    const current: Set<Promise<void>> | undefined = replyGenerationTasks.get(key);
+    const current: Set<Promise<void>> | undefined = replyGenerationTasks.get(generation);
     current?.delete(task);
     if (current?.size === 0) {
-      replyGenerationTasks.delete(key);
+      replyGenerationTasks.delete(generation);
       if (!isCachedReplyGenerationCurrent(chatId, generation)) {
-        replyAbortControllers.delete(key);
+        replyAbortControllers.delete(generation);
       }
     }
   }).catch((): void => {
@@ -115,14 +111,13 @@ export async function quiesceAiChatReplies(): Promise<void> {
  */
 export function invalidateChatReplies(chatId: number): Promise<void> {
   const generation: number = cachedReplyGeneration(chatId);
-  const key: string = generationKey(chatId, generation);
-  replyAbortControllers.get(key)?.abort(
+  replyAbortControllers.get(generation)?.abort(
     new DOMException("AI chat generation invalidated.", "AbortError")
   );
   invalidateChatRuntimeCache(chatId);
-  const tasks: Set<Promise<void>> | undefined = replyGenerationTasks.get(key);
+  const tasks: Set<Promise<void>> | undefined = replyGenerationTasks.get(generation);
   if (tasks === undefined || tasks.size === 0) {
-    replyAbortControllers.delete(key);
+    replyAbortControllers.delete(generation);
     return Promise.resolve();
   }
   const pending: number = tasks.size;
@@ -133,7 +128,7 @@ export function invalidateChatReplies(chatId: number): Promise<void> {
         `after ${AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS}ms; they stay generation-guarded and cannot write anymore.`
       );
     }
-    replyGenerationTasks.delete(key);
-    replyAbortControllers.delete(key);
+    replyGenerationTasks.delete(generation);
+    replyAbortControllers.delete(generation);
   });
 }

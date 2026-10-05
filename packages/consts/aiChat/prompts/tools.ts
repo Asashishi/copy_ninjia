@@ -16,11 +16,13 @@ import {
   SEND_VOICE_TOOL,
   WEB_SEARCH_TOOL,
 } from "../../tools";
+import type { TtsBotLanguage } from "../../../types/config";
+import type { VoiceLanguagePrompts } from "../../../types/aiChat/voiceMessage";
 
 /**
  * 运行时状态区块里「本轮工具状态」段的段首标签。段内每个按轮有条件的工具各占一行、
- * 只写事实（能不能用、是否冷却、还剩几次），怎么据此行动由系统提示词里的
- * REPLY_ACTION_INSTRUCTION 与各工具说明规定；工具清单本身每轮恒定。
+ * 只写事实（能不能用、是否冷却、还剩几次），怎么据此行动由系统提示词「行动与停止」段
+ * （VOICE_LANGUAGE_PROMPTS 的 replyActionInstruction）与各工具说明规定；工具清单本身每轮恒定。
  * 所属模块：aiChat/ai/tools/replyToolset/toolStatus.ts。
  */
 export const TOOL_STATUS_BLOCK_LABEL: string = "【本轮工具状态】";
@@ -59,28 +61,31 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
   "连续想表达同一种情绪时优先换一枚没用过的同类情绪贴纸。" +
   "只有整轮都挑不出对得上的，才改用文字或表情反应。";
 
-/** send_message 工具的模型可见使用说明。手滑轮与普通轮共用这段文案，
- * 因此绝不能提「出错/手滑」：手滑规则只存在于抽中时拼进回复任务的
+/**
+ * send_message 工具的模型可见使用说明，按台词语言各拼一份注册进 VOICE_LANGUAGE_PROMPTS。手滑轮与
+ * 普通轮共用这段文案，因此绝不能提「出错/手滑」：手滑规则只存在于抽中时拼进回复任务的
  * TYPO_REQUIRED_INSTRUCTION；恒声明的两个可选字段的说明只写「回复任务要求时才填」
- * （见 aiChat/ai/tools/replyToolset/definitions.ts）。 */
-export const SEND_MESSAGE_TOOL_INSTRUCTION: string =
-  "把一条独立的文字消息发到群里。只有确实有内容需要对群友说时才调用；" +
-  "判断无需再发言时不要调用本工具，也不要发送空消息。不要把用于判断是否结束的内部分析、历史回应回顾或「本轮结束」「无需回复」等结束说明发到群里。" +
-  "要说的话基本都走本工具——主回复、贴纸说明、动作之后的补充文字都必须显式调用；" +
-  "绝不能把想说的话只留在最终响应正文里。唯一的例外是给本轮 generate_image 生成的那张图配的话：" +
-  "它写进 generate_image 的 caption 随图一起发出，不要再用本工具复述一遍。" +
-  "想连发几条短句就多调用几次（像真人打字那样" +
-  "一句接一句）。text 就是发到群里的原话：不要任何解释、编号、引号、代码块或「[id:...]」" +
-  "这类标记；不允许发纯 emoji 表情的消息——想用现成表情达意就发贴纸（send_sticker），想按群友要求创作新画面就调用 generate_image，" +
-  "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
-  "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
-  "群里消息多怕别人看不出你在回谁时，建议挂上）。text 永远写正确完整内容。" +
-  "同一轮里已经发过的话绝不要原样再发一遍——内容完全相同的调用会被执行侧直接拒绝。" +
-  `send_voice 念过的台词（转录里「${VOICE_SENT_TAG_HINT}」这类行）也不要再用 text 发一遍：台词是日语，按意思判断，` +
-  "把它翻成中文、换个说法或加上注释再发出来都算重复。" +
-  `绝不能用 text 描述一个你没真做的动作：转录里「${STICKER_SENT_TAG_HINT}」「${IMAGE_SENT_TAG_HINT}」「${COMMAND_IMAGE_SENT_TAG_HINT}」「${VOICE_SENT_TAG_HINT}」这类括号行，` +
-  "是执行侧在动作**真正落地之后**替你写下的记录，不是你可以自己打出来的话；" +
-  "绝不要打一段听起来像已经发过图/发过贴纸/发过语音的文字，这种正文会被执行侧拒绝。";
+ * （见 aiChat/ai/tools/replyToolset/definitions.ts）。
+ * @param voiceDuplicateRule 随台词语言变化的语音去重判定，接在「也不要再用 text 发一遍：」之后。
+ */
+function sendMessageToolInstruction(voiceDuplicateRule: string): string {
+  return "把一条独立的文字消息发到群里。只有确实有内容需要对群友说时才调用；" +
+    "判断无需再发言时不要调用本工具，也不要发送空消息。不要把用于判断是否结束的内部分析、历史回应回顾或「本轮结束」「无需回复」等结束说明发到群里。" +
+    "要说的话基本都走本工具——主回复、贴纸说明、动作之后的补充文字都必须显式调用；" +
+    "绝不能把想说的话只留在最终响应正文里。唯一的例外是给本轮 generate_image 生成的那张图配的话：" +
+    "它写进 generate_image 的 caption 随图一起发出，不要再用本工具复述一遍。" +
+    "想连发几条短句就多调用几次（像真人打字那样" +
+    "一句接一句）。text 就是发到群里的原话：不要任何解释、编号、引号、代码块或「[id:...]」" +
+    "这类标记；不允许发纯 emoji 表情的消息——想用现成表情达意就发贴纸（send_sticker），想按群友要求创作新画面就调用 generate_image，" +
+    "想对触发消息表个态就扣反应（add_reaction）。reply_to_trigger 填 true 时这条消息会以" +
+    "「回复」形式挂在触发你这次回复的那条消息上，挂不挂由你判断（对方明确在跟你说话、或" +
+    "群里消息多怕别人看不出你在回谁时，建议挂上）。text 永远写正确完整内容。" +
+    "同一轮里已经发过的话绝不要原样再发一遍——内容完全相同的调用会被执行侧直接拒绝。" +
+    `send_voice 念过的台词（转录里「${VOICE_SENT_TAG_HINT}」这类行）也不要再用 text 发一遍：` + voiceDuplicateRule +
+    `绝不能用 text 描述一个你没真做的动作：转录里「${STICKER_SENT_TAG_HINT}」「${IMAGE_SENT_TAG_HINT}」「${COMMAND_IMAGE_SENT_TAG_HINT}」「${VOICE_SENT_TAG_HINT}」这类括号行，` +
+    "是执行侧在动作**真正落地之后**替你写下的记录，不是你可以自己打出来的话；" +
+    "绝不要打一段听起来像已经发过图/发过贴纸/发过语音的文字，这种正文会被执行侧拒绝。";
+}
 
 /** 手滑替换字必须满足的形、音或输入法邻近规则。 */
 const TYPO_SUBSTITUTION_RULE: string =
@@ -121,32 +126,43 @@ export const GENERATE_IMAGE_TOOL_INSTRUCTION: string =
   "配图想说的话写进 caption：连图带话会作为同一条消息发出，比先发图再单独 send_message 更自然，也少占一个动作；" +
   "只发图更合适就省略 caption。caption 里绝不要描述你没真做的动作，也不要把已经说过的话原样再写一遍。";
 
+/** send_voice 说明里随台词语言变化的三段（sendVoiceToolInstruction 的入参）。 */
+interface SendVoiceLanguageParts {
+  /** 台词语言的中文名，拼进开头「发一条…语音」。 */
+  readonly languageName: string;
+  /** text 与 tone 的写法：台词示例、只写什么、长度上限与语气描述示例。 */
+  readonly lineRules: string;
+  /** 语音与文字的去重判定，接在「不要再用 send_message 发一遍——」之后。 */
+  readonly duplicateRule: string;
+}
+
 /**
- * send_voice 工具的模型可见说明。语音用于低频的情绪与自我表达，调用与否由模型结合
- * 当前对话、自身感受与本轮工具状态里的余量行（voiceToolStatus）判断，执行侧在余量用尽时拒绝；说明逐字恒定，不含随
- * `agent.tts` 配置变化的额度数字，额度只出现在余量行里。
+ * send_voice 工具的模型可见说明，按台词语言各拼一份注册进 VOICE_LANGUAGE_PROMPTS。语音用于低频的
+ * 情绪与自我表达，调用与否由模型结合当前对话、自身感受与本轮工具状态里的余量行（voiceToolStatus）
+ * 判断，执行侧在余量用尽时拒绝；同一台词语言下说明逐字恒定，不含随 `agent.tts` 配置变化的额度数字，
+ * 额度只出现在余量行里。
  */
-export const SEND_VOICE_TOOL_INSTRUCTION: string =
-  "用你自己的声音往群里发一条日语语音：执行侧把 text 交给语音合成模型念出来，以 Telegram 语音消息发出。" +
-  "语音用来表达情绪（得意、嫌弃、撒娇、调侃、回嘴、恼羞、吃惊，等）和自我，是可以使用的表达方式；是否需要由你结合当前对话、自己的感受和想表达的内容判断。" +
-  "通常用文字、贴纸或反应回应，觉得声音更能体现情绪或表达自己时才发，整轮不发语音也完全可以。" +
-  "平淡的陈述、认真求助、严肃或敏感话题不发。" +
-  `语音按天限量，所有群共用一份额度：调用前先看 ${TOOL_STATUS_POINTER}里 ${SEND_VOICE_TOOL} 那一行；` +
-  "显示已用完时不要调用；有余量也不代表必须要使用，整轮不发语音也完全可以。" +
-  `每轮最多 ${MAX_VOICES_PER_REPLY} 条。` +
-  "text 只写要念出来的日语台词，一两句，带嘲讽、挑衅的口吻；优先用海外观众也耳熟能详的动漫腔台词" +
-  "（如「この雑魚♡」「ざぁこ♡」「バーカ」「へんたい」「ふーん、やるじゃん」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
-  `只写日语本身：不要中文、翻译、注音、括号里的动作或语气说明、emoji，不超过 ${VOICE_TEXT_MAX_CHARS} 字。` +
-  "这一句想用什么语气说写进 tone：用日语简短描述说话方式（如「鼻で笑うように」「呆れたようにため息まじりで」「甘えた声でからかうように」），" +
-  `结合台词内容和当前气氛来定，不超过 ${VOICE_TONE_MAX_CHARS} 字；它会接在固定的基础声线描述之后，只影响这一句。` +
-  "语音是回复里额外的一句：语音里已经说过的意思不要再用 send_message 发一遍——台词是日语，按意思判断，" +
-  "把它翻成中文、换个说法或加上注释再发都算重复；文字只发语音之外的内容。" +
-  "语音可能合成失败而没有发出，所以文字里不要提到、预告或指向这条语音（如「听完」「多听几遍」「用声音骂你」），" +
-  "也不要解释为什么没用声音。" +
-  "reply_to_trigger 填 true 时这条语音以「回复」形式挂在触发消息上，挂不挂的判断同 send_message。" +
-  "返回 success 表示语音已接纳：执行侧在后台合成并按顺序发出，合成失败就不会发出；照常继续回复，不要重试也不要等它。" +
-  "返回 error（如额度用尽）时这条语音没有发出：" +
-  "不要重试，也不要在群里提语音、额度或失败的事，当作没打算发语音继续回复。";
+function sendVoiceToolInstruction({ languageName, lineRules, duplicateRule }: SendVoiceLanguageParts): string {
+  return `用你自己的声音往群里发一条${languageName}语音：执行侧把 text 交给语音合成模型念出来，以 Telegram 语音消息发出。` +
+    "语音用来表达情绪（得意、嫌弃、撒娇、调侃、回嘴、恼羞、吃惊，等）和自我，是可以使用的表达方式；是否需要由你结合当前对话、自己的感受和想表达的内容判断。" +
+    "通常用文字、贴纸或反应回应，觉得声音更能体现情绪或表达自己时才发，整轮不发语音也完全可以。" +
+    "平淡的陈述、认真求助、严肃或敏感话题不发。" +
+    `语音按天限量，所有群共用一份额度：调用前先看 ${TOOL_STATUS_POINTER}里 ${SEND_VOICE_TOOL} 那一行；` +
+    "显示已用完时不要调用；有余量也不代表必须要使用，整轮不发语音也完全可以。" +
+    `每轮最多 ${MAX_VOICES_PER_REPLY} 条。` +
+    lineRules +
+    "语音是回复里额外的一句：语音里已经说过的意思不要再用 send_message 发一遍——" + duplicateRule +
+    "；文字只发语音之外的内容。" +
+    "语音可能合成失败而没有发出，所以文字里不要提到、预告或指向这条语音（如「听完」「多听几遍」「用声音骂你」），" +
+    "也不要解释为什么没用声音。" +
+    "reply_to_trigger 填 true 时这条语音以「回复」形式挂在触发消息上，挂不挂的判断同 send_message。" +
+    "返回 success 表示语音已接纳：执行侧在后台合成并按顺序发出，合成失败就不会发出；照常继续回复，不要重试也不要等它。" +
+    "返回 error（如额度用尽）时这条语音没有发出：" +
+    "不要重试，也不要在群里提语音、额度或失败的事，当作没打算发语音继续回复。";
+}
+
+/** send_voice 参数 tone 说明的公共结尾，三种台词语言共用。 */
+const VOICE_TONE_DESCRIPTION_TAIL: string = "会追加在固定的基础声线描述之后，只影响这一句。省略则只用基础声线。";
 
 /**
  * 本轮工具状态里的语音余量行，只在部署了语音合成（send_voice 恒挂）时出现（见
@@ -202,29 +218,113 @@ export function webSearchToolStatus(maxCallsPerUse: number): string {
  * 本段只声明跨工具的不变量；每种动作的字段和限额由对应工具说明负责。工具清单每轮
  * 恒定，按轮变化的可用性只写在运行时状态区块的本轮工具状态里，本段规定模型据此
  * 怎么做；执行侧在调用时另有同样的硬性判定。工具回执的语义（接纳、拒绝、失败后
- * 不单独作反应）也只在本段声明一次。
+ * 不单独作反应）也只在本段声明一次。按台词语言各拼一份注册进 VOICE_LANGUAGE_PROMPTS，
+ * 作为系统提示词的「行动与停止」段（见 workers/aiChat/replyModel.ts）。
+ * @param voiceDuplicateRule 随台词语言变化的语音去重判定，接在跨正文、caption 与台词的去重规则之后。
  */
-export const REPLY_ACTION_INSTRUCTION: string =
-  "先判断本轮是否仍需要回应。若触发消息已被你实质回应且没有新内容，或你判断话题已经结束、无需再发言，" +
-  "就适用静默结束规则。" + SILENT_REPLY_END_INSTRUCTION +
-  "结束不需要通过工具确认，不要用 send_message、caption、贴纸、反应或其他回复工具宣布结束，也不要复述先前已经给出的回应。" +
-  "这项停止规则优先于最低动作数要求。只有确实需要回应时，" +
-  `本轮至少完成一个群友可见动作，通常 1～3 个，最多 ${AI_MAX_ACTIONS_PER_REPLY} 个。` +
-  `工具清单每轮固定；某个工具本轮能不能用、还剩几次，以 ${TOOL_STATUS_POINTER}为准：` +
-  "标为不可用、冷却中或已用完的工具本轮不要调用，执行侧也会直接拒绝。独立文字只用 send_message；" +
-  "生成图片时，随附文字写进 generate_image 的 caption，不要再复述。贴纸必须先 view_sticker_pack 再 send_sticker。" +
-  "查询和查看不算可见动作。" +
-  "发送工具返回 success: true、queued: true 表示动作已接纳，执行侧负责排队、发送和重试；" +
-  "不要重复提交、查询发送进度或等候发送完成，可以继续处理其它任务或结束本轮。" +
-  "工具返回 error 表示这个动作没有发生：之后不得当作已经完成，不引用、不接着它说话，也不要原样重试。" +
-  "对失败本身不单独作反应：不道歉、不解释，不提工具、额度、冷却或失败，照原计划用其它方式回应或直接结束；" +
-  `唯一的例外是群友本轮明确要你画图而 ${GENERATE_IMAGE_TOOL} 用不了或被拒时，用 send_message 一句话告诉 TA 这次画不了（冷却中就说约多少秒后再试）。` +
-  "查看与查询工具直接返回真实数据，按返回清单或数据继续判断，不要把发送接纳回执当成已经取得消息编号。" +
-  "同一轮中同一内容只表达一次，正文、图片 caption 与语音台词共用这条规则；不要靠改标点、空格、换行或换个说法重复已经表达的意思。" +
-  "语音台词是日语，按意思判断：用中文或其它语言把语音里说过的话再发成文字，同样算重复。" +
-  "发送前检查本轮已成功的工具结果和上下文里自己的发言，已经回答过的内容不要再发，也不要为凑动作数补一句。" +
-  "工具返回 skipped: duplicate 表示重复内容已静默丢弃，不算新动作；不要重试、解释丢弃或补发，已有回应就直接结束。" +
-  "完成动作后立即结束，最终响应保持空白。";
+function replyActionInstruction(voiceDuplicateRule: string): string {
+  return "先判断本轮是否仍需要回应。若触发消息已被你实质回应且没有新内容，或你判断话题已经结束、无需再发言，" +
+    "就适用静默结束规则。" + SILENT_REPLY_END_INSTRUCTION +
+    "结束不需要通过工具确认，不要用 send_message、caption、贴纸、反应或其他回复工具宣布结束，也不要复述先前已经给出的回应。" +
+    "这项停止规则优先于最低动作数要求。只有确实需要回应时，" +
+    `本轮至少完成一个群友可见动作，通常 1～3 个，最多 ${AI_MAX_ACTIONS_PER_REPLY} 个。` +
+    `工具清单每轮固定；某个工具本轮能不能用、还剩几次，以 ${TOOL_STATUS_POINTER}为准：` +
+    "标为不可用、冷却中或已用完的工具本轮不要调用，执行侧也会直接拒绝。独立文字只用 send_message；" +
+    "生成图片时，随附文字写进 generate_image 的 caption，不要再复述。贴纸必须先 view_sticker_pack 再 send_sticker。" +
+    "查询和查看不算可见动作。" +
+    "发送工具返回 success: true、queued: true 表示动作已接纳，执行侧负责排队、发送和重试；" +
+    "不要重复提交、查询发送进度或等候发送完成，可以继续处理其它任务或结束本轮。" +
+    "工具返回 error 表示这个动作没有发生：之后不得当作已经完成，不引用、不接着它说话，也不要原样重试。" +
+    "对失败本身不单独作反应：不道歉、不解释，不提工具、额度、冷却或失败，照原计划用其它方式回应或直接结束；" +
+    `唯一的例外是群友本轮明确要你画图而 ${GENERATE_IMAGE_TOOL} 用不了或被拒时，用 send_message 一句话告诉 TA 这次画不了（冷却中就说约多少秒后再试）。` +
+    "查看与查询工具直接返回真实数据，按返回清单或数据继续判断，不要把发送接纳回执当成已经取得消息编号。" +
+    "同一轮中同一内容只表达一次，正文、图片 caption 与语音台词共用这条规则；不要靠改标点、空格、换行或换个说法重复已经表达的意思。" +
+    voiceDuplicateRule +
+    "发送前检查本轮已成功的工具结果和上下文里自己的发言，已经回答过的内容不要再发，也不要为凑动作数补一句。" +
+    "工具返回 skipped: duplicate 表示重复内容已静默丢弃，不算新动作；不要重试、解释丢弃或补发，已有回应就直接结束。" +
+    "完成动作后立即结束，最终响应保持空白。";
+}
+
+/**
+ * 按 `agent.tts.bot_language` 注册的语音相关文案，键与 TtsBotLanguage 一一对应。`ja` 的台词是日语
+ * 动漫腔，`en`、`zh` 换成对应语言的台词示例、语气描述与去重判定；其余模型可见段落三种语言共用同一份
+ * 中文说明。speechLanguageStyle 是交给语音合成模型的朗读语言要求，用该语言本身写成。
+ * replyToolset/orchestrator.ts 每轮按配置取一份，send_message、send_voice 的声明、系统提示词
+ * 「行动与停止」段与本轮 send_voice 的合成请求同用这一份；prompt/voice_tool.md 存在时 send_voice 的
+ * 说明改用其正文（见 replyToolset/voiceMessage.ts 的 buildSendVoiceToolDefinition）。
+ * 所属模块：aiChat/ai/tools/replyToolset。
+ */
+export const VOICE_LANGUAGE_PROMPTS: Readonly<Record<TtsBotLanguage, Readonly<VoiceLanguagePrompts>>> = {
+  en: {
+    sendVoiceInstruction: sendVoiceToolInstruction({
+      languageName: "英语",
+      lineRules:
+        "text 只写要念出来的英语台词，一两句，带嘲讽、挑衅的口吻；优先用英语圈动漫观众也耳熟能详的嘲讽腔台词" +
+        "（如「You're so weak♡」「Weakling~♡」「Idiot~」「Pervert!」「Hmph, not bad」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
+        `只写英语本身：不要中文、日语、翻译、括号里的动作或语气说明、emoji，不超过 ${VOICE_TEXT_MAX_CHARS} 个字符。` +
+        "这一句想用什么语气说写进 tone：用英语简短描述说话方式（如「with a scornful snort」「with an exasperated sigh」「teasing in a sweet, clingy voice」），" +
+        `结合台词内容和当前气氛来定，不超过 ${VOICE_TONE_MAX_CHARS} 个字符；它会接在固定的基础声线描述之后，只影响这一句。`,
+      duplicateRule: "台词是英语，按意思判断，把它翻成中文、换个说法或加上注释再发都算重复",
+    }),
+    voiceTextDescription: `要念出来的英语台词原文，一两句，不超过 ${VOICE_TEXT_MAX_CHARS} 个字符。`,
+    voiceToneDescription:
+      `这一句的说话语气，用英语简短描述怎么说（如「with a scornful snort」「with an exasperated sigh」），不超过 ${VOICE_TONE_MAX_CHARS} 个字符；` +
+      VOICE_TONE_DESCRIPTION_TAIL,
+    sendMessageInstruction: sendMessageToolInstruction(
+      "台词是英语，按意思判断，把它翻成中文、换个说法或加上注释再发出来都算重复。"
+    ),
+    replyActionInstruction: replyActionInstruction(
+      "语音台词是英语，按意思判断：用中文或其它语言把语音里说过的话再发成文字，同样算重复。"
+    ),
+    speechLanguageStyle: "Speak in natural English",
+  },
+  zh: {
+    sendVoiceInstruction: sendVoiceToolInstruction({
+      languageName: "中文",
+      lineRules:
+        "text 只写要念出来的中文台词，一两句，带嘲讽、挑衅的口吻；优先用中文二次元圈耳熟能详的动漫腔台词" +
+        "（如「杂鱼♡」「杂鱼~杂鱼~」「笨蛋」「变态」「哼，还挺有两下子嘛」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
+        `只写中文本身：不要夹日语或英语，不要翻译、拼音、括号里的动作或语气说明、emoji，不超过 ${VOICE_TEXT_MAX_CHARS} 字。` +
+        "这一句想用什么语气说写进 tone：用中文简短描述说话方式（如「从鼻子里哼笑着」「无语地叹着气」「用撒娇的声音逗弄着」），" +
+        `结合台词内容和当前气氛来定，不超过 ${VOICE_TONE_MAX_CHARS} 字；它会接在固定的基础声线描述之后，只影响这一句。`,
+      duplicateRule: "台词是中文，按意思判断，换个说法、翻成其它语言或加上注释再发都算重复",
+    }),
+    voiceTextDescription: `要念出来的中文台词原文，一两句，不超过 ${VOICE_TEXT_MAX_CHARS} 字。`,
+    voiceToneDescription:
+      `这一句的说话语气，用中文简短描述怎么说（如「从鼻子里哼笑着」「无语地叹着气」），不超过 ${VOICE_TONE_MAX_CHARS} 字；` +
+      VOICE_TONE_DESCRIPTION_TAIL,
+    sendMessageInstruction: sendMessageToolInstruction(
+      "台词是中文，按意思判断，换个说法、翻成其它语言或加上注释再发出来都算重复。"
+    ),
+    replyActionInstruction: replyActionInstruction(
+      "语音台词是中文，按意思判断：换个说法或用其它语言把语音里说过的话再发成文字，同样算重复。"
+    ),
+    speechLanguageStyle: "用自然的标准普通话说",
+  },
+  ja: {
+    sendVoiceInstruction: sendVoiceToolInstruction({
+      languageName: "日语",
+      lineRules:
+        "text 只写要念出来的日语台词，一两句，带嘲讽、挑衅的口吻；优先用海外观众也耳熟能详的动漫腔台词" +
+        "（如「この雑魚♡」「ざぁこ♡」「バーカ」「へんたい」「ふーん、やるじゃん」），其余措辞结合当前话题和对方刚说的话来编，不要每次都是同一句。" +
+        `只写日语本身：不要中文、翻译、注音、括号里的动作或语气说明、emoji，不超过 ${VOICE_TEXT_MAX_CHARS} 字。` +
+        "这一句想用什么语气说写进 tone：用日语简短描述说话方式（如「鼻で笑うように」「呆れたようにため息まじりで」「甘えた声でからかうように」），" +
+        `结合台词内容和当前气氛来定，不超过 ${VOICE_TONE_MAX_CHARS} 字；它会接在固定的基础声线描述之后，只影响这一句。`,
+      duplicateRule: "台词是日语，按意思判断，把它翻成中文、换个说法或加上注释再发都算重复",
+    }),
+    voiceTextDescription: `要念出来的日语台词原文，一两句，不超过 ${VOICE_TEXT_MAX_CHARS} 字。`,
+    voiceToneDescription:
+      `这一句的说话语气，用日语简短描述怎么说（如「鼻で笑うように」「呆れたようにため息まじりで」），不超过 ${VOICE_TONE_MAX_CHARS} 字；` +
+      VOICE_TONE_DESCRIPTION_TAIL,
+    sendMessageInstruction: sendMessageToolInstruction(
+      "台词是日语，按意思判断，把它翻成中文、换个说法或加上注释再发出来都算重复。"
+    ),
+    replyActionInstruction: replyActionInstruction(
+      "语音台词是日语，按意思判断：用中文或其它语言把语音里说过的话再发成文字，同样算重复。"
+    ),
+    speechLanguageStyle: "自然な日本語で話す",
+  },
+};
 
 /**
  * generate_image 工具描述末尾的常量指引。

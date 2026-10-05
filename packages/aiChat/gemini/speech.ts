@@ -4,11 +4,11 @@
  * 走 Interactions API（`ai.interactions.create`），不经 client.ts 的
  * generateContent 封装。请求体为：
  * `input` 是一个 user_input 步骤，唯一的文本块携带台词，并用 `speech_metadata`
- * 注解给出朗读风格（`<基础风格>; 细节: <本句语气>`）；`response_format` 只声明要音频，
+ * 注解给出朗读风格（`<基础风格>[; <朗读语言>]; 细节: <本句语气>`）；`response_format` 只声明要音频，
  * 服务端对非流式请求默认回 `audio/wav`（24 kHz 单声道 16 bit PCM）；
  * `generation_config` 指定音色与采样温度。
  * 音色取自 config/dynamic/agent.json 的 `agent.tts.voice`，经 `speech_config[].voice` 原样
- * 传入；基础风格取同一配置快照的 style，与本句语气由 ai/utils/speechStyle.ts 拼接，
+ * 传入；基础风格取同一配置快照的 style，与朗读语言、本句语气由 ai/utils/speechStyle.ts 拼接，
  * 温度取自 consts/aiChat/gemini.ts。
  *
  * 超时与重试逐次显式传参：SDK 的 Interactions 客户端不继承构造期的
@@ -73,7 +73,12 @@ function speechTextContent(text: string, style: string): Interactions.TextConten
 }
 
 /** 把一句台词合成为语音；无可用音频载荷时返回 null。 */
-export async function synthesizeGeminiSpeech({ text, tone, signal }: AiSpeechRequest): Promise<SynthesizedSpeech | null> {
+export async function synthesizeGeminiSpeech({
+  text,
+  languageStyle,
+  tone,
+  signal,
+}: AiSpeechRequest): Promise<SynthesizedSpeech | null> {
   let interaction: SpeechInteractionOutput;
   const requestSignal: AbortSignal = signalWithTimeout(signal, GEMINI_SPEECH_REQUEST_TIMEOUT_MS);
   try {
@@ -86,7 +91,10 @@ export async function synthesizeGeminiSpeech({ text, tone, signal }: AiSpeechReq
       client.interactions.create(
         {
           model: tts.model,
-          input: [{ type: "user_input", content: [speechTextContent(text, composeSpeechStyle(tts.style, tone))] }],
+          input: [{
+            type: "user_input",
+            content: [speechTextContent(text, composeSpeechStyle(tts.style, languageStyle, tone))],
+          }],
           response_format: { type: "audio" },
           generation_config: speechGenerationConfig(tts.voice),
         },

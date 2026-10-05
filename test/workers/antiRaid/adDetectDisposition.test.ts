@@ -9,6 +9,7 @@ import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
 import { isManagedAdminChat } from "../../../packages/infra/blocklist/sweepEligibility";
 import type { ChatState } from "../../../packages/types/chatState";
+import { longestTemplatePart } from "../../helpers/templateText";
 const chatStates = new Map<number, Record<string, unknown>>();
 const activeVerificationSnapshots = new Map<string, unknown>();
 const dispatched: RemoveBlockedMembersParams[][] = [];
@@ -92,6 +93,9 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
 }));
 mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   clearTemporaryAdBypassActivity,
+  clearTemporaryAdBypassActivityOrThrow: (id: number): void => {
+    if (!clearTemporaryAdBypassActivity(id)) throw new Error(`Temporary ad bypass reset for identity ${id} was rejected.`);
+  },
   hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryAdBypassIds.has(id),
   hydrateTemporaryAdBypassActivities: (): void => {},
 }));
@@ -351,7 +355,7 @@ describe("广告判定命中后的处置", () => {
     expect(notice.chatId).toBe(-1001);
     expect(notice.text).toContain("@spammer");
     expect(notice.text).toContain("引流");
-    expect(notice.text).toContain("在所有盯着的群里一起封掉了");
+    expect(notice.text).toContain(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adBanned));
     expect(deleteMessageAfter).toHaveBeenCalledWith(expect.objectContaining({
       chatId: -1001,
       messageId: NOTICE_MESSAGE_ID,
@@ -370,13 +374,13 @@ describe("广告判定命中后的处置", () => {
 
     const notice = sendMessage.mock.calls[0]?.[0] as { text: string };
     // 人根本没被踢走，说「在所有盯着的群里一起封掉了」就是一条与事实相反的公告。
-    expect(notice.text).not.toContain("在所有盯着的群里一起封掉了");
-    expect(notice.text).toContain("一个群都封不动");
+    expect(notice.text).not.toContain(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adBanned));
+    expect(notice.text).toContain(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adNoManagedChat));
   });
 
   test("模型没给理由时播报用兜底文案，不留空", () => {
     expect(formatAdNotice({ label: "@spammer", reason: "", enforcedChats: 2, failedChats: 0, atmosphere: ATMOSPHERE_TEXTS.teasing }))
-      .toContain("整串消息通篇都是推广引流");
+      .toContain(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adDefaultReason);
     expect(formatAdNotice({ label: "@spammer", reason: "卖号", enforcedChats: 2, failedChats: 0, atmosphere: ATMOSPHERE_TEXTS.teasing }))
       .toContain("理由：卖号");
   });
@@ -390,7 +394,7 @@ describe("广告判定命中后的处置", () => {
       enforcedChats: 3,
       failedChats: 2,
     });
-    expect(notice).not.toContain("在所有盯着的群里一起封掉了");
+    expect(notice).not.toContain(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adBanned));
     expect(notice).toContain("在 3 个群封掉了");
     expect(notice).toContain("2 个群没封动");
   });

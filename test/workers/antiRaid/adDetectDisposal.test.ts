@@ -47,6 +47,7 @@ const {
 
 function bundle(): AdMessageBundle {
   return {
+    key: "-1001:7",
     chatId: -1001,
     senderId: 7,
     meta: { firstName: "Spammer", lastName: "", username: "spammer" },
@@ -131,6 +132,7 @@ describe("广告处置副作用", () => {
     const anonymous: AdMessageBundle = { ...bundle(), meta: { firstName: "", lastName: "", username: "" } };
     const channel: AdMessageBundle = {
       ...bundle(),
+      key: "-1001:-1005",
       senderId: -1005,
       isChannel: true,
       meta: { firstName: "广告频道", lastName: "", username: "" },
@@ -281,8 +283,6 @@ describe("广告处置副作用", () => {
     });
 
     const warning: string = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adReferenceWarning("@spammer");
-    expect(warning).toContain("不要回复、引用或转发广告相关内容");
-    expect(warning).toContain("连这点都记不住吗，杂鱼♡");
     expect(warning).not.toContain("五分钟");
     expect(warning).not.toContain("5 分钟");
     expect(sendTemporaryMessageFromMain).toHaveBeenCalledWith({

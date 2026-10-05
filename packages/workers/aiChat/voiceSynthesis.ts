@@ -2,7 +2,8 @@
  * 主线程转交的语音合成（`/send` 代发的 TTS 与 cron `send_voice`）在 AI Worker 侧的
  * 执行：经公共实现 aiChat/ai/voiceSynthesis.ts 按 `operator` 预留额度
  * （`agent.tts.daily_reserve_quota`）合成并编码，以同 requestId 的 voiceSynthesized 回执带回结果，成功时
- * 转移语音字节的底层 buffer。
+ * 转移语音字节的底层 buffer。请求不带朗读语言要求：合成风格只有基础风格与调用方给的语气，
+ * 不随 `agent.tts.bot_language` 变化。
  *
  * 每次请求的取消信号合入 Worker 的统一生命周期信号：Worker 停止或进入排空时在途合成
  * 一并中止；排空开始后到达的请求直接回「worker unavailable」。在途表见
@@ -11,6 +12,7 @@
 
 import { aiChatWorkerAbortController, aiChatWorkerQuiescing } from "../../cache/workers/aiChat/worker";
 import { voiceSynthesisRequests } from "../../cache/workers/aiChat/voiceSynthesis";
+import { logger } from "../../infra/logger";
 import { resolveSpeechSynthesizer, synthesizeVoiceMessage } from "../../aiChat/ai/voiceSynthesis";
 import type {
   AiCancelVoiceSynthesisMessage,
@@ -21,13 +23,22 @@ import type { SpeechSynthesizerLookup, VoiceSynthesisResult } from "../../types/
 
 declare const self: Worker;
 
-/** 取入口并合成；能力缺席与排空期间直接返回失败原因，意外异常由 synthesizeVoiceMessage 按合成失败结算。 */
+/**
+ * 取入口并合成；能力缺席与排空期间直接返回失败原因。取入口与合成的意外异常都按合成失败
+ * 结算：前者在这里记日志，后者由 synthesizeVoiceMessage 记，回执因此一定发出。
+ */
 async function synthesize(
   msg: AiSynthesizeVoiceMessage,
   controller: AbortController
 ): Promise<VoiceSynthesisResult> {
   if (aiChatWorkerQuiescing.current) return { ok: false, reason: "worker unavailable" };
-  const synthesizer: SpeechSynthesizerLookup = resolveSpeechSynthesizer();
+  let synthesizer: SpeechSynthesizerLookup;
+  try {
+    synthesizer = resolveSpeechSynthesizer();
+  } catch (error: unknown) {
+    logger.error(`Speech synthesizer lookup for main-thread request ${msg.requestId} threw:`, error);
+    return { ok: false, reason: "synthesis failed" };
+  }
   if (!synthesizer.ok) return { ok: false, reason: synthesizer.reason };
   return await synthesizeVoiceMessage(
     synthesizer.synthesize,

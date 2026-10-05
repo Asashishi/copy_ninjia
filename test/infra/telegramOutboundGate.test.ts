@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { RawApi, Transformer } from "grammy";
-import { settleTestBatch } from "../libs/helpers";
+import { settleTestBatch } from "../helpers/common";
 import {
   telegramOutboundAbortController,
   telegramOutboundGateState,
@@ -80,7 +80,7 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramOutboundGateState.retryPendingCount).toBe(0);
   });
 
-  test("81,920 容量只约束 429 等待项，满载时新等待项被丢弃", async () => {
+  test("429 总容量只约束 429 等待项，满载时新等待项被丢弃", async () => {
     const previous: PreviousCall = (() => Promise.resolve({ ok: true, result: true })) as PreviousCall;
     const transform: Transformer<RawApi> = telegramOutboundGate();
     const queryLane: TelegramRetryLane = telegramOutboundGateState.lanes.query;

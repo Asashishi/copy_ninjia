@@ -16,6 +16,7 @@ function entry(seq: number, text: string): AdCandidateEntry {
 
 function bundle(entries: AdCandidateEntry[], checkedSeq: number): AdMessageBundle {
   return {
+    key: "-1001:42",
     chatId: -1001,
     senderId: 42,
     meta: { firstName: "Someone", lastName: "", username: "someone" },

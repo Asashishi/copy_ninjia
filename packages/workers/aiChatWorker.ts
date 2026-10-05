@@ -18,7 +18,9 @@ import { AI_SNAPSHOT_INTERVAL_MS } from "../consts/aiChat/memory";
 import { botInfoState, superAdminUserIdState, atmosphereState } from "../cache/workers/aiChat/identity";
 import { adoptTimeZone } from "../config/time";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
+import { clearChatMemoryCache } from "../cache/workers/aiChat/memory";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
+import { voiceToolPromptCache } from "../cache/perThread/config";
 import {
   aiChatMaintenanceTimer,
   aiChatWorkerAbortController,
@@ -29,7 +31,6 @@ import {
   flushDirtyMemories,
   flushMemorySnapshot,
   hydrateMemories,
-  purgeChatMemory,
   recordChatMessage,
 } from "./aiChat/rollingMemory";
 import { recordChatMedia } from "./aiChat/mediaIngest";
@@ -91,11 +92,11 @@ import { installBusinessWorkerPort } from "./businessWorkerPort";
  * ensureStickerCatalogs），与本文件的 dirty 记忆快照共用同一条上报/落盘
  * 节奏（见文件底部的 setInterval 与 flushMemory 分支）。
  *
- * 心情系统：各群心情按随机寿命（几小时量级）自然到期轮换，到期后下次
- * 拼运行时状态区块时重抽叠加进去，与群是否活跃无关，模拟真人聊天号状态会变
- * 的感觉；重抽时还按当前东京天气与配置时区时段微调各心情的概率，见 aiChat/ai/mood.ts；
- * 两个内存缓存（cache/workers/aiChat/mood.ts
- * 的 chatMoods/chatMoodExpiresAts）都不落盘，随 Worker 重启清空。天气
+ * 心情系统：全 Worker 只有一份心情、所有群共用，按随机寿命（几小时量级）自然到期
+ * 轮换，到期后下次任一群拼运行时状态区块时重抽叠加进去，与群是否活跃无关，模拟真人
+ * 聊天号状态会变的感觉；重抽时还按当前东京天气与配置时区时段微调各心情的概率，见
+ * aiChat/ai/mood.ts；当前心情与到期时刻（cache/workers/aiChat/mood.ts 的
+ * currentMoodState）都不落盘，随 Worker 重启清空。天气
  * 数据由 aiChat/ai/weather.ts 统一维护并每小时自动刷新（见文件底部的
  * startWeatherRefreshLoop 调用），get_tokyo_weather 工具与心情系统都只
  * 读现有缓存、不各自发请求。
@@ -105,9 +106,9 @@ declare const self: Worker;
 
 function handleInvalidateChat(msg: AiInvalidateChatMessage): void {
   // invalidateChatReplies 在返回 Promise 前已同步撤销旧 epoch 并 abort 旧代；
-  // purge 同样必须同步发生，避免随后 FIFO record 被迟到的清理删掉。
+  // 记忆清理同样必须同步发生，避免随后 FIFO record 被迟到的清理删掉。
   const drained: Promise<void> = invalidateChatReplies(msg.chatId);
-  purgeChatMemory(msg.chatId);
+  clearChatMemoryCache(msg.chatId);
   self.postMessage({ type: "memoryDeleted", chatId: msg.chatId } satisfies AiMemoryDeletedEvent);
   void drained.then((): void => {
     self.postMessage({
@@ -171,6 +172,7 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       adoptMoodConfig(msg.mood);
       adoptStickerConfig(msg.stickers);
       adoptPersona(msg.persona);
+      voiceToolPromptCache.current = msg.voiceToolPrompt;
       // 配置一落定就把「配了但这一家没实现」的可选能力记一次；热重载替换
       // agent 段时由 reloadAgentDeploymentConfig 再记一次，逐轮回复不重复记录。
       reportUnimplementedAgentCapabilities();
@@ -228,9 +230,8 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // 尚未到期时不产生 /mood switch 的强制重抽副作用。
       self.postMessage({
         type: "moodQueried",
-        chatId: msg.chatId,
         requestId: msg.requestId,
-        moodName: currentMood(msg.chatId).name,
+        moodName: currentMood().name,
       } satisfies AiMoodQueriedEvent);
       break;
     case "switchMood":
@@ -241,9 +242,8 @@ export function handleAiChatWorkerMessage(msg: AiChatWorkerMessage): void {
       // 本线程不发 Telegram 消息（见 commands/mood.ts）。
       self.postMessage({
         type: "moodSwitched",
-        chatId: msg.chatId,
         requestId: msg.requestId,
-        moodName: switchMood(msg.chatId).name,
+        moodName: switchMood().name,
       } satisfies AiMoodSwitchedEvent);
       break;
     case "synthesizeVoice":

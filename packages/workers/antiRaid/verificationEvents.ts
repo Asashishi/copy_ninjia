@@ -18,6 +18,7 @@ import type {
   VerificationDispatcher,
 } from "../../types/antiRaid/internal";
 import { joinCreatesNewRecord } from "../../states/verification";
+import { admitVerificationJoin } from "./verificationAdmission";
 import type {
   JoinEvent,
   VerificationState,
@@ -47,6 +48,7 @@ function memberLabel(member: AntiRaidMember): string {
   }, workerAtmosphere());
 }
 
+/** 仅处理主线程已通过守卫开关的入群；容量拒收先于刷群计数与豁免线索消费。 */
 export function handleJoinEvent(
   message: NewMemberMessage,
   dispatchVerification: VerificationDispatcher
@@ -56,6 +58,7 @@ export function handleJoinEvent(
   // 本进程预算已耗尽的终态只能由下一次完整进程启动恢复；同 key 再入群不能
   // 创建新状态、重置主线程预算或重新武装 Telegram 副作用。
   if (deferredVerificationRecords.has(key)) return;
+  if (!admitVerificationJoin(key)) return;
   const entryState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
   const actorId: number | undefined = message.actorId;

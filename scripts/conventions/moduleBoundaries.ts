@@ -1,6 +1,7 @@
 import { dirname, relative, resolve } from "node:path";
 import ts from "typescript";
 import { runtimeModuleReferences } from "./sourceAnalysis";
+import { globalPropertyName } from "./staticAccess";
 
 /**
  * 逐文件判定几条「谁能依赖谁」的硬边界：读取环境变量的唯一入口、
@@ -38,7 +39,8 @@ const ENVIRONMENT_BOUNDARY_FILES: readonly string[] = [
  *
  * 环境变量名集中在 consts/environment.ts，env 派生配置集中在 consts/paths.ts；
  * 任何别处再读一次，部署路径就有了第二个真相来源，而测试的隔离数据根注入只对
- * 那两个文件生效。`Bun.env` 与 `process.env` 指向同一份环境，必须一起拦。
+ * 那两个文件生效。`Bun.env` 与 `process.env` 指向同一份环境，属性访问与具名直接解构
+ * 使用相同的静态识别，类型位置不参与。
  */
 export function collectEnvironmentAccessProblems({
   projectRoot,
@@ -49,15 +51,14 @@ export function collectEnvironmentAccessProblems({
   if (ENVIRONMENT_BOUNDARY_FILES.includes(relativePath)) return [];
   const problems: string[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(node) && node.name.text === "env") {
-      const owner: ts.Expression = node.expression;
-      const ownerName: string | undefined = ts.isIdentifier(owner) ? owner.text : undefined;
-      if (ownerName === "process" || ownerName === "Bun") {
-        problems.push(
-          `${relativePath}:${lineOf(source, node.getStart(source))} reads ${ownerName}.env; ` +
-          `only ${ENVIRONMENT_BOUNDARY_FILES.join(" and ")} may read the environment`
-        );
-      }
+    const ownerName: string | undefined = globalPropertyName(node, "process") === "env"
+      ? "process"
+      : globalPropertyName(node, "Bun") === "env" ? "Bun" : undefined;
+    if (ownerName !== undefined) {
+      problems.push(
+        `${relativePath}:${lineOf(source, node.getStart(source))} reads ${ownerName}.env; ` +
+        `only ${ENVIRONMENT_BOUNDARY_FILES.join(" and ")} may read the environment`
+      );
     }
     ts.forEachChild(node, visit);
   };

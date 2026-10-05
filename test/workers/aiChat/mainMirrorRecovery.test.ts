@@ -2,15 +2,17 @@ import { getTimeZone } from "../../../packages/config/time";
 import type { TtsDailyUsage } from "../../../packages/types/aiChat/voiceMessage";
 import { pendingStickerCatalogRevisions, stickerCatalogRevisionCounter } from "../../../packages/cache/main/stickers";
 import { diskIOReplyStub, diskIOStub } from "../../helpers/diskIOMock";
-import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegistry";
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
+import { MOOD_REQUEST_TIMEOUT_MS } from "../../../packages/consts/aiChat/mood";
+import { logger } from "../../../packages/infra/logger";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { adoptMoodConfig, getMoodConfig } from "../../../packages/config/mood";
 import { adoptPersona, getPersona } from "../../../packages/config/persona";
-import { personaCache } from "../../../packages/cache/perThread/config";
+import { personaCache, voiceToolPromptCache } from "../../../packages/cache/perThread/config";
 import { botAtmosphereState } from "../../../packages/cache/main/atmosphere";
 import type { Atmosphere } from "../../../packages/types/atmosphere";
 import { adoptStickerConfig, getStickerConfig } from "../../../packages/config/stickers";
@@ -44,6 +46,7 @@ let diskMemoryPersisted: ((reply: AiMemoryPersistedReply) => void) | undefined;
 let diskGaveUp: (() => void) | undefined;
 const aiEnabledChats = new Set<number>();
 
+const terminateWorker = mock(async (): Promise<void> => {});
 mock.module("../../../packages/infra/supervisedWorker", () => ({
   superviseWorker: (options: typeof supervisorOptions) => {
     supervisorOptions = options;
@@ -53,7 +56,7 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
         workerPosts.push(message);
         return workerPostAccepted;
       },
-      terminate: async (): Promise<void> => {},
+      terminate: terminateWorker,
     };
   },
 }));
@@ -98,17 +101,15 @@ const {
   lastInitState,
   latestAiMemories,
   latestStickerCatalogs,
-  moodRequestCounter,
-  moodRequestWaiters,
-  voiceSynthesisWaiters,
+  moodRequests,
+  voiceSynthesisRequests,
   purgedAiMemoryChats,
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
   aiMemoryRevisionCounters,
   aiMemoryRevisionFloor,
   pendingAiMemoryTeardowns,
-  aiChatInvalidateRequestCounter,
-  aiChatInvalidateWaiters,
+  aiChatInvalidateRequests,
   latestAiMemoryRevisions,
   aiMemoryUsages,
   pendingAiMemoryDeletes,
@@ -133,14 +134,11 @@ beforeEach(() => {
     for (const waiter of waiters) clearTimeout(waiter.timer);
   }
   aiMemoryDeleteWaiters.clear();
-  for (const waiter of aiChatInvalidateWaiters.values()) clearTimeout(waiter.timer);
-  aiChatInvalidateWaiters.clear();
-  aiChatInvalidateRequestCounter.current = 0;
-  for (const waiter of moodRequestWaiters.values()) clearTimeout(waiter.timer);
-  moodRequestWaiters.clear();
-  for (const waiter of voiceSynthesisWaiters.values()) clearTimeout(waiter.timer);
-  voiceSynthesisWaiters.clear();
-  moodRequestCounter.current = 0;
+  for (const table of [aiChatInvalidateRequests, moodRequests, voiceSynthesisRequests]) {
+    for (const waiter of table.waiters.values()) clearTimeout(waiter.timer);
+    table.waiters.clear();
+    table.counter.current = 0;
+  }
   latestStickerCatalogs.clear();
   pendingStickerCatalogRevisions.clear();
   stickerCatalogRevisionCounter.current = 0;
@@ -374,6 +372,7 @@ describe("AI main-thread persistence mirror", () => {
         mood: getMoodConfig(),
         stickers: getStickerConfig(),
         persona: getPersona(),
+        voiceToolPrompt: voiceToolPromptCache.current,
       },
       { type: "hydrateTtsUsage", usage: null },
       { type: "hydrate", memories: new Map([[-1001, "latest-memory"]]) },
@@ -544,8 +543,9 @@ describe("AI main-thread persistence mirror", () => {
     expect(workerPosts.at(-1)).toHaveProperty("persistImmediately", false);
   });
 
-  test("启动 init 投递被拒绝时不发布可用状态或可重放身份", () => {
+  test("启动 init 投递被拒绝时不发布可用状态或可重放身份，并终止已建的 Worker", () => {
     workerPostAccepted = false;
+    terminateWorker.mockClear();
 
     expect(() => aiChat.initAiChat({
       id: 99,
@@ -555,6 +555,7 @@ describe("AI main-thread persistence mirror", () => {
 
     expect(aiChatWorkerState.available).toBeFalse();
     expect(lastInitState.current).toBeNull();
+    expect(terminateWorker).toHaveBeenCalledTimes(1);
   });
 
   test("记忆 flush 在 Worker 确认或超时后都会结算并清理等待项", async () => {
@@ -577,34 +578,65 @@ describe("AI main-thread persistence mirror", () => {
   test("心情查询/重抽回执按 requestId 结算；崩溃重启与投递失败都立即 reject", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
-    const queried = aiChat.requestAiMood(-1001, "queryMood");
+    const queried = aiChat.requestAiMood("queryMood");
     const queryRequest = workerPosts.at(-1);
     if (queryRequest?.type !== "queryMood") throw new Error("Expected a queryMood request");
     expect(queryRequest.deadlineAt).toBeGreaterThan(Date.now());
-    supervisorOptions!.onEvent({ type: "moodQueried", chatId: -1001, requestId: queryRequest.requestId, moodName: "平静" });
+    supervisorOptions!.onEvent({ type: "moodQueried", requestId: queryRequest.requestId, moodName: "平静" });
     await expect(queried).resolves.toBe("平静");
-    expect(moodRequestWaiters.size).toBe(0);
+    expect(moodRequests.waiters.size).toBe(0);
 
-    const switched = aiChat.requestAiMood(-1001, "switchMood");
+    const switched = aiChat.requestAiMood("switchMood");
     const switchRequest = workerPosts.at(-1);
     if (switchRequest?.type !== "switchMood") throw new Error("Expected a switchMood request");
     expect(switchRequest.deadlineAt).toBeGreaterThan(Date.now());
-    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: switchRequest.requestId, moodName: "摆烂" });
+    supervisorOptions!.onEvent({ type: "moodSwitched", requestId: switchRequest.requestId, moodName: "摆烂" });
     await expect(switched).resolves.toBe("摆烂");
-    expect(moodRequestWaiters.size).toBe(0);
+    expect(moodRequests.waiters.size).toBe(0);
 
     // 迟到/重复回执不应产生副作用。
-    supervisorOptions!.onEvent({ type: "moodSwitched", chatId: -1001, requestId: switchRequest.requestId, moodName: "开心" });
+    supervisorOptions!.onEvent({ type: "moodSwitched", requestId: switchRequest.requestId, moodName: "开心" });
 
-    const crashed = aiChat.requestAiMood(-1001, "queryMood");
+    const crashed = aiChat.requestAiMood("queryMood");
     supervisorOptions!.onRespawn(() => true);
     await expect(crashed).rejects.toThrow("AI Worker crashed before acknowledging the mood request.");
-    expect(moodRequestWaiters.size).toBe(0);
+    expect(moodRequests.waiters.size).toBe(0);
 
     workerPostAccepted = false;
-    await expect(aiChat.requestAiMood(-1001, "switchMood")).rejects.toThrow("AI Worker is unavailable.");
-    expect(moodRequestWaiters.size).toBe(0);
+    await expect(aiChat.requestAiMood("switchMood")).rejects.toThrow("AI Worker is unavailable.");
+    expect(moodRequests.waiters.size).toBe(0);
     expect(aiChatWorkerState.available).toBeFalse();
+  });
+
+  test("心情请求在 MOOD_REQUEST_TIMEOUT_MS 内没有回执时按超时 reject 并摘掉等待者", async () => {
+    jest.useFakeTimers();
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const pending = aiChat.requestAiMood("queryMood");
+    expect(moodRequests.waiters.size).toBe(1);
+
+    jest.advanceTimersByTime(MOOD_REQUEST_TIMEOUT_MS + 1);
+
+    await expect(pending).rejects.toThrow(`AI queryMood request timed out after ${MOOD_REQUEST_TIMEOUT_MS}ms.`);
+    expect(moodRequests.waiters.size).toBe(0);
+  });
+
+  test("Worker 拒收失效请求时 invalidateAiChat 记错误并 reject，durable 删除照常结算", async () => {
+    const errorLog = spyOn(logger, "error").mockImplementation((): void => {});
+    try {
+      aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+      workerPostAccepted = false;
+      const invalidated = aiChat.invalidateAiChat(-1001).catch((error: unknown): unknown => error);
+      diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+
+      const error: unknown = await invalidated;
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("AI Worker is unavailable while invalidating chat runtime.");
+      expect(aiChatInvalidateRequests.waiters.size).toBe(0);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+      expect(String(errorLog.mock.calls[0]?.[0])).toContain("Worker runtime invalidation rejected for chat -1001");
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test("语音合成回执按 requestId 结算；Worker 未启动、崩溃重建与投递失败都按不可用结算", async () => {
@@ -624,19 +656,19 @@ describe("AI main-thread persistence mirror", () => {
       result: { ok: true, voice: { bytes, durationSeconds: 2, fileName: "voice.mp3" } },
     });
     await expect(synthesized).resolves.toEqual({ ok: true, voice: { bytes, durationSeconds: 2, fileName: "voice.mp3" } });
-    expect(voiceSynthesisWaiters.size).toBe(0);
+    expect(voiceSynthesisRequests.waiters.size).toBe(0);
     // 迟到或重复的回执直接丢弃。
     supervisorOptions!.onEvent({ type: "voiceSynthesized", requestId: request.requestId, result: { ok: false, reason: "synthesis failed" } });
 
     const crashed = aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined });
     supervisorOptions!.onRespawn(() => true);
     await expect(crashed).resolves.toEqual({ ok: false, reason: "worker unavailable" });
-    expect(voiceSynthesisWaiters.size).toBe(0);
+    expect(voiceSynthesisRequests.waiters.size).toBe(0);
 
     workerPostAccepted = false;
     await expect(aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined }))
       .resolves.toEqual({ ok: false, reason: "worker unavailable" });
-    expect(voiceSynthesisWaiters.size).toBe(0);
+    expect(voiceSynthesisRequests.waiters.size).toBe(0);
   });
 
   test("语音合成每日计数：init 后灌回持久化值，回执写入镜像，崩溃重建重放最新值", () => {
@@ -717,7 +749,7 @@ describe("AI main-thread persistence mirror", () => {
 
     // allSettled 不能在 durable 一侧先失败时提前返回：Worker 侧仍要拿到回执并清
     // 自己的 waiter，随后才向调用方保留原来的单一失败原因。
-    expect(aiChatInvalidateWaiters.size).toBe(1);
+    expect(aiChatInvalidateRequests.waiters.size).toBe(1);
     const invalidateRequest: AiChatWorkerMessage | undefined =
       workerPosts.find((message: AiChatWorkerMessage): boolean => message.type === "invalidateChat");
     if (invalidateRequest?.type !== "invalidateChat") throw new Error("Expected an invalidateChat request");
@@ -730,7 +762,7 @@ describe("AI main-thread persistence mirror", () => {
       "Persistence Worker gave up self-healing before the AI memory deletion was durable."
     );
     expect(aiMemoryDeleteWaiters.size).toBe(0);
-    expect(aiChatInvalidateWaiters.size).toBe(0);
+    expect(aiChatInvalidateRequests.waiters.size).toBe(0);
   });
 
   test("还有在途状态时不发 forgetAiMemory：水位线要挡住迟到的 upsert", async () => {
@@ -817,21 +849,27 @@ describe("AI main-thread persistence mirror", () => {
   });
 });
 
-test("init 与重建一并重放自定义人设和已确定的普通通知风格，不逐群投递人设", async () => {
+test("init 与重建一并重放自定义人设、send_voice 说明和已确定的普通通知风格，不逐群投递人设", async () => {
   const preloadedPersona: string | null = personaCache.current;
+  const preloadedVoiceToolPrompt: string | null = voiceToolPromptCache.current;
   const preloadedAtmosphere: Atmosphere | null = botAtmosphereState.current;
   adoptPersona("部署方自定义人设");
+  voiceToolPromptCache.current = "部署方自定义语音说明";
   botAtmosphereState.current = "plain";
   try {
     knownChats.add(-1001);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     expect(workerPosts.map((message: AiChatWorkerMessage): string => message.type)).toEqual(["init", "hydrateTtsUsage"]);
-    expect(workerPosts[0]).toMatchObject({ type: "init", timeZone: getTimeZone(), atmosphere: "plain", persona: "部署方自定义人设" });
+    expect(workerPosts[0]).toMatchObject({
+      type: "init", timeZone: getTimeZone(), atmosphere: "plain",
+      persona: "部署方自定义人设", voiceToolPrompt: "部署方自定义语音说明",
+    });
     const replay: AiChatWorkerMessage[] = [];
     supervisorOptions!.onRespawn((message: AiChatWorkerMessage): boolean => { replay.push(message); return true; });
     expect(replay[0]).toBe(workerPosts[0]);
   } finally {
     personaCache.current = preloadedPersona;
+    voiceToolPromptCache.current = preloadedVoiceToolPrompt;
     botAtmosphereState.current = preloadedAtmosphere;
   }
 });

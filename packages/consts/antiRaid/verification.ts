@@ -76,12 +76,19 @@ export const VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS: number = 15;
  * antiRaid/workerBridge/controller.ts、workers/diskIO/verificationWrites.ts、
  * workers/diskIO/verificationRecovery.ts。
  *
- * 取值推导：私密模式秒踢的占位不持久化、不计入本上限，只有待验证与终态记录计入。
- * 私密模式生效时每群每分钟至多 ANTI_RAID_PER_MINUTE_LIMIT 人进入验证、各自存活
- * VERIFICATION_TIMEOUT_MS，稳态约为 STATE_MANAGED_CHAT_LIMIT × 45 × 3 ≈ 3,375 条；
- * 其余余量留给私密模式未能生效（冷却期或缺少改权限的权限）时的溢出。
+ * pending、kickPending、checkingInviter 与 expelling 都计入本上限；kickPending
+ * 必须先 write-ahead 落盘再执行秒踢。结算后的 kicked 与豁免后的 exempt 只在 Worker
+ * 运行态保留短期去重，不进入持久化记录。
  */
 export const VERIFICATION_RECORD_CAPACITY: number = 15_000;
+/**
+ * Anti-Raid Worker 当前运行态共用的 key 硬顶，包含持久阶段及 exempt/kicked 去重。
+ * 所属模块：workers/antiRaid/verificationAdmission.ts 与 verificationRuntime.ts。
+ * 满额拒收新 join，不转移状态、不发送副作用，只报告一次 fatal；已有 key 继续更新
+ * 和解除。恢复持久责任优先接管，必要时释放非持久去重，但保持拒收新 key 的闩锁，
+ * 直到下一代 adopt 或 stop；不淘汰持久处置责任。跨模块约束见 docs/cn/04-invariants.md。
+ */
+export const VERIFICATION_RUNTIME_CAPACITY: number = VERIFICATION_RECORD_CAPACITY;
 /** Worker 当前代际的活跃与保留期终结 revision 共用的硬上限；新键满额时请求主线程停机。 */
 export const VERIFICATION_REVISION_CAPACITY: number = VERIFICATION_RECORD_CAPACITY;
 /**
@@ -90,17 +97,17 @@ export const VERIFICATION_REVISION_CAPACITY: number = VERIFICATION_RECORD_CAPACI
  */
 export const VERIFICATION_CHAT_KIND_FETCH_MAX: number = 100;
 /**
- * 私密模式下直接踢人的占位记录存活时长：只是给 chat_member 更新和
- * new_chat_members 服务消息（针对同一次入群各自触发）留出去重窗口，
- * 不是真的验证超时，所以远比 VERIFICATION_TIMEOUT_MS 短。
+ * kicked 结算占位与 exempt 豁免占位的运行态去重窗口；同一物理入群的
+ * chat_member 更新和 new_chat_members 服务消息共用占位，重复投递不续期。
+ * kickPending 仍待持久处置，不使用本去重 timer。所属模块：verificationRuntime.ts。
  */
 export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
 /**
  * 私密模式秒踢占位遇到新 join 事件时，用来判断“这是同一次物理入群的另一条
  * 投递（chat_member 更新 + 服务消息）”还是“TA 真的重新
  * 申请了入群”（踢出动作只踢不封，本就能立刻重进）的分界线。
- * 远小于 LOCKDOWN_KICK_DEDUPE_MS——那个是占位整体存活时长，这个只区分
- * 同一次入群的两条腿，见 states/verification/join.ts 的 handleJoin。
+ * 与 kicked/exempt 的 LOCKDOWN_KICK_DEDUPE_MS 去重存活期独立，见
+ * states/verification/join.ts 的 handleJoin。
  */
 export const KICKED_REJOIN_GRACE_MS: number = 5 * 1000;
 /** 终结 revision 为抵御重复 adopt 保留的时间；之后周期清理，避免按历史成员增长。 */

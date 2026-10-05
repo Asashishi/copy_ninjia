@@ -1,5 +1,5 @@
 import { getTimeZone } from "../../packages/config/time";
-import { TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_BOT_LANGUAGE, TTS_DEFAULT_STYLE } from "../../packages/consts/aiChat/voiceMessage";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   LOGGER_CIRCULAR_ERROR_VALUE,
@@ -318,7 +318,7 @@ describe("logger persistence routing boundary", () => {
       summary: { provider: "openai", apiKey: "adopted-summary-key", baseUrl: undefined, headers: undefined, model: "summary" },
       media: { provider: "google", apiKey: "adopted-media-key", baseUrl: undefined, headers: undefined, model: "media" },
       image: { provider: "google", apiKey: "adopted-image-key", baseUrl: undefined, headers: undefined, model: "image", imageProtocol: undefined },
-      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, headers: undefined, model: "tts", voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
+      tts: { provider: "google", apiKey: "adopted-tts-key", baseUrl: undefined, headers: undefined, model: "tts", voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, botLanguage: TTS_DEFAULT_BOT_LANGUAGE, dailyLimit: 100, dailyReserveQuota: 25 },
     });
     adoptAdDetectAgentConfig({
       provider: "openai",

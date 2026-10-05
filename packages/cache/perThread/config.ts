@@ -3,10 +3,10 @@
  * 属 packages/config/adSamples.ts、personaCache 属 packages/config/persona.ts、
  * botConfigCache 属 packages/config/bot.ts；adDetectAgentConfigCache 与
  * agentDeploymentConfigCache 属 packages/config/agent.ts，同一份文件的两段各缓存
- * 各的。
+ * 各的；voiceToolPromptCache 没有访问模块，读写方直接取用（见其 JSDoc）。
  *
  * perThread：主线程在启动总闸严格解析后填充权威快照；AI 闲聊 Worker（agent 对话
- * 段、心情、贴纸、人设）与 Anti-Raid Worker（ad_detect 段、广告示例）只 adopt 主
+ * 段、心情、贴纸、人设、send_voice 说明）与 Anti-Raid Worker（ad_detect 段、广告示例）只 adopt 主
  * 线程投递的副本，自己从不读这些文件。ad_samples.json、agent.json、mood.json 与
  * stickers.json 由主线程热重载（config/reload.ts）整体替换（文件删除时换成 null）后，
  * 再经消息投给持有副本的 Worker；Worker 崩溃重建时重放主线程当前快照。每个 holder
@@ -43,6 +43,14 @@ export const defaultAdSampleConfigCache: { current: AdSampleConfig | null } = { 
  * 缺省时为内置人设），AI Worker 由 init 消息填充，不热重载。
  */
 export const personaCache: { current: string | null } = { current: null };
+/**
+ * prompt/voice_tool.md 正文的单份快照：存在时整份替换按 `agent.tts.bot_language` 选取的内置
+ * send_voice 说明（读取方 aiChat/ai/tools/replyToolset/voiceMessage.ts），null 表示未放置该文件、
+ * 沿用内置说明。主线程为权威：启动总闸（config/readiness.ts 的 ensurePromptFiles）填充一次；AI Worker
+ * 由 init 消息全量接管，崩溃重建时主线程重放的 init 带同一份快照。不热重载、不淘汰，容量至多一个
+ * 字符串，进程重启后重建。
+ */
+export const voiceToolPromptCache: { current: string | null } = { current: null };
 
 /**
  * config/static/bot.json 的主线程只读快照；Bot 配置模块启动时读盘填充，进程重启后重建。

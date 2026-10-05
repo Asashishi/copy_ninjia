@@ -38,7 +38,7 @@ export function sanitizeReplyReference(reference: AiReplyReference): BufferedRep
 export function buildBufferedMessage(
   source: AiRecordContext,
   text: string,
-  now: number = Date.now()
+  now: number
 ): BufferedMessage | null {
   const sanitizedText: string = sanitizeInline(text);
   if (!sanitizedText) return null;

@@ -24,7 +24,7 @@
     推导并与其同住，避免共享类型层反向依赖 `app/`。
 - **`packages/commands/`**
   - **职责**：显式命令按命令族组织，同一入口的子命令在该领域内分派；开关命令共用的权限与配置门禁另成文件。
-  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` 与 `hImage/`（抽图、收图）、`info.ts`、`deferredCommands.ts`（抽图、收图与 `/info` 共用的延迟命令执行器）、`mute.ts`、`batchKick.ts`、
+  - **典型文件**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` 与 `hImage/`（抽图、收图）、`info.ts`、`deferredCommands.ts`（抽图、收图、`/info` 与 `/batch_kick` 共用的延迟命令执行器）、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`；较大的 gag 领域以 `gag.ts` 保留命令入口，
     `gag/runtime.ts`、`gag/inline.ts`、`gag/rendering.ts` 分别承接生命周期、inline 与纯渲染；
     inline 抽签同理由 `luckChallenge/` 承接（`cache.ts`、`draw.ts`、`key.ts`、`rateLimit.ts`、
@@ -79,7 +79,7 @@
     `boundedResponse.ts`、`boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`、
     `errorMessage.ts`（catch 到的 `unknown` 归一化成文案或 Error 的唯一边界）、
     `telegramMarkdown.ts`（Telegram MarkdownV2 转义与拼装的唯一边界）、`webDigest.ts` 与
-    `webDigestMarkdown.ts`（cron 联网摘要 JSON 的严格解码与 MarkdownV2 渲染）、`webDigestUrls.ts`（摘要组稿的来源地址白名单）。
+    `webDigestMarkdown.ts`（cron 联网摘要 JSON 的严格解码与 MarkdownV2 渲染）、`webDigestUrls.ts`（摘要组稿的来源地址白名单）、`workerRequestTable.ts`（主线程向 Worker 发请求时共用的请求号、等待者、超时、取消与 Worker 失效结算表）。
 - **`packages/workers/`**
   - **职责**：三个 Worker 的线程内实现。
   - **典型文件**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、`businessWorkerPort.ts`
@@ -193,7 +193,7 @@
 
 ## 测试的镜像结构
 
-`test/` 与 `packages/` 路径原则上一一对应；同一拆分领域可以共享领域级测试，例如 `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` 统一由 `test/workers/diskIO/verificationFiles.test.ts` 覆盖。其余新模块的测试文件跟随目录结构创建，跨领域共用的替身、夹具与 harness 放 `test/helpers/`，与领域无关的通用小工具放 `test/libs/helpers.ts`，全局隔离机制见 [05 开发流程](05-dev-workflow.md#测试隔离机制)。
+`test/` 与 `packages/` 路径原则上一一对应；同一拆分领域可以共享领域级测试，例如 `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` 统一由 `test/workers/diskIO/verificationFiles.test.ts` 覆盖。其余新模块的测试文件跟随目录结构创建，跨领域共用的替身、夹具与 harness 放 `test/helpers/`，与领域无关的通用小工具放 `test/helpers/common.ts`，全局隔离机制见 [05 开发流程](05-dev-workflow.md#测试隔离机制)。
 
 ---
 

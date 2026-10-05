@@ -71,14 +71,14 @@ afterAll(() => {
 describe("热区消息索引维护", () => {
   test("push 登记索引，可按 message_id 反查同一个条目引用", () => {
     const entry: BufferedMessage = message(1, "第一条");
-    pushBufferedMessage(CHAT_ID, entry);
+    pushBufferedMessage(CHAT_ID, entry, Date.now());
     expect(lookupBufferedMessage(CHAT_ID, 1)).toBe(entry);
     expect(lookupBufferedMessage(CHAT_ID, 999)).toBeUndefined();
   });
 
   test("轮换把移出热区的键删掉，仍热的保留", () => {
     for (let messageId: number = 1; messageId <= VERBATIM_CONTEXT_MAX; messageId++) {
-      pushBufferedMessage(CHAT_ID, message(messageId, `消息-${messageId}`));
+      pushBufferedMessage(CHAT_ID, message(messageId, `消息-${messageId}`), Date.now());
     }
     expect(chatMessageIndexes.get(CHAT_ID)!.size).toBe(VERBATIM_CONTEXT_MAX - COMPACT_BATCH_SIZE);
     expect(lookupBufferedMessage(CHAT_ID, COMPACT_BATCH_SIZE)).toBeUndefined();
@@ -86,7 +86,7 @@ describe("热区消息索引维护", () => {
   });
 
   test("clearChatMemoryCache 连整群索引一并删除", () => {
-    pushBufferedMessage(CHAT_ID, message(1, "第一条"));
+    pushBufferedMessage(CHAT_ID, message(1, "第一条"), Date.now());
     clearChatMemoryCache(CHAT_ID);
     expect(chatMessageIndexes.has(CHAT_ID)).toBe(false);
   });
@@ -125,7 +125,7 @@ describe("机器人自发消息的回复引用还原", () => {
       ...message(5, "被回复的话"),
       username: "alice_dev",
       forwardedFrom: "[id:99] 频道",
-    });
+    }, Date.now());
     expect(replyReferenceForBufferedMessage(CHAT_ID, 5)).toEqual(bufferedReplyReferenceFixture({
       messageId: 5,
       id: 15,

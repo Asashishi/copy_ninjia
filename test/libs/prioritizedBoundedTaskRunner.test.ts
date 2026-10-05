@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createPrioritizedBoundedTaskRunner } from "../../packages/libs/prioritizedBoundedTaskRunner";
-import { settleTestBatch } from "./helpers";
+import { settleTestBatch } from "../helpers/common";
 
 describe("createPrioritizedBoundedTaskRunner", () => {
   test("交互任务优先且后台突发受独立等待上限约束", async () => {

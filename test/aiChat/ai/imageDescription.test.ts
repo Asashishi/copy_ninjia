@@ -28,6 +28,8 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 
 const { describeMedia, describeMediaForStickerCatalog } = await import("../../../packages/aiChat/ai/imageDescription");
+const { ANIMATION_DESCRIPTION_PROMPT, IMAGE_DESCRIPTION_PROMPT } =
+  await import("../../../packages/consts/aiChat/prompts/media");
 const { transientDescriptionCache } = await import("../../../packages/cache/workers/aiChat/imageDescription");
 const {
   isMediaInputProbeCoolingDown,
@@ -39,11 +41,19 @@ const {
   setMediaInputProbe,
 } = await import("../../../packages/cache/workers/aiChat/mediaInputSupport");
 const {
+  IMAGE_DESCRIPTION_MAX_CHARS,
+  SHORT_MEDIA_DESCRIPTION_MAX_CHARS,
   MEDIA_MAX_DOWNLOAD_BYTES,
   MEDIA_PROBE_BACKOFF_BASE_MS,
   MEDIA_PROBE_BACKOFF_MAX_MS,
   MEDIA_PROBE_MAX_TRANSIENT_FAILURES,
 } = await import("../../../packages/consts/aiChat/media");
+
+/** describeVision 收到的请求里本文件断言的两项。 */
+interface VisionRequest {
+  readonly prompt: string;
+  readonly normalize: (text: string) => string;
+}
 
 /** 由测试逐个放行的 describeVision 调用：started 在请求真正发出时兑现。 */
 interface ControlledVisionCall {
@@ -122,6 +132,26 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     expect(request.image.mime).toBe("image/png");
     expect(request.prompt).toContain("贴纸");
     expect(transientDescriptionCache.has("unique-a")).toBe(true);
+  });
+
+  test("描述入缓存前的 normalize：空输出为空串、多行压成单行，动图与图片各取自己的提示词与上限", async () => {
+    await describeMedia({ kind: "animation", fileId: "file-gif", fileUniqueId: "unique-gif", voiceMime: undefined, voiceDurationSeconds: 0 });
+    await describeMedia({ kind: "photo", fileId: "file-photo", fileUniqueId: "unique-photo", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const animation = describeVision.mock.calls[0]![0] as VisionRequest;
+    const photo = describeVision.mock.calls[1]![0] as VisionRequest;
+    expect(animation.prompt).toBe(ANIMATION_DESCRIPTION_PROMPT);
+    expect(photo.prompt).toBe(IMAGE_DESCRIPTION_PROMPT);
+
+    expect(animation.normalize("")).toBe("");
+    expect(animation.normalize("  \n  ")).toBe("");
+    expect(animation.normalize("一只猫\n  在挥手")).toBe("一只猫 在挥手");
+    const long: string = "很长的描述。".repeat(100);
+    const shortened: string = animation.normalize(long);
+    expect(shortened.length).toBeGreaterThan(0);
+    expect(shortened.length).toBeLessThanOrEqual(SHORT_MEDIA_DESCRIPTION_MAX_CHARS);
+    const photoDescription: string = photo.normalize(long);
+    expect(photoDescription.length).toBeGreaterThan(shortened.length);
+    expect(photoDescription.length).toBeLessThanOrEqual(IMAGE_DESCRIPTION_MAX_CHARS);
   });
 
   test("同一媒体的一个消费者取消不会中止仍有消费者使用的共享请求", async () => {

@@ -65,10 +65,24 @@ export const WEB_DIGEST_NO_SEARCH_LOG_MAX_CHARS: number = 2_000;
 /** 未调用搜索时加在 cron 摘要正文开头的可见提示。所属模块：aiChat/ai/webDigest.ts。 */
 export const WEB_DIGEST_UNSEARCHED_WARNING: string = "注意，以下可能为模型侧缓存内容，请仔细甄别";
 /**
- * 主线程等待一次组稿回执的上限（一次检索加最多两次组稿）；到点撤回 Worker 侧的组稿并按
- * timed out 结算。所属模块：aiChat/webDigest.ts。
+ * 一次组稿流水线里单次模型调用的上限：取三家实现包 `text` 与 `web_search` 档位超时的最大值
+ * （GEMINI/OPENAI/ANTHROPIC_REQUEST_TIMEOUTS_MS），档位内已含 SDK 自身的重试。主线程不加载
+ * 各家 SDK，这里不直接引用那三张表，两边一致由 test/consts/webDigest.test.ts 核对。
+ * 所属模块：aiChat/webDigest.ts。
  */
-export const WEB_DIGEST_REQUEST_TIMEOUT_MS: number = 480_000;
+export const WEB_DIGEST_MODEL_CALL_TIMEOUT_MS: number = 180_000;
+/**
+ * 组稿流水线的排队余量：每次模型调用开始前在配额通道里等待的时间不计入单次调用超时。
+ * 所属模块：aiChat/webDigest.ts。
+ */
+export const WEB_DIGEST_QUEUE_ALLOWANCE_MS: number = 60_000;
+/**
+ * 主线程等待一次组稿回执的上限：(1 次检索 + WEB_DIGEST_COMPOSE_ATTEMPTS 次组稿) ×
+ * WEB_DIGEST_MODEL_CALL_TIMEOUT_MS + WEB_DIGEST_QUEUE_ALLOWANCE_MS；到点撤回 Worker 侧的组稿
+ * 并按 timed out 结算。所属模块：aiChat/webDigest.ts。
+ */
+export const WEB_DIGEST_REQUEST_TIMEOUT_MS: number =
+  (1 + WEB_DIGEST_COMPOSE_ATTEMPTS) * WEB_DIGEST_MODEL_CALL_TIMEOUT_MS + WEB_DIGEST_QUEUE_ALLOWANCE_MS;
 
 /**
  * 组稿输出的 JSON Schema（digest/v1）：Gemini 以 responseJsonSchema、Anthropic 以 output_config.format

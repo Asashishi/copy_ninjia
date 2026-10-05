@@ -38,7 +38,8 @@ memory
 .env.production.local
 .env.local
 
-# 可选的自定义 AI 人设（prompt/persona.md），属部署方数据；缺省时使用代码内置人设。
+# 可选的部署方提示词（prompt/persona.md 人设、prompt/voice_tool.md 语音工具说明），属部署方数据；
+# 缺省时使用代码内置文案，示例见 prompt_example/。
 # 锚定根目录，理由同上面的 /database/ 与 /performance/。
 /prompt/
 

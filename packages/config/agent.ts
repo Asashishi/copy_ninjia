@@ -41,6 +41,8 @@ import type {
  * 合成请求决定；OpenAI 侧另要求 speech_protocol（`openai` 为 audio/speech，`xai` 为 xAI
  * `POST /tts`），Google 侧禁止该字段。可选 style 指定基础风格，缺省使用 TTS_DEFAULT_STYLE；
  * xai 协议没有模型名与风格指令，出现 model 或 style 即拒绝，另有可选 language（缺省 `auto`）。
+ * 三种协议都接受可选 bot_language（`en`、`zh` 或 `ja`，缺省 TTS_DEFAULT_BOT_LANGUAGE），只决定
+ * AI 回复取哪一份语音相关提示词。
  * 可选的 daily_limit 与 daily_reserve_quota
  * 将每日预算拆为 AI 与 `/send`、cron 共用的预留额度，两边独立计数。image/tts 缺省或所选实现不支持时，分别不挂
  * 生图/语音工具。

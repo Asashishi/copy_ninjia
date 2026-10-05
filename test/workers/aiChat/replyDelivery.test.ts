@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { hasReplyDeliveryCapacity, isDirectReplyModelActive, reserveReplyDelivery } from "../../../packages/workers/aiChat/replyDelivery";
 import { invalidateChatReplyCache, replyDeliveryCounts, replyDeliveryTotal, replyDeliveryWindows, resetAiChatReplyCache } from "../../../packages/cache/workers/aiChat/replies";
 import { REPLY_DELIVERY_MAX_PER_CHAT, REPLY_DELIVERY_MAX_TOTAL, REPLY_ROUND_MAX_CONCURRENT } from "../../../packages/consts/aiChat/rateLimit";
-import type { ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
+import { LinkedQueue } from "../../../packages/libs/linkedQueue";
+import type { ReplyDeliverySlot, ReplyDeliveryTurn } from "../../../packages/types/aiChat/replies";
 
 afterEach(resetAiChatReplyCache);
 
@@ -49,7 +50,7 @@ test("Worker 总预算限制多群及不断重开的旧代", async () => {
   expect(replyDeliveryTotal.current).toBe(0);
 });
 
-test("固定桶容纳多轮链，直接轮当即放行，后轮先就绪也必须等前面的轮按入站顺位执行", async () => {
+test("同窗容纳多轮链，直接轮当即放行，后轮先就绪也必须等前面的轮按入站顺位执行", async () => {
   const order: number[] = [];
   const turns: ReplyDeliveryTurn[] = [];
   const total: number = REPLY_ROUND_MAX_CONCURRENT * 3 + 1;
@@ -59,9 +60,8 @@ test("固定桶容纳多轮链，直接轮当即放行，后轮先就绪也必�
     void turn.ready.then(() => { order.push(i); });
   }
   const window = replyDeliveryWindows.get(1)!;
-  expect(window.slots).toHaveLength(REPLY_ROUND_MAX_CONCURRENT);
   expect(window.size).toBe(total);
-  expect(window.slots[0]!.size).toBe(4);
+  expect(replyDeliveryCounts.get(1)).toBe(total);
   for (let i: number = turns.length - 1; i > 0; i--) turns[i]!.commit();
   await Promise.resolve();
   // 第一轮是直接轮：占位即放行；后面的轮都已 commit，仍要等它发完。
@@ -71,10 +71,10 @@ test("固定桶容纳多轮链，直接轮当即放行，后轮先就绪也必�
     await turns[i]!.ready;
     expect(order).toEqual(Array.from({ length: i + 1 }, (_, index) => index));
     await turns[i]!.finish();
-    expect(window.slots).toHaveLength(REPLY_ROUND_MAX_CONCURRENT);
+    expect(replyDeliveryTotal.current).toBe(total - i - 1);
   }
   expect(replyDeliveryWindows.size).toBe(0);
-  expect(window.slots.every((bucket) => bucket.size === 0)).toBe(true);
+  expect(window.size).toBe(0);
 });
 
 test("空轮提前完成不放行更晚回复，轮到完成项时直接跳过", async () => {
@@ -183,8 +183,8 @@ test("顺位句柄在编译期不可替换", async () => {
     turn.commit = (): void => {};
     // @ts-expect-error 生命周期收尾句柄只读。
     turn.finish = async (): Promise<void> => {};
-    // @ts-expect-error 发送桶数组只能修改桶内队列，不能替换桶或改变数组长度。
-    window.slots[0] = window.slots[0]!;
+    // @ts-expect-error 发送 FIFO 句柄不可替换。
+    window.queue = new LinkedQueue<ReplyDeliverySlot>();
   };
   void assertReadonly;
   await turn.finish();

@@ -16,6 +16,7 @@ import {
   TEST_SYNC_CONTENT_IO_EXEMPTIONS,
 } from "./nodeAllowances";
 import type { NodeImportAllowance, BufferGlobalAllowance } from "./nodeAllowances";
+import { globalPropertyName, isGlobalReference, isInsideTypeNode, staticPropertyName } from "./staticAccess";
 
 function allowsImport(
   allowance: NodeImportAllowance | undefined,
@@ -34,23 +35,6 @@ function nodeModuleName(name: string): string | undefined {
 /** Bun 自有模块与 Node 内建模块（含不带前缀的形态）由运行时提供，不属于 npm 依赖。 */
 export function isRuntimeBuiltinModule(name: string): boolean {
   return name === "bun" || name.startsWith("bun:") || nodeModuleName(name) !== undefined;
-}
-
-/** 属性名仅接收直接属性和字面量下标，不追踪动态表达式或别名。 */
-function staticPropertyName(node: ts.Node): string | undefined {
-  if (ts.isPropertyAccessExpression(node)) return node.name.text;
-  if (ts.isElementAccessExpression(node) &&
-    (ts.isStringLiteral(node.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(node.argumentExpression))) {
-    return node.argumentExpression.text;
-  }
-  return undefined;
-}
-
-function isGlobalReference(node: ts.Node, name: string): boolean {
-  if (ts.isIdentifier(node)) return node.text === name;
-  return (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
-    ts.isIdentifier(node.expression) && node.expression.text === "globalThis" &&
-    staticPropertyName(node) === name;
 }
 
 function runtimeNodeLoad(node: ts.Node): { readonly kind: string; readonly moduleName: string } | undefined {
@@ -75,15 +59,6 @@ function runtimeNodeLoad(node: ts.Node): { readonly kind: string; readonly modul
     return { kind: "process.getBuiltinModule", moduleName };
   }
   return undefined;
-}
-
-function isInsideTypeNode(node: ts.Node): boolean {
-  let parent: ts.Node | undefined = node.parent;
-  while (parent !== undefined && !ts.isSourceFile(parent)) {
-    if (ts.isTypeNode(parent)) return true;
-    parent = parent.parent;
-  }
-  return false;
 }
 
 function isBufferGlobalUse(node: ts.Node): boolean {
@@ -120,20 +95,14 @@ function bufferGlobalMethod(node: ts.Node): string | undefined {
 }
 
 function discouragedProcessProperty(node: ts.Node): string | undefined {
-  if (!ts.isIdentifier(node) || node.text !== "process" || isInsideTypeNode(node)) return undefined;
-  const parent: ts.Node = node.parent;
-  const property: string | undefined = ts.isPropertyAccessExpression(parent) && parent.expression === node
-    ? parent.name.text
-    : ts.isElementAccessExpression(parent) && parent.expression === node && ts.isStringLiteral(parent.argumentExpression)
-      ? parent.argumentExpression.text
-      : undefined;
+  const property: string | undefined = globalPropertyName(node, "process");
   return property !== undefined && Object.hasOwn(PROCESS_REPLACEMENTS, property) ? property : undefined;
 }
 
 /** 需要原生替换或先核对调度语义的 process 入口。 */
 const PROCESS_REPLACEMENTS: Readonly<Record<string, string>> = {
   argv: "Bun.argv",
-  execPath: "Bun.argv",
+  execPath: "Bun.argv[0]",
   hrtime: "Bun.nanoseconds() after checking the time origin",
   nextTick: "queueMicrotask after checking scheduling and cancellation semantics",
 };
@@ -142,7 +111,7 @@ const PROCESS_REPLACEMENTS: Readonly<Record<string, string>> = {
  * 核对生产模块、脚本或测试文件的 Node 兼容用法：静态 import（未登记模块、namespace/
  * default import 与未登记符号都拒绝）、动态 import/require/process.getBuiltinModule 与
  * 再导出、`Buffer` 全局方法白名单，以及 process.argv/execPath/hrtime/nextTick 的
- * 替换提示；第三方依赖不进入本检查。
+ * 替换提示；属性访问和具名直接解构共用静态识别，类型位置不参与；第三方依赖不进入本检查。
  */
 export function collectNodeCompatibilityProblems(
   projectRoot: string,
@@ -279,15 +248,6 @@ export function collectNodeCompatibilityProblems(
       problems.push(
         `${relativePath}:${line} uses process.${property}; use ${PROCESS_REPLACEMENTS[property]}`
       );
-    }
-    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) &&
-      node.initializer !== undefined && ts.isIdentifier(node.initializer) && node.initializer.text === "process") {
-      for (const element of node.name.elements) {
-        const name: ts.PropertyName | ts.BindingName = element.propertyName ?? element.name;
-        if ((!ts.isIdentifier(name) && !ts.isStringLiteral(name)) || !(Object.hasOwn(PROCESS_REPLACEMENTS, name.text))) continue;
-        problems.push(`${relativePath}:${source.getLineAndCharacterOfPosition(element.getStart()).line + 1} ` +
-          `uses process.${name.text}; use ${PROCESS_REPLACEMENTS[name.text]}`);
-      }
     }
     ts.forEachChild(node, visitDiscouragedProcessProperties);
   };

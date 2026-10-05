@@ -2,6 +2,7 @@ import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import { runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
 import type { CachedUser } from "../../packages/types/chatState";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "../helpers/botPermissions";
@@ -73,6 +74,7 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
 })));
 
 const { handleBlockDisable } = await import("../../packages/commands/unblock");
+const { formatTargetLabel } = await import("../../packages/users/userLabel");
 
 /** `/block <目标> disable` 经 handleBlockCommand 去掉末位动作后交给解除流程的形态。 */
 function handleUnblockCommand(ctx: never): Promise<void> {
@@ -223,6 +225,51 @@ describe("/block disable", () => {
       expect.stringContaining("Unexpected error while running lift the ban on identity 7 in chat -1001"),
       expect.any(Error)
     );
+  });
+
+  test("update 被取消时各群的取消不逐群记意外错误，整条命令以取消解开", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
+    resolveBotAdminStatus.mockResolvedValueOnce(true);
+    const controller: AbortController = new AbortController();
+    unbanChatMemberIfBanned.mockImplementation(async (): Promise<boolean> => {
+      controller.abort(new DOMException("shutdown", "AbortError"));
+      throw controller.signal.reason;
+    });
+
+    await expect(runWithUpdateAbortSignal(
+      controller.signal,
+      (): Promise<void> => handleUnblockCommand(context())
+    )).rejects.toThrow("shutdown");
+
+    expect(unbanChatMemberIfBanned).toHaveBeenCalledTimes(2);
+    expect(loggerError).not.toHaveBeenCalledWith(
+      expect.stringContaining("Unexpected error while running"),
+      expect.anything()
+    );
+  });
+
+  test("机器人不在任何群担任管理员：按名单结论回无受管群文案，不发解封请求", async () => {
+    const notices = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS;
+    const label: string = formatTargetLabel(target!, ATMOSPHERE_TEXTS.teasing);
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    await handleUnblockCommand(context());
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      replyToMessageId: 10,
+      text: notices.unblockNoManagedChat(notices.unblockRecorded(label, "")),
+    });
+
+    sendMessage.mockClear();
+    seedMissingIdentity(7);
+    await handleUnblockCommand(context());
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      chatId: -1001,
+      replyToMessageId: 10,
+      text: notices.unblockNoManagedChat(notices.unblockNotRecorded(label)),
+    });
+    expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
+    expect(unbanChatSenderChat).not.toHaveBeenCalled();
   });
 
   test("名单原本不存在仍执行 Telegram 解封，但不排队数据库 tombstone", async () => {

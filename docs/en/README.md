@@ -38,8 +38,8 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-5920_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.54%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6117_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.69%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -104,7 +104,7 @@ From commit-by-commit human/AI co-review to repeated full-repository audits and 
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 5920 tests passed, 502 test files, 320,978 expect() calls, 98.14% function coverage, 98.54% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 6117 tests passed, 515 test files, 436,787 expect() calls, 98.24% function coverage, 98.69% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -150,7 +150,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎭 Mood and human touches</b><br>
-  <sub>Rotates the group mood and pauses as if it were typing the reply.</sub></p>
+  <sub>Rotates its mood over time and pauses as if it were typing the reply.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>💒 Partner draws</b><br>
@@ -196,7 +196,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 Personas &amp; Notice Styles</b><br>
-  <sub>A built-in teasing persona that <code>prompt/persona.md</code> can replace; explicit Bot notice style takes priority; when omitted, custom personas use ordinary notices and the built-in persona uses teasing notices.</sub></p>
+  <sub>A built-in teasing persona that <code>prompt/persona.md</code> can replace (<a href="../../prompt_example/persona.md">example</a>); explicit Bot notice style takes priority; when omitted, custom personas use ordinary notices and the built-in persona uses teasing notices.</sub></p>
 </td>
 </tr>
 <tr>
@@ -266,7 +266,7 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </tbody>
 </table>
 
-- **TTS Configuration**: Requires explicit `agent.tts` in `config/dynamic/agent.json` (supports Google, OpenAI-compatible `audio/speech`, and xAI Grok `/v1/tts`; Google supports `base_url` and `headers` for third-party gateways).
+- **TTS Configuration**: Requires explicit `agent.tts` in `config/dynamic/agent.json` (supports Google, OpenAI-compatible `audio/speech`, and xAI Grok `/v1/tts`; Google supports `base_url` and `headers` for third-party gateways). Optional `bot_language` (`en` / `zh` / `ja`, default `ja`) sets the language of AI voice lines; `prompt/voice_tool.md` in the project root can replace the whole AI `send_voice` tool instruction (takes effect after a restart; see the example [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)). AI reply synthesis appends a speaking-language requirement by `bot_language` automatically; `style` is shared with `/send` and cron and describes only the voice. When changing `bot_language`, also switch `style` and `voice_tool.md` to that language.
 - **Quota Isolation**: `daily_reserve_quota` (default 25) is reserved from `daily_limit` (default 100) for admin and cron calls; AI voice uses the remainder. Both counters are independent and reset together 24 hours after the first counted request in the window.
 - **Context Recording Rules**: Messages copied by `/send` and scheduled text/voice do not enter AI memory. Automatic image recording requires AI chat to be enabled in the group and not in copying mode. Details: [11 FAQ](11-faq.md).
 

@@ -393,9 +393,10 @@ export class ApplicationLifecycle {
   private installProcessHandlers(): void {
     if (this.processHandlersInstalled) return;
     // 信号 handler 要在第一个 await 之前安装；若信号在 runner 创建前到达，
-    // stopRequested 会让 runner 一创建就立即停止。
-    process.once("SIGINT", this.stopOnSigint);
-    process.once("SIGTERM", this.stopOnSigterm);
+    // stopRequested 会让 runner 一创建就立即停止。监听保持到 dispose 摘除：重复信号
+    // 落到幂等的 stopOnSignal，最终 flush 与 offset 确认照常完成。
+    process.on("SIGINT", this.stopOnSigint);
+    process.on("SIGTERM", this.stopOnSigterm);
     process.on("uncaughtException", this.handleUncaughtException);
     process.on("unhandledRejection", this.handleUnhandledRejection);
     this.processHandlersInstalled = true;

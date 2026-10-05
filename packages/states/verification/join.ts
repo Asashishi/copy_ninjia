@@ -12,6 +12,7 @@ import type {
   PendingState,
   VerificationEffect,
   VerificationState,
+  VerificationTerminalState,
   VerificationTransition,
 } from "../../types/states/verification";
 import { exemptOf, kickPendingOf, pendingUpdated, remindersOf } from "./shared";
@@ -40,7 +41,157 @@ export function joinCreatesNewRecord(
     !resolveJoinExemption(event).exempt;
 }
 
-/** 处理双路入群投递、豁免、私密模式秒踢及普通验证窗口创建。 */
+/** 终态之外、可以被一次入群直接改写的记录状态。 */
+type JoinableState = Exclude<VerificationState, VerificationTerminalState>;
+
+/**
+ * 豁免成立的入群：已有豁免占位与已完成的踢人原样保留；未发出的秒踢换成豁免占位并撤回
+ * 真实计过的那一格；已开的验证窗口撤销计数、删提醒；关联频道评论另发一条欢迎。
+ */
+function joinExempt(
+  state: JoinableState | undefined,
+  event: JoinEvent,
+  viaChannelComment: boolean
+): VerificationTransition {
+  // 已有豁免占位时不动它，也不刷新其去重计时。
+  if (state?.kind === "exempt") return { next: state, effects: NO_VERIFICATION_EFFECTS };
+  if (state?.kind === "kickPending") {
+    if (state.executionStarted === true) {
+      // Telegram 调用已经同步发出，后来的身份证明无法再撤销；等待请求结算
+      // 后进入正常去重窗口，并留下诊断供管理员人工纠正。
+      return {
+        next: state,
+        effects: [{ kind: "logUncancelableKickExemption", label: event.label }],
+      };
+    }
+    // 删除公告等前置 await 尚未完成：用新对象替换执行 token，旧副作用在
+    // kickMember 前的对象同一性复核会自行失效。
+    return {
+      next: exemptOf(event.label, event.isBot),
+      // 只撤销确实计过数的那一格：重进补踢建出的 kickPending 没有对应的
+      // recordJoin（见 KickPendingState.countedJoinAt），凭 requestedAt 撤
+      // 会删掉同一 tick 里另一名合法计数成员，把刷群窗口压到阈值之下。
+      effects: state.countedJoinAt === undefined
+        ? []
+        : [{ kind: "retractJoinCount", joinedAt: state.countedJoinAt }],
+    };
+  }
+  if (state?.kind === "kicked") {
+    // 动作已经完成，无法撤销；保留占位并留下诊断供管理员人工纠正。
+    return {
+      next: state,
+      effects: [{ kind: "logUncancelableKickExemption", label: event.label }],
+    };
+  }
+  const effects: VerificationEffect[] = [];
+  // 已开验证窗口后才确证豁免：撤销计数并删提醒，入群公告与成员发言保留。
+  if (state !== undefined) {
+    effects.push(remindersOf(state));
+    effects.push({ kind: "retractJoinCount", joinedAt: state.joinedAt });
+  }
+  if (viaChannelComment && event.recentComment !== undefined) {
+    effects.push({
+      kind: "sendWelcome",
+      variant: "channelComment",
+      targetLabel: event.label,
+      anchorMessageId: event.recentComment.messageId,
+    });
+  }
+  return { next: exemptOf(event.label, event.isBot), effects };
+}
+
+/**
+ * 已有记录时到达的另一路投递：只补充公告与拉人者，不重启计时器、不再发提醒（幂等）；
+ * 秒踢记录超过双路投递误差后视为真正重进，换成新一代 kickPending。
+ */
+function joinDuplicateDelivery(
+  state: JoinableState,
+  event: JoinEvent,
+  invitedByOther: boolean
+): VerificationTransition {
+  const effects: VerificationEffect[] = [];
+  let snapshotChanged: boolean = false;
+  if (event.announcementMessageId !== undefined) {
+    if (state.kind === "kickPending" || state.kind === "kicked") {
+      effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
+    } else if (state.kind === "pending" && state.announcementMessageId === undefined) {
+      state.announcementMessageId = event.announcementMessageId;
+      snapshotChanged = true;
+    } else if (
+      state.kind === "pending" &&
+      state.announcementMessageId !== event.announcementMessageId
+    ) {
+      effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
+    }
+  }
+  if (
+    (state.kind === "kickPending" || state.kind === "kicked") &&
+    event.now - (state.kind === "kickPending" ? state.requestedAt : state.kickedAt) >
+      KICKED_REJOIN_GRACE_MS
+  ) {
+    // 超过双路投递误差范围视为真正重进；新对象为新一代执行 token。
+    return {
+      next: kickPendingOf({
+        label: state.label,
+        isBot: state.isBot,
+        requestedAt: event.now,
+        countedJoinAt: undefined,
+        announcementMessageId: event.announcementMessageId,
+      }),
+      effects,
+    };
+  }
+  if (state.kind === "pending" && invitedByOther && !event.adminCacheFresh) {
+    if (state.invitedBy === undefined) {
+      state.invitedBy = event.actorId;
+      snapshotChanged = true;
+    }
+    effects.push({ kind: "startAdminCheck", actorId: event.actorId! });
+  }
+  if (state.kind === "pending" && snapshotChanged) return pendingUpdated(state, effects);
+  return { next: state, effects };
+}
+
+/** 新的一次物理入群：私密模式期间直接排秒踢，否则开验证窗口并发提醒。 */
+function joinCreate(event: JoinEvent, invitedByOther: boolean): VerificationTransition {
+  if (event.lockdownActive) {
+    return {
+      next: kickPendingOf({
+        label: event.label,
+        isBot: event.isBot,
+        requestedAt: event.now,
+        countedJoinAt: event.now,
+        announcementMessageId: event.announcementMessageId,
+      }),
+      effects: NO_VERIFICATION_EFFECTS,
+    };
+  }
+  const pending: PendingState = {
+    kind: "pending",
+    label: event.label,
+    isBot: event.isBot,
+    announcementMessageId: event.announcementMessageId,
+    trackedMessageTimes: [],
+    invitedBy: invitedByOther ? event.actorId : undefined,
+    reminderMessageId: undefined,
+    replyReminderMessageId: undefined,
+    replyReminderRequested: false,
+    welcomeAnchorMessageId: undefined,
+    reminderSuperseded: false,
+    joinedAt: event.now,
+    expiresAt: event.now + VERIFICATION_TIMEOUT_MS,
+  };
+  const effects: VerificationEffect[] = [];
+  if (invitedByOther) effects.push({ kind: "startAdminCheck", actorId: event.actorId! });
+  effects.push({ kind: "sendReminder", label: event.label, isBot: event.isBot });
+  return { next: pending, effects };
+}
+
+/**
+ * 处理双路入群投递、豁免、私密模式秒踢及普通验证窗口创建。对象同一性就是解释器的执行 token：
+ * 同一次入群的补充投递原地修改记录、保持 token 不变；豁免替换秒踢、真正重进与替换终态时换成
+ * 新对象，在途的旧副作用在同一性复核时自行失效。
+ */
 export function handleJoin(
   state: VerificationState | undefined,
   event: JoinEvent
@@ -61,132 +212,9 @@ export function handleJoin(
   }
   const { exempt, viaChannelComment }: JoinExemption = resolveJoinExemption(event);
   const invitedByOther: boolean = event.actorId !== undefined && event.actorId !== event.memberId;
-
-  if (exempt) {
-    // 已有豁免占位时不动它，也不刷新其去重计时。
-    if (state?.kind === "exempt") return { next: state, effects: NO_VERIFICATION_EFFECTS };
-    if (state?.kind === "kickPending") {
-      if (state.executionStarted === true) {
-        // Telegram 调用已经同步发出，后来的身份证明无法再撤销；等待请求结算
-        // 后进入正常去重窗口，并留下诊断供管理员人工纠正。
-        return {
-          next: state,
-          effects: [{ kind: "logUncancelableKickExemption", label: event.label }],
-        };
-      }
-      // 删除公告等前置 await 尚未完成：用新对象替换执行 token，旧副作用在
-      // kickMember 前的对象同一性复核会自行失效。
-      return {
-        next: exemptOf(event.label, event.isBot),
-        // 只撤销确实计过数的那一格：重进补踢建出的 kickPending 没有对应的
-        // recordJoin（见 KickPendingState.countedJoinAt），凭 requestedAt 撤
-        // 会删掉同一 tick 里另一名合法计数成员，把刷群窗口压到阈值之下。
-        effects: state.countedJoinAt === undefined
-          ? []
-          : [{ kind: "retractJoinCount", joinedAt: state.countedJoinAt }],
-      };
-    }
-    if (state?.kind === "kicked") {
-      // 动作已经完成，无法撤销；保留占位并留下诊断供管理员人工纠正。
-      return {
-        next: state,
-        effects: [{ kind: "logUncancelableKickExemption", label: event.label }],
-      };
-    }
-    const effects: VerificationEffect[] = [];
-    // 已开验证窗口后才确证豁免：撤销计数并删提醒，入群公告与成员发言保留。
-    if (state !== undefined) {
-      effects.push(remindersOf(state));
-      effects.push({ kind: "retractJoinCount", joinedAt: state.joinedAt });
-    }
-    if (viaChannelComment && event.recentComment !== undefined) {
-      effects.push({
-        kind: "sendWelcome",
-        variant: "channelComment",
-        targetLabel: event.label,
-        anchorMessageId: event.recentComment.messageId,
-      });
-    }
-    return { next: exemptOf(event.label, event.isBot), effects };
-  }
-
-  if (state !== undefined) {
-    // 同一次入群的另一路投递：只补充，不重启计时器/不再发提醒（幂等）。
-    const effects: VerificationEffect[] = [];
-    let snapshotChanged: boolean = false;
-    if (event.announcementMessageId !== undefined) {
-      if (state.kind === "kickPending" || state.kind === "kicked") {
-        effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
-      } else if (state.kind === "pending" && state.announcementMessageId === undefined) {
-        state.announcementMessageId = event.announcementMessageId;
-        snapshotChanged = true;
-      } else if (
-        state.kind === "pending" &&
-        state.announcementMessageId !== event.announcementMessageId
-      ) {
-        effects.push({ kind: "deleteMessage", messageId: event.announcementMessageId });
-      }
-    }
-    if (
-      (state.kind === "kickPending" || state.kind === "kicked") &&
-      event.now - (state.kind === "kickPending" ? state.requestedAt : state.kickedAt) >
-        KICKED_REJOIN_GRACE_MS
-    ) {
-      // 超过双路投递误差范围视为真正重进；新对象为新一代执行 token。
-      return {
-        next: kickPendingOf({
-          label: state.label,
-          isBot: state.isBot,
-          requestedAt: event.now,
-          countedJoinAt: undefined,
-          announcementMessageId: event.announcementMessageId,
-        }),
-        effects,
-      };
-    }
-    if (state.kind === "pending" && invitedByOther && !event.adminCacheFresh) {
-      if (state.invitedBy === undefined) {
-        state.invitedBy = event.actorId;
-        snapshotChanged = true;
-      }
-      effects.push({ kind: "startAdminCheck", actorId: event.actorId! });
-    }
-    if (state.kind === "pending" && snapshotChanged) return pendingUpdated(state, effects);
-    return { next: state, effects };
-  }
-
-  if (event.lockdownActive) {
-    return {
-      next: kickPendingOf({
-        label: event.label,
-        isBot: event.isBot,
-        requestedAt: event.now,
-        countedJoinAt: event.now,
-        announcementMessageId: event.announcementMessageId,
-      }),
-      effects: NO_VERIFICATION_EFFECTS,
-    };
-  }
-
-  const pending: PendingState = {
-    kind: "pending",
-    label: event.label,
-    isBot: event.isBot,
-    announcementMessageId: event.announcementMessageId,
-    trackedMessageTimes: [],
-    invitedBy: invitedByOther ? event.actorId : undefined,
-    reminderMessageId: undefined,
-    replyReminderMessageId: undefined,
-    replyReminderRequested: false,
-    welcomeAnchorMessageId: undefined,
-    reminderSuperseded: false,
-    joinedAt: event.now,
-    expiresAt: event.now + VERIFICATION_TIMEOUT_MS,
-  };
-  const effects: VerificationEffect[] = [];
-  if (invitedByOther) effects.push({ kind: "startAdminCheck", actorId: event.actorId! });
-  effects.push({ kind: "sendReminder", label: event.label, isBot: event.isBot });
-  return { next: pending, effects };
+  if (exempt) return joinExempt(state, event, viaChannelComment);
+  if (state !== undefined) return joinDuplicateDelivery(state, event, invitedByOther);
+  return joinCreate(event, invitedByOther);
 }
 
 /**

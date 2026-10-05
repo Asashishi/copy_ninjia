@@ -6,6 +6,7 @@ import type { Message } from "grammy/types";
 import type { RemoveBlockedMembersParams } from "../../../packages/types/blocklist";
 import type { ChatState } from "../../../packages/types/chatState";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
+import { AD_SAMPLE_CONTEXT_MAX_CHARS } from "../../../packages/consts/antiRaid/adDetect";
 import type { BotConfig } from "../../../packages/types/config";
 import { botPermissions } from "../../helpers/botPermissions";
 import { chatStateOf } from "../../helpers/chatState";
@@ -77,6 +78,9 @@ mock.module("../../../packages/infra/blocklist/membership", () => ({
 }));
 mock.module("../../../packages/infra/identityPolicy/temporaryAdBypass", () => ({
   clearTemporaryAdBypassActivity,
+  clearTemporaryAdBypassActivityOrThrow: (id: number): void => {
+    if (!clearTemporaryAdBypassActivity(id)) throw new Error(`Temporary ad bypass reset for identity ${id} was rejected.`);
+  },
   hasActiveTemporaryAdBypassAt: (id: number): boolean => temporaryAdBypassIds.has(id),
   hydrateTemporaryAdBypassActivities: (): void => {},
 }));
@@ -357,6 +361,15 @@ describe("广告检测投递门禁", () => {
     expect(candidate?.text).toBe("");
     expect(candidate?.sampleQuote).toBe("日入过千 加V xxx996");
     expect(candidate?.sampleReplyTo).toBeUndefined();
+  });
+
+  test("引文截断停在空格之后时去掉末尾空白，交给 Worker 的是清洗完成的单行文本", () => {
+    const head: string = "广".repeat(AD_SAMPLE_CONTEXT_MAX_CHARS - 1);
+    const candidate = buildAdCandidate(message({
+      text: undefined,
+      quote: { text: `${head} 加V xxx996`, position: 0, is_manual: true },
+    }), 999);
+    expect(candidate?.sampleQuote).toBe(head);
   });
 
   test("白名单来源的回复与引用不参与检测，但发送者自己的正文仍照常送检", () => {

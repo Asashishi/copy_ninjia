@@ -8,6 +8,10 @@ import type { Atmosphere } from "../../packages/types/atmosphere";
 import { MARKDOWN_V2_PARSE_MODE } from "../../packages/consts/telegramMarkdown";
 import { parseMarkdownV2 } from "../helpers/markdownV2";
 import type { ParsedMarkdownV2, ParsedMarkdownV2Entity } from "../helpers/markdownV2";
+import { expectTemplateRendered, longestTemplatePart } from "../helpers/templateText";
+
+/** 本文件的默认通知风格（BOT_ATMOSPHERE 替身为 teasing）下 /permission 的文案表。 */
+const TEASING_PERMISSION = ATMOSPHERE_TEXTS.teasing.PERMISSION_COMMAND_TEXTS;
 
 interface SentMessage {
   text: string;
@@ -217,7 +221,7 @@ describe("/permission", () => {
     sent = sendMessage.mock.calls.at(-1)?.[0] as SentMessage;
     view = rendered(sent);
     entity = view.entities[0];
-    expect(view.text).toContain("true 表示已授权，false 表示未授权");
+    expectTemplateRendered(view.text, ATMOSPHERE_TEXTS.plain.PERMISSION_COMMAND_TEXTS.queryPrefix);
     expect(JSON.parse(view.text.slice(entity!.offset, entity!.offset + entity!.length))).toEqual(NON_WHITELIST_PERMISSIONS);
     expect(sent.preserveInGroup).toBeTrue();
   });
@@ -282,14 +286,8 @@ describe("/permission", () => {
         JSON.stringify(WHITELIST_PERMISSION_HELP[key])
       );
     }
-    expect(text).toContain("/permission query");
-    expect(text).toContain("/permission query <用户id|@username>");
-    expect(text).toContain("help 和 query 所有杂鱼都能用");
-    expect(text).toContain("以下修改操作仅限超级管理员");
-    expect(text).toContain("本天才");
-    expect(text).toContain("杂鱼♡");
-    expect(text).toContain("/permission <用户id|频道id|@username>");
-    expect(text).toContain("/permission <用户id|频道id|@username> all");
+    expect(text).toStartWith(TEASING_PERMISSION.helpPrefix);
+    expect(text).toEndWith(`\n${TEASING_PERMISSION.helpSuffix}`);
     expect(text.length).toBeLessThanOrEqual(TELEGRAM_MESSAGE_MAX_CHARS);
   });
 
@@ -312,10 +310,7 @@ describe("/permission", () => {
     );
     expect(codeEntity).toMatchObject({ type: "pre", language: "json" });
     expect(JSON.parse(permissionJson)).toEqual(expected);
-    expect(text).toContain("本天才勉为其难");
-    expect(text).toContain("true 是有这项权限");
-    expect(text).toContain("false 就是没有");
-    expect(text).toContain("杂鱼♡");
+    expectTemplateRendered(text, TEASING_PERMISSION.queryPrefix);
     // 长期保留例外，见 docs/cn/04-invariants.md。
     expect(message?.preserveInGroup).toBeTrue();
   });
@@ -426,7 +421,7 @@ describe("/permission", () => {
     const reply: SentMessage | undefined = sendMessage.mock.calls.at(-1)?.[0] as
       | SentMessage
       | undefined;
-    expect(reply?.text ?? "").not.toContain("既不是合法的 Telegram 用户名");
+    expect(reply?.text ?? "").not.toContain(longestTemplatePart(TEASING_PERMISSION.target.invalidUsername));
   });
 
   test("超级管理员 query 拿到逐项全开的视图，即使 SQLite 没有其白名单记录", async () => {
@@ -453,13 +448,13 @@ describe("/permission", () => {
     await handlePermissionCommand(context(1, "1 isCanMute false"));
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("本来就全开着"),
+      text: TEASING_PERMISSION.superAdminTarget,
     }));
 
     await handlePermissionCommand(context(1, "1 all"));
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("本来就全开着"),
+      text: TEASING_PERMISSION.superAdminTarget,
     }));
     expect(whitelistPermissionsById.has(1)).toBeFalse();
   });
@@ -527,7 +522,7 @@ describe("/permission", () => {
     }));
     await handlePermissionCommand(context(1, "100 all"));
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("本来就是全开的"),
+      text: expect.stringContaining(longestTemplatePart(TEASING_PERMISSION.allAlreadyEnabled)),
     }));
   });
 
@@ -542,7 +537,7 @@ describe("/permission", () => {
     await handlePermissionCommand(context(1, "100 all"));
 
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("没能把这条权限写进硬盘"),
+      text: TEASING_PERMISSION.mutationFailed,
     }));
   });
 
@@ -676,14 +671,14 @@ describe("/permission", () => {
     await handlePermissionCommand(context(1, "-1001 isCanBlock true"));
     expect(setWhitelistPermission).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("这是本群自己的身份"),
+      text: TEASING_PERMISSION.currentChatTarget,
     }));
 
     sendMessage.mockClear();
     await handlePermissionCommand(context(1, "-1001 all"));
     expect(enableAllWhitelistPermissions).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("这是本群自己的身份"),
+      text: TEASING_PERMISSION.currentChatTarget,
     }));
   });
 
@@ -695,7 +690,7 @@ describe("/permission", () => {
     await handlePermissionCommand(context(1, "100 isCanMute true"));
 
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("没能把这条权限写进硬盘"),
+      text: TEASING_PERMISSION.mutationFailed,
     }));
   });
 
@@ -712,7 +707,7 @@ describe("/permission", () => {
 
     expect(confirmWhitelistEntryPersisted).toHaveBeenCalledWith(100, true);
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("没能把这条权限写进硬盘"),
+      text: TEASING_PERMISSION.mutationFailed,
     }));
   });
 });

@@ -14,3 +14,9 @@ export interface MoodOption {
   readonly weatherMultipliers?: Readonly<Partial<Record<WeatherBucket, number>>>;
   readonly timeMultipliers?: Readonly<Partial<Record<TimeBucket, number>>>;
 }
+
+/** 当前生效的心情档位与它的到期时刻（epoch 毫秒）；两者总是一起写入。 */
+export interface CurrentMood {
+  readonly mood: MoodOption;
+  readonly expiresAt: number;
+}

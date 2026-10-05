@@ -173,7 +173,7 @@ describe("Node 兼容约定", () => {
     expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, bufferSource)))
       .toEqual([expect.stringContaining("unreviewed Node compatibility global Buffer.from")]);
     expect(collectNodeCompatibilityProblems(projectRoot, testPath, source(testPath, "const bun = process.execPath;")))
-      .toEqual([expect.stringContaining("uses process.execPath; use Bun.argv")]);
+      .toEqual([expect.stringContaining("uses process.execPath; use Bun.argv[0]")]);
   });
 
   test("运行时动态 import 与 require 不能绕过静态命名导入核对", () => {
@@ -274,7 +274,7 @@ describe("Node 兼容约定", () => {
       scriptPath,
       source(scriptPath, "const executable = process.execPath; const args = process.argv;")
     )).toEqual([
-      expect.stringContaining("uses process.execPath; use Bun.argv"),
+      expect.stringContaining("uses process.execPath; use Bun.argv[0]"),
       expect.stringContaining("uses process.argv; use Bun.argv"),
     ]);
     expect(collectNodeCompatibilityProblems(

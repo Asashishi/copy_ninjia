@@ -8,6 +8,9 @@ import {
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import { RELEASE_PLATFORMS, RELEASE_REQUIRED_FILES, RELEASE_VERSION_PATTERN } from "../../packages/consts/release";
 import { LOGGER_HTTP_URL_PATTERN } from "../../packages/consts/logger";
+import { VOICE_LANGUAGE_PROMPTS } from "../../packages/consts/aiChat/prompts/tools";
+import { TTS_BOT_LANGUAGES } from "../../packages/consts/aiChat/voiceMessage";
+import type { PreparedReplyAction, ReplyActionChains, ReplyToolset } from "../../packages/types/aiChat/replies";
 
 function assertReleaseAndLogConstantsReadonly(): void {
   // @ts-expect-error 发行平台表禁止调用方增删。
@@ -20,6 +23,41 @@ function assertReleaseAndLogConstantsReadonly(): void {
   LOGGER_HTTP_URL_PATTERN.lastIndex = 1;
 }
 void assertReleaseAndLogConstantsReadonly;
+
+/** 回复工具集、已接纳动作与调用链 owner 是构造后只读的句柄。 */
+function assertReplyToolHandlesReadonly(
+  toolset: ReplyToolset,
+  action: PreparedReplyAction,
+  chains: ReplyActionChains
+): void {
+  // @ts-expect-error 工具声明在整轮内不可替换。
+  toolset.functions = [];
+  // @ts-expect-error 接纳边界由工具集构造时固定。
+  toolset.execute = (): string => "";
+  // @ts-expect-error 排空入口不可替换。
+  toolset.settle = async (): Promise<void> => {};
+  // @ts-expect-error 乐观回执在接纳后不可改写。
+  action.result = "";
+  // @ts-expect-error 已接纳链的执行函数不可改写。
+  action.run = async (): Promise<string> => "";
+  // @ts-expect-error 调用链 owner 的入口不可替换。
+  chains.start = (): void => {};
+}
+void assertReplyToolHandlesReadonly;
+
+function assertVoiceLanguagePromptsReadonly(): void {
+  // @ts-expect-error 调用方不能替换某种台词语言的整份文案。
+  VOICE_LANGUAGE_PROMPTS.ja = VOICE_LANGUAGE_PROMPTS.en;
+  // @ts-expect-error 单份文案的工具说明不可修改。
+  VOICE_LANGUAGE_PROMPTS.zh.sendVoiceInstruction = "changed";
+  // @ts-expect-error 行动段文案不可修改。
+  VOICE_LANGUAGE_PROMPTS.en.replyActionInstruction = "changed";
+  // @ts-expect-error 朗读语言要求不可修改。
+  VOICE_LANGUAGE_PROMPTS.ja.speechLanguageStyle = "changed";
+  // @ts-expect-error 台词语言闭集禁止调用方增删。
+  TTS_BOT_LANGUAGES.push("ja");
+}
+void assertVoiceLanguagePromptsReadonly;
 
 function assertAtmosphereReadonly(): void {
   // @ts-expect-error 调用方不能替换风格表。

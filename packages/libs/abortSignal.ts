@@ -36,6 +36,16 @@ export function isTimeoutAbort(signal: AbortSignal): boolean {
   return reason instanceof DOMException && reason.name === "TimeoutError";
 }
 
+/**
+ * 判定一次失败是否就是取消本身：name 为 `"AbortError"` 的 `DOMException`。
+ *
+ * 覆盖 Worker 停机 drain 时 libs/workerDuplex.ts 本地结算的等待者、出站总闸撤销的
+ * 排队请求等不经调用方 signal 的取消；超时给的是 `TimeoutError`，不在此列。
+ */
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 /** 取消原因必须以 Error 传播；标准 AbortController 的 DOMException 原样保留。 */
 function abortSignalError(signal: AbortSignal): Error {
   return toErrorOr(signal.reason as unknown, "AbortSignal was aborted with a non-Error reason.");

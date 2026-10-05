@@ -16,6 +16,7 @@ import {
   deactivateLockdownChat,
   handleLockdownPersisted,
   handleLockdownPersistFailed,
+  retryDeniedLockdownRestore,
   stopLockdownRuntime,
 } from "./antiRaid/lockdownRuntime";
 import { applyAdminChange } from "./antiRaid/adminCache";
@@ -37,6 +38,7 @@ import {
 } from "./antiRaid/floodControl";
 import {
   applyBotPermissionsChange,
+  botCanRestrictIn,
   forgetWorkerBotPermissions,
   resetWorkerBotPermissions,
 } from "./antiRaid/botPermissions";
@@ -214,9 +216,13 @@ export function handleAntiRaidWorkerMessage(msg: AntiRaidWorkerMessage): void {
       // 只清广告状态；临时广告免检不提供防刷屏或其它权限。
       clearIdentityAdDetect(msg.identityId);
       break;
-    case "botPermissionsChanged":
+    case "botPermissionsChanged": {
+      // 限制成员权限从「没有或未知」变为确证有时，被拒后拉长的私密模式解除重试提前到现在。
+      const couldRestrict: boolean = botCanRestrictIn(msg.chatId) === true;
       applyBotPermissionsChange(msg.chatId, msg.permissions);
+      if (!couldRestrict && msg.permissions?.canRestrictMembers === true) retryDeniedLockdownRestore(msg.chatId);
       break;
+    }
     case "chatKind":
       applyChatKindChange(msg.chatId, msg.isSupergroup);
       break;

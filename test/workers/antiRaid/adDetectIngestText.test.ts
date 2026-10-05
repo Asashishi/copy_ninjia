@@ -14,7 +14,6 @@ const {
 const { formatAdBundleText } = await import("../../../packages/workers/antiRaid/adDetect/bundle");
 const {
   adDetectQueue,
-  pendingAdMessages,
 } = await import("../../../packages/cache/workers/antiRaid/adDetect");
 const {
   AD_DETECT_BUNDLE_MAX_CHARS,
@@ -26,6 +25,8 @@ const {
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } = await import("../../../packages/consts/antiRaid/adDetect");
 
+const { pendingAdBundle } =
+  await import("../../../packages/workers/antiRaid/adDetect/queueState");
 beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
 
 describe("入队时的送检文本整形", () => {
@@ -63,7 +64,7 @@ describe("入队时的送检文本整形", () => {
     }
 
     await runAdDetectBatch(1_000);
-    const bundle = pendingAdMessages.get("-1001:7")!;
+    const bundle = pendingAdBundle(-1001, 7)!;
     // 第一拍读到的是最旧那批（广告在其中），而不是被预算挤剩的尾巴。
     expect(classifiedTexts[0]).toContain("日入过千");
     expect(bundle.checkedSeq).toBeLessThan(fillerCount + 1);
@@ -86,7 +87,7 @@ describe("入队时的送检文本整形", () => {
       sampleReplyTo: "日入过千 加V xxx996",
     }), 1_000);
 
-    const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
+    const entry = pendingAdBundle(-1001, 7)!.entries[0]!;
     expect(entry.text).toBe("这种广告真烦 日入过千 加V xxx996");
     expect(entry.directText).toBe("这种广告真烦");
     // 样本侧仍留一份没并进正文的原样：人回头查误判时要分得清哪段是他自己写的。
@@ -104,7 +105,7 @@ describe("入队时的送检文本整形", () => {
       enqueueAdCandidate(candidate({ messageId: index + 1, text: own, sampleReplyTo: replyTo }), 1_000);
     }
 
-    const entries = pendingAdMessages.get("-1001:7")!.entries;
+    const entries = pendingAdBundle(-1001, 7)!.entries;
     expect(entries.map((entry): string => entry.text)).toEqual([`加我 ${replyTo}`, "微 信", "xxx996"]);
     // 样本侧照旧每条都留一份原样：判定去重了，取证不能跟着丢。
     expect(entries.map((entry): string | undefined => entry.replyTo)).toEqual([replyTo, replyTo, replyTo]);
@@ -123,7 +124,7 @@ describe("入队时的送检文本整形", () => {
     const later: number = 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
     enqueueAdCandidate(candidate({ messageId: 2, text: "再看这个", sampleReplyTo: replyTo }), later);
 
-    const entries = pendingAdMessages.get("-1001:7")!.entries;
+    const entries = pendingAdBundle(-1001, 7)!.entries;
     expect(entries.map((entry): string => entry.text)).toEqual([`再看这个 ${replyTo}`]);
   });
 
@@ -147,7 +148,7 @@ describe("入队时的送检文本整形", () => {
       sampleQuote: "日入过千 加V xxx996",
     }), 1_000);
 
-    const entry = pendingAdMessages.get("-1001:7")!.entries[0]!;
+    const entry = pendingAdBundle(-1001, 7)!.entries[0]!;
     expect(entry.text).toBe(`${"废".repeat(AD_DETECT_MESSAGE_MAX_CHARS)} 日入过千 加V xxx996`);
   });
 
@@ -158,7 +159,7 @@ describe("入队时的送检文本整形", () => {
       text: "填".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
       linkUrls: ["https://t.me/spamchannel"],
     }), 1_000);
-    const text: string = pendingAdMessages.get("-1001:7")!.entries[0]!.text;
+    const text: string = pendingAdBundle(-1001, 7)!.entries[0]!.text;
     expect(text.endsWith(" https://t.me/spamchannel")).toBe(true);
     expect(text).toHaveLength(AD_DETECT_MESSAGE_MAX_CHARS + 1 + "https://t.me/spamchannel".length);
   });
@@ -171,7 +172,7 @@ describe("入队时的送检文本整形", () => {
         `https://spam.example/${"x".repeat(AD_DETECT_LINK_URL_MAX_CHARS)}`,
       ],
     }), 1_000);
-    const parts: string[] = pendingAdMessages.get("-1001:7")!.entries[0]!.text.split(" ");
+    const parts: string[] = pendingAdBundle(-1001, 7)!.entries[0]!.text.split(" ");
     expect(parts).toHaveLength(AD_DETECT_MAX_LINK_URLS + 1);
     for (const part of parts.slice(1)) expect(part.length).toBeLessThanOrEqual(AD_DETECT_LINK_URL_MAX_CHARS);
   });
@@ -188,6 +189,6 @@ describe("入队时的送检文本整形", () => {
     // 但撑满之后每条新消息都会再挤掉一条，逐条记就是往 logs/ 里刷屏。
     expect(dropped).toHaveLength(1);
     expect(dropped[0]).toContain("sender 7");
-    expect(pendingAdMessages.get("-1001:7")!.pendingDeleteIds).toHaveLength(3);
+    expect(pendingAdBundle(-1001, 7)!.pendingDeleteIds).toHaveLength(3);
   });
 });

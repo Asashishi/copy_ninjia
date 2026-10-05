@@ -180,8 +180,14 @@
 - **音色与风格**：
   - 音色由 `agent.tts.voice` 设置。
   - 基础风格由可选的 `agent.tts.style` 设置（支持热重载），缺省使用内置的 `TTS_DEFAULT_STYLE`。
-  - 发送时自动拼接为 `<基础风格>; 细节: <语气>`。
+  - 发送时自动拼接为 `<基础风格>; 细节: <语气>`；AI 回复的合成在两者之间追加朗读语言要求（见下方台词语言）。
   - `speech_protocol: "xai"` 协议不支持 `style` 字段，语气亦不发送。
+- **台词语言**：AI `send_voice` 的台词语言由可选的 `agent.tts.bot_language` 设置（`en` / `zh` / `ja`，缺省 `ja`；支持热重载，下一轮回复生效）。它切换 `send_voice`、`send_message` 的工具说明与系统提示词里的语音去重规则，并在 AI 回复的合成请求里给基础风格追加该语言的朗读语言要求（`<基础风格>; <朗读语言>; 细节: <语气>`，文案登记在 `VOICE_LANGUAGE_PROMPTS` 的 `speechLanguageStyle`）；不改变 `style`，也不影响 `/send` 与 cron 的台词和合成请求；xai 协议发给接口的合成语言仍由 `language` 决定。
+- **换台词语言时一起改的配置**：AI 回复的朗读语言要求随 `bot_language` 自动追加；`voice`、`style` 与 `prompt/voice_tool.md` 不随它切换。更换 `bot_language` 时建议：
+  - 把 `style` 改成用对应语言写的声线描述（缺省的 `TTS_DEFAULT_STYLE` 是日语描述）。`style` 同时用于 `/send` 与 cron，只写声线、不写朗读语言；`/send` 与 cron 需要指定语言时写在各自的语气里。改了 `style` 仍不理想时，换一个按对应语言设计的音色（`voice`）。
+  - 部署了 `prompt/voice_tool.md` 的，把其中的台词语言、台词示例与语气示例改成对应语言；该文件改完须重启。
+  - xai 协议没有风格字段，朗读语言要求与语气都不发送；改 `language`。
+- **自定义语音工具说明**：在项目根放置 `prompt/voice_tool.md` 后，重启即以其正文整份替换 `send_voice` 的工具说明，不论 `bot_language` 取何值；`text` / `tone` 参数说明与语音去重规则仍按 `bot_language` 选取。文件为空白或非合法 UTF-8 时拒绝启动；不热重载。
 - **采样温度**：Gemini 语音采样的温度由源码常量 `GEMINI_SPEECH_TEMPERATURE`（当前为 `1`）固定。
 
 ---

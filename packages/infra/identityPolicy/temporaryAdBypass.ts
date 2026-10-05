@@ -157,6 +157,17 @@ export function clearTemporaryAdBypassActivity(id: number): boolean {
   return queueTemporaryAdBypassWrite(id, null);
 }
 
+/**
+ * 同 clearTemporaryAdBypassActivity，但持久化 Worker 拒收时抛出：广告判定 true 与拉黑必须先撤掉
+ * 临时累计才能继续处置，拒收即中止本次处置。
+ */
+export function clearTemporaryAdBypassActivityOrThrow(id: number): void {
+  if (clearTemporaryAdBypassActivity(id)) return;
+  throw new Error(
+    `Temporary ad bypass reset for identity ${id} was rejected by the persistence Worker.`
+  );
+}
+
 function settleTemporaryAdBypassWrites(reply: IdentityStoragePersistedReply): void {
   for (const persisted of reply.temporaryAdBypassWrites) {
     if (

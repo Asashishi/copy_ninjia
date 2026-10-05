@@ -9,6 +9,7 @@
 import {
   blockedMemberRemoverHolder,
   blocklistSweepPages,
+  blocklistSweepSchedulerState,
   blocklistSweepState,
   pendingBlockedRemovals,
 } from "../../cache/main/blocklist";
@@ -388,7 +389,8 @@ async function continueBlocklistSweep(
 
 /**
  * Worker 回执：complete 才销 durable 镜像并允许 sweptAt 落地；未落定任务永久
- * 留在 outbox，直到完成或权威状态取消。
+ * 留在 outbox，直到完成或权威状态取消。任务与补扫记录都已被
+ * forgetChatBlocklistWork 撤销（群不再受管）时，迟到回执直接丢弃。
  */
 export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
   const page: BlocklistSweepPageState | undefined =
@@ -438,6 +440,12 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     }
     blocklistSweepPages.delete(event.removalId);
   }
+  if (
+    !pendingBlockedRemovals.has(event.removalId) &&
+    !blocklistSweepState.has(event.chatId)
+  ) {
+    return;
+  }
   if (event.complete) {
     if (
       pendingBlockedRemovals.delete(event.removalId) &&
@@ -452,10 +460,12 @@ export function settleBlockedRemoval(event: BlockedMembersRemovedEvent): void {
     );
     notePermissionBlocked(event.chatId, event.removalId);
   } else {
-    logger.error(
+    const message: string =
       `Blocklist removal ${event.removalId} for chat ${event.chatId} did not fully settle; ` +
-      "it will be retried."
-    );
+      "it will be retried.";
+    // 停机关闸后 Anti-Raid drain 取消在途处置是预期结局，任务留在 outbox 由下次启动续跑。
+    if (blocklistSweepSchedulerState.accepting) logger.error(message);
+    else logger.log(message);
     recordPendingRemovalFailure(event.removalId, event.chatId, "side-effect-incomplete");
   }
 

@@ -13,7 +13,10 @@ import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { logger } from "../../infra/logger";
 import {
   LOCKDOWN_MS,
+  RESTORE_PERMANENT_FAILURE_LOG_LIMIT,
+  RESTORE_PERMANENT_RETRY_MAX_MS,
 } from "../../consts/antiRaid/lockdown";
+import { cappedExponentialMs } from "../../libs/backoff";
 import {
   lastLockdownIntentId,
   lockdownApiChains,
@@ -76,6 +79,7 @@ function dispatchLockdown(chatId: number, event: LockdownMachineEvent): void {
         restoreTimer: undefined,
         retryTimer: undefined,
         restoreAt: undefined,
+        restorePermanentFailures: 0,
       });
     }
   }
@@ -118,6 +122,30 @@ function scheduleLockdownRetry(
     dispatchLockdown(chatId, event);
   }, delayMs);
   entry.retryTimer.unref();
+}
+
+/**
+ * 解除重试的实际等待：连续权限被拒超过 RESTORE_PERMANENT_FAILURE_LOG_LIMIT 次后，从状态机给的
+ * 间隔起按超出次数翻倍，以 RESTORE_PERMANENT_RETRY_MAX_MS 封顶；其余情况沿用状态机的间隔。
+ */
+function restoreRetryDelayMs(chatId: number, delayMs: number): number {
+  const failures: number = lockdownEntries.get(chatId)?.restorePermanentFailures ?? 0;
+  if (failures <= RESTORE_PERMANENT_FAILURE_LOG_LIMIT) return delayMs;
+  return cappedExponentialMs(delayMs, failures - RESTORE_PERMANENT_FAILURE_LOG_LIMIT, RESTORE_PERMANENT_RETRY_MAX_MS);
+}
+
+/**
+ * 机器人在这个群重新确证能限制成员时，把因权限被拒而拉长的解除重试提前到现在。
+ * 只在条目仍处于 restoring 且正等着重试时生效；状态机按 restoreRetryFired 照常推进。
+ */
+export function retryDeniedLockdownRestore(chatId: number): void {
+  const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
+  if (
+    entry?.state.kind !== "restoring" ||
+    entry.retryTimer === undefined ||
+    entry.restorePermanentFailures === 0
+  ) return;
+  scheduleLockdownRetry(chatId, 0, { type: "restoreRetryFired" });
 }
 
 function clearLockdownEntryTimers(entry: LockdownEntry): void {
@@ -170,7 +198,7 @@ function runLockdownEffects(chatId: number, effects: readonly LockdownEffect[]):
         break;
       }
       case "scheduleRestoreRetry":
-        scheduleLockdownRetry(chatId, effect.delayMs, { type: "restoreRetryFired" });
+        scheduleLockdownRetry(chatId, restoreRetryDelayMs(chatId, effect.delayMs), { type: "restoreRetryFired" });
         break;
       case "scheduleReapplyRetry":
         scheduleLockdownRetry(chatId, effect.delayMs, { type: "reapplyRetryFired" });

@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { botPermissions } from "../helpers/botPermissions";
-import { settleBackgroundWork } from "../libs/helpers";
+import { settleBackgroundWork } from "../helpers/common";
 const {
   blockedUserIds,
   expectLastRemoval,

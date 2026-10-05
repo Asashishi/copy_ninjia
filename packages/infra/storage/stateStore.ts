@@ -156,9 +156,9 @@ export function getTtsUsage(): TtsDailyUsage | null {
 /**
  * 接管 AI Worker 回传的全量计数（ttsUsage 事件）并交给后台写：合并窗口
  * （STATE_BACKGROUND_SAVE_DELAY_MS）到期或下一次等待落盘的写入时写出；写失败按
- * StateStore 既有的重试与 fatal 通道处理。
+ * StateStore 既有的重试与 fatal 通道处理。null（退还到两项皆 0）写出时不带 `ttsUsage` 键。
  */
-export function adoptTtsUsage(usage: TtsDailyUsage): void {
+export function adoptTtsUsage(usage: TtsDailyUsage | null): void {
   globalTtsUsageState.current = usage;
   saveGlobalStateInBackground("record TTS daily usage");
 }

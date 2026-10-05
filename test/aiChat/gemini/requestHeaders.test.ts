@@ -1,4 +1,4 @@
-import { TTS_DEFAULT_STYLE } from "../../../packages/consts/aiChat/voiceMessage";
+import { TTS_DEFAULT_BOT_LANGUAGE, TTS_DEFAULT_STYLE } from "../../../packages/consts/aiChat/voiceMessage";
 /**
  * google provider 的 base_url 与 headers 落到真实请求上：用真实 @google/genai SDK，
  * 只替换 globalThis.fetch，核对 generateContent 与 Interactions（语音合成）两条路径
@@ -66,7 +66,7 @@ beforeEach(() => {
     text: googleCapability("text-key"),
     summary: googleCapability("summary-key"),
     media: googleCapability("media-key"),
-    tts: { ...googleCapability("tts-key"), voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, dailyLimit: 100, dailyReserveQuota: 25 },
+    tts: { ...googleCapability("tts-key"), voice: "Leda", speechProtocol: undefined, style: TTS_DEFAULT_STYLE, language: undefined, botLanguage: TTS_DEFAULT_BOT_LANGUAGE, dailyLimit: 100, dailyReserveQuota: 25 },
   });
 });
 

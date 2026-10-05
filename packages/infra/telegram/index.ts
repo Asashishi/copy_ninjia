@@ -32,7 +32,6 @@ export {
   setMessageReaction,
   setMessageReactions,
 } from "./actions/messageLifecycle";
-export type { DeleteMessageOutcome } from "./actions/messageLifecycle";
 export {
   banChatMember,
   banChatMemberWithOutcome,

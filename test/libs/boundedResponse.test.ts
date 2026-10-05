@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readBoundedResponseBytes, readBoundedResponseText } from "../../packages/libs/boundedResponse";
-import { chunkedResponse } from "./helpers";
+import { chunkedResponse } from "../helpers/common";
 import { BOUNDED_RESPONSE_CHUNK_THRESHOLD, BOUNDED_RESPONSE_COALESCE_BYTES } from "../../packages/consts/streams";
 
 describe("bounded response reader", () => {

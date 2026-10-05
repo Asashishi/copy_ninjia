@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { CachedUser } from "../../packages/types/chatState";
-import { settleTestBatch } from "../libs/helpers";
+import { settleTestBatch } from "../helpers/common";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { longestTemplatePart } from "../helpers/templateText";
+
+/** 本文件的默认通知风格（BOT_ATMOSPHERE 替身为 teasing）下 /white 的文案表。 */
+const TEASING_WHITE = ATMOSPHERE_TEXTS.teasing.WHITE_COMMAND_TEXTS;
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const setWhitelistMembership = mock((): {
@@ -156,7 +160,7 @@ describe("/white", () => {
     await handleWhiteCommand(context(2, "100 disable"));
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("只准给其它身份添加默认权限白名单"),
+      text: TEASING_WHITE.delegatedDisableRejection,
     }));
   });
 
@@ -231,12 +235,12 @@ describe("/white", () => {
 
     await handleWhiteCommand(context(1, "100 enable"));
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("本来就在白名单"),
+      text: expect.stringContaining(longestTemplatePart(TEASING_WHITE.alreadyEnabled)),
     }));
 
     await handleWhiteCommand(context(1, "200 disable"));
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("本来就不在白名单"),
+      text: expect.stringContaining(longestTemplatePart(TEASING_WHITE.alreadyDisabled)),
     }));
   });
 
@@ -328,7 +332,7 @@ describe("/white", () => {
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
-      text: expect.stringContaining("才不用塞进白名单表里"),
+      text: TEASING_WHITE.superAdminEnable,
       replyToMessageId: 10,
     });
 
@@ -339,7 +343,7 @@ describe("/white", () => {
     // 回执因此不能说成「已经从白名单里踢出去啦」：紧接着 /permission query
     // 仍会打印全开，那是一份与事实相反的战报。
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("残留条目已经被本天才清掉"),
+      text: TEASING_WHITE.superAdminDisableCleared,
     }));
 
     sendMessage.mockClear();
@@ -349,7 +353,7 @@ describe("/white", () => {
     }));
     await handleWhiteCommand(context(1, "1 disable"));
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("本来就没有超级管理员的残留条目"),
+      text: TEASING_WHITE.superAdminDisableNoEntry,
     }));
   });
 
@@ -358,7 +362,7 @@ describe("/white", () => {
     await handleWhiteCommand(context(1, "enable", repliedChannel(-1001)));
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("这是本群自己的身份"),
+      text: TEASING_WHITE.currentChatTarget,
     }));
 
     // 直接把本群 id 粘进参数是同一个落点，同样要挡住。
@@ -366,7 +370,7 @@ describe("/white", () => {
     await handleWhiteCommand(context(1, "-1001 enable"));
     expect(setWhitelistMembership).not.toHaveBeenCalled();
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("这是本群自己的身份"),
+      text: TEASING_WHITE.currentChatTarget,
     }));
   });
 
@@ -378,7 +382,7 @@ describe("/white", () => {
     await handleWhiteCommand(context(1, "100 enable"));
 
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("没能把白名单写进硬盘"),
+      text: TEASING_WHITE.mutationFailed,
     }));
   });
 
@@ -395,7 +399,7 @@ describe("/white", () => {
 
     expect(confirmWhitelistEntryPersisted).toHaveBeenCalledWith(100, true);
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-      text: expect.stringContaining("没能把白名单写进硬盘"),
+      text: TEASING_WHITE.mutationFailed,
     }));
   });
 });

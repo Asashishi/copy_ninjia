@@ -31,7 +31,7 @@
 | `bun run perf:hot-path-gate` | **ホットパス性能ゲート** | 厳選 12 ホットパスシナリオのメモリ/GC/JIT ハードゲート（`check` に組み込み済み） |
 | `bun run perf:join-log` | 入室ログ性能ベンチマーク | 25 万件規模の入室ログ容量/スナップショット/追記記帳の独立プロセス比較ベンチマーク |
 | `bun run perf:identity-database` | ID データベースベンチマーク | ID データベースの 6 項目にわたるコールド/ホット読み書きの独立プロセスベンチマーク |
-| `bun run perf:full` | 全量性能ベンチマークスイート | 6 セクションで各 3 ラウンドの独立子プロセスを実行（`--write-doc` で 09 ドキュメントへ書き戻し） |
+| `bun run perf:full` | 全量性能ベンチマークスイート | 6 セクションで各 3 ラウンドの独立子プロセスを実行（`--write-doc` で 3 言語の 10 パフォーマンスページと `performance-result.json` を更新） |
 | `bun run perf:review` | 専門性能再検証 | ホットスポット、AI 返信/ペイロード/音声エンコード、完全コマンドチェーン、Disk I/O Worker 負荷を網羅 |
 | `bun run build -- --version <tag>` | バイナリパッケージ構築 | プレフィックスなしのバージョン番号指定が必須。`dist/` 配布物と SHA-256 を出力 |
 | `bun run release:check -- --version <tag>` | リリース前全量自検 | frozen lockfile + check + カバレッジ突合 + 障害注入 + バイナリ構築検証 |
@@ -54,7 +54,7 @@
   - **構造とリンク**：コード配置、ローカル Markdown リンク、ドキュメント内の名指しファイルの存在性、tracked ファイルの実行権限を検査。
   - **境界隔離**：定数とキャッシュ帰属（`packages/cache/<owner>/` スレッド単一所有権境界）を照合し、実際のモジュールグラフに基づいて Worker と Telegram 能力の隔離を検証。
   - **呼び出し安全**：`packages/workers/` 配下で生成される各タイマーハンドルの `unref()`、Node API 互換モジュールと `Buffer` ホワイトリストの検査、引数読み取りにおける `Bun.argv` の強制。
-  - **ゲート突合**：Telegram 提示メッセージ削除例外、現在のコールド移行エントリ、障害注入スイート一覧、package.json の直接依存宣言、14 か所のカバレッジ宣言、性能記録を静的に突合。テスト内で大文字定数とリテラルを直接比較することを禁止。
+  - **ゲート突合**：Telegram 提示メッセージ削除例外、現在のコールド移行エントリ、障害注入スイート一覧、package.json の直接依存宣言、14 か所のカバレッジ宣言、性能記録を静的に突合。テスト内で大文字定数と数値リテラルを直接比較することを禁止し、matcher の引数に `packages/consts` の文字列定数と完全に同じリテラルを書くことも、漢字・仮名 6 字以上を含むその文言の断片を書き写すことも禁止（期待値は定数、または template 定数を描画した固定部分から取る。`test/helpers/templateText.ts` を参照）。プロンプトの文言そのものを検証する契約テストは `scripts/conventions/testAssertionFragments.ts` の `CONSTANT_TEXT_CONTRACT_EXEMPTIONS` にファイル名とテスト名で登録し、どの命中にも使われない免除も報告します。
 
 ---
 
@@ -80,7 +80,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**5920 tests / 502 files / 320978 `expect()` calls**。全ソースコードの**関数カバレッジは 98.14%、行カバレッジは 98.54%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**6117 tests / 515 files / 436787 `expect()` calls**。全ソースコードの**関数カバレッジは 98.24%、行カバレッジは 98.69%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ---
 

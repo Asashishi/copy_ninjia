@@ -115,8 +115,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/libs/fileAccess.ts": {
     "node:fs": {
-      symbols: ["accessSync", "constants", "lstatSync", "statSync"],
-      purpose: "startup file type and access-mode validation",
+      symbols: ["accessSync", "constants", "lstatSync", "readdirSync", "statSync"],
+      purpose: "startup file type and access-mode validation and optional-directory listing",
     },
   },
   "packages/workers/diskIO/adSampleFile.ts": {
@@ -145,8 +145,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/aiCacheFile.ts": {
     "node:fs": {
-      symbols: ["mkdirSync", "readdirSync"],
-      purpose: "AI cache statistics directory creation and stale-file cleanup",
+      symbols: ["mkdirSync"],
+      purpose: "AI cache statistics directory creation",
     },
   },
   "packages/workers/diskIO/logFiles.ts": {
@@ -169,8 +169,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/wedMemberFiles.ts": {
     "node:fs": {
-      symbols: ["mkdirSync", "readdirSync"],
-      purpose: "wed member snapshot directory inspection and initialization",
+      symbols: ["mkdirSync"],
+      purpose: "wed member snapshot directory initialization",
     },
   },
   "packages/workers/diskIO/verificationRecovery.ts": {

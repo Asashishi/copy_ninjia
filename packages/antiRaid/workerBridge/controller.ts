@@ -226,6 +226,11 @@ export function initAntiRaid(): void {
   } catch (error: unknown) {
     antiRaidRuntimeState.initialized = false;
     stopEmergencyLockdownRecoveries();
+    // 生命周期只在 initAntiRaid 返回后才置位 antiRaidInitialized，停机不会替这里终止
+    // 已经建好的 Worker，必须在失败分支自己收掉。
+    void terminateAntiRaidWorker().catch((terminateError: unknown): void => {
+      logger.error("Failed to terminate the Anti-Raid Worker after its initialization failed:", terminateError);
+    });
     throw error;
   }
 }

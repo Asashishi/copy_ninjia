@@ -16,7 +16,7 @@
 
 ## 🎭 复读模式
 
-复读目标是全局唯一的：同一实例同时只能「变成」一个目标，但复读只发生在发起命令的群中。`/copy stop` 可在任意群停止当前复读。
+复读目标是全局唯一的：同一实例同时只能「变成」一个目标，但复读只发生在发起命令的群中。`/copy stop` 可在任意群停止当前复读。发起复读的群被 `/init disable`、机器人离群或被撤管理员时，复读随之停止并立即落盘，头像在后台静默复原为默认头像，不在群里发消息。
 
 | 命令 | 行为 |
 | :---: | :--- |
@@ -120,9 +120,9 @@
 | `/block … enable` | `isCanBlock` | 拉黑：写进永久黑名单，并在所有机器人管理的群中封禁目标；目标可用回复消息、`@username` 或用户 id 指定 |
 | `/block … disable` | `isCanUnBlock` | 从 SQLite 权威黑名单事务删除目标，并在机器人管理的全部群解除封禁；目标方式同 `/block … enable`，也接受频道负数 id，拒绝本群自己的身份 |
 | `/ai_chat enable\|disable` | `isCanControllAIPermission` | 开关本群 AI 闲聊 |
-| `/clear_context` | `isCanClearContext` | 清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要、待晋升摘要与心情，并将 `chat_states.ai_context` 置 NULL；使本群在途回复代数失效。不接受参数，部署配置写坏或 AI Worker 没起来时同样执行 |
-| `/mood query` | 群成员 | 查询本群 AI 当前有效心情，不触发重抽 |
-| `/mood switch` | `isCanSwitchMood` | 立即重抽本群 AI 心情，并在 Worker 回执后回复新心情名 |
+| `/clear_context` | `isCanClearContext` | 清空本群 AI 上下文记忆：Worker 内的滚动逐字缓存、中期摘要与待晋升摘要，并将 `chat_states.ai_context` 置 NULL；使本群在途回复代数失效。不接受参数，部署配置写坏或 AI Worker 没起来时同样执行 |
+| `/mood query` | 群成员 | 查询 AI 当前有效心情（全局一份，各群共用），不触发重抽 |
+| `/mood switch` | `isCanSwitchMood` | 立即重抽 AI 心情（对所有群生效），并在 Worker 回执后回复新心情名 |
 | `/ad_detect enable\|disable` | `isCanControllAdDetectPermission` | 开关本群广告检测，非受保护身份命中后按 `/block` 同权处置 |
 | `/flood_control enable\|disable` | `isCanControllFloodControlPermission` | 开关本群防刷屏禁言（默认关闭） |
 | `/antiraid enable\|disable` | `isCanControllAntiRaidPermission` | 开关本群入群验证与防冲群私密模式（默认关闭） |
@@ -201,6 +201,7 @@
 - **心跳与刷新机制**：
   - 每 **7 条** 群消息触发一次入口刷新。
   - 用户专属入口在首次激活及每次刷新后等待 **30 秒** 补发；若目标连续 **45 秒** 未发言，下次发言立即补发。
+- **群不再受管时**：`/init disable` 或机器人被撤管理员时静默结束本群全部 gag 并删除提示；机器人已离群时直接释放会话与名额，不再尝试删除。
 
 #### 6. 黑名单：`/block`
 - **操作语法**：`/block <目标> enable` 拉黑，`/block <目标> disable` 解除。目标支持回复、`@username`、用户 ID（正整数）以及频道负数 ID（仅解封支持）。
@@ -211,7 +212,7 @@
 - **`/ad_detect`**：每条消息按发送者（`chatId:senderId`）归并成消息串，队列每秒取一批交 `agent.ad_detect` 模型判定。命中后按 `/block` 同权处置，并在群内播报封禁理由（30 秒自删）。纯代理链接（`vless://`、`vmess://`、`trojan://`、`ss://`）且无招募推销文案时不判广告。
 - **`/flood_control`（防刷屏）**：同一个人在同超级群内 1 分钟发言达到 15 条，就地禁言 3 分钟并在群内播报（30 秒自删）。管理员、频道马甲不计数；豁免看 `isCanBypassFloodControl`。
 - **`/antiraid`**：开启入群验证与防冲群私密模式。关闭时两条链路事件全部停止，发出的验证提醒立即撤回。广告检测、防刷屏、黑名单不受影响。
-- **`/batch_kick`**：仅超级管理员可用，按入群日志在指定时间窗（如 `30m`、`2h`、`1d`，≤ 24 小时）内踢出新成员，只踢不封，白名单与黑名单身份均跳过。
+- **`/batch_kick`**：仅超级管理员可用，按入群日志在指定时间窗（如 `30m`、`2h`、`1d`，≤ 24 小时）内踢出新成员，只踢不封，白名单与黑名单身份均跳过。有记录时先回「已受理」（记录数与时长），踢人在后台进行，结束后发送战报；同群同一时间只跑一批，上一批未结束时回「仍在处理」，后台等待位已满时回忙碌提示；处理途中本群不再受管（`/init disable`、机器人离群或被撤管理员）时静默停止，不发战报。
 
 #### 8. 私聊中转与语音代发：`/send`
 - 开启前探测目标群是否可达，中转期间超级管理员在私聊发送的每条消息原样转发至目标群。

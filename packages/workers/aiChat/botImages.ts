@@ -70,7 +70,7 @@ function describeBotImage(
     fileUniqueId,
     voiceMime: undefined,
     voiceDurationSeconds: 0,
-    signal: replyGenerationSignal(chatId, generation),
+    signal: replyGenerationSignal(generation),
   }).then((description: string | null): void => {
     if (description === null || !isCachedReplyGenerationCurrent(chatId, generation)) return;
     fillBotImage(target, description);
@@ -97,13 +97,15 @@ export function recordBotImage(msg: AiRecordBotImageMessage): void {
     dirtyMemoryChats.add(msg.chatId);
     return;
   }
+  const now: number = Date.now();
   const entry: BufferedMessage | null = buildBufferedMessage(
     buildSelfRecordMessage({ chatId: msg.chatId, self, messageId: msg.messageId, text }),
-    text
+    text,
+    now
   );
   if (entry === null) return;
   entry.pendingImage = { origin: "command", caption };
-  pushBufferedMessage(msg.chatId, entry);
+  pushBufferedMessage(msg.chatId, entry, now);
 }
 
 /** trackGeneratedImage 的入参。 */

@@ -5,13 +5,12 @@ import { createFlushBarrier } from "../../libs/flushBarrier";
 import type { AiMemoryUsage } from "../../types/aiChat/memory";
 import type { AiBotInfo, AiInitMessage } from "../../types/aiChat/protocol";
 import type {
-  AiChatInvalidateWaiter,
   AiMemoryDeleteWaiter,
   AiMemoryTeardown,
-  MoodRequestWaiter,
-  VoiceSynthesisWaiter,
-  WebDigestWaiter,
 } from "../../types/aiChat/waiters";
+import type { VoiceSynthesisResult } from "../../types/aiChat/voiceMessage";
+import type { WebDigestCompositionResult } from "../../types/webDigest";
+import type { WorkerRequestOutcome, WorkerRequestTable } from "../../types/workerRequest";
 
 /**
  * AI Worker 记忆回传 barrier。模块加载时创建，Worker 终止时统一结算等待者；
@@ -136,40 +135,43 @@ export const aiMemoryDeleteWaiters: Map<number, AiMemoryDeleteWaiter[]> = new Ma
  * 容量：同时处于「已请求清除、还没等到 Worker 确认」的群数，上界为受管群数。
  */
 export const purgedAiMemoryChats: Set<number> = new Set();
-/** 在途心情查询/重抽请求的等待表（requestId → waiter）：成功回执、超时或
- *  Worker 崩溃/终止时结算并删除（见 aiChat/workerBridge.ts），容量受并发
- *  /mood query 与 /mood switch 命令数约束。 */
-export const moodRequestWaiters: Map<number, MoodRequestWaiter> = new Map();
-/** 本进程内已分配的最高心情请求 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
-export const moodRequestCounter: { current: number } = { current: 0 };
 /**
- * requestId → 语音合成等待者（`/send` 代发 TTS 与 cron `send_voice`，见
- * aiChat/voiceSynthesis.ts）。发出 synthesizeVoice 前登记；回执、等待超时、调用方
- * 取消、Worker 崩溃重建、放弃或终止时结算并删除，Worker 重建不重放：旧实例的回执不可能
- * 再到达，一律按「worker unavailable」结算。容量等于同时在途的合成请求数，上界为延迟
- * 命令执行器的并发与 cron 同时在途的轮数之和；不设淘汰。
+ * 心情查询/重抽请求的等待表（结算语义见 libs/workerRequestTable.ts，见 aiChat/workerBridge.ts 的
+ * requestAiMood）：回执、超时、投递被拒或 Worker 崩溃重建 / 放弃 / 终止时结算并删除，Worker 重建
+ * 不重放。容量受并发 /mood query 与 /mood switch 命令数约束；requestId 计数器进程重启后从 0 重建。
  */
-export const voiceSynthesisWaiters: Map<number, VoiceSynthesisWaiter> = new Map();
-/** 本进程内已分配的最高语音合成 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
-export const voiceSynthesisRequestCounter: { current: number } = { current: 0 };
+export const moodRequests: WorkerRequestTable<WorkerRequestOutcome<string>> = {
+  waiters: new Map(),
+  counter: { current: 0 },
+};
 /**
- * requestId → 摘要组稿等待者（cron `send_web_digest`，见 aiChat/webDigest.ts）。发出
- * composeWebDigest 前登记；回执、等待超时、调用方取消、Worker 崩溃重建、放弃或终止时结算并删除，
- * Worker 重建不重放：旧实例的回执不可能再到达，一律按「worker unavailable」结算。容量等于同时
- * 在途的组稿请求数，上界为 cron 同时在途的轮数；不设淘汰。
+ * 语音合成等待表（`/send` 代发 TTS 与 cron `send_voice`，见 aiChat/voiceSynthesis.ts）。发出
+ * synthesizeVoice 前登记；回执、等待超时、调用方取消、投递被拒或 Worker 崩溃重建 / 放弃 / 终止时
+ * 结算并删除，Worker 重建不重放：旧实例的回执不可能再到达，一律按「worker unavailable」结算。
+ * 容量等于同时在途的合成请求数，上界为延迟命令执行器的并发与 cron 同时在途的轮数之和；不设淘汰。
  */
-export const webDigestWaiters: Map<number, WebDigestWaiter> = new Map();
-/** 本进程内已分配的最高摘要组稿 requestId；进程重启后旧请求不存在，可安全从 0 重建。 */
-export const webDigestRequestCounter: { current: number } = { current: 0 };
+export const voiceSynthesisRequests: WorkerRequestTable<VoiceSynthesisResult> = {
+  waiters: new Map(),
+  counter: { current: 0 },
+};
 /**
- * requestId → invalidate waiter；回执、超时、Worker 崩溃或终止时结算并删除，
- * 四条路径都会清空条目，没有别的保留方。Worker 重建不重放：旧实例的回执不可能
- * 再到达，重建前已按「Worker 不可用」结算。容量受同时在途的 `/ai_chat disable`、
- * `/clear_context` 与群 teardown 数约束，上界为受管群数。
+ * 摘要组稿等待表（cron `send_web_digest`，见 aiChat/webDigest.ts）。结算与重建口径同
+ * voiceSynthesisRequests；容量等于同时在途的组稿请求数，上界为 cron 同时在途的轮数；不设淘汰。
  */
-export const aiChatInvalidateWaiters: Map<number, AiChatInvalidateWaiter> = new Map();
-/** 本进程内 invalidate 回执关联 ID。 */
-export const aiChatInvalidateRequestCounter: { current: number } = { current: 0 };
+export const webDigestRequests: WorkerRequestTable<WebDigestCompositionResult> = {
+  waiters: new Map(),
+  counter: { current: 0 },
+};
+/**
+ * 群失效（invalidateChat）等待表：回执、超时、投递被拒或 Worker 崩溃重建 / 放弃 / 终止时结算并删除，
+ * 没有别的保留方；requestId 同时写进 pendingAiMemoryTeardowns 关联 teardown 收尾。Worker 重建
+ * 不重放：旧实例的回执不可能再到达，重建前已按「Worker 不可用」结算。容量受同时在途的
+ * `/ai_chat disable`、`/clear_context` 与群 teardown 数约束，上界为受管群数。
+ */
+export const aiChatInvalidateRequests: WorkerRequestTable<WorkerRequestOutcome<undefined>> = {
+  waiters: new Map(),
+  counter: { current: 0 },
+};
 /** Worker 是否仍可接收 invalidate 并回传 memoryDeleted；give-up 后显式关闭。 */
 export const aiChatWorkerState: { available: boolean } = { available: false };
 /**

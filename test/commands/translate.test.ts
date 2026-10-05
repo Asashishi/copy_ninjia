@@ -11,6 +11,8 @@ import {
 import { teardownRegisteredChat } from "../../packages/infra/chatTeardownRegistry";
 import { loggerStub } from "../helpers/loggerMock";
 import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
+import { longestTemplatePart } from "../helpers/templateText";
 import type { Atmosphere } from "../../packages/types/atmosphere";
 
 const sendCommandMessage = mock(async (..._args: unknown[]): Promise<number> => 1);
@@ -164,7 +166,7 @@ describe("/translate 独立命令", () => {
     await handleTranslateCommand(context("stop 7"));
     expect(translateStates.get(-1001)).toHaveLength(1);
     expect(persistChatState).toHaveBeenCalledTimes(1);
-    expect(sendCommandMessage.mock.calls.at(-1)?.[0]).toMatchObject({ text: expect.stringContaining("本来就没在用翻译") });
+    expect(sendCommandMessage.mock.calls.at(-1)?.[0]).toMatchObject({ text: expect.stringContaining(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.translateNotRunning)) });
   });
 
   test("所有方向各群独立，活动 copy 与头像冷却不阻挡翻译", async () => {

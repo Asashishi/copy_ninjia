@@ -6,8 +6,9 @@
  *   表达，入队必须一起增——缺一张就会让「谁在待检」出现两个互相矛盾的答案，
  *   见 docs/cn/04-invariants.md。出队释放在 queue.ts 的派发循环里，那是调度
  *   语义，两行紧挨着写才看得出它们是同一件事的两半。
- * - `pendingAdMessages`：每个发送者的消息串，撞上 AD_DETECT_MAX_PENDING_SENDERS
- *   时拒绝新的不同 key，而不是淘汰队首。
+ * - `pendingAdMessages`：每个发送者的消息串（群 -> 发送者两层表），撞上
+ *   AD_DETECT_MAX_PENDING_SENDERS 时拒绝新的不同 key，而不是淘汰队首。读写一律经本文件的
+ *   访问函数，条数同步记在 `pendingAdBundleCount`。
  * - `recentlyDisposedAdKeys`：逐 key 的处置抑制窗口，读到即回收；处置路径的
  *   写入在 verdict.ts，清群与停机的整表清理在 queue.ts。
  *
@@ -22,6 +23,7 @@ import {
   adDetectQueue,
   adDetectSaturated,
   inFlightAdDetectKeys,
+  pendingAdBundleCount,
   pendingAdMessages,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
@@ -36,7 +38,8 @@ import {
   isNewAdBundleAtCapacity,
 } from "../../../states/adDetectAdmission";
 import { latestSeq } from "./bundle";
-import { verificationKey } from "../../../libs/verificationKey";
+import { requireVerificationKey, verificationKey } from "../../../libs/verificationKey";
+import type { ParsedVerificationKey } from "../../../libs/verificationKey";
 import type { AdMessageBundle } from "../../../types/antiRaid/adDetect";
 import type { AdRequeueDecision } from "../../../types/states/adDetectAdmission";
 
@@ -57,18 +60,65 @@ export function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
   adDetectQueue.push(key);
 }
 
+/** 某群某发送者此刻的消息串。 */
+export function pendingAdBundle(chatId: number, senderId: number): AdMessageBundle | undefined {
+  return pendingAdMessages.get(chatId)?.get(senderId);
+}
+
+/** 按队列里的键取消息串；键只来自本线程的 AdMessageBundle.key。 */
+export function pendingAdBundleForKey(key: string): AdMessageBundle | undefined {
+  const parsed: ParsedVerificationKey = requireVerificationKey(key);
+  return pendingAdBundle(parsed.chatId, parsed.userId);
+}
+
 /**
- * 把一串消息写进待检表。
+ * 把一串新消息写进待检表；已在表里的串原地更新，不经过这里。
  *
  * **本函数不判容量**：唯一调用方 enqueueAdCandidate 是纯同步的，它在清洗
  * 正文之前就问过 rejectNewAdBundleAtCapacity，满载的新 key 在那里已经返回；
- * 走到这里的要么是已在表里的 key（不占新名额），要么刚通过那道闸，中间没有
- * await 让 pendingAdMessages 变化。容量判据因此只有 isNewAdBundleAtCapacity
- * 一处，不留第二道需要手工保持同步的闸。
+ * 走到这里的新串刚通过那道闸，中间没有 await 让 pendingAdMessages 变化。容量判据
+ * 因此只有 isNewAdBundleAtCapacity 一处，不留第二道需要手工保持同步的闸。
  */
-export function storeBundle(key: string, bundle: AdMessageBundle): void {
-  pendingAdMessages.set(key, bundle);
+export function storeBundle(bundle: AdMessageBundle): void {
+  let bundles: Map<number, AdMessageBundle> | undefined = pendingAdMessages.get(bundle.chatId);
+  if (bundles === undefined) {
+    bundles = new Map();
+    pendingAdMessages.set(bundle.chatId, bundles);
+  }
+  bundles.set(bundle.senderId, bundle);
+  pendingAdBundleCount.current++;
   refreshAdDetectCapacitySaturation();
+}
+
+/** 删掉某群某发送者的消息串；不存在时什么都不做。容量状态由调用方按需刷新。 */
+export function deletePendingAdBundle(chatId: number, senderId: number): void {
+  const bundles: Map<number, AdMessageBundle> | undefined = pendingAdMessages.get(chatId);
+  if (bundles?.delete(senderId) !== true) return;
+  pendingAdBundleCount.current--;
+  if (bundles.size === 0) pendingAdMessages.delete(chatId);
+}
+
+/** 停管或关开关：整层删掉这个群的全部消息串。 */
+export function deletePendingAdBundlesInChat(chatId: number): void {
+  const bundles: Map<number, AdMessageBundle> | undefined = pendingAdMessages.get(chatId);
+  if (bundles === undefined) return;
+  pendingAdBundleCount.current -= bundles.size;
+  pendingAdMessages.delete(chatId);
+}
+
+/** 临时免检：删掉这个身份在各群的消息串。 */
+export function deletePendingAdBundlesOfSender(senderId: number): void {
+  for (const [chatId, bundles] of pendingAdMessages) {
+    if (!bundles.delete(senderId)) continue;
+    pendingAdBundleCount.current--;
+    if (bundles.size === 0) pendingAdMessages.delete(chatId);
+  }
+}
+
+/** Worker 停止：清空全部消息串。 */
+export function clearPendingAdBundles(): void {
+  pendingAdMessages.clear();
+  pendingAdBundleCount.current = 0;
 }
 
 /**
@@ -113,7 +163,7 @@ export function expireAdDetectDisposalMarkers(now: number = performance.now()): 
  * 新发送者是否要被容量闸挡下。**纯 O(1)**：消息热路径上不做任何表扫描。
  */
 export function rejectNewAdBundleAtCapacity(): boolean {
-  if (!isNewAdBundleAtCapacity(pendingAdMessages.size)) return false;
+  if (!isNewAdBundleAtCapacity(pendingAdBundleCount.current)) return false;
   noteAdDetectCapacitySaturation(true);
   return true;
 }
@@ -125,7 +175,7 @@ export function rejectNewAdBundleAtCapacity(): boolean {
  */
 export function releaseAdDetectDedupKey(chatId: number, senderId: number): void {
   // 只动处置抑制表：待检表与队列认领都不属于本链路，容量状态也只看
-  // pendingAdMessages.size，由那张表自己的每个删除点负责刷新。封禁批次
+  // pendingAdBundleCount，由那张表自己的每个删除点负责刷新。封禁批次
   // 也可能来自手工 /block 或入群秒踢，那些 key 本来就没有标记，删不到即无事。
   recentlyDisposedAdKeys.delete(verificationKey(chatId, senderId));
 }
@@ -159,6 +209,6 @@ function noteAdDetectCapacitySaturation(saturated: boolean): void {
 /** 按待检表的现场刷新容量状态；它是唯一一张会撞上接纳硬顶的表。 */
 export function refreshAdDetectCapacitySaturation(): void {
   noteAdDetectCapacitySaturation(
-    isNewAdBundleAtCapacity(pendingAdMessages.size)
+    isNewAdBundleAtCapacity(pendingAdBundleCount.current)
   );
 }

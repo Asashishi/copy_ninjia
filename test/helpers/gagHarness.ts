@@ -17,7 +17,7 @@ import type { CachedUser } from "../../packages/types/chatState";
 import type { GagSession } from "../../packages/types/gag";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "./botPermissions";
-import { settleTestBatch } from "../libs/helpers";
+import { settleTestBatch } from "./common";
 // 这三个模块不在被替身覆盖的范围内（只依赖 consts/types/libs），因此可以静态
 // 导入；被测的 packages/commands/gag 必须由各用例文件在本模块的 mock.module
 // 生效之后自行 await import，静态导入会抢在替身安装之前把真实依赖钉死。
@@ -284,7 +284,7 @@ export function lastEphemeralText(): string {
  * 清空会话表、在途后台任务与全部 timer。等价于 commands/gag/runtime.ts 的
  * resetGagSessions，但只碰 cache/main/gag，因此不必先 await import 被测模块。
  */
-export function resetGagTestState(): void {
+function resetGagTestState(): void {
   for (const sessions of gagSessionsByChat.values()) {
     for (const session of sessions) {
       if (session.timer !== null) clearTimeout(session.timer);

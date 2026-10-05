@@ -50,7 +50,7 @@ import type { RemoveBlockedMembersParams } from "../../types/blocklist";
 import { antiRaidDispatchSignal } from "../../cache/workers/antiRaid/tasks";
 import { trackAntiRaidTask } from "./taskTracker";
 import { releaseAdDetectDedupKey } from "./adDetect/queueState";
-import { sleep } from "../../libs/sleep";
+import { sleepUnlessAborted } from "../../libs/sleep";
 
 /**
  * 单个 id 的处置结局。
@@ -120,13 +120,7 @@ async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneP
     if (attempt < BLOCKLIST_REMOVAL_MAX_ATTEMPTS) {
       // 停机 drain 的预算是秒级，退避却按 5s、10s 放大：取消后既不开始、也不继续
       // 等这次退避，本 id 按未落定结算，由 durable outbox 在下一次启动重放。
-      if (signal.aborted) return "failed";
-      try {
-        await sleep(BLOCKLIST_REMOVAL_RETRY_DELAY_MS * attempt, signal);
-      } catch (error: unknown) {
-        if (signal.aborted) return "failed";
-        throw error;
-      }
+      if (!await sleepUnlessAborted(BLOCKLIST_REMOVAL_RETRY_DELAY_MS * attempt, signal)) return "failed";
     }
   }
   return participantInvalid ? "participantInvalid" : "failed";
@@ -147,6 +141,89 @@ interface RemoveBatchResult {
   readonly participantInvalidUserIds: number[];
   /** 结局为 removed、absent 或 targetIsAdmin 的用户 ID，按处置顺序；不含频道 ID。 */
   readonly settledUserIds: number[];
+}
+
+interface ApplyRemovalOutcomeParams {
+  readonly chatId: number;
+  readonly userId: number;
+  readonly outcome: RemovalOutcome;
+  readonly result: RemoveBatchResult;
+}
+
+/**
+ * 把一个 id 的处置结局并进批次结果。
+ * @returns false 表示机器人在这个群缺封禁权限，整批就此停下。
+ */
+function applyRemovalOutcome({ chatId, userId, outcome, result }: ApplyRemovalOutcomeParams): boolean {
+  if (outcome === "removed") {
+    if (userId > 0) result.settledUserIds.push(userId);
+  } else if (outcome === "absent") {
+    result.settledUserIds.push(userId);
+  } else if (outcome === "forbidden") {
+    result.complete = false;
+    result.permissionDenied = true;
+    // 机器人在这个群根本封不了人，剩下的 id 只会一个个撞上同一句 400。补扫
+    // 可能有几千个 id，每个两次注定失败的请求外加分批暂停，全压在与验证超时
+    // 踢人共用的 kick 类别上——发现这件事的这一次补扫本身就是要避免的风暴。
+    return false;
+  } else if (outcome === "targetIsAdmin") {
+    // 就地结算：这个 id 在这个群封不掉，但那是他自己的管理员身份决定的，
+    // 与机器人的权限无关。算进未落定只会让整批永远重试；算成群级权限受阻
+    // 更糟——那会连累同批其余 id 一起停摆。改用一条独立回执让主线程保住这个
+    // 群的补扫欠账（sweptAt 不落），管理员降级后由下一次补扫（或他自己重新
+    // 入群时的秒踢）接上——那正是这行日志承诺的事。
+    result.targetIsAdmin = true;
+    result.settledUserIds.push(userId);
+    logger.error(
+      `Blocklisted user ${userId} is an administrator of chat ${chatId} and cannot be banned; ` +
+      "settling this target and continuing with the rest of the batch."
+    );
+  } else {
+    result.complete = false;
+    if (outcome === "participantInvalid") result.participantInvalidUserIds.push(userId);
+  }
+  return true;
+}
+
+interface FinishRemovalBatchParams {
+  readonly chatId: number;
+  /** 批次开始时的处置世代；群在这期间被停管时不再删公告。 */
+  readonly epoch: number;
+  readonly announcementMessageId: number | undefined;
+  readonly removed: number;
+  readonly result: RemoveBatchResult;
+}
+
+/** 批次收尾：删掉入群公告，记下移除人数与权限受阻。 */
+async function finishRemovalBatch({
+  chatId,
+  epoch,
+  announcementMessageId,
+  removed,
+  result,
+}: FinishRemovalBatchParams): Promise<void> {
+  // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
+  //
+  // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，见
+  // ./botPermissions.ts）：机器人完全可能是「有 can_restrict_members、没有
+  // can_delete_messages」的管理员，那种群里每个黑名单入群都换来一次注定 400 的
+  // 删除。它们虽与踢人分属独立 429 类别，注定失败的请求仍会白占网络、日志和
+  // 停机预算，公告本身照样删不掉。权限闸与 adDetect/disposal.ts 和验证处置
+  // 路径共用同一口径。
+  if (
+    announcementMessageId !== undefined &&
+    currentBlocklistRemovalEpoch(chatId) === epoch &&
+    botCanDeleteIn(chatId) !== false
+  ) {
+    await deleteMessage(chatId, announcementMessageId, telegramApi);
+  }
+  if (removed > 0) logger.log(`Removed ${removed} blocklisted member(s) from chat ${chatId}.`);
+  if (result.permissionDenied) {
+    logger.error(
+      `Blocklist removal in chat ${chatId} is blocked by missing ban rights; ` +
+      "it will stay pending until the bot's permissions there change."
+    );
+  }
 }
 
 /**
@@ -201,70 +278,20 @@ async function removeBlockedMembers({
     }
     // 补扫可能有几千个 id，且与验证超时踢人共用 kick 类别的 429 FIFO；每批
     // 之间让一步，给同 owner 的其它安全动作与 Worker mailbox 留出调度机会。
-    if (index > 0 && index % BLOCKLIST_SWEEP_BATCH_SIZE === 0) {
-      try {
-        await sleep(BLOCKLIST_SWEEP_BATCH_PAUSE_MS, signal);
-      } catch (error: unknown) {
-        if (signal.aborted) {
-          result.complete = false;
-          return result;
-        }
-        throw error;
-      }
+    if (
+      index > 0 &&
+      index % BLOCKLIST_SWEEP_BATCH_SIZE === 0 &&
+      !await sleepUnlessAborted(BLOCKLIST_SWEEP_BATCH_PAUSE_MS, signal)
+    ) {
+      result.complete = false;
+      return result;
     }
     const userId: number = userIds[index]!;
     const outcome: RemovalOutcome = await removeOne({ chatId, userId, probeMembership, signal });
-    if (outcome === "removed") {
-      removed++;
-      if (userId > 0) result.settledUserIds.push(userId);
-    } else if (outcome === "absent") {
-      result.settledUserIds.push(userId);
-    } else if (outcome === "forbidden") {
-      result.complete = false;
-      result.permissionDenied = true;
-      // 机器人在这个群根本封不了人，剩下的 id 只会一个个撞上同一句 400。补扫
-      // 可能有几千个 id，每个两次注定失败的请求外加分批暂停，全压在与验证超时
-      // 踢人共用的 kick 类别上——发现这件事的这一次补扫本身就是要避免的风暴。
-      break;
-    } else if (outcome === "targetIsAdmin") {
-      // 就地结算：这个 id 在这个群封不掉，但那是他自己的管理员身份决定的，
-      // 与机器人的权限无关。算进未落定只会让整批永远重试；算成群级权限受阻
-      // 更糟——那会连累同批其余 id 一起停摆。改用一条独立回执让主线程保住这个
-      // 群的补扫欠账（sweptAt 不落），管理员降级后由下一次补扫（或他自己重新
-      // 入群时的秒踢）接上——那正是这行日志承诺的事。
-      result.targetIsAdmin = true;
-      result.settledUserIds.push(userId);
-      logger.error(
-        `Blocklisted user ${userId} is an administrator of chat ${chatId} and cannot be banned; ` +
-        "settling this target and continuing with the rest of the batch."
-      );
-    } else {
-      result.complete = false;
-      if (outcome === "participantInvalid") result.participantInvalidUserIds.push(userId);
-    }
+    if (outcome === "removed") removed++;
+    if (!applyRemovalOutcome({ chatId, userId, outcome, result })) break;
   }
-  // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
-  //
-  // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，见
-  // ./botPermissions.ts）：机器人完全可能是「有 can_restrict_members、没有
-  // can_delete_messages」的管理员，那种群里每个黑名单入群都换来一次注定 400 的
-  // 删除。它们虽与踢人分属独立 429 类别，注定失败的请求仍会白占网络、日志和
-  // 停机预算，公告本身照样删不掉。权限闸与 adDetect/disposal.ts 和验证处置
-  // 路径共用同一口径。
-  if (
-    announcementMessageId !== undefined &&
-    currentBlocklistRemovalEpoch(chatId) === epoch &&
-    botCanDeleteIn(chatId) !== false
-  ) {
-    await deleteMessage(chatId, announcementMessageId, telegramApi);
-  }
-  if (removed > 0) logger.log(`Removed ${removed} blocklisted member(s) from chat ${chatId}.`);
-  if (result.permissionDenied) {
-    logger.error(
-      `Blocklist removal in chat ${chatId} is blocked by missing ban rights; ` +
-      "it will stay pending until the bot's permissions there change."
-    );
-  }
+  await finishRemovalBatch({ chatId, epoch, announcementMessageId, removed, result });
   return result;
 }
 

@@ -191,11 +191,11 @@ export const TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX: number = 8_192;
 /**
  * 全部 Telegram 429 退避域合计允许保留的任务数，正常在途请求不计入。
  *
- * 取 TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX 的 10 倍：message 类进入 429 队列之前已被
+ * 取 TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX 的 4 倍：message 类进入 429 队列之前已被
  * grammY 全局桶限在其以内，其余 13 个类别不经过任何发送桶。本值只是内存硬顶，
  * 超出即拒绝并交还领域 owner，不承担持久化。所属模块：infra/telegram/outboundQueue.ts。
  */
-export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 10 * TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX;
+export const TELEGRAM_429_RETRY_QUEUE_MAX: number = 4 * TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX;
 /** grammY 全局发送桶每个刷新周期放行的发送请求数（插件默认的每秒 30 次）；所属模块：infra/telegram/messageThrottler.ts。 */
 export const TELEGRAM_MESSAGE_GLOBAL_RESERVOIR: number = 30;
 /** grammY 全局发送桶的刷新周期；所属模块：infra/telegram/messageThrottler.ts。 */

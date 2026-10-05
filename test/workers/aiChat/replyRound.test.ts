@@ -29,6 +29,7 @@ const createReplyToolset = mock(async (ctx: ReplyToolContext): Promise<ReplyTool
     toolStatus: "",
     webSearch: true,
     searchWeb: null,
+    replyActionInstruction: "",
     has: (): boolean => true,
     beforeModelRequest: (): void => {},
     afterModel,

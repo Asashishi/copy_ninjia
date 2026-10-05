@@ -1,10 +1,12 @@
 /**
- * send_voice：把模型写的一句日语台词按可选的本句语气（tone）合成语音，转成 Telegram
- * 语音格式（OGG/Opus 或 MP3，见 aiChat/ai/voiceEncoding.ts）后以语音消息发送到当前群。
+ * send_voice：把模型写的一句台词（语言由 `agent.tts.bot_language` 决定）按该语言的朗读语言要求
+ * （VOICE_LANGUAGE_PROMPTS 的 speechLanguageStyle）与可选的本句语气（tone）合成语音，转成 Telegram
+ * 语音格式（OGG/Opus 或 MP3，见 aiChat/ai/voiceEncoding.ts）后以语音消息
+ * 发送到当前群。
  *
- * 工具声明逐字恒定，只要 `agent.tts` 配置且实现具备语音合成就挂载；调用与否由
- * 模型按工具说明（SEND_VOICE_TOOL_INSTRUCTION）与本轮工具状态里的余量行
- * （见 toolStatus.ts）判断，执行侧不另设按轮资格。
+ * 工具声明在同一台词语言下逐字恒定，只要 `agent.tts` 配置且实现具备语音合成就挂载；调用与否由
+ * 模型按工具说明（prompt/voice_tool.md 正文，未放置时为 VOICE_LANGUAGE_PROMPTS 的 sendVoiceInstruction）
+ * 与本轮工具状态里的余量行（见 toolStatus.ts）判断，执行侧不另设按轮资格。
  *
  * 执行分三段，直接轮与有序并行轮相同：
  * - 准入（调用时同步）：本轮有效性、单轮限额、实现能力、参数校验，最后按 `ai` 口径
@@ -26,7 +28,6 @@
  */
 
 import type { AiMeteredSpeechRequest, AiToolDefinition } from "../../../../types/aiChat/provider";
-import { SEND_VOICE_TOOL_INSTRUCTION } from "../../../../consts/aiChat/prompts/tools";
 import { voiceSentTagTemplate } from "../../../../consts/aiChat/prompts/transcript";
 import {
   MAX_VOICES_PER_REPLY,
@@ -40,6 +41,7 @@ import {
   SEND_VOICE_TOOL,
 } from "../../../../consts/tools";
 import { agentTtsConfig } from "../../../../config/agent";
+import { voiceToolPromptCache } from "../../../../cache/perThread/config";
 import { logger } from "../../../../infra/logger";
 import { sendVoiceWithResult } from "../../../../infra/telegram";
 import { sanitizeInline } from "../../../../libs/text";
@@ -63,6 +65,7 @@ import type {
   SpeechSynthesisAttempt,
   SpeechSynthesizer,
   SpeechSynthesizerLookup,
+  VoiceLanguagePrompts,
   VoiceSynthesisResult,
 } from "../../../../types/aiChat/voiceMessage";
 import type { TelegramSendResult } from "../../../../types/telegram";
@@ -73,25 +76,27 @@ export function isSendVoiceAvailable(): boolean {
   return ttsAiProvider()?.synthesizeSpeech !== undefined;
 }
 
-/** send_voice 的工具声明；整段逐字恒定，不接受任何本轮上下文。 */
-export function buildSendVoiceToolDefinition(): AiToolDefinition {
+/**
+ * send_voice 的工具声明；同一台词语言下整段逐字恒定，不接受任何本轮上下文。说明取本线程已接管的
+ * prompt/voice_tool.md 正文，未放置时取 prompts.sendVoiceInstruction；text、tone 参数说明恒取 prompts。
+ * @param prompts 本轮台词语言对应的一份文案（VOICE_LANGUAGE_PROMPTS 的取值）。
+ */
+export function buildSendVoiceToolDefinition(prompts: Readonly<VoiceLanguagePrompts>): AiToolDefinition {
   return {
     name: SEND_VOICE_TOOL,
-    description: SEND_VOICE_TOOL_INSTRUCTION,
+    description: voiceToolPromptCache.current ?? prompts.sendVoiceInstruction,
     parametersJsonSchema: {
       type: "object",
       properties: {
         text: {
           type: "string",
           maxLength: VOICE_TEXT_MAX_CHARS,
-          description: `要念出来的日语台词原文，一两句，不超过 ${VOICE_TEXT_MAX_CHARS} 字。`,
+          description: prompts.voiceTextDescription,
         },
         tone: {
           type: "string",
           maxLength: VOICE_TONE_MAX_CHARS,
-          description:
-            `这一句的说话语气，用日语简短描述怎么说（如「鼻で笑うように」「呆れたようにため息まじりで」），不超过 ${VOICE_TONE_MAX_CHARS} 字；` +
-            "会追加在固定的基础声线描述之后，只影响这一句。省略则只用基础声线。",
+          description: prompts.voiceToneDescription,
         },
         reply_to_trigger: {
           type: "boolean",
@@ -158,12 +163,12 @@ function settlingReservation(synthesize: SpeechSynthesizer): SpeechSynthesizer {
 function startVoiceProduction(
   ctx: ReplyToolContext,
   synthesize: SpeechSynthesizer,
-  parsed: ParsedVoiceArguments
+  request: AiMeteredSpeechRequest
 ): VoiceProduction {
   // 这份结果脱离工具调用被窗口计时、串行链与后台投递分别等待；synthesizeVoiceMessage 不抛错。
   const result: Promise<VoiceSynthesisResult> = synthesizeVoiceMessage(
     settlingReservation(synthesize),
-    { text: parsed.text, tone: parsed.tone, quota: "ai", signal: ctx.signal },
+    request,
     `chat ${ctx.chatId}`
   );
   const { promise: foreground, resolve }: PromiseWithResolvers<VoiceSynthesisResult | null> =
@@ -275,10 +280,13 @@ function voiceStep(accepted: AcceptedVoice): ReplyActionRun {
 /**
  * 语音执行器：准入在调用时同步完成，通过后在后台开始合成，当场交回接纳回执；投递步骤交串行链
  * 执行，模型不等合成。
+ * @param languageStyle 本轮台词语言的朗读语言要求（VOICE_LANGUAGE_PROMPTS 的 speechLanguageStyle），
+ *   拼在每次合成请求的基础风格之后。
  */
 export function createSendVoiceExecutor(
   ctx: ReplyToolContext,
-  chains: ReplyActionChains
+  chains: ReplyActionChains,
+  languageStyle: string
 ): (argumentsJson: string) => ReplyToolExecution {
   let acceptedVoices: number = 0;
   return (argumentsJson: string): ReplyToolExecution => {
@@ -312,7 +320,13 @@ export function createSendVoiceExecutor(
       ctx,
       chains,
       parsed,
-      production: startVoiceProduction(ctx, synthesizer.synthesize, parsed),
+      production: startVoiceProduction(ctx, synthesizer.synthesize, {
+        text: parsed.text,
+        languageStyle,
+        tone: parsed.tone,
+        quota: "ai",
+        signal: ctx.signal,
+      }),
     };
     return { result: acceptanceReceipt(), run: voiceStep(accepted) };
   };

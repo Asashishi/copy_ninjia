@@ -90,8 +90,11 @@ import {
 import { StorageWriteCapacityError } from "../libs/storageWriteBudget";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
+  DiskDiagnosticBatchRequest,
   DiskIOMessage,
+  EnsureLuckSecretRequest,
   LuckDrawDiskMessage,
+  ReadJoinLogRequest,
 } from "../types/diskIO/messages";
 import type {
   DiskFlushFailedReply,
@@ -122,6 +125,112 @@ function postReply(reply: DiskIOReply): void {
   self.postMessage(reply);
 }
 
+/**
+ * 一批诊断按原始顺序同步消费，完成整批后才向主线程回 ACK。日志先入缓冲并刷盘，成功后才追加
+ * adSample：刷盘失败时主线程整批重投，adSample 在这一轮还没写，重投只追加一次。两者是不同
+ * 文件，相对顺序无意义。
+ */
+async function handleDiagnosticBatch(msg: DiskDiagnosticBatchRequest): Promise<void> {
+  let containsLog: boolean = false;
+  for (const diagnostic of msg.messages) {
+    if (diagnostic.type !== "log") continue;
+    handleLogMessage(diagnostic);
+    containsLog = true;
+  }
+  if (containsLog && !await flushLogBuffer()) {
+    const retry: DiskDiagnosticBatchRetryReply = {
+      type: "diagnosticBatchRetry",
+      batchId: msg.batchId,
+      retryAfterMs: LOG_REOPEN_RETRY_MS,
+    };
+    postReply(retry);
+    return;
+  }
+  // 纯旁路素材：先进样本批次，由阈值、定时或统一 flush 追加，失败即弃
+  // （见 diskIO/adSampleFile.ts 的文件头）。
+  for (const diagnostic of msg.messages) {
+    if (diagnostic.type === "adSample") await handleAdSampleMessage(diagnostic);
+  }
+  // 缓存用量同为旁路统计：先进内存缓冲，由阈值、定时或统一 flush 追加落盘；
+  // 缓冲与刷盘失败只丢统计，不影响本批 ACK（见 diskIO/aiCacheFile.ts）。
+  for (const diagnostic of msg.messages) {
+    if (diagnostic.type !== "aiCacheUsage") continue;
+    try {
+      await handleAiCacheUsageMessage(diagnostic);
+    } catch (error: unknown) {
+      console.error("[diskIOWorker] failed to buffer AI cache usage:", error);
+    }
+  }
+  const reply: DiskDiagnosticBatchAcceptedReply = {
+    type: "diagnosticBatchAccepted",
+    batchId: msg.batchId,
+  };
+  postReply(reply);
+}
+
+/** 按请求日恢复运势回执密钥；跨日时先刷旧日追加并切换 owner，回执之后补录滞留抽签。 */
+async function handleEnsureLuckSecret(msg: EnsureLuckSecretRequest): Promise<void> {
+  let reply: LuckSecretReply;
+  let deferredDraws: LuckDrawDiskMessage[] | null = null;
+  try {
+    const currentLuckDay: string | undefined = luckWorkerCache.current?.day;
+    if (currentLuckDay !== undefined && msg.day < currentLuckDay) {
+      throw new Error(
+        `Refusing to move luck persistence backward from ${currentLuckDay} to ${msg.day}.`
+      );
+    }
+    // 切换 owner 会重置当前 owner 的追加缓冲，因此跨日切换前必须先把
+    // 旧日已确认结果刷盘。失败时拒绝切换，避免仅仅请求新日密钥就丢掉
+    // 尚在正常批量窗口内的旧日结果；这也让新日结果与密钥的一致性检查
+    // 始终建立在已完整提交的上一日 owner 之上。
+    if (currentLuckDay !== msg.day) {
+      if (!await flushLuckAppends()) {
+        throw new Error(`Failed to flush luck results before switching from ${currentLuckDay ?? "none"} to ${msg.day}.`);
+      }
+      // 跨日请求必须先恢复目标日结果，再决定能否轮换密钥；否则不一致备份
+      // 中“结果文件存在、密钥仍是旧日”的组合会被误当成安全的新一天。
+      deferredDraws = await switchLuckDay(msg.day, true);
+    }
+    reply = {
+      type: "luckSecret",
+      requestId: msg.requestId,
+      secret: await recoverLuckReceiptSecret({
+        day: msg.day,
+        confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
+      }),
+    };
+  } catch (error: unknown) {
+    reply = {
+      type: "luckSecret",
+      requestId: msg.requestId,
+      error: errorMessage(error),
+    };
+  }
+  postReply(reply);
+  // 滞留抽签在密钥按磁盘上的确认结果恢复之后才补录，不计入 confirmedResultCount。
+  await replayDeferredLuckDraws(deferredDraws);
+}
+
+/** 读取入群日志窗口；读失败带着原因回执，不让异常离开 onmessage。 */
+async function handleReadJoinLog(msg: ReadJoinLogRequest): Promise<void> {
+  let reply: JoinLogReadReply;
+  try {
+    const records: readonly JoinLogRecord[] = await readJoinLog(msg);
+    reply = {
+      type: "joinLogRead",
+      requestId: msg.requestId,
+      records,
+    };
+  } catch (error: unknown) {
+    reply = {
+      type: "joinLogRead",
+      requestId: msg.requestId,
+      error: errorMessage(error),
+    };
+  }
+  postReply(reply);
+}
+
 /** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
 export async function handleDiskIOWorkerMessage(
   msg: DiskIOMessage
@@ -135,47 +244,9 @@ export async function handleDiskIOWorkerMessage(
       for (const message of msg.messages) await handleDiskIOWorkerMessage(message);
       postReply({ type: "operationBatchAccepted", batchId: msg.batchId });
       break;
-    case "diagnosticBatch": {
-      // 一批中的诊断保持原始顺序同步消费；完成整批后才向主线程回 ACK。
-      // 日志先入缓冲并刷盘，成功后才追加 adSample：刷盘失败时主线程整批重投，
-      // adSample 在这一轮还没写，重投只追加一次。两者是不同文件，相对顺序无意义。
-      let containsLog: boolean = false;
-      for (const diagnostic of msg.messages) {
-        if (diagnostic.type !== "log") continue;
-        handleLogMessage(diagnostic);
-        containsLog = true;
-      }
-      if (containsLog && !await flushLogBuffer()) {
-        const retry: DiskDiagnosticBatchRetryReply = {
-          type: "diagnosticBatchRetry",
-          batchId: msg.batchId,
-          retryAfterMs: LOG_REOPEN_RETRY_MS,
-        };
-        postReply(retry);
-        break;
-      }
-      // 纯旁路素材：先进样本批次，由阈值、定时或统一 flush 追加，失败即弃
-      // （见 diskIO/adSampleFile.ts 的文件头）。
-      for (const diagnostic of msg.messages) {
-        if (diagnostic.type === "adSample") await handleAdSampleMessage(diagnostic);
-      }
-      // 缓存用量同为旁路统计：先进内存缓冲，由阈值、定时或统一 flush 追加落盘；
-      // 缓冲与刷盘失败只丢统计，不影响本批 ACK（见 diskIO/aiCacheFile.ts）。
-      for (const diagnostic of msg.messages) {
-        if (diagnostic.type !== "aiCacheUsage") continue;
-        try {
-          await handleAiCacheUsageMessage(diagnostic);
-        } catch (error: unknown) {
-          console.error("[diskIOWorker] failed to buffer AI cache usage:", error);
-        }
-      }
-      const reply: DiskDiagnosticBatchAcceptedReply = {
-        type: "diagnosticBatchAccepted",
-        batchId: msg.batchId,
-      };
-      postReply(reply);
+    case "diagnosticBatch":
+      await handleDiagnosticBatch(msg);
       break;
-    }
     case "aiMemory":
       markAiMemorySnapshotDirty({
         chatId: msg.chatId,
@@ -210,48 +281,9 @@ export async function handleDiskIOWorkerMessage(
     case "luckDraw":
       await handleLuckDrawMessage(msg);
       break;
-    case "ensureLuckSecret": {
-      let reply: LuckSecretReply;
-      let deferredDraws: LuckDrawDiskMessage[] | null = null;
-      try {
-        const currentLuckDay: string | undefined = luckWorkerCache.current?.day;
-        if (currentLuckDay !== undefined && msg.day < currentLuckDay) {
-          throw new Error(
-            `Refusing to move luck persistence backward from ${currentLuckDay} to ${msg.day}.`
-          );
-        }
-        // 切换 owner 会重置当前 owner 的追加缓冲，因此跨日切换前必须先把
-        // 旧日已确认结果刷盘。失败时拒绝切换，避免仅仅请求新日密钥就丢掉
-        // 尚在正常批量窗口内的旧日结果；这也让新日结果与密钥的一致性检查
-        // 始终建立在已完整提交的上一日 owner 之上。
-        if (currentLuckDay !== msg.day) {
-          if (!await flushLuckAppends()) {
-            throw new Error(`Failed to flush luck results before switching from ${currentLuckDay ?? "none"} to ${msg.day}.`);
-          }
-          // 跨日请求必须先恢复目标日结果，再决定能否轮换密钥；否则不一致备份
-          // 中“结果文件存在、密钥仍是旧日”的组合会被误当成安全的新一天。
-          deferredDraws = await switchLuckDay(msg.day, true);
-        }
-        reply = {
-          type: "luckSecret",
-          requestId: msg.requestId,
-          secret: await recoverLuckReceiptSecret({
-            day: msg.day,
-            confirmedResultCount: luckWorkerCache.current?.entries.size ?? 0,
-          }),
-        };
-      } catch (error: unknown) {
-        reply = {
-          type: "luckSecret",
-          requestId: msg.requestId,
-          error: errorMessage(error),
-        };
-      }
-      postReply(reply);
-      // 滞留抽签在密钥按磁盘上的确认结果恢复之后才补录，不计入 confirmedResultCount。
-      await replayDeferredLuckDraws(deferredDraws);
+    case "ensureLuckSecret":
+      await handleEnsureLuckSecret(msg);
       break;
-    }
     case "verificationUpsert":
       await handleVerificationMessage(
         (): Promise<void> => handleVerificationUpsert({ msg, reply: postReply })
@@ -316,25 +348,9 @@ export async function handleDiskIOWorkerMessage(
       // 不连坐无关的入群事实。
       handleJoinLogDeleteMessage(msg);
       break;
-    case "readJoinLog": {
-      let reply: JoinLogReadReply;
-      try {
-        const records: readonly JoinLogRecord[] = await readJoinLog(msg);
-        reply = {
-          type: "joinLogRead",
-          requestId: msg.requestId,
-          records,
-        };
-      } catch (error: unknown) {
-        reply = {
-          type: "joinLogRead",
-          requestId: msg.requestId,
-          error: errorMessage(error),
-        };
-      }
-      postReply(reply);
+    case "readJoinLog":
+      await handleReadJoinLog(msg);
       break;
-    }
     case "readIdentityPolicies":
       postReply(readIdentityPolicies(msg));
       break;
@@ -385,14 +401,19 @@ async function handleVerificationMessage(apply: () => Promise<void>): Promise<vo
   } catch (error: unknown) {
     noteVerificationWriteRejected();
     console.error("[diskIOWorker] rejected a verification message:", error);
-    if (!diskIOReplayWindow.current) return;
-    const reply: RecoveryReplayFailedReply = {
-      type: "recoveryReplayFailed",
-      domain: "verification",
-      error: errorMessage(error),
-    };
-    postReply(reply);
+    replyReplayFailureIfActive("verification", error);
   }
+}
+
+/** 恢复重放区间内被拒收的写入升级为 fatal：回一条 recoveryReplayFailed；区间外什么都不做。 */
+function replyReplayFailureIfActive(domain: RecoveryReplayFailedReply["domain"], error: unknown): void {
+  if (!diskIOReplayWindow.current) return;
+  const reply: RecoveryReplayFailedReply = {
+    type: "recoveryReplayFailed",
+    domain,
+    error: errorMessage(error),
+  };
+  postReply(reply);
 }
 
 /**
@@ -412,13 +433,7 @@ function handleIdentityMessage(
     noteStorageWriteRejected(domain);
     if (error instanceof StorageWriteCapacityError) postReply({ type: "storageWriteStalled" });
     console.error(`[diskIOWorker] rejected an identity ${domain} message:`, error);
-    if (!diskIOReplayWindow.current) return;
-    const reply: RecoveryReplayFailedReply = {
-      type: "recoveryReplayFailed",
-      domain,
-      error: errorMessage(error),
-    };
-    postReply(reply);
+    replyReplayFailureIfActive(domain, error);
   }
 }
 

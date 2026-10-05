@@ -70,6 +70,12 @@ export interface VerificationRevisionCapacityExceededEvent {
   generation: number;
 }
 
+/** Worker -> 主线程：当前运行态已满，锁住新 key 并保留已有责任。 */
+export interface VerificationRuntimeCapacityExceededEvent {
+  type: "verificationRuntimeCapacityExceeded";
+  generation: number;
+}
+
 /** Worker -> 主线程：barrier 之前的消息均已完成同步路由和镜像发布。 */
 export interface AntiRaidBarrierCompleteEvent {
   type: "barrierComplete";
@@ -96,6 +102,7 @@ export type AntiRaidWorkerEvent =
   | VerificationDeleteEvent
   | VerificationDeferredEvent
   | VerificationRevisionCapacityExceededEvent
+  | VerificationRuntimeCapacityExceededEvent
   | BlockedMembersRemovedEvent
   | AdDetectionEvent
   | AntiRaidBarrierCompleteEvent

@@ -21,6 +21,12 @@ export interface AtmosphereNotices {
   readonly batchKickSupergroupOnly: string;
   readonly joinLogUnavailable: string;
   readonly batchKickEmpty: (duration: string) => string;
+  /** `/batch_kick` 已交给后台执行；结果在处理完后另发一条。 */
+  readonly batchKickAccepted: (values: Readonly<{ duration: string; recordCount: number }>) => string;
+  /** 本群上一批 `/batch_kick` 尚未结束。 */
+  readonly batchKickRunning: string;
+  /** 延迟命令执行器的后台等待位已满。 */
+  readonly batchKickBusy: string;
   readonly batchKickResult: (values: Readonly<{ duration: string; recordCount: number; scanned: number; kicked: number; absent: number; protected: number; blocked: number; forbidden: number; failed: number; abortedNotice: string }>) => string;
   readonly blockUsage: string;
   readonly blockRejected: (actorLabel: string) => string;

@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { waitUntil } from "../helpers/waitUntil";
 import { botPermissions } from "../helpers/botPermissions";
-import { settleBackgroundWork } from "../libs/helpers";
+import { settleBackgroundWork } from "../helpers/common";
 const {
   blockedUserIds,
   configuredBlockedIds,
@@ -11,6 +11,8 @@ const {
   getChatMember,
   installBlocklistSweepHooks,
   lastRemovalId,
+  loggerError,
+  loggerLog,
   readBlocklistIdPage,
   remover,
   setBlocklistIdReads,
@@ -549,6 +551,54 @@ describe("黑名单清扫", () => {
     expect(pendingBlockedRemovals.size).toBe(0);
     expect(remover).not.toHaveBeenCalled();
     expect(blocklistSweepState.has(-1001)).toBeFalse();
+  });
+
+  test("停管后迟到的未完成回执直接丢弃，不重建补扫记录", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001, 1_000);
+    const removalId: number = lastRemovalId();
+    forgetChatBlocklistWork(-1001);
+
+    for (const permissionDenied of [false, true]) {
+      settleBlockedRemoval({
+        type: "blockedMembersRemoved",
+        chatId: -1001,
+        removalId,
+        complete: false,
+        permissionDenied,
+        targetIsAdmin: false,
+        participantInvalidUserIds: [],
+        settledUserIds: [],
+      });
+    }
+
+    expect(blocklistSweepState.has(-1001)).toBeFalse();
+    expect(pendingBlockedRemovals.size).toBe(0);
+    expect(loggerError).not.toHaveBeenCalled();
+  });
+
+  test("停机关闸后 drain 取消的未完成回执只记 log，任务仍留在 outbox", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    await sweepBlockedMembers(-1001);
+    expect(blocklistSweepSchedulerState.accepting).toBeFalse();
+
+    settleLast(false);
+
+    expect(pendingBlockedRemovals.size).toBe(1);
+    expect(loggerError).not.toHaveBeenCalled();
+    expect(loggerLog).toHaveBeenCalledWith(expect.stringContaining("did not fully settle"));
+  });
+
+  test("运行中的未完成回执照常记 error", async () => {
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
+    initBlocklistSweepScheduler();
+    await sweepBlockedMembers(-1001);
+
+    settleLast(false);
+
+    expect(pendingBlockedRemovals.size).toBe(1);
+    expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("did not fully settle"));
+    quiesceBlocklistSweepScheduler();
   });
 
   test("名单为空时连消息都不投", async () => {

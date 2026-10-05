@@ -65,7 +65,7 @@ type ShutdownOwnerClose =
 
 /** 一个按固定顺序排空的停机 owner。 */
 interface ShutdownDrainOwner {
-  /** 写进哪个结果字段；延迟命令、cron 与延迟删除不参与共享数据落盘闸门，为 null。 */
+  /** 写进哪个结果字段；问答表单、延迟命令、cron 与延迟删除不参与共享数据落盘闸门，为 null。 */
   readonly result: keyof OwnerDrainResults | null;
   /** 失败隔离与诊断日志里的 owner 名。 */
   readonly label: string;
@@ -90,8 +90,8 @@ interface ShutdownDrainOwner {
  * flush，就可能在数据尚未落盘时推进最终 Telegram offset。
  *
  * 顺序本身是约束，不能随手调整（见 docs/cn/04-invariants.md）：
- * - wed、gag、延迟命令、cron 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发 Telegram
- *   请求，闸门一关就再也发不出去。
+ * - gag、问答表单、wed、延迟命令、cron 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发
+ *   Telegram 请求，闸门一关就再也发不出去。
  * - 延迟删除排在 anti-raid 之后：广告处置会在 anti-raid 排空期间补发 30 秒公告，
  *   排在后面才能把最后一条也提前兑现。
  * - AI memory 必须先回传到 diskIOWorker，再 flush 那个 Worker。
@@ -136,6 +136,16 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
     initFlag: null,
     drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
       dependencies.drainGagRuntime(timeoutMs),
+  },
+  {
+    // `/qa set` 表单同为状态机消息，只能由自己的路径删除；没有要落盘的数据，删除
+    // 失败或超时只意味着表单留在群里，不参与共享数据落盘闸门。
+    result: null,
+    label: "qa form drain",
+    timeout: "maintenanceMs",
+    initFlag: null,
+    drain: (dependencies: ApplicationLifecycleDependencies, timeoutMs: number): Promise<FlushResult> =>
+      dependencies.drainQaForms(timeoutMs),
   },
   {
     result: "wed",

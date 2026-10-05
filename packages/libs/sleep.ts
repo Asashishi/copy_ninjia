@@ -23,6 +23,20 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * 可被 signal 打断的睡眠：睡满返回 true；signal 已经或在等待期间中止返回 false，不抛错；
+ * 其余错误（如非法时长）原样抛出。
+ */
+export async function sleepUnlessAborted(ms: number, signal: AbortSignal): Promise<boolean> {
+  try {
+    await sleep(ms, signal);
+    return true;
+  } catch (error: unknown) {
+    if (signal.aborted) return false;
+    throw error;
+  }
+}
+
 function abortReason(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   return reason instanceof Error ? reason : new DOMException("Aborted", "AbortError");

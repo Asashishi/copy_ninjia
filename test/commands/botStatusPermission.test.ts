@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { TranslateState } from "../../packages/types/translate";
+import { TELEGRAM_429_RETRY_QUEUE_MAX } from "../../packages/consts/telegram";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
 interface SentCommandMessage {
   readonly chatId: number;
@@ -20,7 +22,7 @@ const telegramOutboundStats = mock((): Readonly<{
   active: number;
   pending: number;
   capacity: number;
-}> => ({ active: 0, pending: 0, capacity: 81_920 }));
+}> => ({ active: 0, pending: 0, capacity: TELEGRAM_429_RETRY_QUEUE_MAX }));
 /** 各群翻译会话；getChatState 按群带出 translate 字段。 */
 const translateStates = new Map<number, readonly TranslateState[]>();
 const getChatState = mock((chatId: number): Readonly<{ translate: readonly TranslateState[] | undefined }> => ({
@@ -129,7 +131,7 @@ describe("/bot_status 白名单权限", () => {
     expect(readBotProcessStatus).toHaveBeenCalledTimes(1);
     expect(activeGagSessionCount).toHaveBeenCalledTimes(1);
     expect(sendCommandMessage.mock.calls[0]?.[0].text)
-      .toContain("本天才的状态，杂鱼可要看仔细啦♡");
+      .toContain(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.statusTitle);
     expect(sendCommandMessage.mock.calls[0]?.[0].text)
       .toContain("正在被本天才调教的杂鱼：3/5");
   });

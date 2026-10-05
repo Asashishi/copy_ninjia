@@ -1,4 +1,4 @@
-import { accessSync, constants, lstatSync, statSync } from "node:fs";
+import { accessSync, constants, lstatSync, readdirSync, statSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { dirname } from "node:path";
 import { invalidInput } from "./inputValidation";
@@ -33,6 +33,19 @@ export function inspectOptionalDirectory(path: string): boolean {
   }
   assertDirectoryReadableWritable(path);
   return true;
+}
+
+/**
+ * 列出可选领域目录的条目名：缺省返回空数组；存在时先经 inspectOptionalDirectory 校验，
+ * 读取失败按输入错误拒绝。
+ */
+export function listOptionalDirectory(path: string): string[] {
+  if (!inspectOptionalDirectory(path)) return [];
+  try {
+    return readdirSync(path);
+  } catch {
+    return invalidInput(path, "$", "a readable directory");
+  }
 }
 
 /**

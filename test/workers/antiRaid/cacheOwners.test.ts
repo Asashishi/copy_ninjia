@@ -34,6 +34,7 @@ import {
 } from
   "../../../packages/consts/antiRaid/lockdown";
 import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/events";
+import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 
 const lockdownEvents: AntiRaidWorkerEvent[] = [];
 const permissionWrites: Record<string, boolean | undefined>[] = [];
@@ -630,7 +631,7 @@ describe("Lockdown write-ahead runtime", () => {
     });
     await Bun.sleep(0);
 
-    expect(sentMessages[0]?.text).toContain("检测到短时间内大量成员入群");
+    expect(sentMessages[0]?.text).toContain(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.lockdownInfluxUnknown);
     expect(sentMessages[0]?.text).not.toContain("0 个");
   });
 

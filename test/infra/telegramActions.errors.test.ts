@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { GrammyError } from "grammy";
 import type { Api } from "grammy";
 import type { TelegramApi } from "../../packages/types/telegramWorker";
-import { settleTestBatch } from "../libs/helpers";
+import { settleTestBatch } from "../helpers/common";
 import { loggerStub } from "../helpers/loggerMock";
 
 const logApiError = mock((..._args: unknown[]): void => {});
@@ -26,6 +26,7 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 
 const actions = await import("../../packages/infra/telegram/actions");
+const { probeChatMembershipWithOutcome } = await import("../../packages/infra/telegram/actions/membership");
 const { runWithUpdateAbortSignal } = await import("../../packages/infra/updateContext");
 
 function apiWithSuccesses(): TelegramApi {
@@ -46,9 +47,11 @@ function apiWithSuccesses(): TelegramApi {
   } as unknown as TelegramApi;
 }
 
-function apiWithFailures(): TelegramApi {
+function apiWithFailures(
+  failure: () => Error = (): Error => new Error("telegram unavailable")
+): TelegramApi {
   const reject = mock(async (..._args: unknown[]): Promise<never> => {
-    throw new Error("telegram unavailable");
+    throw failure();
   });
   return {
     sendMessage: reject,
@@ -124,6 +127,34 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.copyMessage({ chatId: -1001, fromChatId: -2002, messageId: 8 })).toBeUndefined();
     expect(logApiError).toHaveBeenCalledTimes(16);
     expect(markSelfSent).not.toHaveBeenCalled();
+  });
+
+  test("不带调用方 signal 的取消（Worker drain 撤销双工请求）按回退值返回且不记 API 错误", async () => {
+    const api: TelegramApi = apiWithFailures(
+      (): Error => new DOMException("Worker duplex request was aborted.", "AbortError")
+    );
+
+    expect(await actions.sendMessage({ chatId: -1001, text: "hello", api })).toBeUndefined();
+    expect(await actions.deleteMessageWithOutcome(-1001, 3, api)).toBe("failed");
+    expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("failed");
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("failed");
+    expect(await actions.banChatSenderChatWithOutcome(-1001, -2002, api)).toBe("failed");
+    expect(await probeChatMembershipWithOutcome(-1001, 7, api)).toBe("failed");
+    expect(await actions.probeChatAdmin({ chatId: -1001, userId: 7, api })).toBeUndefined();
+    expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
+    expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(false);
+    expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(false);
+    expect(logApiError).not.toHaveBeenCalled();
+  });
+
+  test("超时（TimeoutError）不是取消，照常记 API 错误", async () => {
+    const api: TelegramApi = apiWithFailures(
+      (): Error => new DOMException("The operation timed out.", "TimeoutError")
+    );
+
+    expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("failed");
+    expect(await probeChatMembershipWithOutcome(-1001, 7, api)).toBe("failed");
+    expect(logApiError).toHaveBeenCalledTimes(2);
   });
 
   test("主动取消发送时返回 undefined 且不记录 API 错误", async () => {

@@ -23,8 +23,8 @@
 ## 增加并发批处理
 
 - **确定性落定**：固定且互不依赖的 Promise 用 `Promise.allSettled` 等齐，并逐项处理 rejection，**严禁使用 settlement 吞错**。
-- **动态输入限流**：输入规模可能动态增长时，复用 [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts)，明确并发硬上限，并从结果的 `item/index/attempt` 记录失败身份。禁止先 `map` 成整批 Promise 再等待。
-- **有限退避**：只有领域能区分瞬时错误时才配置有限退避，并通过 `shouldRetry` 和 `onRetry` 约束错误类型并记录退避。下层已重试的逻辑切勿重复叠加，严禁重试非幂等副作用。
+- **动态输入限流**：输入规模可能动态增长时，复用 [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts)，明确并发硬上限，并从结果的 `item/index` 记录失败身份。禁止先 `map` 成整批 Promise 再等待。
+- **有限退避**：只有领域能区分瞬时错误时才在该领域 owner 内配置有限退避，约束错误类型并记录每次退避；`runBoundedSettledBatch` 每项只执行一次，不承担重试。下层已重试的逻辑切勿重复叠加，严禁重试非幂等副作用。
 - **Drain 等待**：仅为 drain 已登记任务而取的快照无需引入任务池，前提是快照不产生新任务，且各任务已内置错误隔离。
 
 ---
@@ -38,7 +38,7 @@
 2. **导出模块**：加入 `packages/commands/index.ts`。
 3. **注册命令**：
    - 在 [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts) 的 `commands` 子链上追加 `commands.command("xxx", ...)`。
-   - **严禁直接挂到 `bot` 上**：命令一律收在 `bot.on(":entities:bot_command")` 子链后面。注册点位于 init 网关、按群串行、私聊网关与入群验证中间件之后，自动继承这些前置安全边界。
+   - **严禁直接挂到 `bot` 上**：命令一律挂在前置链 `:entities:bot_command` 外闸后面的子 Composer 上（`app/registerHandlers.ts`）。注册点位于 init 网关、按群串行、私聊网关与入群验证中间件之后，自动继承这些前置安全边界。
 4. **私聊网关配置**：若命令允许在私聊中使用，必须同步调整 [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts)；当前私聊命令仅显式放行 `/send`。纯群聊命令无需修改。
 5. **菜单配置**：在 `packages/consts/atmosphere/{teasing,plain}/commands.ts` 的两份 `BOT_COMMANDS` 中同时添加命令描述。
 6. **参数常量**：冷却、阈值等常量放入 `packages/consts/commands.ts` 或对应领域的 `packages/consts/<domain>.ts`，附加中文 JSDoc。
@@ -81,6 +81,7 @@
 - 文案表保存固定字符串与格式化函数，Telegram entities 偏移由最终渲染文本计算。
 - `/咬` 等动作命令解析与展示文案分别维护。
 - AI 人设缺省使用 `packages/consts/aiChat/prompts/persona.ts`，存在 `prompt/persona.md` 时采用自定义文件。
+- `send_voice` 工具说明缺省按 `agent.tts.bot_language` 使用 `packages/consts/aiChat/prompts/tools.ts` 的 `VOICE_LANGUAGE_PROMPTS`，存在 `prompt/voice_tool.md` 时采用自定义文件。
 - 若需支持其他语种，建议自行 fork 仓库并完整替换上述文案模块与配置。
 
 ---
@@ -148,7 +149,9 @@
 
 ## 修改人设与 JSON 配置
 
-- **人设维护**：内置人设位于 `packages/consts/aiChat/prompts/persona.ts`；自定义人设在项目根放置 `prompt/persona.md`，重启后全局生效。通知优先采用显式 `atmosphere`，未配置风格时自定义人设使用普通文案。
+- **人设维护**：内置人设位于 `packages/consts/aiChat/prompts/persona.ts`；自定义人设在项目根放置 `prompt/persona.md`（示例见 [`prompt_example/persona.md`](../../prompt_example/persona.md)），重启后全局生效。通知优先采用显式 `atmosphere`，未配置风格时自定义人设使用普通文案。
+- **语音工具说明维护**：内置说明位于 `packages/consts/aiChat/prompts/tools.ts` 的 `VOICE_LANGUAGE_PROMPTS`（`en` / `zh` / `ja` 各一份）；在项目根放置 `prompt/voice_tool.md` 后，重启即以其正文整份替换 `send_voice` 说明，参数说明与其余语音文案仍按 `bot_language` 选取。示例见 [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)。
+- **提示词示例维护**：`prompt_example/` 随发行包分发；`test/config/promptExamples.test.ts` 要求两份示例能被 `loadPromptFile` 接受，`voice_tool.md` 的额度指引、每轮条数与 `text` / `tone` 长度上限与代码常量一致，台词语言与 `config_example/dynamic/agent.json` 的 `bot_language` 一致。调整 `MAX_VOICES_PER_REPLY`、`VOICE_TEXT_MAX_CHARS`、`VOICE_TONE_MAX_CHARS` 或示例的 `bot_language` 时同步修改示例。
 - **配置文件**：开发中只修改被 Git 忽略的 `config/`；`config_example/` 仅作为模板。
   - `config/dynamic/` 支持热重载（`assets.json`、`ad_samples.json`、`agent.json`、`mood.json`、`stickers.json`、`cron.json`）。
   - `config/static/` 需重启生效（`bot.json`、`g-auth.json`）。

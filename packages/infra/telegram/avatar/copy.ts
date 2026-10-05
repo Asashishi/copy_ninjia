@@ -38,7 +38,7 @@ async function resolvePublicUsernameFromChat(
     if (signal?.aborted) return { failed: true };
     if (error instanceof GrammyError) {
       if (error.error_code === 403) {
-        logger.error(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat: 403 Forbidden (chat is not accessible to the bot)`);
+        logger.warn(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat: 403 Forbidden (chat is not accessible to the bot)`);
       } else {
         logger.error(`Could not check ${isChannel ? "channel" : "user"} ${targetId} public username via getChat: ${error.error_code} ${error.description}`);
       }
@@ -60,7 +60,7 @@ async function attemptCopyUserProfilePhoto(
     if (isChannel) {
       const chat: ChatFullInfo = await bot.api.getChat(targetId, telegramSignal(signal));
       if (!chat.photo) {
-        logger.error(`Channel ${targetId} has no chat photo visible to the bot`);
+        logger.log(`Channel ${targetId} has no chat photo visible to the bot`);
         return "permanent-failure";
       }
       fileId = chat.photo.big_file_id;
@@ -77,7 +77,7 @@ async function attemptCopyUserProfilePhoto(
       const activeUniqueId: string | undefined = chatResult.value.photo?.big_file_unique_id;
       const photos: UserProfilePhotos = photosResult.value;
       if (photos.total_count === 0) {
-        logger.error(`User ${targetId} has no profile photos visible to the bot (privacy settings or no avatar)`);
+        logger.log(`User ${targetId} has no profile photos visible to the bot (privacy settings or no avatar)`);
         return "permanent-failure";
       }
 
@@ -85,7 +85,7 @@ async function attemptCopyUserProfilePhoto(
         ? photos.photos.find((sizes: PhotoSize[]): boolean => sizes.length > 0 && sizes[sizes.length - 1]!.file_unique_id === activeUniqueId)?.at(-1)
         : undefined;
       if (!matchedPhoto) {
-        logger.error(`Active avatar of user ${targetId} not found among their visible profile photos (no chat.photo, or history beyond first 100)`);
+        logger.log(`Active avatar of user ${targetId} not found among their visible profile photos (no chat.photo, or history beyond first 100)`);
         return "permanent-failure";
       }
       fileId = matchedPhoto.file_id;
@@ -127,7 +127,7 @@ export async function copyUserProfilePhoto(
     async (attempt: number): Promise<AvatarOperationAttemptResult> => {
       const result: AvatarOperationAttemptResult = await attemptCopyUserProfilePhoto(targetId, isChannel, signal);
       if (result !== "ok") {
-        logger.error(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
+        logger.log(`copyUserProfilePhoto attempt ${attempt}/${AVATAR_FETCH_MAX_ATTEMPTS} failed for ${isChannel ? "channel" : "user"} ${targetId}`);
       }
       return result;
     },
@@ -145,7 +145,7 @@ export async function copyUserProfilePhoto(
   const lookup: PublicUsernameLookupResult = await resolvePublicUsernameFromChat(targetId, isChannel, signal);
   const fallbackUsername: string | undefined = lookup.username;
   if (fallbackUsername) {
-    logger.error(`Falling back to t.me web profile scrape for @${fallbackUsername}`);
+    logger.log(`Falling back to t.me web profile scrape for @${fallbackUsername}`);
     const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(fallbackUsername, signal);
     if (imgBuffer) {
       try {
@@ -162,7 +162,7 @@ export async function copyUserProfilePhoto(
     const hint: string = providedUsername === undefined
       ? ""
       : ` (command context suggested @${providedUsername}, not used because it cannot be proven to still belong to this id)`;
-    logger.error(
+    logger.warn(
       lookup.failed
         ? `Skipping t.me web profile scrape fallback: getChat lookup for ${isChannel ? "channel" : "user"} ${targetId} failed${hint}`
         : `Skipping t.me web profile scrape fallback: ${isChannel ? "channel" : "user"} ${targetId} has no public username${hint}`

@@ -161,10 +161,17 @@ config/
 
 ### コア設定ファイルの詳細
 
-- **`prompt/persona.md`**（任意、プロジェクトルート）
+- **`prompt/persona.md`**（任意、プロジェクトルート。[例](../../prompt_example/persona.md)）
   - **内容**：カスタム AI チャット人設。
   - **動作**：存在しない場合はコード内蔵の人設（[`persona.ts`](../../packages/consts/aiChat/prompts/persona.ts)）を使用します。ファイルが存在する場合はその本文で人設を置き換えます。通知は明示した `atmosphere` を優先し、省略時は通常版を使います。
   - **検証**：プレーンテキスト形式。存在しても空文字または不正な UTF-8 である場合は起動を拒否します。変更後はプロセスの再起動が必要です。
+  - **例**：[`prompt_example/persona.md`](../../prompt_example/persona.md) は穏やかで頼れる「先輩」の人設で、「あなたは誰か / 核となる性格 / 特性の優先順位 / 話し方 / 事実を捏造しない / 言語規範」の節に分かれています。`mkdir -p prompt && cp -n prompt_example/persona.md prompt/` でコピーし（`-n` は既存ファイルを上書きしません）、必要に応じて編集してから再起動します。ファイル本文は前後の空白を除いてそのまま人設としてモデルに渡されるため、運用者向けのメモを書かないでください。
+
+- **`prompt/voice_tool.md`**（任意、プロジェクトルート。[例](../../prompt_example/voice_tool.md)）
+  - **内容**：カスタム AI `send_voice` ツール説明。
+  - **動作**：存在しない場合は `agent.tts.bot_language` に応じて内蔵の `en` / `zh` / `ja` 説明（[`tools.ts`](../../packages/consts/aiChat/prompts/tools.ts) の `VOICE_LANGUAGE_PROMPTS`）を使用します。存在する場合は `bot_language` の値にかかわらず、ファイル本文で説明全体を置き換えます。`text` / `tone` 引数の説明と、`send_message`・「行動と停止」節のボイス重複規則は引き続き `bot_language` で選ばれます。内蔵説明にある実行上の約束（このターンのツール状態にある `send_voice` 残量行の確認、1 ターンの件数と `text` / `tone` の長さ上限、受領・error 応答の扱い）はファイル側で記述する必要があります。
+  - **検証**：プレーンテキスト形式。存在しても空文字または不正な UTF-8 である場合は起動を拒否し、`agent.tts` 未設定時も同様に検証します。変更後はプロセスの再起動が必要です。
+  - **例**：[`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) は上の人設例と対になっており、セリフを穏やかな日常の日本語にしたうえで、上記の実行上の約束をすべて記述しています。例にある 1 ターンの件数と `text` / `tone` の長さ上限はコードの現在の上限に合わせてあるため、編集時も一致させてください。例は `bot_language: "ja"`（[`agent.json` の例](../../config_example/dynamic/agent.json) の値）向けに書かれています。他のセリフ言語を使う場合は、冒頭の文とセリフ言語、セリフと口調の例、重複の説明をその言語に合わせて変えてください。対で使う場合は `agent.tts.style` も対応する声質の説明に替えられます。コピー方法は同じです：`mkdir -p prompt && cp -n prompt_example/voice_tool.md prompt/`。
 
 - **`config/static/bot.json`**（[サンプル](../../config_example/static/bot.json)）
   - `bot_token`、`super_admin_user_id`、および任意の `atmosphere` と `time_zone` を宣言します。起動前に厳格に検証され、未知のキーや不正な型は起動を拒否します。
@@ -186,7 +193,7 @@ config/
        - `media`：画像・音声の文字起こしモデル。マルチモーダルの初回リクエストプローブおよびエンドポイントバックオフに対応。
     2. **拡張生成能力**（未設定時は対応するツールのみ除外）：
        - `image`：画像生成能力。OpenAI 互換プロトコルでは `image_protocol`（`openai` | `openai-standard` | `xai`）を明示宣言する必要があります。
-       - `tts`：音声合成能力。`voice` 音色の指定が必須です。OpenAI は `speech_protocol`（`openai` | `xai`）の宣言が必要です。任意の `daily_limit`（既定 100）および `daily_reserve_quota`（既定 25、`/send` と cron に配分）を設定可能です。
+       - `tts`：音声合成能力。`voice` 音色の指定が必須です。OpenAI は `speech_protocol`（`openai` | `xai`）の宣言が必要です。任意の `bot_language`（`en` | `zh` | `ja`、既定 `ja`）で AI ボイスのセリフの言語を指定します（`send_voice` のツール説明は `prompt/voice_tool.md` で全体を置き換え可能）。`bot_language` はモデル向けのプロンプトを切り替え、AI 返信の合成リクエストでは基本スタイルの後ろにその言語の読み上げ言語指定を追加します（`/send` と cron の合成には追加しません）。`style` と `prompt/voice_tool.md` は追従しません。`style` は `/send` と cron でも使うため声質だけを書き、読み上げ言語は書きません。`bot_language` を変えるときは、その言語で書いた声質説明に替えることを推奨します（省略時の `TTS_DEFAULT_STYLE` は日本語の説明）。`voice_tool.md` を配置している場合は、そのセリフの言語と例も同じ言語に変えてください。任意の `daily_limit`（既定 100）および `daily_reserve_quota`（既定 25、`/send` と cron に配分）を設定可能です。
     3. **検索とリスク管理能力**：
        - `web_search`：ローカル Web 検索ツール能力。1 ターンあたりの呼び出し回数を制限する `max_calls_per_use`（既定 5）に対応。未設定時は `text` モデルのサーバー内蔵検索へフォールバックします。
        - `ad_detect`：グループ参加時のメッセージ広告識別能力。未設定時は広告検出をブロックします。

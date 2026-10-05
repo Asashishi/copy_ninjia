@@ -208,12 +208,14 @@ export interface AiImageRequest {
 }
 
 /**
- * 语音合成请求：一句要念出来的台词，以及可选的本句说话语气。音色与基础朗读风格来自
- * 部署配置 `agent.tts`，tone 追加在基础风格之后只作用于这一句；没有风格指令字段的线协议
- * （xai）不发送 tone。
+ * 语音合成请求：一句要念出来的台词，以及可选的朗读语言要求与本句说话语气。音色与基础朗读风格
+ * 来自部署配置 `agent.tts`，languageStyle 与 tone 依次追加在基础风格之后只作用于这一句（见
+ * aiChat/ai/utils/speechStyle.ts）；没有风格指令字段的线协议（xai）两者都不发送。
  */
 export interface AiSpeechRequest {
   readonly text: string;
+  /** 按 `agent.tts.bot_language` 取的朗读语言要求；只有 AI 回复的 send_voice 带，`/send` 与 cron 不带。 */
+  readonly languageStyle?: string;
   readonly tone?: string;
   readonly signal?: AbortSignal;
 }

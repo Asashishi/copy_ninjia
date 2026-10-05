@@ -34,6 +34,15 @@ export const LOCKDOWN_MS: number = 5 * 60 * 1000;
 /** 解除私密模式的 API 调用失败后，重试前的等待时长。 */
 export const RESTORE_RETRY_MS: number = 30 * 1000;
 /**
+ * 解除私密模式连续因权限被拒（被移出群、被撤管理员）失败多少次之内照常记错误、按
+ * RESTORE_RETRY_MS 重试；超过后降为 warn，重试间隔从 RESTORE_RETRY_MS 起翻倍、以
+ * RESTORE_PERMANENT_RETRY_MAX_MS 封顶。私密模式记录照旧保留，机器人重新获得限制成员权限时
+ * 立即重试。所属模块：workers/antiRaid/lockdownApi.ts 与 lockdownRuntime.ts。
+ */
+export const RESTORE_PERMANENT_FAILURE_LOG_LIMIT: number = 3;
+/** 权限被拒的解除重试退避上限；见 RESTORE_PERMANENT_FAILURE_LOG_LIMIT。 */
+export const RESTORE_PERMANENT_RETRY_MAX_MS: number = 30 * 60 * 1000;
+/**
  * 一轮私密模式因落盘失败或读取原权限失败作废后，暂停再次触发的冷却时长。
  *
  * 这两类失败对同一个群通常是系统性的（状态无法持久化、机器人在该群读不到

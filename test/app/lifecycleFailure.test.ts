@@ -215,6 +215,27 @@ describe("应用启动失败与退出清理", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  test("回归用例：停机途中再收到 SIGTERM 仍由同一 handler 接住，不恢复默认退出动作", async () => {
+    const baseline: number = process.listenerCount("SIGTERM");
+    let afterSecondSignal: number = 0;
+    runnerTask.mockImplementationOnce(async (): Promise<void> => {
+      process.emit("SIGTERM");
+      process.emit("SIGTERM");
+      afterSecondSignal = process.listenerCount("SIGTERM");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+
+    await lifecycle.run("main");
+
+    expect(afterSecondSignal).toBe(baseline + 1);
+    expect(process.listenerCount("SIGTERM")).toBe(baseline);
+    const signalLogs: unknown[][] = loggerLog.mock.calls.filter(
+      (args: unknown[]): boolean => args[0] === "Received SIGTERM; beginning graceful shutdown."
+    );
+    expect(signalLogs).toHaveLength(1);
+    expect(process.exitCode).toBe(0);
+  });
+
   test("正常运行收到 SIGINT 时记录原因并保持干净停机", async () => {
     runnerTask.mockImplementationOnce(async (): Promise<void> => {
       process.emit("SIGINT");
@@ -356,6 +377,8 @@ describe("应用启动失败与退出清理", () => {
     expect(calls.indexOf("quiesceTranslate")).toBeLessThan(calls.indexOf("drainTranslate"));
     expect(calls.indexOf("drainTranslate")).toBeLessThan(calls.indexOf("closeTranslate"));
     expect(calls.indexOf("drainGag")).toBeLessThan(calls.indexOf("drainTelegramOutbound"));
+    expect(calls.indexOf("drainQaForms")).toBeGreaterThan(calls.indexOf("drainGag"));
+    expect(calls.indexOf("drainQaForms")).toBeLessThan(calls.indexOf("drainTelegramOutbound"));
     expect(calls.indexOf("quiesceWed")).toBeLessThan(calls.indexOf("drainWed"));
     expect(calls.indexOf("drainWed")).toBeLessThan(calls.indexOf("drainMessageDeletions"));
     expect(calls.indexOf("flushAiMemory")).toBeLessThan(calls.indexOf("terminateAiChat"));

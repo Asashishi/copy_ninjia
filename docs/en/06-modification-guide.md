@@ -23,8 +23,8 @@ Each recipe specifies the files to touch and the implementation sequence.
 ## Adding a Concurrent Batch
 
 - **Deterministic Settlement**: Use `Promise.allSettled` to wait for fixed, independent Promises, and handle each rejection individually. **Never use settlement to silently swallow errors**.
-- **Dynamic Input Rate Limiting**: When the input scale can grow dynamically, reuse [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts). Define an explicit concurrency ceiling and identify failures via `item/index/attempt` from the results. Never `map` the entire input into an array of Promises before awaiting.
-- **Finite Backoff**: Configure finite backoff only when the domain can distinguish transient errors. Constrain error classes and record delays via `shouldRetry` and `onRetry`. Never layer retries over underlying layers that already retry, and strictly forbid retrying non-idempotent side effects.
+- **Dynamic Input Rate Limiting**: When the input scale can grow dynamically, reuse [`runBoundedSettledBatch`](../../packages/libs/boundedSettledBatch.ts). Define an explicit concurrency ceiling and identify failures via `item/index` from the results. Never `map` the entire input into an array of Promises before awaiting.
+- **Finite Backoff**: Configure finite backoff only when the domain can distinguish transient errors, inside that domain's owner, constraining error classes and recording every delay; `runBoundedSettledBatch` executes each item once and does not retry. Never layer retries over underlying layers that already retry, and strictly forbid retrying non-idempotent side effects.
 - **Drain Waiting**: Taking a snapshot solely to drain already registered tasks does not require a worker pool, provided the snapshot initiates no new tasks and all tasks possess built-in error isolation.
 
 ---
@@ -38,7 +38,7 @@ Each recipe specifies the files to touch and the implementation sequence.
 2. **Export Module**: Add the export to `packages/commands/index.ts`.
 3. **Register Command**:
    - In [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts), append `commands.command("xxx", ...)` to the `commands` sub-chain.
-   - **Never register directly on `bot`**: Commands must strictly be attached behind the `bot.on(":entities:bot_command")` sub-chain. The registration point sits behind the init gateway, per-chat serialization, private-chat gateway, and join-verification middleware, automatically inheriting these front-line security boundaries.
+   - **Never register directly on `bot`**: Commands must strictly be attached to the child Composer behind the preamble's `:entities:bot_command` gate (`app/registerHandlers.ts`). The registration point sits behind the init gateway, per-chat serialization, private-chat gateway, and join-verification middleware, automatically inheriting these front-line security boundaries.
 4. **Private Chat Gateway Configuration**: If the command is permitted in private chats, update [`packages/infra/updateGate.ts`](../../packages/infra/updateGate.ts) accordingly; currently, private chat only explicitly allows `/send`. Group-only commands require no changes.
 5. **Menu Configuration**: Add the command description to both `BOT_COMMANDS` lists in `packages/consts/atmosphere/{teasing,plain}/commands.ts`.
 6. **Parameter Constants**: Place cooldowns, thresholds, and numeric constants in `packages/consts/commands.ts` or the matching `packages/consts/<domain>.ts`, with Chinese JSDoc.
@@ -81,6 +81,7 @@ User-facing static copy is Simplified Chinese. `packages/consts/atmosphere/` pro
 - Text tables maintain static strings and formatters; Telegram entity offsets are computed from rendered text.
 - Action command parsing and display copy (e.g., for `/咬`) are maintained separately.
 - AI persona defaults to `packages/consts/aiChat/prompts/persona.ts`; if `prompt/persona.md` exists, the custom file takes precedence.
+- The `send_voice` tool instruction defaults to `VOICE_LANGUAGE_PROMPTS` in `packages/consts/aiChat/prompts/tools.ts`, chosen by `agent.tts.bot_language`; if `prompt/voice_tool.md` exists, the custom file takes precedence.
 - To support other languages, fork the repository and fully replace the text modules and configuration mentioned above.
 
 ---
@@ -148,7 +149,9 @@ The capability contract is partitioned into 6 independent minimal interfaces (`A
 
 ## Changing Persona and JSON Configuration
 
-- **Persona Maintenance**: The built-in persona resides in `packages/consts/aiChat/prompts/persona.ts`; place custom persona files at `prompt/persona.md` in the project root. Custom personas take effect globally upon restart. Notices prioritize explicit `atmosphere` and use plain copy for a custom persona when that setting is omitted.
+- **Persona Maintenance**: The built-in persona resides in `packages/consts/aiChat/prompts/persona.ts`; place custom persona files at `prompt/persona.md` in the project root (see the example [`prompt_example/persona.md`](../../prompt_example/persona.md)). Custom personas take effect globally upon restart. Notices prioritize explicit `atmosphere` and use plain copy for a custom persona when that setting is omitted.
+- **Voice Tool Instruction Maintenance**: The built-in instructions reside in `VOICE_LANGUAGE_PROMPTS` in `packages/consts/aiChat/prompts/tools.ts` (one each for `en` / `zh` / `ja`); after placing `prompt/voice_tool.md` in the project root, a restart replaces the whole `send_voice` instruction with its text, while the parameter descriptions and the other voice texts still follow `bot_language`. See the example [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md).
+- **Prompt Example Maintenance**: `prompt_example/` ships in the release package. `test/config/promptExamples.test.ts` requires both examples to pass `loadPromptFile`, the quota pointer, per-round count and `text` / `tone` length limits in `voice_tool.md` to match the code constants, and its line language to match `bot_language` in `config_example/dynamic/agent.json`. Update the examples together with `MAX_VOICES_PER_REPLY`, `VOICE_TEXT_MAX_CHARS`, `VOICE_TONE_MAX_CHARS` or the example `bot_language`.
 - **Configuration Files**: Only edit git-ignored `config/` during development; `config_example/` serves purely as templates.
   - `config/dynamic/` supports hot-reloading (`assets.json`, `ad_samples.json`, `agent.json`, `mood.json`, `stickers.json`, `cron.json`).
   - `config/static/` requires a restart to take effect (`bot.json`, `g-auth.json`).

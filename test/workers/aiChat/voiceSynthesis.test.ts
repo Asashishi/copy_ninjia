@@ -105,6 +105,8 @@ describe("AI Worker 侧转交", () => {
     expect(typed.result.ok).toBeTrue();
     expect(transfer).toEqual([typed.result.voice.bytes.buffer]);
     expect(synthesizeSpeech.mock.calls[0]![0]).toMatchObject({ text: "おやすみ", tone: "眠そうに", quota: "operator" });
+    // `/send` 与 cron 的合成不随 bot_language 追加朗读语言要求。
+    expect(synthesizeSpeech.mock.calls[0]![0].languageStyle).toBeUndefined();
     expect(voiceSynthesisRequests.size).toBe(0);
   });
 
@@ -142,6 +144,15 @@ describe("AI Worker 侧转交", () => {
     expect(signals).toHaveLength(2);
     // 未知或已结算的 requestId 撤回不做任何事。
     handleCancelVoiceSynthesis({ type: "cancelVoiceSynthesis", requestId: 99 });
+  });
+
+  test("取入口意外抛错时同样记日志并按合成失败回执，不留下未处理的拒绝", async () => {
+    ttsAiProvider.mockImplementationOnce((): never => { throw new Error("config missing"); });
+    handleSynthesizeVoice({ type: "synthesizeVoice", requestId: 6, text: "hi", tone: undefined });
+    expect((await nextEvent())[0]).toEqual({ type: "voiceSynthesized", requestId: 6, result: { ok: false, reason: "synthesis failed" } });
+    expect(loggerError.mock.calls[0]![0]).toBe("Speech synthesizer lookup for main-thread request 6 threw:");
+    expect(voiceSynthesisRequests.size).toBe(0);
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
   });
 
   test("合成意外抛错时记日志并按合成失败回执", async () => {

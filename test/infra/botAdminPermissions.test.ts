@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { ChatMember, ChatMemberAdministrator } from "grammy/types";
 import type { BotChatPermissions } from "../../packages/types/telegram";
-import { settleBackgroundWork, settleTestBatch } from "../libs/helpers";
+import { settleBackgroundWork, settleTestBatch } from "../helpers/common";
 import { botPermissions } from "../helpers/botPermissions";
 
 const states = new Map<number, Record<string, unknown>>();

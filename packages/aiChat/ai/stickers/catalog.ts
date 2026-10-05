@@ -76,7 +76,7 @@ async function callWithRetry(
     if (result.ok) return result.text;
     if (!result.retryable || attempt >= STICKER_CATALOG_RETRY_DELAYS_MS.length) return null;
     const delayMs: number = STICKER_CATALOG_RETRY_DELAYS_MS[attempt]!;
-    logger.error(`${label} attempt ${attempt + 1} returned no usable text; resampling in ${delayMs} ms.`);
+    logger.warn(`${label} attempt ${attempt + 1} returned no usable text; resampling in ${delayMs} ms.`);
     await sleep(delayMs, signal);
   }
 }

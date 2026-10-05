@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../packages/config/agent";
-import { webDigestWaiters } from "../../packages/cache/main/aiChat";
+import { webDigestRequests } from "../../packages/cache/main/aiChat";
 import { WEB_DIGEST_REQUEST_TIMEOUT_MS } from "../../packages/consts/webDigest";
 import { failAllWebDigestWaiters, requestWebDigest, settleWebDigest } from "../../packages/aiChat/webDigest";
 import type { AiChatWorkerMessage } from "../../packages/types/aiChat/protocol";
@@ -63,7 +63,7 @@ describe("requestWebDigest", () => {
     expect(posts).toEqual([{ type: "composeWebDigest", requestId, request: REQUEST }]);
     settleWebDigest({ type: "webDigestComposed", requestId, result: { ok: true, text: "*摘要*" } });
     await expect(pending).resolves.toEqual({ ok: true, text: "*摘要*" });
-    expect(webDigestWaiters.size).toBe(0);
+    expect(webDigestRequests.waiters.size).toBe(0);
     controller.abort();
     expect(posts).toHaveLength(1);
   });
@@ -76,7 +76,7 @@ describe("requestWebDigest", () => {
     await expect(pending).resolves.toEqual({ ok: false, reason: "aborted" });
     expect(posts.at(-1)).toEqual({ type: "cancelWebDigest", requestId });
     settleWebDigest({ type: "webDigestComposed", requestId, result: { ok: false, reason: "aborted" } });
-    expect(webDigestWaiters.size).toBe(0);
+    expect(webDigestRequests.waiters.size).toBe(0);
   });
 
   test("等待超时按 timed out 结算并撤回组稿", async () => {
@@ -94,10 +94,10 @@ describe("requestWebDigest", () => {
     accepting = true;
     const first: Promise<WebDigestCompositionResult> = request();
     const second: Promise<WebDigestCompositionResult> = request();
-    expect(webDigestWaiters.size).toBe(2);
+    expect(webDigestRequests.waiters.size).toBe(2);
     failAllWebDigestWaiters();
     await expect(first).resolves.toEqual({ ok: false, reason: "worker unavailable" });
     await expect(second).resolves.toEqual({ ok: false, reason: "worker unavailable" });
-    expect(webDigestWaiters.size).toBe(0);
+    expect(webDigestRequests.waiters.size).toBe(0);
   });
 });

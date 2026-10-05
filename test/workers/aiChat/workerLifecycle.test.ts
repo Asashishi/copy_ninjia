@@ -40,7 +40,6 @@ const flushMemorySnapshot = mock((_chatId: number, _persistImmediately?: boolean
   calls.push("flushMemorySnapshot");
 });
 const hydrateMemories = mock((_memories: unknown): void => { calls.push("hydrateMemories"); });
-const purgeChatMemory = mock((_chatId: number): void => { calls.push("purgeMemory"); });
 const recordChatMessage = mock((..._args: unknown[]): void => { calls.push("record"); });
 const recordChatMedia = mock((_message: unknown): void => { calls.push("recordMedia"); });
 const generateAndSendReply = mock((..._args: unknown[]): void => { calls.push("trigger"); });
@@ -50,9 +49,9 @@ const invalidateChatReplies = mock(async (_chatId: number): Promise<void> => {
 });
 const quiesceAiChatReplies = mock(async (): Promise<void> => { calls.push("drainReplies"); });
 const initTelegramClients = mock((): void => { calls.push("telegram"); });
-const currentMood = mock((_chatId: number) => ({ name: "平静", weight: 1, instruction: "" }));
-const switchMood = mock((_chatId: number) => ({ name: "开心", weight: 1, instruction: "" }));
-const refreshChatMoods = mock((): void => { calls.push("refreshMoods"); });
+const currentMood = mock(() => ({ name: "平静", weight: 1, instruction: "" }));
+const switchMood = mock(() => ({ name: "开心", weight: 1, instruction: "" }));
+const refreshMood = mock((): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../../packages/aiChat/ai/stickers/catalog", () => ({
@@ -74,7 +73,6 @@ mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({
   flushDirtyMemories,
   flushMemorySnapshot,
   hydrateMemories,
-  purgeChatMemory,
   recordChatMessage,
 }));
 mock.module("../../../packages/workers/aiChat/mediaIngest", () => ({ recordChatMedia }));
@@ -93,7 +91,7 @@ mock.module("../../../packages/infra/telegram", () => ({ initTelegramClients }))
 const handleSynthesizeVoice = mock((..._args: unknown[]): void => { calls.push("synthesizeVoice"); });
 const handleCancelVoiceSynthesis = mock((..._args: unknown[]): void => { calls.push("cancelVoiceSynthesis"); });
 mock.module("../../../packages/workers/aiChat/voiceSynthesis", () => ({ handleCancelVoiceSynthesis, handleSynthesizeVoice }));
-mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMood, refreshChatMoods, switchMood }));
+mock.module("../../../packages/aiChat/ai/mood", () => ({ currentMood, refreshMood, switchMood }));
 mock.module("../../../packages/infra/logger", () => ({
   acceptForwardedLogBatch: (): boolean => false,
   logger: loggerStub({ error: loggerError }),
@@ -102,8 +100,9 @@ mock.module("../../../packages/infra/logger", () => ({
 const worker = await import("../../../packages/workers/aiChatWorker");
 const { botInfoState, superAdminUserIdState, atmosphereState } = await import("../../../packages/cache/workers/aiChat/identity");
 const { stickerMenuRevision } = await import("../../../packages/cache/workers/aiChat/stickers/menu");
-const { agentDeploymentConfigCache, personaCache } = await import("../../../packages/cache/perThread/config");
+const { agentDeploymentConfigCache, personaCache, voiceToolPromptCache } = await import("../../../packages/cache/perThread/config");
 const { aiCacheUsageSink } = await import("../../../packages/cache/perThread/aiCacheUsage");
+const { hasChatMemory, pendingSummaries, resetAiChatMemoryCache } = await import("../../../packages/cache/workers/aiChat/memory");
 
 /** 主线程投递过来的那一代快照；断言 Worker 原样收进 holder，不另行读盘。 */
 const injectedAgentConfig: AgentDeploymentConfig = {
@@ -126,6 +125,7 @@ beforeEach(() => {
   aiChatWorkerQuiescing.current = false;
   aiChatWorkerAbortController.current = new AbortController();
   aiChatWorkerDrain.current = null;
+  resetAiChatMemoryCache();
   for (const mocked of [
     ensureStickerCatalogs,
     drainStickerCatalogTasks,
@@ -142,7 +142,6 @@ beforeEach(() => {
     flushDirtyMemories,
     flushMemorySnapshot,
     hydrateMemories,
-    purgeChatMemory,
     recordChatMessage,
     recordChatMedia,
     recordBotImage,
@@ -153,7 +152,7 @@ beforeEach(() => {
     initTelegramClients,
     currentMood,
     switchMood,
-    refreshChatMoods,
+    refreshMood,
     loggerError,
   ]) mocked.mockClear();
   quiesceAiChatReplies.mockImplementation(async (): Promise<void> => { calls.push("drainReplies"); });
@@ -166,17 +165,50 @@ afterAll(() => {
 });
 
 describe("AI Chat Worker lifecycle", () => {
-  test("协议路由覆盖恢复、记录、触发、刷盘与可选记忆清除", async () => {
-    const messages: AiChatWorkerMessage[] = [
-      { atmosphere: "plain",
-        type: "init", timeZone: "UTC",
-        botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
-        superAdminUserId: 1,
-        agent: injectedAgentConfig,
-        mood: { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] },
-        stickers: { packs: ["pack"] },
-        persona: "测试人设",
-      },
+  /** 每条协议路由用例都先送这一条 init，与主线程重放顺序一致。 */
+  const INIT_MESSAGE: AiChatWorkerMessage = {
+    atmosphere: "plain",
+    type: "init",
+    timeZone: "UTC",
+    botInfo: { id: 99, first_name: "Ninja", username: "ninja_bot" },
+    superAdminUserId: 1,
+    agent: injectedAgentConfig,
+    mood: { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] },
+    stickers: { packs: ["pack"] },
+    persona: "测试人设",
+    voiceToolPrompt: "测试语音说明",
+  };
+
+  /** 先 init，再依次投递 messages，并让同步路由排出的微任务跑完。 */
+  async function routeAfterInit(messages: readonly AiChatWorkerMessage[]): Promise<void> {
+    worker.handleAiChatWorkerMessage(INIT_MESSAGE);
+    for (const message of messages) worker.handleAiChatWorkerMessage(message);
+    await Bun.sleep(0);
+  }
+
+  test("init 接管身份、时区、人设与主线程投来的配置快照，并按贴纸白名单补目录", async () => {
+    await routeAfterInit([]);
+
+    expect(botInfoState.current?.id).toBe(99);
+    expect(superAdminUserIdState.current).toBe(1);
+    expect(atmosphereState.current).toBe("plain");
+    expect(getTimeZone()).toBe("UTC");
+    // 本进程人设与 send_voice 说明随 init 接管，所有群共用这一份。
+    expect(personaCache.current).toBe("测试人设");
+    expect(voiceToolPromptCache.current).toBe("测试语音说明");
+    // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
+    expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
+    expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
+  });
+
+  test("记录类消息交给各自的记录器，回复 bot 图片时解析被回复的图，要求立即落盘的才刷快照", async () => {
+    const repliedEntry = { messageId: 11 };
+    recordChatMessage.mockImplementationOnce((): void => { calls.push("record"); });
+    recordChatMessage.mockImplementationOnce(((): unknown => {
+      calls.push("record");
+      return repliedEntry;
+    }) as () => void);
+    await routeAfterInit([
       {
         type: "record",
         chatId: -1001,
@@ -219,53 +251,19 @@ describe("AI Chat Worker lifecycle", () => {
         messageId: 10,
         persistImmediately: true,
       } as unknown as AiChatWorkerMessage,
-      {
-        type: "trigger",
-        messageThreadId: undefined,
-        chatId: -1001,
-        triggerSenderId: 7,
-        replyToMessageId: 10,
-        isRandomTrigger: false,
-        telegramBackpressured: true,
-        imageGenerationRequested: true,
-        imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
-      },
-      { type: "hydrate", memories: new Map<number, string>() },
-      { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
-      { type: "flushMemory", flushId: 8 },
-      { type: "invalidateChat", chatId: -1001, requestId: 1 },
-      { type: "invalidateChat", chatId: -1002, requestId: 2 },
-      { type: "queryMood", chatId: -1001, requestId: 3, deadlineAt: Number.MAX_SAFE_INTEGER },
-      { type: "switchMood", chatId: -1001, requestId: 4, deadlineAt: Number.MAX_SAFE_INTEGER },
-    ];
+    ]);
 
-    const repliedEntry = { messageId: 11 };
-    recordChatMessage.mockImplementationOnce((): void => { calls.push("record"); });
-    recordChatMessage.mockImplementationOnce(((): unknown => {
-      calls.push("record");
-      return repliedEntry;
-    }) as () => void);
-    for (const message of messages) worker.handleAiChatWorkerMessage(message);
-    await Bun.sleep(0);
-
-    expect(botInfoState.current?.id).toBe(99);
-    expect(superAdminUserIdState.current).toBe(1);
-    expect(atmosphereState.current).toBe("plain");
-    expect(getTimeZone()).toBe("UTC");
-    // 本进程人设随 init 接管，所有群共用这一份。
-    expect(personaCache.current).toBe("测试人设");
-    // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
-    expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
-    expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
     expect(recordChatMessage).toHaveBeenCalledTimes(2);
     expect(resolveRepliedBotImage).toHaveBeenCalledTimes(1);
     expect(resolveRepliedBotImage).toHaveBeenCalledWith(-1001, repliedEntry, { fileId: "bot-photo", fileUniqueId: "bot-photo-u", caption: "" });
     expect(recordBotImage).toHaveBeenCalledWith({ type: "recordBotImage", chatId: -1001, messageId: 12, caption: "图注", edited: false, persistImmediately: true });
     expect(recordChatMedia).toHaveBeenCalledTimes(1);
-    expect(flushMemorySnapshot).toHaveBeenNthCalledWith(1, -1001, true);
-    expect(flushMemorySnapshot).toHaveBeenNthCalledWith(2, -1001, true);
-    expect(flushMemorySnapshot).toHaveBeenNthCalledWith(3, -1001, true);
-    expect(generateAndSendReply).toHaveBeenCalledWith({
+    expect(flushMemorySnapshot).toHaveBeenCalledTimes(3);
+    expect(flushMemorySnapshot.mock.calls.every((call: unknown[]): boolean => call[0] === -1001 && call[1] === true)).toBeTrue();
+  });
+
+  test("trigger 原样交给回复生成", async () => {
+    const trigger: AiChatWorkerMessage = {
       type: "trigger",
       messageThreadId: undefined,
       chatId: -1001,
@@ -275,23 +273,48 @@ describe("AI Chat Worker lifecycle", () => {
       telegramBackpressured: true,
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
-    });
+    };
+    await routeAfterInit([trigger]);
+    expect(generateAndSendReply).toHaveBeenCalledWith(trigger);
+  });
+
+  test("hydrate 两类快照各接管一次，flushMemory 回 memoryFlushed", async () => {
+    await routeAfterInit([
+      { type: "hydrate", memories: new Map<number, string>() },
+      { type: "hydrateStickerCatalog", catalogs: new Map<string, string>() },
+      { type: "flushMemory", flushId: 8 },
+    ]);
     expect(hydrateMemories).toHaveBeenCalledTimes(1);
     expect(hydrateStickerCatalogs).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 8 });
+  });
+
+  test("invalidateChat 失效回复并恒带记忆清理，分别回执记忆删除与失效完成", async () => {
+    pendingSummaries.set(-1001, "摘要");
+    pendingSummaries.set(-1002, "摘要");
+    await routeAfterInit([
+      { type: "invalidateChat", chatId: -1001, requestId: 1 },
+      { type: "invalidateChat", chatId: -1002, requestId: 2 },
+    ]);
     expect(invalidateChatReplies).toHaveBeenCalledTimes(2);
     // invalidateChat 恒带记忆清理：主线程只有「失效并删记忆」这一条路。
-    expect(purgeChatMemory).toHaveBeenCalledTimes(2);
-    expect(purgeChatMemory).toHaveBeenCalledWith(-1001);
-    expect(purgeChatMemory).toHaveBeenCalledWith(-1002);
-    expect(postMessage).toHaveBeenCalledWith({ type: "memoryFlushed", flushId: 8 });
+    expect(hasChatMemory(-1001)).toBeFalse();
+    expect(hasChatMemory(-1002)).toBeFalse();
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1001 });
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1002 });
     expect(postMessage).toHaveBeenCalledWith({ type: "chatInvalidated", chatId: -1001, requestId: 1 });
     expect(postMessage).toHaveBeenCalledWith({ type: "chatInvalidated", chatId: -1002, requestId: 2 });
-    expect(currentMood).toHaveBeenCalledWith(-1001);
-    expect(postMessage).toHaveBeenCalledWith({ type: "moodQueried", chatId: -1001, requestId: 3, moodName: "平静" });
-    expect(switchMood).toHaveBeenCalledWith(-1001);
-    expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", chatId: -1001, requestId: 4, moodName: "开心" });
+  });
+
+  test("queryMood 与 switchMood 按 requestId 回当前或新抽的心情名", async () => {
+    await routeAfterInit([
+      { type: "queryMood", requestId: 3, deadlineAt: Number.MAX_SAFE_INTEGER },
+      { type: "switchMood", requestId: 4, deadlineAt: Number.MAX_SAFE_INTEGER },
+    ]);
+    expect(currentMood).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "moodQueried", requestId: 3, moodName: "平静" });
+    expect(switchMood).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({ type: "moodSwitched", requestId: 4, moodName: "开心" });
   });
 
   test("启动时装上缓存用量出口，把用量作为事件发回主线程；停止时卸下", () => {
@@ -314,6 +337,7 @@ describe("AI Chat Worker lifecycle", () => {
       mood: { moods: [{ name: "平静", weight: 100, instruction: "平静。" }] },
       stickers: { packs: ["pack"] },
       persona: "测试人设",
+      voiceToolPrompt: null,
     });
     ensureStickerCatalogs.mockClear();
     pruneStickerCatalogs.mockClear();
@@ -325,7 +349,7 @@ describe("AI Chat Worker lifecycle", () => {
     };
     worker.handleAiChatWorkerMessage({ type: "configReload", agent: reloadedAgent, mood: undefined, stickers: undefined });
     expect(agentDeploymentConfigCache.current).toBe(reloadedAgent);
-    expect(refreshChatMoods).not.toHaveBeenCalled();
+    expect(refreshMood).not.toHaveBeenCalled();
     expect(adoptStickerConfig).not.toHaveBeenCalled();
 
     const stickers = { packs: ["pack", "new_pack"] };
@@ -337,7 +361,7 @@ describe("AI Chat Worker lifecycle", () => {
       stickers,
     });
     expect(agentDeploymentConfigCache.current).toBe(reloadedAgent);
-    expect(refreshChatMoods).toHaveBeenCalledTimes(1);
+    expect(refreshMood).toHaveBeenCalledTimes(1);
     expect(adoptStickerConfig).toHaveBeenCalledWith(stickers);
     expect(pruneStickerCatalogs).toHaveBeenCalledWith(["pack", "new_pack"]);
     expect(pruneStickerSets).toHaveBeenCalledWith(["pack", "new_pack"]);
@@ -443,7 +467,6 @@ describe("AI Chat Worker lifecycle", () => {
   test("过期的 switchMood 请求不再迟到改写心情", () => {
     worker.handleAiChatWorkerMessage({
       type: "switchMood",
-      chatId: -1001,
       requestId: 4,
       deadlineAt: 0,
     });
@@ -465,7 +488,6 @@ describe("AI Chat Worker lifecycle", () => {
   test("过期的 queryMood 请求不再读取或初始化心情", () => {
     worker.handleAiChatWorkerMessage({
       type: "queryMood",
-      chatId: -1001,
       requestId: 5,
       deadlineAt: 0,
     });

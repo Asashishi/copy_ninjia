@@ -23,6 +23,13 @@ import {
   collectStringConstantAssertionProblems,
 } from "../../scripts/conventions/testAssertions";
 import {
+  CONSTANT_TEXT_CONTRACT_EXEMPTIONS,
+  collectConstantTextFragmentAssertionProblems,
+  collectConstantTextFragments,
+  collectUnusedConstantTextExemptionProblems,
+  constantTextCorpus,
+} from "../../scripts/conventions/testAssertionFragments";
+import {
   collectCacheJsDocProblems,
   collectConstantProblems,
   collectConstantLocationProblems,
@@ -745,5 +752,88 @@ describe("测试断言取值口径", () => {
         'expect(parse("fixture_tool")).toBe(true);',
       ].join("\n")),
     })).toEqual([]);
+  });
+});
+
+describe("测试断言不得抄写常量文案片段", () => {
+  /** 一个 consts 文件的文案语料：普通字面量、对象字段与模板静态片段都收。 */
+  function corpusOf(text: string): string {
+    const fragments: string[] = [];
+    collectConstantTextFragments(source("/project/packages/consts/sample.ts", text), fragments);
+    return constantTextCorpus(fragments);
+  }
+
+  const CORPUS: string = corpusOf([
+    'export const NOTICE: string = "本天才已经把这条消息删掉啦";',
+    "export const TEXTS = { done: (label: string): string => `${label} 的权限本来就是全开的，笨蛋` };",
+  ].join("\n"));
+
+  test("匹配器实参里含六个以上汉字的常量文案子串都算，模板静态片段与嵌套匹配器同样拦下", () => {
+    const path: string = "/project/test/sample.test.ts";
+    const problems: readonly string[] = collectConstantTextFragmentAssertionProblems({
+      projectRoot: "/project",
+      path,
+      corpus: CORPUS,
+      usedExemptions: new Set<string>(),
+      source: source(path, [
+        'test("回执", () => {',
+        '  expect(text).toContain("已经把这条消息删掉");',
+        '  expect(send).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("本来就是全开的") }));',
+        "  expect(text).not.toContain(`${label} 的权限本来就是全开的`);",
+        "});",
+      ].join("\n")),
+    });
+    expect(problems).toEqual([
+      expect.stringContaining("test/sample.test.ts:2 asserts text copied from packages/consts"),
+      expect.stringContaining("test/sample.test.ts:3 asserts text copied from packages/consts"),
+      expect.stringContaining("test/sample.test.ts:4 asserts text copied from packages/consts"),
+    ]);
+  });
+
+  test("放过不足六个汉字的片段、本文件夹具原样透传的文案与语料里没有的文字", () => {
+    const path: string = "/project/test/sample.test.ts";
+    expect(collectConstantTextFragmentAssertionProblems({
+      projectRoot: "/project",
+      path,
+      corpus: CORPUS,
+      usedExemptions: new Set<string>(),
+      source: source(path, [
+        'const input: string = "本天才已经把这条消息删掉啦";',
+        'test("回执", () => {',
+        '  expect(echo(input)).toBe("本天才已经把这条消息删掉啦");',
+        '  expect(text).toContain("本天才");',
+        '  expect(text).toContain("测试自己写的一整句夹具文字");',
+        '  register("已经把这条消息删掉");',
+        "});",
+      ].join("\n")),
+    })).toEqual([]);
+  });
+
+  test("豁免表里的契约用例按文件与用例名放行并记为已用；没被用到的豁免逐条报出", () => {
+    const exemption = CONSTANT_TEXT_CONTRACT_EXEMPTIONS[0]!;
+    const title: string = exemption.tests[0]!;
+    const path: string = `/project/${exemption.path}`;
+    const used: Set<string> = new Set<string>();
+    expect(collectConstantTextFragmentAssertionProblems({
+      projectRoot: "/project",
+      path,
+      corpus: CORPUS,
+      usedExemptions: used,
+      source: source(path, [
+        `test(${JSON.stringify(title)}, () => {`,
+        '  expect(prompt).toContain("已经把这条消息删掉");',
+        "});",
+        'test("同文件里的普通用例", () => {',
+        '  expect(prompt).toContain("已经把这条消息删掉");',
+        "});",
+      ].join("\n")),
+    })).toEqual([expect.stringContaining(`${exemption.path}:5 asserts text copied`)]);
+    expect([...used]).toEqual([`${exemption.path}::${title}`]);
+
+    const unused: readonly string[] = collectUnusedConstantTextExemptionProblems(used);
+    const exemptTitleCount: number = CONSTANT_TEXT_CONTRACT_EXEMPTIONS
+      .reduce((count: number, entry): number => count + entry.tests.length, 0);
+    expect(unused).toHaveLength(exemptTitleCount - 1);
+    expect(unused.some((problem: string): boolean => problem.includes(title))).toBeFalse();
   });
 });

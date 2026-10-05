@@ -70,11 +70,6 @@ describe("application command menu", () => {
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("mood");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("flood_control");
     expect(BOT_COMMANDS.map(({ command }) => command)).toContain("bot_status");
-    const permissionDescription: string | undefined =
-      BOT_COMMANDS.find(({ command }) => command === "permission")?.description;
-    expect(permissionDescription).toContain("所有杂鱼都能用");
-    expect(permissionDescription).toContain("超级管理员");
-    expect(permissionDescription).not.toContain("白名单边界内");
     const blockDescription: string | undefined =
       BOT_COMMANDS.find(({ command }) => command === "block")?.description;
     expect(blockDescription).toContain("isCanBlock");
@@ -86,6 +81,14 @@ describe("application command menu", () => {
       .toContain("isCanUnMute");
     expect(BOT_COMMANDS.find(({ command }) => command === "init")?.description)
       .toContain("超级管理员");
+  });
+
+  test("/permission 的菜单描述写明 help 与 query 人人可用、修改仅限超级管理员", () => {
+    const permissionDescription: string | undefined =
+      BOT_COMMANDS.find(({ command }) => command === "permission")?.description;
+    expect(permissionDescription).toContain("所有杂鱼都能用");
+    expect(permissionDescription).toContain("超级管理员");
+    expect(permissionDescription).not.toContain("白名单边界内");
   });
 
   test("显式注册公开命令且不暴露管理员私聊 /send", async () => {

@@ -19,9 +19,11 @@ import type { TelegramIdentityMetadata } from "../../../packages/types/identityP
 
 const { enqueueAdCandidate, runAdDetectBatch, stopAdDetectQueue } =
   await import("../../../packages/workers/antiRaid/adDetect/queue");
-const { pendingAdMessages } =
+const { pendingAdBundleCount } =
   await import("../../../packages/cache/workers/antiRaid/adDetect");
 
+const { pendingAdBundle } =
+  await import("../../../packages/workers/antiRaid/adDetect/queueState");
 beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
 
 describe("发言者姓名参与广告检测", (): void => {
@@ -75,7 +77,7 @@ describe("发言者姓名参与广告检测", (): void => {
     }), 1_001);
     await runAdDetectBatch(1_001);
     expect(classifiedTexts).toEqual(["1. 普通名字 已读引文"]);
-    expect(pendingAdMessages.get("-1001:7")?.entries).toHaveLength(1);
+    expect(pendingAdBundle(-1001, 7)?.entries).toHaveLength(1);
 
     enqueueAdCandidate(candidate({
       messageId: 3, text: "", sampleQuote: "已读引文",
@@ -136,7 +138,7 @@ describe("发言者姓名参与广告检测", (): void => {
       username: "",
       text: filler,
     }), 1_000);
-    expect(pendingAdMessages.get("-1001:7")?.entries[0]?.text).toBe(
+    expect(pendingAdBundle(-1001, 7)?.entries[0]?.text).toBe(
       `${"姓".repeat(AD_DETECT_SENDER_NAME_MAX_CHARS)} ${"名".repeat(AD_DETECT_SENDER_NAME_MAX_CHARS)} ${filler}`
     );
   });
@@ -168,6 +170,6 @@ describe("发言者姓名参与广告检测", (): void => {
       get: (): string => { throw new Error("Unexpected name access"); },
     });
     enqueueAdCandidate(unreadName, 1_000);
-    expect(pendingAdMessages.size).toBe(0);
+    expect(pendingAdBundleCount.current).toBe(0);
   });
 });

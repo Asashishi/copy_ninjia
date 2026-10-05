@@ -200,3 +200,14 @@ export type ChatMemberPresence =
 export type AvatarDownloadResult =
   | { readonly status: "ok"; readonly bytes: Uint8Array }
   | { readonly status: "permanent-failure" | "transient-failure" };
+
+/**
+ * 一次删除尝试的结局。`gone` 与 `failed` 必须分开：调用方拿删除结果去写群内
+ * 文案或错误日志时，「这条消息已经不在了」和「本机器人删不动它」是两件相反的
+ * 事，混成一个布尔会冤枉权限配置正确的管理员。
+ */
+export type DeleteMessageOutcome =
+  | "deleted"
+  | "gone"
+  | "forbidden"
+  | "failed";

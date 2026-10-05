@@ -20,7 +20,10 @@ export interface LockdownRecord {
    * 更早进程留下的记录时缺省——删不掉就不删，绝不猜 ID。
    */
   announcementMessageId?: number;
-  /** 应恢复原始权限的绝对时间戳（ms）；续期必须同步刷新。 */
+  /**
+   * 应恢复原始权限的绝对时间戳（ms）。ACTIVE/RECONCILING 为激活时确定的恢复截止，后续入群
+   * 不续期；APPLYING/RESTORING 记发布时刻，不参与恢复语义指纹。
+   */
   expiresAt: number;
 }
 
@@ -43,7 +46,9 @@ export type CopyMode = "reverse" | "nya";
 
 /**
  * 单个群聊各自独立的状态。机器人可能同时在多个群里运行，每个群各自维护一份，
- * 互不影响——主线程以容量 25 的 LRU 保留 SQLite `chat_states` 的热读值。复读目标不在
+ * 互不影响——主线程以不淘汰的热读副本保留 SQLite `chat_states` 的值（容量上界
+ * STATE_MANAGED_CHAT_LIMIT，由建新记录前的 assertChatStateCapacity 卡住，见
+ * cache/main/chatState.ts）。复读目标不在
  * 这里——复读消耗的是机器人头像/人格这一份全局资源，同一时刻全局只有一个
  * 复读目标，见 GlobalCopyState。
  *

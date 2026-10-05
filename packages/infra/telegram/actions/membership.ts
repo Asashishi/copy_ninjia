@@ -54,7 +54,7 @@ export type ChatMembershipProbeOutcome =
   | "participantInvalid"
   | "failed";
 
-/** 探测成员身份并保留 PARTICIPANT_ID_INVALID 分类；所有查询失败照常记 API 错误。 */
+/** 探测成员身份并保留 PARTICIPANT_ID_INVALID 分类；取消以外的查询失败照常记 API 错误。 */
 export async function probeChatMembershipWithOutcome(
   chatId: number,
   userId: number,

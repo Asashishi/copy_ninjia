@@ -1,12 +1,12 @@
 /**
- * 延迟命令执行器：要等目录枚举、下载、上传或语音合成的命令任务（`/h_image` 抽图与收图、
- * `/info`、`/send` 的 TTS 代发）的共同接纳、停机与排空边界，状态见
- * cache/main/deferredCommands.ts。
+ * 延迟命令执行器：要等目录枚举、下载、上传、语音合成或批量 Telegram 请求的命令任务
+ * （`/h_image` 抽图与收图、`/info`、`/send` 的 TTS 代发、`/batch_kick` 的批次）的共同接纳、
+ * 停机与排空边界，状态见 cache/main/deferredCommands.ts。
  *
  * update runner 严格串行（见 docs/cn/04-invariants.md），这些 handler 在参数校验后同步
  * 交给本执行器即返回；任务经 infra/commandExecutor.ts 的 submitCommandExecutorTask 恢复
- * 接纳时的 update 取消上下文并合入运行时停止信号。交互请求走 interactive 档；批量收图走 background 档，两档都有等待项时按
- * interactiveBurst 轮流取。
+ * 接纳时的 update 取消上下文并合入运行时停止信号。交互请求走 interactive 档；批量收图与
+ * `/batch_kick` 走 background 档，两档都有等待项时按 interactiveBurst 轮流取。
  */
 
 import { deferredCommandRuntime } from "../cache/main/deferredCommands";

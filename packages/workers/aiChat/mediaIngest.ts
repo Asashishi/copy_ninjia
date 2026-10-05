@@ -65,19 +65,21 @@ function mediaCommentFor(msg: AiRecordMediaMessage, entry: BufferedMessage, desc
  */
 export function recordChatMedia(msg: AiRecordMediaMessage): void {
   const generation: number = cachedReplyGeneration(msg.chatId);
-  const signal: AbortSignal = replyGenerationSignal(msg.chatId, generation);
+  const signal: AbortSignal = replyGenerationSignal(generation);
   const sanitizedCaption: string = sanitizeInline(msg.caption);
   const imageGenerationReference: ImageGenerationReference | undefined = imageGenerationReferenceFor(msg);
   const telegramBackpressured: boolean | undefined = msg.replyTelegramBackpressured;
+  const now: number = Date.now();
 
   if (msg.kind === "sticker") {
     const catalogEntry: StickerCatalogEntry | undefined = getCatalogEntry(msg.fileUniqueId);
     if (catalogEntry) {
       const entry: BufferedMessage = buildBufferedMessage(
         msg,
-        composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption)
+        composeMediaText(resolvedTagFor("sticker", catalogEntry.description), sanitizedCaption),
+        now
       )!;
-      pushBufferedMessage(msg.chatId, entry);
+      pushBufferedMessage(msg.chatId, entry, now);
       resolveRepliedBotImageOf(msg, entry);
       if (telegramBackpressured !== undefined) {
         generateAndSendReply({
@@ -99,9 +101,10 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
 
   const entry: BufferedMessage = buildBufferedMessage(
     msg,
-    composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption)
+    composeMediaText(pendingPlaceholderFor(msg.kind), sanitizedCaption),
+    now
   )!;
-  pushBufferedMessage(msg.chatId, entry);
+  pushBufferedMessage(msg.chatId, entry, now);
   resolveRepliedBotImageOf(msg, entry);
   const preparation: PromiseWithResolvers<MediaCommentContext | null> | undefined =
     telegramBackpressured !== undefined

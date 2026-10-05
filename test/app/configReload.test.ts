@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import { cpSync } from "node:fs";
 import { rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { waitUntil } from "../helpers/waitUntil";
@@ -18,6 +19,7 @@ const reconcileCronSchedule = mock((): void => {});
 const loggerLog = mock((..._args: unknown[]): void => {});
 const loggerError = mock((..._args: unknown[]): void => {});
 const TEST_DEBOUNCE_MS: number = 100;
+const TEST_REWATCH_RETRY_DELAYS_MS: readonly number[] = [50, 50];
 
 mock.module("../../packages/aiChat", () => ({ resumeAiChat, syncAiChatConfig }));
 mock.module("../../packages/antiRaid", () => ({ syncAntiRaidAgentConfig }));
@@ -27,6 +29,7 @@ mock.module("../../packages/infra/logger", () => ({
 }));
 mock.module("../../packages/consts/configReload", () => ({
   CONFIG_RELOAD_DEBOUNCE_MS: TEST_DEBOUNCE_MS,
+  CONFIG_RELOAD_REWATCH_RETRY_DELAYS_MS: TEST_REWATCH_RETRY_DELAYS_MS,
 }));
 
 const { quiesceConfigReload, startConfigReload } = await import("../../packages/app/configReload");
@@ -299,6 +302,68 @@ describe("config/dynamic/ 监听的失效与关闸", () => {
     } finally {
       await rename(movedRoot, DYNAMIC_CONFIG_DIR);
     }
+  });
+
+  test("目录被整体替换后关闭旧 watcher 重新监听，新目录里的改动照常生效", async () => {
+    startConfigReload();
+    await settle();
+    const replacement: string = `${DYNAMIC_CONFIG_DIR}.new`;
+    const retired: string = `${DYNAMIC_CONFIG_DIR}.old`;
+    cpSync(DYNAMIC_CONFIG_DIR, replacement, { recursive: true });
+    await rename(DYNAMIC_CONFIG_DIR, retired);
+    await rename(replacement, DYNAMIC_CONFIG_DIR);
+    try {
+      const reattached: string = `Re-attached the deployment config watcher to ${DYNAMIC_CONFIG_DIR}.`;
+      expect(await waitUntil((): boolean => loggerLog.mock.calls.some(
+        (args: unknown[]): boolean => args[0] === reattached
+      ))).toBe(true);
+
+      await Bun.write(MOOD_CONFIG_PATH, moodDocument("换目录后"));
+
+      expect(await waitUntil((): boolean => defaultMoodConfigCache.current?.moods[0]?.name === "换目录后")).toBe(true);
+      expect(loggerError).not.toHaveBeenCalled();
+    } finally {
+      await rm(retired, { recursive: true, force: true });
+    }
+  });
+
+  test("目录暂缺时退避重试且只记一次错误，恢复后重新监听并对账", async () => {
+    startConfigReload();
+    await settle();
+    const movedRoot: string = `${DYNAMIC_CONFIG_DIR}.away`;
+    const unavailable: string =
+      "Deployment config directory is unavailable after it was replaced; retrying the watcher with backoff:";
+    await rename(DYNAMIC_CONFIG_DIR, movedRoot);
+    try {
+      expect(await waitUntil((): boolean => configReloadRuntime.rewatchAttempts === TEST_REWATCH_RETRY_DELAYS_MS.length - 1)).toBe(true);
+      await Bun.sleep(TEST_REWATCH_RETRY_DELAYS_MS.at(-1)! * 3);
+      expect(configReloadRuntime.watcher).toBeNull();
+    } finally {
+      await rename(movedRoot, DYNAMIC_CONFIG_DIR);
+    }
+    expect(await waitUntil((): boolean => configReloadRuntime.watcher !== null)).toBe(true);
+    expect(configReloadRuntime.rewatchAttempts).toBe(0);
+    expect(loggerError.mock.calls.filter((args: unknown[]): boolean => args[0] === unavailable)).toHaveLength(1);
+
+    await Bun.write(MOOD_CONFIG_PATH, moodDocument("恢复后"));
+    expect(await waitUntil((): boolean => defaultMoodConfigCache.current?.moods[0]?.name === "恢复后")).toBe(true);
+  });
+
+  test("关闸撤销待执行的重建监听", async () => {
+    startConfigReload();
+    await settle();
+    const movedRoot: string = `${DYNAMIC_CONFIG_DIR}.away`;
+    await rename(DYNAMIC_CONFIG_DIR, movedRoot);
+    try {
+      expect(await waitUntil((): boolean => configReloadRuntime.rewatchTimer !== null)).toBe(true);
+      quiesceConfigReload();
+      expect(configReloadRuntime.rewatchTimer).toBeNull();
+      expect(configReloadRuntime.rewatchAttempts).toBe(0);
+    } finally {
+      await rename(movedRoot, DYNAMIC_CONFIG_DIR);
+    }
+    await settle();
+    expect(configReloadRuntime.watcher).toBeNull();
   });
 
   test("关闸清掉等待中的防抖 timer，之后的文件改动不再分发", async () => {

@@ -34,6 +34,7 @@
       "model": "gemini-3.8-flash-lite-tts",
       "voice": "en-us-nika",
       "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
+      "bot_language": "ja",
       "daily_limit": 100,
       "daily_reserve_quota": 25
     },

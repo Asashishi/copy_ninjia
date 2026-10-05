@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } fro
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "../packages/consts/configLayout";
+import { PROMPT_DIR_NAME, PROMPT_EXAMPLE_DIR_NAME } from "../packages/consts/promptLayout";
 import { checkBinaryMigrations } from "./checkBinaryMigrations";
 import { PRESERVED_MIGRATION_CONFIG_FILES, assertMigrationSourcesUnchanged, deployMigratedFixture } from "./fixtures/migrationDeployment";
 import type { MigratedDeployment } from "./fixtures/migrationDeployment";
@@ -42,6 +43,8 @@ try {
   const manifest: { readonly version: string } = await Bun.file(join(root, "package.json")).json() as { readonly version: string };
   if (run(["--version"]).trim() !== manifest.version) throw new Error("Binary version must match the packaged manifest.");
   await copyFixtureTree(join(root, "config_example"), join(root, "config"));
+  // 以发行包携带的提示词示例作为 prompt/，核对编译产物按 PROJECT_ROOT 读取并严格校验它们。
+  await copyFixtureTree(join(root, PROMPT_EXAMPLE_DIR_NAME), join(root, PROMPT_DIR_NAME));
   // 与首次部署一样不物化只示意结构的示例：g-auth.json 的占位私钥会被启动总闸拒绝，
   // cron.json 的会话 id、地址与本地来源都是假的。
   await Bun.file(join(root, "config", STATIC_CONFIG_DIR_NAME, "g-auth.json")).delete();

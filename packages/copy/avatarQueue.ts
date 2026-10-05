@@ -56,7 +56,7 @@ async function consumeAvatarUpdates(): Promise<void> {
           );
         // 在途任务不能取消，但新目标到达后旧战报已经过期；最终只让最新目标
         // 报告结果，随后单一执行槽继续处理最新 pending。
-        if (!signal.aborted && task.generation === avatarUpdateState.latestGeneration) {
+        if (!task.silent && !signal.aborted && task.generation === avatarUpdateState.latestGeneration) {
           await sendCommandMessage({
             chatId: task.chatId,
             text: renderAvatarNotice(task, updated),
@@ -82,16 +82,17 @@ async function consumeAvatarUpdates(): Promise<void> {
  * 提交头像目标；运行中只保留最新一份，历史请求不会形成 Promise 链。回执在执行槽里
  * 发出、已不在提交它的 update 作用域内，因此在提交时记下触发话题。
  */
-export function queueAvatarUpdate(request: AvatarUpdateRequest): void {
+export function queueAvatarUpdate({ chatId, target, source, silent = false }: AvatarUpdateRequest): void {
   if (!avatarUpdateRuntime.accepting) return;
   const generation: number = avatarUpdateState.nextGeneration++;
   avatarUpdateState.latestGeneration = generation;
   avatarUpdateState.pending = {
     generation,
-    chatId: request.chatId,
-    target: request.target,
-    source: request.source,
-    messageThreadId: updateTopicThreadIdFor(request.chatId),
+    chatId,
+    target,
+    source,
+    messageThreadId: updateTopicThreadIdFor(chatId),
+    silent,
   };
   void consumeAvatarUpdates();
 }

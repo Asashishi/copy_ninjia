@@ -27,7 +27,7 @@ import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLog
 import { formatLogTimestamp, getDateKey } from "../../libs/time";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
-import { bestEffortUnlink, inspectOptionalDirectory } from "../../libs/fileAccess";
+import { bestEffortUnlink, listOptionalDirectory } from "../../libs/fileAccess";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
@@ -171,7 +171,7 @@ export interface LogFilesInspection {
 
 /** 跨域启动第一阶段：只读校验当前日志，并预计算必要的规范化内容。 */
 export async function inspectLogFiles(): Promise<LogFilesInspection> {
-  const names: string[] = inspectOptionalDirectory(LOGS_DIR) ? readdirSync(LOGS_DIR) : [];
+  const names: string[] = listOptionalDirectory(LOGS_DIR);
   return { names, day: await inspectLogDay(getDateKey()) };
 }
 

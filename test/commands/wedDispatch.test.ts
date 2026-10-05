@@ -1,11 +1,12 @@
 import { resetWedMemberStates } from "../../packages/cache/main/wedMembers";
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { Bot } from "grammy";
 import type { Chat, User } from "grammy/types";
 import { runAcknowledgedUpdateBatches } from "../../packages/app/updateRunner";
 import { wedChats, wedRuntime } from "../../packages/cache/main/wed";
 import { currentUpdateAbortSignal } from "../../packages/infra/updateContext";
+import * as diskIO from "../../packages/infra/diskIO";
 
 const logError = mock((): void => {});
 mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: logError }) }));
@@ -30,6 +31,7 @@ const { drainWedRuntime, initWedRuntime, submitWedTask } = await import("../../p
 const { WED_MAX_CONCURRENT, WED_MAX_PENDING } = await import("../../packages/consts/wed");
 const { WED_TEXTS } = await import("../../packages/consts/atmosphere/teasing/wed");
 const { STATE_MANAGED_CHAT_LIMIT } = await import("../../packages/consts/storage");
+const { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } = await import("../../packages/consts/telegram");
 const chat = { id: -1001, type: "supergroup", title: "群" } as const;
 let nextMessageId: number = 100;
 const photo = mock(async (..._args: any[]): Promise<any> => {
@@ -39,6 +41,7 @@ const photo = mock(async (..._args: any[]): Promise<any> => {
 const answer = mock(async (..._args: any[]) => true);
 const edit = mock(async (..._args: any[]) => true);
 const remove = mock(async (..._args: any[]) => true);
+const removeMany = mock(async (..._args: any[]) => true);
 const send = mock(async (..._args: any[]): Promise<any> => ({ message_id: ++nextMessageId, chat, date: 1 }));
 
 function command(id: number): never {
@@ -53,11 +56,11 @@ beforeEach(() => {
   download = Promise.withResolvers<void>();
   upload = Promise.withResolvers<void>();
   nextMessageId = 100;
-  for (const fn of [avatar, photo, answer, edit, remove, send, logError]) fn.mockClear();
+  for (const fn of [avatar, photo, answer, edit, remove, removeMany, send, logError]) fn.mockClear();
   Object.assign(bot.api, {
     getChatMember: async () => { throw new Error("wed must not query chat members"); },
     sendPhoto: photo, answerCallbackQuery: answer, editMessageMedia: edit, deleteMessage: remove,
-    sendMessage: send,
+    deleteMessages: removeMany, sendMessage: send,
   });
   telegramApiState.current = bot.api as never;
 });
@@ -254,17 +257,97 @@ test("teardown 后迟到的上传结果由原会话删除，不影响同群重�
   expect(renewed.sessions.size).toBe(0);
 });
 
-test("teardown 清理中单条删除失败仍清理其余结果，失败走统一日志且不恢复旧群", async () => {
+test("teardown 把空闲结果合成一次批量删除，失败走统一日志且不恢复旧群", async () => {
   download.resolve();
   upload.resolve();
   await handleWedCommand(command(1));
   await handleWedCommand(command(2));
-  remove.mockImplementationOnce(async () => { throw new Error("expected deletion failure"); });
+  removeMany.mockImplementationOnce(async () => { throw new Error("expected deletion failure"); });
   await teardownWedInChat(chat.id, "lostAuthority");
   expect(await drainWedRuntime(1_000)).toBe("flushed");
-  expect(remove.mock.calls.map((args) => args.slice(0, 2))).toEqual([[chat.id, 101], [chat.id, 102]]);
+  expect(removeMany.mock.calls.map((args) => args.slice(0, 2))).toEqual([[chat.id, [101, 102]]]);
+  expect(remove).not.toHaveBeenCalled();
   expect(logError).toHaveBeenCalledTimes(1);
   expect(wedChats.has(chat.id)).toBeFalse();
+});
+
+test("机器人离群时不删除任何结果，忙碌会话结束后也不补删", async () => {
+  download.resolve();
+  upload.resolve();
+  await handleWedCommand(command(1));
+  upload = Promise.withResolvers<void>();
+  // 离群之后的发送只会被 Telegram 拒绝。
+  photo.mockImplementationOnce(async (): Promise<never> => {
+    await upload.promise;
+    throw new Error("Forbidden: bot was kicked from the supergroup chat");
+  });
+  dispatchWedCommand(command(2));
+  await Bun.sleep(0);
+  expect(photo).toHaveBeenCalledTimes(2);
+
+  // 离群连奖池一并删除；本用例只看 Telegram 出站，落盘边界直接放行。
+  const post = spyOn(diskIO, "postDiskIO").mockReturnValue(true);
+  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  try {
+    await teardownWedInChat(chat.id, "departed");
+  } finally {
+    post.mockRestore();
+    flush.mockRestore();
+  }
+  upload.resolve();
+
+  expect(await drainWedRuntime(1_000)).toBe("flushed");
+  expect(remove).not.toHaveBeenCalled();
+  expect(removeMany).not.toHaveBeenCalled();
+  expect(logError).not.toHaveBeenCalled();
+  expect(wedChats.has(chat.id)).toBeFalse();
+});
+
+test("重抽途中机器人离群：被替换的旧结果同样不再删除", async () => {
+  download.resolve();
+  upload.resolve();
+  await handleWedCommand(command(1));
+  expect(photo).toHaveBeenCalledTimes(1);
+  // 同一发起人重抽：新会话顶替旧会话，抽取停在头像读取上。
+  download = Promise.withResolvers<void>();
+  dispatchWedCommand(command(1));
+  await Bun.sleep(0);
+  expect(avatar).toHaveBeenCalledTimes(2);
+
+  const post = spyOn(diskIO, "postDiskIO").mockReturnValue(true);
+  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  try {
+    await teardownWedInChat(chat.id, "departed");
+  } finally {
+    post.mockRestore();
+    flush.mockRestore();
+  }
+  download.resolve();
+
+  expect(await drainWedRuntime(1_000)).toBe("flushed");
+  expect(remove).not.toHaveBeenCalled();
+  expect(removeMany).not.toHaveBeenCalled();
+  expect(logError).not.toHaveBeenCalled();
+});
+
+test("空闲结果超过单次批量上限时分批删除，失败的一批保留消息 id、其余批照常作废", async () => {
+  download.resolve();
+  upload.resolve();
+  const count: number = TELEGRAM_DELETE_MESSAGES_BATCH_MAX + 1;
+  for (let actor: number = 1; actor <= count; actor++) await handleWedCommand(command(actor));
+  const torn = wedChats.get(chat.id)!;
+  const sessions = [...torn.sessions.values()];
+  expect(sessions).toHaveLength(count);
+  removeMany.mockImplementationOnce(async () => { throw new Error("expected first batch failure"); });
+
+  await teardownWedInChat(chat.id, "lostAuthority");
+
+  expect(removeMany.mock.calls.map((args) => (args[1] as number[]).length))
+    .toEqual([TELEGRAM_DELETE_MESSAGES_BATCH_MAX, 1]);
+  expect(sessions.slice(0, TELEGRAM_DELETE_MESSAGES_BATCH_MAX).every((session) => session.messageId !== undefined))
+    .toBeTrue();
+  expect(sessions.at(-1)!.messageId).toBeUndefined();
+  expect(logError).toHaveBeenCalledTimes(1);
 });
 
 test("teardown 等待空闲结果时忙碌会话自行结束，不会重复删除忙碌结果", async () => {
@@ -276,7 +359,7 @@ test("teardown 等待空闲结果时忙碌会话自行结束，不会重复删�
   await Bun.sleep(0);
   const deletion = Promise.withResolvers<void>();
   const busyDeleted = Promise.withResolvers<void>();
-  remove.mockImplementationOnce(async () => { await deletion.promise; return true; });
+  removeMany.mockImplementationOnce(async () => { await deletion.promise; return true; });
   remove.mockImplementationOnce(async () => { busyDeleted.resolve(); return true; });
   try {
     const teardown: Promise<void> = teardownWedInChat(chat.id, "lostAuthority");
@@ -286,7 +369,8 @@ test("teardown 等待空闲结果时忙碌会话自行结束，不会重复删�
     deletion.resolve();
     await teardown;
     expect(await drainWedRuntime(1_000)).toBe("flushed");
-    expect(remove.mock.calls.map((args) => args.slice(0, 2))).toEqual([[chat.id, 101], [chat.id, 102]]);
+    expect(removeMany.mock.calls.map((args) => args.slice(0, 2))).toEqual([[chat.id, [101]]]);
+    expect(remove.mock.calls.map((args) => args.slice(0, 2))).toEqual([[chat.id, 102]]);
   } finally {
     deletion.resolve();
     upload.resolve();

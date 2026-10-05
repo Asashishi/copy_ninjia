@@ -240,7 +240,7 @@ export function startReplyRound(
   longTimes.push(now);
   activeReplyCounts.set(chatId, (activeReplyCounts.get(chatId) ?? 0) + 1);
 
-  const signal: AbortSignal = replyGenerationSignal(chatId, generation);
+  const signal: AbortSignal = replyGenerationSignal(generation);
   const task: Promise<void> = Promise.resolve().then(async (): Promise<void> => {
     let modelFinished: boolean = false;
     const finishModel = (): void => {

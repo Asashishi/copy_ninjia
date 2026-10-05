@@ -43,7 +43,7 @@ The core architectural principle is **Single Ownership**: every piece of runtime
   - **Telegram proxy execution**: The main thread handles Telegram API operations and media downloads that require the Bot identity. AI and Anti-Raid Workers call their configured model services directly.
 
 - **🤖 AI Worker**
-  - **Exclusive state**: Group chat memory (verbatim hot window + cold summary zone), reply admission counter, media description pipeline, group mood tiers, and sticker pack allowlist catalog.
+  - **Exclusive state**: Group chat memory (verbatim hot window + cold summary zone), reply admission counter, media description pipeline, the single global mood, and sticker pack allowlist catalog.
   - **Responsibilities**: Multi-turn model interactions, tool call scheduling, anthropomorphic action orchestration, and rolling memory compression.
 
 - **🛡️ Anti-Raid Worker**
@@ -67,7 +67,7 @@ The core architectural principle is **Single Ownership**: every piece of runtime
 
 ## The Journey of a Message
 
-All message middlewares are explicitly mounted in [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts).
+All message middlewares are explicitly mounted in [`packages/app/registerHandlers.ts`](../../packages/app/registerHandlers.ts): the preamble in steps 1–10 below is collected in order into one array, registered in a batch with `bot.use(...preamble)`, with grammY managing order, claiming, and the next contract; reactions, member changes, callbacks, and inline updates are then registered with their own `bot.on`.
 The pipeline contains **no** `sequentialize`; global message order is guaranteed by the fetch-side acknowledged runner ([`packages/app/updateRunner.ts`](../../packages/app/updateRunner.ts)): **it fetches one update at a time and does not issue the next `getUpdates` until that update's middleware has fully completed**, achieving global serial one-by-one execution.
 
 ```text
@@ -171,7 +171,7 @@ The model can execute multiple tool calls within one round. The tool list remain
 | **`view_sticker_pack`** | Query | Inspects sticker list in a specified pack; does not consume visible action budget; must be inspected before sending. |
 | **`send_sticker`** | Action | Sends a specified sticker; accepted at most once per round. |
 | **`generate_image`** | Action | Generates and sends an image. Only available in direct-trigger rounds; at most once per round; subject to chat cooldown. |
-| **`send_voice`** | Action | Synthesizes Japanese voice line. Synthesized asynchronously in background and queued on serial action chain; at most once per round. |
+| **`send_voice`** | Action | Synthesizes a voice line in the `agent.tts.bot_language` language (default `ja`); `prompt/voice_tool.md` can replace the whole tool instruction. Synthesized asynchronously in background and queued on serial action chain; at most once per round. |
 | **`web_search`** | Query | Local web search tool (mounted when `agent.web_search` configured); bounded by `max_calls_per_use`. |
 | **`group_qa_query`** | Query | Queries list of registered questions in the group; does not count against action budget. |
 | **`group_qa_answer`** | Query | Retrieves registered answer based on exact question text; invoked autonomously by model based on semantics. |

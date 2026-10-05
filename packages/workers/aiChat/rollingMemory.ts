@@ -15,7 +15,6 @@ import {
   hasChatMemory,
   pendingSummaries,
 } from "../../cache/workers/aiChat/memory";
-import { clearChatMoodCache } from "../../cache/workers/aiChat/mood";
 import { evictChatReplyGeneration, hasActiveAiChatTasks } from "./replyGeneration";
 import type { AiMemorySnapshot, AiMemoryUsage, BufferedMessage } from "../../types/aiChat/memory";
 
@@ -47,14 +46,14 @@ declare const self: Worker;
  * recordChatMessage / mediaIngest.ts 的 recordChatMedia 共用——后者需要拿住
  * 条目对象的引用以便异步回填描述，所以入队和构造条目分开。
  *
- * 各群「最后一次有动静」的时间戳也在这里更新（chatLastActivityTimes，见
- * cache/workers/aiChat/memory.ts）：不论文字/媒体、也不论这条消息最终是否触发了
+ * 各群「最后一次有动静」的时间戳也在这里更新为 now（chatLastActivityTimes，见
+ * cache/workers/aiChat/memory.ts；now 与构造条目时的那一次读时钟是同一个值）：不论文字/媒体、也不论这条消息最终是否触发了
  * AI 回复，只要记进了滚动缓存就算——仅用于容量满时 ensureMemoryCapacity
  * 的 LRU 淘汰排序，心情系统不看群活跃度（见 aiChat/ai/mood.ts）。
  */
-export function pushBufferedMessage(chatId: number, entry: BufferedMessage): void {
+export function pushBufferedMessage(chatId: number, entry: BufferedMessage, now: number): void {
   if (!hasChatMemory(chatId)) ensureMemoryCapacity(chatId);
-  chatLastActivityTimes.set(chatId, Date.now());
+  chatLastActivityTimes.set(chatId, now);
   let buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
   if (!buf) {
     buf = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
@@ -87,15 +86,10 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage): voi
  * @returns 写入热区的条目；清洗后没有正文时为 null。
  */
 export function recordChatMessage(message: AiRecordMessage): BufferedMessage | null {
-  const entry: BufferedMessage | null = buildBufferedMessage(message, message.text);
-  if (entry) pushBufferedMessage(message.chatId, entry);
+  const now: number = Date.now();
+  const entry: BufferedMessage | null = buildBufferedMessage(message, message.text, now);
+  if (entry) pushBufferedMessage(message.chatId, entry, now);
   return entry;
-}
-
-/** 删除某群全部可持久化记忆及其衍生运行时状态。 */
-export function purgeChatMemory(chatId: number): void {
-  clearChatMemoryCache(chatId);
-  clearChatMoodCache(chatId);
 }
 
 /**
@@ -125,7 +119,7 @@ function ensureMemoryCapacity(excludeChatId: number): void {
     if (oldestChatId === undefined) return;
 
     evictChatReplyGeneration(oldestChatId);
-    purgeChatMemory(oldestChatId);
+    clearChatMemoryCache(oldestChatId);
     self.postMessage({ type: "memoryDeleted", chatId: oldestChatId } satisfies AiMemoryDeletedEvent);
   }
 }
@@ -201,8 +195,8 @@ export function flushDirtyMemories(): void {
  * 摘要粒度略有漂移，可接受，不为此复刻轮换状态机。
  *
  * chatLastActivityTimes 以快照的 savedAt 近似播种，让恢复出来的群在 LRU
- * 淘汰排序里保持合理的新旧顺序；心情不落盘也不在这里播种，下次拼运行时
- * 状态区块时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
+ * 淘汰排序里保持合理的新旧顺序；心情全 Worker 共用一份、不落盘，也不在这里
+ * 播种，下次拼运行时状态区块时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
  *
  * 恢复完成后一次性回传各群占用量（memoryUsages 事件），播种主线程展示用的
  * 只读镜像（见 cache/main/aiChat.ts 的 aiMemoryUsages）。

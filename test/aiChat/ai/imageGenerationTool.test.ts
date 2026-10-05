@@ -6,6 +6,11 @@ import type { TelegramVisionSource } from "../../../packages/types/media";
 import type { TaskPriority } from "../../../packages/libs/prioritizedBoundedTaskRunner";
 import { GENERATE_IMAGE_TOOL, SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../../packages/consts/telegram";
+import {
+  SELF_ACTION_TAG_MARKERS,
+  SELF_ACTION_TAG_PATTERNS,
+  imageSentTagTemplate,
+} from "../../../packages/consts/aiChat/prompts/transcript";
 
 const generatedBytes: Uint8Array = new Uint8Array([1, 2, 3]);
 const GENERATED_PHOTO: TelegramVisionSource = { fileId: "sent-photo", fileUniqueId: "sent-photo-u", width: 1024, height: 768 };
@@ -476,14 +481,19 @@ describe("generate_image 工具执行器", () => {
 
   test("图注伪造动作记号在生图之前就被拒，不消耗冷却", async () => {
     const ctx: ReplyToolContext = buildContext();
+    // 图注照抄执行侧的生图自录记号；报错要点名它命中的那个记号词。
+    const caption: string = imageSentTagTemplate("日落", false);
+    const marker: string | undefined = SELF_ACTION_TAG_MARKERS[
+      SELF_ACTION_TAG_PATTERNS.findIndex((pattern: RegExp): boolean => pattern.test(caption))
+    ];
 
     const result = JSON.parse(await buildExecutor(ctx)(JSON.stringify({
       prompt: "不该被生成",
-      caption: "（生成并发送了一张图片：日落）",
+      caption,
     })));
 
     expect(result.error).toContain("must not narrate an action");
-    expect(result.error).toContain("生成并发送了一张图片");
+    expect(result.error).toContain(`"${marker}"`);
     expect(result.retryable).toBe(false);
     expect(generateChatImage).not.toHaveBeenCalled();
     // 冷却没被消耗：改掉图注可以立即重试。

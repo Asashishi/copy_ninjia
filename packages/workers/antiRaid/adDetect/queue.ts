@@ -54,6 +54,7 @@ import {
   pendingAdMessages,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
+  referencedAdWarningStates,
   adDetectCapacitySaturated,
   adDetectSaturated,
 } from "../../../cache/workers/antiRaid/adDetect";
@@ -63,7 +64,7 @@ import {
   AD_DETECT_QUEUE_TICK_MS,
   EMPTY_AD_CANDIDATE_ENTRIES,
 } from "../../../consts/antiRaid/adDetect";
-import { sanitizeInline, truncateInline } from "../../../libs/text";
+import { truncateInline } from "../../../libs/text";
 import {
   admitAdCandidate,
   isAdDispatchSaturated,
@@ -85,9 +86,15 @@ import {
   sweepReferencedAdWarnings,
 } from "./referencePolicy";
 import {
+  clearPendingAdBundles,
+  deletePendingAdBundle,
+  deletePendingAdBundlesInChat,
+  deletePendingAdBundlesOfSender,
   expireAdDetectDisposalMarkers,
   hasActiveAdDisposalMarker,
   noteAdDetectSaturation,
+  pendingAdBundle,
+  pendingAdBundleForKey,
   refreshAdDetectCapacitySaturation,
   rejectNewAdBundleAtCapacity,
   requeueIfUnchecked,
@@ -133,8 +140,7 @@ export function enqueueAdCandidate(
   message: AdCandidateMessage,
   now: number = message.observedAt
 ): void {
-  const key: string = verificationKey(message.chatId, message.senderId);
-  const existing: AdMessageBundle | undefined = pendingAdMessages.get(key);
+  const existing: AdMessageBundle | undefined = pendingAdBundle(message.chatId, message.senderId);
   // 普通账号没有频道尾随消息要删：pending 已满时接不进新 bundle，先于处置抑制
   // 表查询返回。频道马甲仍须继续查 recentlyDisposed，命中时要删除这条抢跑广告。
   if (
@@ -143,7 +149,11 @@ export function enqueueAdCandidate(
     !message.isChannel &&
     rejectNewAdBundleAtCapacity()
   ) return;
-  const recentlyDisposed: boolean = hasActiveAdDisposalMarker(key);
+  // 键只在用得到时拼：已有串直接取 bundle.key；处置抑制表与引用警告表空着时（常态）
+  // 不必查，新发送者也只在建串时拼一次。
+  let key: string | undefined = existing?.key;
+  const recentlyDisposed: boolean = recentlyDisposedAdKeys.size > 0 &&
+    hasActiveAdDisposalMarker(key ??= verificationKey(message.chatId, message.senderId));
   // 新普通 key 满载时不可以先分配清洗正文、URL 串和引用上下文。
   // blocked/recentlyDisposed 的频道马甲例外必须继续读正文，非空时要删掉尾随广告。
   if (
@@ -172,7 +182,7 @@ export function enqueueAdCandidate(
   // 看到的是乱码而不是对方真正发的那个字。与同管线的 classifier.ts 用同一个
   // 代理对安全截断。
   const textWithLinks: string = appendLinkUrls(
-    truncateInline(sanitizeInline(message.text), AD_DETECT_MESSAGE_MAX_CHARS),
+    truncateInline(message.text, AD_DETECT_MESSAGE_MAX_CHARS),
     message.linkUrls
   );
   const senderName: string = message.isChannel ? "" : formatAdSenderName(message);
@@ -207,6 +217,7 @@ export function enqueueAdCandidate(
   if (decision === "ignore") return;
 
   const bundle: AdMessageBundle = existing ?? {
+    key: key ?? verificationKey(message.chatId, message.senderId),
     chatId: message.chatId,
     senderId: message.senderId,
     meta: candidateIdentityMetadata(message),
@@ -234,7 +245,8 @@ export function enqueueAdCandidate(
     text,
     directText,
     receivedAt: now,
-    withinReferencedWarning: hasActiveReferencedAdWarning(key, now),
+    withinReferencedWarning: referencedAdWarningStates.size > 0 &&
+      hasActiveReferencedAdWarning(bundle.key, now),
     quote: context?.quote,
     replyTo: context?.replyTo,
   };
@@ -242,8 +254,8 @@ export function enqueueAdCandidate(
   // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
   bundle.entries.push(entry);
   enforceBundleCapacity(bundle);
-  storeBundle(key, bundle);
-  requeueIfUnchecked(key, bundle);
+  if (existing === undefined) storeBundle(bundle);
+  requeueIfUnchecked(bundle.key, bundle);
 }
 
 /**
@@ -277,13 +289,13 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
     // 出队即释放待检位置：这一行和上面的 shift 是同一件事的两半，缺一半就会
     // 让「谁在待检」出现两个互相矛盾的答案（见 docs/cn/04-invariants.md）。
     queuedAdDetectKeys.delete(key);
-    const bundle: AdMessageBundle | undefined = pendingAdMessages.get(key);
+    const bundle: AdMessageBundle | undefined = pendingAdBundleForKey(key);
     if (bundle === undefined) continue;
     // 顺手裁掉窗口外的已判上下文。这一拍取到的键都在这里过一遍，因此不需要
     // 任何按秒跑的全表回收；排在 35 名之后的键等轮到自己或 5 分钟 sweep。
     pruneConsumedContext(bundle, now);
     if (bundle.entries.length === 0) {
-      pendingAdMessages.delete(key);
+      deletePendingAdBundle(bundle.chatId, bundle.senderId);
       refreshAdDetectCapacitySaturation();
       continue;
     }
@@ -326,10 +338,7 @@ export function clearChatAdDetect(chatId: number): void {
   for (const key of queuedAdDetectKeys) {
     if (key.startsWith(prefix)) queuedAdDetectKeys.delete(key);
   }
-  for (const [key, bundle] of pendingAdMessages) {
-    if (bundle.chatId !== chatId) continue;
-    pendingAdMessages.delete(key);
-  }
+  deletePendingAdBundlesInChat(chatId);
   for (const key of recentlyDisposedAdKeys.keys()) {
     if (key.startsWith(prefix)) recentlyDisposedAdKeys.delete(key);
   }
@@ -348,9 +357,7 @@ export function clearIdentityAdDetect(identityId: number): void {
   for (const key of queuedAdDetectKeys) {
     if (belongsToIdentity(key)) queuedAdDetectKeys.delete(key);
   }
-  for (const [key, bundle] of pendingAdMessages) {
-    if (bundle.senderId === identityId) pendingAdMessages.delete(key);
-  }
+  deletePendingAdBundlesOfSender(identityId);
   for (const key of recentlyDisposedAdKeys.keys()) {
     if (belongsToIdentity(key)) recentlyDisposedAdKeys.delete(key);
   }
@@ -365,21 +372,24 @@ export function clearIdentityAdDetect(identityId: number): void {
  * 还留着未判内容的消息串在这里补排一次：既不在队列、也不在途的 bundle 没有
  * 其它路径会把它排回去。
  * requeueIfUnchecked 自己会跳过已排队和在途的键，所以无条件调用是安全的；
- * 它兜的是异常态，不是常规调度路径——常规路径上补排由 detectOne 结算时发起。
+ * 它兜的是异常态，不是常规调度路径——常规路径上补排由 detectOne 结算时发起。补排按待检表的
+ * 遍历顺序进队：群按首次建表顺序，群内按发送者首次入表顺序。
  */
 export function sweepAdDetect(now: number = Date.now()): void {
   expireAdDetectDisposalMarkers();
-  for (const [key, bundle] of pendingAdMessages) {
-    pruneConsumedContext(bundle, now);
-    if (
-      bundle.entries.length === 0 &&
-      !queuedAdDetectKeys.has(key) &&
-      !inFlightAdDetectKeys.has(key)
-    ) {
-      pendingAdMessages.delete(key);
-      continue;
+  for (const bundles of pendingAdMessages.values()) {
+    for (const bundle of bundles.values()) {
+      pruneConsumedContext(bundle, now);
+      if (
+        bundle.entries.length === 0 &&
+        !queuedAdDetectKeys.has(bundle.key) &&
+        !inFlightAdDetectKeys.has(bundle.key)
+      ) {
+        deletePendingAdBundle(bundle.chatId, bundle.senderId);
+        continue;
+      }
+      requeueIfUnchecked(bundle.key, bundle);
     }
-    requeueIfUnchecked(key, bundle);
   }
   sweepReferencedAdWarnings(now);
   refreshAdDetectCapacitySaturation();
@@ -409,7 +419,7 @@ export function stopAdDetectQueue(): void {
   queuedAdDetectKeys.clear();
   recentlyDisposedAdKeys.clear();
   resetReferencedAdWarnings();
-  pendingAdMessages.clear();
+  clearPendingAdBundles();
   inFlightAdDetectKeys.clear();
   inFlightReferencedAdCleanupTasks.clear();
   adDetectSaturated.current = false;

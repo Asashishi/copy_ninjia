@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ATMOSPHERE_TEXTS } from "../packages/consts/atmosphere";
+import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 
-const { applyCopyModeTransform, describeCopyModeEffect } = await import("../packages/copy/copyModes");
+const { applyCopyModeTransform, describeCopyModeEffect } = await import("../../packages/copy/copyModes");
 
 describe("copy mode 文本变换", () => {
   test("反转按字形簇处理，喵后缀不会重复追加", () => {

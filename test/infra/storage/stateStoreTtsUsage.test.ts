@@ -51,4 +51,16 @@ describe("语音合成每日计数的持久化", () => {
     expect(written.ttsUsage).toEqual({ windowStartedAt: 9_000, agentCount: 3, reserveCount: 2 });
     expect(decodeGlobalStateFile(written, statePath).ttsUsage).toEqual({ windowStartedAt: 9_000, agentCount: 3, reserveCount: 2 });
   });
+
+  test("退还到两项皆 0 的 null 回执写出时不带 ttsUsage 键，读回为从没用过", async () => {
+    const statePath: string = join(dir, "state.json");
+    stateStoreHolder.current = new StateStore({ stateFilePath: statePath });
+    adoptTtsUsage({ windowStartedAt: 9_000, agentCount: 0, reserveCount: 1 });
+    adoptTtsUsage(null);
+    expect(getTtsUsage()).toBeNull();
+    expect(await stateStoreHolder.current.flush(5_000)).toBe("flushed");
+    const written: Record<string, unknown> = JSON.parse(await Bun.file(statePath).text()) as Record<string, unknown>;
+    expect("ttsUsage" in written).toBeFalse();
+    expect(decodeGlobalStateFile(written, statePath).ttsUsage).toBeUndefined();
+  });
 });

@@ -25,7 +25,7 @@
 - **`packages/commands/`**
   - **責務**：明示的なコマンドを機能ごとにまとめ、同じ入口のサブコマンドをその領域内で分岐します。トグル系コマンドが
     共有する権限・設定ゲートは別ファイル。
-  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` と `hImage/`（抽選と追加）、`info.ts`、`deferredCommands.ts`（抽選・追加・`/info` が共用する遅延コマンド実行器）、`mute.ts`、`batchKick.ts`、
+  - **代表的なファイル**：`copy.ts`、`icon.ts`、`mood.ts`、`qa.ts`、`block.ts`、`hImage.ts` と `hImage/`（抽選と追加）、`info.ts`、`deferredCommands.ts`（抽選・追加・`/info`・`/batch_kick` が共用する遅延コマンド実行器）、`mute.ts`、`batchKick.ts`、
     `targetResolution.ts`、`configGate.ts`、`arguments.ts`。inline の運勢 domain も同様に
     `luckChallenge/`（`cache.ts`、`draw.ts`、`key.ts`、`rateLimit.ts`、`receipt.ts`、`rendering.ts`、
     `telegramAdapter.ts`。`index.ts` は薄い入口だけ）へ分割します。規模の大きい gag domain は command admission を
@@ -78,7 +78,7 @@
     `boundedResponse.ts`、`boundedSettledBatch.ts`、`monotonicDeadline.ts`、`text.ts`、
     `errorMessage.ts`（catch した `unknown` を文面または Error に正規化する唯一の境界）、
     `telegramMarkdown.ts`（Telegram MarkdownV2 のエスケープと組み立ての唯一の境界）、`webDigest.ts` と
-    `webDigestMarkdown.ts`（cron ウェブダイジェスト JSON の厳密なデコードと MarkdownV2 描画）、`webDigestUrls.ts`（ダイジェスト作成の出典 URL 許可リスト）。
+    `webDigestMarkdown.ts`（cron ウェブダイジェスト JSON の厳密なデコードと MarkdownV2 描画）、`webDigestUrls.ts`（ダイジェスト作成の出典 URL 許可リスト）、`workerRequestTable.ts`（メインスレッドから Worker への request が共用する request id・待機者・タイムアウト・取消・Worker 喪失時の決着の表）。
 - **`packages/workers/`**
   - **責務**：3 つの Worker のスレッド内実装。
   - **代表的なファイル**：`aiChatWorker.ts`、`antiRaidWorker.ts`、`diskIOWorker.ts`、
@@ -200,7 +200,7 @@
 
 ## テストのミラー構造
 
-`test/` は原則として `packages/` のパスに対応しますが、同じ分割 domain は domain-level test を共有できます。たとえば `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` は `test/workers/diskIO/verificationFiles.test.ts` でまとめて検証します。それ以外の新規モジュールのテストは同じ directory structure で作成してください。domain をまたぐ test double・fixture・harness は `test/helpers/` に、domain に依存しない汎用ユーティリティは `test/libs/helpers.ts` に置き、全体の分離方式は [05 開発フロー](05-dev-workflow.md#テスト分離) を参照してください。
+`test/` は原則として `packages/` のパスに対応しますが、同じ分割 domain は domain-level test を共有できます。たとえば `packages/workers/diskIO/verificationCodec.ts`、`verificationRecovery.ts`、`verificationWrites.ts` は `test/workers/diskIO/verificationFiles.test.ts` でまとめて検証します。それ以外の新規モジュールのテストは同じ directory structure で作成してください。domain をまたぐ test double・fixture・harness は `test/helpers/` に、domain に依存しない汎用ユーティリティは `test/helpers/common.ts` に置き、全体の分離方式は [05 開発フロー](05-dev-workflow.md#テスト分離) を参照してください。
 
 ---
 

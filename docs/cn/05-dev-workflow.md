@@ -31,7 +31,7 @@
 | `bun run perf:hot-path-gate` | **热路径性能门禁** | 12 个精选热路径场景的内存/GC/JIT 硬门禁（已并入 `check`） |
 | `bun run perf:join-log` | 入群日志性能基准 | 25 万项入群日志容量/快照/追加记账的独立进程对照基准 |
 | `bun run perf:identity-database` | 身份数据库基准 | 身份数据库六项冷热读写的独立进程基准 |
-| `bun run perf:full` | 全量性能基准套件 | 六个分区各跑三轮独立子进程（`--write-doc` 写回 09 基准文档） |
+| `bun run perf:full` | 全量性能基准套件 | 六个分区各跑三轮独立子进程（`--write-doc` 写回三语 10 性能页及 `performance-result.json`） |
 | `bun run perf:review` | 专项性能复核 | 涵盖热点、AI 回复/载荷/语音编码、完整命令链与 Disk I/O Worker 压力 |
 | `bun run build -- --version <tag>` | 构建二进制包 | 必须显式传入无前缀版本号，产出 `dist/` 发行包及 SHA-256 |
 | `bun run release:check -- --version <tag>` | 发布前全量自检 | frozen lockfile + check + 覆盖率对账 + 故障注入 + 二进制构建验证 |
@@ -54,7 +54,7 @@
   - **结构与链接**：检查代码放置、本地 Markdown 链接、文档点名文件存在性、tracked 文件执行权限。
   - **边界隔离**：核对常量与缓存归属（`packages/cache/<owner>/` 线程单属性边界），按真实模块图校验 Worker 与 Telegram 能力隔离。
   - **调用安全**：`packages/workers/` 内每个 timer 必须 `unref()`；检查 Node API 兼容模块与 `Buffer` 白名单；强制使用 `Bun.argv` 读取参数。
-  - **门禁对账**：静态核对 Telegram 提示清理例外、当前冷迁移入口、故障注入套件清单、package.json 直接依赖声明、14 处覆盖率数字和性能记录。测试中禁止将大写常量与字面量比对。
+  - **门禁对账**：静态核对 Telegram 提示清理例外、当前冷迁移入口、故障注入套件清单、package.json 直接依赖声明、14 处覆盖率数字和性能记录。测试中禁止将大写常量与数字字面量比对；匹配器实参不得写出与 `packages/consts` 字符串常量逐字相同的字面量，也不得抄写其中含 6 个以上汉字或假名的文案片段（从常量或模板常量渲染出的固定片段取期望值，见 `test/helpers/templateText.ts`）。断言提示词措辞本身的契约用例按文件与用例名登记在 `scripts/conventions/testAssertionFragments.ts` 的 `CONSTANT_TEXT_CONTRACT_EXEMPTIONS`，未被命中的豁免同样报错。
 
 ---
 
@@ -80,7 +80,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**5920 tests / 502 files / 320978 次 `expect()`**；全源码**函数覆盖率 98.14% / 行覆盖率 98.54%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**6117 tests / 515 files / 436787 次 `expect()`**；全源码**函数覆盖率 98.24% / 行覆盖率 98.69%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ---
 

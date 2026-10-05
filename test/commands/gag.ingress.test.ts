@@ -12,7 +12,7 @@ import {
 import { GAG_THUMBNAIL_URL } from "../../packages/consts/ui/assets";
 import type { GagSession } from "../../packages/types/gag";
 import { inlineResultSourceOf } from "../../packages/infra/inlineResultSources";
-import { settleTestBatch } from "../libs/helpers";
+import { settleTestBatch } from "../helpers/common";
 import {
   addSession,
   answerInlineQuery,
@@ -322,7 +322,7 @@ describe("gag 消息与 inline 入口", () => {
       await Promise.resolve();
     }
     expect(finishSend).toBeDefined();
-    const teardown: Promise<void> = gag.teardownGagInChat(session.chatId);
+    const teardown: Promise<void> = gag.teardownGagInChat(session.chatId, "explicitDisable");
     await Promise.resolve();
     expect(session.phase).toBe("ending");
 

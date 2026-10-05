@@ -1,11 +1,25 @@
 import { expect, test } from "bun:test";
 import { TEST_DATA_ROOT } from "../preloadEnv";
+import { UPDATE_POLL_INITIAL_RETRY_MS } from "../../packages/consts/updateRunner";
 
 interface StopReport {
   readonly calls: number;
   readonly offsets: readonly number[];
   readonly size: number;
 }
+
+/**
+ * SIGTERM 时 fetcher 正挂着的那次退避：network 夹具第 4 次失败后等第四档（初值翻倍三次），
+ * 429 夹具等 retry_after 的 60 秒。stop 必须取消这次等待；没取消时进程要等它到点才退出。
+ * 断言按这次退避的一半判定，只比较相对关系，不给墙钟设与实现无关的固定阈值。
+ */
+const PENDING_BACKOFF_MS: Readonly<Record<string, number>> = {
+  network: UPDATE_POLL_INITIAL_RETRY_MS * 8,
+  "429": 60_000,
+};
+
+/** network 夹具在第几次失败后发 ready；与夹具 test/fixtures/updateRunner.ts 保持一致。 */
+const NETWORK_READY_CALLS: number = 4;
 
 interface MemoryReport {
   readonly updates: number;
@@ -44,9 +58,9 @@ for (const mode of ["network", "429"]) {
         output += decoder.decode(chunk.value);
       }
       expect(await child.exited).toBe(0);
-      expect(performance.now() - start).toBeLessThan(250);
+      expect(performance.now() - start).toBeLessThan(PENDING_BACKOFF_MS[mode]! / 2);
       const report: StopReport = JSON.parse(output.trim().split("\n").at(-1)!);
-      expect(report.calls).toBe(mode === "network" ? 3 : 1);
+      expect(report.calls).toBe(mode === "network" ? NETWORK_READY_CALLS : 1);
       expect(report.offsets.every((offset: number): boolean => offset === 0)).toBeTrue();
       expect(report.size).toBe(0);
     } finally {

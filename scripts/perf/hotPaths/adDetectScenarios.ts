@@ -5,7 +5,7 @@ import {
   adDetectQueue,
   adDetectStopping,
   inFlightAdDetectKeys,
-  pendingAdMessages,
+  pendingAdBundleCount,
   queuedAdDetectKeys,
   recentlyDisposedAdKeys,
 } from "../../../packages/cache/workers/antiRaid/adDetect";
@@ -17,6 +17,8 @@ import {
   AD_SAMPLE_CONTEXT_MAX_CHARS,
 } from "../../../packages/consts/antiRaid/adDetect";
 import { enqueueAdCandidate } from "../../../packages/workers/antiRaid/adDetect/queue";
+import { clearPendingAdBundles, storeBundle } from "../../../packages/workers/antiRaid/adDetect/queueState";
+import { verificationKey } from "../../../packages/libs/verificationKey";
 import {
   appendLinkUrls,
   boundSampleContext,
@@ -48,6 +50,7 @@ function createCapacityBundle(index: number): AdMessageBundle {
   const senderId: number = index + 1;
   const messageId: number = index + 1;
   return {
+    key: verificationKey(BENCHMARK_CHAT_ID, senderId),
     chatId: BENCHMARK_CHAT_ID,
     senderId,
     meta: {
@@ -103,7 +106,7 @@ function resetAdCapacityScenario(): void {
   adDetectQueue.clear();
   queuedAdDetectKeys.clear();
   recentlyDisposedAdKeys.clear();
-  pendingAdMessages.clear();
+  clearPendingAdBundles();
   inFlightAdDetectKeys.clear();
   adDetectCapacitySaturated.current = false;
   adDetectStopping.current = false;
@@ -111,18 +114,15 @@ function resetAdCapacityScenario(): void {
 
 /** 预置合法上限数量的 key；所有分配都发生在正式计时之前。 */
 function prepareAdCapacityScenario(): void {
+  // 满载边沿日志只记第一次；本场景量的是稳态拒绝，先置位边沿，预置时不写这行日志。
+  adDetectCapacitySaturated.current = true;
   for (
     let index: number = 0;
     index < AD_DETECT_MAX_PENDING_SENDERS;
     index++
   ) {
-    pendingAdMessages.set(
-      `benchmark-capacity:${index}`,
-      createCapacityBundle(index)
-    );
+    storeBundle(createCapacityBundle(index));
   }
-  // 满载边沿日志只记第一次；本场景量的是稳态拒绝，不把一次 I/O 摊进热循环。
-  adDetectCapacitySaturated.current = true;
 }
 
 /** 满载新 key 应在正文/URL/上下文整形之前以 O(1) 返回。 */
@@ -144,7 +144,7 @@ export function createAdCapacityRejectScenario(): Scenario {
         SATURATED_CANDIDATE.isChannel = isChannel;
         // 不显式传 now：生产走的就是载荷自带的 observedAt 默认值。
         enqueueAdCandidate(SATURATED_CANDIDATE);
-        checksum += pendingAdMessages.size + (isChannel ? 1 : 0);
+        checksum += pendingAdBundleCount.current + (isChannel ? 1 : 0);
       }
       return checksum;
     },

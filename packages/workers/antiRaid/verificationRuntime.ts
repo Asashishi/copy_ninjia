@@ -1,6 +1,7 @@
 import { logger } from "../../infra/logger";
 import {
   LOCKDOWN_KICK_DEDUPE_MS,
+  VERIFICATION_RUNTIME_CAPACITY,
 } from "../../consts/antiRaid/verification";
 import {
   canAdmitVerificationRevision,
@@ -10,6 +11,7 @@ import {
   verificationGeneration,
   verificationRevisions,
   verificationRevisionCapacityFatalState,
+  verificationRuntimeCapacityFatalState,
 } from "../../cache/workers/antiRaid/verification";
 import type {
   AdoptVerificationsMessage,
@@ -21,7 +23,6 @@ import type {
 import type {
   VerificationDeleteEvent,
   VerificationDeferredEvent,
-  VerificationRevisionCapacityExceededEvent,
   VerificationUpsertEvent,
 } from "../../types/antiRaid/events";
 import {
@@ -53,18 +54,13 @@ import {
   verificationSnapshot,
 } from "./verificationSnapshot";
 import { isTerminalVerificationPhase } from "../../states/verification/shared";
+import {
+  admitVerificationJoin,
+  reportVerificationRevisionCapacity,
+  reportVerificationRuntimeCapacity,
+} from "./verificationAdmission";
 
 declare const self: Worker;
-
-/** 新 key 满额时只报告一次，主线程按现有业务 Worker fatal 边界停止服务。 */
-function reportVerificationRevisionCapacity(): void {
-  if (verificationRevisionCapacityFatalState.current) return;
-  verificationRevisionCapacityFatalState.current = true;
-  self.postMessage({
-    type: "verificationRevisionCapacityExceeded",
-    generation: verificationGeneration.current,
-  } satisfies VerificationRevisionCapacityExceededEvent);
-}
 
 /**
  * 入群验证状态机（packages/states/verification.ts）的核心解释器。
@@ -104,7 +100,8 @@ function startVerificationTimer(
 
 /**
  * 把事件喂给某成员的状态机并同步落地结果；网络副作用异步执行，不阻塞
- * Worker mailbox 中后续投递。
+ * Worker mailbox 中后续投递。新 join 先核对运行态与 revision 容量，满额不执行
+ * 状态转移或副作用；已有 key 保留更新和解除责任。
  */
 export function dispatchVerification(
   chatId: number,
@@ -112,10 +109,7 @@ export function dispatchVerification(
   event: VerificationEvent
 ): void {
   const key: string = verificationKey(chatId, userId);
-  if (event.type === "join" && !canAdmitVerificationRevision(key)) {
-    reportVerificationRevisionCapacity();
-    return;
-  }
+  if (event.type === "join" && !admitVerificationJoin(key)) return;
   const entry: VerificationEntry | undefined = verificationEntries.get(key);
   const previousWasPersisted: boolean =
     isPersistedVerificationState(entry?.state);
@@ -236,7 +230,27 @@ function publishVerificationChange(
   }
 }
 
-/** Worker 重建时接管主线程内存镜像；重复 adopt 按 revision 幂等。 */
+/**
+ * 为主线程已有持久责任保留恢复槽；满额时只释放非持久去重。
+ * 释放前锁住新 join，防止被释放的去重键重新发送欢迎或改判验证。
+ */
+function reserveVerificationRecoverySlot(key: string): boolean {
+  if (verificationEntries.has(key) || verificationEntries.size < VERIFICATION_RUNTIME_CAPACITY) return true;
+  reportVerificationRuntimeCapacity();
+  for (const [dedupeKey, entry] of verificationEntries) {
+    if (isPersistedVerificationState(entry.state)) continue;
+    if (entry.timer !== undefined) clearTimeout(entry.timer);
+    cancelReminderDelivery(dedupeKey);
+    verificationEntries.delete(dedupeKey);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Worker 重建时先清上一代运行态，再接管主线程持久镜像；重复 adopt 按 revision 幂等。
+ * 同代增量恢复优先接管已有持久责任，运行态满额时不淘汰持久阶段。
+ */
 export function adoptVerifications(message: AdoptVerificationsMessage): void {
   if (message.generation < verificationGeneration.current) return;
   if (message.generation > verificationGeneration.current) {
@@ -246,6 +260,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     verificationEntries.clear();
     verificationRevisions.clear();
     verificationRevisionCapacityFatalState.current = false;
+    verificationRuntimeCapacityFatalState.current = false;
     deferredVerificationRecords.clear();
     threadCommentConfirmations.clear();
     clearReminderDeliveries();
@@ -276,6 +291,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     if ((verificationRevisions.get(key)?.revision ?? 0) >= record.revision) {
       continue;
     }
+    if (!reserveVerificationRecoverySlot(key)) return;
     verificationRevisions.set(key, { revision: record.revision });
     // 快照 → 状态的形状转换是纯逻辑，留在 states/verification/adopt.ts；本函数
     // 只负责计时器、提醒与补投这些有副作用的部分。
@@ -306,15 +322,16 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
       isTerminalVerificationPhase(state.kind) &&
       message.resumePersistedTerminals === true
     ) {
-      dispatchVerification(
-        record.chatId,
-        record.userId,
-        state.kind === "expelling" && state.successNoticeSent === true
-          ? { type: "expelSettled" }
-          : { type: "terminalPersisted" }
-      );
+      dispatchVerification(record.chatId, record.userId, terminalResumeEvent(state));
     }
   }
+}
+
+/** 终态落盘后续跑的事件：成功播报已发出的 expelling 直接收尾，其余重新执行终态动作。 */
+function terminalResumeEvent(state: VerificationState): VerificationEvent {
+  return state.kind === "expelling" && state.successNoticeSent === true
+    ? { type: "expelSettled" }
+    : { type: "terminalPersisted" };
 }
 
 /** 只有精确匹配当前终态 revision 的落盘回执才能启动副作用。 */
@@ -334,13 +351,7 @@ export function handleVerificationPersisted(
   if (state === undefined || !isTerminalVerificationPhase(state.kind)) return;
   // 成功播报的落盘回执立即收尾；其它重复回执不得绕过当前终态的退避 timer。
   if (!(state.kind === "expelling" && state.successNoticeSent === true) && entry?.timer !== undefined) return;
-  dispatchVerification(
-    chatId,
-    userId,
-    state.kind === "expelling" && state.successNoticeSent === true
-      ? { type: "expelSettled" }
-      : { type: "terminalPersisted" }
-  );
+  dispatchVerification(chatId, userId, terminalResumeEvent(state));
 }
 
 /**
@@ -403,6 +414,7 @@ export function stopVerificationRuntime(): void {
   verificationEntries.clear();
   verificationRevisions.clear();
   verificationRevisionCapacityFatalState.current = false;
+  verificationRuntimeCapacityFatalState.current = false;
   deferredVerificationRecords.clear();
   verificationGeneration.current = 0;
 }

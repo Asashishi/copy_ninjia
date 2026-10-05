@@ -1,7 +1,7 @@
 /**
  * 语音合成公共实现（packages/aiChat/ai/voiceSynthesis.ts）与它的三个调用方——AI 语音
- * 工具、`/send` 代发的 TTS 请求、cron `send_voice`——的领域预算、默认基础风格，以及
- * Telegram 语音消息的编码参数。群聊语音转写的常量在 consts/aiChat/voice.ts。
+ * 工具、`/send` 代发的 TTS 请求、cron `send_voice`——的领域预算、默认基础风格、AI 台词语言，
+ * 以及 Telegram 语音消息的编码参数。群聊语音转写的常量在 consts/aiChat/voice.ts。
  *
  * **模型名与音色不在这里**：走 config/dynamic/agent.json 的 `agent.tts`，代码不持有任何
  * 模型默认值（见 config/agent.ts）。超时、重试与错误标签属于供应商能力，在
@@ -10,15 +10,44 @@
  * 所属模块：AI 语音合成。
  */
 
+import type { TtsBotLanguage } from "../../types/config";
+
 /**
  * `agent.tts.style` 缺省时的基础朗读风格（google 与 openai 两种接受风格的协议；xai 协议不接受
- * style）。Gemini 经 `speech_metadata.style`、OpenAI 经 `instructions` 随台词提交；调用方给出
- * 本句语气时以 TTS_TONE_SEPARATOR 接在它之后（见 aiChat/ai/utils/speechStyle.ts）。
+ * style）。Gemini 经 `speech_metadata.style`、OpenAI 经 `instructions` 随台词提交；AI 回复的合成
+ * 请求以 TTS_LANGUAGE_SEPARATOR 接上朗读语言要求，调用方给出本句语气时再以 TTS_TONE_SEPARATOR
+ * 接在最后（见 aiChat/ai/utils/speechStyle.ts）。
  */
 export const TTS_DEFAULT_STYLE: string = "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色";
 
-/** 基础朗读风格与本句语气之间的连接段，拼成 `<基础风格>; 细节: <语气，其他要求>`。 */
+/**
+ * 基础朗读风格与朗读语言要求之间的连接段，拼成 `<基础风格>; <朗读语言>`；只有 AI 回复的合成请求
+ * 带朗读语言（VOICE_LANGUAGE_PROMPTS 的 speechLanguageStyle）。所属模块：aiChat/ai/utils/speechStyle.ts。
+ */
+export const TTS_LANGUAGE_SEPARATOR: string = "; ";
+
+/** 风格说明与本句语气之间的连接段，拼成 `<基础风格>[; <朗读语言>]; 细节: <语气，其他要求>`。 */
 export const TTS_TONE_SEPARATOR: string = "; 细节: ";
+
+/**
+ * `agent.tts.bot_language` 接受的全部取值，与 TtsBotLanguage 一一对应；部署配置解析
+ * （config/agentCapability.ts）据此判定枚举是否合法。
+ */
+export const TTS_BOT_LANGUAGES: readonly TtsBotLanguage[] = ["en", "zh", "ja"];
+
+/**
+ * `agent.tts.bot_language` 缺省时的台词语言；`agent.tts` 整段缺省时 AI 回复的 send_message 与
+ * 「行动与停止」段同样按它取 VOICE_LANGUAGE_PROMPTS（见 aiChat/ai/tools/replyToolset/orchestrator.ts）。
+ */
+export const TTS_DEFAULT_BOT_LANGUAGE: TtsBotLanguage = "ja";
+
+/** `agent.tts.bot_language` 严格校验的期望形态，列出 TTS_BOT_LANGUAGES 的全部取值，不含用户配置值。 */
+export const EXPECTED_TTS_BOT_LANGUAGE: string = '"en", "zh" or "ja"';
+
+/** 判断字符串是否属于 TTS_BOT_LANGUAGES；调用方先完成首尾空白规范化。 */
+export function isTtsBotLanguage(value: string): value is TtsBotLanguage {
+  return (TTS_BOT_LANGUAGES as readonly string[]).includes(value);
+}
 
 /**
  * `agent.tts.daily_limit` 缺省时的每日总预算：每个窗口拆为 AI 与预留两份独立额度。
@@ -109,3 +138,15 @@ export const VOICE_OPUS_COMPLEXITY: number = 5;
 
 /** Opus 编码的应用档位；`audio` 以保真为先，不加 `voip` 档的语音高通处理。 */
 export const VOICE_OPUS_APPLICATION: "voip" | "audio" | "lowdelay" = "audio";
+
+/**
+ * WAV 转 Opus 时每块输入的目标时长（秒），属 aiChat/ai/voiceEncoding.ts。整段语音按块重采样并编码，
+ * 块间让出 AI Worker 事件循环；单块同步占用随块长增加，整段总耗时不变。
+ */
+export const VOICE_OPUS_ENCODE_CHUNK_SECONDS: number = 1;
+
+/**
+ * 分块重采样时每块前后各带上的输入样本数，属 aiChat/ai/voiceEncoding.ts。须不小于依赖
+ * 重采样核（Lanczos-3）单侧触及的 3 个样本，块边界的输出才与整段一次重采样相同。
+ */
+export const VOICE_OPUS_RESAMPLE_CONTEXT_SAMPLES: number = 8;

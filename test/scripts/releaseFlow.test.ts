@@ -10,6 +10,7 @@ import { verifyReleaseAssets } from "../../scripts/release/assets";
 import type { ReleaseAsset } from "../../scripts/release/assets";
 import { publishRelease } from "../../scripts/release/github";
 import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
+import { PERSONA_FILE_NAME, PROMPT_EXAMPLE_DIR_NAME, VOICE_TOOL_PROMPT_FILE_NAME } from "../../packages/consts/promptLayout";
 import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 const TREE: string = "a".repeat(40);
@@ -46,6 +47,11 @@ async function fixture(
   if (defect === "symlink-executable") symlinkSync("binary.json", join(content, "copy-ninjia"));
   if (defect !== "missing-installer") await Bun.write(join(content, "install.sh"), "# mock installer\n");
   if (defect !== "missing-runtime") await Bun.write(join(content, "scripts/install/runtime.js"), "export {};\n");
+  if (defect !== "missing-prompt-example") {
+    for (const fileName of [PERSONA_FILE_NAME, VOICE_TOOL_PROMPT_FILE_NAME]) {
+      await Bun.write(join(content, PROMPT_EXAMPLE_DIR_NAME, fileName), "# mock prompt example\n");
+    }
+  }
   if (defect === "node-modules") await Bun.write(join(content, "node_modules/mock/index.js"), "export {};\n");
   for (const path of migrationPaths) await Bun.write(join(content, path), "export {};\n");
   const archive: string = join(root, "copy-ninjia-linux-x64.tar.gz");
@@ -149,7 +155,7 @@ describe("发布资产与谱系", (): void => {
   });
   test.each([
     "manifest-version", "missing-executable", "non-executable", "directory-executable", "symlink-executable",
-    "duplicate-executable", "mode-decoy", "node-modules", "missing-installer", "missing-runtime",
+    "duplicate-executable", "mode-decoy", "node-modules", "missing-installer", "missing-runtime", "missing-prompt-example",
   ])(
     "独立拒绝发行包结构缺口：%s", async (defect: string): Promise<void> => {
       const { root }: { root: string } = await fixture({}, undefined, defect);

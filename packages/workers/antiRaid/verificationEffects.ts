@@ -69,6 +69,82 @@ function includesTerminalAttempt(effects: readonly VerificationEffect[]): boolea
   return false;
 }
 
+/** 发起许可申请那一刻的执行 token。 */
+interface TerminalAttemptToken {
+  readonly transitionState: VerificationState | undefined;
+  readonly generation: number;
+  readonly revision: number;
+}
+
+/** 申请许可时的执行 token 在 await 之后是否仍是当前这一份：状态对象、代际、revision 都没换，也没在停机。 */
+function isSameTransition(key: string, token: TerminalAttemptToken): boolean {
+  return verificationEntries.get(key)?.state === token.transitionState &&
+    verificationGeneration.current === token.generation &&
+    verificationRevisions.get(key)?.revision === token.revision &&
+    antiRaidDispatchAbort.current?.signal.aborted !== true;
+}
+
+/** acquireTerminalAttempt 的入参。 */
+interface AcquireTerminalAttemptParams {
+  readonly chatId: number;
+  readonly userId: number;
+  readonly key: string;
+  readonly transitionState: VerificationState | undefined;
+  readonly dispatchVerification: VerificationDispatcher;
+  readonly requestTerminalAttempt: VerificationAttemptRequester;
+}
+
+/** 一次已取得的终态许可：第几次尝试与申请时的 revision。 */
+interface GrantedTerminalAttempt {
+  readonly attempt: number;
+  readonly revision: number;
+}
+
+/**
+ * 为本批终态副作用向主线程申请一次许可。token 已换代、申请抛错或未获批时返回 null，本批副作用
+ * 一律不执行；抛错与未获批在 token 仍精确匹配时判耗尽，交给延后闩锁。
+ */
+async function acquireTerminalAttempt({
+  chatId,
+  userId,
+  key,
+  transitionState,
+  dispatchVerification,
+  requestTerminalAttempt,
+}: AcquireTerminalAttemptParams): Promise<GrantedTerminalAttempt | null> {
+  const generation: number = verificationGeneration.current;
+  const revision: number | undefined = verificationRevisions.get(key)?.revision;
+  if (generation <= 0 || revision === undefined) return null;
+  const token: TerminalAttemptToken = { transitionState, generation, revision };
+  let permit: VerificationAttemptPermitResult;
+  try {
+    permit = await requestTerminalAttempt(key, generation, revision);
+  } catch (error: unknown) {
+    if (!isSameTransition(key, token)) return null;
+    logger.error(`Failed to acquire verification terminal attempt permit for ${key}:`, error);
+    // 当前许可无法确认时卸载运行态，沿既有延后边界保留磁盘快照；
+    // 主线程接管延后闩锁，完整进程重启后再恢复，不消耗本地 Telegram 重试计数。
+    dispatchVerification(chatId, userId, { type: "terminalAttemptBudgetExhausted" });
+    return null;
+  }
+  if (!isSameTransition(key, token)) return null;
+  if (permit.status !== "granted") {
+    // stale 只对仍精确匹配的当前 token 收口，不能触碰已经换代或更新的记录。
+    dispatchVerification(chatId, userId, { type: "terminalAttemptBudgetExhausted" });
+    return null;
+  }
+  return { attempt: permit.attempt, revision };
+}
+
+/** 欢迎语按变体取本进程风格的文案。 */
+function welcomeTextFor(effect: Extract<VerificationEffect, { kind: "sendWelcome" }>): string {
+  const texts: ReturnType<typeof workerAtmosphere>["NOTICE_TEXTS"] = workerAtmosphere().NOTICE_TEXTS;
+  if (effect.variant === "channelComment") return texts.verificationCommentExempt(effect.targetLabel);
+  if (effect.variant === "vouchedBot") return texts.verificationBotApproved(effect.fromLabel, effect.targetLabel);
+  if (effect.variant === "approved") return texts.verificationMemberApproved(effect.fromLabel, effect.targetLabel);
+  return texts.verificationSelfPassed(effect.fromLabel);
+}
+
 /** 按序执行一次转移返回的副作用；同一列表内先删后踢再通知的顺序有意义。 */
 export async function runVerificationEffects({
   chatId,
@@ -82,41 +158,17 @@ export async function runVerificationEffects({
   // 整批 effect 共享同一个执行 token；前置 await 后不得捕获替换后的新状态。
   const transitionState: VerificationState | undefined =
     verificationEntries.get(key)?.state;
-  let grantedAttempt: number = 0;
-  let grantedRevision: number = 0;
+  let granted: GrantedTerminalAttempt | null = null;
   if (includesTerminalAttempt(effects)) {
-    const generation: number = verificationGeneration.current;
-    const revision: number | undefined = verificationRevisions.get(key)?.revision;
-    if (generation <= 0 || revision === undefined) return;
-    let permit: VerificationAttemptPermitResult;
-    try {
-      permit = await requestTerminalAttempt(key, generation, revision);
-    } catch (error: unknown) {
-      if (
-        verificationEntries.get(key)?.state !== transitionState ||
-        verificationGeneration.current !== generation ||
-        verificationRevisions.get(key)?.revision !== revision ||
-        antiRaidDispatchAbort.current?.signal.aborted === true
-      ) return;
-      logger.error(`Failed to acquire verification terminal attempt permit for ${key}:`, error);
-      // 当前许可无法确认时卸载运行态，沿既有延后边界保留磁盘快照；
-      // 主线程接管延后闩锁，完整进程重启后再恢复，不消耗本地 Telegram 重试计数。
-      dispatchVerification(chatId, userId, { type: "terminalAttemptBudgetExhausted" });
-      return;
-    }
-    if (
-      verificationEntries.get(key)?.state !== transitionState ||
-      verificationGeneration.current !== generation ||
-      verificationRevisions.get(key)?.revision !== revision ||
-      antiRaidDispatchAbort.current?.signal.aborted === true
-    ) return;
-    if (permit.status !== "granted") {
-      // stale 只对仍精确匹配的当前 token 收口，不能触碰已经换代或更新的记录。
-      dispatchVerification(chatId, userId, { type: "terminalAttemptBudgetExhausted" });
-      return;
-    }
-    grantedAttempt = permit.attempt;
-    grantedRevision = revision;
+    granted = await acquireTerminalAttempt({
+      chatId,
+      userId,
+      key,
+      transitionState,
+      dispatchVerification,
+      requestTerminalAttempt,
+    });
+    if (granted === null) return;
   }
   for (const effect of effects) {
     switch (effect.kind) {
@@ -176,14 +228,7 @@ export async function runVerificationEffects({
         });
         break;
       case "sendWelcome": {
-        const welcomeText: string =
-          effect.variant === "channelComment"
-            ? workerAtmosphere().NOTICE_TEXTS.verificationCommentExempt(effect.targetLabel)
-            : effect.variant === "vouchedBot"
-              ? workerAtmosphere().NOTICE_TEXTS.verificationBotApproved(effect.fromLabel, effect.targetLabel)
-              : effect.variant === "approved"
-                ? workerAtmosphere().NOTICE_TEXTS.verificationMemberApproved(effect.fromLabel, effect.targetLabel)
-                : workerAtmosphere().NOTICE_TEXTS.verificationSelfPassed(effect.fromLabel);
+        const welcomeText: string = welcomeTextFor(effect);
         await runBooleanTelegramAction(
           "send message",
           (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
@@ -226,8 +271,9 @@ export async function runVerificationEffects({
   // 终态换代）时，由该 revision 的落盘回执继续驱动：成功战报据此结算，仍需执行的
   // 终态再次申请许可时由主线程判 exhausted。
   if (
-    grantedAttempt >= VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS &&
-    verificationRevisions.get(key)?.revision === grantedRevision &&
+    granted !== null &&
+    granted.attempt >= VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS &&
+    verificationRevisions.get(key)?.revision === granted.revision &&
     isTerminalVerificationPhase(verificationEntries.get(key)?.state?.kind)
   ) {
     dispatchVerification(chatId, userId, {

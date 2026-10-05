@@ -1,12 +1,7 @@
 /**
- * registerHandlers 的**分发**行为：把真实的注册链装在真实的 grammY Bot 上，
- * 用真实 update 走一遍 bot.handleUpdate，断言每条 update 落到哪个 handler、
- * 以及认领之后链路是否按约定终止。
- *
- * 与 registerHandlers.test.ts 分工：那一条只看「注册了什么、顺序如何」，
- * 拦得住漏注册与错序，但拦不住「注册对了却分发错了」——例如命令收进
- * `:entities:bot_command` 子链后命中集合变窄、ingress 认领后仍然放行下游。
- * 本文件只 mock handler 本体（记录调用名），注册链、过滤与分发全用生产实现。
+ * 在真实 grammY Bot 上安装注册链并通过 handleUpdate 分发夹具更新，核对
+ * handler 顺序、过滤范围和认领后的终止行为。handler 本体只记录调用，
+ * 注册、过滤和链调度均使用生产实现。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";

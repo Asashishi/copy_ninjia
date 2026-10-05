@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "./configLayout";
+import { PERSONA_FILE_NAME, PROMPT_DIR_NAME, VOICE_TOOL_PROMPT_FILE_NAME } from "./promptLayout";
 import {
   CONFIG_ROOT_ENV,
   RUNTIME_DATA_ROOT_ENV,
@@ -61,7 +62,13 @@ export const LOCK_FILE_PATH: string = join(RUNTIME_DATA_ROOT, "bot.lock");
  * 可选的自定义 AI 人设（Markdown）。存在时启动总闸接管其正文，缺省时使用内置人设
  * DEFAULT_AI_PERSONA；通知风格优先级见 docs/cn/04-invariants.md。人设文件不受版本控制。
  */
-export const PERSONA_PATH: string = join(PROJECT_ROOT, "prompt", "persona.md");
+export const PERSONA_PATH: string = join(PROJECT_ROOT, PROMPT_DIR_NAME, PERSONA_FILE_NAME);
+/**
+ * 可选的 send_voice 工具说明（Markdown）。存在时启动总闸接管其正文，整份替换按
+ * `agent.tts.bot_language` 选取的内置说明；缺省时沿用内置说明。text、tone 参数说明与其余
+ * 语音相关文案仍按 bot_language 选取。文件不受版本控制。
+ */
+export const VOICE_TOOL_PROMPT_PATH: string = join(PROJECT_ROOT, PROMPT_DIR_NAME, VOICE_TOOL_PROMPT_FILE_NAME);
 
 /**
  * 部署配置目录；测试显式指向临时数据根下的 config_example/ 副本。顶层只放 static/ 与
