@@ -51,7 +51,7 @@ describe("performance-result.json 的共享写入边界", () => {
     const gate = document.hotPathProfileGate as Record<string, unknown>;
     const calibration = gate.calibration as Record<string, unknown>;
     const runtime = calibration.runtime as Record<string, unknown>;
-    // 两套基准在不同时刻跑；后写的那个绝不能把先写的那节重建掉。
+    // 两套基准在不同时刻跑；后写的不重建先写的那节。
     expect(runtime.notes).toEqual(["给人看的说明"]);
     expect(gate.lastRun).toEqual({ marker: "gate" });
     expect((document.fullSuite as Record<string, unknown>).lastRun).toEqual({ rounds: 3 });
@@ -81,7 +81,7 @@ describe("performance-result.json 的共享写入边界", () => {
       entry: "lastRun",
       value: {},
     })).rejects.toThrow("$.fullSuite must be an object");
-    // 失败后原文不变：写坏的地方留在原地等人看，不被静默重建掩盖。
+    // 失败后原文不变：写坏的地方留在原地，不被静默重建。
     expect((await reload(path)).fullSuite).toBe(42);
   });
 

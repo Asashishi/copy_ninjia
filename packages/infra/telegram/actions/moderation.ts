@@ -26,13 +26,11 @@ export interface MuteChatMemberParams {
   /** 禁言结束的绝对时刻（ms）；这里换算成 Bot API 的 until_date（秒）。 */
   mutedUntil: number;
   /**
-   * 从算好 `mutedUntil` 到请求真正发出的容忍上限；到期即放弃这次禁言。
+   * 从算好 `mutedUntil` 到请求真正发出的容忍上限；到期即放弃这次禁言。必填，不设缺省。
    *
-   * **必填，不设缺省**：`until_date` 是入队前算好的绝对时刻，而 restrict 请求
-   * 命中 429 后会在独立车道按 `retry_after` 无上界等待。排到 `until_date` 距当下
-   * 不足 30 秒时 Bot API 把它当成**永久限制**，而本仓库两条禁言路径都不排恢复
-   * 计时器、不写任何持久化状态——那就是一次只能人工 `/unmute` 的永久禁言，
-   * 回执却照常念「到点自动松开」。放弃这次禁言的代价远小于此。
+   * `until_date` 是入队前算好的绝对时刻，restrict 请求命中 429 后在独立车道按
+   * `retry_after` 等待；派发截止限制这段排队时间，使发出时的 `until_date` 不会过于
+   * 接近当下（Bot API 对此类值按永久限制处理）。
    *
    * 具体预算按各自的最短时长由调用方给出：刷屏禁言用
    * `FLOOD_MUTE_DISPATCH_TIMEOUT_MS`，`/mute` 用
@@ -52,15 +50,11 @@ export type MuteChatMemberOutcome =
 /**
  * 临时收走一名成员在本群的全部发言权限（到点由 Telegram 自动恢复）。
  *
- * `until_date` 向上取整到秒，护的是**下**边界的亚秒那一头：Bot API 把「距现在
- * 不足 30 秒」当永久限制，向下取整会把亚秒余数抹掉、让时长比调用方要的更短。
- * 同一条下边界的**排队**那一头由 `dispatchTimeoutMs` 兜（见该字段）。上边界
- * （超过 366 天同样按永久处理）由 MUTE_MAX_DURATION_MS 留出的一整天余量兜
- * ——取整最多加 1 秒，排队和往返的耗时也远小于那道余量，两头都不会滑出合法区间。
+ * `until_date` 向上取整到秒。Bot API 允许区间的下边界由 `dispatchTimeoutMs`
+ * 约束排队时间，上边界由 MUTE_MAX_DURATION_MS 留出的余量覆盖取整、排队与往返耗时。
  *
- * 派发截止在本函数内与调用方 signal 合成，不由调用点各自 `signalWithTimeout`：
- * 「带 until_date 的禁言必须有派发截止」是这个操作本身的契约，写在类型上才不会
- * 有第三个调用点漏掉它。
+ * 派发截止在本函数内与调用方 signal 合成（`signalWithTimeout`），由必填字段
+ * `dispatchTimeoutMs` 强制，调用点不各自合成。
  */
 export async function muteChatMemberWithOutcome({
   chatId,
@@ -121,7 +115,7 @@ export async function unmuteChatMemberWithOutcome({
   return outcome === "forbidden" ? "forbidden" : "failed";
 }
 
-/** 一次只踢不封请求的结局；权限拒绝与瞬时失败必须由长生命周期调用方区别处理。 */
+/** 一次只踢不封请求的结局；权限拒绝与瞬时失败分开返回。 */
 export type KickChatMemberOutcome =
   | "kicked"
   | "absent"
@@ -134,16 +128,10 @@ export interface KickChatMemberParams {
   /**
    * 这个群是不是超级群；调用前必须精确解析，未知不得授权破坏性动作。
    *
-   * 「只踢不封」在两类群里是两个不同的方法，Bot API 原文各自划定了作用域：
-   * - `unbanChatMember`：「unban a previously banned user **in a supergroup or
-   *   channel**」——普通群用不了；
-   * - `banChatMember`：「ban a user in **a group**, a supergroup or a channel」，
-   *   而「踢了就回不来」那句紧接着限定「**In the case of supergroups and
-   *   channels**」——所以普通群里它就是一次纯移除，不留持久封禁。
-   *
-   * 因此确证普通群走 `banChatMember`，确证超级群走 `unbanChatMember`。类型侧
-   * 强制调用方给出布尔值，避免把冷启动未知默认为任一边（见
-   * docs/cn/04-invariants.md 与 antiRaid/chatKind.ts）。
+   * 「只踢不封」在两类群里用不同的方法：确证普通群走 `banChatMember`（普通群里它是一次
+   * 纯移除，不留持久封禁），确证超级群走 `unbanChatMember`（Bot API 将其限定在超级群
+   * 或频道）。类型侧强制调用方给出布尔值（见 docs/cn/04-invariants.md 与
+   * antiRaid/chatKind.ts）。
    */
   isSupergroup: boolean;
   api?: KickMemberApi;
@@ -172,8 +160,7 @@ export async function kickChatMemberWithOutcome({
           {},
           telegramSignal(signal)
         ),
-    // 「目标已经不在群」不是故障，也不该被解释成权限拒绝：认领掉它，既不记
-    // API 错误，也不让调用方按可重试失败退避。
+    // 「目标已经不在群」由 claimError 认领：不记 API 错误，结局为 absent。
     claimError: isTelegramRetryPreconditionChanged,
   });
   if (outcome === "succeeded") return "kicked";
@@ -182,9 +169,9 @@ export async function kickChatMemberWithOutcome({
 }
 
 /**
- * 一次封禁尝试的结局。`forbidden` 与 `failed` 必须分开：前者是「再试一次也
- * 一样」，后者是限流/网络抖动这类值得退避重试的失败。`participantInvalid` 是
- * Telegram 以 PARTICIPANT_ID_INVALID 拒绝这个用户 ID，只由真人封禁产生。
+ * 一次封禁尝试的结局。`forbidden` 是权限拒绝，`failed` 是限流、网络抖动等偶发失败。
+ * `participantInvalid` 是 Telegram 以 PARTICIPANT_ID_INVALID 拒绝这个用户 ID，
+ * 只由真人封禁产生。
  */
 export type BanChatMemberOutcome =
   | "banned"
@@ -225,8 +212,8 @@ export async function banChatMember(
 }
 
 /**
- * 解除某人在这个群的封禁。`only_if_banned` 不能省，否则当前仍是群成员的目标
- * 会被 unbanChatMember 移出群聊。
+ * 解除某人在这个群的封禁。请求带 `only_if_banned`，目标当前仍是群成员时不会被
+ * 移出群聊。
  */
 export async function unbanChatMemberIfBanned(
   chatId: number,

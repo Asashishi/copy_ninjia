@@ -13,7 +13,7 @@ export interface DownloadTelegramVisionImageParams {
 }
 
 /**
- * 通过 Telegram file_id 现取一张图片并规范成各家视觉接口都能接收的 jpeg/png。
+ * 通过 Telegram file_id 现取一张图片并规范成 jpeg/png。
  * getFile 与下载均由主线程能力边界完成，Worker 只收到受上限约束的字节；
  * 下载与转码后的体积由 MEDIA_MAX_DOWNLOAD_BYTES 统一约束。
  */
@@ -23,10 +23,8 @@ export async function downloadTelegramVisionImage({
   signal,
 }: DownloadTelegramVisionImageParams): Promise<VisionImage | null> {
   try {
-    // 主线程内的两步各自计时，绝不共用一个 deadline：getFile 走自适应 429 队列，
-    // 一次退避就可能耗掉几十秒，共用时下载只剩残额、几乎立刻
-    // abort。invalidate signal 仍要贯穿两步（见 docs/cn/04-invariants.md 的 AI
-    // chat invalidate 约束）。
+    // 主线程内 getFile 与下载两步各自计时，不共用 deadline；invalidate signal 贯穿两步
+    // （见 docs/cn/04-invariants.md 的 AI chat invalidate 约束）。
     const download: TelegramWorkerDownloadFileResult =
       await downloadTelegramFileFromMain({
         fileId,
@@ -38,8 +36,7 @@ export async function downloadTelegramVisionImage({
       return null;
     }
 
-    // 下载缓冲已从主线程转移并归本 Worker 独占，直接传递同一个 Uint8Array，
-    // 不为单张大图建立额外视图或复制字节。
+    // 下载缓冲已从主线程转移并归本 Worker 独占，直接传递同一个 Uint8Array。
     const image: VisionImage | null = await prepareVisionImage(download.bytes);
     if (!image) {
       logger.error(`${logLabel} is an unsupported/unrecognized image format.`);

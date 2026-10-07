@@ -1,15 +1,10 @@
 import { isPlainRecord } from "./record";
 import { isTelegramGroupChatId } from "./telegramId";
-import {
-  invalidInput,
-  optionalBooleanField,
-  optionalStringField,
-  optionalTimestampField,
-} from "./inputValidation";
+import { decodeCachedUser } from "./cachedUserCodec";
+import { invalidInput, optionalTimestampField } from "./inputValidation";
 import type { InputFieldContext } from "./inputValidation";
 import type { TtsDailyUsage } from "../types/aiChat/voiceMessage";
 import type {
-  CachedUser,
   CopyMode,
   DecodedGlobalCopyState,
   DecodedGlobalState,
@@ -50,23 +45,6 @@ function copyMode(value: unknown, context: InputFieldContext): CopyMode | undefi
   return invalidInput(context.source, context.path, "one of reverse or nya");
 }
 
-/** 复读目标身份：可选字符串字段按 Telegram 给出的原样保留（名称与群名可以是空字符串）。 */
-function cachedUser(value: unknown, context: InputFieldContext): CachedUser {
-  const raw: Record<string, unknown> = record(value, context);
-  knownKeys(raw, ["id", "username", "first_name", "last_name", "title", "isChannel"], context);
-  if (typeof raw.id !== "number" || !Number.isSafeInteger(raw.id) || raw.id === 0) {
-    return invalidInput(context.source, `${context.path}.id`, "a non-zero safe integer");
-  }
-  return {
-    id: raw.id,
-    username: optionalStringField(raw, "username", context),
-    first_name: optionalStringField(raw, "first_name", context),
-    last_name: optionalStringField(raw, "last_name", context),
-    title: optionalStringField(raw, "title", context),
-    isChannel: optionalBooleanField(raw, "isChannel", context),
-  };
-}
-
 function globalCopy(value: unknown, context: InputFieldContext): DecodedGlobalCopyState {
   const raw: Record<string, unknown> = record(value, context);
   knownKeys(raw, ["lastCopyTime", "copiedUser", "copyMode", "copyChatId"], context);
@@ -87,7 +65,7 @@ function globalCopy(value: unknown, context: InputFieldContext): DecodedGlobalCo
   }
   return {
     lastCopyTime,
-    copiedUser: cachedUser(raw.copiedUser, at(context, "copiedUser")),
+    copiedUser: decodeCachedUser(raw.copiedUser, at(context, "copiedUser")),
     copyMode: copyMode(raw.copyMode, at(context, "copyMode")),
     copyChatId: raw.copyChatId,
   };

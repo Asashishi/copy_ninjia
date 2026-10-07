@@ -2,16 +2,17 @@
  * Gemini 回复会话：中立请求到 generateContent 请求体的映射，以及多轮工具往返
  * 的对话记录累积。
  *
- * 重点守两条：上一轮模型的整个 content 必须原样接回（thought signature 就在
- * 里面，缺了会丢思考上下文），以及服务端检索调用在失败分支也要计数。
+ * 覆盖：上一轮模型的整个 content（含 thought signature）原样接回，以及服务端检索调用在失败分支也计数。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Content, GenerateContentParameters } from "@google/genai";
 import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
+import type { GeminiRequestOptions } from "../../../packages/aiChat/gemini/client";
 import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition } from "../../../packages/types/aiChat/provider";
 import { DUPLICATE_REPLY_RESULT } from "../../../packages/consts/aiChat/tools";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/config";
 import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
@@ -21,9 +22,12 @@ const requestGeminiResult = mock(async (..._args: unknown[]): Promise<GeminiRequ
   failureKind: "request",
 }));
 
-mock.module("../../../packages/aiChat/gemini/client", () => ({ requestGeminiResult }));
+/** 会话创建时固定的客户端替身；请求经被替换的 requestGeminiResult 发出，不触达它。 */
+const PINNED_CLIENT: object = { label: "pinned gemini client" };
+const getGeminiClient = mock((..._args: unknown[]): object => PINNED_CLIENT);
+mock.module("../../../packages/aiChat/gemini/client", () => ({ getGeminiClient, requestGeminiResult }));
 
-/** 共用显式缓存默认取不到，第 1 次请求照常走完整结构；专门的用例再改返回值。 */
+/** 共用显式缓存默认取不到，首次请求照常走完整结构；专门的用例再改返回值。 */
 const acquireGeminiContextCache = mock((..._args: unknown[]): string | null => null);
 const releaseGeminiContextCache = mock((..._args: unknown[]): void => {});
 /** 内容构造原样透传，断言直接看回复会话交给缓存的字段。 */
@@ -92,7 +96,7 @@ beforeEach(() => {
 const builtBodies: GenerateContentParameters[] = [];
 function respond(result: GeminiRequestResult): (...args: unknown[]) => Promise<GeminiRequestResult> {
   return async (...args: unknown[]): Promise<GeminiRequestResult> => {
-    builtBodies.push((args[1] as () => GenerateContentParameters)());
+    builtBodies.push((args[0] as GeminiRequestOptions).buildBody());
     return result;
   };
 }
@@ -101,6 +105,46 @@ function respond(result: GeminiRequestResult): (...args: unknown[]) => Promise<G
 function bodyAt(index: number): GenerateContentParameters {
   return builtBodies[index]!;
 }
+
+describe("Gemini 回复会话的热重载边界", () => {
+  test("会话创建时固定模型与客户端：工具往返之间热重载 text 配置，后续请求仍用旧模型与旧客户端", async () => {
+    const original = agentDeploymentConfigCache.current!;
+    requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const request: AiReplyTurnRequest = { systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: false, grounded: false };
+    const first: AiReplyTurn = await session.request(request);
+    expect(session.appendToolOutputs([{ call: first.functionCalls[0]!, responseJson: DUPLICATE_REPLY_RESULT }])).toBeTrue();
+    try {
+      agentDeploymentConfigCache.current = { ...original, text: { ...original.text, model: "reloaded-model" } };
+      await session.request(request);
+    } finally {
+      agentDeploymentConfigCache.current = original;
+    }
+
+    expect(builtBodies.map((body: GenerateContentParameters): string => body.model)).toEqual([original.text.model, original.text.model]);
+    for (const call of requestGeminiResult.mock.calls) {
+      expect((call[0] as GeminiRequestOptions).client).toBe(PINNED_CLIENT as never);
+    }
+  });
+
+  test("创建后、第 1 次请求前配置被热重载时不引用共用显式缓存，直接发完整请求", async () => {
+    const original = agentDeploymentConfigCache.current!;
+    acquireGeminiContextCache.mockReturnValue("cachedContents/shared");
+    requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
+    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    try {
+      agentDeploymentConfigCache.current = { ...original, text: { ...original.text } };
+      await session.request({ systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: false, grounded: false });
+    } finally {
+      agentDeploymentConfigCache.current = original;
+      acquireGeminiContextCache.mockReturnValue(null);
+    }
+
+    expect(acquireGeminiContextCache).not.toHaveBeenCalled();
+    expect(bodyAt(0).config?.cachedContent).toBeUndefined();
+    expect(bodyAt(0).config?.systemInstruction).toBe("系统提示词");
+  });
+});
 
 describe("两套请求结构", () => {
   const REQUEST: AiReplyTurnRequest = { systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: true, grounded: false };
@@ -182,8 +226,8 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body: GenerateContentParameters = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
-    expect(requestGeminiResult.mock.calls[0]![0]).toBe("text");
+    const body: GenerateContentParameters = (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody();
+    expect((requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).capability).toBe("text");
     expect(body.model).toBe(getAgentDeploymentConfig().text.model);
     expect(body.contents).toEqual([
       { role: "user", parts: [{ text: "区块一" }] },
@@ -201,7 +245,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody();
     expect(body.config?.temperature).toBe(GEMINI_REPLY_TEMPERATURE);
     expect(body.config?.maxOutputTokens).toBe(GEMINI_REPLY_MAX_TOKENS);
   });
@@ -215,7 +259,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: true,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody();
     expect(body.config?.temperature).toBe(GEMINI_GROUNDED_REPLY_TEMPERATURE);
   });
 
@@ -228,7 +272,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody();
     expect(body.config?.tools).toEqual([
       { googleSearch: {} },
       {
@@ -251,7 +295,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody();
     expect(body.config?.tools).toEqual([{
       functionDeclarations: [{
         name: SEND_MESSAGE.name,
@@ -274,7 +318,7 @@ describe("Gemini 回复会话的请求映射", () => {
       grounded: false,
     });
 
-    const body = (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody();
     expect(body.config?.tools).toEqual([]);
   });
 });
@@ -314,12 +358,12 @@ describe("Gemini 回复会话的对话记录累积", () => {
     };
     const turn: AiReplyTurn = await session.request(request);
     const before: GenerateContentParameters = structuredClone(
-      (requestGeminiResult.mock.calls[0]![1] as () => GenerateContentParameters)()
+      (requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions).buildBody()
     );
     expect(session.appendToolOutputs([{ call: turn.functionCalls[0]!, responseJson: DUPLICATE_REPLY_RESULT }])).toBe(true);
 
     await session.request(request);
-    const after: GenerateContentParameters = (requestGeminiResult.mock.calls[1]![1] as () => GenerateContentParameters)();
+    const after: GenerateContentParameters = (requestGeminiResult.mock.calls[1]![0] as GeminiRequestOptions).buildBody();
     expect(after.config).toEqual(before.config);
     expect(after.config?.cachedContent).toBeUndefined();
     expect(after.contents).toEqual([
@@ -357,7 +401,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
       webSearchEnabled: false,
       grounded: false,
     });
-    const body = (requestGeminiResult.mock.calls[1]![1] as () => GenerateContentParameters)();
+    const body = (requestGeminiResult.mock.calls[1]![0] as GeminiRequestOptions).buildBody();
     const contents = body.contents as Content[];
     // 稳定前缀排在最前，随后是易变区块、模型轮与函数结果。
     expect(contents).toHaveLength(4);
@@ -383,7 +427,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
     }
 
     for (const call of requestGeminiResult.mock.calls) {
-      const body: GenerateContentParameters = (call[1] as () => GenerateContentParameters)();
+      const body: GenerateContentParameters = (call[0] as GeminiRequestOptions).buildBody();
       expect(body.config?.cachedContent).toBeUndefined();
       expect(body.config?.systemInstruction).toBe("系统提示词");
       expect(body.config?.tools).toBeDefined();

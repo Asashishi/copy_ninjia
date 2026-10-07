@@ -12,15 +12,15 @@ export const userCache: Map<string, CachedUser> = new Map();
 
 /** sender id -> 当前小写 username。用于在发送者改名、去名、username 换绑或
  * 正向缓存淘汰时同步撤销旧 alias，也作为破坏性命令解析前的一致性校验。
- * 容量与淘汰逐字跟随 userCache（同为 USER_CACHE_MAX），两张表成对增删。 */
+ * 容量与淘汰同 userCache（USER_CACHE_MAX），两张表成对增删。 */
 export const senderUsernameCache: Map<number, string> = new Map();
 
 /**
  * sender id -> 该 id 当前的身份对象，即 `userCache.get(senderUsernameCache.get(id))`
  * 的直查形式。
  *
- * **键集与 senderUsernameCache 恒等**：两张表只在 users/senderIdentity.ts 的
- * updateCachedIdentity 与 deleteAlias 里成对写入、成对删除，容量因此同为
+ * 键集与 senderUsernameCache 相同：两张表只在 users/senderIdentity.ts 的
+ * updateCachedIdentity 与 deleteAlias 里成对写入、成对删除，容量同为
  * consts/senderIdentity.ts 的 USER_CACHE_MAX，淘汰也由那一处的 deleteAlias 一并完成。
  * 值与 userCache 里是同一个 CachedUser 引用，不额外持有对象。
  *

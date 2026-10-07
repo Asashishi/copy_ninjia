@@ -1,6 +1,6 @@
 /**
  * `/info`：查询目标的名称（用户为 first_name 与 last_name 拼接，频道或群为 title）、用户名、
- * id 与头像，回执 30 秒后删除。任何人都能用；私聊由 infra/updateGate.ts 的前置网关拦截。
+ * id 与头像，回执走统一命令发送边界，自动清理。任何人都能用；私聊由 infra/updateGate.ts 的前置网关拦截。
  *
  * 目标可以是回复、@username、用户 id 或频道/群 id，机器人自己与其他 bot 也可以。handler
  * 同步解析目标后交给延迟命令执行器的 interactive 档，接纳后立即返回。资料以本轮现查为准：
@@ -14,7 +14,7 @@ import type { ChatFullInfo, MessageEntity, User } from "grammy/types";
 import { INFO_TASK_BUDGET_MS } from "../consts/info";
 import { chatAtmosphere } from "../infra/atmosphere";
 import { sendCommandMessage } from "../infra/telegram";
-import { logUnlessAborted, runTelegramAction } from "../infra/telegram/actions/core";
+import { runTelegramAction } from "../infra/telegram/actions/core";
 import { readChatMemberUser } from "../infra/telegram/actions/membership";
 import { readCurrentAvatar } from "../infra/telegram/avatar/read";
 import { sendCommandPhoto } from "../infra/telegram/commandPhotos";
@@ -75,7 +75,6 @@ async function lookUp(request: InfoRequest, signal: AbortSignal): Promise<InfoLo
     map: (value: ChatFullInfo): ChatFullInfo => value,
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
   });
   return chat === undefined ? cachedLookup(target) : chatLookup(chat);
 }

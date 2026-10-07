@@ -204,6 +204,23 @@ describe("config/dynamic/ 目录监听", () => {
     expect(loggerLog).toHaveBeenCalledWith("AI chat became available after a deployment config reload.");
   });
 
+  test("仍不可用且失败在同一文件时沿用已发布的结论，不重新发布", async () => {
+    startConfigReload();
+    await settle();
+    await Bun.file(MOOD_CONFIG_PATH).delete();
+    expect(await waitUntil((): boolean => !published(aiChatConfigReadinessCache).ok)).toBe(true);
+    const unavailable: ConfigReadiness = published(aiChatConfigReadinessCache);
+
+    await Bun.write(STICKERS_CONFIG_PATH, "{\"packs\": [\"NewPack_1\"]}\n");
+    expect(await waitUntil((): boolean =>
+      loggerLog.mock.calls.some((call: unknown[]): boolean => call[0] === `Reloaded deployment config ${STICKERS_CONFIG_PATH}.`)
+    )).toBe(true);
+
+    expect(aiChatConfigReadinessCache.current).toBe(unavailable);
+    expect(resumeAiChat).not.toHaveBeenCalled();
+    expect(syncAiChatConfig).not.toHaveBeenCalled();
+  });
+
   test("恢复 Worker 失败时保持不可用并记错误日志，下一次事件重试", async () => {
     startConfigReload();
     await settle();

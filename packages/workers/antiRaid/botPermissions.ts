@@ -8,8 +8,8 @@
  *
  * 读出来的是三态。**「没观测到」不是「观测到没有」**：撤管理员会镜像确证的
  * false；离群、`/init` 切换和主动失效才清成未知，首次现查失败也继续保持未知。
- * 因此这里只如实转述镜像内容，由调用方决定未知那一档怎么办——目前刷屏禁言的
- * 选择是照常尝试、让 Telegram 当裁判（见 floodControl.ts）。
+ * 因此这里只如实转述镜像内容，未知那一档由调用方决定（刷屏禁言照常尝试、让
+ * Telegram 当裁判，见 floodControl.ts）。
  */
 
 import { workerBotChatPermissions } from "../../cache/workers/antiRaid/botPermissions";

@@ -115,12 +115,12 @@ describe("Gemini request safety settings", () => {
         candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
         usageMetadata: { promptTokenCount: 2_000, cachedContentTokenCount: 1_024, candidatesTokenCount: 30, thoughtsTokenCount: 12 },
       }));
-      await requestGeminiResult("text", () => ({ model: "text", contents: "hi" }), "Test");
+      await requestGeminiResult({ capability: "text", buildBody: () => ({ model: "text", contents: "hi" }), errorLabel: "Test" });
       generateContent.mockImplementationOnce(async (): Promise<GenerateContentResponse> => geminiResponse({
         candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "ok" }] } }],
         usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 5 },
       }));
-      await requestGeminiResult("media", () => ({ model: "media", contents: "hi" }), "Test");
+      await requestGeminiResult({ capability: "media", buildBody: () => ({ model: "media", contents: "hi" }), errorLabel: "Test" });
     } finally {
       installAiCacheUsageSink(null);
     }
@@ -198,7 +198,7 @@ describe("Gemini request safety settings", () => {
       throw new Error("Invalid Gemini config: models.reply must be a non-empty string");
     };
 
-    const result = await requestGeminiResult("summary", broken, "Gemini test");
+    const result = await requestGeminiResult({ capability: "summary", buildBody: broken, errorLabel: "Gemini test" });
     expect(result).toMatchObject({ ok: false, failureKind: "request" });
     // 请求根本没发出去，配额不该被记账。
     expect(generateContent).not.toHaveBeenCalled();
@@ -220,7 +220,7 @@ describe("Gemini request safety settings", () => {
         content: { parts: [{ text: "不得消费" }, { functionCall: { name: "send_message" } }] },
       }],
     }));
-    const result = await requestGeminiResult("summary", (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), "Gemini test");
+    const result = await requestGeminiResult({ capability: "summary", buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), errorLabel: "Gemini test" });
     expect(result).toMatchObject({
       ok: false,
       failureKind: "response",
@@ -309,7 +309,7 @@ describe("Gemini request safety settings", () => {
       normalize: (text: string): string => text,
     })).resolves.toEqual({ ok: false, retryable: false, mediaFailure: "transient" });
 
-    // 摘要那条流水线与 media 端点能力无关：一次超时不得推动媒体模态进退避。
+    // 摘要那条流水线与 media 端点能力无关：一次超时不推动媒体模态进退避。
     generateContent.mockRejectedValueOnce(new FakeApiError(503, "upstream busy"));
     await expect(requestGeminiTextResult({
       capability: "summary",
@@ -334,11 +334,11 @@ describe("Gemini request safety settings", () => {
     const controller: AbortController = new AbortController();
     controller.abort();
 
-    await expect(requestGeminiResult("summary", (): GenerateContentParameters => ({
+    await expect(requestGeminiResult({ capability: "summary", buildBody: (): GenerateContentParameters => ({
       model: "gemini-test",
       contents: "hello",
       config: { abortSignal: controller.signal },
-    }), "Gemini test")).resolves.toMatchObject({ ok: false, failureKind: "request" });
+    }), errorLabel: "Gemini test" })).resolves.toMatchObject({ ok: false, failureKind: "request" });
     expect(generateContent).not.toHaveBeenCalled();
     expect(loggerError).not.toHaveBeenCalled();
   });
@@ -371,11 +371,11 @@ describe("Gemini request safety settings", () => {
     generateContent.mockImplementationOnce((): Promise<GenerateContentResponse> => sdkTask);
 
     const pendingResult: Promise<Awaited<ReturnType<typeof requestGeminiResult>>> =
-      requestGeminiResult("summary", (): GenerateContentParameters => ({
+      requestGeminiResult({ capability: "summary", buildBody: (): GenerateContentParameters => ({
         model: "gemini-test",
         contents: "hello",
         config: { abortSignal: controller.signal },
-      }), "Gemini test");
+      }), errorLabel: "Gemini test" });
     controller.abort();
 
     await expect(pendingResult).resolves.toMatchObject({
@@ -394,5 +394,30 @@ describe("Gemini request safety settings", () => {
     await Promise.resolve();
     expect(reported).toHaveLength(1);
     expect(reported[0]).toMatchObject({ inputTokens: 7, outputTokens: 9 });
+  });
+});
+
+describe("会话固定的客户端", () => {
+  test("传入 client 时请求只走它，不按能力构造或取用缓存的客户端", async () => {
+    geminiClientCache.current = null;
+    createdClientOptions.length = 0;
+    generateContent.mockClear();
+    const pinnedGenerate = mock(async (..._args: GenerateContentParameters[]): Promise<GenerateContentResponse> => geminiResponse({
+      candidates: [{ finishReason: FinishReason.STOP, content: { role: "model", parts: [{ text: "pinned" }] } }],
+    }));
+    const pinned = { models: { generateContent: pinnedGenerate } } as never;
+
+    const result = await requestGeminiResult({
+      capability: "text",
+      buildBody: (): GenerateContentParameters => ({ model: "text", contents: "hi" }),
+      errorLabel: "Gemini test",
+      client: pinned,
+    });
+
+    expect(result.ok).toBeTrue();
+    expect(pinnedGenerate).toHaveBeenCalledTimes(1);
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(createdClientOptions).toEqual([]);
+    expect(geminiClientCache.current).toBeNull();
   });
 });

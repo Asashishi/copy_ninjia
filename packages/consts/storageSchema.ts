@@ -15,10 +15,6 @@ export const BLOCKLIST_DATA_KEYS: readonly string[] = [
   "participantInvalidCount",
 ];
 
-/** 身份记录的配置时区的时间戳格式，不接受其他日期表示。 */
-export const LOCAL_TIMESTAMP_PATTERN: Readonly<RegExp> =
-  /^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/;
-
 /** 群状态持久化字段闭集，用于拒绝未知字段。 */
 export const CHAT_STATE_KEYS: readonly string[] = [
   "quietUntil",
@@ -38,7 +34,7 @@ export const CHAT_STATE_KEYS: readonly string[] = [
 /** 群状态里一条翻译会话的字段闭集（database/codec/chatState.ts 严格解析用）。 */
 export const TRANSLATE_SESSION_KEYS: readonly string[] = ["translatedUser", "language"];
 
-/** 翻译会话目标身份的字段闭集（database/codec/chatState.ts 严格解析用）。 */
+/** 持久化目标身份（复读目标、翻译目标）的字段闭集（libs/cachedUserCodec.ts 严格解析用）。 */
 export const CACHED_USER_KEYS: readonly string[] = [
   "id",
   "username",

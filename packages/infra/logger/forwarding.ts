@@ -3,9 +3,9 @@
  * `Bun.isMainThread` 在 Worker 侧调用；主线程直接落盘不经过此通道。
  *
  * 通道形状：任一时刻只有一个批次在途，主线程回 `__logBatchAccepted` 才推进下一批。
- * 总消息数与 JSON 载荷字节双硬顶（见 cache/perThread/logger.ts 的 forwardedLogQueue），
- * 越界的那条 error 已经写进本线程 stderr，这里只累计两个标量、不再持有对象引用，
- * 等队列排空后补一条汇总日志说明丢了多少。
+ * 总消息数与 JSON 载荷字节双上限（见 cache/perThread/logger.ts 的 forwardedLogQueue），
+ * 越界的那条 error 已写进本线程 stderr，这里只累计丢弃条数与字节两个标量，
+ * 队列有空间后补一条汇总日志。
  *
  * @see ../../../docs/cn/04-invariants.md
  */
@@ -51,10 +51,9 @@ export function pumpForwardedLogs(post: ForwardedLogSink): boolean {
 
 /**
  * 主线程重新消费后，把 Worker 侧整段溢出收敛为一条可落盘的普通日志。
- * 只有汇总真的入了队才清零：入不进去说明队列仍然满着，计数必须留到下一次。
+ * 只有汇总入队成功才清零，否则计数保留到下一次。
  *
- * `now` 是测试缝，两个生产调用点都用缺省值 `Date.now()`；不得改成从触发日志上
- * 取时刻，否则同一条汇总会因调用路径不同而取到两个不同的时间源。
+ * `now` 是测试缝，生产调用点用缺省值 `Date.now()`。
  */
 export function enqueueForwardedLogDropSummary(now: number = Date.now()): void {
   const dropState: typeof forwardedLogDropState.current =

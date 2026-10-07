@@ -12,11 +12,11 @@ export const AI_REPLY_ACTIVITY_MAX_TIMESTAMPS: number =
 /**
  * 活跃度表最多保留的群数；超额淘汰最久未活动群。进表的只有通过 init 网关的群消息，
  * 受管群不超过 STATE_MANAGED_CHAT_LIMIT；停管群的条目要等一个观察窗口空闲后才被清理，
- * 可能与同样多的新受管群短暂并存，因此取两倍。所属模块：auto/message/aiReplyActivity.ts。
+ * 可能与同样多的新受管群短暂并存，取值为 STATE_MANAGED_CHAT_LIMIT 的固定倍数。所属模块：auto/message/aiReplyActivity.ts。
  */
 export const AI_REPLY_ACTIVITY_MAX_CHATS: number = 2 * STATE_MANAGED_CHAT_LIMIT;
 
-/** 单群五分钟滚动窗口及其触发上限。 */
+/** 单群长滚动窗口时长。 */
 export const RATE_LIMIT_LONG_WINDOW_MS: number = 5 * 60_000;
 /** 单群长窗口内允许启动的最大回复轮数。 */
 export const RATE_LIMIT_LONG_MAX_TRIGGERS: number = 150;

@@ -25,7 +25,8 @@ beforeEach(async (): Promise<void> => {
   const loading: Promise<unknown> = loadPersistedData(); emitSuccessfulDiskIOLoad(worker()); await loading;
   worker().autoAcknowledgeOperations = false;
 });
-afterEach(async (): Promise<void> => { await terminateDiskIO(); resetIdentityStorageCache(); restoreWorker(); });
+// 本文件的替身不消费操作批次，排在后面的 closeStorage 得不到回执，收尾时 terminateDiskIO 按无法确认残余写提交 reject。
+afterEach(async (): Promise<void> => { await terminateDiskIO().catch((): undefined => undefined); resetIdentityStorageCache(); restoreWorker(); });
 
 test("非消费 Worker 只有一个在途批次；条数满后保留原事实并只通知一次", (): void => {
   for (let id: number = 1; id <= 3; id++) expect(postDiskIO(write(id))).toBeTrue();
@@ -59,7 +60,9 @@ test("读取和 flush 必须在已入队业务之后消费；消费 ACK 不等�
   expect(worker().operationBatches.at(-1)!.messages.map((message): string => message.type)).toEqual(["readIdentityPolicies", "flush"]);
   expect(unacknowledgedTemporaryAdBypassWrites.size).toBe(1);
   expect(diskIORuntime.operationTimer?.hasRef()).toBeFalse();
-  await terminateDiskIO(); await reading; await flushing;
+  // closeStorage 排在未消费的批次之后得不到回执：照常终止，再以无法确认残余写提交 reject。
+  await expect(terminateDiskIO()).rejects.toThrow("could not confirm that residual storage writes were committed");
+  await reading; await flushing;
 });
 
 test("崩溃按原序重放未消费业务；旧代 ACK 不释放新队列", async (): Promise<void> => {

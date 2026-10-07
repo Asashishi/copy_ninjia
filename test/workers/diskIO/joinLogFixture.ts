@@ -110,7 +110,7 @@ function datedFile(chatId: number, day: string): string {
   return join(joinLogDir, `${chatId}.${day}.json`);
 }
 
-/** 取东京当天中午，避免用 Date.now()-偏移量时在午夜附近跨日造成测试偶发失败。 */
+/** 取东京当天中午的时间戳，再叠加 offsetMs。 */
 function todayAt(offsetMs: number = 0): number {
   return Date.parse(`${getDateKey()}T12:00:00+09:00`) + offsetMs;
 }
@@ -151,9 +151,8 @@ afterAll(() => {
 });
 
 /**
- * 造一份**语义合法但物理上全是历史条目**的当日追加文件：只有 userCount 个
- * 用户，每人反复重新入群。`latestJoinLogRecords` 折叠之后活的就那么几条，
- * 文件里剩下的全是可回收的字节。
+ * 造一份语义合法但物理上全是历史条目的当日追加文件：只有 userCount 个用户，
+ * 每人反复重新入群；`latestJoinLogRecords` 折叠后每人只剩一条，其余全是可回收字节。
  */
 async function writeRedundantJoinLogFile(
   chatId: number,

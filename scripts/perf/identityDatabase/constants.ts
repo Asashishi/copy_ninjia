@@ -9,10 +9,10 @@ export const COLD_READ_BATCH_COUNT: number = 1_000;
 /** 一次身份策略读取批次包含的固定身份数。 */
 export const READ_BATCH_SIZE: number = 8;
 
-/** 读库与主线程 LRU 的固定身份基数；直接取生产 LRU 容量，不另写字面量。 */
+/** 读库与主线程 LRU 的固定身份基数；取生产 LRU 容量。 */
 export const READ_FIXTURE_SIZE: number = IDENTITY_READ_CACHE_MAX_ENTRIES;
 
-/** 每个热写样本提交的 128 行事务数。 */
+/** 每个热写样本提交的事务数；每个事务写入 `IDENTITY_WRITE_BATCH_MAX_ENTRIES` 行。 */
 export const WRITE_TRANSACTION_COUNT: number = 512;
 
 /** 每个冷写样本重新打开数据库并提交的事务数。 */

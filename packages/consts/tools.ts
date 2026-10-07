@@ -2,13 +2,13 @@
 
 import type { AiToolDefinition } from "../types/aiChat/provider";
 
-/** get_tokyo_weather 工具名常量，避免魔法字符串两处漂移。 */
+/** get_tokyo_weather 工具名。 */
 export const GET_TOKYO_WEATHER_TOOL: string = "get_tokyo_weather";
 
 /**
  * AI 回复流水线的静态查询工具声明：无入参、无副作用，由 aiChat/ai/tools/index.ts 的
  * callTool 分发；aiChat/ai/tools/replyToolset/orchestrator.ts 每轮把已挂载的查询排在
- * 行动工具之前，东京天气仅在启动时区为 Asia/Tokyo 时挂载。元素字段只读，调用方不得改写。
+ * 行动工具之前，东京天气仅在启动时区为 TOKYO_TIME_ZONE 时挂载。元素字段只读，调用方不得改写。
  * 所属模块：aiChat/ai/tools/。
  */
 export const TOOL_DECLARATIONS: readonly AiToolDefinition[] = [
@@ -23,8 +23,8 @@ export const TOOL_DECLARATIONS: readonly AiToolDefinition[] = [
 export const WEB_SEARCH_TOOL: string = "web_search";
 
 /**
- * web_search 函数工具的声明：只在部署配置了 `web_search` 能力时挂进回复工具集，挂了就不再挂
- * text 模型的内建检索（见 aiChat/ai/tools/replyToolset/orchestrator.ts）。执行在 AI Worker 本地
+ * web_search 函数工具的声明：只在部署配置了 `web_search` 能力时挂进回复工具集，挂了则
+ * text 模型不挂内建检索（见 aiChat/ai/tools/replyToolset/orchestrator.ts）。执行在 AI Worker 本地
  * （aiChat/ai/tools/webSearch.ts），由 workers/aiChat/replyModel.ts 异步分发。元素字段只读，
  * 调用方不得改写。所属模块：aiChat/ai/tools/。
  */
@@ -41,8 +41,7 @@ export const WEB_SEARCH_TOOL_DECLARATION: Readonly<AiToolDefinition> = {
 };
 
 /** send_sticker 工具名常量（见 aiChat/ai/tools/stickers.ts）。这个工具不在静态清单
- *  里——它的可选贴纸清单随白名单目录变化，需要按次请求动态
- *  拼装，由 aiChat/ai/tools/replyToolset/ 按次回复组装进工具集。 */
+ *  里：可选贴纸清单随白名单目录变化，由 aiChat/ai/tools/replyToolset/ 按次回复动态组装进工具集。 */
 export const SEND_STICKER_TOOL: string = "send_sticker";
 
 /** view_sticker_pack 工具名常量（见 aiChat/ai/tools/stickers.ts）：两层贴纸选择的第一层，
@@ -50,11 +49,11 @@ export const SEND_STICKER_TOOL: string = "send_sticker";
 export const VIEW_STICKER_PACK_TOOL: string = "view_sticker_pack";
 
 /** send_message 工具名常量（见 aiChat/ai/tools/replyToolset/sendMessage.ts）：模型往群里发一条文字
- *  消息的唯一途径——发言本身也是工具，模型自己决定发几条、什么顺序。 */
+ *  消息的工具；发几条、什么顺序由模型决定。 */
 export const SEND_MESSAGE_TOOL: string = "send_message";
 
 /** add_reaction 工具名常量（见 aiChat/ai/tools/replyToolset/reaction.ts）：给触发消息扣一个标准
- *  emoji 反应，同样由模型自主决定用不用。 */
+ *  emoji 反应。 */
 export const ADD_REACTION_TOOL: string = "add_reaction";
 
 /** generate_image 工具名：调用独立图片模型生成一张图片并发送到当前群。 */
@@ -73,11 +72,11 @@ export const SEND_VOICE_TOOL: string = "send_voice";
 /**
  * group_qa_query 工具名：列出本群已登记的问答**问题清单**。
  *
- * 每轮恒挂（见 replyToolset/groupQa.ts）；本群有没有登记问答写在本轮工具状态里，
- * 没有登记时执行器返回空清单。它是纯查询、不计入动作预算——模型先看清单，
+ * 每轮恒挂（见 aiChat/ai/tools/replyToolset/groupQa.ts）；本群有没有登记问答写在本轮工具状态里，
+ * 没有登记时执行器返回空清单。它是纯查询、不计入动作预算：模型先看清单，
  * 判断当前这句话是不是在问其中之一。
- * 一字不差的提问根本走不到模型：那种情况由主干直答短路（见
- * auto/message/qaDirectAnswer.ts）。到得了这里的都是「意思像但字面不同」。
+ * 字面一致的提问由主干直答短路（见 auto/message/qaDirectAnswer.ts），不进入模型；
+ * 到达本工具的是意思相近但字面不同的提问。
  */
 export const GROUP_QA_QUERY_TOOL: string = "group_qa_query";
 
@@ -92,8 +91,8 @@ export const GROUP_QA_ANSWER_TOOL: string = "group_qa_answer";
 /**
  * 会消耗整轮可见动作预算的工具名；查看贴纸包与查询类工具不计入。
  *
- * send_voice 恒在清单里，即使本轮没挂这个工具：这份清单只回答「这个名字算不算
- * 可见动作」，不回答「本轮有没有这个工具」。后者由 toolset.has 判定。
+ * send_voice 恒在清单里，即使本轮没挂这个工具：这份清单只判定「这个名字算不算
+ * 可见动作」；本轮有没有这个工具由 toolset.has 判定。
  */
 export const ACTION_TOOL_NAMES: readonly string[] = [
   SEND_MESSAGE_TOOL,
@@ -123,9 +122,8 @@ export const REPLY_INVALIDATED_TOOL_ERROR: string = "Reply invalidated because A
  * 整轮自定义函数调用预算（MAX_CUSTOM_TOOL_CALLS_PER_REPLY）耗尽后，每一次多余调用
  * 统一拿到的工具结果，已序列化好。
  *
- * 预算耗尽**不摘工具声明**（一轮内 tools 必须逐字恒定，见 workers/aiChat/replyModel.ts
- * 的头注），因此模型仍看得见全部工具、还可能接着调；这段文案要把「别再调了，直接
- * 收尾」说清楚，否则它会一路撞到 MAX_TOOL_ROUNDS。
+ * 预算耗尽后**不摘工具声明**（一轮内 tools 逐字恒定，见 workers/aiChat/replyModel.ts
+ * 的头注）；文案指示模型停止调用工具并直接收尾。
  */
 export const TOOL_BUDGET_EXHAUSTED_RESULT: string = JSON.stringify({
   unavailable: "Tool budget exhausted for this reply; stop calling tools and finish now",

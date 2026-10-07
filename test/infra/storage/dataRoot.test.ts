@@ -64,14 +64,13 @@ describe("runtime data root preflight", () => {
   test("数据根拿到 group/other 写位时 fail closed，且不会自动 chmod", async () => {
     const publicRoot: string = join(testDir, "public-root");
     await prepareRuntimeDataRoot(publicRoot);
-    // 默认 umask 建出来的 0755 是放行的：这道闸拦的是别的账号能不能**改**
-    // 运行状态，不是能不能读（读侧的取舍见 RUNTIME_DATA_ROOT_MAX_MODE 的 JSDoc）。
+    // 默认 umask 建出来的 0755 放行：这道闸拦的是别的账号能不能改运行状态，不管读（读侧见 RUNTIME_DATA_ROOT_MAX_MODE 的 JSDoc）。
     chmodSync(publicRoot, 0o755);
     await expect(prepareRuntimeDataRoot(publicRoot)).resolves.toBeUndefined();
 
     chmodSync(publicRoot, 0o775);
     await expect(prepareRuntimeDataRoot(publicRoot)).rejects.toThrow("mode 0775 is broader than 0755");
-    // 拒绝之后原样保留，绝不替部署方 chmod。
+    // 拒绝之后原样保留，不替部署方 chmod。
     expect(statSync(publicRoot).mode & 0o777).toBe(0o775);
   });
 

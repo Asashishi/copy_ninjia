@@ -77,7 +77,7 @@ describe("群问答主线程持久化边界", () => {
 
     expect(() => setChatQa(CHAT_ID, "再来一条", "不行"))
       .toThrow(`at most ${CHAT_QA_MAX_PER_CHAT} entries per chat`);
-    // 覆盖不占新名额，因此必须仍然放行。
+    // 覆盖不占新名额，放行。
     expect(setChatQa(CHAT_ID, "问题0", "改了")).toBe("replaced");
     expect((chatQaEntries.get(CHAT_ID)?.size ?? 0)).toBe(CHAT_QA_MAX_PER_CHAT);
   });
@@ -87,7 +87,7 @@ describe("群问答主线程持久化边界", () => {
 
     expect(removeChatQa(CHAT_ID, "不存在的")).toBeFalse();
     expect(removeChatQa(CHAT_ID, "怎么入群？")).toBeTrue();
-    // 空表不留存，否则直答路径第一步的 get(chatId) 再也不能靠 undefined 短路。
+    // 空表不留存，直答路径第一步的 get(chatId) 靠 undefined 短路。
     expect(chatQaEntries.has(CHAT_ID)).toBeFalse();
     expect(chatQaEntries.get(CHAT_ID)).toBeUndefined();
   });
@@ -127,7 +127,7 @@ describe("群问答主线程持久化边界", () => {
       chatQaWrites: [{ chatId: CHAT_ID, q: "怎么入群？", revision: first }],
     });
 
-    // 迟到的 ACK 对应的是已经被更新值取代的那一版，不能把未确认记录清掉。
+    // 迟到的 ACK 对应的是已被更新值取代的那一版，不清未确认记录。
     expect(unacknowledgedChatQaWrites.get(CHAT_ID)?.get("怎么入群？")?.revision).toBe(first + 1);
     // 总账只记最新那一版：同一问题覆盖不重复计条数，字节按差额更新。
     expect(unacknowledgedChatQaTotals).toEqual({

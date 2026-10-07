@@ -175,8 +175,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/workers/diskIO/verificationRecovery.ts": {
     "node:fs": {
-      symbols: ["mkdirSync", "readdirSync"],
-      purpose: "verification journal metadata and retention cleanup",
+      symbols: ["mkdirSync", "readdirSync", "renameSync"],
+      purpose: "verification journal metadata, retention cleanup and renaming an undecodable prior day file aside",
     },
   },
   "packages/workers/diskIO/verificationWrites.ts": {

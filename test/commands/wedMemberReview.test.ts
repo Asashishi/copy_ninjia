@@ -11,7 +11,7 @@ import { observeWedMembers } from "../../packages/commands/wed/members";
 import { flushWedMembers, hydrateWedMembers, purgeWedMembers, removeWedMember } from "../../packages/commands/wed/persistence";
 import { drainWedRuntime, initWedRuntime, quiesceWedRuntime } from "../../packages/commands/wed/runtime";
 import { WED_MEMBER_REVIEW_INTERVAL_MS, WED_OPERATION_TIMEOUT_MS } from "../../packages/consts/wed";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import * as diskIO from "../../packages/infra/diskIO";
 import { logger } from "../../packages/infra/logger";
 import { getOrCreateChatState } from "../../packages/infra/storage/stateStore";

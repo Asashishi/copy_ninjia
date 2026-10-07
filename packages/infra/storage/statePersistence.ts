@@ -58,8 +58,8 @@ interface PersistenceWaiter {
 }
 
 /**
- * 叶子路径本身是否真的不存在。`BunFile.stat()` 跟随软链接，悬空链接和缺失文件
- * 同样报 ENOENT；只有 `lstat` 也报 ENOENT 才算「从没写过状态文件」。
+ * 叶子路径本身是否不存在，以 `lstat` 报 ENOENT 为准（`BunFile.stat()` 跟随软链接，
+ * 悬空链接同样报 ENOENT）。
  */
 async function isMissingLeaf(path: string): Promise<boolean> {
   try {
@@ -73,8 +73,7 @@ async function isMissingLeaf(path: string): Promise<boolean> {
 /**
  * 状态文件的默认读取边界：目标必须是普通文件，内容必须是严格 UTF-8。
  *
- * 用 `BunFile.stat()` 而不是 `exists()`：后者对目录返回 false，会把「路径被占成
- * 目录」误判成缺省。目录、指向目录的链接、其它非普通文件、悬空链接以及
+ * 存在性经 `BunFile.stat()` 判定，不用 `exists()`。目录、指向目录的链接、其它非普通文件、悬空链接以及
  * EACCES/ELOOP/ENOTDIR 等访问失败一律是已配置但非法，按 AGENTS.md 的
  * 「不为用户行为兜底」拒绝启动；stat 成功之后的读取或解码失败也不降级为缺失。
  * 指向普通文件的软链接继续接受。
@@ -100,9 +99,8 @@ async function readExistingText(path: string): Promise<string | null> {
 }
 
 /**
- * 14.x 数据根下的 state.json 与备份副本任一存在即拒绝：当前格式不读取它们，继续运行会让
- * 复读状态与语音计数静默归零。只有叶子路径真正不存在才放行；由 loadCurrentGlobalState 在
- * 解码 memory/global/state.json 之前调用。
+ * 旧位置（LEGACY_STATE_FILE_PATHS）的 state.json 与备份副本任一存在即拒绝，只有叶子路径
+ * 不存在才放行；由 loadCurrentGlobalState 在解码 memory/global/state.json 之前调用。
  */
 async function assertLegacyStateFilesAbsent(): Promise<void> {
   for (const path of LEGACY_STATE_FILE_PATHS) {
@@ -350,7 +348,7 @@ export class StateStore {
     }
     this.clearBackgroundTimer();
     const write: StateWrite | null = this.dirtyWrite;
-    // 最新值已经在 writer 里排队或正在写：等它结算即可，再投一次只会把同一 revision 写两遍。
+    // 最新值已在 writer 中排队或正在写：等它结算，不重复投递。
     const alreadyQueued: boolean = write !== null && write === this.pushedWrite && this.observedWriterPromise !== null;
     const run: Promise<void> | null = write === null || alreadyQueued
       ? this.observedWriterPromise

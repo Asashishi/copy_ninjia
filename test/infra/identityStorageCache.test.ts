@@ -24,7 +24,7 @@ import {
   IDENTITY_READ_CACHE_MAX_ENTRIES,
 } from "../../packages/consts/identityStorage";
 import { DISK_BUSINESS_MESSAGE_BASE_BYTES } from "../../packages/consts/diskIO/business";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import {
   TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD,
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
@@ -486,7 +486,7 @@ describe("启动计数灌入", () => {
 
       expect(() => hydrateIdentityStorageCounts(invalid, 1))
         .toThrow("Whitelist entry count must be a non-negative safe integer.");
-      // 白名单计数合法时也不能先写入它再因黑名单计数失败留下半份状态。
+      // 白名单计数合法时，黑名单计数失败也不留下半份状态。
       expect(() => hydrateIdentityStorageCounts(1, invalid))
         .toThrow("Blocklist entry count must be a non-negative safe integer.");
 

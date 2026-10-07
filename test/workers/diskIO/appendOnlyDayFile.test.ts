@@ -5,8 +5,11 @@ import { join } from "node:path";
 import {
   AppendOnlyFileFormatError,
   appendToDayFile,
+  inspectRepairableAppendOnlyFile,
   openAppendOnlyFile,
   openDayFile,
+  openValidatedAppendOnlyFile,
+  repairTruncatedAppendOnlyContent,
   serializeDayFileEntry,
 } from "../../../packages/workers/diskIO/appendOnlyDayFile";
 import { PERSISTED_FILE_MODE } from
@@ -337,7 +340,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
 
   test("多字节 UTF-8 字符（中文 label）不影响后续追加的字节位置计算", async () => {
     const state: DayFileState = await openDayFile(dir, "2026-07-16");
-    // label 全部是多字节字符，用来暴露「按字符数而非字节数」计算位置的潜在 bug
+    // label 全部是多字节字符，位置按字节数而非字符数计算。
     await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("k1", { label: "大吉大利心想事成", fortunePercent: 90.12 }) });
     await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("k2", { label: "倒霉透顶诸事不宜", fortunePercent: 4.56 }) });
     await appendToDayFile({ dir, state, chunk: serializeDayFileEntry("k3", { label: "普普通通", fortunePercent: 50.5 }) });
@@ -347,8 +350,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
       k2: { label: "倒霉透顶诸事不宜", fortunePercent: 4.56 },
       k3: { label: "普普通通", fortunePercent: 50.5 },
     });
-    // state.size 全程只靠算术更新、从不重新 statSync；这里额外校验它确实
-    // 跟物理文件字节数（而非字符数）保持一致。
+    // state.size 全程只靠算术更新、从不重新 statSync；这里校验它与物理文件字节数（而非字符数）一致。
     const physicalSize: number = UTF8_ENCODER.encode(
       await Bun.file(join(dir, "2026-07-16.json")).text()
     ).byteLength;
@@ -443,8 +445,7 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
     expect(recovered.empty).toBe(true);
     expect(await readDay("2026-07-16")).toEqual({});
 
-    // empty 置位后，下一次追加必须走「整份覆写」分支并产出合法 JSON；
-    // 对 3 字节残片按非空文件追加会生成打头带逗号的非法 JSON。
+    // empty 置位后，下一次追加走「整份覆写」分支并产出合法 JSON。
     await appendToDayFile({ dir, state: recovered, chunk: serializeDayFileEntry("111", { label: "大吉", fortunePercent: 90.12 }) });
     expect(await readDay("2026-07-16")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
 
@@ -456,5 +457,44 @@ describe("appendOnlyDayFile：按位置追加的字节层机制", () => {
       "111": { label: "大吉", fortunePercent: 90.12 },
       "222": { label: "小吉", fortunePercent: 60 },
     });
+  });
+});
+
+describe("appendOnlyDayFile：截断修复与规范格式校验", () => {
+  /** 值里带转义引号、反斜杠、逗号与括号的几条完整记录，用来考察修复扫描的字符串与深度跟踪。 */
+  const RECORDS: Readonly<Record<string, unknown>> = {
+    a: { text: "引号\"在里面, 还有 {括号} 与 [方括号]" },
+    b: { text: "反斜杠\\结尾\\", list: [1, "x,y", { nested: "}" }] },
+    c: "纯字符串, 带逗号",
+  };
+
+  test("尾部撕裂时裁回最后一条完整记录，转义与括号不干扰顶层边界", () => {
+    const complete: string = JSON.stringify(RECORDS, null, 2);
+    const torn: string = complete.slice(0, complete.length - 2) + ",\n  \"d\": { \"text\": \"撕\\\"裂";
+    const repaired: string | null = repairTruncatedAppendOnlyContent(torn);
+
+    expect(repaired).not.toBeNull();
+    expect(JSON.parse(repaired!)).toEqual(RECORDS);
+  });
+
+  test("没有任何可用的顶层边界时无法修复", () => {
+    expect(repairTruncatedAppendOnlyContent("{\n  \"a\": \"未闭合")).toBeNull();
+  });
+
+  test("只读探测遇到无法修复的内容时拒绝并保留原字节", async () => {
+    const path: string = join(dir, "broken.json");
+    await Bun.write(path, "not json at all");
+    await expect(inspectRepairableAppendOnlyFile(path, (parsed: unknown): unknown => parsed))
+      .rejects.toThrow("could not be parsed or repaired");
+    expect(await Bun.file(path).text()).toBe("not json at all");
+  });
+
+  test("已校验内容不是规范的多行追加格式时拒绝接管", async () => {
+    const path: string = join(dir, "compact.json");
+    await Bun.write(path, JSON.stringify({ a: 1 }));
+    expect((): unknown => openValidatedAppendOnlyFile({ path, content: JSON.stringify({ a: 1 }), empty: false }))
+      .toThrow(AppendOnlyFileFormatError);
+    expect((): unknown => openValidatedAppendOnlyFile({ path, content: JSON.stringify({ a: 1 }), empty: false }))
+      .toThrow("must use the canonical append-only JSON object formatting");
   });
 });

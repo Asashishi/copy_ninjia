@@ -5,21 +5,16 @@
  *
  * **这是整个持久化里唯一只写不读的一类**，由此有三条规则：
  * - **进程从不读样本内容**。启动恢复不 hydrate，也没有任何业务内存镜像；维护只
- *   扫描目录项以清理孤儿临时文件与过期归档
- *   ——它不是运行时状态，是给人看的原始素材，用来回头调 config/dynamic/ad_samples.json
- *   的判定口径。少一条、多一条、甚至整个文件被删都不影响机器人的任何行为。
+ *   扫描目录项以清理孤儿临时文件与过期归档。样本不是运行时状态，是给人看的原始素材，
+ *   用于调整 config/dynamic/ad_samples.json 的判定口径，缺失不影响机器人的行为。
  * - **不进统一 flush 的失败领域清单**。样本先进内存批次（cache/workers/diskIO/adSample.ts），
  *   累计 FLUSH_MAX_ENTRIES 条或等满 FLUSH_INTERVAL_MS 后整批追加，统一 flush 也会刷出；
  *   写失败整批丢弃（只 console.error），Worker 重建时未刷出的批次随 isolate 丢失。
- *   列进失败领域的话，一个纯诊断文件的写盘失败会让 `/block` 的落盘确认报失败，把运维
- *   引向一个其实没坏的东西；而这份样本本来就允许丢。
- * - **允许截断自愈**（repair=true）。断电撕裂了末尾那条就裁掉，同日志与 AI 用量统计；
- *   这里连「丢掉最后几条」都不构成正确性问题。
+ * - **允许截断自愈**（repair=true）。撕裂的末尾条目被裁掉，同日志与 AI 用量统计。
  *
- * 攒太多时按 AD_SAMPLE_FILE_MAX_BYTES 轮转成带日期的归档；归档按文件名中的
- * 配置时区的日期保留最近 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 个自然日。轮转是为了读回
- * 成本：追加游标在 Worker 重建后与每次追加失败后都作废，下一批样本要对整份
- * 文件重跑一次异步读 + parse，仍由唯一的串行 I/O owner 排队。
+ * 文件达到 AD_SAMPLE_FILE_MAX_BYTES 时轮转成带日期的归档；归档按文件名中的
+ * 配置时区的日期保留最近 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 个自然日。追加游标在
+ * Worker 重建后与每次追加失败后作废，下一批样本要对整份文件重跑一次异步读 + parse。
  */
 
 import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
@@ -47,10 +42,7 @@ import { getDateKey, isCanonicalDateKey, shiftDateKey } from "../../libs/time";
 import { appendToAppendOnlyFile, openAppendOnlyFile, serializeDayFileEntry } from "./appendOnlyDayFile";
 import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
-/**
- * 一条样本的落地形态。刻意不放 senderId 以外的身份字段之外的东西——这份文件
- * 是要给人逐条读的，字段越少越好读。
- */
+/** 一条样本的落地形态，身份字段只含 senderId。 */
 interface AdSampleRecord {
   detectedAt: string;
   chatId: number;
@@ -80,18 +72,15 @@ export interface SweepExpiredAdSampleArchivesParams {
 /**
  * 样本在顶层对象里的键：`<chatId>:<本次判定第一条消息的 messageId>`。
  *
- * message_id 在一个群里不会重复，因此这个键天然唯一，且能直接对回 Telegram
- * 里的那条消息。用时间戳当键则会在同一秒的两次命中上撞车。
+ * message_id 在一个群里不重复，键因此唯一，且可对回 Telegram 里的那条消息。
  */
 function sampleKey(msg: AdSampleDiskMessage): string {
   return `${msg.chatId}:${msg.messages[0]?.messageId ?? 0}`;
 }
 
 /**
- * 清掉这个目录里的孤儿 .tmp。原子写在 openSync 与 renameSync 之间被硬杀就会留
- * 一个残片，模块自身的 catch 只覆盖进程内错误。其余落盘领域都在启动恢复时扫
- * 自己的目录，本领域不恢复样本内容，因此挂在启动后维护或第一次写入前，每个
- * isolate 只做一次。
+ * 清掉这个目录里的孤儿 .tmp（原子写在 openSync 与 renameSync 之间被终止会留下残片）。
+ * 本领域没有启动恢复阶段，因此挂在启动后维护或第一次写入前，每个 isolate 只做一次。
  */
 async function sweepOrphanedTemps(): Promise<void> {
   if (adSampleTempsSwept.current) return;
@@ -126,7 +115,7 @@ function archiveDayFromName(name: string): string | null {
 
 /**
  * 按归档名里的配置时区的日期清理过期普通文件。清扫和单文件删除都 best effort；
- * 日期先记账，保证失败不会让后续每条样本反复扫描目录。
+ * 日期先记账，同一天不重复扫描。
  */
 export async function sweepExpiredAdSampleArchives({
   today,
@@ -236,8 +225,7 @@ export async function flushAdSampleBuffer(): Promise<void> {
   const chunk: string = adSampleBuffer.chunks.join(",\n");
   adSampleBuffer.chunks = [];
   try {
-    // 目录在这里按需建：本文件没有启动恢复阶段可以顺带建目录，而首次命中
-    // 可能发生在部署后的任何时候。recursive 让它幂等。
+    // 目录在这里按需建，recursive 保证幂等。
     mkdirSync(AD_SAMPLE_MEMORY_DIR, { recursive: true });
     await sweepOrphanedTemps();
     await sweepExpiredAdSampleArchives({ today: getDateKey() });
@@ -246,8 +234,7 @@ export async function flushAdSampleBuffer(): Promise<void> {
       PERSISTED_FILE_MODE,
       true
     );
-    // 每批追加前都判一次：游标一旦缓存下来就一直用下去，只在打开时判的话，
-    // 一个长期不重启的进程永远轮转不了。
+    // 每批追加前判一次轮转。
     adSampleFileState.current = rotateIfOversized(adSampleFileState.current);
     const state: AppendOnlyFileState = adSampleFileState.current;
     await appendToAppendOnlyFile({

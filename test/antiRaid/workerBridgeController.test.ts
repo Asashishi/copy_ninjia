@@ -1,11 +1,11 @@
 /**
  * Anti-Raid 主线程控制器（packages/antiRaid/workerBridge/controller.ts）的
- * 四个公开控制命令与双工能力分派。
+ * 公开控制命令与双工能力分派。
  *
- * 与 workerBridgeObservers.test.ts 分工：那一条驱动的是「注册一次、由上游回调」
- * 的四个观察者；本文件驱动的是命令侧——`/antiraid disable`、`/ad_detect disable`、
+ * 与 workerBridgeObservers.test.ts 分工：那一条驱动「注册一次、由上游回调」
+ * 的观察者；本文件驱动命令侧——`/antiraid disable`、`/ad_detect disable`、
  * `/flood_control disable` 与统一 teardown 各自投什么，以及 Worker 不可用时它们
- * 必须上抛而不是静默吞掉。
+ * 上抛而不是静默吞掉。
  */
 
 import { botPermissions } from "../helpers/botPermissions";
@@ -59,8 +59,7 @@ mock.module("../../packages/antiRaid/verificationAttempts", () => ({
     grantedPermits.push(request);
     return { granted: true };
   },
-  // 整份模块被替换掉时缺一个导出就会在 import 阶段报 Export not found；
-  // 这两个本文件不驱动，只为让模块形状完整。
+  // 整份模块被替换时需要提供全部导出；这两个本文件不驱动，只为让模块形状完整。
   acceptVerificationDeferred: (): boolean => false,
   settlePersistedVerificationDeferral: (): boolean => false,
   resetVerificationAttemptRuntime: (): void => {},

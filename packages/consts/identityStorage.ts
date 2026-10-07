@@ -6,9 +6,9 @@ export const IDENTITY_READ_CACHE_MAX_ENTRIES: number = 8_192;
 /**
  * 单次跨线程冷读携带的主键上限；**必须严格小于** IDENTITY_READ_CACHE_MAX_ENTRIES。
  *
- * 预热时已缓存的主键先刷新热度、冷键再整块写入，块不超过 LRU 容量才能保证同一
- * 块里的主键在写完后全部仍在缓存中；留出余量还能容纳同一条 update 的其它身份。
- * 破坏性批量处置不依赖这份缓存的驻留，而是按块直接取局部结论（见
+ * 预热时已缓存的主键先刷新热度、冷键再整块写入；块不超过 LRU 容量，同一块里的
+ * 主键写完后全部仍在缓存中，余量容纳同一条 update 的其它身份。
+ * 破坏性批量处置不依赖这份缓存的驻留，按块直接取局部结论（见
  * infra/identityStorage/read.ts 的 readIdentityPolicyVerdicts）。
  */
 export const IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES: number = 4_096;
@@ -27,8 +27,8 @@ export const IDENTITY_WRITE_BATCH_MAX_ENTRIES: number = 128;
 /**
  * 游标读取允许叠加的 Worker 事务内黑名单变化上限。
  *
- * 正常补扫在每页前先 flush 并确认主线程 revision 已 ACK，因此这里通常为零；
- * 该硬顶只兜并发写入和异常恢复，防止读请求为合并未提交变化重新物化无界集合。
+ * 补扫在每页前先 flush 并确认主线程 revision 已 ACK，叠加量通常为零；
+ * 本上限约束并发写入与异常恢复时读请求合并的未提交变化数。
  * 所属模块：workers/diskIO/storageDatabase/identityPolicy.ts。
  */
 export const BLOCKLIST_SWEEP_PENDING_DELTA_MAX_ENTRIES: number =
@@ -62,11 +62,11 @@ export const IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT: number =
 export const IDENTITY_DATABASE_JSONB_MIGRATION_HASH: string =
   "cb91b39a954c1638dcdc98e97ea0bfec947ea3cc1c377f39f45834bbda9d0cd3";
 
-/** 当前直建 JSONB 的初始 migration SHA-256；与历史两步来源互斥。 */
+/** 当前直建 JSONB 的初始 migration SHA-256；与历史文本、历史文本转 JSONB 两条来源互斥。 */
 export const IDENTITY_DATABASE_CURRENT_BASE_MIGRATION_HASH: string =
   "6c68bc6862efa69ffc2fbd29284275a7e4094de3e8e3206f7ae19ca3b9da0000";
 
-/** 新增白名单代加权限 migration 的时间戳；两种合法基础谱系都必须包含。 */
+/** 新增白名单代加权限 migration 的时间戳；各合法基础谱系都必须包含。 */
 export const IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT: number =
   20_260_812_000_000;
 
@@ -98,11 +98,11 @@ export const IDENTITY_DATABASE_TEMPORARY_ACTIVITY_MIGRATION_CREATED_AT: number =
 export const IDENTITY_DATABASE_TEMPORARY_ACTIVITY_MIGRATION_HASH: string =
   "9a5d4cf250abc3881ab6cebb7f7be2c2d80596b47e3872f490e19602a304c978";
 
-/** 首日临时免检与连续七日永久免检 migration 的时间戳。 */
+/** 临时广告免检首日规则与连续合格日永久免检 migration 的时间戳。 */
 export const IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_CREATED_AT: number =
   20_260_830_000_000;
 
-/** 首日临时免检与连续七日永久免检 migration 的 SHA-256。 */
+/** 临时广告免检首日规则与连续合格日永久免检 migration 的 SHA-256。 */
 export const IDENTITY_DATABASE_TEMPORARY_AD_BYPASS_MIGRATION_HASH: string =
   "6e1d6777fdc2f7cac747be2c6f6e0b2ca7a2ce30dab8d7cd8dcdb33866391528";
 
@@ -181,7 +181,7 @@ export const CHAT_PERSONA_REMOVAL_MIGRATION_CREATED_AT: number = 20_261_001_000_
 export const CHAT_PERSONA_REMOVAL_MIGRATION_HASH: string =
   "86b4dee97dbd407b3acefcb93f6dc848c90bbee8a52ef0be4d832fc264807eef";
 
-/** 写入 Asia/Tokyo 时区标记并升到 schema v13 的迁移时间戳；当前数据库必须以此条目结尾。所属模块：数据库谱系校验。 */
+/** 写入时区标记并升到当前 schema 版本的迁移时间戳；当前数据库必须以此条目结尾。所属模块：数据库谱系校验。 */
 export const TIME_ZONE_MARKER_MIGRATION_CREATED_AT: number = 20_261_003_000_000;
 
 /** 时区标记迁移的 SHA-256；SQL 变更必须同步更新，启动与冷迁移据此核验当前谱系。 */

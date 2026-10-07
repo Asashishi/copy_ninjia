@@ -6,12 +6,9 @@ import {
   adDetectAgentConfigSnapshot,
   adoptAdDetectAgentConfig,
   adoptAgentDeploymentConfig,
-  ensureAdDetectAgentConfig,
-  ensureAgentDeploymentConfig,
   getAdDetectAgentConfig,
   getAgentDeploymentConfig,
-  loadAdDetectAgentConfig,
-  loadAgentDeploymentConfig,
+  loadAgentConfigSnapshots,
   parseAdDetectAgentConfig,
   parseAgentDeploymentConfig,
   requireAgentCapabilityConfig,
@@ -577,19 +574,6 @@ describe("unified agent.json loading", () => {
     });
   });
 
-  test("分段加载互不解析另一段", async () => {
-    const badAgentPath: string = await writeConfig({ agent: { ad_detect: AD_DETECT, bad: true } });
-    expect(await loadAdDetectAgentConfig(badAgentPath)).toEqual({
-      provider: "openai",
-      apiKey: "deepseek-key",
-      baseUrl: "https://deepseek.example/v1",
-      headers: undefined,
-      model: "deepseek-test",
-    });
-    const badAdPath: string = await writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
-    expect((await loadAgentDeploymentConfig(badAdPath)).text.model).toBe("gemini-text");
-  });
-
   test("启动总闸允许功能级可选能力缺省，但拒绝已存在的非法能力", async () => {
     const validPath: string = await writeConfig({ agent: AGENT });
     await expect(validateAgentDeploymentConfig(validPath)).resolves.toBeUndefined();
@@ -599,7 +583,8 @@ describe("unified agent.json loading", () => {
     await expect(validateAgentDeploymentConfig(missingPath)).resolves.toBeUndefined();
     const adOnlyPath: string = await writeConfig({ agent: { ad_detect: AD_DETECT } });
     await expect(validateAgentDeploymentConfig(adOnlyPath)).resolves.toBeUndefined();
-    await expect(loadAgentDeploymentConfig(adOnlyPath)).rejects.toThrow(/agent must be exactly/);
+    // 只有 ad_detect 段时对话快照为 null，由功能 readiness 判为未配置。
+    expect((await loadAgentConfigSnapshots(adOnlyPath)).agent).toBeNull();
     const invalidPath: string = await writeConfig({ agent: { ...AGENT, ad_detect: { bad: true } } });
     await expect(validateAgentDeploymentConfig(invalidPath)).rejects.toThrow(/agent\.ad_detect/);
     const extraPath: string = await writeConfig({ agent: AGENT, gemini: {} });
@@ -642,19 +627,5 @@ describe("unified agent.json loading", () => {
     const webSearch: AgentWebSearchCapabilityConfig = { ...agentValue.text, maxCallsPerUse: WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE };
     adoptAgentDeploymentConfig({ ...agentValue, webSearch });
     expect(requireAgentCapabilityConfig("web_search")).toBe(webSearch);
-  });
-
-  test("readiness 探测入口在 holder 已填时不再解析", async () => {
-    // 启动总闸先填好两段快照，探测就只剩一次分支：已存在的文件在一个进程里
-    // 只解析一次，探测与运行时读的是同一个对象。
-    const agentValue: AgentDeploymentConfig = parseAgentDeploymentConfig(AGENT, "agent.json");
-    adoptAgentDeploymentConfig(agentValue);
-    await ensureAgentDeploymentConfig();
-    expect(agentDeploymentConfigCache.current).toBe(agentValue);
-
-    const adValue: AdDetectAgentConfig = parseAdDetectAgentConfig(AD_DETECT, "agent.json");
-    adoptAdDetectAgentConfig(adValue);
-    await ensureAdDetectAgentConfig();
-    expect(adDetectAgentConfigSnapshot()).toBe(adValue);
   });
 });

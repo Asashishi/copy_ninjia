@@ -67,7 +67,7 @@ function decodeHtmlAttribute(value: string): string {
   });
 }
 
-/** 解析 img/meta/link 起始标签；页面正文已在进入这里前受到字节硬顶限制。 */
+/** 解析 img/meta/link 起始标签；页面正文已在进入这里前受 PUBLIC_PROFILE_PAGE_MAX_DOWNLOAD_BYTES 限制。 */
 function parseRelevantHtmlTags(html: string): ParsedHtmlTag[] {
   const tags: ParsedHtmlTag[] = [];
   for (const tagMatch of html.matchAll(/<(img|meta|link)\b[^>]*>/gi)) {
@@ -171,7 +171,7 @@ function hasMatchingProfileIdentity(tags: readonly ParsedHtmlTag[], expectedUser
 
 /**
  * 从 t.me 公开主页提取头像 HTTPS URL。优先使用头像 class；语义 meta 回退
- * 只有在页面身份与目标 username 完全匹配时才启用，避免误取挑战页分享图。
+ * 只有在页面身份与目标 username 完全匹配时才启用。
  */
 export function extractAvatarUrlFromProfileHtml(html: string, expectedUsername?: string): string | undefined {
   const tags: ParsedHtmlTag[] = parseRelevantHtmlTags(html);

@@ -32,7 +32,7 @@ export type GagReservationOutcome =
   | "full"
   | "quiescing";
 
-/** 删除精确的会话对象；同目标的新会话不会被旧收尾误删。 */
+/** 按对象身份删除会话，同目标的新会话不受影响。 */
 function removeGagSession(session: GagSession): void {
   const sessions: GagSession[] | undefined =
     gagSessionsByChat.get(session.chatId);
@@ -70,7 +70,7 @@ function clearCleanupTimer(session: GagSession): void {
   session.cleanupTimer = null;
 }
 
-/** ending 在 Telegram 收尾完成前继续占位，旧任务不能穿插同目标的新会话。 */
+/** 认领结束：phase 置 ending 并清掉各 timer；ending 在 Telegram 收尾完成前继续占位。 */
 function claimGagEnd(session: GagSession): boolean {
   if (
     findGagSession(session.chatId, session.targetId) !== session ||
@@ -88,8 +88,8 @@ async function deleteGagNotices(session: GagSession): Promise<boolean> {
   if (session.noticePending) return false;
   const refreshTask: Promise<void> | null = session.speakNoticeRefreshTask;
   if (refreshTask !== null) {
-    // 消息或 timer 触发的换新均由此任务持有。等待它停止改状态后，再按
-    // current/pending/retired 槽位清理；update 取消也不能丢掉 onSent 登记的 id。
+    // 消息或 timer 触发的换新均由此任务持有；等待它停止改状态后，再按
+    // current/pending/retired 槽位清理。
     try {
       await refreshTask;
     } catch {
@@ -190,8 +190,7 @@ async function retryGagCleanup(
     session.phase !== "ending" ||
     session.noticePending
   ) return false;
-  // 现有任务的创建者负责最终 remove/schedule；旁路只等待结果，不能在原始
-  // finishGag 尚未发送解除回执时提前释放槽位。
+  // 现有任务的创建者负责最终 remove/schedule；旁路只等待结果。
   if (session.endingTask !== null) return session.endingTask;
   clearCleanupTimer(session);
   const cleaned: boolean = await runExclusiveEndingTask(session);
@@ -205,7 +204,7 @@ export function requestGagCleanupRetry(session: GagSession): void {
   observeGagTask(retryGagCleanup(session));
 }
 
-/** 删除开始提示，并按原有结束原因决定是否发送一条 30 秒解除提示。 */
+/** 删除开始提示，并按结束原因决定是否发送解除提示（teardown 不发送）。 */
 export async function finishGag(
   session: GagSession,
   reason: GagEndReason,
@@ -213,17 +212,14 @@ export async function finishGag(
 ): Promise<boolean> {
   if (!claimGagEnd(session)) return false;
   if (session.noticePending) {
-    // teardown（chat 停管与停机排空）必须能强制结算：它是有预算的最后一遍，
-    // 留着这条会话只会让 drainGagRuntime 恒判 failed、进程带非零码退出并扣住
-    // 实例锁。释放槽位是安全的——发送方结算时 commitGagNotices 会发现自己已不是
-    // 当前会话，转而删掉那条迟到的提示（见该函数的 findGagSession 分支）。
+    // teardown（chat 停管与停机排空）强制结算并释放槽位；发送方结算时
+    // commitGagNotices 发现自己已不是当前会话，转而删掉迟到的提示（见该函数的
+    // findGagSession 分支）。
     if (reason === "teardown") removeGagSession(session);
-    // 其余路径（/ungag、到期）不释放 owner：发送方结算后会补上 message id 并
-    // 接管清理，此时抢先释放会让同目标的新会话与旧收尾互相踩踏。
+    // 其余路径（/ungag、到期）不释放 owner：发送方结算后补上 message id 并接管清理。
     return true;
   }
-  // endingTask 覆盖完整 Telegram 收尾，而不只覆盖删除请求；否则提示已删除、
-  // 解除回执仍在途的窗口会被另一条 `/ungag` 或停机 drain 提前释放槽位。
+  // endingTask 覆盖完整 Telegram 收尾（删除提示与发送解除回执）。
   const task: Promise<boolean> = (async (): Promise<boolean> => {
     const cleaned: boolean = await deleteGagNotices(session);
     try {
@@ -236,8 +232,8 @@ export async function finishGag(
           chatId: session.chatId,
           text: atmosphere.NOTICE_TEXTS.gagEndedNotice(reasonText, session.targetLabel, session.tool),
           replyToMessageId,
-          // 到期那一路没有可回复的消息，缺了话题就会把解除回执播到 General，
-          // 而被管教的人正盯着入口所在的那个话题（见 types/gag.ts 的同名字段）。
+          // 解除回执落在入口所在话题（见 types/gag.ts 的同名字段）；到期路径没有
+          // 可回复的消息，靠它定位话题。
           messageThreadId: session.speakNoticeThreadId,
         });
       }
@@ -299,13 +295,11 @@ export async function failGagNotice(session: GagSession): Promise<void> {
 }
 
 /**
- * 开始提示 message id 的**同步**登记点，由发送层在拿到 id 的那一刻回调
+ * 开始提示 message id 的同步登记点，由发送层在拿到 id 的那一刻回调
  * （见 infra/telegram/actions/messages.ts 的 onSent）。
  *
- * 必须同步、且早于任何 await：停机时 `runner.abortActive()` 可能正落在「远端
- * 已经收下这条提示、handler 还没走到提交那一行」的窗口里，await 会以 AbortError
- * 解开，message id 随返回值一起蒸发——提示已经挂在群里，状态机却再也删不掉它，
- * 于是 gag owner 每次排空都判 failed，进程带着非零码退出。
+ * 同步执行，早于调用方的任何 await：停机 abort 打断发送时，会话仍持有该 message id，
+ * 由排空按 ending 路径删除。
  *
  * 幂等：正常路径上拿到发送返回值后会再调一次。
  */
@@ -325,8 +319,9 @@ export function recordGagSpeakNotice(
 }
 
 /**
- * 开始提示发送成功后的唯一提交点。teardown 若已把 starting 认领为 ending，
- * 就先写入迟到的 message id，再沿同一清理状态机删除，不能丢失 owner。
+ * 开始提示发送成功后的唯一提交点：noticePending 置 false；会话已不是当前会话时删除
+ * 已登记的提示；仍为 starting 则激活；已被 teardown 认领为 ending 则沿同一清理状态机
+ * 重试清理。
  */
 export async function commitGagNotices(session: GagSession): Promise<void> {
   session.noticePending = false;
@@ -344,8 +339,7 @@ export async function commitGagNotices(session: GagSession): Promise<void> {
 /**
  * 群停管、机器人离群或降权时静默结束 gag，并重试遗留的 ending 提示。
  *
- * 机器人已离群（`departed`）时出站 API 一条也发不出，提示删除注定失败：直接释放
- * 会话与 timer，不占用全局槽位，也不留给停机排空。
+ * reason 为 `departed` 时直接释放会话与 timer，不发起提示删除，也不留给停机排空。
  */
 export async function teardownGagInChat(
   chatId: number,

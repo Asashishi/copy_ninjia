@@ -9,9 +9,8 @@ import {
  * send_message 的工具声明，同一台词语言下每轮逐字恒定。
  * @param instruction 本轮台词语言对应的说明（VOICE_LANGUAGE_PROMPTS 的 sendMessageInstruction）。
  *
- * 手滑的两个字段恒声明为可选：抽中与否只体现在回复任务的 TYPO_REQUIRED_INSTRUCTION 里，
- * 字段说明只写「回复任务要求时才填」，不写手滑规则本身。没抽中的轮次模型即使填了，
- * 执行侧也按原文发送（见 typoHandling.ts 的 decideMessageTypo）。
+ * 手滑的两个字段恒声明为可选：抽中与否只体现在回复任务的 TYPO_REQUIRED_INSTRUCTION 里。
+ * 没抽中的轮次模型即使填了，执行侧也按原文发送（见 typoHandling.ts 的 decideMessageTypo）。
  */
 export function buildSendMessageToolDefinition(instruction: string): AiToolDefinition {
   return {

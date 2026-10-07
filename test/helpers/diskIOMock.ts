@@ -1,5 +1,11 @@
 import type * as diskIO from "../../packages/infra/diskIO";
-import type { DiskIOReplyListenerMap, DomainFlushOutcome } from "../../packages/types/diskIO/replies";
+import type {
+  DiskIOReplyListenerMap,
+  DomainFlushOutcome,
+  IdentityPolicyPersistedRevision,
+  IdentityStoragePersistedReply,
+} from "../../packages/types/diskIO/replies";
+import type { IdentityPolicyWriteDiskMessage } from "../../packages/types/diskIO/messages";
 import type { FlushResult } from "../../packages/types/lifecycle";
 
 /** 未提供读取夹具时拒绝调用，不把缺失数据伪装成空结果。 */
@@ -51,4 +57,24 @@ export function diskIOReplyStub(captures: DiskIOReplyCaptures): typeof diskIO.on
     const capture = captures[type] as ((captured: (reply: DiskIOReplyListenerMap[K]) => void) => void) | undefined;
     capture?.(listener);
   };
+}
+
+/**
+ * 模拟 Worker 提交已投递的身份策略写入：把 postDiskIO 替身收到的 identityPolicyWrite 按精确
+ * revision 回执给 listeners（生产里这份回执先于同批 flush 结果到达）。
+ * @param postedCalls postDiskIO 替身的 `mock.calls`。
+ */
+export function acknowledgeIdentityPolicyWrites(
+  postedCalls: readonly (readonly unknown[])[],
+  listeners: readonly ((reply: IdentityStoragePersistedReply) => void)[]
+): void {
+  const writes: IdentityPolicyPersistedRevision[] = [];
+  for (const [message] of postedCalls) {
+    const write = message as Partial<IdentityPolicyWriteDiskMessage>;
+    if (write.type !== "identityPolicyWrite") continue;
+    writes.push({ table: write.table!, id: write.id!, revision: write.revision! });
+  }
+  for (const listener of listeners) {
+    listener({ type: "identityStoragePersisted", writes, temporaryAdBypassWrites: [], chatStateWrites: [], chatQaWrites: [] });
+  }
 }

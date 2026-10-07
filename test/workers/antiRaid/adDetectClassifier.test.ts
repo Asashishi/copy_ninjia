@@ -49,16 +49,16 @@ describe("广告判定响应解析", () => {
       .toEqual({ isAd: false, reason: "提到 ```json 示例 ```" });
     expect(parseAdVerdict("判定如下：{\"ad\": false, \"reason\": \"提到 ```json 示例 ```\"}"))
       .toEqual({ isAd: false, reason: "提到 ```json 示例 ```" });
-    // 围栏优先于解释里的花括号，否则 first/last 会把两段拼成无效 JSON。
+    // 围栏优先于解释里的花括号。
     expect(parseAdVerdict("说明 {仅作展示}\n```JSON\r\n{\"ad\": false, \"reason\": \"纯链接\"}\r\n```\n完毕"))
       .toEqual({ isAd: false, reason: "纯链接" });
     expect(parseAdVerdict("判定如下：{\"ad\": true, \"reason\": \"卖号\"} 完毕")).toEqual({ isAd: true, reason: "卖号" });
-    // 多包一层数组同样只取里面那个对象——剥壳，而不是另一套判定语义。
+    // 多包一层数组同样只取里面那个对象。
     expect(parseAdVerdict("[{\"ad\": true, \"reason\": \"引流\"}]")).toEqual({ isAd: true, reason: "引流" });
   });
 
   test("只认真正的布尔 true，其余一律当成没判定", () => {
-    // 判成 true 会把人永久拉黑，这里的宽容度必须是零。
+    // 宽容度为零：只认布尔 true。
     expect(parseAdVerdict("{\"ad\": \"true\", \"reason\": \"x\"}")).toBeNull();
     expect(parseAdVerdict("{\"ad\": 1}")).toBeNull();
     expect(parseAdVerdict("这不是 JSON")).toBeNull();
@@ -93,13 +93,13 @@ describe("广告判定请求", () => {
     expect(params.errorLabel).toBe("Ad detection request");
     // 部署示例只进系统提示词；待判定原文只进 user 段，永远是数据。
     expect(params.systemPrompt).toContain("加溦拉群");
-    // json_object 模式要求提示词提到 json，否则 DeepSeek 直接 400。
+    // json_object 模式要求提示词提到 json。
     expect(params.systemPrompt).toContain("JSON");
-    // 纯代理节点/订阅链接是硬性反例，不能因 URL 很长或参数复杂而误封。
+    // 纯代理节点/订阅链接是硬性反例，不因 URL 长或参数复杂而判广告。
     expect(params.systemPrompt).toContain("如果全部消息仅由");
     expect(params.systemPrompt).toContain("vless://");
     expect(params.systemPrompt).toContain("一律判 false");
-    // 兼容端点即使无视 JSON mode，也被提示词明确禁止返回 Markdown 围栏。
+    // 提示词明确禁止返回 Markdown 围栏。
     expect(params.systemPrompt).toContain("禁止 Markdown 代码块");
     expect(params.systemPrompt).toContain("first_name、last_name 和正文");
     expect(params.systemPrompt).toContain("即使正文是正常闲聊");
@@ -109,18 +109,17 @@ describe("广告判定请求", () => {
   });
 
   test("入群验证窗口这条系统事实独立于正文交给传输，两侧都显式声明", async () => {
-    // 模型自己看不到入群时间；只在成立时追加一句的话，它会把「这次没提」当成
-    // 信息缺失去猜，而这条信号只有确证时才该加分。
+    // 模型看不到入群时间；成立与不成立各有一句显式声明。
     await classifyAdText({ text: "1. 加我", justJoined: true });
     const joined = requestAdDetectJson.mock.calls[0]?.[0] as PromptParams;
     expect(joined.fact).toBe(adDetectFact(true));
     expect(joined.fact).toContain("刚加入本群、尚未通过入群验证");
-    // 规则与示例段不含系统事实，才能在 Gemini 路径进显式缓存。
+    // 规则与示例段不含系统事实，Gemini 路径可进显式缓存。
     expect(joined.instructions).toBe(buildAdDetectInstructions(["加溦拉群"]));
     expect(joined.instructions).not.toContain(adDetectFact(true));
     // OpenAI 兼容路径：规则与示例段在前，系统事实固定拼在 system 段最后。
     expect(joined.systemPrompt).toBe(`${joined.instructions}\n${adDetectFact(true)}`);
-    // 正文全是用户可控内容：把系统事实混进去等于给刷屏号一个伪造它的机会。
+    // 正文只含用户可控内容，不混入系统事实。
     expect(joined.userContent).toBe("1. 加我");
 
     await classifyAdText({ text: "1. 加我", justJoined: false });
@@ -165,7 +164,7 @@ describe("广告判定请求", () => {
     await expect(classifyAdText({ text: "x", justJoined: false })).resolves.toBeNull();
     expect(errorLogs[0]).toContain("Ad detection response was not valid JSON");
 
-    // 压根没有大括号的输出在解析前就被挡掉，不值得记一条日志。
+    // 没有大括号的输出在解析前就被挡掉，不记日志。
     errorLogs.length = 0;
     requestAdDetectJson.mockImplementation(async (): Promise<string | null> => "我觉得不是广告");
     await expect(classifyAdText({ text: "x", justJoined: false })).resolves.toBeNull();

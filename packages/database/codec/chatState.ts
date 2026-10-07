@@ -1,5 +1,4 @@
 import {
-  CACHED_USER_KEYS,
   CHAT_STATE_KEYS,
   LOCKDOWN_KEYS,
   TRANSLATE_SESSION_KEYS,
@@ -10,13 +9,13 @@ import { CHAT_PERMISSION_KEYS } from "../../consts/storage";
 import {
   invalidInput,
   optionalBooleanField,
-  optionalStringField,
   optionalTimestampField,
   parseJsonInput,
 } from "../../libs/inputValidation";
 import { TRANSLATE_CHAT_USER_LIMIT } from "../../consts/translate";
 import type { InputFieldContext } from "../../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../../libs/record";
+import { decodeCachedUser } from "../../libs/cachedUserCodec";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
 import type { CachedUser, ChatState, LockdownPhase, LockdownRecord } from "../../types/chatState";
 import type { TranslateState } from "../../types/translate";
@@ -39,7 +38,7 @@ function requiredBoolean(
   return field;
 }
 
-/** Telegram 消息 ID 恒为正整数；0 与负数不是「没有消息」，而是坏数据。 */
+/** Telegram 消息 ID 为正整数；0 与负数按非法值拒绝。 */
 function optionalMessageId(
   value: Record<string, unknown>,
   key: string,
@@ -147,7 +146,7 @@ function decodeLockdown(
   const announcementMessageId: number | undefined =
     optionalMessageId(value, "announcementMessageId", context);
   if (announcementMessageId !== undefined && !announced) {
-    // 消息 ID 只可能来自一次成功的发送，两者必须同时成立。
+    // 消息 ID 来自一次成功的发送，与 announced 必须同时成立。
     return invalidInput(source, `${path}.announcementMessageId`, "absent while announced is false");
   }
   return {
@@ -167,36 +166,13 @@ function decodeLockdown(
 /**
  * 主线程接收 Worker lockdown 事件时的入站校验，校验规则与磁盘解码同源。
  *
- * ChatState 采用先写内存、再落盘的顺序；未通过校验的记录一旦写入内存，会导致
- * 该群此后所有状态写入（任何开关命令）随之抛错。校验必须在写入内存前完成，
- * 不能延后到 encodeChatStateData 才发现。
+ * ChatState 先写内存、再落盘，校验在写入内存前完成，不延后到 encodeChatStateData。
  */
 export function assertPersistableLockdown(
   record: LockdownRecord,
   source: string
 ): void {
   decodeLockdown(record, source, "$.lockdown");
-}
-
-/**
- * 翻译目标身份：非零安全整数 id，可选字符串字段按 Telegram 给出的原样保留（名称与群名可以是空字符串）；
- * 按固定字段顺序构造。
- */
-function decodeTranslatedUser(value: unknown, context: InputFieldContext): CachedUser {
-  if (!isPlainRecord(value) || !hasOnlyKeys(value, CACHED_USER_KEYS)) {
-    return invalidInput(context.source, context.path, "an object containing only id, username, first_name, last_name, title and isChannel");
-  }
-  if (typeof value.id !== "number" || !Number.isSafeInteger(value.id) || value.id === 0) {
-    return invalidInput(context.source, `${context.path}.id`, "a non-zero safe integer");
-  }
-  return {
-    id: value.id,
-    username: optionalStringField(value, "username", context),
-    first_name: optionalStringField(value, "first_name", context),
-    last_name: optionalStringField(value, "last_name", context),
-    title: optionalStringField(value, "title", context),
-    isChannel: optionalBooleanField(value, "isChannel", context),
-  };
 }
 
 /**
@@ -219,7 +195,7 @@ function decodeTranslateSessions(value: unknown, source: string): readonly Trans
     if (language !== "ja" && language !== "cn" && language !== "en" && language !== "uk" && language !== "ru") {
       return invalidInput(source, `${path}.language`, "one of ja, cn, en, uk or ru");
     }
-    const translatedUser: CachedUser = decodeTranslatedUser(entry.translatedUser, { source, path: `${path}.translatedUser` });
+    const translatedUser: CachedUser = decodeCachedUser(entry.translatedUser, { source, path: `${path}.translatedUser` });
     if (userIds.has(translatedUser.id)) {
       return invalidInput(source, `${path}.translatedUser.id`, "unique within the chat");
     }

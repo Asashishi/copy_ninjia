@@ -1,6 +1,6 @@
 import type { HImageAddSummary } from "../../../types/hImage";
 
-/** `/h_image` 与 `/h_image add` 的用法、失败与结果提示（普通风格）；全部经 sendCommandMessage 发送，30 秒后删除。 */
+/** `/h_image` 与 `/h_image add` 的用法、失败与结果提示（普通风格）；全部经 sendCommandMessage 发送，按统一命令消息清理延迟删除。 */
 export const H_IMAGE_TEXTS: Readonly<{
   usage: string;
   busy: string;

@@ -135,8 +135,7 @@ describe("黑名单清扫", () => {
     await sweepBlockedMembers(-1001);
 
     expect(remover).toHaveBeenCalledTimes(1);
-    // probeMembership=true：这是名单快照，不确定人在不在群里，Worker 必须
-    // 逐个探一次；那 O(名单长度) 次请求不该发生在主线程。
+    // probeMembership=true：这是名单快照，不确定人在不在群里，由 Worker 逐个探测。
     expect(remover).toHaveBeenCalledWith([{
       chatId: -1001,
       userIds: [-4004, 7],
@@ -172,7 +171,7 @@ describe("黑名单清扫", () => {
     expect(blocklistSweepPages.size).toBe(1);
     expect(pendingBlockedRemovals.size).toBe(1);
 
-    // 一页只有落地回执后才允许续读；不能一次把剩余页全塞进 Worker mailbox。
+    // 一页只有落地回执后才允许续读，不一次把剩余页全投进 Worker mailbox。
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
       participantInvalidUserIds: [],
@@ -183,7 +182,7 @@ describe("黑名单清扫", () => {
       permissionDenied: false,
       targetIsAdmin: false,
     });
-    // 下一页 flush/read 尚未完成时，上一页的重复回执不能把 durable 任务提前销账。
+    // 下一页 flush/read 尚未完成时，上一页的重复回执不使 durable 任务提前销账。
     settleBlockedRemoval({
       type: "blockedMembersRemoved",
       participantInvalidUserIds: [],
@@ -214,7 +213,7 @@ describe("黑名单清扫", () => {
       removalId,
       userIds: [BLOCKLIST_SWEEP_PAGE_SIZE + 1, BLOCKLIST_SWEEP_PAGE_SIZE + 2],
     }]);
-    // 多页共用一条 durable 任务；中间页回执不得提前销账。
+    // 多页共用一条 durable 任务；中间页回执不提前销账。
     expect(pendingBlockedRemovals.size).toBe(1);
 
     settleBlockedRemoval({
@@ -326,10 +325,7 @@ describe("黑名单清扫", () => {
   });
 
   test("补扫在 outbox 里不冻结名单：条目不随名单长度增长，投递时才现算", async () => {
-    // outbox 每次变更都要整份重写并 fsync，而 N 个群的补扫条目装的是同一份
-    // 名单——冻进去就是 O(群数² × 名单长度) 的落盘，`removals.json` 也会成为
-    // 整个持久化里唯一一个大小随黑名单长度增长的文件，偏偏它在启动恢复的
-    // 关键路径上（见 types/blocklist.ts 的 PendingBlockedRemovalParams）。
+    // outbox 里冻结的只有任务本身（见 types/blocklist.ts 的 PendingBlockedRemovalParams），各群补扫条目不带名单。
     for (let index: number = 0; index < 50; index++) {
       blockedUserIds.set(index + 1, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     }
@@ -352,8 +348,7 @@ describe("黑名单清扫", () => {
     await sweepBlockedMembers(-1001);
     const removalId: number = lastRemovalId();
 
-    // 批次还没落定期间又拉黑了一个人：重放时该扫的是**此刻**的名单，而不是
-    // 登记那一刻的快照。
+    // 批次还没落定期间又拉黑了一个人：重放扫的是此刻的名单，不是登记那一刻的快照。
     blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/07/26 00:00:01" });
     remover.mockClear();
     replayPendingBlockedRemovals();
@@ -387,8 +382,7 @@ describe("黑名单清扫", () => {
     replayPendingBlockedRemovals();
     await Bun.sleep(0);
 
-    // 重复 ban 幂等，漏掉却意味着那个人一直坐在群里；重放必须合并成一次
-    // write-ahead/flush/barrier，不能按 outbox 条目重复序列化完整快照。
+    // 重复 ban 幂等；重放合并成一次 write-ahead/flush/barrier，不按 outbox 条目重复序列化完整快照。
     expect(remover).toHaveBeenCalledTimes(1);
     expect(remover).toHaveBeenCalledWith([
       expect.objectContaining({ chatId: -1001, userIds: [7] }),
@@ -399,8 +393,7 @@ describe("黑名单清扫", () => {
   test("Worker 没收到、屏障失败或落盘失败都保留 durable outbox 任务", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
-    // 屏障超时/落盘失败：消息已经进了 Worker 信箱，删镜像等于毁掉唯一的重放
-    // 依据，那批副作用就永远没人认领了。
+    // 屏障超时/落盘失败：消息已进 Worker 信箱，镜像保留，作为重放依据。
     remover.mockRejectedValueOnce(new Error("Anti-Raid Worker barrier timedOut."));
     await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("barrier timedOut");
     expect(pendingBlockedRemovals.size).toBe(1);
@@ -408,18 +401,15 @@ describe("黑名单清扫", () => {
     pendingBlockedRemovals.clear();
     blocklistSweepState.clear();
 
-    // post() 返回 false 时 update 会重投，但 outbox 是独立的跨进程恢复边界，
-    // 不能依赖 Telegram 仍保留旧 update 来替代它。
+    // post() 返回 false 时 update 会重投；outbox 是独立的跨进程恢复边界，不依赖 Telegram 保留旧 update。
     remover.mockRejectedValueOnce(new WorkerUndeliveredError("Anti-Raid Worker is unavailable."));
     await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("unavailable");
     expect(pendingBlockedRemovals.size).toBe(1);
   });
 
   test("回归用例：Worker 重建重投的 durable 交接失败时让这些群重新欠一次补扫", async () => {
-    // 这次重投是 fire-and-forget 的，rejection 到达时 onRespawn 早已返回，够不着
-    // supervisedWorker 的 replayFailure。只记一行日志就等于放弃：frozen 批次
-    // （`/block` 秒踢）既没有计时器也没有退避，重试钩子只有「下一次 Worker 重建」
-    // 和「一次确证的权限恢复」，两者都不来时那批人就一直坐在群里。
+    // 这次重投是 fire-and-forget 的，rejection 到达时 onRespawn 已返回，够不着 supervisedWorker 的 replayFailure；
+    // frozen 批次（`/block` 秒踢）没有计时器与退避，重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     await sweepBlockedMembers(-1001);
     settleLast(true);
@@ -438,9 +428,7 @@ describe("黑名单清扫", () => {
   });
 
   test("回归用例：投递失败也要推进退避——执行 owner 持续抛错时不能每轮都按基础间隔重来", async () => {
-    // 这批任务不会再有回执来推进计数（claim 已清空），退避只能由降级路径自己推进。
-    // 不推进的话，Worker 不可用期间每次重试都按 BLOCKLIST_SWEEP_RETRY_INTERVAL_MS
-    // 排期、永远走不到上限，每一轮还烧掉一个 outbox id 加一行错误日志。
+    // 这批任务没有回执推进计数（claim 已清空），退避由降级路径自己推进。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     remover.mockRejectedValue(new WorkerUndeliveredError("Anti-Raid Worker is unavailable."));
 
@@ -457,8 +445,7 @@ describe("黑名单清扫", () => {
 
   test("回归用例：登记不进 outbox 时同样推进退避", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
-    // 满仓走的是就地降级、不抛出去（抛了会形成重投/重启循环），因此更需要自己
-    // 推进退避：没有任何回执会替它做这件事。
+    // 满仓走就地降级、不抛出去，由降级路径自己推进退避：没有回执会替它做。
     for (let index: number = 0; index < BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES; index++) {
       trackBlockedRemoval({ chatId: -1001, userIds: [index + 1], probeMembership: false });
     }
@@ -488,7 +475,7 @@ describe("黑名单清扫", () => {
 
     await expect(sweepBlockedMembers(-1001, 1_000)).rejects.toThrow("persistence failed");
 
-    // 回执写下的 sweptAt 不能被 catch 覆盖掉，否则这个群会被反复重扫。
+    // 回执写下的 sweptAt 不被 catch 覆盖。
     expect(blocklistSweepState.get(-1001)?.sweptAt).toEqual(expect.any(Number));
   });
 
@@ -500,8 +487,7 @@ describe("黑名单清扫", () => {
 
     await sweepBlockedMembers(-1001, 1_000 + 300_000);
 
-    // 名单只增不减，新快照是旧批次的超集；不删就是每个退避窗口沉积一份完整
-    // userIds 副本，且每次 Worker 重建全量重投。
+    // 名单只增不减，新快照是旧批次的超集；旧批次被新快照替换。
     expect(pendingBlockedRemovals.size).toBe(1);
   });
 
@@ -546,8 +532,7 @@ describe("黑名单清扫", () => {
     replayPendingBlockedRemovals();
     await Bun.sleep(0);
 
-    // Worker 侧的处置世代只活在 isolate 里，重建即归零，拦不住重放——停管
-    // 必须由主线程权威判定。
+    // Worker 侧的处置世代只活在 isolate 里，重建即归零；停管由主线程权威判定。
     expect(pendingBlockedRemovals.size).toBe(0);
     expect(remover).not.toHaveBeenCalled();
     expect(blocklistSweepState.has(-1001)).toBeFalse();
@@ -613,21 +598,20 @@ describe("黑名单清扫", () => {
     await sweepBlockedMembers(-1001);
 
     expect(remover).not.toHaveBeenCalled();
-    // 一条都没投出去 = claim 必须作废：留着的话这个群此后永远在
-    // prepareBlocklistSweep 的 `removalId !== null` 早退，再也不会被清扫。
+    // 一条都没投出去：claim 作废。
     expect(blocklistSweepState.get(-1001)?.removalId).toBeNull();
   });
 
   test("正常 resolve 但零投递按失败结算：作废 claim 并推进退避", async () => {
     // durable 对账在并发 /block disable 反复裁剪同一批时会扣下整批 removeBlockedMembers，
-    // 投递路径于是拿着空数组早退并正常 resolve——没抛错，也没有任何消息在途。
+    // 投递路径拿着空数组早退并正常 resolve：没抛错，也没有消息在途。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     remover.mockImplementationOnce(async (): Promise<number> => 0);
 
     await sweepBlockedMembers(-1001, 1_000);
 
     expect(remover).toHaveBeenCalledTimes(1);
-    // claim 作废、退避推进：不这么记的话 removalId 停在原值，而回执永不会来。
+    // claim 作废、退避推进。
     expect(blocklistSweepState.get(-1001)?.removalId).toBeNull();
     expect(blocklistSweepState.get(-1001)?.sweptAt).toBeNull();
     expect(blocklistSweepState.get(-1001)?.failedSweeps).toBe(1);
@@ -635,7 +619,7 @@ describe("黑名单清扫", () => {
     expect(pendingBlockedRemovals.size).toBe(1);
     expect(pendingBlockedRemovals.values().next().value?.lastFailure).toBe("delivery-boundary");
 
-    // 退避到点后可以重新认领：真正卡死的判据是这一步能不能再投出去。
+    // 退避到点后可以重新认领。
     remover.mockClear();
     await sweepBlockedMembers(-1001, 1_000 + 300_000);
     expect(remover).toHaveBeenCalledTimes(1);

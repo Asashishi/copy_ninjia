@@ -26,11 +26,10 @@ export async function handleReaction(ctx: Context): Promise<void> {
   if (copyTargetId === undefined || reactorId !== copyTargetId) return;
   if (activeTranslateStateIn(reaction.chat.id, reactorId) !== undefined) return;
 
-  // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组算好（付费反应被
-  // 单独归类，天然排除——原因见 CopyableReaction 类型注释）。机器人没有
-  // Premium，一条消息只能设 1 个反应；目标（若是 Premium 用户）却可能同时
-  // 点了 2~3 个：优先跟随本次新增的那个，没有新增（比如只是取消了其中一个）
-  // 就退回仍点着的第一个；全空表示目标清掉了可复制的反应，跟着清除。
+  // grammY 的 ctx.reactions() 已把 old/new 的差量按类型分组（付费反应单独归类，
+  // 不在可复制范围，见 CopyableReaction 类型注释）。机器人一条消息只设一个反应：
+  // 优先跟随本次新增的那个，没有新增就取仍点着的第一个；全空表示目标清掉了
+  // 可复制的反应，跟着清除。
   const { emoji, emojiAdded, emojiRemoved, customEmoji, customEmojiAdded, customEmojiRemoved }: ReturnType<typeof ctx.reactions> = ctx.reactions();
   let toApply: CopyableReaction[];
   if (emojiAdded.length > 0) {
@@ -42,8 +41,7 @@ export async function handleReaction(ctx: Context): Promise<void> {
   } else if (customEmoji.length > 0) {
     toApply = [{ type: "custom_emoji", custom_emoji_id: customEmoji[0]! }];
   } else if (emojiRemoved.length === 0 && customEmojiRemoved.length === 0) {
-    // 这次变化不涉及任何可复制的反应（比如目标只点了个付费反应）：机器人
-    // 既没有要设的也没有要清的，不值得为此花一次 API 调用。
+    // 这次变化不涉及任何可复制的反应：没有要设或要清的，不发 API 调用。
     return;
   } else {
     toApply = [];

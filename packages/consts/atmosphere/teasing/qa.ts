@@ -6,7 +6,7 @@ export const QA_QUERY_PAGE_PREV_TEXT: string = "‹ 上一页";
 /** `/qa query` 看板下一页按钮的文案。 */
 export const QA_QUERY_PAGE_NEXT_TEXT: string = "下一页 ›";
 
-/** 群问答三个子命令的表单、查询与删除文案。 */
+/** 群问答各子命令的表单、查询与删除文案。 */
 export const QA_COMMAND_TEXTS: Readonly<{
   rejected: (label: string) => string;
   full: string;
@@ -15,7 +15,9 @@ export const QA_COMMAND_TEXTS: Readonly<{
   formPrompt: string;
   formUnset: string;
   questionTooLong: string;
+  questionHasCommand: string;
   answerTooLong: string;
+  answerHasCommand: string;
   questionSaved: string;
   answerSaved: string;
   created: string;
@@ -42,8 +44,12 @@ export const QA_COMMAND_TEXTS: Readonly<{
   formUnset: "还没设呢，笨蛋♡",
   questionTooLong:
     `问题写这么长是要考谁？${CHAT_QA_QUESTION_MAX_CHARS} 字以内，重发一条，杂鱼♡`,
+  questionHasCommand:
+    "问题里藏着能点的斜杠命令，谁一点就乱套了，把「/」换成全角「／」或者改写一下再发，杂鱼♡",
   answerTooLong:
     `答案超过 ${CHAT_QA_ANSWER_MAX_CHARS} 字了，本天才可背不动，删一点再发，笨蛋♡`,
+  answerHasCommand:
+    "答案里代码块外面有能点的斜杠命令，本天才才不替你乱发指令，换成全角「／」、塞进代码块或者改写再发，笨蛋♡",
   questionSaved: "问题嘛，本天才勉为其难记下了♡",
   answerSaved: "答案也收下了，就这点东西还要本天才替你背着♡",
   created: "哼，新问答登记好啦，以后有杂鱼原样问，就由本天才勉为其难代劳♡",

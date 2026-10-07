@@ -1,11 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 
 /**
- * 问答直答的**发送**边界。判定那一半在 qaDirectAnswer.test.ts；这里只钉两件
- * 发送侧的事，都是审查里发现没有任何用例经过的：
- * 1. 答案走 sendMessage 而不是命令那条 30 秒清理边界（`AGENTS.md` 的长期保留例外）；
- * 2. 论坛群里必须把话题带上——答案长期留在群里，只靠 reply_parameters 的话，
- *    提问被删时会掉进 General 并永久留在那里。
+ * 问答直答的发送边界。判定那一半在 qaDirectAnswer.test.ts；这里验证两件发送侧的事：
+ * 1. 答案走 sendMessage，不走命令提示的延迟清理边界（`AGENTS.md` 的长期保留例外）；
+ * 2. 论坛群里带上话题：答案长期留在群里，不只靠 reply_parameters。
  */
 
 interface CapturedSend {

@@ -9,16 +9,15 @@ export const FLOOD_WINDOW_MS: number = 60_000;
 /**
  * 一个窗口内达到这个条数即判定为刷屏（达到即触发，不要求超过）。
  *
- * 与反刷群入群阈值（consts/antiRaid/lockdown.ts）是两件事：那条数的是「多少人
- * 进来」，这条数的是「一个人说了多少」，两者互不替代。
+ * 与反刷群入群阈值（consts/antiRaid/lockdown.ts 的 ANTI_RAID_PER_MINUTE_LIMIT）不同：
+ * 本值计的是单人发言条数。
  */
 export const FLOOD_MESSAGE_LIMIT: number = 15;
 
 /**
- * 一次刷屏禁言的时长，到点由 Telegram 自动恢复发言权限，机器人不排恢复计时器
- * ——恢复不靠本进程活着，重启也不会把人永久按住。
+ * 一次刷屏禁言的时长，到点由 Telegram 自动恢复发言权限，机器人不排恢复计时器。
  *
- * 不能低于 30 秒：Bot API 把「距现在不足 30 秒」的 until_date 当成永久限制。
+ * 须高于 Bot API 把 until_date 当成永久限制的官方下限。
  */
 export const FLOOD_MUTE_DURATION_MS: number = 3 * 60_000;
 
@@ -27,12 +26,12 @@ export const FLOOD_MUTE_DURATION_MS: number = 3 * 60_000;
  * （抑制位回滚，下一个满窗口重来）。
  *
  * until_date 是**入队前**算好的绝对时刻。restrict 请求不进发送调度器，
- * 但若 Telegram 返回 429，它仍会在 restrict 类独立车道按 retry_after 等待；
- * 排到 until_date 距当下不足 30 秒时，Bot API 把它当成**永久限制**，而本模块
- * 明确不排恢复计时器、也不落盘，那个人就被无声地永久禁言了，只能人工解除。
+ * 但 Telegram 返回 429 时仍会在 restrict 类独立车道按 retry_after 等待；
+ * 本模块不排恢复计时器、也不落盘，until_date 距发出时刻不足官方下限时
+ * 会被当成永久限制。
  *
- * 取值必须保证真正发出去的那一刻 until_date 离当下明显大于 30 秒的永久限制
- * 红线，不得直接取 FLOOD_MUTE_DURATION_MS 的原值。
+ * 取值保证真正发出去的那一刻 until_date 离当下明显大于该下限，
+ * 不直接取 FLOOD_MUTE_DURATION_MS 的原值。
  */
 export const FLOOD_MUTE_DISPATCH_TIMEOUT_MS: number = FLOOD_MUTE_DURATION_MS - 60_000;
 
@@ -40,9 +39,8 @@ export const FLOOD_MUTE_DISPATCH_TIMEOUT_MS: number = FLOOD_MUTE_DURATION_MS - 6
  * 禁言公告从「禁言已落地」到「真的发出去」的容忍上限；超过就不发这条公告，
  * 但禁言本身仍然照做——被按住的人到点自行恢复，不依赖这条公告。
  *
- * 公告与欢迎语、验证提醒等聊天消息排在发送调度器里本群的同一条发送车道；超时的公告
- * 被丢弃时，也给验证提醒等功能性消息让出了排队位置与额度。kick/restrict 走独立 429 域，
- * 不受这条发送车道影响。
+ * 公告与欢迎语、验证提醒等聊天消息排在发送调度器里本群的同一条发送车道；
+ * 超时的公告被丢弃。kick/restrict 走独立 429 域，不在这条发送车道上。
  */
 export const FLOOD_NOTICE_DISPATCH_TIMEOUT_MS: number = 30_000;
 

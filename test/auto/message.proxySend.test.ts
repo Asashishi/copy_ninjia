@@ -34,7 +34,7 @@ mock.module("../../packages/infra/telegram", () => ({
 
 const targetChatId = -1001234567890;
 let chatState: { isTranslationEnabled?: boolean } = {};
-// g-auth.json 的可用性；坏掉时自动复读必须退化成普通复制，不能假装翻译过。
+// g-auth.json 的可用性；坏掉时自动复读退化成普通复制，不假装翻译过。
 let jaReadiness: { ok: true } | { ok: false; failure: { file: string; reason: string } } = { ok: true };
 mock.module("../../packages/config/readiness", () => ({
   translateConfigReadiness: () => jaReadiness,

@@ -21,8 +21,8 @@ export interface RecordBotImageParams {
  * auto/message/guards.ts）。Worker 写入占位态条目、不识图，有人回复这张图时
  * 才识图回填（见 workers/aiChat/botImages.ts）。
  *
- * 调用点都在图片已经发出之后（多在 runTelegramAction 的 map 里），因此本函数
- * 不抛错：AI Worker 不可用时记一行错误日志并放弃这条自录，发送结果不受影响。
+ * 调用点都在图片已经发出之后（多在 runTelegramAction 的 map 里）；本函数
+ * 不抛错：AI Worker 不可用时记一行错误日志并放弃这条自录。
  */
 export function recordBotImage({ chatId, messageId, caption, edited }: RecordBotImageParams): void {
   if (activeCopyTargetIdIn(chatId) !== undefined || !isAiChatActiveIn(chatId)) return;

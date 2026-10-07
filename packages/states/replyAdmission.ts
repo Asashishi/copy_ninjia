@@ -16,12 +16,12 @@ import type {
  * isReplyRoundRateLimited，见 replyQueue.ts），各自只接收调用方算好的标量。滑动
  * 窗口（longTriggerTimes）、队列（pendingReplyTriggers）、在途计数
  * （activeReplyCounts）、提示冷却（rateLimitNoticeTimes）等容器与计时属于
- * replyState/replyQueue/replyRound 三个运行时模块。
+ * replyState/replyQueue/replyRound 等运行时模块。
  */
 
 /**
  * 同群允许同时处理的模型轮数（含直接轮）：有序并行轮最多 REPLY_ROUND_MAX_CONCURRENT 个，直接轮
- * 独立于它们，仍在模型阶段时另加这 1 轮；Telegram 发送高压时合计只放行 1 轮。
+ * 独立于它们，仍在模型阶段时额外占一个并发位；Telegram 发送高压时降为单轮。
  * @param telegramBackpressured 触发投递时刻的发送面高压快照。
  * @param directRoundActive 该群的直接轮仍在模型阶段。
  */
@@ -54,8 +54,8 @@ export function admitTrigger(input: AdmitTriggerInput): AdmitDecision {
 }
 
 /**
- * 限频闸判定：该群 5 分钟滑动窗口内的触发数是否已达上限。调用方必须先把
- * 窗口外的旧触发挤掉再数 windowCount——本函数不掐时间，只比较数量。
+ * 限频闸判定：该群 RATE_LIMIT_LONG_WINDOW_MS 滑动窗口内的触发数是否已达
+ * RATE_LIMIT_LONG_MAX_TRIGGERS。调用方先挤掉窗口外的旧触发再数 windowCount；本函数只比较数量。
  * 返回 true 时调用方不记账，按触发来源通知或保留队首；false 时记账后执行。
  * @param windowCount 挤掉过期项之后，窗口内剩余的触发数。
  */

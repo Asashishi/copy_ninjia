@@ -267,7 +267,7 @@ describe("/white", () => {
   });
 
   test("目标名单预热失败时拒绝执行：不按「不在黑名单」写白名单，只回一句名单读不出来", async () => {
-    // 冷 LRU 下 isUserBlocked 读成 false：放行会把黑名单身份写进白名单。
+    // 冷 LRU 下 isUserBlocked 读成 false：拒绝，不让黑名单身份写进白名单。
     prefetchIdentityPolicies.mockResolvedValue(false);
 
     await handleWhiteCommand(context(1, "100 enable"));
@@ -336,12 +336,10 @@ describe("/white", () => {
       replyToMessageId: 10,
     });
 
-    // disable 只清表里的残留条目，清完超级管理员本人的权限一点不受影响
-    // （权限来自身份，见 packages/infra/identityPolicy/whitelist.ts）。
+    // disable 只清表里的残留条目，超级管理员本人的权限不受影响（权限来自身份，见 packages/infra/identityPolicy/whitelist.ts）。
     await handleWhiteCommand(context(1, "1 disable"));
     expect(setWhitelistMembership).toHaveBeenCalledWith({ id: 1, enabled: false });
-    // 回执因此不能说成「已经从白名单里踢出去啦」：紧接着 /permission query
-    // 仍会打印全开，那是一份与事实相反的战报。
+    // 回执不说成「已经从白名单里踢出去啦」：紧接着 /permission query 仍打印全开。
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
       text: TEASING_WHITE.superAdminDisableCleared,
     }));

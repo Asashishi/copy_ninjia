@@ -36,11 +36,8 @@ export const VERIFICATION_REMINDER_RETRY_MAX_MS: number = 15_000;
  * 「一条带按钮的提醒都没发出去」这种情形下，验证窗口最多能被连续续期到入群后
  * 多久为止。
  *
- * 续期本身是对的：没人看得见按钮就不能把「没点」解释成拒绝验证。但它不能没有
- * 尽头——某个群 sendMessage 持续失败（论坛的 General 话题被关闭、机器人被禁言
- * 却仍保有限制成员的权限）时，每个入群者都会留下一条不朽记录：常驻待验证表、
- * 常驻主线程镜像、持续刷新 memory/anti-raid/<day>.json。超过这个总时长就按
- * 普通超时结算：只踢不封，成员仍可重新加入。
+ * 提醒未送达期间验证窗口持续续期（没人看得见按钮，「没点」不按拒绝验证处理）；
+ * 超过这个总时长就按普通超时结算：只踢不封，成员仍可重新加入。
  * 所属模块：states/verification/pending.ts 的 handleVerifyTimeout。
  */
 export const VERIFICATION_REMINDER_UNDELIVERED_MAX_MS: number = 15 * 60 * 1000;
@@ -49,11 +46,9 @@ export const VERIFICATION_TERMINAL_RETRY_MS: number = 30 * 1000;
 /**
  * 终态重试指数退避的上限。
  *
- * 有些失败注定不会好转：机器人是管理员却没有封禁权限，或目标本人就是这个群的
- * 管理员。记录按设计不能删，于是固定 30 秒一轮就意味着——一次刷群留下的**每个**
- * 未验证成员各占一个永久的 30 秒循环，各自不停执行成员探测与踢出动作，
- * 并往 logs/ 里刷同一行报错，Worker 重建和进程重启后还会照单重新武装。
- * 退避到上限而不是放弃：管理员补上封禁权限后，最迟一个上限周期内自愈。
+ * 部分失败不会自行好转（机器人是管理员却没有封禁权限，或目标本人是该群管理员），
+ * 记录按设计不删除：重试间隔从 VERIFICATION_TERMINAL_RETRY_MS 起指数增长到本上限，
+ * 之后每个上限周期重试一次，管理员补上封禁权限后最迟一个上限周期内恢复。
  * 所属模块：workers/antiRaid/verificationEffects/retry.ts。
  */
 export const VERIFICATION_TERMINAL_RETRY_MAX_MS: number = 30 * 60 * 1000;
@@ -93,7 +88,7 @@ export const VERIFICATION_RUNTIME_CAPACITY: number = VERIFICATION_RECORD_CAPACIT
 export const VERIFICATION_REVISION_CAPACITY: number = VERIFICATION_RECORD_CAPACITY;
 /**
  * 冷启动恢复终态时，Worker 并发反查群类型的硬顶。请求按群复用，超过时保留终态
- * 等下一轮退避，避免大量历史群同时恢复时无界创建 getChat Promise。
+ * 等下一轮退避。
  */
 export const VERIFICATION_CHAT_KIND_FETCH_MAX: number = 100;
 /**
@@ -110,5 +105,5 @@ export const LOCKDOWN_KICK_DEDUPE_MS: number = 30 * 1000;
  * states/verification/join.ts 的 handleJoin。
  */
 export const KICKED_REJOIN_GRACE_MS: number = 5 * 1000;
-/** 终结 revision 为抵御重复 adopt 保留的时间；之后周期清理，避免按历史成员增长。 */
+/** 终结 revision 保留的时间，用于抵御重复 adopt；之后周期清理。 */
 export const VERIFICATION_REVISION_RETENTION_MS: number = 10 * 60 * 1000;

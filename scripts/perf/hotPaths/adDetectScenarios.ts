@@ -34,7 +34,7 @@ import type { Scenario } from "./types";
 import { AD_SAMPLE_TEXTS } from "./adFixture";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
 
-/** 广告无元数据路径的只读空输入，避免基准自身制造额外容器。 */
+/** 广告无元数据路径的只读空输入。 */
 const EMPTY_LINK_URLS: readonly string[] = [];
 /** 广告无上下文路径的只读既有条目。 */
 const EMPTY_AD_ENTRIES: readonly AdCandidateEntry[] = [];
@@ -42,9 +42,8 @@ const EMPTY_AD_ENTRIES: readonly AdCandidateEntry[] = [];
 /**
  * 为容量预置创建一份真实队列形态的独立 bundle。
  *
- * 每个 sender 都必须拥有自己的 bundle、元数据、entry 与数组；共享空对象会把
- * 满载 Map 的 retained heap 严重低估。这里保留一条已经接纳但尚未判定的消息，
- * 只模拟 sender 容量边界，不在默认门禁里同时制造每 sender 15 条的极端峰值。
+ * 每个 sender 各自拥有 bundle、元数据、entry 与数组，保留一条已接纳但尚未判定的
+ * 消息，只模拟 sender 容量边界。
  */
 function createCapacityBundle(index: number): AdMessageBundle {
   const senderId: number = index + 1;
@@ -58,6 +57,7 @@ function createCapacityBundle(index: number): AdMessageBundle {
       lastName: "Sender",
       username: `benchmark_${senderId}`,
     },
+    senderName: `Benchmark ${senderId} Sender`,
     isChannel: false,
     justJoined: false,
     entries: [{
@@ -71,12 +71,14 @@ function createCapacityBundle(index: number): AdMessageBundle {
       replyTo: undefined,
     }],
     pendingDeleteIds: [],
+    pendingDeleteOverflowed: false,
+    uncheckedEvicted: false,
     nextSeq: 2,
     checkedSeq: 0,
   };
 }
 
-/** 满载拒绝输入故意带满所有可变载荷；正式循环不得读取它们。 */
+/** 满载拒绝输入带满所有可变载荷；正式循环不读取它们。 */
 const SATURATED_CANDIDATE: AdCandidateMessage = {
   type: "adCandidate",
   chatId: BENCHMARK_CHAT_ID,
@@ -114,7 +116,7 @@ function resetAdCapacityScenario(): void {
 
 /** 预置合法上限数量的 key；所有分配都发生在正式计时之前。 */
 function prepareAdCapacityScenario(): void {
-  // 满载边沿日志只记第一次；本场景量的是稳态拒绝，先置位边沿，预置时不写这行日志。
+  // 先置位满载边沿，预置时不写边沿日志；本场景量稳态拒绝。
   adDetectCapacitySaturated.current = true;
   for (
     let index: number = 0;
@@ -134,15 +136,14 @@ export function createAdCapacityRejectScenario(): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index++) {
-        // 两种真实发送者路径都覆盖：普通账号在 pending 硬顶直接返回，频道马甲
-        // 还要查处置 TTL 才能决定是否删除尾随消息。senderId 与身份种类都轮换，
-        // 防止 JSC 证明固定 key 永远 miss 后把无副作用拒绝折叠掉；对象 shape 不变。
+        // 覆盖两种发送者路径：普通账号在 pending 硬顶直接返回，频道马甲还要查处置
+        // TTL。senderId 与身份种类逐轮轮换，对象 shape 不变。
         const isChannel: boolean = (index & 1) === 0;
         SATURATED_CANDIDATE.senderId = isChannel
           ? -1 - (index & 1_023)
           : Number.MAX_SAFE_INTEGER - (index & 1_023);
         SATURATED_CANDIDATE.isChannel = isChannel;
-        // 不显式传 now：生产走的就是载荷自带的 observedAt 默认值。
+        // 不传 now，使用载荷自带的 observedAt 默认值，与生产一致。
         enqueueAdCandidate(SATURATED_CANDIDATE);
         checksum += pendingAdBundleCount.current + (isChannel ? 1 : 0);
       }
@@ -168,15 +169,15 @@ export function adEmptyMetadataScenario(): Scenario {
       }
       return checksum;
     },
-    // 本场景走的是「无元数据」那条分支：boundSampleContext 恒返回 undefined，
-    // claimSampleContextParts 永远不会被调用，因此不登记它。
+    // 无元数据分支：boundSampleContext 恒返回 undefined，不调用
+    // claimSampleContextParts，因此不登记它。
     probes: { appendLinkUrls, boundSampleContext },
   };
 }
 
 /**
  * 一条普通群消息的广告候选跨线程复制成本。字面量按 antiRaid/adCandidate.ts 的
- * buildAdCandidate 的键序写全；AdCandidateMessage 的字段全部必填，缺键在编译期报错。
+ * buildAdCandidate 的键序写全。
  */
 export function adWireCloneScenario(): Scenario {
   const message: AdCandidateMessage = {

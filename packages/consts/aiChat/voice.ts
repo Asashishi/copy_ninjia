@@ -17,31 +17,25 @@ export const VOICE_PENDING_PLACEHOLDER: string = "[语音：识别中]";
 export const VOICE_FALLBACK_PLACEHOLDER: string = "[语音：没听清，请无视此消息]";
 
 /**
- * 转写文本入缓存前的截断上限。
- *
- * 比图片描述宽得多：图片那条是「模型对画面的概括」，长了就是啰嗦；语音这条是
- * **群友原话**，截断等于把人话说了一半，模型据此接话会答非所问。上限只用来防
- * 单条超长语音把整个热区挤爆。
+ * 转写文本入缓存前的截断上限，宽于图片描述；转写是**群友原话**，
+ * 上限只约束单条超长语音占用的热区。
  */
 export const VOICE_TRANSCRIPT_MAX_CHARS: number = 1_024;
 
 /**
  * 单条语音允许读入内存并内联进请求的最大字节数。
  *
- * 音频与图片一样 base64 内联发给模型，编码后涨 4/3，必须满足编码后加
- * MEDIA_INLINE_PROMPT_RESERVE_BYTES 不超过 MEDIA_INLINE_REQUEST_MAX_BYTES（见
- * consts/aiChat/media.ts）。8 MiB 编码后约 11.2 MB，低于视觉上限
- * MEDIA_MAX_DOWNLOAD_BYTES；正常 voice note 通常先撞下面的时长上限，这道硬顶
- * 主要防异常码率或异常容器把请求体与 Worker 内存拉爆。
+ * 音频与图片一样 base64 内联发给模型，编码后加
+ * MEDIA_INLINE_PROMPT_RESERVE_BYTES 必须不超过 MEDIA_INLINE_REQUEST_MAX_BYTES（见
+ * consts/aiChat/media.ts），并低于视觉上限 MEDIA_MAX_DOWNLOAD_BYTES；
+ * 正常 voice note 先达到 VOICE_MAX_DURATION_SECONDS，本值约束异常码率或异常容器。
  */
 export const VOICE_MAX_DOWNLOAD_BYTES: number = 8 * 1_024 * 1_024;
 
 /**
  * 允许送去转写的最长语音时长（秒）。
  *
- * 与字节上限各挡一头：字节挡的是请求体，这个挡的是 token 账单与延迟（音频按
- * 32 token/秒计费，512 秒约为 8 分 32 秒、16 384 token，且转写要等完整下载 +
- * 一次长请求）。
+ * 与字节上限各约束一头：字节上限约束请求体，本值约束 token 用量与延迟。
  * 超时长的语音在主线程就不进媒体管线，直接按「[语音 N 秒]」记一行文字，见
  * auto/message/voice.ts。
  */
@@ -50,9 +44,8 @@ export const VOICE_MAX_DURATION_SECONDS: number = 512;
 /**
  * 可直接内联给多模态模型的音频容器白名单（Gemini 官方支持清单的子集）。
  *
- * Telegram voice note 恒为 OGG/Opus，白名单只是用来把 Telegram 声明的
- * `mime_type` 归一——声明缺失或写了别的容器时一律退回 VOICE_DEFAULT_MIME，不
- * 把一个没验证过的字符串原样转发给模型。
+ * 白名单用来归一 Telegram 声明的 `mime_type`：声明缺失或不在白名单内时
+ * 一律退回 VOICE_DEFAULT_MIME。
  */
 export const VOICE_MIME_TYPES: readonly string[] = [
   "audio/ogg",

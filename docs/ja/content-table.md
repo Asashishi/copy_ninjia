@@ -93,7 +93,8 @@
 
 1. **[01 環境構築と初回実行](01-getting-started.md)**
    - 依存関係（Bun 1.4.2 / Linux / Bot Token / AI provider API Key）
-   - `config/static/bot.json` など deployment 設定の必須項目
+   - `install.sh` によるワンショットインストール（ソースまたはバイナリ配布版）と手動ソースインストール
+   - `config/static/bot.json` など deployment 設定のフィールドと厳格な検証
    - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode / Bot-to-Bot）
    - 初回起動と `/init enable` のハンドシェイク
 
@@ -114,22 +115,24 @@
    - 永続化：永続化と snapshot の contract、グループ状態と `chat_states`、ブロックリストと広告検出、確認境界と停止、ファイル権限
 
 5. **[05 開発フローと品質ゲート](05-dev-workflow.md)**
-   - `bun run check` 8 段階検証パイプライン：install script 構文 + install 隔離 + 規約チェック + Lint + Typecheck + カバレッジ付き全テスト + 固定 seed のランダム順全テスト + hot path gate
+   - `bun run check` 直列パイプライン：install script 構文 + install 隔離 + 規約チェック + Lint + Typecheck + カバレッジ付き全テスト + 固定 seed のランダム順全テスト + hot path gate
    - テスト隔離機構と一時データサンドボックス
-   - コミット規約とリリース前の障害注入テスト `bun run test:fault-injection`
+   - コミット手順、障害注入テスト `bun run test:fault-injection` とリリース手順
 
 6. **[06 よくある変更レシピ](06-modification-guide.md)**
-   - レシピ 1：Telegram スラッシュコマンドの追加
-   - レシピ 2：システム定数やタイムアウトの調整
-   - レシピ 3：AI カスタムツールの拡張
-   - レシピ 4：設定 schema または永続化データ構造の変更（手動移行戦略）
+   - Telegram スラッシュコマンド（漢字アクションコマンドを含む）の追加、応答へのリンクや書式の付与
+   - 動作パラメータの調整、ペルソナと JSON 設定の変更、deployment JSON 設定の追加
+   - AI ツール、任意の provider 能力、汎用 JSON API 呼び出しの追加
+   - 実行時 cache の追加、Worker 間 protocol の変更
+   - 永続化 schema の変更と SQLite table の追加（手動移行戦略）
    - 非目標：i18n はやらない。言語を変えるなら fork
 
 7. **[07 運用と障害対応](07-operations.md)**
-   - デプロイ形態とハードウェアの目安表（デプロイ規模別）
-   - `COPY_NINJIA_DATA_ROOT` ディレクトリ機能チェック（fsync / hard link / rename）
-   - バックアップと復元（`memory/luck/receipt-secret.json` 鍵の一貫性）
-   - よくある起動失敗と `bot.lock` のトラブルシューティング
+   - デプロイ形態、ハードウェアの目安表（デプロイ規模別）、systemd とバイナリデプロイ
+   - データルートの各ディレクトリと `COPY_NINJIA_DATA_ROOT` ディレクトリ機能チェック（fsync / hard link / rename）
+   - ID ストレージの移行：新規データベース作成、共有データベースのコールド移行、段階的アップグレード
+   - よくある起動失敗（`bot.lock` 単一インスタンスロック、`memory/luck/receipt-secret.json` 鍵の一貫性を含む）の調査
+   - アップグレードとリリース、日常の監視項目
 
 8. **[08 画像ライブラリと定時タスク](08-images-and-cron.md)**
    - 専用ライブラリの準備、画像収集と内容の重複判定
@@ -142,12 +145,13 @@
    - `/gag`、`/block`、`/batch_kick`、広告検出、参加認証などの挙動の詳細
 
 10. **[10 パフォーマンスベンチマーク](10-performance.md)**
-    - `bun run perf:full` の 6 セクションの計測対象：コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、コンテナとアルゴリズム、参加ログ容量線
-    - 各項目を独立 3 ラウンド実行し、平均・最小・最大・変動係数を報告
+    - `bun run perf:full` の各セクションの計測対象：コールドスタート、本番ホットパス、エンドツーエンドの永続化チェーン、SQLite とメインスレッドキャッシュ、コンテナとアルゴリズム、参加ログ容量線
+    - 各項目を既定のラウンド数で実行し、平均・最小・最大・変動係数を報告
     - 1 ラウンドあたりの総スループット、総 I/O、モックデータルートの使用量
 
 11. **[11 よくある質問](11-faq.md)**
-    - Bot が動いているのに返信しない場合：初期化、プライバシーモード、AI の反応条件、個人チャット、通知の自動削除、Inline Mode、Bot-to-Bot、既定で無効な保護機能、プロセスの状態
+    - Bot が動いているのに返信しない場合の順次確認：初期化、プライバシーモード、AI の反応条件、個人チャット、通知の自動削除、Inline Mode、Bot-to-Bot、既定で無効な保護機能、プロセスの状態
+    - 通知の口調、画像ライブラリによる起動拒否、定時タスクの再送、定時ボイスと `/send` のボイス、ボイスの長さとメモリ設定、サードパーティゲートウェイ経由の Google モデル呼び出し
 
 ---
 

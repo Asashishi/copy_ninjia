@@ -13,7 +13,7 @@ export const aiCacheUsageSink: { current: ((usage: AiCacheUsage) => void) | null
 
 /**
  * perThread 用量诊断去重集合：首次出现的原因填充，安装/卸下出口时清空。
- * 容量最多为 6 种能力 × 2 个供应商 × 5 种原因；不含可增长的模型名或响应字段。
+ * 容量以「能力 × 供应商 × 原因」的组合数为上界，不含可增长的模型名或响应字段。
  * Worker 重建后为空，同一出口生命周期内每种组合只记录一次。
  */
 export const aiUsageWarningKeys: Set<AiUsageWarningKey> = new Set();

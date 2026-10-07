@@ -32,9 +32,8 @@ describe("config/static/bot.json", () => {
   });
 
   test("示例 token 在启动前拒绝且错误不回显原值", () => {
-    // 取常量而不是再抄一份字面量：占位符在 consts、config_example 与 install.sh
-    // 各有一份，抄进测试会让常量改了测试照样绿。示例文件那一份的对拍见
-    // test/config/examples.test.ts，install.sh 那一份见 test/scripts/installScript.test.ts。
+    // 取常量而不是再抄一份字面量：占位符在 consts、config_example 与 install.sh 各有一份；
+    // 示例文件那一份的对拍见 test/config/examples.test.ts，install.sh 那一份见 test/scripts/installScript.test.ts。
     const placeholder: string = TELEGRAM_BOT_TOKEN_PLACEHOLDER;
     const parse = (): BotConfig => parseBotConfig(
       { bot_token: placeholder, super_admin_user_id: 123 },
@@ -61,9 +60,8 @@ describe("config/static/bot.json", () => {
   });
 
   test("快照未初始化时读取直接抛错，且只写路径不写值", () => {
-    // 生产里这条分支只在「模块顶层 await 尚未跑完就有人读」时到得了，属于
-    // 启动期必须硬失败的边界（AGENTS.md「不为用户行为兜底」）：不得回退默认值，
-    // 也不得把 token 回显进错误文案。
+    // 生产里这条分支只在「模块顶层 await 尚未跑完就有人读」时到得了，属于启动期硬失败的边界
+    // （AGENTS.md「不为用户行为兜底」）：不回退默认值，也不把 token 回显进错误文案。
     botConfigCache.current = null;
     expect(getBotConfig).toThrow(
       `Telegram configuration was not initialized from ${BOT_CONFIG_PATH}.`

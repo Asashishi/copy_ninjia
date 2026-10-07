@@ -1,4 +1,5 @@
 import type { CronAllChats, CronExceptChats } from "../types/cron";
+import { DAY_MS } from "./time";
 
 /**
  * cron.json 任务 `chat_id` 数组的「所有群」写法，属 packages/config/cron.ts：
@@ -27,14 +28,14 @@ export const CRON_MAX_ACTIONS_PER_TASK: number = 16;
 /** 任务名（任务身份）的最大 UTF-16 长度，属 packages/config/cron.ts；限定 just_once 记录的单条大小。 */
 export const CRON_TASK_NAME_MAX_CHARS: number = 64;
 
-/** `rand_cron` 区间允许的最小等待毫秒数（1 分钟），属 packages/config/cron.ts。 */
+/** `rand_cron` 区间允许的最小等待毫秒数，属 packages/config/cron.ts。 */
 export const CRON_RANDOM_INTERVAL_MIN_MS: number = 60_000;
 
-/** `rand_cron` 区间允许的最大等待毫秒数（24 天），属 packages/config/cron.ts。 */
-export const CRON_RANDOM_INTERVAL_MAX_MS: number = 24 * 24 * 60 * 60_000;
+/** `rand_cron` 区间允许的最大等待毫秒数，属 packages/config/cron.ts。 */
+export const CRON_RANDOM_INTERVAL_MAX_MS: number = 24 * DAY_MS;
 
 /**
- * cron 表达式的时间粒度（1 分钟）毫秒数，属 packages/cron/scheduler.ts：`rand_cron` 的随机
+ * cron 表达式的时间粒度（一分钟）毫秒数，属 packages/cron/scheduler.ts：`rand_cron` 的随机
  * 时刻向上取整到它的整数倍，再写成只匹配那一分钟的表达式。
  */
 export const CRON_MINUTE_MS: number = 60_000;
@@ -47,7 +48,7 @@ export const CRON_RANDOM_FIRE_TIME_ZONE: string = "UTC";
 
 /**
  * `chat_id: ["all"]` 交给目标解析的空排除表，属 packages/cron/run.ts；
- * 只有 `["except", ...]` 才带排除名单，这里避免每轮新建一个空数组。
+ * 只有 `["except", ...]` 才带排除名单；本常量是共用的空排除表。
  */
 export const CRON_NO_EXCLUDED_CHAT_IDS: readonly number[] = [];
 
@@ -55,7 +56,7 @@ export const CRON_NO_EXCLUDED_CHAT_IDS: readonly number[] = [];
 export const CRON_ACTION_GAP_MS: number = 1_000;
 
 /**
- * 单个动作可重试失败后的退避序列，属 packages/cron/run.ts；长度即最多重试次数（3 次），
+ * 单个动作可重试失败后的退避序列，属 packages/cron/run.ts；长度即最多重试次数，
  * 每次重试仍经同一出站边界。
  */
 export const CRON_ACTION_RETRY_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000];
@@ -77,5 +78,5 @@ export const CRON_TASK_KEYS: readonly string[] = [
   "actions",
 ];
 
-/** cron 单次图片动作的图片数上限；Telegram 相册最多容纳 10 张，不拆分发送。 */
+/** cron 单次图片动作的图片数上限，等于 Telegram 相册容量，不拆分发送。 */
 export const CRON_MAX_IMAGES: number = 10;

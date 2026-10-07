@@ -250,8 +250,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     });
     workerHooks.supervisorOptions!.onEvent({ type: "verificationDelete", chatId: -1001, userId: 42, generation: 1, revision: 5 });
 
-    // 配置快照永远排在第一条：广告判定逐条候选取模型名与凭据（见
-    // types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
+    // 配置快照排在第一条：广告判定逐条候选取模型名与凭据（见 types/antiRaid.ts 的 AntiRaidAgentConfigMessage）。
     expect(workerPosts[0]).toEqual({ atmosphere: "teasing",
       type: "agentConfig", timeZone: getTimeZone(),
       adDetect: adDetectAgentConfigSnapshot(),
@@ -290,9 +289,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
   });
 
   test("开关已关的群：adopt 之后立刻收掉残留的验证窗口与私密模式", async () => {
-    // 残留的成因是 `/antiraid disable` 那一刻 Worker 恰好不可用：开关落了盘，
-    // 运行态却留在镜像和 state.json 里。不收的话，重建/重启后的 Worker 会照着
-    // 旧窗口继续踢人——开关显示关着，人却还在被踢。
+    // 残留来自 /antiraid disable 时 Worker 不可用：开关已落盘，运行态仍留在镜像和 state.json 里；adopt 之后收掉。
     await resetAntiRaidTestState();
     chatStates.set(-1001, { isAntiRaidEnabled: false });
     chatStates.set(-1002, {
@@ -310,8 +307,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
     antiRaid.initAntiRaid();
 
     const types: string[] = workerPosts.map((message: AntiRaidWorkerMessage): string => message.type);
-    // 顺序是硬要求：先让新 isolate 接管，再拆。反过来就是对着空状态发拆除，
-    // -1002 的邀请权限从此没人恢复。
+    // 顺序：先让新 isolate 接管，再拆。
     expect(types.indexOf("adoptVerifications")).toBeLessThan(types.indexOf("deactivateJoinGuard"));
     expect(types.indexOf("adopt")).toBeLessThan(types.indexOf("deactivateJoinGuard"));
     expect(workerPosts.filter(
@@ -452,7 +448,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       announced: true,
       expiresAt: 200_000,
     });
-    // 真正推进了一个阶段：这才是「完成后要补写」的那种变化。
+    // 真正推进了一个阶段：属于「完成后要补写」的变化。
     workerHooks.supervisorOptions!.onEvent({
       type: "lockdown",
       chatId: -2003,
@@ -543,7 +539,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       releases[intentId - 2]!();
       await Bun.sleep(0);
     }
-    // 第五轮看到 intent 6 后触顶；finally 必须消费 lost wake-up 并新开第六次保存。
+    // 对账轮数触顶：finally 消费 lost wake-up 并新开一次保存。
     await Bun.sleep(0);
     expect(saveState).toHaveBeenCalledTimes(6);
     releases[5]!();

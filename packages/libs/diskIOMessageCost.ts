@@ -3,11 +3,10 @@ import type { VerificationSnapshot } from "../types/antiRaid/verification";
 import type { PendingBlockedRemoval, PendingBlockedRemovalParams } from "../types/blocklist";
 import type {
   BlocklistRemovalsDiskMessage,
-  DiskIOOperationMessage,
   DiskBusinessMessage,
+  QueuedDiskIOOperationMessage,
   VerificationUpsertDiskMessage,
 } from "../types/diskIO/messages";
-import { jsonSerializedBytes } from "./jsonBytes";
 
 /**
  * 联合类型各成员键的并集；结构上界模板据此必须列出每个可能出现的字段。模板只约束键齐全：
@@ -17,7 +16,7 @@ import { jsonSerializedBytes } from "./jsonBytes";
  */
 type AllKeys<T> = T extends unknown ? keyof T : never;
 
-/** JSON 写法最长的安全整数（`-9007199254740991`），模板里的整数字段一律取它。 */
+/** JSON 写法最长的安全整数（Number.MIN_SAFE_INTEGER），模板里的整数字段一律取它。 */
 const LONGEST_SAFE_INTEGER: number = Number.MIN_SAFE_INTEGER;
 /** 整数数组里一个元素的 JSON 上界：最长写法加分隔逗号。 */
 const INTEGER_ELEMENT_MAX_BYTES: number = String(LONGEST_SAFE_INTEGER).length + 1;
@@ -133,10 +132,10 @@ function verificationUpsertMaxBytes(message: VerificationUpsertDiskMessage): num
 }
 
 /**
- * 队列中字符串与消息对象的保守成本；高频固定字段不重新序列化。outbox 快照与验证
- * 快照按结构算 JSON 字节上界，诊断批按实际序列化字节计。
+ * 操作 FIFO 中字符串与消息对象的保守成本；高频固定字段不重新序列化。outbox 快照与验证
+ * 快照按结构算 JSON 字节上界。启动 load 与诊断批次不进 FIFO，不在计价范围内。
  */
-export function diskIOMessageCost(message: DiskIOOperationMessage): number {
+export function diskIOMessageCost(message: QueuedDiskIOOperationMessage): number {
   let payloadBytes: number = 0;
   switch (message.type) {
     case "aiMemory":
@@ -167,13 +166,6 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
     case "verificationUpsert":
       payloadBytes = verificationUpsertMaxBytes(message) * 2;
       break;
-    case "diagnosticBatch":
-      payloadBytes = jsonSerializedBytes(message) * 2;
-      break;
-    case "load":
-      payloadBytes = message.timeZone.length * 2;
-      for (const pack of message.stickerPacks ?? []) payloadBytes += pack.length * 2;
-      break;
     case "ensureLuckSecret":
       payloadBytes = message.day.length * 2;
       break;
@@ -189,16 +181,16 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
     case "readBlocklistIdPage":
     case "recoveryReplay":
     case "storageFlushHold":
+    case "closeStorage":
       break;
     default: {
-      // 穷尽性断言：新增 DiskIOOperationMessage 变体时这一行编译失败，必须为它显式定价。
-      // 计价是跨线程传输预算与背压的唯一容量单位（见 infra/diskIO/transport.ts），漏掉
-      // 的变体只按 DISK_BUSINESS_MESSAGE_BASE_BYTES 计入，队列水位随之失真。
-      // 运行期不可达：调用方只对本线程构造的消息记账，不解析外部输入。
+      // 穷尽性断言：新增进 FIFO 的消息变体时这一行编译失败，须为它显式定价。
+      // 计价是跨线程传输预算与背压的容量单位（见 infra/diskIO/transport.ts）。
+      // 运行期不可达：调用方只对本线程构造的消息记账。
       const unhandled: never = message;
       throw new Error(
         "Unsupported Disk I/O operation message type: " +
-        String((unhandled as DiskIOOperationMessage).type)
+        String((unhandled as QueuedDiskIOOperationMessage).type)
       );
     }
   }
@@ -206,10 +198,8 @@ export function diskIOMessageCost(message: DiskIOOperationMessage): number {
 }
 
 /** 代际失效时只把业务事实交给恢复 FIFO，逐请求等待者由宿主拒绝。 */
-export function isDiskBusinessMessage(message: DiskIOOperationMessage): message is DiskBusinessMessage {
+export function isDiskBusinessMessage(message: QueuedDiskIOOperationMessage): message is DiskBusinessMessage {
   switch (message.type) {
-    case "diagnosticBatch":
-    case "load":
     case "recoveryReplay":
     case "storageFlushHold":
     case "flush":
@@ -217,6 +207,7 @@ export function isDiskBusinessMessage(message: DiskIOOperationMessage): message 
     case "readBlocklistIdPage":
     case "readJoinLog":
     case "ensureLuckSecret":
+    case "closeStorage":
       return false;
     default:
       return true;

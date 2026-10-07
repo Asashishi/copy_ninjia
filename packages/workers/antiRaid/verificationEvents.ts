@@ -86,8 +86,7 @@ export function handleJoinEvent(
   if (joinCreatesNewRecord(entryState, event)) {
     // joinedAt 与滑动窗口使用同一个时间戳，retractJoinWindow 才能按值精确撤销。
     recordJoin(chatId, event.now);
-    // 临界这一次 recordJoin 可能同步建立 lockdown 占位；事件必须看到新状态，
-    // 否则触发封锁的成员仍会进入普通验证窗口，而不是当场进入秒踢流程。
+    // 这一次 recordJoin 可能同步建立 lockdown 占位，事件刷新 lockdownActive 后再派发。
     event.lockdownActive = lockdownEntries.has(chatId);
   }
   dispatchVerification(chatId, member.id, event);
@@ -166,8 +165,7 @@ function confirmThreadComment({
       );
     return;
   }
-  // 淘汰 Map 项并不能释放已挂到共享 Promise 上的 then closure；满载时必须
-  // 直接拒绝新 owner，才是真正的全局常驻上限。该消息已按普通消息 fail closed。
+  // 满载时直接拒绝新 owner，不淘汰已有项；该消息已按普通消息 fail closed。
   if (
     threadCommentConfirmations.size >=
     THREAD_COMMENT_CONFIRMATION_MAX
@@ -185,8 +183,8 @@ function confirmThreadComment({
 
   void trackAntiRaidTask({
     task: fetchChatHasLinkedChannel(message.chatId).then((hasLinked: boolean | undefined): void => {
-      // 群停管、adopt、容量淘汰或同键新 owner 都会替换/删除 token；迟到结果
-      // 必须在写 recent comment 或回投状态机之前止步。
+      // 群停管、adopt 或同键新 owner 会替换/删除 token；迟到结果在写 recent comment
+      // 或回投状态机之前止步。
       if (threadCommentConfirmations.get(key) !== confirmation) return;
       threadCommentConfirmations.delete(key);
       if (hasLinked !== true) return;

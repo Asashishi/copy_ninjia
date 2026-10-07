@@ -127,8 +127,7 @@ export interface AiRecordMediaMessage extends AiRecordContext {
    *
    * 发起回复指直接触发，或非直接触发但已占到随机评价名额（解析完成后评价），
    * 直接触发恒为 boolean。Worker 以是否为 undefined 决定是否进入回复准入，以取值
-   * 决定随机评价丢弃与同群并发上限（见 workers/aiChat/mediaIngest.ts）；不要再增加
-   * 表达「是否评价」的重复字段。
+   * 决定随机评价丢弃与同群并发上限（见 workers/aiChat/mediaIngest.ts）。
    *
    * 构造值由 auto/message/recordContext.ts 的 mediaReplyBackpressurePlaceholder 给出
    * （要回复的媒体先写 false），aiChat/messageIngress.ts 在投递时刻覆写为与 trigger
@@ -138,24 +137,21 @@ export interface AiRecordMediaMessage extends AiRecordContext {
   /** 贴纸取不到视觉源时的兜底文案；其余媒体为 undefined。 */
   stickerFallbackText: string | undefined;
   /**
-   * 语音专用的两项事实，摊平为两个字段而非嵌套对象；其余媒体分别为 undefined
-   * 与 0。mime 为 Telegram 声明的容器原始值，交给转写侧按白名单归一（见
-   * aiChat/ai/telegramAudio.ts 的 normalizeVoiceMime）后才可用于模型请求。
+   * 语音专用的 Telegram 声明容器原始值；其余媒体为 undefined。交给转写侧按白名单归一（见
+   * aiChat/ai/telegramAudio.ts 的 normalizeVoiceMime）后才用于模型请求。
    */
   voiceMime: string | undefined;
-  voiceDurationSeconds: number;
   /**
-   * 直接触发的成因；随机/无触发为 undefined。它同时就是「本轮有没有图片工具
-   * 资格」这一个事实，不要增加重复布尔字段；四个 handler 与
-   * workers/aiChat/mediaIngest.ts 都以是否为 undefined 判断。
+   * 直接触发的成因；随机/无触发为 undefined。它同时表达「本轮有没有图片工具
+   * 资格」：各 handler 与 workers/aiChat/mediaIngest.ts 都以是否为 undefined 判断。
    */
   directTriggerReason: AiDirectTriggerReason | undefined;
   /**
    * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
    *
-   * 媒体轮的回复由 Worker 在 describeMedia 解析完成后异步发起，那时手上只剩这条
-   * 载荷，因此话题落点必须随它一起过线（见 workers/aiChat/mediaIngest.ts）。判定
-   * 与提取见 libs/forumTopic.ts。键恒发、缺省显式 undefined，不得省略。
+   * 话题落点随载荷过线，Worker 在 describeMedia 解析完成后异步发起回复时使用
+   * （见 workers/aiChat/mediaIngest.ts）。判定与提取见 libs/forumTopic.ts。
+   * 键恒发、缺省显式 undefined，不得省略。
    */
   messageThreadId: number | undefined;
 }
@@ -194,22 +190,24 @@ export interface AiTriggerMessage {
   telegramBackpressured: boolean;
   /** 当前触发是否具备图片工具资格；具体生成/编辑意图由模型判断。 */
   imageGenerationRequested: boolean;
-  /** 当前图片/贴纸，或本条文字回复的图片/贴纸；仅在直接触发的本轮短期附带。 */
-  imageGenerationReference?: ImageGenerationReference;
   /**
-   * 本群已登记的问答（问题原文 -> 答案）；本群一条都没有时省略。载荷有界——每群至多
-   * CHAT_QA_MAX_PER_CHAT 条。
-   *
-   * 一字不差的提问不会走到这里：那种情况在主干上就被直答短路了，连 trigger
-   * 都不会发。到得了 Worker 的只有「意思像但字面不同」，交给模型判断。
+   * 当前图片/贴纸，或本条文字回复的图片/贴纸；仅在直接触发的本轮短期附带。键恒发，
+   * 没有参考图时为 undefined。
    */
-  chatQa?: ReadonlyMap<string, string>;
+  imageGenerationReference: ImageGenerationReference | undefined;
+  /**
+   * 本群已登记的问答（问题原文 -> 答案）；键恒发，本群一条都没有时为 undefined。载荷有界，
+   * 每群至多 CHAT_QA_MAX_PER_CHAT 条。
+   *
+   * 字面完全一致的提问由主线程直答，不发 trigger；到达 Worker 的由模型判断是否对应
+   * 已登记的问答。
+   */
+  chatQa: ReadonlyMap<string, string> | undefined;
   /**
    * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
    *
-   * 本轮全部主动发送（文字、贴纸、生图、语音、「正在输入…」与限频提示）都要带上
-   * 它，否则话题群里除「挂了回复」之外的每一条都会掉进 General。判定与提取见
-   * libs/forumTopic.ts。键恒发、缺省显式 undefined，不得省略。
+   * 本轮全部主动发送（文字、贴纸、生图、语音、「正在输入…」与限频提示）都带上
+   * 它。判定与提取见 libs/forumTopic.ts。键恒发、缺省显式 undefined，不得省略。
    */
   messageThreadId: number | undefined;
 }
@@ -328,8 +326,7 @@ export interface AiMemoryEvent {
   persistImmediately?: boolean;
   /**
    * 本群此刻的上下文占用量，供主线程的只读镜像展示（见 cache/main/aiChat.ts 的
-   * aiMemoryUsages）。本事件每群每 AI_SNAPSHOT_INTERVAL_MS 才走一次，接收侧原样存进
-   * 镜像、不再重建对象。
+   * aiMemoryUsages）。本事件每群每 AI_SNAPSHOT_INTERVAL_MS 走一次，接收侧原样存进镜像。
    */
   usage: AiMemoryUsage;
 }
@@ -338,8 +335,8 @@ export interface AiMemoryEvent {
  * hydrate 完成后一次性回传各群的上下文占用量，用于播种主线程镜像。
  *
  * 启动恢复与 Worker 崩溃重建走的都是 hydrate（重建时由 aiChat/workerBridge.ts 的
- * onRespawn 重放），恢复出来的群在下一条新消息之前不 dirty、不会产生 memory
- * 事件；没有这条事件，那些群的占用量要一直缺到它们重新说话为止。
+ * onRespawn 重放），恢复出来的群在下一条新消息之前不 dirty、不产生 memory 事件，
+ * 这些群的占用量由本事件回传。
  */
 export interface AiMemoryUsagesEvent {
   type: "memoryUsages";

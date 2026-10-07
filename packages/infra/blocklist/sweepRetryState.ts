@@ -69,8 +69,9 @@ export function noteSweepAttemptFailed(
 }
 
 /**
- * 更新一次任务诊断，只改内存镜像、不排 durable 快照；达到阈值只告警，不删除安全任务。
- * 需要按条件排快照的调用方用下面的 recordPendingRemovalFailure。
+ * 更新一次任务诊断，只改内存镜像、不排 durable 快照；attempts 达到
+ * BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS 只告警，不删除任务。
+ * 需要按条件排快照的调用方用 recordPendingRemovalFailure。
  */
 export function updatePendingRemovalFailure(
   removalId: number,

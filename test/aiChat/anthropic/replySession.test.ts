@@ -10,6 +10,7 @@ import type { AnthropicRequestResult } from "../../../packages/types/aiChat/anth
 import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition } from "../../../packages/types/aiChat/provider";
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
+import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/config";
 import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
 
 const results: AnthropicRequestResult[] = [];
@@ -18,7 +19,12 @@ const requestAnthropicMessage = mock(async (...args: unknown[]): Promise<Anthrop
   bodies.push(structuredClone((args[0] as { buildBody: () => Anthropic.MessageCreateParamsNonStreaming }).buildBody()));
   return results.shift() ?? { ok: false, failureKind: "request" };
 });
-mock.module("../../../packages/aiChat/anthropic/client", () => ({ requestAnthropicMessage }));
+/** 会话创建时固定的客户端替身；请求经被替换的 requestAnthropicMessage 发出，不触达它。 */
+const PINNED_CLIENT: object = { label: "pinned anthropic client" };
+mock.module("../../../packages/aiChat/anthropic/client", () => ({
+  getAnthropicClient: (): object => PINNED_CLIENT,
+  requestAnthropicMessage,
+}));
 
 const { createAnthropicReplySession } = await import("../../../packages/aiChat/anthropic/replySession");
 const {
@@ -48,6 +54,28 @@ beforeEach(() => {
   installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
 });
 afterEach(() => installAiCacheUsageSink(null));
+
+describe("Anthropic 回复会话的热重载边界", () => {
+  test("会话创建时固定模型与客户端：工具往返之间热重载 text 配置，后续请求仍用旧模型与旧客户端", async () => {
+    const original = agentDeploymentConfigCache.current!;
+    results.push({ ok: true, message: message([{ type: "tool_use", id: "tu-1", name: SEND.name, input: { text: "嗨" } }], "tool_use") });
+    const session: AiReplySession = createAnthropicReplySession({ stableBlocks: ["记忆"], volatileBlocks: ["转录"] });
+    const first: AiReplyTurn = await session.request(REQUEST);
+    expect(session.appendToolOutputs([{ call: first.functionCalls[0]!, responseJson: "{}" }])).toBeTrue();
+    try {
+      agentDeploymentConfigCache.current = { ...original, text: { ...original.text, model: "reloaded-model" } };
+      await session.request(REQUEST);
+    } finally {
+      agentDeploymentConfigCache.current = original;
+    }
+
+    expect(bodies.map((body: Anthropic.MessageCreateParamsNonStreaming): string => body.model))
+      .toEqual([original.text.model, original.text.model]);
+    for (const call of requestAnthropicMessage.mock.calls) {
+      expect((call[0] as { client?: unknown }).client).toBe(PINNED_CLIENT);
+    }
+  });
+});
 
 describe("Anthropic 回复会话", () => {
   test("请求体：内建检索在前且只许直接调用，自定义工具透传 Schema；系统提示词、最后一个稳定区块与请求顶层带缓存断点，不带温度", async () => {
@@ -96,7 +124,7 @@ describe("Anthropic 回复会话", () => {
       { type: "text", text: "运行时状态" },
     ]);
     expect(content.slice(1, 4).map((block: Anthropic.TextBlockParam): string => block.text).join("")).toBe(conversation);
-    // 系统提示词、参考记忆、已定段与顶层自动断点合计不超过端点的 4 个上限。
+    // 系统提示词、参考记忆、已定段与顶层自动断点合计不超过端点的缓存断点上限。
     const markers: number = content.filter((block: Anthropic.TextBlockParam): boolean => block.cache_control !== undefined).length +
       (bodies[0]!.system as Anthropic.TextBlockParam[]).length + (bodies[0]!.cache_control === undefined ? 0 : 1);
     expect(markers).toBe(4);

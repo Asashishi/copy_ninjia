@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { Bot, Context } from "grammy";
 
 /**
- * 身份预热中间件的两条路径（`app/registerHandlers.ts` 前置链的第 5 条）：
+ * 身份预热中间件的两条路径（`app/registerHandlers.ts` 前置链里的身份预热那一条）：
  * 全热 update 直接返回 `next()`，有冷身份时先等预热完成再进入下游。
  */
 
@@ -32,7 +32,7 @@ const { registerHandlers } = await import("../../packages/app/registerHandlers")
 
 type TestMiddleware = (ctx: Context, next: () => Promise<void>) => Promise<void>;
 
-/** 装一次链路，取出身份预热那一条（前置链第 5 条）。 */
+/** 装一次链路，取出前置链里的身份预热那一条。 */
 function identityPrefetchMiddleware(): TestMiddleware {
   let prefetchMiddleware: TestMiddleware | undefined;
   const noop = (): unknown => fakeBot;

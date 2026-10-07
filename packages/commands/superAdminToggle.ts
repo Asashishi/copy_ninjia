@@ -11,7 +11,7 @@ import type { ToggleAction, ToggleCommandTexts } from "../types/commands";
 import { rejectUnlessPermitted, rejectUnlessSuperAdmin } from "./commandActor";
 import { parseToggleAction } from "./arguments";
 
-/** resolveSuperAdminToggleArg 的入参；只服务本文件那一个函数，不对外导出。 */
+/** resolveSuperAdminToggleArg 的入参。 */
 interface SuperAdminToggleOptions {
   /** 本命令的文案表，取自 consts/commands.ts。 */
   readonly texts: ToggleCommandTexts;
@@ -19,13 +19,13 @@ interface SuperAdminToggleOptions {
   readonly permission?: WhitelistPermissionKey;
 }
 
-/** toggleReplyText 的入参；只服务本文件那一个函数，不对外导出。 */
+/** toggleReplyText 的入参。 */
 interface ToggleReplyTextParams {
   /** 本次命令写入的目标状态。 */
   readonly isEnabled: boolean;
   /** 写入之前这个群的状态，用来识别同状态重复执行。 */
   readonly wasEnabled: boolean;
-  /** 本命令的文案表；这里只取四种状态结局那四项。 */
+  /** 本命令的文案表；这里只取各状态结局的回执文案。 */
   readonly texts: ToggleCommandTexts;
 }
 
@@ -33,8 +33,7 @@ interface ToggleReplyTextParams {
  * 按「目标状态」与「原状态」选出开关命令的回执文案。
  *
  * 判定只看这两个布尔值，不看落盘或运行时清理是否执行过：同状态重复执行仍会
- * 照常落盘并重跑清理（那正是上一次清理失败后最自然的手工重试路径，同
- * commands/block.ts 里重复 /block 仍补投落盘），但回执必须如实说它没改变什么。
+ * 落盘并重跑清理，回执说明状态未改变。
  */
 export function toggleReplyText({
   isEnabled,
@@ -64,7 +63,7 @@ export interface ChatToggleCommandParams {
   readonly write: (state: ChatState, isEnabled: boolean) => void;
   /**
    * 开启方向的配置总闸；返回 true 表示它已经自己回执并拒绝了本次开启。
-   * 省略表示这个开关没有「开着也永远不会生效」的前提。
+   * 省略表示开启时不检查部署配置。
    */
   readonly refuseEnable?: (chatId: number, messageId: number | undefined) => Promise<boolean>;
   /** 关闭开关前必须完成的持久化前置操作；失败原样上抛，不确认本条 update。 */
@@ -72,9 +71,8 @@ export interface ChatToggleCommandParams {
   /** 关闭方向的运行时拆除；省略表示没有需要就地收掉的运行时状态。 */
   readonly teardown?: (chatId: number) => void | Promise<void>;
   /**
-   * 拆除失败时的替代回执。省略表示「拆不干净也照常按开关结果回执」——只有
-   * 状态活在主线程镜像、会被 Worker 重建 adopt 回去的开关才需要如实告知
-   * （当前只有 /antiraid，见该命令头注）。
+   * 拆除失败时的替代回执。省略表示拆除失败时仍按开关结果回执；状态活在主线程镜像
+   * 的开关（/antiraid，见 commands/antiRaid.ts）提供它。
    */
   readonly teardownFailedText?: string;
 }
@@ -84,11 +82,9 @@ export interface ChatToggleCommandParams {
  * 关闭方向尽力而为地拆除运行时 → 回执。
  *
  * /ad_detect、/ai_chat、/flood_control、/antiraid 与 /translate 开关共用这一编排。
- * 其中两处顺序是语义，不能由调用方自由发挥：
- * - 落盘**先于**运行时拆除。反过来的话，拆干净了却没落盘，重启后开关又是开的。
- * - 拆除异常只记日志、绝不外抛。开关本身已经落盘；放它逃出 handler 就是这条
- *   update 判失败、最终 offset 被扣住、重启后 Telegram 重投同一条命令——而
- *   Worker 那时仍不可用，重投同样失败，恰好把重启循环焊死。
+ * 其中两处顺序是语义，调用方不得改动：
+ * - 落盘先于运行时拆除。
+ * - 拆除异常只记日志、不外抛；开关此时已落盘。
  */
 export async function runChatToggleCommand({
   ctx,
@@ -143,13 +139,12 @@ export async function runChatToggleCommand({
 }
 
 /**
- * runChatToggleCommand 的五个调用方（/ad_detect、/ai_chat、/flood_control、/antiraid、/translate
- * 开关分支）与 /init 共用的权限与参数校验。
+ * runChatToggleCommand 的各调用方与 /init 共用的权限与参数校验。
  *
- * 提供 permission 时按该权限键授权；超级管理员恒持有全部权限键（见
- * whitelist.ts），因此不必也不该在这里再判一次身份。省略 permission 则是
- * 「只认身份、无法授权出去」的一类（当前只有 /init），走 rejectUnlessSuperAdmin。
- * ctx.match 还必须是 enable/disable 之一。
+ * 提供 permission 时按该权限键授权，超级管理员恒持有全部权限键（见
+ * whitelist.ts）；省略 permission 时只认超级管理员身份（/init），走
+ * rejectUnlessSuperAdmin。ctx.match 还必须是 enable/disable 之一，否则回复
+ * texts.usage。
  */
 export async function resolveSuperAdminToggleArg(
   ctx: CommandContext<Context>,

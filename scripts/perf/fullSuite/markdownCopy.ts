@@ -1,14 +1,14 @@
 /**
- * 基准区块的三语文案表。
+ * 基准区块的各语言文案表。
  *
- * 稳定 id 仍由渲染层原样输出；本文件只负责标题、列名和口径说明，被测动作的
- * 三语名称集中在 `markdownEntryCopy.ts`。
+ * 稳定 id 由渲染层原样输出；本文件只负责标题、列名和口径说明，被测动作的
+ * 各语言名称在 `markdownEntryCopy.ts`。
  */
 
 import { CRON_MAX_ACTIONS_PER_TASK, CRON_MAX_TASKS } from "../../../packages/consts/cron";
 import type { SectionId } from "./types";
 
-/** 性能文档的三种语言；对应 docs/{cn,en,ja}/10-performance.md。 */
+/** 性能文档的语言；对应 docs/{cn,en,ja}/10-performance.md。 */
 export type Language = "zh" | "en" | "ja";
 
 /** 一份语言的完整文案。 */

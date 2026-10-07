@@ -265,7 +265,7 @@ describe("chat_states codec 的拒绝分支", () => {
       }),
       "$.lockdown.intentId"
     );
-    // expiresAt 是必填：缺了它这条封锁永远不会到期，重启接管后无从判断该不该恢复。
+    // expiresAt 是必填。
     expectRejected(
       chatStateJson({
         lockdown: {

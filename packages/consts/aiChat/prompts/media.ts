@@ -42,10 +42,9 @@ export const ANIMATION_DESCRIPTION_PROMPT: string =
 /**
  * 语音转写模型的固定任务提示。
  *
- * 要的是**原话**而不是概括：这条最终会以「[语音：…]」整行进转录，模型接话时把它
- * 当群友说的话读。因此指令一律往「逐字」上收，并明确禁止把「没听清」写成一段
- * 解释——那种输出会被当成群友真的说了这句话。真的听不出内容时输出空串，由
- * finalizeAiTextResult 归一成一次失败，走 VOICE_FALLBACK_PLACEHOLDER 兜底
+ * 要的是**原话**而不是概括：转写结果以「[语音：…]」整行进转录，模型接话时按群友
+ * 所说读取；指令往「逐字」上收，并禁止把「没听清」写成解释。真的听不出内容时
+ * 输出空串，由 finalizeAiTextResult 归一成一次失败，走 VOICE_FALLBACK_PLACEHOLDER 兜底
  * （见 aiChat/ai/utils/textResult.ts 与 workers/aiChat/mediaText.ts）。
  */
 export const VOICE_TRANSCRIPTION_PROMPT: string =

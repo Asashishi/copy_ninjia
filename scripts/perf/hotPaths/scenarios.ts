@@ -64,18 +64,15 @@ export function senderScenario(username?: string): Scenario {
 /**
  * 同一个群里真实用户与频道马甲混着发言时的 cacheSender 稳态。
  *
- * `sender-no-username` 与 `sender-stable-username` 各只喂一种身份形态，`message` 与
- * `userCache` 里的 `CachedUser` 都恒是同一个 shape，整条判定是单态读取。生产的群同时
- * 有真实用户、频道马甲和匿名管理员皮套，`from` 与 `sender_chat` 两种消息形态交替进入
- * 同一个调用点，本场景补的就是这个观测点。
+ * `from` 与 `sender_chat` 两种消息形态交替进入同一个调用点；`sender-no-username` 与
+ * `sender-stable-username` 各只喂一种身份形态，`cacheSender` 是单态读取。
  *
- * 本场景记录 `cacheSender` 的 `reoptRetries`，用于观察混合输入下的重新优化次数；
- * 具体计数由当前 Bun/JSC 构建及预热决定（判读见 hotPaths/types.ts 的 JitTierCounts）。
- * 绝对 ns/op **不可与 `sender-stable-username` 直接相比**：那个场景只有一个发送者，
- * 差值里混着发送者基数，不是形态混合的代价。
+ * 本场景记录 `cacheSender` 的 `reoptRetries`，观察混合输入下的重新优化次数
+ * （判读见 hotPaths/types.ts 的 JitTierCounts）。绝对 ns/op 不与
+ * `sender-stable-username` 直接相比：后者只有一个发送者，差值含发送者基数。
  *
- * 两种形态交替喂入，发送者 id 各不相同且资料保持不变：命中的是「发送者资料没变、
- * 逐字段比对后提前返回」那条稳态热路径，不是写入路径。
+ * 两种形态交替喂入，发送者 id 各不相同且资料保持不变：命中「发送者资料没变、
+ * 逐字段比对后提前返回」的稳态热路径，不是写入路径。
  */
 export function senderMixedIdentityScenario(): Scenario {
   const messages: readonly Message[] = [
@@ -178,11 +175,11 @@ export function joinTimestampWindowScenario(): Scenario {
 /**
  * 有硬顶配额窗口的容器成本：`TimestampDeque` + `tryConsumeSlidingWindow` 是
  * 配额型滑动窗口用的那一套（中文动作命令、`/h_image`、运势内联查询、Worker 重启
- * 节流）。容量直接引生产常量——配额上限即长度上界，判定只在未满时记账，环形缓冲
- * 因此永远撑不满。
+ * 节流）。容量取生产常量 `CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW`，配额上限即
+ * 长度上界，判定只在未满时记账。
  *
- * 与 join-timestamp-window 迭代数相同、每次迭代时钟前进 1 ms；窗口长度不同（本场景
- * 165 ms，入群窗口取生产 JOIN_WINDOW_MS）。
+ * 每次迭代时钟前进 1 ms；窗口长度为场景内的固定值，与入群窗口（生产 `JOIN_WINDOW_MS`）
+ * 不同。
  */
 export function quotaTimestampWindowScenario(): Scenario {
   const timestamps: TimestampDeque =
@@ -215,11 +212,11 @@ export function quotaTimestampWindowScenario(): Scenario {
 }
 
 /**
- * AI 滚动记忆缓冲的容器成本：`BoundedDeque` 就是 `cache/workers/aiChat/memory.ts`
- * 里每群那一份逐字上下文缓冲用的容器。
+ * AI 滚动记忆缓冲的容器成本：`BoundedDeque` 是 `cache/workers/aiChat/memory.ts`
+ * 里每群逐字上下文缓冲用的容器。
  *
- * 容量与批量直接引生产常量：满 `VERBATIM_CONTEXT_MAX` 后压缩一块
- * `COMPACT_BATCH_SIZE` 再继续推入，正是生产里摘要触发前后的进出形状。
+ * 容量与批量取生产常量：满 `VERBATIM_CONTEXT_MAX` 后压缩一块
+ * `COMPACT_BATCH_SIZE` 再继续推入，复刻摘要触发前后的进出形状。
  */
 export function boundedRollingBufferScenario(): Scenario {
   const buffer: BoundedDeque<number> = new BoundedDeque<number>(VERBATIM_CONTEXT_MAX);
@@ -266,10 +263,7 @@ const BENCHMARK_LOG_LINES: readonly string[] = [
 ];
 
 /**
- * 日志脱敏在「正文一个密钥都不含」这条主路径上的成本。
- *
- * 每条日志的每个参数都要跑一遍，而生产上几乎所有日志正文都不含密钥；因此这条
- * 早退路径才是它的常态，值得单列一个场景盯着。
+ * 日志脱敏在正文不含任何密钥的早退路径上的成本；每条日志的每个参数都经过这条判定。
  */
 export function redactCleanLogScenario(): Scenario {
   return {
@@ -305,8 +299,9 @@ export function luckTierTableScenario(): Scenario {
 }
 
 /**
- * gag 活动群的每消息入口计数：会话数量读取生产容量上限，每 7 次才允许分配
- * due 数组；调用方在真实换新成功后同样把对应计数归零。
+ * gag 活动群的每消息入口计数：会话数量取生产容量上限 `GAG_SESSION_MAX`，计数达到
+ * `GAG_SPEAK_NOTICE_MESSAGE_INTERVAL` 才分配 due 数组；场景在返回的会话上同样把
+ * 计数归零。
  */
 export function gagSpeakCounterScenario(): Scenario {
   const sessions: GagSession[] = [];
@@ -362,20 +357,18 @@ export function gagSpeakCounterScenario(): Scenario {
 }
 
 /**
- * 每条群消息都要读 4~6 次的那张群状态表（`getChatState(chatId).isXEnabled`，
+ * 每条群消息都要读多次的那张群状态表（`getChatState(chatId).isXEnabled`，
  * 调用点见 antiRaid/updateIngress.ts、antiRaid/floodControl.ts、
  * auto/message/index.ts、aiChat/availability.ts）。
  *
- * **Map 查找刻意提到循环外**：本场景量对象 shape 稳定性，而不是
- * `chatStateCache.get`。这里只轮转已经取到手的状态对象，避免哈希查找掩盖字段读取。
+ * Map 查找在循环外：本场景量对象 shape 稳定性，只轮转已经取到手的状态对象。
  *
- * 状态表刻意由不同写入方各设一个字段建出来，复刻生产里各写各的那种分布：只有
- * 当每份 ChatState 都出自 createChatState() 的同一个隐藏类时，这个读取点才拿得到
- * 内联缓存。没有条目的群走 DEFAULT_CHAT_STATE，它也必须是同一个形状，因此一并
- * 排进轮转。
+ * 状态表由不同写入方各设一个字段建出来，复刻生产里各写各的分布；每份 ChatState
+ * 都出自 createChatState() 的同一个隐藏类时，这个读取点才拿得到内联缓存。
+ * 没有条目的群走 DEFAULT_CHAT_STATE，同样排进轮转。
  *
- * fixture 只复刻七种生产形状，不包含字段删除造成的隐藏类迁移；报告仅用于本场景
- * 固定输入下的纵向门禁。
+ * fixture 只复刻各 writer 对应的生产形状，不含字段删除造成的隐藏类迁移；报告仅用于
+ * 本场景固定输入下的纵向门禁。
  */
 export function chatStateReadScenario(): Scenario {
   const writers: readonly ((state: ChatState) => void)[] = [
@@ -402,8 +395,7 @@ export function chatStateReadScenario(): Scenario {
       writers[index]!(getOrCreateChatState(chatId));
       states.push(getChatState(chatId));
     }
-    // 没有条目的群：它交出来的 DEFAULT_CHAT_STATE 若与上面几份不同形状，
-    // 这个读取点照样是多态的。
+    // 没有条目的群读到 DEFAULT_CHAT_STATE。
     states.push(getChatState(BENCHMARK_CHAT_ID - 999));
     return states;
   };
@@ -418,8 +410,7 @@ export function chatStateReadScenario(): Scenario {
       }
       return checksum;
     },
-    // 重新建表而不是只清空：清空之后每个群都退化成 DEFAULT_CHAT_STATE，后续
-    // 样本量到的就不再是「多个群各自的状态」这条路径了。
+    // 重新建表；只清空会使每个群读到 DEFAULT_CHAT_STATE。
     reset: (): void => {
       for (const chatId of chatIds) chatStateCache.delete(chatId);
       states = seed();

@@ -6,21 +6,21 @@ import type { TestAssertionRuleParams } from "./testAssertions";
 /**
  * 测试断言的文案口径（AGENTS.md「测试」）的子串规则：匹配器实参里的字符串字面量或模板静态片段，
  * 含至少 CONSTANT_TEXT_FRAGMENT_MIN_CJK 个汉字或假名、又是 packages/consts 某段文案的子串时，
- * 就是把常量文案的一部分抄进了测试——文案一改，断言要么跟着手改、要么红得与行为无关。
- * 改法是从常量（或模板常量渲染出的固定片段，见 test/helpers/templateText.ts）取期望值。
+ * 视为把常量文案的一部分抄进了测试；期望值从常量（或模板常量渲染出的固定片段，见
+ * test/helpers/templateText.ts）取得。
  *
- * 同一字面量在本文件匹配器实参之外出现过（测试自造的夹具输入）时不算。断言的就是提示词常量
- * 必须写明哪些话的「提示词契约」用例按文件与用例名列在 CONSTANT_TEXT_CONTRACT_EXEMPTIONS；
- * 豁免表里没被任何命中用到的条目同样报错，避免豁免比测试活得久。
+ * 同一字面量在本文件匹配器实参之外出现过（测试自造的夹具输入）时不算。断言对象就是提示词常量
+ * 必须写明哪些话的「提示词契约」用例，按文件与用例名列在 CONSTANT_TEXT_CONTRACT_EXEMPTIONS；
+ * 豁免表里没被任何命中用到的条目同样报错。
  */
 
-/** 参与比对的最少汉字与假名个数；更短的片段（「群成员」「本天才」）与常量天然重叠。 */
+/** 参与比对的最少汉字与假名个数；更短的片段不参与比对。 */
 const CONSTANT_TEXT_FRAGMENT_MIN_CJK: number = 6;
 
 /** 计数用的字符范围：平假名、片假名与 CJK 统一汉字（含扩展 A）。 */
 const CJK_CHARACTER_PATTERN: RegExp = /[\u3040-\u30ff\u3400-\u9fff]/g;
 
-/** 语料里分隔各片段的字符；常量与测试文案都不会含它，跨片段的拼接因此不会误中。 */
+/** 语料里分隔各片段的字符；子串查找不会跨越它。 */
 const FRAGMENT_SEPARATOR: string = "\u0000";
 
 /** 一条提示词契约豁免：该文件里这些用例名下的命中不计。 */
@@ -32,8 +32,8 @@ interface ConstantTextContractExemption {
 }
 
 /**
- * 提示词契约测试：它们验证的是「提示词常量必须写明这些要求」，措辞本身就是被测行为，
- * 改成读常量就成了常量包含它自己。新增条目须写明用例名，不得整文件豁免普通回执断言。
+ * 提示词契约测试：验证「提示词常量必须写明这些要求」，措辞本身就是被测行为。
+ * 新增条目须写明用例名，不得整文件豁免普通回执断言。
  */
 export const CONSTANT_TEXT_CONTRACT_EXEMPTIONS: readonly Readonly<ConstantTextContractExemption>[] = [
   {

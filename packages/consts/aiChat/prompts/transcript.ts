@@ -3,8 +3,8 @@ import { COMPACT_BATCH_SIZE } from "../memory";
 
 /** 群聊转录行内标注与区块名的共享模板。拼装侧（aiChat/ai/utils/chatTranscript.ts 的
  * formatReplyReference/formatForwardTag 与各区块标题）与说明文案侧（本目录 memory.ts 的
- * SUMMARY_SYSTEM_PROMPT、转录段首格式说明、记忆仲裁与禁言指令）共用同一模板，防止格式与说明
- * 各改各的漂移；说明里引用的占位形态直接以「…」代入模板生成，参照
+ * SUMMARY_SYSTEM_PROMPT、转录段首格式说明、记忆仲裁与禁言指令）共用同一模板；
+ * 说明里引用的占位形态直接以「…」代入模板生成，参照
  * workers/aiChat/mediaText.ts 的 resolvedTagFor 与 workers/aiChat/promptContext.ts
  * 的 mediaTagHintFor。 */
 
@@ -30,7 +30,7 @@ export function forwardTagTemplate(origin: string): string {
 }
 
 /** 紧凑转录的日期分隔行：其后的行都属于这一天，行内因此只留时分秒。
- *  每个分层区块开头都会重发一次当前日期，读者跳进任一区块都不缺日期。 */
+ *  每个分层区块开头都重发一次当前日期。 */
 export function transcriptDateHeader(date: string): string {
   return `── ${date} ──`;
 }
@@ -84,26 +84,24 @@ export const COLD_MEMORY_BLOCK_HEADER: string =
   `${blockTitle(COLD_MEMORY_TIER_NAME, "长期背景")}下列内容是更早对话的压缩摘要（按时间从旧到新），只用于理解长期话题、称呼、人物关系和前因后果，不用于判断当前状态；` +
   "它与较新的逐字记录不一致时，只说明情况后来变了，当前状态以逐字记录为准：\n";
 
-/** 机器人自己在名册里的固定编号。不跟着 u1/u2 排号：模型认出「哪些行是我
- *  自己说的」是回复链路的前提，给它一个不需要查表就认得的记号。 */
+/** 机器人自己在名册里的固定编号，不参与 u1/u2 排号。 */
 export const SELF_ROSTER_CODE: string = "me";
 
 /** AI 上下文中本机器人发言的唯一代称；仅按自身账号 ID 使用，转录身份不展示 Telegram 姓名或用户名。 */
 export const SELF_SPEAKER_NAME: string = "自己（也就是你）";
 
-/** 转录行上的消息号。只出现在「本段里被别人回复过」和本轮触发消息这两类行上
- *  ——其余行没有任何东西会引用它们的编号，写出来纯属付费。 */
+/** 转录行上的消息号，只出现在「本段里被别人回复过」和本轮触发消息这两类行上。 */
 export function messageNumberTag(messageId: number | string): string {
   return `#${messageId}`;
 }
 
-/** 紧凑转录里的回复指针：被回复的消息就在同一段转录里，作者与原文去那一行看，
- *  不再内嵌一份副本。 */
+/** 紧凑转录里的回复指针：被回复的消息就在同一段转录里，作者与原文见那一行，
+ *  不内嵌副本。 */
 export function replyPointerTemplate(messageId: number | string): string {
   return `（回复 ${messageNumberTag(messageId)}）`;
 }
 
-/** 精确引用片段的正文：用户手选的那一段，转录里没有别的地方记着它。 */
+/** 精确引用片段的正文：用户手选的那一段。 */
 function replyQuoteBody(quote: string): string {
   return `精确引用片段：「${quote}」`;
 }
@@ -116,7 +114,7 @@ export function replyQuoteTemplate(quote: string): string {
 /**
  * 内嵌进 replyTagTemplate 的形态：外层已经有一对括号，这里只补分隔符。
  *
- * 与上面那条共用同一份正文，保证两个渲染点的格式同步。
+ * 与上面那条共用同一份正文。
  */
 export function replyQuoteInlineTemplate(quote: string): string {
   return `；${replyQuoteBody(quote)}`;
@@ -125,7 +123,7 @@ export function replyQuoteInlineTemplate(quote: string): string {
 /** 说明文案里引用的精确引用片段占位形态。 */
 export const REPLY_QUOTE_HINT: string = replyQuoteTemplate("…");
 
-/** 被回复目标已滑出逐字窗口时的标记：本段里没有那一行可跳，只能退回内嵌快照。 */
+/** 被回复目标已滑出逐字窗口时的标记：本段里没有对应行，使用内嵌快照。 */
 export const REPLY_TARGET_EVICTED_TAG: string = "[已滑出]";
 
 /** 本轮回复任务使用的完整转发路径。origin 是原始来源，forwarder 是把内容
@@ -136,7 +134,7 @@ export function forwardPathTemplate(origin: string, forwarder: string): string {
 
 /** 自包含转录行的占位形态：压缩摘要那条路用的格式（本目录 memory.ts 的
  * SUMMARY_SYSTEM_PROMPT），实际拼装见 aiChat/ai/utils/chatTranscript.ts 的
- * formatBufferedMessageLine。两侧共用同一字符串，防止行格式与说明各改各的漂移。 */
+ * formatBufferedMessageLine。两侧共用同一字符串。 */
 export const TRANSCRIPT_LINE_FORMAT_HINT: string =
   "「[年/月/日 时:分:秒] [message_id:消息ID] [id:用户ID] [username:@公开用户名] 名字：内容」";
 
@@ -173,7 +171,7 @@ export const FORWARD_TAG_HINT: string = forwardTagTemplate("…");
  *
  * 这些模板与下面的 SELF_ACTION_TAG_MARKERS 必须共用同一份字面量：记号是
  * 「这个动作确实发生过」的唯一凭据，拦截侧（send_message 正文校验，见
- * SELF_ACTION_TAG_PATTERNS）按同一批词判定伪造，两边一漂移就等于凭据失效。
+ * SELF_ACTION_TAG_PATTERNS）按同一批词判定伪造。
  */
 export function stickerSentTagTemplate(detail: string): string {
   return detail ? `（${SELF_STICKER_TAG_MARKER}：${detail}）` : `（${SELF_STICKER_TAG_MARKER}）`;
@@ -228,14 +226,9 @@ export const SELF_ACTION_TAG_MARKERS: readonly string[] = [
  * 拦截侧的判定式：模型给 send_message 的正文里命中其中任何一条，就是在用文字
  * 伪造一次执行侧动作，必须拒发（见 aiChat/ai/tools/replyToolset/sendMessage.ts）。
  *
- * 锚定的是上面这些模板的**整体形状**而不是裸短语：记号要出现在一对全角括号
- * 里、紧跟着 `：` 或收尾的 `）`，中间只允许一小段没跨过 `）` 的前缀（模型仿写
- * 时会把「参考素材」改成「参考上传的素材」这类说法，只认字面模板等于没拦）。
- *
- * 不能用裸子串：「发了一枚贴纸」「生成并发送了一张图片」本身都是日常中文，
- * 群友问一句「你刚刚生成并发送了一张图片吗？」模型照常作答就会命中而被硬拒，
- * 本轮兜底文本走的又是同一个执行器、会被再拒一次，结果是对着一条 @ 提及完全
- * 沉默。括号外提到这两个词一律放行，括号内摆成凭据形状的一律拦下。
+ * 锚定的是上面这些模板的**整体形状**：记号出现在一对全角括号里、紧跟着 `：` 或
+ * 收尾的 `）`，中间只允许一小段没跨过 `）` 的前缀（容许「参考素材」写成
+ * 「参考上传的素材」这类变体）。括号外提到这些词一律放行，括号内摆成凭据形状的一律拦下。
  */
 export const SELF_ACTION_TAG_PATTERNS: readonly RegExp[] = [
   new RegExp(`（[^）]{0,20}${SELF_STICKER_TAG_MARKER}(?:：|）)`),

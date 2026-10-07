@@ -4,10 +4,9 @@
  * - OGG/Opus（OGG_OPUS_MIME_TYPE）与 MP3（MP3_MIME_TYPE）：Telegram sendVoice 直接接受，只经
  *   utils/voiceContainer.ts 校验容器并算出时长，字节复制成独占 buffer 后原样发送，不转码。
  * - WAV（见 consts/audio.ts 的 WAV_MIME_TYPES）：先由 utils/wavPcm.ts 取出单声道 PCM，再按
- *   VOICE_OPUS_ENCODE_CHUNK_SECONDS 分块重采样到 48 kHz、交给 @audio/encode-opus 编码，块间让出
- *   AI Worker 事件循环，最后收尾。编码器按 48 kHz 输入建立，OpusHead 的输入采样率字段因此为
- *   48 kHz（该字段只是元数据，不影响播放）。单块同步占用与音频总时长无关；台词长度由 AI 工具
- *   和运维入口分别限制。
+ *   VOICE_OPUS_ENCODE_CHUNK_SECONDS 分块重采样到 OPUS_RATE、交给 @audio/encode-opus 编码，块间让出
+ *   AI Worker 事件循环，最后收尾。编码器按 OPUS_RATE 输入建立，OpusHead 的输入采样率字段因此为
+ *   OPUS_RATE。单块同步占用与音频总时长无关；台词长度由 AI 工具和运维入口分别限制。
  * - 其余 MIME 返回 `unsupported speech mime type`。
  *
  * 失败一律返回带原因的结果，不抛错；编码器异常在这里记下原始错误，其余原因由
@@ -66,12 +65,12 @@ function greatestCommonDivisor(left: number, right: number): number {
 }
 
 /**
- * 把单声道 PCM 分块重采样到 48 kHz 并逐块编码，块间让出事件循环，返回各块产出的 OGG 页。
+ * 把单声道 PCM 分块重采样到 OPUS_RATE 并逐块编码，块间让出事件循环，返回各块产出的 OGG 页。
  *
- * 编码器按 48 kHz 输入建立，重采样由依赖导出的 toOpusRate 逐块完成：每块前后各带
+ * 编码器按 OPUS_RATE 输入建立，重采样由依赖导出的 toOpusRate 逐块完成：每块前后各带
  * VOICE_OPUS_RESAMPLE_CONTEXT_SAMPLES 个输入样本的上下文，只取本块对应的输出，拼起来与整段一次
- * 重采样相同；不带上下文逐块重采样会在块边界截断重采样核。块起点与上下文长度都取重采样比既约
- * 分母的倍数，保证本块输出在整段输出中的起点是整数下标。
+ * 重采样相同。块起点与上下文长度都取重采样比既约分母的倍数，保证本块输出在整段输出中的起点是
+ * 整数下标。
  */
 async function encodePcmInChunks(
   encoder: StreamEncoder,

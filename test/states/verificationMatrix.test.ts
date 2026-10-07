@@ -1,6 +1,6 @@
 /**
  * 入群验证状态机的「状态 × 事件」矩阵：每个状态 kind（expelling 按 reason 拆两行）
- * 对每个事件类型的 next 归类与效果种类。每格现造状态，因为 pending / kickPending /
+ * 对每个事件类型的 next 归类与效果种类。每格现造状态：pending / kickPending /
  * 终态的若干转移原地修改对象。
  */
 

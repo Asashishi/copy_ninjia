@@ -1,9 +1,9 @@
 /**
  * 动作执行的两种节奏（见 types/aiChat/replies.ts 的 ReplyActionPause）：都先切到动作对应的挡位，
- * 心跳还在静默期时停顿顺延剩余静默（见 aiChat/ai/chatActionHeartbeat.ts），可见时长不被吃掉。
+ * 心跳还在静默期时停顿顺延剩余静默（见 aiChat/ai/chatActionHeartbeat.ts）。
  * 两种轮次的动作都在串行链上执行：有序并行轮对每个动作做拟人停顿；直接轮只有「正在输入」请求交回
  * 的第一条文字沿用请求期间亮着的挡位、不再停顿，其余动作照常停顿，逐个发出。发送工具只调用注入的
- * 停顿，不区分轮次；五个发送工具共用 pauseThenSettle 完成「停顿 → 切回 idle 并落定 → 复核本轮」。
+ * 停顿，不区分轮次；各发送工具共用 pauseThenSettle 完成「停顿 → 切回 idle 并落定 → 复核本轮」。
  */
 
 import { REPLY_INVALIDATED_TOOL_ERROR } from "../../../../consts/tools";
@@ -23,8 +23,7 @@ export function createSimulatedPause(chatAction: ChatActionControl, signal?: Abo
 /**
  * 直接轮：串行链空闲时亮本次请求要的挡位，链忙时由链上正在执行的那一步掌管状态，链排空后再亮
  * 仍在进行的请求要的挡位。动作在接纳时（按工具调用顺序）接走请求亮着的挡位：「正在输入」请求交回
- * 的第一个动作是文字时，它的第一次停顿只切挡——模型写这句话的请求期间已经亮着「正在输入」；其余
- * 停顿切挡并照常等待。挑贴纸的那次请求很短，选择状态撑不起一段可见的时长，因此贴纸总是停顿。模型
+ * 的第一个动作是文字时，它的第一次停顿只切挡；其余停顿切挡并照常等待，贴纸总是停顿。模型
  * 阶段结束时，请求亮着、还没被动作接走的挡位同样收回。
  */
 export function createDirectPacing(chatAction: ChatActionControl, signal?: AbortSignal): DirectReplyPacing {

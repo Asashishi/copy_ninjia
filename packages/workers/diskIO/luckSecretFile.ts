@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { LUCK_DAY_PATTERN, LUCK_RECEIPT_SECRET_PATTERN } from "../../consts/luckReceipt";
+import { LUCK_RECEIPT_SECRET_PATTERN } from "../../consts/luckReceipt";
 import { LUCK_RECEIPT_SECRET_PATH } from "../../consts/paths";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
@@ -15,7 +15,7 @@ export interface LuckSecretFileIO {
   writeText: (path: string, content: string, mode: number) => void;
 }
 
-/** 用 Bun 支持的 Web Crypto CSPRNG 完整覆写 32 字节日级密钥。 */
+/** 用 Bun 支持的 Web Crypto CSPRNG 生成日级密钥字节。 */
 function generateLuckReceiptKey(): Uint8Array {
   const key: Uint8Array = new Uint8Array(32);
   crypto.getRandomValues(key);
@@ -35,7 +35,6 @@ function decodeLuckReceiptSecret(value: unknown, path: string): LuckReceiptSecre
   if (value.version !== 1) return invalidInput(path, "$.version", "1");
   if (
     typeof value.day !== "string" ||
-    !LUCK_DAY_PATTERN.test(value.day) ||
     !isCanonicalDateKey(value.day)
   ) return invalidInput(path, "$.day", "a canonical YYYY-MM-DD date");
   const expectedKey: string = "a canonical base64url encoding of 32 bytes";
@@ -79,8 +78,8 @@ export interface LuckSecretRecoveryInspection {
 }
 
 /**
- * 已有确认结果时，密钥缺失或属于旧日代表备份不一致。此时生成新密钥会让
- * 尚未确认的同日预览静默变化，必须保留现场并要求人工恢复一致备份。
+ * 已有确认结果时，密钥缺失或属于旧日代表备份不一致：拒绝创建并保留现场，
+ * 要求人工恢复一致备份。
  */
 function assertSecretCanBeCreated(
   confirmedResultCount: number,
@@ -92,8 +91,7 @@ function assertSecretCanBeCreated(
 
 /**
  * 加载当天密钥；仅在当天尚无确认结果时允许首次创建或从旧日原子轮换。
- * 损坏、未来日期、字段异常及“已有结果但密钥缺失/过期”一律拒绝，绝不
- * 静默覆盖导致当天尚未确认的预览结果改变。
+ * 损坏、未来日期、字段异常及“已有结果但密钥缺失/过期”一律拒绝，不覆盖现有密钥。
  */
 export async function inspectLuckReceiptSecret(
   {
@@ -102,7 +100,7 @@ export async function inspectLuckReceiptSecret(
     path = LUCK_RECEIPT_SECRET_PATH,
   }: RecoverLuckReceiptSecretParams
 ): Promise<LuckSecretRecoveryInspection> {
-  if (!LUCK_DAY_PATTERN.test(day) || !isCanonicalDateKey(day)) {
+  if (!isCanonicalDateKey(day)) {
     throw new Error("Luck receipt target day must be a canonical YYYY-MM-DD date.");
   }
   if (!Number.isSafeInteger(confirmedResultCount) || confirmedResultCount < 0) {

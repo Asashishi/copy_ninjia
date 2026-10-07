@@ -39,7 +39,7 @@ export interface RoundsOptions {
   readonly label: string;
   readonly seedMode: "cold-start" | "chain" | "none";
   readonly args: readonly string[];
-  /** 追加到测量子进程的环境变量；两个根目录变量始终以本轮隔离根为准。 */
+  /** 追加到测量子进程的环境变量；各根目录变量始终以本轮隔离根为准。 */
   readonly env?: Readonly<Record<string, string>>;
   /** 每轮测量子进程成功后收到其 stderr，按轮次顺序调用；播种子进程不经过它。 */
   readonly onStderr?: (stderr: string) => void;

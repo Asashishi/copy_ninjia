@@ -48,14 +48,14 @@ interface BenchmarkResult {
   samplesNsPerOp: number[];
   medianNsPerOp: number;
   /**
-   * 采样期间**留存下来**的堆增量（采样前后各做一次 full GC 再读）。
+   * 采样期间留存下来的堆增量（采样前后各做一次 full GC 再读）。
    *
-   * 这里只有 retained 一组，没有「GC 前」的对应项：`heapStats()` 的计数在 GC
-   * 边界才更新，采样后不 GC 直接读恒为 0（见 HeapSnapshot），不能用来衡量分配。
+   * 没有「GC 前」的对应项：`heapStats()` 的计数在 GC 边界才更新，采样后不 GC 直接读
+   * 恒为 0（见 HeapSnapshot）。
    *
-   * 也要清楚它**不度量分配速率**：采样中被回收的短命对象一律不计。短命分配
-   * 的运行时后果由 steadyProfile 模式的 GC 暂停占比、heapUsed 与 RSS 节拍峰值
-   * 共同观测；仍不能把这些读数误称为精确 allocation bytes/op。
+   * 它不度量分配速率：采样中被回收的短命对象不计。短命分配的运行时后果由
+   * steadyProfile 模式的 GC 暂停占比、heapUsed 与 RSS 节拍峰值共同观测，这些读数
+   * 不是精确的 allocation bytes/op。
    */
   retainedHeapDelta: number | null;
   retainedExtraMemoryDelta: number | null;
@@ -78,22 +78,18 @@ interface BenchmarkResult {
   checksum: number;
 }
 
-/** 单场景计时采样数；中位数用于抵抗偶发调度和 GC 抖动。 */
+/** 单场景计时采样数；取中位数。 */
 const SAMPLE_COUNT: number = 7;
-/** 正式采样前的预热占比，确保热点有机会进入 JSC 高层级编译。 */
+/** 正式采样前的预热占比：预热迭代数为场景迭代数除以该值。 */
 const WARMUP_DIVISOR: number = 5;
 
-/**
- * 峰值 RSS 读取器放在模块级：按样本调用时不现造闭包，避免分配计入被测的堆增长。
- * 单位是 KiB，换算留给调用方。
- */
+/** 峰值 RSS 读取器放在模块级，按样本调用时不创建闭包。单位是 KiB，换算由调用方完成。 */
 function readProcessPeakRssKb(): number {
   return process.resourceUsage().maxRSS;
 }
 
 function snapshotLiveMemory(): LiveMemorySnapshot {
-  // 三次读取都要包：只护住其中一次的话，另外两次照样能被同一个信号打断，
-  // 而它们抛出来的效果与第一次完全一样——整轮 profile 白跑。
+  // 三次读取都经 readInterruptibleMemory 包装。
   const processMemory: NodeJS.MemoryUsage = readInterruptibleMemory(process.memoryUsage);
   const jscMemory: ReturnType<typeof jscMemoryUsage> =
     readInterruptibleMemory(jscMemoryUsage);
@@ -111,8 +107,8 @@ function snapshotLiveMemory(): LiveMemorySnapshot {
 }
 
 /**
- * async 编排壳可能永远不进 DFG，因此只检查场景显式登记的生产探针。一次稳定
- * 表示所有探针已经进入 DFG，且完整场景轮次前后的编译与重试计数都没有变化。
+ * 只检查场景显式登记的生产探针，不检查 `scenario.run`（async 编排壳可能不进 DFG）。
+ * 一次稳定表示所有探针已经进入 DFG，且完整场景轮次前后的编译与重试计数都没有变化。
  */
 function productionJitTiersAreStable(
   before: Readonly<Record<string, JitTierCounts>>,
@@ -235,10 +231,8 @@ async function runBenchmark(
   scenario.prepare?.();
   const warmupResult: number | Promise<number> = scenario.run(warmupIterations);
   /**
-   * 本场景是不是同步的。由第一次预热的返回值判定，供下面挑采样驱动。
-   *
-   * `Scenario.run` 的同步/异步是场景自己的固定属性（同一个闭包，分支不随迭代
-   * 次数变），因此判定一次即可，正式采样不再重复探测。
+   * 本场景是否同步：由第一次预热的返回值判定，选择采样驱动；`Scenario.run` 的
+   * 同步/异步是场景的固定属性，正式采样不再探测。
    */
   const scenarioIsSynchronous: boolean = typeof warmupResult === "number";
   let checksum: number = typeof warmupResult === "number"
@@ -305,9 +299,8 @@ async function runBenchmark(
   /**
    * 同步场景的采样驱动。
    *
-   * **分层统计按栈顶帧归属，因此 profile 的回调里不能出现只跑几次的 async 壳。**
-   * 那种壳永远进不了 DFG/FTL，样本会落在壳自己身上而不是生产帧上。同步场景一律
-   * 走本函数，异步场景的分层读数只作参考。
+   * 分层统计按栈顶帧归属，profile 回调里不放只跑几次的 async 壳（它不进 DFG/FTL，
+   * 样本会落在壳上）。同步场景一律走本函数，异步场景的分层读数只作参考。
    */
   function sampleScenarioSync(): void {
     const gcStartedAt: number = steadyProfile ? beginGcProfileWindow() : 0;
@@ -324,7 +317,7 @@ async function runBenchmark(
     if (steadyProfile) endGcProfileWindow(gcStartedAt);
   }
 
-  /** 异步场景的采样驱动；编排壳的开销本来就是生产每条消息要付的那一份。 */
+  /** 异步场景的采样驱动；编排壳的开销计入读数。 */
   async function sampleScenarioAsync(): Promise<void> {
     const gcStartedAt: number = steadyProfile ? beginGcProfileWindow() : 0;
     for (let sample: number = 0; sample < SAMPLE_COUNT; sample += 1) {

@@ -5,10 +5,8 @@ import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../pa
 /**
  * 复读边界（packages/auto/message/echo.ts）的「不回显命令」这道闸。
  *
- * 它守的是一件很具体的事：机器人自己发出去的那一份副本会被 Telegram 渲染成
- * 可点击的命令链接。只看 message.text 的话，媒体消息的 caption 会整条绕过这
- * 道闸——`/copy` 锁定的人发一张 caption 写着 `/batch_kick 1d` 的图，机器人就
- * 亲手替一条破坏性管理命令造了个一键入口。
+ * 机器人自己发出去的那一份副本会被 Telegram 渲染成可点击的命令链接，闸门判定整段文本，
+ * 包括媒体消息的 caption（如 `/copy` 锁定的人发一张 caption 写着 `/batch_kick 1d` 的图）。
  */
 
 const copyMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 77);
@@ -41,8 +39,7 @@ beforeEach(() => {
 });
 
 describe("复读的话题落点", () => {
-  // 复读不挂回复，话题群里缺了 message_thread_id 就会掉进 General：被复读的人
-  // 在自己话题里说话，本天才却在 General 学舌（见 libs/forumTopic.ts）。
+  // 复读不挂回复，话题群里缺了 message_thread_id 会落进 General：被复读的人在自己话题里说话，复读也落在该话题（见 libs/forumTopic.ts）。
   test("媒体复读把话题带给 copyMessage", async () => {
     await echoMessage({
       chatId: CHAT_ID,
@@ -120,8 +117,7 @@ describe("复读的命令守卫", () => {
   });
 
   test("命令不在行首的 caption 同样不复读", async () => {
-    // 带 bot_command 实体的消息拿不到 plainText，会落到 copyMessage 分支；
-    // 因此入口必须检查整段 caption，而不能只检查开头或依赖变换后守卫。
+    // 带 bot_command 实体的消息拿不到 plainText，会落到 copyMessage 分支；入口检查整段 caption，不只检查开头，也不依赖变换后守卫。
     await echoMessage({
       chatId: CHAT_ID,
       message: mediaMessage("看这个 /batch_kick 1d"),
@@ -149,7 +145,7 @@ describe("复读的命令守卫", () => {
   });
 
   test("正文里的斜杠不构成命令时照常复读", async () => {
-    // 守卫收紧后不能把 `and/or`、`http://x` 这类日常正文一起误伤。
+    // 守卫不误伤 `and/or`、`http://x` 这类日常正文。
     await echoMessage({
       chatId: CHAT_ID,
       message: mediaMessage("要么 a/b 要么 c"),
@@ -188,8 +184,7 @@ function plainTextMessage(text: string): Message {
 
 describe("变换之后的文本同样要过命令守卫", () => {
   test("reverse 把普通文本倒成行首命令时整条丢弃", async () => {
-    // 原文不以 `/` 开头，只对原文判定的守卫会放行；真正发出去的却是
-    // `/batch_kick 1d`，Telegram 会把它渲染成可点击的批量踢人链接。
+    // 原文不以 `/` 开头，只对原文判定的守卫会放行；真正发出去的是 `/batch_kick 1d`，Telegram 会把它渲染成可点击的链接，守卫按发出去的串判定。
     await echoMessage({
       chatId: CHAT_ID,
       message: plainTextMessage("d1 kcik_hctab/"),
@@ -201,7 +196,7 @@ describe("变换之后的文本同样要过命令守卫", () => {
   });
 
   test("命令被空白顶到第二位同样丢弃：bot_command 不只认行首", async () => {
-    // 只判 startsWith("/") 的话，原文末尾多打一个空格就能绕过去。
+    // 原文末尾多一个空格也被拦下，不只判 startsWith("/")。
     await echoMessage({
       chatId: CHAT_ID,
       message: plainTextMessage("d1 kcik_hctab/ "),

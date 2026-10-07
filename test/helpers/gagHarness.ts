@@ -18,9 +18,8 @@ import type { GagSession } from "../../packages/types/gag";
 import type { BotChatPermissions } from "../../packages/types/telegram";
 import { botPermissions } from "./botPermissions";
 import { settleTestBatch } from "./common";
-// 这三个模块不在被替身覆盖的范围内（只依赖 consts/types/libs），因此可以静态
-// 导入；被测的 packages/commands/gag 必须由各用例文件在本模块的 mock.module
-// 生效之后自行 await import，静态导入会抢在替身安装之前把真实依赖钉死。
+// 这三个模块不在被替身覆盖的范围内（只依赖 consts/types/libs），静态导入即可；
+// 被测的 packages/commands/gag 由各用例文件在本模块的 mock.module 生效之后自行 await import。
 import * as identity from "../../packages/commands/gag/identity";
 import * as rendering from "../../packages/commands/gag/rendering";
 import {
@@ -136,8 +135,7 @@ mock.module("../../packages/commands/targetResolution", () => ({ resolveCommandT
 const originalDateNow: () => number = Date.now;
 
 /**
- * 入口换新是 fire-and-forget 的后台任务（见 commands/gag/inline.ts：在 ingress
- * 里 await 一次 Telegram 往返会阻塞整个 update 循环）。断言换新结果前先把这批
+ * 入口换新是 fire-and-forget 的后台任务（见 commands/gag/inline.ts）。断言换新结果前先把这批
  * 任务排空，等价于生产里 drainGagRuntime 的那一步。
  */
 export async function settleGagBackgroundTasks(): Promise<void> {
@@ -282,7 +280,7 @@ export function lastEphemeralText(): string {
 
 /**
  * 清空会话表、在途后台任务与全部 timer。等价于 commands/gag/runtime.ts 的
- * resetGagSessions，但只碰 cache/main/gag，因此不必先 await import 被测模块。
+ * resetGagSessions，但只碰 cache/main/gag，不需要先 await import 被测模块。
  */
 function resetGagTestState(): void {
   for (const sessions of gagSessionsByChat.values()) {
@@ -302,8 +300,7 @@ function resetGagTestState(): void {
 }
 
 /**
- * gag 用例文件共用的隔离钩子。每份都必须登记，否则会话表、
- * Date.now 替身与 mock 实现会跨用例泄漏。
+ * gag 用例文件共用的隔离钩子。每份都登记，使会话表、Date.now 替身与 mock 实现不跨用例泄漏。
  */
 export function installGagTestHooks(): void {
   const preloadedAtmosphere: typeof botAtmosphereState.current = botAtmosphereState.current;

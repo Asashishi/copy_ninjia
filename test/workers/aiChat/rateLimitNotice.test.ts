@@ -4,10 +4,11 @@ import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { ATMOSPHERE_TEXTS } from "../../../packages/consts/atmosphere";
 import { SELF_SPEAKER_NAME } from "../../../packages/consts/aiChat/prompts/transcript";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../packages/consts/commands";
 
 /**
- * 限频/溢出提示的投递路径（replyState.ts 的 notifyRateLimited）：按群冷却避免
- * 刷屏，发送成功后与普通 AI 回复一样写入滚动记忆。
+ * 限频/溢出提示的投递路径（replyState.ts 的 notifyRateLimited）：按群冷却，
+ * 发送成功后与普通 AI 回复一样写入滚动记忆。
  */
 
 let nextSentMessageId: number | undefined = 501;
@@ -15,8 +16,9 @@ const sendMessage = mock(async (_message: { chatId: number; text: string }): Pro
   nextSentMessageId
 );
 const recordChatMessage = mock((..._args: unknown[]): void => {});
+const deleteMessageAfter = mock((_params: { chatId: number; messageId: number; delayMs: number }): void => {});
 
-mock.module("../../../packages/infra/telegram", () => ({ sendMessage }));
+mock.module("../../../packages/infra/telegram", () => ({ sendMessage, deleteMessageAfter }));
 mock.module("../../../packages/workers/aiChat/rollingMemory", () => ({ recordChatMessage }));
 
 const { notifyRateLimited } = await import("../../../packages/workers/aiChat/replyState");
@@ -40,6 +42,7 @@ beforeEach(() => {
   nextSentMessageId = 501;
   sendMessage.mockClear();
   recordChatMessage.mockClear();
+  deleteMessageAfter.mockClear();
 });
 
 afterAll(() => {
@@ -65,7 +68,13 @@ describe("AI 限频提示", () => {
       chatId: CHAT_ID,
       text: RATE_LIMIT_NOTICE_TEXT,
       signal: expect.any(AbortSignal),
+      onSent: expect.any(Function),
     });
+    expect(deleteMessageAfter).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: CHAT_ID,
+      messageId: nextSentMessageId,
+      delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
+    }));
     expect(recordChatMessage).toHaveBeenCalledWith(aiRecordMessageFixture({
       chatId: CHAT_ID,
       senderId: 99,

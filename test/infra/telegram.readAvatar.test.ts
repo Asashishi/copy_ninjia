@@ -61,20 +61,24 @@ test("无可复用头像时下载当前 ChatPhoto，不把只供下载的 file_i
 
 test("用户未与 bot 私聊时使用本轮核实的 username，复用公开头像抓取", async (): Promise<void> => {
   getChat.mockImplementationOnce(async (): Promise<any> => { throw new Error("chat inaccessible"); });
+  // 同时发出的头像列表即便含有匹配项，getChat 没确认当前头像也不采用。
+  getUserProfilePhotos.mockImplementationOnce(async (): Promise<UserProfilePhotos> => currentPhotos());
   const signal: AbortSignal = new AbortController().signal;
   expect(await readCurrentAvatar(user, signal)).toEqual({ status: "ok", identity: user, photo: new Uint8Array([4, 5]) });
-  expect(getUserProfilePhotos).not.toHaveBeenCalled();
+  expect(getUserProfilePhotos).toHaveBeenCalledTimes(1);
   expect(web).toHaveBeenCalledWith("current_user", signal);
 });
 
 test("无当前头像且无公开用户名不猜测历史头像；取消不再触发网页请求", async (): Promise<void> => {
   getChat.mockImplementation(async (): Promise<any> => ({}));
+  getUserProfilePhotos.mockImplementationOnce(async (): Promise<UserProfilePhotos> => currentPhotos());
   expect(await readCurrentAvatar({ id: 42, first_name: "群友", is_bot: false }, new AbortController().signal)).toEqual(ABSENT);
+  expect(getUserProfilePhotos).toHaveBeenCalledTimes(1);
   const controller: AbortController = new AbortController();
   controller.abort();
   expect(await readCurrentAvatar(user, controller.signal)).toEqual(FAILED);
   expect(web).not.toHaveBeenCalled();
-  expect(getUserProfilePhotos).not.toHaveBeenCalled();
+  expect(getUserProfilePhotos).toHaveBeenCalledTimes(1);
 });
 
 test("下载失败时可以继续读取已核实用户的公开头像", async (): Promise<void> => {
@@ -135,9 +139,13 @@ test("裸 ID 的 getChat 明确找不到私聊时单独归类，其他 400 仍�
   getChat.mockImplementationOnce(async (): Promise<never> => {
     throw Object.assign(new Error("chat not found"), { error_code: 400, description: "Bad Request: chat not found" });
   });
+  // 同时发出的头像列表查询对不存在的用户同样报错；没被消费的失败不记录。
+  getUserProfilePhotos.mockImplementationOnce(async (): Promise<never> => {
+    throw Object.assign(new Error("user not found"), { error_code: 400, description: "Bad Request: user not found" });
+  });
   expect(await readCurrentAvatar(user.id, signal)).toEqual({ status: "chat-not-found" });
   expect(logError).not.toHaveBeenCalled();
-  expect(getUserProfilePhotos).not.toHaveBeenCalled();
+  expect(getUserProfilePhotos).toHaveBeenCalledTimes(1);
   expect(download).not.toHaveBeenCalled();
   expect(web).not.toHaveBeenCalled();
 
@@ -199,9 +207,46 @@ for (const stage of ["chat", "photos"] as const) {
     expect(download).not.toHaveBeenCalled();
     expect(web).not.toHaveBeenCalled();
     expect(logError).not.toHaveBeenCalled();
-    if (stage === "chat") expect(getUserProfilePhotos).not.toHaveBeenCalled();
+    // 头像列表与 getChat 同时发出，沿用同一个请求信号，取消时一并取消。
+    expect(getUserProfilePhotos).toHaveBeenCalledTimes(1);
+    expect(getUserProfilePhotos.mock.calls[0]![2].aborted).toBeTrue();
   });
 }
+
+test("头像列表查询与 getChat 同时发出，不等 getChat 返回", async (): Promise<void> => {
+  const chat: PromiseWithResolvers<any> = Promise.withResolvers<any>();
+  getChat.mockImplementationOnce((): Promise<any> => chat.promise);
+  getUserProfilePhotos.mockImplementationOnce(async (): Promise<UserProfilePhotos> => currentPhotos());
+  const task: Promise<CurrentAvatarResult> = readCurrentAvatar(user, new AbortController().signal);
+  for (let turn: number = 0; turn < 20 && getUserProfilePhotos.mock.calls.length === 0; turn++) await Promise.resolve();
+  expect(getChat).toHaveBeenCalledTimes(1);
+  expect(getUserProfilePhotos).toHaveBeenCalledTimes(1);
+  expect(getChat.mock.invocationCallOrder[0]!).toBeLessThan(getUserProfilePhotos.mock.invocationCallOrder[0]!);
+  chat.resolve({ photo: { big_file_id: "active-photo", big_file_unique_id: "active-unique" } });
+  expect(await task).toEqual({ status: "ok", identity: user, photo: "reusable-current" });
+  expect(download).not.toHaveBeenCalled();
+});
+
+test("用不上的头像列表查询不中止，等它结算后才返回，失败不记录", async (): Promise<void> => {
+  getChat.mockImplementationOnce(async (): Promise<any> => ({ id: 42, type: "private", first_name: "群友" }));
+  const photos: PromiseWithResolvers<UserProfilePhotos> = Promise.withResolvers<UserProfilePhotos>();
+  getUserProfilePhotos.mockImplementationOnce((): Promise<UserProfilePhotos> => photos.promise);
+  let settled: boolean = false;
+  const task: Promise<CurrentAvatarResult> = readCurrentAvatar(42, new AbortController().signal)
+    .finally((): void => { settled = true; });
+  for (let turn: number = 0; turn < 50; turn++) await Promise.resolve();
+  expect(settled).toBeFalse();
+  expect(getUserProfilePhotos.mock.calls[0]![2].aborted).toBeFalse();
+  photos.reject(new Error("fixture late failure"));
+  expect(await task).toEqual(ABSENT);
+  expect(logError).not.toHaveBeenCalled();
+});
+
+test("频道 ID 不发用户头像列表查询", async (): Promise<void> => {
+  getChat.mockImplementationOnce(async (): Promise<any> => ({ id: -10042, type: "channel", title: "频道" }));
+  expect(await readCurrentAvatar(-10042, new AbortController().signal)).toEqual(ABSENT);
+  expect(getUserProfilePhotos).not.toHaveBeenCalled();
+});
 
 test("update 在头像查询期间取消时继续传播取消，不降级为下载", async (): Promise<void> => {
   const controller: AbortController = new AbortController();

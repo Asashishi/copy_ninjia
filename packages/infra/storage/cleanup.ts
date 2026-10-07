@@ -16,10 +16,8 @@ export interface StorageCleanupOptions {
 
 /**
  * 按 guard candidate 文件名里的 PID 判定属主是否已死：只有 /proc 下查不到这个
- * PID 才算死。PID 被别的活进程复用、或本来就还活着时一律返回 false，因此这条
- * 兜底只可能错向「拒绝删除」，不可能删掉一个仍然活着的属主留下的文件。
- * candidate 本身也从不是已发布的 guard——cleanupOrphanedTempFiles 不扫
- * `<lock>.guard`，删掉一个 candidate 不影响任何实例锁。
+ * PID 才返回 true；PID 仍存在（包括被别的进程复用）返回 false。
+ * candidate 不是已发布的 guard，cleanupOrphanedTempFiles 不扫 `<lock>.guard`。
  */
 async function hasDeadCandidateFilenameOwner(path: string): Promise<boolean> {
   const named: RegExpExecArray | null = CANDIDATE_OWNER_PID_PATTERN.exec(basename(path));
@@ -33,10 +31,9 @@ async function hasInactiveCurrentFormatOwner(path: string): Promise<boolean> {
   const content: string = await Bun.file(path).text();
   const inactive: boolean | undefined = await isRecordedLockOwnerInactive(content);
   if (inactive !== undefined) return inactive;
-  // 0 字节孤儿：candidate 先 `open(..., "wx")` 建空文件、再写身份行（见
-  // instanceLock.ts 的 acquirePidFileLock），中途被 SIGKILL/OOM/掉电打断会留下
-  // 这个形态。内容为空，属主 PID 写在文件名上，因此按文件名判定。非空却认不出
-  // 的内容不走这条路，仍按人工修复处理。
+  // 内容为空的 candidate（先 `open(..., "wx")` 建空文件、再写身份行，见
+  // instanceLock.ts 的 acquirePidFileLock）按文件名里的 PID 判定属主。
+  // 非空却认不出的内容不走这条路，按人工修复处理。
   if (content.trim().length > 0) return false;
   return await hasDeadCandidateFilenameOwner(path);
 }

@@ -13,12 +13,11 @@ import { channelIdentity, userIdentity, visibleSenderChat } from "../users/visib
 
 /**
  * 解析命令对外可见的发起身份。sender_chat（频道马甲/频道帖）优先于 from，
- * 否则频道白名单会被 Telegram 附带的匿名服务用户误判；普通用户则回退到 from。
+ * 普通用户回退到 from；两者都没有时返回 undefined。
  *
- * 会话身份直接取 users/visibleSender.ts 的 visibleSenderChat（两种身份的形状也取自
- * 同一模块的 channelIdentity / userIdentity）：`/qa set` 的表单在命令侧用这里记下
- * openedById，在投递侧用同一个函数算发送者，两边对不上就等于匿名管理员和频道身份
- * 永远填不了自己开的表单。命令上下文里 `ctx.from === ctx.msg.from`。
+ * 会话身份取 users/visibleSender.ts 的 visibleSenderChat，两种身份的形状取自同一
+ * 模块的 channelIdentity / userIdentity。`/qa set` 在命令侧用本函数记下 openedById，
+ * 投递侧用同一个函数算发送者。命令上下文里 `ctx.from === ctx.msg.from`。
  */
 export function resolveCommandActor(ctx: CommandContext<Context>): CachedUser | undefined {
   const senderChat: Chat | undefined = visibleSenderChat(ctx.msg);
@@ -31,7 +30,7 @@ export function resolveCommandActor(ctx: CommandContext<Context>): CachedUser | 
 /**
  * 按白名单权限键放行群命令。发起身份只解析一次：持有 permission 时原样返回它；
  * 否则（含解析不出发起身份）在本群回复命令消息发一条拒绝，文案由 rejection 按
- * 发起人标签与本进程氛围文案拼出，走 sendCommandMessage 的默认 30 秒清理，并返回
+ * 发起人标签与当前氛围文案拼出，走 sendCommandMessage 的默认自动清理，并返回
  * undefined。超级管理员恒持有全部权限键（见 whitelist.ts）。
  */
 export async function rejectUnlessPermitted(
@@ -47,7 +46,7 @@ export async function rejectUnlessPermitted(
 
 /**
  * 只放行超级管理员本人的群命令（/batch_kick、/init）；拒绝回执的形态与
- * rejectUnlessPermitted 相同。这类命令不属于白名单权限键，无法授权出去。
+ * rejectUnlessPermitted 相同。这类命令不对应白名单权限键。
  */
 export async function rejectUnlessSuperAdmin(
   ctx: CommandContext<Context>,

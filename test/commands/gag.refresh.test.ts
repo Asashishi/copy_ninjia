@@ -113,7 +113,7 @@ describe("gag 发言入口刷新", () => {
         expect(sendCommandMessage).not.toHaveBeenCalled();
         expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
       }
-      // 功能入口按会话保留，不进入普通群提示的固定 30 秒清理边界。
+      // 功能入口按会话保留，不进入普通群提示的固定延迟清理边界。
       await advanceTime(expiresAt - Date.now() - 1);
       expect(sessionFor(-1001)).toBe(session);
       expect(session.speakNoticeMessageId).toBeGreaterThan(0);

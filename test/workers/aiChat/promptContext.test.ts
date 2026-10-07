@@ -4,17 +4,29 @@ import {
   bufferedReplyReferenceFixture,
 } from "../../helpers/aiMemoryFixtures";
 import { chatBuffers, chatSummaries, resetAiChatMemoryCache } from "../../../packages/cache/workers/aiChat/memory";
-import { COMPACT_BATCH_SIZE, TRANSCRIPT_SETTLED_SEGMENT_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
+import { COMPACT_BATCH_SIZE, MAX_SUMMARY_ROUNDS, TRANSCRIPT_SETTLED_SEGMENT_SIZE, VERBATIM_CONTEXT_MAX } from "../../../packages/consts/aiChat/memory";
 import {
   REPLY_CONTEXT_SECTION_NAMES,
   REPLY_CONTEXT_SECTION_TEXT,
   directInvokerSentence,
 } from "../../../packages/consts/aiChat/prompts/memory";
-import { longestTemplatePart } from "../../helpers/templateText";
+import { expectTemplateRendered, longestTemplatePart } from "../../helpers/templateText";
+import {
+  RANDOM_TRIGGER_INSTRUCTION,
+  forwardedMediaNotice,
+  mediaNounFor,
+  mediaReplyTriggerInstruction,
+  queuedTriggerDescription,
+  selfIdentityStatement,
+} from "../../../packages/consts/aiChat/prompts/replyTask";
 import { TOOL_STATUS_BLOCK_LABEL, VOICE_LANGUAGE_PROMPTS } from "../../../packages/consts/aiChat/prompts/tools";
-import { REPLY_TARGET_EVICTED_TAG } from "../../../packages/consts/aiChat/prompts/transcript";
+import {
+  REPLY_TARGET_EVICTED_TAG,
+  forwardPathTemplate,
+  replyPointerTemplate,
+  replyTagTemplate,
+} from "../../../packages/consts/aiChat/prompts/transcript";
 import { BoundedDeque } from "../../../packages/libs/boundedDeque";
-import { LinkedQueue } from "../../../packages/libs/linkedQueue";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { QueuedReplyTrigger, ReplyPromptSections } from "../../../packages/types/aiChat/replies";
 import { buildReplyPromptSections } from "../../../packages/workers/aiChat/promptContext";
@@ -69,12 +81,12 @@ test("直接唤起在回复任务开头声明唤起者完整身份，不再另�
   // 唤起者的发言只在完整转录里出现一次，回复任务不再复制一份。
   expect(sections.replyTask).not.toContain(`最热区里的唤起者消息 ${total}`);
   expect(sections.replyTask).not.toContain("较早区里的唤起者消息");
-  // 身份只在名册里出现一次，行内只写编号——转录里最贵的一类结构开销就是它。
+  // 身份只在名册里出现一次，行内只写编号。
   expect(sections.currentConversation).toContain(`u1=[id:${invokerId}] [username:@alice] Alice Wong`);
   expect(sections.currentConversation).toContain(`u1：最热区里的唤起者消息 ${total}`);
   expect(sections.currentConversation).toContain("较早区里的唤起者消息");
   expect(sections.currentConversation).toContain(`其他人的最热消息 ${total - 2}`);
-  // 区块数恒定为三段（另附当前会话内的转录已定切点），不再按触发类型多插一个 Part。
+  // 区块集合固定，不随触发类型增减 Part；转录已定切点另列一项。
   expect(Object.keys(sections)).toEqual(["referenceMemory", "currentConversation", "currentConversationSettledOffsets", "replyTask"]);
   // 切点平移到当前会话区块内：最新消息所在格之前每格一个，紧跟上一格最后一条正文。
   const transcriptStart: number = sections.currentConversation.indexOf("\n", sections.currentConversation.indexOf(
@@ -133,15 +145,13 @@ test("触发消息已不在热区索引时，唤起者身份从逐字缓存里�
     { triggerMessageId: 999, directInvokerId: 7, isRandomTrigger: false, roundHasTypo: false }
   )!;
 
-  // 身份段之外还带上行内编号：转录行只写编号，不给出对应关系模型就得拿 id
-  // 回名册做一次连接查询。
+  // 身份段之外还带上行内编号，与转录行的编号对应。
   expect(sections.replyTask).toContain("本轮由 [id:7] [username:@alice] アリス（转录里的编号是 u1）明确 @ 或回复你而唤起");
   expect(sections.replyTask).not.toContain("old_alice");
-  // 名册登记的也是改名后的身份：两处若各取一端，同一个人在同一次请求里会有
-  // 两个名字，模型得靠 [id:] 才能对上号。
+  // 名册登记的是改名后的身份，与回复任务里的写法一致。
   expect(sections.currentConversation).toContain("u1=[id:7] [username:@alice] アリス");
   expect(sections.currentConversation).not.toContain("old_alice");
-  // 名册顺序仍按首次发言先后：改名不会把这个人挪到表尾。
+  // 名册顺序按首次发言先后，改名不改变位置。
   expect(sections.currentConversation.indexOf("u1=")).toBeLessThan(sections.currentConversation.indexOf("u2="));
 });
 
@@ -186,12 +196,12 @@ test("随机插话不声明唤起者", () => {
     { triggerMessageId: 1, isRandomTrigger: true, roundHasTypo: false }
   )!;
 
-  // 「有没有这句话」就是模型判断本轮有没有人叫它的依据，随机插话必须一个字都不带。
+  // 随机插话不带唤起者那句话。
   expect(sections.replyTask).not.toContain(
     longestTemplatePart((invoker: string): string => directInvokerSentence(invoker, ""))
   );
   expect(sections.replyTask).toStartWith(
-    `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n${REPLY_CONTEXT_SECTION_TEXT.replyTask.header}\n群里最新这条消息并没有人在叫你`
+    `[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n${REPLY_CONTEXT_SECTION_TEXT.replyTask.header}\n${RANDOM_TRIGGER_INSTRUCTION}`
   );
 });
 
@@ -223,7 +233,7 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
     senderName: "Alice",
     text: "@ninja_bot 你怎么看",
   };
-  const summaries = new LinkedQueue<string>();
+  const summaries = new BoundedDeque<string>(MAX_SUMMARY_ROUNDS);
   summaries.push("更早时 Alice 和 Bob 约好周末去看展。");
   chatSummaries.set(-1001, summaries);
 
@@ -235,8 +245,7 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
 
   expect(sections.referenceMemory).toStartWith(`[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]\n${REPLY_CONTEXT_SECTION_TEXT.referenceMemory.header}`);
   expect(sections.referenceMemory).toContain("更早时 Alice 和 Bob 约好周末去看展。");
-  expect(sections.referenceMemory).toContain("本群中 [id:99] 的发言人「自己（也就是你）」就是你");
-  expect(sections.referenceMemory).toContain("你的 Telegram 用户名是 @ninja_bot。");
+  expect(sections.referenceMemory).toContain(selfIdentityStatement(99, "ninja_bot"));
   expect(sections.referenceMemory).not.toContain("Ninja");
   expect(sections.referenceMemory).toEndWith(`[END ${REPLY_CONTEXT_SECTION_NAMES.referenceMemory}]`);
 
@@ -245,19 +254,23 @@ test("排队触发独立携带回复对象和转发路径，不依赖原消息�
   expect(sections.currentConversation).toEndWith(`\n[END ${REPLY_CONTEXT_SECTION_NAMES.currentConversation}]`);
 
   expect(sections.replyTask).toStartWith(`[BEGIN ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]\n${REPLY_CONTEXT_SECTION_TEXT.replyTask.header}`);
-  expect(sections.replyTask).toContain("转发路径：「频道 [id:-100666] [username:@tokyo_daily] 东京日报 → [id:1] Alice」");
-  expect(sections.replyTask).toContain("转发正文：「@ninja_bot 你怎么看」");
-  expect(sections.replyTask).not.toContain("TA 说的是：「@ninja_bot 你怎么看」");
-  // 回复引用与转录里的写法同源：目标不在窗口里就退回带 [已滑出] 的内嵌快照，
-  // 而不是另起一套 [message_id:]/[id:] 记法——同一个请求里出现两种记法时，
-  // 模型没法把它和转录里的任何一行对上。
-  expect(sections.replyTask).toContain(
-    `那条消息（回复 ${REPLY_TARGET_EVICTED_TAG} [id:2] Bob 的消息：「被回复的原问题」）`
-  );
+  // 按转发形态描述触发消息；回复引用与转录里的写法同源：目标不在窗口里就退回带 [已滑出] 的内嵌快照，
+  // 不出现 [message_id:] 记法。
+  expect(sections.replyTask).toContain(queuedTriggerDescription({
+    senderName: "Alice",
+    forwardPath: forwardPathTemplate("频道 [id:-100666] [username:@tokyo_daily] 东京日报", "[id:1] Alice"),
+    text: "@ninja_bot 你怎么看",
+    replyReference: replyTagTemplate({
+      target: `${REPLY_TARGET_EVICTED_TAG} [id:2] Bob`,
+      text: "被回复的原问题",
+      forwardTag: "",
+      quote: "",
+    }),
+  }));
   expect(sections.replyTask).not.toContain("[message_id:");
-  // 那条排队消息要自己认领「本轮触发消息」这个身份：它已经滑出窗口，转录里
-  // 没有它的行，不点明模型就会把转录最后一行当成触发消息。
-  expect(sections.replyTask).toContain("那条就是本轮的触发消息");
+  // 排队的触发消息已滑出窗口，回复任务按转发形态点明它是「本轮触发消息」。
+  expectTemplateRendered(sections.replyTask, (value: string): string =>
+    queuedTriggerDescription({ senderName: value, forwardPath: value, text: value, replyReference: value }));
   // 原消息不在热区时只使用入队快照里的单跳引用。
   expect(sections.replyTask).not.toContain("多层回复链");
   expect(sections.replyTask).toEndWith(`\n[END ${REPLY_CONTEXT_SECTION_NAMES.replyTask}]`);
@@ -357,11 +370,15 @@ test("排队触发滑出窗口后保留入队正文与单跳引用，不追加�
   )!;
 
   expect(sections.replyTask).not.toContain("多层回复链");
-  expect(sections.replyTask).toContain("（回复 #81）");
-  // 那个编号在转录里不存在，一个字都不该出现。
+  // 该编号不出现在回复任务里。
   expect(sections.replyTask).not.toContain("#2000");
-  // 任务保留触发时的正文，避免把当前转录尾部当成待回答的消息。
-  expect(sections.replyTask).toContain("那条就是本轮的触发消息（TA 说的是：「所以到底几点集合」");
+  // 任务保留触发时的正文，回复对象就在窗口里时只留指针。
+  expect(sections.replyTask).toContain(queuedTriggerDescription({
+    senderName: "Carol",
+    forwardPath: "",
+    text: "所以到底几点集合",
+    replyReference: replyPointerTemplate(81),
+  }));
 });
 
 test("媒体特殊回复任务明确标出来源到当前发送者的转发路径", () => {
@@ -395,15 +412,10 @@ test("媒体特殊回复任务明确标出来源到当前发送者的转发路�
     }
   )!;
 
-  expect(sections.replyTask).toContain("这份内容是转发来的，转发路径：「[id:4] Dave → [id:3] Carol Chan」");
+  expect(sections.replyTask).toContain(forwardedMediaNotice(forwardPathTemplate("[id:4] Dave", "[id:3] Carol Chan")));
 });
 
-test.each([
-  ["sticker", "一枚贴纸"],
-  ["animation", "一个 GIF（动图）"],
-  ["voice", "一条语音"],
-  ["photo", "一张图片"],
-] as const)("媒体回复任务按类型 %s 给出名词「%s」", (kind, noun) => {
+test.each(["sticker", "animation", "voice", "photo"] as const)("媒体回复任务按类型 %s 给出对应名词", (kind) => {
   const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
   messages.push(bufferedMessageFixture({
     messageId: 83,
@@ -431,5 +443,7 @@ test.each([
     }
   )!;
 
-  expect(sections.replyTask).toContain(`刚才 Carol 用${noun}回复了你上一条消息。`);
+  expect(sections.replyTask).toContain(mediaNounFor(kind));
+  expectTemplateRendered(sections.replyTask, (value: string): string =>
+    mediaReplyTriggerInstruction({ kind, senderId: 3, senderName: value, description: value }, value));
 });

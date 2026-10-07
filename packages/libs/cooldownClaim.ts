@@ -1,35 +1,15 @@
 /**
  * 「先占位、再发请求、失败按 token 撤销」的按群冷却骨架。
  *
- * 本模块**不持有任何缓存**：冷却表由 owner 文件声明并按 AGENTS.md 写清填充、
+ * 本模块不持有任何缓存：冷却表由 owner 文件声明并按 AGENTS.md 写清填充、
  * 清理、容量与 Worker 重建策略（见 cache/workers/aiChat/imageGeneration.ts），
- * 这里只接收它并实现判定，符合「纯函数不得与另一线程独占缓存放在同一文件」。
+ * 这里只接收它并实现判定。
  *
- * token 是这套语义里唯一不显然的部分：撤销必须校验 token，否则一次迟到的失败
- * 回调会删掉同群后来建立的**新**冷却，让下一次请求立刻穿透。
+ * 撤销按 token 校验：只有原占位者的 token 能删除冷却，迟到的失败回调不影响同群后来
+ * 建立的新冷却。
  */
 
-/** 某群当前资格及不可用时的剩余冷却。 */
-export type CooldownAvailability =
-  | { allowed: true }
-  | { allowed: false; retryAfterMs: number };
-
-/** 原子占位结果；token 只供原占位者释放，旁路占位不产生 token。 */
-export type CooldownClaim =
-  | { allowed: true; token: symbol | null }
-  | { allowed: false; retryAfterMs: number };
-
-/** 一份按群冷却的全部状态；由 owner 文件提供，本模块只读写不持有。 */
-export interface CooldownClaimStore {
-  /** 每群最近一次占位时刻。 */
-  readonly claimedAt: Map<number, number>;
-  /** 与 claimedAt 逐键对齐的占位 token。 */
-  readonly tokens: Map<number, symbol>;
-  /** 冷却时长。 */
-  readonly cooldownMs: number;
-  /** Symbol 描述，只用于调试可读性。 */
-  readonly tokenLabel: string;
-}
+import type { CooldownAvailability, CooldownClaim, CooldownClaimStore } from "../types/cooldown";
 
 export interface CooldownClaimParams {
   readonly store: CooldownClaimStore;

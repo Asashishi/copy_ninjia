@@ -123,8 +123,8 @@ export function prepareApplyLockdown(chatId: number, dispatchLockdown: LockdownD
 
 /**
  * applying intent 已落盘后才真正修改 Telegram。先重新读取最新权限，只合并
- * invite 限制，避免 T0 快照覆盖落盘窗口内的管理员修改。读取失败发生在写
- * 操作之前，可安全撤销 intent；set 失败的远端结果不确定，仍需恢复协调。
+ * invite 限制；读取失败发生在写操作之前，撤销 intent；set 失败的远端结果不确定，
+ * 进入恢复协调。
  */
 export function commitApplyLockdown(chatId: number, dispatchLockdown: LockdownDispatcher): void {
   const entry: LockdownEntry | undefined = lockdownEntries.get(chatId);
@@ -172,7 +172,7 @@ export function commitApplyLockdown(chatId: number, dispatchLockdown: LockdownDi
  * 异步恢复群组原本的默认权限，结果以 restoreResult 回投（失败由状态机安排重试）。
  *
  * 权限被拒的失败计入条目的 restorePermanentFailures，超过 RESTORE_PERMANENT_FAILURE_LOG_LIMIT
- * 后降为 warn（重试退避见 lockdownRuntime.ts 的 scheduleRestoreRetry）；Worker 停机撤销的请求
+ * 后降为 warn（重试退避见 lockdownRuntime.ts 的 restoreRetryDelayMs）；Worker 停机撤销的请求
  * 不改计数、不记日志，其它结局清零。
  */
 export function beginRestoreLockdown(chatId: number, originalPermissions: ChatPermissions, dispatchLockdown: LockdownDispatcher): void {

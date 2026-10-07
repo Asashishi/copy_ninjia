@@ -45,7 +45,7 @@ installGagTestHooks();
 
 describe("gag 消息与 inline 入口", () => {
   test("被管教的人换个话题说话：入口搬到新话题，旧话题那条被删掉", async () => {
-    // 按钮留在原话题的话，他在话题 B 被删消息、却要回话题 A 才能说话。
+    // 入口随目标最近发言的话题搬到新话题。
     const session: GagSession = createSession({
       targetId: 7,
       speakNoticeMessageId: 55,
@@ -74,7 +74,7 @@ describe("gag 消息与 inline 入口", () => {
     await settleGagBackgroundTasks();
 
     expect(claimed).toBe(true);
-    // 先在新话题发一条，再删旧话题那条；顺序反过来会出现一段没有入口的空窗。
+    // 先在新话题发一条，再删旧话题那条。
     expect(events).toEqual(["send:22", "delete:55"]);
     expect(session.speakNoticeThreadId).toBe(22);
     expect(session.speakNoticeMessageId).toBe(56);
@@ -98,7 +98,7 @@ describe("gag 消息与 inline 入口", () => {
       }
     );
 
-    // 目标自己的消息会被 gag 删掉，因此不进 7 条窗口；换新由别人的消息推动。
+    // 目标自己的消息会被 gag 删掉，不进计数窗口；换新由别人的消息推动。
     await gag.handleGagMessageIngress(
       normalMessage({
         message_id: 90,
@@ -309,15 +309,14 @@ describe("gag 消息与 inline 入口", () => {
       }
     ));
 
-    // 本群有活动会话，因此这条必须走异步认领段；同步返回就说明守卫判错了群。
-    const started: boolean | Promise<boolean> = gag.handleGagMessageIngress(
+    // 本群有活动会话但发言人不是目标：认领判定同步返回 false，不分配 Promise；
+    // 到期的入口换新交给 gag 后台任务。
+    expect(gag.handleGagMessageIngress(
       normalMessage({
         from: { id: 100, is_bot: false, first_name: "Admin" },
       }),
       999
-    );
-    expect(started).toBeInstanceOf(Promise);
-    const ingress: Promise<boolean> = started as Promise<boolean>;
+    )).toBeFalse();
     for (let step: number = 0; step < 6 && finishSend === undefined; step++) {
       await Promise.resolve();
     }
@@ -327,10 +326,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(session.phase).toBe("ending");
 
     finishSend!();
-    const ingressDone: Promise<void> = ingress.then(
-      (handled: boolean): void => expect(handled).toBeFalse()
-    );
-    await settleTestBatch([ingressDone, teardown]);
+    await settleTestBatch([teardown]);
 
     expect(gagSessionsByChat.has(session.chatId)).toBeFalse();
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(-1001, 54);
@@ -557,8 +553,7 @@ describe("gag 消息与 inline 入口", () => {
   });
 
   test("本群没有活动会话且这条不是 gag 结果时同步返回 false", () => {
-    // 判定只需一次 Map.has 加一次 via_bot/entity 判定；本 handler 挂在每条群
-    // 消息与全部命令之前（见 app/registerHandlers.ts），返回值必须同步。
+    // 判定只需一次 Map.has 加一次 via_bot/entity 判定；本 handler 挂在每条群消息与全部命令之前（见 app/registerHandlers.ts），返回值同步。
     expect(gagSessionsByChat.size).toBe(0);
     expect(gag.handleGagMessageIngress(normalMessage({ message_id: 4242 }), 999))
       .toBe(false);
@@ -660,7 +655,7 @@ describe("gag 消息与 inline 入口", () => {
   });
 
   test("每次应答登记本次全部结果的源文本，供广告检测按落群正文取回", async () => {
-    // 送检的是这份源文本而不是变形正文；对应关系只有应答那一刻能建立。
+    // 送检的是这份源文本，不是变形正文；对应关系只有应答那一刻能建立。
     const userSession: GagSession = createSession();
     const otherChatSession: GagSession = createSession({ chatId: -1002 });
     addSession(userSession);
@@ -694,8 +689,7 @@ describe("gag 消息与 inline 入口", () => {
       expect(inlineResultSourceOf(7, messageText)).toBe("小号 也有啊");
     }
 
-    // 每敲一个键就来一次应答并整体覆盖：上一次按键那些结果再也取不回源文本，
-    // 只会被当成拿不到，而不会拿这次的源文本去判上一次那条正文。
+    // 每敲一个键就来一次应答并整体覆盖：上一次按键那些结果取不回源文本，不拿这次的源文本去判上一次那条正文。
     const latest: string[] = await renderQuery("小号也有啊喵", "inline-source-2");
     expect(inlineResultSourceOf(7, latest[0]!)).toBe("小号也有啊喵");
     expect(inlineResultSourceOf(7, rendered[0]!)).toBeUndefined();
@@ -705,7 +699,7 @@ describe("gag 消息与 inline 入口", () => {
     expect(inlineResultSourceOf(7, emptyRendered[0]!)).toBeUndefined();
     expect(inlineResultSourceOf(7, latest[0]!)).toBe("小号也有啊喵");
 
-    // Bot API 明确拒收的应答没有送达任何结果，不得顶掉上一次送达的登记。
+    // Bot API 明确拒收的应答没有送达任何结果，不顶掉上一次送达的登记。
     const rejectedError: Error = Object.assign(new Error("Bad Request"), {
       error_code: 400,
       description: "Bad Request: query is too old and response timeout expired or query ID is invalid",
@@ -817,8 +811,7 @@ describe("gag 消息与 inline 入口", () => {
     };
     expect(await gag.handleGagInlineQuery(context as never)).toBeTrue();
     expect(answerInlineQuery.mock.calls[0]?.[0]).toHaveLength(GAG_SESSION_MAX);
-    // GAG_SESSION_MAX 是跨全部群的全局上限，远小于 answerInlineQuery 的 50 条
-    // 上限，因此不存在第二页，也就不再回 next_offset。
+    // GAG_SESSION_MAX 是跨全部群的全局上限，小于 answerInlineQuery 的单次结果上限，不存在第二页：不回 next_offset。
     expect(answerInlineQuery.mock.calls[0]?.[1]).toEqual({
       cache_time: 0,
       is_personal: true,

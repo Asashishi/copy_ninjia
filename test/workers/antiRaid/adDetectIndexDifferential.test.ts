@@ -1,18 +1,17 @@
 /**
- * 广告待检表两层索引（群 id → 发送者 id）与改造前单层 `chatId:senderId` 字符串键索引的对拍。
+ * 广告待检表两层索引（群 id → 发送者 id）与单层 `chatId:senderId` 字符串键参照实现（LegacyPendingIndex）的对拍。
  *
- * 旧模型逐字保留改造前的语义：已有发送者再来消息时重复 set 并刷新饱和边沿，停管按 bundle.chatId
- * 逐键删、免检按 bundle.senderId 逐键删，容量按表大小判。新实现直接调用 queueState.ts 的访问函数。
- * 同一随机操作序列逐步喂给两边，每步比较条数、群层数、每个键取到的对象、容量拒绝结论与饱和标志，以及
- * 每个群内的发送者顺序。跨群的遍历次序不在对拍范围内：两层表按群分组遍历，只影响 sweep 兜底
- * 补排进队的先后（见 sweepAdDetect 的 JSDoc）。
+ * 参照实现：已有发送者再来消息时重复 set 并刷新饱和边沿，停管按 bundle.chatId 逐键删、免检按 bundle.senderId 逐键删，
+ * 容量按表大小判。两层索引直接调用 queueState.ts 的访问函数。同一随机操作序列（STEPS 步）逐步喂给两边，每步比较条数、
+ * 群层数、每个键取到的对象、容量拒绝结论与饱和标志，以及每个群内的发送者顺序。跨群的遍历次序不在对拍范围内：
+ * 两层表按群分组遍历，只影响 sweep 兜底补排进队的先后（见 sweepAdDetect 的 JSDoc）。
  */
 
 import { beforeEach, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 import type { AdMessageBundle } from "../../../packages/types/antiRaid/adDetect";
 
-/** 调小的待检容量，让两万步里反复撞满与恢复。 */
+/** 调小的待检容量，让 STEPS 步随机序列里反复撞满与恢复。 */
 const TEST_PENDING_CAPACITY: number = 9;
 const realAdDetectConsts = await import("../../../packages/consts/antiRaid/adDetect");
 mock.module("../../../packages/consts/antiRaid/adDetect", () => ({
@@ -41,7 +40,7 @@ const CHAT_IDS: readonly number[] = [-1001, -1002, -1003, -1004];
 const SENDER_IDS: readonly number[] = [1, 2, 3, 4, 5, 6];
 const STEPS: number = 20_000;
 
-/** 改造前的待检表：单层 Map，键为 verificationKey。 */
+/** 单层参照实现：Map 的键为 verificationKey。 */
 class LegacyPendingIndex {
   readonly bundles: Map<string, AdMessageBundle> = new Map<string, AdMessageBundle>();
   saturated: boolean = false;
@@ -144,7 +143,7 @@ test("两层索引与旧单层索引在同一随机操作序列下逐步一致",
     const senderId: number = pick(SENDER_IDS);
     const roll: number = random();
     if (roll < 0.55) {
-      // 一条新候选：已有发送者原地并入（旧实现重复 set），新发送者先过容量闸再入表。
+      // 一条新候选：已有发送者原地并入（参照实现重复 set），新发送者先过容量闸再入表。
       const existing: AdMessageBundle | undefined = legacy.get(chatId, senderId);
       if (existing !== undefined) {
         legacy.store(existing);

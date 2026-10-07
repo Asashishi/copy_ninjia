@@ -1,4 +1,5 @@
 import type { WebDigestLanguage } from "../types/webDigest";
+import { exhaustiveList } from "./exhaustiveList";
 
 /** cron `send_web_digest` 联网摘要（libs/webDigest.ts、libs/webDigestMarkdown.ts、config/cron.ts）的格式常量。 */
 
@@ -36,7 +37,7 @@ export const WEB_DIGEST_DEFAULT_MAX_ITEMS: number = 5;
 /** cron.json `payload.language` 缺省时的摘要语言。所属模块：config/cron.ts。 */
 export const WEB_DIGEST_DEFAULT_LANGUAGE: WebDigestLanguage = "zh";
 /** cron.json `payload.language` 接受的全部取值。所属模块：config/cron.ts。 */
-export const WEB_DIGEST_LANGUAGES: readonly WebDigestLanguage[] = ["zh", "ja", "en"];
+export const WEB_DIGEST_LANGUAGES: readonly WebDigestLanguage[] = exhaustiveList<WebDigestLanguage>()(["zh", "ja", "en"]);
 
 /**
  * 来源行的标签（含分隔符），按摘要语言取用；渲染为「标签[来源](地址)」。
@@ -50,7 +51,7 @@ export const WEB_DIGEST_SOURCE_LABELS: Readonly<Record<WebDigestLanguage, string
 /** 来源与时间之间的分隔。所属模块：libs/webDigestMarkdown.ts。 */
 export const WEB_DIGEST_TIME_SEPARATOR: string = " · ";
 
-/** 组稿最多请求几次：首次不合格（JSON 非法、字段不合格、来源未出现或超长）时带诊断重试一次。所属模块：aiChat/ai/webDigest.ts。 */
+/** 组稿最多请求次数：首次不合格（JSON 非法、字段不合格、来源未出现或超长）时带诊断重试。所属模块：aiChat/ai/webDigest.ts。 */
 export const WEB_DIGEST_COMPOSE_ATTEMPTS: number = 2;
 /** 交给组稿模型的来源列表最多条数（按地址去重后取前若干条）。所属模块：aiChat/ai/webDigest.ts。 */
 export const WEB_DIGEST_MAX_SOURCES: number = 20;
@@ -66,8 +67,8 @@ export const WEB_DIGEST_NO_SEARCH_LOG_MAX_CHARS: number = 2_000;
 export const WEB_DIGEST_UNSEARCHED_WARNING: string = "注意，以下可能为模型侧缓存内容，请仔细甄别";
 /**
  * 一次组稿流水线里单次模型调用的上限：取三家实现包 `text` 与 `web_search` 档位超时的最大值
- * （GEMINI/OPENAI/ANTHROPIC_REQUEST_TIMEOUTS_MS），档位内已含 SDK 自身的重试。主线程不加载
- * 各家 SDK，这里不直接引用那三张表，两边一致由 test/consts/webDigest.test.ts 核对。
+ * （GEMINI/OPENAI/ANTHROPIC_REQUEST_TIMEOUTS_MS），档位内已含 SDK 自身的重试；
+ * 与那三张表的一致性由 test/consts/webDigest.test.ts 核对。
  * 所属模块：aiChat/webDigest.ts。
  */
 export const WEB_DIGEST_MODEL_CALL_TIMEOUT_MS: number = 180_000;
@@ -77,7 +78,7 @@ export const WEB_DIGEST_MODEL_CALL_TIMEOUT_MS: number = 180_000;
  */
 export const WEB_DIGEST_QUEUE_ALLOWANCE_MS: number = 60_000;
 /**
- * 主线程等待一次组稿回执的上限：(1 次检索 + WEB_DIGEST_COMPOSE_ATTEMPTS 次组稿) ×
+ * 主线程等待一次组稿回执的上限：(一次检索 + WEB_DIGEST_COMPOSE_ATTEMPTS 次组稿) ×
  * WEB_DIGEST_MODEL_CALL_TIMEOUT_MS + WEB_DIGEST_QUEUE_ALLOWANCE_MS；到点撤回 Worker 侧的组稿
  * 并按 timed out 结算。所属模块：aiChat/webDigest.ts。
  */

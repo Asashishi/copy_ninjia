@@ -27,7 +27,7 @@ import type { VoiceLanguagePrompts } from "../../../types/aiChat/voiceMessage";
  */
 export const TOOL_STATUS_BLOCK_LABEL: string = "【本轮工具状态】";
 
-/** 工具说明与行动总则里指向本轮工具状态段的固定说法；各工具说明共用，措辞不漂移。 */
+/** 工具说明与行动总则里指向本轮工具状态段的固定说法；各工具说明共用。 */
 export const TOOL_STATUS_POINTER: string =
   `${REPLY_CONTEXT_SECTION_NAMES.runtimeState} 区块的${TOOL_STATUS_BLOCK_LABEL}`;
 
@@ -63,7 +63,7 @@ export const SEND_STICKER_TOOL_INSTRUCTION: string =
 
 /**
  * send_message 工具的模型可见使用说明，按台词语言各拼一份注册进 VOICE_LANGUAGE_PROMPTS。手滑轮与
- * 普通轮共用这段文案，因此绝不能提「出错/手滑」：手滑规则只存在于抽中时拼进回复任务的
+ * 普通轮共用这段文案，文案不提「出错/手滑」：手滑规则只存在于抽中时拼进回复任务的
  * TYPO_REQUIRED_INSTRUCTION；恒声明的两个可选字段的说明只写「回复任务要求时才填」
  * （见 aiChat/ai/tools/replyToolset/definitions.ts）。
  * @param voiceDuplicateRule 随台词语言变化的语音去重判定，接在「也不要再用 text 发一遍：」之后。
@@ -207,7 +207,7 @@ export function groupQaToolStatus(count: number): string {
     : `${GROUP_QA_QUERY_TOOL} / ${GROUP_QA_ANSWER_TOOL}：本群没有登记问答`;
 }
 
-/** 独立 web_search 的本轮函数调用上限；来自构造执行器时的同一配置快照。所属模块：replyToolset/toolStatus.ts。 */
+/** 独立 web_search 的本轮函数调用上限；来自构造执行器时的同一配置快照。所属模块：aiChat/ai/tools/replyToolset/toolStatus.ts。 */
 export function webSearchToolStatus(maxCallsPerUse: number): string {
   return `${WEB_SEARCH_TOOL}：本轮最多调用 ${maxCallsPerUse} 次`;
 }
@@ -249,9 +249,9 @@ function replyActionInstruction(voiceDuplicateRule: string): string {
  * 按 `agent.tts.bot_language` 注册的语音相关文案，键与 TtsBotLanguage 一一对应。`ja` 的台词是日语
  * 动漫腔，`en`、`zh` 换成对应语言的台词示例、语气描述与去重判定；其余模型可见段落三种语言共用同一份
  * 中文说明。speechLanguageStyle 是交给语音合成模型的朗读语言要求，用该语言本身写成。
- * replyToolset/orchestrator.ts 每轮按配置取一份，send_message、send_voice 的声明、系统提示词
+ * aiChat/ai/tools/replyToolset/orchestrator.ts 每轮按配置取一份，send_message、send_voice 的声明、系统提示词
  * 「行动与停止」段与本轮 send_voice 的合成请求同用这一份；prompt/voice_tool.md 存在时 send_voice 的
- * 说明改用其正文（见 replyToolset/voiceMessage.ts 的 buildSendVoiceToolDefinition）。
+ * 说明改用其正文（见 aiChat/ai/tools/replyToolset/voiceMessage.ts 的 buildSendVoiceToolDefinition）。
  * 所属模块：aiChat/ai/tools/replyToolset。
  */
 export const VOICE_LANGUAGE_PROMPTS: Readonly<Record<TtsBotLanguage, Readonly<VoiceLanguagePrompts>>> = {
@@ -329,10 +329,9 @@ export const VOICE_LANGUAGE_PROMPTS: Readonly<Record<TtsBotLanguage, Readonly<Vo
 /**
  * generate_image 工具描述末尾的常量指引。
  *
- * 参考素材尺寸、群冷却剩余秒数每次触发都不同，写进工具声明就会让「静态系统提示词 +
- * 全部工具声明」这段稳定前缀每轮换一个指纹，各家供应商的前缀缓存都会从这里开始
- * 落空（见 aiChat/{gemini,openai}/replySession.ts 的头注）。因此声明里只留这句逐字
- * 恒定的指引，素材与冷却写进运行时状态区块的本轮工具状态。
+ * 参考素材尺寸、群冷却剩余秒数每次触发都不同，写进运行时状态区块的本轮工具状态；
+ * 工具声明里只留这句逐字恒定的指引，使「静态系统提示词 + 全部工具声明」这段稳定前缀
+ * 每轮一致（见 aiChat/{gemini,openai}/replySession.ts 的头注）。
  */
 export const IMAGE_REFERENCE_POINTER: string =
   `本轮有没有可用的参考图片素材，见 ${TOOL_STATUS_POINTER}里 ${GENERATE_IMAGE_TOOL} 那一行。`;

@@ -99,21 +99,21 @@ Every JSON file is parsed under a strict schema: unknown keys, typos, type misma
 
 ## Editing While Running (Hot Reload)
 
-The bot watches `config/dynamic/` continuously. Saving changes triggers strict schema validation and hot reload in approximately 0.5 seconds:
+The bot watches `config/dynamic/` continuously. Strict schema validation and hot reload are triggered once the `CONFIG_RELOAD_DEBOUNCE_MS` debounce window has elapsed after the last file event in the directory:
 
-1. **Hot Replacement**: Valid changes update the in-memory snapshot and are immediately dispatched to relevant Workers. In-flight requests finish cleanly with the previous configuration.
+1. **Hot Replacement**: Valid changes update the in-memory snapshot and are immediately dispatched to relevant Workers.
 2. **Rejection & Fail-Safe**: Invalid configurations are rejected as a whole. Detailed error locations (file path, field path, expected shape) are logged, and the bot continues running using the previous valid snapshot.
 3. **Availability Linkage**:
    - Adding or removing `ad_samples.json` or `ad_detect` in `agent.json` directly enables or disables ad detection.
-   - Adding or removing the chat core capabilities (`text`, `summary`, `media`) or `mood.json` / `stickers.json` immediately halts AI chat. Per-chat database toggles maintain their state and resume automatically once prerequisites are restored.
+   - Adding or removing the chat core capabilities (`text`, `summary`, `media`) or `mood.json` / `stickers.json` automatically enables or disables AI chat.
    - Adding or removing optional tools (`image`, `tts`, `web_search`) takes effect on the fly.
 4. **Cross-File Dependency Validation**:
-   - `send_voice` in `cron.json` strictly requires `agent.tts`: task tables with voice actions are rejected if `tts` is absent; removing `tts` while an active cron task uses `send_voice` rejects the `agent.json` modification.
-   - `send_web_digest` requires the core dialogue capabilities, following the same rejection rules.
+   - `send_voice` in `cron.json` strictly requires `agent.tts`: task tables with voice actions are rejected if `tts` is absent; while the task table still contains `send_voice`, an `agent.json` change that removes `agent.tts` is rejected as a whole.
+   - `send_web_digest` requires the core dialogue capabilities, following the same rejection rules. At startup the same check validates `agent.json` before `cron.json`, and a missing dependency refuses startup.
 5. **Stickers & Media**:
-   - Newly added packs in `stickers.json` begin indexing immediately; removed packs are withdrawn from AI access.
-   - `assets.json` updates take effect on next use. If `onlyPath.random_h_image_dir` points to an invalid directory, the modification is rejected.
-6. **Incremental Task Reconciliation**: `cron.json` diffs by task name: unchanged tasks maintain their schedules, modified or deleted tasks stop cleanly, and new tasks start scheduling.
+   - Newly added packs in `stickers.json` immediately begin building their description catalogs asynchronously; packs removed from the allowlist are no longer used, and their set cache and generated catalogs are cleaned up.
+   - If `onlyPath.random_h_image_dir` in `assets.json` is changed to an invalid directory, the whole modification is rejected.
+6. **Incremental Task Reconciliation**: `cron.json` diffs by task name: unchanged tasks keep their schedules, modified or deleted tasks stop being scheduled, an in-flight round stops before its next action, retry, or chat, and new tasks start scheduling.
 
 ---
 
@@ -139,7 +139,7 @@ Static configuration file located at `config/static/bot.json`. Requires a proces
 | `bot_token` | `string` | **Required** | Non-empty string, not equal to placeholder | Telegram Bot API token issued by BotFather (`123456:ABC...`). Core secret credential |
 | `super_admin_user_id` | `number` | **Required** | Positive safe integer (`> 0`) | Telegram numeric user ID of the sole super administrator (not @username). Inherent holder of all permissions |
 | `atmosphere` | `string` | Optional | `"mesugaki"` or `"normal"`; trimmed and strictly validated; omission selects by custom-persona presence | Global notification tone; explicit configuration takes priority (`mesugaki` teasing, `normal` plain). When omitted, use plain if `prompt/persona.md` exists, otherwise teasing; does not change the AI persona |
-| `time_zone` | `string` | Optional | IANA name, default `"Asia/Tokyo"`; trimmed and strictly validated | Default calendar zone for fortune, logs, ad activity, AI clocks, daily maintenance, and cron tasks without an explicit zone; the Tokyo weather tool is registered only for `Asia/Tokyo`, including the omitted default; invalid values refuse startup |
+| `time_zone` | `string` | Optional | IANA name, default `"Asia/Tokyo"`; trimmed and strictly validated | Default calendar zone for fortune, logs, ad activity, AI clocks, daily maintenance, and cron tasks without an explicit zone; the Tokyo weather tool is registered only for `Asia/Tokyo`, including the omitted default; invalid values refuse startup. The data root is bound to this zone when it is created, and a later change refuses startup; see [07 Operations](../../docs/en/07-operations.md#calendar-time-zone) |
 
 ---
 
@@ -223,9 +223,9 @@ Applies to all capabilities (`text`, `summary`, `media`, `ad_detect`, `image`, `
 | --- | --- | --- | --- | --- |
 | `provider` | `string` | **Required** | `"google"`, `"openai"`, or `"anthropic"` | Underlying protocol and SDK (**Note**: `image` and `tts` only support `"google"` or `"openai"`). Compatible services (DeepSeek, xAI) use `"openai"` |
 | `api_key` | `string` | **Required** | Non-empty string, not equal to placeholder | Dedicated API key for this capability |
-| `base_url` | `string` | Optional | Absolute HTTPS URL (`http` only allowed for loopback `127.0.0.1`, `localhost`) | Custom endpoint URL. Must not contain userinfo credentials or `#` fragments |
-| `model` | `string` | **Required** (except xAI TTS) | Non-empty string | Actual model name accepted by the endpoint |
-| `headers` | `object` | Optional | 1–8 key-value pairs (**Only allowed when `provider: "google"`**) | Custom HTTP request headers for third-party gateway authentication (e.g. Cloudflare AI Gateway). Keys cannot be `x-goog-api-key`; values must be printable ASCII |
+| `base_url` | `string` | Optional | Absolute HTTPS URL (`http` only allowed for loopback `localhost`, `127.0.0.1`, `::1`) | Custom endpoint URL. Must not contain userinfo credentials or `#` fragments |
+| `model` | `string` | **Required** (forbidden for xAI TTS) | Non-empty string | Actual model name accepted by the endpoint |
+| `headers` | `object` | Optional | 1–8 key-value pairs (**Only allowed when `provider: "google"`**) | Custom HTTP request headers for third-party gateway authentication (e.g. Cloudflare AI Gateway). Keys must be HTTP tokens, must be unique ignoring case, and cannot be `x-goog-api-key`; values must be non-empty printable ASCII strings after trimming |
 
 ### Image Generation Keys (`agent.image`)
 
@@ -239,11 +239,11 @@ Applies to all capabilities (`text`, `summary`, `media`, `ad_detect`, `image`, `
 | --- | --- | --- | --- | --- |
 | `speech_protocol` | `string` | **OpenAI Required** | `"openai"` (audio/speech) or `"xai"` (POST /tts) | Voice wire protocol format. **Strictly forbidden** when `provider: "google"` |
 | `voice` | `string` | **Required** | Non-empty string | Voice timbre identifier. Google built-in name (e.g. `en-us-nika`) or Voice Design ID; OpenAI/xAI voice name (e.g. `coral`, `ara`) |
-| `style` | `string` | Optional | Non-empty string, **forbidden for xAI protocol** | Base reading style prompt. Defaults to built-in tsundere prompt: `いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
-| `language` | `string` | Optional | BCP-47 code or `"auto"`, **only allowed for xAI** | Synthesis language, default `"auto"` |
+| `style` | `string` | Optional | Non-empty string, **forbidden for xAI protocol** | Base reading style prompt. Defaults to the built-in tsundere style (`TTS_DEFAULT_STYLE`) |
+| `language` | `string` | Optional | Non-empty string (BCP-47 code or `"auto"`), **only allowed for xAI** | Synthesis language sent with the synthesis request, default `"auto"` |
 | `bot_language` | `string` | Optional | `"en"`, `"zh"` or `"ja"`; trimmed and strictly validated; default `"ja"` | Language of AI voice lines: switches the model-facing voice tool instruction and de-duplication rules, and appends that language's speaking-language requirement to the base style in AI reply synthesis requests (not sent under the xAI protocol; `/send` and cron do not get it). Neither `style` nor `prompt/voice_tool.md` follows it; switch them to the same language when changing it |
-| `daily_limit` | `number` | Optional | Positive safe integer, default `100` | Total daily voice synthesis budget across all callers in rolling 24h window |
-| `daily_reserve_quota` | `number` | Optional | Integer, range `0` to `daily_limit - 1`, default `25` | Dedicated quota reserved for `/send` and cron tasks. AI chat independently consumes remaining `daily_limit - daily_reserve_quota` |
+| `daily_limit` | `number` | Optional | Positive safe integer, default `100` | Total voice synthesis budget per counting window; the window starts at the first request within it and lasts `TTS_USAGE_WINDOW_MS` |
+| `daily_reserve_quota` | `number` | Optional | Integer, range `0` to `daily_limit - 1`, default `25` | Dedicated quota reserved for `/send` and cron tasks. AI chat independently consumes the remaining `daily_limit - daily_reserve_quota`, and the two sides are counted separately |
 
 ### Web Search Keys (`agent.web_search`)
 
@@ -307,7 +307,7 @@ Dynamic configuration file located at `config/dynamic/stickers.json`. Specifies 
 
 | Key | Type | Required | Constraints & Values | Description |
 | --- | --- | --- | --- | --- |
-| `packs` | `string[]` | **Required** | Array with `0` to `5` unique entries | List of Telegram sticker pack short names (the name segment in `t.me/addstickers/<name>`, **not the full URL**). An empty array `[]` disables sticker usage in AI chat |
+| `packs` | `string[]` | **Required** | Array with `0` to `5` entries; each entry, trimmed, contains only letters, digits, and underscores and must be unique | List of Telegram sticker pack short names (the name segment in `t.me/addstickers/<name>`, **not the full URL**). An empty array `[]` disables sticker usage in AI chat |
 
 ---
 
@@ -353,9 +353,9 @@ Dynamic configuration file located at `config/dynamic/mood.json`. Defines AI moo
       }
     },
     {
-      "name": "发情",
+      "name": "色气",
       "weight": 25,
-      "instruction": "你现在处于发情状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
+      "instruction": "你现在处于色气拉满的状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
       "timeMultipliers": {
         "morning": 0.7,
         "daytime": 0.8,
@@ -387,7 +387,7 @@ Dynamic configuration file located at `config/dynamic/mood.json`. Defines AI moo
 | Key | Type | Required | Constraints & Values | Description |
 | --- | --- | --- | --- | --- |
 | `moods` | `object[]` | **Required** | Non-empty array of objects | Mood definitions list |
-| `moods[].name` | `string` | **Required** | Non-empty string, unique across list | Mood identifier name (e.g. `"Happy"`, `"Sleepy"`) |
+| `moods[].name` | `string` | **Required** | Non-empty string, unique across list | Mood identifier name (e.g. `"开心"`, `"色气"`, `"困"`) |
 | `moods[].weight` | `number` | **Required** | Positive integer, **sum of all items must equal exactly 100** | Base selection weight percentage |
 | `moods[].instruction` | `string` | **Required** | Non-empty string | Persona behavioral prompt injected into AI context |
 | `moods[].weatherMultipliers` | `object` | Optional | Keys restricted to `clear`, `cloudy`, `rain`, `snow`, `storm`, `fog`; values `0 < x ≤ 100` | Weather adjustment multipliers (default multiplier is `1.0`) |
@@ -414,7 +414,7 @@ Dynamic configuration file located at `config/dynamic/ad_samples.json`. Root is 
 
 | Structure | Type | Required | Constraints & Values | Description |
 | --- | --- | --- | --- | --- |
-| Root Array | `string[]` | **Required** | Array with `1` to `500` unique entries | Positive ad message examples. Each entry must be non-empty after trimming and `≤ 1024` characters. Under `provider: "google"`, these samples are automatically compiled into a Gemini explicit context cache (1h TTL, refreshed on turn) |
+| Root Array | `string[]` | **Required** | Array with `0` to `500` unique entries | Positive ad message examples. Each entry, after runs of whitespace are collapsed into a single space and leading/trailing whitespace is trimmed, must be non-empty and `≤ 1024` characters; uniqueness is judged on that normalized form. Under `provider: "google"`, these samples are automatically compiled into a Gemini explicit context cache, refreshed in the background when the remaining lifetime falls below a threshold |
 
 ---
 
@@ -435,7 +435,8 @@ Place the service account JSON downloaded from Google Cloud at `config/static/g-
 | `type` | `string` | Optional | Fixed to `"service_account"` | Service account credential type |
 | `project_id` | `string` | Optional | Non-empty string | GCP project ID |
 | `private_key_id` | `string` | Optional | Non-empty string | Private key identifier |
-| Other fields | `string` | Optional | Standard GCP format | `client_id`, `auth_uri`, `token_uri` consumed by Google Cloud SDK |
+| `quota_project_id`, `universe_domain` | `string` | Optional | Non-empty string | Quota project and universe domain |
+| Other fields | any | Optional | Not validated, preserved as-is | `client_id`, `auth_uri`, `token_uri` consumed by Google Cloud SDK |
 
 ---
 
@@ -496,21 +497,23 @@ Dynamic configuration file located at `config/dynamic/cron.json`. Root is an arr
 
 ### Task-Level Key Reference
 
+The root array holds at most 128 tasks, and task names must be unique within the file; a missing file means no tasks.
+
 | Key | Type | Required | Constraints & Values | Description |
 | --- | --- | --- | --- | --- |
 | `name` | `string` | **Required** | Non-empty, `≤ 64` characters, unique across file | Unique task name. Renaming a task is equivalent to deleting the old task and registering a new one |
 | `chat_id` | `array` | **Required** | See "Chat Target Delivery Modes" below | Target destination chat IDs |
-| `cron` | `string` | **Required** | Standard 5-field cron expression or `@daily` macro | Schedule trigger expression |
+| `cron` | `string` | **Required** | Standard 5-field cron expression or `@daily` macro; must still have a future trigger time | Schedule trigger expression |
 | `time_zone` | `string` | Optional | IANA name; inherits `bot.json.time_zone` when omitted | Time zone used to evaluate trigger times (e.g. `"America/New_York"`) |
-| `rand_cron` | `string` | Optional | Format `"<min>-<max>"` or `"<max>"` in `m`/`h`/`d` within `1m` to `24d` | Random floating interval: after cron fires, picks a random minute within interval for execution |
+| `rand_cron` | `string` | Optional | Format `"<min>-<max>"` or `"<max>"` in `m`/`h`/`d` within `1m` to `24d` | Random floating interval: the first run fires on `cron`; after each run, the next trigger time is drawn uniformly at random within the interval (rounded up to a whole minute) |
 | `just_once` | `boolean` | Optional | `true` or `false`, default `false` (**cannot be used with `rand_cron`**) | Whether to run only once. **Note: execution flag is memory-only and resets on restart** |
-| `actions` | `object[]` | **Required** | Array of 1 to 16 action objects | Sequence of actions executed sequentially with 1-second interval |
+| `actions` | `object[]` | **Required** | Array of 1 to 16 action objects | Sequence of actions executed in declaration order, with `CRON_ACTION_GAP_MS` between adjacent actions |
 
 #### Chat Target Delivery Modes (`chat_id`)
 
-- **Explicit list** (e.g. `[-1001234567890, -1009876543210]`): Sent sequentially to listed chats (up to 64 chats).
-- **All managed chats** (`["all"]`): Sent to all chats enabled with `/init enable`. Verifies the bot's sending permissions (text/images/files/voice) beforehand; skips chats lacking any required permission.
-- **Exclusion list** (e.g. `["except", -1001234567890]`): Subtracts specified chat IDs from the `all` candidate list.
+- **Explicit list** (e.g. `[-1001234567890, -1009876543210]`): Sent to the listed chats one by one in written order; at most 64 non-zero, unique chat IDs; send permissions are not checked.
+- **All managed chats** (`["all"]`): Sent to all chats enabled with `/init enable`, one by one in ascending chat ID order. At the start of each round the bot's current sending permissions are checked per chat for the action types the task actually uses (text, image, file, voice); a chat is skipped as a whole when a permission is missing or the lookup fails.
+- **Exclusion list** (e.g. `["except", -1001234567890]`): Subtracts specified chat IDs from the `all` candidate list; excluded IDs share the same chat ID count limit as the explicit list.
 
 ### Action Types & Payload Reference (`actions`)
 
@@ -518,7 +521,7 @@ Dynamic configuration file located at `config/dynamic/cron.json`. Root is an arr
 | --- | --- | --- |
 | `send_message` | Send plain text | • `content` (`string`, Required): Message body, up to 4096 characters |
 | `send_image` | Send image(s), album, or random draw | • `content` (`string`, Optional): Caption text, up to 1024 characters<br>• `is_blurred` (`boolean`, Optional): Add spoiler blur to image(s), default `false`<br>• **Fixed image mode**: `url` (array of 1–10 URLs) or `path` (array of 1–10 local file paths), single items must still be an array<br>• **Random draw mode**: `rand_image: true`, forbids `url` and multi-file array; `path` optionally specifies custom directory, defaults to `assets.json`'s `random_h_image_dir` |
-| `send_file` | Send document / file | • `content` (`string`, Optional): Caption text, up to 1024 characters<br>• `url` (`string`, Mutually exclusive Required): Remote file URL (Telegram limit 20 MB)<br>• `path` (`string`, Mutually exclusive Required): Local file path (Local upload limit 50 MB) |
+| `send_file` | Send document / file | • `content` (`string`, Optional): Caption text, up to 1024 characters<br>• `url` (`string`, Mutually exclusive Required): Direct http(s) link to the remote file, fetched by Telegram<br>• `path` (`string`, Mutually exclusive Required): Local file path; must be a regular file no larger than `TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES` |
 | `send_voice` | Send synthesized voice message | • `content` (`string`, Required): Lines to speak, up to 256 characters<br>• `tone` (`string`, Optional): Timbre tone modifier, up to 64 characters (appended to base style)<br>*Note: Strictly requires `agent.tts`; synthesized once per turn and reused across chats* |
 | `send_web_digest` | Research and summarize a topic | • `topic` (`string`, Required): Short research description, up to 200 characters<br>• `language` (`string`, Optional): Digest language, `"zh"`, `"ja"`, or `"en"` (default `"zh"`)<br>• `max_items` (`number`, Optional): Maximum items (1–15, default 5)<br>• `instructions` (`string`, Optional): Task rules shared by research and composition, up to 500 characters; put formatting rules here, including separate lines per platform using JSON `\n` in item bodies<br>*Note: Requires core dialogue capabilities; prefers `agent.web_search`, otherwise uses built-in `agent.text` search; a model response without search is sent with a warning* |
 

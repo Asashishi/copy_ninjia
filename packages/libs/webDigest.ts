@@ -3,7 +3,7 @@
  *
  * 组稿模型交回的 JSON 必须逐字段合格才发：字段集精确、未知键拒绝；所有字符串去掉首尾空白后
  * 非空、不超过各自上限，也不得含可被渲染成机器人命令的片段；仅条目正文允许非空的多行，
- * 其它字符串不含换行；1–WEB_DIGEST_MAX_SECTIONS
+ * 其它字符串不含换行；至少一个、至多 WEB_DIGEST_MAX_SECTIONS
  * 个小节，每节至少一条，条目总数不超过任务的 max_items；来源地址只收 https、不带 userinfo、
  * 不含空白。失败时交回一条英文诊断（字段路径与期望形态），供组稿重试时带给模型。
  */
@@ -36,7 +36,7 @@ function reject(path: string, expected: string): never {
   throw new WebDigestProblem(`${path} must be ${expected}`);
 }
 
-/** 必填单行字符串：去掉首尾空白后 1–maxChars 字符、不含换行与可渲染命令。 */
+/** 必填单行字符串：去掉首尾空白后非空且不超过 maxChars 字符、不含换行与可渲染命令。 */
 function requiredLine(value: unknown, path: string, maxChars: number): string {
   const expected: string = `a single-line string of 1 to ${maxChars} characters without bot commands`;
   if (typeof value !== "string") return reject(path, expected);

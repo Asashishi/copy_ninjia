@@ -21,7 +21,7 @@ export interface SourceFileRuleParams {
   readonly projectRoot: string;
   /** 被检查文件的绝对路径。 */
   readonly path: string;
-  /** 该文件**唯一一次**解析得到的 AST；调用方负责用它跑完所有适用规则。 */
+  /** 该文件唯一一次解析得到的 AST；调用方负责用它跑完所有适用规则。 */
   readonly source: ts.SourceFile;
 }
 
@@ -162,7 +162,7 @@ export function collectConstantProblems({
  * 在编译期表达（见 AGENTS.md「常量与不可变性」），不做运行期冻结。
  *
  * 这条独立于 collectConstantProblems：解析结果和句柄对象不是 SCREAMING_SNAKE 常量，
- * 走不到那一条，但同样不许冻结。
+ * 不经过那一条，同样不许冻结。
  */
 export function collectObjectFreezeProblems({
   projectRoot,
@@ -216,7 +216,7 @@ export function collectModuleCacheProblems({
 const TEST_ONLY_TYPE_BARREL_PATTERN: RegExp = /(^|\/)types(\/index|\/antiRaid|\/diskIO)?$/;
 
 /**
- * `packages/` 通用的五条 AST 判定：领域类型入口、`console.error` 边界、导出函数
+ * `packages/` 通用的 AST 判定：领域类型入口、`console.error` 边界、导出函数
  * 返回类型、内联对象参数类型与 catch 绑定标注。
  */
 export function collectDeclarationProblems({

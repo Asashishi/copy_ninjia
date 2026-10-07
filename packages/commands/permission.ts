@@ -42,9 +42,8 @@ function formatPermissionHelpMessage(atmosphere: AtmosphereTexts): string {
  * 把目标身份的完整权限渲染为 MarkdownV2：转义后的开场白加 JSON 代码块。开场白里的
  * 目标昵称是用户可控内容，随开场白整段转义，不会形成格式或链接。
  *
- * 与 `help` 一样长期保留：这份回执是一张要照着逐项核对的权限看板，30 秒清理会
- * 在人读完之前把它收走，于是只能反复重发同一条命令。用户已明确授权这条例外，
- * 调用点显式传 `preserveInGroup: true`（见 docs/cn/04-invariants.md）。
+ * 与 `help` 一样长期保留：这份权限看板属获授权的长期保留例外，调用点显式传
+ * `preserveInGroup: true`（见 docs/cn/04-invariants.md）。
  */
 function formatPermissionQueryMessage(
   permissions: Readonly<WhitelistPermissions>,
@@ -63,7 +62,7 @@ export function parseWhitelistPermissionKey(
   return WHITELIST_PERMISSION_KEY_BY_LOWERCASE.get(normalized);
 }
 
-/** 只接受字面量 true/false，避免 1、yes 等形态日后出现多套口径。 */
+/** 只接受字面量 true/false（大小写不敏感）。 */
 export function parsePermissionBoolean(raw: string): boolean | undefined {
   const normalized: string = raw.toLowerCase();
   if (normalized === "true") return true;
@@ -84,16 +83,10 @@ interface ReportWhitelistMutationFailureParams {
 }
 
 /**
- * 白名单写盘失败时就地降级：记一行错误日志并如实回执。
+ * 白名单写盘失败时就地降级：记一行错误日志并回执 mutationFailed，异常不逸出 handler。
  *
- * 不能让异常逸出 handler。bot.catch 按设计原样重抛（见 app/registerHandlers.ts），
- * acknowledged runner 随即让进程带非零码退出且**不确认 offset**，Telegram 重投
- * 同一条命令、同一处再抛——`database/` 不可写时一条 /permission 就能把机器人锁进
- * 永久重启循环，所有群一起失能。
- *
- * 确认这条 update 是安全的：失败可能发生在投递、事务 flush 或精确 ACK 边界，
- * 但最终值都已作为未 ACK revision 留在主线程 LRU 里，幂等重试与 Worker 重建
- * 都会重放。因此回执只说「没写进硬盘」，不谎称权限已经改好。降级语义与
+ * 失败可能发生在投递、事务 flush 或精确 ACK 边界，最终值都已作为未 ACK revision 留在
+ * 主线程 LRU 里，幂等重试与 Worker 重建都会重放；回执只说「没写进硬盘」。降级语义与
  * antiRaid/blocklistGuard.ts 的 claimBlockedJoiner、commands/white.ts 一致。
  */
 async function reportWhitelistMutationFailure({
@@ -143,10 +136,7 @@ async function handlePermissionQuery(
       botUserId: ctx.me.id,
       rawArgument: rawTargetArgument,
       acceptUserId: true,
-      // 与授权分支保持同一道解析口径。缺了它，`resolveArgumentTarget`
-      // 跳过 parseChatIdArgument，而 USERNAME_ARG_PATTERN 匹配不了前导 `-`，
-      // 于是 `/permission query -100…` 被回成「不是合法用户名」——刚用
-      // `/permission -100… isCanBlock true` 授过权的频道身份反而读不回来。
+      // 与授权分支同一解析口径：接受负数会话 id。
       acceptChatId: true,
       messages: chatAtmosphere().PERMISSION_COMMAND_TEXTS.target,
     });
@@ -172,8 +162,8 @@ async function handlePermissionQuery(
     parseMode: MARKDOWN_V2_PARSE_MODE,
     replyToMessageId: messageId,
     // 与 help 同一口径的长期保留例外；见 formatPermissionQueryMessage 的 JSDoc。
-    // 目标解析失败、修改拒绝与用法提示仍走默认 30 秒清理，本例外只覆盖成功渲染
-    // 出的那张权限看板。
+    // 目标解析失败、修改拒绝与用法提示仍走默认自动清理，本例外只覆盖成功渲染
+    // 出的权限看板。
     preserveInGroup: true,
     messageThreadId: forumTopicThreadId(ctx.msg),
   });
@@ -234,19 +224,15 @@ async function handlePermissionMutation(
     acceptChatId: true,
     // 「目标不在白名单」判定与逐项权限写入都读目标的名单结论。
     requireIdentityPolicies: true,
-    // 与 /block、/block disable、/white 同一道闸：匿名管理员拿当前群当皮套时
-    // resolveCommandTarget 按设计返回这个群自己的 identity（见
-    // targetResolution.ts 的 currentChatTargetText）。这里必须拒绝——给它逐项发
-    // 权限，等于把 /block、/mute 与各功能开关交给这个群的任意匿名管理员，而
-    // Telegram 从不告诉本进程皮套底下是谁。
+    // 与 /block、/block disable、/white 同一道闸：目标解析得到当前群自己的 identity
+    // （匿名管理员皮套）时，发送 currentChatTargetText 并返回 undefined（见
+    // targetResolution.ts 的 currentChatTargetText）。
     currentChatTargetText: chatAtmosphere().PERMISSION_COMMAND_TEXTS.currentChatTarget,
     messages: chatAtmosphere().PERMISSION_COMMAND_TEXTS.target,
   });
   if (target === undefined) return;
-  // 超级管理员的权限来自身份本身、恒为全开，永远不落进 SQLite 白名单表
-  // （见 consts/whitelist.ts 的 SUPER_ADMIN_WHITELIST_PERMISSIONS）。放行只会
-  // 写进一条永远不被读到的条目，换过 SUPER_ADMIN_USER_ID 后还会留成全开的旧
-  // 身份，所以在入口就挡住。
+  // 超级管理员的权限来自身份本身、恒为全开，不落进 SQLite 白名单表
+  // （见 consts/whitelist.ts 的 SUPER_ADMIN_WHITELIST_PERMISSIONS），目标是他时在入口拒绝。
   if (target.id === SUPER_ADMIN_USER_ID) {
     await sendCommandMessage({
       chatId,
@@ -298,12 +284,11 @@ async function handlePermissionMutation(
  * 管理员可修改已经存在的白名单条目。
  *
  * 新增/删除成员由 /white 负责；其中持有 isCanWhiteOther 的普通成员只能新增
- * 默认权限条目，删除和本命令的逐项授权仍仅限超级管理员，避免把权限委托继续
- * 扩大成可传递的管理边界。
+ * 默认权限条目，删除和本命令的逐项授权仍仅限超级管理员。
  *
- * 超级管理员在这条命令里出现在两个位置，语义相反：作为**发起人**他是唯一能改
- * 权限的人；作为**目标**则一律被拒——他的权限来自身份、恒为全开，写进配置文件
- * 的条目永远不会被读到（见 whitelist.ts 的 getEffectiveWhitelistPermissions）。
+ * 超级管理员在这条命令里出现在两个位置，语义相反：作为发起人他是唯一能改
+ * 权限的人；作为目标则一律被拒（他的权限来自身份、恒为全开，见 whitelist.ts 的
+ * getEffectiveWhitelistPermissions）。
  */
 export async function handlePermissionCommand(
   ctx: CommandContext<Context>

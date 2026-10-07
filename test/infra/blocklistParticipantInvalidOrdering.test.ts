@@ -49,7 +49,7 @@ const {
   prefetchIdentityPolicies,
   readBlocklistSweepPage,
 } = await import("../../packages/infra/identityStorage");
-const { runBlocklistIdentityMutation } = await import("../../packages/infra/identityPolicy/coordination");
+const { blocklistIdentityMutationRunner } = await import("../../packages/cache/main/blocklist");
 const { isUserBlocked } = await import("../../packages/infra/blocklist/membership");
 const { recordBlocklistParticipantReadability } = await import("../../packages/infra/blocklist/participantInvalid");
 
@@ -91,7 +91,7 @@ describe("黑名单销号计数的次序", () => {
   test("排队期间清零后又涨回上限减 1，也按条目对象判定为已变化", async () => {
     storeBlocked(7, BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
     const busy: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
-    const held: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> => busy.promise);
+    const held: Promise<void> = blocklistIdentityMutationRunner.run(7, (): Promise<void> => busy.promise);
 
     recordBlocklistParticipantReadability(receipt([7]));
     recordBlocklistParticipantReadability(receipt([], [7]));
@@ -115,7 +115,7 @@ describe("黑名单销号计数的次序", () => {
   test("排队解除期间条目被淘汰后重读，放弃这次解除", async () => {
     storeBlocked(7, BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
     const busy: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
-    const held: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> => busy.promise);
+    const held: Promise<void> = blocklistIdentityMutationRunner.run(7, (): Promise<void> => busy.promise);
 
     recordBlocklistParticipantReadability(receipt([7]));
     await blocklistParticipantInvalidQueue.current;

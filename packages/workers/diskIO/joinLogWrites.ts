@@ -28,6 +28,7 @@ import {
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import { JOIN_LOG_MEMORY_DIR } from "../../consts/paths";
 import { atomicWriteTextChunksSync, syncDirectorySync } from "../../libs/atomicFile";
+import { isPendingWithin } from "../../libs/clockWindow";
 import { invalidInput } from "../../libs/inputValidation";
 import type {
   AppendOnlyFileState,
@@ -225,7 +226,8 @@ export async function getJoinLogFileCache(
 }
 
 /**
- * 把一个 `chatId:day` 分组的待写条目落到该文件；成功后清掉该键的退避。建目录在内的
+ * 把一个 `chatId:day` 分组的待写条目落到该文件；成功后清掉该键的退避（窗口按
+ * libs/clockWindow.ts 的 isPendingWithin 判定，时钟回拨超过窗口即视为结束）。建目录在内的
  * 全部 I/O 失败都收在本函数内，不向缓冲的调用方抛出。
  * @returns 是否已落盘；false 时调用方保留条目并按退避重试。
  */
@@ -238,7 +240,7 @@ export async function writeFileEntries(
   const key: string = fileKey(chatId, day);
   const path: string = joinLogPath(chatId, day);
   const now: number = Date.now();
-  if (!joinLogFileCaches.has(key) && now < (joinLogRetryAt.get(key) ?? 0)) {
+  if (!joinLogFileCaches.has(key) && isPendingWithin(joinLogRetryAt.get(key) ?? 0, now, JOIN_LOG_REOPEN_RETRY_MS)) {
     return false;
   }
   try {
@@ -277,8 +279,7 @@ export async function writeFileEntries(
             JOIN_LOG_ENTRY_SEPARATOR_BYTES + joinLogSnapshotEntryBytes(record);
         }
       );
-      // 先改可丢弃的内存索引、再原子发布；失败时 catch 丢掉索引并从未改变的
-      // 权威文件重建，因此无需复制整张 Map 作为回滚副本。
+      // 先改内存索引、再原子发布；失败时 catch 丢掉索引并从未改变的权威文件重建。
       rewriteJoinLogFile(path, cache);
       if (!cache.capacityWarningEmitted) {
         cache.capacityWarningEmitted = true;
@@ -303,8 +304,7 @@ export async function writeFileEntries(
       mode: PERSISTED_FILE_MODE,
     });
     cache.appendedBytesSinceCompaction += Buffer.byteLength(chunk);
-    // 索引记账复用上面已经序列化好的 texts：每条记录的快照字节数就是它自己那
-    // 段文本的长度，重新调用 joinLogSnapshotEntryBytes 等于把整批再序列化一遍。
+    // 索引记账复用上面已序列化的 texts，每条记录的快照字节数即其文本长度。
     for (let index: number = 0; index < newest.length; index += 1) {
       const record: JoinLogRecord = newest[index]!.record;
       const current: JoinLogRecord | undefined =

@@ -83,10 +83,7 @@ import { drainAdDisposals, handleAdDetected } from
   "../../../packages/antiRaid/adDetect";
 import { botChatPermissionsIn } from
   "../../../packages/infra/botAdmin";
-import {
-  ensureAdDetectAgentConfig,
-  ensureAgentDeploymentConfig,
-} from "../../../packages/config/agent";
+import { validateAgentDeploymentConfig } from "../../../packages/config/agent";
 import { validateExistingDeploymentInputs } from
   "../../../packages/config/readiness";
 import { cacheAdminIds } from
@@ -158,7 +155,7 @@ const STORAGE_CHAIN_DEPENDENCIES: StorageChainDependencies = {
   flushDiskIODomain,
   readIdentityPolicies,
   recordEligibleTemporaryAdBypassActivity,
-  ensureAdDetectAgentConfig,
+  validateAgentDeploymentConfig,
   whitelistEntryCache,
   blocklistEntryCache,
   temporaryAdBypassActivityCache,
@@ -177,8 +174,7 @@ const COMMAND_CHAIN_DEPENDENCIES: CommandChainDependencies = {
   stateManagedChatLimit: STATE_MANAGED_CHAT_LIMIT,
   benchmarkChatId,
   benchmarkUserId,
-  ensureAdDetectAgentConfig,
-  ensureAgentDeploymentConfig,
+  validateAgentDeploymentConfig,
   handleAdDetected,
   drainAdDisposals,
   botChatPermissionsIn,
@@ -217,7 +213,7 @@ const CONFIG_CHAIN_DEPENDENCIES: ConfigChainDependencies = {
 };
 
 /**
- * 出站换成罐头应答的链路：三条命令链路要断言出站计数；cron.json 热重载链路据此断言
+ * 出站换成罐头应答的链路：命令链路断言出站计数；cron.json 热重载链路据此断言
  * 计时窗口内没有任务执行。
  */
 const CANNED_OUTBOUND_CHAINS: ReadonlySet<ChainName> = new Set<ChainName>([
@@ -342,9 +338,9 @@ async function runChainChild(chain: ChainName): Promise<ChainRound> {
   routeBusinessLogsToStderr();
   installOutboundGuards();
   if (CANNED_OUTBOUND_CHAINS.has(chain)) installCannedTelegramOutbound();
-  // 与生产启动同序：部署输入预检填充贴纸等配置快照与三份功能 readiness。
-  // loadPersistedData 要取贴纸包，广告检测链路要读 adDetectConfigReadiness()，
-  // 两者都在这一步之后才有值。
+  // 与生产启动同序：部署输入预检填充贴纸等配置快照与各功能 readiness；
+  // loadPersistedData 取贴纸包，广告检测链路读 adDetectConfigReadiness()，
+  // 两者都以这一步为前提。
   await validateExistingDeploymentInputs();
   initDiskIO();
   try {

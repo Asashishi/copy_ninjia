@@ -2,7 +2,7 @@
  * 日志落盘逻辑：接收 diskIOWorker.ts 从诊断批路由来的日志消息，先进入内存 buffer，
  * 每个诊断批消费完、每日维护或收到统一 flush 指令时批量落盘到 logs/YYYY-MM-DD.json：文件内容是一个
  * JSON 对象，键为「配置时区的日期时间_uuid」（如 2026-07-12 11:48:25.123_9f…），
- * 值为该条日志的内容对象，与 JSON.stringify(entries, null, 2) 的输出逐字节
+ * 值为该条日志的内容对象，与 JSON.stringify(entries, null, DAY_FILE_JSON_INDENT) 的输出逐字节
  * 一致。
  *
  * 键包含记录时的本地时间与独立 UUID，新条目追加到对象末尾；夏令时回拨时本地时间可重复。
@@ -23,8 +23,9 @@ import {
   LOG_REOPEN_RETRY_MS,
   RETENTION_DAYS,
 } from "../../consts/diskIO/appendOnly";
-import { flushBuffer, loggerFileState, loggerReopenState, markLogDirty, resetLogCache } from "../../cache/workers/diskIO/logs";
+import { flushBuffer, loggerFileState, loggerReopenState, resetLogCache } from "../../cache/workers/diskIO/logs";
 import { formatLogTimestamp, getDateKey, shiftDateKey } from "../../libs/time";
+import { isPendingWithin } from "../../libs/clockWindow";
 import { isPlainRecord } from "../../libs/record";
 import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
 import { bestEffortUnlink, listOptionalDirectory } from "../../libs/fileAccess";
@@ -109,12 +110,10 @@ async function openLogDay(day: string): Promise<DayFileState> {
 /**
  * 清掉 LOGS_DIR 下残留的 *.tmp：日文件首条写入（appendOnlyDayFile.ts 的
  * appendToAppendOnlyFile）、尾部修复与排版规范化（adoptLogDay，以及追加失败且原位
- * 回滚也失败后 openAppendOnlyFile 重新探测）都经 atomicWriteTextSync 走 tmp + rename，正常情况
- * rename 后 tmp 不会留下；只有
- * 进程恰好在 writeFileSync 与 renameSync 之间被杀、或 rename 本身失败（磁盘
- * 满等）才会留下孤儿文件。DAY_FILE_PATTERN 只匹配 <day>.json，不匹配
- * <day>.json.tmp，保留期清理天然覆盖不到，得单独扫一遍删掉——对齐
- * snapshotFiles.ts 的 maintainLuckDay 同样的清理。
+ * 回滚也失败后 openAppendOnlyFile 重新探测）都经 atomicWriteTextSync 走 tmp + rename；
+ * 进程在 writeFileSync 与 renameSync 之间被终止、或 rename 本身失败时会留下孤儿文件。
+ * DAY_FILE_PATTERN 只匹配 <day>.json，保留期清理不覆盖 <day>.json.tmp，因此单独扫描删除，
+ * 同 snapshotFiles.ts 的 maintainLuckDay。
  */
 function cleanupStaleTmpFiles(names: readonly string[] = readdirSync(LOGS_DIR)): Promise<void> {
   return removeOrphanedTempFiles(LOGS_DIR, names);
@@ -133,13 +132,9 @@ async function cleanupOldLogs(names: readonly string[] = readdirSync(LOGS_DIR)):
 async function writeDay(day: string, texts: string[]): Promise<boolean> {
   if (texts.length === 0) return true;
   const now: number = Date.now();
-  // 上一次追加失败后还在退避窗口内：直接丢这一批，不重走 openLogDay。磁盘满、
-  // 卷转只读这类故障不会在一个 flush 周期内自愈，而重开一次要把整个日文件读一
-  // 遍、逐条校验 schema、再扫一遍目录——不退避的话每个周期都要按日文件大小付
-  // 一次这个代价，且故障期本身制造的 logger.error 还会把节拍压得更密。这条线程
-  // 同时持有身份策略/群状态 SQLite、移除 outbox 与 AI 记忆快照（见
-  // consts/diskIO/appendOnly.ts 的 LOG_REOPEN_RETRY_MS）。
-  if (loggerFileState.current === null && now < loggerReopenState.retryAt) return false;
+  // 上一次追加失败后还在退避窗口（LOG_REOPEN_RETRY_MS）内：直接丢这一批，不重走 openLogDay。
+  // 系统时钟回拨超过窗口时按窗口已结束处理（libs/clockWindow.ts）。
+  if (loggerFileState.current === null && isPendingWithin(loggerReopenState.retryAt, now, LOG_REOPEN_RETRY_MS)) return false;
   try {
     if (loggerFileState.current?.day !== day) {
       loggerFileState.current = await openLogDay(day);
@@ -154,8 +149,7 @@ async function writeDay(day: string, texts: string[]): Promise<boolean> {
     loggerReopenState.retryAt = 0;
     return true;
   } catch (err: unknown) {
-    // 本批写入失败就丢弃（控制台/journal 里仍有原始输出），并重置状态
-    // 让下次 flush 重新校验文件，避免在损坏的结尾上继续追加。
+    // 本批写入失败就丢弃，并重置状态让下次 flush 重新校验文件。
     loggerFileState.current = null;
     loggerReopenState.retryAt = now + LOG_REOPEN_RETRY_MS;
     console.error("[diskIOWorker] flush to disk failed:", err);
@@ -235,8 +229,8 @@ export function handleLogMessage(msg: LogEnvelope): void {
     args: hasStructuredArgs ? msg.args : undefined,
   };
   // key 以配置时区的日期时间为前缀，主线程入队时生成的 id 区分重复本地时间与同一
-  // 毫秒内的日志，整批重投时保持不变。
-  markLogDirty({
+  // 毫秒内的日志，整批重投时保持不变；由诊断批尾的 flushLogBuffer 落盘。
+  flushBuffer.entries.push({
     day: getDateKey(msg.timestamp),
     text: serializeDayFileEntry(`${formatLogTimestamp(msg.timestamp)}_${msg.id}`, record),
   });

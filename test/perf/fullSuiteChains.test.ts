@@ -44,7 +44,7 @@ describe("全量性能链路编排", () => {
       chainTemporaryAdBypassWrites: 1,
       benchmarkChatId: (index: number): number => -1_000 - index,
       benchmarkUserId: (index: number): number => 10_000 + index,
-      ensureAdDetectAgentConfig: (): never => {
+      validateAgentDeploymentConfig: (): never => {
         readinessCalls++;
         return undefined as never;
       },
@@ -165,7 +165,7 @@ describe("cron 语音链路", () => {
       cronVoiceWarmupOperations: 0,
       cronVoicePcmBytes: 480,
       benchmarkChatId: (index: number): number => -1_000 - index,
-      ensureAgentDeploymentConfig: async (): Promise<void> => {},
+      validateAgentDeploymentConfig: async (): Promise<void> => {},
       geminiClientCache: geminiClients as never,
       ttsDailyUsage: { current: { windowStartedAt: Date.now(), agentCount: 100, reserveCount: 0 } },
       cannedTelegramCalls: calls,

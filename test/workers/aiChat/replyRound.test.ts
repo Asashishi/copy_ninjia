@@ -561,7 +561,7 @@ describe("AI 单轮回复生命周期", () => {
     expect(replyGenerations.has(-1001)).toBe(false);
     expect(isCachedReplyGenerationCurrent(-1001, captured)).toBe(false);
 
-    // 每个群都先真正捕获 epoch，再模拟 disable/teardown；历史项应全部释放。
+    // 每个群先捕获 epoch，再模拟 disable/teardown；登记项全部释放。
     for (let chatId: number = -9000; chatId > -14_000; chatId--) {
       cachedReplyGeneration(chatId);
       invalidateChatReplyCache(chatId);

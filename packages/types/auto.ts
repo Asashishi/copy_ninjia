@@ -22,8 +22,8 @@ export interface MessageTriggerContext {
   /**
    * 本条消息统一的「现在」，由 auto/message/index.ts 一次取得后传下来。
    *
-   * 吃 now 的判定一律读这个字段，不得自己再调 Date.now()：同一条消息的活跃度
-   * 入窗、安静期与随机冷却必须落在同一时刻，且热路径不重复读取墙钟。
+   * 吃 now 的判定一律读这个字段，不得自己再调 Date.now()；同一条消息的活跃度
+   * 入窗、安静期与随机冷却取同一时刻。
    * @see ../../docs/cn/04-invariants.md
    */
   now: number;
@@ -41,19 +41,17 @@ export interface MessageTriggerContext {
    * 触发消息所在的论坛话题 id；General、非论坛群与讨论组评论为 undefined。
    *
    * 由 createMessageTriggerContext 一次解析后传下来，供本条消息派生的记录与触发
-   * 载荷共用——话题群里不挂回复的主动发送缺了它就会掉进 General
-   * （判定见 ../libs/forumTopic.ts）。
+   * 载荷共用（判定见 ../libs/forumTopic.ts）。
    */
   messageThreadId?: number;
   /**
    * 直接唤起的成因；随机/无触发为 undefined。字段名与
-   * types/aiChat/replies.ts 的 directTriggerReason 保持一致；摊平为字符串而非
-   * 嵌套对象的约束同 types/aiChat/protocol.ts 的 voiceMime/voiceDurationSeconds。
+   * types/aiChat/protocol.ts 的 AiTriggerMessage.directTriggerReason 一致。
    */
   directTriggerReason?: AiDirectTriggerReason;
 }
 
-/** 提及相关的两个触发事实，由消息实体的一次遍历得到。 */
+/** 提及相关的触发事实，由消息实体的一次遍历得到。 */
 export interface MentionFacts {
   /** 消息里 @ 到了机器人自己；只按 Telegram entity 精确识别，不做子串匹配。 */
   isMentioned: boolean;
@@ -66,7 +64,7 @@ export interface MentionFacts {
 }
 
 /**
- * 随机媒体评价的掷骰结果，三态：
+ * 随机媒体评价的掷骰结果：
  *
  * - `none`：没掷中，这条媒体不成为评价候选。
  * - `candidate`：掷中了，但「群 × 发言人」的冷却名额没抢到。

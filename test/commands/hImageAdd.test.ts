@@ -3,15 +3,20 @@ import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import type { Message } from "grammy/types";
 import type { TelegramFileDownloadResult } from "../../packages/types/telegram";
 import { imageFixture } from "../helpers/image";
+import { waitUntil } from "../helpers/waitUntil";
 
 const sendCommandMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 1);
 const downloads: Map<string, TelegramFileDownloadResult | Error> = new Map<string, TelegramFileDownloadResult | Error>();
 /** 置为 true 时下载一直挂起，直到调用方的信号被取消。 */
 let hangDownloads: boolean = false;
+/** 列在这里的 fileId 下载等对应的 Promise 兑现才返回；调用方的信号被取消时照常抛出。 */
+const downloadGates: Map<string, Promise<void>> = new Map<string, Promise<void>>();
 const downloadTelegramFileBytes = mock(async ({ fileId, signal }: { fileId: string; signal: AbortSignal }): Promise<TelegramFileDownloadResult> => {
-  if (hangDownloads) {
-    await new Promise<never>((_resolve: unknown, reject: (reason: unknown) => void): void => {
+  const gate: Promise<void> | undefined = downloadGates.get(fileId);
+  if (hangDownloads || gate !== undefined) {
+    await new Promise<void>((resolve: () => void, reject: (reason: unknown) => void): void => {
       signal.addEventListener("abort", (): void => reject(signal.reason), { once: true });
+      if (!hangDownloads) void gate!.then(resolve);
     });
   }
   const result: TelegramFileDownloadResult | Error | undefined = downloads.get(fileId);
@@ -19,6 +24,8 @@ const downloadTelegramFileBytes = mock(async ({ fileId, signal }: { fileId: stri
   return result ?? { status: "httpError", httpStatus: 404 };
 });
 let permitted: boolean = true;
+/** 测试把每页张数压到 2：三四张的相册就会跨页。 */
+const DOWNLOAD_BATCH_SIZE: number = 2;
 const loggerError = mock((..._args: unknown[]): void => {});
 
 mock.module("../../packages/infra/telegram", () => ({ sendCommandMessage, sendPhotoWithResult: async (): Promise<undefined> => undefined }));
@@ -30,6 +37,7 @@ mock.module("../../packages/consts/hImage", () => ({
   MEDIA_GROUP_CACHE_MAX: 256,
   MEDIA_GROUP_ITEMS_MAX: 10,
   H_IMAGE_ADD_TASK_BUDGET_MS: 200,
+  H_IMAGE_ADD_DOWNLOAD_BATCH_SIZE: DOWNLOAD_BATCH_SIZE,
   H_IMAGE_ADD_METADATA_TIMEOUT_MS: 10_000,
   H_IMAGE_ADD_DOWNLOAD_TIMEOUT_MS: 25_000,
   H_IMAGE_ADD_ARGUMENT: "add",
@@ -48,17 +56,16 @@ const { chatAtmosphere } = await import("../../packages/infra/atmosphere");
 const { getAssetConfig } = await import("../../packages/config/assets");
 
 const CHAT_ID: number = -1001;
-// 真实可解码的字节：收图路径现在要读一次宽高（infra/image.ts 的 readImageDimensions），
-// 手写魔数头过不了解码。
+// 真实可解码的字节：收图路径要读一次宽高（infra/image.ts 的 readImageDimensions），手写魔数头过不了解码。
 const JPEG: Uint8Array = await new Bun.Image(imageFixture(4, 4)).jpeg().bytes();
 const PNG: Uint8Array = await new Bun.Image(imageFixture(4, 4)).png().bytes();
 const WEBP: Uint8Array = await new Bun.Image(imageFixture(4, 4)).webp().bytes();
-/** 宽高之和 12040 > 10000：字节数只有几十 KB，字节闸放行，sendPhoto 会拒。 */
+/** 宽高之和超过 TELEGRAM_PHOTO_MAX_DIMENSION_SUM：字节数只有几十 KB，字节闸放行，sendPhoto 会拒。 */
 const OVERSIZED: Uint8Array = await new Bun.Image(imageFixture(12_000, 40)).png().bytes();
-/** 2100×100：宽高之和合规，长宽比 21 > 20。 */
+/** 宽高之和合规，长宽比超过 TELEGRAM_PHOTO_MAX_ASPECT_RATIO。 */
 const SKEWED: Uint8Array = await new Bun.Image(imageFixture(2_100, 100)).png().bytes();
-/** 临界值：长宽比恰好 20（宽高之和 2100 也在门槛内），应照收。
- *  两条门槛的逐像素边界另在 test/libs/telegramImage.test.ts 直接钉纯判定。 */
+/** 临界值：长宽比恰好等于 TELEGRAM_PHOTO_MAX_ASPECT_RATIO（宽高之和也在门槛内），应照收。
+ *  两条门槛的逐像素边界另在 test/libs/telegramImage.test.ts 直接验证纯判定。 */
 const AT_LIMIT: Uint8Array = await new Bun.Image(imageFixture(2_000, 100)).png().bytes();
 const texts = chatAtmosphere().H_IMAGE_TEXTS;
 const directory: string = getAssetConfig().randomHImageDirectory;
@@ -68,6 +75,11 @@ const CONTENT_NAME: RegExp = /^[0-9a-f]{64}\.(?:jpg|png|webp)$/;
 /** 图库里由收图写下的那些文件。 */
 function collectedNames(): string[] {
   return readdirSync(directory).filter((name: string): boolean => CONTENT_NAME.test(name)).sort();
+}
+
+/** 本次调用依次请求下载的 fileId。 */
+function downloadedFileIds(): string[] {
+  return downloadTelegramFileBytes.mock.calls.map((call: [{ fileId: string }]): string => call[0].fileId);
 }
 
 /** 某份内容在图库里的文件名；名字即内容摘要，收图与预置共用这一个算法。 */
@@ -106,6 +118,7 @@ beforeEach(() => {
   downloadTelegramFileBytes.mockClear();
   loggerError.mockClear();
   downloads.clear();
+  downloadGates.clear();
   hangDownloads = false;
   permitted = true;
   mediaGroupImages.clear();
@@ -152,9 +165,8 @@ describe("/h_image add", () => {
     downloads.set("file-c", { status: "ok", bytes: WEBP });
 
     await runAdd(photo("a", { media_group_id: "album" }));
-    // 去重排在下载之后：要算内容摘要就得先拿到字节，三张都会下载。
-    expect(downloadTelegramFileBytes.mock.calls.map((call: [{ fileId: string }]): string => call[0].fileId))
-      .toEqual(["file-a", "file-b", "file-c"]);
+    // 去重排在下载之后：算内容摘要需要字节，三张都会下载。
+    expect(downloadedFileIds()).toEqual(["file-a", "file-b", "file-c"]);
     expect(collectedNames()).toEqual([storedName(JPEG, ".jpg"), storedName(PNG, ".png"), storedName(WEBP, ".webp")].sort());
     expect(sendCommandMessage).toHaveBeenCalledWith({
       chatId: CHAT_ID, text: texts.addResult({ added: 2, librarySize: 1, existing: 1, invalidDimensions: 0, failed: 0 }), replyToMessageId: 10,
@@ -209,8 +221,7 @@ describe("/h_image add", () => {
     downloads.set("file-err", new Error("ECONNRESET"));
 
     await runAdd(photo("big", { media_group_id: "album", photo: undefined, text: "caption only" }));
-    expect(downloadTelegramFileBytes.mock.calls.map((call: [{ fileId: string }]): string => call[0].fileId))
-      .toEqual(["file-gif", "file-404", "file-err"]);
+    expect(downloadedFileIds()).toEqual(["file-gif", "file-404", "file-err"]);
     expect(readdirSync(directory)).toEqual([]);
     expect(sendCommandMessage).toHaveBeenCalledWith({
       chatId: CHAT_ID, text: texts.addResult({ added: 0, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 4 }), replyToMessageId: 10,
@@ -218,9 +229,26 @@ describe("/h_image add", () => {
     expect(loggerError).toHaveBeenCalledTimes(2);
   });
 
+  test("写盘失败记错误日志并计为失败，同页其余照常写盘", async () => {
+    mediaGroupImages.set("album", {
+      chatId: CHAT_ID,
+      items: [{ fileId: "file-a", fileUniqueId: "a", fileSize: 10 }, { fileId: "file-b", fileUniqueId: "b", fileSize: 10 }],
+    });
+    // 目标文件名被一个非空目录占着：判存在只认文件，改名覆盖不了非空目录。
+    mkdirSync(`${directory}/${storedName(JPEG, ".jpg")}/occupied`, { recursive: true });
+    downloads.set("file-a", { status: "ok", bytes: JPEG });
+    downloads.set("file-b", { status: "ok", bytes: PNG });
+
+    await runAdd(photo("a", { media_group_id: "album" }));
+    expect(readdirSync(directory).sort()).toEqual([storedName(JPEG, ".jpg"), storedName(PNG, ".png")].sort());
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 1 }), replyToMessageId: 10,
+    });
+    expect(loggerError).toHaveBeenCalledTimes(1);
+  });
+
   test("宽高之和超过 10000 或长宽比超过 20 的图不收，回执单独报这一档", async () => {
-    // 这两张都过得了字节闸与格式闸，收进去只会在日后被抽中时以一次
-    // PHOTO_INVALID_DIMENSIONS 静默失败收场，群里没有任何反馈。
+    // 这两张都过得了字节闸与格式闸，但尺寸不合规：回执单独报尺寸这一档，不收。
     mediaGroupImages.set("album", {
       chatId: CHAT_ID,
       items: [
@@ -240,7 +268,7 @@ describe("/h_image add", () => {
       text: texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 2, failed: 0 }),
       replyToMessageId: 10,
     });
-    // 尺寸不合规与「超过 10 MB、格式不对或下载失败」分属两档，回执要说清是哪一条。
+    // 尺寸不合规与「超过字节上限、格式不对或下载失败」分属两档，回执说清是哪一条。
     expect(texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 2, failed: 0 }))
       .not.toBe(texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 2 }));
     expect(loggerError).not.toHaveBeenCalled();
@@ -265,17 +293,58 @@ describe("/h_image add", () => {
     expect(downloadTelegramFileBytes).not.toHaveBeenCalled();
   });
 
-  test("总预算耗尽后剩下的图记为失败，照常回汇总", async () => {
-    hangDownloads = true;
+  test("一页内的图同时下载，整页结算并写盘后才开始下一页", async () => {
     mediaGroupImages.set("album", {
       chatId: CHAT_ID,
-      items: [{ fileId: "file-a", fileUniqueId: "a", fileSize: 1 }, { fileId: "file-b", fileUniqueId: "b", fileSize: 1 }],
+      items: [
+        { fileId: "file-a", fileUniqueId: "a", fileSize: 10 },
+        { fileId: "file-b", fileUniqueId: "b", fileSize: 10 },
+        { fileId: "file-c", fileUniqueId: "c", fileSize: 10 },
+      ],
     });
-    await runAdd(photo("a", { media_group_id: "album" }));
-    expect(downloadTelegramFileBytes).toHaveBeenCalledTimes(1);
+    downloads.set("file-a", { status: "ok", bytes: JPEG });
+    downloads.set("file-b", { status: "ok", bytes: PNG });
+    downloads.set("file-c", { status: "ok", bytes: WEBP });
+    const gateA: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    const gateB: PromiseWithResolvers<void> = Promise.withResolvers<void>();
+    downloadGates.set("file-a", gateA.promise);
+    downloadGates.set("file-b", gateB.promise);
+
+    await handleHImageCommand(context(photo("a", { media_group_id: "album" })));
+    expect(await waitUntil((): boolean => downloadTelegramFileBytes.mock.calls.length === DOWNLOAD_BATCH_SIZE)).toBe(true);
+    expect(downloadedFileIds()).toEqual(["file-a", "file-b"]);
+    gateA.resolve();
+    await Bun.sleep(20);
+    // 同页的 b 还没结算：a 不写盘，下一页也不开始，内存里至多一页的图。
+    expect(downloadedFileIds()).toEqual(["file-a", "file-b"]);
+    expect(collectedNames()).toEqual([]);
+    gateB.resolve();
+    expect(await drainDeferredCommandRuntime(5_000)).toBe("flushed");
+    expect(downloadedFileIds()).toEqual(["file-a", "file-b", "file-c"]);
+    expect(collectedNames()).toEqual([storedName(JPEG, ".jpg"), storedName(PNG, ".png"), storedName(WEBP, ".webp")].sort());
     expect(sendCommandMessage).toHaveBeenCalledWith({
-      chatId: CHAT_ID, text: texts.addResult({ added: 0, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 2 }), replyToMessageId: 10,
+      chatId: CHAT_ID, text: texts.addResult({ added: 3, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 0 }), replyToMessageId: 10,
     });
+  });
+
+  test("总预算耗尽：同页已下载的照常写盘，未结算的与剩下几页记为失败，不记错误日志", async () => {
+    mediaGroupImages.set("album", {
+      chatId: CHAT_ID,
+      items: [
+        { fileId: "file-a", fileUniqueId: "a", fileSize: 1 },
+        { fileId: "file-b", fileUniqueId: "b", fileSize: 1 },
+        { fileId: "file-c", fileUniqueId: "c", fileSize: 1 },
+      ],
+    });
+    downloads.set("file-a", { status: "ok", bytes: JPEG });
+    downloadGates.set("file-b", new Promise<void>((): void => {}));
+    await runAdd(photo("a", { media_group_id: "album" }));
+    expect(downloadedFileIds()).toEqual(["file-a", "file-b"]);
+    expect(collectedNames()).toEqual([storedName(JPEG, ".jpg")]);
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: texts.addResult({ added: 1, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 2 }), replyToMessageId: 10,
+    });
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
   test("停机取消时静默收场，不回汇总，图库里不留临时文件", async () => {
@@ -285,6 +354,22 @@ describe("/h_image add", () => {
     await Bun.sleep(10);
     expect(sendCommandMessage).not.toHaveBeenCalled();
     expect(readdirSync(directory)).toEqual([]);
+  });
+
+  test("停机取消时这一页已下载的图也不写盘", async () => {
+    mediaGroupImages.set("album", {
+      chatId: CHAT_ID,
+      items: [{ fileId: "file-a", fileUniqueId: "a", fileSize: 1 }, { fileId: "file-b", fileUniqueId: "b", fileSize: 1 }],
+    });
+    downloads.set("file-a", { status: "ok", bytes: JPEG });
+    downloadGates.set("file-b", new Promise<void>((): void => {}));
+    await handleHImageCommand(context(photo("a", { media_group_id: "album" })));
+    expect(await waitUntil((): boolean => downloadTelegramFileBytes.mock.calls.length === DOWNLOAD_BATCH_SIZE)).toBe(true);
+    expect(await drainDeferredCommandRuntime(0)).toBe("timedOut");
+    await Bun.sleep(10);
+    expect(sendCommandMessage).not.toHaveBeenCalled();
+    expect(readdirSync(directory)).toEqual([]);
+    expect(loggerError).not.toHaveBeenCalled();
   });
 
   test("执行器停止接纳时回「稍后再试」", async () => {

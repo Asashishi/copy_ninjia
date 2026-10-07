@@ -26,9 +26,8 @@ export function gagSpeechPrefix(tool: string): string {
 
 /**
  * 构造开始提示的发言入口。查询 scope 的唯一语法是 `gag:<目标 ID>`；用户与
- * 频道都不得追加摘要、随机 token、群 ID 或其它载荷。Telegram 不把当前具体群 ID
- * 放进 InlineQuery，任何追加值也无法证明实际输入群；群绑定必须留给隐藏 marker
- * 和落群后的 from.id/sender_chat.id、message.chat.id 校验。无前缀查询进入运势。
+ * 频道都不得追加摘要、随机 token、群 ID 或其它载荷。群绑定由隐藏 marker
+ * 和落群后的 from.id/sender_chat.id、message.chat.id 校验承担。无前缀查询进入运势。
  */
 export function buildGagSpeakKeyboard(session: GagSession, atmosphere: AtmosphereTexts = chatAtmosphere()): InlineKeyboard {
   return new InlineKeyboard().switchInlineCurrent(
@@ -56,7 +55,7 @@ export function parseGagInlineQuery(
   return { targetId, text };
 }
 
-/** 在 25% 替换候选内均匀抽取一个字符。 */
+/** 从 GAG_REPLACEMENT_CHARACTERS 中均匀抽取一个字符。 */
 function randomGagReplacement(random: () => number): string {
   const roll: number = random();
   const index: number = Math.min(
@@ -66,7 +65,7 @@ function randomGagReplacement(random: () => number): string {
   return GAG_REPLACEMENT_CHARACTERS[index]!;
 }
 
-/** 随机生成 3~6 个点，并对每个点间空隙独立抽取 1/3 的插空格概率。 */
+/** 随机生成 GAG_FILLER_MIN_DOTS 到 GAG_FILLER_MAX_DOTS 个点，每个点间空隙独立按 GAG_FILLER_GAP_SPACE_PROBABILITY 插入空格。 */
 function randomGagFiller(random: () => number): string {
   const range: number = GAG_FILLER_MAX_DOTS - GAG_FILLER_MIN_DOTS + 1;
   const offset: number = Math.min(
@@ -82,7 +81,7 @@ function randomGagFiller(random: () => number): string {
   return filler;
 }
 
-/** 按扩展字形数返回短文本操作保底；单字操作一次，超过 64 个字形不设保底。 */
+/** 按扩展字形数返回短文本操作保底（GAG_MIN_OPERATION_TIERS）；单字操作一次，超出最后一档不设保底。 */
 export function gagMinimumOperationCount(graphemeCount: number): number {
   if (graphemeCount <= 0) return 0;
   if (graphemeCount === 1) return 1;
@@ -95,10 +94,10 @@ export function gagMinimumOperationCount(graphemeCount: number): number {
 type GagSpeechOperation = "fill" | "replace";
 
 /**
- * 把 inline 查询正文渲染成 gag 发言。按扩展字形簇而不是 UTF-16 码元遍历。
- * 每个字形先按 75%/25% 抽取填充或替换；同类操作连续两次后，第三次候选会
- * 保留原字形并重置连续计数。只有跳过后无法达到短文本保底时才强制改走另一类。
- * 填充生成 3~6 个点，每个点间独立有 1/3 概率插入空格；组合字符不会被拆开。
+ * 把 inline 查询正文渲染成 gag 发言。按扩展字形簇遍历，组合字符不会被拆开。
+ * 每个字形先按 GAG_FILL_OPERATION_PROBABILITY 抽取填充或替换；同类操作连续达到
+ * GAG_MAX_CONSECUTIVE_SAME_OPERATIONS 次后，下一个同类候选保留原字形并重置连续计数；
+ * 只有跳过后无法达到短文本保底时才强制改走另一类。填充形态见 randomGagFiller。
  */
 export function renderGagSpeech({
   text,
@@ -168,13 +167,11 @@ export function renderGagSpeakNotice(session: GagSession, atmosphere: Atmosphere
     : atmosphere.NOTICE_TEXTS.gagSpeakNotice(session.targetLabel);
 }
 
-/** 只接受三个离散分钟值，不把其它时长猜成最近一档。 */
+/** 只接受 GAG_DURATION_MINUTES 中的离散分钟值，其它时长不就近取档。 */
 function parseGagDuration(token: string | undefined): GagDurationMinutes | undefined {
-  if (token !== "5" && token !== "10" && token !== "15") return undefined;
-  const duration: number = Number(token);
-  return GAG_DURATION_MINUTES.includes(duration as GagDurationMinutes)
-    ? duration as GagDurationMinutes
-    : undefined;
+  return GAG_DURATION_MINUTES.find(
+    (minutes: GagDurationMinutes): boolean => String(minutes) === token
+  );
 }
 
 /** 识别命令参数里明确写出的目标；用户名必须按对外语法携带 `@`。 */
@@ -185,7 +182,7 @@ function isExplicitGagTarget(token: string): boolean {
 
 /**
  * 把命令参数拆成目标、可选时长与任意自由文本用具。回复模式下首项直接作为
- * 时长/用具；非回复模式必须先给显式目标。省略时长固定取 5 分钟。
+ * 时长/用具；非回复模式必须先给显式目标。省略时长取 GAG_DEFAULT_DURATION_MINUTES。
  */
 export function parseGagCommand(
   raw: string,
@@ -205,8 +202,8 @@ export function parseGagCommand(
     firstToken.startsWith("@") &&
     isExplicitGagTarget(firstToken)
   ) {
-    // 保留“回复某人又显式写同一 @username”的既有无害重复语义；裸数字在回复
-    // 模式下一律属于时长位置，避免 `/gag 7` 被误解成第二个目标。
+    // 回复模式下首项为 @username 时视为显式目标（回复某人又写同一 @username）；
+    // 裸数字在回复模式下属于时长位置。
     rawTarget = firstToken;
     argumentIndex = 1;
   }
@@ -235,8 +232,8 @@ export function parseGagCommand(
 }
 
 /**
- * 用 Telegram 的两个官方长度上限推导当前用具是否能容纳最坏 256 字符查询。
- * 这不是业务侧用具白名单/长度档位；只拒绝必然无法发出的载荷。
+ * 用 Telegram 的官方长度上限（TELEGRAM_MESSAGE_MAX_CHARS）与 GAG_INLINE_QUERY_MAX_CHARS
+ * 推导当前用具是否能容纳最坏情形的查询；只拒绝必然无法发出的载荷。
  */
 export function canRenderMaximumInlineQuery(tool: string): boolean {
   const prefixLength: number = gagSpeechPrefix(tool).length;

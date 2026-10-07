@@ -130,7 +130,6 @@ export function recordChatMedia(msg: AiRecordMediaMessage): void {
     fileId: msg.fileId,
     fileUniqueId: msg.fileUniqueId,
     voiceMime: msg.voiceMime,
-    voiceDurationSeconds: msg.voiceDurationSeconds,
     signal,
   }).then((description: string | null): void => {
     if (!isCachedReplyGenerationCurrent(msg.chatId, generation)) return;

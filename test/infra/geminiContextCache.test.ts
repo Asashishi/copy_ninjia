@@ -691,10 +691,7 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
   });
 });
 
-/**
- * 两个 scope 句柄构造后只读：断言写在不会被调用的闭包内，`@ts-expect-error` 只在编译期
- * 生效，只读性一旦失效就会变成「未使用的抑制」而让 typecheck 失败。
- */
+/** 两个 scope 句柄构造后只读：断言写在不会被调用的闭包内，由 `@ts-expect-error` 在编译期验证。 */
 test("scope 句柄的字段与方法都不能被调用方替换", () => {
   const assertScopesReadonly = (): void => {
     // @ts-expect-error 调用方不能改 text scope 的槽数上限。

@@ -149,7 +149,7 @@ function parseChildProfileResult(text: string, stderr: string): ChildProfileResu
   };
 }
 
-/** 只返回生产探针；scenario.run 编排壳不能证明内部函数已进入 DFG。 */
+/** 只返回生产探针，不含 `scenario.run` 编排壳。 */
 export function productionJitProbes(
   result: ChildProfileResult
 ): readonly JitProbeResult[] {

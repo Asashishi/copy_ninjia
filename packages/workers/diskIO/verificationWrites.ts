@@ -63,7 +63,10 @@ function acknowledge(
   }
 }
 
-/** 跨日先发布新日 active 快照，成功后才删旧日文件，跨午夜 pending 不逃逸。 */
+/**
+ * 跨日先发布新日 active 快照（含覆盖旧日的 tombstone，见 verificationRecovery.ts 的
+ * compactVerificationDay），成功后才删旧日文件，跨午夜 pending 不逃逸。
+ */
 async function rolloverVerificationDay(
   day: string,
   reply: VerificationReplySink,
@@ -72,7 +75,7 @@ async function rolloverVerificationDay(
   const changes: [string, VerificationFileChange][] = [
     ...verificationPendingChanges.entries(),
   ];
-  compactVerificationDay(day, dir);
+  await compactVerificationDay(day, dir);
   await removeOldVerificationDays(day, dir);
   acknowledge(changes, reply);
 }
@@ -104,7 +107,7 @@ export async function maintainVerificationDayForToday(
     await rolloverVerificationDay(day, reply, dir);
   } catch (error: unknown) {
     console.error("[diskIOWorker] failed to roll pending verification day:", error);
-    // 整晚没有新验证消息时也要尽快重试旧日清理，而不是拖到下一午夜。
+    // 按 VERIFICATION_ROLLOVER_RETRY_MS 重试旧日清理，不依赖新的验证消息。
     scheduleVerificationRolloverRetry(reply, dir);
   }
 }
@@ -248,7 +251,7 @@ export async function flushVerificationChanges(
       verificationFileState.appendedBytes + appendedBytes >=
         VERIFICATION_FILE_COMPACT_BYTES
     ) {
-      compactVerificationDay(day, dir);
+      await compactVerificationDay(day, dir);
       acknowledge(changes, reply);
       return true;
     }

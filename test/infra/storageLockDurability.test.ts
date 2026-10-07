@@ -8,9 +8,8 @@ import type { InstanceLockOptions } from "../../packages/infra/storage/instanceL
 import type { ProcessIdentity } from "../../packages/types/storage";
 
 /**
- * guard 协议的 candidate 是用 link() 直接发布成 bot.lock.guard 的，没有 rename
- * 兜底。这里注入可观测的文件句柄，断言数据与目录项都在 link() 之前落盘——
- * 否则掉电会留下内容为空/撕裂的 guard，只能人工 rm 才能重新启动。
+ * guard 协议的 candidate 用 link() 直接发布成 bot.lock.guard，没有 rename 兜底。
+ * 这里注入可观测的文件句柄，断言数据与目录项都在 link() 之前落盘。
  */
 const operations: string[] = [];
 const openNames = new Map<number, string>();
@@ -34,8 +33,7 @@ afterAll((): void => {
   Bun.file = realBunFile;
 });
 
-// mock.module 会就地改写 node:fs/promises 的命名空间对象；真实实现必须在打桩
-// 之前快照下来，否则包装函数会调回自己造成无限递归。
+// mock.module 会就地改写 node:fs/promises 的命名空间对象；真实实现在打桩之前快照下来。
 const realFs = { ...realFsPromises };
 const realOpen = realFs.open;
 const realLink = realFs.link;

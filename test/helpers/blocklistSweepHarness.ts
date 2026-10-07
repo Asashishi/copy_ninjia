@@ -127,12 +127,8 @@ mock.module("../../packages/infra/chatTeardownRegistry", () => ({
 }));
 
 /**
- * 被测模块由各用例文件自行 `await import` 之后注入。
- *
- * 助手模块**不能**自己 await import：那些模块都依赖上面 mock.module 装上的替身，
- * 而带顶层 await 的助手一旦被用例文件静态或动态导入，Bun 会让它的导出停在 TDZ
- * （实测：`Cannot access 'x' before initialization`）。注入还顺带把「本文件用到
- * 哪些被测出口」写成了类型。
+ * 被测模块由各用例文件自行 `await import` 之后注入；助手模块不自己 await import 依赖
+ * 上面 mock.module 替身的模块。注入也把「本文件用到哪些被测出口」写成了类型。
  */
 export interface BlocklistSweepDeps {
   readonly quiesceBlocklistSweepScheduler: () => void;
@@ -189,7 +185,7 @@ export function promotion(newStatus: string, oldStatus: string, canRestrict?: bo
   } as never;
 }
 
-/** Worker 回执：这批因为机器人没有封禁权限而没落定。 */
+/** Worker 回执：这批没落定，原因是机器人没有封禁权限。 */
 export function settleLastAsForbidden(chatId: number = -1001): void {
   requireDeps().settleBlockedRemoval({
     type: "blockedMembersRemoved",

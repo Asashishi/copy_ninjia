@@ -98,7 +98,7 @@ test("SQLite 时区闸排在第一个 inspect：换时区先于未来日期的�
   const { handleDiskIOStartupLoad } = await import("../../../packages/workers/diskIO/startup");
   const { getTimeZone } = await import("../../../packages/config/time");
   const { IDENTITY_DATABASE_TIME_ZONE_KEY } = await import("../../../packages/consts/identityStorage");
-  const { DAY_MS } = await import("../../../packages/consts/diskIO/common");
+  const { DAY_MS } = await import("../../../packages/consts/time");
   const { openStorageDatabase, closeStorageDatabase } = await import("../../../packages/database/interact/connection");
   const setMarker = (timeZone: string): void => {
     const database = openStorageDatabase({ path: realPaths.IDENTITY_DATABASE_PATH });

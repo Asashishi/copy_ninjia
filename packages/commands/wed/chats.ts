@@ -7,7 +7,7 @@ import { getOrCreateWedMemberState } from "./persistence";
 
 /**
  * 只由通过初始化网关的群交互创建；成员集合满额（STATE_MANAGED_CHAT_LIMIT）时
- * 拒绝新群，因此交互表与成员集合同界，不需要淘汰。
+ * 拒绝新群，交互表与成员集合同界，不淘汰。
  */
 export function getOrCreateWedChat(chatId: number): WedChat | undefined {
   let chat: WedChat | undefined = wedChats.get(chatId);

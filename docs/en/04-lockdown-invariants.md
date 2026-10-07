@@ -4,18 +4,47 @@
 
 [← 04 Runtime Invariants](04-invariants.md)
 
-- The lockdown durability handshake's fingerprint consists of `phase`, `intentId`, and `announced`. The first two are the stable identity of one lockdown intent; although `announced` changes at most once from false to true per intent, it decides whether recovery may send an unlock notice and therefore must be covered by the persistence acknowledgement. Emergency permission recovery still compares only `phase` and `intentId` when deciding whether a late result belongs to the current intent: persisting the notice flag does not create a new permission intent. Neither fingerprint may include `expiresAt`: in the `APPLYING`/`RESTORING` phases it is filled from the wall clock at publish time, so two publishes of the same intent (persisting the announcement result, for instance) already differ.
+- **Lockdown Fingerprint & Intent Identity**:
+  - The lockdown durability handshake fingerprint (`lockdownFingerprint`) consists of three fields: `phase`, `intentId`, and `announced`.
+  - `phase` and `intentId` establish the stable identity of a specific lockdown intent.
+  - `announced` determines whether crash recovery is permitted to broadcast an unlock notice; therefore, the persistence acknowledgement must cover it.
+  - Emergency permission recovery checks only `phase` and `intentId` when deciding whether a delayed result belongs to the active intent (persisting the announcement flag does not spawn a new permission intent).
+  - Neither fingerprint may ever include `expiresAt`.
 
-  Including it means the main thread's "persist, then look again at whether it is still the same intent" reconcile loop never sees equality, paying one fsynced `chat_states` write per round; when publishes arrive faster than those writes the loop never terminates, so neither the fingerprint nor the persistence receipt is ever produced. The countdown itself still lives in the mirror's `expiresAt`, and adopt derives the remaining time from it.
+- **Countdown & Reconcile Loop**:
+  - The countdown timer is tracked in the mirror's `expiresAt`, from which `remainingMs` is derived upon state adoption.
+  - The persistence reconcile loop is capped at `LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS` rounds.
+  - If a new event arrives while persistence is currently in flight, a queued-rerun flag is set.
+  - If the round limit is reached, the active task logs an error, yields the current microtask, and automatically initiates a fresh task using the latest mirror snapshot, without waiting for external triggers.
 
-  That loop also carries a round cap as a backstop. A new event arriving while persistence is in flight sets a queued-rerun marker; exhausting the cap only leaves an error log and yields the current microtask, then automatically starts a new task from the latest mirror. The final wake-up must not depend on another external lockdown event.
-- Once the Worker gives up self-healing, the main thread's `recoverAbandonedLockdowns` iterates the chat-state hot-read copy (the `Map` in `cache/main/chatState.ts`) directly in insertion order, without taking a snapshot. The recovery chain synchronously reads the current entry before its first `await`; `Map.get` does not change iteration order, so each chat with a lockdown is produced once and appears once in the takeover log. When a chat's recovery is already registered, `startEmergencyLockdownRecovery` returns on the fingerprint.
-- The current lockdown mirror requires `phase` and a positive `intentId`; active pending-verification records require `phase` and `trackedMessageTimes`. Reminder IDs and `announcementMessageId` remain business-optional: absence means only that the reminder has not landed yet, or that this record never observed a join announcement, so recovery takes each one's own redelivery/cleanup path.
+- **Main-Thread Emergency Takeover**:
+  - If the Anti-Raid Worker gives up self-healing, the main thread's `recoverAbandonedLockdowns` directly scans the hot-read chat state cache (`chatStateCache` in `cache/main/chatState.ts`) without cloning or relying on iteration order.
+  - The recovery pipeline reads each entry synchronously before any `await`; each locked chat is processed once and logged once in the takeover journal.
+  - If recovery for a chat is already active with the identical `phase` and `intentId`, `startEmergencyLockdownRecovery` returns immediately. If a different intent is detected, it aborts the old recovery process and restarts anew.
 
-  Other missing or incompatible fields must be migrated manually while the old process is stopped; production read paths retain no compatibility logic.
-- **Persist all three independent terminal-notice flags.** `successNoticeSent` records the success report, `failureNoticeSent` an unsuccessful kick or missing `can_restrict_members`, and `unconfirmedNoticeSent` an unconfirmed membership or chat type. The main thread deletes all three notice types 30 seconds after successful sending. Each flag independently prevents its notice from being repeated after Worker replacement or process restart; none substitutes for another. Setting a flag publishes a new revision whose persistence the terminal retry must await.
+- **Mirror Validation & Optional Fields**:
+  - Active lockdown mirrors must contain `phase` and a positive integer `intentId`. `announcementMessageId` is permitted only when `announced` is true.
+  - Verification challenge snapshots must include `phase` and `trackedMessageTimes`.
+  - `reminderMessageId` and `announcementMessageId` are optional: their absence merely indicates that a reminder has not yet landed or that no join announcement was captured, allowing recovery to follow their respective cleanup paths.
+  - Any other missing or unrecognized fields are rejected by strict validation and must be migrated offline; production read paths retain no backward-compatibility fallback logic.
 
-  **A successful kick whose success report failed to send must not settle.** Settling deletes the record, so the chat watches a member vanish with the one explanation that would have covered it gone for good. That path writes `removalConfirmed` into the snapshot before backing off, and that flag must be persisted too: without it the next round's membership probe answers only "not in the chat", the terminal settles silently as if someone else had removed them, and the report is swallowed permanently. It is written only when the send fails — in a normal round the kick and the report settle together and cost no extra persistence.
-- **The "confirmed to lack the ban permission, so stop issuing requests" short circuit requires cleanup to be finished first** (`cleanupSettled`). Keyed on `failureNoticeSent` alone, a verification announcement whose deletion failed once on a network blip is frozen in place: every later round returns at the short circuit, the cleanup block never runs again, and a message with a live verification button stays in the chat forever for a member who was never kicked. While cleanup is still owed the round runs the full disposal — the kick is short-circuited by `canRestrict`, the report by `failureNoticeSent`, and deletion by the permission mirror when `can_delete_messages` is confirmed absent — so "not a single request" still holds. Like `executionStarted`, this flag is a **Worker-local idempotence gate that stays out of the snapshot**: replaying a deletion is idempotent, resending a report is not.
+- **Three Independent Terminal Notice Flags**:
+  - `successNoticeSent`: Records that the success report was delivered.
+  - `failureNoticeSent`: Records an unsuccessful kick attempt or missing `can_restrict_members` permission.
+  - `unconfirmedNoticeSent`: Records unconfirmed chat membership or invalid chat type.
+  - The main thread automatically deletes all three notice types after `COMMAND_MESSAGE_AUTO_DELETE_MS` (30 seconds).
+  - Each flag independently ensures its notice is not duplicated across Worker restarts or process reboots. Setting any flag issues a new revision that terminal retry loops must await.
+
+- **Kick Confirmation & Report Atomicity**:
+  - **A successful kick whose success report failed to send must not be marked settled.**
+  - `removalConfirmed` is written to the snapshot before backing off and retrying. When the subsequent probe reports that the user is "not in chat", the bot recognizes that it completed the expulsion and dispatches the success report.
+  - `removalConfirmed` is written and persisted only when the report dispatch encounters a network failure. Under normal conditions, the kick and report settle together in a single atomic transaction without extra writes.
+
+- **Short-Circuiting Without Ban Rights**:
+  - The short-circuit optimization ("confirmed to lack ban permissions, halt further API calls") requires cleanup to be completely finished first (`cleanupSettled`).
+  - When `botCanRestrictIn` is false, the cycle exits early only if both `failureNoticeSent` and `cleanupSettled` are true; each such cycle sends a single membership probe, settles if the member has left, and otherwise keeps backing off.
+  - Lockdown instant kicks (`kickPending`) also probe membership first when the ban permission is missing: a departed member settles and its record is released; a present member is logged and backed off without a kick request.
+  - If cleanup remains unsettled, the full disposal cycle continues: the kick is bypassed by `canRestrict`, the report is bypassed by `failureNoticeSent`, and message deletions are bypassed when `can_delete_messages` is absent. Only pending deletions that can still execute are retried.
+  - Like `executionStarted`, `cleanupSettled` is an **in-memory Worker-local idempotency gate that is never written to disk snapshots**.
 
 <p align="right"><a href="04-invariants.md#quick-navigation">↑ Back to quick navigation</a></p>

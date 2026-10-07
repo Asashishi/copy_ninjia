@@ -24,8 +24,7 @@ import type { ImageDimensions } from "../types/hImage";
 /** 魔数嗅探得到的图片格式；unknown 表示不属于 jpeg、png、webp、gif 中任何一种。 */
 export type SniffedImageFormat = "jpeg" | "png" | "webp" | "gif" | "unknown";
 
-/** 按文件头魔数嗅探格式，不依赖 Telegram 的 file_path 扩展名（贴纸/缩略图的
- *  扩展名不总是可靠）。 */
+/** 按文件头魔数嗅探格式，不依赖 Telegram 的 file_path 扩展名。 */
 export function sniffImageFormat(bytes: Uint8Array): SniffedImageFormat {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpeg";
   if (
@@ -134,9 +133,8 @@ export function firstAnimatedWebpFrame(bytes: Uint8Array): Uint8Array | null {
 
 /**
  * 把任意支持格式的图片字节转成可直接喂视觉接口的 jpeg/png。jpeg/png
- * 原样直通（无转码开销）；webp/gif 经 `Bun.Image` 转 png，动态 webp 与 gif 都只取第一帧
- * （本项目没有抽帧能力，只能按封面帧分析；`Bun.Image` 只解静态 webp，动态 webp 先经
- * firstAnimatedWebpFrame 抽出首帧）。解码、编码在 Bun 的图像线程上执行，不阻塞调用线程；
+ * 原样直通；webp/gif 经 `Bun.Image` 转 png，动态 webp 与 gif 都只取第一帧
+ * （`Bun.Image` 只解静态 webp，动态 webp 先经 firstAnimatedWebpFrame 抽出首帧）。解码、编码在 Bun 的图像线程上执行，不阻塞调用线程；
  * 像素数超过 VISION_TRANSCODE_MAX_PIXELS 的图在分配像素缓冲前即被拒绝。不支持的格式、
  * 超限或转码失败均返回 null，调用方按「这条不解析」处理。编解码器随 Bun 运行时静态
  * 链接，源码与二进制发行包都不依赖 node_modules 里的原生模块。
@@ -161,12 +159,8 @@ export async function prepareVisionImage(bytes: Uint8Array): Promise<VisionImage
  * 只读一张图的像素尺寸，不解码像素、不转码。`Bun.Image` 的 `metadata()` 只解码到
  * 能读出宽高与格式为止。
  *
- * 任何解码失败（不认识的格式、截断的头、超出 maxPixels）都返回 null——调用方
- * 对「读不出尺寸」和「读出来不合规」要分开处置，但都不该让一次收图抛出去。
- *
- * **刻意不记日志**：入参是用户随手转发进来的字节，「这不是一张能解码的图」是
- * 正常输入而不是故障；一个刷屏相册就能把它变成日志噪声源。调用方把 null 归到
- * 与「格式不对」同一档，用户从命令回执里看得到张数。
+ * 任何解码失败（不认识的格式、截断的头、超出 maxPixels）都返回 null，不抛出、不记日志；
+ * 调用方把「读不出尺寸」与「读出来不合规」分开处置。
  * @param bytes 完整的图片字节。
  * @returns 像素宽高；读不出时为 null。
  */

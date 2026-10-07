@@ -45,15 +45,10 @@ import { errorMessage } from "../../libs/errorMessage";
  * 上，触发时执行本函数；条数达到 FLUSH_MAX_ENTRIES 时由 handleLuckDrawMessage 直接调
  * flushLuckAppends 立即落盘。
  *
- * 补录不能挪进 flushLuckAppends()：两条换日路径正是先调它再经 switchLuckDay 切
- * owner，若它自己顺手补录，补录建立的新 owner 会紧接着被那次切换连同刚入队的条目
- * 一起清掉。所以「刷」与「补录」只在这条重试路径上组合，换日路径按 switchLuckDay
- * 的顺序来（先取走滞留区、再切 owner、最后逐条重放）。
- *
- * 也不能等下一条 luckDraw 消息来推动：运势是每人每天一次的低频写入，「下一条」
- * 可能在几个小时之后，也可能今天再也没有——那时磁盘早就恢复了，条目却还只活在
- * 内存里。导出是为了让单测直接驱动这一跳，不必真等 FLUSH_INTERVAL_MS，也不必去
- * 碰 Timeout 的运行时内部字段。
+ * 「刷」与「补录」只在这条重试路径上组合，不在 flushLuckAppends() 内：两条换日路径
+ * 先调 flushLuckAppends 再经 switchLuckDay 切 owner，按 switchLuckDay 的顺序补录
+ * （先取走滞留区、再切 owner、最后逐条重放）。重试由定时器驱动，不依赖后续 luckDraw
+ * 消息。导出供单测直接驱动这一跳。
  */
 export async function retryLuckFlush(): Promise<void> {
   if (await flushLuckAppends()) await replayDeferredLuckDraws(takeDeferredLuckDraws());
@@ -61,10 +56,8 @@ export async function retryLuckFlush(): Promise<void> {
 
 /**
  * 把这条「新一天」的抽签挪进滞留区，等旧日刷得动、owner 换过去之后补录。
- *
- * 直接丢是不行的：主线程的 dailyLuckCache 早已把它记成「今天抽过了」并给用户
- * 发了回执，磁盘恢复后当天文件却永远缺这一条，用户当天也再抽不了第二次——
- * onDiskIORespawn 的全量重放只覆盖 Worker 重建，覆盖不到「Worker 活着但写不进盘」。
+ * 主线程的 dailyLuckCache 已记下这条抽签并发出回执；onDiskIORespawn 的全量重放只覆盖
+ * Worker 重建。
  *
  * 跨模块约束（换日、滞留补录与上界）完整表述见 docs/cn/04-invariants.md 的
  * 「运势与 AI 记忆恢复」。
@@ -118,19 +111,13 @@ export async function switchLuckDay(
 }
 
 /**
- * 把运势待追加缓冲追加写盘（先清掉可能挂起的定时器，避免它日后再触发一次
- * 空落盘）。追加失败保留 pending 重试，并且：重置文件探测状态（下次重新
- * openDayFile 校验/修复文件，对齐 logFiles.ts writeDay 的做法，不在可能已
- * 损坏的结尾上盲写）、重排定时器——运势是低频写入，不重排的话「下轮重试」
- * 要等到下一条 luckDraw 消息才会发生，条目可能在内存里滞留几个小时。
- * 过期文件清理放在追加成功、pending 清空之后：它一旦抛错只影响清理本身，
- * 不能连累已经写进磁盘的条目被当作「没写过」再追加一遍。
+ * 把运势待追加缓冲追加写盘（先清掉可能挂起的定时器）。追加失败保留 pending 重试，
+ * 并重置文件探测状态（下次重新 openDayFile 校验/修复文件，同 logFiles.ts writeDay）、
+ * 重排定时器。过期文件清理放在追加成功、pending 清空之后，清理抛错只影响清理本身。
  *
  * 连续失败到 LUCK_APPEND_STALL_ALERT_FAILURES 次时，除 console.error 外额外向
- * 主线程发一条 luckAppendStalled 诊断：本 Worker 的 console 在把 stdout/stderr
- * 接到 /dev/null 的部署上等于没有，而运势「内存有、磁盘没有」在别处无迹可寻。
- * 告警边沿触发，一次故障期只发一条（见 cache/workers/diskIO/luck.ts 的
- * luckAppendFailures）。
+ * 主线程发一条 luckAppendStalled 诊断。告警边沿触发，一次故障期只发一条
+ * （见 cache/workers/diskIO/luck.ts 的 luckAppendFailures）。
  */
 export async function flushLuckAppends(): Promise<boolean> {
   cancelDiskIOFlushTimer(luckFlushTimer);
@@ -152,10 +139,8 @@ export async function flushLuckAppends(): Promise<boolean> {
       luckAppendFailures.consecutive >= LUCK_APPEND_STALL_ALERT_FAILURES &&
       luckAppendStalledNotifier.current !== null
     ) {
-      // 诊断投递自己抛出绝不能逸出 onmessage：Bun 里 Worker 的未捕获异常会
-      // 直接终止整条落盘线程（见 diskIOWorker.ts handleDiskIOWorkerMessage 中「共享 SQLite 写消息的非法输入就地拒收」一段），那等于为了
-      // 一行告警把 AI 记忆、黑名单、待验证的缓冲一起赔进去——而这条路径恰恰
-      // 只在写盘已经出问题时才走到。
+      // 诊断投递抛出的异常不得逸出 onmessage（Worker 未捕获异常会终止整条落盘线程，
+      // 见 diskIOWorker.ts handleDiskIOWorkerMessage 中「共享 SQLite 写消息的非法输入就地拒收」一段）。
       try {
         luckAppendStalledNotifier.current({
           type: "luckAppendStalled",
@@ -164,8 +149,7 @@ export async function flushLuckAppends(): Promise<boolean> {
           consecutiveFailures: luckAppendFailures.consecutive,
           error: errorMessage(error),
         });
-        // 只在真正投出去之后才置位：出口没装上、或投递失败时不能把这一轮当成
-        // 已告警，否则这段故障期就永远不会再报。
+        // 只在投递成功后置位：出口未装上或投递失败时不视为已告警。
         luckAppendFailures.alerted = true;
       } catch (notifyError: unknown) {
         console.error("[diskIOWorker] failed to report stalled luck appends:", notifyError);
@@ -186,15 +170,12 @@ export async function flushLuckAppends(): Promise<boolean> {
 export async function handleLuckDrawMessage(
   msg: LuckDrawDiskMessage
 ): Promise<void> {
-  // YYYY-MM-DD 可按字典序判断方向。Worker 重建后可能重放跨零点前缓冲的旧
-  // 消息；它不能把已恢复的当天 owner 拍回昨日，更不能让后续清理误删当天文件。
+  // YYYY-MM-DD 可按字典序判断方向；重放的旧消息（msg.day 早于当前 owner 日）不回拨 owner。
   const current: LuckDayCache | null = luckWorkerCache.current;
   if (current === null || msg.day > current.day) {
-    // startLuckDay 会经 hydrateLuckCache 把 luckPendingAppends 整个清零，因此
-    // 跨日切换前必须先把旧日已确认结果刷盘——否则还在 30 秒批量窗口里的条目
-    // 一次都没写盘就被丢掉，而丢失是完全静默的。刷不动就不切 owner，但这条新日
-    // 抽签本身要留在滞留区等补录（见 deferLuckDraw：丢掉它同样是静默丢盘，只是
-    // 丢的是新一天那侧）。口径与 workers/diskIOWorker.ts 的 ensureLuckSecret 分支一致。
+    // startLuckDay 经 hydrateLuckCache 清空 luckPendingAppends，跨日切换前先把旧日
+    // 已确认结果刷盘；刷不动就不切 owner，这条新日抽签留在滞留区等补录（见 deferLuckDraw）。
+    // 口径与 workers/diskIOWorker.ts 的 handleEnsureLuckSecret 一致。
     if (current !== null && !await flushLuckAppends()) {
       deferLuckDraw(msg);
       console.error(
@@ -209,8 +190,8 @@ export async function handleLuckDrawMessage(
     await replayDeferredLuckDraws(deferred);
   }
 
-  // 重新取一次 owner：上面补录滞留条目时，万一夹着比 msg 更新的一天，owner 已经
-  // 又往前走了一步，这条就成了过期消息，与 msg.day < current.day 是同一种处置。
+  // 重新取 owner：补录滞留条目期间 owner 可能已前进到更新的一天，此时这条是过期消息，
+  // 与 msg.day < current.day 同一种处置。
   const dayCache: LuckDayCache | null = luckWorkerCache.current;
   if (dayCache?.day !== msg.day) {
     console.error(
@@ -218,11 +199,9 @@ export async function handleLuckDrawMessage(
     );
     return;
   }
-  // 去重按「key + 值」而不是只看 key：值也一样才算重复（本 Worker 崩溃
-  // 重建后主线程会把 dailyLuckCache 全量重放一遍，见 infra/diskIO.ts 的
-  // onDiskIORespawn，其中多数条目已经在崩溃前落过盘，不去重会白占地方）。
-  // 只看 key 会挡住同 key 改值的消息；同 key 不同值的消息照常落盘覆盖。重复 key
-  // 追加是安全的——JSON.parse 只认最后一次出现，恢复时天然取到最新值。
+  // 去重按「key + 值」：值也一样才算重复（Worker 重建后主线程全量重放 dailyLuckCache，
+  // 见 infra/diskIO.ts 的 onDiskIORespawn）；同 key 不同值的消息照常追加，
+  // JSON.parse 只认最后一次出现，恢复时取到最新值。
   const record: LuckDrawRecord = { label: msg.label, fortunePercent: msg.fortunePercent };
   const known: LuckDrawRecord | undefined = dayCache.entries.get(msg.key);
   if (known?.label === record.label && known.fortunePercent === record.fortunePercent) return;
@@ -258,8 +237,7 @@ export function adoptLuckDay(
 
 /**
  * 每日维护先提交旧 owner 与故障期滞留抽签，再经 switchLuckDay 严格接管目标日并清理更早
- * 文件，接管后补录这期间重新滞留的抽签。目标日落后于当前 owner 时拒绝回拨，避免时钟回拨误删
- * 当前数据。
+ * 文件，接管后补录这期间重新滞留的抽签。目标日落后于当前 owner 时拒绝回拨。
  */
 export async function maintainLuckForDay(day: string): Promise<void> {
   const currentDay: string | undefined = luckWorkerCache.current?.day;

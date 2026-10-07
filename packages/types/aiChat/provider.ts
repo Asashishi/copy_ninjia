@@ -3,14 +3,11 @@
  * 实现形状，具体收发在 aiChat/<vendor>/ 实现包里落地。部署层只要求 text、summary、
  * media；image/tts 缺配置时不挂对应工具。语音转写是否可用由实现与首次请求探测。
  *
- * 领域侧（工具编排、记忆压缩、贴纸目录、生图工具）只认这里的类型，不再
- * import 任何供应商 SDK 的类型——换供应商时编译期就能确认哪些调用点没接上。
- * 跨模块约束见 docs/cn/04-invariants.md。
+ * 领域侧（工具编排、记忆压缩、贴纸目录、生图工具）只认这里的类型，不 import
+ * 供应商 SDK 的类型。跨模块约束见 docs/cn/04-invariants.md。
  *
- * **可选能力一律用「这个成员在不在」表达，不用供应商名字判断。** 领域侧写
- * `provider.synthesizeSpeech === undefined` 而不是 `provider.name !== "google"`：后者
- * 会让每个调用点都记住一份「谁支持什么」的名单，再有第三家或某家补齐能力时，
- * 漏改的那处只会在运行期表现成一个不该出现的工具。
+ * 可选能力一律用「这个成员在不在」表达，不用供应商名字判断：领域侧写
+ * `provider.synthesizeSpeech === undefined`，不写 `provider.name !== "google"`。
  */
 
 import type { GeneratedChatImage, ImageGenerationAspectRatio } from "./imageGeneration";
@@ -22,9 +19,8 @@ import type { AgentProvider } from "../config";
 export type AiProviderTaskPriority = "interactive" | "background";
 
 /**
- * 一个自定义函数工具的中立声明。参数一律用 JSON Schema 表达：Gemini 的
- * `parametersJsonSchema` 与 OpenAI 的 `parameters` 都直接吃这份对象，工具
- * 定义因此不必按供应商分叉。
+ * 一个自定义函数工具的中立声明。参数用 JSON Schema 表达，Gemini 的
+ * `parametersJsonSchema` 与 OpenAI 的 `parameters` 都直接使用这份对象。
  */
 export interface AiToolDefinition {
   readonly name: string;
@@ -49,11 +45,11 @@ export interface AiToolOutput {
 }
 
 /**
- * 一次媒体请求失败对**整条模态**的归因。
+ * 一次媒体请求失败对整条模态的归因。
  *
  * 只有能对「这个 media 端点还能不能处理这种输入」下结论的失败才带上它；单份
  * 媒体自己的问题（下载不到、格式不合、正文被安全策略清空）一律不带，媒体探测
- * 状态机据此把「这一份不行」与「这一类都不行」分开，见
+ * 状态机据此区分「这一份不行」与「这一类都不行」，见
  * cache/workers/aiChat/mediaInputSupport.ts。
  */
 export type MediaInputFailure =
@@ -65,8 +61,8 @@ export type MediaInputFailure =
   | "transient";
 
 /**
- * 单次文本生成的业务结果。供应商 SDK 已耗尽 HTTP 重试时 retryable=false，
- * 防止调用方再套一层完整请求重试；HTTP 成功但正文不可用时才允许业务层重采样。
+ * 单次文本生成的业务结果。供应商 SDK 已耗尽 HTTP 重试时 retryable=false；
+ * HTTP 成功但正文不可用时才允许业务层重采样。
  */
 export type AiTextResult =
   | { readonly ok: true; readonly text: string }
@@ -86,19 +82,16 @@ export type MediaInputCapability = "vision" | "voice";
 /**
  * 一种媒体输入在本 Worker 生命周期内的探测结论。
  *
- * `unsupported` 与 `misconfigured` 都阻止新下载与请求；同配置代次的在途成功可恢复，二者分开
- * 记：前者是「这个模型就没有这项能力」，后者是「模型名或 base_url 写错了」。
- * 合并成一个值会让一次部署笔误在日志里长得和模型能力缺失一模一样。
+ * `unsupported` 与 `misconfigured` 都阻止新下载与请求；同配置代次的在途成功可恢复。
+ * 前者表示模型没有这项能力，后者表示模型名或 base_url 配置有误。
  */
 export type MediaInputSupport = "unknown" | "supported" | "unsupported" | "misconfigured";
 
 /** 一轮回复请求里随轮次变化的工具配置与采样语义。 */
 export interface AiReplyTurnRequest {
   /**
-   * 系统提示词。**只含逐字恒定的段落**（人设 + 固定指令），不含当前时间、
-   * 心情这类运行时状态——那些走 AiReplySessionParams.volatileBlocks 进 user
-   * 内容。这条约束是缓存前提：混进每秒都变的时间戳会从系统提示词处切断各家
-   * 供应商的自动前缀缓存。
+   * 系统提示词。只含逐字恒定的段落（人设 + 固定指令）；当前时间、心情这类运行时
+   * 状态走 AiReplySessionParams.volatileBlocks 进 user 内容。
    */
   readonly systemPrompt: string;
   /** 本轮挂载的自定义函数声明；同一回复内逐字恒定，预算与可用性只在执行侧兑现（见 workers/aiChat/replyModel.ts 头注）。 */
@@ -106,11 +99,8 @@ export interface AiReplyTurnRequest {
   /** 本轮是否挂载供应商的服务端联网检索工具。 */
   readonly webSearchEnabled: boolean;
   /**
-   * 本轮之前是否已经观测到服务端检索。
-   *
-   * 只传语义、不传温度：采样参数因供应商而异（OpenAI 侧的推理模型根本不接受
-   * temperature），具体取什么值由各实现包按自己的 consts 决定，见
-   * consts/aiChat/{gemini,openai}.ts。
+   * 本轮之前是否已经观测到服务端检索。采样参数不由调用方传入，由各实现包按自己的
+   * consts 决定，见 consts/aiChat/{gemini,openai}.ts。
    */
   readonly grounded: boolean;
 }
@@ -127,8 +117,8 @@ export interface AiReplyTurn {
   readonly finishMessage?: string;
   /**
    * 供应商明确报告「服务端工具调用过多」（Gemini 的 TOO_MANY_TOOL_CALLS）。
-   * 没有对等信号的供应商恒为 false——上层据此决定要不要关掉检索重试一次，
-   * fail-safe 含义是「不触发那次额外重试」，而不是「一定没超限」。
+   * 没有对等信号的供应商恒为 false；上层据此决定是否关掉检索重试一次，
+   * false 表示不触发那次额外重试。
    */
   readonly toolCallLimitHit: boolean;
 }
@@ -152,14 +142,12 @@ export interface AiReplySession {
   appendToolOutputs(outputs: readonly AiToolOutput[]): boolean;
 }
 
-/** 纯文本生成的两条流水线。两者的输出 token 上限差一个数量级，由各实现包
- *  按自己的 consts 分别给值。 */
+/** 纯文本生成的两条流水线；输出 token 上限由各实现包按自己的 consts 分别给值。 */
 export type AiTextPurpose = "chatSummary" | "stickerPackSummary";
 
 /**
- * 纯文本生成请求（记忆压缩、贴纸整包简介）。模型、采样温度与 token 上限都不
- * 由调用方指定：那三样因供应商而异，选什么值是实现包自己的事（见各包 consts）。
- * 调用方只声明「这是哪条流水线」，以及产出该怎么清洗。
+ * 纯文本生成请求（记忆压缩、贴纸整包简介）。模型、采样温度与 token 上限不由
+ * 调用方指定，由实现包按各包 consts 决定。调用方只声明所属流水线与产出清洗方式。
  */
 export interface AiTextRequest {
   readonly purpose: AiTextPurpose;
@@ -265,23 +253,20 @@ export interface AiMeteredSpeechRequest extends AiSpeechRequest {
 /**
  * 创建一轮回复会话所需的初始上下文。
  *
- * 区块按「跨轮回复是否逐字不变」分成两组，而不是按语义分。这条分界是给供应商
- * 缓存用的：稳定组连同系统提示词与工具声明构成同一个群反复重发的那段前缀，
- * 两组都进请求的 user 内容，按 stable→volatile 的顺序。稳定组排在前面是为了让
- * 各家的前缀缓存有机会接住它：Gemini 的隐式缓存、OpenAI 的 Responses 前缀缓存与 Anthropic
- * 在最后一个稳定区块打的缓存断点都只认「从头开始逐字相同」的那一段。Anthropic 只在区块边界
- * 命中，另按 conversationSettledOffsets 把当前会话切开，接住转录里跨轮重现的前缀。
+ * 区块按「跨轮回复是否逐字不变」分成稳定组与易变组。两组都进请求的 user 内容，按
+ * stable→volatile 的顺序；稳定组连同系统提示词与工具声明构成同一个群反复重发的前缀，
+ * 供各家前缀缓存使用：Gemini 的隐式缓存、OpenAI 的 Responses 前缀缓存与 Anthropic
+ * 在最后一个稳定区块打的缓存断点。Anthropic 只在区块边界命中，另按
+ * conversationSettledOffsets 把当前会话切开。
  */
 export interface AiReplySessionParams {
   /**
-   * 跨轮回复逐字不变的区块（当前是只读参考记忆）。内容变化只发生在冷记忆压缩
-   * 轮换或机器人账号身份变化时，因此它是 user 内容里唯一有希望被自动前缀缓存
-   * 接住的一段，必须排在易变组之前。
+   * 跨轮回复逐字不变的区块（当前是只读参考记忆），内容只在冷记忆压缩轮换或机器人
+   * 账号身份变化时改变；排在易变组之前。
    */
   readonly stableBlocks: readonly string[];
   /**
-   * 每轮回复都会变的区块（当前是群聊转录、本轮运行时状态与回复任务）。绝不能
-   * 混进稳定组：其中的当前时间精确到秒，混进去等于让公共缓存前缀每秒变化一次。
+   * 每轮回复都会变的区块（当前是群聊转录、本轮运行时状态与回复任务），不得混进稳定组。
    */
   readonly volatileBlocks: readonly string[];
   /**
@@ -294,15 +279,10 @@ export interface AiReplySessionParams {
 }
 
 /**
- * 各项能力的最小契约。
+ * 各项能力的最小契约，按编译期边界拆开：config/dynamic/agent.json 按能力独立选
+ * provider，调用方只拿到自己能力对应的那一份契约（见 aiChat/provider.ts 模块头注）。
  *
- * 按**编译期边界**拆开：config/dynamic/agent.json 按能力独立选 provider，一次
- * summary 路由拿到的实现只应该被用来生成摘要。若各处都拿着完整的
- * AiChatProvider，「从 summary 那一家去读图」或「拿 media 那一家开回复会话」在
- * 类型上完全合法，只有运行期才会表现成用错了模型和端点——而那正是本项目刻意
- * 拒绝的静默漂移（见 aiChat/provider.ts 模块头注）。
- *
- * `name` 每项都有：日志诊断要能说清是哪一家，与能力无关。
+ * `name` 每项都有，用于日志诊断。
  */
 
 /** 带工具往返的群聊正文能力。 */
@@ -325,11 +305,10 @@ export interface AiMediaProvider {
   /**
    * 语音转写。缺席表示这一家没有这项能力，调用方按「这条语音解析不出来」降级
    * （转录里留兜底占位，见 workers/aiChat/mediaText.ts 的 fallbackTextFor），
-   * **不得为此临时换一家**——那正是 aiChat/provider.ts 模块头注拒绝的静默漂移。
+   * 不换用其他供应商。
    *
-   * 显式声明 `this: void`：可选成员必须先取出来判空再调用，而带隐式 this 的方法
-   * 签名一旦被取成变量就丢了接收者。实现包给的本来就是自由函数，这里把这件事
-   * 写进类型，顺带让「取出来再调」成为合法写法（synthesizeSpeech 同理）。
+   * 声明 `this: void`：实现包给出的是自由函数，可选成员取出并判空后可直接调用
+   * （synthesizeSpeech 同理）。
    */
   transcribeVoice?(this: void, request: AiVoiceRequest): Promise<AiTextResult>;
 }
@@ -357,13 +336,14 @@ export interface AiWebSearchFacade {
 
 /**
  * 结构化 JSON 生成请求（text 能力，不挂工具，cron 摘要组稿用）。实现包按自己的协议要求端点
- * 只输出 JSON：OpenAI 兼容端点用 `json_object`（提示词里须出现 JSON 一词），Gemini 另把
- * jsonSchema 交给 `responseJsonSchema`。不使用 Gemini 显式缓存。
+ * 只输出 JSON：OpenAI 兼容端点用 `json_object`（提示词里须出现 JSON 一词，Schema 由调用方
+ * 写进提示词），Gemini 把 jsonSchema 交给 `responseJsonSchema`，Anthropic 交给
+ * `output_config.format`。不使用 Gemini 显式缓存。
  */
 export interface AiJsonRequest {
   readonly systemPrompt: string;
   readonly userContent: string;
-  /** 期望输出的 JSON Schema；解码与校验仍由调用方负责。 */
+  /** 期望输出的 JSON Schema；OpenAI 兼容端点不读取；解码与校验由调用方负责。 */
   readonly jsonSchema: Readonly<Record<string, unknown>>;
   readonly signal?: AbortSignal;
   /** 出现在错误日志里的调用名（英文）。 */
@@ -376,10 +356,23 @@ export interface AiStructuredTextProvider {
   generateJson(request: AiJsonRequest): Promise<AiTextResult>;
 }
 
-/** 生图能力；能力缺配置时由路由返回 null，不挂 generate_image。 */
+/**
+ * 生图门面（aiChat/provider.ts 的 imageAiProvider）；能力缺配置或所选实现缺席生图时由路由返回 null，
+ * 不挂 generate_image。
+ */
 export interface AiImageProvider {
   readonly name: AgentProvider;
   generateImage(request: AiImageRequest): Promise<GeneratedChatImage | null>;
+}
+
+/** 生图能力：实现包交出的供应商契约。 */
+export interface AiImageGenerationProvider {
+  readonly name: AgentProvider;
+  /**
+   * 生图。缺席表示这一家没有这项能力；配置解析已拒绝把 image 路由给缺席的一家
+   * （见 config/agentCapability.ts），路由按缺席返回 null。
+   */
+  generateImage?(this: void, request: AiImageRequest): Promise<GeneratedChatImage | null>;
 }
 
 /** 语音合成能力：实现包交出的供应商契约。 */
@@ -405,17 +398,16 @@ export interface AiSpeechFacade {
 /**
  * 一家供应商对 AI 闲聊全部模型能力的实现；实现包导出的就是这一个对象。
  *
- * 选取按 text、summary、media、image、tts、web_search 六项能力拆分，见 aiChat/provider.ts：
- * 路由持有完整实现，交给调用方的却只有上面对应的那一份最小契约。每项只读取
- * config/dynamic/agent.json 中自己的 provider；不存在凭据回退或运行时覆盖。因此各家
- * 客户端可以在同一条 Worker 线程上同时存在，并按能力持有各自实例
- * （见 cache/workers/aiChat/{gemini,openai,anthropic}.ts）。
+ * 选取按 text、summary、media、image、tts、web_search 能力拆分，见 aiChat/provider.ts：
+ * 路由持有完整实现，交给调用方的只有上面对应的那一份最小契约。每项只读取
+ * config/dynamic/agent.json 中自己的 provider，各家客户端可以在同一条 Worker 线程上
+ * 同时存在，并按能力持有各自实例（见 cache/workers/aiChat/{gemini,openai,anthropic}.ts）。
  */
 export interface AiChatProvider extends
   AiTextProvider,
   AiSummaryProvider,
   AiMediaProvider,
-  AiImageProvider,
+  AiImageGenerationProvider,
   AiSpeechProvider,
   AiWebSearchProvider,
   AiStructuredTextProvider {}

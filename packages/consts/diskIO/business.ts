@@ -1,4 +1,5 @@
 import type { StorageDatabaseDomain } from "../../types/diskIO/replies";
+import { exhaustiveList } from "../exhaustiveList";
 
 /** Disk I/O 业务传输每批最多处理的消息数；单批确认后才继续投递。 */
 export const DISK_BUSINESS_BATCH_MAX_MESSAGES: number = 128;
@@ -6,9 +7,9 @@ export const DISK_BUSINESS_BATCH_MAX_MESSAGES: number = 128;
 export const DISK_OPERATION_CONTROL_RESERVE: number = 16;
 /**
  * Disk I/O Worker 本地串行队列的最大在途操作数（workers/diskIO/operationQueue.ts）。
- * 来源上界为 5：主线程的业务批与诊断批各至多一批在途（均在处理完才回 ACK）、启动或
+ * 来源：主线程的业务批与诊断批各至多一批在途（均在处理完才回 ACK）、启动或
  * 重建时的 load、每日维护 cron 的一项，以及本 Worker 全部定时 flush 合并后的一项（见
- * workers/diskIO/timedFlush.ts）。超出即协议违约，拒收后终止本代 Worker。
+ * workers/diskIO/timedFlush.ts），来源之和不超过本上限。超出即协议违约，拒收后终止本代 Worker。
  */
 export const DISK_WORKER_MAX_QUEUED_OPERATIONS: number = 8;
 
@@ -26,10 +27,10 @@ export const DISK_OPERATION_MAX_RETAINED_BYTES: number = DISK_BUSINESS_MAX_RETAI
   DISK_OPERATION_CONTROL_RESERVE * DISK_BUSINESS_MESSAGE_BASE_BYTES;
 
 /**
- * 共享 SQLite 事务覆盖的七个领域，也是 all/business flush 回报其失败领域的顺序
+ * 共享 SQLite 事务覆盖的领域，也是 all/business flush 回报其失败领域的顺序
  * （workers/diskIO/storageDatabase/flush.ts 的 collectStorageDatabaseFailures）。
  */
-export const STORAGE_DATABASE_DOMAINS: readonly StorageDatabaseDomain[] = [
+export const STORAGE_DATABASE_DOMAINS: readonly StorageDatabaseDomain[] = exhaustiveList<StorageDatabaseDomain>()([
   "whitelist",
   "blocklist",
   "temporaryAdBypass",
@@ -37,7 +38,7 @@ export const STORAGE_DATABASE_DOMAINS: readonly StorageDatabaseDomain[] = [
   "chatState",
   "chatQa",
   "aiMemory",
-];
+]);
 
 /** SQLite 未 ACK 主键上限；主线程与 Worker 都按领域独立检查，超限拒收新事实。 */
 export const STORAGE_PENDING_MAX_ENTRIES: number = 8_192;

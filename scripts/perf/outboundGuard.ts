@@ -4,14 +4,13 @@ import type { TelegramApi } from "../../packages/types/telegramWorker";
 import type { Transformer } from "grammy";
 
 /**
- * 出站硬闸：基准子进程会 import 生产模块，部署机上运行的 bot 通常用同一个
- * token。本函数堵死统一出站通道，任何一次出站调用都直接抛错。
+ * 出站硬闸：任何一次出站调用都直接抛错。
  *
- * grammY 在模块加载时绑定内部 fetch；修改 `globalThis.fetch` 不覆盖这条通道，
- * 因此 Telegram API 由 transformer 在 grammY 调用层拦截。
+ * Telegram API 由 transformer 在 grammY 调用层拦截（grammY 在模块加载时绑定内部
+ * fetch，修改 `globalThis.fetch` 不覆盖这条通道）。
  *
- * `globalThis.fetch` 这道拦的是另一类调用：项目里直接写 `fetch(...)` 的地方
- * （头像抓取、JSON API）在调用时才解析全局，因此拦得住。
+ * `globalThis.fetch` 拦的是项目里直接写 `fetch(...)` 的调用（头像抓取、JSON API），
+ * 这些调用在调用时才解析全局。
  *
  * 本模块由热路径入口、fullSuite 各子进程与 review/diskPressure.ts 共用。
  */
@@ -44,8 +43,7 @@ const CANNED_TELEGRAM_RESULTS: Readonly<Record<string, (payload: Record<string, 
   getChatAdministrators: (): readonly unknown[] => [],
   /**
    * 只有机器人自己算管理员：其余成员返回 `member`，机器人自己返回
-   * `administrator` 并带齐处置权限字段；广告链路靠预热的管理员缓存判定发送者，
-   * 不会触发这次查询。
+   * `administrator` 并带齐处置权限字段。
    */
   getChatMember: (payload: Record<string, unknown>): unknown => {
     const userId: number = Number(payload.user_id);
@@ -82,9 +80,8 @@ export const cannedTelegramCalls: Map<string, number> = new Map<string, number>(
 /**
  * 每个方法最近一次被罐头应答的时刻（`Bun.nanoseconds()`）。
  *
- * AI 回复链路要靠它把「拟人停顿」从读数里扣掉：那段 sleep 夹在 `sendChatAction`
- * 与 `sendMessage` 之间，长度是 `1.5s + 55ms/字 + 抖动`，抖动在生产函数内部取
- * `Math.random()`，事后无法复算——只能像这样按真实发生的两次调用实测。
+ * AI 回复链路用它把「拟人停顿」从读数里扣掉：停顿夹在 `sendChatAction` 与
+ * `sendMessage` 两次调用之间，按这两次调用的实测时刻差计算。
  */
 export const cannedTelegramCallTimes: Map<string, number> = new Map<string, number>();
 
@@ -93,7 +90,7 @@ function noteCannedCall(method: string): void {
   cannedTelegramCallTimes.set(method, Bun.nanoseconds());
 }
 
-/** 单调递增的消息号；处置链路要靠它区分自己刚发出的那条提示。 */
+/** 单调递增的消息号，区分各次发出的消息。 */
 const cannedMessageId: { current: number } = { current: 0 };
 
 function cannedMessage(payload: Record<string, unknown>): unknown {
@@ -106,23 +103,19 @@ function cannedMessage(payload: Record<string, unknown>): unknown {
 }
 
 /**
- * 装一套只在进程内应答的 Telegram 出站，供跑完整命令链路的基准使用（广告判定、
- * AI 回复）。
+ * 装一套只在进程内应答的 Telegram 出站，供跑完整命令链路的基准使用。
  *
  * 回的一律是「调用成功」的最小形状：计时窗口里保留处置段的全部进程内工作
- * （黑名单落盘、移除 outbox 写前日志、播报编码），只摘掉网络往返本身。返回值
- * 只满足调用方实际读取的字段，不追求与 Bot API 完全同构；调用方读到未覆盖的
- * 字段时需要在这里补上对应分支。
+ * （黑名单落盘、移除 outbox 写前日志、播报编码），只去掉网络往返。返回值只含调用方
+ * 实际读取的字段，不与 Bot API 完全同构；调用方读到未覆盖的字段时在这里补上对应分支。
  *
- * **必须在 installOutboundGuards 之后调用。** grammY 的 `use` 后装的转换器在
- * 最外层（`transformers.reduce(concatTransformer, this.call)`），罐头必须先于
- * deny 那层拦截调用才会生效。顺序对了之后，罐头认得的方法就地应答，认不得的
- * 继续撞在硬闸上。
+ * 必须在 installOutboundGuards 之后调用：grammY 的 `use` 后装的转换器在最外层
+ * （`transformers.reduce(concatTransformer, this.call)`），罐头认得的方法就地应答，
+ * 认不得的继续落到 deny 那层硬闸。
  */
 export function installCannedTelegramOutbound(): void {
-  // botAdmin.ts 读 bot.botInfo.id 判断一条成员态是不是机器人自己的，而填上它的
-  // bot.init() 是一次联网握手（冷启动分区的小注也点名不含它）。grammY 允许直接
-  // 赋值 botInfo 跳过握手，这里给一个稳定身份，不出网也不改判定口径。
+  // botAdmin.ts 读 bot.botInfo.id 判断成员态是不是机器人自己的；直接赋值 botInfo，
+  // 跳过 bot.init() 的联网握手。
   bot.botInfo = {
     id: CANNED_BOT_ID,
     is_bot: true,
@@ -138,8 +131,7 @@ export function installCannedTelegramOutbound(): void {
     can_manage_bots: false,
     supports_join_request_queries: false,
   };
-  // 不接 signal：它下面唯一的一层是 deny，那一层无条件抛异常，取消信号传不传
-  // 都不改变结果，而多接一个形参会顶破 max-params。
+  // 不接 signal：下一层是 deny，无条件抛错。
   const answer: Transformer = (
     prev: Parameters<Transformer>[0],
     method: string,
@@ -152,8 +144,7 @@ export function installCannedTelegramOutbound(): void {
     return Promise.resolve({ ok: true, result: canned(payload) } as never);
   };
   bot.api.config.use(answer);
-  // 业务动作走线程能力面而不是 bot.api，两条路都要铺到；同一张罐头表喂两边，
-  // 免得哪天补了一个方法只补了一半。
+  // 业务动作走线程能力面而不是 bot.api，两条路径都铺罐头；同一张罐头表喂两边。
   const capability: Record<string, (...args: readonly unknown[]) => Promise<unknown>> = {};
   for (const [method, canned] of Object.entries(CANNED_TELEGRAM_RESULTS)) {
     capability[method] = (...args: readonly unknown[]): Promise<unknown> => {

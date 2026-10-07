@@ -93,7 +93,8 @@ test("等待频道自发标记期间会话关闭，消息尚未认领且不删�
   const session: QaFormSession = qaFormSessions.get(CHAT_ID)!;
   const pending: PromiseWithResolvers<boolean> = Promise.withResolvers<boolean>();
   waitForBotOwnMessage.mockImplementationOnce((): Promise<boolean> => pending.promise);
-  const task: Promise<QaFormIngressResult | null> = claimQaFieldMessage(channelPost("回答:点置顶"));
+  const task: Promise<QaFormIngressResult | null> | null = claimQaFieldMessage(channelPost("回答:点置顶"));
+  expect(task).toBeInstanceOf(Promise);
   closeQaFormSession(session);
   pending.resolve(false);
   expect(await task).toBeNull();
@@ -102,6 +103,16 @@ test("等待频道自发标记期间会话关闭，消息尚未认领且不删�
 });
 
 describe("表单投递的认领判据", () => {
+  test("不是发起者投递的字段时同步返回 null，不分配 Promise", async () => {
+    expect(claimQaFieldMessage(delivered("问题:\n怎么入群？"))).toBeNull();
+    openForm(OWNER);
+    expect(claimQaFieldMessage(delivered("问题:\n怎么入群？", { fromId: 7 }))).toBeNull();
+    expect(claimQaFieldMessage(delivered("今天天气不错"))).toBeNull();
+    const claiming: Promise<QaFormIngressResult | null> | null = claimQaFieldMessage(delivered("问题:\n怎么入群？"));
+    expect(claiming).toBeInstanceOf(Promise);
+    expect((await claiming)?.accepted.q).toBe("怎么入群？");
+  });
+
   test("没有表单的群一律不认领", async () => {
     expect(await claimQaFieldMessage(delivered("问题:\n怎么入群？"))).toBeNull();
     expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
@@ -156,7 +167,7 @@ describe("表单投递的认领判据", () => {
     lateBotOwnMessage = true;
 
     expect(await claimQaFieldMessage(channelPost("回答:\n本天才随口答的一段"))).toBeNull();
-    // 认领的代价是删掉那条消息并把正文写进问答；自回环一条都不能走到这一步。
+    // 认领的代价是删掉那条消息并把正文写进问答；自回环不走到这一步。
     expect(deleteMessageWithOutcome).not.toHaveBeenCalled();
     expect(qaFormSessions.get(CHAT_ID)?.a).toBeUndefined();
   });
@@ -195,10 +206,10 @@ describe("长度闸", () => {
       delivered(`问题:\n${"长".repeat(CHAT_QA_QUESTION_MAX_CHARS + 1)}`)
     );
 
-    expect(claimed?.questionTooLong).toBeTrue();
+    expect(claimed?.rejection).toBe("questionTooLong");
     expect(claimed?.accepted.q).toBeUndefined();
     expect(qaFormSessions.get(CHAT_ID)?.q).toBeUndefined();
-    // 已经认领了就得删：那条超长消息没有别的用途。
+    // 已经认领的超长消息照常删除。
     expect(deleteMessageWithOutcome).toHaveBeenCalled();
   });
 
@@ -210,7 +221,7 @@ describe("长度闸", () => {
       delivered(`回答:\n${"长".repeat(CHAT_QA_ANSWER_MAX_CHARS + 1)}`)
     );
 
-    expect(claimed?.answerTooLong).toBeTrue();
+    expect(claimed?.rejection).toBe("answerTooLong");
     expect(qaFormSessions.get(CHAT_ID)?.a).toBeUndefined();
     expect(qaFormSessions.get(CHAT_ID)?.q).toBe("怎么入群？");
   });
@@ -222,8 +233,104 @@ describe("长度闸", () => {
       delivered(`回答:\n${"长".repeat(CHAT_QA_ANSWER_MAX_CHARS)}`)
     );
 
-    expect(claimed?.answerTooLong).toBeFalse();
+    expect(claimed?.rejection).toBeNull();
     expect(qaFormSessions.get(CHAT_ID)?.a?.length).toBe(CHAT_QA_ANSWER_MAX_CHARS);
+  });
+});
+
+describe("可点命令闸", () => {
+  test("问题整条含可点命令时不写进会话，报 questionHasCommand", async () => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered("问题:\n怎么 /start 机器人？"));
+
+    expect(claimed?.rejection).toBe("questionHasCommand");
+    expect(claimed?.accepted.q).toBeUndefined();
+    expect(qaFormSessions.get(CHAT_ID)?.q).toBeUndefined();
+    expect(deleteMessageWithOutcome).toHaveBeenCalled();
+  });
+
+  test("答案在代码块之外含可点命令时不写进会话，报 answerHasCommand", async () => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered("回答:\n先发 /info 看看"));
+
+    expect(claimed?.rejection).toBe("answerHasCommand");
+    expect(qaFormSessions.get(CHAT_ID)?.a).toBeUndefined();
+  });
+
+  test("代码块里的命令示例照常收下；同一答案代码块外再出现命令仍挡下", async () => {
+    openForm(OWNER);
+    const example: string = "/qa set";
+    const inside: string = `回答:\n${example}`;
+
+    const accepted = await claimQaFieldMessage(delivered(inside, {
+      entities: [{ type: "pre", offset: 4, length: example.length }],
+    }));
+    expect(accepted?.rejection).toBeNull();
+    expect(qaFormSessions.get(CHAT_ID)?.a).toBe(`\`\`\`\n${example}\n\`\`\``);
+
+    const outside: string = `回答:\n${example}\n再发 /info`;
+    const rejected = await claimQaFieldMessage(delivered(outside, {
+      entities: [{ type: "pre", offset: 4, length: example.length }],
+      messageId: 78,
+    }));
+    expect(rejected?.rejection).toBe("answerHasCommand");
+    expect(qaFormSessions.get(CHAT_ID)?.a).toBe(`\`\`\`\n${example}\n\`\`\``);
+  });
+
+  test("未闭合的围栏按普通文本判定", async () => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered("回答:\n```\n/start"));
+
+    expect(claimed?.rejection).toBe("answerHasCommand");
+  });
+
+  test("一条消息两项一项被挡：合规项照常写入，表单保留", async () => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered("问题:\n怎么入群？\n回答:\n点 /join"));
+
+    expect(claimed?.rejection).toBe("answerHasCommand");
+    expect(claimed?.accepted).toEqual({ q: "怎么入群？", a: undefined });
+    expect(qaFormSessions.get(CHAT_ID)?.q).toBe("怎么入群？");
+    expect(qaFormSessions.get(CHAT_ID)?.a).toBeUndefined();
+  });
+
+  test("两项都被挡下时报问题的原因", async () => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered("问题:\n/help 在哪\n回答:\n/help"));
+
+    expect(claimed?.rejection).toBe("questionHasCommand");
+    expect(claimed?.accepted).toEqual({ q: undefined, a: undefined });
+  });
+
+  test("全角斜杠与 URL 路径不算可点命令", async () => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered("问题:\n发 ／start 有用吗\n回答:\n见 https://a.com/b"));
+
+    expect(claimed?.rejection).toBeNull();
+    expect(qaFormSessions.get(CHAT_ID)?.q).toBe("发 ／start 有用吗");
+    expect(qaFormSessions.get(CHAT_ID)?.a).toBe("见 https://a.com/b");
+  });
+
+  // 判据与发送出口的命令守卫一致（consts/renderableCommand.ts）：斜杠前是行首或非字母数字
+  // 下划线斜杠、后紧跟字母数字下划线即算可点命令，所以下面这些写法也会被挡下（已知误伤）。
+  test.each([
+    "改 /etc/hosts",
+    "详见 (/help)",
+    "行内 `/help` 也算",
+    "中文/English",
+    "优点/Advantages",
+  ])("已知误伤：代码块之外的「%s」按可点命令挡下", async (answer: string) => {
+    openForm(OWNER);
+
+    const claimed = await claimQaFieldMessage(delivered(`回答:\n${answer}`));
+
+    expect(claimed?.rejection).toBe("answerHasCommand");
   });
 });
 
@@ -249,7 +356,7 @@ describe("代码块投递", () => {
       entities: [{ type: "pre", offset: 4, length: body.length }],
     }));
 
-    expect(claimed?.questionTooLong).toBeFalse();
+    expect(claimed?.rejection).toBeNull();
     expect(qaFormSessions.get(CHAT_ID)?.q).toBe(body);
   });
 
@@ -263,6 +370,6 @@ describe("代码块投递", () => {
       entities: [{ type: "pre", offset: 4, length: body.length, language: "json" }],
     }));
 
-    expect(claimed?.answerTooLong).toBeTrue();
+    expect(claimed?.rejection).toBe("answerTooLong");
   });
 });

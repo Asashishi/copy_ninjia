@@ -31,12 +31,12 @@ export interface AcknowledgedUpdateRunner {
   /** 当前仍在执行的 middleware 数。 */
   readonly size: () => number;
   /**
-   * 是否有 update 以抛错结束。为真时**不得**确认最终 Telegram offset：那条
-   * update 必须留给 Telegram 在重启后重投。
+   * 是否有 update 以抛错结束。为真时不得确认最终 Telegram offset，那条 update
+   * 留给 Telegram 在重启后重投。
    *
-   * 单独暴露这个标记是因为停机路径会放弃在途 update、不再用它的结算结果决定
-   * 退出状态；正常路径则由 task() 的 rejection 表达失败。标记在
-   * handleUpdate 抛错的同一个同步段里写下，因此 size() 归零时它必然已生效。
+   * 停机路径放弃在途 update，不用它的结算结果决定退出状态，由本标记表达失败；
+   * 正常路径由 task() 的 rejection 表达失败。标记在 handleUpdate 抛错的同一个同步段里
+   * 写下，size() 归零时它已生效。
    */
   readonly hasFailedUpdate: () => boolean;
   /** 中止全部活跃 update，并返回这次实际发出取消信号的数量。 */
@@ -76,11 +76,8 @@ export interface ShutdownResults {
  * 一次停机的结局分档。判定见 `packages/app/lifecycle/shutdown.ts` 的
  * `classifyShutdown`。
  *
- * 必须是三态而不是「干净 / 不干净」两态：`offsetWithheld` 指「所有 owner 都排空
- * 落盘、Worker 已终止，只有最终 offset 那道 gate 没走完」。它与 `unsettled` 同样
- * 非零退出并打印诊断行（offset 没确认意味着重启后会重投，运维必须看得见），但
- * **只有 `unsettled` 才扣住实例锁**——扣锁的唯一条件是「可能还有人在写共享数据
- * 目录」，而这一态下那个风险不存在。
+ * `offsetWithheld`：所有 owner 都排空落盘、Worker 已终止，只有最终 offset 的确认门禁
+ * 没走完。它与 `unsettled` 同样非零退出并打印诊断行，只有 `unsettled` 扣住实例锁。
  */
 export type ShutdownOutcome = "clean" | "offsetWithheld" | "unsettled";
 
@@ -90,7 +87,7 @@ export type OwnerShutdownResults = Omit<
   "runnerDrained" | "maintenanceSettled" | "offsetConfirmed"
 >;
 
-/** 把单个 owner 的异常折算成兜底值并记录，绝不让它中断整段停机。 */
+/** 把单个 owner 的异常折算成兜底值并记录，不中断整段停机。 */
 export interface OwnerSettler {
   /** 返回 FlushResult 的 owner；抛错记为 `"failed"`。 */
   readonly flush: (owner: string, run: () => Promise<FlushResult>) => Promise<FlushResult>;

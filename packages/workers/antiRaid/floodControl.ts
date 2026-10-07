@@ -3,18 +3,18 @@ import { workerAtmosphere } from "./atmosphere";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 /**
- * 刷屏禁言的执行侧（入群守卫线程）：一分钟内同一个人发言达到阈值，就地禁言
- * 几分钟并在群里说明一句。
+ * 刷屏禁言的执行侧（入群守卫线程）：窗口（FLOOD_WINDOW_MS）内同一个人发言达到阈值
+ * （FLOOD_MESSAGE_LIMIT），就地禁言 FLOOD_MUTE_DURATION_MS 并在群里说明一句。
  *
  * 主线程入口只做同步门禁 + 一次 post（见 packages/antiRaid/floodControl.ts），计数
- * 窗口与重试 owner 留在这里；Telegram 调用经双工请求回到主线程总闸，因此等待
- * 不阻塞本 Worker mailbox，也不会让原始 update handler 等待禁言网络往返。
+ * 窗口与重试 owner 留在这里；Telegram 调用经双工请求回到主线程总闸，等待
+ * 不阻塞本 Worker mailbox。
  *
  * 与另外两条自动处置的边界：
  * - 反刷群私密模式数的是「多少人进来」，这里数的是「一个人说了多少」；
  * - 广告检测判的是「说了什么」，处置与 `/block` 同权且不可逆。
- * 刷屏禁言只是把人按下去几分钟，到点由 Telegram 按 `until_date` 自行恢复——
- * 本进程不排恢复计时器，因此它不写任何持久化状态、Worker 重建也不需要 adopt。
+ * 刷屏禁言到点由 Telegram 按 `until_date` 自行恢复，本进程不排恢复计时器、
+ * 不写持久化状态，Worker 重建不需要 adopt。
  */
 
 import {
@@ -98,9 +98,8 @@ function removeFloodWindow(entry: FloodWindowEntry): void {
 /**
  * 记一条发言，并判断这条是不是压垮窗口的那一条。
  *
- * 命中时把整条窗口清空：既是去重（抑制窗口万一被回滚，也不会拿旧时间戳立刻
- * 再凑出一次命中），也是失败时的天然退避——这次没禁成的话，得再刷满一整个
- * 窗口才会重来，不会每来一条消息就重打一轮 API。导出仅为可测试性。
+ * 命中时清空该成员的整条窗口：抑制位被回滚后也不会拿旧时间戳再次命中，
+ * 下一次命中需要重新填满窗口。导出仅为可测试性。
  * @param now 当前时刻；默认取墙钟，测试注入固定值。
  * @returns 命中时返回该成员的窗口条目，供调用方就地置抑制位；否则 undefined。
  */
@@ -133,14 +132,13 @@ export function observeMemberMessage(
     state.entryCount++;
     linkFloodWindowAsNewest(entry);
   } else {
-    // Date.now() 因系统校时短暂回退时仍保持队列单调，避免过期修剪失序。
+    // Date.now() 因系统校时回退时仍保持队列单调。
     now = Math.max(now, entry.lastObservedAt);
     touchFloodWindow(entry);
   }
   entry.lastObservedAt = now;
 
-  // 抑制期内到达的消息一律不计数：要么人已经被按住了（那几条是禁言落地前
-  // 就在路上的），要么上一次判定的结论是确定性的，重判换不来新结果。
+  // 抑制期内到达的消息一律不计数。
   if (now < entry.suppressedUntil) return undefined;
 
   entry.timestamps.trim(FLOOD_WINDOW_MS, now);
@@ -151,10 +149,7 @@ export function observeMemberMessage(
 }
 
 /**
- * 群内通知文案：只说清「谁、因为什么、被按多久」。
- *
- * 不回显刷屏内容——那等于替他再刷一遍；也不点名请管理员介入——这次处置可逆，
- * 到点自己就解开了，和广告检测那条「人已经没了」的播报不是一回事。
+ * 群内通知文案：包含被禁言者、刷屏阈值与禁言时长，不回显刷屏内容，不点名管理员。
  * 导出仅为可测试性。
  */
 export function formatFloodMuteNotice(label: string, atmosphere: AtmosphereTexts): string {
@@ -169,11 +164,10 @@ interface MuteFlooderParams {
 }
 
 /**
- * 把这次判定的乐观抑制位回滚掉，让下一个填满的窗口重试。
+ * 把这次判定的乐观抑制位回滚，让下一个填满的窗口重试。
  *
- * 只在瞬时失败上调用（身份没查出来、禁言请求失败）。await 之后条目可能已被
- * LRU 淘汰或随 deactivateChat 清掉，按全线程惯例用「状态对象同一性」识别：
- * 对不上就说明这条窗口已经不属于这次判定了，不该再改它。
+ * 只在瞬时失败上调用（身份没查出来、禁言请求失败）。条目已被 LRU 淘汰或随
+ * deactivateChat 清掉时，按「状态对象同一性」识别，对不上就不再改它。
  */
 function rollbackSuppression(chatId: number, userId: number, entry: FloodWindowEntry): void {
   if (getFloodWindowEntry(chatId, userId) !== entry) return;
@@ -183,73 +177,55 @@ function rollbackSuppression(chatId: number, userId: number, entry: FloodWindowE
 /**
  * 禁言一名刷屏者并播报。
  *
- * 播报排在最后且只在禁言真的落地之后发：它断言的正是「人已经被按住了」，
- * 禁言没成还照发就是一条与事实相反的公告（同广告检测播报）。
+ * 播报排在最后，只在禁言落地之后发。
  *
- * **每个 await 之后都要复核这条窗口还在表里**（stillManaged）。停管、`/init disable`
- * 与群 teardown 都会走 deactivateChat → clearChatFloodWindows 把这个群的窗口全部
- * 丢掉，而机器人此刻多半仍是 Telegram 管理员：禁得动、也发得出话。对不上还照做，
- * 就是在一个本进程已经不再管理的群里把成员按住三分钟、再公开说一句「本天才把你
- * 禁言 3 分钟」——一次没人负责的处置，而本模块不排恢复计时器。同种情形下
- * adDetect/verdict.ts（`pendingAdBundle(bundle.chatId, bundle.senderId) !== bundle`）与
- * verificationEffects/terminal.ts 的 stillCurrent 都是就地中止。
+ * **每个 await 之后复核这条窗口仍在表里**（stillManaged）：停管、`/init disable`
+ * 与群 teardown 经 deactivateChat → clearChatFloodWindows 丢掉该群的窗口，对不上时
+ * 就地中止，不再禁言或播报。同种情形下 adDetect/verdict.ts
+ * （`pendingAdBundle(bundle.chatId, bundle.senderId) !== bundle`）与
+ * verificationEffects/terminal.ts 的 stillCurrent 同样就地中止。
  *
- * 代价是 FLOOD_WINDOW_MAX_MEMBERS 的 LRU 淘汰恰好撞在这次往返上时会少判一次
- * 刷屏，与那个常量 JSDoc 的约定一致（sweepFloodWindows 不会碰它：
- * 触发那一刻已置上乐观抑制位）。
+ * FLOOD_WINDOW_MAX_MEMBERS 的 LRU 淘汰撞在这次往返上时，该次处置按 stillManaged 放弃；
+ * sweepFloodWindows 不会碰它：触发时已置上乐观抑制位。
  */
 async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void> {
   const stillManaged = (): boolean =>
     getFloodWindowEntry(message.chatId, message.userId) === entry;
-  // 停机已经开始：这次处置整个放掉，连身份确证那一次往返都不必付。禁言是尽力
-  // 而为的（到点由 Telegram 自行解除，本进程不排恢复计时器、不落盘），而它命中
-  // restrict 类 429 后的 retry_after 可以远超 drain 的预算——契约见
+  // 停机已经开始：整个处置放掉，不做身份确证。禁言是尽力而为的，契约见
   // cache/workers/antiRaid/tasks.ts 的 antiRaidDispatchSignal。
   const dispatchAbort: AbortSignal = antiRaidDispatchSignal();
   if (dispatchAbort.aborted) return;
   const targetIsAdmin: boolean | undefined = await isChatAdmin(message.chatId, message.userId, "flooding user");
-  // 确认是管理员：结论是确定性的，保留抑制位——每填满一个窗口就重查一次身份
-  // 既费额度又换不来别的答案。没查出来则是瞬时失败，回滚等下一个窗口。
+  // 确认是管理员时保留抑制位；没查出来是瞬时失败，回滚等下一个窗口。
   if (targetIsAdmin === undefined) rollbackSuppression(message.chatId, message.userId, entry);
   if (targetIsAdmin !== false) return;
-  // 身份确证缓存冷时是一整次 getChatAdministrators，够管理员在这期间执行完
-  // `/init disable`：这个群的窗口已经全被丢掉，别再往下处置（见函数头注）。
+  // 身份确证期间窗口可能已被 deactivateChat 清掉，此时不再往下处置（见函数头注）。
   if (!stillManaged()) return;
 
-  // 截止时刻在真正发请求前算：上面那次身份确证可能等上几百毫秒（缓存冷时是
-  // 一整次 getChatAdministrators），用收到消息那一刻的时钟会把时长抹短一截。
+  // 截止时刻在身份确证之后、发请求前计算，禁言时长从此刻起算。
   const mutedUntil: number = Date.now() + FLOOD_MUTE_DURATION_MS;
   const outcome: MuteChatMemberOutcome = await muteChatMemberWithOutcome({
     chatId: message.chatId,
     userId: message.userId,
     mutedUntil,
     api: telegramApi,
-    // 两个取消源由 muteChatMemberWithOutcome 合起来：
-    // - 派发截止：until_date 是这一刻算好的绝对时刻，请求命中 429 后还可能在
-    //   restrict 类退避车道排队。太久时它会在发出那一刻落进 Bot API 的
-    //   「不足 30 秒即永久」区间——本模块不排恢复计时器，那就是一次只能人工解除
-    //   的永久禁言。宁可放弃这次禁言：抑制位由下面的 failed 分支回滚，下一个
-    //   满窗口重来。
-    // - 停机：这个任务登记在 drain 的等待集合里，而上面那个截止是 2 分钟量级、
-    //   drain 的预算是秒级。不撤掉的话，凡是停机恰好落在排队期间就换来一次脏
-    //   退出加一批 update 重投（见 cache/workers/antiRaid/tasks.ts 的
-    //   antiRaidDispatchSignal）。
+    // 两个取消源由 muteChatMemberWithOutcome 合并：
+    // - 派发截止（FLOOD_MUTE_DISPATCH_TIMEOUT_MS）：until_date 是此刻算好的绝对时刻，
+    //   超过截止的请求放弃发出，抑制位由下面的 failed 分支回滚，下一个满窗口重来。
+    // - 停机：任务登记在 drain 的等待集合里，停机时撤销排队中的请求（见
+    //   cache/workers/antiRaid/tasks.ts 的 antiRaidDispatchSignal）。
     dispatchTimeoutMs: FLOOD_MUTE_DISPATCH_TIMEOUT_MS,
     signal: dispatchAbort,
   });
   if (outcome !== "muted") {
-    // forbidden 是 Telegram 明确的拒绝（机器人缺权限，或目标其实是管理员而
-    // 上面那份缓存刚好没认出来）：再试一次也一样，保留抑制位，别让一场刷屏
-    // 每填满一个窗口就重打一个注定失败的请求。具体原因已由统一错误边界带着
-    // Telegram 自己的说法记进日志，这里不再重复一行。failed 是限流/网络抖动，
-    // 回滚等下一个满窗口——这也正是权限镜像还没到时那条兜底路径的收口。
+    // forbidden 是 Telegram 明确的拒绝（机器人缺权限，或目标是管理员而缓存未认出）：
+    // 保留抑制位，原因已由统一错误边界记入日志。failed 是限流/网络抖动，
+    // 回滚等下一个满窗口。
     if (outcome === "failed") rollbackSuppression(message.chatId, message.userId, entry);
     return;
   }
-  // 抑制位对齐到真实的禁言结束时刻：触发那一刻置的是乐观值，中间还隔着一次
-  // 身份确证的往返。条目已被替换时不再回写，同 rollbackSuppression。
-  // 只向后对齐、不把乐观值往回缩：mutedUntil 读的是原始墙钟，校时往回跳时它
-  // 会比乐观值还早，直接赋值等于把抑制期提前作废（同 handleFloodCandidate）。
+  // 抑制位对齐到真实的禁言结束时刻，只向后取大、不缩短乐观值（同 handleFloodCandidate）；
+  // 条目已被替换时不再回写，同 rollbackSuppression。
   if (stillManaged()) {
     entry.suppressedUntil = Math.max(entry.suppressedUntil, mutedUntil);
   }
@@ -257,8 +233,7 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     `Flood control muted user ${message.userId} in chat ${message.chatId} for ` +
     `${Math.round(FLOOD_MUTE_DURATION_MS / 1000)}s after ${FLOOD_MESSAGE_LIMIT} messages in one minute.`
   );
-  // 禁言请求本身也能排上一阵，停管可能正落在这期间。人是已经被按住了（这条
-  // 事实收不回来，到点由 Telegram 自行解除），但不该再往一个已经不管的群里发言。
+  // 禁言请求期间群可能已停管；已停管时不再发言。
   if (!stillManaged()) return;
 
   await sendTemporaryMessageFromMain({
@@ -283,10 +258,10 @@ function floodMuteNoticeText(name: string, atmosphere: AtmosphereTexts): string 
  * 收下一条参与刷屏计数的群消息。同步记账，不阻塞 mailbox；越过阈值才派生一个
  * 后台任务去请求主线程网络能力，并登记进停机 drain 的在途集合。
  *
- * 权限闸排在最前面：**确证**没有「限制成员」权限时连身份确证那一次
- * `getChatAdministrators` 都不必付。权限位由主线程按变更镜像过来（见
- * ./botPermissions.ts），而它是三态——「没观测到」不当成没权限，照常往下走，
- * 由 Telegram 的回应当裁判，见 muteFlooder 对 `forbidden` / `failed` 的分档。
+ * 权限闸排在最前面：**确证**没有「限制成员」权限时不做身份确证、不发请求。
+ * 权限位由主线程按变更镜像过来（见 ./botPermissions.ts），是三态——「没观测到」
+ * 不当成没权限，照常往下走，由 Telegram 的回应判定，见 muteFlooder 对
+ * `forbidden` / `failed` 的分档。
  *
  * 计数时刻取候选自带的主线程观测时刻（见 FloodCandidateMessage.observedAt）；
  * 本线程不为每条候选另读一次墙钟。
@@ -295,23 +270,15 @@ export function handleFloodCandidate(message: FloodCandidateMessage): void {
   const entry: FloodWindowEntry | undefined =
     observeMemberMessage(message.chatId, message.userId, message.observedAt);
   if (entry === undefined) return;
-  // 乐观抑制：本函数是同步的 mailbox handler，一次爆发式刷屏能在第一次网络
-  // 往返回来之前就把下一个窗口填满。等结果再置位就是同一个人挨两次禁言、
-  // 群里挨两条公告。瞬时失败由 muteFlooder 自己回滚。
+  // 乐观抑制：先置抑制位再派生任务，瞬时失败由 muteFlooder 回滚。
   //
-  // 基准取 entry.lastObservedAt 而不是 message.observedAt：observeMemberMessage 只把
-  // **它自己的形参**钳到单调值（见那边的 Math.max），候选自带的观测时刻还是原始墙钟。
-  // 两边读不同的钟，系统校时往回跳一下就会写出一个「已经过期」的抑制位——消费侧
-  // 拿钳过的时刻去比，`now < suppressedUntil` 恒假，这段乐观抑制等于没有。
+  // 基准取 entry.lastObservedAt 而非 message.observedAt：observeMemberMessage 已把时刻
+  // 钳到单调值（见那边的 Math.max），消费侧用同一个钟比较 suppressedUntil。
   entry.suppressedUntil = entry.lastObservedAt + FLOOD_MUTE_DURATION_MS;
 
-  // 三态：确证没有权限才就地放弃；「没观测到」照常往下走，由 Telegram 当裁判
-  // ——镜像可能只是还没到（主线程的按需现查撞上一次 429 就会退避几分钟），
-  // 那几分钟里把刷屏放过去、还在日志里写一句不准确的「没有权限」，比多打一个
-  // 注定失败的请求糟得多。真没权限时那次请求会带回 Telegram 自己的说法。
+  // 三态：确证没有权限才就地放弃；「没观测到」照常往下走，由 Telegram 的回应判定。
   if (botCanRestrictIn(message.chatId) === false) {
-    // 保留抑制位：这个结论在权限变回来之前不会变，而权限一变主线程会立刻
-    // 镜像过来。不保留的话，一场刷屏就是每填满一个窗口往 logs/ 里刷同一行。
+    // 保留抑制位，权限变更由主线程镜像过来。
     logger.error(
       `Flood control cannot mute user ${message.userId} in chat ${message.chatId}: ` +
       "the bot does not have permission to restrict members."
@@ -336,11 +303,8 @@ export function clearChatFloodWindows(chatId: number): void {
 }
 
 /**
- * 删掉空闲满一个窗口的条目，挂在 Worker 的统一 sweep 节拍上。
- *
- * 只靠 LRU 是不够的：容量未满时，已经安静的群仍会长期占着名额。仍在抑制期的条目要留着
- * ——`suppressedUntil` 正是「这段时间到的消息不必再判」的依据，删掉就等于
- * 让抑制提前失效。
+ * 删掉空闲满一个窗口（FLOOD_WINDOW_MS）的条目，挂在 Worker 的统一 sweep 节拍上；
+ * 仍在抑制期（`suppressedUntil`）的条目保留。
  * @returns 本次删除的条目数，便于测试与诊断。
  */
 export function sweepFloodWindows(now: number = Date.now()): number {

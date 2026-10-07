@@ -15,9 +15,8 @@ interface RunTelegramActionParams<T, R> {
   fallback: R;
   signal?: AbortSignal;
   /**
-   * 第二个参数是 runTelegramAction 已算好的复合信号，直接复用。自己再调一次
-   * combineWithUpdateAbortSignal 只为读一次 .aborted，却要新建一个
-   * AbortSignal.any 并挂到调用方那个长生命周期 controller 上。
+   * 是否把这次失败记成 API 错误；第二个参数是 runTelegramAction 已算好的复合信号，直接复用。
+   * 缺省为 logUnlessAborted（调用方 signal 已中止时不记）。
    */
   shouldLogError?: (
     error: unknown,
@@ -33,9 +32,8 @@ interface RunTelegramActionParams<T, R> {
 /**
  * 把 Telegram 动作失败归一化成调用方约定的业务结果。map 也在同一个错误
  * 边界内：成功后的结果转换或本机自发消息登记失败时同样记录
- * 对应动作并返回 fallback。这里不用 grammY 的 bot.catch：它处理的是
- * update/middleware 逃逸异常，且本项目会让该错误触发 update 重投；这些主动
- * API 调用失败属于可预期的业务结果，调用方还需要得到 false/undefined。
+ * 对应动作并返回 fallback。主动 API 调用失败按业务结果返回 fallback，
+ * 不经 grammY 的 bot.catch（它处理 update/middleware 逃逸异常）。
  *
  * 失败本身是取消（isAbortError，例如 Worker 停机 drain 撤销的双工请求）时不记
  * API 错误；`shouldLogError` 仍会被调用，供调用方完成结局分类。
@@ -46,7 +44,7 @@ export async function runTelegramAction<T, R>({
   map,
   fallback,
   signal,
-  shouldLogError,
+  shouldLogError = logUnlessAborted,
   selfSentChatId,
 }: RunTelegramActionParams<T, R>): Promise<R> {
   const updateSignal: AbortSignal | undefined =
@@ -57,15 +55,15 @@ export async function runTelegramAction<T, R>({
   if (selfSentChatId !== undefined) beginSelfSentSend(selfSentChatId);
   try {
     const mapped: R = map(await execute(actionSignal));
-    // 远端可能在 abort 竞态中已经提交成功；先做 map 中最小的 self-sent
-    // 记账，再把 update 取消向上抛出，禁止 handler 继续后续业务写入。
+    // 先完成 map 中的 self-sent 记账，再把 update 取消向上抛出，
+    // handler 不再继续后续业务写入。
     throwIfUpdateAborted(updateSignal);
     return mapped;
   } catch (error: unknown) {
     if (updateSignal?.aborted === true) {
       throwIfUpdateAborted(updateSignal);
     }
-    if (shouldLogError?.(error, actionSignal) !== false && !isAbortError(error)) {
+    if (shouldLogError(error, actionSignal) && !isAbortError(error)) {
       logApiError(action, error);
     }
     return fallback;
@@ -75,13 +73,10 @@ export async function runTelegramAction<T, R>({
 }
 
 /**
- * 默认的 `shouldLogError`：调用方 signal 已中止时的失败不记 API 错误——它不是远端故障。
+ * runTelegramAction 缺省的 `shouldLogError`：调用方 signal 已中止时的失败不记 API 错误。
  *
  * 只对带调用方 signal 的动作有意义（update 取消在判据之前已由统一边界上抛，
- * 取消形状的失败由 runTelegramAction 统一不记）：由
- * runBooleanTelegramAction、actions/messages.ts、actions/mediaMessages.ts、actions/membership.ts、
- * commandPhotos.ts、avatar/read.ts、cron/targets.ts、commands/wed/messages.ts 与
- * commands/info.ts 的 runTelegramAction 调用共用；membership.ts 的 readPresentChatUser 与
+ * 取消形状的失败由 runTelegramAction 统一不记）。各 Telegram 动作入口共用；
  * runPermissionAwareTelegramAction 在分类后同样经过本函数。
  */
 export function logUnlessAborted(
@@ -103,7 +98,6 @@ export async function runBooleanTelegramAction(
     map: (): boolean => true,
     fallback: false,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -133,10 +127,9 @@ export interface RunPermissionAwareTelegramActionParams {
  *
  * mute / unmute / kick / ban / ban sender chat 共用这一权限闩锁与结果映射；
  * 不关心 `participantInvalid` 的调用方把它归入 `failed`。
- * 闩锁必须覆盖整次动作，避免把永久的 403 归类为值得退避重试的偶发失败。
+ * 权限拒绝（见 isPermissionDenied）归为 `forbidden`，不归入偶发的 `failed`。
  *
- * 取消造成的失败不记 API 错误——它不是远端故障，口径与
- * runBooleanTelegramAction 一致。
+ * 取消造成的失败不记 API 错误，口径与 runBooleanTelegramAction 一致。
  */
 export async function runPermissionAwareTelegramAction({
   action,
@@ -178,20 +171,18 @@ export interface TelegramReplyParameters {
  * 把可选的「回复哪一条」译成 Bot API 的 `reply_parameters`，没有回复时给
  * `undefined`。
  *
- * `allow_sending_without_reply` 恒为 true：被回复的消息可能已被删除，那时这条
- * 仍要发出去（代价是它会降级成普通发送、掉出话题，落点因此另由
- * `message_thread_id` 兜住，见 libs/forumTopic.ts）。
+ * `allow_sending_without_reply` 恒为 true：被回复的消息已被删除时这条仍发出
+ * （降级成普通发送、掉出话题，落点由 `message_thread_id` 保证，见 libs/forumTopic.ts）。
  *
  * 返回 `undefined` 而不是让调用方条件展开：payload 按定形一次初始化，
- * grammY 序列化时会丢掉值为 undefined 的字段（core/payload.js 的 `str()`
- * 与 payloadToMultipartItr 各自过滤 null/undefined），产出与整个不带这个键
- * 逐字节相同的请求体。
+ * grammY 序列化时丢掉值为 undefined 的字段（core/payload.js 的 `str()`
+ * 与 payloadToMultipartItr 各自过滤 null/undefined），请求体与不带这个键
+ * 逐字节相同。
  */
 export function replyParametersFor(
   replyToMessageId: number | undefined
 ): TelegramReplyParameters | undefined {
-  // 判真值而不是 `!== undefined`：Telegram 的 message_id 恒为正整数，0 不是
-  // 合法目标，挂上去只会让整条消息被拒收。
+  // 判真值：message_id 为 0 时不挂回复。
   return replyToMessageId ? { message_id: replyToMessageId, allow_sending_without_reply: true } : undefined;
 }
 
@@ -200,9 +191,8 @@ export function isPermissionDenied(error: unknown): boolean {
   const details: Readonly<{ errorCode: number; description: string }> | undefined =
     telegramErrorDetails(error);
   if (details === undefined) return false;
-  // 403 一律算：不在群、被踢出、没有权限，共同点是「这次调用永远不会成功」。
-  // 400 只认点名权限的那一句：同为 400 的「用户不存在」「聊天不存在」不该
-  // 被当成权限问题，那会让一个本可重试的批次被永久挂起等一个不会来的授权。
+  // 403 一律算权限拒绝；400 只认描述含 `not enough rights` 的一类，
+  // 其余 400（如用户不存在、聊天不存在）不算。
   if (details.errorCode === 403) return true;
   return (
     details.errorCode === 400 &&

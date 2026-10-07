@@ -41,16 +41,15 @@ interface ParsedStickerCatalog {
 
 /**
  * 机器人自己要发的贴纸（config/dynamic/stickers.json 白名单包）的画面描述目录：
- * file_unique_id -> { emoji, description }，外加一条整包简介（≤200 字，
- * 见 summarizePack）。让 aiChat/ai/tools/stickers.ts 挑贴纸时能按「画面实际是什么」而非
- * 「作者随手标的 emoji」来判断应景与否；整包简介供两层贴纸工具的第一层
- * （view_sticker_pack）挑包。
+ * file_unique_id -> { emoji, description }，外加一条整包简介（长度上限
+ * STICKER_PACK_SUMMARY_MAX_CHARS，见 summarizePack）。目录供 aiChat/ai/tools/stickers.ts
+ * 挑贴纸时按画面描述判断；整包简介供两层贴纸工具的第一层（view_sticker_pack）挑包。
  *
  * init、配置重载与维护重试通过 ensureStickerCatalogs 启动包级对账，
  * getStickerSet 提供当前缓存或线上拉取的集合。目录缺失的贴纸串行生成描述，
  * 已移出集合的条目剪枝；集合拉取失败时整包跳过、不补也不剪。
  *
- * 有更新（补或剪）就标 dirty；aiChatWorker.ts 定期把 dirty 包上报给主
+ * 有更新（补或剪）就标 dirty；workers/aiChatWorker.ts 定期把 dirty 包上报给主
  * 线程，经 diskIOWorker 落盘到 memory/stickers/<pack>.json，重启后由
  * hydrateStickerCatalogs 灌回、已有描述的贴纸不重新生成。退出白名单的内存目录
  * 由 pruneStickerCatalogs 清理，目录文件由 Disk I/O 启动恢复时对账；
@@ -61,9 +60,8 @@ interface ParsedStickerCatalog {
  * 调用方只能通过本文件导出的查询、恢复与刷盘函数改变目录生命周期。
  */
 
-/** 跑一次贴纸目录的 AI 调用（逐枚视觉解析/整包简介）。只有下载/排队失败，
- * 或 HTTP 成功但模型结果不可用时，才按 STICKER_CATALOG_RETRY_DELAYS_MS
- * 重新采样；SDK 已耗尽 HTTP 重试的请求立即停止，避免乘法重试。 */
+/** 跑一次贴纸目录的 AI 调用（逐枚视觉解析/整包简介）。结果的 retryable 为 true 时按
+ * STICKER_CATALOG_RETRY_DELAYS_MS 逐档重新采样；档位用尽或 retryable 为 false 时返回 null。 */
 async function callWithRetry(
   label: string,
   call: () => Promise<AiTextResult>,
@@ -102,8 +100,8 @@ function markEntryFailed(pack: string, fileUniqueId: string): void {
 }
 
 /**
- * 这枚贴纸的失败记录是否还在退避期内。已经到期的顺手清掉，让本轮对账当场就能
- * 重描——这正是整包描述失败后目录能自愈的那一步，见 failedEntries 的头注。
+ * 这枚贴纸的失败记录是否还在退避期内。已经到期的当场清掉，本轮对账即可重新描述，
+ * 见 failedEntries 的头注。
  */
 function isEntryFailureActive(pack: string, fileUniqueId: string): boolean {
   const failed: Map<string, number> | undefined = failedEntries.get(pack);
@@ -117,12 +115,10 @@ function isEntryFailureActive(pack: string, fileUniqueId: string): boolean {
 }
 
 /** 启动时（或本 Worker 崩溃重启后）灌入持久化的贴纸目录。只对内存里还没
- *  有数据的包生效——重启后本来就全空，天然成立，不会覆盖掉刚生成的条目。
- *  快照全程以序列化 JSON 文本流转（见 types/stickers/protocol.ts 的
- *  AiStickerCatalogEvent.snapshot），这里是整条管线唯一的解析点；文本只
- *  出自 buildSnapshot 的 stringify 或启动恢复时逐字段重建后的重新
- *  stringify。整批先使用与 Disk I/O 相同的严格 decoder 校验，任一项非法都
- *  让 Worker 失败，不能把协议损坏解释成缺少目录后继续运行。 */
+ *  有数据的包生效，不覆盖已生成的条目。快照全程以序列化 JSON 文本流转
+ *  （见 types/stickers/protocol.ts 的 AiStickerCatalogEvent.snapshot），这里是整条管线
+ *  唯一的解析点。整批先使用与 Disk I/O 相同的严格 decoder 校验，任一项非法都
+ *  让 Worker 失败。 */
 export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
   const parsedCatalogs: ParsedStickerCatalog[] = [];
   for (const [pack, snapshotJson] of snapshots) {
@@ -143,8 +139,7 @@ export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
     if (catalogs.has(pack)) continue;
     catalogs.set(pack, new Map(Object.entries(snapshot.entries)));
     invalidateStickerMenu();
-    // Worker 重启前或极端 FIFO 竞态下，同一 ID 可能曾以普通群贴纸身份进入
-    // 临时缓存；常驻目录恢复后立即移除临时副本，保证只有一个权威来源。
+    // 常驻目录恢复后移除同一 file_unique_id 在临时缓存里的副本，目录是唯一来源。
     for (const fileUniqueId of Object.keys(snapshot.entries)) {
       transientDescriptionCache.delete(fileUniqueId);
     }
@@ -152,8 +147,7 @@ export function hydrateStickerCatalogs(snapshots: Map<string, string>): void {
   }
 }
 
-/** 按贴纸自身的 file_unique_id 跨包合并查找目录条目——群聊里群友发的贴纸
- *  若恰好来自白名单包，直接复用已生成的描述，省一次视觉调用。 */
+/** 按贴纸自身的 file_unique_id 跨包合并查找目录条目；群友发的贴纸来自白名单包时复用已生成的描述。 */
 export function getCatalogEntry(fileUniqueId: string): StickerCatalogEntry | undefined {
   for (const map of catalogs.values()) {
     const entry: StickerCatalogEntry | undefined = map.get(fileUniqueId);
@@ -205,14 +199,12 @@ function isStalePack(pack: string, active: ReadonlySet<string>): boolean {
 
 /**
  * 按新的白名单剪掉已下架包的目录、简介与失败记录；生成中及待上报包继续保留。
- * 热重载替换 config/dynamic/stickers.json 后由 workers/aiChat/configReload.ts 调用，维护节拍
- * （workers/aiChatWorker.ts）再兜一次。剪掉任何东西都让贴纸菜单失效。
+ * 热重载替换 config/dynamic/stickers.json 后由 workers/aiChat/configReload.ts 调用，
+ * 任务结算、快照上报与维护节拍（workers/aiChatWorker.ts）也会调用。剪掉任何东西都让贴纸菜单失效。
  *
- * 生成与上报责任结束后，getCatalogEntry 不再复用已下架包的目录。
+ * 剪掉后 getCatalogEntry 不再复用已下架包的目录。
  * 不删 memory/stickers/<pack>.json：文件对账由下一次 Disk I/O 启动恢复执行。
  * 已释放的包在同一进程内重新加入时，由生成任务重新建立目录。
- *
- * 任务结算、快照上报后立即重试清理；维护节拍再核对一次。
  */
 export function pruneStickerCatalogs(activePacks: readonly string[]): void {
   const active: ReadonlySet<string> = new Set(activePacks);
@@ -233,7 +225,7 @@ export function pruneStickerCatalogs(activePacks: readonly string[]): void {
 
 /**
  * 等待所有已经启动的目录生成任务结算。调用前 Worker 必须停止 init 与维护推力；
- * 循环取快照是为了覆盖当前任务结算回调前已经登记的后续任务。
+ * 循环取快照，覆盖当前任务结算回调前已经登记的后续任务。
  */
 export async function drainStickerCatalogTasks(): Promise<void> {
   while (generatingPacks.size > 0) {
@@ -244,8 +236,8 @@ export async function drainStickerCatalogTasks(): Promise<void> {
 /**
  * 维护节拍按重试间隔选择目录为空、简介缺失或单枚失败负缓存到期的包。
  * 复用 ensureStickerCatalogs 的包级并发去重；完整且无失败记录的包不请求出站。
- * 缺项由目录生成循环按既有 TTL 补齐，取消与持久化约束见 docs/cn/04-invariants.md。
- * @param now 注入时钟，便于测试。
+ * 缺项由目录生成循环补齐，取消与持久化约束见 docs/cn/04-invariants.md。
+ * @param now 注入时钟。
  */
 export function retryIncompleteStickerCatalogs(packs: readonly string[], now: number = Date.now()): void {
   // 0 表示尚无维护重试，第一个节拍可立即接纳；init 生成不占用维护重试间隔。
@@ -271,20 +263,15 @@ export function retryIncompleteStickerCatalogs(packs: readonly string[], now: nu
 }
 
 /**
- * 对账单个包：线上有、目录没有的补；目录有、线上已经没有的剪（贴纸被移出
- * 包/包被整理过，留着只会让 getCatalogEntry 对一枚发不出去的贴纸给出
- * 「有效」描述，属于陈旧数据）。
+ * 对账单个包：线上有、目录没有的补；目录有、线上已经没有的剪。
  *
  * getStickerSet 失败返回 null 时整包跳过，不补也不剪；后续 init、配置重载或
- * 维护节拍选中该包时可再次对账。失败返回值不能当作空集合参与剪枝。
+ * 维护节拍选中该包时可再次对账。
  *
- * 导出仅为可测试性（单测需要等它跑完才能断言 catalogs 的最终状态，
- * ensureStickerCatalogs 是 fire-and-forget 的公开入口，拿不到这个句柄）；
- * 生产代码路径统一走 ensureStickerCatalogs。
+ * 生产代码路径统一经 ensureStickerCatalogs 调用；本函数导出供测试等待对账完成。
  */
 export async function generatePackCatalog(pack: string, signal: AbortSignal = aiChatWorkerAbortController.current.signal): Promise<void> {
-  // 剪枝当场让菜单失效；新增描述与整包简介只在本包结算时（finally）失效一次，
-  // 逐枚描述期间（可达数分钟）各轮回复的工具声明保持不变。
+  // 剪枝当场让菜单失效；新增描述与整包简介只在本包结算时（finally）失效一次。
   let menuChanged: boolean = false;
   try {
     const set: StickerSet | null = await getStickerSet(pack, undefined, signal);
@@ -296,18 +283,14 @@ export async function generatePackCatalog(pack: string, signal: AbortSignal = ai
     for (const fileUniqueId of map.keys()) {
       if (!liveIds.has(fileUniqueId)) {
         map.delete(fileUniqueId);
-        // 对账删除必须同时清掉这枚贴纸可能在目录生成前留下的临时描述，
-        // 否则消息记录紧接着可能从临时 LRU 缓存读回已经失效的旧值——现行
-        // 缓存没有 TTL（见 cache/workers/aiChat/imageDescription.ts），不删会一直错到被
-        // 容量淘汰为止。
+        // 同时清掉这枚贴纸在临时缓存里的描述（见 cache/workers/aiChat/imageDescription.ts）。
         transientDescriptionCache.delete(fileUniqueId);
         entriesChanged = true;
         dirtyPacks.add(pack);
       }
     }
     if (entriesChanged) invalidateStickerMenu();
-    // 失败记录同样按线上集合剪枝：贴纸被移出包后，它的失败记录留着只会
-    // 白占内存（该 id 不会再出现在补齐循环里），一并清掉。
+    // 失败记录同样按线上集合剪枝。
     const failed: Map<string, number> | undefined = failedEntries.get(pack);
     if (failed) {
       for (const fileUniqueId of failed.keys()) {
@@ -366,17 +349,16 @@ export async function generatePackCatalog(pack: string, signal: AbortSignal = ai
   }
 }
 
-/** 目录条目转喂给整包简介模型的一行：情绪 emoji 元数据（如有）在前、画面
- *  描述在后——emoji 是作者标注的情绪意图，能帮总结模型把情绪清单列得更准。 */
+/** 目录条目转喂给整包简介模型的一行：emoji（如有）在前、画面描述在后。 */
 function formatEntryForSummary(entry: StickerCatalogEntry): string {
   return entry.emoji ? `${entry.emoji} ${entry.description}` : entry.description;
 }
 
 /**
- * 调当前供应商把一个包内全部贴纸的画面描述（带情绪 emoji 元数据）压缩成一条
- * 整包简介（≤200 字，供两层贴纸工具的第一层挑包用，措辞要求见
- * STICKER_PACK_SUMMARY_PROMPT）。走与冷消息压缩相同的中性总结模型；
- * 产出压成单行并按子句边界截断；结果同时声明业务层是否允许重新采样。
+ * 经 summaryAiProvider 把一个包内全部贴纸的画面描述（带 emoji）压缩成一条
+ * 整包简介（供两层贴纸工具的第一层挑包，措辞要求见 STICKER_PACK_SUMMARY_PROMPT）；
+ * 产出压成单行并按子句边界截断到 STICKER_PACK_SUMMARY_MAX_CHARS；结果的 retryable
+ * 声明是否允许重新采样。
  */
 async function summarizePack(
   title: string,

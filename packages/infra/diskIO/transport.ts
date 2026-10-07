@@ -3,13 +3,13 @@ import { DISK_OPERATION_MAX_RETAINED_BYTES, DISK_BUSINESS_ACK_TIMEOUT_MS, DISK_B
 import { diskIOMessageCost, isDiskBusinessMessage } from "../../libs/diskIOMessageCost";
 import { LinkedQueue } from "../../libs/linkedQueue";
 import type { AcknowledgedBatch } from "../../libs/acknowledgedBatchQueue";
-import type { DiskBusinessMessage, DiskIOMessage, DiskIOOperationMessage } from "../../types/diskIO/messages";
+import type { DiskBusinessMessage, DiskIOMessage, DiskIOOperationMessage, QueuedDiskIOOperationMessage } from "../../types/diskIO/messages";
 import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 import { signalDiskIOFatal } from "./fatal";
 
 /**
- * Worker.postMessage 可能在本地 owner 仍判定 Worker 可写之后同步抛出；把这个
- * 竞态统一挡在这里，不让它扩散到每一个业务、诊断与请求类调用方。
+ * Worker.postMessage 可能在本地 owner 仍判定 Worker 可写时同步抛出；这里统一捕获，
+ * 以返回值表示是否被接受。
  * @returns 投递是否被 Worker 接受。
  */
 function postRaw(worker: Worker, message: DiskIOMessage, context: string): boolean {
@@ -46,7 +46,7 @@ export function canQueueDiskIOBusiness(message: DiskBusinessMessage): boolean {
 
 function pumpDiskIOOperations(worker: Worker): boolean {
   if (diskIORuntime.worker !== worker) return false;
-  const batch: AcknowledgedBatch<DiskIOOperationMessage> | null = diskIORuntime.operationQueue.nextDelivery();
+  const batch: AcknowledgedBatch<QueuedDiskIOOperationMessage> | null = diskIORuntime.operationQueue.nextDelivery();
   if (batch === null) return true;
   diskIORuntime.operationQueue.markDelivered(batch.batchId);
   diskIORuntime.operationTimer = setTimeout((): void => {
@@ -68,10 +68,10 @@ export function safePostDiskIO(worker: Worker, message: DiskIOOperationMessage, 
 }
 
 /**
- * 按已算好的成本把一条操作排进共用 FIFO 并尝试投递；超出条数或字节硬顶时通知 fatal。
+ * 按已算好的成本把一条操作排进共用 FIFO 并尝试投递；超出条数或字节上限时通知 fatal。
  * 启动 load 与诊断批次不经这里，见 safePostDiskIO。
  */
-export function queueDiskIOOperationMessage(worker: Worker, message: DiskIOOperationMessage, cost: number): boolean {
+export function queueDiskIOOperationMessage(worker: Worker, message: QueuedDiskIOOperationMessage, cost: number): boolean {
   if (diskIORuntime.worker !== worker) return false;
   if (diskIORuntime.operationQueue.size + diskIORuntime.pendingBusinessMessages.size >=
       diskIORuntime.maxPendingBusinessMessages + DISK_OPERATION_CONTROL_RESERVE ||
@@ -104,7 +104,7 @@ export function acceptDiskIOOperationBatch(worker: Worker, batchId: number): voi
 /** 代际失效时按序收回未确认业务；读取请求不重放，宿主会拒绝其等待者。 */
 export function pauseDiskIOOperations(): void {
   clearOperationTimer();
-  const retained: readonly DiskIOOperationMessage[] = diskIORuntime.operationQueue.takeAll();
+  const retained: readonly QueuedDiskIOOperationMessage[] = diskIORuntime.operationQueue.takeAll();
   const previous: LinkedQueue<DiskBusinessMessage> = diskIORuntime.pendingBusinessMessages;
   const pending: LinkedQueue<DiskBusinessMessage> = new LinkedQueue();
   let bytes: number = 0;
@@ -122,7 +122,7 @@ export function pauseDiskIOOperations(): void {
   diskIORuntime.pendingBusinessBytes = bytes;
 }
 
-/** 宿主最终终止时释放传输引用与 timer；不参与运行时恢复的事实淘汰。 */
+/** 宿主最终终止时释放传输引用与 timer。 */
 export function resetDiskIOOperations(): void {
   clearOperationTimer();
   diskIORuntime.operationQueue.reset();

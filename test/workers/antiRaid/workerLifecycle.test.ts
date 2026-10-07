@@ -79,7 +79,7 @@ mock.module("../../../packages/workers/antiRaid/floodControl", () => ({
   sweepFloodWindows(): number { calls.push("sweepFloodWindows"); return 0; },
   resetFloodWindows(): void { calls.push("resetFloodWindows"); },
 }));
-/** 镜像里此前是否确证能限制成员；botPermissionsChanged 只在它从否变为是时提前私密模式重试。 */
+/** 镜像里此前是否确证能限制成员；botPermissionsChanged 只在它从否变为是时触发 retryDeniedLockdownRestore。 */
 let couldRestrict: boolean = false;
 mock.module("../../../packages/workers/antiRaid/botPermissions", () => ({
   applyBotPermissionsChange(_chatId: number, permissions: unknown): void {
@@ -143,7 +143,7 @@ const injectedAdDetectConfig: AdDetectAgentConfig = {
 
 beforeEach(() => {
   worker.stopAntiRaidWorker();
-  // 新 isolate 的 holder 本来就是空的：配置消息之前取 ad_detect 必须 fail-closed。
+  // 新 isolate 的 holder 为空：配置消息之前取 ad_detect 配置 fail-closed。
   adDetectAgentConfigCache.current = null;
   calls.length = 0;
   workerEvents.length = 0;
@@ -280,7 +280,7 @@ describe("Anti-Raid Worker lifecycle", () => {
       "join", "left", "deactivateVerification", "deactivateLockdown",
       // 停管连待检的广告消息串一起丢：不再替这个群判定，也不再在那里删消息。
       "clearAdDetect",
-      // 刷屏计数与权限镜像同理：重新接管时主线程会重新镜像，计数从零开始。
+      // 刷屏计数与权限镜像同理：重新接管时主线程重新镜像，计数从零开始。
       "clearFloodWindows", "botPermissionsUnknown", "forgetChatKind",
       // `/antiraid disable` 只收入群这一条链路：验证经状态机收摊、私密模式解锁，
       // 广告队列、刷屏窗口、权限与群类型镜像一个都不动（各有各的开关）。
@@ -289,10 +289,10 @@ describe("Anti-Raid Worker lifecycle", () => {
       "adopt", "lockdownPersisted", "lockdownPersistFailed", "adoptVerifications", "verificationPersisted", "adminsChanged",
       "removeBlockedMembers", "adCandidate", "clearAdDetect",
       "floodCandidate", "clearFloodWindows", "clearIdentityAdDetect",
-      // 限制成员权限从没有变成确证有时才提前被拒的私密模式解除重试。
+      // 限制成员权限从没有变成确证有时才触发被拒私密模式的解除重试。
       "botPermissionsChanged", "retryDeniedLockdownRestore", "botPermissionsChanged", "chatKindChanged",
     ]);
-    // 配置消息不产生业务副作用，只把快照写进 holder：本线程此后不读 agent.json。
+    // 配置消息不产生业务副作用，只把快照写进 holder。
     expect(adDetectAgentConfigCache.current).toBe(injectedAdDetectConfig);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 99 }]);
     // 镜像里本来就确证能限制成员时，再来一次同样的确证不提前重试。
@@ -380,8 +380,7 @@ describe("Anti-Raid Worker lifecycle", () => {
 
     await Bun.sleep(0);
     expect(workerEvents).toEqual([{ type: "barrierComplete", barrierId: 10 }]);
-    // 统一延迟删除 flush 必须在 quiesce 后、任务 drain 前认领全部 timer；
-    // 返回的删除 Promise 会接入同一个在途集合。
+    // 统一延迟删除 flush 在 quiesce 后、任务 drain 前认领全部 timer；返回的删除 Promise 接入同一个在途集合。
     expect(calls.indexOf("flushGenericMessageDeletions"))
       .toBeGreaterThan(calls.indexOf("quiesceAdDetect"));
     expect(deletionFlushRequestSignal).toBeNull();

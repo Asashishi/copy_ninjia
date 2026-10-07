@@ -1,7 +1,7 @@
 /**
  * 覆盖 packages/aiChat/availability.ts 的判定入口：进程侧前提就绪
  * （aiChatConfigReadiness）与本群 `isAIChatEnabled` 的合取，逐组合覆盖
- * 真值表四格。约束见 docs/cn/04-invariants.md。
+ * 真值表各格。约束见 docs/cn/04-invariants.md。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";

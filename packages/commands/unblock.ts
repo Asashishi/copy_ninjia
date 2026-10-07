@@ -15,7 +15,7 @@ import {
   unblockUser,
 } from "../infra/blocklist/membership";
 import type { ManagedChatOutcome } from "../infra/blocklist/membership";
-import { runBlocklistIdentityMutation } from "../infra/identityPolicy/coordination";
+import { blocklistIdentityMutationRunner } from "../cache/main/blocklist";
 
 interface UnblockExecutionOutcome extends UnbanOutcome {
   removedFromList: boolean;
@@ -26,8 +26,9 @@ interface UnblockExecutionOutcome extends UnbanOutcome {
 async function executeUnblock(targetUser: CachedUser, originChatId: number): Promise<UnblockExecutionOutcome> {
   // 先发布主线程 LRU 的解除结论，再投递 tombstone；后续入群更新立即读到新结论。
   const removedFromList: boolean = unblockUser(targetUser.id);
-  // 名单里没有目标不代表各群没有封禁；默认完整解封仍要继续逐群执行。
-  const persisted: boolean = removedFromList ? await confirmBlocklistPersisted() : true;
+  // 等待 tombstone 的事务 ACK；名单里本就没有目标时，若上一次解除的 tombstone 尚未 ACK，
+  // 先补投同一最终值再等待。名单里没有目标不代表各群没有封禁；默认完整解封仍要继续逐群执行。
+  const persisted: boolean = await confirmBlocklistPersisted(targetUser.id, !removedFromList);
   const { unbannedCount, failedCount }: UnbanOutcome = await unbanEverywhereFor(targetUser, originChatId);
   return { removedFromList, persisted, unbannedCount, failedCount };
 }
@@ -60,7 +61,7 @@ export async function handleBlockDisable(ctx: CommandContext<Context>, targetArg
     rawArgument: targetArgument,
     acceptUserId: true,
     acceptChatId: true,
-    // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
+    // unblockUser 按名单结论决定是否写 tombstone，预热失败时拒绝执行。
     requireIdentityPolicies: true,
     // 拒绝当前群自己的身份，覆盖匿名管理员回复与裸会话 id；约束见 docs/cn/04-invariants.md。
     currentChatTargetText: chatAtmosphere().NOTICE_TEXTS.unblockCurrentChat,
@@ -73,11 +74,11 @@ export async function handleBlockDisable(ctx: CommandContext<Context>, targetArg
     persisted,
     unbannedCount,
     failedCount,
-  }: UnblockExecutionOutcome = await runBlocklistIdentityMutation(
+  }: UnblockExecutionOutcome = await blocklistIdentityMutationRunner.run(
     targetUser.id,
     (): Promise<UnblockExecutionOutcome> => executeUnblock(targetUser, chatId)
   );
-  // 未收到持久化确认时附加警告；名单无变更时不等待 ACK。
+  // 该 id 的最终值（本次或上一次解除的 tombstone）未收到持久化确认时附加警告；没有未 ACK 最终值时不等待。
   const atmosphere: AtmosphereTexts = chatAtmosphere();
   const targetLabel: string = formatTargetLabel(targetUser, atmosphere);
   const persistWarning: string = persisted
@@ -86,7 +87,7 @@ export async function handleBlockDisable(ctx: CommandContext<Context>, targetArg
 
   const listNote: string = removedFromList
     ? atmosphere.NOTICE_TEXTS.unblockRecorded(targetLabel, persistWarning)
-    : atmosphere.NOTICE_TEXTS.unblockNotRecorded(targetLabel);
+    : atmosphere.NOTICE_TEXTS.unblockNotRecorded(targetLabel, persistWarning);
 
   if (unbannedCount === 0 && failedCount === 0) {
     await sendCommandMessage({

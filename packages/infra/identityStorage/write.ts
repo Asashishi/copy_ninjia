@@ -128,7 +128,7 @@ function postIdentityPolicyWrite(message: IdentityPolicyWriteDiskMessage): boole
 
 /**
  * 容量准入后发布 LRU 最终值，登记未 ACK revision 并投给 Disk I/O；迟到读不能覆盖它。
- * 调用前必须预热该 ID 的正/负结论，才能准确维护表计数与互斥边界。
+ * 调用前必须预热该 ID 的正/负结论；表计数与白/黑名单互斥校验依赖它。
  */
 export function queueIdentityPolicyWrite(
   table: IdentityPolicyTable,

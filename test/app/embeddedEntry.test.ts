@@ -18,15 +18,12 @@ mock.module("../../packages/app/lifecycle", () => ({
 const { application } = await import("../../index");
 
 /**
- * import 刚完成、任何用例开跑之前的运行记录快照。
- *
- * 「import 本身不启动任何东西」只有这一刻能作证：`runs` 是模块级共享数组，
- * 用例调一次入口就往里推一条，`bun test --randomize` 下先跑的用例已经把它写脏了。
+ * import 刚完成、任何用例开跑之前的运行记录快照；`runs` 是模块级共享数组，用例调一次入口就往里推一条，
+ * 「import 本身不启动任何东西」以这一刻的快照为准。
  */
 const RUNS_AFTER_IMPORT: readonly ApplicationRunMode[] = [...runs];
 
-// 两个用例都调运行入口，共享的 runs 必须逐例清空；runResult 一并复位，避免
-// 「原样交还异常」那条留下的 reject 实现漏给随机顺序里排在它后面的用例。
+// 两个用例都调运行入口，共享的 runs 逐例清空；runResult 一并复位。
 beforeEach(() => {
   runs.length = 0;
   runResult = async (): Promise<void> => {};

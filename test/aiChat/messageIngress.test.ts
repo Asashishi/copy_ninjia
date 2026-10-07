@@ -10,6 +10,7 @@ import {
 import type { AiChatWorkerMessage } from "../../packages/types/aiChat/protocol";
 import type { TelegramRetryLane } from "../../packages/types/telegramOutbound";
 import { telegramOutboundGateState } from "../../packages/cache/main/telegram";
+import { chatQaEntries } from "../../packages/cache/main/qa";
 
 const workerPosts: AiChatWorkerMessage[] = [];
 const messageLane: TelegramRetryLane = telegramOutboundGateState.lanes.message;
@@ -143,6 +144,7 @@ describe("AI 主线程消息入口", () => {
         telegramBackpressured: true,
         imageGenerationRequested: false,
         imageGenerationReference: undefined,
+        chatQa: undefined,
       },
       {
         type: "trigger",
@@ -154,6 +156,7 @@ describe("AI 主线程消息入口", () => {
         telegramBackpressured: true,
         imageGenerationRequested: true,
         imageGenerationReference: undefined,
+        chatQa: undefined,
       },
       {
         type: "trigger",
@@ -165,8 +168,38 @@ describe("AI 主线程消息入口", () => {
         telegramBackpressured: false,
         imageGenerationRequested: false,
         imageGenerationReference: undefined,
+        chatQa: undefined,
       },
     ]);
+  });
+
+  test("本群登记了问答时触发载荷带上主线程热读副本里的同一份清单", () => {
+    const entries: Map<string, string> = new Map<string, string>([["几点集合", "早上九点"]]);
+    chatQaEntries.set(-1001, entries);
+    try {
+      generateAndSendReply({
+        chatId: -1001,
+        triggerSenderId: 7,
+        replyToMessageId: 17,
+        messageThreadId: undefined,
+        imageGenerationRequested: false,
+        imageGenerationReference: undefined,
+      });
+      generateAndSendReply({
+        chatId: -1002,
+        triggerSenderId: 8,
+        replyToMessageId: 18,
+        messageThreadId: undefined,
+        imageGenerationRequested: false,
+        imageGenerationReference: undefined,
+      });
+    } finally {
+      chatQaEntries.delete(-1001);
+    }
+
+    expect(workerPosts.map((message: AiChatWorkerMessage) => message.type === "trigger" ? message.chatQa : null))
+      .toEqual([entries, undefined]);
+    expect((workerPosts[0] as { chatQa?: unknown }).chatQa).toBe(entries);
   });
 
   test("要发起回复轮的媒体在投递时刻写入与文字触发同源的发送面高压快照", () => {

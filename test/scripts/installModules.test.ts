@@ -1,6 +1,6 @@
 /**
  * 一键安装脚本的自洽性门禁（scripts/conventions/installModules.ts）。
- * 真实仓库当前一致，因此这里在临时副本里逐条打散，确认每种分叉都能被拦下。
+ * 真实仓库一致，这里在临时副本里逐条打散，确认每种分叉都被拦下。
  */
 
 import { afterEach, describe, expect, test } from "bun:test";

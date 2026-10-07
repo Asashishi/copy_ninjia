@@ -5,7 +5,7 @@ export function storageWriteCost(data: string | null, key: string = ""): number 
   return DISK_BUSINESS_MESSAGE_BASE_BYTES + ((data?.length ?? 0) + key.length) * 2;
 }
 
-/** 容量拒收必须与普通领域校验失败区分，通知宿主停止入口。 */
+/** 容量拒收的错误类型，与普通领域校验失败区分，用于通知宿主停止入口。 */
 export class StorageWriteCapacityError extends Error {
   constructor() { super("Storage pending write capacity was exhausted."); }
 }

@@ -20,8 +20,7 @@ export interface MoodConfig {
 
 /**
  * 广告检测的部署者示例清单：config/dynamic/ad_samples.json 是一个纯字符串数组，每条
- * 是一段“应当被判成广告”的原文。文件本身是判定口径的唯一可调旋钮，改它
- * 不需要动代码，见 workers/antiRaid/adDetect/classifier.ts。
+ * 是一段“应当被判成广告”的原文，作为判定口径由 workers/antiRaid/adDetect/classifier.ts 使用。
  */
 export type AdSampleConfig = readonly string[];
 
@@ -49,28 +48,25 @@ export interface GoogleServiceAccountKey {
 }
 
 /**
- * ad_detect 能力配置。与其他能力一样显式选择 Google 或 OpenAI 协议；端点缺省
+ * ad_detect 能力配置。与其他能力一样显式选择 provider（AgentProvider）；端点缺省
  * 时跟随对应 SDK 的官方地址，兼容端点必须在该能力自己的 base_url 显式声明。
  *
- * 与 AI agent 配置同住 config/dynamic/agent.json，但运行时仍按消费方分段加载：广告检测
- * Worker 不接触闲聊能力配置，AI Worker 也不读取广告模型。分段边界见
- * config/agent.ts。
+ * 与 AI agent 配置同住 config/dynamic/agent.json，运行时按消费方分段加载：广告检测
+ * Worker 只接收本段，AI Worker 只接收 AI 对话能力段。分段边界见 config/agent.ts。
  */
 export type AdDetectAgentConfig = AgentCapabilityConfig;
 
 /**
- * OpenAI 兼容生图的线协议。
- *
- * 这是请求体能力边界，不是模型供应商或模型名枚举：`openai` 表示 gpt-image-2
- * 任意尺寸协议，`openai-standard` 表示 GPT Image 全系共同支持的三种标准尺寸，
- * `xai` 表示 xAI JSON/画幅协议。同一个代理端点也必须显式选择；后续新增不兼容
- * 的 images 请求形状时，在这里和 aiChat/openai/image.ts 的穷举分派同步增加一档。
+ * OpenAI 兼容生图的线协议，对应请求体能力边界：`openai` 表示 gpt-image-2
+ * 任意尺寸协议，`openai-standard` 表示 GPT Image 全系共同支持的标准尺寸，
+ * `xai` 表示 xAI JSON/画幅协议。同一个代理端点也必须显式选择；新增不兼容
+ * 的 images 请求形状时，须在这里和 aiChat/openai/image.ts 的穷举分派同步增加一档。
  */
 export type OpenAiImageProtocol = "openai" | "openai-standard" | "xai";
 
 /**
- * agent 能力可选的 SDK 协议；模型品牌不在这里枚举。anthropic 不支持 image 与 tts，
- * 那两项在配置解析时拒绝它（见 config/agentCapability.ts）。
+ * agent 能力可选的 SDK 协议。anthropic 不支持 image 与 tts，那两项在配置解析时
+ * 拒绝它（见 config/agentCapability.ts）。
  */
 export type AgentProvider = "google" | "openai" | "anthropic";
 
@@ -82,8 +78,8 @@ export type AgentProvider = "google" | "openai" | "anthropic";
 export type AgentCapability = "text" | "summary" | "media" | "image" | "tts" | "web_search";
 
 /**
- * 配置类型为通用能力配置（AgentCapabilityConfig）的四项能力：三项对话核心能力与独立检索
- * `web_search`；按名取配置见 config/agent.ts 的 requireAgentCapabilityConfig。
+ * 配置类型为通用能力配置（AgentCapabilityConfig）的能力：对话核心能力 `text`、`summary`、
+ * `media` 与独立检索 `web_search`；按名取配置见 config/agent.ts 的 requireAgentCapabilityConfig。
  */
 export type AgentGeneralCapability = Extract<AgentCapability, "text" | "summary" | "media" | "web_search">;
 
@@ -135,22 +131,20 @@ export type AgentWebSearchCapabilityConfig = AgentCapabilityConfig & {
   readonly maxCallsPerUse: number;
 };
 
-/** Google 生图配置；Google SDK 自己定义请求体，不接受 OpenAI 协议档位。 */
+/** Google 生图配置；Google SDK 自己定义请求体，imageProtocol 恒为 undefined。 */
 export interface GoogleAgentImageCapabilityConfig extends GoogleAgentCapabilityConfig {
   readonly imageProtocol: undefined;
 }
 
-/** OpenAI 兼容生图配置；协议必须显式给出，不能从模型名或端点猜测。 */
+/** OpenAI 兼容生图配置；协议必须显式给出。 */
 export interface OpenAiAgentImageCapabilityConfig extends OpenAiAgentCapabilityConfig {
   readonly imageProtocol: OpenAiImageProtocol;
 }
 
 /**
- * OpenAI 协议下语音合成的线协议。
- *
- * 同 OpenAiImageProtocol，这是请求体能力边界，不是模型枚举：`openai` 表示 OpenAI
- * audio/speech（官方 SDK，含兼容端点），`xai` 表示 xAI `POST /tts`（fetch，无模型名与风格
- * 指令字段）。新增时在这里和 aiChat/openai/speech.ts 的穷举分派同步增加一档。
+ * OpenAI 协议下语音合成的线协议，同 OpenAiImageProtocol 对应请求体能力边界：`openai` 表示
+ * OpenAI audio/speech（官方 SDK，含兼容端点），`xai` 表示 xAI `POST /tts`（fetch，无模型名与
+ * 风格指令字段）。新增时须在这里和 aiChat/openai/speech.ts 的穷举分派同步增加一档。
  */
 export type OpenAiSpeechProtocol = "openai" | "xai";
 
@@ -160,11 +154,11 @@ export type OpenAiSpeechProtocol = "openai" | "xai";
  */
 export type TtsBotLanguage = "en" | "zh" | "ja";
 
-/** 三种语音合成配置共有的音色、台词语言与每日额度。 */
+/** 各语音合成配置共有的音色、台词语言与每日额度。 */
 interface AgentTtsVoiceQuota {
   /**
    * 原样交给实现包的音色：Google 为预置音色名或 AI Studio Voice design 生成的 `voice_` 音色 ID
-   * （归属 api_key 所在项目、有效期一年，过期后须重新生成并替换），OpenAI 为 audio/speech 的
+   * （归属 api_key 所在项目，过期后须重新生成并替换），OpenAI 为 audio/speech 的
    * voice，xAI 为 `voice_id`。
    */
   readonly voice: string;
@@ -239,7 +233,7 @@ export type ProviderCapabilityConfig<TProvider extends AgentProvider> =
   Extract<AgentDeploymentCapabilityConfig, { readonly provider: TProvider }>;
 
 /**
- * config/dynamic/agent.json 的 agent 段；三项对话核心能力必填且各自独立路由。
+ * config/dynamic/agent.json 的 agent 段；对话核心能力 `text`、`summary`、`media` 必填且各自独立路由。
  * `text` 是带工具往返的群聊回复，`summary` 是无状态纯文本摘要，`media` 是视觉
  * 描述与语音转写，`image` 是生图，`tts` 是语音合成，`webSearch`（部署字段 `web_search`）
  * 是回复与 cron 摘要共用的联网检索执行器。
@@ -287,7 +281,7 @@ export type DefaultAvatarSource =
 
 /**
  * config/dynamic/assets.json 解析并补齐缺省后的外部素材配置（解析见 packages/config/assets.ts）。
- * 五项各自独立；文件或字段缺省时取 consts/ui/assets.ts 的内置常量。
+ * 各项相互独立；文件或字段缺省时取 consts/ui/assets.ts 的内置常量。
  */
 export interface AssetConfig {
   /** 随机图片（`/h_image`）来源目录的绝对路径；相对写法已按运行时数据根解析。 */
@@ -302,7 +296,7 @@ export interface AssetConfig {
   readonly botDefaultAvatar: DefaultAvatarSource;
 }
 
-/** config/reload.ts 对六份可热重载部署文件的一轮读取。 */
+/** config/reload.ts 对可热重载部署文件的一轮读取。 */
 export interface HotDeploymentConfigReads {
   /** assets.json；随机图片目录变化时已在读取阶段完成目录准备，失败记为 invalid。 */
   readonly assets: HotConfigRead<AssetConfig>;
@@ -349,12 +343,6 @@ export interface ConfigFailure {
 export type ConfigReadiness =
   | { readonly ok: true }
   | { readonly ok: false; readonly failure: ConfigFailure };
-
-/** 单份部署文件的探测项：文件名 + 一次会在坏掉时抛出的加载。 */
-export interface DeploymentFileProbe {
-  readonly file: string;
-  readonly load: () => Promise<unknown>;
-}
 
 /** 判定结论的单例缓存 holder；成功与失败都缓存，见 config/readiness.ts 头注。 */
 export interface ConfigReadinessCache {

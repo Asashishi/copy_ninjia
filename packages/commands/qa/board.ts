@@ -1,23 +1,20 @@
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import { chatAtmosphere } from "../../infra/atmosphere";
 /**
- * `/qa query` 看板：把本群已登记的问答铺成可复制的 JSON 代码块，并按长度分页。
+ * `/qa query` 看板：把本群已登记的问答铺成可复制的 JSON 代码块，并按条数分页。
  *
- * 看板是**用户明确授权的长期保留例外**（见 docs/cn/04-invariants.md），
- * 不挂 30 秒清理；翻页按钮因此必须能在任意时刻工作，页码不进任何会话状态——
- * 每次点击都按 callback_data 里的页号从热表重新装页。这样重启、`/qa remove`
- * 改动条目、甚至整群条目被清空之后，旧看板再点一下也会自己收敛到当前事实，
- * 而不是渲染一份早就不存在的快照。
+ * 看板是获授权的长期保留例外（见 docs/cn/04-invariants.md），不挂固定延迟清理；
+ * 翻页按钮在任意时刻可用，页码不进任何会话状态——每次点击按 callback_data 里的
+ * 页号从热表重新装页，条目变化或被清空后旧看板再点会收敛到当前内容。
  *
- * 答案在看板上**截断**到 QA_QUERY_ANSWER_PREVIEW_MAX_CHARS：看板是拿来扫一眼
- * 对照的，要完整答案原样问一次即可。问题**从不截断**——它是 `/qa remove` 的
- * 入参，截断过的问题照抄回去什么也删不掉。
+ * 答案在看板上截断到 QA_QUERY_ANSWER_PREVIEW_MAX_CHARS，完整答案按问题原样查询。
+ * 问题从不截断，它是 `/qa remove` 的入参。
  */
 
 import { InlineKeyboard } from "grammy";
 import type { Context } from "grammy";
 import type { CallbackQuery } from "grammy/types";
-import { QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_JSON_LANGUAGE, QA_QUERY_PAGE_ARG_PATTERN, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../consts/qa";
+import { QA_QUERY_ANSWER_PREVIEW_MAX_CHARS, QA_QUERY_JSON_INDENT, QA_QUERY_JSON_LANGUAGE, QA_QUERY_PAGE_ARG_PATTERN, QA_QUERY_PAGE_CALLBACK_PREFIX, QA_QUERY_PAGE_MAX_ENTRIES, QA_QUERY_PAGE_NOOP_DATA, QA_TRUNCATION_MARK } from "../../consts/qa";
 
 import { answerCallbackQuery, editMessageText } from "../../infra/telegram";
 import { chatQaEntries } from "../../cache/main/qa";
@@ -37,8 +34,8 @@ function answerPreview(answer: string): string {
 /** 把一页条目渲染成「前缀 + json 代码块」；实体偏移按 UTF-16 code unit 计。 */
 function renderQaBoardPage(entries: readonly QaEntry[], atmosphere: AtmosphereTexts): RichTextMessage {
   const prefix: string = atmosphere.QA_COMMAND_TEXTS.queryPrefix;
-  // 单条与多条都用数组：看板的形状必须稳定，读的人才能照着同一套结构抄。
-  const json: string = JSON.stringify(entries, null, 2);
+  // 单条与多条都用数组，看板结构一致。
+  const json: string = JSON.stringify(entries, null, QA_QUERY_JSON_INDENT);
   return {
     text: `${prefix}${json}`,
     entities: [{
@@ -53,9 +50,8 @@ function renderQaBoardPage(entries: readonly QaEntry[], atmosphere: AtmosphereTe
 /**
  * 把条目按 QA_QUERY_PAGE_MAX_ENTRIES 条一页装页。
  *
- * 条数固定，因此每页装多少与条目长短无关：短问答不会挤成一整屏、让翻页条
- * 整个消失。单页不会超出 Telegram 上限的依据写在 QA_QUERY_PAGE_MAX_ENTRIES 的
- * JSDoc 里。
+ * 每页条数与条目长短无关。单页不超出 Telegram 上限的依据见 QA_QUERY_PAGE_MAX_ENTRIES
+ * 的 JSDoc。
  */
 export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: AtmosphereTexts): readonly RichTextMessage[] {
   const pages: RichTextMessage[] = [];
@@ -75,8 +71,8 @@ export function buildQaBoardPages(entries: readonly QaEntry[], atmosphere: Atmos
 /**
  * 翻页条；只有一页时返回 undefined，看板就是一条干净的消息。
  *
- * 首页不给「上一页」、末页不给「下一页」：Telegram 没有禁用态按钮，画一个点了
- * 没反应的按钮只会让人以为看板坏了。中间那颗是页码指示，点它什么都不做。
+ * 首页不给「上一页」，末页不给「下一页」；中间是页码指示按钮（QA_QUERY_PAGE_NOOP_DATA），
+ * 点击不做任何事。
  */
 export function buildQaBoardKeyboard(page: number, total: number, atmosphere: AtmosphereTexts): InlineKeyboard | undefined {
   if (total <= 1) return undefined;
@@ -94,9 +90,8 @@ export function buildQaBoardKeyboard(page: number, total: number, atmosphere: At
 /**
  * 处理看板翻页按钮的点击。
  *
- * @returns 是否由本领域认领。带本领域前缀的 callback 一律认领——哪怕页号解析
- *   失败或条目已被删光，也当场应答掉，绝不放给别的领域：不应答的话点的人只会
- *   看到按钮一直转。
+ * @returns 是否由本领域认领。带本领域前缀的 callback 一律认领并应答，页号解析
+ *   失败或条目已被删光时同样如此。
  */
 export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   const query: CallbackQuery | undefined = ctx.callbackQuery;
@@ -104,13 +99,13 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   if (query === undefined || data === undefined) return false;
   if (!data.startsWith(QA_QUERY_PAGE_CALLBACK_PREFIX)) return false;
   await answerCallbackQuery({ callbackQueryId: query.id });
-  // 页码指示按钮：目标状态就是当前状态，连编辑请求都不必发。
+  // 页码指示按钮：不发编辑请求。
   if (data === QA_QUERY_PAGE_NOOP_DATA) return true;
 
   const boardMessage: CallbackQuery["message"] = query.message;
   if (boardMessage === undefined) return true;
-  // callback_data 属于外部输入：前缀对上不代表后半段是合法页号。本 bot 只生成
-  // 规范十进制，`"1e3"`、`" 2"`、`"2.0"` 这些写法一律来自外部构造。
+  // callback_data 属于外部输入：后半段须匹配 QA_QUERY_PAGE_ARG_PATTERN 且为安全整数，
+  // 否则只应答、不编辑。
   const rawPage: string = data.slice(QA_QUERY_PAGE_CALLBACK_PREFIX.length);
   if (!QA_QUERY_PAGE_ARG_PATTERN.test(rawPage)) return true;
   const requested: number = Number(rawPage);
@@ -123,8 +118,7 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
   const atmosphere: AtmosphereTexts = chatAtmosphere();
   const pages: readonly RichTextMessage[] = buildQaBoardPages(entries, atmosphere);
   if (pages.length === 0) {
-    // 看板还挂着，条目却已经被删光：就地收敛成「空空如也」并收走翻页条，
-    // 而不是留一份指向不存在条目的旧快照。
+    // 条目已被删光：就地改成 queryEmpty 并收走翻页条。
     await editMessageText({
       chatId,
       messageId: boardMessage.message_id,
@@ -132,7 +126,7 @@ export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
     });
     return true;
   }
-  // 条目变少时旧按钮上的页号可能已经越界，夹回现有范围而不是报错。
+  // 页号越界时夹回现有范围。
   const page: number = Math.min(requested, pages.length - 1);
   const rendered: RichTextMessage | undefined = pages[page];
   if (rendered === undefined) return true;

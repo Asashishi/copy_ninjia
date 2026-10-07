@@ -3,8 +3,8 @@ import { chatAtmosphere } from "../infra/atmosphere";
 import { logger } from "../infra/logger";
 
 /**
- * 向 Telegram 注册聊天框里的命令菜单。菜单只是提示层，注册失败不应阻断
- * Bot 启动；/send 刻意不展示，它只供超级管理员在私聊中使用。
+ * 向 Telegram 注册聊天框里的命令菜单。菜单只是提示层，注册失败不阻断
+ * Bot 启动；/send 不展示，它只供超级管理员在私聊中使用。
  *
  * 所有群聊作用域使用本进程生效的文案风格（见 infra/atmosphere.ts），注册成功后
  * 清除默认作用域；私聊不注册菜单，私聊命令准入由 infra/updateGate.ts 控制。

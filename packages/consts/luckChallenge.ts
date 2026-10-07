@@ -5,7 +5,7 @@ import type { LuckTier } from "../types/luckChallenge";
 /**
  * commands/luckChallenge/ 的吉凶权重与行大运概率区间（闭区间，%）。
  * 当日密钥与 cache key 确定档位及区间内的概率，后者保留两位小数。
- * 区间两两不重叠、按档递减，「尚可」的 45~55 区间跨越 50。
+ * 区间两两不重叠、按档递减。
  */
 export const LUCK_TIERS: readonly LuckTier[] = [
   { label: "大吉", weight: 7, fortunePercentRange: [88, 97] as const },
@@ -18,9 +18,8 @@ export const LUCK_TIERS: readonly LuckTier[] = [
 ];
 
 /**
- * 按持久化 label 取回当前运势档位。固定七档使用分支查找，避免启动恢复与
- * 主线程水合时为每条记录遍历整张表；未知 label 仍返回 undefined 并由调用方
- * fail closed。所属模块：commands/luckChallenge/cache.ts、workers/diskIO/snapshotFiles.ts。
+ * 按持久化 label 取回当前运势档位，用分支查找；未知 label 返回 undefined，
+ * 由调用方 fail closed。所属模块：commands/luckChallenge/cache.ts、workers/diskIO/snapshotFiles.ts。
  */
 export function luckTierByLabel(label: string): LuckTier | undefined {
   switch (label) {
@@ -47,14 +46,18 @@ if (LUCK_TIER_WEIGHT_SUM !== 100) {
 }
 
 /**
- * 全局滑动窗口限流：每 90 秒最多 300 次内联查询应答，不分群、不分用户合并
- * 计数——内联查询会随用户每敲一个字符就触发一次。超额立即拒绝而非排队
- * （不同于 Telegram 总闸的排队与 429 退避），因为排队对一个
- * 几秒内就该有结果的内联查询没有意义。
+ * 全局滑动窗口限流：每个 RATE_LIMIT_WINDOW_MS 窗口内最多应答的内联查询次数，
+ * 不分群、不分用户合并计数。超额立即拒绝，不排队（不同于 Telegram 总闸的排队与 429 退避）。
  */
 export const RATE_LIMIT_MAX_CALLS_PER_WINDOW: number = 300;
 /** 全局内联查询滑动限频窗口时长。 */
 export const RATE_LIMIT_WINDOW_MS: number = 90_000;
+
+/**
+ * 不抽签的内联应答（限流占位、当天密钥刷新失败时的空结果）让客户端缓存的秒数，
+ * 所属模块：commands/luckChallenge/telegramAdapter.ts。
+ */
+export const LUCK_INLINE_NO_DRAW_CACHE_SECONDS: number = 1;
 
 /** "同款问题"按钮上展示的所求事项摘要，超过这个字符数就截断并加 "..."。 */
 export const SAME_QUESTION_LABEL_MAX_LEN: number = 4;
@@ -69,20 +72,16 @@ export const LUCK_RESULT_IDS: ReadonlySet<string> = new Set([
 /**
  * pendingLuckDraws（见 cache/main/luckChallenge.ts）的 key 数量上限，超出按插入
  * 顺序淘汰最旧的（不因命中刷新）。
- * 这个 Map 记的是"预览阶段抽到、但还没被用户选中确认"的结果——inline_query
- * 是打字即触发的预览，用户每敲一个字符都可能新增一条从未被选中过的 key，
+ * 这个 Map 记的是"预览阶段抽到、但还没被用户选中确认"的结果，
  * 只有到配置时区的零点跨天才会整体清空（见 commands/luckChallenge/cache.ts 的
- * ensureLuckCacheFreshForToday），单日内没有其它清理时机；需要一个真正
- * 生效的上限防止忙碌的一天里被打字预览堆到很大。签名回执（libs/luckReceipt.ts）
- * 是自描述验签，不占用任何反向索引，不受此上限约束。 */
+ * ensureLuckCacheFreshForToday），单日内没有其它清理时机。
+ * 签名回执（libs/luckReceipt.ts）是自描述验签，不占用反向索引，不受此上限约束。 */
 export const PENDING_LUCK_CACHE_MAX: number = 15_000;
 
 /**
  * dailyLuckCache（见 cache/main/luckChallenge.ts）当日已确认结果的数量上限，
  * 同步约束主线程 Map、Disk I/O Worker 当日镜像与 `memory/luck/<day>.json` 三处。
- * key 为 `userId:sha256(问题原文)`，问题原文由用户输入，因此当日唯一 key 数没有
- * 自然上界。撑满时拒绝新 key、不淘汰已有 key：抽签派生是确定性的（同一密钥同一
- * key 必得同一结果），越界的新 key 不会产生 luckDraw 消息，重新预览得到的仍是
- * 同一条已确认结果。
+ * key 为 `userId:sha256(问题原文)`。撑满时拒绝新 key、不淘汰已有 key；抽签派生是
+ * 确定性的（同一密钥同一 key 得同一结果），越界的新 key 不产生 luckDraw 消息。
  */
 export const DAILY_LUCK_CACHE_MAX: number = 45_000;

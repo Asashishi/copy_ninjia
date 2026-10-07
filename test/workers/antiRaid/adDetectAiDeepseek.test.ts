@@ -145,7 +145,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
       usage: { completion_tokens_details: { reasoning_tokens: 64 } },
     }));
     await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
-    // 因 reasoning 占满额度被截断时返回 null，错误日志带 truncated/hasPartialText/reasoning_tokens/max_tokens 四个字段。
+    // reasoning 占满额度被截断时返回 null，错误日志带 truncated/hasPartialText/reasoning_tokens/max_tokens 字段。
     expect(errorLogs[0]).toContain("truncated=true");
     expect(errorLogs[0]).toContain("hasPartialText=true");
     expect(errorLogs[0]).toContain("reasoning_tokens=64");

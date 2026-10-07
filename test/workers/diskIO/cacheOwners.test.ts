@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { flushBuffer, loggerFileState, markLogDirty, resetLogCache } from "../../../packages/cache/workers/diskIO/logs";
+import { flushBuffer, loggerFileState, resetLogCache } from "../../../packages/cache/workers/diskIO/logs";
 import {
   joinLogBuffer,
   joinLogCleanupDay,
@@ -33,8 +33,8 @@ afterEach(() => {
 });
 
 describe("Disk I/O append-domain cache owners", () => {
-  test("日志 markDirty 与 reset 同时管理 buffer 和文件游标", () => {
-    markLogDirty({ day: "2026-07-19", text: "entry" });
+  test("日志缓冲与 reset 同时管理 buffer 和文件游标", () => {
+    flushBuffer.entries.push({ day: "2026-07-19", text: "entry" });
     expect(flushBuffer.entries).toHaveLength(1);
     loggerFileState.current = { day: "2026-07-19", size: 10, empty: false };
 

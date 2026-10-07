@@ -1,14 +1,13 @@
 /**
- * 全量性能基准的公共契约：子进程回传的原始读数、三轮聚合后的指标，以及
+ * 全量性能基准的公共契约：子进程回传的原始读数、多轮聚合后的指标，以及
  * 最终报告的形状。
  *
- * 单独成文件：父进程（编排与渲染）只 import 这里的类型，不 import 会拉起生产
- * 模块图的子进程实现。
+ * 父进程（编排与渲染）只 import 这里的类型，不 import 子进程实现。
  */
 
 import type { ChildResult as IdentityChildResult } from "../identityDatabase/types";
 
-/** `/proc/<pid>/io` 在一次计时窗口内的增量；Linux 专属，本项目本就只支持 Linux。 */
+/** `/proc/<pid>/io` 在一次计时窗口内的增量；Linux 专属。 */
 export interface ProcessIoDelta {
   /** 进程视角读入的字节数（含命中页缓存的部分）。 */
   readonly rcharBytes: number;
@@ -66,7 +65,7 @@ export interface ColdStartRound {
   readonly peakRssBytes: number;
 }
 
-/** 七条真实落盘动作、三条用户可见本地流程与一条部署配置热重载；全部从生产入口驱动。 */
+/** 真实落盘动作、用户可见本地流程与部署配置热重载；全部从生产入口驱动。 */
 export type ChainName =
   | "join-log-append"
   | "identity-policy-write"
@@ -93,9 +92,9 @@ export interface ChainRound {
   /**
    * 完整处理吞吐（ops/s）：每秒能从生产入口跑完多少次该动作。
    *
-   * 七条落盘动作的终点是 durable 回执；广告检测与 AI 回复的终点分别是处置
-   * 排空与消息发送完成。批量动作的 `throughputPerSecond` 按记录折算，天然是它
-   * 的 recordsPerOperation 倍，不能替代这一口径比较一次完整动作的成本。
+   * 落盘动作的终点是 durable 回执；广告检测与 AI 回复的终点分别是处置
+   * 排空与消息发送完成。批量动作的 `throughputPerSecond` 按记录折算，是它
+   * 的 recordsPerOperation 倍，不用于比较一次完整动作的成本。
    */
   readonly operationThroughputPerSecond: number;
   /** 业务记录吞吐（records/s），已按 recordsPerOperation 折算。 */
@@ -113,9 +112,8 @@ export interface ChainRound {
  * 存储分区一轮的回传：直接复用 `perf:identity-database` 的逐次读数，外加这个
  * 子进程整个生命周期的读写量。
  *
- * `io` 的口径与冷启动、链路两个分区**不同**：那两个分区量的是计时窗口内的读写，
- * 这里覆盖的是整个子进程，含 fixture 建库那一段。总量表用的正是这个口径——
- * 「跑完一遍全量基准，磁盘上到底发生了多少读写」。
+ * `io` 的口径与冷启动、链路分区不同：那两个分区量的是计时窗口内的读写，
+ * 这里覆盖整个子进程，含 fixture 建库；总量表使用这个口径。
  */
 export interface StorageRound {
   readonly result: IdentityChildResult;
@@ -182,7 +180,7 @@ export interface BenchmarkSection {
 /**
  * 冷启动分区的旁注：恢复到的数据量与进程峰值 RSS。
  *
- * 不放进分区表：分区表每一行是一个启动阶段、单位都是毫秒，与这里的字段单位不同。
+ * 独立于分区表：分区表每一行是一个启动阶段，单位为毫秒。
  */
 export interface ColdStartSummary {
   readonly recovered: ColdStartRecovered;
@@ -205,7 +203,7 @@ export interface SuiteTotals {
   readonly mockRootFiles: number;
 }
 
-/** 出数机器与运行时；换任何一项都会让读数不可与历史比较。 */
+/** 出数机器与运行时。 */
 export interface SuiteEnvironment {
   readonly bunVersion: string;
   readonly bunRevision: string;
@@ -215,7 +213,7 @@ export interface SuiteEnvironment {
   /**
    * 逻辑核心数；不记录 CPU 型号。
    *
-   * 判断一份读数能否与历史比较，看核心数、内存和 Bun 构建这三项。
+   * 读数可比性由核心数、内存与 Bun 构建判定。
    */
   readonly cpuCount: number;
   readonly totalMemoryBytes: number;

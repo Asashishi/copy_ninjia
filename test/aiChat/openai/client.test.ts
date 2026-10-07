@@ -1,8 +1,7 @@
 /**
- * OpenAI 底层收发的失败分类与日志。整条降级链都压在这里的
- * request/response 二分上：「SDK 已耗尽 HTTP 重试」不允许业务层再套一层完整
- * 请求，「HTTP 成功但产出不可用」才允许重采样。口径与
- * test/aiChat/gemini/client.test.ts 一一对应。
+ * OpenAI 底层收发的失败分类与日志。降级链建立在 request/response 二分上：
+ * 「SDK 已耗尽 HTTP 重试」不允许业务层再套一层完整请求，「HTTP 成功但产出不可用」才允许重采样。
+ * 口径与 test/aiChat/gemini/client.test.ts 一一对应。
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -375,5 +374,31 @@ describe("文本请求的重试边界", () => {
       capability: "summary", buildBody: () => BODY, errorLabel: "AI test API", normalize: (text: string): string => text.trim(),
     }))
       .resolves.toEqual({ ok: true, text: "正文" });
+  });
+});
+
+describe("会话固定的客户端", () => {
+  test("传入 client 时请求只走它，不按能力构造或取用缓存的客户端", async () => {
+    const pinnedCreate = mock(async (..._args: unknown[]): Promise<unknown> => ({
+      status: "completed",
+      error: null,
+      incomplete_details: null,
+      output: [{ type: "message", content: [] }],
+      output_text: "pinned",
+    }));
+    const pinned = { responses: { create: pinnedCreate } } as unknown as OpenAI;
+
+    const result = await requestOpenAiResult({
+      capability: "summary",
+      buildBody: () => BODY,
+      errorLabel: "AI test API",
+      client: pinned,
+    });
+
+    expect(result.ok).toBeTrue();
+    expect(pinnedCreate).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(createdOptions).toEqual([]);
+    expect(openAiClientCache.current).toBeNull();
   });
 });

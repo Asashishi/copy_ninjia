@@ -23,15 +23,15 @@ export {
 } from "../../packages/database/interact/connection";
 export { initializeStorageDatabase } from "../../packages/database/interact/initialization";
 
-/** 完成问卷和新库初始化后才加载启动总闸，避免路径解析阶段读取尚未填写的配置。 */
+/** 完成问卷和新库初始化后才加载启动总闸。 */
 export async function validateExistingDeploymentInputs(): Promise<void> {
   const readiness: typeof Readiness = await import("../../packages/config/readiness");
   await readiness.validateExistingDeploymentInputs();
 }
 
 /**
- * 安装前按启动恢复同一口径只读校验全局状态：数据根仍有 14.x 的 state.json 或备份副本，或
- * memory/global/state.json 不是当前格式（例如总计数 ttsUsage）时拒绝。
+ * 安装前按启动恢复同一口径只读校验全局状态：旧位置的状态文件（`LEGACY_STATE_FILE_PATHS`）
+ * 存在，或 memory/global/state.json 不是当前格式时拒绝。
  */
 export async function assertStateFilesMigrated(): Promise<void> {
   await loadCurrentGlobalState(new StateStore());
@@ -48,8 +48,9 @@ function readCurrentStorageMetadata(database: StorageDatabase): readonly StoredS
 }
 
 /**
- * 安装前只读核对已有共享数据库的 schema 版本：仍是上一版格式（未经 migrate:chat-persona-removal
- * 的 v11）时拒绝，不改写数据库。库不存在时由建库步骤创建；完整校验留给启动恢复。
+ * 安装前只读核对已有共享数据库的 schema 版本：不是当前版本（例如未经
+ * migrate:chat-persona-removal 的源 schema）时拒绝，不改写数据库。库不存在时由建库步骤创建；
+ * 完整校验留给启动恢复。
  */
 export async function assertStorageDatabaseMigrated(): Promise<void> {
   if (!await Bun.file(IDENTITY_DATABASE_PATH).exists()) return;

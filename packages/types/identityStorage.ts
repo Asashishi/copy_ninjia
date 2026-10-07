@@ -10,8 +10,8 @@ export interface IdentityPolicyRawReadResult {
 }
 
 /**
- * 一次直接冷读得到的本批永久策略结论，只由发起读取的调用方局部持有。
- * 不经过身份 LRU，因此批量处置期间其它流量的缓存淘汰不会改变它。
+ * 一次直接冷读得到的本批永久策略结论，只由发起读取的调用方局部持有；
+ * 不经过身份 LRU，其它流量的缓存淘汰不改变它。
  */
 export interface IdentityPolicyVerdicts {
   /** 读取时刻存在永久白名单记录的身份（不含只由配置授予的超级管理员）。 */
@@ -80,10 +80,7 @@ export interface StorageDatabaseHydration {
   readonly permissionEntryCount: number;
   readonly pendingBlockedRemovals: Map<number, PendingBlockedRemoval>;
   readonly chatStates: Map<number, ChatState>;
-  /**
-   * 群 -> 问题 -> 答案。整表恒定不超过 375 行（受管群 × 每群 15 条），因此启动
-   * 一次性读全，不像 outbox 那样分页。
-   */
+  /** 群 -> 问题 -> 答案。行数以 STATE_MANAGED_CHAT_LIMIT × CHAT_QA_MAX_PER_CHAT 为界，启动一次性读全。 */
   readonly chatQa: Map<number, ReadonlyMap<string, string>>;
 }
 

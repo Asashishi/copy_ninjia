@@ -1,8 +1,8 @@
 /**
- * 防刷屏成员窗口的三条场景：单成员命中、建表增长、满载稳定淘汰。
+ * 防刷屏成员窗口的场景：单成员命中、建表增长、满载稳定淘汰。
  *
- * 与 scenarios.ts 分开：三条共用同一套 observeMemberMessage/resetFloodWindows
- * 与全局硬顶常量，改防刷屏记账时只需读这一个文件。
+ * 与 scenarios.ts 分开：各场景共用同一套 observeMemberMessage/resetFloodWindows
+ * 与全局硬顶常量。
  */
 
 import { FLOOD_WINDOW_MAX_MEMBERS } from "../../../packages/consts/antiRaid/flood";
@@ -17,9 +17,9 @@ import type { Scenario } from "./types";
  * 防刷屏开启后每条候选群消息都会走的单成员窗口命中路径。
  *
  * 只量同步记账叶子，不调用会派生 Telegram 请求的 handleFloodCandidate；每达到
- * 阈值时 observeMemberMessage 自己清空时间队列，下一轮仍保持同一个既有成员。
- * now 在所有预热和正式样本间单调递增，既贴近生产 Date.now() 的量级，也避免
- * 样本边界的人为时钟回拨改变被测分支。
+ * 阈值时 observeMemberMessage 自己清空时间队列，下一轮仍是同一个既有成员。
+ * now 在所有预热和正式样本间单调递增，量级与生产 Date.now() 一致，样本边界无
+ * 时钟回拨。
  */
 export function floodWindowHitScenario(): Scenario {
   let nextNow: number = BENCHMARK_EPOCH_MS;
@@ -47,8 +47,8 @@ export function floodWindowHitScenario(): Scenario {
 /**
  * 刷屏窗口从空表增长到全局硬顶的相变路径。
  *
- * 每个正式样本计时前都清空，确保读数不混入满载淘汰；与下方 steady 场景分开
- * 判断建表分配期和稳定 LRU 淘汰期的 JIT/GC 行为。
+ * 每个正式样本计时前清空，读数不含满载淘汰；与 steady 场景分开观测建表分配期和
+ * 稳定 LRU 淘汰期的 JIT/GC 行为。
  */
 export function floodWindowGrowthScenario(): Scenario {
   let nextUserId: number = 1;

@@ -1,7 +1,7 @@
 /**
  * AI 闲聊「此刻是否运行」的唯一判定入口。
  *
- * 三个条件缺一不可：config/dynamic/agent.json 的 AI 能力与凭据严格合法、辅助部署配置
+ * 以下条件缺一不可：config/dynamic/agent.json 的 AI 能力与凭据严格合法、辅助部署配置
  * 解析成功（config/dynamic/{stickers,mood}.json，见 config/readiness.ts）、
  * 本群已执行 /ai_chat enable（ChatState.isAIChatEnabled，缺省关闭）。
  */

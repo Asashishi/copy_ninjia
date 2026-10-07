@@ -129,9 +129,8 @@ describe("resolveCommandTarget", () => {
   });
 
   test("传入 currentChatTargetText 的命令拒绝当前群自己的 identity，并发出各自的文案", async () => {
-    // 匿名管理员拿当前群当皮套时 Telegram 只给 sender_chat=本群，皮套底下是谁
-    // 从不暴露；/block、/block disable、/white、/permission 据此做破坏性处置或发
-    // 权限，全部要在这一层被挡下（见 docs/cn/04-invariants.md）。
+    // 匿名管理员拿当前群当皮套时 Telegram 只给 sender_chat=本群，不暴露皮套底下是谁；
+    // /block、/block disable、/white、/permission 的破坏性处置与授权都在这一层被挡下（见 docs/cn/04-invariants.md）。
     replyTarget = { id: -1001, title: "Test Group", isChannel: true };
 
     expect(await resolveCommandTarget({ ...params(""), currentChatTargetText: "拒绝本群皮套" }))
@@ -200,8 +199,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("回显的参数原文按上限截断并压成单行，出站文案不会撑爆单条消息上限", async () => {
-    // 参数原文可以长到近 4096 字符（命令词之后的全部内容），原样插回提示语会
-    // 超过 Telegram 单条消息上限。
+    // 参数原文可以很长（命令词之后的全部内容），插回提示语前先截断，不超过 Telegram 单条消息上限。
     const huge: string = "长".repeat(4_000);
     expect(await resolveCommandTarget(params(huge))).toBeUndefined();
     const sent = sendMessageMock.mock.calls.at(-1)![0] as { text: string };
@@ -258,8 +256,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("只开 acceptUserId 时负数、零、前导零、小数与超出安全整数的位数一律拒绝", async () => {
-    // 负数 id 只在单独开了 acceptChatId 时才认；20 位那种虽完全匹配「十进制
-    // 正整数」，但 Number() 转换后已经超出安全整数范围、指向另一个数。
+    // 负数 id 只在单独开了 acceptChatId 时才认；位数超长的十进制正整数虽完全匹配，但 Number() 转换后已超出安全整数范围、指向另一个数。
     for (const argument of ["-1001", "-1001234567890", "0", "007", "4.2", "1e5", "99999999999999999999"]) {
       sendMessageMock.mockClear();
       expect(await resolveCommandTarget(params(argument, true))).toBeUndefined();
@@ -280,8 +277,7 @@ describe("resolveCommandTarget", () => {
   });
 
   test("开了 acceptChatId 也只放行负号那一种形态，畸形写法照样拒绝", async () => {
-    // -0 与 -007 会被 Number() 归成 0 / -7，都不是任何一个会话 id；位数超出
-    // 安全整数的负数同样在转换后改指别处。
+    // -0 与 -007 被 Number() 归成 0 / -7，都不是任何一个会话 id；位数超出安全整数的负数转换后同样改指别处。
     for (const argument of ["-0", "-007", "-4.2", "-1e5", "-99999999999999999999", "- 1001"]) {
       sendMessageMock.mockClear();
       expect(await resolveCommandTarget(params(argument, true, true))).toBeUndefined();
@@ -309,8 +305,8 @@ describe("resolveCommandTarget", () => {
 });
 
 /**
- * 各命令实际投产的目标提示表。三条失败分支的文案函数只有真的走一遍解析器才会被
- * 调用，`@ts-expect-error` 不可变性断言不会触发调用。
+ * 各命令实际投产的目标提示表。各失败分支的文案函数只有真的走一遍解析器才会被调用，
+ * `@ts-expect-error` 不可变性断言不会触发调用。
  */
 const { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/gag");
 const { BLOCK_TARGET_TEXTS, COPY_TARGET_TEXTS, MUTE_TARGET_TEXTS, NYA_COPY_TARGET_TEXTS, REVERSE_COPY_TARGET_TEXTS, STEAL_ICON_TARGET_TEXTS, UNBLOCK_TARGET_TEXTS, UNMUTE_TARGET_TEXTS } = await import("../../packages/consts/atmosphere/teasing/commands");
@@ -391,8 +387,7 @@ describe("投产目标提示表的三条失败分支", () => {
       expect(conflicting.text).toBe(texts.conflictingTarget("777"));
       expect(conflicting.text).toContain("777");
 
-      // 三条分支各发且只发一条，全部经 sendCommandMessage（带 30 秒延迟删除，
-      // 见 docs/cn/04-invariants.md），且三句文案必须互不相同。
+      // 各分支各发且只发一条，全部经 sendCommandMessage（带延迟删除，见 docs/cn/04-invariants.md），且各句文案互不相同。
       expect(sendMessageMock).toHaveBeenCalledTimes(3);
       expect(new Set([malformed.text, unknown.text, conflicting.text]).size).toBe(3);
     });

@@ -14,7 +14,7 @@ import { JOIN_LOG_MAX_BUFFERED_ENTRIES } from "../../packages/consts/diskIO/join
  * 入群事实的主线程入口（packages/infra/joinLog.ts）。
  *
  * 它的返回值直接决定 antiRaid/updateIngress.ts 抛不抛错：受理即放行 update，未确认
- * 镜像满或 Disk I/O 拒收时让 update 失败重投。落盘确认改由 joinLogPersisted 水位
+ * 镜像满或 Disk I/O 拒收时让 update 失败重投。落盘确认由 joinLogPersisted 水位
  * 释放镜像，Worker 重建时镜像原序重放。
  */
 
@@ -144,11 +144,7 @@ describe("recordJoinLog 的受理与未确认镜像", () => {
   });
 });
 
-/**
- * 群 teardown 的整群删除。它是 `/init disable` 与离群这两条路上唯一会动
- * `memory/joinlog/` 的入口；不删的话，一个已经不再接管的群的成员名单会一直躺在
- * 那里，直到保留窗口自然过期。
- */
+/** 群 teardown 的整群删除。它是 `/init disable` 与离群这两条路上唯一会动 `memory/joinlog/` 的入口。 */
 describe("purgeChatJoinLog 的整群删除", () => {
   test("投递删除并以 joinLogPurge 领域的 flush 回执为准", async () => {
     await purgeChatJoinLog(-1001);

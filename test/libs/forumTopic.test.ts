@@ -19,8 +19,7 @@ describe("forumTopicThreadId", () => {
   });
 
   test("讨论组评论线程不算话题：它的 message_thread_id 不能当 forum topic 用", () => {
-    // 关联频道讨论组的评论也带 message_thread_id，但 Bot API 的发送参数只对
-    // forum supergroup 有效，误传只会换一次 400（同 antiRaid/updateIngress.ts）。
+    // 关联频道讨论组的评论也带 message_thread_id，但 Bot API 的发送参数只对 forum supergroup 有效（同 antiRaid/updateIngress.ts）。
     expect(forumTopicThreadId(message({ message_thread_id: 12345 }))).toBeUndefined();
   });
 

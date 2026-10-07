@@ -21,10 +21,8 @@ export interface QueuedReplyTrigger {
   imageGenerationRequested: boolean;
   imageGenerationReference?: ImageGenerationReference;
   /**
-   * 触发时刻的本群问答快照；与 triggerReference 同理在入队时捕获。
-   *
-   * 补跑沿用当时那份清单：这一轮回答的是**当时那条消息**。载荷有界（每群至多
-   * CHAT_QA_MAX_PER_CHAT 条）。
+   * 触发时刻的本群问答快照；与 triggerReference 同理在入队时捕获，补跑沿用这份清单。
+   * 载荷有界，每群至多 CHAT_QA_MAX_PER_CHAT 条。
    */
   chatQa?: ReadonlyMap<string, string>;
   /** 触发消息所在的论坛话题；补跑时这一轮仍然回到当初那个话题。 */
@@ -35,15 +33,13 @@ export interface QueuedReplyTrigger {
   mediaPreparation?: Promise<MediaCommentContext | null>;
 }
 
-/** 一轮回复交给模型的有序初始上下文区块。三段恒定出现——触发类型只改变
- * replyTask 的内容（直接触发时它开头多一句唤起者声明），不改变区块数量，
- * 因此本接口没有可选字段，构造点也不会分出第二种 shape。
+/** 一轮回复交给模型的有序初始上下文区块。各区块恒定出现——触发类型只改变
+ * replyTask 的内容（直接触发时它开头多一句唤起者声明），本接口没有可选字段。
  *
- * 本接口只管这三段；模型实际收到的第四段「本轮运行时状态」（心情、当前时间与本轮工具状态）
- * 由 workers/aiChat/runtimeState.ts 在 replyModel 里补在转录与回复任务之间——它
- * 不来自聊天记忆，也不参与本接口的构造。区块保持领域语义，直到各供应商实现包的
- * replySession.ts 边界，才按稳定/易变两组映射成同一个 user 轮次下的多段文本
- * （见 types/aiChat/provider.ts 的 AiReplySessionParams）。 */
+ * 模型实际收到的「本轮运行时状态」（心情、当前时间与本轮工具状态）不在本接口内，
+ * 由 workers/aiChat/runtimeState.ts 在 replyModel 里补在转录与回复任务之间。区块保持
+ * 领域语义，直到各供应商实现包的 replySession.ts 边界，才按稳定/易变两组映射成同一个
+ * user 轮次下的多段文本（见 types/aiChat/provider.ts 的 AiReplySessionParams）。 */
 export interface ReplyPromptSections {
   readonly referenceMemory: string;
   readonly currentConversation: string;
@@ -61,18 +57,14 @@ export interface ReplyToolContext {
   replyToMessageId: number;
   /**
    * 本轮全部发送要落进的论坛话题；General、非论坛群与讨论组评论为 undefined。
-   *
-   * 收在上下文里而不是逐个工具各传一次：一轮里文字、贴纸、生图、语音与
-   * 「正在输入…」是同一条对话的五种出口，任一处漏掉都会把那一件事单独扔进 General
-   * （见 libs/forumTopic.ts）。
+   * 文字、贴纸、生图、语音与「正在输入…」共用这一个话题（见 libs/forumTopic.ts）。
    */
   messageThreadId: number | undefined;
   /** 本群已登记问答；为空或缺省时问答执行器返回空清单，本轮工具状态写明没有登记。 */
   chatQa?: ReadonlyMap<string, string>;
   /**
    * 重媒体工具（generate_image）的直接触发资格。工具只按部署能力恒挂；为 false 时
-   * 本轮工具状态写明不可用，执行器在调用时直接拒绝。它**不**代表生图意图已由程序
-   * 预判——具体意图仍由模型按当前消息自行判断。
+   * 本轮工具状态写明不可用，执行器在调用时直接拒绝。具体意图由模型按当前消息自行判断。
    *
    * 资格由 workers/aiChat/replyRound.ts 的 mediaToolsAllowed 计算。协议层
    * `imageGenerationRequested` 记录入口是否允许图片工具，轮次开始时再与随机触发
@@ -125,7 +117,6 @@ export interface SentGeneratedImage {
   photo: TelegramVisionSource;
 }
 
-/** 一轮 AI 回复的函数工具集与执行状态。 */
 /** 一次 web_search 函数工具调用的结果（aiChat/ai/tools/webSearch.ts）。 */
 export interface WebSearchToolOutcome {
   /** 交回模型的工具结果 JSON。 */
@@ -137,14 +128,14 @@ export interface WebSearchToolOutcome {
 /** 一轮回复的 web_search 执行器；入参是模型给出的原始参数 JSON。 */
 export type WebSearchToolExecutor = (argumentsJson: string) => Promise<WebSearchToolOutcome>;
 
+/** 一轮 AI 回复的函数工具集与执行状态。 */
 export interface ReplyToolset {
   /** 本轮全部自定义函数声明（静态查询工具 + 行动工具）。中立 JSON Schema 表达，
    *  各供应商实现包各自转成自家形状；同一部署同一人设下每轮逐字相同。 */
   readonly functions: readonly AiToolDefinition[];
   /** 本轮工具状态段（含段首标签），拼进运行时状态区块（见
    *  aiChat/ai/tools/replyToolset/toolStatus.ts）。按轮变化的可用性（直接触发资格、
-   *  群冷却、参考素材、语音余量、问答条数）只写在这里，不进工具声明，免得打散
-   *  供应商侧缓存的稳定前缀。 */
+   *  群冷却、参考素材、语音余量、问答条数）只写在这里，不进工具声明。 */
   readonly toolStatus: string;
   /** 本轮是否挂载 text 模型的服务端联网检索工具（Gemini 的 googleSearch /
    *  OpenAI 的 hosted web_search）；配置了 web_search 能力时恒为 false。 */
@@ -258,7 +249,7 @@ export interface ReplyDeliveryTurn {
   readonly ready: Promise<void>;
   /**
    * 模型阶段结束（含提前返回与取消），可重复调用：有序并行轮标记完整动作链就绪；直接轮交还
-   * 它独立占用的那 1 个模型并发位。
+   * 它独立占用的模型并发位。
    */
   readonly commit: () => void;
   readonly finish: () => Promise<void>;
@@ -276,7 +267,7 @@ export interface ReplyDeliverySlot {
  */
 export interface ReplyDeliveryWindow {
   readonly queue: LinkedQueue<ReplyDeliverySlot>;
-  /** 本窗口的直接轮仍在模型阶段；为 true 时有序并行轮之外另放行这 1 轮。 */
+  /** 本窗口的直接轮仍在模型阶段；为 true 时有序并行轮之外另放行这一轮。 */
   directModelActive: boolean;
 }
 
@@ -288,13 +279,13 @@ export interface RoundMessageState {
    * acceptRoundText），容量受本轮动作硬顶约束，随轮次释放。
    */
   acceptedCanonicalTexts: Set<string>;
-  /** 执行侧已接管的错字纠正单字的归一化形态；防止模型从工具结果自行补发。 */
+  /** 执行侧已接管的错字纠正单字的归一化形态。 */
   reservedCorrectionText: string | null;
 }
 
 /**
  * 评价触发的附加上下文：发送人显示名、解析出的描述与媒体类型。
- * kind 决定拼进提示词的措辞（“一张图片”/“一枚贴纸”/“一个 GIF”）。
+ * kind 决定拼进提示词的措辞（见 consts/aiChat/prompts/replyTask.ts 的 mediaNounFor）。
  */
 export interface MediaCommentContext {
   kind: MediaKind;
@@ -315,6 +306,6 @@ export interface MediaCommentContext {
    * 回复指令改为必回语气，并发闸打满时按直接触发排队补跑而非丢弃。
    */
   directTriggerReason?: AiDirectTriggerReason;
-  /** 排队时随触发快照保存，避免原转录条目滑出后丢失回复对象。 */
+  /** 排队时随触发快照保存；原转录条目滑出后仍保留回复对象。 */
   replyTo?: BufferedReplyReference;
 }

@@ -32,7 +32,7 @@ function ownerText(owner: ProcessIdentity): string {
   return `v2:${owner.pid}:${owner.startTimeTicks}:${owner.bootId}`;
 }
 
-function registryText(owner: ProcessIdentity, token: string): string {
+function lockLineText(owner: ProcessIdentity, token: string): string {
   return `${ownerText(owner)}:${getBotTokenFingerprint(token)}\n`;
 }
 
@@ -55,19 +55,18 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // 部分用例刻意留下需要人工处理的损坏锁；生产 release 必须传播错误，
-  // 测试夹具清理则直接删除整个临时目录，不把预期错误变成 afterEach 失败。
+  // 部分用例刻意留下需要人工处理的损坏锁；测试夹具清理直接删除整个临时目录。
   await releaseSingleInstanceLock(TOKEN_A, lockFilePath).catch((): undefined => undefined);
   await releaseSingleInstanceLock(TOKEN_B, lockFilePath).catch((): undefined => undefined);
   rmSync(testDir, { recursive: true, force: true });
 });
 
-describe("single instance lock registry", () => {
+describe("single instance lock (bot.lock)", () => {
   test("bot.lock 严格写 v2 完整进程身份与 token 指纹，不落盘明文 token", async () => {
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
 
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
     expect(await Bun.file(lockFilePath).text()).not.toContain(TOKEN_A);
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
   });
@@ -76,7 +75,7 @@ describe("single instance lock registry", () => {
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
     await expect(acquireSingleInstanceLock(TOKEN_B, lockFilePath)).rejects.toThrow("different token");
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("相同 token 已有活 owner 时拒绝重复启动", async () => {
@@ -86,22 +85,22 @@ describe("single instance lock registry", () => {
 
   test("下一次操作清理当前 v2 格式中已不存在的进程身份", async () => {
     const stalePid = 2_147_483_647;
-    await Bun.write(lockFilePath, registryText(identity(stalePid, "10"), TOKEN_A));
+    await Bun.write(lockFilePath, lockLineText(identity(stalePid, "10"), TOKEN_A));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath);
 
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("PID 相同但 starttime 不同视为 stale owner，而完整身份相同仍拒绝抢锁", async () => {
     const oldOwner: ProcessIdentity = identity(process.pid, "100");
     const current: ProcessIdentity = identity(process.pid, "200");
     const options: InstanceLockOptions = lockOptions(current, [current]);
-    await Bun.write(lockFilePath, registryText(oldOwner, TOKEN_A));
+    await Bun.write(lockFilePath, lockLineText(oldOwner, TOKEN_A));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath, options);
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("same token");
   });
 
@@ -109,10 +108,10 @@ describe("single instance lock registry", () => {
     const oldOwner: ProcessIdentity = identity(process.pid, "300", BOOT_A);
     const current: ProcessIdentity = identity(process.pid, "300", BOOT_B);
     const options: InstanceLockOptions = lockOptions(current, [current]);
-    await Bun.write(lockFilePath, registryText(oldOwner, TOKEN_A));
+    await Bun.write(lockFilePath, lockLineText(oldOwner, TOKEN_A));
 
     await acquireSingleInstanceLock(TOKEN_A, lockFilePath, options);
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("guard/recovery 的 PID 被复用时按完整身份回收，不被同 PID 新进程阻塞", async () => {
@@ -126,7 +125,7 @@ describe("single instance lock registry", () => {
 
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
     expect(existsSync(`${lockFilePath}.guard.recovery`)).toBe(false);
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("旧 guard 已死而 recovery 被活进程持有时拒绝启动，两份文件原样保留", async () => {
@@ -165,7 +164,7 @@ describe("single instance lock registry", () => {
 
     expect(existsSync(`${lockFilePath}.guard`)).toBe(false);
     expect(existsSync(recoveryPath)).toBe(false);
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("持有 recovery 期间 guard 被活进程重新取得时报错，并清掉自己的 recovery", async () => {
@@ -202,7 +201,7 @@ describe("single instance lock registry", () => {
     expect(await Bun.file(guardPath).text()).toBe(ownerText(current));
   });
 
-  test("旧 pid:tokenFingerprint registry 原样保留并要求人工处理，不检查 PID 生死", async () => {
+  test("旧 pid:tokenFingerprint 格式的 bot.lock 原样保留并要求人工处理，不检查 PID 生死", async () => {
     const oldContent: string = `2147483647:${getBotTokenFingerprint(TOKEN_A)}\n`;
     await Bun.write(lockFilePath, oldContent);
 
@@ -231,23 +230,46 @@ describe("single instance lock registry", () => {
     expect(await Bun.file(recoveryPath).text()).toBe(String(staleOwner.pid));
   });
 
-  test("损坏或空 registry 原样保留并要求人工处理", async () => {
-    for (const content of ["broken\n", ""]) {
+  test("损坏、空、缺行尾换行或多于一行的 bot.lock 在取锁与释放时都原样保留并要求人工处理，不检查 PID 生死", async () => {
+    const staleOwner: ProcessIdentity = identity(2_147_483_647, "10");
+    const otherStaleOwner: ProcessIdentity = identity(2_147_483_646, "11");
+    // 记录里的身份都按存活应答：只要实现去查了它们，下面的「未查询」断言就会失败。
+    const liveOptions: InstanceLockOptions = lockOptions(identity(process.pid, "100"), [staleOwner, otherStaleOwner]);
+    const queriedPids: number[] = [];
+    const options: InstanceLockOptions = {
+      currentIdentity: liveOptions.currentIdentity,
+      readProcessIdentity: async (pid: number): Promise<ProcessIdentity | null> => {
+        queriedPids.push(pid);
+        return liveOptions.readProcessIdentity!(pid);
+      },
+    };
+    const contents: string[] = [
+      "broken\n",
+      "",
+      lockLineText(staleOwner, TOKEN_A).slice(0, -1),
+      lockLineText(staleOwner, TOKEN_A) + lockLineText(otherStaleOwner, TOKEN_B),
+      lockLineText(staleOwner, TOKEN_A) + lockLineText(staleOwner, TOKEN_A),
+    ];
+    for (const content of contents) {
       await Bun.write(lockFilePath, content);
 
-      await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath)).rejects.toThrow("repair it manually");
+      await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("repair it manually");
+      expect(await Bun.file(lockFilePath).text()).toBe(content);
+      await expect(releaseSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("repair it manually");
       expect(await Bun.file(lockFilePath).text()).toBe(content);
     }
+    expect(queriedPids).not.toContain(staleOwner.pid);
+    expect(queriedPids).not.toContain(otherStaleOwner.pid);
   });
 
   test("释放只删除完整身份匹配的 owner，不按相同 PID 误删新 owner", async () => {
     const releasingOwner: ProcessIdentity = identity(process.pid, "400");
     const replacementOwner: ProcessIdentity = identity(process.pid, "500");
     const replacementOptions: InstanceLockOptions = lockOptions(releasingOwner, [replacementOwner]);
-    await Bun.write(lockFilePath, registryText(replacementOwner, TOKEN_A));
+    await Bun.write(lockFilePath, lockLineText(replacementOwner, TOKEN_A));
 
     await releaseSingleInstanceLock(TOKEN_A, lockFilePath, replacementOptions);
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(replacementOwner, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(replacementOwner, TOKEN_A));
 
     await releaseSingleInstanceLock(TOKEN_A, lockFilePath, lockOptions(replacementOwner, [replacementOwner]));
     expect(existsSync(lockFilePath)).toBe(false);
@@ -255,19 +277,19 @@ describe("single instance lock registry", () => {
 
   test("进程身份读取异常时 fail-closed，不清理当前 v2 owner", async () => {
     const current: ProcessIdentity = identity(process.pid, "600");
-    await Bun.write(lockFilePath, registryText(current, TOKEN_A));
+    await Bun.write(lockFilePath, lockLineText(current, TOKEN_A));
     const options: InstanceLockOptions = {
       currentIdentity: current,
       readProcessIdentity: async () => { throw new Error("proc unavailable"); },
     };
 
     await expect(acquireSingleInstanceLock(TOKEN_A, lockFilePath, options)).rejects.toThrow("proc unavailable");
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("释放时身份读取异常向调用方传播，并原样保留 owner", async () => {
     const current: ProcessIdentity = identity(process.pid, "601");
-    await Bun.write(lockFilePath, registryText(current, TOKEN_A));
+    await Bun.write(lockFilePath, lockLineText(current, TOKEN_A));
     const options: InstanceLockOptions = {
       currentIdentity: current,
       readProcessIdentity: async (): Promise<never> => {
@@ -277,7 +299,7 @@ describe("single instance lock registry", () => {
 
     await expect(releaseSingleInstanceLock(TOKEN_A, lockFilePath, options))
       .rejects.toThrow("release proc unavailable");
-    expect(await Bun.file(lockFilePath).text()).toBe(registryText(current, TOKEN_A));
+    expect(await Bun.file(lockFilePath).text()).toBe(lockLineText(current, TOKEN_A));
   });
 
   test("/proc stat 解析兼容 comm 中的空格和右括号，并拒绝缺字段内容", () => {

@@ -4,9 +4,7 @@ export interface AtmosphereNotices {
   readonly statusChatIdLabel: string;
   readonly statusContextUsage: (percent: string) => string;
   readonly blockAlreadyRecorded: (warning: string) => string;
-  readonly blockKicked: (count: number) => string;
-  readonly blockConfirmedBanned: (count: number) => string;
-  readonly unblockNotRecorded: (label: string) => string;
+  readonly unblockNotRecorded: (label: string, warning: string) => string;
   readonly batchKickAborted: string;
   readonly gagChannelEntry: string;
   readonly adDetected: (label: string, reason: string) => string;
@@ -38,7 +36,7 @@ export interface AtmosphereNotices {
   readonly blockSkippedHere: (reason: string) => string;
   readonly blockPartialFailure: (failedCount: number) => string;
   readonly blockRecorded: (persistWarning: string) => string;
-  readonly blockResult: (values: Readonly<{ skippedHereNote: string; targetLabel: string; actionNote: string; failedNote: string; blocklistNote: string }>) => string;
+  readonly blockResult: (values: Readonly<{ skippedHereNote: string; targetLabel: string; bannedCount: number; failedNote: string; blocklistNote: string }>) => string;
   readonly botPermissionUnknown: string;
   readonly botNotAdministrator: (permission: string) => string;
   readonly botMissingPermission: (permission: string) => string;
@@ -51,6 +49,24 @@ export interface AtmosphereNotices {
   readonly statusPermissionsUnknown: string;
   readonly statusFeatures: string;
   readonly statusRejected: (actorLabel: string) => string;
+  readonly statusCpu: (percent: string, cpuCount: number) => string;
+  readonly statusUptime: (uptime: string) => string;
+  /** 运行满一天后的时长写法；不足一天只展示 `HH:MM:SS`，不经过这里。 */
+  readonly statusUptimeWithDays: (days: number, clock: string) => string;
+  readonly statusMemoryUnavailable: string;
+  readonly statusMemory: (used: string, limit: string, percent: string) => string;
+  readonly statusMemoryNoLimit: (used: string) => string;
+  /** 「全局模型能力」各行：参数是去掉厂商命名空间后的模型名（语音合成走 xai 协议时是音色）。 */
+  readonly statusModelText: (model: string) => string;
+  readonly statusModelSummary: (model: string) => string;
+  readonly statusModelMedia: (model: string) => string;
+  readonly statusModelImage: (model: string) => string;
+  readonly statusModelTts: (model: string) => string;
+  readonly statusModelWebSearch: (model: string) => string;
+  readonly statusModelAdDetect: (model: string) => string;
+  readonly statusTelegram: string;
+  readonly statusTelegramActive: (active: number) => string;
+  readonly statusTelegramPending: (pending: number, capacity: number) => string;
   readonly actionUsage: string;
   readonly actionMissingTarget: (actionWord: string, command: string) => string;
   readonly actionInvalidTarget: (rawArgument: string, actionWord: string) => string;
@@ -156,6 +172,14 @@ export interface AtmosphereNotices {
   readonly copyReverseEffect: string;
   readonly copyNyaEffect: string;
   readonly unknownUser: string;
+  /** users/userLabel.ts 的 formatUserLabel 在频道身份没有可展示的 title 时的兜底称呼。 */
+  readonly unknownChannel: string;
+  /**
+   * 只知道 id 的用户/频道目标在命令回执里的称呼（users/userLabel.ts 的 formatTargetLabel）。
+   * 会被拼进 `${label} 这只…` 一类句子，自身不带调侃称呼。
+   */
+  readonly userIdLabel: (id: number) => string;
+  readonly channelIdLabel: (id: number) => string;
   readonly adReferenceWarning: (label: string) => string;
   readonly floodMuted: (label: string, messageCount: number, minutes: number) => string;
   readonly lockdownInflux: (windowSeconds: number, joinCount: number) => string;

@@ -69,8 +69,8 @@ async function holdFirstMembershipProbe(
 describe("/gag 与 /ungag 状态机", () => {
   /**
    * 三条命令拒绝分支：走到它们时命令都还没解析出目标，断言口径统一是
-   * 「回一条固定文案 + 绝不进入目标解析」，且都经 sendCommandMessage 这一个
-   * 统一边界（带 30 秒延迟删除，见 docs/cn/04-invariants.md）。
+   * 「回一条固定文案 + 不进入目标解析」，且都经 sendCommandMessage 这一个
+   * 统一边界（带延迟删除，见 docs/cn/04-invariants.md）。
    */
   test("私聊里用 /gag 只回一条提示，不解析目标", async () => {
     await gag.handleGagCommand(commandContext({ chatType: "private" }));
@@ -114,10 +114,9 @@ describe("/gag 与 /ungag 状态机", () => {
   });
 
   test("用具名过长撑爆 inline 消息时拒绝，不预约会话", async () => {
-    // 目标解析得出来、权限也够，卡住它的只有渲染上限本身：单条 inline 应答的
-    // 预算是 TELEGRAM_MESSAGE_MAX_CHARS - GAG_INLINE_QUERY_MAX_CHARS × (1 +
-    // GAG_FILLER_MAX_CHARS) = 1024 字符，全部留给「（透过<用具>）」这个前缀。
-    // 取 1_100 是为了在这三个常量任一被调小时仍然稳稳越线。
+    // 目标解析得出来、权限也够，只有渲染上限本身拦住：单条 inline 应答的预算是
+    // TELEGRAM_MESSAGE_MAX_CHARS - GAG_INLINE_QUERY_MAX_CHARS × (1 + GAG_FILLER_MAX_CHARS)，
+    // 全部留给「（透过<用具>）」这个前缀；用具名长度取值远超该预算。
     await gag.handleGagCommand(commandContext({ match: `@alice 5 ${"用".repeat(1_100)}` }));
 
     expect(sendCommandMessage).toHaveBeenCalledTimes(1);
@@ -215,13 +214,23 @@ describe("/gag 与 /ungag 状态机", () => {
       switch_inline_query_current_chat: "gag:7 ",
     });
     expect(sessionButton).not.toHaveProperty("callback_data");
-    // 交出去的必须是 GAG_TARGET_TEXTS 本身：解析失败的六条文案由解析器渲染并经
-    // sendCommandMessage 发出（覆盖见 test/commands/targetResolution.test.ts）。
+    // 交出去的是 GAG_TARGET_TEXTS 本身：解析失败的各条文案由解析器渲染并经 sendCommandMessage 发出（覆盖见 test/commands/targetResolution.test.ts）。
     expect(resolveCommandTarget.mock.calls[0]?.[0]).toMatchObject({
       botUserId: 999,
       messages: GAG_TARGET_TEXTS,
     });
     expectTemplateRendered(lastEphemeralText(), NOTICES.gagSpeakNotice);
+  });
+
+  test("在论坛话题里下命令时，群内状态落在该话题，发言入口记下同一话题", async () => {
+    const ctx = commandContext({ match: "@alice 5" }) as unknown as { msg: Record<string, unknown> };
+    ctx.msg.is_topic_message = true;
+    ctx.msg.message_thread_id = 3;
+
+    await gag.handleGagCommand(ctx as never);
+
+    expect(sessionFor(-1001)?.speakNoticeThreadId).toBe(3);
+    expect(sendMessage.mock.calls[0]?.[0]).toMatchObject({ chatId: -1001, messageThreadId: 3 });
   });
 
   test("普通通知风格的 /gag 与 /ungag 把普通版目标文案交给解析器", async () => {
@@ -628,7 +637,7 @@ describe("/gag 与 /ungag 状态机", () => {
   });
   /**
    * 目标解析与成员查询之后才同步预约：查询挂起期间别的命令可能已经占位或进入停机，
-   * 放行后的预约结果必须如实回给发起人。
+   * 放行后的预约结果如实回给发起人。
    */
   test("成员查询期间同目标已被另一条 /gag 管教：放行后回已在管教，只留一个会话", async () => {
     const held = await holdFirstMembershipProbe(() => gag.handleGagCommand(commandContext()));

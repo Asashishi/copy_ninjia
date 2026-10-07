@@ -16,7 +16,7 @@ mock.module("../../packages/infra/telegram/avatar/read", () => ({ readCurrentAva
 // mock.module 会就地改写模块记录，命名空间对象随之指向替身；真实实现必须先拷出来。
 const abortSignals = { ...await import("../../packages/libs/abortSignal") };
 /**
- * 每次 operationSignal 取阶段预算时按队列改写本次预算，队列空则照常取 30 秒。
+ * 每次 operationSignal 取阶段预算时按队列改写本次预算，队列空则照常取默认预算。
  * 队列里的数值预算由 setTimeout 计时，开了假时钟的用例可以用 advanceTimersByTime
  * 精确推进到预算耗尽；取消原因与 AbortSignal.timeout 相同。
  */
@@ -59,7 +59,7 @@ const channel: Chat.ChannelChat = { id: -2002, type: "channel", title: "频道�
 const actor: User = { id: 1, first_name: "小🌸", is_bot: false };
 const partner: User = { id: 2, first_name: "<b>群友</b>", is_bot: false };
 const nextPartner: User = { id: 3, first_name: "另一个人", is_bot: false };
-/** /wed 不再查成员身份；真被调用就让用例当场失败。 */
+/** /wed 不查成员身份；真被调用就让用例当场失败。 */
 const member = mock(async (..._args: any[]): Promise<any> => { throw new Error("wed must not query chat members"); });
 let sentId: number = 100;
 const photo = mock(async (..._args: any[]): Promise<any> => ({ message_id: ++sentId, chat, date: 1, photo: [] }));
@@ -148,8 +148,7 @@ describe("/wed 图片和按钮交互", () => {
   test("按钮拒绝非规范十进制：裸 Number() 放行的写法本 bot 从不生成", async () => {
     await handleWedCommand(command());
     member.mockClear();
-    // 指数、十六进制、前导空白、带小数点、带正号——`Number()` 加
-    // `Number.isSafeInteger` 会全部放行（见 commands/targetResolution.ts）。
+    // 指数、十六进制、前导空白、带小数点、带正号：`Number()` 加 `Number.isSafeInteger` 会全部放行（见 commands/targetResolution.ts）。
     for (const actorId of ["1e0", "0x1", " 1", "1.0", "+1"]) {
       await handleWedCallback(callback("change", { data: `wed:${actorId}:2:change` }));
       expect(answer.mock.calls.at(-1)![1].text).toBe(WED_TEXTS.expired);
@@ -247,19 +246,64 @@ describe("/wed 图片和按钮交互", () => {
     expect(wedChats.get(chat.id)!.sessions.size).toBe(1);
   });
 
-  test("重开时旧图片删除失败，原会话和确认状态仍可操作", async () => {
+  test("重开先送达新图再删旧图；旧图删除失败时留在群里，旧按钮只回执过期", async () => {
     await handleWedCommand(command());
     await handleWedCallback(callback("marry"));
     const previous = wedChats.get(chat.id)!.sessions.get(1)!;
     remove.mockImplementationOnce(async (): Promise<any> => { throw new Error("delete failed"); });
     await handleWedCommand(command({ msgId: 11 }));
+    expect(photo).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
+    expect(photo.mock.invocationCallOrder[1]!).toBeLessThan(remove.mock.invocationCallOrder[0]!);
+    const current = wedChats.get(chat.id)!.sessions.get(1)!;
+    expect(current).not.toBe(previous);
+    expect(current.messageId).toBe(102);
+    expect(current.busy).toBeFalse();
+    expect(previous.controller.signal.aborted).toBeTrue();
+    expect(notice).not.toHaveBeenCalled();
+    await handleWedCallback({ callbackQuery: {
+      id: "stale", data: "wed:1:2:remove", from: actor, message: { message_id: 101, chat, date: 1 },
+    } } as never);
+    expect(answer.mock.calls.at(-1)![1].text).toBe(WED_TEXTS.expired);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(wedChats.get(chat.id)!.sessions.get(1)).toBe(current);
+  });
+
+  test("重开时新图发送失败，旧图与原会话和确认状态原样保留", async () => {
+    await handleWedCommand(command());
+    await handleWedCallback(callback("marry"));
+    const previous = wedChats.get(chat.id)!.sessions.get(1)!;
+    photo.mockImplementationOnce(async (): Promise<any> => { throw new Error("send failed"); });
+    await handleWedCommand(command({ msgId: 11 }));
+    expect(remove).not.toHaveBeenCalled();
     expect(wedChats.get(chat.id)!.sessions.get(1)).toBe(previous);
+    expect(previous.messageId).toBe(101);
     expect(previous.confirmed).toBeTrue();
     expect(previous.busy).toBeFalse();
     expect(previous.controller.signal.aborted).toBeFalse();
-    expect(photo).toHaveBeenCalledTimes(1);
+    expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.failed);
     await handleWedCallback(callback("remove"));
+    expect(remove).toHaveBeenCalledWith(chat.id, 101, undefined);
     expect(wedChats.get(chat.id)!.sessions.size).toBe(0);
+  });
+
+  test("按钮应答先于动作发出、与动作同时进行，两者都结算后才结束交互", async () => {
+    await handleWedCommand(command());
+    const answered: PromiseWithResolvers<any> = Promise.withResolvers<any>();
+    answer.mockImplementationOnce((): Promise<any> => answered.promise);
+    let settled: boolean = false;
+    const pending: Promise<boolean> = handleWedCallback(callback("marry"))
+      .finally((): void => { settled = true; });
+    for (let turn: number = 0; turn < 50 && markup.mock.calls.length === 0; turn++) await Promise.resolve();
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(markup).toHaveBeenCalledTimes(1);
+    expect(answer.mock.invocationCallOrder[0]!).toBeLessThan(markup.mock.invocationCallOrder[0]!);
+    for (let turn: number = 0; turn < 50; turn++) await Promise.resolve();
+    expect(wedChats.get(chat.id)!.sessions.get(1)!.confirmed).toBeTrue();
+    expect(wedChats.get(chat.id)!.sessions.get(1)!.busy).toBeFalse();
+    expect(settled).toBeFalse();
+    answered.resolve(true);
+    expect(await pending).toBeTrue();
   });
 
   test("确认回执丢失后 Telegram 报内容未变，仍收敛为已确认", async () => {
@@ -565,7 +609,7 @@ describe("/wed 图片和按钮交互", () => {
       expect(photo).toHaveBeenCalledTimes(1);
       expect(deliverySignal).toBeInstanceOf(AbortSignal);
 
-      // 推进到 t=200：抽取那份 150ms 预算早已到点，投递自己的预算还远没用完。
+      // 推进到 t=200：抽取那份预算早已到点，投递自己的预算还没用完。
       jest.advanceTimersByTime(150);
       expect(drawSignal?.aborted).toBeTrue();
       expect((deliverySignal as AbortSignal).aborted).toBeFalse();
@@ -577,6 +621,19 @@ describe("/wed 图片和按钮交互", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  test("按钮动作开始时预算已取消：照常应答按钮，回执操作失败，不抽取也不改结果", async () => {
+    await handleWedCommand(command());
+    seed(wedChats.get(chat.id)!.members, nextPartner);
+    budgets.push("expired");
+    await handleWedCallback(callback("change"));
+    expect(answer).toHaveBeenCalledTimes(1);
+    expect(avatar).toHaveBeenCalledTimes(1);
+    expect(edit).not.toHaveBeenCalled();
+    expect(notice.mock.calls.at(-1)![1]).toBe(WED_TEXTS.failed);
+    expect(wedChats.get(chat.id)!.sessions.get(1)!.targetId).toBe(2);
+    expect(wedChats.get(chat.id)!.sessions.get(1)!.busy).toBeFalse();
   });
 
   test("「换一只」抽取预算耗尽时回执操作失败，原结果不变", async () => {

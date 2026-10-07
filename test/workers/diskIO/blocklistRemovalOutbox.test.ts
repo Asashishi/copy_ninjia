@@ -176,8 +176,7 @@ beforeEach(() => {
 describe("DiskIO Worker SQLite 身份存储", () => {
   test("数据库文件由 owner 读写，启动只恢复计数和待踢行", () => {
     expect(statSync(IDENTITY_DATABASE_PATH).mode & 0o777).toBe(IDENTITY_DATABASE_FILE_MODE);
-    // 隔离测试进程未必属于临时根目录的 group，内核可清除 setgid；这里验证
-    // owner/group 权限位，真实迁移再在 chown 后落实并核验 setgid。
+    // 隔离测试进程未必属于临时根目录的 group，内核可清除 setgid；这里只验证 owner/group 权限位。
     expect(statSync(DATABASE_DIR).mode & 0o777).toBe(
       IDENTITY_DATABASE_DIRECTORY_MODE & 0o777
     );
@@ -212,7 +211,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(hydrateStorageDatabase().permissionEntryCount).toBe(1);
   });
 
-  test("黑白两表分别计到 128；任一满批时同一事务提交当时全部变化", () => {
+  test("黑白两表分别计到批次上限；任一满批时同一事务提交当时全部变化", () => {
     for (let index: number = 1; index < IDENTITY_WRITE_BATCH_MAX_ENTRIES; index++) {
       handleIdentityPolicyWrite(whitelistWrite(index, index), reply);
       handleIdentityPolicyWrite(blocklistWrite(-index, 10_000 + index), reply);
@@ -280,7 +279,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       revision: 1_000,
     }, reply);
 
-    // tombstone 是第 128 条黑名单变化，就地提交；先到的快照删除随同一事务落盘。
+    // tombstone 是第 IDENTITY_WRITE_BATCH_MAX_ENTRIES 条黑名单变化，就地提交；先到的快照删除随同一事务落盘。
     expect(acknowledgements).toHaveLength(1);
     expect(acknowledgements[0]!.removalSnapshotRevision).toBe(2);
     resetStorageDatabaseCache();
@@ -295,7 +294,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(flushStorageDatabase(reply)).toBeTrue();
     acknowledgements.length = 0;
 
-    // Worker 重建后的重放顺序：黑名单写入（优先级 100）先于待踢快照（101）。
+    // Worker 重建后的重放顺序：黑名单写入（DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST）先于待踢快照（其后一位）。
     setStorageFlushHold(true, reply);
     for (let index: number = 1; index < IDENTITY_WRITE_BATCH_MAX_ENTRIES; index++) {
       handleIdentityPolicyWrite(blocklistWrite(1_000 + index, 1 + index), reply);
@@ -331,7 +330,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect(acknowledgements).toHaveLength(1);
   });
 
-  test("待踢启动恢复按 removal_id 每页 2048 条读取并在页间继续", () => {
+  test("待踢启动恢复按 removal_id 分页读取并在页间继续", () => {
     handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
     const persisted: [number, PendingBlockedRemoval][] = Array.from(
       { length: BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE + 1 },
@@ -456,8 +455,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
   });
 
   test("补扫条目要求名单里至少还有一个有效身份，否则拒绝落盘", () => {
-    // 补扫（probeMembership）不冻结 id 列表，任务语义是「拿当前名单扫这个群」；
-    // 名单已空时直接拒绝，不静默丢弃这一条。
+    // 补扫（probeMembership）不冻结 id 列表，任务语义是「拿当前名单扫这个群」；名单已空时直接拒绝。
     expect(() => handlePendingRemovalSnapshot({
       type: "blocklistRemovals",
       removals: [[9, sweepRemoval(9)]],
@@ -518,8 +516,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     resetStorageDatabaseCache();
     expect(hydrateStorageDatabase().pendingBlockedRemovals.size).toBe(2);
 
-    // 9 号销账之后的下一份完整快照里只剩 10 号：9 号必须落成删除行，
-    // 而不是靠下次启动恢复时「读不到就当没有」。
+    // 9 号销账之后的下一份完整快照里只剩 10 号：9 号落成删除行。
     handlePendingRemovalSnapshot({
       type: "blocklistRemovals",
       removals: [[10, removal(10)]],
@@ -564,7 +561,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
       revision: 2,
     }, reply);
     handleIdentityPolicyWrite(whitelistWrite(7, 3), reply);
-    // 同表迟到旧值必须在跨表互斥校验前丢弃，不能干扰已经排队的黑转白。
+    // 同表迟到旧值在跨表互斥校验前丢弃，不干扰已经排队的黑转白。
     handleIdentityPolicyWrite(blocklistWrite(7, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
 
@@ -575,16 +572,13 @@ describe("DiskIO Worker SQLite 身份存储", () => {
   });
 
   test("已提交行的跨表互斥两个方向都拒绝，不靠未提交视图兜底", () => {
-    // 这条专钉「已经落库」那条分支：pending 里没有这个主键时，互斥校验只能去查
-    // 数据库（assertOppositePolicyAbsent 的 hasStoredIdentityPolicy）。上面那条
-    // 「同一事务先删后加」走的是未提交视图，两表接反也照样过——查库这条不补，
-    // 预编译语句把白名单查成黑名单就没有任何测试拦得住。
+    // 覆盖「已经落库」分支：pending 里没有这个主键时，互斥校验查数据库（hasStoredIdentityPolicy，由 assertOppositePolicyAbsent 调用）；上一条「同一事务先删后加」走未提交视图。
     handleIdentityPolicyWrite(blocklistWrite(11, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     expect((): void => handleIdentityPolicyWrite(whitelistWrite(11, 2), reply))
       .toThrow(`Identity 11 cannot exist in both ${PERMISSION_LIST_TABLE} and ${BLOCKLIST_ENTRIES_TABLE}.`);
 
-    // 反方向同样要拒绝：只查一张表的实现能过上面那半，过不了这半。
+    // 反方向同样拒绝。
     handleIdentityPolicyWrite(whitelistWrite(12, 1), reply);
     expect(flushStorageDatabase(reply)).toBeTrue();
     expect((): void => handleIdentityPolicyWrite(blocklistWrite(12, 2), reply))
@@ -642,7 +636,7 @@ describe("DiskIO Worker SQLite 身份存储", () => {
     expect((): void => handleIdentityPolicyWrite(blocklistWrite(21, 2), reply)).not.toThrow();
   });
 
-  test("群状态第 25 条自动事务提交并精确 ACK，第 26 条在 Worker owner 再次拒绝", () => {
+  test("群状态达到托管群上限时自动事务提交并精确 ACK，再多一个群在 Worker owner 再次拒绝", () => {
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index++) {
       handleChatStateWrite(chatStateWrite(-1_000 - index, 1), reply);
     }

@@ -50,10 +50,8 @@ import { flushIfStorageFull } from "./flush";
 import { errorMessage } from "../../../libs/errorMessage";
 
 /**
- * 取本连接的三条预编译语句，首次用到时建好挂进连接级缓存。
- *
- * 缓存住在这里而不是 database/interact：那一层是不接触任何线程独占缓存的叶子
- * 模块（AGENTS.md 的分层约定），而这三条语句只有本 Worker 用。
+ * 取本连接的预编译主键查询语句，首次用到时建好挂进连接级缓存。
+ * 缓存归本 Worker 持有，database/interact 层不接触线程独占缓存。
  */
 function identityIdLookups(): StoredIdentityIdLookups {
   const database: StorageDatabase = requireStorageDatabase();

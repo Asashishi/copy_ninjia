@@ -336,7 +336,7 @@ describe("待踢 outbox 行的严格解码", () => {
         "$.params.userIds"
       );
     }
-    // 重复 ID 单独一条判定：同一个人被踢两次会在战报里重复计数。
+    // 重复 ID 单独一条判定。
     expectRejected(
       (): unknown => decodePendingBlockedRemovalData(
         entryJson({ ...FROZEN_PARAMS, userIds: [11, 11] }),

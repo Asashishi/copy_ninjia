@@ -1,4 +1,5 @@
 import type { HotPathGcCpuBudget, HotPathProfileScenarioName } from "../types/performance";
+import { exhaustiveList } from "./exhaustiveList";
 
 /** GC 暂停日志测量窗口的起始标记；仅性能脚本向 stderr 输出。 */
 export const HOT_PATH_GC_WINDOW_START: string = "COPY_NINJIA_GC_WINDOW_START";
@@ -29,13 +30,13 @@ export const HOT_PATH_GC_CPU_BUDGETS: readonly HotPathGcCpuBudget[] = [
  */
 export const HOT_PATH_GC_SOFT_OVERRUN_PERCENT: number = 5;
 
-/** 热路径稳态采样的 JSC profiler 间隔；1 ms 与 Bun CPU profiler 默认粒度对齐。 */
+/** 热路径稳态采样的 JSC profiler 间隔，与 Bun CPU profiler 默认粒度一致。 */
 export const HOT_PATH_PROFILE_SAMPLE_INTERVAL_US: number = 1_000;
 
 /**
  * 热路径门禁的校准过松倍数：某场景本次最慢中位数乘以该倍数仍小于其软阈值时，
  * 门禁输出一行 `hot-path calibration stale` 提示重校。只上报，不改判据。倍数
- * 覆盖 1.5 倍校准余量与按进程双峰场景（mention-facts-plain）的快慢峰之比。
+ * 覆盖校准余量与按进程双峰场景（mention-facts-plain）的快慢峰之比。
  * 所属模块：scripts/perf/hotPaths/gateLimits.ts。
  */
 export const HOT_PATH_CALIBRATION_STALE_RATIO: number = 5;
@@ -53,20 +54,20 @@ export const HOT_PATH_PROFILE_MAX_JIT_STABILIZATION_ROUNDS: number = 6;
 export const HOT_PATH_PROFILE_MEMORY_USAGE_MAX_ATTEMPTS: number = 3;
 
 /**
- * 极短 mention 叶子在 profile 模式下的操作数倍数，确保 1 ms 采样至少覆盖
+ * 极短 mention 叶子在 profile 模式下的操作数倍数，确保采样间隔至少覆盖
  * `performance-result.json` 里 `limits.minProfileSamples` 要求的样本点。
  */
 export const HOT_PATH_PROFILE_FAST_SCENARIO_ITERATION_MULTIPLIER: number = 4;
 
 /**
  * 默认性能门禁覆盖真实消息主链与固定高频叶子热点；元素顺序固定，独立进程按此
- * 顺序串行运行，避免并发争抢 CPU/内存污染读数。
+ * 顺序串行运行。
  *
- * 这张表是场景**构成**、不是读数，因此留在代码里；它与 `performance-result.json` 的
+ * 这张表是场景构成、不含读数；它与 `performance-result.json` 的
  * `calibration.scenarios` 必须精确一一对应，由
  * `assertHotPathMedianPolicyCoverage` 在门禁启动时双向核对。
  */
-export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] = [
+export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] = exhaustiveList<HotPathProfileScenarioName>()([
   "incoming-message-spine",
   "ai-media-direct-trigger",
   "sender-stable-username",
@@ -79,4 +80,4 @@ export const HOT_PATH_PROFILE_SCENARIOS: readonly HotPathProfileScenarioName[] =
   "identity-permission-read",
   "buffered-message-build",
   "temporary-whitelist-activity",
-];
+]);

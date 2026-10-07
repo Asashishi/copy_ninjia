@@ -4,16 +4,14 @@ import type { ToggleAction } from "../types/commands";
 /**
  * 命令参数的统一分词。
  *
- * `/mute`、`/white`、`/block`、`/permission`、`/batch_kick` 与开关类命令都要把 `ctx.match`
- * 拆成位置参数或动作，口径必须一致，收在这一处。
+ * `/mute`、`/white`、`/block`、`/permission`、`/batch_kick` 与开关类命令把 `ctx.match`
+ * 拆成位置参数或动作，分词口径统一在本模块。
  */
 
 /**
  * 把命令参数原文拆成非空 token，保持原有相对顺序。
  *
- * `trim` 之后仍要滤掉空串：`"".split(/\s+/)` 的结果是 `[""]` 而不是 `[]`，少这一步
- * 空参数就会变成「有一个空 token」，调用方按 `tokens.length` 分派子命令时会走进
- * 一条本该报用法的分支。
+ * 先 `trim` 再按 COMMAND_ARGUMENT_SEPARATOR_PATTERN 切分，并滤掉空串；空参数得到 `[]`。
  * @param match grammY 给出的命令参数原文（`ctx.match`），可以是空串。
  */
 export function commandArgumentTokens(match: string): string[] {

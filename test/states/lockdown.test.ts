@@ -12,7 +12,7 @@ import type {
   LockdownState,
 } from "../../packages/types/states/lockdown";
 
-/** 本轮作废时压制重触发：只应出现在真的把这一轮丢掉的那几条转移上。 */
+/** 本轮作废时压制重触发：只出现在真正把这一轮丢掉的那几条转移上。 */
 function suppression(reason: LockdownAbandonReason): LockdownEffect {
   return { kind: "suppressRetrigger", reason, durationMs: LOCKDOWN_RETRIGGER_COOLDOWN_MS };
 }
@@ -63,7 +63,7 @@ describe("触发与占位", () => {
       announcementPending: true,
       announcementMessageId: undefined,
     });
-    // 公告排在读权限之前：占位一落地，新进群的人就被直接请出去，群里必须有交代。
+    // 公告排在读权限之前：占位一落地就发公告。
     expect(effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: true },
       { kind: "beginLockdownAnnouncement", joinCount: 46 },
@@ -85,7 +85,7 @@ describe("触发与占位", () => {
   });
 
   test("ACTIVE 中再次超阈值 → 只预热管理员表：本轮倒计时不再被推后", () => {
-    // ACTIVE 状态下再次超阈值不能重排倒计时，否则持续刷群会让同一轮无限续期。
+    // ACTIVE 状态下再次超阈值不重排倒计时。
     const state: LockdownState = ACTIVE;
     const { next, effects } = transitionLockdown(state, { type: "thresholdExceeded", joinCount: 50 });
     expect(next).toBe(state);
@@ -218,8 +218,7 @@ describe("加锁落地", () => {
     const committed = transitionLockdown(prepared.next, { type: "statePersisted", phase: "applying", intentId: 7 });
     expect(committed.effects).toEqual([{ kind: "commitApply" }]);
 
-    // 同一份 intent 的落盘回执可能到达多次（公告结果落盘、主线程对账重跑），
-    // 但 commitApply 是一次真实的 setChatPermissions，只能发一次。
+    // 同一份 intent 的落盘回执可能到达多次（公告结果落盘、主线程对账重跑）；commitApply 是一次真实的 setChatPermissions，只发一次。
     expect(committed.next).toEqual({
       kind: "applying",
       stage: "prepared",
@@ -326,7 +325,7 @@ describe("落盘失败一律 fail-safe 打开", () => {
       phase: "applying",
       intentId: 7,
     });
-    // 落盘失败必须清除 APPLYING 占位，不能留下永久秒踢且无恢复计时的状态。
+    // 落盘失败清除 APPLYING 占位。
     expect(next).toBeUndefined();
     expect(effects).toEqual([
       { kind: "reportUnlock" },
@@ -459,8 +458,7 @@ describe("到期恢复", () => {
   });
 
   test("公告没发出去的那条路恢复成功 → 只回报解锁，不删也不发", () => {
-    // 公告发送失败 → RESTORING（announced=false）→ 恢复成功。这个群从头到尾
-    // 没收到过封锁公告，再发一句「限制解除」读起来就是没头没尾的一句话。
+    // 公告发送失败 → RESTORING（announced=false）→ 恢复成功：这个群没收到过封锁公告，恢复成功时不发「限制解除」公告。
     const silent: LockdownState = { ...RESTORING, ...SILENT };
     const { next, effects } = transitionLockdown(silent, { type: "restoreResult", ok: true });
 
@@ -562,7 +560,7 @@ describe("到期恢复", () => {
 
 describe("adopt 接管", () => {
   test("INACTIVE + adopt → 直接视为已生效的 ACTIVE，无条件预热缓存 + 按调用方算好的真实剩余时长重排计时（回归：曾无条件重开满额，快到期的锁定会被意外延长）", () => {
-    const remainingMs = 42_000; // 模拟"锁定只剩 42 秒就该恢复"，而非满额的 LOCKDOWN_MS
+    const remainingMs = 42_000; // 模拟锁定只剩一小段就该恢复，而非满额的 LOCKDOWN_MS
     const { next, effects } = transitionLockdown(undefined, {
       type: "adopt",
       phase: "active",
@@ -620,7 +618,7 @@ describe("adopt 接管", () => {
       announcementPending: true,
       announcementMessageId: undefined,
     });
-    // 人数无从追认，公告文案不得伪造一个数字（effect 不带 joinCount）。
+    // 人数无从追认：公告文案不伪造数字（effect 不带 joinCount）。
     expect(active.effects).toEqual([
       { kind: "prefetchAdmins", onlyIfCold: false },
       { kind: "beginLockdownAnnouncement" },
@@ -681,7 +679,7 @@ describe("adopt 接管", () => {
       stage: "prepared",
       originalPermissions: PERMS,
       intentId: 7,
-      // 这一路立刻发 commitApply，随之置位，补发公告带来的落盘回执不会再写一次。
+      // 这一路立刻发 commitApply，随之置位；补发公告带来的落盘回执不再写一次。
       commitStarted: true,
       ...ANNOUNCED,
     });

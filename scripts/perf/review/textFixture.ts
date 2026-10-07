@@ -1,19 +1,18 @@
 /**
  * 文本清洗专项的固定夹具：场景矩阵、逐条输入与迭代次数。
  *
- * 正文语言比例固定为每十条六条中文、三条英文、一条 emoji 混排；长短混合场景的
- * 短正文为 16 码元规范单行。输入经 JSON 往返展平，避免 repeat/slice 的绳索字符串
- * 在首次访问时展开并混入计时。
+ * 正文语言按固定比例轮换中文、英文与 emoji 混排；长短混合场景的短正文为规范单行。
+ * 输入经 JSON 往返展平，repeat/slice 产生的绳索字符串不在计时内展开。
  */
 import type { AiRecordContext, AiReplyReference } from "../../../packages/types/aiChat/protocol";
 
 /** `sanitize` 直接测清洗函数；`message` 测完整缓存条目构造。 */
 export type TextReviewKind = "sanitize" | "message";
-/** 正文语言；`mixed` 按 6:3:1 轮换中文、英文与 emoji 混排。 */
+/** 正文语言；`mixed` 按固定比例轮换中文、英文与 emoji 混排。 */
 export type TextReviewAlphabet = "latin" | "cjk" | "mixed";
 /**
  * 长正文的空白排版：`canonical` 为规范单行；`head`/`middle`/`tail` 在对应位置放一个
- * 换行；`dense` 每 40 码元一个换行、每 17 码元一个制表符；`varied` 按每十条轮换前五种。
+ * 换行；`dense` 密集插入换行与制表符；`varied` 按每十条轮换 `VARIED_LAYOUTS`。
  */
 export type TextReviewLayout = "canonical" | "head" | "middle" | "tail" | "dense" | "varied";
 
@@ -27,7 +26,7 @@ export interface TextReviewScenario {
   readonly layout: TextReviewLayout;
   /** 长正文占全部输入的百分比；null 表示全部为长正文。 */
   readonly longPercent: number | null;
-  /** 是否附带与正文同长同排版的回复原文及 128 码元以内的 quote。 */
+  /** 是否附带与正文同长同排版的回复原文及长度受限的 quote。 */
   readonly reply: boolean;
 }
 
@@ -150,7 +149,7 @@ function textOf({ length, alphabet, layout, index }: TextOfOptions): string {
   return JSON.parse(JSON.stringify(text)) as string;
 }
 
-/** 场景的全部输入：全长正文场景 100 条，长短混合场景 1,000 条。 */
+/** 场景的全部输入；全长正文场景与长短混合场景的输入条数各自固定。 */
 export function textReviewInputs(scenario: TextReviewScenario): readonly TextReviewInput[] {
   const result: TextReviewInput[] = [];
   const count: number = scenario.longPercent === null ? 100 : 1_000;
@@ -190,8 +189,8 @@ export function textReviewInputs(scenario: TextReviewScenario): readonly TextRev
 }
 
 /**
- * 单个计时样本的迭代次数：按平均正文长度把单样本耗时压在同一量级；长短混合场景
- * 取输入条数的整数倍，保证每个样本覆盖完整的输入序列。
+ * 单个计时样本的迭代次数：按平均正文长度折算，使单样本耗时处于同一量级；长短混合
+ * 场景取输入条数的整数倍，每个样本覆盖完整的输入序列。
  */
 export function textReviewIterations(
   scenario: TextReviewScenario,

@@ -1,7 +1,7 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
 import { temporaryAdBypassActivityCache } from "../../packages/cache/main/temporaryAdBypass";
 import { whitelistEntryCache } from "../../packages/cache/main/identityStorage";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import {
   hasActiveTemporaryAdBypass,
   hasActiveTemporaryAdBypassAt,

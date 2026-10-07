@@ -6,8 +6,7 @@ import type { Bot, Context } from "grammy";
  *
  * 判定点（whitelist.ts 的 isWhitelisted、infra/blocklist/membership.ts 的
  * isUserBlocked）都是同步读 LRU、冷缺失 fail-closed，因此「这条 update 里哪些
- * 身份会被判定」必须与「预热收集了哪些 id」严格对齐——漏一个就等于让那个身份在
- * 本条 update 里被当成未授权。
+ * 身份会被判定」与「预热收集了哪些 id」严格对齐。
  */
 
 const prefetchedBatches: readonly number[][] = [];
@@ -51,10 +50,7 @@ function collectMiddleware(): TestMiddleware[] {
   return middleware;
 }
 
-/**
- * 预热中间件是前置链里唯一一个会调用 prefetchIdentityPolicies 的；按行为定位而
- * 不是按下标，前面插一道无关中间件时本用例不会悄悄测到别的东西。
- */
+/** 预热中间件是前置链里唯一调用 prefetchIdentityPolicies 的；按行为定位，不按下标。 */
 async function runPrefetchMiddleware(ctx: Record<string, unknown>): Promise<void> {
   for (const handler of collectMiddleware()) {
     await handler(ctx as unknown as Context, (): Promise<void> => Promise.resolve());
@@ -92,8 +88,7 @@ describe("update 前置身份预热", () => {
       msg: { text: "/mood query" },
     });
 
-    // users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts 都
-    // 按 ctx.chat.id 解析频道帖的行为主体，因此这里预热的是频道自身的 id。
+    // users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts 都按 ctx.chat.id 解析频道帖的行为主体，这里预热的是频道自身的 id。
     expect(prefetchedBatches[0]).toEqual([-1002233445566]);
   });
 

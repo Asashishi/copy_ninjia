@@ -2,8 +2,7 @@
 export type MonotonicClock = () => number;
 
 /**
- * 从当前单调时间创建绝对截止点。负预算与零预算都立即到期，避免调用方
- * 各自实现略有差异的边界处理。
+ * 从当前单调时间创建绝对截止点。负预算与零预算都立即到期。
  */
 export function createMonotonicDeadline(
   timeoutMs: number,

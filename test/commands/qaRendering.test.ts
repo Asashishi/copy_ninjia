@@ -111,7 +111,7 @@ describe("表单字段解析", () => {
   });
 
   test("取值两端的空白被 trim 掉", () => {
-    // 前后带空格的问题用户永远打不出来，留着会让直答永远命中不了。
+    // 取值前后的空白在存入前去掉。
     expect(parseQaFieldMessage(groupMessage("问题:   怎么入群？  "))?.q).toBe("怎么入群？");
   });
 });
@@ -133,8 +133,7 @@ describe("表单提示", () => {
   });
 
   test("两项都填满时按 Telegram 上限截断回答，问题不动", () => {
-    // 问题与回答各自的字符上限相加会超过单条消息 4096 的上限，这里验证渲染时
-    // 只截断回答、问题保持原文。
+    // 问题与回答各自的字符上限相加超过单条消息的上限；渲染时只截断回答、问题保持原文。
     const question: string = "问".repeat(CHAT_QA_QUESTION_MAX_CHARS);
     const answer: string = "答".repeat(CHAT_QA_ANSWER_MAX_CHARS);
     const prompt: string = renderQaFormPrompt(question, answer, ATMOSPHERE_TEXTS.teasing);

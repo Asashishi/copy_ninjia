@@ -37,9 +37,7 @@ export interface StoredChatStateRow {
   readonly data: string;
 }
 
-/**
- * 群问答表的一行。主键是 (chatId, q) 复合键，因此这里两列都是标识而非载荷。
- */
+/** 群问答表的一行。主键是 (chatId, q) 复合键，data 为载荷列。 */
 export interface StoredChatQaRow {
   readonly chatId: number;
   readonly q: string;
@@ -60,8 +58,7 @@ export interface StorageTimeZoneMetadata {
 /**
  * 生产启动恢复载荷；名单只取计数，群状态只恢复正文而不执行启动正确性校验。
  *
- * 不含 storage_metadata：版本与时区判定必须早于当前业务表的读取，因此元数据由
- * readStorageDatabaseSchemaMetadata 单独取，不从这里回传。
+ * 不含 storage_metadata；元数据由 readStorageDatabaseSchemaMetadata 单独读取，早于业务表读取。
  */
 export interface StorageDatabaseStartupRows {
   readonly permissionEntryCount: number;
@@ -99,8 +96,7 @@ export interface StorageDatabaseJsonStorageRow {
 /**
  * 一条预编译的主键存在性查询；只用到按占位符取单行这一种调用。
  *
- * 占位符表照 Drizzle 的 `prepare().get()` 原样写成 `Record<string, unknown>`：
- * 那个形参就是这个类型，换成具名 interface 会因为缺隐式索引签名而赋不进去。
+ * 占位符表与 Drizzle 的 `prepare().get()` 形参一致，为 `Record<string, unknown>`。
  * 本查询唯一的占位符是 `sql.placeholder("id")`。
  */
 export interface StoredIdentityIdLookup {
@@ -138,7 +134,7 @@ export interface StorageDatabaseWriter {
   readonly updateAiContext: StorageWriteStatement;
 }
 
-/** 三张身份关系各一条预编译语句，随连接一起存活。 */
+/** 各身份关系各一条预编译语句，随连接一起存活。 */
 export interface StoredIdentityIdLookups {
   readonly whitelist: StoredIdentityIdLookup;
   readonly blocklist: StoredIdentityIdLookup;

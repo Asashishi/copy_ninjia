@@ -230,7 +230,7 @@ function publishVerificationChange(
 
 /**
  * 为主线程已有持久责任保留恢复槽；满额时只释放非持久去重。
- * 释放前锁住新 join，防止被释放的去重键重新发送欢迎或改判验证。
+ * 释放前经 reportVerificationRuntimeCapacity 锁住新 key（见 verificationAdmission.ts）。
  */
 function reserveVerificationRecoverySlot(key: string): boolean {
   if (verificationEntries.has(key) || verificationEntries.size < VERIFICATION_RUNTIME_CAPACITY) return true;
@@ -294,7 +294,7 @@ export function adoptVerifications(message: AdoptVerificationsMessage): void {
     // 快照 → 状态的形状转换是纯逻辑，留在 states/verification/adopt.ts；本函数
     // 只负责计时器、提醒与补投这些有副作用的部分。
     const state: VerificationState = adoptVerificationState(record, now);
-    // 同代增量重放也要先清旧 timer，否则旧期限会提前触发新状态。
+    // 同代增量重放先清旧 timer。
     const previousEntry: VerificationEntry | undefined = verificationEntries.get(key);
     if (previousEntry?.timer !== undefined) clearTimeout(previousEntry.timer);
     cancelReminderDelivery(key);
@@ -355,17 +355,13 @@ export function handleVerificationPersisted(
 /**
  * `/antiraid disable`：把这个群每一条验证记录**经状态机**收摊。
  *
- * 与 deactivateVerificationChat 的区别不只是范围，更是**走不走状态机**。那条是
- * 停管/退群的紧急拆除，直接删内存条目再补 tombstone；这条把每条记录都喂给
- * dispatchVerification 走一次 guardDisabled 转移，让「关掉之后哪些事不再发生」
- * 由状态机自己说了算，而不是散落在这里的删表逻辑（见 states/verification/disable.ts：
+ * 与 deactivateVerificationChat 的区别在于**走状态机**：那条是停管/退群的紧急拆除，
+ * 直接删内存条目再补 tombstone；这条把每条记录都喂给 dispatchVerification 走一次
+ * guardDisabled 转移，由状态机决定哪些事不再发生（见 states/verification/disable.ts：
  * 一律回 ABSENT；仍在群里的带按钮提醒会删除，但不再提醒、不踢人）。
+ * 终态（checkingInviter/expelling）的 tombstone 由 dispatchVerification 统一发布。
  *
- * 这样写还有一个实际好处：终态（checkingInviter/expelling）的 tombstone 由
- * dispatchVerification 统一发布，重启后不会被 adopt 重放回来接着踢人。
- *
- * 时序上先删 thread comment 确认 owner：它们持有指向状态对象的 token，逐条转移
- * 之后再删只是让那些 token 先落一次空。
+ * 先删 thread comment 确认 owner，再逐条转移。
  */
 export function disableJoinGuardChat(chatId: number): void {
   const prefix: string = verificationKeyPrefix(chatId);

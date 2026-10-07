@@ -38,8 +38,7 @@ export interface SweepExpiredSnapshotsParams<TSnapshot extends { readonly fetche
 /**
  * 按 TTL 淘汰按需快照，跳过仍在拉取的群。
  *
- * 「在途的群不淘汰」是语义而不是优化：同步快路径在拉取完成前依赖旧快照，
- * 扫掉它会让判定在窗口里退化成「不知道」。两个 owner
+ * 仍在拉取的群不淘汰，其旧快照供同步快路径在拉取完成前使用。两个 owner
  * （cache/workers/antiRaid/admins.ts、linkedChannels.ts）共用这一淘汰口径。
  * @returns 本轮淘汰的条数。
  */

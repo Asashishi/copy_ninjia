@@ -7,16 +7,16 @@ import type {
 } from "../../types/states/lockdown";
 
 /**
- * 封锁公告的发送结果。发送结果比本轮活得更久时（加锁失败、期间被解除），
- * 在拿到 ID 的此刻直接删除，绝不留孤儿公告。
+ * 封锁公告的发送结果。结果比本轮活得更久时（加锁失败、期间被解除），
+ * 拿到 ID 的此刻直接删除。
  */
 export function handleAnnouncementResult(
   state: LockdownState | undefined,
   event: Extract<LockdownMachineEvent, { type: "announcementResult" }>
 ): LockdownTransition {
   if (state === undefined) {
-    // 本轮在公告落地前就结束了（加锁失败、或期间被解除）：这条消息从此
-    // 没有任何状态记得它，只能在拿到 ID 的此刻直接删掉。
+    // 本轮在公告落地前已结束（加锁失败、或期间被解除）：没有状态记录这条消息，
+    // 拿到 ID 即删除。
     return {
       next: state,
       effects: event.ok && event.messageId !== undefined

@@ -1,8 +1,9 @@
 /**
  * 身份策略主线程缓存与 SQLite 的独立进程吞吐、稳定性基准。
  *
- * 父进程在系统临时目录下建立带固定前缀的 mock 数据根，所有 SQLite、
- * WAL/SHM 与 Worker 写透数据都只能落在其中。存储层分别测量同一连接上的热读写
+ * 独立运行时，父进程在系统临时目录下建立带固定前缀的 mock 数据根（作为全量基准的
+ * 存储分区复用时落在仓库 `performance/` 下，见 identityDatabase/roots.ts），所有
+ * SQLite、WAL/SHM 与 Worker 写透数据都只能落在其中。存储层分别测量同一连接上的热读写
  * 与每批重新打开连接的冷读写；“冷”只代表 SQLite 连接页缓存和 Bun prepared-
  * statement 缓存为空，不声称绕过操作系统页缓存。主线程层直接调用线上 LRU
  * 读取门面，并让写透路径经过真实 Worker 消息、JSONB 事务和 ACK。计时外执行
@@ -45,7 +46,7 @@ import type {
   ChildResult,
 } from "./identityDatabase/types";
 
-/** 固定执行顺序覆盖主线程与 SQLite 的全部热冷路径。 */
+/** 固定执行顺序。 */
 const BENCHMARK_OPERATIONS: readonly BenchmarkOperation[] = [
   "main-lru-read",
   "main-write-through-acked",

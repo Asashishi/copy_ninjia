@@ -16,7 +16,7 @@ export interface DownloadTelegramFileParams {
   readonly fileId: string;
   /** 读到超过这个字节数即停下并报 tooLarge。 */
   readonly maxBytes: number;
-  /** getFile 自己的超时；与下载分开计时，前者排 429 队列不会吃掉后者的预算。 */
+  /** getFile 自己的超时；与下载分开计时。 */
   readonly metadataTimeoutMs: number;
   /** 下载请求从发出到读完的超时。 */
   readonly downloadTimeoutMs: number;

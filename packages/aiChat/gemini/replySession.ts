@@ -3,23 +3,23 @@ import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
  * Gemini 侧的一轮回复会话：把中立的 AiReplySession 契约落到 generateContent
  * 的 contents 累积上。
  *
- * 会话记录的关键在于「上一轮模型的整个 content 原样接回」——里面带着 thought
- * signature，缺了会丢思考上下文，多轮工具往返的质量会肉眼可见地掉。因此
- * request() 每次都把模型这一轮的 content 暂存下来，等 appendToolOutputs() 连同
- * functionResponse 一起写进 contents。
+ * 上一轮模型的整个 content（含 thought signature）原样接回：request() 每次都把模型这一轮的
+ * content 暂存下来，等 appendToolOutputs() 连同 functionResponse 一起写进 contents。
  *
- * googleSearch 是服务端工具，搜索在 Google 侧自动执行，结果直接体现在最终
- * 文本里，不会以 functionCall 形式抛回来；与函数工具混用时必须要求 SDK 把
- * 服务端工具调用记录接回 content（includeServerSideToolInvocations），否则
- * Gemini API 会拒绝该组合或丢失搜索上下文。
+ * googleSearch 是服务端工具，搜索在 Google 侧自动执行，结果体现在最终文本里，不以
+ * functionCall 形式抛回；与函数工具混用时经 includeServerSideToolInvocations
+ * （GEMINI_SERVER_TOOL_CONFIG）要求 SDK 把服务端工具调用记录接回 content。
  *
- * **两套请求结构**：每轮回复的第 1 次请求引用全群共用的显式缓存（cachedContent，只装
+ * 两套请求结构：每轮回复的第 1 次请求引用全群共用的显式缓存（cachedContent，只装
  * systemInstruction + tools + toolConfig，scope 见 contextCache.ts），请求里只发全部 contents；
  * 缓存暂不可用时这一次也走完整请求。第 2 次起一律发送完整的 systemInstruction、tools、
- * toolConfig 与 contents，由 Gemini 的隐式缓存按公共前缀接住第 1 次留下的块与工具往返。
- * 两套结构的 token 序列逐字一致，contents 与模型 content（含思考签名）的处理完全相同，
- * 只有 config 在 cachedContent 与三项完整字段之间切换。稳定区块排在易变区块之前，工具
- * 往返只向 contents 尾部追加。
+ * toolConfig 与 contents。两套结构的 token 序列逐字一致，contents 与模型 content
+ * （含思考签名）的处理完全相同，只有 config 在 cachedContent 与三项完整字段之间切换。
+ * 稳定区块排在易变区块之前，工具往返只向 contents 尾部追加。
+ *
+ * 会话创建时固定 text 能力的配置与客户端，整轮的每次请求都用它们；agent 配置热重载只影响
+ * 之后新建的会话。第 1 次请求时 agent 配置已被热重载替换（text 快照不再是同一个对象）的，
+ * 不引用共用显式缓存，直接发完整请求。
  */
 
 import type {
@@ -27,6 +27,7 @@ import type {
   FunctionCall,
   GenerateContentParameters,
   GenerateContentResponse,
+  GoogleGenAI,
   Part,
   Tool,
 } from "@google/genai";
@@ -39,7 +40,7 @@ import {
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { isPlainRecord } from "../../libs/record";
-import { requestGeminiResult } from "./client";
+import { getGeminiClient, requestGeminiResult } from "./client";
 import {
   acquireGeminiContextCache,
   geminiContextCacheContent,
@@ -56,13 +57,14 @@ import type {
   AiReplyTurnRequest,
   AiToolOutput,
 } from "../../types/aiChat/provider";
+import type { AgentCapabilityConfig } from "../../types/config";
 
 /**
  * 按本轮配置拼请求要挂的工具集合：googleSearch 在前，函数声明合成一个 Tool。
  *
  * 中立的 AiToolDefinition（`{ name, description, parametersJsonSchema }`）与 SDK 的
- * FunctionDeclaration 同形，按引用透传；SDK 只序列化、不改写这些声明。外层数组每次
- * 新建，因为 Tool.functionDeclarations 要求可变数组。
+ * FunctionDeclaration 同形，按引用透传；SDK 只序列化、不改写这些声明。functionDeclarations
+ * 数组每次新建（Tool.functionDeclarations 为可变数组类型）。
  */
 function buildTools(request: AiReplyTurnRequest): Tool[] {
   const tools: Tool[] = [];
@@ -76,8 +78,7 @@ function buildTools(request: AiReplyTurnRequest): Tool[] {
 /**
  * 抽出带 name 的函数调用；入参统一序列化成 JSON 字符串交给领域侧解析。
  *
- * 零调用时交回共用空数组：每个回复的最后一轮以及纯文本中间轮都没有 function
- * call，成功路径不为这些轮次重复分配空数组。
+ * 零调用时交回共用空数组 EMPTY_FUNCTION_CALLS，不重复分配。
  */
 function extractFunctionCalls(data: GenerateContentResponse): readonly AiFunctionCall[] {
   const calls: AiFunctionCall[] = [];
@@ -97,10 +98,11 @@ function extractFunctionCalls(data: GenerateContentResponse): readonly AiFunctio
 export function createGeminiReplySession(
   { stableBlocks, volatileBlocks, signal }: AiReplySessionParams
 ): AiReplySession {
+  const textConfig: AgentCapabilityConfig = getAgentDeploymentConfig().text;
+  const client: GoogleGenAI = getGeminiClient("text");
   /**
-   * 本轮会话记录。稳定区块与易变区块分成两个 user 轮次、稳定的在前：这是
-   * Gemini 与 OpenAI 自动前缀缓存共同的命中前提（见 types/aiChat/provider.ts 的
-   * AiReplySessionParams），也让参考记忆在两次压缩之间保持公共前缀。
+   * 本轮会话记录。稳定区块与易变区块分成两个 user 轮次、稳定的在前
+   * （见 types/aiChat/provider.ts 的 AiReplySessionParams）。
    */
   const contents: Content[] = [
     { role: "user", parts: stableBlocks.map((text: string): Part => ({ text })) },
@@ -121,10 +123,10 @@ export function createGeminiReplySession(
     tools: Tool[],
     cachedContent: string | null
   ): GenerateContentParameters {
-    // 查证过的轮次压低采样随机性，让模型照搜索结果讲；上层只给 grounded 语义，
-    // 取什么温度由本包决定。
+    // grounded 轮次取 GEMINI_GROUNDED_REPLY_TEMPERATURE，其余取 GEMINI_REPLY_TEMPERATURE；
+    // 温度由本包决定，上层只给 grounded 语义。
     const temperature: number = request.grounded ? GEMINI_GROUNDED_REPLY_TEMPERATURE : GEMINI_REPLY_TEMPERATURE;
-    const model: string = getAgentDeploymentConfig().text.model;
+    const model: string = textConfig.model;
     if (cachedContent !== null) {
       return {
         model,
@@ -146,27 +148,39 @@ export function createGeminiReplySession(
     };
   }
 
+  /** 按完整结构发一次请求（不引用显式缓存）。 */
+  function requestFull(request: AiReplyTurnRequest, tools: Tool[]): Promise<GeminiRequestResult> {
+    return requestGeminiResult({
+      capability: "text",
+      buildBody: (): GenerateContentParameters => buildBody(request, tools, null),
+      errorLabel: GEMINI_REPLY_ERROR_LABEL,
+      client,
+    });
+  }
+
   /**
-   * 第 1 次请求：先取共用显式缓存，取到就按显式结构发；端点以 404/4xx 拒绝这份缓存
-   * （已过期、被删或无权访问）时释放登记，再按完整结构补发一次。取不到或端点故障时
-   * 与完整请求的处理相同，不补发。模型名在请求体闭包里读，配置写坏时由
-   * requestGeminiResult 统一归一成失败结果。
+   * 第 1 次请求：先取共用显式缓存，取到就按显式结构发；端点以 4xx 拒绝（failureKind 为
+   * misconfigured 或 rejected）时释放登记，再按完整结构补发一次。取不到缓存或其它失败
+   * 与完整请求的处理相同，不补发。会话固定的配置已被热重载替换时直接发完整请求。请求体
+   * 闭包内求值抛错由 requestGeminiResult 归一成失败结果。
    */
   async function requestFirst(request: AiReplyTurnRequest, tools: Tool[]): Promise<GeminiRequestResult> {
+    if (getAgentDeploymentConfig().text !== textConfig) return requestFull(request, tools);
     const acquired: { name: string | null } = { name: null };
-    const result: GeminiRequestResult = await requestGeminiResult(
-      "text",
-      (): GenerateContentParameters => {
+    const result: GeminiRequestResult = await requestGeminiResult({
+      capability: "text",
+      buildBody: (): GenerateContentParameters => {
         acquired.name = acquireGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, geminiContextCacheContent({
-          model: getAgentDeploymentConfig().text.model,
+          model: textConfig.model,
           systemInstruction: request.systemPrompt,
           tools,
           toolConfig: request.webSearchEnabled ? GEMINI_SERVER_TOOL_CONFIG : undefined,
         }));
         return buildBody(request, tools, acquired.name);
       },
-      GEMINI_REPLY_ERROR_LABEL
-    );
+      errorLabel: GEMINI_REPLY_ERROR_LABEL,
+      client,
+    });
     const cachedContent: string | null = acquired.name;
     if (
       cachedContent === null ||
@@ -176,11 +190,7 @@ export function createGeminiReplySession(
       return result;
     }
     releaseGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, cachedContent);
-    return requestGeminiResult(
-      "text",
-      (): GenerateContentParameters => buildBody(request, tools, null),
-      GEMINI_REPLY_ERROR_LABEL
-    );
+    return requestFull(request, tools);
   }
 
   return {
@@ -191,19 +201,13 @@ export function createGeminiReplySession(
       firstRequest = false;
       const result: GeminiRequestResult = first
         ? await requestFirst(request, tools)
-        : await requestGeminiResult(
-          "text",
-          (): GenerateContentParameters => buildBody(request, tools, null),
-          GEMINI_REPLY_ERROR_LABEL
-        );
+        : await requestFull(request, tools);
 
-      // 检索次数在失败分支也要统计：那一次请求已经把服务端调用花掉了，不核销
-      // 预算等于让后续轮次继续白送额度。
+      // 失败分支同样累计检索次数。
       const response: GenerateContentResponse | undefined = result.response;
       const webSearchCalls: number = response === undefined ? 0 : countGoogleSearchCalls(response);
 
-      // 成功与失败两条分支按同一顺序初始化同一组字段：这个对象会流进
-      // 回复循环里同一批读取点，shape 分叉会把那些访问点变成多态的
+      // 成功与失败两条分支按同一顺序初始化同一组字段，保持对象 shape 一致
       // （见 AGENTS.md 的「性能、内存与 Bun/JSC JIT」一节）。
       if (!result.ok) {
         return {
@@ -229,8 +233,7 @@ export function createGeminiReplySession(
     },
 
     appendToolOutputs(outputs: readonly AiToolOutput[]): boolean {
-      // 缺 content 说明这次响应没法续接（模型轮次都拿不到，接回去只会让下一轮
-      // 看到一段错位的对话）；交给调用方按「本轮到此为止」收尾。
+      // 缺 content 时无法续接，返回 false，由调用方按「本轮到此为止」收尾。
       if (!pendingModelContent) return false;
       contents.push(pendingModelContent);
       pendingModelContent = undefined;

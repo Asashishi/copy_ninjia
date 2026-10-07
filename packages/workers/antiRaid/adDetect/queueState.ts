@@ -3,16 +3,15 @@
  *
  * 收的是**接纳侧的判据**，三张表的入口一律经过这里：
  * - `queuedAdDetectKeys` 与 `adDetectQueue`：「已取得一个待派发位置」的唯一
- *   表达，入队必须一起增——缺一张就会让「谁在待检」出现两个互相矛盾的答案，
- *   见 docs/cn/04-invariants.md。出队释放在 queue.ts 的派发循环里，那是调度
- *   语义，两行紧挨着写才看得出它们是同一件事的两半。
+ *   表达，入队时一起增（见 docs/cn/04-invariants.md）；出队释放在 queue.ts 的
+ *   派发循环里。
  * - `pendingAdMessages`：每个发送者的消息串（群 -> 发送者两层表），撞上
- *   AD_DETECT_MAX_PENDING_SENDERS 时拒绝新的不同 key，而不是淘汰队首。读写一律经本文件的
+ *   AD_DETECT_MAX_PENDING_SENDERS 时拒绝新的不同 key。读写一律经本文件的
  *   访问函数，条数同步记在 `pendingAdBundleCount`。
  * - `recentlyDisposedAdKeys`：逐 key 的处置抑制窗口，读到即回收；处置路径的
  *   写入在 verdict.ts，清群与停机的整表清理在 queue.ts。
  *
- * 饱和日志只在边沿记一行：撑满期间每拍记一次会让日志自己变成第二个刷屏源。
+ * 饱和日志只在边沿记一行。
  *
  * 状态全在 cache/workers/antiRaid/adDetect.ts，随 Worker isolate 生死。
  */
@@ -54,8 +53,7 @@ export function requeueIfUnchecked(key: string, bundle: AdMessageBundle): void {
     inFlight: inFlightAdDetectKeys.has(key),
   });
   if (decision === "skip") return;
-  // 两张表一起动，缺一张就会让「谁在待检」出现两个互相矛盾的答案，
-  // 见 docs/cn/04-invariants.md。
+  // 两张表一起增，见 docs/cn/04-invariants.md。
   queuedAdDetectKeys.add(key);
   adDetectQueue.push(key);
 }
@@ -74,10 +72,9 @@ export function pendingAdBundleForKey(key: string): AdMessageBundle | undefined 
 /**
  * 把一串新消息写进待检表；已在表里的串原地更新，不经过这里。
  *
- * **本函数不判容量**：唯一调用方 enqueueAdCandidate 是纯同步的，它在清洗
- * 正文之前就问过 rejectNewAdBundleAtCapacity，满载的新 key 在那里已经返回；
- * 走到这里的新串刚通过那道闸，中间没有 await 让 pendingAdMessages 变化。容量判据
- * 因此只有 isNewAdBundleAtCapacity 一处，不留第二道需要手工保持同步的闸。
+ * **本函数不判容量**：唯一调用方 enqueueAdCandidate 同步执行，已在清洗正文之前经
+ * rejectNewAdBundleAtCapacity 拦下满载的新 key，容量判据只有
+ * isNewAdBundleAtCapacity 一处。
  */
 export function storeBundle(bundle: AdMessageBundle): void {
   let bundles: Map<number, AdMessageBundle> | undefined = pendingAdMessages.get(bundle.chatId);
@@ -134,8 +131,8 @@ function adDisposalMarkerActive(disposedAt: number, now: number): boolean {
 }
 
 /**
- * 读取一个 key 的处置抑制状态；失效记录就地删除，避免逻辑过期但 Map 仍增长。
- * 每个 key 独立到期，读到即回收，因此不依赖任何周期扫描保证正确性。
+ * 读取一个 key 的处置抑制状态；失效记录读到即删除。每个 key 独立到期，
+ * 正确性不依赖周期扫描。
  */
 export function hasActiveAdDisposalMarker(key: string): boolean {
   const disposedAt: number | undefined = recentlyDisposedAdKeys.get(key);
@@ -148,10 +145,9 @@ export function hasActiveAdDisposalMarker(key: string): boolean {
 /**
  * 回收已经过期的处置抑制记录。
  *
- * **不挂在 1 秒节拍上**：正确性由 hasActiveAdDisposalMarker 的读时回收保证，
- * 容量由 setBoundedMapValue 的硬顶保证，这里只是把「判过之后再没来过消息」
- * 的死记录从内存里清掉，5 分钟一次的维护 sweep 足够；不进入每秒一次的判定
- * 节拍，避免满载时反复扫描最多 8,192 条记录。
+ * 挂在维护 sweep（sweepAdDetect）上，不进判定节拍：正确性由 hasActiveAdDisposalMarker
+ * 的读时回收保证，容量由 setBoundedMapValue 的硬顶保证，这里清掉判过之后再没来过
+ * 消息的过期记录。
  */
 export function expireAdDetectDisposalMarkers(now: number = performance.now()): void {
   for (const [key, disposedAt] of recentlyDisposedAdKeys) {
@@ -181,9 +177,8 @@ export function releaseAdDetectDedupKey(chatId: number, senderId: number): void 
 }
 
 /**
- * 记录撞上/离开全局在途闸的边沿。只在翻转时记一行，撑满期间每拍记一次会让
- * 日志自己变成第二个刷屏源。已接纳 key 的待检内容没有等待 TTL，被挡下时留在
- * 队首等容量恢复，因此这里只需要把持续积压的事实点名一次。
+ * 记录撞上/离开全局在途闸的边沿，只在翻转时记一行。被挡下的已接纳 key 留在
+ * 队首等容量恢复，这里把持续积压的事实点名一次。
  */
 export function noteAdDetectSaturation(saturated: boolean): void {
   if (saturated === adDetectSaturated.current) return;
@@ -195,7 +190,7 @@ export function noteAdDetectSaturation(saturated: boolean): void {
   );
 }
 
-/** 记录待检 key 容量撞满/恢复的边沿，避免每条被拒消息都刷一行日志。 */
+/** 记录待检 key 容量撞满/恢复的边沿，只在翻转时记一行。 */
 function noteAdDetectCapacitySaturation(saturated: boolean): void {
   if (saturated === adDetectCapacitySaturated.current) return;
   adDetectCapacitySaturated.current = saturated;

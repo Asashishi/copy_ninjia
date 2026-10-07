@@ -13,7 +13,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("daily luck receipt secret file", () => {
   test("文件缺失时以 0644 创建，同日重载复用密钥并保留部署方收紧的 mode", async () => {
-    // 即使生产进程使用严格 umask，rename 前也会 fchmod 成 0644。
+    // 严格 umask 下，rename 前仍 fchmod 成 PERSISTED_FILE_MODE。
     const previousUmask: number = process.umask(0o077);
     let created: Awaited<ReturnType<typeof recoverLuckReceiptSecret>>;
     try {

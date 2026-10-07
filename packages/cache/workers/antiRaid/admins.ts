@@ -35,15 +35,13 @@ export const pendingAdminChangesDuringFetch: Map<number, Map<number, boolean>> =
 
 /**
  * 整表世代号：`resetAdminCache()` 每次自增。在途的全量拉取用它判断自己那份
- * 快照是不是已经被一次整表清空作废——清空同时丢掉了
- * `pendingAdminChangesDuringFetch`，因此 reset 之后再把 reset 前的快照写回去，
- * 等于让那段窗口里到达的管理员降权凭空消失。
- * 填充/清理时机：只在 resetAdminCache 自增，永不回退；容量固定一个数字，
- * Worker 崩溃重建后从 0 重新开始，届时在途拉取也随旧 isolate 一起没了。
+ * 快照是否已被整表清空作废；reset 同时清掉 `pendingAdminChangesDuringFetch`，作废的快照不写回。
+ * 填充/清理时机：只在 resetAdminCache 自增，不回退；容量固定一个数字，
+ * Worker 崩溃重建后从 0 重新开始，在途拉取随旧 isolate 消失。
  */
 export const adminCacheGeneration: { current: number } = { current: 0 };
 
-/** 在 500 群硬顶内落一份非匿名管理员豁免快照。 */
+/** 在 ANTI_RAID_CHAT_CACHE_MAX 硬顶内落一份非匿名管理员豁免快照。 */
 export function cacheAdminIds(chatId: number, adminIds: Set<number>, fetchedAt: number = Date.now()): void {
   setBoundedMapValue({
     map: chatAdmins,

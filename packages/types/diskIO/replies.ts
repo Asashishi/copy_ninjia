@@ -10,7 +10,7 @@ import type {
 } from "./storage";
 import type { BlocklistIdPage } from "../identityStorage";
 import type { StoredTemporaryAdBypassActivity } from "../temporaryAdBypass";
-/** diskIOWorker -> 主线程：启动恢复读盘完成。两张快照表的值与增量写入
+/** diskIOWorker -> 主线程：启动恢复读盘完成。AI 记忆与贴纸目录的值与增量写入
  * 消息同形态——序列化 JSON 文本（恢复时逐字段重建校验后重新 stringify；AI 记忆
  * 见 database/interact/aiContext.ts，贴纸目录见 workers/diskIO/snapshotFiles.ts），
  * 供 hydrate 链路直接透传。 */
@@ -31,7 +31,7 @@ export interface LoadedReply {
   permissionEntryCount: number;
   /** 当前格式的全部群状态；主线程据此填满群状态热读副本，不重复启动正确性校验。 */
   chatStates: Map<number, ChatState>;
-  /** 全部群问答；整表恒定不超过 375 行，主线程据此建立直答热表。 */
+  /** 全部群问答；行数以 STATE_MANAGED_CHAT_LIMIT × CHAT_QA_MAX_PER_CHAT 为界，主线程据此建立直答热表。 */
   chatQa: Map<number, ReadonlyMap<string, string>>;
   /** 恢复失败时主线程必须拒绝启动，不能把部分结果当成空状态继续。 */
   error?: string;
@@ -52,7 +52,7 @@ export interface LoadedData {
   blocklistEntryCount: number;
   permissionEntryCount: number;
   chatStates: Map<number, ChatState>;
-  /** 群 -> 问题 -> 答案；整表恒定不超过 375 行，启动一次性读全。 */
+  /** 群 -> 问题 -> 答案；行数以 STATE_MANAGED_CHAT_LIMIT × CHAT_QA_MAX_PER_CHAT 为界，启动一次性读全。 */
   chatQa: Map<number, ReadonlyMap<string, string>>;
 }
 
@@ -87,6 +87,20 @@ export interface BlocklistIdPageReadReply {
   type: "blocklistIdPageRead";
   requestId: number;
   page?: BlocklistIdPage;
+  error?: string;
+}
+
+/** 停机关库的结局：残余写是否已提交，WAL checkpoint 是否被其它读连接挡住（busy）。 */
+export interface StorageCloseOutcome {
+  readonly committed: boolean;
+  readonly checkpointBusy: boolean;
+}
+
+/** Disk I/O Worker -> 主线程：closeStorage 的回执；关库失败时只带 error。 */
+export interface StorageClosedReply {
+  type: "storageClosed";
+  requestId: number;
+  outcome?: StorageCloseOutcome;
   error?: string;
 }
 
@@ -159,21 +173,20 @@ export type DiskIODomain =
   | "joinLog"
   | "joinLogPurge";
 
-/** 共用同一个 SQLite 事务提交的七个领域（含 AI 上下文）。 */
+/** 共用同一个 SQLite 事务提交的领域（含 AI 上下文）。 */
 export type StorageDatabaseDomain = Extract<
   DiskIODomain,
   "whitelist" | "blocklist" | "temporaryAdBypass" | "blocklistRemovalOutbox" | "chatState" | "chatQa" | "aiMemory"
 >;
 
-/** 计入未 ACK 写入预算的六个 SQLite 领域；aiMemory 每群至多一项，不计预算。 */
+/** 计入未 ACK 写入预算的 SQLite 领域；aiMemory 每群至多一项，不计预算。 */
 export type BudgetedStorageDomain = Exclude<StorageDatabaseDomain, "aiMemory">;
 
 /**
- * 单领域 flush 的结局，附带**发起这一次请求所收到的**失败领域名。
+ * 单领域 flush 的结局，附带发起这一次请求所收到的失败领域名。
  *
  * failedDomains 只在 Worker 明确回复了本次 flushId 时存在；超时、传输失败、
- * Worker 崩溃中途结算都没有回执，此时必须保持 undefined——把别的 flush 留下
- * 的领域名安到这一次头上，会让运维照着一个其实与本次失败无关的文件去查。
+ * Worker 崩溃中途结算都没有回执，此时为 undefined。
  */
 export interface DomainFlushOutcome {
   result: FlushResult;
@@ -234,12 +247,10 @@ export interface AiMemoryPersistedReply {
 /**
  * diskIOWorker -> 主线程：当日运势追加已连续失败到阈值，条目仍滞留在 Worker 内存。
  *
- * 这是 Worker 侧写盘失败里**唯一**会被转成 `logger.error` 的一条，因此不是对
- * 「Worker 内部错误只 console.error」的推翻，而是一条窄口径的例外：它报的不是
- * 某一次 write(2) 的错，而是「一个领域已经持续丢数据」这件事实——而运势的丢失
- * 在别处完全无迹可寻（主线程 dailyLuckCache 照常命中，用户看不出异常）。
- * 递归风险为零：主线程据此记的日志走 log 领域，log 领域自己写失败只 console.error，
- * 不会再产生第二条 logger 调用。
+ * 这是 Worker 侧写盘失败里唯一转成 `logger.error` 的一条，是对
+ * 「Worker 内部错误只 console.error」的窄口径例外：它报告的是一个领域已经持续丢数据，
+ * 而不是某一次 write(2) 的错。主线程据此记的日志走 log 领域，log 领域自己写失败只
+ * console.error，不会再产生第二条 logger 调用。
  * @see ../../../docs/cn/04-invariants.md
  */
 export interface LuckAppendStalledReply {
@@ -258,16 +269,15 @@ export interface LuckAppendStalledReply {
  * diskIOWorker -> 主线程：恢复缓冲重放期间有一条共享 SQLite 写消息被拒收。
  *
  * 与 LuckAppendStalledReply 一样是「Worker 内部错误只 console.error」的窄口径例外，
- * 但走的不是日志而是停机：这条事实对应的 update 已经被确认过了（见
- * RecoveryReplayRequest），继续跑下去就是一次无迹可寻的静默丢数据。主线程收到后
- * 按 stopWorkerAfterLoadFailure 的统一 fatal 路径停机，让 Telegram 从上一个确认点
- * 重投。
+ * 但触发的是停机而不是日志：这条事实对应的 update 已经被确认过（见
+ * RecoveryReplayRequest）。主线程收到后按 stopWorkerAfterLoadFailure 的统一 fatal
+ * 路径停机，Telegram 从上一个确认点重投。
  */
 export interface RecoveryReplayFailedReply {
   type: "recoveryReplayFailed";
   /** 出错的业务消息类型，供运维直接判读是哪个领域。 */
   domain: DiskIODomain;
-  /** 错误文本；不含任何消息内容，避免把用户数据写进诊断。 */
+  /** 错误文本；不含任何消息内容。 */
   error: string;
 }
 
@@ -351,6 +361,7 @@ export type DiskIOReply =
   | JoinLogReadReply
   | IdentityPoliciesReadReply
   | BlocklistIdPageReadReply
+  | StorageClosedReply
   | IdentityStoragePersistedReply
   | DiskFlushReply
   | DiskFlushFailedReply

@@ -108,8 +108,7 @@ describe("热路径纳秒软上报", () => {
   });
 
   test("校验通过后交回场景 -> 阈值表，门禁不必再回表查一次", () => {
-    // 阈值契约只有这一个 owner：createHotPathMedianLatencyReport 直接吃这里给出的
-    // 数，两处各判一次会让将来改阈值形状必须同步改两个地方才自洽。
+    // 阈值契约只有这一个 owner：createHotPathMedianLatencyReport 直接使用这里给出的数。
     const policy: ReadonlyMap<string, number> = assertHotPathMedianPolicyCoverage(
       ["first", "second"],
       { first: 10, second: 20 }

@@ -5,7 +5,7 @@ export type TaskPriority = "interactive" | "background";
 
 /**
  * 带交互优先级的进程内有界异步执行器。等待上限按两档队列合计计算；后台另有
- * 更小的占用上限，避免启动对账或批量摘要先把真人请求的全部等待位占满。
+ * 更小的占用上限 maxBackgroundPending。
  */
 export interface PrioritizedBoundedTaskRunner {
   readonly activeCount: number;
@@ -129,8 +129,8 @@ export function createPrioritizedBoundedTaskRunner({
           resolve(undefined);
         }
 
-        // 入口处已对已 abort 的 signal 提前返回，且到这里没有跨过任何 await，
-        // 因此注册即生效，不需要在注册后再补一次 aborted 复查。
+        // 入口处已对已 abort 的 signal 提前返回，到这里没有跨过 await，
+        // 注册后无需再复查 aborted。
         queue.push(resume);
         signal?.addEventListener("abort", onAbort, { once: true });
       });

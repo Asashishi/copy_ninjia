@@ -5,8 +5,7 @@ import type { AiSpeakerSnapshot } from "./speaker";
 /**
  * 一条 Telegram 回复所指向的原消息快照。
  *
- * 可选字段一律写成 `T | undefined` 而非 `?:`，与 AiSpeakerSnapshot 相同：
- * 形状恒定才能让转录渲染的属性读取保持单态。
+ * 可选字段一律写成 `T | undefined` 而非 `?:`，与 AiSpeakerSnapshot 相同，对象形状恒定。
  */
 export interface BufferedReplyReference extends AiSpeakerSnapshot {
   messageId: number;
@@ -19,12 +18,11 @@ export interface BufferedReplyReference extends AiSpeakerSnapshot {
 }
 
 /**
- * 逐字缓存里的一条消息。字段顺序即构造顺序，可选字段同样是 `T | undefined`
- * ——这一族对象在缓存里长期存活，每次拼回复转录都要读满整个逐字缓存（上限
- * VERBATIM_CONTEXT_MAX 条），形状发散的代价按每次回复计。
+ * 逐字缓存里的一条消息（上限 VERBATIM_CONTEXT_MAX 条）。字段顺序即构造顺序，
+ * 可选字段同样是 `T | undefined`。
  */
 export interface BufferedMessage extends AiSpeakerSnapshot {
-  /** Telegram message_id；当前格式中的每条热区消息都必须可索引。 */
+  /** Telegram message_id；热区每条消息都必须可索引。 */
   messageId: number;
   text: string;
   /** 当前消息显式回复的原消息；非回复消息为 undefined。 */
@@ -70,8 +68,7 @@ export interface AiMemorySnapshot {
  * chatBuffers 与 chatSummaries），随记忆快照上报和 hydrate 完成过线到主线程只读
  * 镜像（见 cache/main/aiChat.ts 的 aiMemoryUsages），供 `/bot_status` 展示。
  *
- * 两个计数都不含 pendingSummaries：那一轮摘要的原文此刻仍在逐字热区里，把它
- * 记进冷区等于同一段消息数两次。
+ * 两个计数都不含 pendingSummaries。
  */
 export interface AiMemoryUsage {
   /** 滚动缓存中的逐字消息条数，上限 VERBATIM_CONTEXT_MAX。 */

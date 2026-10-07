@@ -11,8 +11,9 @@ import type { DiskIORequestMessage, EnsureLuckSecretRequest } from "../../types/
 import type { DiskIORequestOutcome } from "../../types/diskIO/replies";
 import type { LuckReceiptSecret } from "../../types/diskIO/storage";
 import { safePostDiskIO } from "./transport";
+import { writeDiskIODiagnostic } from "../../workers/diskIO/diagnosticSink";
 
-/** 一次结算全部通道；漏掉任何一类等待者都会让调用方干等到自己的超时。 */
+/** 一次结算全部请求通道的等待者。 */
 export function rejectAllPendingDiskIORequests(describe: (label: string) => string): void {
   for (const channel of DISK_IO_REQUEST_CHANNELS) {
     failAllWorkerRequests<DiskIORequestOutcome<never>>(channel.table, {
@@ -50,6 +51,9 @@ export async function requestDiskIO<TResult>({
     table: channel.table,
     timeoutMs,
     post: (requestId: number): boolean => safePostDiskIO(worker, buildRequest(requestId), `${label} request`),
+    onPostError: (error: unknown): void => {
+      writeDiskIODiagnostic(`[diskIO] failed to post the ${label} request:`, error);
+    },
     timedOut: DISK_IO_REQUEST_TIMED_OUT,
     rejected: DISK_IO_REQUEST_REJECTED,
   });
@@ -75,7 +79,7 @@ interface SettleDiskIOReplyParams<TResult> {
 
 /**
  * 用一条回执结算对应等待者。迟到、重复或已超时的 requestId 一律忽略；
- * Worker 明确报错或没带载荷时按失败结算，绝不把「没读到」解释成空结果。
+ * Worker 明确报错或没带载荷时按失败结算，不把缺失载荷解释成空结果。
  */
 export function settleDiskIOReply<TResult>({
   channel,

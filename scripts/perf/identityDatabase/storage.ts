@@ -131,8 +131,8 @@ function runReadBatches(
 }
 
 /**
- * 每批使用新连接，因此 SQLite 连接页缓存和 Bun 语句缓存都从空状态开始。
- * 操作系统页缓存在 fixture 建立后不做全局清理，报告会显式标注这一口径。
+ * 每批使用新连接，SQLite 连接页缓存和 Bun 语句缓存从空状态开始。
+ * 操作系统页缓存在 fixture 建立后不做全局清理，报告显式标注这一口径。
  */
 function runColdReadBatches(
   path: string,
@@ -197,7 +197,7 @@ function runWriteBatches(
   return checksum;
 }
 
-/** 每个 128 行事务都在新连接上提交并关闭，覆盖生产重连后的首写路径。 */
+/** 每个事务都在新连接上提交并关闭，覆盖生产重连后的首写路径。 */
 function runColdWriteBatches(
   path: string,
   batches: readonly ReadonlyMap<number, StorageDatabaseChange>[]

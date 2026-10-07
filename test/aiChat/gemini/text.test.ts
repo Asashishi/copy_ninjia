@@ -2,7 +2,7 @@
  * Gemini 的纯文本生成、视觉描述与语音转写请求映射。前两项与
  * test/aiChat/openai/text.test.ts 对称：同一份中立请求，两家各自映射成自家
  * 请求体，模型由实现包自行决定、不由调用方指定。语音转写只有 Gemini 一侧有
- * （契约里是可选成员），因此没有对称用例。
+ * （契约里是可选成员），没有对称用例。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -147,7 +147,7 @@ describe("语音转写", () => {
     const bytes: Uint8Array = new Uint8Array([0x4f, 0x67, 0x67, 0x53]);
     await transcribeGeminiVoice({
       prompt: "把这条语音逐字转写成文字",
-      clip: { bytes, mime: "audio/ogg", durationSeconds: 9 },
+      clip: { bytes, mime: "audio/ogg" },
       errorLabel: "AI voice transcription API",
       normalize: (text: string): string => text,
     });
@@ -169,7 +169,7 @@ describe("语音转写", () => {
   test("转写档的 token 上限高于媒体描述档：逐字还原比概括长得多", async () => {
     await transcribeGeminiVoice({
       prompt: "p",
-      clip: { bytes: new Uint8Array([1]), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new Uint8Array([1]), mime: "audio/ogg" },
       errorLabel: "label",
       normalize: (text: string): string => text,
     });
@@ -182,7 +182,7 @@ describe("语音转写", () => {
   test("不传采样温度：转写要忠实还原，随机性只会让模型润色群友的原话", async () => {
     await transcribeGeminiVoice({
       prompt: "p",
-      clip: { bytes: new Uint8Array([1]), mime: "audio/ogg", durationSeconds: 1 },
+      clip: { bytes: new Uint8Array([1]), mime: "audio/ogg" },
       errorLabel: "label",
       normalize: (text: string): string => text,
     });

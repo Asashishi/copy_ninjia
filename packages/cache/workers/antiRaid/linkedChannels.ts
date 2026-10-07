@@ -30,7 +30,7 @@ export const linkedChannelFetches: Map<number, Promise<void>> = new Map();
  */
 export const linkedChannelCacheGeneration: { current: number } = { current: 0 };
 
-/** 在 500 群硬顶内落一份关联频道快照。 */
+/** 在 ANTI_RAID_CHAT_CACHE_MAX 硬顶内落一份关联频道快照。 */
 export function cacheLinkedChannel(chatId: number, hasLinked: boolean, fetchedAt: number = Date.now()): void {
   setBoundedMapValue({
     map: linkedChannels,

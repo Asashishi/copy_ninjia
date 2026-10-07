@@ -110,7 +110,7 @@ function readJsonbStorageRow(
   };
 }
 
-/** 读取当前 schema 六张 JSONB 表的声明与存储统计。 */
+/** 读取当前 schema 全部 JSONB 列的声明与存储统计。 */
 function readStorageDatabaseJsonStorage(
   database: StorageDatabase
 ): readonly StorageDatabaseJsonStorageRow[] {
@@ -150,7 +150,7 @@ function assertJsonbStorageRows(
   }
 }
 
-/** 启动与性能夹具都拒绝当前七个 JSONB 列的非严格存储。 */
+/** 启动与性能夹具都拒绝当前 schema 全部 JSONB 列的非严格存储。 */
 export function assertStorageDatabaseJsonbStorage(
   database: StorageDatabase,
   source: string
@@ -226,8 +226,8 @@ function hasSchemaV5MigrationLineage(
 }
 
 /**
- * 当前 v13 必须包含完整谱系，并依次以 AI 上下文、清理上下文权限、`/h_image add` 权限、
- * 移除群人设、时区标记五条迁移结尾，不接受缺项或额外项。
+ * 当前 schema 版本必须包含完整迁移谱系，并依次以 AI 上下文、清理上下文权限、`/h_image add` 权限、
+ * 移除群人设、时区标记迁移结尾，不接受缺项或额外项。
  */
 export function assertStorageDatabaseMigrationLineage(
   database: StorageDatabase,
@@ -377,8 +377,8 @@ export function assertStorageDatabaseStartupJsonbStorage(
 }
 
 /**
- * 只读 storage_metadata（当前格式为 schema 版本与时区标记两行）。启动必须先确认版本与
- * 时区、再查询当前版本的业务表，避免旧库先以缺表错误失败而掩盖明确的版本诊断。
+ * 只读 storage_metadata（当前格式为 schema 版本与时区标记两行）。启动先确认版本与
+ * 时区，再查询当前版本的业务表。
  */
 export function readStorageDatabaseSchemaMetadata(
   database: StorageDatabase
@@ -391,7 +391,7 @@ export function readStorageDatabaseSchemaMetadata(
 
 /**
  * 生产启动读取：名单只做 COUNT；群状态与问答只为恢复热缓存读取，不在这里校验。
- * 调用方必须已用 readStorageDatabaseSchemaMetadata 确认过 schema 版本——本函数
+ * 调用方须已用 readStorageDatabaseSchemaMetadata 确认过 schema 版本；本函数
  * 查询 `chat_states` 与 `chat_qa`，版本不符的库不得进入这里。
  */
 export function readStorageDatabaseStartupRows(
@@ -406,15 +406,14 @@ export function readStorageDatabaseStartupRows(
     permissionEntryCount,
     blocklistEntryCount,
     chatStates: storedChatStates,
-    // 全表读而不分页：每群上限 15 条、受管群上限 STATE_MANAGED_CHAT_LIMIT，
-    // 整张表因此恒定不超过 375 行，不存在需要游标的规模。
+    // 全表读取不分页：行数以 STATE_MANAGED_CHAT_LIMIT × CHAT_QA_MAX_PER_CHAT 为界。
     chatQa: readStoredChatQa(database),
   };
 }
 
 /**
  * 启动按主键游标读取一页 outbox；存储形态与严格 JSONB 结果随正文同页投影。
- * null 游标读取第一页，后续页只读取更大的 removal_id，不使用随表增长变慢的 OFFSET。
+ * null 游标读取第一页，后续页只读取更大的 removal_id，不使用 OFFSET。
  */
 export function readStorageDatabasePendingRemovalPage(
   database: StorageDatabase,

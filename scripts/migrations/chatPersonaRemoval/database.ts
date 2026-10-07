@@ -25,7 +25,7 @@ export const CHAT_PERSONA_REMOVAL_SOURCE_SCHEMA_VERSION: number = 11;
 /** 本次直接迁移直接移除的权限位。 */
 const REMOVED_PERMISSION_KEY: string = "isCanConfigAiPrompt";
 
-/** 校验上次迁移产出的完整 v11 谱系；未知、过旧和额外条目一律拒绝。 */
+/** 校验上次迁移产出的完整源谱系；未知、过旧和额外条目一律拒绝。 */
 function assertSourceLineage(database: StorageDatabase, source: string): void {
   const migrations: MigrationMeta[] = readMigrationFiles({ migrationsFolder: IDENTITY_DATABASE_MIGRATIONS_DIR });
   const removal: MigrationMeta | undefined = migrations.at(-2);
@@ -59,7 +59,7 @@ export interface ChatPersonaRemovalMigrationCounts {
   readonly removedPermissions: number;
 }
 
-/** 旧权限必须是完整的 v11 形态且带布尔 isCanConfigAiPrompt；去掉该位后按当前格式严格解码。 */
+/** 源权限必须是完整的源 schema 形态且带布尔 isCanConfigAiPrompt；去掉该位后按当前格式严格解码。 */
 function inspectSourcePermissions(database: StorageDatabase, source: string): number {
   let removedPermissions: number = 0;
   for (const row of database.$client.query<StoredIdentityPolicyRow, []>(
@@ -77,7 +77,7 @@ function inspectSourcePermissions(database: StorageDatabase, source: string): nu
   return removedPermissions;
 }
 
-/** 只允许删除仅靠人设存在的空状态行；其余空状态必须拒绝，避免迁移时丢失 AI 上下文。 */
+/** 只允许删除仅靠人设存在的空状态行；其余空状态（含带 AI 上下文的空状态）一律拒绝。 */
 function inspectSourceChatStates(database: StorageDatabase, source: string): Omit<ChatPersonaRemovalMigrationCounts, "removedPermissions"> {
   const invalid: { readonly chatId: number } | null = database.$client
     .query<{ readonly chatId: number }, []>(
@@ -97,9 +97,9 @@ function inspectSourceChatStates(database: StorageDatabase, source: string): Omi
 }
 
 /**
- * 独立副本中执行 v11 → v13：直接删除 chat_states.ai_persona 列与 isCanConfigAiPrompt 权限位，
- * 状态为空、仅因群人设而存在的群行随之删除；其余群状态、AI 上下文与权限原样保留；并写入
- * Asia/Tokyo 时区标记（v11 的日历固定为东京）。产物须通过与生产启动相同的完整校验
+ * 独立副本中执行源 schema → 当前 schema：直接删除 chat_states.ai_persona 列与 isCanConfigAiPrompt
+ * 权限位，状态为空、仅因群人设而存在的群行随之删除；其余群状态、AI 上下文与权限原样保留；并写入
+ * Asia/Tokyo 时区标记（源 schema 的日历固定为东京）。产物须通过与生产启动相同的完整校验
  * （validateStorageDatabase）才返回，调用方须已在本线程接管 Asia/Tokyo。
  */
 export function migrateChatPersonaRemovalDatabase(database: StorageDatabase, source: string): ChatPersonaRemovalMigrationCounts {

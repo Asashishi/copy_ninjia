@@ -10,14 +10,14 @@ export const WEATHER_API_URL: string = "https://api.open-meteo.com/v1/forecast";
 /** 单次 Open-Meteo 请求的超时预算。 */
 export const WEATHER_REQUEST_TIMEOUT_MS: number = 10_000;
 
-/** 后台定时刷新东京天气缓存的间隔：每小时一次，由 aiChat/ai/weather.ts 的
- *  startWeatherRefreshLoop 发起，是全进程唯一会真正打 Open-Meteo 接口的
+/** 后台定时刷新东京天气缓存的间隔，由 aiChat/ai/weather.ts 的
+ *  startWeatherRefreshLoop 发起，是全进程唯一会真正请求 Open-Meteo 接口的
  *  地方。 */
 export const WEATHER_REFRESH_INTERVAL_MS: number = 60 * 60 * 1_000;
 
 /** WMO 天气代码 -> 中文描述，覆盖 Open-Meteo 会返回的全部取值；被 aiChat/ai/mood.ts 与
- *  aiChat/ai/weather.ts 共用，`Readonly<Record<>>` 防止一方误改动影响另一方
- *  （不可变性只在编译期表达，见 AGENTS.md 的「常量」一节）。 */
+ *  aiChat/ai/weather.ts 共用；`Readonly<Record<>>` 在编译期表达不可变
+ *  （见 AGENTS.md 的「常量」一节）。 */
 export const WEATHER_CODE_DESCRIPTIONS: Readonly<Record<number, string>> = {
   0: "晴朗",
   1: "大致晴朗",

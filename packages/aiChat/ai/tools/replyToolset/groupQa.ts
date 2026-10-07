@@ -1,13 +1,11 @@
 /**
  * 群问答的两个查询工具：`group_qa_query` 与 `group_qa_answer`。
  *
- * 两个都是**纯查询**：不发消息、不改状态、不计入整轮可见动作预算。数据来自本轮
- * trigger 消息随附的那份问答表，因此执行期不跨线程、不读盘，就是一次 Map 查表。
+ * 两个都是纯查询：不发消息、不改状态、不计入整轮可见动作预算。数据来自本轮
+ * trigger 消息随附的那份问答表，执行期不跨线程、不读盘，只做 Map 查表。
  *
- * 分工要说清楚：**一字不差的提问根本到不了这里**——那种情况在主干上就被直答
- * 短路了（见 auto/message/qaDirectAnswer.ts），连 trigger 都不会发。能走到模型
- * 面前的只有「意思像但字面对不上」的问法，这两个工具用于让
- * 模型自己判断语义够不够近。
+ * 一字不差的提问在主干上由 auto/message/qaDirectAnswer.ts 直答，不发 trigger；
+ * 到模型面前的是字面对不上的问法，由模型用这两个工具判断语义是否足够近。
  */
 
 import { GROUP_QA_ANSWER_TOOL, GROUP_QA_QUERY_TOOL } from "../../../../consts/tools";
@@ -55,7 +53,7 @@ export function buildGroupQaToolDefinitions(): readonly AiToolDefinition[] {
   ];
 }
 
-/** 列出问题清单；只给问题不给答案，逼模型先判断语义再取答案。 */
+/** 列出问题清单，只含问题不含答案。 */
 export function executeGroupQaQuery(
   entries: ReadonlyMap<string, string> | undefined
 ): string {
@@ -67,7 +65,7 @@ export function executeGroupQaQuery(
   return JSON.stringify({ questions });
 }
 
-/** 按原文取答案；对不上就如实说没有，绝不模糊匹配到别条上去。 */
+/** 按原文取答案；对不上返回 found: false，不做模糊匹配。 */
 export function executeGroupQaAnswer(
   entries: ReadonlyMap<string, string> | undefined,
   argumentsJson: string
@@ -84,8 +82,7 @@ export function executeGroupQaAnswer(
   }
   const answer: string | undefined = entries?.get(question);
   if (answer === undefined) {
-    // 这里绝不做模糊匹配：模型拿着清单原文来调，对不上就是它改写了原文，
-    // 此时替它猜一条最像的，等于把一条本群没登记过的答案说成登记过的。
+    // 不做模糊匹配：原文对不上即返回未找到。
     return JSON.stringify({ found: false, question });
   }
   return JSON.stringify({ found: true, question, answer });

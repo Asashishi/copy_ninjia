@@ -1,4 +1,4 @@
-/** 当前冷迁移直接前序（schema v11）的非空数据库夹具；migrate:chat-persona-removal 把它迁到 v13。 */
+/** 当前冷迁移输入格式（`CHAT_PERSONA_REMOVAL_SOURCE_SCHEMA_VERSION`）的非空数据库夹具；migrate:chat-persona-removal 把它迁到当前 schema。 */
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -59,8 +59,8 @@ export interface CreateMigrationDatabaseOptions {
 }
 
 /**
- * 从发行包自带的迁移 SQL 复制出去掉末尾 drop 条迁移的目录：drop=2 止于 schema v11，drop=1 止于
- * v12（只缺时区标记）。末两条必须依次是移除群人设与时区标记迁移。
+ * 从发行包自带的迁移 SQL 复制出去掉末尾 `drop` 条迁移的目录：2 止于源 schema，1 止于只缺时区标记的
+ * 中间 schema。末两条必须依次是移除群人设与时区标记迁移。
  */
 async function writeMigrationPrefix(packageRoot: string, target: string, drop: 1 | 2): Promise<void> {
   const migrations: string = join(packageRoot, "packages/database/schema/migrations");
@@ -76,7 +76,7 @@ async function writeMigrationPrefix(packageRoot: string, target: string, drop: 1
   }
 }
 
-/** 以发行包自带的迁移 SQL 建出 v11 库；从持有未 checkpoint WAL 的测试库复制一致性快照，源三件套不再打开。 */
+/** 以发行包自带的迁移 SQL 建出源 schema 库；从持有未 checkpoint WAL 的测试库复制一致性快照，源三件套不再打开。 */
 export async function createMigrationDatabase({
   packageRoot, root, source, historical = false,
 }: CreateMigrationDatabaseOptions): Promise<MigrationDatabaseFixture> {
@@ -140,8 +140,8 @@ export async function createMigrationDatabase({
 }
 
 /**
- * v11 夹具再只应用移除群人设迁移得到的 schema v12 库：已应用 0010、缺时区标记。模拟时区标记
- * 迁移发布前就迁到 v12 的部署；冷迁移 CLI 必须拒绝它，停机时由生产 migrate() 只补 0011。
+ * 源 schema 夹具再只应用移除群人设迁移得到的中间 schema 库：缺时区标记迁移。冷迁移 CLI 必须拒绝它，
+ * 停机时由生产 migrate() 只补时区标记迁移。
  */
 export async function createSchemaV12Database(options: CreateMigrationDatabaseOptions): Promise<MigrationDatabaseFixture> {
   const fixture: MigrationDatabaseFixture = await createMigrationDatabase(options);

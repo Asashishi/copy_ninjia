@@ -1,5 +1,5 @@
 /**
- * 「部署配置写坏了就别让这个功能动」的统一拒绝点。
+ * 功能依赖的部署配置不可用时的统一拒绝点。
  *
  * 启动预检已拒绝存在但非法的部署输入；本边界读取各功能的 readiness，
  * 对缺省或能力不完整的配置发送拒绝回执并记录诊断，不改变功能状态。
@@ -17,13 +17,13 @@ export interface RefuseIfConfigBrokenParams {
   messageId: number | undefined;
   /** 出现在英文错误日志里的功能名，如 `AI chat`。 */
   feature: string;
-  /** 拒绝文案；参数是坏掉的那份文件的相对路径，务必原样带进文案。 */
+  /** 拒绝文案；参数是不可用的那份文件的相对路径，文案原样带出该路径。 */
   text: (file: string) => string;
 }
 
 /**
  * 配置可用就什么都不做；不可用则记一行诊断、回一条点名文件的拒绝，并告诉
- * 调用方「已经拒了」。
+ * 调用方已经拒绝。
  * @returns true 表示已经拒绝并回复，调用方必须立刻 return、不得改任何状态。
  */
 export async function refuseIfConfigBroken({

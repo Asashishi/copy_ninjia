@@ -44,26 +44,24 @@ export function runAcknowledgedUpdateBatches(
         (): Promise<void> => bot.handleUpdate(update),
         updateTopicOf(update)
       );
-      // handler 可能没有 await 可取消操作；即便它恰好在 abort 后自行返回，
-      // 该 update 仍不能被当成成功完成并跨过 offset。
+      // handler 在 abort 后自行返回时，该 update 仍不算成功完成，不跨过 offset。
       throwIfUpdateAborted(updateController.signal);
     } catch (error: unknown) {
-      // 停机后的迟到失败也必须阻止确认；size() 归零之前先记下失败标志。
+      // 停机后的迟到失败同样阻止确认；size() 归零之前先记下失败标志。
       failedUpdate = true;
       if (updateController.signal.aborted) throw error;
       try {
         await bot.errorHandler(error as BotError<Context>);
       } catch (handlerError: unknown) {
-        // bot.catch 可以有意重抛 BotError 或其原始 error，让 acknowledged
-        // runner 保留失败 update；这属于传播协议，不是 error handler 自身
-        // 故障。只有抛出了不同对象时才追加诊断，避免二次扫描再次误报。
+        // bot.catch 有意重抛 BotError 或其原始 error 时属于传播协议，不是
+        // error handler 自身故障；只有抛出了不同对象时才追加诊断。
         const deliberatelyPropagated: boolean = handlerError === error ||
           (error instanceof BotError && handlerError === error.error);
         if (!deliberatelyPropagated) {
           logger.error("Bot update error handler failed:", handlerError);
         }
       }
-      // 处理失败的 update 不能被下一轮 getUpdates 确认；让 runner 失败并交给
+      // 处理失败的 update 不被下一轮 getUpdates 确认：runner 失败并交给
       // 应用生命周期停止进程，由 Telegram 在重启后重新投递。
       throw error;
     } finally {
@@ -86,7 +84,7 @@ export function runAcknowledgedUpdateBatches(
       }
       if (!running) return;
       if (updates.length === 0) continue;
-      // 异常响应必须在执行任何副作用前 fail closed。
+      // 异常响应在执行任何副作用前 fail closed。
       if (updates.length !== 1) {
         throw new Error(`Telegram returned ${updates.length} updates for a single-update fetch.`);
       }
@@ -96,7 +94,7 @@ export function runAcknowledgedUpdateBatches(
         resolve: (value: void | PromiseLike<void>) => void,
         reject: (reason?: unknown) => void
       ): void => {
-        // middleware 可在同步段调用 stop，登记前必须检查它是否已经停止。
+        // middleware 可在同步段调用 stop，登记前检查 running。
         if (running) resolveStop = resolve;
         else resolve();
         void updateTask.then(resolve, reject);

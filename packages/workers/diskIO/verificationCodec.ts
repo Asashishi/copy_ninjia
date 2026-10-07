@@ -37,7 +37,7 @@ function isOptionalSafeTimestamp(value: unknown): value is number | undefined {
   return value === undefined || isSafeTimestamp(value);
 }
 
-/** 按 phase 拒绝未知字段，避免 compact 时静默甩掉状态内容。 */
+/** 按 phase 拒绝未知字段。 */
 function hasCurrentVerificationKeys(value: Record<string, unknown>): boolean {
   let allowed: ReadonlySet<string> = VERIFICATION_BASE_RECORD_KEYS;
   if (value.phase === "kickPending") {
@@ -136,7 +136,7 @@ function decodeCheckingInviter(
   return { ...base, phase: "checkingInviter", terminalInviterId };
 }
 
-/** expelling：处置原因与四个可选的播报/确认标志。 */
+/** expelling：处置原因与可选的播报/确认标志。 */
 function decodeExpelling(
   base: VerificationSnapshotBase,
   value: Record<string, unknown>
@@ -168,8 +168,7 @@ function decodeExpelling(
  * 对当天文件中的最新值逐字段校验，不把畸形数据带回业务 Worker。
  *
  * 只服务同文件的 decodeVerificationDay，不导出：单条记录的合法性判据依附于
- * 「整份日文件要么全收、要么整份拒绝」这条语义，单独拿出去用会得到一个把
- * 畸形记录悄悄读成 null 的入口。
+ * 「整份日文件要么全收、要么整份拒绝」。
  */
 function decodeVerificationSnapshot(
   key: string,

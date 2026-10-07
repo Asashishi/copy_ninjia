@@ -10,9 +10,8 @@ import type { LuckReceiptSecret } from "../types/diskIO/storage";
 /**
  * cache key 的 UTF-8 编解码器在模块级复用。
  *
- * 解码器带 `fatal: true`：非法 UTF-8 必须抛出而不是替换成 U+FFFD，否则伪造的
- * cache key 会被悄悄改写成另一个合法字符串。抛出后实例仍可继续使用——每次
- * `decode()` 都是独立的非流式调用，不留跨调用状态。
+ * 解码器带 `fatal: true`：非法 UTF-8 抛出，不替换成 U+FFFD。每次 `decode()` 都是
+ * 独立的非流式调用，抛出后实例仍可继续使用。
  */
 const CACHE_KEY_ENCODER: TextEncoder = new TextEncoder();
 const CACHE_KEY_DECODER: TextDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -34,11 +33,10 @@ function secretKey(secret: LuckReceiptSecret): Uint8Array {
  *
  * 回执正文来自群消息实体，字符集与长度只受 LUCK_RECEIPT_PATTERN 约束，而
  * `Uint8Array.fromBase64` 对长度 ≡ 1 (mod 4) 的输入抛 SyntaxError。校验路径
- * 一律把「解不开」当成普通的格式不合法：异常逸出到 update handler 会被
- * bot.catch 重抛，acknowledged runner 随即带着未确认的 offset 退出，同一条
- * 消息重投后进程再也出不来（见 app/registerHandlers.ts 的 bot.catch）。
+ * 把「解不开」当成普通的格式不合法，异常不逸出到 update handler
+ * （见 app/registerHandlers.ts 的 bot.catch）。
  *
- * 只服务校验路径。部署密钥的解码仍留在 secretKey 里按致命错误处理。
+ * 只服务校验路径。部署密钥的解码留在 secretKey 里，按致命错误处理。
  */
 function decodeBase64UrlOrUndefined(value: string): Uint8Array | undefined {
   try {
@@ -52,8 +50,7 @@ function decodeBase64UrlOrUndefined(value: string): Uint8Array | undefined {
 /**
  * cache key 不是本协议认得的形态时按致命错误抛出。
  *
- * 只用在 key 由本进程自己给出的路径（签发与抽签派生）。校验路径不得调用它：
- * 那里的 key 是从群消息里的回执解码出来的，异常会一路逸出到 update handler
+ * 只用在 key 由本进程给出的路径（签发与抽签派生）。校验路径不得调用它
  * （见 decodeBase64UrlOrUndefined 的头注）。
  */
 function assertValidCacheKey(cacheKey: string): void {
@@ -128,8 +125,7 @@ export function verifyLuckReceipt(
     void error;
     return undefined;
   }
-  // 外层 test 必须留着：它是 encodeCacheKey 只拿到合法 key 的保证，也顺带把
-  // 「解得开但不是本协议 key」挡在编码之前。
+  // 先用 LUCK_CACHE_KEY_PATTERN 校验，合法 key 才交给 encodeCacheKey 回编比对。
   if (!LUCK_CACHE_KEY_PATTERN.test(cacheKey) || encodeCacheKey(cacheKey) !== encoded) return undefined;
 
   const signatureOffset: number = receipt.lastIndexOf(".");
@@ -143,7 +139,7 @@ export function verifyLuckReceipt(
   return cacheKey;
 }
 
-/** 以日级密钥、日期和 cache key 派生稳定的 256 位抽签熵。 */
+/** 以日级密钥、日期和 cache key 派生稳定的抽签熵（SHA-256 摘要）。 */
 export function deriveLuckEntropy(secret: LuckReceiptSecret, cacheKey: string): Uint8Array {
   assertValidCacheKey(cacheKey);
   return new Bun.CryptoHasher("sha256", secretKey(secret))
@@ -158,11 +154,10 @@ export function deriveLuckEntropy(secret: LuckReceiptSecret, cacheKey: string): 
  * 从结果消息的末行取出展示用 HMAC 摘要；可见标签不参与 HMAC。
  * 只识别当前格式：没有标签前缀、或前缀后不是合法摘要，一律不是回执。
  *
- * 取的是 `text` 从 `lastLineStart` 到**结尾**的那一段，因此该偏移必须是最后一行
- * 的起点（末个换行符的下一位，或整串没有换行时的 0）。判定按偏移在原串上比
- * 前缀，不先把末行切出来：`confirmLuckDraw` 跑在每一条带换行的 update 上
- * （见 app/registerHandlers.ts 的第二道 middleware），而绝大多数末行都不是回执，
- * 先切子串等于为每条多行消息白付一次子串分配。
+ * 取 `text` 从 `lastLineStart` 到结尾的那一段，该偏移必须是最后一行的起点
+ * （末个换行符的下一位，或整串没有换行时的 0）。判定按偏移在原串上比前缀，不先把
+ * 末行切出来；`confirmLuckDraw` 在每条带换行的 update 上调用（见
+ * app/registerHandlers.ts 的第二道 middleware）。
  *
  * @param text 完整消息正文。
  * @param lastLineStart 末行在 `text` 中的起始下标。

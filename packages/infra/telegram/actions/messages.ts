@@ -9,7 +9,6 @@ import type {
 import { telegramApi } from "../client";
 import { telegramErrorDetails } from "../errors";
 import {
-  logUnlessAborted,
   replyParametersFor,
   runBooleanTelegramAction,
   runTelegramAction,
@@ -42,12 +41,12 @@ export interface SendMessageBaseParams {
   /**
    * 论坛（topics）群里这条消息要落进哪个话题。
    *
-   * 不传就是 General——Bot API 里「没有 message_thread_id」和「General」是同一件事。
-   * 因此话题群里任何**不挂回复**的主动发送都必须显式带上它，否则一律掉进 General
-   * （见 libs/forumTopic.ts）。挂了回复也不等于安全：`allow_sending_without_reply`
-   * 会在目标已被删除时把这条降级成普通发送，那时只有这个参数还留在话题里。
+   * 不传就是 General（Bot API 里没有 message_thread_id 即 General）。
+   * 话题群里不挂回复的主动发送需要显式带上它（见 libs/forumTopic.ts）；挂了回复时，
+   * `allow_sending_without_reply` 在目标已被删除时会降级成普通发送，此时只有这个参数
+   * 保留话题。
    *
-   * **用户命令与交互触发的消息落在触发消息所在的话题**（`AGENTS.md`「Telegram
+   * 用户命令与交互触发的消息落在触发消息所在的话题（`AGENTS.md`「Telegram
    * 提示留存」）：
    * - 会话性输出、长期保留例外与按钮消息由调用方显式传入；`preserveInGroup`
    *   那一档由 `bun run check:conventions` 强制。
@@ -106,9 +105,8 @@ export async function sendMessageWithResult({
     execute: async (
       requestSignal?: AbortSignal
     ): Promise<Message.TextMessage> => {
-      // 定形一次初始化：字段齐、顺序固定，缺席用 undefined 表达。条件展开会为
-      // 每个可选字段造一个一次性 {} 并让同一个 payload 类型长出 2^6 种 shape，
-      // 而 grammY 两条序列化路径都丢弃 undefined，产出的请求体逐字节相同
+      // 定形一次初始化：字段齐、顺序固定，缺席用 undefined 表达；grammY 两条
+      // 序列化路径都丢弃 undefined，请求体与不带该键逐字节相同
       // （对拍见 test/infra/telegramSendPayload.test.ts）。
       const other: Parameters<SendMessageApi["sendMessage"]>[2] = {
         message_thread_id: messageThreadId,
@@ -134,7 +132,6 @@ export async function sendMessageWithResult({
     },
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
     selfSentChatId: chatId,
   });
 }
@@ -160,14 +157,11 @@ export interface SendEphemeralMessageParams {
    */
   messageThreadId?: number;
   /**
-   * 消息 id 的**同步**登记点：拿到 id 的那一刻立即回调，早于 runTelegramAction
+   * 消息 id 的同步登记点：拿到 id 时立即回调，早于 runTelegramAction
    * 在发送成功之后补做的 update 取消判定（见 actions/core.ts）。
    *
-   * 用于这一种情形：停机时 `runner.abortActive()` 可能恰好落在「远端已经
-   * 收下这条消息、handler 还没走到下一行」的窗口里，此时 await 会以 AbortError
-   * 解开，返回值连同 message id 一起丢失——发出去的提示从此没有任何人知道它的
-   * id，状态机再也删不掉它。用它把 id 落进自己的状态，再让取消照常向上抛。
-   * 回调必须是同步且不抛的：它跑在错误边界内部，抛出会被折算成发送失败。
+   * 调用方用它把 id 落进自己的状态，update 取消随后照常向上抛。
+   * 回调必须同步且不抛：它跑在错误边界内部，抛出按发送失败处理。
    */
   onSent?: (messageId: number) => void;
 }
@@ -222,7 +216,6 @@ export async function sendEphemeralMessage({
     },
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -234,8 +227,7 @@ export interface SendChatActionParams {
   signal?: AbortSignal;
   /**
    * 论坛（topics）群里这次状态要亮在哪个话题；语义见 SendMessageParams
-   * 的同名字段。不传就亮在 General——消息落在话题里、「正在输入…」却亮在
-   * General，是话题群里最容易被看见的那种不一致（见 libs/forumTopic.ts）。
+   * 的同名字段。不传就亮在 General（见 libs/forumTopic.ts）。
    */
   messageThreadId?: number;
 }
@@ -273,7 +265,7 @@ export interface EditMessageTextParams {
   api?: EditMessageTextApi;
   /** 由调用方自行算好偏移的富文本实体，语义同 SendMessageFormat.entities。 */
   entities?: readonly MessageEntity[];
-  /** 新的按钮；不传即**清空**原有按钮，翻页看板据此在只剩一页时收走翻页条。 */
+  /** 新的按钮；不传即清空原有按钮。 */
   keyboard?: InlineKeyboardMarkup;
   signal?: AbortSignal;
 }
@@ -281,8 +273,7 @@ export interface EditMessageTextParams {
 /**
  * 就地改写一条已发出的文本消息；富文本只由 entities 表达，不设置 parse_mode。
  *
- * @returns 是否已让远端处于目标状态。内容本就相同时同样为 true——调用方要的是
- *   「这条消息现在显示的是这一页」，而不是「本次真的发生了改写」。
+ * @returns 是否已让远端处于目标状态。内容本就相同时同样为 true。
  */
 export async function editMessageText({
   chatId,
@@ -294,7 +285,7 @@ export async function editMessageText({
   signal,
 }: EditMessageTextParams): Promise<boolean> {
   // 「内容本就相同」在 execute 内就地吞掉：既不记 API 错误，也对调用方报成功。
-  // 其余失败原样抛给统一边界，停机 abort 由 runBooleanTelegramAction 的
+  // 其余失败原样抛给统一边界，停机 abort 由 runTelegramAction 缺省的
   // logUnlessAborted 判为不记错误。
   return runBooleanTelegramAction(
     "edit message text",

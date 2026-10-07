@@ -1,9 +1,7 @@
 /**
  * 只保留「当前正在处理的值 + 最新待处理值」的异步写入器。
  *
- * 高频状态变化若为每个快照都排一次磁盘写，会让慢磁盘后面堆出一条没有
- * 上限的 Promise 链，并同时保留许多已经过时的大字符串。本工具把中间快照
- * 合并掉：正在写的不能撤销，写入期间到达的更新只保留最后一份。
+ * 中间快照被合并：正在写的不能撤销，写入期间到达的更新只保留最后一份。
  */
 export interface LatestValueRunner<T> {
   readonly push: (value: T) => Promise<void>;
@@ -12,7 +10,7 @@ export interface LatestValueRunner<T> {
 export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>): LatestValueRunner<T> {
   let pending: { value: T } | null = null;
   let running: Promise<void> | null = null;
-  // 「drain 还没自己收尾」。用来分辨 drain 是否一路同步跑完，见 push。
+  // drain 尚未自行收尾的标记；push 据此判断 drain 是否一路同步跑完。
   let draining: boolean = false;
 
   const drain = async (): Promise<void> => {
@@ -23,19 +21,16 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
       pending = null;
       try {
         await consume(current.value);
-        // 中间旧值失败、但更新的值成功时，调用方关心的最新状态已经持久化，
-        // 不应继续把整批 promise 误报为失败。
+        // 中间旧值失败、更新的值成功时，最新状态已经持久化，整批结算为成功。
         latestError = undefined;
         latestFailed = false;
       } catch (error: unknown) {
-        // 单次失败不能把期间到达的最新值永久搁在内存里；继续排空，最终
-        // 只以最新一次实际消费的结果结算。
+        // 单次失败后继续排空，最终只以最新一次实际消费的结果结算。
         latestError = error;
         latestFailed = true;
       }
     }
-    // 必须在 drain 自己返回前同步清空；若放在 promise.finally，循环结束与
-    // finally 执行之间的微任务缝隙会让新 push 误接到已完成的旧 promise。
+    // 在 drain 自己返回前同步清空，不放在 promise.finally 里。
     draining = false;
     running = null;
     if (latestFailed) throw latestError;
@@ -47,11 +42,8 @@ export function createLatestValueRunner<T>(consume: (value: T) => Promise<void>)
       if (running !== null) return running;
       draining = true;
       const started: Promise<void> = drain();
-      // drain 一路同步跑完时（consume 在第一个挂起点之前就抛出，或哪天被改成
-      // 非 async），上面那句已经把 draining 置回 false：这次 push 其实已经结算
-      // 完了，绝不能再把这个 settled promise 挂回 running——那样此后每次 push 都
-      // 看到 running !== null，只置 pending 并返回同一个陈旧拒绝，drain 再也不会
-      // 重启，状态落盘与配置对账都依赖后续 push 能继续启动 drain。
+      // drain 一路同步跑完时（consume 在第一个挂起点之前就抛出），draining 已被置回
+      // false：这次 push 已经结算，不把这个 settled promise 挂回 running。
       if (draining) running = started;
       return started;
     },

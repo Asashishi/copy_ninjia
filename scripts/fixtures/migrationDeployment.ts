@@ -1,5 +1,5 @@
 /**
- * 源码与二进制共用的冷迁移端到端验证：以 16.3.2 格式的停机备份执行当前全部冷迁移边；全部路径归
+ * 源码与二进制共用的冷迁移端到端验证：以上一次迁移产出格式的停机备份执行当前全部冷迁移边；全部路径归
  * 调用方的独立临时根所有。
  */
 import { expect } from "bun:test";
@@ -36,7 +36,7 @@ export interface MigratedDeployment {
   readonly sources: readonly MigrationFileSnapshot[];
 }
 
-/** 16.3.2 的 bot.json（没有 time_zone）；身份与安装器夹具的 API 桩一致。 */
+/** 冷迁移输入格式的 bot.json（没有 time_zone）；身份与安装器夹具的 API 桩一致。 */
 const BOT_IDENTITY: Readonly<Record<string, unknown>> = {
   bot_token: "123456789:migration_test_token",
   super_admin_user_id: 123456789,
@@ -50,7 +50,7 @@ const SECRET_CONFIG_FILES: readonly string[] = [
   join(STATIC_CONFIG_DIR_NAME, "g-auth.json"),
 ];
 
-/** 冷迁移不涉及、部署时原样沿用的 16.3.2 配置；安装与启动后必须逐字节不变。 */
+/** 冷迁移不涉及、部署时原样沿用的配置；安装与启动后必须逐字节不变。 */
 export const PRESERVED_MIGRATION_CONFIG_FILES: readonly string[] = [
   join(STATIC_CONFIG_DIR_NAME, "g-auth.json"),
   ...["agent.json", "ad_samples.json", "mood.json", "stickers.json", "assets.json"].map(
@@ -65,8 +65,8 @@ function migrationArguments(command: string, data: string): readonly string[] {
 }
 
 /**
- * 建立 16.3.2 格式的完整 mock 停机备份（当前配置布局、当前全局状态、内容摘要命名的图库与 schema
- * v11 库，复读与翻译目标及群名含空字符串），执行实际 CLI，核对拒绝覆盖与源哈希，再按清单组装部署目录：
+ * 建立上一次迁移产出格式的完整 mock 停机备份（当前配置布局、当前全局状态、内容摘要命名的图库与源
+ * schema 库，复读与翻译目标及群名含空字符串），执行实际 CLI，核对拒绝覆盖与源哈希，再按清单组装部署目录：
  * 只替换数据库，其余文件原样沿用。
  */
 export async function prepareMigratedDeployment({

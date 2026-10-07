@@ -53,10 +53,8 @@ export function fallbackTextFor(kind: MediaKind, msg: AiRecordMediaMessage): str
   return IMAGE_FALLBACK_PLACEHOLDER;
 }
 
-/** 拿媒体回复机器人但解析失败时，喂给必回指令的内容描述。贴纸退回元数据
- *  行仍有信息量；图片/GIF/语音的常规兜底文案写着「请无视此消息」，塞进「别
- *  已读不回」的指令里自相矛盾（模型可能听话地沉默），换成明说没看清/没听清，
- *  让模型自然回一句「看不清」而不是被指示无视。 */
+/** 拿媒体回复机器人但解析失败时，喂给必回指令的内容描述：贴纸用元数据行，
+ *  图片/GIF/语音明说没看清/没听清，不用 fallbackTextFor 的通用失败说明。 */
 export function replyFallbackDescriptionFor(msg: AiRecordMediaMessage): string {
   if (msg.kind === "sticker" && msg.stickerFallbackText) return msg.stickerFallbackText;
   if (msg.kind === "voice") return "（这条语音没能识别出来，你没听清对方说了什么）";

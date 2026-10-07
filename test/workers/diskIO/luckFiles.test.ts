@@ -85,8 +85,8 @@ function repairDayFile(day: string = DAY): void {
 }
 
 /**
- * 立刻跑一次排着的那个重试定时器该做的事，不必真等 FLUSH_INTERVAL_MS（30 秒）。
- * 与真实触发一样先清空槽位；定时器本身同时被取消，不会到点再跑一次、落进后面的用例里。
+ * 立刻跑一次排着的重试定时器该做的事，不等 FLUSH_INTERVAL_MS。
+ * 与真实触发一样先清空槽位；定时器本身同时被取消。
  */
 async function fireLuckFlushTimer(): Promise<void> {
   expect(luckFlushTimer.timer).not.toBeNull();
@@ -236,8 +236,7 @@ describe("diskIO/luckFiles：运势缓冲/落盘调度", () => {
     expect(luckPendingAppends.length).toBe(1);
 
     await handleLuckDrawMessage(luckMsg({ key: "222", label: "小凶", fortunePercent: 39.99, day: DAY }));
-    // startLuckDay 会把 luckPendingAppends 整个清零；不先刷盘，那条 2026-07-15
-    // 的已确认结果就一次都没写盘地静默消失了。
+    // startLuckDay 会清零 luckPendingAppends；旧 day 的缓冲先落盘再切。
     expect(await readDayFile("2026-07-15")).toEqual({ "111": { label: "大吉", fortunePercent: 90.12 } });
     expect(luckWorkerCache.current?.day).toBe(DAY);
     expect(luckPendingAppends.length).toBe(1);
@@ -454,7 +453,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
   });
 
   test("旧日刷不动时拒绝换 owner，但新一天的抽签滞留待补录而不是被丢掉", async () => {
-    // 新一天抽签若被静默丢弃：dailyLuckCache 已记为完成，磁盘却永远缺这条。
+    // 新一天的抽签滞留待补录；主线程 dailyLuckCache 已记为完成。
     await handleLuckDrawMessage(luckMsg({ key: "111", label: "大吉", fortunePercent: 90.12 }));
     breakDayFile();
 
@@ -584,7 +583,7 @@ describe("diskIO/luckFiles：追加持续失败的停摆诊断", () => {
     await handleLuckDrawMessage(luckMsg({ key: "222", label: "凶", fortunePercent: 10.5, day: "2026-07-17" }));
     expect(luckDeferredDraws.length).toBe(1);
 
-    // 启动恢复整体替换 owner：滞留区属于上一任 owner 的运行态，不能跨过去。
+    // 启动恢复整体替换 owner；滞留区属于上一任 owner 的运行态，不保留。
     repairDayFile();
     await hydrateLuckDay("2026-07-17");
     expect(luckDeferredDraws.length).toBe(0);

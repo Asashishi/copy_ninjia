@@ -160,11 +160,9 @@ export interface LockdownPersistedMessage {
 }
 
 /**
- * 主线程 -> Worker：这一轮 lockdown 意图确定写不进 SQLite。
- *
- * 落盘是私密模式「跨进程可恢复」的唯一凭据。失去它以后再维持限制，就等于把
- * 一条没人能恢复的限制留在群里；Worker 收到后按阶段 fail-safe 打开（见
- * states/lockdown/persistence.ts 的 handlePersistFailed），并进入重触发冷却。
+ * 主线程 -> Worker：这一轮 lockdown 意图确定写不进 SQLite。Worker 收到后按阶段
+ * fail-safe 打开（见 states/lockdown/persistence.ts 的 handlePersistFailed），
+ * 并进入重触发冷却。
  */
 export interface LockdownPersistFailedMessage {
   type: "lockdownPersistFailed";
@@ -186,8 +184,8 @@ export interface FloodCandidateMessage {
   /**
    * 主线程观测到这条 update 的时刻，发言窗口按它计数。
    *
-   * 口径与 AdCandidateMessage.observedAt 完全一致，两条候选走同一条判定的
-   * 「本条消息统一的现在」，也同样省掉 Worker 侧的逐条时钟读取。
+   * 口径与 AdCandidateMessage.observedAt 一致，取本条消息统一的「现在」，Worker 不逐条
+   * 读取时钟。
    */
   observedAt: number;
   /**

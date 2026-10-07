@@ -51,8 +51,8 @@ const SECTIONS: readonly BenchmarkSection[] = [
       {
         id: "identity-policy-write",
         metrics: [
-          // 批量链路的两个吞吐口径刻意取不同量级：渲染层把它们混成一列时，
-          // 这一行会立刻暴露（记录/s 是完整链路/s 的 IDENTITY_WRITE_BATCH_MAX_ENTRIES 倍）。
+          // 批量链路的两个吞吐口径取不同量级：渲染层把它们混成一列时，这一行会暴露
+          // （记录/s 是完整链路/s 的 IDENTITY_WRITE_BATCH_MAX_ENTRIES 倍）。
           stats("completedThroughput", "ops/s", 44),
           stats("meanLatency", "ms", 0.42),
           stats("p50Latency", "ms", 25.4),
@@ -191,7 +191,7 @@ describe("基准区块渲染", () => {
       const block: string = renderBenchmarkBlock(REPORT, language);
       expect(block).toContain(cores);
       expect(block).toContain("7.75 GiB");
-      // 型号是出数机器的具体硬件，任何语言的区块里都不该出现。
+      // 型号是出数机器的具体硬件，不进任何语言的区块。
       expect(block).not.toContain("Xeon");
       // 页脚只留复现命令：运行时机与 mock 根的口径写在文档正文，不进生成块。
       expect(block).toContain(footer);
@@ -217,7 +217,7 @@ describe("基准区块渲染", () => {
   });
 
   test("没有条目的分区不会渲染成一张空表", () => {
-    // 摘要行先于分区渲染，因此必须保留它依赖的三个分区，才能验证空表这一条。
+    // 摘要行先于分区渲染，保留它依赖的分区，才能验证空表这一条。
     expect((): string => renderBenchmarkBlock(
       { ...REPORT, sections: [...SECTIONS, { id: "storage", entries: [] }] },
       "zh"

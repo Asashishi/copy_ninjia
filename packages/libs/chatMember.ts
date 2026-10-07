@@ -13,9 +13,7 @@ export function isAdminStatus(status: ChatMember["status"]): boolean {
 /**
  * 这份成员记录是否带着封禁成员的权限。
  *
- * 群主（creator）恒为真；普通管理员看 `can_restrict_members`——「是管理员」与
- * 「能封人」是两回事，黑名单处置卡住最常见的原因正是被授予了管理员却没勾这
- * 一项。其余身份一律为假。
+ * 群主（creator）恒为真；普通管理员看 `can_restrict_members`。其余身份一律为假。
  */
 function canRestrictMembers(member: ChatMember): boolean {
   if (member.status === "creator") return true;
@@ -26,7 +24,7 @@ function canRestrictMembers(member: ChatMember): boolean {
  * 把一份 ChatMember 收敛成机器人自己的完整管理员权限快照。
  *
  * 群主按 Telegram 「拥有全部管理权限」的定义收敛为全权限 true；普通
- * 管理员逐项读当前锁定类型声明的字段，可选字段缺省明确收敛为 false；
+ * 管理员逐项读 `grammy/types` 声明的字段，可选字段缺省明确收敛为 false；
  * 其余身份保留一份全 false 快照。调用方整体替换 State 中的旧快照，不就地修改字段。
  */
 export function readBotChatPermissions(member: ChatMember): BotChatPermissions {
@@ -81,8 +79,7 @@ export function projectBotActionPermissions(
 }
 
 /**
- * 只比投影后的那两位。其余 16 位对 Worker 而言不存在：它们变了也只会投出一条与
- * 上一条逐字节相同的消息，而 my_chat_member 对机器人自身成员记录的任何改动都会送达
+ * 只比 BOT_ACTION_PERMISSION_KEYS 投影后的位，其余权限位的变化不产生投递
  * （见 infra/botAdmin.ts 的 recordBotChatPermissions）。
  */
 export function botActionPermissionsEqual(

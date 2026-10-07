@@ -78,16 +78,14 @@ describe("aiChat/ai/mood currentMoodInstruction", () => {
       currentMoodInstruction();
       expect(currentMoodState.current?.mood.name).toBe(FIRST_MOOD_NAME);
 
-      // 才过 1 分钟，远小于寿命下限（2 小时），不该重抽——即使这次
-      // Math.random 换成会抽到另一档心情的值，也不该生效。
+      // 距首次抽取只过去一小段，远小于寿命下限，不重抽：即使这次 Math.random 换成会抽到另一档心情的值，也不生效。
       Date.now = () => 1_000_000 + 60_000;
       Math.random = () => 0.99;
       currentMoodInstruction();
       expect(currentMoodState.current?.mood.name).toBe(FIRST_MOOD_NAME);
 
-      // 过了寿命上限一毫秒：无论寿命本身随机浮动到多少都已到期，一定会
-      // 重抽。Math.random 固定为同一个值，重抽后的心情和新寿命共用它。
-      // roll 顶到上限附近，落在权重表最后一档。
+      // 过了寿命上限 MOOD_REROLL_MAX_MS 一毫秒：无论寿命随机浮动到多少都已到期，一定重抽；
+      // Math.random 固定为同一个值，重抽后的心情和新寿命共用它；roll 顶到上限附近，落在权重表最后一档。
       Date.now = () => 1_000_000 + MOOD_REROLL_MAX_MS + 1;
       Math.random = () => 0.99;
       currentMoodInstruction();

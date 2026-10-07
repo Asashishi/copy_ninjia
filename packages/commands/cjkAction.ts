@@ -35,7 +35,7 @@ interface ActionMessage {
 
 /** parseCjkActionCommand 的解析结果。 */
 export interface CjkActionCommand {
-  /** 动作词本身，1~2 个中文字，如「咬」「贴贴」。 */
+  /** 动作词本身（字数由 CJK_ACTION_COMMAND_PATTERN 限定的中文字），如「咬」「贴贴」。 */
   actionWord: string;
   /** `/咬@BotUsername` 里的定向后缀；没写 @ 时为 undefined。 */
   addressedBotUsername: string | undefined;
@@ -44,9 +44,9 @@ export interface CjkActionCommand {
 }
 
 /**
- * 从消息原文解析 `/<1~2 个中文字>` 动作命令，兼容 `/咬@BotUsername` 写法。
- * 与 bot.hears 用的是同一条正则（见 consts/commands.ts），因此能匹配进
- * handler 的消息在这里必定也能解析出来。
+ * 从消息原文解析 `/<动作词>` 动作命令，兼容 `/咬@BotUsername` 写法。
+ * 与 bot.hears 用的是同一条正则（CJK_ACTION_COMMAND_PATTERN，见 consts/commands.ts），
+ * 能匹配进 handler 的消息在这里必定也能解析出来。
  * @returns 不是中文动作命令时为 undefined。
  */
 export function parseCjkActionCommand(text: string | undefined): CjkActionCommand | undefined {
@@ -61,8 +61,8 @@ export function parseCjkActionCommand(text: string | undefined): CjkActionComman
 }
 
 /**
- * 全局滑动窗口配额：任意 1~2 个中文字都能触发动作命令，没有命令菜单那层天然
- * 约束，因此不分群、不分用户合并计数（窗口与上限见 consts/commands.ts，
+ * 全局滑动窗口配额：不分群、不分用户合并计数（窗口与上限见 consts/commands.ts 的
+ * CJK_ACTION_RATE_LIMIT_WINDOW_MS 与 CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW，
  * 队列见 cache/main/cjkAction.ts）。超额立即拒绝、不排队。
  * @param now 当前时刻；默认取墙钟，测试可注入固定值。
  * @returns 仍在配额内为 true，本次调用已记账；超额为 false。
@@ -78,15 +78,15 @@ export function tryConsumeCjkActionRateLimit(now: number = Date.now()): boolean 
 
 /**
  * 把各段文本拼成一条消息，并为带链接的段生成 text_link 实体。偏移按 Telegram
- * 的 UTF-16 code unit 口径累计，而 JS 的 String#length 正好是同一口径，所以
- * 昵称里的 emoji（代理对）会自然占 2 个单位，不必额外换算。
+ * 的 UTF-16 code unit 口径累计，与 JS 的 String#length 同口径，昵称里的 emoji
+ * （代理对）占 2 个单位。
  */
 function buildActionMessage(segments: readonly ActionSegment[]): ActionMessage {
   const parts: string[] = [];
   const entities: MessageEntity[] = [];
   let offset: number = 0;
   for (const segment of segments) {
-    // 空文本不能挂实体：Telegram 会以 length 为 0 的实体整条拒收。
+    // 空文本不挂实体：length 为 0 的实体会被 Telegram 拒收。
     if (segment.url !== undefined && segment.text.length > 0) {
       entities.push({ type: "text_link", offset, length: segment.text.length, url: segment.url });
     }
@@ -97,11 +97,9 @@ function buildActionMessage(segments: readonly ActionSegment[]): ActionMessage {
 }
 
 /**
- * 菜单占位项 `/x` 的处理器。`/x` 自己不是动作命令——它只为把「把 x 换成任意
- * 1~2 个中文字」这个用法曝光进命令菜单（非 ASCII 命令名进不了菜单，见
- * consts/atmosphere/teasing/commands.ts 的 BOT_COMMANDS）。但点菜单会真的把 `/x` 发出去，所以它
- * 必须回一句用法：沉默会让用户完全不知道发生了什么；而放行到消息兜底则会让
- * 这条命令被当成普通消息进入 AI/复读流水线，正是注册它要避免的事。
+ * 菜单占位项 `/x` 的处理器。`/x` 本身不是动作命令，只用于在命令菜单里展示动作命令
+ * 的用法（非 ASCII 命令名进不了菜单，见 consts/atmosphere/teasing/commands.ts 的
+ * BOT_COMMANDS）。收到 `/x` 时回复 actionUsage，不放行到普通消息流水线。
  */
 export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
   const chatId: number | undefined = ctx.chat?.id;
@@ -114,41 +112,37 @@ export async function handleCjkActionUsageCommand(ctx: Context): Promise<void> {
 }
 
 /**
- * 处理 `/<1~2 个中文字>` 动作命令（`/咬`、`/贴贴`……）：回复「发起人 X了 目标！」，
+ * 处理 `/<动作词>` 动作命令（`/咬`、`/贴贴`……）：回复「发起人 X了 目标！」，
  * 两个名字都用 first_name last_name 形式，并各自挂上 t.me 主页链接（只有公开
- * username 的人才有链接，其余是纯文本）。链接靠显式 entities 表达而非
- * parse_mode，昵称里的标记字符不会被解析（见 infra/telegram/actions.ts）。
+ * username 的人才有链接，其余是纯文本）。链接靠显式 entities 表达，不使用 parse_mode。
  * 目标解析与 /copy、/block 共用 targetResolution.ts：支持回复目标或当前缓存中的
  * 用户名（如 `/咬 @username`）；回复与参数同时给出时必须指向同一身份。
- * 成功动作是用户明确要求长期保留的功能性群内容，与 `/permission help`、
- * `/permission query` 一样显式设置 preserveInGroup；目标解析失败与 `/x` 用法
- * 提示仍走默认 30 秒清理。
- * 动作词进不了 Telegram 命令菜单——命令名只收 ASCII，这类命令也因此拿不到
- * bot_command 实体，只能由 bot.hears 按原文匹配；菜单里的 `/x` 只是一条不做
- * 任何处理的占位说明项，见 consts/atmosphere/teasing/commands.ts 的 BOT_COMMANDS。
- * @param next 命令并非发给本机器人（`/咬@OtherBot`）或消息形态异常时放行，
- * 让消息回到普通消息流水线，不被这里静默吞掉。
+ * 成功动作结果属获授权的长期保留例外，与 `/permission help`、`/permission query`
+ * 一样显式设置 preserveInGroup；目标解析失败与 `/x` 用法提示仍走默认自动清理。
+ * 命令名只收 ASCII，动作命令拿不到 bot_command 实体，由 bot.hears 按原文匹配；
+ * 菜单里的 `/x` 是占位说明项，见 handleCjkActionUsageCommand 与
+ * consts/atmosphere/teasing/commands.ts 的 BOT_COMMANDS。
+ * @param next 命令并非发给本机器人（`/咬@OtherBot`）或消息形态不符时放行，
+ * 回到普通消息流水线。
  */
 export async function handleCjkActionCommand(ctx: Context, next: NextFunction): Promise<void> {
   const message: Message | undefined = ctx.msg;
   const chatId: number | undefined = ctx.chat?.id;
   if (!message || chatId === undefined) return next();
 
-  // 只认纯文本，不认 caption。bot.hears 对 text 和 caption 都会匹配，但认领一条
-  // 带图消息意味着它不再流进 handleIncomingMessageMiddleware，那张图就不会进 AI 滚动记忆
-  // 与视觉流水线；真正的 Telegram 命令也只在 text 上产生 bot_command 实体。
-  // caption 形态在这里 next() 放行，回到普通消息流水线。
+  // 只认纯文本，不认 caption：bot.hears 对 text 和 caption 都会匹配，caption 形态在这里
+  // next() 放行，回到普通消息流水线（handleIncomingMessageMiddleware）；
+  // Telegram 命令也只在 text 上产生 bot_command 实体。
   const command: CjkActionCommand | undefined = parseCjkActionCommand(message.text);
   if (!command) return next();
 
-  // 必须早于任何输出：本 handler 注册在消息流水线之前，拿不到它那道自发消息
-  // 门禁。机器人在自己管理的频道发的帖子会被原样推回（见 infra/selfSentTracker.ts），
-  // 而回复正文里的昵称/频道名可以由对方设成 `/咬` 开头，从而再次匹配本命令，
-  // 形成自问自答的刷屏循环。
+  // 自发消息门禁必须早于任何输出：本 handler 注册在消息流水线之前，用
+  // infra/selfSentTracker.ts 的 isBotOwnMessage 与 waitForBotOwnMessage 自行判定，
+  // 机器人自己的消息 next() 放行。
   if (isBotOwnMessage(message)) return next();
   if (needsBotOwnMessageWait(message) && await waitForBotOwnMessage(message)) return next();
 
-  // 群里可能同时有多个本机器人的实例，`/咬@SomeoneElse` 明确指名了别人。
+  // `/咬@SomeoneElse` 指名了其它机器人时放行。
   if (
     command.addressedBotUsername !== undefined &&
     command.addressedBotUsername.toLowerCase() !== ctx.me.username.toLowerCase()
@@ -158,13 +152,12 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
 
   const actor: CachedUser | undefined = resolveSenderIdentity(message);
   if (!actor) return next();
-  // 被本 handler 认领的消息不会再流经 handleIncomingMessageMiddleware，而 cacheSender 只在
-  // 那里调用。不在这里补一次，发言以动作命令为主的人就永远进不了 username 缓存，
-  // 明明刚在群里说过话，/copy @TA 却会答「都还没说过话呢」。
+  // 被本 handler 认领的消息不再流经 handleIncomingMessageMiddleware（cacheSender 只在
+  // 那里调用），这里用 updateCachedIdentity 补记发起人的身份缓存。
   updateCachedIdentity(actor);
 
-  // 配额在这里消耗：往下每条路径（含目标解析失败的嘲讽）都会发出一条消息。
-  // 超额静默丢弃，也不再 next()——限流的意义就是不为这条更新做任何输出。
+  // 配额在这里消耗：往下每条路径（含目标解析失败的提示）都会发出一条消息。
+  // 超额静默丢弃，不 next()。
   if (!tryConsumeCjkActionRateLimit()) return;
 
   const { actionWord }: CjkActionCommand = command;
@@ -198,13 +191,12 @@ export async function handleCjkActionCommand(ctx: Context, next: NextFunction): 
     text,
     entities,
     replyToMessageId: message.message_id,
-    // 两个名字都挂了 t.me 链接，不关预览的话每条回复底下都会跟一张主页卡片。
+    // 关闭链接预览，t.me 主页链接不展开预览卡片。
     disableLinkPreview: true,
-    // 用户明确授权的长期留存例外：仅成功动作结果保留；目标校验提示仍自动清理。
+    // 获授权的长期保留例外：仅成功动作结果保留；目标校验提示仍自动清理。
     preserveInGroup: true,
-    // 长期保留的内容必须自己带话题：不清理就意味着一旦落错话题会永久留在
-    // General（见 SendMessageParams.messageThreadId）。上面那些 30 秒自删的
-    // 目标校验提示不适用本条。
+    // 长期保留的内容必须自己带话题（见 SendMessageParams.messageThreadId），
+    // 目标校验提示不适用。
     messageThreadId: forumTopicThreadId(message),
   });
 }

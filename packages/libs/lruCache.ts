@@ -35,9 +35,8 @@ export class LruCache<K, V> {
   }
 
   /** 读取一个键；命中时顺带把它标记为最近使用。未命中返回 undefined。
-   *  命中判据是「有没有这个 node」而不是「取值是不是 undefined」：后者会把
-   *  "存了 undefined 值的键"误判成未命中，既返回值分不清真假未命中，还会跳过
-   *  命中本该做的热度刷新，让该项永不被 LRU 提升、每次读都像未命中。 */
+   *  命中判据是「有没有这个 node」，不看取值是否为 undefined：存了 undefined 值的键
+   *  同样命中并刷新热度。 */
   get(key: K): V | undefined {
     const node: LruNode<K, V> | undefined = this.map.get(key);
     if (node === undefined) return undefined;
@@ -45,9 +44,8 @@ export class LruCache<K, V> {
     return node.value;
   }
 
-  /** 不影响使用顺序地查看一个键的当前值：用于"这个 key 现在还是不是我
-   *  插入的那份"之类的引用比对场景——这种内部核对不该被当成一次真实的
-   *  访问去刷新它的淘汰顺位。 */
+  /** 不影响使用顺序地查看一个键的当前值，用于"这个 key 现在还是不是我
+   *  插入的那份"之类的引用比对。 */
   peek(key: K): V | undefined {
     return this.map.get(key)?.value;
   }
@@ -97,12 +95,10 @@ export class LruCache<K, V> {
   /**
    * 把节点从链上摘下来。
    *
-   * **只能对仍在链上的节点调用。** 对已经摘过的节点再摘一次，它的
-   * `newer`/`older` 都是 null，两个分支会把 `newest` 与 `oldest` 一起置空——
-   * Map 里条目还在，链却空了，此后淘汰找不到最旧项，
-   * 而且不报任何错。三个调用点都已经保证这一点：`delete` 先查 Map 决定要不要摘，
-   * `touch` 摘完立刻重新挂上，容量淘汰摘的是 `this.oldest`。新增调用点必须自己
-   * 先确认节点还在链上。这里不加运行期断言——它落在每次命中续命的路径上。
+   * 只能对仍在链上的节点调用：对已经摘过的节点再摘一次，会把 `newest` 与 `oldest`
+   * 一起置空。三个调用点保证这一点：`delete` 先查 Map 决定要不要摘，`touch` 摘完
+   * 立刻重新挂上，容量淘汰摘的是 `this.oldest`。新增调用点必须自己先确认节点还在链上；
+   * 这里不加运行期断言。
    */
   private unlink(node: LruNode<K, V>): void {
     const newer: LruNode<K, V> | null = node.newer;

@@ -7,7 +7,7 @@ import {
   TEMPORARY_AD_BYPASS_PERMISSIONS,
   WHITELIST_PERMISSION_KEYS,
 } from "../../packages/consts/whitelist";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import { SUPER_ADMIN_USER_ID } from "../../packages/config/bot";
 import type {
   DiskBusinessMessage,
@@ -312,7 +312,7 @@ describe("落盘投递被拒收时不得回执成功", () => {
   test("三条写入路径都抛错，交给命令的 mutationFailed 分支如实回执", async () => {
     seedMissing(7);
     acceptDiskMessages = false;
-    // queueIdentityPolicyWrite 的返回值不得被忽略，否则 Worker 拒收会被误读成成功。
+    // queueIdentityPolicyWrite 的返回值不得被忽略。
     expect(() => setWhitelistMembership({
       id: 7,
       enabled: true,

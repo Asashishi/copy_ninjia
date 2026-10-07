@@ -1,4 +1,5 @@
-import { IDENTITY_META_KEYS, WHITELIST_DATA_KEYS, BLOCKLIST_DATA_KEYS, LOCAL_TIMESTAMP_PATTERN } from "../../consts/storageSchema";
+import { IDENTITY_META_KEYS, WHITELIST_DATA_KEYS, BLOCKLIST_DATA_KEYS } from "../../consts/storageSchema";
+import { LOCAL_TIMESTAMP_PATTERN } from "../../consts/time";
 import {
   BLOCKLIST_PARTICIPANT_INVALID_LIMIT,
   BLOCKLIST_REMOVAL_ENTRY_KEYS,
@@ -230,7 +231,7 @@ export function decodePendingBlockedRemovalData(
   };
 }
 
-/** 编码前先走同一严格解码器，避免内存中的非法结构进入数据库。 */
+/** 编码前先走同一严格解码器，非法结构不进入数据库。 */
 export function encodeWhitelistEntryData(value: Readonly<WhitelistEntryData>): string {
   const text: string = JSON.stringify(value);
   decodeWhitelistEntryData(text, "whitelist entry");
@@ -244,7 +245,7 @@ export function encodeBlocklistEntryData(value: Readonly<BlocklistEntryData>): s
   return text;
 }
 
-/** 编码结果连同校验时已经解出来的规范值一起交出，避免调用方重复 parse。 */
+/** 编码结果连同校验时解出的规范值一起交出，调用方不需要重复 parse。 */
 export interface EncodedPendingBlockedRemoval {
   /** 落库文本；同一个值反复编码逐字节稳定，可直接用于变更比较。 */
   readonly text: string;

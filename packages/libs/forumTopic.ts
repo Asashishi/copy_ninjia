@@ -4,21 +4,19 @@ import type { UpdateTopic } from "../types/lifecycle";
 /**
  * 论坛（topics）群里这条消息所属话题的 `message_thread_id`。
  *
- * **只认 `is_topic_message` 为真的这一种来源**：`message_thread_id` 有两个来源——
+ * 只认 `is_topic_message` 为真的这一种来源：`message_thread_id` 有两个来源——
  * 论坛话题，和关联频道讨论组的评论线程（见 antiRaid/updateIngress.ts 的同一条判定）。
- * Bot API 的 `message_thread_id` 发送参数只对 forum supergroup 有效，把评论线程的
- * 那个 id 当话题传上去会返回 400。讨论组的评论仍由 `reply_parameters` 决定落点。
+ * Bot API 的 `message_thread_id` 发送参数只对 forum supergroup 有效；讨论组的评论
+ * 由 `reply_parameters` 决定落点。
  *
- * **General 话题恒为 undefined**：论坛群里发在 General 的消息不带
- * `message_thread_id`，因此原样镜像回去（不带这个参数）正好落回 General——
- * 「没有话题」与「General」在 Bot API 里本来就是同一件事。
+ * General 话题恒为 undefined：论坛群里发在 General 的消息不带 `message_thread_id`，
+ * 原样镜像回去（不带这个参数）即落回 General。
  *
- * **入群验证提醒不走这里（显式豁免）**：回复式提醒（workers/antiRaid/
+ * 入群验证提醒不走这里（显式豁免）：回复式提醒（workers/antiRaid/
  * verificationReminders.ts 的 sendReplyReminder）锚在待验证成员刚发出的消息上，
- * 那条消息在论坛群里确实在某个话题里，锚被删掉时提醒会掉进 General。提醒不带
- * 话题，由状态机在验证结算时删除（verificationEffects.ts 的
- * replyReminderMessageId 分支），寿命上限是 VERIFICATION_TIMEOUT_MS（3 分钟），
- * 未送达的极端情形也只到 VERIFICATION_REMINDER_UNDELIVERED_MAX_MS（15 分钟）。
+ * 不带话题，由状态机在验证结算时删除（verificationEffects.ts 的
+ * replyReminderMessageId 分支），寿命上限是 VERIFICATION_TIMEOUT_MS，
+ * 未送达时上限是 VERIFICATION_REMINDER_UNDELIVERED_MAX_MS。
  * Worker 重建后由 ensurePendingReminder 用快照里的 welcomeAnchorMessageId 重发，
  * 同样不带话题。
  *
@@ -48,7 +46,7 @@ export function updateTopicOf(update: Update): UpdateTopic | undefined {
 /**
  * 这条消息显式回复的那条消息；没有显式回复时返回 undefined。
  *
- * Bot API 对论坛（topics）群非 General 话题里**没有显式回复**的消息，同样填上
+ * Bot API 对论坛（topics）群非 General 话题里没有显式回复的消息，同样填上
  * `reply_to_message`，指向该话题的创建服务消息：它带 `forum_topic_created`，
  * `message_id` 等于本条的 `message_thread_id`。两种形态任一命中都按「没有回复」
  * 处理；第二种只在 `is_topic_message === true` 时成立。

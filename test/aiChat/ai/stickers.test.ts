@@ -12,9 +12,8 @@ const sendStickerMock = mock(async (_params: {
   signal?: AbortSignal;
 }): Promise<number | undefined> => 12345);
 mock.module("../../../packages/infra/telegram", () => ({ ...realTelegram, sendSticker: sendStickerMock }));
-// sendStickerTool 的发送步骤会用 pauseForToolAction 做 1.5~5 秒的拟人停顿
-// （STICKER_CHOOSE_DELAY_BASE_MS/JITTER_MS），这里把 sleep 换成立即 resolve，
-// 已 abort 时按 abort 原因 reject，单测无需真的等待。
+// sendStickerTool 的发送步骤会用 pauseForToolAction 做拟人停顿（STICKER_CHOOSE_DELAY_BASE_MS/JITTER_MS）；
+// 这里把 sleep 换成立即 resolve，已 abort 时按 abort 原因 reject。
 mock.module("../../../packages/libs/sleep", () => ({
   sleep: async (_ms: number, signal?: AbortSignal): Promise<void> => {
     if (signal?.aborted === true) throw signal.reason;
@@ -52,7 +51,7 @@ const MENU: any[] = [
   pack({ name: "pack_b", title: "狗狗包", summary: "一包卖萌狗狗", stickers: [candidate("b1", "🥰", "一只狗撒娇")] }),
 ];
 
-/** 已看过 MENU 里所有包的限额状态，省得每个发送用例都先走一遍 view。 */
+/** 已看过 MENU 里所有包的限额状态。 */
 function viewedState(): any {
   const state = createStickerRoundState();
   state.viewedPackIntents.set(1, "用哭泣贴纸表达委屈，但不要显得真生气");
@@ -165,8 +164,7 @@ describe("aiChat/ai/stickers viewStickerPackTool", () => {
   });
 
   test("停顿期间轮次被作废：返回工具错误，不让 reject 逃出 execute", async () => {
-    // signal 在调用前已 abort：viewStickerPackTool 在入口同步返回工具错误，
-    // 不进入任何异步路径。
+    // signal 在调用前已 abort：viewStickerPackTool 在入口同步返回工具错误，不进入异步路径。
     const state = createStickerRoundState();
     const controller = new AbortController();
     controller.abort(new Error("chat teardown"));

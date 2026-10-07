@@ -3,10 +3,9 @@ import { drainWithWaiter } from "../../packages/libs/drainWaiter";
 import type { FlushResult } from "../../packages/types/lifecycle";
 
 /**
- * 停机 drain 骨架的两条易错语义（见 libs/drainWaiter.ts 的模块头注）：
- * **预算为 0 时不抛校验错、而是立刻 abort 并按 timedOut 结算**，以及
- * 「登记 waiter 之后必须再触发一次空闲检查」那道补漏。两条都只有在这里被直接
- * 钉住；新增 owner 复用同一个函数，不该在调用点各写一份。
+ * 停机 drain 骨架的两条语义（见 libs/drainWaiter.ts 的模块头注）：
+ * 预算为 0 时不抛校验错、而是立刻 abort 并按 timedOut 结算，以及「登记 waiter 之后再触发一次空闲检查」。
+ * 新增 owner 复用同一个函数，不在调用点各写一份。
  */
 
 interface Harness {
@@ -65,7 +64,7 @@ describe("drainWithWaiter 停机排空骨架", () => {
     const owner = harness(false);
     await expect(owner.drain(0)).resolves.toBe("timedOut");
     expect(owner.abortCalls()).toBe(1);
-    // 没有可等待的窗口，因此既不登记 waiter 也不触发空闲检查。
+    // 没有可等待的窗口，既不登记 waiter 也不触发空闲检查。
     expect(owner.waiters.size).toBe(0);
     expect(owner.notifyCalls()).toBe(0);
   });

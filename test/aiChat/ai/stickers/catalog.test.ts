@@ -33,8 +33,7 @@ mock.module("../../../../packages/aiChat/ai/imageDescription", () => ({
   describeMedia: describeMediaMock,
   describeMediaForStickerCatalog: describeMediaForStickerCatalogMock,
 }));
-// 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把
-// 睡眠打成即时返回，失败用例才不会真等几分钟。
+// 单次调用失败会按 STICKER_CATALOG_RETRY_DELAYS_MS 退避重试；测试里把睡眠打成即时返回。
 mock.module("../../../../packages/libs/sleep", () => ({ sleep: sleepMock }));
 mock.module("../../../../packages/aiChat/provider", () => ({
   summaryAiProvider: () => ({ name: "google", generateText: generateTextMock }),
@@ -66,11 +65,10 @@ const previousConfig: ReturnType<typeof getStickerConfig> = getStickerConfig();
 afterEach((): void => { adoptStickerConfig(previousConfig); });
 
 /**
- * 五个替身都是模块级共享的，`mockReset()` 同时清调用记录与 `mockImplementationOnce`
- * 排队的实现，每条用例开始前统一复位，避免执行顺序不同导致排队替身串到下一条用例。
+ * 各替身是模块级共享的，`mockReset()` 同时清调用记录与 `mockImplementationOnce` 排队的实现，每条用例开始前统一复位。
  *
  * 目录状态（catalogs/dirtyPacks/failedEntries/generatingPacks）不在这里清：
- * 每条用例都用各自独立的包名与 uid 自行 `hydrate` 播种，彼此不可见。
+ * 每条用例用各自独立的包名与 uid 自行 `hydrate` 播种。
  */
 beforeEach(() => {
   getStickerSetMock.mockReset();
@@ -335,7 +333,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
 
   test("简介生成失败且退避重试用尽（1 + 3 次）：保留旧简介，不清掉", async () => {
     hydrateStickerCatalogs(persisted("pack_summary_fail", { "uid-c": { emoji: "👍", description: "描述C" } }, "旧简介仍在"));
-    // 包内容有变化（新增一枚），简介要重生成，但首次和三次重试全部失败。
+    // 包内容有变化（新增一枚），简介要重生成，但首次和全部重试都失败。
     getStickerSetMock.mockImplementationOnce(async () => ({ title: "变动包", stickers: [sticker("uid-c", "👍"), sticker("uid-d", "😂")] }));
     describeMediaForStickerCatalogMock.mockImplementationOnce(async () => generatedText("新贴纸描述"));
     generateTextMock
@@ -415,7 +413,7 @@ describe("aiChat/ai/stickers/catalog generatePackCatalog 对账", () => {
     describeMediaForStickerCatalogMock.mockImplementation(async () => retryableFailure);
 
     await generatePackCatalog("pack_latch");
-    // 1 次 + 3 次退避重试全部失败，这一枚进失败桶，整包目录仍为空。
+    // 首次与全部退避重试都失败，这一枚进失败桶，整包目录仍为空。
     expect(describeMediaForStickerCatalogMock).toHaveBeenCalledTimes(4);
     expect(getCatalogEntry("latch-uid")).toBeUndefined();
 

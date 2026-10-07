@@ -3,7 +3,7 @@
  *
  * parseCronConfig 只做形态、取值与路径的词法判定，不做 I/O；loadCronConfig 在读盘后
  * 再逐项核对 `payload.path` 指向的文件或目录存在且类型相符（跟随符号链接）。
- * 固定图片使用 1–10 项文件或 URL 数组，随机图片的 path 使用可选目录字符串；
+ * 固定图片使用 1 到 CRON_MAX_IMAGES 项文件或 URL 数组，随机图片的 path 使用可选目录字符串；
  * 随机目录缺省时由发送侧使用 config/dynamic/assets.json 的 `random_h_image_dir`（见
  * config/assets.ts）。`payload.path` 写绝对路径，或相对运行时数据根（RUNTIME_DATA_ROOT）的
  * 路径，不限定目录；相对路径基准与 assets.json 的本机路径一致。
@@ -81,8 +81,8 @@ function boundedText(value: unknown, context: InputFieldContext, maxChars: numbe
 }
 
 /**
- * `"<min>-<max>"` 或单值（≡ `1m-<值>`），单位 m/h/d，落在 [1m, 24d] 且 min ≤ max；整串先去掉
- * 首尾空白。
+ * `"<min>-<max>"` 或单值（等价于以 CRON_RANDOM_INTERVAL_MIN_MS 为下界、该值为上界），单位 m/h/d，
+ * 落在 [CRON_RANDOM_INTERVAL_MIN_MS, CRON_RANDOM_INTERVAL_MAX_MS] 且 min ≤ max；整串先去掉首尾空白。
  */
 function parseRandomInterval(value: unknown, context: InputFieldContext): CronRandomInterval {
   const expected: string = "\"<min>-<max>\" or \"<max>\" with m/h/d units, within 1m-24d and min <= max";
@@ -248,7 +248,7 @@ function parseAction(value: unknown, context: InputFieldContext): CronAction {
 /**
  * `chat_id` 数组：`["all"]`、`["except", ...会话 id]`，或直接列出会话 id。
  *
- * 三种写法都必须是数组，且都至少要有一个元素；`"all"` 只能单独出现，`"except"` 只能作为
+ * 各种写法都必须是数组，且都至少要有一个元素；`"all"` 只能单独出现，`"except"` 只能作为
  * 首项；字符串标记去掉首尾空白。会话 id 是非零安全整数且不得重复，最多 CRON_MAX_CHAT_IDS_PER_TASK 个。
  */
 function parseChatTargets(value: unknown, context: InputFieldContext): CronChatTargets {

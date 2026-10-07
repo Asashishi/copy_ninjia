@@ -4,13 +4,12 @@ import { expandedInstallSource, readInstallScripts } from "../installSources";
 import type { InstallScriptSource } from "../installSources";
 
 /**
- * 一键安装脚本的自洽性：模块清单与步骤清单各自写在好几处，任何一处漏改都只会在
- * 真实安装时才暴露，而那一刻脚本已经在部署机上跑了一半。
+ * 一键安装脚本的自洽性：模块清单与步骤清单各自写在多处，本模块核对它们彼此一致。
  *
- * 核对三组事实：
- * 1. `scripts/install/` 下的模块文件、入口的语法自检循环、入口的 `source` 顺序三者一致；
+ * 核对以下事实：
+ * 1. `scripts/install/` 下的模块文件、入口的语法自检循环、入口的 `source` 顺序一致；
  * 2. `step "n/N …"` 的编号连续、分母一致，且覆盖 1..N；
- * 3. 入口头注列出的步骤名与真实 `step` 调用逐字一致——头注是部署方唯一会读的流程说明。
+ * 3. 入口头注列出的步骤名与真实 `step` 调用逐字一致。
  */
 
 /** 入口头注里声明流程的那一段；每行一个步骤，顺序即执行顺序。 */

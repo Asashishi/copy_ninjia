@@ -8,8 +8,8 @@ import { DOC_PAGE_TARGETS } from "../perf/fullSuite/docPage";
 /**
  * 全量基准的两种呈现必须描述同一次运行。
  *
- * `bun run perf:full -- --write-doc` 同时写三份 `10-performance.md` 的基准区块与
- * `performance-result.json` 的 `fullSuite.lastRun`。三份文档时间戳必须一致，
+ * `bun run perf:full -- --write-doc` 同时写各语言 `10-performance.md` 的基准区块与
+ * `performance-result.json` 的 `fullSuite.lastRun`。各文档时间戳必须一致，
  * `lastRun.generatedAt` 必须存在且与该时间戳相同；缺失、null 或单侧更新均失败。
  */
 
@@ -28,7 +28,7 @@ function blockTimestamp(source: string): string | null {
   const block: string = source.slice(start, end);
   const matches: RegExpMatchArray | null = block.match(BLOCK_TIMESTAMP_PATTERN);
   if (matches === null || matches.length === 0) return null;
-  // 同一区块里出现两个不同时间戳，说明整块替换没有整块生效。
+  // 同一区块里的时间戳必须唯一。
   const unique: ReadonlySet<string> = new Set(matches);
   return unique.size === 1 ? matches[0] ?? null : null;
 }

@@ -45,7 +45,7 @@ export async function runDiskIOMaintenanceTasks(
   }
 }
 
-/** 先通知主线程接纳日级任务，再依次维护七个磁盘领域；不等待主线程复核。 */
+/** 先通知主线程接纳日级任务，再依次维护各磁盘领域；不等待主线程复核。 */
 export function runDiskIOMidnightMaintenance(
   reply: DiskIOMaintenanceReplySink,
   day: string = getDateKey()

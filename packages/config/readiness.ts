@@ -4,21 +4,16 @@
  * 主进程启动总闸先校验全部已存在的部署输入；真正缺省的可选文件再由相关功能
  * （`/ai_chat enable`、`/ad_detect enable`、`/translate enable`）按需判定。
  *
- * 结论按功能缓存成功与缺省两侧；运行时只检查已校验配置 holder，不重新读取文件。
- * 启动总闸填充三条结论。之后 config/dynamic/ 热重载每轮改写 holder，由 app/configReload.ts
- * 按本模块的 *ReadinessFromHolders 重算 AI 闲聊与广告检测两条并经 adopt* 发布；
- * 翻译结论（g-auth.json 不热重载）只在启动时判定。
+ * 结论只在主线程判定（见 cache/main/configReadiness.ts）：判定挂在命令与
+ * 投喂门禁上，全在主线程；Worker 不判定功能能否开启。
  *
- * 结论只在主线程判定（见 cache/main/configReadiness.ts）：三条判定挂的都是命令与
- * 投喂门禁，全在主线程；Worker 不问「这个功能能不能开」。
- *
- * 功能 readiness 对 config/dynamic/agent.json 按消费方**分段**探测，且与运行时共用同
- * 一对 holder：启动总闸严格解析整份文件后会同时填充两段快照，探测因此只是
- * 「holder 空不空」的一次分支，已存在文件在一个进程里只解析一次。运行时那一侧
- * 只读 holder，Worker 的那份由初始化消息投递（见 config/agent.ts 的边界说明）。
- *
- * AI 探测表都是模块级只读常量，翻译直接消费启动快照：命中缓存只读 holder，
- * 每条群消息都要走的路上不构造数组与 probe 对象。
+ * 启动与热重载共用同一套判定：AI 闲聊与广告检测的结论都由 *ReadinessFromHolders 按
+ * 已校验配置 holder 得出，不重新读盘。启动总闸严格解析每份已存在的文件后填充对应 holder
+ * （config/dynamic/agent.json 同时填充对话与 ad_detect 两段快照），holder 为空即文件或所需
+ * 的段缺省；之后 config/dynamic/ 热重载每轮改写 holder，由 app/configReload.ts 重算这两项结论并
+ * 经 adopt* 发布。翻译结论（g-auth.json 不热重载）只在启动时按启动快照判定。Worker 的那份配置由
+ * 初始化消息投递（见 config/agent.ts 的边界说明）。结论按功能缓存成功与缺省两侧，命中缓存只读
+ * holder，每条群消息都要走的路上不分配。
  */
 
 import { validateGoogleServiceAccountKey } from "./googleAuth";
@@ -29,11 +24,7 @@ import { ensureAssetConfig } from "./assets";
 import { ensureMoodConfig } from "./mood";
 import { ensureStickerConfig } from "./stickers";
 import { getBotConfig } from "./bot";
-import {
-  ensureAdDetectAgentConfig,
-  ensureAgentDeploymentConfig,
-  validateAgentDeploymentConfig,
-} from "./agent";
+import { validateAgentDeploymentConfig } from "./agent";
 import { ensureCronConfig } from "./cron";
 import { adoptPersona } from "./persona";
 import { loadPromptFile } from "./promptFile";
@@ -70,30 +61,8 @@ import { InputValidationError, invalidInput } from "../libs/inputValidation";
 import type {
   ConfigReadiness,
   ConfigReadinessCache,
-  DeploymentFileProbe,
   GoogleServiceAccountKey,
 } from "../types/config";
-import { errorMessage } from "../libs/errorMessage";
-
-/** 逐份探测，返回第一份坏掉的；全通过返回 ok。 */
-async function probeAll(
-  probes: readonly DeploymentFileProbe[]
-): Promise<ConfigReadiness> {
-  for (const probe of probes) {
-    try {
-      await probe.load();
-    } catch (error: unknown) {
-      return {
-        ok: false,
-        failure: {
-          file: probe.file,
-          reason: errorMessage(error),
-        },
-      };
-    }
-  }
-  return { ok: true };
-}
 
 /**
  * 读取一条功能的已缓存结论：命中时只有一次 holder 读取加一次分支，不分配。
@@ -112,53 +81,19 @@ function cachedReadiness(cache: ConfigReadinessCache): ConfigReadiness {
   };
 }
 
-/**
- * AI 闲聊要读的部署配置：贴纸白名单、心情表与 agent 段必检。prompt/ 下的提示词不在此列：
- * 缺省时由启动总闸接管内置人设与内置 send_voice 说明（见 ensurePromptFiles）。
- *
- * 前两份缺一不可——回复流水线在 Worker 里同步取用它们（aiChat/ai/tools/stickers.ts、
- * aiChat/ai/mood.ts），任一份解析失败都会让那条线程当场抛出而不是降级。
- *
- * agent 配置按能力声明 provider、api_key、model 与 base_url。AI 对话只要求
- * text、summary、media；image/tts 缺省不阻塞，由工具装配单独摘挂。探测不读取
- * ad_detect，因此它的缺省不影响 AI 对话，反过来也一样。
- *
- * 顺序即拒绝顺序：probeAll 报第一份坏掉的文件，改动这张表等于改动运维看到的
- * 拒绝文案。
- */
-const AI_CHAT_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "config/dynamic/stickers.json", load: ensureStickerConfig },
-  { file: "config/dynamic/mood.json", load: ensureMoodConfig },
-  { file: "config/dynamic/agent.json", load: ensureAgentDeploymentConfig },
-];
-
-/**
- * 广告检测要读的两份：判定口径的示例清单，以及 config/dynamic/agent.json 的
- * **ad_detect 段**。
- *
- * 开启广告检测时后者**必填**：`provider`、`api_key` 与 `model` 缺一不可；缺文件、
- * 缺能力、缺字段都在这里判为不可用。`base_url` 可省，缺省时由所选 SDK 使用官方端点；
- * Google 能力另可设置 `headers`。字段均由 agent 配置解析器严格校验。
- *
- * 这份功能结论只探 ad_detect 段；文件一旦存在，其他段的合法性已由
- * validateExistingDeploymentInputs 的启动总闸独立保证。
- */
-const AD_DETECT_PROBES: readonly DeploymentFileProbe[] = [
-  { file: "config/dynamic/ad_samples.json", load: ensureAdSampleConfig },
-  { file: "config/dynamic/agent.json", load: ensureAdDetectAgentConfig },
-];
-
 /** 一份缺失部署输入的不可用结论；诊断口径同 InputValidationError。 */
 function unavailable(file: string, message: string): ConfigReadiness {
   return { ok: false, failure: { file, reason: message } };
 }
 
 /**
- * 按主线程当前 holder 判定 AI 闲聊的部署前提；只读 holder，不读盘。
+ * 按主线程当前 holder 判定 AI 闲聊的部署前提；只读 holder，不读盘，按顺序报第一份缺失的文件。
  *
- * 顺序与 AI_CHAT_PROBES 一致，报第一份缺失的文件。启动总闸之后 holder 为空只可能
- * 是文件或 agent.json 的对话核心能力段缺省（存在但非法的输入已拒绝启动或被热重载
- * 拒绝），与启动时 probeAll 的判据相同。
+ * 必检贴纸白名单、心情表与 agent.json 的对话核心能力段（text、summary、media）：前两份是回复
+ * 流水线在 Worker 里同步取用的（aiChat/ai/tools/stickers.ts、aiChat/ai/mood.ts）；image/tts 缺省
+ * 不阻塞，由工具装配单独摘挂；不看 ad_detect 段。prompt/ 下的提示词不在此列：缺省时由启动总闸
+ * 接管内置人设与内置 send_voice 说明（见 ensurePromptFiles）。启动总闸之后 holder 为空只可能是
+ * 文件或所需的段缺省（存在但非法的输入已拒绝启动或被热重载拒绝）。
  */
 export function aiChatReadinessFromHolders(): ConfigReadiness {
   if (defaultStickerConfigCache.current === null) {
@@ -176,7 +111,10 @@ export function aiChatReadinessFromHolders(): ConfigReadiness {
   return { ok: true };
 }
 
-/** 按主线程当前 holder 判定广告检测的部署前提；顺序与 AD_DETECT_PROBES 一致，其余同上。 */
+/**
+ * 按主线程当前 holder 判定广告检测的部署前提：判定口径的示例清单与 agent.json 的 ad_detect 段
+ * （开启时必填 provider、api_key 与 model，由 agent 配置解析器严格校验）；只看这一段，其余同上。
+ */
 export function adDetectReadinessFromHolders(): ConfigReadiness {
   if (defaultAdSampleConfigCache.current === null) {
     return unavailable("config/dynamic/ad_samples.json", new InputValidationError(AD_SAMPLES_CONFIG_PATH, "$", "a readable valid JSON document").message);
@@ -211,7 +149,7 @@ export function adDetectConfigReadiness(): ConfigReadiness {
   return cachedReadiness(adDetectConfigReadinessCache);
 }
 
-/** 启动总闸成功校验默认密钥后同步填充 readiness，避免首次功能探测重复读盘。 */
+/** 启动总闸成功校验默认密钥后，同步填充密钥 holder 与 readiness。 */
 async function validateAndCacheGoogleServiceAccountKey(): Promise<void> {
   const validated: GoogleServiceAccountKey = await validateGoogleServiceAccountKey();
   if (translateConfigReadinessCache.current === null) {
@@ -236,11 +174,11 @@ export async function deploymentInputExists(path: string): Promise<boolean> {
 }
 
 /**
- * 启动总闸接管 AI 人设、send_voice 说明与本进程群通知风格，三者同批填充、不热重载。
+ * 启动总闸接管 AI 人设、send_voice 说明与本进程群通知风格，同批填充、不热重载。
  * prompt/persona.md 存在时严格读取其正文，缺省时使用内置人设；prompt/voice_tool.md 存在时严格
  * 读取其正文，缺省时为 null（按 `agent.tts.bot_language` 取内置说明），是否配置 `agent.tts`
  * 都同样校验。显式 atmosphere 优先；风格缺省时自定义人设使用普通文案，内置人设使用默认风格。
- * 已接管时只读 holder，不再读盘。
+ * 已接管时只读 holder，不读盘。
  */
 async function ensurePromptFiles(): Promise<void> {
   if (botAtmosphereState.current !== null) return;
@@ -278,8 +216,8 @@ export async function validateExistingDeploymentInputs(): Promise<void> {
     if (await deploymentInputExists(probe.path)) await probe.load();
   }
   await ensurePromptFiles();
-  aiChatConfigReadinessCache.current = await probeAll(AI_CHAT_PROBES);
-  adDetectConfigReadinessCache.current = await probeAll(AD_DETECT_PROBES);
+  aiChatConfigReadinessCache.current = aiChatReadinessFromHolders();
+  adDetectConfigReadinessCache.current = adDetectReadinessFromHolders();
   translateConfigReadinessCache.current ??= {
     ok: false,
     failure: {

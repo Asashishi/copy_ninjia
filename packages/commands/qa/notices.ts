@@ -17,9 +17,8 @@ export interface SendQaFormParams {
   /**
    * `/qa set` 所在的论坛话题。
    *
-   * 表单不挂固定延迟清理（见文件头注），会一直留到填齐、TTL 到期或群 teardown，
-   * 因此必须自己带话题：只靠 reply_parameters 的话，命令消息被删掉时这张正在
-   * 填的表单会落进 General（见 SendMessageParams.messageThreadId）。
+   * 表单不挂固定延迟清理（见文件头注），留到填齐、TTL 到期或群 teardown，
+   * 自己带话题（见 SendMessageParams.messageThreadId）。
    */
   readonly messageThreadId: number | undefined;
   /** 远端返回 id 后同步登记，已关闭会话的迟到消息交回状态机清理。 */

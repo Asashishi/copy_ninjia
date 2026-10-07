@@ -96,7 +96,6 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(true);
     expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("kicked");
     expect(await actions.banChatMember(-1001, 7, api)).toBe(true);
-    expect(await actions.isChatMember(-1001, 7, api)).toBe(true);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(true);
     expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(true);
     expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(true);
@@ -119,14 +118,13 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.deleteMessage(-1001, 3, api)).toBe(false);
     expect(await actions.kickChatMemberWithOutcome({ chatId: -1001, userId: 7, isSupergroup: true, api })).toBe("failed");
     expect(await actions.banChatMember(-1001, 7, api)).toBe(false);
-    expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.banChatSenderChat(-1001, -2002, api)).toBe(false);
     expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(false);
     expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(false);
 
     copyMessageApi.mockRejectedValueOnce(new Error("copy failed"));
     expect(await actions.copyMessage({ chatId: -1001, fromChatId: -2002, messageId: 8 })).toBeUndefined();
-    expect(logApiError).toHaveBeenCalledTimes(16);
+    expect(logApiError).toHaveBeenCalledTimes(15);
     expect(markSelfSent).not.toHaveBeenCalled();
   });
 
@@ -142,7 +140,6 @@ describe("Telegram 动作适配层失败归一化", () => {
     expect(await actions.banChatSenderChatWithOutcome(-1001, -2002, api)).toBe("failed");
     expect(await probeChatMembershipWithOutcome(-1001, 7, api)).toBe("failed");
     expect(await actions.probeChatAdmin({ chatId: -1001, userId: 7, api })).toBeUndefined();
-    expect(await actions.isChatMember(-1001, 7, api)).toBe(false);
     expect(await actions.unbanChatMemberIfBanned(-1001, 7, api)).toBe(false);
     expect(await actions.unbanChatSenderChat(-1001, -2002, api)).toBe(false);
     expect(logApiError).not.toHaveBeenCalled();
@@ -414,9 +411,8 @@ describe("Telegram 动作适配层失败归一化", () => {
 
 describe("解除封禁必须带 only_if_banned", () => {
   test("unbanChatMemberIfBanned 传 only_if_banned，踢出成员刻意不传", async () => {
-    // Bot API 的 unbanChatMember 对「当前就是群成员」的人语义是把他移出群聊
-    // ——kickChatMember 的「只踢不封」正是靠这一点。跨群批量解封若漏了这个
-    // 标志，会把本来好端端待在群里的人一个个踢出去。
+    // Bot API 的 unbanChatMember 对「当前就是群成员」的人语义是把他移出群聊（kickChatMember 的「只踢不封」靠这一点）；
+    // 跨群批量解封带 only_if_banned 标志。
     const unbanChatMember = mock(async (..._args: unknown[]) => true);
     const api: Api = { unbanChatMember } as unknown as Api;
 
@@ -431,8 +427,7 @@ describe("解除封禁必须带 only_if_banned", () => {
 
 describe("黑名单封禁结果归一化", () => {
   test("权限不足与偶发失败必须分成两档", async () => {
-    // 缺封禁权限时重试多少次都一样，只有权限本身变了才有意义；把它跟限流、
-    // 网络抖动混成一个 false，主线程就只能按时间盲目重试（见 infra/blocklist/）。
+    // 缺封禁权限时只有权限本身变了才有意义，与限流、网络抖动分开归类（见 infra/blocklist/）。
     const banChatMember = mock(async (..._args: unknown[]) => true);
     const api: Api = { banChatMember } as unknown as Api;
     expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("banned");
@@ -447,8 +442,7 @@ describe("黑名单封禁结果归一化", () => {
     });
     expect(await actions.banChatMemberWithOutcome(-1001, 7, api)).toBe("forbidden");
 
-    // 同为 400 的其它错误不能被当成权限问题：那会让一批本可重试的处置永久
-    // 挂起，等一个不会到来的授权。
+    // 同为 400 的其它错误不当成权限问题。
     banChatMember.mockImplementation((): never => {
       throw new GrammyError("x", { ok: false, error_code: 400, description: "Bad Request: user not found" }, "banChatMember", {});
     });
@@ -459,8 +453,7 @@ describe("黑名单封禁结果归一化", () => {
   });
 
   test("banChatMember 传 revoke_messages", async () => {
-    // /block、秒踢、补扫与广告检测命中都走这一条；该参数撤销被移除成员对既有
-    // 群消息的访问，并不删除 TA 发给群内其他成员的历史消息。
+    // /block、秒踢、补扫与广告检测命中都走这一条；该参数撤销被移除成员对既有群消息的访问，不删除 TA 发给群内其他成员的历史消息。
     const banChatMember = mock(async (..._args: unknown[]) => true);
     const api: Api = { banChatMember } as unknown as Api;
 
@@ -475,8 +468,7 @@ describe("editMessageText 的失败分档", () => {
   }
 
   test("「内容本就相同」报成功且不记 API 错误", async () => {
-    // 翻页按钮把同一页再点一次就会撞上它：目标状态已经达成，调用方要的是
-    // 「这条消息现在显示的是这一页」。
+    // 翻页按钮把同一页再点一次会撞上它：目标状态已经达成，调用方要的是「这条消息现在显示的是这一页」。
     logApiError.mockClear();
     const api: Api = editApi((): never => {
       throw new GrammyError("x", {
@@ -501,8 +493,7 @@ describe("editMessageText 的失败分档", () => {
   });
 
   test("调用方 signal 已 abort 时与同类动作一样不记 API 错误", async () => {
-    // 本文件其余动作全部按 `actionSignal?.aborted !== true` 判定；editMessageText
-    // 与它们同口径：停机/取消造成的失败不计入 Telegram API 错误。
+    // 本文件其余动作按 `actionSignal?.aborted !== true` 判定；editMessageText 同口径：停机/取消造成的失败不计入 Telegram API 错误。
     const controller: AbortController = new AbortController();
     controller.abort();
     const abortRejection = (): never => { throw new DOMException("aborted", "AbortError"); };

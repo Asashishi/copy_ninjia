@@ -243,8 +243,7 @@ describe("registerHandlers 分发", () => {
   test("全部命令经 :entities:bot_command 子链落到各自 handler，且不再进消息兜底", async () => {
     for (const [command, handler] of Object.entries(COMMAND_HANDLERS)) {
       const observed: readonly string[] = await dispatch(commandMessage(`/${command}`));
-      // 命令消息同样要先过三条 ingress：待验证成员发的命令必须计入刷屏窗口、
-      // 被 gag 的命令消息不得继续，`/qa set` 表单投递也要先被认领。
+      // 命令消息同样先过各 ingress：待验证成员发的命令计入刷屏窗口、被 gag 的命令消息不继续，`/qa set` 表单投递先被认领。
       expect(observed).toEqual([
         "handleAntiRaidMessageIngress",
         "handleGagMessageIngress",
@@ -260,7 +259,7 @@ describe("registerHandlers 分发", () => {
       .toContain("handlePermissionCommand");
     const other: readonly string[] = await dispatch(commandMessage("/permission@other_bot"));
     expect(other).not.toContain("handlePermissionCommand");
-    // 不是发给本 bot 的命令按普通消息继续流转，与分组前一致。
+    // 不是发给本 bot 的命令按普通消息继续流转。
     expect(other).toContain("handleIncomingMessageMiddleware");
   });
 
@@ -273,7 +272,7 @@ describe("registerHandlers 分发", () => {
   });
 
   test("没有 bot_command 实体的消息一次跳过整组命令，直达 hears 与消息兜底", async () => {
-    // 这条正是分组的收益点：整组命令 handler 都不执行。
+    // 整组命令 handler 都不执行。
     expect(await dispatch(groupMessage("普通群消息"))).toEqual([
       "handleAntiRaidMessageIngress",
       "handleGagMessageIngress",

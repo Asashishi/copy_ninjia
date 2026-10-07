@@ -24,15 +24,14 @@ const { STICKER_MEMORY_DIR } =
 /**
  * 清空隔离数据根下的贴纸目录。
  *
- * 本文件里有两个用例会真的落盘：三阶段恢复那条自己写入基线，定时 flush 那条经
- * 模块默认依赖写入。inspect 会严格解码目录里的**每一个**文件（白名单外的算孤儿
- * 也要先解码），所以任何跨用例残留都会让随机执行序变成偶发失败。
+ * 三阶段恢复用例自己写入基线，定时 flush 用例经模块默认依赖写入；inspect 严格解码
+ * 目录里的每一个文件（白名单外的孤儿也先解码），用例之间不得留下残留文件。
  */
 function clearStickerDirectory(): void {
   rmSync(STICKER_MEMORY_DIR, { recursive: true, force: true });
 }
 
-/** 一份合法的 version=1 贴纸目录快照文本，供三阶段恢复用例写进真实目录。 */
+/** 一份合法的贴纸目录快照文本，供三阶段恢复用例写进真实目录。 */
 function stickerSnapshotJson(description: string): string {
   return JSON.stringify({
     version: 1,
@@ -51,9 +50,8 @@ const {
 } = await import("../../../packages/cache/workers/diskIO/stickers");
 
 /**
- * 启动恢复的测试编排：生产在 adoptStickerCatalogSnapshots 里做同一件事——把只读扫描的
- * 结果整体发布进 owner 缓存（见 workers/diskIO/startup.ts）。这里用注入的假结果，好在
- * 不碰真实目录的前提下验证 owner 的替换语义。
+ * 启动恢复的测试编排：与生产 adoptStickerCatalogSnapshots 一样把只读扫描的结果整体发布进
+ * owner 缓存（见 workers/diskIO/startup.ts）；这里用注入的假结果，不碰真实目录。
  */
 function hydrateStickerCatalogs(activePacks: readonly string[]): Map<string, string> {
   hydrateStickerCatalogCache(recoverStickerCatalogs(activePacks));
@@ -80,12 +78,12 @@ describe("Disk I/O sticker catalog snapshot owner", () => {
     stickerCatalogCache.set("stale_pack", "stale-sticker");
 
     const inspection = await inspectStickerCatalogs(["pack_one"]);
-    // 第一阶段只读：owner 缓存在 adopt 之前必须原封不动。
+    // 第一阶段只读：adopt 之前 owner 缓存原封不动。
     expect(stickerCatalogCache.get("stale_pack")).toBe("stale-sticker");
     expect(inspection.snapshots.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));
 
     expect(adoptStickerCatalogSnapshots(inspection)).toBe(stickerCatalogCache);
-    // 整体替换：adopt 之后旧 owner 内容不得残留。
+    // 整体替换：adopt 之后旧 owner 内容不残留。
     expect(stickerCatalogCache.has("stale_pack")).toBeFalse();
     expect(stickerCatalogCache.get("pack_one")).toBe(stickerSnapshotJson("恢复出来的目录"));
 
@@ -103,9 +101,7 @@ describe("Disk I/O sticker catalog snapshot owner", () => {
   test("markDirty 排的定时 flush 到点后真的落盘并交回 timer 槽", () => {
     jest.useFakeTimers();
     try {
-      // 定时 flush 走的是模块默认依赖，也就是真的写进贴纸目录；因此内容必须是
-      // 合法的快照 JSON——owner 缓存里存的本来就是序列化好的文本，随手塞一个
-      // 非 JSON 串会给同一目录留下一份下一次 inspect 必然拒绝的孤儿文件。
+      // 定时 flush 走模块默认依赖，真实写进贴纸目录，内容是合法的快照 JSON（owner 缓存里存的是序列化好的文本）。
       markStickerCatalogSnapshotDirty("pack_two", stickerSnapshotJson("定时落盘"), 1);
       expect(stickerFlushState.timer).not.toBeNull();
       // 重复 markDirty 不另排一条：定时器槽只有一个。

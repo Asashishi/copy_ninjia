@@ -215,9 +215,7 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
   });
 
   test("重进补踢建出的占位没计过数 → 晚到的豁免一格都不撤", () => {
-    // 这一路 joinCreatesNewRecord 为 false（状态已存在），调用方没有 recordJoin。
-    // 凭 requestedAt 去撤，删掉的会是同一 tick 里另一名合法计数成员那一格——
-    // 刷群窗口因此差一个而不触发私密模式，正是这个计数要挡的事。
+    // 这一路 joinCreatesNewRecord 为 false（状态已存在），调用方没有 recordJoin：晚到的豁免不撤销任何计数。
     const state = kickPendingState({ requestedAt: 12_345 });
     const { next, effects } = transitionVerification(state, joinEvent({ identityExempt: true }));
     expect(next).toEqual({ kind: "exempt", label: "杂鱼A", isBot: false });
@@ -248,11 +246,8 @@ describe("join：重复投递（chat_member 与服务消息各到一次）", () 
 
 describe("trackedMessage", () => {
   test("时钟回拨后落在未来的时间戳照样驱逐，没刷屏的人不会被判成 flood", () => {
-    // 窗口必须同时清理过旧与落在未来的时间戳。NTP 往回跳一次之后，未来时间戳
-    // 若一直保留，攒了
-    // 40 条的人再慢慢发几条就能越过 45 条/分钟的阈值——消息全删、人被踢出，而
-    // 他根本没刷过屏。同一个阈值的另一半（lockdownRuntime 的入群窗口）本来就
-    // 走共享的窗口判定，两边不能对回拨给出两种语义。
+    // 窗口同时清理过旧与落在未来的时间戳（NTP 往回跳之后留下的）；同一个阈值的另一半（lockdownRuntime 的入群窗口）
+    // 走共享的窗口判定，两边对回拨给出同一种语义。
     const now: number = 1_000_000;
     const state = pendingState({
       // 全部「来自未来」：时钟往回跳超过一个窗口之后就是这个形态。
@@ -278,8 +273,7 @@ describe("trackedMessage", () => {
     expect(state.reminderMessageId).toBeUndefined();
     expect(state.reminderSuperseded).toBe(true);
     expect(state.welcomeAnchorMessageId).toBe(40);
-    // 补发提醒排在删旧提醒之前：解释器会 await deleteMessage；若顺序反过来，
-    // 删除等待期间状态可能被其它投递替换，导致过期提醒回填到新记录。
+    // 补发提醒排在删旧提醒之前：解释器会 await deleteMessage，等待期间状态可能被其它投递替换。
     expect(effects).toEqual([
       { kind: "sendReplyReminder", label: "杂鱼A", targetMessageId: 40 },
       { kind: "deleteMessage", messageId: 30 },
@@ -489,6 +483,12 @@ describe("私密模式踢人结算", () => {
       effects: [{ kind: "kickMember" }],
     });
     expect(state.effectStarted).toBeTrue();
+
+    // 上一轮踢人效果还在执行（效果门已开）时，重复的 kickRetry 不再产生第二次效果。
+    expect(transitionVerification(state, { type: "kickRetry" })).toEqual({
+      next: state,
+      effects: [],
+    });
 
     state.effectStarted = false;
     state.executionStarted = true;
@@ -755,8 +755,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
   });
 
   test("guardDisabled：PENDING 停止触发，并清理已经失效的验证按钮", () => {
-    // 主动关闭后按钮不再有有效 owner，必须由这条状态机路径删除；入群公告和
-    // 成员自己的消息不在 effect 里，关闭功能不会扩大成清理群成员内容。
+    // 主动关闭后按钮不再有有效 owner，由这条状态机路径删除；入群公告和成员自己的消息不在 effect 里，关闭功能不清理群成员内容。
     const state = pendingState({ reminderMessageId: 11, replyReminderMessageId: 12 });
 
     const { next, effects } = transitionVerification(state, { type: "guardDisabled" });
@@ -770,8 +769,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
   });
 
   test("guardDisabled：两个已落盘终态一并作废，不再踢人", () => {
-    // 终态是「已经决定要踢、正等落盘回执」；开关关掉之后还把人踢出去，是管理员
-    // 最不可能预期的结果。返回 undefined 让解释器发 tombstone，重启也不会复活。
+    // 终态是「已经决定要踢、正等落盘回执」：开关关掉之后不踢人，返回 undefined 让解释器发 tombstone，重启也不复活。
     const snapshot = {
       label: "杂鱼A",
       isBot: false,
@@ -798,8 +796,7 @@ describe("异步核查通过 / 离群 / 提醒回填 / 去重到期", () => {
   });
 
   test("回归：新入群取代终态记录时，先删掉旧记录留下的验证提醒", () => {
-    // 旧记录被替换后，它的 expel 收尾会因对象同一性复核不过而整段跳过，
-    // 因此替换发生时必须由这条转移路径直接发出 deleteReminders。
+    // 旧记录被替换后，它的 expel 收尾因对象同一性复核不过而整段跳过；替换发生时由这条转移路径直接发出 deleteReminders。
     const snapshot = {
       label: "杂鱼A",
       isBot: false,

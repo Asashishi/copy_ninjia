@@ -36,7 +36,7 @@ const { resetMediaInputSupport, getMediaInputState, recordMediaInputResult, getM
   await import("../../../packages/cache/workers/aiChat/mediaInputSupport");
 
 function request(key: string, signal?: AbortSignal): Promise<string | null> {
-  return describeMedia({ kind: "photo", fileId: key, fileUniqueId: key, voiceMime: undefined, voiceDurationSeconds: 0, signal });
+  return describeMedia({ kind: "photo", fileId: key, fileUniqueId: key, voiceMime: undefined, signal });
 }
 
 async function flush(): Promise<void> {
@@ -87,11 +87,11 @@ test("冷探测等待有界，取消释放等待位，目录入口使用同一�
 
 test("视觉与语音只各执行一个探测，共享等待额度", async (): Promise<void> => {
   void request("vision-probe");
-  void describeMedia({ kind: "voice", fileId: "voice-probe", fileUniqueId: "voice-probe", voiceMime: "audio/ogg", voiceDurationSeconds: 1 });
+  void describeMedia({ kind: "voice", fileId: "voice-probe", fileUniqueId: "voice-probe", voiceMime: "audio/ogg" });
   for (let index: number = 0; index < MEDIA_DESCRIPTION_MAX_PENDING; index++) void request(`vision-${index}`);
   await flush();
   expect(describeVision).toHaveBeenCalledTimes(2);
-  expect(await describeMedia({ kind: "voice", fileId: "voice-overflow", fileUniqueId: "voice-overflow", voiceMime: "audio/ogg", voiceDurationSeconds: 1 })).toBeNull();
+  expect(await describeMedia({ kind: "voice", fileId: "voice-overflow", fileUniqueId: "voice-overflow", voiceMime: "audio/ogg" })).toBeNull();
   expect(getMediaInputProbe("vision")?.waiterCount).toBe(MEDIA_DESCRIPTION_MAX_PENDING);
   expect(getMediaInputProbe("voice")?.waiterCount).toBe(0);
 });

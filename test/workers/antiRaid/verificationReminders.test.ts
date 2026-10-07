@@ -1,6 +1,6 @@
 /**
  * 入群验证提醒的投递 owner：发送在途期间成员状态被替换（已通过、离群或重建）时，
- * 迟到落地的提醒必须自删，且不再向状态机派发 reminderLanded，避免群里留下孤儿提醒。
+ * 迟到落地的提醒自删，且不再向状态机派发 reminderLanded。
  */
 
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";

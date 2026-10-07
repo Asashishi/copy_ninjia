@@ -38,13 +38,12 @@ const {
   VOICE_TRANSCRIPT_MAX_CHARS,
 } = await import("../../../packages/consts/aiChat/voice");
 
-/** 默认参数：一条 12 秒的 OGG voice note。 */
-function voiceParams(overrides: Partial<{ fileId: string; declaredMime: string | undefined; durationSeconds: number }> = {}): {
+/** 默认参数：一条 OGG voice note。 */
+function voiceParams(overrides: Partial<{ fileId: string; declaredMime: string | undefined }> = {}): {
   fileId: string;
   declaredMime: string | undefined;
-  durationSeconds: number;
 } {
-  return { fileId: "voice-file", declaredMime: "audio/ogg", durationSeconds: 12, ...overrides };
+  return { fileId: "voice-file", declaredMime: "audio/ogg", ...overrides };
 }
 
 beforeEach(() => {
@@ -79,14 +78,13 @@ describe("语音转写", () => {
     expect(transcribeVoice).toHaveBeenCalledTimes(1);
     const request = transcribeVoice.mock.calls[0]![0] as {
       prompt: string;
-      clip: { mime: string; durationSeconds: number; bytes: Uint8Array };
+      clip: { mime: string; bytes: Uint8Array };
       errorLabel: string;
     };
     expect(request.clip.mime).toBe("audio/ogg");
-    expect(request.clip.durationSeconds).toBe(12);
     expect(request.clip.bytes).toEqual(new Uint8Array([1, 2, 3]));
     expect(request.errorLabel).toBe(VOICE_TRANSCRIPTION_ERROR_LABEL);
-    // 指令必须要原话而不是概括：这一行会被当成群友说过的话读。
+    // 指令要求原话而不是概括：这一行会被当成群友说过的话读。
     expect(request.prompt).toContain("逐字");
   });
 
@@ -135,7 +133,7 @@ describe("语音转写", () => {
     });
     await expect(transcribeVoiceUncached(voiceParams())).resolves.toEqual({ ok: false, retryable: true });
 
-    // 空下载同样拦在模型请求之前：0 字节的 inlineData 只会换来一次必然失败的请求。
+    // 空下载同样拦在模型请求之前。
     downloadTelegramFileFromMain.mockResolvedValueOnce({ status: "empty" });
     await expect(transcribeVoiceUncached(voiceParams())).resolves.toEqual({ ok: false, retryable: true });
 

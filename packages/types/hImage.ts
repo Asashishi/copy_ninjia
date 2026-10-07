@@ -10,7 +10,7 @@ export interface HImageRequest {
 /** 一条消息里能收进随机图库的一张图（libs/telegramImage.ts）。 */
 export interface MessageImageCandidate {
   readonly fileId: string;
-  /** 跨时间、跨 bot 稳定的文件标识；收进图库后写在文件名的 uuidv7 之后，也用于去重。 */
+  /** 跨时间、跨 bot 稳定的文件标识；相册缓存与同批候选按它去重，图库去重看内容 SHA-256。 */
   readonly fileUniqueId: string;
   /** Telegram 给出的字节数；没给时为 undefined。 */
   readonly fileSize: number | undefined;
@@ -28,8 +28,8 @@ export interface HImageAddRequest extends HImageRequest {
   readonly candidates: readonly MessageImageCandidate[];
 }
 
-/** 收一张图的结局（commands/hImage/add.ts）；stopped 表示停机取消，整批静默收场。 */
-export type HImageAddOutcome = "added" | "existing" | "invalidDimensions" | "failed" | "stopped";
+/** 收一张图的结局（commands/hImage/add.ts）；停机取消不产生结局，整批静默收场。 */
+export type HImageAddOutcome = "added" | "existing" | "invalidDimensions" | "failed";
 
 /** 一张图的像素尺寸（infra/image.ts 的 readImageDimensions）。 */
 export interface ImageDimensions {
@@ -43,12 +43,11 @@ export interface HImageAddSummary {
   readonly added: number;
   /** 本次收图开始前图库里的张数，口径同 `/h_image` 抽图的候选（infra/randomImage.ts）。 */
   readonly librarySize: number;
-  /** 图库里早已有同一 file_unique_id、本次跳过的张数。 */
+  /** 内容 SHA-256 已在图库里（含同批更早写入的一张）、本次没再写入的张数。 */
   readonly existing: number;
   /**
    * 宽高之和超过 TELEGRAM_PHOTO_MAX_DIMENSION_SUM、或长宽比超过
-   * TELEGRAM_PHOTO_MAX_ASPECT_RATIO 而没收的张数。与 failed 分开记：这一档
-   * 的图本身下载成功、格式也对，只是 Telegram 发不出去，回执要说清是哪一条。
+   * TELEGRAM_PHOTO_MAX_ASPECT_RATIO 而没收的张数；与 failed 分开计数。
    */
   readonly invalidDimensions: number;
   /** 超限、格式不对、下载失败或预算耗尽而没收成的张数。 */

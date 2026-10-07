@@ -26,36 +26,33 @@ import type {
 /**
  * config/dynamic/agent.json：所有 AI 能力的统一部署配置。
  *
- * 顶层只含 agent；其下按能力而不是按 SDK 分组。ad_detect、text、summary、media、image、tts、web_search 各自声明
+ * 顶层只含 agent；其下按能力分组。ad_detect、text、summary、media、image、tts、web_search 各自声明
  * provider、api_key、model 与可选 base_url；google provider 另可声明 headers，给每个请求附加
  * 请求头（三方网关鉴权等），openai 与 anthropic provider 不接受该字段。provider 只表示调用协议，接受
- * google、openai 与 anthropic；模型品牌不受枚举限制，因此 Grok 等 OpenAI 兼容模型使用 openai
- * provider 加对应端点。text、summary、media 是对话核心能力；ad_detect、image、tts、web_search
+ * google、openai 与 anthropic；Grok 等 OpenAI 兼容模型使用 openai provider 加对应端点。
+ * text、summary、media 是对话核心能力；ad_detect、image、tts、web_search
  * 均可缺省，由对应功能门禁或工具装配单独处理。web_search 由它的模型执行带内建检索的单轮请求，
  * 可选 max_calls_per_use 指定每轮回复最多调用该函数的次数，缺省使用 WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE。
- * 非法或未知字段在
- * 建立外部连接前直接拒绝启动。
+ * 非法或未知字段在建立外部连接前直接拒绝启动。
  *
- * image 额外要求 OpenAI 侧显式给 image_protocol；Google 侧禁止该字段。请求体差异
- * 不能从模型名或端点可靠推断。tts 额外要求 voice，只校验为非空字符串，音色是否存在由首次
+ * image 额外要求 OpenAI 侧显式给 image_protocol；Google 侧禁止该字段。
+ * tts 额外要求 voice，只校验为非空字符串，音色是否存在由首次
  * 合成请求决定；OpenAI 侧另要求 speech_protocol（`openai` 为 audio/speech，`xai` 为 xAI
  * `POST /tts`），Google 侧禁止该字段。可选 style 指定基础风格，缺省使用 TTS_DEFAULT_STYLE；
  * xai 协议没有模型名与风格指令，出现 model 或 style 即拒绝，另有可选 language（缺省 `auto`）。
- * 三种协议都接受可选 bot_language（`en`、`zh` 或 `ja`，缺省 TTS_DEFAULT_BOT_LANGUAGE），只决定
+ * 各协议都接受可选 bot_language（`en`、`zh` 或 `ja`，缺省 TTS_DEFAULT_BOT_LANGUAGE），只决定
  * AI 回复取哪一份语音相关提示词。
- * 可选的 daily_limit 与 daily_reserve_quota
- * 将每日预算拆为 AI 与 `/send`、cron 共用的预留额度，两边独立计数。image/tts 缺省或所选实现不支持时，分别不挂
- * 生图/语音工具。
+ * 可选的 daily_limit 与 daily_reserve_quota 将每日预算拆为 AI 与 `/send`、cron 共用的预留额度，
+ * 两边独立计数。image/tts 缺省或所选实现不支持时，分别不挂生图/语音工具。
  *
- * **读盘只发生在主线程。** 本文件分成三段边界，谁能调哪一段由所在线程决定：
+ * **读盘只发生在主线程。** 本文件按所在线程分为以下边界：
  *
  * 1. `parse*` / `load*` / `validateAgentDeploymentConfig`：解析与启动总闸，只有
  *    主线程走。总闸解析成功后把两段结果放进本 isolate 的 holder，成为主线程的
  *    权威快照；运行期由 config/reload.ts 用同一份 loadAgentConfigSnapshots 严格
  *    解析改过的文件，通过后整体替换 holder。
- * 2. `ensure*`：主线程 readiness 探测入口。holder 已被总闸填好就直接返回，
- *    否则解析一次并填充；抛出的错误由 config/readiness.ts 缓存成功能结论。
- * 3. `get*` / `adopt*`：**只读 holder，绝不读盘**。Worker 只 adopt 主线程经初始化
+ * 2. `*Snapshot` / `get*` / `adopt*`：**只读 holder，绝不读盘**。`*Snapshot` 返回可空的当前快照
+ *    （null 表示明确未配置），`get*` 取不到时抛错。Worker 只 adopt 主线程经初始化
  *    消息与热重载消息投递的快照，每条群消息的模型名、凭据与端点都只从 holder 取。
  *    Worker 崩溃重建重放的是主线程当前生效的那份快照（见 aiChat/workerBridge.ts
  *    与 antiRaid/workerBridge/controller.ts），Worker 自己从不读盘。
@@ -69,7 +66,7 @@ export function parseAdDetectAgentConfig(
   return parseCapability(value, "$.agent.ad_detect", sourcePath);
 }
 
-/** 严格解码 agent 段；三项对话必备能力不能缺，其余能力可显式缺省。 */
+/** 严格解码 agent 段；对话必备能力不能缺，其余能力可显式缺省。 */
 export function parseAgentDeploymentConfig(
   value: unknown,
   sourcePath: string = AGENT_CONFIG_PATH
@@ -171,38 +168,6 @@ export async function validateAgentDeploymentConfig(
   }
 }
 
-/** 只加载广告检测段。 */
-export async function loadAdDetectAgentConfig(
-  path: string = AGENT_CONFIG_PATH
-): Promise<AdDetectAgentConfig> {
-  const record: Readonly<Record<string, unknown>> = await readAgentConfigRecord(path);
-  return parseAdDetectAgentConfig(record.ad_detect, path);
-}
-
-/** 只加载 AI agent 段。 */
-export async function loadAgentDeploymentConfig(
-  path: string = AGENT_CONFIG_PATH
-): Promise<AgentDeploymentConfig> {
-  return parseAgentDeploymentConfig(await readAgentConfigRecord(path), path);
-}
-
-/**
- * 主线程 readiness 探测入口（ad_detect 段）。启动总闸已经填好 holder 时直接
- * 返回，保证已存在的文件在一个进程里只解析一次；holder 为空——文件缺省，或
- * 文件在但没有 ad_detect 段——才解析一次并让错误逃出去，由
- * config/readiness.ts 缓存成功能结论（成功与失败都缓存，见该文件头注）。
- */
-export async function ensureAdDetectAgentConfig(): Promise<void> {
-  if (adDetectAgentConfigCache.current !== null) return;
-  adDetectAgentConfigCache.current = await loadAdDetectAgentConfig();
-}
-
-/** 主线程 readiness 探测入口（AI 对话核心能力段）；语义同上。 */
-export async function ensureAgentDeploymentConfig(): Promise<void> {
-  if (agentDeploymentConfigCache.current !== null) return;
-  agentDeploymentConfigCache.current = await loadAgentDeploymentConfig();
-}
-
 /**
  * 本 isolate 当前的 ad_detect 快照：主线程据此投递 Anti-Raid Worker 初始化消息，Worker 侧
  * 接管新快照前据此判断 agent.ad_detect 是否变化。
@@ -227,9 +192,8 @@ export function agentDeploymentConfigSnapshot(): AgentDeploymentConfig | null {
  * 接管已严格校验的 ad_detect 快照：Worker 侧来自主线程的初始化、重建与热重载
  * 消息，主线程侧来自 config/reload.ts。
  *
- * 每次都无条件整体赋值（含显式 null），不做 `??=`，也不就地改写旧对象：「这次
- * 明确没配」不得被读成「沿用上次」，logger 的凭据脱敏也按 holder 的对象身份
- * 判断是否重算。
+ * 每次都无条件整体赋值（含显式 null），不做 `??=`，也不就地改写旧对象；
+ * logger 的凭据脱敏按 holder 的对象身份判断是否重算。
  */
 export function adoptAdDetectAgentConfig(config: AdDetectAgentConfig | null): void {
   adDetectAgentConfigCache.current = config;
@@ -243,10 +207,9 @@ export function adoptAgentDeploymentConfig(config: AgentDeploymentConfig | null)
 /**
  * 读取本 isolate 的 ad_detect 配置。**只读 holder，不读盘。**
  *
- * 主线程由启动总闸与热重载填充，Anti-Raid Worker 由主线程的 agentConfig 消息填充。取不到只可能是
- * 「这个部署没配广告检测」或「配置消息还没到」，两种都必须 fail-closed：主线程
- * 那道 adDetectConfigReadiness 门禁本就拦住了候选消息，走到这里说明调用序有
- * 问题，猜一个默认值只会让判定用着不存在的模型继续拉黑人。
+ * 主线程由启动总闸与热重载填充，Anti-Raid Worker 由主线程的 agentConfig 消息填充。取不到表示
+ * 「这个部署没配广告检测」或「配置消息还没到」，两种都 fail-closed 抛错：主线程
+ * 的 adDetectConfigReadiness 门禁已拦住候选消息，走到这里说明调用序有问题。
  */
 export function getAdDetectAgentConfig(): AdDetectAgentConfig {
   const config: AdDetectAgentConfig | null = adDetectAgentConfigCache.current;

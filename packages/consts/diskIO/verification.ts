@@ -12,19 +12,29 @@ export const VERIFICATION_TOP_LEVEL_ENTRY_PATTERN: RegExp = new RegExp(
 
 /** 午夜轮换失败后的固定重试间隔；正常每日触发由统一维护 cron 负责。 */
 export const VERIFICATION_ROLLOVER_RETRY_MS: number = 1_000;
-/** 追加条数或字节达到任一阈值时收敛为 active 快照，避免当天文件无限增长（字节阈值见 VERIFICATION_FILE_COMPACT_BYTES）。 */
+/**
+ * 跨日整理或收敛时，同一份最新旧日文件连续解码失败达到这个次数，就把它改名为损坏文件
+ * （见 VERIFICATION_CORRUPT_DAY_FILE_SUFFIX），新的一天直接按 active 镜像写入。
+ * 所属模块：workers/diskIO/verificationRecovery.ts。
+ */
+export const VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS: number = 3;
+/**
+ * 损坏旧日文件改名时追加的后缀：`<YYYY-MM-DD>.json` 改为 `<YYYY-MM-DD>.json.corrupt`。改名后不再以
+ * `.json` 结尾，启动恢复与旧日清理都不读也不删它，原样留给人工排查。所属模块：
+ * workers/diskIO/verificationRecovery.ts。
+ */
+export const VERIFICATION_CORRUPT_DAY_FILE_SUFFIX: string = ".corrupt";
+/** 追加条数或字节达到任一阈值时收敛为 active 快照（字节阈值见 VERIFICATION_FILE_COMPACT_BYTES）。 */
 export const VERIFICATION_FILE_COMPACT_ENTRIES: number = 10_000;
 /** 待验证当日文件触发 active 快照收敛的字节阈值。 */
 export const VERIFICATION_FILE_COMPACT_BYTES: number = 4 * 1024 * 1024;
 /**
- * 快照 label 字段的防御性长度上限。正常取值来自 Telegram username（≤32）、
- * first_name（≤64）或频道标题（≤128），远小于此值；这里只用于拒绝损坏/篡改
- * 文件，不代表业务预期长度。
+ * 快照 label 字段的防御性长度上限，只用于拒绝损坏/篡改文件，不代表业务预期长度。
  */
 export const VERIFICATION_LABEL_MAX_CHARS: number = 512;
 
 /**
- * 四种待验证记录共同允许的字段；codec 只读查表，不为每条恢复记录重建 Set。
+ * 各阶段待验证记录共同允许的字段；codec 只读查表，不为每条恢复记录重建 Set。
  * 所属模块：workers/diskIO/verificationCodec.ts。
  */
 export const VERIFICATION_BASE_RECORD_KEYS: ReadonlySet<string> = new Set([

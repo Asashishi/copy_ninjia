@@ -50,9 +50,9 @@ function isRawSuccess(response: unknown): response is Readonly<{
 }
 
 /**
- * 超级群的纯踢出由不带 only_if_banned 的 unbanChatMember 实现。一次 429 等待
- * 足以让人工管理员在期间封禁目标，所以每次重放前都必须重新确认目标仍在群；
- * 否则重放会把人工封禁解除。
+ * 超级群的纯踢出由不带 only_if_banned 的 unbanChatMember 实现；每次重放前先经
+ * getChatMember 确认目标仍在群，目标已是 left 或 kicked 时抛
+ * TelegramRetryPreconditionChangedError。
  */
 async function revalidateUnbanKickRetry(
   previous: PreviousCall,
@@ -180,9 +180,9 @@ export function resetRecoveryIfIdle(lane: TelegramRetryLane): void {
 }
 
 /**
- * 结算一个仍然 active 的任务。唯一调用方 handleActiveResponse 已在同一个同步
- * 片段里确认过状态，中间只隔一次纯读 header 的 telegramRetryAfterMilliseconds，
- * 因此这里不再重复判状态；非 active 的响应由那一处统一释放 body。
+ * 结算一个仍然 active 的任务。调用方 handleActiveResponse 已在同一个同步
+ * 片段里确认过状态，这里不再复判；非 active 的响应由 handleActiveResponse
+ * 统一释放 body。
  */
 function resolveActiveJob(job: TelegramOutboundJob, response: unknown): void {
   const wasRecovery: boolean = job.fromRetryQueue;
@@ -244,17 +244,16 @@ function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void
   }
   const lane: TelegramRetryLane = releaseActiveJob(job);
   if (job.signal.aborted) {
-    // 调用方在 429 回来的同时取消了（下载超时与退避撞在一起就是这个形态）：
-    // 这条响应既不重排也不外交，body 必须在这里释放。
+    // 调用方在 429 返回的同时取消：不重排也不交给调用方，在此释放 body。
     releaseResponseBody(response);
     job.state = "settled";
     detachAbortListener(job);
     job.reject(abortReason());
   } else if (enqueueRetryJob(job)) {
-    // 按接纳序号回到原有 FIFO 位置，由下一次尝试自己拿新响应，这一份丢弃。
+    // 按接纳序号回到原有 FIFO 位置，下一次尝试取新响应，本次响应丢弃。
     releaseResponseBody(response);
   } else {
-    // 队列已满：原样把 429 交给调用方，body 的所有权随之转移，这里不能释放。
+    // 队列已满：原样把 429 交给调用方，body 所有权随之转移，这里不释放。
     job.state = "settled";
     detachAbortListener(job);
     job.resolve(response);
@@ -421,7 +420,7 @@ export function runTelegramCategorizedRequest<T>(
 /**
  * 主线程唯一 Telegram 出站闸门。发送类（isTelegramMessageRequest）交给每聊天发送调度器
  * （./sendScheduler.ts）按 Telegram 公开限额主动控速、按聊天冻结 429；其余请求直接执行，
- * 不猜固定速率，某一类别真实收到 429 后，仅该类别按 retry_after 排队并渐进恢复。
+ * 某一类别真实收到 429 后，仅该类别按 retry_after 排队并渐进恢复。
  */
 export function telegramOutboundGate(): Transformer<RawApi> {
   // grammY 的 transformer 固定为四参数泛型回调，参数类型由 Transformer 完整约束。

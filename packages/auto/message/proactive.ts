@@ -34,9 +34,7 @@ async function replyToBathTrigger(
     chatId: message.chat.id,
     text: BATH_TRIGGER_REPLY_TEXT,
     replyToMessageId: message.message_id,
-    // 这条回复不挂延迟删除，会长期留在群里，因此必须自己带话题：只靠
-    // reply_parameters 的话，触发它的消息被删掉时整条回复会落进 General
-    // （同随机复读，见 SendMessageParams.messageThreadId）。
+    // 这条回复长期留在群里，自带话题（同随机复读，见 SendMessageParams.messageThreadId）。
     messageThreadId: forumTopicThreadId(message),
   });
   if (aiChatEnabled && sentMessageId !== undefined) {
@@ -51,7 +49,7 @@ async function replyToBathTrigger(
 
 /**
  * 洗澡触发和随机复读；仅由无活动复制目标的非私聊流水线调用。AI 开启时
- * 仍保留洗澡关键词响应，但禁用随机复读，避免两套随机插话机制同时运行。
+ * 保留洗澡关键词响应，禁用随机复读。
  */
 export function handleProactiveMessageActions({
   message,

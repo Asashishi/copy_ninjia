@@ -66,7 +66,7 @@ export function writeBufferFullySync(
 
 /**
  * 可持久化的原子文件操作。写入遵循“同目录唯一临时文件 -> fsync -> rename ->
- * 父目录 fsync”，避免进程崩溃后留下半份目标文件，并保证目录项已落盘。
+ * 父目录 fsync”，目标文件不会是半份内容，目录项落盘后才返回。
  */
 
 const UTF8_ENCODER: TextEncoder = new TextEncoder();
@@ -81,7 +81,7 @@ function temporaryPath(path: string): string {
 
 /**
  * 同步 path 所在目录的目录项，让此前的 rename/link/unlink 在掉电后仍可见。
- * 导出供 hard link 协议（infra/storage/instanceLock.ts）复用，不要另抄一份。
+ * 导出供 hard link 协议（infra/storage/instanceLock.ts）复用。
  */
 export async function syncDirectory(path: string): Promise<void> {
   const handle: FileHandle = await open(dirname(path), "r");
@@ -105,12 +105,11 @@ export function syncDirectorySync(path: string): void {
 type AtomicSyncWriter = (fd: number) => number;
 
 /**
- * 同步原子写的公共生命周期。writer 返回已经写入的字节数，异常统一走
- * close + unlink，避免文本与分块写各自维护一套容易漂移的失败路径。
+ * 同步原子写的公共生命周期，文本与分块写共用。writer 返回已经写入的字节数，
+ * 异常统一走 close + unlink。
  *
  * 权限接管与 atomicWriteText 同口径：已有目标始终沿用部署方当前权限，`mode`
- * 只作为首次创建的默认值。否则调用方为了给新文件指定 0644，会在下一次普通
- * 写入时把部署方主动收紧到 0600/0640 的文件静默放宽。
+ * 只作为首次创建的默认值。
  */
 function atomicWriteSync(
   path: string,
@@ -123,16 +122,15 @@ function atomicWriteSync(
   let writtenBytes: number;
   try {
     writtenBytes = writer(fd);
-    // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前
-    // 显式设回要求的最终权限，避免目标曾短暂以 0600 出现。
+    // open(2) 的 mode 受进程 umask 约束；在临时文件 rename 可见之前显式设回最终权限。
     if (targetMode !== undefined) fchmodSync(fd, targetMode);
     fsyncSync(fd);
   } catch (error: unknown) {
     try {
       closeSync(fd);
     } catch {
-      // closeSync 若也抛错不能让它盖过原始写入错误（下面 throw error 抛的
-      // 仍是 write/fsync 失败），否则会跳过 unlinkSync 清理、留下孤儿 .tmp。
+      // closeSync 的错误不覆盖原始写入错误（下面 throw error 抛的仍是 write/fsync 失败），
+      // 也不跳过 unlinkSync 清理。
     }
     try {
       unlinkSync(tmpPath);
@@ -180,8 +178,7 @@ function currentFileModeSync(path: string): number | undefined {
 
 /**
  * 读出目标文件当前的权限位；文件还不存在时返回 undefined（首次创建没有可
- * 沿用的权限，交给 open 的默认值）。ENOENT 之外的失败不吞：那时紧接着的
- * open 同样写不进去，谎报「没有权限可沿用」只会把真正的错误推迟一步。
+ * 沿用的权限，交给 open 的默认值）。ENOENT 之外的失败原样抛出。
  */
 async function currentFileMode(path: string): Promise<number | undefined> {
   try {
@@ -195,9 +192,8 @@ async function currentFileMode(path: string): Promise<number | undefined> {
 /**
  * 原子替换文本文件，并同步文件数据和父目录项。
  *
- * 权限必须显式接管：临时文件是新建的，`0666 & ~umask`（常见 0644）与目标
- * 原有的权限没有任何关系，而 rename 直接把它替换上去。已有目标始终沿用
- * 当前权限；`mode` 只给首次创建指定默认值。同步版 atomicWriteSync 口径一致。
+ * 权限显式接管：已有目标始终沿用当前权限，`mode` 只给首次创建指定默认值。
+ * 同步版 atomicWriteSync 口径一致。
  */
 export async function atomicWriteText(path: string, content: string, mode?: number): Promise<void> {
   const targetMode: number | undefined = (await currentFileMode(path)) ?? mode;
@@ -205,8 +201,8 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
   const handle: FileHandle = await open(tmpPath, "wx", targetMode);
   try {
     await Bun.write(Bun.file(handle.fd), content);
-    // open(2) 的 mode 会被进程 umask 收紧。在临时文件尚未 rename 可见前显式
-    // 设回要求的最终权限，同 atomicWriteSync。
+    // open(2) 的 mode 受进程 umask 约束；在临时文件 rename 可见之前显式设回最终权限，
+    // 同 atomicWriteSync。
     if (targetMode !== undefined) await handle.chmod(targetMode);
     await handle.sync();
   } catch (error: unknown) {
@@ -217,8 +213,7 @@ export async function atomicWriteText(path: string, content: string, mode?: numb
   try {
     await handle.close();
   } catch (error: unknown) {
-    // close() 本身失败：不能再假设 tmp 文件完好可用，按失败路径清理，
-    // 不尝试 rename——否则 close 抛错时会跳过下面的清理，留下孤儿 .tmp。
+    // close() 本身失败：按失败路径清理，不尝试 rename。
     await Bun.file(tmpPath).delete().catch((): undefined => undefined);
     throw error;
   }

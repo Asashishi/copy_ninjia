@@ -17,10 +17,7 @@ function pruneEntry(entry: AiReplyActivityEntry, now: number): void {
   entry.timestamps.trim(AI_REPLY_ACTIVITY_WINDOW_MS, now);
 }
 
-/**
- * 满载插入新群时扫描固定上限的表并淘汰 LRU。把 O(AI_REPLY_ACTIVITY_MAX_CHATS) 的工作留在
- * 缓存 miss 冷路径，避免每条已有群消息通过 Map delete/set 制造短命桶对象。
- */
+/** 满载插入新群时扫描表并淘汰访问序号最小的群；扫描只在缓存 miss 的冷路径执行，命中路径不重排 Map。 */
 function evictLeastRecentlyUsedActivityEntry(): void {
   let oldestChatId: number | undefined;
   let oldestSequence: number = Number.POSITIVE_INFINITY;
@@ -43,10 +40,7 @@ function storeActivityEntry(
   aiReplyActivityByChat.set(chatId, entry);
 }
 
-/**
- * 清理已空闲满一小时的群。只有全局单 timer 调用这个 O(AI_REPLY_ACTIVITY_MAX_CHATS)
- * 扫描；每条消息的热路径只修剪它自己的队列。导出便于边界测试。
- */
+/** 修剪各群队列并删除窗口内已无时间戳的群；仅由全局单 timer 调用，消息热路径只修剪自己群的队列。导出供边界测试。 */
 export function sweepAiReplyActivity(now: number = Date.now()): void {
   for (const [chatId, entry] of aiReplyActivityByChat) {
     pruneEntry(entry, now);
@@ -96,7 +90,7 @@ export function observeGroupMessageForAiReply(chatId: number, now: number = Date
       lastObservedAt: now,
     };
   } else {
-    // Date.now() 因系统校时短暂回退时仍保持队列单调，避免过期修剪失序。
+    // 系统时钟回退时 now 取 lastObservedAt，队列时间戳保持单调。
     now = Math.max(now, entry.lastObservedAt);
     pruneEntry(entry, now);
   }

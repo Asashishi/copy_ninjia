@@ -22,20 +22,16 @@ export interface FetchJsonWithTimeoutParams {
   input: string | URL;
   init: RequestInit;
   timeoutMs: number;
-  /**
-   * 出现在错误日志里的接口名（如「Open-Meteo API」），用于区分是哪次调用
-   * 出的错。
-   */
+  /** 出现在错误日志里的接口名（如「Open-Meteo API」）。 */
   errorLabel: string;
 }
 
 /**
- * 带超时和响应体硬上限的 JSON API 请求。成功/失败正文都经过同一个流式
- * bounded reader，不能因缺失或伪造 Content-Length 而无界占用内存。请求
- * 失败、调用方取消、超时、超限、非法 JSON 或非 2xx 时返回 null，具体 JSON 形状校验
- * 交给调用方；调用方取消不是接口故障，不记错误日志。请求地址必须命中 JSON_API_ALLOWED_ORIGINS，且禁止自动跟随
- * 重定向，避免可信服务把通用请求能力转交给未经允许的目标。Telegram 头像
- * 爬取使用独立的 HTML/图片下载链路，不受此 JSON API 列表约束。
+ * 带超时和响应体上限（JSON_API_MAX_RESPONSE_BYTES）的 JSON API 请求。成功与失败正文
+ * 都经过同一个流式 bounded reader，不依赖 Content-Length。请求失败、调用方取消、
+ * 超时、超限、非法 JSON 或非 2xx 时返回 null，具体 JSON 形状校验交给调用方；
+ * 调用方取消不记错误日志。请求地址必须命中 JSON_API_ALLOWED_ORIGINS，且不跟随
+ * 重定向。Telegram 头像爬取使用独立的 HTML/图片下载链路，不受此 JSON API 列表约束。
  */
 export async function fetchJsonWithTimeout({
   input,

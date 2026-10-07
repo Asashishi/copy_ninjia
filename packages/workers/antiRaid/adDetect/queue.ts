@@ -3,42 +3,38 @@
  *
  * 节奏由两道闸共同决定：
  * - 队列**只排发送者的键**（`chatId:userId`），消息串挂在 map 里。同一个人在
- *   等待期间新说的话直接并进他那一串，不会在队列里占第二个位置——「已取得一个
+ *   等待期间新说的话直接并进他那一串，不在队列里占第二个位置；「已取得一个
  *   待派发位置」由 queuedAdDetectKeys 独家表达，与队列同步增删，出队即释放。
  *   送检期间的新消息仍并串，由 inFlight 阻止并发，结算后把未判水位恰好重排一次。
  * - 调度器每 AD_DETECT_QUEUE_TICK_MS 从队首取至多 AD_DETECT_BATCH_SIZE 个键，
  *   一起 Promise.allSettled。这道闸是**整条线程的总量、不按群分配**：队列只有
  *   一条，各群的键混排走 FIFO，取键时不看 chatId。
- * 两道闸叠起来的效果是：刷屏的人吃不光额度，正常聊天的人不必等在他后面，而
  * 一次判定看到的是该 key 派发前已经并入的完整批次，而不是逐条并发送检。
  *
  * **节拍不做任何全表扫描**：这一拍取到的键顺路裁一次已判上下文，处置抑制记录
- * 读到即回收、容量由 setBoundedMapValue 顶住，其余到期记录交给 5 分钟一次的
- * sweepAdDetect。待派发所有权只由 queuedAdDetectKeys 与队列同步表达。
+ * 读到即回收、容量由 setBoundedMapValue 顶住，其余到期记录交给维护 sweep
+ * （sweepAdDetect）。待派发所有权只由 queuedAdDetectKeys 与队列同步表达。
  *
- * 90 秒只约束处置抑制与已经消费的上下文：尚未判定的条目无论排队多久都不能
- * 过期；已判过的上下文暂留一个窗口，与后续拆开发的「加我 / 微信 / xxx」合并。
- * checkedSeq 记录已经消费到哪里，只有还有更大序号时才值得重新入队。
+ * AD_DETECT_JUDGED_RETENTION_WINDOW_MS 只约束处置抑制与已经消费的上下文：尚未判定的
+ * 条目无论排队多久都不过期；已判过的上下文暂留一个窗口，与后续拆开发的
+ * 「加我 / 微信 / xxx」合并。checkedSeq 记录已经消费到哪里，只有还有更大序号时才重新入队。
  *
  * **速率**：出队即释放待检位置、结算即补排，所以一个持续发言的人稳态是每
- * 「1 秒节拍 + 一次分类往返」判一次（约 3~4 秒），不是每 90 秒一次。全线程的
- * 上界只由 AD_DETECT_MAX_IN_FLIGHT（95）与每拍 AD_DETECT_BATCH_SIZE（35）封顶，
- * 即最坏约 35 次/秒的新建请求、95 个并发在途；几百人同时刷屏时这两道闸会长期
- * 顶格，这是设计意图而不是故障。调 provider 配额看这两个数，不要看 90 秒窗口。
+ * 「一个节拍 + 一次分类往返」判一次，而不是每个保留窗口一次。全线程的
+ * 上界只由 AD_DETECT_MAX_IN_FLIGHT 与每拍 AD_DETECT_BATCH_SIZE 封顶；几百人同时刷屏时
+ * 这两道闸会长期顶格。调 provider 配额看这两个常量，不看保留窗口。
  *
  * 判定失败（网络抖动、模型抽风、响应形状不对）一律当作「本次没判定」并把这
- * 一批记成已检：绝不猜一个 true 出来，也绝不无限重试——后者在 provider 侧
- * 故障时会把上面那个 35 次/秒的新建上界一直顶满，等于把一次故障放大成持续
- * 的请求风暴（判定与处置的编排本身在 verdict.ts）。
+ * 一批记成已检：不猜 true，也不重试（判定与处置的编排本身在 verdict.ts）。
  *
  * 本文件是这条链路的入口与节拍：`enqueueAdCandidate` 收下一条消息，
  * `runAdDetectBatch` 每拍派发一批，其余是 quiesce、清群、维护 sweep 与启停。
  * 接纳侧的判定——排队认领、容量接纳、处置抑制读取、饱和边沿记账——收在
- * queueState.ts，本文件一律调用它，不自己重写那几条判据；派发出队与 teardown
- * 清表是队列自身的调度语义，仍在本文件直接操作那几张表。
+ * queueState.ts，本文件调用它；派发出队与 teardown 清表是队列自身的调度语义，
+ * 在本文件直接操作那几张表。
  *
  * 状态全在 cache/workers/antiRaid/adDetect.ts，随 Worker isolate 生死；崩溃重建后队列
- * 清空，主线程不做镜像（判定是尽力而为的启发式，不构成安全边界）。
+ * 清空，主线程不做镜像。
  */
 
 import { deleteStragglerAdMessage } from "./disposal";
@@ -141,8 +137,8 @@ export function enqueueAdCandidate(
   now: number = message.observedAt
 ): void {
   const existing: AdMessageBundle | undefined = pendingAdBundle(message.chatId, message.senderId);
-  // 普通账号没有频道尾随消息要删：pending 已满时接不进新 bundle，先于处置抑制
-  // 表查询返回。频道马甲仍须继续查 recentlyDisposed，命中时要删除这条抢跑广告。
+  // pending 已满时普通账号接不进新 bundle，先于处置抑制表查询返回；频道马甲仍须
+  // 查 recentlyDisposed，命中时删除这条抢跑广告。
   if (
     existing === undefined &&
     !message.blocked &&
@@ -154,16 +150,15 @@ export function enqueueAdCandidate(
   let key: string | undefined = existing?.key;
   const recentlyDisposed: boolean = recentlyDisposedAdKeys.size > 0 &&
     hasActiveAdDisposalMarker(key ??= verificationKey(message.chatId, message.senderId));
-  // 新普通 key 满载时不可以先分配清洗正文、URL 串和引用上下文。
-  // blocked/recentlyDisposed 的频道马甲例外必须继续读正文，非空时要删掉尾随广告。
+  // 新普通 key 满载时不分配清洗正文、URL 串和引用上下文；
+  // blocked/recentlyDisposed 的频道马甲例外，继续读正文，非空时删掉尾随广告。
   if (
     existing === undefined &&
     !message.blocked &&
     !recentlyDisposed &&
     rejectNewAdBundleAtCapacity()
   ) return;
-  // 裁剪提到接纳判定之前：下面那道引文去重要按「裁完之后这一串还剩哪些条目」算，
-  // 否则会把一段引文认领给本次就要被回收的 entry，新来的这条跟着丢掉它。
+  // 裁剪在接纳判定之前：下面的引文去重按裁完之后串里剩下的条目计算。
   if (existing !== undefined) pruneConsumedContext(existing, now);
   // 管理员闸排在正文清洗之前（判据见 states/adDetectAdmission.ts 的
   // isKnownAdminCandidate）。传本条消息的 now，让同一条消息的两处判定落在同一
@@ -172,20 +167,21 @@ export function enqueueAdCandidate(
     message.isChannel,
     freshAdminIds(message.chatId, now)?.has(message.senderId) === true
   )) return;
-  // 被引用段/被回复原文与正文一起送检：广告的主流形态是「先发正常消息 → 隔一段
-  // 时间编辑成广告 → 用回复/引用把它顶上来」，广告正文永远不在新消息的 text 里
+  // 被引用段/被回复原文与正文一起送检
   // （详见 bundle.ts 的 claimSampleContextParts，归因边界与跨条去重也写在那里）。
   const context: AdSampleContext | undefined =
     boundSampleContext(message.sampleQuote, message.sampleReplyTo);
-  // 按码元硬切会把切点落在代理对中间：留下的孤立高位代理进模型提示词时
-  // 被 UTF-8 编码换成 U+FFFD，还会原样写进 memory/ 的命中样本，运维复核误判时
-  // 看到的是乱码而不是对方真正发的那个字。与同管线的 classifier.ts 用同一个
-  // 代理对安全截断。
+  // truncateInline 按代理对安全截断，与同管线的 classifier.ts 一致。
   const textWithLinks: string = appendLinkUrls(
     truncateInline(message.text, AD_DETECT_MESSAGE_MAX_CHARS),
     message.linkUrls
   );
-  const senderName: string = message.isChannel ? "" : formatAdSenderName(message);
+  // 已有串且姓与名都没变时为串里已算好的送检姓名，否则为 undefined。
+  const knownSenderName: string | undefined =
+    existing?.meta.firstName === message.firstName && existing.meta.lastName === message.lastName
+      ? existing.senderName
+      : undefined;
+  const senderName: string = message.isChannel ? "" : knownSenderName ?? formatAdSenderName(message);
   const senderText: string = senderName.length === 0
     ? textWithLinks
     : textWithLinks.length === 0 ? senderName : `${senderName} ${textWithLinks}`;
@@ -198,10 +194,7 @@ export function enqueueAdCandidate(
     );
   const directText: string = message.isForwarded ? senderName : senderText;
   // 只重复已认领引文且姓名未变时没有新内容；改名则必须留下当次姓名重新送检。
-  const onlyKnownName: boolean = text === senderName &&
-    existing !== undefined && existing.entries.length > 0 &&
-    existing.meta.firstName === message.firstName &&
-    existing.meta.lastName === message.lastName;
+  const onlyKnownName: boolean = text === senderName && knownSenderName !== undefined && (existing?.entries.length ?? 0) > 0;
   // 投递闸（没有可判定正文、已拉黑或自己的 TTL 内刚处置过）收在
   // states/adDetectAdmission.ts 里；这里只执行结论。
   const decision: AdCandidateDecision = admitAdCandidate({
@@ -221,22 +214,23 @@ export function enqueueAdCandidate(
     chatId: message.chatId,
     senderId: message.senderId,
     meta: candidateIdentityMetadata(message),
+    senderName,
     isChannel: message.isChannel,
     justJoined: message.justJoined,
     entries: [],
     pendingDeleteIds: [],
+    pendingDeleteOverflowed: false,
+    uncheckedEvicted: false,
     nextSeq: 1,
     checkedSeq: 0,
   };
   if (existing !== undefined) {
-    // 昵称随时可改；播报要用最新的那个。元数据只在变化时重新组装，同一发送者的
-    // 后续消息不为它分配对象。
-    if (
-      bundle.meta.firstName !== message.firstName ||
-      bundle.meta.lastName !== message.lastName ||
-      bundle.meta.username !== message.username
-    ) bundle.meta = candidateIdentityMetadata(message);
-    // 取并集而不是覆盖：验证会在窗口内通过，先发广告后点验证的人不该洗白。
+    // 元数据取最新昵称，只在变化时重新组装；送检姓名随之换成本条算出的那个。
+    if (knownSenderName === undefined || bundle.meta.username !== message.username) {
+      bundle.meta = candidateIdentityMetadata(message);
+      bundle.senderName = senderName;
+    }
+    // justJoined 取并集。
     bundle.justJoined ||= message.justJoined;
   }
   const entry: AdCandidateEntry = {
@@ -250,8 +244,7 @@ export function enqueueAdCandidate(
     quote: context?.quote,
     replyTo: context?.replyTo,
   };
-  // 两段上下文已经并进上面的 text 参与判定；这里再留一份独立的，只服务命中
-  // 样本——人回头查误判时要分得清哪一段是他自己写的、哪一段是引来的。
+  // 两段上下文已并进 text 参与判定；独立留一份，只服务命中样本。
   bundle.entries.push(entry);
   enforceBundleCapacity(bundle);
   if (existing === undefined) storeBundle(bundle);
@@ -261,14 +254,8 @@ export function enqueueAdCandidate(
 /**
  * 跑一个节拍：从队首取至多一批键并发送检。
  *
- * **刻意不登记进 Worker 的在途任务集合**（trackAntiRaidTask）：那个集合是停机
- * drain 的等待对象，而 drain 的预算是 ANTI_RAID_DRAIN_TIMEOUT_MS 这一档的秒级
- * 数值，一次判定请求却可以耗到分钟级——两个 provider 的请求超时
- * （AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS、AD_DETECT_GOOGLE_REQUEST_TIMEOUT_MS）都是
- * 每次 SDK 尝试各自的期限，还要乘上各自的 SDK 尝试次数与空正文重试。登记进去的话，
- * 凡是停机时恰好有一次判定在途，drain 必然超时——生命周期据此拒绝确认 Telegram
- * offset 并以非零状态退出，等于每次撞上都换来一次脏退出加一批 update 重投。
- * 判定是尽力而为的启发式，本来就不该扣着停机不放；真正不可丢的那一半
+ * **不登记进 Worker 的在途任务集合**（trackAntiRaidTask）：该集合是停机 drain 的
+ * 等待对象，在途判定不拖住 drain。判定是尽力而为的启发式；不可丢的那一半
  * （拉黑 + 各群封禁登记）在主线程，由 drainAntiRaid 每轮经 drainAdDisposals 等待
  * inFlightAdDisposals 收口（见 antiRaid/durableDelivery.ts、antiRaid/adDetect.ts）。
  * @returns 本批全部结算的 Promise；调用方（节拍与测试）自行决定要不要等。
@@ -277,30 +264,26 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
   const tasks: Promise<void>[] = [];
   let saturated: boolean = false;
   for (let taken: number = 0; taken < AD_DETECT_BATCH_SIZE; taken++) {
-    // 全局在途闸（判定见 states/adDetectAdmission.ts）：判断排在 shift 之前——
-    // 先取出来再发现发不掉，那个键就从队列里消失了，而它未必还有下一条新消息
-    // 把自己重新排进来。
+    // 全局在途闸（判定见 states/adDetectAdmission.ts）排在 shift 之前，闸满时键留在队列里。
     if (isAdDispatchSaturated(inFlightAdDetectKeys.size)) {
       saturated = true;
       break;
     }
     const key: string | undefined = adDetectQueue.shift();
     if (key === undefined) break;
-    // 出队即释放待检位置：这一行和上面的 shift 是同一件事的两半，缺一半就会
-    // 让「谁在待检」出现两个互相矛盾的答案（见 docs/cn/04-invariants.md）。
+    // 出队即释放待检位置，与上面的 shift 成对（见 docs/cn/04-invariants.md）。
     queuedAdDetectKeys.delete(key);
     const bundle: AdMessageBundle | undefined = pendingAdBundleForKey(key);
     if (bundle === undefined) continue;
-    // 顺手裁掉窗口外的已判上下文。这一拍取到的键都在这里过一遍，因此不需要
-    // 任何按秒跑的全表回收；排在 35 名之后的键等轮到自己或 5 分钟 sweep。
+    // 顺手裁掉窗口外的已判上下文；未取到的键等轮到自己或维护 sweep。
     pruneConsumedContext(bundle, now);
     if (bundle.entries.length === 0) {
       deletePendingAdBundle(bundle.chatId, bundle.senderId);
       refreshAdDetectCapacitySaturation();
       continue;
     }
-    // 防御性复核：requeueIfUnchecked 保证在途的键不会同时排在队列里，正常路径不会走到
-    // 这里；万一走到，让在途的那次自己收尾并重新入队，同一个人不并发送检两次。
+    // 复核：requeueIfUnchecked 保证在途的键不会同时排在队列里，正常路径不会走到
+    // 这里；走到时由在途的那次自己收尾并重新入队，同一个人不并发送检。
     if (inFlightAdDetectKeys.has(key)) continue;
     // 整串都判过：这一拍没有要送检的内容。已判上下文留给 sweep 按窗口回收，
     // 期间新消息会自己重新排队。
@@ -317,8 +300,8 @@ export function runAdDetectBatch(now: number = Date.now()): Promise<void> {
 
 /**
  * 停机 quiesce：停掉批处理 timer，不再开始新的判定。在途的那一次照常自己收尾，
- * 但没有登记进在途任务集合，因此不会拖住 drain（见 runAdDetectBatch）。
- * 队列与消息串原样保留——它们随 isolate 一起消失，没必要在退出路径上多做清理。
+ * 但没有登记进在途任务集合，不会拖住 drain（见 runAdDetectBatch）。
+ * 队列与消息串原样保留。
  */
 export function quiesceAdDetectQueue(): void {
   adDetectStopping.current = true;
@@ -330,7 +313,7 @@ export function quiesceAdDetectQueue(): void {
 
 /**
  * 丢掉某个群尚未送检的消息串；在途的那一次由同一性检查自行作废。两张 TTL 表里
- * 属于这个群的键一并摘掉：留着只会让重新开启开关后的头一个 TTL 白白哑火。
+ * 属于这个群的键一并摘掉。
  */
 export function clearChatAdDetect(chatId: number): void {
   const prefix: string = verificationKeyPrefix(chatId);
@@ -366,13 +349,12 @@ export function clearIdentityAdDetect(identityId: number): void {
 }
 
 /**
- * 5 分钟一次的维护回收：裁掉窗口外已经消费完的上下文，删掉整串判完又不在
- * 排队/在途的空 bundle，并清理过期的处置抑制记录。未消费条目没有等待 TTL。
+ * 维护回收（挂在 Worker 的统一 sweep 节拍上）：裁掉窗口外已经消费完的上下文，
+ * 删掉整串判完又不在排队/在途的空 bundle，并清理过期的处置抑制记录。未消费条目没有等待 TTL。
  *
- * 还留着未判内容的消息串在这里补排一次：既不在队列、也不在途的 bundle 没有
- * 其它路径会把它排回去。
+ * 还留着未判内容、既不在队列也不在途的消息串在这里补排一次。
  * requeueIfUnchecked 自己会跳过已排队和在途的键，所以无条件调用是安全的；
- * 它兜的是异常态，不是常规调度路径——常规路径上补排由 detectOne 结算时发起。补排按待检表的
+ * 这里兜异常态，常规路径上的补排由 detectOne 结算时发起。补排按待检表的
  * 遍历顺序进队：群按首次建表顺序，群内按发送者首次入表顺序。
  */
 export function sweepAdDetect(now: number = Date.now()): void {
@@ -424,7 +406,6 @@ export function stopAdDetectQueue(): void {
   inFlightReferencedAdCleanupTasks.clear();
   adDetectSaturated.current = false;
   adDetectCapacitySaturated.current = false;
-  // stop 是「清掉全部状态」：quiesce 那面旗要留着挡迟到的判定，走到 stop 时
-  // 状态已整体作废，旗一并归零，下一次 start 从干净状态起步。
+  // stop 清掉全部状态，quiesce 置位的 adDetectStopping 一并归零，下一次 start 从干净状态起步。
   adDetectStopping.current = false;
 }

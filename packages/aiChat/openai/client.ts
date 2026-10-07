@@ -4,12 +4,11 @@
  * 见同目录 image.ts；openai 语音协议走 audio/speech，见同目录 speech.ts；两者共用同一套
  * 按能力缓存的客户端。xai 语音协议不经 SDK，见 xaiSpeech.ts）。
  *
- * 收发走官方 openai SDK：超时与瞬时失败重试由 SDK 内建。客户端是线程内单例，
+ * 收发走官方 openai SDK：超时与瞬时失败重试由 SDK 内建。客户端按能力缓存在线程内的 holder 里，
  * Worker 崩溃重建后由 cache/workers/aiChat/openai.ts 的空 holder 重新构造。
  * token 与检索次数经 infra/aiCacheUsage.ts 按同一响应上报。
  *
- * 使用 Responses API：回复流水线的联网查证依赖 hosted 的 web_search 内建工具，
- * 它只在 Responses 上提供。
+ * 使用 Responses API，联网检索挂 hosted 的 web_search 内建工具。
  */
 
 import OpenAI from "openai";
@@ -41,8 +40,8 @@ import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
 
 /**
- * 按能力取得 OpenAI 客户端。每项能力的 api_key/base_url 独立，避免同端点但不同
- * 凭据时复用错误的认证状态；timeout/maxRetries 是每次请求各自的预算。
+ * 按能力取得 OpenAI 客户端。每项能力的 api_key/base_url 独立，各持一个客户端；
+ * timeout/maxRetries 是每次请求各自的预算。
  */
 export function getOpenAiClient(capability: AgentCapability): OpenAI {
   return capabilityClient({
@@ -75,18 +74,17 @@ export interface OpenAiRequestOptions {
   readonly buildBody: () => OpenAI.Responses.ResponseCreateParamsNonStreaming;
   readonly errorLabel: string;
   readonly signal?: AbortSignal;
+  /** 回复会话创建时固定的客户端；缺省时在 try 内按 capability 现取（getOpenAiClient）。 */
+  readonly client?: OpenAI;
 }
 
 /**
  * 调一次 Responses 接口。请求失败、超时、非 2xx 或产出不可用返回带诊断的
- * 失败结果（已记日志）；被 max_output_tokens 腰斩的静默失败点名记下来，
- * 否则上层只能看到「没产出」，查不到原因。
- * @param buildBody 就地构造完整请求体，直接使用官方 SDK 的参数类型，SDK 升级
- *   造成的字段漂移会在编译期暴露。收的是构造器而不是构造好的对象，因为模型名
- *   与端点来自 config/dynamic/agent.json 的对应能力（见 config/agent.ts），配置写坏时解析
- *   会抛：构造放在调用方就意味着异常绕过本函数的 try、直接掀掉整轮回复，上层
- *   为 `ok:false` 准备的诊断与降级路径一条都走不到，运维只看得见 bot 不说话。
- * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
+ * 失败结果（已记日志）；被 max_output_tokens 截断的响应另记一条 token 诊断日志。
+ * @param buildBody 就地构造完整请求体，直接使用官方 SDK 的参数类型。构造发生在本函数的
+ *   try 内，抛错（如 config/dynamic/agent.json 缺对应能力，见 config/agent.ts）按
+ *   `failureKind: "request"` 归一。
+ * @param errorLabel 出现在错误日志里的调用名。
  * @param signal 调用方的取消信号；与本函数合成的 deadline 一起下传，中止时
  *   同步阻止后续请求并结束调用方的等待。
  */
@@ -95,20 +93,21 @@ export async function requestOpenAiResult({
   buildBody,
   errorLabel,
   signal,
+  client,
 }: OpenAiRequestOptions): Promise<OpenAiRequestResult> {
   let body: OpenAI.Responses.ResponseCreateParamsNonStreaming;
   let response: OpenAI.Responses.Response;
   try {
     signal?.throwIfAborted();
     body = buildBody();
-    // SDK 的 timeout 是每次尝试各自的期限。同一份合成 signal 同时交给
-    // SDK 与外层等待：网络层据此停止后续尝试，调用方则在整轮 deadline
-    // 到期或上游取消时立即结算，不受 SDK 内部退避计时器影响。
+    // SDK 的 timeout 是每次尝试各自的期限；同一份合成 signal 同时交给
+    // SDK 与外层等待：网络层据此停止后续尝试，调用方在整轮 deadline
+    // 到期或上游取消时立即结算。
     const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_REQUEST_TIMEOUTS_MS[capability]);
     requestSignal.throwIfAborted();
     const model: string = String(body.model);
     response = await raceAbortOrThrow(
-      getOpenAiClient(capability).responses.create(body, { signal: requestSignal })
+      (client ?? getOpenAiClient(capability)).responses.create(body, { signal: requestSignal })
         .then((result: OpenAI.Responses.Response): OpenAI.Responses.Response => {
           reportAiCacheUsage({
             capability, provider: "openai", model,
@@ -144,9 +143,8 @@ export async function requestOpenAiResult({
 
   if (isTruncatedByTokenLimit(response)) {
     // 带 `status: "incomplete"` 的截断响应由下面的 abnormalResponseDiagnostic 判为不可用，
-    // 哪怕带着半句正文也整份丢弃；推理型模型更容易在思考阶段就烧光额度、正文为空。
-    // 不管有没有部分正文都额外记一条 token 诊断，方便观测这类「中途夭折」的频率。
-    // 口径同 aiChat/gemini/client.ts 的 MAX_TOKENS 分支。
+    // 带部分正文也整份丢弃；此处额外记一条 token 诊断，口径同
+    // aiChat/gemini/client.ts 的 MAX_TOKENS 分支。
     logger.error(
       `${errorLabel} response was truncated by max_output_tokens ` +
       `(hasPartialText=${responseOutputText(response).length > 0}, ` +
@@ -179,7 +177,7 @@ export interface OpenAiTextRequestOptions {
 
 /**
  * 请求一段需要业务侧清洗的 OpenAI 文本，并把跨请求重试边界显式带回调用方。
- * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
+ * HTTP/网络失败已经由 SDK 重试，调用方不得再次发完整请求；只有
  * HTTP 成功但产出异常或清洗后正文为空时，才允许按领域策略重新采样。
  */
 export async function requestOpenAiTextResult({

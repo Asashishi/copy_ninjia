@@ -80,12 +80,10 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
 }));
 mock.module("../../packages/infra/telegram/actions", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,
-  // 黑名单秒踢与新晋管理员清扫用的，本文件不触发（名单为空），但整份模块
-  // 被替换掉时缺了它们会在 import 阶段就报 Export not found。
+  // 黑名单秒踢与新晋管理员清扫用的，本文件不触发（名单为空）；整份模块被替换时需要提供这些导出。
   banChatMember: async (): Promise<boolean> => true,
   banChatSenderChat: async (): Promise<boolean> => true,
   deleteMessageWithOutcome: async (): Promise<"deleted"> => "deleted",
-  isChatMember: async (): Promise<boolean> => true,
   // 广告处置的群内播报用的，同理。
   sendMessage: async (): Promise<number | undefined> => undefined,
   deleteMessageAfter: (): void => {},
@@ -96,17 +94,15 @@ mock.module("../../packages/infra/telegram/client", () => ({
   telegramApi: { kind: "main-thread-test-api" },
 }));
 mock.module("../../packages/infra/telegram/lockdownPermissions", () => ({ restoreLockdownInvitePermission }));
-// JOIN_WINDOW_MS 原样透出：秒踢路径的入群计数去重用它当窗口宽度
-// （见 antiRaid/blocklistGuard.ts），整份模块被替换掉时缺了会在 import 阶段报错。
+// JOIN_WINDOW_MS 原样透出：秒踢路径的入群计数去重用它当窗口宽度（见 antiRaid/blocklistGuard.ts）；整份模块被替换时需要提供。
 mock.module("../../packages/consts/antiRaid/lockdown", () => ({ RESTORE_RETRY_MS: 5, JOIN_WINDOW_MS: 60_000 }));
 mock.module("../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,
-  // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
+  // ingress 的同步快路径读它；未确证时返回 undefined，退回上面那次现查。
   cachedBotAdminStatus: (): true => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
-  // 权限位镜像的注册与按需补齐；本文件不触发，但整份模块被替换掉时缺了
-  // 会在 import 阶段就报 Export not found。
+  // 权限位镜像的注册与按需补齐；本文件不触发，整份模块被替换时需要提供这些导出。
   registerBotPermissionObserver: (): void => {},
   botCanDeleteMessagesIn: (): undefined => undefined,
 }));
@@ -193,8 +189,7 @@ export { chatIsSupergroupById } from "../../packages/cache/main/antiRaid/chatKin
 /**
  * 被测的 packages/antiRaid 由各用例文件自行 `await import` 后注入。
  *
- * 助手模块不能自己 await import 依赖替身的模块：Bun 会让它的导出停在 TDZ
- * （实测 `Cannot access 'x' before initialization`）。上面那些 cache/main/antiRaid
+ * 助手模块不自己 await import 依赖替身的模块；上面那些 cache/main/antiRaid
  * 纯状态模块不依赖任何替身，静态导入即可。
  */
 export interface AntiRaidMirrorDeps {

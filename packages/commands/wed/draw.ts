@@ -8,7 +8,7 @@ import { removeWedMemberFromAllChats } from "./persistence";
 
 /**
  * getChat 以私聊资料核实过的候选转成图注与提及实体要用的 User；其它身份返回 undefined。
- * 候选 ID 只来自以个人身份发言的非机器人用户（commands/wed/members.ts），因此 is_bot 恒为 false。
+ * 候选 ID 只来自以个人身份发言的非机器人用户（commands/wed/members.ts），is_bot 恒为 false。
  */
 function privateChatUser(identity: AvatarIdentity): User | undefined {
   if (!("type" in identity) || identity.type !== "private") return undefined;
@@ -25,14 +25,14 @@ function privateChatUser(identity: AvatarIdentity): User | undefined {
  * 在有界候选快照中无放回随机抽取；更换时排除当前结果，失败不改写会话。
  *
  * 候选信源只有 memory/wed 的已发言成员 ID 集合：抽中后只按 ID 读当前头像，身份（图注和公开
- * 头像兜底都要用）取自同一次 getChat 返回的私聊资料，不发 getChatMember，因此不要求机器人是
+ * 头像兜底都要用）取自同一次 getChat 返回的私聊资料，不发 getChatMember，不要求机器人是
  * 群管理员。不判断是否仍在群；getChat 明确找不到的裸 ID 从所有群集合移除，新发言可重新加入。
  * 其余离群成员由退群事件和每日复核清理，见
  * commands/wed/members.ts 与 commands/wed/memberReview.ts；机器人不是群管理员时两者都
- * 不完整，已离群的人仍会被抽中，这是既定行为，见 docs/cn/04-invariants.md。
+ * 不完整，已离群的人仍可能被抽中，见 docs/cn/04-invariants.md。
  * 只有确认没有可用头像（含 getChat 核实出来不是私聊用户或找不到私聊）才消耗 WED_DRAW_ATTEMPTS；
  * 查询没跑完不占配额，累计 WED_DRAW_TRANSIENT_LIMIT 次即放弃本轮。
- * signal 是**抽取阶段**自己的预算，与投递阶段各算各的，见 commands/wed.ts 的
+ * signal 是抽取阶段自己的预算，与投递阶段各算各的，见 commands/wed.ts 的
  * operationSignal。预算耗尽、群 teardown 和停机取消同样返回 undefined，调用方按
  * signal 的取消来源决定回执还是静默。
  */

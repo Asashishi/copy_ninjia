@@ -1,6 +1,6 @@
 import type { CommandTargetMessages } from "../../../types/commands";
 
-/** `/info` 的字段标签与提示（普通风格）；回执与提示都在 30 秒后删除。 */
+/** `/info` 的字段标签与提示（普通风格）；回执与提示按统一命令消息清理延迟删除。 */
 export const INFO_TEXTS: Readonly<{
   nameLabel: string;
   usernameLabel: string;

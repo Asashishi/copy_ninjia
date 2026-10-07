@@ -5,9 +5,8 @@ import { loggerStub } from "../helpers/loggerMock";
 import type { DiskIORecoveryTransport, DiskIORespawnListener } from "../../packages/types/diskIO/messages";
 
 /**
- * mock.module 必须在任何真实 import 之前调用（静态 import 会被提升，所以下面
- * 全部用动态 import 拿到被 mock 过的版本）。diskIO 模块导入已无副作用，
- * 这里仍替换其进程级单例桥，才能精确断言落盘消息并模拟 Worker 重建。
+ * mock.module 必须在任何真实 import 之前调用（静态 import 会被提升，所以下面全部用动态 import 取被 mock 过的版本）。
+ * 这里替换 diskIO 模块的进程级单例桥，用来精确断言落盘消息并模拟 Worker 重建。
  */
 // 返回值语义与真实 postDiskIO 一致：Worker 收下为 true。promotePendingDraw
 // 判这个返回值，false 时点名记一行（见 commands/luckChallenge/cache.ts）。
@@ -15,7 +14,6 @@ let postDiskIOAccepted: boolean = true;
 const postDiskIOMock = mock((..._args: unknown[]): boolean => postDiskIOAccepted);
 const onDiskIORespawnMock = mock((..._args: unknown[]): void => {});
 const onLuckAppendStalledMock = mock((..._args: unknown[]): void => {});
-const relayLogMessageMock = mock((..._args: unknown[]): boolean => true);
 const logApiErrorMock = mock((..._args: unknown[]): void => {});
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 const loggerWarnMock = mock((..._args: unknown[]): void => {});
@@ -42,18 +40,14 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO: postDiskIOMock,
   onDiskIORespawn: onDiskIORespawnMock,
   onDiskIOReply: diskIOReplyStub({ luckAppendStalled: onLuckAppendStalledMock }),
-  relayLogMessage: relayLogMessageMock,
   ensureLuckReceiptSecret: ensureLuckReceiptSecretMock,
 })));
 
-// 跨配置时区的零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）
-// 时 getDateKey 走真实实现，其余测试完全不受影响。
-// 两个坑（都是本 bun 版本 mock.module 的行为）决定了必须写成这个形状：
-// 1. 真实模块必须先展开成普通对象快照再 mock——mock.module 之后，已经取得的
-//    模块命名空间引用会被追溯重绑定到 mock 本身，工厂里引用它会在加载期
-//    死锁或调用期无限递归；普通对象持有的真实函数引用不受重绑定影响。
-// 2. 对同一模块的 mock.module 二次注册不会覆盖第一次（装上摘不掉），所以
-//    不能拆成独立测试文件各自 mock，只能单文件内做开关式透传。
+// 跨配置时区的零点专项测试用的日期开关：mockTodayOverride 为 null（默认与收尾）时 getDateKey 走真实实现。
+// mock.module 的两个行为决定了这个形状：
+// 1. 真实模块先展开成普通对象快照再 mock：mock.module 之后，已取得的模块命名空间引用会被追溯重绑定到 mock 本身，
+//    工厂里引用它会在加载期死锁或调用期无限递归；普通对象持有的真实函数引用不受重绑定影响。
+// 2. 对同一模块的 mock.module 二次注册不覆盖第一次，所以在单文件内做开关式透传，不拆成独立测试文件各自 mock。
 let mockTodayOverride: string | null = null;
 const realTime = { ...(await import("../../packages/libs/time")) };
 mock.module("../../packages/libs/time", () => ({
@@ -70,6 +64,7 @@ const { inlineResultSourceOf } = await import("../../packages/infra/inlineResult
 const cache = await import("../../packages/cache/main/luckChallenge");
 const {
   DAILY_LUCK_CACHE_MAX,
+  LUCK_INLINE_NO_DRAW_CACHE_SECONDS,
   LUCK_TIERS,
   RATE_LIMIT_MAX_CALLS_PER_WINDOW,
 } = await import("../../packages/consts/luckChallenge");
@@ -157,18 +152,24 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(logApiErrorMock).toHaveBeenCalledWith("answer rate-limited luck inline query", error);
   });
 
-  test("刷新日缓存失败时，内联查询与选中确认都记录错误后返回", async () => {
+  test("刷新日缓存失败时，内联查询记录错误并应答空结果，选中确认记录错误后返回", async () => {
     const error = new Error("disk I/O unavailable");
     ensureLuckReceiptSecretError = error;
     mockTodayOverride = "2030-01-02";
     try {
-      const ctx = makeInlineCtx(103, "");
+      const answers: { results: unknown[]; options: unknown }[] = [];
+      const ctx = {
+        ...makeInlineCtx(103, ""),
+        answerInlineQuery: async (results: unknown[], options: unknown): Promise<void> => {
+          answers.push({ results, options });
+        },
+      };
       await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
       await luckChallenge.handleLuckChosenInlineResult({
         chosenInlineResult: { result_id: "luck-fortune", from: { id: 103 }, query: "" },
       } as any);
 
-      expect(ctx.results).toHaveLength(0);
+      expect(answers).toEqual([{ results: [], options: { cache_time: LUCK_INLINE_NO_DRAW_CACHE_SECONDS, is_personal: true } }]);
       expect(logApiErrorMock).not.toHaveBeenCalled();
       expect(loggerErrorMock.mock.calls).toEqual([
         ["Failed to refresh luck cache for inline query:", error],
@@ -180,8 +181,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("cache key 解不开的恶意回执走完确认链路并正常 resolve", async () => {
-    // 签名部分是合法的 32 字节，两道同步闸都能通过；cache key 部分构造成
-    // 长度 ≡ 1 (mod 4)，使 `Uint8Array.fromBase64` 对它抛 SyntaxError。
+    // 签名部分长度合法，两道同步闸都能通过；cache key 部分长度 ≡ 1 (mod 4)，使 `Uint8Array.fromBase64` 对它抛 SyntaxError。
     const signaturePart: string = new Uint8Array(32).fill(0xab)
       .toBase64({ alphabet: "base64url", omitPadding: true });
     const receipt: string = `luck:v1:${getDateKey()}:AAAAA.${signaturePart}`;
@@ -197,7 +197,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
 
     const confirmation: Promise<void> | undefined =
       luckChallenge.confirmLuckDraw(text, entities as never);
-    // 两道同步闸都通过，确实进入了异步确认——否则这条用例什么也没覆盖到。
+    // 两道同步闸都通过，进入了异步确认。
     expect(confirmation).toBeDefined();
     await expect(confirmation).resolves.toBeUndefined();
     expect(postDiskIOMock).not.toHaveBeenCalled();
@@ -281,7 +281,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     const receiptUrl: string = entitiesOf(ctx.results[0])[1]!.url;
     const legacyReceipt: string = receiptUrl.slice("https://t.me/#luck-receipt=".length);
 
-    // 验签要求回执内嵌日期等于当天，日级密钥每天轮换，旧格式回执因此必然验证失败。
+    // 验签要求回执内嵌日期等于当天，日级密钥每天轮换。
     await luckChallenge.confirmLuckDraw(`${lines.join("\n")}\n${legacyReceipt}`);
     expect(postDiskIOMock).not.toHaveBeenCalled();
   });
@@ -298,8 +298,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("Worker 收不下落盘消息时点名记一行：这条抽签只在内存里", async () => {
-    // postDiskIO 在 Worker 已终止、或恢复握手期积压撑到硬顶时返回 false，
-    // 而它自己不打印任何东西，返回值必须由调用方判定。
+    // postDiskIO 在 Worker 已终止、或恢复握手期积压撑到硬顶时返回 false；它自己不打印日志，返回值由调用方判定。
     postDiskIOAccepted = false;
     const ctx = makeInlineCtx(444, "");
     await luckChallenge.handleLuckChallengeInlineQuery(ctx as any);
@@ -684,8 +683,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
     expect(postDiskIOMock).not.toHaveBeenCalled();
   });
 
-  // beforeEach 把进程级日切状态恢复成新进程初值；随机顺序下也不能把这条
-  // fail-closed 闩锁泄漏给依赖「同日重启后重建派生」的其它用例。
+  // beforeEach 把进程级日切状态恢复成新进程初值；fail-closed 闩锁不泄漏给依赖「同日重启后重建派生」的其它用例。
   test("进程内跨配置时区的零点后：迟到确认 fail closed，当天新流程与带当日证明的回执不受影响", async () => {
     const luckDrawCalls = (): unknown[] =>
       postDiskIOMock.mock.calls.filter((call) => (call[0] as { type?: string }).type === "luckDraw");
@@ -764,8 +762,7 @@ describe("/luck_challenge 预览 -> 选中确认 -> 落盘 全链路", () => {
   });
 
   test("启动时恰好卡在日切：丢弃过期凭据继续启动，不抛错拦下整个进程", async () => {
-    // Disk I/O Worker 在启动边界算出的日期是 D，主线程收到 load 回执时
-    // 可能已经是 D+1；restoreLuckState 必须能处理这种过期凭据而不抛错。
+    // Disk I/O Worker 在启动边界算出的日期是 D，主线程收到 load 回执时可能已是 D+1；restoreLuckState 处理这种过期凭据而不抛错。
     try {
       mockTodayOverride = "2030-01-02";
       cache.luckCacheState.dayKey = "";

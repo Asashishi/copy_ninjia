@@ -101,12 +101,11 @@ function clearRetryTimer(entry: LockdownEntry): void {
  * 排一次重试节拍：换掉这个群仍在等的那颗重试 timer，到点把 `event` 投回状态机。
  *
  * 恢复重试（restoreRetryFired）与重新收紧重试（reapplyRetryFired）共用
- * `entry.retryTimer` 一个字段——状态机保证同一时刻只有一个阶段在等重试，因此两条
- * 副作用只差事件类型。两个事件都只带 `type`，可以在排程时就定形；`scheduleRestore`
- * 不能这样收，它的 `intentId` 必须在**触发那一刻**才铸出来。
+ * `entry.retryTimer` 一个字段，状态机保证同一时刻只有一个阶段在等重试。
+ * 两个事件都只带 `type`，在排程时定形；`scheduleRestore` 的 `intentId` 在**触发那一刻**
+ * 才铸出。
  *
- * 回调先把句柄归零再派发，`reconcileLockdownEntryTimers` 之后就不会去 clear 一颗
- * 已经触发过的 timer。timer 不阻止线程退出，Worker 停止时由 stopLockdownRuntime
+ * 回调先把句柄归零再派发。timer 不阻止线程退出，Worker 停止时由 stopLockdownRuntime
  * 统一清理。
  */
 function scheduleLockdownRetry(
@@ -219,9 +218,7 @@ function runLockdownEffects(chatId: number, effects: readonly LockdownEffect[]):
         reapplyLockdownRestriction(chatId, dispatchLockdown);
         break;
       case "reportUnlock":
-        // 本轮已经处理过的入群不再为下一轮计数：窗口里那 45+ 个时间戳是刚被
-        // 这一轮踢出去的人留下的，留着它们会让解除后的第一条入群立刻再锁一
-        // 轮，「最长 LOCKDOWN_MS」就成了纸面上的数字。清零后必须重新在
+        // 清空入群窗口：本轮已处理过的入群不再为下一轮计数，解除后需重新在
         // JOIN_WINDOW_MS 内攒够阈值才会再次进入私密模式。
         clearJoinWindow(chatId);
         self.postMessage({ type: "unlock", chatId } satisfies UnlockEvent);
@@ -275,17 +272,15 @@ export function handleLockdownPersisted(msg: LockdownPersistedMessage): void {
 /** 群被禁用/离开/撤管理员时，先持久化 restoring 再尝试恢复权限。 */
 export function deactivateLockdownChat(chatId: number): void {
   clearJoinWindow(chatId);
-  // 守卫都关了，重新开启时不该背着上一次的作废冷却继续不设防。
+  // 守卫关闭时丢弃重触发冷却。
   lockdownRetriggerCooldowns.delete(chatId);
   dispatchLockdown(chatId, { type: "deactivate", intentId: nextLockdownIntentId() });
 }
 
 /**
  * 记录一次已确认的新成员加入（由 verificationEvents.ts 的 handleJoinEvent 按
- * joinCreatesNewRecord 去重后调用，另由 blocklistEffects.ts 为黑名单秒踢补记）。滑动窗口：最近 JOIN_WINDOW_MS 内的
- * 入群人数超过阈值即触发临时私密模式——不用「首次入群起算、到点整体清零」
- * 的固定桶，是为了防住横跨桶边界的刷群（前桶尾 + 后桶头各塞半个阈值，
- * 固定桶永远数不满）。
+ * joinCreatesNewRecord 去重后调用，另由 blocklistEffects.ts 为黑名单秒踢补记）。
+ * 滑动窗口：最近 JOIN_WINDOW_MS 内的入群人数超过阈值即触发临时私密模式。
  */
 export function recordJoin(chatId: number, now: number): void {
   const joinCount: number | undefined = recordJoinWindow(chatId, now);

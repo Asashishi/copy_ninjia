@@ -1,5 +1,5 @@
 /**
- * 把报告渲染为三语性能文档的 Markdown 区块。
+ * 把报告渲染为各语言性能文档的 Markdown 区块。
  * 数字使用固定千分位与小数格式，输出不受运行环境的 locale 影响。
  */
 
@@ -46,7 +46,7 @@ function formatBytes(value: number): string {
   return `${sign}${group(magnitude.toFixed(digits))} ${BYTE_UNITS[unit]}`;
 }
 
-/** 耗时统一选最接近人类尺度的单位，避免出现 `0.000 ms` 这类丢信息读数。 */
+/** 耗时按量级选 ns、µs 或 ms 单位。 */
 function formatNanoseconds(value: number): string {
   if (value < 1_000) return `${value.toFixed(1)} ns`;
   if (value < 1_000_000) {
@@ -97,7 +97,7 @@ function tableSeparator(columns: number): string {
   return `|${" --- |".repeat(columns)}`;
 }
 
-/** 表头只写指标名：单位跟着每个单元格走，写两遍只会让表更宽、更难扫。 */
+/** 表头只写指标名，单位跟着每个单元格走。 */
 function metricHeader(metric: MetricStats, copy: BenchmarkCopy): string {
   return copy.metricLabels[metric.metric] ?? metric.metric;
 }
@@ -105,8 +105,7 @@ function metricHeader(metric: MetricStats, copy: BenchmarkCopy): string {
 /**
  * 一个分区渲染成一张表。
  *
- * 列由**第一行**的指标表决定，其余行按名字对齐；对不上就抛错而不是留空格：
- * 同一张表里各行列含义不同的报告，读者没有办法正确解读。
+ * 列由第一行的指标表决定，其余行按名字对齐；对不上即抛错。
  */
 function renderSection(
   section: BenchmarkSection,
@@ -302,8 +301,8 @@ function renderColdStartCaption(
 /**
  * 渲染一份语言的完整区块，含首尾标记。
  *
- * 区块直接嵌进 `docs/<lang>/10-performance.md`：页标题、语言切换和上下页导航都
- * 是那一页手写的部分，生成块只负责标记之间的读数，重跑基准时按标记整块替换。
+ * 区块嵌进 `docs/<lang>/10-performance.md`：页标题、语言切换和上下页导航是那一页
+ * 手写的部分，生成块只含标记之间的读数，重跑基准时按标记整块替换。
  */
 export function renderBenchmarkBlock(
   report: FullSuiteReport,

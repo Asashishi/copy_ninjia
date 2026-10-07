@@ -3,7 +3,7 @@ import { withoutMarkdownCodeFences } from "./markdownSource";
 /**
  * Markdown 本地链接里 `#片段` 的存在性核对。
  *
- * 从目标文档的标题与显式 HTML id 建立锚点集合，核对本地链接的片段，覆盖三语导航。
+ * 从目标文档的标题与显式 HTML id 建立锚点集合，核对本地链接的片段。
  */
 
 /** 去掉标题里的行内 Markdown 装饰，只留渲染后的可见文本。 */
@@ -46,7 +46,7 @@ function slugify(text: string): string {
 
 /**
  * HTML 标题（`<h1>`…`<h6>`）同样会生成锚点，取的是去掉内嵌标签后的可见文字。
- * 三份 README 的主标题就是这种写法，「回到顶部」全指向它。
+ * README 的主标题就是这种写法，「回到顶部」链接指向它。
  */
 export function markdownHtmlHeadingAnchors(source: string): ReadonlySet<string> {
   const anchors: Set<string> = new Set<string>();

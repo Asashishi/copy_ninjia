@@ -13,7 +13,7 @@ import {
 import { parseMarkdownV2 } from "../helpers/markdownV2";
 import type { ParsedMarkdownV2 } from "../helpers/markdownV2";
 
-/** Bot API 列出的 18 个正文保留字符。 */
+/** Bot API 列出的正文保留字符。 */
 const RESERVED: string = "_*[]()~`>#+-=|{}.!";
 
 describe("libs/telegramMarkdown 转义", () => {

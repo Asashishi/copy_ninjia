@@ -17,7 +17,7 @@ import type { StickerCatalogEntry } from "../../../../types/stickers/catalog";
  */
 export const catalogs: Map<string, Map<string, StickerCatalogEntry>> = new Map();
 
-/** pack short name -> AI 生成的整包简介（≤200 字），供两层贴纸工具的第一层
+/** pack short name -> AI 生成的整包简介，供两层贴纸工具的第一层
  *  挑包：aiChat/ai/tools/stickers.ts 直接只读，缺项表示尚未生成或生成失败。
  *  生成/重生成时机见 packages/aiChat/ai/stickers/catalog.ts 的 generatePackCatalog。
  *  清理与容量跟随 catalogs：包退出白名单且生成、上报责任结束后随目录删除。

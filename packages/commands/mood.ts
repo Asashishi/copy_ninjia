@@ -39,8 +39,7 @@ async function isMoodAvailable({
   brokenConfigText,
   disabledText,
 }: MoodAvailabilityOptions): Promise<boolean> {
-  // 前提不齐时 AI Worker 根本没启动，post 只会同步失败并把 Worker 标成不可用；
-  // 先点名配置文件，别让运维在「Worker 没回话」的兜底文案里猜原因。
+  // 先核对 aiChatConfigReadiness；不可用时点名配置文件并回执，不向 Worker 投递。
   const refused: boolean = await refuseIfConfigBroken({
     readiness: aiChatConfigReadiness(),
     chatId,
@@ -64,7 +63,7 @@ async function isMoodAvailable({
 /**
  * 处理 /mood query 指令：任意群成员均可查询 AI 当前有效心情（全局一份，所有群共用）。主线程
  * 只向 AI Worker 投递 queryMood 并等待 moodQueried 回执；不经过权限系统，
- * 也不强制重抽尚未自然到期的心情。
+ * 也不重抽尚未到期的心情。
  */
 async function queryMood(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -103,7 +102,7 @@ async function queryMood(ctx: CommandContext<Context>): Promise<void> {
  * 在 AI Worker 线程内（cache/workers/aiChat/mood.ts），主线程只 post 一条 switchMood
  * 请求、等 moodSwitched 回执单独带回新心情名（见 aiChat/workerBridge.ts 的 requestAiMood），
  * 回复固定从这里发出，不走 AI 回复流水线。仅持有 isCanSwitchMood 的身份可用；
- * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权；其他人尝试只会被嘲讽。
+ * 超级管理员恒持有该权限（见 whitelist.ts），白名单身份可由 /permission 单独获权；其他身份收到拒绝回执。
  */
 async function switchMood(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -138,8 +137,7 @@ async function switchMood(ctx: CommandContext<Context>): Promise<void> {
     return;
   }
 
-  // Worker 已明确回执成功后，Telegram 发送失败属于消息投递错误，不能再
-  // 伪装成重抽失败；让 grammY 的统一错误边界按 update 失败处理。
+  // Worker 已回执成功；这里的发送失败按消息投递错误上抛，由 grammY 的统一错误边界按 update 失败处理。
   await sendCommandMessage({
     chatId,
     text: chatAtmosphere().NOTICE_TEXTS.moodSwitched(moodName),

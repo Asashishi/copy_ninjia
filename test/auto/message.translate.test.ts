@@ -4,6 +4,7 @@ import {
   autoMessageCopyState,
   copyMessageMock,
   generateAndSendReplyMock,
+  recordChatMessageMock,
   resetAutoMessageMocks,
   autoMessageTranslateSessions,
   sendMessageMock,
@@ -40,6 +41,24 @@ beforeEach(() => {
   autoMessageTranslateSessions.clear();
   autoMessageTranslateSessions.set(-1001, [{ translatedUser: { id: 7 }, language: "ja" }]);
   translateText.mockClear();
+});
+
+describe("复读接管时的 AI 分流", () => {
+  test("本群有复读目标时，其他人的消息不进 AI 触发（不记录、不回复）", async () => {
+    autoMessageTranslateSessions.clear();
+    autoMessageCopyState.targetId = 123;
+    const ctx = context(9) as any;
+    ctx.msg.text = "@test_bot 你好";
+    await handleAndSettle(ctx as never);
+
+    expect(recordChatMessageMock).not.toHaveBeenCalled();
+    expect(generateAndSendReplyMock).not.toHaveBeenCalled();
+    expect(copyMessageMock).not.toHaveBeenCalled();
+
+    autoMessageCopyState.targetId = undefined;
+    await handleAndSettle(ctx as never);
+    expect(recordChatMessageMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("群消息翻译分流", () => {
@@ -118,7 +137,7 @@ describe("群消息翻译分流", () => {
   test("翻译和 copy 可同时盯不同人，同一目标优先完成翻译且只发送一次", async () => {
     autoMessageCopyState.targetId = 8;
     await handleAndSettle(context(8));
-    // 复读按字符串重新发送原文，不再原样复制。
+    // 复读按字符串重新发送原文，不原样复制。
     expect(sendMessageMock).toHaveBeenCalledWith({ chatId: -1001, text: "你好", messageThreadId: 42 });
     expect(translateText).not.toHaveBeenCalled();
     sendMessageMock.mockClear();

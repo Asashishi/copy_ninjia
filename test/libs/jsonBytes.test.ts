@@ -6,9 +6,8 @@ const UTF8_ENCODER: TextEncoder = new TextEncoder();
 /**
  * 跨线程诊断载荷的容量单位。
  *
- * 关键契约是**异常输入不得让容量检查自己抛出**：这个函数的调用点是有界队列的
- * 入队判定（见 infra/logger.ts 的 forwardWorkerLog），在那里抛出等于让一条畸形
- * 日志把整条转发通道打死。约定是返回 MAX_SAFE_INTEGER，让队列拒收这一条。
+ * 契约：异常输入不让容量检查自己抛出。调用点是有界队列的入队判定（见 infra/logger.ts 的 forwardWorkerLog），
+ * 约定返回 MAX_SAFE_INTEGER，让队列拒收这一条。
  */
 describe("jsonSerializedBytes", () => {
   test("常规值按 UTF-8 字节数计量", () => {

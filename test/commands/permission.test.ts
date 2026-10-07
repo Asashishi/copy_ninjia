@@ -412,9 +412,8 @@ describe("/permission", () => {
   });
 
   test("query 与授权分支同一道解析口径：频道 id 必须能读回来", async () => {
-    // 授权分支开着 acceptChatId，query 分支缺了它的话，resolveArgumentTarget 会
-    // 跳过 parseChatIdArgument，而 USERNAME_ARG_PATTERN 匹配不了前导 `-`，于是
-    // 刚 /permission -100… isCanBlock true 授过权的频道身份反而读不回来。
+    // 授权分支与 query 分支都开着 acceptChatId：resolveArgumentTarget 才会走 parseChatIdArgument
+    // （USERNAME_ARG_PATTERN 匹配不了前导 `-`），授过权的频道身份能读回来。
     await handlePermissionCommand(context(2, "query -1002233445566"));
 
     expect(getWhitelistPermissionQueryView).toHaveBeenLastCalledWith(-1002233445566);

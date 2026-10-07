@@ -3,7 +3,7 @@
  * `opus`）与 MP3（xAI `/tts` 的 `mp3`）。只走容器结构，不解码音频。
  *
  * OGG/Opus：逐页核对捕获模式与段表长度，首页必须是 OpusHead；时长取最后一个带 granule
- * position 的页减去 pre-skip，按 48 kHz 固定时钟换算。MP3：跳过开头的 ID3v2 标签，逐帧核对
+ * position 的页减去 pre-skip，按 OPUS_GRANULE_RATE 固定时钟换算。MP3：跳过开头的 ID3v2 标签，逐帧核对
  * MPEG Layer III 帧头并累加样本数，末尾只允许一个 ID3v1 标签；帧间出现其它字节或末帧不完整
  * 即拒绝。时长一律向上取整到整秒。
  *
@@ -72,7 +72,7 @@ export function probeOggOpus(bytes: Uint8Array): VoiceContainerProbeResult {
     const granuleLow: number = view.getUint32(offset + 6, true);
     const granuleHigh: number = view.getUint32(offset + 10, true);
     if (granuleLow !== OGG_GRANULE_UNSET_WORD || granuleHigh !== OGG_GRANULE_UNSET_WORD) {
-      // 32 位低位在 48 kHz 下可表示约 24 小时，高位非 0 的 granule 不属于一段语音。
+      // 高 32 位非 0 的 granule 不属于一段语音。
       if (granuleHigh !== 0) return { ok: false, reason: "invalid Ogg granule position" };
       granule = granuleLow;
     }

@@ -29,9 +29,7 @@ export interface LockdownIntentFingerprint {
  * 主线程判断 lockdown 落盘回执是否覆盖当前恢复语义的指纹。
  *
  * announced 一轮最多从 false 变为 true 一次，且决定能否发送解锁公告，必须被
- * 落盘确认覆盖；expiresAt 不参与身份判定——APPLYING/RESTORING 阶段每次发布都
- * 按当刻墙钟填，同一份意图前后两次发布就会不相等，纳入指纹会让对账循环永远
- * 等不到「存下去的还是当前这份」。
+ * 落盘确认覆盖；expiresAt 不参与身份判定。
  */
 export interface PersistedLockdownFingerprint extends LockdownIntentFingerprint {
   announced: boolean;
@@ -67,8 +65,7 @@ export interface VerificationEntry {
   /**
    * 终态处置（踢人/删消息）已安排的重试次数，条目构造时为 0，每次排程加一（见
    * workers/antiRaid/verificationEffects/retry.ts）；只调节本地重试节奏，不进入状态机
-   * 或持久化快照。记录不能因重试耗尽被删除，否则等于把未处置成员当成完成；
-   * 条目删除即消失，Worker 重建后从头计数。
+   * 或持久化快照。记录不因重试耗尽被删除；条目删除即消失，Worker 重建后从头计数。
    */
   terminalRetries: number;
 }
@@ -98,9 +95,7 @@ export interface FloodWindowEntry {
   readonly userId: number;
   /**
    * 窗口内的发言时刻，按时间升序。到期项在每次发言时就地修剪；达到阈值触发
-   * 禁言后整条清空——清空既是去重（禁言落地前还在路上的那几条不会再触发一次
-   * 判定），也是失败时的天然退避（这次没禁成就得再刷满一整个窗口才会重来）。
-   * 因此队列长度恒不超过 FLOOD_MESSAGE_LIMIT。
+   * 禁言后整条清空，队列长度恒不超过 FLOOD_MESSAGE_LIMIT。
    */
   timestamps: TimestampDeque;
   /** 上一次观测到的时刻；系统校时回拨时用它保持队列单调，也用于空闲清扫。 */
@@ -108,14 +103,11 @@ export interface FloodWindowEntry {
   /**
    * 在此之前到达的消息一律不计数（ms 绝对时刻，0 表示不抑制）。
    *
-   * 判定命中的那一刻就地置位、不等禁言落地：mailbox handler 是同步的，一次
-   * 爆发式刷屏可以在第一次网络往返回来之前就把下一个窗口填满，等结果再置位
-   * 就是同一个人挨两次禁言、群里挨两条公告。落地之后它正好等于禁言结束时刻。
+   * 判定命中的那一刻就地置位，不等禁言落地；落地之后它等于禁言结束时刻。
    *
-   * 判定结论是确定性的那几种（禁言成功、目标是管理员、机器人没有限制成员
-   * 权限）保留这次抑制——重判换不来新结果，只会重复打请求或重复刷同一行日志；
-   * 瞬时失败（管理员身份没查出来、禁言请求本身失败）则回滚成 0，让下一个
-   * 填满的窗口重试。
+   * 判定结论确定的情形（禁言成功、目标是管理员、机器人没有限制成员权限）保留这次
+   * 抑制；瞬时失败（管理员身份没查出来、禁言请求本身失败）回滚成 0，下一个填满的
+   * 窗口重试。
    */
   suppressedUntil: number;
   /** LRU 中比本条更新的条目；最新条目为 null。 */

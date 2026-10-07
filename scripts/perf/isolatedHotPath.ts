@@ -1,4 +1,4 @@
-/** 为单个专项场景准备隔离根，并复用热路径入口执行三轮独立进程测量。 */
+/** 为单个专项场景准备隔离根，并复用热路径入口按 `HOT_PATH_PROFILE_REPEATS` 轮独立进程测量。 */
 
 import { join } from "node:path";
 import { HOT_PATH_PROFILE_REPEATS } from "../../packages/consts/performance";

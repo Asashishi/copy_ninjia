@@ -45,8 +45,7 @@ export async function readBoundedResponseBytes(response: Response, maxBytes: num
     }
   }
 
-  // Bun 的全局 Response.body 当前会退化为 ReadableStream<any>；在这一个
-  // Web API 边界收窄为 fetch 响应实际产出的字节块，避免 any 向下游扩散。
+  // 在这一个 Web API 边界把 Response.body 收窄为字节块流。
   const body: ReadableStream<Uint8Array<ArrayBufferLike>> | null = response.body as ReadableStream<Uint8Array> | null;
   if (!body) return { ok: true, bytes: new Uint8Array() };
 

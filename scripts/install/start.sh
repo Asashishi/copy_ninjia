@@ -6,9 +6,7 @@ step "7/8 初始化身份数据库"
 # --------------------------------------------------------------------------
 
 # 身份库的真实位置由 packages/consts/paths.ts 决定：缺省是仓库根，设了
-# COPY_NINJIA_DATA_ROOT 就在那个根下。这里向它要一次，不自己拼相对路径——
-# 拼死的话，配了独立数据根的部署会在错误的目录上做存在性判断、建目录和 chmod，
-# 而库其实建到了别处。
+# COPY_NINJIA_DATA_ROOT 就在那个根下；这里向它取路径，不自己拼相对路径。
 IDENTITY_DATABASE_FILE="$(bun -e '
   import { IDENTITY_DATABASE_PATH } from "./scripts/install/runtime";
   await Bun.write(Bun.stdout, IDENTITY_DATABASE_PATH);
@@ -25,8 +23,7 @@ if [ -e "$IDENTITY_DATABASE_FILE" ]; then
   info "${IDENTITY_DATABASE_FILE} 已存在，不动它。"
 else
   mkdir -p -- "$IDENTITY_DATABASE_DIR"
-  # 运行时按设计不会凭缺失数据库猜出一份空名单，所以全新部署必须显式建库。
-  # 直接复用生产建库入口，不另写一份建表逻辑。
+  # 运行时不会凭缺失数据库生成空名单，全新部署显式建库；复用生产建库入口。
   #
   # createStorageDatabase 只建表；schema-version 与 bot.json 的时区标记由初始化边界另写一笔。
   bun -e '
@@ -56,8 +53,7 @@ else
   info "已建立空的 ${IDENTITY_DATABASE_FILE}（黑白名单为空）。"
 fi
 
-# 配置全部就位之后、对外提供服务之前，跑一次和启动总闸同一份校验：
-# 有问题现在就点名文件与字段，好过启动后进重启循环。
+# 配置全部就位之后、对外提供服务之前，跑一次和启动总闸同一份校验，失败时点名文件与字段。
 info "校验已存在的部署输入……"
 bun -e '
   import { validateExistingDeploymentInputs } from "./scripts/install/runtime";
@@ -68,7 +64,7 @@ info "配置校验通过。"
 printf '\n'
 info "首次启动前还需要在 BotFather 侧关闭 Privacy Mode 并开启 Inline Mode。"
 info "机器人进群后，由超级管理员在群里执行 /init enable 打开本群业务入口——未 init 的群，普通业务 update 在入口网关直接丢弃。"
-info "其余三个开关都是可选、缺省关闭：/ai_chat enable（AI 闲聊）、/ad_detect enable（广告检测）、/antiraid enable（入群验证与防冲群）。"
+info "其余开关都是可选、缺省关闭，例如 /ai_chat enable（AI 闲聊）、/ad_detect enable（广告检测）、/antiraid enable（入群验证与防冲群）。"
 info "/ad_detect 与 /antiraid 还要求机器人在本群是管理员，否则打开了也不会真正触发。"
 
 # --------------------------------------------------------------------------

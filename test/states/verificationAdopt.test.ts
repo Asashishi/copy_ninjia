@@ -6,7 +6,7 @@ import type { VerificationState } from "../../packages/types/states/verification
 
 const NOW: number = 10_000_000;
 
-/** 四个 phase 共用的快照底座；各用例只覆盖自己关心的字段。 */
+/** 各 phase 共用的快照底座；各用例只覆盖自己关心的字段。 */
 function snapshot(overrides: Partial<VerificationSnapshot> = {}): VerificationSnapshot {
   return {
     phase: "pending",
@@ -52,8 +52,7 @@ describe("adoptVerificationState：落盘快照重建成内存状态", () => {
   });
 
   test("pending 的发言窗口按 (now - JOIN_WINDOW_MS, now] 裁剪，同时丢掉回拨后落在未来的项", () => {
-    // 手写 filter 只裁过期队首：时钟往回跳之后留下的「未来」时间戳会带着
-    // 一整窗永不过期的项回来，接着几条发言就能把人判成 flood。
+    // 窗口按 (now - JOIN_WINDOW_MS, now] 裁剪：过期的与时钟回拨后落在未来的项一并丢掉。
     const state: VerificationState = adoptVerificationState(
       snapshot({
         trackedMessageTimes: [
@@ -156,8 +155,7 @@ describe("adoptVerificationState：落盘快照重建成内存状态", () => {
   });
 
   test("没有播报记账的 expelling 快照重建出四项 undefined，而不是 false", () => {
-    // 「还没播报过」与「播报过但结果是 false」是两回事：后者会让收尾路径
-    // 以为告警已经发过，管理员再也收不到那一条。
+    // 「还没播报过」与「播报过但结果是 false」是两回事：没有播报记账时各项取 undefined。
     const state: VerificationState = adoptVerificationState(
       snapshot({ phase: "expelling", expelReason: "timeout" }),
       NOW

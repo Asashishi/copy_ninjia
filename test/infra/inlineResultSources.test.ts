@@ -69,7 +69,7 @@ describe("inline 结果源文本登记", () => {
     }
     // 最旧的那位重新查询一次：他回到队尾，被挤掉的应当是第二旧的那位。
     recordInlineResultSources(1, "源 1 改", [textResult("r-1", "正文 1 改")]);
-    // 新来的必须是上面没占过的 id，否则只是覆盖、不会触发淘汰。
+    // 新来的是上面没占过的 id（占过的只是覆盖，不触发淘汰）。
     const newcomerId: number = INLINE_RESULT_SOURCE_MAX_AUTHORS + 1;
     recordInlineResultSources(newcomerId, "新来的", [
       textResult(`r-${newcomerId}`, "正文 新来的"),

@@ -1,11 +1,9 @@
 /**
  * 入群验证状态机的契约：状态、事件、效果与转移结果。
  *
- * **状态对象的缺省字段一律写成必填的 `T | undefined`，不用 `field?:`**：这些对象活到
- * 整条验证生命周期结束，期间 verificationSnapshot 与解释器要反复读它们。必填字段
- * 保证每个构造点一次写全，同一个 kind 只有一种 hidden class，不会事后补字段改形状
- * （见 AGENTS.md「性能、内存与 Bun/JSC JIT」，口径同 types/aiChat/speaker.ts 与
- * workers/aiChat/bufferedMessage.ts）。漏写字段是编译错误，构造顺序由声明顺序固定；
+ * 状态对象的缺省字段一律写成必填的 `T | undefined`，不用 `field?:`：每个构造点一次写全，
+ * 同一个 kind 的对象形状恒定（见 AGENTS.md「性能、内存与 Bun/JSC JIT」，口径同
+ * types/aiChat/speaker.ts 与 workers/aiChat/bufferedMessage.ts），构造顺序由声明顺序固定。
  * 除 pending 外各 kind 的构造统一收在 states/verification/shared.ts（exemptOf、
  * kickPendingOf、kickedOf、checkingInviterOf、expellingOf），adopt 重建与状态机新建共用
  * 同一份；pending 以同一字段顺序的对象字面量分别构造于 states/verification/join.ts（新建）
@@ -61,11 +59,9 @@ export interface KickPendingState {
   /**
    * 本次入群计入刷群统计时用的那个时间戳；没计过数时为 undefined。
    *
-   * 不能拿 requestedAt 顶替：只有 joinCreatesNewRecord 为真的那次入群才由
-   * 调用方 recordJoin，而「踢完之后真的重新申请入群」那条路径状态已存在、
-   * 不会再计一次数。撤销按值删队列里第一个相等的时间戳，同一 tick 内处理的
-   * 多名入群成员时间戳完全相同，拿一个从未计数的值去撤，删掉的就是另一名
-   * 合法计数成员那一格（见 packages/libs/timestampDeque.ts 的 removeValue）。
+   * 只有 joinCreatesNewRecord 为真的那次入群才由调用方 recordJoin；撤销只使用本字段，
+   * 不使用 requestedAt，按值删除队列里第一个相等的时间戳（见 packages/libs/timestampDeque.ts
+   * 的 removeValue）。
    */
   countedJoinAt: number | undefined;
   /** 入群公告 id；首次动作须在落盘回执后先清理该痕迹再踢人。 */
@@ -116,15 +112,12 @@ export interface ExpellingState {
   /**
    * 「想踢却踢不动」（缺 can_restrict_members）这条告警已发送。
    *
-   * 与 unconfirmedNoticeSent 分开记：两条文案指向完全不同的原因，共用一个名额
-   * 时，先发出去的那条会把另一条永久顶掉——探测抖动先占了名额，之后每次重试
-   * 都不再发那条唯一点名「去检查封禁权限」的诊断，人留在群里而管理员被引向
-   * 网络问题。随快照持久化，Worker 重生/进程重启后不重发；发出去的那条消息本身
-   * 走统一临时发送边界，30 秒后自删（见 workers/antiRaid/verificationEffects/
-   * terminal.ts 的 sendTemporaryMessageFromMain）。
+   * 与 unconfirmedNoticeSent 各自独立记录，两条告警互不占用名额。随快照持久化，
+   * Worker 重生/进程重启后不重发；发出去的那条消息本身走统一临时发送边界，到期自删
+   * （见 workers/antiRaid/verificationEffects/terminal.ts 的 sendTemporaryMessageFromMain）。
    */
   failureNoticeSent: boolean | undefined;
-  /** 「没能确认成员是否仍在群里或群类型」告警已发送；理由同 failureNoticeSent。 */
+  /** 「没能确认成员是否仍在群里或群类型」告警已发送；语义同 failureNoticeSent。 */
   unconfirmedNoticeSent: boolean | undefined;
   /**
    * 成功播报已经发出并进入持久化快照。落盘确认后可直接结束终态，Worker
@@ -134,20 +127,16 @@ export interface ExpellingState {
   /**
    * 踢人请求已被 Telegram 确认成功，但那条成功播报还没发出去。
    *
-   * 随快照持久化，且**只在播报发送失败时才写**（正常一轮里踢人与播报同轮结算，
-   * 不必多付一次落盘）。它的唯一用途是让下一轮认得出「人已经不在群里」的
-   * 来路：没有它的话，重试时的成员探测只会答「不在群里」，终态直接静默结算，
-   * 群里看着一个成员凭空消失，而那条唯一的说明再也不会出现。
+   * 随快照持久化，只在播报发送失败时写（正常一轮里踢人与播报同轮结算）。
+   * 下一轮据此把成员探测得到的「不在群里」认作本机器人踢人成功，继续发送成功播报。
    */
   removalConfirmed: boolean | undefined;
   /**
-   * 机器人自己的验证消息已经一条不剩地清理完毕。
+   * 机器人自己的验证消息已经全部清理完毕。
    *
-   * **Worker 本地幂等门，不持久化**（同 executionStarted）：重放一次删除是幂等
-   * 的，重发一条播报不是，所以这条不必跟着快照走。它只用来给
-   * verificationEffects/terminal.ts 里那道「确证没有封禁权限就不再发请求」的
-   * 短路加一个前提——清理还欠着账时不能短路，否则一条删除失败过的验证公告会
-   * 带着可点击的按钮永远挂在群里，再也没有任何一轮会重试它。
+   * Worker 本地幂等门，不持久化（同 executionStarted）。
+   * verificationEffects/terminal.ts 里「确证没有封禁权限就不再发请求」的短路以它为前提：
+   * 清理未结清时不短路。
    */
   cleanupSettled: boolean;
 }
@@ -161,7 +150,7 @@ export type VerificationState =
   | VerificationTerminalState;
 
 /**
- * 一次入群的豁免结论（states/verification/join.ts 的 resolveJoinExemption）；三种组合各有
+ * 一次入群的豁免结论（states/verification/join.ts 的 resolveJoinExemption）；各组合各有
  * 一份共享只读常量（consts/antiRaid/verification.ts），调用方只读字段。
  */
 export interface JoinExemption {
@@ -244,10 +233,8 @@ export type VerificationEvent =
   /**
    * 本群的入群守卫被 `/antiraid disable` 关掉了（见 commands/antiRaid.ts）。
    *
-   * 与 `left` 的区别是**谁走了**：`left` 是这个成员离开了群，验证自然作废；
-   * 这条是功能本身被关掉，群里的人一个都没动，因此每一种状态都要就地收摊
-   * ——包括已经落盘、正等着踢人的那两个终态。开关关掉之后还把人踢出去，是
-   * 管理员最不可能预期的结果。
+   * 与 `left` 的区别：`left` 是这个成员离开了群，验证自然作废；本事件是功能本身被关掉，
+   * 每一种状态都就地收摊，包括已经落盘、正等着踢人的两个终态，不再踢人。
    */
   | { type: "guardDisabled" }
   | TrackedMessageEvent

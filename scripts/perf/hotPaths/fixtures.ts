@@ -1,8 +1,7 @@
 /**
  * 各热点场景共用的基准夹具：固定的群 id、时间戳起点与一份最小消息。
  *
- * 跨场景组共用（hotPaths/ 下各领域场景文件）；各组按领域分文件，不为拿一个常量
- * 去 import 另一组场景。
+ * 跨场景组共用（hotPaths/ 下各领域场景文件）；各场景文件从这里取夹具，不互相 import。
  */
 
 import type { ChatMemberAdministrator, Message, UserFromGetMe } from "grammy/types";
@@ -10,30 +9,24 @@ import type { ChatMemberAdministrator, Message, UserFromGetMe } from "grammy/typ
 /** 基准群聊 id；仅用于进程内 Map，不产生任何 Telegram 或磁盘副作用。 */
 export const BENCHMARK_CHAT_ID: number = -100_000_000_000_001;
 /**
- * 所有时间戳场景的起点，取 2026-01-01T00:00:00Z 的毫秒值。
+ * 所有时间戳场景的起点（毫秒）。
  *
- * 必须用生产量级，不能用 1_000_000 这类小整数。`Date.now()` 的毫秒值约 1.75e12，
- * 早已超出 int32；生产窗口喂进来的全是 `Date.now()`，基准必须使用相同数量级，
- * 才能维持一致的数值表示和 JIT 输入形态。
- *
- * 固定值让各次运行可复现，并避免同一热函数在预热与正式循环之间切换数值表示。
+ * 取 `Date.now()` 同量级的值，超出 int32，使数值表示与 JIT 输入形态与生产一致；
+ * 固定值使各次运行可复现，同一热函数在预热与正式循环之间不切换数值表示。
  */
 export const BENCHMARK_EPOCH_MS: number = 1_767_225_600_000;
 
 /**
- * 基准发送者 id，取真实 Telegram 用户 id 的量级。
+ * 基准发送者 id，取真实 Telegram 用户 id 的量级，超出 int32。
  *
- * 本夹具覆盖超出 int32 的用户 id，避免只测量小整数输入；生产用户 id 也可能落在
- * int32 范围内。数值表示影响 JSC 的 Map 键、比较与跨函数传递，判读时必须连同
- * 输入量级一起核对，见 `BENCHMARK_EPOCH_MS`。
- *
- * 同一场景要多个不同发送者时按 `+1` 递增，量级不变。
+ * 数值表示影响 JSC 的 Map 键、比较与跨函数传递，判读时连同输入量级一起核对，
+ * 见 `BENCHMARK_EPOCH_MS`。同一场景要多个不同发送者时按 `+1` 递增。
  */
 export const BENCHMARK_SENDER_ID: number = 7_123_456_789;
 
 /**
- * 一条普通用户消息。`senderId` 只在同一场景要喂**多个不同发送者**时才传：
- * 同 id 换 username 会被 cacheSender 判成改名并走写入路径，那不是稳态热路径。
+ * 一条普通用户消息。`senderId` 在同一场景要喂多个不同发送者时传入；
+ * 同 id 换 username 会被 cacheSender 判成改名并走写入路径。
  */
 export function messageFixture(
   username?: string,
@@ -60,9 +53,9 @@ export function messageFixture(
 /**
  * 频道马甲 / 匿名管理员皮套发的那条消息：只有 `sender_chat`，没有 `from`。
  *
- * 与 `messageFixture` 配对使用，喂出生产里两种身份形态混着到达同一个调用点的输入；
- * 两种形态在 `users/senderIdentity.ts` 的 `resolveSenderIdentity` 里各产出一个
- * `CachedUser` shape。`index` 只用于区分不同频道，量级与 `BENCHMARK_CHAT_ID` 一致。
+ * 与 `messageFixture` 配对使用，两种身份形态混着到达同一个调用点；两种形态在
+ * `users/senderIdentity.ts` 的 `resolveSenderIdentity` 里各产出一个 `CachedUser`
+ * shape。`index` 区分不同频道。
  */
 export function channelMessageFixture(index: number, username?: string): Message {
   return {
@@ -93,8 +86,8 @@ export const BENCHMARK_BOT_INFO: Readonly<UserFromGetMe> = {
 /**
  * 本机器人在基准群里的管理员身份，喂给 `readBotChatPermissions` 生成权限快照。
  *
- * 受管群的常态就是它已经是管理员，各条 ingress 的稳定态判定全建立在这上面
- * （见 registeredMiddlewareScenario.ts 的场景头注）。权限逐项给全，不留三态未知。
+ * 各条 ingress 的稳定态判定以它为前提（见 registeredMiddlewareScenario.ts 的场景头注）。
+ * 权限逐项给定，不留未知。
  */
 export const BENCHMARK_BOT_ADMIN_MEMBER: Readonly<ChatMemberAdministrator> = {
   status: "administrator",

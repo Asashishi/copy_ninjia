@@ -12,7 +12,7 @@ import {
 } from "../../packages/libs/time";
 import type { CurrentTimeResult } from "../../packages/types/time";
 import { adoptTimeZone, getTimeZone } from "../../packages/config/time";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 
 const INITIAL_TIME_ZONE: string = getTimeZone();
 beforeEach((): void => { adoptTimeZone("Asia/Tokyo"); });

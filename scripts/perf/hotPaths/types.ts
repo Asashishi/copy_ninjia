@@ -57,19 +57,18 @@ export type ScenarioName =
   | "luck-tier-table";
 
 /**
- * 可被 bun:jsc 询问 JIT 分层状态的热函数。只用于观测，基准从不调用它。
- * 形参写成 never[] 是为了容纳任意签名的被测函数，同时不引入 any。
+ * 可被 bun:jsc 询问 JIT 分层状态的热函数，只用于观测，不被基准调用。
+ * 形参为 `never[]`，容纳任意签名。
  */
 export type JitProbe = (...args: never[]) => unknown;
 
 /**
  * 一个热函数在某个时刻的 JSC 分层计数。
  *
- * dfgCompiles=0 表示它从未进入 DFG——要么调用次数不足以触发分层，要么被测
- * 逻辑其实不在这个函数里，两种情况下该场景的 ns/op 都测不到优化后的稳态。
- * reoptRetries>0 是真正的坏味道：JSC 编译后又因为推测失败（类型/对象 shape
- * 不稳定）被迫去优化并重编译，正是 AGENTS.md「热调用点保持类型和对象 shape
- * 稳定」那条规约的机器可判信号。
+ * dfgCompiles 为 0 表示从未进入 DFG（调用次数不足以触发分层，或被测逻辑不在该
+ * 函数里），该场景的 ns/op 不含优化后的稳态。reoptRetries 大于 0 表示 JSC 编译后
+ * 因推测失败（类型或对象 shape 不稳定）去优化并重编译，对应 AGENTS.md「热调用点
+ * 保持类型和对象 shape 稳定」的规约。
  */
 export interface JitTierCounts {
   dfgCompiles: number;
@@ -92,8 +91,7 @@ export interface Scenario {
   /** 完整 I/O 操作可只观察实际 JIT 层级；缺省要求生产探针进入 DFG 并稳定。 */
   profileRequiresOptimizedJit?: boolean;
   /**
-   * 跑 iterations 轮并返回校验和。允许返回 Promise：编排层入口本身是 async，
-   * 只能连同它的 promise 开销一起量——生产里每条消息付的也正是这份开销。
+   * 跑 iterations 轮并返回校验和。允许返回 Promise：异步场景连同 promise 开销一起量；
    * 同步场景保持同步分支，不计入微任务调度开销。
    */
   run: (iterations: number) => number | Promise<number>;

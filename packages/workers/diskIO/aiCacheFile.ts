@@ -36,6 +36,7 @@ import {
 } from "../../consts/diskIO/appendOnly";
 import { AI_CACHE_FILE_PATH, AI_CACHE_MEMORY_DIR } from "../../consts/paths";
 import { atomicWriteTextSync, removeOrphanedTempFiles } from "../../libs/atomicFile";
+import { isPendingWithin } from "../../libs/clockWindow";
 import { listOptionalDirectory } from "../../libs/fileAccess";
 import { formatLogTimestamp, getDateKey } from "../../libs/time";
 import type { AiCacheDocument, AiCacheRow, AiCacheSummary } from "../../types/aiCache";
@@ -140,7 +141,8 @@ export async function handleAiCacheUsageMessage(message: AiCacheUsageDiskMessage
 
 /**
  * 把缓冲里的记录一次追加到文件末尾。游标失效时先重新探测；上一次失败仍在退避窗口内
- * 或本次失败时丢弃这一批并返回 false。
+ * （按 libs/clockWindow.ts 的 isPendingWithin，时钟回拨超过窗口即视为结束）或本次失败时
+ * 丢弃这一批并返回 false。
  */
 export async function flushAiCacheBuffer(): Promise<boolean> {
   cancelDiskIOFlushTimer(aiCacheBuffer);
@@ -148,7 +150,7 @@ export async function flushAiCacheBuffer(): Promise<boolean> {
   const texts: string[] = aiCacheBuffer.texts;
   aiCacheBuffer.texts = [];
   const now: number = Date.now();
-  if (aiCacheFileState.current === null && now < aiCacheReopenState.retryAt) return false;
+  if (aiCacheFileState.current === null && isPendingWithin(aiCacheReopenState.retryAt, now, LOG_REOPEN_RETRY_MS)) return false;
   try {
     if (aiCacheFileState.current === null) {
       mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });

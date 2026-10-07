@@ -9,8 +9,7 @@
  *
  * 行序固定为生图 → 语音 → 问答 → 独立检索。部署没有生图或语音能力时对应工具不挂，也不出这一行；
  * 问答两件恒挂，问答行恒出现；独立检索只在配置了该能力时给出调用上限。
- * 整段位于稳定前缀之后，写进冷却秒数、余量与检索上限不影响
- * 供应商缓存（前缀约束见 docs/cn/04-invariants.md）。
+ * 整段位于稳定前缀之后（前缀约束见 docs/cn/04-invariants.md）。
  */
 
 import {
@@ -30,7 +29,7 @@ import { aiTtsRemaining } from "../../ttsUsage";
 import { ttsQuotaLimit } from "../../utils/ttsUsageWindow";
 import { defaultAspectRatioFor, imageCooldownRetrySeconds } from "./imageGeneration";
 import type { AgentTtsCapabilityConfig } from "../../../../types/config";
-import type { ImageGenerationAvailability } from "../../../../types/aiChat/imageGeneration";
+import type { CooldownAvailability } from "../../../../types/cooldown";
 import type { ReplyToolContext } from "../../../../types/aiChat/replies";
 
 /** 本模块从本轮回复上下文里真正读到的字段。 */
@@ -53,7 +52,7 @@ export interface ToolStatusParams {
 /** 生图行：先看触发资格，再看群冷却，都通过才给参考素材说明。 */
 function imageStatusLine(ctx: ToolStatusContext): string {
   if (!ctx.mediaToolsRequested) return IMAGE_TOOL_STATUS_UNAUTHORIZED;
-  const availability: ImageGenerationAvailability = getImageGenerationAvailability({
+  const availability: CooldownAvailability = getImageGenerationAvailability({
     chatId: ctx.chatId,
     bypassCooldown: ctx.bypassMediaToolCooldown,
   });

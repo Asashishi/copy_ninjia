@@ -1,8 +1,8 @@
 /**
  * 黑名单群级处置 durable outbox 的主线程 owner。
  *
- * 本模块持有启动恢复、write-ahead、任务编号/裁剪、业务 Worker 交付，以及
- * Disk I/O Worker 重建后的重放边界；补扫的退避与回执状态机在 sweep.ts。
+ * 本模块持有启动恢复、write-ahead、任务编号与裁剪，以及 Disk I/O Worker
+ * 重建后的快照重放；补扫的退避与回执状态机在 sweep.ts。
  * 它不调用 Telegram API，执行 owner 通过单槽 holder 反向注册。
  * @see ../../../docs/cn/04-invariants.md
  */
@@ -96,8 +96,7 @@ function restorePermissionBlockedSweep(
 }
 
 /**
- * 启动恢复：把 SQLite 当前格式 outbox 灌入主线程镜像。必须在 runner 开始
- * 投喂更新之前完成，否则启动瞬间进群的黑名单用户会漏踢。
+ * 启动恢复：把 SQLite outbox 灌入主线程镜像。必须在 runner 开始投喂更新之前完成。
  */
 export function hydrateBlocklist(
   recoveredRemovals: Map<number, PendingBlockedRemoval>
@@ -114,7 +113,7 @@ export function hydrateBlocklist(
       filtered = true;
       continue;
     }
-    // 补扫不带名单，投递时按当前名单现算；名单为空时任务已没有目标，应销账。
+    // 补扫不带名单，投递时按当前名单现算；名单为空时销账。
     if (pending.params.probeMembership) {
       if (!hasAnyBlockedIdentity()) {
         filtered = true;
@@ -137,11 +136,10 @@ export function hydrateBlocklist(
       }
       continue;
     }
-    // 冻结批次在这里不裁剪：启动期由 inspectStorageDatabase（workers/diskIO/storageDatabase/
+    // 冻结批次在这里不裁剪：启动期 inspectStorageDatabase（workers/diskIO/storageDatabase/
     // hydration.ts）经 validateStorageDatabase 的 assertPendingRemovalBlocklistReferences
-    // （database/validation/storageRows.ts）对「冻结 userId 不在 blocklist_entries」直接抛错，
-    // 进程在启动阶段以非零码退出并点名该行；运行期的 handlePendingRemovalSnapshot
-    // （workers/diskIO/storageDatabase/pendingRemoval.ts）同样拒绝。
+    // （database/validation/storageRows.ts）对「冻结 userId 不在 blocklist_entries」抛错并拒绝启动；
+    // 运行期的 handlePendingRemovalSnapshot（workers/diskIO/storageDatabase/pendingRemoval.ts）同样拒绝。
     const userIds: number[] = [...pending.params.userIds];
     pendingBlockedRemovals.set(removalId, {
       params: { ...pending.params, userIds },
@@ -160,7 +158,7 @@ export function hydrateBlocklist(
 
 /**
  * 把主线程权威镜像完整投给 Disk I/O Worker。写入端逐字段重建并标脏，紧随
- * 其后的领域 flush 才是 durable 边界；排队快照与可变失败诊断字段分离。
+ * 其后的领域 flush 才是 durable 边界。
  * @internal 供同目录 sweep owner 合并权威变更。
  */
 export function queuePendingBlockedRemovalsSnapshot(): boolean {
@@ -177,7 +175,7 @@ export function queuePendingBlockedRemovalsSnapshot(): boolean {
   } satisfies BlocklistRemovalsDiskMessage);
 }
 
-/** 传输队列保留到消费 ACK；快照拥有独立诊断字段，params 只由整条记录替换。 */
+/** 逐条浅拷贝 pending 作为快照；params 只由整条记录替换，不原地修改。 */
 function pendingRemovalSnapshot(): readonly (readonly [number, PendingBlockedRemoval])[] {
   const snapshot: (readonly [number, PendingBlockedRemoval])[] = [];
   for (const [id, pending] of pendingBlockedRemovals) {
@@ -186,7 +184,7 @@ function pendingRemovalSnapshot(): readonly (readonly [number, PendingBlockedRem
   return snapshot;
 }
 
-/** Anti-Raid 投递前的 write-ahead 边界。 */
+/** Anti-Raid 投递前的 write-ahead 边界：投递快照并等待 `blocklistRemovalOutbox` 领域 flush 完成。 */
 export async function persistPendingBlockedRemovals(): Promise<void> {
   if (!queuePendingBlockedRemovalsSnapshot()) {
     throw new Error("Persistence Worker rejected the blocklist removal outbox snapshot.");
@@ -231,7 +229,7 @@ export function getPendingBlockedRemovalParams(
 }
 
 /**
- * 放掉某个群补扫进度里的在途占位；只在任务已被权威销账、不会再有回执时调用。
+ * 放掉某个群补扫进度里属于该 removalId 的在途占位；只在任务已被权威销账时调用。
  * @internal outbox 裁剪路径专用。
  */
 function releaseSweepClaim(chatId: number, removalId: number): void {
@@ -242,7 +240,7 @@ function releaseSweepClaim(chatId: number, removalId: number): void {
 
 /**
  * 把某个 id 从冻结名单批次摘掉。补扫不冻结名单，只有权威名单被清空时才连同
- * 补扫任务一起销账；所有销账路径同步释放永远不会再收到回执的 sweep claim。
+ * 补扫任务一起销账；销账路径同步释放对应的 sweep claim。
  * @internal 由 membership.ts 的 unblockUser 调用（/block disable 与销号自动摘除）。
  */
 export function forgetUserBlocklistRemovals(userId: number): void {
@@ -316,8 +314,8 @@ export function trackBlockedRemoval(
 }
 
 /**
- * 群停止管理时删除其全部任务与 sweep 进度。主线程是这个取消边界的权威 owner；
- * Worker isolate 里的世代在重建后会归零，不能代替这里的 durable 裁剪。
+ * 群停止管理时删除其全部任务与 sweep 进度。主线程是这个取消边界的权威 owner，
+ * durable 裁剪在这里完成。
  */
 export function forgetChatBlocklistWork(chatId: number): void {
   let changed: boolean = false;
@@ -344,7 +342,7 @@ function settleRemovalSnapshot(reply: IdentityStoragePersistedReply): void {
 
 onDiskIOReply("identityStoragePersisted", settleRemovalSnapshot);
 
-// Disk I/O Worker 重建后只重放仍未收到事务 ACK 的最终 outbox 快照。
+// Disk I/O Worker 重建后只重放尚未收到事务 ACK 的最新 outbox 快照。
 onDiskIORespawn("blocklist outbox", DISK_IO_RESPAWN_PRIORITIES.BLOCKLIST + 1, (
   transport: DiskIORecoveryTransport
 ): boolean => {

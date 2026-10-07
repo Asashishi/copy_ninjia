@@ -14,6 +14,10 @@ import {
 } from "./conventions/sourceRules";
 import type { SourceFileRuleParams } from "./conventions/sourceRules";
 import { collectColdMigrationProblems } from "./conventions/coldMigrations";
+import { collectConstExhaustiveListProblems, PARTIAL_LITERAL_TABLES } from "./conventions/constExhaustiveLists";
+import { collectConstImmutabilityAssertionProblems } from "./conventions/constImmutability";
+import { createConstsProgram, exportedConstDeclarations } from "./conventions/constsProgram";
+import type { ExportedConstDeclaration } from "./conventions/constsProgram";
 import { collectCoverageMetricProblems } from "./conventions/coverageMetrics";
 import { collectFaultInjectionSuiteProblems } from "./conventions/faultInjectionSuite";
 import { collectFileLengthProblems } from "./conventions/fileLength";
@@ -64,6 +68,7 @@ import {
   collectFullSuiteImportProblems,
   collectInfraLayeringProblems,
   collectStatesPurityProblems,
+  collectConstsPurityProblems,
 } from "./conventions/moduleBoundaries";
 
 const PROJECT_ROOT: string = join(import.meta.dir, "..");
@@ -110,7 +115,7 @@ function projectFiles(): string[] {
   );
 }
 
-/** 每份文档的锚点集合只算一次；同一批检查里多个文件会互相指来指去。 */
+/** 每份文档的锚点集合只算一次，按文档路径缓存。 */
 const markdownAnchorCache: Map<string, ReadonlySet<string> | null> = new Map();
 
 /** 读取并缓存一份文档的锚点；文件读不到时返回 null（路径那一半另有报错）。 */
@@ -189,7 +194,7 @@ async function checkMarkdownLocalLinks(
   }
 }
 
-/** 四条线程各自入口的绝对路径；从入口出发构建同线程模块闭包（含最短引入路径）。 */
+/** 各线程入口的绝对路径；从入口出发构建同线程模块闭包（含最短引入路径）。 */
 const THREAD_ENTRIES: Readonly<Record<string, string>> = Object.fromEntries(
   Object.entries(THREAD_ENTRY_PATHS).map(
     ([thread, path]: [string, string]): [string, string] => [thread, join(PROJECT_ROOT, path)]
@@ -230,8 +235,8 @@ for (const problem of await collectPerformanceRecordProblems(PROJECT_ROOT)) {
 for (const problem of await collectInstallModuleProblems(PROJECT_ROOT)) {
   failures.push(`install script: ${problem}`);
 }
-// 目录清单核对要按真实目录解析文档里的目录名；整趟只遍历一次，且只走源码根
-// （理由见 collectSourceDirectories：仓库根下有部署方数据目录，不能碰）。
+// 目录清单核对按真实目录解析文档里的目录名；整趟只遍历一次，且只走源码根
+// （见 collectSourceDirectories 的 JSDoc）。
 const sourceDirectories: readonly string[] = collectSourceDirectories([
   SOURCE_ROOT,
   SCRIPTS_ROOT,
@@ -325,18 +330,17 @@ const exportedStringConstants: Map<string, string[]> = new Map();
 const constantTextFragments: string[] = [];
 /** 文案片段规则本次用到的提示词契约豁免（`路径::用例名`），跑完后核对有无闲置条目。 */
 const usedConstantTextExemptions: Set<string> = new Set<string>();
-/** 注释交叉引用按 basename 兜底解析时的候选集合；生产源码与入口一份就够。 */
+/** 注释交叉引用按 basename 解析时的候选集合：生产源码与主线程入口。 */
 const referenceResolutionFiles: readonly string[] = [
   ...sourceFilesUnder(SOURCE_ROOT),
   THREAD_ENTRIES.main!,
 ];
-// 逐文件的源码约定：每个文件**只读一次、只解析一次**，适用的规则全在这一趟里跑完。
+// 逐文件的源码约定：每个文件只读一次、只解析一次，适用的规则全在这一趟里跑完。
 // cache/consts 规则按 sourceFilesUnder 的真实文件集合判定适用范围；模块级缓存规则由
 // collectModuleCacheProblems 判定。失败列表按文件汇总。
 //
-// 仓库根的 index.ts 是生产入口，AGENTS.md 多条规则的适用范围写的就是「packages/ 与
-// index.ts」；它不在 sourceFilesUnder(SOURCE_ROOT) 里，必须显式并进同一趟判定，
-// 否则日志边界、Node 兼容与声明规范在这个文件上没有任何门禁。
+// 仓库根的 index.ts 是生产入口，AGENTS.md 多条规则的适用范围是「packages/ 与
+// index.ts」；它不在 sourceFilesUnder(SOURCE_ROOT) 里，显式并进同一趟判定。
 for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   const source: ts.SourceFile = await parseSourceFile(path);
   const params: SourceFileRuleParams = { projectRoot: PROJECT_ROOT, path, source };
@@ -364,6 +368,9 @@ for (const path of [...sourceFilesUnder(SOURCE_ROOT), THREAD_ENTRIES.main!]) {
   failures.push(...collectEnvironmentAccessProblems(params));
   if (path.startsWith(STATES_ROOT + "/")) {
     failures.push(...collectStatesPurityProblems(params));
+  }
+  if (path.startsWith(CONSTS_ROOT + "/")) {
+    failures.push(...collectConstsPurityProblems(params));
   }
   if (path.startsWith(INFRA_ROOT + "/")) {
     failures.push(...collectInfraLayeringProblems(params));
@@ -412,6 +419,22 @@ for (const path of [...sourceFilesUnder(SCRIPTS_ROOT), ...sourceFilesUnder(TEST_
   }
 }
 failures.push(...collectUnusedConstantTextExemptionProblems(usedConstantTextExemptions));
+const constFiles: readonly string[] = [...constsSourceFiles];
+const constsProgram: ts.Program = createConstsProgram(PROJECT_ROOT, constFiles);
+const constsChecker: ts.TypeChecker = constsProgram.getTypeChecker();
+const constDeclarations: readonly ExportedConstDeclaration[] = exportedConstDeclarations(constsProgram, constFiles);
+failures.push(...collectConstImmutabilityAssertionProblems({
+  projectRoot: PROJECT_ROOT,
+  checker: constsChecker,
+  declarations: constDeclarations,
+  assertionSource: await Bun.file(join(PROJECT_ROOT, "test", "consts", "immutability.test.ts")).text(),
+}));
+failures.push(...collectConstExhaustiveListProblems({
+  projectRoot: PROJECT_ROOT,
+  checker: constsChecker,
+  declarations: constDeclarations,
+  partialTables: PARTIAL_LITERAL_TABLES,
+}));
 failures.push(...collectUnusedNodeAllowanceProblems(nodeImportUsage));
 
 for (const problem of await collectTelegramMessageProblems(

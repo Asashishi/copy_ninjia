@@ -120,7 +120,7 @@ export interface AiCostUsageReport {
   readonly capability: AiCacheCapability;
   readonly provider: AgentProvider;
   readonly model: string;
-  /** 本次请求的费用（ticks，1 美元 = 10,000,000,000 ticks）。 */
+  /** 本次请求的费用（xAI `cost_in_usd_ticks`，单位 tick）。 */
   readonly costInUsdTicks: unknown;
 }
 

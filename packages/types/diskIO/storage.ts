@@ -63,11 +63,11 @@ export interface JoinLogFileCache {
   latestByUser: Map<number, JoinLogRecord>;
   /** latestByUser 按标准快照格式写出后的准确 UTF-8 字节数。 */
   snapshotBytes: number;
-  /** 上次评估压缩后新追加的物理字节，用于把整文件序列化成本摊薄。 */
+  /** 上次评估压缩后新追加的物理字节，作为压缩评估的触发依据。 */
   appendedBytesSinceCompaction: number;
   /** 当前文件中确定已被更新值取代的物理历史条目数。 */
   redundantEntries: number;
-  /** 本群日本代际是否已经记录过容量降级，避免每条事件重复刷控制台。 */
+  /** 本群日本代际是否已经记录过容量降级；每代只记一次。 */
   capacityWarningEmitted: boolean;
 }
 

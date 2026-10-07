@@ -167,9 +167,9 @@ async function checkSuccessfulReplacement(atmosphere?: string): Promise<void> {
   assertCondition(!result.output.includes(replacementToken), "安装输出不得回显 Telegram token");
   const calls: string = await Bun.file(fixture.callLog).text();
   const outbound: string = await Bun.file(fixture.outboundLog).text();
-  // scripts/install/start.sh 里那两行 chmod 是 consts/identityStorage.ts 两个常量的
-  // 镜像：建库本身在夹具里被替身接管，但收紧权限的 shell 语句照原样执行，因此这里
-  // 核对的是真正落到磁盘的模式。目录带 setgid，按 0o7777 取位。
+  // scripts/install/start.sh 里的 chmod 对应 consts/identityStorage.ts 的权限
+  // 常量：建库在夹具里由替身接管，收紧权限的 shell 语句照原样执行，这里核对落到
+  // 磁盘的模式；目录带 setgid，按 0o7777 取位。
   assertContains(calls, "database:create", "全新部署必须走建库分支");
   const databaseDirectory: string = join(fixture.runtimeRoot, "database");
   assertEqual(

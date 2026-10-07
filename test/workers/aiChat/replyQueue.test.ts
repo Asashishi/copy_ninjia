@@ -38,10 +38,8 @@ describe("AI 回复触发队列", () => {
   });
 
   test("文本触发快照按 replyToMessageId 定位触发消息，不取缓冲尾条", () => {
-    // 主线程把 record 与 trigger 作为两条独立消息投过来，两者之间在途轮次的
-    // onMessageSent 完全可能把机器人自己的消息推进 chatBuffers。取尾条的话，
-    // 排队轮的提示词会渲染成「XX 也在跟你说话（TA 说的是：「机器人上一句」）」
-    // ——模型对着自己编造的内容回复。
+    // record 与 trigger 是两条独立消息；机器人自己的消息可能在两者之间进入 chatBuffers，
+    // 快照按 replyToMessageId 定位触发消息，不取缓冲尾条。
     const messages = new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     const older: BufferedMessage = bufferedMessageFixture({ messageId: 87, id: 1, firstName: "Older", lastName: "", text: "旧消息", at: "" });
     const trigger: BufferedMessage = bufferedMessageFixture({
@@ -54,7 +52,7 @@ describe("AI 回复触发队列", () => {
       replyTo: bufferedReplyReferenceFixture({ messageId: 70, id: 4, firstName: "Carol", lastName: "", text: "原问题" }),
       at: "",
     });
-    // 触发消息之后又落进来一条机器人自己的发言：尾条从此不再是触发消息。
+    // 触发消息之后又进来一条机器人自己的发言，尾条不再是触发消息。
     const selfSent: BufferedMessage = bufferedMessageFixture({ messageId: 89, id: 99, firstName: "Ninjia", lastName: "", text: "本天才刚说的话", at: "" });
     for (const entry of [older, trigger, selfSent]) {
       messages.push(entry);
@@ -162,10 +160,7 @@ describe("AI 回复触发队列", () => {
   });
 
   test("被限频拒绝时停下并把这条留在队首，不整队丢弃", () => {
-    // 限频闸只看这个群 5 分钟窗口内的轮数，跟具体是哪一条触发无关：第一条被拒
-    // 就意味着后面每一条都会被拒。而被拒时并发计数不增长，循环条件永远为真——
-    // 继续往下走就是在同一个同步 tick 里把整队 @提及/回复 shift 掉全部丢弃，
-    // 那些人一句回复都收不到。
+    // 限频闸按群的窗口内轮数判定：第一条被拒即停止，并把这条留在队首，不 shift 掉整队。
     const queue = new LinkedQueue<QueuedReplyTrigger>();
     for (let index: number = 1; index <= 3; index++) {
       queue.push({ triggerSenderId: index, replyToMessageId: index, telegramBackpressured: false, messageThreadId: undefined, imageGenerationRequested: false, senderName: "A", text: "x" });

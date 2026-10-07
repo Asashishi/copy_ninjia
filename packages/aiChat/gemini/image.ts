@@ -1,7 +1,6 @@
 /**
- * Gemini 侧的生图：调独立图片模型生成一张 1K 图片，文本段与思考中间图一律忽略。
- * 载荷校验（base64 规范性、大小上限、文件签名）走两家共用的
- * aiChat/ai/utils/imagePayload.ts，换供应商不会绕过任何一道门禁。
+ * Gemini 侧的生图：调独立图片模型按 GEMINI_IMAGE_SIZE 生成一张图片，文本段与思考中间图一律忽略。
+ * 载荷校验（base64 规范性、大小上限、文件签名）走 aiChat/ai/utils/imagePayload.ts（Gemini 与 OpenAI 共用）。
  */
 
 import { FinishReason } from "@google/genai";
@@ -18,8 +17,7 @@ import type { GeneratedChatImage } from "../../types/aiChat/imageGeneration";
 
 function extractGeneratedImage(data: GenerateContentResponse): GeneratedChatImage | null {
   const candidate: Candidate | undefined = data.candidates?.[0];
-  // unary generateContent 返回时生成已经结束；只有明确 STOP 的 candidate
-  // 才可发送。安全/复刻/禁止内容/NO_IMAGE 等异常即使意外夹带 payload 也拒绝。
+  // 只有明确 STOP 的 candidate 才可发送；其它收尾原因即使带有 payload 也拒绝。
   if (candidate?.finishReason !== FinishReason.STOP) return null;
   const parts: Part[] = candidate.content?.parts ?? [];
   for (const part of parts) {
@@ -32,7 +30,7 @@ function extractGeneratedImage(data: GenerateContentResponse): GeneratedChatImag
   return null;
 }
 
-/** 调 Gemini 生图模型生成一张 1K 图片；无可用载荷时返回 null。 */
+/** 调 Gemini 生图模型按 GEMINI_IMAGE_SIZE 生成一张图片；无可用载荷时返回 null。 */
 export async function generateGeminiImage({
   prompt,
   aspectRatio,

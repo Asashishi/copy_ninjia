@@ -1,6 +1,6 @@
 /**
  * Anthropic 侧的纯文本生成、结构化 JSON 生成与视觉描述，共用 client.ts 的
- * requestAnthropicTextResult，差别只在请求体。语音转写不实现：Messages API 没有音频输入，
+ * requestAnthropicTextResult，差别只在请求体。语音转写不实现：
  * 契约里的 transcribeVoice 在本包缺席（见 aiChat/provider.ts 的启动诊断）。
  *
  * 清洗与截断由调用方通过 normalize 传入，口径同 aiChat/openai/text.ts。请求不带采样温度。

@@ -33,7 +33,6 @@ export function handleStickerMessage(context: MessageTriggerContext): boolean {
     replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
     stickerFallbackText: fallbackText,
     voiceMime: undefined,
-    voiceDurationSeconds: 0,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

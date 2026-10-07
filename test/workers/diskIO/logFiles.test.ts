@@ -1,13 +1,13 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
   flushBuffer,
   loggerFileState,
   loggerReopenState,
-  markLogDirty,
   resetLogCache,
 } from "../../../packages/cache/workers/diskIO/logs";
+import { LOG_REOPEN_RETRY_MS } from "../../../packages/consts/diskIO/appendOnly";
 import { LOGS_DIR, TMP_FILE_SUFFIX } from "../../../packages/consts/paths";
 import { getDateKey } from "../../../packages/libs/time";
 import {
@@ -23,8 +23,7 @@ import type { LogEnvelope } from "../../../packages/types/diskIO/messages";
 
 /**
  * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
- * inspect -> adopt -> maintenance（见 workers/diskIO/startup.ts）。
- * 生产没有这个包装——它是跨域编排的一环，这里只是把同一顺序收成一行。
+ * inspect -> adopt -> maintenance（见 workers/diskIO/startup.ts），收成一个调用。
  */
 async function initLogFiles(): Promise<void> {
   const inspection = await inspectLogFiles();
@@ -217,7 +216,7 @@ describe("diskIO/logFiles 启动恢复", () => {
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     const original: string = "[]";
     await Bun.write(todayPath, original);
-    markLogDirty({
+    flushBuffer.entries.push({
       day: today,
       text: serializeDayFileEntry("entry", { level: "error", message: "boom" }),
     });
@@ -232,21 +231,41 @@ describe("diskIO/logFiles 启动恢复", () => {
     const today: string = getDateKey();
     const todayPath: string = join(LOGS_DIR, `${today}.json`);
     await Bun.write(todayPath, "[]");
-    markLogDirty({ day: today, text: serializeDayFileEntry("a", { level: "error", message: "boom" }) });
+    flushBuffer.entries.push({ day: today, text: serializeDayFileEntry("a", { level: "error", message: "boom" }) });
     expect(await flushLogBuffer()).toBeFalse();
     expect(loggerReopenState.retryAt).toBeGreaterThan(0);
 
     // 文件此刻已经修好，但仍在退避窗口内：这一批照样丢弃，不去重开。
     await Bun.write(todayPath, "{}");
-    markLogDirty({ day: today, text: serializeDayFileEntry("b", { level: "error", message: "again" }) });
+    flushBuffer.entries.push({ day: today, text: serializeDayFileEntry("b", { level: "error", message: "again" }) });
     expect(await flushLogBuffer()).toBeFalse();
     expect(await Bun.file(todayPath).text()).toBe("{}");
 
     // 退避到期后才重试；接管成功即清掉退避标记。
     loggerReopenState.retryAt = Date.now() - 1;
-    markLogDirty({ day: today, text: serializeDayFileEntry("c", { level: "error", message: "recovered" }) });
+    flushBuffer.entries.push({ day: today, text: serializeDayFileEntry("c", { level: "error", message: "recovered" }) });
     expect(await flushLogBuffer()).toBeTrue();
     expect(loggerReopenState.retryAt).toBe(0);
     expect(Object.keys(JSON.parse(await Bun.file(todayPath).text()) as Record<string, unknown>)).toEqual(["c"]);
+  });
+
+  test("系统时钟回拨超过退避窗口时视为窗口已结束，下一批立即重开日文件", async () => {
+    const today: string = getDateKey();
+    const todayPath: string = join(LOGS_DIR, `${today}.json`);
+    await Bun.write(todayPath, "[]");
+    flushBuffer.entries.push({ day: today, text: serializeDayFileEntry("a", { level: "error", message: "boom" }) });
+    expect(await flushLogBuffer()).toBeFalse();
+    const retryAt: number = loggerReopenState.retryAt;
+    await Bun.write(todayPath, "{}");
+
+    const clock = spyOn(Date, "now").mockReturnValue(retryAt - LOG_REOPEN_RETRY_MS - 1);
+    try {
+      flushBuffer.entries.push({ day: today, text: serializeDayFileEntry("b", { level: "error", message: "recovered" }) });
+      expect(await flushLogBuffer()).toBeTrue();
+    } finally {
+      clock.mockRestore();
+    }
+    expect(loggerReopenState.retryAt).toBe(0);
+    expect(Object.keys(JSON.parse(await Bun.file(todayPath).text()) as Record<string, unknown>)).toEqual(["b"]);
   });
 });

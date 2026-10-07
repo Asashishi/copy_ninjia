@@ -115,9 +115,8 @@ describe("createPrioritizedBoundedTaskRunner", () => {
     expect(queuedStarted).toBeFalse();
   });
 
-  // 下面两条是单档退化配置（maxBackgroundPending 取满 maxPending、interactiveBurst
-  // 取 1、全部按 interactive 提交），对应 packages/cache/workers/aiChat/mediaTasks.ts
-  // 媒体执行器的用法，钉住「饱和即拒 / 槽位释放后续队 / 排队中可取消」三条语义。
+  // 下面两条是单档退化配置（maxBackgroundPending 取满 maxPending、interactiveBurst 取 1、全部按 interactive 提交），
+  // 对应 packages/cache/workers/aiChat/mediaTasks.ts 媒体执行器的用法，覆盖「饱和即拒 / 槽位释放后续队 / 排队中可取消」语义。
   test("单档退化：限制执行与等待数量，饱和后立即拒绝且槽位释放后继续队列", async () => {
     const runner = createPrioritizedBoundedTaskRunner({
       maxConcurrent: 2,
@@ -194,8 +193,7 @@ describe("createPrioritizedBoundedTaskRunner", () => {
   });
 
   test("占到执行位后、真正调用前被取消的任务不再执行", async () => {
-    // start() 先占执行位，任务本体要到下一个微任务才调用；这一拍里取消的话，
-    // 两条等待队列都不参与，只有 start() 里的复查挡得住。
+    // start() 先占执行位，任务本体要到下一个微任务才调用；这一拍里取消时两条等待队列都不参与，由 start() 里的复查处理。
     const runner = createPrioritizedBoundedTaskRunner({
       maxConcurrent: 1,
       maxPending: 0,

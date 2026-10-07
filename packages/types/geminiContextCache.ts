@@ -3,7 +3,7 @@ import type { AiCacheCapability } from "./aiCache";
 
 /**
  * 一槽显式缓存的本地登记（见 infra/geminiContextCache.ts）。字段在创建与启动接管两处
- * 一次写全；命中、续期只改 expireAt / lastUsedAt / renewing / renewFailedAt 四项。
+ * 一次写全；命中、续期只改 expireAt / lastUsedAt / renewing / renewFailedAt。
  */
 export interface GeminiContextCacheSlot {
   /** 缓存内容（模型、系统指令、工具声明、toolConfig）的指纹；同槽内容变了就换条目。 */

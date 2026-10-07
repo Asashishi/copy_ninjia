@@ -16,10 +16,9 @@ export interface PermissionSetReplyParams {
 /**
  * /permission 的全部对外文案。
  *
- * help 与 query 两条回执都要在正文里嵌一个 JSON 代码块，代码块紧接在开场白
- * 之后，因此 helpPrefix / queryPrefix **必须以换行结尾**：少了那个换行，代码块
- * 会紧贴在开场白的最后一个字符后面，Telegram 渲染出来是错位的。文案按
- * MarkdownV2 发送前整段转义（见 commands/permission.ts），这里写的是显示原文。
+ * help 与 query 两条回执在正文里嵌一个 JSON 代码块，紧接在开场白之后，
+ * helpPrefix / queryPrefix 必须以换行结尾。文案按 MarkdownV2 发送前整段转义
+ * （见 commands/permission.ts），这里写的是显示原文。
  * 具体文案表见 packages/consts/atmosphere/ 下各风格的 whitelist.ts。
  */
 export interface PermissionCommandTexts {
@@ -41,7 +40,7 @@ export interface PermissionCommandTexts {
   readonly currentChatTarget: string;
   /** 目标还不在白名单里，得先 /white。 */
   readonly targetNotWhitelisted: (targetLabel: string) => string;
-  /** 写盘失败：白名单记录没有被改动，必须如实说出来而不是让异常掀翻进程。 */
+  /** 写盘失败：白名单记录没有被改动。 */
   readonly mutationFailed: string;
   /** all：本次真的把全部权限打开了。 */
   readonly allEnabled: (targetLabel: string) => string;
@@ -66,9 +65,9 @@ export interface WhiteCommandTexts {
   /**
    * 目标是超级管理员自己、动作是 disable，且白名单表里确实有一条残留被清掉。
    *
-   * 与 disabled 分开：超级管理员的白名单身份与权限来自 SUPER_ADMIN_USER_ID
-   * 本身（见 infra/identityPolicy/whitelist.ts 的 isWhitelisted 与
-   * getEffectiveWhitelistPermissions），清掉表里那条残留改变不了其中任何一样。
+   * 超级管理员的白名单身份与权限来自 SUPER_ADMIN_USER_ID 本身（见
+   * infra/identityPolicy/whitelist.ts 的 isWhitelisted 与
+   * getEffectiveWhitelistPermissions），表里的残留条目不影响其中任何一样。
    */
   readonly superAdminDisableCleared: string;
   /** 目标是超级管理员自己、动作是 disable，且白名单表里本来就没有残留条目。 */
@@ -77,9 +76,9 @@ export interface WhiteCommandTexts {
   readonly currentChatTarget: string;
   /** 目标还在黑名单里，得先 /block disable。 */
   readonly blocked: (targetLabel: string) => string;
-  /** 写盘失败：白名单没有被改动，必须如实说出来而不是让异常掀翻进程。 */
+  /** 写盘失败：白名单没有被改动。 */
   readonly mutationFailed: string;
-  /** enable：本次真的加进来了，赏一套默认权限。 */
+  /** enable：本次真的加进来了，授予默认权限。 */
   readonly enabled: (targetLabel: string) => string;
   /** enable：本来就在白名单里，已有权限不会被重置。 */
   readonly alreadyEnabled: (targetLabel: string) => string;

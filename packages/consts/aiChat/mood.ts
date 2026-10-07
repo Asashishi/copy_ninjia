@@ -1,4 +1,5 @@
 import type { TimeBucket, WeatherBucket } from "../../types/aiChat/mood";
+import { exhaustiveList } from "../exhaustiveList";
 
 /** 单条心情配置必须具有的字段，用于 config/mood.ts 的严格键校验。 */
 export const MOOD_ENTRY_REQUIRED_KEYS: readonly string[] = ["name", "weight", "instruction"];
@@ -23,32 +24,24 @@ export const MOOD_REROLL_MAX_MS: number = 4 * 60 * 60_000;
 export const MOOD_REQUEST_TIMEOUT_MS: number = 5_000;
 
 /**
- * 部署配置中单个天气/时段倍率的硬上限。倍率只用于微调概率，超过该值通常是
- * 配置笔误；在启动阶段拒绝可同时保证权重连乘与总和保持有限。
+ * 部署配置中单个天气/时段倍率的硬上限；超过时启动阶段拒绝，权重连乘与总和保持有限。
  */
 export const MOOD_MULTIPLIER_MAX: number = 100;
 
-// 天气/时段桶的运行时全集，供部署配置（config/dynamic/mood.json）的倍率表键做运行时
-// 校验。由带 Record<Bucket, true> 标注的对象派生：types/aiChat/mood.ts 的联合类型
-// 增删桶而这里没跟上时直接编译报错。
-/** 天气桶联合类型的运行时全集，用于配置键校验。 */
-const WEATHER_BUCKET_FLAGS: Readonly<Record<WeatherBucket, true>> = {
-  clear: true,
-  cloudy: true,
-  rain: true,
-  snow: true,
-  storm: true,
-  fog: true,
-};
-/** 部署配置允许使用的全部天气桶。 */
-export const WEATHER_BUCKETS: readonly WeatherBucket[] = Object.keys(WEATHER_BUCKET_FLAGS) as WeatherBucket[];
-/** 时段桶联合类型的运行时全集，用于配置键校验。 */
-const TIME_BUCKET_FLAGS: Readonly<Record<TimeBucket, true>> = {
-  lateNight: true,
-  morning: true,
-  daytime: true,
-  evening: true,
-  night: true,
-};
-/** 部署配置允许使用的全部配置时区时段桶。 */
-export const TIME_BUCKETS: readonly TimeBucket[] = Object.keys(TIME_BUCKET_FLAGS) as TimeBucket[];
+/** 部署配置（config/dynamic/mood.json）倍率表允许使用的全部天气桶，供配置键校验。 */
+export const WEATHER_BUCKETS: readonly WeatherBucket[] = exhaustiveList<WeatherBucket>()([
+  "clear",
+  "cloudy",
+  "rain",
+  "snow",
+  "storm",
+  "fog",
+]);
+/** 部署配置倍率表允许使用的全部配置时区时段桶，供配置键校验。 */
+export const TIME_BUCKETS: readonly TimeBucket[] = exhaustiveList<TimeBucket>()([
+  "lateNight",
+  "morning",
+  "daytime",
+  "evening",
+  "night",
+]);

@@ -7,7 +7,7 @@
 #   bash install.sh --binary  # 下载 GitHub Release 预编译发行包
 #   bash install.sh --source  # 安装源码版本
 #
-# 按顺序执行这八步（与运行时打印的进度逐字一致）：
+# 按顺序执行这些步骤（与运行时打印的进度逐字一致）：
 #   1/8 平台自检
 #   2/8 获取仓库
 #   3/8 基础工具与 Bun
@@ -33,8 +33,8 @@ readonly SERVICE_UNIT_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
 readonly CLONE_TARGET="${COPY_NINJIA_DIR:-copy_ninjia}"
 INSTALL_MODE="${COPY_NINJIA_INSTALL_MODE:-}"
 
-# 所有交互输入都从这里读，**不能用标准输入**：`curl | bash` 时 fd 0 是脚本正文，
-# bash 还在一边执行一边从它读后面的内容，动了它脚本就会从中间断掉。
+# 所有交互输入都从这里读，不使用标准输入：`curl | bash` 时 fd 0 是脚本正文，
+# bash 一边执行一边从它读取后续内容。
 readonly TTY_DEVICE="/dev/tty"
 
 step() { printf '\n==> %s\n' "$1"; }
@@ -105,7 +105,7 @@ verify_service_target() {
   esac
 }
 
-# 用系统包管理器补齐基础工具。没有可用的包管理器，或安装失败时返回非零，由调用方决定 die 还是降级；不猜、不硬来。
+# 用系统包管理器补齐基础工具。没有可用的包管理器，或安装失败时返回非零，由调用方决定 die 还是降级。
 install_system_packages() {
   if command -v apt-get >/dev/null 2>&1; then
     run_privileged apt-get update -y && run_privileged apt-get install -y "$@"
@@ -223,8 +223,8 @@ step "1/8 平台自检"
   die "只支持 Linux：实例锁依赖 /proc/<pid>/stat 与 boot ID，其它平台会 fail-closed 拒绝启动。"
 [ -r /proc/self/stat ] ||
   die "/proc 不可读：实例锁无法工作。容器请挂载 /proc 后重试。"
-# 不看 `[ -t 0 ]`：`curl | bash` 时 fd 0 本来就是脚本正文，那个判断只会误伤。
-# 真正要有的是一个能读能写的控制终端，后面所有问答都从它读。
+# 不看 `[ -t 0 ]`：`curl | bash` 时 fd 0 是脚本正文。要求一个能读能写的控制终端，
+# 后面所有问答都从它读。
 { [ -r "$TTY_DEVICE" ] && [ -w "$TTY_DEVICE" ]; } ||
   die "拿不到控制终端（${TTY_DEVICE}），无法询问配置。请在交互式终端里运行本脚本。"
 info "Linux + 可读 /proc + 可用控制终端，均满足。"

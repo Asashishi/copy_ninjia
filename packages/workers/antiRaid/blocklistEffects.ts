@@ -6,25 +6,23 @@
  *
  * 与验证超时踢人一样放在 Worker 里：重试节奏、群停管代际与整批结算都由
  * Anti-Raid owner 维护；每个 Telegram 调用只通过双工能力交给主线程总闸执行，
- * Worker 等待网络时不阻塞 mailbox，主线程 update handler 也不等待整批补扫。
+ * Worker 等待网络时不阻塞 mailbox。
  *
  * 与本线程其它副作用共用同一条节奏：dispatch 里同步的部分立即返回，异步能力
- * 请求事后串行交给主线程执行，绝不阻塞 mailbox——否则一波刷屏入群的后续投递
- * 会被网络往返卡住。
+ * 请求事后串行交给主线程执行，不阻塞 mailbox。
  *
- * 三条与「一次失败就等于放人进群」直接相关的约束（见 docs/cn/04-invariants.md）：
- * - 失败必须重试，且最终结果要回执给主线程。黑名单入群不开验证窗口，没有
- *   超时踢人兜底，处置是这个人被清出去的唯一机会。
- * - 探测失败不算「不在群」。只有确认不在群才跳过，其余一律照封。
- * - 群停管后立刻放弃在途批次，避免在已经不归自己管的群里继续封人。
+ * 三条约束（见 docs/cn/04-invariants.md）：
+ * - 失败必须重试，且最终结果要回执给主线程；黑名单入群不开验证窗口，没有
+ *   超时踢人兜底。
+ * - 探测失败不算「不在群」：只有确认不在群才跳过，其余一律照封。
+ * - 群停管后立刻放弃在途批次。
  *
- * 整批登记在 Worker 在途任务集合里、由停机 drain 等待，因此同时订阅停机取消信号
+ * 整批登记在 Worker 在途任务集合里、由停机 drain 等待，同时订阅停机取消信号
  * （antiRaidDispatchSignal）：取消后不再开始新的 id、分批暂停或重试退避，整批按
  * complete:false 回执，durable outbox 在下一次启动重放。
  *
- * 还有一条与「一个 id 卡住整个群」相关：`permissionDenied` 只能由**机器人自己
- * 缺权限**触发。Telegram 用同一句 400 表达「目标是管理员」，混进去就会把整个群
- * 的清扫永久闩死，见 RemovalOutcome 的 targetIsAdmin。
+ * `permissionDenied` 只能由**机器人自己缺权限**触发；Telegram 用同一句 400 表达
+ * 「目标是管理员」，该情形归 RemovalOutcome 的 targetIsAdmin。
  */
 
 import { banChatMemberWithOutcome, banChatSenderChatWithOutcome, deleteMessage, probeChatAdmin, telegramApi } from "../../infra/telegram";
@@ -55,13 +53,10 @@ import { sleepUnlessAborted } from "../../libs/sleep";
 /**
  * 单个 id 的处置结局。
  *
- * `forbidden` 从 `failed` 里单独分出来：那是「机器人在这个群封不了人」，主线程
- * 据此停掉这个群按时间的重试，只等一次确证的权限变更（见 docs/cn/04-invariants.md）。
- * `targetIsAdmin` 又从 `forbidden` 里分出来：Telegram 对「目标本身是管理员」返回
- * 的也是 400 `not enough rights`，混在一起就意味着一个封不掉的管理员会把**整个群**
- * 的黑名单清扫永久闩死——此后补扫早退、重扫请求被拒、每次重启跳过重放，而唯一
- * 的解锁边沿是「机器人的封禁权限变了」，那件事根本不会发生。这一档只结算这个
- * 目标，不动群级的 permissionBlocked。
+ * `forbidden`：机器人在这个群封不了人，主线程据此停掉这个群按时间的重试，
+ * 只等一次确证的权限变更（见 docs/cn/04-invariants.md）。
+ * `targetIsAdmin`：Telegram 对「目标本身是管理员」返回的同样是 400 `not enough rights`，
+ * 这一档只结算这个目标，不动群级的 permissionBlocked。
  * `participantInvalid` 与 `failed` 同样算未落定，区别只在回执里把这个 id 报给
  * 主线程的销号计数（见 infra/blocklist/participantInvalid.ts）。
  */
@@ -90,27 +85,23 @@ async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneP
     if (userId < 0) {
       const outcome: BanChatMemberOutcome = await banChatSenderChatWithOutcome(chatId, userId, telegramApi);
       if (outcome === "banned") return "removed";
-      // 同真人分支：权限不够时重试没有意义，这批等的是权限变更。没有
-      // targetIsAdmin 那一档可分辨，见 banChatSenderChatWithOutcome。
+      // 同真人分支：权限不够时不重试。没有 targetIsAdmin 那一档可分辨，
+      // 见 banChatSenderChatWithOutcome。
       if (outcome === "forbidden") return "forbidden";
     } else {
       if (probeMembership) {
         const probe: ChatMembershipProbeOutcome =
           await probeChatMembershipWithOutcome(chatId, userId, telegramApi);
-        // 只有「确认不在群」才跳过。探测失败（429、网络抖动、PARTICIPANT_ID_INVALID）
-        // 时照样封：对一个本来就不在群里的黑名单 id 多封一次是幂等的，效果只是
-        // 提前封住；反过来把失败当成「不在群」，坐在群里的人就被静默放过了。
+        // 只有「确认不在群」才跳过；探测失败（429、网络抖动、PARTICIPANT_ID_INVALID）
+        // 时照样封，封禁对不在群的 id 幂等。
         if (probe === "absent") return "absent";
         if (probe !== "participantInvalid") participantInvalid = false;
       }
       const outcome: BanChatMemberOutcome = await banChatMemberWithOutcome(chatId, userId, telegramApi);
       if (outcome === "banned") return "removed";
       if (outcome !== "participantInvalid") participantInvalid = false;
-      // 权限不够不再消耗剩余尝试：同一秒里重试三次只是把同一条报错刷三遍，
-      // 这个批次要等的是权限变更，不是下一次退避。但在把这个群整体判成「缺
-      // 封禁权限」之前必须先分辨一次：同一句 400 也可能只是说「这个目标是
-      // 管理员」，那是一个 id 的事，不该闩住整个群（见 RemovalOutcome）。
-      // 查不出身份时维持原判——没有确证就不把群级闩锁降级成逐个重试。
+      // 权限不够不再消耗剩余尝试。判成群级「缺封禁权限」之前先探测目标是否管理员：
+      // 是则归 targetIsAdmin（见 RemovalOutcome）；查不出身份时维持 forbidden。
       if (outcome === "forbidden") {
         return await probeChatAdmin({ chatId, userId, api: telegramApi }) === true
           ? "targetIsAdmin"
@@ -118,8 +109,8 @@ async function removeOne({ chatId, userId, probeMembership, signal }: RemoveOneP
       }
     }
     if (attempt < BLOCKLIST_REMOVAL_MAX_ATTEMPTS) {
-      // 停机 drain 的预算是秒级，退避却按 5s、10s 放大：取消后既不开始、也不继续
-      // 等这次退避，本 id 按未落定结算，由 durable outbox 在下一次启动重放。
+      // 停机取消后不开始、也不继续等这次退避，本 id 按未落定结算，由 durable outbox
+      // 在下一次启动重放。
       if (!await sleepUnlessAborted(BLOCKLIST_REMOVAL_RETRY_DELAY_MS * attempt, signal)) return "failed";
     }
   }
@@ -165,16 +156,12 @@ function applyRemovalOutcome({ chatId, userId, outcome, result }: ApplyRemovalOu
     logger.error(
       `Blocklist removal in chat ${chatId} is blocked by missing ban rights; stopping this batch.`
     );
-    // 机器人在这个群根本封不了人，剩下的 id 只会一个个撞上同一句 400。补扫
-    // 可能有几千个 id，每个两次注定失败的请求外加分批暂停，全压在与验证超时
-    // 踢人共用的 kick 类别上——发现这件事的这一次补扫本身就是要避免的风暴。
+    // 机器人在这个群封不了人，剩下的 id 不再处置，整批就此停下。
     return false;
   } else if (outcome === "targetIsAdmin") {
-    // 就地结算：这个 id 在这个群封不掉，但那是他自己的管理员身份决定的，
-    // 与机器人的权限无关。算进未落定只会让整批永远重试；算成群级权限受阻
-    // 更糟——那会连累同批其余 id 一起停摆。改用一条独立回执让主线程保住这个
-    // 群的补扫欠账（sweptAt 不落），管理员降级后由下一次补扫（或他自己重新
-    // 入群时的秒踢）接上——那正是这行日志承诺的事。
+    // 就地结算：这个 id 因自身管理员身份封不掉，与机器人的权限无关；不计入未落定，
+    // 也不触发群级权限受阻。批次回执带 targetIsAdmin 标记，主线程据此保留这个群的
+    // 补扫欠账（sweptAt 不落），管理员降级后由下一次补扫（或他重新入群时的秒踢）接上。
     result.targetIsAdmin = true;
     result.settledUserIds.push(userId);
     logger.error(
@@ -203,14 +190,10 @@ async function finishRemovalBatch({
   announcementMessageId,
   removed,
 }: FinishRemovalBatchParams): Promise<void> {
-  // 入群公告：不投 join 就没人再管这条服务消息了，处置走完顺手删掉。
+  // 入群公告：黑名单入群不投 join，处置走完后由这里删除这条服务消息。
   //
-  // 确证没有删消息权限时一条请求都不发（三态里只拦确证的 false，见
-  // ./botPermissions.ts）：机器人完全可能是「有 can_restrict_members、没有
-  // can_delete_messages」的管理员，那种群里每个黑名单入群都换来一次注定 400 的
-  // 删除。它们虽与踢人分属独立 429 类别，注定失败的请求仍会白占网络、日志和
-  // 停机预算，公告本身照样删不掉。权限闸与 adDetect/disposal.ts 和验证处置
-  // 路径共用同一口径。
+  // 确证没有删消息权限时不发请求（三态里只拦确证的 false，见 ./botPermissions.ts），
+  // 口径与 adDetect/disposal.ts 和验证处置路径相同。
   if (
     announcementMessageId !== undefined &&
     currentBlocklistRemovalEpoch(chatId) === epoch &&
@@ -233,20 +216,13 @@ async function removeBlockedMembers({
   joinedAt,
   announcementMessageId,
 }: RemoveBlockedMembersParams): Promise<RemoveBatchResult> {
-  // 入群计数是同步的、与网络无关，先记：黑名单入群不再投 join，若不在这里
-  // 补记，一波以黑名单账号为主的刷群就凑不够反刷群窗口的阈值。
+  // 入群计数同步完成、与网络无关，先记：黑名单入群不投 join，由这里补记入群计数。
   //
-  // 记的是**本线程观测到的时刻**，不是 joinedAt 本身。recordJoin 把第二个参数
-  // 当成「现在」交给 TimestampDeque.trim，而后者按契约会把落在「未来」的队尾
-  // 判成系统时钟回拨并丢掉（见 libs/timestampDeque.ts）。joinedAt 是主
-  // 线程在 durable outbox flush **之前**取的，必然早于本线程随后用自己的
-  // Date.now() 记下的那些入群——直接传进去，一次补记就能把同一批里刚记下的真实
-  // 入群整段抹掉，窗口计数永远爬不到 ANTI_RAID_PER_MINUTE_LIMIT，紧急私密模式
-  // 再也不会触发。差价只有一次 flush 的时间，方向也偏向「更晚出窗口」。
+  // 记的是**本线程观测到的时刻** now，不是 joinedAt 本身：recordJoin 的第二个参数
+  // 按「现在」处理，见 libs/timestampDeque.ts 的 trim 契约。
   if (joinedAt !== undefined) {
     const now: number = Date.now();
-    // 已经滑出窗口的补记直接丢弃：跨进程重放（启动恢复、Worker 重生）带来的
-    // joinedAt 属于上一个进程的入群潮，把它对齐到现在就是凭空多算一次入群。
+    // 已经滑出窗口（JOIN_WINDOW_MS）的补记直接丢弃，跨进程重放带来的 joinedAt 不计入。
     if (now - joinedAt < JOIN_WINDOW_MS) recordJoin(chatId, now);
   }
   const epoch: number = currentBlocklistRemovalEpoch(chatId);
@@ -259,9 +235,8 @@ async function removeBlockedMembers({
     participantInvalidUserIds: [],
     settledUserIds: [],
   };
-  // 镜像已确证缺封禁权限（三态里只认确证的 false，见 ./botPermissions.ts）：每个 id 都只会
-  // 换来一次注定失败的封禁加一次管理员探测，整批直接按权限受阻回执，由主线程闩住
-  // 这个群并记日志；入群计数与入群公告清理照常。
+  // 镜像已确证缺封禁权限（三态里只认确证的 false，见 ./botPermissions.ts）：整批不发请求，
+  // 直接按权限受阻回执，由主线程闩住这个群并记日志；入群计数与入群公告清理照常。
   if (botCanRestrictIn(chatId) === false) {
     result.complete = false;
     result.permissionDenied = true;
@@ -280,8 +255,8 @@ async function removeBlockedMembers({
       result.complete = false;
       return result;
     }
-    // 补扫可能有几千个 id，且与验证超时踢人共用 kick 类别的 429 FIFO；每批
-    // 之间让一步，给同 owner 的其它安全动作与 Worker mailbox 留出调度机会。
+    // 每 BLOCKLIST_SWEEP_BATCH_SIZE 个 id 暂停 BLOCKLIST_SWEEP_BATCH_PAUSE_MS，
+    // 让出 kick 类别的 429 FIFO 与 Worker mailbox。
     if (
       index > 0 &&
       index % BLOCKLIST_SWEEP_BATCH_SIZE === 0 &&
@@ -313,10 +288,7 @@ export interface HandleRemoveBlockedMembersParams {
 export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlockedMembersParams): Promise<void> {
   const task: Promise<void> = removeBlockedMembers(msg)
     .then((result: RemoveBatchResult): void => {
-      // 回执先发。主线程只在 complete 时销镜像并把群标成已清扫，排在它后面的
-      // 任何一步抛出都会转到下面的 .catch 并改发 complete:false，让主线程重投
-      // 一个其实已经跑完的批次——去重记录回收是尽力而为的清理，不该有能力
-      // 否决一个已经确定的结果。
+      // 回执先发；其后的去重记录回收是尽力而为的清理，不影响已确定的结果。
       publish({
         type: "blockedMembersRemoved",
         chatId: msg.chatId,
@@ -328,9 +300,8 @@ export function handleRemoveBlockedMembers({ msg, publish }: HandleRemoveBlocked
         settledUserIds: result.settledUserIds,
       });
       // 非探测批次里的目标已确认封禁后，尝试释放同 key 的广告判定去重记录；
-      // release 内部只认 direct-ad 标记，不会误碰手工 /block 或秒踢的待检 bundle。
-      // 自带 try：抛出去只会落进下面的 .catch 再补发一条 complete:false，同一个
-      // removalId 就有了两条互相矛盾的回执。这里失败最多让几个 key 多等一个窗口。
+      // release 内部只认 direct-ad 标记，不会碰手工 /block 或秒踢的待检 bundle。
+      // 自带 try，失败不会进入下面的 .catch 补发回执。
       if (result.complete && !result.targetIsAdmin && !msg.probeMembership) {
         try {
           for (const userId of msg.userIds) {

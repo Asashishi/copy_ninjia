@@ -78,8 +78,8 @@ function adSenderLabel(bundle: AdMessageBundle, atmosphere: AtmosphereTexts): st
 }
 
 /**
- * 第一次引用类广告的公开警告。主线程在发出消息的同一成功回调里登记 30 秒删除，
- * 返回成功即表示清理 owner 已接管；Worker 后续退出也不会遗留非功能性提示。
+ * 第一次引用类广告的公开警告。主线程在发出消息的同一成功回调里登记
+ * COMMAND_MESSAGE_AUTO_DELETE_MS 后删除，返回成功即表示清理 owner 已接管。
  */
 export function warnReferencedAdSender(
   bundle: AdMessageBundle
@@ -96,7 +96,7 @@ export function warnReferencedAdSender(
 
 /**
  * 清理第一次警告覆盖的广告消息。删除是独立的尽力而为副作用，不占用分类
- * in-flight；慢删除或 429 不能阻塞同一发送者警告后的再次判定。
+ * in-flight，不阻塞同一发送者警告后的再次判定。
  */
 export function deleteReferencedAdMessages({
   bundle,
@@ -142,10 +142,9 @@ export function deleteReferencedAdMessages({
 }
 
 /**
- * 这次处置要删的消息 id：判定依据 ∪ 此刻串里还剩的 ∪ 挤出去时转存的。三边都
- * 不能少——只删第一份会放过往返期间抢发的后续广告，只删第二份会漏掉被单 key
- * 条数/字符预算挤出当前上下文、但模型确实读过并据此判定的那些消息，而第三份
- * 是压根没赶上判定就被挤出去的那些（见 AdMessageBundle.pendingDeleteIds）。
+ * 这次处置要删的消息 id：判定依据 ∪ 此刻串里还剩的 ∪ 挤出去时转存的。三份分别
+ * 覆盖送检时的入选条目、往返期间并进串里的后续消息、被条数/字符预算挤出串且未赶上
+ * 判定的消息（见 AdMessageBundle.pendingDeleteIds）。
  */
 function disposalMessageIds({
   judged,
@@ -172,15 +171,12 @@ function disposalMessageIds({
 /**
  * 删掉一条抢在处置落地之前发出来的广告（只用于频道马甲）。
  *
- * 频道身份的封禁走 banChatSenderChat，那个接口没有 revoke_messages（见
- * docs/cn/04-invariants.md），逐条删除是这些消息唯一的清理路径；而判定命中到封禁
- * 真正落地之间还隔着回投主线程、黑名单 fsync、outbox 写前日志与 mailbox 屏障，
- * 这段空档里频道新发的广告不会再被判定第二次。fire-and-forget：与本流水线其余
- * 部分一样是尽力而为，不登记进停机 drain 的在途集合。
+ * 频道身份的封禁走 banChatSenderChat，该接口没有 revoke_messages（见
+ * docs/cn/04-invariants.md），这些消息逐条删除；处置落地前频道新发的消息不会被再次
+ * 判定。fire-and-forget：尽力而为，不登记进停机 drain 的在途集合。
  */
 export function deleteStragglerAdMessage(chatId: number, messageId: number): void {
-  // 确证没有删消息权限就别打：一场广告突袭能产生几十个注定 400 的删除请求，白占
-  // 网络、日志和停机预算。三态里只拦确证的 false，「没观测到」照常发（见
+  // 确证没有删消息权限时不发请求；三态里只拦确证的 false，「没观测到」照常发（见
   // ../botPermissions.ts）。
   if (botCanDeleteIn(chatId) === false) return;
   void deleteMessage(chatId, messageId, telegramApi);
@@ -188,13 +184,10 @@ export function deleteStragglerAdMessage(chatId: number, messageId: number): voi
 
 /**
  * 执行一次广告处置的 Worker 半边：回投事件 + 删消息。两者都是尽力而为（失败
- * 只记日志）；真正不可丢的拉黑与封禁由主线程接管，因此这里不会因为删除失败
- * 就不回投事件。
+ * 只记日志），删除失败不影响事件回投；拉黑与封禁由主线程接管。
  *
- * 群内播报**不在这里发**。它的文案要断言「在所有盯着的群里一起封掉了」，而
- * 那件事此刻还没发生：主线程可能因为 outbox 触顶、刚被撤管理员或 /init disable
- * 而一个群都登记不上。谁知道结果谁播报，因此由主线程发（见 antiRaid/adDetect.ts
- * 的 announceAdDisposal）。
+ * 群内播报**不在这里发**，由主线程按处置结果发出（见 antiRaid/adDetect.ts 的
+ * announceAdDisposal）。
  */
 export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSenderParams): Promise<void> {
   const messageIds: number[] = disposalMessageIds({
@@ -207,12 +200,10 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
     `on ${judged.length} judged message(s), deleting ${messageIds.length}: ` +
     `${verdict.reason || "no reason given"}.`
   );
-  // 先回投主线程：拉黑落盘 + 各群封禁是这次处置里唯一不可丢的部分，不该排在
-  // 删消息的网络往返后面。通道为空只发生在 Worker 已经停止的路径上。
+  // 先回投主线程，再删消息。通道为空只发生在 Worker 已经停止的路径上。
   const publish: ((event: AdDetectedEvent) => void) | null = adDetectPublishHolder.current;
   if (publish === null) {
-    // 通道已关（Worker 停止路径）：拉黑与各群封禁这半边永远不会发生了，播报
-    // 自然也不会有——它跟着结果走，在主线程发。删消息照做。
+    // 通道已关（Worker 停止路径）：不回投事件，也就没有拉黑、封禁与播报；删消息照做。
     logger.error(
       `Ad detection could not report sender ${bundle.senderId} in chat ${bundle.chatId}: ` +
       "the main-thread channel is closed; deleting the messages without announcing a block."
@@ -228,10 +219,8 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
     label: adSenderLabel(bundle, workerAtmosphere()),
     meta: bundle.meta,
     reason: verdict.reason,
-    // 判定依据的整串原样带回主线程写进命中样本（见 diskIO/adSampleFile.ts）：
-    // 判定看的是整串而不是某一条，只留触发那一条的话，人回头看到的是一句
-    // 孤立的话，复现不出模型当时读到的东西。用送检那一刻定格的 judged 而不是
-    // 活的 bundle.entries，否则写进样本的是模型没读过的内容。
+    // 判定依据的整串原样带回主线程写进命中样本（见 diskIO/adSampleFile.ts），
+    // 取送检时定格的 judged，不取活的 bundle.entries。
     messages: judged.map((entry: AdCandidateEntry): AdSampleMessage => ({
       messageId: entry.messageId,
       text: entry.text,
@@ -240,29 +229,20 @@ export async function disposeAdSender({ bundle, verdict, judged }: DisposeAdSend
     })),
   });
 
-  // 一次删掉判定依据与此刻串里还剩的并集（见 disposalMessageIds）。封禁那边也带
-  // revoke_messages，但它只覆盖「还在这个群里的成员」，频道马甲与已经自己退群的
-  // 账号都不在其列；而这些正是本次判定的直接依据，无论如何都要清掉。
-  //
-  // 走批量接口而不是逐条 await：广告链路刻意不登记进在途任务集合，同时在跑多少条
-  // 没有上界；逐条删会把一次处置放大成几十个 delete 类别的往返，批量则每
-  // TELEGRAM_DELETE_MESSAGES_BATCH_MAX 条只占一个请求。
+  // 一次删掉判定依据与此刻串里还剩的并集（见 disposalMessageIds）。封禁带
+  // revoke_messages 只覆盖仍在群里的成员，频道马甲与已退群账号的消息由这里清掉。
+  // 走批量接口，每 TELEGRAM_DELETE_MESSAGES_BATCH_MAX 条占一个请求。
   await deleteAdMessages(bundle.chatId, messageIds);
 }
 
 /**
- * 按 Telegram 的单次上限分片删除。并集含 pendingDeleteIds 之后可以远超 100
- * （见 AD_DETECT_MAX_PENDING_DELETE_IDS），而 deleteMessages 只有整体成败：
- * 一次带满整份 id 会让整批被拒，一条都删不掉——比不转存那些 id 还糟。
+ * 按 TELEGRAM_DELETE_MESSAGES_BATCH_MAX 分片删除：并集含 pendingDeleteIds 后可超过
+ * 单次上限（见 AD_DETECT_MAX_PENDING_DELETE_IDS），而 deleteMessages 只有整体成败。
  *
- * 有分片失败时记一条明确指向权限的错误：机器人可以是「有 can_restrict_members、
- * 没有 can_delete_messages」的管理员，那种配置下这里每次都全军覆没，而统一错误
- * 边界记的是 Telegram 那句通用的 400。不额外重试——超过 48 小时的消息本来就删
- * 不掉，重试只是在共用队列上再堆一轮注定失败的请求。
+ * 有分片失败时记一条指向权限的错误，不额外重试。
  */
 async function deleteAdMessages(chatId: number, messageIds: readonly number[]): Promise<void> {
-  // 同 deleteStragglerAdMessage：确证没权限时一次分片都不必发。一次处置的并集
-  // 可以远超 100 条，全打出去就是 ceil(N/100) 个注定失败的请求。
+  // 同 deleteStragglerAdMessage：确证没权限时不发分片。
   if (botCanDeleteIn(chatId) === false) {
     logger.error(
       `Ad disposal skipped deleting ${messageIds.length} message(s) in chat ${chatId}: ` +

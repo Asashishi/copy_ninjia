@@ -38,7 +38,7 @@ describe("inflight tracker", () => {
       settled = true;
     });
 
-    // reject 已经发生，若等待用的是 Promise.all 会在这里提前失败返回。
+    // reject 已经发生，等待不提前失败返回。
     await Promise.resolve();
     await Promise.resolve();
     expect(settled).toBe(false);

@@ -16,8 +16,8 @@ export interface MediaInputModalityState {
   readonly transientFailures: number;
   /**
    * 下一次允许发起真实探测的绝对时刻（Date.now() 口径）；0 表示不在退避中。
-   * 墙钟回拨会让它落在过远的未来，读取侧按 MEDIA_PROBE_BACKOFF_MAX_MS 识别并
-   * 立即放行（同 auto/message/triggerPolicy.ts 的冷却口径）。
+   * 读取侧把超过 MEDIA_PROBE_BACKOFF_MAX_MS 的剩余时长视为墙钟回拨并立即放行
+   * （同 auto/message/triggerPolicy.ts 的冷却口径）。
    */
   readonly nextProbeAt: number;
   /**
@@ -27,18 +27,15 @@ export interface MediaInputModalityState {
   readonly configGeneration: number;
 }
 
-/** media 模型的模态支持表；两项固定初始化，避免运行期改变对象 shape。 */
+/** media 模型的模态支持表；vision 与 voice 固定初始化。 */
 export interface MediaInputSupportState {
   readonly vision: MediaInputModalityState;
   readonly voice: MediaInputModalityState;
 }
 
 /**
- * 媒体模态状态机要求调用方执行的副作用。
- *
- * 目前只有一种：模态落定为 misconfigured 的那一次记一条英文诊断。放在效果里
- * 而不是在状态机里直接写日志，是为了让 states/ 保持纯函数——判定与落定在
- * packages/states/mediaInputSupport.ts，日志边界在 AI Chat Worker 的 owner 缓存。
+ * 媒体模态状态机要求调用方执行的副作用：模态落定为 misconfigured 的那一次记一条英文诊断。
+ * 判定与落定在 packages/states/mediaInputSupport.ts，日志边界在 AI Chat Worker 的 owner 缓存。
  */
 export interface MediaInputEffect {
   readonly kind: "logMisconfiguredMediaEndpoint";

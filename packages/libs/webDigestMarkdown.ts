@@ -10,7 +10,7 @@
  * - 有结语时空一行写单行引用 `>结语`。
  *
  * 所有文字都经 libs/telegramMarkdown.ts 转义，模型文本里的 `*`、`_`、`[x](…)` 只按字面显示。
- * 同一遍里累计 Telegram 解析后的可见正文，交回它的 UTF-16 长度供调用方核对 4096 上限。
+ * 同一遍里累计 Telegram 解析后的可见正文，交回它的 UTF-16 长度供调用方核对 TELEGRAM_MESSAGE_MAX_CHARS。
  */
 
 import { WEB_DIGEST_SOURCE_LABELS, WEB_DIGEST_TIME_SEPARATOR } from "../consts/webDigest";

@@ -496,7 +496,7 @@ describe("Anti-Raid Worker verification attempt budget", (): void => {
     });
     await drainAntiRaidTasks();
 
-    // 成功战报置位后发布了 revision 4；延后卸载会让它的落盘回执找不到条目。
+    // 成功战报置位后发布了 revision 4；它的落盘回执需要找到条目。
     expect(sendTemporaryMessageFromMain).toHaveBeenCalledTimes(1);
     expect(workerEvents.map((event: AntiRaidWorkerEvent): string => event.type))
       .toEqual(["verificationUpsert"]);

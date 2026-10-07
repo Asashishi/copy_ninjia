@@ -52,10 +52,9 @@ import type { ChatState } from "../types/chatState";
 import { TELEGRAM_DATE_UNIT_MS } from "../consts/telegram";
 
 /**
- * 处理 `chat_member` 更新：这是权威且始终会送达的入群/离群信号（不同于
- * `new_chat_members`/`left_chat_member` 服务消息——一旦群组开启了"隐藏入群/
- * 离群消息"，这些服务消息就完全不会再发送）。要接收非机器人自身成员的这类
- * 更新，需要机器人是群管理员——而封禁/删除消息本来也需要这个权限。
+ * 处理 `chat_member` 更新：入群/离群的权威信号（`new_chat_members`/`left_chat_member`
+ * 服务消息在群组隐藏入群/离群消息时不会发送）。接收非机器人自身成员的 chat_member
+ * 更新要求机器人是群管理员。
  */
 export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const update: ChatMemberUpdated | undefined = ctx.chatMember;
@@ -66,16 +65,12 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   // 按它分派方法（见 ./chatKind.ts）。按值去重，每次类型变化只投一条。
   observeChatKind(update.chat);
   const user: User = update.new_chat_member.user;
-  // 自身的成员变动本来走 my_chat_member；这条排除必须放在最前面——万一
-  // Telegram 真的也为机器人自己送来一条 chat_member（比如这次恰好就是自己
-  // 被撤管理员），排在下面 markBotAdminObserved 之后会被误判：那条推理
-  // （"收到别人的 chat_member 就证明自己此刻是管理员"）建立在"这是关于
-  // 别人的更新"之上，套在这条报告自己被撤权的更新上会得出恰好相反的结论。
+  // 机器人自身的成员变动走 my_chat_member；本排除位于 markBotAdminObserved 之前，
+  // 因为该观测以「更新是关于别人的」为前提。
   if (user.id === ctx.me.id) return;
 
-  // 能收到别人的 chat_member 更新，本身就证明机器人此刻是本群管理员——
-  // 顺手记录（见 botAdmin.ts），这条路径无需（也不能）做非管理员门控：
-  // 不是管理员时这类更新根本不会送达。
+  // 收到别人的 chat_member 更新即说明机器人此刻是本群管理员，据此记录（见 botAdmin.ts）；
+  // 本路径不做非管理员门控。
   await markBotAdminObserved(chatId);
 
   // 入群守卫的总开关（`/antiraid`）。关着的群仍然记入群日志、仍然按黑名单秒踢
@@ -96,11 +91,9 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
   const isInviterExempt: boolean =
     isInviterExemptAdmin(update.new_chat_member);
   const messages: AntiRaidWorkerMessage[] = [];
-  // 这一条**不受开关门控**：它是低频的缓存维护消息，applyAdminChange 只改邀请者
-  // 豁免缓存、不碰状态机，守卫关着时投过去没有任何副作用。反过来漏掉它是有代价的
-  // ——缓存条目按 fetchedAt 判过期而 applyAdminChange 不刷新它（见
-  // workers/antiRaid/adminCache.ts），若「关闭 → 某人被降权 → 重新开启」挤在同一个
-  // ADMIN_CACHE_TTL_MS 窗口里，剩余那段时间他拉进来的人仍会免验证。
+  // 这一条不受开关门控：applyAdminChange 只改邀请者豁免缓存、不碰状态机，守卫关着时
+  // 投过去没有副作用；缓存条目按 fetchedAt 判过期，applyAdminChange 不刷新它
+  // （见 workers/antiRaid/adminCache.ts）。
   if (wasInviterExempt !== isInviterExempt) {
     messages.push({
       type: "adminsChanged",
@@ -112,9 +105,9 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 
   const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
   if (!wasActive && isActive) {
-    // 使用 Telegram 事件自带时间戳作为幂等 key 的一部分；落盘 Worker 在写前
+    // Telegram 事件自带时间戳作为幂等 key 的一部分；落盘 Worker 在写前
     // 按用户最新记录去重。入群事实进批次即受理；未确认镜像已满或 Disk I/O 拒收时
-    // 让 update 失败重投，不能静默漏掉慢速僵尸清理依据。
+    // 抛错让 update 失败重投。
     if (!recordJoinLog({
       chatId,
       userId: user.id,
@@ -124,10 +117,9 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
         `Join log persistence refused the event for chat ${chatId}, user ${user.id}.`
       );
     }
-    // 以管理员/群主身份入群的（典型如群主退群重进）免验证。身份只有本路径
-    // 可见，new_chat_members 服务消息里没有——所以不能简单跳过不投递，而要
-    // 带 exempt 标记投给 Worker：若服务消息那一路已抢先开了验证窗口，Worker
-    // 收到豁免后会将其撤销。
+    // 以管理员/群主身份入群的免验证。身份只有本路径可见（new_chat_members
+    // 服务消息里没有），因此带 exempt 标记投给 Worker：服务消息那一路已开了
+    // 验证窗口时，Worker 收到豁免后撤销它。
     const joinMessage: AntiRaidWorkerMessage | undefined = joinGuardEnabled
       ? {
         type: "join",
@@ -137,10 +129,10 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
         actorId: update.from.id,
       }
       : undefined;
-    // 黑名单优先于一切豁免，且取代 join 投递：Worker 不会为一个马上要被踢掉的人开窗口。
+    // 黑名单优先于一切豁免，且取代 join 投递。
     // 这一路没有入群公告（chat_member 更新不带服务消息），刷群计数由处置消息补记。
-    // 被取代的 join 一并登记：处置在 durable 对账里被 /block disable 取消掉时改投它，
-    // 否则这个人既没有移除也没有验证窗口（见 blocklistDelivery.ts）。
+    // 被取代的 join 一并登记：处置在 durable 对账里被 /block disable 取消时改投它
+    // （见 blocklistDelivery.ts）。
     if (!claimBlockedJoiner({
       chatId,
       userId: user.id,
@@ -161,8 +153,7 @@ export async function handleChatMemberUpdate(ctx: Context): Promise<void> {
 
 /**
  * 消息事件的投递入口，在 app/registerHandlers.ts 里以中间件形式挂在所有
- * 命令处理器之前
- * ——这样待验证用户发的命令消息（/copy 之类）也会计入刷屏窗口。职责：在群组
+ * 命令处理器之前，待验证用户发的命令消息（/copy 之类）也计入刷屏窗口。职责：在群组
  * 未隐藏 `new_chat_members`/`left_chat_member` 服务消息时顺带捕获它们，并把
  * 每条消息的（chatId, userId, messageId）投递给 Worker；messageId 只用于回复式
  * 提醒和频道评论豁免锚点，不会在纯 kick 时用于删除成员发言。
@@ -178,22 +169,17 @@ export function handleAntiRaidMessageIngress(
   message: Message,
   botId: number
 ): boolean | Promise<boolean> {
-  // 验证只发生在群聊里，私聊消息不必跨线程投递去查一次注定落空的 Map。
+  // 验证只发生在群聊里，私聊直接放行。
   if (message.chat?.type === "private") return false;
 
-  // 已接管群的类型镜像（见 ./chatKind.ts）排在管理员门禁之前：机器人此刻不是
-  // 管理员不代表以后不是；未接管群的 /init 不会在容量拒绝前占用镜像。
+  // 已接管群的类型镜像（见 ./chatKind.ts）排在管理员门禁之前；未接管群不占用镜像。
   observeChatKind(message.chat);
 
-  // 机器人不是本群管理员时整个入群守卫不启动：踢人/删消息都做不了，投递
-  // 过去只会让 Worker 开一堆注定失败的验证窗口、刷一堆权限报错。
-  // 入群公告照样吞掉（服务消息本来就不该流进复读/AI 流水线），只是不投递。
+  // 机器人不是本群管理员时整个入群守卫不启动，不投递；入群公告照样吞掉
+  // （服务消息不进复读/AI 流水线）。
   //
-  // 已确证过的群同步读现值，`undefined` 才付一次现查：稳定态下这个群的权限
-  // 快照早就在 ChatState 里，走 resolveBotAdminStatus 只是为一个已经在手的
-  // 布尔值分配一个 Promise。两条路的判定完全一致——cachedBotAdminStatus 返回的
-  // 就是同一份快照的 isAdministrator，而 resolveBotAdminStatus 在快照已知时
-  // 也只是把它读出来。
+  // 已确证过的群同步读现值（cachedBotAdminStatus），`undefined` 才现查
+  // （resolveBotAdminStatus）；两条路判定的是同一份权限快照。
   const knownAdmin: boolean | undefined = cachedBotAdminStatus(message.chat.id);
   if (knownAdmin !== undefined) {
     return knownAdmin
@@ -244,8 +230,8 @@ function ingestAdminChatMessage(
   botId: number
 ): boolean | Promise<boolean> {
   // 永久黑名单不依赖广告开关、模型密钥或样本配置。频道身份没有
-  // banChatMember.revoke_messages 可用，因此每条仍漏进来的消息必须在公共入口
-  // 就地删除；真人用户则由在途 banChatMember 的服务端全量撤回收口。
+  // banChatMember.revoke_messages 可用，仍漏进来的消息在公共入口就地删除；
+  // 真人用户由在途 banChatMember 的服务端撤回处理。
   const blocked: boolean | Promise<boolean> =
     deleteBlockedSenderChatMessage(message);
   if (typeof blocked !== "boolean") {
@@ -268,14 +254,13 @@ function ingestAdmittedMessage(
     message.new_chat_members &&
     message.new_chat_members.length > 0
   ) {
-    // 入群守卫关着时这一路只剩黑名单秒踢：不开验证窗口、不记入群计数，但公告
-    // 照样吞掉（服务消息本来就不该进复读/AI 流水线，与守卫开关无关）。
+    // 入群守卫关着时这一路只剩黑名单秒踢：不开验证窗口、不记入群计数；公告
+    // 照样吞掉（与守卫开关无关）。
     const joinGuardEnabled: boolean = chatState.isAntiRaidEnabled === true;
     const messages: AntiRaidWorkerMessage[] = [];
     const replacedJoins: Map<number, AntiRaidWorkerMessage> = new Map();
     for (const member of message.new_chat_members) {
-      // 机器人同样走验证（由本群管理员代点「通过」作保），只跳过本天才自己
-      // ——自己既不能验证自己，也不该被自己踢出去。
+      // 机器人同样走验证（由本群管理员代点「通过」作保），只跳过本机器人自己。
       if (member.id === botId) continue;
       const joinMessage: AntiRaidWorkerMessage | undefined = joinGuardEnabled
         ? {
@@ -286,15 +271,14 @@ function ingestAdmittedMessage(
           actorId: message.from?.id,
         }
         : undefined;
-      // 与 chat_member 那一路会为同一次入群各投一次处置；重复 ban 幂等，但两条都要拦
-      // ——隐藏入群消息的群只有 chat_member 会到，而 chat_member 又要管理员权限才送达。
+      // 与 chat_member 那一路会为同一次入群各投一次处置（重复 ban 幂等）。
       if (claimBlockedJoiner({
         chatId: message.chat.id,
         userId: member.id,
         messages,
         replacedJoin: joinMessage,
         replacedJoins,
-        // 服务消息这一路带得到入群公告；不投 join 就没人再管它，交给处置一并删。
+        // 服务消息这一路带得到入群公告，交给处置一并删。
         announcementMessageId: message.message_id,
         joinGuardEnabled,
       })) {
@@ -321,8 +305,7 @@ function ingestAdmittedMessage(
   }
 
   // 临时广告免检累计先于候选构建：本条消息恰好让成员获权时，
-  // buildAdCandidate 必须立即读到临时广告绕过权限，不得再把这条送检。
-  // 投递仍是尽力而为：Worker 重建时待检队列本来就会随 isolate 清空。
+  // buildAdCandidate 立即读到临时广告绕过权限，不再送检。投递尽力而为。
   // 两者共同的前置判定（开关、配置、自动转发、自发消息与展示身份）只做一次。
   let adCandidate: AdCandidateMessage | undefined;
   if (chatState.isAdDetectEnabled === true) {
@@ -332,8 +315,7 @@ function ingestAdmittedMessage(
       const adContext: AdDetectionMessageContext = {
         message,
         botId,
-        // 与自动流水线主干共用本条 update 唯一的一次时钟读取；两条 middleware
-        // 判定同一条消息，本来就该落在同一时刻（见 infra/updateContext.ts）。
+        // 与自动流水线主干共用本条 update 的同一次时钟读取（见 infra/updateContext.ts）。
         now: updateNow(),
         senderId: adSenderId,
         senderChat,
@@ -348,28 +330,24 @@ function ingestAdmittedMessage(
 
   // 刷屏计数投递：与广告检测同一形态，主线程只做同步门禁 + 一次尽力而为的
   // post，窗口与禁言都在 Worker 侧（见 workers/antiRaid/floodControl.ts）。排在
-  // 服务消息两条分支之后——入群/离群公告不是谁的「发言」，不该计进那个人的窗口。
-  // 无论开关如何，先保留本条 update 的时刻供后续自动流水线复用；普通群和未开
-  // 刷屏的群跳过候选函数及其入参对象。开启时与上面广告上下文仍共用同一时刻。
+  // 服务消息两条分支之后，入群/离群公告不计入窗口。
+  // 无论开关如何，先读取本条 update 的时刻（updateNow）供后续自动流水线复用；
+  // 普通群和未开刷屏的群跳过候选函数及其入参对象。
   const now: number = updateNow();
   const floodCandidate: FloodCandidateMessage | undefined =
     message.chat.type === "supergroup" && chatState.isFloodControlEnabled === true
       ? buildFloodCandidate({ message, botId, now, chatState })
       : undefined;
   if (floodCandidate !== undefined) {
-    // 投递被拒不记日志，与广告检测那条刻意不同：那一路只在 /ad_detect enable 的
-    // 群上跑，而这一路每条群消息都走。post 返回 false 只有「Worker 正在重建」与
-    // 「已放弃重建」两种成因，前者是亚秒级的、后者在 supervisor 那里已经带着
-    // giveUpConsequence 响过一次；在这里逐条补一行 error，只会按群消息量把
-    // logs/ 刷满，把真正的故障淹掉。丢掉的只是计数，窗口本来就随 isolate 生死。
+    // 投递被拒不记日志，与广告检测那条不同：post 返回 false 只发生在 Worker 正在
+    // 重建或已放弃重建时（后者由 supervisor 带 giveUpConsequence 记录），丢掉的只是计数。
     postAntiRaid(floodCandidate);
   }
 
   const userId: number | undefined = message.from?.id;
   // message_thread_id 有两个来源：关联频道讨论组的评论线程，和论坛（topics）
-  // 群里的话题。只有前者可能是「评论早于 join 更新到达」的候选；论坛话题回复
-  // 永远不可能是频道评论，把它排除掉，否则开了 topics 的群里每条普通消息都要
-  // 白走一次 Worker barrier 与关联频道探测。
+  // 群里的话题；只有评论线程可能是「评论早于 join 更新到达」的候选，
+  // 论坛话题消息（is_topic_message）排除。
   const isCommentThreadReply: boolean =
     message.message_thread_id !== undefined &&
     message.is_topic_message !== true;
@@ -377,16 +355,13 @@ function ingestAdmittedMessage(
     message.reply_to_message?.is_automatic_forward === true ||
     isCommentThreadReply;
   if (userId === undefined) return false;
-  // 先看表空不空再拼键：待验证镜像绝大多数时候是空的（没人正在验证），
-  // 而 `${chatId}:${userId}` 是每条群消息都要现造的一个短命字符串。
-  // `has()` 在空表上恒为 false，这道前置判断不改变任何结果。
+  // 先看表空不空再拼键，空表时跳过复合键构造。
   const senderPending: boolean =
     activeVerificationSnapshots.size > 0 &&
     activeVerificationSnapshots.has(verificationKey(message.chat.id, userId));
   if (
     !(senderPending || mayPrecedeJoinInCommentThread) ||
-    // 排在最后：守卫开着的群才需要这条投递，而上面两个判定比一次 Map 取值更
-    // 便宜（空表恒 false）。关着的群没有窗口，评论区线索也无处可用。
+    // 排在最后：守卫关着的群没有验证窗口，不需要这条投递。
     chatState.isAntiRaidEnabled !== true
   ) {
     return false;
@@ -405,8 +380,8 @@ function ingestAdmittedMessage(
   };
   // 待验证成员的消息会改写验证镜像，必须经 durable 投递落盘后才确认本条 update。
   if (senderPending) return postAntiRaidDurably([workerMessage]).then((): boolean => false);
-  // 其余只是评论区线索：Worker 只记进内存，barrier 换不来持久性；端口 FIFO 已保证它
-  // 先于之后的入群消息到达。投递被拒不记日志，口径同上面的刷屏计数。
+  // 其余只是评论区线索：Worker 只记进内存；端口 FIFO 保证它先于之后的入群消息到达。
+  // 投递被拒不记日志，口径同上面的刷屏计数。
   postAntiRaid(workerMessage);
   return false;
 }
@@ -435,9 +410,7 @@ export async function handleVerificationCallback(
     return;
   }
 
-  // 守卫已关的群里还可能留着一颗没被删掉的旧按钮（disable 那次 Worker 不可用
-  // 就会这样）。当场应答掉、不投给 Worker：不应答的话点的人只看到按钮一直转，
-  // 而投过去只会为一个已经关掉的功能重新开工。
+  // 守卫已关的群里可能留着没被删掉的旧按钮：当场应答并提示，不投给 Worker。
   const callbackChatId: number | undefined = query.message?.chat.id;
   if (
     callbackChatId !== undefined &&
@@ -451,11 +424,9 @@ export async function handleVerificationCallback(
     return;
   }
 
-  // callback_data 属于外部输入：前缀匹配不代表后半段一定是合法整数。NaN 若
-  // 进入 Worker 会生成 "chatId:NaN" 状态键，按钮只会永远转圈且留下脏状态。
-  // 与命令参数共用同一道严格十进制判定（见 libs/telegramId.ts 的
-  // parseUserIdArgument）：本 bot 只生成规范十进制，`"1e3"`、`" 12"` 这类写法
-  // 一律视为外部构造，不放行。
+  // callback_data 属于外部输入，前缀匹配不代表后半段是合法整数；与命令参数共用同一道
+  // 严格十进制判定（见 libs/telegramId.ts 的 parseUserIdArgument），
+  // `"1e3"`、`" 12"` 这类非规范写法不放行。
   const targetUserId: number | undefined = parseUserIdArgument(data.slice(prefixLength));
   if (targetUserId === undefined) {
     await answerCallbackQuery({

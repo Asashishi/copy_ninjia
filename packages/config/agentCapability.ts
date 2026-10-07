@@ -2,7 +2,7 @@
  * config/dynamic/agent.json 里单项 AI 能力的严格解码（纯函数，不读盘、不接触缓存）：通用字段
  * provider、api_key、base_url、model（provider 为 google、openai 或 anthropic；anthropic 不支持
  * image 与 tts，那两项拒绝它），google provider 独有的 headers，image 的
- * image_protocol、tts 的 speech_protocol、voice、style、language、bot_language 与每日额度两项，
+ * image_protocol、tts 的 speech_protocol、voice、style、language、bot_language 与每日额度字段，
  * 以及 web_search 的 max_calls_per_use。
  * 文件级加载、分段快照与 holder 在 config/agent.ts。报错只写来源路径、字段路径与期望形态，
  * 不回显配置值。
@@ -63,16 +63,11 @@ function requiredApiKey(value: unknown, context: string, sourcePath: string): st
 /**
  * 解码可选的绝对端点；缺省交给对应 SDK 的官方地址。
  *
- * 默认只收 HTTPS：这个字段旁边就是同一项能力的 api_key，配成非本机的明文 HTTP
- * 端点等于让密钥每次请求都在网络上裸奔，而校验放行之后没有任何一层会再提醒。
- * 本机三个回环主机是例外——本地代理和测试端点是正当用法，且流量不出机器。
+ * 只接受 HTTPS；LOOPBACK_HOSTS 内的本机主机可用明文 HTTP。
  *
- * userinfo 一律拒绝：`https://user:pass@host` 里的凭据既进不了脱敏名单（脱敏
- * 读的是 api_key 与 headers 的值），又会被 SDK 原样拼进每一次请求 URL，一旦进日志就是
- * 明文。供应商凭据走 api_key，三方网关鉴权走 google provider 的 headers。
+ * userinfo 一律拒绝：供应商凭据走 api_key，三方网关鉴权走 google provider 的 headers。
  *
- * fragment 一律拒绝：三家 SDK 都把 base_url 当路径前缀拼接，`#` 之后的部分不会
- * 被发到服务端。留着它只会让人以为自己配了一个能生效的端点。
+ * fragment 一律拒绝：SDK 把 base_url 当路径前缀拼接，`#` 之后的部分不会被发到服务端。
  */
 function optionalBaseUrl(value: unknown, context: string, sourcePath: string): string | undefined {
   if (value === undefined) return undefined;
@@ -177,7 +172,7 @@ function capabilityShape(provider: AgentProvider, extraShape: string): string {
 
 /**
  * 解码通用字段；调用方须先按 capabilityKeys 核对过字段集。google 分支另解 headers，
- * openai 分支 headers 恒为 undefined。
+ * 其余分支 headers 恒为 undefined。
  */
 function parseCapabilityFields(
   value: Readonly<Record<string, unknown>>,
@@ -305,7 +300,7 @@ interface TtsDailyQuota {
 
 /**
  * 解码可选的 daily_limit 与 daily_reserve_quota。daily_limit 是正整数；daily_reserve_quota 是
- * 0～daily_limit-1 的整数，保证 AI 语音工具至少有 1 次额度。缺省值（TTS_DEFAULT_DAILY_LIMIT、
+ * 0～daily_limit-1 的整数，使 AI 语音工具至少保留一次额度。缺省值（TTS_DEFAULT_DAILY_LIMIT、
  * TTS_DEFAULT_DAILY_RESERVE_QUOTA）同样按这一关系核对。
  */
 function parseTtsDailyQuota(
@@ -387,7 +382,7 @@ function parseXAiTtsCapability(
  * - openai：必填 speech_protocol。取 `openai`（audio/speech）时字段同 google 但无 headers；
  *   取 `xai` 时见 parseXAiTtsCapability。
  *
- * style 缺省使用 TTS_DEFAULT_STYLE；三种协议都接受可选的 bot_language（见 optionalBotLanguage）
+ * style 缺省使用 TTS_DEFAULT_STYLE；各协议都接受可选的 bot_language（见 optionalBotLanguage）
  * 与 daily_limit、daily_reserve_quota（见 parseTtsDailyQuota）。字段集之外的键一律拒绝；
  * anthropic 不受理。
  */

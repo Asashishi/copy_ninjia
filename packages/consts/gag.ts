@@ -1,4 +1,5 @@
 import type { GagDurationMinutes } from "../types/gag";
+import { exhaustiveList } from "./exhaustiveList";
 
 /** `/gag` command 域的容量、时长、文案渲染与 inline 素材常量。 */
 
@@ -16,7 +17,7 @@ export const GAG_CLEANUP_RETRY_DELAYS_MS: readonly number[] = [
 ];
 
 /** `/gag` 接受的分钟数；命令不把其它正数收敛到边界。 */
-export const GAG_DURATION_MINUTES: readonly (5 | 10 | 15)[] = [5, 10, 15];
+export const GAG_DURATION_MINUTES: readonly GagDurationMinutes[] = exhaustiveList<GagDurationMinutes>()([5, 10, 15]);
 
 /** `/gag` 省略时长时采用的分钟数；必须属于 GAG_DURATION_MINUTES。 */
 export const GAG_DEFAULT_DURATION_MINUTES: GagDurationMinutes = 5;
@@ -75,10 +76,10 @@ export const GAG_FILLER_MAX_DOTS: number = 6;
 /** 相邻两个填充点之间插入一个 ASCII 空格的独立概率。 */
 export const GAG_FILLER_GAP_SPACE_PROBABILITY: number = 1 / 3;
 
-/** 六个点且每个点间都有空格时的最坏 UTF-16 长度，用于发送上限预检。 */
+/** 点数取 `GAG_FILLER_MAX_DOTS` 且相邻点间都插入空格时的最坏 UTF-16 长度，用于发送上限预检。 */
 export const GAG_FILLER_MAX_CHARS: number = GAG_FILLER_MAX_DOTS * 2 - 1;
 
-/** 25% 替换候选均匀抽取的字符；只替换原字形，不追加到它后面。 */
+/** 命中替换概率的位置上均匀抽取的字符；只替换原字形，不追加到它后面。 */
 export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
   "唔",
   "啊",
@@ -90,18 +91,18 @@ export const GAG_REPLACEMENT_CHARACTERS: readonly string[] = [
 
 /**
  * 候选操作选择填充的概率；剩余概率走 GAG_REPLACEMENT_CHARACTERS 替换分支。
- * 两个分支由 gag/rendering.ts 的 `roll < GAG_FILL_OPERATION_PROBABILITY` 单条判定
- * 切分。连续操作闸门会挡住
- * 部分候选，因此该值只描述抽样概率，不承诺最终文本中的填充占比。
+ * 两个分支由 commands/gag/rendering.ts 的 `roll < GAG_FILL_OPERATION_PROBABILITY` 单条判定
+ * 切分。连续操作闸门会挡住部分候选，该值只描述抽样概率，不是最终文本中的填充占比。
  */
 export const GAG_FILL_OPERATION_PROBABILITY: number = 0.75;
 
-/** 同类填充或替换最多连续作用于两个相邻字形，第三次候选必须被闸门处理。 */
+/** 同类填充或替换最多连续作用的相邻字形数；超出该数的候选由闸门处理。 */
 export const GAG_MAX_CONSECUTIVE_SAME_OPERATIONS: number = 2;
 
 /**
  * 短文本操作保底档位；元素依次为「字形数上界（不含）」与「最少操作数」。
- * 2~3、4~7、8~31、32~64 个字形分别至少操作 2、3、7、15 次；超过 64 不保底。
+ * 字形数小于某档上界时取首个命中档的最少操作数，超过末档上界不保底
+ * （见 commands/gag/rendering.ts 的 gagMinimumOperationCount）。
  */
 export const GAG_MIN_OPERATION_TIERS: readonly (
   readonly [upperExclusive: number, minimumOperations: number]
@@ -112,5 +113,5 @@ export const GAG_MIN_OPERATION_TIERS: readonly (
   [65, 15],
 ];
 
-/** inline 列表里的群名和用具摘要上限，防止用户字段撑坏客户端预览。 */
+/** inline 列表里的群名和用具摘要的字符上限。 */
 export const GAG_INLINE_LABEL_MAX_CHARS: number = 96;

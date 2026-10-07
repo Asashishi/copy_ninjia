@@ -5,14 +5,13 @@ import type { CopyMode } from "../types/chatState";
 
 /**
  * 同一群里同一用户两次随机 AI 触发之间的最短间隔，只限制随机插话和媒体
- * 评价。回复/@ 机器人等直接交互由 Worker 的并发闸与有界队列承接，不允许
- * 在主线程静默丢弃。
+ * 评价；回复/@ 机器人等直接交互不受此限，由 Worker 的并发闸与有界队列承接。
  */
 export const USER_REPLY_TRIGGER_COOLDOWN_MS: number = 15_000;
 
 /**
- * 主线程随机回复个人冷却表的硬顶。达到上限且没有过期条目可清时，宁可
- * 放弃新的随机回复，也不淘汰仍生效的冷却、让高基数流量绕过限频。
+ * 主线程随机回复个人冷却表的容量上限。达到上限且没有过期条目可清时，
+ * 放弃新的随机回复，不淘汰仍生效的冷却。
  */
 export const USER_REPLY_TRIGGER_CACHE_MAX: number = 5_000;
 
@@ -23,16 +22,15 @@ export const RANDOM_ECHO_PROBABILITY: number = 1 / 100;
 export const RANDOM_ECHO_MODES: readonly (CopyMode | undefined)[] = [undefined, "reverse", "nya"];
 
 /**
- * 「说到洗澡就回看看」的触发词：洗澡 / 泡澡（中间可插最多 4 个白名单里的
- * 助词/修饰字，白名单挡「洗刷刷澡堂子见」这类字面撞上的误伤）以及冲凉
- * （繁体沖涼，中间可插「个/個/了」等）。
+ * 「说到洗澡就回看看」的触发词：洗澡 / 泡澡（中间可插有限个白名单里的
+ * 助词/修饰字）以及冲凉（含繁体沖涼，中间可插「个/個/了」等）。
  */
 export const BATH_TRIGGER_PATTERN: RegExp = /[洗泡][个個了完一热熱水冷好]{0,4}澡|[冲沖][个個了完一]{0,2}[凉涼]/;
 
-/** 「说到洗澡就回看看」只对短消息生效（字符数 ≤ 此值），避免长文里偶然带出也被打扰。 */
+/** 「说到洗澡就回看看」只对短消息生效（字符数不超过此值）。 */
 export const BATH_TRIGGER_MAX_MESSAGE_LENGTH: number = 15;
 
-/** 「说到洗澡就回看看」的固定回复文本：发送与自录进 AI 对话缓存共用同一个常量，避免两处字面量各改各的漂移。 */
+/** 「说到洗澡就回看看」的固定回复文本；发送与记入 AI 对话缓存共用本常量。 */
 export const BATH_TRIGGER_REPLY_TEXT: string = "看看";
 
 /** 频道马甲（resolveSpeaker 的 sender_chat 分支）与转发来源的 chat 缺 title 时使用的兜底展示名。 */
@@ -42,7 +40,7 @@ export const FALLBACK_SPEAKER_NAME: string = "某杂鱼";
 
 /**
  * 未提及任何人时的提及事实（auto/message/facts.ts 的 resolveMentionFacts）：没有
- * entity 表，或实体里没有提及。两项都为 false；与下面三项一起覆盖全部四种结果，
+ * entity 表，或实体里没有提及。两项都为 false；与下面三项一起覆盖全部提及结果，
  * 全局各共享一份，调用方只读字段，不得修改。
  */
 export const NO_MENTION_FACTS: Readonly<MentionFacts> = { isMentioned: false, hasOtherMention: false };

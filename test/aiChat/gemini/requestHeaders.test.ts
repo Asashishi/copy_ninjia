@@ -72,10 +72,10 @@ beforeEach(() => {
 
 describe("google provider 自定义端点与请求头", () => {
   test("generateContent 发往 base_url 并带上 headers", async () => {
-    await requestGeminiResult("text", (): GenerateContentParameters => ({
+    await requestGeminiResult({ capability: "text", buildBody: (): GenerateContentParameters => ({
       model: "gemini-test",
       contents: "hello",
-    }), "Gemini header test");
+    }), errorLabel: "Gemini header test" });
 
     expect(captured).toHaveLength(1);
     expect(captured[0]!.url.startsWith(`${GATEWAY}/`)).toBe(true);

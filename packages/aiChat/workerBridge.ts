@@ -25,7 +25,10 @@ import {
   postPurgeAiMemoryPersistRevisions,
   purgedAiMemoryChats,
   pendingAiMemoryTeardowns,
+  voiceSynthesisRequests,
+  webDigestRequests,
 } from "../cache/main/aiChat";
+import { AI_WORKER_JOB_UNAVAILABLE } from "../consts/aiChat/workerJob";
 import {
   AI_CHAT_INVALIDATE_TIMEOUT_MS,
   AI_MEMORY_FLUSH_TIMEOUT_MS,
@@ -55,10 +58,10 @@ import {
   telegramWorkerResponseTransfer,
 } from "../infra/telegram/workerRequests";
 import { activeStickerCatalogs, mirrorStickerCatalog, pruneStickerCatalogMirror } from "./stickerMirror";
-import { failAllVoiceSynthesisWaiters, requestVoiceSynthesis, settleVoiceSynthesis } from "./voiceSynthesis";
+import { requestVoiceSynthesis } from "./voiceSynthesis";
 import type { VoiceSynthesisRequest } from "./voiceSynthesis";
 import type { VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
-import { failAllWebDigestWaiters, requestWebDigest, settleWebDigest } from "./webDigest";
+import { requestWebDigest } from "./webDigest";
 import type { WebDigestCompositionResult, WebDigestRequest } from "../types/webDigest";
 
 /** 心情与群失效请求的结局：成功交回值，失败把 Error 抛给调用方。 */
@@ -69,7 +72,7 @@ function unwrapWorkerRequestOutcome<T>(outcome: WorkerRequestOutcome<T>): T {
 
 /**
  * 旧实例的回执不可能再到达（崩溃重建、放弃自愈或停机）时统一失败结算全部在途等待者：
- * 记忆 flush、心情查询/重抽、群失效、语音合成与摘要组稿；不结算会让调用方干等到超时。
+ * 记忆 flush、心情查询/重抽、群失效、语音合成与摘要组稿。
  */
 function failAllAiChatWaiters(moodReason: string, invalidateReason: string): void {
   aiMemoryFlushBarrier.settleAll("failed");
@@ -78,8 +81,8 @@ function failAllAiChatWaiters(moodReason: string, invalidateReason: string): voi
     aiChatInvalidateRequests,
     { ok: false, error: new Error(invalidateReason) }
   );
-  failAllVoiceSynthesisWaiters();
-  failAllWebDigestWaiters();
+  failAllWorkerRequests<VoiceSynthesisResult>(voiceSynthesisRequests, AI_WORKER_JOB_UNAVAILABLE);
+  failAllWorkerRequests<WebDigestCompositionResult>(webDigestRequests, AI_WORKER_JOB_UNAVAILABLE);
 }
 
 /**
@@ -129,9 +132,8 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
           latestAiMemories.set(event.chatId, event.snapshot);
           latestAiMemoryRevisions.set(event.chatId, revision);
           aiMemoryUsages.set(event.chatId, event.usage);
-          // 字段一律发出，不用条件展开：这是上一跳（workers/aiChat/rollingMemory.ts
-          // 的 memory 事件）的同一个字段再转投一手，两跳的产生频率完全相同。只修
-          // 前一跳等于把形状发散往后挪了一格。落盘侧判的是 `=== true`，语义不变。
+          // 字段一律发出，不用条件展开，与上一跳（workers/aiChat/rollingMemory.ts
+          // 的 memory 事件）一致；落盘侧判的是 `=== true`。
           postDiskIO({
             type: "aiMemory",
             chatId: event.chatId,
@@ -143,8 +145,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
         break;
       case "memoryUsages":
         // hydrate 播种的占用量（见 workers/aiChat/rollingMemory.ts 的
-        // hydrateMemories）。正在等待 purge 确认的群一律跳过：那一份记忆已经
-        // 判了死刑，镜像不能被恢复出来的旧计数重新点亮。
+        // hydrateMemories）；正在等待 purge 确认的群跳过，不写入镜像。
         for (const [chatId, usage] of event.usages) {
           if (purgedAiMemoryChats.has(chatId)) continue;
           aiMemoryUsages.set(chatId, usage);
@@ -175,10 +176,10 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
         settleWorkerRequest(moodRequests, event.requestId, { ok: true, value: event.moodName });
         break;
       case "voiceSynthesized":
-        settleVoiceSynthesis(event);
+        settleWorkerRequest(voiceSynthesisRequests, event.requestId, event.result);
         break;
       case "webDigestComposed":
-        settleWebDigest(event);
+        settleWorkerRequest(webDigestRequests, event.requestId, event.result);
         break;
       case "ttsUsage":
         adoptTtsUsage(event.usage);
@@ -195,11 +196,9 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
       "AI Worker crashed before completing chat invalidation."
     );
     settleAiMemoryTeardownWorker();
-    // 新 Worker 重新走一遍身份注入与配置快照投递，FIFO 保证它先于任何
-    // record/trigger 到达。重放的 init 带着主线程当前生效的配置快照（热重载由
-    // syncAiChatConfig 同步改写），新 isolate 不自己读盘。重启发生在 initAiChat
-    // 调用之前的话 lastInitState.current 仍是 null，没有可重放的，新 Worker 等
-    // 本来就该来的那次 initAiChat 调用即可。
+    // 新 Worker 重放身份注入与配置快照，FIFO 保证它先于任何 record/trigger 到达；
+    // 重放的 init 带着主线程当前生效的配置快照（热重载由 syncAiChatConfig 同步改写）。
+    // initAiChat 调用之前 lastInitState.current 为 null，没有可重放的内容。
     if (lastInitState.current && !postToNext(lastInitState.current)) return;
     // 语音合成每日计数：新 Worker 从空值起步，凭主线程持有的最新回执恢复，
     // 排在任何 trigger/synthesizeVoice 之前到达。
@@ -209,8 +208,7 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
     if (latestAiMemories.size > 0) {
       if (!postToNext({ type: "hydrate", memories: latestAiMemories })) return;
     }
-    // 贴纸目录镜像同理：新 Worker 的 init 处理会重新 ensureStickerCatalogs，
-    // 若不先灌回已生成的条目会白白重新调一遍视觉模型。
+    // 贴纸目录镜像同理：先灌回已生成的条目，再由 init 处理的 ensureStickerCatalogs 对账。
     if (latestStickerCatalogs.size > 0) {
       if (!postToNext({ type: "hydrateStickerCatalog", catalogs: activeStickerCatalogs() })) {
         logger.error("AI Worker sticker catalog replay was rejected.");
@@ -219,19 +217,19 @@ const { init: initAiChatWorker, post, terminate: terminateAiChatWorker }: Superv
   },
   onGiveUp: (): void => {
     aiChatWorkerState.available = false;
-    // 身份注入记录必须一起清掉：flushAiMemory 用 `lastInitState.current === null`
-    // 判断「这条线根本没起来，没什么可刷的」并直接返回 flushed。
+    // lastInitState 一并清掉：flushAiMemory 以 `lastInitState.current === null`
+    // 判断这条线未启动并直接返回 flushed。
     lastInitState.current = null;
-    // 同 onRespawn/terminateAiChat：立即结算全部等待者，不留给定时器超时兜底。
+    // 同 onRespawn/terminateAiChat：立即结算全部等待者。
     failAllAiChatWaiters(
       "AI Worker gave up restarting before acknowledging the mood request.",
       "AI Worker gave up before completing chat invalidation."
     );
-    // 已终止实例不可能再回传旧 memory；purged 只负责拒绝旧 Worker 快照。
-    // pendingAiMemoryDeletes 由 Disk I/O durable 回执拥有，绝不能在这里清空。
+    // purged 只负责拒绝旧 Worker 快照；pendingAiMemoryDeletes 由 Disk I/O
+    // durable 回执拥有，这里不清空。
     purgedAiMemoryChats.clear();
-    // 尚未收到首份快照（null）的群已不可能由终止的 Worker 回传；已经投给
-    // Disk I/O 的数字 revision 继续保留，供其重建时维持即时写盘语义。
+    // 尚未收到首份快照（null）的群不再有 Worker 回传，清掉；已经投给
+    // Disk I/O 的数字 revision 保留，供其重建时维持即时写盘语义。
     for (const [chatId, revision] of postPurgeAiMemoryPersistRevisions) {
       if (revision === null) postPurgeAiMemoryPersistRevisions.delete(chatId);
     }
@@ -336,8 +334,8 @@ export function syncAiChatConfig(domains: AiConfigDomains): void {
 /**
  * 要求 aiChatWorker 立即把所有 dirty 群的记忆快照、dirty 的贴纸目录上报
  * （进而转投 diskIOWorker 落盘），并等待完成。用于进程退出前的最后一刷
- * （握手样式同 infra/diskIO.ts 的 flushDiskIO）。带超时兜底：Worker 异常时
- * 停机流程最多被拖住 timeoutMs，不会挂死。
+ * （握手样式同 infra/diskIO.ts 的 flushDiskIO）。带超时：Worker 异常时
+ * 停机流程最多等待 timeoutMs。
  */
 export function flushAiMemory(timeoutMs: number = AI_MEMORY_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   if (lastInitState.current === null) return Promise.resolve("flushed");
@@ -378,6 +376,9 @@ export async function requestAiMood(requestType: "queryMood" | "switchMood"): Pr
       if (post({ type: requestType, requestId, deadlineAt })) return true;
       aiChatWorkerState.available = false;
       return false;
+    },
+    onPostError: (error: unknown): void => {
+      logger.error(`Failed to post the AI ${requestType} request:`, error);
     },
     timedOut: { ok: false, error: new Error(`AI ${requestType} request timed out after ${MOOD_REQUEST_TIMEOUT_MS}ms.`) },
     rejected: { ok: false, error: new Error("AI Worker is unavailable.") },
@@ -424,6 +425,9 @@ export async function invalidateAiChat(chatId: number): Promise<void> {
         const teardown: AiMemoryTeardown | undefined = pendingAiMemoryTeardowns.get(chatId);
         if (teardown !== undefined) teardown.requestId = requestId;
         return post({ type: "invalidateChat", chatId, requestId });
+      },
+      onPostError: (error: unknown): void => {
+        logger.error(`Failed to post the AI chat invalidation request for chat ${chatId}:`, error);
       },
       timedOut: {
         ok: false,

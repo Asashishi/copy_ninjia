@@ -32,8 +32,7 @@ async function sendTemporaryMessage(
   if (request.purpose === "notice" && request.deleteAfterMs !== COMMAND_MESSAGE_AUTO_DELETE_MS) {
     throw new Error("Telegram group notices must use the standard deletion delay.");
   }
-  // 组合能力会拉入线程内 Telegram 动作层；只在真正执行时加载，避免普通 Worker
-  // 协议导入反向装载全部消息生命周期实现。
+  // 动态导入：组合能力依赖线程内 Telegram 动作层，只在执行时加载。
   const temporarySender: (
     params: SendTemporaryMessageOnMainParams
   ) => Promise<TelegramWorkerTemporaryMessageSentResult | undefined> =
@@ -102,27 +101,23 @@ function downloadTelegramFile(
 }
 
 /**
- * 把 Worker 经本边界发出的消息登记进**主线程**的自发消息表。
+ * 把 Worker 经本边界发出的消息登记进主线程的自发消息表。
  *
- * `infra/selfSentTracker.ts` 按线程隔离，因此需要本函数：Worker 侧那次
- * `sendMessage` 在自己的 isolate 里 `markSelfSent`，而真正的 Bot API 调用发生在
- * 下面的 `bot.api.raw.*`——那条路绕开了共享动作层的登记。主线程因此认不出这条
- * 消息是自己发的，频道帖回投时会被当成新内容喂进 AI/复读流水线，或被
- * `/qa set` 的投递入口认领（三个入口的判定见 auto/message/index.ts、
- * commands/cjkAction.ts、commands/qa/ingress.ts）。
+ * `infra/selfSentTracker.ts` 按线程隔离：Worker 侧的 `sendMessage` 在自己的 isolate 里
+ * `markSelfSent`，真正的 Bot API 调用是下面的 `bot.api.raw.*`，不经共享动作层的登记，
+ * 由本函数在主线程补登记。主线程据此在频道帖回投时识别自发消息（三个入口的判定见
+ * auto/message/index.ts、commands/cjkAction.ts、commands/qa/ingress.ts）。
  *
- * 登记发生在**响应回传给 Worker 之前**，也就是早于 Worker 拿到 message id 的那一
- * 刻。两个 Worker 都不回投「我发了什么」，本函数因此是全部 Worker 自发消息的
- * **唯一**登记点。
+ * 登记发生在响应回传给 Worker 之前。两个 Worker 都不回投「我发了什么」，本函数是
+ * 全部 Worker 自发消息的唯一登记点。
  *
- * **但这不消除回投竞态，只把它收窄**：登记时刻是发送响应落地，而回投可能由一次
- * 并发的长轮询先取回。入口侧因此仍要在同步的 `isBotOwnMessage` 之外走有界
- * rendezvous，见 docs/cn/04-invariants.md 的「出站请求与消息安全」。
+ * 登记时刻是发送响应落地，回投可能由并发的长轮询先取回；入口侧因此在同步的
+ * `isBotOwnMessage` 之外走有界 rendezvous，见 docs/cn/04-invariants.md 的
+ * 「出站请求与消息安全」。
  *
- * 判据取**返回值的形状**而不是按方法名 switch：新增能力只要产出 Message 就自动
- * 被覆盖，不必记得回来改这里。读结果而不读 payload 的 `chat_id`，是因为后者可以
- * 是 `@username` 字符串，而结果里的 `chat.id` 恒为数字（唯一只返回
- * `MessageId`、拿不到 chat 的 `copyMessage` 不在任何 Worker 能力白名单里）。
+ * 判据取返回值的形状而不是按方法名 switch：只要产出 Message 就被覆盖。读结果里恒为
+ * 数字的 `chat.id`，不读 payload 的 `chat_id`（可以是 `@username` 字符串）；只返回
+ * `MessageId` 的 `copyMessage` 不在任何 Worker 能力白名单里。
  */
 function markWorkerSentMessage(result: unknown): void {
   if (typeof result !== "object" || result === null) return;
@@ -275,7 +270,7 @@ export function handleAntiRaidWorkerTelegramRequest(
 
 /**
  * Telegram 下载成功回执把字节 buffer 直接转移给请求 Worker。主线程在能力处理器
- * 返回后不再读取该 Uint8Array，因此转移所有权不会留下失效引用。
+ * 返回后不再读取该 Uint8Array。
  */
 export function telegramWorkerResponseTransfer(
   request: TelegramWorkerRequest,

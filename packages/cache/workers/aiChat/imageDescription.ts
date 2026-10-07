@@ -5,22 +5,15 @@ import { LruCache } from "../../../libs/lruCache";
 import { MEDIA_DESCRIPTION_CACHE_MAX } from "../../../consts/aiChat/media";
 
 /**
- * 临时媒体描述缓存：按 file_unique_id 去重。同一份媒体无论被谁、在哪个聊天、
- * 重发多少次，Telegram 给的 file_id 都可能不同，但 file_unique_id 恒定——
- * 不用自己下载算 hash，Telegram 已经替我们算好了（file_unique_id 不能用于
- * 下载，所以下载仍要 file_id）。值存 Promise 而不是结果：同一份媒体短时间被
- * 刷屏时，第二条起直接挂在首条的在途解析上，连并发的重复下载/API 调用也
- * 合并掉。解析失败（resolve 为 null）就把条目摘掉，下次这份媒体重发时重试，
- * 不把一次偶发失败钉死成永久失败。淘汰：超 MEDIA_DESCRIPTION_CACHE_MAX 条
- * 淘汰最久未使用的一个（真 LRU——命中即续命，见 libs/lruCache.ts），热门
- * 媒体命中时更新使用顺序；最多保存 4,096 项，不设 TTL。Worker 崩溃后从空
- * 缓存重建，媒体再次使用时重新描述。
+ * 临时媒体描述缓存，按 file_unique_id 去重：同一份媒体的 file_id 可能不同，file_unique_id 不变
+ * （file_unique_id 不能用于下载，下载仍使用 file_id）。值存 Promise：同一份媒体短时间重复出现时，
+ * 后续消息挂在首条的在途解析上，合并并发的下载与 API 调用。解析失败（resolve 为 null）时摘掉条目，
+ * 下次该媒体重发时重试。淘汰：超 MEDIA_DESCRIPTION_CACHE_MAX 条时淘汰最久未使用的一个
+ * （命中即刷新使用顺序，见 libs/lruCache.ts）；不设 TTL。Worker 崩溃后从空缓存重建。
  *
- * config/dynamic/stickers.json 白名单包的描述不属于这份缓存：它们从
- * memory/stickers/ 恢复进 stickerCatalog 的常驻内存目录，只有线上贴纸包
- * 对账发现增删时才更新。消息记录会先查该目录，未命中才走这里；生成目录
- * 新条目时也绕过这里，避免本地条目占用 MEDIA_DESCRIPTION_CACHE_MAX 额度、
- * 挤掉真正需要缓存的临时媒体，或在目录对账删除后仍从临时缓存读到旧描述。
+ * config/dynamic/stickers.json 白名单包的描述不属于这份缓存：它们从 memory/stickers/ 恢复进
+ * stickerCatalog 的常驻内存目录，只在线上贴纸包对账发现增删时更新。消息记录先查该目录，
+ * 未命中才走这里；生成目录新条目时也不经过这里。
  */
 export const transientDescriptionCache: LruCache<string, Promise<string | null>> = new LruCache(MEDIA_DESCRIPTION_CACHE_MAX);
 

@@ -9,8 +9,7 @@ const ALL_FILES_PATTERN: RegExp =
   /^\s*All files\s*\|\s*(\d+(?:\.\d+)?)\s*\|\s*(\d+(?:\.\d+)?)\s*\|/m;
 
 /**
- * 从 Bun 文本测试报告中解析公开指标；任何字段缺失都显式拒绝，避免 reporter
- * 变更后把部分旧值当成新结果写入文档。
+ * 从 Bun 文本测试报告中解析公开指标；任何字段缺失都显式拒绝。
  */
 export function parseCoverageSummary(output: string): CoverageMetrics {
   const ran: RegExpExecArray | null = RAN_PATTERN.exec(output);

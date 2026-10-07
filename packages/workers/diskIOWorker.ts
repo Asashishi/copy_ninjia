@@ -2,13 +2,11 @@
  * 磁盘 IO 线程（Bun Worker）：共享业务数据的磁盘 IO 收在这一条线程里串行执行——
  * 日志（error 级）、AI 记忆快照（各群滚动缓存 + 中期摘要）、白名单贴纸包
  * 目录快照、每日运势缓存、待验证当日增量 JSON、身份策略 SQLite、入群日志与 wed 成员集合都由
- * 进程唯一的统一持久化 Worker 串行落盘。多类负载共用一条 IO 线程，避免并发追加同一个文件时
- * 互相踩坏。群状态也进入同一 SQLite；只有主线程持有的 `memory/global/state.json` 是明确
- * 例外，由主线程 StateStore 独立异步维护，本 Worker 不访问 memory/global/。
+ * 进程唯一的统一持久化 Worker 串行落盘。群状态也进入同一 SQLite；只有主线程持有的
+ * `memory/global/state.json` 由主线程 StateStore 独立异步维护，本 Worker 不访问 memory/global/。
  *
  * 本文件只做消息路由；按领域与 scope 的统一 flush 在 diskIO/domainFlush.ts，启动恢复编排在
- * diskIO/startup.ts，
- * 具体领域逻辑分别在
+ * diskIO/startup.ts，具体领域逻辑分别在
  * diskIO/logFiles.ts（日志的缓冲/追加）、diskIO/aiMemoryStorage.ts（AI 记忆）、
  * diskIO/stickerCatalogFiles.ts（贴纸目录）、diskIO/luckFiles.ts（运势的缓冲/
  * 追加）、diskIO/luckSecretFile.ts（日级回执密钥）、
@@ -25,12 +23,12 @@
  * cache/workers/diskIO/ 下各领域 owner 是唯一事实源，写是「缓存 -> 磁盘」
  * 的单向定时同步。入群日志在启动时只校验保留窗口，收到入群事实或
  * `/batch_kick` 请求时才按群日建立 LRU；查询前先刷缓冲并读取滚动窗口。本线程自身的内部错误一律
- * console.error（journal 兜底）——它就是落盘终点，不能再指望被自己转发
- * 的日志落盘自己的错误，那是一场递归。
+ * console.error（journal 兜底），不经日志转发。
  */
 
 import { handleAdSampleMessage } from "./diskIO/adSampleFile";
 import {
+  closeStorageDatabaseForShutdown,
   handleChatQaWrite,
   handleChatStateWrite,
   handleIdentityPolicyWrite,
@@ -83,13 +81,15 @@ import {
 } from "../cache/workers/diskIO/verification";
 import { joinLogPersistedNotifier } from "../cache/workers/diskIO/joinLog";
 import {
-  noteStorageWriteRejected,
+  rejectedStorageDomains,
+  storageDatabaseClosed,
   storagePersistenceReplyHolder,
   storageWriteFatalReply,
 } from "../cache/workers/diskIO/storageDatabase";
 import { StorageWriteCapacityError } from "../libs/storageWriteBudget";
 import { diskIOReplayWindow } from "../cache/workers/diskIO/recovery";
 import type {
+  CloseStorageRequest,
   DiskDiagnosticBatchRequest,
   DiskIOMessage,
   EnsureLuckSecretRequest,
@@ -106,6 +106,7 @@ import type {
   JoinLogReadReply,
   LuckSecretReply,
   RecoveryReplayFailedReply,
+  StorageClosedReply,
   StorageDatabaseDomain,
 } from "../types/diskIO/replies";
 import type {
@@ -126,9 +127,8 @@ function postReply(reply: DiskIOReply): void {
 }
 
 /**
- * 一批诊断按原始顺序同步消费，完成整批后才向主线程回 ACK。日志先入缓冲并刷盘，成功后才追加
- * adSample：刷盘失败时主线程整批重投，adSample 在这一轮还没写，重投只追加一次。两者是不同
- * 文件，相对顺序无意义。
+ * 日志先入缓冲并刷盘；刷盘失败回 diagnosticBatchRetry，该批 adSample 与 aiCacheUsage 尚未处理，
+ * 由主线程整批重投。刷盘成功后依次处理 adSample、aiCacheUsage，整批完成才回 diagnosticBatchAccepted。
  */
 async function handleDiagnosticBatch(msg: DiskDiagnosticBatchRequest): Promise<void> {
   let containsLog: boolean = false;
@@ -179,16 +179,12 @@ async function handleEnsureLuckSecret(msg: EnsureLuckSecretRequest): Promise<voi
         `Refusing to move luck persistence backward from ${currentLuckDay} to ${msg.day}.`
       );
     }
-    // 切换 owner 会重置当前 owner 的追加缓冲，因此跨日切换前必须先把
-    // 旧日已确认结果刷盘。失败时拒绝切换，避免仅仅请求新日密钥就丢掉
-    // 尚在正常批量窗口内的旧日结果；这也让新日结果与密钥的一致性检查
-    // 始终建立在已完整提交的上一日 owner 之上。
+    // 切换 owner 会重置追加缓冲，跨日切换前先刷盘旧日已确认结果；刷盘失败时拒绝切换。
     if (currentLuckDay !== msg.day) {
       if (!await flushLuckAppends()) {
         throw new Error(`Failed to flush luck results before switching from ${currentLuckDay ?? "none"} to ${msg.day}.`);
       }
-      // 跨日请求必须先恢复目标日结果，再决定能否轮换密钥；否则不一致备份
-      // 中“结果文件存在、密钥仍是旧日”的组合会被误当成安全的新一天。
+      // 跨日请求先恢复目标日结果，再决定能否轮换密钥。
       deferredDraws = await switchLuckDay(msg.day, true);
     }
     reply = {
@@ -231,6 +227,25 @@ async function handleReadJoinLog(msg: ReadJoinLogRequest): Promise<void> {
   postReply(reply);
 }
 
+/** 干净停机关库；失败带着原因回执，不让异常离开 onmessage。 */
+function handleCloseStorage(msg: CloseStorageRequest): void {
+  let reply: StorageClosedReply;
+  try {
+    reply = {
+      type: "storageClosed",
+      requestId: msg.requestId,
+      outcome: closeStorageDatabaseForShutdown(postReply),
+    };
+  } catch (error: unknown) {
+    reply = {
+      type: "storageClosed",
+      requestId: msg.requestId,
+      error: errorMessage(error),
+    };
+  }
+  postReply(reply);
+}
+
 /** 路由一条主线程消息；独立导出便于验证协议而不初始化真实落盘目录。 */
 export async function handleDiskIOWorkerMessage(
   msg: DiskIOMessage
@@ -256,14 +271,13 @@ export async function handleDiskIOWorkerMessage(
       });
       break;
     case "deleteAiMemory":
-      // 删除排入共享事务缓冲后立即提交，不等定时窗口。提交失败时缓冲保留删除最终值
-      // 由事务重试 timer 继续；若线程在处理前或处理中崩溃，主线程持有的 revision
-      // tombstone 会在新 Worker 完成 load 后重放，直到收到 durable 删除回执。
+      // 删除排入共享事务缓冲后立即提交，不等定时窗口。提交失败时缓冲保留删除最终值，
+      // 由事务重试 timer 继续；线程在处理前或处理中崩溃时，主线程持有的 revision
+      // tombstone 在新 Worker 完成 load 后重放，直到收到 durable 删除回执。
       deleteAiMemorySnapshot(msg.chatId, msg.revision);
       break;
     case "forgetAiMemory":
-      // 主线程的 revision 计数器已在 teardown 归零，这里同步丢掉水位线，两侧
-      // 的作用域才对得上；否则重新启用后的 revision 1 会被判成迟到消息丢弃
+      // 同步丢掉该群的 revision 水位线，与主线程 teardown 后归零的 revision 计数器对齐
       // （见 types/diskIO/messages.ts 的 AiMemoryForgetDiskMessage）。
       forgetAiMemoryChat(msg.chatId);
       break;
@@ -294,13 +308,10 @@ export async function handleDiskIOWorkerMessage(
         (): Promise<void> => handleVerificationDelete({ msg, reply: postReply })
       );
       break;
-    // 共享 SQLite 写消息的非法输入就地拒收：handlePendingRemovalSnapshot 会在 removalId 重复、
-    // params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
-    // handleIdentityPolicyWrite 由 validatePolicyData / assertOppositePolicyAbsent
-    // 抛。异常一旦离开 onmessage，Bun 会直接终止整条落盘线程：在途 flush 全部按
-    // 失败结算、各领域的缓冲随线程一起没了，反复触发还会顶到重启节流把整个进程
-    // 停掉——为了一条本来只该由自己那个领域承担的非法消息。就地拒收，并按领域
-    // 留下标记，让主线程的下一次领域 flush 拿到失败回执。
+    // 共享 SQLite 写消息的非法输入就地拒收，异常不离开 onmessage：handlePendingRemovalSnapshot
+    // 在 removalId 重复、params.removalId 不匹配、probe 批次黑名单为空、冻结 userId 不在名单时抛，
+    // handleIdentityPolicyWrite 由 validatePolicyData / assertOppositePolicyAbsent 抛。
+    // 拒收时按领域留下标记，主线程的下一次领域 flush 拿到失败回执。
     case "blocklistRemovals":
       handleIdentityMessage(
         "blocklistRemovalOutbox",
@@ -343,9 +354,8 @@ export async function handleDiskIOWorkerMessage(
       await handleJoinLogMessage(msg);
       break;
     case "deleteJoinLog":
-      // 目录列举与逐个 unlink 的失败都由 purgeChatJoinLogFiles 自己收在 try 内并保留
-      // 待删标记，删除结果经 `joinLogPurge` 领域 flush 回报给发起 teardown 的调用方，
-      // 不连坐无关的入群事实。
+      // 目录列举与逐个 unlink 的失败都由 purgeChatJoinLogFiles 收在 try 内并保留
+      // 待删标记，删除结果经 `joinLogPurge` 领域 flush 回报给发起 teardown 的调用方。
       handleJoinLogDeleteMessage(msg);
       break;
     case "readJoinLog":
@@ -356,6 +366,9 @@ export async function handleDiskIOWorkerMessage(
       break;
     case "readBlocklistIdPage":
       postReply(readBlocklistIdPage(msg));
+      break;
+    case "closeStorage":
+      handleCloseStorage(msg);
       break;
     case "load":
       adoptTimeZone(msg.timeZone);
@@ -370,9 +383,7 @@ export async function handleDiskIOWorkerMessage(
       break;
     }
     default: {
-      // 穷尽性断言：协议新增一条 main -> diskIO 消息时这一行编译失败，必须在本
-      // switch 里点名它的 owner。落到这里的消息会被整条丢掉且没有任何回执，
-      // 请求方只能等到超时；运行期不可达。
+      // 穷尽性断言：新增 main -> diskIO 消息而未在本 switch 点名时编译失败；运行期不可达。
       const unhandled: never = msg;
       void unhandled;
       break;
@@ -419,18 +430,19 @@ function replyReplayFailureIfActive(domain: RecoveryReplayFailedReply["domain"],
 /**
  * 身份 SQLite 消息的统一拒收边界：异常只拖垮它自己那个领域，不离开 onmessage。
  *
- * 恢复重放区间内额外升级为 fatal：那批消息对应的 update 早已被 Telegram 确认，
- * 后面不会再有任何 flush 来问它写没写进去，继续跑就是静默丢数据（见
- * types/diskIO/messages.ts 的 RecoveryReplayRequest）。
+ * 恢复重放区间内额外升级为 fatal，回 recoveryReplayFailed（见
+ * types/diskIO/messages.ts 的 RecoveryReplayRequest）。停机关库之后到达的消息直接忽略，
+ * 不记拒收、不升级。
  */
 function handleIdentityMessage(
   domain: Exclude<StorageDatabaseDomain, "aiMemory">,
   apply: () => void
 ): void {
+  if (storageDatabaseClosed.current) return;
   try {
     apply();
   } catch (error: unknown) {
-    noteStorageWriteRejected(domain);
+    rejectedStorageDomains.add(domain);
     if (error instanceof StorageWriteCapacityError) postReply({ type: "storageWriteStalled" });
     console.error(`[diskIOWorker] rejected an identity ${domain} message:`, error);
     replyReplayFailureIfActive(domain, error);
@@ -446,8 +458,7 @@ function startDiskIOWorker(): void {
   storagePersistenceReplyHolder.current = postReply;
   aiMemoryDeletePersistedNotifier.current = postReply;
   aiMemoryPersistedNotifier.current = postReply;
-  // 运势追加持续失败时的兜底诊断出口：本线程的 console 可能被部署接到
-  // /dev/null，这条会由主线程的运势 owner 记进统一 logs/（见 luckFiles.ts）。
+  // 运势追加持续失败时的诊断出口，由主线程的运势 owner 记入统一日志（见 luckFiles.ts）。
   luckAppendStalledNotifier.current = postReply;
   self.onmessage = (event: MessageEvent<DiskIOMessage>): void => {
     void queueDiskIOWorkerMessage(event.data);

@@ -1,22 +1,22 @@
 /**
  * 进程唯一的共享数据 Disk I/O Worker 宿主（主线程侧）：统一承载日志、AI/贴纸快照、
- * 每日运势、待验证当日增量 JSON、群状态与 /block 黑名单——由 diskIOWorker 在单一 Worker
- * 线程里串行执行，避免多个业务 Worker 并发写坏共享文件。全局状态 memory/global/state.json
+ * 每日运势、待验证当日增量 JSON、群状态与 /block 黑名单，由 diskIOWorker 在单一 Worker
+ * 线程里串行执行。全局状态 memory/global/state.json
  * 由主线程经 infra/storage/stateStore.ts 门面交给 statePersistence.ts 独立异步读写与 flush。
  *
  * Worker 拥有权、flush/load 握手与对外投递语义收在本文件；Worker 创建与回执路由在
  * infra/diskIO/host.ts，逐请求投递与回执结算在 infra/diskIO/requests.ts，业务与请求的传输队列在
  * infra/diskIO/transport.ts，诊断 FIFO 在 infra/diskIO/diagnosticChannel.ts，恢复握手、
  * 镜像重放与崩溃自愈的重启节流在 infra/diskIO/recovery.ts。
- * infra/logger.ts 只是调用方之一（error 日志经 relayLogMessage 投递）。
+ * infra/logger.ts 只是调用方之一：initDiskIO 把 relayLogMessage 装进 cache/perThread/logger.ts 的
+ * logRelaySink，主线程 error 日志经它投递。
  * 各主线程领域 owner（如 aiChat/memoryMirror.ts、antiRaid/verificationMirror.ts、
  * commands/wed/persistence.ts、infra/joinLog.ts、infra/identityStorage/write.ts）经
  * postDiskIO 投递，恢复镜像重放经 infra/diskIO/businessWrite.ts 的 postWithTransport。
  *
  * 本模块自身的错误一律经 workers/diskIO/diagnosticSink.ts 的 writeDiskIODiagnostic
- * （即 console.error，由进程控制台日志兜底）输出——它就是落盘终点，不能再指望被自己
- * 转发的日志线程落盘自己的错误，否则是一场递归。崩溃自愈同样只用该出口，不经
- * infra/supervisedWorker.ts 通用骨架（其 onerror 走 logger.error）。
+ * （console.error）输出，不经 logger 转发。崩溃自愈同样只用该出口，不经
+ * infra/supervisedWorker.ts 通用骨架。
  * @see ../../docs/cn/04-invariants.md
  */
 
@@ -28,9 +28,11 @@ import {
   joinLogReadRequests,
   pendingFlushFailedDomains,
   pendingLoad,
+  storageCloseRequests,
 } from "../cache/main/diskIO";
+import { logRelaySink } from "../cache/perThread/logger";
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../consts/diskIO/common";
-import { DISK_IO_FLUSH_TIMEOUT_MS } from "../consts/lifecycle";
+import { DISK_IO_FLUSH_TIMEOUT_MS, DISK_IO_STORAGE_CLOSE_TIMEOUT_MS } from "../consts/lifecycle";
 import { createDiskIOWorker } from "./diskIO/host";
 import { clearRuntimeRecoveryTimer, stopWorkerAfterLoadFailure } from "./diskIO/recovery";
 import {
@@ -61,11 +63,12 @@ export {
 } from "./diskIO/observers";
 import type { FlushResult } from "../types/lifecycle";
 import type {
+  CloseStorageRequest,
   DiskBusinessMessage,
   DiskFlushRequest,
   DiskFlushScope,
-  DiskIOOperationMessage,
   LoadRequest,
+  QueuedDiskIOOperationMessage,
   AdSampleDiskMessage,
   AiCacheUsageDiskMessage,
   LogMessage,
@@ -78,6 +81,7 @@ import type {
   DomainFlushOutcome,
   LoadedData,
   LoadedReply,
+  StorageCloseOutcome,
 } from "../types/diskIO/replies";
 import type {
   JoinLogRecord,
@@ -85,6 +89,7 @@ import type {
 } from "../types/diskIO/storage";
 import type { BlocklistIdPage, IdentityPolicyRawReadResult } from "../types/identityStorage";
 import { toErrorOr } from "../libs/errorMessage";
+import { writeDiskIODiagnostic } from "../workers/diskIO/diagnosticSink";
 
 const isMainThread: boolean = Bun.isMainThread;
 export interface DiskIOInitOptions {
@@ -92,7 +97,7 @@ export interface DiskIOInitOptions {
   onFatal?: (error: Error) => void;
   /** 仅供测试缩短；生产默认与启动 load 握手使用同一预算。 */
   runtimeRecoveryTimeoutMs?: number;
-  /** 排队、在途与恢复窗口合计的业务硬顶，避免失联 Worker 造成无界内存增长。 */
+  /** 排队、在途与恢复窗口合计的业务消息上限。 */
   maxPendingBusinessMessages?: number;
 }
 
@@ -102,10 +107,9 @@ function requirePositiveFinite(value: number, label: string): number {
 }
 
 /**
- * 在主线程显式启动唯一的落盘 Worker。调用方必须已经取得数据目录的
- * bot.lock；重复调用幂等，不能借重复初始化绕过崩溃自愈的放弃阈值。
- * 模块导入本身不创建线程，竞争单实例锁失败的第二进程因此不会触达共享数据；
- * Worker 线程里永远不初始化本宿主，只使用 logger.ts 的转发模式。
+ * 在主线程显式启动唯一的落盘 Worker，并把 relayLogMessage 装成 logger 的落盘出口。调用方必须
+ * 已经取得数据目录的 bot.lock；重复调用幂等，不重置崩溃自愈的放弃阈值。
+ * 模块导入本身不创建线程；Worker 线程不初始化本宿主，只使用 logger.ts 的转发模式。
  */
 export function initDiskIO({
   onFatal,
@@ -126,7 +130,7 @@ export function initDiskIO({
   diskIORuntime.fatalHandler = onFatal;
   diskIORuntime.runtimeRecoveryTimeoutMs = nextRuntimeRecoveryTimeoutMs;
   diskIORuntime.maxPendingBusinessMessages = maxPendingBusinessMessages;
-  diskIORuntime.operationQueue = new AcknowledgedBatchQueue<DiskIOOperationMessage>({
+  diskIORuntime.operationQueue = new AcknowledgedBatchQueue<QueuedDiskIOOperationMessage>({
     maxBatchMessages: DISK_BUSINESS_BATCH_MAX_MESSAGES,
     maxMessages: maxPendingBusinessMessages + DISK_OPERATION_CONTROL_RESERVE,
     maxCost: DISK_OPERATION_MAX_RETAINED_BYTES,
@@ -138,6 +142,7 @@ export function initDiskIO({
   diskIORuntime.writable = false;
   diskIORuntime.worker = createDiskIOWorker();
   diskIORuntime.initialized = true;
+  logRelaySink.current = relayLogMessage;
 }
 
 /** 供入口生命周期守卫和无副作用 import 测试查询，不代表 Worker 当前可用。 */
@@ -149,12 +154,11 @@ export function isDiskIOInitialized(): boolean {
  * 把 error 日志交给主线程有界 FIFO：主线程自身的日志由 logger.ts 直接调用，其它 Worker
  * 线程转发来的日志由 infra/supervisedWorker.ts 调用（logger.ts 的转发模式）。
  * DiskIO Worker 不可写、崩溃或同步拒收时延后重投；容量越界时释放原消息引用并
- * 记入后续汇总，因此本函数仍返回已接管，让来源 Worker 可以释放原批。
+ * 记入后续汇总，本函数仍返回已接管，来源 Worker 随即释放原批。
  */
 export function relayLogMessage(message: LogMessage): boolean {
-  // 进程尚未取得单实例锁、也未初始化唯一 DiskIO owner 时只写 journal，不建立
-  // 可能永远等不到消费者的进程级积压。业务 Worker 只会在 DiskIO 初始化完成后
-  // 启动，因此运行期转发不经过这个分支。
+  // DiskIO owner 未初始化时返回 false，不建立积压。业务 Worker 在 DiskIO
+  // 初始化完成后才启动，运行期转发不经过这个分支。
   if (!diskIORuntime.initialized) return false;
   return enqueueDiskIODiagnostic({ type: "log", id: crypto.randomUUID(), ...message });
 }
@@ -163,8 +167,8 @@ export function relayLogMessage(message: LogMessage): boolean {
  * 主线程 -> diskIOWorker：排队一条不进入业务恢复缓冲的旁路诊断（广告命中样本与 AI 缓存用量）。
  *
  * 与 postDiskIO 的差别是它进入独立有界 FIFO，不占 pendingBusinessMessages 的
- * 恢复预算，也绝不触发业务 fatal；Worker 代际失败后原批重发，容量越界则记入
- * 一条后续汇总。样本文件与用量统计都是 best effort 的旁路数据，写盘失败不会拖垮权威状态，
+ * 恢复预算，也不触发业务 fatal；Worker 代际失败后原批重发，容量越界则记入
+ * 一条后续汇总。样本文件与用量统计是尽力投递的旁路数据，
  * 见 workers/diskIO/adSampleFile.ts 与 workers/diskIO/aiCacheFile.ts。
  * @returns 已由有界诊断通道接管；调用方无需自行重试。
  */
@@ -192,16 +196,13 @@ export function postDiskIO(
 }
 
 /**
- * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时兜底。
- * 必须在 runner 开始投喂更新之前调用并等待完成（见 app/lifecycle.ts）——尤其是
- * 运势缓存与待验证记录都必须先恢复，避免重复抽签或遗漏超时处置。
- * 超时或 Worker 不存在时拒绝启动。持久化恢复不能降级为空状态继续：迟到的
- * load 回执不会再被主线程接管，后续新快照会覆盖磁盘上的旧记忆，造成静默
- * 数据丢失；交给 app/lifecycle.ts 的 run().catch 以非零码退出并由进程管理器重试。
+ * 启动恢复：向 diskIOWorker 请求上一次成功落盘的全部状态，带超时。
+ * 必须在 runner 开始投喂更新之前调用并等待完成（见 app/lifecycle.ts）。
+ * 超时、Worker 不存在或恢复回执带 error 时 reject，调用方不得以空状态继续启动。
  */
 export function loadPersistedData(timeoutMs: number = LOAD_TIMEOUT_MS): Promise<LoadedData> {
   requirePositiveFinite(timeoutMs, "Disk I/O load timeout");
-  // pendingLoad 是单槽：第二个并发请求会覆盖前一个的 resolve / reject / timer。
+  // pendingLoad 是单槽，同一时刻只允许一个启动 load 请求。
   if (pendingLoad.timer !== null) {
     throw new Error("[diskIO] a startup load request is already pending.");
   }
@@ -306,8 +307,8 @@ export interface ReadJoinLogParams {
 }
 
 /**
- * 仅供 `/batch_kick` 按需读取本群滚动 24 小时入群日志；Worker 会先提交更早到达的
- * 追写缓冲，因此返回值覆盖命令请求之前已经处理的全部入群事件。
+ * 仅供 `/batch_kick` 按需读取本群入群日志；Worker 先提交更早到达的
+ * 追写缓冲，返回值覆盖请求之前已处理的全部入群事件。
  */
 export function readJoinLog({
   chatId,
@@ -366,10 +367,9 @@ export function readBlocklistIdPage(
 
 /**
  * 要求 diskIOWorker 立即把所有 dirty 数据（含待验证增量）全部落盘，
- * 并等待完成。用于进程退出前的最后一刷。带超时兜底：
- * Worker 异常时停机流程最多被拖住 timeoutMs，不会挂死。resolve 只代表
- * "等待已结束"；返回值明确区分成功、超时与失败。Worker 若恰好在这次
- * flush 期间崩溃，onerror 会立即以 failed 结算并记录数据未落盘。
+ * 并等待完成，用于进程退出前的最后一刷。等待最长 timeoutMs；resolve 只代表
+ * 等待已结束，返回值区分 flushed、timedOut 与 failed。Worker 在这次
+ * flush 期间崩溃时，onerror 立即以 failed 结算。
  */
 export async function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS): Promise<FlushResult> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
@@ -382,8 +382,8 @@ export async function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS):
     if (remaining <= 0) return "timedOut";
     const diagnostics: FlushResult = await waitForDiskIODiagnostics(remaining);
     if (diagnostics !== "flushed") return diagnostics;
-    // Promise 续体恢复前可能已有另一条主线程诊断入队；重新检查到真正发送
-    // flush 的同一个同步片段，不能让它落到 flush 信封后面。
+    // Promise 续体恢复前可能已有新的主线程诊断入队；循环重检，直到与发送
+    // flush 处于同一个同步片段，诊断先于 flush 信封。
   }
   const remaining: number = deadline - performance.now();
   if (remaining <= 0) return "timedOut";
@@ -411,9 +411,9 @@ async function requestDiskIOFlush(
 }
 
 /**
- * 单个领域的落盘屏障：Worker 只刷这一个领域（共享 SQLite 的七个领域共用一个事务，见
- * types/diskIO/messages.ts 的 DiskFlushScope），其它领域的缓冲窗口不受影响；回执只带
- * 该领域自己的失败（见 workers/diskIO/domainFlush.ts）。
+ * 单个领域的落盘屏障：Worker 只刷这一个领域（共享 SQLite 的各领域共用一个事务，见
+ * types/diskIO/messages.ts 的 DiskFlushScope），回执只带该领域自己的失败
+ * （见 workers/diskIO/domainFlush.ts）。
  * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
  */
 export async function flushDiskIODomain(
@@ -424,10 +424,8 @@ export async function flushDiskIODomain(
 }
 
 /**
- * 同上，但把**本次请求**回执里的失败领域名一并带出，供调用方点名真正坏掉的
- * 文件（Worker 侧的写盘错误按设计只有 console.error，不点名就没有一条进得了
- * logs/）。超时或 Worker 崩溃中途结算时没有本次回执，failedDomains 保持
- * undefined——那种情况下任何领域名都只是别的 flush 留下的旧值。
+ * 同 flushDiskIODomain，并带出本次请求回执里的失败领域名 failedDomains。
+ * 超时或 Worker 崩溃中途结算时没有本次回执，failedDomains 为 undefined。
  */
 export function flushDiskIODomainOutcome(
   domain: DiskIODomain,
@@ -436,8 +434,50 @@ export function flushDiskIODomainOutcome(
   return requestDiskIOFlush(timeoutMs, domain);
 }
 
-/** 终止落盘 Worker；返回后旧实例不可能再 rename/append 共享文件。 */
-export function terminateDiskIO(): Promise<void> {
+/**
+ * 停机关库：每条 terminateDiskIO 路径（含未捕获异常的紧急释放）都在当前代际已完成恢复握手、
+ * 可写且未发出致命信号时发送一次 closeStorage。先把 writable 置假，此后的业务写在源头进恢复
+ * 缓冲、随 terminate 丢弃；Worker 按 FIFO 处理完更早的操作后提交残余写、TRUNCATE checkpoint 并关库。
+ * checkpoint 被其它读连接挡住只写诊断（残余写已提交，WAL 留在库旁）。
+ * @returns 不满足发送条件或回执确认残余写已提交时为 null；回执报残余写未提交，或请求超时、
+ *   被拒、回执报错而无法确认时为描述原因的错误。
+ */
+async function closeDiskIOStorage(): Promise<Error | null> {
+  const worker: Worker | null = diskIORuntime.worker;
+  if (worker === null || !diskIORuntime.initialized || !diskIORuntime.writable || diskIORuntime.fatalSignaled) return null;
+  diskIORuntime.writable = false;
+  let outcome: StorageCloseOutcome;
+  try {
+    outcome = await requestDiskIO({
+      worker,
+      channel: storageCloseRequests,
+      timeoutMs: DISK_IO_STORAGE_CLOSE_TIMEOUT_MS,
+      buildRequest: (requestId: number): CloseStorageRequest => ({ type: "closeStorage", requestId }),
+    });
+  } catch (error: unknown) {
+    return new Error(
+      "[diskIO] could not confirm that residual storage writes were committed before the database closed.",
+      { cause: error }
+    );
+  }
+  if (outcome.checkpointBusy) {
+    writeDiskIODiagnostic(
+      "[diskIO] WAL checkpoint was blocked by another database reader at shutdown; " +
+      "the -wal file stays next to the database and must be backed up with it."
+    );
+  }
+  return outcome.committed
+    ? null
+    : new Error("[diskIO] residual storage writes were not committed before the database closed.");
+}
+
+/**
+ * 终止落盘 Worker：先按 closeDiskIOStorage 关库，再清空宿主运行态，拒绝所有待决的 load、
+ * 读请求与 flush 并 terminate。关库无法确认残余写已提交时照常终止，随后以该错误 reject，
+ * 停机把这一步记为失败（结局 unsettled，见 docs/cn/04-invariants.md）。
+ */
+export async function terminateDiskIO(): Promise<void> {
+  const closeFailure: Error | null = await closeDiskIOStorage();
   resetDiskIOOperations();
   const worker: Worker | null = diskIORuntime.worker;
   diskIORuntime.worker = null;
@@ -463,11 +503,12 @@ export function terminateDiskIO(): Promise<void> {
   pendingLoad.reject?.(new Error(terminationMessage));
   pendingLoad.reject = null;
   rejectAllPendingDiskIORequests((): string => terminationMessage);
-  if (worker === null) return Promise.resolve();
-  try {
-    worker.terminate();
-    return Promise.resolve();
-  } catch (error: unknown) {
-    return Promise.reject(toErrorOr(error, "Persistence Worker termination failed."));
+  if (worker !== null) {
+    try {
+      worker.terminate();
+    } catch (error: unknown) {
+      throw toErrorOr(error, "Persistence Worker termination failed.");
+    }
   }
+  if (closeFailure !== null) throw closeFailure;
 }

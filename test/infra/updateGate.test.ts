@@ -98,13 +98,9 @@ describe("shouldPassInitGate", () => {
   test("已 /init 过的群 + 普通消息：放行", () => {
     const chatId = -1001111111113;
     getOrCreateChatState(chatId).isInitEnabled = true;
-    // 若误用非隔离测试，同进程会共享 infra/storage 的模块级 chatStates（同文件的
-    // /send 中转测试也有这条注意事项），务必测完把这个字段清回去，不留给
-    // 同进程里跑在它之后的其它测试文件。注意：这里只重置字段、不能用
-    // 删除整个状态——本文件只 mock 了 infra/diskIO（防的是 logger.ts
-    // 间接把真实 Worker 拉起来），没有 mock infra/storage 本体，
-    // 若调用带落盘的删除路径，会触发 saveStateInBackground 真的写项目根
-    // 目录下的 state.json，那是这台机器上正在跑的真实 bot 在用的文件。
+    // 测完把这个字段清回去，不留给同进程里的其它测试文件。只重置字段，不删除整个状态：
+    // 本文件只 mock 了 infra/diskIO，没有 mock infra/storage 本体，带落盘的删除路径会触发
+    // saveStateInBackground 写项目根目录下的 state.json。
     try {
       const ctx = fakeCtx({ chat: { id: chatId, type: "supergroup" }, message: { text: "随便说点什么" } });
       expect(shouldPassInitGate(ctx)).toBe(true);
@@ -121,8 +117,7 @@ describe("shouldPassInitGate", () => {
       message: { text: "你好，@someone\n汝的今日运势: 小凶\n有点不太妙哦，杂鱼小心点走路♡", via_bot: { id: ME.id } },
     });
     ctx.msg = ctx.message;
-    // 运势回执不受影响：confirmLuckDraw 是 registerHandlers.ts 里排在本网关之前
-    // 的一道 bot.use（转发副本也要认），从来不靠这条豁免够到。
+    // 运势回执不受影响：confirmLuckDraw 是 registerHandlers.ts 里排在本网关之前的一道 bot.use（转发副本也要认），不经这条豁免。
     expect(shouldPassInitGate(ctx)).toBe(false);
   });
 
@@ -210,9 +205,7 @@ describe("shouldPassPrivateCommandGate", () => {
   });
 
   test("caption 里的指令同样拦下：bot.hears 对 caption 也匹配", () => {
-    // bot.command 只认 text，但 `/咬` 这类中文动作命令走 bot.hears，text 和
-    // caption 都会匹配。网关只看 text 的话，一张 caption 写着指令的图片就能绕过
-    // 私聊封锁，让任意陌生人驱使机器人在私聊里作答、并借回复差异探测缓存。
+    // bot.command 只认 text，`/咬` 这类中文动作命令走 bot.hears，text 与 caption 都匹配；网关同样判 caption。
     const ctx = fakeCtx({
       chat: { id: 4, type: "private" },
       message: { caption: "/咬 @someone", photo: [{ file_id: "f" }] },

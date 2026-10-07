@@ -14,7 +14,7 @@ export function templateParts(render: (value: string) => string): string[] {
     .filter((part: string): boolean => part.length > 0);
 }
 
-/** 模板里最长的固定片段；否定断言用它，避免「笨蛋，」这类短片段误中别的文案。 */
+/** 模板里最长的固定片段，供否定断言使用；「笨蛋，」这类短片段可能误中别的文案。 */
 export function longestTemplatePart(render: (value: string) => string): string {
   let longest: string = "";
   for (const part of templateParts(render)) if (part.length > longest.length) longest = part;

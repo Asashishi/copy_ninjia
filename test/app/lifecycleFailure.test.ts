@@ -145,7 +145,7 @@ describe("应用启动失败与退出清理", () => {
     );
   });
 
-  /** 四个进程 handler 的装卸必须成对；只查 SIGINT/SIGTERM 会漏掉另外两个。 */
+  /** 进程 handler 的装卸成对，不只查 SIGINT/SIGTERM。 */
   const PROCESS_HANDLER_EVENTS: readonly string[] =
     ["SIGINT", "SIGTERM", "uncaughtException", "unhandledRejection"];
 
@@ -192,8 +192,7 @@ describe("应用启动失败与退出清理", () => {
   });
 
   test("回归用例：启动期到达的停止信号不能把 quiesce 一次性闩死", async () => {
-    // 取锁期间收到 SIGTERM：此时 init 还没用 initAvatarUpdates 等四个入口
-    // 重新武装 owner。
+    // 取锁期间收到 SIGTERM：此时 init 还没用 initAvatarUpdates 等入口重新武装 owner。
     acquireSingleInstanceLock.mockImplementationOnce(async (): Promise<void> => {
       calls.push("acquireLock");
       process.emit("SIGTERM");
@@ -205,7 +204,7 @@ describe("应用启动失败与退出清理", () => {
     // init 尾部那次重新收口之后，wait()/dispose() 仍会各自再 quiesce 一遍。
     expect(quiesceAvatarUpdates.mock.calls.length).toBeGreaterThan(1);
     expect(quiesceTranslate.mock.calls.length).toBeGreaterThan(1);
-    // 标题刷新只在入口同步查一次 accepting，因此重新收口必须排在它启动之前。
+    // 标题刷新只在入口同步查一次 accepting，重新收口排在它启动之前。
     expect(calls.indexOf("quiesceTitles")).toBeGreaterThan(-1);
     expect(calls.indexOf("quiesceTitles")).toBeLessThan(calls.indexOf("refreshTitles"));
     const signalLogs: unknown[][] = loggerLog.mock.calls.filter(
@@ -404,6 +403,25 @@ describe("应用启动失败与退出清理", () => {
     );
   });
 
+  test("磁盘终止无法确认残余写已提交时停机记为 unsettled：state 照常 flush、扣住实例锁并非零退出", async () => {
+    terminateDiskIO.mockImplementationOnce(async (): Promise<void> => {
+      calls.push("terminateDiskIO");
+      throw new Error("residual storage writes were not committed");
+    });
+    const lifecycle = new ApplicationLifecycle(testDependencies);
+    await lifecycle.init();
+
+    await lifecycle.dispose();
+
+    expect(flushStateToDisk).toHaveBeenCalledTimes(1);
+    expect(releaseSingleInstanceLock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(loggerError).toHaveBeenCalledWith(
+      "Shutdown owner disk I/O termination threw during disposal:",
+      expect.any(Error)
+    );
+  });
+
   test("dispose 在 Anti-Raid drain 落定前不得 flush 或终止任何业务 Worker", async () => {
     const antiRaidGate: PromiseWithResolvers<FlushResult> = Promise.withResolvers<FlushResult>();
     drainAntiRaid.mockImplementationOnce(() => {
@@ -467,7 +485,7 @@ describe("应用启动失败与退出清理", () => {
     }) as typeof clearTimeout;
 
     try {
-      // 直接触发私有入口，避免向测试进程广播 uncaughtException 干扰 Bun runner。
+      // 直接触发私有入口，不向测试进程广播 uncaughtException。
       (lifecycle as unknown as { exitAfterEmergencyDispose(): void }).exitAfterEmergencyDispose();
 
       expect(deadlineDelayMs).toBe(EMERGENCY_REUSED_DISPOSE_DEADLINE_MS);

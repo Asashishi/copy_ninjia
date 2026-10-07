@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import type { ChatMember, ChatMemberAdministrator } from "grammy/types";
 import type { BotChatPermissions } from "../../packages/types/telegram";
@@ -64,8 +64,10 @@ let onGetChatMember: (() => void) | undefined;
 /** 设成一个未完成的 Promise 就能把现查悬在途中，用来验证调用方没有被它挡住。 */
 let getChatMemberGate: Promise<void> | undefined;
 
+/** logger.error 的首个参数，按调用顺序记录。 */
+const loggedErrors: string[] = [];
 mock.module("../../packages/infra/logger", () => ({
-  logger: loggerStub(),
+  logger: loggerStub({ error(message: string): void { loggedErrors.push(message); } }),
 }));
 mock.module("../../packages/infra/telegram/mainClient", () => ({
   bot: {
@@ -85,9 +87,8 @@ mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
   telegramApi: { kind: "guard-api" },
 }));
-// botAdmin -> blocklist 的新晋管理员补扫会取这三个；本文件名单为空，不触发。
+// botAdmin -> blocklist 的新晋管理员补扫会取这两个；本文件名单为空，不触发。
 mock.module("../../packages/infra/telegram/actions", () => ({
-  isChatMember: async (): Promise<boolean> => false,
   banChatMember: async (): Promise<boolean> => true,
   banChatSenderChat: async (): Promise<boolean> => true,
 }));
@@ -121,9 +122,12 @@ mock.module("../../packages/infra/storage/stateStore", () => ({
   },
 }));
 
+const sweepModule = await import("../../packages/infra/blocklist/sweep");
 const {
   botCanDeleteMessagesIn,
+  botCanRestrictMembersIn,
   botChatPermissionsIn,
+  cachedBotAdminStatus,
   forgetBotChatPermissions,
   handleMyChatMemberUpdate,
   invalidateBotAdminStatus,
@@ -143,6 +147,7 @@ const CHAT_ID: number = -1001;
 const broadcasts: { chatId: number; permissions: BotChatPermissions | undefined }[] = [];
 
 beforeEach(() => {
+  loggedErrors.length = 0;
   states.clear();
   states.set(CHAT_ID, { isInitEnabled: true });
   botPermissionFetches.clear();
@@ -189,6 +194,14 @@ describe("机器人自身权限 State 快照", () => {
     expect(botCanDeleteMessagesIn(CHAT_ID)).toBeTrue();
   });
 
+  test("同步封禁权限读取保留 true/false/unknown 三态", () => {
+    expect(botCanRestrictMembersIn(CHAT_ID)).toBeUndefined();
+    setStatePermissions(botPermissions({ canDeleteMessages: true }));
+    expect(botCanRestrictMembersIn(CHAT_ID)).toBeFalse();
+    setStatePermissions(botPermissions({ canRestrictMembers: true }));
+    expect(botCanRestrictMembersIn(CHAT_ID)).toBeTrue();
+  });
+
   test("my_chat_member 落地后判定是纯内存命中，不打 getChatMember", async () => {
     await handleMyChatMemberUpdate(myChatMemberContext({
       status: "administrator",
@@ -212,8 +225,7 @@ describe("机器人自身权限 State 快照", () => {
       .filter(([key]: [string, boolean]): boolean => key.startsWith("can"))
       .every(([, allowed]: [string, boolean]): boolean => allowed)).toBeTrue();
 
-    // 仍是管理员、只是被取消了限制成员权限：这类改动同样以 my_chat_member 送达，
-    // 缓存必须跟着降级，否则禁言/踢人会拿着一份作废的快照继续放行。
+    // 仍是管理员、只是被取消了限制成员权限：这类改动同样以 my_chat_member 送达，缓存跟着降级。
     await handleMyChatMemberUpdate(myChatMemberContext({
       status: "administrator",
       can_restrict_members: false,
@@ -238,6 +250,31 @@ describe("机器人自身权限 State 快照", () => {
     expect(states.has(CHAT_ID)).toBeFalse();
   });
 
+  test("同步管理员身份读取保留 true/false/unknown 三态，不现查", async () => {
+    expect(cachedBotAdminStatus(CHAT_ID)).toBeUndefined();
+    await handleMyChatMemberUpdate(myChatMemberContext({ status: "administrator", can_restrict_members: true }));
+    expect(cachedBotAdminStatus(CHAT_ID)).toBeTrue();
+    await handleMyChatMemberUpdate(myChatMemberContext({ status: "member" }, "administrator"));
+    expect(cachedBotAdminStatus(CHAT_ID)).toBeFalse();
+    expect(getChatMemberCalls).toBe(0);
+  });
+
+  test("确证或复用管理员身份后的黑名单清扫失败只记错误，不向调用方抛", async () => {
+    const sweep = spyOn(sweepModule, "sweepBlockedMembers").mockImplementation(async (): Promise<never> => {
+      throw new Error("sweep failed");
+    });
+    try {
+      await handleMyChatMemberUpdate(myChatMemberContext({ status: "administrator", can_restrict_members: true }));
+      await markBotAdminObserved(CHAT_ID);
+    } finally {
+      sweep.mockRestore();
+    }
+    expect(loggedErrors).toEqual([
+      `Failed to sweep blocklisted members from chat ${CHAT_ID} after gaining admin rights:`,
+      `Failed to sweep blocklisted members from chat ${CHAT_ID} after an admin observation:`,
+    ]);
+  });
+
   test("收到别人的 chat_member 更新时，缺快照就现查完整权限", async () => {
     await markBotAdminObserved(CHAT_ID);
     expect(getChatMemberCalls).toBe(1);
@@ -246,9 +283,7 @@ describe("机器人自身权限 State 快照", () => {
     expect(statePermissions()).toEqual(botPermissions({ canRestrictMembers: true }));
   });
 
-  // 这条路径挂在入群洪流上，而 update runner 严格串行：一条 update 没跑完就不再
-  // getUpdates。现查要付一次 getChatMember 往返加一次 durable 落盘，await 它等于让
-  // 冷进程里刷群的第一条 chat_member 把整条 ingress 顶住。
+  // 这条路径挂在入群洪流上，update runner 严格串行；现查（一次 getChatMember 往返加一次 durable 落盘）不被 await。
   test("现查不再挡住调用方：getChatMember 悬在途中，markBotAdminObserved 照常返回", async () => {
     let releaseProbe: () => void = (): void => {};
     getChatMemberGate = new Promise((resolve: () => void): void => { releaseProbe = resolve; });
@@ -266,8 +301,7 @@ describe("机器人自身权限 State 快照", () => {
     expect(statePermissions()).toEqual(botPermissions({ canRestrictMembers: true }));
   });
 
-  // 这一路挂在入群洪流上：每个新成员一条 chat_member。现查失败时按约定不落任何
-  // 快照，不设闸就等于按入群速率一条一条重发注定失败的请求。
+  // 这一路挂在入群洪流上：每个新成员一条 chat_member；现查失败时不落任何快照，并设闸限制重发。
   test("chat_member 这一路的现查同样过退避闸，一场刷屏不会换来逐条重查", async () => {
     getChatMemberFails = true;
 
@@ -309,7 +343,7 @@ describe("机器人自身权限 State 快照", () => {
     expect(statePermissions()).toBeUndefined();
     expect(backgroundSaves).toEqual([{ chatId: CHAT_ID, context: "bot permissions forgotten" }]);
 
-    // 没有已知值可丢时不写盘：teardown 路径会对同一个群反复调用。
+    // 没有已知值可丢时不写盘；teardown 路径会对同一个群反复调用。
     backgroundSaves.length = 0;
     forgetBotChatPermissions(CHAT_ID);
     expect(backgroundSaves).toHaveLength(0);
@@ -388,8 +422,8 @@ describe("机器人自身权限 State 快照", () => {
     const authoritative: BotChatPermissions = botPermissions();
     onGetChatMember = (): void => { setStatePermissions(authoritative); };
 
-    // 现查发出时看到的还是「能限制成员」，但 my_chat_member 已经把权限改动写进
-    // 缓存了；这次响应描述的是它到达之前的旧身份，不能回填。
+    // 现查发出时看到的还是「能限制成员」，但 my_chat_member 已把权限改动写进缓存；
+    // 这次响应描述的是它到达之前的旧身份，不回填。
     expect(await botChatPermissionsIn(CHAT_ID)).toBe(authoritative);
     expect(statePermissions()).toBe(authoritative);
   });
@@ -417,8 +451,7 @@ describe("机器人自身权限 State 快照", () => {
       { chatId: CHAT_ID, permissions: fullPermissions },
     ]);
 
-    // my_chat_member 会为任何一次成员变动送达（改头衔、改群名片都算）；权限位
-    // 没变就不该往 Worker mailbox 里塞一条一模一样的消息。
+    // my_chat_member 会为任何一次成员变动送达（改头衔、改群名片都算）；权限位没变就不往 Worker mailbox 里投消息。
     await handleMyChatMemberUpdate(myChatMemberContext({
       status: "administrator",
       can_restrict_members: true,

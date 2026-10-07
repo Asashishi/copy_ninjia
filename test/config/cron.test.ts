@@ -250,7 +250,7 @@ describe("parseCronConfig", () => {
 
   test("chat_id 的形态严格判定：标量、空数组、混写与重复 id 一律拒绝", () => {
     const shape: string = `${PATH}: $[0].chat_id must be ["${CRON_ALL_CHATS}"], ["${CRON_EXCEPT_CHATS}", <chat id>, ...] or a list of at most ${CRON_MAX_CHAT_IDS_PER_TASK} unique non-zero safe integer chat ids.`;
-    // 标量写法不再受理；"all" 只能单独出现，"except" 只能作为首项且必须带 id。
+    // 标量写法不受理；"all" 只能单独出现，"except" 只能作为首项且必须带 id。
     for (const chatId of [-1001, "all", "except", [], ["all", -1001], ["except"], {}, null]) {
       rejects([task({ chat_id: chatId })], shape);
     }
@@ -408,7 +408,7 @@ describe("loadCronConfig", () => {
   });
 
   test("相对路径不再按项目根解析：只在项目根下存在的文件按不存在拒绝", async () => {
-    // 测试 preload 把运行时数据根指到独立临时目录，两个基准在这里必然不同。
+    // 测试 preload 把运行时数据根指到独立临时目录，两个基准必然不同。
     expect(RUNTIME_DATA_ROOT).not.toBe(PROJECT_ROOT);
     await Bun.write(CRON_CONFIG_PATH, JSON.stringify([task({ actions: [{ type: "send_file", payload: { path: "config_example/dynamic/cron.json" } }] })]));
     await expect(loadCronConfig()).rejects.toThrow("$[0].actions[0].payload.path must be an existing regular file.");

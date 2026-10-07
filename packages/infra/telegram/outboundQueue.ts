@@ -12,7 +12,7 @@ export function laneFor(category: TelegramRetryCategory): TelegramRetryLane {
 }
 
 /**
- * 按接纳序号把任务插入侵入式 FIFO；达到全局硬顶时不修改状态。
+ * 按接纳序号把任务插入侵入式 FIFO；等待数达到 TELEGRAM_429_RETRY_QUEUE_MAX 时返回 false 且不修改状态。
  *
  * 队列始终按 admissionSeq 升序。新接纳的任务序号最大，O(1) 接到尾部；在途任务
  * 收到 429 重排时插回第一个比它晚接纳的等待任务之前（队首取出的探测任务回到

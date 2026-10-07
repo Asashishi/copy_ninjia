@@ -12,18 +12,22 @@ import {
   flushVerificationChanges,
   handleVerificationDelete,
   handleVerificationUpsert,
+  maintainVerificationDayForToday,
 } from "../../../packages/workers/diskIO/verificationWrites";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
   verificationPendingChanges,
+  verificationWorkerCache,
 } from "../../../packages/cache/workers/diskIO/verification";
 import type { PendingVerificationSnapshot, VerificationSnapshot, VerificationSnapshotBase } from "../../../packages/types/antiRaid/verification";
 import type { VerificationDeleteDiskMessage, VerificationUpsertDiskMessage } from "../../../packages/types/diskIO/messages";
 import type { VerificationPersistedReply } from "../../../packages/types/diskIO/replies";
 import {
+  VERIFICATION_CORRUPT_DAY_FILE_SUFFIX,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_VERSION,
+  VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS,
 } from "../../../packages/consts/diskIO/verification";
 import { VERIFICATION_RECORD_CAPACITY } from "../../../packages/consts/antiRaid/verification";
 
@@ -77,9 +81,8 @@ async function deleteVerification(
  * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
  * inspect -> adopt -> maintenance（见 workers/diskIO/startup.ts）。
  *
- * 生产没有这个包装。两点与生产不同，读断言时要记住：生产的 runMaintenance 对
- * 每个领域单独 try/catch 并只记一行 console.error，不上抛、也不重置本领域缓存；
- * 这里保留旧包装的「重置后上抛」，好让维护阶段的失败在用例里可断言。
+ * 与生产的差异：生产的 runMaintenance 对每个领域单独 try/catch 并只记一行
+ * console.error，不上抛、也不重置本领域缓存；这里维护阶段失败时先重置缓存再上抛。
  */
 async function recoverVerificationDay(
   day: string,
@@ -408,6 +411,57 @@ describe("pending verification daily append JSON", () => {
     expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
   });
 
+  test("active 镜像已满时拒收新成员的 upsert，已有成员照常更新", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    for (let index: number = 1; verificationWorkerCache.size < VERIFICATION_RECORD_CAPACITY; index++) {
+      verificationWorkerCache.set(`-1001:${1_000 + index}`, snapshot(1, { userId: 1_000 + index }));
+    }
+
+    await expect(upsert({
+      type: "verificationUpsert",
+      record: snapshot(1, { userId: 77 }),
+      critical: true,
+    })).rejects.toThrow(`Verification persistence capacity (${VERIFICATION_RECORD_CAPACITY}) exceeded.`);
+    expect(verificationWorkerCache.has("-1001:77")).toBeFalse();
+
+    await upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
+    expect(verificationWorkerCache.get("-1001:42")?.revision).toBe(2);
+  });
+
+  test("跨日 compact 后旧日文件还没删掉时，新日为镜像已删除的旧日 key 写 tombstone，重启不复活", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    await upsert({
+      type: "verificationUpsert",
+      record: snapshot(1, { userId: 43, label: "第二位" }),
+      critical: true,
+    });
+    // 删除还在待写缓冲里、尚未追加到旧日文件时跨日 compact，随后旧日删除前进程退出。
+    verificationWorkerCache.delete("-1001:42");
+    await compactVerificationDay(DAY_TWO, dir);
+
+    expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeTrue();
+    expect(JSON.parse(await Bun.file(join(dir, `${DAY_TWO}.json`)).text())).toEqual({
+      "-1001:43": { version: VERIFICATION_FILE_VERSION, ...snapshot(1, { userId: 43, label: "第二位" }) },
+      "-1001:42": null,
+    });
+    const recovered: Map<string, VerificationSnapshot> = await recoverVerificationDay(DAY_TWO, dir);
+    expect([...recovered.keys()]).toEqual(["-1001:43"]);
+    expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeFalse();
+  });
+
+  test("启动 compact 后旧日文件还没删掉时，新日保留覆盖旧日的 tombstone，再次恢复结果不变", async () => {
+    resetVerificationPersistenceCache();
+    await Bun.write(join(dir, `${DAY_ONE}.json`), JSON.stringify({
+      "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) },
+    }, null, 2));
+    await Bun.write(join(dir, `${DAY_TWO}.json`), JSON.stringify({ "-1001:42": null }, null, 2));
+    adoptVerificationDay(await inspectVerificationDay(DAY_TWO, dir));
+    await compactVerificationDay(DAY_TWO, dir);
+
+    expect(existsSync(join(dir, `${DAY_ONE}.json`))).toBeTrue();
+    expect((await inspectVerificationDay(DAY_TWO, dir)).recovered.size).toBe(0);
+  });
+
   test("待迁移旧日损坏时不改写新旧文件，也不清理旧日", async () => {
     resetVerificationPersistenceCache();
     const oldContent: string = "{\"-1001:42\":";
@@ -427,6 +481,46 @@ describe("pending verification daily append JSON", () => {
     expect(await Bun.file(currentPath).text()).toBe(currentContent);
   });
 
+  test("跨日整理连续解码不了最新旧日时，达到上限那一次把它改名为损坏文件，新日按 active 镜像写入", async () => {
+    await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
+    const priorPath: string = join(dir, `${DAY_ONE}.json`);
+    const corruptPath: string = `${priorPath}${VERIFICATION_CORRUPT_DAY_FILE_SUFFIX}`;
+    const corruptContent: string = "{\"-1001:42\":";
+    await Bun.write(priorPath, corruptContent);
+
+    for (let attempt: number = 1; attempt < VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS; attempt++) {
+      await maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
+      expect(await Bun.file(priorPath).text()).toBe(corruptContent);
+      expect(existsSync(join(dir, `${DAY_TWO}.json`))).toBeFalse();
+    }
+    await maintainVerificationDayForToday(receiveReply, DAY_TWO, dir);
+
+    expect(existsSync(priorPath)).toBeFalse();
+    expect(await Bun.file(corruptPath).text()).toBe(corruptContent);
+    expect(JSON.parse(await Bun.file(join(dir, `${DAY_TWO}.json`)).text()))
+      .toEqual({ "-1001:42": { version: VERIFICATION_FILE_VERSION, ...snapshot(1) } });
+    // 损坏文件不再以 .json 结尾：重启恢复只读新日文件，不被它挡住，也不删它。
+    resetVerificationPersistenceCache();
+    const recovered: Map<string, VerificationSnapshot> = await recoverVerificationDay(DAY_TWO, dir);
+    expect([...recovered.keys()]).toEqual(["-1001:42"]);
+    expect(existsSync(corruptPath)).toBeTrue();
+  });
+
+  test("最新旧日改名为损坏文件后，tombstone 按剩下的旧日计算", async () => {
+    resetVerificationPersistenceCache();
+    await Bun.write(join(dir, `${DAY_ZERO}.json`), JSON.stringify({
+      "-1001:41": { version: VERIFICATION_FILE_VERSION, ...snapshot(1, { userId: 41, label: "更早成员" }) },
+    }, null, 2));
+    await Bun.write(join(dir, `${DAY_ONE}.json`), "not json");
+    for (let attempt: number = 1; attempt < VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS; attempt++) {
+      await expect(compactVerificationDay(DAY_TWO, dir)).rejects.toThrow();
+    }
+    await compactVerificationDay(DAY_TWO, dir);
+
+    expect(existsSync(join(dir, `${DAY_ONE}.json${VERIFICATION_CORRUPT_DAY_FILE_SUFFIX}`))).toBeTrue();
+    expect(JSON.parse(await Bun.file(join(dir, `${DAY_TWO}.json`)).text())).toEqual({ "-1001:41": null });
+  });
+
   test("压缩前后恢复结果一致，并移除重复 key 与 null 历史", async () => {
     await upsert({ type: "verificationUpsert", record: snapshot(1), critical: true });
     await upsert({ type: "verificationUpsert", record: snapshot(2), critical: true });
@@ -438,7 +532,7 @@ describe("pending verification daily append JSON", () => {
     await deleteVerification({ type: "verificationDelete", chatId: -1001, userId: 43, generation: 1, revision: 2 });
     const before = await recoverVerificationDay(DAY_ONE, dir);
 
-    compactVerificationDay(DAY_ONE, dir);
+    await compactVerificationDay(DAY_ONE, dir);
     expect(await recoverVerificationDay(DAY_ONE, dir)).toEqual(before);
     expect(Object.keys(JSON.parse(await Bun.file(join(dir, `${DAY_ONE}.json`)).text())))
       .toEqual(["-1001:42"]);

@@ -41,8 +41,8 @@ interface SendMessageMockParams {
 }
 /**
  * 复刻真实 sendMessage 的 onSent 契约：远端收下的同步时点先回调 onSent，
- * 之后才把 id 作为返回值交出。停机 abort 会吃掉返回值但吃不掉这次回调，
- * 因此删除 owner 只能挂在 onSent 上（见 infra/telegram/actions/core.ts）。
+ * 之后才把 id 作为返回值交出；停机 abort 吃掉返回值、不吃这次回调，
+ * 删除 owner 挂在 onSent 上（见 infra/telegram/actions/core.ts）。
  */
 const sendMessage = mock(async (params: SendMessageMockParams): Promise<number | undefined> => {
   params.onSent?.(NOTICE_MESSAGE_ID);
@@ -122,7 +122,7 @@ blockedMemberRemoverHolder.current = dispatchBlockedRemovals;
 const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../../packages/consts/commands");
 const { inFlightAdDisposals } = await import("../../../packages/cache/main/antiRaid/adDisposal");
 const { blocklistIdentityMutationQueues } = await import("../../../packages/cache/main/blocklist");
-const { runBlocklistIdentityMutation } = await import("../../../packages/infra/identityPolicy/coordination");
+const { blocklistIdentityMutationRunner } = await import("../../../packages/cache/main/blocklist");
 const { inlineResultSources } = await import("../../../packages/cache/main/inlineResultSources");
 const { resetSelfSentTracker } = await import("../../../packages/cache/perThread/selfSentTracker");
 const { blocklistEntryCache, whitelistEntryCache } =
@@ -231,8 +231,7 @@ describe("广告判定命中后的处置", () => {
       username: "spammer",
     });
     expect(confirmBlocklistPersisted).toHaveBeenCalledTimes(1);
-    // 触发判定的群排最前：那里正躺着刚发出来的广告。未初始化或没有管理员
-    // 身份的群不进清单——在那里封人本来就会失败。
+    // 触发判定的群排最前；未初始化或没有管理员身份的群不进清单。
     expect(dispatched[0]?.map((params) => params.chatId)).toEqual([-1001, -1002]);
     expect(dispatched[0]?.[0]).toMatchObject({ userIds: [7], probeMembership: false });
   });
@@ -259,13 +258,13 @@ describe("广告判定命中后的处置", () => {
     expect(releasePersist).toBeFunction();
 
     let unblockStarted: boolean = false;
-    const laterUnblock: Promise<void> = runBlocklistIdentityMutation(7, (): void => {
+    const laterUnblock: Promise<void> = blocklistIdentityMutationRunner.run(7, (): void => {
       unblockStarted = true;
       blockedIds.delete(7);
     });
     await Bun.sleep(0);
 
-    // 广告处置持有同身份尾链；管理员的较晚解封不能先跑完，再被旧任务补封。
+    // 广告处置持有同身份尾链；管理员的较晚解封排在它之后。
     expect(unblockStarted).toBeFalse();
     expect(trackBlockedRemoval).not.toHaveBeenCalled();
 
@@ -287,8 +286,7 @@ describe("广告判定命中后的处置", () => {
     expect(dispatched[0]?.map((params) => params.chatId)).toEqual([-1001, -1002]);
     expect(confirmBlocklistPersisted).toHaveBeenCalledTimes(1);
 
-    // 封禁落地前这人又被判了一次：整套重来的代价是一次带 fsync 的名单落盘 +
-    // 每个在管群各一批封禁（每批都要整份 outbox 落盘），按群数放大成 O(n²)。
+    // 封禁落地前这人又被判了一次：名单不再落盘，只向触发判定的群再投一批。
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
     expect(confirmBlocklistPersisted).toHaveBeenCalledTimes(1);
@@ -315,9 +313,7 @@ describe("广告判定命中后的处置", () => {
   test("某个群登记失败只作废那个群：其余群照常封，失败的群改欠一次补扫", async () => {
     chatStates.set(-1002, { isInitEnabled: true, botPermissions: botPermissions() });
     chatStates.set(-1003, { isInitEnabled: true, botPermissions: botPermissions() });
-    // outbox 满：登记在第二个群上抛出。整段用 map 的话这一抛会让已登记的第一
-    // 批留在 outbox 里而 dispatchBlockedRemovals 一次都调不到，这个刷屏号在
-    // 所有群都封不掉。
+    // outbox 满：登记在第二个群上抛出；已登记的群照常投递，失败的群改欠一次补扫。
     trackBlockedRemoval.mockImplementation(
       (params: Omit<RemoveBlockedMembersParams, "removalId">): RemoveBlockedMembersParams => {
         if (params.chatId === -1002) throw new Error("Blocklist removal outbox reached its capacity.");
@@ -372,7 +368,7 @@ describe("广告判定命中后的处置", () => {
     await drainAdDisposals(5_000);
 
     const notice = sendMessage.mock.calls[0]?.[0] as { text: string };
-    // 人根本没被踢走，说「在所有盯着的群里一起封掉了」就是一条与事实相反的公告。
+    // 没有任何群封成时，不说「在所有盯着的群里一起封掉了」。
     expect(notice.text).not.toContain(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adBanned));
     expect(notice.text).toContain(longestTemplatePart(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.adNoManagedChat));
   });
@@ -385,7 +381,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("部分群登记失败时只报封上的群数，不说「在所有盯着的群里」", () => {
-    // 那些登记失败的群里人还坐着，说「所有」同样是假话。
+    // 部分群登记失败时，不说「所有」。
     const notice: string = formatAdNotice({
       atmosphere: ATMOSPHERE_TEXTS.teasing,
       label: "@spammer",
@@ -400,7 +396,7 @@ describe("广告判定命中后的处置", () => {
 
   test("回归用例：播报不断言删消息——删除跑在判定线程上、排在事件回投之后，" +
     "主线程根本不知道它成没成，机器人也可能压根没有 can_delete_messages", () => {
-    // 只说这边确证得了的两件事：记进名单、封了几个群。
+    // 播报只说确证得了的两件事：记进名单、封了几个群；不断言删消息。
     for (const enforcedChats of [0, 2]) {
       const notice: string = formatAdNotice({
         atmosphere: ATMOSPHERE_TEXTS.teasing,
@@ -424,9 +420,8 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("远端已收下、返回值被停机 abort 吃掉时，删除 owner 仍已认领", async () => {
-    // runTelegramAction 先跑 map（onSent 在其中）再检查 update 取消，取消时抛错、
-    // 返回值丢失。认领点若写在 await 之后，这条播报就永久留在群里——而 30 秒清理
-    // 是硬约定（见 AGENTS.md「Telegram 提示留存」）。
+    // runTelegramAction 先跑 map（onSent 在其中）再检查 update 取消，取消时抛错、返回值丢失；
+    // 删除 owner 在 onSent 中认领（固定延迟自删的约定见 AGENTS.md「Telegram 提示留存」）。
     sendMessage.mockImplementation(async (params: SendMessageMockParams): Promise<number | undefined> => {
       params.onSent?.(NOTICE_MESSAGE_ID);
       throw new DOMException("Telegram update was aborted during shutdown.", "AbortError");
@@ -462,10 +457,8 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("处置排到写名单之前 /ad_detect disable 已经生效时，整条判定丢掉", async () => {
-    // 事件回调是同步的，而处置要先排过 identity 串行队列才轮到写名单——这中间
-    // 正好够管理员那条 /ad_detect disable 落地。clearAdDetection 只清得掉判定
-    // 线程里还没判的队列，够不到一条已经发布出来的判定，所以这道复查必须在
-    // 主线程这边（见 antiRaid/adDetect.ts）。
+    // 事件回调是同步的，处置要先排过 identity 串行队列才写名单，期间 /ad_detect disable 可能已生效；
+    // clearAdDetection 清不到已发布的判定，复查在主线程（见 antiRaid/adDetect.ts）。
     handleAdDetected(detected());
     chatStates.set(-1001, {
       isAdDetectEnabled: false,
@@ -478,7 +471,7 @@ describe("广告判定命中后的处置", () => {
     expect(dispatched).toHaveLength(0);
     expect(diskMessages).toHaveLength(0);
     expect(sendMessage).not.toHaveBeenCalled();
-    // 这是预期内的竞态结局，不是错误：不该占用 protected sender 那条告警。
+    // 这是预期内的竞态结局，不是错误：不占用 protected sender 那条告警。
     expect(errorLogs.some((line) => line.includes("protected sender"))).toBeFalse();
   });
 
@@ -498,8 +491,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("命中即写一条旁路样本，含时间、消息、理由与引用/回复上下文", async () => {
-    // 判定规则由提示词定死，题材口径全靠 config/dynamic/ad_samples.json 的示例，而示例
-    // 只能从真实命中里攒——这条旁路就是那份原始素材。
+    // 命中即写一条旁路样本，作为 config/dynamic/ad_samples.json 示例的原始素材。
     handleAdDetected(detected());
     await drainAdDisposals(5_000);
 
@@ -515,7 +507,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("样本投递失败不影响封禁本身：只记一行日志", async () => {
-    // 纯旁路：丢了不影响任何运行时状态，绝不该反过来拖住不可丢的那一半。
+    // 纯旁路：投递失败不影响运行时状态，也不拖住封禁。
     postDiskIO.mockImplementation((): boolean => false);
 
     handleAdDetected(detected());
@@ -533,9 +525,7 @@ describe("广告判定命中后的处置", () => {
   });
 
   test("排空受预算约束：预算为 0 时立刻结算成 timedOut，不拖到强制退出线", async () => {
-    // 异常退出路径把全部预算设成 0（EMERGENCY_FLUSH_TIMEOUTS）。裸等的话，处置内部
-    // 的落盘确认与 outbox 屏障会把停机一路拖到 15 秒强制退出：进程带非零码死在
-    // 半路，实例锁不释放、offset 不确认。
+    // 异常退出路径把全部预算设成 0（EMERGENCY_FLUSH_TIMEOUTS）；排空不裸等处置内部的落盘确认与 outbox 屏障。
     let release: (() => void) | undefined;
     dispatchBlockedRemovals.mockImplementationOnce((): Promise<number> =>
       new Promise<number>((resolve) => { release = (): void => resolve(1); }));

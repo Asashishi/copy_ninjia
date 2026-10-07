@@ -1,8 +1,8 @@
 /**
- * 每条群消息共担的那段主干、自发消息判定，以及 AI 开启后媒体分支的纯计算段。
+ * 每条群消息共担的编排主干、自发消息判定，以及 AI 开启后媒体分支的纯计算段。
  *
- * 与 scenarios.ts 分开：这几条量的是编排主干（handleIncomingMessageMiddleware 那串固定
- * 调用），改动它们要读的是 auto/message 那一侧，与容器/时间窗那批叶子场景无关。
+ * 与 scenarios.ts 的叶子场景分开：这几条量的是编排主干（handleIncomingMessageMiddleware
+ * 那串固定调用），读的是 auto/message 一侧。
  */
 
 import type { Message } from "grammy/types";
@@ -42,7 +42,7 @@ import { cacheSender } from "../../../packages/users/senderIdentity";
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
 import type { Scenario } from "./types";
 
-/** 空闲机器人：15 秒内一条都没发过，isSelfSent 在外层就落空。 */
+/** 空闲机器人：`sentMessages` 为空，isSelfSent 在外层就落空。 */
 export function selfSentEmptyScenario(): Scenario {
   return {
     iterations: 2_000_000,
@@ -60,25 +60,18 @@ export function selfSentEmptyScenario(): Scenario {
   };
 }
 
-/** 活跃机器人在一个 TTL 窗口内的自发消息群数与每群条数，取常见群规模的稳态。 */
+/** 活跃机器人在一个 `SELF_SENT_MESSAGE_TTL_MS` 窗口内的自发消息群数与每群条数。 */
 const ACTIVE_SELF_SENT_CHATS: number = 12;
 const ACTIVE_SELF_SENT_PER_CHAT: number = 4;
 
 /**
- * **活跃**机器人下的回环判定：`sentMessages` 非空，外层快速路径不再生效。
+ * 活跃机器人下的回环判定：`sentMessages` 非空，外层快速路径不生效。
  *
- * 与 self-sent-empty 成对存在，缺了这一条就只量到了空闲那一半——而这条判定在
- * 每条群消息上最多要跑 5 次（调用点清单见 infra/selfSentTracker.ts 头注），
- * 只要机器人在 SELF_SENT_MESSAGE_TTL_MS 内发过任何一条消息，走的就全是这一支。
+ * 与 self-sent-empty 成对；每条群消息上的判定调用点见 infra/selfSentTracker.ts 头注。
+ * 每轮迭代对应一条群消息的全部回环查询，其中一次落在已登记的编号上，其余未命中。
  *
- * 每轮按「一条群消息 5 次查询」计一次迭代，与生产的调用密度对齐；其中一次落在
- * 已登记的编号上，其余全部未命中，接近真实分布（回环是少数）。
- *
- * 表由 reset 直接填充，**不经 markSelfSent**：那条路挂的是 SELF_SENT_MESSAGE_TTL_MS
- * （15 秒）的真 timer，而 JIT 稳定轮 + 预热 + 多次采样的总时长会越过它，表会在测量
- * 中途被清空——那时这个场景就静默变成了 self-sent-empty，读数还看不出异常。
- * 占位值用一个已 clearTimeout 的真 Timeout：类型正确、永远不会触发，
- * 被测的 isSelfSent 也只做 has()，从不读它。
+ * 表由 reset 直接填充，不经 markSelfSent（它挂 `SELF_SENT_MESSAGE_TTL_MS` 的真 timer）。
+ * 占位值是一个已 clearTimeout 的 Timeout；被测的 isSelfSent 只做 has()，不读它。
  */
 export function selfSentActiveScenario(): Scenario {
   const chatIds: number[] = [];
@@ -118,25 +111,20 @@ export function selfSentActiveScenario(): Scenario {
 /**
  * 每条群消息都要走的编排主干（`auto/message/index.ts` 的 handleIncomingMessageMiddleware）。
  *
- * 其余场景量的都是叶子工具，而叶子各自快不等于串起来快；这一条量的是真正跑在
- * 每条消息上的那串固定调用：getChatState → recordChatTitleFromChat → isBotOwnMessage
+ * 量的是串起来的那串固定调用：getChatState → recordChatTitleFromChat → isBotOwnMessage
  * → cacheSender → observeGroupMessageForAiReply → activeCopyTargetIdIn →
  * activeTranslateStateIn → resolveQaDirectAnswer → isQuietUntilActive →
  * isAiChatConfigured → handleProactiveMessageActions。
  *
- * **fixture 必须是「无可复制内容」的消息**，这是本场景零副作用的依据，不是随手
- * 挑的：没有 `text`，洗澡触发的第一个条件就不成立；`hasCopyableContent` 为 false，
- * 随机复读（`RANDOM_ECHO_PROBABILITY` = 1/100）也进不去。两道门一关，
- * `sendMessage`/`echoMessage` 在这条路径上不可达。落盘同理——prepare 建立一份
- * 标题已经一致的受管群状态，`recordChatTitle` 同步比较后直接返回，因此
- * `saveChatStateInBackground` 不可达。AI 配置 readiness 也直接预置为成功，但
- * 群开关保持关闭：这既覆盖生产已配置进程的稳态判定，又不投递 Worker，并避免
- * 基准读取部署方的 config/。
- * 部署机上 bot 常驻运行、共用同一份 SQLite 和 token，这两条不可达性是本场景
- * 能安全存在的前提；改 fixture 前必须重新验证它们。
+ * fixture 是「无可复制内容」的消息，使本场景无副作用：没有 `text`，洗澡触发的第一个
+ * 条件不成立；`hasCopyableContent` 为 false，随机复读（`RANDOM_ECHO_PROBABILITY`）也
+ * 进不去，`sendMessage`/`echoMessage` 在这条路径上不可达。prepare 建立一份标题已经
+ * 一致的受管群状态，`recordChatTitle` 同步比较后直接返回，`saveChatStateInBackground`
+ * 不可达。AI 配置 readiness 预置为成功、群开关保持关闭：覆盖已配置进程的稳态判定，
+ * 不投递 Worker，不读取部署方的 config/。改 fixture 前必须重新确认这两条不可达性。
  *
- * 覆盖范围要说清楚：AI 关闭时不进各载荷 handler（生产同理），因此这条量的是
- * 「所有消息共担的那段」，不含 AI 开启后的文本/贴纸分支。
+ * AI 关闭时不进各载荷 handler，本场景只含所有消息共担的那段，不含 AI 开启后的
+ * 文本/贴纸分支。
  */
 export function incomingMessageSpineScenario(): Scenario {
   const chat: Message["chat"] = {
@@ -190,20 +178,17 @@ export function incomingMessageSpineScenario(): Scenario {
 }
 
 /**
- * AI 开启后，每条**媒体**消息共担的纯计算段。
+ * AI 开启后，每条媒体消息共担的纯计算段。
  *
- * incoming-message-spine 的 fixture 是「无可复制内容且 AI 关闭」，不进入载荷
- * handler；本场景覆盖 AI 开启时的一次触发上下文、掷骰判定与 22 字段媒体载荷。
+ * incoming-message-spine 不进入载荷 handler；本场景覆盖 AI 开启时的一次触发上下文、
+ * 掷骰判定与媒体载荷（`buildAiRecordMediaMessage`）。
  *
- * **fixture 刻意选「回复机器人的图片」这条直接唤起路径**，这是本场景零副作用与
- * 可复现的依据，不是随手挑的：
+ * fixture 选「回复机器人的图片」这条直接唤起路径：
  * - 有 directTriggerReason 时 shouldAttemptRandomTrigger 在第一个条件就短路，
- *   因此不调 Math.random()、不写 userReplyTriggerTimes、不排 timer——读数可复现，
- *   也不会让门禁的 retained/RSS 判据混进一张会增长的冷却表。
+ *   不调 Math.random()、不写 userReplyTriggerTimes、不排 timer。
  * - 本场景在 triggerPolicy.ts 的直接唤起分支短路，不访问随机触发的冷却缓存；
  *   triggerContext.ts / recordContext.ts 及 facts.ts 只计算输入事实与载荷。
- *   这里**不**调 recordChatMedia：那一步会 postAiChatOrThrow 到 AI Worker，
- *   而基准进程从不启动它。
+ *   不调 recordChatMedia（它会 postAiChatOrThrow 到 AI Worker，基准进程不启动该 Worker）。
  */
 export function aiMediaDirectTriggerScenario(): Scenario {
   const bot: AiBotInfo = { id: 4242, first_name: "Tensai", username: "tensai_bot" };
@@ -219,7 +204,6 @@ export function aiMediaDirectTriggerScenario(): Scenario {
     chat,
     from: { id: bot.id, is_bot: true, first_name: "Tensai", username: "tensai_bot" },
     text: "机器人之前说的话",
-    // ReplyMessage 按 Telegram 的实际形态不再嵌套下一层被回复消息。
     reply_to_message: undefined,
   };
   const message: Message = {
@@ -236,13 +220,10 @@ export function aiMediaDirectTriggerScenario(): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
-        // resolveSpeaker 必须留在循环里：生产的每个媒体 handler 都是每条消息解析
-        // 一次发言人身份（并为此造一个 AiSpeakerSnapshot）。提到循环外既少量了一次
-        // 每消息分配，也会让它作为门禁探针形同虚设——那条断言要求每个生产探针在
-        // 采样期确实跑在 DFG 稳态上，没被调用的函数满足不了它想证明的东西。
+        // resolveSpeaker 留在循环里：生产的每个媒体 handler 每条消息解析一次发言人
+        // 身份并构造 AiSpeakerSnapshot；门禁要求每个探针在采样期确实被调用。
         const speaker: AiSpeakerSnapshot = resolveSpeaker(message);
-        // now 逐轮递增：生产里它是每条消息各自的 Date.now()，喂同一个字面量会让
-        // 整个循环体退化成常量表达式（同 hotPaths/adFixture.ts 里 AD_SAMPLE_TEXTS 那段的理由）。
+        // now 逐轮递增，对应生产里每条消息各自的 Date.now()，不得传同一个字面量。
         const context: MessageTriggerContext = createMessageTriggerContext({
           message,
           bot,
@@ -263,7 +244,6 @@ export function aiMediaDirectTriggerScenario(): Scenario {
           replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, claim),
           stickerFallbackText: undefined,
           voiceMime: undefined,
-          voiceDurationSeconds: 0,
         });
         checksum += payload.width + (payload.directTriggerReason === undefined ? 0 : 1);
       }

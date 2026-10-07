@@ -4,6 +4,7 @@ import type { ChatActionPhase } from "../../../packages/types/aiChat/chatAction"
 import type { TelegramPhotoSendResult, TelegramSendResult } from "../../../packages/types/telegram";
 import type { TelegramVisionSource } from "../../../packages/types/media";
 import type { TaskPriority } from "../../../packages/libs/prioritizedBoundedTaskRunner";
+import { GENERATE_IMAGE_TOOL_INSTRUCTION } from "../../../packages/consts/aiChat/prompts/tools";
 import { GENERATE_IMAGE_TOOL, SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 import { TELEGRAM_CAPTION_MAX_CHARS, TELEGRAM_MESSAGE_MAX_CHARS } from "../../../packages/consts/telegram";
 import {
@@ -30,13 +31,12 @@ const sendPhotoWithResult = mock(async (..._args: unknown[]): Promise<TelegramPh
   photo: GENERATED_PHOTO,
   repliedToMessageId: 42,
 }));
-// 超长图注降级时执行器会补发一条独立文本；这条走的是 sendMessageWithResult，
-// 不 mock 就会打到真实 Bot API。
+// 超长图注降级时执行器会补发一条独立文本，走 sendMessageWithResult；这里 mock 掉。
 const sendMessageWithResult = mock(async (..._args: unknown[]): Promise<TelegramSendResult | undefined> => ({
   messageId: 78,
   repliedToMessageId: 42,
 }));
-// 超长图注降级会走一次拟人停顿；这里只核对两条消息的落地顺序和结算，故打掉 sleep。
+// 超长图注降级会走一次拟人停顿；sleep 被替换为桩，用例核对两条消息的落地顺序和结算。
 /** 拟人停顿的桩实现；beforeEach 的 mockReset 之后按这一份原样装回。 */
 async function sleepStub(..._args: unknown[]): Promise<void> {}
 const sleepMock = mock(sleepStub);
@@ -69,10 +69,7 @@ const { acceptRoundText, createRoundMessageState } = await import("../../../pack
 const { claimImageGeneration, resetImageGenerationCache } = await import("../../../packages/cache/workers/aiChat/imageGeneration");
 const { HARD_MAX_ACTIONS_PER_REPLY } = await import("../../../packages/consts/aiChat/tools");
 
-/**
- * 绝大多数用例不关心本轮已发消息状态，默认给一份全新的；动作预算默认按「整轮
- * 还没用过动作」给满，只有验证图注补发预算闸的用例才传别的值。
- */
+/** 默认给一份全新的本轮已发消息状态；动作预算默认「整轮还没用过动作」，验证图注补发预算闸的用例才传别的值。 */
 function buildExecutor(
   ctx: ReplyToolContext,
   state: RoundMessageState = createRoundMessageState(),
@@ -122,9 +119,7 @@ function buildReferenceContext(chatId: number = -1001, bypass: boolean = false):
   };
 }
 
-// 一律用 mockReset：mockClear 只清调用记录，`mockResolvedValueOnce` 排进队列却没被
-// 消费的那一份会活到下一个用例，用例顺序一变就是跨用例污染。mockReset 连同 once
-// 队列、调用记录和实现一起清掉，因此下面每个桩都必须在这里重新装回实现。
+// 一律用 mockReset：连同 once 队列、调用记录和实现一起清掉，因此下面每个桩都在这里重新装回实现。
 beforeEach(() => {
   resetImageGenerationCache();
   imageProvider.current = { name: "gemini", generateImage };
@@ -149,11 +144,10 @@ afterEach(() => {
 describe("generate_image 工具执行器", () => {
   test("工具声明逐字恒定：冷却与参考素材都不进 schema", () => {
     const baseline = JSON.stringify(buildGenerateImageToolDefinition());
-    expect(buildGenerateImageToolDefinition().description).toContain("每轮最多成功发送 1 张");
+    expect(buildGenerateImageToolDefinition().description).toContain(GENERATE_IMAGE_TOOL_INSTRUCTION);
     expect(buildGenerateImageToolDefinition().description).toContain(IMAGE_REFERENCE_POINTER);
 
-    // 冷却推进、superAdmin 旁路、带不带参考图，都不得改变声明的任何一个字节；
-    // 前缀缓存约束见 docs/cn/04-invariants.md。
+    // 冷却推进、superAdmin 旁路、带不带参考图，都不改变声明的任何一个字节；前缀缓存约束见 docs/cn/04-invariants.md。
     claimImageGeneration({ chatId: -1001, bypassCooldown: false });
     expect(JSON.stringify(buildGenerateImageToolDefinition())).toBe(baseline);
     resetImageGenerationCache();
@@ -198,8 +192,7 @@ describe("generate_image 工具执行器", () => {
   test("冷却中在解析参数之前就返回提示，不请求模型", async () => {
     claimImageGeneration({ chatId: -1001, bypassCooldown: false });
 
-    // 参数故意写坏：冷却闸排在参数解析之前，模型拿到的必须是「还要等多久」而不是一句
-    // 参数错误——本轮工具状态是回复开始时的快照，可能已经过期，调用时以这条结果为准。
+    // 参数故意写坏：冷却闸排在参数解析之前，模型拿到的是「还要等多久」；本轮工具状态是回复开始时的快照，以调用时这条结果为准。
     const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "" })));
 
     expect(result.error).toBe("Image generation is cooling down in this chat");
@@ -228,9 +221,7 @@ describe("generate_image 工具执行器", () => {
 
     const result = JSON.parse(await execute(JSON.stringify({ prompt: "  日落下的纸飞机  ", aspect_ratio: "7:5" })));
 
-    // toEqual 精确核对整个结果对象：不含 resolution 字段——OpenAI 走 size、
-    // xAI 走 aspect_ratio/resolution、Gemini 固定 1K，供应商侧的画幅/分辨率细节
-    // 都不进 generate_image 的工具结果。
+    // toEqual 精确核对整个结果对象：不含 resolution 字段；供应商侧的画幅/分辨率细节不进 generate_image 的工具结果。
     expect(result).toEqual({ success: true, message_id: 77, aspect_ratio: "4:3", actions_used: 1 });
     expect(generateImage).toHaveBeenCalledWith({
       prompt: "日落下的纸飞机",
@@ -387,7 +378,7 @@ describe("generate_image 工具执行器", () => {
     expect(result.success).toBe(true);
     expect(result.caption_delivery).toBe("separate_message");
     expect(result.actions_used).toBe(2);
-    // 图先按无图注发出，绝不把超长正文塞给 Bot API。
+    // 图先按无图注发出，不把超长正文交给 Bot API。
     expect(sendPhotoWithResult).toHaveBeenCalledWith({
       chatId: -1001,
       bytes: generatedBytes,
@@ -408,8 +399,7 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("整轮只剩一个动作预算时不补发超长图注，图照发，硬顶不被顶破", async () => {
-    // 编排器的门禁只判断「还有没有额度开始这次调用」；补发若照发会让这次调用
-    // 返回 actions_used: 2，顶破 HARD_MAX_ACTIONS_PER_REPLY 硬顶，因此丢图注不丢图。
+    // 编排器的门禁只判断「还有没有额度开始这次调用」；补发会让这次调用返回 actions_used: 2，超过 HARD_MAX_ACTIONS_PER_REPLY 硬顶，因此丢图注不丢图。
     const ctx: ReplyToolContext = buildContext();
     const state: RoundMessageState = createRoundMessageState();
     const longCaption: string = "长".repeat(TELEGRAM_CAPTION_MAX_CHARS + 1);
@@ -427,9 +417,7 @@ describe("generate_image 工具执行器", () => {
   });
 
   test("发图失败时的错误不可重试：冷却已被这次真实模型请求占掉", async () => {
-    // 认领不释放（modelRequestStarted 已为真）时错误必须标 retryable: false：
-    // 否则模型同轮重试会撞上自家冷却闸，其 required_action 会让机器人向群里
-    // 播报「暂时不能使用生图」——但群里其实并未收到过任何图。
+    // 认领不释放（modelRequestStarted 已为真）时错误标 retryable: false。
     sendPhotoWithResult.mockImplementationOnce(async (): Promise<undefined> => undefined);
 
     const result = JSON.parse(await buildExecutor(buildContext())(JSON.stringify({ prompt: "发不出去的图" })));
@@ -547,8 +535,7 @@ describe("generate_image 工具执行器", () => {
     expect(wrongType.error).toContain("caption must be a string");
     expect(generateImage).not.toHaveBeenCalled();
 
-    // caption: null 与清洗后为空串都按「没写图注」放行，不报参数错误；三段各用
-    // 不同群，避免前一次成功生图占掉后一次的群冷却。
+    // caption: null 与清洗后为空串都按「没写图注」放行，不报参数错误；三段各用不同群，互不占用群冷却。
     const explicitNull = JSON.parse(await buildExecutor(buildContext(-1002))(JSON.stringify({
       prompt: "显式 null",
       caption: null,

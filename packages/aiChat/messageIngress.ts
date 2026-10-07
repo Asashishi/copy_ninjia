@@ -23,9 +23,8 @@ import { postAiChatOrThrow } from "./workerBridge";
 /**
  * 为 purge 后第一份新记忆武装即时持久化标志，并在投递失败时回滚新标志。
  *
- * 这条路跑在每条进 AI 记忆的群消息上，因此只查一次 postPurgeAiMemoryPersistRevisions：
- * 它的值域是 `number | null`，存进去的值永远不是 `undefined`，所以
- * `get(...) === undefined` 与 `!has(...)` 逐字等价，同一个键不必查两遍。
+ * 只查一次 postPurgeAiMemoryPersistRevisions：它的值域是 `number | null`，
+ * `get(...) === undefined` 与 `!has(...)` 等价。
  */
 function postMemoryRecord(message: AiRecordMessage | AiRecordMediaMessage | AiRecordBotImageMessage): void {
   const armedRevision: number | null | undefined =
@@ -64,10 +63,9 @@ function isTelegramReplyBackpressured(): boolean {
  * auto/message/recordContext.ts 与 aiChat/ai/utils/selfRecord.ts 一次成型；命令与
  * 定时任务发出的机器人图片（占位态，不识图）由 aiChat/botImages.ts 现造。
  *
- * **调用即交出所有权：** postMemoryRecord 对 `persistImmediately` 的置位
- * 改的就是调用方传入的那个对象本身。每个调用点须用 builder 现造一份传入，
- * 不得把同一个载荷对象重复投递——上一次投递可能已经把它的即时持久化标志
- * 置上，重复投会跟着白走一次 durable 落盘。
+ * 调用即交出所有权：postMemoryRecord 对 `persistImmediately` 的置位
+ * 改的是调用方传入的那个对象本身。每个调用点须用 builder 现造一份传入，
+ * 不得重复投递同一个载荷对象。
  */
 export function recordChatMessage(message: AiRecordMessage | AiRecordBotImageMessage): void {
   purgedAiMemoryChats.delete(message.chatId);
@@ -89,10 +87,10 @@ export function recordChatMedia(message: AiRecordMediaMessage): void {
   postMemoryRecord(message);
 }
 
-/** 触发一次回复所需的主线程载荷；随机触发默认关闭。 */
+/** 触发一次回复所需的主线程载荷；随机触发默认关闭，发送面高压与本群问答由本模块补齐。 */
 export type GenerateAndSendReplyParams = Omit<
   AiTriggerMessage,
-  "type" | "isRandomTrigger" | "telegramBackpressured"
+  "type" | "isRandomTrigger" | "telegramBackpressured" | "chatQa"
 > & {
   isRandomTrigger?: boolean;
 };
@@ -122,7 +120,7 @@ export function generateAndSendReply({
     // structuredClone 会复制这张 Map，两条线程不共享可变内存。载荷有界：
     // 每群至多 CHAT_QA_MAX_PER_CHAT 条。
     chatQa: chatQaEntries.get(chatId),
-    // 话题群里除「挂了回复」之外的每一条主动发送都靠它才落回原话题；同样恒发，
+    // 话题群里的主动发送靠它落回原话题；同样恒发，
     // General 与非论坛群是显式 undefined（见 libs/forumTopic.ts）。
     messageThreadId,
   });

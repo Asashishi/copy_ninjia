@@ -11,6 +11,7 @@ import { LOGGER_HTTP_URL_PATTERN } from "../../packages/consts/logger";
 import { AI_WORKER_JOB_ABORTED, AI_WORKER_JOB_TIMED_OUT, AI_WORKER_JOB_UNAVAILABLE } from "../../packages/consts/aiChat/workerJob";
 import { VOICE_LANGUAGE_PROMPTS } from "../../packages/consts/aiChat/prompts/tools";
 import { TTS_BOT_LANGUAGES } from "../../packages/consts/aiChat/voiceMessage";
+import { REPLY_CONTEXT_SECTION_TEXT } from "../../packages/consts/aiChat/prompts/memory";
 import type { PreparedReplyAction, ReplyActionChains, ReplyToolset } from "../../packages/types/aiChat/replies";
 
 function assertReleaseAndLogConstantsReadonly(): void {
@@ -24,6 +25,14 @@ function assertReleaseAndLogConstantsReadonly(): void {
   LOGGER_HTTP_URL_PATTERN.lastIndex = 1;
 }
 void assertReleaseAndLogConstantsReadonly;
+
+function assertAiPromptAndToolConstantsReadonly(): void {
+  // @ts-expect-error 回复上下文的分段文案禁止调用方改写（深层只读）。
+  REPLY_CONTEXT_SECTION_TEXT.referenceMemory.header = "mock";
+  // @ts-expect-error Gemini 服务端工具配置禁止调用方改写。
+  GEMINI_SERVER_TOOL_CONFIG.includeServerSideToolInvocations = true;
+}
+void assertAiPromptAndToolConstantsReadonly;
 
 function assertDiskIORequestOutcomesReadonly(): void {
   // @ts-expect-error 共用的超时结局禁止调用方改写。
@@ -148,7 +157,7 @@ import {
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import { GAG_MIN_OPERATION_TIERS, GAG_REPLACEMENT_CHARACTERS } from "../../packages/consts/gag";
 import { GAG_TARGET_TEXTS, UNGAG_TARGET_TEXTS } from "../../packages/consts/atmosphere/teasing/gag";
-import { GEMINI_SAFETY_SETTINGS } from "../../packages/consts/aiChat/gemini";
+import { GEMINI_SAFETY_SETTINGS, GEMINI_SERVER_TOOL_CONFIG } from "../../packages/consts/aiChat/gemini";
 import {
   OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO,
   OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO,
@@ -185,19 +194,16 @@ import { EMPTY_FUNCTION_CALLS } from "../../packages/consts/aiChat/tools";
 import { EMPTY_STICKER_MENU } from "../../packages/consts/aiChat/stickers";
 
 /**
- * 共享常量表的不可变性回归测试。
+ * 共享常量表的不可变性测试。
  *
- * 这些表**运行期不再 `Object.freeze`**（理由与实测数字见 AGENTS.md 的「常量」
- * 一节：冻结容器在 JSC 上没有读取快路径），保护全部落在类型上。
- * `bun run check:conventions` 能保证「容器本身声明成只读」，但它是纯 AST 检查，
- * 判不了 `readonly LuckTier[]` 里那个 `LuckTier` 的字段到底可不可写——旧规则
- * 靠逐层 `Object.freeze` 覆盖的正是这一层。这个文件把那一层补回来。
+ * 这些表运行期不 `Object.freeze`，保护全部落在类型上。
+ * `bun run check:conventions` 保证「容器本身声明成只读」，但它是纯 AST 检查，
+ * 判不了 `readonly LuckTier[]` 里那个 `LuckTier` 的字段是否可写；这个文件补上元素这一层。
  *
- * 每一行 `@ts-expect-error` 都是断言：哪天某个元素类型被放宽成可写，这里会因为
- * 「预期的错误没有发生」直接让 `bun run typecheck` 失败（TS2578）。
+ * 每一行 `@ts-expect-error` 都是断言：元素类型被放宽成可写时，「预期的错误没有发生」会让
+ * `bun run typecheck` 失败（TS2578）。
  *
- * **注意 `@ts-expect-error` 只压制类型报错，底下那行仍会执行**，所以这里只做
- * 读取断言，绝不真去改这些共享表——写坏了会污染同进程里其它测试。
+ * `@ts-expect-error` 只压制类型报错，底下那行仍会执行，所以这里只做读取断言，不改这些共享表。
  */
 
 test("常量表本身不可整体替换或就地增删", () => {
@@ -303,15 +309,14 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
     // @ts-expect-error 权限键规范化索引是跨命令调用共享的只读查表，不允许增删。
     WHITELIST_PERMISSION_KEY_BY_LOWERCASE.set("x", "isCanMute");
   };
-  // 逐场景纳秒软上报阈值已经不是代码常量：它随运行时重测而变，现在住在仓库根
-  // performance-result.json 里，只读性由 test/perf/hotPathGateResult.test.ts 在解析结果上断言。
+  // 逐场景纳秒软上报阈值不是代码常量：它随运行时重测而变，存放在仓库根 performance-result.json 里，
+  // 只读性由 test/perf/hotPathGateResult.test.ts 在解析结果上断言。
   expect(compileOnly).toBeFunction();
 });
 
 /**
- * 五张开关命令文案表都是跨调用方共享的单例：resolveSuperAdminToggleArg 与
- * toggleReplyText 各读一次，写坏其中一句就是全群一起换口径。ToggleCommandTexts
- * 的字段本身声明为 readonly，这里逐张确认那层只读没有在常量声明处被放宽。
+ * 开关命令文案表是跨调用方共享的单例：resolveSuperAdminToggleArg 与 toggleReplyText 各读一次。
+ * ToggleCommandTexts 的字段本身声明为 readonly，这里逐张确认那层只读在常量声明处没有被放宽。
  */
 test("白名单命令文案表不可写入，嵌套的目标提示同样只读", () => {
   // @ts-expect-error PermissionCommandTexts.usage 只读
@@ -329,9 +334,8 @@ test("白名单命令文案表不可写入，嵌套的目标提示同样只读",
 });
 
 /**
- * help / query 两条回执要在正文里嵌 JSON 代码块，pre 实体的 offset 就是前缀的
- * UTF-16 长度。前缀少了结尾换行，代码块会从开场白最后一个字符开始，Telegram
- * 渲染出来整块错位——这是文案改动最容易踩、又最不容易在单测里看出来的一处。
+ * help / query 两条回执在正文里嵌 JSON 代码块，pre 实体的 offset 就是前缀的 UTF-16 长度；
+ * 前缀以换行结尾，代码块从下一行开始。
  */
 test("/permission 的代码块前缀以换行结尾", () => {
   expect(PERMISSION_COMMAND_TEXTS.helpPrefix.endsWith("\n")).toBeTrue();
@@ -384,8 +388,7 @@ test("各命令的目标解析文案表不可写入", () => {
 });
 
 /**
- * 这几张表是从「每次调用现造」抽出来的，最容易在复制粘贴时留下上一条命令的
- * 命令名。逐张确认提示里念的是自己那条命令。
+ * 这几张表是从「每次调用现造」抽出来的；逐张确认提示里念的是自己那条命令。
  */
 test("目标解析文案念的是各自的命令名", () => {
   for (const [command, texts] of [
@@ -438,8 +441,7 @@ test("开关命令文案表四种结局齐备且互不相同", () => {
       texts.alreadyDisabled,
     ];
     for (const outcome of outcomes) expect(outcome.length).toBeGreaterThan(0);
-    // 四句必须两两不同：同状态重复执行若沿用刚改完那句，群里看到的就是一次
-    // 并不存在的状态变化（见 types/commands.ts 的 ToggleCommandTexts）。
+    // 四句两两不同：同状态重复执行时不沿用刚改完那句（见 types/commands.ts 的 ToggleCommandTexts）。
     expect(new Set(outcomes).size).toBe(4);
     expect(texts.usage.length).toBeGreaterThan(0);
     expect(texts.rejection("杂鱼").length).toBeGreaterThan(0);
@@ -447,11 +449,9 @@ test("开关命令文案表四种结局齐备且互不相同", () => {
 });
 
 /**
- * 这张表比其它常量更危险：它不是一份静态数据，而是 `getChatState` 在「这个群
- * 还没有任何状态」时交出去的那个**全进程共享**对象。写进它一次，所有没有状态
- * 的群立刻一起报告那个字段。因此除了常量声明本身，访问器的返回类型也必须锁住
- * ——`readonly` 不参与 TS 的可赋值性判定，只要哪天有人把返回类型写回可变的
- * `ChatState`，第二条断言就会因为「预期的错误没有发生」让 typecheck 报 TS2578。
+ * 这张表是 `getChatState` 在「这个群还没有任何状态」时交出去的全进程共享对象。
+ * 除了常量声明本身，访问器的返回类型也要锁住：`readonly` 不参与 TS 的可赋值性判定，
+ * 返回类型写回可变的 `ChatState` 时，第二条断言会因「预期的错误没有发生」让 typecheck 报 TS2578。
  */
 test("默认群状态单例与它的只读访问器都不许被写", () => {
   // @ts-expect-error Readonly<ChatState> 的字段只读
@@ -471,15 +471,11 @@ test("默认群状态单例与它的只读访问器都不许被写", () => {
 });
 
 test("默认群状态单例与新建状态同形状：形状不一致会让热路径的读取重新发散", () => {
-  // getChatState 在「有条目」和「没条目」之间来回交出这两个对象；键集合或顺序
-  // 一旦分叉，每条群消息那 4~6 次读取就又变成多态（见 libs/chatState.ts 的
-  // createChatState）。漏加一个字段在别处只会静默降级，只有这里看得出来。
+  // getChatState 在「有条目」和「没条目」之间交出这两个对象；键集合与顺序保持一致
+  // （见 libs/chatState.ts 的 createChatState）。
   //
-  // 比对的是一份**手写的**字段清单，不是 createChatState() 自己：
-  // DEFAULT_CHAT_STATE 就等于 createChatState() 的返回值，两者互比恒真。
-  // `Record<keyof ChatState, true>` 让 ChatState 新增字段时这里编译不过
-  // （字段全是可选的，TS 不会替 createChatState 检查遗漏）；运行期再比一次键
-  // 顺序，抓 createChatState 少写或写错顺序的那一档。
+  // 比对的是一份手写的字段清单，不是 createChatState() 自己：DEFAULT_CHAT_STATE 就等于 createChatState() 的返回值。
+  // `Record<keyof ChatState, true>` 让 ChatState 新增字段时这里编译不过；运行期再比一次键顺序。
   const shape: Record<keyof ChatState, true> = {
     quietUntil: true,
     lockdown: true,
@@ -503,7 +499,6 @@ test("默认群状态单例与新建状态同形状：形状不一致会让热�
 });
 
 test("isEmptyChatState 必须认得全部 12 个字段：漏掉一个就会把有状态的群当成空条目回收", () => {
-  // 回收判定漏一个字段，那个群的状态会在下一次保存时连同条目一起消失。
   const values: Readonly<Record<keyof ChatState, unknown>> = {
     quietUntil: 1,
     lockdown: { phase: "applying", intentId: 1, originalPermissions: {}, announced: false, expiresAt: 1 },

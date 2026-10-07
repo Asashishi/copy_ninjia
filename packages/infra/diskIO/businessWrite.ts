@@ -18,8 +18,8 @@ export function postWithTransport(
 }
 
 /**
- * 领域 flush 未成功时附在报错里的领域说明：有回执时逐个点名失败领域，超时或
- * Worker 崩溃没有回执时如实说明。
+ * 领域 flush 未成功时附在报错里的领域说明：有回执时列出失败领域，超时或
+ * Worker 崩溃没有回执时说明没有逐领域回执。
  */
 export function describeFlushFailure(outcome: DomainFlushOutcome): string {
   return outcome.failedDomains === undefined

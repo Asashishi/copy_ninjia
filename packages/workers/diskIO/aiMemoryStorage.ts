@@ -12,7 +12,7 @@ import {
   markAiMemoryDeleted,
   markAiMemoryDirty,
 } from "../../cache/workers/diskIO/snapshots";
-import { noteStorageWriteRejected } from "../../cache/workers/diskIO/storageDatabase";
+import { rejectedStorageDomains } from "../../cache/workers/diskIO/storageDatabase";
 import { assertAiContextSnapshot, queueAiContextWrite } from "./storageDatabase/aiContext";
 import { commitStorageUrgently, scheduleStorageCommit } from "./storageDatabase/flush";
 
@@ -45,7 +45,7 @@ export function markAiMemorySnapshotDirty({
   try {
     assertAiContextSnapshot(chatId, snapshot);
   } catch (error: unknown) {
-    noteStorageWriteRejected("aiMemory");
+    rejectedStorageDomains.add("aiMemory");
     console.error(`[diskIOWorker] rejected an invalid AI memory snapshot for chat ${chatId}:`, error);
     return;
   }

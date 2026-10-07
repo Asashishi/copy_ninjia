@@ -1,5 +1,5 @@
 /**
- * 入群日志 25 万容量线的独立进程对照基准。
+ * 入群日志容量线的独立进程对照基准。
  *
  * 父进程交替启动 baseline/current 子进程，确保每个样本有独立 JSC 堆与预热；
  * baseline 是固定参照算法：整表复制加排序加整串 JSON（snapshot/capacity），
@@ -82,7 +82,7 @@ interface BenchmarkReport {
   results: AggregateResult[];
 }
 
-/** 生产容量线；夹具规模直接引用生产常量，输入固定后 baseline/current 才能做同轮对照。 */
+/** 生产容量线；夹具规模取生产常量，输入固定。 */
 const RECORD_COUNT: number = JOIN_LOG_MAX_USERS_PER_CHAT_DAY;
 /** 单次正常 flush 最多引入的高基数溢出量。 */
 const OVERFLOW: number = FLUSH_MAX_ENTRIES;
@@ -92,7 +92,7 @@ const WARMUP_RECORD_COUNT: number = 10_000;
 const PROCESS_SAMPLE_COUNT: number = 5;
 /** 单批规模取生产的待刷上限，对应一次 flush 能携带的最大事实数。 */
 const APPEND_BATCH_SIZE: number = JOIN_LOG_MAX_BUFFERED_ENTRIES;
-/** 批次数使总输入与 snapshot/capacity 同在 25 万条量级。 */
+/** 批次数使总输入与 snapshot/capacity 同量级。 */
 const APPEND_BATCH_COUNT: number =
   Math.floor(RECORD_COUNT / APPEND_BATCH_SIZE);
 

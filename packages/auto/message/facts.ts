@@ -49,29 +49,25 @@ export function resolveSpeaker(message: Message): AiSpeakerSnapshot {
   if (fromUser) {
     return { id: fromUser.id, firstName: fromUser.first_name ?? "", lastName: fromUser.last_name ?? "", username: fromUser.username };
   }
-  // username 显式写 undefined：三条分支必须产出同一个隐藏类，否则转录渲染里
-  // 每条 `.username` 读取都要在多个形状之间挑（约束见 types/aiChat/speaker.ts）。
+  // username 显式写 undefined，三条分支产出同一个 hidden class（约束见 types/aiChat/speaker.ts）。
   return { id: 0, firstName: FALLBACK_SPEAKER_NAME, lastName: "", username: undefined };
 }
 
 /**
- * 一次遍历实体数组同时判定两个提及事实——createMessageTriggerContext 对每条
- * 消息都要两者，合并解析避免对同一条消息的 entities 重复扫两遍。正文与媒体
+ * 一次遍历实体数组同时判定两个提及事实（提及本机器人、提及他人）；正文与媒体
  * caption 共用同一套 entity 判定。两个事实以局部布尔值累计，按组合返回
- * consts/auto.ts 的四个共享只读常量之一（没有 entity 表时直接返回 NO_MENTION_FACTS），
+ * consts/auto.ts 的共享只读常量之一（没有 entity 表时返回 NO_MENTION_FACTS），
  * 不分配对象；调用方只读字段，不比较对象身份。
  *
- * 逐个实体先用**长度**筛一道，筛掉的实体连子串都不物化：`toLowerCase` 只会让
+ * 逐个实体先用长度筛一道，筛掉的实体不物化子串：`toLowerCase` 只会让
  * 长度不变或变长（全 Unicode 里唯一会变长的是 U+0130，`test/auto/messageFacts.test.ts`
- * 逐码元锁住这一点），因此 `实体码元数 > @用户名码元数` 的实体折完大小写也不可能
- * 与目标等长，一定不是本机器人。群里绝大多数 @ 都是别人，这道判定把每个这样的
- * 实体上的一次 `substring` + 一次 `toLowerCase` 整个省掉。
+ * 逐码元锁住这一点），因此 `实体码元数 > @用户名码元数` 的实体折完大小写也不会
+ * 与目标等长，不是本机器人。
  *
- * 长度筛选只在实体**完整落在正文内**时才敢下结论：`substring` 会把越界实体夹短，
- * 那时 `entity.length` 不再等于真正参与比对的长度，只按它筛就可能把一条本该命中的
- * 提及判成别人。Telegram 不产生越界实体，但正确性不押在这个前提上——越界实体
- * 一律走下面的物化比对，两条分支与「整串折小写后逐字比对 `@用户名`」同解，
- * 由 `test/auto/messageFacts.test.ts` 的参考实现穷举对拍守住。
+ * 长度筛选只在实体完整落在正文内时下结论：`substring` 会把越界实体夹短，
+ * `entity.length` 不再等于参与比对的长度，越界实体一律走下面的物化比对。
+ * 两条分支与「整串折小写后逐字比对 `@用户名`」同解，
+ * 由 `test/auto/messageFacts.test.ts` 的参考实现穷举对拍。
  */
 export function resolveMentionFacts(
   message: Message,
@@ -91,12 +87,11 @@ export function resolveMentionFacts(
   }
   let isMentioned: boolean = false;
   let hasOtherMention: boolean = false;
-  // 只折用户名自己的大小写，不拼 `@用户名`：拼接必然分配一个短命字符串，而
-  // 已经是小写的用户名 `toLowerCase` 原样返回同一个对象。前导 `@` 由下面的首码元
-  // 判定承担，两者合起来与「整串比对 `@用户名` 的小写形态」逐字等价（`@` 既非
-  // cased 也非 case-ignorable，加不加它都不改变后续字符的折叠结果）。
-  // 没有用户名（含空串）时 botMentionLength 恒为 -1：两处长度判定都不可能成立，
-  // 于是任何 mention 一律记成别人，与「没有可比对的目标」这个语义一致。
+  // 只折用户名自己的大小写，不拼 `@用户名`；前导 `@` 由下面的首码元判定承担，
+  // 两者合起来与整串比对 `@用户名` 的小写形态等价（`@` 既非 cased 也非
+  // case-ignorable，不影响后续字符的折叠结果）。
+  // 没有用户名（含空串）时 botMentionLength 为 -1：两处长度判定都不成立，
+  // 任何 mention 记为他人。
   const botUsernameLower: string = botUsername ? botUsername.toLowerCase() : "";
   const botMentionLength: number = botUsernameLower.length === 0 ? -1 : botUsernameLower.length + 1;
   for (const entity of entities) {
@@ -135,7 +130,7 @@ export function isReplyToSelf(message: Message): boolean {
   return senderId !== undefined && senderId === visibleSenderId(repliedTo);
 }
 
-/** 把 forward_origin 的四种来源统一整理成转录可读的身份标注，标记词汇与
+/** 把 forward_origin 的各种来源统一整理成转录可读的身份标注，标记词汇与
  * 转录行一致（[id:]/[username:@]，缺失时省略）；隐藏账号的来源只有显示名。 */
 function forwardOriginLabel(origin: MessageOrigin): string {
   switch (origin.type) {
@@ -160,15 +155,15 @@ function forwardOriginLabel(origin: MessageOrigin): string {
 
 /** 提取当前消息的转发来源标注；非转发消息返回 undefined。关联频道帖自动
  * 转进讨论组的副本（is_automatic_forward）也不标：其转录发言人已解析为频道
- * 本身（见 users/visibleSender.ts），再标「转发自」同一频道只是逐条噪音。 */
+ * 本身（见 users/visibleSender.ts）。 */
 export function resolveForwardOrigin(message: Message): string | undefined {
   const origin: MessageOrigin | undefined = message.forward_origin;
   if (origin === undefined || message.is_automatic_forward === true) return undefined;
   return forwardOriginLabel(origin);
 }
 
-/** 把被回复的 Telegram 消息转换成模型可读的单行正文；视觉内容会在原消息
- * 自己进入缓存时异步获得描述，这里的类型标签负责旧消息已滑出缓存时兜底。 */
+/** 把被回复的 Telegram 消息转换成模型可读的单行正文；视觉内容在原消息
+ * 自己进入缓存时异步获得描述，这里的类型标签用于原消息已滑出缓存的情形。 */
 function replyReferenceText(message: Message): string {
   if (typeof message.text === "string") return message.text;
   const caption: string = typeof message.caption === "string" ? message.caption : "";
@@ -200,8 +195,8 @@ function repliedBotImage(repliedTo: Message, botId: number): RepliedBotImage | u
   };
 }
 
-/** 提取当前消息的显式回复关系。Telegram 已在 reply_to_message 中附带原消息，
- * 因此无需额外 API 请求；论坛话题自动填入的话题创建消息不算回复（见
+/** 提取当前消息的显式回复关系。原消息取自 reply_to_message，
+ * 不发额外 API 请求；论坛话题自动填入的话题创建消息不算回复（见
  * libs/forumTopic.ts 的 explicitReplyTo）；quote 则保留用户选中的精确引用片段。
  * 被回复的是机器人自己的图片时附上 botImage，由 Worker 识图后回填（见
  * workers/aiChat/botImages.ts）。 */
@@ -209,8 +204,8 @@ export function resolveReplyReference(message: Message, botId: number): AiReplyR
   const repliedTo: Message | undefined = explicitReplyTo(message);
   if (!repliedTo) return undefined;
   const speaker: AiSpeakerSnapshot = resolveSpeaker(repliedTo);
-  // 三个可选字段一律写出来（缺省即 undefined），让进入 Worker 与逐字缓存的引用
-  // 保持单一隐藏类（见 types/aiChat/speaker.ts 的形状约束）。空串按 undefined 归一。
+  // 可选字段都显式写出（缺省为 undefined），进入 Worker 与逐字缓存的引用保持
+  // 单一 hidden class（见 types/aiChat/speaker.ts 的形状约束）；空串按 undefined 归一。
   const quote: string | undefined = message.quote?.text;
   const forwardedFrom: string | undefined = resolveForwardOrigin(repliedTo);
   return {

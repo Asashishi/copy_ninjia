@@ -161,7 +161,7 @@ describe("AI reply admission pipeline", () => {
   test("溢出时群里没有存活轮次就当场发出提示，不等永远不会到来的收尾推力", () => {
     decision = "enqueueOverflow";
     hasLiveReplyRounds.mockReturnValue(false);
-    // 发出时读到的话题必须是这条被丢掉的触发所在的话题。
+    // 发出时读到的话题是这条被丢掉的触发所在的话题。
     let flushedTopic: number | undefined;
     flushOverflowNotice.mockImplementationOnce((chatId: number): void => {
       flushedTopic = pendingOverflowNotices.get(chatId);
@@ -191,7 +191,7 @@ describe("AI reply admission pipeline", () => {
 
     startQueuedRound(queued);
 
-    // 排队轮一律不算随机触发，并把原触发对象带回给 replyRound 用于自录快照。
+    // 排队轮不算随机触发，并把原触发对象带回给 replyRound 用于自录快照。
     expect(startReplyRound).toHaveBeenLastCalledWith({
       chatId: -1001,
       triggerSenderId: 42,
@@ -209,11 +209,9 @@ describe("AI reply admission pipeline", () => {
   });
 
   // 轮次参数的两个构造点（本文件的 startQueuedRound 与 generateAndSendReply 的
-  // startRound 分支）必须产出同一个隐藏类：缺席的可选字段显式写 undefined，而不是
-  // 条件展开成「不写这个键」。口径与 auto/message/recordContext.ts、
-  // antiRaid/adCandidate.ts、workers/aiChat/bufferedMessage.ts 一致；那三处的注释
-  // 记着同一件事——这种对象会被下游反复读，多种 shape 会让读点多态。
-  // 键集合仍然逐字校验，误加或漏字段照样测得出来。
+  // startRound 分支）产出同一个 shape：缺席的可选字段显式写 undefined。口径与
+  // auto/message/recordContext.ts、antiRaid/adCandidate.ts、workers/aiChat/bufferedMessage.ts 一致；
+  // 键集合逐字校验。
   test("轮次参数保持单一 shape：缺席的可选字段显式写成 undefined", () => {
     generateAndSendReply(baseRequest);
     pendingReplyTriggers.set(-1001, { size: 1 });
@@ -250,9 +248,7 @@ describe("AI reply admission pipeline", () => {
   });
 
   test("维护节拍在限频窗口空出来后补跑积压，窗口仍满时不空转", () => {
-    // 队列的常规推力来自模型完成、轮次结束与新触发入队，而限频闸拒绝时那一轮根本没建
-    // 任务、也就永远不会有完成回调：没有这道兜底，撞上长窗口上限的群会把最多
-    // REPLY_TRIGGER_QUEUE_MAX 条 @提及连同快照无限期扣在内存里。
+    // 限频闸拒绝的轮次没有任务也没有完成回调；维护节拍在窗口空出后补跑 pendingReplyTriggers 里的积压。
     pendingReplyTriggers.set(-1001, { size: 3 });
     const times: TimestampDeque = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(900);
@@ -260,7 +256,7 @@ describe("AI reply admission pipeline", () => {
 
     roundRateLimited = true;
     drainPendingReplyQueues(1_000);
-    // 空转一次就等于每个 RATE_LIMIT_NOTICE_COOLDOWN_MS 冷却周期往群里刷一条限频提示。
+    // 窗口仍满时不调用 drainQueuedReplies。
     expect(drainQueuedReplies).not.toHaveBeenCalled();
 
     roundRateLimited = false;
@@ -293,10 +289,7 @@ describe("AI reply admission pipeline", () => {
   });
 
   test("轮次结束的推力同样设闸：窗口仍满时只补溢出提示，不空转队列", () => {
-    // 模型完成、轮次结束、新触发入队与维护节拍四处推力必须都过闸。轮次结束这一处不设闸的话，
-    // 撞满长窗口且队列非空的群里每一轮结束都会空转一次 startReplyRound，被限频闸拒绝时
-    // 它自己会发一条限频提示（自带 RATE_LIMIT_NOTICE_COOLDOWN_MS 冷却）——整个饱和期
-    // 每个冷却周期往群里刷一句。
+    // 模型完成、轮次结束、新触发入队与维护节拍四处推力都过限频闸；窗口仍满时只补溢出提示，不调用 drainQueuedReplies。
     pendingReplyTriggers.set(-1001, { size: 3 });
     const times: TimestampDeque = new TimestampDeque(RATE_LIMIT_LONG_MAX_TRIGGERS);
     times.push(900);
@@ -310,7 +303,7 @@ describe("AI reply admission pipeline", () => {
     onFinished(-1001);
 
     expect(drainQueuedReplies).not.toHaveBeenCalled();
-    // 欠着群成员的那条溢出提示不跟着被跳过：它与推队列是两条独立的路径。
+    // 欠着的溢出提示照常补发：它与推队列是两条独立的路径。
     expect(flushOverflowNotice).toHaveBeenCalledWith(-1001);
     expect(pendingOverflowNotices.has(-1001)).toBeFalse();
   });

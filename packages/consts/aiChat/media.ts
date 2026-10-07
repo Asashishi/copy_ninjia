@@ -31,15 +31,13 @@ export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 100;
 /** Telegram 文件下载请求（从发出到读完）的超时；只覆盖取回文件字节那一次 fetch。getFile 的超时见 MEDIA_FILE_METADATA_TIMEOUT_MS，字节上限见 MEDIA_MAX_DOWNLOAD_BYTES。 */
 export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
 /**
- * 取文件元数据（`getFile`）的独立超时预算，必须与下载分开计时：两步共用一个
- * deadline 时，一次 429 退避就能把下载的额度吃光，下载几乎立刻 abort，机器人
- * 对着一张明明能看的图装看不见。取消信号（回复代际失效）同时合入两段超时，见
- * infra/telegram/fileDownload.ts。
+ * 取文件元数据（`getFile`）的独立超时预算，与下载分开计时。取消信号
+ * （回复代际失效）同时合入两段超时，见 infra/telegram/fileDownload.ts。
  */
 export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
 /**
- * 内联媒体请求的整体字节预算：Gemini 官方规定内联数据的整个请求（提示词、system
- * 指令与 base64 字节合计）不超过 20 MB，各家实现共用同一份媒体字节、按这一上限取。Anthropic 的单图
+ * 内联媒体请求的整体字节预算：取 Gemini 官方对内联数据整个请求（提示词、system
+ * 指令与 base64 字节合计）的上限，各家实现共用同一份媒体字节、按这一上限取。Anthropic 的单图
  * 上限更低，超出的那一份由端点按单份媒体拒绝，不改变模态结论。
  * 所属模块：本文件与 consts/aiChat/voice.ts 的字节上限推导。
  */
@@ -49,7 +47,7 @@ export const MEDIA_INLINE_PROMPT_RESERVE_BYTES: number = 1_000_000;
 /**
  * 单张视觉图片（下载与转码后）允许读入内存并内联进请求的最大字节数，也是下载
  * 与 photo 档位选择的上限。按 base64 编码后加 MEDIA_INLINE_PROMPT_RESERVE_BYTES
- * 恰好不超过 MEDIA_INLINE_REQUEST_MAX_BYTES 推导（14,250,000 字节）。所属模块：
+ * 恰好不超过 MEDIA_INLINE_REQUEST_MAX_BYTES 推导。所属模块：
  * aiChat/ai/telegramImage.ts、infra/telegram/workerRequests.ts 与 libs/telegramImage.ts。
  */
 export const MEDIA_MAX_DOWNLOAD_BYTES: number =
@@ -63,16 +61,12 @@ export const MEDIA_DESCRIPTION_MAX_PENDING: number = 256;
 
 /**
  * 模态探测在连续瞬时失败后的首次退避时长（见
- * cache/workers/aiChat/mediaInputSupport.ts）。
- *
- * 这道退避挡的是「端点持续故障」：SDK 自己已经把首次加最多五次重试用完了，若
- * 下一条媒体立刻又下载一遍、再套一整轮请求，一个抽风的端点就能让每条群媒体都
- * 白付一次下载、转码和执行器槽位。
+ * cache/workers/aiChat/mediaInputSupport.ts）。退避期间的媒体请求得到
+ * MEDIA_BACKOFF_RESULT。
  */
 export const MEDIA_PROBE_BACKOFF_BASE_MS: number = 30_000;
 /**
- * 退避时长的上界。指数增长必须封顶：故障持续几小时时，无上界的退避等于把模态
- * 永久关掉，而那正是本状态机刻意不做的事（瞬时失败不得形成永久结论）。
+ * 退避时长的上界；瞬时失败不形成永久结论。
  */
 export const MEDIA_PROBE_BACKOFF_MAX_MS: number = 10 * 60_000;
 /**
@@ -95,8 +89,8 @@ export const MEDIA_TASK_REJECTED_RESULT: Readonly<AiTextResult> = { ok: false, r
 export const MEDIA_CANCELLED_RESULT: Readonly<AiTextResult> = { ok: false, retryable: false };
 
 /**
- * media 模态从未探测过的初始状态，属 states/mediaInputSupport.ts。两种模态各取
- * 这一份共享只读对象；状态机只整体替换，不就地改写，因此共享不会串台。
+ * media 模态从未探测过的初始状态，属 cache/workers/aiChat/mediaInputSupport.ts。两种模态各取
+ * 这一份共享只读对象；状态机只整体替换，不就地改写。
  * 配置代次 0 是第一代，agent.json 热重载替换 media 能力时由 resetMediaInputSupport
  * 递增。
  */

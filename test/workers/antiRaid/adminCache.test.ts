@@ -2,11 +2,10 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
 
 /**
- * 处置前那道身份闸的三态契约（packages/workers/antiRaid/adminCache.ts 的
- * isChatAdmin）。
+ * 处置前那道身份闸的三态契约（packages/workers/antiRaid/adminCache.ts 的 isChatAdmin）。
  *
- * 它是一条权限边界：`undefined` 表示「没查出来」，调用方必须按不处置办。入群
- * 验证、刷屏禁言、广告处置等多处调用方会 mock 它，真实语义由本文件直接覆盖。
+ * `undefined` 表示「没查出来」，调用方按不处置办。入群验证、刷屏禁言、广告处置等多处调用方会 mock 它，
+ * 真实语义由本文件直接覆盖。
  */
 
 const errorLogs: string[] = [];

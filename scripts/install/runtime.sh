@@ -56,9 +56,8 @@ step "4/8 安装依赖"
 
 verify_service_target "$PWD"
 
-# systemd 的系统服务不会继承运行安装脚本的 shell 环境。只有部署方显式设置了
-# COPY_NINJIA_DATA_ROOT 时才写 Environment=：缺省时继续让生产代码使用项目根，
-# 不能把缺省根也写进去，否则会把 RUNTIME_DATA_ROOT_IS_CONFIGURED 错置为 true。
+# 只有部署方显式设置了 COPY_NINJIA_DATA_ROOT 时才写 Environment=；缺省时生产代码
+# 使用项目根，不把缺省根写进 unit（RUNTIME_DATA_ROOT_IS_CONFIGURED 保持 false）。
 # 数据根在任何部署写入之前解析，并与既有 unit 的同名环境项核对。
 SYSTEMD_DATA_ROOT_ENVIRONMENT=""
 RESOLVED_RUNTIME_DATA_ROOT=""
@@ -70,7 +69,7 @@ if [ "${COPY_NINJIA_DATA_ROOT+x}" = "x" ]; then
 fi
 verify_service_data_root "$RESOLVED_RUNTIME_DATA_ROOT"
 
-# 用锁文件安装：bun.lock 已进版本库，装出来的树必须和门禁跑过的那棵一致。
+# 按 bun.lock 冻结安装。
 if [ "$INSTALL_MODE" = source ]; then
   bun install --frozen-lockfile || die "bun install 失败。"
   info "依赖安装完成。"
@@ -82,7 +81,7 @@ fi
 step "5/8 准备配置目录"
 # --------------------------------------------------------------------------
 
-# 旧入口与放错位置的部署文件在模板补缺之前拒绝，迁移必须由部署方显式执行。
+# 旧入口与放错位置的部署文件在模板补缺之前拒绝，迁移由部署方显式执行。
 bun -e '
   import { assertNoMisplacedConfigFiles } from "./scripts/install/runtime";
   await assertNoMisplacedConfigFiles("config");
@@ -95,7 +94,7 @@ bun -e '
   await assertStateFilesMigrated();
 ' || die "全局状态不是当前格式（文件与字段见上）：数据根仍有 state.json 或 state.json.bak，或 memory/global/state.json 仍是旧格式（例如总计数 ttsUsage）时，先升级到 16.3.2 并按其说明完成迁移，再安装本版。"
 
-# 已有共享数据库只读核对 schema 版本：16.3.2 的 v11 库由部署方停服冷迁移，不带着它注册和启动服务。
+# 已有共享数据库只读核对 schema 版本：源 schema 的库由部署方停服冷迁移，不带着它注册和启动服务。
 bun -e '
   import { assertStorageDatabaseMigrated } from "./scripts/install/runtime";
   await assertStorageDatabaseMigrated();
@@ -106,11 +105,11 @@ for example_file in config_example/static/*.json config_example/dynamic/*.json; 
   config_path="config/${example_file#config_example/}"
   config_name="$(basename -- "$example_file")"
   if [ "$config_name" = "agent.json" ]; then
-    # agent 示例含故意不可用的占位凭据；只有完成问卷后才生成部署文件。
+    # agent 示例含占位凭据；只有完成问卷后才生成部署文件。
     continue
   fi
   if [ "$config_name" = "g-auth.json" ]; then
-    # 翻译凭据示例只示意结构，占位私钥必然被严格解析拒绝；真实密钥由部署方带外放入。
+    # 翻译凭据示例只示意结构，占位私钥会被严格解析拒绝；真实密钥由部署方带外放入。
     continue
   fi
   if [ "$config_name" = "cron.json" ]; then
@@ -118,7 +117,7 @@ for example_file in config_example/static/*.json config_example/dynamic/*.json; 
     continue
   fi
   if [ -e "$config_path" ]; then
-    # 已有配置一律不覆盖：那是部署方数据，不能被示例值顶掉。
+    # 已有配置一律不覆盖。
     info "保留 ${config_path}（已存在）。"
     continue
   fi

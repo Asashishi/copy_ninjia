@@ -1,5 +1,5 @@
 /**
- * 把基准区块写回三语性能基准文档页。
+ * 把基准区块写回各语言性能基准文档页。
  *
  * 按显式标记整块替换，保留标记之外的标题与导航；标记缺失或顺序非法时拒绝写入。
  */
@@ -20,7 +20,7 @@ export interface DocPageTarget {
   readonly language: Language;
 }
 
-/** 三份性能基准页的固定目标；发布时一起更新，不允许只更新其中一份。 */
+/** 各语言性能基准页的固定目标；一起更新，不允许只更新其中一份。 */
 export const DOC_PAGE_TARGETS: readonly DocPageTarget[] = [
   { path: join("docs", "cn", "10-performance.md"), language: "zh" },
   { path: join("docs", "en", "10-performance.md"), language: "en" },
@@ -45,7 +45,7 @@ export function replaceBlock(source: string, block: string, path: string): strin
     source.slice(end + README_BLOCK_END.length);
 }
 
-/** 把报告写进三份性能基准页；返回实际改写的路径，供 CLI 回显。 */
+/** 把报告写进各语言性能基准页；返回实际改写的路径，供 CLI 回显。 */
 export async function writeBenchmarkDocPages(
   report: FullSuiteReport
 ): Promise<readonly string[]> {

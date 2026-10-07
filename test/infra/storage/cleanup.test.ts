@@ -120,13 +120,12 @@ describe("storage startup cleanup", () => {
 });
 
 /**
- * 上面的用例都注入了 isInactiveLockOwner 替身，真实的 hasInactiveCurrentFormatOwner
- * 从未被执行过。它是「不认识的内容一律不删」这条 fail-closed 判定的唯一实现，
- * 必须用真实文件与真实 /proc 身份覆盖。
+ * 上面的用例注入了 isInactiveLockOwner 替身；这里用真实文件与真实 /proc 身份覆盖真实的
+ * hasInactiveCurrentFormatOwner，它是「不认识的内容一律不删」这条 fail-closed 判定的唯一实现。
  */
 describe("guard 归属判定的真实实现", () => {
   const BOOT_ID = "11111111-1111-4111-8111-111111111111";
-  /** 远超 Linux pid_max，/proc 下必然不存在。 */
+  /** 远超 Linux pid_max，/proc 下不存在。 */
   const DEAD_PID = 999_999_999;
   let testDir: string;
   let lockFilePath: string;
@@ -158,7 +157,7 @@ describe("guard 归属判定的真实实现", () => {
     const deadOwner: string = candidateName(45, "44444444-4444-4444-8444-444444444444");
     const recycledPid: string = candidateName(46, "55555555-5555-4555-8555-555555555555");
 
-    // 旧格式/损坏内容：认不出归属，绝不能删。
+    // 无法识别的内容：认不出归属，不删。
     await writeCandidate(unparseable, "legacy-owner-format");
     // pid 超出安全整数范围：同样拒绝。
     await writeCandidate(unsafePid, `v2:99999999999999999999:1234:${BOOT_ID}`);
@@ -178,9 +177,7 @@ describe("guard 归属判定的真实实现", () => {
   });
 
   test("0 字节 candidate 按文件名里的 PID 判活：属主已死就回收，还活着就保留", async () => {
-    // candidate 是先 open(wx) 建空文件、再写身份行的，中间被 SIGKILL/OOM/掉电
-    // 打断就留下 0 字节孤儿。只按内容判的话它永远回收不掉，每次启动还照着报
-    // 一行「属主还活着或格式不对」——而两半都不成立。
+    // candidate 是先 open(wx) 建空文件、再写身份行的，中途被 SIGKILL/OOM/掉电打断会留下 0 字节孤儿；这种文件按文件名里的 PID 判活。
     const current: ProcessIdentity = (await readLinuxProcessIdentity(process.pid))!;
     const deadOwner: string = candidateName(DEAD_PID, "66666666-6666-4666-8666-666666666666");
     const liveOwner: string = candidateName(current.pid, "77777777-7777-4777-8777-777777777777");
@@ -190,13 +187,12 @@ describe("guard 归属判定的真实实现", () => {
     await cleanupOrphanedTempFiles({ stateFilePath, lockFilePath });
 
     expect(existsSync(join(testDir, deadOwner))).toBe(false);
-    // PID 还活着（可能是原属主，也可能是复用）：方向只能错向「拒绝删除」。
+    // PID 还活着（可能是原属主，也可能是复用）：保留。
     expect(existsSync(join(testDir, liveOwner))).toBe(true);
   });
 
   test("bot.lock.guard.recovery 内容为空时仍然保留：文件名里没有 PID 可兜底", async () => {
-    // recovery 是从已经写好并 fsync 过的 candidate hard link 出来的，本来不会
-    // 是 0 字节；真出现了也没有第二个身份来源，只能维持 fail-closed。
+    // recovery 是从已写好并 fsync 过的 candidate hard link 出来的；内容为空时没有第二个身份来源，维持 fail-closed。
     const recoveryPath: string = join(testDir, "bot.lock.guard.recovery");
     await Bun.write(recoveryPath, "");
 

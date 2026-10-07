@@ -182,11 +182,8 @@ afterEach(() => {
 });
 
 /**
- * install.sh 里那几组硬编码必须跟着代码走。
- *
- * 安装器是 `curl | bash` 的一次性入口，装完就没了，没有任何运行时会去核对它
- * 抄下来的这些值。加一项 AI 能力却忘了改问卷，表现是新部署**静默**配不出那项
- * 能力——不报错、不缺文件，只是问卷少问一句。三组值各自与权威源对拍。
+ * install.sh 里那几组硬编码跟着代码走：安装器是 `curl | bash` 的一次性入口，装完没有任何运行时会核对它抄下来的这些值；
+ * 各组值与权威源对拍。
  */
 describe("install.sh 与代码共享同一份事实", () => {
   test("问卷的能力全集与 AGENT_CAPABILITY_NAMES 逐项一致（含顺序）", () => {
@@ -227,7 +224,6 @@ describe("install.sh 与代码共享同一份事实", () => {
 
   test("重填问卷的判据用的就是 TELEGRAM_BOT_TOKEN_PLACEHOLDER", () => {
     // install.sh 靠 grep 这个串判断「bot.json 还是示例值、需要问」。
-    // 常量改了而这里没改，安装器会把已填好的配置当成没填，反复追问。
     expect(INSTALL_SCRIPT).toContain(`'${TELEGRAM_BOT_TOKEN_PLACEHOLDER}'`);
   });
 });
@@ -237,7 +233,7 @@ describe("install.sh 启动后核对 journal 非零退出", () => {
     const cursorIndex: number = INSTALL_SCRIPT.indexOf('JOURNAL_CURSOR="$(service_journal_cursor)"');
     const enableIndex: number = INSTALL_SCRIPT.indexOf('systemctl enable "${SERVICE_NAME}.service"');
     const verdictIndex: number = INSTALL_SCRIPT.indexOf('service_journal_since "$JOURNAL_CURSOR"');
-    // 游标要在服务被拉起之前取，判定要在观察窗口之后做，否则窗口对不上。
+    // 游标在服务被拉起之前取，判定在观察窗口之后做。
     expect(cursorIndex).toBeGreaterThan(-1);
     expect(enableIndex).toBeGreaterThan(cursorIndex);
     expect(verdictIndex).toBeGreaterThan(enableIndex);

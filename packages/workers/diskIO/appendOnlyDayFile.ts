@@ -10,12 +10,11 @@
  * 多久 flush 一次、保留策略等领域逻辑，这里只管字节层面的
  * 打开、探测与追加；截断修复只供调用方显式选择的诊断材料和日志使用。
  *
- * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作，
- * openAppendOnlyFile 供入群日志与广告样本使用，appendToAppendOnlyFile 另供 AI 用量统计
- * 使用；openDayFile/appendToDayFile 是它们在 `<dir>/<day>.json` 命名约定上的薄封装。
- * appendToDayFile 供按天滚动的日志、每日运势与待验证三个领域使用；openDayFile 只有每日
- * 运势（snapshotFiles.ts）使用，日志与待验证由各自模块构造 DayFileState。日志与 AI 用量
- * 统计的只读探测共用 inspectRepairableAppendOnlyFile（允许在内存里裁掉撕裂的末尾残片）。
+ * 两层 API：openAppendOnlyFile/appendToAppendOnlyFile 直接按完整路径操作；
+ * openDayFile/appendToDayFile 是它们在 `<dir>/<day>.json` 命名约定上的薄封装，
+ * 供按天滚动的领域使用。日志与 AI 用量统计的只读探测共用
+ * inspectRepairableAppendOnlyFile（允许在内存里裁掉撕裂的末尾残片）；
+ * openValidatedAppendOnlyFile 接管已由领域 codec 严格校验过的文件。
  */
 
 import { closeSync, fsyncSync, ftruncateSync, openSync, statSync } from "node:fs";
@@ -33,9 +32,8 @@ const UTF8_ENCODER: TextEncoder = new TextEncoder();
 /** 追加前文件结尾的两字节；回滚撕裂的追加时原位写回。 */
 const APPEND_ONLY_TAIL: Uint8Array = UTF8_ENCODER.encode("\n}");
 
-// serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出是多行形态
-// （indent 为 0 时输出单行，掐头去尾会切进内容本身）；启动即断言，不让
-// 一次误改常量静默产出坏文件。
+// serializeDayFileEntry 的 slice(2, -2) 依赖 stringify 输出多行形态
+// （indent 为 0 时输出单行），启动即断言。
 if (DAY_FILE_JSON_INDENT < 1) {
   throw new Error("DAY_FILE_JSON_INDENT must be >= 1: serializeDayFileEntry relies on multi-line JSON.stringify output");
 }
@@ -61,14 +59,15 @@ export class AppendOnlyFileFormatError extends Error {
 
 /**
  * 打开（或接管）一个追加型 JSON 对象文件并校验其可追加性。文件不存在或为
- * 空对象视作空文件；内容合法但结尾形态不符（比如被人手动编辑过）就按标准
- * 格式重写一次；解析失败时默认保留原始字节并抛错，只有 repair=true 才尝试
- * repairTruncated 裁掉末尾残片。顶层不是普通对象或无法修复时同样拒绝。
+ * 空对象视作空文件；内容合法但结尾形态不符时，repair=true 才按标准格式重写一次，
+ * 否则抛 AppendOnlyFileFormatError；解析失败时默认保留原始字节并抛错，只有
+ * repair=true 才尝试 repairTruncatedAppendOnlyContent 裁掉末尾残片。顶层不是普通对象
+ * 或无法修复时同样拒绝。
  * 裁尾修复与排版规范化经 atomicWriteTextSync 以 tmp + fsync + rename 整份
  * 原子替换；追记热路径（appendToAppendOnlyFile / appendToDayFile 向非空文件
  * 追加）按位置写入。
- * size 一律以 fs.statSync 读到的物理文件大小为准，不信任内存里算出来的
- * 字节数。完整扫描只发生在打开/恢复阶段，成功后的追记热路径仍为 O(1)。
+ * size 一律以 fs.statSync 读到的物理文件大小为准。完整扫描只发生在打开/恢复阶段，
+ * 追记热路径为 O(1)。
  * @param repair 是否显式允许裁掉末尾残片或规范化排版；默认 false。只写诊断
  *   材料和日志可选择 true，运行时权威状态必须保持 false。
  */
@@ -79,15 +78,13 @@ export async function openAppendOnlyFile(
 ): Promise<AppendOnlyFileState> {
   const state: AppendOnlyFileState = { size: 0, empty: true };
   if (!inspectOptionalFile(path)) return state;
-  // mode 只用于首次创建。已有文件保留部署方权限，并在接管阶段显式确认
-  // 当前进程可读写；不能靠目录 rename 权限绕过文件本身的只读策略。
+  // mode 只用于首次创建；已有文件保留部署方权限，inspectOptionalFile 确认当前进程可读写。
   const content: string = await readUtf8TextInput(path);
   let parsed: unknown;
   try {
     parsed = JSON.parse(content);
   } catch {
-    // 不允许自愈的领域在这里就停：repairTruncated 是「裁掉末尾残片」，
-    // 对黑名单而言等同于静默解除拉黑，必须原样保留字节交给人工。
+    // repair=false 的领域在这里停止，原样保留字节交给人工。
     if (!repair) {
       throw new AppendOnlyFileFormatError(path, "could not be parsed; refusing to repair this file.");
     }
@@ -115,10 +112,8 @@ export async function openAppendOnlyFile(
         "must use the canonical append-only JSON object formatting."
       );
     }
-    // 只规范排版，不承诺保留原文件的键序：JSON.parse 建出来的普通对象已经把
-    // 「整数索引形态」的键提到最前，源文本的顺序在这一步就没了。这条路径只在
-    // 文件被手工编辑过（结尾形态不符）时触发，属异常态的一次性归一；调用方
-    // 不得把这条修复路径当作键顺序稳定性保证。
+    // 只规范排版，不保留原文件的键序（JSON.parse 已把整数索引形态的键提前）；
+    // 调用方不得把这条路径当作键顺序稳定性保证。
     atomicWriteTextSync(path, JSON.stringify(parsed, null, DAY_FILE_JSON_INDENT), mode);
   }
   state.size = statSync(path).size;
@@ -184,8 +179,7 @@ export async function inspectRepairableAppendOnlyFile<T>(
  * 调用方必须把同一轮读取的 content 与空对象结论一起传入；本函数只复核通用的
  * 规范结尾、物理大小和权限，不再把同一份 JSON 解析第二次。不存在时仍按
  * openAppendOnlyFile 的空文件语义返回，外部并发删除不会让旧游标被接管。
- * 该入口不提供 repair：需要裁尾的异常文件仍必须走 openAppendOnlyFile，避免
- * 绕开修复后的领域复核。
+ * 该入口不提供 repair：需要裁尾的异常文件走 openAppendOnlyFile。
  */
 export function openValidatedAppendOnlyFile({
   path,
@@ -237,8 +231,8 @@ function repairCandidateAt(
  * 无论是对象、数组还是 null 等基础类型都适用；裁掉其后的撕裂记录、补上
  * 「\n}」并以 JSON.parse 复核。
  * @returns 修复后的完整 JSON 文本；所有候选都无效时返回 null，表示无法修复
- *   ——调用方（openAppendOnlyFile）据此抛 AppendOnlyFileFormatError 阻止写入并原样
- *   保留字节，等待人工恢复，绝不从空文件重新开始覆盖原数据。
+ *   ——调用方（openAppendOnlyFile）据此抛 AppendOnlyFileFormatError 阻止写入，
+ *   原样保留字节等待人工恢复。
  * @see ../../../docs/cn/04-invariants.md
  */
 export function repairTruncatedAppendOnlyContent(content: string): string | null {
@@ -282,9 +276,8 @@ export function repairTruncatedAppendOnlyContent(content: string): string | null
   if (last !== null) return last;
 
   // 顶层边界候选具有「前缀有效、后缀无效」的单调性：某个边界之前一旦已有
-  // 非法 token，之后追加完整的 `, member` 不可能改正更早的语法；反过来，损坏
-  // 发生前的所有完整成员前缀都可独立补 `}` 解析。因此对最后一个有效前缀二分，
-  // 避免早期损坏时从文件尾反复 slice + parse 退化为 O(n²)。
+  // 非法 token，之后追加完整的 `, member` 不会改正更早的语法；损坏发生前的
+  // 所有完整成员前缀都可独立补 `}` 解析。因此对最后一个有效前缀二分。
   let low: number = 0;
   let high: number = boundaries.length - 2;
   let best: string | null = null;
@@ -335,8 +328,7 @@ export async function appendToAppendOnlyFile({
 }: AppendToAppendOnlyFileParams): Promise<void> {
   if (state.empty) {
     const content: string = `{\n${chunk}\n}`;
-    // 首条也走原子替换；传入 mode 时临时文件会在 rename 前
-    // fchmod，不会因进程 umask 而暴露权限不符合要求的目标。
+    // 首条也走原子替换；传入 mode 时临时文件在 rename 前 fchmod。
     atomicWriteTextSync(path, content, mode);
     state.size = Buffer.byteLength(content);
     state.empty = false;
@@ -348,8 +340,7 @@ export async function appendToAppendOnlyFile({
   let restored: boolean = false;
   try {
     writeBufferFullySync(fd, data, { position: state.size - 2, write });
-    // write/close 只保证字节进入内核页缓存；验证 persisted 与统一 flushed
-    // 回执承诺的是断电后仍可恢复，因此每个已合并批次在成功返回前只 sync 一次。
+    // 每个已合并批次在成功返回前只 sync 一次（persisted 与统一 flushed 回执承诺断电后可恢复）。
     sync(fd);
   } catch (error: unknown) {
     failure = error;
@@ -364,10 +355,9 @@ export async function appendToAppendOnlyFile({
     const appendFailure: Error = toErrorOr(failure, "Append failed with a non-Error value.");
     // 已在原 fd 上回滚并 fsync：文件与 state 都停在追加前，原样抛出追加错误。
     if (restored) throw appendFailure;
-    // 回滚失败或 close 失败：可能已有前缀落盘，旧 size 与物理文件都不再可信。
-    // fd 已关闭后重新探测；允许自愈的领域裁掉残片，绝不能按完整 data 的长度
-    // 推进游标。不允许自愈的领域探测再失败时，调用方据此把游标作废、条目
-    // 留在缓冲里等人工恢复。
+    // 回滚失败或 close 失败：旧 size 与物理文件都不再可信。fd 已关闭后重新探测；
+    // 允许自愈的领域裁掉残片，游标不按完整 data 的长度推进。不允许自愈的领域探测
+    // 再失败时，调用方据此作废游标、条目留在缓冲里等人工恢复。
     let recovered: AppendOnlyFileState;
     try {
       recovered = await openAppendOnlyFile(path, mode, repair);
@@ -417,9 +407,8 @@ export async function appendToDayFile({
 /**
  * 把单条记录序列化成顶层对象里的一段文本（含 DAY_FILE_JSON_INDENT 缩进、
  * 不含前后逗号），与 JSON.stringify(整个对象, null, DAY_FILE_JSON_INDENT)
- * 中该条目的形态完全一致。实现上借单条目对象的 stringify 结果，掐掉外层的
- * 「{\n」和「\n}」——这两处各固定 2 个字符（左花括号+换行、换行+右花括号），
- * 与缩进宽度本身无关，缩进改多宽这里都不用跟着变。
+ * 中该条目的形态完全一致。实现上借单条目对象的 stringify 结果，掐掉外层各固定
+ * 2 个字符的「{\n」和「\n}」，与缩进宽度无关。
  */
 export function serializeDayFileEntry(key: string, value: unknown): string {
   return JSON.stringify({ [key]: value }, null, DAY_FILE_JSON_INDENT).slice(2, -2);

@@ -1,7 +1,7 @@
 /**
- * 视觉转码单张图片允许解码的最大像素数（宽 × 高），按 8K UHD（7680 × 4320）取值；超出时
- * `Bun.Image` 在读完文件头、分配像素缓冲之前拒绝，这张图按「不解析」处理。单次解码的 RGBA
- * 缓冲因此不超过约 133 MB，挡住文件很小、头部声明超大画布的解压炸弹。
+ * 视觉转码单张图片允许解码的最大像素数（宽 × 高）；超出时
+ * `Bun.Image` 在读完文件头、分配像素缓冲之前拒绝，这张图按「不解析」处理，
+ * 单次解码的 RGBA 缓冲因此有界。
  * 所属模块：infra/image.ts。
  */
 export const VISION_TRANSCODE_MAX_PIXELS: number = 7_680 * 4_320;
@@ -24,9 +24,8 @@ export const WEBP_FOURCC_VP8L: number = 0x4c_38_50_56;
 export const WEBP_FRAME_IMAGE_FOURCCS: readonly number[] = [WEBP_FOURCC_VP8L, WEBP_FOURCC_VP8];
 
 /**
- * 在一个区间内查找目标块时最多检查的块数。合法的动态 WebP 在首个 ANMF 之前只有 VP8X、ICCP、
- * ANIM 等少数几块，帧内只有 ALPH 与图像码流；超出即按容器不合法处理，使特制的海量零长度块
- * 不会让同步扫描随文件长度占用 Worker 线程。所属模块：infra/image.ts。
+ * 在一个区间内查找目标块时最多检查的块数；超出即按容器不合法处理，
+ * 同步扫描的耗时不随文件长度增长。所属模块：infra/image.ts。
  */
 export const WEBP_MAX_SCANNED_CHUNKS: number = 64;
 

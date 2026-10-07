@@ -15,7 +15,7 @@ export const joinWindows: Map<number, JoinWindow> = new Map();
 /**
  * 每群 lockdown 状态机与恢复 timer；解锁、停用或 Worker 停止时清除。
  * 容量：每个受管群最多一条，上界 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）；
- * 不设淘汰——条目要么随恢复结束删除，要么随群停用删除。Worker 崩溃重建：由
+ * 不设淘汰，条目随恢复结束或群停用删除。Worker 崩溃重建：由
  * 主线程的 lockdown 镜像重放，未恢复的意图按 ChatState.lockdown（SQLite
  * `chat_states` 持久化）里的 LockdownRecord 接管。
  */
@@ -26,11 +26,11 @@ export const lockdownEntries: Map<number, LockdownEntry> = new Map();
  * 状态机判定一轮作废时（读不到原权限、intent 落不了盘）发 suppressRetrigger，
  * lockdownRuntime.ts 的 runLockdownEffects 交给 lockdownJoinWindow.ts 的
  * beginLockdownRetriggerCooldown 写入；recordJoinWindow 在到期前不返回计数，
- * recordJoin 因此不投递 thresholdExceeded。三处清理：到期后被下一次 recordJoin 就地
- * 删除、写入新条目时顺带扫掉所有已过期条目、群停用时按 chatId 删除（守卫都关
- * 了，重开不该背着旧冷却）；Worker 停止时随 stopLockdownRuntime 整体清空。
- * 条目只在作废路径产生，最多与机器人所在群数同阶。Worker 崩溃重建后为空 Map：
- * 无条目 = 不抑制触发，这是 fail-safe 方向（宁可多试一次也不漏防）。
+ * recordJoin 因此不投递 thresholdExceeded。清理：到期后被下一次 recordJoin 就地
+ * 删除、写入新条目时顺带扫掉所有已过期条目、群停用时按 chatId 删除；
+ * Worker 停止时随 stopLockdownRuntime 整体清空。
+ * 条目只在作废路径产生，与机器人所在群数同阶。Worker 崩溃重建后为空 Map，
+ * 无条目表示不抑制触发。
  */
 export const lockdownRetriggerCooldowns: Map<number, number> = new Map();
 /**

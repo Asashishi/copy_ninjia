@@ -2,11 +2,10 @@ import type { DiskIOMessage, DiskIOReply } from "../../packages/types/diskIO";
 import type { LuckReceiptSecret } from "../../packages/types/diskIO/storage";
 
 /**
- * `terminate()` 的三种结局。
+ * `terminate()` 的各种结局。
  *
- * `throwSync` 与 `reject` 不能合并：宿主对这两种失败各写了一条捕获路径
- * （`try/catch` 包住调用本身，`.catch` 接住返回的 promise），把 `terminate`
- * 写成 `async` 只到得了后者。
+ * `throwSync` 与 `reject` 是两种失败：宿主对它们各有一条捕获路径
+ * （`try/catch` 包住调用本身，`.catch` 接住返回的 promise）。
  */
 export type FakeDiskIOTerminateBehavior = "succeed" | "throwSync";
 
@@ -14,11 +13,10 @@ export type FakeDiskIOTerminateBehavior = "succeed" | "throwSync";
 export class FakeDiskIOWorker {
   static readonly instances: FakeDiskIOWorker[] = [];
   /**
-   * 预置给**下一个**被构造的替身的拒收类型与 terminate 结局。
+   * 预置给下一个被构造的替身的拒收类型与 terminate 结局。
    *
    * 自愈路径在 `recoverDiskIOWorker` 里同步 `new Worker()` 之后立刻投 `load`，
-   * 调用方拿不到那个实例、也没有插手的时机。要让新代际在握手第一步就失败，
-   * 只能在构造前把配置放在这里。构造后即复位，不会漏给再下一个实例。
+   * 调用方拿不到那个实例，要在构造前把配置放在这里；构造后即复位。
    */
   static nextRejectedTypes: readonly DiskIOMessage["type"][] = [];
   static nextTerminateBehavior: FakeDiskIOTerminateBehavior = "succeed";
@@ -28,6 +26,11 @@ export class FakeDiskIOWorker {
   readonly messages: DiskIOMessage[] = [];
   readonly operationBatches: Extract<DiskIOMessage, { type: "operationBatch" }>[] = [];
   autoAcknowledgeOperations: boolean = true;
+  /**
+   * 为 true 时收到 closeStorage 立即回执关库成功（terminateDiskIO 的关库步骤不等超时）；
+   * 关库路径的用例改成 false 后自己回执或让它超时。
+   */
+  autoCloseStorage: boolean = true;
   readonly rejectedTypes: Set<DiskIOMessage["type"]> = new Set<DiskIOMessage["type"]>();
   terminated: boolean = false;
   terminateBehavior: FakeDiskIOTerminateBehavior;
@@ -52,6 +55,14 @@ export class FakeDiskIOWorker {
       this.messages.push(...message.messages);
       if (this.autoAcknowledgeOperations) {
         this.onmessage?.({ data: { type: "operationBatchAccepted", batchId: message.batchId } } as MessageEvent<DiskIOReply>);
+      }
+      for (const operation of message.messages) {
+        if (operation.type !== "closeStorage" || !this.autoCloseStorage) continue;
+        this.onmessage?.({ data: {
+          type: "storageClosed",
+          requestId: operation.requestId,
+          outcome: { committed: true, checkpointBusy: false },
+        } } as MessageEvent<DiskIOReply>);
       }
       return;
     }
@@ -133,9 +144,8 @@ export function emitDiskIOLuckSecretReply(
 /**
  * 让当前代际崩溃，并返回自愈建出的下一个替身。
  *
- * 恢复握手的分支几乎都要求「先有一个正在恢复的代际」，而那个代际只能由一次
- * 崩溃产生；把这一步收在这里，用例才不用各自记住 `onerror` 之后去
- * `instances` 的哪一格取新实例。
+ * 恢复握手的分支几乎都需要「正在恢复的代际」，它由一次崩溃产生；
+ * 这一步收在这里，用例不必各自记住 `onerror` 之后去 `instances` 的哪一格取新实例。
  */
 export function crashDiskIOWorker(
   worker: FakeDiskIOWorker,

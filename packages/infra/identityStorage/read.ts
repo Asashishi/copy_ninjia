@@ -44,10 +44,10 @@ export function identityMetadataFromCachedUser(
 }
 
 /**
- * 启动恢复只灌入数据库计数，不把 SQLite 整表复制到主线程。
+ * 启动恢复只灌入数据库计数。
  *
  * 两个计数都通过校验后才清空三份读取 LRU 并写入计数；三类未 ACK 最终值与
- * revision 发号器不在这里改动，它们只随进程全新初始化清空。
+ * revision 发号器不在这里改动。
  */
 export function hydrateIdentityStorageCounts(
   whitelistCount: number,
@@ -66,7 +66,7 @@ export function hydrateIdentityStorageCounts(
   identityEntryCounts.blocklist = blocklistCount;
 }
 
-/** 三份 LRU 是否都已有该主键的正/负结论；热 update 据此避免临时数组。 */
+/** 三份 LRU 是否都已有该主键的正/负结论。 */
 export function isIdentityPolicyCached(id: number): boolean {
   return whitelistEntryCache.has(id) &&
     blocklistEntryCache.has(id) &&
@@ -155,10 +155,10 @@ async function readIdentityPolicyChunk(
 
 /**
  * 批量预热三份 LRU 的冷缺失；本地未 ACK 最终值覆盖数据库迟到结果。
- * 已缓存的主键按一次使用刷新热度，保证它们不会被同一次预热写入的冷键挤出
- * （单块严格小于 LRU 容量，见 IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES）。
- * 未初始化 Disk I/O 时只可能是独立单测，保持同步读取的 fail-closed 语义。
- * 冷读失败就地降级，避免 update 前置预热把 Worker 自愈窗口放大为重启循环。
+ * 已缓存的主键按一次使用刷新热度，不会被同一次预热写入的冷键挤出
+ * （单块小于 LRU 容量，见 IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES）。
+ * Disk I/O 未初始化时直接返回 true，同步读取保持 fail-closed。
+ * 冷读失败只记日志并返回 false，对应主键保持冷缺失。
  * @returns true 表示没有冷读失败；破坏性批量路径必须在 false 时放弃执行。
  */
 export async function prefetchIdentityPolicies(
@@ -209,8 +209,8 @@ export async function prefetchIdentityPolicies(
 /**
  * 为破坏性批量处置直接冷读一批主键的永久策略结论，不论它们此刻是否已缓存。
  *
- * 结论由调用方局部持有，处置期间其它流量造成的 LRU 淘汰不会把白名单身份变成
- * 「冷缺失即不存在」；读取同时写入三份 LRU，供处置中的实时复核继续命中。
+ * 结论由调用方局部持有，不受处置期间 LRU 淘汰影响；读取同时写入三份 LRU，
+ * 供处置中的实时复核继续命中。
  * 本地未 ACK 最终值覆盖数据库迟到结果；Disk I/O 不可用时按读取失败处理。
  * @returns 读取失败时为 null，调用方必须放弃本批处置。
  */

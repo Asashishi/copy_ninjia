@@ -46,15 +46,13 @@ describe("chat state normalization", () => {
   });
 
   test("小幅回拨落在容差内时顶格静默原样保留", () => {
-    // `/quiet 15` 写下的 quietUntil - now 恰好等于上限，容差为零的话主机时钟往回
-    // 跳 1 毫秒就让它当场失效、字段还被这个 normalizer 一并抹掉。
+    // `/quiet 15` 写下的 quietUntil - now 恰好等于上限；主机时钟往回跳 1 毫秒仍落在容差内，字段原样保留。
     const state: ChatState = chatStateOf({ quietUntil: 1_000 + QUIET_MAX_DURATION_MS });
     expect(normalizeChatState(state, 999)).toEqual(chatStateOf({ quietUntil: 1_000 + QUIET_MAX_DURATION_MS }));
   });
 
   test("墙钟回拨造成超出最大静默时长的未来截止时间被收敛到上限，而不是删掉", () => {
-    // 删字段是不可逆的：静默从内存和 SQLite 行一起消失，时钟回正也找不回来。
-    // 收敛保住静默本身，同时保证它不晚于上限结束。
+    // 删字段不可逆（内存与 SQLite 行一起消失）；收敛保住静默本身，同时保证它不晚于上限结束。
     const state: ChatState = chatStateOf({ quietUntil: 1_000 + QUIET_MAX_DURATION_MS + 60 * 60_000 });
     expect(normalizeChatState(state, 1_000)).toEqual(chatStateOf({ quietUntil: 1_000 + QUIET_MAX_DURATION_MS }));
   });

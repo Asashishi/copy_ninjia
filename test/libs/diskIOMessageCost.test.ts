@@ -1,4 +1,3 @@
-import { getTimeZone } from "../../packages/config/time";
 import { describe, expect, test } from "bun:test";
 import {
   diskIOMessageCost,
@@ -6,18 +5,17 @@ import {
 } from "../../packages/libs/diskIOMessageCost";
 import { DISK_BUSINESS_MESSAGE_BASE_BYTES } from "../../packages/consts/diskIO/business";
 import { BLOCKLIST_REMOVAL_FAILURE_TYPES } from "../../packages/consts/antiRaid/blocklist";
-import type { DiskIOOperationMessage } from "../../packages/types/diskIO/messages";
+import type { QueuedDiskIOOperationMessage } from "../../packages/types/diskIO/messages";
 import type { VerificationSnapshot, VerificationSnapshotBase } from "../../packages/types/antiRaid/verification";
 import type { PendingBlockedRemoval } from "../../packages/types/blocklist";
 
 /**
- * 计价与分类是跨线程传输预算和背压的唯一容量单位（见
- * infra/diskIO/transport.ts），漏掉一个变体不会有任何运行期迹象，只会让队列
- * 水位悄悄失真。因此这里按 `DiskIOOperationMessage["type"]` 建全表：少写一个键
- * 编译不过，新增一个变体也必须在这里显式给出它的计价口径。
+ * 计价与分类是跨线程传输预算和背压的唯一容量单位（见 infra/diskIO/transport.ts）；
+ * 按 `QueuedDiskIOOperationMessage["type"]` 建全表（启动 load 与诊断批次不进操作 FIFO、不计价，不在表内），
+ * 少写一个键编译不过，新增一个变体也要在这里给出它的计价口径。
  */
 interface MessageCase {
-  readonly message: DiskIOOperationMessage;
+  readonly message: QueuedDiskIOOperationMessage;
   /** 期望的载荷字节，与 base 相加即为 diskIOMessageCost 的返回值。 */
   readonly payloadBytes: number;
   /** 期望的 isDiskBusinessMessage 分类。 */
@@ -53,25 +51,19 @@ const REMOVAL: PendingBlockedRemoval = {
   lastFailure: null,
 };
 
-const BLOCKLIST_REMOVALS: DiskIOOperationMessage = {
+const BLOCKLIST_REMOVALS: QueuedDiskIOOperationMessage = {
   type: "blocklistRemovals",
   removals: [[-1001, REMOVAL]],
   revision: 9,
 };
 
-const VERIFICATION_UPSERT: DiskIOOperationMessage = {
+const VERIFICATION_UPSERT: QueuedDiskIOOperationMessage = {
   type: "verificationUpsert",
   record: SNAPSHOT,
   critical: true,
 };
 
-const DIAGNOSTIC_BATCH: DiskIOOperationMessage = {
-  type: "diagnosticBatch",
-  batchId: 4,
-  messages: [{ type: "log", id: "log-1", timestamp: 1_700_000_000_000, level: "error", args: ["boom"] }],
-};
-
-const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
+const CASES: Readonly<Record<QueuedDiskIOOperationMessage["type"], MessageCase>> = {
   aiMemory: {
     message: { type: "aiMemory", chatId: -1001, revision: 2, snapshot: "记忆快照" },
     payloadBytes: "记忆快照".length * 2,
@@ -147,16 +139,6 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     payloadBytes: serializedBytes(VERIFICATION_UPSERT) * 2,
     business: true,
     upperBound: true,
-  },
-  diagnosticBatch: {
-    message: DIAGNOSTIC_BATCH,
-    payloadBytes: serializedBytes(DIAGNOSTIC_BATCH) * 2,
-    business: false,
-  },
-  load: {
-    message: { type: "load", timeZone: getTimeZone(), stickerPacks: ["one", "two"] },
-    payloadBytes: (getTimeZone().length + "one".length + "two".length) * 2,
-    business: false,
   },
   ensureLuckSecret: {
     message: { type: "ensureLuckSecret", requestId: 2, day: "2026-09-07" },
@@ -237,12 +219,18 @@ const CASES: Readonly<Record<DiskIOOperationMessage["type"], MessageCase>> = {
     payloadBytes: 0,
     business: false,
   },
+  closeStorage: {
+    message: { type: "closeStorage", requestId: 5 },
+    payloadBytes: 0,
+    business: false,
+  },
 };
 
 describe("Disk I/O 消息计价", () => {
   test("每个变体的计价口径与分类逐条固定", () => {
     for (const [type, expectation] of Object.entries(CASES)) {
-      expect(expectation.message.type).toBe(type as DiskIOOperationMessage["type"]);
+      expect(expectation.message.type).toBe(type as QueuedDiskIOOperationMessage["type"]);
+      expect(isDiskBusinessMessage(expectation.message)).toBe(expectation.business);
       if (expectation.upperBound === true) {
         expect(diskIOMessageCost(expectation.message)).toBeGreaterThanOrEqual(
           DISK_BUSINESS_MESSAGE_BASE_BYTES + expectation.payloadBytes
@@ -252,7 +240,6 @@ describe("Disk I/O 消息计价", () => {
           DISK_BUSINESS_MESSAGE_BASE_BYTES + expectation.payloadBytes
         );
       }
-      expect(isDiskBusinessMessage(expectation.message)).toBe(expectation.business);
     }
   });
 
@@ -280,7 +267,7 @@ describe("Disk I/O 消息计价", () => {
         lastFailure,
       }]);
     }
-    const worst: DiskIOOperationMessage = { type: "blocklistRemovals", removals, revision: Number.MIN_SAFE_INTEGER };
+    const worst: QueuedDiskIOOperationMessage = { type: "blocklistRemovals", removals, revision: Number.MIN_SAFE_INTEGER };
     expect(diskIOMessageCost(worst)).toBeGreaterThanOrEqual(DISK_BUSINESS_MESSAGE_BASE_BYTES + serializedBytes(worst) * 2);
 
     const typicalRows: [number, PendingBlockedRemoval][] = [];
@@ -299,7 +286,7 @@ describe("Disk I/O 消息计价", () => {
         lastFailure: null,
       }]);
     }
-    const typical: DiskIOOperationMessage = { type: "blocklistRemovals", removals: typicalRows, revision: 64 };
+    const typical: QueuedDiskIOOperationMessage = { type: "blocklistRemovals", removals: typicalRows, revision: 64 };
     const typicalJson: number = serializedBytes(typical) * 2;
     const typicalPayload: number = diskIOMessageCost(typical) - DISK_BUSINESS_MESSAGE_BASE_BYTES;
     expect(typicalPayload).toBeGreaterThanOrEqual(typicalJson);
@@ -341,19 +328,14 @@ describe("Disk I/O 消息计价", () => {
       },
     ];
     for (const record of records) {
-      const message: DiskIOOperationMessage = { type: "verificationUpsert", record, critical: false };
+      const message: QueuedDiskIOOperationMessage = { type: "verificationUpsert", record, critical: false };
       expect(diskIOMessageCost(message)).toBeGreaterThanOrEqual(DISK_BUSINESS_MESSAGE_BASE_BYTES + serializedBytes(message) * 2);
     }
   });
 
   test("没有载荷的控制与请求消息只占基础字节", () => {
-    expect(diskIOMessageCost(CASES.flush.message)).toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES);
-    expect(diskIOMessageCost(CASES.recoveryReplay.message)).toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES);
-  });
-
-  test("stickerPacks 缺省的 load 仍计入时区载荷", () => {
-    expect(diskIOMessageCost({ type: "load", timeZone: getTimeZone(), stickerPacks: null }))
-      .toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES + getTimeZone().length * 2);
+    expect(diskIOMessageCost({ type: "flush", flushId: 1, scope: "all" })).toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES);
+    expect(diskIOMessageCost({ type: "recoveryReplay", active: true })).toBe(DISK_BUSINESS_MESSAGE_BASE_BYTES);
   });
 
   test("只有业务事实进恢复 FIFO，诊断、读取与生命周期都不进", () => {
@@ -370,8 +352,8 @@ describe("Disk I/O 消息计价", () => {
   });
 
   test("未知变体走穷尽性断言而不是静默按基础字节计价", () => {
-    const unknown: DiskIOOperationMessage =
-      { type: "somethingNew" } as unknown as DiskIOOperationMessage;
+    const unknown: QueuedDiskIOOperationMessage =
+      { type: "somethingNew" } as unknown as QueuedDiskIOOperationMessage;
     expect(() => diskIOMessageCost(unknown)).toThrow(
       "Unsupported Disk I/O operation message type: somethingNew"
     );

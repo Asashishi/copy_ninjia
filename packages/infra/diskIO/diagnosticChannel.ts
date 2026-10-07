@@ -96,8 +96,8 @@ function pumpDiskIODiagnostics(worker: Worker): void {
 }
 
 /**
- * 把诊断收入主线程有界 FIFO。DiskIO 尚未可写时仍保留；单批 ACK 窗口避免把
- * 积压复制进 Worker mailbox。越界消息释放引用并合并为后续一条汇总日志。
+ * 把诊断收入主线程有界 FIFO。DiskIO 尚未可写时仍保留；单批 ACK 窗口使 Worker
+ * mailbox 中同一时刻只有一个批次。越界消息释放引用并合并为后续一条汇总日志。
  */
 export function enqueueDiskIODiagnostic(message: DiskDiagnosticMessage): boolean {
   enqueueDiskIODiagnosticDropSummary();
@@ -125,8 +125,8 @@ export function acceptDiskIODiagnosticBatch(worker: Worker, batchId: number): bo
 }
 
 /**
- * 等待当前全部诊断获得 durable ACK。只供进程级 flush 使用；新诊断在调用方真正
- * 发出 flush 请求前还会再次检查，封住 Promise 续体之间的入队竞态。
+ * 等待当前全部诊断获得 durable ACK。只供进程级 flush 使用；调用方在真正
+ * 发出 flush 请求前会再次检查新入队的诊断。
  */
 export function waitForDiskIODiagnostics(timeoutMs: number): Promise<FlushResult> {
   enqueueDiskIODiagnosticDropSummary();
@@ -157,8 +157,8 @@ export interface RetryDiskIODiagnosticBatchOptions {
 }
 
 /**
- * Worker 明确表示日志刷盘失败时重新开放原批；普通失败按退避窗口重发，达到宿主
- * 连续失败阈值时只开放、不再给即将被替换的旧代际安排 timer。
+ * Worker 明确表示日志刷盘失败时重新开放原批；schedule 为 true 时按退避窗口重发，
+ * 为 false 时只开放原批、不安排重试 timer。
  */
 export function retryDiskIODiagnosticBatch({
   worker,

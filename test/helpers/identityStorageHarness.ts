@@ -3,7 +3,7 @@
  * Disk I/O 替身、可调旋钮与逐用例复位。
  *
  * 形态照 `test/helpers/blocklistSweepHarness.ts`：import 期登记
- * `mock.module("../../packages/infra/diskIO")`，因此**必须在被测生产模块之前 import**；
+ * `mock.module("../../packages/infra/diskIO")`，必须在被测生产模块之前 import；
  * 各用例文件用顶层 `await import` 拿生产模块，天然满足。助手自身不 await import 被测模块，
  * 被测出口由用例文件自行解构。
  */

@@ -1,13 +1,11 @@
 /**
- * Gemini 侧的纯文本生成、结构化 JSON 生成、视觉描述与语音转写。三者共用 client.ts 的
+ * Gemini 侧的纯文本生成、结构化 JSON 生成、视觉描述与语音转写。四者共用 client.ts 的
  * requestGeminiTextResult，差别只在请求体：文本走一段 user 文本，视觉多挂一份
  * inlineData 图片字节，语音则挂一份 inlineData 音频字节。
  *
- * 视觉与语音共用 config/dynamic/agent.json 的 `agent.media`：那一档本来就是多模态理解
- * 模型，图片与音频是它的两种输入模态，不是两个模型。
+ * 视觉与语音转写共用 config/dynamic/agent.json 的 `agent.media`。
  *
- * 清洗与截断由调用方通过 normalize 传入——摘要、贴纸整包简介、三类媒体描述与
- * 语音转写的字数上限各不相同，那是领域策略，不该下沉到供应商实现包。
+ * 清洗与截断由调用方通过 normalize 传入，不在本包内决定。
  */
 
 import {
@@ -87,8 +85,7 @@ interface InlineMediaPrompt {
 
 /**
  * media 档位的一次「内联媒体 + 文字指令」请求：user 轮里先放内联媒体、后放文字指令。
- * 视觉描述与语音转写共用；两者都不传 temperature，用模型默认档——转写要忠实还原，
- * 采样随机性会让模型「润色」群友原话，而那一行会整行进转录被当成真人说过的话。
+ * 视觉描述与语音转写共用；两者都不传 temperature，使用模型默认档。
  */
 function requestInlineMediaText({
   mime,

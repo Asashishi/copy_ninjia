@@ -16,13 +16,11 @@ import { neutralizeRenderableCommands } from "./renderableCommand";
 
 /**
  * 把要写进转录的文本压成单行：所有空白串（含换行）折叠为一个空格。
- * 这是防转录注入的关键——转录按「一行 = 一条消息」拼装，若用户消息或
- * 自己改的昵称里带换行，就能伪造出「[id:x] 某人：……」的假发言行，
- * 给别人栽赃。折叠换行后一条消息永远只占一行，该向量彻底失效。
- * 同一条契约也护着广告判定的提示词（formatAdBundleText 按序号逐行拼装）。
+ * 转录按「一行 = 一条消息」拼装，折叠换行后一条消息只占一行；广告判定的提示词
+ * （formatAdBundleText 按序号逐行拼装）依同一契约。
  *
  * 未命中 INLINE_SANITIZE_REQUIRED_PATTERN 的规范输入原样返回；命中时折叠空白并去掉首尾空白。
- * 本函数在每条进滚动记忆的消息上调用 4~5 次（见 workers/aiChat/bufferedMessage.ts）。
+ * 本函数在每条进滚动记忆的消息上调用多次（见 workers/aiChat/bufferedMessage.ts）。
  */
 export function sanitizeInline(raw: string): string {
   if (!INLINE_SANITIZE_REQUIRED_PATTERN.test(raw)) return raw;
@@ -32,17 +30,11 @@ export function sanitizeInline(raw: string): string {
 /**
  * 显示名清洗：剥掉双向控制符、中和可点击命令，再压成单行。
  *
- * 昵称由用户自己设置，却会被拼进机器人撰写的句子、并作为 text_link 的锚文本
- * （见 commands/cjkAction.ts）。两类注入都出在这里：
+ * 昵称由用户设置，会被拼进机器人撰写的句子，并作为 text_link 的锚文本
+ * （见 commands/cjkAction.ts）。所有拼进机器人文案的昵称、频道名、群标题都经由这一入口
+ * 统一处理：双向控制符一律剥掉，形如命令的片段由 neutralizeRenderableCommands 中和。
  *
- * 1. 一个 RLO 就能让整句的其余部分反向渲染，使「发起人 X了 目标」在视觉上主宾
- *    颠倒、两个人名各自的主页链接看起来挂错人。
- * 2. 一个叫 `/batch_kick 1d` 的昵称会让机器人自己印出一条可点击命令——`/咬` 的
- *    成功回执是用户明确授权长期保留的（见 infra/telegram/commandMessages.ts），
- *    那条一键入口就会一直挂在群里等超级管理员误触。所有拼进机器人文案的昵称、
- *    频道名、群标题都经由这一入口统一中和。
- *
- * 空白折叠的规则与 sanitizeInline 共用，不另写一份。
+ * 空白折叠的规则与 sanitizeInline 共用。
  */
 export function sanitizeDisplayName(raw: string): string {
   return sanitizeInline(neutralizeRenderableCommands(raw.replace(BIDI_CONTROL_PATTERN, "")));
@@ -51,10 +43,8 @@ export function sanitizeDisplayName(raw: string): string {
 /**
  * 去掉用户名前导的 `@`，供转录行、回复标注与逐字缓存条目共用同一份归一规则。
  *
- * Telegram 的 username 字段本身不含 `@`，剥离是给「用户手打进来的 @名字」和
- * 「从 mention 实体里切出来的片段」兜底，正常路径一个字符都不用改。因此先看
- * 首码元、只有真的带 `@` 时才走正则：`String.prototype.replace` 不匹配时虽然
- * 返回同一个字符串对象，仍要完整跑一遍匹配。这条判定落在每条进滚动记忆的
+ * Telegram 的 username 字段本身不含 `@`，剥离针对用户手打进来的 @名字与从 mention
+ * 实体里切出来的片段。先看首码元，只有带 `@` 时才走正则。这条判定落在每条进滚动记忆的
  * 群消息（workers/aiChat/bufferedMessage.ts）和每次转录渲染的名册与回复标注
  * （aiChat/ai/utils/chatTranscript.ts）上。
  *
@@ -70,11 +60,11 @@ export function stripLeadingAtSigns(username: string): string {
 /**
  * 把 Telegram 的 `first_name` / `last_name` 拼成一个展示名；两段都缺时返回空串。
  *
- * 缺席与空串一律当作「没有这一段」，与「两段都在时用一个空格分隔」共同构成
- * 本函数的全部语义；首尾空白由调用方按各自兜底需要决定是否 `trim`。
+ * 缺席与空串一律当作「没有这一段」，两段都在时用一个空格分隔；首尾空白由调用方按需
+ * `trim`。
  *
  * 直接分支拼接，不创建字面量数组、filter 结果数组或一次性闭包；转发来源标注
- * （auto/message/facts.ts 的 forwardOriginLabel）会在每条带 forward_origin 的消息上调用。
+ * （auto/message/facts.ts 的 forwardOriginLabel）在每条带 forward_origin 的消息上调用。
  */
 export function joinPersonName(
   firstName: string | undefined,
@@ -93,9 +83,8 @@ export function splitGraphemes(text: string): string[] {
 }
 
 /**
- * 把文本截断到 maxChars 个 UTF-16 码元以内。slice 可能恰好切在代理对中间
- * （emoji 等），此时去掉孤立的高位代理——孤立代理不是合法字符，混进消息
- * 可能被 Telegram 拒收，混进 prompt 则是每次请求都带着的乱码。
+ * 把文本截断到 maxChars 个 UTF-16 码元以内。slice 恰好切在代理对中间（emoji 等）时，
+ * 去掉孤立的高位代理。
  */
 export function truncateInline(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -108,8 +97,7 @@ export function truncateInline(text: string, maxChars: number): string {
 }
 
 /**
- * 句末标点「。！？…～♡」的码元。与 truncateAtClauseBoundary 的取值集合是同一份
- * 事实，改这里就要同步改那边的对拍用例。
+ * 句末标点「。！？…～♡」的码元；取值集合与 test/libs/text.test.ts 的对拍用例一致。
  */
 function isSentenceEndCode(code: number): boolean {
   return code === 0x3002 || code === 0xff01 || code === 0xff1f ||
@@ -126,8 +114,7 @@ function isClauseBreakCode(code: number): boolean {
  * 生成的描述与简介。
  * 规则：先硬切到 maxChars；若切点内能找到句末标点（。！？…～♡），收到
  * 最后一个句末标点为止（含标点）；否则找最后一个子句分隔符（，、；：）
- * 收到它之前（丢掉悬空的分隔符）。边界位置过于靠前（不足上限一半，收完
- * 只剩个开头）时放弃找边界，退回硬切——宁可断句也不丢大半内容。
+ * 收到它之前（丢掉悬空的分隔符）。边界位置不足上限一半时放弃找边界，退回硬切。
  */
 export function truncateAtClauseBoundary(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
@@ -137,17 +124,14 @@ export function truncateAtClauseBoundary(text: string, maxChars: number): string
   let lastSentenceEnd: number = -1;
   let lastClauseBreak: number = -1;
   for (let i: number = 0; i < hardCut.length; i++) {
-    // 按码元比对，避免为 CJK/全角字符物化单字符字符串并做子串查找。取值集合由
-    // isSentenceEndCode / isClauseBreakCode 表达，逐个标点的对拍用例在
-    // test/libs/text.test.ts——写错一个码点只会让那一个标点静默失效。
+    // 按码元比对；取值集合由 isSentenceEndCode / isClauseBreakCode 表达，
+    // 逐个标点的对拍用例在 test/libs/text.test.ts。
     const code: number = hardCut.charCodeAt(i);
     if (isSentenceEndCode(code)) lastSentenceEnd = i;
     else if (isClauseBreakCode(code)) lastClauseBreak = i;
   }
-  // 两个 -1 哨兵值都要显式判"确实找到过"：lastSentenceEnd 的判断是
-  // `+1 >= minKeep`，当 minKeep<=0（maxChars<=1）时 -1+1=0 会碰巧满足
-  // 这个条件，把"没找到"误判成"找到了、且在边界内"，slice(0,0) 会丢光
-  // 本该保留的硬切内容。
+  // 两个 -1 哨兵值都显式判断是否找到过：minKeep<=0（maxChars<=1）时，
+  // 未找到的 -1 也满足 `+1 >= minKeep`。
   if (lastSentenceEnd >= 0 && lastSentenceEnd + 1 >= minKeep) return hardCut.slice(0, lastSentenceEnd + 1);
   if (lastClauseBreak >= 0 && lastClauseBreak >= minKeep) return hardCut.slice(0, lastClauseBreak);
   return hardCut;

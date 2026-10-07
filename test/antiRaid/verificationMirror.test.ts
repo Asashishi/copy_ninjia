@@ -126,8 +126,7 @@ describe("antiRaid/verificationMirror 的 revision 水位线", () => {
     expect(acceptVerificationUpsert({ type: "verificationUpsert", record: record(2, 1) })).toBeTrue();
     expect(activeVerificationSnapshots.get(KEY)?.revision).toBe(1);
     expect(activeVerificationSnapshots.get(KEY)?.generation).toBe(2);
-    // 新记录必须真的发去落盘：判成过期的话它永远不落盘、terminalPersisted 也
-    // 永远不投递，kickPending/expelling 就此卡住。
+    // 新记录发去落盘。
     expect(diskPosts).toEqual([{
       type: "verificationUpsert",
       record: record(2, 1),

@@ -42,7 +42,7 @@ import {
  * 2. 作为全量基准的存储分区被复用时，仓库 `performance/` 下的 `run-*`
  *    （见 scripts/perf/fullSuite/mockRoot.ts）。
  *
- * 两种形态共用同一道闸，不在全量基准里另写一份放宽版。
+ * 两种形态共用同一道闸。
  *
  * 本函数只做纯词法形态判定：看根的父目录和前缀，不读文件系统。真正会建目录或
  * 删除的入口必须再走 `assertMockRoot`，由它补上真实路径分量的核对。
@@ -74,7 +74,7 @@ function boundaryFor(mockRoot: string): FixturePathBoundary {
   };
 }
 
-/** 形态与真实路径分量都要成立；词法判定挡不住指向根外的软链接。 */
+/** 形态与真实路径分量都要成立；词法判定不识别指向根外的软链接。 */
 export function assertMockRoot(root: string): void {
   if (!isBenchmarkMockRoot(root)) {
     throw new Error("Identity benchmark requires its isolated temporary mock root.");

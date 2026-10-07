@@ -7,7 +7,6 @@ import type { TelegramApi } from "../../../types/telegramWorker";
 import { markSelfSent } from "../../selfSentTracker";
 import { telegramApi } from "../client";
 import {
-  logUnlessAborted,
   replyParametersFor,
   runTelegramAction,
 } from "./core";
@@ -52,7 +51,6 @@ export async function sendSticker({
     },
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
     selfSentChatId: chatId,
   });
 }
@@ -115,7 +113,6 @@ export async function sendPhotoWithResult({
     },
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
     selfSentChatId: chatId,
   });
 }
@@ -168,7 +165,6 @@ export async function sendVoiceWithResult({
       toTelegramSendResult(chatId, sent),
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
     selfSentChatId: chatId,
   });
 }

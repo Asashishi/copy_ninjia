@@ -80,8 +80,8 @@ interface ReplyToolContextParams {
 /**
  * 拼出本轮的工具上下文，连同各发送回调的自录：消息、贴纸、语音与生图发出后按 Telegram 实际
  * 返回的回复目标写进转录（目标已滑出热区时退回媒体解析或轮次开始前捕获的触发快照），
- * 本轮已作废时一律不写。主线程认自己的消息不靠这里回投——代理边界在把 id 交回本线程之前
- * 就已登记（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage）。
+ * 本轮已作废时一律不写。主线程对 Worker 自发消息的登记在代理边界完成（见
+ * infra/telegram/workerRequests.ts 的 markWorkerSentMessage）。
  */
 function buildReplyToolContext({
   request,
@@ -256,7 +256,7 @@ export function startReplyRound(
     };
     const isActive = (): boolean =>
       !signal.aborted && isCachedReplyGenerationCurrent(chatId, generation);
-    // 提示词与 send_message 执行侧的错字处理必须共用同一次抽签，否则配置概率不等于实际错字概率。
+    // 提示词与 send_message 执行侧的错字处理共用同一次抽签。
     const roundHasTypo: boolean = Math.random() < AI_TEXT_TYPO_PROBABILITY;
     try {
       const resolvedMedia: MediaCommentContext | null | undefined = mediaPreparation

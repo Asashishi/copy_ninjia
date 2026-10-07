@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { RUNTIME_DATA_ROOT } from "../paths";
 import type { AssetConfig } from "../../types/config";
 
-/** 部署 UI 素材的内置缺省值；config/dynamic/assets.json 的 `onlyPath`、`pathOrUrl`、`onlyUrl` 三组逐项覆盖，见 packages/config/assets.ts。 */
+/** 部署 UI 素材的内置缺省值；config/dynamic/assets.json 的 `onlyPath`、`pathOrUrl`、`onlyUrl` 各组逐项覆盖，见 packages/config/assets.ts。 */
 
 /** 「未卜先知」Telegram inline 结果的缺省缩略图直链。 */
 export const FORTUNE_THUMBNAIL_URL: string =

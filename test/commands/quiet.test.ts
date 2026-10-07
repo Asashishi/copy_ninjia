@@ -102,7 +102,7 @@ describe("/quiet 与 /unquiet", () => {
   });
 
   test("小幅回拨落在容差内时静默仍然生效，不允许叠加重设", async () => {
-    // isQuietUntilActive 的判定边界：15 分钟上限 + 1 分钟容差，16 分钟以内都算生效中。
+    // isQuietUntilActive 的判定边界：静默上限加一段容差内都算生效中。
     states.set(-1001, { quietUntil: 1_000_000 + 16 * 60_000 });
 
     await handleQuietCommand(context("2"));

@@ -24,7 +24,7 @@ import type {
 } from "../../../packages/infra/diskIO";
 import type { recordEligibleTemporaryAdBypassActivity } from
   "../../../packages/antiRaid/temporaryAdBypass";
-import type { ensureAdDetectAgentConfig } from
+import type { validateAgentDeploymentConfig } from
   "../../../packages/config/agent";
 import type {
   blocklistEntryCache,
@@ -67,7 +67,7 @@ export interface StorageChainDependencies {
   readonly readIdentityPolicies: typeof readIdentityPolicies;
   readonly recordEligibleTemporaryAdBypassActivity:
     typeof recordEligibleTemporaryAdBypassActivity;
-  readonly ensureAdDetectAgentConfig: typeof ensureAdDetectAgentConfig;
+  readonly validateAgentDeploymentConfig: typeof validateAgentDeploymentConfig;
   readonly whitelistEntryCache: Pick<typeof whitelistEntryCache, "set">;
   readonly blocklistEntryCache: Pick<typeof blocklistEntryCache, "set">;
   readonly temporaryAdBypassActivityCache:
@@ -170,7 +170,7 @@ function temporaryAdBypassWriteChain(
     operations: dependencies.chainTemporaryAdBypassWrites,
     recordsPerOperation: 1,
     prepare: async (): Promise<void> => {
-      await dependencies.ensureAdDetectAgentConfig();
+      await dependencies.validateAgentDeploymentConfig();
       dependencies.hydrateIdentityStorageCounts(0, 0);
       for (let sequence: number = 0; sequence < totalOperations; sequence += 1) {
         const id: number = dependencies.benchmarkUserId(sequence);

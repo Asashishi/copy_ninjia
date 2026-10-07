@@ -62,7 +62,7 @@ describe("LruCache", () => {
     cache.set("b", 2);
     expect(cache.has("a")).toBe(true);
     expect(cache.get("a")).toBeUndefined();
-    cache.set("c", 3); // 容量满，若 "a" 的 get 没有正确续命会被误判成最久未使用而淘汰
+    cache.set("c", 3); // 容量满：淘汰的是最久未使用的 "b"，"a" 的 get 已续命
     expect(cache.has("a")).toBe(true);
     expect(cache.has("b")).toBe(false);
   });

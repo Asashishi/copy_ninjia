@@ -19,7 +19,7 @@ export type AdCandidateDecision =
   | "accept"
   /** 不参与判定，也不必再做别的。 */
   | "ignore"
-  /** 不参与判定，但要顺手删掉这条：见 states/adDetectAdmission.ts 的说明。 */
+  /** 不参与判定，但要删掉这条：见 states/adDetectAdmission.ts 的说明。 */
   | "deleteStraggler";
 
 export interface AdRequeueInput {

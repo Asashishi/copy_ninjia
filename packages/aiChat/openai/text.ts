@@ -4,14 +4,11 @@
  * 一份 data URI 图片；语音转写直接调 audio.transcriptions 并自行归因（见
  * transcribeOpenAiVoice）。
  *
- * 两条路径都必须显式传 instructions：不给系统提示词时，部分代理网关会把
- * 自己的默认提示词灌进去，产出的文风与长度全不受本项目控制。
+ * 文本与视觉两条路径都显式传 instructions。
  *
- * 清洗与截断由调用方通过 normalize 传入——摘要、贴纸整包简介、三类媒体描述
- * 的字数上限各不相同，那是领域策略，不该下沉到供应商实现包。
+ * 清洗与截断由调用方通过 normalize 传入。
  *
- * 请求体以构造器形式交给 client.ts，让 config/dynamic/agent.json 的解析发生在它的
- * try 内（见 client.ts 的 requestOpenAiResult）。
+ * 请求体以构造器形式交给 client.ts，在它的 try 内求值（见 client.ts 的 requestOpenAiResult）。
  */
 
 import OpenAI, { toFile } from "openai";
@@ -53,7 +50,7 @@ export function generateOpenAiText(request: AiTextRequest): Promise<AiTextResult
       model: getAgentDeploymentConfig().summary.model,
       instructions: request.systemPrompt,
       input: request.userContent,
-      // 不带 temperature：摘要用低温这条策略在 GPT-5 系推理模型上不可用。
+      // 不带 temperature。
       max_output_tokens: request.purpose === "chatSummary"
         ? OPENAI_CHAT_SUMMARY_MAX_TOKENS
         : OPENAI_STICKER_PACK_SUMMARY_MAX_TOKENS,
@@ -66,8 +63,8 @@ export function generateOpenAiText(request: AiTextRequest): Promise<AiTextResult
 }
 
 /**
- * text 能力的一次结构化 JSON 生成：不挂工具，要求端点只输出 JSON 对象（`json_object`，
- * DeepSeek 等兼容端点只支持这一档；Schema 由调用方写进提示词，解码与校验也由调用方负责）。
+ * text 能力的一次结构化 JSON 生成：不挂工具，要求端点只输出 JSON 对象（`json_object`；
+ * Schema 由调用方写进提示词，解码与校验也由调用方负责）。
  */
 export function generateOpenAiJson(request: AiJsonRequest): Promise<AiTextResult> {
   return requestOpenAiTextResult({
@@ -88,9 +85,7 @@ export function generateOpenAiJson(request: AiJsonRequest): Promise<AiTextResult
 
 /**
  * 一次视觉描述。图片以 data URI 内联进请求（字节已由
- * aiChat/ai/telegramImage.ts 下载并转码成 jpg/png），描述指令走 instructions
- * ——Responses 的图片输入不接受与图片并列的系统级指令，放 instructions 才是
- * 这套 API 的惯用位置。
+ * aiChat/ai/telegramImage.ts 下载并转码成 jpg/png），描述指令走 instructions。
  */
 export function describeOpenAiVision(request: AiVisionRequest): Promise<AiTextResult> {
   return requestOpenAiTextResult({
@@ -124,8 +119,8 @@ function isVoiceRequestAborted(request: AiVoiceRequest): boolean {
 }
 
 /**
- * 用 media 能力配置尝试 OpenAI 兼容音频转写。模型是否同时支持视觉与音频不靠
- * 名字推断：第一次真实语音请求由端点回答，结果会被媒体支持度缓存记住。
+ * 用 media 能力配置尝试 OpenAI 兼容音频转写。模型是否支持音频由第一次真实语音请求
+ * 确认，结果记入媒体支持度缓存。
  */
 export async function transcribeOpenAiVoice(request: AiVoiceRequest): Promise<AiTextResult> {
   if (isVoiceRequestAborted(request)) return { ok: false, retryable: false };

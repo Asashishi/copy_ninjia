@@ -230,8 +230,7 @@ test("reply_to_trigger 请求退化为普通发送时，自录回调不伪造回
 });
 
 test("话题群：reply_to_trigger=false 的正文照样带上本轮话题，不掉进 General", async () => {
-  // reply_to_trigger=false 时不挂回复，因此没有 reply_parameters 带路，
-  // 话题落点只能靠 messageThreadId。
+  // reply_to_trigger=false 时不挂回复，没有 reply_parameters 带路，话题落点靠 messageThreadId。
   sendMessageMock.mockImplementationOnce(async (): Promise<TelegramSendResult> => ({ messageId: 101, repliedToMessageId: undefined }));
   const toolset = await createReplyToolset(replyToolContextFixture({ messageThreadId: 77 }));
 
@@ -388,7 +387,7 @@ describe("群问答工具在按次工具集里的接线", () => {
     expect(toolset.has(GROUP_QA_ANSWER_TOOL)).toBe(true);
     expect(toolset.toolStatus).toContain(groupQaToolStatus(1));
 
-    // 直接断言 ReplyToolContext.chatQa 被交给执行器，而不只依赖类型保证。
+    // 直接断言 ReplyToolContext.chatQa 被交给执行器。
     const listed: { questions: string[] } = JSON.parse(
       await executeAndSettle(toolset, GROUP_QA_QUERY_TOOL, "{}")
     );
@@ -442,8 +441,7 @@ describe("工具分派", () => {
   }
 
   test("两个贴纸工具都从分派表接到本轮共享的菜单与状态", async () => {
-    // 看包与发贴纸必须落在同一份菜单和同一份轮内状态上：分派时各建一份的话，
-    // 模型按 view 返回的编号去发，发出去的会是另一份菜单里的同号贴纸。
+    // 看包与发贴纸落在同一份菜单和同一份轮内状态上：模型按 view 返回的编号发贴纸，对应同一份菜单里的同号贴纸。
     seedStickerMenu();
     const context = replyToolContextFixture();
     const toolset = await createReplyToolset(context);

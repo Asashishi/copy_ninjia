@@ -5,7 +5,7 @@ import type { AgentCapability } from "../../types/config";
 
 /**
  * 按能力取 SDK 每次尝试的超时上限，requestAnthropicMessage 同时以它作整次调用的 deadline；与
- * OpenAI、Gemini 侧同口径。显式给出超时也让 SDK 不再按 max_tokens 拦截非流式请求。media（视觉
+ * OpenAI、Gemini 侧同口径。显式给出超时使 SDK 不按 max_tokens 拦截非流式请求。media（视觉
  * 描述）宽于纯文本往返；web_search 由交互式检索与 cron 摘要共用；image 与 tts 不会选 anthropic。
  * 所属模块：aiChat/anthropic/client.ts。
  */
@@ -40,8 +40,8 @@ export const ANTHROPIC_WEB_SEARCH_MAX_TOKENS: number = 8_192;
 export const ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS: number = 3;
 
 /**
- * Messages API 内建联网检索工具的类型名。`allowed_callers: ["direct"]` 让它只由模型直接调用：
- * Haiku 4.5 等不支持程序化工具调用的模型不加这一项会被整个请求 400。
+ * Messages API 内建联网检索工具的类型名。`allowed_callers: ["direct"]` 让它只由模型直接调用，
+ * 不依赖程序化工具调用。
  */
 export const ANTHROPIC_WEB_SEARCH_TOOL_TYPE: Anthropic.WebSearchTool20260209["type"] = "web_search_20260209";
 /** 内建联网检索工具在请求里的固定名字。 */

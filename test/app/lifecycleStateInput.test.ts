@@ -25,10 +25,9 @@ installLifecycleFixtureHooks();
 /**
  * 启动总闸对 memory/global/state.json 的真实字节判定。
  *
- * 只有 `loadState` 接到真实临时 `StateStore.load()`，其余出站依旧是 fixture 的
- * mock：这条链路要验证的是「磁盘上确有一份非法状态文件时进程拒绝启动」，不是
- * Telegram 或 Worker 行为。写盘同样注入 mock，用来断言被拒绝的启动一个字节都
- * 没有回写。
+ * 只有 `loadState` 接到真实临时 `StateStore.load()`，其余出站仍是 fixture 的 mock；
+ * 这条链路验证「磁盘上确有一份非法状态文件时进程拒绝启动」。写盘同样注入 mock，
+ * 用来断言被拒绝的启动没有回写。
  */
 describe("启动总闸的全局状态输入判定", () => {
   const legal: string = '{"copy":{"copiedUser":{"id":1,"first_name":"X"},"copyChatId":-1}}';

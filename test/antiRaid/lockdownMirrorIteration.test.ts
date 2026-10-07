@@ -90,7 +90,7 @@ describe("主线程紧急恢复遍历真实群状态 LRU", () => {
     });
 
     recoverAbandonedLockdowns();
-    // 第二次调用发生在三条恢复都还挂着的时候：每群已在册且指纹未变，必须直接返回。
+    // 第二次调用发生在各条恢复都还挂着的时候：每群已在册且指纹未变，直接返回。
     recoverAbandonedLockdowns();
 
     expect(restoreLockdownInvitePermission).toHaveBeenCalledTimes(chatIds.length);

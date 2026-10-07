@@ -87,22 +87,19 @@ interface MediaRecordOptions {
   replyTelegramBackpressured: boolean;
 }
 
-/** 一条要发起回复轮的图片记录；背压快照即主线程投递时刻写入的那个值。 */
+/** 一条要发起回复轮的图片记录；replyTelegramBackpressured 是主线程投递时刻写入的背压快照。 */
 function mediaRecord(id: number, options: MediaRecordOptions): AiRecordMediaMessage {
   return {
     type: "recordMedia", messageThreadId: undefined, kind: "photo", chatId: -1001,
     senderId: 7, firstName: "Alice", lastName: "", username: undefined,
     caption: "", fileId: `file-${id}`, fileUniqueId: `unique-${id}`, width: 100, height: 100,
     messageId: id, replyTelegramBackpressured: options.replyTelegramBackpressured, stickerFallbackText: undefined,
-    voiceMime: undefined, voiceDurationSeconds: 0, directTriggerReason: options.directTriggerReason,
+    voiceMime: undefined, directTriggerReason: options.directTriggerReason,
     replyTo: undefined, forwardedFrom: undefined, persistImmediately: false,
   };
 }
 
-/**
- * 条件在预算内未成立就当场失败，而不是静默继续：本文件后面的 settleTasks 会
- * `await` 回复任务结算，条件没成立时那些任务永远不会结算，静默继续等于挂死。
- */
+/** 条件在 pollUntil 预算内未成立时当场使测试失败。 */
 async function waitUntil(predicate: () => boolean): Promise<void> {
   expect(await pollUntil(predicate)).toBe(true);
 }
@@ -269,7 +266,7 @@ test("直接轮边生成边发送；有序并行轮等直接轮发完，模型�
 test("直接轮发送挂起时模型阶段照常结束并交还独立并发位，待处理请求逐个补跑，有序并行轮的完整链不占模型位", async () => {
   const pending = Promise.withResolvers<TelegramSendResult>();
   sendMessage.mockImplementationOnce((params) => { sent.push(params.text); return pending.promise; });
-  // 直接轮独立占 1 个模型位，有序并行轮另有满额。
+  // 直接轮另占一个模型位，有序并行轮占满 REPLY_ROUND_MAX_CONCURRENT。
   const running: number = REPLY_ROUND_MAX_CONCURRENT + 1;
   const total: number = running + REPLY_TRIGGER_QUEUE_MAX;
   for (let i: number = 1; i <= total; i++) trigger(i);
@@ -280,7 +277,7 @@ test("直接轮发送挂起时模型阶段照常结束并交还独立并发位�
     expect(activeReplyCounts.get(-1001)).toBe(running);
     expect(pendingReplyTriggers.get(-1001)?.size).toBe(REPLY_TRIGGER_QUEUE_MAX);
     expect(pendingReplyTriggers.get(-1001)?.peek()?.replyToMessageId).toBe(running + 1);
-    // 直接轮的兜底正文接纳后由串行链发出并挂住：模型阶段已结束、交还自己的那 1 位，有序并行轮
+    // 直接轮的兜底正文接纳后由串行链发出并挂住：模型阶段已结束并交还自己的模型位，有序并行轮
     // 仍占满上限，队列不动。
     models.get(1)!.resolve("回复1");
     await waitUntil(() => sent.length === 1 && activeReplyCounts.get(-1001) === REPLY_ROUND_MAX_CONCURRENT);
@@ -324,7 +321,7 @@ test("媒体入站先占位；后到文字已生成也等待媒体识别与回�
     senderId: 7, firstName: "Alice", lastName: "", username: undefined,
     caption: "@bot 看图", fileId: "file", fileUniqueId: "unique", width: 100, height: 100,
     messageId: 1, replyTelegramBackpressured: false, stickerFallbackText: undefined,
-    voiceMime: undefined, voiceDurationSeconds: 0, directTriggerReason: "mention",
+    voiceMime: undefined, directTriggerReason: "mention",
     replyTo: undefined, forwardedFrom: undefined, persistImmediately: false,
   };
   recordChatMedia(msg);

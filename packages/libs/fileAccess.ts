@@ -14,8 +14,8 @@ function optionalEntry(path: string): Stats | undefined {
 
 /**
  * 只读检查可选领域目录；缺省返回 false，存在时要求可读写、可进入的目录。
- * 允许指向有效目录的链接；缺省分支继续核对父目录，祖先断链不能冒充缺省。
- * 同步契约供追加游标接管复用，Node lstat 保留链接本身的拓扑语义。
+ * 允许指向有效目录的链接；缺省分支继续核对父目录，祖先不可访问时按输入错误拒绝。
+ * 同步实现，供追加游标接管复用，用 `node:fs` 的 lstat 检查，不跟随链接。
  */
 export function inspectOptionalDirectory(path: string): boolean {
   const entry: Stats | undefined = optionalEntry(path);

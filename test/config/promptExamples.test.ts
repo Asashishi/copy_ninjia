@@ -1,9 +1,9 @@
 /**
- * `prompt_example/` 下的提示词示例必须能被启动总闸的同一读取器接受，并写全 send_voice 的执行约定。
+ * `prompt_example/` 下的提示词示例能被启动总闸的同一读取器接受，并写全 send_voice 的执行约定。
  *
  * 部署方把示例复制成 `prompt/persona.md`、`prompt/voice_tool.md` 后，启动总闸按
  * `loadPromptFile` 严格读取；voice_tool.md 整份替换内置 send_voice 说明，额度指引、每轮条数与
- * text / tone 长度上限只能由文件自己写明，因此这里把这些取值与代码常量对拍。示例台词语言跟随
+ * text / tone 长度上限由文件自己写明，这里把这些取值与代码常量对拍。示例台词语言跟随
  * `config_example/dynamic/agent.json` 的 `agent.tts.bot_language`。
  */
 

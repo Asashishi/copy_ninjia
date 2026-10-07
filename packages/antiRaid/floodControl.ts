@@ -5,8 +5,7 @@
  * workers/antiRaid/floodControl.ts。这里只把一条群消息收敛成无状态的投递；
  * 按群开关、聊天类型、可禁言成员身份与白名单豁免均在创建候选对象前完成。
  *
- * 投递走普通 post 而非 durable 边界，与广告检测同理：窗口随 isolate 生死，
- * 为每条群消息加一道跨线程屏障换不来任何恢复能力。
+ * 投递走普通 post，不经 durable 边界（与广告检测相同）：计数窗口随 Worker isolate 生灭。
  */
 
 import { visibleSenderChat } from "../users/visibleSender";
@@ -15,7 +14,7 @@ import type { FloodCandidateMessage } from "../types/antiRaid/protocol";
 import type { ChatState } from "../types/chatState";
 import type { Message, User } from "grammy/types";
 
-/** buildFloodCandidate 的入参；四项越过位置参数上限，故收成 options。 */
+/** buildFloodCandidate 的入参。 */
 export interface BuildFloodCandidateParams {
   readonly message: Message;
   /** 本机器人的用户 id；自己发的消息不计数。 */
@@ -36,16 +35,12 @@ export function buildFloodCandidate({
   now,
   chatState,
 }: BuildFloodCandidateParams): FloodCandidateMessage | undefined {
-  // 只在超级群计数：`restrictChatMember` 按 Bot API 的定义只对超级群有效，
-  // 普通群里连计数都是白占内存——攒满一整个窗口只换来一次注定失败的请求和
-  // 一行把运维引向权限配置的报错。普通群升级成超级群之后消息自带新的
-  // chat.type，这道门禁随之自愈。
+  // 只在超级群计数：`restrictChatMember` 只对超级群有效。
   if (message.chat.type !== "supergroup") return undefined;
   // 缺省关闭；在任何身份解析、白名单查询和候选对象创建之前直接返回。
   if (chatState.isFloodControlEnabled !== true) return undefined;
-  // 频道马甲与匿名管理员没有可禁言的成员身份：restrictChatMember 只认真实用户，
-  // 拿频道/群 id 去调只会换一句报错，而皮套底下是谁 Telegram 并不暴露——与
-  // `/block` 拒绝把当前群身份当成员目标是同一约束。
+  // 频道马甲与匿名管理员没有可禁言的成员身份（restrictChatMember 只认真实用户），
+  // 与 `/block` 拒绝把当前群身份当成员目标是同一约束。
   if (visibleSenderChat(message) !== undefined) return undefined;
 
   const sender: User | undefined = message.from;
@@ -57,7 +52,6 @@ export function buildFloodCandidate({
     chatId: message.chat.id,
     userId: sender.id,
     observedAt: now,
-    // 每条计入窗口的群消息都走这里，而只有越过阈值的那一条才会用到展示名：
     // 昵称清洗推迟到 Worker 真的禁言时（见 workers/antiRaid/floodControl.ts）。
     name: sender.username ? `@${sender.username}` : sender.first_name,
   };

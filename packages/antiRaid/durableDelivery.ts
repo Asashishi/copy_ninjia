@@ -57,19 +57,16 @@ export async function drainAntiRaid(
   const quiesceResult: FlushResult =
     await drainAntiRaidWorkerTasks(remainingMonotonicTime(deadline));
   if (quiesceResult !== "flushed") {
-    // 回执拿不到（Worker 已放弃或正在重生）时，主线程侧仍可能有处置卡在
-    // confirmBlocklistPersisted 上——那正是「拉黑已入队、还没落盘」的窗口，
-    // 直接 return 会连同待写的黑名单一起丢掉。因此用剩余预算再排空一次；
-    // 没有回执就没有稳定边界，这一轮只覆盖此刻在途的那批，属尽力而为，
-    // 结果不改写返回值：失败原因仍是 quiesce 本身。
+    // 回执拿不到（Worker 已放弃或正在重生）时，用剩余预算再排空一次主线程在途处置；
+    // 没有回执就没有稳定边界，这一轮只覆盖此刻在途的那批，结果不改写返回值，
+    // 返回的仍是 quiesce 本身的结果。
     await drainAdDisposals(remainingMonotonicTime(deadline));
     return quiesceResult;
   }
   for (let round: number = 0; round < ANTI_RAID_DRAIN_MAX_ROUNDS; round++) {
     // 广告判定命中后的主线程处置（拉黑落盘 + 登记封禁批次）收进本轮对账：
-    // 它自己会再投一次 removeBlockedMembers，落在下面的 barrier 与 flush 之前。
-    // 与本轮其余每一步一样吃同一份剩余预算——裸等的话，预算为 0 的异常退出
-    // 路径会被它一路拖到强制退出线（见 adDetect.ts 的 drainAdDisposals）。
+    // 它会再投一次 removeBlockedMembers，落在下面的 barrier 与 flush 之前；
+    // 与本轮其余每一步共用同一份剩余预算（见 adDetect.ts 的 drainAdDisposals）。
     const disposalResult: FlushResult =
       await drainAdDisposals(remainingMonotonicTime(deadline));
     if (disposalResult !== "flushed") return disposalResult;
@@ -77,11 +74,9 @@ export async function drainAntiRaid(
       await barrierAntiRaidMailbox(remainingMonotonicTime(deadline));
     if (initialBarrier !== "flushed") return initialBarrier;
 
-    // 预算先取一次再进两个 flush：两者都把非正预算当成致命参数错误，
-    // flushDiskIO 是 async（拒绝的 promise）而 flushStateToDisk 是同步 throw，
-    // 写在同一个数组字面量里时后者会在前者已经产生拒绝之后中断整个表达式，
-    // 那条拒绝就再也交不到 allSettled 手上（unhandledRejection -> lifecycle.ts
-    // 的强制 exit(1)）。零预算在本函数其余每一步都是 timedOut，这里同口径。
+    // 预算先取一次再进两个 flush：两者都把非正预算当成参数错误
+    // （flushDiskIO 是 async 拒绝，flushStateToDisk 是同步 throw）；
+    // 零预算与本函数其余各步同口径，返回 timedOut。
     const persistenceBudget: number = remainingMonotonicTime(deadline);
     if (persistenceBudget === 0) return "timedOut";
     const persistenceResults: [
@@ -145,9 +140,9 @@ interface ChangedAntiRaidMirrors {
 
 /**
  * Anti-Raid 镜像的领域落盘屏障：待验证镜像在 `verification` 领域，锁定记录随群状态
- * 在共享 SQLite 的 `chatState` 领域。只刷发生变化的那一格：`chatState` 屏障会提交
- * 整个共享 SQLite 事务，验证镜像变化不需要它；其它领域的攒批窗口不受影响，停机排空
- * 仍走统一 flush（见 drainAntiRaid）。未变化的领域按已刷新结算。
+ * 在共享 SQLite 的 `chatState` 领域。只刷发生变化的那一格（`chatState` 屏障会提交
+ * 整个共享 SQLite 事务）；停机排空仍走统一 flush（见 drainAntiRaid）。
+ * 未变化的领域按已刷新结算。
  */
 function flushAntiRaidMirrors(
   changed: ChangedAntiRaidMirrors,
@@ -163,8 +158,8 @@ function flushAntiRaidMirrors(
  * update 安全交接：处理 mailbox 后，仅为变化过的 Anti-Raid 镜像经对应领域屏障落盘。
  * @returns 真正投给 Worker 的消息条数。durable 对账可能把整批
  *   removeBlockedMembers 扣下（见 prepareDurableAntiRaidMessages），此时本函数
- *   正常 resolve 但一条都没投出去——调用方若把「没抛错」当成「已投递」就会
- *   永久卡住自己的 claim，见 types/blocklist.ts 的 BlockedMemberRemover。
+ *   正常 resolve，返回值小于 messages.length（可为 0），见 types/blocklist.ts 的
+ *   BlockedMemberRemover。
  */
 export async function postAntiRaidDurably(
   messages: readonly AntiRaidWorkerMessage[],
@@ -184,9 +179,9 @@ export async function postAntiRaidDurably(
   const verificationVersionBefore: number = antiRaidRuntimeState.verificationVersion;
   const lockdownVersionBefore: number = antiRaidRuntimeState.lockdownVersion;
   for (const message of messagesToPost) {
-    // 只有这一条路径代表「Worker 压根没收到」。下面的屏障失败与落盘失败都
-    // 意味着它已经收下并在后台执行；两者仍要保留 durable 镜像，但错误类型
-    // 必须可区分，供调用方判断本次是否可能已启动副作用（见 workerDelivery.ts）。
+    // 只有这一条路径抛 WorkerUndeliveredError（Worker 没收到）；下面的屏障失败与
+    // 落盘失败表示 Worker 已收下并在后台执行，抛普通 Error，供调用方区分
+    // 本次是否可能已启动副作用（见 libs/workerDelivery.ts）。
     if (!postAntiRaid(message)) {
       throw new WorkerUndeliveredError("Anti-Raid Worker is unavailable.");
     }

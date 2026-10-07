@@ -19,24 +19,22 @@ export const adSampleBuffer: { chunks: string[]; timer: ReturnType<typeof setTim
 };
 
 /**
- * 样本文件的追加游标。null 表示还没打开过、或上一次追加失败已作废——
- * 下一次写入前会重新探测文件形态。Worker 重建后从 null 起步，重新打开即可，
- * 没有任何需要从磁盘读回内存的状态。
+ * 样本文件的追加游标。null 表示尚未打开，或上一次追加失败后作废；
+ * 下一次写入前重新探测文件形态。Worker 重建后从 null 起步。
  */
 export const adSampleFileState: { current: AppendOnlyFileState | null } = { current: null };
 
 /**
  * 本进程是否已经清扫过 memory/ad-detected/ 里的孤儿 .tmp。
  *
- * 启动成功后的维护或第一次写入会清扫，用这面旗保证一个 isolate 只做一次
- * readdir。Worker 重建后回到 false，重新扫一次，覆盖上一个 isolate 崩溃留下的残片。
+ * 启动成功后的维护或第一次写入会清扫，一个 isolate 只做一次 readdir。
+ * Worker 重建后回到 false，重新扫一次。
  */
 export const adSampleTempsSwept: { current: boolean } = { current: false };
 
 /**
- * 最近完成或尝试过归档保留期清扫的配置时区的日期。只有日期严格前进时才再扫，避免
- * 每条样本触发 readdir，也避免系统时钟回拨后同一自然日重复扫描。Worker 重建后
- * 回到 null，可安全重扫一次；清扫失败也记录日期，失败本身不能拖累旁路追加。
+ * 最近完成或尝试过归档保留期清扫的配置时区的日期。只有日期严格前进时才再扫；
+ * Worker 重建后回到 null，重扫一次；清扫失败也记录日期，不影响旁路追加。
  */
 export const adSampleArchiveSweepDay: { current: string | null } = { current: null };
 
@@ -56,7 +54,7 @@ export interface AdSampleArchiveCursor {
  * - 清理/重建：Worker 重建后为 null，由首次样本触发的目录扫描重建；日期变化
  *   时用新日扫描结果整体替换。
  * - 容量：一个日期和一个安全整数，无增长。
- * - 碰撞策略：使用前仍以 existsSync 向前复核，因此外部新增归档不会被覆盖。
+ * - 碰撞策略：使用前仍以 existsSync 向前复核，不覆盖已有归档。
  */
 export const adSampleArchiveCursor: {
   current: AdSampleArchiveCursor | null;

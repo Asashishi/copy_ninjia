@@ -35,13 +35,13 @@ describe("LinkedQueue", () => {
     expect(queue.size).toBe(0);
     expect(queue.peek()).toBeUndefined();
     expect(queue.shift()).toBeUndefined();
-    expect(queue.last(1)).toEqual([]);
+    expect([...queue.values()]).toEqual([]);
 
-    // tail 未一并清掉的话，这次 push 会挂到旧节点后面，size 与出队顺序都会错。
+    // tail 一并清掉，这次 push 不挂到旧节点后面。
     queue.push(9);
     expect(queue.size).toBe(1);
     expect(queue.peek()).toBe(9);
-    expect(queue.last(3)).toEqual([9]);
+    expect([...queue.values()]).toEqual([9]);
   });
 
   test("空队列 clear 是幂等的", () => {
@@ -53,20 +53,13 @@ describe("LinkedQueue", () => {
     expect(queue.shift()).toBe(1);
   });
 
-  test("last(n) 取队尾最近 n 个，保持入队顺序；n 超出长度时返回全部", () => {
-    const q = new LinkedQueue<number>();
-    [1, 2, 3, 4, 5].forEach((v) => q.push(v));
-    expect(q.last(2)).toEqual([4, 5]);
-    expect(q.last(10)).toEqual([1, 2, 3, 4, 5]);
-  });
-
   describe("removeValue", () => {
     test("移除队首节点，队列继续正常出队", () => {
       const q = new LinkedQueue<number>();
       [1, 2, 3].forEach((v) => q.push(v));
       expect(q.removeValue(1)).toBe(true);
       expect(q.size).toBe(2);
-      expect(q.last(2)).toEqual([2, 3]);
+      expect([...q.values()]).toEqual([2, 3]);
       expect(q.shift()).toBe(2);
     });
 
@@ -76,14 +69,14 @@ describe("LinkedQueue", () => {
       expect(q.removeValue(3)).toBe(true);
       expect(q.size).toBe(2);
       q.push(4);
-      expect(q.last(3)).toEqual([1, 2, 4]);
+      expect([...q.values()]).toEqual([1, 2, 4]);
     });
 
     test("移除中间节点，不影响其余元素的相对顺序", () => {
       const q = new LinkedQueue<number>();
       [1, 2, 3, 4].forEach((v) => q.push(v));
       expect(q.removeValue(2)).toBe(true);
-      expect(q.last(3)).toEqual([1, 3, 4]);
+      expect([...q.values()]).toEqual([1, 3, 4]);
     });
 
     test("值不存在时返回 false，不改动队列", () => {
@@ -91,7 +84,7 @@ describe("LinkedQueue", () => {
       [1, 2, 3].forEach((v) => q.push(v));
       expect(q.removeValue(999)).toBe(false);
       expect(q.size).toBe(3);
-      expect(q.last(3)).toEqual([1, 2, 3]);
+      expect([...q.values()]).toEqual([1, 2, 3]);
     });
 
     test("空队列移除任何值都返回 false", () => {
@@ -125,7 +118,7 @@ describe("LinkedQueue", () => {
 
       expect(queue.removeWhere((value: number): boolean => value % 2 === 0)).toBe(3);
       expect(queue.size).toBe(3);
-      expect(queue.last(3)).toEqual([1, 3, 5]);
+      expect([...queue.values()]).toEqual([1, 3, 5]);
       expect(queue.shift()).toBe(1);
       expect(queue.shift()).toBe(3);
       expect(queue.shift()).toBe(5);
@@ -135,13 +128,13 @@ describe("LinkedQueue", () => {
       const queue = new LinkedQueue<number>();
       [1, 2].forEach((value: number): void => queue.push(value));
       expect(queue.removeWhere((): boolean => false)).toBe(0);
-      expect(queue.last(2)).toEqual([1, 2]);
+      expect([...queue.values()]).toEqual([1, 2]);
 
       expect(queue.removeWhere((): boolean => true)).toBe(2);
       expect(queue.size).toBe(0);
       queue.push(9);
       expect(queue.peek()).toBe(9);
-      expect(queue.last(1)).toEqual([9]);
+      expect([...queue.values()]).toEqual([9]);
     });
   });
 });

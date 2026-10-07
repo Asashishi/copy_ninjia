@@ -1,24 +1,27 @@
 import { inspectOptionalFile, inspectOptionalDirectory } from "../../libs/fileAccess";
 /** Owner: Disk I/O Worker。负责待验证日文件的恢复、跨日合并与 compact。 */
 
-import { mkdirSync, readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, renameSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { DAY_FILE_JSON_INDENT, DAY_FILE_PATTERN } from "../../consts/diskIO/appendOnly";
 import { PERSISTED_FILE_MODE } from "../../consts/diskIO/common";
 import {
+  VERIFICATION_CORRUPT_DAY_FILE_SUFFIX,
   VERIFICATION_FILE_COMPACT_BYTES,
   VERIFICATION_FILE_COMPACT_ENTRIES,
+  VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS,
   VERIFICATION_TOP_LEVEL_ENTRY_PATTERN,
 } from "../../consts/diskIO/verification";
 import { VERIFICATION_MEMORY_DIR } from "../../consts/paths";
 import {
   resetVerificationPersistenceCache,
   verificationFileState,
+  verificationPriorDayDecodeFailures,
   verificationWorkerCache,
 } from "../../cache/workers/diskIO/verification";
 import { atomicWriteTextSync } from "../../libs/atomicFile";
-import { invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
+import { InputValidationError, invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
 import { getDateKey, isCanonicalDateKey } from "../../libs/time";
 import type { VerificationSnapshot } from
   "../../types/antiRaid/verification";
@@ -99,43 +102,37 @@ function assertRecoveredVerificationCapacity(
 
 /**
  * 只删除本目录中明确匹配日期命名、且**严格早于** day 的 JSON，不碰临时文件
- * 或其它资产。从最旧删到最新：若中途失败，最新旧日仍是下次恢复的权威基线。
+ * 或其它资产。从最旧删到最新，中途失败时最新旧日仍是下次恢复的权威基线。
  *
- * 晚于 day 的日文件一律保留：恢复目录计划明确拒绝把它们并进本次恢复，删掉就
- * 等于把一整天的待验证记录未读丢弃——宿主时钟快于真实时间（VM 恢复、NTP
- * 同步前启动）时写出的那份就是这种文件。
- * 留着它不会常驻：时钟走到那天时，它自己就是当天文件并被正常恢复。
+ * 晚于 day 的日文件一律保留，不并进本次恢复；时钟走到那天时它就是当天文件并被正常恢复。
  */
 export async function removeOldVerificationDays(
   day: string,
   dir: string = VERIFICATION_MEMORY_DIR
 ): Promise<void> {
-  await removeOldVerificationDaysFromEntries(
-    day,
-    dir,
-    readdirSync(dir, { withFileTypes: true })
-  );
+  await applyVerificationDirectoryRecoveryPlan(day, dir, scanVerificationDayFiles(day, dir));
 }
 
-/** rollover 独立扫描时只规划严格日期文件；未知资产被忽略。 */
-async function removeOldVerificationDaysFromEntries(
-  day: string,
-  dir: string,
-  entries: readonly Dirent<string>[]
-): Promise<void> {
-  const oldDays: string[] = [];
-  let futureDays: number = 0;
-  for (const entry of entries) {
+/**
+ * rollover 与 compact 的独立扫描：只认日期命名的普通文件，未知资产忽略；按 day 分出更早的旧日、
+ * 其中最新的一份与晚于 day 的文件数。
+ */
+function scanVerificationDayFiles(day: string, dir: string): VerificationDirectoryRecoveryPlan {
+  let latestPriorDay: string | undefined;
+  const oldDayNames: string[] = [];
+  let futureDayCount: number = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (!entry.isFile()) continue;
     const candidate: string | undefined = DAY_FILE_PATTERN.exec(entry.name)?.[1];
     if (candidate === undefined || candidate === day) continue;
     if (candidate > day) {
-      futureDays++;
+      futureDayCount++;
       continue;
     }
-    oldDays.push(entry.name);
+    oldDayNames.push(entry.name);
+    if (latestPriorDay === undefined || candidate > latestPriorDay) latestPriorDay = candidate;
   }
-  await applyVerificationDirectoryRecoveryPlan(day, dir, { oldDayNames: oldDays, futureDayCount: futureDays });
+  return { latestPriorDay, oldDayNames, futureDayCount };
 }
 
 /**
@@ -158,19 +155,79 @@ async function applyVerificationDirectoryRecoveryPlan(
   for (const name of oldDayNames) await Bun.file(join(dir, name)).delete();
 }
 
-/** 把当前 active 镜像原子写成指定日期的规范对象；维护路径才整份重写。 */
-export function compactVerificationDay(
+/**
+ * 严格读取并解码一份旧日文件。内容不是合法 UTF-8 或不是当前格式时计一次连续解码失败并上抛；
+ * 同一文件第 VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS 次失败时改名为
+ * `<日期>.json` + VERIFICATION_CORRUPT_DAY_FILE_SUFFIX、写一行诊断并返回 null。读盘失败等其它
+ * 错误原样上抛，不计数。
+ */
+async function decodePriorDayOrQuarantine(priorPath: string): Promise<Map<string, VerificationDayValue> | null> {
+  let values: Map<string, VerificationDayValue>;
+  try {
+    values = decodeVerificationDay(priorPath, await readUtf8TextInput(priorPath));
+  } catch (error: unknown) {
+    // 严格 UTF-8 解码失败抛 TypeError，格式不符抛 InputValidationError。
+    if (!(error instanceof InputValidationError) && !(error instanceof TypeError)) throw error;
+    const failures: { path: string | null; count: number } = verificationPriorDayDecodeFailures;
+    failures.count = failures.path === priorPath ? failures.count + 1 : 1;
+    failures.path = priorPath;
+    if (failures.count < VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS) throw error;
+    failures.path = null;
+    failures.count = 0;
+    const corruptPath: string = `${priorPath}${VERIFICATION_CORRUPT_DAY_FILE_SUFFIX}`;
+    renameSync(priorPath, corruptPath);
+    console.error(
+      `[diskIOWorker] verification day file ${priorPath} failed to decode ` +
+      `${VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS} times in a row; renamed it to ${corruptPath} ` +
+      "and the new day continues from the in-memory verification mirror:",
+      error
+    );
+    return null;
+  }
+  verificationPriorDayDecodeFailures.path = null;
+  verificationPriorDayDecodeFailures.count = 0;
+  return values;
+}
+
+/**
+ * 目录里严格早于 day 的最新日文件中仍为 active、而当前镜像已没有的 key。启动恢复把 day 文件当
+ * 增量叠在最新旧日之上（见 inspectVerificationDay），旧日文件还没删掉时，compact 产物必须为这些
+ * key 写 null tombstone，已删除的记录才不会从旧日复活。最新旧日被 decodePriorDayOrQuarantine
+ * 改名为损坏文件后接着看剩下的旧日；没有旧日文件时返回空数组。
+ */
+async function priorDayTombstoneKeys(day: string, dir: string): Promise<string[]> {
+  for (;;) {
+    const latestPriorDay: string | undefined = scanVerificationDayFiles(day, dir).latestPriorDay;
+    if (latestPriorDay === undefined) return [];
+    const values: Map<string, VerificationDayValue> | null =
+      await decodePriorDayOrQuarantine(join(dir, `${latestPriorDay}.json`));
+    if (values === null) continue;
+    const keys: string[] = [];
+    for (const [key, value] of values) {
+      if (value !== null && !verificationWorkerCache.has(key)) keys.push(key);
+    }
+    return keys;
+  }
+}
+
+/**
+ * 把当前 active 镜像原子写成指定日期的规范对象；维护路径才整份重写。目录里还留着更早的
+ * 日文件时，为其中仍 active、镜像里已删除的 key 追加 null tombstone（见 priorDayTombstoneKeys）。
+ */
+export async function compactVerificationDay(
   day: string,
   dir: string = VERIFICATION_MEMORY_DIR
-): void {
+): Promise<void> {
   mkdirSync(dir, { recursive: true });
   const compacted: Record<string, unknown> = {};
   for (const [key, snapshot] of verificationWorkerCache) {
     compacted[key] = storedVerificationSnapshot(snapshot);
   }
+  const tombstoneKeys: string[] = await priorDayTombstoneKeys(day, dir);
+  for (const key of tombstoneKeys) compacted[key] = null;
   const content: string = JSON.stringify(compacted, null, DAY_FILE_JSON_INDENT);
   atomicWriteTextSync(join(dir, `${day}.json`), content, PERSISTED_FILE_MODE);
-  const empty: boolean = verificationWorkerCache.size === 0;
+  const empty: boolean = verificationWorkerCache.size === 0 && tombstoneKeys.length === 0;
   verificationFileState.current = {
     day,
     size: empty ? 0 : Buffer.byteLength(content),
@@ -284,7 +341,7 @@ export async function maintainVerificationDay(
   try {
     mkdirSync(inspection.dir, { recursive: true });
     if (inspection.shouldCompact) {
-      compactVerificationDay(inspection.day, inspection.dir);
+      await compactVerificationDay(inspection.day, inspection.dir);
     }
     await applyVerificationDirectoryRecoveryPlan(
       inspection.day,
@@ -292,8 +349,8 @@ export async function maintainVerificationDay(
       inspection.directoryPlan
     );
   } catch (error: unknown) {
-    // 原子 rename 成功、目录 fsync 失败时调用方会收到异常，但目标文件可能已经
-    // 发布；丢掉旧游标，下一次写先按磁盘现状重新 compact，不能沿错误 offset 追加。
+    // 原子 rename 成功、目录 fsync 失败时目标文件可能已经发布；丢掉旧游标，
+    // 下一次写先按磁盘现状重新 compact。
     verificationFileState.current = null;
     verificationFileState.appendedEntries = 0;
     verificationFileState.appendedBytes = 0;

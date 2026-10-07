@@ -1,7 +1,7 @@
 /**
  * 落盘事务（database/interact/transaction.ts）在真实 SQLite 上的作用域：
- * 六张业务表的删除都必须只命中被点名的那一行，问答删除还要区分同一群里的
- * 其余问题。纯内存断言看不出 WHERE 写错，这里一律读回真实行验证。
+ * 各业务表的删除只命中被点名的那一行，问答删除还区分同一群里的其余问题；
+ * 一律读回真实行验证。
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_WHITELIST_PERMISSIONS } from "../../packages/consts/whitelist";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import { IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES } from "../../packages/consts/identityStorage";
 import { encodeChatQaData } from "../../packages/database/codec/chatQa";
 import { encodeChatStateData } from "../../packages/database/codec/chatState";

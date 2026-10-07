@@ -90,7 +90,7 @@ describe("encodeVoiceMessage", () => {
       const bytes: Uint8Array = sineWav(sampleRate, VOICE_OPUS_ENCODE_CHUNK_SECONDS * 3.3);
       const pcm = decodeWavPcm(bytes);
       if (!pcm.ok) throw new Error(pcm.reason);
-      // 整段一次交给依赖、按原始采样率由它自己重采样，是分块之前的编码方式。
+      // 整段一次交给依赖、按原始采样率由它自己重采样，作为对照。
       const realOpus: typeof opus = (await import("@audio/encode-opus")).default;
       const encoder = await realOpus({
         sampleRate,

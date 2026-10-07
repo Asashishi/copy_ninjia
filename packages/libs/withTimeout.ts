@@ -19,7 +19,7 @@ export function withTimeout<T>(task: Promise<T>, timeoutMs: number, operation: s
         (): void => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
         timeoutMs
       );
-      // 超时 timer 不应把进程留在事件循环里：竞速的另一侧才是真正的工作。
+      // 超时 timer 不阻止进程退出。
       timer.unref();
     }),
   ]).finally((): void => {

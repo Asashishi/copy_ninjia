@@ -24,7 +24,6 @@
  *
  * 每条语音发送前都按语音时长模拟「正在录音」，与之前等合成亮过多久无关；随后切 idle、等状态
  * 收敛后发送，落地后按同一消息登记语音自录记号。
- * 工具声明、参数口径、单轮限额与挂回复只属于本工具。
  */
 
 import type { AiMeteredSpeechRequest, AiToolDefinition } from "../../../../types/aiChat/provider";

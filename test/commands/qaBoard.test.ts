@@ -83,8 +83,7 @@ describe("看板装页", () => {
   });
 
   test("超过每页条数就分页，短问答也照样分", () => {
-    // 这正是按条数装页要保住的行为：预算装页会让 5 条短问答全挤进一页，
-    // buildQaBoardKeyboard 在只有一页时返回 undefined，翻页条整个不出现。
+    // 按条数装页：短问答也按每页条数分页，buildQaBoardKeyboard 在只有一页时返回 undefined，翻页条不出现。
     const entries = Array.from({ length: 5 }, (_unused: unknown, index: number) => ({
       q: `问题${index}`,
       a: `答案${index}`,
@@ -115,8 +114,7 @@ describe("看板装页", () => {
   });
 
   test("满页三条在两项都取上限时仍在 Telegram 单条上限之内", () => {
-    // 问题受 CHAT_QA_QUESTION_MAX_CHARS 约束、答案被看板预览上限压过，
-    // 因此按条数装页不需要再叠一道长度闸。
+    // 问题受 CHAT_QA_QUESTION_MAX_CHARS 约束、答案被看板预览上限压过，按条数装页不再叠加长度闸。
     const entries = Array.from({ length: QA_QUERY_PAGE_MAX_ENTRIES }, () => ({
       q: "问".repeat(CHAT_QA_QUESTION_MAX_CHARS),
       a: "答".repeat(CHAT_QA_ANSWER_MAX_CHARS),
@@ -154,7 +152,7 @@ describe("看板装页", () => {
     const pages = buildQaBoardPages([{ q: question, a: answer }], ATMOSPHERE_TEXTS.teasing);
     const parsed = parsePage(pages[0]!.text, pages[0]!.entities[0]!) as { q: string; a: string }[];
 
-    // 问题是 /qa remove 的入参，截断过的照抄回去什么也删不掉。
+    // 问题是 /qa remove 的入参，看板里的问题一字不改。
     expect(parsed[0]!.q).toBe(question);
     expect(parsed[0]!.a).toHaveLength(QA_QUERY_ANSWER_PREVIEW_MAX_CHARS);
     expect(parsed[0]!.a.endsWith(QA_TRUNCATION_MARK)).toBeTrue();
@@ -267,7 +265,7 @@ describe("翻页回调", () => {
     expect(call.keyboard).toBeUndefined();
   });
 
-  // 后六种是裸 `Number()` 会放行、而本 bot 从不生成的非规范写法。
+  // 后面几种是裸 `Number()` 会放行、而本 bot 从不生成的非规范写法。
   test.each(["abc", "", "-1", "1e3", "0x10", " 1", "1.0", "+1", "01"])(
     "页号 %p 不是规范十进制时只应答，不改写",
     async (page: string) => {

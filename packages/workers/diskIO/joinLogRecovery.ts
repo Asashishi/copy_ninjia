@@ -17,7 +17,7 @@ import {
   JOIN_LOG_MAX_USERS_PER_CHAT_DAY,
 } from "../../consts/diskIO/joinLog";
 import { JOIN_LOG_MEMORY_DIR, TMP_FILE_SUFFIX } from "../../consts/paths";
-import { DAY_MS } from "../../consts/diskIO/common";
+import { DAY_MS } from "../../consts/time";
 import { getTimeZone } from "../../config/time";
 import { invalidInput, readUtf8TextInput } from "../../libs/inputValidation";
 import { isTelegramGroupChatId } from "../../libs/telegramId";
@@ -39,7 +39,7 @@ export interface ValidatedJoinLogFile {
   readonly parsed: Record<string, JoinLogRecord>;
 }
 
-/** 保留至少三个公历日期，并覆盖前一日任意命令的滚动 24 小时窗口；短日时扩展日文件范围。 */
+/** 保留至少 JOIN_LOG_FILE_RETENTION_DAYS 个公历日期，并覆盖前一日任意命令的滚动 24 小时窗口；短日时扩展日文件范围。 */
 export function retainedJoinLogDayKeys(today: string): ReadonlySet<string> {
   const current: Temporal.PlainDate = Temporal.PlainDate.from(today);
   const previousStart: number = current.subtract({ days: 1 })
@@ -96,16 +96,16 @@ export async function cleanupExpiredJoinLogDays(
 /**
  * 删除一个群在保留窗口内外的全部入群日志文件，并丢掉它们的接管游标与退避。
  *
- * 不看日期：本函数的起因是这个群不再被接管（`/init disable` 或机器人离群），
- * 保留窗口对它已经没有意义，目录里叫得上它名字的文件一个都不留。整群删干净才
- * 摘除待删标记，任一文件失败都保留，由下一次统一 flush 经 `joinLogPurge` 领域重试。
+ * 不看日期：这个群不再被接管（`/init disable` 或机器人离群），目录里属于它的文件
+ * 全部删除。整群删干净才摘除待删标记，任一文件失败都保留，由下一次统一 flush 经
+ * `joinLogPurge` 领域重试。
  */
 export function purgeChatJoinLogFiles(chatId: number): void {
   let names: readonly string[];
   try {
     // 目录创建与列举收在同一个 try 里：本函数的调用点（diskIOWorker 的
-    // deleteJoinLog 分支）不做兜底，异常逸出 onmessage 会被 Bun 直接终止整条落盘
-    // 线程。这里两样失败的收场相同——保留待删标记，等下一次领域 flush 重试。
+    // deleteJoinLog 分支）不做兜底；两样失败的收场相同，保留待删标记，等下一次
+    // 领域 flush 重试。
     mkdirSync(JOIN_LOG_MEMORY_DIR, { recursive: true });
     names = readdirSync(JOIN_LOG_MEMORY_DIR);
   } catch (error: unknown) {
@@ -117,10 +117,9 @@ export function purgeChatJoinLogFiles(chatId: number): void {
     const match: RegExpExecArray | null = JOIN_LOG_FILE_PATTERN.exec(name);
     if (match === null || Number(match[1]!) !== chatId) continue;
     try {
-      // 用带目录 fsync 的删除，而不是保留窗口清理那条 `Bun.file().delete()`：这一次
-      // 的结果要经 `joinLogPurge` 领域 flush 当成 durable 回执交给 teardown，掉电后
-      // 文件不能再出现（见 libs/atomicFile.ts 的 durableUnlinkSync）。窗口清理没有这个
-      // 承诺——那边漏删一次，下一次跨日清理照样会删掉。
+      // 用带目录 fsync 的删除（见 libs/atomicFile.ts 的 durableUnlinkSync）：结果经
+      // `joinLogPurge` 领域 flush 作为 durable 回执交给 teardown；保留窗口清理走
+      // bestEffortUnlink，不带这个承诺。
       durableUnlinkSync(join(JOIN_LOG_MEMORY_DIR, name));
     } catch (error: unknown) {
       console.error(`[diskIOWorker] failed to delete join log ${name}:`, error);
@@ -135,11 +134,8 @@ export function purgeChatJoinLogFiles(chatId: number): void {
 }
 
 /**
- * 逐群重试仍未删净的入群日志；空集表示本领域没有待删的群。
- *
- * 空集先早退：本函数挂在 `joinLogPurge` 领域屏障与统一 flush 上，稳定态下待删集合
- * 恒为空，早退让这两条路径连那份键快照都不分配。键快照只在真的有待删群时才取：
- * purgeChatJoinLogFiles 会就地删集合里的项。
+ * 逐群重试仍未删净的入群日志；空集表示本领域没有待删的群，空集先早退。
+ * 键快照只在有待删群时才取，因为 purgeChatJoinLogFiles 会就地删集合里的项。
  */
 export function purgeJoinLogDeletions(): boolean {
   if (joinLogDeletions.size === 0) return true;

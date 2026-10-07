@@ -83,8 +83,7 @@ describe("群消息主动行为", () => {
     }));
   });
 
-  // 这条回复不挂延迟删除，长期留在群里，因此需要显式带话题（SendMessageParams
-  // 的 messageThreadId），不能只靠 reply_parameters。
+  // 这条回复不挂延迟删除，长期留在群里，显式带话题（SendMessageParams 的 messageThreadId），不只靠 reply_parameters。
   test("论坛话题里的洗澡触发，回复带着话题发回去", async () => {
     await handleProactiveMessageActions({
       message: messageFixture({

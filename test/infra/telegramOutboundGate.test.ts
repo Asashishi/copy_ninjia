@@ -330,8 +330,7 @@ describe("Telegram 主线程出站总闸", () => {
     ].map((waiter): ReturnType<typeof setTimeout> => waiter.timer);
     expect(waiterTimers).toHaveLength(2);
 
-    // 先到期的那个 waiter 自己出队并触发全局 abort；剩下的必须由
-    // settleAllDrainWaiters 一起结算，而不是各等各的预算。
+    // 先到期的那个 waiter 自己出队并触发全局 abort；剩下的由 settleAllDrainWaiters 一起结算。
     await expect(expiring).resolves.toBe("timedOut");
     await expect(waiting).resolves.toBe("timedOut");
     expect(clearTimeoutSpy).toHaveBeenCalledWith(waiterTimers[1]!);
@@ -377,8 +376,7 @@ describe("Telegram 主线程出站总闸", () => {
     expect(queryLane.head).not.toBeNull();
     expect(queryLane.retryTimer).not.toBeNull();
 
-    // 换代生命周期信号：旧任务不再挂在当前 controller 上，停机只能靠逐条遍历
-    // 队列与在途集合把它们取消掉。
+    // 换代生命周期信号：旧任务不再挂在当前 controller 上，停机靠逐条遍历队列与在途集合取消它们。
     telegramOutboundAbortController.current = new AbortController();
 
     await expect(drainTelegramOutbound(0)).resolves.toBe("timedOut");
@@ -660,13 +658,11 @@ describe("Telegram 主线程出站总闸", () => {
   });
 
   /**
-   * 上面那条覆盖的是「查得出来，且确证目标已不在群」——现查干净地否掉了重放。
-   * 下面两条覆盖的是**查不出来**：形状不对与状态未知。
+   * 上面那条覆盖「查得出来，且确证目标已不在群」：现查否掉了重放。
+   * 下面两条覆盖「查不出来」：形状不对与状态未知。
    *
-   * 这两条必须与上面同样地放弃重放。不带 only_if_banned 的 unbanChatMember 是
-   * 超级群的纯踢出，一次 429 等待足以让人工管理员在期间把目标真正封禁；此时
-   * 盲目重放等于替对方解封。因此复核拿不准时唯一安全的结局是「不重放」——
-   * 回归成默默重放不会有任何日志痕迹，只会表现为人工封禁莫名其妙失效。
+   * 这两条同样放弃重放：不带 only_if_banned 的 unbanChatMember 是超级群的纯踢出，
+   * 一次 429 等待期间人工管理员可能已真正封禁目标；复核拿不准时的结局是「不重放」。
    */
   test("重放前的成员复核拿到畸形响应时放弃重放，不替人工封禁解封", async () => {
     const calledMethods: string[] = [];
@@ -674,8 +670,7 @@ describe("Telegram 主线程出站总闸", () => {
     const previous: PreviousCall = ((method: string): Promise<unknown> => {
       calledMethods.push(method);
       if (method === "getChatMember") {
-        // ok 为真但 result 里没有 status：Telegram 侧不该出现，但代理/网关改写
-        // 响应体时会。形状不符一律当作「没查出来」。
+        // ok 为真但 result 里没有 status（代理/网关改写响应体时可能出现）：形状不符一律当作「没查出来」。
         return Promise.resolve({ ok: true, result: {} });
       }
       if (method === "unbanChatMember") {
@@ -779,8 +774,7 @@ describe("Telegram 主线程出站总闸", () => {
       }
       unbanAttempts++;
       // 用一个极小的正数把重试排到下一个 tick：非正值会被下限 clamp 到
-      // TELEGRAM_429_FALLBACK_RETRY_MS（见下面那条零延迟回归），本例关心的
-      // 是「重试仍能完成内部复核」，不是退避时长。
+      // TELEGRAM_429_FALLBACK_RETRY_MS（见下面的零延迟用例），本例验证重试仍能完成内部复核。
       return Promise.resolve(unbanAttempts === 1
         ? {
           ok: false,
@@ -805,10 +799,8 @@ describe("Telegram 主线程出站总闸", () => {
     expect(unbanAttempts).toBe(2);
   });
 
-  // 零延迟重试就是对着一个刚说过 429 的服务端空转（实测持续 429 时 300ms 内近
-  // 三百次请求，正常兜底只有两次）。空串与纯空白会被 Number 归成 0 从而绕过
-  // null 兜底；`Retry-After: 0` 本身还是 RFC 9110 的合法取值。三条路都必须落到
-  // 统一兜底值上。
+  // Retry-After 为空串、纯空白或 0 时（空串与纯空白经 Number 归成 0；`Retry-After: 0` 是 RFC 9110 的合法取值）
+  // 都落到统一兜底值，不做零延迟重试。
   for (const retryAfter of ["", "   ", "0"]) {
     test(`回归：Retry-After 为 ${JSON.stringify(retryAfter)} 时按兜底退避，不做零延迟空转`, async () => {
       let attempts: number = 0;
@@ -821,14 +813,12 @@ describe("Telegram 主线程出站总闸", () => {
             : new Response(null, { status: 200 }));
         },
       });
-      // 先接住结局再排空：排空超时会同步 abort 这个请求，晚一拍挂 handler
-      // 会被当成未处理的 rejection（同「排空超时会中止永不结算的真实请求」）。
+      // 先接住结局再排空：排空超时会同步 abort 这个请求（同「排空超时会中止永不结算的真实请求」）。
       const outcome: Promise<unknown> = request.then(
         (value: unknown): unknown => value,
         (error: unknown): unknown => error
       );
-      // 排空预算远小于兜底退避：重试还没到点，只能超时收场。若退避是 0，
-      // 这一轮会当场重试成功并让排空返回 flushed。
+      // 排空预算远小于兜底退避：重试还没到点，只能超时收场。
       await expect(drainTelegramOutbound(10)).resolves.toBe("timedOut");
       expect(await outcome).toMatchObject({ name: "AbortError" });
       expect(attempts).toBe(1);
@@ -896,11 +886,7 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramRetryCategoryFor("kickChatMember")).toBe("kick");
   });
 
-  /**
-   * 前缀兜底保证项目调用面之外的新 Bot API 方法不会意外与 kick、
-   * restrict 这些安全动作共用一个 429 冷却域——一次退避把封禁和一个无关的
-   * setMyCommands 绑在一起，是这道闸门要防的事。
-   */
+  /** 前缀兜底：项目调用面之外的新 Bot API 方法不与 kick、restrict 这些安全动作共用 429 冷却域。 */
   test("未列入 switch 的方法按前缀归类，且一律不落进安全动作的冷却域", () => {
     expect(telegramRetryCategoryFor("getMyCommands")).toBe("query");
     expect(telegramRetryCategoryFor("editMessageText")).toBe("edit");
@@ -916,8 +902,7 @@ describe("Telegram 主线程出站总闸", () => {
     expect(telegramRetryCategoryFor("createForumTopic")).toBe("management");
     expect(telegramRetryCategoryFor("createChatInviteLink")).toBe("management");
     expect(telegramRetryCategoryFor("sendDice")).toBe("message");
-    // 头像归 profile 认的是 `ProfilePhoto` 这个片段，不是「照片」这个概念：
-    // setChatPhoto 改的是群头像，与机器人自己的资料无关，落 other 是对的。
+    // 头像归 profile 认的是 `ProfilePhoto` 这个片段：setChatPhoto 改的是群头像，与机器人自己的资料无关，落 other。
     expect(telegramRetryCategoryFor("setChatPhoto")).toBe("other");
     expect(telegramRetryCategoryFor("leaveChat")).toBe("other");
   });

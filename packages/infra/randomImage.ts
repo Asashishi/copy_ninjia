@@ -3,7 +3,7 @@
  *
  * 启动时严格检查专用图库；运行时为 /h_image 与 cron 提供抽图、计数和按内容摘要收图。
  * 不持有缓存，也不发送；目录路径由调用方传入（部署值见 config/assets.ts 的 getAssetConfig）。
- * 每次抽取都重新枚举目录，增删图片不用重启；低频路径，不缓存目录列表。
+ * 每次抽取都重新枚举目录，不缓存目录列表。
  */
 
 import { access, lstat, mkdir, readdir, rename } from "node:fs/promises";
@@ -103,9 +103,8 @@ function vanished(error: unknown): boolean {
 /**
  * 从目录非递归地均匀抽一张图片并读出字节。候选口径见 randomImageNames。抽中的文件超过
  * RANDOM_IMAGE_MAX_BYTES（只看 stat，不读入内存），或在读取前已消失（部署方正在整理目录）
- * 时，都从剩余候选里剔除后重新均匀抽取，最多尝试候选数那么多次，所以图库里混进几张超限
- * 文件不影响抽到其余的图。候选抽完仍无可发送的图时，这一轮抽中过超限文件就报 tooLarge 并
- * 点名最后那个，否则报 empty。
+ * 时，都从剩余候选里剔除后重新均匀抽取，最多尝试候选数那么多次。候选抽完仍无可发送的图时，
+ * 这一轮抽中过超限文件就报 tooLarge 并点名最后那个，否则报 empty。
  * @param directory 已解析成绝对路径的目录。
  */
 export async function pickRandomImage(directory: string): Promise<RandomImagePick> {

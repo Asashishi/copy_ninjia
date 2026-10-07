@@ -1,7 +1,7 @@
 /**
  * 读写计量：进程级 `/proc/<pid>/io` 计数器与 mock 数据根的落盘足迹。
  *
- * 项目只支持带可读 `/proc` 的 Linux（见 README 的运行前提），这里不做跨平台回退。
+ * 仅适用带可读 `/proc` 的 Linux，不做跨平台回退。
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -34,7 +34,7 @@ const IO_KEYS: Readonly<Record<string, keyof ProcessIoSnapshot>> = {
   write_bytes: "writeBytes",
 };
 
-/** 采样当前进程的 I/O 计数器；解析失败按致命错误处理，不返回零值掩盖。 */
+/** 采样当前进程的 I/O 计数器；解析失败即抛错。 */
 export function readProcessIo(): ProcessIoSnapshot {
   const content: string = readFileSync("/proc/self/io", "utf8");
   const values: Record<keyof ProcessIoSnapshot, number> = {
@@ -61,7 +61,7 @@ export function readProcessIo(): ProcessIoSnapshot {
   return values;
 }
 
-/** 两次采样之差；负数表示采样被计数器回绕污染，直接拒绝而不是报一个负的读写量。 */
+/** 两次采样之差；任一字段为负即抛错。 */
 export function diffProcessIo(
   before: ProcessIoSnapshot,
   after: ProcessIoSnapshot

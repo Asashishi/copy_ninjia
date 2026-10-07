@@ -9,7 +9,10 @@
  * @see ../../../docs/cn/04-invariants.md
  */
 
-import { blocklistParticipantInvalidQueue } from "../../cache/main/blocklist";
+import {
+  blocklistIdentityMutationRunner,
+  blocklistParticipantInvalidQueue,
+} from "../../cache/main/blocklist";
 import {
   BLOCKLIST_PARTICIPANT_INVALID_LIMIT,
   BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS,
@@ -21,7 +24,6 @@ import {
   queueIdentityPolicyWrite,
   retainParticipantInvalidBlocklistIds,
 } from "../identityStorage";
-import { runBlocklistIdentityMutation } from "../identityPolicy/coordination";
 import { logger } from "../logger";
 import { unblockUser } from "./membership";
 import type { BlockedMembersRemovedEvent } from "../../types/antiRaid/events";
@@ -77,7 +79,7 @@ function applyParticipantReadability(
       continue;
     }
     // 与广告封禁、/block disable 共用逐身份队列，较早的封禁处置先完整结算。
-    void runBlocklistIdentityMutation(
+    void blocklistIdentityMutationRunner.run(
       userId,
       (): Promise<void> => unblockDeletedAccount(userId, entry)
     ).catch((error: unknown): void => {
@@ -88,8 +90,9 @@ function applyParticipantReadability(
 
 /**
  * 只预热需要改写的身份，并在全部仍在缓存时同步写出整条回执的计数变化。
- * 已落定的 ID 可达一整页，先经不回填 LRU 的读取筛出仍带计数的少数条目；预热
- * 等待期间有身份被淘汰时整条重来，不做部分写入。
+ * 已落定的 ID 可达一整页，先经不回填 LRU 的读取筛出仍带计数的条目；预热
+ * 等待期间有身份被淘汰时整条重试，最多 BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS 次，
+ * 不做部分写入。
  */
 async function settleParticipantReadability(
   event: BlockedMembersRemovedEvent

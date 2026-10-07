@@ -13,9 +13,9 @@ import { parseChatIdArgument } from "../libs/telegramId";
 import type { ChatFullInfo } from "grammy/types";
 
 /**
- * 隐藏的超管私聊中转命令；群聊和非超管调用静默拒绝。只接受可达、且已经在
- * chat_states 里被纳管的 group/supergroup（这条命令自己绝不新建群状态，见
- * 下方那处判定），持久化位置由 ChatState.isProxySendEnabled 定义。
+ * 隐藏的超管私聊中转命令；群聊和非超管调用静默返回。只接受可达、且已经在
+ * chat_states 里被纳管的 group/supergroup（本命令不新建群状态，见下方判定），
+ * 会话状态存于 ChatState.isProxySendEnabled；`finish` 关闭当前中转会话。
  */
 export async function handleSendCommand(ctx: CommandContext<Context>): Promise<void> {
   if (ctx.chat.type !== "private") return;
@@ -23,8 +23,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
   const chatId: number = ctx.chat.id;
   const messageId: number | undefined = ctx.msgId;
 
-  // 以 `ctx.from` 而非命令可见发起身份判定：私聊里没有频道马甲，也不该让 sender_chat
-  // 参与；对非本人的探测保持沉默，不确认这个指令存在。
+  // 以 `ctx.from` 判定超级管理员身份，sender_chat 不参与；非本人调用静默返回。
   if (ctx.from?.id !== SUPER_ADMIN_USER_ID) return;
 
   const arg: string = ctx.match.trim();
@@ -41,10 +40,7 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
     return;
   }
 
-  // 与全仓其余 id 解析同一口径（正则 + 安全整数），不用裸 `Number()`：后者会把
-  // `-100123456789.0`、`0x2d` 这类非规范写法悄悄收下，而这条命令的结果会落进
-  // ChatState.isProxySendEnabled 开一个持久代发会话——超管此后每条私聊都转进
-  // 一个他从没输入过的群。
+  // 目标 chat id 经 parseChatIdArgument 解析（正则 + 安全整数）。
   const targetChatId: number | undefined = parseChatIdArgument(arg);
   if (targetChatId === undefined) {
     await sendCommandMessage({ chatId, text: chatAtmosphere().NOTICE_TEXTS.proxyUsage, replyToMessageId: messageId });
@@ -58,8 +54,8 @@ export async function handleSendCommand(ctx: CommandContext<Context>): Promise<v
 
   // 目标群必须已经在 chat_states 里，否则只回一句提示。
   //
-  // 这里只读现有状态，不为未纳管目标创建 chat_states 记录，也不触发只属于
-  // /init enable 的容量闸。判定放在 getChat 之前，没纳管的目标无需探测可达性。
+  // 这里只读现有状态，不创建 chat_states 记录，也不触发 /init enable 的容量闸。
+  // 判定在 getChat 之前，未纳管的目标不探测可达性。
   if (!getChatStateCache().has(targetChatId)) {
     await sendCommandMessage({ chatId, text: chatAtmosphere().NOTICE_TEXTS.proxyNotInitialized(targetChatId), replyToMessageId: messageId });
     return;

@@ -2,9 +2,8 @@
  * packages/antiRaid/lockdownMirror.ts，落盘对账循环在
  * packages/antiRaid/workerBridge/events.ts 的 persistCurrentLockdown）。
  *
- * 这里全是**主线程**状态，与 cache/workers/antiRaid/lockdown.ts 那份入群守卫线程的
- * lockdown 状态机没有任何共享：真正的私密模式状态在 ChatState.lockdown
- * （stateStore 持有），本模块只记「哪一份意图已经确认落盘」。
+ * 本模块是主线程状态，不与 cache/workers/antiRaid/lockdown.ts 的入群守卫线程状态机共享：
+ * 私密模式状态在 ChatState.lockdown（stateStore 持有），本模块只记「哪一份意图已经确认落盘」。
  */
 
 import type {
@@ -13,22 +12,19 @@ import type {
 } from "../../../types/antiRaid/internal";
 
 /**
- * 记录某群当前 lockdown 记录是否已确认落盘，而非 lockdown 本身——真正的
- * 私密模式状态在 ChatState.lockdown（stateStore 持有）。
+ * 记录某群当前 lockdown 记录是否已确认落盘。
  *
  * 指纹由 `phase`、`intentId` 与 `announced` 组成，不含 `expiresAt`（判据见
- * types/antiRaid/internal.ts 的 PersistedLockdownFingerprint）；倒计时照常落在
+ * types/antiRaid/internal.ts 的 PersistedLockdownFingerprint）；倒计时落在
  * ChatState.lockdown.expiresAt 里，adopt 时按它换算剩余时长。initAntiRaid 启动时
  * 先清空，再用已加载的 SQLite 记录播种（能载入即视为上次已持久化）；
  * Worker 报告新的 lockdown 持久化事实或 unlock（onEvent）时先删除旧指纹，
  * persistCurrentLockdown 待 SQLite ACK 成功且记录未被更新覆盖后才重新写入
  * 并通知 Worker；落盘失败且记录仍是该次意图时、主线程紧急恢复权限成功后同样
- * 删除。仅供
- * antiRaid/lockdownMirror.ts 构建 adopt 消息时判断某条记录是否已知持久化。
+ * 删除。仅供 antiRaid/lockdownMirror.ts 构建 adopt 消息时判断某条记录是否已知持久化。
  *
  * 容量：每个受管群至多一项，上界 STATE_MANAGED_CHAT_LIMIT（见 consts/storage.ts）；
- * 不设淘汰——丢掉一项只会让下一轮对账多等一次 ACK，但按容量淘汰会让已确认的
- * 意图被当成未落盘反复重写。
+ * 不设淘汰。
  */
 export const persistedLockdownFingerprints: Map<number, PersistedLockdownFingerprint> = new Map();
 

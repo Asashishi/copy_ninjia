@@ -106,8 +106,7 @@ function inspectPendingRemovalPages(
  */
 export function validateStorageDatabase(database: StorageDatabase, source: string): StorageDatabaseInspection {
   assertStorageDatabaseStartupJsonbStorage(database, source);
-  // 版本判定必须排在读取业务行**之前**：当前 schema 才保证所有业务表存在，
-  // 先读 startup rows 会把版本不符伪装成 SQLite 缺表错误。
+  // 版本判定排在读取业务行之前：只有当前 schema 保证所有业务表存在。
   const metadata: readonly StoredStorageMetadataRow[] =
     readStorageDatabaseSchemaMetadata(database);
   const version: number = readStorageSchemaVersion(
@@ -120,7 +119,7 @@ export function validateStorageDatabase(database: StorageDatabase, source: strin
       "{\"version\":" + String(IDENTITY_DATABASE_SCHEMA_VERSION) + "}."
     );
   }
-  // 时区标记紧随版本闸、先于一切按日校验：换时区重启只报这一处，不落到免检行的同日约束上。
+  // 时区标记紧随版本闸、先于一切按日校验。
   assertStorageTimeZone({ metadata }, source, getTimeZone());
   assertStorageDatabaseIntegrity(database, source);
   assertStorageDatabaseMigrationLineage(database, source);

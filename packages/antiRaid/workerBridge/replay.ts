@@ -97,8 +97,7 @@ export function replayChatKinds(
 /**
  * adopt 完成后清理开关已关群的残留入群守卫。
  *
- * 必须让 Worker 先接管再发 deactivate，使其按原 revision 协议产生 tombstone；
- * 只在重放前过滤会让旧记录继续留在持久化文件中。
+ * Worker 先接管再收到 deactivate，按原 revision 协议产生 tombstone。
  */
 export function purgeDisabledJoinGuards(
   postTo: (message: AntiRaidWorkerMessage) => boolean

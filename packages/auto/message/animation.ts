@@ -38,7 +38,6 @@ export function handleAnimationMessage(context: MessageTriggerContext): boolean 
     replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
     stickerFallbackText: undefined,
     voiceMime: undefined,
-    voiceDurationSeconds: 0,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

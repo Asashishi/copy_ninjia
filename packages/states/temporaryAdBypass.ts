@@ -8,9 +8,8 @@ import type { TemporaryAdBypassActivity } from "../types/states/temporaryAdBypas
 /**
  * 记录是否尚未越过保留边界；未来时间轴留给下一条发言显式收敛。
  *
- * `now` 必填：本模块与同目录其余判定一样不读时钟，墙钟由调用方一次取好传进来
- * （见 infra/identityPolicy/temporaryAdBypass.ts），同一条消息的多次判定因此用
- * 同一个时刻。
+ * `now` 由调用方一次取好传入（见 infra/identityPolicy/temporaryAdBypass.ts），
+ * 本模块不读时钟，同一条消息的多次判定使用同一个时刻。
  */
 export function isTemporaryAdBypassActivityRetained(
   activity: Readonly<TemporaryAdBypassActivity>,
@@ -79,13 +78,12 @@ function restartActivityAfterClockRollback(
 
 /**
  * 计入一条跨群发言：首个合格日即时授予临时广告免检，单日只累计一次；
- * 连续第 7 个合格日把计数推进到自动永久免检门槛。配置时区的上一自然日未达标或中间
+ * 连续合格日数达到 TEMPORARY_AD_BYPASS_REQUIRED_DAYS 时推进到自动永久免检门槛。配置时区的上一自然日未达标或中间
  * 跳日时从当前发言重新建立记录，不沿用旧成员关系或发言累计。
  *
- * 当天已达标后原样返回入参对象：`sendCount` 与 `countedAt` 不再进入任何保留、
- * 跨日或解码判定，冻结在达标那条发言上，调用方按引用相等跳过整条写回链路。
- * 由此墙钟回拨的重建阈值是「当天达标那条发言」而非「上一条发言」：回拨到达标
- * 时刻之前仍重建计数时间轴，回拨到达标之后按同日继续，成员关系两侧都保留。
+ * 当天已达标后原样返回入参对象：`sendCount` 与 `countedAt` 冻结在达标那条发言上，
+ * 调用方按引用相等跳过整条写回链路。墙钟回拨的重建阈值是当天达标那条发言的时刻：
+ * 回拨到该时刻之前重建计数时间轴，回拨到该时刻之后按同日继续，成员关系两侧都保留。
  *
  * @see ../../docs/cn/04-invariants.md
  */

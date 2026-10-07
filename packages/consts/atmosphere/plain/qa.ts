@@ -6,7 +6,7 @@ export const QA_QUERY_PAGE_PREV_TEXT: string = "‹ 上一页";
 /** `/qa query` 看板下一页按钮的文案。 */
 export const QA_QUERY_PAGE_NEXT_TEXT: string = "下一页 ›";
 
-/** 群问答三个子命令的表单、查询与删除文案。 */
+/** 群问答各子命令的表单、查询与删除文案。 */
 export const QA_COMMAND_TEXTS: Readonly<{
   rejected: (label: string) => string;
   full: string;
@@ -15,7 +15,9 @@ export const QA_COMMAND_TEXTS: Readonly<{
   formPrompt: string;
   formUnset: string;
   questionTooLong: string;
+  questionHasCommand: string;
   answerTooLong: string;
+  answerHasCommand: string;
   questionSaved: string;
   answerSaved: string;
   created: string;
@@ -35,7 +37,9 @@ export const QA_COMMAND_TEXTS: Readonly<{
   formPrompt: "请按以下格式分别发送问题和回答：\n问题:\n（需要原样匹配的文本）\n回答:\n（机器人发送的答案，可包含代码块）\n" + `请在 ${QA_FORM_SESSION_TTL_MS / 60_000} 分钟内填完，两项齐全后表单会自动关闭。`,
   formUnset: "尚未设置",
   questionTooLong: `问题不能超过 ${CHAT_QA_QUESTION_MAX_CHARS} 字，请缩短后重新发送。`,
+  questionHasCommand: "问题里不能含有会显示成可点击命令的斜杠写法，请把「/」换成全角「／」或改写后重新发送。",
   answerTooLong: `答案不能超过 ${CHAT_QA_ANSWER_MAX_CHARS} 字，请缩短后重新发送。`,
+  answerHasCommand: "答案里代码块之外不能含有会显示成可点击命令的斜杠写法，请把「/」换成全角「／」、放进代码块或改写后重新发送。",
   questionSaved: "问题已记录。", answerSaved: "答案已记录。", created: "问答已登记，原样匹配问题时将自动发送答案。",
   replaced: "已有问题的答案已更新。", persistFailed: "问答未能保存，请管理员检查存储状态。", queryEmpty: "本群尚未登记问答。", queryPrefix: "本群问答：\n",
   queryMissing: (q: string): string => `未找到问题「${q}」。`, removeUsage: "请使用 /qa remove <问题文本> 指定要删除的问题。",

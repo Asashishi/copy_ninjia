@@ -1,5 +1,5 @@
 /**
- * 存储分区子进程：直接复用 `perf:identity-database` 的六项冷热读写实现。
+ * 存储分区子进程：直接复用 `perf:identity-database` 的各项冷热读写实现。
  *
  * 这里只做编排——夹具、批量大小、校验和判定全在 `scripts/perf/identityDatabase/`
  * 里，不重复实现。

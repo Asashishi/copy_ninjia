@@ -1,5 +1,5 @@
 /**
- * 主线程群状态持久化边界：至多 25 项的 chatStateCache 是唯一热读副本，SQLite 是
+ * 主线程群状态持久化边界：至多 STATE_MANAGED_CHAT_LIMIT 项的 chatStateCache 是唯一热读副本，SQLite 是
  * 权威落盘源。
  *
  * 写入先发布热读副本最终值，再只保留 revision 与删除墓碑，正文不复制到第二张主线程
@@ -60,7 +60,7 @@ function capacityError(): Error {
   );
 }
 
-/** 启动恢复信任 SQLite 当前写入边界，只把持久化值搬进固定 shape 的热读副本。 */
+/** 启动恢复把 SQLite 持久化值载入固定 shape 的热读副本。 */
 export function hydrateChatStateCache(states: ReadonlyMap<number, ChatState>): void {
   resetChatStateCache();
   for (const [chatId, decoded] of states) {
@@ -70,7 +70,7 @@ export function hydrateChatStateCache(states: ReadonlyMap<number, ChatState>): v
   }
 }
 
-/** 新建群状态前执行容量闸；第 26 个群直接拒绝，热读副本不淘汰权威记录。 */
+/** 新建群状态前执行容量闸；超过 STATE_MANAGED_CHAT_LIMIT 直接拒绝，热读副本不淘汰权威记录。 */
 export function assertChatStateCapacity(chatId: number): void {
   assertTelegramChatId(chatId, "chat state cache");
   if (!chatStateCache.has(chatId) && chatStateCache.size >= STATE_MANAGED_CHAT_LIMIT) {
@@ -105,7 +105,7 @@ export function queueChatStateWrite(chatId: number): number {
   const bytes: number = unacknowledgedChatStateBytes.current + cost - (previous?.bytes ?? 0);
   assertStorageAdmission(unacknowledgedChatStateWrites.size + (previous === undefined ? 1 : 0), bytes);
   if (!canQueueDiskIOBusiness(message)) throw new Error("Disk I/O refused chat state publication.");
-  // 准入通过后才摘除已空的群状态：闸抛错时热读副本与未 ACK 记账都保持调用前原样。
+  // 准入通过后才摘除已空的群状态；闸抛错时热读副本与未 ACK 记账保持不变。
   if (encoded.deleted) chatStateCache.delete(chatId);
   chatStateWriteRevision.current = revision;
   unacknowledgedChatStateWrites.set(chatId, { revision, deleted: encoded.deleted, bytes: cost });

@@ -56,7 +56,7 @@ describe("decodeGlobalStateFile", () => {
   });
 
   test("14.x 的 global 包装、assets、translate 与 model 都不属于当前 schema", () => {
-    // 结构变更只做冷迁移：兼容分支会让复读状态被静默读成空，而群里看不出区别。
+    // 结构变更只做冷迁移，不保留兼容分支。
     expect(() => decode({ global: { copy: { copiedUser: null } } }))
       .toThrow("state.json: $.<key> must be absent (not part of the current state schema).");
     for (const key of ["assets", "translate", "model", "chats"]) {
@@ -86,6 +86,15 @@ describe("decodeGlobalStateFile", () => {
     } catch (error: unknown) {
       expect((error as Error).message).toContain("$.copy.<key>");
       expect((error as Error).message).not.toContain(secret);
+    }
+    // 复读目标与群状态的翻译目标共用同一份身份解码，未知键同样不回显。
+    try {
+      decode({ copy: { copiedUser: { id: 42, [secret]: true }, copyChatId: -1001 } });
+      throw new Error("expected rejection");
+    } catch (error: unknown) {
+      expect((error as Error).message).toBe(
+        "state.json: $.copy.copiedUser must be an object containing only id, username, first_name, last_name, title and isChannel."
+      );
     }
   });
 });

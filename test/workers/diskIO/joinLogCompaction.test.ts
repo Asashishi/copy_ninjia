@@ -46,8 +46,7 @@ describe("入群日志压缩故障", () => {
       expect(parsed[`${now + 1}:42`]).toEqual({ userId: 42, joinedAt: now + 1 });
       expect(cache.state.size).toBeGreaterThan(written);
 
-      // 沿用的游标仍指向同一个文件：下一批直接追加，文件保持合法；计数已清零，
-      // 故障仍在也不会逐批重试整文件重写。
+      // 沿用的游标仍指向同一个文件：下一批直接追加，文件保持合法；计数已清零，不重试整文件重写。
       const errorCalls: number = error.mock.calls.length;
       await handleJoinLogMessage(joinMessage(-1001, 43, now + 2));
       expect(await flushJoinLogBuffer()).toBeTrue();
@@ -127,6 +126,37 @@ describe("入群日志压缩故障", () => {
       expect(compacted[`${now + 1}:42`]).toEqual({ userId: 42, joinedAt: now + 1 });
 
       snapshotRewriteFault.current = null;
+      await handleJoinLogMessage(joinMessage(-1001, 43, now + 2));
+      expect(await flushJoinLogBuffer()).toBeTrue();
+      const parsed = await expectFileMatchesCache(-1001);
+      expect(Object.keys(parsed)).toHaveLength(43);
+      expect(parsed[`${now + 2}:43`]).toEqual({ userId: 43, joinedAt: now + 2 });
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("快照实写字节数与累计不符：按 rename 后失败处理，丢弃旧游标并按新快照重开", async () => {
+    const key: string = `-1001:${getDateKey()}`;
+    await writeRedundantJoinLogFile(-1001, 40, JOIN_LOG_COMPACT_MIN_RECLAIM_BYTES * 2);
+    const now: number = todayAt();
+    await handleJoinLogMessage(joinMessage(-1001, 41, now));
+    expect(await flushJoinLogBuffer()).toBeTrue();
+    const cache: JoinLogFileCache = joinLogFileCaches.get(key)!;
+    cache.redundantEntries = JOIN_LOG_COMPACT_REDUNDANT_ENTRIES;
+    // 让累计的快照字节数比真实序列化多 1，模拟计数与写出内容失配。
+    cache.snapshotBytes += 1;
+
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      await handleJoinLogMessage(joinMessage(-1001, 42, now + 1));
+      expect(await flushJoinLogBuffer()).toBeTrue();
+      expect(joinLogRetryAt.has(key)).toBeFalse();
+      expect(joinLogFileCaches.has(key)).toBeFalse();
+      const [message, cause] = error.mock.calls.at(-1)!;
+      expect(String(message)).toContain("the snapshot was already published");
+      expect((cause as Error).message).toContain("Join log snapshot size mismatch");
+
       await handleJoinLogMessage(joinMessage(-1001, 43, now + 2));
       expect(await flushJoinLogBuffer()).toBeTrue();
       const parsed = await expectFileMatchesCache(-1001);

@@ -12,13 +12,13 @@ interface GetChatMemberOptions {
   readonly api: ChatMemberApi;
   readonly chatId: number;
   readonly userId: number;
-  /** 缺省表示本次调用不参与取消，必须整个省略第三个参数。 */
+  /** 缺省表示本次调用不参与取消。 */
   readonly signal?: AbortSignal;
 }
 
 /**
- * getChatMember 的唯一调用点。grammY 把 signal 放在第三个位置，而 TelegramApi
- * 只暴露 grammY 的 `Other` 形态；没有 signal 时省略该参数，不能传 undefined。
+ * 本模块经 TelegramApi 调用 getChatMember 的唯一入口。grammY 把 signal 放在第三个位置；
+ * signal 经 telegramSignal 在类型边界适配后原样传入，缺省时传 undefined，即本次调用不参与取消。
  */
 function getChatMember({
   api,
@@ -27,21 +27,6 @@ function getChatMember({
   signal,
 }: GetChatMemberOptions): Promise<ChatMember> {
   return api.getChatMember(chatId, userId, telegramSignal(signal));
-}
-
-/** 查询失败按非成员处理，避免在未确认时生成“已踢出”的错误战报。 */
-export async function isChatMember(
-  chatId: number,
-  userId: number,
-  api: ChatMemberApi = telegramApi
-): Promise<boolean> {
-  return runTelegramAction({
-    action: `check chat membership (chat ${chatId}, user ${userId})`,
-    execute: (signal?: AbortSignal): Promise<ChatMember> =>
-      getChatMember({ api, chatId, userId, signal }),
-    map: isPresentMember,
-    fallback: false,
-  });
 }
 
 /**
@@ -114,7 +99,6 @@ export async function probeChatAdmin(
       isAdminStatus(member.status),
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -139,7 +123,6 @@ export function readChatMemberUser({ chatId, userId, signal }: ChatMemberUserOpt
     map: (member: ChatMember): User => member.user,
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 

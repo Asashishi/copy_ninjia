@@ -1,6 +1,6 @@
 /**
- * 不可信部署输入的安全错误。消息只包含来源、字段路径和期望形态，禁止携带
- * 实际值或底层异常，避免配置与状态内容经日志外泄。
+ * 不可信部署输入的安全错误。消息只包含来源、字段路径和期望形态，不携带
+ * 实际值或底层异常。
  */
 export class InputValidationError extends Error {
   constructor(sourcePath: string, fieldPath: string, expected: string) {

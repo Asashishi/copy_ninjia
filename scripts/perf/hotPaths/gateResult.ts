@@ -6,13 +6,11 @@
  * GC 来源读数独立保留；所有场景的 GC 硬上限按
  * `packages/consts/performance.ts` 的 CPU 分档标准选择。
  *
- * 方向是双向的，但两半的 owner 不同，不能混：
- * - `calibration` 由人重标后手工修改，门禁只读。回写路径一个字节都不碰它——
- *   阈值只能在空载机器上多进程重测后调整（见 performance-result.json 的 notes），让门禁
- *   拿一次运行的读数自动改自己的判据，等于把闸门焊死在当前性能上。
+ * 两半的 owner 不同：
+ * - `calibration` 由人重标后手工修改，门禁只读，回写路径不碰它；阈值只在空载机器上
+ *   多进程重测后调整（见 performance-result.json 的 notes）。
  * - `lastRun` 由 `bun run perf:hot-path-gate --write-result` 覆盖写，记录最近
- *   一次门禁的读数。不传 `--write-result` 时门禁绝不写盘，`bun run check`
- *   因此不会弄脏工作树。
+ *   一次门禁的读数；不传 `--write-result` 时门禁不写盘。
  *
  * 解析一律 fail-fast：未知键、缺字段、类型不符、取值越界都抛错并点明字段路径，
  * 不做默认值回填、不丢弃非法条目（见 AGENTS.md 的「不为用户行为兜底」）。
@@ -23,7 +21,7 @@ import { writePerformanceResultEntry } from "../performanceResult";
 import { HOT_PATH_PROFILE_REPEATS } from "../../../packages/consts/performance";
 import { errorMessage } from "../../../packages/libs/errorMessage";
 
-/** 校准时使用的 Bun 运行时；同版本不同构建也会混测，两项都要对上。 */
+/** 校准时使用的 Bun 运行时；版本与 revision 都要对上。 */
 export interface HotPathGateRuntimeCalibration {
   readonly bunVersion: string;
   readonly bunRevision: string;
@@ -62,14 +60,12 @@ const NOTES_KEY: string = "notes";
 
 /**
  * 顶层允许出现的节。`fullSuite` 由全量基准（`bun run perf:full -- --write-doc`）
- * 写入，门禁既不读也不写它，但必须容忍它存在——否则同一份记录文件里多一节，
- * 热路径门禁就会整份拒绝解析。
+ * 写入，门禁既不读也不写它，解析时容许它存在。
  */
 const TOP_LEVEL_SECTIONS: readonly string[] = ["hotPathProfileGate", "fullSuite"];
 
 /**
- * 抛出点名字段路径的解析失败。这里只写字段路径，文件路径由 read/write 入口统一
- * 补在前面——校验函数不该各自记住自己在读哪个文件，那样迟早会有一处写错。
+ * 抛出点名字段路径的解析失败；只写字段路径，文件路径由 read/write 入口统一补在前面。
  */
 function fail(path: string, expectation: string): never {
   throw new Error(`$.${path} ${expectation}; fix the calibration record before running the gate.`);
@@ -109,7 +105,7 @@ function requiredPositiveNumber(
   return value;
 }
 
-/** 键集合精确闭集；多一个未知键就说明记录与解析边界已经脱节。 */
+/** 键集合必须与声明精确一致；未知键与缺键都拒绝。 */
 function assertExactKeys(
   value: Readonly<Record<string, unknown>>,
   keys: readonly string[],
@@ -158,8 +154,7 @@ function parseLimits(gate: Readonly<Record<string, unknown>>): HotPathGateLimits
     [...LIMIT_KEYS, NOTES_KEY],
     "hotPathProfileGate.calibration.limits"
   );
-  // 逐字段显式取值，不循环装配后强转：字段类型由 HotPathGateLimits 在编译期
-  // 保证，新增一项会在这里编译报错，不会悄悄产出少一个字段的对象。
+  // 逐字段显式取值；HotPathGateLimits 新增字段时此处编译报错。
   return {
     minProfileSamples: requiredPositiveNumber(
       limits, "minProfileSamples", "hotPathProfileGate.calibration.limits.minProfileSamples"
@@ -190,7 +185,7 @@ function parseLimits(gate: Readonly<Record<string, unknown>>): HotPathGateLimits
   };
 }
 
-/** 每个场景保留至少三次独立进程的完整 GC 暂停读数，不参与 CPU 预算选择。 */
+/** 每个场景保留至少 `HOT_PATH_PROFILE_REPEATS` 次独立进程的完整 GC 暂停读数，不参与 CPU 预算选择。 */
 function validateGcCalibration(value: unknown, path: string): void {
   if (!isPlainRecord(value)) fail(path, "must be an object");
   assertExactKeys(value, ["samples", "note"], path);
@@ -223,7 +218,7 @@ function validateGcCalibration(value: unknown, path: string): void {
 
 /**
  * 校验单个场景的软上报阈值及其来源读数，返回阈值。`measured` 只用于在解析期核对
- * 「阈值必须解释得了它自己」，不进入解析结果。
+ * 阈值不低于它自己的来源读数，不进入解析结果。
  */
 function parseScenario(
   value: unknown,
@@ -264,8 +259,7 @@ function parseScenario(
     "slowestMedianNsPerOp",
     `${path}.measured.slowestMedianNsPerOp`
   );
-  // 阈值低于它自己的来源读数，说明这条记录在重标时只改了一半：门禁会从第一次
-  // 运行起就稳定软报，而那正是「出现即异常」失效的样子。
+  // 阈值必须不低于它自己的来源读数。
   if (threshold < slowestMedianNsPerOp) {
     fail(
       `${path}.medianNsPerOpReportThreshold`,
@@ -279,8 +273,8 @@ function parseScenario(
 /**
  * 读取并严格校验 performance-result.json 的校准记录。
  *
- * 只校验结构与取值形态；「场景表是否与默认场景一一对应」仍由
- * assertHotPathMedianPolicyCoverage 判定，避免同一条契约有两个 owner。
+ * 只校验结构与取值形态；「场景表是否与默认场景一一对应」由
+ * assertHotPathMedianPolicyCoverage 判定。
  */
 export async function readHotPathGateCalibration(
   path: string
@@ -307,7 +301,7 @@ function parseCalibrationDocument(parsed: unknown): HotPathGateCalibration {
   if (!hasOnlyKeys(parsed, TOP_LEVEL_SECTIONS)) {
     fail("", `must declare only these keys: ${TOP_LEVEL_SECTIONS.join(", ")}`);
   }
-  // hotPathProfileGate 的存在性由下面这行强制：门禁没有它就无从判定。
+  // 缺少 hotPathProfileGate 节即拒绝。
   const root: Record<string, unknown> = requiredRecord(
     parsed,
     "hotPathProfileGate",
@@ -324,8 +318,7 @@ function parseCalibrationDocument(parsed: unknown): HotPathGateCalibration {
     ["runtime", "limits", "scenarios", NOTES_KEY],
     "hotPathProfileGate.calibration"
   );
-  // 按声明顺序校验。runtime 与 limits 是常数级检查，排在逐场景循环之前才符合
-  // 本模块「记录写坏时不该先做完一堆无用功再报错」的口径。
+  // 先校验 runtime 与 limits，再逐场景校验。
   const runtime: HotPathGateRuntimeCalibration = parseRuntime(calibration);
   const limits: HotPathGateLimits = parseLimits(calibration);
   const scenarios: Record<string, unknown> = requiredRecord(
@@ -350,8 +343,7 @@ function parseCalibrationDocument(parsed: unknown): HotPathGateCalibration {
  * 把最近一次门禁读数覆盖写进 `hotPathProfileGate.lastRun`。
  *
  * 实际写盘在 `scripts/perf/performanceResult.ts`（同一份文件还有全量基准那一节，
- * 两边共用「只换自己那一格」的语义）。这层只钉死本侧的节名与键名，免得调用点
- * 各自拼字符串——拼错不会报错，只会往记录里多长出一个没人读的键。
+ * 两边共用「只换自己那一格」的语义）；这层只固定本侧的节名与键名。
  */
 export async function writeHotPathGateLastRun(
   path: string,

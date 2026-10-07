@@ -7,8 +7,7 @@
 import type { AiTextResult } from "../../../types/aiChat/provider";
 
 /**
- * 各家实现包共用的请求失败归因。名字与各自 `RequestResult.failureKind` 一致：
- * 那是同一套业务语义，不该在收窄成 AiTextResult 时各写一份映射。
+ * 各实现包共用的请求失败归因，取值与各自 `RequestResult.failureKind` 一致。
  */
 export type AiRequestFailureKind =
   | "request"
@@ -18,20 +17,18 @@ export type AiRequestFailureKind =
   | "misconfigured";
 
 /**
- * 把一次失败的请求收窄成业务结果，并把**对整条媒体模态的结论**一起带出去。
+ * 把一次失败的请求收窄成业务结果，并带出对整条媒体模态的结论。
  *
- * 四条口径各自独立，不能合并：
+ * 四条口径各自独立：
  * - `response`（HTTP 成功但产出不可用）只说明这一次采样不行，允许业务层重采样。
- * - `rejected`（普通 4xx 拒绝这次请求内容）说明这一份输入不合适；SDK 重试已耗尽，
- *   不得再套一层完整请求。两者都**不带** mediaFailure——单份坏媒体既不该关闭整条
- *   模态，也不该推动退避。
+ * - `rejected`（普通 4xx 拒绝这次请求内容）说明这一份输入被拒，不可重采样。
+ *   两者都不带 mediaFailure。
  * - `unsupported` / `misconfigured` 是确定性模态结论；模态状态机据此阻止新下载与请求，
  *   同配置代次的在途成功仍可恢复支持结论。
- * - `request`（端点故障：网络、超时、408/429/5xx）对媒体是**瞬时**结论：模态结论
- *   不变，只按次数退避，绝不永久关闭。
+ * - `request`（端点故障：网络、超时、408/429/5xx）对媒体是瞬时结论：模态结论
+ *   不变，只按次数退避，不永久关闭。
  *
- * 非媒体流水线（摘要、贴纸整包简介）一律不带 mediaFailure：那条路上的失败与
- * media 端点能力无关，混进去会让一次摘要超时推动媒体模态进退避。
+ * 非媒体流水线（摘要、贴纸整包简介）一律不带 mediaFailure。
  */
 export function classifyAiTextFailure(
   failureKind: AiRequestFailureKind,
@@ -47,11 +44,7 @@ export function classifyAiTextFailure(
 /**
  * 把清洗后的正文收窄成业务结果。
  *
- * 「清洗后为空」必须算作**可重采样**的失败：那多半是模型这一次空转，而不是它
- * 判断出「没什么可说的」——两者对调用方不可区分，当成成功交回去就成了一次没有
- * 任何日志痕迹的静默降级（摘要变空、媒体描述退化成占位）。
- *
- * OpenAI 与 Gemini 共用这一口径，避免一侧把空串误判为成功。
+ * 清洗后为空算作可重采样的失败（`retryable: true`），非空为成功。各实现包共用这一口径。
  */
 export function finalizeAiTextResult(normalizedText: string): AiTextResult {
   return normalizedText.length > 0

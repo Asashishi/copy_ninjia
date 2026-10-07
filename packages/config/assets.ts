@@ -1,12 +1,12 @@
 /**
- * config/dynamic/assets.json 的严格解析：顶层只有 `onlyPath`、`pathOrUrl` 与 `onlyUrl` 三个分组。
+ * config/dynamic/assets.json 的严格解析：顶层只有 `onlyPath`、`pathOrUrl` 与 `onlyUrl` 分组。
  *
  * - `onlyPath`：`random_h_image_dir`，随机图库的本机目录。
  * - `pathOrUrl`：`bot_default_avatar`，机器人默认头像的本机文件或本进程下载的 http(s) 直链。
- * - `onlyUrl`：三条 inline 结果缩略图直链，由 Telegram 拉取，只收绝对 https URL。
+ * - `onlyUrl`：inline 结果缩略图直链，由 Telegram 拉取，只收绝对 https URL。
  *
  * 本机路径只收绝对路径或 `./`、`../` 开头的相对路径，相对路径按运行时数据根解析。
- * 文件、三个分组与组内字段都可选，缺省按「从没设过」取 consts/ui/assets.ts 的内置常量；分组或字段
+ * 文件、各分组与组内字段都可选，缺省按「从没设过」取 consts/ui/assets.ts 的内置常量；分组或字段
  * 存在但非法、出现未知分组或组外字段、顶层或分组不是对象时整份拒绝，报错只含文件路径、字段路径与
  * 期望形态。parseAssetConfig 只做形态与路径的词法判定，不做 I/O；loadAssetConfig 在读盘后再核对默认
  * 头像的本机文件（见 verifyDefaultAvatarFile）。启动总闸（config/readiness.ts）在文件存在时

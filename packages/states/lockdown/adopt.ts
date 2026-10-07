@@ -13,9 +13,8 @@ export function handleAdopt(
   event: Extract<LockdownMachineEvent, { type: "adopt" }>
 ): LockdownTransition {
   if (state !== undefined) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
-  // 上一代那次发送的结局已无从追认：接管方只认落盘下来的 announced 与
-  // messageId。落盘说「没公告过」而锁定仍要继续时补一次公告——群里必须
-  // 知道自己为什么进不来人；RESTORING 正在收尾，补公告只会前言不搭后语。
+  // 接管方只认落盘下来的 announced 与 messageId：落盘记为未公告且锁定仍要继续时
+  // 补一次公告；RESTORING 阶段不补公告。
   const announceOnAdopt: boolean = !event.announced && event.phase !== "restoring";
   const announcement: LockdownAnnouncement = {
     announced: event.announced,
@@ -32,8 +31,7 @@ export function handleAdopt(
         stage: "prepared",
         originalPermissions: event.originalPermissions,
         intentId: event.intentId,
-        // 下面立刻发 commitApply 的那一路必须同时置位，否则补发公告带来的
-        // 那次落盘回执会让同一轮再写一次 Telegram。
+        // persisted 时下面立刻发 commitApply，commitStarted 同步置位。
         commitStarted: event.persisted,
         ...announcement,
       },

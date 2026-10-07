@@ -62,8 +62,7 @@ describe("入群滑窗静默清理 timer", () => {
     recordJoinWindow(CHAT_ID, Date.now());
     const stale: JoinWindow = joinWindows.get(CHAT_ID)!;
 
-    // 直接换掉表里的条目（不走 clearJoinWindow，因此旧 timer 仍挂着）：
-    // 这正是回调首行那道 identity 判据要挡的情形。
+    // 直接换掉表里的条目（不走 clearJoinWindow，旧 timer 仍挂着）：回调首行的 identity 判据挡下这种情形。
     const replacement: JoinWindow = {
       timestamps: new TimestampDeque(JOIN_WINDOW_CAPACITY, JOIN_WINDOW_CAPACITY),
       overflowThrough: undefined,

@@ -17,7 +17,7 @@ mock.module("../../packages/config/bot", () => ({
   getBotConfig: (): BotConfig => ({ timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 100 }),
 }));
 // 超级管理员由身份直接持有全部白名单权限（见 packages/infra/identityPolicy/whitelist.ts 的
-// getEffectiveWhitelistPermissions），命令层不再单独判身份。
+// getEffectiveWhitelistPermissions），命令层不单独判身份。
 mock.module("../../packages/infra/identityPolicy/whitelist", () => ({
   hasWhitelistPermission: (id: number, key: string): boolean => id === 100 && key === "isCanSwitchMood",
 }));

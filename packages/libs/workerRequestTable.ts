@@ -1,7 +1,7 @@
 /**
  * 主线程向 Worker 发起、按 requestId 等回执的请求表：心情查询/重抽、群失效、语音合成、摘要组稿
  * 与 Disk I/O 逐请求通道共用。等待者先登记后投递（同步回执也不会丢，同 libs/flushBarrier.ts 的
- * 顺序约定），结算只有回执、超时、调用方取消、投递被拒与 Worker 崩溃重建 / 放弃 / 终止五条路，一律经 resolve 交回
+ * 顺序约定），结算路径为回执、超时、调用方取消、投递被拒与 Worker 崩溃重建 / 放弃 / 终止，一律经 resolve 交回
  * 调用方给定的结果，不 reject。等待表实例由调用方的 cache 模块持有。
  */
 
@@ -28,8 +28,10 @@ export interface WorkerRequestAbort<T> {
 export interface BeginWorkerRequestOptions<T> {
   readonly table: WorkerRequestTable<T>;
   readonly timeoutMs: number;
-  /** 投递带 requestId 的请求；返回 false 表示同步拒绝，按 rejected 结算。 */
+  /** 投递带 requestId 的请求；返回 false 或同步抛错表示投递被拒，按 rejected 结算。 */
   readonly post: (requestId: number) => boolean;
+  /** post 同步抛错时的诊断出口：先把异常交给它，再按 rejected 结算。 */
+  readonly onPostError: (error: unknown) => void;
   /** 超时或取消后撤回 Worker 侧的工作；不需要撤回时省略。 */
   readonly cancel?: (requestId: number) => void;
   /** 调用方取消；请求不可取消时省略。 */
@@ -38,11 +40,12 @@ export interface BeginWorkerRequestOptions<T> {
   readonly rejected: T;
 }
 
-/** 登记一个等待者并投递请求，返回在五条结算路之一兑现的 Promise。 */
+/** 登记一个等待者并投递请求，返回在任一结算路径兑现的 Promise。 */
 export function beginWorkerRequest<T>({
   table,
   timeoutMs,
   post,
+  onPostError,
   cancel,
   abort,
   timedOut,
@@ -67,7 +70,14 @@ export function beginWorkerRequest<T>({
       onAbort,
     });
     if (onAbort !== undefined) signal?.addEventListener("abort", onAbort, { once: true });
-    if (!post(requestId)) takeWorkerRequest(table, requestId)?.resolve(rejected);
+    let posted: boolean;
+    try {
+      posted = post(requestId);
+    } catch (error: unknown) {
+      onPostError(error);
+      posted = false;
+    }
+    if (!posted) takeWorkerRequest(table, requestId)?.resolve(rejected);
   });
 }
 

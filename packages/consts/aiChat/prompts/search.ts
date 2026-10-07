@@ -29,8 +29,7 @@ export const WEB_SEARCH_DECISION_INSTRUCTION: string =
  * 回复的每次模型往返复用相同的 system prompt。
  *
  * 次数是**软限制**：检索工具在一轮内恒挂，replyModel.ts 只记账并在跨过上限时点名，
- * 不再中途摘掉工具——它排在 tools 数组首位，摘一次就会让整段前缀缓存从第一个字节
- * 起落空。搜索结果随会话历史传入后续轮次。
+ * 不中途摘掉工具（它排在 tools 数组首位）。搜索结果随会话历史传入后续轮次。
  */
 export const WEB_SEARCH_INSTRUCTION: string =
   WEB_SEARCH_DECISION_INSTRUCTION +

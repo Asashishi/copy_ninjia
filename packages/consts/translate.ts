@@ -36,7 +36,7 @@ export const TRANSLATE_LANGUAGE_CODES: Readonly<Record<TranslateLanguage, string
   ru: "ru",
 };
 
-/** /translate list 的 JSON 缩进；列表固定使用两空格。 */
+/** /translate list 的 JSON 缩进空格数。 */
 export const TRANSLATE_LIST_JSON_INDENT: number = 2;
 
 /** /translate list 的代码块语言；由 Telegram pre 实体标识 JSON。 */

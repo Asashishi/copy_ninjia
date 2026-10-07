@@ -12,18 +12,9 @@ export function timestampDequeOf(
   return deque;
 }
 
-/**
- * 窗口内容快照，保持入队顺序。
- *
- * 排空再原样压回，而不是给 TimestampDeque 加一个只有测试用得上的 `last()`：
- * 生产侧从不需要摊平这个窗口，加上去就等于为断言扩生产 API。压回的条数与
- * 排空的完全相同，因此不会撞上容量硬顶。
- */
+/** 窗口内容快照，保持入队顺序；按偏移逐个 peekAt，不改变窗口。 */
 export function timestampDequeContents(deque: TimestampDeque): number[] {
   const contents: number[] = [];
-  for (let value: number | undefined = deque.shift(); value !== undefined; value = deque.shift()) {
-    contents.push(value);
-  }
-  for (const value of contents) deque.push(value);
+  for (let offset: number = 0; offset < deque.size; offset += 1) contents.push(deque.peekAt(offset)!);
   return contents;
 }

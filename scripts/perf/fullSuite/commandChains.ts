@@ -1,8 +1,5 @@
 import type { ChatState } from "../../../packages/types/chatState";
-import type {
-  ensureAdDetectAgentConfig,
-  ensureAgentDeploymentConfig,
-} from "../../../packages/config/agent";
+import type { validateAgentDeploymentConfig } from "../../../packages/config/agent";
 import type {
   drainAdDisposals,
   handleAdDetected,
@@ -60,8 +57,7 @@ export interface CommandChainDependencies {
   readonly stateManagedChatLimit: number;
   readonly benchmarkChatId: (index: number) => number;
   readonly benchmarkUserId: (index: number) => number;
-  readonly ensureAdDetectAgentConfig: typeof ensureAdDetectAgentConfig;
-  readonly ensureAgentDeploymentConfig: typeof ensureAgentDeploymentConfig;
+  readonly validateAgentDeploymentConfig: typeof validateAgentDeploymentConfig;
   readonly handleAdDetected: typeof handleAdDetected;
   readonly drainAdDisposals: typeof drainAdDisposals;
   readonly botChatPermissionsIn: typeof botChatPermissionsIn;
@@ -95,7 +91,7 @@ function adDetectCommandChain(
     operations: dependencies.chainAdDetectCommands,
     recordsPerOperation: 1,
     prepare: async (): Promise<void> => {
-      await dependencies.ensureAdDetectAgentConfig();
+      await dependencies.validateAgentDeploymentConfig();
       dependencies.adDetectOpenAiClientHolder.current = {
         chat: {
           completions: {
@@ -216,7 +212,7 @@ function aiReplyCommandChain(
     warmupOperations: dependencies.aiReplyWarmupOperations,
     excludedNanoseconds: (): number => pauseNs.current,
     prepare: async (): Promise<void> => {
-      await dependencies.ensureAgentDeploymentConfig();
+      await dependencies.validateAgentDeploymentConfig();
       dependencies.botInfoState.current = {
         id: 1,
         username: "benchmark_bot",
@@ -308,7 +304,7 @@ function cronSendVoiceChain(
     recordsPerOperation: 1,
     warmupOperations: dependencies.cronVoiceWarmupOperations,
     prepare: async (): Promise<void> => {
-      await dependencies.ensureAgentDeploymentConfig();
+      await dependencies.validateAgentDeploymentConfig();
       const audio: string = benchmarkWav(dependencies.cronVoicePcmBytes).toBase64();
       dependencies.geminiClientCache.current = new Map([["tts", {
         interactions: {
@@ -325,7 +321,7 @@ function cronSendVoiceChain(
     run: async (sequence: number): Promise<void> => {
       const lookup: SpeechSynthesizerLookup | null = synthesizer.current;
       if (lookup?.ok !== true) throw new Error("Benchmark speech synthesizer was not prepared.");
-      // 每次从空计数起步：迭代次数超过每日上限时门面会拒绝发起请求。
+      // 每次从空计数起步，tts 门面的每日计数不累积。
       dependencies.ttsDailyUsage.current = null;
       const result: VoiceSynthesisResult = await dependencies.synthesizeVoiceMessage(
         lookup.synthesize,

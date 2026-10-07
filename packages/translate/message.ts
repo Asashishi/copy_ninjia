@@ -39,10 +39,10 @@ export interface TranslateMessageParams {
  * - 既无正文也无图注（贴纸、不带图注的图片与文件等）；
  * - 同语种或中性文字（needsNoTranslation 命中，不调用翻译）；
  * - 翻译 API 失败，或译文与原文逐字相同；
- * - 原文或译文含可渲染命令：把 Google 译出来的 `/xxx` 发进群会被 Telegram 当成命令实体渲染；
- * - 译文超过正文长度上限，不发注定被拒的请求。
- * 以上都对发送者静默——翻译是旁路增强，不回错误提示；只有 API 异常由 client.ts 记错误日志。
- * 异步完成后复核会话，停止或重开后的迟到结果不再发送。
+ * - 原文或译文含可渲染命令（见 libs/renderableCommand.ts）；
+ * - 译文超过正文长度上限。
+ * 以上都对发送者静默，不回错误提示；只有 API 异常由 client.ts 记错误日志。
+ * 异步完成后复核会话，停止或重开后的迟到结果不发送。
  */
 export async function translateMessage(params: TranslateMessageParams): Promise<void> {
   const { chatId, message, state, messageThreadId }: TranslateMessageParams = params;

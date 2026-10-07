@@ -7,10 +7,9 @@ import type { AiRecordContext, AiReplyReference } from "../../types/aiChat/proto
 /**
  * 主线程的原始引用进入滚动记忆前统一清洗、限长。
  *
- * 可选字段全部写出来、缺省显式 undefined，不用条件展开：这一族对象要长期留在
- * 逐字缓存里，被 chatTranscript.ts 每次拼提示词读满一轮，形状必须恒定
- * （见 types/aiChat/memory.ts）。空串仍归一成 undefined，下游「有值才拼标记」
- * 的判断逐字不变；落盘也不变——JSON.stringify 本来就丢弃值为 undefined 的键。
+ * 可选字段全部写出、缺省显式 undefined，不用条件展开，对象形状恒定
+ * （见 types/aiChat/memory.ts）。空串归一成 undefined；JSON.stringify 落盘时
+ * 丢弃值为 undefined 的键。
  */
 export function sanitizeReplyReference(reference: AiReplyReference): BufferedReplyReference {
   const sanitizedUsername: string = stripLeadingAtSigns(sanitizeInline(reference.username ?? ""));
@@ -31,9 +30,8 @@ export function sanitizeReplyReference(reference: AiReplyReference): BufferedRep
 /**
  * 文字与媒体共用的缓存条目构造边界；返回 null 表示清洗后没有正文。
  *
- * 字段顺序即隐藏类顺序，且与 normalizeHydratedBufferedMessage 必须逐字一致
- * ——恢复出来的旧快照要和新收到的消息落在同一个隐藏类上，否则转录渲染在
- * 重启后的头几百条消息里会一直读两种形状。
+ * 字段顺序与 normalizeHydratedBufferedMessage 逐字一致，恢复出来的条目与新收到的
+ * 消息形状相同。
  */
 export function buildBufferedMessage(
   source: AiRecordContext,
@@ -59,16 +57,13 @@ export function buildBufferedMessage(
 }
 
 /**
- * 把 JSON.parse 出来的历史快照条目重建成与 buildBufferedMessage 完全同形的对象。
+ * 把 JSON.parse 出来的快照条目重建成与 buildBufferedMessage 同形的对象。
  *
- * 落盘 JSON 里缺省字段是**不存在**的键（stringify 丢 undefined），因此
- * `JSON.parse` 产出的隐藏类完全取决于那条记录当初有没有 username/replyTo/
- * forwardedFrom/pendingImage——恢复一个群就可能同时灌进四五种形状，而它们随后要和新消息
- * 混在同一个 deque 里被转录逐条读。这里按固定顺序重建一遍，代价只在启动恢复
- * 时按条付一次。
+ * 落盘 JSON 里缺省字段是**不存在**的键（stringify 丢 undefined），这里按固定顺序
+ * 补齐 username/replyTo/forwardedFrom/pendingImage，只在启动恢复时按条执行。
  *
- * 只做形状归一，不做清洗：快照里的内容在写入时已经过 sanitizeInline，重复清洗
- * 既无必要，也会让「恢复后的正文」与落盘内容不再逐字相等。
+ * 只做形状归一，不做清洗：快照里的内容在写入时已经过 sanitizeInline，恢复后的正文
+ * 与落盘内容逐字相等。
  */
 export function normalizeHydratedBufferedMessage(message: BufferedMessage): BufferedMessage {
   const replyTo: BufferedReplyReference | undefined = message.replyTo;

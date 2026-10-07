@@ -58,8 +58,8 @@ function readOnlyMetadataRow(
 }
 
 /**
- * 严格读取 schema-version 行，版本范围由调用生命周期决定。只认该主键、不核对其余行：
- * 版本不符的库（例如缺时区标记的 v12）必须先得到版本诊断。
+ * 严格读取 schema-version 行，版本范围由调用生命周期决定。只认该主键、不核对其余行，
+ * 版本不符的库先得到版本诊断。
  */
 export function readStorageSchemaVersion(
   rows: ReadStorageMetadataParams,
@@ -193,7 +193,7 @@ export function assertPendingRemovalBlocklistReferences(
   }
 }
 
-/** 严格解码群状态，并执行 25 群硬顶与唯一代理目标约束。 */
+/** 严格解码群状态，并执行 STATE_MANAGED_CHAT_LIMIT 群上限与唯一代理目标约束。 */
 export function decodeStoredChatStates(
   rows: readonly StoredChatStateRow[],
   source: string
@@ -227,9 +227,7 @@ export function decodeStoredChatStates(
 }
 
 /**
- * 严格解码全部问答行，并核对每群条数没有越过硬顶。
- *
- * 启动读取不依赖写入侧校验；手工改库或从别处恢复的备份都可能带入越界数据。
+ * 严格解码全部问答行，并核对每群条数不超过 CHAT_QA_MAX_PER_CHAT。
  *
  * @returns 群 -> 问题 -> 答案；调用方据此重建热缓存。
  */

@@ -1,7 +1,6 @@
 /**
- * Disk I/O Worker 路由层里此前没有任何用例走过的五条分支：删掉其中任意一条
- * `case` 都必须让本文件变红。夹具与 diskIOWorker.test.ts 共用，见
- * test/helpers/diskIOWorkerRouterHarness.ts。
+ * Disk I/O Worker 路由层若干 `case` 分支的专项用例，每条分支各有断言。夹具与
+ * diskIOWorker.test.ts 共用，见 test/helpers/diskIOWorkerRouterHarness.ts。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -61,7 +60,7 @@ describe("Disk I/O Worker 路由：此前无用例覆盖的分支", () => {
       reply: (value: unknown) => void;
     };
     expect(input.msg).toEqual({ type: "verificationUpsert", record, critical: true });
-    // 回执必须原样回到 Worker 全局的 postMessage，而不是被路由层吞掉。
+    // 回执原样回到 Worker 全局的 postMessage。
     input.reply({ type: "verificationPersisted", chatId: CHAT_ID, userId: 42, generation: 1, revision: 1 });
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "verificationPersisted", chatId: CHAT_ID, userId: 42, generation: 1, revision: 1,

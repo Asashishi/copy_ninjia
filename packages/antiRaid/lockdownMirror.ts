@@ -247,9 +247,9 @@ export function stopEmergencyLockdownRecoveries(): void {
       recovery.retryTimer = null;
     }
   }
-  // Telegram 请求本身可能永久悬挂，停机不能越过生命周期预算无限等待。
-  // 已关闸且清空 owner；迟到的成功/失败都会在 run 中停止，不再修改 state
-  // 或重新安排 timer。state 保留 lockdown，下一进程可幂等恢复权限。
+  // 停机不等待在途的 Telegram 请求：已关闸（stopped）并清空 owner；迟到的成功/失败
+  // 都会在 run 中停止，不再修改 state 或重新安排 timer。state 保留 lockdown，
+  // 下一进程可幂等恢复权限。
   emergencyLockdownRecoveries.clear();
 }
 

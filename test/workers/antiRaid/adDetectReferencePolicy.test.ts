@@ -51,10 +51,8 @@ const {
 } = await import("../../../packages/workers/antiRaid/adDetect/referencePolicy");
 
 /**
- * attempt 序号按设计只增不减（resetReferencedAdWarnings 刻意不碰它，见该函数头注），
- * 「序号耗尽」那条用例会把它留在 MAX_SAFE_INTEGER 上。随机顺序下它可能排在本文件
- * 任何一条之前，因此复位必须放在顶层 beforeEach，不能只放在它所在的 describe 里——
- * 这是测试自己的隔离需要，不改变生产语义。
+ * attempt 序号只增不减（resetReferencedAdWarnings 不重置它，见该函数头注），
+ * 顶层 beforeEach 把它归零。
  */
 const { pendingAdBundle } =
   await import("../../../packages/workers/antiRaid/adDetect/queueState");
@@ -343,15 +341,14 @@ describe("引用类广告的警告升级与处置抑制", () => {
 
   test("命中后同窗口内抢跑进来的消息直接丢弃，不再攒出第二次处置", async () => {
     classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
-    // 处置标记由判定结算路径按本地时钟落下，读它的一侧必须用同一把钟——混用
-    // 小逻辑时钟会被回拨判据当成时钟往回走，标记提前失效。
+    // 处置标记由判定结算路径按本地时钟落下，读取一侧使用同一把钟。
     const disposedAt: number = Date.now();
     enqueueAdCandidate(candidate({ messageId: 1, text: "USDT 承兑加我" }), disposedAt);
     await runAdDetectBatch(disposedAt);
     expect(disposeAdSender).toHaveBeenCalledTimes(1);
     expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(true);
 
-    // 封禁还没落地时他还能再说几句；重判只会换来第二次完全相同的处置。
+    // 封禁还没落地时他还能再说几句；这些消息直接丢弃，不重判。
     const stragglerAt: number = Date.now() + 500;
     enqueueAdCandidate(candidate({ messageId: 2, text: "还有名额" }), stragglerAt);
     expect(pendingAdBundleCount.current).toBe(0);
@@ -364,8 +361,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
   });
 
   test("命中后频道马甲抢跑进来的广告照样删掉", async () => {
-    // banChatSenderChat 没有 revoke_messages，逐条删除是这些消息唯一的清理路径；
-    // 判定到封禁落地之间还隔着回投主线程、名单 fsync 与 outbox 屏障。
+    // banChatSenderChat 没有 revoke_messages，逐条删除是这些消息唯一的清理路径。
     classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
     // 同上：处置标记按本地时钟落下，抢跑消息也用本地时钟读。
     const disposedAt: number = Date.now();
@@ -376,7 +372,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
     const stragglerAt: number = Date.now() + 500;
     enqueueAdCandidate(candidate({ senderId: -1005, isChannel: true, messageId: 2, text: "还有名额" }), stragglerAt);
     expect(deleteStragglerAdMessage).toHaveBeenCalledWith(-1001, 2);
-    // 仍然不重判、不重新处置：那一套只该走一次。
+    // 仍然不重判、不重新处置。
     expect(pendingAdBundleCount.current).toBe(0);
     expect(disposeAdSender).toHaveBeenCalledTimes(1);
 
@@ -387,8 +383,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
   });
 
   test("封禁确定完成只释放处置标记，不碰同一个人新取得的待检位置", () => {
-    // 同一个人在封禁落地前又说了话：那一串已经重新排上队，释放处置标记不能
-    // 把它的队列位置一起带走，否则这批新内容永远等不到判定。
+    // 同一个人在封禁落地前又说了话：那一串已经重新排上队；释放处置标记不带走它的队列位置。
     recentlyDisposedAdKeys.set("-1001:7", Date.now());
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
 
@@ -409,9 +404,8 @@ describe("引用类广告的警告升级与处置抑制", () => {
   });
 
   test("已拉黑的频道马甲跨窗口照样删，不占判定额度", () => {
-    // recentlyDisposedAdKeys 只活一个去重窗口，而「已拉黑但封禁没落地」可以跨
-    // 窗口存在（秒踢、补扫、上个窗口判定登记的封禁批次都是先写名单再等 outbox
-    // 落盘与 mailbox 屏障）。该 key TTL 到期后就只剩 blocked 这一个判据认得它。
+    // recentlyDisposedAdKeys 只活一个去重窗口，「已拉黑但封禁没落地」可以跨窗口存在；
+    // 该 key TTL 到期后只剩 blocked 判据认得它。
     expireAdDetectDisposalMarkers();
     expect(recentlyDisposedAdKeys.size).toBe(0);
 
@@ -429,8 +423,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
   });
 
   test("群管理员即使被判成广告也不处置", async () => {
-    // 处置与 /block 同权且不可逆：永久黑名单 + 每个托管群封禁 + revoke_messages
-    // 抹掉近期消息，恢复要人工 /block disable 再逐群解封。
+    // 群管理员被判成广告也不处置，不触发与 /block 同权的永久黑名单与逐群封禁。
     classifyAdText.mockImplementation(async (): Promise<AdVerdict> => ({ isAd: true, reason: "引流" }));
     fetchedAdmins.set(-1001, new Set([7]));
     enqueueAdCandidate(candidate({ messageId: 1, text: "看我合作方的链接" }), 1_000);
@@ -463,9 +456,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
 
   /**
    * 已知管理员这道闸在 enqueueAdCandidate 里排在正文清洗之前（见那边的注释）。
-   * 下面四条钉住的是「提前返回不得改变任何一种身份组合的结局」——判据横跨
-   * isChannel / blocked / recentlyDisposed 与「串里已有内容」四个维度，正是提前
-   * 返回唯一可能踩空的地方。
+   * 下面四条验证提前返回不改变各种身份组合（isChannel / blocked / recentlyDisposed / 串里已有内容）的结局。
    */
   test("中途被提为管理员：新消息被忽略，既有消息串原样不动", async () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "先说一句正常的" }), 1_000);
@@ -479,7 +470,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
       sampleReplyTo: "被回复的一段原文",
     }), 1_100);
 
-    // 既不新增条目，也不改写既有条目——提前返回不得顺手动到别人的串。
+    // 既不新增条目，也不改写既有条目。
     const bundle = pendingAdBundle(-1001, 7);
     expect(bundle?.entries).toHaveLength(1);
     expect(bundle?.entries[0]?.messageId).toBe(1);
@@ -487,8 +478,7 @@ describe("引用类广告的警告升级与处置抑制", () => {
   });
 
   test("管理员豁免只认用户身份：频道马甲不因同 id 出现在管理员表而放行", async () => {
-    // 频道 id 是负数，正常不会进管理员表；这里刻意塞进去，确认判据是 isChannel
-    // 而不是「id 在不在表里」。频道马甲照常入队送检。
+    // 频道 id 是负数，正常不会进管理员表；这里塞进去，确认判据是 isChannel 而不是 id 在不在表里。频道马甲照常入队送检。
     cachedAdmins.set(-1001, new Set([-1005]));
     enqueueAdCandidate(candidate({
       senderId: -1005,
@@ -521,12 +511,9 @@ describe("引用类广告的警告升级与处置抑制", () => {
 });
 
 /**
- * 上面那组走的是队列集成路径，因此 referencePolicy 的容量闸、按身份清理和周期
- * 回收这三段**函数体一次都没被执行过**（表在被调用时恒为空）。这里直接驱动这些
- * 纯函数，把它们各自的不变量钉住。
- *
- * 每条都先把表填成**真的有匹配条目**的样子再调用——只调不填等于复制出上面那种
- * 「函数进得去、循环体没跑」的假覆盖。
+ * 上面那组走队列集成路径，referencePolicy 的容量闸、按身份清理和周期回收三段
+ * 在其中不会遇到非空表。这里直接驱动这些纯函数，验证各自的不变量；
+ * 每条都先把表填成有匹配条目的状态再调用。
  */
 describe("引用广告警告状态表自身的容量与回收", () => {
   /** 造一条已进入五分钟窗口的 warned 记录，绕开发送链路直接落表。 */
@@ -555,7 +542,7 @@ describe("引用广告警告状态表自身的容量与回收", () => {
 
     expect(beginReferencedAdWarning("-1001:newcomer")).toBeDefined();
 
-    // 淘汰的是插入序最早的那条，而不是随便一条；总量不越硬顶。
+    // 淘汰的是插入序最早的那条；总量不越硬顶。
     expect(referencedAdWarningStates.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(referencedAdWarningStates.has("-1001:0")).toBeFalse();
     expect(referencedAdWarningStates.has("-1001:1")).toBeTrue();
@@ -567,7 +554,7 @@ describe("引用广告警告状态表自身的容量与回收", () => {
       expect(beginReferencedAdWarning(`-1001:${index}`)).toBeDefined();
     }
 
-    // 表满 + 已存在：先 delete 再 set，净增为零，淘汰分支不该开火。
+    // 表满且键已存在：先 delete 再 set，净增为零，不触发淘汰分支。
     expect(beginReferencedAdWarning("-1001:0")).toBeDefined();
 
     expect(referencedAdWarningStates.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);

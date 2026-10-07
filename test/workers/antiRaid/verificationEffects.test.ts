@@ -330,8 +330,7 @@ describe("同步副作用的逐条执行", () => {
     expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeTrue();
     expect(sentTexts[0]).toContain("Alice 通过验证啦");
     expect(autoDeleted).toEqual([{ messageId: 900, delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS }]);
-    // 必须落在 error 上：Worker 只向主线程中继 error，warn 到不了 logs/，
-    // 而这条正是「合法成员被误踢了、请人工拉回来」的唯一线索。
+    // 记在 error 上：Worker 只向主线程中继 error，不记 warn；该行是「合法成员被误踢」的线索。
     expect(warnings).toEqual([]);
     expect(loggedErrors.some((line) => line.includes("had already been sent or completed"))).toBeTrue();
   });
@@ -367,7 +366,7 @@ describe("同步副作用的逐条执行", () => {
     restoreTimeouts();
   });
 
-  test("私密模式确证没有限制成员权限时本轮零请求，权限恢复后下一轮继续踢人", async () => {
+  test("私密模式确证没有限制成员权限时本轮只探测成员、不发踢人请求，权限恢复后下一轮继续踢人", async () => {
     const delays: number[] = [];
     const restoreTimeouts: () => void = recordScheduledDelays(delays);
     try {
@@ -381,7 +380,7 @@ describe("同步副作用的逐条执行", () => {
       await run([{ kind: "kickMember" }]);
 
       expect(kickedUserIds).toEqual([]);
-      expect(probeChatMembership).not.toHaveBeenCalled();
+      expect(probeChatMembership).toHaveBeenCalledTimes(1);
       expect(state.executionStarted).toBeFalse();
       expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
       expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
@@ -399,6 +398,24 @@ describe("同步副作用的逐条执行", () => {
     }
   });
 
+  test("私密模式确证没有限制成员权限、成员已离群时直接结算，不退避", async () => {
+    applyBotPermissionsChange(CHAT_ID, {
+      canRestrictMembers: false,
+      canDeleteMessages: true,
+    });
+    testState.membershipPresent = false;
+    setState(kickPendingState());
+
+    await run([{ kind: "kickMember" }]);
+
+    expect(kickedUserIds).toEqual([]);
+    expect(dispatched).toEqual([{
+      userId: USER_ID,
+      event: { type: "kickSettled", now: expect.any(Number) },
+    }]);
+    expect(verificationEntries.get(KEY)?.terminalRetries).toBe(0);
+  });
+
   test("私密模式踢人请求失败但成员已离群时允许结算", async () => {
     testState.kickSucceeds = false;
     testState.membershipPresent = false;
@@ -413,10 +430,7 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("踢人请求失败后的复探发现人已离群：结算，不再退避重试", async () => {
-    // 与上一条的区别在**哪一次探测**说人不在：这里首发前的探测说在场，请求真
-    // 发出去了才失败，随后的复探才发现人已经不在——响应可能只是丢了。这条路
-    // 必须结算，否则一个已经离群的记录会一直退避到重试上限，群里那条验证提示
-    // 也跟着挂到最后。
+    // 与上一条的区别在哪一次探测说人不在：这里首发前的探测说在场，请求发出去后失败，随后的复探才发现人已不在；这条路结算。
     testState.kickSucceeds = false;
     testState.membershipPresent = true;
     probeChatMembership.mockImplementationOnce(async (): Promise<boolean> => true);
@@ -439,8 +453,7 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("判不出群还是超级群时零踢人请求，保留待处置并退避", async () => {
-    // 超级群走 unbanChatMember、普通群走 banChatMember + unban，两者不可互换：
-    // 猜错一边就等于用一个会解封的请求去踢人。查不出来时宁可什么都不发。
+    // 超级群走 unbanChatMember、普通群走 banChatMember + unban，两者不可互换；群类型查不出来时零请求。
     const delays: number[] = [];
     const restoreTimeouts: () => void = recordScheduledDelays(delays);
     try {
@@ -451,13 +464,13 @@ describe("同步副作用的逐条执行", () => {
       await run([{ kind: "kickMember" }]);
 
       expect(kickedUserIds).toEqual([]);
-      // 群类型都判不出来，就不该再去问成员在不在。
+      // 群类型判不出来时不探测成员。
       expect(probeChatMembership).not.toHaveBeenCalled();
       expect(state.executionStarted).toBeFalse();
       expect(dispatched.some(({ event }) => event.type === "kickSettled")).toBeFalse();
       expect(verificationEntries.get(KEY)?.terminalRetries).toBe(1);
       expect(delays).toEqual([VERIFICATION_TERMINAL_RETRY_MS]);
-      // 这条分支一个 Telegram 请求都不发，诊断必须由它自己记出来。
+      // 这条分支不发 Telegram 请求，由它自己记诊断。
       expect(loggedErrors.some((line: string): boolean =>
         line.includes("could not resolve whether the chat is a group or supergroup")
       )).toBeTrue();
@@ -481,10 +494,8 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("私密模式首发也先探测：join update 证明的是在场，不是没被封", async () => {
-    // join update 只证明目标在场，不能替代封禁状态查询。锁群下的调用若命中 429
-    // 会排进 kick 类独立退避车道；等待期间人工管理员完全可能
-    // 在客户端直接封禁这个人，而超级群的「只踢不封」映射到不带 only_if_banned
-    // 的 unbanChatMember——排到的那一发会把管理员的封禁解开。
+    // join update 只证明目标在场，不替代封禁状态查询；私密模式首发也先探测，
+    // 超级群的「只踢不封」映射到不带 only_if_banned 的 unbanChatMember。
     setState(kickPendingState());
 
     await run([{ kind: "kickMember" }]);
@@ -494,8 +505,7 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("首发时人已经被管理员封掉：直接结算，绝不发那个会解封的请求", async () => {
-    // getChatMember 报 kicked 时 isPresentMember 为 false，人已经出去了，
-    // 移除的目的已经达成，不能再去碰那条封禁。
+    // getChatMember 报 kicked 时 isPresentMember 为 false：移除目的已达成，不再碰那条封禁。
     testState.membershipPresent = false;
     setState(kickPendingState());
 
@@ -509,9 +519,8 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("私密模式重试同样先探测：人已经不在群里就直接结算，不发那个会解封的请求", async () => {
-    // 超级群的「只踢不封」映射到 unbanChatMember，而它不带 only_if_banned 时
-    // 会**解除已有封禁**：首发瞬时失败、退避期间超管刚 /block 掉这个人的话，
-    // 重试这一发就把刚落的封禁解开了，人凭任意邀请链接就能回来。
+    // 超级群的「只踢不封」映射到 unbanChatMember，不带 only_if_banned 时会解除已有封禁；
+    // 重试同样先探测，人已不在群里就直接结算。
     testState.membershipPresent = false;
     const state = kickPendingState();
     setState(state);
@@ -528,7 +537,7 @@ describe("同步副作用的逐条执行", () => {
   });
 
   test("私密模式重试时探测不出成员在不在群里，同样不发那个请求", async () => {
-    // 查询失败不等于不在群，也不足以授权一个可能解掉别人封禁的调用。
+    // 查询失败不等于不在群：不发可能解掉别人封禁的请求。
     testState.membershipPresent = undefined;
     const state = kickPendingState();
     setState(state);

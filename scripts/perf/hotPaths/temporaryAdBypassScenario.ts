@@ -24,8 +24,8 @@ export function createTemporaryAdBypassActivityScenario(): Scenario {
     countedAt: 1_800_000_000_000,
     qualifiedAt: null,
   };
-  // 活跃发言者当天第 8 条之后的全部消息都落在这一形态上：状态机原样返回入参，
-  // 调用方据此跳过写回，所以它必须占基准输入的主体。
+  // 活跃发言者当天达标之后的全部消息都落在这一形态上：状态机原样返回入参，
+  // 调用方据此跳过写回；它占基准输入的主体。
   const qualified: Readonly<TemporaryAdBypassActivity> = {
     adBypass: true,
     adBypassGrantedAt: 1_800_000_000_000,
@@ -40,7 +40,7 @@ export function createTemporaryAdBypassActivityScenario(): Scenario {
     run: (iterations: number): number => {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
-        // 80% 日内已达标稳态、10% 未授权稳态、10% 首次合格授权边沿；
+        // 按 slot 取输入：多数为已达标稳态，其余为未授权稳态与首次合格授权边沿；
         // 输入与对象 shape 固定。
         const slot: number = index % 10;
         const current: Readonly<TemporaryAdBypassActivity> =

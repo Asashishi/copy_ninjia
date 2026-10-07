@@ -1,17 +1,16 @@
 /**
  * 身份策略 LRU 的每消息热读场景。
  *
- * 每条群消息要在三张 8,192 项缓存上读 3~5 次：`canBypassFloodControl`
+ * 每条群消息要在三张身份缓存上读多次：`canBypassFloodControl`
  * （antiRaid/floodControl.ts 的 buildFloodCandidate）、`canBypassAdDetection`
  * 与 `isUserBlocked`（antiRaid/adCandidate.ts 的 buildAdCandidate）。
  *
- * 这个场景守 `libs/lruCache.ts` 的侵入式双向链表命中路径：命中只重连节点指针，
- * 不分配对象，也不对底层 Map 做删除后重插。场景必须持续覆盖身份缓存热读。
+ * 场景覆盖 `libs/lruCache.ts` 的侵入式双向链表命中路径：命中只重连节点指针，
+ * 不分配对象，也不对底层 Map 做删除后重插。
  *
- * 缓存整表填满：长期运行的部署本来就是这个稳态（每条 update 的前置预热会把
- * 见到的每个身份连同负缓存一起写进来，见 app/registerHandlers.ts）。取键按
- * 「90% 落在 500 个反复发言的身份、10% 散落全表」的固定序列，与真实群里的
- * 发言分布同形，且不依赖时钟。
+ * 缓存整表填满（容量 `IDENTITY_READ_CACHE_MAX_ENTRIES`）：每条 update 的前置预热把
+ * 见到的每个身份连同负缓存一起写进来（见 app/registerHandlers.ts）。取键序列固定，
+ * 偏斜到反复发言的工作集（`WORKING_SET`），其余散落全表，不依赖时钟。
  */
 
 import {
@@ -59,7 +58,7 @@ const BLOCKLIST_ENTRY: Readonly<BlocklistEntryData> = {
   meta: BENCHMARK_META,
 };
 
-/** 超级管理员在两个读口都会短路，落进序列会让读数依部署而异。 */
+/** 超级管理员在两个读口都会短路，序列里的 id 避开它。 */
 function benchmarkIdentityId(index: number): number {
   const id: number = IDENTITY_BASE + index;
   return id === SUPER_ADMIN_USER_ID ? id + IDENTITY_READ_CACHE_MAX_ENTRIES : id;
@@ -80,7 +79,7 @@ function buildKeySequence(): Int32Array {
 }
 
 export function createIdentityPermissionReadScenario(): Scenario {
-  // Int32Array 装不下 Telegram id，序列里存的是**下标**，取用时再换算成 id。
+  // Int32Array 装不下 Telegram id，序列里存的是下标，取用时换算成 id。
   const keys: Int32Array = buildKeySequence();
   const ids: Float64Array = new Float64Array(IDENTITY_READ_CACHE_MAX_ENTRIES);
   for (let index: number = 0; index < ids.length; index += 1) {
@@ -91,8 +90,8 @@ export function createIdentityPermissionReadScenario(): Scenario {
     prepare: (): void => {
       for (let index: number = 0; index < ids.length; index += 1) {
         const id: number = ids[index]!;
-        // 生产上绝大多数条目是负缓存（见过、但不在任何名单里）；三张表在同一次
-        // update 前置读取中一起填充，临时广告免检的常态热读也必须进入场景。
+        // 绝大多数条目是负缓存（见过、但不在任何名单里）；三张表一起填充，
+        // 临时广告免检的常态热读也进入场景。
         const whitelisted: boolean = index % 50 === 0;
         const blocked: boolean = !whitelisted && index % 97 === 0;
         whitelistEntryCache.set(id, whitelisted ? WHITELIST_ENTRY : null);

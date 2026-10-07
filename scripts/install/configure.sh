@@ -5,7 +5,7 @@
 step "6/8 填写配置"
 # --------------------------------------------------------------------------
 
-# 首次填写（含仍是示例占位值的文件）固定 0600；重新填写已填过的文件沿用原 mode。
+# 首次填写（含仍是示例占位值的文件）固定仅属主可读写；重新填写已填过的文件沿用原 mode。
 CONFIGURE_TELEGRAM=1
 BOT_CONFIG_SETTINGS="$(bun -e '
   import { loadInstallerBotConfig } from "./scripts/install/runtime";
@@ -31,7 +31,7 @@ if [ "$CONFIGURE_TELEGRAM" -eq 1 ]; then
   BOT_TOKEN=""
   while true; do
     ask_secret BOT_TOKEN "Telegram bot token（输入不回显）："
-    # 形态是 <数字>:<字母数字_->。先卡形态，写 JSON 时才不必再考虑转义。
+    # 形态是 <数字>:<字母数字_->；形态先行校验，写 JSON 时无需转义。
     [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]] && break
     warn "token 形态不对，应形如 123456789:AA...；请重新输入。"
   done

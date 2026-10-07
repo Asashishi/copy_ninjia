@@ -2,7 +2,7 @@ import type { AtmosphereTexts } from "../../types/atmosphere";
 import { chatAtmosphere } from "../../infra/atmosphere";
 /**
  * /wed 状态消息的唯一发送边界。可操作的图片结果只由移除、
- * 重开和群 teardown 清理，不挂固定延迟删除。豁免登记于 conventions/telegramMessages。
+ * 重开和群 teardown 清理，不挂固定延迟删除；豁免登记见 scripts/conventions/telegramMessages.ts。
  * 结果图发出与换图后都写一条占位态自录（见 aiChat/botImages.ts）。
  * 发送、取消和自发消息登记遵守 docs/cn/04-invariants.md 的 Telegram 出站约束。
  */
@@ -15,7 +15,6 @@ import { isMessageDeletionSettled } from "../../libs/messageDeletion";
 import { markSelfSent } from "../../infra/selfSentTracker";
 import { recordBotImage } from "../../aiChat";
 import {
-  logUnlessAborted,
   replyParametersFor,
   runTelegramAction,
 } from "../../infra/telegram/actions/core";
@@ -61,7 +60,6 @@ export function sendWedResult({ session, candidate, replyToMessageId, signal }: 
     },
     fallback: false,
     signal,
-    shouldLogError: logUnlessAborted,
     selfSentChatId: session.chatId,
   });
 }
@@ -96,7 +94,6 @@ export function replaceWedResult(session: WedSession, candidate: WedCandidate, s
     },
     fallback: false,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -119,11 +116,10 @@ export function confirmWedResult(session: WedSession, signal: AbortSignal): Prom
     },
     fallback: false,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 
-/** 删除失败保留消息 ID 和会话，允许原发起人再次点击移除。 */
+/** 删除成功或消息已不在时清空消息 ID；失败保留，移除按钮据此保留会话，允许原发起人再次点击移除。 */
 export async function removeWedResult(session: WedSession): Promise<boolean> {
   if (session.messageId === undefined) return true;
   if (!isMessageDeletionSettled(await deleteMessageWithOutcome(session.chatId, session.messageId))) return false;

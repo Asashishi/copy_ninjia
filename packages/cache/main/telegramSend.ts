@@ -25,7 +25,7 @@ export const sendGlobalWindow: TimestampDeque = new TimestampDeque(TELEGRAM_SEND
 
 /**
  * 只差全局秒窗口额度的车道按到达顺序轮转：全局定时器到点后从队首依次放行，每条车道一次
- * 只放一条，热闹的群饿不死其它群。车道入队时置 inGlobalRing，出队时清除；同一车道至多
+ * 只放一条，各群轮流放行。车道入队时置 inGlobalRing，出队时清除；同一车道至多
  * 一项，容量不超过 sendChatLanes。全局取消或重新初始化时清空。
  */
 export const sendGlobalRing: LinkedQueue<TelegramSendLane> = new LinkedQueue<TelegramSendLane>();

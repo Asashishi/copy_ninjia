@@ -179,9 +179,8 @@ export function sourceFilesUnder(root: string): string[] {
 }
 
 /**
- * 读入一个源文件并解析成 AST。四处约定检查共用这一份：`setParentNodes` 必须为
- * true（规则要沿 `node.parent` 上行），`ScriptKind.TS` 固定按 TypeScript 解析，
- * 避免各检查各写一份参数而在某一处漏掉 parent 指针。
+ * 读入一个源文件并解析成 AST，各约定检查共用这一份：`setParentNodes` 为 true
+ * （规则沿 `node.parent` 上行），`ScriptKind.TS` 固定按 TypeScript 解析。
  * @param path 源文件路径。
  */
 export async function parseSourceFile(path: string): Promise<ts.SourceFile> {

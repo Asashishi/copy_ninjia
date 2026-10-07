@@ -10,11 +10,11 @@
 
 ---
 
-This page covers preparing the dedicated image library, collecting pictures, and configuring scheduled images, albums, and voice. Complete field specifications live in [Deployment Configuration](../../config_example/README/en.md); command permissions and behavior live in [09 Command Reference](09-commands.md).
+This guide explains how to set up the dedicated image library, collect and draw images via bot commands, and schedule automated delivery for images, photo albums, voice notes, and AI-generated web summaries. For complete JSON field definitions, see the [Deployment Configuration Guide](../../config_example/README/en.md). For command permissions and behavior, see [09 Command Reference](09-commands.md).
 
 ## Prepare the Dedicated Library
 
-Set the library directory in `config/dynamic/assets.json`:
+Specify the image library path in `config/dynamic/assets.json`:
 
 ```json
 {
@@ -24,25 +24,27 @@ Set the library directory in `config/dynamic/assets.json`:
 }
 ```
 
-- Use an absolute path or a relative path starting with `./` or `../`. Relative paths resolve against the runtime data root; see [07 Operations](07-operations.md) for data-root configuration.
-- The service account needs permission to read, write, and traverse the directory. Startup can create a missing directory and strictly validates files in an existing one.
-- The dedicated library accepts regular image files named with their content's 64-character lowercase hexadecimal SHA-256 and a `.jpg`, `.jpeg`, `.png`, or `.webp` extension. Subdirectories, file symlinks, or invalid names in the directory cause startup to fail.
-- Collecting through `/h_image add` calculates the content hash and assigns the filename automatically; identical content already present is not written again. Later draws read the current directory contents after images are added or removed.
+- **Path format**: Accepts absolute paths, or relative paths starting with `./` or `../`. Relative paths resolve against the runtime data root (see [07 Operations](07-operations.md) for data-root configuration).
+- **Directory permissions**: The system user running the bot must have read, write, and directory traversal permissions. Missing directories are created automatically on startup; existing directories are scanned and validated thoroughly.
+- **Naming conventions**: The library **strictly accepts image files only**. Filenames must be exactly the 64-character lowercase hexadecimal SHA-256 hash of the image binary, using `.jpg`, `.jpeg`, `.png`, or `.webp` extensions. If subdirectories, symbolic links, or non-compliant filenames are detected, startup halts with an error.
+- **Dynamic updates**: Adding pictures via `/h_image add` automatically hashes and names the files on disk; duplicate files matching existing hashes are skipped. Adding or removing compliant images manually requires no restart—subsequent draws read the directory contents dynamically.
 
-See [assets.json](../../config_example/README/en.md#assetsjson) for detailed path rules.
+For detailed path rules, see [assets.json](../../config_example/README/en.md#assetsjson).
 
 ## Collect and Draw Pictures
 
-1. Have a super administrator execute `/init enable` in the target group.
-2. An identity with `isCanAddHImage` replies to an image message with `/h_image add`. Other pictures in the same album already received by the bot are collected together.
-3. Check the summary counts for added, existing, invalid-dimension, and failed pictures.
-4. Send `/h_image` in the group to draw one picture from the dedicated library. Results always use Telegram spoiler masks and expand when tapped.
+Follow these steps to collect and draw images:
 
-Supported image inputs, dimension limits, command rate limits, and notice retention are described under [Random Pictures](09-commands.md#random-images).
+1. A superadmin executes `/init enable` in the target group to activate basic bot features.
+2. A user with `isCanAddHImage` permission replies to an image message with `/h_image add`. If replying to an album message, all received images belonging to that album are collected in batch.
+3. The bot replies with a receipt detailing newly added images, existing duplicates, oversized dimensions, and download failures.
+4. Group members send `/h_image` to draw a uniformly random image from the library. Output images are sent with Telegram spoiler masks, requiring users to tap before revealing them.
+
+For supported formats, size and dimension ceilings, command rate limits, and 30-second notice auto-deletion rules, see [Random Pictures](09-commands.md#random-images).
 
 ## Schedule Image Delivery
 
-Configure scheduled tasks in `config/dynamic/cron.json`, a task array that supports hot reload. This example draws one dedicated-library image every day in the specified time zone:
+Scheduled tasks are defined as an array in `config/dynamic/cron.json` and support runtime hot-reloading. The following example schedules a daily random picture from the library in the specified time zone:
 
 ```json
 [
@@ -65,28 +67,32 @@ Configure scheduled tasks in `config/dynamic/cron.json`, a task array that suppo
 ]
 ```
 
-Replace the example group ID with the real target group ID, then set the time and caption as needed. Task names must be unique within the file; actions execute in their declared order.
+Replace the example group ID with your target group ID, and customize trigger times and captions. Task names (`name`) must be globally unique within the file. Multiple actions declared under a task execute sequentially in order.
 
 ### Single Images, Albums, and Random Pictures
 
-| Delivery mode | Source fields in `send_image.payload` |
-| --- | --- |
-| Fixed single image | `url: ["https://example.com/a.jpg"]`, or `path: ["./posters/a.jpg"]` |
-| Fixed album | Multiple image sources in the `url` or `path` array |
-| Random dedicated-library image | `rand_image: true`, with `path` omitted |
-| Random custom-directory image | `rand_image: true`, plus a directory string such as `path: "./gallery"` |
+Configure the source in `send_image.payload`:
 
-Fixed-image `url` and `path` are mutually exclusive, and even a single image uses an array; multiple images are sent as an album. Random-mode `path` is a directory string, and custom-directory images do not require SHA-256 filenames. `is_blurred` controls scheduled-image spoiler masks and defaults to off.
+| Delivery Mode | Field Combination |
+| :--- | :--- |
+| **Fixed single image** | `url: ["https://example.com/a.jpg"]` or `path: ["./posters/a.jpg"]` |
+| **Fixed album** | Array with multiple image paths or URLs |
+| **Dedicated library random picture** | Set `rand_image: true` and omit `path` |
+| **Custom directory random picture** | Set `rand_image: true` and provide a directory string, e.g. `path: "./gallery"` |
+
+- When sending fixed images, `url` and `path` are mutually exclusive. Single images must also be wrapped in an array; multiple images are delivered as a Telegram media group (album).
+- In random mode, `path` accepts a single directory path string. Images inside custom directories do not need to follow SHA-256 hash naming rules.
+- Set `is_blurred` to `true` to deliver scheduled images behind Telegram spoiler masks (defaults to `false`).
 
 ### Times and Delivery Targets
 
-- `cron` accepts five-field expressions or macros such as `@daily`; `time_zone` takes an IANA time zone name and inherits `time_zone` from `config/static/bot.json` when omitted (the Bot default is `Asia/Tokyo`).
-- `rand_cron` sets a random execution interval after each trigger, such as `"6h-12h"`. `just_once: true` executes once during the current process run; the two cannot be used together.
-- `chat_id` accepts an array of group IDs; `["all"]` covers all enabled groups with send permissions; `["except", -1001234567890]` excludes specified groups from that set.
+- **Cron expressions**: The `cron` field accepts standard 5-part cron syntax or standard macros like `@daily`. `time_zone` accepts IANA time zone identifiers (e.g. `Asia/Shanghai`); omitting it inherits the time zone from `config/static/bot.json` (defaults to `Asia/Tokyo`).
+- **Random intervals**: Setting `rand_cron` enables randomized scheduling (e.g. `"6h-12h"`). The initial trigger fires based on `cron`, while subsequent runs schedule next executions uniformly at random within the interval (rounded up to whole minutes). Setting `just_once: true` runs the task once during the current process lifetime; `rand_cron` and `just_once` cannot be used together.
+- **Target groups**: `chat_id` accepts an array of numerical group IDs. Specifying `["all"]` broadcasts to all enabled groups where the bot has send permissions. Specifying `["except", -1001234567890]` broadcasts to all enabled groups while excluding specified IDs.
 
 ## Scheduled Voice and Other Actions
 
-Configure `agent.tts` in `config/dynamic/agent.json` before scheduling voice. Add this action to a task's `actions`:
+Before scheduling voice notes, configure the `agent.tts` text-to-speech settings in `config/dynamic/agent.json`. Add the `send_voice` action to your task definition:
 
 ```json
 {
@@ -98,15 +104,14 @@ Configure `agent.tts` in `config/dynamic/agent.json` before scheduling voice. Ad
 }
 ```
 
-`agent.tts.voice` selects the voice, and optional `tone` modifies this line's delivery. Sending to several groups in the same round reuses the first synthesized audio. See [TTS Configuration](../../config_example/README/en.md#agentjson) for field specifications.
-
-Tasks also support `send_message`, `send_file`, and `send_web_digest`. Action fields, capability dependencies, and length and count limits are specified in [cron.json](../../config_example/README/en.md#cronjson).
+- **Voice synthesis**: Voice synthesis adopts the speaker configured in `agent.tts.voice`, with `tone` providing optional emotion hints. When broadcasting a voice note across multiple groups, the bot reuses the initial synthesized audio file to avoid burning API quota. See [TTS Configuration](../../config_example/README/en.md#agentjson) for full field specs.
+- **Other supported actions**: Scheduled tasks can also send text messages (`send_message`), documents/files (`send_file`), and scrape web pages for AI-generated summaries (`send_web_digest`). For field definitions and limits, see [cron.json](../../config_example/README/en.md#cronjson).
 
 ## Verify and Update at Runtime
 
-Confirm library paths, service-account access, group initialization, and send permissions, then check collection and drawing results. After configuring a scheduled task, verify its expected time zone and trigger time, and inspect logs and actual delivery in the target group.
-
-`assets.json`, `cron.json`, and `agent.json` support hot reload. Tasks are reconciled by name, and unchanged tasks retain their schedules. See [04 Invariants](04-invariants.md) for startup validation, hot reload, message topics, and shutdown rules, and [07 Operations](07-operations.md) for library format migration.
+- **Environment verification**: Verify directory permissions for your image library, ensure target groups have been initialized with `/init enable`, and confirm the bot holds message-sending permissions before testing collection and draw commands.
+- **Cron observability**: Review startup logs to confirm correct time zone parsing and calculated next execution times. Monitor target groups during scheduled windows to verify delivery.
+- **Hot-reloading**: `assets.json`, `cron.json`, and `agent.json` support dynamic reloading while running. The engine reconciles tasks by name: unmodified tasks maintain their existing schedules without interruption, while modified or newly added tasks recalculate their next run. For startup rules, topic routing, and shutdown drains, see [04 Runtime Invariants](04-invariants.md); for legacy library migrations, see [07 Operations](07-operations.md).
 
 ---
 

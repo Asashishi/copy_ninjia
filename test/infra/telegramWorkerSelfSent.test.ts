@@ -4,15 +4,12 @@ import type { TelegramWorkerRequest } from "../../packages/types/telegramWorker"
 /**
  * Worker 代理发送的自发登记时序。
  *
- * 本文件把 Worker 侧的代理客户端接到**真实的**主线程 handler 上，钉住的是一条
- * 时序不变量：`workerTelegramApi.*` 解开的那一刻，主线程的自发消息表里已经有这条
- * 消息了。Worker 最早也要等到这一刻才拿得到 message id，因此它不需要、也无法比
- * 主线程更早知道自己发了什么——「Worker 不回投自己发了什么」这条设计由本文件
- * 负责证明（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage）。
+ * 本文件把 Worker 侧的代理客户端接到真实的主线程 handler 上，验证一条时序不变量：
+ * `workerTelegramApi.*` 解开的那一刻，主线程的自发消息表里已经有这条消息。
+ * Worker 最早在这一刻才拿到 message id，不回投自己发了什么（见 infra/telegram/workerRequests.ts 的 markWorkerSentMessage）。
  *
- * 代理客户端自己**不**调用 markSelfSent（`infra/telegram/workerClient.ts` 只做
- * 载荷编组），所以这里读到的 true 只可能来自主线程边界的登记——不会因为单进程
- * 测试里两侧共用同一张 per-thread 表而给出假阳性。这条前提由最后一个用例钉住。
+ * 代理客户端自己不调用 markSelfSent（`infra/telegram/workerClient.ts` 只做载荷编组），
+ * 所以这里读到的 true 来自主线程边界的登记；这条前提由最后一个用例验证。
  */
 
 /** 主线程 handler 的注入位；mock 工厂在 import 时才求值，此处按调用时读取。 */
@@ -123,8 +120,7 @@ describe("Worker 拿到 id 之前，主线程已经登记了这条自发消息",
   });
 
   test("键取自结果里的 chat.id，不取 payload 的 chat_id", async (): Promise<void> => {
-    // payload 的 chat_id 可以是 `@username` 字符串，拼不出主线程那张表的数字键。
-    // 判据因此只认结果的形状：没有 chat 就不登记。
+    // payload 的 chat_id 可以是 `@username` 字符串，拼不出主线程那张表的数字键；判据只认结果的形状：没有 chat 就不登记。
     nextResultOverride = { message_id: 18 };
 
     await workerTelegramApi.sendMessage(CHAT_ID, "reply");
@@ -148,9 +144,7 @@ describe("Worker 拿到 id 之前，主线程已经登记了这条自发消息",
   });
 
   test("代理客户端自己不登记：主线程不登记时上面的断言必然为假", async (): Promise<void> => {
-    // 本用例是上面五条 true 的对照组。绕开主线程 handler 直接返回一条 Message，
-    // 若代理客户端或共用的 per-thread 表会顺手登记，这里就会是 true——那样
-    // 上面那五条 true 全都证明不了「登记来自主线程边界」。
+    // 本用例是上面各条 true 的对照组：绕开主线程 handler 直接返回一条 Message，代理客户端与共用的 per-thread 表不登记。
     mainThreadHandler = async (): Promise<unknown> => sentMessage(CHAT_ID);
 
     const sent: unknown = await workerTelegramApi.sendMessage(CHAT_ID, "reply");

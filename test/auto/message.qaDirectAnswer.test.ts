@@ -8,14 +8,13 @@ import {
 } from "../helpers/autoMessageMocks";
 
 /**
- * 问答直答在**消息主干上的位置**（`auto/message/index.ts`）。
+ * 问答直答在消息主干上的位置（`auto/message/index.ts`）。
  *
  * 命中判定与渲染各有叶子用例（`qaDirectAnswer.test.ts`、`qaDirectAnswerSend.test.ts`）；
- * 这里验证只有主干才表达得出来的两条约束：命中必须**排在 AI 触发之前**，且命中即
- * **终止本条消息的后续处理**。
+ * 这里验证只有主干才表达得出来的约束：命中排在 AI 触发之前，且命中即终止本条消息的后续处理。
  *
- * 正反两面都用同一条 `@机器人 怎么入群？`：它本身就是 AI 的直接触发条件，关掉
- * 直答的任一前提，断言就会翻到「进 AI」那一侧。
+ * 正反两面都用同一条 `@机器人 怎么入群？`：它本身就是 AI 的直接触发条件，
+ * 关掉直答的任一前提，断言就翻到「进 AI」那一侧。
  */
 
 const { handleIncomingMessageMiddleware } = await import("../../packages/auto/message");

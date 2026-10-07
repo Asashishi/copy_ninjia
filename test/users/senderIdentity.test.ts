@@ -42,7 +42,7 @@ beforeEach(() => {
  * 断言 identityById 与「按 alias 反查 userCache」的结果逐项一致。
  */
 function expectIdentityIndexInLockstep(): void {
-  // 先收集不一致项，再用固定两次断言报出，避免按 USER_CACHE_MAX 逐条 expect()。
+  // 先收集不一致项，再用固定数量的断言报出，不按 USER_CACHE_MAX 逐条 expect()。
   const mismatches: string[] = [];
   for (const [id, username] of senderUsernameCache) {
     if (identityById.get(id) !== userCache.get(username)) mismatches.push(`alias:${id}`);

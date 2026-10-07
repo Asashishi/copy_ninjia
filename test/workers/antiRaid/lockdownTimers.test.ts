@@ -1,10 +1,9 @@
 /**
  * 私密模式解释器的两颗 timer 接线：恢复到期 timer 与共用的重试 timer。
  *
- * 状态机本身由 test/states/lockdown.test.ts 穷尽，这里守的是 lockdownRuntime.ts
- * 那两个回调体——`restoreTimerFired` / `restoreRetryFired` / `reapplyRetryFired`
- * 三个事件在全仓只由它们派发，接线错了（句柄没归零、投错事件、没排上）不会让
- * 任何门禁变红：群会一直锁着到进程重启，或者一次失败的恢复再也没有第二次尝试。
+ * 状态机本身由 test/states/lockdown.test.ts 覆盖，这里覆盖 lockdownRuntime.ts 的
+ * `restoreTimerFired` / `restoreRetryFired` / `reapplyRetryFired` 三个回调体：
+ * 句柄归零、派发的事件、重试 timer 的排定。
  */
 
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
@@ -136,8 +135,7 @@ describe("私密模式 timer 接线", (): void => {
 
     jest.advanceTimersByTime(REMAINING_MS);
 
-    // 到点必须派发 restoreTimerFired：投成别的事件（或压根没派发）时状态会留在
-    // active，群就一直锁到进程重启。
+    // 到点派发 restoreTimerFired，状态进入 restoring。
     expect(entry.state.kind).toBe("restoring");
     // 落盘优先：先记「要恢复」，回执之后才真的把权限还回去。
     expect(persisted).toEqual([CHAT_ID]);
@@ -153,8 +151,7 @@ describe("私密模式 timer 接线", (): void => {
     const restoring: LockdownState = entry.state;
     if (restoring.kind !== "restoring") throw new Error("restore timer did not enter restoring");
     restoreOutcomes.push(false);
-    // intentId 必须取状态里的那一个：restoreTimerFired 在**触发那一刻**才铸出它，
-    // 落盘回执对不上号时状态机按迟到回执整条忽略。
+    // intentId 取状态里的那一个：restoreTimerFired 在触发那一刻才铸出它；回执对不上号时状态机整条忽略。
     handleLockdownPersisted({
       type: "lockdownPersisted",
       chatId: CHAT_ID,
@@ -168,10 +165,8 @@ describe("私密模式 timer 接线", (): void => {
 
     jest.advanceTimersByTime(RESTORE_RETRY_MS);
     await drainLockdownApiChain();
-    // 第二次尝试必须真的发生：重试 timer 没排上、或投错事件时这里恒为一次，
-    // 那次失败的恢复就再也没有下文，群里留下一条谁都解不开的限制。
-    // scheduleRestoreRetry 与 scheduleReapplyRetry 共用 scheduleLockdownRetry，
-    // 事件字面量留在各自调用点，因此这一条同时守住两条副作用的接线。
+    // 第二次尝试发生：重试 timer 排上并投回 restoreRetryFired。
+    // scheduleRestoreRetry 与 scheduleReapplyRetry 共用 scheduleLockdownRetry。
     expect(restoreCalls).toEqual([CHAT_ID, CHAT_ID]);
     // 第二次成功：状态机收摊，条目连同两颗 timer 一起消失。
     expect(lockdownEntries.has(CHAT_ID)).toBeFalse();

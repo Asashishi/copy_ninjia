@@ -17,9 +17,8 @@ mock.module("../../packages/infra/telegram/client", () => ({
   installTelegramApi: (): void => {},
   telegramApi: { kind: "guard-api" },
 }));
-// botAdmin -> blocklist 的新晋管理员清扫会取这三个；本文件不触发（名单为空）。
+// botAdmin -> blocklist 的新晋管理员清扫会取这两个；本文件不触发（名单为空）。
 mock.module("../../packages/infra/telegram/actions", () => ({
-  isChatMember: async (): Promise<boolean> => false,
   banChatMember: async (): Promise<boolean> => true,
   banChatSenderChat: async (): Promise<boolean> => true,
 }));
@@ -96,7 +95,7 @@ beforeEach(() => {
 });
 
 describe("chat runtime teardown", () => {
-  // 从穷尽顺序表生成期望；新增 owner 时，顺序表与运行时派发必须同时覆盖。
+  // 从穷尽顺序表生成期望；新增 owner 时，顺序表与运行时派发同时覆盖。
   test("ChatRuntimeOwner 的每个 owner 都被组合 teardown 派发到", async () => {
     const dispatched: string[] = [];
     for (const owner of CHAT_TEARDOWN_ORDER) {
@@ -122,8 +121,7 @@ describe("chat runtime teardown", () => {
     expect(reasons).toEqual(["explicitDisable", "departed", "lostAuthority"]);
   });
 
-  // 各 owner 一律走这个判定，不在自己那里手写字面量比较；漏掉一个起因就等于
-  // 那个 owner 悄悄留下了一份本该删掉的群数据。
+  // 各 owner 一律走这个判定，不在自己那里手写字面量比较。
   test("只有失权停管不删数据，另外两条起因都删", () => {
     expect(purgesChatData("explicitDisable")).toBeTrue();
     expect(purgesChatData("departed")).toBeTrue();
@@ -208,10 +206,9 @@ describe("chat runtime teardown", () => {
     // 问答一并删除；被撤管理员那一路仍是 lostAuthority，一条数据都不动。
     expect(reasons).toEqual(["departed"]);
     expect(states.get(-1001)).toEqual({ lockdown });
-    // 第二条是权限快照被丢掉时顺手排的后台写：botPermissions 是持久字段，只清内存
-    // 会让磁盘继续留着一份已经作废的快照（见 infra/botAdmin.ts 的
-    // forgetBotChatPermissions）。这一路后面那次 persistChatState 会以更高 revision
-    // 盖过它，多出来的这次写是 teardown 每群一次的固定成本，不进任何热路径。
+    // 第二条是权限快照被丢掉时顺手排的后台写：botPermissions 是持久字段，内存清除时磁盘同步清除
+    // （见 infra/botAdmin.ts 的 forgetBotChatPermissions）。这一路后面那次 persistChatState 以更高 revision 覆盖它；
+    // 这次写是 teardown 每群一次的固定成本。
     expect(calls.slice(0, 11)).toEqual([
       "clear:botPermissions",
       "save:bot permissions forgotten",

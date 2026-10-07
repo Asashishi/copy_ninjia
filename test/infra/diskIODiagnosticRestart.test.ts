@@ -62,11 +62,11 @@ describe("Disk I/O diagnostic failure recycling", () => {
       first.messages.length = 0;
 
       diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["first"] });
-      for (let failure: number = 0; failure < 44; failure++) {
+      for (let failure: number = 0; failure < DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES - 1; failure++) {
         await failCurrentBatch(first);
       }
       expect(FakeWorker.instances).toHaveLength(1);
-      expect(diskIORuntime.consecutiveDiagnosticWriteFailures).toBe(44);
+      expect(diskIORuntime.consecutiveDiagnosticWriteFailures).toBe(DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES - 1);
 
       const accepted: Extract<DiskIOMessage, { type: "diagnosticBatch" }> =
         latestDiagnosticBatch(first);
@@ -78,7 +78,7 @@ describe("Disk I/O diagnostic failure recycling", () => {
       expect(diskIORuntime.diagnosticQueue.size).toBe(0);
 
       diskIO.relayLogMessage({ timestamp: 2, level: "error", args: ["second"] });
-      for (let failure: number = 0; failure < 44; failure++) {
+      for (let failure: number = 0; failure < DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES - 1; failure++) {
         await failCurrentBatch(first);
       }
       expect(FakeWorker.instances).toHaveLength(1);

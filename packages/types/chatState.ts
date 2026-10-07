@@ -17,7 +17,7 @@ export interface LockdownRecord {
   announced: boolean;
   /**
    * 封锁公告的消息 ID；解除封锁时按它删除群里那条公告。发送失败、或接管的是
-   * 更早进程留下的记录时缺省——删不掉就不删，绝不猜 ID。
+   * 更早进程留下的记录时缺省，缺省时不删。
    */
   announcementMessageId?: number;
   /**
@@ -45,14 +45,12 @@ export interface CachedUser {
 export type CopyMode = "reverse" | "nya";
 
 /**
- * 单个群聊各自独立的状态。机器人可能同时在多个群里运行，每个群各自维护一份，
- * 互不影响——主线程以不淘汰的热读副本保留 SQLite `chat_states` 的值（容量上界
- * STATE_MANAGED_CHAT_LIMIT，由建新记录前的 assertChatStateCapacity 卡住，见
- * cache/main/chatState.ts）。复读目标不在
- * 这里——复读消耗的是机器人头像/人格这一份全局资源，同一时刻全局只有一个
- * 复读目标，见 GlobalCopyState。
+ * 单个群聊各自独立的状态，每个群各维护一份。主线程以不淘汰的热读副本保留 SQLite
+ * `chat_states` 的值（容量上界 STATE_MANAGED_CHAT_LIMIT，建新记录前由
+ * assertChatStateCapacity 校验，见 cache/main/chatState.ts）。复读目标不在这里，
+ * 全局只有一个复读目标，见 GlobalCopyState。
  *
- * `is*Enabled` 七个开关在内存中恒为 boolean，默认 false；读取统一写 `=== true` 或
+ * 各 `is*Enabled` 开关在内存中恒为 boolean，默认 false；读取统一写 `=== true` 或
  * `!== true`。持久化时只写入为 true 的开关，缺省键解码为 false（见
  * database/codec/chatState.ts）。其余字段缺省为 undefined，表示从没设过。
  */
@@ -96,7 +94,7 @@ export interface ChatState {
    * 需通过 /antiraid enable 显式开启（仅持有 isCanControllAntiRaidPermission
    * 的身份可用，超级管理员恒持有，见 commands/antiRaid.ts）。
    *
-   * 它**不覆盖**同在 Anti-Raid Worker 里跑的其余能力：广告检测归
+   * 不覆盖同在 Anti-Raid Worker 里跑的其余能力：广告检测归
    * isAdDetectEnabled、防刷屏禁言归 isFloodControlEnabled、永久黑名单不设开关。
    * 关闭只让主线程停止投递入群链路的事件（见 antiRaid/updateIngress.ts），
    * 并让 Worker 清掉这个群已开的验证窗口、对仍生效的私密模式发起恢复
@@ -122,14 +120,14 @@ export interface ChatState {
    */
   botPermissions?: BotChatPermissions;
   /**
-   * 本群名称，纯粹供人核对 SQLite 中某个 chatId 是哪个群，不参与任何
-   * 业务判断。启动时全量现查一轮回填，此后每条群消息顺手用消息自带的
-   * chat.title 刷新（零额外 API 开销），见 packages/infra/chatTitle.ts。
+   * 本群名称，供人核对 SQLite 中某个 chatId 是哪个群，不参与业务判断。启动时对
+   * 已知群各现查一次回填，此后每条群消息用消息自带的 chat.title 刷新，见
+   * packages/infra/chatTitle.ts。
    */
   title?: string;
   /**
-   * 本群是否为唯一的 /send 中转目标。状态挂在目标群并持久化，避免另存目标
-   * ID 形成双份事实；命令入口负责全局唯一约束。
+   * 本群是否为唯一的 /send 中转目标。状态挂在目标群并持久化；命令入口负责全局
+   * 唯一约束。
    */
   isProxySendEnabled: boolean;
   /**
@@ -153,10 +151,9 @@ export type ChatStateSwitchKey = {
 export type ChatStateOptionalField = Exclude<keyof ChatState, ChatStateSwitchKey>;
 
 /**
- * copy 类功能的全局状态：复读目标和冷却时钟所有群共用同一份（消耗的是机器人
- * 自己头像这一份全局资源，同一时刻只能"变成"一个人，不按群分别维护）。
- * 复读行为本身只发生在发起 /copy 的那个群里（copyChatId），但"手上有没有
- * 猎物"的判定是全局的——别的群想 /copy 得先 /copy stop（任何群都可以停）。
+ * copy 类功能的全局状态：复读目标和冷却时钟所有群共用同一份，不按群分别维护。
+ * 复读行为只发生在发起 /copy 的那个群里（copyChatId），是否已有复读目标的判定是
+ * 全局的。
  */
 export interface GlobalCopyState {
   lastCopyTime?: number;
@@ -170,8 +167,7 @@ export interface GlobalCopyState {
 /**
  * memory/global/state.json 的落盘形态：所有群共用的全局状态，按用途分块。`copy` 是
  * 复读状态与冷却时钟，`ttsUsage` 是语音合成的每日计数（缺省表示从没用过）。按群的状态
- * 由 `database/storage.sqlite` 的 `chat_states` 表持久化；外部素材由 config/dynamic/assets.json、
- * AI provider 与模型由 config/dynamic/agent.json 管理，都不进入状态。
+ * 由 `database/storage.sqlite` 的 `chat_states` 表持久化。
  */
 export interface GlobalState {
   copy: GlobalCopyState;
@@ -180,7 +176,7 @@ export interface GlobalState {
 
 /**
  * 全局状态 `copy` 块解码后的形态，与运行期的 `GlobalCopyState` 分开维护
- * （后者是主线程可变持有者，初始只有 `copiedUser: null`，三个字段由
+ * （后者是主线程可变持有者，初始只有 `copiedUser: null`，目标、模式与群 id 由
  * adoptCopyTarget 一次写齐）。判别联合强制「copiedUser 为 null ⟺ 没有
  * copyMode/copyChatId；copiedUser 非空 ⟺ copyChatId 是合法负数群 id」这条配对，
  * 由解码器（libs/stateFileCodec.ts 的 globalCopy）保证成立。

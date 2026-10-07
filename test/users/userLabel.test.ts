@@ -14,13 +14,17 @@ describe("破坏性命令的目标标签", () => {
   });
 
   test("只有 id 时念出 id，而不是泛指的兜底称呼", () => {
-    expect(formatTargetLabel({ id: 4242 }, ATMOSPHERE_TEXTS.teasing)).toBe("用户 4242");
-    expect(formatUserLabel({ id: 4242 }, ATMOSPHERE_TEXTS.teasing)).toBe("这个杂鱼");
+    for (const texts of [ATMOSPHERE_TEXTS.teasing, ATMOSPHERE_TEXTS.plain]) {
+      expect(formatTargetLabel({ id: 4242 }, texts)).toBe(texts.NOTICE_TEXTS.userIdLabel(4242));
+      expect(formatUserLabel({ id: 4242 }, texts)).toBe(texts.NOTICE_TEXTS.unknownUser);
+    }
   });
 
   test("只有 id 的频道身份念成频道，不与真人目标混为一谈", () => {
-    expect(formatTargetLabel({ id: -1009, isChannel: true }, ATMOSPHERE_TEXTS.teasing)).toBe("频道 -1009");
-    expect(formatUserLabel({ id: -1009, isChannel: true }, ATMOSPHERE_TEXTS.teasing)).toBe("这个频道");
+    for (const texts of [ATMOSPHERE_TEXTS.teasing, ATMOSPHERE_TEXTS.plain]) {
+      expect(formatTargetLabel({ id: -1009, isChannel: true }, texts)).toBe(texts.NOTICE_TEXTS.channelIdLabel(-1009));
+      expect(formatUserLabel({ id: -1009, isChannel: true }, texts)).toBe(texts.NOTICE_TEXTS.unknownChannel);
+    }
   });
 
   test("昵称里的换行与连续空白照常压成单行，不把一整块贴图糊进回执", () => {

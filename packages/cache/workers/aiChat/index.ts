@@ -11,8 +11,8 @@ import { resetAiChatMoodCache } from "./mood";
 import { resetAiProviderSchedulerCache } from "./providerScheduler";
 import { invalidateChatReplyCache, resetAiChatReplyCache } from "./replies";
 
-/** AI 禁用或记忆淘汰的统一运行时失效边界。压缩链不提前删除：代际已让旧
- * 结果失效，保留链到自然排空可防同群新旧压缩任务并发。 */
+/** AI 禁用或记忆淘汰的统一运行时失效边界。压缩链不提前删除：代际使旧
+ * 结果失效，链自然排空。 */
 export function invalidateChatRuntimeCache(chatId: number): void {
   invalidateChatReplyCache(chatId);
   clearChatHeartbeatCache(chatId);
@@ -20,7 +20,7 @@ export function invalidateChatRuntimeCache(chatId: number): void {
 }
 
 /**
- * 测试隔离用的聚合清理：依次调用下面十个领域模块各自的 reset。不覆盖 gemini、openai、
+ * 测试隔离用的聚合清理：依次调用下面各领域模块各自的 reset。不覆盖 gemini、openai、
  * imageDescription、mediaInputSupport、mediaTasks、stickers、ttsUsage、
  * voiceSynthesis、weather 与 worker 这些模块，用到它们的测试自行复位。
  *

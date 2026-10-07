@@ -1,14 +1,13 @@
 /** /block 黑名单处置（入群秒踢与新晋管理员补扫）的节奏常量。 */
 
 /**
- * 单个 id 的封禁最多尝试几次。Telegram 总闸会留住带 retry_after 的 429；
- * 这里兜网络错误、有限 5xx 重试耗尽及其它可恢复失败。
- * 黑名单没有验证窗口兜底：一次失败不重试就等于把人永久留在群里。
+ * 单个 id 的封禁最多尝试次数。带 retry_after 的 429 由 Telegram 总闸承接；
+ * 本值约束网络错误、有限 5xx 重试耗尽及其它可恢复失败的重试。
  * 所属模块：workers/antiRaid/blocklistEffects.ts。
  */
 export const BLOCKLIST_REMOVAL_MAX_ATTEMPTS: number = 3;
 
-/** 两次尝试之间的退避基数，按尝试次数线性放大（1x、2x……）。 */
+/** 两次尝试之间的退避基数，按尝试次数线性放大。 */
 export const BLOCKLIST_REMOVAL_RETRY_DELAY_MS: number = 5_000;
 
 /**
@@ -30,9 +29,8 @@ export const BLOCKLIST_PARTICIPANT_INVALID_LIMIT: number = 5;
 export const BLOCKLIST_PARTICIPANT_INVALID_WRITE_ATTEMPTS: number = 3;
 
 /**
- * 补扫时每批处理多少个 id。Bot API 没有枚举群成员的接口，一次补扫固定是
- * O(名单长度) 次请求；它们与验证超时踢人共用主线程 kick 类 429 车道。
- * 不分批的话，该类别一旦进入恢复期，几千条名单会先占满 FIFO；分批和让步
+ * 补扫时每批处理多少个 id。一次补扫是 O(名单长度) 次请求，
+ * 与验证超时踢人共用主线程 kick 类 429 车道；分批并在批间让步，
  * 允许新到的验证踢人在下一批之前插入。
  */
 export const BLOCKLIST_SWEEP_BATCH_SIZE: number = 15;
@@ -41,9 +39,8 @@ export const BLOCKLIST_SWEEP_BATCH_SIZE: number = 15;
 export const BLOCKLIST_SWEEP_BATCH_PAUSE_MS: number = 1_000;
 
 /**
- * 「同一次入群已经记过反刷群计数」这张去重表的容量上界。正常情况下条目在
- * JOIN_WINDOW_MS 之后就被淘汰，这道闸兜的是一分钟内涌入海量黑名单入群的极端
- * 情形：宁可让超出的那些多记一次，也不让表跟着刷群规模无界增长。
+ * 「同一次入群已经记过反刷群计数」这张去重表的容量上界。条目在
+ * JOIN_WINDOW_MS 之后淘汰；超过上限时，超出的入群可能多记一次计数。
  * 所属模块：antiRaid/blocklistGuard.ts。
  */
 export const BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES: number = 5_000;
@@ -51,12 +48,10 @@ export const BLOCKLIST_JOIN_DEDUP_MAX_ENTRIES: number = 5_000;
 /**
  * 持久化黑名单移除 outbox 的批次数硬顶。达到上限时 `trackBlockedRemoval` 抛错。
  *
- * 这个抛错**不构成背压**，绝不能逃到 update 边界去：满仓通常正是一批永远封不掉
- * 的处置堆出来的，扣住 offset 只会变成「重投 -> 再抛 -> 非零退出」的重启循环，
- * 只能靠人工修复 SQLite outbox 解开（见 blocklistGuard.ts 的 claimBlockedJoiner）。
- * 调用方一律就地降级：记一行点名日志，再用 requestBlocklistResweep 把这个群挂
- * 回补扫，等 outbox 腾出位置后补做。已登记的批次留在 outbox，没登记上的由补扫
- * 覆盖，两边都不丢任务。
+ * 这个抛错**不构成背压**，不得逃到 update 边界（见 blocklistGuard.ts 的
+ * claimBlockedJoiner）。调用方一律就地降级：记一行点名日志，再用
+ * requestBlocklistResweep 把这个群挂回补扫，等 outbox 腾出位置后补做。
+ * 已登记的批次留在 outbox，没登记上的由补扫覆盖。
  * Disk I/O 启动 inspect 对 `pending_blocked_removals` 行数执行同一上限，超出即拒绝启动。
  * 所属模块：infra/blocklist/。
  */
@@ -64,7 +59,7 @@ export const BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES: number = 4_096;
 
 /**
  * 启动恢复从 SQLite 顺序接管待踢 outbox 时的单页行数。使用 removal_id 游标，
- * 每页完成存储形态与领域解码后才读取下一页，避免一次性投影整表。
+ * 每页完成存储形态与领域解码后才读取下一页。
  * 所属模块：database/interact/inspection.ts、database/interact/validation.ts。
  */
 export const BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE: number = 2_048;
@@ -72,19 +67,15 @@ export const BLOCKLIST_REMOVAL_HYDRATION_PAGE_SIZE: number = 2_048;
 /**
  * 处置消息投递前，「落盘 → 再看一眼权威镜像还是不是同一批」的对账最多重来几轮。
  *
- * 正常一轮就够：重来意味着 flush 等待期间真的有 `/block disable` 或停管裁剪了这批，
- * 那是人为操作、次数有界。这道闸是兜底——每一轮都是一次整份 outbox 深拷贝 +
- * 带 fsync 的整文件重写，而本函数跑在 update 处理里面；没有上限的话，一个持续
- * 变动的镜像就能让这条 update 一直转下去，把 runner drain 拖到超时、扣住
- * Telegram offset、整批 update 重投。用尽只是这一次投递放弃并留一行错误日志，
- * outbox 里的任务不受影响，下一次边沿会重投。
+ * 重来表示 flush 等待期间 `/block disable` 或停管裁剪了这批。每一轮是一次整份
+ * outbox 深拷贝加带 fsync 的整文件重写，而本函数跑在 update 处理里面，因此轮数有上限。
+ * 用尽只是这一次投递放弃并留一行错误日志，outbox 里的任务不受影响，下一次边沿会重投。
  * 所属模块：antiRaid/blocklistDelivery.ts。
  */
 export const BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS: number = 5;
 
 /**
- * durable outbox 允许记录的失败边界。类型层从本常量派生，codec 也复用同一
- * 列表，避免新增分类时协议与校验分叉。
+ * durable outbox 允许记录的失败边界。类型层从本常量派生，codec 复用同一列表。
  * 所属模块：infra/blocklist/、database/codec/identity.ts。
  */
 export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
@@ -96,10 +87,8 @@ export const BLOCKLIST_REMOVAL_FAILURE_TYPES: readonly [
   "delivery-boundary",
   "side-effect-incomplete",
   "worker-restarted",
-  // 机器人在那个群没有封禁权限（或目标本身是管理员）：与其它几档的区别在于
-  // 「再试一次也没用」。它是 outbox 里一条批次卡住的**唯一自解释标记**——运维
-  // 看到它就知道该去补权限，而不是去查网络或磁盘；主线程据此停掉这个群按时间
-  // 的重试，只等一次确证的权限变更（见 infra/blocklist/）。
+  // 机器人在该群没有封禁权限（或目标本身是管理员）：重试无效；主线程据此停掉
+  // 这个群按时间的重试，只等一次确证的权限变更（见 infra/blocklist/）。
   "missing-permission",
 ];
 
@@ -136,9 +125,9 @@ export const BLOCKLIST_REMOVAL_ENTRY_KEYS: readonly string[] = [
 export const BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS: number = 5;
 
 /**
- * 一次补扫没能全部落定后，最少隔多久才允许对同一个群再试。补扫由
- * 「是管理员 && 已 /init enable」的边沿触发，而失败重试挂在后续的管理员
- * 身份观测上——那类更新每条入群都会来一次，没有这道闸就是请求风暴。
+ * 一次补扫没能全部落定后，同一个群再试的最短间隔。补扫由
+ * 「是管理员 && 已 /init enable」的边沿触发，失败重试挂在后续的管理员
+ * 身份观测上，本间隔限制重试频率。
  * 所属模块：infra/blocklist/。
  */
 export const BLOCKLIST_SWEEP_RETRY_INTERVAL_MS: number = 300_000;
@@ -146,12 +135,10 @@ export const BLOCKLIST_SWEEP_RETRY_INTERVAL_MS: number = 300_000;
 /**
  * 连续没落定的补扫，退避按失败次数线性放大后的上限。
  *
- * 固定 5 分钟一轮兜不住「永远封不掉」的目标：目标自己就是这个群的管理员、或
- * 机器人是管理员但没有封禁权限时，每一轮补扫都注定 `complete: false`，于是每
- * 5 分钟就重扫一次整份名单——O(名单长度) 次 getChatMember + banChatMember，
- * 这些注定失败的请求虽不会进入 429 FIFO，仍会持续浪费 Worker 调度、网络连接
- * 与错误日志。退避必须有上限：`sweptAt` 那道闩锁始终要有打开的路径，
- * 权限修好之后不能等到进程重启才重扫（见 docs/cn/04-invariants.md）。
+ * 目标自己是该群管理员、或机器人是管理员但没有封禁权限时，每一轮补扫都是
+ * `complete: false`，每轮是 O(名单长度) 次 getChatMember + banChatMember；
+ * 重扫间隔随失败次数增大，直到本上限。`sweptAt` 闩锁始终有打开的路径，
+ * 权限修好之后不必等到进程重启才重扫（见 docs/cn/04-invariants.md）。
  * 所属模块：infra/blocklist/。
  */
 export const BLOCKLIST_SWEEP_RETRY_MAX_INTERVAL_MS: number = 21_600_000;

@@ -1,5 +1,5 @@
 /**
- * config/dynamic/ 热重载的主线程判定：按启动总闸同一套严格解析器读取六份可热重载部署
+ * config/dynamic/ 热重载的主线程判定：按启动总闸同一套严格解析器读取可热重载部署
  * 文件（assets.json、ad_samples.json、agent.json、mood.json、stickers.json、cron.json），
  * 再与主线程已生效快照比较并整体替换 holder。
  *
@@ -99,7 +99,7 @@ async function readHotAssetConfig(): Promise<HotConfigRead<AssetConfig>> {
   return read;
 }
 
-/** 按固定顺序逐份读取六份可热重载部署文件；不改写任何 holder。 */
+/** 按固定顺序逐份读取可热重载部署文件；不改写任何 holder。 */
 export async function readHotDeploymentConfigs(): Promise<HotDeploymentConfigReads> {
   const assets: HotConfigRead<AssetConfig> = await readHotAssetConfig();
   const adSamples: HotConfigRead<AdSampleConfig> = await readHotConfig(AD_SAMPLES_CONFIG_PATH, loadAdSampleConfig);

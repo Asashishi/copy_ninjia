@@ -8,7 +8,7 @@ import {
 } from "../../scripts/conventions/coverageMetrics";
 import type { CoverageMetrics } from "../../scripts/conventions/coverageMetrics";
 
-/** 一次覆盖率运行的五个数字，按文档里的书写形态保存。 */
+/** 一次覆盖率运行的各项数字，按文档里的书写形态保存。 */
 interface MetricText {
   readonly tests: string;
   readonly files: string;
@@ -62,7 +62,7 @@ function svg(run: MetricText, cells: readonly string[] = [
     "\n</svg>\n";
 }
 
-/** 14 个位置全部描述同一次运行的合规文件集。 */
+/** 全部位置描述同一次运行的合规文件集。 */
 function consistentFiles(): Record<string, string> {
   return {
     "README.md": readme(

@@ -4,19 +4,16 @@ import type { LockdownPhase } from "../chatState";
 /**
  * 每个阶段都携带的封锁公告记账。
  *
- * announced：本次锁定有没有真的在群里公告过。公告在**进入 APPLYING 占位的
- * 同一刻**发出——占位一落地，新进群的人就开始被直接请出去，群里必须先看到
- * 「为什么进不来人」。它同时决定解除时发不发解锁公告：加锁调用失败后的补偿
- * 对账（applyResult(!ok)）如果公告没发出去，恢复成功时就不能凭空丢一句
- * 「限制解除」。该字段必须随状态持久化，否则崩溃后无法区分两条恢复路径。
+ * announced：本次锁定有没有真的在群里公告过。公告在进入 APPLYING 占位的同一刻发出；
+ * 它同时决定解除时发不发解锁公告：加锁调用失败后的补偿对账（applyResult(!ok)）在公告
+ * 没发出去时，恢复成功不发「限制解除」。该字段随状态持久化。
  *
  * announcementPending：这一轮有一次公告在途或待发（结果以 announcementResult
- * 回投）。只活在内存里：跨进程接管时上一代那次发送的结局已无从追认——落盘说
- * 「公告过」就照单接受，说「没公告过」而锁定仍要继续时补发一次并重新置位。
+ * 回投）。只活在内存里；跨进程接管时，落盘为「公告过」即照单接受，为「没公告过」而
+ * 锁定仍要继续时补发一次并重新置位。
  *
- * announcementMessageId：公告消息 ID，解除封锁时按它删除。必须随状态持久化，
- * 否则进程重启后接管的那一轮解除时删不掉群里那条公告。发送失败、或接管的是
- * 老进程留下的记录时为 undefined——删不掉就不删，绝不猜 ID。
+ * announcementMessageId：公告消息 ID，解除封锁时按它删除，随状态持久化。发送失败、
+ * 或接管的是老进程留下的记录时为 undefined，此时不删。
  */
 export interface LockdownAnnouncement {
   announced: boolean;
@@ -76,8 +73,7 @@ export type LockdownMachineEvent =
   | { type: "applyCommitPreparationFailed" }
   | { type: "statePersisted"; phase: LockdownPhase; intentId: number }
   /**
-   * 这一轮意图确定写不进 SQLite。持久化是「跨进程可恢复」的唯一凭据，失去它
-   * 就不能再维持任何限制：占位直接撤销，已经落地的限制立刻恢复（见状态机
+   * 这一轮意图确定写不进 SQLite：占位直接撤销，已经落地的限制立刻恢复（见状态机
    * persistFailed 分支）。
    */
   | { type: "persistFailed"; phase: LockdownPhase; intentId: number }
@@ -104,9 +100,8 @@ export type LockdownMachineEvent =
   };
 
 /**
- * 一轮私密模式被判定作废的原因；决定日志文案，也是「这一轮确实被放弃了」的
- * 唯一来源——冷却由状态机在真正作废的那条转移里发出，迟到或重复的失败通知
- * 撞上已经换代的状态时不会误伤健康的一轮。
+ * 一轮私密模式被判定作废的原因，决定日志文案。suppressRetrigger 冷却由状态机在真正
+ * 作废的那条转移里发出，迟到或重复的失败通知撞上已换代的状态时不产生冷却。
  */
 export type LockdownAbandonReason =
   | "preparationFailed"
@@ -116,7 +111,7 @@ export type LockdownAbandonReason =
 export type LockdownEffect =
   /** 预热管理员表：锁定期内「管理员拉人免验证」只认同步缓存判定。 */
   | { kind: "prefetchAdmins"; onlyIfCold: boolean }
-  /** 只读取原权限；此阶段绝不修改 Telegram。 */
+  /** 只读取原权限；此阶段不修改 Telegram。 */
   | { kind: "prepareApply" }
   /** 把当前非 idle 状态交给主线程落盘。 */
   | { kind: "persistState" }
@@ -132,7 +127,7 @@ export type LockdownEffect =
   /** 纠偏失败后的有界退避重试。 */
   | { kind: "scheduleReapplyRetry"; delayMs: number }
   | { kind: "reportUnlock" }
-  /** 占位一落地就发封锁公告；结果必须回投，不能把发送尝试当成发送成功。 */
+  /** 占位落地后发封锁公告；结果回投状态机。 */
   | { kind: "beginLockdownAnnouncement"; joinCount?: number }
   /** 本轮结束，删除群里那条封锁公告；只在确知 messageId 时发出。 */
   | { kind: "deleteLockdownAnnouncement"; messageId: number }

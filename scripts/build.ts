@@ -72,7 +72,7 @@ try {
       target: "bun",
       naming: "[name].js",
       sourcemap: "none",
-      // bundle 的目录与 consts 源码同为根下两层，SQL 等资产相对包根解析。
+      // bundle 位于包根下的 scripts/migrations/，与 consts 源码目录深度一致，SQL 等资产相对包根解析。
       define: { "Bun.isStandaloneExecutable": "false" },
     });
     if (!migration.success) throw new AggregateError(migration.logs, `Migration compilation failed: ${edge.command}`);

@@ -1,8 +1,8 @@
 /**
  * 主线程黑名单补扫的唯一截止时间调度器。
  *
- * 本模块只观察补扫进度与群管理状态，不建立 claim、不投递 Worker；真正执行函数
- * 由 sweep.ts 注入，避免调度器与补扫状态机形成循环依赖。
+ * 本模块只观察补扫进度与群管理状态，不建立 claim、不投递 Worker；执行函数
+ * 由 sweep.ts 注入。
  */
 
 import {
@@ -29,8 +29,8 @@ function nextBlocklistSweepAt(): number | null {
   let earliest: number | null = null;
   for (const [chatId, progress] of blocklistSweepState) {
     const chatState: ChatState | undefined = getChatStateCache().get(chatId);
-    // 只判「槽位空不空」，不带 now：本函数要回答的正是「什么时候能扫」，
-    // 退避截止时刻由下面挑最早的那一个（判据来源见 sweepEligibility.ts）。
+    // 只判槽位是否空闲，不带 now；退避截止时刻由下面挑最早的 nextRetryAt
+    // （判据见 sweepEligibility.ts）。
     if (!isManagedAdminChat(chatState) || !isSweepSlotFree(progress)) {
       continue;
     }
@@ -63,8 +63,7 @@ export function armBlocklistSweepScheduler(): void {
   clearBlocklistSweepTimer();
   blocklistSweepSchedulerState.scheduledAt = scheduledAt;
   const timer: ReturnType<typeof setTimeout> = setTimeout((): void => {
-    // clearTimeout 与已进入事件队列的回调可能交错；陈旧回调不得清掉后来重排的
-    // timer 句柄，更不能再启动一轮重复补扫。
+    // timer 句柄已被重排替换的陈旧回调直接返回，不清句柄也不启动补扫。
     if (blocklistSweepSchedulerState.timer !== timer) return;
     blocklistSweepSchedulerState.timer = null;
     blocklistSweepSchedulerState.scheduledAt = null;

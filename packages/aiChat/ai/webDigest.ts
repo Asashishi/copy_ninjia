@@ -7,7 +7,7 @@
  * 2. 组稿：text 模型不挂工具、输出 digest/v1 JSON（aiChat/provider.ts 的 structuredTextAiProvider，
  *    不使用 Gemini 显式缓存），本地严格解码（libs/webDigest.ts），核对每条 url 都逐字取自正文链接或来源列表，
  *    再渲染成 MarkdownV2（libs/webDigestMarkdown.ts）并核对可见正文不超过 Telegram 上限。任何一项
- *    不合格都带着诊断重试一次（WEB_DIGEST_COMPOSE_ATTEMPTS），仍不合格就判本轮失败，不截断、不拆条。
+ *    不合格都带着诊断重试，总尝试次数为 WEB_DIGEST_COMPOSE_ATTEMPTS，仍不合格就判本轮失败，不截断、不拆条。
  *
  * 未检索时记一行带有界模型正文的告警；失败时记英文错误日志。取消后不再记错误。
  */

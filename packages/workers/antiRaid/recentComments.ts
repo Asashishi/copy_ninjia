@@ -22,9 +22,8 @@ export interface RememberRecentCommentParams {
 /**
  * 暂存一条「发言者当前没有验证状态记录」的评论区留言/线程回复，等这条留言
  * 触发的自动拉群（chat_member 更新可能后到）来消费。同一人连发多条只留
- * 最新的；直属评论和楼中楼回复在豁免语义上没有差别，因此缓存不携带来源
- * 标记。不为每个成员创建 timer：统一由 Worker sweeper 清理，读取路径自身
- * 也拒绝过期项。
+ * 最新的；缓存不区分直属评论与楼中楼回复，不携带来源标记。不为每个成员创建
+ * timer：统一由 Worker sweeper 清理，读取路径自身也拒绝过期项。
  */
 export function rememberRecentComment({
   chatId,
@@ -39,8 +38,7 @@ export function rememberRecentComment({
     recentChannelComments.delete(key);
   }
 
-  // 先按时间清一遍：能靠过期回收就不必淘汰还在窗口内的条目。最小 observedAt 的
-  // 下界证明没有到期条目时跳过这次整表扫描（raid 高峰持续触顶时每次插入都会走到）。
+  // 先按时间清一遍；最小 observedAt 的下界证明没有到期条目时跳过整表扫描。
   if (
     recentChannelComments.size >= RECENT_COMMENT_CACHE_MAX &&
     observedAt - recentCommentsMinObservedAt.current >= COMMENT_JOIN_CORRELATE_MS
@@ -49,8 +47,7 @@ export function rememberRecentComment({
     sweepRecentComments(observedAt, false);
   }
   if (observedAt < recentCommentsMinObservedAt.current) recentCommentsMinObservedAt.current = observedAt;
-  // 清完仍触顶时由共享实现淘汰最早插入项。每次更新都是「先 delete 旧 key 再
-  // set」，异步确认可能让观察时间乱序；容量仍按插入序 O(1) 淘汰。
+  // 清完仍触顶时由共享实现按插入序淘汰最早项。
   setBoundedMapValue({
     map: recentChannelComments,
     key,

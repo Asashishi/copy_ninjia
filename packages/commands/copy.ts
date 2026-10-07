@@ -30,9 +30,8 @@ function copyTargetTextsForMode(mode: CopyMode | undefined, atmosphere: Atmosphe
  * 参数指定（要求当前身份缓存中存在该用户名），也可以回复目标消息来指定。
  * 回复目标不要求公开 username 或命中缓存；回复与参数同时给出时必须指向同一身份。
  *
- * 复读目标是全局唯一的（机器人只有一张脸，同一时刻只能"变成"一个人）：
- * 任何群在复读时，其他群想 /copy 都会被挡，得先 /copy stop（任何群都能停）。
- * 复读行为本身只发生在发起 /copy 的这个群里。
+ * 复读目标全局唯一：任一群正在复读时，其他群的 /copy 被拒绝，需先 /copy stop
+ * （任何群都能停）。复读行为只发生在发起 /copy 的群里。
  */
 export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -56,10 +55,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
 
   // acknowledged runner 严格串行处理 update；本次命令返回前不会开始另一条命令。
   if (globalCopy.copiedUser !== null) {
-    // 这条 /copy 已经注定被拒，这里只想知道目标是谁好挑一句文案——必须用不带
-    // 发送副作用的只读查询。走完整解析的话，参数是未缓存的 @username 时它会
-    // 自己发一条「@x 都还没说过话呢」并返回 undefined，用户收到的是「不认识
-    // 这个用户名」，而真正的原因（正在复读别人）永远没说。
+    // 这条 /copy 已被拒绝，仅需知道目标是谁来挑文案：用无发送副作用的 peekCommandTarget。
     const targetUser: CachedUser | undefined = peekCommandTarget(ctx.msg, targetArgument);
     const atmosphere: AtmosphereTexts = chatAtmosphere();
     const replyText: string = globalCopy.copiedUser.id === targetUser?.id
@@ -93,8 +89,7 @@ export async function handleCopyCommand(ctx: CommandContext<Context>): Promise<v
     }
   }
 
-  // 成功反馈和头像任务必须等对应 revision 的全局状态 durable，
-  // 避免 update 已确认后重启复活旧 copy 状态。
+  // 成功反馈和头像任务在对应 revision 的全局状态 durable 之后才执行。
   await persistGlobalState("copy started");
 
   const atmosphere: AtmosphereTexts = chatAtmosphere();

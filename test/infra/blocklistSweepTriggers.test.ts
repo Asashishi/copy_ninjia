@@ -78,8 +78,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     states.set(-1001, { isInitEnabled: true, botPermissions: botPermissions() });
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
-    // 管理员权限变更（比如加了删消息权）也走 my_chat_member；即使身份仍是
-    // administrator，也必须补扫，不能只依赖身份值变化边沿。
+    // 管理员权限变更（如加了删消息权）也走 my_chat_member；身份仍是 administrator 也补扫，不只依赖身份值变化边沿。
     await handleMyChatMemberUpdate(promotion("administrator", "administrator"));
     expect(remover).toHaveBeenCalledTimes(1);
     settleLast(true);
@@ -88,10 +87,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     readBlocklistIdPage.mockClear();
     await handleMyChatMemberUpdate(promotion("administrator", "administrator"));
     expect(remover).not.toHaveBeenCalled();
-    // 「不重复扫」必须在**读名单页之前**成立：那一次读先向 Disk I/O Worker 请求
-    // 一次黑名单领域 flush 再跨线程取一页主键（infra/identityStorage/sweep.ts），而本
-    // 触发点挂在每条 chat_member 更新的管理员身份观测上。放在读之后早退的话，
-    // 每个进群/退群的人都要付一次往返，并提前提交共享 SQLite 的攒批事务。
+    // 「不重复扫」在读名单页之前成立：那一次读先向 Disk I/O Worker 请求一次黑名单领域 flush，
+    // 再跨线程取一页主键（infra/identityStorage/sweep.ts）；本触发点挂在每条 chat_member 更新的管理员身份观测上。
     expect(readBlocklistIdPage).not.toHaveBeenCalled();
   });
 
@@ -101,7 +98,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     settleLast(false);
     remover.mockClear();
 
-    // 触发点是每条入群更新都会来的管理员身份观测：不设退避就是请求风暴。
+    // 触发点是每条入群更新都会来的管理员身份观测：重扫带退避。
     await sweepBlockedMembers(-1001, 2_000);
     expect(remover).not.toHaveBeenCalled();
 
@@ -110,21 +107,19 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("连续没落定就逐次拉长退避：永远封不掉的目标不会每 5 分钟重扫一次整份名单", async () => {
-    // 目标自己就是这个群的管理员、或机器人是管理员却没有封禁权限时，每一轮
-    // 补扫都注定 complete:false。固定 5 分钟一轮的话，这个群会在进程存活期间
-    // 永久地每 5 分钟做一次 O(名单长度) 的探测 + 封禁；这些封禁与验证超时踢人
-    // 共用 kick 类别的 429 FIFO，类别正在退避时会持续扩大安全动作积压。
+    // 目标自己是这个群的管理员、或机器人是管理员却没有封禁权限时，每一轮补扫都 complete:false；
+    // 重扫间隔逐次拉长，不固定为基础间隔。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     await sweepBlockedMembers(-1001, 1_000);
     settleLast(false);
 
-    // 第一次退避仍是 5 分钟。
+    // 第一次退避是 BLOCKLIST_SWEEP_RETRY_INTERVAL_MS。
     await sweepBlockedMembers(-1001, 301_000);
     expect(remover).toHaveBeenCalledTimes(2);
     settleLast(false);
 
     remover.mockClear();
-    // 再过 5 分钟还不够：这一次的窗口已经涨到 10 分钟。
+    // 再过一个基础间隔还不够：这一次的窗口已经翻倍。
     await sweepBlockedMembers(-1001, 601_000);
     expect(remover).not.toHaveBeenCalled();
 
@@ -133,8 +128,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("权限不够时停掉按时间的重试，只等一次确证的权限变更", async () => {
-    // 退避拉长仍然是「按时间重试」：机器人没有封禁权限时，每个窗口末尾照样
-    // 要把整份名单重扫一遍，换来的只是同一条报错再刷一次。
+    // 退避拉长仍然是「按时间重试」：每个窗口末尾照样重扫整份名单。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     await sweepBlockedMembers(-1001, 1_000);
     const removalId: number = lastRemovalId();
@@ -207,12 +201,9 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("投递边界抛错时不得清掉 await 期间刚被并发回执置上的权限闩锁", async () => {
-    // 时序：A 群已有一批 frozen 秒踢在途；补扫认领了新的 removalId 并 await
-    // durable 投递；等待期间 Worker 回来一条属于**旧批次**的 permissionDenied
-    // 回执——notePermissionBlocked 置上闩锁后，因 removalId 对不上而提前返回，
-    // 闩锁是它留下的唯一痕迹。随后投递边界抛错，失败记账若原样写
-    // permissionBlocked: false，就把它抹掉了：此后每一次管理员身份观测都会
-    // 重新武装一整轮注定 400 的全名单补扫，持续浪费 Worker 调度、网络与日志。
+    // 时序：A 群已有一批 frozen 秒踢在途；补扫认领了新的 removalId 并 await durable 投递；
+    // 等待期间 Worker 回来一条属于旧批次的 permissionDenied 回执，notePermissionBlocked 置上闩锁后因 removalId 对不上而提前返回；
+    // 随后投递边界抛错，失败记账保留 permissionBlocked 为真。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     const frozen = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
 
@@ -242,10 +233,8 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("从没扫过的群也要记下权限受阻，而不是把标记丢掉", async () => {
-    // 补扫记录只由 sweepBlockedMembers 创建，而机器人从来就没有封禁权限的群
-    // 恰恰是最需要这个标记的一类：秒踢那一路的权限拒绝若记不下来，
-    // replayPendingBlockedRemovals 每次 Worker 重生都会把这批注定失败的处置
-    // 重投一遍，而唯一的解锁边沿没有记录可以解锁。
+    // 补扫记录只由 sweepBlockedMembers 创建；机器人从来没有封禁权限的群里，秒踢一路的权限拒绝也要记下标记，
+    // replayPendingBlockedRemovals 在 Worker 重生时据此跳过必败处置。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     const params = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
     expect(blocklistSweepState.has(-1001)).toBeFalse();
@@ -388,25 +377,21 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     });
     expect(blocklistSweepState.get(-1001)?.removalId).toBe(sweepRemovalId);
 
-    // Anti-Raid Worker 在 R 完成前死掉：被终止的 isolate 什么回执都发不出来，
-    // 而闩锁又让 Worker 重建时的整批重放跳过这个群，R 从此没人重投。
+    // Anti-Raid Worker 在 R 完成前死掉：被终止的 isolate 发不出回执；闩锁让 Worker 重建时的整批重放跳过这个群。
     remover.mockClear();
     replayPendingBlockedRemovals();
     await Bun.sleep(0);
     expect(remover).not.toHaveBeenCalled();
 
-    // 权限恢复：claim 必须一并释放。继续沿用 R 的话，
-    // replayPendingBlockedRemovalsForChat 按设计只重放 frozen 批次、不会重投 R，
-    // 而 prepareBlocklistSweep 又因为 removalId !== null 永久早退——这个群从此
-    // 再也补扫不了，黑名单成员就一直坐在里面。
+    // 权限恢复：claim 一并释放；replayPendingBlockedRemovalsForChat 只重放 frozen 批次，
+    // prepareBlocklistSweep 在 removalId !== null 时早退。
     await handleMyChatMemberUpdate(promotion("administrator", "administrator", true));
     expect(blocklistSweepState.get(-1001)?.removalId).not.toBe(sweepRemovalId);
     expect(remover.mock.calls.at(-1)?.[0]).toEqual([
       expect.objectContaining({ probeMembership: true }),
     ]);
 
-    // 后续按时间的重扫同样不再被幽灵 claim 挡住（这一批没落定，退避窗口过去
-    // 之后照常再来一轮）。
+    // 后续按时间的重扫不被残留 claim 挡住（这一批没落定，退避窗口过去之后照常再来一轮）。
     settleLast(false);
     remover.mockClear();
     await sweepBlockedMembers(-1001, Date.now() + 10_000_000);
@@ -494,15 +479,14 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     const removalId: number = lastRemovalId();
     postDiskIO.mockClear();
 
-    // 一轮重放会回来 N 份「没落定」回执；每份都排一次全表深拷贝 + 整文件
-    // fsync 的话，合起来就是 replayPendingBlockedRemovals 注释里点名禁止的
-    // O(n²)。这里变的只有诊断字段，任务本身没有增删。
+    // 一轮重放会回来多份「没落定」回执；每份都不排全表深拷贝与整文件 fsync（见 replayPendingBlockedRemovals 注释）；
+    // 这里变的只有诊断字段，任务本身没有增删。
     for (let attempt: number = 1; attempt < BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS; attempt++) {
       settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId, complete: false });
     }
     expect(postDiskIO).not.toHaveBeenCalled();
 
-    // 跨越告警阈值那一次仍要立刻落盘：「已经失败到该报警了」必须跨重启存活。
+    // 跨越告警阈值那一次立刻落盘，使「已经失败到该报警了」跨重启存活。
     settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId, complete: false });
     expect(postDiskIO).toHaveBeenCalledTimes(1);
     expect(pendingBlockedRemovals.get(removalId)?.attempts).toBe(BLOCKLIST_REMOVAL_REPLAY_ALERT_ATTEMPTS);
@@ -572,10 +556,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("状态落盘失败不得被折算成「不是管理员」", async () => {
-    // Telegram 侧明明查到了管理员身份，只是状态没写进硬盘。折算成 false 的话，
-    // 调用方按非管理员早退：这一批 new_chat_members 不开验证窗口、不被消息
-    // 跟踪、超时也不踢，一整批刷群就这么走进来，而唯一的诊断把锅指向 Telegram
-    // API，下一次调用又从内存读到 true，现象根本复现不了。
+    // Telegram 侧查到了管理员身份，只是状态没写进硬盘：落盘失败向调用方抛出，不折算成 false。
     states.set(-1001, { isInitEnabled: true });
     persistChatState.mockRejectedValueOnce(new Error("state store quiesced"));
 
@@ -592,9 +573,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
   });
 
   test("还没 /init enable 的群不清扫，哪怕这一刻成了管理员", async () => {
-    // my_chat_member 会绕过 isInitEnabled 网关送达，这里必须自己把关，
-    // 否则机器人一被拉进任何群当管理员就会在别人群里踢人。合取的另一半
-    // 之后由 /init enable 补上，那一刻才轮到清扫。
+    // my_chat_member 绕过 isInitEnabled 网关送达，这里自己把关；合取的另一半由 /init enable 补上，那一刻才轮到清扫。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await handleMyChatMemberUpdate(promotion("administrator", "member"));
@@ -608,8 +587,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     settleLast(true);
     expect(blocklistSweepState.get(-1001)?.sweptAt).toEqual(expect.any(Number));
 
-    // 秒踢那一路的批次编号跟补扫进度对不上；黑名单入群不开验证窗口、没有超时
-    // 踢人兜底，这批失败就是那个人留在群里的全部原因。
+    // 秒踢那一路的批次编号跟补扫进度对不上；黑名单入群不开验证窗口、没有超时踢人兜底。
     const kick = trackBlockedRemoval({ chatId: -1001, userIds: [7], probeMembership: false, joinedAt: 2_000 });
     settleBlockedRemoval({ type: "blockedMembersRemoved", participantInvalidUserIds: [], settledUserIds: [], chatId: -1001, removalId: kick.removalId, complete: false });
 
@@ -622,8 +600,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     settleLast(true);
     remover.mockClear();
 
-    // sweptAt 是永久闩锁，唯一的复位路径本来只有停管：那个群里被拉黑的人会
-    // 一直待到进程结束。
+    // sweptAt 是永久闩锁；/block 封禁失败时用 requestBlocklistResweep 复位它。
     requestBlocklistResweep(-1001, 2_000);
     await sweepBlockedMembers(-1001, 2_000);
 
@@ -634,8 +611,7 @@ describe("「是管理员 && 已初始化」成立的那一刻触发清扫", () 
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
     await sweepBlockedMembers(-1001, 1_000);
 
-    // /block 在这个群封禁失败时，补扫批次可能还在跑。回执若照常写 sweptAt，
-    // 这次请求就丢了——而它正是冲着「这个群里还留着人」来的。
+    // /block 在这个群封禁失败时补扫批次可能还在跑；complete 回执写 sweptAt 时保留这次重扫请求。
     requestBlocklistResweep(-1001, 1_500);
     settleLast(true);
 

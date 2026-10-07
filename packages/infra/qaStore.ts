@@ -34,7 +34,7 @@ import type { UnacknowledgedChatQaWrite } from "../types/qa";
 /** 问答条数达到上限；命令回执只把这一类失败解释为业务容量已满。 */
 export class ChatQaCapacityError extends Error {}
 
-/** 启动恢复信任 SQLite 当前写入边界，只把持久化值搬进内存。 */
+/** 启动恢复把 SQLite 持久化值载入内存。 */
 export function hydrateChatQaCache(
   entries: ReadonlyMap<number, ReadonlyMap<string, string>>
 ): void {
@@ -94,8 +94,7 @@ function queueChatQaWrite(message: ChatQaWriteDiskMessage): void {
  * 写入一条问答的最终值。
  *
  * @returns 已存在同一问题时为 `"replaced"`，新增为 `"created"`；容量已满则抛错。
- *   回执必须按这个结果措辞——把「覆盖了旧答案」说成「新增」会让人以为原来那条
- *   还在（见 docs/cn/04-invariants.md 的回执口径）。
+ *   回执按这个结果措辞（见 docs/cn/04-invariants.md 的回执口径）。
  */
 export function setChatQa(chatId: number, q: string, a: string): "created" | "replaced" {
   const existing: Map<string, string> | undefined = chatQaEntries.get(chatId);
@@ -120,8 +119,7 @@ export function removeChatQa(chatId: number, q: string): boolean {
   if (questions?.has(q) !== true) return false;
   const message: ChatQaWriteDiskMessage = prepareChatQaWrite(chatId, q, undefined);
   questions.delete(q);
-  // 空表不留存，否则每个曾登记过问答的群都会在热表里留一项空壳，而直答路径
-  // 第一步的 `get(chatId)` 就再也不能靠 undefined 短路。
+  // 空表不留存，直答路径第一步的 `get(chatId)` 靠 undefined 短路。
   if (questions.size === 0) chatQaEntries.delete(chatId);
   queueChatQaWrite(message);
   return true;
@@ -143,7 +141,7 @@ export function removeAllChatQa(chatId: number): number {
   if (questions === undefined) return 0;
   let removed: number = 0;
   try {
-    // 先取一份键快照：下面的循环会就地改 questions，直接迭代它是在改集合的同时遍历。
+    // 先取键快照；循环就地修改 questions。
     for (const q of [...questions.keys()]) {
       const message: ChatQaWriteDiskMessage = prepareChatQaWrite(chatId, q, undefined);
       questions.delete(q);
@@ -151,9 +149,8 @@ export function removeAllChatQa(chatId: number): number {
       removed++;
     }
   } finally {
-    // 空表不留存，同 removeChatQa：直答路径第一步要能靠 undefined 短路。
-    // 收在 finally 里：中途抛错时已经摘走的那几条不能再回到表里，而剩下的必须
-    // 原样留着等重试，两者都要求按此刻的 size 判定。
+    // 空表不留存，同 removeChatQa。放在 finally 中，中途抛错时按此刻的 size 判定：
+    // 已摘走的条目不回表，剩余条目保留。
     if (questions.size === 0) chatQaEntries.delete(chatId);
   }
   return removed;

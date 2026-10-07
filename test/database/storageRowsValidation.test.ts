@@ -21,13 +21,13 @@ import type {
 import { chatStateOf } from "../helpers/chatState";
 
 /**
- * 共享 SQLite 业务行的**启动期严格校验**。
+ * 共享 SQLite 业务行的启动期严格校验。
  *
  * schema 版本与群状态是 `AGENTS.md`「不为用户行为兜底」要求 fail closed 的边界；
  * 身份表、outbox 与 migration 谱系由 test/workers/diskIO/storageDatabaseSchemaGate.test.ts
  * 的真实 SQLite 启动检查覆盖。
  *
- * 错误文案也一起钉住：必须写明来源路径与字段路径，且**不得回显行内容**。
+ * 错误文案也一起断言：写明来源路径与字段路径，不回显行内容。
  */
 
 const SOURCE: string = "database/storage.sqlite";
@@ -199,7 +199,7 @@ describe("群状态严格解码", () => {
     expect(states.get(CHAT_ID)?.isInitEnabled).toBe(true);
   });
 
-  test("超过 25 群硬顶时拒绝启动，并点名要先删掉不再管的群", () => {
+  test("超过托管群硬顶时拒绝启动，并点名要先删掉不再管的群", () => {
     const rows: StoredChatStateRow[] = Array.from(
       { length: STATE_MANAGED_CHAT_LIMIT + 1 },
       (_value: unknown, index: number): StoredChatStateRow =>
@@ -209,7 +209,7 @@ describe("群状态严格解码", () => {
       .toThrow(new RegExp(`at most ${STATE_MANAGED_CHAT_LIMIT} chats`));
   });
 
-  test("正好 25 群不拒绝", () => {
+  test("正好托管群硬顶时不拒绝", () => {
     const rows: StoredChatStateRow[] = Array.from(
       { length: STATE_MANAGED_CHAT_LIMIT },
       (_value: unknown, index: number): StoredChatStateRow =>

@@ -6,7 +6,7 @@ import type {
   StoredChatQaRow,
 } from "../../types/storageDatabase";
 
-/** 读取全部已提交问答行（含 data）；启动按 25 群、每群 15 条的硬顶恢复。 */
+/** 读取全部已提交问答行（含 data）；启动按 STATE_MANAGED_CHAT_LIMIT 群、每群 CHAT_QA_MAX_PER_CHAT 条的上限恢复。 */
 export function readStoredChatQa(
   database: StorageDatabase
 ): readonly StoredChatQaRow[] {
@@ -22,8 +22,8 @@ export function readStoredChatQa(
 
 /**
  * 只读取某一群已提交问答的问题文本，不读取 data 列（JSONB BLOB，需经
- * `jsonbTextProjection` 物化成 JSON 文本）。容量闸只需要知道该群已登记哪些
- * 问题；做法与 readStoredChatStateIds 相同。
+ * `jsonbTextProjection` 物化成 JSON 文本）。容量闸只读取该群已登记的
+ * 问题；做法同 readStoredChatStateIds。
  */
 export function readStoredChatQaQuestions(
   database: StorageDatabase,

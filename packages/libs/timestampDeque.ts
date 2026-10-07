@@ -1,18 +1,17 @@
 import { assertDequeCapacities } from "./dequeCapacity";
 
 /**
- * 有界数字时间戳双端队列。仅保存 number，使用可增长的连续数组和环形下标，
- * 避免消息级滑动窗口为每个时间戳创建链表节点。
+ * 有界数字时间戳双端队列。仅保存 number，使用可增长的连续数组和环形下标。
  *
  * backing array 从小容量起步并最多增长到构造时给定的硬上限；clear 只重置下标，
- * 数组里残留的是原始 number，不会钉住对象引用。实例只用于进程内窗口，不承担
+ * 数组里残留的是原始 number，不持有对象引用。实例只用于进程内窗口，不承担
  * 持久化格式或跨线程共享。
  *
- * **容量是会抛错的硬顶**：只承载配额本身就封住长度的窗口（构造时把容量取成那个
- * 配额上限即可）。没有上界的任务队列见 libs/linkedQueue.ts 的头注。
+ * 容量是会抛错的硬顶：只承载配额本身就封住长度的窗口（构造时把容量取成那个
+ * 配额上限）。没有上界的任务队列见 libs/linkedQueue.ts 的头注。
  *
- * 与 libs/boundedDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
- * 共用校验见 libs/dequeCapacity.ts 的头注。
+ * 与 libs/boundedDeque.ts 的环形下标逻辑同构，两者各自存储，共用校验见
+ * libs/dequeCapacity.ts。
  */
 export class TimestampDeque {
   private values: number[];
@@ -35,7 +34,7 @@ export class TimestampDeque {
 
   /**
    * 队尾槽位。`head + count - 1` 恒小于 `2 * values.length`，一次条件减即可
-   * 折回环内；取模在这里会让每条群消息都付一次整数除法。
+   * 折回环内。
    */
   private tailIndex(): number {
     const length: number = this.values.length;
@@ -43,7 +42,7 @@ export class TimestampDeque {
     return index >= length ? index - length : index;
   }
 
-  /** 追加一个时间戳；达到构造时的硬上限表示调用方违反了领域容量约束。 */
+  /** 追加一个时间戳；已达构造时的硬上限时抛 RangeError。 */
   push(value: number): void {
     if (this.count === this.values.length) {
       if (this.count === this.maxCapacity) {
@@ -61,8 +60,7 @@ export class TimestampDeque {
   /**
    * 追加时间戳；达到硬上限时原地覆盖最早一项并返回被覆盖值。
    *
-   * 仅供已经定义饱和语义的窗口使用。普通配额窗口必须继续调用 push，让违反
-   * 容量不变量的写入抛错，不能静默覆盖。
+   * 仅供已经定义饱和语义的窗口使用；普通配额窗口调用 push，违反容量不变量的写入抛错。
    */
   pushReplacingOldest(value: number): number | undefined {
     if (this.count < this.maxCapacity) {
@@ -74,17 +72,6 @@ export class TimestampDeque {
     const next: number = this.head + 1;
     this.head = next === this.values.length ? 0 : next;
     return replaced;
-  }
-
-  /** 移除并返回最早时间戳。 */
-  shift(): number | undefined {
-    if (this.count === 0) return undefined;
-    const value: number | undefined = this.values[this.head];
-    const next: number = this.head + 1;
-    this.head = next === this.values.length ? 0 : next;
-    this.count -= 1;
-    if (this.count === 0) this.head = 0;
-    return value;
   }
 
   /** 查看最早时间戳但不移除。 */
@@ -102,8 +89,7 @@ export class TimestampDeque {
   }
 
   /**
-   * 移除第一个与 value 全等的时间戳；窗口容量很小且撤销属于低频异步路径，
-   * 因此原地移动后续数字，避免为按值撤销保留链表节点或临时数组。
+   * 移除第一个与 value 全等的时间戳；原地移动后续数字，不分配链表节点或临时数组。
    */
   removeValue(value: number): boolean {
     const length: number = this.values.length;
@@ -130,21 +116,18 @@ export class TimestampDeque {
   }
 
   /**
-   * 就地保留半开窗口 `(now - windowMs, now]`。直接操作环形下标，避免热路径
-   * 为每次修剪跨多个公开队列方法调用。
+   * 就地保留半开窗口 `(now - windowMs, now]`。直接操作环形下标，不跨多个公开队列
+   * 方法调用。
    *
-   * **全仓滑动窗口的边界定义就是这里**，调用方不要各自手写
-   * `while (peek() < cutoff) shift()`：`<` / `<=` / `>=` 的写法差一个刻度，
-   * 同样的窗口长度会因为读的是哪份副本而得出不同结论。另外两种数组形态
-   * （`trimSlidingWindowArray` 与 `trimSlidingWindowArrayInPlace`，用于要随快照落盘的
-   * 窗口）位于 libs/slidingWindowRateLimit.ts，必须与本方法逐字一致；该约束由
+   * 全仓滑动窗口的边界定义就是这里。
+   * 另外两种数组形态（`trimSlidingWindowArray` 与 `trimSlidingWindowArrayInPlace`，用于
+   * 要随快照落盘的窗口）位于 libs/slidingWindowRateLimit.ts，与本方法逐字一致；该约束由
    * test/libs/slidingWindowBoundary.test.ts 的同输入对拍锁住。
    *
-   * 两件事：
-   * 1. 丢掉已滑出窗口的队首（`ts <= now - windowMs`）；
-   * 2. 系统时钟回拨后队尾会落在「未来」，**只丢这些越界项**，保留仍然合法的
-   *    历史记录。绝不能整窗清空：那等于把配额清零重来，往回拨 1 毫秒就能凭空
-   *    换到一整个新窗口，限流形同虚设。
+   * 两步，按执行顺序：
+   * 1. 系统时钟回拨后队尾会落在「未来」，只丢这些越界项，保留仍然合法的历史记录，
+   *    不整窗清空；
+   * 2. 丢掉已滑出窗口的队首（`ts <= now - windowMs`）。
    */
   trim(windowMs: number, now: number): void {
     while (this.count > 0) {

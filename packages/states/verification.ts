@@ -29,7 +29,7 @@ export { adoptVerificationState } from "./verification/adopt";
 
 /**
  * 入群验证生命周期的显式状态机入口（纯逻辑，不做 I/O、不持有计时器）。
- * 各领域转移位于同名目录；本文件保留完整事件路由，便于穷尽审计状态图。
+ * 各领域转移位于同名目录；本文件保留完整事件路由，穷尽路由全部事件。
  *
  * 状态图（ABSENT = Map 里没有这个 key）：
  *

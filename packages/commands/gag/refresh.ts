@@ -45,7 +45,7 @@ export function scheduleGagSpeakNoticeRefresh(session: GagSession): void {
   session.speakNoticeRefreshTimer.unref();
 }
 
-/** 删除上一次换新遗留的旧入口；失败时保留固定单槽位，禁止继续堆新入口。 */
+/** 删除上一次换新遗留的旧入口；失败时保留在 retired 槽位。 */
 async function retryRetiredGagSpeakNotice(
   session: GagSession
 ): Promise<boolean> {
@@ -55,15 +55,14 @@ async function retryRetiredGagSpeakNotice(
 }
 
 /**
- * 发出本会话的新入口，再原子切换 current/pending/retired 三个固定槽位，最后
- * 删除旧入口。onSent 必须先写 pending：停机 abort 即使带走返回值，ending 仍
- * 能按精确目标身份回收远端已经建立的入口。
+ * 发出本会话的新入口，再原子切换 current/pending/retired 槽位，最后删除旧入口。
+ * onSent 先写 pending：停机 abort 带走返回值时，ending 仍能按精确目标身份回收
+ * 已建立的入口。
  *
- * `targetThreadId` 就是这条新入口要落进的话题：按消息数滚动换新时传当前话题
- * （原地换一条更靠下的），被管教的人换话题说话时传新话题（搬家）。两者是同一
- * 套「发新的 → 切槽位 → 删旧的」，因此不另写一条发送/删除路径。
+ * `targetThreadId` 是这条新入口落进的话题：按消息数滚动换新时传当前话题，被管教的人
+ * 换话题说话时传新话题（搬家），两者同一套「发新的 → 切槽位 → 删旧的」。
  * `speakNoticeThreadId` 只在切槽位那一步更新，发送失败时仍指向旧话题，下一条
- * 消息还会再判一次要不要搬家。
+ * 消息再判一次是否搬家。
  */
 async function replaceGagSpeakNotice(
   session: GagSession,
@@ -135,8 +134,8 @@ function refreshGagSpeakNotice(
  * 用户沉默达到阈值后再次发言即补发；跨话题发言同时移动用户或频道入口。
  * 仅目标消息更新沉默起点，定时或消息阈值刷新不影响它。
  *
- * 与滚动换新共用 replaceGagSpeakNotice，因此 retired 槽位、单条在途任务与
- * ending 的接管语义全部沿用。旧入口重试也由同一个在途任务持有。
+ * 与滚动换新共用 replaceGagSpeakNotice，retired 槽位、单条在途任务与
+ * ending 的接管语义沿用；旧入口重试由同一个在途任务持有。
  */
 export function refreshGagSpeakNoticeOnSpeech(
   session: GagSession,
@@ -165,7 +164,7 @@ export function refreshDueGagSpeakNotices(
       session.phase !== "active" ||
       session.expiresAt <= Date.now()
     ) continue;
-    // 滚动换新只是把入口挪到更靠下的位置，话题不变。
+    // 滚动换新留在原话题。
     refreshGagSpeakNotice(session, session.speakNoticeThreadId);
   }
 }

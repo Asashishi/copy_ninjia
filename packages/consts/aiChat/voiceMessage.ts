@@ -11,6 +11,8 @@
  */
 
 import type { TtsBotLanguage } from "../../types/config";
+import { DAY_MS } from "../time";
+import { exhaustiveList } from "../exhaustiveList";
 
 /**
  * `agent.tts.style` 缺省时的基础朗读风格（google 与 openai 两种接受风格的协议；xai 协议不接受
@@ -33,7 +35,7 @@ export const TTS_TONE_SEPARATOR: string = "; 细节: ";
  * `agent.tts.bot_language` 接受的全部取值，与 TtsBotLanguage 一一对应；部署配置解析
  * （config/agentCapability.ts）据此判定枚举是否合法。
  */
-export const TTS_BOT_LANGUAGES: readonly TtsBotLanguage[] = ["en", "zh", "ja"];
+export const TTS_BOT_LANGUAGES: readonly TtsBotLanguage[] = exhaustiveList<TtsBotLanguage>()(["en", "zh", "ja"]);
 
 /**
  * `agent.tts.bot_language` 缺省时的台词语言；`agent.tts` 整段缺省时 AI 回复的 send_message 与
@@ -68,7 +70,7 @@ export const TTS_DEFAULT_DAILY_RESERVE_QUOTA: number = 25;
  * 计数窗口长度（ms）。窗口从当前窗口内第一次请求起算；登记时距窗口起点已满本值，
  * 就以这次请求为新起点，两项计数清零后只登记本次请求所属的那一项。
  */
-export const TTS_USAGE_WINDOW_MS: number = 86_400_000;
+export const TTS_USAGE_WINDOW_MS: number = DAY_MS;
 
 /** 语音工具单轮最多接纳一条语音；接纳时同时预占一个共享可见动作。 */
 export const MAX_VOICES_PER_REPLY: number = 1;
@@ -83,8 +85,8 @@ export const MAX_VOICES_PER_REPLY: number = 1;
 export const VOICE_FOREGROUND_WAIT_MS: number = 25_000;
 
 /**
- * 模型交给语音合成的台词最大字符数；约束在一两句短台词的量级。编码在 AI Worker
- * 线程上同步执行、耗时随时长线性增长，这个上限同时约束单次编码占用线程的时长。
+ * 模型交给语音合成的台词最大字符数；同时约束单次编码占用 AI Worker
+ * 线程的时长（编码同步执行、耗时随时长线性增长）。
  */
 export const VOICE_TEXT_MAX_CHARS: number = 64;
 
@@ -112,8 +114,8 @@ export const VOICE_OPERATOR_TEXT_MAX_CHARS: number = 256;
 export const VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS: number = 240_000;
 
 /**
- * 合成结果解码后的最大字节数。24 kHz 单声道 16 bit PCM 每秒约 48 KB，8 MiB
- * 约合 175 秒；按完整音频载荷校验，包含容器头；OGG/Opus 与 MP3 即响应体字节数。
+ * 合成结果解码后的最大字节数；按完整音频载荷校验，包含容器头；
+ * OGG/Opus 与 MP3 即响应体字节数。
  */
 export const VOICE_SPEECH_MAX_BYTES: number = 8 * 1_024 * 1_024;
 
@@ -130,7 +132,7 @@ export const VOICE_OGG_FILE_NAME: string = "voice.ogg";
 /** MP3 语音上传到 Telegram 的文件名（xAI `mp3` 响应）。 */
 export const VOICE_MP3_FILE_NAME: string = "voice.mp3";
 
-/** Opus 编码目标码率（kbps），用于供应商合成的 24 kHz 单声道人声。 */
+/** Opus 编码目标码率（kbps），用于供应商合成的单声道人声。 */
 export const VOICE_OPUS_BITRATE_KBPS: number = 48;
 
 /** Opus 编码器的计算档位（0～10），档位越高单次编码占用 AI Worker 线程越久。 */
@@ -146,7 +148,7 @@ export const VOICE_OPUS_APPLICATION: "voip" | "audio" | "lowdelay" = "audio";
 export const VOICE_OPUS_ENCODE_CHUNK_SECONDS: number = 1;
 
 /**
- * 分块重采样时每块前后各带上的输入样本数，属 aiChat/ai/voiceEncoding.ts。须不小于依赖
- * 重采样核（Lanczos-3）单侧触及的 3 个样本，块边界的输出才与整段一次重采样相同。
+ * 分块重采样时每块前后各带上的输入样本数，属 aiChat/ai/voiceEncoding.ts。须不小于
+ * 重采样核单侧触及的样本数，块边界的输出才与整段一次重采样相同。
  */
 export const VOICE_OPUS_RESAMPLE_CONTEXT_SAMPLES: number = 8;

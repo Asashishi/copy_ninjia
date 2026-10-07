@@ -25,13 +25,12 @@ describe("滑动窗口限流判定", () => {
 
     expect(consume(timestamps, 400)).toBeFalse();
     expect(consume(timestamps, 500)).toBeFalse();
-    // 拒绝不入队，否则后续窗口会被拒绝记录二次占用名额。
+    // 拒绝不入队。
     expect(contents(timestamps)).toEqual([100, 200, 300]);
   });
 
   test("窗口是半开区间 (now - windowMs, now]，边界两侧行为明确", () => {
-    // 全仓所有滑动窗口共用这一个边界定义（见 TimestampDeque.trim）：写法不一
-    // （`<` / `<=` / `>=`）会让同样的窗口长度差出一个刻度。
+    // 全仓所有滑动窗口共用这一个边界定义（见 TimestampDeque.trim）。
     const justInside = queueOf(100, 200, 300);
     // 1099：100 还差 1 毫秒才满一个窗口，仍占着名额。
     expect(consume(justInside, 1_099)).toBeFalse();
@@ -43,10 +42,10 @@ describe("滑动窗口限流判定", () => {
   });
 
   test("时钟回拨只丢落在未来的记录，合法历史必须留下", () => {
-    // 整窗清空等于把配额清零重来——往回拨 1 毫秒就能凭空换到一整个新窗口。
+    // 回拨不整窗清空。
     const timestamps = timestampDequeOf([900, 5_002], 2);
     expect(consume(timestamps, 1_000, 2)).toBeTrue();
-    // 900 仍占名额，所以这次必须被拒；若回拨时整窗清空了，这里会错误放行。
+    // 900 仍占名额，所以这次被拒。
     expect(consume(timestamps, 1_000, 2)).toBeFalse();
     expect(contents(timestamps)).toEqual([900, 1_000]);
   });

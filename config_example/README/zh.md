@@ -99,21 +99,21 @@ done
 
 ## 运行中修改（热重载）
 
-机器人持续监听 `config/dynamic/` 目录。修改并保存文件后约 0.5 秒触发严格 schema 解析与热重载：
+机器人持续监听 `config/dynamic/` 目录。目录最后一次文件事件之后，经 `CONFIG_RELOAD_DEBOUNCE_MS` 去抖窗口触发严格 schema 解析与热重载：
 
-1. **热替换与优雅生效**：解析通过且配置产生变化时，立即更新快照并投递给各 Worker，在途请求平稳按旧配置完成。
+1. **热替换**：解析通过且配置产生变化时，立即更新快照并投递给各 Worker。
 2. **校验失败保护**：解析失败时整份变更被拒绝，日志记录具体错误位置（文件路径、字段路径与期望形态），系统继续沿用上一份已生效配置，不中断运行。
 3. **功能联动**：
    - 增删 `ad_samples.json` 或 `agent.json` 的 `ad_detect` 段，自动启停广告检测。
    - 增删 `agent.json` 核心三项（`text` / `summary` / `media`）或 `mood.json` / `stickers.json`，自动启停 AI 闲聊。
    - 可选能力（`image`、`tts`、`web_search`）的变更即时生效。
 4. **跨配置依赖校验**：
-   - `cron.json` 中的 `send_voice` 强依赖 `agent.tts`：未配 `tts` 时含语音的 cron 配置整份拒绝；正在执行语音任务时移除 `agent.tts` 同样会被拒绝。
-   - `send_web_digest` 强依赖对话核心能力，校验口径相同。
+   - `cron.json` 中的 `send_voice` 强依赖 `agent.tts`：未配 `tts` 时含语音的 cron 配置整份拒绝；任务表仍含 `send_voice` 时，去掉 `agent.tts` 的 `agent.json` 变更同样整份拒绝。
+   - `send_web_digest` 强依赖对话核心能力，校验口径相同。启动时同一核对在 `cron.json` 之前校验 `agent.json`，缺依赖则拒绝启动。
 5. **贴纸与图库**：
-   - `stickers.json` 新增贴纸包立即开始异步索引建库；移出的贴纸包不再使用。
+   - `stickers.json` 新增贴纸包立即开始异步建立描述目录；移出白名单的贴纸包不再使用，其集合缓存与已生成的目录随之清理。
    - `assets.json` 中 `random_h_image_dir` 改换路径时若新目录无效，整份变更拒绝。
-6. **定时任务增量对账**：`cron.json` 按任务名 diff，未变动任务保持原有计时，修改或删除的任务平稳停止，新任务开始调度。
+6. **定时任务增量对账**：`cron.json` 按任务名 diff，未变动任务保持原有调度，修改或删除的任务停止调度，在途一轮在下一个动作、重试或群之前停下，新任务开始调度。
 
 ---
 
@@ -139,7 +139,7 @@ done
 | `bot_token` | `string` | **必填** | 非空字符串，不能等于示例占位符 | BotFather 发放的 Telegram Bot API Token，形如 `123456:ABC...`，属于核心敏感凭据 |
 | `super_admin_user_id` | `number` | **必填** | 正安全整数（`> 0`） | 唯一超级管理员的 Telegram 用户数字 ID（非用户名），天生拥有全部可授予权限，无需写入数据库 |
 | `atmosphere` | `string` | 可选 | `"mesugaki"` 或 `"normal"`；首尾空白去掉后严格校验，缺省按是否配置自定义人设选择 | 机器人系统通知与命令回执的语气风格；显式配置优先（`mesugaki` 雌小鬼，`normal` 普通）。未配置时，存在 `prompt/persona.md` 使用普通风格，否则使用雌小鬼风格；不改变 AI 人设 |
-| `time_zone` | `string` | 可选 | IANA 时区名，缺省 `"Asia/Tokyo"`；首尾空白去掉后严格校验 | 默认日历时区：运势、日志、广告累计、AI 时间、每日维护与未指定时区的 cron 共用；仅为 `Asia/Tokyo`（含缺省）时注册东京天气工具；非法值拒绝启动 |
+| `time_zone` | `string` | 可选 | IANA 时区名，缺省 `"Asia/Tokyo"`；首尾空白去掉后严格校验 | 默认日历时区：运势、日志、广告累计、AI 时间、每日维护与未指定时区的 cron 共用；仅为 `Asia/Tokyo`（含缺省）时注册东京天气工具；非法值拒绝启动。数据根建库时绑定该时区，之后更换会被启动拒绝，见 [07 运维与排障](../../docs/cn/07-operations.md#日历时区) |
 
 ---
 
@@ -201,7 +201,7 @@ done
       "api_key": "replace-with-google-api-key",
       "model": "gemini-3.8-flash-lite-tts",
       "voice": "en-us-nika",
-      "style": "いたずらすきそうな音調が高い小恶魔の甘く、弾むようなツンデレ音色",
+      "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
       "daily_limit": 100,
       "daily_reserve_quota": 25
     },
@@ -224,8 +224,8 @@ done
 | `provider` | `string` | **必填** | `"google"`、`"openai"` 或 `"anthropic"` | 调用协议与 SDK 类型（**注意**：`image` 与 `tts` 仅支持 `"google"` 或 `"openai"`）。兼容 OpenAI 接口的模型（如 DeepSeek、xAI）均填 `"openai"` |
 | `api_key` | `string` | **必填** | 非空字符串，不能是示例占位符 | 该能力专属的 API 密钥 |
 | `base_url` | `string` | 可选 | 绝对 HTTPS URL（仅 `localhost`、`127.0.0.1`、`::1` 本地回环允许 HTTP） | 自定义端点地址。不能包含用户名/密码，不能包含 `#` 片段。缺省时直连对应官方 API |
-| `model` | `string` | **必填**（xAI TTS 除外） | 非空字符串 | 端点实际接受的模型名称 |
-| `headers` | `object` | 可选 | 1–8 个键值对（**仅 `provider: "google"` 时允许**） | 附加 HTTP 请求头，用于第三方网关鉴权（如 Cloudflare AI Gateway）。键名不能是 `x-goog-api-key`，键值必须为 ASCII 字符串 |
+| `model` | `string` | **必填**（xAI TTS 禁止配置） | 非空字符串 | 端点实际接受的模型名称 |
+| `headers` | `object` | 可选 | 1–8 个键值对（**仅 `provider: "google"` 时允许**） | 附加 HTTP 请求头，用于第三方网关鉴权（如 Cloudflare AI Gateway）。键名须为 HTTP token，忽略大小写不得重复，且不能是 `x-goog-api-key`；键值去掉首尾空白后为非空的可打印 ASCII 字符串 |
 
 ### 生图专属键说明（`agent.image`）
 
@@ -239,11 +239,11 @@ done
 | --- | --- | --- | --- | --- |
 | `speech_protocol` | `string` | **OpenAI 必填** | `"openai"`（audio/speech）或 `"xai"`（POST /tts） | 语音合成协议。`provider: "google"` 时**严禁**配置此键 |
 | `voice` | `string` | **必填** | 非空字符串 | 发音音色标识。Google 可以是内置音色名（如 `en-us-nika`）或 Voice Design ID；OpenAI/xAI 为对应音色名（如 `coral`、`ara`） |
-| `style` | `string` | 可选 | 非空字符串，xAI 协议**禁止**配置 | 基础朗读风格提示词。缺省使用内置ツンデレ风格：`いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色` |
-| `language` | `string` | 可选 | BCP-47 语言代码或 `"auto"`，**仅 xAI 协议允许** | 合成语言，缺省为 `"auto"` |
+| `style` | `string` | 可选 | 非空字符串，xAI 协议**禁止**配置 | 基础朗读风格提示词。缺省使用内置的ツンデレ风格（`TTS_DEFAULT_STYLE`） |
+| `language` | `string` | 可选 | 非空字符串（BCP-47 语言代码或 `"auto"`），**仅 xAI 协议允许** | 随合成请求发送的合成语言，缺省为 `"auto"` |
 | `bot_language` | `string` | 可选 | `"en"`、`"zh"` 或 `"ja"`；首尾空白去掉后严格校验，缺省 `"ja"` | AI 语音台词的语言：切换模型可见的语音工具说明与去重规则，并在 AI 回复的合成请求里给基础风格追加该语言的朗读语言要求（xAI 协议不发送；`/send` 与 cron 不追加）。`style` 与 `prompt/voice_tool.md` 不随它切换，更换时建议一并改成对应语言 |
-| `daily_limit` | `number` | 可选 | 正安全整数，缺省 `100` | 每日（24 小时滚动窗口）总语音合成预算次数 |
-| `daily_reserve_quota` | `number` | 可选 | 整数，范围 `0` ～ `daily_limit - 1`，缺省 `25` | 预留给 `/send` 和 `cron` 语音任务的独立额度。AI 对话独立使用剩余的 `daily_limit - daily_reserve_quota` 次 |
+| `daily_limit` | `number` | 可选 | 正安全整数，缺省 `100` | 每个计数窗口的语音合成总预算次数；窗口自其内首次请求起算，长度为 `TTS_USAGE_WINDOW_MS` |
+| `daily_reserve_quota` | `number` | 可选 | 整数，范围 `0` ～ `daily_limit - 1`，缺省 `25` | 预留给 `/send` 和 `cron` 语音任务的独立额度。AI 对话独立使用剩余的 `daily_limit - daily_reserve_quota` 次，两边分别计数 |
 
 ### 独立联网检索专属键说明（`agent.web_search`）
 
@@ -307,7 +307,7 @@ done
 
 | 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
 | --- | --- | --- | --- | --- |
-| `packs` | `string[]` | **必填** | 数组长度 `0 ～ 5`，元素互不重复 | Telegram 贴纸包的 short name 列表（即添加贴纸链接 `t.me/addstickers/<name>` 中的 name 部分，**不要写完整 URL**）。配置为空数组 `[]` 表示 AI 对话不使用贴纸包 |
+| `packs` | `string[]` | **必填** | 数组长度 `0 ～ 5`，元素去掉首尾空白后仅含字母、数字与下划线且互不重复 | Telegram 贴纸包的 short name 列表（即添加贴纸链接 `t.me/addstickers/<name>` 中的 name 部分，**不要写完整 URL**）。配置为空数组 `[]` 表示 AI 对话不使用贴纸包 |
 
 ---
 
@@ -353,9 +353,9 @@ done
       }
     },
     {
-      "name": "发情",
+      "name": "色气",
       "weight": 25,
-      "instruction": "你现在处于发情状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
+      "instruction": "你现在处于色气拉满的状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
       "timeMultipliers": {
         "morning": 0.7,
         "daytime": 0.8,
@@ -387,7 +387,7 @@ done
 | 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
 | --- | --- | --- | --- | --- |
 | `moods` | `object[]` | **必填** | 非空对象数组 | 心情档位列表 |
-| `moods[].name` | `string` | **必填** | 非空字符串，全数组唯一 | 心情名称标识（如 `"开心"`、`"发情"`、`"困"`） |
+| `moods[].name` | `string` | **必填** | 非空字符串，全数组唯一 | 心情名称标识（如 `"开心"`、`"色气"`、`"困"`） |
 | `moods[].weight` | `number` | **必填** | 正整数，**所有项之和必须严格等于 100** | 基础抽取权重（可直接视为百分比） |
 | `moods[].instruction` | `string` | **必填** | 非空字符串 | 该心情注入 AI Prompt 的人格与行为指导指令 |
 | `moods[].weatherMultipliers` | `object` | 可选 | 键仅限 `clear`、`cloudy`、`rain`、`snow`、`storm`、`fog`；值必须为 `0 < x ≤ 100` 的正数 | 天气影响倍率，缺省乘数为 `1.0` |
@@ -414,7 +414,7 @@ done
 
 | 结构 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
 | --- | --- | --- | --- | --- |
-| 顶层数组 | `string[]` | **必填** | 数组长度 `1 ～ 500`，元素互不重复 | 广告正例文本样本数组。每条样本去除前后空白后必须非空且长度 `≤ 1024` 个字符。使用 `provider: "google"` 时，系统会自动将这些样本构建为 Gemini 显式上下文缓存（TTL 1 小时，每次调用自动续期） |
+| 顶层数组 | `string[]` | **必填** | 数组长度 `0 ～ 500`，元素互不重复 | 广告正例文本样本数组。每条样本的连续空白压成单个空格并去掉首尾空白后必须非空且长度 `≤ 1024` 个字符，判重按该规范化结果。使用 `provider: "google"` 时，系统会自动将这些样本构建为 Gemini 显式上下文缓存，剩余存活时长不足阈值时后台续期 |
 
 ---
 
@@ -435,7 +435,8 @@ done
 | `type` | `string` | 可选 | 固定为 `"service_account"` | 服务账号凭据类型 |
 | `project_id` | `string` | 可选 | 非空字符串 | GCP 项目 ID |
 | `private_key_id` | `string` | 可选 | 非空字符串 | 私钥 ID 标识 |
-| 其他字段 | `string` | 可选 | 遵循 GCP 官方格式 | `client_id`、`auth_uri`、`token_uri` 等标准字段由 Google SDK 消费 |
+| `quota_project_id`、`universe_domain` | `string` | 可选 | 非空字符串 | 配额项目与 universe 域名 |
+| 其他字段 | 任意 | 可选 | 不做校验，原样保留 | `client_id`、`auth_uri`、`token_uri` 等标准字段由 Google SDK 消费 |
 
 ---
 
@@ -496,21 +497,23 @@ done
 
 ### 任务级键说明
 
+顶层数组最多 128 个任务，任务名在文件内不得重复；缺省文件即没有任务。
+
 | 键名 | 类型 | 必填/可选 | 约束与取值范围 | 说明 |
 | --- | --- | --- | --- | --- |
 | `name` | `string` | **必填** | 非空，`≤ 64` 字符，全文件唯一 | 任务唯一标识名。修改任务名等同于删除旧任务并注册新任务 |
 | `chat_id` | `array` | **必填** | 详见下方「目标群投递模式」 | 目标投递群组 ID 列表 |
-| `cron` | `string` | **必填** | 标准 5 段 Cron 表达式或 `@daily` 等预设宏 | 定时触发调度表达式 |
+| `cron` | `string` | **必填** | 标准 5 段 Cron 表达式或 `@daily` 等预设宏，须还有将来的触发时间 | 定时触发调度表达式 |
 | `time_zone` | `string` | 可选 | IANA 时区名，缺省继承 `bot.json` 的 `time_zone` | 触发时间的计算时区（如 `"Asia/Shanghai"`） |
-| `rand_cron` | `string` | 可选 | 格式 `"<min>-<max>"` 或 `"<max>"`，单位 `m`/`h`/`d`，范围 `1m ～ 24d` | 随机浮动执行模式：每次按 cron 触发后，在区间内随机取一分钟作为实际执行时刻 |
+| `rand_cron` | `string` | 可选 | 格式 `"<min>-<max>"` 或 `"<max>"`，单位 `m`/`h`/`d`，范围 `1m ～ 24d` | 随机浮动执行模式：首次按 `cron` 触发；此后每轮结束，在区间内均匀随机取下一个触发时刻（向上取整到整分钟） |
 | `just_once` | `boolean` | 可选 | `true` 或 `false`，缺省 `false`（**不能与 `rand_cron` 同时使用**） | 是否仅触发执行一次。**注意：执行记录保存在内存中，重启后清零** |
-| `actions` | `object[]` | **必填** | 包含 1 ～ 16 个动作对象 | 触发时按声明顺序依次执行的动作序列，相邻动作间隔 1 秒 |
+| `actions` | `object[]` | **必填** | 包含 1 ～ 16 个动作对象 | 触发时按声明顺序依次执行的动作序列，相邻动作间隔 `CRON_ACTION_GAP_MS` |
 
 #### 目标群投递模式（`chat_id`）
 
-- **显式列表**（如 `[-1001234567890, -1009876543210]`）：逐个群顺序投递，最多 64 个群。
-- **全体纳管群**（`["all"]`）：投递给所有已 `/init enable` 的群。执行前会自动检查机器人当前在群内的发信权限（文本/图片/文件/语音），权限不满足时整群跳过。
-- **排除列表**（如 `["except", -1001234567890]`）：在 `all` 候选群的基础上排除指定群。
+- **显式列表**（如 `[-1001234567890, -1009876543210]`）：按书写顺序逐个会话投递，最多 64 个、非零且互不重复的会话 ID，不核对发送权限。
+- **全体纳管群**（`["all"]`）：投递给所有已 `/init enable` 的群，按群 ID 升序逐群投递。每轮开始时按本任务实际用到的动作类型（文本、图片、文件、语音）逐群核对机器人当前的发信权限，权限不满足或查询失败时整群跳过。
+- **排除列表**（如 `["except", -1001234567890]`）：在 `all` 候选群的基础上排除指定群；排除项与显式列表共用会话 ID 的个数上限。
 
 ### 动作类型与 Payload 说明（`actions`）
 
@@ -518,7 +521,7 @@ done
 | --- | --- | --- |
 | `send_message` | 发送纯文本消息 | • `content` (`string`, 必填)：消息正文，最长 4096 字符 |
 | `send_image` | 发送单图、相册或随机图 | • `content` (`string`, 可选)：配图文字说明，最长 1024 字符<br>• `is_blurred` (`boolean`, 可选)：是否为图片添加剧透遮罩（Spoiler），缺省 `false`<br>• **固定图片模式**：`url`（1–10 个图片直链数组）或 `path`（1–10 个本地文件路径数组），单张也必须写为数组<br>• **随机抽图模式**：`rand_image: true`，禁止配置 `url` 与多文件数组；`path` 可选指定特定目录，缺省使用 `assets.json` 的 `random_h_image_dir` |
-| `send_file` | 发送通用文件/文档 | • `content` (`string`, 可选)：说明文字，最长 1024 字符<br>• `url` (`string`, 互斥必填)：远程文件下载直链（Telegram 限制 20 MB）<br>• `path` (`string`, 互斥必填)：本地文件路径（本地上传限制 50 MB） |
+| `send_file` | 发送通用文件/文档 | • `content` (`string`, 可选)：说明文字，最长 1024 字符<br>• `url` (`string`, 互斥必填)：远程文件的 http(s) 直链，交给 Telegram 拉取<br>• `path` (`string`, 互斥必填)：本地文件路径，须为不超过 `TELEGRAM_DOCUMENT_UPLOAD_MAX_BYTES` 的普通文件 |
 | `send_voice` | 发送合成语音消息 | • `content` (`string`, 必填)：要念的台词正文，最长 256 字符<br>• `tone` (`string`, 可选)：本句的说话语气修饰，最长 64 字符（拼在基础风格之后）<br>*注：强依赖 `agent.tts` 配置，单轮多群投递复用首次合成音频* |
 | `send_web_digest` | 检索并生成主题汇总 | • `topic` (`string`, 必填)：简短检索主题，最长 200 字符<br>• `language` (`string`, 可选)：摘要语言，`"zh"`（缺省）、`"ja"` 或 `"en"`<br>• `max_items` (`number`, 可选)：条目数量上限（1–15，缺省 5）<br>• `instructions` (`string`, 可选)：检索与组稿共用的任务规则，最长 500 字符；每个平台独占一行等格式要求写在这里，条目正文支持 JSON 的 `\n` 换行<br>*注：需要对话核心能力；检索优先用 `agent.web_search`，未配置时用 `agent.text` 内建检索；未调用搜索时直接发送带警示的模型正文* |
 

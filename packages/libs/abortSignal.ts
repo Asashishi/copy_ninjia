@@ -1,18 +1,16 @@
 /**
  * AbortSignal 的组合工具。
  *
- * 与 libs/withTimeout.ts 分开：那边是给一个**已经在途、无法取消**的 Promise 加
- * 等待上限（超时只结束等待，底层任务照跑）；这边产出的是一个真能把下游 fetch
- * 掐断的 signal。两者名字相近但职责不同，不要合并。
+ * 与 libs/withTimeout.ts 职责不同：那边给一个已经在途、无法取消的 Promise 加
+ * 等待上限（超时只结束等待，底层任务照跑）；这边产出可中止下游 fetch 的 signal。
  */
 
 import { toErrorOr } from "./errorMessage";
 
 /**
- * 把调用方的 invalidate signal 与一份**独立**的超时预算合成一个 signal。
+ * 把调用方的 invalidate signal 与一份独立的超时预算合成一个 signal。
  *
- * 每次调用现取一个 `AbortSignal.timeout`，因此同一次下载里的两步不会共享同一个
- * deadline——传入一个共享 signal 的话，第一步用掉的时间会从第二步的预算里扣。
+ * 每次调用现取一个 `AbortSignal.timeout`，各次调用的超时预算互相独立。
  *
  * @param signal 调用方的取消源；缺省表示只受超时约束。
  * @param timeoutMs 本次调用独占的超时预算。
@@ -23,10 +21,10 @@ export function signalWithTimeout(signal: AbortSignal | undefined, timeoutMs: nu
 }
 
 /**
- * 判定一个 signal 的中止是否来自**本次调用的超时预算**耗尽。
+ * 判定一个 signal 的中止是否来自本次调用的超时预算耗尽。
  *
- * 用来把「预算用完」与「群 teardown、停机取消」分开：前者是普通业务失败，调用方
- * 可以照常给用户回执；后者必须静默收场。判据是 `AbortSignal.timeout` 的取消原因为
+ * 区分「预算用完」与「群 teardown、停机取消」：前者是普通业务失败，调用方
+ * 照常给用户回执；后者静默收场。判据是 `AbortSignal.timeout` 的取消原因为
  * name 是 `"TimeoutError"` 的 `DOMException`，而 `AbortController.abort()` 无参时给
  * 的是 `AbortError`。`AbortSignal.any` 原样透传首个触发源的 reason，signalWithTimeout
  * 合成出来的信号因此同样可判；未中止的 signal 一律为 false。
@@ -74,8 +72,7 @@ export function raceAbortOrThrow<T>(
   if (signal === undefined) return promise;
   const activeSignal: AbortSignal = signal;
   if (activeSignal.aborted) {
-    // 下游任务在调用本函数前已经创建；即使 signal 预先中止，也必须接住它稍后的
-    // rejection，避免 SDK 在检查已中止 signal 后产生未处理 rejection。
+    // 下游任务在调用本函数前已经创建；signal 预先中止时仍接住它稍后的 rejection。
     void promise.catch((_error: unknown): void => undefined);
     return Promise.reject<T>(abortSignalError(activeSignal));
   }
@@ -108,25 +105,24 @@ export function raceAbortOrThrow<T>(
   });
 }
 
-/** raceAbort 的取消源与回退值。同一份共享工作的各个等待者回退值不同，故按调用点传入。 */
+/** raceAbort 的取消源与回退值。同一份共享工作的各个等待者回退值按调用点传入。 */
 export interface RaceAbortOptions<T> {
   /** 本等待者自己的取消源；缺省表示一直等到 promise 结算（此时原样返回 promise）。 */
   readonly signal?: AbortSignal;
   /** 因取消提前离场时交给本等待者的值。 */
   readonly cancelled: T;
   /**
-   * promise 自身 reject 时交给本等待者的值。刻意不设默认值：T 常常把 null 或空表
-   * 当成有意义的取值，一旦按「缺省沿用 cancelled」处理，调用方想把 reject 归到
-   * null 上就无从表达，而且沉默地取错值。两者相同就显式写两遍。
+   * promise 自身 reject 时交给本等待者的值。不设默认值；与 cancelled 相同时调用点
+   * 显式写两遍。
    */
   readonly rejected: T;
 }
 
 /**
- * 让一份**共享**在途工作的等待服从各等待者自己的取消。
+ * 让一份共享在途工作的等待服从各等待者自己的取消。
  *
  * 贴纸集合与贴纸菜单的请求合并、回复轮对媒体解析与机器人图片回填的等待，以及串行
- * 动作链对前一步的等待都走这里：任一调用方失效时只结束**它自己的等待**并拿到既定
+ * 动作链对前一步的等待都走这里：任一调用方失效时只结束它自己的等待并拿到既定
  * 回退值，底层工作是否随之中止由其自身的取消信号决定。
  *
  * 与 libs/withTimeout.ts 的区别同本文件模块头：那边加的是等待上限，这边等的是别人
@@ -141,7 +137,7 @@ export function raceAbort<T>(promise: Promise<T>, options: RaceAbortOptions<T>):
     return Promise.resolve(cancelled);
   }
   const rejected: T = options.rejected;
-  // 提升到函数声明之外：函数声明会被提升，TS 无法把上面的 undefined 收窄带进闭包。
+  // 取出为 const，使 signal 的非 undefined 收窄带进下面的函数声明。
   const activeSignal: AbortSignal = signal;
   return new Promise<T>((resolve: (value: T | PromiseLike<T>) => void): void => {
     let finished: boolean = false;
@@ -157,8 +153,7 @@ export function raceAbort<T>(promise: Promise<T>, options: RaceAbortOptions<T>):
       finish(cancelled);
     }
 
-    // 已 abort 的 signal 不会再派发 abort 事件，但上面已经提前返回，因此这里
-    // 注册即生效，无需在注册后再补一次 aborted 复查（复查在同步段内恒为 false）。
+    // 已 abort 的 signal 在上面已提前返回，这里注册后无需再复查 aborted。
     activeSignal.addEventListener("abort", onAbort, { once: true });
     void promise.then(finish, (): void => finish(rejected));
   });

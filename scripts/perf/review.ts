@@ -1,5 +1,6 @@
 /**
- * 专项复核入口：生产热点、启用功能的命令链路与真实 Worker 压力，三轮独立进程。
+ * 专项复核入口：生产热点、启用功能的命令链路与真实 Worker 压力，每项按
+ * `FULL_SUITE_ROUNDS` 轮独立进程运行。
  * 文本清洗与冷却表专项仅在显式 `--text`、`--cooldown` 时运行。
  */
 import { join } from "node:path";

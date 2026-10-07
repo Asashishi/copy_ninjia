@@ -20,27 +20,10 @@ const testPrivateKey: string = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
 }).privateKey;
 
-let stickerFailure: string | null = null;
-let moodFailure: string | null = null;
-let adSampleFailure: string | null = null;
-let adDetectSectionFailure: string | null = null;
-let agentSectionFailure: string | null = null;
 let telegramFailure: string | null = null;
-/** 每个 loader 的调用次数；readiness 命中缓存后必须不再增长。 */
-const loaderCalls = new Map<string, number>();
 
-function countCall(name: string): void {
-  loaderCalls.set(name, (loaderCalls.get(name) ?? 0) + 1);
-}
-
-function loaderOf(name: string, failure: () => string | null): () => Promise<object> {
-  return async (): Promise<object> => {
-    countCall(name);
-    const message: string | null = failure();
-    if (message !== null) throw new Error(message);
-    return {};
-  };
-}
+/** 这些路径在测试根下不存在，启动总闸跳过它们的严格解析；占位 loader 只为满足模块导入。 */
+async function unusedLoader(): Promise<void> {}
 
 mock.module("../../packages/consts/paths", () => ({
   GOOGLE_AUTH_FILE_PATH: authFilePath,
@@ -58,29 +41,10 @@ mock.module("../../packages/config/bot", () => ({
     return { timeZone: getTimeZone(), atmosphere: "mesugaki", botToken: "telegram-token", superAdminUserId: 1 };
   },
 }));
-mock.module("../../packages/config/stickers", () => ({
-  ensureStickerConfig: loaderOf("stickers", (): string | null => stickerFailure),
-}));
-mock.module("../../packages/config/mood", () => ({
-  ensureMoodConfig: loaderOf("mood", (): string | null => moodFailure),
-}));
-mock.module("../../packages/config/adSamples", () => ({
-  ensureAdSampleConfig: loaderOf("adSamples", (): string | null => adSampleFailure),
-}));
-mock.module("../../packages/config/agent", () => ({
-  ensureAdDetectAgentConfig: async (): Promise<void> => {
-    countCall("agent.ad_detect");
-    if (adDetectSectionFailure !== null) throw new Error(adDetectSectionFailure);
-  },
-  ensureAgentDeploymentConfig: async (): Promise<void> => {
-    countCall("agent");
-    if (agentSectionFailure !== null) throw new Error(agentSectionFailure);
-  },
-  validateAgentDeploymentConfig: async (): Promise<void> => {
-    if (agentSectionFailure !== null) throw new Error(agentSectionFailure);
-    if (adDetectSectionFailure !== null) throw new Error(adDetectSectionFailure);
-  },
-}));
+mock.module("../../packages/config/stickers", () => ({ ensureStickerConfig: unusedLoader }));
+mock.module("../../packages/config/mood", () => ({ ensureMoodConfig: unusedLoader }));
+mock.module("../../packages/config/adSamples", () => ({ ensureAdSampleConfig: unusedLoader }));
+mock.module("../../packages/config/agent", () => ({ validateAgentDeploymentConfig: unusedLoader }));
 mock.module("../../packages/config/persona", () => ({
   adoptPersona: (): void => {},
 }));
@@ -97,18 +61,39 @@ const {
   translateConfigReadinessCache,
 } = await import("../../packages/cache/main/configReadiness");
 const { googleServiceAccountKey } = await import("../../packages/cache/main/translate");
+const {
+  adDetectAgentConfigCache,
+  agentDeploymentConfigCache,
+  defaultAdSampleConfigCache,
+  defaultMoodConfigCache,
+  defaultStickerConfigCache,
+} = await import("../../packages/cache/perThread/config");
+
+/** preload 接管的配置 holder 原值；用例把某一份置空表示该文件或该段缺省，之后还原。 */
+const HOLDERS = {
+  sticker: defaultStickerConfigCache.current,
+  mood: defaultMoodConfigCache.current,
+  adSample: defaultAdSampleConfigCache.current,
+  agent: agentDeploymentConfigCache.current,
+  adDetect: adDetectAgentConfigCache.current,
+};
+
+function restoreHolders(): void {
+  defaultStickerConfigCache.current = HOLDERS.sticker;
+  defaultMoodConfigCache.current = HOLDERS.mood;
+  defaultAdSampleConfigCache.current = HOLDERS.adSample;
+  agentDeploymentConfigCache.current = HOLDERS.agent;
+  adDetectAgentConfigCache.current = HOLDERS.adDetect;
+}
+
+afterAll(restoreHolders);
 
 async function writeAuthFile(content: string): Promise<void> {
   await Bun.write(authFilePath, content);
 }
 
 beforeEach(async (): Promise<void> => {
-  loaderCalls.clear();
-  stickerFailure = null;
-  moodFailure = null;
-  adSampleFailure = null;
-  adDetectSectionFailure = null;
-  agentSectionFailure = null;
+  restoreHolders();
   telegramFailure = null;
   aiChatConfigReadinessCache.current = null;
   adDetectConfigReadinessCache.current = null;
@@ -123,72 +108,67 @@ describe("deployment config readiness", () => {
     await expect(validateExistingDeploymentInputs()).rejects.toThrow("config/static/bot.json: $.bot_token");
   });
 
+  test("启动总闸完成前三项功能都报 startup 未完成", () => {
+    for (const readiness of [aiChatConfigReadiness(), adDetectConfigReadiness(), translateConfigReadiness()]) {
+      expect(readiness).toEqual({
+        ok: false,
+        failure: { file: "startup", reason: "deployment configuration preflight has not completed" },
+      });
+    }
+  });
+
   test("配置齐全时两项 AI 功能分别放行", async () => {
     await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness()).toEqual({ ok: true });
     expect(adDetectConfigReadiness()).toEqual({ ok: true });
   });
 
-  test("AI 闲聊按声明顺序报第一份坏文件并缓存失败", async () => {
-    stickerFailure = "Invalid stickers config: boom";
-    moodFailure = "Invalid mood config: also broken";
+  test("AI 闲聊按声明顺序报第一份缺省的文件并缓存失败", async () => {
+    defaultStickerConfigCache.current = null;
+    defaultMoodConfigCache.current = null;
     await validateExistingDeploymentInputs();
     const verdict: ConfigReadiness = aiChatConfigReadiness();
     if (verdict.ok) throw new Error("expected a failure verdict");
     expect(verdict.failure.file).toBe("config/dynamic/stickers.json");
-    stickerFailure = null;
-    expect(aiChatConfigReadiness().ok).toBe(false);
+    restoreHolders();
+    expect(aiChatConfigReadiness()).toBe(verdict);
   });
 
-  test("agent 与 ad_detect 分段探测互不污染", async () => {
-    agentSectionFailure = "Invalid agent config";
+  test("agent 对话段与 ad_detect 段互不影响", async () => {
+    agentDeploymentConfigCache.current = null;
     await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness().ok).toBe(false);
     expect(adDetectConfigReadiness().ok).toBe(true);
 
     aiChatConfigReadinessCache.current = null;
     adDetectConfigReadinessCache.current = null;
-    agentSectionFailure = null;
-    adDetectSectionFailure = "Invalid ad endpoint";
+    restoreHolders();
+    adDetectAgentConfigCache.current = null;
     await validateExistingDeploymentInputs();
     expect(aiChatConfigReadiness().ok).toBe(true);
     const verdict: ConfigReadiness = adDetectConfigReadiness();
     expect(verdict.ok === false && verdict.failure.file).toBe("config/dynamic/agent.json");
   });
 
-  test("命中缓存后不再调用 loader，且返回同一结论引用", async () => {
+  test("广告检测的示例清单缺省时报 ad_samples.json", async () => {
+    defaultAdSampleConfigCache.current = null;
+    await validateExistingDeploymentInputs();
+    const verdict: ConfigReadiness = adDetectConfigReadiness();
+    expect(verdict.ok === false && verdict.failure.file).toBe("config/dynamic/ad_samples.json");
+  });
+
+  test("命中缓存后返回同一结论引用，holder 之后变化也不重算", async () => {
     await validateExistingDeploymentInputs();
     const firstAiChat: ConfigReadiness = aiChatConfigReadiness();
     const firstAdDetect: ConfigReadiness = adDetectConfigReadiness();
     const firstJa: ConfigReadiness = translateConfigReadiness();
-    expect(loaderCalls.get("stickers")).toBe(1);
-    expect(loaderCalls.get("agent")).toBe(1);
-    expect(loaderCalls.get("agent.ad_detect")).toBe(1);
-
+    defaultMoodConfigCache.current = null;
+    adDetectAgentConfigCache.current = null;
     for (let round: number = 0; round < 3; round++) {
       expect(aiChatConfigReadiness()).toBe(firstAiChat);
       expect(adDetectConfigReadiness()).toBe(firstAdDetect);
       expect(translateConfigReadiness()).toBe(firstJa);
     }
-    // 热路径每条群消息都会问一次；命中缓存的那一路不得重新探测任何一份文件。
-    expect(loaderCalls.get("stickers")).toBe(1);
-    expect(loaderCalls.get("mood")).toBe(1);
-    expect(loaderCalls.get("agent")).toBe(1);
-    expect(loaderCalls.get("adSamples")).toBe(1);
-    expect(loaderCalls.get("agent.ad_detect")).toBe(1);
-  });
-
-  test("失败结论同样缓存：坏文件在同一进程内只解析一次", async () => {
-    moodFailure = "Invalid mood config: boom";
-    await validateExistingDeploymentInputs();
-    const verdict: ConfigReadiness = aiChatConfigReadiness();
-    expect(verdict.ok).toBe(false);
-    // 探测在第二份就停下，agent 段这一轮不该被读到。
-    expect(loaderCalls.get("agent")).toBeUndefined();
-
-    moodFailure = null;
-    expect(aiChatConfigReadiness()).toBe(verdict);
-    expect(loaderCalls.get("mood")).toBe(1);
   });
 });
 

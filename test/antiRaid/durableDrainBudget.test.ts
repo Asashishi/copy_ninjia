@@ -1,7 +1,6 @@
 /**
- * 停机排空在零预算下的收场。持久化那一步用的是真实的 flushDiskIO /
- * flushStateToDisk：两者对非正预算的拒绝方式不同（前者 async 拒绝、后者同步
- * 抛），把它们 mock 掉就再也看不见那条会逃逸的拒绝。
+ * 停机排空在零预算下的收场。持久化那一步用真实的 flushDiskIO / flushStateToDisk：
+ * 两者对非正预算的拒绝方式不同（前者 async 拒绝、后者同步抛）。
  */
 
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
@@ -43,8 +42,7 @@ test("预算恰好耗尽时按 timedOut 收场，且不留下无人接管的拒�
   const result: FlushResult = await drainAntiRaid(0);
 
   expect(result).toBe("timedOut");
-  // 两个 flush 各自的参数校验都会拒绝零预算；数组字面量在第二个同步抛出时中断，
-  // 第一个已经产生的拒绝就没有 allSettled 接手了。
+  // 两个 flush 各自的参数校验都会拒绝零预算；两个拒绝都由 drain 接管，不留无人处理的 rejection。
   await Bun.sleep(1);
   await Bun.sleep(1);
   expect(unhandled).toEqual([]);

@@ -14,8 +14,8 @@ import type { ApplicationLifecycleDependencies } from "../lifecycleDependencies"
 /**
  * 依次关闭所有会在停机排空期间继续制造工作的维护 owner。
  *
- * 不记「已经 quiesce 过」：每次调用都完整执行全部入口（均为幂等赋值），因为
- * app/lifecycle.ts 的 init() 会把各 owner 的接纳重新置真。
+ * 每次调用都完整执行全部入口（均为幂等赋值）；app/lifecycle.ts 的 init() 会把各 owner 的
+ * 接纳重新置真。
  * @returns 全部入口都未抛错时为 true。
  */
 export function quiesceLifecycleMaintenance(
@@ -30,7 +30,7 @@ export function quiesceLifecycleMaintenance(
       dependencies.logger.error(`Shutdown owner ${owner} quiesce threw during shutdown:`, error);
     }
   };
-  // 每个入口独立结算：前一个 owner 抛错不能让后续入口继续接受新工作。
+  // 每个入口独立结算：前一个 owner 抛错不影响后续入口。
   quiesceOwner("avatar", (): void => dependencies.quiesceAvatarUpdates());
   quiesceOwner("chat-title", (): void => dependencies.quiesceChatTitleRefresh());
   quiesceOwner("translate", (): void => dependencies.quiesceTranslate());
@@ -39,9 +39,8 @@ export function quiesceLifecycleMaintenance(
   quiesceOwner("deferred-commands", (): void => dependencies.quiesceDeferredCommandRuntime());
   // 定时任务会在排空期间继续触发发送，与其它发送方一起在排空前关闸。
   quiesceOwner("cron", (): void => dependencies.quiesceCronScheduler());
-  // 补扫 timer 能启动 Anti-Raid 网络任务与 outbox 写入，必须在确认最终 offset
-  // 前与其它 maintenance owner 一起关闸；只在 dispose() 终局关会在前置 drain
-  // 已完成后重新制造工作，破坏“排空后不再有生产者”的边界。
+  // 补扫 timer 能启动 Anti-Raid 网络任务与 outbox 写入，在确认最终 offset
+  // 前与其它 maintenance owner 一起关闸，排空之后不再有生产者。
   quiesceOwner("blocklist-sweep", (): void =>
     dependencies.quiesceBlocklistSweepScheduler());
   // 配置热重载会向两条业务 Worker 投递新快照并启动贴纸目录对账，同样在排空前关闸。
@@ -107,7 +106,7 @@ export async function waitForLifecycleBackgroundMaintenance(
   dependencies: ApplicationLifecycleDependencies
 ): Promise<boolean> {
   if (timeoutMs <= 0) {
-    // 没有等待窗口时也必须 abort：不变量要求预算耗尽后不得再写入群标题。
+    // 没有等待窗口时同样 abort，预算耗尽后不再写入群标题。
     dependencies.abortChatTitleRefresh();
     dependencies.logger.error("Skipping unfinished chat title refresh during emergency disposal; aborted it.");
     return false;

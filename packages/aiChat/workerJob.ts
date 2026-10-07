@@ -7,6 +7,7 @@
 
 import { AI_WORKER_JOB_ABORTED, AI_WORKER_JOB_TIMED_OUT, AI_WORKER_JOB_UNAVAILABLE } from "../consts/aiChat/workerJob";
 import { beginWorkerRequest } from "../libs/workerRequestTable";
+import { logger } from "../infra/logger";
 import type { AiChatWorkerMessage } from "../types/aiChat/protocol";
 import type { AiWorkerJobFailure, AiWorkerJobTransport } from "../types/aiChat/workerJob";
 import type { WorkerRequestTable } from "../types/workerRequest";
@@ -39,6 +40,9 @@ export function requestAiWorkerJob<T>({
     table,
     timeoutMs,
     post: (requestId: number): boolean => transport.post(start(requestId)),
+    onPostError: (error: unknown): void => {
+      logger.error("Failed to post an AI Worker job request:", error);
+    },
     cancel: (requestId: number): void => {
       transport.post(cancel(requestId));
     },

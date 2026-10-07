@@ -13,8 +13,7 @@ import {
   releaseCooldownClaim,
   sweepCooldownClaims,
 } from "../../../libs/cooldownClaim";
-import type { CooldownClaimStore } from "../../../libs/cooldownClaim";
-import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../../types/aiChat/imageGeneration";
+import type { CooldownAvailability, CooldownClaim, CooldownClaimStore } from "../../../types/cooldown";
 
 /**
  * 每群最近一次普通用户生图占位时间；独立于 AI 回复触发限频且不落盘。
@@ -22,10 +21,9 @@ import type { ImageGenerationAvailability, ImageGenerationClaim } from "../../..
  * 填充：生图工具在发起模型请求前同步 claim。
  * 清理：请求未真正发出时由原占位者 release；到期条目由 Worker 的周期
  * sweepImageGenerationCache 删除。
- * 容量：按群数增长，无硬顶——每条只有一个数字，且 sweep 每个维护周期都会把过期
- * 的删干净（表大小恒等于「最近一个冷却窗口内生过图的群数」）。
- * Worker 崩溃重建：整表清空，等价于所有群的冷却提前结束。这是刻意的 fail-open：
- * 崩溃本来就罕见，而把冷却做成持久化状态要为一个纯限流器引入落盘与对账。
+ * 容量：按群数增长，无硬顶；每条一个数字，sweep 每个维护周期删除过期项，
+ * 表大小等于最近一个冷却窗口内生过图的群数。
+ * Worker 崩溃重建：整表清空，所有群的冷却结束（fail-open）。
  * 不落盘、不跨线程。
  */
 export const imageGenerationClaimTimes: Map<number, number> = new Map();
@@ -52,7 +50,7 @@ export function getImageGenerationAvailability({
   chatId,
   bypassCooldown,
   now = Date.now(),
-}: ImageGenerationCooldownParams): ImageGenerationAvailability {
+}: ImageGenerationCooldownParams): CooldownAvailability {
   return cooldownAvailability({ store: imageGenerationStore, chatId, bypassCooldown, now });
 }
 
@@ -64,7 +62,7 @@ export function claimImageGeneration({
   chatId,
   bypassCooldown,
   now = Date.now(),
-}: ImageGenerationCooldownParams): ImageGenerationClaim {
+}: ImageGenerationCooldownParams): CooldownClaim {
   return claimCooldown({ store: imageGenerationStore, chatId, bypassCooldown, now });
 }
 

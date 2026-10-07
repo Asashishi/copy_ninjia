@@ -50,11 +50,8 @@ export function decideMessageTypo({
     ? buildCharacterTypo(text, originalChar, replacementChar)
     : null;
   const typoText: string | null = characterTypo?.typoText ?? null;
-  // 错字版本要单独判一次可点击命令：send_message 那道守卫看的是**替换前**的正文，
-  // 而真正发出去的是这一串。替换字由模型给，`/` 既不是空白也不是 emoji，能过
-  // buildCharacterTypo 的全部校验——正文写「喵 xbatch_kick」、替换 x→/ 就凑出了
-  // 一条可点击的 `/batch_kick`。守卫和被守卫的值必须是同一个字符串（同
-  // auto/message/echo.ts 的同类说明）。命中只作废这次手滑、正文照常发出。
+  // 错字版本单独判一次可点击命令：send_message 的守卫校验替换前的正文，实际发出的是
+  // 错字版本；守卫与被守卫的值必须是同一个字符串。命中只作废这次手滑、正文照常发出。
   const shouldUseTypo: boolean = roundHasTypo &&
     !typoAlreadyUsed &&
     characterTypo !== null &&

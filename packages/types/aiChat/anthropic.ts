@@ -8,7 +8,7 @@ export type AnthropicRequestResult =
   | { ok: true; message: Anthropic.Message }
   | {
     ok: false;
-    /** 端点在故障（网络/超时/408/429/5xx）或调用方主动取消；口径同 OpenAiRequestResult。 */
+    /** 请求本身失败；各取值的含义同 OpenAiRequestResult 的同名 failureKind。 */
     failureKind: "request" | "rejected" | "unsupported" | "misconfigured";
     message?: undefined;
   }

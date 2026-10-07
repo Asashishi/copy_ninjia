@@ -54,7 +54,7 @@ export interface TelegramOutboundJob {
 
 /**
  * 一个 429 域的 FIFO 与恢复窗口。冷却结束先放行一个探测请求，成功后逐步扩大
- * 并发；再次 429 会立即收回到一个，避免把整条积压同时打回 Telegram。
+ * 并发；再次 429 立即收回到一个。
  */
 export interface TelegramRetryLane {
   head: TelegramOutboundJob | null;
@@ -74,12 +74,12 @@ export interface TelegramRetryLane {
 export type TelegramSendChatKey = number | string;
 
 /**
- * 一个聊天的发送车道（infra/telegram/sendScheduler.ts）。同一聊天最多 1 条在途，其余按
- * 接纳顺序在侵入式 FIFO 里等单聊天令牌桶、群类分钟窗口、全局秒窗口与 429 冻结。
+ * 一个聊天的发送车道（infra/telegram/sendScheduler.ts）。同一聊天同时只有一条在途，其余按
+ * 接纳顺序在侵入式 FIFO 里等单聊天令牌桶、群类窗口、全局窗口与 429 冻结。
  */
 export interface TelegramSendLane {
   readonly key: TelegramSendChatKey;
-  /** 负数 id 与 `@username`（群、超级群、频道）额外受分钟窗口约束。 */
+  /** 负数 id 与 `@username`（群、超级群、频道）额外受群类窗口约束。 */
   readonly groupClass: boolean;
   head: TelegramOutboundJob | null;
   tail: TelegramOutboundJob | null;
@@ -91,7 +91,7 @@ export interface TelegramSendLane {
   tokens: number;
   /** tokens 最近一次按时间补充的时刻（performance.now 毫秒）。 */
   tokensAt: number;
-  /** 群类车道的 60 秒发送窗口（按条数记时间戳）；私聊为 null。 */
+  /** 群类车道的发送窗口（TELEGRAM_SEND_GROUP_WINDOW_MS，按条数记时间戳）；私聊为 null。 */
   readonly minuteWindow: TimestampDeque | null;
   /** 本聊天 429 冻结截止；0 表示未冻结。 */
   frozenUntil: number;

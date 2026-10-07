@@ -1,5 +1,6 @@
-import { DAY_MS } from "../consts/diskIO/common";
 import {
+  DATE_KEY_PATTERN,
+  DAY_MS,
   FORMAT_MAX_TIMESTAMP_MS,
   FORMAT_MIN_TIMESTAMP_MS,
   MAX_EPOCH_MILLISECONDS,
@@ -19,7 +20,7 @@ export function formatMinSec(ms: number): string {
 
 /** 严格判断 YYYY-MM-DD 是否为可往返的公历日期，拒绝 02-30 等归一化输入。 */
 export function isCanonicalDateKey(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (!DATE_KEY_PATTERN.test(value)) return false;
   const parsed: Date = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
@@ -54,7 +55,7 @@ function validateCalendarTimestamp(timestampMs: number): void {
   }
 }
 
-/** 三个文本格式化函数只接受公元 1000–9999 年的整数 epoch 毫秒。 */
+/** 文本格式化函数只接受 FORMAT_MIN_TIMESTAMP_MS 到 FORMAT_MAX_TIMESTAMP_MS 之间的整数 epoch 毫秒。 */
 function validateFormatTimestamp(timestampMs: number): void {
   if (!Number.isInteger(timestampMs) || timestampMs < FORMAT_MIN_TIMESTAMP_MS || timestampMs > FORMAT_MAX_TIMESTAMP_MS) {
     throw new RangeError("Formatted timestamp must be an integer within years 1000 to 9999.");
@@ -122,7 +123,7 @@ function formatSecondOfDay(secondOfDay: number): string {
     `${TWO_DIGIT_STRINGS[((secondOfDay / 60) | 0) % 60]!}:${TWO_DIGIT_STRINGS[secondOfDay % 60]!}`;
 }
 
-/** 配置时区的自然日序号；相邻公历日期相差一，即使两日间实际相差 23 或 25 小时。 */
+/** 配置时区的自然日序号；相邻公历日期相差一，与两日间的实际时长无关。 */
 export function getDayIndex(timestampMs: number): number {
   validateDayTimestamp(timestampMs);
   return Math.floor((timestampMs + localOffsetMs(timestampMs)) / DAY_MS);

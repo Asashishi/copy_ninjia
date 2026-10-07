@@ -89,9 +89,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("显示名退化：只有一个名字段、全空白、乃至字段缺失都退回占位而不抛", () => {
-    // 两个名字字段都缺失时 `(first || last || "")` 退化为空串再 `.trim()`，
-    // 最终落到占位符而不抛异常；转录是每次回复的必经之地，不能因为一条脏
-    // 记录把整轮回复打断。
+    // 两个名字字段都缺失时 `(first || last || "")` 退化为空串再 `.trim()`，最终落到占位符，不抛异常。
     expect(formatBufferedMessageLine({ ...message, lastName: "" })).toBe(
       "[2026/07/17 18:18:42] [message_id:42] [id:42] 千早：咋啦"
     );
@@ -101,8 +99,7 @@ describe("AI 群聊转录身份格式", () => {
     expect(formatBufferedMessageLine({ ...message, firstName: "  ", lastName: "  " })).toBe(
       `[2026/07/17 18:18:42] [message_id:42] [id:42] ${FALLBACK_SPEAKER_NAME}：咋啦`
     );
-    // 类型上两个字段都是必填 string，磁盘回灌也逐字段校验过；这里刻意越过类型
-    // 模拟脏数据，确认它退化成占位而不是抛异常。
+    // 类型上两个字段都是必填 string；这里越过类型模拟脏数据，确认它退化成占位而不是抛异常。
     const missing = { ...message } as Partial<BufferedMessage> as BufferedMessage;
     delete (missing as Partial<BufferedMessage>).firstName;
     delete (missing as Partial<BufferedMessage>).lastName;
@@ -188,8 +185,7 @@ describe("AI 群聊转录身份格式", () => {
     expect(transcript).toContain(EARLIER_VERBATIM_BLOCK_HEADER);
     expect(transcript).toContain("u1：消息 1");
     expect(transcript).toContain(HOT_MEMORY_BLOCK_HEADER);
-    // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐：超出一块 1 条时较早区就取满
-    // 一个对齐格，第 33 条起才进最热区。
+    // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐：超出一块一条时较早区取满一个对齐格，下一条起进最热区。
     expect(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT}：消息 ${TIER_BOUNDARY_ALIGNMENT}`))
       .toBeLessThan(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER));
     expect(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER))
@@ -197,10 +193,10 @@ describe("AI 群聊转录身份格式", () => {
     // 最新一条是逐字行的最后一行，名册整段排在全部逐字行之后。
     expect(transcript).toContain(`u${COMPACT_BATCH_SIZE + 1}：消息 ${COMPACT_BATCH_SIZE + 1}\n\n${SPEAKER_ROSTER_BLOCK_NAME}`);
     expect(transcript).toEndWith(`u${COMPACT_BATCH_SIZE + 1}=[id:${COMPACT_BATCH_SIZE + 1}] 千早 愛音`);
-    // 每个分层区块开头都要重发一次当前日期，否则跳进最热区块就看不到日期。
+    // 每个分层区块开头都重发一次当前日期。
     const dateHeaders: number = transcript.split("── 2026/07/17 ──").length - 1;
     expect(dateHeaders).toBe(2);
-    // 没有人被回复过，触发消息之外一个消息号都不该出现。
+    // 没有人被回复过：除触发消息外不出现消息号。
     expect(transcript).not.toContain("#1 ");
     expect(transcript).toContain(`#${COMPACT_BATCH_SIZE + 1} `);
   });
@@ -229,7 +225,7 @@ describe("AI 群聊转录身份格式", () => {
         .toBeLessThan(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER));
       expect(transcript.indexOf(HOT_MEMORY_BLOCK_HEADER))
         .toBeLessThan(transcript.indexOf(`u${TIER_BOUNDARY_ALIGNMENT + 1}：消息 ${TIER_BOUNDARY_ALIGNMENT + 1}`));
-      // 向上取整的用处：最热区永远不超过标题里写死的那个条数。
+      // 向上取整使最热区不超过标题里写死的条数。
       expect(hotLineCount(transcript)).toBeLessThanOrEqual(COMPACT_BATCH_SIZE);
     }
 
@@ -246,9 +242,8 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("消息数不超过一个压缩块时只出最热记忆，不产生空的「较早」区块", () => {
-    // 分层判据是 hotStart>0，而 hotStart = max(0, len - COMPACT_BATCH_SIZE)。
-    // 边界（恰好等于一块）与不足一块都必须落在「没有较早区块」这一侧，否则
-    // 模型会收到一个标着「次要背景」的空段落。
+    // 分层判据是 hotStart>0，hotStart = max(0, len - COMPACT_BATCH_SIZE)；恰好一块与不足一块都落在
+    // 「没有较早区块」一侧，不产出空的「次要背景」段落。
     for (const count of [1, 2, COMPACT_BATCH_SIZE]) {
       const messages: BufferedMessage[] = Array.from({ length: count }, (_, index: number) => ({
         ...message,
@@ -260,8 +255,7 @@ describe("AI 群聊转录身份格式", () => {
       expect(transcript).not.toContain(EARLIER_VERBATIM_BLOCK_HEADER);
       expect(transcript).toContain(HOT_MEMORY_BLOCK_HEADER);
       expect(transcript).toContain(`u${count}：消息 ${count}`);
-      // 逐行拼装不能在收尾多挂一个换行——转录按「一行 = 一条消息」读，
-      // 空行会被当成一条空发言。
+      // 逐行拼装不在收尾多挂换行：转录按「一行 = 一条消息」读。
       expect(transcript.endsWith("\n")).toBe(false);
     }
   });
@@ -270,7 +264,7 @@ describe("AI 群聊转录身份格式", () => {
     const transcript: string = renderTranscript([], TRANSCRIPT_OPTIONS);
     expect(transcript).not.toContain(EARLIER_VERBATIM_BLOCK_HEADER);
     expect(transcript).toContain(HOT_MEMORY_BLOCK_HEADER);
-    // 一个人都没有时不拼【转发来源名册】那一段，避免给模型一段空表。
+    // 一个人都没有时不拼【转发来源名册】那一段。
     expect(transcript).not.toContain(FORWARD_ROSTER_BLOCK_NAME);
     expect(transcript.endsWith("\n")).toBe(true);
   });
@@ -290,7 +284,7 @@ describe("AI 群聊转录身份格式", () => {
     expect(transcript).toContain(`${SELF_ROSTER_CODE}=[id:99] ${SELF_SPEAKER_NAME}`);
     expect(transcript).not.toContain("ninja_bot");
     expect(transcript).not.toContain("天才酱");
-    // 机器人不占 uN 序号：它要能一眼认出哪些行是自己说的，不该被排进普通编号。
+    // 机器人不占 uN 序号，不编入普通编号。
     expect(transcript).not.toContain("u2=");
     expect(transcript).toContain("] u1：群友说话");
     expect(transcript).toContain(`] ${SELF_ROSTER_CODE}：我自己说话`);
@@ -331,7 +325,7 @@ describe("AI 群聊转录身份格式", () => {
     // 段内目标只留指针，作者与原文不再复制一份。
     expect(transcript).toContain("u2（回复 #10）：指针回复");
     expect(transcript).not.toContain("的消息：「被回复的原话」");
-    // 目标带上了消息号，否则指针指向一个段内找不到的编号。
+    // 目标带上消息号，指针指向段内可查的编号。
     expect(transcript).toContain("#10 u1：被回复的原话");
     // 已滑出：段内没有行可跳，退回内嵌快照并显式标注，精确引用片段一并保留。
     expect(transcript).toContain(`（回复 ${REPLY_TARGET_EVICTED_TAG} [id:8] 早就滑走的人 的消息：「已经不在段内的原话」；精确引用片段：「选中的片段」）`);
@@ -404,7 +398,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("日期分隔行只在真的换天时出现，行归属由它上方最近一条分隔行决定", () => {
-    // 150 条窗口可能跨天，直接覆盖分隔行切换与后续消息归属。
+    // 逐字窗口可能跨天，直接覆盖分隔行切换与后续消息归属。
     const messages: BufferedMessage[] = [
       { ...message, messageId: 1, id: 1, text: "第一天", at: "2026/07/17 23:58:00" },
       { ...message, messageId: 2, id: 1, text: "还是第一天", at: "2026/07/17 23:59:00" },
@@ -423,9 +417,7 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("日期段不定宽时也不会把后一天并进前一天的表头", () => {
-    // 换天判定先比日期段长度再比前缀。只用 startsWith 的话，记录侧一旦改成
-    // 不补零，`"2026/7/10 …".startsWith("2026/7/1")` 为真，整个 7/10 会被静默
-    // 归到 7/1 底下——没有任何报错，只是日期从此全错。
+    // 换天判定先比日期段长度再比前缀：记录侧不补零（"2026/7/10 …"）时不被误归到 "2026/7/1" 底下。
     const transcript: string = renderTranscript([
       { ...message, messageId: 1, id: 1, text: "七月一号", at: "2026/7/1 08:00:00" },
       { ...message, messageId: 2, id: 1, text: "七月十号", at: "2026/7/10 08:00:00" },
@@ -445,9 +437,8 @@ describe("AI 群聊转录身份格式", () => {
   });
 
   test("同一个 message_id 有两份条目时只保留最后一份，指针不再指向两行", () => {
-    // 快照 hydrate 出来一份、Telegram 又重投同一条 update 再记一份，全链路没有
-    // message_id 去重（见 workers/aiChat/bufferedMessageIndex.ts）。两行同号时 #N 指针就
-    // 指不准了，而媒体描述之类的回填只落在后写入的那份上。
+    // 快照 hydrate 出一份、Telegram 重投同一条 update 再记一份；全链路没有 message_id 去重
+    // （见 workers/aiChat/bufferedMessageIndex.ts），渲染侧同号只保留最后一份，媒体描述之类的回填也落在它上。
     const messages: BufferedMessage[] = [
       { ...message, messageId: 10, id: 1, text: "看这个" },
       { ...message, messageId: 10, id: 1, text: "[图片：一张收据，金额 3200 日元]" },
@@ -488,21 +479,20 @@ describe("AI 群聊转录身份格式", () => {
     ], { selfId: -1, triggerMessageId: 11 });
 
     expect(transcript).toContain(`u2${replyPointerTemplate(10)}${replyQuoteTemplate("第二句")}：说的是后半句`);
-    // 拼装侧写什么形状，说明侧就得讲什么形状——两边各自手写就会悄悄漂移。
+    // 拼装侧与说明侧共用同一模板形状。
     expect(REPLY_QUOTE_HINT).toBe(replyQuoteTemplate("…"));
     expect(TRANSCRIPT_FORMAT_INSTRUCTION).toContain(REPLY_QUOTE_HINT);
   });
 
   test("说明文案里的占位形态由模板直接代入生成，不靠替换数字凑", () => {
-    // 占位文案直接使用模板形态，避免字符串替换只覆盖首个数字。
+    // 占位文案直接使用模板形态。
     expect(MESSAGE_NUMBER_HINT).toBe(messageNumberTag("消息号"));
     expect(REPLY_POINTER_HINT).toBe(replyPointerTemplate("消息号"));
     expect(REPLY_POINTER_HINT).toContain(MESSAGE_NUMBER_HINT);
   });
 
   test("渲染结果提供行内编号与单跳引用，供转录之外点名同一个人/同一条消息", () => {
-    // 转录之外还要点名的地方（唤起者声明、排队补跑的回复引用）必须能
-    // 拿到与转录行同一套写法，否则同一个人在同一次请求里出现两种身份形态。
+    // 转录之外点名的地方（唤起者声明、排队补跑的回复引用）使用与转录行同一套写法。
     const rendered: RenderedTranscript = buildTieredVerbatimTranscript(
       [
         { ...message, messageId: 10, id: 42, text: "群友说话" },
@@ -562,7 +552,7 @@ describe("AI 群聊转录的前缀稳定性", () => {
   }
 
   test("已定切点按格宽对齐，只切最新消息所在格之前的格边界，切点紧跟上一格最后一条正文", () => {
-    // 格宽整除分层对齐粒度，分层边界才恒落在格边界上。
+    // 格宽整除分层对齐粒度，分层边界落在格边界上。
     expect(TIER_BOUNDARY_ALIGNMENT % TRANSCRIPT_SETTLED_SEGMENT_SIZE).toBe(0);
     for (let count: number = 1; count <= TRANSCRIPT_SETTLED_SEGMENT_SIZE * 3; count += 1) {
       const rendered: RenderedTranscript = renderNumbered(count);

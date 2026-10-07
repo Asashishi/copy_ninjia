@@ -38,8 +38,8 @@
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6117_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.69%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6269_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.75%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -106,7 +106,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 6117 件のテストが全て成功 / テストファイル 515 件 / expect() 呼び出し 436,787 回 / 関数カバレッジ 98.24% / 行カバレッジ 98.69%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 6269 件のテストが全て成功 / テストファイル 526 件 / expect() 呼び出し 446,227 回 / 関数カバレッジ 98.24% / 行カバレッジ 98.75%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -122,113 +122,113 @@
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🪞 高精度な復唱</b><br>
-  <sub>対象を 1 つ固定し、その発言を 1 件ずつ復唱してアバターも同期。</sub></p>
+  <sub>特定の対象を固定し、発言を1件ずつ復唱しながらアバターもリアルタイム同期。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌐 多言語翻訳</b><br>
-  <sub>群ごとに翻訳 session を開き、以後の発言を 5 言語へ翻訳。</sub></p>
+  <sub>グループごとに翻訳セッションを開始し、以後の発言を指定の複数言語へ自動翻訳。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🥷 アバター盗用</b><br>
-  <sub>復唱は始めず、相手のアバターだけを自分に写します。</sub></p>
+  <sub>復唱は開始せず、対象のアバターのみを即座に模倣・同期。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🤖 AI チャット</b><br>
-  <sub>話すかどうかも何の tool を使うかも人格が自分で決めます。</sub></p>
+  <sub>自律的に発言の可否や使用ツールを判断し、自然に対話。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>👁️ マルチモーダル &amp; 創作</b><br>
-  <sub>画像と音声を理解し、画像を作ったりボイスを送ったりして群へ返します。</sub></p>
+  <sub>画像と音声を理解し、画像生成や音声メッセージを生成してグループへ送信。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🔎 リアルタイム事実確認</b><br>
-  <sub>事実が要るときは web 検索や天気 tool を自分で呼びます。</sub></p>
+  <sub>最新情報が必要な際は Web 検索や天気ツールを自律的に呼び出し。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🧠 コンテキスト記憶</b><br>
-  <sub>逐語 context を保ち、溢れた分は圧縮要約にして引き継ぎます。</sub></p>
+  <sub>直近の文脈を保持し、上限超過分を要約して効率的に引き継ぎ。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎭 気分と人間らしさ</b><br>
-  <sub>気分が時間で切り替わり、入力中の間を置いてから返します。</sub></p>
+  <sub>時間経過で気分が推移し、入力中（typing）の待機を挟んで返信。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>💒 グループ内抽選</b><br>
-  <sub>発言したことのあるメンバーを 1 人選び、アバターを表示。</sub></p>
+  <sub>グループ内で発言歴のあるメンバーをランダムに抽選し、アバターを表示。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🛡️ 参加認証</b><br>
-  <sub>新規メンバーは制限時間内に button を押さないと退出させます。</sub></p>
+  <sub>新規参加者が制限時間内に認証ボタンを押さない場合、自動退出処分。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🚨 Anti-Raid</b><br>
-  <sub>参加頻度が異常なら私密モードへ切り替え、招待権限を回収。</sub></p>
+  <sub>参加頻度異常を検知して非公開モードへ移行し、招待権限を自動回収。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>📮 広告検出</b><br>
-  <sub>連続する message を束ねて判定し、広告なら即削除して処理。</sub></p>
+  <sub>連続メッセージを束ねて広告判定し、該当メッセージを即時削除・処分。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🎲 今日のおみくじ</b><br>
-  <sub>Inline Mode で抽選し、同じ人の同じ日は結果が変わりません。</sub></p>
+  <sub>Inline Mode で抽選。同一ユーザー・同一日は決定論的に結果を固定。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌐 複数グループ連携</b><br>
-  <sub>1 つの command で、管理下の複数の群を横断して BAN します。</sub></p>
+  <sub>1 つのコマンドで管理対象の複数グループを横断して BAN を実行。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>💬 chat Q&amp;A</b><br>
-  <sub>登録済みの質問に当たれば、AI を通さずそのまま答えます。</sub></p>
+  <p><b>💬 グループ Q&amp;A</b><br>
+  <sub>登録済みの質問に一致した場合、AI を介さず直接即答。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
   <p><b>🖼️ ランダム画像庫</b><br>
-  <sub>/h_image でネタバレ防止付きの画像をランダム送信。権限のある人は画像やアルバムに返信して保存でき、内容で重複を判定します。</sub></p>
+  <sub>/h_image でスポイラー（ネタバレ防止）付き画像をランダム送信。権限保持者は返信で画像を収集でき、内容ハッシュで重複を防止。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>⏰ 定時送信</b><br>
-  <sub>時区を指定して文章・ファイル・ボイス・ランダム画像・固定画像 1〜10 枚を送信。一度限りの実行やランダム間隔にも対応します。</sub></p>
+  <sub>タイムゾーンを指定してテキスト・ファイル・音声・Web要約・画像を定期送信。単発実行やランダム間隔にも対応。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🎨 人設と通知の口調</b><br>
-  <sub>内蔵の雌小鬼人設を <code>prompt/persona.md</code> で置き換え可能（<a href="../../prompt_example/persona.md">例</a>）。Bot の通知は明示設定を優先し、省略時はカスタム人設なら普通、内蔵人設なら雌小鬼の口調を使います。</sub></p>
+  <p><b>🎨 ペルソナと通知口調</b><br>
+  <sub>内蔵のメスガキ口調を <code>prompt/persona.md</code> で差し替え可能（<a href="../../prompt_example/persona.md">例</a>）。通知口調は明示設定を優先し、省略時はカスタム設定なら標準、内蔵設定ならメスガキ口調を採用。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🤐 発言の制限</b><br>
-  <sub>/gag の対象者は専用ボタンから変形された文章を送信。期限切れや解除で通常の発言に戻ります。</sub></p>
+  <p><b>🤐 発言制限</b><br>
+  <sub>/gag の対象者は専用ボタンから変形テキストのみ送信可能。期限切れや解除で通常状態に復帰。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🫧 中国語アクション</b><br>
-  <sub>返信で /咬 や /贴贴 など漢字 1〜2 文字の動作を実行。事前登録は不要です。</sub></p>
+  <p><b>🫧 CJK アクション</b><br>
+  <sub>返信で /咬 や /贴贴 など漢字 1〜2 文字のアクションを実行。事前登録は不要。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌊 連投対策</b><br>
-  <sub>群ごとに発言頻度を監視して一時ミュート。免除権限も個別に設定できます。</sub></p>
+  <sub>グループごとに発言頻度を監視して一時ミュート。免除権限も個別設定可能。</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🔎 身元の照会</b><br>
-  <sub>/info でユーザーやチャンネルの公開情報とアイコン、群の情報を照会。結果は 30 秒後に削除します。</sub></p>
+  <p><b>🔎 ID・プロフィールの照会</b><br>
+  <sub>/info でユーザーやチャンネルの公開情報、アイコン、グループ情報を照会（結果は30秒で自動削除）。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🔐 個別の権限設定</b><br>
-  <sub>機能の切替・画像収集・群 Q&amp;A・管理の権限を身元ごとに割り当て、一覧で確認できます。</sub></p>
+  <p><b>🔐 きめ細かな権限管理</b><br>
+  <sub>機能切替・画像収集・Q&amp;A管理などの権限を身元ごとに割り当て、ダッシュボードで一覧確認。</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>📨 プライベート中継</b><br>
-  <sub>スーパー管理者が個別チャットで /send を開始すると、管理中の指定群へメッセージを転送でき、テキストを Bot にボイスで読み上げさせることもできます。</sub></p>
+  <sub>スーパー管理者が個別チャットで /send を開始し、指定グループへ代理送信や音声読み上げ転送を実行。</sub></p>
 </td>
 </tr>
 </table>
@@ -241,9 +241,9 @@
 | OpenAI | 80%–90% |
 | Claude | 80%–90% |
 
-- **Gemini**：サービス側の暗黙的キャッシュの有効期限切れと、初回リクエストで暗黙的キャッシュが未準備であることがミスに含まれます。現在は各応答の初回リクエストで、利用可能な場合に固定プレフィックスの明示的キャッシュを再利用し、後続リクエストでは暗黙的キャッシュでミスを緩和します。また、約 8% の確率で突発的にキャッシュ使用量が 0 となる現象があり、プロジェクトの実装とは無関係です。
-- **Claude**：ミスの主な要因は、5 分間のキャッシュ有効期間が終了することです。
-- **OpenAI**：現時点で既知のキャッシュ不具合はありません。初回の格納、プレフィックスの変更、新しい動的内容による通常のミスは発生します。
+- **Gemini**：各応答の初回リクエストでは、利用可能な場合に固定プレフィックスの明示的キャッシュを再利用し、後続リクエストでは暗黙的キャッシュを使います。サービス側の暗黙的キャッシュの有効期限切れと、初回リクエストで暗黙的キャッシュが未準備であることがミスの原因になります。
+- **Claude**：リクエストは固定位置に `cache_control` ブレークポイントを 1 つずつ置き、Messages API がブロック境界でキャッシュにヒットさせます。キャッシュ有効期間が終了した後のリクエストはヒットしません。
+- **OpenAI**：すべてのリクエストに、安定したプレフィックスから算出した `prompt_cache_key` を付けます。初回の格納、プレフィックスの変更、新しい動的内容でミスが発生します。
 
 ### ボイス・画像・記憶
 
@@ -257,11 +257,11 @@
 <tbody>
   <tr>
     <td><nobr>🎙️ <b>AI ボイス</b></nobr></td>
-    <td>音色と文ごとの口調を設定可能。1 ターンにつき最大 1 件、UTF-16 コード単位で 64 文字まで。送信成功後にセリフを記憶。</td>
+    <td>音色と文ごとの口調を設定可能。1 ターンにつき最大 <code>MAX_VOICES_PER_REPLY</code> 件、セリフの長さの上限は <code>VOICE_TEXT_MAX_CHARS</code>（UTF-16 コード単位）。送信成功後にセリフを記憶。</td>
   </tr>
   <tr>
     <td><nobr>📢 <b>管理者・定時ボイス</b></nobr></td>
-    <td><code>/send</code> と cron で TTS リソースを共有（上限 256 文字）。cron は 1 回合成して Telegram <code>file_id</code> を再利用。</td>
+    <td><code>/send</code> と cron で TTS リソースを共有し、セリフの長さの上限は <code>VOICE_OPERATOR_TEXT_MAX_CHARS</code>（UTF-16 コード単位）。定時ボイスは 1 ターンにつき 1 回だけ合成し、Telegram <code>file_id</code> を再利用。</td>
   </tr>
   <tr>
     <td><nobr>🖼️ <b>画像の記憶</b></nobr></td>
@@ -270,8 +270,8 @@
 </tbody>
 </table>
 
-- **TTS 音声設定**：`config/dynamic/agent.json` で `agent.tts` の明示設定が必要です（Google、OpenAI 互換 `audio/speech`、xAI Grok `/v1/tts` に対応。Google は `base_url` と `headers` によるゲートウェイ経由も可能）。任意の `bot_language`（`en` / `zh` / `ja`、既定 `ja`）で AI ボイスのセリフの言語を指定できます。プロジェクトルートの `prompt/voice_tool.md` で AI `send_voice` のツール説明全体を置き換えられます（再起動後に反映。例は [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)）。AI 返信の合成には `bot_language` に従って読み上げ言語指定が自動で追加されます。`style` は `/send`・cron と共用で声質だけを書きます。`bot_language` を変えるときは `style` と `voice_tool.md` も同じ言語に変えることを推奨します。
-- **枠の独立管理**：`daily_limit`（既定 100）のうち `daily_reserve_quota`（既定 25）を管理者と cron 用に予約し、残りを AI 音声に割り当てます。両方の回数は独立して数え、ウィンドウ内で最初に計上したリクエストから 24 時間後にまとめてリセットします。
+- **TTS 音声設定**：`config/dynamic/agent.json` で `agent.tts` の明示設定が必要です（Google、OpenAI 互換 `audio/speech`、xAI Grok `/tts` に対応。Google は `base_url` と `headers` によるゲートウェイ経由も可能）。任意の `bot_language`（`en` / `zh` / `ja`、既定 `ja`）で AI ボイスのセリフの言語を指定できます。プロジェクトルートの `prompt/voice_tool.md` で AI `send_voice` のツール説明全体を置き換えられます（再起動後に反映。例は [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)）。AI 返信の合成には `bot_language` に従って読み上げ言語指定が自動で追加されます。`style` は `/send`・cron と共用で声質だけを書きます。`bot_language` を変えるときは `style` と `voice_tool.md` も同じ言語に変えることを推奨します。
+- **枠の独立管理**：`daily_limit`（既定 100）のうち `daily_reserve_quota`（既定 25）を管理者と cron 用に予約し、残りを AI 音声に割り当てます。両方の回数は独立して数え、カウントウィンドウ（`TTS_USAGE_WINDOW_MS`）はその中の最初のリクエストから起算され、ウィンドウ終了後の次のリクエストで新しいウィンドウが始まり、まとめてゼロに戻ります。
 - **コンテキスト記録規則**：`/send` による中継メッセージや定時テキスト/音声は AI 記憶に自動記録されません。画像の自動記録は、グループで AI が有効かつ非復唱状態の場合に動作します。詳細は [11 よくある質問](11-faq.md)。
 
 各機能の挙動・設定・境界は **[📚 開発者ドキュメント](content-table.md)** を参照してください。
@@ -338,10 +338,10 @@ done
 
 初回起動前に、BotFather 側で Privacy Mode の無効化と Inline Mode の有効化を行ってください（詳細は [BotFather とグループ権限の設定](#botfather-setup)）。各設定値の仕様は [`config_example/README/ja.md`](../../config_example/README/ja.md)、詳細手順は [01 環境構築と初回起動](01-getting-started.md) にあります。
 
-設定完了後、品質ゲート検証と Bot の起動を行います：
+設定と[身元データベースの初期化](01-getting-started.md#identity-storage-の初期化)が完了したら、品質ゲート検証と Bot の起動を行います：
 
 ```bash
-bun run check                          # プロジェクト規約、ESLint、TypeScript、単体テストを検証
+bun run check                          # すべての品質ゲート（規約の自己検査、ESLint、TypeScript、テスト、ホットパスゲート）を実行
 bun run start                          # ロングポーリングを開始
 ```
 
@@ -380,7 +380,7 @@ Copy Ninjia のアーキテクチャ概要、モジュールマップ、実行�
   </tr>
   <tr>
     <td><nobr>🏗️ <b>アーキテクチャ理解</b></nobr></td>
-    <td>メインスレッドと 3 つの Worker モデル、メッセージ処理のライフサイクルと復元</td>
+    <td>メインスレッドと Worker の協調モデル、メッセージ処理のライフサイクルと復元</td>
     <td align="center"><nobr><a href="02-architecture.md">📖 02 アーキテクチャ</a></nobr></td>
   </tr>
   <tr>
@@ -476,11 +476,11 @@ Copy Ninjia のアーキテクチャ概要、モジュールマップ、実行�
 </tbody>
 </table>
 
-BotFather で `/setcommands` を手動設定する必要はありません。Bot は起動時に設定された通知口調でコマンドメニューを自動登録します（通知口調を省略しカスタム人設を配置した場合は通常版メニューを使用）。メニューはグループチャットにのみ表示されます。個別チャットはスーパー管理者の `/send` のみ受け付けるため、通常メニューは表示されません。
+BotFather で `/setcommands` を手動設定する必要はありません。Bot は起動時に設定された通知口調でコマンドメニューを自動登録します（通知口調を省略しカスタムペルソナを配置した場合は通常版メニューを使用）。メニューはグループチャットにのみ表示されます。個別チャットはスーパー管理者の `/send` のみ受け付けるため、通常メニューは表示されません。
 
 > [!WARNING]
 > **Bot-to-Bot 通信モードの注意点**：
-> このモードを有効にすると、管理者権限を持つかプライバシーモードを無効にしたグループで他の Bot の通常メッセージを受信できます。他の Bot から届いたメッセージはグローバルな入口制限を通ります。継続して活動する各 Bot の最初の 15 件だけを業務処理へ渡し、16 件目以降は通知せずに無視します。発言が 90 分間なければカウントをリセットします。記録できる他の Bot は最大 512 件で、満杯の間は新しい Bot ID のメッセージを無視します。この Bot 自身のメッセージは記録も遮断もしません。詳しくは [dispatch の不変条件](04-invariants.md) を参照してください。
+> このモードを有効にすると、管理者権限を持つかプライバシーモードを無効にしたグループで他の Bot の通常メッセージを受信できます。他の Bot から届いたメッセージはグローバルな入口制限を通ります。継続して活動する各 Bot の最初の `BOT_MESSAGE_ACTIVITY_LIMIT` 件だけを業務処理へ渡し、それ以降は通知せずに無視します。発言が `BOT_MESSAGE_ACTIVITY_TTL_MS` なければカウントをリセットします。記録できる他の Bot は最大 `BOT_MESSAGE_ACTIVITY_MAX_ENTRIES` 件で、満杯の間は新しい Bot のメッセージを無視します。この Bot 自身のメッセージは記録も遮断もしません。詳しくは [dispatch の不変条件](04-invariants.md) を参照してください。
 
 ### グループ内の管理者権限
 

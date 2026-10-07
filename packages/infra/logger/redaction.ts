@@ -7,9 +7,8 @@ import type { LogRedactionReplacer } from "../../types/logger";
 /**
  * 判断一个 JSON 字段名是否直接承载凭据。
  *
- * 这里不能只依赖配置值级替换：OpenAI/xAI SDK 的错误对象会附带上游响应头，
- * Cloudflare 的 `set-cookie` 值不是本进程配置的密钥，却同样不能进入 journal 或
- * logs/。精确匹配字段名，不把 `output_tokens`、request id 等正常诊断一并抹掉。
+ * 不依赖配置值级替换，按字段名精确匹配（大小写不敏感），覆盖 SDK 错误对象附带的
+ * 上游响应头（如 `set-cookie`）；`output_tokens`、request id 等诊断字段不匹配。
  */
 function isSensitiveLogField(key: string): boolean {
   switch (key.toLowerCase()) {
@@ -64,7 +63,7 @@ function skipLogWhitespace(text: string, start: number): number {
 
 /**
  * 判断 `:`/`=` 左侧是否是完整的敏感字段名。先按字符边界筛选长度，只有候选键
- * 才切片并做大小写归一化，避免普通日志里的 URL、时间戳为每个分隔符制造字符串。
+ * 才切片并做大小写归一化。
  */
 function hasSensitiveLogFieldBefore(text: string, separator: number): boolean {
   let end: number = separator;
@@ -87,8 +86,8 @@ function hasSensitiveLogFieldBefore(text: string, separator: number): boolean {
 }
 
 /**
- * 找到字符串或容器形态字段值的末尾。引号内的逗号与括号不结束扫描，保证
- * `set-cookie` 中的 Expires 日期不会被截断；格式残缺时宁可脱敏到文本结尾。
+ * 找到字符串或容器形态字段值的末尾。引号内的逗号与括号不结束扫描；
+ * 格式残缺时脱敏到文本结尾。
  */
 function findStructuredLogValueEnd(text: string, start: number): number {
   const opening: number = text.charCodeAt(start);
@@ -189,8 +188,8 @@ export function redactSensitiveFieldsInText(text: string): string {
  * 为一份只读凭据快照创建 JSON.stringify 遍历回调，由线程缓存复用。
  *
  * 除对象字段外，也覆盖二元 header tuple 与 Node 风格扁平 rawHeaders；字符串值
- * 继续检查 SDK 已经预格式化进去的字段。全部复用既有序列化遍历，避免为每条错误
- * 日志深拷贝整棵 SDK 错误对象。已登记凭据在 URL 规范化前按原文替换；回调只捕获
+ * 继续检查 SDK 已经预格式化进去的字段。全部复用既有序列化遍历，不深拷贝错误对象。
+ * 已登记凭据在 URL 规范化前按原文替换；回调只捕获
  * 本份快照的名单，不读取后续替换的配置，也不捕获每次 emit 的展开状态。
  */
 export function createLogRedactionReplacer(secrets: readonly string[]): LogRedactionReplacer {
@@ -218,7 +217,7 @@ export function safeStringify(value: unknown, replacer: LogRedactionReplacer): s
     try {
       return JSON.stringify(String(value), replacer);
     } catch {
-      // 最后一层必须是静态文本：再次读取 value 只会让 logger 重演原始异常。
+      // 最后一层是静态文本，不再读取 value。
       return JSON.stringify(LOGGER_UNSERIALIZABLE_VALUE);
     }
   }

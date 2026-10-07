@@ -1,17 +1,15 @@
 /**
  * catch 到的 `unknown` 归一化边界。
  *
- * `catch (error: unknown)` 是全仓强制的写法（见 AGENTS.md「类型与接口」），
- * 但日志文案要的是一段字符串、Promise 的 reject 约定要的是一个 Error。这里提供
- * 三档：errorMessage 取文案，toError 以原值字符串重建 Error，toErrorOr 以调用点
+ * `catch (error: unknown)` 捕获的值经本模块转成日志文案（字符串）或 reject 用的 Error，
+ * 提供三档：errorMessage 取文案，toError 以原值字符串重建 Error，toErrorOr 以调用点
  * 自己的兜底文案重建 Error 并把原值挂进 `cause`。
  */
 
 /**
  * 把 catch 到的值压成日志和回执能直接拼接的一段文案。
  *
- * 非 Error 值走 `String()`：抛出来的可能是字符串、数字，甚至 `undefined`，
- * 读 `.message` 会再抛一次或印出 `undefined`。
+ * 非 Error 值取 `String()`。
  * @param error catch 到的原值。
  * @returns Error 的 message，或原值的字符串形式。
  */

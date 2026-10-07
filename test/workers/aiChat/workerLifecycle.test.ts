@@ -105,7 +105,7 @@ const { agentDeploymentConfigCache, personaCache, voiceToolPromptCache } = await
 const { aiCacheUsageSink } = await import("../../../packages/cache/perThread/aiCacheUsage");
 const { hasChatMemory, pendingSummaries, resetAiChatMemoryCache } = await import("../../../packages/cache/workers/aiChat/memory");
 
-/** 主线程投递过来的那一代快照；断言 Worker 原样收进 holder，不另行读盘。 */
+/** 主线程投递的那一代快照；断言 Worker 原样收进 holder。 */
 const injectedAgentConfig: AgentDeploymentConfig = {
   text: { provider: "google", apiKey: "injected-text-key", baseUrl: undefined, headers: undefined, model: "injected-text" },
   summary: { provider: "openai", apiKey: "injected-summary-key", baseUrl: undefined, headers: undefined, model: "injected-summary" },
@@ -121,7 +121,7 @@ beforeEach(() => {
   workerSelf.onmessage = null;
   botInfoState.current = null;
   superAdminUserIdState.current = null;
-  // 新 isolate 的 holder 本来就是空的：init 之前取配置必须 fail-closed。
+  // 新 isolate 的 holder 为空：init 之前取配置 fail-closed。
   agentDeploymentConfigCache.current = null;
   aiChatWorkerQuiescing.current = false;
   aiChatWorkerAbortController.current = new AbortController();
@@ -207,7 +207,7 @@ describe("AI Chat Worker lifecycle", () => {
     // 本进程人设与 send_voice 说明随 init 接管，所有群共用这一份。
     expect(personaCache.current).toBe("测试人设");
     expect(voiceToolPromptCache.current).toBe("测试语音说明");
-    // 配置快照进 holder，且是主线程投来的那一个对象本身：本线程此后不读盘。
+    // 配置快照进 holder，且是主线程投来的那一个对象本身。
     expect(agentDeploymentConfigCache.current).toBe(injectedAgentConfig);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack"]);
   });
@@ -284,6 +284,7 @@ describe("AI Chat Worker lifecycle", () => {
       telegramBackpressured: true,
       imageGenerationRequested: true,
       imageGenerationReference: { fileId: "reference-file", fileUniqueId: "reference-unique", width: 1600, height: 900 },
+      chatQa: undefined,
     };
     await routeAfterInit([trigger]);
     expect(generateAndSendReply).toHaveBeenCalledWith(trigger);
@@ -308,7 +309,7 @@ describe("AI Chat Worker lifecycle", () => {
       { type: "invalidateChat", chatId: -1002, requestId: 2 },
     ]);
     expect(invalidateChatReplies).toHaveBeenCalledTimes(2);
-    // invalidateChat 恒带记忆清理：主线程只有「失效并删记忆」这一条路。
+    // invalidateChat 恒带记忆清理。
     expect(hasChatMemory(-1001)).toBeFalse();
     expect(hasChatMemory(-1002)).toBeFalse();
     expect(postMessage).toHaveBeenCalledWith({ type: "memoryDeleted", chatId: -1001 });
@@ -377,9 +378,9 @@ describe("AI Chat Worker lifecycle", () => {
     expect(pruneStickerCatalogs).toHaveBeenCalledWith(["pack", "new_pack"]);
     expect(pruneStickerSets).toHaveBeenCalledWith(["pack", "new_pack"]);
     expect(ensureStickerCatalogs).toHaveBeenCalledWith(["pack", "new_pack"]);
-    // 配置替换显式失效菜单；即使目录生成与剪枝没有改写条目，revision 仍须递增。
+    // 配置替换显式失效菜单；目录生成与剪枝没有改写条目时，revision 仍递增。
     expect(stickerMenuRevision.current).toBeGreaterThan(menuRevision);
-    // 先接管配置、再剪枝、最后启动对账：剪枝用的是新白名单，新加入的包不会被自己剪掉。
+    // 顺序：先接管配置、再剪枝、最后启动对账；剪枝使用新白名单。
     expect(pruneStickerCatalogs.mock.invocationCallOrder[0]!)
       .toBeLessThan(ensureStickerCatalogs.mock.invocationCallOrder[0]!);
 
@@ -431,6 +432,8 @@ describe("AI Chat Worker lifecycle", () => {
       isRandomTrigger: false,
       telegramBackpressured: false,
       imageGenerationRequested: false,
+      imageGenerationReference: undefined,
+      chatQa: undefined,
     });
     await Promise.resolve();
 
@@ -515,8 +518,7 @@ describe("AI Chat Worker lifecycle", () => {
     expect(flushDirtyMemories).toHaveBeenCalledTimes(1);
     expect(flushDirtyStickerCatalogs).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "stickerCatalogSnapshot", name: "pack" });
-    // 白名单剪枝兜住热重载时正在生成、当时跳过的包；必须排在 dirty 上报之前，
-    // 已下架包的 dirty 标记才不会换来一次下次启动就被删掉的落盘。
+    // 白名单剪枝处理热重载时正在生成、当时跳过的包；排在 dirty 上报之前。
     expect(pruneStickerCatalogs).toHaveBeenCalledWith(["pack"]);
     expect(pruneStickerCatalogs.mock.invocationCallOrder[0]!)
       .toBeLessThan(flushDirtyStickerCatalogs.mock.invocationCallOrder[0]!);

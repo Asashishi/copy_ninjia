@@ -8,7 +8,7 @@ import type { AtmosphereNotices } from "../../../packages/types/atmosphereNotice
 import type { ExpelRemovalOutcome, VerificationCleanupResult } from "../../../packages/types/antiRaid/verification";
 
 /**
- * 踢出终态播报文案的穷举表：两套文案 × 刷屏/超时 × 成员处置结果 × 清理结果 × 是否机器人，
+ * 踢出终态播报文案的穷举表：各氛围文案 × 刷屏/超时 × 成员处置结果 × 清理结果 × 是否机器人，
  * 按「没踢走 → 原因」「踢走 + 清理欠账 → 清理结果」「踢走 + 清理干净 → 原因与身份」分组核对。
  */
 
@@ -36,7 +36,7 @@ interface NoticeCase {
   readonly isBot: boolean;
 }
 
-/** 给定清理结果集合，展开两套文案 × 两种原因 × 是否机器人。 */
+/** 给定清理结果集合，展开各氛围文案 × 各原因 × 是否机器人。 */
 function cases(cleanups: readonly VerificationCleanupResult[]): readonly NoticeCase[] {
   const result: NoticeCase[] = [];
   for (const atmosphere of ATMOSPHERES) {

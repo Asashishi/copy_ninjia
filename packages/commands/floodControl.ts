@@ -6,13 +6,12 @@ import { clearFloodControl } from "../antiRaid";
 import { runChatToggleCommand } from "./superAdminToggle";
 
 /**
- * 处理 /flood_control enable|disable 指令：按群开关防刷屏禁言（见
- * ChatState.isFloodControlEnabled，缺省关闭）。仅持有
- * isCanControllFloodControlPermission 的身份可用；超级管理员恒持有该权限
+ * 处理 /flood_control enable|disable 指令：按群开关防刷屏禁言（见 ChatState.isFloodControlEnabled）。
+ * 仅持有 isCanControllFloodControlPermission 的身份可用；超级管理员恒持有该权限
  * （见 whitelist.ts），白名单身份可由 /permission 单独获权。
  *
- * 关闭时同步清掉该群在 Worker 里的计数窗口；开关本身已经落盘，这步清理是
- * 尽力而为，边界见 runChatToggleCommand。
+ * 关闭时经 clearFloodControl 清掉该群在 Worker 里的发言窗口；清理在落盘之后，
+ * 是尽力而为，边界见 runChatToggleCommand。
  */
 export async function handleFloodControlCommand(
   ctx: CommandContext<Context>

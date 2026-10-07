@@ -5,7 +5,9 @@ import { join } from "node:path";
 import type { JoinLogDiskMessage, ReadJoinLogRequest } from "../../../packages/types/diskIO/messages";
 import type { JoinLogFileCache } from "../../../packages/types/diskIO/storage";
 import { FLUSH_MAX_ENTRIES } from "../../../packages/consts/diskIO/appendOnly";
-import { DAY_MS } from "../../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../../packages/consts/time";
+import { JOIN_LOG_REOPEN_RETRY_MS } from "../../../packages/consts/diskIO/joinLog";
+import { writeFileEntries } from "../../../packages/workers/diskIO/joinLogWrites";
 import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
 import {
   joinLogDir,
@@ -439,6 +441,31 @@ describe("diskIO/joinLogFiles", () => {
     }
   });
 
+  test("系统时钟回拨超过退避窗口时视为窗口已结束，同一文件立即重试", async () => {
+    const now: number = todayAt();
+    const day: string = getDateKey();
+    const path: string = currentFile(-1001);
+    mkdirSync(path, { recursive: true });
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    const clock = spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const entry = { sequence: 1, chatId: -1001, day, record: { userId: 42, joinedAt: now } };
+      expect(await writeFileEntries(-1001, day, [entry])).toBeFalse();
+      expect(joinLogRetryAt.get(`-1001:${day}`)).toBe(now + JOIN_LOG_REOPEN_RETRY_MS);
+
+      rmSync(path, { recursive: true, force: true });
+      clock.mockReturnValue(now - 1);
+      expect(await writeFileEntries(-1001, day, [entry])).toBeTrue();
+      expect(joinLogRetryAt.get(`-1001:${day}`)).toBeUndefined();
+      expect(JSON.parse(await Bun.file(path).text())).toEqual({
+        [`${now}:42`]: { userId: 42, joinedAt: now },
+      });
+    } finally {
+      clock.mockRestore();
+      error.mockRestore();
+    }
+  });
+
   test("入群日志目录建不出来时整批留在缓冲里退避，不抛出也不算已处置", async () => {
     rmSync(joinLogDir, { recursive: true, force: true });
     await Bun.write(joinLogDir, "not a directory");
@@ -588,7 +615,7 @@ describe("diskIO/joinLogFiles", () => {
       await handleJoinLogMessage(joinMessage(-1001, 42, now - 10_000));
       await handleJoinLogMessage(joinMessage(-2002, 77, now - 10_000));
 
-      // 群 B 的日志本身完好：读取不得被群 A 的写失败连坐。
+      // 群 B 的日志不受群 A 写失败影响。
       expect(await readJoinLog({
         type: "readJoinLog",
         requestId: 9,
@@ -597,7 +624,7 @@ describe("diskIO/joinLogFiles", () => {
         now,
       })).toEqual([{ userId: 77, joinedAt: now - 10_000 }]);
 
-      // 群 A 自己的读取仍要如实报错，且点名是哪个群哪一天。
+      // 群 A 自己的读取如实报错，并点名是哪个群哪一天。
       await expect(readJoinLog({
         type: "readJoinLog",
         requestId: 10,
@@ -689,8 +716,7 @@ describe("diskIO/joinLogFiles", () => {
   });
 
   test("单群单日超出容量线时原子重写权威文件，并只告警一次", async () => {
-    // 端到端造满 25 万人太贵，这里直接把 Worker 独占的 latest-by-user 索引预填到
-    // 容量线，再投一条新用户——走的仍是 writeFileEntries 里真正的溢出分支。
+    // 把 Worker 独占的 latest-by-user 索引预填到容量线 JOIN_LOG_MAX_USERS_PER_CHAT_DAY，再投一条新用户，走 writeFileEntries 里的溢出分支。
     const day: string = getDateKey();
     const key: string = `-1001:${day}`;
     const path: string = currentFile(-1001);
@@ -701,7 +727,7 @@ describe("diskIO/joinLogFiles", () => {
       latestByUser.set(userId, { userId, joinedAt: base + userId });
     }
     const snapshotBytes: number = measureJoinLogSnapshotBytes(latestByUser);
-    // 权威文件先按这份索引落到盘上：溢出分支必须把它整个换掉，而不是往后追加。
+    // 权威文件先按这份索引落到盘上；溢出分支把它整个换掉，不追加。
     mkdirSync(joinLogDir, { recursive: true });
     await Bun.write(path, [...joinLogSnapshotChunks(latestByUser)].join(""));
     const cache: JoinLogFileCache = {
@@ -736,7 +762,7 @@ describe("diskIO/joinLogFiles", () => {
         joinedAt: newestJoinedAt,
       });
 
-      // 逐条增量记账必须与整表重算逐字节一致。
+      // 逐条增量记账与整表重算逐字节一致。
       expect(cache.snapshotBytes).toBe(measureJoinLogSnapshotBytes(cache.latestByUser));
       expect(cache.state).toEqual({ size: cache.snapshotBytes, empty: false });
       expect(cache.appendedBytesSinceCompaction).toBe(0);
@@ -748,7 +774,7 @@ describe("diskIO/joinLogFiles", () => {
       expect(written).not.toContain(`"${base + 1}:1"`);
       expect(written).toContain(`"${newestJoinedAt}:${newUserId}"`);
 
-      // 成功落盘后退避条目必须清掉。
+      // 成功落盘后退避条目清掉。
       expect(joinLogRetryAt.has(key)).toBeFalse();
 
       expect(cache.capacityWarningEmitted).toBeTrue();
@@ -757,7 +783,7 @@ describe("diskIO/joinLogFiles", () => {
         `exceeded ${JOIN_LOG_MAX_USERS_PER_CHAT_DAY} users; retained the newest records and evicted 1`
       );
 
-      // 同一份缓存再溢出一次只淘汰、不重复刷屏。
+      // 同一份缓存再溢出一次只淘汰、不重复告警。
       markJoinLogDirty({
         sequence: 2,
         chatId: -1001,
@@ -784,8 +810,8 @@ describe("diskIO/joinLogFiles", () => {
     expect(cache.redundantEntries).toBe(0);
     const bytesAfterFirst: number = cache.snapshotBytes;
 
-    // 同一个 userId、更晚的 joinedAt：折叠层放行，但索引里已经有这个人，
-    // 追加的这条在文件里是冗余历史，只有记账知道它可以被压实回收。
+    // 同一个 userId、更晚的 joinedAt：折叠层放行，索引里已有这个人，
+    // 追加的这条是文件里的冗余历史，由 redundantEntries 记账。
     const second: number = first + 1_000;
     await handleJoinLogMessage(joinMessage(-1001, 42, second));
     expect(await flushJoinLogBuffer()).toBeTrue();
@@ -810,7 +836,7 @@ describe("diskIO/joinLogFiles", () => {
     mkdirSync(joinLogDir, { recursive: true });
     await Bun.write(datedFile(-1001, yesterday), "{}");
     await Bun.write(datedFile(-2002, today), "{}");
-    // 删除之前又来了一条本群的入群事实：它属于一个已经不再接管的群，不能被写回去。
+    // 删除之前又来了一条本群的入群事实：本群已不再接管，这条不写回。
     markJoinLogDirty({ sequence: 2, chatId: -1001, day: today, record: { userId: 43, joinedAt: todayAt(1) } });
     markJoinLogDirty({ sequence: 3, chatId: -2002, day: today, record: { userId: 44, joinedAt: todayAt(2) } });
     expect(joinLogFileCaches.has(`-1001:${today}`)).toBeTrue();
@@ -846,8 +872,7 @@ describe("diskIO/joinLogFiles", () => {
       handleJoinLogDeleteMessage({ type: "deleteJoinLog", chatId: -1001 });
       expect(joinLogDeletions.has(-1001)).toBeTrue();
       expect(purgeJoinLogDeletions()).toBeFalse();
-      // 别的群的入群事实照常落盘并回报成功：一个删不掉的文件不得连坐其它群的入群
-      // 批次（见 types/diskIO/replies.ts 的 DiskIODomain）。
+      // 别的群的入群事实照常落盘并回报成功：删除失败只影响 joinLogPurge（见 types/diskIO/replies.ts 的 DiskIODomain）。
       await handleJoinLogMessage(joinMessage(-2002, 42, todayAt()));
       expect(await flushJoinLogBuffer()).toBeTrue();
 

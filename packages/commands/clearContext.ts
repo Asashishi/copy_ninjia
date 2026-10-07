@@ -11,20 +11,17 @@ import { rejectUnlessPermitted } from "./commandActor";
 /**
  * 处理 /clear_context：清空本群 AI 上下文记忆，从零重新累计。
  *
- * 清掉的是 AI Worker 里这个群的滚动逐字缓存、中期摘要与待晋升摘要，以及
- * 磁盘上的 chat_states.ai_context（心情全 Worker 共用一份，不随单群清理）——两件事由 aiChat/workerBridge.ts 的
- * invalidateAiChat(chatId) 一并完成，本命令不另写一条清理路径。同一次调用
- * 还会递增本群回复代数：在途那一轮的上下文此刻已经不存在，它的回复不该再发出去。
+ * 清掉 AI Worker 里这个群的运行时状态，以及磁盘上的 chat_states.ai_context；心情全局共用一份，
+ * 不随单群清理。两部分由 aiChat/workerBridge.ts 的 invalidateAiChat(chatId) 一并完成，
+ * 同一次调用还会使本群回复代数失效，在途回复不再发出。
  *
  * 发起身份必须持有 isCanClearContext；超级管理员由统一权限边界直授。
- * 只操作命令所在群，不接受指定其它群的参数。
+ * 只操作命令所在群，带参数时回复用法提示。
  *
- * **前提不齐也照样执行**，口径同 `/ai_chat disable` 的关闭方向：部署配置写坏或
- * AI Worker 没起来时，磁盘上的记忆仍要能清干净，durable 删除本来就不经 Worker。
+ * 不检查部署配置与 AI Worker 状态，口径同 `/ai_chat disable` 的关闭方向。
  *
- * 失败只回一句并记日志，绝不外抛：抛出去这条 update 就判失败，Telegram 会在重启
- * 后重投同一条命令，而那时 Worker 多半仍不可用，正好把重启循环焊死（同
- * commands/superAdminToggle.ts 的 runChatToggleCommand 对拆除失败的处理）。
+ * 清理失败只回一句失败回执并记日志，不外抛（同 commands/superAdminToggle.ts 的
+ * runChatToggleCommand 对拆除失败的处理）。
  */
 export async function handleClearContextCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;

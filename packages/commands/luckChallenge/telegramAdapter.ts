@@ -4,7 +4,7 @@ import { telegramSignal } from "../../libs/telegramSignal";
 import { chatAtmosphere } from "../../infra/atmosphere";
 import { formatUserLabel } from "../../users/userLabel";
 import type { LuckDraw } from "../../types/luckChallenge";
-import { LUCK_RESULT_IDS } from "../../consts/luckChallenge";
+import { LUCK_INLINE_NO_DRAW_CACHE_SECONDS, LUCK_RESULT_IDS } from "../../consts/luckChallenge";
 import { recordInlineResultSources } from "../../infra/inlineResultSources";
 import { logApiError } from "../../infra/telegram";
 import { isTelegramRequestRejected } from "../../infra/telegram/errors";
@@ -45,22 +45,38 @@ export async function handleLuckChosenInlineResult(ctx: Context): Promise<void> 
   promotePendingDraw(cacheKey);
 }
 
-/** Telegram 内联查询适配层：负责输入输出，抽签、缓存与渲染由各领域模块完成。 */
+/**
+ * 不抽签时的应答（限流占位或空结果），客户端缓存 LUCK_INLINE_NO_DRAW_CACHE_SECONDS 秒；应答失败只记 API 错误，
+ * update 取消照常上抛。
+ * @param action 应答失败时日志里的动作名。
+ */
+async function answerLuckInlineQueryWithoutDraw(
+  ctx: Context,
+  results: InlineQueryResultArticle[],
+  action: string
+): Promise<void> {
+  try {
+    await ctx.answerInlineQuery(
+      results,
+      { cache_time: LUCK_INLINE_NO_DRAW_CACHE_SECONDS, is_personal: true },
+      telegramSignal(currentUpdateAbortSignal())
+    );
+  } catch (error: unknown) {
+    throwIfUpdateAborted();
+    logApiError(action, error);
+  }
+}
+
+/**
+ * Telegram 内联查询适配层：负责输入输出，抽签、缓存与渲染由各领域模块完成。限流时应答占位结果；
+ * 当天密钥刷新失败时记错误并应答空结果，面板不等到超时。
+ */
 export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void> {
   const inlineQuery: InlineQuery | undefined = ctx.inlineQuery;
   if (!inlineQuery) return;
 
   if (!tryConsumeLuckRateLimit()) {
-    try {
-      await ctx.answerInlineQuery(
-        [buildRateLimitedResult()],
-        { cache_time: 1, is_personal: true },
-        telegramSignal(currentUpdateAbortSignal())
-      );
-    } catch (error: unknown) {
-      throwIfUpdateAborted();
-      logApiError("answer rate-limited luck inline query", error);
-    }
+    await answerLuckInlineQueryWithoutDraw(ctx, [buildRateLimitedResult()], "answer rate-limited luck inline query");
     return;
   }
 
@@ -68,6 +84,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     await ensureLuckCacheFreshForToday();
   } catch (error: unknown) {
     logger.error("Failed to refresh luck cache for inline query:", error);
+    await answerLuckInlineQueryWithoutDraw(ctx, [], "answer luck inline query after cache refresh failure");
     return;
   }
   const fromUser: User = inlineQuery.from;
@@ -97,9 +114,7 @@ export async function handleLuckChallengeInlineQuery(ctx: Context): Promise<void
     logApiError("answer luck inline query", error);
     if (isTelegramRequestRejected(error)) return;
   }
-  // 结果正文是本 bot 的模板（问候、抽签结果、防伪回执），用户真正写的只有所求
-  // 事项这一段；广告检测按结果正文取回它来判（见 infra/inlineResultSources.ts）。
-  // 没写所求事项的纯运势与概率结果里没有一个字是用户写的，`text` 为空时本次
-  // 应答不登记，那两条结果因此也不进判定。
+  // 登记所求事项作为结果正文对应的源文本，广告检测按结果正文取回
+  // （见 infra/inlineResultSources.ts）；`text` 为空时不登记，纯运势与概率结果不进判定。
   recordInlineResultSources(fromUser.id, text, results);
 }

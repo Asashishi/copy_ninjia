@@ -25,16 +25,15 @@ import type { Scenario } from "./types";
 /**
  * 真实注册链消费普通文本；静默群和已知管理员状态覆盖热缓存命中的完整路径。
  *
- * **权限位必须是 administrator**：受管群的常态就是本机器人已经是管理员（入群守卫、
- * gag、刷屏禁言、广告处置全都以此为前提）。给成员身份的话
- * `handleAntiRaidMessageIngress` 在 `cachedBotAdminStatus` 那道闸就返回，
- * `ingestAdminChatMessage` 与 `ingestAdmittedMessage` 整段——黑名单频道门禁、广告候选、
- * 刷屏候选、待验证镜像的空表前置判定——一次都不会执行，而那一段是每条群消息都要走的。
+ * 权限位是 administrator：成员身份下 `handleAntiRaidMessageIngress` 在
+ * `cachedBotAdminStatus` 那道闸就返回，`ingestAdminChatMessage` 与
+ * `ingestAdmittedMessage` 整段（黑名单频道门禁、广告候选、刷屏候选、待验证镜像的
+ * 空表前置判定）不执行。
  *
- * 管理员身份下这条路径仍然同步、零副作用：`sender_chat` 缺席让黑名单门禁第一行返回
- * false；`isAdDetectEnabled` 与 `isFloodControlEnabled` 都保持缺省关闭，两个候选都是
- * `undefined`（因此也不碰任何跨线程投递）；待验证镜像为
- * 空表，键都不拼。改 fixture 前必须重新验证这几条。
+ * 管理员身份下这条路径同步、无副作用：`sender_chat` 缺席让黑名单门禁第一行返回
+ * false；`isAdDetectEnabled` 与 `isFloodControlEnabled` 保持缺省关闭，两个候选都是
+ * `undefined`（不触发跨线程投递）；待验证镜像为空表，键都不拼。改 fixture 前必须
+ * 重新确认这几条。
  */
 export function registeredMiddlewareScenario(): Scenario {
   installCannedTelegramOutbound();

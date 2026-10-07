@@ -16,21 +16,20 @@ import type { ChatState } from "../types/chatState";
 
 /**
  * 各群名称的追踪与持久化（ChatState.title，随 SQLite 群状态行落盘）。群名称不
- * 参与任何业务判断，纯粹是让人核对数据库条目时能一眼认出某个
- * chatId 是哪个群，不用逐个 chatId 去客户端反查。
+ * 参与业务判断，只用于核对数据库条目对应的群。
  *
  * 维护路径两条，互为补充：
  * 1. 启动时对已知的每个群现查一次（refreshAllChatTitles，见 app/lifecycle.ts）——
- *    覆盖存量群、以及上次运行期间改过名但没能实时捕捉到的群；
- * 2. 此后每条收到的群消息，其 chat.title 本就随更新一起送达，不用额外
- *    调 API，顺手记录/刷新（recordChatTitleFromChat，见
+ *    覆盖存量群与上次运行期间改名的群；
+ * 2. 此后每条收到的群消息，其 chat.title 随更新一起送达，不调 API，
+ *    直接记录/刷新（recordChatTitleFromChat，见
  *    packages/auto/message/ 的 handleIncomingMessageMiddleware）。
  */
 
 /**
  * 把确证的群名称写入内存 ChatState；未初始化的群（isInitEnabled !== true）或与已知值
- * 相同时不写并返回 false，同 infra/botAdmin.ts 的 recordBotChatPermissions——不能让
- * 只是被拉进去、从没人管过的群凭空在 `chat_states` 里长出条目。
+ * 相同时不写并返回 false，同 infra/botAdmin.ts 的 recordBotChatPermissions，
+ * 未初始化的群不建 `chat_states` 条目。
  * @returns 是否改写了名称，调用方据此决定是否落盘。
  */
 function applyChatTitle(
@@ -44,7 +43,7 @@ function applyChatTitle(
   return true;
 }
 
-/** 名称有变化才后台落盘，避免高频群消息把这里变成每条消息都触发一次写入。 */
+/** 名称有变化才后台落盘。 */
 function recordChatTitle(
   chatId: number,
   title: string,
@@ -70,11 +69,9 @@ export function recordChatTitleFromChat(
 
 /**
  * 启动流程：给 SQLite 里已知的每个群现查一次当前群名称并回填。不阻塞
- * bot 启动主流程——这纯粹是方便人核对数据库的锦上添花，慢一点或个别
- * 群查询失败都不影响机器人正常运行。app/lifecycle.ts 会追踪该任务，并在
- * 最终持久化 flush 前等待它完成，避免刷新任务在 flush 后继续改状态。共享的 bot.api
- * 客户端会把 429 请求退回主线程 query 类别队列。群状态只覆盖受管群，并发上限取
- * STATE_MANAGED_CHAT_LIMIT，即每个受管群各查一次。
+ * bot 启动主流程，个别群查询失败不影响其它群。app/lifecycle.ts 追踪该任务，并在
+ * 最终持久化 flush 前等待它完成。共享的 bot.api 客户端把 429 请求退回主线程
+ * query 类别队列。并发上限取 STATE_MANAGED_CHAT_LIMIT，即每个受管群各查一次。
  */
 export async function refreshAllChatTitles(
   signal: AbortSignal = chatTitleRefreshRuntime.controller.signal
@@ -97,7 +94,7 @@ export async function refreshAllChatTitles(
         }
       } catch (error: unknown) {
         if (!signal.aborted) {
-          // 单个群查询失败不该中断其它群的回填。
+          // 单个群查询失败不中断其它群的回填。
           logger.error(`Failed to refresh chat title for chat ${chatId}:`, error);
         }
       } finally {

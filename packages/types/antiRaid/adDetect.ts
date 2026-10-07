@@ -42,7 +42,7 @@ export interface AdDetectJsonRequestParams {
 
 /**
  * 按当前广告示例快照拼好的判定提示词（见 cache/workers/antiRaid/adDetect.ts）。
- * 三段共用同一份 instructions 前缀；系统提示词 = instructions + 换行 + 对应的系统事实。
+ * 各系统提示词共用同一份 instructions 前缀；系统提示词 = instructions + 换行 + 对应的系统事实。
  */
 export interface AdDetectPrompts {
   /** 判定规则与部署示例段，不含系统事实。 */
@@ -66,9 +66,8 @@ export interface AdSampleContext {
  * 机器人是本群管理员、且发送者不是自己人时才投递（见 antiRaid/adCandidate.ts）。
  * Worker 侧按发送者归并成消息串排队送检，见 workers/antiRaid/adDetect/queue.ts。
  *
- * 字段全部必填、缺省显式 undefined，并且除 linkUrls 外只含原始值：Bun 的 structured
- * clone 对值全为原始类型的扁平对象走快路径，嵌套对象会让每条候选的跨线程成本翻倍。
- * 发送者元数据与引用上下文因此平铺成独立字段，Worker 侧按需重新组装。
+ * 字段全部必填、缺省显式 undefined，除 linkUrls 外只含原始值；发送者元数据与引用
+ * 上下文平铺成独立字段，Worker 侧按需重新组装。
  */
 export interface AdCandidateMessage {
   type: "adCandidate";
@@ -80,11 +79,8 @@ export interface AdCandidateMessage {
    * 主线程观测到这条 update 的时刻，本条消息在 Worker 侧的全部时间判定都用它。
    *
    * 由主线程按 update 唯一的那次时钟读取填入（见 infra/updateContext.ts 的
-   * updateNow），Worker 因此不必为每条候选再读一次墙钟——在时钟读取不走 vDSO
-   * 快路径的部署机上，那一次读取本身就比整段同步记账还贵。
-   *
-   * 语义上它是「主线程收到这条消息的时刻」，比「Worker 从 mailbox 取到它的时刻」
-   * 更贴近事实：Worker 积压时后者会把同一批消息的间隔压短，让判定偏严。
+   * updateNow），Worker 不为每条候选再读墙钟。它是主线程收到这条消息的时刻，
+   * 不是 Worker 从 mailbox 取到它的时刻。
    */
   observedAt: number;
   /** 已清洗成单行的正文（文本或图片说明）。 */
@@ -157,8 +153,8 @@ export interface AdCandidateEntry extends AdSampleContext {
    */
   receivedAt: number;
   /**
-   * 本条到达时是否处于已经公开的引用广告警告窗口。判定可能排队超过五分钟，
-   * 因此升级事实必须在入队时冻结，不能用之后的处理墙钟重新推断。
+   * 本条到达时是否处于已经公开的引用广告警告窗口；该事实在入队时冻结，不用之后的
+   * 处理墙钟重新推断。
    */
   withinReferencedWarning: boolean;
 }
@@ -167,7 +163,7 @@ export interface AdCandidateEntry extends AdSampleContext {
 export type ReferencedAdWarningState =
   | {
     readonly phase: "sending";
-    /** 同 key 的单调 attempt，清群后迟到的旧回执不能命中新状态。 */
+    /** 同 key 的单调 attempt；清群后迟到的旧回执不命中新状态。 */
     readonly generation: number;
   }
   | {
@@ -192,44 +188,37 @@ export interface AdMessageBundle {
    * 现算（见 workers/antiRaid/adDetect/disposal.ts 的 adSenderLabel）。
    */
   meta: Readonly<TelegramIdentityMetadata>;
+  /**
+   * 送检姓名（workers/antiRaid/adDetect/senderName.ts 的 formatAdSenderName），建串时算出，
+   * meta 的姓或名变化时随之重算；频道马甲恒为空串。
+   */
+  senderName: string;
   /** 发送者是频道马甲（sender_chat）而非真人。 */
   isChannel: boolean;
   /**
-   * 这一串里是否有任何一条是「刚进群、还没通过验证」时发出的。取并集而不是取
-   * 最后一条：验证会在窗口内通过，先发广告后通过验证的人不该因此洗白。
+   * 这一串里是否有任何一条是「刚进群、还没通过验证」时发出的；取并集，不取最后一条。
    */
   justJoined: boolean;
   entries: AdCandidateEntry[];
   /**
-   * 被单 key 条数上限挤出 entries、却从来没送过判定的消息 id。
-   *
-   * 判定依据（judged）与此刻串里还剩的（entries）都覆盖不到它们，不单独留一份
-   * 的话，这些消息既进不了判定也进不了处置的删除集合，命中之后会永久留在群里
-   * ——频道马甲尤其如此，banChatSenderChat 没有 revoke_messages。
-   * 容量见 AD_DETECT_MAX_PENDING_DELETE_IDS。
+   * 被单 key 条数上限挤出 entries、却从来没送过判定的消息 id；命中后并入处置的删除集合
+   * （见 workers/antiRaid/adDetect/disposal.ts）。容量见 AD_DETECT_MAX_PENDING_DELETE_IDS。
    */
   pendingDeleteIds: number[];
   /**
-   * 这一串已经因为待删列表撑满而丢过 id。只为让那行错误日志每个发送者最多记
-   * 一次：溢出之后**每条**新消息都会再挤掉一个，逐条记就是往 logs/ 里刷屏，
-   * 而运维需要知道的只是「这个人有广告删不掉了」这一件事。
+   * 这一串已经因为待删列表撑满而丢过 id；该行错误日志每个发送者最多记一次。建串时为 false。
    */
-  pendingDeleteOverflowed?: boolean;
+  pendingDeleteOverflowed: boolean;
   /**
-   * 这一串已经因为单 key 条数上限挤掉过**从没判定过**的正文。同上，只为让那行
-   * 错误日志每个发送者最多记一次。丢掉的正文再也进不了分类器，这是本模块唯一
-   * 一处「内容级」漏判，必须留下痕迹——否则运维只能看到判定结果偏松，查不出
-   * 是模型放过了还是正文压根没送到。
+   * 这一串已经因为单 key 条数上限挤掉过从没判定过的正文；该行错误日志每个发送者最多
+   * 记一次。建串时为 false。
    */
-  uncheckedEvicted?: boolean;
+  uncheckedEvicted: boolean;
   /** 下一条消息要用的序号；只增不减，上下文裁剪不回退它。 */
   nextSeq: number;
   /**
-   * 已送检过的最大序号；只有序号比它大的消息才值得重新入队。
-   *
-   * 用序号而不是「已检条数」记账：一次判定要等一趟 provider 往返，这期间
-   * 发送者可能又说了几句，已消费上下文也可能被裁掉。按数组下标记账会把裁剪
-   * 腾出来的位置算成「已经检过」，让新消息永远送不出去。
+   * 已送检过的最大序号；只有序号比它大的消息才重新入队。按序号记账，不按 entries 的
+   * 数组下标。
    */
   checkedSeq: number;
 }

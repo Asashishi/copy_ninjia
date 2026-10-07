@@ -1,11 +1,12 @@
 /**
- * 四条「谁能依赖谁」的门禁（scripts/conventions/moduleBoundaries.ts）。
- * 真实仓库当前全部合规，因此这里逐条造违规样本，确认它们能被拦下。
+ * 「谁能依赖谁」的门禁（scripts/conventions/moduleBoundaries.ts）。
+ * 真实仓库全部合规，这里逐条造违规样本，确认它们被拦下。
  */
 
 import { describe, expect, test } from "bun:test";
 import ts from "typescript";
 import {
+  collectConstsPurityProblems,
   collectEnvironmentAccessProblems,
   collectFullSuiteImportProblems,
   collectInfraLayeringProblems,
@@ -50,6 +51,25 @@ describe("环境变量读取边界", () => {
       "packages/libs/example.ts",
       "const value = options.env.HOME; const spawn = { env: {} };"
     ))).toEqual([]);
+  });
+});
+
+describe("packages/consts 纯度", () => {
+  test("运行期只允许同目录模块；纯类型引用、npm 包与 node: 内置模块不算", () => {
+    expect(collectConstsPurityProblems(params(
+      "packages/consts/aiChat/example.ts",
+      'import { A } from "../exhaustiveList";\nimport type { B } from "../../types/x";\n' +
+      'import { join } from "node:path";\nimport { FinishReason } from "@google/genai";'
+    ))).toEqual([]);
+  });
+
+  test("其余 packages/ 模块的运行期引用一律拦下", () => {
+    const problems = collectConstsPurityProblems(params(
+      "packages/consts/example.ts",
+      'import { a } from "../libs/x";\nexport { b } from "../infra/y";'
+    ));
+    expect(problems).toHaveLength(2);
+    expect(problems.every((problem: string): boolean => problem.includes("may only depend on other consts modules"))).toBeTrue();
   });
 });
 

@@ -63,7 +63,7 @@ export const deferredVerificationRecords: Map<string, DeferredVerificationRecord
  * 冷缓存楼中楼消息的在途关联频道确认。每个成员键只有一个可更新 owner，请求
  * settle、群停用、Worker adopt 或停止时清除；Worker 崩溃后不恢复，重新观察
  * 消息后再建。全局容量由 THREAD_COMMENT_CONFIRMATION_MAX 背压限制：满载时拒收
- * 新的确认请求，不淘汰在途项——被淘汰的那一项会让一名已确认参与讨论的成员被踢。
+ * 新的确认请求，不淘汰在途项。
  */
 export const threadCommentConfirmations: Map<string, ThreadCommentConfirmation> =
   new Map();

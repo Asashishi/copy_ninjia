@@ -1,14 +1,11 @@
 /**
  * Disk I/O 恢复握手里 scoped transport 与失败收口的各条错误路径。
  *
- * 这些分支只在「上一代 Worker 已经死了、新一代还在恢复握手中」这个窗口里到得了，
- * 生产上正是最难复现、也最不该猜的一段：镜像重放拿不到运势密钥、重放消息投不出去、
- * 新代际连 load 都收不下、终止旧实例本身又失败。走错任何一条的后果都是同一类——
- * 存储悄悄回到可写、或者反过来永久不可写，而两者都不会有第二处日志说明原因。
+ * 这些分支只在「上一代 Worker 已经死了、新一代还在恢复握手中」这个窗口里到得了：
+ * 镜像重放拿不到运势密钥、重放消息投不出去、新代际连 load 都收不下、终止旧实例本身又失败。
  *
- * 代际操纵靠 helpers/diskIOWorkerHarness.ts：`crashDiskIOWorker` 造出「正在恢复的
- * 代际」，`FakeDiskIOWorker.nextRejectedTypes` / `nextTerminateBehavior` 预置那个
- * 由宿主自己 new 出来、调用方碰不到的替身。
+ * 代际操纵靠 helpers/diskIOWorkerHarness.ts：`crashDiskIOWorker` 造出「正在恢复的代际」，
+ * `FakeDiskIOWorker.nextRejectedTypes` / `nextTerminateBehavior` 预置那个由宿主自己 new 出来、调用方碰不到的替身。
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -45,8 +42,7 @@ const luckDraw: LuckDrawDiskMessage = {
 /**
  * 只留本用例这一个恢复监听器，跑完原样放回。
  *
- * 不是追加而是整表替换：生产监听器也会在同一次握手里跑，混在一起就分不清
- * 「握手停在哪一步」是本用例造成的还是别人的。
+ * 整表替换而不是追加：生产监听器也会在同一次握手里跑，这里只保留本用例的监听器。
  */
 function withOnlyRespawnListener(listener: DiskIORespawnListener): () => void {
   const saved: typeof diskIORuntime.respawnListeners = [...diskIORuntime.respawnListeners];
@@ -71,10 +67,8 @@ interface RecoveryFixture {
 /**
  * 装好替身、跑完首次 load、进入可写稳态；返回第一代替身与清理钩子。
  *
- * 顺带把重启节流按下：`diskIORestartThrottle` 是**模块级**滑动窗口，只允许
- * WORKER_MAX_RESTARTS 次重建，而本文件每条用例都要现造一个「正在恢复的代际」。
- * 不按住它，跑到第六条就再也建不出新代际，失败原因还会指向一个跟本用例无关的
- * 配额（同 diskIOGiveUp.test.ts 头注说明的连坐）。放弃自愈那条路由那个文件独占。
+ * 顺带把重启节流按下：`diskIORestartThrottle` 是模块级滑动窗口，只允许 WORKER_MAX_RESTARTS 次重建，
+ * 而本文件每条用例都要现造一个「正在恢复的代际」。放弃自愈那条路由 diskIOGiveUp.test.ts 独占。
  */
 async function startDiskIO(options: { readonly onFatal?: boolean } = {}): Promise<RecoveryFixture> {
   const restoreWorker: () => void = installFakeDiskIOWorker();
@@ -109,8 +103,7 @@ describe("Disk I/O 恢复握手的 scoped transport", () => {
     let secretError: string = "";
     const restoreListeners: () => void = withOnlyRespawnListener(
       async (transport: DiskIORecoveryTransport): Promise<boolean> => {
-        // 重放刚开始，第二代就又崩了：此后这个 transport 指向的代际已经不是
-        // 当前代际，任何一次投递都必须当场失败，而不是写进一个没人会读的实例。
+        // 重放刚开始，第二代就又崩了：此后这个 transport 指向的代际已不是当前代际，任何一次投递都当场失败。
         crashDiskIOWorker(FakeWorker.instances[1]!, "died mid-replay");
         posted = transport.post(luckDraw);
         try {
@@ -137,18 +130,16 @@ describe("Disk I/O 恢复握手的 scoped transport", () => {
   });
 
   test("密钥已经回来、Worker 随即死掉：这次恢复必须作废，不能用旧代际的答案继续", async () => {
-    // 回执先落地、代际后翻转是真实竞态：Worker 的回复已经在 mailbox 里排着，
-    // 它自己却在下一拍崩了。拿这份已经到手的密钥继续把存储标成可写，等于让
-    // 一个不存在的代际替新代际做了握手。
+    // 回执先落地、代际后翻转：Worker 的回复已经在 mailbox 里排着，它自己在下一拍崩了；
+    // 这份已经到手的密钥不再用来把存储标成可写。
     const fixture: RecoveryFixture = await startDiskIO();
     let secretError: string = "";
     const restoreListeners: () => void = withOnlyRespawnListener(
       async (transport: DiskIORecoveryTransport): Promise<boolean> => {
         const second: FakeWorker = FakeWorker.instances[1]!;
         const pending: Promise<unknown> = transport.ensureLuckReceiptSecret("2026-07-19");
-        // 先成功结算这次请求（waiter 就此摘掉），再让代际翻转——崩溃时的
-        // rejectAllPendingDiskIORequests 已经找不到它，continuation 只能靠
-        // 自己那道代际检查发现问题。
+        // 先成功结算这次请求（waiter 就此摘掉），再让代际翻转：崩溃时的 rejectAllPendingDiskIORequests 找不到它，
+        // continuation 靠自己那道代际检查发现问题。
         emitDiskIOLuckSecretReply(second, { secret: luckReceiptSecret });
         crashDiskIOWorker(second, "died after replying");
         try {
@@ -216,7 +207,7 @@ describe("Disk I/O 恢复握手的 scoped transport", () => {
   });
 
   test("密钥正常回来时握手照常走完，存储恢复可写", async () => {
-    // 上面四条都是失败路径；这一条钉住成功那条路没有被它们连带改坏。
+    // 前面几条是失败路径；这一条覆盖成功路径。
     const fixture: RecoveryFixture = await startDiskIO();
     let received: unknown = null;
     const restoreListeners: () => void = withOnlyRespawnListener(
@@ -291,8 +282,7 @@ describe("Disk I/O 新代际握手与终止失败", () => {
   test("新代际连 load 请求都收不下：当场按致命失败收口，不留半初始化代际", async () => {
     const fixture: RecoveryFixture = await startDiskIO();
     try {
-      // 自愈是在 recoverDiskIOWorker 里同步 new Worker() 之后立刻投 load 的，
-      // 调用方拿不到那个实例，只能在构造前预置。
+      // 自愈在 recoverDiskIOWorker 里同步 new Worker() 之后立刻投 load，调用方拿不到那个实例，在构造前预置。
       FakeWorker.nextRejectedTypes = ["load"];
       const second: FakeWorker = crashDiskIOWorker(fixture.first);
 
@@ -305,8 +295,7 @@ describe("Disk I/O 新代际握手与终止失败", () => {
   });
 
   test("恢复失败时终止旧实例本身又失败：只记诊断，不改变已经收口的结论", async () => {
-    // terminate 失败不能反过来影响「存储不可写 + 已发致命信号」这个结论，
-    // 否则一次清理故障会把真正的故障掩盖掉。
+    // terminate 失败不影响「存储不可写 + 已发致命信号」这个结论。
     const fixture: RecoveryFixture = await startDiskIO();
     try {
       FakeWorker.nextTerminateBehavior = "throwSync";
@@ -453,8 +442,7 @@ describe("Disk I/O 诊断受控重建", () => {
   });
 
   test("受控重建等待期间 Worker 崩溃：回收标记归零，不挡住后续的重建", async () => {
-    // 标记留着的话，之后每一次日志失败都会在 beginDiagnosticWorkerRecycle 的
-    // 第一道闸被挡回去，受控重建从此再也发不起来。
+    // 回收标记归零，之后的日志失败仍能越过 beginDiagnosticWorkerRecycle 的第一道闸，再发起受控重建。
     const fixture: RecoveryFixture = await startDiskIO();
     try {
       await driveDiagnosticRecycle(fixture.first);

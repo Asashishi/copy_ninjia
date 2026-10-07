@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { aiRecordMessageFixture, aiReplyReferenceFixture } from "../helpers/aiMemoryFixtures";
-// 七个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
-// 必须在下面的 await import 之前登记。
+// 公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；必须在下面的 await import 之前登记。
 import {
   autoMessageChatState,
   generateAndSendReplyMock,
@@ -20,8 +19,7 @@ const botInfo = { id: 999999, username: "test_bot", first_name: "TestBot" };
 describe("AI 缓存发送者 username 传递", () => {
   beforeEach(() => {
     resetAutoMessageMocks();
-    // 本文件专测频道/自动转发的自发消息等待，因此把 needsBotOwnMessageWait 换成
-    // 生产语义（helper 的缺省是恒 false，供不关心这条分支的用例使用）。
+    // 本文件专测频道/自动转发的自发消息等待，needsBotOwnMessageWait 取生产语义（helper 的缺省是恒 false）。
     needsBotOwnMessageWaitMock.mockImplementation((message: any): boolean =>
       message.chat.type === "channel" ||
       (message.is_automatic_forward === true && message.forward_origin?.type === "channel")
@@ -137,7 +135,7 @@ describe("AI 缓存发送者 username 传递", () => {
   });
 
   test("论坛话题里的直接触发把话题 id 一路带进 trigger，其它话题/General 不受影响", async () => {
-    // 话题群里 AI 的主动发送全靠这个 id 落回原话题；漏掉它整轮都会掉进 General。
+    // 话题群里 AI 的主动发送靠这个 id 落回原话题。
     await handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
@@ -245,7 +243,7 @@ describe("AI 缓存发送者 username 传递", () => {
         releaseMarker = resolve;
       }));
     autoMessageChatState.isAIChatEnabled = true;
-    // 自动转发要等自发消息判定，因此这一条必须走异步分支。
+    // 自动转发要等自发消息判定，这一条走异步分支。
     const started: Promise<void> | undefined = handleIncomingMessageMiddleware({
       me: botInfo,
       msg: {
@@ -329,7 +327,6 @@ describe("AI 缓存发送者 username 传递", () => {
       replyTelegramBackpressured: undefined,
       stickerFallbackText: undefined,
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       directTriggerReason: undefined,
     });
   });

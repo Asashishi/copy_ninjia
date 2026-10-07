@@ -1,5 +1,5 @@
 /** 生图的官方宽高比集合。OAI 兼容侧按显式线协议映射：OpenAI 任意尺寸档逐档
- *  发送 size、标准档收敛到三种通用尺寸，xAI 改传最近 aspect_ratio，见
+ *  发送 size、标准档收敛到全系通用的标准尺寸，xAI 改传最近 aspect_ratio，见
  *  aiChat/openai/image.ts。 */
 import type { Base64PayloadDecodeFailure } from "./payload";
 
@@ -13,11 +13,8 @@ export interface GeneratedChatImage {
 }
 
 /**
- * 生图载荷不可用的具体原因，只用于错误日志定位（英文，见 AGENTS.md 的日志约定）。
- *
- * 分得这么细是因为这几种失败对上层完全等价——都是「没图」——而处置方式差得
- * 很远：格式不匹配要去钉 output_format，超限要去调 IMAGE_GENERATION_MAX_BYTES
- * 或画幅，脏 base64 才是网关问题。不点名就只能从「生图失败」四个字里猜。
+ * 生图载荷不可用的具体原因，只用于错误日志定位（英文，见 AGENTS.md 的日志约定）；
+ * 上层都按「没图」处理。
  */
 export type GeneratedImageDecodeFailure =
   | Base64PayloadDecodeFailure
@@ -27,13 +24,3 @@ export type GeneratedImageDecodeFailure =
 export type GeneratedImageDecodeResult =
   | { readonly ok: true; readonly image: GeneratedChatImage }
   | { readonly ok: false; readonly reason: GeneratedImageDecodeFailure };
-
-/** 某群当前生图资格及不可用时的剩余冷却。 */
-export type ImageGenerationAvailability =
-  | { allowed: true }
-  | { allowed: false; retryAfterMs: number };
-
-/** 生图原子占位结果；token 只供原占位者释放。 */
-export type ImageGenerationClaim =
-  | { allowed: true; token: symbol | null }
-  | { allowed: false; retryAfterMs: number };

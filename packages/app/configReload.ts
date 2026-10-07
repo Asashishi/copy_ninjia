@@ -5,7 +5,7 @@
  * 目录自身被改名、删除或整体替换时旧 watcher 收不到新目录的事件，因此按目录名的改名事件
  * 关闭旧 watcher 并重新监听，目录暂缺时有界退避重试、只记一次错误日志。任何事件只重新
  * 武装一次防抖 timer，到期后由最新值执行器串行跑一轮：config/reload.ts 读取并
- * 严格解析六份可热重载文件（assets.json 切换随机图片目录时先准备新目录）→ 同步替换
+ * 严格解析各可热重载文件（assets.json 切换随机图片目录时先准备新目录）→ 同步替换
  * 主线程 holder → 按 holder 重算广告检测与 AI 闲聊的可用性 → 把变化投给持有副本的
  * Worker（AI 闲聊：agent 对话段、mood、stickers；Anti-Raid：ad_detect 段与广告示例）
  * → cron.json 变化时对账定时任务。assets.json 只有主线程读取，不分发。一轮在途时
@@ -197,7 +197,7 @@ function installConfigWatcher(watcher: FSWatcher): void {
 
 /**
  * 开始监听 config/dynamic/。须在 AI 闲聊与 Anti-Raid 初始化之后调用，保证首轮分发时
- * Worker 已持有初始快照；启动总闸到监听建立之间的改动没有事件可等，因此
+ * Worker 已持有初始快照；启动总闸到监听建立之间的改动没有事件，
  * 建立后立即对账一轮。watcher 建立失败时记错误日志，本进程不热重载，已生效
  * 配置照常运行。重复调用不重复建立 watcher。
  */

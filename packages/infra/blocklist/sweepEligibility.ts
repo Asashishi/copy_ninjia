@@ -26,8 +26,7 @@ export function isManagedAdminChat(chatState: ChatState | undefined): boolean {
  * claim 槽位此刻空不空：上一轮已经扫完（`sweptAt`）、仍有在途任务
  * （`removalId`）、或被缺封禁权限闩住（`permissionBlocked`）时都不空。
  *
- * **不含退避时间判定**：调度器要在这一档之上再读 `nextRetryAt` 排 timer，
- * 那一步问的是「什么时候能扫」而不是「能不能扫」。
+ * 不含退避时间判定；调度器在此之上读 `nextRetryAt` 排 timer。
  */
 export function isSweepSlotFree(progress: BlocklistSweepRecord): boolean {
   return progress.sweptAt === null &&

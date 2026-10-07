@@ -29,16 +29,14 @@ import { stripLeadingAtSigns } from "../../../libs/text";
 /**
  * 发言人的显示名：first/last 拼接，都没有则给个占位。
  *
- * 这是转录热函数：每条转录行与回复标注都会调用，排队触发快照与媒体评价上下文
- * 也直接传入 BufferedMessage 取发送者显示名。直接分支拼接，不创建临时数组或
- * 过滤结果；全空白字段与两者皆空时回退到占位符。
+ * 每条转录行与回复标注都会调用；直接分支拼接，不创建临时数组；全空白字段与
+ * 两者皆空时回退到占位符。
  */
 export function displaySpeakerName(speaker: AiSpeakerSnapshot): string {
   const first: string = speaker.firstName;
   const last: string = speaker.lastName;
   if (first && last) return `${first} ${last}`.trim() || FALLBACK_SPEAKER_NAME;
-  // `|| ""` 让越过类型边界的 undefined 输入同样退化成占位符，
-  // 不会在 `.trim()` 上抛 TypeError。
+  // `|| ""` 使越过类型边界的 undefined 输入同样退化成占位符。
   return (first || last || "").trim() || FALLBACK_SPEAKER_NAME;
 }
 
@@ -58,7 +56,7 @@ function formatForwardTag(forwardedFrom: string | undefined): string {
   return forwardedFrom ? forwardTagTemplate(forwardedFrom) : "";
 }
 
-/** 回复关系以内嵌元数据呈现，模型无需靠相邻消息猜测被回复对象。 */
+/** 回复关系以内嵌元数据呈现。 */
 function formatReplyReference(reference: BufferedReplyReference, selfId: number | undefined): string {
   const quote: string = reference.quote ? replyQuoteInlineTemplate(reference.quote) : "";
   return replyTagTemplate({
@@ -73,9 +71,8 @@ function formatReplyReference(reference: BufferedReplyReference, selfId: number 
  * 把一条缓存消息格式化成**自包含**的一行：时间、消息号、完整身份、转发来源和
  * 被回复原文全都内嵌，不依赖任何外部名册。
  *
- * 冷历史压缩由 workers/aiChat/compaction.ts 的 summarizeBatch 调用。
- * 那条路每 COMPACT_BATCH_SIZE 条消息才跑一次、单独一次模型调用、没有名册可查，
- * 自包含正是它需要的；说明文案见 consts/aiChat/prompts/memory.ts 的
+ * 冷历史压缩由 workers/aiChat/compaction.ts 调用：每批 COMPACT_BATCH_SIZE 条消息
+ * 一次模型调用，没有名册可查；说明文案见 consts/aiChat/prompts/memory.ts 的
  * SUMMARY_SYSTEM_PROMPT。回复转录使用名册 + 编号的紧凑渲染，见
  * buildTieredVerbatimTranscript。
  */
@@ -91,13 +88,11 @@ interface TranscriptContext {
   /** 本机器人 ID；名册与窗口外引用都据此选择统一代称。 */
   readonly selfId: number;
   /** 发送者 id → 行内编号；机器人自己固定是 SELF_ROSTER_CODE。
-   *  单独一张只存编号的表，是因为它每渲染一行就要查一次（一次回复上百次），
-   *  而下面那张快照表只在拼名册时遍历一遍。 */
+   *  每渲染一行查一次；speakerSnapshots 只在拼名册时遍历一遍。 */
   readonly speakers: Map<number, string>;
-  /** 发送者 id → 窗口内**最后一次**出现时的身份快照，供名册取显示名与 username。
-   *  取最后一次而不是第一次：改过名的人应当以现在的称呼登记，且与回复任务里
-   *  唤起者声明的取法一致（见 workers/aiChat/promptContext.ts 的 resolveInvoker）。
-   *  Map 的插入顺序不因覆盖而改变，所以名册顺序仍是「按首次发言先后」。 */
+  /** 发送者 id → 窗口内最后一次出现时的身份快照，供名册取显示名与 username；
+   *  取法与回复任务里唤起者声明一致（见 workers/aiChat/promptContext.ts 的 resolveInvoker）。
+   *  Map 的插入顺序不因覆盖而改变，名册顺序为首次发言先后。 */
   readonly speakerSnapshots: Map<number, AiSpeakerSnapshot>;
   /** 转发来源原串 → 行内编号（f1、f2……）。 */
   readonly origins: Map<string, string>;
@@ -105,9 +100,8 @@ interface TranscriptContext {
   readonly numbered: Set<number>;
   /** 本段内确实存在的消息号；决定回复标注走指针还是退回内嵌快照。 */
   readonly present: Set<number>;
-  /** 入参里重复的 message_id 条数，由 `messages.length - present.size` 白拿——
-   *  `present` 本来就要按全部消息建一遍，判重不额外走一趟。>0 时调用方去重后
-   *  重建一次上下文（见 buildTieredVerbatimTranscript）。 */
+  /** 入参里重复的 message_id 条数，即 `messages.length - present.size`。
+   *  >0 时调用方去重后重建一次上下文（见 buildTieredVerbatimTranscript）。 */
   readonly duplicates: number;
 }
 
@@ -125,9 +119,8 @@ interface TranscriptRange {
 
 /**
  * 渲染结果包含转录文本、行内编号和同源的单跳引用渲染函数：
- * 转录之外还要点名某个人或某条消息的地方（唤起者声明、排队补跑的回复
- * 引用）因此能用与转录行同一套写法，模型不必在两种身份/消息号形态之间做连接，
- * 也不会被指向一个转录里根本不存在的编号。
+ * 转录之外点名某个人或某条消息的地方（唤起者声明、排队补跑的回复引用）
+ * 使用与转录行同一套写法。
  */
 export interface RenderedTranscript {
   readonly text: string;
@@ -138,8 +131,8 @@ export interface RenderedTranscript {
   /**
    * 已定切点：text 内的 UTF-16 下标，升序。窗口按消息序号每 TRANSCRIPT_SETTLED_SEGMENT_SIZE
    * 条一格，只取最新消息所在格之前的格边界；切点紧跟上一格最后一条消息的正文，落在其后的
-   * 换行、日期行与分层标题之前，因此分层边界移动前后同一格边界的下标不变。两次块轮换之间，
-   * 切点之前的文字在下一轮通常逐字重现；切分只影响供应商侧的区块边界，拼回去与 text 逐字相同。
+   * 换行、日期行与分层标题之前，因此分层边界移动前后同一格边界的下标不变。
+   * 切分拼回去与 text 逐字相同。
    */
   readonly settledOffsets: readonly number[];
 }
@@ -154,12 +147,8 @@ export interface TieredTranscriptOptions {
 /**
  * 扫一遍窗口，定下编号表与哪些行需要消息号。
  *
- * 一次回复只跑一遍（对比之下逐行渲染要跑一两百遍），因此这里按可读性写，
- * 不做 formatBufferedMessageLine 那种逐字节抠分配的处理。
- *
- * 转发来源只在**真的会被渲染出来**时才占编号：行自身的 forwardedFrom 一定会渲染，
- * 而被回复消息的 forwardedFrom 只在目标已滑出、退回内嵌快照时才出现——目标还在
- * 段内时那条转发标记根本不写，给它占个编号就等于在名册里挂一条没人引用的行。
+ * 转发来源只在会被渲染出来时才占编号：行自身的 forwardedFrom 一定渲染，
+ * 被回复消息的 forwardedFrom 只在目标已滑出、退回内嵌快照时渲染。
  */
 function buildTranscriptContext(
   messages: BufferedMessage[],
@@ -174,15 +163,13 @@ function buildTranscriptContext(
   const numbered: Set<number> = new Set<number>();
   if (present.has(triggerMessageId)) numbered.add(triggerMessageId);
 
-  // 编号单独计数，不用 speakers.size 推：机器人占的是 SELF_ROSTER_CODE 而不是
-  // 一个 uN，用 size 推会因为它在不在表里而错开一位。
+  // 编号单独计数：机器人占 SELF_ROSTER_CODE，不占 uN。
   let userCode: number = 0;
   for (const message of messages) {
     if (!speakers.has(message.id)) {
       speakers.set(message.id, message.id === selfId ? SELF_ROSTER_CODE : `u${(userCode += 1)}`);
     }
-    // 每条都覆盖，留下的是最后一次的身份；这里只存引用，身份串等到拼名册时
-    // 按人各拼一次，不是按消息拼一百多次。
+    // 每条都覆盖，留下最后一次的身份；只存引用，身份串在拼名册时按人拼一次。
     speakerSnapshots.set(message.id, message);
     if (message.forwardedFrom !== undefined && !origins.has(message.forwardedFrom)) {
       origins.set(message.forwardedFrom, `f${origins.size + 1}`);
@@ -199,7 +186,7 @@ function buildTranscriptContext(
 }
 
 /** 名册区块：编号到人、编号到转发来源各一段；没有转发时后一段整个不出现。
- *  两段都直接遍历 buildTranscriptContext 攒好的表，不再回头重扫消息数组。 */
+ *  两段都直接遍历 buildTranscriptContext 攒好的表。 */
 function buildRosterBlock(context: TranscriptContext): string {
   const speakerLines: string[] = [];
   for (const [id, snapshot] of context.speakerSnapshots) {
@@ -220,8 +207,7 @@ function buildRosterBlock(context: TranscriptContext): string {
 /**
  * 把 [start, end) 区间渲染成紧凑行，日期变化时插一条日期分隔行。
  *
- * 区间开头一定先发一条日期分隔行（`lastDate` 传空串即可），这样每个分层区块
- * 都自带日期，模型跳进任一区块都不必回头找。
+ * 区间开头先写一条日期分隔行，每个分层区块自带日期。
  *
  * 逐行 `+=` 累加，不创建行数组。生产会在拼进提示词、跨线程 clone 或发送网络时
  * 展平 rope；对应基准必须用 `charCodeAt(length - 1)` 强制物化，不能只读 `.length`，
@@ -243,17 +229,10 @@ function renderRange(
     if (index > start && index <= settledEnd && index % TRANSCRIPT_SETTLED_SEGMENT_SIZE === 0) {
       settledOffsets.push(offset + rendered.length);
     }
-    // `at` 由记录侧统一格式化成「YYYY/MM/DD HH:MM:SS」；万一没有空格就整串当
-    // 时间用、不发日期行，宁可少一条分隔也不要把整段转录切坏。
+    // `at` 由记录侧格式化成「YYYY/MM/DD HH:MM:SS」；没有空格时整串当时间用、不发日期行。
     const at: string = message.at;
     const separator: number = at.indexOf(" ");
-    // 同一天的行占绝大多数，先用定宽前缀比一次，把日期 slice 压到「真的换天」
-    // 那几次；`indexOf`/`startsWith` 都不分配，省下的是每行一个中间串。
-    //
-    // 先比长度再比前缀，不能只用 `startsWith`：日期段一旦不是定宽（记录侧改成
-    // 不补零就会变成 `2026/7/1`），`"2026/7/10 08:00:00".startsWith("2026/7/1")`
-    // 为真，整个 7/10 会被静默归到 7/1 的表头下面。长度比较是 O(1)、不分配，
-    // 却正好把这条路堵死。
+    // 同一天判定：日期段长度与前缀都相同；只在换天时 slice 出日期串。
     if (separator > 0 && (separator !== lastDate.length || !at.startsWith(lastDate))) {
       lastDate = at.slice(0, separator);
       if (!first) rendered += "\n";
@@ -274,19 +253,15 @@ function renderRange(
 }
 
 /**
- * 紧凑回复标注。目标还在本段里就只留指针，作者与原文让模型顺编号回溯。
- *
- * 目标已滑出窗口时段内没有行可跳，退回内嵌快照；此时作者若仍在名册里就用编号，
- * 否则写完整身份。精确引用片段无论哪条路都保留：它是用户手选的片段，转录里
- * 没有任何别的地方记着它。
+ * 紧凑回复标注。目标还在本段里就只留指针；目标已滑出窗口时退回内嵌快照，
+ * 作者仍在名册里则用编号，否则写完整身份。精确引用片段两条路都保留。
  */
 function formatCompactReplyTag(
   reference: BufferedReplyReference | undefined,
   context: TranscriptContext
 ): string {
   if (reference === undefined) return "";
-  // 引用片段的拼接留在「已滑出」那条分支里。放在这里的话，紧接着的快路径 return
-  // 用的是 replyQuoteTemplate、根本不读它；目标仍在窗口内时不得白拼内嵌引用串。
+  // 内嵌引用串只在「已滑出」分支里拼接；目标仍在窗口内时走指针分支。
   if (context.present.has(reference.messageId)) {
     return `${replyPointerTemplate(reference.messageId)}${reference.quote ? replyQuoteTemplate(reference.quote) : ""}`;
   }
@@ -304,27 +279,21 @@ function formatCompactReplyTag(
 
 /**
  * 把逐字缓存按判断优先级分层：最新 COMPACT_BATCH_SIZE 条始终单列为最热
- * 记忆；更早、但仍未滑出逐字缓存的上一块列为次要背景。这样模型不会把
- * 压缩摘要、上一块逐字镜像和正在发生的对话等权看待。
+ * 记忆；更早、但仍未滑出逐字缓存的上一块列为次要背景。
  *
  * 行本身走紧凑渲染：身份、转发来源各出一次名册，行内只写编号；日期只在变化时
  * 单起一行；消息号只给真的会被引用的行；被回复消息只留指针。名册排在全部逐字行
- * 之后：窗口里出现新发言人只改动区块末尾，两次块轮换之间逐字行对上一轮是纯追加，
- * 供应商的自动前缀缓存能一路命中到最新的变化点。只在区块边界命中缓存的供应商另用
+ * 之后：窗口里出现新发言人只改动区块末尾，两次块轮换之间逐字行相对上一轮是纯追加。
  * settledOffsets 把转录切成按消息序号对齐的多段，切分不改变 text。
- * 输出形状由 test/aiChat/ai/chatTranscript.test.ts 钉住。
  *
- * 本段只出数据和分层标注：行格式怎么读由 systemInstruction 里的
- * TRANSCRIPT_FORMAT_INSTRUCTION 交代（见 consts/aiChat/prompts/memory.ts）。
- * 那段说明恒定，拼在这里就会跟着每轮都变的转录一起落进缓存不到的那一半。
+ * 本段只出数据和分层标注；行格式的说明由 systemInstruction 里的
+ * TRANSCRIPT_FORMAT_INSTRUCTION 给出（见 consts/aiChat/prompts/memory.ts）。
  */
 export function buildTieredVerbatimTranscript(
   messages: BufferedMessage[],
   options: TieredTranscriptOptions
 ): RenderedTranscript {
-  // 判重不额外扫一遍：上下文本来就要按全部消息建 `present`，重复几条由
-  // 长度差白拿。真有重复才付去重与重建上下文的代价——那是重启撞上重投才有的
-  // 罕见情形，不该让每一轮渲染都为它多走一趟。
+  // 重复条数由 buildTranscriptContext 给出；有重复才去重并重建上下文。
   const scanned: TranscriptContext = buildTranscriptContext(messages, options);
   const deduped: BufferedMessage[] = scanned.duplicates === 0
     ? messages
@@ -332,9 +301,7 @@ export function buildTieredVerbatimTranscript(
   const context: TranscriptContext = scanned.duplicates === 0
     ? scanned
     : buildTranscriptContext(deduped, options);
-  // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐，不取 `length - COMPACT_BATCH_SIZE`
-  // 的精确值：后者每来一条消息就把边界前移一条，整段【最热记忆】相对上一轮
-  // 必然错位，自动前缀缓存从边界处就断掉。向上取整让【最热记忆】恒不超过
+  // 边界按 TIER_BOUNDARY_ALIGNMENT 向上对齐，【最热记忆】恒不超过
   // COMPACT_BATCH_SIZE 条，与 HOT_MEMORY_BLOCK_HEADER 标题里的条数一致。
   const overflow: number = deduped.length - COMPACT_BATCH_SIZE;
   const hotStart: number = overflow <= 0
@@ -379,13 +346,8 @@ export function buildTieredVerbatimTranscript(
 }
 
 /**
- * 同一个 message_id 完全可能有两份条目同时在热区（快照 hydrate 出来一份，
- * Telegram 又重投了同一条 update 再记一份，见 workers/aiChat/bufferedMessageIndex.ts 的
- * 注释），而紧凑转录拿 #N 当指针——两行同号，指针就指不准了。
- *
- * 保留最后一份：媒体描述之类的回填只会落在后写入的那份上。只在 duplicates>0
- * 时才由调用方走这条路——判重本身是 buildTranscriptContext 顺手算出来的，
- * 每轮渲染不为这个罕见情形多扫一遍数组。
+ * 同一个 message_id 的重复条目只保留最后一份（回填只落在后写入的那份上），使 #N 指针唯一。
+ * 仅在 duplicates > 0 时由调用方调用。
  */
 function dedupeByMessageId(messages: BufferedMessage[], duplicates: number): BufferedMessage[] {
   const kept: BufferedMessage[] = new Array<BufferedMessage>(messages.length - duplicates);

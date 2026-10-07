@@ -6,15 +6,14 @@
  * 一次请求经 aiChat/workerJob.ts 在 cache/main/aiChat.ts 的 voiceSynthesisRequests 登记一个等待者
  * 再投递 synthesizeVoice，等待上限为 VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS；超时与取消会再投一条
  * cancelVoiceSynthesis 让 Worker 中止在途合成。结算一律交回 VoiceSynthesisResult，不抛错。投递函数
- * 由 aiChat/workerBridge.ts 注入，本模块不反向导入 bridge。
+ * 由 aiChat/workerBridge.ts 注入，本模块不反向导入 bridge；voiceSynthesized 回执与 Worker 失效时的
+ * 整表失败结算也在 bridge 里直接对等待表执行。
  */
 
 import { agentTtsConfig } from "../config/agent";
 import { VOICE_SYNTHESIS_REQUEST_TIMEOUT_MS } from "../consts/aiChat/voiceMessage";
-import { AI_WORKER_JOB_UNAVAILABLE } from "../consts/aiChat/workerJob";
 import { voiceSynthesisRequests } from "../cache/main/aiChat";
-import { failAllWorkerRequests, settleWorkerRequest } from "../libs/workerRequestTable";
-import type { AiChatWorkerMessage, AiVoiceSynthesizedEvent } from "../types/aiChat/protocol";
+import type { AiChatWorkerMessage } from "../types/aiChat/protocol";
 import type { VoiceSynthesisResult } from "../types/aiChat/voiceMessage";
 import type { AiWorkerJobTransport } from "../types/aiChat/workerJob";
 import { requestAiWorkerJob } from "./workerJob";
@@ -45,14 +44,4 @@ export function requestVoiceSynthesis(
     start: (requestId: number): AiChatWorkerMessage => ({ type: "synthesizeVoice", requestId, text: request.text, tone: request.tone }),
     cancel: (requestId: number): AiChatWorkerMessage => ({ type: "cancelVoiceSynthesis", requestId }),
   });
-}
-
-/** voiceSynthesized 回执：按 requestId 结算；已超时、已取消或未知的回执直接丢弃。 */
-export function settleVoiceSynthesis(event: AiVoiceSynthesizedEvent): void {
-  settleWorkerRequest(voiceSynthesisRequests, event.requestId, event.result);
-}
-
-/** Worker 崩溃重建、放弃或终止：旧实例的回执不可能再到达，全部按不可用结算。 */
-export function failAllVoiceSynthesisWaiters(): void {
-  failAllWorkerRequests<VoiceSynthesisResult>(voiceSynthesisRequests, AI_WORKER_JOB_UNAVAILABLE);
 }

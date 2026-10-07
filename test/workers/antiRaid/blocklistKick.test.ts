@@ -32,8 +32,7 @@ mock.module("../../../packages/infra/logger", () => ({
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   clearChatStateField: (): boolean => false,
   disableChatStateSwitch: (): boolean => false,
-  // 入群守卫开着：本文件考察的是守卫开启时黑名单如何取代验证投递（关着时
-  // 的行为由 test/antiRaid/joinGuardSwitch.test.ts 覆盖）。
+  // 入群守卫开着；关着时的行为由 test/antiRaid/joinGuardSwitch.test.ts 覆盖。
   getChatState: () => ({ isInitEnabled: true, isFloodControlEnabled: true, isAntiRaidEnabled: true }),
   getChatStateCache: () => new Map(),
   getOrCreateChatState: () => ({}),
@@ -43,8 +42,7 @@ mock.module("../../../packages/infra/storage/stateStore", () => ({
 }));
 mock.module("../../../packages/infra/telegram/actions", () => ({
   answerCallbackQuery: async (): Promise<boolean> => true,
-  // 广告处置的群内播报用的，本文件不触发；整份模块被替换掉时缺了它们会在
-  // import 阶段就报 Export not found。
+  // 广告处置的群内播报用，本文件不触发；整份模块被替换时需要提供这些导出。
   sendMessage: async (): Promise<number | undefined> => undefined,
   deleteMessageAfter: (): void => {},
   deleteMessageWithOutcome: async (
@@ -62,7 +60,7 @@ mock.module("../../../packages/infra/telegram/client", () => ({
 }));
 mock.module("../../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => true,
-  // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
+  // ingress 的同步快路径读它；未确证时返回 undefined，退回上面那次现查。
   cachedBotAdminStatus: (): true => true,
   markBotAdminObserved: async (): Promise<void> => {},
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
@@ -162,8 +160,7 @@ beforeEach(() => {
   blockedUserIds.clear();
   pendingBlockedRemovals.clear();
   recentBlockedJoinCounts.clear();
-  // 群类型镜像按值去重、每个群一生只投一次：不清就变成「哪个用例先跑哪个能
-  // 看到那条投递」，随机顺序下必然翻车。
+  // 群类型镜像按值去重、每个群只投一次；每个用例前清空。
   chatIsSupergroupById.clear();
 });
 
@@ -181,7 +178,7 @@ describe("黑名单成员入群秒踢", () => {
       chatId: -1001,
       userIds: [42],
       probeMembership: false,
-      // 不投 join 就没人替这次入群记刷群计数，处置消息必须把时刻带上。
+      // 不投 join，处置消息带上入群时刻，由处置路径记刷群计数。
       joinedAt: expect.any(Number),
     });
     expect(diskPosts).toContainEqual({
@@ -192,7 +189,7 @@ describe("黑名单成员入群秒踢", () => {
       joinedAt: 1_000,
       day: "1970-01-01",
     });
-    // 未销账的批次要能被重投，编号是它的身份。
+    // 未销账的批次可被重投，编号是它的身份。
     expect(pendingBlockedRemovals.size).toBe(1);
     expect(joins()).toHaveLength(0);
     expect(diskPosts.at(-1)).toMatchObject({
@@ -202,10 +199,10 @@ describe("黑名单成员入群秒踢", () => {
       })]],
     });
     expect(deliveryOrder).toEqual([
-      // 群类型镜像排在最前：它是踢人方法分派的依据，必须先于任何可能触发踢人
-      // 的投递到达 Worker（见 antiRaid/chatKind.ts）。按值去重，每个群只投一次。
+      // 群类型镜像排在最前：它是踢人方法分派的依据，先于任何可能触发踢人的投递到达 Worker
+      // （见 antiRaid/chatKind.ts）；按值去重，每个群只投一次。
       "worker-chatKind",
-      // 入群事实进批次即受理，不再等落盘屏障；outbox 仍是 write-ahead 屏障。
+      // 入群事实进批次即受理，不等落盘屏障；outbox 仍是 write-ahead 屏障。
       "disk-joinLog",
       "disk-blocklistRemovals",
       "disk-flush",
@@ -279,8 +276,7 @@ describe("黑名单成员入群秒踢", () => {
 
     expect(removals()).toHaveLength(0);
     expect(pendingBlockedRemovals.size).toBe(0);
-    // 发现权威任务已取消后还要再 flush 一次空快照，不能只依赖 /block disable
-    // 排队但尚未确认的 cleanup。
+    // 发现权威任务已取消后再 flush 一次空快照，不依赖 /block disable 排队但尚未确认的 cleanup。
     expect(flushDiskIODomain).toHaveBeenCalledTimes(2);
     expect(diskPosts.at(-1)).toMatchObject({
       type: "blocklistRemovals",
@@ -296,8 +292,7 @@ describe("黑名单成员入群秒踢", () => {
   });
 
   test("new_chat_members 服务消息路径：黑名单的踢掉，同批其他人照常验证", async () => {
-    // 两条路径都要拦：群组隐藏入群消息时只有 chat_member 会到，而 chat_member
-    // 需要管理员权限才送达，缺哪一条都会漏。
+    // 两条路径都拦：群组隐藏入群消息时只有 chat_member 会到，chat_member 需要管理员权限才送达。
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     const claimed: boolean = await handleAntiRaidMessageIngress({
@@ -317,7 +312,7 @@ describe("黑名单成员入群秒踢", () => {
       chatId: -1001,
       userIds: [42],
       probeMembership: false,
-      // 这一路带得到入群公告；不投 join 就没人再管它，交给处置一并删。
+      // 这一路带得到入群公告，由处置一并删。
       announcementMessageId: 10,
     });
     expect(joins()).toHaveLength(1);
@@ -325,9 +320,8 @@ describe("黑名单成员入群秒踢", () => {
   });
 
   test("同一次入群被两条路径各认领一次时，只带一次 joinedAt", async () => {
-    // 处置这一路没有 joinCreatesNewRecord 那道去重闸（普通入群靠它）。两条都
-    // 带 joinedAt 就是 recordJoin 两次，反刷群阈值对黑名单账号实际减半，整群
-    // 被提前打进私密模式，普通成员的发言权跟着被收走。
+    // 处置这一路没有 joinCreatesNewRecord 那道去重闸（普通入群靠它）；
+    // 两条路径各认领一次时只有第一条带 joinedAt，recordJoin 只记一次。
     blockedUserIds.set(42, { isBlocked: true, blockedAt: "2026/07/26 00:00:00" });
 
     await handleChatMemberUpdate(joinUpdate(42));
@@ -340,8 +334,7 @@ describe("黑名单成员入群秒踢", () => {
 
     expect(removals()).toHaveLength(2);
     expect(removals()[0]).toMatchObject({ joinedAt: expect.any(Number) });
-    // 第二条仍要投（隐藏入群消息的群只有 chat_member 会到，缺哪条都会漏），
-    // 但不再重复记账；公告 id 照带，删公告本来就是幂等的。
+    // 第二条仍投（隐藏入群消息的群只有 chat_member 会到），但不再重复记账；公告 id 照带，删公告是幂等的。
     expect((removals()[1] as { joinedAt?: number }).joinedAt).toBeUndefined();
     expect(removals()[1]).toMatchObject({ announcementMessageId: 10 });
   });
@@ -364,8 +357,7 @@ describe("黑名单成员入群秒踢", () => {
 
     await handleChatMemberUpdate(joinUpdate(42, "administrator"));
 
-    // 群类型镜像是每个群一次的旁路，与这条 FIFO 约束无关（它的位置由上面那条
-    // deliveryOrder 用例单独钉住）；这里只看这两条的先后。
+    // 群类型镜像是每个群一次的旁路，与这条 FIFO 约束无关（位置由上面的 deliveryOrder 用例覆盖）；这里只看这两条的先后。
     expect(
       workerPosts
         .map((message) => message.type)
@@ -391,8 +383,7 @@ describe("黑名单频道消息入口", () => {
 
     expect(claimed).toBeTrue();
     expect(deletedMessages).toEqual([{ chatId: -1001, messageId: 16 }]);
-    // 群类型镜像与本条消息的处置无关，是每个群一次的旁路；这里断言的是「没有
-    // 任何入群守卫工作被投出去」。
+    // 群类型镜像是每个群一次的旁路，与本条消息的处置无关；这里断言没有任何入群守卫工作被投出去。
     expect(workerPosts.filter((message) => message.type !== "chatKind")).toBeEmpty();
   });
 });

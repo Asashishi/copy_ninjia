@@ -1,9 +1,8 @@
 /**
  * xai 语音协议：以 Bun 原生 fetch 调 xAI `POST <base_url>/tts`，把一句台词合成为 MP3。
  *
- * xAI TTS 的请求体与 OpenAI audio/speech 不兼容（`text`、`voice_id`、`language`、
- * `output_format`，没有模型名与风格指令），因此不经 OpenAI SDK，认证只用 api_key 的
- * Bearer 头。部署配置在 xai 协议下不接受 model 与 style（见 config/agentCapability.ts），
+ * 请求体字段为 `text`、`voice_id`、`language`、`output_format`，不经 OpenAI SDK，
+ * 认证只用 api_key 的 Bearer 头。部署配置在 xai 协议下不接受 model 与 style（见 config/agentCapability.ts），
  * 朗读语言要求（languageStyle）与本句语气（tone）没有对应字段，不发送。`output_format` 钉为
  * XAI_SPEECH_CODEC（MP3）、XAI_SPEECH_SAMPLE_RATE 与 XAI_SPEECH_BIT_RATE；响应体按 MP3_MIME_TYPE
  * 交回，由编码侧校验帧结构后原样发送。
@@ -15,7 +14,7 @@
  * XAI_SPEECH_ERROR_BODY_MAX_BYTES 有界读入错误日志。响应不带用量或费用，收到 2xx 时按
  * missing 记一次有界诊断。
  *
- * 失败返回 null 并记一行英文错误日志；调用方 signal 已中止时静默返回 null，绝不抛错。
+ * 失败返回 null 并记一行英文错误日志；调用方 signal 已中止时静默返回 null，不抛错。
  * 所属线程：AI 闲聊 Worker；本模块不持有缓存。
  */
 

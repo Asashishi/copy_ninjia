@@ -3,7 +3,7 @@
  * handleActiveResponse 非 active 分支与「在途但 signal 已中止」分支）、入队前已中止
  * 的 signal、429 重放前置条件同步抛错，以及生命周期 signal 已中止后 retry timer
  * 到点。只有 fetch 那条路（媒体下载、头像抓取）会拿到真正的 Response；没人接手的
- * 那一份 body 必须就地释放，否则连接与缓冲一直占着。
+ * 那一份 body 就地释放。
  */
 
 import { afterEach, expect, test } from "bun:test";
@@ -358,8 +358,7 @@ test("生命周期 signal 已中止后 retry timer 到点：lane 复位，不再
   expect(queryLane.head).not.toBeNull();
   expect(queryLane.retryTimer).not.toBeNull();
 
-  // 换代后中止当前生命周期 signal：排队任务挂在上一代 signal 上不会被连带取消，
-  // timer 到点时只能靠生命周期检查拦住恢复。
+  // 换代后中止当前生命周期 signal：排队任务挂在上一代 signal 上不被连带取消，timer 到点时由生命周期检查拦住恢复。
   telegramOutboundAbortController.current = new AbortController();
   telegramOutboundAbortController.current.abort();
 

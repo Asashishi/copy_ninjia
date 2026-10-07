@@ -17,16 +17,13 @@ import type { QueuedReplyTrigger, ReplyDeliveryWindow } from "../../../types/aiC
 
 /**
  * 每群当前的唯一回复 epoch。首次接纳该群的异步工作时分配；群失效时删除，Worker
- * 重建时随 isolate 清空，因此容量只随当前有回复工作的群数增长，不保留历史群。
+ * 重建时随 isolate 清空，容量等于当前有回复工作的群数，不保留历史群。
  *
- * epoch 在同一 isolate 内绝不复用：在途回复轮、限频提示、媒体描述与记忆压缩捕获
- * 旧值后，即使本群条目已回收并重新启用，也不可能重新匹配旧任务。
+ * epoch 在同一 isolate 内不复用：在途回复轮、限频提示、媒体描述与记忆压缩捕获的
+ * 旧值，不会匹配本群条目回收并重新启用后的新 epoch。
  */
 export const replyGenerations: Map<number, number> = new Map();
-/**
- * 回复 epoch 的单调分配器；Worker 重建时从零开始。测试隔离的 cache reset 刻意
- * 不回退它，防止 reset 前尚未回调的异步工作与 reset 后的新工作复用同一个 epoch。
- */
+/** 回复 epoch 的单调分配器；Worker 重建时从零开始，测试隔离的 cache reset 不回退它。 */
 const replyGenerationCounter: { current: number } = { current: 0 };
 /**
  * 每群最近一次限频提示时刻；周期 sweep 删除过期项，Worker 重建后清空。
@@ -36,15 +33,13 @@ export const rateLimitNoticeTimes: Map<number, number> = new Map();
 /**
  * 每群长窗口触发时刻队列；周期 sweep 删除过期项。
  *
- * 只在 isReplyRoundRateLimited 判定仍有配额时记账，因此单群长度恒不超过
- * RATE_LIMIT_LONG_MAX_TRIGGERS（150），环形缓冲按这个数定容（构造在
- * workers/aiChat/replyRound.ts），永远撑不满。
+ * 只在 isReplyRoundRateLimited 判定仍有配额时记账，单群长度不超过
+ * RATE_LIMIT_LONG_MAX_TRIGGERS，环形缓冲按该值定容（构造在 workers/aiChat/replyRound.ts）。
  */
 export const longTriggerTimes: Map<number, TimestampDeque> = new Map();
 /**
  * 每群正在处理的模型轮数（含直接轮），准入上限见 states/replyAdmission.ts 的
- * replyRoundConcurrencyLimit：有序并行 REPLY_ROUND_MAX_CONCURRENT 轮，直接轮在模型阶段另加 1 轮，高压时合计 1。
- * 启动时递增，模型阶段结束时递减，归零时删除；发送等待不计入，Worker 重建后清空。
+ * replyRoundConcurrencyLimit。启动时递增，模型阶段结束时递减，归零时删除；发送等待不计入，Worker 重建后清空。
  */
 export const activeReplyCounts: Map<number, number> = new Map();
 /**
@@ -68,7 +63,7 @@ export const replyDeliveryCounts: Map<number, number> = new Map();
  */
 export const replyDeliveryTotal: { current: number } = { current: 0 };
 /**
- * 每群尚未开始处理的直接触发 FIFO，上限为 REPLY_TRIGGER_QUEUE_MAX（15）。
+ * 每群尚未开始处理的直接触发 FIFO，上限为 REPLY_TRIGGER_QUEUE_MAX。
  * 准入时入队，轮次启动时出队，排空时删除；群失效、reset 或 Worker 重建时清空。
  * 主线程只给启用 AI 的受管群投递触发，受 STATE_MANAGED_CHAT_LIMIT 限制，
  * 因此全线程待处理项最多 STATE_MANAGED_CHAT_LIMIT × REPLY_TRIGGER_QUEUE_MAX。
@@ -77,9 +72,7 @@ export const pendingReplyTriggers: Map<number, LinkedQueue<QueuedReplyTrigger>> 
 /**
  * 已安排溢出提示的群 -> 那条被丢掉的触发所在的论坛话题（General/非论坛群为
  * undefined）；提示任务 settle 或群失效时删除。
- *
- * 记话题而不只是记群：提示是对某一条具体触发的回应，话题群里不带
- * message_thread_id 发出去就会掉进 General（见 libs/forumTopic.ts）。
+ * 提示发出时带上该话题的 message_thread_id（见 libs/forumTopic.ts）。
  * 容量与 pendingReplyTriggers 同阶（每群至多一项）。
  */
 export const pendingOverflowNotices: Map<number, number | undefined> = new Map();
@@ -87,7 +80,7 @@ export const pendingOverflowNotices: Map<number, number | undefined> = new Map()
  * 每个 generation 的取消控制器（generation 在本 isolate 内唯一，见 cachedReplyGeneration）。
  * 回复轮或限频提示开始时创建，invalidate 同步 abort 旧代；该代任务全部 settle 后删除。
  * 容量：同时存活的代际数，被 replyDeliveryTotal 的 REPLY_DELIVERY_MAX_TOTAL
- * 与每群并发闸共同兜住；不设淘汰——丢掉一个控制器等于让那一代永远取消不掉。
+ * 与每群并发闸共同兜住；不设淘汰。
  */
 export const replyAbortControllers: Map<number, AbortController> = new Map();
 /**

@@ -77,8 +77,7 @@ const mockRootExistedBeforeTests: boolean = existsSync(PERFORMANCE_MOCK_ROOT);
 
 afterAll((): void => {
   // removeMockPath 拒绝删除 mock 根本身，这里直接调 node:fs 的 rmdirSync（非递归）：
-  // 每条用例都在 finally 里撤掉自己的 run-* 子树，这层理应已空；若此时另有基准在写，
-  // 非空目录会让 rmdirSync 抛错而不是连锅端走对方的运行目录。
+  // 每条用例都在 finally 里撤掉自己的 run-* 子树，这层应已为空；另有基准在写时，非空目录让 rmdirSync 抛错，不删对方的运行目录。
   if (mockRootExistedBeforeTests || !existsSync(PERFORMANCE_MOCK_ROOT)) return;
   if (readdirSync(PERFORMANCE_MOCK_ROOT).length === 0) {
     rmdirSync(PERFORMANCE_MOCK_ROOT);
@@ -138,9 +137,8 @@ describe("mock 根的建立与清理", () => {
 });
 
 /**
- * 词法前缀判定挡不住软链接：`resolve()` 不读文件系统，运行目录下若有一段 `bridge`
- * 指向仓库外，字符串仍判定为「在 mock 根内」，而实际建目录、复制、删除会落到链接
- * 目标上。下面每条用自建的外部夹具当哨兵，断言越界操作被拒绝且外部字节未变。
+ * 词法前缀判定不读文件系统（`resolve()`）：运行目录下有一段 `bridge` 指向仓库外时，字符串仍判定为「在 mock 根内」。
+ * 下面每条用自建的外部夹具当哨兵，断言越界操作被拒绝且外部字节未变。
  */
 describe("mock 根的文件系统边界", () => {
   function withExternalFixture(

@@ -53,9 +53,7 @@ describe("入队时的送检文本整形", () => {
   });
 
   test("送检预算装不下时按序判定，没送审的条目不算判过", async () => {
-    // 一条广告后面跟一串灌水撑爆 AD_DETECT_BUNDLE_MAX_CHARS。水位只能推到这一拍
-    // 真正送检的最后一条：从最新一条往回取的话，最旧的那条广告会夹在水位下面被
-    // 记成判过再被 pruneConsumedContext 裁掉——模型从没读过它，也就永远判不出来。
+    // 一条广告后面跟一串灌水撑爆 AD_DETECT_BUNDLE_MAX_CHARS。水位只推到这一拍真正送检的最后一条，从最旧一条起按序取。
     const filler: string = "填".repeat(AD_DETECT_MESSAGE_MAX_CHARS);
     const fillerCount: number = Math.ceil(AD_DETECT_BUNDLE_MAX_CHARS / AD_DETECT_MESSAGE_MAX_CHARS) + 1;
     enqueueAdCandidate(candidate({ messageId: 1, text: "日入过千 加V xxx996" }), 1_000);
@@ -65,12 +63,12 @@ describe("入队时的送检文本整形", () => {
 
     await runAdDetectBatch(1_000);
     const bundle = pendingAdBundle(-1001, 7)!;
-    // 第一拍读到的是最旧那批（广告在其中），而不是被预算挤剩的尾巴。
+    // 第一拍读到的是最旧那批（广告在其中），不是被预算挤剩的尾巴。
     expect(classifiedTexts[0]).toContain("日入过千");
     expect(bundle.checkedSeq).toBeLessThan(fillerCount + 1);
     expect(bundle.entries.some((entry) => entry.seq > bundle.checkedSeq)).toBe(true);
 
-    // 剩下的未判条目在本批结算时已经重排，一条都不落。
+    // 剩下的未判条目在本批结算时重排。
     expect(adDetectQueue.size).toBe(1);
     await runAdDetectBatch(1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1);
     expect(bundle.checkedSeq).toBe(fillerCount + 1);
@@ -78,8 +76,7 @@ describe("入队时的送检文本整形", () => {
 
   test("引用与回复接进送检文本一起判定：广告主流形态是「编辑旧消息 + 回复/引用顶上来」，" +
     "广告正文永远不在新消息的 text 里", async () => {
-    // quote 与 replyTo 完全重合（引用的正是所回复消息的片段）时只接一遍，
-    // 重复接只是白烧送检预算。
+    // quote 与 replyTo 完全重合（引用的正是所回复消息的片段）时只接一遍。
     enqueueAdCandidate(candidate({
       messageId: 1,
       text: "这种广告真烦",
@@ -90,7 +87,7 @@ describe("入队时的送检文本整形", () => {
     const entry = pendingAdBundle(-1001, 7)!.entries[0]!;
     expect(entry.text).toBe("这种广告真烦 日入过千 加V xxx996");
     expect(entry.directText).toBe("这种广告真烦");
-    // 样本侧仍留一份没并进正文的原样：人回头查误判时要分得清哪段是他自己写的。
+    // 样本侧留一份没并进正文的原样。
     expect(entry.quote).toBe("日入过千 加V xxx996");
     expect(entry.replyTo).toBe("日入过千 加V xxx996");
 
@@ -107,11 +104,11 @@ describe("入队时的送检文本整形", () => {
 
     const entries = pendingAdBundle(-1001, 7)!.entries;
     expect(entries.map((entry): string => entry.text)).toEqual([`加我 ${replyTo}`, "微 信", "xxx996"]);
-    // 样本侧照旧每条都留一份原样：判定去重了，取证不能跟着丢。
+    // 样本侧每条都留一份原样。
     expect(entries.map((entry): string | undefined => entry.replyTo)).toEqual([replyTo, replyTo, replyTo]);
 
     await runAdDetectBatch(1_000);
-    // 三个碎片与那段引文一起进同一次判定，而不是被切成好几轮各判一个无害片段。
+    // 三个碎片与那段引文一起进同一次判定。
     expect(classifiedTexts).toEqual([`1. 加我 ${replyTo}\n2. 微 信\n3. xxx996`]);
   });
 
@@ -120,7 +117,7 @@ describe("入队时的送检文本整形", () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "看这个", sampleReplyTo: replyTo }), 1_000);
     await runAdDetectBatch(1_000);
 
-    // 第一条判过又出了去重窗口，pruneConsumedContext 会把它连引文一起裁掉。
+    // 第一条判过又出了去重窗口，pruneConsumedContext 把它连引文一起裁掉。
     const later: number = 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1;
     enqueueAdCandidate(candidate({ messageId: 2, text: "再看这个", sampleReplyTo: replyTo }), later);
 
@@ -141,7 +138,7 @@ describe("入队时的送检文本整形", () => {
   });
 
   test("上下文接在正文截断之后，几百字废话顶不掉引文", async () => {
-    // 先拼后截就是一条零成本绕过：填充文本把引文挤出 AD_DETECT_MESSAGE_MAX_CHARS。
+    // 上下文接在正文按 AD_DETECT_MESSAGE_MAX_CHARS 截断之后，填充文本顶不掉引文。
     enqueueAdCandidate(candidate({
       messageId: 1,
       text: "废".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
@@ -153,8 +150,7 @@ describe("入队时的送检文本整形", () => {
   });
 
   test("落地页 URL 有独立配额，填充文本顶不掉它", () => {
-    // 正文按 AD_DETECT_MESSAGE_MAX_CHARS 从头保留，URL 接在截断之后——共用额度
-    // 的话，七百字废话加一个「点这里」超链接就能让落地页永远到不了模型面前。
+    // 正文按 AD_DETECT_MESSAGE_MAX_CHARS 从头保留，URL 接在截断之后，不共用额度。
     enqueueAdCandidate(candidate({
       text: "填".repeat(AD_DETECT_MESSAGE_MAX_CHARS + 200),
       linkUrls: ["https://t.me/spamchannel"],
@@ -185,8 +181,7 @@ describe("入队时的送检文本整形", () => {
     const dropped: string[] = errorLogs.filter((line: string): boolean =>
       line.includes("dropped never-judged message text")
     );
-    // 丢的正文再也进不了分类器，这是本模块唯一一处「内容级」漏判，必须留痕；
-    // 但撑满之后每条新消息都会再挤掉一条，逐条记就是往 logs/ 里刷屏。
+    // 丢的正文不会进入分类器；每个发送者只记一次，之后挤掉的不再逐条记。
     expect(dropped).toHaveLength(1);
     expect(dropped[0]).toContain("sender 7");
     expect(pendingAdBundle(-1001, 7)!.pendingDeleteIds).toHaveLength(3);

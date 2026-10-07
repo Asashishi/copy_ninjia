@@ -116,8 +116,8 @@ afterEach(() => {
 
 describe("Telegram 媒体下载与视觉描述适配层", () => {
   test("成功描述写入按 file_unique_id 合并的 Promise 缓存", async () => {
-    const first: Promise<string | null> = describeMedia({ kind: "sticker", fileId: "file-a", fileUniqueId: "unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
-    const second: Promise<string | null> = describeMedia({ kind: "sticker", fileId: "file-b", fileUniqueId: "unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const first: Promise<string | null> = describeMedia({ kind: "sticker", fileId: "file-a", fileUniqueId: "unique-a", voiceMime: undefined });
+    const second: Promise<string | null> = describeMedia({ kind: "sticker", fileId: "file-b", fileUniqueId: "unique-a", voiceMime: undefined });
 
     expect(second).toBe(first);
     await expect(first).resolves.toBe("一只挥手的猫");
@@ -135,8 +135,8 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
   });
 
   test("描述入缓存前的 normalize：空输出为空串、多行压成单行，动图与图片各取自己的提示词与上限", async () => {
-    await describeMedia({ kind: "animation", fileId: "file-gif", fileUniqueId: "unique-gif", voiceMime: undefined, voiceDurationSeconds: 0 });
-    await describeMedia({ kind: "photo", fileId: "file-photo", fileUniqueId: "unique-photo", voiceMime: undefined, voiceDurationSeconds: 0 });
+    await describeMedia({ kind: "animation", fileId: "file-gif", fileUniqueId: "unique-gif", voiceMime: undefined });
+    await describeMedia({ kind: "photo", fileId: "file-photo", fileUniqueId: "unique-photo", voiceMime: undefined });
     const animation = describeVision.mock.calls[0]![0] as VisionRequest;
     const photo = describeVision.mock.calls[1]![0] as VisionRequest;
     expect(animation.prompt).toBe(ANIMATION_DESCRIPTION_PROMPT);
@@ -181,7 +181,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "shared-a",
       fileUniqueId: "shared-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       signal: firstController.signal,
     });
     const second: Promise<string | null> = describeMedia({
@@ -189,7 +188,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "shared-b",
       fileUniqueId: "shared-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       signal: secondController.signal,
     });
 
@@ -226,7 +224,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "lone-a",
       fileUniqueId: "lone-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       signal: controller.signal,
     });
     await started;
@@ -236,9 +233,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     await expect(only).resolves.toBeNull();
     // 只有引用计数归零才会中止底层请求。
     expect(requestSignal.current?.aborted).toBeTrue();
-    // 中止的同时摘掉条目：底层请求要到回卷完才把 pending 结算成 null，这段窗口里
-    // 另一个聊天带着存活的 signal 进来会命中它、挂到一个已中止的任务上，从此永远
-    // 拿到与自身取消无关的 null。
+    // 中止的同时摘掉条目：底层请求要到回卷完才把 pending 结算成 null，这段窗口里带着存活 signal 的另一个聊天不命中这个已中止的任务。
     expect(transientDescriptionCache.has("lone-unique")).toBe(false);
 
     const laterController: AbortController = new AbortController();
@@ -247,7 +242,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "lone-b",
       fileUniqueId: "lone-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       signal: laterController.signal,
     })).resolves.toBe("一只挥手的猫");
     expect(describeVision).toHaveBeenCalledTimes(2);
@@ -268,7 +262,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "late-ok",
       fileUniqueId: "late-ok-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       signal: controller.signal,
     })).resolves.toBeNull();
 
@@ -279,10 +272,10 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("失败结果不负缓存，同一媒体下次重发会重新尝试", async () => {
     describeVision.mockResolvedValueOnce({ ok: false, retryable: false });
-    await expect(describeMedia({ kind: "photo", fileId: "file", fileUniqueId: "retryable", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "file", fileUniqueId: "retryable", voiceMime: undefined })).resolves.toBeNull();
     expect(transientDescriptionCache.has("retryable")).toBe(false);
 
-    await expect(describeMedia({ kind: "photo", fileId: "file", fileUniqueId: "retryable", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBe("一只挥手的猫");
+    await expect(describeMedia({ kind: "photo", fileId: "file", fileUniqueId: "retryable", voiceMime: undefined })).resolves.toBe("一只挥手的猫");
     expect(downloadTelegramFileFromMain).toHaveBeenCalledTimes(2);
   });
 
@@ -293,7 +286,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "probe-file",
       fileUniqueId: "probe-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     })).resolves.toBeNull();
     expect(mediaInputSupportCache.current?.vision.support).toBe("unsupported");
 
@@ -302,14 +294,12 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "skipped-file",
       fileUniqueId: "skipped-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     });
     const skippedAgain: Promise<string | null> = describeMedia({
       kind: "photo",
       fileId: "another-skipped-file",
       fileUniqueId: "another-skipped-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     });
     expect(skippedAgain).toBe(skipped);
     await expect(skipped).resolves.toBeNull();
@@ -342,7 +332,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "probe-a",
       fileUniqueId: "probe-unique-a",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     });
     await probeStarted;
     const second: Promise<string | null> = describeMedia({
@@ -350,7 +339,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "probe-b",
       fileUniqueId: "probe-unique-b",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     });
     expect(downloadTelegramFileFromMain).toHaveBeenCalledTimes(1);
     expect(describeVision).toHaveBeenCalledTimes(1);
@@ -381,7 +369,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "unsupported-a",
       fileUniqueId: "unsupported-unique-a",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     });
     await probeStarted;
     const second: Promise<string | null> = describeMedia({
@@ -389,7 +376,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "unsupported-b",
       fileUniqueId: "unsupported-unique-b",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     });
     probeControl.resolve?.({ ok: false, retryable: false, mediaFailure: "unsupported" });
 
@@ -402,11 +388,11 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("冷启动探测因单份媒体自身失败时，等待者重新进闸：一次只放行一个新探测，其余继续等待", async () => {
     const firstProbe: ControlledVisionCall = controlNextVisionCall();
-    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-a", fileUniqueId: "single-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-a", fileUniqueId: "single-unique-a", voiceMime: undefined });
     await firstProbe.started;
     const secondProbe: ControlledVisionCall = controlNextVisionCall();
-    const second: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-b", fileUniqueId: "single-unique-b", voiceMime: undefined, voiceDurationSeconds: 0 });
-    const third: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-c", fileUniqueId: "single-unique-c", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const second: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-b", fileUniqueId: "single-unique-b", voiceMime: undefined });
+    const third: Promise<string | null> = describeMedia({ kind: "photo", fileId: "single-c", fileUniqueId: "single-unique-c", voiceMime: undefined });
 
     // HTTP 成功但这一份的正文不可用：不带 mediaFailure，不构成模态结论。
     firstProbe.resolve({ ok: false, retryable: true });
@@ -429,9 +415,9 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("冷启动探测带瞬时端点故障时，等待者共享失败并一起进入退避，不下载自己的媒体", async () => {
     const probe: ControlledVisionCall = controlNextVisionCall();
-    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "shared-fail-a", fileUniqueId: "shared-fail-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "shared-fail-a", fileUniqueId: "shared-fail-unique-a", voiceMime: undefined });
     await probe.started;
-    const second: Promise<string | null> = describeMedia({ kind: "photo", fileId: "shared-fail-b", fileUniqueId: "shared-fail-unique-b", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const second: Promise<string | null> = describeMedia({ kind: "photo", fileId: "shared-fail-b", fileUniqueId: "shared-fail-unique-b", voiceMime: undefined });
 
     probe.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
     await expect(first).resolves.toBeNull();
@@ -443,7 +429,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("等待者自己已取消时，探测的单份失败不会让它再发请求", async () => {
     const probe: ControlledVisionCall = controlNextVisionCall();
-    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "cancel-a", fileUniqueId: "cancel-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 });
+    const first: Promise<string | null> = describeMedia({ kind: "photo", fileId: "cancel-a", fileUniqueId: "cancel-unique-a", voiceMime: undefined });
     await probe.started;
     const controller: AbortController = new AbortController();
     const second: Promise<string | null> = describeMedia({
@@ -451,7 +437,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "cancel-b",
       fileUniqueId: "cancel-unique-b",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
       signal: controller.signal,
     });
     controller.abort();
@@ -474,7 +459,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
     for (let index: number = 0; index < 6; index++) {
       const call: ControlledVisionCall = controlNextVisionCall();
       album.push(call);
-      pending.push(describeMedia({ kind: "photo", fileId: `album-${index}`, fileUniqueId: `album-unique-${index}`, voiceMime: undefined, voiceDurationSeconds: 0 }));
+      pending.push(describeMedia({ kind: "photo", fileId: `album-${index}`, fileUniqueId: `album-unique-${index}`, voiceMime: undefined }));
       await call.started;
     }
     const before: number = Date.now();
@@ -501,12 +486,12 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       for (let index: number = 0; index < 4; index++) {
         const call: ControlledVisionCall = controlNextVisionCall();
         calls.push(call);
-        pending.push(describeMedia({ kind: "photo", fileId: `staggered-${index}`, fileUniqueId: `staggered-${index}`, voiceMime: undefined, voiceDurationSeconds: 0 }));
+        pending.push(describeMedia({ kind: "photo", fileId: `staggered-${index}`, fileUniqueId: `staggered-${index}`, voiceMime: undefined }));
         await call.started;
       }
       const firstFailureAt: number = 1_000_001;
       const firstProbeAt: number = firstFailureAt + MEDIA_PROBE_BACKOFF_BASE_MS;
-      // 后三次失败依次落在「前一次若计数会开出的那一档窗口」之后 1、2、3 秒。
+      // 后三次失败依次落在「前一次若计数会开出的那一档窗口」之后，偏移逐次递增。
       const failureTimes: readonly number[] = [
         firstFailureAt,
         firstProbeAt + 1_000,
@@ -521,7 +506,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
         expect(mediaInputSupportCache.current!.vision.nextProbeAt).toBe(firstProbeAt);
       }
       const next: ControlledVisionCall = controlNextVisionCall();
-      const result: Promise<string | null> = describeMedia({ kind: "photo", fileId: "next-probe", fileUniqueId: "next-probe", voiceMime: undefined, voiceDurationSeconds: 0 });
+      const result: Promise<string | null> = describeMedia({ kind: "photo", fileId: "next-probe", fileUniqueId: "next-probe", voiceMime: undefined });
       await next.started;
       next.resolve({ ok: false, retryable: false, mediaFailure: "transient" });
       await expect(result).resolves.toBeNull();
@@ -593,10 +578,9 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "misconfigured-file",
       fileUniqueId: "misconfigured-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     })).resolves.toBeNull();
     expect(mediaInputSupportCache.current?.vision.support).toBe("misconfigured");
-    // 诊断要指向 config/dynamic/agent.json 的 media 段，而不是含糊地说模型没这项能力。
+    // 诊断指向 config/dynamic/agent.json 的 media 段。
     const diagnostics: string[] = loggerError.mock.calls.map((call: unknown[]): string => String(call[0]));
     expect(diagnostics.filter((line: string): boolean => line.includes("$.agent.media"))).toHaveLength(1);
 
@@ -605,7 +589,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "after-misconfigured",
       fileUniqueId: "after-misconfigured-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     })).resolves.toBeNull();
     // 不再下载、不再请求，也不再刷第二条诊断。
     expect(downloadTelegramFileFromMain).toHaveBeenCalledTimes(1);
@@ -620,7 +603,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "transient-a",
       fileUniqueId: "transient-unique-a",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     })).resolves.toBeNull();
     const afterFirst = mediaInputSupportCache.current!.vision;
     // 瞬时故障不构成能力结论：结论仍是未知，只是压上了退避。
@@ -633,24 +615,23 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "transient-b",
       fileUniqueId: "transient-unique-b",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     })).resolves.toBeNull();
     // 退避期内既不下载也不请求，更不留下注定为 null 的缓存条目。
     expect(downloadTelegramFileFromMain).toHaveBeenCalledTimes(1);
     expect(describeVision).toHaveBeenCalledTimes(1);
     expect(transientDescriptionCache.has("transient-unique-b")).toBe(false);
 
-    // 第二次瞬时失败的退避必须比第一次长（指数增长）。
+    // 第二次瞬时失败的退避比第一次长（指数增长）。
     mediaInputSupportCache.current = { vision: { ...afterFirst, nextProbeAt: 0 }, voice: afterFirst };
     describeVision.mockResolvedValueOnce({ ok: false, retryable: false, mediaFailure: "transient" });
-    await describeMedia({ kind: "photo", fileId: "transient-c", fileUniqueId: "transient-unique-c", voiceMime: undefined, voiceDurationSeconds: 0 });
+    await describeMedia({ kind: "photo", fileId: "transient-c", fileUniqueId: "transient-unique-c", voiceMime: undefined });
     const afterSecond = mediaInputSupportCache.current!.vision;
     expect(afterSecond.transientFailures).toBe(2);
     expect(afterSecond.nextProbeAt - Date.now()).toBeGreaterThan(afterFirst.nextProbeAt - Date.now());
 
     // 退避到期后重新探测；一次成功即清空计数与退避。
     mediaInputSupportCache.current = { vision: { ...afterSecond, nextProbeAt: 0 }, voice: afterSecond };
-    await expect(describeMedia({ kind: "photo", fileId: "recovered", fileUniqueId: "recovered-unique", voiceMime: undefined, voiceDurationSeconds: 0 }))
+    await expect(describeMedia({ kind: "photo", fileId: "recovered", fileUniqueId: "recovered-unique", voiceMime: undefined }))
       .resolves.toBe("一只挥手的猫");
     expect(mediaInputSupportCache.current?.vision).toEqual({
       support: "supported",
@@ -665,7 +646,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       vision: {
         support: "unknown",
         transientFailures: 1,
-        // 任何一档退避都不可能排到一天之后：只可能是系统时钟往回拨了。
+        // nextProbeAt 设在一天之后：任何一档退避都排不到这么远，视作系统时钟往回拨。
         nextProbeAt: Date.now() + 24 * 60 * 60_000,
         configGeneration: 0,
       },
@@ -677,7 +658,6 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "rollback",
       fileUniqueId: "rollback-unique",
       voiceMime: undefined,
-      voiceDurationSeconds: 0,
     })).resolves.toBe("一只挥手的猫");
     expect(describeVision).toHaveBeenCalledTimes(1);
   });
@@ -685,9 +665,9 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
   test("单份坏媒体不推进退避，也不改变模态结论", async () => {
     // 下载失败与「HTTP 成功但正文为空」都是这一份自己的问题：不带 mediaFailure。
     downloadTelegramFileFromMain.mockRejectedValueOnce(new Error("getFile failed"));
-    await expect(describeMedia({ kind: "photo", fileId: "bad-a", fileUniqueId: "bad-unique-a", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "bad-a", fileUniqueId: "bad-unique-a", voiceMime: undefined })).resolves.toBeNull();
     describeVision.mockResolvedValueOnce({ ok: false, retryable: true });
-    await expect(describeMedia({ kind: "photo", fileId: "bad-b", fileUniqueId: "bad-unique-b", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "bad-b", fileUniqueId: "bad-unique-b", voiceMime: undefined })).resolves.toBeNull();
 
     expect(mediaInputSupportCache.current?.vision).toEqual({
       support: "unknown",
@@ -696,22 +676,22 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       configGeneration: 0,
     });
     // 没有退避，下一份媒体照常下载并请求。
-    await expect(describeMedia({ kind: "photo", fileId: "good", fileUniqueId: "good-unique", voiceMime: undefined, voiceDurationSeconds: 0 }))
+    await expect(describeMedia({ kind: "photo", fileId: "good", fileUniqueId: "good-unique", voiceMime: undefined }))
       .resolves.toBe("一只挥手的猫");
   });
 
   test("Telegram 缺 file_path、HTTP 非 2xx 和下载超限均在进入视觉 API 前停止", async () => {
     downloadTelegramFileFromMain.mockResolvedValueOnce({ status: "missingPath" });
-    await expect(describeMedia({ kind: "photo", fileId: "missing", fileUniqueId: "u1", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "missing", fileUniqueId: "u1", voiceMime: undefined })).resolves.toBeNull();
 
     downloadTelegramFileFromMain.mockResolvedValueOnce({ status: "httpError", httpStatus: 404 });
-    await expect(describeMedia({ kind: "photo", fileId: "http", fileUniqueId: "u2", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "http", fileUniqueId: "u2", voiceMime: undefined })).resolves.toBeNull();
 
     downloadTelegramFileFromMain.mockResolvedValueOnce({
       status: "tooLarge",
       observedBytes: MEDIA_MAX_DOWNLOAD_BYTES + 1,
     });
-    await expect(describeMedia({ kind: "photo", fileId: "large", fileUniqueId: "u3", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "large", fileUniqueId: "u3", voiceMime: undefined })).resolves.toBeNull();
 
     expect(prepareVisionImage).not.toHaveBeenCalled();
     expect(describeVision).not.toHaveBeenCalled();
@@ -721,7 +701,7 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
   test("Telegram 下载重定向失败时不读取响应、不转码也不请求视觉模型", async () => {
     downloadTelegramFileFromMain.mockRejectedValueOnce(new TypeError("fetch() encountered a redirect"));
 
-    await expect(describeMedia({ kind: "photo", fileId: "redirect", fileUniqueId: "redirect-u", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "redirect", fileUniqueId: "redirect-u", voiceMime: undefined })).resolves.toBeNull();
 
     expect(prepareVisionImage).not.toHaveBeenCalled();
     expect(describeVision).not.toHaveBeenCalled();
@@ -730,22 +710,22 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
 
   test("不支持的图片、转码后超限和空模型正文均安全降级", async () => {
     prepareVisionImage.mockResolvedValueOnce(null as never);
-    await expect(describeMedia({ kind: "animation", fileId: "bad-image", fileUniqueId: "u4", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "animation", fileId: "bad-image", fileUniqueId: "u4", voiceMime: undefined })).resolves.toBeNull();
 
     prepareVisionImage.mockResolvedValueOnce({
       bytes: new Uint8Array(MEDIA_MAX_DOWNLOAD_BYTES + 1),
       mime: "image/png" as const,
     });
-    await expect(describeMedia({ kind: "photo", fileId: "expanded", fileUniqueId: "u5", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "expanded", fileUniqueId: "u5", voiceMime: undefined })).resolves.toBeNull();
 
     describeVision.mockResolvedValueOnce({ ok: false, retryable: true });
-    await expect(describeMedia({ kind: "photo", fileId: "blank", fileUniqueId: "u6", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "blank", fileUniqueId: "u6", voiceMime: undefined })).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledTimes(2);
   });
 
   test("Telegram/下载异常不抛出，贴纸目录描述绕过临时缓存", async () => {
     downloadTelegramFileFromMain.mockRejectedValueOnce(new Error("getFile failed"));
-    await expect(describeMedia({ kind: "photo", fileId: "throw", fileUniqueId: "u7", voiceMime: undefined, voiceDurationSeconds: 0 })).resolves.toBeNull();
+    await expect(describeMedia({ kind: "photo", fileId: "throw", fileUniqueId: "u7", voiceMime: undefined })).resolves.toBeNull();
     expect(loggerError).toHaveBeenCalledWith("Error loading chat media (kind=photo):", expect.any(Error));
 
     await expect(describeMediaForStickerCatalog("catalog-file")).resolves.toEqual({ ok: true, text: "一只挥手的猫" });
@@ -755,20 +735,18 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
   });
 
   test("语音走转写那条实现，绝不进视觉转码与视觉 API", async () => {
-    // 这里的桩供应商只实现了 describeVision（等价于切到 OpenAI 的部署），因此
-    // 转写不可用、结果为 null；要断言的是**路由**：语音一次都不碰图片转码和
-    // 视觉接口，而不是它这次能不能识别出来。
+    // 桩供应商只实现了 describeVision（等价于切到 OpenAI 的部署），转写不可用、结果为 null；
+    // 这里断言路由：语音不碰图片转码和视觉接口。
     await expect(describeMedia({
       kind: "voice",
       fileId: "voice-file",
       fileUniqueId: "voice-unique",
       voiceMime: "audio/ogg",
-      voiceDurationSeconds: 9,
     })).resolves.toBeNull();
 
     expect(prepareVisionImage).not.toHaveBeenCalled();
     expect(describeVision).not.toHaveBeenCalled();
-    // 能力缺席时连下载都不该发生：先问能不能转写，再决定要不要拉字节。
+    // 能力缺席时不下载：先问能不能转写，再决定要不要拉字节。
     expect(downloadTelegramFileFromMain).not.toHaveBeenCalled();
     // 失败不负缓存，同一条语音下次重发会重新尝试（与视觉那条同一口径）。
     expect(transientDescriptionCache.has("voice-unique")).toBe(false);
@@ -780,18 +758,16 @@ describe("Telegram 媒体下载与视觉描述适配层", () => {
       fileId: "voice-a",
       fileUniqueId: "shared-unique",
       voiceMime: "audio/ogg",
-      voiceDurationSeconds: 9,
     });
     const second: Promise<string | null> = describeMedia({
       kind: "voice",
       fileId: "voice-b",
       fileUniqueId: "shared-unique",
       voiceMime: "audio/ogg",
-      voiceDurationSeconds: 9,
     });
 
-    // 同一份媒体只解析一次：两次调用拿到的是同一个 pending，而不是两条并行的
-    // 下载 + 模型请求（键空间不冲突，file_unique_id 本就是 Telegram 全局唯一）。
+    // 同一份媒体只解析一次：两次调用拿到的是同一个 pending，而不是两条并行的下载 + 模型请求
+    // （file_unique_id 在 Telegram 内全局唯一，键空间不冲突）。
     expect(second).toBe(first);
     await first;
   });

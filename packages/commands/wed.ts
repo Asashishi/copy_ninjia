@@ -21,9 +21,8 @@ import { confirmWedResult, removeWedResult, replaceWedResult, sendWedResult } fr
 /**
  * 取一份阶段预算，同时服从群 teardown、update 取消与 WED_OPERATION_TIMEOUT_MS。
  *
- * 抽取和投递各取一份：抽取用掉的时间不从投递的预算里扣，口径与 libs/abortSignal.ts
- * 的 signalWithTimeout 一致。单次交互的最坏总时长因此是两份预算，仍然有界；群
- * teardown 与停机取消照旧即时切断两个阶段。
+ * 抽取和投递各取一份，互不扣减（口径与 libs/abortSignal.ts 的 signalWithTimeout 一致）；
+ * 群 teardown 与停机取消即时切断两个阶段。
  */
 function operationSignal(session: WedSession): AbortSignal {
   return combineWithUpdateAbortSignal(
@@ -34,8 +33,8 @@ function operationSignal(session: WedSession): AbortSignal {
 /**
  * 出站失败或阶段中止后的群内回执，undefined 表示保持静默。
  *
- * 预算耗尽是普通业务失败，照常回执；群 teardown 与停机取消保持静默——群要没了、
- * 进程要停了，此时再发消息是错的。两者由 libs/abortSignal.ts 的 isTimeoutAbort 区分。
+ * 预算耗尽照常回执；群 teardown 与停机取消保持静默。两者由 libs/abortSignal.ts 的
+ * isTimeoutAbort 区分。
  */
 function failureNotice(signal: AbortSignal): string | undefined {
   return signal.aborted && !isTimeoutAbort(signal) ? undefined : chatAtmosphere().WED_TEXTS.failed;
@@ -60,11 +59,9 @@ async function sendWedNotice(
  * 群关闭先同步关闸，再删除状态机拥有的结果（机器人已离群时不删，见 teardownWedChat）；
  * 重启不恢复这些会话。
  *
- * 交互缓存与长期成员集合是两份状态，收场也不同：前者只在本进程有过交互、且没被
- * 先前的 teardown 收掉时才存在，后者只要这个群发过言就一直在。因此**成员集合的
- * 删除不挂在 `chat !== undefined` 上**——没有交互的群同样要把奖池删干净。只有被撤
- * 管理员那一路只收交互、不动成员集合：权限随时可能加回来，那时奖池必须原样还在
- * （见 libs/chatTeardown.ts 的 purgesChatData）。
+ * 交互缓存（wedChats）与长期成员集合是两份状态：成员集合的删除不依赖 wedChats 里有
+ * 该群条目。只有 purgesChatData(reason) 为真时才删成员集合（见 libs/chatTeardown.ts），
+ * `lostAuthority` 只收交互、保留成员集合。
  */
 export async function teardownWedInChat(
   chatId: number,
@@ -78,7 +75,11 @@ export async function teardownWedInChat(
   if (purgesChatData(reason)) await purgeWedMembers(chatId);
 }
 
-/** 每位用户在群里保留一张结果；重复命令重新抽取并回复新命令。 */
+/**
+ * 每位用户在群里保留一张可操作的结果；重复命令重新抽取并回复新命令。
+ * 新结果送达后才放弃并删除旧结果；送达失败时旧结果与原会话原样保留。旧结果删除失败
+ * （已按统一 Telegram 错误日志记录）时那张图留在群里，按钮因会话已换成新结果而只回执过期。
+ */
 export async function handleWedCommand(ctx: CommandContext<Context>): Promise<void> {
   const actor: User | undefined = ctx.from;
   if ((ctx.chat.type !== "group" && ctx.chat.type !== "supergroup") ||
@@ -111,7 +112,6 @@ export async function handleWedCommand(ctx: CommandContext<Context>): Promise<vo
     busy: true,
   };
   chat.sessions.set(session.actor.id, session);
-  let replacedPrevious: boolean = previous === undefined;
   try {
     const drawSignal: AbortSignal = operationSignal(session);
     const candidate: WedCandidate | undefined = await drawWedCandidate(session, chat, drawSignal);
@@ -120,67 +120,58 @@ export async function handleWedCommand(ctx: CommandContext<Context>): Promise<vo
       await sendWedNotice(session, drawMissNotice(drawSignal), ctx.msgId);
       return;
     }
-    // 投递预算必须在删除上一张结果**之前**判定：此刻已被取消就原样留着旧结果。
     const deliverySignal: AbortSignal = operationSignal(session);
     if (deliverySignal.aborted) {
       await sendWedNotice(session, failureNotice(deliverySignal), ctx.msgId);
       return;
     }
-    if (previous !== undefined) {
-      if (!await removeWedResult(previous)) {
-        await sendWedNotice(session, failureNotice(deliverySignal), ctx.msgId);
-        return;
-      }
-      previous.controller.abort();
-      replacedPrevious = true;
-    }
     if (!await sendWedResult({ session, candidate, replyToMessageId: ctx.msgId, signal: deliverySignal })) {
       await sendWedNotice(session, failureNotice(deliverySignal), ctx.msgId);
+      return;
+    }
+    // 群 teardown 先于迟到的送达时，新旧结果都交给 finally 按是否离群清理。
+    if (previous !== undefined && !session.controller.signal.aborted) {
+      previous.controller.abort();
+      await removeWedResult(previous);
     }
   } finally {
     session.busy = false;
     if (session.controller.signal.aborted) {
-      await removeWedResult(session);
-      if (previous !== undefined && !chat.departed) await removeWedResult(previous);
+      // 机器人已离群时新旧结果都删不掉，不发删除请求。
+      if (!chat.departed) {
+        await removeWedResult(session);
+        if (previous !== undefined) await removeWedResult(previous);
+      }
     } else if (session.messageId === undefined) {
-      if (previous !== undefined && !replacedPrevious) chat.sessions.set(session.actor.id, previous);
+      // 新结果没送达：旧结果还没被放弃，换回原会话。
+      if (previous !== undefined) chat.sessions.set(session.actor.id, previous);
       else chat.sessions.delete(session.actor.id);
     }
   }
 }
 
-/** 认领 /wed 回调，校验群、消息、发起人和当前目标；耗时操作前先应答按钮。 */
-export async function handleWedCallback(ctx: Context): Promise<boolean> {
-  const query: CallbackQuery | undefined = ctx.callbackQuery;
-  if (!query?.data?.startsWith(WED_CALLBACK_PREFIX)) return false;
-  const parts: string[] = query.data.slice(WED_CALLBACK_PREFIX.length).split(":");
-  // 与命令参数共用同一道严格十进制判定：裸 `Number()` 会放过 `"1e3"`、`" 12"`、
-  // `"12.0"` 这些本 bot 从不生成的写法（见 libs/telegramId.ts）。
-  const actorId: number | undefined = parseUserIdArgument(parts[0] ?? "");
-  const targetId: number | undefined = parseUserIdArgument(parts[1] ?? "");
-  const action: string | undefined = parts[2];
-  const message: CallbackQuery["message"] = query.message;
-  const chat: WedChat | undefined = message === undefined ? undefined : wedChats.get(message.chat.id);
-  const session: WedSession | undefined = actorId === undefined ? undefined : chat?.sessions.get(actorId);
-  const rejected: string | undefined = parts.length !== 3 || actorId === undefined || targetId === undefined ||
-    (action !== "remove" && action !== "marry" && action !== "change") ||
-    message === undefined || message.date === 0 || session?.messageId !== message.message_id
-    ? chatAtmosphere().WED_TEXTS.expired : query.from.id !== session.actor.id ? chatAtmosphere().WED_TEXTS.ownerOnly
-    : session.targetId !== targetId ? chatAtmosphere().WED_TEXTS.updated
-    : session.busy ? chatAtmosphere().WED_TEXTS.busy : undefined;
-  if (rejected !== undefined || session === undefined || chat === undefined) {
-    await answerCallbackQuery({ callbackQueryId: query.id, text: rejected ?? chatAtmosphere().WED_TEXTS.expired });
-    return true;
-  }
-  session.busy = true;
+/** 按钮动作名；回调数据里的其它取值一律按过期处理。 */
+type WedButtonAction = "remove" | "marry" | "change";
+
+function parseWedButtonAction(value: string | undefined): WedButtonAction | undefined {
+  return value === "remove" || value === "marry" || value === "change" ? value : undefined;
+}
+
+/** 按钮动作所需的群、会话与已校验的动作名。 */
+interface WedCallbackAction {
+  readonly chat: WedChat;
+  readonly session: WedSession;
+  readonly action: WedButtonAction;
+}
+
+/** 执行一次按钮动作；会话已置忙，结束时释放，期间被取消则删除结果。 */
+async function runWedCallbackAction({ chat, session, action }: WedCallbackAction): Promise<void> {
   try {
-    // 第一份预算覆盖按钮应答与本动作的第一步：移除、确认或抽取。
+    // 第一份预算覆盖本动作的第一步：移除、确认或抽取。
     const signal: AbortSignal = operationSignal(session);
-    await answerCallbackQuery({ callbackQueryId: query.id,
-      text: action === "marry" && session.confirmed ? chatAtmosphere().WED_TEXTS.confirmed : undefined });
     if (signal.aborted) {
       await sendWedNotice(session, failureNotice(signal), session.messageId);
-      return true;
+      return;
     }
     let succeeded: boolean;
     // 更换要先抽取再编辑，编辑另取一份预算；其余动作只有一步，沿用本阶段预算。
@@ -192,14 +183,14 @@ export async function handleWedCallback(ctx: Context): Promise<boolean> {
         session.controller.abort();
       }
     } else if (action === "marry") {
-      if (session.confirmed) return true;
+      if (session.confirmed) return;
       succeeded = await confirmWedResult(session, signal);
     } else {
       const candidate: WedCandidate | undefined = await drawWedCandidate(session, chat, signal);
-      if (session.controller.signal.aborted) return true;
+      if (session.controller.signal.aborted) return;
       if (candidate === undefined) {
         await sendWedNotice(session, drawMissNotice(signal), session.messageId);
-        return true;
+        return;
       }
       deliverySignal = operationSignal(session);
       succeeded = await replaceWedResult(session, candidate, deliverySignal);
@@ -208,6 +199,42 @@ export async function handleWedCallback(ctx: Context): Promise<boolean> {
   } finally {
     session.busy = false;
     if (session.controller.signal.aborted) await removeWedResult(session);
+  }
+}
+
+/**
+ * 认领 /wed 回调，校验群、消息、发起人和当前目标。按钮应答先于动作发出、与动作同时进行，
+ * 两者都结算后才结束本次交互；任一方抛出（update 取消）时原样上抛。
+ */
+export async function handleWedCallback(ctx: Context): Promise<boolean> {
+  const query: CallbackQuery | undefined = ctx.callbackQuery;
+  if (!query?.data?.startsWith(WED_CALLBACK_PREFIX)) return false;
+  const parts: string[] = query.data.slice(WED_CALLBACK_PREFIX.length).split(":");
+  // 与命令参数共用同一道严格十进制判定（见 libs/telegramId.ts 的 parseUserIdArgument）。
+  const actorId: number | undefined = parseUserIdArgument(parts[0] ?? "");
+  const targetId: number | undefined = parseUserIdArgument(parts[1] ?? "");
+  const action: WedButtonAction | undefined = parseWedButtonAction(parts[2]);
+  const message: CallbackQuery["message"] = query.message;
+  const chat: WedChat | undefined = message === undefined ? undefined : wedChats.get(message.chat.id);
+  const session: WedSession | undefined = actorId === undefined ? undefined : chat?.sessions.get(actorId);
+  const rejected: string | undefined = parts.length !== 3 || actorId === undefined || targetId === undefined ||
+    action === undefined ||
+    message === undefined || message.date === 0 || session?.messageId !== message.message_id
+    ? chatAtmosphere().WED_TEXTS.expired : query.from.id !== session.actor.id ? chatAtmosphere().WED_TEXTS.ownerOnly
+    : session.targetId !== targetId ? chatAtmosphere().WED_TEXTS.updated
+    : session.busy ? chatAtmosphere().WED_TEXTS.busy : undefined;
+  if (rejected !== undefined || session === undefined || chat === undefined || action === undefined) {
+    await answerCallbackQuery({ callbackQueryId: query.id, text: rejected ?? chatAtmosphere().WED_TEXTS.expired });
+    return true;
+  }
+  session.busy = true;
+  const settlements: PromiseSettledResult<void>[] = await Promise.allSettled([
+    answerCallbackQuery({ callbackQueryId: query.id,
+      text: action === "marry" && session.confirmed ? chatAtmosphere().WED_TEXTS.confirmed : undefined }),
+    runWedCallbackAction({ chat, session, action }),
+  ]);
+  for (const settlement of settlements) {
+    if (settlement.status === "rejected") throw settlement.reason;
   }
   return true;
 }

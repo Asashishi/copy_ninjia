@@ -24,10 +24,9 @@ interface ModuleEdges {
 /**
  * 一次约定检查内共用的模块图读取器。
  *
- * 四条线程的闭包高度重叠，而「这个文件依赖谁」只取决于文件本身，因此同一个
- * 文件在整次检查里只解析一次，结果按路径记在读取器自己的表里。缓存的是抽出来的
- * **说明符清单**（两个字符串数组），不是 SourceFile——AST 占内存最多，逐文件用完
- * 即弃。
+ * 同一个文件在整次检查里只解析一次，结果按路径记在读取器自己的表里；记下的是
+ * 抽出来的说明符清单（内部与外部说明符数组），不是 SourceFile，AST 逐文件
+ * 用完即弃。
  *
  * 读取器随一次检查生死；调用方各自 `createModuleGraphReader()`，不共享全局状态。
  */
@@ -35,8 +34,7 @@ export interface ModuleGraphReader {
   /**
    * 从线程入口构建同线程模块闭包，并保留到每个模块的最短引入路径。
    *
-   * 刻意不跟 `new Worker(new URL(...))`：那正是线程边界，跟过去会把四条线程的
-   * 模块图糊成一张。
+   * 不跟随 `new Worker(new URL(...))`，它是线程边界。
    */
   threadModuleClosure(entry: string): Promise<Map<string, string[]>>;
   /** 本文件会在运行期加载的 npm 包；类型专用 import 不进入结果。 */

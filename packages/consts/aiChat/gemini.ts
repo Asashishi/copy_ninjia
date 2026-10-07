@@ -6,26 +6,25 @@
  * **模型名不在这里**：provider=google 的能力从 config/dynamic/agent.json 各自读取 model
  * 与可选 base_url，代码不持有任何模型默认值（见 config/agent.ts）。
  *
- * 与供应商无关的预算（工具轮数、动作上限）留在 consts/aiChat/tools.ts 与各领域 consts
- * 里——换供应商时那些数不该跟着动；采样温度与输出 token 上限属于供应商能力，各家各自定义。
+ * 与供应商无关的预算（工具轮数、动作上限）在 consts/aiChat/tools.ts 与各领域 consts
+ * 里；采样温度与输出 token 上限属于供应商能力，各家各自定义。
  * 所属模块：packages/aiChat/gemini/。
  */
 
 import { HarmBlockThreshold, HarmCategory } from "@google/genai";
-import type { SafetySetting, ToolConfig } from "@google/genai";
+import type { SafetySetting } from "@google/genai";
 import type { AgentCapability } from "../../types/config";
 
-/** 生图请求固定的分辨率档位；该模型只支持这一档，不做成可变参数。 */
+/** 生图请求固定的分辨率档位。 */
 export const GEMINI_IMAGE_SIZE: string = "1K";
 
 /**
- * 闲聊回复生成温度，仅 Gemini 使用。采样温度是供应商特有能力，不放进跨供应商
- * 共享的 consts：OpenAI 侧 GPT-5 系推理模型只接受默认温度，不发送该参数。
+ * 闲聊回复生成温度，仅 Gemini 使用；OpenAI 侧不发送温度参数
+ * （见 consts/aiChat/openai.ts 的模块头注）。
  */
 export const GEMINI_REPLY_TEMPERATURE: number = 1.0;
-/** 本轮已观测到服务端搜索后，后续工具轮改用的温度，用于降低采样随机性、贴合
- *  搜索结果。搜索与首次成文发生在同一次请求里，那一轮仍按
- *  GEMINI_REPLY_TEMPERATURE 生成。 */
+/** 本轮已观测到服务端搜索后，后续工具轮改用的温度；搜索与首次成文发生在
+ *  同一次请求里，那一轮仍按 GEMINI_REPLY_TEMPERATURE 生成。 */
 export const GEMINI_GROUNDED_REPLY_TEMPERATURE: number = 0.7;
 /** 冷消息压缩与贴纸整包简介共用的总结温度。 */
 export const GEMINI_SUMMARY_TEMPERATURE: number = 0.5;
@@ -42,8 +41,7 @@ export const GEMINI_STICKER_PACK_SUMMARY_MAX_TOKENS: number = 4_096;
 /** 单次媒体描述请求的输出 token 上限。 */
 export const GEMINI_MEDIA_DESCRIPTION_MAX_TOKENS: number = 8_192;
 /**
- * 单次语音转写请求的输出 token 上限，高于媒体描述档：转写需逐字还原语音全文，
- * 加上思考消耗后体量明显更大。
+ * 单次语音转写请求的输出 token 上限，高于媒体描述档。
  */
 export const GEMINI_VOICE_TRANSCRIPTION_MAX_TOKENS: number = 16_384;
 /** text 能力结构化 JSON 生成（aiChat/gemini/text.ts 的 generateGeminiJson）的输出 token 上限（含思考 token）。 */
@@ -75,8 +73,8 @@ export const GEMINI_SPEECH_TEMPERATURE: number = 1;
 /**
  * 按能力取 SDK 每次尝试的超时上限，requestGeminiResult 同时以它作整次调用的 deadline。
  * media（视觉描述与语音转写）宽一档：服务端需先把整份图片或整段音频解码进上下文才开始出字；
- * 视觉与语音共用 config/dynamic/agent.json 的 `agent.media`，是同一个多模态模型的两种输入模态，
- * 因此共用同一档。web_search 由交互式检索与 cron 摘要共用。语音合成由 aiChat/gemini/speech.ts
+ * 视觉与语音共用 config/dynamic/agent.json 的 `agent.media`，
+ * 共用同一档。web_search 由交互式检索与 cron 摘要共用。语音合成由 aiChat/gemini/speech.ts
  * 在每次调用上另行覆盖（GEMINI_SPEECH_REQUEST_TIMEOUT_MS）。所属模块：aiChat/gemini/client.ts。
  */
 export const GEMINI_REQUEST_TIMEOUTS_MS: Readonly<Record<AgentCapability, number>> = {
@@ -88,18 +86,18 @@ export const GEMINI_REQUEST_TIMEOUTS_MS: Readonly<Record<AgentCapability, number
   web_search: 180_000,
 };
 /**
- * Gemini SDK 对 408/429/5xx 的总尝试次数（首次加最多五次重试）；显式传入才能
+ * Gemini SDK 对 408/429/5xx 的总尝试次数（含首次）；显式传入才能
  * 启用 SDK 的 retryOptions，所有调用方不得再重试这类请求失败。
  */
 export const GEMINI_REQUEST_RETRY_ATTEMPTS: number = 6;
 
 /**
  * 所有 Gemini 请求统一携带的内容过滤设置；应用不按可调概率等级主动拒绝，
- * 仍受 API 不可关闭的核心安全策略约束。数组与元素字段都由只读类型锁住，避免
- * 调用方漂移（不可变性只在编译期表达，见 AGENTS.md 的「常量」一节）。
+ * 仍受 API 不可关闭的核心安全策略约束。数组与元素字段都由只读类型表达不可变
+ * （见 AGENTS.md 的「常量」一节）。
  *
  * 这一档没有跨供应商对等物：OpenAI 侧的文本安全策略不可调（见
- * consts/aiChat/openai.ts 的模块头注），把能力配到 OpenAI 时回复口径会随之收紧。
+ * consts/aiChat/openai.ts 的模块头注）。
  */
 export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
   { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -109,12 +107,11 @@ export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
 ];
 
 /**
- * 服务端检索工具与函数调用混用时必须携带的 toolConfig，否则 Gemini 会以
- * `Please enable tool_config.include_server_side_tool_invocations to use
- * Built-in tools with Function calling` 拒绝整个请求；因此它与 googleSearch
+ * 服务端检索工具与函数调用混用时必须携带的 toolConfig
+ * （`tool_config.include_server_side_tool_invocations`）；它与 googleSearch
  * 同进同出，由每次完整请求直接填进 config。
  */
-export const GEMINI_SERVER_TOOL_CONFIG: Readonly<ToolConfig> = {
+export const GEMINI_SERVER_TOOL_CONFIG: Readonly<{ includeServerSideToolInvocations: true }> = {
   includeServerSideToolInvocations: true,
 };
 

@@ -3,6 +3,8 @@ import { loggerStub } from "../../helpers/loggerMock";
 import { bufferedMessageFixture } from "../../helpers/aiMemoryFixtures";
 import type { BufferedMessage } from "../../../packages/types/aiChat/memory";
 import type { AiTextResult } from "../../../packages/types/aiChat/provider";
+import { summarySelfNote } from "../../../packages/consts/aiChat/prompts/memory";
+import { SELF_SPEAKER_NAME } from "../../../packages/consts/aiChat/prompts/transcript";
 
 const responses: AiTextResult[] = [];
 const generateText = mock(async (..._args: unknown[]): Promise<AiTextResult> =>
@@ -85,9 +87,9 @@ describe("AI 中期记忆压缩", () => {
     })], false);
     await waitForRotation(-1009);
     const request: { userContent: string } = generateText.mock.calls[0]![0] as { userContent: string };
-    expect(request.userContent).toContain("[id:99] 自己（也就是你）");
+    expect(request.userContent).toContain(`[id:99] ${SELF_SPEAKER_NAME}`);
     expect(request.userContent).toContain("[id:7] [username:@alice_dev] Alice Chen");
-    expect(request.userContent).toContain("摘要里统一以「自己（也就是你）」称呼它");
+    expect(request.userContent).toContain(summarySelfNote(99));
     for (const field of ["Ninja", "BotLast", "ninja_bot"]) expect(request.userContent).not.toContain(field);
     expect(own.firstName).toBe("Ninja");
   });
@@ -100,11 +102,10 @@ describe("AI 中期记忆压缩", () => {
 
     const request: { systemPrompt: string; userContent: string } =
       generateText.mock.calls[0]?.[0] as { systemPrompt: string; userContent: string };
-    // systemPrompt 是这次请求唯一可被隐式缓存的前缀段：掺进精确到秒的时间就会
-    // 让它从第一个字节起每次都对不上（见 compaction.ts 的 summarizeBatch）。
+    // systemPrompt 恒为 SUMMARY_SYSTEM_PROMPT，不含时间（见 compaction.ts 的 summarizeBatch）。
     expect(request.systemPrompt).toBe(SUMMARY_SYSTEM_PROMPT);
     expect(request.systemPrompt).not.toContain("当前实际时间");
-    // 落在整批转录之后：那一段本来就每次都变，时间排在它后面不再多断一次前缀。
+    // 当前时间落在整批转录之后。
     expect(request.userContent.endsWith("当前实际时间：测试。")).toBe(true);
     expect(request.userContent.indexOf("当前实际时间")).toBeGreaterThan(
       request.userContent.indexOf("今天继续测试压缩")
@@ -180,6 +181,19 @@ describe("AI 中期记忆压缩", () => {
     expect(pendingSummaries.has(-1005)).toBe(false);
   });
 
+  test("摘要请求意外抛错时只记一行错误，不留待晋升摘要，串行链照常结算", async () => {
+    generateText.mockImplementationOnce(async (): Promise<never> => {
+      throw new Error("provider exploded");
+    });
+    scheduleRotation(-1001, batch, false);
+    await waitForRotation(-1001);
+
+    expect(logError).toHaveBeenCalledTimes(1);
+    expect(logError.mock.calls[0]?.[0]).toBe("Error in chat compaction task:");
+    expect(pendingSummaries.has(-1001)).toBe(false);
+    expect(compactionPendingCounts.has(-1001)).toBe(false);
+  });
+
   test("请求在途时群代际失效会等待压缩 settle，迟到摘要不会污染新状态", async () => {
     let resolveRequest!: (value: AiTextResult) => void;
     generateText.mockImplementationOnce(() => new Promise((resolve) => {
@@ -215,9 +229,7 @@ describe("AI 中期记忆压缩", () => {
     expect(generateText).not.toHaveBeenCalled();
     expect(compactionPendingCounts.get(-1004)).toBe(COMPACTION_MAX_PENDING_PER_CHAT);
     expect(logError).toHaveBeenCalledTimes(1);
-    // 拒绝路径不得惰性建出 AbortController：登记项只由 trackReplyGenerationTask
-    // 的 finally（需要已跟踪任务）或整代失效清理摘除，这里没有任何一方会来收，
-    // 持续溢出且长期不被作废的群会一路累积用不上的 controller。
+    // 拒绝路径不建 AbortController：replyAbortControllers 的登记项数不变。
     expect(replyAbortControllers.size).toBe(controllersBefore);
   });
 });

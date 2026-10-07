@@ -14,8 +14,8 @@ import type { ApplicationLifecycleDependencies } from "../lifecycleDependencies"
  * 主文件保留 init/wait/run、进程 handler 与实例锁处置，这里只负责「按固定顺序
  * 走完每个 owner，并把每一步的结果如实带回去」。
  *
- * 本模块负责失败隔离：异常退出路径上 dispose() 是最后一次落盘机会，
- * 任何单个 owner 抛错都不允许跳过其后的 owner 与 flushStateToDisk。
+ * 本模块负责失败隔离：dispose() 是异常退出路径上最后一次落盘机会，
+ * 单个 owner 抛错不跳过其后的 owner 与 flushStateToDisk。
  * @see ../../../docs/cn/04-invariants.md
  */
 
@@ -83,18 +83,14 @@ interface ShutdownDrainOwner {
 }
 
 /**
- * 停机 owner 的**唯一**有序表：确认最终 offset 之前的落盘（flushAllToDisk）与
- * 进程退出前的收尾（runShutdownOwners）共用它。
+ * 停机 owner 的唯一有序表：确认最终 offset 之前的落盘（flushAllToDisk）与
+ * 进程退出前的收尾（runShutdownOwners）共用它的顺序、门禁与结果聚合。
  *
- * 两个入口必须共用这一份顺序、门禁与结果聚合；否则任一 owner 未纳入确认前
- * flush，就可能在数据尚未落盘时推进最终 Telegram offset。
- *
- * 顺序本身是约束，不能随手调整（见 docs/cn/04-invariants.md）：
- * - gag、问答表单、wed、延迟命令、cron 与延迟删除必须排在 Telegram 总闸**之前**——它们的收尾都要发
- *   Telegram 请求，闸门一关就再也发不出去。
- * - 延迟删除排在 anti-raid 之后：广告处置会在 anti-raid 排空期间补发 30 秒公告，
- *   排在后面才能把最后一条也提前兑现。
- * - AI memory 必须先回传到 diskIOWorker，再 flush 那个 Worker。
+ * 顺序是约束（见 docs/cn/04-invariants.md）：
+ * - gag、问答表单、wed、延迟命令、cron 与延迟删除排在 Telegram 总闸之前，它们的收尾要发
+ *   Telegram 请求。
+ * - 延迟删除排在 anti-raid 之后：anti-raid 排空期间补发的待删公告一并提前兑现。
+ * - AI memory 先回传到 diskIOWorker，再 flush 那个 Worker。
  */
 const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
   {
@@ -128,8 +124,8 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
       dependencies.drainAntiRaid(timeoutMs),
   },
   {
-    // gag 开始提示是带按钮的功能状态，必须在 Telegram 总闸关闭前由自己的状态机
-    // 删除；失败不能伪装成总闸已经排空。
+    // gag 开始提示是带按钮的功能状态，在 Telegram 总闸关闭前由自己的状态机
+    // 删除；失败如实计入 gag 结果。
     result: "gag",
     label: "gag drain",
     timeout: "maintenanceMs",
@@ -138,8 +134,8 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
       dependencies.drainGagRuntime(timeoutMs),
   },
   {
-    // `/qa set` 表单同为状态机消息，只能由自己的路径删除；没有要落盘的数据，删除
-    // 失败或超时只意味着表单留在群里，不参与共享数据落盘闸门。
+    // `/qa set` 表单同为状态机消息，由自己的路径删除；没有要落盘的数据，
+    // 不参与共享数据落盘闸门。
     result: null,
     label: "qa form drain",
     timeout: "maintenanceMs",
@@ -156,8 +152,7 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
       dependencies.drainWedRuntime(timeoutMs),
   },
   {
-    // 延迟命令没有要落盘的数据；超时只意味着有图或回执没发出去、收图没收完，不参与
-    // 共享数据落盘闸门。
+    // 延迟命令没有要落盘的数据，不参与共享数据落盘闸门。
     result: null,
     label: "deferred commands drain",
     timeout: "maintenanceMs",
@@ -166,7 +161,7 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
       dependencies.drainDeferredCommandRuntime(timeoutMs),
   },
   {
-    // 定时任务没有要落盘的数据；超时只意味着这一轮没发完，不参与共享数据落盘闸门。
+    // 定时任务没有要落盘的数据，不参与共享数据落盘闸门。
     result: null,
     label: "cron drain",
     timeout: "maintenanceMs",
@@ -201,8 +196,7 @@ const SHUTDOWN_DRAIN_OWNERS: readonly Readonly<ShutdownDrainOwner>[] = [
     label: "Telegram outbound drain",
     timeout: "maintenanceMs",
     initFlag: null,
-    // 关闸只在终局那一遍：offset 确认前那次若把闸门关掉，dispose() 里 gag、延迟
-    // 删除与 anti-raid 的重试就只剩 AbortError（见 outboundGate 的 quiesce 说明）。
+    // 关闸只在终局那一遍（见 outboundGate 的 quiesce 说明）。
     drain: (
       dependencies: ApplicationLifecycleDependencies,
       timeoutMs: number,
@@ -273,7 +267,7 @@ async function drainOwners({
       owner.label,
       (): Promise<FlushResult> => owner.drain(dependencies, timeoutMs, terminal)
     );
-    // close 是终局专属：offset 确认前那一遍不关闭任何 owner，后面还要用它们。
+    // close 只在终局那一遍执行。
     if (terminal && owner.close !== undefined) {
       if (owner.close.kind === "flush") {
         const closeStep: Extract<ShutdownOwnerClose, { kind: "flush" }> = owner.close;
@@ -300,17 +294,17 @@ async function drainOwners({
 
 export interface RunShutdownOwnersParams {
   dependencies: ApplicationLifecycleDependencies;
-  /** 就地更新：终止过的 owner 会被置回 false，防止重复终止。 */
+  /** 就地更新：终止过的 owner 置回 false。 */
   flags: OwnerInitFlags;
   settler: OwnerSettler;
   timeouts: FlushTimeouts;
-  /** 未持锁时不写 state，避免与真正的持锁进程抢同一份文件。 */
+  /** 未持锁时不写 state。 */
   lockAcquired: boolean;
 }
 
 /**
  * 按 SHUTDOWN_DRAIN_OWNERS 的固定顺序收尾，再终止 Anti-Raid / Disk I/O，最后
- * flush StateStore。与 flushAllToDisk 的差别只有三处：执行 close 步骤、关闭
+ * flush StateStore。与 flushAllToDisk 的差别：执行 close 步骤、关闭
  * Telegram 出站闸门、写 state 前要求持锁。
  * @returns 每个 owner 的结算结果；不抛错，异常一律折算进结果。
  */
@@ -326,8 +320,7 @@ export async function runShutdownOwners({
     terminate: FlushResult;
   } = await drainOwners({ dependencies, flags, settler, timeouts, terminal: true });
 
-  // 终止型 owner 的失败单独汇总：它们排在各自 flush 之后，失败不影响已经
-  // 落盘的数据，但仍要如实反映在退出码与实例锁处置上。
+  // 终止型 owner 的失败单独汇总：它们排在各自 flush 之后，反映在退出码与实例锁处置上。
   let terminate: FlushResult = closeTerminate;
   for (const owner of SHUTDOWN_TERMINATION_OWNERS) {
     if (!flags[owner.initFlag]) continue;
@@ -347,11 +340,8 @@ export async function runShutdownOwners({
 }
 
 /**
- * 本次停机每个**会写共享数据的** owner 是否都干净收尾。
- *
- * 刻意不看 `offsetConfirmed`：那道 gate 只决定 Telegram 会不会重投，与「此刻
- * 还有没有人可能往数据目录里写」无关。两件事的处置也不同——见
- * classifyShutdown。
+ * 本次停机每个会写共享数据的 owner 是否都干净收尾。
+ * 不看 `offsetConfirmed`（它只决定 Telegram 是否重投），处置差异见 classifyShutdown。
  */
 function allOwnersSettled(results: ShutdownResults): boolean {
   return results.runnerDrained &&
@@ -369,14 +359,14 @@ function allOwnersSettled(results: ShutdownResults): boolean {
 }
 
 /**
- * 把停机结局分成三态（语义见 types/lifecycle.ts 的 `ShutdownOutcome`）。
+ * 把停机结局分成 clean / offsetWithheld / unsettled（语义见 types/lifecycle.ts 的 `ShutdownOutcome`）。
  *
- * 中间那一态由三条路径产生：最终确认请求失败、前置未满足而跳过，或
- * `runner.task()` 直接抛错把整段确认前闸门跳过。
+ * offsetWithheld 由这些路径产生：最终确认请求失败、前置未满足而跳过，或
+ * `runner.task()` 直接抛错而跳过确认前闸门。
  *
- * 判据必须是**调用方自己这一轮**的 `ShutdownResults`，不是 `wait()` 当时的观测：
- * `wait()` 里 flush 失败、随后 `dispose()` 自己那次 flush 成功，正是「offset 该扣、
- * 锁该放」的正当组合。
+ * 判据是调用方这一轮的 `ShutdownResults`，不是 `wait()` 当时的观测：
+ * `wait()` 里 flush 失败、随后 `dispose()` 自己那次 flush 成功时，结果为
+ * offsetWithheld（offset 不确认、锁释放）。
  */
 export function classifyShutdown(results: ShutdownResults): ShutdownOutcome {
   if (!allOwnersSettled(results)) return "unsettled";
@@ -401,10 +391,9 @@ export interface FlushAllToDiskParams {
 
 /**
  * 确认最终 Telegram offset 之前的完整落盘：Worker mailbox 与主线程后台队列
- * 必须先归零，随后 flush 才覆盖它们发布的最后一份镜像，不能在 flush 后再让
- * 旧任务补写。owner 顺序与 runShutdownOwners 共用 SHUTDOWN_DRAIN_OWNERS，
- * 差别只在这里**不终止任何 Worker、也不关闭 Telegram 出站闸门**——dispose()
- * 还要再排空一遍 gag 提示与延迟删除，而那些收尾都要发 Telegram 请求。
+ * 先归零，随后 flush 覆盖它们发布的最后一份镜像。owner 顺序与 runShutdownOwners
+ * 共用 SHUTDOWN_DRAIN_OWNERS，差别只在不终止任何 Worker、不关闭 Telegram 出站闸门，
+ * dispose() 随后再排空一遍 gag 提示与延迟删除。
  * @returns 是否全部干净落盘；false 时调用方不得确认 offset。
  */
 export async function flushAllToDisk({

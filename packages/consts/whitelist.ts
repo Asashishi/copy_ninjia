@@ -2,6 +2,7 @@ import type {
   WhitelistPermissionKey,
   WhitelistPermissions,
 } from "../types/identityPolicy";
+import { exhaustiveList } from "./exhaustiveList";
 
 /** 白名单条目缺省不可使用手动禁言。所属模块：packages/infra/identityPolicy/whitelist.ts。 */
 const DEFAULT_IS_CAN_MUTE: boolean = false;
@@ -127,11 +128,9 @@ export const TEMPORARY_AD_BYPASS_PERMISSIONS: Readonly<WhitelistPermissions> = {
  * 超级管理员的固定有效权限：逐项全开。
  *
  * 超级管理员的授权来自 `SUPER_ADMIN_USER_ID` 这个身份本身，不来自 SQLite
- * 白名单表——因此它**不写入**该表，只在运行时由
- * `packages/infra/identityPolicy/whitelist.ts` 的读取边界覆盖上去。这样既让所有可授予的
- * 白名单权限判定对超级管理员恒为 true（调用方不必再单独判身份），又保证
- * `/white`、`/permission` 永远只落盘管理员明确登记的条目：否则一旦
- * `SUPER_ADMIN_USER_ID` 换人，表里会留下一条全开的旧身份。
+ * 白名单表：它**不写入**该表，只在运行时由
+ * `packages/infra/identityPolicy/whitelist.ts` 的读取边界覆盖上去。所有可授予的
+ * 白名单权限判定对超级管理员恒为 true，`/white`、`/permission` 只落盘管理员明确登记的条目。
  *
  * 与 DEFAULT_WHITELIST_PERMISSIONS 一样跨调用方共享同一个对象，由
  * `Readonly<>` 在编译期锁住全部字段（断言在 `test/consts/immutability.test.ts`）。
@@ -164,7 +163,7 @@ export const SUPER_ADMIN_WHITELIST_PERMISSIONS: Readonly<WhitelistPermissions> =
 };
 
 /** 白名单权限策略与 /permission 共同接受的权限键全集。 */
-export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
+export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = exhaustiveList<WhitelistPermissionKey>()([
   "isCanMute",
   "isCanUnMute",
   "isCanGag",
@@ -183,11 +182,11 @@ export const WHITELIST_PERMISSION_KEYS: readonly WhitelistPermissionKey[] = [
   "isCanControllAntiRaidPermission",
   "isCanControllQaPermission",
   "isCanAddHImage",
-];
+]);
 
 /**
- * 权限键的小写输入到规范拼写的只读索引；命令解析复用，避免每次从头遍历并对
- * 全部候选重复 lower-case。所属模块：packages/commands/permission.ts。
+ * 权限键的小写输入到规范拼写的只读索引，命令解析按小写输入直接查找。
+ * 所属模块：packages/commands/permission.ts。
  */
 export const WHITELIST_PERMISSION_KEY_BY_LOWERCASE: ReadonlyMap<
   string,

@@ -8,7 +8,7 @@
  *   libs/boundedResponse.ts 流式读取，超过 VOICE_SPEECH_MAX_BYTES 即拒绝，不保留部分响应体；
  *   容器结构由 aiChat/ai/voiceEncoding.ts 按 MIME 校验。
  *
- * 另有两条三家实现共用的失败收尾（请求失败与载荷不可用），日志统一经 logger。
+ * 另有两条各供应商实现共用的失败收尾（请求失败与载荷不可用），日志统一经 logger。
  *
  * 不持有缓存，不接触 SDK 类型。
  */

@@ -61,11 +61,10 @@ describe("production module coverage manifest", () => {
       throw new Error("A production module registered a timeout during import.");
     }) as unknown as typeof setTimeout;
 
-    // 文件系统写入与上面三类副作用同级拦截：任何生产模块都不得在 import
-    // 阶段写盘。只拦截写路径，合法读取（readFileSync/readdirSync 等）走真实实现。
+    // 文件系统写入与上面几类副作用同级拦截：任何生产模块在 import 阶段都不得写盘。
+    // 只拦截写路径，合法读取（readFileSync/readdirSync 等）走真实实现。
     //
-    // 使用带开关的透传包装：mock.module 注册会保留到同进程后续测试，finally
-    // 关闭开关后包装只透传真实实现，不影响需要读写临时目录的用例。
+    // 使用带开关的透传包装：mock.module 注册保留到同进程后续测试，finally 关闭开关后包装只透传真实实现。
     let fsWriteStarts: number = 0;
     let fsGuardActive: boolean = false;
     const realFs: Record<string, unknown> = { ...nodeFs };
@@ -97,9 +96,8 @@ describe("production module coverage manifest", () => {
 
     // 生产代码的落盘不止 node:fs：删除走 Bun 原生 BunFile.delete()（见
     // packages/libs/atomicFile.ts、infra/storage/{cleanup,dataRoot,instanceLock}.ts），
-    // 只拦 node:fs 会给这条路留一个 import 期写盘的盲区。Bun.write 与 BunFile 的
-    // write/writer 同理一并拦下。与 mock.module 不同，这两个是普通可写属性，
-    // finally 里能原样还原，不会把 Proxy 留给后续用例。
+    // Bun.write 与 BunFile 的 write/writer 同样拦下。与 mock.module 不同，
+    // 这两个是普通可写属性，finally 里原样还原。
     const realBunFile = Bun.file;
     const realBunWrite = Bun.write;
     function guardBunWrite(label: string): void {
@@ -113,9 +111,8 @@ describe("production module coverage manifest", () => {
     }) as typeof Bun.write;
     Bun.file = ((path: any, options?: any): any => {
       const file = realBunFile(path, options);
-      // 文件描述符形态（Bun.stdout/stderr、内部 fs.WriteStream）是控制台输出，
-      // 不是落盘：依赖内部的 debug / google-logging-utils 在 import 期就会为
-      // TTY 探测建 WriteStream，把它算成写盘会让这道防线永远误报。
+      // 文件描述符形态（Bun.stdout/stderr、内部 fs.WriteStream）是控制台输出，不是落盘：
+      // 依赖内部的 debug / google-logging-utils 在 import 期为 TTY 探测建 WriteStream。
       if (typeof path === "number") return file;
       return new Proxy(file, {
         get(target: any, property: string | symbol): unknown {

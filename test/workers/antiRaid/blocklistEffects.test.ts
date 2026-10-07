@@ -30,7 +30,7 @@ mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({ recor
 mock.module("../../../packages/workers/antiRaid/adDetect/queueState", () => ({
   releaseAdDetectDedupKey,
 }));
-// 真实节奏（5s 退避、25 个一批）在测试里没法等；只压缩时间，不改变分支。
+// 退避间隔与补扫批量在测试里压缩，不改变分支。
 mock.module("../../../packages/consts/antiRaid/blocklist", () => ({
   BLOCKLIST_REMOVAL_MAX_ATTEMPTS: 3,
   BLOCKLIST_REMOVAL_RETRY_DELAY_MS: 1,
@@ -53,11 +53,7 @@ const {
 const events: BlockedMembersRemovedEvent[] = [];
 const publish = (event: BlockedMembersRemovedEvent): void => { events.push(event); };
 
-/**
- * 轮询同步点的兜底上限。健康机器上实际只花一两毫秒；留足余量应对全量+覆盖率
- * 插桩下的调度抖动，又明显低于 bun 的用例超时——真出回归时，先失败的应该是
- * 紧随其后那条带具体数值的断言，而不是一句「test timed out」。
- */
+/** 轮询同步点的兜底上限，到点未成立时交给随后的断言报告失败。 */
 const SETTLE_TIMEOUT_MS: number = 2_000;
 
 /** 轮询等到条件成立；到点仍不成立就返回，让后面的断言给出真正的失败信息。 */
@@ -66,11 +62,10 @@ async function until(ready: () => boolean): Promise<void> {
 }
 
 /**
- * 副作用是事后执行的：等这批处置发出落定回执，而不是赌一个固定时长。
+ * 等这批处置发出落定回执。
  *
- * handleRemoveBlockedMembers 恒在 removeBlockedMembers 完成之后（成功或异常）发且
- * 只发一条回执，所以回执到达就等于这批的探测、封禁、删公告、补记入群全部结束
- * ——它是这个单元真正的完成边界，不依赖机器负载或固定等待时长。
+ * handleRemoveBlockedMembers 在 removeBlockedMembers 完成之后（成功或异常）恒发且只发一条回执，
+ * 回执到达即这批的探测、封禁、删公告、补记入群全部结束。
  */
 function settle(): Promise<void> {
   return until((): boolean => events.length > 0);
@@ -102,7 +97,7 @@ beforeEach(() => {
 
 describe("黑名单处置副作用（守卫线程侧）", () => {
   test("probeMembership=false 时直接封禁，不多打一次成员探测", async () => {
-    // 刚到的入群更新：人此刻确定在群里，再探一次纯属浪费一次 API 调用。
+    // 刚到的入群更新：人此刻确定在群里，不再探测成员。
     handleRemoveBlockedMembers({
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [42], probeMembership: false, removalId: 1 },
       publish,
@@ -117,8 +112,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("去重回收抛出也不改回执：一个已经跑完的批次不能被重投", async () => {
-    // 回收排在 publish 之前时，这里抛出会转进 .catch 并改发 complete:false，
-    // 主线程据此重投一个其实已经完成的批次。回执必须先于任何尽力而为的清理。
+    // 回执先于任何尽力而为的清理发出；回收抛出不改发 complete:false。
     releaseAdDetectDedupKey.mockImplementationOnce((): void => {
       throw new Error("ad-detect release failed");
     });
@@ -130,7 +124,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 42, guardApi);
-    // 恰好一条，且是真实结果；不能既发 complete:true 又补一条 complete:false。
+    // 恰好一条回执，且是真实结果，不补发 complete:false。
     expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 9, complete: true, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [42] }]);
   });
 
@@ -150,7 +144,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     // 确认不在群不算失败：这批算完整落定。
     expect(events[0]?.complete).toBeTrue();
     expect(events[0]?.settledUserIds).toEqual([7, 8]);
-    // 补扫批次可能很大，不用它逐 id 触发广告去重回收。
+    // 补扫批次不逐 id 触发广告去重回收。
     expect(releaseAdDetectDedupKey).not.toHaveBeenCalled();
   });
 
@@ -168,7 +162,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("封禁失败按退避重试，最终仍失败时回执 complete=false", async () => {
-    // 黑名单入群不开验证窗口，没有超时踢人兜底——这次处置是唯一的机会。
+    // 黑名单入群不开验证窗口，没有超时踢人兜底。
     banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "failed");
 
     handleRemoveBlockedMembers({
@@ -183,10 +177,8 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("「目标是管理员」只结算这个 id，不把整个群标成权限受阻", async () => {
-    // Telegram 对「机器人没权限」和「目标本身是管理员」返回的是同一句 400。
-    // 混在一起就意味着一个封不掉的管理员会把整个群的清扫永久闩死：此后补扫
-    // 早退、重扫请求被拒、每次重启跳过重放，而唯一的解锁边沿是「机器人的封禁
-    // 权限变了」——那件事根本不会发生。
+    // Telegram 对「机器人没权限」和「目标本身是管理员」返回同一句 400；
+    // probeChatAdmin 区分两者，目标是管理员时只结算这个 id，不把群标成 permissionDenied。
     banChatMemberWithOutcome.mockImplementation(async (..._args: unknown[]): Promise<string> =>
       _args[1] === 7 ? "forbidden" : "banned");
     probeChatAdmin.mockImplementation(async (...args: unknown[]): Promise<boolean | undefined> => (args[0] as { userId: number }).userId === 7);
@@ -198,7 +190,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(probeChatAdmin).toHaveBeenCalledWith({ chatId: -1001, userId: 7, api: guardApi });
-    // 同批其余 id 照常处置完，整批就此落定——不留给按时间的重试，也不闩住群。
+    // 同批其余 id 照常处置，整批落定。
     expect(banChatMemberWithOutcome).toHaveBeenCalledWith(-1001, 8, guardApi);
     expect(events).toEqual([
       { type: "blockedMembersRemoved", chatId: -1001, removalId: 41, complete: true, permissionDenied: false, targetIsAdmin: true, participantInvalidUserIds: [], settledUserIds: [7, 8] },
@@ -207,8 +199,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("确证不了目标身份时维持原判：仍按机器人缺权限上报", async () => {
-    // 没有确证就把群级闩锁降级成逐个重试，等于把「永远封不掉」重新变成
-    // 每个退避窗口一次 O(名单长度) 的请求风暴。
+    // 确证不了目标身份时（probeChatAdmin 返回 undefined）仍按机器人缺权限上报。
     banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => "forbidden");
     probeChatAdmin.mockImplementation(async (): Promise<boolean | undefined> => undefined);
 
@@ -238,7 +229,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("秒踢路径补记入群计数并清掉入群公告", async () => {
-    // 不投 join 就没人替这次入群记刷群计数、也没人删那条公告。
+    // 不经 join 投递，由处置路径自己记入群计数并删公告。
     const before: number = Date.now();
     handleRemoveBlockedMembers({
       msg: {
@@ -247,8 +238,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
         userIds: [7],
         probeMembership: false,
         removalId: 6,
-        // 主线程在 durable outbox flush 之前取的时刻：必然早于本线程随后记下的
-        // 那些入群。
+        // 主线程在 durable outbox flush 之前取的时刻，早于本线程随后记下的那些入群。
         joinedAt: before - 1_000,
         announcementMessageId: 88,
       },
@@ -256,9 +246,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    // 记的必须是本线程观测到的时刻。直接把 joinedAt 当「现在」交给 recordJoin
-    // 的话，TimestampDeque.trim 会把同一批里刚记下的、时间戳更新的真实入群全部
-    // 当成时钟回拨丢掉，反刷群阈值再也凑不满。
+    // recordJoin 记的是本线程观测到的时刻，不是 joinedAt。
     expect(recordJoin).toHaveBeenCalledTimes(1);
     const [recordedChatId, recordedAt] = recordJoin.mock.calls[0] as [number, number];
     expect(recordedChatId).toBe(-1001);
@@ -267,10 +255,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("确证没有删消息权限时不发那次注定 400 的公告删除", async () => {
-    // 机器人可以是「有 can_restrict_members、没有 can_delete_messages」的管理员。
-    // 那种群里每个黑名单入群都换来一次必败的 deleteMessage，而这些请求排在与
-    // 验证超时踢人共用的 kick 类别 429 FIFO 上——一波协同入群时，
-    // 它们会把真正的踢人顶到验证窗口之后，公告本身照样删不掉。
+    // 机器人是「有 can_restrict_members、没有 can_delete_messages」的管理员时，不发公告删除。
     applyBotPermissionsChange(-1001, { canRestrictMembers: true, canDeleteMessages: false });
 
     handleRemoveBlockedMembers({
@@ -287,7 +272,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     await settle();
 
     expect(deleteMessage).not.toHaveBeenCalled();
-    // 封禁本身照常执行：这道闸只挡删消息。
+    // 封禁照常执行，这道闸只挡删消息。
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
   });
 
@@ -326,9 +311,8 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("权限未观测到时照常尝试删除，由 Telegram 当裁判", async () => {
-    // 三态里只拦确证的 false：撤管理员、离群、/init 切换和现查失败发的都是同
-    // 一条「权限未知」，把它折算成「没有权限」等于在一个权限齐全的群里白白留着
-    // 那条公告（口径见 workers/antiRaid/botPermissions.ts）。
+    // 三态里只拦确证的 false：权限未知（撤管理员、离群、/init 切换和现查失败）照常尝试删除
+    // （口径见 workers/antiRaid/botPermissions.ts）。
     handleRemoveBlockedMembers({
       msg: {
         type: "removeBlockedMembers",
@@ -372,16 +356,15 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
       msg: { type: "removeBlockedMembers", chatId: -1001, userIds: [7, 8, 9], probeMembership: false, removalId: 7 },
       publish,
     });
-    // 等第一次封禁真的发出去——releaseFirst 是在那个 mock 实现里才被赋值的。
-    // 同样不赌固定时长：赌少了这里会变成 releaseFirst is not a function。
+    // 等第一次封禁真的发出去：releaseFirst 在 mock 实现里才被赋值。
     await until((): boolean => banChatMemberWithOutcome.mock.calls.length > 0);
-    // 第一条还悬着的时候 /init disable：补扫可能还要跑几分钟，必须立刻收手。
+    // 第一条还悬着的时候 /init disable：补扫立刻收手。
     bumpBlocklistRemovalEpoch(-1001);
     releaseFirst("banned");
     await settle();
 
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
-    // 没扫完，回执必须说清楚——重新接管后还要再欠一次。
+    // 没扫完：回执 complete=false，重新接管后再补。
     expect(events).toEqual([{ type: "blockedMembersRemoved", chatId: -1001, removalId: 7, complete: false, permissionDenied: false, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [7] }]);
   });
 
@@ -407,8 +390,8 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    // 权限不够不消耗剩余尝试，也不该退化成 failed——permissionDenied 才是那道
-    // 「停掉按时间重试、只等权限变更」的闩锁的唯一入口。
+    // 权限不够不消耗剩余尝试，回执为 permissionDenied 而非 failed；
+    // 它是「停掉按时间重试、只等权限变更」闩锁的唯一入口。
     expect(banChatSenderChatWithOutcome).toHaveBeenCalledTimes(1);
     expect(events).toEqual([
       { type: "blockedMembersRemoved", chatId: -1001, removalId: 20, complete: false, permissionDenied: true, targetIsAdmin: false, participantInvalidUserIds: [], settledUserIds: [] },
@@ -424,7 +407,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     });
     await settle();
 
-    // 只为第一个 id 付一次 banChatMember + 一次 probeChatAdmin；剩下四个不再发。
+    // 只为第一个 id 发一次 banChatMember 与一次 probeChatAdmin，其余不再发。
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
     expect(probeChatAdmin).toHaveBeenCalledTimes(1);
     expect(events).toEqual([
@@ -450,7 +433,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
     void returned.finally((): void => { settled = true; });
     await Bun.sleep(0);
     expect(settled).toBeFalse();
-    // 第一条还悬着，第二条就不该发出——同批内部仍是串行，不并发轰 API。
+    // 第一条还悬着，第二条不发出：同批内部串行。
     expect(banChatMemberWithOutcome).toHaveBeenCalledTimes(1);
 
     settleBan("banned");
@@ -471,8 +454,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("停机取消后不再重试、也不开始下一个 id：整批立即按未完成回执", async () => {
-    // drain 到达时 Worker 双工请求被就地 abort，封禁结算成 failed。此后仍按退避
-    // 重试、再逐个处置剩余 id 的话，每个 id 都要白等整轮退避，drain 必然超时。
+    // drain 到达时 Worker 双工请求被就地 abort，封禁结算成 failed；此后不重试，也不处置剩余 id。
     banChatMemberWithOutcome.mockImplementation(async (): Promise<string> => {
       quiesceAntiRaidDispatch();
       return "failed";
@@ -491,8 +473,7 @@ describe("黑名单处置副作用（守卫线程侧）", () => {
   });
 
   test("正在进行的重试退避随停机取消立即结束，drain 不再被整轮退避拖住", async () => {
-    // 生产退避是 5s、10s；这里把本批发出的 timer 统一拉长到远超等待预算，
-    // 只有退避本身可被取消时，回执与 drain 才能在预算内结算。
+    // 把本批发出的 timer 统一拉长到远超等待预算；只有退避本身可被取消时，回执与 drain 才能在预算内结算。
     const realSetTimeout: typeof setTimeout = globalThis.setTimeout;
     const scheduledDelays: number[] = [];
     const timeoutSpy = spyOn(globalThis, "setTimeout").mockImplementation(

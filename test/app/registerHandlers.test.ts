@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import type { Mock } from "bun:test";
-import { Composer } from "grammy";
+import { Composer, GrammyError } from "grammy";
 import type { Bot, Context } from "grammy";
 import { botMessageActivity } from "../../packages/cache/main/botMessage";
 import { BOT_MESSAGE_ACTIVITY_LIMIT } from "../../packages/consts/botMessage";
@@ -98,8 +98,7 @@ describe("application handler registration", () => {
     expect(SDK_REGISTRATIONS_AFTER_IMPORT).toBe(0);
     const { used, middleware, commands, directCommands, directHears }: Registration = registerOnFakeBot();
 
-    // 6 条前置 + Anti-Raid / gag / qa 三条 ingress + 命令外闸 + 中文动作命令外闸 + 消息兜底，
-    // 按这个顺序收在同一个数组里。
+    // 前置链 + Anti-Raid / gag / qa 三条 ingress + 命令外闸 + 中文动作命令外闸 + 消息兜底，按这个顺序收在同一个数组里。
     expect(used).toHaveLength(1);
     expect(middleware).toHaveLength(12);
     expect(used[0]).toBe(middleware);
@@ -138,8 +137,7 @@ describe("application handler registration", () => {
 
   test("非消息 update 在前置链之后按固定顺序登记，错误处理器只装一个", () => {
     const { registrationOrder, updates, catchHandlers }: Registration = registerOnFakeBot();
-    // 两条 callback_query:data：/qa query 翻页先认领（未认领时 next()），
-    // 未认领的交给入群验证（不调 next()）。
+    // callback_query:data 的 handler：/qa query 翻页先认领（未认领时 next()），未认领的交给入群验证（不调 next()）。
     expect(registrationOrder).toEqual([
       "use",
       `on:${JSON.stringify("message_reaction")}`,
@@ -156,7 +154,7 @@ describe("application handler registration", () => {
 
   test("消息类外闸对非消息 update 原样放行，并直接返回 next 的 Promise", () => {
     const { middleware }: Registration = registerOnFakeBot();
-    // 发言限流、三条 ingress、命令外闸、「/」外闸与消息兜底。
+    // 发言限流、各 ingress、命令外闸、「/」外闸与消息兜底。
     for (const index of [1, 6, 7, 8, 9, 10, 11]) {
       const nextResult: Promise<void> = Promise.resolve();
       let nextCalls: number = 0;
@@ -208,6 +206,26 @@ describe("application handler registration", () => {
         if (activity.timer !== null) clearTimeout(activity.timer);
       }
       botMessageActivity.clear();
+    }
+  });
+
+  test("GrammyError 只记状态码与描述，不把请求 payload 写进日志", () => {
+    const { catchHandlers }: Registration = registerOnFakeBot();
+    const secret: string = "private-message-text-marker";
+    const apiError: GrammyError = new GrammyError(
+      "Call to 'sendMessage' failed!",
+      { ok: false, error_code: 403, description: "Forbidden: bot was blocked by the user" },
+      "sendMessage",
+      { chat_id: 7, text: secret }
+    );
+    const consoleError: Mock<typeof console.error> = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      expect(() => catchHandlers[0]!({ ctx: { update: { update_id: 14 } } as Context, error: apiError })).toThrow(apiError);
+      const logged: string = consoleError.mock.calls.map((call: unknown[]): string => call.map(String).join(" ")).join("\n");
+      expect(logged).toBe("Unhandled error while handling update 14: 403 Forbidden: bot was blocked by the user");
+      expect(logged).not.toContain(secret);
+    } finally {
+      consoleError.mockRestore();
     }
   });
 

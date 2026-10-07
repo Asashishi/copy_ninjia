@@ -4,12 +4,8 @@ import { BoundedDeque } from "../../packages/libs/boundedDeque";
 import { TimestampDeque } from "../../packages/libs/timestampDeque";
 
 /**
- * 两个有界环形队列共用的构造校验。
- *
- * 它是这两个容器唯一的入口检查：放过一个非法容量，`new Array(n)` 要么抛
- * `Invalid array length`（负数/非整数），要么静默造出一个永远装不下东西的
- * 零容量数组——后者会让滑动窗口在生产里悄悄丢弃每一条记录。因此这里逐条钉住
- * 「什么样的取值必须当场拒绝」，而不只是测正常路径。
+ * 两个有界环形队列共用的构造校验：它是这两个容器唯一的入口检查，
+ * 非法容量（负数/非整数、零容量）在这里当场拒绝；逐条覆盖「什么样的取值必须当场拒绝」，不只测正常路径。
  */
 describe("assertDequeCapacities", () => {
   test("接受合法组合：initialCapacity 可以等于 maxCapacity", () => {

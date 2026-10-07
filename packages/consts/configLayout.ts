@@ -5,5 +5,5 @@
 
 /** 只在启动时读取、修改后须重启才生效的部署配置子目录名（bot.json、g-auth.json）。 */
 export const STATIC_CONFIG_DIR_NAME: string = "static";
-/** 由 app/configReload.ts 监听、修改后热重载即时生效的部署配置子目录名（其余六份）。 */
+/** 由 app/configReload.ts 监听、修改后热重载即时生效的部署配置子目录名（其余部署配置）。 */
 export const DYNAMIC_CONFIG_DIR_NAME: string = "dynamic";

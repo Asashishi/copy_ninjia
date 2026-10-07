@@ -10,8 +10,8 @@
  * 线程投递的副本，自己从不读这些文件。ad_samples.json、agent.json、mood.json 与
  * stickers.json 由主线程热重载（config/reload.ts）整体替换（文件删除时换成 null）后，
  * 再经消息投给持有副本的 Worker；Worker 崩溃重建时重放主线程当前快照。每个 holder
- * 恒为一个对象或 null，只整体替换、绝不就地改写——logger 的凭据脱敏按对象身份判断
- * 是否重算。
+ * 为一个对象或 null，只整体替换，不就地改写（logger 的凭据脱敏按对象身份判断
+ * 是否重算）。
  *
  * 按功能聚合的可用性结论只有主线程用，因此不在这里，见
  * cache/main/configReadiness.ts。
@@ -60,26 +60,25 @@ export const voiceToolPromptCache: { current: string | null } = { current: null 
 export const botConfigCache: { current: BotConfig | null } = { current: null };
 
 /**
- * config/dynamic/agent.json 的 **agent.ad_detect 能力**快照；主线程权威值的本线程副本。
+ * config/dynamic/agent.json 的 agent.ad_detect 能力快照；主线程权威值的本线程副本。
  *
  * 填充时机按线程分两路：
  * - 主线程：启动总闸 validateAgentDeploymentConfig 解析成功后写入；文件在但没有
  *   ad_detect 段时显式写 null。热重载（config/reload.ts）按本轮读到的内容整体
  *   替换，段或文件被删除时写 null，补上时写新快照。
  * - Anti-Raid Worker：主线程 agentConfig 消息到达时 adopt 写入（含显式 null）；
- *   初始化、热重载与 Worker 崩溃重建各投递一次主线程当前快照，绝不自己读盘。
+ *   初始化、热重载与 Worker 崩溃重建各投递一次主线程当前快照，Worker 不自己读盘。
  *
- * 因此 null 一律读作「这个部署没配广告检测」，判定侧 fail-closed，不得回填默认值。
- * 两段各一个 holder 而不是整份文件一个：探哪一段、运行时就只读哪一段，否则
- * 「通过启动门禁的配置」与「跑得起来的配置」是两个集合。容量恒为一个对象。
+ * null 读作「这个部署没配广告检测」，判定侧 fail-closed，不回填默认值。
+ * agent.json 的两段各持一个 holder，运行时只读自己那一段。容量为一个对象。
  *
  * logger 的值级脱敏逐条日志读取本 holder（见 infra/logger/serialization.ts 的 currentSecrets），
- * 因此它必须在**每条**持有该凭据的线程里都有一份，不能收进某个 owner 目录。
+ * 每条持有该凭据的线程各持一份，不归入任何 owner 目录。
  */
 export const adDetectAgentConfigCache: { current: AdDetectAgentConfig | null } = { current: null };
 
 /**
- * config/dynamic/agent.json 的 **AI 对话能力段**快照；分段与填充口径同上。
+ * config/dynamic/agent.json 的 AI 对话能力段快照；分段与填充口径同上。
  *
  * 主线程由启动总闸填充、热重载整体替换；AI 闲聊 Worker 由 init 与 configReload
  * 消息 adopt 填充，崩溃重建时由 lastInitState 重放主线程当前快照。回复、总结、

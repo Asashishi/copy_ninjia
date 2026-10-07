@@ -2,8 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { adoptPersona, getPersona } from "../../packages/config/persona";
 import { personaCache } from "../../packages/cache/perThread/config";
 
-// preload 已经为全进程装好人设快照；本文件会临时改写 holder，跑完必须还原，
-// 否则后续文件里读 getPersona 的用例会看到本文件留下的值。
+// preload 已经为全进程装好人设快照；本文件临时改写 holder，跑完还原。
 const PRELOADED_PERSONA: string | null = personaCache.current;
 
 afterEach((): void => {

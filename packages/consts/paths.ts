@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { DYNAMIC_CONFIG_DIR_NAME, STATIC_CONFIG_DIR_NAME } from "./configLayout";
+import { DATABASE_DIR_NAME, GLOBAL_STATE_DIR_NAME, LOGS_DIR_NAME, MEMORY_DIR_NAME } from "./dataRootLayout";
 import { PERSONA_FILE_NAME, PROMPT_DIR_NAME, VOICE_TOOL_PROMPT_FILE_NAME } from "./promptLayout";
 import {
   CONFIG_ROOT_ENV,
@@ -48,8 +49,8 @@ export const RUNTIME_DATA_ROOT: string = CONFIGURED_DATA_ROOT === undefined
   : resolve(CONFIGURED_DATA_ROOT);
 
 /**
- * 14.x 放在数据根的全局状态文件与其备份副本。当前格式不读取它们：任一存在即拒绝启动，
- * 须先升级到 16.3.2 完成其迁移并由运维移走（见 infra/storage/statePersistence.ts 的 assertLegacyStateFilesAbsent）。
+ * 数据根顶层的 state.json 与 state.json.bak。当前格式不读取它们：任一存在即拒绝启动，
+ * 由运维移走（见 infra/storage/statePersistence.ts 的 assertLegacyStateFilesAbsent）。
  */
 export const LEGACY_STATE_FILE_PATHS: readonly string[] = [
   join(RUNTIME_DATA_ROOT, "state.json"),
@@ -81,7 +82,7 @@ export const CONFIG_ROOT: string = resolve(
 /** 静态部署配置目录：bot.json 与 g-auth.json。 */
 export const STATIC_CONFIG_DIR: string = join(CONFIG_ROOT, STATIC_CONFIG_DIR_NAME);
 /**
- * 动态部署配置目录：六份可热重载文件（见 config/reload.ts）。启动时必须是已存在的目录，
+ * 动态部署配置目录：可热重载的部署文件（见 config/reload.ts）。启动时必须是已存在的目录，
  * 运行期目录级监听覆盖文件的新建、改写、改名替换与删除。
  */
 export const DYNAMIC_CONFIG_DIR: string = join(CONFIG_ROOT, DYNAMIC_CONFIG_DIR_NAME);
@@ -107,29 +108,29 @@ export const ASSETS_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "assets.json"
 /** 定时任务部署配置（可选、可热重载），见 packages/config/cron.ts。 */
 export const CRON_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "cron.json");
 /** error 日志落盘目录（diskIOWorker 按日一个 JSON 文件）。 */
-export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, "logs");
+export const LOGS_DIR: string = join(RUNTIME_DATA_ROOT, LOGS_DIR_NAME);
 
 /**
  * memory/ 落盘目录：每日运势缓存（luck/ 下按配置时区的日期一个文件，只留当天）、白名单贴纸包的目录快照
  * （stickers/ 下按 pack short name 一个 <pack>.json，见 aiChat/ai/stickers/catalog.ts）、
- * 待验证当日增量（anti-raid/ 下只保留配置时区的当天），以及滚动 24 小时入群事实
+ * 待验证当日增量（anti-raid/ 下只保留配置时区的当天），以及滚动窗口内的入群事实
  * （joinlog/）和每群已发言成员集合（wed/），均由 diskIOWorker 落盘，见
  * packages/workers/diskIOWorker.ts；ai-daily-usage/ 下是模型请求的缓存用量统计，同样由 diskIOWorker
  * 落盘；ad-detected/ 是广告命中样本旁路（见 AD_SAMPLE_MEMORY_DIR）；global/ 下的全局状态由主线程落盘。每一类数据各占
  * 一个子目录，顶层不放单个文件。不进 git，与 logs/ 同级对待；部署时应按敏感数据保护。
  */
-export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, "memory");
+export const MEMORY_DIR: string = join(RUNTIME_DATA_ROOT, MEMORY_DIR_NAME);
 /**
  * 所有群共用的全局状态目录；与 memory/ 下 Disk I/O Worker 的各领域目录并列，由主线程
  * StateStore 独占写入（见 infra/storage/statePersistence.ts）。
  */
-const GLOBAL_STATE_DIR: string = join(MEMORY_DIR, "global");
+const GLOBAL_STATE_DIR: string = join(MEMORY_DIR, GLOBAL_STATE_DIR_NAME);
 /** 全局状态文件：复读状态、冷却时钟与语音合成每日计数。 */
 export const GLOBAL_STATE_FILE_PATH: string = join(GLOBAL_STATE_DIR, "state.json");
 /**
  * SQLite 运行时数据库目录；与 memory/ 平级，只由 Disk I/O Worker 和显式迁移脚本访问。
  */
-export const DATABASE_DIR: string = join(RUNTIME_DATA_ROOT, "database");
+export const DATABASE_DIR: string = join(RUNTIME_DATA_ROOT, DATABASE_DIR_NAME);
 /** 权限、封禁、群状态与 AI 上下文共用的 SQLite 数据库文件。 */
 export const IDENTITY_DATABASE_PATH: string = join(DATABASE_DIR, "storage.sqlite");
 /** /wed 已发言成员集合目录；Disk I/O Worker 按 <chatId>.json 原子替换数字数组。 */
@@ -143,22 +144,22 @@ export const STICKER_MEMORY_DIR: string = join(MEMORY_DIR, "stickers");
 /** Anti-Raid 待验证增量文件目录；按配置时区的日期命名，只保留当天文件。 */
 export const VERIFICATION_MEMORY_DIR: string = join(MEMORY_DIR, "anti-raid");
 /**
- * 群成员滚动入群日志目录；按 `<chatId>.<配置时区的日期>.json` 追写，至少保留最近三个
- * 自然日，并覆盖前一日命令的滚动 24 小时窗口；启动时校验保留窗口，
+ * 群成员滚动入群日志目录；按 `<chatId>.<配置时区的日期>.json` 追写，保留期见
+ * JOIN_LOG_FILE_RETENTION_DAYS；启动时校验保留窗口，
  * `/batch_kick` 查询和新入群事件再按需建立有界缓存。
  */
 export const JOIN_LOG_MEMORY_DIR: string = join(MEMORY_DIR, "joinlog");
 /**
- * 广告检测命中样本的旁路目录。与 memory/ 下其余子目录同级，但性质完全不同：
- * 它**不是运行时状态**，进程从不读样本内容；启动成功后的维护只扫描目录项，
- * 清理孤儿临时文件与过期归档。内容纯粹用于回头优化 config/dynamic/ad_samples.json。
+ * 广告检测命中样本的旁路目录，与 memory/ 下其余子目录同级。
+ * 它**不是运行时状态**：进程不读样本内容，启动成功后的维护只扫描目录项，
+ * 清理孤儿临时文件与过期归档；内容用于优化 config/dynamic/ad_samples.json。
  */
 export const AD_SAMPLE_MEMORY_DIR: string = join(MEMORY_DIR, "ad-detected");
 /**
  * 判定命中并触发封禁的原始样本，追加写入，进程不把其内容用于业务判断（追加游标
  * 重建时的读回校验除外）。涨过
  * AD_SAMPLE_FILE_MAX_BYTES 时整份改名成 `sample.<配置时区的日期>.json` 归档，
- * 归档只保留最近 15 个配置时区的自然日。
+ * 归档按 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 保留。
  * 所属模块：workers/diskIO/adSampleFile.ts。
  */
 export const AD_SAMPLE_FILE_PATH: string = join(AD_SAMPLE_MEMORY_DIR, "sample.json");

@@ -5,11 +5,12 @@
 
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { FinishReason } from "@google/genai";
-import type { GenerateContentParameters, GenerateContentResponse } from "@google/genai";
+import type { GenerateContentResponse } from "@google/genai";
 import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
 import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
+import type { GeminiRequestOptions } from "../../../packages/aiChat/gemini/client";
 import type { AgentCapability } from "../../../packages/types/config";
 
 /** agent.json 的检索能力名，即用量记录与客户端缓存的能力键。 */
@@ -55,7 +56,7 @@ test("请求体挂 googleSearch，按 web_search 能力的模型与调用方提�
   const signal: AbortSignal = new AbortController().signal;
   await searchGeminiWeb(WEB_SEARCH_CAPABILITY, { instruction: "先检索", query: "今天的新闻", signal });
 
-  const [capability, buildBody] = requestGeminiResult.mock.calls[0]! as [string, () => GenerateContentParameters];
+  const { capability, buildBody } = requestGeminiResult.mock.calls[0]![0] as GeminiRequestOptions;
   expect(capability).toBe(WEB_SEARCH_CAPABILITY);
   expect(buildBody()).toEqual({
     model: getAgentDeploymentConfig().webSearch!.model,
@@ -71,7 +72,7 @@ test("请求体挂 googleSearch，按 web_search 能力的模型与调用方提�
 
 test("成功时交回正文、带地址的来源（缺标题以地址代替）与检索次数，执行器不重复上报用量", async () => {
   requestGeminiResult.mockImplementationOnce(async (...args: unknown[]): Promise<GeminiRequestResult> => {
-    (args[1] as () => GenerateContentParameters)();
+    (args[0] as GeminiRequestOptions).buildBody();
     return { ok: true, response: groundedResponse() };
   });
   expect(await searchGeminiWeb(WEB_SEARCH_CAPABILITY, { instruction: "i", query: "q" })).toEqual({
@@ -88,7 +89,7 @@ test("成功时交回正文、带地址的来源（缺标题以地址代替）�
 
 test("产出不可用时仍计入已执行的检索；请求失败时没有检索也不记", async () => {
   requestGeminiResult.mockImplementationOnce(async (...args: unknown[]): Promise<GeminiRequestResult> => {
-    (args[1] as () => GenerateContentParameters)();
+    (args[0] as GeminiRequestOptions).buildBody();
     return { ok: false, failureKind: "response", finishReason: FinishReason.MAX_TOKENS, response: groundedResponse() };
   });
   expect(await searchGeminiWeb(WEB_SEARCH_CAPABILITY, { instruction: "i", query: "q" })).toEqual({ ok: false, searchCalls: 2 });
@@ -101,8 +102,8 @@ test("产出不可用时仍计入已执行的检索；请求失败时没有检�
 
 test("text 能力的检索用对话模型，执行器不重复上报用量", async () => {
   requestGeminiResult.mockImplementationOnce(async (...args: unknown[]): Promise<GeminiRequestResult> => {
-    expect(args[0]).toBe(TEXT_CAPABILITY);
-    expect((args[1] as () => GenerateContentParameters)().model).toBe(getAgentDeploymentConfig().text.model);
+    expect((args[0] as GeminiRequestOptions).capability).toBe(TEXT_CAPABILITY);
+    expect((args[0] as GeminiRequestOptions).buildBody().model).toBe(getAgentDeploymentConfig().text.model);
     return { ok: true, response: groundedResponse() };
   });
   await searchGeminiWeb(TEXT_CAPABILITY, { instruction: "i", query: "q" });

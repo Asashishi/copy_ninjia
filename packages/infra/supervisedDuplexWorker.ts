@@ -137,8 +137,7 @@ export function superviseDuplexWorker<TMessage, TEvent, TRequest>(
             value: undefined,
             error: {
               name: error instanceof Error ? error.name : "Error",
-              // 普通 Error.message 可能含 Telegram 文件 URL（也就含 token）。
-              // 只有 GrammyError.description 是 Bot API 返回的安全诊断字段。
+              // 只回传 GrammyError.description（Bot API 返回的诊断字段），不回传普通 Error.message。
               message: telegramError?.description ??
                 "Main-thread capability request failed.",
               telegramErrorCode: telegramError?.error_code,

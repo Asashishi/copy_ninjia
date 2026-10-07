@@ -44,7 +44,7 @@ export interface SetWhitelistMembershipParams {
 
 /**
  * /white 持久化白名单成员关系的结果。删除后 permissions 为 undefined；
- * 重复 enable 返回原有权限，绝不把已经单独授权的字段重置成默认值。
+ * 重复 enable 返回原有权限，不重置已单独授权的字段。
  */
 export interface SetWhitelistMembershipResult {
   changed: boolean;
@@ -120,10 +120,9 @@ export function hasPermanentWhitelistPermission(
 /**
  * 发布一条白名单最终值，并确认它真的交到了 Disk I/O Worker 手上。
  *
- * `queueIdentityPolicyWrite` 返回 false 是 postDiskIO 拒收的唯一信号（见
- * infra/identityStorage/write.ts）：Worker 侧的写盘错误只有 console.error，不进入 logs/。
- * 拒收时在这里抛出，交给两条命令既有的 mutationFailed 分支如实回执
- * （commands/permission.ts、commands/white.ts）。
+ * `queueIdentityPolicyWrite` 返回 false 表示 postDiskIO 拒收（见
+ * infra/identityStorage/write.ts）。拒收时在这里抛出，由 commands/permission.ts、
+ * commands/white.ts 的 mutationFailed 分支回执。
  */
 function publishWhitelistEntry(
   id: number,
@@ -151,8 +150,7 @@ function updateWhitelistPermissions(
   if (permissions === null) {
     return { changed: false, permissions: existing.permissions };
   }
-  // meta 由两条路共用同一份既有值：任何一条忘了带，重新落盘时那条身份的
-  // Telegram 名称/用户名就会被清空。
+  // meta 沿用既有值。
   publishWhitelistEntry(id, { permissions, meta: existing.meta });
   return { changed: true, permissions };
 }
@@ -222,7 +220,7 @@ export function setWhitelistMembership({
 }
 
 /**
- * 把连续七日成员写入永久白名单，只授予广告检测豁免；已有人工白名单原样保留。
+ * 把连续合格日达标的成员写入永久白名单，只授予广告检测豁免；已有人工白名单原样保留。
  */
 export function promoteAdBypassWhitelistMembership(
   id: number,

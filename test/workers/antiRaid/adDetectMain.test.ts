@@ -37,8 +37,8 @@ interface SendMessageMockParams {
 }
 /**
  * 复刻真实 sendMessage 的 onSent 契约：远端收下的同步时点先回调 onSent，
- * 之后才把 id 作为返回值交出。停机 abort 会吃掉返回值但吃不掉这次回调，
- * 因此删除 owner 只能挂在 onSent 上（见 infra/telegram/actions/core.ts）。
+ * 之后才把 id 作为返回值交出；停机 abort 吃掉返回值、不吃这次回调，
+ * 删除 owner 挂在 onSent 上（见 infra/telegram/actions/core.ts）。
  */
 const sendMessage = mock(async (params: SendMessageMockParams): Promise<number | undefined> => {
   params.onSent?.(NOTICE_MESSAGE_ID);
@@ -122,10 +122,7 @@ function message(overrides: Partial<Message> = {}): Message {
  * 本文件全部候选共用的观测时刻。
  *
  * 生产侧每条 update 只读一次墙钟（infra/updateContext.ts 的 updateNow），
- * buildAdCandidate 把它原样写进 observedAt。助手若每次调用现读一次 Date.now()，
- * 同一条消息的两次构建就会各拿一个时刻，跨毫秒边界时逐字段比对在 observedAt
- * 上失败。固定成常量既守住「一次 update 一个时刻」的口径，也让 observedAt 可比对。
- *
+ * buildAdCandidate 把它原样写进 observedAt；这里固定成常量，同一条消息的多次构建得到同一个 observedAt。
  * 本文件把临时广告免检整层 mock 成纯集合判断，now 的唯一可观测去向就是 observedAt。
  */
 const OBSERVED_AT_MS: number = Date.parse("2026-03-01T00:00:00Z");
@@ -295,7 +292,7 @@ describe("广告检测投递门禁", () => {
   });
 
   test("自己人与拿本群当皮套的匿名管理员一律跳过", () => {
-    // 名单不可逆：自己人连送进判定的机会都不该有（见 docs/cn/04-invariants.md）。
+    // 自己人不进入判定（见 docs/cn/04-invariants.md）。
     expect(buildAdCandidate(message({ from: { id: 1, is_bot: false, first_name: "Super" } }), 999)).toBeUndefined();
     expect(buildAdCandidate(message({ from: { id: 100, is_bot: false, first_name: "Priv" } }), 999)).toBeUndefined();
     expect(buildAdCandidate(
@@ -331,9 +328,8 @@ describe("广告检测投递门禁", () => {
   });
 
   test("被引用的原文与 text 分成两个字段跨线程传，但两样都参与判定", () => {
-    // 分开传不是为了让判定读不到，而是因为接的时机不同：Worker 侧必须在正文按
-    // AD_DETECT_MESSAGE_MAX_CHARS 截断之后再接（先拼后截等于零成本绕过），
-    // 样本侧则要留一份没并进正文的原样。命中后的归因理由见 buildSampleContext。
+    // 被引用的原文与 text 分字段传：Worker 侧在正文按 AD_DETECT_MESSAGE_MAX_CHARS 截断之后再接，
+    // 样本侧留一份没并进正文的原样；命中后的归因理由见 buildSampleContext。
     const candidate = buildAdCandidate(message({
       text: "这种广告真烦",
       quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
@@ -358,8 +354,7 @@ describe("广告检测投递门禁", () => {
   });
 
   test("回归用例：自己一个字都不打、只靠引用把编辑成广告的旧消息顶上来，照样送检", () => {
-    // 只看 text 的话，不打字就能绕过去——而「编辑旧消息 + 回复/引用顶上来」
-    // 正是当前最主流的广告形态。正文、URL、上下文三样全空才算没有可判定内容。
+    // 正文、URL、上下文三样全空才算没有可判定内容；只靠引用顶上来的旧消息照样送检。
     const candidate = buildAdCandidate(message({
       text: undefined,
       quote: { text: "日入过千 加V xxx996", position: 0, is_manual: true },
@@ -519,9 +514,7 @@ describe("广告检测投递门禁", () => {
   });
 
   test("超链接背后的落地页与正文分开带，裸链接不重复", () => {
-    // 可见文字可以完全无害，落点只在实体的 url 里；只读 text 的话，判定规则里
-    // 最硬的那条「有没有把人带离本群」直接失效。URL 不拼进正文：Worker 侧按
-    // 字数从头保留，拼在尾部的落地页正好是超长时被切掉的那一段。
+    // 可见文字无害、落点只在实体 url 里时，linkUrls 单独携带它；URL 不拼进正文。
     const linked = buildAdCandidate(message({
       text: "点这里",
       entities: [{ type: "text_link", offset: 0, length: 3, url: "https://t.me/spamchannel" }],
@@ -547,8 +540,7 @@ describe("广告检测投递门禁", () => {
   });
 
   test("关联频道的自动转发与机器人自己的帖子回弹都不判定", () => {
-    // 频道贴走 sender_chat，处置会在每个托管群 banChatSenderChat，把整个评论区
-    // 连根拔掉；机器人自己发在频道里的帖回弹进来更是能把自己的频道拉黑。
+    // 关联频道的自动转发（sender_chat）与机器人自己发在频道里的帖子回弹都不构建候选。
     expect(buildAdCandidate(message({
       is_automatic_forward: true,
       sender_chat: { id: -1005, type: "channel", title: "关联频道" },
@@ -558,10 +550,8 @@ describe("广告检测投递门禁", () => {
   });
 
   test("本 bot 自己的 inline 结果一律按源文本判定，取不到源文本就不判", () => {
-    // gag 落群正文由 renderGagSpeech 随机插点生成，正落在提示词「刻意变形」那条
-    // 最强单项信号上，前缀那条隐藏主页 marker 又补上一个 t.me 落点；运势正文则是
-    // 问候、抽签结果与防伪回执——两者都是本 bot 自己写的，送检的必须是应答那一刻
-    // 登记下来的源文本。
+    // gag 落群正文由 renderGagSpeech 随机插点生成，运势正文由问候、抽签结果与防伪回执组成；
+    // 两者都是本 bot 自己写的，送检的是应答那一刻登记下来的源文本。
     const gagSpeech = (overrides: Partial<Message> = {}): Message => message({
       via_bot: { id: 999, is_bot: true, first_name: "Bot" },
       text: "（透过口塞）小. .. ..号. ...也有... . ..啊",
@@ -587,8 +577,7 @@ describe("广告检测投递门禁", () => {
     expect(gagged?.senderId).toBe(7);
     expect(gagged?.linkUrls).toBeUndefined();
 
-    // 运势结果同样只判用户写的所求事项，问候、抽签结果、防伪回执与那条回执
-    // 链接都不进判定。
+    // 运势结果同样只判用户写的所求事项；问候、抽签结果、防伪回执与回执链接都不进判定。
     const fortuneText: string =
       "你好，@spammer\n所求事项: 加我微信\n结果: 大吉\n防伪标记: 0123";
     recordInlineResultSources(7, "加我微信", [{
@@ -610,8 +599,7 @@ describe("广告检测投递门禁", () => {
     expect(fortune?.text).toBe("加我微信");
     expect(fortune?.linkUrls).toBeUndefined();
 
-    // 正文对不上本次登记（客户端发的是上一次按键那条结果、或进程在发言之后
-    // 重启）时整条不判：本 bot 的渲染结果一个字都不能送检。
+    // 正文对不上本次登记时整条不判：本 bot 的渲染结果不送检。
     expect(buildAdCandidate(gagSpeech(), 999)).toBeUndefined();
     inlineResultSources.clear();
     expect(buildAdCandidate(message({
@@ -620,8 +608,7 @@ describe("广告检测投递门禁", () => {
     }), 999)).toBeUndefined();
 
     // 别的机器人的 inline 结果不是自己人：这条通道只对本 bot 的渲染结果生效，
-    // 它照常按消息正文送检，落地页也照常补进去——广告最常见的形态之一就是借
-    // 别人的 inline bot 发出来，绝不能跟着一起豁免。
+    // 它照常按消息正文送检，落地页也照常补进去。
     const otherBotMessage = (): Message => message({
       via_bot: { id: 1000, is_bot: true, first_name: "Other" },
       text: "点这里",
@@ -672,24 +659,21 @@ describe("广告检测投递门禁", () => {
   });
 
   test("仍在入群验证窗口内时带上 justJoined 事实", () => {
-    // 这条事实模型自己看不到（转录里没有入群时间），只能由主线程按待验证镜像喂。
+    // justJoined 由主线程按待验证镜像提供。
     expect(buildAdCandidate(message(), 999)?.justJoined).toBe(false);
     activeVerificationSnapshots.set("-1001:7", {});
     expect(buildAdCandidate(message(), 999)?.justJoined).toBe(true);
   });
 
   test("已经在黑名单里的真人不再送检", () => {
-    // 处置早就排上了，他还在说话只是因为封禁尚未落地；继续送检只会把额度烧在
-    // 一个注定要被清出去的人身上，还会换来一次完全相同的处置。真人的封禁走
-    // banChatMember，带 revoke_messages，这段空档里的消息会随封禁一起撤掉。
+    // 已在黑名单里的真人处置已排上，封禁尚未落地；不再送检。真人的封禁走 banChatMember，带 revoke_messages。
     blockedIds.add(7);
     expect(buildAdCandidate(message(), 999)).toBeUndefined();
   });
 
   test("已经在黑名单里的频道马甲照常投递，带着 blocked 交给判定线程删", () => {
-    // 频道身份的封禁走 banChatSenderChat，那个接口没有 revoke_messages：在主线程
-    // 就吞掉的话，它在封禁落地之前抢发的每一条广告都没有任何清理路径，会永久
-    // 留在群里且没有任何日志。投递闸认得 blocked，会直接删掉而不进判定额度。
+    // 频道身份的封禁走 banChatSenderChat，没有 revoke_messages；已在黑名单里的频道马甲照常投递并带 blocked，
+    // 投递闸认得 blocked，直接删除而不进判定额度。
     blockedIds.add(-1005);
     const candidate = buildAdCandidate(
       message({ sender_chat: { id: -1005, type: "channel", title: "广告频道" } }),

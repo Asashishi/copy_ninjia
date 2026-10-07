@@ -251,8 +251,7 @@ describe("explicit Worker initialization", () => {
       const failedFlushPromise = diskIO.flushDiskIO(1_000);
       const failedFlush = first.messages.at(-1)!;
       expect(failedFlush.type).toBe("flush");
-      // 回执按领域回报失败，让 /block 这类只关心自己那个领域的调用方不被
-      // 无关领域误导（见 workers/diskIO/domainFlush.ts 的 flushScope）。
+      // 回执按领域回报失败（见 workers/diskIO/domainFlush.ts 的 flushScope）。
       const failedFlushReply: DiskIOReply = {
         type: "flushFailed",
         flushedId: failedFlush.type === "flush" ? failedFlush.flushId : -1,
@@ -273,9 +272,7 @@ describe("explicit Worker initialization", () => {
       first.onmessage!({ data: targetDomainFlushReply } as MessageEvent<DiskIOReply>);
       expect(await targetDomainFlushPromise).toBe("failed");
 
-      // 带回执的出口把领域名一并带出，且只带**本次请求**回执里的那一份：
-      // 上一次失败留下的 aiMemory 不得出现在这一次的诊断里，否则 /block 会
-      // 把运维引向一个跟本次失败毫无关系的文件。
+      // 带回执的出口把领域名一并带出，且只带本次请求回执里的那一份：上一次失败留下的 aiMemory 不出现在这一次的诊断里。
       const outcomePromise = diskIO.flushDiskIODomainOutcome("blocklist", 1_000);
       const outcomeFlush = first.messages.at(-1)!;
       expect(outcomeFlush).toMatchObject({ type: "flush", scope: "blocklist" });
@@ -598,8 +595,7 @@ describe("explicit Worker initialization", () => {
   });
 
   test("重放期间的写失败回执按 fatal 停机，不留下已确认却没落盘的事实", async () => {
-    // 缓冲那一刻 recordJoinLog 就已经放行了该 update，此后没有任何 flush 会再问
-    // 它写没写进去；Worker 只能靠这条回执把失败报上来，主线程据此停机，让
+    // 缓冲那一刻 recordJoinLog 已放行该 update；Worker 靠这条回执报告失败，主线程据此停机，
     // Telegram 从上一个确认点整段重投（见 infra/joinLog.ts）。
     FakeWorker.instances.length = 0;
     const originalWorker: typeof Worker = globalThis.Worker;

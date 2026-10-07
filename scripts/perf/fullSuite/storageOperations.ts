@@ -2,13 +2,13 @@
  * 存储分区的操作表与参数解析。
  *
  * 本文件只放操作表与参数解析，供父进程按序 spawn。`fullSuite/storage.ts` 会
- * 静态 import 生产模块，父进程不 import 它（约束见 fullSuite/mockRoot.ts 的模块
- * 头注）。
+ * 静态 import 生产模块，父进程不 import 它（约束见
+ * scripts/conventions/moduleBoundaries.ts 的 collectFullSuiteImportProblems）。
  */
 
 import type { BenchmarkOperation } from "../identityDatabase/types";
 
-/** 存储分区固定按这个顺序出数，覆盖主线程与 SQLite 的全部冷热路径。 */
+/** 存储分区固定按这个顺序出数。 */
 export const STORAGE_OPERATIONS: readonly BenchmarkOperation[] = [
   "main-lru-read",
   "main-write-through-acked",

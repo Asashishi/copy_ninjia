@@ -19,8 +19,7 @@ import { exemptOf, kickPendingOf, pendingUpdated, remindersOf } from "./shared";
 
 /**
  * 汇总一次入群的全部豁免来源。关联频道评论区的直属评论和楼中楼回复都视为
- * 已实际参与讨论：Telegram 的入群/消息投递顺序不稳定，机器人也无法可靠
- * 反查线程根，因此只要在关联讨论线程观察到消息就豁免且不计刷群统计。
+ * 已参与讨论：在关联讨论线程观察到消息即豁免，不计刷群统计。
  */
 function resolveJoinExemption(event: JoinEvent): JoinExemption {
   if (event.identityExempt || event.actorSyncExempt) return IDENTITY_JOIN_EXEMPTION;
@@ -29,9 +28,9 @@ function resolveJoinExemption(event: JoinEvent): JoinExemption {
 }
 
 /**
- * 本次入群是否会新建一条记录（= 计入刷群统计）。调用方必须先用它决定是否
- * recordJoin，再取 lockdownActive、再 dispatch——recordJoin 可能同步触发
- * 私密模式，越过阈值的那次入群自己就要走秒踢分支，顺序不能反。
+ * 本次入群是否会新建一条记录（= 计入刷群统计）。调用方先用它决定是否
+ * recordJoin，再取 lockdownActive、再 dispatch；recordJoin 可能同步触发
+ * 私密模式，越过阈值的那次入群自己走秒踢分支。
  */
 export function joinCreatesNewRecord(
   state: VerificationState | undefined,
@@ -68,9 +67,8 @@ function joinExempt(
     // kickMember 前的对象同一性复核会自行失效。
     return {
       next: exemptOf(event.label, event.isBot),
-      // 只撤销确实计过数的那一格：重进补踢建出的 kickPending 没有对应的
-      // recordJoin（见 KickPendingState.countedJoinAt），凭 requestedAt 撤
-      // 会删掉同一 tick 里另一名合法计数成员，把刷群窗口压到阈值之下。
+      // 只撤销确实计过数的那一格；重进补踢建出的 kickPending 没有对应的
+      // recordJoin（见 KickPendingState.countedJoinAt）。
       effects: state.countedJoinAt === undefined
         ? []
         : [{ kind: "retractJoinCount", joinedAt: state.countedJoinAt }],
@@ -196,14 +194,11 @@ export function handleJoin(
   state: VerificationState | undefined,
   event: JoinEvent
 ): VerificationTransition {
-  // 终态属于上一次物理入群。若 Telegram 已经送来一次新入群，就以新记录
-  // 替换它；解释器捕获的旧终态会因对象同一性不再匹配而停止踢人，避免误伤
-  // 同一 userId 的新一代成员记录。
+  // 终态属于上一次物理入群：新入群以新记录替换它，解释器捕获的旧终态
+  // 因对象同一性不再匹配而停止踢人。
   if (state?.kind === "checkingInviter" || state?.kind === "expelling") {
-    // 被替换掉的那条记录还挂着自己的验证提醒，而它的 expel 收尾（本该顺手删掉
-    // 这些消息）会因为对象同一性复核不过而整段跳过。提醒带按钮，按 AGENTS.md
-    // 不能挂固定 30 秒删除，没有任何兜底路径——不在这里发这条 effect，群里就
-    // 永久留着一个指向已不存在记录的「验证」按钮。
+    // 被替换记录的验证提醒带按钮，不挂固定延迟删除；它的 expel 收尾因对象同一性
+    // 复核不过而跳过，提醒由这里的 effect 删除。
     const replaced: VerificationTransition = handleJoin(undefined, event);
     return {
       ...replaced,
@@ -220,12 +215,10 @@ export function handleJoin(
 /**
  * 处理成员离群。
  *
- * pending 直接回到 ABSENT，并删掉两条带按钮的验证提醒——人已经不在群里，
- * 那些按钮永远不会再被按，留着只是噪声。
+ * pending 直接回到 ABSENT，并删掉两条带按钮的验证提醒。
  *
- * 两个终态**保持原状不动**：正在执行的踢人可能就是本机器人自己发起的，
- * 这条 left 正是它的结果。此时清掉记录会让随后的处置结算事件找不到状态，
- * 落盘回执与去重窗口一起丢失（结算路径见 verificationRuntime.ts 的
+ * 两个终态保持原状：正在执行的踢人可能由本机器人发起，这条 left 即是其结果，
+ * 记录保留到处置结算事件到达（结算路径见 verificationRuntime.ts 的
  * dispatchVerification）。其余状态（EXEMPT / KICK_PENDING / KICKED）随离群
  * 一并作废。
  */

@@ -7,8 +7,17 @@ import {
 } from "../../packages/commands/botStatus";
 import type { BotStatusSnapshot } from "../../packages/commands/botStatus";
 import { BOT_CHAT_PERMISSION_KEYS } from "../../packages/consts/botAdmin";
-import { BOT_STATUS_FEATURE_KEYS } from "../../packages/consts/botStatus";
+import { MAX_SUMMARY_ROUNDS, VERBATIM_CONTEXT_MAX } from "../../packages/consts/aiChat/memory";
+import {
+  BOT_STATUS_COLD_MEMORY_WEIGHT,
+  BOT_STATUS_DECIMAL_PLACES,
+  BOT_STATUS_FEATURE_KEYS,
+  BOT_STATUS_HOT_MEMORY_WEIGHT,
+  BOT_STATUS_PERCENT_SCALE,
+} from "../../packages/consts/botStatus";
 import { TELEGRAM_429_RETRY_QUEUE_MAX } from "../../packages/consts/telegram";
+import { GAG_SESSION_MAX } from "../../packages/consts/gag";
+import { TRANSLATE_CHAT_USER_LIMIT } from "../../packages/consts/translate";
 import { botPermissions } from "../helpers/botPermissions";
 import { chatStateOf } from "../helpers/chatState";
 import { botAtmosphereState } from "../../packages/cache/main/atmosphere";
@@ -16,6 +25,15 @@ import type { Atmosphere } from "../../packages/types/atmosphere";
 import { parseMarkdownV2 } from "../helpers/markdownV2";
 import { ATMOSPHERE_TEXTS } from "../../packages/consts/atmosphere";
 import type { ParsedMarkdownV2 } from "../helpers/markdownV2";
+import type { AtmosphereNotices } from "../../packages/types/atmosphereNotices";
+
+const PLAIN: Readonly<AtmosphereNotices> = ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS;
+const TEASING: Readonly<AtmosphereNotices> = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS;
+
+/** 夹具里热记忆占上限的一半、冷记忆摘要占满上限时，按两段权重加权求和得到的展示百分比。 */
+const expectedContextUsagePercent: string = `${(
+  (BOT_STATUS_HOT_MEMORY_WEIGHT * 0.5 + BOT_STATUS_COLD_MEMORY_WEIGHT * 1) * BOT_STATUS_PERCENT_SCALE
+).toFixed(BOT_STATUS_DECIMAL_PLACES)}%`;
 
 /** 按 Telegram 的 MarkdownV2 解析口径还原回执的可见正文与实体；原文会被拒收时直接抛错。 */
 function renderStatus(snapshot: BotStatusSnapshot): ParsedMarkdownV2 {
@@ -94,7 +112,7 @@ function statusSnapshot(): BotStatusSnapshot {
     telegramCapacity: TELEGRAM_429_RETRY_QUEUE_MAX,
     activeGagSessions: 3,
     activeTranslateSessions: 2,
-    aiContextUsage: { bufferedCount: 128, summaryCount: 3 },
+    aiContextUsage: { bufferedCount: VERBATIM_CONTEXT_MAX / 2, summaryCount: MAX_SUMMARY_ROUNDS },
     processStatus: {
       uptimeSeconds: 183_845,
       averageCpuPercent: 12.345,
@@ -117,40 +135,60 @@ describe("/bot_status", () => {
 
     expect(text).toStartWith(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusTitle);
     expect(text).toContain(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusModels);
-    expect(text).toContain("群聊正文：gpt-status\n");
-    expect(text).toContain("记忆摘要：gemini-summary\n");
-    expect(text).toContain("媒体理解：gemini-media\n");
-    expect(text).toContain("语音合成：gemini-tts\n");
-    expect(text).toContain("广告检测：ad-model\n");
-    expect(text).not.toContain("图片生成：");
-    expect(text).not.toContain("联网检索：");
+    expect(text).toContain(`${PLAIN.statusModelText("gpt-status")}\n`);
+    expect(text).toContain(`${PLAIN.statusModelSummary("gemini-summary")}\n`);
+    expect(text).toContain(`${PLAIN.statusModelMedia("gemini-media")}\n`);
+    expect(text).toContain(`${PLAIN.statusModelTts("gemini-tts")}\n`);
+    expect(text).toContain(`${PLAIN.statusModelAdDetect("ad-model")}\n`);
+    expect(text).not.toContain(PLAIN.statusModelImage(""));
+    expect(text).not.toContain(PLAIN.statusModelWebSearch(""));
     expect(text).not.toContain("已配置");
     expect(text).not.toContain("未配置");
-    expect(text).toContain(`Telegram 出站：\n• 处理中 7\n• 429 退避排队 1024/${TELEGRAM_429_RETRY_QUEUE_MAX}`);
+    expect(text).toContain(
+      `${PLAIN.statusTelegram}\n${PLAIN.statusTelegramActive(7)}\n` +
+      PLAIN.statusTelegramPending(1024, TELEGRAM_429_RETRY_QUEUE_MAX)
+    );
     expect(text).not.toContain("openai");
     expect(text).not.toContain("google");
     // 本群一组：id 在前，翻译会话占用在最后，不再展示提示词状态。
     expect(text).toContain(
-      "• 本群 ID：-1001234567890\n" +
-      "• AI 上下文利用率：47.86%\n" +
-      "• 当前 gag 会话：3/5\n" +
-      "• 本群翻译人数：2/5 人\n\n"
+      `${PLAIN.statusChatIdLabel}-1001234567890\n` +
+      PLAIN.statusContextUsage(expectedContextUsagePercent) + "\n" +
+      PLAIN.statusGag(3, GAG_SESSION_MAX) + "\n" +
+      PLAIN.statusTranslate(2, TRANSLATE_CHAT_USER_LIMIT) + "\n\n"
     );
     expect(text).not.toContain("提示词");
-    expect(text).toContain("本机进程：");
-    expect(text).toContain("Bot 运行时长：2 天 03:04:05");
-    expect(text).toContain("CPU：12.35% (6 Core)");
+    expect(text).toContain(PLAIN.statusProcess);
+    expect(text).toContain(PLAIN.statusUptime(PLAIN.statusUptimeWithDays(2, "03:04:05")));
+    expect(text).toContain(PLAIN.statusCpu("12.35%", 6));
     expect(text).not.toContain("运行期平均");
-    expect(text).toContain("当前内存占用：512.00 MiB / 8.00 GiB（6.25%）");
+    expect(text).toContain(PLAIN.statusMemory("512.00 MiB", "8.00 GiB", "6.25%"));
     expect(text).toContain('"isAIChatEnabled": true');
     expect(text).toContain('"isAntiRaidEnabled": true');
     expect(text).toContain('"isTranslationEnabled": false');
     expect(text).not.toContain("secret-");
     expect(text).not.toContain("example/v1");
-    // 上下文容量 = 0.7 × 128/256 + 0.3 × 3/7 = 47.86%；只给百分比，两段记忆的
-    // 原始条数属于记忆分层的内部机制，不对群友外露。
+    // 上下文容量按两段记忆的占用加权折算成百分比；只给百分比，两段记忆的原始条数不对群友外露。
     expect(text).not.toContain("滑动热记忆");
     expect(text).not.toContain("冷记忆摘要");
+  });
+
+  test("上下文利用率：只占满热记忆或只占满冷记忆摘要时，各自只贡献自己的权重", () => {
+    const percentLine = (weight: number): string =>
+      ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusContextUsage(
+        `${(weight * BOT_STATUS_PERCENT_SCALE).toFixed(BOT_STATUS_DECIMAL_PLACES)}%`
+      );
+    const hotOnly: string = renderStatus({
+      ...statusSnapshot(),
+      aiContextUsage: { bufferedCount: VERBATIM_CONTEXT_MAX, summaryCount: 0 },
+    }).text;
+    const coldOnly: string = renderStatus({
+      ...statusSnapshot(),
+      aiContextUsage: { bufferedCount: 0, summaryCount: MAX_SUMMARY_ROUNDS },
+    }).text;
+
+    expect(hotOnly).toContain(percentLine(BOT_STATUS_HOT_MEMORY_WEIGHT));
+    expect(coldOnly).toContain(percentLine(BOT_STATUS_COLD_MEMORY_WEIGHT));
   });
 
   test("配置了 web_search 时联网检索行展示它的模型名，不显示余量", () => {
@@ -169,7 +207,7 @@ describe("/bot_status", () => {
         },
       },
     }).text;
-    expect(text).toContain("语音合成：gemini-tts\n• 联网检索：gpt-search\n");
+    expect(text).toContain(`${PLAIN.statusModelTts("gemini-tts")}\n${PLAIN.statusModelWebSearch("gpt-search")}\n`);
     expect(text).not.toContain("secret-search-key");
   });
 
@@ -193,9 +231,9 @@ describe("/bot_status", () => {
       adDetectConfig: null,
     }).text;
 
-    expect(text).toContain("图片生成：imagen-status\n");
-    expect(text).not.toContain("语音合成：");
-    expect(text).not.toContain("广告检测：");
+    expect(text).toContain(`${PLAIN.statusModelImage("imagen-status")}\n`);
+    expect(text).not.toContain(PLAIN.statusModelTts(""));
+    expect(text).not.toContain(PLAIN.statusModelAdDetect(""));
     expect(text).not.toContain("secret-image-key");
   });
 
@@ -221,7 +259,7 @@ describe("/bot_status", () => {
         },
       },
     }).text;
-    expect(text).toContain("语音合成：ara\n");
+    expect(text).toContain(`${PLAIN.statusModelTts("ara")}\n`);
     expect(text).not.toContain("secret-xai-key");
   });
 
@@ -240,17 +278,17 @@ describe("/bot_status", () => {
 
     expect(text).not.toContain(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.statusModels);
     expect(text).not.toContain("AI 对话能力：");
-    expect(text).not.toContain("广告检测：");
-    expect(text).toContain("Telegram 出站：");
+    expect(text).not.toContain(TEASING.statusModelAdDetect(""));
+    expect(text).toContain(TEASING.statusTelegram);
     // 镜像没有条目就是「此刻没有可展示的上下文」，按 0 展示而不是沿用旧值。
     expect(text).toContain(
-      "• 本群 ID：-1001234567890\n" +
-      "• 猫娘大脑利用率：0.00%\n" +
-      "• 正在被本天才调教的杂鱼：3/5\n" +
-      "• 本群正赖着本天才翻译的杂鱼：2/5♡\n\n"
+      `${TEASING.statusChatIdLabel}-1001234567890\n` +
+      TEASING.statusContextUsage("0.00%") + "\n" +
+      TEASING.statusGag(3, GAG_SESSION_MAX) + "\n" +
+      TEASING.statusTranslate(2, TRANSLATE_CHAT_USER_LIMIT) + "\n\n"
     );
     expect(text).toEndWith(
-      "本群的开关都摆这儿了，连这个都记不住吗，笨蛋♡：\n" +
+      `${TEASING.statusFeatures}\n` +
       "{\n" +
       '  "isInitEnabled": false,\n' +
       '  "isAIChatEnabled": false,\n' +
@@ -270,8 +308,8 @@ describe("/bot_status", () => {
       aiConfig: null,
     }).text;
 
-    expect(text).toContain("全局模型能力：\n• 广告检测：ad-model\n");
-    expect(text).not.toContain("群聊正文：");
+    expect(text).toContain(`${PLAIN.statusModels}\n${PLAIN.statusModelAdDetect("ad-model")}\n`);
+    expect(text).not.toContain(PLAIN.statusModelText(""));
     expect(text).not.toContain("AI 对话能力：");
   });
 
@@ -285,7 +323,7 @@ describe("/bot_status", () => {
       entity.offset,
       entity.offset + entity.length
     );
-    expect(message.text).toContain(`机器人在本群的权限：\n${json}`);
+    expect(message.text).toContain(`${PLAIN.statusPermissions}\n${json}`);
     // 快照是「管理员 + 通用管理能力 + 删除消息」，顺序仍随权限清单。
     expect(JSON.parse(json)).toEqual({
       isAdministrator: "管理员身份",
@@ -317,7 +355,7 @@ describe("/bot_status", () => {
     });
 
     expect(message.entities).toHaveLength(3);
-    expect(message.text).toContain("机器人在本群的权限：\n{}");
+    expect(message.text).toContain(`${PLAIN.statusPermissions}\n{}`);
   });
 
   test("权限尚未确证时不出 JSON 块，也不留下空的代码块", () => {
@@ -329,9 +367,7 @@ describe("/bot_status", () => {
 
     // 权限块缺席时只剩本群 id 与功能块两个实体。
     expect(message.entities.map((entity) => entity.type)).toEqual(["code", "pre"]);
-    expect(message.text).toContain(
-      "机器人在本群的权限：\n• 尚未确认本群权限"
-    );
+    expect(message.text).toContain(`${PLAIN.statusPermissions}\n${PLAIN.statusPermissionsUnknown}`);
   });
 
   test("功能块逐项给出本群开关的真假，键与顺序随 BOT_STATUS_FEATURE_KEYS", () => {
@@ -340,7 +376,7 @@ describe("/bot_status", () => {
     expect(entity.type).toBe("pre");
     expect(entity).toMatchObject({ language: "json" });
     const json: string = message.text.slice(entity.offset, entity.offset + entity.length);
-    expect(message.text).toContain(`本群功能开关：\n${json}`);
+    expect(message.text).toContain(`${PLAIN.statusFeatures}\n${json}`);
     const parsed = JSON.parse(json) as Record<string, boolean>;
     expect(Object.keys(parsed)).toEqual([...BOT_STATUS_FEATURE_KEYS]);
     // 快照开着监听、AI 闲聊、广告检测与入群验证；没设过的开关照样列出来，给 false。
@@ -361,7 +397,7 @@ describe("/bot_status", () => {
       const code = message.entities[0]!;
       expect(code.type).toBe("code");
       expect(message.text.slice(code.offset, code.offset + code.length)).toBe("-1001234567890");
-      expect(message.text.slice(0, code.offset)).toEndWith("• 本群 ID：");
+      expect(message.text.slice(0, code.offset)).toEndWith(ATMOSPHERE_TEXTS[atmosphere].NOTICE_TEXTS.statusChatIdLabel);
       expect(code.offset).toBeLessThan(message.entities[1]!.offset);
     }
   });
@@ -374,7 +410,7 @@ describe("/bot_status", () => {
       aiConfig: { ...snapshot.aiConfig!, text: { ...snapshot.aiConfig!.text, model } },
     });
 
-    expect(message.text).toContain(`群聊正文：${model}\n`);
+    expect(message.text).toContain(`${PLAIN.statusModelText(model)}\n`);
     expect(message.entities.map((entity) => entity.type)).toEqual(["code", "pre", "pre"]);
   });
 
@@ -396,8 +432,8 @@ describe("/bot_status", () => {
   });
 
   test("运行时长、容量单位和不可用内存上限均稳定格式化", () => {
-    expect(formatBotUptime(59.9)).toBe("00:00:59");
-    expect(formatBotUptime(Number.NaN)).toBe("00:00:00");
+    expect(formatBotUptime(59.9, ATMOSPHERE_TEXTS.plain)).toBe("00:00:59");
+    expect(formatBotUptime(Number.NaN, ATMOSPHERE_TEXTS.plain)).toBe("00:00:00");
     expect(formatBotMemory(512)).toBe("512 B");
     expect(formatBotMemory(2_048)).toBe("2.00 KiB");
 
@@ -412,8 +448,24 @@ describe("/bot_status", () => {
         memoryPercent: Number.NaN,
       },
     }).text;
-    expect(text).toContain("CPU：0.00% (1 Core)");
-    expect(text).toContain("当前内存占用：0 B（本机上限不可用）");
+    expect(text).toContain(PLAIN.statusCpu("0.00%", 1));
+    expect(text).toContain(PLAIN.statusMemoryNoLimit("0 B"));
+  });
+
+  test("调侃风格下进程、模型与出站各行都走调侃文案，数值照常展示", () => {
+    const text: string = withAtmosphere("teasing", (): string => renderStatus(statusSnapshot()).text);
+
+    expect(text).toContain(TEASING.statusCpu("12.35%", 6));
+    expect(text).toContain(TEASING.statusUptime(TEASING.statusUptimeWithDays(2, "03:04:05")));
+    expect(text).toContain(TEASING.statusMemory("512.00 MiB", "8.00 GiB", "6.25%"));
+    expect(text).toContain(`${TEASING.statusModelText("gpt-status")}\n`);
+    expect(text).toContain(`${TEASING.statusModelAdDetect("ad-model")}\n`);
+    expect(text).toContain(
+      `${TEASING.statusTelegram}\n${TEASING.statusTelegramActive(7)}\n` +
+      TEASING.statusTelegramPending(1024, TELEGRAM_429_RETRY_QUEUE_MAX)
+    );
+    expect(text).not.toContain(PLAIN.statusTelegram);
+    expect(text).not.toContain(PLAIN.statusModelText(""));
   });
 
   test("无法采样当前内存占用时显示不可用，其他状态仍完整展示", () => {
@@ -422,9 +474,9 @@ describe("/bot_status", () => {
       ...snapshot,
       processStatus: { ...snapshot.processStatus, memoryFootprintBytes: null },
     }).text;
-    expect(text).toContain("当前内存占用：不可用");
+    expect(text).toContain(PLAIN.statusMemoryUnavailable);
     expect(text).not.toContain("RSS");
-    expect(text).toContain("Bot 运行时长");
+    expect(text).toContain(PLAIN.statusUptime(""));
     expect(text).toContain(ATMOSPHERE_TEXTS.plain.NOTICE_TEXTS.statusModels);
   });
 });

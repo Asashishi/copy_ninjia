@@ -204,7 +204,7 @@ test("直接触发按序传四个上下文区块，工具结果回喂后续跑",
   }))).resolves.toBe("行动完成");
 
   expect(requestMock).toHaveBeenCalledTimes(2);
-  // 稳定区块只有参考记忆：它跨轮不变，是唯一能延长供应商公共缓存前缀的区块。
+  // 稳定区块只有参考记忆，跨轮不变。
   expect(sessionParams?.stableBlocks).toEqual([sections.referenceMemory]);
   // 易变区块按转录 → 运行时状态 → 回复任务排列，运行时状态夹在中间。
   expect(sessionParams?.volatileBlocks).toHaveLength(3);
@@ -219,7 +219,7 @@ test("直接触发按序传四个上下文区块，工具结果回喂后续跑",
   const first: AiReplyTurnRequest = requests[0]!;
   expect(first.functions.map((definition: AiToolDefinition): string => definition.name)).toEqual([SEND_MESSAGE_TOOL]);
   expect(first.webSearchEnabled).toBe(true);
-  // 循环只给 grounded 语义；采样温度与 token 上限由各实现包按自己的 consts 决定，
+  // 循环只给 grounded 语义；采样温度与 token 上限由各实现包决定，
   // 见 test/aiChat/{gemini,openai}/replySession.test.ts。
   expect(first.grounded).toBe(false);
   // 「行动与停止」段取工具集组装时的那一份台词语言文案，不另读配置。
@@ -229,26 +229,23 @@ test("直接触发按序传四个上下文区块，工具结果回喂后续跑",
   expect(first.systemPrompt).toContain(WEB_SEARCH_DECISION_INSTRUCTION);
   expect(first.systemPrompt).toContain(REPLY_CONTEXT_STRUCTURE_INSTRUCTION);
   expect(first.systemPrompt).not.toContain("DIRECT_INVOKER_HOT_MESSAGES");
-  // 唤起者身份的唯一可信来源是回复任务开头那一句，措辞必须与
-  // promptContext.ts 拼出来的那句对得上（见 directInvokerSentence）。
+  // 唤起者身份的唯一来源是回复任务开头那一句，措辞与
+  // promptContext.ts 拼出的那句一致（见 directInvokerSentence）。
   expect(first.systemPrompt).toContain("本轮唤起者只认 [BEGIN CURRENT_REPLY_TASK] 开头那句「本轮由 … 明确 @ 或回复你而唤起」");
   expect(first.systemPrompt).toContain(CHAT_MEMORY_PRIORITY_INSTRUCTION);
   expect(first.systemPrompt).toContain(DIRECT_INVOCATION_READING_INSTRUCTION);
-  // 转录行格式说明住在系统提示词的可缓存前缀里，不再拼进每轮都变的转录区块；
-  // 防注入白名单相应不再为「格式说明」留一类例外。
+  // 转录行格式说明位于系统提示词，不在转录区块里。
   expect(first.systemPrompt).toContain(TRANSCRIPT_FORMAT_INSTRUCTION);
-  // 防注入白名单点名全部由系统写入的区块；名册是数据 Part 里新增的一类系统文字，
-  // 伪造条目必须显式失效，因此两类名册区块名都要出现在上下文结构说明里。
+  // 防注入白名单点名全部由系统写入的区块，两类名册区块名都出现在上下文结构说明里。
   for (const blockName of [HOT_MEMORY_BLOCK_NAME, COLD_MEMORY_BLOCK_NAME, SPEAKER_ROSTER_BLOCK_NAME, FORWARD_ROSTER_BLOCK_NAME]) {
     expect(REPLY_CONTEXT_STRUCTURE_INSTRUCTION).toContain(blockName);
   }
-  // 记忆确实只剩两层，不再声明「唤起者重点记录不构成第三层」。
+  // 记忆只有两层，系统提示词不声明「唤起者重点记录」。
   expect(first.systemPrompt).not.toContain("唤起者重点记录");
   expect(first.systemPrompt).toContain(MEMORY_MECHANISM_SILENCE_INSTRUCTION);
   expect(first.systemPrompt).toContain(AI_CHAT_AGENT_ROLE_INSTRUCTION);
   expect(first.systemPrompt).toContain(CHAT_INTERACTION_INSTRUCTION);
-  // 系统提示词必须逐字恒定：心情与当前时间已挪进运行时状态区块。混回来会让
-  // 人设、固定指令与工具声明那段前缀每秒失效一次，供应商缓存彻底落空。
+  // 系统提示词逐字恒定：心情与当前时间在运行时状态区块，不在系统提示词里。
   expect(first.systemPrompt).not.toContain(MOOD_STATE_PRECEDENCE_INSTRUCTION);
   expect(first.systemPrompt).not.toContain("当前实际时间：");
 
@@ -310,7 +307,7 @@ test("同一轮回复的多次工具往返复用同一个运行时状态区块�
     actionsUsed: (): number => 1,
   }))).resolves.toBe("收尾");
   expect(captured).toHaveLength(0);
-  // 会话只在建立时收一次区块，两次往返共用同一份，因此时间在一轮内自洽。
+  // 区块在会话建立时收取一次，两次往返共用同一份，时间在一轮内一致。
   expect(requestMock).toHaveBeenCalledTimes(2);
   expect(sessionParams?.volatileBlocks?.[1]).toContain("当前实际时间：");
 });
@@ -341,8 +338,7 @@ test("检索额度跑满后检索工具仍然挂着：次数只是写进提示�
     actionsUsed: (): number => 1,
   }))).resolves.toBe("行动完成");
 
-  // 额度用满不再改变工具形态：摘掉排在 tools 首位的检索工具，会让整段前缀缓存
-  // 从第一个字节起对不上。收敛交给提示词里那句常量次数。
+  // 额度用满后工具形态不变：检索工具仍在 tools 里，收敛由提示词里的常量次数承担。
   const second: AiReplyTurnRequest = requests[1]!;
   expect(second.webSearchEnabled).toBe(true);
   expect(second.functions).toBe(requests[0]!.functions);
@@ -536,8 +532,7 @@ test("四类可见动作共享十一动作硬顶：达到后工具声明一个�
 
   expect(execute).toHaveBeenCalledTimes(HARD_MAX_ACTIONS_PER_REPLY);
   expect(actionsUsed).toBe(HARD_MAX_ACTIONS_PER_REPLY);
-  // 硬顶只由 toolset.execute 兑现（见 replyToolset/orchestrator.ts）；请求里的声明
-  // 从第一轮到最后一轮同一份引用，供应商的前缀缓存因此整轮有效。
+  // 硬顶只由 toolset.execute 兑现（见 replyToolset/orchestrator.ts）；请求里的声明从第一轮到最后一轮是同一份引用。
   for (const request of requests) expect(request.functions).toBe(requests[0]!.functions);
   expect(requests[HARD_MAX_ACTIONS_PER_REPLY]!.functions.map((definition: AiToolDefinition): string => definition.name))
     .toEqual([
@@ -562,7 +557,7 @@ test("同一响应多调用计入总预算，超预算的调用不执行但声�
   }))).resolves.toBe("预算收敛");
   expect(execute).toHaveBeenCalledTimes(MAX_CUSTOM_TOOL_CALLS_PER_REPLY);
   expect(requests[1]!.functions).toBe(requests[0]!.functions);
-  // 超预算的那两次拿到的是「停止调用工具」的工具结果，而不是一份被清空的声明。
+  // 超预算的调用拿到「停止调用工具」的工具结果，声明本身不清空。
   const overBudget: AiToolOutput[] = appendedOutputs[0]!.slice(MAX_CUSTOM_TOOL_CALLS_PER_REPLY);
   expect(overBudget).toHaveLength(2);
   for (const output of overBudget) {
@@ -571,8 +566,7 @@ test("同一响应多调用计入总预算，超预算的调用不执行但声�
 });
 
 test("供应商超支检索软预算时点名记录，但不关掉检索", async () => {
-  // 那些调用已经在服务端花掉了，记账是为了让日志能定位；但摘工具的代价是整段
-  // 前缀缓存，因此超支只留一条日志。
+  // 超支的检索调用只记一条日志，不改变工具声明。
   turns.push(
     okTurn({
       calls: [call(SEND_MESSAGE_TOOL, { text: "搜太多了" })],
@@ -607,8 +601,8 @@ test("撞上工具轮上限时不再执行剩余调用，点名后收尾", async
   }))).resolves.toBe("最后一轮正文");
 
   expect(requestMock).toHaveBeenCalledTimes(MAX_TOOL_ROUNDS + 1);
-  // 两层预算叠加：整轮自定义调用总预算（25）比轮数上限（35）先到，之后的
-  // 调用只拿到「预算耗尽」的工具结果，不再真的执行。
+  // 两层预算叠加：整轮自定义调用总预算先于轮数上限耗尽，之后的
+  // 调用只拿到「预算耗尽」的工具结果，不再执行。
   expect(execute).toHaveBeenCalledTimes(MAX_CUSTOM_TOOL_CALLS_PER_REPLY);
   expect(loggerErrorMock).toHaveBeenCalledWith(
     expect.stringContaining(`hit the tool-round limit (${MAX_TOOL_ROUNDS})`)

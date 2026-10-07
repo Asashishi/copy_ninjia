@@ -1,14 +1,13 @@
 /**
  * 语音消息的准入与记录（见 packages/auto/message/voice.ts）。
  *
- * 时长与声明体积两条上限在**下载之前**就拦掉，不等下载侧的字节闸。被拦下的
+ * 时长与声明体积各自的上限在下载之前就拦掉，不等下载侧的字节闸。被拦下的
  * 语音退回一行带时长的纯文本，直接触发时仍会回复。
  */
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { aiRecordMediaMessageFixture, aiRecordMessageFixture } from "../helpers/aiMemoryFixtures";
-// 七个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
-// 必须在下面的 await import 之前登记。
+// 公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；必须在下面的 await import 之前登记。
 import {
   generateAndSendReplyMock,
   recordChatMediaMock,
@@ -75,7 +74,6 @@ describe("群聊语音消息", () => {
       width: 0,
       height: 0,
       voiceMime: "audio/ogg",
-      voiceDurationSeconds: 12,
       stickerFallbackText: undefined,
       directTriggerReason: "reply",
       replyTelegramBackpressured: false,
@@ -139,7 +137,7 @@ describe("群聊语音消息", () => {
   });
 
   test("媒体夹具的默认形状与语音载荷共享同一组必填键", () => {
-    // 协议形状必须保持单一隐藏类：语音那两个字段在其余媒体上也要写出来。
-    expect(aiRecordMediaMessageFixture()).toMatchObject({ voiceMime: undefined, voiceDurationSeconds: 0 });
+    // 协议形状保持单一隐藏类：语音专用的 voiceMime 在其余媒体上也写出来。
+    expect(aiRecordMediaMessageFixture()).toMatchObject({ voiceMime: undefined });
   });
 });

@@ -41,7 +41,7 @@ export interface SubmitCommandExecutorTaskOptions {
 
 /**
  * 同步提交一个任务：合入运行时停止信号与接纳时的 update 取消上下文，任务在自己的取消上下文与
- * 触发话题里运行，不继承释放槽位的另一条任务的上下文；停机取消后的异常不再上报。接纳时
+ * 触发话题里运行；停机取消后的异常不再上报。接纳时
  * update 已取消则返回 false。接纳后没有开跑就被撤销的任务在结算时调用 onSkipped。
  * @see ../../docs/cn/04-invariants.md
  */

@@ -40,10 +40,8 @@ export interface StickerCatalogRecoveryInspection {
 /**
  * 跨域启动第一阶段（只读）：严格校验 memory/stickers/ 下每个贴纸包的目录快照
  * （孤儿快照同样先严格解码），把它们归类成待载入快照与孤儿快照，并交回目录项供清理临时文件残留。
- * 本函数不写盘、不删除。机制与其它快照领域基本一致，只是文件名使用 pack short
- * name；多一步 activePacks 对账——config/dynamic/stickers.json 的白名单已经不包含的包
- * 记为孤儿，不载入内存，也就不会让 aiChat/ai/stickers/catalog.ts 的
- * getCatalogEntry 继续拿一个已下架包的旧描述去匹配群友发的贴纸。删除由全域
+ * 本函数不写盘、不删除。文件名使用 pack short name，并按 activePacks 对账：
+ * config/dynamic/stickers.json 的白名单不包含的包记为孤儿，不载入内存。删除由全域
  * 校验成功后的 maintainStickerCatalogFiles 执行。
  * @param activePacks 当前 config/dynamic/stickers.json 的贴纸包白名单（见
  *   config/stickers.ts），用于判定哪些持久化文件已经是孤儿；null 表示白名单缺省，
@@ -85,8 +83,7 @@ export async function maintainStickerCatalogFiles(
 }
 
 /** 覆盖式写入某个白名单贴纸包的目录快照（tmp + fsync + rename 原子落盘），
- *  使用 tmp + fsync + rename，snapshotJson 为源头序列化好的
- *  JSON 文本。 */
+ *  snapshotJson 为源头序列化好的 JSON 文本。 */
 export function writeStickerCatalogFile(pack: string, snapshotJson: string): void {
   mkdirSync(STICKER_MEMORY_DIR, { recursive: true });
   atomicWriteTextSync(join(STICKER_MEMORY_DIR, `${pack}.json`), snapshotJson, PERSISTED_FILE_MODE);
@@ -102,8 +99,7 @@ function inspectStaleLuckFiles(
 ): readonly string[] {
   const stalePaths: string[] = [];
   for (const name of names) {
-    // 密钥与按日结果同属 luck owner，但由 recoverLuckReceiptSecret 单独严格
-    // 校验；这里仅负责按日文件，不能把已登记的固定元数据文件误判成坏日期。
+    // 密钥文件由 recoverLuckReceiptSecret 单独严格校验，这里只处理按日文件。
     if (name === basename(LUCK_RECEIPT_SECRET_PATH)) continue;
     const match: RegExpExecArray | null = DAY_FILE_PATTERN.exec(name);
     if (match === null) {
@@ -182,7 +178,7 @@ export async function inspectLuckDay(
   for (const key in raw) {
     if (!Object.hasOwn(raw, key)) continue;
     entryCount++;
-    // 容量错误按既有口径优先于任意记录错误；记住首个领域错误但继续完成计数。
+    // 容量错误优先于记录错误；记住首个领域错误并继续完成计数。
     if (failurePath !== null) continue;
     const value: unknown = raw[key];
     if (!LUCK_CACHE_KEY_PATTERN.test(key)) {

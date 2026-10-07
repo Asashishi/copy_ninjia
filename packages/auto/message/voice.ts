@@ -11,12 +11,9 @@ import { voiceDurationPlaceholder } from "../../consts/auto";
 import { composeMediaText } from "../../libs/text";
 
 /**
- * 语音消息进入转写管线的准入判定。
- *
- * 两条上限在**下载之前**就拦掉，而不是等下载侧的字节闸：那道闸要先把整段音频拉
- * 下来才知道超限，一条一小时的语音会白占一个媒体执行槽和整段下载带宽，最后仍然
- * 只换来一行兜底占位。Telegram 在 update 里就带着 duration 与 file_size，这里直接
- * 用。file_size 是可选字段，缺失时只按时长判——真超限仍有下载侧兜底。
+ * 语音消息进入转写管线的准入判定：按 update 里携带的 duration 与 file_size 在下载之前判定
+ * （上限见 VOICE_MAX_DURATION_SECONDS 与 VOICE_MAX_DOWNLOAD_BYTES）。
+ * file_size 是可选字段，缺失时只按时长判，下载侧另有字节闸。
  */
 function isTranscribable(voice: Voice): boolean {
   if (voice.duration > VOICE_MAX_DURATION_SECONDS) return false;
@@ -27,8 +24,7 @@ function isTranscribable(voice: Voice): boolean {
  * 记录语音占位/转写，并调度直接回复或随机评价。
  *
  * 结构与 animation.ts 一致：能解析就走「占位入缓存 -> 异步转写 -> 原位回填」的媒体
- * 管线，解析不了就退回一行纯文本上下文，并在直接触发时照样回一句——真人在等回应，
- * 「已读不回」比回一句「这条语音太长了没听」更糟。
+ * 管线，解析不了就退回一行纯文本上下文，直接触发时仍回一句（见 mediaFallback.ts）。
  */
 export function handleVoiceMessage(context: MessageTriggerContext): boolean {
   const { message }: MessageTriggerContext = context;
@@ -53,15 +49,14 @@ export function handleVoiceMessage(context: MessageTriggerContext): boolean {
     caption,
     fileId: voice.file_id,
     fileUniqueId: voice.file_unique_id,
-    // 语音没有画幅；两个尺寸字段恒为 0，形状约束见 types/aiChat/protocol.ts。
+    // 语音没有画幅，两个尺寸字段为 0，形状约束见 types/aiChat/protocol.ts。
     width: 0,
     height: 0,
     replyTelegramBackpressured: mediaReplyBackpressurePlaceholder(context, randomTrigger),
-    // 直接回复/@ 只开放重媒体工具资格，具体调不调由模型判断；语音不作为
+    // 直接回复/@ 只开放重媒体工具资格，具体调用由模型判断；语音不作为
     // 生图参考素材（imageGenerationReferenceFor 只认图片和贴纸）。
     stickerFallbackText: undefined,
     voiceMime: voice.mime_type,
-    voiceDurationSeconds: voice.duration,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

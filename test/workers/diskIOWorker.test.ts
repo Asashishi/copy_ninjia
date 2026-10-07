@@ -131,7 +131,7 @@ describe("Disk I/O Worker protocol router", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "flushed", flushedId: 9 });
   });
 
-  /** 批内逐条派发 + 回执与批号/批长校验一起验证：批号与批长是协议不变量，越界必须当场抛，不能吞掉半个批次再回一个 accepted。 */
+  /** 批内逐条派发，批末回一条 accepted 回执。 */
   test("业务批次逐条派发并回一条 accepted", async () => {
     await route({
       type: "operationBatch",
@@ -261,14 +261,13 @@ describe("Disk I/O Worker protocol router", () => {
     }
 
     expect(consoleError).toHaveBeenCalledTimes(3);
-    // 主线程只能靠下一次领域 flush 的失败回执才知道这条最终值没落盘——
-    // /block 的 confirmBlocklistPersisted 正是这么问的。
+    // 拒收按领域记入 rejectedStorageDomains，由下一次领域 flush 的失败回执回报；/block 的 confirmBlocklistPersisted 经此确认落盘。
     expect([...rejectedStorageDomains].sort()).toEqual([
       "blocklistRemovalOutbox",
       "temporaryAdBypass",
       "whitelist",
     ]);
-    // 在线消息不升级为停机：主线程仍持有未 ACK 的 revision，Worker 重建时重放。
+    // 在线消息只记拒收，不发停机回执；未 ACK 的 revision 由主线程在 Worker 重建时重放。
     expect(postMessage).not.toHaveBeenCalled();
     rejectedStorageDomains.clear();
   });
@@ -301,7 +300,7 @@ describe("Disk I/O Worker protocol router", () => {
       console.error = originalConsoleError;
     }
 
-    // 重放的这条对应的 update 早已被确认过，后面不会再有 flush 来问它。
+    // 重放期间的身份写失败直接发 recoveryReplayFailed 回执，不依赖后续 flush。
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: "recoveryReplayFailed",
       domain: "blocklist",
@@ -696,7 +695,7 @@ describe("Disk I/O Worker protocol router", () => {
     ]) {
       expect(fn).toHaveBeenCalledTimes(1);
     }
-    // 回执按领域列出失败清单，不是单个合取布尔。
+    // 回执按领域列出失败清单 failedDomains。
     expect(postMessage).toHaveBeenLastCalledWith({
       type: "flushFailed",
       flushedId: 11,
@@ -737,7 +736,7 @@ describe("Disk I/O Worker protocol router", () => {
   test("单领域屏障只刷目标领域，其它领域的缓冲窗口不受影响", async () => {
     await route({ type: "flush", flushId: 15, scope: "chatState" });
 
-    // 共享 SQLite 的七个领域（含 AI 上下文）共用一个事务：任一 SQLite 领域名都提交一次。
+    // 共享 SQLite 的各领域（含 AI 上下文）共用一个事务：任一 SQLite 领域屏障都只提交一次。
     expect(flushBlocklistRemovalOutbox).toHaveBeenCalledTimes(1);
     for (const fn of [
       flushLogBuffer,

@@ -62,11 +62,13 @@ mock.module("../../packages/infra/telegram/client", () => ({
  * （resolveBotAdminStatus），其余值走同步快路径。默认是已确证的管理员。
  */
 const botAdminStatus: { cached: boolean | undefined; resolved: boolean } = { cached: true, resolved: true };
+/** 收到别人的 chat_member 更新时按群记下「机器人此刻是管理员」。 */
+const markBotAdminObserved = mock(async (_chatId: number): Promise<void> => {});
 mock.module("../../packages/infra/botAdmin", () => ({
   resolveBotAdminStatus: async (): Promise<boolean> => botAdminStatus.resolved,
   // ingress 的同步快路径读它；未确证时返回 undefined 才会退回上面那次现查。
   cachedBotAdminStatus: (): boolean | undefined => botAdminStatus.cached,
-  markBotAdminObserved: async (): Promise<void> => {},
+  markBotAdminObserved,
   botChatPermissionsIn: async (): Promise<undefined> => undefined,
   registerBotPermissionObserver: (): void => {},
   botCanDeleteMessagesIn: (): true => true,
@@ -170,6 +172,7 @@ function typesOf(): string[] {
 
 beforeEach(() => {
   workerPosts.length = 0;
+  markBotAdminObserved.mockClear();
   diskPosts.length = 0;
   answeredCallbacks.length = 0;
   temporaryAdBypassActivityMessages.length = 0;
@@ -187,6 +190,15 @@ beforeEach(() => {
 });
 
 describe("入群守卫开关（主线程投递侧）", () => {
+  test("别人的 chat_member 更新先记下机器人在本群是管理员，机器人自身的更新不记", async () => {
+    await handleChatMemberUpdate(joinUpdate(42));
+    expect(markBotAdminObserved.mock.calls).toEqual([[-1001]]);
+
+    markBotAdminObserved.mockClear();
+    await handleChatMemberUpdate(joinUpdate(999));
+    expect(markBotAdminObserved).not.toHaveBeenCalled();
+  });
+
   test("关着时不投 join/left", async () => {
     await handleChatMemberUpdate(joinUpdate(42));
     await handleChatMemberUpdate(leaveUpdate(42));

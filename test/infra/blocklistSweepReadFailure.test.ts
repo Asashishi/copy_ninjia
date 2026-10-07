@@ -60,10 +60,8 @@ describe("黑名单主键读失败的降级边界", () => {
     requestBlocklistResweep(-1001, retryAt);
     failBlocklistIdReads();
 
-    // 名单页读排在 claim 资格闸之后，因此这一轮的 now 必须已越过退避截止，
-    // 否则本次调用会在读盘之前就早退（见 sweep.ts 的 canClaimSweep 那道闸）。
-    // 读落在 try/finally 之外时这次 reject 会整体跳过 finally，
-    // armBlocklistSweepScheduler 本次不执行，周期补扫在本进程里再也不触发。
+    // 名单页读排在 claim 资格闸之后，这一轮的 now 越过退避截止（见 sweep.ts 的 canClaimSweep）；
+    // 读失败后 finally 照常执行，armBlocklistSweepScheduler 继续排下一轮周期补扫。
     await expect(sweepBlockedMembers(-1001, retryAt + 1_000))
       .rejects.toThrow("cannot read blocklist IDs");
     expect(blocklistSweepSchedulerState.timer).not.toBeNull();
@@ -97,8 +95,7 @@ describe("黑名单主键读失败的降级边界", () => {
     requestBlocklistResweep(-1001, retryAt);
     failBlocklistIdReads();
 
-    // 读注定会被 prepareBlocklistSweep 原样丢掉，因此这一轮一个字节都不该读；
-    // 读失败也就不会冒充成一次真实故障。
+    // 读注定会被 prepareBlocklistSweep 原样丢掉，这一轮不读盘；读失败不冒充成真实故障。
     await expect(sweepBlockedMembers(-1001, retryAt - 1_000)).resolves.toBeUndefined();
     expect(blocklistSweepSchedulerState.timer).not.toBeNull();
     quiesceBlocklistSweepScheduler();
@@ -112,7 +109,7 @@ describe("黑名单主键读失败的降级边界", () => {
     await expect(sweepManagedBlocklistChats(1_000)).resolves.toBeUndefined();
 
     expect(remover).not.toHaveBeenCalled();
-    // 早已过期的 nextRetryAt 会让 finally 里的重排立刻再跑一轮；必须推到窗口之外。
+    // 早已过期的 nextRetryAt 会让 finally 里的重排立刻再跑一轮；这里推到窗口之外。
     expect(blocklistSweepState.get(-1001)?.nextRetryAt).toBeGreaterThan(1_000);
   });
 
@@ -129,11 +126,10 @@ describe("黑名单主键读失败的降级边界", () => {
     replayPendingBlockedRemovals();
     await Bun.sleep(0);
 
-    // 整体 return 会让冻结批次永久丢失：它们没有 timer、没有退避，重试钩子只有
-    // 「下一次 Worker 重建」和「一次确证的权限恢复」，而 /block 早已回执成功。
+    // 冻结批次没有 timer、没有退避，重试钩子只有「下一次 Worker 重建」和「一次确证的权限恢复」；读失败时不整体 return。
     expect(remover).toHaveBeenCalledTimes(1);
     expectLastRemoval({ chatId: -1001, userIds: [7], probeMembership: false });
-    // 被跳过的补扫没有任何回执可等，必须重新欠一次。
+    // 被跳过的补扫没有回执可等，重新欠一次。
     expect(blocklistSweepState.get(-1002)?.sweptAt).toBeNull();
     expect(blocklistSweepState.get(-1002)?.nextRetryAt).toBeGreaterThan(0);
   });

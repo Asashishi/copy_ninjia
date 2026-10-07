@@ -120,8 +120,7 @@ test("配了 web_search 时用它检索；组稿拿到去重后的来源列表�
   const compose: AiJsonRequest = composeRequests[0]!;
   expect(compose.systemPrompt).toBe(WEB_DIGEST_COMPOSE_INSTRUCTION);
   expect(compose.systemPrompt).toContain("事实只依据用户消息里的【检索结果】与【来源列表】");
-  // 组稿提示必须交代链接取自检索结果或来源列表，并说明 JSON 字符串里的换行转义，
-  // 正文里的平台换行与完整链接才能原样落进摘要（见下面两组行为用例）。
+  // 组稿提示交代链接取自检索结果或来源列表，并说明 JSON 字符串里的换行转义（见下面两组行为用例）。
   expect(compose.systemPrompt).toContain("【检索结果】中的完整链接或【来源列表】");
   expect(compose.systemPrompt).toContain("JSON 字符串中的转义序列 \\n");
   expect(compose.systemPrompt).not.toContain("调用提供的联网检索工具");

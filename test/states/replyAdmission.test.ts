@@ -167,10 +167,8 @@ describe("isReplyRoundRateLimited：限频闸", () => {
 
 describe("补跑不占限频名额（组合场景，验证两道闸的分工）", () => {
   test("并发闸放行（补跑腾出空位）后，仍需过一次独立的限频闸判定", () => {
-    // 补跑（drainReplyQueue）不会再调用 admitTrigger——它直接调
-    // startReplyRound（对应真实解释器里 admitTrigger 被完全跳过），本用例
-    // 验证的是 isReplyRoundRateLimited 本身与 activeRounds 无关：即便并发位已经腾出，
-    // 限频闸只看滑动窗口计数，不因为“是补跑”而放宽或收紧。
+    // 补跑（drainReplyQueue）不再调用 admitTrigger，直接调 startReplyRound（对应真实解释器里 admitTrigger 被完全跳过）；
+    // 本用例验证 isReplyRoundRateLimited 与 activeRounds 无关：并发位腾出后，限频闸只看滑动窗口计数，不因为是补跑而放宽或收紧。
     const admitted = admitTrigger({ activeRounds: REPLY_ROUND_MAX_CONCURRENT - 1, queueSize: 0, kind: "direct" });
     expect(admitted).toBe("startRound");
     expect(isReplyRoundRateLimited(RATE_LIMIT_LONG_MAX_TRIGGERS)).toBe(true);

@@ -256,11 +256,10 @@ export function collectNodeCompatibilityProblems(
 }
 
 /**
- * 逐文件登记表里指向**已不存在文件**的条目。
+ * 逐文件登记表里指向已不存在文件的条目。
  *
- * `collectNodeCompatibilityProblems` 只在遍历到某个文件时才查它的登记，文件一旦删除，
- * 它留下的登记就再也不会被访问到，会作为一条永不过期的豁免留在表里。本函数在逐文件
- * 遍历之外整表核对一次路径存在性，七张逐文件登记表各查一遍。
+ * 本函数在 `collectNodeCompatibilityProblems` 的逐文件遍历之外，对 `tables` 列出的
+ * 每张逐文件登记表整表核对路径存在性。
  */
 export function collectStaleNodeAllowanceProblems(
   projectRoot: string
@@ -316,7 +315,7 @@ export function collectNodeImportUsage(
     if (clause?.phaseModifier === ts.SyntaxKind.TypeKeyword) continue;
     const bindings: ts.NamedImportBindings | undefined = clause?.namedBindings;
     if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
-      // 命名空间 import 只在 `symbols: "*"` 下被允许；记成同一个通配名即可。
+      // 命名空间 import 记成通配名。
       usage.push({ relativePath, moduleName, imported: "*" });
       continue;
     }
@@ -342,12 +341,10 @@ function inScope(relativePath: string, scope: AllowanceScope): boolean {
 }
 
 /**
- * 登记表里已经没人再用的条目。
+ * 登记表里已经没有使用者的条目。
  *
- * 正向检查只在遍历到某个文件时才查它的登记，因此「某个符号已经不再被 import」永远
- * 不会报出来——豁免于是只增不减，下一个人看到表里有它就以为这是被审过、仍然必要的
- * 用法。共享表（PORTABLE/SCRIPT/TEST_SHARED）按作用域核对符号是否还有使用者；
- * 逐文件表额外核对该文件是否真的还 import 这个模块与这些符号。
+ * 共享表（PORTABLE/SCRIPT/TEST_SHARED）按作用域核对符号是否还有使用者；
+ * 逐文件表核对该文件是否仍 import 这个模块与这些符号。
  *
  * 路径已经消失的条目由 collectStaleNodeAllowanceProblems 报，这里不重复。
  */

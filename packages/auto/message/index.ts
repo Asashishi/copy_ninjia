@@ -38,8 +38,7 @@ import { handleVoiceMessage } from "./voice";
 
 /**
  * 判定这条消息交给哪个 AI handler；没有对应 handler（视频、文件、以 `/` 开头的
- * 文本等）返回 undefined。按「一条消息只可能是其中一种载荷」逐项判定；语音排在
- * 最后，与它在群里的出现频率一致（前面几种命中就不再往下判）。
+ * 文本等）返回 undefined。按「一条消息只可能是其中一种载荷」逐项判定，命中即返回。
  */
 function aiTriggerPayloadOf(message: Message): AiTriggerPayload | undefined {
   if (typeof message.text === "string") {
@@ -66,23 +65,18 @@ function handleAcceptedIncomingMessage(
 ): Promise<void> | undefined {
   const chatId: number = message.chat.id;
   const senderId: number | undefined = cacheSender(message);
-  // 相册里的图记进缓存，供 `/h_image add` 收齐整组；普通消息只多读这一个字段。排在复读、
-  // 翻译等提前返回的分支之前，被复读的人发的相册同样记得到。
+  // 相册里的图记进缓存，供 `/h_image add` 收齐整组；排在复读、翻译等提前返回的分支之前。
   if (message.media_group_id !== undefined) observeMediaGroupImage(message);
   const state: Readonly<ChatState> = groupState ?? getChatState(chatId);
   /**
-   * 本条消息统一的「现在」，显式传给下面两个吃 now 的判定。
-   *
-   * 活跃度入窗与安静期判定必须使用同一时刻，不能因两次 Date.now() 横跨毫秒边界。
-   * 两个热函数都显式接收 now，避免在被调方默认参数中重复读取墙钟。
-   *
-   * 取值经 updateNow 而不是直接读墙钟：已确证机器人是管理员的群消息在入群
-   * 守卫入口已先取本条 update 的时刻，广告检测与防刷屏开关关闭时也一样；
-   * 其余消息在本处首次取值并留给后续调用点（见 infra/updateContext.ts）。
+   * 本条消息统一的「现在」，传给活跃度入窗与安静期判定。
+   * 取值经 updateNow：已确证机器人是管理员的群消息在入群守卫入口已先取本条 update 的
+   * 时刻（广告检测与防刷屏开关关闭时同样），其余消息在本处首次取值并留给后续调用点
+   * （见 infra/updateContext.ts）。
    */
   const now: number = updateNow();
 
-  // 所有可见群消息都先计入一小时滑动活跃度，即使当前正在复读或 AI 已关闭。
+  // 所有可见群消息都先计入滑动活跃度窗口，即使当前正在复读或 AI 已关闭。
   const aiReplyProbability: number =
     message.chat.type === "group" || message.chat.type === "supergroup"
       ? observeGroupMessageForAiReply(chatId, now)
@@ -118,11 +112,10 @@ function handleAcceptedIncomingMessage(
   }
 
   // 群问答直答：与登记问题一字不差时直接回答，不进 AI，也不受 @/回复/随机插话
-  // 那套触发条件约束。必须排在下面的 AI 触发之前——用户明确要求「完全一致就
-  // 直接查询返回」，走到 AI 就等于多付一次模型调用去回答一个已经写死的答案。
+  // 的触发条件约束；排在 AI 触发之前。
   // 未接管的群已被 infra/updateGate.ts 的 shouldPassInitGate 挡在流水线之外；本群没
   // 登记过问答时 resolveQaDirectAnswer 在第一行返回。
-  // 同步判定：未命中就是一次 Map.get 返回 undefined，不分配 promise。
+  // 同步判定：未命中是一次 Map.get 返回 undefined，不分配 promise。
   const qaAnswer: string | undefined = resolveQaDirectAnswer(
     chatId,
     message,
@@ -138,8 +131,8 @@ function handleAcceptedIncomingMessage(
   }
 
   const isQuiet: boolean = isQuietUntilActive(state.quietUntil, now);
-  // 凭据缺失时这里恒为 false：既不投喂 Worker（它根本没启动），也让下面的
-  // 主动行为回到「AI 关闭」那条分支——随机复读仍照常，见 aiChat/availability.ts。
+  // 凭据缺失时为 false：不投喂 Worker（它没有启动），下面的主动行为走「AI 关闭」
+  // 分支，随机复读照常，见 aiChat/availability.ts。
   const aiChatEnabled: boolean =
     isAiChatConfigured() && state.isAIChatEnabled === true;
 
@@ -208,10 +201,9 @@ export function handleIncomingMessageMiddleware(ctx: Context): Promise<void> | u
     return waitForBotOwnMessage(message).then(
       (matched: boolean): Promise<void> | undefined => {
         if (matched) return undefined;
-        // 自动转发会在超级群进入这条异步路径；等待期间开关可能变化，恢复处理
-        // 必须读取当时现值，不能把等待前的状态带过异步边界。时刻同理：这条
-        // rendezvous 最长等 SELF_SENT_RENDEZVOUS_TIMEOUT_MS，等待前那次读取到这里
-        // 已经过期，必须重新取一次并让后续调用点改用新值。
+        // 自动转发会在超级群进入这条异步路径；恢复处理读取当时现值，不沿用等待前的
+        // 状态。时刻同理：rendezvous 最长等 SELF_SENT_RENDEZVOUS_TIMEOUT_MS，
+        // 这里经 refreshUpdateNow 重新取一次，后续调用点使用新值。
         refreshUpdateNow();
         return handleAcceptedIncomingMessage(message, botIdentity, undefined);
       }

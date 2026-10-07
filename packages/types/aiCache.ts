@@ -37,7 +37,7 @@ export interface AiTokenUsage extends AiUsageBase {
 
 /**
  * 供应商不给 token 数、只给本次请求费用时的计量（xAI 生图的 usage.cost_in_usd_ticks）。
- * 单位沿用 xAI：1 美元 = 10,000,000,000 ticks。
+ * 单位沿用 xAI 的 ticks。
  */
 export interface AiCostUsage extends AiUsageBase {
   readonly kind: "cost";
@@ -64,7 +64,7 @@ export interface AiCacheTotals {
   readonly reportedInputTokens: number;
   readonly cachedInputTokens: number;
   readonly outputTokens: number;
-  /** cachedInputTokens / reportedInputTokens，保留 4 位小数；分母为 0 时为 null。 */
+  /** cachedInputTokens / reportedInputTokens，保留 AI_CACHE_HIT_RATE_DIGITS 位小数；分母为 0 时为 null。 */
   readonly cacheHitRate: number | null;
   /**
    * 按费用计量的请求的费用合计（ticks，口径同 AiCostUsage）；这组没有费用请求时为

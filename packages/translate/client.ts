@@ -16,9 +16,8 @@ interface TranslateClientParams {
   /** 启动总闸严格解析的完整服务账号快照。 */
   credentials: GoogleServiceAccountKey;
   /**
-   * SDK 真实的 `ClientOptions`（来自传递依赖 google-gax）带索引签名，少了它
-   * 本接口就不满足构造器形参的逆变要求。不从 google-gax 直接引类型：那是传递
-   * 依赖、不在本仓 package.json 里，钉着它等于给自己埋一颗版本地雷。
+   * SDK 真实的 `ClientOptions`（来自传递依赖 google-gax）带索引签名，本接口以索引签名
+   * 满足构造器形参的逆变要求；类型不直接引自 google-gax（传递依赖，不在本仓 package.json 里）。
    */
   [option: string]: string | number | object | undefined;
 }
@@ -49,19 +48,17 @@ function ensureTranslateGeneration(expectedGeneration: number): void {
 }
 
 /**
- * gRPC 客户端构造会注册退避 timer；延迟到首次真实翻译，保持模块导入无副作用。
+ * gRPC 客户端惰性构造：首次真实翻译时才构造，模块导入无副作用（客户端构造会注册退避 timer）。
  *
- * **SDK 本身也是动态 import 的**，不能写成顶层 `import`。本模块经翻译消息处理与
+ * **SDK 本身也是动态 import 的**，不能写成顶层 `import`：本模块经翻译消息处理与
  * lifecycleDependencies 挂在启动路径上，只有真实请求翻译时才加载 gRPC 模块图。
+ * 类型侧仍是顶层 `import type`。
  *
  * 生命周期钩子（initTranslate/quiesceTranslate/closeTranslate/drainTranslate）
- * 只碰 translateRuntime 上的标志与已有实例，都不需要 SDK，因此这条惰性边界
- * 收在这里最干净。类型侧仍是顶层 `import type`，编译期擦除、零运行时成本。
+ * 只碰 translateRuntime 上的标志与已有实例，不需要 SDK。
  *
- * `await import(...)` 期间 `closeTranslate` 可能把 client 置空并推进 generation。
- * 此时构造并写回会留下一个**永远不会被 close 的 gRPC
- * 客户端**（close 已经拿着 null 走完了）——一条随每次停机泄漏一个通道的路径。
- * 因此 await 之后先复核 generation，不属于当前 owner 就直接抛，绝不构造。
+ * `await import(...)` 期间 `closeTranslate` 可能把 client 置空并推进 generation；
+ * await 之后先复核 generation，不属于当前 owner 就直接抛，不构造客户端。
  */
 async function getTranslateClient(expectedGeneration: number): Promise<GoogleTranslate.TranslationServiceClient> {
   if (translateRuntime.client !== null) return translateRuntime.client;
@@ -77,7 +74,7 @@ async function getTranslateClient(expectedGeneration: number): Promise<GoogleTra
 }
 
 // v3 请求作用域限定在 "projects/{project}/locations/{location}" 下；project
-// 解析与缓存见下方（缓存原因见 cache/main/translate.ts）。
+// 解析与缓存见下方（缓存见 cache/main/translate.ts）。
 async function getTranslateParent(expectedGeneration: number): Promise<string> {
   ensureTranslateGeneration(expectedGeneration);
   if (!translateParentCache.parent) {
@@ -116,8 +113,7 @@ async function runTranslation(text: string, language: TranslateLanguage, expecte
       targetLanguageCode: TRANSLATE_LANGUAGE_CODES[language],
       model: language === "en" ? `${parent}/models/${TRANSLATE_REGIONAL_MODEL}` : undefined,
     }, { timeout: TRANSLATE_REQUEST_TIMEOUT_MS });
-    // 空字符串和 null/undefined 同样按失败返回 null，调用方不会发出一条注定被
-    // Telegram 拒绝的空消息。
+    // 空字符串和 null/undefined 同样按失败返回 null。
     const translated: string | null | undefined = response.translations?.[0]?.translatedText;
     return translated ? translated : null;
   } catch (error: unknown) {

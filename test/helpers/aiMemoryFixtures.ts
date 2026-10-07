@@ -11,12 +11,11 @@ import type {
 /**
  * AI 记忆一族载荷的测试构造器。
  *
- * 这些类型的可选字段一律是 `T | undefined` 而不是 `?:`，因为生产侧靠「每个
- * 构造点都把字段写全」来保住隐藏类恒定（见 types/aiChat/speaker.ts）。那条
- * 约束对测试固件同样成立，但让每个用例都手写九个字段只会淹掉它真正想断言的
- * 那一两个，所以在这里集中给缺省值，用例只覆盖自己关心的字段。
+ * 这些类型的可选字段一律是 `T | undefined` 而不是 `?:`：生产侧靠「每个
+ * 构造点都把字段写全」保住隐藏类恒定（见 types/aiChat/speaker.ts）。
+ * 这里集中给缺省值，用例只覆盖自己关心的字段。
  *
- * 缺省值刻意都取「没有」的那一档（undefined / 空串），与生产上最常见的一条
+ * 缺省值取「没有」的那一档（undefined / 空串），与生产上最常见的一条
  * 普通文字消息一致；要测「有 username / 有回复 / 是转发」的分支就显式传。
  */
 
@@ -99,7 +98,6 @@ export function aiRecordMediaMessageFixture(
     replyTelegramBackpressured: undefined,
     stickerFallbackText: undefined,
     voiceMime: undefined,
-    voiceDurationSeconds: 0,
     directTriggerReason: undefined,
     ...overrides,
   };

@@ -2,7 +2,7 @@
  * `/h_image` 抽图：从随机图片目录（config/dynamic/assets.json 的 onlyPath.random_h_image_dir，见
  * config/assets.ts 的 getAssetConfig）均匀抽一张发到触发的群。
  * 在延迟命令执行器里运行（见 commands/deferredCommands.ts）。结果图片只经
- * sendHImageResult 发送；抽取失败的提示走 sendCommandMessage，30 秒后删除。
+ * sendHImageResult 发送；抽取失败的提示走 sendCommandMessage 的默认自动清理。
  */
 
 import { chatAtmosphere } from "../../infra/atmosphere";
@@ -21,9 +21,9 @@ interface SendHImageResultParams extends HImageRequest {
 }
 
 /**
- * `/h_image` 结果图片的唯一发送边界。**长期保留**：这是用户授权的保留例外（见
+ * `/h_image` 结果图片的唯一发送边界。长期保留：获授权的保留例外（见
  * docs/cn/04-invariants.md），不挂固定延迟删除；论坛群带触发消息所在话题并
- * 回复触发消息。图片固定以 Telegram 剧透遮罩发送，点开才显示。经共享的
+ * 回复触发消息。图片固定以 Telegram 剧透遮罩发送。经共享的
  * sendPhotoWithResult 发送，自发登记与出站闸（发送调度器、429 分类）都在那一层；
  * 发送成功后写一条占位态自录（见 aiChat/botImages.ts）。
  */
@@ -39,7 +39,7 @@ async function sendHImageResult({ chatId, messageId, messageThreadId, pick }: Se
   if (sent !== undefined) recordBotImage({ chatId, messageId: sent.messageId, caption: "", edited: false });
 }
 
-/** 抽取并发送；抽取失败按结果回一句 30 秒提示。 */
+/** 抽取并发送；抽取失败按结果回一句提示。 */
 export async function deliverRandomImage(request: HImageRequest): Promise<void> {
   const pick: RandomImagePick = await pickRandomImage(getAssetConfig().randomHImageDirectory);
   if (pick.status === "ok") {

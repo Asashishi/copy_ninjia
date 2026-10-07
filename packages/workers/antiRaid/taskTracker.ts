@@ -55,8 +55,8 @@ export function trackAntiRaidTask<T>({
 /**
  * drain 到达：撤掉所有还在消息桶或分类型 429 车道里等待的尽力而为请求。
  *
- * 必须排在 drainAntiRaidTasks 之前，且**必须**在统一延迟删除 flush 之前——
- * 后者是 drain 期间刻意新建的请求，不能让它误用已经取消的业务生命周期。
+ * 排在 drainAntiRaidTasks 之前、统一延迟删除 flush 之前；后者是 drain 期间新建的
+ * 请求，不继承已取消的业务生命周期。
  */
 export function quiesceAntiRaidDispatch(): void {
   antiRaidDispatchAbort.current ??= new AbortController();
@@ -79,8 +79,7 @@ export async function drainAntiRaidTasks(): Promise<void> {
 export function resetAntiRaidTaskTracker(): void {
   antiRaidTaskTrackerGeneration.current++;
   antiRaidInFlightTasks.clear();
-  // 换一个没被 abort 的控制器：停机用的那个一旦 abort 就永久 abort，留着会让
-  // 下一次 start（以及每个测试用例）发出的请求当场失败。
+  // 置空后下一次使用时重新创建控制器，已 abort 的控制器不复用。
   antiRaidDispatchAbort.current = null;
   blocklistRemovalTaskCounts.clear();
   blocklistRemovalEpochs.clear();

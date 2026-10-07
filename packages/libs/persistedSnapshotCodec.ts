@@ -1,9 +1,10 @@
-import { AI_MEMORY_NON_SPACE_WHITESPACE_PATTERN, AI_MEMORY_TIME_PATTERN, BOT_IMAGE_ORIGINS, BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS, PENDING_BOT_IMAGE_KEYS } from "../consts/aiChat/persistence";
+import { AI_MEMORY_NON_SPACE_WHITESPACE_PATTERN, BOT_IMAGE_ORIGINS, BUFFERED_REPLY_REFERENCE_KEYS, BUFFERED_MESSAGE_KEYS, AI_MEMORY_SNAPSHOT_KEYS, PENDING_BOT_IMAGE_KEYS } from "../consts/aiChat/persistence";
 import {
   AI_MEMORY_HYDRATE_BUFFER_MAX,
   MAX_SUMMARY_ROUNDS,
   REPLY_REFERENCE_MAX_CHARS,
 } from "../consts/aiChat/memory";
+import { LOCAL_TIMESTAMP_PATTERN } from "../consts/time";
 import { invalidInput, parseJsonInput } from "./inputValidation";
 import { hasExactKeys, hasOnlyKeys, isPlainRecord } from "./record";
 import type {
@@ -18,8 +19,7 @@ import type {
 
 /**
  * AI 记忆与贴纸目录当前持久化 schema 的无状态严格 decoder。
- * Disk I/O 启动恢复和 AI Worker 协议 hydrate 必须共用本模块，避免同一份载荷
- * 在两条线程边界上得到不同的校验结论。
+ * Disk I/O 启动恢复和 AI Worker 协议 hydrate 共用本模块。
  */
 
 function validateInline(value: unknown, source: string, field: string): asserts value is string {
@@ -77,7 +77,7 @@ function validateBufferedMessage(value: unknown, source: string, field: string):
   validateSpeaker(value, source, field);
   if (value.replyTo !== undefined) validateReplyReference(value.replyTo, source, `${field}.replyTo`);
   if (value.pendingImage !== undefined) validatePendingBotImage(value.pendingImage, source, `${field}.pendingImage`);
-  if (typeof value.at !== "string" || !AI_MEMORY_TIME_PATTERN.test(value.at)) {
+  if (typeof value.at !== "string" || !LOCAL_TIMESTAMP_PATTERN.test(value.at)) {
     invalidInput(source, `${field}.at`, "a valid local calendar time in YYYY/MM/DD HH:mm:ss format");
   }
   try {

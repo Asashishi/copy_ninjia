@@ -25,12 +25,9 @@ const chatStates = new Map<number, Record<string, unknown>>();
 const saveStateInBackgroundMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatState: (): Record<string, never> => ({}),
-  // 故意按「State 已经管满」建模：真实的 getOrCreateChatState 在 chat_states 已达
-  // STATE_MANAGED_CHAT_LIMIT 时，为一个未知群新建状态会抛容量错（见
-  // infra/chatStateStorage.ts 的 assertChatStateCapacity）。handleSendCommand 绝不
-  // 该为未纳管的群走到这里，所以这句抛错等价于一条断言：它一旦逸出，复现的就是
-  // 「一条 /send 让 update 不被确认、进程带非零码退出、Telegram 重投再抛」的
-  // 重启循环。
+  // 按「State 已经管满」建模：真实的 getOrCreateChatState 在 chat_states 已达
+  // STATE_MANAGED_CHAT_LIMIT 时，为未知群新建状态会抛容量错（见 infra/chatStateStorage.ts 的 assertChatStateCapacity）；
+  // handleSendCommand 不为未纳管的群走到这里，这句抛错等价于一条断言。
   getOrCreateChatState: (chatId: number): Record<string, unknown> => {
     const state = chatStates.get(chatId);
     if (!state) throw new Error("chat_states must contain at most 25 chats; delete chats that are no longer managed before adding another chat.");
@@ -139,8 +136,7 @@ describe("handleSendCommand", () => {
   });
 
   test("非规范写法的 id 按用法错误挡在可达性探测之前，绝不开会话", async () => {
-    // 覆盖裸 Number() 会悄悄收下的写法：小数尾巴、十六进制、前导零、科学计数法；
-    // 正数同样拒绝，群和频道的 id 恒为负。
+    // 覆盖裸 Number() 会收下的写法：小数尾巴、十六进制、前导零、科学计数法；正数同样拒绝，群和频道的 id 恒为负。
     for (const arg of ["-100123.0", "0x2d", "123", "-0100123", "-1e5", "--100123"]) {
       await handleSendCommand(makeCtx("private", SUPER_ADMIN_USER_ID, arg));
     }

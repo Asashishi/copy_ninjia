@@ -287,9 +287,8 @@ describe("acknowledgement-safe update runner", () => {
   });
 
   test("停机放弃在途 update 时，随后失败仍由 hasFailedUpdate 挡住最终 offset", async () => {
-    // stop() 让取数循环赢下 Promise.race 并直接 return，之后 updateTask 的 rejection
-    // 再没有观察者、task() 正常 resolve。只靠 task() 的话生命周期会照常确认最终
-    // offset，把这条从未成功处理的 update 一并确认掉，Telegram 不再重投。
+    // stop() 让取数循环赢下 Promise.race 并直接 return，之后 updateTask 的 rejection 没有观察者、task() 正常 resolve；
+    // 生命周期不能只靠 task() 确认最终 offset，须另由 runnerHasFailedUpdate 判定。
     const gate: PromiseWithResolvers<void> = Promise.withResolvers<void>();
     let handledErrors: number = 0;
     const fakeBot = {
@@ -313,7 +312,7 @@ describe("acknowledgement-safe update runner", () => {
     await Bun.sleep(0);
     await Bun.sleep(0);
 
-    // size() 归零与标记生效必须同步：生命周期正是在排空之后读这个标记。
+    // size() 归零与标记生效同步：生命周期在排空之后读这个标记。
     expect(runner.size()).toBe(0);
     expect(runner.hasFailedUpdate()).toBeTrue();
     expect(handledErrors).toBe(1);
@@ -324,8 +323,7 @@ describe("acknowledgement-safe update runner", () => {
     let fetchCount: number = 0;
     const fakeBot = {
       api: {
-        // 第二次取数必须挂住：整批瞬间完成的话取数循环会在微任务里无限打转，
-        // 宏任务（Bun.sleep）永远排不上。
+        // 第二次取数挂住：整批瞬间完成时取数循环会在微任务里无限打转，宏任务（Bun.sleep）排不上。
         getUpdates: async (_args: { offset: number }, signal: AbortSignal): Promise<Update[]> => {
           fetchCount++;
           if (fetchCount === 1) return [{ update_id: 70 }] as Update[];

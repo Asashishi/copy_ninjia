@@ -6,7 +6,7 @@ import {
   submitDeferredCommand,
 } from "../../packages/commands/deferredCommands";
 import { deferredCommandRuntime } from "../../packages/cache/main/deferredCommands";
-import { runBlocklistIdentityMutation } from "../../packages/infra/identityPolicy/coordination";
+import { blocklistIdentityMutationRunner } from "../../packages/cache/main/blocklist";
 import {
   DEFERRED_COMMAND_MAX_BACKGROUND_PENDING,
   DEFERRED_COMMAND_MAX_CONCURRENT,
@@ -80,7 +80,7 @@ describe("/block 跨群扇出的同身份顺序", () => {
     await drainDeferredCommandRuntime(0);
     await inline;
     expect(order).toEqual(["inline"]);
-    await expect(runBlocklistIdentityMutation(IDENTITY_ID, (): string => "after")).resolves.toBe("after");
+    await expect(blocklistIdentityMutationRunner.run(IDENTITY_ID, (): string => "after")).resolves.toBe("after");
   });
 
   test("扇出抛错时仍释放串行位，错误留给执行器记日志", async () => {
@@ -91,6 +91,6 @@ describe("/block 跨群扇出的同身份顺序", () => {
       errorLabel: "test:",
       fanOut: async (): Promise<void> => { throw new Error("fan-out failed"); },
     })).rejects.toThrow("fan-out failed");
-    await expect(runBlocklistIdentityMutation(IDENTITY_ID, (): string => "after")).resolves.toBe("after");
+    await expect(blocklistIdentityMutationRunner.run(IDENTITY_ID, (): string => "after")).resolves.toBe("after");
   });
 });

@@ -1,6 +1,6 @@
 /**
  * Anthropic 侧的联网检索执行器（web_search 或 text 能力）：用该能力的模型发一次挂内建
- * `web_search_20260209`（`allowed_callers: ["direct"]`）的单轮请求，交回结论正文、引用与检索结果
+ * 检索工具（ANTHROPIC_WEB_SEARCH_TOOL_TYPE，`allowed_callers: ["direct"]`）的单轮请求，交回结论正文、引用与检索结果
  * 给出的来源与实际检索次数。服务端工具循环暂停（`pause_turn`）时把已得内容作为续写前缀再发，
  * 最多 ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS 次。收发与失败归一化走 client.ts 的
  * requestAnthropicMessage；token 与检索次数在那里按同一响应上报。HTTP 成功中的工具错误按失败交回。

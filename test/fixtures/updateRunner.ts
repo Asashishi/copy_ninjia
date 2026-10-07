@@ -28,7 +28,7 @@ if (mode !== "memory") {
       getUpdates: async (args: { offset: number }): Promise<never> => {
         offsets.push(args.offset);
         calls++;
-        // network 第 4 次失败后挂着第四档退避，见 updateRunnerResources.test.ts 的 PENDING_BACKOFF_MS。
+        // network 在若干次失败后挂着较高一档退避，见 updateRunnerResources.test.ts 的 PENDING_BACKOFF_MS。
         if ((mode === "network" && calls === 4) || mode === "429") console.log("ready");
         if (mode === "429") throw { error_code: 429, parameters: { retry_after: 60 } };
         throw new Error("mock network failure");

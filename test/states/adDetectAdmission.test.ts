@@ -1,7 +1,6 @@
 /**
- * 广告检测的五道准入闸（纯规则）。抽出来的意义在于：`docs/cn/04-invariants.md`
- * 要求「待检所有权由 pendingAdMessages、adDetectQueue 与 queuedAdDetectKeys
- * 共同表达，三者必须同步增删」。本文件直接验证集中准入判定与这项不变量。
+ * 广告检测的准入闸（纯规则）。`docs/cn/04-invariants.md` 要求「待检所有权由 pendingAdMessages、
+ * adDetectQueue 与 queuedAdDetectKeys 共同表达，三者必须同步增删」；本文件直接验证集中准入判定与这项不变量。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -55,8 +54,7 @@ describe("投递闸 admitAdCandidate", () => {
   });
 
   test("自身 TTL 内刚处置过：普通账号忽略，频道马甲要顺手删这一条", () => {
-    // banChatSenderChat 没有 revoke_messages，跨线程空档里频道新发的广告
-    // 不会被那次封禁带走，也不会再有第二次判定来删它。
+    // banChatSenderChat 没有 revoke_messages：跨线程空档里频道新发的广告不会被那次封禁带走，也没有第二次判定来删它。
     expect(admitAdCandidate({ ...CANDIDATE, recentlyDisposed: true })).toBe("ignore");
     expect(admitAdCandidate({ ...CANDIDATE, recentlyDisposed: true, isChannel: true }))
       .toBe("deleteStraggler");
@@ -84,7 +82,7 @@ describe("排队闸 admitAdRequeue", () => {
   });
 
   test("排队闸没有容量判据：队列每键最多一个位置，长度天然被待检硬顶兜住", () => {
-    // 走到这一步的键必定已在 pendingAdMessages 里，容量已由待检硬顶判完。
+    // 走到这一步的键已在 pendingAdMessages 里，容量已由待检硬顶判完。
     expect(admitAdRequeue(REQUEUE)).toBe("enqueue");
   });
 });

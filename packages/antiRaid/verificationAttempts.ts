@@ -102,7 +102,7 @@ function finalizeVerificationDeferral(
   deferredVerificationRecords.set(key, { ...record });
 }
 
-/** 最新 revision 落盘后才丢弃完整活动镜像，保证 DiskIO 重建仍有完整重放源。 */
+/** 最新 revision 落盘后才丢弃完整活动镜像（DiskIO 重建以活动镜像为重放源）。 */
 export function settlePersistedVerificationDeferral(
   key: string,
   generation: number,
@@ -135,8 +135,7 @@ export function advanceDeferredVerificationGeneration(generation: number): void 
 }
 
 /**
- * 显式关闭守卫或群 teardown 时删除延后记录；这时取消动作是权威意图，必须落
- * tombstone，不能留到下次完整进程启动复活。
+ * 显式关闭守卫或群 teardown 时删除延后记录，并落 tombstone（取消是权威意图）。
  */
 export function deleteDeferredVerificationsForChat(chatId: number): number {
   const prefix: string = verificationKeyPrefix(chatId);

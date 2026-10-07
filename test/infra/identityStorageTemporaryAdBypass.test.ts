@@ -22,7 +22,7 @@ import {
   IDENTITY_READ_CACHE_MAX_ENTRIES,
   IDENTITY_WRITE_BATCH_MAX_ENTRIES,
 } from "../../packages/consts/identityStorage";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import {
   TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD,
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
@@ -123,7 +123,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
     expect(queueIdentityPolicyWrite("blocklist", 7, blockValue())).toBeTrue();
     expect(recordTemporaryAdBypassActivity(7, now)).toBeUndefined();
 
-    // 三份 LRU 各自淘汰：临时累计仍热而黑名单视图已冷时不能按「不在名单」累计。
+    // 三份 LRU 各自淘汰：临时累计仍热而黑名单视图已冷时，不按「不在名单」累计。
     whitelistEntryCache.set(8, null);
     temporaryAdBypassActivityCache.set(8, null);
     expect(recordTemporaryAdBypassActivity(8, now)).toBeUndefined();

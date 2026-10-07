@@ -9,6 +9,7 @@ import {
   luckSecretRequests,
   pendingFlushFailedDomains,
   pendingLoad,
+  storageCloseRequests,
 } from "../../cache/main/diskIO";
 import { DISK_IO_WORKER_URL } from "../../consts/paths";
 import { DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES } from
@@ -42,8 +43,8 @@ function notifyReplyListeners<K extends keyof DiskIOReplyListenerMap>(
 }
 
 /**
- * 恢复握手的 loaded 回执：启动和运行时重建都必须先验证完整恢复结果，任何领域失败
- * 时都不能进入 writable，也不能重放可能覆盖旧数据的镜像。
+ * 恢复握手的 loaded 回执：启动和运行时重建都先验证完整恢复结果，任何领域失败
+ * 时都不进入 writable，也不重放镜像。
  */
 function handleLoadedReply(w: Worker, data: LoadedReply): void {
   const resolve: ((reply: LoadedReply) => void) | null = pendingLoad.resolve;
@@ -85,9 +86,8 @@ function handleDiagnosticBatchRetry(w: Worker, batchId: number, retryAfterMs: nu
 
 /**
  * 创建一个落盘 Worker 实例并挂上回执路由与崩溃自愈；不改变 diskIORuntime.worker。
- * 运势追加停摆（luckAppendStalled）是 Worker 报上来的领域数据丢失事实，与其它可订阅
- * 回执一样转交 owner 记进统一 logs/；本文件自身的错误只走非递归诊断 sink（见
- * types/diskIO/replies.ts 的 LuckAppendStalledReply）。
+ * 运势追加停摆（luckAppendStalled）与其它可订阅回执一样转交 owner；本文件自身的
+ * 错误只走诊断 sink（见 types/diskIO/replies.ts 的 LuckAppendStalledReply）。
  */
 export function createDiskIOWorker(): Worker {
   const w: Worker = new Worker(DISK_IO_WORKER_URL);
@@ -123,8 +123,7 @@ export function createDiskIOWorker(): Worker {
         handleDiagnosticBatchRetry(w, data.batchId, data.retryAfterMs);
         return;
       case "recoveryReplayFailed":
-        // 对应的 update 已被确认过；按 RecoveryReplayRequest 的口径停机，
-        // 让 Telegram 从上一个确认点重投。
+        // 按 RecoveryReplayRequest 的口径停机，Telegram 从上一个确认点重投。
         stopWorkerAfterLoadFailure(
           w,
           `${data.domain} replay failed during recovery: ${data.error}`,
@@ -135,8 +134,8 @@ export function createDiskIOWorker(): Worker {
         diskIOFlushBarrier.settle(data.flushedId, "flushed");
         return;
       case "flushFailed":
-        // 失败领域名落入非递归诊断，Worker 侧写盘错误按设计只有 console.error。
-        // 按领域的判定只读下面按 flushId 记账的表，不使用进程级的「最后一次回执」。
+        // 失败领域名写入诊断 sink；按领域的判定只读下面按 flushId 记账的
+        // pendingFlushFailedDomains。
         writeDiskIODiagnostic(`[diskIO] flush failed for domain(s): ${data.failedDomains.join(", ")}.`);
         if (diskIOFlushBarrier.settle(data.flushedId, "failed")) {
           pendingFlushFailedDomains.set(data.flushedId, data.failedDomains);
@@ -183,13 +182,21 @@ export function createDiskIOWorker(): Worker {
           payload: data.page,
         });
         return;
+      case "storageClosed":
+        settleDiskIOReply({
+          channel: storageCloseRequests,
+          requestId: data.requestId,
+          error: data.error,
+          payload: data.outcome,
+        });
+        return;
       case "loaded":
         handleLoadedReply(w, data);
     }
   };
   w.onerror = (event: ErrorEvent): void => {
-    // Bun 在未捕获异常后已经终止 Worker；这里只复用代际失效与恢复协议，不能再次
-    // terminate。旧实例的迟到/重复错误由 recoverDiskIOWorker 的代际 guard 拒绝。
+    // Bun 在未捕获异常后已终止 Worker，这里只走代际失效与恢复协议（terminateWorker: false）。
+    // 旧实例的迟到或重复错误由 recoverDiskIOWorker 的代际检查拒绝。
     recoverDiskIOWorker({
       createWorker: createDiskIOWorker,
       worker: w,

@@ -72,8 +72,8 @@ async function handleAntiRaidWorkerRequest(
     return grantVerificationAttempt(request);
   }
   if (request.operation === "sendTemporaryMessage" && request.purpose === "adWarning") {
-    // 引用警告晚于候选入队和模型判定；发送前必须以主线程当前权限为准。
-    // 冷读失败时不拿未知身份冒充无豁免，避免错误警告或删除临时成员消息。
+    // 引用警告晚于候选入队和模型判定，发送前以主线程当前权限为准；
+    // 身份策略冷读失败时按抑制处理。
     const prefetched: boolean = await prefetchIdentityPolicies([request.identityId]);
     if (
       !prefetched ||
@@ -222,13 +222,13 @@ export function initAntiRaid(): void {
           .join(", ")
       );
     }
-    // 必须先 adopt 再拆残留，确保 Worker 发出持久化 tombstone。
+    // 先 adopt 再拆残留，使 Worker 发出持久化 tombstone。
     purgeDisabledJoinGuards(postAntiRaid);
   } catch (error: unknown) {
     antiRaidRuntimeState.initialized = false;
     stopEmergencyLockdownRecoveries();
-    // 生命周期只在 initAntiRaid 返回后才置位 antiRaidInitialized，停机不会替这里终止
-    // 已经建好的 Worker，必须在失败分支自己收掉。
+    // initAntiRaid 返回后生命周期才置位 antiRaidInitialized，停机路径不会终止这里
+    // 已建好的 Worker，失败分支自行终止。
     void terminateAntiRaidWorker().catch((terminateError: unknown): void => {
       logger.error("Failed to terminate the Anti-Raid Worker after its initialization failed:", terminateError);
     });

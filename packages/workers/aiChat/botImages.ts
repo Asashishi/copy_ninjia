@@ -69,7 +69,6 @@ function describeBotImage(
     fileId,
     fileUniqueId,
     voiceMime: undefined,
-    voiceDurationSeconds: 0,
     signal: replyGenerationSignal(generation),
   }).then((description: string | null): void => {
     if (description === null || !isCachedReplyGenerationCurrent(chatId, generation)) return;

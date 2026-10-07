@@ -134,7 +134,7 @@ beforeEach(() => {
   joinWindows.clear();
   lockdownEntries.clear();
   lockdownApiChains.clear();
-  // 作废冷却按群留存，不清就会漏给下一个用例（stopLockdownRuntime 同样清它）。
+  // 作废冷却按群留存，每个用例前清空（stopLockdownRuntime 同样清它）。
   lockdownRetriggerCooldowns.clear();
 });
 
@@ -224,9 +224,8 @@ describe("Anti-Raid cache owners", () => {
   });
 
   test("整表清空后陈旧拉取既不删新槽位，也不把旧快照写回去", async () => {
-    // resetAdminCache()（Worker 停机路径/测试隔离）会在拉取在途时清空整张表。
-    // finally 无条件 delete 的话删掉的是**新** fetch 的槽位，去重失效，下一个
-    // 调用者会在入群验证使用的 query 类别 429 FIFO 上再发起一次全量拉取。
+    // resetAdminCache()（Worker 停机路径/测试隔离）在拉取在途时清空整张表；
+    // 陈旧拉取的 finally 只删自己的槽位，新 fetch 的槽位保留去重。
     let resolveStale!: (admins: { user: { id: number }; is_anonymous: boolean }[]) => void;
     getChatAdministrators.mockImplementationOnce(
       () => new Promise((resolve) => { resolveStale = resolve; })
@@ -245,9 +244,7 @@ describe("Anti-Raid cache owners", () => {
     const freshSlot: Promise<Set<number>> | undefined = adminFetches.get(-1010);
     expect(freshSlot).toBeDefined();
 
-    // 陈旧拉取此刻才 settle：既不能删掉新槽位（去重失效 = 共享 Telegram 队列上多一次
-    // 全量拉取），也不能把 reset 前的快照灌回刚清空的表——那样被降权者会在整个
-    // ADMIN_CACHE_TTL_MS 内继续留在邀请人豁免集合里，他拉进来的人全部免入群验证。
+    // 陈旧拉取此刻才 settle：不删新槽位，也不把 reset 前的快照写回刚清空的表。
     resolveStale([{ user: { id: 42 }, is_anonymous: false }]);
     await expect(stale).resolves.toEqual(new Set([42]));
     expect(adminFetches.get(-1010)).toBe(freshSlot!);
@@ -347,7 +344,7 @@ describe("Lockdown write-ahead runtime", () => {
     for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
-    // 公告必须先于任何权限写落地：从占位那一刻起入群就被直接请出去了。
+    // 公告先于任何权限写落地。
     expect(sentMessages[0]?.text).toContain(`冲进来了 ${ANTI_RAID_PER_MINUTE_LIMIT + 1} 个`);
     const applying = lockdownEvents.find((event) => event.type === "lockdown");
     expect(applying).toMatchObject({
@@ -359,7 +356,7 @@ describe("Lockdown write-ahead runtime", () => {
     expect(permissionWrites).toEqual([]);
     if (applying?.type !== "lockdown") throw new Error("missing applying intent");
 
-    // applying intent 落盘期间管理员调整了其它权限；提交必须重新读取并保留。
+    // applying intent 落盘期间管理员调整了其它权限；提交重新读取并保留。
     currentPermissions = { can_invite_users: true, can_send_messages: false, can_send_polls: true };
     lockdownRuntime.handleLockdownPersisted({
       type: "lockdownPersisted",
@@ -416,7 +413,7 @@ describe("Lockdown write-ahead runtime", () => {
     await settleLockdownCalls();
     expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
 
-    // 冷却是暂停不是永久关闭：过了这段时间，同样的刷群必须能再次锁上。
+    // 冷却是暂停不是永久关闭：过了冷却时间，同样的刷群能再次锁上。
     const afterCooldown = Date.now() + LOCKDOWN_RETRIGGER_COOLDOWN_MS + 1;
     for (let index = 0; index <= ANTI_RAID_PER_MINUTE_LIMIT; index++) lockdownRuntime.recordJoin(chatId, afterCooldown);
     await settleLockdownCalls();
@@ -477,7 +474,7 @@ describe("Lockdown write-ahead runtime", () => {
       event.type === "lockdown" && event.chatId === chatId
     ).length;
 
-    // ACTIVE 状态下持续入群不得重排倒计时，否则同一轮会被无限续期。
+    // ACTIVE 状态下持续入群不重排倒计时。
     for (let index = 0; index < 20; index++) lockdownRuntime.recordJoin(chatId, Date.now());
     await settleLockdownCalls();
 
@@ -586,7 +583,7 @@ describe("Lockdown write-ahead runtime", () => {
     });
     await settleLockdownCalls();
 
-    // 落盘失败必须清除 APPLYING 占位，不能留下永久秒踢且无恢复计时的状态。
+    // 落盘失败清除 APPLYING 占位。
     expect(lockdownEntries.has(chatId)).toBeFalse();
     expect(permissionWrites).toEqual([]);
     expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
@@ -679,7 +676,7 @@ describe("Lockdown write-ahead runtime", () => {
 
     expect(getChat).toHaveBeenCalledTimes(1);
     expect(setChatPermissions).not.toHaveBeenCalled();
-    // 抛出时占位仍属本轮，失败回投状态机撤销它，不留下无恢复计时的秒踢占位。
+    // 抛出时占位仍属本轮，失败回投状态机撤销它。
     expect(lockdownEntries.has(chatId)).toBeFalse();
     expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
     expect(lockdownTrail(chatId)).toEqual([]);
@@ -753,7 +750,7 @@ describe("Lockdown write-ahead runtime", () => {
     expect(lockdownTrail(chatId)).toEqual(["applying", "unlock"]);
     expect(joinWindows.has(chatId)).toBeFalse();
     expect(deletedMessages).toEqual([{ chatId, messageId: 700 }]);
-    // 没有经过恢复成功，因此只有封锁公告，没有解除通知。
+    // 没有经过恢复成功：只有封锁公告，没有解除通知。
     expect(sentMessages).toHaveLength(1);
     expect(lockdownRetriggerCooldowns.has(chatId)).toBeTrue();
     expect(loggedErrors).toEqual([
@@ -802,8 +799,8 @@ describe("Lockdown write-ahead runtime", () => {
    * `scheduleRestoreRetry` 这条 effect 唯一的触发来源是 RESTORING 阶段恢复失败
    * （见 states/lockdown/restore.ts 的 handleRestoreResult）。
    *
-   * 三个 schedule* 排的 timer 都 unref() 且延迟按分钟计，用例不推进时钟就不会
-   * 执行，因此这里只钉「排了、没误判成已解除」，不断言回调体。
+   * 三个 schedule* 排的 timer 都 unref() 且延迟按分钟计；用例不推进时钟，
+   * 只断言「排了、没误判成已解除」，不断言回调体。
    */
   test("恢复失败时保留 RESTORING 并排一个重试 timer", async () => {
     const chatId = -1007;

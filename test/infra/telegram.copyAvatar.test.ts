@@ -110,9 +110,7 @@ describe("copyUserProfilePhoto t.me 兜底", () => {
   });
 
   test("调用方给的 username 只进日志，抓取目标一律以 getChat 现查的为准", async () => {
-    // username 来自 reply_to_message 或身份缓存，可能是几个月前的快照，而 Telegram
-    // 用户名释放后可以被别人重新注册。短路掉权威查询就会把现任持有者的头像顶上去，
-    // 而成功提示里写的还是原目标。
+    // username 来自 reply_to_message 或身份缓存，可能是旧快照；用户名释放后可被别人重新注册，不短路权威查询。
     getChatMock
       .mockImplementationOnce(async (_chatId: number): Promise<any> => ({ id: -1003952764805, type: "channel", title: "Yuna Sakagami" }))
       .mockImplementationOnce(async (_chatId: number): Promise<any> => ({

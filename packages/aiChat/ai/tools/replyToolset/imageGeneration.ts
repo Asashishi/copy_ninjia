@@ -32,9 +32,8 @@ import type { ChatActionControl } from "../../../../types/aiChat/chatAction";
 import type {
   GeneratedChatImage,
   ImageGenerationAspectRatio,
-  ImageGenerationAvailability,
-  ImageGenerationClaim,
 } from "../../../../types/aiChat/imageGeneration";
+import type { CooldownAvailability, CooldownClaim } from "../../../../types/cooldown";
 import type { TelegramPhotoSendResult } from "../../../../types/telegram";
 import { imageAiProvider } from "../../../provider";
 import { normalizeImageAspectRatio } from "../../utils/aspectRatio";
@@ -48,14 +47,14 @@ import { modelAuthoredTextPolicyResult } from "./modelAuthoredText";
 import { pauseThenSettle } from "./pacing";
 
 /** 省略 aspect_ratio 时执行侧采用的比例：有参考素材就取最接近它的官方比例。
- *  本轮工具状态的参考素材文案与执行侧解析共用这一个函数，两处默认值不会漂移（见 toolStatus.ts）。 */
+ *  本轮工具状态的参考素材文案（见 toolStatus.ts）与执行侧解析共用这一个函数。 */
 export function defaultAspectRatioFor(reference: ReplyToolContext["imageGenerationReference"]): ImageGenerationAspectRatio {
   if (!reference || reference.width <= 0 || reference.height <= 0) return DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
   return normalizeImageAspectRatio(`${reference.width}:${reference.height}`) ?? DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
 }
 
 /**
- * generate_image 的工具声明。**整段逐字恒定**，不接受任何本轮上下文；前缀缓存约束见
+ * generate_image 的工具声明。整段逐字恒定，不接受本轮上下文；前缀缓存约束见
  * docs/cn/04-invariants.md。直接触发资格、群冷却剩余秒数与参考素材文案都写进运行时
  * 状态区块的本轮工具状态（见 toolStatus.ts）；工具只要部署配置了生图能力就由
  * createReplyToolset 恒挂，资格与冷却由 createGenerateImageExecutor 在调用时兜底拒绝。
@@ -110,17 +109,14 @@ function parseArguments(
   const prompt: string = parsed.prompt.trim();
   if (!prompt || prompt.length > IMAGE_GENERATION_PROMPT_MAX_CHARS) return null;
   if (parsed.aspect_ratio !== undefined && typeof parsed.aspect_ratio !== "string") return null;
-  // caption 是「省略就只发图」的纯可选字段，因此 null 和 undefined 一样按没写
-  // 处理：模型把可选参数填成 null 很常见，为此整条调用报参数错误会让它白跑一
-  // 轮，还得从一句「caption must be a string」里猜出自己其实什么都不用改。
+  // caption 是可选字段，null 与 undefined 一样按没写处理。
   if (parsed.caption !== undefined && parsed.caption !== null && typeof parsed.caption !== "string") return null;
   const requestedAspectRatio: string | undefined = parsed.aspect_ratio;
   const aspectRatio: ImageGenerationAspectRatio | null = requestedAspectRatio === undefined || requestedAspectRatio.trim() === ""
     ? defaultAspectRatio
     : normalizeImageAspectRatio(requestedAspectRatio);
-  // 图注和 send_message 的 text 一样是群友直接看到的原话，因此共用 cleanReply：
-  // 去掉引用标记、代码围栏和整句包裹引号，并按文本消息上限兜底截断。清洗后
-  // 只剩空串时按「没写图注」处理，不当成参数错误——只发图本来就是合法调用。
+  // 图注与 send_message 的 text 共用 cleanReply 清洗；清洗后为空串按「没写图注」处理，
+  // 不算参数错误。
   const caption: string | null = typeof parsed.caption === "string" ? cleanReply(parsed.caption) : null;
   return aspectRatio ? { prompt, aspectRatio, caption } : null;
 }
@@ -175,7 +171,7 @@ export function createGenerateImageExecutor(
     // 本轮工具状态里的冷却是组装时的快照，可能已过期；在解析参数、下载参考图和请求
     // 模型之前先做一次只读判定，冷却中直接把剩余秒数回给模型。真正的原子闸仍是下面的
     // claim——只读判定与 claim 之间同群另一轮可能抢先占位，那条路径回同一段文案。
-    const availability: ImageGenerationAvailability = getImageGenerationAvailability({
+    const availability: CooldownAvailability = getImageGenerationAvailability({
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,
     });
@@ -193,7 +189,7 @@ export function createGenerateImageExecutor(
       if (policyResult !== null) return policyResult;
     }
 
-    const claim: ImageGenerationClaim = claimImageGeneration({
+    const claim: CooldownClaim = claimImageGeneration({
       chatId: ctx.chatId,
       bypassCooldown: ctx.bypassMediaToolCooldown,
     });

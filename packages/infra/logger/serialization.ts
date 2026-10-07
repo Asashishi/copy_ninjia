@@ -44,16 +44,14 @@ function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig 
 }
 
 /**
- * 本次调用要脱敏的敏感值。每条日志取一次而不是每个参数取一次。Telegram 与
- * agent loader 都把成功结果放在线程内 holder，logger 只读取已有快照，不反向
- * 触发同步文件 I/O。
+ * 本次调用要脱敏的敏感值，每条日志取一次。Telegram 与 agent loader 把成功结果
+ * 放在线程内 holder，logger 只读取已有快照，不触发同步文件 I/O。
  *
  * 文本凭据、JSON 转义片段与遍历回调按三个 holder 的对象身份记忆化（三个 holder 见
  * cache/perThread/config.ts，记忆见 cache/perThread/logger.ts 的 loggerSecretsMemo）。
  * 配置身份未变时复用只读快照；身份变化（热重载替换快照）
- * 时，上一份名单里不再生效的旧凭据排在当前凭据之后继续脱敏，覆盖旧客户端在途
- * 请求仍可能带出的凭据。总量受 LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃
- * 最早退役的。
+ * 时，上一份名单里不再生效的旧凭据排在当前凭据之后继续脱敏。总量受
+ * LOGGER_MAX_REDACTED_SECRETS 限制，封顶时丢弃最早退役的。
  */
 function currentSecrets(): LogRedactionSecrets {
   const telegram: BotConfig | null = botConfigCache.current;
@@ -97,10 +95,8 @@ function currentSecrets(): LogRedactionSecrets {
  * 由 serializeError 展开（含嵌套 Error）；其余对象尝试 JSON 序列化，
  * 失败（循环引用等）则退化为字符串。
  *
- * Bun 的 fetch 网络异常会把完整请求 URL 放进 Error 的可枚举 path 字段；
- * Telegram 文件下载 URL 内嵌 BOT_TOKEN。展开后的整棵结构整体序列化成稳定 JSON，
- * 字段名、原文凭据及 URL 脱敏由快照回调覆盖每一层，再用 JSON 转义后的凭据片段
- * 匹配整份 JSON，覆盖对象键中的已登记凭据。
+ * 展开后的整棵结构整体序列化成 JSON，字段名、原文凭据及 URL 脱敏由快照回调覆盖
+ * 每一层，再用 JSON 转义后的凭据片段匹配整份 JSON，覆盖对象键中的已登记凭据。
  */
 function serializeArg(arg: unknown, budget: SerializationBudget): unknown {
   const secrets: LogRedactionSecrets = budget.secrets;
@@ -114,8 +110,7 @@ function serializeArg(arg: unknown, budget: SerializationBudget): unknown {
     : arg;
 
   const redacted: string = redactSecretsInText(safeStringify(serializable, secrets.replacer), secrets.json);
-  // 脱敏是对整份 JSON 文本做字面替换；敏感值本身是 JSON 结构字符（如 `,`）
-  // 时，替换结果可能不再是合法 JSON。解析失败就退化为脱敏后的文本，不向上抛出。
+  // 脱敏是对整份 JSON 文本做字面替换，结果可能不是合法 JSON；解析失败时返回脱敏后的文本。
   try {
     return JSON.parse(redacted);
   } catch {
@@ -189,13 +184,9 @@ function serializeError(
  * 不可枚举的 `cause` 与 AggregateError 的 `errors`。只读取数据描述符，不执行 getter。
  * 值为 Error 的字段、`cause` 与 `errors` 数组中的 Error 元素经 serializeNestedError
  * 递归展开；其余值逐个属性独立降级，某个值不可序列化（循环引用、BigInt）时只让它
- * 自己退化成字符串，不连累整条记录。safeStringify 走 `String(value)` 兜底时返回字符串，
- * 因此逐属性处理，不把降级结果展开进对象；字符串展开会变成
- * `{"0":"[","1":"o",...}` 的下标键，覆盖掉 code/path 等真实字段。
+ * 自己退化成字符串，不连累整条记录；降级结果作为该属性的值保存，不展开进对象。
  *
- * 累加对象必须用 `Object.create(null)`（无原型）：键名为 `__proto__` 时，向普通
- * `{}` 赋值会命中 Object.prototype 继承的访问器，导致该字段被静默丢弃或整条
- * 记录的原型被替换，字段不会出现在 logs/ 里。
+ * 累加对象用 `Object.create(null)`（无原型），键名 `__proto__` 作为普通字段保留。
  */
 function ownErrorProperties(
   error: Error,
@@ -220,12 +211,12 @@ function ownErrorProperties(
     }
     budget.items--;
     if (!("value" in descriptor)) {
-      // 日志不能为了取诊断字段执行依赖对象的 getter；它可能正是原始故障源。
+      // 不执行访问器 getter。
       own[key] = LOGGER_UNSERIALIZABLE_VALUE;
       continue;
     }
     const value: unknown = descriptor.value;
-    // JSON 不能表达 undefined；逐个降级时显式跳过，避免凭空生成 null 字段。
+    // JSON 不能表达 undefined，显式跳过。
     if (value === undefined) continue;
     const nested: Error | null = asError(value);
     if (nested === null && !aggregateErrors) {
@@ -300,7 +291,7 @@ function serializeAggregateErrors(value: unknown, owner: ErrorExpansionFrame, bu
   }
 }
 
-/** 单个参数的任何意外失败都只降级该参数，不能替换调用方正在汇报的异常。 */
+/** 单个参数的任何意外失败只降级该参数。 */
 function serializeArgSafely(
   arg: unknown,
   budget: SerializationBudget

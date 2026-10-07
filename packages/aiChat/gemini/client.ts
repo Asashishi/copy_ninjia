@@ -3,7 +3,7 @@
  * 的回复会话、文本生成、结构化 JSON、视觉描述、生图与独立检索全部经由这里发请求。
  *
  * 收发走官方 @google/genai SDK：SDK 自带每次请求的超时（httpOptions.timeout）与
- * 瞬时失败（网络错误/5xx/429）的自动重试（显式限制为首次加最多 5 次重试）。
+ * 瞬时失败（网络错误/5xx/429）的自动重试（次数由 GEMINI_REQUEST_RETRY_ATTEMPTS 约束）。
  * 视觉输入（inlineData）与多轮函数调用往返均由同一 SDK 处理。
  *
  * 本文件负责发请求、按业务结果分类并记录错误日志；函数调用直接读取
@@ -36,14 +36,13 @@ import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
 
 /**
- * 取得线程内唯一 Gemini 客户端。timeout 是每次 SDK 尝试各自的预算，重试总数
- * 由 GEMINI_REQUEST_RETRY_ATTEMPTS 显式约束。Worker 线程各自拥有独立实例，
+ * 按能力取得本线程的 Gemini 客户端。timeout 是每次 SDK 尝试各自的预算，重试总数
+ * 由 GEMINI_REQUEST_RETRY_ATTEMPTS 约束。Worker 线程各自拥有独立实例，
  * 崩溃重建后由 cache/workers/aiChat/gemini.ts 的空 holder 重建。
  *
- * 导出供本包内的 speech.ts（语音合成走 Interactions API 那条端点，用不上下面的
- * generateContent 封装）与 contextCache.ts（显式缓存登记表）复用同一个实例：每条
- * 流水线各 new 一个会让同一条 Worker 线程上散着好几份连接池与鉴权状态。本包之外
- * 不得 import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
+ * 导出供本包内的 speech.ts（语音合成走 Interactions API 端点）、contextCache.ts
+ * （显式缓存登记表）与 replySession.ts（会话创建时固定客户端）复用同一个实例。
+ * 本包之外不得 import 它（领域侧只认 aiChat/provider.ts 的中立契约）。
  */
 export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
   return capabilityClient({
@@ -62,26 +61,34 @@ export function getGeminiClient(capability: AgentCapability): GoogleGenAI {
   });
 }
 
+/** generateContent 调用的完整参数；能力决定客户端端点与超时。 */
+export interface GeminiRequestOptions {
+  readonly capability: AgentCapability;
+  /**
+   * 拼出完整请求体的闭包（model/contents/config 等由调用方拼好），直接使用官方 SDK 的
+   * GenerateContentParameters。闭包在 requestGeminiResult 的 try 内求值，抛错（如
+   * config/dynamic/agent.json 缺对应能力的模型名）按 `failureKind: "request"` 归一。
+   * 口径同 aiChat/openai/client.ts 的 requestOpenAiResult。
+   */
+  readonly buildBody: () => GenerateContentParameters;
+  /** 出现在错误日志里的调用名。 */
+  readonly errorLabel: string;
+  /** 回复会话创建时固定的客户端；缺省时在 try 内按 capability 现取（getGeminiClient）。 */
+  readonly client?: GoogleGenAI;
+}
+
 /**
  * 调一次 generateContent 接口。请求失败、超时、非 2xx 或异常 candidate
- * 返回带诊断的失败结果（已记日志）；finishReason=MAX_TOKENS 的静默失败（多半是输出/思考把
- * maxOutputTokens 烧光，见 consts/aiChat/gemini.ts 的 GEMINI_REPLY_MAX_TOKENS 注释）点名
- * 记下来，否则上层只能看到「没产出」，查不到原因。
- * @param buildBody 拼出完整请求体的闭包（model/contents/config 等由调用方拼好），
- *   直接使用官方 SDK 的 GenerateContentParameters，SDK 升级造成的字段漂移会在
- *   编译期暴露。收的是闭包而不是拼好的对象，因为请求体里要读 config/dynamic/agent.json
- *   对应能力的模型名：在调用方的对象字面量里求值，这份
- *   部署配置一旦写坏，抛出的位置就在本函数**之外**，绕开这里唯一的失败归一化，
- *   于是上层拿不到 ok:false 而是被更外层的 catch 吞掉——回复轮次会连同排队中的
- *   其余工具调用一起静默消失。口径同 aiChat/openai/client.ts 的 requestOpenAiResult。
- * @param errorLabel 出现在错误日志里的调用名，用于区分是哪条流水线出的错。
+ * 返回带诊断的失败结果（已记日志）；finishReason=MAX_TOKENS 的失败另记一条带 token 诊断的日志
+ * （见 consts/aiChat/gemini.ts 的 GEMINI_REPLY_MAX_TOKENS 注释）。
  */
-export async function requestGeminiResult(
-  capability: AgentCapability,
-  buildBody: () => GenerateContentParameters,
-  errorLabel: string
-): Promise<GeminiRequestResult> {
-  // 未赋值即代表 buildBody() 自己抛了（多半是部署配置写坏），此时没有 body 可读。
+export async function requestGeminiResult({
+  capability,
+  buildBody,
+  errorLabel,
+  client,
+}: GeminiRequestOptions): Promise<GeminiRequestResult> {
+  // body 未赋值表示 buildBody() 自己抛错，此时没有 body 可读。
   let body: GenerateContentParameters | undefined;
   let data: GenerateContentResponse;
   try {
@@ -93,16 +100,14 @@ export async function requestGeminiResult(
     );
     requestSignal.throwIfAborted();
     const model: string = String(body.model);
-    data = await raceAbortOrThrow(getGeminiClient(capability).models.generateContent({
+    data = await raceAbortOrThrow((client ?? getGeminiClient(capability)).models.generateContent({
       ...body,
       config: {
         ...body.config,
-        // 在唯一底层封装覆盖，聊天、压缩、媒体描述和未来调用方不会漏配，
-        // 也不能各自悄悄恢复成更严格的档位。
+        // 安全设置在这一处统一覆盖，调用方传入的 safetySettings 不生效。
         safetySettings: [...GEMINI_SAFETY_SETTINGS],
         // SDK 与外层等待共用同一份整轮 deadline：网络层据此停止后续
-        // 尝试，调用方则在到期或 invalidate 时立即结算，不受 SDK 内部退避
-        // 计时器影响。
+        // 尝试，调用方在到期或 invalidate 时立即结算。
         abortSignal: requestSignal,
       },
     }).then((response: GenerateContentResponse): GenerateContentResponse => {
@@ -116,9 +121,8 @@ export async function requestGeminiResult(
     if (error instanceof ApiError) {
       // ApiError 自带 HTTP 状态码与 API 返回的错误信息，拼一行足够定位。
       logger.error(`${errorLabel} error: ${error.status} ${error.message}`);
-      // 归因级联与它到失败结果的映射都收在 ai/utils/mediaSupportError.ts：
-      // 三个模型客户端共用同一条级联。
-      // undefined 就是 endpointFailure 那一档，落到下面的统一兜底。
+      // 归因级联与到失败结果的映射在 ai/utils/mediaSupportError.ts，各模型客户端共用；
+      // undefined 即 endpointFailure 档，落到下面的统一兜底。
       const failure: ProviderApiFailureResult | undefined = providerApiFailureResult(
         classifyProviderApiFailure(error.status, error.message, capability === "media")
       );
@@ -131,9 +135,8 @@ export async function requestGeminiResult(
 
   const candidate: Candidate | undefined = data.candidates?.[0];
   if (candidate?.finishReason === FinishReason.MAX_TOKENS) {
-    // MAX_TOKENS 由下面的 abnormalFinishDiagnostic 判为不可用响应，哪怕带着半句
-    // 正文也整份丢弃；思考型请求更容易在思考阶段就烧光额度、正文为空。不管有没有
-    // 部分正文都额外记一条 token 诊断，方便观测这类「中途夭折」的频率。
+    // MAX_TOKENS 由下面的 abnormalFinishDiagnostic 判为不可用响应，带部分正文也整份丢弃；
+    // 此处额外记一条 token 诊断。
     logger.error(
       `${errorLabel} response was truncated by maxOutputTokens ` +
       `(hasPartialText=${!!responseText(data)}, ` +
@@ -142,9 +145,8 @@ export async function requestGeminiResult(
     );
   }
 
-  // HTTP 层成功但内容不可用（无 candidates / SAFETY 等非 STOP 收尾）也要
-  // 点名：这类响应对上层与「模型没产出」不可区分，不记就查无原因，见
-  // aiChat/gemini/response.ts 的 abnormalFinishDiagnostic。
+  // HTTP 层成功但内容不可用（无 candidates / SAFETY 等非 STOP 收尾）记日志并按 response 失败交回，
+  // 见 aiChat/gemini/response.ts 的 abnormalFinishDiagnostic。
   const abnormal: string | null = abnormalFinishDiagnostic(data);
   if (abnormal) {
     logger.error(`${errorLabel} returned an unusable response: ${abnormal}.`);
@@ -160,15 +162,14 @@ export async function requestGeminiResult(
 }
 
 /**
- * 无需检查异常原因的调用方使用的安全便捷边界。只有正常 STOP candidate 才
- * 返回响应；任何夹带文本/functionCall 的异常 candidate 都在这里被清空。
+ * 供无需区分失败原因的调用方使用：只有正常 STOP candidate 才返回响应，其余返回 null。
  */
 export async function requestGeminiResponse(
   capability: AgentCapability,
   buildBody: () => GenerateContentParameters,
   errorLabel: string
 ): Promise<GenerateContentResponse | null> {
-  const result: GeminiRequestResult = await requestGeminiResult(capability, buildBody, errorLabel);
+  const result: GeminiRequestResult = await requestGeminiResult({ capability, buildBody, errorLabel });
   return result.ok ? result.response : null;
 }
 
@@ -183,7 +184,7 @@ export interface GeminiTextRequestOptions {
 
 /**
  * 请求一段需要业务侧清洗的 Gemini 文本，并把跨请求重试边界显式带回调用方。
- * HTTP/网络失败已经由 SDK 按统一次数重试，调用方不得再次发完整请求；只有
+ * HTTP/网络失败已经由 SDK 重试，调用方不得再次发完整请求；只有
  * HTTP 成功但 candidate 异常或清洗后正文为空时，才允许按领域策略重新采样。
  */
 export async function requestGeminiTextResult({
@@ -193,7 +194,7 @@ export async function requestGeminiTextResult({
   normalize,
   signal,
 }: GeminiTextRequestOptions): Promise<AiTextResult> {
-  const result: GeminiRequestResult = await requestGeminiResult(capability, buildBody, errorLabel);
+  const result: GeminiRequestResult = await requestGeminiResult({ capability, buildBody, errorLabel });
   if (signal?.aborted === true) return { ok: false, retryable: false };
   if (!result.ok) {
     return classifyAiTextFailure(result.failureKind, capability);

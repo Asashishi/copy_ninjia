@@ -36,9 +36,9 @@ function renderableCommandError(surface: ModelAuthoredTextSurface): string {
 /**
  * 统一校验模型即将对外发送的正文或 caption。
  *
- * 执行侧转录记号只能由真实动作回执写入；机器人自身消息中的命令不能被
- * Telegram 渲染成可点击入口；同轮重复文本静默丢弃。返回值是工具错误或零动作
- * 的跳过回执，null 表示允许继续执行。
+ * 依次检查：同轮重复文本以 DUPLICATE_REPLY_RESULT 静默丢弃；含执行侧转录记号
+ * （SELF_ACTION_TAG_PATTERNS）的文本拒绝；含可渲染斜杠命令的文本拒绝。返回值是工具错误或
+ * 零动作的跳过回执，null 表示允许继续执行。
  */
 export function modelAuthoredTextPolicyResult(
   text: string,

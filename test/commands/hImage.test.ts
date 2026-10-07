@@ -57,7 +57,7 @@ function context(match: string = "", topic: number | undefined = undefined): nev
 
 const texts = chatAtmosphere().H_IMAGE_TEXTS;
 
-/** 发一次 `/h_image`；这一组只测执行器的容量与结果，因此每次都让出全局限流配额。 */
+/** 发一次 `/h_image`；这一组只测执行器的容量与结果，每次都让出全局限流配额。 */
 async function submitHImage(ctx: never): Promise<void> {
   recentHImageCallTimestamps.clear();
   await handleHImageCommand(ctx);
@@ -185,7 +185,7 @@ describe("/h_image 的全局限流", () => {
       expect(tryConsumeHImageRateLimit(start)).toBe(true);
     }
     expect(tryConsumeHImageRateLimit(start)).toBe(false);
-    // 窗口是 (now - windowMs, now]，落在窗口末端的那 5 次还占着名额。
+    // 窗口是 (now - windowMs, now]，落在窗口末端的那几次还占着名额。
     expect(tryConsumeHImageRateLimit(start + H_IMAGE_RATE_LIMIT_WINDOW_MS - 1)).toBe(false);
     for (let index: number = 0; index < H_IMAGE_RATE_LIMIT_MAX_CALLS_PER_WINDOW; index++) {
       expect(tryConsumeHImageRateLimit(start + H_IMAGE_RATE_LIMIT_WINDOW_MS)).toBe(true);

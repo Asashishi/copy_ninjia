@@ -28,7 +28,7 @@ function groupMessage(overrides: Partial<Message> = {}): Message {
   } as Message;
 }
 
-/** 收敛一次投递判定；本文件只关心门禁与标签，时刻固定不参与断言以外的逻辑。缺省读本群缓存状态。 */
+/** 收敛一次投递判定；本文件只关心门禁与标签，时刻固定。缺省读本群缓存状态。 */
 function candidate(
   message: Message = groupMessage(),
   chatState: Readonly<ChatState> = getChatState(message.chat.id)

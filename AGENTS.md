@@ -109,7 +109,7 @@
 - 长期 Map、Set、队列、timer 和单例放在 `packages/cache/<owner>/`。
 - 第一层 owner 仅允许 `main/`、`workers/aiChat/`、`workers/antiRaid/`、`workers/diskIO/`、`perThread/`。
 - 缓存文件头必须注明 owner。
-- 缓存只能被 owner 线程 import；跨线程只能传消息，不得共享内存。归属由 `bun run check:conventions` 按真实模块图核对，当前只有一条豁免：`packages/cache/main/diskIO.ts` 允许被 aiChat / antiRaid isolate 引入（`infra/logger.ts` 静态 import `infra/diskIO.ts`，Worker 里那份状态恒为初始值）。新增豁免必须同时改 `CACHE_OWNER_EXEMPTIONS` 与被豁免模块的头注。
+- 缓存只能被 owner 线程 import；跨线程只能传消息，不得共享内存。归属由 `bun run check:conventions` 按真实模块图核对，当前没有豁免（`CACHE_OWNER_EXEMPTIONS` 为空）。新增豁免必须同时改 `CACHE_OWNER_EXEMPTIONS` 与被豁免模块的头注。
 - 可变单例必须使用 `{ current: T | null }` holder，不得使用 `export let`；泛型必须写在类型标注上。
 - 每个缓存导出必须用 JSDoc 写明填充和清理时机、Worker 崩溃重建方式、容量及清理策略。
 - 新增缓存必须按以下顺序决策，前一项可行时不得进入后一项：

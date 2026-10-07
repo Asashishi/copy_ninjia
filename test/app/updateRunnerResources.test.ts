@@ -9,9 +9,8 @@ interface StopReport {
 }
 
 /**
- * SIGTERM 时 fetcher 正挂着的那次退避：network 夹具第 4 次失败后等第四档（初值翻倍三次），
- * 429 夹具等 retry_after 的 60 秒。stop 必须取消这次等待；没取消时进程要等它到点才退出。
- * 断言按这次退避的一半判定，只比较相对关系，不给墙钟设与实现无关的固定阈值。
+ * SIGTERM 时 fetcher 正挂着的那次退避：network 夹具在若干次失败后等到较高一档退避，429 夹具等 retry_after。
+ * stop 取消这次等待；断言按这次退避的一半判定，只比较相对关系。
  */
 const PENDING_BACKOFF_MS: Readonly<Record<string, number>> = {
   network: UPDATE_POLL_INITIAL_RETRY_MS * 8,

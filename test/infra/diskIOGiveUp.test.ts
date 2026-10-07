@@ -8,9 +8,8 @@ import {
 } from "../helpers/diskIOWorkerHarness";
 
 /**
- * 放弃自愈这条路必须独占一个测试文件：`diskIORestartThrottle` 是模块级滑动窗口，
- * 走完这条路就把配额用光了，同文件里任何还指望 Worker 重建的用例都会连坐失败
- * （随机顺序下尤其明显）。`bun test --isolate` 按文件重建模块注册表，分文件即隔离。
+ * 放弃自愈这条路独占一个测试文件：`diskIORestartThrottle` 是模块级滑动窗口，走完这条路就把配额用光；
+ * `bun test --isolate` 按文件重建模块注册表，分文件即隔离。
  */
 
 const diskIO = await import("../../packages/infra/diskIO");
@@ -27,14 +26,12 @@ describe("Disk I/O Worker 放弃自愈", () => {
       emitSuccessfulLoad(first);
       await loadedPromise;
 
-      // 放弃之后没有替补 Worker：onDiskIORespawn 不会跑，还在等 durable 回执的
-      // owner（典型是 AI 记忆删除 waiter）不会再等到任何回执，只能靠这条通知
-      // 立刻失败，而不是各自干等自己那份超时——那段干等恰好和同一个 fatal 信号
-      // 触发的停机抢排空预算。
+      // 放弃之后没有替补 Worker：onDiskIORespawn 不会跑，还在等 durable 回执的 owner（如 AI 记忆删除 waiter）
+      // 靠这条通知立刻失败。
       let notified: number = 0;
       diskIO.onDiskIOGiveUp((): void => { notified++; });
 
-      // 普通崩溃继续沿用共享 Worker 的五次滑动窗口预算。
+      // 普通崩溃继续沿用共享 Worker 的滑动窗口预算。
       for (let attempt: number = 0; attempt <= WORKER_MAX_RESTARTS; attempt++) {
         FakeWorker.instances.at(-1)?.onerror!({ message: "runtime crash" } as ErrorEvent);
         if (diskIORuntime.worker === null) break;

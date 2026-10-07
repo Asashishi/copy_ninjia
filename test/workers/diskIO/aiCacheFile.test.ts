@@ -201,6 +201,32 @@ describe("diskIO/aiCacheFile 追加失败与退避", () => {
       consoleError.mockRestore();
     }
   });
+
+  test("系统时钟回拨超过退避窗口时视为窗口已结束，下一批立即重新探测并追加", async () => {
+    const consoleError: Mock<typeof console.error> = spyOn(console, "error").mockImplementation((): void => {});
+    const failedAt: number = tokyoNoon("2026-09-26");
+    try {
+      await initAiCache();
+      rmSync(AI_CACHE_FILE_PATH, { force: true });
+      mkdirSync(AI_CACHE_FILE_PATH);
+      setSystemTime(new Date(failedAt));
+      await handleAiCacheUsageMessage(usage("2026-09-26", { model: "dropped-on-failure" }));
+      expect(await flushAiCacheBuffer()).toBeFalse();
+      expect(aiCacheReopenState.retryAt).toBe(failedAt + LOG_REOPEN_RETRY_MS);
+
+      rmSync(AI_CACHE_FILE_PATH, { recursive: true });
+      setSystemTime(new Date(failedAt - 1));
+      await handleAiCacheUsageMessage(usage("2026-09-26", { model: "appended-after-clock-step" }));
+
+      expect(await flushAiCacheBuffer()).toBeTrue();
+      expect(aiCacheReopenState.retryAt).toBe(0);
+      expect(Object.values(await readDocument()).map((row: unknown): unknown => (row as { model: unknown }).model))
+        .toEqual(["appended-after-clock-step"]);
+    } finally {
+      setSystemTime();
+      consoleError.mockRestore();
+    }
+  });
 });
 
 describe("diskIO/aiCacheFile 每日汇总", () => {

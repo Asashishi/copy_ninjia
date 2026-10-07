@@ -2,9 +2,8 @@
  * OpenAI 回复会话：中立请求到 Responses 请求体的映射，以及多轮工具往返的
  * input item 累积。
  *
- * 重点守三条：instructions 必须显式带上（缺了会被网关灌自己的提示词）、
- * 联网查证挂的是内建 hosted web_search 工具、function_call 与
- * function_call_output 必须靠 call_id 正确配对。
+ * 覆盖：instructions 显式携带、联网查证使用内建 hosted web_search 工具、
+ * function_call 与 function_call_output 靠 call_id 配对。
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -24,7 +23,12 @@ const requestOpenAiResult = mock(async (..._args: unknown[]): Promise<OpenAiRequ
   failureKind: "request",
 }));
 
-mock.module("../../../packages/aiChat/openai/client", () => ({ requestOpenAiResult }));
+/** 会话创建时固定的客户端替身；请求经被替换的 requestOpenAiResult 发出，不触达它。 */
+const PINNED_CLIENT: object = { label: "pinned openai client" };
+mock.module("../../../packages/aiChat/openai/client", () => ({
+  getOpenAiClient: (): object => PINNED_CLIENT,
+  requestOpenAiResult,
+}));
 
 const { createOpenAiReplySession } = await import("../../../packages/aiChat/openai/replySession");
 const {
@@ -101,6 +105,25 @@ afterEach(() => {
   agentDeploymentConfigCache.current = ORIGINAL_AGENT_CONFIG;
 });
 
+describe("OpenAI 回复会话的热重载边界", () => {
+  test("会话创建时固定模型与客户端：两次工具往返之间热重载 text 配置，后续请求仍用旧模型与旧客户端", async () => {
+    requestOpenAiResult.mockResolvedValueOnce(okResult(modelOutput()));
+    const session: AiReplySession = createOpenAiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const first: AiReplyTurn = await session.request(baseRequest());
+    expect(session.appendToolOutputs([{ call: first.functionCalls[0]!, responseJson: DUPLICATE_REPLY_RESULT }])).toBeTrue();
+
+    const pinnedModel: string = getAgentDeploymentConfig().text.model;
+    useOpenAiTextConfig({ provider: "openai", apiKey: "rotated-key", baseUrl: undefined, headers: undefined, model: "reloaded-model" });
+    await session.request(baseRequest());
+
+    expect(capturedBody(0).model).toBe(pinnedModel);
+    expect(capturedBody(1).model).toBe(pinnedModel);
+    for (const call of requestOpenAiResult.mock.calls) {
+      expect((call[0] as { client?: unknown }).client).toBe(PINNED_CLIENT);
+    }
+  });
+});
+
 describe("OpenAI 回复会话的请求映射", () => {
   test("初始上下文区块映射成同一个 user 轮次下的多段 input_text，并显式带 instructions", async () => {
     const session: AiReplySession = createOpenAiReplySession({ stableBlocks: [], volatileBlocks: ["区块一", "区块二", "区块三"] });
@@ -118,7 +141,7 @@ describe("OpenAI 回复会话的请求映射", () => {
       ],
     }]);
     expect(body.max_output_tokens).toBe(OPENAI_REPLY_MAX_TOKENS);
-    // 不落服务端会话：Worker 崩溃重建后没有任何一方持有 response id。
+    // 不落服务端会话：不持有 response id。
     expect(body.store).toBe(OPENAI_STORE_RESPONSES);
     expect(body.store).toBe(false);
   });
@@ -246,7 +269,7 @@ describe("OpenAI 回复会话的请求映射", () => {
         name: SEND_MESSAGE.name,
         description: SEND_MESSAGE.description,
         parameters: SEND_MESSAGE.parametersJsonSchema,
-        // 本项目的 schema 不声明 additionalProperties:false，开严格模式会被拒。
+        // 本项目的 schema 不声明 additionalProperties:false，不开严格模式。
         strict: false,
       },
     ]);
@@ -357,9 +380,8 @@ describe("OpenAI 回复会话的对话记录累积", () => {
     await session.request(baseRequest({ webSearchEnabled: true }));
     const body: ResponseBody = capturedBody(1);
     const input = body.input as unknown[];
-    // 初始 user 轮次 + 三条可回放的模型 output item + 一条函数结果。
-    // store:false 下 OpenAI 原生端点默认返回加密 reasoning 载荷，
-    // 它必须与该轮的函数调用和结果一起续传。
+    // 初始 user 轮次 + 三条可回放的模型 output item + 一条函数结果；
+    // store:false 下 OpenAI 原生端点默认返回加密 reasoning 载荷，它与该轮的函数调用和结果一起续传。
     expect(input).toHaveLength(5);
     expect(input[1]).toEqual({
       type: "reasoning",
@@ -398,8 +420,7 @@ describe("OpenAI 回复会话的对话记录累积", () => {
   test("缺 call_id 的 function_call 不回灌 input：它配不上任何 function_call_output", async () => {
     requestOpenAiResult.mockResolvedValueOnce(okResult([
       { type: "function_call", id: "fc-1", call_id: "call-1", name: "send_message", arguments: "{}", status: "completed" },
-      // 网关串扰/乱码轮次会给出这种没法配对的项；抽取那边已经跳过它，
-      // 回灌这边也必须跳过，否则下一轮请求被整体 400 拒绝。
+      // 网关串扰/乱码轮次会给出这种没法配对的项；抽取与回灌两侧都跳过它。
       { type: "function_call", id: "fc-2", call_id: "", name: "send_sticker", arguments: "{}", status: "completed" },
     ]));
 

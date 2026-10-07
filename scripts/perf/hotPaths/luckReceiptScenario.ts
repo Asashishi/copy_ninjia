@@ -1,7 +1,7 @@
 import { confirmLuckDraw } from "../../../packages/commands/luckChallenge/receipt";
 import type { Scenario } from "./types";
 
-/** 普通消息回执快路径输入；轮换长度和换行位置，防止 JSC 把解析折叠成常量。 */
+/** 普通消息回执快路径输入；轮换长度和换行位置。 */
 const LUCK_RECEIPT_FAST_PATH_TEXTS: readonly string[] = [
   "ordinary message",
   "普通聊天消息",

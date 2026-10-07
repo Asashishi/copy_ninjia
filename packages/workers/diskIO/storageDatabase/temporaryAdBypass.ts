@@ -3,7 +3,7 @@ import {
   pendingTemporaryAdBypassWrites,
 } from "../../../cache/workers/diskIO/storageDatabase";
 import { storageWriteCost } from "../../../libs/storageWriteBudget";
-import { DAY_MS } from "../../../consts/diskIO/common";
+import { DAY_MS } from "../../../consts/time";
 import { assertTelegramIdentityId } from "../../../database/codec/identity";
 import { assertTemporaryAdBypassActivity } from
   "../../../database/codec/temporaryAdBypass";

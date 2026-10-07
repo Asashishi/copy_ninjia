@@ -7,9 +7,8 @@ import { parseCoverageSummary } from "./coverageSummary";
  * 现跑一次 `bun test --isolate --coverage`，核对仓库声明的覆盖率指标与真实读数一致。
  *
  * 与 `bun run check:conventions` 里那层的分工写在 conventions/coverageMetrics.ts
- * 的头注：那层只判各位置彼此一致（无条件生效、零成本），管不了「全部位置一起
- * 过期」；这一层判它们与真实读数一致，代价是整跑一遍测试，因此不进
- * `bun run check`，由 `bun run release:check` 与显式指令触发。
+ * 的头注：那层只判各位置彼此一致；这一层判它们与真实读数一致，整跑一遍测试，
+ * 不进 `bun run check`，由 `bun run release:check` 与显式指令触发。
  *
  * 失败时只报差异，不改文件：要改哪些位置见 docs/cn/05-dev-workflow.md 的
  * 「同步 README 指标」。

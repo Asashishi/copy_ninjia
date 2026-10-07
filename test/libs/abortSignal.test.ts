@@ -145,7 +145,7 @@ describe("raceAbort 共享等待", () => {
       Promise.reject(new Error("boom"));
     const controller: AbortController = new AbortController();
 
-    // 调用方靠对象身份区分「被取消」与「底层失败」，包一层新对象就会破坏判定。
+    // 调用方靠对象身份区分「被取消」与「底层失败」，不包新对象。
     expect(await raceAbort(failing, {
       signal: controller.signal,
       cancelled: CANCELLED,

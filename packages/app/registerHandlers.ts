@@ -80,12 +80,9 @@ function appendColdIdentityId(
 }
 
 /**
- * 把三条「认领即终止、否则放行」的 ingress 收敛成同一条 MaybePromise 边界。
- *
- * 三条 ingress 的常态都是同步返回 false（本群没有活动 gag 会话、没有未完成的
- * `/qa set` 表单、机器人管理员身份已确证且这条不是黑名单频道消息）。这里因此
- * 不写成 `async`：普通群消息一条都不为这三道判定分配 Promise，只有真正认领或
- * 需要出站 I/O 的那条 update 才等一次。
+ * 把「认领即终止、否则放行」的 ingress（Anti-Raid、gag、`/qa set` 表单投递）收敛成同一条
+ * MaybePromise 边界：入参为 boolean 时同步决定是否 next，为 Promise 时等待结果后再决定。
+ * 函数本身不是 `async`，三条 ingress 同步返回 false 的常态路径不分配 Promise。
  *
  * 「返回不返回 Promise 是语义的一部分」这条跨模块约束（含命令必须收在一层
  * `:entities:bot_command` 子链后面）见 @see ../../docs/cn/04-invariants.md
@@ -126,12 +123,11 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined =>
     shouldPassBotMessage(ctx.message, ctx.me.id) ? next() : undefined);
 
-  // 运势签名回执是 chosen_inline_result 之外的确认路径。转发副本也有效，
-  // 因此必须在 `shouldPassInitGate` 网关前检查。
+  // 运势签名回执是 chosen_inline_result 之外的确认路径，转发副本同样有效，
+  // 在 `shouldPassInitGate` 网关前检查。
   preamble.push((ctx: Context, next: NextFunction): Promise<void> => {
-    // `ctx.msg` 是每次求值的 getter 链（grammy/out/context.js 的 `get msg()` 串
-    // 八个 update 字段），本条链上凡是要多次读取的地方一律先取成局部变量：
-    // `ctx.update` 在一条 update 的处理期内不可变，派生值读一次即可。
+    // `ctx.msg` 是每次求值的 getter 链（grammy/out/context.js 的 `get msg()`），
+    // 多次读取处先取成局部变量。
     const message: Message | undefined = ctx.msg;
     const confirmation: Promise<void> | undefined = confirmLuckDraw(
       message?.text,
@@ -140,10 +136,10 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return confirmation === undefined ? next() : confirmation.then(next);
   });
 
-  // 未初始化群和不允许的私聊命令在这里终止，避免继续进入授权维护、身份预热、
+  // 未初始化群和不允许的私聊命令在这里终止，不进入授权维护、身份预热、
   // 验证、命令与 AI 链路。群内只有首次 /init 与 my_chat_member 等网关自身
   // 明确放行的更新能越过初始化状态；私聊只接受超级管理员的 /send。
-  // 网关拒绝时仍摘除已保存的退群成员，不新增候选或放行业务处理。
+  // 网关拒绝时仍摘除已保存的退群成员，不新增候选。
   preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     if (!shouldPassInitGate(ctx)) {
       observeWedMemberDeparture(ctx, ctx.chat);
@@ -153,17 +149,16 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   });
 
   // 黑白名单判断保持同步 LRU 读取；每个 update 在进入 Anti-Raid 和命令前，一次性
-  // 补齐可见身份的冷缺失。热命中不跨线程，冷读同时查询三张关系并写入正/负缓存。
-  // 预热是 best-effort：Disk I/O 自愈窗口里冷读会失败，prefetchIdentityPolicies
-  // 自己就地降级并返回 false（异常逸出会被 bot.catch 重抛成整进程重启循环，
-  // 见该函数头注）。本中间件不消费这个结论——留冷即按 fail-closed 判定。
+  // 补齐可见身份的冷缺失。热命中不跨线程，冷读一并查询各身份关系并写入正/负缓存。
+  // 预热是 best-effort：Disk I/O 自愈窗口里冷读失败时 prefetchIdentityPolicies
+  // 就地降级并返回 false（见该函数头注），本中间件不消费这个结论，留冷身份按
+  // fail-closed 判定。
   //
-  // **不写成 async**：全热 update 的 ids 恒为 null，不应为每条 update 无条件创建
-  // promise 与 async 帧；只有冷读分支返回实际 Promise。
+  // 不写成 async：全热 update 的 ids 为 null，直接 next()；只有冷读分支返回 Promise。
   preamble.push((ctx: Context, next: NextFunction): Promise<void> => {
     // 成员集合只消费通过初始化网关的主线程更新，实际增删由 wed owner 合并落盘。
     observeWedMembers(ctx);
-    // 同上：`ctx.msg` 与它的 `reply_to_message` 在本段里各要读七八次，先各取一次。
+    // 同上：`ctx.msg` 与它的 `reply_to_message` 在本段里多次读取，先各取一次。
     const message: Message | undefined = ctx.msg;
     const repliedTo: Message | undefined = message?.reply_to_message;
     let ids: number[] | null = null;
@@ -171,12 +166,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     if (message?.sender_chat !== undefined) {
       ids = appendColdIdentityId(ids, message.sender_chat.id);
     } else {
-      // 纯粹的频道帖没有 from、也没有 sender_chat：频道自己就是 ctx.chat，
-      // 而 users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts
-      // 都按这个 id 解析行为主体。漏掉它的话，已在 permission_list 里的频道
-      // 在自己频道发 /mood query、/bot_status 会撞上冷 LRU 的 fail-closed 判定，
-      // 被当成未授权拒绝，直到别的 update 偶然把这个 id 预热进来。
-      // `ctx.chat` 只在这条分支需要，因此留在分支内读一次，不提到函数头。
+      // 纯频道帖没有 from 也没有 sender_chat：频道自己就是 ctx.chat，
+      // users/visibleSender.ts、commands/commandActor.ts 与 infra/updateGate.ts
+      // 按这个 id 解析行为主体。`ctx.chat` 只在这条分支读取。
       const chat: Chat | undefined = ctx.chat;
       if (chat?.type === "channel") ids = appendColdIdentityId(ids, chat.id);
     }
@@ -222,12 +214,12 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     return next();
   });
 
-  // message / channel_post 上的 ingress 与消息兜底一律收进前置链，在 middleware
+  // message / channel_post 上的 ingress 与消息兜底收进前置链，在 middleware
   // 内自行判定 update 类型。判据与 on("message")、on(["message", "channel_post"])
-  // 相同（allowed_updates 不含 edited_*，消息类 update 只有 message 与 channel_post 两种），
+  // 相同（allowed_updates 不含 edited_*，消息类 update 只有 message 与 channel_post），
   // 命中集合、顺序与认领语义一致。
 
-  // 入群验证必须早于命令处理器，否则待验证用户发出的命令不会被追踪清理。
+  // 入群验证位于命令处理器之前。
   preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message;
     return message === undefined
@@ -235,9 +227,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
       : claimOrContinue(handleAntiRaidMessageIngress(message, ctx.me.id), next);
   });
 
-  // gag 同样要覆盖命令消息，因此必须位于全部 bot.command 之前；Anti-Raid 先看
-  // 原始消息，才能让广告/刷屏/待验证追踪按原始消息计数。被 gag 的消息即使
-  // Telegram 删除失败也在这里终止，不得继续喂给 AI、copy 或命令处理器。
+  // gag 覆盖命令消息，位于全部 bot.command 之前；Anti-Raid 先看原始消息，
+  // 广告/刷屏/待验证追踪按原始消息计数。被 gag 的消息即使 Telegram 删除失败
+  // 也在这里终止，不进入 AI、copy 或命令处理器。
   preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message;
     return message === undefined
@@ -245,24 +237,19 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
       : claimOrContinue(handleGagMessageIngress(message, ctx.me.id), next);
   });
 
-  // /qa set 表单投递同样要覆盖命令消息，且必须终止本条 update：那条投递消息
-  // 已经被认领并删除，再放进 AI、复读或命令链路只会处理一个不存在的东西。
-  // 必须同时覆盖 channel_post：频道里的「问题:」「回答:」是频道帖。
+  // /qa set 表单投递覆盖命令消息与 channel_post（频道里的「问题:」「回答:」
+  // 是频道帖）；被认领的消息已删除，终止本条 update。
   preamble.push((ctx: Context, next: NextFunction): Promise<void> | undefined => {
     const message: Message | undefined = ctx.message ?? ctx.channelPost;
     return message === undefined ? next() : claimOrContinue(handleQaMessageIngress(message), next);
   });
 
-  // 授权维护命令与其余命令一样排在上面那道 ingress 之后，没有例外：这两条
-  // handler 都不调 next()，注册在 ingress 之前的话，/permission 与 /white 会
-  // 整条绕开 handleAntiRaidMessageIngress —— 发的人不计入刷屏窗口却每条都能
-  // 拿到一条机器人回复（非白名单是拒绝文案，白名单是整份权限 JSON），等于一个
-  // 不受防刷屏约束的回复放大器；黑名单频道身份发的这两条命令也不会被就地删除，
-  // 待验证成员发的更不会产生 trackedMessage。
+  // 授权维护命令与其余命令一样排在上面那道 ingress 之后：/permission 与 /white
+  // 的 handler 不调 next()，需经过 handleAntiRaidMessageIngress 后才执行。
   // 全部命令收在一层 `:entities:bot_command` 子链后面：外闸判据与
-  // Context.has.command() 自己的第一步完全相同（都是 `:entities:bot_command`），
-  // 因此它是每条命令判据的严格超集，不带 bot_command 实体的消息一次跳过整组。
-  // 中文动作命令拿不到 bot_command 实体，因此由下面的「/」外闸单独承接。
+  // Context.has.command() 的第一步相同，是每条命令判据的超集，
+  // 不带 bot_command 实体的消息一次跳过整组。
+  // 中文动作命令没有 bot_command 实体，由下面的「/」外闸承接。
   const commands: Composer<Filter<Context, ":entities:bot_command">> = new Composer();
   commands.command("permission", handlePermissionCommand);
   commands.command("white", handleWhiteCommand);
@@ -290,10 +277,9 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   commands.command("ungag", handleUngagCommand);
   commands.command("send", handleSendCommand);
   commands.command("qa", handleQaCommand);
-  // 菜单占位项：它只为在命令菜单里曝光「/<1~2 个中文字>」这个用法（那类命令名
-  // 注册不进菜单，见 consts/commands.ts）。必须在这里终止链路——点菜单会真的把
-  // /x 发出去，不拦住的话它会落到下面的消息兜底，被当成普通消息进入 AI/复读
-  // 流水线；但也不能什么都不回，否则点了菜单的人只会得到一片沉默。
+  // 菜单占位项：在命令菜单里展示「/<中文动作名>」用法（那类命令名注册不进菜单，
+  // 见 consts/commands.ts）；handleCjkActionUsageCommand 回复用法并终止链路，
+  // 不落到消息兜底。
   commands.command("x", handleCjkActionUsageCommand);
   // 外闸直接用 grammY 的 matchFilter，与 `bot.on(":entities:bot_command")` 同一个判据。
   const isBotCommand: (ctx: Context) => ctx is Filter<Context, ":entities:bot_command"> =
@@ -302,11 +288,10 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   preamble.push((ctx: Context, next: NextFunction): unknown =>
     isBotCommand(ctx) ? commandMiddleware(ctx, next) : next());
 
-  // `/咬`、`/贴贴` 这类中文动作命令拿不到 Telegram 的 bot_command 实体，bot.command
-  // 匹配不到，只能按消息原文 hears。必须排在消息兜底处理器之前，否则会被当成
-  // 普通消息进入 AI/复读流水线；不认领的形态由 handler 自己 next() 放行。
-  // CJK_ACTION_COMMAND_PATTERN 以 `^\/` 开头，「原文首字符是 /」是它的严格超集，
-  // 其余消息不进 hears 子链。原文取法与 Context.has.text() 相同。
+  // `/咬`、`/贴贴` 这类中文动作命令没有 Telegram 的 bot_command 实体，bot.command
+  // 匹配不到，按消息原文 hears。排在消息兜底处理器之前；不认领的形态由 handler
+  // 自己 next() 放行。CJK_ACTION_COMMAND_PATTERN 以 `^\/` 开头，「原文首字符是 /」
+  // 是它的超集，其余消息不进 hears 子链。原文取法与 Context.has.text() 相同。
   const cjkActions: Composer<Context> = new Composer();
   cjkActions.hears(CJK_ACTION_COMMAND_PATTERN, handleCjkActionCommand);
   const cjkActionMiddleware: MiddlewareFn<Context> = cjkActions.middleware();
@@ -338,8 +323,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("chosen_inline_result", handleLuckChosenInlineResult);
 
   bot.catch((err: BotError<Context>): never => {
-    // GrammyError 携带完整请求 payload；这里只记录状态码和描述，避免日志泄漏
-    // 可能嵌在 URL 或 inline result 中的 BOT_TOKEN。
+    // GrammyError 携带完整请求 payload，这里只记录状态码和描述。
     if (err.error instanceof GrammyError) {
       logger.error(
         `Unhandled error while handling update ${err.ctx.update.update_id}: ` +
@@ -348,9 +332,8 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
     } else {
       logger.error(`Unhandled error while handling update ${err.ctx.update.update_id}:`, err.error);
     }
-    // 记录后必须继续向 acknowledged runner 传播。吞掉异常会让 bot.handleUpdate
-    // resolve，下一次 getUpdates 随即确认本次失败（包括 durability barrier
-    // 失败）的 update，进程重启后 Telegram 也不会重投。
+    // 记录后继续向 acknowledged runner 传播，不吞掉异常；失败的 update
+    // （包括 durability barrier 失败）因此不会被 getUpdates 确认。
     throw err.error;
   });
 

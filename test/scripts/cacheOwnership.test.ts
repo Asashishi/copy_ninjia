@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  CACHE_OWNER_EXEMPTIONS,
   collectCacheOwnerHeaderProblems,
   collectStaleCacheExemptionProblems,
   expectedCacheOwnerHeader,
@@ -54,16 +53,6 @@ describe("cache 归属豁免的反向核对", () => {
     })).toEqual([
       "CACHE_OWNER_EXEMPTIONS retains an exemption for a cache module that no longer exists: packages/cache/main/removed.ts",
     ]);
-  });
-
-  test("仓库现有豁免表在 cache 文件集合缺失对应模块时逐条报出", (): void => {
-    expect(collectStaleCacheExemptionProblems({
-      projectRoot,
-      cacheFiles: [otherPath],
-      threadClosures,
-      exemptions: CACHE_OWNER_EXEMPTIONS,
-    })).toEqual(Object.keys(CACHE_OWNER_EXEMPTIONS).map((relativePath: string): string =>
-      `CACHE_OWNER_EXEMPTIONS retains an exemption for a cache module that no longer exists: ${relativePath}`));
   });
 });
 

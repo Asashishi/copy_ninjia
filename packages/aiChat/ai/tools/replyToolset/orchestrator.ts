@@ -196,8 +196,8 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     replyActionInstruction: voicePrompts.replyActionInstruction,
     has: (name: string): boolean => names.has(name),
     // 直接轮从请求模型起亮状态（串行链忙时由链上的步骤掌管，排空后再亮）。还没接纳过动作的请求亮
-    // 「正在输入」，交回的第一条文字直接发出；刚看过贴纸包的那次请求是在挑贴纸，亮「正在选择贴纸」；
-    // 其余请求多半是收尾，不亮状态，之后交回的动作都做拟人停顿。
+    // 「正在输入」，交回的第一条文字直接发出；刚看过贴纸包的那次请求亮「正在选择贴纸」；
+    // 其余请求不亮状态，之后交回的动作都做拟人停顿。
     beforeModelRequest: (): void => {
       if (directPacing === null || !ctx.isActive()) return;
       directPacing.beforeModelRequest(choosingSticker ? "choose_sticker" : actionsUsed === 0 ? "typing" : "idle");
@@ -209,7 +209,7 @@ export async function createReplyToolset(ctx: ReplyToolContext, deliveryReady?: 
     execute: (name: string, argumentsJson: string): string => {
       if (!ctx.isActive()) return toolError(REPLY_INVALIDATED_TOOL_ERROR);
       // 校验和接纳在调用时完成，两种轮次相同：动作按接纳回执先占额度，当场交回模型继续；
-      // 拟人停顿、语音合成的等待与发送都由串行链执行，失败只记日志，不退额度给模型重复投递。
+      // 拟人停顿、语音合成的等待与发送都由串行链执行，失败只记日志，额度不退还。
       const isActionTool: boolean = ACTION_TOOL_NAMES.includes(name);
       if (isActionTool && actionsUsed >= HARD_MAX_ACTIONS_PER_REPLY) {
         return toolError(

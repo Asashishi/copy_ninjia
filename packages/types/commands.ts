@@ -32,7 +32,7 @@ export type ToggleAction = "enable" | "disable";
 /**
  * 一条 enable/disable 开关命令的全部对外文案。
  *
- * 六项均必填；状态发生变化与重复执行使用不同回执。
+ * 各项均必填；状态发生变化与重复执行使用不同回执。
  *
  * 具体文案表见 packages/consts/atmosphere/ 下各风格的 commands.ts，判定见
  * packages/commands/superAdminToggle.ts 的 toggleReplyText。

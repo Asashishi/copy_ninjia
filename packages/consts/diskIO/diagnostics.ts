@@ -5,8 +5,8 @@ export const DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES: number = 32;
 export const DISK_DIAGNOSTIC_MAX_PENDING_MESSAGES: number = 4_096;
 
 /**
- * 主线程诊断 FIFO 允许保留的 JSON 序列化载荷字节总数。消息数同时受独立硬顶
- * 约束，因此小对象开销也不能按故障持续时间无限增长。
+ * 主线程诊断 FIFO 允许保留的 JSON 序列化载荷字节总数；消息数另受
+ * DISK_DIAGNOSTIC_MAX_PENDING_MESSAGES 约束。
  */
 export const DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES: number = 8 * 1024 * 1024;
 
@@ -19,10 +19,9 @@ export const DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES: number = 8 * 1024 * 1024;
 export const DISK_DIAGNOSTIC_MAX_CONSECUTIVE_WRITE_FAILURES: number = 45;
 
 /**
- * 日志连续落盘失败链路第几次要求重建 Disk I/O Worker 时必须中断 bot 进程。
- *
- * 前两次允许重建；第三次说明落盘问题不是一次偶发 isolate 故障。任一重建的
- * load、镜像或握手本身失败时不等待本阈值，宿主会立即走 fatal。普通 Worker
+ * 日志连续落盘失败链路第几次要求重建 Disk I/O Worker 时必须中断 bot 进程；
+ * 此前的要求照常重建。任一重建的
+ * load、镜像或握手本身失败时不等待本阈值，宿主立即走 fatal。普通 Worker
  * 崩溃仍使用 workerSupervisor.ts 的共享滑动窗口，不计入本阈值。
  */
 export const DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD: number = 3;

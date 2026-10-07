@@ -37,9 +37,8 @@ export function handleTrackedMessage(
 
   // 频道评论区活动已提前豁免；其余消息按成员自己的滑动窗口统计。
   //
-  // 就地修剪窗口数组：状态机独占这份数组（下一行紧接着 push），全部消费方
-  // 都以 `[...]` 复制出去，没有第二处别名。边界判据与 filter 版本由同一组
-  // 对拍锁住，见 libs/slidingWindowRateLimit.ts 的 trimSlidingWindowArrayInPlace。
+  // 就地修剪窗口数组：状态机独占这份数组，消费方都以 `[...]` 复制出去，
+  // 见 libs/slidingWindowRateLimit.ts 的 trimSlidingWindowArrayInPlace。
   trimSlidingWindowArrayInPlace(state.trackedMessageTimes, JOIN_WINDOW_MS, event.now);
   state.trackedMessageTimes.push(event.now);
   if (state.trackedMessageTimes.length > ANTI_RAID_PER_MINUTE_LIMIT) {
@@ -48,7 +47,7 @@ export function handleTrackedMessage(
       effects: NO_VERIFICATION_EFFECTS,
     };
   }
-  // 滑动窗口本身是持久字段，即使提醒已补发，也必须发布本次原地修改。
+  // 滑动窗口是持久字段，提醒已补发时也发布本次原地修改。
   if (state.replyReminderRequested) return pendingUpdated(state, NO_VERIFICATION_EFFECTS);
   state.replyReminderRequested = true;
   state.welcomeAnchorMessageId = event.messageId;
@@ -59,7 +58,7 @@ export function handleTrackedMessage(
     label: state.label,
     targetMessageId: event.messageId,
   }];
-  // 先发补充提醒再删旧提醒，避免 deleteMessage 的 await 扩大交错窗口。
+  // 先发补充提醒再删旧提醒。
   if (state.reminderMessageId !== undefined) {
     effects.push({ kind: "deleteMessage", messageId: state.reminderMessageId });
     state.reminderMessageId = undefined;
@@ -199,12 +198,10 @@ export function handleReminderLanded(
 /**
  * 处理异步管理员核查返回的通过结论。
  *
- * 只对 pending 生效：核查是为待验证记录发起的，结论回来时记录若已不是 pending
- * （按钮已通过、已离群、已进终态），这条迟到结论必须原样放过，不得把已经收摊的
- * 记录重新拉回 EXEMPT。
+ * 只对 pending 生效：结论回来时记录若已不是 pending（按钮已通过、已离群、已进终态），
+ * 迟到结论原样放过，不把记录重新拉回 EXEMPT。
  *
- * 通过时删掉两条验证提醒，并撤销这次入群在反刷群滑动窗口里的计数——被确认是
- * 管理员拉进来的人不该算进冲群统计。
+ * 通过时删掉两条验证提醒，并撤销这次入群在反刷群滑动窗口里的计数。
  */
 export function handleAdminCheckResolved(
   state: VerificationState | undefined

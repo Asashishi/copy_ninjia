@@ -87,12 +87,11 @@ describe("parseMuteDurationMs", () => {
   });
 
   test("越界值收敛到 Bot API 的临时禁言区间边界", () => {
-    // 上限留一整天余量：Bot API 的永久禁言分界在 366 天，贴顶时排队耗时与
-    // until_date 的向上取整会把它推过界（见 MUTE_MAX_DURATION_MS）。
+    // 上限相对 Bot API 的永久禁言分界留有余量：贴顶时排队耗时与 until_date 的向上取整不会越界（见 MUTE_MAX_DURATION_MS）。
     expect(MUTE_MAX_DURATION_MS).toBeLessThan(366 * 24 * 60 * 60_000);
     expect(parseMuteDurationMs("366d")).toBe(MUTE_MAX_DURATION_MS);
     expect(parseMuteDurationMs("500d")).toBe(MUTE_MAX_DURATION_MS);
-    // 数值大到超出安全整数也只会更大，同样落在最大值上，不会绕回小数。
+    // 数值大到超出安全整数也落在最大值上，不会绕回小数。
     expect(parseMuteDurationMs("99999999999999999999d")).toBe(MUTE_MAX_DURATION_MS);
     expect(parseMuteDurationMs("1m")).toBe(MUTE_MIN_DURATION_MS);
   });
@@ -143,7 +142,7 @@ describe("/mute 手动禁言", () => {
     };
     expect(resolveParams.rawArgument).toBe("@alice");
     expect(resolveParams.acceptUserId).toBe(true);
-    // 自己人闸读 isWhitelisted：名单预热失败时由解析层拒绝，不能按「不受保护」捂人。
+    // 自己人闸读 isWhitelisted：名单预热失败时由解析层拒绝，不按「不受保护」处理。
     expect(resolveParams.requireIdentityPolicies).toBe(true);
     expect(muteChatMemberWithOutcome).toHaveBeenCalledWith({
       chatId: -1001,

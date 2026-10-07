@@ -32,7 +32,7 @@ import {
   LOCKDOWN_KICK_DEDUPE_MS,
 } from "../../../packages/consts/antiRaid/verification";
 
-/** 预算类常量必须是正安全整数，否则下面的比较关系本身没有意义。 */
+/** 预算类常量是正安全整数，下面的比较关系以此为前提。 */
 const POSITIVE_INTEGER_BUDGETS: readonly (readonly [string, number])[] = [
   ["AI_MAX_ACTIONS_PER_REPLY", AI_MAX_ACTIONS_PER_REPLY],
   ["HARD_MAX_ACTIONS_PER_REPLY", HARD_MAX_ACTIONS_PER_REPLY],
@@ -46,7 +46,7 @@ const POSITIVE_INTEGER_BUDGETS: readonly (readonly [string, number])[] = [
 
 describe("AI 回复动作预算", () => {
   test("每一项都是正安全整数", () => {
-    // 断言整张表而不是逐项 expect：失败时错误信息直接指出是哪个常量坏了。
+    // 断言整张表，失败时错误信息指出是哪个常量不满足。
     const offenders: string[] = POSITIVE_INTEGER_BUDGETS
       .filter(([, value]: readonly [string, number]): boolean =>
         !Number.isSafeInteger(value) || value <= 0)

@@ -19,7 +19,7 @@ import type { DayFileState } from "../../../types/diskIO/storage";
  * 清理：handleVerificationDelete 单条删除（验证通过、离群、终态结算完成），
  * 跨日 rollover 按最新旧日重建，resetVerificationPersistenceCache 整表清空。
  * 容量：硬顶 VERIFICATION_RECORD_CAPACITY（见 consts/antiRaid/verification.ts），
- * 满载时拒收新记录而不是淘汰旧记录——被淘汰的那条正是还欠一次踢人的。
+ * 满载时拒收新记录，不淘汰旧记录。
  * Worker 崩溃重建：由 inspectVerificationDay + adoptVerificationDay 从当天与
  * 最新旧日文件整份重建。
  */
@@ -49,6 +49,16 @@ export const verificationRolloverRetryTimer: {
 } = { timer: null };
 
 /**
+ * 跨日整理或收敛时最新旧日文件的连续解码失败：path 为失败的文件，count 为连续次数。同一文件
+ * 再次失败累加，换了文件从 1 计；解码成功、改名为损坏文件或 reset 时清零。容量为一条记录；
+ * Worker 重建时随 isolate 回到初值。
+ */
+export const verificationPriorDayDecodeFailures: { path: string | null; count: number } = {
+  path: null,
+  count: 0,
+};
+
+/**
  * 本轮是否拒收过待验证写入（容量超限等非法输入）；下一次覆盖 verification 领域的 flush
  * 取走并按失败回报，取走即清除。容量为一个布尔值，Worker 重建时由 reset 清除。
  */
@@ -66,7 +76,7 @@ export function takeVerificationWriteRejection(): boolean {
   return rejected;
 }
 
-/** Worker 恢复/停止时取消两个 timer 并清空镜像、增量、文件游标与拒收标记。 */
+/** Worker 恢复/停止时取消两个 timer 并清空镜像、增量、文件游标、旧日解码失败计数与拒收标记。 */
 export function resetVerificationPersistenceCache(): void {
   if (verificationFlushTimer.timer !== null) clearTimeout(verificationFlushTimer.timer);
   if (verificationRolloverRetryTimer.timer !== null) {
@@ -79,5 +89,7 @@ export function resetVerificationPersistenceCache(): void {
   verificationFileState.current = null;
   verificationFileState.appendedEntries = 0;
   verificationFileState.appendedBytes = 0;
+  verificationPriorDayDecodeFailures.path = null;
+  verificationPriorDayDecodeFailures.count = 0;
   verificationWriteRejected.current = false;
 }

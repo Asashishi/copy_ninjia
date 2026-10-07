@@ -1,13 +1,12 @@
 /**
  * 冷启动子进程：按 `packages/app/lifecycle.ts` 的 init 顺序逐段计时。
  *
- * **本文件不得静态 import 任何 `packages/` 下的模块。** 模块图加载是被测的第
- * 一段，静态 import 会让它在计时开始前就完成，那一段读数会退化成 0，后面各段
- * 也拿不到「刚启动的进程」该有的冷状态。
+ * 本文件不得静态 import `packages/` 下的模块（`import type` 除外）：模块图加载是
+ * 被测的第一段，由 `runColdStartChild` 动态 import。
  *
- * 覆盖范围要说清楚：这里只跑到「持久化恢复就绪」，不含 `bot.init()`、命令菜单
- * 注册、黑名单补扫这些需要联网的握手，也不含 AI/Anti-Raid 两个业务 Worker 的
- * 创建（它们要等 `bot.botInfo`）。落盘与解析之外的启动成本不在本读数里。
+ * 覆盖范围：只跑到「持久化恢复就绪」，不含 `bot.init()`、命令菜单注册、黑名单补扫
+ * 这些需要联网的握手，也不含 AI 与 Anti-Raid 业务 Worker 的创建（创建要等
+ * `bot.botInfo`）。
  */
 
 import { assertBenchmarkRuntimeRoot } from "./mockRoot";
@@ -16,8 +15,7 @@ import {
   readProcessIo,
 } from "./processIo";
 import type { ProcessIoSnapshot } from "./processIo";
-// 只导类型：`import type` 在运行期被完全擦除，不会把生产模块图提前拉进来，
-// 因此它不违反本文件「不静态 import 生产模块」的约束。
+// 只导类型：`import type` 在运行期被擦除，不加载生产模块图。
 import type { ApplicationLifecycleDependencies } from
   "../../../packages/app/lifecycleDependencies";
 import type { LoadedData } from "../../../packages/types/diskIO";
@@ -45,8 +43,7 @@ async function runColdStartChild(): Promise<ColdStartRound> {
   ).lifecycleDependencies;
   const moduleGraphMs: number = elapsedMsSince(moduleStartedAtNs);
 
-  // 模块图一到手就堵死出站：下面每一段都只该碰本地文件，任何一次真实出站都会
-  // 以线上机器人的身份发出去。
+  // 模块图加载完成后立即安装出站拦截：下面各段只碰本地文件。
   const installOutboundGuards: () => void = (
     await import("../outboundGuard")
   ).installOutboundGuards;

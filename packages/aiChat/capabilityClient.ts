@@ -1,5 +1,5 @@
 /**
- * 三家实现包（gemini、openai、anthropic）按能力取 SDK 客户端的共用骨架：核对该能力配置的
+ * 各实现包（gemini、openai、anthropic）按能力取 SDK 客户端的共用骨架：核对该能力配置的
  * provider，按能力从本线程 holder 取已建实例，没有时以该能力配置构造并回填。各家 holder 仍归
  * cache/workers/aiChat/ 下各自的文件；端点、超时与重试等构造参数由调用方的 create 决定。
  */

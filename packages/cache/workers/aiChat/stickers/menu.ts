@@ -1,10 +1,9 @@
 /** owner: workers/aiChat。贴纸包菜单（packages/aiChat/ai/tools/stickers.ts 的 buildStickerPackMenu）的记忆化状态。
  * 只由该文件读写；随 AI 闲聊 Worker isolate 生死，崩溃重启后从 0 重建。
  *
- * 菜单的两个输入——贴纸集合缓存（cache/workers/aiChat/stickers/sets.ts）与画面描述目录/整包简介
- * （cache/workers/aiChat/stickers/catalog.ts）——都是无 TTL 的进程内缓存，稳态下根本不变；
- * `createReplyToolset` 每轮回复都取一份菜单（每群同时存在的回复轮数受
- * REPLY_ROUND_MAX_CONCURRENT 加直接轮 1 轮限制），版本号一致时直接复用
+ * 菜单的两个输入是贴纸集合缓存（cache/workers/aiChat/stickers/sets.ts）与画面描述目录/整包简介
+ * （cache/workers/aiChat/stickers/catalog.ts），都是无 TTL 的进程内缓存；
+ * `createReplyToolset` 每轮回复取一份菜单，版本号一致时直接复用
  * 上次构建结果，不重跑 `Promise.allSettled`。
  *
  * 填充：取菜单时版本号与缓存不一致就重建一次，构建期间版本没再变才写回缓存。
@@ -26,7 +25,7 @@ export const stickerMenuCache: {
   current: { revision: number; menu: readonly StickerPackCandidate[] } | null;
 } = { current: null };
 
-/** 正在构建中的菜单：冷启动时几轮回复同时开工，只让第一轮真的去拉。 */
+/** 正在构建中的菜单；同版本的并发取用复用同一次构建。 */
 export const stickerMenuInflight: {
   current: { revision: number; promise: Promise<readonly StickerPackCandidate[]> } | null;
 } = { current: null };

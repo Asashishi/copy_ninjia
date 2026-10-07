@@ -233,7 +233,7 @@ describe("超级管理员开关命令", () => {
 
     await handleAntiRaidCommand(context("disable"));
     expect(states.get(-1001)?.isAntiRaidEnabled).toBe(false);
-    // 只拆入群这条链路：广告检测与防刷屏各有各的开关，不能被这条命令一起关掉。
+    // 只拆入群这条链路：广告检测与防刷屏各有各的开关，这条命令不关它们。
     expect(deactivateJoinGuardChat).toHaveBeenCalledWith(-1001);
     expect(clearAdDetection).not.toHaveBeenCalled();
     expect(clearFloodControl).not.toHaveBeenCalled();
@@ -287,7 +287,7 @@ describe("超级管理员开关命令", () => {
     expect(states.get(-1001)?.isAIChatEnabled).toBe(true);
   });
 
-  test("State 已管理 25 个群时拒绝为第 26 个群启用 /init", async () => {
+  test("State 已管理到托管群上限时拒绝再为新群启用 /init", async () => {
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) {
       states.set(-2_000 - index, chatStateOf({ isInitEnabled: true }));
     }
@@ -318,7 +318,7 @@ describe("超级管理员开关命令", () => {
     expect(states.has(-1001)).toBe(false);
   });
 
-  test("25 轮「启用又关掉」之后仍能为新群启用 /init——残留的 title 曾经会把群槽吃光", async () => {
+  test("上限那么多轮「启用又关掉」之后仍能为新群启用 /init，不留残留 title 占群槽", async () => {
     for (let index: number = 0; index < STATE_MANAGED_CHAT_LIMIT; index += 1) {
       const chatId: number = -2_000 - index;
       await handleInitCommand(context("enable", 100, chatId));
@@ -367,7 +367,7 @@ describe("超级管理员开关命令", () => {
     expect(saveStateInBackground).toHaveBeenCalledTimes(3);
     // enable 必须立刻重新判定管理员身份。
     expect(resolveBotAdminStatus).toHaveBeenCalledWith(-1001);
-    // disable 不重判——那一刻合取本来就不成立。
+    // disable 不重判：那一刻合取不成立。
     expect(resolveBotAdminStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -512,9 +512,8 @@ interface ToggleCase {
   readonly field: keyof ChatState;
   readonly run: (argument: string) => Promise<void>;
   /**
-   * disable 之后该字段读出来是什么。功能开关落成 false（规范化后等价于「没设过」，
-   * 但记录本身还在）；`/init` 的 disable 会整行删掉这个群，因此读出来是 undefined。
-   * 逐条写死而不给默认值：`undefined` 在这里是一个有意义的期望，不是「没配」。
+   * disable 之后该字段读出来是什么：功能开关落成 false（规范化后等价于「没设过」，但记录本身还在）；
+   * `/init` 的 disable 会整行删掉这个群，读出来是 undefined。逐条写死而不给默认值：`undefined` 是一个有意义的期望。
    */
   readonly disabledValue: boolean | undefined;
 }
@@ -568,7 +567,7 @@ describe("开关命令的同状态重复执行", () => {
 
         await toggle.run(action);
         const repeatText: string = lastReplyText(sendMessage);
-        // 状态不动，但回执必须换一句，不能沿用刚改完那句。
+        // 状态不动，但回执换一句，不沿用刚改完那句。
         expect(states.get(-1001)?.[toggle.field]).toBe(target);
         expect(repeatText).not.toBe(changedText);
         expect(repeatText).toContain("本来就");

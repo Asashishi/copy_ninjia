@@ -35,7 +35,7 @@ mock.module("../../../packages/workers/antiRaid/lockdownRuntime", () => ({ recor
 mock.module("../../../packages/workers/antiRaid/adDetect/queueState", () => ({
   releaseAdDetectDedupKey,
 }));
-// 真实节奏（5s 退避、25 个一批）在测试里没法等；只压缩时间，不改变分支。
+// 退避间隔与补扫批量在测试里压缩，不改变分支。
 mock.module("../../../packages/consts/antiRaid/blocklist", () => ({
   BLOCKLIST_REMOVAL_MAX_ATTEMPTS: 3,
   BLOCKLIST_REMOVAL_RETRY_DELAY_MS: 1,
@@ -54,11 +54,7 @@ const {
 const events: BlockedMembersRemovedEvent[] = [];
 const publish = (event: BlockedMembersRemovedEvent): void => { events.push(event); };
 
-/**
- * 轮询同步点的兜底上限。健康机器上实际只花一两毫秒；留足余量应对全量+覆盖率
- * 插桩下的调度抖动，又明显低于 bun 的用例超时——真出回归时，先失败的应该是
- * 紧随其后那条带具体数值的断言，而不是一句「test timed out」。
- */
+/** 轮询同步点的兜底上限，到点未成立时交给随后的断言报告失败。 */
 const SETTLE_TIMEOUT_MS: number = 2_000;
 
 /** 轮询等到条件成立；到点仍不成立就返回，让后面的断言给出真正的失败信息。 */
@@ -67,11 +63,10 @@ async function until(ready: () => boolean): Promise<void> {
 }
 
 /**
- * 副作用是事后执行的：等这批处置发出落定回执，而不是赌一个固定时长。
+ * 等这批处置发出落定回执。
  *
- * handleRemoveBlockedMembers 恒在 removeBlockedMembers 完成之后（成功或异常）发且
- * 只发一条回执，所以回执到达就等于这批的探测、封禁、删公告、补记入群全部结束
- * ——它是这个单元真正的完成边界，不依赖机器负载或固定等待时长。
+ * handleRemoveBlockedMembers 在 removeBlockedMembers 完成之后（成功或异常）恒发且只发一条回执，
+ * 回执到达即这批的探测、封禁、删公告、补记入群全部结束。
  */
 function settle(): Promise<void> {
   return until((): boolean => events.length > 0);

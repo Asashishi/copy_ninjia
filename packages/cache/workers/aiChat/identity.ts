@@ -1,6 +1,6 @@
 /** owner: workers/aiChat。AI Worker 自身账号身份（packages/workers/aiChatWorker.ts）的内存状态；同目录
  * 下多个回复流水线子模块只读取，写入只发生在 aiChatWorker.ts 的 init 处理；
- * 容量固定为机器人身份和超级管理员身份及通知风格三个 holder。
+ * 容量为机器人身份、超级管理员身份与通知风格各一个 holder。
  */
 
 import type { Atmosphere } from "../../../types/atmosphere";

@@ -1,6 +1,5 @@
 /** owner: workers/aiChat。群聊记忆与同源消息索引。 */
 
-import type { LinkedQueue } from "../../../libs/linkedQueue";
 import type { BoundedDeque } from "../../../libs/boundedDeque";
 import type { BufferedMessage } from "../../../types/aiChat/memory";
 
@@ -23,9 +22,10 @@ import type { BufferedMessage } from "../../../types/aiChat/memory";
 export const chatBuffers: Map<number, BoundedDeque<BufferedMessage>> = new Map();
 /**
  * 每群已完成的冷历史摘要；轮换压缩填充，快照恢复，群淘汰时删除。
- * 容量与清理路径同 chatBuffers，两张表随同一次群淘汰一起删除。
+ * 群数与清理路径同 chatBuffers，两张表随同一次群淘汰一起删除；每群条数由
+ * BoundedDeque（MAX_SUMMARY_ROUNDS）封顶，满时晋升新摘要前先挤出最旧一条。
  */
-export const chatSummaries: Map<number, LinkedQueue<string>> = new Map();
+export const chatSummaries: Map<number, BoundedDeque<string>> = new Map();
 /**
  * 每群尚未合并进 summaries 的摘要文本；压缩 settle 或群淘汰时清除。
  * 容量：每群至多一条，随 chatBuffers 同界。
@@ -46,8 +46,8 @@ export const chatLastActivityTimes: Map<number, number> = new Map();
  *  bufferedMessageIndex.ts）。chatBuffers 的纯派生索引：内层值与滚动缓存共享同一批
  *  对象引用，不复制内容，容量天然受 VERBATIM_CONTEXT_MAX × AI_MEMORY_MAX_CHATS
  *  约束，无独立淘汰策略。不落盘；push 入缓存时登记、轮换移出热区时删键、
- *  hydrate 时从恢复出的 buffer 重建（均见 rollingMemory.ts）——索引里永远
- *  只有仍在热区的消息。 */
+ *  hydrate 时从恢复出的 buffer 重建（均见 rollingMemory.ts），索引里只有
+ *  仍在热区的消息。 */
 export const chatMessageIndexes: Map<number, Map<number, BufferedMessage>> = new Map();
 
 /** 判断某群是否存在任一可持久化记忆部分。 */
@@ -60,8 +60,7 @@ export function chatMemoryIds(): Set<number> {
   return new Set([...chatBuffers.keys(), ...chatSummaries.keys(), ...pendingSummaries.keys()]);
 }
 
-/** 删除一个群的全部可持久化记忆；调用方另行处理代际和非持久化衍生状态。
- *  消息索引严格派生自 chatBuffers，随之一并删除，不交给调用方。 */
+/** 删除一个群的全部可持久化记忆，消息索引随 chatBuffers 一并删除；调用方另行处理代际和其它非持久化衍生状态。 */
 export function clearChatMemoryCache(chatId: number): void {
   chatBuffers.delete(chatId);
   chatSummaries.delete(chatId);

@@ -37,7 +37,7 @@ export interface SeedStorageDatabaseOptions {
 /**
  * 测试与性能夹具在一个 Drizzle 事务内写入全部初始行。当前格式的 metadata 用
  * packages/database/interact/initialization.ts 的 storageMetadataRows 构造（与安装器建库同源），
- * 其时区必须等于读这份库的进程所接管的配置时区，否则启动恢复会拒绝加载整个库。
+ * 其时区必须等于读这份库的进程所接管的配置时区。
  */
 export function seedStorageDatabase(
   database: StorageDatabase,

@@ -23,12 +23,9 @@ export function messageImageCandidate(message: Message): MessageImageCandidate |
 }
 
 /**
- * 这张图的尺寸是否过得了 `sendPhoto` 的两道硬性门槛：宽高之和 ≤ 10000，长宽比
- * ≤ 20（两个方向都算，取长边除以短边）。纯函数，只比较数字。
- *
- * 两道门槛与字节上限互不蕴含：一张 12000×40 的长条 PNG 只有几十 KB，字节闸放行，
- * `sendPhoto` 照样以 PHOTO_INVALID_DIMENSIONS 拒绝。零或负的边长按不合规处理
- * ——那种值只可能来自读错的元数据。
+ * 这张图的尺寸是否过得了 `sendPhoto` 的两道门槛：宽高之和不超过
+ * TELEGRAM_PHOTO_MAX_DIMENSION_SUM，长宽比不超过 TELEGRAM_PHOTO_MAX_ASPECT_RATIO（取长边
+ * 除以短边）。两道门槛与字节上限相互独立。纯函数，只比较数字；零或负的边长按不合规处理。
  * @param dimensions 已读出的像素宽高。
  */
 export function isSendablePhotoDimensions({ width, height }: ImageDimensions): boolean {

@@ -4,18 +4,18 @@
  * 只在发布或明确指令时运行，不进 `bun run check`；热路径的 GC/RSS/JIT 硬门禁
  * 由 `bun run perf:hot-path-gate` 单独承担，本脚本不设失败阈值。
  *
- * 覆盖六个分区：冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、
- * 容器与算法、入群日志容量线。每一项都在独立子进程里跑三轮，报告平均值、
- * 最小值、最大值与变异系数。
+ * 覆盖冷启动、生产热路径、端到端落盘链路、SQLite 与主线程缓存、容器与算法、
+ * 入群日志容量线各分区。每一项都在独立子进程里跑 `FULL_SUITE_ROUNDS` 轮，报告
+ * 平均值、最小值、最大值与变异系数。
  *
  * 数据一律落在仓库根的 `performance/` 下（不进 Git），配置从 `config_example/`
  * 复制到本次运行目录并换成非占位夹具凭据，每轮跑完整棵删除。父进程不 import
- * 任何生产实现模块，因此没有能力写到真实数据根。
+ * 生产实现模块。
  *
  * 用法：
  *   bun run perf:full                  跑完把 JSON 报告打到 stdout
  *   bun run perf:full -- --markdown    再附带打印简体中文 Markdown 区块
- *   bun run perf:full -- --write-doc     跑完把三语区块写回 docs/<lang>/10-performance.md，
+ *   bun run perf:full -- --write-doc     跑完把各语言区块写回 docs/<lang>/10-performance.md，
  *                                        并把结构化报告记进仓库根 performance-result.json
  */
 
@@ -72,8 +72,8 @@ function parseRounds(value: string | undefined): number {
 /**
  * 解析父进程参数。
  *
- * `--rounds` 只为本地排查而存在；发布必须用默认的三轮，别的轮数出来的数不进
- * 三份性能文档与结构化报告（见 docs/cn/05-dev-workflow.md 的发布流程）。
+ * `--rounds` 只用于本地排查；发布使用默认的 `FULL_SUITE_ROUNDS`，非默认轮数的读数
+ * 不写进性能文档与结构化报告（见 docs/cn/05-dev-workflow.md 的发布流程）。
  */
 export function parseOptions(argv: readonly string[]): SuiteOptions {
   let rounds: number = FULL_SUITE_ROUNDS;
@@ -194,8 +194,8 @@ async function runSuite(options: SuiteOptions): Promise<FullSuiteReport> {
 /**
  * 子进程模块的统一形状。
  *
- * 四个子进程模块（seed / cold-start / chain / storage）都只对外暴露一个
- * `main`；本文件用这个结构类型接住动态 import 的结果，不静态 import 它们的实现。
+ * 子进程模块（seed / cold-start / chain / storage）都只对外暴露一个 `main`；
+ * 本文件用这个结构类型接住动态 import 的结果，不静态 import 它们的实现。
  */
 interface ChildModule {
   readonly main: (argument: string | undefined) => Promise<void>;
@@ -240,7 +240,7 @@ const DEFAULT_SUITE_DOCUMENT_WRITERS: SuiteDocumentWriters = {
   writePerformanceResultEntry,
 };
 
-/** 同一次报告同步三语页面和结构化结果，并返回被更新的页面路径。 */
+/** 同一次报告同步各语言页面和结构化结果，并返回被更新的页面路径。 */
 export async function writeSuiteDocuments(
   report: FullSuiteReport,
   writers: SuiteDocumentWriters = DEFAULT_SUITE_DOCUMENT_WRITERS

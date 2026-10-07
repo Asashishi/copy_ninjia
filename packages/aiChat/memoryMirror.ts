@@ -136,8 +136,8 @@ export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<vo
   postPurgeAiMemoryPersistRevisions.delete(chatId);
   const hadLatestSnapshot: boolean = latestAiMemories.delete(chatId);
   latestAiMemoryRevisions.delete(chatId);
-  // 展示用的占用量镜像与快照镜像同生共死：这一刻起本群没有可展示的上下文，
-  // `/bot_status` 按「无条目 = 0」如实显示（见 cache/main/aiChat.ts 的 aiMemoryUsages）。
+  // 占用量镜像与快照镜像同生共死：无条目时 `/bot_status` 显示 0
+  // （见 cache/main/aiChat.ts 的 aiMemoryUsages）。
   aiMemoryUsages.delete(chatId);
   let revision: number | undefined = pendingAiMemoryDeletes.get(chatId);
   if (revision === undefined || hadLatestSnapshot) {
@@ -158,8 +158,8 @@ export function requestAiMemoryDelete(chatId: number, wait: boolean): Promise<vo
 }
 
 onDiskIOGiveUp((): void => {
-  // Worker 已经放弃自愈，没有替补实例：onDiskIORespawn 不会跑，deleteAiMemory
-  // 不会重放，durable 回执永远不会来，因此在此立即结算所有等待者为失败。
+  // Worker 已放弃自愈：onDiskIORespawn 不会跑，deleteAiMemory 不会重放，durable 回执不会来；
+  // 立即把所有等待者结算为失败。
   for (const waiters of aiMemoryDeleteWaiters.values()) {
     for (const waiter of [...waiters]) {
       clearTimeout(waiter.timer);

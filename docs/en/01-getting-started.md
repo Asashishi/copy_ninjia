@@ -10,23 +10,23 @@
 
 ---
 
-This page takes a clean environment all the way to "the bot works normally in a group," focusing on the shortest path. System architecture and message flows are described in [02 Architecture Overview](02-architecture.md).
+This guide walks you through the quickest path to take a clean server environment and get Copy Ninjia running smoothly in your group. For deep dives into system architecture, thread topology, and message flow, see [02 Architecture Overview](02-architecture.md).
 
 ## Prerequisites
 
-- **Linux system** (must have a readable `/proc`): The instance lock strictly depends on `/proc/<pid>/stat` and the system boot ID; all other operating systems will fail closed and refuse startup.
-- **Bun 1.4.2**: Required for source installation and local development. Install with:
+- **Linux Operating System** (must have a readable `/proc` filesystem): The instance lock depends strictly on `/proc/<pid>/stat` and the system boot ID. Unsupported operating systems will fail closed and refuse to start.
+- **Bun 1.4.2**: Required for source installs and local development. Install via:
   ```bash
   curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2
   ```
   > [!NOTE]
-  > Binary release packages include an embedded Bun runtime, requiring no pre-installed Bun on the host. Node.js is not required anywhere in the project.
-- **Telegram Bot Token**: Send `/newbot` to [@BotFather](https://t.me/BotFather) to create a bot and obtain its Token.
-- **API Keys for configured AI capabilities**: Each capability configured in `config/dynamic/agent.json` (chat, media description, image generation, TTS, web search, etc.) independently owns its key, provider, endpoint, and model; obtain them from [Google AI Studio](https://aistudio.google.com/), [OpenAI Platform](https://platform.openai.com/), or compatible services. Capabilities never fail over automatically into one another.
-- **(Optional) Google Cloud service account JSON**: Only required by `/translate` for translation, saved as `config/static/g-auth.json` (structure matches the [example](../../config_example/static/g-auth.json); the example's placeholder private key is rejected).
-  - **Credential specifications**: Strictly parsed by `packages/config/googleAuth.ts`, must contain `client_email` and a non-empty RSA PEM private key for RS256 signing (EC, Ed25519, and RSA-PSS keys are rejected); `type` is omitted or must equal `service_account`.
-  - **Graceful degradation**: Missing credentials do not prevent the process from starting; `/translate` simply refuses directly and names the file. If the file exists but has an invalid format, the startup gate exits immediately during parsing.
-  - **Credential security**: Credentials generate a process-level read-only snapshot at startup and are not read repeatedly at runtime. Error messages include only file paths and expected fields, never credential secrets in plaintext.
+  > Binary release packages bundle a standalone Bun runtime, requiring no pre-installed Bun or Node.js on the host. Node.js is not used anywhere in this project.
+- **Telegram Bot Token**: Message [@BotFather](https://t.me/BotFather) with `/newbot` to create your bot and obtain its API Token.
+- **API Keys for AI Capabilities**: Each capability configured in `config/dynamic/agent.json` (chat, vision, image generation, speech synthesis, web search) independently configures its provider, model, endpoint, and key. Obtain credentials from [Google AI Studio](https://aistudio.google.com/), [OpenAI Platform](https://platform.openai.com/), or compatible endpoints.
+- **(Optional) Google Cloud Service Account JSON**: Required only if you intend to enable the `/translate` command. Place the file at `config/static/g-auth.json` (structure matches [`config_example/static/g-auth.json`](../../config_example/static/g-auth.json)).
+  - **Key Specifications**: Must contain `client_email` and an RSA PEM private key for RS256 signing (EC, Ed25519, and RSA-PSS keys are rejected); `type` must be `service_account` if present.
+  - **Graceful Degradation**: Missing this file does not prevent the bot from running; `/translate` simply informs users that translation is unconfigured. If the file exists but contains invalid JSON or unsupported keys, the startup check will fail fast.
+  - **Safety**: Credentials are read once into an immutable snapshot during startup. Error logs print file paths and missing fields, never secret tokens or private keys.
 
 ---
 
@@ -34,19 +34,19 @@ This page takes a clean environment all the way to "the bot works normally in a 
 
 ### Automated Installation
 
-For a fresh server environment, the [`install.sh`](../../install.sh) automated script is recommended:
+For a fresh deployment, using the automated [`install.sh`](../../install.sh) script is recommended:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-Specify the installation mode via command-line flags or environment variables (choose one):
+You can specify the installation mode using command-line flags or the `COPY_NINJIA_INSTALL_MODE` environment variable (`binary` | `source`). When omitted, the installer prompts interactively:
 
 ```bash
-# Binary release installation (recommended for fast deployment; no git or system Bun required)
+# Standalone binary installation (Recommended for production; no git or Bun required)
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --binary
 
-# Source installation (suitable for secondary development)
+# Source installation (Ideal for contributors and local development)
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --source
 ```
 
@@ -63,33 +63,34 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 <tbody>
   <tr>
     <td><nobr>📦 <b>Distribution</b></nobr></td>
-    <td>Automatically downloaded from GitHub Latest Release for host architecture</td>
-    <td><code>git clone</code> corresponding Release tag (in detached HEAD)</td>
+    <td>Pulls the latest precompiled release matching your host architecture from GitHub Releases</td>
+    <td>Performs a shallow <code>git clone</code> of the latest release tag</td>
   </tr>
   <tr>
     <td><nobr>⚙️ <b>Dependencies</b></nobr></td>
-    <td>No system Bun, git, or local compilation; the installer adds missing download tools when possible</td>
-    <td>Uses git and Bun 1.4.2; the installer attempts to add missing tools, but an installed Bun version mismatch needs manual correction</td>
+    <td>Zero external tool requirements; no Bun, git, or compiler needed on the server</td>
+    <td>Requires git and Bun 1.4.2; the installer will attempt to install missing tools if permitted</td>
   </tr>
   <tr>
     <td><nobr>🚀 <b>Runtime</b></nobr></td>
-    <td>Self-contained executable embedding Bun runtime and Worker bundles</td>
-    <td>Installed via <code>bun install --frozen-lockfile</code> (7-day security cooldown)</td>
+    <td>Single self-contained executable bundling Bun runtime and Worker code</td>
+    <td>Managed via <code>bun install --frozen-lockfile</code></td>
   </tr>
   <tr>
     <td><nobr>▶️ <b>Run Command</b></nobr></td>
     <td>Directly run <code>./copy-ninjia</code></td>
-    <td>Run <code>bun run start</code> or <code>bun run index.ts</code></td>
+    <td>Run <code>bun run start</code></td>
   </tr>
 </tbody>
 </table>
 
 > [!TIP]
-> **Installation Flow Overview**:
-> 1. **Environment and architecture verification**: Check Linux and `/proc` availability; detect Linux x64/arm64 and glibc/musl.
-> 2. **Deployment configuration preparation**: Copy missing templates only, skipping `agent.json`, `g-auth.json`, and `cron.json`. Back up existing files outside the worktree before candidate validation and atomic replacement; permissions are strictly set to `600`.
-> 3. **Identity database initialization**: Validate `database/storage.sqlite` through production code. An existing database is checked read-only that its bound time zone equals `time_zone` in `bot.json`, and a mismatch exits before the service is registered; if absent, initialize a fresh empty database for the current schema bound to the `bot.json` zone.
-> 4. **Service registration and observation**: Register or reuse `copy-ninjia.service`, monitor service state, and verify `active/running`, unchanged restart count, and clean journal before cleaning up backups.
+> **Installer Flow & Safeguards**:
+> 1. **Environment Check**: Verifies Linux kernel version, readable `/proc`, and a valid controlling terminal (`/dev/tty`).
+> 2. **Target Repository Resolution**: Detects existing installations to prevent accidental overwrites, or downloads the latest release bundle into a dedicated directory.
+> 3. **Configuration Guard**: Copies missing configuration templates while strictly protecting existing deployment files. Prompts interactively for `config/static/bot.json` credentials and AI provider settings.
+> 4. **Database Initialization**: Sets up a clean SQLite schema (`database/storage.sqlite`) bound to the configured time zone.
+> 5. **Service Registration**: Configures and starts a systemd unit (`copy-ninjia.service`) or runs in the foreground if systemd is unavailable, monitoring initial service health.
 
 ### Manual Source Installation
 
@@ -98,10 +99,10 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 
-# 2. Install locked dependencies
-bun install
+# 2. Install dependencies with strict lockfile verification
+bun install --frozen-lockfile
 
-# 3. Prepare deployment configuration directories
+# 3. Prepare deployment directories and copy example templates (never overwrites existing configs)
 mkdir -p config/static config/dynamic
 for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in
@@ -112,103 +113,103 @@ done
 ```
 
 > [!WARNING]
-> The examples for `g-auth.json` and `cron.json` are illustrative only and must not be blindly copied to production. See [`config_example/README/en.md`](../../config_example/README/en.md).
+> The examples for `g-auth.json` and `cron.json` are illustrative templates and must not be blindly copied to production. Replace all `replace-with-…` placeholder values (`bot_token` and provider `api_key` entries) with actual credentials; unedited placeholders will trigger a fail-fast error at startup. See [`config_example/README/en.md`](../../config_example/README/en.md).
 
 ---
 
 ## Configuring Telegram Identity
 
-Bot credentials and the global super administrator are defined in `config/static/bot.json`:
+Core bot credentials and administrator ownership are declared in `config/static/bot.json`:
 
 - **`bot_token`** (required, string)
-  - Telegram Bot API Token obtained from BotFather.
+  - The Telegram Bot API Token issued by @BotFather. Placeholder values cause immediate startup termination.
 - **`super_admin_user_id`** (required, positive integer)
-  - A single decimal super administrator user ID.
-  - **Privilege boundary**: Inherently holds **all permissions** that an allowlist can grant; does not need an entry in the SQLite allowlist table.
-  - **Exemption protection**: Cooldown exemptions for copying, image generation, etc. belong exclusively to this identity; always protected from automatic actions; cannot be muted, blocked, or batch-kicked.
-  - **Exclusive commands**: `/init`, `/batch_kick`, `/permission` mutations, `/white disable`, and `/send` are restricted to the super administrator alone.
+  - The Telegram numeric user ID of the primary operator.
+  - **Privilege Boundary**: Holds all system permissions inherently. Does not need to be added to the SQLite allowlist table.
+  - **Exemption Protections**: Completely exempt from rate limits and cooldowns (copying, image generation, etc.). Cannot be targeted by `/block`, `/mute`, or `/batch_kick`.
+  - **Exclusive Authority**: Commands like `/init`, `/batch_kick`, `/permission` assignments, `/white disable`, and `/send` are strictly restricted to this user ID.
 - **`atmosphere`** (optional, enum: `"mesugaki"` | `"normal"`)
-  - Default tone style for notices and menus (teasing / ordinary).
-  - Explicit configuration takes priority; when omitted, use ordinary copy if `prompt/persona.md` exists, otherwise teasing copy. Strings are trimmed; invalid values refuse startup.
-- **`time_zone`** (optional IANA time zone name, default `"Asia/Tokyo"`)
-  - Default calendar zone for fortune, logs, ad activity, AI clocks, daily maintenance, and cron tasks without an explicit zone.
-  - Trimmed before validation and case-normalized by Temporal (for example `asia/tokyo` becomes `Asia/Tokyo`; aliases such as `Japan` are kept as written); empty strings, invalid types, and unsupported zones refuse startup.
-  - Database initialization writes it as the `time-zone` marker in `storage_metadata`, binding the data root to that zone: startup and the installer compare against it, a changed `time_zone` refuses startup (the error names `storage_metadata.time-zone`), and changing the zone of an existing data root is not supported.
+  - Sets the communication tone for system notices, menus, and help messages (`mesugaki` for teasing tone, `normal` for clean/restrained tone).
+  - Explicit configuration takes precedence. If omitted, custom personas use `normal` tone by default, while the built-in persona uses `mesugaki`.
+- **`time_zone`** (optional string, default `DEFAULT_BOT_TIME_ZONE`, e.g. `Asia/Tokyo`)
+  - Defines the authoritative calendar time zone for fortunes, rotation logs, daily maintenance crons, and ad quotas.
+  - Case-normalized via Temporal (e.g. `asia/tokyo` becomes `Asia/Tokyo`).
+  - **Data Root Binding**: The initial setup permanently stamps this time zone into `database/storage.sqlite`. Changing `time_zone` on an existing data root will be rejected at startup to prevent time-series corruption.
 
 ---
 
 ## Project Configuration Files
 
-The `config/` directory contains deployment-private data and is excluded by `.gitignore`. The directory layout strictly enforces subdirectories:
+The `config/` directory stores private deployment data and is excluded from Git tracking. Configuration files are strictly organized into static and dynamic subdirectories:
 
 ```text
 config/
-├── static/                 # Static configuration (modifications require process restart)
-│   ├── bot.json            # Bot identity and super admin configuration
+├── static/                 # Static configuration (requires process restart to take effect)
+│   ├── bot.json            # Bot credentials and super administrator ID
 │   └── g-auth.json         # Google Cloud service account credentials (optional)
-└── dynamic/                # Dynamic configuration (auto hot-reloaded within ~0.5s)
-    ├── agent.json          # AI model capabilities configuration
-    ├── assets.json         # Thumbnails, default avatar, and image library paths
-    ├── stickers.json       # Sticker pack allowlist
-    ├── mood.json           # Mood tiers and weights
-    ├── ad_samples.json     # Reference ad detection samples
-    └── cron.json           # Scheduled tasks configuration (optional)
+└── dynamic/                # Dynamic configuration (automatically reloaded with debouncing)
+    ├── agent.json          # AI model capabilities and provider endpoints
+    ├── assets.json         # Paths for avatars, thumbnails, and dedicated image library
+    ├── stickers.json       # Whitelisted sticker packs
+    ├── mood.json           # AI mood tiers and weight distribution
+    ├── ad_samples.json     # Reference spam and advertisement text samples
+    └── cron.json           # Scheduled tasks and periodic broadcasts (optional)
 ```
 
 > [!IMPORTANT]
-> - Any configuration file placed at the top level of `config/` or in the wrong subdirectory causes the system to fail closed and exit during startup.
-> - Editing files under `config/dynamic/` while running triggers debounced hot reload. Syntax or schema errors cause that edit to be rejected wholesale with an error log while retaining the last valid snapshot; unfixed errors will refuse the next startup.
+> - Configuration files placed in the root of `config/` or misplaced across subdirectories will cause the bot to fail fast and exit immediately on startup.
+> - Modifications to files in `config/dynamic/` trigger debounced hot-reloading at runtime. Syntax or schema errors are rejected safely, keeping the existing valid snapshot in memory while logging an error.
 
 ### Core Configuration Files Explained
 
-- **`prompt/persona.md`** (optional, project root; [example](../../prompt_example/persona.md))
-  - **Content**: Custom AI chat persona.
-  - **Behavior**: Uses the built-in persona ([`persona.ts`](../../packages/consts/aiChat/prompts/persona.ts)) by default; when present, replaces the persona with the file text. Notices use explicit `atmosphere` first and ordinary copy when that setting is omitted.
-  - **Validation**: Plain text; empty or non-UTF-8 content refuses startup. Changes require a restart.
-  - **Example**: [`prompt_example/persona.md`](../../prompt_example/persona.md) is a calm, dependable "senior student" persona, split into the sections who you are / core personality / trait arbitration order / speaking style / never fabricate facts / language rules. Copy it with `mkdir -p prompt && cp -n prompt_example/persona.md prompt/` (`-n` never overwrites an existing file), adjust it, and restart. The file text, trimmed of surrounding whitespace, is handed to the model verbatim as the persona, so do not put notes meant for the operator in it.
+- **`prompt/persona.md`** (optional, located at project root; see [example](../../prompt_example/persona.md))
+  - **Purpose**: Defines the custom AI chat persona and behavioral guidelines.
+  - **Behavior**: Uses the built-in teasing persona ([`persona.ts`](../../packages/consts/aiChat/prompts/persona.ts)) by default. When this file exists, its entire trimmed text replaces the built-in prompt upon process restart.
+  - **Validation**: Must be valid non-empty UTF-8 text.
 
-- **`prompt/voice_tool.md`** (optional, project root; [example](../../prompt_example/voice_tool.md))
-  - **Content**: Custom AI `send_voice` tool instruction.
-  - **Behavior**: When absent, the built-in `en` / `zh` / `ja` instruction is chosen by `agent.tts.bot_language` (`VOICE_LANGUAGE_PROMPTS` in [`tools.ts`](../../packages/consts/aiChat/prompts/tools.ts)); when present, the file text replaces the whole instruction regardless of `bot_language`. The `text` / `tone` parameter descriptions and the voice de-duplication rules in `send_message` and the action-and-stop section still follow `bot_language`. The file must state the execution contract of the built-in instruction itself: check the `send_voice` quota line in this round's tool status, the per-round count and the `text` / `tone` length limits, and how to handle accepted and error receipts.
-  - **Validation**: Plain text; empty or non-UTF-8 content refuses startup, also when `agent.tts` is not configured. Changes require a restart.
-  - **Example**: [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) pairs with the persona example above: its lines are gentle everyday Japanese, and it spells out the whole execution contract above. The per-round count and the `text` / `tone` length limits in the example match the current limits in code; keep them consistent when editing. The example is written for `bot_language: "ja"` (the value in the [`agent.json` example](../../config_example/dynamic/agent.json)); for another line language, switch the opening sentence and line language, the line and tone examples, and the de-duplication note to that language. When using the pair, you can also change `agent.tts.style` to a matching voice description. Copy it the same way: `mkdir -p prompt && cp -n prompt_example/voice_tool.md prompt/`.
+- **`prompt/voice_tool.md`** (optional, located at project root; see [example](../../prompt_example/voice_tool.md))
+  - **Purpose**: Custom instruction prompt for the `send_voice` AI speech synthesis tool.
+  - **Behavior**: When omitted, the built-in instruction is chosen according to `agent.tts.bot_language` (`en` / `zh` / `ja`). When present, this file replaces the tool description completely.
+  - **Validation**: Plain text; empty files or invalid UTF-8 will prevent startup. Requires a restart to take effect.
 
 - **`config/static/bot.json`** ([Example](../../config_example/static/bot.json))
-  - Declares `bot_token`, `super_admin_user_id`, and optional `atmosphere` and `time_zone`. Strictly validated before networking; unknown keys or invalid types refuse startup.
+  - Holds primary bot token, owner user ID, notice atmosphere, and time zone. Strictly parsed with zero tolerance for unknown fields.
 
 - **`config/dynamic/stickers.json`** ([Example](../../config_example/dynamic/stickers.json))
-  - Declares an array of up to 5 sticker pack names available to the AI.
+  - Defines the `packs` array of Telegram sticker pack short names available for AI expression. Each pack name must be unique, with total count capped at `MAX_CONFIGURED_STICKER_PACKS`.
 
 - **`config/dynamic/mood.json`** ([Example](../../config_example/dynamic/mood.json))
-  - Declares AI mood tiers (name, description, weight, weather, and time multipliers). Weights must be positive integers whose sum strictly equals 100.
+  - Configures the AI mood tiers `moods`. Each mood defines a `name`, positive integer `weight`, and character `instruction`. Weights must strictly sum to `MOOD_WEIGHT_TOTAL`.
 
 - **`config/dynamic/ad_samples.json`** ([Example](../../config_example/dynamic/ad_samples.json))
-  - Declares reference samples for ad classification: an array of non-empty, unique strings, up to 500 items.
+  - Provides reference text samples for few-shot spam classification. Each entry must not exceed `AD_SAMPLE_MAX_CHARS` characters, up to `MAX_CONFIGURED_AD_SAMPLES` entries.
 
 - **`config/dynamic/agent.json`** ([Example](../../config_example/dynamic/agent.json))
-  - Declares 7 independent AI capabilities. Capabilities never fail over into one another:
-    1. **Core Chat Capabilities** (all three required for AI chat):
-       - `text`: Text generation model.
-       - `summary`: Memory compression and summarization model.
-       - `media`: Vision and audio transcription model; probes multimodal capabilities on the first request with endpoint backoff.
-    2. **Extended Generation Capabilities** (absence removes the corresponding tool):
-       - `image`: Image generation. OpenAI-compatible protocols must declare `image_protocol` (`openai` | `openai-standard` | `xai`).
-       - `tts`: Speech synthesis. Must specify `voice`; OpenAI-compatible endpoints declare `speech_protocol` (`openai` | `xai`). Optional `bot_language` (`en` | `zh` | `ja`, default `ja`) sets the language of AI voice lines (`prompt/voice_tool.md` can replace the whole `send_voice` tool instruction). `bot_language` switches the model-facing prompts and appends that language's speaking-language requirement to the base style in AI reply synthesis requests (`/send` and cron synthesis do not get it); neither `style` nor `prompt/voice_tool.md` follows it. `style` is shared with `/send` and cron, so it describes only the voice, not the speaking language; when changing `bot_language`, prefer a voice description written in that language (the default `TTS_DEFAULT_STYLE` is written in Japanese), and if `voice_tool.md` is deployed, switch its line language and examples to that language as well. Optional `daily_limit` (default 100) and `daily_reserve_quota` (default 25, reserved for `/send` and cron).
-    3. **Search and Risk Control Capabilities**:
-       - `web_search`: Local function tool for web search; supports `max_calls_per_use` (default 5). If omitted, falls back to the `text` model's server-side search.
-       - `ad_detect`: Inbound message ad detection model. If omitted, ad detection is disabled.
-    4. **Common Capability Fields**:
-       - `provider`: `google` | `openai` | `anthropic` (`image` and `tts` support only google and openai).
-       - `api_key`: API access key.
-       - `model`: Model identifier string.
-       - `base_url`: Optional custom endpoint (`https` required; plain `http` only permitted for localhost/127.0.0.1/::1).
-       - `headers`: Additional HTTP request headers (1–8 headers, only allowed for `google` provider, e.g. for Cloudflare AI Gateway authentication).
+  - Declares all AI model capabilities under the top-level `agent` object. Each capability is isolated and configured independently:
+    1. **Core Conversational Suite** (all three required for AI chatting):
+       - `text`: Primary text generation model.
+       - `summary`: Memory condensation and rolling summarization model.
+       - `media`: Multimodal vision and audio transcription model.
+    2. **Extended Generation Tools** (absence automatically disables the corresponding tool):
+       - `image`: Image generation. OpenAI-compatible endpoints declare `image_protocol` (`openai` | `openai-standard` | `xai`).
+       - `tts`: Speech synthesis. Must declare a `voice` identifier; OpenAI-compatible endpoints set `speech_protocol` (`openai` | `xai`). Optional `style` provides baseline voice characteristics.
+         - `bot_language` (`en` | `zh` | `ja`, default `ja`) sets the speaking language for AI-generated voice lines.
+         - `daily_limit` (default 100) and `daily_reserve_quota` (default 25) partition daily synthesis volume between AI chatter and administrative `/send`/cron broadcasts.
+    3. **Search & Moderation**:
+       - `web_search`: Function tool for real-time web search. If omitted, the text model's native search is used if supported.
+       - `ad_detect`: Dedicated classifier model for inbound spam analysis.
+    4. **Common Capability Attributes**:
+       - `provider`: `google` | `openai` | `anthropic`.
+       - `api_key`: API key string (placeholders trigger startup failure).
+       - `model`: Provider model identifier.
+       - `base_url`: Custom HTTPS proxy or API gateway endpoint.
+       - `headers`: Custom HTTP headers (allowed for `google` provider, e.g. for Cloudflare AI Gateway authentication).
 
 ---
 
 ### Initializing Identity Storage
 
-The runtime does not automatically create database tables; fresh deployments must initialize the SQLite database manually or via script:
+Copy Ninjia does not perform dynamic schema migrations at runtime. Fresh deployments must initialize the SQLite database prior to first launch:
 
 ```bash
 mkdir -p database
@@ -238,13 +239,13 @@ chmod 660 database/storage.sqlite
 ```
 
 > [!IMPORTANT]
-> `initializeStorageDatabase` is essential: it writes the schema version and the `bot.json` `time_zone` (the time-zone marker binding the data root) into `storage_metadata`, so run it after configuring the Telegram identity. Skipping it causes startup hydration to fail fast due to missing metadata.
+> Running `initializeStorageDatabase` writes the current schema version and the `bot.json` `time_zone` binding into `storage_metadata`. Skipping this initialization will cause the bot to abort during startup due to missing metadata.
 
 ---
 
 ### Customizing Inline Thumbnails and Default Avatar
 
-Customize UI assets and image library paths through `config/dynamic/assets.json` (supports hot reload):
+Customize visual assets and local image library paths in `config/dynamic/assets.json` (supports dynamic hot-reloading):
 
 ```json
 {
@@ -262,9 +263,9 @@ Customize UI assets and image library paths through `config/dynamic/assets.json`
 }
 ```
 
-- **`onlyPath`**: Local absolute path or `./` / `../` relative path (resolved relative to data root). `random_h_image_dir` is the dedicated `/h_image` library.
-- **`pathOrUrl`**: Local path or HTTPS/HTTP URL. `bot_default_avatar` provides the image to restore the default avatar.
-- **`onlyUrl`**: Must be an absolute `https://` address returning direct image bytes. Provides thumbnails for fortune, probability, and gag speaking popups.
+- **`onlyPath`**: Local path (relative paths resolve against the data root). `random_h_image_dir` sets the dedicated image library directory used by `/h_image` and cron tasks.
+- **`pathOrUrl`**: Local filesystem path or HTTP(S) URL. `bot_default_avatar` provides the fallback image used when restoring the bot's original avatar.
+- **`onlyUrl`**: Direct HTTPS URLs providing thumbnail icons for fortunes, probability rolls, and `/gag` buttons.
 
 ---
 
@@ -272,41 +273,41 @@ Customize UI assets and image library paths through `config/dynamic/assets.json`
 
 Configure the following settings in [@BotFather](https://t.me/BotFather):
 
-1. **Disable Privacy Mode**: Execute `/setprivacy` -> Select your bot -> Choose **Disable**.
-   - *Reason*: Without disabling privacy mode, the bot cannot receive ordinary group messages; copying, AI chat, and automatic risk control will not trigger.
-2. **Grant Administrator Permissions**: Add the bot to your target group and grant administrator rights (delete messages, restrict users, manage chat, etc.).
-3. **Enable Inline Mode**: Execute `/setinline` -> Choose **Enable**.
-   - *Reason*: Fortune draws (`@bot query`) and gag speech restrictions rely on inline mode.
-4. **Set Inline Feedback Rate**: Execute `/setinlinefeedback` -> Set to **100%**.
-   - *Reason*: `chosen_inline_result` is critical for confirming and persisting fortune draw results.
-5. **(Optional) Enable Bot-to-Bot Communication**: To copy or translate ordinary messages from other bots, enable this mode in BotFather. Incoming bot messages pass through the [main-thread ingress limit](04-invariants.md).
+1. **Disable Privacy Mode**: Send `/setprivacy` -> Select your bot -> Choose **Disable**.
+   - *Reason*: Allows the bot to receive normal group messages; required for copying, translation, AI interjections, and group Q&A.
+2. **Grant Administrator Permissions**: Add the bot to your target group and grant administrative permissions (delete messages, restrict users, ban members).
+3. **Enable Inline Mode**: Send `/setinline` -> Choose **Enable**.
+   - *Reason*: Daily fortunes (`@bot query`) and `/gag` speech restriction buttons operate via Inline Mode.
+4. **Set Inline Feedback Rate**: Send `/setinlinefeedback` -> Set to **100%**.
+   - *Reason*: The `chosen_inline_result` event is the authoritative feedback pipeline for persisting fortune results.
+5. **(Optional) Enable Bot-to-Bot Communication**: If you plan to copy or translate messages sent by other bots, enable this setting in BotFather. Inbound bot messages remain subject to global rate-limiting gates.
 
 ---
 
 ## First Startup
 
 ```bash
-# 1. Run quality gates to verify clean environment
+# 1. Run full quality gates to verify project integrity
 bun run check
 
-# 2. Start the long-polling service
+# 2. Launch the long-polling process
 bun run start
 ```
 
-After startup, the **super administrator** sends handshake commands in the target group:
+Once online, the **super administrator** must activate business logic inside the target group by running:
 
 ```text
-/init enable      # Activate business handling in this group (mandatory; otherwise all messages are silently ignored)
-/ai_chat enable   # (Optional) Enable AI chat in this group
-/ad_detect enable # (Optional) Enable ad detection in this group (requires admin rights)
-/antiraid enable  # (Optional) Enable join verification and anti-raid private mode (requires admin rights)
+/init enable      # Onboard this group (mandatory; uninitialized groups are completely ignored)
+/ai_chat enable   # (Optional) Enable conversational AI chat in this group
+/ad_detect enable # (Optional) Enable smart spam detection (requires admin rights)
+/antiraid enable  # (Optional) Enable join verification challenge and anti-raid mode
 ```
 
 ### Verification
 
-- Send `/copy` in the group (as a reply to a message): The bot should echo the message and mirror the user's avatar.
-- Check the `logs/` directory: Runtime logs should be created normally.
-- Press `Ctrl+C`: Observe console logs for gate closing, Worker drain, and state persistence to verify graceful shutdown.
+- Reply to any message in the group with `/copy`: The bot should echo the text and assume the user's avatar.
+- Check the `logs/` directory: Structured error and operational logs should appear normally.
+- Send `Ctrl+C`: Observe graceful shutdown logs confirming that incoming gates closed, queues drained, and states persisted cleanly before exit.
 
 ---
 

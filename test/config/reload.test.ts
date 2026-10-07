@@ -543,6 +543,38 @@ describe("cron.json 的 send_web_digest 与 agent.json 的对话核心能力", (
     expect(cronConfigCache.current).toBe(baseline.cron);
   });
 
+  test("删掉 agent.json 被现行任务表拒绝后，同轮新任务表按现行配置也缺依赖时两份一起拒绝", async () => {
+    const document = await readAgentDocument();
+    delete document.agent.tts;
+    await writeJson(AGENT_CONFIG_PATH, document);
+    await writeJson(CRON_CONFIG_PATH, DIGEST_TASKS);
+    expect((await reload()).rejections).toEqual([]);
+    const adoptedAgent: AgentDeploymentConfig | null = agentDeploymentConfigCache.current;
+    const adoptedCron: CronConfig | null = cronConfigCache.current;
+
+    // 新任务表用 send_voice：候选 agent 已删、现行 agent 没有 tts，两边都撑不起它。
+    rmSync(AGENT_CONFIG_PATH);
+    await writeJson(CRON_CONFIG_PATH, [{
+      name: "voice",
+      chat_id: [-1001],
+      cron: "0 9 * * *",
+      actions: [{ type: "send_voice", payload: { content: "おはよう" } }],
+    }]);
+    const changes: HotDeploymentConfigChanges = await reload();
+
+    expect(changes.rejections).toEqual([
+      AGENT_REJECTION,
+      `${CRON_CONFIG_PATH}: $[0].actions[0].type must be a type other than send_voice ` +
+      "unless config/dynamic/agent.json configures $.agent.tts alongside text, summary and media.",
+    ]);
+    expect(changes.aiAgent).toBe(false);
+    expect(changes.cron).toBe(false);
+    expect(changes.reloadedPaths).toEqual([]);
+    expect(changes.removedPaths).toEqual([]);
+    expect(agentDeploymentConfigCache.current).toBe(adoptedAgent);
+    expect(cronConfigCache.current).toBe(adoptedCron);
+  });
+
   test("现行配置没有对话核心能力时新增 send_web_digest 的 cron.json 整份拒绝", async () => {
     const document = await readAgentDocument();
     await writeJson(AGENT_CONFIG_PATH, { agent: { ad_detect: document.agent.ad_detect } });

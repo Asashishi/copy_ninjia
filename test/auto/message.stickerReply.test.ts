@@ -11,8 +11,7 @@ import {
  * quietUntil 恒为将来时刻——必回路径与文字回复/@ 一致地无视 /quiet，正好
  * 顺带验证这一点。 */
 
-// 七个公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；
-// 必须在下面的 await import 之前登记。贴纸视觉源解析用真实实现。
+// 公共模块桩收在 helper 里（见 test/helpers/autoMessageMocks.ts）；必须在下面的 await import 之前登记。贴纸视觉源解析用真实实现。
 import {
   autoMessageChatState,
   copyMessageMock,
@@ -22,9 +21,8 @@ import {
   resetAutoMessageMocks,
 } from "../helpers/autoMessageMocks";
 
-// tryClaimUserReplyTrigger 的 15s 每人触发冷却按真实 Date.now() 计时（见
-// packages/auto/message/）：本文件多个用例共用同一个 chatId + alice.id 夹具，
-// 不清空会导致后面的用例被前一个用例占用的冷却名额挡住、断言失败。
+// tryClaimUserReplyTrigger 的每人触发冷却按真实 Date.now() 计时（见 packages/auto/message/）：
+// 本文件多个用例共用同一个 chatId + alice.id 夹具，每个用例前清空冷却。
 const { userReplyTriggerTimes } = await import("../../packages/cache/main/auto");
 const { clearUserReplyTriggerTimes } =
   await import("../../packages/auto/message/triggerPolicy");

@@ -1,4 +1,4 @@
-/** 引用类广告的五分钟警告升级状态；状态 owner 为 Anti-Raid Worker。 */
+/** 引用类广告的警告升级状态（窗口 AD_REFERENCE_WARNING_WINDOW_MS）；状态 owner 为 Anti-Raid Worker。 */
 
 import {
   referencedAdWarningGeneration,
@@ -37,7 +37,7 @@ export function beginReferencedAdWarning(key: string): number | undefined {
 }
 
 /**
- * 把仍匹配当前 attempt 的发送态提交为五分钟警告态。清群、关闭或新 attempt
+ * 把仍匹配当前 attempt 的发送态提交为警告态。清群、关闭或新 attempt
  * 已经替换它时返回 false，调用方只能清理迟到提示，不得建立升级窗口。
  */
 export function completeReferencedAdWarning(
@@ -74,16 +74,15 @@ export function cancelReferencedAdWarning(
 }
 
 /**
- * 消息到达时冻结它是否处于已公开警告窗口。处理队列可能延迟超过五分钟，之后
- * 的判定只读冻结事实，不再拿处理时钟推翻消息真正到达时的状态。
+ * 消息到达时冻结它是否处于已公开警告窗口；之后的判定只读冻结事实，不再用处理
+ * 时钟重新判断。
  */
 export function hasActiveReferencedAdWarning(key: string, receivedAt: number): boolean {
   const state: ReferencedAdWarningState | undefined =
     referencedAdWarningStates.get(key);
   if (state?.phase !== "warned") return false;
   if (receivedAt >= state.warnedAt && receivedAt < state.expiresAt) return true;
-  // 走到这里只剩两种情况：窗口已过，或 receivedAt 早于 warnedAt——后者只能由墙钟
-  // 回拨造成，继续保留会把五分钟升级窗拉长。两种都直接回收，不再重复判一次条件。
+  // 走到这里只剩窗口已过、或 receivedAt 早于 warnedAt（墙钟回拨）两种情况，都直接回收。
   referencedAdWarningStates.delete(key);
   return false;
 }

@@ -74,7 +74,7 @@ async function settleDeferredCommands(): Promise<void> {
   while (tasks !== undefined && tasks.size > 0) await Promise.allSettled([...tasks]);
 }
 
-/** 30 分钟窗口的「已受理」回执。 */
+/** 默认窗口的「已受理」回执。 */
 /** 本文件默认通知风格下的群提示文案表。 */
 const NOTICES = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS;
 
@@ -86,7 +86,7 @@ interface ResultStats {
   readonly aborted?: boolean;
 }
 
-/** 按本用例的实际统计用常量渲染完整战报，窗口与 context() 缺省的 30m 一致。 */
+/** 按本用例的实际统计用常量渲染完整战报，窗口与 context() 缺省值一致。 */
 function resultText({ recordCount, scanned, kicked = 0, aborted = false }: ResultStats): string {
   return NOTICES.batchKickResult({
     duration: formatDurationCn(30 * 60_000),
@@ -231,9 +231,8 @@ describe("/batch_kick", () => {
   });
 
   test("回溯窗口按命令消息自带的 Telegram 时间戳算，不掺宿主时钟", async () => {
-    // 库里的 joinedAt 全部来自 `update.date`（见 antiRaid/updateIngress.ts）。这里
-    // 若用 Date.now()，两个时钟直接相减，窗口边界就整体漂移出它们之间的偏差——
-    // readJoinLog 既拿 since/now 逐条比 joinedAt，也拿它们算该读哪一两个日文件。
+    // 库里的 joinedAt 全部来自 `update.date`（见 antiRaid/updateIngress.ts）；窗口用同一个 Telegram 时间戳起算，
+    // readJoinLog 既用 since/now 逐条比 joinedAt，也用它们算该读哪几个日文件。
     await runCommand(context({ match: "2h" }));
 
     const now: number = COMMAND_DATE_SECONDS * 1_000;
@@ -589,7 +588,7 @@ describe("身份结论按块直接冷读并与消费交错", () => {
 
     expect(readIdentityPolicyVerdicts).toHaveBeenCalledTimes(2);
     expect(readAtCall[0]).toBe(0);
-    // 第二次冷读发生在第一块**已经消费完**之后，而不是一开始就全部取完。
+    // 第二次冷读发生在第一块已经消费完之后，不是一开始全部取完。
     expect(readAtCall[1]).toBe(IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES);
     expect(lastReplyText(sendMessage)).toBe(resultText({
       recordCount: records.length,
@@ -637,7 +636,7 @@ describe("身份结论按块直接冷读并与消费交错", () => {
 
     await runCommand(context());
 
-    // 缺正/负结论时不能按「不在白名单」处置：那正是白名单管理员被误踢的路径。
+    // 缺正/负结论时不按「不在白名单」处置。
     expect(probeChatMembership).not.toHaveBeenCalled();
     expect(kickChatMemberWithOutcome).not.toHaveBeenCalled();
     expect(lastReplyText(sendMessage)).toBe(IDENTITY_POLICY_UNAVAILABLE_TEXT);

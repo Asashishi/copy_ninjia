@@ -1,9 +1,8 @@
 /**
  * OpenAI 生图适配器：gpt-image-2 任意尺寸、GPT Image 通用标准尺寸与 xAI
- * aspect_ratio 三档显式分流，最终共用同一份载荷安全门禁。
+ * aspect_ratio 显式分流，最终共用同一份载荷安全门禁。
  *
- * 画幅收敛只发生在实现包内部——领域侧仍按十档表达意图，这份测试同时守住
- * 「换回 Gemini 不必改任何调用点」这个前提。
+ * 画幅收敛只发生在实现包内部，领域侧仍按同一套档位表达意图（换回 Gemini 不改任何调用点）。
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -174,7 +173,7 @@ describe("请求分流", () => {
       model: IMAGE_MODEL,
       prompt: "一只纸飞机",
       size: "1536x864",
-      // 不钉输出格式就由服务端默认值决定，一变成 WebP 就每次都在签名判定处落空。
+      // 请求钉住输出格式，响应签名判定据此成立。
       output_format: OPENAI_IMAGE_OUTPUT_FORMAT,
       // 审核档位取 SDK 允许的最低档；edit 分支没有这个参数（见下一条用例）。
       moderation: OPENAI_IMAGE_MODERATION,
@@ -209,7 +208,7 @@ describe("请求分流", () => {
     expect(body.prompt).toBe("把原图改成水彩");
     expect(body.size).toBe("1024x1024");
     expect(body.output_format).toBe(OPENAI_IMAGE_OUTPUT_FORMAT);
-    // openai@7.15 的 ImageEditParamsBase 上没有 moderation 字段，edit 分支不发送它。
+    // ImageEditParamsBase 上没有 moderation 字段，edit 分支不发送它。
     expect(body.moderation).toBeUndefined();
     expect(body.n).toBe(1);
     // 扩展名与 MIME 跟随实际字节格式，服务端据此判格式。

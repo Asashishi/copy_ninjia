@@ -35,8 +35,7 @@ describe("captureFencedText", () => {
   });
 
   test("读不回的语言标记被丢弃，退化成裸围栏而不是坏掉的开栏", () => {
-    // 带空白的语言标记若原样写进围栏，渲染侧就不再认它是开栏，
-    // 那条答案会连着可见的反引号一起发出去。
+    // 带空白的语言标记写进围栏前去掉，渲染侧才认得开栏。
     const text: string = "回答:abc";
     const entities: readonly MessageEntity[] = [
       { type: "pre", offset: 3, length: 3, language: "json 篡改" },
@@ -51,7 +50,7 @@ describe("captureFencedText", () => {
 
   test("越过取值区间的实体按普通文本取出，不造半截围栏", () => {
     const text: string = "问题:abc回答:def";
-    // pre 实体横跨两个字段：认它就会在问题里留下一个没有闭栏的开栏。
+    // pre 实体横跨两个字段：不认它，问题里不留下没有闭栏的开栏。
     const entities: readonly MessageEntity[] = [{ type: "pre", offset: 3, length: 9 }];
 
     expect(captureFencedText({ text, entities, start: 3, end: 6 })).toBe("abc");
@@ -110,8 +109,7 @@ describe("renderFencedText", () => {
   });
 
   test("拆完为空时整段退回原文，不产出发不出去的空消息", () => {
-    // 只有一个空代码块：丢弃它会得到空正文，而 Telegram 拒收空正文——
-    // 那条问答就成了「存得进库却永远答不出来」的死条目。
+    // 只有一个空代码块：保留它，不丢成空正文（Telegram 拒收空正文）。
     const rendered: RichTextMessage = renderFencedText("```json\n```");
 
     expect(rendered.text).toBe("```json\n```");

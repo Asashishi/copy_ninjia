@@ -183,7 +183,7 @@ test("cron 全部发送类型在所属聊天的发送队列等待 429 重放，�
     { action: voice, method: "sendVoice" },
     { action: digest, method: "sendMessage" },
   ];
-  // 每种发送各用一个群：429 让本群进入保守档，换群避免前一种的保守档拖慢下一种。
+  // 每种发送各用一个群：429 让本群进入保守档，换群使前一种的保守档不影响下一种。
   for (const [index, { action, method }] of cases.entries()) {
     const chatId: number = -1001 - index;
     calls.length = 0;
@@ -273,7 +273,7 @@ test("主线程查询的 429 同时暂停 Worker 与 ctx.api 查询，并保持�
     return successResponse(call);
   };
   const main: Promise<unknown> = bot.api.getChat(-1001);
-  // 原始 429 结算后，后续请求必须先进入同一条等待链。
+  // 原始 429 结算后，后续请求先进入同一条等待链。
   await waitUntil((): boolean => telegramOutboundStats().pending === 1);
   expect(telegramOutboundStats().pending).toBe(1);
   const worker: Promise<unknown> = handleAntiRaidWorkerTelegramRequest({

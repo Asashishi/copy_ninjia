@@ -7,7 +7,7 @@ import {
 import type { BotMessageActivity } from "../types/botMessage";
 import type { Message, User } from "grammy/types";
 
-/** 为一条机器人发言记录设置或续期独立的 90 分钟过期计时器。 */
+/** 为一条机器人发言记录设置或续期独立的过期计时器（BOT_MESSAGE_ACTIVITY_TTL_MS）。 */
 function refreshActivity(botId: number, activity: BotMessageActivity, now: number): void {
   activity.expiresAt = now + BOT_MESSAGE_ACTIVITY_TTL_MS;
   if (activity.timer === null) {
@@ -20,8 +20,8 @@ function refreshActivity(botId: number, activity: BotMessageActivity, now: numbe
 }
 
 /**
- * 主线程在分发前计数真实机器人发来的 message；前 15 条放行，从第 16 条起静默丢弃。
- * 计数按 bot id 跨群共享，收到发言后把过期时间续到 90 分钟后。容量满时拒绝
+ * 主线程在分发前计数真实机器人发来的 message；前 BOT_MESSAGE_ACTIVITY_LIMIT 条放行，之后静默丢弃。
+ * 计数按 bot id 跨群共享，收到发言后把过期时间续到 BOT_MESSAGE_ACTIVITY_TTL_MS 之后。容量满时拒绝
  * 尚未记录的机器人，不为它分配计时器。频道身份、自身回投与非 message 更新不计入。
  */
 export function shouldPassBotMessage(message: Message | undefined, ownBotId: number): boolean {

@@ -1,9 +1,9 @@
 /**
  * /block 黑名单的主线程同步名单。
  *
- * 判定必须是同步的：入群更新到达时要立刻决定踢不踢，不能等跨线程往返。
- * 每条 update 进入业务链前批量预热 LRU；写保持「先发布内存最终值、后投递
- * Disk I/O Worker」并保留到事务 ACK。durable removal outbox 由同目录 outbox.ts
+ * 判定是同步的，入群更新到达时直接读 LRU，不等跨线程往返。
+ * 每条 update 进入业务链前批量预热 LRU；写先发布内存最终值、后投递
+ * Disk I/O Worker，并保留到事务 ACK。durable removal outbox 由同目录 outbox.ts
  * 持有，本模块只在 unblockUser 时请求它裁剪相关任务。另含 `/block enable`、
  * `/block disable` 与广告处置共用的托管群清单 `managedAdminChatIds`，以及有界并发处置
  * `runManagedChatBatch`。
@@ -19,13 +19,12 @@ import type {
 } from "../../libs/boundedSettledBatch";
 import { getChatStateCache } from "../storage/stateStore";
 import { isManagedAdminChat } from "./sweepEligibility";
-import { flushDiskIODomainOutcome } from "../diskIO";
 import { logger } from "../logger";
 import { throwIfUpdateAborted } from "../updateContext";
 import { forgetUserBlocklistRemovals } from "./outbox";
-import type { DomainFlushOutcome } from "../../types/diskIO/replies";
 import {
   cachedBlocklistEntry,
+  confirmIdentityPolicyPersisted,
   prefetchIdentityPolicies,
   queueBlocklistDeletion,
   queueIdentityPolicyWrite,
@@ -121,8 +120,7 @@ export function isUserBlocked(userId: number): boolean {
  * 启动阶段的致命互斥校验：配置里的超级管理员不得同时存在于 blocklist_entries。
  *
  * `isWhitelisted` 对超管短路 true，`isUserBlocked` 不短路（见 identityPolicy/whitelist.ts
- * 与本文件上方 `isUserBlocked`）。两者同时成立会导致该身份被 `sweepManagedBlocklistChats`
- * 反复清出并被 `claimBlockedJoiner` 再次拉黑。校验失败时以非零码退出，不继续启动。
+ * 与本文件上方 `isUserBlocked`）。校验失败时抛错，启动以非零码退出。
  */
 export async function assertSuperAdminNotBlocked(
   superAdminUserId: number
@@ -156,27 +154,29 @@ export function blockUser(
 }
 
 /**
- * 等待本次拉黑落盘的统一 flush 回执。`queueIdentityPolicyWrite` 只保证消息进入
- * Worker 信箱；写盘失败时 Worker 内部只有 console.error，不进入 logs/。
- * @returns 已 durable 为 true；false 表示这条记录目前只活在内存里，重启就没了。
+ * 等待该 id 当前未 ACK 的黑名单最终值（拉黑记录或解除 tombstone）通过 SQLite 事务并收到
+ * 精确 revision ACK，口径同 identityStorage/write.ts 的 confirmIdentityPolicyPersisted；
+ * 没有未 ACK 最终值时立即返回 true。retryUnacknowledged 为 true 时先把未 ACK 的同一最终值
+ * 补投给当前 Worker（不创建新 revision）。
+ * @returns 已 durable 为 true；false 表示这条最终值目前只在内存中，已记一行错误日志。
  */
-export async function confirmBlocklistPersisted(): Promise<boolean> {
-  // flushDiskIODomainOutcome 按各领域合取判定，这里只看 "blocklist" 领域的结果。
-  const outcome: DomainFlushOutcome = await flushDiskIODomainOutcome("blocklist");
-  if (outcome.result === "flushed") return true;
-  // 领域名取自本次 flush 的回执；超时或崩溃时 outcome.failedDomains 为 undefined。
-  const domainNote: string = outcome.failedDomains === undefined
-    ? " no reply arrived for this flush; the persistence Worker timed out or crashed mid-flush."
-    : ` failed domains: ${outcome.failedDomains.join(", ")}.`;
-  logger.error(`Blocklist entry was not persisted to disk: flush ${outcome.result}.${domainNote}`);
-  return false;
+export async function confirmBlocklistPersisted(
+  userId: number,
+  retryUnacknowledged: boolean
+): Promise<boolean> {
+  try {
+    await confirmIdentityPolicyPersisted("blocklist", userId, retryUnacknowledged);
+    return true;
+  } catch (error: unknown) {
+    logger.error("Blocklist entry was not persisted to disk:", error);
+    return false;
+  }
 }
 
 /**
  * 解除拉黑：先发布 LRU 负缓存，再让 outbox owner 裁剪含该 id 的在途批次，最后
- * 把 tombstone 投给 Disk I/O Worker；顺序是裁剪快照先于 tombstone。Worker 按
- * 到达顺序处理，已提交的数据库不会留下引用已删条目的冻结批次。已经投进业务
- * Worker 的批次无法撤回，管理员仍可能需要执行一次 Telegram 解封。
+ * 把 tombstone 投给 Disk I/O Worker；裁剪快照先于 tombstone，Worker 按到达顺序
+ * 处理。已经投进业务 Worker 的批次不可撤回。
  * @returns 本次真的移除了记录为 true；本来就不在名单里为 false。
  */
 export function unblockUser(userId: number): boolean {

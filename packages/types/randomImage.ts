@@ -20,9 +20,7 @@ export type RandomImagePick =
   | { readonly status: "empty" }
   | { readonly status: "tooLarge"; readonly fileName: string };
 
-/**
- * 图库的一次候选计数（infra/randomImage.ts 的 readRandomImageLibrary），不包含去重索引。
- */
+/** 图库的一次候选计数（infra/randomImage.ts 的 readRandomImageLibrary）。 */
 export interface RandomImageLibrary {
   /** 图库里的图片张数，口径同 pickRandomImage 的候选。 */
   readonly size: number;

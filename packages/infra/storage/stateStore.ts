@@ -47,10 +47,8 @@ export function getGlobalCopyState(): Readonly<GlobalCopyState> {
 /**
  * 本群此刻的复读目标 id；没有目标、或目标锁在别的群时为 undefined。
  *
- * 不返回 `{ copiedUser, copyMode }` 投影对象：该判定挂在每条群消息与每次反应更新上
- * （auto/message/index.ts、auto/message/echo.ts、auto/message/guards.ts、
- * auto/reactionSync.ts、aiChat/botImages.ts），调用点只需
- * 判断「是不是 TA」。需要整份身份的冷路径直接读 getGlobalCopyState()。
+ * 用于每条群消息与每次反应更新，只返回目标 id，不创建投影对象。
+ * 需要整份身份的冷路径直接读 getGlobalCopyState()。
  */
 export function activeCopyTargetIdIn(chatId: number): number | undefined {
   if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) {
@@ -60,8 +58,8 @@ export function activeCopyTargetIdIn(chatId: number): number | undefined {
 }
 
 /**
- * 本群此刻生效的复读模式。调用方必须先用 activeCopyTargetIdIn 确认本群确有目标，
- * 否则这里的 undefined 分不清「没目标」还是「有目标但没指定模式」。
+ * 本群此刻生效的复读模式。调用方先用 activeCopyTargetIdIn 确认本群确有目标；
+ * 此时 undefined 表示该目标没有指定模式。
  */
 export function activeCopyModeIn(chatId: number): CopyMode | undefined {
   if (globalCopyState.copiedUser === null || globalCopyState.copyChatId !== chatId) {

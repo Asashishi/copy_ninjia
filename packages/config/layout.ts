@@ -2,8 +2,8 @@
  * 部署配置目录布局的严格检查；安装器与启动总闸共用，只 lstat/stat 目录项，不读取文件内容。
  *
  * 配置根顶层只放 static/ 与 dynamic/：static/ 下是修改后须重启的 bot.json、g-auth.json，
- * dynamic/ 下是热重载即时生效的六份文件（见 config/reload.ts）。任一份部署文件出现在
- * 配置根顶层或另一子目录都是放错位置，按致命错误拒绝，不猜测哪一份才是部署方想要的。
+ * dynamic/ 下是热重载即时生效的文件（见 config/reload.ts）。任一份部署文件出现在
+ * 配置根顶层或另一子目录都是放错位置，按致命错误拒绝。
  */
 
 import { lstat } from "node:fs/promises";
@@ -67,7 +67,7 @@ async function assertEntryAbsent(path: string, expected: string): Promise<void> 
 }
 
 /**
- * 拒绝放错位置的部署文件：配置根顶层的旧 Bot 入口，以及每份部署文件在配置根顶层或
+ * 拒绝放错位置的部署文件：配置根顶层的 LEGACY_BOT_CONFIG_NAME 文件，以及每份部署文件在配置根顶层或
  * 另一子目录下的同名项。配置根或子目录不存在时视为没有放错；安装器在建立子目录与
  * 示例文件之前调用。
  */

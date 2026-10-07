@@ -11,10 +11,10 @@ import type { UnacknowledgedIdentityWrite } from "../../types/identityStorage";
 import { resetTemporaryAdBypassCache } from "./temporaryAdBypass";
 
 /**
- * 白名单热查询缓存；null 是已确认不存在的负缓存，容量严格为 8192
- * （IDENTITY_READ_CACHE_MAX_ENTRIES）。
+ * 白名单热查询缓存；null 是已确认不存在的负缓存，容量上限为
+ * IDENTITY_READ_CACHE_MAX_ENTRIES。
  * 清理：LruCache 满载淘汰最久未用项；写入路径按主键覆盖，`/white disable`
- * 写入 null 负缓存而不是删键。进程重启归零，由 prefetchIdentityPolicies 重新预热。
+ * 写入 null 负缓存。进程重启归零，由 prefetchIdentityPolicies 重新预热。
  */
 export const whitelistEntryCache: LruCache<
   number,
@@ -22,7 +22,7 @@ export const whitelistEntryCache: LruCache<
 > = new LruCache(IDENTITY_READ_CACHE_MAX_ENTRIES);
 
 /**
- * 黑名单热查询缓存；null 是已确认不存在的负缓存，容量与淘汰逐字同
+ * 黑名单热查询缓存；null 是已确认不存在的负缓存，容量与淘汰同
  * whitelistEntryCache。
  */
 export const blocklistEntryCache: LruCache<
@@ -39,9 +39,9 @@ export const identityEntryCounts: {
 /**
  * 白名单未 ACK 最终值；同一主键反复修改只保留最新 revision。
  * 清理：收到该 revision 的 durable ACK 时按主键删除；Disk I/O Worker 重建时
- * **不清空**——整表由 onDiskIORespawn 重放，ACK 到达才移出。
+ * 不清空，整表由 onDiskIORespawn 重放，ACK 到达才移出。
  * 容量：未 ACK 字节总数由 unacknowledgedIdentityBytes 记账并受写预算约束，
- * 超限拒收新事实而不是淘汰已登记的最终值。
+ * 超限拒收新事实，不淘汰已登记的最终值。
  */
 export const unacknowledgedWhitelistWrites: Map<
   number,
@@ -50,7 +50,7 @@ export const unacknowledgedWhitelistWrites: Map<
 
 /**
  * 黑名单未 ACK 最终值；同一主键反复修改只保留最新 revision。
- * 清理、重放与容量策略逐字同 unacknowledgedWhitelistWrites。
+ * 清理、重放与容量策略同 unacknowledgedWhitelistWrites。
  */
 export const unacknowledgedBlocklistWrites: Map<
   number,

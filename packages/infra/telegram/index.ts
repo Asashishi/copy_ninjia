@@ -50,7 +50,6 @@ export type {
   UnmuteChatMemberOutcome,
 } from "./actions/moderation";
 export {
-  isChatMember,
   probeChatAdmin,
   probeChatMembership,
 } from "./actions/membership";

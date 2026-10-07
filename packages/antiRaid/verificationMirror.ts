@@ -23,17 +23,14 @@ import type {
 } from "../types/antiRaid/events";
 
 /**
- * 同代际的 revision 水位线；**旧代际的条目一律记 0**。
+ * 同代际的 revision 水位线；旧代际的条目一律记 0。
  *
  * revision 只在一个代际内部单调递增：Worker 崩溃重建时 adoptVerifications 按
- * activeVerificationSnapshots 重放，已删除的 key 不在重放范围内，因此那个 key
- * 的新记录会从 revision 1 重新开始。此时若拿旧代际留下的墓碑（比如 revision 13）
- * 当水位线，新代际的 revision 1 就会被判成过期而 `return false`：记录永远不落盘、
- * terminalPersisted 永远不投递，kickPending / expelling 卡在原地，群里那条带按钮
- * 的验证消息也没人清理。
+ * activeVerificationSnapshots 重放，已删除的 key 不在重放范围内，其新记录从
+ * revision 1 重新开始。
  *
- * 忽略旧代际不会放行迟到消息：两个入口都已在最前面用相等判定挡掉了非当前代际的
- * 事件，能走到这里的一定属于当前代际。
+ * 两个入口（acceptVerificationUpsert、acceptVerificationDelete）都已在最前面用相等判定
+ * 挡掉非当前代际的事件，能走到这里的条目属于当前代际。
  */
 function currentGenerationRevision(
   entry: Readonly<{ generation: number; revision: number }> | undefined
@@ -44,8 +41,7 @@ function currentGenerationRevision(
 
 /**
  * active、deferred 与 pending delete 按协议互斥；pending deferral 始终仍在 active
- * 内，因此不重复计数。这个 O(1) 计数位于验证事件热边界，不能为每次 upsert
- * 临时构造 Set。
+ * 内，因此不重复计数。O(1) 计数，不构造临时 Set。
  */
 function verificationRecordCount(): number {
   return activeVerificationSnapshots.size +

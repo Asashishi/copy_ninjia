@@ -58,8 +58,7 @@ export function handleChatStateWrite(
   const rowSource: string = storageSource("chat_states", message.chatId);
   assertTelegramChatId(message.chatId, rowSource);
   assertPositiveRevision(message.revision, rowSource);
-  // 解码结果留着用：下面的唯一代理目标判定只关心「这次写有没有把 isProxySendEnabled
-  // 打开」，重新解一遍纯属白付一次完整校验。
+  // 解码结果留给下面的唯一代理目标判定：只看这次写是否打开了 isProxySendEnabled。
   const incoming: ChatState | null = message.data === null
     ? null
     : decodeChatStateData(message.data, rowSource);

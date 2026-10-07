@@ -177,6 +177,16 @@ describe("cron 发送边界", () => {
     pickRandomImage.mockImplementationOnce(async (): Promise<RandomImagePick> => ({ status: "empty" }));
     expect(await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: null }, isBlurred: false }))
       .toEqual({ kind: "permanent", detail: "the random image directory has no pictures" });
+    pickRandomImage.mockImplementationOnce(async (): Promise<RandomImagePick> => ({ status: "missingDirectory" }));
+    expect(await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: null }, isBlurred: false }))
+      .toEqual({ kind: "permanent", detail: "the random image directory is missing" });
+    pickRandomImage.mockImplementationOnce(async (): Promise<RandomImagePick> => ({ status: "tooLarge", fileName: "huge.png" }));
+    expect(await deliver({ type: "send_image", content: undefined, source: { kind: "random", directory: null }, isBlurred: false }))
+      .toEqual({
+        kind: "permanent",
+        detail: "the random image directory has no picture under the Telegram upload limit (last oversized: huge.png)",
+      });
+    expect(calls).toHaveLength(2);
   });
 
   test("is_blurred 为 true 时以剧透遮罩发送；为 false 时请求里不带 has_spoiler", async () => {
@@ -412,6 +422,17 @@ describe("cron send_web_digest", () => {
   test("组稿期间取消按 aborted 返回，不发送", async () => {
     composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => ({ ok: false, reason: "aborted" }));
     expect(await deliver(DIGEST)).toEqual({ kind: "aborted" });
+    expect(calls).toEqual([]);
+  });
+
+  test("组稿已成功但停机取消先到时按 aborted 返回，不发送", async () => {
+    const controller: AbortController = new AbortController();
+    composeWebDigest.mockImplementationOnce(async (): Promise<WebDigestCompositionResult> => {
+      controller.abort();
+      return { ok: true, text: DIGEST_TEXT };
+    });
+    expect(await deliverCronAction({ chatId: -1001, action: DIGEST, signal: controller.signal, voices: new Map(), digests: new Map() }))
+      .toEqual({ kind: "aborted" });
     expect(calls).toEqual([]);
   });
 });

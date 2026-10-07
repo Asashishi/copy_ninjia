@@ -19,10 +19,8 @@ import type { ForwardedLogBatch, LogMessage } from "../../packages/types/diskIO"
 /**
  * 业务 Worker -> 主线程的 error 日志转发协议。
  *
- * 本文件直接覆盖日志转发通道的四个函数与「日志系统被压垮时不拖住 Worker」的
- * 边界：单批在途、
- * 双硬顶、溢出只累计标量、排空后补一条汇总。任一条回归都不会有报错，只会表现为
- * error 日志缺失或 mailbox 无界增长。
+ * 本文件直接覆盖日志转发通道的函数与「日志系统被压垮时不拖住 Worker」的边界：
+ * 单批在途、双硬顶、溢出只累计标量、排空后补一条汇总。
  */
 
 /** 收集出口收到的批次；可切换成同步拒绝，模拟 postMessage 抛出。 */
@@ -105,7 +103,7 @@ describe("Worker 侧 error 日志转发通道", () => {
     expect(batches).toHaveLength(0);
 
     reject.current = false;
-    // 重发的必须是同一批（含原来那条），而不是把它丢掉只发新的。
+    // 重发的是同一批（含原来那条）。
     expect(pumpForwardedLogs(sink)).toBeTrue();
     expect(batches).toHaveLength(1);
     expect(firstArg(batches[0]!)).toBe("rejected");
@@ -122,7 +120,7 @@ describe("Worker 侧 error 日志转发通道", () => {
     expect(forwardedLogDropState.current.droppedSerializedBytes).toBeGreaterThan(0);
     const dropped: number = forwardedLogDropState.current.droppedMessages;
 
-    // 逐批 ACK 排空；队列一有余量，汇总就必须补进去且计数清零。
+    // 逐批 ACK 排空；队列一有余量，汇总补进去且计数清零。
     let guard: number = 0;
     while (forwardedLogQueue.size > 0 && guard < 200) {
       const pending: ForwardedLogBatch | undefined = batches.at(-1);

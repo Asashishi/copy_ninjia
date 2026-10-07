@@ -39,8 +39,7 @@ import { acceptVerificationDeferred } from "../verificationAttempts";
  * 把群当前的 lockdown 意图写入 SQLite，落定后回执给 Worker。
  *
  * 指纹排除 expiresAt（见 types/antiRaid/internal.ts）；对账轮次仅在恢复语义
- * 真正推进时重跑。期间收到的新事件通过 queued 集合在当前微任务结束后续跑，
- * 避免丢掉最后一次唤醒。
+ * 真正推进时重跑。期间收到的新事件通过 queued 集合在当前轮结束后续跑。
  */
 function persistCurrentLockdown(
   chatId: number,
@@ -150,8 +149,7 @@ export function handleAntiRaidWorkerEvent(
       try {
         assertPersistableLockdown(expected, `chat state ${event.chatId}`);
       } catch (error: unknown) {
-        // 绝不让它进内存：ChatState 先写内存再落盘，挂上一条落盘自检过不了的
-        // 记录，会让该群此后每一条状态写入（任何开关命令）都跟着抛。
+        // 不写入内存：ChatState 先写内存再落盘，不可落盘的记录不得挂上去。
         logger.error(
           `Anti-raid lockdown intent for chat ${event.chatId} cannot be persisted; abandoning it:`,
           error

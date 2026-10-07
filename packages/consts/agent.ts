@@ -1,10 +1,11 @@
 import type { AgentProvider } from "../types/config";
+import { exhaustiveList } from "./exhaustiveList";
 
 /**
  * `config/dynamic/agent.json` 的 `agent` 段允许出现的全部能力名，顺序与
  * `config_example/dynamic/agent.json` 一致。
  *
- * 这份名单是唯一权威源：`packages/config/agent.ts` 的两处 `hasOnlyKeys` 用它
+ * 这份名单是唯一权威源：`packages/config/agent.ts` 的 `hasOnlyKeys` 校验用它
  * 决定「未知字段一律拒绝」，install.sh 的安装问卷按同一份名单逐项询问，
  * 由 `test/scripts/installScript.test.ts` 与本常量对拍。新增能力必须改这里，
  * 并同步能力档解析、示例文件与三语文档。
@@ -39,7 +40,7 @@ export const AGENT_AI_CHAT_REQUIRED_CAPABILITIES: readonly string[] = [
  * （workers/diskIO/aiCacheDocument.ts）共用。新增 provider 时同步 AgentProvider、
  * AGENT_PROVIDER_LABELS 与 aiChat/provider.ts 的实现包映射。所属模块：AI 能力部署配置。
  */
-export const AGENT_PROVIDERS: readonly AgentProvider[] = ["google", "openai", "anthropic"];
+export const AGENT_PROVIDERS: readonly AgentProvider[] = exhaustiveList<AgentProvider>()(["google", "openai", "anthropic"]);
 
 /** 判断字符串是否属于 AGENT_PROVIDERS；调用方先完成首尾空白规范化。所属模块：AI 能力部署配置。 */
 export function isAgentProvider(value: string): value is AgentProvider {
@@ -72,7 +73,7 @@ export const EXPECTED_BASE_URL: string =
 
 /**
  * google provider 能力的 headers 最多条数。每个值都进日志值级脱敏名单，
- * 七项能力按上限配满时名单仍在 LOGGER_MAX_REDACTED_SECRETS 之内。
+ * 各项能力按上限配满时名单仍在 LOGGER_MAX_REDACTED_SECRETS 之内。
  * 所属模块：AI 能力部署配置。
  */
 export const AGENT_HEADERS_MAX_ENTRIES: number = 8;

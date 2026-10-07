@@ -4,14 +4,34 @@
 
 [← 04 运行时权威约束](04-invariants.md)
 
-- lockdown 落盘握手的指纹由 `phase`、`intentId` 与 `announced` 组成。前两项是一次锁定意图的稳定身份；`announced` 虽然每轮最多只从 false 变为 true 一次，却直接决定恢复后能否发解锁公告，因此落盘回执必须覆盖它。紧急权限恢复判断迟到结果是否仍属于当前意图时仍只比较 `phase` 与 `intentId`，公告落盘不应创建新的权限意图。两类指纹都不得含 `expiresAt`：`APPLYING`/`RESTORING` 阶段发布时它填的是当刻墙钟，同一份意图前后两次发布（例如公告结果落盘）就会不相等；把它算进落盘指纹，主线程「存下去 → 再看一眼还是不是同一份」的对账循环永远等不到相等，每轮一次带 fsync 的 `chat_states` 写入，发布比写盘更快时循环不终止，既写不下指纹也发不出落盘回执。
-
-  倒计时本身照常落在镜像的 `expiresAt` 里，adopt 时据此换算剩余时长。该对账循环另有轮次上限兜底；持久化在途期间到达的新事件会置位待续跑标记，用尽后当前任务只留下错误日志并让出微任务，随后自动以最新镜像开启新任务，不得依赖下一条外部 lockdown 事件补回最后一次唤醒。
-- Worker 放弃自愈后，主线程的 `recoverAbandonedLockdowns` 按插入顺序直接遍历群状态热读副本（`cache/main/chatState.ts` 的 `Map`），不取快照。恢复链在第一次 `await` 之前同步读取当前这一条，`Map.get` 不改变迭代顺序，因此每个带 lockdown 的群只产出一次，接管日志里每群也只列一次；同一群的恢复已在册时，`startEmergencyLockdownRecovery` 按指纹直接返回。
-- 当前 lockdown 镜像要求 `phase` 与正数 `intentId`；待验证 active 记录要求 `phase` 与 `trackedMessageTimes`。reminder ID 与 `announcementMessageId` 仍是业务可选字段：缺失只表示提醒尚未成功落地、或这条记录压根没观测到入群公告，恢复后各走自己的补发/清理路径。其它缺失或不兼容字段必须在旧进程停止期间人工迁移，生产读取路径不保留兼容逻辑。
-- **终态播报的三个标志均须持久化**：`successNoticeSent` 表示成功战报，`failureNoticeSent` 表示无法踢人或缺少 `can_restrict_members`，`unconfirmedNoticeSent` 表示无法确认成员或群类型。三类提示均在发送成功后由主线程于 30 秒后删除。各标志独立阻止对应播报在 Worker 重建或进程重启后重复发送，不能互相替代；设置标志须发布新 revision，并由终态重试等待该 revision 的持久化确认。
-
-  **踢成功、成功战报却没发出去时不得结算**：结算等于删记录，群里看着一个成员凭空消失，而那句唯一的说明再也没有第二次机会。这一路要先把 `removalConfirmed` 写进快照再退避重试——它同样必须持久化，否则下一轮的成员探测只会答「人已经不在群里」，终态按「别人处置的」静默结算，等于把战报永久吞掉。它只在战报发送失败时才写，正常一轮里踢人与战报同轮结算，不多付一次落盘。
-- **「确证没有封禁权限就不再发请求」这道短路要以清理已经清完为前提**（`cleanupSettled`）。只认 `failureNoticeSent` 的话，一条因为网络抖动删失败过的验证公告会就此定格：此后每轮都在短路处返回，那段清理代码再也不会执行，群里于是永远挂着一条带可点击验证按钮的公告，而对应的成员根本没被踢走。清理还欠账时照常走完整条处置——踢人被 `canRestrict` 短路、战报被 `failureNoticeSent` 短路，确证没有 `can_delete_messages` 时删除也被镜像短路，因此「一个请求都不发」这条性质仍然成立。这个标志与 `executionStarted` 同属 **Worker 本地幂等门、不进快照**：重放一次删除是幂等的，重发一条战报不是。
+- **Lockdown 落盘握手指纹（`lockdownFingerprint`）**：
+  - 指纹由 `phase`、`intentId` 与 `announced` 三项构成。
+    - `phase` 与 `intentId`：代表一次锁定意图的稳定唯一身份；
+    - `announced`：决定系统重启或恢复后是否补发解锁公告，持久化落盘回执必须覆盖此字段；
+    - 紧急权限恢复在核验迟到结果是否仍属于当前意图时，仅比较 `phase` 与 `intentId`；公告落盘不会创建新的权限意图。两类指纹均严禁包含易变的 `expiresAt`。
+  - **倒计时与对账循环**：
+    - 锁定倒计时存储在镜像的 `expiresAt` 绝对时间戳中，接管（adopt）时按当前时钟动态换算为 `remainingMs`。
+    - 落盘对账循环以 `LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS` 为轮次上限。若持久化在途期间有新事件到达，置位待续跑标记；用尽轮次后记录错误日志并让出微任务，随后自动加载最新镜像开启新任务，不依赖后续外部事件唤醒。
+- **Worker 崩溃后的紧急恢复接管**：
+  - 当 Anti-Raid Worker 耗尽重启预算放弃自愈时，主线程通过 `recoverAbandonedLockdowns` 直接遍历群状态热读副本（`cache/main/chatState.ts` 中的 `chatStateCache`），不创建中间快照，也不依赖特定遍历顺序。
+  - 恢复链在首个 `await` 之前同步读取当前群状态，每个处于锁定态的群仅触发一次恢复接管并在日志中打印一次。
+  - 若某群的恢复任务已在册且 `phase` 与 `intentId` 相同，`startEmergencyLockdownRecovery` 直接返回；若锁定意图不同，则先注销旧任务再开启新恢复。
+- **镜像格式与严格校验**：
+  - 运行时 lockdown 镜像必须包含 `phase` 与正整数 `intentId`；`announcementMessageId` 仅允许在 `announced === true` 时出现。
+  - 验证快照必须包含 `phase` 与 `trackedMessageTimes`。选填字段 `reminderMessageId` 与 `announcementMessageId` 缺失仅表示提醒尚未成功发出或未检测到入群公告，恢复后各自独立执行补发或清理逻辑。
+  - 其它字段缺失或格式不符时由解码器严格拒绝启动，必须在停机期间人工修复，生产读取路径不保留向前兼容降级。
+- **终态播报标志持久化**：
+  - 终态提示的三个状态标志必须持久化落盘：
+    - `successNoticeSent`：成功踢人战报已发送；
+    - `failureNoticeSent`：无法执行踢人或缺乏 `can_restrict_members` 权限；
+    - `unconfirmedNoticeSent`：无法确认成员在群状态或群类型。
+  - 三类提示发送成功后，均通过主线程挂载 `COMMAND_MESSAGE_AUTO_DELETE_MS` 定时自动删除。
+  - 三个标志各自独立防止对应消息在 Worker 重建或服务重启后重复发送，不可相互替代；设置标志时发布新 revision 并等待持久化确认。
+  - **踢人成功未播报时的断点保护**：若踢人已成功但战报发送失败，严禁直接结算。先将 `removalConfirmed` 写入快照并进入退避重试；下一轮探测确认目标已离群时，据此认定为已被本 bot 踢出并补发战报。`removalConfirmed` 仅在战报失败时持久化写入。
+- **权限缺失短路门禁（`cleanupSettled`）**：
+  - 确证无封禁权限（`botCanRestrictIn === false`）时的提前短路，必须以**关联清理已全部完成**（`cleanupSettled === true`）为前提：仅当 `failureNoticeSent` 与 `cleanupSettled` 同时为真时才短路，此时每轮只发一次成员探测，成员已离群即结算，否则继续退避。
+  - 私密模式秒踢（`kickPending`）在无封禁权限时同样先做成员探测：成员已离群即结算并释放该条记录；仍在群内则记日志并退避，不发踢人请求。
+  - 若仍有未完成的清理动作，照常推进处置流程：踢人被封禁权限短路、战报被已发送标志短路、删消息在无删除权限时短路，确保所有可执行且需重试的清理工作（如删除消息）均得到执行。
+  - `cleanupSettled` 与 `executionStarted` 属于 **Worker 本地内存幂等控制标志，不进入持久化快照**。
 
 <p align="right"><a href="04-invariants.md#快速导航">↑ 返回快速导航</a></p>

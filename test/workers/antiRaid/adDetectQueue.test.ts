@@ -58,14 +58,11 @@ const { deletePendingAdBundle, pendingAdBundle, pendingAdBundleForKey } =
 beforeEach((): void => resetAdDetectQueueHarness(stopAdDetectQueue));
 
 /**
- * 「谁在待检」只有一个答案：queuedAdDetectKeys 必须与 adDetectQueue 的内容逐键
- * 一致，且同一个键在队列里最多占一个位置。
- *
- * 去重、容量与补排判据全部落在这一张表上；它一旦和队列失配，要么同一个人吃掉
- * 两份判定额度，要么未判内容永远排不回来。
+ * 「谁在待检」只有一个答案：queuedAdDetectKeys 与 adDetectQueue 的内容逐键一致，
+ * 且同一个键在队列里最多占一个位置。去重、容量与补排判据都落在这张表上。
  */
 function expectQueueOwnershipConsistent(): void {
-  const queued: string[] = adDetectQueue.last(adDetectQueue.size);
+  const queued: string[] = [...adDetectQueue.values()];
   expect(new Set<string>(queued).size).toBe(queued.length);
   expect(queuedAdDetectKeys.size).toBe(queued.length);
   for (const key of queued) expect(queuedAdDetectKeys.has(key)).toBe(true);
@@ -158,7 +155,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
   test("不传 now 时按候选自带的主线程观测时刻记账，本线程不读墙钟", () => {
     const observedAt: number = 1_800_000_000_000;
-    // 夹具先造好：harness 的 candidate() 默认值自己会读一次钟，那次不算本用例。
+    // 夹具先造好：harness 的 candidate() 默认值会读一次钟，不计入本用例。
     const message: AdCandidateMessage = candidate({ messageId: 1, observedAt });
     const nowSpy: ReturnType<typeof spyOn> = spyOn(Date, "now");
     try {
@@ -181,7 +178,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("justJoined 在消息串里取并集，后续消息不能把它洗掉", () => {
-    // 验证会在窗口内通过：先发广告、后点验证的人不该因此洗白。
+    // 验证在窗口内通过时，先发广告、后点验证的人仍保留 justJoined。
     enqueueAdCandidate(candidate({ messageId: 1, justJoined: true }), 1_000);
     enqueueAdCandidate(candidate({ messageId: 2, justJoined: false }), 1_100);
     expect(pendingAdBundle(-1001, 7)?.justJoined).toBe(true);
@@ -209,14 +206,14 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     enqueueAdCandidate(candidate({ messageId: 2 }), 1_000 + AD_DETECT_JUDGED_RETENTION_WINDOW_MS + 1);
     expect(bundle.entries.map((entry) => entry.messageId)).toEqual([2]);
-    // 序号单调递增，裁剪不回退它：新那条的 seq 比 checkedSeq 大，照样要判。
+    // 序号单调递增，裁剪不回退它：新那条的 seq 大于 checkedSeq，照样要判。
     expect(bundle.entries[0]?.seq).toBe(2);
     expect(bundle.checkedSeq).toBe(1);
   });
 
   test("在途判定期间旧条目仍算未消费，结算后才可按序号裁掉", async () => {
-    // 判定返回前 checkedSeq 还没推进，哪怕等待超过窗口也不能裁掉这批在途条目；
-    // 返回后按 captured seq 结算，之后的新消息仍保持未判定。
+    // 判定返回前 checkedSeq 不推进，等待超过窗口也不裁掉在途条目；
+    // 返回后按 captured seq 结算，之后的新消息保持未判定。
     let release!: (verdict: AdVerdict) => void;
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict> => new Promise<AdVerdict>((resolve) => {
       release = resolve;
@@ -235,7 +232,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     await running;
     expect(bundle.checkedSeq).toBe(2);
 
-    // 结算时 requeueIfUnchecked 已经把未判内容排进下一批，不靠任何周期回收推动。
+    // 结算时 requeueIfUnchecked 把未判内容排进下一批，不依赖周期回收。
     expect(adDetectQueue.size).toBe(1);
     await runAdDetectBatch(late);
     expect(classifiedTexts[1]).toBe("1. 加我微信\n2. 带你上岸");
@@ -249,7 +246,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     const bundle = pendingAdBundle(-1001, 7)!;
     expect(bundle.entries).toHaveLength(AD_DETECT_MAX_MESSAGES_PER_SENDER);
     expect(bundle.pendingDeleteIds).toHaveLength(AD_DETECT_MAX_PENDING_DELETE_IDS);
-    // 被挤掉的是 1…(total-15)，其中最旧的 1 号因待删表满而丢弃。
+    // 被挤掉的是 1…(total-AD_DETECT_MAX_MESSAGES_PER_SENDER)，其中最旧的 1 号因待删表满而丢弃。
     expect(bundle.pendingDeleteIds[0]).toBe(2);
     expect(bundle.pendingDeleteIds.at(-1)).toBe(total - AD_DETECT_MAX_MESSAGES_PER_SENDER);
     expect(errorLogs.filter((line: string): boolean =>
@@ -288,12 +285,8 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("判定抛错按「本次没判定」结算：记一行日志、推进水位，不静默死循环", async () => {
-    // classifyAdText 的同步准备阶段也会抛：它先调 currentAdDetectPrompts →
-    // getAdSampleConfig()，而后者只缓存成功结果——进程启动之后把
-    // config/dynamic/ad_samples.json 改坏，每一次调用都重新抛同一个错。不接住的话异常
-    // 一路逃到 runAdDetectBatch 的 Promise.allSettled 被整个吞掉：checkedSeq
-    // 永不推进，之后每条新发言都会把同一批旧内容带回来再次失败，全程一行日志
-    // 都没有，而 /ad_detect 仍然报告功能已启用。
+    // classifyAdText 的同步准备阶段（currentAdDetectPrompts → getAdSampleConfig()）也会抛；
+    // runAdDetectBatch 接住它，按「本次没判定」结算。
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict | null> => {
       throw new Error("config/dynamic/ad_samples.json must contain a JSON object.");
     });
@@ -302,16 +295,15 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     await runAdDetectBatch(1_000);
 
     expect(errorLogs.some((line: string): boolean => line.includes("failed to classify sender 7 in chat -1001"))).toBeTrue();
-    // 与「模型抽风、响应形状不对」同一档：本次记成已检，不重试成请求风暴。
+    // 与「模型抽风、响应形状不对」同一档：本次记成已检，不重试。
     expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
-    // in-flight 标记照常释放，这个键不会被永久钉住。
+    // in-flight 标记照常释放。
     expect(inFlightAdDetectKeys.size).toBe(0);
     expect(disposeAdSender).not.toHaveBeenCalled();
   });
 
   test("全局在途闸撑满时不再派发，被挡下的键留在队列里而不是凭空消失", async () => {
-    // 批大小只限每拍起多少个，拦不住「上一批还没回来就再起一批」：DeepSeek 一慢，
-    // 在途请求就按派发速率乘单次耗时堆积，每个都钉住自己那一串消息。
+    // 批大小只限每拍起多少个；在途总数由 AD_DETECT_MAX_IN_FLIGHT 限制。
     let release!: () => void;
     const blocked = new Promise<AdVerdict | null>((resolve: (verdict: AdVerdict | null) => void): void => {
       release = (): void => resolve({ isAd: false, reason: "" });
@@ -329,7 +321,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     }
 
     expect(inFlightAdDetectKeys.size).toBe(AD_DETECT_MAX_IN_FLIGHT);
-    // 判断排在 shift 之前，所以挡下的键还在队列里等下一拍，没有被取出来丢掉。
+    // 在途闸判断排在 shift 之前，挡下的键留在队列里等下一拍。
     expect(adDetectQueue.size).toBe(senders - AD_DETECT_MAX_IN_FLIGHT);
     expect(queuedAdDetectKeys.size).toBe(senders - AD_DETECT_MAX_IN_FLIGHT);
 
@@ -360,7 +352,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
     expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
 
-    // 同一串没有新内容时不该被重复判定，否则每一拍都在重烧同一条消息。
+    // 同一串没有新内容时不重复判定。
     await runAdDetectBatch(1_000);
     expect(classifyAdText).toHaveBeenCalledTimes(1);
 
@@ -386,9 +378,8 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("待检位置没有等待 TTL：排多久都不过期，也不产生副本", async () => {
-    // 已接纳的键在发生至少一次判定尝试前不能因为等太久而消失（见
-    // docs/cn/04-invariants.md）。位置由 queuedAdDetectKeys 独家表达，没有计时器
-    // 能在判定前把它收走。
+    // 已接纳的键在发生至少一次判定尝试前不会消失（见 docs/cn/04-invariants.md）。
+    // 位置由 queuedAdDetectKeys 独家表达，没有计时器收走它。
     const firstAt: number = 1_000;
     const secondAt: number = 2_000;
     enqueueAdCandidate(candidate({ senderId: 7, messageId: 1 }), firstAt);
@@ -492,7 +483,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     await runAdDetectBatch(1_000);
     expect(disposeAdSender).not.toHaveBeenCalled();
-    // 失败也推进判定进度：DeepSeek 侧故障时重排就是每秒一批的请求风暴。
+    // 失败也推进判定进度，不重排。
     expect(pendingAdBundle(-1001, 7)?.checkedSeq).toBe(1);
     expect(adDetectQueue.size).toBe(0);
   });
@@ -541,8 +532,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     release({ isAd: true, reason: "引流" });
     await running;
-    // 整串已经不在了：旧引用对不上，不在已停管的群里封人；已经取得的 true
-    // 仍清累计，避免重开开关后沿用广告发生前的连续日。
+    // 整串已经不在了：旧引用对不上，不在已停管的群里封人；已经取得的 true 仍清累计。
     expect(disposeAdSender).not.toHaveBeenCalled();
     expect(verdictEvents).toEqual([{
       type: "adVerdictTrue",
@@ -609,7 +599,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     const running: Promise<void> = runAdDetectBatch(1_000);
     expect(inFlightAdDetectKeys.has("-1001:7")).toBe(true);
 
-    // 一波新发送者把表撑到上界：满载后拒绝后来者，不能挤掉已经接纳的广告号。
+    // 一波新发送者把表撑到上界：满载后拒绝后来者，已经接纳的广告号不被挤掉。
     for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS + 5; index++) {
       enqueueAdCandidate(candidate({ senderId: 1_000 + index }), 1_000);
     }
@@ -655,7 +645,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(true);
 
     clearChatAdDetect(-1001);
-    // 留着只会让重新开启开关后的头一个窗口白白哑火。
+    // 清群后该群的待检位置、消息串与引用警告状态都被摘除，别的群不受影响。
     expect(queuedAdDetectKeys.has("-1001:7")).toBe(false);
     expect(queuedAdDetectKeys.has("-1002:9")).toBe(true);
     expect(pendingAdBundle(-1001, 7) !== undefined).toBe(false);
@@ -668,8 +658,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("停机 quiesce 只停节拍、不动状态，也不把在途判定挂进 drain 等待集合", async () => {
-    // drain 的预算是秒级，一次判定却能耗到 20 秒：登记进在途集合的话，停机时
-    // 恰好有判定在途就必然超时，换来脏退出加一批 update 重投。
+    // 在途判定不登记进 antiRaidInFlightTasks，drain 不等待它。
     let release!: (verdict: AdVerdict) => void;
     classifyAdText.mockImplementationOnce((): Promise<AdVerdict> => new Promise<AdVerdict>((resolve) => {
       release = resolve;
@@ -681,7 +670,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     quiesceAdDetectQueue();
     expect(adDetectTickTimer.current).toBeNull();
-    // 状态原样留着：它随 isolate 一起消失，退出路径上不必多做清理。
+    // 状态原样保留，退出路径上不做清理。
     expect(pendingAdBundleCount.current).toBe(1);
 
     release({ isAd: false, reason: "" });
@@ -704,8 +693,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
     release({ isAd: true, reason: "引流" });
     await running;
 
-    // 照常处置的话，群里会收到「在所有盯着的群里一起封掉了」，而那条黑名单
-    // 根本写不进 memory/blocklist/blocklist.json，重启后此人若无其事。
+    // quiesce 之后回来的判定不处置，不调用 disposeAdSender。
     expect(disposeAdSender).not.toHaveBeenCalled();
   });
 
@@ -735,8 +723,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("离开队列的键无论走哪条出口都交还待检位置", async () => {
-    // 位置一交出去就必须从 queuedAdDetectKeys 消失，否则「谁在待检」有两个
-    // 互相矛盾的答案：键不在队列里却仍被判成已排队，未判内容再也排不回来。
+    // 位置一交出去就从 queuedAdDetectKeys 消失。
     const key: string = "-1001:7";
 
     // 出口一：消息串已经不在了（清群之类）。
@@ -775,7 +762,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("反复「入队 -> 空串 -> 出队」不会让待检位置数越过待检 key 数", async () => {
-    // 待检位置数不得越过待检 key 数，否则容量闸会误报满载。
+    // 待检位置数不越过待检 key 数。
     for (let round: number = 0; round < 32; round++) {
       const at: number = 1_000 + round;
       enqueueAdCandidate(candidate({ senderId: round, messageId: round + 1 }), at);
@@ -869,8 +856,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
   test("sweep 补排失去调度位置的未判消息串，接手旧窗口轮换的自愈职责", () => {
     enqueueAdCandidate(candidate({ messageId: 1, text: "USDT 承兑加我" }), 1_000);
-    // 模拟异常态：队列位置没了，消息串还留着未判内容。派发循环只走队列，
-    // 这种串没有任何其它力量会把它排回去。
+    // 构造异常态：队列位置没了，消息串还留着未判内容；派发循环只走队列，由 sweepAdDetect 补排。
     adDetectQueue.clear();
     queuedAdDetectKeys.clear();
     expect(pendingAdBundle(-1001, 7)!.entries.length).toBe(1);
@@ -895,8 +881,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("处置去重表撞顶时淘汰最早处置的键，不无限增长", async () => {
-    // 这张表只由处置路径写入，没有任何入口闸替它把关；节拍停掉或处置快过回收
-    // 时它是整条流水线里唯一一张会无限长的表。
+    // 处置去重表只由处置路径写入，没有入口闸；撞顶时按插入序淘汰最早的键。
     const disposedAt: number = performance.now();
     for (let index: number = 0; index < AD_DETECT_MAX_PENDING_SENDERS; index++) {
       recentlyDisposedAdKeys.set(`-1002:${index}`, disposedAt);
@@ -909,14 +894,14 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
 
     expect(recentlyDisposedAdKeys.size).toBe(AD_DETECT_MAX_PENDING_SENDERS);
     expect(recentlyDisposedAdKeys.has("-1001:7")).toBe(true);
-    // FIFO：挤掉的是最早写进去的那个，它的封禁早已落地。
+    // FIFO：挤掉的是最早写进去的那个。
     expect(recentlyDisposedAdKeys.has("-1002:0")).toBe(false);
     expect(recentlyDisposedAdKeys.has("-1002:1")).toBe(true);
   });
 
   test("在途闸长期撑满：积压的键坐满一个窗口也不丢位置、不产生副本", async () => {
-    // 已接纳的键撞上在途上限时留在队列里等容量恢复，不会过期（见
-    // docs/cn/04-invariants.md）。撑满在途闸把这段积压真造出来。
+    // 已接纳的键撞上在途上限时留在队列里等容量恢复，不会过期（见 docs/cn/04-invariants.md）；
+    // 撑满在途闸造出这段积压。
     classifyAdText.mockImplementation((): Promise<AdVerdict> => new Promise<AdVerdict>((): void => {}));
     const startedAt: number = 1_000;
     const senders: number = AD_DETECT_MAX_IN_FLIGHT + AD_DETECT_BATCH_SIZE;
@@ -946,8 +931,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("长期积压期间同一个人的新消息只并串，不排出第二个位置", async () => {
-    // 挡住重复入队的只有 queuedAdDetectKeys 一道。它要是不管用，同一个人会在
-    // 队列里占两个位置，判定额度被一个人吃掉两份。
+    // 重复入队只由 queuedAdDetectKeys 一道拦截；同一个人只占一个队列位置。
     classifyAdText.mockImplementation((): Promise<AdVerdict> => new Promise<AdVerdict>((): void => {}));
     const startedAt: number = 1_000;
     for (let index: number = 0; index < AD_DETECT_MAX_IN_FLIGHT + 1; index++) {
@@ -976,7 +960,7 @@ describe("广告判定队列：排队、调度与位置所有权", () => {
   });
 
   test("正常调度的每一步都维持「队列与待检位置表一致」", async () => {
-    // 覆盖派发、结算补排、判成广告摘串三条主路径，而不只是异常出口。
+    // 覆盖派发、结算补排、判成广告摘串三条主路径。
     enqueueAdCandidate(candidate({ messageId: 1 }), 1_000);
     expectQueueOwnershipConsistent();
     await runAdDetectBatch(1_000);

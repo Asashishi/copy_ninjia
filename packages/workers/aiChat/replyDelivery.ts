@@ -35,7 +35,7 @@ export function hasLiveReplyRounds(chatId: number): boolean {
  * 每个窗口用一个 FIFO 追加多轮；存活容量独立于模型并发计数。
  * 群里没有在途轮次（没有窗口）时本轮是直接轮：占位即就绪，ready 当即放行，动作接纳后立即由串行链执行、边生成边发送；
  * 它仍是发送链的队首，后续有序并行轮等它 finish 后才按入站顺位放行。直接轮在模型阶段独立占
- * 1 个并发位，commit（模型阶段结束）时交还。有序并行轮的 commit 标记完整动作链就绪，finish
+ * 一个并发位，commit（模型阶段结束）时交还。有序并行轮的 commit 标记完整动作链就绪，finish
  * 标记发送完成并等待按序回收。生命周期约束见 docs/cn/04-invariants.md。
  */
 export function reserveReplyDelivery(chatId: number): ReplyDeliveryTurn | undefined {
@@ -85,7 +85,7 @@ export function hasReplyDeliveryCapacity(chatId: number): boolean {
     (replyDeliveryCounts.get(chatId) ?? 0) < REPLY_DELIVERY_MAX_PER_CHAT;
 }
 
-/** 该群的直接轮仍在模型阶段；准入与补跑据此在有序并行上限之外另放行这 1 轮。 */
+/** 该群的直接轮仍在模型阶段；准入与补跑据此在有序并行上限之外另放行这一轮。 */
 export function isDirectReplyModelActive(chatId: number): boolean {
   return replyDeliveryWindows.get(chatId)?.directModelActive === true;
 }

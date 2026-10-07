@@ -20,12 +20,12 @@ export interface WorkerDuplexWaiter {
  * 当前 isolate 尚未收到主线程回执的请求。
  * 清理：收到回执、请求被 signal 取消、resetWorkerDuplex（Worker stop）时删除。
  * 容量：受各 Worker 自身业务并发上限与 Telegram 主线程总闸共同约束，不另设
- * 淘汰——丢掉一个 waiter 会让调用方永远等下去。Worker 重建：新 isolate 从空表
+ * 淘汰。Worker 重建：新 isolate 从空表
  * 开始，旧请求由主线程代际 signal 取消。
  */
 export const workerDuplexWaiters: Map<number, WorkerDuplexWaiter> = new Map();
 
-/** 当前 isolate 的单调请求编号；不回退，避免迟到回执命中新请求。 */
+/** 当前 isolate 的单调请求编号；不回退。 */
 export const workerDuplexRequestCounter: { current: number } = { current: 0 };
 
 /**

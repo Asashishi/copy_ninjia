@@ -5,19 +5,17 @@
  * generateContent 封装。请求体为：
  * `input` 是一个 user_input 步骤，唯一的文本块携带台词，并用 `speech_metadata`
  * 注解给出朗读风格（`<基础风格>[; <朗读语言>]; 细节: <本句语气>`）；`response_format` 只声明要音频，
- * 服务端对非流式请求默认回 `audio/wav`（24 kHz 单声道 16 bit PCM）；
+ * 响应音频的 MIME 取自载荷声明，容器由 aiChat/ai/voiceEncoding.ts 按 MIME 处理；
  * `generation_config` 指定音色与采样温度。
  * 音色取自 config/dynamic/agent.json 的 `agent.tts.voice`，经 `speech_config[].voice` 原样
  * 传入；基础风格取同一配置快照的 style，与朗读语言、本句语气由 ai/utils/speechStyle.ts 拼接，
  * 温度取自 consts/aiChat/gemini.ts。
  *
- * 超时与重试逐次显式传参：SDK 的 Interactions 客户端不继承构造期的
- * `httpOptions.retryOptions`，重试次数按 GEMINI_SPEECH_REQUEST_ATTEMPTS 声明；
- * 请求带 signal 时 SDK 不启用自己的 `timeout`，因此把调用方 signal 与独立超时
- * 用 libs/abortSignal.ts 的 signalWithTimeout 合成一个再传下去，同时照传
- * `timeout` 覆盖没有调用方 signal 的路径。
+ * 超时与重试逐次显式传参：重试次数按 GEMINI_SPEECH_REQUEST_ATTEMPTS 声明（`maxRetries`
+ * 为其减一）；调用方 signal 与独立超时经 libs/abortSignal.ts 的 signalWithTimeout 合成一个
+ * signal 传下去，同时传入 `timeout`。
  *
- * 失败一律返回 null 并记一行英文错误日志，绝不抛错；调用方（aiChat/provider.ts 的
+ * 失败一律返回 null 并记一行英文错误日志，不抛错；调用方（aiChat/provider.ts 的
  * tts 门面）据此结算为 `synthesis failed`。
  */
 

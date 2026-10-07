@@ -150,3 +150,18 @@ describe("requestAnthropicTextResult", () => {
       .toEqual({ ok: false, retryable: true });
   });
 });
+
+describe("会话固定的客户端", () => {
+  test("传入 client 时请求只走它，不按能力构造或取用缓存的客户端", async () => {
+    const pinnedCreate = mock(async (..._args: unknown[]): Promise<unknown> => message("end_turn"));
+    const pinned = { messages: { create: pinnedCreate } } as never;
+
+    const result = await requestAnthropicMessage({ capability: "text", buildBody: body, errorLabel: "test", client: pinned });
+
+    expect(result.ok).toBeTrue();
+    expect(pinnedCreate).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(constructions).toEqual([]);
+    expect(anthropicClientCache.current).toBeNull();
+  });
+});

@@ -87,11 +87,6 @@ function queueRejectedTextResult(): AiTextResult {
   return { ok: false, retryable: false };
 }
 
-/** 生图按「这次没做出来」结算。 */
-function queueRejectedImage(): null {
-  return null;
-}
-
 function queueRejectedSpeechAttempt(): SpeechSynthesisAttempt {
   return { ok: false, reason: "synthesis failed" };
 }
@@ -193,11 +188,16 @@ function createMediaFacade(
   };
 }
 
-/** 生图门面：交互优先排队；队列已满或被取消时按「这次没做出来」结算为 `null`。 */
+/**
+ * 生图门面：交互优先排队；队列已满或被取消时按「这次没做出来」结算为 `null`。所选实现缺席
+ * generateImage 时没有门面，返回 null。
+ */
 function createImageFacade(
   provider: AiChatProvider,
   config: AgentCapabilityConfig
-): AiImageProvider {
+): AiImageProvider | null {
+  const generateImage: AiChatProvider["generateImage"] = provider.generateImage;
+  if (generateImage === undefined) return null;
   const runner: PrioritizedBoundedTaskRunner = quotaRunnerFor(config);
   return {
     name: provider.name,
@@ -206,8 +206,8 @@ function createImageFacade(
         runner,
         priority: "interactive",
         signal: request.signal,
-        fallback: queueRejectedImage,
-        task: (): Promise<GeneratedChatImage | null> => provider.generateImage(request),
+        fallback: (): null => null,
+        task: (): Promise<GeneratedChatImage | null> => generateImage(request),
       });
     },
   };
@@ -348,15 +348,15 @@ interface OptionalCapabilityFacadeParams<TCapability extends "image" | "tts" | "
   readonly capability: TCapability;
   /** 当前缓存值；`undefined` 专表「还没问过」。 */
   readonly cached: TFacade | null | undefined;
-  /** 配置齐全时以该能力自己的配置构造门面。 */
-  readonly create: (config: NonNullable<AgentDeploymentConfig[TCapability]>) => TFacade;
+  /** 配置齐全时以该能力自己的配置构造门面；所选实现缺席这项能力时返回 null。 */
+  readonly create: (config: NonNullable<AgentDeploymentConfig[TCapability]>) => TFacade | null;
   /** 写回记忆化槽位；null 同样要写。 */
   readonly store: (facade: TFacade | null) => void;
 }
 
 /**
- * 可缺席能力（image、tts、web_search）的门面记忆化：缺配置时把 `null` 也缓存下来。
- * `undefined` 专表「还没问过」，`null` 表「问过、没配」，两者严格分开缓存。
+ * 可缺席能力（image、tts、web_search）的门面记忆化：缺配置或所选实现缺席该能力时把 `null` 也缓存下来。
+ * `undefined` 专表「还没问过」，`null` 表「问过、没有门面」，两者严格分开缓存。
  */
 function optionalCapabilityFacade<TCapability extends "image" | "tts" | "webSearch", TFacade>({
   capability,
@@ -370,17 +370,17 @@ function optionalCapabilityFacade<TCapability extends "image" | "tts" | "webSear
     store(null);
     return null;
   }
-  const facade: TFacade = create(config);
+  const facade: TFacade | null = create(config);
   store(facade);
   return facade;
 }
 
-/** 生图能力；未配置时不注册对应工具。 */
+/** 生图能力；未配置或所选实现缺席生图时为 null，不注册对应工具。 */
 export function imageAiProvider(): AiImageProvider | null {
   return optionalCapabilityFacade<"image", AiImageProvider>({
     capability: "image",
     cached: aiProviderFacades.image,
-    create: (config: AgentImageCapabilityConfig): AiImageProvider =>
+    create: (config: AgentImageCapabilityConfig): AiImageProvider | null =>
       createImageFacade(AI_CHAT_PROVIDERS[config.provider], config),
     store: (facade: AiImageProvider | null): void => { aiProviderFacades.image = facade; },
   });
@@ -439,8 +439,8 @@ export function structuredTextAiProvider(): AiStructuredTextProvider {
 }
 
 /**
- * 启动诊断：能力配置齐全、结构校验也过了，但选中的那一家**根本没有**这项能力
- * （工具不挂、语音不转写）。这不是错误配置，不拒绝启动，只记 warn。
+ * 启动诊断：能力配置齐全且校验通过，但选中的 provider 没有实现这项能力
+ * （工具不挂、语音不转写）时只记 warn，不拒绝启动。
  *
  * 在 AI Worker 初始化与每次 agent 配置热重载后各调用一次，逐轮回复不重复记录。
  */
@@ -464,8 +464,9 @@ export function reportUnimplementedAgentCapabilities(): void {
 /**
  * 接管主线程热重载投递的 agent 对话能力快照（见 workers/aiChat/configReload.ts）。
  *
- * 整体替换本线程 holder 后丢弃按旧快照建立的能力门面与三家 SDK 客户端，下一次
- * 取用按新快照重建；在途请求继续持有旧门面与旧客户端直至结算。同一协议、端点
+ * 整体替换本线程 holder 后丢弃按旧快照建立的能力门面与各 SDK 客户端，下一次
+ * 取用按新快照重建；在途请求与已建立的回复会话（整轮工具往返）继续持有旧门面、旧模型
+ * 与旧客户端直至结算（会话在创建时固定，见各实现包的 replySession.ts）。同一协议、端点
  * 与凭据的配额 lane 原样保留，并发额度跨重载延续；不再被任何能力引用的 lane
  * 从表中摘除。media 能力变化时两种输入模态回到未探测状态；text 能力变化时丢弃
  * Gemini 回复共用显式缓存的登记表，下一次回复按新客户端重新扫描。

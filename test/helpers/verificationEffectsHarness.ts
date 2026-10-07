@@ -40,7 +40,7 @@ export const warnings: string[] = [];
 export const loggedErrors: string[] = [];
 /**
  * 清理机器人验证消息时每次 deleteMessageWithOutcome 的结局，按调用顺序消费，
- * 用尽后回落到 "deleted"。取值含 "deleted" / "gone" / "failed" 三态。
+ * 用尽后回落到 "deleted"。取值为 "deleted" / "gone" / "failed"。
  */
 export const traceDeleteOutcomes: string[] = [];
 /**
@@ -49,6 +49,8 @@ export const traceDeleteOutcomes: string[] = [];
 export const testState: {
   /** sendMessage 的返回 id；undefined 表示发送失败。 */
   nextSentMessageId: number | undefined;
+  /** 为 true 时 sendMessage 直接 reject，模拟 Worker→主线程请求本身失败。 */
+  sendRejects: boolean;
   kickSucceeds: boolean;
   kickTargetAbsent: boolean;
   /** 模拟机器人是否具备删除验证消息的权限，可与踢人权限独立开关。 */
@@ -58,6 +60,7 @@ export const testState: {
   publishedChanges: number;
 } = {
   nextSentMessageId: 900,
+  sendRejects: false,
   kickSucceeds: true,
   kickTargetAbsent: false,
   deleteSucceeds: true,
@@ -90,6 +93,7 @@ mock.module("../../packages/infra/telegram", () => ({
   sendMessage: async (
     message: { text: string; keyboard?: InlineKeyboardMarkup }
   ): Promise<number | undefined> => {
+    if (testState.sendRejects) throw new Error("Main-thread capability request failed.");
     sentTexts.push(message.text);
     sentKeyboards.push(message.keyboard);
     return testState.nextSentMessageId;
@@ -123,11 +127,8 @@ mock.module("../../packages/infra/telegram", () => ({
 }));
 
 /**
- * 被测模块与其缓存由各用例文件自行 `await import` 后注入。
- *
- * 助手模块不能自己 await import：这些模块都依赖上面 mock.module 装上的替身，
- * 而带顶层 await 的助手一旦被用例文件导入，Bun 会让它的导出停在 TDZ
- * （实测 `Cannot access 'x' before initialization`）。
+ * 被测模块与其缓存由各用例文件自行 `await import` 后注入；助手模块不自己 await import 依赖
+ * 上面 mock.module 替身的模块。
  */
 export interface VerificationEffectsDeps {
   readonly runVerificationEffects: (params: never) => Promise<void>;
@@ -150,11 +151,10 @@ function requireDeps(): VerificationEffectsDeps {
 }
 
 /**
- * 把 setTimeout 换成只记录延时的桩，返回**带 unref 的**假句柄。
+ * 把 setTimeout 换成只记录延时的桩，返回带 unref 的假句柄。
  *
- * Worker 内的 timer 装完一律 unref（门禁见 scripts/conventions/workerTimers.ts）。
- * 桩既然宣称满足 `ReturnType<typeof setTimeout>`，就必须给出这个类型真正有的
- * 方法；只返回一个裸数字会让生产侧的 unref 那一行抛 TypeError。
+ * Worker 内的 timer 装完一律 unref（门禁见 scripts/conventions/workerTimers.ts），
+ * 假句柄提供 `ReturnType<typeof setTimeout>` 所具备的 unref 方法。
  *
  * @param delays 承接每次排期延时的数组，按调用顺序追加。
  * @returns 还原 setTimeout 的函数，调用方在 finally 里执行。
@@ -285,6 +285,7 @@ export function installVerificationEffectsHooks(injected: VerificationEffectsDep
     warnings.length = 0;
     loggedErrors.length = 0;
     testState.nextSentMessageId = 900;
+    testState.sendRejects = false;
     testState.kickSucceeds = true;
     testState.kickTargetAbsent = false;
     testState.deleteSucceeds = true;

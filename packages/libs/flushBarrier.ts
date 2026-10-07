@@ -22,8 +22,8 @@ export interface CreateFlushBarrierParams {
 
 /**
  * Worker flush / mailbox barrier 的统一握手原语。等待项在 post 之前登记，
- * 因而同步回执也不会丢失；所有完成路径都先从 Map 删除并清 timer，再 resolve，
- * 让超时、迟到回执与崩溃结算之间保持 exactly-once。
+ * 同步回执同样可结算；所有完成路径都先从 Map 删除并清 timer，再 resolve，
+ * 超时、迟到回执与崩溃结算之间只结算一次。
  */
 export function createFlushBarrier(options: CreateFlushBarrierParams): FlushBarrier {
   const pending: Map<number, PendingFlush> = new Map();

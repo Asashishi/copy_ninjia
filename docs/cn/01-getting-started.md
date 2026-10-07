@@ -10,23 +10,23 @@
 
 ---
 
-本页把一个全新环境带到「机器人在群里正常工作」，只求最短路径。系统架构与消息流见 [02 架构总览](02-architecture.md)。
+本文将指导你以最快路径在全新环境中完成部署，使机器人可以在群组中正常工作。关于系统的分层架构与消息流转，请参考 [02 架构总览](02-architecture.md)。
 
 ## 前置条件
 
-- **Linux 系统**（必须具备可读的 `/proc`）：实例锁强依赖 `/proc/<pid>/stat` 与系统 boot ID；其它操作系统均会 fail-closed 拒绝启动。
-- **Bun 1.4.2**：源码安装与本地开发需要，可通过以下命令安装：
+- **Linux 系统**（必须具备可读的 `/proc` 目录）：系统的单实例锁机制强依赖 `/proc/<pid>/stat` 与内核 boot ID，以此防止多进程并发冲突。不支持非 Linux 系统，启动时若检测到不支持的平台将直接退出以保障安全。
+- **Bun 1.4.2**：源码安装与本地开发所需，可通过以下命令快速安装：
   ```bash
   curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2
   ```
   > [!NOTE]
-  > 二进制发行包已自带内置 Bun 运行时，无需宿主机预先安装 Bun。项目全链路不需要 Node.js。
-- **Telegram Bot Token**：向 [@BotFather](https://t.me/BotFather) 发送 `/newbot` 创建机器人并取得 Token。
-- **所配 AI 能力的 API Key**：`config/dynamic/agent.json` 中配置的各项能力（对话、媒体描述、生图、TTS、联网检索等）各自持有 key、provider、端点与模型；可从 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或兼容服务取得。能力之间不设自动回退。
-- **（可选）Google Cloud 服务账号 JSON**：仅 `/translate` 翻译功能需要，保存为 `config/static/g-auth.json`（结构参考 [示例](../../config_example/static/g-auth.json)；示例中的占位私钥会被解析器拒绝）。
-  - **凭据规格**：由 `packages/config/googleAuth.ts` 严格解析，必须包含 `client_email` 与用于 RS256 签名的非空 RSA PEM 私钥（不接受 EC、Ed25519 或 RSA-PSS 密钥）；`type` 省略或只能为 `service_account`。
-  - **优雅降级**：凭据缺失时不阻止进程启动，仅在执行 `/translate` 时直接拒绝并明确点名该文件；文件若存在但格式非法，启动总闸会在解析阶段立刻退出。
-  - **凭据安全**：凭据在启动阶段生成进程级只读快照，运行时不再反复读盘；错误信息仅输出文件路径与字段期望，严禁回显凭据明文。
+  > 二进制发行包已内置 Bun 运行时，无需宿主机预先安装 Bun。整个项目都不需要 Node.js。
+- **Telegram Bot Token**：向官方 [@BotFather](https://t.me/BotFather) 发送 `/newbot` 创建机器人并取得 API Token。
+- **AI 模型 API Key**：若需要使用 AI 闲聊、图像理解、AI 生图、语音合成（TTS）或联网检索功能，需准备对应提供商的 API 密钥（支持 [Google AI Studio](https://aistudio.google.com/)、[OpenAI Platform](https://platform.openai.com/) 或兼容服务）。在 `config/dynamic/agent.json` 中按需配置，各项能力独立生效，互不回退。
+- **（可选）Google Cloud 服务账号凭据**：仅在启用 `/translate` 翻译功能时需要，保存为 `config/static/g-auth.json`（格式参考 [示例](../../config_example/static/g-auth.json)；示例中的占位私钥会被解析器直接拒绝）。
+  - **凭据规格**：由 `packages/config/googleAuth.ts` 解析，必须包含 `client_email` 与用于 RS256 签名的非空 RSA PEM 私钥（不支持 EC、Ed25519 或 RSA-PSS 密钥）；`type` 只能为 `service_account`（可缺省）。
+  - **默认行为**：若未配置该凭据，不会影响机器人启动，仅在群内使用 `/translate` 时提示缺少该文件；但若文件存在且格式错误，启动时的配置校验会直接报错退出。
+  - **安全保障**：启动时一次性读入进程内存快照，运行期不再重复读取；错误日志只记录文件路径与格式要求，绝不泄露凭据内容。
 
 ---
 
@@ -34,19 +34,19 @@
 
 ### 一键安装
 
-全新服务器环境推荐使用 [`install.sh`](../../install.sh) 自动化脚本：
+全新服务器环境推荐使用 [`install.sh`](../../install.sh) 自动化安装脚本：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash
 ```
 
-可通过参数或环境变量指定安装模式（两者仅选其一）：
+安装模式可通过参数或环境变量 `COPY_NINJIA_INSTALL_MODE`（`source` 或 `binary`）指定；若未指定，安装程序会在终端通过交互菜单询问（默认为源码模式）。`COPY_NINJIA_DIR` 用于指定安装目录名（默认为 `copy_ninjia`）。
 
 ```bash
-# 二进制发行版安装（推荐快速部署，不依赖 git 或系统 Bun）
+# 二进制发行版安装（推荐快速部署，不依赖本地 git 或系统 Bun）
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --binary
 
-# 源码安装（适合后续二次开发）
+# 源码安装（适合后续二次开发与贡献代码）
 curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/install.sh | bash -s -- --source
 ```
 
@@ -63,18 +63,18 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 <tbody>
   <tr>
     <td><nobr>📦 <b>发行渠道</b></nobr></td>
-    <td>自动从 GitHub Latest Release 下载对应架构预编译包</td>
-    <td><code>git clone</code> 对应 Release tag（处于 detached HEAD）</td>
+    <td>自动从 GitHub Latest Release 下载对应架构的预编译单二进制包</td>
+    <td>通过 <code>git clone</code> 拉取对应 Release tag 的源码仓库</td>
   </tr>
   <tr>
     <td><nobr>⚙️ <b>系统依赖</b></nobr></td>
-    <td>无需系统 Bun、git 或本地编译；安装器会尝试补齐缺少的下载工具</td>
-    <td>需要 git 与 Bun 1.4.2；安装器会尝试补装缺少的工具，已安装的 Bun 版本不符时需手工调整</td>
+    <td>无需系统预装 Bun、git 或编译工具链；脚本会自动尝试补齐基础下载工具</td>
+    <td>需要 git 与 Bun 1.4.2；安装脚本会尝试辅助安装缺失工具，若版本不符需手动调整</td>
   </tr>
   <tr>
     <td><nobr>🚀 <b>运行时封装</b></nobr></td>
-    <td>独立单可执行文件，内置 Bun 运行时与 Worker 逻辑</td>
-    <td>执行 <code>bun install --frozen-lockfile</code>（7 天依赖安全冷却期）</td>
+    <td>独立单可执行文件，内嵌 Bun 运行时与各 Worker 运行逻辑</td>
+    <td>执行 <code>bun install --frozen-lockfile</code> 安装完整依赖（遵循依赖安全冷却期）</td>
   </tr>
   <tr>
     <td><nobr>▶️ <b>启动命令</b></nobr></td>
@@ -85,11 +85,15 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 </table>
 
 > [!TIP]
-> **安装流程概览**：
-> 1. **环境与架构校验**：核对 Linux 与 `/proc` 可用性；自动识别 Linux x64/arm64 与 glibc/musl。
-> 2. **部署配置准备**：仅补充缺少的配置模板，跳过 `agent.json`、`g-auth.json` 与 `cron.json`。已有文件先在工作树外备份，校验通过后原子替换；生成的文件权限严格设为 `600`。
-> 3. **身份数据库初始化**：按生产路径校验 `database/storage.sqlite`。已存在时只读核对它绑定的时区与 `bot.json` 的 `time_zone` 一致，不符即在注册服务前退出；不存在则以 `bot.json` 的时区初始化当前 schema 的全新空库。
-> 4. **服务注册与观测**：自动注册或复用 `copy-ninjia.service`，启动后动态观察服务状态，确认 `active/running`、重启计数稳定且 journal 无异常后清理备份。
+> **安装流程概览**（与 `install.sh` 执行步骤保持一致；服务托管与备份边界见 [07 运维](07-operations.md#安装器的服务与备份边界)）：
+> 1. **环境检查**：确认操作系统为 Linux、具备可读的 `/proc` 目录与可读写的控制终端（`/dev/tty`）。
+> 2. **获取文件**：依次检查当前脚本所在目录、当前工作目录及目标克隆目录；若均无现存副本，则从 GitHub 拉取对应 Release 源码或下载预编译二进制包（自动识别 x64/arm64 与 glibc/musl）。之后转入目标目录自带的安装脚本继续执行。
+> 3. **工具与环境**：源码模式按需安装指定版本的 Bun；二进制模式直接使用包内自带的可执行文件。
+> 4. **安装依赖**：源码模式执行 `bun install --frozen-lockfile`；二进制模式直接跳过。
+> 5. **准备配置目录**：检查配置目录结构；自动补充缺失的基础配置模板，但跳过可选的 `agent.json`、`g-auth.json` 与 `cron.json`，且绝不覆盖已有文件。
+> 6. **交互式填写配置**：在终端引导填写 `config/static/bot.json`；若 `agent.json` 尚不存在，则逐项询问并配置 AI 能力。覆盖已有配置文件前会自动在临时目录外部备份，经严格格式校验通过后原子替换。
+> 7. **初始化身份数据库**：检查 `database/storage.sqlite`。若数据库已存在，核对其记录的时区与 `bot.json` 的 `time_zone` 是否一致（不一致时拒绝注册服务）；若不存在，则以当前配置的时区初始化全新的空数据库。随后对所有已存在的配置文件执行全面校验。
+> 8. **注册服务并观测**：注册或更新 systemd 服务 `copy-ninjia.service`（无可用 systemd 时提示在前台运行）。启动后持续观察服务状态，确认进程正常运行、无异常重启且日志无报错后，清理临时配置备份。
 
 ### 手工源码安装
 
@@ -98,10 +102,10 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 git clone https://github.com/Asashishi/copy_ninjia.git
 cd copy_ninjia
 
-# 2. 锁定安装依赖
-bun install
+# 2. 按锁文件安装依赖
+bun install --frozen-lockfile
 
-# 3. 准备部署配置目录
+# 3. 准备部署配置目录并复制模板文件
 mkdir -p config/static config/dynamic
 for example in config_example/static/*.json config_example/dynamic/*.json; do
   case "${example##*/}" in
@@ -112,103 +116,101 @@ done
 ```
 
 > [!WARNING]
-> `g-auth.json` 与 `cron.json` 的示例仅示意语法，不要盲目复制到生产环境。详细说明见 [`config_example/README/zh.md`](../../config_example/README/zh.md)。
+> `config_example/` 目录下的 `g-auth.json` 与 `cron.json` 示例仅作语法示意，切勿直接原样复制到生产环境。复制后的配置文件中如果带有 `replace-with-…` 占位字符串（如 `bot_token` 或各 AI 模型的 `api_key`），必须替换为真实凭据；保留占位符会导致程序在启动阶段报错退出。详细说明见 [`config_example/README/zh.md`](../../config_example/README/zh.md)。
 
 ---
 
 ## 配置 Telegram 身份
 
-Bot 基础身份与全局超级管理员定义在 `config/static/bot.json`：
+机器人的基础身份与全局超级管理员定义在 `config/static/bot.json` 中：
 
 - **`bot_token`**（必填，字符串）
-  - 从 BotFather 取得的 Telegram Bot API Token。
+  - 从 BotFather 获取的 Telegram Bot API Token；示例中的占位字符会被校验直接拒绝。
 - **`super_admin_user_id`**（必填，正整数）
-  - 单个十进制超级管理员用户 ID。
-  - **特权边界**：该身份本身天然持有白名单能授予的**全部权限**，不需要写入 SQLite 白名单表。
-  - **豁免保护**：复读、生图等操作的冷却豁免仅属于该身份；恒在白名单边界内，享有自动处置保护，不可被 `/block`、`/mute` 或 `/batch_kick` 处置。
-  - **专属命令**：`/init`、`/batch_kick`、`/permission` 的修改操作、`/white disable` 与 `/send` 仅允许超级管理员调用。
+  - 全局超级管理员的十进制 Telegram 用户 ID。
+  - **特权边界**：超级管理员身份天生拥有白名单所能授予的**全部权限**，不需要（也不会）写入数据库白名单表中。
+  - **豁免保护**：复读、生图等操作的调用冷却仅豁免超级管理员；超级管理员享有永久保护，不可被 `/block`、`/mute` 或 `/batch_kick` 处置。
+  - **专属命令**：`/init`、`/batch_kick`、`/permission` 修改、`/white disable` 以及私聊 `/send` 仅允许超级管理员调用。
 - **`atmosphere`**（可选，枚举：`"mesugaki"` | `"normal"`）
-  - 通知与菜单的默认语气风格（雌小鬼 / 普通版）。
-  - 显式配置优先；未配置时，存在 `prompt/persona.md` 使用普通文案，否则使用雌小鬼文案。字符串先去掉首尾空白，非法值拒绝启动。
-- **`time_zone`**（可选，IANA 时区名，缺省 `"Asia/Tokyo"`）
-  - 默认日历时区，供运势、日志、广告累计、AI 时间、每日维护及未指定时区的 cron 共用。
-  - 去掉首尾空白后校验，并按 Temporal 规范化大小写（如 `asia/tokyo` 记为 `Asia/Tokyo`；`Japan` 等别名原样保留）；空字符串、非法类型或不支持的时区会拒绝启动。
-  - 建库时写入数据库 `storage_metadata` 的 `time-zone` 标记，数据根从此绑定该时区：启动与安装器都按它比对，修改 `time_zone` 会被拒绝启动（报错点名 `storage_metadata.time-zone`），已有数据根不支持更换时区。
+  - 系统通知与命令菜单的默认语气风格（`mesugaki` 雌小鬼版 / `normal` 普通版）。
+  - 若显式配置则以此为准；未配置时，若存在 `prompt/persona.md` 则默认使用普通版，否则使用雌小鬼版。
+- **`time_zone`**（可选，IANA 时区名，默认为 `Asia/Tokyo`）
+  - 机器人的基准日历时区，供运势抽签、日志归档、广告统计、AI 时间感知、每日维护以及未指定时区的 cron 任务共同使用（不会直接继承宿主机操作系统时区）。
+  - 配置时会自动去除首尾空白并规范化名称（例如 `asia/tokyo` 会标准化为 `Asia/Tokyo`）。
+  - **时区绑定**：数据库初始化时会将此时区写入 `storage_metadata` 表中。此后机器人启动或安装脚本均会核对此时区；若中途修改 `time_zone` 将导致启动报错退出。已有数据不支持直接更换时区。
 
 ---
 
 ## 项目侧配置文件
 
-`config/` 目录属于部署方私有数据，已在 `.gitignore` 中完全排除。文件布局必须严格遵守子目录分类：
+## 项目配置文件说明
+
+`config/` 目录用于存放本地部署私有配置，已被 `.gitignore` 排除。配置文件的目录结构必须严格按静态与动态划分：
 
 ```text
 config/
-├── static/                 # 静态配置（修改后须重启进程）
-│   ├── bot.json            # 机器人身份与超管配置
-│   └── g-auth.json         # Google Cloud 服务账号凭据（可选）
-└── dynamic/                # 动态配置（修改后约 0.5s 自动热重载）
+├── static/                 # 静态配置（修改后需要重启机器人进程生效）
+│   ├── bot.json            # 机器人核心身份与超级管理员配置
+│   └── g-auth.json         # Google Cloud 服务账号凭据（可选，翻译功能使用）
+└── dynamic/                # 动态配置（修改后支持自动防抖热重载）
     ├── agent.json          # AI 模型各项能力配置
-    ├── assets.json         # 缩略图、默认头像与图库路径
-    ├── stickers.json       # 贴纸包白名单
-    ├── mood.json           # 心情挡位与权重
-    ├── ad_samples.json     # 广告样本参考集
+    ├── assets.json         # 界面素材缩略图、默认头像与图库路径
+    ├── stickers.json       # AI 贴纸包白名单
+    ├── mood.json           # AI 心情挡位与权重配置
+    ├── ad_samples.json     # 广告识别参考样本
     └── cron.json           # 定时任务配置（可选）
 ```
 
 > [!IMPORTANT]
-> - 任何配置文件若出现在 `config/` 顶层或放错子目录，系统将在启动阶段直接 fail-closed 退出。
-> - 运行中修改 `config/dynamic/` 下的文件会自动触发防抖热重载。若改动出现语法或 schema 错误，该次改动整份拒绝并记日志，继续沿用上一份有效快照；下次重启时若仍未修复则拒绝启动。
+> - 配置文件必须严格放在对应的子目录下，禁止直接散落在 `config/` 根目录，否则启动校验将报错退出。
+> - 机器人运行期间修改 `config/dynamic/` 下的文件会自动触发防抖热重载。如果新配置存在语法或格式错误，该次修改将被整体拒绝并记录错误日志，系统继续沿用上一份有效配置；但如果在重启时配置仍未修复，启动检查将报错退出。
 
 ### 核心配置文件详解
 
-- **`prompt/persona.md`**（可选，项目根目录；[示例](../../prompt_example/persona.md)）
-  - **内容**：自定义 AI 闲聊人设。
-  - **行为**：缺省使用代码内置人设（[`persona.ts`](../../packages/consts/aiChat/prompts/persona.ts)）；存在时以文件正文替换人设；通知优先采用显式 `atmosphere`，风格未配置时使用普通文案。
-  - **校验**：纯文本格式；若存在但为空白或非合法 UTF-8 则拒绝启动。修改后须重启。
-  - **示例**：[`prompt_example/persona.md`](../../prompt_example/persona.md) 是一份温和可靠的「学姐」人设，按「你是谁 / 核心性格 / 特质仲裁顺序 / 说话方式 / 绝不编造事实 / 语言规范」分段。以 `mkdir -p prompt && cp -n prompt_example/persona.md prompt/` 复制（`-n` 不覆盖已有文件）后按需修改并重启。文件正文去掉首尾空白后原样作为人设交给模型，不要在其中写给部署方看的注释。
+- **`prompt/persona.md`**（可选，项目根目录；参考 [示例](../../prompt_example/persona.md)）
+  - **作用**：自定义 AI 闲聊的 System Prompt 人设。
+  - **行为**：默认使用代码内置的人设；如果该文件存在，则读取其全部文本作为人设提示词。
+  - **规范**：纯文本文件，编码必须为 UTF-8 且内容不能为空白。修改后需要重启生效。文件内容将原样提交给大模型，请勿在其中编写面向管理员的代码注释。
 
-- **`prompt/voice_tool.md`**（可选，项目根目录；[示例](../../prompt_example/voice_tool.md)）
-  - **内容**：自定义 AI `send_voice` 工具说明。
-  - **行为**：缺省时按 `agent.tts.bot_language` 使用内置的 `en` / `zh` / `ja` 说明（[`tools.ts`](../../packages/consts/aiChat/prompts/tools.ts) 的 `VOICE_LANGUAGE_PROMPTS`）；存在时以文件正文整份替换说明，不论 `bot_language` 取何值。`text` / `tone` 参数说明与 `send_message`、「行动与停止」段里的语音去重规则仍按 `bot_language` 选取。文件需自行写明内置说明里的执行约定：先看本轮工具状态里的 `send_voice` 余量行、每轮条数与 `text` / `tone` 长度上限、接纳与 error 回执的处理。
-  - **校验**：纯文本格式；若存在但为空白或非合法 UTF-8 则拒绝启动，未配置 `agent.tts` 时同样校验。修改后须重启。
-  - **示例**：[`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md) 与上面的人设示例配套，台词改为温柔的日常日语，并写全上述执行约定；示例里的每轮条数与 `text` / `tone` 长度上限对应代码当前的限制，修改时保持一致。示例按 `bot_language: "ja"`（[`agent.json` 示例](../../config_example/dynamic/agent.json) 的取值）编写；使用其它台词语言时，把首句与台词语言、台词与语气示例、去重说明一并改成对应语言。配套使用时可把 `agent.tts.style` 换成相应的声线描述。复制方式同上：`mkdir -p prompt && cp -n prompt_example/voice_tool.md prompt/`。
+- **`prompt/voice_tool.md`**（可选，项目根目录；参考 [示例](../../prompt_example/voice_tool.md)）
+  - **作用**：自定义 AI 调用语音合成工具（`send_voice`）时的提示词说明。
+  - **行为**：默认根据 `agent.json` 中配置的语音语言（`en` / `zh` / `ja`）自动加载内置说明；如果该文件存在，则整份替换为该文件的内容。修改后需要重启生效。
 
-- **`config/static/bot.json`**（[示例](../../config_example/static/bot.json)）
-  - 声明 `bot_token`、`super_admin_user_id` 与可选的 `atmosphere`、`time_zone`。启动前严格校验，未知键或非法类型均拒绝启动。
+- **`config/static/bot.json`**（参考 [示例](../../config_example/static/bot.json)）
+  - 核心身份配置文件，字段见上文「配置 Telegram 身份」。启动时进行严格校验，不允许出现未知字段或非法数据类型。
 
-- **`config/dynamic/stickers.json`**（[示例](../../config_example/dynamic/stickers.json)）
-  - 声明 AI 可选用的贴纸包名称数组，最多 5 个。
+- **`config/dynamic/stickers.json`**（参考 [示例](../../config_example/dynamic/stickers.json)）
+  - 配置 AI 闲聊时允许发送的贴纸包 short name 列表（`packs` 数组）。各项必须为合法的 Telegram 贴纸包短名称且不得重复。
 
-- **`config/dynamic/mood.json`**（[示例](../../config_example/dynamic/mood.json)）
-  - 声明 AI 心情挡位（名称、描述、权重、天气与时段倍率）。权重必须为正整数且总和严格等于 100。
+- **`config/dynamic/mood.json`**（参考 [示例](../../config_example/dynamic/mood.json)）
+  - 配置 AI 心情轮换挡位（`moods` 数组）。每项包含 `name`（心情名称）、`weight`（抽取权重）与 `instruction`（注入模型的行为指示），可选配置天气与时段权重加成。
 
-- **`config/dynamic/ad_samples.json`**（[示例](../../config_example/dynamic/ad_samples.json)）
-  - 声明广告检测模型的参考判定样本，纯字符串数组，非空且不重复，最多 500 条。
+- **`config/dynamic/ad_samples.json`**（参考 [示例](../../config_example/dynamic/ad_samples.json)）
+  - 提供给广告检测模型的少样本参考集，为纯文本字符串数组。
 
-- **`config/dynamic/agent.json`**（[示例](../../config_example/dynamic/agent.json)）
-  - 声明 AI 系统的 7 大能力。每项能力独立配置，能力之间绝不跨项回退：
-    1. **对话核心必备能力**（三项缺一则 AI 闲聊不可用）：
-       - `text`：文本生成模型。
-       - `summary`：记忆压缩摘要模型。
-       - `media`：视觉与语音转写模型。支持多模态首次请求探测与端点退避。
-    2. **扩展生成能力**（缺省时仅摘除对应工具）：
-       - `image`：生图能力。OpenAI 兼容协议必须显式声明 `image_protocol`（`openai` | `openai-standard` | `xai`）。
-       - `tts`：语音合成能力。必须指定 `voice` 音色；OpenAI 需声明 `speech_protocol`（`openai` | `xai`）。可选 `bot_language`（`en` | `zh` | `ja`，默认 `ja`）指定 AI 语音台词的语言（`send_voice` 的工具说明可由 `prompt/voice_tool.md` 整份覆盖）。`bot_language` 切换模型可见的提示词，并在 AI 回复的合成请求里给基础风格追加该语言的朗读语言要求（`/send` 与 cron 的合成不追加）；`style` 与 `prompt/voice_tool.md` 都不随它切换：`style` 同时用于 `/send` 与 cron，只写声线、不写朗读语言，更换 `bot_language` 时建议改用对应语言写的声线描述（缺省的 `TTS_DEFAULT_STYLE` 是日语描述），部署了 `voice_tool.md` 的也把其中的台词语言与示例改成对应语言。可选 `daily_limit`（默认 100）与 `daily_reserve_quota`（默认 25，分配给 `/send` 与 cron）。
+- **`config/dynamic/agent.json`**（参考 [示例](../../config_example/dynamic/agent.json)）
+  - 配置 AI 系统的各项模型能力，顶层为 `agent` 对象。每项能力独立配置，各自声明 provider、api_key、model 及端点，能力之间不设自动回退：
+    1. **AI 闲聊核心能力**（三项缺一则闲聊功能不可用）：
+       - `text`：文本对话生成模型。
+       - `summary`：群聊长上下文的滚动记忆压缩与摘要模型。
+       - `media`：图像理解与语音识别转写模型。首次请求会自动探测端点对模态的支持度。
+    2. **扩展生成工具**（未配置时自动卸载对应工具）：
+       - `image`：AI 画图生成能力。使用 OpenAI 兼容协议时需声明 `image_protocol`（`openai` | `openai-standard` | `xai`）。
+       - `tts`：语音合成能力。必须指定 `voice` 音色。可选配置 `bot_language`（台词语言）以及每日合成额度预算。
     3. **检索与风控能力**：
-       - `web_search`：本地联网检索工具能力。支持 `max_calls_per_use`（默认 5）限制单轮调用次数。未配置时回退使用 `text` 模型的服务端内建检索。
-       - `ad_detect`：进群消息广告识别能力。未配置时阻止广告检测。
-    4. **单项能力通用字段**：
-       - `provider`：`google` | `openai` | `anthropic`（`image` 与 `tts` 仅支持前两者）。
-       - `api_key`：访问密钥。
-       - `model`：模型标识字符串。
-       - `base_url`：可选自定义端点（仅限 `https`，明文 `http` 仅允许 localhost/127.0.0.1/::1）。
-       - `headers`：仅 `google` provider 允许配置附加 HTTP 请求头（1～8 个，用于 Cloudflare AI Gateway 等三方网关鉴权）。
+       - `web_search`：联网检索工具。未单独配置时，将回退使用 `text` 模型的服务商内建搜索能力。
+       - `ad_detect`：进群消息的广告自动识别模型。未配置时广告检测不可用。
+    4. **通用配置项**：
+       - `provider`：模型供应商，支持 `google`、`openai`、`anthropic`（生图与语音仅支持前两者）。
+       - `api_key`：访问密钥；占位字符串会被校验拦截。
+       - `model`：具体的模型名称。
+       - `base_url`：可选的自定义 API 端点（用于代理或内网网关）。
 
 ---
 
 ### 初始化身份数据库
 
-运行时不执行自动建表，首次部署必须手工或通过脚本初始化 SQLite 数据库：
+为保证数据一致性，机器人运行时不会自动建表。在首次部署时，必须通过以下脚本初始化本地 SQLite 数据库：
 
 ```bash
 mkdir -p database
@@ -238,13 +240,13 @@ chmod 660 database/storage.sqlite
 ```
 
 > [!IMPORTANT]
-> `initializeStorageDatabase` 必不可少：它在 `storage_metadata` 写入 schema 版本号与 `bot.json` 的 `time_zone`（数据根绑定的时区标记），因此须在配置 Telegram 身份之后执行。若跳过该步，启动 hydrate 会因找不到元数据而直接退出。
+> 这一步至关重要：它会在数据库的 `storage_metadata` 表中写入当前结构版本号与配置的基准时区。请务必在完成 `bot.json` 配置后再执行初始化；若跳过此步，启动时将因找不到数据库元数据而直接报错退出。
 
 ---
 
-### 换掉内联缩略图与机器人默认头像
+### 自定义素材与图库路径
 
-通过 `config/dynamic/assets.json`（支持热重载）自定义界面素材与图库目录：
+通过 `config/dynamic/assets.json`（支持动态热重载）可以自定义内联缩略图、机器人默认头像与专用图库目录：
 
 ```json
 {
@@ -262,51 +264,57 @@ chmod 660 database/storage.sqlite
 }
 ```
 
-- **`onlyPath`**：只收本机绝对路径或 `./` / `../` 相对路径（相对数据根解析）。`random_h_image_dir` 为 `/h_image` 专用图库。
-- **`pathOrUrl`**：本机路径或 HTTPS/HTTP 直链。`bot_default_avatar` 为复原默认头像所用图片。
-- **`onlyUrl`**：必须为可直出图片字节的 `https://` 绝对地址。分别为运势、概率论与 gag 发言入口的缩略图。
+各字段说明如下：
+- **`onlyPath`**：仅支持本地文件路径（绝对路径或以 `./`、`../` 开头的相对数据根路径）。`random_h_image_dir` 指定随机图库目录，供 `/h_image` 命令与定时发图任务读取。
+- **`pathOrUrl`**：支持本地路径或 HTTP(S) 图片直链。`bot_default_avatar` 为复原默认头像时所使用的图片。
+- **`onlyUrl`**：必须为有效的 `https://` 图片绝对地址。分别用于运势抽签、概率计算与口球发言入口的卡片缩略图。
 
 ---
 
-## Telegram 侧配置（BotFather 与群内）
+## Telegram 侧配置（BotFather 与群权限）
 
-前往 [@BotFather](https://t.me/BotFather) 完成以下配置：
+前往 Telegram 官方 [@BotFather](https://t.me/BotFather) 对机器人进行如下设置：
 
-1. **关闭 Privacy Mode**：执行 `/setprivacy` -> 选择你的 Bot -> 设为 **Disable**。
-   - *原因*：若不关闭，机器人无法收到群内普通消息，复读、AI 闲聊与自动风控均无法触发。
-2. **授予管理员权限**：将机器人拉入目标群，并授予群管理员权限（删除消息、封禁成员、管理群聊等）。
-3. **开启 Inline Mode**：执行 `/setinline` -> 设为 **Enable**。
-   - *原因*：运势抽签（`@机器人 所求事项`）与 gag 限制发言均依赖内联模式。
-4. **设置 Inline 反馈率**：执行 `/setinlinefeedback` -> 设为 **100%**。
-   - *原因*：`chosen_inline_result` 是抽签结果落地确认与落盘的核心链路。
-5. **（可选）开启 Bot-to-Bot 通信**：如需复读或翻译其他机器人的普通发言，在 BotFather 中开启该模式。收到的其他 Bot 消息会经过[主线程入口限流](04-invariants.md)。
+1. **关闭群隐私模式（Privacy Mode）**：
+   - 执行 `/setprivacy` -> 选择你的 Bot -> 设置为 **Disable**。
+   - *说明*：关闭后机器人才能接收到群内的普通文本消息；复读、AI 闲聊与群风控均依赖此项。
+2. **授予群管理员权限**：
+   - 将机器人拉入目标群组，并赋予群管理员身份（至少勾选“删除消息”与“限制成员/封禁”权限）。
+3. **开启内联模式（Inline Mode）**：
+   - 执行 `/setinline` -> 设置为 **Enable**。
+   - *说明*：运势抽签（`@机器人 所求事项`）与口球（`/gag`）限制发言依赖内联模式。
+4. **设置内联反馈率**：
+   - 执行 `/setinlinefeedback` -> 设置为 **100%**。
+   - *说明*：用于接收内联抽签结果的落盘回执。
+5. **（可选）开启 Bot 间通信**：
+   - 若需要在群里复读或翻译其他机器人的发言，在 BotFather 中开启 **Bot-to-Bot Communication Mode**。
 
 ---
 
-## 首次启动
+## 首次启动与群组激活
 
 ```bash
-# 1. 运行质量门禁确认环境完好
+# 1. 运行质量门禁确保环境完好无损
 bun run check
 
-# 2. 启动长轮询服务
+# 2. 启动服务（长轮询模式）
 bun run start
 ```
 
-服务启动后，**超级管理员**在目标群组中发送命令完成握手：
+服务启动后，**超级管理员**进入目标群组，发送以下命令激活相关功能：
 
 ```text
-/init enable      # 激活本群业务入口（必须先执行此项，否则其余消息均被静默丢弃）
+/init enable      # 激活本群业务总开关（必须首先执行此项，否则机器人对本群消息保持静默）
 /ai_chat enable   # （可选）开启本群 AI 闲聊
-/ad_detect enable # （可选）开启本群广告检测（需管理员权限）
-/antiraid enable  # （可选）开启本群入群验证与防冲群私密模式（需管理员权限）
+/ad_detect enable # （可选）开启本群广告自动检测（需管理员权限）
+/antiraid enable  # （可选）开启本群入群验证与防冲群保护（需管理员权限）
 ```
 
-### 验证跑通了
+### 验证运行状态
 
-- 在群里发送 `/copy`（回复某条消息）：机器人应成功复读并同步该用户头像。
-- 检查 `logs/` 目录：已正常生成运行日志文件。
-- 按 `Ctrl+C` 退出：观察控制台完成入口关闸、Worker 队列排空与状态落盘，确认优雅退出流程顺畅。
+- 在群里发送 `/copy`（回复某条群消息）：机器人应成功复读该消息并同步更换为对方头像。
+- 检查 `logs/` 目录：已正常生成当天的运行日志。
+- 按 `Ctrl+C` 退出：控制台应显示入口关闸、Worker 队列排空与状态完整落盘的优雅退出日志。
 
 ---
 

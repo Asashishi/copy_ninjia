@@ -50,11 +50,8 @@ installAntiRaidMirrorHooks({
 
 describe("Anti-Raid mirror persistence barriers", () => {
   test("倒计时刷新不再多花一轮整文件重写：持久化指纹刻意忽略 expiresAt", async () => {
-    // 私密模式生效期间，每条越过阈值的入群都会让 Worker 重发一次 lockdown 事件，
-    // 而事件里的 expiresAt 是当场 Date.now() + LOCKDOWN_MS 算出来的，每次都不一样。
-    // 把它算进指纹的话，对账循环永远等不到「存下去的还是当前这份」，每轮一次带
-    // fsync 的 state.json + .bak 整文件重写；入群比这两次写更快时循环不终止，
-    // 既写不下指纹也发不出 lockdownPersisted，紧急封锁的握手就此卡死。
+    // 私密模式生效期间，每条越过阈值的入群都让 Worker 重发一次 lockdown 事件，事件里的 expiresAt 每次不同；
+    // 持久化指纹忽略 expiresAt，对账循环据此判定「存下去的还是当前这份」。
     workerPosts.length = 0;
     saveState.mockClear();
 
@@ -82,9 +79,8 @@ describe("Anti-Raid mirror persistence barriers", () => {
   });
 
   test("落盘自检过不了的 lockdown intent 绝不进内存，Worker 立刻 fail-safe 打开", async () => {
-    // Telegram 给 getChat().permissions 新增一个字段就是这个形态：严格解码器
-    // 不认识它。记录必须先通过落盘自检才能进入内存 ChatState，否则该群后续
-    // 任意状态写入都会持续失败。
+    // Telegram 给 getChat().permissions 新增一个字段就是这个形态：严格解码器不认识它。
+    // 记录必须先通过落盘自检才能进入内存 ChatState。
     workerPosts.length = 0;
     saveState.mockClear();
     chatStates.delete(-2005);
@@ -133,7 +129,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
     expect(workerPosts.filter((message) => message.type === "lockdownPersistFailed")).toEqual([
       { type: "lockdownPersistFailed", chatId: -2006, phase: "active", intentId: 92 },
     ]);
-    // 没落定的 intent 绝不能发出「已落盘」回执。
+    // 没落定的 intent 不发出「已落盘」回执。
     expect(workerPosts.some((message) =>
       message.type === "lockdownPersisted" && message.chatId === -2006
     )).toBeFalse();
@@ -146,8 +142,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
     workerPosts.length = 0;
     saveState.mockClear();
     saveStateInBackground.mockClear();
-    // 写盘在途时新一轮把记录换掉了：这条失败属于上一份意图，不能拿它去清掉
-    // 现在这份——那会把一条仍然有效、且可能还锁着群的记录一起丢掉。
+    // 写盘在途时新一轮把记录换掉了：这条失败属于上一份意图，不清掉现在这份。
     saveState.mockImplementationOnce(async (): Promise<void> => {
       const state = chatStates.get(-2007);
       if (state?.lockdown !== undefined) state.lockdown.intentId = 93;
@@ -408,7 +403,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
     await Bun.sleep(0);
-    // 只刷变化过的验证镜像领域：chatState 屏障会提交整个共享 SQLite 事务。
+    // 只刷变化过的验证镜像领域，不提交 chatState 屏障（它会提交整个共享 SQLite 事务）。
     expect(flushDiskIODomain.mock.calls.map((call: unknown[]): unknown => call[0]))
       .toEqual(["verification"]);
     expect(settled).toBe(false);
@@ -559,9 +554,8 @@ describe("Anti-Raid mirror persistence barriers", () => {
       workerPosts.length = 0;
       let settled: boolean = false;
       const started: boolean | Promise<unknown> = start();
-      // 这几条入口必须把 durable barrier 纳入返回值。ingress 的常态是同步返回
-      // false（不分配 Promise），正因为如此，「服务消息这一路仍然返回 Promise」
-      // 才需要显式钉住：同步返回就等于 update 不再等 barrier 落地。
+      // 这几条入口把 durable barrier 纳入返回值：ingress 的常态是同步返回 false（不分配 Promise），
+      // 服务消息这一路返回 Promise，update 等 barrier 落地。
       expect(started).toBeInstanceOf(Promise);
       const handled = (started as Promise<unknown>).finally(() => { settled = true; });
       await Bun.sleep(0);
@@ -670,8 +664,8 @@ describe("Anti-Raid mirror persistence barriers", () => {
 
   test("论坛话题消息不是评论区候选：不投递、不加投 barrier", async () => {
     workerPosts.length = 0;
-    // 开了 topics 的超级群里每条普通消息都带 message_thread_id；只有关联频道
-    // 讨论组的评论线程才算候选，论坛话题必须走普通非待验证语义。
+    // 开了 topics 的超级群里每条普通消息都带 message_thread_id；只有关联频道讨论组的评论线程是候选，
+    // 论坛话题走普通非待验证语义。
     await antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
       from: { id: 91 },

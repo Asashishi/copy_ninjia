@@ -1,4 +1,5 @@
 import {
+  createRetryLane,
   telegramOutboundAbortController,
   telegramOutboundAccepting,
   telegramOutboundGateState,
@@ -6,17 +7,10 @@ import {
 import type { TelegramRetryCategory, TelegramRetryLane } from "../../packages/types/telegramOutbound";
 import { resetSendScheduler } from "../../packages/infra/telegram/sendScheduler";
 
+/** 原地复位成 createRetryLane 的初始字段（对象身份不变），先清掉在途的退避定时器。 */
 function resetLane(lane: TelegramRetryLane): void {
-  lane.head = null;
-  lane.tail = null;
-  lane.activeCount = 0;
-  lane.pendingCount = 0;
-  lane.retryAt = 0;
   if (lane.retryTimer !== null) clearTimeout(lane.retryTimer);
-  lane.retryTimer = null;
-  lane.recoveryLimit = 1;
-  lane.recoveryActive = 0;
-  lane.recovering = false;
+  Object.assign(lane, createRetryLane());
 }
 
 /**

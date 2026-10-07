@@ -11,8 +11,8 @@ export type AvatarOperationAttemptResult = "ok" | "transient-failure" | "permane
 
 /**
  * 头像操作异常的重试分类，复制目标头像与复原默认头像共用：Telegram 的 400 是对这次
- * 请求本身的判定（PHOTO_CROP_SIZE_SMALL、目标不可见之类），换几次都一样；其余
- * （429/5xx/网络抖动）才值得再试。取消由调用方在记录日志前先行判定。
+ * 请求本身的判定（PHOTO_CROP_SIZE_SMALL、目标不可见之类），归为 permanent-failure；其余
+ * （429/5xx/网络抖动）归为 transient-failure。取消由调用方在记录日志前先行判定。
  */
 export function avatarFailureFor(error: unknown): "transient-failure" | "permanent-failure" {
   return error instanceof GrammyError && error.error_code === 400 ? "permanent-failure" : "transient-failure";
@@ -48,7 +48,7 @@ export async function runAvatarFetchAttempts(
  * 把一段图片字节换成机器人头像。三条头像路径（复制目标头像、t.me 页面兜底、
  * 复原默认头像）唯一的上传出口。
  *
- * 只负责这一次 Bot API 调用：**不 catch**，异常原样上抛由调用点归类——复制与复原按
+ * 只负责这一次 Bot API 调用：不 catch，异常原样上抛由调用点归类——复制与复原按
  * avatarFailureFor 分成可重试与确定性失败，t.me 页面兜底失败即放弃。
  * 文件名固定为 BOT_PROFILE_PHOTO_FILE_NAME，取消信号照常下传。
  */

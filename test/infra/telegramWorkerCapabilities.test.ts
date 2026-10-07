@@ -8,6 +8,7 @@ import { telegramRetryCategoryFor } from "../../packages/infra/telegram/outbound
 import { telegramOutboundGate } from "../../packages/infra/telegram/outboundGate";
 import { drainTelegramOutbound, initTelegramOutbound, telegramOutboundStats } from "../../packages/infra/telegram/outboundLifecycle";
 import { isSelfSent } from "../../packages/infra/selfSentTracker";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../packages/consts/commands";
 
 const calls: { readonly method: string; readonly payload: any; readonly signal: AbortSignal | undefined }[] = [];
 let owner: "ai" | "antiRaid" = "ai";
@@ -132,6 +133,44 @@ test("上传与 CDN 下载均经主线程出站闸；跨 owner 调用和取消�
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("能力白名单之内仍按操作核对 429 类别与临时消息参数，不符时拒绝且不出站", async (): Promise<void> => {
+  const signal: AbortSignal = new AbortController().signal;
+  const rejected: [TelegramWorkerRequest, string][] = [
+    [
+      { operation: "call", category: "query", call: { method: "sendMessage", payload: { chat_id: -1001, text: "x" } } } as TelegramWorkerRequest,
+      "category does not match its Bot API method",
+    ],
+    [
+      { operation: "sendPhoto", category: "download", chatId: -1001, bytes: new Uint8Array([1]), fileName: "a.png", other: {} } as unknown as TelegramWorkerRequest,
+      "sendPhoto must use the message category",
+    ],
+    [
+      { operation: "sendVoice", category: "download", chatId: -1001, bytes: new Uint8Array([1]), fileName: "a.ogg", other: {} } as unknown as TelegramWorkerRequest,
+      "sendVoice must use the message category",
+    ],
+    [
+      { operation: "downloadFile", category: "message", fileId: "file", purpose: "vision" } as unknown as TelegramWorkerRequest,
+      "downloadFile must use the download category",
+    ],
+    [
+      { operation: "sendTemporaryMessage", category: "download", purpose: "notice", chatId: -1001, text: "x", deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS } as unknown as TelegramWorkerRequest,
+      "temporary messages must use the message category",
+    ],
+    [
+      { operation: "sendTemporaryMessage", category: "message", purpose: "notice", chatId: -1001, text: "x", deleteAfterMs: 0 } as unknown as TelegramWorkerRequest,
+      "deletion delay must be a positive safe integer",
+    ],
+    [
+      { operation: "sendTemporaryMessage", category: "message", purpose: "notice", chatId: -1001, text: "x", deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS + 1 } as unknown as TelegramWorkerRequest,
+      "must use the standard deletion delay",
+    ],
+  ];
+  for (const [request, message] of rejected) {
+    await expect(handleAiWorkerTelegramRequest(request, signal)).rejects.toThrow(message);
+  }
+  expect(calls).toEqual([]);
 });
 
 test("Worker 代理没有主线程专属方法，共享门面在本地拒绝这些方法", (): void => {

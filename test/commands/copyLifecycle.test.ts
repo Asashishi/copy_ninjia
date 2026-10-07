@@ -81,8 +81,7 @@ function context(chatId: number = -1001, replyToUserId?: number, argument: strin
     from: { id: 8, first_name: "Caller" },
     me: { id: 999 },
     msgId: 9,
-    // 活动 copy 拒绝分支用 peekCommandTarget 只读地看一眼目标（回复优先），
-    // 因此这里必须是一条真实形状的消息。
+    // 活动 copy 拒绝分支用 peekCommandTarget 只读地看一眼目标（回复优先），这里是一条真实形状的消息。
     msg: {
       message_id: 9,
       date: 1,
@@ -260,7 +259,7 @@ describe("copy 类命令生命周期", () => {
   test("/copy stop 对空状态只提示，对活动状态清空全部复制字段", async () => {
     await handleCopyCommand(context(-1001, undefined, "stop"));
     expect(saveStateInBackground).not.toHaveBeenCalled();
-    // 什么都没在复读时不该动脸：没偷过就没什么可复原的。
+    // 什么都没在复读时不动头像：没偷过就没什么可复原的。
     expect(restoreAvatarInBackground).not.toHaveBeenCalled();
 
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
@@ -273,7 +272,7 @@ describe("copy 类命令生命周期", () => {
   });
 
   test("/copy stop 停掉复读后顺带把头像复原", async () => {
-    // /copy 会偷目标头像，只停复读不复原会留下「已经不复读了、却还顶着别人脸」。
+    // /copy 会偷目标头像，停复读时一并复原头像。
     globalCopy.copiedUser = { id: 7, first_name: "Alice" };
     globalCopy.copyChatId = -1001;
     await handleCopyCommand(context(-1001, undefined, "stop"));

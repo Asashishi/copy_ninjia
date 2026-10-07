@@ -31,8 +31,8 @@ export function clearJoinWindow(chatId: number): void {
 }
 
 /**
- * 每群只保留一个静默清理 timer。持续入群只更新 expiresAt；旧 timer 到点后若
- * 仍未静默，再按剩余时间续排，避免每条入群创建并立即丢弃 timer 与闭包。
+ * 每群只保留一个静默清理 timer：持续入群只更新 expiresAt，旧 timer 到点后若
+ * 仍未静默，再按剩余时间续排。
  */
 function scheduleJoinWindowCleanup(
   chatId: number,
@@ -52,7 +52,7 @@ function scheduleJoinWindowCleanup(
   window.resetTimeout.unref();
 }
 
-/** 冷却是否仍然生效；到期条目就地删除，避免长期占位。 */
+/** 冷却是否仍然生效；到期条目就地删除。 */
 function joinWindowCoolingDown(chatId: number, now: number): boolean {
   const until: number | undefined = lockdownRetriggerCooldowns.get(chatId);
   if (until === undefined) return false;
@@ -62,8 +62,7 @@ function joinWindowCoolingDown(chatId: number, now: number): boolean {
 }
 
 /**
- * 开始某群的重触发冷却。冷却比计数窗口长，期间记录在允许重触发前必然过期，
- * 因此立即释放窗口；写入时顺带清理其余过期冷却项。
+ * 开始某群的重触发冷却：立即释放该群的计数窗口；写入时顺带清理其余过期冷却项。
  */
 function suppressJoinWindowRetrigger(chatId: number, durationMs: number): void {
   const now: number = Date.now();

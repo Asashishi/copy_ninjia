@@ -7,6 +7,7 @@ import { teardownRegisteredChat } from "../../../packages/infra/chatTeardownRegi
 import { AI_CHAT_INVALIDATE_TIMEOUT_MS, AI_MEMORY_FLUSH_TIMEOUT_MS } from "../../../packages/consts/lifecycle";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../../packages/consts/storage";
 import { MOOD_REQUEST_TIMEOUT_MS } from "../../../packages/consts/aiChat/mood";
+import { AI_WORKER_JOB_UNAVAILABLE } from "../../../packages/consts/aiChat/workerJob";
 import { logger } from "../../../packages/infra/logger";
 import { aiRecordMessageFixture } from "../../helpers/aiMemoryFixtures";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../../packages/config/agent";
@@ -18,6 +19,7 @@ import type { Atmosphere } from "../../../packages/types/atmosphere";
 import { adoptStickerConfig, getStickerConfig } from "../../../packages/config/stickers";
 import { SUPER_ADMIN_USER_ID } from "../../../packages/config/bot";
 import type { AiChatWorkerEvent, AiChatWorkerMessage, AiInitMessage } from "../../../packages/types/aiChat/protocol";
+import type { WebDigestRequest } from "../../../packages/types/webDigest";
 import type {
   AiMemoryDeletedPersistedReply,
   AiMemoryPersistedReply,
@@ -35,6 +37,8 @@ const initWorker = mock((): void => {});
 const teardownFatal = mock((_error: Error): void => {});
 mock.module("../../../packages/infra/diskIO/fatal", () => ({ signalDiskIOFatal: teardownFatal }));
 let workerPostAccepted: boolean = true;
+/** 设置后 Worker 投递同步抛出这个错误。 */
+let workerPostError: Error | undefined;
 let diskPostAccepted: boolean = true;
 let supervisorOptions: {
   onEvent: (event: AiChatWorkerEvent) => void;
@@ -54,6 +58,7 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
     return {
       init: initWorker,
       post: (message: AiChatWorkerMessage): boolean => {
+        if (workerPostError !== undefined) throw workerPostError;
         workerPosts.push(message);
         return workerPostAccepted;
       },
@@ -75,9 +80,7 @@ mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
       diskMemoryPersisted = callback;
     },
   }),
-  // 按 owner 名捕获，不用「最后注册的那个」：同一个 isolate 里还有别的领域
-  // （群状态、群问答、身份策略）也会登记重放回调，谁最后被 import 就会顶掉
-  // 前一个，测试于是悄悄换成在验别人的重放。
+  // 按 owner 名捕获，只保存 owner 为 "AI memory" 的重放回调，同一 isolate 里其它领域登记的回调不覆盖它。
   onDiskIORespawn: (owner: string, _priority: number, listener: DiskIORespawnListener): void => {
     if (owner === "AI memory") diskRespawn = listener;
   },
@@ -104,6 +107,7 @@ const {
   latestStickerCatalogs,
   moodRequests,
   voiceSynthesisRequests,
+  webDigestRequests,
   purgedAiMemoryChats,
   aiChatWorkerState,
   aiMemoryDeleteWaiters,
@@ -135,7 +139,7 @@ beforeEach(() => {
     for (const waiter of waiters) clearTimeout(waiter.timer);
   }
   aiMemoryDeleteWaiters.clear();
-  for (const table of [aiChatInvalidateRequests, moodRequests, voiceSynthesisRequests]) {
+  for (const table of [aiChatInvalidateRequests, moodRequests, voiceSynthesisRequests, webDigestRequests]) {
     for (const waiter of table.waiters.values()) clearTimeout(waiter.timer);
     table.waiters.clear();
     table.counter.current = 0;
@@ -149,6 +153,7 @@ beforeEach(() => {
   aiEnabledChats.clear();
   knownChats.clear();
   workerPostAccepted = true;
+  workerPostError = undefined;
   diskPostAccepted = true;
 });
 afterEach((): void => { jest.useRealTimers(); });
@@ -412,8 +417,7 @@ describe("AI main-thread persistence mirror", () => {
     });
 
     expect(latestAiMemories.has(-1001)).toBeFalse();
-    // 展示用的占用量镜像与快照镜像同生共死：清除之后 `/bot_status` 必须按
-    // 「无条目 = 0」显示，绝不能留着 purge 前的旧计数。
+    // 展示用的占用量镜像与快照镜像同时清除；`/bot_status` 按「无条目 = 0」显示。
     expect(aiMemoryUsages.has(-1001)).toBeFalse();
     expect(purgedAiMemoryChats.has(-1001)).toBeTrue();
     expect(diskPosts.slice(-2)).toEqual([
@@ -438,7 +442,7 @@ describe("AI main-thread persistence mirror", () => {
 
   test("启动恢复不会 hydrate 已关闭群，并为磁盘残留安排 durable 删除", () => {
     aiEnabledChats.add(-1002);
-    // -1001 在 state.json 里，只是开关不是 true —— 这才是管理员关掉了它。
+    // -1001 在 state.json 里但开关不是 true，即管理员关闭的群。
     knownChats.add(-1001);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
@@ -480,9 +484,7 @@ describe("AI main-thread persistence mirror", () => {
     workerPosts.length = 0;
     diskPosts.length = 0;
 
-    // 每次都现造一份载荷，与生产一致：recordChatMessage 会就地置位
-    // persistImmediately，复用同一个对象投第二次会把上一次的标志带过去
-    // （所有权约定见 aiChat/messageIngress.ts）。
+    // 每次现造一份载荷：recordChatMessage 会就地置位 persistImmediately（所有权约定见 aiChat/messageIngress.ts）。
     const memory = (messageId: number, text: string) => aiRecordMessageFixture({
       chatId: -1001,
       senderId: 7,
@@ -622,6 +624,27 @@ describe("AI main-thread persistence mirror", () => {
     expect(moodRequests.waiters.size).toBe(0);
   });
 
+  test("心情请求与运行态失效的投递同步抛错时先记诊断，再按 Worker 不可用结算", async () => {
+    const errorLog = spyOn(logger, "error").mockImplementation((): void => {});
+    try {
+      aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+      const thrown: Error = new Error("structured clone failed");
+      workerPostError = thrown;
+
+      await expect(aiChat.requestAiMood("queryMood")).rejects.toThrow("AI Worker is unavailable.");
+      expect(errorLog).toHaveBeenCalledWith("Failed to post the AI queryMood request:", thrown);
+      expect(moodRequests.waiters.size).toBe(0);
+
+      const invalidated = aiChat.invalidateAiChat(-1001).catch((error: unknown): unknown => error);
+      diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
+      expect(((await invalidated) as Error).message).toBe("AI Worker is unavailable while invalidating chat runtime.");
+      expect(errorLog).toHaveBeenCalledWith("Failed to post the AI chat invalidation request for chat -1001:", thrown);
+      expect(aiChatInvalidateRequests.waiters.size).toBe(0);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
   test("Worker 拒收失效请求时 invalidateAiChat 记错误并 reject，durable 删除照常结算", async () => {
     const errorLog = spyOn(logger, "error").mockImplementation((): void => {});
     try {
@@ -643,7 +666,7 @@ describe("AI main-thread persistence mirror", () => {
 
   test("语音合成回执按 requestId 结算；Worker 未启动、崩溃重建与投递失败都按不可用结算", async () => {
     await expect(aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined }))
-      .resolves.toEqual({ ok: false, reason: "worker unavailable" });
+      .resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
     expect(workerPosts.some((message: AiChatWorkerMessage): boolean => message.type === "synthesizeVoice")).toBeFalse();
 
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
@@ -664,13 +687,40 @@ describe("AI main-thread persistence mirror", () => {
 
     const crashed = aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined });
     supervisorOptions!.onRespawn(() => true);
-    await expect(crashed).resolves.toEqual({ ok: false, reason: "worker unavailable" });
+    await expect(crashed).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
     expect(voiceSynthesisRequests.waiters.size).toBe(0);
 
     workerPostAccepted = false;
     await expect(aiChat.synthesizeVoice({ text: "hi", tone: undefined, signal: undefined }))
-      .resolves.toEqual({ ok: false, reason: "worker unavailable" });
+      .resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
     expect(voiceSynthesisRequests.waiters.size).toBe(0);
+  });
+
+  test("摘要组稿回执按 requestId 结算；Worker 未启动、崩溃重建与投递失败都按不可用结算", async () => {
+    const request: WebDigestRequest = { topic: "今日新闻", language: "zh", maxItems: 3, instructions: undefined };
+    const signal: AbortSignal = new AbortController().signal;
+    await expect(aiChat.composeWebDigest(request, signal)).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
+    expect(workerPosts.some((message: AiChatWorkerMessage): boolean => message.type === "composeWebDigest")).toBeFalse();
+
+    aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
+    const composed = aiChat.composeWebDigest(request, signal);
+    const posted = workerPosts.at(-1);
+    if (posted?.type !== "composeWebDigest") throw new Error("Expected a composeWebDigest request");
+    expect(posted).toEqual({ type: "composeWebDigest", requestId: posted.requestId, request });
+    supervisorOptions!.onEvent({ type: "webDigestComposed", requestId: posted.requestId, result: { ok: true, text: "摘要正文" } });
+    await expect(composed).resolves.toEqual({ ok: true, text: "摘要正文" });
+    expect(webDigestRequests.waiters.size).toBe(0);
+    // 迟到或重复的回执直接丢弃。
+    supervisorOptions!.onEvent({ type: "webDigestComposed", requestId: posted.requestId, result: { ok: false, reason: "compose failed" } });
+
+    const crashed = aiChat.composeWebDigest(request, signal);
+    supervisorOptions!.onRespawn(() => true);
+    await expect(crashed).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
+    expect(webDigestRequests.waiters.size).toBe(0);
+
+    workerPostAccepted = false;
+    await expect(aiChat.composeWebDigest(request, signal)).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
+    expect(webDigestRequests.waiters.size).toBe(0);
   });
 
   test("语音合成每日计数：init 后灌回持久化值，回执写入镜像，崩溃重建重放最新值", () => {
@@ -714,8 +764,7 @@ describe("AI main-thread persistence mirror", () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
 
     const deleted = aiChat.invalidateAiChat(-1001);
-    // 墓碑还没拿到 durable 回执：这时清掉计数器，重置后的 revision 1 会与在途
-    // 的那一号撞车，一条过期回执就能把新记忆判成已删。
+    // 墓碑尚无 durable 回执时，计数器保留。
     forgetAiMemoryRevisionCounter(-1001);
     expect(aiMemoryRevisionCounters.get(-1001)).toBe(1);
 
@@ -730,27 +779,23 @@ describe("AI main-thread persistence mirror", () => {
     });
     await deleted;
 
-    // 全部结算之后才允许摘掉——这是 AI 记忆那套状态里唯一没有容量上界的表。
+    // 全部结算之后才摘掉计数器。
     forgetAiMemoryRevisionCounter(-1001);
     expect(aiMemoryRevisionCounters.has(-1001)).toBeFalse();
-    // 落盘侧的水位线必须同一时刻一起丢：只归零主线程计数器的话，重新启用后的
-    // revision 1 会被 Worker 判成迟到消息静默丢弃，直到爬过删除时的旧水位。
+    // 落盘侧的水位线与主线程计数器同时丢弃：forgetAiMemory 投给 Disk I/O。
     expect(diskPosts.filter((message: DiskBusinessMessage): boolean => message.type === "forgetAiMemory"))
       .toEqual([{ type: "forgetAiMemory", chatId: -1001 }]);
   });
 
   test("回归：Disk I/O 放弃自愈时删除 waiter 立刻失败，不干等满超时", async () => {
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
-    // 放弃之后没有替补 Worker：onDiskIORespawn 不会跑，deleteAiMemory 不会重放，
-    // durable 回执永远不会来。干等那两秒恰好和同一个 fatal 信号触发的停机抢排空
-    // 预算，失败原因也会被表述成超时而不是「Worker 已经放弃」。
+    // 放弃之后没有替补 Worker：onDiskIORespawn 不会跑，deleteAiMemory 不重放，durable 回执不会到达；删除 waiter 在放弃时直接失败。
     const deleted = aiChat.invalidateAiChat(-1001);
     expect(aiMemoryDeleteWaiters.size).toBe(1);
 
     diskGaveUp!();
 
-    // allSettled 不能在 durable 一侧先失败时提前返回：Worker 侧仍要拿到回执并清
-    // 自己的 waiter，随后才向调用方保留原来的单一失败原因。
+    // durable 一侧先失败时，Worker 侧仍会收到回执并清除自己的 waiter，之后调用方得到原来的单一失败原因。
     expect(aiChatInvalidateRequests.waiters.size).toBe(1);
     const invalidateRequest: AiChatWorkerMessage | undefined =
       workerPosts.find((message: AiChatWorkerMessage): boolean => message.type === "invalidateChat");
@@ -772,7 +817,7 @@ describe("AI main-thread persistence mirror", () => {
     try {
       const first: Promise<unknown> = aiChat.invalidateAiChat(-1001).catch((error: unknown): unknown => error);
       const firstRevision: number = pendingAiMemoryDeletes.get(-1001)!;
-      // 镜像里又有了快照，下一次删除必须换新 revision。
+      // 镜像里重新有了快照，下一次删除使用新 revision。
       latestAiMemories.set(-1001, "new-memory");
       diskPostAccepted = false;
 
@@ -823,7 +868,7 @@ describe("AI main-thread persistence mirror", () => {
     expect(aiChatWorkerState.available).toBeFalse();
     expect(purgedAiMemoryChats.size).toBe(0);
     expect(pendingAiMemoryDeletes.get(-1001)).toBe(1);
-    // Worker 侧先失败也必须等 durable 删除结算，不能把仍在途的墓碑留给调用方。
+    // Worker 侧先失败时仍等 durable 删除结算，在途墓碑不留给调用方。
     diskDeletePersisted!({ type: "aiMemoryDeletedPersisted", chatId: -1001, revision: 1 });
     await expect(firstDelete).rejects.toThrow(
       "AI Worker gave up before completing chat invalidation."
@@ -840,13 +885,10 @@ describe("AI main-thread persistence mirror", () => {
     aiEnabledChats.add(-1001);
     aiChat.initAiChat({ id: 99, username: "ninja_bot", first_name: "Ninja" });
     aiChat.hydrateAiMemory(new Map([[-1001, "restored-memory"]]));
-    // 恢复出来的群在下一条新消息之前不 dirty，没有 memory 事件可搭；占用量只能
-    // 由 hydrate 完成后的这条事件播种（见 workers/aiChat/rollingMemory.ts 的
-    // hydrateMemories）。
+    // 恢复出来的群在下一条新消息之前不 dirty，没有 memory 事件；占用量由 hydrate 完成后的这条事件播种（见 workers/aiChat/rollingMemory.ts 的 hydrateMemories）。
     expect(aiMemoryUsages.has(-1001)).toBeFalse();
 
-    // -1002 正在等待 purge 确认：它那份记忆已经判了死刑，重建出来的旧计数不得
-    // 把镜像重新点亮。
+    // -1002 正在等待 purge 确认，重建出来的旧计数不点亮镜像。
     purgedAiMemoryChats.add(-1002);
     supervisorOptions!.onEvent({
       type: "memoryUsages",
@@ -866,11 +908,7 @@ describe("AI main-thread persistence mirror", () => {
 
     supervisorOptions!.onGiveUp();
 
-    // 身份注入记录必须跟着一起清掉：flushAiMemory 用它判断「这条线根本没起来」。
-    // 留着的话停机 flush 会越过短路、进 barrier 后因 post 失败结算成 "failed"，
-    // 于是 flushAllToDisk 返回 false、wait() 拒绝确认最终 offset，Telegram 重投
-    // 上次确认点之后的全部更新，重复执行复读/命令回执这些非幂等副作用。而本功能
-    // 既定的降级只是「AI 闲聊静默停用到下次重启」。
+    // 身份注入记录一并清掉：flushAiMemory 据此判定 Worker 线未启动，直接结算为 flushed。
     expect(lastInitState.current).toBeNull();
     workerPosts.length = 0;
     await expect(aiChat.flushAiMemory(1_000)).resolves.toBe("flushed");

@@ -4,7 +4,7 @@
  * 全部经仓库唯一的当前 schema 夹具入口写出：SQLite 走 `seedStorageDatabase`，
  * `memory/` 下的文件走真实 Disk I/O Worker，不手写落盘格式。
  *
- * 本文件只在子进程里 import：它会拉起整张生产模块图。
+ * 本文件只在子进程里 import，加载生产模块图。
  */
 
 import { chmodSync, mkdirSync } from "node:fs";
@@ -81,13 +81,13 @@ export interface SeededFixtureCounts {
 /** 基准群 id 的起点；负安全整数即合法 Telegram 群/频道 id。 */
 const BENCHMARK_CHAT_ID_BASE: number = -1_002_000_000_000;
 
-/** 基准成员 id 的起点；与群 id 分开，避免主键在两张表之间意外重叠。 */
+/** 基准成员 id 的起点；取值区间与群 id 分开。 */
 const BENCHMARK_USER_ID_BASE: number = 700_000_000;
 
 /** 黑名单 fixture 的主键起点；待踢 outbox 只能冻结这段范围内的身份。 */
 const BENCHMARK_BLOCKLIST_ID_BASE: number = COLD_START_IDENTITY_ROWS + 1;
 
-/** fixture 时间戳起点，取 2026-01-01T00:00:00Z；固定值保证各轮输入完全一致。 */
+/** fixture 时间戳起点；固定值使各轮输入一致。 */
 const FIXTURE_EPOCH_MS: number = 1_767_225_600_000;
 
 /** 第 index 个基准群的 id。 */
@@ -111,7 +111,7 @@ function buildChatState(index: number): ChatState {
   return state;
 }
 
-/** 一份撑满生产恢复上限的 AI 记忆快照；正文长度随下标变化，避免整表同形。 */
+/** 一份撑满生产恢复上限的 AI 记忆快照；正文长度随下标变化。 */
 export function buildAiMemorySnapshot(chatIndex: number): string {
   const at: string = formatLocalTime(FIXTURE_EPOCH_MS);
   const buffer: BufferedMessage[] = new Array<BufferedMessage>(
@@ -221,9 +221,8 @@ function removalRows(): readonly StoredPendingRemovalRow[] {
 /**
  * 在当前进程的运行时数据根下建库并写入给定业务行。
  *
- * 目录与文件权限照 `packages/consts/identityStorage.ts` 的生产口径设置：数据根
- * 预检对 `database/` 有独立的权限判据，mock 根建宽了，冷启动那一段就绕过了
- * 生产真的会执行的检查。
+ * 目录与文件权限按 `packages/consts/identityStorage.ts` 的生产口径设置，满足数据根
+ * 预检对 `database/` 的权限判据。
  */
 function createDatabase(rows: SeedStorageDatabaseOptions): void {
   mkdirSync(DATABASE_DIR, {
@@ -244,7 +243,7 @@ function createDatabase(rows: SeedStorageDatabaseOptions): void {
   chmodSync(IDENTITY_DATABASE_PATH, IDENTITY_DATABASE_FILE_MODE);
 }
 
-/** 满库：冷启动分区要量的是「读到一份生产量级的部署数据」的成本。 */
+/** 满库：生产量级的部署数据，供冷启动分区使用。 */
 export function createBenchmarkDatabase(): void {
   createDatabase({
     metadata: storageMetadataRows(getTimeZone()),
@@ -256,7 +255,7 @@ export function createBenchmarkDatabase(): void {
   });
 }
 
-/** 空库，只带 storage_metadata（schema 版本与本进程配置时区）；链路分区从零开始写，不受 fixture 体量干扰。 */
+/** 空库，只带 storage_metadata（schema 版本与本进程配置时区）；供链路分区从零开始写。 */
 export function createEmptyBenchmarkDatabase(): void {
   createDatabase({
     metadata: storageMetadataRows(getTimeZone()),
@@ -280,10 +279,7 @@ export function readBenchmarkAiMemories(): ReadonlyMap<number, string> {
 }
 
 /**
- * 一条入群日志事件，直接给出生产 wire 形态。
- *
- * 返回 `JoinLogDiskMessage` 而不是它的字段子集：调用点因此可以原样 post，
- * 不必再展开一次同构对象，类型也由生产协议本身钉住。
+ * 一条入群日志事件，直接给出生产 wire 形态；返回 `JoinLogDiskMessage`，调用点原样 post。
  */
 export function joinLogEvent(index: number): JoinLogDiskMessage {
   const joinedAt: number = Date.now();

@@ -1,5 +1,7 @@
 /** owner: main。黑名单群级处置状态；身份热查询与未 ACK 写入由 cache/main/identityStorage.ts 持有。 */
 
+import { createKeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
+import type { KeyedSerialTaskRunner } from "../../libs/keyedSerialTaskRunner";
 import type {
   BlockedMemberRemover,
   BlocklistSweepPageState,
@@ -10,12 +12,11 @@ import type {
 /**
  * 白名单成员关系与动态黑名单新增共用的主线程串行链。
  *
- * `/white enable` 的「确认未拉黑 -> 原子写入并发布白名单」会跨越异步磁盘 I/O；
- * 同时广告判定可从 Worker 回投并同步 `blockUser`。两者若各自排队，同一身份会
- * 在白名单写盘期间被拉黑，留下启动门禁下一次必然拒绝的矛盾状态。
+ * `/white enable` 的「确认未拉黑 -> 原子写入并发布白名单」跨越异步磁盘 I/O，
+ * 与 Worker 回投的广告判定触发的同步 `blockUser` 经同一条链排队。
  *
- * 所有调用都必须经 packages/infra/identityPolicy/coordination.ts；失败会被尾链吸收，下一次
- * 操作仍可继续。队列只保存一个 Promise，不随身份数增长，进程重启后自然重建。
+ * 所有调用都必须经 packages/infra/identityPolicy/coordination.ts；失败被尾链吸收，下一次
+ * 操作照常继续。队列只保存一个 Promise，不随身份数增长，进程重启后从已决议的 Promise 重建。
  */
 export const protectedIdentityMutationQueue: { current: Promise<void> } = {
   current: Promise.resolve(),
@@ -26,11 +27,19 @@ export const protectedIdentityMutationQueue: { current: Promise<void> } = {
  *
  * owner 是主线程；广告命中的「拉黑、落盘、登记并投递封禁」、`/block enable` 的跨群封禁扇出
  * （提交给延迟命令执行器时即占位，commands/blocklistFanOut.ts）与 `/block disable` 的
- * 「删名单、落盘、跨群解封」必须按同一身份的到达顺序完整结算，否则较早广告
- * 任务可能在较晚 `/block disable` 之后补登记旧封禁。不同身份互不阻塞。每条尾链结算
- * 后立即删除，因此容量只等于当前仍在处理的身份数；进程重启后自然重建。
+ * 「删名单、落盘、跨群解封」按同一身份的到达顺序完整结算，不同身份互不阻塞。
+ * 每条尾链结算后立即删除，容量等于当前仍在处理的身份数；进程重启后从空表重建。
+ * 只经 blocklistIdentityMutationRunner 读写。
  */
 export const blocklistIdentityMutationQueues: Map<number, Promise<void>> = new Map();
+
+/**
+ * blocklistIdentityMutationQueues 上的逐身份串行执行器（libs/keyedSerialTaskRunner.ts）。
+ * 同一身份的处置可跨 await 持有串行位，异常交回调用方、不阻塞后续处置；与
+ * infra/identityPolicy/coordination.ts 的全局互斥临界区职责不同。
+ */
+export const blocklistIdentityMutationRunner: KeyedSerialTaskRunner<number> =
+  createKeyedSerialTaskRunner(blocklistIdentityMutationQueues);
 
 /**
  * 黑名单销号计数的主线程串行尾链（infra/blocklist/participantInvalid.ts）。
@@ -50,17 +59,17 @@ export const blocklistParticipantInvalidQueue: { current: Promise<void> } = {
  * 已投给入群守卫线程、但还没收到落地回执的处置批次（removalId → 入参 + 投递
  * 计数）。
  *
- * 生命周期：sweepBlockedMembers / claimBlockedJoiner 投递前写入。删除只在
- * 「这批不再需要执行」时发生，分成三类：
+ * 生命周期：sweepBlockedMembers / claimBlockedJoiner 投递前写入。删除只发生在
+ * 「这批不再需要执行」时，分三类：
  * 1. 收到 `complete: true` 回执；
  * 2. 权威状态取消：`/block disable` 摘掉用户，或 forgetChatBlocklistWork 停管群；
- * 3. 同群的补扫批次被新一轮补扫取代（名单只增不减，新快照是旧批次的超集）。
- * 投递拒绝、屏障超时、落盘失败与副作用失败都不删除：durable outbox 是独立
- * 于 Telegram update 重投的恢复边界（见 infra/blocklist/）。
+ * 3. 同群的补扫批次被新一轮补扫取代。
+ * 投递拒绝、屏障超时、落盘失败与副作用失败都不删除，恢复边界是 durable outbox
+ * （见 infra/blocklist/）。
  *
- * Worker 崩溃重建时整表重投——处置是纯副作用，重复 ban 幂等，漏掉却意味着
- * 那个人一直坐在群里。容量由 BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES 硬顶背压；
- * attempts 只用于持久化诊断，达到告警阈值也不能销毁安全任务。
+ * Worker 崩溃重建时整表重投；处置只含幂等的封禁副作用。容量由
+ * BLOCKLIST_REMOVAL_OUTBOX_MAX_ENTRIES 硬顶背压；attempts 只用于持久化诊断，
+ * 不触发销毁。
  */
 export const pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Map();
 
@@ -68,20 +77,17 @@ export const pendingBlockedRemovals: Map<number, PendingBlockedRemoval> = new Ma
 export const blocklistRemovalCounter: { current: number } = { current: 0 };
 
 /**
- * 各群的补扫进度。「是管理员 && 已 /init enable」成立时补扫一次，成功才记
- * sweptAt——把边沿消耗在投递那一刻、而不是落地那一刻，一次限流失败就等于
- * 那些人永久坐在群里（见 infra/blocklist/）。失败后的重试挂在管理员身份
- * 观测上，而那类更新每条入群都会来一次，因此必须有 nextRetryAt 这道闸。
+ * 各群的补扫进度。「是管理员 && 已 /init enable」成立时补扫一次，补扫成功才记
+ * sweptAt（见 infra/blocklist/）。失败后的重试挂在管理员身份观测上，由 nextRetryAt 限流。
  *
- * sweptAt 一旦写下就是个闩锁，只有两条路径能打开：停管后重新接管，或
- * infra/blocklist/ 的 requestBlocklistResweep 显式请求重扫。后者是 `/block`
- * 某个群封禁失败、秒踢批次没落定这类「这个群里还留着人」的信号——没有它，
- * 那个人就在那个群里待到进程结束。
+ * sweptAt 写下后是闩锁，只有两条路径能打开：停管后重新接管，或
+ * infra/blocklist/ 的 requestBlocklistResweep 显式请求重扫；后者对应 `/block`
+ * 某个群封禁失败、秒踢批次没落定这类「这个群里还留着人」的信号。
  *
  * 生命周期：投递时写入，回执时更新；群被 /init disable、机器人被撤管理员或
  * 移出群时由 infra/blocklist/ 的 forgetChatBlocklistWork 连同在途批次一起
- * 清掉，重新接管后照常再欠一次。
- * 容量按「本进程见过的管理员群」计，随停管即时释放。
+ * 清掉，重新接管后再补扫一次；进程重启后从空表重建。
+ * 容量按本进程见过的管理员群计，随停管即时释放。
  */
 export const blocklistSweepState: Map<number, BlocklistSweepRecord> = new Map();
 
@@ -109,7 +115,7 @@ export const blocklistSweepSchedulerState: BlocklistSweepSchedulerState = {
   runSweep: null,
 };
 
-/** 未注册时的显式 no-op：没有 owner 就没人能执行处置，因此投出去的条数恒为 0。 */
+/** 未注册 owner 时的 no-op，投出去的条数恒为 0。 */
 const noBlockedMemberRemover: BlockedMemberRemover = (): Promise<number> => Promise.resolve(0);
 
 /**

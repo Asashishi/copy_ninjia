@@ -19,7 +19,7 @@ export const RANDOM_IMAGE_EXTENSIONS: ReadonlyMap<string, RandomImageMimeType> =
 export const RANDOM_IMAGE_MAX_BYTES: number = TELEGRAM_PHOTO_UPLOAD_MAX_BYTES;
 
 /**
- * 收图（`/h_image add`）按字节嗅探出的格式到保存扩展名，属 infra/randomImage.ts；只收这三种，
+ * 收图（`/h_image add`）按字节嗅探出的格式到保存扩展名，属 infra/randomImage.ts；只收表内格式，
  * 保存后的文件恰好落在 RANDOM_IMAGE_EXTENSIONS 的候选规则之内。
  */
 export const RANDOM_IMAGE_SAVE_EXTENSIONS: ReadonlyMap<string, string> = new Map<string, string>([
@@ -39,11 +39,10 @@ export const RANDOM_IMAGE_TEMP_PREFIX: string = ".h_image-add-";
 
 /**
  * 收图写下的文件名（去掉扩展名之后）的形态，属 infra/randomImage.ts：文件内容的
- * SHA-256，64 个小写十六进制字符。
+ * SHA-256 小写十六进制。
  *
- * 名字即内容摘要，因此同一张图无论由谁、从哪个 `file_unique_id` 转发进来都落到同一个
- * 文件名上：重名就是重复，收图直接报「已有」，写盘也永远不会盖掉不同的内容。名字里
- * 不含任何用户可控片段，拼不出目录分隔符或上级路径。
+ * 名字即内容摘要：同一张图落到同一个文件名上，重名即重复，收图报「已有」，
+ * 写盘不会覆盖不同的内容；名字不含用户可控片段。
  *
  * 启动时仅校验名称形态；入库去重计算内容摘要。测试用它断言收图写下的文件名形态。
  */

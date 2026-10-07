@@ -23,7 +23,7 @@ const TEST_IDENTITY_META: Readonly<{
 const blockedIdentityTestIds: Set<number> = new Set<number>();
 
 /**
- * 只存在于测试 isolate 的旧 Map 观察适配器；生产代码不再持有无界黑名单 Map。
+ * 测试 isolate 内的黑名单 Map 观察适配器；生产代码不持有无界黑名单 Map。
  * set 同时补齐三张关系的正/负缓存，使被测写操作满足“先冷读、后变更”的前提。
  */
 export const blockedIdentityTestView: {
@@ -67,7 +67,7 @@ export const blockedIdentityTestView: {
   },
 };
 
-/** 模拟 SQLite 全表主键查询；不受主线程 8192 项 LRU 淘汰影响。 */
+/** 模拟 SQLite 全表主键查询；不受主线程 LRU 淘汰影响。 */
 export function readBlockedIdentityTestIds(): readonly number[] {
   return [...blockedIdentityTestIds];
 }

@@ -1,12 +1,11 @@
 import { assertDequeCapacities } from "./dequeCapacity";
 
 /**
- * 有界引用双端队列。使用可增长的环形数组，避免长期高频队列为每个元素额外
- * 创建链表节点；移出元素时立即清掉 backing slot，不能让已淘汰对象被数组继续
- * 引用。只承载进程内状态，不承担持久化格式或跨线程共享。
+ * 有界引用双端队列。使用可增长的环形数组；移出元素时立即清掉 backing slot，
+ * 已淘汰对象不再被数组引用。只承载进程内状态，不承担持久化格式或跨线程共享。
  *
- * 与 libs/timestampDeque.ts 的环形下标逻辑同构，但**刻意不合并成一个泛型**：
- * 共用校验见 libs/dequeCapacity.ts 的头注。
+ * 与 libs/timestampDeque.ts 的环形下标逻辑同构，两者各自存储，共用校验见
+ * libs/dequeCapacity.ts。
  */
 export class BoundedDeque<T> {
   private values: (T | undefined)[];
@@ -29,7 +28,7 @@ export class BoundedDeque<T> {
 
   /**
    * 从队首偏移 offset 的槽位。`head + offset` 恒小于 `2 * values.length`，
-   * 一次条件减即可折回环内；取模在这里是长期高频队列上的整数除法。
+   * 一次条件减即可折回环内。
    */
   private slotAt(offset: number): number {
     const length: number = this.values.length;
@@ -37,7 +36,7 @@ export class BoundedDeque<T> {
     return index >= length ? index - length : index;
   }
 
-  /** 追加一个引用；达到构造时的硬上限表示调用方违反了领域容量约束。 */
+  /** 追加一个引用；已达构造时的硬上限时抛 RangeError。 */
   push(value: T): void {
     if (this.count === this.values.length) {
       if (this.count === this.maxCapacity) {

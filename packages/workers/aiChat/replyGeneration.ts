@@ -78,8 +78,8 @@ export function trackReplyGenerationTask(
 
 /**
  * 停机时同步使全部回复 epoch 失效并取消可取消请求，再等待回复、提示、媒体描述
- * 与记忆压缩任务全部 settle。调用方已先关闭新任务入口；循环快照仍防御在途任务
- * 结算过程中登记的子任务。只有本函数完成后，flush 才能覆盖最后一份 dirty 记忆。
+ * 与记忆压缩任务全部 settle。调用方已先关闭新任务入口；循环每轮重新取任务快照，
+ * 覆盖在途任务结算过程中登记的子任务。本函数完成后 flush 才上报最后一份 dirty 记忆。
  */
 export async function quiesceAiChatReplies(): Promise<void> {
   for (const controller of replyAbortControllers.values()) {
@@ -101,12 +101,10 @@ export async function quiesceAiChatReplies(): Promise<void> {
 
 /**
  * 同步使旧 generation 失效并 abort，返回的 Promise 在该代相关异步任务 settle
- * 后完成——最多等 AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS，到点降级放行。调用栈内
+ * 后完成，最多等 AI_CHAT_INVALIDATE_DRAIN_TIMEOUT_MS，到点放行。调用栈内
  * 先删除旧 epoch，后续 trigger 会分配全新的唯一 epoch。
  *
- * 等待仍保留硬上限：媒体下载、摘要与供应商请求都传递本代 AbortSignal，但外部 SDK、
- * Worker 双工或代理端点仍可能没有及时结算。无上限地等会让主线程命令超时并重投；
- * 降级不影响正确性，因为任务同时按 generation 自检，失效后绝不再写状态（见
+ * 放行时未结算的任务按 generation 自检，失效后不再写状态（见
  * compaction.ts 的 rotateCompaction 与 mediaIngest.ts 的回填守卫）。
  */
 export function invalidateChatReplies(chatId: number): Promise<void> {

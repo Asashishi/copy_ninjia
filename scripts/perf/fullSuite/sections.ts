@@ -1,7 +1,7 @@
 /**
  * 各分区的父进程编排：建根、播种、按轮 spawn 子进程、聚合成分区。
  *
- * 本文件属于父进程，可复用基准编排模块；从 packages/ 只导入纯常量和类型，
+ * 本文件属于父进程；从 packages/ 只导入纯常量和类型，
  * 不引入生产实现模块。隔离边界见 fullSuite/mockRoot.ts 的模块头注。
  */
 
@@ -30,7 +30,7 @@ import type {
 
 export type { SectionContext, SectionDependencies } from "./sectionRunner";
 
-/** 生产热路径：真实业务函数，读数直接反映线上每条消息的成本。 */
+/** 生产热路径场景：调用真实业务函数。 */
 export const PRODUCTION_HOT_PATH_SCENARIOS: readonly ScenarioName[] = [
   "incoming-message-spine",
   "ai-media-direct-trigger",
@@ -77,7 +77,7 @@ export const CONTAINER_ALGORITHM_SCENARIOS: readonly ScenarioName[] = [
   "bounded-rolling-buffer",
 ];
 
-/** 十一条完整生产动作的固定出数顺序：七条落盘动作、三条用户可见流程与一条部署配置热重载。 */
+/** 完整生产动作的固定出数顺序：落盘动作、用户可见流程与部署配置热重载。 */
 export const CHAIN_NAMES: readonly ChainName[] = [
   "join-log-append",
   "identity-policy-write",
@@ -92,12 +92,7 @@ export const CHAIN_NAMES: readonly ChainName[] = [
   "cron-config-reload",
 ];
 
-/**
- * 入群日志容量线的两项操作，一律跑 `current` 变体。
- *
- * `baseline` 的整表复制与排序只在 `bun run perf:join-log` 中提供固定参照与
- * checksum 等价性校验，不进文档；这一页只报当前实现的成本。
- */
+/** 入群日志容量线的各项操作，一律跑 `current` 变体；`baseline` 变体只由 `bun run perf:join-log` 运行。 */
 const JOIN_LOG_OPERATIONS: readonly string[] = ["snapshot", "capacity"];
 
 /** 冷启动分区的产出：分区表与旁注。 */
@@ -306,7 +301,7 @@ const CHAIN_METRICS: readonly MetricDefinition<ChainRound>[] = [
   },
 ];
 
-/** 完整流程分区：七条 durable 动作、三条本地命令流程与 cron.json 中途变更的单次耗时及吞吐。 */
+/** 完整流程分区：durable 动作、本地命令流程与 cron.json 中途变更的单次耗时及吞吐。 */
 export async function runChainSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {
@@ -356,7 +351,7 @@ const JOIN_LOG_METRICS: readonly MetricDefinition<JoinLogRound>[] = [
   },
 ];
 
-/** 入群日志 25 万容量线：复用 scripts/perf/joinLog.ts 的子进程，只跑当前实现。 */
+/** 入群日志容量线：复用 scripts/perf/joinLog.ts 的子进程，只跑当前实现。 */
 export async function runJoinLogSection(
   context: SectionContext
 ): Promise<BenchmarkSection> {

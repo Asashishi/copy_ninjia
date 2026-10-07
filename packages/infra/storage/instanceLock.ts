@@ -144,56 +144,43 @@ async function resolveCurrentIdentity(
   return validateProcessIdentity(identity, process.pid);
 }
 
-/** 严格读取唯一 v2 锁注册表；旧格式与损坏格式都必须人工处理。 */
-async function readBotLockRecords(lockFilePath: string): Promise<BotLockRecord[]> {
+/**
+ * 严格读取 bot.lock：内容必须恰好是一行当前格式的属主记录加换行。文件不存在返回 null；
+ * 空文件、缺行尾换行、多于一行（含逐行都合法的多行）、旧格式或字段非法一律抛错，
+ * 抛错前不查任何记录的 PID 生死，文件原样保留，须人工处理。
+ */
+async function readBotLockRecord(lockFilePath: string): Promise<BotLockRecord | null> {
   let content: string;
   try {
     content = await Bun.file(lockFilePath).text();
   } catch (error: unknown) {
-    if (isErrno(error, "ENOENT")) return [];
+    if (isErrno(error, "ENOENT")) return null;
     throw error;
   }
-  if (content === "") {
-    throw new Error(`${lockFilePath} has an obsolete or invalid lock registry format; repair it manually.`);
+  const match: RegExpExecArray | null = content.endsWith("\n")
+    ? BOT_LOCK_LINE_PATTERN.exec(content.slice(0, -1))
+    : null;
+  const pid: number = match === null ? Number.NaN : Number(match[1]);
+  if (match === null || !Number.isSafeInteger(pid)) {
+    throw new Error(
+      `${lockFilePath} must contain exactly one current-format lock owner line ` +
+      "(v2:<pid>:<starttime>:<boot id>:<token fingerprint>); repair it manually."
+    );
   }
-  if (!content.endsWith("\n")) throw new Error(`${lockFilePath} has an invalid lock registry format; repair it manually.`);
-
-  const records: BotLockRecord[] = [];
-  const fingerprints: Set<string> = new Set();
-  for (const line of content.slice(0, -1).split("\n")) {
-    const match: RegExpExecArray | null = BOT_LOCK_LINE_PATTERN.exec(line);
-    if (!match) throw new Error(`${lockFilePath} has an obsolete or invalid lock registry format; repair it manually.`);
-    const pid: number = Number(match[1]);
-    const startTimeTicks: string = match[2]!;
-    const bootId: string = match[3]!;
-    const tokenFingerprint: string = match[4]!;
-    if (!Number.isSafeInteger(pid) || fingerprints.has(tokenFingerprint)) {
-      throw new Error(`${lockFilePath} has duplicate or invalid lock records; repair it manually.`);
-    }
-    fingerprints.add(tokenFingerprint);
-    const identity: ProcessIdentity = validateProcessIdentity({ pid, startTimeTicks, bootId });
-    records.push({ ...identity, tokenFingerprint });
-  }
-  return records;
+  const identity: ProcessIdentity = validateProcessIdentity({ pid, startTimeTicks: match[2]!, bootId: match[3]! });
+  return { ...identity, tokenFingerprint: match[4]! };
 }
 
-async function writeBotLockRecords(lockFilePath: string, records: BotLockRecord[]): Promise<void> {
-  if (records.length === 0) {
-    try {
-      await Bun.file(lockFilePath).delete();
-    } catch (error: unknown) {
-      if (!isErrno(error, "ENOENT")) throw error;
-    }
-    return;
+async function deleteBotLock(lockFilePath: string): Promise<void> {
+  try {
+    await Bun.file(lockFilePath).delete();
+  } catch (error: unknown) {
+    if (!isErrno(error, "ENOENT")) throw error;
   }
-  await atomicWriteText(
-    lockFilePath,
-    records.map((record: BotLockRecord): string => `${serializeProcessIdentity(record)}:${record.tokenFingerprint}\n`).join("")
-  );
 }
 
 /**
- * 用 hard link 原子发布完整进程身份 guard，并安全回收当前 v2 格式的 stale guard。
+ * 用 hard link 原子发布完整进程身份 guard，并回收当前格式的 stale guard。
  * 协议的非原子回收边界见 docs/cn/04-invariants.md。
  */
 async function acquirePidFileLock(
@@ -206,10 +193,7 @@ async function acquirePidFileLock(
   try {
     try {
       await Bun.write(Bun.file(handle.fd), serializeProcessIdentity(currentIdentity));
-      // candidate 会被 link() 直接发布成 guard 本体，没有 rename 兜底，因此这里
-      // 必须先把数据和目录项都落盘。否则掉电可能留下内容为空或撕裂的
-      // bot.lock.guard——它既不在 cleanupOrphanedTempFiles 的清扫范围内，
-      // 又会让下次启动在 parseProcessIdentity 处直接被拒，只能人工 rm。
+      // candidate 由 link() 直接发布成 guard 本体，发布前先把数据和目录项落盘。
       await handle.sync();
     } finally {
       await handle.close();
@@ -233,7 +217,7 @@ async function acquirePidFileLock(
       }
       if (await isProcessIdentityActive(existingIdentity, readProcessIdentity)) {
         throw new Error(
-          `Another process (pid=${existingIdentity.pid}) is updating the bot lock registry; retry startup shortly.`
+          `Another process (pid=${existingIdentity.pid}) is updating the bot lock; retry startup shortly.`
         );
       }
 
@@ -309,6 +293,12 @@ async function withBotLockGuard<T>(
   }
 }
 
+/**
+ * 启动时取得数据根的单实例锁，在 bot.lock.guard 互斥下执行：严格读取 bot.lock（见
+ * readBotLockRecord，格式不符时抛错并原样保留文件）；属主进程仍在时不论 token 是否相同
+ * 一律抛错；无属主或属主已不在时，用原子写把文件整体换成当前进程这一行。
+ * 抛错由启动流程以非零码退出。
+ */
 export async function acquireSingleInstanceLock(
   botToken: string,
   lockFilePath: string = LOCK_FILE_PATH,
@@ -321,22 +311,23 @@ export async function acquireSingleInstanceLock(
   const readProcessIdentity: (pid: number) => Promise<ProcessIdentity | null> = options.readProcessIdentity ?? readLinuxProcessIdentity;
   const currentIdentity: ProcessIdentity = await resolveCurrentIdentity(options.currentIdentity, readProcessIdentity);
   await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
-    const activeRecords: BotLockRecord[] = [];
-    for (const record of await readBotLockRecords(lockFilePath)) {
-      if (await isProcessIdentityActive(record, readProcessIdentity)) activeRecords.push(record);
-    }
-    const owner: BotLockRecord | undefined = activeRecords[0];
-    if (owner) {
+    const owner: BotLockRecord | null = await readBotLockRecord(lockFilePath);
+    if (owner !== null && await isProcessIdentityActive(owner, readProcessIdentity)) {
       const tokenScope: string = owner.tokenFingerprint === tokenFingerprint ? "the same token" : "a different token";
       throw new Error(
         `Another bot instance (pid=${owner.pid}) is already using this data directory with ${tokenScope}; ` +
         "refusing concurrent access to shared state."
       );
     }
-    await writeBotLockRecords(lockFilePath, [{ ...currentIdentity, tokenFingerprint }]);
+    await atomicWriteText(lockFilePath, `${serializeProcessIdentity(currentIdentity)}:${tokenFingerprint}\n`);
   });
 }
 
+/**
+ * 停机时释放单实例锁，在 bot.lock.guard 互斥下执行：文件不存在时直接返回；属主是本进程且
+ * token 相同，或属主进程已不在时删除文件；属主是另一个仍在运行的进程时原样保留。
+ * 读取同样严格，格式不符时抛错并原样保留文件，由停机流程记 error 并以退出码 1 结束。
+ */
 export async function releaseSingleInstanceLock(
   botToken: string,
   lockFilePath: string = LOCK_FILE_PATH,
@@ -348,13 +339,10 @@ export async function releaseSingleInstanceLock(
   const currentIdentity: ProcessIdentity =
     await resolveCurrentIdentity(options.currentIdentity, readProcessIdentity);
   await withBotLockGuard(lockFilePath, { currentIdentity, readProcessIdentity }, async (): Promise<void> => {
-    const remaining: BotLockRecord[] = [];
-    for (const record of await readBotLockRecords(lockFilePath)) {
-      const active: boolean = await isProcessIdentityActive(record, readProcessIdentity);
-      if (active && !(sameProcessIdentity(record, currentIdentity) && record.tokenFingerprint === tokenFingerprint)) {
-        remaining.push(record);
-      }
-    }
-    await writeBotLockRecords(lockFilePath, remaining);
+    const owner: BotLockRecord | null = await readBotLockRecord(lockFilePath);
+    if (owner === null) return;
+    const active: boolean = await isProcessIdentityActive(owner, readProcessIdentity);
+    if (active && !(sameProcessIdentity(owner, currentIdentity) && owner.tokenFingerprint === tokenFingerprint)) return;
+    await deleteBotLock(lockFilePath);
   });
 }

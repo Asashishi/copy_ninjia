@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig } from "../../packages/config/agent";
 import { webDigestRequests } from "../../packages/cache/main/aiChat";
 import { WEB_DIGEST_REQUEST_TIMEOUT_MS } from "../../packages/consts/webDigest";
-import { failAllWebDigestWaiters, requestWebDigest, settleWebDigest } from "../../packages/aiChat/webDigest";
+import { requestWebDigest } from "../../packages/aiChat/webDigest";
+import { AI_WORKER_JOB_ABORTED, AI_WORKER_JOB_TIMED_OUT, AI_WORKER_JOB_UNAVAILABLE } from "../../packages/consts/aiChat/workerJob";
+import { failAllWorkerRequests, settleWorkerRequest } from "../../packages/libs/workerRequestTable";
 import type { AiChatWorkerMessage } from "../../packages/types/aiChat/protocol";
 import type { AgentDeploymentConfig } from "../../packages/types/config";
 import type { WebDigestCompositionResult, WebDigestRequest } from "../../packages/types/webDigest";
@@ -38,7 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  failAllWebDigestWaiters();
+  failAllWorkerRequests<WebDigestCompositionResult>(webDigestRequests, AI_WORKER_JOB_UNAVAILABLE);
   adoptAgentDeploymentConfig(AGENT);
   jest.useRealTimers();
 });
@@ -49,10 +51,10 @@ describe("requestWebDigest", () => {
     await expect(request()).resolves.toEqual({ ok: false, reason: "ai unconfigured" });
     adoptAgentDeploymentConfig(AGENT);
     await expect(requestWebDigest(REQUEST, new AbortController().signal, { post, workerAvailable: false }))
-      .resolves.toEqual({ ok: false, reason: "worker unavailable" });
+      .resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
     const aborted: AbortController = new AbortController();
     aborted.abort();
-    await expect(request(aborted.signal)).resolves.toEqual({ ok: false, reason: "aborted" });
+    await expect(request(aborted.signal)).resolves.toEqual(AI_WORKER_JOB_ABORTED);
     expect(posts).toEqual([]);
   });
 
@@ -61,7 +63,7 @@ describe("requestWebDigest", () => {
     const pending: Promise<WebDigestCompositionResult> = request(controller.signal);
     const requestId: number = lastRequestId();
     expect(posts).toEqual([{ type: "composeWebDigest", requestId, request: REQUEST }]);
-    settleWebDigest({ type: "webDigestComposed", requestId, result: { ok: true, text: "*摘要*" } });
+    settleWorkerRequest(webDigestRequests, requestId, { ok: true, text: "*摘要*" });
     await expect(pending).resolves.toEqual({ ok: true, text: "*摘要*" });
     expect(webDigestRequests.waiters.size).toBe(0);
     controller.abort();
@@ -73,9 +75,9 @@ describe("requestWebDigest", () => {
     const pending: Promise<WebDigestCompositionResult> = request(controller.signal);
     const requestId: number = lastRequestId();
     controller.abort();
-    await expect(pending).resolves.toEqual({ ok: false, reason: "aborted" });
+    await expect(pending).resolves.toEqual(AI_WORKER_JOB_ABORTED);
     expect(posts.at(-1)).toEqual({ type: "cancelWebDigest", requestId });
-    settleWebDigest({ type: "webDigestComposed", requestId, result: { ok: false, reason: "aborted" } });
+    settleWorkerRequest(webDigestRequests, requestId, { ok: false, reason: "aborted" });
     expect(webDigestRequests.waiters.size).toBe(0);
   });
 
@@ -84,20 +86,20 @@ describe("requestWebDigest", () => {
     const pending: Promise<WebDigestCompositionResult> = request();
     const requestId: number = lastRequestId();
     jest.advanceTimersByTime(WEB_DIGEST_REQUEST_TIMEOUT_MS);
-    await expect(pending).resolves.toEqual({ ok: false, reason: "timed out" });
+    await expect(pending).resolves.toEqual(AI_WORKER_JOB_TIMED_OUT);
     expect(posts.at(-1)).toEqual({ type: "cancelWebDigest", requestId });
   });
 
   test("投递被拒与 Worker 整体失效都按 worker unavailable 结算", async () => {
     accepting = false;
-    await expect(request()).resolves.toEqual({ ok: false, reason: "worker unavailable" });
+    await expect(request()).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
     accepting = true;
     const first: Promise<WebDigestCompositionResult> = request();
     const second: Promise<WebDigestCompositionResult> = request();
     expect(webDigestRequests.waiters.size).toBe(2);
-    failAllWebDigestWaiters();
-    await expect(first).resolves.toEqual({ ok: false, reason: "worker unavailable" });
-    await expect(second).resolves.toEqual({ ok: false, reason: "worker unavailable" });
+    failAllWorkerRequests<WebDigestCompositionResult>(webDigestRequests, AI_WORKER_JOB_UNAVAILABLE);
+    await expect(first).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
+    await expect(second).resolves.toEqual(AI_WORKER_JOB_UNAVAILABLE);
     expect(webDigestRequests.waiters.size).toBe(0);
   });
 });

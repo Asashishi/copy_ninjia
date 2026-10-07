@@ -17,8 +17,8 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
   recordChatMessage(buildAiRecordMessage({ context, speaker, text: message.text }));
 
   if (context.directTriggerReason !== undefined) {
-    // 这里只确认当前消息确实直接叫了机器人；是否包含生图/修图意图由模型
-    // 根据本轮消息与工具说明判断，避免关键词正则漏掉自然表达。
+    // 这里只确认当前消息直接叫了机器人；是否包含生图/修图意图由模型
+    // 根据本轮消息与工具说明判断。
     const repliedPhoto: TelegramVisionSource | undefined = Array.isArray(context.repliedTo?.photo) && context.repliedTo.photo.length > 0
       ? pickPhotoFile(context.repliedTo.photo)
       : undefined;
@@ -27,9 +27,8 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       : undefined;
     const imageGenerationReference: TelegramVisionSource | undefined = repliedPhoto ?? repliedSticker;
     generateAndSendReply({
-      // 字段一律写全（缺省显式 undefined），不用条件展开：三个入口共用同一个
-      // 隐藏类，messageIngress.ts 的解构与 Worker 侧读取才不会多态。口径同
-      // auto/message/recordContext.ts。
+      // 字段写全（缺省显式 undefined），不用条件展开，各入口共用同一个 hidden class
+      // （messageIngress.ts 的解构与 Worker 侧读取）。口径同 auto/message/recordContext.ts。
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
@@ -48,7 +47,7 @@ export function handleTextMessage(context: MessageTriggerContext): boolean {
       chatId,
       triggerSenderId: speaker.id,
       replyToMessageId: message.message_id,
-      // 没有回复/@机器人只是随机插话，不构成对生图工具的明确调用。
+      // 随机插话没有回复/@机器人，不构成对生图工具的明确调用。
       imageGenerationRequested: false,
       imageGenerationReference: undefined,
       isRandomTrigger: true,

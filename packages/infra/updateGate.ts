@@ -10,27 +10,23 @@ import type { Chat, Message } from "grammy/types";
  * app/registerHandlers.ts 的同一个前置 middleware 中合取。
  * /permission 与 /white 同样位于本中间件之后，只有通过初始化网关才能处理。
  *
- * 指向自己的 via_bot 消息**不**豁免。运势回执确认位于本网关之前；未初始化群
- * 的 via_bot 更新不得进入身份预热、入群守卫和刷屏流水线。唯一相关的下游
+ * 指向自己的 via_bot 消息不豁免：运势回执确认位于本网关之前，未初始化群
+ * 的 via_bot 更新不进入身份预热、入群守卫和刷屏流水线。下游
  * recordSelfInlineResult 也要求本群已经启用 AI 闲聊。
  */
 export function shouldPassInitGate(ctx: Context): boolean {
   if (ctx.myChatMember) return true;
-  // `ctx.chat` 是每次求值的 getter 链（先跑一遍 `ctx.msg` 再串九个 update 字段），
-  // 而本函数要读四次；`ctx.update` 在一条 update 的处理期内不可变，读一次即可。
-  // 取值放在 myChatMember 判定之后：那条分支根本用不到 chat。
+  // `ctx.chat` 是每次求值的 getter 链，这里只读一次；取值放在 myChatMember 判定之后。
   const chat: Chat | undefined = ctx.chat;
   if (!chat || chat.type === "private") return true;
   if (getChatState(chat.id).isInitEnabled === true) return true;
-  // 未初始化群的低成本网关必须在进入身份预热/入群守卫之前完成权限
-  // 与目标 bot 校验。否则任意用户可用 /init（甚至 /init@OtherBot）反复触发
-  // 管理员 API 查询；真正的命令处理器虽会拒绝权限，却已经太晚。
+  // 未初始化群在进入身份预热、入群守卫之前完成权限与目标 bot 校验：
+  // 只放行超级管理员发给当前机器人的 /init。
   const message: Message | undefined = ctx.msg;
   const actorId: number | undefined =
     message?.sender_chat?.id ??
     (chat.type === "channel" ? chat.id : ctx.from?.id);
-  // 身份判定排在全部字符串工作之前；未初始化群的普通消息无需切词、大小写归一
-  // 或模板拼接。
+  // 身份判定排在字符串处理之前。
   if (actorId !== SUPER_ADMIN_USER_ID) return false;
   return isBotCommandText(message?.text ?? "", "/init", ctx.me.username);
 }
@@ -45,16 +41,12 @@ export function isBotCommandText(text: string, command: string, botUsername: str
 }
 
 /**
- * 私聊指令前置网关，见 app/registerHandlers.ts。私聊里的 / 开头文本一律
+ * 私聊指令前置网关，见 app/registerHandlers.ts。私聊里以 / 开头的文本一律
  * 拦下，唯一例外是超级管理员发给当前机器人的 /send。该判断与 init 网关在
- * 所有 bot.command / bot.hears 注册之前运行，因此 /permission、/white 也不能
- * 绕过。commands/send.ts 仍保留身份校验，避免未来调用路径绕开本门禁。
- * 判定同时看 text 与 caption：bot.command 只认 text，但 bot.hears（`/咬` 这类
- * 中文动作命令，见 commands/cjkAction.ts）两者都匹配。只看 text 的话，
- * 一张 caption 写着 `/咬` 的图片就能绕过本网关，让任意陌生人在私聊里驱使
- * 机器人作答、并借回复文案的差异探测 username 缓存里有谁。
- * 即使 /send 中转会话正在运行，斜杠开头的内容也不作为中转消息接收，避免它
- * 与真实命令共享一条有歧义的解释路径。
+ * 所有 bot.command / bot.hears 注册之前运行，/permission、/white 同样经过。
+ * 判定同时看 text 与 caption：bot.command 只认 text，bot.hears（`/咬` 这类
+ * 中文动作命令，见 commands/cjkAction.ts）两者都匹配；caption 以 / 开头的
+ * 内容一律拦下。/send 中转会话运行期间，斜杠开头的内容也不作为中转消息接收。
  */
 export function shouldPassPrivateCommandGate(ctx: Context): boolean {
   if (ctx.chat?.type !== "private") return true;

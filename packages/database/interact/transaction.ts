@@ -40,7 +40,7 @@ function excluded(column: SQLiteColumn): SQL {
 /**
  * 为一条连接预编译统一事务提交用的全部写语句。
  *
- * 本函数只负责**建**，不持有：Disk I/O Worker 把结果挂在
+ * 本函数只建不持有：Disk I/O Worker 把结果挂在
  * cache/workers/diskIO/storageDatabase.ts 的连接级 WeakMap 上，同一连接的每次提交复用。
  * 本文件是不接触任何线程独占缓存的叶子模块。
  */

@@ -3,11 +3,11 @@ import { QUIET_CLOCK_SKEW_TOLERANCE_MS, QUIET_MAX_DURATION_MS } from "../consts/
 
 /**
  * ChatState 的规范形状：所有字段在这里按固定顺序一次初始化，此后只赋值、不
- * `delete`。七个开关默认 false；其余字段以 `undefined` 表示从没设过。
+ * `delete`。各开关默认 false；其余字段以 `undefined` 表示从没设过。
  *
- * 每条群消息会由多个 middleware 读取当前群状态，所有写入方都从本构造器取得同一
- * 隐藏类（antiRaid/updateIngress.ts、antiRaid/floodControl.ts、antiRaid/adCandidate.ts、
- * auto/message/index.ts、aiChat/availability.ts 为主要读取方）。
+ * 所有创建方都经本构造器，对象形状一致（antiRaid/updateIngress.ts、
+ * antiRaid/floodControl.ts、antiRaid/adCandidate.ts、auto/message/index.ts、
+ * aiChat/availability.ts 为主要读取方）。
  *
  * 持久化时状态编码器只写入已设置的字段与为 true 的开关（见
  * database/codec/chatState.ts）。
@@ -58,12 +58,11 @@ export function adoptChatState(decoded: Readonly<ChatState>): ChatState {
 }
 
 /**
- * 墙钟回拨时拒绝把静默期延长到配置上限之外。
+ * 静默期是否仍有效；墙钟回拨时拒绝把静默期延长到配置上限之外。
  *
- * 上限带一分钟容差（QUIET_CLOCK_SKEW_TOLERANCE_MS）：`/quiet <上限分钟数>`
- * 写下的 `quietUntil - now` 恰好等于 QUIET_MAX_DURATION_MS，不留容差的话主机
- * 时钟往回跳 1 毫秒就让顶格静默当场失效。超出容差的大幅回拨由
- * normalizeChatState 收敛到上限——那条路径保留静默、只缩短它。
+ * 上限带容差（QUIET_CLOCK_SKEW_TOLERANCE_MS）：`quietUntil - now` 不超过
+ * QUIET_MAX_DURATION_MS 加容差即有效。超出容差的大幅回拨由 normalizeChatState
+ * 收敛到上限，保留静默、缩短时长。
  */
 export function isQuietUntilActive(quietUntil: number | undefined, now: number = Date.now()): boolean {
   if (quietUntil === undefined || quietUntil <= now) return false;

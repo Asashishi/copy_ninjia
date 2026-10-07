@@ -42,15 +42,13 @@ export function currentUpdateAbortSignal(): AbortSignal | undefined {
 /**
  * 本条 update 统一的「现在」。
  *
- * 同一条群消息会在两条 middleware 上各要一次时刻：入群守卫的投递段
- * （antiRaid/updateIngress.ts）与自动流水线主干（auto/message/index.ts）。两处
- * 各读一次墙钟，同一条消息的判定就可能横跨毫秒边界；本函数让整条 update 共用同一个
- * 时刻。
+ * 整条 update 共用同一个时刻：入群守卫的投递段（antiRaid/updateIngress.ts）与
+ * 自动流水线主干（auto/message/index.ts）等调用点读到同一个值。
  *
- * 已填值时只做一次 AsyncLocalStorage 取值，不再读墙钟。
+ * 已填值时只做一次 AsyncLocalStorage 取值，不读墙钟。
  *
- * 不在 update 作用域内（Worker、启动路径、单测直调）时如实返回当刻墙钟，
- * 语义与直接调用 `Date.now()` 完全一致。
+ * 不在 update 作用域内（Worker、启动路径、单测直调）时返回当刻墙钟，
+ * 等同 `Date.now()`。
  */
 export function updateNow(): number {
   const scope: UpdateScope | undefined = updateScopeStorage.getStore();
@@ -61,9 +59,8 @@ export function updateNow(): number {
 /**
  * 跨过一次有界等待之后重新取时刻，并让本 update 后续调用点改用新值。
  *
- * 只有一个调用点：自动流水线在频道帖自发消息 rendezvous
- * （最长 SELF_SENT_RENDEZVOUS_TIMEOUT_MS）之后恢复处理。等待前的时刻不得带过
- * 这条边界，与那里「恢复处理必须读取当时现值」的状态复读相同。
+ * 调用点是自动流水线在频道帖自发消息 rendezvous
+ * （最长 SELF_SENT_RENDEZVOUS_TIMEOUT_MS）之后恢复处理。
  */
 export function refreshUpdateNow(): number {
   const scope: UpdateScope | undefined = updateScopeStorage.getStore();

@@ -50,7 +50,7 @@ export function hasActiveTemporaryAdBypassAt(
   return isTemporaryAdBypassActive(activity, now);
 }
 
-/** 批量读取回执叠加主线程未 ACK 最终值后写入 8192 项正/负 LRU。 */
+/** 批量读取回执叠加主线程未 ACK 最终值后写入正/负 LRU。 */
 export function hydrateTemporaryAdBypassActivities(
   rows: readonly StoredTemporaryAdBypassActivity[],
   requested: ReadonlySet<number>,
@@ -119,15 +119,13 @@ function queueTemporaryAdBypassWrite(
 }
 
 /**
- * 计入一条已通过入口门禁的群发言；冷缺失时 fail closed，不创建猜测记录。
+ * 计入一条已通过入口门禁的群发言；该主键未预热时返回 undefined，不创建记录。
  *
  * 临时累计与黑名单互斥（见 docs/cn/04-invariants.md）：黑名单 LRU 命中或冷缺失
- * 时同样返回 undefined，只有确认不在黑名单的身份才推进累计，Disk I/O 因此不会
- * 收到与黑名单相交的累计写。
+ * 时同样返回 undefined，只有确认不在黑名单的身份才推进累计。
  *
- * 状态机原样返回入参（当天已达标后的稳态）时没有新事实要落盘：跳过 revision
- * 递增、LRU 写、未 ACK 记账与一次到 Disk I/O 线程的 structured clone。这一路同时
- * 跳过 `LruCache.set` 的热度刷新，因此调用方必须在同一条消息上先经
+ * 状态机原样返回入参时没有新事实要落盘：跳过 revision 递增、LRU 写、未 ACK
+ * 记账与投递。这一路不刷新 `LruCache.set` 的热度，调用方须在同一条消息上先经
  * `hasActiveTemporaryAdBypassAt` 读过该主键，由那次 `get` 维持热度。投递失败由
  * queueTemporaryAdBypassWrite 记日志并保留未 ACK 最终值等待重放。
  * @returns 计入后的最终累计；未计入时为 undefined。
@@ -152,8 +150,7 @@ export function recordTemporaryAdBypassActivity(
 export function clearTemporaryAdBypassActivity(id: number): boolean {
   const cached: boolean = temporaryAdBypassActivityCache.has(id);
   if (cached && temporaryAdBypassActivityCache.peek(id) === null) return true;
-  // 删除不依赖旧值。冷读失败时仍发布墓碑并保留到 ACK，避免一次 Disk I/O
-  // 自愈窗口让已经确证的 ad=true 累计继续存活。
+  // 删除不依赖旧值：缓存冷缺失时同样发布墓碑，并保留到 ACK。
   return queueTemporaryAdBypassWrite(id, null);
 }
 

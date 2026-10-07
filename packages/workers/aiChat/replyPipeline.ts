@@ -38,9 +38,8 @@ import { replyReferenceForBufferedMessage } from "./bufferedMessageIndex";
  */
 function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean {
   if (aiChatWorkerQuiescing.current) return false;
-  // 字段一律写全、缺省显式 undefined：startReplyRound 只有本函数与
-  // generateAndSendReply 两个调用点，两处同形才只有一个隐藏类进它的解构。
-  // 口径同 replyQueue.ts 的 pushReplyTrigger。
+  // 字段一律写全、缺省显式 undefined，与 generateAndSendReply 的调用同形
+  // （口径同 replyQueue.ts 的 pushReplyTrigger）。
   return startReplyRound(
     {
       chatId,
@@ -63,12 +62,10 @@ function startQueuedRound(chatId: number, trigger: QueuedReplyTrigger): boolean 
 }
 
 /**
- * 只在 5 分钟窗口确实有余量时推一次队列。所有补跑入口都只能走这里。
+ * 只在限频窗口（RATE_LIMIT_LONG_WINDOW_MS）有余量时推一次队列。所有补跑入口都只能走这里。
  *
- * 窗口仍然满的群直接跳过，不做无用的尝试：startReplyRound 每被拒一次就会发一条
- * 限频提示（自带 60 秒冷却），空转就等于每分钟往群里刷一句。撞满窗口的群里轮次
- * 还在一轮接一轮地结束，不设闸的那条推力于是每轮都空转一次——刷屏由此持续整个
- * 饱和期，见 docs/cn/04-invariants.md。
+ * 窗口已满的群直接跳过，不调用 startReplyRound，也就不产生限频提示，见
+ * docs/cn/04-invariants.md。
  */
 function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
   const times: TimestampDeque | undefined = longTriggerTimes.get(chatId);
@@ -79,16 +76,14 @@ function drainReplyQueueIfWindowAllows(chatId: number, now: number): void {
   drainQueuedReplies(chatId, (trigger: QueuedReplyTrigger): boolean => startQueuedRound(chatId, trigger));
 }
 
-/** 模型交付完整链即补跑下一条，发送积压不占模型位；五分钟限频仍在入口判定。 */
+/** 模型交付完整链即补跑下一条，发送积压不占模型位；限频窗口仍在入口判定。 */
 function onReplyModelFinished(chatId: number): void {
   if (aiChatWorkerQuiescing.current) return;
   drainReplyQueueIfWindowAllows(chatId, Date.now());
 }
 
 /**
- * 一轮结束时的推力：先把欠下的溢出提示补出去，再按窗口余量推队列。
- *
- * 两件事分开做。提示是欠着群成员的一句话，窗口满不满都要发；推队列则必须设闸，
+ * 一轮结束时的推力：先补发欠下的溢出提示（与窗口余量无关），再按窗口余量推队列，
  * 见 drainReplyQueueIfWindowAllows。
  */
 function onReplyRoundFinished(chatId: number): void {
@@ -101,10 +96,8 @@ function onReplyRoundFinished(chatId: number): void {
  * 维护节拍的兜底排空（由 aiChatWorker.ts 的 runAiChatWorkerMaintenance 调用）。
  *
  * 模型完成、发送收尾及新触发入队均尝试补跑；限频闸拒绝时 startReplyRound
- * 没有建任务，不会有完成回调，入队尝试也可能仍撞满窗口。没有这道兜底，撞上
- * 5 分钟窗口上限的群会把最多 REPLY_TRIGGER_QUEUE_MAX 条 @提及连同它们的快照
- * （正文片段、图片引用）无限期扣在内存里，直到某次无关触发恰好完整跑完一轮
- * 才被顺带带出来。
+ * 没有建任务，不会有完成回调，入队尝试也可能仍撞满窗口。本函数按维护节拍对
+ * 所有有排队项的群再推一次。
  */
 export function drainPendingReplyQueues(now: number = Date.now()): void {
   if (aiChatWorkerQuiescing.current) return;
@@ -216,10 +209,9 @@ export function generateAndSendReply({
       drainReplyQueueIfWindowAllows(chatId, Date.now());
       break;
     case "enqueueOverflow":
-      // 等当前轮收尾后再发提示，避免插进同一轮的连续短句中间。话题一并记下：
-      // 提示是对这条被丢掉的触发的回应，得落回它所在的话题。
+      // 等当前轮收尾后再发提示；话题一并记下，提示落回被丢弃触发所在的话题。
       pendingOverflowNotices.set(chatId, messageThreadId);
-      // 队列因限频窗口满而积压、群里却没有存活轮次时，不会有收尾推力来补发：当场发出。
+      // 群里没有存活轮次时没有收尾推力，当场发出。
       if (!hasLiveReplyRounds(chatId)) flushOverflowNotice(chatId);
       break;
     case "dropSilently":

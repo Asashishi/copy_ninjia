@@ -29,7 +29,6 @@ export function handlePhotoMessage(context: MessageTriggerContext): boolean {
     // 直接回复/@ 只开放工具资格，具体是否要编辑图片交给模型判断。
     stickerFallbackText: undefined,
     voiceMime: undefined,
-    voiceDurationSeconds: 0,
   }));
   return mediaTriggerHandled(context, randomTrigger);
 }

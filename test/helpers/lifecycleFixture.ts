@@ -217,8 +217,7 @@ const testDependencies = {
   terminateDiskIO,
 } as unknown as ApplicationLifecycleDependencies;
 
-// 异常退出路径必须用真实 drain：忽略 timeoutMs 的替身会把参数校验整个跳过，
-// 紧急预算（maintenanceMs = 0）下的真实行为就永远测不到。
+// 异常退出路径用真实 drain：紧急预算（maintenanceMs = 0）下的真实行为需要经过真实实现。
 const realDrainDependencies = {
   ...testDependencies,
   drainAvatarUpdates: realDrainAvatarUpdates,
@@ -366,8 +365,7 @@ export function installLifecycleFixtureHooks(): void {
   });
 
   afterEach(() => {
-    // Bun 在 test isolate 内把 undefined 视为“保留现有退出码”；显式归零，
-    // 避免刻意覆盖的启动失败路径把整个测试命令误报为失败。
+    // Bun 在 test isolate 内把 undefined 视为“保留现有退出码”；显式归零。
     process.exitCode = 0;
   });
 }

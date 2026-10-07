@@ -55,10 +55,7 @@ describe("runBoundedSettledBatch", () => {
     })).rejects.toThrow("maxConcurrent");
   });
 
-  /**
-   * 这套批处理骨架承载黑名单补扫、批量踢人等不可逆动作：回调抛错时若把整批吞掉
-   * 或让某一项静默消失，调用方拿到的是一份「都成功了」的假战报。
-   */
+  /** 这套批处理骨架承载黑名单补扫、批量踢人等不可逆动作：回调抛错时整批不被吞掉，也没有某一项静默消失。 */
   test("execute 同步抛出（不返回 Promise）也按该项失败结算，不炸穿整批", async () => {
     const results: BoundedBatchResult<number, number>[] =
       await runBoundedSettledBatch<number, number>({

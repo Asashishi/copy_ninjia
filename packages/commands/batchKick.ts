@@ -52,21 +52,20 @@ interface BatchKickStats {
   forbidden: number;
   failed: number;
   /**
-   * 其中「本命令一步都没做、纯粹交还给黑名单流程」的条数：命中黑名单后直接
-   * 早退的那两条分支。不进战报（对管理员而言它们都是「黑名单交回封禁」），
-   * 只用来决定整批结束后要不要真的请一次补扫——补封成功那条路已经自己把人
-   * 按住了，不该再白白惊动清扫。
+   * blocked 中本命令未做任何处置、交还给黑名单流程的条数：processJoinRecord 里命中
+   * 黑名单后直接返回的分支。只用来决定整批结束后是否请求一次补扫；补封成功的
+   * 记录不计入。
    */
   blockedHandoffs: number;
-  /** 真正进入处置的记录条数；身份冷读失败中断时小于总条数。 */
+  /** 真正进入处置的记录条数；身份策略读取失败中断时小于总条数。 */
   scanned: number;
-  /** 是否因为身份冷读失败提前中断；true 时剩余记录一个都没动过。 */
+  /** 是否因身份策略读取失败提前中断；true 时剩余记录未处理。 */
   aborted: boolean;
   /** 批次途中本群不再受管而停止；true 时不发战报。 */
   unmanaged: boolean;
 }
 
-/** 把 `/batch_kick` 的单个 m/h/d 参数严格换算为一天以内的毫秒数。 */
+/** 把 `/batch_kick` 的单个 m/h/d 参数换算为毫秒数；须落在 BATCH_KICK_MIN_DURATION_MS 与 BATCH_KICK_MAX_DURATION_MS 之间，否则返回 undefined。 */
 export function parseBatchKickDurationMs(token: string): number | undefined {
   const durationMs: number | undefined = parseDurationTokenMs(token);
   if (
@@ -98,8 +97,8 @@ interface ProcessJoinRecordParams {
 }
 
 /**
- * 处理单条日志：先确认仍在群，再调用只踢不封接口。这个顺序不能省略，
- * `unbanChatMember` 对已封禁身份有解除封禁语义，盲打会把历史封禁意外放开。
+ * 处理单条日志：先确认仍在群（probeChatMembership），再调用只踢不封接口；
+ * 顺序固定，`unbanChatMember` 对已封禁身份有解除封禁语义。
  */
 async function processJoinRecord({
   chatId,
@@ -129,22 +128,21 @@ async function processJoinRecord({
     stats.failed++;
     return;
   }
-  // membership 探测与只踢请求之间仍可能并发执行 `/block`。第二次同步判定缩小
-  // 窗口；请求完成后再判一次并补封，保证先写内存名单的永久封禁最终获胜。
+  // membership 探测与只踢请求之间可能并发执行 `/block`：这里做第二次同步判定，
+  // 请求完成后再判一次并补封，先写内存名单的永久封禁最终生效。
   if (isUserBlocked(record.userId)) {
     stats.blocked++;
     stats.blockedHandoffs++;
     return;
   }
-  // 本命令在入口就只接受超级群（见 handleBatchKickCommand），如实传 true 而不是
-  // 留空：这样各调用点交给同一个封装的都是同一种对象 shape。
+  // 本命令入口只接受超级群（见 handleBatchKickCommand），isSupergroup 传 true。
   const outcome: KickChatMemberOutcome = await kickChatMemberWithOutcome({
     chatId,
     userId: record.userId,
     isSupergroup: true,
   });
-  // 网络失败也可能发生在 Telegram 已执行 unban 之后，因此不能只在明确
-  // "kicked" 时补查；只要权威名单已变为 blocked，就一律把永久封禁补回。
+  // 网络失败也可能发生在 Telegram 已执行 unban 之后；只要权威名单已变为 blocked，
+  // 不论 outcome 都补封。
   if (isUserBlocked(record.userId)) {
     const restored: BanChatMemberOutcome = await banChatMemberWithOutcome(
       chatId,
@@ -184,14 +182,13 @@ interface RunBatchKickParams {
 }
 
 /**
- * 用固定小并发消费日志；每条结果保留输入下标，意外异常不会截断其余记录。
- * Telegram 总闸已经负责 429 的有限退避，这里不再套一层重复踢人重试。
+ * 按 BATCH_KICK_CONCURRENCY 并发消费日志，每块 IDENTITY_PREFETCH_CHUNK_MAX_ENTRIES 条；
+ * 每条结果保留输入下标，意外异常不截断其余记录。429 退避由 Telegram 总闸负责，
+ * 这里不重试。
  *
- * 每块开始前直接冷读本块全部身份的永久策略结论并局部持有，逐块与消费交错。
- * 白名单与黑名单判定取「局部结论 ∪ 实时缓存」：一块要处理数分钟，期间其它流量
- * 可能把本块身份挤出身份 LRU，只看缓存的话冷未命中会把白名单管理员/频道身份当
- * 普通成员踢出去。冷读失败不能按「不在白名单」处置，只能就地中断，剩余记录
- * 一条都不碰。
+ * 每块开始前经 readIdentityPolicyVerdicts 直接读取本块全部身份的永久策略结论并局部
+ * 持有，与消费逐块交错；白名单与黑名单判定取「局部结论 ∪ 实时缓存」。读取失败
+ * （返回 null）时就地中断并置 aborted，剩余记录不处理。
  *
  * 停机取消本条任务后，尚未开始的记录不再处理，在途记录因取消而失败的结果不计入
  * 战报也不记日志；每块开始前与结束后各检查一次，取消即向上解开整条任务。本群途中
@@ -297,13 +294,10 @@ async function deliverBatchKick({
       });
       return;
     }
-    // 命中黑名单就直接早退的那几条，processJoinRecord 一步都没做——不探测、不移除，
-    // 回执却渲染成「黑名单交回封禁 N」。不在这里真的交回去，那句话就是空的：管理员
-    // 据此认为黑名单流程接手了，实际没有任何批次、清扫或重试存在。典型成因正是更早
-    // 的封禁批次在限流下被判 complete 而实际没生效，人还坐在群里。
-    // 只看 blockedHandoffs：并发拉黑后补封成功那条路已经把人按住了，不必再惊动清扫。
-    // 整批只派发一次：prepareBlocklistSweep 自带 claim 与 nextRetryAt 闸门，逐条
-    // 调用只是空转，还要在命令的固定小并发池里排队。
+    // processJoinRecord 对命中黑名单的记录直接返回，不探测、不移除；回执渲染成
+    // 「黑名单交回封禁」，这里把它们真正交回：整批只派发一次补扫
+    // （requestBlocklistResweep + sweepBlockedMembers）。只看 blockedHandoffs，
+    // 并发拉黑后补封成功的记录不触发。
     if (stats.blockedHandoffs > 0) {
       requestBlocklistResweep(chatId);
       try {
@@ -335,12 +329,12 @@ async function deliverBatchKick({
 /**
  * `/batch_kick <Nm|Nh|Nd>`：只允许超级管理员在超级群中执行；初始化状态由
  * app/registerHandlers.ts 的统一前置网关保证，本 handler 不重复判断或提示。
- * 按需读取本群滚动 24 小时入群追写日志，并踢出回溯窗口内仍在群的人。
+ * 按需读取本群入群追写日志中回溯窗口覆盖的记录，并踢出窗口内仍在群的人。
  * 本命令不新增黑名单持久化；与并发 `/block` 冲突、或日志里的人本来就在黑名单上
  * 时，本命令不自己处置，而是在整批结束后请一次补扫，把他们真正交回封禁流程。
  *
- * update runner 严格串行，handler 只做校验与读日志：有记录时同群单飞，交给延迟命令执行器的
- * background 档后回「已受理」，批次与战报在后台任务里完成（见 deliverBatchKick）。
+ * handler 只做校验与读日志：有记录时同群单飞，交给延迟命令执行器的 background 档后
+ * 回「已受理」，批次与战报在后台任务里完成（见 deliverBatchKick）。
  */
 export async function handleBatchKickCommand(
   ctx: CommandContext<Context>
@@ -373,7 +367,7 @@ export async function handleBatchKickCommand(
     return;
   }
 
-  // 同群单飞在读日志之前判定：上一批还在后台跑时不读盘，也不占住串行的 update runner。
+  // 同群单飞在读日志之前判定：上一批还在后台跑时不读盘。
   if (batchKickChats.has(chatId)) {
     await sendCommandMessage({
       chatId,
@@ -383,14 +377,11 @@ export async function handleBatchKickCommand(
     return;
   }
 
-  // 窗口的「现在」取本条命令自带的 Telegram 时间戳，不是宿主的 Date.now()：
-  // 库里那些 joinedAt 全都来自 `update.date`（见 antiRaid/updateIngress.ts），
-  // 两个时钟直接相减的话，窗口边界会整体漂移出它们之间的偏差——`readJoinLog`
-  // 既拿 since/now 逐条比 joinedAt，也拿它们算窗口覆盖的日文件（那些文件名
-  // 同样是按 joinedAt 的配置时区的日期起的）。同源之后这两步与写入侧用的是同一把尺。
+  // 窗口的「现在」取本条命令自带的 Telegram 时间戳，与 joinedAt（来自 `update.date`，
+  // 见 antiRaid/updateIngress.ts）同源；`readJoinLog` 用 since/now 比对 joinedAt，
+  // 并据此计算窗口覆盖的日文件。
   //
-  // 文件保留期那侧仍按宿主时钟判（见 readJoinLog 里的 today）：那问的是「盘上
-  // 还剩哪几天」，由 Worker 自己的跨日清理决定，与事件时间无关。
+  // 文件保留期按宿主时钟判（见 readJoinLog 里的 today），与事件时间无关。
   const now: number = ctx.msg.date * TELEGRAM_DATE_UNIT_MS;
   let records: readonly JoinLogRecord[];
   try {

@@ -13,7 +13,7 @@
  * 或删除的任务停止调度并标记撤销，在途一轮在下一个动作、重试或群之前停下；新增的任务
  * 登记。just_once 记录只在任务仍是 just_once 时保留，转为周期任务即清除；删除后同名
  * 加回仍按已执行处理。停机期间错过的触发不补发；记录与随机时刻都不持久化。
- * 所有 handler 自行吞掉异常：Bun.cron 的 reject 会成为 unhandledRejection 触发紧急退出。
+ * 所有 handler 自行吞掉异常，不向 Bun.cron 返回 reject。
  */
 
 import { cronRuntime } from "../cache/main/cron";
@@ -48,7 +48,8 @@ async function trackRound(runtime: CronRuntime, schedule: CronTaskSchedule): Pro
 
 /**
  * 只在一个整分钟匹配的 cron 表达式：取 `instantMs` 所在或之后的第一个整分钟，按 UTC 写成
- * 「分 时 日 月 *」。表达式不含年份，调用方保证该时刻在一年之内，并在首次触发时停掉任务。
+ * 「分 时 日 月 *」。表达式不含年份，调用方保证该时刻在一年之内（区间上限为
+ * CRON_RANDOM_INTERVAL_MAX_MS），并在首次触发时停掉任务。
  */
 function cronExpressionAt(instantMs: number): string {
   const fireAt: Date = new Date(Math.ceil(instantMs / CRON_MINUTE_MS) * CRON_MINUTE_MS);
@@ -57,7 +58,7 @@ function cronExpressionAt(instantMs: number): string {
 
 /**
  * rand_cron：本轮结束后在区间内均匀随机取一个时刻，重新注册只在那一分钟触发的 Bun 原生
- * cron。实际间隔落在 [min, max + 1 分钟) 内。
+ * cron。实际间隔落在 [min, max + CRON_MINUTE_MS) 内。
  */
 function armRandomCron(runtime: CronRuntime, schedule: CronTaskSchedule): void {
   const interval: CronTask["randomInterval"] = schedule.task.randomInterval;

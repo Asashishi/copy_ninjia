@@ -6,12 +6,10 @@ import { withoutMarkdownCodeFences } from "./markdownSource";
  * 文档里「目录清单」写法的存在性核对。
  *
  * `docs/<lang>/03-directory-map.md` 用「`<目录>/`（`a.ts`、`b.ts`）」列一个目录的代表文件。
- * 这些名字既不是 Markdown 链接（`checkMarkdownLocalLinks` 看不到），也不在源码注释里
- * （`collectCommentReferenceProblems` 看不到），于是文件删掉之后清单会静默留旧名，
- * 三份文档一起过期而 `bun run check` 的其余各段都发现不了。
+ * 这些名字既不是 Markdown 链接（`checkMarkdownLocalLinks` 的核对对象），也不在源码注释里
+ * （`collectCommentReferenceProblems` 的核对对象），由本模块核对。
  *
- * 判据只做一件事：括号里点名的文件在那个目录下还在不在。**歧义一律放过**，
- * 本检查的价值在于零误报：
+ * 判据只做一件事：括号里点名的文件在那个目录下还在不在。歧义一律放过：
  * - 目录名在仓库里解析不到唯一一处 → 跳过整段。
  * - 括号里出现占位符（`<domain>` 之类）或非 `.ts` 条目 → 那一项跳过。
  * - 只认紧跟在 `` `<目录>/` `` 之后的那一对括号，不扫散落全文的文件名。
@@ -55,10 +53,8 @@ function resolveDirectory(
 /**
  * 收集参与解析的目录集合。
  *
- * **只走源码根**（调用方传 packages/ scripts/ test/），不扫仓库根：`database/`、
- * `logs/`、`memory/` 是部署方数据，其中两个是 2770，服务账号组外的用户跑门禁时
- * `readdirSync` 会直接抛，把整道 gate 拖垮；而文档里能解析出唯一目标的目录名
- * 本来就都在 packages/ 下，收窄范围一条覆盖都不损失。
+ * 只遍历调用方传入的源码根（packages/、scripts/、test/），不扫仓库根下的部署方数据目录
+ * `database/`、`logs/`、`memory/`。
  */
 export function collectSourceDirectories(
   roots: readonly string[]

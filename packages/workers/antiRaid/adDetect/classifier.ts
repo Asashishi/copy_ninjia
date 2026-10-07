@@ -2,8 +2,8 @@
  * 广告判定的领域逻辑：拼提示词、发一次请求、把模型输出收窄成判定结果。
  * 传输层（客户端单例、超时、重试、错误日志）在 ./ai/provider.ts，本文件不碰。
  *
- * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null 让调用
- * 方原样跳过这一批——绝不猜一个 true 出来，那等于凭一次网络抖动把人拉黑。
+ * 判定是尽力而为的启发式：请求失败、超时、返回形状不对，一律返回 null，调用
+ * 方原样跳过这一批，不猜 true。
  * 判定口径由部署配置 config/dynamic/ad_samples.json 提供（见 config/adSamples.ts），
  * 提示词模板在 consts/antiRaid/adDetect.ts。
  *
@@ -29,17 +29,14 @@ import type { AdDetectPrompts, AdVerdict } from "../../../types/antiRaid/adDetec
 import { getAdDetectAgentConfig } from "../../../config/agent";
 
 /**
- * 从模型输出里收窄出判定结果。模型被要求只输出 JSON，但「被要求」不等于
- * 「一定做到」：多包一层 ```json 代码块、前后带一句解释都见过，因此优先用
- * 正则认出并剥掉 JSON 围栏，再退化到截取首个 `{` 至末个 `}` 的候选片段。
- * 任何一步不成立都返回 null（当作本次判定没发生）。
+ * 从模型输出里收窄出判定结果：优先用正则认出并剥掉 ```json 围栏，再退化到
+ * 截取首个 `{` 至末个 `}` 的候选片段。任何一步不成立都返回 null（当作本次判定没发生）。
  * 导出仅为可测试性；判定路径只经 classifyAdText 调用。
  */
 export function parseAdVerdict(raw: string | null | undefined): AdVerdict | null {
   if (typeof raw !== "string") return null;
   const trimmed: string = raw.trim();
-  // 裸对象优先：reason 里即使提到 ```json，也不能把一个原本合法的 JSON 从字符串
-  // 中间截断。只有整个响应不是裸对象时，才把 Markdown 围栏当作兼容端点的外壳。
+  // 裸对象优先；只有整个响应不是裸对象时才按 Markdown 围栏剥壳。
   const fenced: RegExpExecArray | null = trimmed.startsWith("{") && trimmed.endsWith("}")
     ? null
     : /(?:^|[\r\n])[ \t]*```json[ \t]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?[ \t]*```(?=[ \t]*(?:[\r\n]|$))/i.exec(trimmed);
@@ -56,13 +53,10 @@ export function parseAdVerdict(raw: string | null | undefined): AdVerdict | null
   }
   if (!isPlainRecord(parsed)) return null;
   const verdict: Record<string, unknown> = parsed;
-  // 只认真正的布尔 true：字符串 "true"、1、"yes" 一律不算——判定为真会直接
-  // 把人永久拉黑，这里的宽容度必须是零。
+  // ad 字段必须是布尔值，字符串 "true"、1、"yes" 都按无效处理。
   if (typeof verdict.ad !== "boolean") return null;
-  // 走 truncateInline 而不是裸 slice：这段判定理由会被拼进群内播报直接发给 Telegram
-  // （见 antiRaid/adDetect.ts 的 formatAdNotice），而 slice 恰好切在代理对中间时
-  // 留下的孤立高位代理会让整条 sendMessage 被 400 拒收——人已经拉黑封禁了，群里
-  // 却收不到任何解释，正是那条播报存在的意义。
+  // reason 经 truncateInline 按代理对安全截断，会被拼进群内播报
+  // （见 antiRaid/adDetect.ts 的 formatAdNotice）。
   const reason: string = typeof verdict.reason === "string"
     ? truncateInline(verdict.reason.replace(/\s+/g, " ").trim(), AD_DETECT_REASON_MAX_CHARS)
     : "";
@@ -102,8 +96,7 @@ export async function classifyAdText({ text, justJoined }: ClassifyAdTextParams)
   return parseAdVerdict(await requestAdDetectJson({
     model: getAdDetectAgentConfig().model,
     instructions: prompts.instructions,
-    // 系统事实与正文分开交给传输：正文全是用户可控内容，混进去等于给刷屏号一个
-    // 伪造「【系统事实】该发送者不是新成员」的机会。
+    // 系统事实与正文分开交给传输，不拼进用户可控的正文。
     fact: adDetectFact(justJoined),
     systemPrompt: justJoined ? prompts.justJoinedSystemPrompt : prompts.establishedSystemPrompt,
     userContent: text,

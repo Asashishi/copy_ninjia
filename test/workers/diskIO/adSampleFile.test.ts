@@ -85,7 +85,7 @@ describe("广告命中样本旁路", () => {
       senderId: 7,
       label: "@spammer",
       reason: "引流加微信",
-      // 判定看的是整串，样本因此按串记；引用/回复只在这里出现，判定读不到。
+      // 样本按整串记录；引用/回复只出现在样本里，判定不读取。
       messages: [
         { messageId: 11, text: "加我", replyTo: "在吗" },
         { messageId: 12, text: "微信 xxx", quote: "别人说过的话" },
@@ -126,7 +126,7 @@ describe("广告命中样本旁路", () => {
     await appendSample(sample({ messages: [{ messageId: 99, text: "换个号继续" }] }));
 
     expect(Object.keys(await readSamples())).toEqual(["-1001:99"]);
-    // 新归档落在 15 个配置时区的自然日保留窗口内，内容应原样保留。
+    // 新归档落在 AD_SAMPLE_ARCHIVE_RETENTION_DAYS 的自然日保留窗口内（按配置时区），内容原样保留。
     const archives: string[] = readdirSync(AD_SAMPLE_MEMORY_DIR)
       .filter((name: string): boolean => name !== "sample.json");
     expect(archives).toHaveLength(1);
@@ -251,9 +251,7 @@ describe("广告命中样本旁路", () => {
   });
 
   test("写盘失败只作废游标、不抛出：旁路绝不能拖住封禁本身", async () => {
-    // 显式建父目录 memory/：beforeEach 只删 AD_SAMPLE_MEMORY_DIR 本身，
-    // --randomize 把本用例排第一个时若 memory/ 还不存在，占位写入会先撞
-    // ENOENT。父目录建好后把 AD_SAMPLE_MEMORY_DIR 占成普通文件，让 mkdir 失败。
+    // 显式建父目录 memory/，再把 AD_SAMPLE_MEMORY_DIR 占成普通文件，让 mkdir 失败。
     mkdirSync(dirname(AD_SAMPLE_MEMORY_DIR), { recursive: true });
     rmSync(AD_SAMPLE_MEMORY_DIR, { recursive: true, force: true });
     await Bun.write(AD_SAMPLE_MEMORY_DIR, "not a directory");

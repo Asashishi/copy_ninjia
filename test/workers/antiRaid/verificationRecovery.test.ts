@@ -40,10 +40,8 @@ mock.module("../../../packages/infra/telegram", () => ({
   },
   sendMessage: async (): Promise<number | undefined> => {
     reminderAttempts++;
-    // 队列为空按「发出去了」算。终态播报发不出去时不再算结算（见
-    // verificationEffects/terminal.ts 的 removalConfirmed），默认返回 undefined
-    // 会让每一个处置终态都停在等播报那一步；要模拟发送失败的用例自己往队列里
-    // 放一个 undefined。
+    // 队列为空按「发出去了」算；终态播报发不出去时不算结算（见 verificationEffects/terminal.ts 的 removalConfirmed）。
+    // 要模拟发送失败的用例往队列里放一个 undefined。
     return reminderResults.length > 0 ? reminderResults.shift() : 700;
   },
   deleteMessage: async (_chatId: number, messageId: number): Promise<boolean> =>
@@ -126,7 +124,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       ...record(42, Date.now() + 60_000),
       reminderMessageId: 11,
     };
-    // 43 已经推进到终态（落盘完、就等踢人）：这一条最能说明「关掉之后不踢人」。
+    // 43 已经推进到终态（落盘完、等踢人）：关掉之后不踢人。
     const expiring: VerificationSnapshot = {
       ...record(43, Date.now() - 1),
       reminderMessageId: 12,
@@ -213,9 +211,8 @@ describe("Anti-Raid Worker verification recovery", () => {
     settleLatestTerminal(42);
     await Bun.sleep(0);
     expect(kicks).toBe(1);
-    // 踢完还要等那条成功播报：它先写进新 revision，收到那一版的落盘回执才结算
-    // （见 verificationEffects/terminal.ts）。播报没发出去时终态不结算，人不会
-    // 被静默地从群里抹掉而一句说明都没有。
+    // 踢完要等那条成功播报：它先写进新 revision，收到那一版的落盘回执才结算（见 verificationEffects/terminal.ts）；
+    // 播报没发出去时终态不结算。
     settleLatestTerminal(42);
     await Bun.sleep(0);
 
@@ -251,8 +248,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       revision: event.revision,
       userId: event.userId,
     }))).toEqual([
-      // revision 比 44/45 多一格：处置终态在踢完之后还要为「成功播报已发出」
-      // 再写一版快照，收到那一版的回执才结算。
+      // revision 比 44/45 多一格：处置终态在踢完之后为「成功播报已发出」再写一版快照，收到那一版的回执才结算。
       { generation: 2, revision: 4, userId: 42 },
       { generation: 3, revision: 4, userId: 43 },
       { generation: 4, revision: 2, userId: 44 },
@@ -340,7 +336,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       jest.useRealTimers();
     }
 
-    // 清理延长后的计时器，避免测试进程等待或影响后续用例。
+    // 清理延长后的计时器。
     runtime.adoptVerifications({ type: "adoptVerifications", generation: 8, verifications: [] });
   });
 
@@ -366,9 +362,7 @@ describe("Anti-Raid Worker verification recovery", () => {
       reminderMessageId: undefined,
     });
 
-    // 重试节拍是 VERIFICATION_REMINDER_RETRY_INITIAL_MS（1 秒）；等的是「补发已经落地
-    // 并回填了 messageId」这个终态。预算要盖住那一秒并留出调度余量，又必须低于 bun 的
-    // 单用例超时（5 秒），否则条件不成立时报出来的是超时而不是下面那条断言。
+    // 重试节拍是 VERIFICATION_REMINDER_RETRY_INITIAL_MS；等待「补发已经落地并回填了 messageId」这个终态。
     await waitUntil((): boolean => {
       const state = verificationEntries.get("-1001:70")?.state;
       return state?.kind === "pending" && state.reminderMessageId === 701;
@@ -522,10 +516,8 @@ describe("Anti-Raid Worker verification recovery", () => {
       actorSyncExempt: false,
       adminCacheFresh: true,
       lockdownActive: false,
-      // 这一路建的是 pending，解释器按 `expiresAt - Date.now()` 起验证计时器。
-      // 合成的小时间戳会让 expiresAt 早已过期、计时器以 0 ms 触发，下面那句
-      // 断言就得和它抢同一个宏任务——机器一慢（覆盖率插桩时尤其）状态就已经
-      // 转成 expelling 了。用真实时钟起算，让记录在断言期间稳稳停在 pending。
+      // 这一路建的是 pending，解释器按 `expiresAt - Date.now()` 起验证计时器；
+      // now 用真实时钟，记录在断言期间停在 pending。
       now: Date.now(),
     });
     releaseBlockedDelete!();

@@ -114,7 +114,7 @@ async function runActions(context: CronDeliveryContext): Promise<boolean> {
  * 按会话顺序逐个执行整套动作；返回 false 表示本轮已被撤销或取消。
  *
  * 只有「逐个列出的单个会话」按整轮口径记日志；`["all"]`、`["except", ...]` 与列出多个
- * 会话时，失败日志一律写明是哪个会话——前两种本轮解析出几个群不固定，日志口径不能跟着变。
+ * 会话时，失败日志一律写明是哪个会话。
  */
 async function runChats(round: CronRoundContext, chatIds: readonly number[]): Promise<boolean> {
   const { schedule, signal, voices, digests }: CronRoundContext = round;

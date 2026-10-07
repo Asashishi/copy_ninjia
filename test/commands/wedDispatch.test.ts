@@ -330,6 +330,33 @@ test("重抽途中机器人离群：被替换的旧结果同样不再删除", as
   expect(logError).not.toHaveBeenCalled();
 });
 
+test("重抽的新图在机器人离群后才送达：新旧结果都不发删除请求", async () => {
+  download.resolve();
+  upload.resolve();
+  await handleWedCommand(command(1));
+  expect(photo).toHaveBeenCalledTimes(1);
+  // 同一发起人重抽：抽取立即完成，新图停在发送上，远端随后仍回成功。
+  upload = Promise.withResolvers<void>();
+  dispatchWedCommand(command(1));
+  await Bun.sleep(0);
+  expect(photo).toHaveBeenCalledTimes(2);
+
+  const post = spyOn(diskIO, "postDiskIO").mockReturnValue(true);
+  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  try {
+    await teardownWedInChat(chat.id, "departed");
+  } finally {
+    post.mockRestore();
+    flush.mockRestore();
+  }
+  upload.resolve();
+
+  expect(await drainWedRuntime(1_000)).toBe("flushed");
+  expect(remove).not.toHaveBeenCalled();
+  expect(removeMany).not.toHaveBeenCalled();
+  expect(logError).not.toHaveBeenCalled();
+});
+
 test("空闲结果超过单次批量上限时分批删除，失败的一批保留消息 id、其余批照常作废", async () => {
   download.resolve();
   upload.resolve();

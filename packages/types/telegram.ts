@@ -5,10 +5,24 @@ import type {
   MessageEntity,
   ReactionTypeCustomEmoji,
   ReactionTypeEmoji,
+  Update,
   User,
 } from "grammy/types";
 import type { TelegramApi } from "./telegramWorker";
 import type { TelegramVisionSource } from "./media";
+
+/** 长轮询订阅的 update 类型；consts/telegram.ts 的 TELEGRAM_ALLOWED_UPDATES 逐项列出全部成员。 */
+export type TelegramSubscribedUpdate = Extract<
+  keyof Update,
+  | "message"
+  | "channel_post"
+  | "message_reaction"
+  | "chat_member"
+  | "my_chat_member"
+  | "callback_query"
+  | "inline_query"
+  | "chosen_inline_result"
+>;
 
 /**
  * 头像交互可使用的身份；发起身份来自更新，候选身份来自本轮查询。只给 ID 时由 getChat
@@ -36,9 +50,7 @@ export type CurrentAvatarResult =
  * 本项目会发出的 Telegram 聊天状态取值。
  *
  * 单点定义：AI 回复心跳的挡位类型（types/aiChat/chatAction.ts 的
- * ChatActionPhase）由它加上 "idle" 派生，发送侧也直接吃它。两处各写一份联合
- * 类型的话，新增一个状态时漏改任何一处都编译通过，运行时才发现发出去的是
- * 另一个状态。
+ * ChatActionPhase）由它加上 "idle" 派生，发送侧也直接使用它。
  */
 export type TelegramChatAction = "typing" | "upload_photo" | "choose_sticker" | "record_voice";
 
@@ -81,8 +93,7 @@ export interface InlineResultSource {
 /**
  * 一条带富文本实体的待发送消息：正文与调用方自行算好的实体表。
  *
- * `offset`/`length` 一律按 **UTF-16 code unit** 计——写死成别的长度不会报错，
- * 只会让 Telegram 把代码块画歪或整段吞掉。问答看板、问答直答与 libs/codeFence.ts
+ * `offset`/`length` 一律按 UTF-16 code unit 计。问答看板、问答直答与 libs/codeFence.ts
  * 共用这一个形状，发送侧直接把它铺进 sendMessage 的 text/entities。
  */
 export interface RichTextMessage {
@@ -114,9 +125,8 @@ export interface PendingMessageDeletion {
  * 机器人自己在某个群里的完整管理员权限快照。
  *
  * 权威副本就是 `ChatState.botPermissions`，`my_chat_member` 与按需
- * `getChatMember` 都只替换这一份快照。字段对齐当前锁定的 `grammy/types` 中 `ChatAdministratorRights`；
- * 可选的频道/论坛权限也显式收敛为布尔值，不让「API 没返回」与「已确认没有」
- * 在持久化状态里混用。
+ * `getChatMember` 都只替换这一份快照。字段对齐 `grammy/types` 的 `ChatAdministratorRights`；
+ * 可选的频道/论坛权限也显式收敛为布尔值。
  */
 export interface BotChatPermissions {
   /** 是否为管理员或群主；其它权限为 false 时仍不能代替此身份位。 */
@@ -200,9 +210,8 @@ export type AvatarDownloadResult =
   | { readonly status: "permanent-failure" | "transient-failure" };
 
 /**
- * 一次删除尝试的结局。`gone` 与 `failed` 必须分开：调用方拿删除结果去写群内
- * 文案或错误日志时，「这条消息已经不在了」和「本机器人删不动它」是两件相反的
- * 事，混成一个布尔会冤枉权限配置正确的管理员。
+ * 一次删除尝试的结局：`deleted` 已删除；`gone` Telegram 明确回复消息不存在或不可删；
+ * `forbidden` 被拒绝权限；`failed` 其它失败。
  */
 export type DeleteMessageOutcome =
   | "deleted"

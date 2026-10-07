@@ -54,7 +54,7 @@ export interface TelegramWorkerDownloadFileRequest {
 
 /**
  * Worker 请求主线程发送一条固定期限的群提示。发送成功与登记延迟删除由主线程
- * 同步完成，避免远端已经建消息、Worker 却在拿到 message_id 前退出而遗留提示。
+ * 同步完成。
  */
 interface TelegramWorkerTemporaryMessageBase {
   readonly operation: "sendTemporaryMessage";
@@ -95,7 +95,7 @@ export type TelegramWorkerDownloadFileResult = TelegramFileDownloadResult;
 /**
  * Worker 与主线程共用的内存上传描述；不携带 grammY 运行时对象。
  * Worker 代理会把 bytes.buffer 直接转移给主线程，调用 sendPhoto/sendVoice 后
- * 原 Uint8Array 已失效，调用方不得读取或复用；这条所有权约束避免大媒体全量复制。
+ * 原 Uint8Array 已失效，调用方不得读取或复用。
  */
 export interface TelegramMemoryFile {
   readonly bytes: Uint8Array;

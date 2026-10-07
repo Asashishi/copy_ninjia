@@ -1,5 +1,6 @@
 import type { FlushResult } from "../../packages/types/lifecycle";
-import { diskIOStub } from "../helpers/diskIOMock";
+import { acknowledgeIdentityPolicyWrites, diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
+import type { IdentityStoragePersistedReply } from "../../packages/types/diskIO/replies";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
 import { runWithUpdateAbortSignal } from "../../packages/infra/updateContext";
@@ -40,6 +41,16 @@ const resolveCommandTarget = mock(async (
 const loggerError = mock((..._args: unknown[]): void => {});
 const postDiskIO = mock((..._args: unknown[]): boolean => true);
 const flushDiskIO = mock(async (): Promise<FlushResult> => "flushed");
+const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
+/** 为 false 时 flush 成功也不回执身份写入，模拟 Worker 尚未提交这批事务。 */
+const identityAck: { enabled: boolean } = { enabled: true };
+
+/** 黑名单确认等的是精确 revision ACK：flush 成功时先把已投递的身份写入回执出去。 */
+async function flushBlocklistDomain(): Promise<{ result: FlushResult }> {
+  const result: FlushResult = await flushDiskIO();
+  if (result === "flushed" && identityAck.enabled) acknowledgeIdentityPolicyWrites(postDiskIO.mock.calls, persistedListeners);
+  return { result };
+}
 
 mock.module("../../packages/config/bot", () => ({
   BOT_ATMOSPHERE: "teasing", SUPER_ADMIN_USER_ID: 1 }));
@@ -69,7 +80,12 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   onDiskIORespawn: (): void => {},
   relayLogMessage: (): boolean => true,
   flushDiskIODomain: flushDiskIO,
-  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIO() }),
+  flushDiskIODomainOutcome: flushBlocklistDomain,
+  onDiskIOReply: diskIOReplyStub({
+    identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
+      persistedListeners.push(listener);
+    },
+  }),
   flushDiskIO,
 })));
 
@@ -112,6 +128,7 @@ beforeEach(() => {
   sendMessage.mockImplementation(async (): Promise<number | undefined> => 55);
   postDiskIO.mockImplementation((): boolean => true);
   flushDiskIO.mockImplementation(async (): Promise<FlushResult> => "flushed");
+  identityAck.enabled = true;
   unbanChatMemberIfBanned.mockImplementation(async (): Promise<boolean> => true);
   unbanChatSenderChat.mockImplementation(async (): Promise<boolean> => true);
   resolveBotAdminStatus.mockImplementation(async (): Promise<boolean> => false);
@@ -160,6 +177,35 @@ describe("/block disable", () => {
     }));
   });
 
+  test("tombstone 没收到精确 revision ACK 时回执说破；再次解除补投同一 tombstone，仍未确认照样说破，确认后不再补投", async () => {
+    const warning: string = ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.unblockPersistFailed;
+    blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
+    identityAck.enabled = false;
+
+    await handleUnblockCommand(context());
+
+    expect(postDiskIO).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining(warning) }));
+
+    // 名单里已没有目标：补投仍未确认时，「本来就不在」的回执同样带警告。
+    await handleUnblockCommand(context());
+
+    expect(postDiskIO).toHaveBeenCalledTimes(2);
+    expect(postDiskIO.mock.calls[1]![0]).toEqual(postDiskIO.mock.calls[0]![0]);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ text: expect.stringContaining(warning) }));
+
+    identityAck.enabled = true;
+    await handleUnblockCommand(context());
+
+    expect(postDiskIO).toHaveBeenCalledTimes(3);
+    expect(postDiskIO.mock.calls[2]![0]).toEqual(postDiskIO.mock.calls[0]![0]);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.not.objectContaining({ text: expect.stringContaining(warning) }));
+
+    // 已确认之后没有未 ACK 最终值，再解除不补投。
+    await handleUnblockCommand(context());
+    expect(postDiskIO).toHaveBeenCalledTimes(3);
+  });
+
   test("跨群解封与连坐同一清单：是管理员但未 /init enable 的群不解封", async () => {
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
@@ -172,7 +218,7 @@ describe("/block disable", () => {
   });
 
   test("目标名单预热失败由解析层拒绝：不回「本来就不在小本本上」，也不跨群解封", async () => {
-    // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不能当成「不在名单」。
+    // unblockUser 按名单结论决定是否写 tombstone，冷读失败时不当成「不在名单」。
     target = undefined;
     resolveBotAdminStatus.mockResolvedValue(true);
 
@@ -206,8 +252,8 @@ describe("/block disable", () => {
   });
 
   test("单群意外 rejection 只算这一个群失败，不掀掉其余群的解封", async () => {
-    // 扇出与 /block 共用 runManagedChatBatch：常规 API 错误已由适配层归一化成
-    // false，能抛到这里的是意外异常，逐项结算而不是让整条命令连同战报一起失败。
+    // 扇出与 /block 共用 runManagedChatBatch：常规 API 错误由适配层归一化成 false，能抛到这里的是意外异常；
+    // 逐项结算，不让整条命令连同战报一起失败。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     chatStates.set(-2002, { isInitEnabled: true, botPermissions: botPermissions() });
     resolveBotAdminStatus.mockResolvedValueOnce(true);
@@ -266,7 +312,7 @@ describe("/block disable", () => {
     expect(sendMessage).toHaveBeenLastCalledWith({
       chatId: -1001,
       replyToMessageId: 10,
-      text: notices.unblockNoManagedChat(notices.unblockNotRecorded(label)),
+      text: notices.unblockNoManagedChat(notices.unblockNotRecorded(label, "")),
     });
     expect(unbanChatMemberIfBanned).not.toHaveBeenCalled();
     expect(unbanChatSenderChat).not.toHaveBeenCalled();

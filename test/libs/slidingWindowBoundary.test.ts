@@ -9,13 +9,11 @@ import { timestampDequeContents, timestampDequeOf } from "../helpers/timestampDe
 /**
  * 两种滑动窗口形态的边界对拍。
  *
- * 全仓的窗口边界只有一个定义——TimestampDeque.trim 的半开区间
- * `(now - windowMs, now]`，外加「时钟回拨只丢落在未来的队尾」。随快照落盘的
- * 窗口保持数组形状，但必须与运行时环形缓冲对同一输入给出相同结果。
+ * 全仓的窗口边界只有一个定义：TimestampDeque.trim 的半开区间 `(now - windowMs, now]`，
+ * 外加「时钟回拨只丢落在未来的队尾」。随快照落盘的窗口保持数组形状，对同一输入与运行时环形缓冲给出相同结果。
  *
- * 数组形态有两个实现（返回新数组的 trimSlidingWindowArray 与就地压缩的
- * trimSlidingWindowArrayInPlace），两者的谓词必须逐字一致，因此本文件是**三方**
- * 对拍：deque / 数组 / 就地。就地版额外锁住「原数组被原地改短、且不换对象」。
+ * 数组形态有两个实现（返回新数组的 trimSlidingWindowArray 与就地压缩的 trimSlidingWindowArrayInPlace），
+ * 两者的谓词逐字一致；本文件三方对拍：deque / 数组 / 就地。就地版额外断言原数组被原地改短、且不换对象。
  */
 
 const WINDOW_MS: number = 1_000;
@@ -73,7 +71,7 @@ describe("滑动窗口两种形态的边界一致", () => {
 
   /**
    * 时钟回拨会让数组不再单调，此时「裁掉任意位置的未来项」与「只裁连续尾段」
-   * 才会分道扬镳。deque 只能表达后者，因此这一组只对拍两个数组实现——它们是
+   * 才会分道扬镳。deque 只能表达后者，这一组只对拍两个数组实现——它们是
    * 同一份持久化窗口的两种写法，必须逐元素相同。
    */
   test("非单调输入下两个数组实现逐元素一致", () => {

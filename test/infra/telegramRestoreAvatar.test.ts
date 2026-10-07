@@ -1,17 +1,14 @@
 /**
  * restoreDefaultProfilePhoto：把机器人头像换回默认来源（直链或本机文件）那张。
  *
- * 直链来源重点守五条：
- * 1. **跟随重定向**：地址是部署配置的一部分，而图床与对象存储的直链先跳一次到存储
- *    域名是常态（内置缺省那条 Drive 链接即是）。/copy、/icon steal 那三条的
- *    `redirect: "error"`（见 telegramAvatar / telegram.copyAvatar 两份用例）归
- *    Telegram 自有资产域 allowlist 那条约束管，与这一条不是一回事。
- * 2. 响应仍走有界读取，第三方响应撑不爆内存。
- * 3. 上传前认一遍字节签名：Drive 在配额超限/病毒扫描警告时会以 HTTP 200 返回
- *    一张 HTML 插页，不挡住它就等于把 HTML 当图片交给 Telegram。
- * 4. 瞬时失败按 AVATAR_FETCH_MAX_ATTEMPTS 重试，确定性失败立刻放弃——确定性
- *    拒绝白烧三次头像接口调用，正好可能撞上重试本想规避的 flood 限制。
- * 5. 失败日志点名地址但不带查询串：这一项是部署方配的，可能是预签名地址。
+ * 直链来源覆盖：
+ * 1. 跟随重定向：地址是部署配置的一部分，图床与对象存储的直链先跳一次到存储域名是常态。
+ *    /copy、/icon steal 那几条的 `redirect: "error"`（见 telegramAvatar / telegram.copyAvatar 两份用例）
+ *    归 Telegram 自有资产域 allowlist 约束管，与这一条无关。
+ * 2. 响应仍走有界读取。
+ * 3. 上传前认一遍字节签名：HTTP 200 返回的 HTML 插页（如 Drive 的配额超限/病毒扫描警告页）不交给 Telegram。
+ * 4. 瞬时失败按 AVATAR_FETCH_MAX_ATTEMPTS 重试，确定性失败立刻放弃。
+ * 5. 失败日志点名地址但不带查询串（地址可能是预签名地址）。
  *
  * 本机文件来源同样有界读取、上传前认字节签名；读不到、超限与非图片都是确定性失败。
  */
@@ -66,7 +63,7 @@ function stubFetch(responses: readonly (() => Response)[]): void {
   }) as typeof fetch;
 }
 
-/** 合法 PNG 的 8 字节签名，后面补几字节凑成一份「像样的」载荷。 */
+/** 合法 PNG 的字节签名，后面补几字节凑成一份「像样的」载荷。 */
 const PNG_BYTES: Uint8Array = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const JPEG_BYTES: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 8, 7]);
 
@@ -74,7 +71,7 @@ function imageResponse(bytes: Uint8Array = PNG_BYTES): Response {
   return new Response(bytes, { status: 200 });
 }
 
-/** Drive 在配额超限/病毒扫描警告时返回的那种 HTML 插页：HTTP 200，正文是网页。 */
+/** HTTP 200 返回的 HTML 插页（如 Drive 的配额超限/病毒扫描警告页）：正文是网页。 */
 function interstitialResponse(): Response {
   return new Response("<!DOCTYPE html><html><body>Quota exceeded</body></html>", {
     status: 200,
@@ -116,9 +113,7 @@ describe("默认头像的取图口径", () => {
     await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(true);
     expect(fetchCalls).toHaveLength(1);
     expect(fetchCalls[0]!.url).toBe(BOT_DEFAULT_AVATAR_URL);
-    // 逼配置者自己解析出跳转终点，只会把一个必然踩到的坑变成必须写进文档的注意
-    // 事项。下面两道检查（有界读取 + 字节签名）防的是「拿回来的不是图片」，与跳
-    // 不跳转无关。
+    // 请求用 redirect: "follow"；有界读取与字节签名两道检查与跳转无关。
     expect(fetchCalls[0]!.init?.redirect).toBe("follow");
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
   });
@@ -138,7 +133,7 @@ describe("上传前的字节校验", () => {
 
     await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
-    // 配额/病毒扫描插页重试多少次都是同一张，白烧头像接口的额度。
+    // 配额/病毒扫描插页是确定性失败：不重试。
     expect(fetchCalls).toHaveLength(1);
     expect(loggerErrorMock).toHaveBeenCalledWith(
       expect.stringContaining("did not return a JPEG or PNG image (sniffed=unknown")
@@ -154,8 +149,7 @@ describe("上传前的字节校验", () => {
   });
 
   test("WebP 之类 Telegram 不收的静态图也在本地就挡掉", async () => {
-    // 字节数组而不是带 NUL 的字符串字面量：写成字符串会让整个文件被 git 判成二进制，
-    // diff/blame 全失效，本文件覆盖的换脸路径就再也进不了代码审查。
+    // 用字节数组构造夹具，不用带 NUL 的字符串字面量。
     const webp: Uint8Array = new Uint8Array([
       0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
     ]);
@@ -218,7 +212,7 @@ describe("失败分类", () => {
     });
 
     await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(false);
-    // 换几次都一样，重试只会白烧换头像的限流额度。
+    // 确定性失败不重试。
     expect(setMyProfilePhotoMock).toHaveBeenCalledTimes(1);
   });
 
@@ -241,13 +235,12 @@ describe("失败日志的地址脱敏", () => {
   const PRESIGNED: string = "https://bucket.example/faces/bot.png?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600";
 
   test("取图用完整地址，日志只留 origin + pathname", async () => {
-    // 部署方可以把这一项配成 S3/OSS 预签名地址，而 logs/<day>.json 的 mode 是
-    // 0644 且属于备份对象；libs/redaction.ts 的 redactSecretsInText 只脱敏已登记
-    // 的 env 密钥、不看 query，所以签名要在拼日志时就去掉。
+    // 取图用完整地址（可能是预签名地址），日志只留 origin + pathname：
+    // libs/redaction.ts 的 redactSecretsInText 只脱敏已登记的 env 密钥、不看 query，签名在拼日志时去掉。
     stubFetch([(): Response => interstitialResponse()]);
 
     await expect(restoreDefaultProfilePhoto({ kind: "url", url: PRESIGNED })).resolves.toBe(false);
-    // 签名不能被顺手削掉：削掉了这张图根本取不回来。
+    // 取图请求保留完整签名。
     expect(fetchCalls[0]!.url).toBe(PRESIGNED);
     expect(loggedText()).toContain("https://bucket.example/faces/bot.png");
     expect(loggedText()).not.toContain("X-Amz-Signature");

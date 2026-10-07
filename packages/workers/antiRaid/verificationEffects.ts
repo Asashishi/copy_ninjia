@@ -24,6 +24,7 @@ import type {
 import { fetchAdminIds } from "./adminCache";
 import { retractJoinWindow } from "./lockdownJoinWindow";
 import { runKickMemberEffect } from "./verificationEffects/kick";
+import { retryRejectedTerminal } from "./verificationEffects/retry";
 import {
   runExpelEffect,
   runRecheckInviterEffect,
@@ -170,101 +171,109 @@ export async function runVerificationEffects({
     });
     if (granted === null) return;
   }
-  for (const effect of effects) {
-    switch (effect.kind) {
-      case "deleteMessage":
-        await deleteMessage(chatId, effect.messageId, telegramApi);
-        break;
-      case "kickMember":
-        await runKickMemberEffect({
-          chatId,
-          userId,
-          transitionState,
-          dispatchVerification,
-        });
-        break;
-      case "deleteReminders":
-        if (effect.reminderMessageId !== undefined) {
-          await deleteMessage(chatId, effect.reminderMessageId, telegramApi);
-        }
-        if (effect.replyReminderMessageId !== undefined) {
-          await deleteMessage(chatId, effect.replyReminderMessageId, telegramApi);
-        }
-        break;
-      case "expel":
-      case "expelFlood":
-        await runExpelEffect({
-          chatId,
-          userId,
-          effect,
-          dispatchVerification,
-          publishVerificationChange,
-        });
-        break;
-      case "recheckInviter":
-        await runRecheckInviterEffect({
-          chatId,
-          userId,
-          effect,
-          dispatchVerification,
-        });
-        break;
-      case "sendReminder":
-        sendVerificationReminder({
-          chatId,
-          userId,
-          label: effect.label,
-          isBot: effect.isBot,
-          dispatchVerification,
-        });
-        break;
-      case "sendReplyReminder":
-        sendReplyReminder({
-          chatId,
-          userId,
-          label: effect.label,
-          targetMessageId: effect.targetMessageId,
-          dispatchVerification,
-        });
-        break;
-      case "sendWelcome": {
-        const welcomeText: string = welcomeTextFor(effect);
-        await runBooleanTelegramAction(
-          "send message",
-          (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
-            purpose: "notice",
+  try {
+    for (const effect of effects) {
+      switch (effect.kind) {
+        case "deleteMessage":
+          await deleteMessage(chatId, effect.messageId, telegramApi);
+          break;
+        case "kickMember":
+          await runKickMemberEffect({
             chatId,
-            text: welcomeText,
-            replyToMessageId: effect.anchorMessageId,
-            deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
-            signal,
-          })
-        );
-        break;
+            userId,
+            transitionState,
+            dispatchVerification,
+          });
+          break;
+        case "deleteReminders":
+          if (effect.reminderMessageId !== undefined) {
+            await deleteMessage(chatId, effect.reminderMessageId, telegramApi);
+          }
+          if (effect.replyReminderMessageId !== undefined) {
+            await deleteMessage(chatId, effect.replyReminderMessageId, telegramApi);
+          }
+          break;
+        case "expel":
+        case "expelFlood":
+          await runExpelEffect({
+            chatId,
+            userId,
+            effect,
+            dispatchVerification,
+            publishVerificationChange,
+          });
+          break;
+        case "recheckInviter":
+          await runRecheckInviterEffect({
+            chatId,
+            userId,
+            effect,
+            dispatchVerification,
+          });
+          break;
+        case "sendReminder":
+          sendVerificationReminder({
+            chatId,
+            userId,
+            label: effect.label,
+            isBot: effect.isBot,
+            dispatchVerification,
+          });
+          break;
+        case "sendReplyReminder":
+          sendReplyReminder({
+            chatId,
+            userId,
+            label: effect.label,
+            targetMessageId: effect.targetMessageId,
+            dispatchVerification,
+          });
+          break;
+        case "sendWelcome": {
+          const welcomeText: string = welcomeTextFor(effect);
+          await runBooleanTelegramAction(
+            "send message",
+            (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
+              purpose: "notice",
+              chatId,
+              text: welcomeText,
+              replyToMessageId: effect.anchorMessageId,
+              deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
+              signal,
+            })
+          );
+          break;
+        }
+        case "answerCallback":
+          await answerVerificationCallback({ callbackQueryId: effect.callbackQueryId, reply: effect.reply });
+          break;
+        case "startAdminCheck":
+          startAdminCheck({
+            chatId,
+            userId,
+            actorId: effect.actorId,
+            dispatchVerification,
+          });
+          break;
+        case "retractJoinCount":
+          retractJoinWindow(chatId, effect.joinedAt);
+          break;
+        case "logUncancelableKickExemption":
+          // Worker 经 error 日志向主线程中继，供人工纠正误踢。
+          logger.error(
+            `The kick request for member ${effect.label} (chat ${chatId}, user ${userId}) had already been sent or completed ` +
+            "when exemption proof (admin identity) arrived; it cannot be undone automatically — " +
+            "an admin may need to manually re-invite them if this was a false positive."
+          );
+          break;
       }
-      case "answerCallback":
-        await answerVerificationCallback({ callbackQueryId: effect.callbackQueryId, reply: effect.reply });
-        break;
-      case "startAdminCheck":
-        startAdminCheck({
-          chatId,
-          userId,
-          actorId: effect.actorId,
-          dispatchVerification,
-        });
-        break;
-      case "retractJoinCount":
-        retractJoinWindow(chatId, effect.joinedAt);
-        break;
-      case "logUncancelableKickExemption":
-        // Worker 只向主线程中继 error 日志；这是误踢后唯一可供人工纠正的线索。
-        logger.error(
-          `The kick request for member ${effect.label} (chat ${chatId}, user ${userId}) had already been sent or completed ` +
-          "when exemption proof (admin identity) arrived; it cannot be undone automatically — " +
-          "an admin may need to manually re-invite them if this was a false positive."
-        );
-        break;
     }
+  } catch (error: unknown) {
+    // 取得许可的这批终态动作中途 reject：复位执行门并退避重试，再把错误交给 dispatchVerification 记日志。
+    if (granted !== null) {
+      retryRejectedTerminal({ chatId, userId, state: transitionState, dispatchVerification });
+    }
+    throw error;
   }
   // 本进程最后一次许可用完仍停在终态时，只有本轮没有发布新 revision 才就地判耗尽。
   // 本轮已发布新 revision（置位 successNoticeSent、removalConfirmed 等持久化标志，或

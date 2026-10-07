@@ -40,7 +40,6 @@ function photoMessage(): AiRecordMediaMessage {
     replyTelegramBackpressured: false,
     stickerFallbackText: undefined,
     voiceMime: undefined,
-    voiceDurationSeconds: 0,
     directTriggerReason: "mention",
     username: undefined,
     replyTo: undefined,

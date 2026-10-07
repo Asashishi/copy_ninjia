@@ -10,7 +10,7 @@ export interface VerificationSnapshotBase {
   isBot: boolean;
   /** 入群公告 id；只清理机器人/Telegram 制造的验证痕迹，不删除成员发言。 */
   announcementMessageId?: number;
-  /** 最近一分钟的待验证成员消息时间戳。 */
+  /** 最近 JOIN_WINDOW_MS 内的待验证成员消息时间戳。 */
   trackedMessageTimes: number[];
   invitedBy?: number;
   reminderMessageId?: number;

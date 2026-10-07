@@ -55,8 +55,8 @@ function abortError(): Error {
 }
 
 /**
- * Worker 请求主线程执行一项能力。等待者先登记后 post，保证同步测试回执也不会
- * 丢；取消时用独立 cancel 信封撤销主线程排队/在途工作。
+ * Worker 请求主线程执行一项能力。等待者先登记后 post，同步回执同样可结算；
+ * 取消时用独立 cancel 信封撤销主线程排队/在途工作。
  */
 export function requestMainThread<TRequest, TResult>(
   request: TRequest,
@@ -93,7 +93,7 @@ export function requestMainThread<TRequest, TResult>(
         try {
           poster({ __duplex: "cancel", requestId });
         } catch {
-          // 本地 waiter 已经结算；Worker 退出会由主线程代际 signal 再兜一次。
+          // 本地 waiter 已经结算；Worker 退出时由主线程代际 signal 收尾。
         }
         reject(abortError());
       };

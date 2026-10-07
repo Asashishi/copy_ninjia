@@ -6,9 +6,9 @@ import { runtimeModuleReferences } from "./sourceAnalysis";
 /**
  * 项目源码的运行期裸导入必须由根 `package.json` 直接声明。
  *
- * 只经传递依赖提升到 `node_modules/` 顶层的包（phantom dependency）当前能解析，
- * 但它的存在取决于其它包的依赖声明与安装器布局；这里按 AST 取运行期引用，
- * 纯类型引用、相对路径、Bun 与 Node 内建模块不参与判定，包子路径归到所属包名。
+ * 只经传递依赖提升到 `node_modules/` 顶层的包（phantom dependency）不算声明；
+ * 本模块按 AST 取运行期引用，纯类型引用、相对路径、Bun 与 Node 内建模块不参与判定，
+ * 包子路径归到所属包名。
  */
 
 interface RootPackageManifest {

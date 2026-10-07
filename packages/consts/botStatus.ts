@@ -1,6 +1,7 @@
 /** `/bot_status` 本机进程指标的换算与展示常量。 */
 
 import type { ChatStateSwitchKey } from "../types/chatState";
+import { exhaustiveList } from "./exhaustiveList";
 
 /** 一秒包含的微秒数；用于把 process.cpuUsage 与 uptime 放到同一量纲。 */
 export const BOT_STATUS_MICROSECONDS_PER_SECOND: number = 1_000_000;
@@ -37,7 +38,7 @@ export const BOT_STATUS_BYTES_PER_GIB: number =
  * `/bot_status` 的上下文容量是两段记忆各自占用率的加权和：滑动热记忆按
  * VERBATIM_CONTEXT_MAX 算占用率，冷记忆摘要按 MAX_SUMMARY_ROUNDS 算（两个上限
  * 都在 consts/aiChat/memory.ts）。**本值与 BOT_STATUS_COLD_MEMORY_WEIGHT 之和
- * 恒为 1**，否则两段都满时给不出 100%。所属模块：packages/commands/botStatus.ts。
+ * 恒为 1**。所属模块：packages/commands/botStatus.ts。
  */
 export const BOT_STATUS_HOT_MEMORY_WEIGHT: number = 0.7;
 
@@ -47,17 +48,17 @@ export const BOT_STATUS_HOT_MEMORY_WEIGHT: number = 0.7;
  */
 export const BOT_STATUS_COLD_MEMORY_WEIGHT: number = 0.3;
 
-/** 权限块与功能块的 JSON 缩进空格数；两格让 Telegram 代码块里逐行可读。 */
+/** 权限块与功能块的 JSON 缩进空格数。 */
 export const BOT_STATUS_JSON_INDENT: number = 2;
 /** 权限块与功能块 `pre` 实体的语言标签，让客户端按 JSON 高亮。 */
 export const BOT_STATUS_JSON_LANGUAGE: string = "json";
 
 /**
  * `/bot_status` 功能块列出的群开关字段名与展示顺序，属 packages/commands/botStatus.ts。
- * 键就是 state 里的开关名，值是该开关此刻的真假；新增群开关时在这里补一项，漏了那一项
- * 就不会出现在功能块里。
+ * 键就是 state 里的开关名，值是该开关此刻的真假；覆盖 ChatStateSwitchKey 的全部成员，
+ * 新增群开关时须在这里补上展示位置。
  */
-export const BOT_STATUS_FEATURE_KEYS: readonly ChatStateSwitchKey[] = [
+export const BOT_STATUS_FEATURE_KEYS: readonly ChatStateSwitchKey[] = exhaustiveList<ChatStateSwitchKey>()([
   "isInitEnabled",
   "isAIChatEnabled",
   "isTranslationEnabled",
@@ -65,4 +66,4 @@ export const BOT_STATUS_FEATURE_KEYS: readonly ChatStateSwitchKey[] = [
   "isFloodControlEnabled",
   "isAntiRaidEnabled",
   "isProxySendEnabled",
-];
+]);

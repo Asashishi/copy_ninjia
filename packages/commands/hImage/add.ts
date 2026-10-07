@@ -2,13 +2,13 @@
  * `/h_image add`：把被回复消息里的图（连同同一相册里已见过的其余几张）收进随机图库。
  *
  * 发起身份要有 isCanAddHImage（超级管理员恒有）。handler 同步收集候选并交给延迟命令执行器
- * 的 background 档；任务先列一次图库目录拿到张数，再在
- * H_IMAGE_ADD_TASK_BUDGET_MS 的总预算内一张一张处理，内存里最多同时只有一张图：
- * 已知超过 10 MB 的不下载，其余经共享的 Telegram 文件下载读进有界内存，再按
- * `sendPhoto` 的尺寸门槛过一道闸（宽高之和 ≤ 10000、长宽比 ≤ 20），最后按字节嗅探格式写进
- * 图库（infra/randomImage.ts）。
+ * 的 background 档；任务先列一次图库目录拿到张数，再在 H_IMAGE_ADD_TASK_BUDGET_MS 的
+ * 总预算内按 H_IMAGE_ADD_DOWNLOAD_BATCH_SIZE 张一页处理，内存里至多同时有一页的图：
+ * 一页内同时下载，已知超过 RANDOM_IMAGE_MAX_BYTES 的不下载，其余经共享的 Telegram 文件下载
+ * 读进有界内存，再按 `sendPhoto` 的尺寸门槛（isSendablePhotoDimensions）过一道闸；整页结算后
+ * 按候选顺序逐张按字节嗅探格式写进图库（infra/randomImage.ts），写完才开始下一页。
  * 结果只回一句汇总（新收张数、收图前图库张数，以及跳过、尺寸不合规与失败的张数），
- * 30 秒后删除；停机取消时静默收场。
+ * 走默认自动清理；停机取消时静默收场。
  *
  * 同批候选按 file_unique_id 去重；与图库的去重在下载后由 storeRandomImage
  * 按内容 SHA-256 文件名判定，不读取已有图片，也不按 Telegram 标识查询图库。
@@ -17,6 +17,7 @@
 import type { CommandContext, Context } from "grammy";
 import type { Message } from "grammy/types";
 import {
+  H_IMAGE_ADD_DOWNLOAD_BATCH_SIZE,
   H_IMAGE_ADD_DOWNLOAD_TIMEOUT_MS,
   H_IMAGE_ADD_METADATA_TIMEOUT_MS,
   H_IMAGE_ADD_TASK_BUDGET_MS,
@@ -32,6 +33,8 @@ import { sendCommandMessage } from "../../infra/telegram";
 import { downloadTelegramFileBytes } from "../../infra/telegram/fileDownload";
 import { currentUpdateAbortSignal } from "../../infra/updateContext";
 import { isTimeoutAbort, signalWithTimeout } from "../../libs/abortSignal";
+import { runBoundedSettledBatch } from "../../libs/boundedSettledBatch";
+import type { BoundedBatchExecution, BoundedBatchResult } from "../../libs/boundedSettledBatch";
 import { explicitReplyTo, forumTopicThreadId } from "../../libs/forumTopic";
 import { isSendablePhotoDimensions, messageImageCandidate } from "../../libs/telegramImage";
 import type { AtmosphereTexts } from "../../types/atmosphere";
@@ -56,26 +59,18 @@ function collectCandidates(chatId: number, replied: Message): MessageImageCandid
   return candidates;
 }
 
-/** collectImage 的入参。 */
-interface CollectImageParams {
-  /** 已解析成绝对路径的图库目录。 */
-  readonly directory: string;
-  readonly candidate: MessageImageCandidate;
-  readonly signal: AbortSignal;
-}
+/** 一张图下载并过完尺寸闸的结果：待写盘的字节，或不再写盘的结局。 */
+type DownloadedImage = Uint8Array | "invalidDimensions" | "failed";
 
 /**
- * 收一张图；失败只记日志并计数，停机取消返回 stopped。
+ * 下载一张图并过尺寸闸：返回待写盘的字节，或不再写盘的结局；失败只记日志并计为
+ * failed，取消与预算超时不记日志（停机取消由 addRandomImages 在整页结算后收场）。
  *
  * 去重排在下载之后：图库文件名是内容的 SHA-256（见 infra/randomImage.ts 的
- * storeRandomImage），要算出这个名字就得先拿到字节。已收录的图同样会被下载一次；
- * 同一张图换个人转发、`file_unique_id` 不同，也照样判成重复。
+ * storeRandomImage）。已收录的图同样会被下载一次；同一张图换个人转发
+ * （`file_unique_id` 不同）也判成重复。
  */
-async function collectImage({
-  directory,
-  candidate,
-  signal,
-}: CollectImageParams): Promise<HImageAddOutcome> {
+async function downloadImage(candidate: MessageImageCandidate, signal: AbortSignal): Promise<DownloadedImage> {
   try {
     if (candidate.fileSize !== undefined && candidate.fileSize > RANDOM_IMAGE_MAX_BYTES) return "failed";
     const download: TelegramFileDownloadResult = await downloadTelegramFileBytes({
@@ -91,24 +86,33 @@ async function collectImage({
       }
       return "failed";
     }
-    // 尺寸闸排在写盘之前：`sendPhoto` 要求宽高之和 ≤ 10000、长宽比 ≤ 20，字节闸
-    // 拦不住这一档（一张 12000×40 的长条 PNG 只有几十 KB）。收进去的话，这张图
-    // 日后被 `/h_image` 或 cron `rand_image` 抽中时只会静默发不出去，群里没有
-    // 任何反馈，运维也无从知道图库里躺着一张永远发不出的图。
+    // 尺寸闸排在写盘之前，按 isSendablePhotoDimensions 判定 `sendPhoto` 的尺寸门槛。
     const dimensions: ImageDimensions | null = await readImageDimensions(download.bytes);
     if (dimensions === null) return "failed";
     if (!isSendablePhotoDimensions(dimensions)) return "invalidDimensions";
-    const stored: StoreRandomImageResult = await storeRandomImage(directory, download.bytes);
-    if (stored.status === "stored") return "added";
-    return stored.status === "existing" ? "existing" : "failed";
+    return download.bytes;
   } catch (error: unknown) {
-    if (signal.aborted) return isTimeoutAbort(signal) ? "failed" : "stopped";
-    logger.error("Failed to collect a picture for /h_image add:", error);
+    if (!signal.aborted) logger.error("Failed to collect a picture for /h_image add:", error);
     return "failed";
   }
 }
 
-/** 先列一遍图库目录，再在总预算内逐张收图，最后回一句汇总。 */
+/**
+ * 把一张已下载的图写进图库；写盘失败只记日志并计为 failed。同一页按候选顺序逐张调用，
+ * 同批内容相同的后一张因此报 existing。
+ */
+async function storeImage(directory: string, bytes: Uint8Array): Promise<HImageAddOutcome> {
+  try {
+    const stored: StoreRandomImageResult = await storeRandomImage(directory, bytes);
+    if (stored.status === "stored") return "added";
+    return stored.status === "existing" ? "existing" : "failed";
+  } catch (error: unknown) {
+    logger.error("Failed to store a picture for /h_image add:", error);
+    return "failed";
+  }
+}
+
+/** 先列一遍图库目录，再在总预算内按页收图，最后回一句汇总。 */
 async function addRandomImages(request: HImageAddRequest): Promise<void> {
   const texts: AtmosphereTexts["H_IMAGE_TEXTS"] = chatAtmosphere().H_IMAGE_TEXTS;
   const directory: string = getAssetConfig().randomHImageDirectory;
@@ -123,20 +127,36 @@ async function addRandomImages(request: HImageAddRequest): Promise<void> {
   }
   const library: RandomImageLibrary = await readRandomImageLibrary(directory);
   const signal: AbortSignal = signalWithTimeout(currentUpdateAbortSignal(), H_IMAGE_ADD_TASK_BUDGET_MS);
+  const candidates: readonly MessageImageCandidate[] = request.candidates;
   let added: number = 0;
   let existing: number = 0;
   let invalidDimensions: number = 0;
   let failed: number = 0;
-  for (const candidate of request.candidates) {
-    // 预算耗尽后剩下的图直接记为失败；停机取消则整批静默收场。
-    const outcome: HImageAddOutcome = signal.aborted
-      ? (isTimeoutAbort(signal) ? "failed" : "stopped")
-      : await collectImage({ directory, candidate, signal });
-    if (outcome === "stopped") return;
-    if (outcome === "added") added++;
-    else if (outcome === "existing") existing++;
-    else if (outcome === "invalidDimensions") invalidDimensions++;
-    else failed++;
+  for (let start: number = 0; start < candidates.length; start += H_IMAGE_ADD_DOWNLOAD_BATCH_SIZE) {
+    if (signal.aborted) {
+      // 停机取消整批静默收场；预算耗尽后剩下的图直接记为失败。
+      if (!isTimeoutAbort(signal)) return;
+      failed += candidates.length - start;
+      break;
+    }
+    const downloads: BoundedBatchResult<MessageImageCandidate, DownloadedImage>[] =
+      await runBoundedSettledBatch({
+        items: candidates.slice(start, start + H_IMAGE_ADD_DOWNLOAD_BATCH_SIZE),
+        maxConcurrent: H_IMAGE_ADD_DOWNLOAD_BATCH_SIZE,
+        execute: ({ item }: BoundedBatchExecution<MessageImageCandidate>): Promise<DownloadedImage> =>
+          downloadImage(item, signal),
+      });
+    // 停机取消时这一页已下载的图也不再写盘。
+    if (signal.aborted && !isTimeoutAbort(signal)) return;
+    for (const download of downloads) {
+      // downloadImage 自行结算全部异常，不会 reject。
+      const image: DownloadedImage = download.status === "fulfilled" ? download.value : "failed";
+      const outcome: HImageAddOutcome = typeof image === "string" ? image : await storeImage(directory, image);
+      if (outcome === "added") added++;
+      else if (outcome === "existing") existing++;
+      else if (outcome === "invalidDimensions") invalidDimensions++;
+      else failed++;
+    }
   }
   await sendCommandMessage({
     chatId: request.chatId,

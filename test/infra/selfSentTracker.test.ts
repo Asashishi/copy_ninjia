@@ -127,11 +127,8 @@ describe("跨线程自发消息 rendezvous", () => {
 });
 
 /**
- * 分层表的容量语义：外层 chatId、内层 messageId，内层空了必须连带摘除外层。
- *
- * 这条不变量承载着 isSelfSent 的空表快速路径——只要有一个群留下空的内层表，
- * `sentMessages.size === 0` 就再也不成立，每条群消息都会白付一次外层查找，
- * 泄漏的空 Map 也永远不回收。
+ * 分层表的容量语义：外层 chatId、内层 messageId，内层空了连带摘除外层；
+ * isSelfSent 的空表快速路径（`sentMessages.size === 0`）依赖这一点。
  */
 describe("自发消息登记的分层容量", () => {
   test("同群多条各自计数，TTL 到期后内层与外层一起摘除", () => {
@@ -151,8 +148,7 @@ describe("自发消息登记的分层容量", () => {
 
       jest.advanceTimersByTime(SELF_SENT_MESSAGE_TTL_MS);
 
-      // 逐条到期后不能留下空的内层 Map：外层非空会让 isSelfSent 的空表快速路径
-      // 永久失效，泄漏的空 Map 也再无人回收。
+      // 逐条到期后不留下空的内层 Map，空表快速路径保持成立。
       expect(sentMessageCount()).toBe(0);
       expect(sentMessages.size).toBe(0);
       expect(isSelfSent(-1001, 10)).toBeFalse();

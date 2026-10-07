@@ -138,16 +138,13 @@ describe("StateStore", () => {
     });
 
     await expect(store.save(schema(40), { waitForPersistence: false })).resolves.toBeUndefined();
-    // 等的是「第二次 writeText 已经发生」这个可观测事实，不猜 timer 在繁忙事件循环里晚多久触发。
+    // 等待「第二次 writeText 已经发生」这个可观测事实。
     await waitUntil((): boolean => attempts > 1);
     expect(attempts).toBeGreaterThan(1);
     await expect(store.flush(20, true)).resolves.toBe("failed");
   });
 
-  /**
-   * 下面三条按合并窗口与重试退避的先后关系断言，用假时钟逐毫秒推进，不依赖事件循环
-   * 在这台机器上恰好多快：真实 timer 下，一次超过窗口的卡顿就会让「到期前不写」读到已写。
-   */
+  /** 下面三条按合并窗口与重试退避的先后关系断言，用假时钟逐毫秒推进。 */
   describe("后台合并窗口（假时钟）", () => {
     beforeEach((): void => { jest.useFakeTimers(); });
     afterEach((): void => { jest.useRealTimers(); });
@@ -378,9 +375,8 @@ describe("StateStore", () => {
 /**
  * 默认读取边界：状态文件必须是普通文件且是严格 UTF-8，否则拒绝启动。
  *
- * 一律使用真实临时文件和默认 reader；注入 readText 只能测到已经解码成合法字符串
- * 的内容，测不到非法字节和非文件路径。写入统一注入 mock 计数，用来断言被拒绝的
- * 加载一次都没有回写。
+ * 一律使用真实临时文件和默认 reader（注入 readText 测不到非法字节和非文件路径）；
+ * 写入统一注入 mock 计数，断言被拒绝的加载没有回写。
  */
 describe("StateStore 默认读取边界", () => {
   const legal: string = '{"copy":{"copiedUser":{"id":1,"first_name":"X"},"copyChatId":-1}}';
@@ -512,10 +508,7 @@ describe("StateStore 默认读取边界", () => {
   });
 });
 
-/**
- * 内存镜像上的纯查询/裁剪门面。业务侧测试普遍 mock 掉这些函数，这里直接打
- * 真实现，避免各处替身与真语义悄悄漂移。
- */
+/** 内存镜像上的纯查询/裁剪门面。业务侧测试普遍 mock 掉这些函数，这里直接测真实现。 */
 describe("群级状态门面", () => {
   afterEach(() => {
     chatStateCache.clear();

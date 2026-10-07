@@ -1,13 +1,13 @@
 import type { BotActionPermissions, BotChatPermissions } from "../types/telegram";
+import { exhaustiveList } from "./exhaustiveList";
 
 /** 机器人自身管理员身份与权限位追踪（packages/infra/botAdmin.ts）的调参常量。 */
 
 /**
  * `ChatState.botPermissions` 的完整字段集与稳定序列化顺序。
- * 解码、等值判定和「非管理员必须全 false」校验共用它，任一读写口
- * 不得另写一份会漂移的字段清单。
+ * 解码、等值判定和「非管理员必须全 false」校验共用它。
  */
-export const BOT_CHAT_PERMISSION_KEYS: readonly (keyof BotChatPermissions)[] = [
+export const BOT_CHAT_PERMISSION_KEYS: readonly (keyof BotChatPermissions)[] = exhaustiveList<keyof BotChatPermissions>()([
   "isAdministrator",
   "isAnonymous",
   "canManageChat",
@@ -26,15 +26,14 @@ export const BOT_CHAT_PERMISSION_KEYS: readonly (keyof BotChatPermissions)[] = [
   "canPinMessages",
   "canManageTopics",
   "canManageDirectMessages",
-];
+]);
 
 /**
  * 权限位的中文名。`/bot_status` 的权限块只列**已经拥有**的位，缺权限提示点名
- * 机器人缺的那一位（见 libs/botPermissionGap.ts）；两处读同一张表，同一位在
- * 群里只有一个叫法。
+ * 机器人缺的那一位（见 libs/botPermissionGap.ts），两处读同一张表。
  *
  * 字段全集与展示顺序以 BOT_CHAT_PERMISSION_KEYS 为准，这里只补名字；新增权限位时
- * 两处都要加：本表缺项会在类型层报错，BOT_CHAT_PERMISSION_KEYS 缺项不会。
+ * 两处都要加，仅本表缺项会在类型层报错。
  */
 export const BOT_CHAT_PERMISSION_LABELS: Readonly<
   Record<keyof BotChatPermissions, string>
@@ -60,14 +59,14 @@ export const BOT_CHAT_PERMISSION_LABELS: Readonly<
 };
 
 /**
- * 这份快照里**下游 Anti-Raid Worker 真正读的**那两位（见 types/telegram.ts 的
- * `BotActionPermissions`）；其余 16 位 Worker 不读。投影与广播去重共用这一份
- * 清单（见 libs/chatMember.ts），不另写一份会漂移的字段集。
+ * 这份快照里**下游 Anti-Raid Worker 读取的**权限位（见 types/telegram.ts 的
+ * `BotActionPermissions`）；其余位 Worker 不读。投影与广播去重共用这份
+ * 清单（见 libs/chatMember.ts）。
  */
-export const BOT_ACTION_PERMISSION_KEYS: readonly (keyof BotActionPermissions)[] = [
+export const BOT_ACTION_PERMISSION_KEYS: readonly (keyof BotActionPermissions)[] = exhaustiveList<keyof BotActionPermissions>()([
   "canRestrictMembers",
   "canDeleteMessages",
-];
+]);
 
 /**
  * 一次没能确证权限位的现查之后，同一个群多久才允许再现查一次。

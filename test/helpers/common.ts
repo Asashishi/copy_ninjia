@@ -2,10 +2,9 @@
 
 /**
  * 排空「已经发起、但调用方按设计不 await」的后台链——典型是 infra/botAdmin.ts 的
- * 按需权限现查：它不能挡住串行的 update 处理，因此快照要晚若干个微任务才落下。
+ * 按需权限现查：它不挡住串行的 update 处理，快照要晚若干个微任务才落下。
  *
- * 用一个宏任务收口，而不是数着 `await Promise.resolve()` 凑圈数：要凑几圈取决于
- * 被测实现里叠了几层 await，改一处实现就得回来改一串断言。
+ * 用一个宏任务收口，不数 `await Promise.resolve()` 的圈数。
  */
 export function settleBackgroundWork(): Promise<void> {
   return new Promise((resolve: () => void): void => { setTimeout(resolve, 0); });
@@ -25,8 +24,8 @@ export function chunkedResponse(chunks: readonly Uint8Array[], init?: ResponseIn
 }
 
 /**
- * 测试里的固定小批并发统一等待全部结算；失败项按输入下标聚合，避免 allSettled
- * 被误用成吞错。调用方只传已经启动的 Promise，本函数不扩大生产并发面。
+ * 测试里的固定小批并发统一等待全部结算；失败项按输入下标聚合。
+ * 调用方只传已经启动的 Promise，本函数不扩大生产并发面。
  */
 export async function settleTestBatch<T>(tasks: readonly Promise<T>[]): Promise<T[]> {
   const settlements: PromiseSettledResult<T>[] = await Promise.allSettled(tasks);

@@ -23,9 +23,7 @@ import { flushIfStorageFull } from "./flush";
 /**
  * 某群已提交问题叠加未提交最终值后的有效问题集合。
  *
- * 只查这一个群的 `q` 列，不读 data：容量闸要的只是「这个群现在登记了哪几句」，
- * 而 data 是 JSONB BLOB，读它必须逐行物化成 JSON 文本——那是每次问答写入都要
- * 白付的转换与字符串分配。与 chat_states 的容量闸同一口径。
+ * 只查这一个群的 `q` 列，不读 data（JSONB BLOB）。口径同 chat_states 的容量闸。
  */
 function effectiveChatQaQuestions(chatId: number): Set<string> {
   const rows: readonly Pick<StoredChatQaRow, "q">[] = readStoredChatQaQuestions(
@@ -54,8 +52,7 @@ export function handleChatQaWrite(
   assertTelegramChatId(message.chatId, rowSource);
   assertChatQaQuestion(message.q, rowSource);
   assertPositiveRevision(message.revision, rowSource);
-  // 解一次是为了在进缓冲前就拒掉非法答案；解码结果本身不留用——落库的是主线程
-  // 已经编码好的那份文本，Worker 不重新组装结构。
+  // 解码只为在进缓冲前拒掉非法答案，结果不留用；落库的是主线程已编码的文本。
   if (message.data !== null) decodeChatQaData(message.data, rowSource);
 
   const questions: Map<string, PendingChatQaWrite> =

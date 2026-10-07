@@ -21,9 +21,8 @@ export interface DrainWaiterParams {
  * 停机 drain 的骨架：等待某个 owner 的在途与待执行工作归零，超出预算则 abort 并结算。
  *
  * 当前唯一的 owner 是头像更新队列（copy/avatarQueue.ts 的 drainAvatarUpdates）。
- * 固定两条语义：**预算为 0 时不抛校验错、而是立刻 abort 并按 timedOut 结算**，以及
- * 「登记 waiter 之后必须再触发一次空闲检查」。新增 owner 直接复用本函数，
- * 不要在调用点各写一份。
+ * 预算为 0 时不抛校验错，立刻 abort 并按 timedOut 结算；登记 waiter 之后再触发一次
+ * 空闲检查。新增 owner 复用本函数。
  * @see ../../docs/cn/04-invariants.md
  * @returns 归零返回 `"flushed"`；预算耗尽时先 abort 再返回 `"timedOut"`。
  */
@@ -37,8 +36,7 @@ export function drainWithWaiter({
 }: DrainWaiterParams): Promise<FlushResult> {
   assertTimeoutMs(timeoutMs, `${owner} drain timeout`);
   if (isIdle()) return Promise.resolve("flushed");
-  // 预算为 0（异常退出路径）时没有可等待的窗口：直接执行 timer 回调本该做的
-  // 事——abort 在途 Telegram 请求并结算，而不是把校验错误抛回 dispose()。
+  // 预算为 0（异常退出路径）时没有等待窗口：直接 abort 并按 timedOut 结算，不抛校验错误。
   if (timeoutMs === 0) {
     abort();
     return Promise.resolve("timedOut");

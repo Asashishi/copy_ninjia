@@ -108,12 +108,12 @@ describe("/<1~2 个中文字> 动作命令", () => {
         { type: "text_link", offset: 0, length: 6, url: "https://t.me/neon_asa" },
         { type: "text_link", offset: 10, length: 17, url: "https://t.me/hiyase" },
       ],
-      // 两个名字都挂 t.me 链接，必须关掉 Telegram 的自动预览卡片。
+      // 两个名字都挂 t.me 链接，关掉 Telegram 的自动预览卡片。
       disableLinkPreview: true,
       // 用户明确授权成功动作与 /permission help 同为群内长期留存例外。
       preserveInGroup: true,
     });
-    // 实体必须精确覆盖两个名字，否则链接会错位到旁边的文字上。
+    // 实体精确覆盖两个名字。
     expect(text.slice(0, 6)).toBe("ネオン アサ");
     expect(text.slice(10, 10 + 17)).toBe("冷曦[Hiyase] 🏳️‍🌈");
   });
@@ -126,7 +126,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
       chatId: -1001,
       text: "Alice 揪住了 Bob！",
       replyToMessageId: 10,
-      // 动作词多一个字，目标名的 offset 就得跟着从 9 挪到 10，否则链接会错位。
+      // 动作词多一个字，目标名的 offset 从 9 挪到 10。
       entities: [
         { type: "text_link", offset: 0, length: 5, url: "https://t.me/alice" },
         { type: "text_link", offset: 10, length: 3, url: "https://t.me/bob" },
@@ -206,8 +206,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
   });
 
   test("回归：昵称里的可点击命令被中和，成功回执长期留在群里也不成一键入口", async () => {
-    // 这条回执属于长期保留例外（见 docs/cn/04-invariants.md），昵称又完全由
-    // 用户自己设，正文里的可点击命令必须被中和。
+    // 这条回执属于长期保留例外（见 docs/cn/04-invariants.md），昵称由用户自己设；正文里的可点击命令被中和。
     target = { id: 7, first_name: "喵，/batch_kick 1d", username: "victim" };
     await handleCjkActionCommand(context("/咬", { id: 100, first_name: "/gag 5" }), next);
 
@@ -227,7 +226,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
     expect(nextCalls).toBe(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
 
-    // 既没有 from 也没有 sender_chat 的消息形态：拿不到发起人就没法造句。
+    // 既没有 from 也没有 sender_chat 的消息形态：拿不到发起人，不造句。
     await handleCjkActionCommand(context("/咬", null), next);
     expect(nextCalls).toBe(2);
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -235,7 +234,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
 
   test("全局配额按窗口内调用上限计数，超额后静默丢弃且不再解析目标", async () => {
 
-    // handler 内部取墙钟，所以窗口要按真实时刻填满。
+    // handler 内部取墙钟，窗口按真实时刻填满。
     const now: number = Date.now();
     for (let filled: number = 0; filled < CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW; filled++) {
       recentActionCallTimestamps.push(now);
@@ -244,7 +243,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
     await handleCjkActionCommand(context("/咬"), next);
     expect(sendMessage).not.toHaveBeenCalled();
     expect(resolveCommandTarget).not.toHaveBeenCalled();
-    // 超额不 next()：限流就是不为这条更新产生任何输出，也不转交下游流水线。
+    // 超额不 next()：限流不为这条更新产生任何输出，也不转交下游流水线。
     expect(nextCalls).toBe(0);
   });
 
@@ -261,8 +260,7 @@ describe("/<1~2 个中文字> 动作命令", () => {
   test("拿不到消息或会话时同样放行，不吞掉更新", async () => {
     await handleCjkActionCommand({ chat: { id: -1001 }, me: { id: 999, username: "MyBot" } } as any, next);
     await handleCjkActionCommand({ msg: { message_id: 1, text: "/咬" }, me: { id: 999, username: "MyBot" } } as any, next);
-    // hears 与 handler 用同一条正则，理论上不会出现匹配了却解析不出的消息；
-    // 这里补上防御分支，确保真出现时是放行而不是静默丢弃。
+    // hears 与 handler 用同一条正则；匹配了却解析不出的防御分支放行，不静默丢弃。
     await handleCjkActionCommand(context("/copy"), next);
     expect(nextCalls).toBe(3);
     expect(sendMessage).not.toHaveBeenCalled();

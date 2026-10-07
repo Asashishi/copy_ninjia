@@ -222,4 +222,47 @@ describe("cron 调度", () => {
     finish();
     pendingRound = null;
   });
+
+  test("重建调度器：上一代还有在途轮次时拒绝，结算后撤销旧调度并中止旧信号再重建", async () => {
+    let finish!: () => void;
+    pendingRound = new Promise<void>((resolve: () => void): void => {
+      finish = resolve;
+    });
+    cronConfigCache.current = [task()];
+    startCronScheduler();
+    const previous: CronRuntime = runtime();
+    const previousSchedule: CronTaskSchedule = previous.schedules.get("daily")!;
+    await advance(1_050);
+    expect(previous.runs.size).toBe(1);
+
+    expect((): void => startCronScheduler()).toThrow("Cannot start the cron scheduler while runs are unsettled.");
+    expect(runtime()).toBe(previous);
+
+    finish();
+    pendingRound = null;
+    await advance(0);
+    expect(previous.runs.size).toBe(0);
+    startCronScheduler();
+    expect(runtime()).not.toBe(previous);
+    expect(previousSchedule.cancelled).toBe(true);
+    expect(previous.controller.signal.aborted).toBe(true);
+    expect(runtime().schedules.has("daily")).toBe(true);
+  });
+
+  test("一轮意外抛错只记日志，在途集合照常摘除", async () => {
+    const { logger } = await import("../../packages/infra/logger");
+    const loggerError = spyOn(logger, "error").mockImplementation((): void => {});
+    try {
+      runCronRound.mockImplementationOnce(async (): Promise<void> => {
+        throw new Error("round exploded");
+      });
+      cronConfigCache.current = [task()];
+      startCronScheduler();
+      await advance(1_050);
+      expect(loggerError).toHaveBeenCalledWith('Cron task "daily" run failed unexpectedly:', expect.any(Error));
+      expect(runtime().runs.size).toBe(0);
+    } finally {
+      loggerError.mockRestore();
+    }
+  });
 });

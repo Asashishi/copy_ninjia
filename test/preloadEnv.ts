@@ -8,16 +8,15 @@ import {
 } from "../packages/consts/environment";
 
 /**
- * 测试进程的路径注入，必须先于任何会求值 consts/paths 的生产模块完成。
+ * 测试进程的路径注入，先于任何会求值 consts/paths 的生产模块完成。
  *
- * 单独成文件而不是写在 preload.ts 顶部：ESM 里 import 一律先于同文件的语句
- * 求值，preload.ts 只要静态 import 了任何生产模块，写在文件里的赋值就已经晚
- * 了一步——CONFIG_ROOT 会指向开发机上的真实部署目录。
+ * 单独成文件，不写在 preload.ts 顶部：ESM 里 import 一律先于同文件的语句求值，
+ * preload.ts 静态 import 任何生产模块都会让文件里的赋值晚一步，
+ * CONFIG_ROOT 会指向开发机上的真实部署目录。
  *
- * **本文件必须整段同步完成**：它是 preload.ts 的第一个静态 import，而带顶层
- * await 的模块不会在同级后续 import 求值之前结束（Bun 1.4.2 实测：后一个模块
- * 读到的仍是注入前的环境）。preload.ts 自己的顶层 await 则没有这个问题——那一
- * 层 Bun 会等续体跑完再开始跑测试文件（同批实测）。
+ * 本文件整段同步完成：它是 preload.ts 的第一个静态 import，带顶层 await 的模块
+ * 不会在同级后续 import 求值之前结束。preload.ts 自己的顶层 await 没有这个问题：
+ * Bun 会等那一层续体跑完再开始跑测试文件。
  */
 
 /** 进程原有的两个根目录设置；preload 的 afterAll 负责还原。 */
@@ -56,6 +55,5 @@ writeFileSync(TEST_BOT_CONFIG_PATH, TEST_BOT_CONFIG, { mode: 0o600 });
 // 在任何生产模块 import 之前切断 state/lock/logs/memory 的默认生产路径。
 // 测试仍做真实文件 I/O，只是所有漏注入的写入也只能落到本隔离目录。
 process.env[RUNTIME_DATA_ROOT_ENV] = TEST_DATA_ROOT;
-// 部署 config/ 不受版本控制；测试和测试 Worker 统一读取独占临时副本，既避免
-// 占位凭据被严格解析器接受，也不会误读或改写开发机上的真实部署配置。
+// 部署 config/ 不受版本控制；测试和测试 Worker 统一读取独占临时副本，不读也不改开发机上的真实部署配置。
 process.env[CONFIG_ROOT_ENV] = TEST_CONFIG_ROOT;

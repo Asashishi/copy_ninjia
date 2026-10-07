@@ -29,7 +29,7 @@ export default defineConfig(
       },
     },
     rules: {
-      // 生产代码普遍把泛型写在显式类型标注上，例如 `const cache: Map<K, V> = new Map()`。
+      // 泛型写在显式类型标注上，例如 `const cache: Map<K, V> = new Map()`。
       "@typescript-eslint/consistent-generic-constructors": ["error", "type-annotation"],
       "@typescript-eslint/consistent-type-exports": "error",
       // 返回类型不止导出函数要写：内部函数、回调箭头，以及能从上下文推出类型的
@@ -42,7 +42,7 @@ export default defineConfig(
       "@typescript-eslint/no-deprecated": "error",
       "@typescript-eslint/prefer-nullish-coalescing": [
         "error",
-        // 字符串等原始值常把空值作为有效的回退信号，保留现有的 `||` 语义。
+        // 原始值保留 `||` 语义（空字符串等同样触发回退）。
         { ignorePrimitives: true },
       ],
       "@typescript-eslint/prefer-readonly": "error",
@@ -82,7 +82,7 @@ export default defineConfig(
         "error",
         { fixStyle: "separate-type-imports", prefer: "type-imports" },
       ],
-      // 项目有意为简单局部变量也写明类型，作为相邻状态和常量的可读性提示。
+      // 简单局部变量也写明类型。
       "@typescript-eslint/no-inferrable-types": "off",
       "@typescript-eslint/no-import-type-side-effects": "error",
       "@typescript-eslint/no-unused-vars": [
@@ -119,7 +119,7 @@ export default defineConfig(
       "@stylistic/computed-property-spacing": ["error", "never"],
       "@stylistic/eol-last": ["error", "always"],
       "@stylistic/function-call-spacing": ["error", "never"],
-      // 多行三元表达式沿用仓库现有的平铺对齐，其余语法仍检查两空格缩进。
+      // 多行三元表达式使用平铺对齐，其余语法检查两空格缩进。
       "@stylistic/indent": ["error", 2, { SwitchCase: 1, ignoredNodes: ["ConditionalExpression"] }],
       "@stylistic/key-spacing": ["error", { beforeColon: false, afterColon: true }],
       "@stylistic/keyword-spacing": ["error", { before: true, after: true }],

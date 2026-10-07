@@ -1,11 +1,9 @@
 /**
  * 从工具调用的参数 JSON 字符串里解析字段的纯函数族：JSON.parse 失败/字段缺失/
  * 类型不对一律返回 null（或对布尔字段返回 false），不抛错——调用方按各自的错误
- * 提示喂回模型。aiChat/ai/tools/replyToolset/ 与 aiChat/ai/tools/stickers.ts 共用，
- * 避免各自重复一份 try/catch JSON.parse 样板。
+ * 提示喂回模型。aiChat/ai/tools/replyToolset/ 与 aiChat/ai/tools/stickers.ts 共用。
  *
- * 需要一次读多个字段的工具（生图、语音）直接用 parseToolArguments 拿整张记录，
- * 不要为每个字段各解析一遍。
+ * 需要一次读多个字段的工具（生图、语音）用 parseToolArguments 取整张记录。
  */
 
 import { isPlainRecord } from "../../../libs/record";
@@ -13,9 +11,8 @@ import { isPlainRecord } from "../../../libs/record";
 /**
  * 把参数 JSON 解析成一张普通记录；解析失败或顶层不是对象时返回 null。
  *
- * 本模块的每个字段解析器都从这里起步，多字段的工具也用它——那份 try/catch
- * 样板因此只有一处。顶层用 `isPlainRecord` 判而不是 cast：数组、数字、`null`
- * 同样解析得出来，它们只是一个字段也取不到，提前收窄比在取值处兜底更直白。
+ * 本模块的每个字段解析器都从这里起步。顶层用 `isPlainRecord` 判断：数组、数字、`null`
+ * 视为解析失败。
  */
 export function parseToolArguments(argumentsJson: string): Record<string, unknown> | null {
   let parsed: unknown;

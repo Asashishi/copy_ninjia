@@ -12,6 +12,12 @@ function table(): WorkerRequestTable<string> {
   return { waiters: new Map(), counter: { current: 0 } };
 }
 
+/** 投递同步抛错时交出的异常；每个用例结束前按需断言。 */
+const postErrors: unknown[] = [];
+const onPostError = (error: unknown): void => {
+  postErrors.push(error);
+};
+
 describe("workerRequestTable", () => {
   test("先登记后投递：投递期间同步到达的回执照常结算，迟到的重复回执被丢弃", async () => {
     const requests: WorkerRequestTable<string> = table();
@@ -22,6 +28,7 @@ describe("workerRequestTable", () => {
         settleWorkerRequest(requests, requestId, "receipt");
         return true;
       },
+      onPostError,
       timedOut: "timed out",
       rejected: "rejected",
     });
@@ -37,7 +44,7 @@ describe("workerRequestTable", () => {
       const requests: WorkerRequestTable<string> = table();
       const cancel = mock((_requestId: number): void => {});
       const timedOut: Promise<string> = beginWorkerRequest({
-        table: requests, timeoutMs: 50, post: (): boolean => true, cancel, timedOut: "timed out", rejected: "rejected",
+        table: requests, timeoutMs: 50, post: (): boolean => true, onPostError, cancel, timedOut: "timed out", rejected: "rejected",
       });
       jest.advanceTimersByTime(50);
       expect(await timedOut).toBe("timed out");
@@ -54,6 +61,7 @@ describe("workerRequestTable", () => {
         table: requests,
         timeoutMs: 1_000,
         post: (): boolean => true,
+        onPostError,
         cancel,
         abort: { signal: controller.signal, result: "aborted" },
         timedOut: "timed out",
@@ -69,19 +77,36 @@ describe("workerRequestTable", () => {
     }
   });
 
-  test("投递被拒按 rejected 结算且不撤回；崩溃重建一次结算全部在途等待者", async () => {
+  test("投递被拒（返回 false 或同步抛错）按 rejected 结算且不撤回；崩溃重建一次结算全部在途等待者", async () => {
     const requests: WorkerRequestTable<string> = table();
     const cancel = mock((_requestId: number): void => {});
     expect(await beginWorkerRequest({
-      table: requests, timeoutMs: 1_000, post: (): boolean => false, cancel, timedOut: "timed out", rejected: "rejected",
+      table: requests, timeoutMs: 1_000, post: (): boolean => false, onPostError, cancel, timedOut: "timed out", rejected: "rejected",
     })).toBe("rejected");
     expect(cancel).not.toHaveBeenCalled();
+    // 同步抛错同样按投递被拒结算：异常先交给诊断出口，不 reject，也不留下等到超时的等待者。
+    postErrors.length = 0;
+    const thrown: Error = new Error("postMessage failed");
+    expect(await beginWorkerRequest({
+      table: requests,
+      timeoutMs: 1_000,
+      post: (): boolean => {
+        throw thrown;
+      },
+      onPostError,
+      cancel,
+      timedOut: "timed out",
+      rejected: "rejected",
+    })).toBe("rejected");
+    expect(postErrors).toEqual([thrown]);
+    expect(cancel).not.toHaveBeenCalled();
+    expect(requests.waiters.size).toBe(0);
 
     const first: Promise<string> = beginWorkerRequest({
-      table: requests, timeoutMs: 1_000, post: (): boolean => true, timedOut: "timed out", rejected: "rejected",
+      table: requests, timeoutMs: 1_000, post: (): boolean => true, onPostError, timedOut: "timed out", rejected: "rejected",
     });
     const second: Promise<string> = beginWorkerRequest({
-      table: requests, timeoutMs: 1_000, post: (): boolean => true, timedOut: "timed out", rejected: "rejected",
+      table: requests, timeoutMs: 1_000, post: (): boolean => true, onPostError, timedOut: "timed out", rejected: "rejected",
     });
     expect(requests.waiters.size).toBe(2);
     failAllWorkerRequests(requests, "unavailable");

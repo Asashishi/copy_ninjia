@@ -49,8 +49,7 @@ const {
 const { loggerSecretsMemo } = await import("../../packages/cache/perThread/logger");
 
 describe("logger persistence routing boundary", () => {
-  // 脱敏名单会保留热重载替换下来的旧凭据；每条用例从空名单起步，前一条用例
-  // 装进 holder 的替身值不得带进下一条。
+  // 脱敏名单会保留热重载替换下来的旧凭据；每条用例从空名单起步，不沿用前一条装进 holder 的替身值。
   beforeEach((): void => {
     loggerSecretsMemo.current = null;
   });
@@ -141,11 +140,9 @@ describe("logger persistence routing boundary", () => {
   });
 
   /**
-   * 脱敏值列表按三个 holder 的对象身份记忆化（见 cache/perThread/logger.ts 的
-   * loggerSecretsMemo）。这条用例守的是那次记忆化唯一可能造成的事故：三个 holder
-   * 都是惰性填充的，取得实例锁之前就会有日志经过这里，若把那时算出的空结果按
-   * 「已经算过一次」缓存下来，配置读完之后每一条日志都不再脱敏——凭据从此原样
-   * 进 journal 与 logs/，而且没有任何报错。
+   * 脱敏值列表按三个 holder 的对象身份记忆化（见 cache/perThread/logger.ts 的 loggerSecretsMemo）。
+   * 三个 holder 都是惰性填充的：取得实例锁之前经过的日志算出的空结果不按「已经算过一次」缓存，
+   * 配置读完之后每条日志照常脱敏。
    */
   test("配置在第一条日志之后才填上时，后续日志照常脱敏（记忆化不得把空结果钉死）", () => {
     const originalTelegram: BotConfig | null = botConfigCache.current;
@@ -299,10 +296,8 @@ describe("logger persistence routing boundary", () => {
   });
 
   test("Worker 侧 adopt 进来的快照同样进脱敏名单", () => {
-    // 两条业务线程不读盘，凭据只经初始化消息 adopt 进本 isolate 的 holder
-    // （见 config/agent.ts）。脱敏名单读的就是这两个 holder，因此这条路必须与
-    // 主线程解析那条等价——否则 Worker 里的 SDK 报错会把 api_key 原样带进
-    // journal 与 logs/。
+    // 两条业务线程不读盘，凭据只经初始化消息 adopt 进本 isolate 的 holder（见 config/agent.ts）；
+    // 脱敏名单读这两个 holder，与主线程解析那条等价。
     const originalAgent: AgentDeploymentConfig | null = agentDeploymentConfigCache.current;
     const originalAdDetect: AdDetectAgentConfig | null = adDetectAgentConfigCache.current;
     const workerSecrets: readonly string[] = [
@@ -448,11 +443,8 @@ describe("logger persistence routing boundary", () => {
   test("Error 自带 __proto__ 自有属性时照常落进诊断字段，不命中原型访问器", () => {
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     try {
-      // 依赖抛出来的 Error 带上这个键并不稀奇（grammY/genai/gRPC 包装的
-      // payload 都可能）。累加对象若是普通 `{}`，`own[key] = ...` 命中的是
-      // Object.prototype 继承来的访问器：值是对象就静默换掉记录的原型，不是对象
-      // 就整句赋值失效——两种结局都让这个字段从 logs/ 的错误记录里消失，而它
-      // 往往正是唯一能解释本次故障的诊断。
+      // 依赖抛出的 Error 可能带 __proto__ 自有属性（grammY/genai/gRPC 包装的 payload）；
+      // 该字段进入诊断字段，不命中 Object.prototype 继承来的访问器，记录的原型不变。
       const error: Error = new Error("dependency blew up");
       Object.defineProperty(error, "__proto__", {
         value: { hint: "from dependency" },
@@ -589,9 +581,7 @@ describe("logger persistence routing boundary", () => {
     };
     const consoleError = spyOn(console, "error").mockImplementation(() => {});
     try {
-      // 这里若从 logger 内部抛出 SyntaxError，catch 块里的这句 logger.error 就会
-      // 顶掉原始错误：真实故障一条都不落盘，连 uncaughtException 处理器都会在
-      // 汇报退出原因时再炸一次。
+      // logger 内部不向上抛 SyntaxError，原始错误照常落盘。
       expect((): void => logger.error("boom", new Error("fetch failed"))).not.toThrow();
       const fallback: unknown = consoleError.mock.calls.at(-1)![1];
       // 解析不了就退化成脱敏后的文本，敏感值仍然不得出现。

@@ -46,20 +46,15 @@ export interface PumpChatActionParams {
 }
 
 /**
- * 把一发状态请求排进本群的串行链。执行时才重读当下挡位：挡位已切走的排队
- * 请求坍缩成最新挡位、已切 idle 或正处静默期的直接跳过（静默结束由
- * lightChatAction 补发）——同群请求逐个到达 Telegram，并发切挡不会乱序把旧
- * 状态盖回新状态之上。deduplicate 为 true（切挡补发）时对重复状态节流：同一
- * 挡位在 intervalMs 内刚真正发过就跳过，状态本就还在 Telegram 约 5 秒的过期
- * 窗口里亮着；定时 tick 不节流——tick 间隔就是维持显示的节奏，再跳过会在
- * 过期边缘造成闪断。
+ * 把一发状态请求排进本群的串行链，同群请求逐个到达 Telegram。执行时才重读当下挡位：
+ * 挡位已切走的排队请求按最新挡位发送，已切 idle 或正处静默期的直接跳过（静默结束由
+ * lightChatAction 补发）。deduplicate 为 true（切挡补发）时对重复状态节流：同一挡位
+ * 在 intervalMs 内刚真正发过就跳过；定时 tick 不节流。
  *
- * 链上最多保留一发「排队未执行」的请求：它执行时才读挡位，天然代表它
- * 入队之后到来的所有请求，发送挂起期间的连续 tick 全部合并进它，恢复后
- * 只补一发、不背靠背连发同一状态；合并时混入过 tick 则排队那发降级为
- * 必发（entry.pendingSendDeduplicate），保住强制刷新语义。请求结果维护
- * 连续失败计数，达到阈值才停表；链上的执行函数自身不抛异常，发送层报错
- * 按失败计。导出仅为可测试性（挂起/合并的时序靠直接驱动才能确定性复现）。
+ * 链上最多保留一发「排队未执行」的请求：它执行时才读挡位，代表它入队之后到来的所有
+ * 请求，发送挂起期间的连续 tick 合并进它，恢复后只补一发；合并时混入过 tick 则排队那发
+ * 降级为必发（entry.pendingSendDeduplicate）。请求结果维护连续失败计数，达到阈值才停表；
+ * 链上的执行函数自身不抛异常，发送层报错按失败计。导出供测试直接驱动挂起/合并时序。
  */
 export function pumpChatAction({
   chatId,
@@ -100,10 +95,7 @@ export function pumpChatAction({
     }
     if (dependencies.entries.get(chatId) !== entry) return;
     if (ok) {
-      // 节流记忆只记真正送达、且送达时仍亮着的状态：失败不落账，后续同挡位补发不会被一发
-      // 失败请求的「刚发过」误拦（重试有定时 tick 兜底，但补发更快）；请求在途期间挡位已被
-      // 切走（发送前切 idle、消息随后落地会清掉状态），这次送达也不算数，消息之后同挡位的
-      // 补发必须立即发出。
+      // 节流记忆只记真正送达、且送达时挡位未变的状态：失败不落账；在途期间挡位已被切走的送达也不记。
       if (entry.action === phase) {
         entry.lastSentPhase = phase;
         entry.lastSentAt = Date.now();
@@ -147,11 +139,7 @@ function lightChatAction(
 
 export interface StartChatActionHeartbeatParams {
   chatId: number;
-  /**
-   * 本轮所在的论坛话题；General、非论坛群为 undefined。
-   *
-   * 不带它的话，话题群里「正在输入…」会亮在 General，而消息落在话题里。
-   */
+  /** 本轮所在的论坛话题；General、非论坛群为 undefined。 */
   messageThreadId: number | undefined;
   dependencies?: ChatActionHeartbeatDependencies;
   signal?: AbortSignal;
@@ -163,20 +151,16 @@ export interface StartChatActionHeartbeatParams {
  * 有界窗口（见 aiChat/ai/tools/replyToolset/actionChains.ts），链上的步骤按顺序切挡。直接轮的
  * 动作同样由串行链切挡；链空闲时，还没接纳过动作的请求期间亮「正在输入」、刚看过贴纸包的那次
  * 请求亮「正在选择贴纸」，其余请求不亮，链忙时请求的挡位等链排空再亮，模型阶段结束时收回
- * 还没被动作接走的请求挡位（见 replyToolset/pacing.ts 与 replyToolset/orchestrator.ts）；
- * 因此直接轮里模型最终只扣反应或静默结束时，群友会看到一段等不来消息的「正在输入」。
- * 切到非 idle 挡会补发一次对应状态（同挡位在间隔内刚发过则节流跳过），此后由定时器按间隔
- * 重发维持（choose_sticker 挡跨越发贴纸前的拟人停顿，upload_photo 挡跨越参考图下载与生图，
- * record_voice 挡跨越等待合成的时段与按音频时长模拟的录音，长消息的 typing 窗口也可长达
- * 7.5 秒，都可能超过单次状态约 5 秒的过期时间，全靠间隔小于过期时间的重发接力）。所有发送
- * 共用条目上的串行链（见 pumpChatAction），并发切挡不会乱序。发送消息、贴纸、语音或图片前，
- * 调用方先切 idle 再 settle，确保所有较早的状态请求都先于消息落定；落地后再切一次 idle。
- * 切 idle 标记一段状态结束，同群静默 restMs 后才点亮下一段（见 lightChatAction），静默期
- * 从最后一次切 idle 算起，其间不发任何状态请求，set 返回的剩余静默供拟人停顿顺延。
+ * 还没被动作接走的请求挡位（见 replyToolset/pacing.ts 与 replyToolset/orchestrator.ts）。
+ * 切到非 idle 挡会补发一次对应状态（同挡位在间隔内刚发过则节流跳过），此后由定时器按
+ * intervalMs 间隔重发维持，间隔小于 Telegram 单次状态的过期窗口。所有发送共用条目上的
+ * 串行链（见 pumpChatAction）。发送消息、贴纸、语音或图片前，调用方先切 idle 再 settle，
+ * 使较早的状态请求先于消息落定；落地后再切一次 idle。切 idle 标记一段状态结束，同群静默
+ * restMs 后才点亮下一段（见 lightChatAction），静默期从最后一次切 idle 算起，其间不发任何
+ * 状态请求，set 返回的剩余静默供拟人停顿顺延。
  *
- * settle/stop 故意不依赖 Map 中仍存在本条目：连续失败可能先把条目移除，但
- * 本代链上仍可能有请求在途；若此时直接返回，它们就会在消息之后迟到并重新
- * 盖回状态。stop 同样会等待这些请求，避免异常中断后还有状态请求姗姗来迟。
+ * settle/stop 不依赖 Map 中仍存在本条目：连续失败可能先把条目移除，本代链上在途的请求
+ * 仍由 settle/stop 等待。
  */
 export function startChatActionHeartbeat({
   chatId,
@@ -186,8 +170,7 @@ export function startChatActionHeartbeat({
 }: StartChatActionHeartbeatParams): ChatActionHeartbeatControl {
   let entry: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
   if (entry !== undefined && entry.signal !== signal) {
-    // invalidate 已同步 abort 旧 generation，但新 generation 可以在旧任务 settle
-    // 前开始。两代不能共享 timer/请求链；旧句柄的 stop 会识别 Map 已换代。
+    // signal 变化即换代：旧条目的 timer 与请求链拆除，不与新 generation 共享；旧句柄的 stop 识别 Map 已换代。
     clearInterval(entry.timer);
     clearTimeout(entry.restTimer ?? undefined);
     dependencies.entries.delete(chatId);
@@ -222,13 +205,10 @@ export function startChatActionHeartbeat({
     dependencies.entries.set(chatId, entry);
   }
 
-  // 心跳条目按群共享并用 refCount 记持有句柄数，最后一个 stop 才拆表；每轮持有
-  // 一个句柄（本轮串行动作链共用它），同群并发轮各持一个，refCount/owner 防止迟到
-  // stop 误拆仍由其它句柄使用的条目。
-  // 非 idle 挡按句柄记归属（owner）：后切非 idle 挡的句柄盖掉此前的挡位仍是
-  // 后写覆盖（Telegram 一个聊天同时只显示一种状态，接受），但收挡只认持有
-  // 句柄——切 idle/停止只收回自己拉起的挡位，并发轮的窗口不受影响，
-  // 先结束的轮也不会把「正在选择贴纸…」遗留给还在跑的轮一直重发。
+  // 心跳条目按群共享，refCount 记持有句柄数，最后一个 stop 才拆表；每轮持有一个句柄
+  // （本轮串行动作链共用它），同群并发轮各持一个。
+  // 非 idle 挡按句柄记归属（owner）：后切非 idle 挡的句柄覆盖此前的挡位，收挡只认持有
+  // 句柄——切 idle/停止只收回自己拉起的挡位，不影响并发轮的窗口。
   entry.refCount++;
 
   const acquired: ChatActionHeartbeatEntry = entry;
@@ -245,9 +225,7 @@ export function startChatActionHeartbeat({
         acquired.owner = null;
         acquired.action = "idle";
         acquired.messageThreadId = undefined;
-        // 重置节流记忆：切 idle 意味着一条消息/贴纸即将落地并清掉聊天状态，
-        // 下一段窗口哪怕还是同一挡位，第一发也必须立即补出去，不能被
-        // 「刚发过」误判跳过而黑屏到下一个 tick。
+        // 重置节流记忆：下一段窗口的第一发不受「刚发过」节流。
         acquired.lastSentPhase = "idle";
         return 0;
       }
@@ -257,7 +235,7 @@ export function startChatActionHeartbeat({
       return lightChatAction(chatId, acquired, dependencies);
     },
     settle: async (): Promise<void> => {
-      // 即使本代已经因连续失败从 Map 移除，也必须等齐它留下的全部请求。
+      // 本代已因连续失败从 Map 移除时，仍等待它留下的全部在途请求。
       await Promise.allSettled(acquired.inflight);
     },
     stop: async (): Promise<void> => {
@@ -265,8 +243,7 @@ export function startChatActionHeartbeat({
         released = true;
         const current: ChatActionHeartbeatEntry | undefined = dependencies.entries.get(chatId);
         if (current === acquired) {
-          // 收回本轮持有的挡位：并发轮还在时条目继续存活，不收回的话本轮
-          // 遗留的「正在选择贴纸…」会被定时重发一直维持到最后一轮结束。
+          // 收回本轮持有的挡位；并发轮还在时条目继续存活。
           if (acquired.owner === ownerToken) {
             acquired.owner = null;
             acquired.action = "idle";

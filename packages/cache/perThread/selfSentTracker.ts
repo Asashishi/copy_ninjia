@@ -4,8 +4,8 @@
  * 各 isolate 不共享此表；入站回环判定读取主线程拥有的发送结果。
  *
  * sentMessages 与 pendingSelfSentWaiters 按 chatId 分层、内层才是 messageId，按两次整数键
- * 查找，不构造复合字符串键；inFlightSelfSends 只按 chatId 计数。判回环在每条群消息上最多
- * 要跑 5 次（调用点清单见 infra/selfSentTracker.ts 头注）；没发过消息的群在外层就落空，不查内层。
+ * 查找，不构造复合字符串键；inFlightSelfSends 只按 chatId 计数。判回环在每条群消息上会
+ * 多次调用（调用点清单见 infra/selfSentTracker.ts 头注）；没发过消息的群在外层就落空，不查内层。
  */
 
 import type { SelfSentWaiter } from "../../types/telegram";
@@ -20,7 +20,7 @@ import type { SelfSentWaiter } from "../../types/telegram";
 export const sentMessages: Map<number, Map<number, ReturnType<typeof setTimeout>>> = new Map();
 
 /**
- * 尚在等待发送成功登记的频道 update：分层与 sentMessages 完全一致。
+ * 尚在等待发送成功登记的频道 update：分层同 sentMessages。
  *
  * 同一频道帖的原帖与自动转发可各有一个 waiter，因此内层值是 Set；标记到达、超时，或该
  * chat 的在途发送归零时（按 false 结算）即摘除，空的 Set 与空的内层表同步删除。容量只等于最近一个 rendezvous 窗口内尚未

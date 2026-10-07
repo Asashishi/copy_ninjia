@@ -5,15 +5,14 @@
  * 一次请求经 aiChat/workerJob.ts 在 cache/main/aiChat.ts 的 webDigestRequests 登记一个等待者再投递
  * composeWebDigest，等待上限为 WEB_DIGEST_REQUEST_TIMEOUT_MS；超时与取消会再投一条 cancelWebDigest 让
  * Worker 中止在途组稿。结算一律交回 WebDigestCompositionResult，不抛错。投递函数由
- * aiChat/workerBridge.ts 注入，本模块不反向导入 bridge。
+ * aiChat/workerBridge.ts 注入，本模块不反向导入 bridge；webDigestComposed 回执与 Worker 失效时的
+ * 整表失败结算也在 bridge 里直接对等待表执行。
  */
 
 import { agentDeploymentConfigSnapshot } from "../config/agent";
 import { WEB_DIGEST_REQUEST_TIMEOUT_MS } from "../consts/webDigest";
-import { AI_WORKER_JOB_UNAVAILABLE } from "../consts/aiChat/workerJob";
 import { webDigestRequests } from "../cache/main/aiChat";
-import { failAllWorkerRequests, settleWorkerRequest } from "../libs/workerRequestTable";
-import type { AiChatWorkerMessage, AiWebDigestComposedEvent } from "../types/aiChat/protocol";
+import type { AiChatWorkerMessage } from "../types/aiChat/protocol";
 import type { AiWorkerJobTransport } from "../types/aiChat/workerJob";
 import type { WebDigestCompositionResult, WebDigestRequest } from "../types/webDigest";
 import { requestAiWorkerJob } from "./workerJob";
@@ -37,14 +36,4 @@ export function requestWebDigest(
     start: (requestId: number): AiChatWorkerMessage => ({ type: "composeWebDigest", requestId, request }),
     cancel: (requestId: number): AiChatWorkerMessage => ({ type: "cancelWebDigest", requestId }),
   });
-}
-
-/** webDigestComposed 回执：按 requestId 结算；已超时、已取消或未知的回执直接丢弃。 */
-export function settleWebDigest(event: AiWebDigestComposedEvent): void {
-  settleWorkerRequest(webDigestRequests, event.requestId, event.result);
-}
-
-/** Worker 崩溃重建、放弃或终止：旧实例的回执不可能再到达，全部按不可用结算。 */
-export function failAllWebDigestWaiters(): void {
-  failAllWorkerRequests<WebDigestCompositionResult>(webDigestRequests, AI_WORKER_JOB_UNAVAILABLE);
 }

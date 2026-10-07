@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 # 由目标工作树 install.sh 按顺序 source；共享其严格模式、日志函数与安装上下文。
 
-# 这棵工作树自己是不是一个 git 仓库根。
-#
-# 刻意不只看 `.git` 存不存在，也不接受「恰好落在别的仓库的子目录里」——那种情况
-# 更新时动的是外层那个仓库，不是这份部署。两边都取物理路径再比，避免符号链接
-# 让同一个目录比出两种写法。
+# 这棵工作树自己是不是一个 git 仓库根：不只看 `.git` 是否存在，落在别的仓库子目录里
+# 的不算；两边都取物理路径再比。
 is_git_repository_root() {
   local target="" toplevel=""
   target="$(cd -- "$1" 2>/dev/null && pwd -P)" || return 1
@@ -13,18 +10,17 @@ is_git_repository_root() {
   [ "$toplevel" = "$target" ]
 }
 
-# 工作树没有 git 仓库时就地补一个，好让部署方此后能用 git 更新。
+# 工作树没有 git 仓库时就地补一个，使部署方此后能用 git 更新。
 #
 # 解压发布包（或整目录拷贝）得到的源码满足 is_repository_root 却没有 `.git`，
-# 于是 clone 那一步被跳过，装出来的部署此后只能靠手工换文件更新。这里补上。
+# clone 那一步因此被跳过；这里补上仓库。
 #
-# **本函数不写工作树里的任何文件，也不把工作树里的文件收进对象库**，这是它敢在
-# 一棵已经装好的部署上运行的前提：init 只建 `.git`，remote/fetch 只落 config 与
-# 远端对象，read-tree / update-index 只动索引，diff-index / rev-parse / tag 只读，
-# update-ref 只动 HEAD，而 `reset --mixed` 按定义就是「重置索引但不动工作树」。
+# 本函数不写工作树里的任何文件，也不把工作树里的文件收进对象库：init 只建 `.git`，
+# remote/fetch 只落 config 与远端对象，read-tree / update-index 只动索引，
+# diff-index / rev-parse / tag 只读，update-ref 只动 HEAD，`reset --mixed` 重置索引
+# 但不动工作树。
 #
-# 失败一律降级而不是中断安装：装不上 git、拉不到 tag 都只是拿不到「能更新」这个
-# 附加好处，不该把一次本来能成功的安装掀翻。
+# 失败一律降级而不是中断安装：装不上 git、拉不到 tag 只影响此后能否用 git 更新。
 ensure_git_repository() {
   is_git_repository_root "$PWD" && return 0
 
@@ -53,18 +49,17 @@ ensure_git_repository() {
     return 0
   fi
 
-  # 按**逐个 tag 比对内容**认版本，不按版本号猜：对上了才敢把 HEAD 指过去，
-  # 那之后 `git status` 是干净的，更新就是一次普通的 fetch + checkout。
+  # 逐个 tag 比对内容认版本，不按版本号推断：对上了才把 HEAD 指过去，此后
+  # `git status` 干净，更新是一次普通的 fetch + checkout。
   #
   # 比对只用 `read-tree`（只读 tag 自带的对象）与 `diff-index`（只比该 tag 跟踪的
-  # 那些文件、无视未跟踪文件），不会把 config/、memory/、database/ 等部署数据写进
-  # 对象库。每个 tag 各比一遍内容，发布 tag 数量有限。
+  # 文件、无视未跟踪文件），不把 config/、memory/、database/ 等部署数据写进对象库。
   local candidate="" matched="" head_commit=""
   while IFS= read -r candidate; do
     [ -n "$candidate" ] || continue
     git read-tree "${candidate}^{tree}" 2>/dev/null || continue
-    # 先刷新 stat 信息：read-tree 之后索引对每个文件都是 stat-dirty 的，
-    # 不刷新的话 `diff-index --quiet` 会仅因 stat 不同就报「有差异」。
+    # 先刷新 stat 信息：read-tree 之后索引对每个文件都是 stat-dirty，
+    # `diff-index --quiet` 在刷新后比对。
     git update-index -q --refresh >/dev/null 2>&1 || true
     if git diff-index --quiet "${candidate}^{tree}" --; then
       matched="$candidate"
@@ -72,11 +67,11 @@ ensure_git_repository() {
     fi
   done < <(git tag --list)
 
-  # 索引此刻还留着最后一个候选 tag 的内容；无论对上与否都要先复位，免得
-  # 留下一份与 HEAD 对不上的索引，让部署方第一次 git status 就看到一片假差异。
+  # 索引此刻留着最后一个候选 tag 的内容；两个分支都要复位索引（未对上用
+  # `read-tree --empty`，对上用 `reset --mixed`）。
   if [ -z "$matched" ]; then
-    # 对不上任何已发布 tag：改过，或根本不是发布包。仓库给到位，但不替部署方
-    # 决定 HEAD 指向哪个版本——猜错会让此后每次 git status 都是一片假差异。
+    # 对不上任何已发布 tag：改过，或不是发布包。建好仓库，HEAD 不指向任何版本，
+    # 由部署方自行选择。
     git read-tree --empty >/dev/null 2>&1 || true
     warn "工作树与任何已发布 tag 都对不上（改过，或不是发布包）。"
     warn "仓库与 origin/tags 已就绪，但 HEAD 未指向任何版本；核对后自行 git checkout <tag>。"
@@ -84,7 +79,7 @@ ensure_git_repository() {
   fi
 
   # 对上了：HEAD 指到该 tag 并让索引跟上，得到与 `clone --branch <tag>` 相同的
-  # detached 状态。三条命令都不写工作树文件。
+  # detached 状态；这些命令都不写工作树文件。
   head_commit="$(git rev-parse --verify "${matched}^{commit}" 2>/dev/null)" || head_commit=""
   if [ -z "$head_commit" ] ||
     ! git update-ref --no-deref HEAD "$head_commit" ||

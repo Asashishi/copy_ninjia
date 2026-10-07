@@ -49,7 +49,7 @@ const inputs: readonly TextReviewInput[] = textReviewInputs(definition);
 const iterations: number = textReviewIterations(definition, inputs);
 let averageLength: number = 0;
 for (const input of inputs) averageLength += input.text.length / inputs.length;
-// 构造结果按生产压缩批次大小留存，保证消息对象逃逸而不被优化掉。
+// 构造结果按生产压缩批次大小 `COMPACT_BATCH_SIZE` 留存，使消息对象逃逸。
 const retainedWindow: (BufferedMessage | null)[] = new Array<BufferedMessage | null>(COMPACT_BATCH_SIZE).fill(null);
 let checksum: number = 0;
 
@@ -102,8 +102,8 @@ let stableSamples: number = 0;
 let warmupSamples: number = 0;
 while (stableSamples < REQUIRED_STABLE_WARMUP_SAMPLES && warmupSamples < MAX_WARMUP_SAMPLES) {
   sampleNsPerOp();
-  // 与正式样本做同样的内存读取：进程内首次 process.memoryUsage() 会让已编译的
-  // 热函数重新编译，必须落在预热内，稳定判定才对正式采样成立。
+  // 与正式样本做同样的内存读取：进程内首次 process.memoryUsage() 会使已编译的
+  // 热函数重新编译，该次读取放在预热内。
   readInterruptibleMemory(process.memoryUsage);
   warmupSamples++;
   const next: Record<string, JitTierCounts> = collectJitTiers(scenario);

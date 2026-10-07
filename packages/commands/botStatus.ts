@@ -1,4 +1,5 @@
 import type { AtmosphereTexts } from "../types/atmosphere";
+import type { AtmosphereNotices } from "../types/atmosphereNotices";
 import { chatAtmosphere } from "../infra/atmosphere";
 import type { CommandContext, Context } from "grammy";
 import { activeGagSessionCount } from "../cache/main/gag";
@@ -62,9 +63,8 @@ function statusLabel(value: string): string {
  * 只展示模型名：不带 provider，并去掉模型 id 里最后一个 `/` 之前的厂商命名空间
  * （`openai/gpt-6-luna` 展示为 `gpt-6-luna`）。
  */
-function capabilityLine(label: string, model: string): string {
-  const modelName: string = model.slice(model.lastIndexOf("/") + 1);
-  return `• ${label}：${statusLabel(modelName)}`;
+function modelName(model: string): string {
+  return statusLabel(model.slice(model.lastIndexOf("/") + 1));
 }
 
 /** 语音合成行展示的名字：xai 协议没有模型名，展示音色。 */
@@ -72,8 +72,8 @@ function ttsStatusName(tts: AgentTtsCapabilityConfig): string {
   return tts.speechProtocol === "xai" ? tts.voice : tts.model;
 }
 
-/** 把进程 uptime 格式化为不会随本地时区变化的天与时分秒。 */
-export function formatBotUptime(uptimeSeconds: number): string {
+/** 把进程 uptime 格式化为不会随本地时区变化的天与时分秒；满一天时按氛围文案带上天数。 */
+export function formatBotUptime(uptimeSeconds: number, atmosphere: AtmosphereTexts): string {
   const totalSeconds: number = Number.isFinite(uptimeSeconds) && uptimeSeconds > 0
     ? Math.floor(uptimeSeconds)
     : 0;
@@ -85,7 +85,7 @@ export function formatBotUptime(uptimeSeconds: number): string {
   const seconds: number = remainderAfterHours % BOT_STATUS_SECONDS_PER_MINUTE;
   const clock: string = `${String(hours).padStart(2, "0")}:` +
     `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  return days === 0 ? clock : `${days} 天 ${clock}`;
+  return days === 0 ? clock : atmosphere.NOTICE_TEXTS.statusUptimeWithDays(days, clock);
 }
 
 /** 以最短的二进制单位展示本机内存字节数。 */
@@ -114,13 +114,10 @@ function formatPercent(value: number): string {
  * BOT_STATUS_COLD_MEMORY_WEIGHT 加权求和，只给这一个百分比。
  *
  * 分母是两段记忆各自的领域上限（consts/aiChat/memory.ts 的 VERBATIM_CONTEXT_MAX
- * 与 MAX_SUMMARY_ROUNDS），不是模型的 token 预算：这一行（展示名「猫脑子利用率」）
- * 回答的是「本天才还记着这个群多少东西」，而轮换与摘要晋升都按条数触发。
- * 两段的原始条数不外露——
- * 那是记忆分层的内部机制，对群友一律不可见（见 docs/cn/04-invariants.md）。
+ * 与 MAX_SUMMARY_ROUNDS），不是模型的 token 预算。两段的原始条数不外露
+ * （见 docs/cn/04-invariants.md）。
  *
- * 没有镜像条目就是没有可展示的上下文，按 0 展示而不是沿用旧值（见
- * cache/main/aiChat.ts 的 aiMemoryUsages）。
+ * 没有镜像条目时按 0 展示（见 cache/main/aiChat.ts 的 aiMemoryUsages）。
  */
 function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined, atmosphere: AtmosphereTexts): string {
   const percent: number = (
@@ -131,13 +128,11 @@ function contextCapacityLine(usage: Readonly<AiMemoryUsage> | undefined, atmosph
 }
 
 /**
- * 权限快照的展示体：**只列这个群里已经拥有的权限位**，键沿用 BotChatPermissions 的
- * 英文字段名，值给该位的中文名。没有的位不出现——「有什么」才是这块要回答的问题，逐项列
- * 出十八个「否」只会把真正有的那几条淹掉。
+ * 权限快照的展示体：只列这个群里已经拥有的权限位，键沿用 BotChatPermissions 的
+ * 英文字段名，值给该位的中文名；没有的位不出现，一位都没有时为空对象。
  *
- * 字段与顺序取自 BOT_CHAT_PERMISSION_KEYS（见 consts/botAdmin.ts），不另写一份
- * 会漂移的清单；缺省的可选权限在快照里已经收敛成布尔值，这里不再区分「没返回」
- * 与「确认没有」。一位都没有时给出空对象，那正是「什么都不能做」的如实回答。
+ * 字段与顺序取自 BOT_CHAT_PERMISSION_KEYS（见 consts/botAdmin.ts）；缺省的可选权限
+ * 在快照里已经收敛成布尔值，这里不区分「没返回」与「确认没有」。
  */
 function permissionsJson(permissions: Readonly<BotChatPermissions>): string {
   const display: Record<string, string> = {};
@@ -148,12 +143,11 @@ function permissionsJson(permissions: Readonly<BotChatPermissions>): string {
 }
 
 /**
- * 群功能开关的展示体：**逐项列出本群全部可切换的能力此刻开没开**，键沿用 state 里的
- * 开关字段名，值是布尔。与只列「有什么」的权限块不同——开关一共就这几项，「哪几项是
- * 关的」本身就是这块要回答的问题。
+ * 群功能开关的展示体：逐项列出本群全部可切换能力此刻是否开启，键沿用 state 里的
+ * 开关字段名，值是布尔。
  *
  * 字段与顺序取自 BOT_STATUS_FEATURE_KEYS（见 consts/botStatus.ts）。缺省（从没设过）与
- * 显式关闭都给 false：这块回答的是此刻的生效状态，不区分二者。
+ * 显式关闭都给 false，展示的是此刻的生效状态。
  */
 function featuresJson(chatState: Readonly<ChatState>): string {
   const display: Record<string, boolean> = {};
@@ -166,60 +160,63 @@ function featuresJson(chatState: Readonly<ChatState>): string {
  * 省略整段，不输出 provider、api_key、base_url 或配置失败细节。
  *
  * 正文按 MarkdownV2 拼装（见 libs/telegramMarkdown.ts）：本群 id 是内联代码，权限块与功能块
- * 是 json 代码块，其余各段整段转义——模型名、文案里的 `.`、`-`、`(` 都是保留字符。
+ * 是 json 代码块，其余各段整段转义。
  */
 export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMessage {
   const atmosphere: AtmosphereTexts = chatAtmosphere();
+  const notices: Readonly<AtmosphereNotices> = atmosphere.NOTICE_TEXTS;
+  const processStatus: Readonly<BotProcessStatus> = snapshot.processStatus;
   const lines: string[] = [
-    atmosphere.NOTICE_TEXTS.statusTitle,
+    notices.statusTitle,
     "",
-    atmosphere.NOTICE_TEXTS.statusProcess,
-    `• CPU：${formatPercent(snapshot.processStatus.averageCpuPercent)}` +
-      ` (${snapshot.processStatus.availableCpuCount} Core)`,
-    `• Bot 运行时长：${formatBotUptime(snapshot.processStatus.uptimeSeconds)}`,
-    snapshot.processStatus.memoryFootprintBytes === null
-      ? "• 当前内存占用：不可用"
-      : snapshot.processStatus.memoryLimitBytes > 0
-      ? `• 当前内存占用：${formatBotMemory(snapshot.processStatus.memoryFootprintBytes)} / ` +
-        `${formatBotMemory(snapshot.processStatus.memoryLimitBytes)}` +
-        `（${formatPercent(snapshot.processStatus.memoryPercent)}）`
-      : `• 当前内存占用：${formatBotMemory(snapshot.processStatus.memoryFootprintBytes)}（本机上限不可用）`,
+    notices.statusProcess,
+    notices.statusCpu(formatPercent(processStatus.averageCpuPercent), processStatus.availableCpuCount),
+    notices.statusUptime(formatBotUptime(processStatus.uptimeSeconds, atmosphere)),
+    processStatus.memoryFootprintBytes === null
+      ? notices.statusMemoryUnavailable
+      : processStatus.memoryLimitBytes > 0
+      ? notices.statusMemory(
+        formatBotMemory(processStatus.memoryFootprintBytes),
+        formatBotMemory(processStatus.memoryLimitBytes),
+        formatPercent(processStatus.memoryPercent)
+      )
+      : notices.statusMemoryNoLimit(formatBotMemory(processStatus.memoryFootprintBytes)),
   ];
   const modelLines: string[] = [];
   if (snapshot.aiReady && snapshot.aiConfig !== null) {
-    modelLines.push(capabilityLine("群聊正文", snapshot.aiConfig.text.model));
-    modelLines.push(capabilityLine("记忆摘要", snapshot.aiConfig.summary.model));
-    modelLines.push(capabilityLine("媒体理解", snapshot.aiConfig.media.model));
+    modelLines.push(notices.statusModelText(modelName(snapshot.aiConfig.text.model)));
+    modelLines.push(notices.statusModelSummary(modelName(snapshot.aiConfig.summary.model)));
+    modelLines.push(notices.statusModelMedia(modelName(snapshot.aiConfig.media.model)));
     if (snapshot.aiConfig.image !== undefined) {
-      modelLines.push(capabilityLine("图片生成", snapshot.aiConfig.image.model));
+      modelLines.push(notices.statusModelImage(modelName(snapshot.aiConfig.image.model)));
     }
     if (snapshot.aiConfig.tts !== undefined) {
-      modelLines.push(capabilityLine("语音合成", ttsStatusName(snapshot.aiConfig.tts)));
+      modelLines.push(notices.statusModelTts(modelName(ttsStatusName(snapshot.aiConfig.tts))));
     }
     if (snapshot.aiConfig.webSearch !== undefined) {
-      modelLines.push(capabilityLine("联网检索", snapshot.aiConfig.webSearch.model));
+      modelLines.push(notices.statusModelWebSearch(modelName(snapshot.aiConfig.webSearch.model)));
     }
   }
   if (snapshot.adDetectReady && snapshot.adDetectConfig !== null) {
-    modelLines.push(capabilityLine("广告检测", snapshot.adDetectConfig.model));
+    modelLines.push(notices.statusModelAdDetect(modelName(snapshot.adDetectConfig.model)));
   }
-  if (modelLines.length > 0) lines.push("", atmosphere.NOTICE_TEXTS.statusModels, ...modelLines);
+  if (modelLines.length > 0) lines.push("", notices.statusModels, ...modelLines);
   lines.push(
     "",
-    "Telegram 出站：",
-    `• 处理中 ${snapshot.telegramActive}`,
-    `• 429 退避排队 ${snapshot.telegramPending}/${snapshot.telegramCapacity}`,
+    notices.statusTelegram,
+    notices.statusTelegramActive(snapshot.telegramActive),
+    notices.statusTelegramPending(snapshot.telegramPending, snapshot.telegramCapacity),
     "",
-    atmosphere.NOTICE_TEXTS.statusChatIdLabel
+    notices.statusChatIdLabel
   );
   // 本群一组：id 在前（内联代码，点一下即可复制），其后是上下文、禁言与翻译会话占用。
   const chatGroup: string = [
     "",
     contextCapacityLine(snapshot.aiContextUsage, atmosphere),
-    atmosphere.NOTICE_TEXTS.statusGag(snapshot.activeGagSessions, GAG_SESSION_MAX),
-    atmosphere.NOTICE_TEXTS.statusTranslate(snapshot.activeTranslateSessions, TRANSLATE_CHAT_USER_LIMIT),
+    notices.statusGag(snapshot.activeGagSessions, GAG_SESSION_MAX),
+    notices.statusTranslate(snapshot.activeTranslateSessions, TRANSLATE_CHAT_USER_LIMIT),
     "",
-    atmosphere.NOTICE_TEXTS.statusPermissions,
+    notices.statusPermissions,
     "",
   ].join("\n");
   // undefined 只表示尚未确证（见 types/chatState.ts）：确认不是管理员时快照仍在，
@@ -230,14 +227,14 @@ export function buildBotStatusMessage(snapshot: BotStatusSnapshot): BotStatusMes
     markdownV2InlineCode(String(snapshot.chatId)) +
     escapeMarkdownV2(chatGroup) +
     (permissions === undefined
-      ? escapeMarkdownV2(atmosphere.NOTICE_TEXTS.statusPermissionsUnknown)
+      ? escapeMarkdownV2(notices.statusPermissionsUnknown)
       : markdownV2Pre(permissionsJson(permissions), BOT_STATUS_JSON_LANGUAGE)) +
-    escapeMarkdownV2(`\n\n${atmosphere.NOTICE_TEXTS.statusFeatures}\n`) +
+    escapeMarkdownV2(`\n\n${notices.statusFeatures}\n`) +
     markdownV2Pre(featuresJson(snapshot.chatState), BOT_STATUS_JSON_LANGUAGE);
   return { text };
 }
 
-/** 处理群内 `/bot_status`；命令正文与其它群命令一致在 30 秒后统一清理。 */
+/** 处理群内 `/bot_status`：仅持有 isCanViewBotStatus 的身份可用，回执走 sendCommandMessage 的默认自动清理。 */
 export async function handleBotStatusCommand(
   ctx: CommandContext<Context>
 ): Promise<void> {

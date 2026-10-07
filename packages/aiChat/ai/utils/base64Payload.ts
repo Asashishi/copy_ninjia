@@ -13,10 +13,8 @@ import type {
 import { BASE64_NON_ALPHABET_PATTERN } from "../../../consts/aiChat/payload";
 
 /**
- * API 约定返回无换行的标准 base64；严格校验后才交给 Bun 原生解码器。
- *
- * 不导出：唯一消费方就是下面的 decodeBase64Payload，而它已经是两条链路共用的
- * 单一入口。单独放出去只会多一个可以绕过大小上限直接用的口子。
+ * 标准 base64（无换行）的规范性校验：长度为 4 的倍数，仅在末尾出现 `=` 填充。
+ * 模块内部使用，由 decodeBase64Payload 调用。
  */
 function isCanonicalBase64(encoded: string): boolean {
   if (encoded.length === 0 || encoded.length % 4 !== 0) return false;
@@ -37,8 +35,8 @@ export interface DecodeBase64PayloadOptions {
 /**
  * base64 规范性与大小上限的统一门禁，通过后解码一次。
  *
- * 先按 base64 理论上限挡住异常大响应，避免解码后才发现超限而额外分配一份
- * 最多不可控大小的字节数组；解码只发生一次，调用方的签名判定复用同一份字节。
+ * 先按编码态字符数上限拦截，再校验规范性，最后解码一次并核对字节数上限；
+ * 调用方的签名判定复用同一份字节。
  */
 export function decodeBase64Payload({
   encoded,

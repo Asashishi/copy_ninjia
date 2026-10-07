@@ -37,12 +37,9 @@ resolve_runtime_data_root() {
 }
 
 # 观察窗口开始处的 journal 游标；后面只读这一点之后新增的条目。
-# unit 从来没写过日志（全新安装）时没有游标可取，返回空串——那种情况下这条 unit
-# 的**全部**条目都是本次装出来的，调用方读全量即可，不会把旧崩溃算到本次头上。
+# unit 没有日志（全新安装）时没有游标，返回空串，调用方读全量。
 service_journal_cursor() {
-  # 末尾的 `|| true` 是必需的：pipefail 下 journalctl 失败会让整条管道非零，而
-  # 调用点是 `CURSOR="$(service_journal_cursor)"`，赋值失败会被 set -e 当场打死。
-  # 取不到游标只是「读全量」，不是安装失败。
+  # 末尾的 `|| true` 使 pipefail 下 journalctl 失败时函数仍返回零；取不到游标即返回空串。
   {
     run_privileged journalctl -u "${SERVICE_NAME}.service" -n 0 --show-cursor --no-pager 2>/dev/null |
       sed -n 's/^-- cursor: *//p' |
@@ -66,9 +63,9 @@ service_journal_since() {
 
 # 从 journal 正文里挑出 systemd 记的非零退出。
 # `code=exited, status=0/SUCCESS` 是正常停止，不算；非 0 状态码、以及被信号杀掉的
-# `code=killed` / `code=dumped` 都算。这是 AGENTS.md 要求的「journal 无新增非零退出」
-# 那一条的判据，与 NRestarts 增量互为交叉验证：重启计数只在 systemd 真的拉起下一次
-# 时才涨，而「退出了但没被拉起来」只在这里留痕。
+# `code=killed` / `code=dumped` 都算。这是 AGENTS.md「journal 无新增非零退出」的判据，
+# 与 NRestarts 增量互为补充：重启计数只在 systemd 拉起下一次时增长，「退出了但没被
+# 拉起来」只在这里留痕。
 journal_nonzero_exit_lines() {
   grep -E 'code=exited, status=0*[1-9][0-9]*|code=(killed|dumped)' || true
 }
@@ -182,7 +179,7 @@ verify_service_data_root() {
   esac
 }
 
-# 观察覆盖两次重启等待上限（含退避与随机延迟），另留两秒。
+# 观察时长按重启等待上限（含退避与随机延迟）折算，并附加固定余量。
 service_observation_seconds() {
   local interval="" steps="" maximum="" randomized=""
   interval="$(systemctl show "${SERVICE_NAME}.service" -p RestartUSec --value)" || return 1

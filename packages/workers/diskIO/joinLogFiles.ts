@@ -19,7 +19,7 @@ import {
   JOIN_LOG_ACCEPTED_EVENT_DAYS,
   JOIN_LOG_REOPEN_RETRY_MS,
 } from "../../consts/diskIO/joinLog";
-import { DAY_MS } from "../../consts/diskIO/common";
+import { DAY_MS } from "../../consts/time";
 import { getDateKey, shiftDateKey } from "../../libs/time";
 import type {
   JoinLogDeleteDiskMessage,
@@ -50,12 +50,11 @@ import { armDiskIOFlushTimer, cancelDiskIOFlushTimer } from "./timedFlush";
 
 async function ensureCurrentDayPrepared(today: string): Promise<void> {
   if (joinLogCleanupDay.current === today) return;
-  // 先提交跨日前仍在缓冲中的记录，再清理保留窗口外文件，不能先删后刷。
+  // 先提交跨日前仍在缓冲中的记录，再清理保留窗口外文件。
   const failedKeys: ReadonlySet<string> = await flushJoinLogEntries();
   if (failedKeys.size > 0) {
-    // 但「先删后刷」只在**这次要删掉的那一天**仍有未落盘条目时才成立。任意一个
-    // 群写失败就整体拒绝跨日准备的话，每日维护与 `/batch_kick` 读取都会卡在同一个
-    // 检查上，而清理动的是保留窗口**之外**的文件，与它们毫无关系。
+    // 写失败的分组落在保留窗口之外（即将被清理的那一天仍有未落盘条目）时放弃本次清理；
+    // 窗口内的失败分组不阻塞清理。
     const retainedDays: ReadonlySet<string> =
       retainedJoinLogDayKeys(today);
     for (const key of failedKeys) {
@@ -99,11 +98,7 @@ function publishJoinLogPersisted(): void {
  * 领先本 Worker 今天的条目留到下一次 flush（启动恢复拒绝未来日期文件，不能提前建文件）。
  * 结束时按剩余缓冲发出处置回执。
  * @returns 本次写失败的 `chatId:day` 键集合；空集只表示没有写失败，领先条目不计入。
- *
- * 返回**哪些**分组失败而不只是「有没有失败」：一个群的文件写不动（ENOSPC、
- * 部署后 chown 导致 EACCES、尾部截断）不能连坐其它群——按需读取和跨日准备
- * 都只关心自己那几个 `chatId:day`，用全局布尔判会让健康群的 `/batch_kick`
- * 一起失败，而它自己的日志文件完好且早已刷盘。
+ *   按分组返回失败键：按需读取和跨日准备只关心各自的 `chatId:day`。
  */
 async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
   cancelDiskIOFlushTimer(joinLogBuffer);
@@ -153,8 +148,7 @@ async function flushJoinLogEntries(): Promise<ReadonlySet<string>> {
     }
   }
   if (failedEntries.length > 0 || aheadEntries !== null) {
-    // flush 是同步 owner，新消息不能在循环中插入；仍使用 prepend 语义明确保证
-    // 留下的旧事实排在未来新事实之前。
+    // 留下的条目放在缓冲前部，排在 flush 期间新入缓冲的条目之前。
     joinLogBuffer.entries = aheadEntries === null
       ? failedEntries.concat(joinLogBuffer.entries)
       : failedEntries.concat(aheadEntries, joinLogBuffer.entries);
@@ -178,8 +172,7 @@ export async function flushJoinLogBuffer(): Promise<boolean> {
 /**
  * 群 teardown 的整群删除：先丢掉这个群仍在缓冲里的待写事实，再删它的全部日志文件。
  *
- * 缓冲必须同步丢掉——留着的话，本条之后的任何一次 flush 都会把属于已停管群的入群
- * 事实重新写回一份刚被删掉的文件。删除失败保留待删标记，由 `joinLogPurge` 领域
+ * 缓冲同步丢掉，不留给后续 flush。删除失败保留待删标记，由 `joinLogPurge` 领域
  * 的每一次 flush 重试并回报；那一格与追写的 `joinLog` 分开记，见
  * types/diskIO/replies.ts 的 DiskIODomain。
  */
@@ -199,11 +192,10 @@ export function handleJoinLogDeleteMessage(msg: JoinLogDeleteDiskMessage): void 
  *
  * 「窗口外」的两侧收场不同：
  *
- * - **过旧**（停机后 Telegram 重投的几天前入群）是**有意静默丢弃**。滚动 24 小时
- *   窗口本来就用不上它；缓冲为空时立即发出处置回执，免得这类事实占住主线程镜像。
- * - **领先**（事件日期比本 Worker 的今天还晚）是事件时间与宿主时钟对不上，典型是
- *   Telegram 先跨过配置时区的零点。它照常进缓冲，由 flush 留到本 Worker 的日期追上后再写：
- *   提前建出未来日期文件会让下一次启动恢复拒绝启动。
+ * - **过旧**（停机后 Telegram 重投的几天前入群）**静默丢弃**，不属于滚动 24 小时窗口；
+ *   缓冲为空时立即发出处置回执，主线程镜像随之释放。
+ * - **领先**（事件日期比本 Worker 的今天还晚，典型是 Telegram 先跨过配置时区的零点）
+ *   照常进缓冲，由 flush 留到本 Worker 的日期追上后再写；启动恢复拒绝未来日期文件。
  */
 export async function handleJoinLogMessage(
   msg: JoinLogDiskMessage
@@ -270,8 +262,7 @@ export async function readJoinLog(
     day <= lastDay;
     day = shiftDateKey(day, 1)
   ) requestedDays.push(day);
-  // 只认本群、本窗口文件的落盘结果：别的群写不动与这次读取无关，
-  // 用全局判据会让日志完好的群也收到「入群日志暂时读不了」。
+  // 只认本群、本窗口文件的落盘结果。
   for (const day of requestedDays) {
     if (failedKeys.has(fileKey(request.chatId, day))) {
       throw new Error(

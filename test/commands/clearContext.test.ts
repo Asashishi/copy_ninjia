@@ -29,8 +29,7 @@ mock.module("../../packages/infra/logger", () => ({ logger: loggerStub({ error: 
 
 const { handleClearContextCommand } = await import("../../packages/commands/clearContext");
 
-// userId 传 null 表示这条 update 解析不出发起身份；显式 undefined 会被默认值
-// 补成超级管理员，那正好把「拒绝」测成「放行」。
+// userId 传 null 表示这条 update 解析不出发起身份；显式 undefined 取默认值（超级管理员）。
 function context(argument: string = "", userId: number | null = 100): never {
   const chat = { id: -1001, type: "supergroup" };
   return {

@@ -1,14 +1,11 @@
 /**
  * 出站 payload 采用「可选字段定形一次初始化、缺席用 undefined 表达」的写法时，
- * 真正发到网络上的请求体必须与「整个不带这个键」逐字节相同。
+ * 真正发到网络上的请求体与「整个不带这个键」逐字节相同。
  *
- * 字段从「不存在」变成「存在但为 undefined」本是一次真实的载荷变化，
- * 只是恰好被 grammY 的两条序列化路径（JSON / multipart）各自过滤掉了；
- * 这一过滤行为在依赖内部实现，grammY 升级时没有任何编译期信号会提醒这里，
+ * grammY 的两条序列化路径（JSON / multipart）各自过滤 undefined 字段；该行为依赖其内部实现，
  * 因此用例直接判定网络层的真实请求体。
  *
- * 判据取**注入 fetch 拿到的真实请求体**，不 import grammY 的内部模块：那些路径
- * 不在它的 exports 映射里，照着写等于把测试绑在依赖的目录结构上。
+ * 判据取注入 fetch 拿到的真实请求体，不 import grammY 的内部模块（那些路径不在它的 exports 映射里）。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -46,8 +43,7 @@ async function capture(
       { headers: { "content-type": "application/json" } }
     );
   }
-  // Bun 的 `typeof fetch` 还带一个 preconnect 成员；补上它才满足 grammY 的
-  // `fetch?: typeof fetch`，不必在这里放一个 as unknown as 的双重断言。
+  // Bun 的 `typeof fetch` 带 preconnect 成员；补上它以满足 grammY 的 `fetch?: typeof fetch`。
   const capturingFetch: typeof fetch = Object.assign(record, {
     preconnect: fetch.preconnect,
   });
@@ -59,7 +55,7 @@ async function capture(
 
 describe("grammY 丢弃值为 undefined 的出站字段", () => {
   test("JSON 路径：定形 payload 与省略写法产出同一请求体", async () => {
-    // 六个可选字段恒定出现，缺席用 undefined 表达。
+    // 可选字段恒定出现，缺席用 undefined 表达。
     const fixedShape: CapturedRequest = await capture((api: Api): Promise<unknown> =>
       api.raw.sendMessage({
         chat_id: -100_123,

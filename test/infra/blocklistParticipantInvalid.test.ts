@@ -41,7 +41,7 @@ const {
 } = await import("../../packages/cache/main/identityStorage");
 const { diskIORuntime } = await import("../../packages/cache/main/diskIO");
 const { cachedBlocklistEntry } = await import("../../packages/infra/identityStorage");
-const { runBlocklistIdentityMutation } = await import("../../packages/infra/identityPolicy/coordination");
+const { blocklistIdentityMutationRunner } = await import("../../packages/cache/main/blocklist");
 const { isUserBlocked } = await import("../../packages/infra/blocklist/membership");
 const { recordBlocklistParticipantReadability } = await import("../../packages/infra/blocklist/participantInvalid");
 
@@ -169,7 +169,7 @@ describe("黑名单销号计数", () => {
   test("排队等待解除期间计数被清零时放弃解除", async () => {
     storeBlocked(7, BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
     const busy: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
-    const held: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> => busy.promise);
+    const held: Promise<void> = blocklistIdentityMutationRunner.run(7, (): Promise<void> => busy.promise);
 
     recordBlocklistParticipantReadability(receipt([7]));
     recordBlocklistParticipantReadability(receipt([], [7]));
@@ -218,7 +218,7 @@ describe("黑名单销号计数", () => {
   test("持久化拒收解除时记一行错误并保留黑名单条目", async () => {
     storeBlocked(7, BLOCKLIST_PARTICIPANT_INVALID_LIMIT - 1);
     const busy: { promise: Promise<void>; resolve: () => void } = Promise.withResolvers<void>();
-    const held: Promise<void> = runBlocklistIdentityMutation(7, (): Promise<void> => busy.promise);
+    const held: Promise<void> = blocklistIdentityMutationRunner.run(7, (): Promise<void> => busy.promise);
 
     recordBlocklistParticipantReadability(receipt([7]));
     await blocklistParticipantInvalidQueue.current;

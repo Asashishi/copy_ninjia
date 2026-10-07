@@ -27,7 +27,7 @@ export interface WedKeyboardOptions {
   readonly atmosphere: AtmosphereTexts;
 }
 
-/** 单排三按钮绑定发起人和当前目标，消息 ID 由 Telegram 回传。 */
+/** 单排按钮绑定发起人和当前目标，消息 ID 由 Telegram 回传。 */
 export function buildWedKeyboard(actorId: number, targetId: number, { confirmed = false, atmosphere }: WedKeyboardOptions): InlineKeyboard {
   return new InlineKeyboard()
     .text(atmosphere.WED_BUTTON_TEXTS.remove, `${WED_CALLBACK_PREFIX}${actorId}:${targetId}:remove`)

@@ -1,10 +1,10 @@
-/** owner: workers/aiChat。media 模型视觉/语音输入支持度的 holder 与探测登记。四档状态机本身是纯函数，
- * 在 states/mediaInputSupport.ts；本文件只持有状态、执行它给出的效果，并把
- * 「哪一次探测正在进行」这类线程独占的运行态收在一起。
+/** owner: workers/aiChat。media 模型视觉/语音输入支持度的 holder 与探测登记。状态机本身是纯函数，
+ * 在 states/mediaInputSupport.ts；本文件持有状态、执行它给出的效果，并保存
+ * 「哪一次探测正在进行」这类线程独占的运行态。
  *
  * 容量恒定：两个模态各一个固定 shape 的状态对象、各最多一个在途探测及可摘除等待者，
  * 等待者与执行器队列共用媒体等待上限，没有 timer。Worker 崩溃重建或进程重启后 holder 回到
- * null，按当前配置快照从初始状态重新探测——外部端点的能力可能已经恢复。
+ * null，按当前配置快照从初始状态重新探测。
  * agent.json 热重载替换 media 能力时由 resetMediaInputSupport 进入新配置代次，
  * 旧代次请求迟到的结论不再改写新状态。
  */
@@ -65,8 +65,8 @@ export function setMediaInputProbe(
 }
 
 /**
- * 探测结束后按任务身份清理。身份核对防止旧任务的 finally 误清后继探测；
- * Worker 崩溃时无需显式清理，isolate 会连 holder 一起释放。
+ * 探测结束后按任务身份清理，旧任务的 finally 不清后继探测；
+ * Worker 崩溃时 holder 随 isolate 释放。
  */
 export function clearMediaInputProbe(
   capability: MediaInputCapability,
@@ -123,7 +123,7 @@ export function isMediaInputProbeCoolingDown(
   return isWithinMediaProbeBackoff(getMediaInputState(capability).nextProbeAt, now);
 }
 
-/** 执行状态机给出的效果；当前只有 misconfigured 落定那一次的英文诊断。 */
+/** 执行状态机给出的效果；logMisconfiguredMediaEndpoint 输出 media 端点配置错误的诊断。 */
 function applyMediaInputEffect(effect: MediaInputEffect): void {
   switch (effect.kind) {
     case "logMisconfiguredMediaEndpoint":

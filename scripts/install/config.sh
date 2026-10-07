@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 由目标工作树 install.sh 按顺序 source；共享其严格模式、日志函数与安装上下文。
 
-# config_example/dynamic/agent.json 里的七项 AI 能力，顺序与示例一致。
+# config_example/dynamic/agent.json 里的 AI 能力，顺序与示例一致。
 readonly AGENT_CAPABILITIES=(ad_detect text summary media image tts web_search)
 # AI 闲聊的必备能力；缺任意一项，/ai_chat enable 会被拒绝。
 readonly AGENT_REQUIRED_CAPABILITIES=(text summary media)
@@ -22,7 +22,7 @@ ask() {
   printf -v "$target_name" '%s' "$answer"
 }
 
-# 读一行不回显的输入；token、API key 走这条，避免留在终端回滚里。
+# 读一行不回显的输入；token、API key 走这条。
 ask_secret() {
   local target_name="$1" prompt_text="$2" answer=""
   printf '    %s' "$prompt_text"
@@ -48,7 +48,7 @@ confirm() {
   done
 }
 
-# 软链接配置沿用其实际写入目标，避免原子替换将部署方软链接改成普通文件。
+# 软链接配置沿用其实际写入目标，原子替换不改变部署方软链接。
 resolve_config_target_path() {
   local target_path="$1" result_name="$2" resolved_path=""
   if [ -L "$target_path" ]; then
@@ -61,7 +61,7 @@ resolve_config_target_path() {
   printf -v "$result_name" '%s' "$resolved_path"
 }
 
-# 在实际写入目标同目录创建 0600 临时文件，使最后一步 mv 是同文件系统原子替换。
+# 在实际写入目标同目录创建仅属主可读写的临时文件，最后一步 mv 是同文件系统原子替换。
 create_config_staging_path() {
   local target_path="$1" result_name="$2" target_directory="" target_name="" generated_path=""
   target_directory="$(dirname -- "$target_path")"
@@ -73,7 +73,7 @@ create_config_staging_path() {
   printf -v "$result_name" '%s' "$generated_path"
 }
 
-# 新建示例配置也先完整复制到同目录临时文件，避免中断留下半份 JSON。
+# 新建示例配置也先完整复制到同目录临时文件，再 mv 到目标。
 create_config_from_example() {
   local source_path="$1" target_path="$2" staging_path="" source_mode=""
   local current_umask="" target_mode="" resolved_target_path=""
@@ -145,9 +145,9 @@ backup_deployment_config() {
 }
 
 # 目标内容已严格解析后才走这里。第三个参数为 preserve 时替换部署方已填写过的既有
-# 配置：候选文件在 0600 下先改成原属主/属组，mv 前才改成原文件 mode，因此候选内容
-# 的可读范围从不超过原文件，服务账号也保留原有读取能力。为 new 时文件固定 0600，
-# 目标已存在则只保留属主/属组。
+# 配置：候选文件先在仅属主可读写的权限下改成原属主/属组，mv 前才改成原文件 mode，
+# 候选内容的可读范围不超过原文件。为 new 时文件固定仅属主可读写，目标已存在则只保留
+# 属主/属组。
 commit_staged_config() {
   local staging_path="$1" target_path="$2" mode_policy="$3" target_uid="" target_gid=""
   local target_mode="" staging_uid="" staging_gid="" owner_changed=0
@@ -206,7 +206,7 @@ clear_agent_config_inputs() {
   unset AGENT_CONFIG_SPEECH_PROTOCOLS AGENT_CONFIG_VOICES
 }
 
-# EXIT 只清理尚未提交的候选文件；外部备份不能在失败路径被顺手删掉。
+# EXIT 只清理尚未提交的候选文件，保留外部备份。
 cleanup_install_staging() {
   local staging_path=""
   for staging_path in "${CONFIG_STAGING_PATHS[@]}"; do

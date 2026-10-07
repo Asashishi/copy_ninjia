@@ -1,6 +1,7 @@
 import { workerAtmosphere } from "../atmosphere";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
 import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
+import { runTelegramAction } from "../../../infra/telegram/actions/core";
 import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
 import { verificationEntries } from "../../../cache/workers/antiRaid/verification";
 import { logger } from "../../../infra/logger";
@@ -118,39 +119,45 @@ export async function runExpelEffect({
     expectedState.reason !== reason ||
     expectedState.snapshot !== effect.snapshot
   ) return;
-  // 权限镜像是三态：只有确证没有限制成员权限时才跳过踢人请求。每轮保留一次
-  // O(1) 判定并继续退避，权限恢复后下一轮自然重新执行；未知不能折算成没有权限。
+  // 权限镜像是三态：只有确证没有限制成员权限时才跳过踢人请求；未知交给 Telegram 裁判。
+  // 每轮保留一次 O(1) 判定并继续退避，权限恢复后下一轮重新执行。
   //
-  // **但只短路请求，不短路诊断。** 管理员必须收到一次点名封禁权限的群内提示；
-  // 否则目标会留在群里，退避会静默增长，机器人的验证提示也无法收口。
+  // 短路的只是踢人请求，不是成员探测与诊断：第一次进这条分支时照常走一遍 expelMember——
+  // 探测成员是否还在群里（已离群即结算，不占记录）、清机器人自己的验证消息、发出点名
+  // 封禁权限的群内提示、记一行日志。之后由 failureNoticeSent 闩住：它随快照持久化，
+  // Worker 重生与进程重启后也不会重发，每轮重试只发一次成员探测并推进本地退避；探测到
+  // 已自行离群时直接结算，removalConfirmed 记着「上一轮已踢掉、战报未发出」时交给 expelMember
+  // 补发战报。提示自己没发出去时不置位（见 expelMember 收尾），下一轮重来。
   //
-  // 因此第一次进这条分支时照常走一遍 expelMember——清机器人自己的验证消息、发出
-  // 那条提示、记一行日志，只是不发成员探测和踢人请求。之后由 failureNoticeSent
-  // 闩住：它随快照持久化，Worker 重生与进程重启后也不会重发，每轮重试只推进本地
-  // 退避，一个请求都不发。提示自己也没发出去时不置位（见 expelMember 收尾），
-  // 下一轮会重来。
-  //
-  // **清理还欠着账时不许短路**（cleanupSettled）。只认 failureNoticeSent 的话，
-  // 一条因为网络抖动删失败过的验证公告会就此定格：此后每一轮都在这里返回，
-  // 那段清理代码再也不会执行，群里于是永远挂着一条带可点击验证按钮的公告，而
-  // 对应的成员根本没被踢走。cleanupSettled 为假时照常走 expelMember——那条路上
-  // 踢人被 canRestrict 短路、播报被 failureNoticeSent 短路，机器人确证没有删除
-  // 权限时删除也被 botCanDeleteIn 短路，因此「一个请求都不发」这条性质仍然成立，
-  // 只有真的还能删、也确实该重试的那种情形才会发出请求。
+  // 清理还欠着账（cleanupSettled 为假）时不短路：照常走 expelMember，踢人被 canRestrict
+  // 短路、播报被 failureNoticeSent 短路、确证没有删除权限时删除被 botCanDeleteIn 短路，
+  // 只有仍能删且需要重试的清理才会发出请求。
   const permissionBlocked: boolean = botCanRestrictIn(chatId) === false;
   if (
     permissionBlocked &&
     expectedState.failureNoticeSent === true &&
     expectedState.cleanupSettled === true
   ) {
-    retryTerminalLater({ chatId, userId, state: expectedState, dispatchVerification });
-    return;
+    const removal: ExpelRemovalOutcome = await probeBlockedMember(
+      chatId,
+      userId,
+      (): boolean => verificationEntries.get(key)?.state === expectedState
+    );
+    if (removal === "stale") return;
+    if (removal !== "absent") {
+      retryTerminalLater({ chatId, userId, state: expectedState, dispatchVerification });
+      return;
+    }
+    if (expectedState.removalConfirmed !== true) {
+      dispatchVerification(chatId, userId, { type: "expelSettled" });
+      return;
+    }
   }
   if (permissionBlocked) {
     logger.error(
       `Verification expel for user ${userId} in chat ${chatId} cannot kick: the bot is confirmed to lack ` +
       "can_restrict_members there. Cleaning up the bot's own verification messages and notifying the chat once, then " +
-      "backing off without further requests until the permission returns."
+      "backing off with only a membership probe per retry until the member leaves or the permission returns."
     );
   }
   const settled: boolean = await expelMember({
@@ -206,8 +213,9 @@ interface ExpelMemberParams {
   snapshot: ExpelSnapshot;
   reason: "timeout" | "flood";
   /**
-   * 确证没有限制成员权限时为 false：跳过成员探测与踢人请求，其余（清理机器人
-   * 自己的验证消息、战报措辞、诊断名额）全部照旧，结局按「没踢动」结算。
+   * 确证没有限制成员权限时为 false：只做成员探测、不发踢人请求（见 probeBlockedMember），
+   * 其余（清理机器人自己的验证消息、战报措辞、诊断名额）全部照旧；成员仍在群里或查询
+   * 失败时结局按「没踢动」结算。
    */
   canRestrict: boolean;
   expectedState: VerificationTerminalState & { kind: "expelling" };
@@ -241,6 +249,21 @@ async function kickPresentMember(
   if (outcome === "kicked") return "kicked";
   if (outcome === "absent") return "absent";
   return "failed";
+}
+
+/**
+ * 确证没有限制成员权限时只探测成员、不发踢人请求：已离群为 absent，在群或查询失败为
+ * failed（与请求被拒的结局一致），探测期间状态被替换为 stale。
+ */
+async function probeBlockedMember(
+  chatId: number,
+  userId: number,
+  isCurrent: () => boolean
+): Promise<ExpelRemovalOutcome> {
+  const present: boolean | undefined =
+    await probeChatMembership(chatId, userId, telegramApi);
+  if (!isCurrent()) return "stale";
+  return present === false ? "absent" : "failed";
 }
 
 interface DeleteVerificationMessagesOptions {
@@ -311,12 +334,12 @@ async function expelMember({
 }: ExpelMemberParams): Promise<boolean> {
   const stillCurrent = (): boolean =>
     verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState;
-  // canRestrict 为假时保持初值：没发请求就是没踢动，战报走「没给本天才封禁
-  // 权限」那条，与请求真的被 Telegram 403 掉时的结局一致。
   let removalOutcome: ExpelRemovalOutcome = "failed";
   if (!stillCurrent()) return false;
-  if (reason === "flood" && canRestrict) {
-    removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
+  if (reason === "flood") {
+    removalOutcome = canRestrict
+      ? await kickPresentMember(chatId, userId, stillCurrent)
+      : await probeBlockedMember(chatId, userId, stillCurrent);
     if (removalOutcome === "stale") return false;
   }
   const cleanup: VerificationCleanupResult | null =
@@ -325,43 +348,52 @@ async function expelMember({
   // 只在真的一条不剩时置位；欠着账就留给下一轮重试（见 ExpellingState.cleanupSettled）。
   if (cleanup.missed === 0) expectedState.cleanupSettled = true;
   if (!stillCurrent()) return false;
-  if (reason === "timeout" && canRestrict) {
-    removalOutcome = await kickPresentMember(chatId, userId, stillCurrent);
+  if (reason === "timeout") {
+    removalOutcome = canRestrict
+      ? await kickPresentMember(chatId, userId, stillCurrent)
+      : await probeBlockedMember(chatId, userId, stillCurrent);
     if (removalOutcome === "stale") return false;
   }
-  // 「人已经不在群里」有两种来路，必须分开：本来就走了（照常静默结算，机器人
-  // 不认领别人的处置），以及上一轮确实是本天才踢掉的、只是那条播报没发出去
-  // （removalConfirmed 记着，见 ExpellingState）。后者仍要走播报那条路，否则
-  // 一次探测就把唯一的说明永久吞掉。
+  // 「人已经不在群里」分两种来路：本来就走了（静默结算，不认领别人的处置）；
+  // 上一轮由机器人踢掉、播报未发出（removalConfirmed 记着，见 ExpellingState），
+  // 仍走播报路径。
   const kicked: boolean = removalOutcome === "kicked" ||
     (removalOutcome === "absent" && expectedState.removalConfirmed === true);
   if (removalOutcome === "absent" && !kicked) return stillCurrent();
   if (!stillCurrent()) return false;
 
-  // 三类诊断分别持久化，成员/群类型探测失败不能占掉权限失败的唯一告警名额。
+  // 三类诊断（success、unconfirmed、failure）各有各的持久化标记。
   const unconfirmed: boolean = removalOutcome === "unconfirmed" || removalOutcome === "kindUnknown";
   const shouldSendNotice: boolean = kicked
     ? expectedState.successNoticeSent !== true
     : unconfirmed
       ? expectedState.unconfirmedNoticeSent !== true
       : expectedState.failureNoticeSent !== true;
-  const notice: TelegramWorkerTemporaryMessageResult | undefined = shouldSendNotice
-    ? await sendTemporaryMessageFromMain({
-      purpose: "notice",
-      deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
-      chatId,
-      text: expelNoticeText({
-        texts: workerAtmosphere().NOTICE_TEXTS,
-        reason,
-        removalOutcome,
-        kicked,
-        cleanup,
-        label: snapshot.label,
-        isBot: snapshot.isBot,
+  // 播报经统一 Telegram 动作边界发送：请求 reject（含 Worker→主线程请求失败）记一行 API 错误，
+  // 按「没发出去」走下面的退避分支。
+  const noticeMessageId: number | undefined = shouldSendNotice
+    ? await runTelegramAction({
+      action: "send message",
+      execute: (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
+        purpose: "notice",
+        deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
+        chatId,
+        text: expelNoticeText({
+          texts: workerAtmosphere().NOTICE_TEXTS,
+          reason,
+          removalOutcome,
+          kicked,
+          cleanup,
+          label: snapshot.label,
+          isBot: snapshot.isBot,
+        }),
+        signal,
       }),
+      map: (result: TelegramWorkerTemporaryMessageResult | undefined): number | undefined =>
+        result !== undefined && "messageId" in result ? result.messageId : undefined,
+      fallback: undefined,
     })
     : undefined;
-  const noticeMessageId: number | undefined = notice !== undefined && "messageId" in notice ? notice.messageId : undefined;
   if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
     if (unconfirmed) {
       expectedState.unconfirmedNoticeSent = true;
@@ -373,10 +405,8 @@ async function expelMember({
     publishVerificationChange(chatId, userId, true);
     return false;
   }
-  // 踢成功了、那条播报却没发出去（429 排干净、网络抖动）。**不能就这么结算**：
-  // 结算等于删记录，群里看着一个人凭空消失，而唯一的说明再也不会有第二次机会。
-  // 先把「人确实是本天才踢走的」记进快照再退避重试，下一轮的成员探测才不会把
-  // 「不在群里」当成别人的处置（见上面 kicked 的两条来路）。
+  // 踢成功但播报没发出去：不结算，先把 removalConfirmed 记进快照再退避重试
+  // （见上面 kicked 的两条来路）。
   if (kicked && shouldSendNotice) {
     if (expectedState.removalConfirmed !== true) {
       expectedState.removalConfirmed = true;

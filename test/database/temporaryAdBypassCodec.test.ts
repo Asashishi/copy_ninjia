@@ -19,7 +19,7 @@ import type { TemporaryAdBypassActivity } from "../../packages/types/states/temp
 
 const SOURCE: string = "temporary_ad_bypass_activity[42]";
 
-/** 东京日内一个固定时刻，避免用例跨自然日边界抖动。 */
+/** 东京日内一个固定时刻，用例不跨自然日边界。 */
 const NOW: number = Date.UTC(2026, 0, 15, 3, 0, 0);
 
 /** 一条完全合法的「已获临时免检、当日已达标」记录；各用例只改一处。 */
@@ -104,12 +104,12 @@ describe("临时广告免检关系列的严格校验", () => {
   });
 
   test("ad_bypass 与 ad_bypass_granted_at 必须同真同假", () => {
-    // 有免检时刻却没置位：读回来这个人会被当成没拿到豁免，广告链路照常送检。
+    // 有免检时刻却没置位：被拒绝。
     expectRejected(
       { ...validActivity(), adBypass: false, qualifiedDays: 0 },
       "$.ad_bypass"
     );
-    // 置了位却没有免检时刻：豁免起点无从考据。
+    // 置了位却没有免检时刻：被拒绝。
     expectRejected({ ...validActivity(), adBypassGrantedAt: null }, "$.ad_bypass");
   });
 
@@ -149,8 +149,7 @@ describe("临时广告免检关系列的严格校验", () => {
     expectRejected({ ...validActivity(), qualifiedDays: 0 }, "$.qualified_at");
     expectRejected({ ...validActivity(), qualifiedAt: NOW + 1 }, "$.qualified_at");
 
-    // 达标时刻必须落在 counted_at 所属的那个东京日里：跨日就说明这一行的
-    // 「当日累计」和「当日达标」指的不是同一天，连续日计数不再可信。
+    // 达标时刻落在 counted_at 所属的那个东京日里；跨日说明「当日累计」和「当日达标」指的不是同一天。
     const previousDay: number = NOW - 48 * 60 * 60 * 1000;
     expect(getDayIndex(previousDay)).not.toBe(getDayIndex(NOW));
     expectRejected(

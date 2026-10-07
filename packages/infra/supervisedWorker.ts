@@ -4,13 +4,11 @@
  * - 创建 Worker 并 unref（不阻止进程退出，停机时在途任务随线程丢弃）；
  * - 识别 Worker 回传的有界 error 日志批次（logger.ts 的转发模式），转投主线程
  *   唯一的落盘线程并确认该批；其余消息交给 onEvent（业务事件回传）；
- * - Worker 崩溃时按节流重建：Bun 里 Worker 内部一旦抛出未捕获异常（同步或
- *   async 均如此）就会直接终止该 Worker 线程，不需要（实际上
- *   也没法）手动 terminate，直接换新实例顶上，并经 onRespawn 重放必要状态；
+ * - Worker 崩溃时按节流重建：Bun 在未捕获异常后已终止该 Worker 线程，这里不再
+ *   terminate，直接换新实例顶上，并经 onRespawn 重放必要状态；
  * - 放弃自愈的节流阈值见 consts/workerSupervisor.ts；永久不可用时
- *   post() 返回 false，并通知 ApplicationLifecycle 停止 runner。不同 Bun
- *   版本对不可用 Worker 的 postMessage 可能抛出或静默丢弃，因此投递边界
- *   也把同步异常统一收敛为 false。
+ *   post() 返回 false，并通知 ApplicationLifecycle 停止 runner。投递边界
+ *   把同步异常统一收敛为 false。
  */
 
 import { logger } from "./logger";
@@ -133,37 +131,30 @@ export function superviseWorker<TMessage, TEvent = never>(
     };
     w.onmessage = (event: MessageEvent<unknown>): void => {
       const data: unknown = event.data;
-      // __logBatch 转发不受下面的活跃实例守卫约束：它只是把这个 Worker 自己的
-      // error 日志转投落盘线程，不改写任何共享镜像，没有"过期数据覆盖新
-      // 状态"的风险；旧实例崩溃前最后一条自我诊断日志（比如它自己
-      // logger.error 记下的、导致接下来崩溃的原因）仍然值得落盘，不该因为
-      // 它在 onerror 重建之后才被处理就被无差别丢弃。
+      // __logBatch 转发不受下面的活跃实例守卫约束：它只把这个 Worker 自己的
+      // error 日志转投落盘线程，不改写共享镜像；旧实例的迟到日志同样转投。
       if (data && typeof data === "object" && "__logBatch" in data) {
         const forwarded: ForwardedLogBatch = data as ForwardedLogBatch;
         let acceptedAll: boolean = true;
         for (const message of forwarded.__logBatch.messages) {
           if (!relayLogMessage(message)) acceptedAll = false;
         }
-        // 未初始化唯一 DiskIO owner 时不能假装接收成功；业务 Worker 按生命周期
-        // 不会早于 DiskIO 启动，这个守卫只负责让异常启动顺序保持无损挂起。
+        // DiskIO owner 未初始化时不回 ACK，原批留在 Worker 的待确认队列。
         if (!acceptedAll) return;
         const accepted: ForwardedLogBatchAccepted = {
           __logBatchAccepted: forwarded.__logBatch.batchId,
         };
-        // ACK 被旧代际同步拒绝不撤回已经收入主线程 FIFO 的原批；旧 isolate
-        // 终止后只释放它持有的副本，主线程权威队列仍会继续向 DiskIO 重投。
+        // ACK 被旧代际同步拒绝时，已收入主线程 FIFO 的原批不撤回，由主线程队列
+        // 继续向 DiskIO 重投。
         postToWorker(w, accepted);
         return;
       }
-      // 已被替换的旧实例若有迟到/入队中的业务事件才送达，不能再让它们改写
-      // 当前镜像（同 onerror 的守卫，见下方）——旧 worker 抛异常终止前可能
-      // 已入队一条基于旧快照的事件，若在 onerror 重建之后才被处理，会用
-      // 过期数据覆盖新实例已经重放过的最新状态。
+      // 已被替换的旧实例迟到送达的业务事件丢弃（同 onerror 的守卫）。
       if (worker !== w) return;
       options.onEvent?.(data as TEvent, eventContext);
     };
     w.onerror = (event: ErrorEvent): void => {
-      // 已被替换的旧实例若迟到/重复上报错误，不得再次创建一条平行自愈链。
+      // 已被替换的旧实例迟到或重复上报的错误忽略。
       if (worker !== w) return;
       logger.error(`${options.label} errored, restarting:`, event.message || event.error || event);
       controller.abort();

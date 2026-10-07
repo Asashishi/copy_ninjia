@@ -12,14 +12,14 @@ import type {
 } from "../../types/storageDatabase";
 
 /**
- * 为一条连接建三条「主键是否已持久化」的预编译语句。
+ * 为一条连接建各名单（永久白名单、永久黑名单、临时广告免检）的「主键是否已持久化」预编译语句。
  *
  * 这个查询在写入路径上按条目调用（workers/diskIO/storageDatabase/identityPolicy.ts
- * 的 assertOppositePolicyAbsent），因此每条连接只构建一次并复用预编译语句。
+ * 的 assertOppositePolicyAbsent），每条连接只构建一次并复用预编译语句。
  *
- * 本函数只负责**建**，不持有：语句归谁、活多久由调用侧决定（Disk I/O Worker 把
+ * 本函数只建不持有：语句的归属与生命周期由调用侧决定（Disk I/O Worker 把
  * 它挂在 cache/workers/diskIO/storageDatabase.ts 的连接级 WeakMap 上）。本文件是
- * 不接触任何线程独占缓存的叶子模块，这条边界不要在这里破。
+ * 不接触任何线程独占缓存的叶子模块。
  */
 export function prepareStoredIdentityIdLookups(
   database: StorageDatabase
@@ -37,7 +37,7 @@ export function prepareStoredIdentityIdLookups(
 
 /**
  * 按唯一主键稳定顺序读取已提交黑名单的一段游标页。
- * limit 由上层固定硬顶；本函数不使用 offset，名单增长时单页查询仍为有界工作。
+ * limit 由上层固定上限；本函数不使用 offset。
  */
 export function readStoredBlocklistIdPage(
   database: StorageDatabase,

@@ -14,11 +14,10 @@ import type {
  * 填充：hydrate 时按已存在的快照置 0，此后每次接受 upsert/delete 时更新。
  * 清理：`forgetAiMemoryChat`（主线程 teardown 后确认该群再无在途操作时发来的
  * forgetAiMemory 消息）、`hydrateAiMemoryCache`、`resetAiMemoryCache`。
- * **删除受理本身不清**——那会让一条早发的旧 revision 复活刚删掉的记忆。
+ * 删除受理本身不清水位线，迟到的旧 revision 仍被拒。
  * Worker 崩溃重建：由 load 后的 hydrate 按磁盘现存快照整体重建；主线程的
  * tombstone 与最新快照另由 onDiskIORespawn 重放。
- * 容量：活跃 chat 数级别，并由 forgetAiMemoryChat 随 teardown 回收；没有这条
- * 回收路径时它会按「进程历史上出现过的 chat 数」单调增长。
+ * 容量：活跃 chat 数级别，由 forgetAiMemoryChat 随 teardown 回收。
  */
 export const aiMemoryRevisions: Map<number, number> = new Map();
 /**
@@ -32,8 +31,7 @@ export const aiMemoryOperations: Map<number, "upsert" | "delete"> = new Map();
  *
  * 填充：purge 之后要求即时写入的首份新快照入队时登记。清理：共享事务提交后的回执结算
  * （storageDatabase/aiContext.ts 的 settleAiContextPersisted）、markAiMemoryDeleted
- * 与 resetAiMemoryCache。Worker 崩溃重建：不重建——它只表达「本进程这一刻还欠
- * 一次即时写」，新实例没有这笔欠账。容量：同时处于该状态的群数，上界为受管群数。
+ * 与 resetAiMemoryCache。Worker 崩溃重建：不重建，新实例没有待结算的即时写。容量：同时处于该状态的群数，上界为受管群数。
  */
 export const aiMemoryImmediateChats: Set<number> = new Set();
 
@@ -92,11 +90,10 @@ export function markAiMemoryDeleted(chatId: number, revision: number): boolean {
  * 丢弃某群的 revision 水位线；只由 forgetAiMemory 消息触发。
  *
  * 调用前提由主线程负责：该群已 durable 删除、AI Worker 失效，且没有在途快照、墓碑与
- * waiter（见 aiChat/memoryMirror.ts 的 forgetAiMemoryRevisionCounter）。没有
- * 这个前提就不能删水位线——它正是用来挡迟到 upsert 的。
+ * waiter（见 aiChat/memoryMirror.ts 的 forgetAiMemoryRevisionCounter）。水位线
+ * 用于拒绝迟到 upsert，前提不成立时不得删除。
  *
- * 只动这两张水位线表：共享事务缓冲里的上下文最终值有自己的生命周期，
- * 「忘掉 revision 序列」不表达「删除上下文」。
+ * 只清这两张水位线表；共享事务缓冲里的上下文最终值有自己的生命周期。
  */
 export function forgetAiMemoryChat(chatId: number): void {
   aiMemoryRevisions.delete(chatId);

@@ -74,8 +74,7 @@ describe("黑名单处置投递前的 durable 对账", () => {
   });
 
   test("批次在等待期里被取消时补投它取代掉的那条 join", async () => {
-    // claimBlockedJoiner 对黑名单成员不投 join；批次被并发 /block disable 取消后，
-    // 需要补投被取代的那条 join，否则这个人既没有移除也没有验证窗口。
+    // claimBlockedJoiner 对黑名单成员不投 join；批次被并发 /block disable 取消后，补投被取代的那条 join。
     authoritative.clear();
 
     const result = await prepareDurableAntiRaidMessages([removal], new Map([[7, replacedJoin]]));
@@ -90,8 +89,8 @@ describe("黑名单处置投递前的 durable 对账", () => {
   });
 
   test("补扫只复核当前有界页：落盘窗口里的新增身份不扩张本页", async () => {
-    // 补扫的名单不进 outbox，durable 的只有任务本身。当前页开始投递后又新增的
-    // 身份由直接处置/下一轮补扫覆盖，不能把它并进当前页并重新制造全量快照。
+    // 补扫的名单不进 outbox，durable 的只有任务本身；当前页开始投递后又新增的身份由直接处置/下一轮补扫覆盖，
+    // 不并进当前页，也不重新制造全量快照。
     const sweep: AntiRaidWorkerMessage = {
       type: "removeBlockedMembers",
       chatId: -1001,
@@ -146,8 +145,7 @@ describe("黑名单处置投递前的 durable 对账", () => {
   });
 
   test("对账轮次用尽只摘掉处置、不补 join：批次还在 outbox 里，人仍待清出去", async () => {
-    // 这一档与「被取消」不同：任务没丢，只是这次不投。补一个验证窗口等于给一个
-    // 仍在黑名单上的人开门。
+    // 这一档与「被取消」不同：任务没丢，只是这次不投；不补验证窗口。
     let round: number = 0;
     authoritative = new Map();
     const shifting = {

@@ -3,11 +3,11 @@ export const STICKER_SET_FAILURE_RETRY_MS: number = 60_000;
 
 /** 一轮回复最多发送一枚贴纸。 */
 export const MAX_STICKERS_PER_REPLY: number = 1;
-/** 部署配置最多允许五个贴纸包，启动预检会拒绝超出的配置。 */
+/** 部署配置允许的贴纸包上限，启动预检拒绝超出的配置。 */
 export const MAX_CONFIGURED_STICKER_PACKS: number = 5;
 /** Telegram 贴纸包 short name 的运行时校验规则。 */
 export const STICKER_PACK_NAME_PATTERN: RegExp = /^[A-Za-z0-9_]{1,64}$/;
-/** 一轮最多查看五个不同贴纸包；同一包由执行侧保证只能查看一次。 */
+/** 一轮最多查看的不同贴纸包数；同一包由执行侧保证只能查看一次。 */
 export const MAX_STICKER_PACK_VIEWS_PER_REPLY: number = MAX_CONFIGURED_STICKER_PACKS;
 
 /** send_sticker 在串行链发送步骤里展示「正在选择贴纸」的基础停顿和随机抖动（见 aiChat/ai/tools/stickers.ts）。 */
@@ -20,8 +20,7 @@ export const STICKER_CATALOG_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_00
 
 /**
  * 单枚贴纸描述在退避序列也用完之后的负缓存时长（见 cache/workers/aiChat/stickers/catalog.ts 的
- * failedEntries）：期间对账跳过该贴纸，到期后由下一次对账重描。远长于
- * STICKER_CATALOG_RETRY_INTERVAL_MS，条目不会永久闩死。
+ * failedEntries）：期间对账跳过该贴纸，到期后由下一次对账重描。
  */
 export const STICKER_CATALOG_ENTRY_FAILURE_RETRY_MS: number = 30 * 60_000;
 

@@ -21,7 +21,7 @@ interface CostedQueueValue<T> {
 /**
  * 单向通道的 ACK 批处理队列。
  *
- * 队列只允许一个批次在途，避免对端停止消费时继续向 Worker mailbox 无界复制；
+ * 队列只允许一个批次在途；
  * 在途值保留到 ACK，投递拒绝或对端代际崩溃后可原批重发，语义为 at-least-once。
  * 总条数与领域成本均有硬顶；enqueue 越界时返回 false，由领域 owner 决定丢弃、
  * 合并或升级。实例必须放进所属线程的 cache 模块。

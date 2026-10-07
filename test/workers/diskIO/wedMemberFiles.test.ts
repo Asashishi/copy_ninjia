@@ -201,7 +201,7 @@ test("整群删除立即 unlink，并丢掉这个群仍未落盘的快照", asyn
   await handleDiskIOWorkerMessage({ type: "deleteWedMembers", chatId: -1001, revision: 1 });
 
   expect(await Bun.file(path).exists()).toBeFalse();
-  // 待写快照必须一起丢掉：留着的话下一次 flush 会把文件重新写回来。
+  // 待写快照一并丢掉，下一次 flush 不重新写出文件。
   expect(pendingWedMembers.has(-1001)).toBeFalse();
   expect(dirtyWedChats.has(-1001)).toBeFalse();
   expect(deletedWedChats.size).toBe(0);
@@ -227,7 +227,7 @@ test("删除失败保留待删标记并让本领域回报失败，重试成功�
     );
     expect(deletedWedChats.has(-1001)).toBeTrue();
     expect(await Bun.file(path).exists()).toBeTrue();
-    // 领域 flush 必须照实回报失败，否则 teardown 会把「文件还在」报成删干净了。
+    // 领域 flush 照实回报失败。
     expect(flushWedMemberFiles(writeWedMemberFile, (): never => { throw new Error("permission denied"); })).toBeFalse();
     expect(wedFileFlushTimer.current).not.toBeNull();
 

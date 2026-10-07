@@ -1,15 +1,15 @@
 /**
  * 主线程每聊天发送调度器。出站闸（./outboundGate.ts）把发送类请求（isTelegramMessageRequest）交到
  * 这里，其余类别仍走按类别的 429 退避。按 Telegram FAQ 的公开限额主动控速，三层额度都满足才发出：
- * - 单聊天令牌桶：每 TELEGRAM_SEND_CHAT_REFILL_MS 补一个，容量 TELEGRAM_SEND_CHAT_BURST（保守档为 1）；
+ * - 单聊天令牌桶：每 TELEGRAM_SEND_CHAT_REFILL_MS 补一个，容量 TELEGRAM_SEND_CHAT_BURST（保守档内降为单条）；
  * - 群类聊天（负数 id 与 `@username`）：任意 TELEGRAM_SEND_GROUP_WINDOW_MS 内不超过 TELEGRAM_SEND_GROUP_LIMIT 条；
  * - 全局：任意 TELEGRAM_SEND_GLOBAL_WINDOW_MS 内不超过 TELEGRAM_SEND_GLOBAL_LIMIT 条。
  * 相册按张数、批量复制/转发按条数扣额度；单次条数超过桶容量时等桶满后放行，余下欠额顺延，
  * 窗口按其容量封顶记账。
  *
- * 每个聊天一条 FIFO、最多 1 条在途，保持同一聊天的发送顺序；只差全局额度的车道进全局轮转队列
+ * 每个聊天一条 FIFO、单槽在途，保持同一聊天的发送顺序；只差全局额度的车道进全局轮转队列
  * 依次放行。收到 429 只冻结这个聊天 retry_after，冻结结束后 TELEGRAM_SEND_CHAT_CAUTIOUS_MS 内
- * 突发容量降为 1，期间再 429 则顺延。额度在真正发出时才扣，排队中取消 O(1) 出队、不扣额度。
+ * 突发容量降为单条，期间再 429 则顺延。额度在真正发出时才扣，排队中取消 O(1) 出队、不扣额度。
  *
  * 计数口径与出站闸一致：已接纳、未结算的任务（含等额度的）计入 activeCount 与 message 类的
  * activeCount；因 429 在聊天 FIFO 里等待重发的任务改计入 retryPendingCount 与 message 类的
@@ -36,6 +36,7 @@ import {
   TELEGRAM_SEND_GLOBAL_WINDOW_MS,
   TELEGRAM_SEND_GROUP_LIMIT,
   TELEGRAM_SEND_GROUP_WINDOW_MS,
+  TELEGRAM_TIMER_MAX_DELAY_MS,
 } from "../../consts/telegram";
 import { toErrorOr } from "../../libs/errorMessage";
 import { TimestampDeque } from "../../libs/timestampDeque";
@@ -191,10 +192,17 @@ function onLaneTimer(lane: TelegramSendLane): void {
   if (isLaneLive(lane)) pumpSendLane(lane, false);
 }
 
-/** 本车道唯一定时器改到 at；每次被挡下最多重挂一次。 */
+/**
+ * 本车道唯一定时器改到 at；每次被挡下最多重挂一次。超过 TELEGRAM_TIMER_MAX_DELAY_MS 的等待
+ * 分段：定时器提前到点后 pumpSendLane / retireIdleLane 按冻结与窗口复查并续挂。
+ */
 function armLaneTimer(lane: TelegramSendLane, at: number, now: number): void {
   clearLaneTimer(lane);
-  lane.timer = setTimeout(onLaneTimer, Math.max(0, Math.ceil(at - now)), lane);
+  lane.timer = setTimeout(
+    onLaneTimer,
+    Math.min(Math.max(0, Math.ceil(at - now)), TELEGRAM_TIMER_MAX_DELAY_MS),
+    lane
+  );
   lane.timer.unref();
 }
 
@@ -216,7 +224,7 @@ function retireIdleLane(lane: TelegramSendLane, now: number): void {
   sendChatLanes.delete(lane.key);
 }
 
-/** 当前突发容量：保守档内为 1。 */
+/** 当前突发容量：保守档内降为单条。 */
 function chatBurst(lane: TelegramSendLane, now: number): number {
   return now < lane.cautiousUntil ? 1 : TELEGRAM_SEND_CHAT_BURST;
 }
@@ -333,7 +341,7 @@ function handleSendResponse(lane: TelegramSendLane, job: TelegramOutboundJob, re
     settleSendJob(job);
     job.resolve(response);
   } else {
-    // 回到本聊天队首，由下一次尝试自己拿新响应，这一份丢弃。
+    // 回到本聊天队首，下一次尝试取新响应，本次响应丢弃。
     releaseResponseBody(response);
     prependRetryQueued(lane, job);
   }

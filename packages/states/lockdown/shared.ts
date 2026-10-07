@@ -6,7 +6,7 @@ import type {
   LockdownState,
 } from "../../types/states/lockdown";
 
-/** 本轮公告的记账原样带到下一阶段：公告属于「这一轮封锁」，不属于某个阶段。 */
+/** 本轮公告的记账原样带到下一阶段。 */
 export function announcementOf(state: LockdownState): LockdownAnnouncement {
   return {
     announced: state.announced,
@@ -22,10 +22,7 @@ export function announcementCleanupEffects(state: LockdownState): readonly Lockd
     : [{ kind: "deleteLockdownAnnouncement", messageId: state.announcementMessageId }];
 }
 
-/**
- * 本轮作废时压制重触发。只在真正作废的那条转移里发出：作废判定要看当前状态，
- * 迟到或重复的失败通知撞上已经换代的状态时不得连累健康的那一轮。
- */
+/** 本轮作废时压制重触发；只在真正作废的那条转移里发出，迟到或重复的失败通知对已换代的状态不发。 */
 export function suppressRetrigger(reason: LockdownAbandonReason): LockdownEffect {
   return { kind: "suppressRetrigger", reason, durationMs: LOCKDOWN_RETRIGGER_COOLDOWN_MS };
 }

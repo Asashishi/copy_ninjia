@@ -123,9 +123,8 @@ async function replayPendingBlockedRemovalsAsync(
       continue;
     }
     if (countPreviousAttempt) {
-      // 重放计数只改内存镜像：跨过告警阈值时同样只告警、不单独排快照，诊断随下一份
-      // outbox 快照整表落盘（按条件排快照的口径见 sweepRetryState.ts 的
-      // recordPendingRemovalFailure）。
+      // 重放计数只改内存镜像、不单独排快照，诊断随下一份 outbox 快照整表落盘
+      // （按条件排快照见 sweepRetryState.ts 的 recordPendingRemovalFailure）。
       updatePendingRemovalFailure(
         removalId,
         pending.params.chatId,

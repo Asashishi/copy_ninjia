@@ -15,8 +15,7 @@ export interface EchoMessageParams {
   /**
    * 复读要落进的论坛话题；General、非论坛群为 undefined。
    *
-   * 复读**不挂回复**（复读的是原话，不是回原话），所以话题群里缺了它，被复读的
-   * 人在自己话题里说话、本天才却在 General 学舌（判定见 libs/forumTopic.ts）。
+   * 复读不挂回复，话题由本参数确定（判定见 libs/forumTopic.ts）。
    */
   messageThreadId?: number;
 }
@@ -29,19 +28,18 @@ export interface EchoMessageParams {
  */
 export async function echoMessage(params: EchoMessageParams): Promise<void> {
   const { chatId, message, mode, expectedTargetId, messageThreadId }: EchoMessageParams = params;
-  // caption 也要看：一条 caption 写着 `/batch_kick 1d` 的图片被复读出去时，Telegram 会把
-  // 机器人自己发出的那句 caption 渲染成可点击的命令链接。判定不用 `startsWith("/")`：
-  // bot_command 不只认行首，`喵 /batch_kick 1d` 同样能被点击。
+  // caption 也检查：被复读出去的 caption 含 `/batch_kick 1d` 时 Telegram 会渲染成
+  // 可点击的命令链接。判定不用 `startsWith("/")`，bot_command 不只认行首
+  // （`喵 /batch_kick 1d`）。
   const source: string | undefined = message.text ?? message.caption;
   if (source !== undefined && containsRenderableCommand(source)) return;
 
   const text: string | undefined = source === undefined ? undefined : applyCopyModeTransform(source, mode);
   if (text !== undefined) {
-    // 上面那道守卫看的是**变换前**的原文，真正发出去的是这一串：`reverse` 能把
-    // `d1 kcik_hctab/` 倒成 `/batch_kick 1d`。守卫和被守卫的值必须是同一个字符串，
-    // 命中即整条丢弃，不退化成原样复制。
+    // 上面那道守卫判定变换前的原文，这一道判定实际发出去的串（`reverse` 能把
+    // `d1 kcik_hctab/` 倒成 `/batch_kick 1d`）；命中即整条丢弃，不退化成原样复制。
     if (containsRenderableCommand(text)) return;
-    // 变换可能撑破上限（nya 的后缀）；超限整条丢弃，不发一个注定被拒的请求。
+    // 变换可能撑破上限（nya 的后缀），超限整条丢弃。
     const limit: number = typeof message.text === "string" ? TELEGRAM_MESSAGE_MAX_CHARS : TELEGRAM_CAPTION_MAX_CHARS;
     if (text.length > limit) return;
   }

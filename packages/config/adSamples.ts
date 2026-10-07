@@ -23,8 +23,7 @@ export function parseAdSampleConfig(
     if (typeof sample !== "string") {
       return invalidInput(sourcePath, `$[${index}]`, "a non-empty string");
     }
-    // 提示词按行拼装，示例里的换行会把一条示例撕成看起来彼此无关的几条；
-    // 统一压成单行后再判空/判重，空白差异也就不会伪装成两条不同的示例。
+    // 空白序列压成单个空格并去掉首尾空白后，再判空、判长与判重；示例按单行拼进提示词。
     const normalized: string = sample.replace(/\s+/g, " ").trim();
     if (normalized.length === 0) {
       return invalidInput(sourcePath, `$[${index}]`, "a non-empty string");

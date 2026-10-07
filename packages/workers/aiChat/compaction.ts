@@ -1,6 +1,6 @@
 import { logger } from "../../infra/logger";
 import { sleep } from "../../libs/sleep";
-import { LinkedQueue } from "../../libs/linkedQueue";
+import { BoundedDeque } from "../../libs/boundedDeque";
 import { sanitizeInline, truncateAtClauseBoundary } from "../../libs/text";
 import { formatBufferedMessageLine } from "../../aiChat/ai/utils/chatTranscript";
 import { summaryAiProvider } from "../../aiChat/provider";
@@ -11,8 +11,7 @@ import {
   SUMMARY_MAX_CHARS,
   SUMMARY_RETRY_DELAYS_MS,
 } from "../../consts/aiChat/memory";
-import { CURRENT_TIME_LABEL, SUMMARY_SYSTEM_PROMPT } from "../../consts/aiChat/prompts/memory";
-import { SELF_SPEAKER_NAME } from "../../consts/aiChat/prompts/transcript";
+import { CURRENT_TIME_LABEL, SUMMARY_SYSTEM_PROMPT, summarySelfNote } from "../../consts/aiChat/prompts/memory";
 import { botInfoState } from "../../cache/workers/aiChat/identity";
 import { chatSummaries, dirtyMemoryChats, pendingSummaries } from "../../cache/workers/aiChat/memory";
 import { compactionPendingCounts, compactionRunner } from "../../cache/workers/aiChat/compaction";
@@ -33,10 +32,8 @@ import { replyGenerationSignal, trackReplyGenerationTask } from "./replyGenerati
 
 /**
  * 把一轮「晋升旧摘要 + 压缩新镜像」挂到该群的轮换串行链上（链的机制见
- * libs/keyedSerialTaskRunner.ts）。链保证时序：洪峰下第 N+1 轮可能在第 N
- * 轮的压缩调用返回前就到来，串行执行才能保证晋升到手的一定是上一轮的
- * 结果、摘要严格按时间顺序入队。rotateCompaction 自身兜错，链永不因此
- * 中断。
+ * libs/keyedSerialTaskRunner.ts）。同群轮换串行执行，晋升的摘要来自上一轮的
+ * 压缩结果，摘要按时间顺序入队。rotateCompaction 自身兜错，链不因单轮失败中断。
  * @param mirrorBatch 刚攒满、成为新镜像的一块消息（快照，之后缓存继续滚动不影响它）。
  * @param promoteFirst 本轮是否有旧镜像滑出（首轮没有），有则先晋升其摘要。
  */
@@ -51,10 +48,8 @@ export function scheduleRotation(chatId: number, mirrorBatch: BufferedMessage[],
     return;
   }
 
-  // 溢出判定之后才取 signal：replyGenerationSignal 会惰性建一个 AbortController 并
-  // 登记进 replyAbortControllers，而登记项只由 trackReplyGenerationTask 的 finally
-  // （需要已跟踪任务）或整代失效清理摘除。放在判定之前的话，持续溢出且长期不被
-  // 作废的群会一路累积用不上的 controller。
+  // 溢出判定之后才取 signal：replyGenerationSignal 惰性创建 AbortController 并登记进
+  // replyAbortControllers，登记项由 trackReplyGenerationTask 的 finally 或整代失效清理摘除。
   const signal: AbortSignal = replyGenerationSignal(generation);
   compactionPendingCounts.set(chatId, pendingCount + 1);
   const next: Promise<void> = compactionRunner.run(chatId, (): Promise<void> => rotateCompaction({
@@ -106,8 +101,8 @@ async function rotateCompaction({
       pendingSummaries.set(chatId, summary);
       dirtyMemoryChats.add(chatId);
     } else {
-      // SDK 请求重试或业务层重采样用尽后才放弃，且不回灌：镜像原文此刻还在
-      // 逐字区，要到下一轮滑出时这段中期记忆才真正缺失。
+      // SDK 请求重试或业务层重采样用尽后放弃，不回灌；镜像原文在下一轮滑出逐字区时
+      // 这段中期记忆才缺失。
       logger.error(`AI compaction failed: chat ${chatId}'s ${mirrorBatch.length} mirrored messages produced no summary after eligible retries; mid-term memory for this window will be missing once it slides out.`);
     }
   } catch (error: unknown) {
@@ -118,9 +113,8 @@ async function rotateCompaction({
 
 /**
  * 带退避重采样的镜像压缩：只有 HTTP 成功但 candidate 异常或清洗后正文为空
- * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败已由供应商 SDK 重试，
- * 此处立即停止，避免两层次数相乘。等待期间镜像原文仍在逐字区；本函数在该群
- * 的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
+ * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败由供应商 SDK 重试，
+ * 此处不再重试。本函数在该群的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
  */
 async function summarizeBatchWithRetry(
   chatId: number,
@@ -144,41 +138,31 @@ function promotePendingSummary(chatId: number): void {
   const pending: string | undefined = pendingSummaries.get(chatId);
   pendingSummaries.delete(chatId);
   if (!pending) return; // 上一轮压缩失败：无可晋升项，失败当时已记过日志。
-  let queue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
+  let queue: BoundedDeque<string> | undefined = chatSummaries.get(chatId);
   if (!queue) {
-    queue = new LinkedQueue<string>();
+    queue = new BoundedDeque<string>(MAX_SUMMARY_ROUNDS);
     chatSummaries.set(chatId, queue);
   }
+  if (queue.size === MAX_SUMMARY_ROUNDS) queue.shift();
   queue.push(pending);
-  while (queue.size > MAX_SUMMARY_ROUNDS) {
-    queue.shift();
-  }
   dirtyMemoryChats.add(chatId);
 }
 
 /**
- * 调当前供应商把一批冷消息压缩成一条摘要。走独立的中性总结提示词（不带
- * 人设、不带工具），产出压成单行并截断——摘要虽是模型生成的，但源头是
- * 用户文本，保持「一行一条」的转录结构，多行伪造向量在这里同样失效。
+ * 调当前供应商把一批冷消息压缩成一条摘要。使用独立的中性总结提示词（不带
+ * 人设、不带工具），产出压成单行并截断，保持「一行一条」的转录结构。
  *
  * systemPrompt 只放逐字恒定的 SUMMARY_SYSTEM_PROMPT，当前时间拼在 userContent
- * **末尾**、整批转录之后。各家供应商都按系统提示词 → 输入
- * 的顺序比对前缀，这一段常量因此是本请求唯一可被隐式缓存的前缀；时间精确到秒，
- * 放进 systemPrompt 或 userContent 开头都会让它从第一个字节起每次都对不上。
- * 转录行自带每条消息的发送时间（见 chatTranscript.ts 的 formatBufferedMessageLine），
- * 末尾这句只补「现在几点」。
+ * **末尾**、整批转录之后；转录行自带每条消息的发送时间（见 chatTranscript.ts 的
+ * formatBufferedMessageLine），末尾这句只补当前时间。
  *
- * 截断用子句边界而不是硬切：各实现包的摘要 token 上限（GEMINI_/OPENAI_CHAT_SUMMARY_MAX_TOKENS）
- * 远大于 SUMMARY_MAX_CHARS，
- * 上游不会把长度约束到这个量级附近，硬切留下的半句会被 buildMemorySnapshot
- * 落进 chat_states.ai_context，再作为中期记忆回喂模型最多 MAX_SUMMARY_ROUNDS 轮
- * （truncateAtClauseBoundary 的 JSDoc 记的正是这类残留）。
+ * 截断用 truncateAtClauseBoundary 按子句边界进行，上限为 SUMMARY_MAX_CHARS；摘要经
+ * buildMemorySnapshot 落进 chat_states.ai_context，并作为中期记忆回喂模型最多
+ * MAX_SUMMARY_ROUNDS 轮。
  */
 async function summarizeBatch(batch: BufferedMessage[], signal: AbortSignal): Promise<AiTextResult> {
   const selfId: number | undefined = botInfoState.current?.id;
-  const selfNote: string = selfId !== undefined
-    ? `注意：[id:${selfId}] 是群里聊天机器人本人的发言，摘要里统一以「${SELF_SPEAKER_NAME}」称呼它。\n\n`
-    : "";
+  const selfNote: string = selfId !== undefined ? summarySelfNote(selfId) : "";
   return summaryAiProvider().generateText({
     purpose: "chatSummary",
     systemPrompt: SUMMARY_SYSTEM_PROMPT,

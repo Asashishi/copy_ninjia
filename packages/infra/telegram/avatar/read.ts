@@ -3,7 +3,6 @@ import { USER_PROFILE_PHOTOS_LIMIT } from "../../../consts/telegram";
 import { bot } from "../mainClient";
 import { telegramErrorDetails } from "../errors";
 import {
-  logUnlessAborted,
   runTelegramAction,
 } from "../actions/core";
 import { telegramSignal } from "../../../libs/telegramSignal";
@@ -31,15 +30,34 @@ function missingAvatar(probe: CurrentAvatarProbe): CurrentAvatarResult {
   return { status: probe.transient ? "transient-failure" : "permanent-failure" };
 }
 
+/** 与 getChat 同时发出的用户头像列表查询。 */
+interface ProfilePhotosRequest {
+  readonly targetId: number;
+  /** 查询本身；失败只在 readReusableUserAvatar 消费时记录。 */
+  readonly response: Promise<UserProfilePhotos>;
+  /** 同一查询挂好 rejection 监听后的结算点，不消费结果时只等它。 */
+  readonly settled: Promise<unknown>;
+}
+
+/** 发出用户头像列表查询并立即挂上 rejection 监听，查询沿用调用方的请求信号。 */
+function startProfilePhotosRequest(targetId: number, signal?: AbortSignal): ProfilePhotosRequest {
+  const response: Promise<UserProfilePhotos> = bot.api.getUserProfilePhotos(
+    targetId,
+    { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT },
+    telegramSignal(signal)
+  );
+  return { targetId, response, settled: response.catch((): undefined => undefined) };
+}
+
 /** 只复用与当前 ChatPhoto 匹配的用户头像；查询失败或历史未匹配时交回下载路径。 */
-function readReusableUserAvatar(targetId: number, current: ChatPhoto, signal?: AbortSignal): Promise<string | undefined> {
+function readReusableUserAvatar(
+  request: ProfilePhotosRequest,
+  current: ChatPhoto,
+  signal?: AbortSignal
+): Promise<string | undefined> {
   return runTelegramAction({
-    action: `read reusable avatar (identity ${targetId})`,
-    execute: (requestSignal?: AbortSignal): Promise<UserProfilePhotos> => bot.api.getUserProfilePhotos(
-      targetId,
-      { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT },
-      telegramSignal(requestSignal)
-    ),
+    action: `read reusable avatar (identity ${request.targetId})`,
+    execute: (): Promise<UserProfilePhotos> => request.response,
     map: (photos: UserProfilePhotos): string | undefined => {
       for (const sizes of photos.photos) {
         for (const photo of sizes) {
@@ -50,7 +68,6 @@ function readReusableUserAvatar(targetId: number, current: ChatPhoto, signal?: A
     },
     fallback: undefined,
     signal,
-    shouldLogError: logUnlessAborted,
   });
 }
 
@@ -58,7 +75,9 @@ function readReusableUserAvatar(targetId: number, current: ChatPhoto, signal?: A
  * 读取当前头像。`target` 是调用方已持有的用户身份，或只有 ID 的频道/用户：只给 ID 时以同一次
  * getChat 核实身份，频道得到 ChannelChat，用户得到私聊资料 PrivateChat，不另发成员查询，
  * 因此不要求机器人是群管理员。
- * 用户优先复用匹配的 PhotoSize.file_id；ChatPhoto ID 只用于下载，网页兜底复用抓取边界。
+ * 用户优先复用匹配的 PhotoSize.file_id：用户头像列表查询只依赖 ID，与 getChat 同时发出，
+ * getChat 确认当前头像后才消费；用不上（没有当前头像、身份不符或 getChat 失败）时不中止，
+ * 等它结算后返回，失败也不记录。ChatPhoto ID 只用于下载，网页兜底复用抓取边界。
  * 结果区分「确认没有可用头像」「这次没查成」与裸 ID 的「私聊无法访问」，见
  * types/telegram.ts 的 CurrentAvatarResult。
  */
@@ -69,34 +88,42 @@ export async function readCurrentAvatar(target: User | number, signal: AbortSign
   const probe: CurrentAvatarProbe = await runTelegramAction({
     action: `read current avatar (identity ${targetId})`,
     execute: async (requestSignal?: AbortSignal): Promise<CurrentAvatarProbe> => {
-      let chat: ChatFullInfo;
+      const chatRequest: Promise<ChatFullInfo> = bot.api.getChat(targetId, telegramSignal(requestSignal));
+      // 正数 ID 只能是用户：只有用户发头像列表查询，与 getChat 同时发出。
+      const photos: ProfilePhotosRequest | undefined = targetId > 0
+        ? startProfilePhotosRequest(targetId, requestSignal)
+        : undefined;
       try {
-        chat = await bot.api.getChat(targetId, telegramSignal(requestSignal));
-      } catch (error: unknown) {
-        const details: Readonly<{ errorCode: number; description: string }> | undefined = telegramErrorDetails(error);
-        if (typeof target === "number" && targetId > 0 && details?.errorCode === 400 &&
-          /^Bad Request: chat not found$/i.test(details.description)) return AVATAR_PROBE_CHAT_NOT_FOUND;
-        throw error;
-      }
-      if (typeof target === "number") {
-        if (chat.id !== targetId || (chat.type !== "channel" && chat.type !== "private")) return AVATAR_PROBE_ABSENT;
-        identity = chat;
-      }
-      if (requestSignal?.aborted) return AVATAR_PROBE_FAILED;
-      if (chat.photo === undefined) return AVATAR_PROBE_ABSENT;
-      if (typeof target !== "number" || chat.type === "private") {
-        const fileId: string | undefined = await readReusableUserAvatar(targetId, chat.photo, requestSignal);
+        let chat: ChatFullInfo;
+        try {
+          chat = await chatRequest;
+        } catch (error: unknown) {
+          const details: Readonly<{ errorCode: number; description: string }> | undefined = telegramErrorDetails(error);
+          if (typeof target === "number" && targetId > 0 && details?.errorCode === 400 &&
+            /^Bad Request: chat not found$/i.test(details.description)) return AVATAR_PROBE_CHAT_NOT_FOUND;
+          throw error;
+        }
+        if (typeof target === "number") {
+          if (chat.id !== targetId || (chat.type !== "channel" && chat.type !== "private")) return AVATAR_PROBE_ABSENT;
+          identity = chat;
+        }
         if (requestSignal?.aborted) return AVATAR_PROBE_FAILED;
-        if (fileId !== undefined) return { photo: fileId, transient: false };
+        if (chat.photo === undefined) return AVATAR_PROBE_ABSENT;
+        if (photos !== undefined) {
+          const fileId: string | undefined = await readReusableUserAvatar(photos, chat.photo, requestSignal);
+          if (requestSignal?.aborted) return AVATAR_PROBE_FAILED;
+          if (fileId !== undefined) return { photo: fileId, transient: false };
+        }
+        const result: AvatarDownloadResult = await downloadAvatarFile(chat.photo.big_file_id, targetId, requestSignal);
+        if (result.status === "ok") return { photo: result.bytes, transient: false };
+        return result.status === "transient-failure" ? AVATAR_PROBE_FAILED : AVATAR_PROBE_ABSENT;
+      } finally {
+        await photos?.settled;
       }
-      const result: AvatarDownloadResult = await downloadAvatarFile(chat.photo.big_file_id, targetId, requestSignal);
-      if (result.status === "ok") return { photo: result.bytes, transient: false };
-      return result.status === "transient-failure" ? AVATAR_PROBE_FAILED : AVATAR_PROBE_ABSENT;
     },
     map: (result: CurrentAvatarProbe): CurrentAvatarProbe => result,
     fallback: AVATAR_PROBE_FAILED,
     signal,
-    shouldLogError: logUnlessAborted,
   });
   if (signal.aborted) return missingAvatar(AVATAR_PROBE_FAILED);
   if (identity === undefined) return missingAvatar(probe);

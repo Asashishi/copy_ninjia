@@ -47,7 +47,7 @@ export class ApplicationLifecycle {
 
   private lockAcquired: boolean = false;
   // 各 owner 的初始化标志交给停机序列就地读写（见 lifecycle/shutdown.ts）：
-  // 终止过的 owner 会被置回 false，避免重复终止。
+  // 终止过的 owner 置回 false，不重复终止。
   private readonly flags: OwnerInitFlags = {
     aiChatInitialized: false,
     antiRaidInitialized: false,
@@ -66,15 +66,14 @@ export class ApplicationLifecycle {
   private runnerCancellationUnsettled: boolean = false;
   /**
    * 最终 Telegram offset gate 的进程级闩锁。没有待确认 update 时保持 true；
-   * wait() 一旦发现确认失败/超时或关键前置未完成，就永久置 false，后续 dispose
-   * 不能因 owner 第二次恰好排空而把这次未确认伪装成干净停机。
+   * wait() 一旦发现确认失败/超时或关键前置未完成，就永久置 false，后续 dispose 读取它。
    */
   private finalOffsetGateSucceeded: boolean = true;
 
   /**
    * 三条停机入口（信号、Disk I/O fatal、业务 Worker fatal）共用的停止动作：
    * 置位 stopRequested、静默维护任务，再请求 runner 停止取 update。runner 停止
-   * 失败只记一行日志，不上抛——此刻已经在停机路上，抛出去只会顶掉真正的停机原因。
+   * 失败只记一行日志，不上抛。
    * @param stopErrorMessage runner 停止失败时的日志前缀，按入口区分。
    */
   private stopForShutdown(stopErrorMessage: string): void {
@@ -136,7 +135,7 @@ export class ApplicationLifecycle {
     this.dependencies.initDeferredCommandRuntime();
     this.flags.translateInitialized = true;
 
-    // 配置文件和持久化状态都是不可信部署输入。已有部署输入不受功能开关影响，
+    // 配置文件和持久化状态按不可信部署输入严格校验；已有部署输入不受功能开关影响，
     // 各 Worker 在自己的 isolate 中复用同一严格解析器。
     await this.dependencies.cleanupOrphanedTempFiles();
     await this.dependencies.loadState();
@@ -158,10 +157,8 @@ export class ApplicationLifecycle {
       loaded.permissionEntryCount,
       loaded.blocklistEntryCount
     );
-    // 超管与黑名单必须互斥。这条断言只能排在 hydrate 之后（它会清空三份 LRU）、
-    // 且必须早于 sweepManagedBlocklistChats——否则一个指向历史 /block 账号的
-    // super_admin_user_id 会让本进程把新超管从所有托管群里清出去，而他连一条
-    // /block disable 都发不出来（见 infra/blocklist/membership.ts）。
+    // 超管与黑名单互斥：断言排在 hydrate 之后（hydrate 会清空身份 LRU）、
+    // sweepManagedBlocklistChats 之前（见 infra/blocklist/membership.ts）。
     await this.dependencies.assertSuperAdminNotBlocked(
       this.dependencies.SUPER_ADMIN_USER_ID
     );
@@ -179,11 +176,11 @@ export class ApplicationLifecycle {
     this.dependencies.hydrateStickerCatalog(loaded.stickerCatalogs);
     this.dependencies.restoreLuckState(loaded.luckReceiptSecret, loaded.luckDay);
     this.dependencies.hydratePendingVerifications(loaded.verifications);
-    // 必须早于 runner 开始投喂更新：启动瞬间进群的黑名单用户要能立刻被认出来。
+    // 早于 runner 开始投喂更新。
     this.dependencies.hydrateBlocklist(loaded.pendingBlockedRemovals);
     this.dependencies.initAntiRaid();
     this.flags.antiRaidInitialized = true;
-    // 定时任务按启动总闸接管的 cron.json 登记；先于热重载，热重载的对账才有调度器可改。
+    // 定时任务按启动总闸接管的 cron.json 登记；先于热重载，热重载的对账改动该调度器。
     this.dependencies.startCronScheduler();
     // 两条业务 Worker 都已持有初始配置快照，此后 config/dynamic/ 的改动才有分发对象。
     this.dependencies.startConfigReload();
@@ -202,13 +199,11 @@ export class ApplicationLifecycle {
       this.dependencies.bot,
       TELEGRAM_ALLOWED_UPDATES
     );
-    // 启动期到达的停止信号必须在这里重新收口：它触发的那次 quiesce 发生在
-    // init 前段，而上面的 initAvatarUpdates/
-    // initChatTitleRefresh/initTranslate/initGagRuntime/initWedRuntime/initDeferredCommandRuntime/
-    // startCronScheduler/startConfigReload/initBlocklistSweepScheduler 又把这些 owner 重新置为接受工作。
-    // 位置也要卡在标题刷新之前——refreshAllChatTitles 只在入口同步检查一次
-    // accepting，晚一步 quiesce 就等于在已经要求停机之后，照样跑完整轮
-    // getChat 扫描加批量落盘。
+    // 启动期到达的停止信号在这里重新收口：它触发的那次 quiesce 发生在 init 前段，
+    // 其后的 initAvatarUpdates/initChatTitleRefresh/initTranslate/initGagRuntime/
+    // initWedRuntime/initDeferredCommandRuntime/startCronScheduler/startConfigReload/
+    // initBlocklistSweepScheduler 把这些 owner 重新置为接受工作。
+    // 该步骤位于标题刷新之前（refreshAllChatTitles 只在入口同步检查一次 accepting）。
     if (this.stopRequested) this.stopForShutdown("Error stopping runner:");
     this.dependencies.enableWedMemberReview();
     // 关键 Bot API 握手、Worker hydrate 和 runner 入口全部就绪后，才让低优先级
@@ -229,12 +224,8 @@ export class ApplicationLifecycle {
     try {
       await runner.task();
     } catch (error: unknown) {
-      // task() 抛错会让下面整段「确认最终 offset」的闸门被整体跳过，而
-      // finalOffsetGateSucceeded 还停在初始值 true。dispose() 用它组装
-      // ShutdownResults.offsetConfirmed，于是 classifyShutdown 判成 "clean"：
-      // 诊断行不输出，运维 grep 日志看到的是「一切正常」，实际这轮既没走确认、
-      // 也丢了一条更新，重启后的重复投递无从溯源。异常路径必须自己把闸门标记
-      // 按下去，让它落进 "offsetWithheld"。
+      // task() 抛错时下面的最终 offset 确认整段跳过：这里把
+      // finalOffsetGateSucceeded 置 false，dispose 据此判为 "offsetWithheld"。
       this.finalOffsetGateSucceeded = false;
       throw error;
     } finally {
@@ -243,18 +234,18 @@ export class ApplicationLifecycle {
     const maintenanceQuiesceSucceeded: boolean = quiesceLifecycleMaintenance(this.dependencies);
     const runnerDrained: boolean = await this.waitForRunnerDrain(runner);
 
-    // 标题刷新可能排入 chatState SQLite 写缓冲；必须先等它完成，再做最终 flush。
+    // 标题刷新可能排入 chatState SQLite 写缓冲，先等它完成，再做最终 flush。
     const maintenanceSettled: boolean = await this.waitForBackgroundMaintenance(
       NORMAL_FLUSH_TIMEOUTS.maintenanceMs
     );
     const persistenceFlushed: boolean = await this.flushAllToDisk(NORMAL_FLUSH_TIMEOUTS);
     if (!maintenanceQuiesceSucceeded || !runnerDrained || !maintenanceSettled) process.exitCode = 1;
 
-    // 停机时取数循环会放弃在途 update、不再 await 它的结算，随后发生的失败
-    // 只有 runner 的这个标记能证明（task() 会正常 resolve）。失败的 update 必须
-    // 留给 Telegram 重投，绝不能被最终 offset 一起确认，见
-    // docs/cn/04-invariants.md「Telegram update 只有在对应 middleware 完成后才可
-    // 推进确认边界」。读在 waitForRunnerDrain 之后：标记与 size() 归零同步。
+    // 停机时取数循环放弃在途 update、不再 await 它的结算，之后发生的失败由
+    // runner 的这个标记表达（task() 正常 resolve）。失败的 update 留给 Telegram
+    // 重投，不随最终 offset 确认，见 docs/cn/04-invariants.md「Telegram update
+    // 只有在对应 middleware 完成后才可推进确认边界」。读取位于 waitForRunnerDrain
+    // 之后：标记与 size() 归零同步。
     const failedUpdateWithheld: boolean = runner.hasFailedUpdate();
     if (failedUpdateWithheld) {
       process.exitCode = 1;
@@ -325,9 +316,8 @@ export class ApplicationLifecycle {
       } catch (error: unknown) {
         this.dependencies.logger.error("Shutdown owner fatal-handler teardown threw during disposal:", error);
       }
-      // 三态而不是「干净 / 不干净」：诊断与「能不能释放实例锁」是两个问题。
-      // 非 clean 一律报非零退出并打印诊断行；但只有「可能还有人在写共享数据」
-      // 那一档才扣住锁（见 lifecycle/shutdown.ts 的 classifyShutdown）。
+      // 结果分 clean / offsetWithheld / unsettled（见 lifecycle/shutdown.ts 的
+      // classifyShutdown）：非 clean 报非零退出并打印诊断行；只有 unsettled 扣住实例锁。
       const outcome: ShutdownOutcome = classifyShutdown(results);
       if (outcome !== "clean") {
         process.exitCode = 1;
@@ -341,9 +331,8 @@ export class ApplicationLifecycle {
         return;
       }
       if (outcome === "offsetWithheld") {
-        // 锁照常释放：所有 owner 都已排空落盘、Worker 已终止，没有任何东西还会
-        // 写共享数据目录。留一行说清楚这次释放不代表 offset 也确认过了——重启后
-        // Telegram 会重投上次确认点之后的更新。
+        // 锁照常释放：所有 owner 都已排空落盘、Worker 已终止。日志说明 offset
+        // 未确认，重启后 Telegram 重投上次确认点之后的更新。
         this.dependencies.logger.error(
           "Releasing the single-instance lock even though the final Telegram offset was not confirmed: " +
           "every owner drained and flushed, so expect redelivery after restart rather than a persistence problem."
@@ -392,9 +381,9 @@ export class ApplicationLifecycle {
 
   private installProcessHandlers(): void {
     if (this.processHandlersInstalled) return;
-    // 信号 handler 要在第一个 await 之前安装；若信号在 runner 创建前到达，
-    // stopRequested 会让 runner 一创建就立即停止。监听保持到 dispose 摘除：重复信号
-    // 落到幂等的 stopOnSignal，最终 flush 与 offset 确认照常完成。
+    // 信号 handler 在第一个 await 之前安装；信号在 runner 创建前到达时，
+    // stopRequested 使 runner 一创建就停止。监听保持到 dispose 摘除，重复信号
+    // 落到幂等的 stopOnSignal。
     process.on("SIGINT", this.stopOnSigint);
     process.on("SIGTERM", this.stopOnSigterm);
     process.on("uncaughtException", this.handleUncaughtException);
@@ -423,10 +412,8 @@ export class ApplicationLifecycle {
       process.exit(1);
     };
 
-    // disposePromise 会固定首次调用的预算：普通关停已在途时，传入紧急预算
-    // 无法缩短它。因此仅在复用分支设置独立绝对截止，避免二次扫描把新建的
-    // 紧急 dispose（其各阶段已有短预算）误判为同一问题。该 timer 刻意保持
-    // ref，确保清理卡死时仍能执行最后的强制退出。
+    // disposePromise 固定首次调用的预算：普通关停已在途时，传入紧急预算不缩短它。
+    // 仅在复用分支设置独立绝对截止；该 timer 保持 ref，清理卡死时仍执行最后的强制退出。
     if (reusesActiveDisposal) {
       hardDeadlineTimer = setTimeout((): void => {
         this.dependencies.logger.error(

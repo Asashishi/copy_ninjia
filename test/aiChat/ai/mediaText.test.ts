@@ -27,7 +27,6 @@ const stickerMessage: AiRecordMediaMessage = {
   replyTelegramBackpressured: undefined,
   stickerFallbackText: "[贴纸：🙂，来自 pack]",
   voiceMime: undefined,
-  voiceDurationSeconds: 0,
   directTriggerReason: undefined,
   username: undefined,
   replyTo: undefined,

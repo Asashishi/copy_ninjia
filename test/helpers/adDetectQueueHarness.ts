@@ -90,14 +90,13 @@ export function candidate(overrides: Partial<AdCandidateMessage> = {}): AdCandid
   };
 }
 
-/** 复位 mock 与夹具；真实 owner 状态的清理由调用方传入，避免 helper 动态导入生产模块。 */
+/** 复位 mock 与夹具；真实 owner 状态的清理由调用方传入，helper 不动态导入生产模块。 */
 export function resetAdDetectQueueHarness(stopAdDetectQueue: () => void): void {
   stopAdDetectQueue();
   errorLogs.length = 0;
   classifiedTexts.length = 0;
   classifiedFacts.length = 0;
-  // 用 mockReset 而不是 mockClear：mockClear 只清调用记录，不会丢掉某条用例装上
-  // 却没来得及消费的 mockImplementationOnce，那份「一次性实现」会漏进下一条用例。
+  // 用 mockReset：连同未消费的 mockImplementationOnce 一起清掉。
   classifyAdText.mockReset();
   classifyAdText.mockImplementation(async (): Promise<AdVerdict | null> => ({ isAd: false, reason: "" }));
   disposeAdSender.mockClear();

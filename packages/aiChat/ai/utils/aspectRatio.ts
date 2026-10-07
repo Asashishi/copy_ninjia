@@ -18,17 +18,13 @@ function aspectRatioValue(ratio: ImageGenerationAspectRatio): number {
 }
 
 /**
- * 官方比例表对应的数值宽高比，模块加载时一次算好。
- *
- * 输入是构造后只读的常量表、没有失效边界，每次归一都重算一遍等于每次生图
- * 调用白产生一个临时数组和十次字符串切分（见 AGENTS.md 的「性能、内存与
- * Bun/JSC JIT」一节对 map 中间结果的约束）。
+ * 官方比例表对应的数值宽高比，模块加载时一次算好；输入是只读常量表，没有失效边界。
  */
 const ASPECT_RATIO_VALUES: readonly number[] = IMAGE_GENERATION_ASPECT_RATIOS.map(aspectRatioValue);
 
 /**
- * 在候选比值里取与目标最接近的一项。距离按 log(target / candidate) 计算，
- * 这样横竖互换时距离仍对称（4:3 到 1:1 与 3:4 到 1:1 应当等距）。
+ * 在候选比值里取与目标最接近的一项。距离按 |log(target / candidate)| 计算，
+ * 横竖互换时距离对称。
  * @param target 目标宽高比数值，必须为正有限数。
  * @param candidates 候选比值，至少一项。
  * @returns 最接近项在 candidates 中的下标。

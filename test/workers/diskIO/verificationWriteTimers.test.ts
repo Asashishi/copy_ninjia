@@ -86,9 +86,8 @@ async function restartFixtureClock(now: number): Promise<void> {
  * 单领域恢复的测试编排：按生产 handleDiskIOStartupLoad 的顺序跑
  * inspect -> adopt -> maintenance（见 workers/diskIO/startup.ts）。
  *
- * 生产没有这个包装。两点与生产不同，读断言时要记住：生产的 runMaintenance 对
- * 每个领域单独 try/catch 并只记一行 console.error，不上抛、也不重置本领域缓存；
- * 这里保留旧包装的「重置后上抛」，好让维护阶段的失败在用例里可断言。
+ * 与生产的差异：生产的 runMaintenance 对每个领域单独 try/catch 并只记一行
+ * console.error，不上抛、也不重置本领域缓存；这里维护阶段失败时先重置缓存再上抛。
  */
 async function recoverVerificationDay(
   day: string,

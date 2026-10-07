@@ -38,20 +38,20 @@ import type { StickerCandidate, StickerPackCandidate, StickerRoundState } from "
 /**
  * 应景贴纸的两层选择工具：
  * 一层 view_sticker_pack——工具描述里只列每个白名单包的编号、包名和整包
- * 简介（≤200 字，见 aiChat/ai/stickers/catalog.ts 的 summarizePack），模型按简介挑
+ * 简介（见 aiChat/ai/stickers/catalog.ts 的 summarizePack），模型按简介挑
  * 一个包调用，返回包内每枚贴纸的编号清单（emoji + 画面描述）；
  * 二层 send_sticker——按「包编号 + 贴纸编号」真正发送。必须先看过对应包的
  * 清单才能发（viewedPackIntents 强制）；每轮最多查看
  * MAX_STICKER_PACK_VIEWS_PER_REPLY 个不同包，同一包只能查看一次；每轮回复最多
- * MAX_STICKERS_PER_REPLY 枚（当前为 1：要么不发、要么只发一枚）、绝不重复同一枚（acceptedStickerUids 按
- * file_unique_id 强制，上限为 1 时限额先挡住、此规则只在上限放宽时兜底）
+ * MAX_STICKERS_PER_REPLY 枚、不重复同一枚（acceptedStickerUids 按
+ * file_unique_id 强制）
  * ——这些限额状态挂在 StickerRoundState 上，每轮回复新建一份（见
  * aiChat/ai/tools/replyToolset/orchestrator.ts）。同群各轮的动作按入站顺序依次出站（见
  * workers/aiChat/replyDelivery.ts）。
  *
- * 工具定义按次回复现组装（不进 consts/tools.ts 的 TOOL_DECLARATIONS 静态清单）：菜单会随
- * 目录内容变化，且模型选中的编号要和组装工具描述时用的同一份菜单对应，
- * 两处必须共享 buildStickerPackMenu() 同一次调用的产出。
+ * 工具定义按次回复现组装（不进 consts/tools.ts 的 TOOL_DECLARATIONS 静态清单）：
+ * 模型选中的编号与组装工具描述时用的菜单对应，两处共享 buildStickerPackMenu()
+ * 同一次调用的产出。
  */
 
 export function createStickerRoundState(): StickerRoundState {
@@ -90,7 +90,7 @@ async function rebuildStickerPackMenu(
 ): Promise<readonly StickerPackCandidate[]> {
   try {
     const menu: readonly StickerPackCandidate[] = await collectStickerPackMenu(signal);
-    // 构建期间目录又变过就不落缓存：这一份已经是旧的，下一次取会重建。
+    // 构建期间目录又变过（revision 不同）就不写缓存，下一次取会重建。
     if (!signal.aborted && stickerMenuRevision.current === revision) {
       stickerMenuCache.current = { revision, menu };
     }
@@ -102,10 +102,8 @@ async function rebuildStickerPackMenu(
 
 async function collectStickerPackMenu(signal: AbortSignal): Promise<StickerPackCandidate[]> {
   const packs: readonly string[] = getStickerConfig().packs;
-  // 各包拉取互不依赖，并发进行，避免冷启动/负缓存刚过期时把多个包的网络
-  // 延迟串联进同一轮回复。用 allSettled 而非 all：任何一个包的意外异常都
-  // 不该把其余已经拉回来的包一并作废（getStickerSet 自身失败返回 null，
-  // reject 属于防御场景）。
+  // 各包拉取互不依赖，并发进行；allSettled 使单个包的意外异常不影响其余包
+  // （getStickerSet 自身失败返回 null，reject 属于防御路径）。
   const results: PromiseSettledResult<StickerSet | null>[] = await Promise.allSettled(
     packs.map((pack: string): Promise<StickerSet | null> =>
       getStickerSet(pack, undefined, signal)
@@ -116,8 +114,7 @@ async function collectStickerPackMenu(signal: AbortSignal): Promise<StickerPackC
     const pack: string = packs[i]!;
     const result: PromiseSettledResult<StickerSet | null> = results[i]!;
     if (result.status === "rejected") {
-      // packs 已由配置校验限制为最多五项；防御性 rejection 仍要带包名落日志，
-      // 不能把 allSettled 变成吞错。常规 Telegram 失败由 getStickerSet 返回 null。
+      // 防御性 rejection 带包名落日志；常规 Telegram 失败由 getStickerSet 返回 null。
       logger.error(`Unexpected sticker menu fetch rejection for pack "${pack}":`, result.reason);
     }
     const set: StickerSet | null = result.status === "fulfilled" ? result.value : null;
@@ -196,8 +193,8 @@ export function buildSendStickerToolDefinition(menu: readonly StickerPackCandida
   };
 }
 
-/** 解析查看贴纸包时必填的表达意图：必须是去除首尾空白后的非空单行文本，
- * 且不能超过 STICKER_INTENT_MAX_CHARS，避免把大段推理带进工具往返。 */
+/** 解析查看贴纸包时必填的表达意图：空白折叠成单行并去除首尾空白后非空，
+ * 且不超过 STICKER_INTENT_MAX_CHARS。 */
 export function parseStickerIntent(argumentsJson: string): string | null {
   const value: unknown = parseToolArguments(argumentsJson)?.intent;
   if (typeof value !== "string") return null;
@@ -256,7 +253,7 @@ export function viewStickerPackTool({
 /** sendStickerTool 的入参。 */
 export interface SendStickerToolParams {
   chatId: number;
-  /** 本轮所在的论坛话题；缺了它话题群里的贴纸会掉进 General。 */
+  /** 本轮所在的论坛话题；General、非论坛群为 undefined。 */
   messageThreadId: number | undefined;
   /**
    * 必须是同一轮回复里 buildStickerPackMenu 产出的那份菜单（与组装工具描述/

@@ -33,17 +33,14 @@ import { buildRuntimeStateBlock } from "./runtimeState";
  * 无关的那部分：系统提示词分段拼装、整轮函数调用预算、检索额度记账、
  * 工具轮数硬顶，以及每一轮把函数结果喂回会话。
  *
- * **一轮回复内 `functions` 与 `webSearchEnabled` 逐字恒定**：各家供应商的前缀
- * 缓存都按 `systemInstruction/instructions → tools → 输入` 的顺序比对，工具形态
- * 中途改一次，从 tools 往后的整段（参考记忆、转录、运行时状态、本轮已累积的全部
- * 工具往返）就在剩余轮次里全部落空——而那正是上下文最长、最贵的时刻。因此各类
- * 上限一律只在执行侧兑现：动作硬顶由 toolset.execute 返回错误（见
+ * **一轮回复内 `functions` 与 `webSearchEnabled` 逐字恒定**，供应商的前缀缓存按
+ * `systemInstruction/instructions → tools → 输入` 的顺序比对。各类上限因此只在执行侧
+ * 兑现：动作硬顶由 toolset.execute 返回错误（见
  * aiChat/ai/tools/replyToolset/orchestrator.ts），整轮函数调用预算由本文件按调用
- * 逐次回「预算耗尽」，内建检索的额度退化为写进提示词的软限制、只记账不摘工具。唯一的
- * 例外是供应商报服务端工具调用超限后的那一次降级重试（见 toolCallLimitHit 分支）：
- * 那一轮的响应本来就不可用，缓存已经无从谈起。
+ * 逐次回「预算耗尽」，内建检索额度是写进提示词的软限制、只记账不摘工具。唯一的
+ * 例外是供应商报服务端工具调用超限后的那一次降级重试（见 toolCallLimitHit 分支）。
  *
- * toolset 包含 packages/aiChat/ai/tools 的静态查询函数（当前为东京天气）和
+ * toolset 包含 packages/aiChat/ai/tools 的静态查询函数（如东京天气）和
  * 行动工具（发言、反应、两层贴纸、问答查询，部署配置了时的生图与语音）。工具清单
  * 跨回复同样恒定：按轮变化的可用性写进运行时状态区块的本轮工具状态
  * （toolset.toolStatus），执行器在调用时兜底拒绝。可见副作用在接纳后的独立调用链内
@@ -51,10 +48,9 @@ import { buildRuntimeStateBlock } from "./runtimeState";
  * 检索、由供应商执行；配了时 `web_search` 是本地函数工具，由本文件 await toolset.searchWeb
  * 取得结果后再喂回模型（执行器自带每轮次数硬顶，见 aiChat/ai/tools/webSearch.ts）。
  *
- * 查时间不走工具：当前时间、今天的心情与本轮工具状态拼进 user 内容的运行时状态区块
- * （见 runtimeState.ts），转录行也自带每条消息的发送时间（见
- * aiChat/ai/utils/chatTranscript.ts 的 formatBufferedMessageLine）。它们都**不在**
- * 系统提示词里——那一段必须逐字恒定，才能连同工具声明一起被供应商缓存住。
+ * 当前时间、今天的心情与本轮工具状态拼进 user 内容的运行时状态区块（见 runtimeState.ts），
+ * 转录行自带每条消息的发送时间（见 aiChat/ai/utils/chatTranscript.ts 的
+ * formatBufferedMessageLine）。系统提示词逐字恒定，不含这些内容。
  */
 
 function toolCountsDiagnostic(counts: ReadonlyMap<string, number>): string {
@@ -143,10 +139,9 @@ export async function generateReply(
   if (!toolset.isActive()) return null;
   const staticSystemPrompt: string = buildReplySystemPrompt(toolset);
 
-  // 稳定区块只有参考记忆：它跨轮回复逐字不变，能延长供应商自动缓存的公共前缀。
-  // 其余三段每轮都变，其中运行时状态在回复开始时读取一次，同一回复的工具
-  // 往返复用同一个字符串（时间因此在一轮内自洽，不会逐轮跳秒）。转录已定切点
-  // 随当前会话一起交给实现包，只有在区块边界命中缓存的实现会用它。
+  // 稳定区块只有参考记忆，跨回复逐字不变。其余三段随回复而变；运行时状态在回复开始时
+  // 读取一次，同一回复的工具往返复用同一个字符串。转录已定切点随当前会话一起交给
+  // 实现包，只有在区块边界命中缓存的实现会用它。
   const session: AiReplySession = textAiProvider().createReplySession({
     stableBlocks: [promptSections.referenceMemory],
     volatileBlocks: [
@@ -163,8 +158,8 @@ export async function generateReply(
     customToolCalls: 0,
     customToolCallsByName: new Map<string, number>(),
   };
-  // 只由 toolCallLimitHit 的降级重试置位；除它以外本轮的工具形态恒定。置位后
-  // webSearchEnabled 恒为假，那条分支不会再进来，因此它同时就是「只降级一次」的闸。
+  // 只由 toolCallLimitHit 的降级重试置位；置位后 webSearchEnabled 恒为假，降级分支
+  // 不再进入，降级至多发生一次。
   let searchDisabledByFallback: boolean = false;
 
   for (let round: number = 0; round <= MAX_TOOL_ROUNDS; round++) {
@@ -174,13 +169,11 @@ export async function generateReply(
     toolset.beforeModelRequest();
     const turn: AiReplyTurn = await session.request({
       systemPrompt: staticSystemPrompt,
-      // 整轮同一份声明，按引用透传：预算耗尽不再摘工具，模型多调一次只会拿到
-      // 执行侧的错误或「预算耗尽」，前缀缓存不受影响。
+      // 整轮同一份声明，按引用透传；预算耗尽后模型的调用由执行侧返回错误或「预算耗尽」。
       functions: toolset.functions,
       webSearchEnabled,
-      // 只给语义，不给温度：已经查证过的轮次该怎么压低采样随机性由各实现包
-      // 决定（OpenAI 侧的推理模型根本不接受该参数）。搜索与首次成文发生在
-      // 同一次请求里，那一轮无法预知，因此仍按未查证处理。
+      // 只传语义标志，采样参数由各实现包决定；搜索与首次成文发生在同一次请求里时，
+      // 该轮按未查证处理。
       grounded: counters.webSearchCalls > 0,
     });
     if (!toolset.isActive()) return null;
@@ -192,9 +185,7 @@ export async function generateReply(
         `server_tool_invocations=${turn.webSearchCalls}, finish_reason=${turn.finishReason ?? "?"}, ` +
         `finish_message=${JSON.stringify((turn.finishMessage ?? "").slice(0, 500))}, side_effects=${toolset.actionsUsed()}.`
       );
-      // 本轮唯一一次改变工具形态：这次响应已经不可用，与其保住一段没人能用上的
-      // 前缀，不如换一个能出话的请求形态。已经产生过副作用就不再降级重试——那会
-      // 让同一轮里的可见动作重来一遍。
+      // 降级重试是本轮唯一一次改变工具形态；已经产生过副作用时不降级重试。
       if (turn.toolCallLimitHit && webSearchEnabled && toolset.actionsUsed() === 0) {
         searchDisabledByFallback = true;
         logger.error(
@@ -209,8 +200,7 @@ export async function generateReply(
       const previousCalls: number = counters.webSearchCalls;
       counters.webSearchCalls += turn.webSearchCalls;
       // text 内建检索额度是写进提示词的软限制（见 consts/aiChat/prompts/search.ts）：超了
-      // 只记账、不摘工具——服务端检索工具排在 tools 数组首位，中途摘掉会让整段
-      // 前缀从第一个字节起就对不上。只在跨过阈值的那一次点名，不逐轮刷屏。
+      // 只记账、不摘工具；只在跨过阈值的那一次记日志。
       if (previousCalls <= MAX_WEB_SEARCH_CALLS_PER_REPLY && counters.webSearchCalls > MAX_WEB_SEARCH_CALLS_PER_REPLY) {
         logger.error(
           `AI reply exceeded the soft web search budget for chat ${chatId}: ` +
@@ -223,8 +213,7 @@ export async function generateReply(
     if (functionCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
       const outputs: AiToolOutput[] | null = await runFunctionCalls(functionCalls, toolset, counters);
       if (outputs === null) return null;
-      // 供应商交不出可续接的模型轮次时到此为止：再发一次请求只会让对话记录
-      // 与模型实际看到的历史错位。
+      // 供应商交不出可续接的模型轮次时到此为止，不再发请求。
       if (!session.appendToolOutputs(outputs)) {
         logger.error(
           `AI reply session could not continue after tool outputs for chat ${chatId}: round=${round}, ` +
@@ -236,8 +225,7 @@ export async function generateReply(
     }
 
     if (functionCalls.length > 0) {
-      // 只可能在 round === MAX_TOOL_ROUNDS 时走到：模型仍在要工具但轮数
-      // 上限已到，这些调用不再执行，本轮就此收尾（多半以零动作告终）。
+      // 只在 round === MAX_TOOL_ROUNDS 时走到：这些调用不再执行，本轮就此收尾。
       logger.error(`AI reply for chat ${chatId} hit the tool-round limit (${MAX_TOOL_ROUNDS}) with ${functionCalls.length} unexecuted tool call(s); ending the round.`);
     }
 

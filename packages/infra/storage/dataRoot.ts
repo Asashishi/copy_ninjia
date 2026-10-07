@@ -3,6 +3,7 @@ import {
   RUNTIME_DATA_ROOT_MAX_MODE,
   RUNTIME_SENSITIVE_DIRECTORY_NAMES,
 } from "../../consts/storage";
+import { DATABASE_DIR_NAME } from "../../consts/dataRootLayout";
 import { IDENTITY_DATABASE_DIRECTORY_MODE } from "../../consts/identityStorage";
 import { isErrno } from "../../libs/errno";
 import type { FileHandle } from "node:fs/promises";
@@ -123,9 +124,8 @@ export async function prepareRuntimeDataRoot(
     }
     for (const directoryName of RUNTIME_SENSITIVE_DIRECTORY_NAMES) {
       const directoryPath: string = join(root, directoryName);
-      const isIdentityDatabaseDirectory: boolean = directoryName === "database";
-      // 建目录与校验目录必须用同一个上限：`database/` 的上限是 0770，比数据根的
-      // 0755 更严格，两处混用会导致新建目录的 mode 通不过下方的校验。
+      const isIdentityDatabaseDirectory: boolean = directoryName === DATABASE_DIR_NAME;
+      // 建目录与校验目录用同一个上限：`database/` 与其余目录各有自己的 mode 上限常量。
       const maximumMode: number = isIdentityDatabaseDirectory
         ? IDENTITY_DATABASE_DIRECTORY_MODE & 0o777
         : RUNTIME_DATA_ROOT_MAX_MODE;

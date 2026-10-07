@@ -9,10 +9,10 @@ import type { DiskIODomain } from "./replies";
 
 /**
  * 磁盘 IO 线程（packages/workers/diskIOWorker.ts）统一的消息协议与快照类型：
- * 日志、AI/贴纸快照、每日运势、待验证当日增量与身份 SQLite 共用同一个
- * Worker。快照的结构
- * 类型见 types/aiChat/memory.ts 的 AiMemorySnapshot 与 types/stickers/catalog.ts 的
- * StickerCatalogSnapshot——消息里只带它们序列化后的 JSON 文本。
+ * 日志、AI/贴纸快照、每日运势、待验证当日增量与身份 SQLite 共用同一个 Worker。
+ * 快照的结构类型见 types/aiChat/memory.ts 的 AiMemorySnapshot 与
+ * types/stickers/catalog.ts 的 StickerCatalogSnapshot，消息里只带它们序列化后的
+ * JSON 文本。
  */
 
 export type LogLevel = "log" | "info" | "warn" | "error";
@@ -124,8 +124,8 @@ export interface LuckDrawDiskMessage {
   key: string;
   /** LuckTier.label；加载时按 LUCK_TIERS 反查还原 tier（见 commands/luckChallenge/cache.ts）。 */
   label: string;
-  /** 该次抽签在 tier.fortunePercentRange 内浮动出的行大运具体数值（%，两位小数）。
-   * 区间内浮动，无法从 label 反查，必须随 label 一起落盘，见 LuckDrawRecord。 */
+  /** 该次抽签在 tier.fortunePercentRange 内取得的行大运具体数值（%，两位小数）。
+   * 无法从 label 反查，随 label 一起落盘，见 LuckDrawRecord。 */
   fortunePercent: number;
 }
 
@@ -185,8 +185,7 @@ export interface ChatStateWriteDiskMessage {
 /**
  * 主线程 -> Disk I/O Worker：一条群问答最终值；`data` 为 null 表示删除这条问答。
  *
- * 主键是 (chatId, q) 复合键，因此两者都要随消息过去；`q` 由主线程 trim 后作为
- * 落库主键，Worker 不做归一化——两侧对同一条问答必须指的是同一个键。
+ * 主键是 (chatId, q) 复合键；`q` 由主线程 trim 后作为落库主键，Worker 不做归一化。
  */
 export interface ChatQaWriteDiskMessage {
   type: "chatQaWrite";
@@ -200,9 +199,8 @@ export interface ChatQaWriteDiskMessage {
 /**
  * 主线程 -> diskIOWorker：一条广告判定命中样本，追加进 memory/ad-detected/sample.json。
  *
- * 这是整个持久化里唯一**只写不读**的一类：进程从不加载它，启动恢复也不碰，
- * 丢了不影响任何运行时状态。它存在的唯一目的是让人回头翻原始素材、据此调
- * config/dynamic/ad_samples.json 的判定口径（见 workers/diskIO/adSampleFile.ts）。
+ * 只写不读：进程不加载它，启动恢复也不读取，供人工查阅原始素材
+ * （见 workers/diskIO/adSampleFile.ts）。
  */
 export interface AdSampleDiskMessage {
   type: "adSample";
@@ -259,9 +257,8 @@ export interface JoinLogDiskMessage {
 /**
  * 主线程 -> diskIOWorker：删除某群保留窗口内的全部入群日志文件。
  *
- * 起因与 WedMembersDeleteDiskMessage 相同。落盘端按 `<chatId>.<配置时区的日期>.json`
- * 前缀匹配整群删除，并丢掉该群仍在缓冲里的待写事实——那些事实属于一个已经不再
- * 接管的群，写进去只会在下一次跨日清理前一直留着。
+ * 触发条件与 WedMembersDeleteDiskMessage 相同。落盘端按 `<chatId>.<配置时区的日期>.json`
+ * 前缀匹配整群删除，并丢掉该群仍在缓冲里的待写事实。
  */
 export interface JoinLogDeleteDiskMessage {
   type: "deleteJoinLog";
@@ -292,12 +289,10 @@ export type DiskBusinessMessage =
  *
  * 只在当前 respawn listener 返回的 Promise 结算前有效；listener 不得把恢复
  * 工作 fire-and-forget。任一方法失败都必须让本轮恢复保持不可写。领域镜像
- * 不得回退到普通 postDiskIO，否则消息会进入恢复缓冲，无法证明镜像先于缓冲
- * 业务完成。
+ * 不得回退到普通 postDiskIO。
  */
 export interface DiskIORecoveryTransport {
-  // readonly：这两个句柄在 createRecoveryTransportScope 里一次绑定后只被调用，
-  // 不可变性由类型承担而不是运行期 Object.freeze（见 AGENTS.md 的「常量」一节）。
+  // 两个句柄在 createRecoveryTransportScope 里一次绑定，之后只被调用。
   readonly post: (this: void, message: DiskBusinessMessage) => boolean;
   readonly ensureLuckReceiptSecret: (this: void, day: string) => Promise<LuckReceiptSecret>;
 }
@@ -336,12 +331,11 @@ export interface LoadRequest {
 /**
  * 主线程 -> diskIOWorker：恢复缓冲重放窗口的开合标记。
  *
- * 一条共享 SQLite 写消息被拒收，在两种到达方式下的收场完全不同。正常在线投递的那条
+ * 一条共享 SQLite 写消息被拒收，在两种到达方式下的处理不同：正常在线投递的那条
  * 由 Worker 记下领域拒收标记，调用方自己的领域屏障（如 infra/chatStateStorage.ts 的
- * persistChatState）拿到失败回执，update 不被确认、Telegram 重投即可自愈；而恢复缓冲
- * 重放的那条**没有任何人再来 flush**——投递方早在缓冲那一刻就已经放行了这条 update。
- * Worker 自己看不出两者的区别，因此由主线程在重放前后各发一条标记把那段区间圈出来：
- * 区间内的拒收只能走 stopWorkerAfterLoadFailure 的统一 fatal 停机。
+ * persistChatState）拿到失败回执，update 不被确认、由 Telegram 重投；恢复缓冲重放的
+ * 那条没有调用方再 flush，对应的 update 已被放行。Worker 无法区分两者，由主线程在重放
+ * 前后各发一条标记圈出区间，区间内的拒收走 stopWorkerAfterLoadFailure 的统一 fatal 停机。
  */
 export interface RecoveryReplayRequest {
   type: "recoveryReplay";
@@ -374,7 +368,7 @@ export interface EnsureLuckSecretRequest {
  * flush 范围。`all` 覆盖日志、全部业务领域与旁路数据，供停机使用；`business` 仅供
  * 诊断日志连续失败后的受控重建前使用，跳过已知故障的日志领域，但仍覆盖全部权威业务
  * 领域，不能作为普通停机 flush 的降级模式；单个领域名是该领域的落盘屏障，只刷这一个
- * 领域（共享 SQLite 的七个领域含 AI 上下文，共用一个事务，任一 SQLite 领域都会提交全部表的
+ * 领域（共享 SQLite 的各领域含 AI 上下文，共用一个事务，任一 SQLite 领域都会提交全部表的
  * 待写值）。
  */
 export type DiskFlushScope = "all" | "business" | DiskIODomain;
@@ -411,15 +405,26 @@ export interface ReadBlocklistIdPageRequest {
 }
 
 /**
- * 需要逐条回执的 main -> diskIO 请求信封。四条通道共用同一套发号、等待表与
- * 超时结算（见 infra/diskIO/requests.ts 的 requestDiskIO），因此 requestId 是它们
- * 唯一必须共有的字段。
+ * 主线程 -> Disk I/O Worker：停机时关闭共享 SQLite。Worker 先以一个事务提交残余写，
+ * 再 `PRAGMA wal_checkpoint(TRUNCATE)` 并关闭连接；主线程发送前已置不可写、不再投递存储写，
+ * 此后到达的身份写直接忽略，AI 上下文写只进缓冲、不再提交。只由 infra/diskIO.ts 的
+ * terminateDiskIO 在可写代际上发送一次。
+ */
+export interface CloseStorageRequest {
+  type: "closeStorage";
+  requestId: number;
+}
+
+/**
+ * 需要逐条回执的 main -> diskIO 请求信封。各通道共用同一套发号、等待表与
+ * 超时结算（见 infra/diskIO/requests.ts 的 requestDiskIO），requestId 是它们共有的字段。
  */
 export type DiskIORequestMessage =
   | EnsureLuckSecretRequest
   | ReadJoinLogRequest
   | ReadIdentityPoliciesRequest
-  | ReadBlocklistIdPageRequest;
+  | ReadBlocklistIdPageRequest
+  | CloseStorageRequest;
 
 /**
  * 落盘线程 mailbox 收得到的全部消息 = 诊断 + 业务 + 逐条回执请求 + 生命周期。
@@ -435,6 +440,12 @@ export type DiskIOOperationMessage =
   | RecoveryReplayRequest
   | StorageFlushHoldRequest
   | DiskFlushRequest;
+
+/**
+ * 经主线程共用操作 FIFO 投递、按 libs/diskIOMessageCost.ts 计价的消息：启动 load 与诊断批次
+ * 各有自己的有界握手，直接投递，不进 FIFO（见 infra/diskIO/transport.ts 的 safePostDiskIO）。
+ */
+export type QueuedDiskIOOperationMessage = Exclude<DiskIOOperationMessage, LoadRequest | DiskDiagnosticBatchRequest>;
 
 /** 主线程单批在途的业务及有序读取；确认仅表示消费完成，不代表落盘。 */
 export interface DiskOperationBatchRequest {

@@ -90,9 +90,8 @@ export function handleWedMembersMessage(message: WedMembersDiskMessage): void {
 /**
  * 群 teardown 的整群删除：先丢掉这个群仍未落盘的快照，再立即尝试 unlink。
  *
- * 待写快照必须同步丢掉——留着的话，本条之后的重试 timer 会把一份属于已停管群的
- * 成员集合重新写回磁盘。删除本身失败时保留待删标记，由普通重试 timer 继续尝试，
- * 领域 flush 期间照实回报失败。
+ * 待写快照同步丢掉，不留给后续重试 timer。删除本身失败时保留待删标记，
+ * 由普通重试 timer 继续尝试，领域 flush 期间照实回报失败。
  */
 export function handleWedMembersDeleteMessage(
   message: WedMembersDeleteDiskMessage,

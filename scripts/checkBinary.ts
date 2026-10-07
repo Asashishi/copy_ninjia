@@ -1,4 +1,4 @@
-/** 在独立临时部署中核对编译产物：无 source map 与 node_modules、版本一致、内置图片编解码、三个 Worker 与正常排空，并在无系统 Bun 下执行发行包携带的冷迁移与安装器（首次安装与迁移后升级）。 */
+/** 在独立临时部署中核对编译产物：无 source map 与 node_modules、版本一致、内置图片编解码、各 Worker 与正常排空，并在无系统 Bun 下执行发行包携带的冷迁移与安装器（首次安装与迁移后升级）。 */
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -45,8 +45,7 @@ try {
   await copyFixtureTree(join(root, "config_example"), join(root, "config"));
   // 以发行包携带的提示词示例作为 prompt/，核对编译产物按 PROJECT_ROOT 读取并严格校验它们。
   await copyFixtureTree(join(root, PROMPT_EXAMPLE_DIR_NAME), join(root, PROMPT_DIR_NAME));
-  // 与首次部署一样不物化只示意结构的示例：g-auth.json 的占位私钥会被启动总闸拒绝，
-  // cron.json 的会话 id、地址与本地来源都是假的。
+  // 与首次部署一样不物化只示意结构的示例（g-auth.json、cron.json）。
   await Bun.file(join(root, "config", STATIC_CONFIG_DIR_NAME, "g-auth.json")).delete();
   await Bun.file(join(root, "config", DYNAMIC_CONFIG_DIR_NAME, "cron.json")).delete();
   await Bun.write(join(root, "config", STATIC_CONFIG_DIR_NAME, "bot.json"), JSON.stringify({ bot_token: "123456789:binary_test_token", super_admin_user_id: 123456789 }));
@@ -73,7 +72,7 @@ try {
       if (metadata.format !== "png" || metadata.width !== 2 || metadata.height !== 2) throw new Error("Bun.Image transcoding failed");
     }
   `], { BUN_BE_BUN: "1" });
-  // 编译产物不会从磁盘上的 node_modules 解析第三方包，发行包因此不得携带它。
+  // 编译产物不从磁盘上的 node_modules 解析第三方包，发行包不得携带它。
   if (existsSync(join(root, "node_modules"))) throw new Error("Binary package must not contain node_modules.");
   const output: string = run([], {
     BUN_OPTIONS: `--preload ${join(import.meta.dir, "../test/fixtures/binaryNetwork.ts")}`,

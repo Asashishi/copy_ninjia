@@ -63,9 +63,8 @@ describe("luck receipt protocol", () => {
   });
 
   test("解不开的 base64url 一律返回 undefined，不抛异常", () => {
-    // LUCK_RECEIPT_PATTERN 的 cache key 组允许 1..120 个字符，其中长度
-    // ≡ 1 (mod 4) 的取值不是合法 base64url。这些回执来自群消息实体，异常逸出
-    // 会被 bot.catch 重抛成整进程重启循环，因此必须当成普通的格式不合法。
+    // LUCK_RECEIPT_PATTERN 的 cache key 组允许一段长度范围，其中长度 ≡ 1 (mod 4) 的取值不是合法 base64url；
+    // 这些回执来自群消息实体，当成普通的格式不合法，不抛出。
     const signaturePart: string = createLuckReceipt(SECRET, "123").split(".")[1]!;
     for (const length of [1, 5, 9, 117]) {
       const receipt: string = `luck:v1:${DAY}:${"A".repeat(length)}.${signaturePart}`;
@@ -73,7 +72,7 @@ describe("luck receipt protocol", () => {
       expect(verifyLuckReceipt(receipt, DAY, SECRET)).toBeUndefined();
       expect(() => luckReceiptHmacHash(receipt)).not.toThrow();
     }
-    // 签名组定长 43，本身永远解得开；非规范尾比特由回环比较挡下。
+    // 签名组定长，本身永远解得开；非规范尾比特由回环比较挡下。
     const nonCanonical: string = `luck:v1:${DAY}:MTIz.${"B".repeat(43)}`;
     expect(luckReceiptHmacHash(nonCanonical)).toBeUndefined();
     expect(verifyLuckReceipt(nonCanonical, DAY, SECRET)).toBeUndefined();
@@ -101,7 +100,7 @@ describe("luck receipt protocol", () => {
     const receipt: string = createLuckReceipt(SECRET, "123");
     const receiptHash: string = luckReceiptHmacHash(receipt)!;
     expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receiptHash}`)).toBe("可读正文");
-    // 旧格式（无标签的完整协议串、或标签后跟完整协议串）不再被识别为回执。
+    // 无标签的完整协议串、或标签后跟完整协议串的形态不被识别为回执。
     expect(stripLuckReceipt(`可读正文\n${receipt}`)).toBe(`可读正文\n${receipt}`);
     expect(stripLuckReceipt(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`))
       .toBe(`可读正文\n${LUCK_RECEIPT_DISPLAY_PREFIX}${receipt}`);

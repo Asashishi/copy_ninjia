@@ -1,11 +1,7 @@
 /** owner: main。磁盘 IO 宿主（packages/infra/diskIO.ts）的内存状态：主线程侧的 flush/load 回执路由。
  *
- * 本目录里唯一一个会被别的线程一并加载的模块，也是线程归属检查里唯一一条豁免
- * （见 scripts/conventions/cacheOwnership.ts 的 CACHE_OWNER_EXEMPTIONS）：infra/logger.ts 静态 import
- * infra/diskIO.ts 取 relayLogMessage，而每条线程都要能记日志。Worker isolate
- * 里这份状态**恒为初始值**——只有主线程会 initDiskIO 填 worker 句柄，Worker 侧的
- * error 日志走 postMessage 信封回主线程再转投（见 infra/logger.ts 模块头注），
- * 一次也不会读写这里。所有权因此仍然只在主线程，不是 perThread/。
+ * 只有主线程加载；Worker 侧的 error 日志经 postMessage 信封回主线程转投（见 infra/logger.ts 模块头注），
+ * 不读写这里。
  */
 
 import { DEFAULT_MAX_PENDING_BUSINESS_MESSAGES, LOAD_TIMEOUT_MS } from "../../consts/diskIO/common";
@@ -25,13 +21,14 @@ import type {
   DiskBusinessMessage,
   DiskIORespawnRegistration,
   DiskDiagnosticMessage,
-  DiskIOOperationMessage,
+  QueuedDiskIOOperationMessage,
 } from "../../types/diskIO/messages";
 import type {
   DiskIODomain,
   DiskIOReplyListeners,
   DiskIORequestOutcome,
   LoadedReply,
+  StorageCloseOutcome,
 } from "../../types/diskIO/replies";
 import type { WorkerRequestTable } from "../../types/workerRequest";
 import type { JoinLogRecord, LuckReceiptSecret } from "../../types/diskIO/storage";
@@ -51,7 +48,7 @@ export const pendingLoad: {
 /**
  * 一条 main -> diskIO 的 request/reply 通道：共享等待表与两句领域文案。
  *
- * 运势密钥、入群日志、身份策略、黑名单主键四个领域各声明一个通道对象；等待表的
+ * 各领域（运势密钥、入群日志、身份策略、黑名单主键、停机关库）各声明一个通道对象；等待表的
  * 填充与结算只由 infra/diskIO/requests.ts 经 libs/workerRequestTable.ts 完成，
  * 回执、超时、投递被拒、Worker 代际失效与 terminate 都会摘除等待者。容量为同时
  * 在途的请求数，由各调用方的串行或批量边界封住。
@@ -87,6 +84,10 @@ export const identityPolicyReadRequests: DiskIORequestChannel<IdentityPolicyRawR
 export const blocklistIdPageReadRequests: DiskIORequestChannel<BlocklistIdPage> =
   createDiskIORequestChannel("blocklist ID page read", "Disk I/O Worker returned no blocklist ID page.");
 
+/** 干净停机关库（closeStorage）的请求通道。 */
+export const storageCloseRequests: DiskIORequestChannel<StorageCloseOutcome> =
+  createDiskIORequestChannel("storage close", "Disk I/O Worker returned no storage close outcome.");
+
 /**
  * 全部请求通道。Worker 代际失效、恢复失败与 terminate 都按表结算所有等待者。
  * 元素的 TResult 各不相同，统一失败路径只写入失败结局，故按 never 擦除。
@@ -96,16 +97,16 @@ export const DISK_IO_REQUEST_CHANNELS: readonly DiskIORequestChannel<never>[] = 
   joinLogReadRequests,
   identityPolicyReadRequests,
   blocklistIdPageReadRequests,
+  storageCloseRequests,
 ] as readonly DiskIORequestChannel<never>[];
 
 /**
  * Worker 明确回复为部分失败、且正在等待调用方消费的 flush 回执。
  * infra/diskIO/host.ts 只在对应 barrier 仍在途时填充；infra/diskIO.ts 的
  * requestDiskIOFlush 与 infra/diskIO/recovery.ts 的诊断回收 flush 在各自 barrier
- * 结算后立即删除，terminateDiskIO 整表清空。传输失败、超时、Worker 崩溃不会产生条目，
- * 因而不能被误判成某领域成功。
+ * 结算后立即删除，terminateDiskIO 整表清空。传输失败、超时、Worker 崩溃不产生条目。
  * 容量：同时在途的 flush barrier 数（键是 flushId），由各 barrier 调用方
- * 自己的串行边界封住；不设淘汰——丢掉一条会把部分失败读成全部成功。
+ * 自己的串行边界封住；不设淘汰。
  */
 export const pendingFlushFailedDomains: Map<number, readonly DiskIODomain[]> = new Map();
 
@@ -122,7 +123,7 @@ interface DiskIORuntime {
   fatalSignaled: boolean;
   pendingBusinessMessages: LinkedQueue<DiskBusinessMessage>;
   pendingBusinessBytes: number;
-  operationQueue: AcknowledgedBatchQueue<DiskIOOperationMessage>;
+  operationQueue: AcknowledgedBatchQueue<QueuedDiskIOOperationMessage>;
   operationTimer: ReturnType<typeof setTimeout> | null;
   diagnosticQueue: AcknowledgedBatchQueue<DiskDiagnosticMessage>;
   diagnosticDroppedMessages: number;
@@ -172,7 +173,7 @@ export const diskIORuntime: DiskIORuntime = {
   fatalSignaled: false,
   pendingBusinessMessages: new LinkedQueue<DiskBusinessMessage>(),
   pendingBusinessBytes: 0,
-  operationQueue: new AcknowledgedBatchQueue<DiskIOOperationMessage>({
+  operationQueue: new AcknowledgedBatchQueue<QueuedDiskIOOperationMessage>({
     maxBatchMessages: DISK_BUSINESS_BATCH_MAX_MESSAGES,
     maxMessages: DEFAULT_MAX_PENDING_BUSINESS_MESSAGES + DISK_OPERATION_CONTROL_RESERVE,
     maxCost: DISK_OPERATION_MAX_RETAINED_BYTES,

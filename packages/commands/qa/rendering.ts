@@ -2,8 +2,7 @@ import type { AtmosphereTexts } from "../../types/atmosphere";
 /**
  * 群问答的文本解析与渲染：表单投递消息的字段解析，以及表单提示正文。
  *
- * `/qa query` 看板的分页渲染在同目录的 board.ts；那边只负责把已登记的条目铺成
- * JSON 代码块，与这里的「把用户写的东西读出来」是相反的两个方向。
+ * `/qa query` 看板的分页渲染在同目录的 board.ts。
  */
 
 import type { Message, MessageEntity } from "grammy/types";
@@ -22,10 +21,7 @@ interface QaLabelHit {
 }
 
 /**
- * 某个偏移是否落在代码块内部。
- *
- * 用于答案里那些整段 JSON：块内出现一行以「回答:」开头的文本时，
- * 若照样当成新字段的标签，答案会被从中间切断。`pre` 与 `code` 都算块内。
+ * 某个偏移是否落在代码块（`pre` 或 `code` 实体）内部；块内以标签开头的行不当作字段标签。
  */
 function isInsideCodeEntity(
   entities: readonly MessageEntity[] | undefined,
@@ -54,8 +50,7 @@ function matchLabel(
 /**
  * 逐行找出全部字段标签。
  *
- * 标签只在**行首**生效：句子中间提到「回答:」的消息不该被当成表单投递，
- * 而用户按提示写的那两条永远是标签独占一行或紧跟取值。
+ * 标签只在行首生效，且不在代码块内。
  */
 function findQaLabels(
   text: string,
@@ -86,12 +81,11 @@ function findQaLabels(
  * 从一条投递消息里解析出表单字段。
  *
  * 取值范围是「本标签之后到下一个标签之前」，两端 trim。回答里范围内的 `pre` 实体
- * 会被还原成字面 ``` 围栏，因此用户直接粘一整块 ```json 也能原样存下来；问题取
- * 原文切片，与问答直答（auto/message/qaDirectAnswer.ts）比对的 `message.text`、
- * `/qa remove`、`/qa query <问题>` 读到的 `ctx.match` 同一口径。
+ * 会被还原成字面 ``` 围栏，整块 ```json 原样存下；问题取原文切片，与问答直答
+ * （auto/message/qaDirectAnswer.ts）比对的 `message.text`、`/qa remove`、
+ * `/qa query <问题>` 读到的 `ctx.match` 同一口径。
  *
- * @returns 一个字段都解析不出（含取值为空）时是 undefined——那条消息与本领域
- *   无关，调用方必须原样放回消息流水线，不能当成填错格式的表单吞掉。
+ * @returns 一个字段都解析不出（含取值为空）时为 undefined，调用方把消息放回消息流水线。
  */
 export function parseQaFieldMessage(message: Message): QaFieldInput | undefined {
   const text: string | undefined = message.text;
@@ -103,8 +97,7 @@ export function parseQaFieldMessage(message: Message): QaFieldInput | undefined 
   for (let index: number = 0; index < hits.length; index++) {
     const hit: QaLabelHit | undefined = hits[index];
     if (hit === undefined) continue;
-    // 同一字段写了两次时以先出现的为准：后一段多半是用户重写时忘了删的草稿，
-    // 静默用后者覆盖会让人看不出到底存了哪一段。
+    // 同一字段写了两次时以先出现的为准。
     if (hit.field === "q" ? question !== undefined : answer !== undefined) continue;
     const end: number = hits[index + 1]?.labelStart ?? text.length;
     const value: string = (hit.field === "q"
@@ -119,19 +112,16 @@ export function parseQaFieldMessage(message: Message): QaFieldInput | undefined 
 }
 
 /**
- * 表单提示正文：把两项的当前状态摆出来，用户才知道还差哪个。
+ * 表单提示正文：把两项的当前状态摆出来。
  *
  * 开表单时两项皆空，此后每认领一项就由 `editQaForm` 用会话当前值重渲一次
- * （见 commands/qa.ts）；两处必须共用这一份，表单正文才只有一种形态。
+ * （见 commands/qa.ts），两处共用本函数。
  *
- * **回答回显按剩余预算截断**。两项的上限（256 / 3840）各自独立，且分别来自
- * 不同的投递消息——单条入站消息的 4096 上限管不住它们的和，两项都填满时整段
- * 会达到 4216。表单是 `editMessageText` 单条直发、没有分页，超限只会换来
- * 400 与一张停在旧内容上的表单。问题**不截断**：它短、且是用户校对自己写了
- * 什么的依据；被截掉的只是回显，权威值仍在会话里，落库用的是那一份。
+ * 回答回显按剩余预算（TELEGRAM_MESSAGE_MAX_CHARS 减去前缀）截断，问题不截断；
+ * 被截掉的只是回显，落库用的是会话里的完整值。
  *
- * @param q 必须已受 CHAT_QA_QUESTION_MAX_CHARS 约束——会话里这一项只由
- *   qa/ingress.ts 按该上限写入，剩余预算因此恒为正，不需要运行期兜底。
+ * @param q 必须已受 CHAT_QA_QUESTION_MAX_CHARS 约束：会话里这一项只由
+ *   qa/ingress.ts 按该上限写入，剩余预算恒为正。
  */
 export function renderQaFormPrompt(
   q: string | undefined,

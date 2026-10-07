@@ -10,7 +10,7 @@
 
 ---
 
-When the bot process is running but there is no response in the chat, troubleshoot step-by-step using the checklist below. BotFather settings and the required group administrator permissions for each feature can be found in the [project README](README.md#botfather-setup).
+If the bot process is running but fails to respond as expected in chat, work through this checklist. For essential BotFather toggles and required Telegram administrator privileges, see the [project README](README.md#botfather-setup).
 
 ## The Bot Is Running, Why Is There No Reply?
 
@@ -25,65 +25,66 @@ When the bot process is running but there is no response in the chat, troublesho
   <tr>
     <td><nobr>❌ <b>No response in the group</b></nobr></td>
     <td>
-      • <b>Not initialized</b>: Group has not been initialized via <code>/init enable</code> by the super administrator.<br>
-      • <b>Privacy mode blocking</b>: Bot is not a group admin, and Group Privacy mode is not disabled in BotFather (<code>/setprivacy → Disable</code>). <i>Note: Remove and re-add bot to refresh state after changing.</i>
+      • <b>Not initialized</b>: The superadmin has not run <code>/init enable</code> in this group yet.<br>
+      • <b>Privacy mode blocking</b>: The bot lacks group administrator rights, and Group Privacy is still enabled in @BotFather (send <code>/setprivacy → Disable</code>). <i>Note: After changing privacy settings in BotFather, you must kick and re-add the bot for Telegram to apply the change.</i>
     </td>
   </tr>
   <tr>
     <td><nobr>🤖 <b>AI stays silent</b></nobr></td>
     <td>
-      • <b>Not enabled</b>: Must run <code>/ai_chat enable</code> in the group (off by default).<br>
-      • <b>Trigger rules</b>: Direct replies to the bot or <code>@bot</code> mentions are guaranteed to trigger; other messages trigger probabilistically (no interjections during <code>/quiet</code>).<br>
-      • <b>Mode conflict</b>: If the group is actively running <code>/copy</code>, AI chat is paused.<br>
-      • <b>Rate limit</b>: Fast triggers engage a 5-minute sliding-window rate limit.
+      • <b>Feature disabled</b>: Run <code>/ai_chat enable</code> in the group (disabled by default).<br>
+      • <b>Missing configuration</b>: Requires valid <code>text</code>, <code>summary</code>, and <code>media</code> providers in <code>agent.json</code>, plus <code>stickers.json</code> and <code>mood.json</code>; missing any of these disables AI chat entirely.<br>
+      • <b>Trigger mechanics</b>: Direct replies to the bot or <code>@bot_username</code> mentions always trigger a reply; regular messages trigger probabilistically (no interjections during <code>/quiet</code>).<br>
+      • <b>Repeat mode conflict</b>: If active repetition (<code>/copy</code>) is running in the group, AI chat pauses automatically.<br>
+      • <b>Rate limiting</b>: Frequent triggers engage sliding-window rate limits (see <code>RATE_LIMIT_LONG_WINDOW_MS</code> and <code>RATE_LIMIT_LONG_MAX_TRIGGERS</code>).
     </td>
   </tr>
   <tr>
     <td><nobr>📨 <b>No reply in private chat</b></nobr></td>
     <td>
-      • Private chats only respond to the super administrator's <code>/send</code> command; other commands and casual chats are ignored.
+      • Private chat only responds to superadmin <code>/send</code> relay commands; all other messages and casual chats are ignored by design.
     </td>
   </tr>
   <tr>
-    <td><nobr>⏱️ <b>Notices vanish after a while</b></nobr></td>
+    <td><nobr>⏱️ <b>Notices vanish after 30 seconds</b></nobr></td>
     <td>
-      • <b>Intended behavior</b>: Command errors, permission denials, usage hints, and receipts are <b>automatically deleted 30s after delivery</b> (exceptions in <a href="09-commands.md">09 Commands</a>).
+      • <b>Expected design</b>: Command validation errors, permission denials, usage hints, and operation receipts auto-delete after 30 seconds (<code>COMMAND_MESSAGE_AUTO_DELETE_MS</code>) to keep groups clean (exceptions detailed in <a href="09-commands.md#parameter-and-target-resolution-rules">09 Command Reference</a>).
     </td>
   </tr>
   <tr>
-    <td><nobr>🎲 <b><code>@bot</code> shows no fortunes</b></nobr></td>
+    <td><nobr>🎲 <b><code>@Bot</code> fortune prompt does not appear</b></nobr></td>
     <td>
-      • Inline Mode is not enabled in @BotFather (<code>/setinline</code>).
+      • Inline Mode is not enabled in @BotFather (send <code>/setinline</code> to activate it).
     </td>
   </tr>
   <tr>
-    <td><nobr>🫧 <b>Action commands get no reply</b></nobr></td>
+    <td><nobr>🫧 <b>Action commands (e.g. <code>/咬</code>) get no reply</b></nobr></td>
     <td>
-      • Only recognizes 1–2 Chinese characters as action words; global sliding-window limits responses to 450 per 90 seconds.
+      • Action commands only recognize 1–2 Chinese characters. A global sliding window limits calls (up to <code>CJK_ACTION_RATE_LIMIT_MAX_CALLS_PER_WINDOW</code> per <code>CJK_ACTION_RATE_LIMIT_WINDOW_MS</code>); excess requests are dropped silently.
     </td>
   </tr>
   <tr>
-    <td><nobr>🌐 <b>Cannot translate other bots</b></nobr></td>
+    <td><nobr>🌐 <b>Cannot translate another bot's messages</b></nobr></td>
     <td>
-      • Must enable <b>Bot-to-Bot Communication Mode</b> for this bot in @BotFather.<br>
-      • Incoming messages from other bots have a global ingress limit: the 16th message from a continuously active bot is ignored, the count resets after 90 minutes of silence, and new bot IDs are ignored when 512 are tracked (see <a href="04-invariants.md">dispatch invariants</a>).<br>
-      • Translation only handles text/captions; does not forward pure media, numeric punctuation, or target-language text.
+      • You must enable <b>Bot-to-Bot Communication Mode</b> for this bot in @BotFather.<br>
+      • Incoming messages from other bots are subject to global ingress throttling: messages from a bot exceeding <code>BOT_MESSAGE_ACTIVITY_LIMIT</code> are temporarily ignored until <code>BOT_MESSAGE_ACTIVITY_TTL_MS</code> of silence passes; new bots are ignored once <code>BOT_MESSAGE_ACTIVITY_MAX_ENTRIES</code> entries are tracked (see <a href="04-invariants.md">Dispatch Invariants</a>).<br>
+      • Translation only processes text and captions; pure media, numeric strings, or messages already in the target language are skipped.
     </td>
   </tr>
   <tr>
     <td><nobr>🛡️ <b>Anti-Raid / Ads / Flood inactive</b></nobr></td>
     <td>
-      • <b>Disabled by default</b>: Explicitly enable via <code>/antiraid enable</code>, <code>/ad_detect enable</code>, <code>/flood_control enable</code>.<br>
-      • <b>Missing admin rights</b>: Bot must be promoted to group admin with delete and restrict rights.<br>
-      • <b>Model missing</b>: Ad detection requires <code>agent.ad_detect</code> in <code>config/dynamic/agent.json</code>.
+      • <b>Disabled by default</b>: Explicitly run <code>/antiraid enable</code>, <code>/ad_detect enable</code>, or <code>/flood_control enable</code>.<br>
+      • <b>Insufficient rights</b>: The bot must be an administrator with delete and ban permissions.<br>
+      • <b>Configuration unready</b>: Ad detection requires <code>agent.ad_detect</code> in <code>config/dynamic/agent.json</code> and a populated <code>config/dynamic/ad_samples.json</code>.
     </td>
   </tr>
   <tr>
-    <td><nobr>💀 <b>Process dead, no menu</b></nobr></td>
+    <td><nobr>💀 <b>Process dead, menu missing</b></nobr></td>
     <td>
-      • <b>Service status</b>: Check <code>systemctl status &lt;service&gt;</code>.<br>
-      • <b>Fatal config error</b>: Check <code>logs/&lt;date&gt;.json</code> under the data root; invalid configs fail fast and exit at boot.<br>
-      • <b>Token conflict (409)</b>: Code 409 means another instance is polling or a webhook is configured (see <a href="07-operations.md#startup-failures">07 Operations</a>).
+      • <b>Check service status</b>: Inspect <code>systemctl status &lt;service&gt;</code>.<br>
+      • <b>Fatal configuration error</b>: Check <code>logs/&lt;date&gt;.json</code> under the data root; malformed configs fail fast and terminate startup.<br>
+      • <b>Token conflict (HTTP 409)</b>: Code 409 indicates multiple instances polling the same token or an uncleared webhook (see <a href="07-operations.md#startup-failures">07 Operations</a>).
     </td>
   </tr>
 </tbody>
@@ -93,31 +94,31 @@ When the bot process is running but there is no response in the chat, troublesho
 
 ## How Do I Change the Notice Atmosphere?
 
-- In `config/static/bot.json`, explicitly set `atmosphere` to `mesugaki` (teasing) or `normal` (plain). This takes priority over the persona-based default and applies after restart.
-- When `atmosphere` is omitted, notices and menus across all groups use plain style if the project-root `prompt/persona.md` exists, otherwise teasing style.
-- Notice atmosphere only alters system outward notification style; it does not change the AI chat System Prompt persona.
+- **Explicit configuration**: In `config/static/bot.json`, set `atmosphere` to `mesugaki` (teasing/bratty) or `normal` (reserved/standard). Restart the bot to apply changes. Explicit configuration always takes highest priority.
+- **Default fallback**: When `atmosphere` is omitted, the bot selects tone based on the persona file: if a custom `prompt/persona.md` exists in the project root, all groups default to reserved tone; if using the built-in persona, it defaults to teasing tone.
+- **Scope of influence**: The atmosphere setting only affects system notifications, command receipts, menu descriptions, and button labels; it does not alter the AI chat persona prompt.
 
 ---
 
 ## Why Does the Image Library Refuse Startup or Miss Duplicates?
 
-- **File Specifications**: The dedicated image library directory (`assets.json`'s `random_h_image_dir`) only allows regular images named by **content SHA-256** (64-character lowercase hexadecimal).
-- **Startup Interception**: If subdirectories, symbolic links, hidden files, or residual temporary files exist in the directory, startup inspection will refuse startup. Stop the service and back up, then clean up residuals per [07 Operations](07-operations.md).
-- **Deduplication Logic**: Deduplication occurs after downloading when computing hashes; if the library already contains an identical hash, it is skipped and reported as already collected. Manually placed images must maintain consistent content digests and extensions to hit deduplication.
+- **Strict filename rules**: The dedicated image library (`random_h_image_dir` in `assets.json`) **strictly accepts image files only**. Filenames must be exactly the 64-character lowercase hexadecimal SHA-256 hash of the binary file, with `.jpg`, `.jpeg`, `.png`, or `.webp` extensions.
+- **Startup inspection**: If subdirectories, symlinks, hidden files, or non-hash filenames are present, the bot halts immediately at boot. Stop the service and clean up directory contents per [07 Operations](07-operations.md).
+- **Deduplication timing**: Deduplication during `/h_image add` occurs after downloading the image and computing its SHA-256 hash. If an identical hash already exists in the library, writing is skipped and reported as already collected. If manually copying files into the library, filenames must match their SHA-256 hash to deduplicate properly.
 
 ---
 
 ## Why Does a Scheduled Task Send Again After Restart?
 
-- `just_once` execution records are held only in memory and re-register after restart; completed tasks should be removed from `config/dynamic/cron.json`.
-- Randomized moments in `rand_cron` are redrawn within intervals upon restart; missed executions during downtime are not replayed.
-- Fixed images require a 1–10 item array; relative paths in `cron.json` resolve against the runtime data root (no `./` prefix required).
+- **One-off tasks (`just_once`)**: Execution records are maintained in memory only and will fire again after a process reboot. Remove completed one-off tasks from `config/dynamic/cron.json`.
+- **Random intervals (`rand_cron`)**: Next execution times are recalculated randomly upon startup; missed triggers during downtime are not backfilled.
+- **Path and URL formatting**: Fixed images require an array for `url` or `path` (see the [Configuration Guide](../../config_example/README/en.md#cronjson)); relative paths in `cron.json` resolve against the runtime data root (no `./` prefix needed).
 
 ---
 
 ## Why Is Scheduled Voice or `/send` Voice Not Sending?
 
-Scheduled `send_voice` tasks and superadmin private `/send` voice delegation both depend on `agent.tts` in `config/dynamic/agent.json`, synthesized asynchronously on the AI Worker:
+Scheduled `send_voice` actions and superadmin private `/send` voice delegations both rely on `agent.tts` in `config/dynamic/agent.json`, synthesized asynchronously by the AI Worker:
 
 ### Key Log Troubleshooting
 
@@ -131,79 +132,82 @@ Scheduled `send_voice` tasks and superadmin private `/send` voice delegation bot
 <tbody>
   <tr>
     <td><code>speech synthesis failed: worker unavailable</code></td>
-    <td>AI Worker is not ready (verify that <code>stickers.json</code>, <code>mood.json</code>, and <code>agent.json</code> are configured).</td>
+    <td>The AI Worker has not finished initializing (verify that <code>stickers.json</code>, <code>mood.json</code>, and <code>agent.json</code> are configured properly).</td>
   </tr>
   <tr>
     <td><code>tts unsupported</code></td>
-    <td>Selected provider does not implement speech synthesis (only <code>google</code> and <code>openai</code> natively supported).</td>
+    <td>The configured provider does not support speech synthesis (natively supported by <code>google</code> and <code>openai</code>).</td>
   </tr>
   <tr>
     <td><code>synthesis failed</code> / <code>timed out</code></td>
-    <td>Model call failed or timed out; OpenAI-compatible endpoints must support <code>audio/speech</code> and <code>opus</code> format.</td>
+    <td>Vendor API call failed or timed out; OpenAI-compatible endpoints must support <code>audio/speech</code> and <code>opus</code> format.</td>
   </tr>
   <tr>
     <td><code>not an Ogg Opus stream</code> / <code>not an MP3 stream</code></td>
-    <td>Returned audio stream encoding does not match requested protocol.</td>
+    <td>The returned audio encoding does not match the requested protocol format.</td>
   </tr>
   <tr>
     <td><code>daily limit reached</code></td>
-    <td>Daily voice quota is exhausted; resets after the 24-hour rolling window.</td>
+    <td>Voice synthesis quota for the current counting window (<code>TTS_USAGE_WINDOW_MS</code>) is exhausted.</td>
   </tr>
 </tbody>
 </table>
 
 ### Quota and Allocation Mechanics
 
-- `/send` and `cron.json` share an independent **`daily_reserve_quota`** (default 25), recorded in `reserveCount`.
-- AI chat independently uses the remaining **`daily_limit - daily_reserve_quota`** (default 75), recorded in `agentCount`.
-- Both quotas are mutually isolated and do not preempt each other. Quotas reset when the 24-hour rolling window expires.
+- Private relay (`/send`) and `cron.json` scheduled tasks share an independent **`daily_reserve_quota`**, tracked in `reserveCount`.
+- Conversational AI in groups independently uses the remaining **`daily_limit - daily_reserve_quota`**, tracked in `agentCount`.
+- Both quotas are isolated from each other. The quota window begins on the first request; once `TTS_USAGE_WINDOW_MS` passes, the next request resets counters and starts a new window.
 
 ### Private Chat `/send` Format Requirements
 
-Voice requests in private chat must have the **entire message as a code block**, with `type` declared as `tts`:
+When requesting voice delegation in private chat, **send the entire message as a JSON code block** with `type` set to `"tts"`:
 ```json
 { "type": "tts", "tone": "tsundere", "text": "line to synthesize" }
 ```
-The code block is parsed as JSONC, so comments and trailing commas are accepted. If parsing fails or `type` is not `"tts"`, the original message is copied to the target group. If `type` is `"tts"` but its fields are invalid, the administrator receives a format notice in private and the message is not relayed.
+The payload is parsed as JSONC (supporting trailing commas and comments). If parsing fails or `type` is not `"tts"`, the message is forwarded as regular text. If `type` is `"tts"` but payload fields are invalid, the bot replies with an error notice in private chat without sending to the group.
 
 ---
 
 ## How Are Voice Length, Temperature, and Memory Configured?
 
-| Entry Point | Line Limit (UTF-16) | AI Memory After Successful Send |
+| Entry Point | Line Limit (UTF-16) | Persisted to AI Memory |
 | :--- | :---: | :--- |
-| **AI `send_voice`** | 64 | Records spoken line |
-| **Private `/send` TTS** | 256 | Not automatically recorded |
-| **cron `send_voice`** | 256 | Not automatically recorded |
+| **AI `send_voice` Tool** | `VOICE_TEXT_MAX_CHARS` | Yes, recorded into conversational context |
+| **Private `/send` TTS** | `VOICE_OPERATOR_TEXT_MAX_CHARS` | No |
+| **Scheduled `send_voice`** | `VOICE_OPERATOR_TEXT_MAX_CHARS` | No |
 
-- **Tone and Length**: `tone` is capped at 64 UTF-16 code units across all entry points; validated after whitespace normalization. Audio response volume is capped at 8 MiB.
-- **Voice and Style**:
-  - Voice is configured via `agent.tts.voice`.
-  - Base style is configured via optional `agent.tts.style` (supports hot reload), defaulting to built-in `TTS_DEFAULT_STYLE`.
-  - Automatically joined upon sending as `<base style>; 细节: <tone>`; AI reply synthesis inserts the speaking-language requirement between them (see Line Language below).
-  - `speech_protocol: "xai"` does not support `style`, nor does it send tone.
-- **Line Language**: The language of AI `send_voice` lines is set by optional `agent.tts.bot_language` (`en` / `zh` / `ja`, default `ja`; supports hot reload and takes effect from the next reply). It switches the `send_voice` and `send_message` tool instructions and the voice de-duplication rule in the system prompt, and appends that language's speaking-language requirement to the base style in AI reply synthesis requests (`<base style>; <speaking language>; 细节: <tone>`, registered as `speechLanguageStyle` in `VOICE_LANGUAGE_PROMPTS`); it does not change `style` and does not affect `/send` or cron lines or their synthesis requests. For the xai protocol, the synthesis language sent to the API is still set by `language`.
-- **What to Change Together with the Line Language**: The speaking-language requirement of AI replies is appended automatically by `bot_language`; `voice`, `style` and `prompt/voice_tool.md` do not follow it. When changing `bot_language`:
-  - Rewrite `style` as a voice description written in that language (the default `TTS_DEFAULT_STYLE` is written in Japanese). `style` is shared with `/send` and cron, so it describes only the voice, not the speaking language; when `/send` or cron needs a language, put it in their own tone. If the result is still off after changing `style`, switch to a voice (`voice`) designed for that language.
-  - If `prompt/voice_tool.md` is deployed, switch its line language, line examples and tone examples to that language; the file requires a restart after editing.
-  - The xai protocol has no style field, so neither the speaking-language requirement nor the tone is sent; change `language` instead.
-- **Custom Voice Tool Instruction**: After placing `prompt/voice_tool.md` in the project root, a restart replaces the whole `send_voice` tool instruction with its text regardless of `bot_language`; the `text` / `tone` parameter descriptions and the voice de-duplication rules still follow `bot_language`. Empty or non-UTF-8 content refuses startup; the file does not hot reload.
-- **Sampling Temperature**: Gemini speech sampling temperature is fixed by source constant `GEMINI_SPEECH_TEMPERATURE` (currently `1`).
+- **Tone and length bounds**: The `tone` modifier is capped at `VOICE_TONE_MAX_CHARS` (UTF-16 code units), verified after whitespace normalization. Audio file size is capped at `VOICE_SPEECH_MAX_BYTES`.
+- **Voices and base styles**:
+  - Voice speaker is configured via `agent.tts.voice`.
+  - Base voice style is defined in `agent.tts.style` (supports hot reload), defaulting to `TTS_DEFAULT_STYLE`.
+  - Requests assemble parameters as `<base style>; 细节: <tone>`; AI chat inserts language pronunciation guidelines between them.
+  - The `speech_protocol: "xai"` protocol does not support `style` or tone injection.
+- **Language configuration (`bot_language`)**:
+  - The language for AI `send_voice` is specified via `agent.tts.bot_language` (`en`, `zh`, or `ja`, default `ja`; hot-reloaded dynamically).
+  - This switches tool descriptions for `send_voice` and `send_message`, applies system prompt deduplication rules, and appends language instructions to the voice style request (`<base style>; <language requirements>; 细节: <tone>`, defined in `VOICE_LANGUAGE_PROMPTS`).
+  - This setting does not alter `style` directly, nor does it impact `/send` or cron voice delivery. For xAI, synthesis language is determined by `language`.
+- **Recommended steps when changing languages**:
+  - Update `style` with a voice description in the target language (default `TTS_DEFAULT_STYLE` is Japanese). Because `style` is shared with `/send` and cron, describe voice timbre rather than language constraints; specify language requirements in individual task tone modifiers instead. If speech sounds unnatural, select a `voice` optimized for the target language.
+  - If a custom `prompt/voice_tool.md` is deployed, update script examples and tone guidelines to the target language, then restart the bot.
+  - When using xAI, adjust the `language` field directly.
+- **Custom voice tool instructions**: Placing `prompt/voice_tool.md` in the project root overrides the description of `send_voice` upon restart; parameter specifications for `text` and `tone` continue to align with `bot_language`. The file must contain valid UTF-8 and does not hot-reload.
+- **Sampling temperature**: Gemini voice synthesis sampling temperature is fixed by the code constant `GEMINI_SPEECH_TEMPERATURE`.
 
 ---
 
 ## How Do I Call Google Models via Third-Party Gateways (e.g., Cloudflare AI Gateway)?
 
-1. **Configure Endpoint**: Set the capability's `base_url` to the gateway address, e.g.:
+1. **Configure Endpoint**: Set `base_url` under the target capability to your gateway URL, for example:
    `https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/google-ai-studio`
-2. **Attach Auth Headers**: Configure `headers` under the same capability, e.g.:
+2. **Add Custom Headers**: Add custom authentication headers under that capability, for example:
    ```json
    "headers": {
      "cf-aig-authorization": "Bearer <token>"
    }
    ```
-3. **Retain API Key**: `api_key` remains the required Google API key. `headers` is only effective for `provider: "google"`; sensitive values are automatically masked in logs.
-4. **Route Coverage**: Text, vision, and image generation use the generateContent route; speech synthesis uses the Interactions API. After configuration, test gateway connectivity via `/send` with a voice message.
+3. **Retain Google API Key**: The `api_key` field remains mandatory; provide your valid Google AI Studio API key. The `headers` option is supported for `provider: "google"`; sensitive credentials are redacted from logs automatically.
+4. **Endpoint routing**: Text chat, vision, and image generation automatically route through `generateContent`; voice synthesis routes through the `Interactions API`. Test connectivity using `/send` with a voice payload in private chat.
 
 ---
 

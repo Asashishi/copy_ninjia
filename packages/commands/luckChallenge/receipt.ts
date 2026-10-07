@@ -58,8 +58,8 @@ async function confirmLuckReceipt(receipt: string): Promise<void> {
   if (!secret) return;
   const cacheKey: string | undefined = verifyLuckReceipt(receipt, luckCacheState.dayKey, secret);
   if (!cacheKey) return;
-  // 验签通过即证明该回执是用当天密钥签发的：即便进程内已跨过零点、pending
-  // 已被清空，也允许用当天密钥重建派生（见 promotePendingDraw 的参数注释）。
+  // 验签通过即证明回执由当天密钥签发：进程内已跨过零点时仍允许用当天密钥重建派生
+  // （见 promotePendingDraw 的 confirmedForToday）。
   promotePendingDraw(cacheKey, true);
 }
 
@@ -74,9 +74,8 @@ export function confirmLuckDraw(
   if (typeof messageText !== "string") return;
   const lastLineBreak: number = messageText.lastIndexOf("\n");
   if (lastLineBreak < 0) return;
-  // 只认当前格式：标签前缀 + 定长摘要，原回执由同范围的 text_link 实体携带。
-  // 普通多行消息不能因此进入跨日密钥刷新与磁盘 Worker 往返。判定按偏移直接读
-  // 原串，末行不是回执时连子串都不物化（见 libs/luckReceipt.ts 的头注）。
+  // 只认标签前缀 + 定长摘要，原回执由同范围的 text_link 实体携带。末行不是回执的
+  // 消息不进入密钥刷新；判定按偏移直接读原串，不物化子串（见 libs/luckReceipt.ts 的头注）。
   const receiptHash: string | undefined = luckReceiptHashFromLine(
     messageText,
     lastLineBreak + 1

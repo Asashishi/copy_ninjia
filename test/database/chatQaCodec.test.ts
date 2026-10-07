@@ -22,7 +22,7 @@ describe("chat_qa codec", () => {
   test("问题必须非空、无首尾空白且不超长", () => {
     expect(() => assertChatQaQuestion("怎么入群？", SOURCE)).not.toThrow();
     expect(() => assertChatQaQuestion("", SOURCE)).toThrow();
-    // 带首尾空白的键让直答查表与用户看到的文本对不上：用户永远打不出这种串。
+    // 带首尾空白的键被拒绝：用户打不出这种串。
     expect(() => assertChatQaQuestion(" 怎么入群？", SOURCE)).toThrow();
     expect(() => assertChatQaQuestion("怎么入群？ ", SOURCE)).toThrow();
     expect(() => assertChatQaQuestion("a".repeat(CHAT_QA_QUESTION_MAX_CHARS + 1), SOURCE))

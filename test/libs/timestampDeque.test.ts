@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { TimestampDeque } from "../../packages/libs/timestampDeque";
+import { timestampDequeContents as contents } from "../helpers/timestampDeque";
 
-function contents(queue: TimestampDeque): number[] {
-  const values: number[] = [];
-  while (queue.size > 0) values.push(queue.shift()!);
-  return values;
+/** 按时间窗口丢掉不晚于 oldestKept - 1 的最早项（窗口终点取当前最新值），用来把队首推进到环内。 */
+function dropOldest(queue: TimestampDeque, newest: number, oldestKept: number): void {
+  queue.trim(newest - oldestKept + 1, newest);
 }
 
 describe("TimestampDeque", () => {
@@ -12,7 +12,7 @@ describe("TimestampDeque", () => {
     const queue = new TimestampDeque(8, 2);
     queue.push(1);
     queue.push(2);
-    expect(queue.shift()).toBe(1);
+    dropOldest(queue, 2, 2);
     queue.push(3);
     queue.push(4);
     queue.push(5);
@@ -28,7 +28,6 @@ describe("TimestampDeque", () => {
     queue.clear();
     expect(queue.size).toBe(0);
     expect(queue.peek()).toBeUndefined();
-    expect(queue.shift()).toBeUndefined();
     queue.push(9);
     expect(contents(queue)).toEqual([9]);
   });
@@ -54,8 +53,7 @@ describe("TimestampDeque", () => {
   test("peekAt 按从最早算起的偏移读取且不移除，回绕后仍正确，越界返回 undefined", () => {
     const queue = new TimestampDeque(4, 4);
     for (const value of [1, 2, 3, 4]) queue.push(value);
-    expect(queue.shift()).toBe(1);
-    expect(queue.shift()).toBe(2);
+    dropOldest(queue, 4, 3);
     queue.push(5);
     queue.push(6);
 
@@ -68,7 +66,7 @@ describe("TimestampDeque", () => {
   test("按值撤销在回绕前后保持顺序", () => {
     const queue = new TimestampDeque(4, 4);
     for (const value of [1, 2, 3, 4]) queue.push(value);
-    expect(queue.shift()).toBe(1);
+    dropOldest(queue, 4, 2);
     queue.push(5);
 
     expect(queue.removeValue(3)).toBeTrue();

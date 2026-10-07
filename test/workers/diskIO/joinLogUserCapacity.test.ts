@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { TEST_DATA_ROOT } from "../../preloadEnv";
 
 /**
- * 启动检查拒绝单群单日独立用户数越过硬上限的入群日志文件。真实上限是 25 万人，
- * 这里只把上限调小，其余常量与路径之外的实现全部是生产代码。
+ * 启动检查拒绝单群单日独立用户数越过硬上限的入群日志文件。这里只把上限
+ * （JOIN_LOG_MAX_USERS_PER_CHAT_DAY）调小，其余常量与路径之外的实现全部是生产代码。
  */
 
 const testRoot: string = mkdtempSync(join(TEST_DATA_ROOT, "join-log-capacity-test-"));

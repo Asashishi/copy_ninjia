@@ -20,8 +20,7 @@ function isAllowedHostname(hostname: string, allowedSuffixes: readonly string[])
 
 /**
  * 只接受 allowlist 内的 HTTPS URL。origin 规则精确匹配；hostname suffix
- * 规则按 DNS label 边界匹配且拒绝自定义端口，避免 eviltelegram.org 之类
- * 的字符串后缀绕过。
+ * 规则按 DNS label 边界匹配且拒绝自定义端口。
  */
 export function parseAllowedHttpsUrl({
   input,

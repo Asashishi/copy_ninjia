@@ -14,26 +14,7 @@ import type { VerificationState } from "../../../types/states/verification";
 import type { KickChatMemberOutcome } from "../../../infra/telegram";
 import { botCanRestrictIn } from "../botPermissions";
 import { resolveChatIsSupergroup } from "../chatKind";
-import { scheduleTerminalRetry } from "./retry";
-
-interface ScheduleKickRetryParams {
-  chatId: number;
-  userId: number;
-  state: VerificationState & { kind: "kickPending" };
-  dispatchVerification: VerificationDispatcher;
-}
-
-/** 为仍是当前 token 的私密模式踢人动作安排指数退避重试；排上时清掉「效果已开始」标记。 */
-function scheduleKickRetry({
-  chatId,
-  userId,
-  state,
-  dispatchVerification,
-}: ScheduleKickRetryParams): void {
-  if (scheduleTerminalRetry({ chatId, userId, state, event: { type: "kickRetry" }, dispatchVerification })) {
-    state.effectStarted = false;
-  }
-}
+import { scheduleKickRetry } from "./retry";
 
 interface RunKickMemberEffectParams {
   chatId: number;
@@ -58,15 +39,21 @@ export async function runKickMemberEffect({
     transitionState?.kind !== "kickPending" ||
     entry?.state !== transitionState
   ) return;
-  // 与可恢复 expelling 共用同一权限语义：确证没有限制成员权限时，本轮只推进
-  // 本地退避，不发送成员探测或踢人请求；未知仍让 Telegram 作最终裁判。
-  //
-  // 请求短路了，诊断不能跟着短路：这条分支下没有任何 Telegram 调用去触发下面
-  // 那行 logger.error，管理员因此看不到「私密模式想踢却踢不动」的任何线索，
-  // 而记录会一路静默退避到 VERIFICATION_TERMINAL_RETRY_MAX_MS。每轮一行，与
-  // 正常路径（每次重试失败各记一行）同一密度，且这里一个请求都不发。
+  // 与可恢复 expelling 共用同一权限语义：确证没有限制成员权限时，本轮只发成员探测、
+  // 不发踢人请求——成员已离群即结算，否则推进本地退避；未知仍让 Telegram 作最终裁判。
+  // 请求短路时诊断照常：每轮记一行日志，与正常路径每次重试失败各记一行同一密度。
   if (botCanRestrictIn(chatId) === false) {
     transitionState.executionStarted = false;
+    const presentWithoutPermission: boolean | undefined =
+      await probeChatMembership(chatId, userId, telegramApi);
+    if (verificationEntries.get(key)?.state !== transitionState) return;
+    if (presentWithoutPermission === false) {
+      dispatchVerification(chatId, userId, {
+        type: "kickSettled",
+        now: Date.now(),
+      });
+      return;
+    }
     logger.error(
       `Lockdown kick for user ${userId} in chat ${chatId} was not attempted: the bot is confirmed to lack ` +
       "can_restrict_members there; retaining the pending action and backing off until the permission returns."
@@ -96,16 +83,10 @@ export async function runKickMemberEffect({
     });
     return;
   }
-  // **每一发都先付这次成员探测，首发也不例外。** 超级群的「只踢不封」映射到
-  // unbanChatMember，它不带 only_if_banned 时会**解除已有封禁**（见
-  // infra/telegram/actions/moderation.ts 的 kickChatMemberWithOutcome）。因此发这
-  // 一枪之前必须确认目标此刻真的还是在群的普通成员：`getChatMember` 报
-  // `kicked` 时 isPresentMember 为 false，人已经出去了，直接结算，绝不去碰那条
-  // 封禁。
-  //
-  // join update 只能证明到达时在场，不能证明请求排队期间没有被人工管理员封禁。
-  // Telegram 429 会让调用进入 kick 类别的独立退避车道，因此首发与重试都必须
-  // 重新确认成员状态，避免不带 only_if_banned 的 unbanChatMember 解除现有封禁。
+  // **首发与重试都先做成员探测。** 超级群的「只踢不封」映射到 unbanChatMember，
+  // 不带 only_if_banned 时会**解除已有封禁**（见 infra/telegram/actions/moderation.ts
+  // 的 kickChatMemberWithOutcome），因此发请求前必须确认目标此刻仍是在群的普通成员：
+  // `getChatMember` 报 `kicked` 时探测结果为 false，直接结算，不碰封禁。
   //
   // 查询失败（undefined）不等于不在群，也不足以授权这个调用，照常退避重试。
   const memberPresentBeforeKick: boolean | undefined =

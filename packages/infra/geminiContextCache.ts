@@ -4,15 +4,15 @@
  * aiChat/gemini/contextCache.ts，ad_detect 在 workers/antiRaid/adDetect/ai/google.ts，各自的登记表放在
  * 所在线程的 cache 里。
  *
- * **按系统指令分槽**：槽键是系统指令的指纹；槽里记着当前条目的内容键（模型、系统指令、
+ * 按系统指令分槽：槽键是系统指令的指纹；槽里记着当前条目的内容键（模型、系统指令、
  * 工具声明、toolConfig 的指纹），同槽内容变了就新建条目并删除旧的服务端条目。
  *
- * **引用从不等待**：acquireGeminiContextCache 同步返回可用条目的资源名，或返回 null 让本次
- * 走完整请求，同时在后台完成该做的事——登记表第一次被取用时触发启动扫描，按 displayName
+ * 引用从不等待：acquireGeminiContextCache 同步返回可用条目的资源名，或返回 null 让本次
+ * 走完整请求，同时在后台完成该做的事：登记表第一次被取用时触发启动扫描，按 displayName
  * 接管服务端已有的本 scope 条目；未命中时后台创建（同槽同时只创建一次）；命中且剩余存活
  * 不足 GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS 时后台续期。
  *
- * **失败口径**：创建被端点以 400 拒绝（内容低于该模型的最小 token 数或参数非法）时记下该槽
+ * 失败口径：创建被端点以 400 拒绝时记下该槽
  * 的内容键与累计次数，只记 warn；未满 GEMINI_CONTEXT_CACHE_MAX_REJECTIONS 次时
  * GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS 后再试，满额后同一内容不再创建。其余创建失败、
  * 续期失败以及引用被拒后的释放，都在 GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS 内不再重发同一种
@@ -21,7 +21,7 @@
  *
  * 服务端条目 TTL 为 GEMINI_CONTEXT_CACHE_TTL_SECONDS，到期由 Google 自动删除；本模块在换
  * 内容、新建后发现接管以来从未用过的条目、超出槽数上限时主动删除。创建时的输入 token
- * 按全价计费，经 reportAiCacheUsage 以 scope.capability、命中 0 上报。后台请求在发起时取
+ * 经 reportAiCacheUsage 以 scope.capability、命中 0 上报。后台请求在发起时取
  * scope.signal()，停机时一并取消。
  */
 

@@ -12,12 +12,10 @@ import type {
 /**
  * 管理员闸：发送者是否为本群已知管理员，其消息不参与广告判定。
  *
- * 只在缓存**明确**认得时挡：缓存冷时照常送检，判定命中后还有一道以
- * getChatAdministrators 为准的确证闸兜底，这里只是把已知管理员的消息挡在额度之外。
- * 频道马甲不适用：它没有「群成员」身份，交给投递闸按 blocked/处置抑制分派。
+ * 仅当 Worker 侧管理员缓存明确认得该发送者时拦截；缓存冷时照常送检，判定命中后由以
+ * getChatAdministrators 为准的确证闸处理。频道马甲不适用，交给投递闸按 blocked/处置抑制分派。
  *
- * 判据只读两个标量，排在正文清洗之前：结论已定的消息不该先付 sanitize、截断、
- * URL 拼接与引文认领（调用方见 workers/antiRaid/adDetect/queue.ts 的 enqueueAdCandidate）。
+ * 判据只读两个标量，排在正文清洗之前（调用方见 workers/antiRaid/adDetect/queue.ts 的 enqueueAdCandidate）。
  * @param knownAdmin Worker 侧管理员缓存明确认得这个发送者；缓存冷时为 false。
  */
 export function isKnownAdminCandidate(isChannel: boolean, knownAdmin: boolean): boolean {
@@ -25,20 +23,17 @@ export function isKnownAdminCandidate(isChannel: boolean, knownAdmin: boolean): 
 }
 
 /**
- * 投递闸：一条已过管理员闸（isKnownAdminCandidate）的候选消息该不该并进这个
+ * 投递闸：一条已过管理员闸（isKnownAdminCandidate）的候选消息是否并进这个
  * 发送者的消息串。
  *
- * recentlyDisposed 命中时通常直接忽略——处置已经发出，主线程正在把人写进黑
- * 名单，再攒一串重判只会换来第二次完全相同的处置。**频道马甲是例外**：
- * banChatSenderChat 没有 revoke_messages，这段跨线程空档里频道新发的广告既不
- * 会被那次封禁带走，也不会再有第二次判定来删它，不顺手删掉就永久留在群里。
+ * recentlyDisposed 命中时忽略该消息：处置已经发出，主线程正在把人写进黑名单。
+ * 频道马甲例外：banChatSenderChat 没有 revoke_messages，处置后频道新发的广告需要单独删除，
+ * 返回 deleteStraggler。
  *
- * blocked 走的是同一条例外。recentlyDisposed 按每个 key 各自的去重 TTL 存活；
- * blocked 覆盖的「已拉黑但封禁还没落地」可以跨多个 TTL 存在（秒踢、补扫、
- * 更早判定登记的封禁批次都会先写名单再等 outbox 落盘与 mailbox 屏障），而且不止
- * 由本次判定产生。用户身份不需要这条：banChatMember 带 revoke_messages，落地
- * 时会把这段 TTL 内的消息一起撤掉。两者都不进判定额度——名单里的人结局已定，
- * 再判一次只会换来一模一样的处置。
+ * blocked 走同一条例外。recentlyDisposed 按每个 key 各自的去重 TTL 存活；blocked 覆盖
+ * 「已拉黑但封禁还没落地」，可以跨多个 TTL 存在（秒踢、补扫、更早判定登记的封禁批次都会先写名单
+ * 再等 outbox 落盘与 mailbox 屏障），且不止由本次判定产生。用户身份不走例外：banChatMember
+ * 带 revoke_messages，落地时撤掉这段时间内的消息。两者都不进判定额度。
  */
 export function admitAdCandidate(input: AdCandidateAdmissionInput): AdCandidateDecision {
   if (input.textLength === 0) return "ignore";
@@ -51,13 +46,12 @@ export function admitAdCandidate(input: AdCandidateAdmissionInput): AdCandidateD
 /**
  * 排队闸：这个键该不该（重新）排进队列。
  *
- * 「这个 key 已取得一个待派发位置」由 queuedAdDetectKeys 独家表达：它随
- * adDetectQueue 同步增删，排着的人再说什么都只并进消息串。判定在途期间由
- * inFlight 单独防止并发送检，派发到结算之间的空档因此也是封住的。
+ * 「这个 key 已取得一个待派发位置」由 queuedAdDetectKeys 表达：它随
+ * adDetectQueue 同步增删，排着的人再说的话只并进消息串。判定在途期间由
+ * inFlight 单独拦截并发送检，派发到结算之间也被覆盖。
  *
- * 这里不需要容量闸：能走到这一步的键必定已经在 pendingAdMessages 里（容量在
- * 那道闸就判完了），而每个键在队列里最多占一个位置，队列长度因此天然被待检
- * 表的硬顶兜住。
+ * 不设容量闸：能走到这一步的键已在 pendingAdMessages 里（容量在那道闸判定），
+ * 每个键在队列里最多占一个位置，队列长度被待检表的硬顶兜住。
  * @param input.hasUncheckedContent 由调用方比较 latestSeq 与 checkedSeq 得出；
  *   本函数不认识 bundle。
  */
@@ -68,17 +62,15 @@ export function admitAdRequeue(input: AdRequeueInput): AdRequeueDecision {
 }
 
 /**
- * 容量闸：新发送者是否已撞上全局硬顶。
+ * 容量闸：新发送者是否已撞上全局硬顶 AD_DETECT_MAX_PENDING_SENDERS。
  *
- * 已经入队的键必须留到至少一次判定尝试，因此满载时拒绝**新的不同键**而不是
- * 淘汰队首——FIFO 淘汰会让先到的人在从没被判过一次的情况下消失。已有键的后续
- * 消息不占新名额，由调用方按 `existing !== undefined` 直接跳过本闸。
+ * 已经入队的键至少保留到一次判定尝试，满载时拒绝新的不同键，不淘汰队首。
+ * 已有键的后续消息不占新名额，由调用方按 `existing !== undefined` 直接跳过本闸。
  *
- * 只读标量、不构造决策对象：判定跑在每条开着广告检测的群消息上，要能在清洗
- * 正文、URL 和引用上下文之前零载荷分配早退。本判据只由
- * workers/antiRaid/adDetect/queueState.ts 调用：rejectNewAdBundleAtCapacity 供
- * enqueueAdCandidate 的两道入队闸接纳新 key，refreshAdDetectCapacitySaturation
- * 记饱和边沿；问完即已决定去留，storeBundle 不重复判定。
+ * 只读标量、不构造决策对象：跑在每条开着广告检测的群消息上，在清洗正文、URL 和引用上下文之前
+ * 零载荷分配早退。本判据只由 workers/antiRaid/adDetect/queueState.ts 调用：
+ * rejectNewAdBundleAtCapacity 供 enqueueAdCandidate 的两道入队闸接纳新 key，
+ * refreshAdDetectCapacitySaturation 记饱和边沿；storeBundle 不重复判定。
  */
 export function isNewAdBundleAtCapacity(pendingSize: number): boolean {
   return pendingSize >= AD_DETECT_MAX_PENDING_SENDERS;
@@ -87,10 +79,8 @@ export function isNewAdBundleAtCapacity(pendingSize: number): boolean {
 /**
  * 在途闸：这一拍是否已不能再起判定。
  *
- * 批大小只限每拍**起**多少个，拦不住「上一批还没回来就再起一批」，因此这道闸
- * 按全局在途数算、不按群分配。调用方必须在把键从队列里取出**之前**问：先取
- * 出来再发现发不掉，那个键就从队列里消失了，而它未必还有下一条新消息把自己
- * 重新排进来。
+ * 批大小只限每拍起多少个，本闸按全局在途数 AD_DETECT_MAX_IN_FLIGHT 判定，不按群分配。
+ * 调用方在把键从队列里取出之前询问：键取出后未发出时不会再被排回队列。
  * @param inFlight 此刻正在等广告检测 provider 回话的键数。
  */
 export function isAdDispatchSaturated(inFlight: number): boolean {

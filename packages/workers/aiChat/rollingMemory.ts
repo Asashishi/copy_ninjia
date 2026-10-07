@@ -1,5 +1,4 @@
 import { logger } from "../../infra/logger";
-import { LinkedQueue } from "../../libs/linkedQueue";
 import { BoundedDeque } from "../../libs/boundedDeque";
 import { invalidInput } from "../../libs/inputValidation";
 import { parseAiMemorySnapshot } from "../../libs/persistedSnapshotCodec";
@@ -43,13 +42,11 @@ declare const self: Worker;
 
 /**
  * 把一条已清洗好的缓存条目压进该群的滚动缓存，并按块边界触发轮换。
- * recordChatMessage / mediaIngest.ts 的 recordChatMedia 共用——后者需要拿住
- * 条目对象的引用以便异步回填描述，所以入队和构造条目分开。
+ * recordChatMessage 与 mediaIngest.ts 的 recordChatMedia 共用，条目由调用方构造并持有引用。
  *
- * 各群「最后一次有动静」的时间戳也在这里更新为 now（chatLastActivityTimes，见
- * cache/workers/aiChat/memory.ts；now 与构造条目时的那一次读时钟是同一个值）：不论文字/媒体、也不论这条消息最终是否触发了
- * AI 回复，只要记进了滚动缓存就算——仅用于容量满时 ensureMemoryCapacity
- * 的 LRU 淘汰排序，心情系统不看群活跃度（见 aiChat/ai/mood.ts）。
+ * 各群「最后一次有动静」的时间戳在这里更新为 now（chatLastActivityTimes，见
+ * cache/workers/aiChat/memory.ts）：不论文字/媒体、也不论这条消息是否触发了 AI 回复，
+ * 只要记进了滚动缓存就算；仅用于 ensureMemoryCapacity 的 LRU 淘汰排序。
  */
 export function pushBufferedMessage(chatId: number, entry: BufferedMessage, now: number): void {
   if (!hasChatMemory(chatId)) ensureMemoryCapacity(chatId);
@@ -62,9 +59,7 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage, now:
   buf.push(entry);
   indexBufferedMessage(chatId, entry);
   dirtyMemoryChats.add(chatId);
-  // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次只 +1，且轮换把 size 收回
-  // COMPACT_BATCH_SIZE 后 push 不会再撞上下面第二个判等，两个 === 各自恰好
-  // 在块边界命中一次。
+  // 轮换机制见 COMPACT_BATCH_SIZE 注释。push 每次 +1，两个 === 判等各自在块边界命中一次。
   if (buf.size === VERBATIM_CONTEXT_MAX) {
     for (let i: number = 0; i < COMPACT_BATCH_SIZE; i++) {
       const removed: BufferedMessage | undefined = buf.shift();
@@ -79,10 +74,9 @@ export function pushBufferedMessage(chatId: number, entry: BufferedMessage, now:
 
 /**
  * 记录一条群消息到该群的滚动缓存，供之后拼装成对话上下文喂给模型。
- * 文本与昵称都会被压成单行（见 sanitizeInline，防转录注入）。
+ * 文本与昵称都会被压成单行（见 libs/text.ts 的 sanitizeInline）。
  * @param message 主线程投递过来的整条记录载荷；逐字段语义见
- *   packages/types/aiChat/protocol.ts 的 AiRecordContext / AiRecordMessage
- *   （那里也写明了字段必须一次性齐备、不得事后补键）。
+ *   packages/types/aiChat/protocol.ts 的 AiRecordContext / AiRecordMessage。
  * @returns 写入热区的条目；清洗后没有正文时为 null。
  */
 export function recordChatMessage(message: AiRecordMessage): BufferedMessage | null {
@@ -98,7 +92,7 @@ export function recordChatMessage(message: AiRecordMessage): BufferedMessage | n
  */
 function ensureMemoryCapacity(excludeChatId: number): void {
   for (;;) {
-    // chatMemoryIds() 每次都从三个 Map 重新构建 Set，同一轮淘汰内取一次共用。
+    // chatMemoryIds() 每次重新构建 Set，同一轮淘汰内取一次共用。
     const memoryIds: Set<number> = chatMemoryIds();
     if (memoryIds.size < AI_MEMORY_MAX_CHATS) return;
     const findOldest = (excludeActiveReplies: boolean): number | undefined => {
@@ -125,13 +119,12 @@ function ensureMemoryCapacity(excludeChatId: number): void {
 }
 
 /** 把某群当前的滚动缓存 + 中期摘要 + 待晋升摘要序列化成一份紧凑的快照 JSON 文本。
- *  stringify 只在这里做一次：此后「Worker -> 主线程 -> diskIOWorker」两跳
- *  postMessage 克隆的都是字符串（近乎 memcpy，对象图则要走两次深克隆），落盘端
- *  校验后写入 `chat_states.ai_context`，不再重复序列化（见 types/aiChat/protocol.ts
- *  的 AiMemoryEvent.snapshot）。 */
+ *  stringify 只在这里做一次：快照以字符串经「Worker -> 主线程 -> diskIOWorker」传递，
+ *  落盘端校验后写入 `chat_states.ai_context`（见 types/aiChat/protocol.ts 的
+ *  AiMemoryEvent.snapshot）。 */
 function buildMemorySnapshot(chatId: number): string {
   const buf: BoundedDeque<BufferedMessage> | undefined = chatBuffers.get(chatId);
-  const summaryQueue: LinkedQueue<string> | undefined = chatSummaries.get(chatId);
+  const summaryQueue: BoundedDeque<string> | undefined = chatSummaries.get(chatId);
   const snapshot: AiMemorySnapshot = {
     version: 1,
     buffer: buf ? buf.last(buf.size) : [],
@@ -159,10 +152,7 @@ function buildMemoryUsage(chatId: number): AiMemoryUsage {
  */
 export function flushMemorySnapshot(chatId: number, persistImmediately: boolean = false): void {
   if (!dirtyMemoryChats.has(chatId)) return;
-  // 字段一律发出，不用条件展开：flushDirtyMemories 每个维护 tick 都会对所有
-  // dirty 群走这里，两种形状轮着产生会让主线程 aiChat/workerBridge.ts 的
-  // onEvent 多态读 `event.persistImmediately`（AGENTS.md：不得事后增删字段）。
-  // 语义不变——接收侧判的是 `=== true`。
+  // 字段一律发出，不用条件展开，事件形状固定；接收侧判 `persistImmediately === true`。
   self.postMessage({
     type: "memory",
     chatId,
@@ -175,7 +165,7 @@ export function flushMemorySnapshot(chatId: number, persistImmediately: boolean 
 
 /**
  * 把所有 dirty 群的记忆快照 post 给主线程（进而转投 diskIOWorker 落盘），
- * 随后清空 dirty 标记。定时调用（见 aiChatWorker.ts 底部的 setInterval）以及
+ * 随后清空 dirty 标记。维护节拍（见 aiChatWorker.ts 的 runAiChatWorkerMaintenance）与
  * flushMemory（退出前最后一刷）共用。
  */
 export function flushDirtyMemories(): void {
@@ -185,18 +175,15 @@ export function flushDirtyMemories(): void {
 
 /**
  * 启动时（或本 Worker 崩溃重启后）灌入持久化的记忆快照。只对内存里还没有
- * 数据的群生效——重启后本来就全空，天然成立，不会覆盖掉刚收到的新消息。
+ * 数据的群生效，不覆盖已收到的新消息。
  *
- * buffer 只恢复最新 AI_MEMORY_HYDRATE_BUFFER_MAX（= VERBATIM_CONTEXT_MAX - 1）
- * 条：pushBufferedMessage 靠严格等值 `size === VERBATIM_CONTEXT_MAX` 触发轮换，
- * 若恰好灌回整 VERBATIM_CONTEXT_MAX 条，下一次 push 会先撞上 deque 的领域硬
- * 上限，也没有机会执行轮换。`=== COMPACT_BATCH_SIZE` 分支对恢复后 size 已达到
- * 该值的群不再触发，镜像语义由恢复的 pendingSummary 近似衔接——极端情况某块
- * 摘要粒度略有漂移，可接受，不为此复刻轮换状态机。
+ * buffer 只恢复最新 AI_MEMORY_HYDRATE_BUFFER_MAX 条（比 VERBATIM_CONTEXT_MAX 少一条），
+ * 使 pushBufferedMessage 的 `size === VERBATIM_CONTEXT_MAX` 判等在下一次 push 仍可命中。
+ * `=== COMPACT_BATCH_SIZE` 分支对恢复后 size 已达到该值的群不再触发，镜像语义由恢复的
+ * pendingSummary 近似衔接，不复刻轮换状态机。
  *
- * chatLastActivityTimes 以快照的 savedAt 近似播种，让恢复出来的群在 LRU
- * 淘汰排序里保持合理的新旧顺序；心情全 Worker 共用一份、不落盘，也不在这里
- * 播种，下次拼运行时状态区块时由 aiChat/ai/mood.ts 的 currentMoodInstruction 现抽。
+ * chatLastActivityTimes 以快照的 savedAt 播种，供 LRU 淘汰排序；心情不在这里播种，
+ * 由 aiChat/ai/mood.ts 的 currentMoodInstruction 在拼运行时状态区块时抽取。
  *
  * 恢复完成后一次性回传各群占用量（memoryUsages 事件），播种主线程展示用的
  * 只读镜像（见 cache/main/aiChat.ts 的 aiMemoryUsages）。
@@ -221,12 +208,10 @@ export function hydrateMemories(memories: Map<number, string>): void {
 
   parsedMemories.sort((left: ParsedChatMemory, right: ParsedChatMemory): number => right.snapshot.savedAt - left.snapshot.savedAt);
   let skippedOverCapacity: number = 0;
-  // 容量判定随准入递增，不在循环里反复重建 Set：chatMemoryIds() 每次
-  // 都要新建一个 Set 并完整遍历 chatBuffers / chatSummaries / pendingSummaries，
-  // 逐群调用就把启动恢复变成 O(n²)（同 ensureMemoryCapacity）。
+  // 容量判定随准入递增计数，循环内不重复调用 chatMemoryIds()。
   let memoryChatCount: number = chatMemoryIds().size;
-  // 恢复出来的群在下一条新消息之前都不 dirty，不会产生 memory 事件；主线程的
-  // 占用量镜像因此只能由本次 hydrate 播种（见下方那条 memoryUsages）。
+  // 恢复出来的群在下一条新消息之前不 dirty，不产生 memory 事件；主线程的
+  // 占用量镜像由本次 hydrate 播种（见下方 memoryUsages）。
   const usages: Map<number, AiMemoryUsage> = new Map();
   for (const { chatId, snapshot } of parsedMemories) {
     if (hasChatMemory(chatId)) continue;
@@ -239,8 +224,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
     const buf: BoundedDeque<BufferedMessage> =
       new BoundedDeque<BufferedMessage>(VERBATIM_CONTEXT_MAX);
     for (const message of snapshot.buffer.slice(-AI_MEMORY_HYDRATE_BUFFER_MAX)) {
-      // 形状归一后再入队：JSON.parse 出来的条目按各自记录时有没有可选字段分成
-      // 好几个隐藏类，直接灌进 deque 会让转录渲染在重启后长期读多种形状。
+      // 条目形状归一后再入队，deque 内的条目对象形状一致。
       const normalized: BufferedMessage = normalizeHydratedBufferedMessage(message);
       buf.push(normalized);
       // 回复链索引不落盘，恢复热区的同时同源重建（见 cache/workers/aiChat/memory.ts）。
@@ -249,7 +233,7 @@ export function hydrateMemories(memories: Map<number, string>): void {
     if (buf.size > 0) chatBuffers.set(chatId, buf);
 
     if (snapshot.summaries.length > 0) {
-      const queue: LinkedQueue<string> = new LinkedQueue<string>();
+      const queue: BoundedDeque<string> = new BoundedDeque<string>(MAX_SUMMARY_ROUNDS);
       for (const summary of snapshot.summaries.slice(-MAX_SUMMARY_ROUNDS)) {
         queue.push(summary);
       }
@@ -260,14 +244,13 @@ export function hydrateMemories(memories: Map<number, string>): void {
       pendingSummaries.set(chatId, snapshot.pendingSummary);
     }
     if (hasChatMemory(chatId)) {
-      // 只有真正留下了内容才算占一个名额——下面那条分支什么都没装进来。
+      // 只有留下内容的群才占容量名额。
       memoryChatCount++;
       chatLastActivityTimes.set(chatId, snapshot.savedAt);
       usages.set(chatId, buildMemoryUsage(chatId));
     } else {
-      // 与上面的超容量分支不同：这份快照解析、校验都过了，装进来却什么都没
-      // 留下（buffer 空、无摘要、无待处理摘要），文件本身已经没有内容可恢复，
-      // 删掉不损失任何东西。
+      // 快照解析、校验通过但没有装进任何内容（buffer 空、无摘要、无待处理摘要）：
+      // 上报 memoryDeleted 删除该快照。
       self.postMessage({ type: "memoryDeleted", chatId } satisfies AiMemoryDeletedEvent);
     }
   }

@@ -116,7 +116,7 @@ function isMessageGone(error: unknown): boolean {
 
 /**
  * 执行一次删除并归入 deleted/gone/forbidden/failed 四态；普通删除与目标专属消息删除共用。
- * 「消息已经不在了」不是故障（删痕迹这条路上它甚至是常态），不记 API 错误；update 取消由统一边界
+ * 「消息已经不在了」不记 API 错误；update 取消由统一边界
  * 直接上抛，其余取消由 runTelegramAction 统一不记。
  */
 async function runDeletion(
@@ -181,8 +181,8 @@ export async function deleteMessage(
 }
 
 /**
- * 一次删掉同一个群里的多条消息。单次上限 100 条，且与 deleteMessage 一样只能删
- * 48 小时内的；超出由调用方分片，删不掉的个别消息 Telegram 自行跳过。
+ * 一次删掉同一个群里的多条消息。单次条数上限见 TELEGRAM_DELETE_MESSAGES_BATCH_MAX，且与
+ * deleteMessage 一样只能删官方时限内的消息；超出由调用方分片，删不掉的个别消息 Telegram 自行跳过。
  */
 export async function deleteMessages(
   chatId: number,
@@ -225,7 +225,7 @@ function trackMessageDeletion(request: Promise<boolean>): void {
   );
 }
 
-/** 停机路径认领同客户端、同群的一批条目，并按 Bot API 硬上限发一次删除。 */
+/** 停机路径认领同客户端、同群的一批条目并发一次删除；批大小由调用方按 TELEGRAM_DELETE_MESSAGES_BATCH_MAX 切分。 */
 function startMessageDeletionBatch(
   entries: readonly PendingMessageDeletion[],
   api: TelegramMessageDeletionApi,
@@ -262,7 +262,7 @@ export function deleteMessageAfter({
 /**
  * 立即认领全部未到期条目，按客户端与群合批（每批不超过 TELEGRAM_DELETE_MESSAGES_BATCH_MAX）
  * 发 deleteMessages，并返回本线程当前所有在途删除句柄。正常到期仍逐条删除。Worker 可把这些
- * Promise 接入自己的 task tracker；主线程 drain 也复用它，避免两套兑现逻辑。
+ * Promise 接入自己的 task tracker；主线程 drain 也复用它。
  */
 export function flushPendingMessageDeletions(): readonly Promise<void>[] {
   const batches: Map<TelegramMessageDeletionApi, Map<number, PendingMessageDeletion[]>> = new Map();
@@ -298,7 +298,7 @@ export function flushPendingMessageDeletions(): readonly Promise<void>[] {
 
 /**
  * 正常停机前提前兑现本线程全部延迟删除，并等待已开始的删除请求。预算为零时不
- * 新建网络请求；超时只记诊断并返回，不让非功能性清理无限阻止退出。
+ * 新建网络请求；超时只记诊断并返回。
  */
 export async function drainPendingMessageDeletions(timeoutMs: number): Promise<FlushResult> {
   if (timeoutMs <= 0 && (pendingMessageDeletions.size > 0 || inFlightMessageDeletions.size > 0)) {

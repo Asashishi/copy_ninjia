@@ -54,7 +54,8 @@ async function sourceFileRecords(root: string): Promise<readonly MigrationFileRe
 }
 
 /**
- * 从 schema v11 停机备份生成独立的 v13 产物：直接删除 chat_states.ai_persona 列与 isCanConfigAiPrompt
+ * 从源 schema（`CHAT_PERSONA_REMOVAL_SOURCE_SCHEMA_VERSION`）停机备份生成独立的当前 schema
+ * （`IDENTITY_DATABASE_SCHEMA_VERSION`）产物：直接删除 chat_states.ai_persona 列与 isCanConfigAiPrompt
  * 权限位，并写入 Asia/Tokyo 时区标记。不改源文件，不覆盖既有目录，不执行服务操作；ready.json 只在
  * 全部校验及源哈希复核后产生，中断后保留目录，换新 outputRoot 重跑。部署方停服期间按清单手工替换 SQLite。
  */
@@ -109,7 +110,7 @@ if (import.meta.main) {
       "Restore original ownership/modes from sourceFiles; ensure the service can write SQLite and its directory.\n" +
       "Validate configuration and state before startup; retain the backup until service stability is confirmed.");
   } else {
-    // v11 谱系的日历固定为东京；产物按同一时区接受与生产启动相同的完整校验。
+    // 源谱系的日历固定为 `TOKYO_TIME_ZONE`；产物按同一时区接受与生产启动相同的完整校验。
     adoptTimeZone(TOKYO_TIME_ZONE);
     try {
       const result: ChatPersonaRemovalMigrationResult = await prepareChatPersonaRemovalMigration(parseSourceOutputRoots(Bun.argv.slice(2)));

@@ -19,7 +19,7 @@ import type { DiskIODomain, DiskIOReply } from "../../types/diskIO/replies";
 
 /**
  * 把单个领域的缓冲立即落盘，失败时把该领域记进 failedDomains。各自的窗口阈值在这里
- * 不生效——不管有没有攒够条数/等够时间，都立即刷。共享 SQLite 的七个领域（含 AI 上下文）
+ * 不生效，不论是否攒够条数/等够时间都立即刷。共享 SQLite 的各领域（含 AI 上下文）
  * 共用一个事务，经任一领域名提交一次即覆盖全部表，但只取走并回报这一个领域的失败；
  * all/business 由 flushScope 一次回报全部领域。
  */
@@ -60,8 +60,7 @@ async function flushDomain(
       if (!await flushJoinLogBuffer()) failedDomains.push("joinLog");
       return;
     case "joinLogPurge":
-      // 整群删除单独占一格：一个已停管群删不掉的文件不能让入群追写那一格一起
-      // 判成未落盘（见 types/diskIO/replies.ts 的 DiskIODomain）。
+      // 整群删除单独占一格，与入群追写分开判定（见 types/diskIO/replies.ts 的 DiskIODomain）。
       if (!purgeJoinLogDeletions()) failedDomains.push("joinLogPurge");
       return;
     default: {
@@ -89,7 +88,7 @@ export async function flushScope(
   // 不短路：即使前一领域失败，其余领域仍必须获得本轮落盘机会。
   if (scope === "all") await flushDomain("log", failedDomains, reply);
   // 旁路统计与样本：照常刷出，失败只丢这一批并由各自模块记 console.error，
-  // 不计入失败领域，因此不会让等待业务落盘的调用方判为失败。
+  // 不计入失败领域。
   await flushAiCacheBuffer();
   await flushAdSampleBuffer();
   await flushDomain("stickerCatalog", failedDomains, reply);

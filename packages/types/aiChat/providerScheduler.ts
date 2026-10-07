@@ -12,7 +12,7 @@ import type { AgentProvider } from "../config";
 
 /**
  * 一条 AI 供应商配额归属。相同协议、端点和凭据的能力共享执行器；模型名不参与
- * 分组，因为常见供应商在账号或项目层共享额度。
+ * 分组。
  */
 export interface AiProviderQuotaLane {
   readonly provider: AgentProvider;

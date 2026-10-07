@@ -1,13 +1,11 @@
 /**
  * 持久化路径的只读启动检查（packages/libs/fileAccess.ts）。
  *
- * 这两个函数是 AGENTS.md「不为用户行为兜底」在文件权限上的落点：路径不具备运行
- * 账号所需的权限时必须在建立连接、对外服务之前以非零码退出，且错误只写路径、
- * 字段路径和期望形态——不 chmod、不降级、不回显内容。
+ * 这两个函数是 AGENTS.md「不为用户行为兜底」在文件权限上的落点：路径不具备运行账号所需的权限时，
+ * 在建立连接、对外服务之前以非零码退出，且错误只写路径、字段路径和期望形态——不 chmod、不降级、不回显内容。
  *
- * 拒绝分支用**缺失路径**驱动：`accessSync` 对「不存在」与「权限不足」抛的是同一
- * 类错误，两者在本函数里收敛到同一条拒绝，而缺失路径不依赖测试进程的 uid
- * （以 root 跑时 chmod 0 仍然可读写，那种夹具在 CI 与本机会给出不同结论）。
+ * 拒绝分支用缺失路径驱动：`accessSync` 对「不存在」与「权限不足」抛同一类错误，在本函数里收敛到同一条拒绝；
+ * 缺失路径不依赖测试进程的 uid。
  */
 
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -173,8 +171,7 @@ describe("持久化路径的启动权限检查", () => {
     const root: string = tempRoot();
     const path: string = join(root, "database");
 
-    // SQLite 写连接要维护 WAL/SHM 旁路文件，因此父目录的期望形态比文件多一个
-    // 可进入位（见 database/interact/connection.ts 的 requireWritableAccess）。
+    // SQLite 写连接要维护 WAL/SHM 旁路文件，父目录的期望形态比文件多一个可进入位（见 database/interact/connection.ts 的 requireWritableAccess）。
     expect(() => assertDirectoryReadableWritable(path)).toThrow(InputValidationError);
     expect(() => assertDirectoryReadableWritable(path)).toThrow(
       `${path}: $mode must be readable, writable and searchable by the runtime account.`
@@ -194,7 +191,7 @@ describe("持久化路径的启动权限检查", () => {
 
     expect(message).toContain(secretPath);
     expect(message).toContain("$mode");
-    // 底层异常一律被吞掉：errno 文案进日志等于把部署方的目录结构写进 logs/。
+    // 底层异常一律被吞掉，errno 文案不进日志。
     expect(message).not.toContain("ENOENT");
     expect(message).not.toContain("no such file");
   });

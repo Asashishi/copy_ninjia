@@ -20,19 +20,19 @@ function bundle(entries: AdCandidateEntry[], checkedSeq: number): AdMessageBundl
     chatId: -1001,
     senderId: 42,
     meta: { firstName: "Someone", lastName: "", username: "someone" },
+    senderName: "Someone",
     isChannel: false,
     justJoined: false,
     entries,
     pendingDeleteIds: [],
+    pendingDeleteOverflowed: false,
+    uncheckedEvicted: false,
     nextSeq: entries.length + 1,
     checkedSeq,
   };
 }
 
-/**
- * 送检选取是一个纯函数，却决定了「判定读到什么」与「水位推进到哪」，因此单独
- * 成文件覆盖，不挤进那份重 mock 的 adDetectQueue 集成测试。
- */
+/** 送检选取（selectAdBundleEntries）：纯函数，决定判定读到的条目与水位推进到的序号。 */
 describe("广告送检条目选取", () => {
   test("未判条目按序装入，水位推进到最后一条装下的序号", () => {
     const selection: AdBundleSelection = selectAdBundleEntries(bundle([entry(1, "a"), entry(2, "b"), entry(3, "c")], 0));
@@ -45,16 +45,14 @@ describe("广告送检条目选取", () => {
     const selection: AdBundleSelection = selectAdBundleEntries(
       bundle([entry(1, "ctx1"), entry(2, "ctx2"), entry(3, "new")], 2)
     );
-    // 顺序是这条用例的重点：拼串按序号逐行编号，顺序错了模型读到的上下文就错位。
+    // 顺序：拼串按序号逐行编号，上下文在前、待判在后。
     expect(selection.entries.map((item: AdCandidateEntry): number => item.seq)).toEqual([1, 2, 3]);
     expect(selection.checkedToSeq).toBe(3);
   });
 
   test("全部已判过时不选出任何新内容，水位原地不动（选出来的只是上下文）", () => {
-    // 这种 bundle 在真实路径上到不了这里——派发前 admitAdRequeue 的
-    // hasUncheckedContent 闸就把它挡住了。这里钉的是水位不变量本身：没有比
-    // checkedSeq 更大的条目被选中，checkedToSeq 也绝不能前进，否则一次空转
-    // 就会把还没判过的内容记成判过。
+    // 这种 bundle 在真实路径上到不了这里：派发前 admitAdRequeue 的 hasUncheckedContent 闸会挡住它。
+    // 这里验证水位不变量：没有比 checkedSeq 更大的条目被选中时，checkedToSeq 不前进。
     const selection: AdBundleSelection = selectAdBundleEntries(bundle([entry(1, "a"), entry(2, "b")], 2));
     expect(selection.checkedToSeq).toBe(2);
     expect(selection.entries.every((item: AdCandidateEntry): boolean => item.seq <= 2)).toBe(true);
@@ -77,9 +75,7 @@ describe("广告送检条目选取", () => {
   });
 
   test("返回的清单是独立数组，调用方改它不会污染原 bundle", () => {
-    // 选取内部复用了自己那个局部上下文数组来承载最终清单；它必须仍与
-    // bundle.entries 无别名，否则调用方（disposal 侧要留一份送检快照）一改就
-    // 把原串也改了。
+    // 选取内部复用局部上下文数组承载最终清单；它与 bundle.entries 无别名（disposal 侧要留一份送检快照）。
     const source: AdCandidateEntry[] = [entry(1, "a"), entry(2, "b")];
     const original: AdMessageBundle = bundle(source, 0);
     const selection: AdBundleSelection = selectAdBundleEntries(original);

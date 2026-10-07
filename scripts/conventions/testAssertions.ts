@@ -3,15 +3,15 @@ import ts from "typescript";
 
 /**
  * 测试断言的取值口径（AGENTS.md「测试」）：断言涉及代码常量的取值时必须从常量模块
- * 读取，不得在测试里写死具体值。机器可判的下界有两条：
+ * 读取，不得在测试里写死具体值。机器可判的下界如下：
  *
- * - 「把导入的 SCREAMING_SNAKE_CASE 常量直接与数字字面量比对」：
- *   `expect(IMPORTED_CONST).toBe(30_000)`、`.toEqual(3 * 60_000)` 这类写法只重复常量的
- *   当前取值，常量改了测试跟着改，不验证任何行为（collectConstantValueAssertionProblems）。
- * - 「匹配器实参里写出与 packages/consts 导出字符串常量逐字相同的字面量」：常量的文案
- *   一改，断言要么跟着手改、要么红得与行为无关（collectStringConstantAssertionProblems）。
- *   同一字面量在本文件匹配器实参之外出现过（测试自造的夹具输入，断言只是核对它原样
- *   透传）时不算，短于 STRING_CONSTANT_MIN_LENGTH 的常量不参与比对。
+ * - 把导入的 SCREAMING_SNAKE_CASE 常量直接与数字字面量比对：
+ *   `expect(IMPORTED_CONST).toBe(30_000)`、`.toEqual(3 * 60_000)` 这类写法
+ *   （collectConstantValueAssertionProblems）。
+ * - 匹配器实参里写出与 packages/consts 导出字符串常量逐字相同的字面量
+ *   （collectStringConstantAssertionProblems）。同一字面量在本文件匹配器实参之外出现过
+ *   （测试自造的夹具输入，断言只是核对它原样透传）时不算，短于 STRING_CONSTANT_MIN_LENGTH
+ *   的常量不参与比对。
  *
  * 测试文件自己声明的夹具常量不在本规则范围内。
  */
@@ -35,8 +35,7 @@ const CONSTANT_NAME_PATTERN: RegExp = /^[A-Z][A-Z0-9_]*$/;
 const VALUE_MATCHERS: ReadonlySet<string> = new Set(["toBe", "toEqual", "toStrictEqual"]);
 
 /**
- * 参与字符串常量比对的最短取值长度。更短的取值（"user"、"text" 这类）与夹具、协议字段
- * 天然重名，逐字相同说明不了断言在重复常量。
+ * 参与字符串常量比对的最短取值长度；更短的取值（"user"、"text" 这类）不参与比对。
  */
 const STRING_CONSTANT_MIN_LENGTH: number = 8;
 

@@ -122,48 +122,54 @@ function findActiveGagSenderSession(
  * 标记与 sender_chat.id 同时绑定发言频道，并由 fragment 与 message.chat.id
  * 同时绑定超级群；用户分支对应核对主页标记、群 ID 与 from.id。
  *
- * **常态同步返回 false**：本群没有活动会话、这条也不是本 bot 发出的旧 gag
- * inline 结果时，判定只有一次 Map.has 与一次 via_bot/entity 检查。本 handler
- * 挂在每条群消息之前（见 app/registerHandlers.ts），不能为这条恒假的判定给
- * 每条消息分配一个 Promise；只有真要认领时才进入下面的异步段。
+ * 认领判定全部同步完成，只有真要删消息或结束过期会话时才返回 Promise：本群没有会话、
+ * 这条也不是本 bot 发出的旧 gag inline 结果时，判定只有一次 Map 查询与一次 via_bot/entity
+ * 检查；本群有会话时，不认领的消息（非目标发言人等）同样同步返回 false。本 handler 挂在
+ * 每条群消息之前（见 app/registerHandlers.ts）。
  */
 export function handleGagMessageIngress(
   message: Message,
   botId: number
 ): boolean | Promise<boolean> {
-  if (
-    !gagSessionsByChat.has(message.chat.id) &&
-    !hasGagInlineMarker(message, botId)
-  ) return false;
-  return claimGagMessage(message, botId);
-}
-
-/**
- * 认领判定的异步段；只有本群有会话、或消息带 gag 标记时才走到（普通群消息在
- * 上面那道同步守卫就返回了），因此本群没有会话时这条消息必带 gag 标记。标记判定在
- * 这里重算一次：它是纯判定，而这条路本来就低频，重算换来的是守卫与本体各自只读
- * 自己需要的东西。
- */
-async function claimGagMessage(
-  message: Message,
-  botId: number
-): Promise<boolean> {
   const sessions: GagSession[] | undefined =
     gagSessionsByChat.get(message.chat.id);
+  if (sessions === undefined) {
+    // 本群没有会话时，带标记的消息是跨群或已过期的 gag inline 结果，删除并认领。
+    return hasGagInlineMarker(message, botId) ? deleteClaimedGagMessage(message) : false;
+  }
+  return claimGagMessage(message, botId, sessions);
+}
+
+/** 删除一条已认领的消息；删除结局不影响认领。 */
+async function deleteClaimedGagMessage(message: Message): Promise<boolean> {
+  await deleteMessageWithOutcome(message.chat.id, message.message_id);
+  return true;
+}
+
+/** 结束到期会话；这条消息是带文字的 gag 入口候选时一并删除并认领。 */
+async function finishExpiredGagOnMessage(
+  session: GagSession,
+  message: Message,
+  deleteCandidate: boolean
+): Promise<boolean> {
+  await finishGag(session, "timeout");
+  return deleteCandidate ? deleteClaimedGagMessage(message) : false;
+}
+
+/** 本群有会话时的认领判定（见 handleGagMessageIngress）。 */
+function claimGagMessage(
+  message: Message,
+  botId: number,
+  sessions: GagSession[]
+): boolean | Promise<boolean> {
   const senderId: number | undefined =
     message.sender_chat?.id ?? message.from?.id;
-  // 本群没有会话时仍要拦下带标记的旧结果——那是跨群或已过期的 gag inline 结果。
-  if (sessions === undefined) {
-    await deleteMessageWithOutcome(message.chat.id, message.message_id);
-    return true;
-  }
   const session: GagSession | undefined = findActiveGagSenderSession(
     sessions,
     senderId
   );
   const now: number = Date.now();
-  // 只有「说话的人正被管教」才付话题解析这两次属性读取；本 handler 排在所有
-  // 命令之前，普通群消息不该为一个只对被管教者生效的判定买单。
+  // 只有说话的人正被管教时才解析话题。
   if (session !== undefined) {
     const threadId: number | undefined = forumTopicThreadId(message);
     // 发言补发与跨话题移动均同步认领后台任务，不等待维护性的 Telegram 往返。
@@ -178,19 +184,15 @@ async function claimGagMessage(
     !isGagInlineMessage &&
     hasDeletableText;
   if (!isDeletedGagTargetMessage) {
-    // 会被 gag 删除的目标消息不进入任何入口的 7 条窗口；通过按钮的发言和
-    // 允许保留的无文字媒体仍是群内可见消息。常态只原地更新定长小数组。
+    // 会被 gag 删除的目标消息不计入任何入口的消息窗口（见 ./counter.ts）；
+    // 通过按钮的发言和保留的无文字媒体仍计入。
     const due: GagSession[] | null = collectDueGagSpeakNotices(
       sessions,
       now
     );
-    // 入口换新只是维护动作，绝不能在这条 ingress 里 await：本 handler 注册在所有
-    // 命令之前，而 update 循环一次只取一条 update 并完整等待（app/updateRunner.ts）。
-    // 一旦 message/delete 车道处在 429 退避，enqueueOrStart 会把这次发送/删除停到
-    // retry_after（infra/telegram/outboundGate.ts），期间**任何群的任何 update**
-    // 都不再被处理。交给统一的 gag 后台任务集合，停机由 drainGagRuntime 有界排空。
-    // 换新任务自己会重新核对会话仍是当前 active 会话，并由 speakNoticeRefreshTask
-    // 保证同一会话只有一条在途。
+    // 入口换新是维护动作，不在这条 ingress 里 await：交给统一的 gag 后台任务集合，
+    // 停机由 drainGagRuntime 有界排空。换新任务自己重新核对会话仍是当前 active
+    // 会话，并由 speakNoticeRefreshTask 保证同一会话只有一条在途。
     if (due !== null) refreshDueGagSpeakNotices(due);
   }
   const isCandidate: boolean = hasGagInlineMarker(message, botId) || isGagInlineCandidate(
@@ -199,23 +201,15 @@ async function claimGagMessage(
     sessions
   );
   if (session === undefined) {
-    if (!isCandidate) return false;
-    if (!hasDeletableText) return false;
-    await deleteMessageWithOutcome(message.chat.id, message.message_id);
-    return true;
+    if (!isCandidate || !hasDeletableText) return false;
+    return deleteClaimedGagMessage(message);
   }
   if (session.expiresAt <= Date.now()) {
-    await finishGag(session, "timeout");
-    if (isCandidate && hasDeletableText) {
-      await deleteMessageWithOutcome(message.chat.id, message.message_id);
-      return true;
-    }
-    return false;
+    return finishExpiredGagOnMessage(session, message, isCandidate && hasDeletableText);
   }
   if (isGagInlineMessage && senderId === session.targetId) return false;
   if (!hasDeletableText) return false;
-  await deleteMessageWithOutcome(message.chat.id, message.message_id);
-  return true;
+  return deleteClaimedGagMessage(message);
 }
 
 /** 为一条活动会话建立身份专属 inline article。 */
@@ -268,15 +262,14 @@ function buildGagInlineResult(
  * 5. 任何带 `gag:` 的查询都由本函数终止分发；非法、过期或用户身份不匹配时回空，
  *    绝不能回退运势或同时生成两类结果。
  *
- * InlineQuery 关于所在聊天只提供 chat_type，没有当前具体 chat.id 或发送前拦截钩子；
- * 追加 token/摘要/群 ID 只能声称来源，不能证明输入框在哪个群，因此禁止重新引入。
- * 正常按钮用 switch_inline_query_current_chat 留在会话群；真正放行发生在消息入口：
- * 主页 marker 绑定目标、fragment 绑定会话群，再与 Telegram 实际给出的
- * from.id/sender_chat.id、message.chat.id 核验。频道候选使用不含群标题的通用标题。
+ * InlineQuery 关于所在聊天只提供 chat_type，没有当前具体 chat.id 或发送前拦截钩子，
+ * 查询文本里的 token/摘要/群 ID 只能声称来源。正常按钮用
+ * switch_inline_query_current_chat 留在会话群；放行发生在消息入口：主页 marker
+ * 绑定目标、fragment 绑定会话群，再与 Telegram 实际给出的 from.id/sender_chat.id、
+ * message.chat.id 核验。频道候选使用不含群标题的通用标题。
  *
- * 不做分页：GAG_SESSION_MAX 是**跨全部群**的全局上限（见 gag/runtime.ts 的
- * reserveGagSession），远小于单次 answerInlineQuery 的 50 条上限，而每条查询最多
- * 匹配五条会话；频道可在多个群有同一目标，具体群由结果的隐藏标记绑定。
+ * 不做分页：结果数受 GAG_SESSION_MAX（跨全部群的全局上限，见 gag/runtime.ts 的
+ * reserveGagSession）约束；频道可在多个群有同一目标，具体群由结果的隐藏标记绑定。
  */
 export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
   const inlineQuery: InlineQuery | undefined = ctx.inlineQuery;
@@ -288,7 +281,7 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
     parseGagInlineQuery(inlineQuery.query);
   const results: InlineQueryResultArticle[] = [];
   const now: number = Date.now();
-  // 解析不出来的伪造前缀照样由 gag 认领，只是回一份空结果——绝不能退回运势。
+  // 带 gag 前缀但解析不出来的查询照样由 gag 认领，回空结果，不退回运势。
   if (scopedQuery !== undefined) {
     for (const sessions of gagSessionsByChat.values()) {
       for (const session of sessions) {
@@ -319,11 +312,9 @@ export async function handleGagInlineQuery(ctx: Context): Promise<boolean> {
     logApiError("answer gag inline query", error);
     if (isTelegramRequestRejected(error)) return true;
   }
-  // 发言正文由 renderGagSpeech 变形生成且不可逆，落群消息里没有这个人真正打的
-  // 字；广告检测只能按结果正文取回这里登记的源文本（见
-  // infra/inlineResultSources.ts）。归一方式与 renderGagSpeech 内部一致，登记的
-  // 因此正是被变形的那段文本。登记在会话目标名下：结果只含该目标的会话，落群
-  // 后的发送者（本人 from.id 或频道 sender_chat.id）正是它。
+  // 登记结果正文对应的源文本（见 infra/inlineResultSources.ts），广告检测按结果
+  // 正文取回。归一方式与 renderGagSpeech 内部一致（sanitizeInline）。登记在会话
+  // 目标 id 名下，落群后的发送者（本人 from.id 或频道 sender_chat.id）即该 id。
   if (scopedQuery !== undefined) {
     recordInlineResultSources(
       scopedQuery.targetId,

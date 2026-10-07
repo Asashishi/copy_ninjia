@@ -121,7 +121,7 @@ describe("Anti-Raid pending-member flood handling", () => {
       generation: terminal.record.generation,
       revision: terminal.record.revision,
     });
-    // 终态现在先 await 一次 getChatMember 确认仍在群，kick 不再与回执处理同 tick。
+    // 终态先 await 一次 getChatMember 确认仍在群，kick 与回执处理不在同一 tick。
     await Bun.sleep(0);
     expect(actions[0]).toBe("kick");
 

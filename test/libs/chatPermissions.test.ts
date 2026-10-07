@@ -5,8 +5,7 @@ import { normalizeChatPermissions } from "../../packages/libs/chatPermissions";
 
 describe("chat permissions normalization", () => {
   test("丢掉平台新增的未知字段，已知布尔字段原样保留", () => {
-    // Telegram 单方面给 getChat().permissions 加一个字段就是这个形态。原样存进
-    // ChatState.lockdown 会在落盘自检处变成致命错误，把整轮私密模式卡在 APPLYING。
+    // Telegram 单方面给 getChat().permissions 加一个字段就是这个形态；未知字段不进 ChatState.lockdown，落盘自检不因它失败。
     const fromTelegram = {
       can_invite_users: true,
       can_send_messages: false,
@@ -31,7 +30,7 @@ describe("chat permissions normalization", () => {
   });
 
   test("已经合法的权限集原样通过，缺省字段不被补成 false", () => {
-    // 补 false 等于把「Telegram 没说」写成「明确禁止」，恢复时会把群权限改小。
+    // 缺省字段不补 false：「Telegram 没说」与「明确禁止」是两回事。
     expect(normalizeChatPermissions({})).toEqual({});
     const full: ChatPermissions = {};
     for (const key of CHAT_PERMISSION_KEYS) Reflect.set(full, key, true);

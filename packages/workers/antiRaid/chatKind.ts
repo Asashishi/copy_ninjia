@@ -10,8 +10,8 @@
  * 有过一条被本进程处理的 update 时都读不到值。终态处置按群类型分派
  * `banChatMember`/`unbanChatMember`，「只踢不封」不变量见 docs/cn/04-invariants.md。
  *
- * 冷启动时主线程镜像也可能为空；终态执行前会用 getChat 按群复用反查，查不出
- * 类型就保留终态退避，绝不拿「未知」猜一个破坏性 API。
+ * 冷启动时主线程镜像可能为空；终态执行前用 getChat 按群复用反查，查不出
+ * 类型就保留终态退避，不按「未知」选择破坏性 API。
  */
 
 import type { ChatFullInfo } from "grammy/types";
@@ -47,8 +47,7 @@ export function resolveChatIsSupergroup(
   }
   const task: Promise<boolean | undefined> = telegramApi.getChat(chatId)
     .then((chat: ChatFullInfo): boolean | undefined => {
-      // 主线程镜像可能在查询期间到达。迟到请求不得覆盖它，但当前等待者可以直接
-      // 使用那份更新值，避免无谓地再退避一个终态周期。
+      // 主线程镜像可能在查询期间到达：迟到请求不覆盖它，当前等待者直接使用那份更新值。
       if (workerChatKindFetches.get(chatId) !== task) {
         return workerChatIsSupergroup.get(chatId);
       }

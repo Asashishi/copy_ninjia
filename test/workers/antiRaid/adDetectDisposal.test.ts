@@ -51,6 +51,7 @@ function bundle(): AdMessageBundle {
     chatId: -1001,
     senderId: 7,
     meta: { firstName: "Spammer", lastName: "", username: "spammer" },
+    senderName: "Spammer",
     isChannel: false,
     justJoined: false,
     entries: [
@@ -73,6 +74,8 @@ function bundle(): AdMessageBundle {
       },
     ],
     pendingDeleteIds: [],
+    pendingDeleteOverflowed: false,
+    uncheckedEvicted: false,
     nextSeq: 3,
     checkedSeq: 0,
   };
@@ -109,19 +112,16 @@ describe("广告处置副作用", () => {
       label: "@spammer",
       meta: { firstName: "Spammer", lastName: "", username: "spammer" },
       reason: "引流加微信",
-      // 判定依据的整串原样回投，供主线程写进命中样本；只给人看的引用/回复
-      // 上下文跟着各自那条消息走，判定文本里从来没有它们。
+      // 判定依据的整串原样回投，供主线程写进命中样本；引用/回复上下文跟着各自那条消息走，不在判定文本里。
       messages: [
         { messageId: 11, text: "加我", replyTo: "在吗" },
         { messageId: 12, text: "微信 xxx" },
       ],
     }]);
-    // 整串走一次批量删除：逐条删会把一次处置放大成几十个往返，在 delete
-    // 类别发生 429 时也会无谓扩大这条独立 FIFO 的积压。
+    // 整串走一次批量删除。
     expect(deleteMessages).toHaveBeenCalledTimes(1);
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12]);
-    // 播报的文案要断言「在所有盯着的群里一起封掉了」，而此刻一个群都还没登记：
-    // 谁知道结果谁播报，因此这一步不在本线程做（见 antiRaid/adDetect.ts）。
+    // 播报由知道结果的主线程发出，本线程不播报（见 antiRaid/adDetect.ts）。
     expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
   });
 
@@ -180,11 +180,9 @@ describe("广告处置副作用", () => {
     adDetectPublishHolder.current = (event: AdDetectedEvent): void => { events.push(event); };
     await disposeAdSender({ bundle: live, judged, verdict: { isAd: true, reason: "引流" } });
 
-    // 样本必须是模型读过的那两条：把它没读过的 13 写进「判定依据」，人回头
-    // 复现的就是另一串内容，而样本文件存在的唯一理由就是复现它读过的东西。
+    // 样本是模型读过的那两条（11、12），不含它没读过的 13。
     expect(events[0]?.messages.map((message) => message.messageId)).toEqual([11, 12]);
-    // 删除则要覆盖两边：只删 judged 会放过抢跑发出来的 13，只删现场会漏掉
-    // 已被裁掉、但模型确实据以判定的 11。
+    // 删除取两边的并集：来自现场的 13 与来自已被裁掉的判定依据的 11。
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12, 13]);
   });
 
@@ -196,14 +194,13 @@ describe("广告处置副作用", () => {
     adDetectPublishHolder.current = (): void => {};
     await disposeAdSender({ bundle: live, judged: live.entries, verdict: { isAd: true, reason: "引流" } });
 
-    // 不带上它们的话，这些广告既没进过判定也没人删，会永久留在群里——频道马甲
-    // 尤其如此，banChatSenderChat 没有 revoke_messages。
+    // 转存的 id 并入删除集合。
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12, 9, 10]);
   });
 
   test("并集超过接口单次上限时分片删除，不让整批被拒", async () => {
     const live: AdMessageBundle = bundle();
-    // 爆发式刷屏攒出的待删 id 可以远超 100（见 AD_DETECT_MAX_PENDING_DELETE_IDS）。
+    // 爆发式刷屏攒出的待删 id 可以超过 TELEGRAM_DELETE_MESSAGES_BATCH_MAX（见 AD_DETECT_MAX_PENDING_DELETE_IDS）。
     live.pendingDeleteIds = Array.from(
       { length: 150 },
       (_value, index): number => 1_000 + index
@@ -213,8 +210,7 @@ describe("广告处置副作用", () => {
     const totalIds: number = live.pendingDeleteIds.length + live.entries.length;
     await disposeAdSender({ bundle: live, judged: live.entries, verdict: { isAd: true, reason: "引流" } });
 
-    // deleteMessages 只有整体成败：一次带满全部 id 会让整批被拒、一条都删不掉，
-    // 比不转存那些 id 还糟。
+    // deleteMessages 只有整体成败，并集按 TELEGRAM_DELETE_MESSAGES_BATCH_MAX 分片。
     expect(deleteMessages).toHaveBeenCalledTimes(2);
     expect((deleteMessages.mock.calls[0]?.[1] as number[]).length).toBe(TELEGRAM_DELETE_MESSAGES_BATCH_MAX);
     expect((deleteMessages.mock.calls[1]?.[1] as number[]).length).toBe(totalIds - TELEGRAM_DELETE_MESSAGES_BATCH_MAX);
@@ -264,9 +260,9 @@ describe("广告处置副作用", () => {
   test("回投通道已关闭时删消息照做，只记一行错误日志", async () => {
     await disposeAdSender({ bundle: bundle(), judged: bundle().entries, verdict: { isAd: true, reason: "卖号" } });
     expect(errorLogs[0]).toContain("main-thread channel is closed");
-    // 那一串确实是广告，删掉没问题。
+    // 那一串确实是广告，删除照做。
     expect(deleteMessages).toHaveBeenCalledTimes(1);
-    // 拉黑与各群封禁永远不会发生，跟着结果走的播报自然也不会有。
+    // 拉黑与各群封禁不会发生，播报也不发。
     expect(sendTemporaryMessageFromMain).not.toHaveBeenCalled();
   });
 

@@ -3,22 +3,21 @@
  * input item 累积上。
  *
  * 请求固定 store=false（见 consts/aiChat/openai.ts 的 OPENAI_STORE_RESPONSES），
- * 因此多轮工具往返不靠服务端会话续接，而是把模型每一轮的 output item 原样
- * 追加回本地 input 列表，再挂上 function_call_output。`call_id` 是这两者之间
- * 唯一的关联键，缺了就没法续接。
+ * 多轮工具往返不靠服务端会话续接，而是把模型每一轮的 output item 原样
+ * 追加回本地 input 列表，再挂上 function_call_output；`call_id` 是这两者之间
+ * 的关联键。
  *
  * 联网查证走 OpenAI 内建的 hosted `web_search` 工具：检索在服务端自动执行，
- * 结果直接体现在最终正文里，只以 `web_search_call` item 的形式留下调用记录，
- * 不会以函数调用的形式抛回来——与 Gemini 的 googleSearch 是同一种服务端工具
- * 语义，因此上层的检索预算逻辑对各家通用。
+ * 结果体现在最终正文里，只以 `web_search_call` item 的形式留下调用记录，
+ * 不以函数调用的形式抛回；上层的检索预算逻辑对各家通用。
  *
- * 与 Gemini 侧的差异：请求不带采样温度，GPT-5 系推理模型只接受默认
- * 值。中立契约的 `grounded` 因此在本包不影响采样，只有 Gemini 侧会据此降温。
+ * 请求不带采样温度；中立契约的 `grounded` 在本包不影响采样。
  *
- * OpenAI 原生 Responses 在 `store:false` 时默认把可回放的
- * `reasoning.encrypted_content` 带回；多轮工具往返必须与函数调用一起续传。
- * 兼容网关可能剥掉该载荷，因此只回放确实带非空密文的 reasoning item；
- * id-only item 仍丢弃，避免下一轮被无服务端状态可查的兼容端点拒绝。
+ * `store:false` 时，多轮工具往返把带非空 `reasoning.encrypted_content` 的 reasoning item
+ * 与函数调用一起续传；id-only 的 reasoning item 丢弃。
+ *
+ * 会话创建时固定 text 能力的配置与客户端，整轮的每次请求都用它们；agent 配置热重载只影响
+ * 之后新建的会话。
  */
 
 import type OpenAI from "openai";
@@ -31,7 +30,7 @@ import {
   OPENAI_STORE_RESPONSES,
 } from "../../consts/aiChat/openai";
 import { getAgentDeploymentConfig } from "../../config/agent";
-import { requestOpenAiResult } from "./client";
+import { getOpenAiClient, requestOpenAiResult } from "./client";
 import { stablePrefixFingerprint } from "../../libs/prefixFingerprint";
 import {
   countWebSearchCalls,
@@ -40,7 +39,7 @@ import {
   responseOutputItems,
   responseOutputText,
 } from "./response";
-import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
+import { failedReplyTurn } from "../ai/utils/replyTurn";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
 import type {
   AiReplySession,
@@ -53,15 +52,13 @@ import type {
 import type { AgentCapabilityConfig } from "../../types/config";
 
 /** 中立工具声明转 Responses 的 function tool。两边的参数都是 JSON Schema，
- *  直接透传；strict 必须为 false——本项目的 schema 不声明
- *  additionalProperties:false，开严格模式会被服务端拒绝。 */
+ *  直接透传；strict 固定为 false。 */
 function toFunctionTool(definition: AiToolDefinition): OpenAI.Responses.Tool {
   return {
     type: "function",
     name: definition.name,
     description: definition.description,
-    // 按引用透传，不克隆：schema 是 consts 里构造后只读的对象，SDK 只序列化不
-    // 改写它。每轮请求都克隆一遍等于每次工具往返白产生一批短命对象。
+    // 按引用透传，不克隆：schema 是 consts 里构造后只读的对象，SDK 只序列化不改写它。
     parameters: definition.parametersJsonSchema,
     strict: false,
   };
@@ -76,11 +73,9 @@ function buildTools(request: AiReplyTurnRequest): OpenAI.Responses.Tool[] {
 }
 
 /**
- * 判断本次请求能否使用 GPT-5.6 的 prompt cache breakpoint 协议。
- *
- * 只有 SDK 默认的 OpenAI 官方端点且模型属于当前已核对的 GPT-5.6 家族时启用。
- * 自定义 base_url 代表兼容协议，不能因模型名相同就假定端点接受 breakpoint 字段；
- * 其余 OpenAI 模型不带 breakpoint 与 `prompt_cache_options`，只走自动前缀缓存。
+ * 判断本次请求是否带 prompt cache breakpoint：provider 为 openai、未配置自定义 base_url
+ * （SDK 默认端点），且模型名为 OPENAI_PROMPT_CACHE_BREAKPOINT_MODEL_PREFIX 或以其加 `-` 开头时为真；
+ * 其余请求不带 breakpoint 与 `prompt_cache_options`。
  */
 function supportsPromptCacheBreakpoints(config: AgentCapabilityConfig): boolean {
   if (config.provider !== "openai" || config.baseUrl !== undefined) return false;
@@ -93,13 +88,9 @@ function supportsPromptCacheBreakpoints(config: AgentCapabilityConfig): boolean 
  * 加密推理、可配对的函数调用、正文消息与服务端检索记录；其余 item 类型本
  * 项目不挂载对应工具，出现即忽略。
  *
- * **函数调用要过 isPairableFunctionCall**，与 extractFunctionCalls 同一判据：
- * 缺 call_id 的那条不会被执行、也就配不上 function_call_output，原样推回
- * input 只会让下一轮请求被整体 400 拒绝（详见该函数的 JSDoc）。
+ * 函数调用经 isPairableFunctionCall 过滤，与 extractFunctionCalls 同一判据。
  *
- * **reasoning item 只在有非空加密载荷时回放**：OpenAI 原生端点在无状态
- * 模式下默认返回它，不需要额外的 include；兼容网关若只留下 `rs_…` id，
- * 回放反而可能因无服务端状态可查而被拒绝，所以仍然 fail-safe 丢弃。
+ * reasoning item 只在带非空 `encrypted_content` 时回放，其余丢弃。
  */
 function toInputItems(output: readonly OpenAI.Responses.ResponseOutputItem[]): OpenAI.Responses.ResponseInputItem[] {
   const items: OpenAI.Responses.ResponseInputItem[] = [];
@@ -122,25 +113,27 @@ function toInputItems(output: readonly OpenAI.Responses.ResponseOutputItem[]): O
 /**
  * 建立一轮 OpenAI 回复会话。会话随本轮结束即弃，不跨轮复用。
  *
- * 稳定区块与易变区块按顺序拼进同一个 user 轮次，**不合并成一段文本**：
- * Responses 的自动前缀缓存按 instructions → tools → input 的序列比对前缀，稳定
- * 内容排在前面才可能命中。所有模型都带按稳定前缀算出的 `prompt_cache_key`——键只
- * 影响路由，让共享同一段前缀的请求尽量落到同一台机器上。GPT-5.6 官方端点还在最后
- * 一个稳定区块后放显式 breakpoint，同时保留 implicit 模式：显式断点服务跨回复的
- * 稳定前缀，隐式断点服务同一回复内持续增长的工具往返。兼容端点与其余模型不发送
- * 这两个字段。`prompt_cache_key` 的分段哈希约定见 libs/prefixFingerprint.ts。
+ * 稳定区块与易变区块按顺序拼进同一个 user 轮次，各自保持独立的 input_text 块，稳定的在前。
+ * 所有请求都带按稳定前缀算出的 `prompt_cache_key`（分段哈希约定见 libs/prefixFingerprint.ts）。
+ * supportsPromptCacheBreakpoints 为真时，最后一个稳定区块带显式 breakpoint，并以 implicit
+ * 模式发送 `prompt_cache_options`；其余请求不发送这两个字段。
  */
 export function createOpenAiReplySession(
   { stableBlocks, volatileBlocks, signal }: AiReplySessionParams
 ): AiReplySession {
+  const config: AgentCapabilityConfig = getAgentDeploymentConfig().text;
+  const client: OpenAI = getOpenAiClient("text");
+  const useBreakpoints: boolean = stableBlocks.length > 0 && supportsPromptCacheBreakpoints(config);
   const content: OpenAI.Responses.ResponseInputContent[] = [];
-  let breakpointTarget: OpenAI.Responses.ResponseInputText | undefined;
   for (let index: number = 0; index < stableBlocks.length; index += 1) {
     const text: string | undefined = stableBlocks[index];
     if (text === undefined) continue;
     if (index === stableBlocks.length - 1) {
-      breakpointTarget = { type: "input_text", text, prompt_cache_breakpoint: undefined };
-      content.push(breakpointTarget);
+      content.push({
+        type: "input_text",
+        text,
+        prompt_cache_breakpoint: useBreakpoints ? { mode: "explicit" } : undefined,
+      });
     } else {
       content.push({ type: "input_text", text });
     }
@@ -150,10 +143,9 @@ export function createOpenAiReplySession(
   // 上一次 request() 拿到的模型 output item，等 appendToolOutputs() 接回 input。
   let pendingModelItems: OpenAI.Responses.ResponseInputItem[] | undefined;
 
-  // prompt_cache_key 按工具形态记忆化：一轮回复内 functions 与 systemPrompt 恒定，
-  // webSearchEnabled 只会在供应商报服务端工具调用超限后的降级重试里变化一次（见
-  // workers/aiChat/replyModel.ts 头注），没必要每轮重算一次几十 KB 的 SHA-256。
-  // 指纹覆盖本端自动前缀缓存能复用的完整稳定段，包括参考记忆。
+  // prompt_cache_key 按工具形态记忆化：functions、systemPrompt 与 webSearchEnabled 都没变时
+  // 复用上一次算好的键（webSearchEnabled 只会在供应商报服务端工具调用超限后的降级重试里变化，
+  // 见 workers/aiChat/replyModel.ts 头注）。指纹覆盖完整稳定段，包括参考记忆。
   let cacheKey: string | undefined;
   let keyedFunctions: readonly AiToolDefinition[] | undefined;
   let keyedWebSearchEnabled: boolean | undefined;
@@ -162,10 +154,7 @@ export function createOpenAiReplySession(
   /**
    * 取本轮请求的 prompt_cache_key，工具形态没变就复用上一次算好的。
    *
-   * Responses 的自动前缀缓存覆盖 instructions → tools → input 的整段前缀，其中
-   * 包含按群变化的参考记忆，所以键必须**按群分**，让同一个群的请求落到同一台
-   * 机器上。键含参考记忆还顺带避免单键过热——OpenAI 文档明确要求高流量的分组
-   * 拆成更多键。
+   * 指纹覆盖 systemPrompt、工具声明与全部稳定区块（含按群变化的参考记忆），因此键按群区分。
    */
   function promptCacheKeyFor(request: AiReplyTurnRequest, tools: readonly OpenAI.Responses.Tool[]): string {
     if (
@@ -191,68 +180,39 @@ export function createOpenAiReplySession(
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingModelItems = undefined;
-      // 请求体在 requestOpenAiResult 的 try 内构造：模型名来自 config/dynamic/agent.json，
-      // 那份文件写坏时解析会抛，构造留在这里就等于让异常绕过整条 ok:false 通路
-      // （见 client.ts 的 requestOpenAiResult 与 config/readiness.ts 的闸门）。
+      // 请求体在 requestOpenAiResult 的 try 内构造（见 client.ts 的 requestOpenAiResult）。
       const tools: OpenAI.Responses.Tool[] = buildTools(request);
       const promptCacheKey: string = promptCacheKeyFor(request, tools);
       const result: OpenAiRequestResult = await requestOpenAiResult({
         capability: "text",
-        buildBody: (): OpenAI.Responses.ResponseCreateParamsNonStreaming => {
-          const config: AgentCapabilityConfig = getAgentDeploymentConfig().text;
-          const useBreakpoints: boolean =
-            breakpointTarget !== undefined && supportsPromptCacheBreakpoints(config);
-          if (breakpointTarget !== undefined) {
-            breakpointTarget.prompt_cache_breakpoint = useBreakpoints
-              ? { mode: "explicit" }
-              : undefined;
-          }
-          return {
-            model: config.model,
-            instructions: request.systemPrompt,
-            input,
-            tools,
-            // 只影响路由：让共享同一段稳定前缀的请求尽量落到同一台机器上，
-            // 自动前缀缓存才有机会读到那一段（见 consts/aiChat/openai.ts）。
-            prompt_cache_key: promptCacheKey,
-            // implicit 保留最新 user/tool 消息的自动断点；稳定区块末尾的显式断点
-            // 让下一轮回复即使易变后缀不同，也能复用此前缀。
-            prompt_cache_options: useBreakpoints
-              ? { mode: "implicit", ttl: OPENAI_PROMPT_CACHE_TTL }
-              : undefined,
-            // 不带 temperature：GPT-5 系推理模型只接受默认值，传别的会直接
-            // 400，因此 request.grounded 在本包不影响采样（见本文件头注）。
-            max_output_tokens: OPENAI_REPLY_MAX_TOKENS,
-            store: OPENAI_STORE_RESPONSES,
-          };
-        },
+        buildBody: (): OpenAI.Responses.ResponseCreateParamsNonStreaming => ({
+          model: config.model,
+          instructions: request.systemPrompt,
+          input,
+          tools,
+          // 只影响请求路由（见 consts/aiChat/openai.ts）。
+          prompt_cache_key: promptCacheKey,
+          // implicit 保留最新 user/tool 消息的自动断点；显式断点位于最后一个稳定区块末尾。
+          prompt_cache_options: useBreakpoints
+            ? { mode: "implicit", ttl: OPENAI_PROMPT_CACHE_TTL }
+            : undefined,
+          // 不带 temperature，request.grounded 在本包不影响采样（见本文件头注）。
+          max_output_tokens: OPENAI_REPLY_MAX_TOKENS,
+          store: OPENAI_STORE_RESPONSES,
+        }),
         errorLabel: OPENAI_REPLY_ERROR_LABEL,
         signal,
+        client,
       });
 
-      // 检索次数在失败分支也要统计：那一次请求已经把服务端调用花掉了，不核销
-      // 预算等于让后续轮次继续白送额度。
+      // 失败分支同样累计检索次数。
       const response: OpenAI.Responses.Response | undefined = result.response;
       const webSearchCalls: number = response === undefined ? 0 : countWebSearchCalls(response);
 
-      // 成功与失败两条分支按同一顺序初始化同一组字段，同
-      // aiChat/gemini/replySession.ts 的同名分支。
-      if (!result.ok) {
-        return {
-          ok: false,
-          text: null,
-          functionCalls: EMPTY_FUNCTION_CALLS,
-          webSearchCalls,
-          finishReason: result.finishReason,
-          // Responses 没有与 Gemini finishMessage 对等的补充说明字段。
-          finishMessage: undefined,
-          // OpenAI 也没有「服务端工具调用过多」的对等信号；恒为 false 的
-          // fail-safe 含义是「不触发关掉检索的那次额外重试」。
-          toolCallLimitHit: false,
-        };
-      }
-      // 过 responseOutputItems 而不是直接读 result.response.output：省略该字段的
-      // 兼容网关会让它是 undefined，for...of 当场抛 TypeError（见 response.ts）。
+      // Responses 没有 finishMessage 与「服务端工具调用过多」的对等信号，失败轮走共用构造；
+      // 成功分支按同一顺序初始化同一组字段。
+      if (!result.ok) return failedReplyTurn(webSearchCalls, result.finishReason);
+      // 经 responseOutputItems 读取 output，缺失时按空列表处理（见 response.ts）。
       pendingModelItems = toInputItems(responseOutputItems(result.response));
       return {
         ok: true,
@@ -266,13 +226,11 @@ export function createOpenAiReplySession(
     },
 
     appendToolOutputs(outputs: readonly AiToolOutput[]): boolean {
-      // 没有可续接的模型轮次说明上一次请求就没成功；交给调用方按「本轮到此
-      // 为止」收尾，别把一段错位的对话喂进下一轮。
+      // 没有可续接的模型轮次时返回 false，由调用方按「本轮到此为止」收尾。
       if (!pendingModelItems) return false;
       const results: OpenAI.Responses.ResponseInputItem[] = [];
       for (const output of outputs) {
-        // call_id 由 extractFunctionCalls 保证非空；缺了就无法与上一轮的
-        // function_call 配对，服务端会直接拒绝整个请求。
+        // call_id 由 extractFunctionCalls 保证非空；缺失时返回 false。
         if (output.call.id === undefined) return false;
         results.push({
           type: "function_call_output",

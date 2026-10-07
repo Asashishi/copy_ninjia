@@ -10,7 +10,7 @@ export interface LogRedactionSecrets {
   readonly replacer: LogRedactionReplacer;
 }
 
-/** 每线程凭据缓存的完整快照；三个配置引用用于判断失效，所有字段一次构造。 */
+/** 每线程凭据缓存的完整快照；各配置引用用于判断失效，所有字段一次构造。 */
 export interface LoggerSecretsSnapshot extends LogRedactionSecrets {
   readonly telegram: BotConfig | null;
   readonly adDetect: AdDetectAgentConfig | null;

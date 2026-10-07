@@ -64,8 +64,7 @@ export function claimOperatorTtsUsage(dailyLimit: number, now: number = Date.now
 
 /**
  * 退还一次 `operator` 登记：只有当前窗口仍是登记时那一个且 reserveCount 大于 0 时减一并回传；
- * 窗口已换代（旧窗口计数已作废）时不退。两项计数都减到 0 时回传 null，等同从没用过——
- * 持久化解码不接受两项皆 0 的计数。
+ * 窗口已换代时不退。两项计数都减到 0 时回传 null，等同从没用过。
  */
 export function refundOperatorTtsUsage(claim: TtsOperatorClaim, now: number = Date.now()): void {
   const current: TtsDailyUsage | null = activeTtsUsage(ttsDailyUsage.current, now);

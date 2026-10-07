@@ -10,7 +10,7 @@ import { CHILD_TIMEOUT_MS } from "./constants";
 export interface SpawnChildOptions {
   /** `bun` 之后的完整参数表，通常以脚本路径开头。 */
   readonly args: readonly string[];
-  /** 追加到当前环境的变量；主要是两个根目录。 */
+  /** 追加到当前环境的变量；主要是各根目录变量。 */
   readonly env?: Readonly<Record<string, string>>;
   /** 出错信息里用来指认是哪一项测量。 */
   readonly label: string;
@@ -56,7 +56,7 @@ export async function spawnJsonChild<TResult>({
   }
   const stdout: string = await stdoutPromise;
   const stderr: string = await stderrPromise;
-  // 超时单独归类为一种失败，不复用 kill 后子进程留下的信号退出码。
+  // 超时先于退出码判定。
   if (timedOut) {
     throw new Error(
       `${label}: benchmark child exceeded ${timeoutMs} ms and was killed. ${stderr.trim()}`

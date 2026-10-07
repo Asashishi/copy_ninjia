@@ -3,7 +3,7 @@ import {
   IDENTITY_WRITE_BATCH_MAX_ENTRIES,
   IDENTITY_WRITE_FLUSH_INTERVAL_MS,
 } from "../../../packages/consts/identityStorage";
-import { DAY_MS } from "../../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../../packages/consts/time";
 import { adoptTimeZone, getTimeZone } from "../../../packages/config/time";
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
 import {
@@ -149,7 +149,7 @@ describe("临时广告免检 SQLite 合并写与过期清理", () => {
     )[0]?.sendCount).toBe(2);
   });
 
-  test("第 128 个不同主键到达时立即以一个事务提交整批", (): void => {
+  test("不同主键数达到批次上限时立即以一个事务提交整批", (): void => {
     for (let id: number = 1; id <= IDENTITY_WRITE_BATCH_MAX_ENTRIES; id++) {
       handleTemporaryAdBypassWrite(activityWrite(id, 1), reply);
       if (id < IDENTITY_WRITE_BATCH_MAX_ENTRIES) {

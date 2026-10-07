@@ -17,7 +17,7 @@ export const dirtyWedChats: Set<number> = new Set();
  *
  * 主线程在群 teardown 时投递一次 `deleteWedMembers` 即登记；unlink 成功即摘除，
  * 失败保留并由统一 dirty flush 的重试 timer 继续尝试，期间 wedMembers 领域
- * flush 一律回报失败，teardown 因此不会把「文件还在」报成删干净了。容量与群数
+ * flush 一律回报失败。容量与群数
  * 上限同阶；新快照取消旧删除；Worker 重建后为空，未确认删除由主线程全量重投。
  */
 export const deletedWedChats: Map<number, number> = new Map();

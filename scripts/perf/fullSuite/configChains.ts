@@ -2,12 +2,12 @@
  * 部署配置热重载链路：cron.json 中途变更后，主线程吸收这次变更的本地成本。
  *
  * 夹具是满规格任务表：CRON_MAX_TASKS 个任务，每个 CRON_MAX_ACTIONS_PER_TASK 个动作，按
- * 文字、CRON_MAX_IMAGES 张本地图片、随机目录、本地文件四种写法轮换；本地来源一律写成相对
- * 运行时数据根的路径，与部署方的写法一致。表达式只在 2 月 29 日 0 点触发，计时窗口内
- * 不会有任务执行。每次计时先改写一个任务（改写与写盘属于部署方，按 excludedNanoseconds
- * 扣除），再按生产热重载的顺序读取并严格解析六份可热重载文件、替换 holder、按任务名对账
- * 调度器；广告检测与 AI 闲聊的可用性重算（只改 cron.json 时不产生分发）与热重载日志不在
- * 这条链路里。
+ * 文字、CRON_MAX_IMAGES 张本地图片、随机目录、本地文件各种写法轮换；本地来源一律写成相对
+ * 运行时数据根的路径，与部署方的写法一致。`FIXTURE_CRON_EXPRESSION` 在计时窗口内不会
+ * 触发任务。每次计时先改写一个任务（改写与写盘属于部署方，按 excludedNanoseconds
+ * 扣除），再按生产热重载的顺序读取并严格解析可热重载的各配置文件、替换 holder、按任务名
+ * 对账调度器；广告检测与 AI 闲聊的可用性重算（只改 cron.json 时不产生分发）与热重载日志
+ * 不在这条链路里。
  *
  * 本文件不加载生产模块图（见 scripts/conventions/moduleBoundaries.ts 的全量基准 import
  * 边界）：生产入口由 chain.ts 在子进程里装配后注入，这里只 import 纯常量与类型。
@@ -76,7 +76,7 @@ function fixtureImagePaths(): readonly string[] {
   return paths;
 }
 
-/** 一个动作的原始 JSON 写法；按动作下标在四种来源写法之间轮换。 */
+/** 一个动作的原始 JSON 写法；按动作下标在各来源写法之间轮换。 */
 function rawAction(
   taskIndex: number,
   actionIndex: number,
@@ -198,14 +198,14 @@ function cronConfigReloadChain(dependencies: ConfigChainDependencies): ChainDefi
     },
     excludedNanoseconds: (): number => excludedNs.current,
     verify: (): void => {
-      // 任务在计时窗口内不该触发；有任何出站请求说明夹具表达式失效，读数不可信。
+      // 计时窗口内任务不触发；出现任何罐头 Telegram 请求即抛错。
       const calls: number = totalTelegramCalls(dependencies.cannedTelegramCalls);
       if (calls > 0) throw new Error(`Cron reload benchmark sent ${calls} Telegram request(s).`);
     },
     cleanup: async (): Promise<void> => {
       dependencies.quiesceCronScheduler();
-      // 配置根在各子进程间共用；定时任务在其余基准里保持缺省（见 mockRoot.ts）。prepare
-      // 可能在写出之前就失败，只删存在的文件，不让收尾错误盖住原始错误。
+      // 配置根在各子进程间共用，其余基准里定时任务保持缺省（见 mockRoot.ts）；
+      // 只删存在的文件，prepare 在写出前失败时 cleanup 不抛错。
       const cronConfig: BunFile = Bun.file(dependencies.cronConfigPath);
       if (await cronConfig.exists()) await cronConfig.delete();
     },

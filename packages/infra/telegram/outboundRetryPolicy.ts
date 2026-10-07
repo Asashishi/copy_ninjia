@@ -55,7 +55,7 @@ export class TelegramRetryQueueFullError extends Error {
 
 /**
  * 按业务语义选择独立的 429 域。高频调用都走 switch 的稳定分支；前缀兜底只
- * 服务未在项目调用面出现的新 Bot API，避免它意外与已有安全动作共享冷却。
+ * 服务未在项目调用面出现的 Bot API。
  */
 export function telegramRetryCategoryFor(
   method: keyof RawApi
@@ -129,7 +129,7 @@ function clampRetryDelay(delayMs: number): number {
 
 /**
  * 从 fetch Response 或 Bot API 原始响应提取退避毫秒数；非 429 返回 undefined。
- * 空白、非法、非正或已经过去的 Retry-After 都回落到统一兜底，避免零延迟空转。
+ * 空白、非法、非正或已经过去的 Retry-After 都回落到 TELEGRAM_429_FALLBACK_RETRY_MS。
  */
 export function telegramRetryAfterMilliseconds(
   response: unknown

@@ -69,8 +69,8 @@ type TransferableTelegramMemoryFile = TelegramMemoryFile & {
 };
 
 /**
- * Worker 上传文件的完整普通 ArrayBuffer 直接移交，不再复制图片或语音字节。调用约定
- * 禁止发送后复用 bytes；SharedArrayBuffer 或子视图不能证明独占 backing store，只在这两个非标准输入上建立精确副本，避免 detach 其它别名。
+ * Worker 上传文件的完整普通 ArrayBuffer 直接移交，不复制字节；调用方发送后不得复用 bytes。
+ * SharedArrayBuffer 与子视图不独占 backing store，这两类输入建立精确副本后再移交。
  */
 function checkedMemoryFile(value: unknown, label: string): TransferableTelegramMemoryFile {
   if (

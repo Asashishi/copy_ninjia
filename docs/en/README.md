@@ -38,12 +38,12 @@
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6117_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.69%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6269_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.75%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
-Message copying and personality mimicry are only the surface. Underneath is a multi-Worker group-chat automation system with recovery, bounded caches, and race protection.
+Message copying and personality mimicry are only the surface. Underneath is a multi-Worker group-chat automation system engineered with fault recovery, bounded memory caches, and strict race protection.
 
 ---
 
@@ -61,40 +61,40 @@ Every line of production code, every test case, and this README itself was writt
 <thead>
   <tr>
     <th width="20%" align="left">Stage</th>
-    <th width="30%" align="left">Who</th>
-    <th width="50%" align="left">What they do</th>
+    <th width="30%" align="left">Owner</th>
+    <th width="50%" align="left">Role & Responsibilities</th>
   </tr>
 </thead>
 <tbody>
   <tr>
     <td><nobr>📐 <b>Architecture</b></nobr></td>
     <td><b>Asashishi</b></td>
-    <td>Designs and decides system boundaries, Worker decomposition, persistence, and recovery strategies</td>
+    <td>Defines and adjudicates system boundaries, multi-worker decomposition, persistence models, and recovery strategies</td>
   </tr>
   <tr>
     <td><nobr>⌨️ <b>Implementation</b></nobr></td>
     <td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td>
-    <td>Writes 100% of production code, tests, and documentation</td>
+    <td>Writes 100% of production business code, automated tests, and trilingual documentation</td>
   </tr>
   <tr>
-    <td><nobr>🧾 <b>Commit review</b></nobr></td>
+    <td><nobr>🧾 <b>Commit Review</b></nobr></td>
     <td><nobr><b>Asashishi</b> × AI</nobr></td>
-    <td>Every commit is reviewed jointly by human and AI before entering the repository</td>
+    <td>Every single commit is paired and verified by human and AI before being merged into the repository</td>
   </tr>
   <tr>
-    <td><nobr>🔬 <b>Repository audits</b></nobr></td>
+    <td><nobr>🔬 <b>Repository Audits</b></nobr></td>
     <td><b>GPT</b> · <b>Claude</b></td>
-    <td>Conduct multiple cross-reviews of the entire codebase; findings become hardening commits</td>
+    <td>Conducts repeated cross-model audits across the entire codebase; findings immediately turn into hardening commits</td>
   </tr>
   <tr>
-    <td><nobr>🛰️ <b>Safety exercises</b></nobr></td>
-    <td>The same frontier models</td>
-    <td>Review production scenarios: crash recovery, concurrency races, hostile input, and resource exhaustion</td>
+    <td><nobr>🛰️ <b>Safety Exercises</b></nobr></td>
+    <td>Same frontier models</td>
+    <td>Stress-tests real production scenarios: crash recovery, concurrency races, malicious injections, and resource exhaustion</td>
   </tr>
 </tbody>
 </table>
 
-From commit-by-commit human/AI co-review to repeated full-repository audits and safety simulations, every finding directly informs new authoritative constraints.
+From commit-by-commit human/AI co-review to repeated full-repository audits and safety simulations, every finding directly informs and cements the system's authoritative runtime invariants.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
@@ -104,7 +104,7 @@ From commit-by-commit human/AI co-review to repeated full-repository audits and 
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 6117 tests passed, 515 test files, 436,787 expect() calls, 98.24% function coverage, 98.69% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 6269 tests passed, 526 test files, 446,227 expect() calls, 98.24% function coverage, 98.75% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -117,114 +117,114 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 <table width="100%">
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🪞 Precise copying</b><br>
-  <sub>Locks one target and echoes its messages one by one, avatar included.</sub></p>
+  <p><b>🪞 Precise Copying</b><br>
+  <sub>Locks onto a target group member, echoing their messages verbatim and copying their avatar in real time.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🌐 Multilingual translation</b><br>
-  <sub>Opens a per-chat session that renders messages into five languages.</sub></p>
+  <p><b>🌐 Multilingual Translation</b><br>
+  <sub>Manages per-user translation sessions within a group, converting messages into multiple target languages on the fly.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🥷 Avatar theft</b><br>
-  <sub>Takes only the target's avatar, without starting a copy session.</sub></p>
-</td>
-</tr>
-<tr>
-<td align="left" valign="top" width="33%">
-  <p><b>🤖 AI group chat</b><br>
-  <sub>The persona decides whether to speak, what to say, and which tool to use.</sub></p>
-</td>
-<td align="left" valign="top" width="33%">
-  <p><b>👁️ Multimodal understanding and creation</b><br>
-  <sub>Reads images and voice notes, and replies with pictures or voice messages.</sub></p>
-</td>
-<td align="left" valign="top" width="33%">
-  <p><b>🔎 Live fact-checking</b><br>
-  <sub>Reaches for web search and weather tools when an answer needs facts.</sub></p>
+  <p><b>🥷 Avatar Theft</b><br>
+  <sub>Clones the target user's avatar onto the bot without echoing messages.</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🧠 Group-chat memory</b><br>
-  <sub>Keeps verbatim context and compacts older turns into summaries.</sub></p>
+  <p><b>🤖 AI Group Chat</b><br>
+  <sub>An autonomous conversational agent whose personality determines when to speak, what to say, and which tools to invoke.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🎭 Mood and human touches</b><br>
-  <sub>Rotates its mood over time and pauses as if it were typing the reply.</sub></p>
+  <p><b>👁️ Multimodal Creation</b><br>
+  <sub>Understands incoming images and audio notes, and actively replies with synthesized voice messages or generated images.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>💒 Partner draws</b><br>
-  <sub>Draws a random member who has spoken and shows their avatar.</sub></p>
-</td>
-</tr>
-<tr>
-<td align="left" valign="top" width="33%">
-  <p><b>🛡️ Join verification</b><br>
-  <sub>New members must press a button in time, or they are kicked out.</sub></p>
-</td>
-<td align="left" valign="top" width="33%">
-  <p><b>🚨 Anti-Raid</b><br>
-  <sub>Flips the group into private mode when the join rate spikes.</sub></p>
-</td>
-<td align="left" valign="top" width="33%">
-  <p><b>📮 Ad detection</b><br>
-  <sub>Screens threads of messages and acts the moment one is an ad.</sub></p>
+  <p><b>🔎 Live Fact-Checking</b><br>
+  <sub>Autonomously searches the web or checks real-time info (like weather) whenever factual grounding is needed.</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🎲 Daily fortune</b><br>
-  <sub>Draws over Inline Mode, fixed for the same person on the same day.</sub></p>
+  <p><b>🧠 Group-Chat Memory</b><br>
+  <sub>Preserves recent verbatim dialogue and automatically compresses older exchanges into rolling summaries.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🌐 Cross-group moderation</b><br>
-  <sub>One command bans the same identity across several managed groups.</sub></p>
+  <p><b>🎭 Moods & Human Touches</b><br>
+  <sub>Cycles its mood dynamically over time, pausing before responding with human-like typing simulation.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>💬 Group Q&amp;A</b><br>
-  <sub>Answers pre-registered questions directly, without going through the AI.</sub></p>
+  <p><b>💒 Partner Lottery</b><br>
+  <sub>Randomly draws a partner from active group members who have spoken, displaying their avatar with an interactive card.</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🖼️ Random Image Library</b><br>
-  <sub>Use /h_image to send a random spoiler-covered image; authorized members can save replied images or albums with content deduplication.</sub></p>
+  <p><b>🛡️ Join Verification</b><br>
+  <sub>Requires newcomers to solve an interactive button challenge within a set timeout, auto-kicking unverified users.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>⏰ Scheduled Posts</b><br>
-  <sub>Schedule text, files, voice, random images or 1–10 fixed images with time zones, one-shot tasks and random intervals.</sub></p>
+  <p><b>🚨 Anti-Raid Lockdown</b><br>
+  <sub>Detects join-rate anomalies during raids and automatically triggers private mode, revoking invite permissions.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>📮 Smart Ad Detection</b><br>
+  <sub>Evaluates concatenated message streams with an AI classifier, instantly purging detected spam and banning the sender.</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🎲 Daily Fortune</b><br>
+  <sub>Interactive fortune-telling via Telegram Inline Mode, producing consistent, tamper-proof daily results per user.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>🌐 Cross-Group Moderation</b><br>
+  <sub>Synchronously bans offending accounts across all managed groups with a single administrative command.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>💬 Custom Group Q&amp;A</b><br>
+  <sub>Pre-registered questions trigger immediate canned responses without consuming AI model quota.</sub></p>
+</td>
+</tr>
+<tr>
+<td align="left" valign="top" width="33%">
+  <p><b>🖼️ Dedicated Image Library</b><br>
+  <sub>Draws spoiler-masked images via /h_image; authorized members can add images with automatic hash-based deduplication.</sub></p>
+</td>
+<td align="left" valign="top" width="33%">
+  <p><b>⏰ Scheduled Automation</b><br>
+  <sub>Pushes scheduled text, files, voice notes, web digests, or image albums based on cron schedules or random intervals.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🎨 Personas &amp; Notice Styles</b><br>
-  <sub>A built-in teasing persona that <code>prompt/persona.md</code> can replace (<a href="../../prompt_example/persona.md">example</a>); explicit Bot notice style takes priority; when omitted, custom personas use ordinary notices and the built-in persona uses teasing notices.</sub></p>
+  <sub>Built-in playful teasing persona, easily replaced with custom Markdown prompts; system notice style is independently configurable.</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🤐 Speech Control</b><br>
-  <sub>Use /gag to route a target's text through a dedicated button that transforms it, until expiry or release.</sub></p>
+  <p><b>🤐 Speech Restriction (/gag)</b><br>
+  <sub>Restricts targets from typing directly in group chat, routing them through an interactive button that applies playful text distortions.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>🫧 Chinese Actions</b><br>
-  <sub>Reply with one- or two-character Chinese actions such as /咬 or /贴贴, with no prior registration.</sub></p>
+  <p><b>🫧 Natural Chinese Actions</b><br>
+  <sub>Responds to 1–2 character action commands (e.g. /咬, /贴贴) without requiring pre-registration in menus.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🌊 Flood Control</b><br>
-  <sub>Enable per-group message-rate checks and temporary mutes, with a separate exemption permission.</sub></p>
+  <sub>Enforces sliding-window rate limits per group, applying tiered mutes to spammers with configurable exemptions.</sub></p>
 </td>
 </tr>
 <tr>
 <td align="left" valign="top" width="33%">
-  <p><b>🔎 Identity Lookup</b><br>
-  <sub>Use /info for public user or channel profiles and avatars, or group details; results disappear after 30 seconds.</sub></p>
+  <p><b>🔎 Identity Lookup (/info)</b><br>
+  <sub>Quickly queries public user/channel IDs, usernames, and profile pictures with auto-expiring receipts.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
   <p><b>🔐 Granular Permissions</b><br>
-  <sub>Grant feature switches, image collection, group Q&amp;A and moderation permissions by identity, with a queryable dashboard.</sub></p>
+  <sub>Fine-grained access control over feature switches, image curation, Q&amp;A maintenance, and administrative operations.</sub></p>
 </td>
 <td align="left" valign="top" width="33%">
-  <p><b>📨 Private Relay</b><br>
-  <sub>The super administrator can start /send in private chat to relay messages to a managed group, or have the bot speak a line there as a voice message.</sub></p>
+  <p><b>📨 Private Chat Relay (/send)</b><br>
+  <sub>Allows super-admins to relay messages or voice notes into managed groups directly from private chat.</sub></p>
 </td>
 </tr>
 </table>
@@ -237,9 +237,9 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 | OpenAI | 80%–90% |
 | Claude | 80%–90% |
 
-- **Gemini**: Misses include expiration of the service's implicit cache and an unwarmed implicit cache on the first request. When available, each reply's first request reuses the fixed prefix through explicit caching; subsequent requests use implicit caching to mitigate misses. Sporadic zero cache usage also occurs with an approximately 8% probability, unrelated to the project implementation.
-- **Claude**: Misses mainly occur when the 5 minute cache lifetime expires.
-- **OpenAI**: No known cache defects are currently identified. Initial population, prefix changes, and new dynamic content can still cause normal misses.
+- **Gemini**: The first request of each turn reuses the fixed prompt prefix via explicit caching when available, while subsequent turns leverage implicit context caching; cache expirations and cold first-turn caches account for misses.
+- **Claude**: Injects `cache_control` breakpoints at stable message boundaries; the Anthropic Messages API matches prompt cache at block prefixes, with misses occurring only after the cache time-to-live expires.
+- **OpenAI**: Attaches a deterministically hashed `prompt_cache_key` computed from the invariant prefix; cache misses occur during initial population, prefix edits, or dynamic prompt changes.
 
 ### Voice, images, and memory
 
@@ -252,37 +252,37 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 </thead>
 <tbody>
   <tr>
-    <td><nobr>🎙️ <b>AI Voice</b></nobr></td>
-    <td>Supports configurable voice and tone; at most 1 line per turn up to 64 UTF-16 code units; persists line to memory on delivery.</td>
+    <td><nobr>🎙️ <b>AI Voice Generation</b></nobr></td>
+    <td>Supports configurable voice and tone modifiers; capped at <code>MAX_VOICES_PER_REPLY</code> per turn, with a line limit of <code>VOICE_TEXT_MAX_CHARS</code> (UTF-16 code units); automatically persisted to conversational memory upon delivery.</td>
   </tr>
   <tr>
-    <td><nobr>📢 <b>Admin & Cron Voice</b></nobr></td>
-    <td><code>/send</code> and cron share TTS resources with a 256 code-unit limit; cron synthesizes once per round and reuses Telegram <code>file_id</code>.</td>
+    <td><nobr>📢 <b>Admin & Scheduled Voice</b></nobr></td>
+    <td><code>/send</code> and cron tasks share a dedicated reserve TTS quota, capped at <code>VOICE_OPERATOR_TEXT_MAX_CHARS</code> (UTF-16 code units); multi-group cron broadcasts synthesize once and reuse the Telegram <code>file_id</code>.</td>
   </tr>
   <tr>
     <td><nobr>🖼️ <b>Multimodal Memory</b></nobr></td>
-    <td>AI-generated images record actual visuals; <code>/wed</code>, <code>/h_image</code>, and cron images record placeholders until replied to.</td>
+    <td>AI-generated images record their actual visuals in context; group drawings from <code>/wed</code>, <code>/h_image</code>, and scheduled tasks record placeholders until a user explicitly replies to them.</td>
   </tr>
 </tbody>
 </table>
 
-- **TTS Configuration**: Requires explicit `agent.tts` in `config/dynamic/agent.json` (supports Google, OpenAI-compatible `audio/speech`, and xAI Grok `/v1/tts`; Google supports `base_url` and `headers` for third-party gateways). Optional `bot_language` (`en` / `zh` / `ja`, default `ja`) sets the language of AI voice lines; `prompt/voice_tool.md` in the project root can replace the whole AI `send_voice` tool instruction (takes effect after a restart; see the example [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)). AI reply synthesis appends a speaking-language requirement by `bot_language` automatically; `style` is shared with `/send` and cron and describes only the voice. When changing `bot_language`, also switch `style` and `voice_tool.md` to that language.
-- **Quota Isolation**: `daily_reserve_quota` (default 25) is reserved from `daily_limit` (default 100) for admin and cron calls; AI voice uses the remainder. Both counters are independent and reset together 24 hours after the first counted request in the window.
-- **Context Recording Rules**: Messages copied by `/send` and scheduled text/voice do not enter AI memory. Automatic image recording requires AI chat to be enabled in the group and not in copying mode. Details: [11 FAQ](11-faq.md).
+- **TTS Configuration**: Configured under `agent.tts` in `config/dynamic/agent.json` (supports native Google, OpenAI-compatible `audio/speech`, and xAI Grok `/tts`; Google supports custom `base_url` and `headers` for third-party gateways). Optional `bot_language` (`en` / `zh` / `ja`, default `ja`) sets the language of AI voice lines; placing `prompt/voice_tool.md` in the project root overrides the entire `send_voice` tool instruction (takes effect after a restart; see [`prompt_example/voice_tool.md`](../../prompt_example/voice_tool.md)). The AI reply pipeline automatically appends target language guidance based on `bot_language`; `style` is shared with `/send` and cron and describes only the acoustic timbre. When changing `bot_language`, remember to align `style` and `voice_tool.md` accordingly.
+- **Quota Isolation**: The daily quota `daily_limit` (default 100) reserves `daily_reserve_quota` (default 25) exclusively for `/send` and scheduled cron tasks, leaving the remainder for spontaneous AI chatter; both pools track counts independently. The tracking window (`TTS_USAGE_WINDOW_MS`) begins on the first request and resets both counters upon window expiry.
+- **Memory Ingestion Boundaries**: Messages forwarded via `/send` and scheduled cron tasks are excluded from AI conversation context. Automatic image logging requires AI chat to be enabled in the group and not suppressed by active copying mode. See [11 FAQ](11-faq.md).
 
-Behavior details, configuration, and constraints for each feature live in the **[📚 Developer Documentation](content-table.md)**.
+For comprehensive behavioral contracts, configuration parameters, and invariants for every feature, explore the **[📚 Developer Documentation](content-table.md)**.
 
 <p align="right"><sub><a href="#copy-ninjia">⬆️ Back to top</a></sub></p>
 
 ## 🎮 Commands and Permissions
 
-Commands are authorized by entry point and role:
+Commands are organized into three clear authorization tiers:
 
-- **Group Members**: Basic chat features such as copying, translation, actions, `/info`, `/wed`, and `/h_image`.
-- **Identity Permissions (`isCanXxx`)**: Administrative commands including `/bot_status`, `/mute` / `/unmute`, `/gag`, `/block`, `/h_image add`, and feature toggles.
-- **Super Administrator (`SUPER_ADMIN_USER_ID`)**: `/init`, `/permission` edits, `/white disable`, `/batch_kick` for recent joins in the current group, and private `/send` relays. An allowlisted identity with `isCanWhiteOther` may also use `/white enable` to add a member with default permissions.
+- **Group Members**: Basic chat features such as copying, translation, actions, `/info`, `/wed`, and `/h_image` are open to all group participants.
+- **Identity Permissions (`isCanXxx`)**: Administrative commands including `/bot_status`, `/mute` / `/unmute`, `/gag`, `/block`, `/h_image add`, and feature switches, granted individually via fine-grained permission rules.
+- **Super Administrator (`SUPER_ADMIN_USER_ID`)**: Strict hard boundaries restricted exclusively to the configured owner ID: `/init` group onboarding, `/permission` grants, `/white disable` member removal, `/batch_kick` mass removal of recent joins, and private `/send` relays. Allowlisted users with `isCanWhiteOther` may use `/white enable` to add members, but can only assign default baseline permissions.
 
-Image library and cron task configuration and usage are documented in [08 Images and Scheduled Tasks](08-images-and-cron.md); cold migration steps live in the [Operations Manual](07-operations.md).
+Image library and cron task configuration and usage are documented in [08 Images and Scheduled Tasks](08-images-and-cron.md); offline cold migration steps live in the [Operations Manual](07-operations.md).
 
 The full command reference and permission matrix are documented in **[📖 09 Command and Behaviour Reference](09-commands.md)**.
 
@@ -292,10 +292,10 @@ The full command reference and permission matrix are documented in **[📖 09 Co
 
 ### Prerequisites
 
-- **OS**: Linux with a readable `/proc` directory (the instance lock fails closed on other platforms).
-- **Telegram Credentials**: A Bot Token from BotFather and your Telegram user ID as super administrator.
-- **Runtime**: [Bun](https://bun.sh/) 1.4.2 for source installs; binary releases bundle the runtime.
-- **External Services**: API keys for enabled AI capabilities; Google Cloud service-account JSON for `/translate`. Hardware guidance: [07 Operations](07-operations.md#hardware-guidance).
+- **OS**: Linux with a readable `/proc` filesystem (the instance lock enforces fail-closed behavior on unsupported platforms).
+- **Telegram Credentials**: A Bot Token from BotFather and your personal Telegram user ID as super administrator.
+- **Runtime**: [Bun](https://bun.sh/) 1.4.2 for source installs; official binary releases bundle the runtime statically.
+- **External Services**: API keys for enabled AI capabilities; Google Cloud service-account JSON credentials for `/translate`. Hardware sizing recommendations: [07 Operations](07-operations.md#hardware-guidance).
 
 ### One-Shot Installation
 
@@ -308,8 +308,8 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
 ```
 
 > [!TIP]
-> - **Install Mode**: Interactive prompt by default. Pass `--binary` to download the platform package without system Bun or git; pass `--source` to clone the source, with the installer attempting to install missing git and Bun.
-> - **Interactive Setup**: The wizard configures credentials, initializes the SQLite database, and registers a systemd background service. Existing deployments preserve current versions without overwriting.
+> - **Install Mode**: Prompts interactively by default. Pass `--binary` to fetch the precompiled standalone binary for your architecture without needing Bun or git installed; pass `--source` to clone the repository and automatically pull dependencies.
+> - **Interactive Setup**: The setup wizard guides credential entry and initializes the SQLite database; on systemd-enabled hosts it registers a managed daemon service, or runs as a foreground process otherwise. Existing deployments are safeguarded against accidental overwrites.
 
 ### Manual Source Installation
 
@@ -330,10 +330,10 @@ done
 
 Before your first run, disable Privacy Mode and enable Inline Mode in BotFather (see [BotFather Setup](#botfather-setup)). Configuration specifications are in [`config_example/README/en.md`](../../config_example/README/en.md); complete setup instructions live in [01 Getting Started](01-getting-started.md).
 
-Once configured, verify quality gates and start the bot:
+Once configured and the [identity database initialized](01-getting-started.md#initializing-identity-storage), verify quality gates and start the bot:
 
 ```bash
-bun run check                          # Runs conventions, ESLint, TypeScript, and tests
+bun run check                          # Runs all quality gates (conventions, ESLint, TypeScript, tests, and the hot-path gate)
 bun run start                          # Starts long polling
 ```
 
@@ -372,7 +372,7 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
   </tr>
   <tr>
     <td><nobr>🏗️ <b>Architecture</b></nobr></td>
-    <td>Main thread + 3 Workers model, message lifecycle, recovery</td>
+    <td>Main thread and Worker collaboration model, message lifecycle, recovery</td>
     <td align="center"><nobr><a href="02-architecture.md">📖 02 Architecture</a></nobr></td>
   </tr>
   <tr>
@@ -443,17 +443,17 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
   <tr>
     <td><nobr><b>Disable Group Privacy</b></nobr></td>
     <td><kbd>/setprivacy</kbd> → <b>Disable</b></td>
-    <td>Allows receiving normal group messages (copying, translation, AI interjections depend on this).<br><sub>*Note: Remove and re-add bot after changing; unnecessary if bot is group admin.*</sub></td>
+    <td>Allows the bot to receive ordinary group messages (copying, translation, AI interjections, and Q&amp;A rely on this).<br><sub>*Note: Remove and re-add the bot after changing; unnecessary if the bot is already a group admin.*</sub></td>
   </tr>
   <tr>
     <td><nobr><b>Enable Inline Mode</b></nobr></td>
     <td><kbd>/setinline</kbd></td>
-    <td>Supports daily fortunes (<code>@bot query</code>) and <code>/gag</code> speaking buttons.</td>
+    <td>Supports daily fortunes (<code>@bot query</code>) and <code>/gag</code> speech control buttons.</td>
   </tr>
   <tr>
     <td><nobr><b>Inline Feedback 100%</b></nobr></td>
     <td><kbd>/setinlinefeedback</kbd> → <b>100%</b></td>
-    <td>Primary confirmation pipeline for persisting fortune results.</td>
+    <td>Primary confirmation callback pipeline for persisting and validating fortune results.</td>
   </tr>
   <tr>
     <td><nobr><b>Allow Joining Groups</b></nobr></td>
@@ -463,16 +463,16 @@ Comprehensive architecture overviews, module maps, authoritative runtime invaria
   <tr>
     <td><nobr><b>Bot-to-Bot Communication</b></nobr><br><sub>(Optional Mode)</sub></td>
     <td>Bot Settings → Bot-to-Bot</td>
-    <td>Required when <code>/translate</code> or <code>/copy</code> targets another bot.</td>
+    <td>Required when <code>/translate</code> or <code>/copy</code> targets another bot in the group.</td>
   </tr>
 </tbody>
 </table>
 
-There is no need to run `/setcommands` manually in BotFather: the bot automatically registers its command menu at startup using its configured notice style (the standard menu applies when notice style is omitted and a custom persona is deployed). Menus are shown only in group chats; private chats accept only the super administrator's `/send` and do not display a general menu.
+There is no need to configure `/setcommands` manually in BotFather: the bot automatically registers its command menu at startup using its configured notice style (standard menu applies when notice style is omitted and a custom persona is deployed). Menus are shown only in group chats; private chats accept only the super administrator's `/send` command and do not display a general command menu.
 
 > [!WARNING]
 > **Bot-to-Bot Communication Mode Details**:
-> When enabled, this bot can receive ordinary messages from other bots in groups where it is an administrator or has privacy mode disabled. Incoming messages from other bots pass through a global ingress limit: the first 15 messages from each bot during continuous activity enter business handlers; messages from the 16th onward are silently ignored. The count resets after 90 minutes without a message. At most 512 other bots are tracked; when full, messages from new bot IDs are ignored. This bot's own messages are neither counted nor blocked by this gate. See the [dispatch invariants](04-invariants.md).
+> When enabled, this bot can receive ordinary messages from other bots in groups where it is an administrator or has privacy mode disabled. Incoming messages from other bots pass through a global ingress rate-limiter: the first `BOT_MESSAGE_ACTIVITY_LIMIT` messages from each bot during continuous activity enter business handlers, and subsequent messages are silently ignored. The count resets after `BOT_MESSAGE_ACTIVITY_TTL_MS` of inactivity. At most `BOT_MESSAGE_ACTIVITY_MAX_ENTRIES` other bots are tracked; when full, messages from newly observed bots are ignored. The bot's own messages are neither counted nor blocked by this gate. See [dispatch invariants](04-invariants.md).
 
 ### Administrator Rights in the Group
 

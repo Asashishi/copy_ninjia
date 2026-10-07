@@ -5,8 +5,8 @@
  * 一个 user 轮、两个 part——系统事实一行在前、待判定消息串在后。系统指令可用时经
  * ad_detect 的显式缓存 scope（下方 AD_DETECT_GEMINI_CONTEXT_CACHE_SCOPE，核心在
  * infra/geminiContextCache.ts）改为引用 cachedContent，此时请求不带 systemInstruction，
- * contents 不变——有无缓存，模型看到的内容逐字一致。引用缓存的请求被端点以 408/429 以外
- * 的 4xx 拒绝时释放登记，当场按带系统指令的完整请求补发一次。
+ * contents 不变——有无缓存，模型看到的内容逐字一致。引用缓存的请求被端点拒绝
+ * （isGeminiContextCacheRejection）时释放登记，当场按带系统指令的完整请求补发一次。
  */
 
 import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";

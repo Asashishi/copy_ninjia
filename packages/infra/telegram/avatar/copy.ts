@@ -65,9 +65,8 @@ async function attemptCopyUserProfilePhoto(
       }
       fileId = chat.photo.big_file_id;
     } else {
-      // 两个请求互不依赖（activeUniqueId 在两者都返回后才被消费），并发
-      // 缩短这条用户可见路径的往返延迟。用 allSettled 等两边都落定，任一
-      // 失败再抛出原因，由外层 catch 按 avatarFailureFor 分类。
+      // 两个请求并发发出，allSettled 等两边都落定，任一失败再抛出原因，
+      // 由外层 catch 按 avatarFailureFor 分类。
       const [chatResult, photosResult]: [PromiseSettledResult<ChatFullInfo>, PromiseSettledResult<UserProfilePhotos>] = await Promise.allSettled([
         bot.api.getChat(targetId, telegramSignal(signal)),
         bot.api.getUserProfilePhotos(targetId, { offset: 0, limit: USER_PROFILE_PHOTOS_LIMIT }, telegramSignal(signal)),
@@ -106,8 +105,7 @@ async function attemptCopyUserProfilePhoto(
 /** 复制用户头像时由调用方提供的诊断线索和取消信号。 */
 export interface CopyUserProfilePhotoOptions {
   /**
-   * 调用方上下文里带的 username（回复目标、身份缓存），**只作诊断线索**，不作
-   * 抓取目标——见 copyUserProfilePhoto 里那段注释。
+   * 调用方上下文里带的 username（回复目标、身份缓存），只作诊断线索，不作抓取目标。
    */
   username?: string;
   signal?: AbortSignal;
@@ -136,12 +134,8 @@ export async function copyUserProfilePhoto(
   if (outcome === "ok") return true;
   if (outcome === "aborted") return false;
 
-  // 抓取目标只认 getChat 现查的结果，绝不用调用方给的那个。provided 值来自
-  // reply_to_message（可能是三个月前的消息）或身份缓存，而 Telegram 用户名释放
-  // 之后可以被任何人重新注册；抓取页面时的 hasMatchingProfileIdentity 只能证明
-  // 「这个页面属于 @name」，证明不了「@name 此刻仍指向 targetId」。短路掉权威
-  // 查询的后果是把**现任 @handle 持有者**的头像顶成机器人头像，而成功提示里
-  // 写着原目标——一次谁都发现不了的张冠李戴。
+  // 抓取目标只取 getChat 现查的结果，不用调用方给的 username（它来自回复目标或
+  // 身份缓存，不能证明仍指向 targetId）。
   const lookup: PublicUsernameLookupResult = await resolvePublicUsernameFromChat(targetId, isChannel, signal);
   const fallbackUsername: string | undefined = lookup.username;
   if (fallbackUsername) {
@@ -157,7 +151,7 @@ export async function copyUserProfilePhoto(
       }
     }
   } else {
-    // 命令上下文里的那个 username 只进日志：它可能已经易主，不能拿来抓页面。
+    // 命令上下文里的 username 只进日志，不用于抓取。
     const providedUsername: string | undefined = normalizePublicUsername(username);
     const hint: string = providedUsername === undefined
       ? ""

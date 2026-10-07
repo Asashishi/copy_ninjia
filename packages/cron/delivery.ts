@@ -10,7 +10,7 @@
  * `send_voice` 先经 AI Worker 的语音合成公共实现（aiChat/voiceSynthesis.ts）把台词与语气
  * 合成成 Telegram 语音（OGG/Opus 或 MP3），再按其文件名调用 sendVoice；合成结果登记进本轮的 CronRoundVoices，重试与后续
  * 会话复用同一段语音。本轮首次发送成功后记下 Telegram 交回的 file_id，之后改为引用它，
- * 不再重复上传。`send_web_digest` 经 AI Worker 生成摘要（未搜索时为加警示的模型正文），拿回
+ * 不重复上传。`send_web_digest` 经 AI Worker 生成摘要（未搜索时为加警示的模型正文），拿回
  * MarkdownV2 原文登记进本轮的 CronRoundDigests，重试与后续会话复用；不传 link_preview_options，
  * 由 Telegram 为正文第一个链接生成预览。每次调用只投递一次，失败按 CronDeliveryOutcome 分类
  * 交给 cron/run.ts 决定是否重试，本边界不记日志；Telegram 拒收（4xx，含 MarkdownV2 解析失败）

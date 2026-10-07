@@ -25,10 +25,7 @@ export interface CapturedCommandOptions {
  * 以 Bun.spawn 运行命令，先开始读取 stdout 与 stderr，再等待退出，两路输出读完后返回。
  * 被信号结束时退出码为 128 加信号值。供测试与夹具收集外部命令的退出码和完整输出。
  *
- * 不用 Bun.spawnSync：Bun 1.4.2 的 spawnSync 在长时间运行的 bun test 进程里会偶发丢失
- * 子进程退出（子进程留成僵尸），等待循环单核空转到用例超时后仍不返回，整轮门禁随之卡住，
- * 日志只留下 `killed 1 dangling process`。上游问题见 oven-sh/bun#34069，修复 PR
- * oven-sh/bun#40078 截至 2026-10-01 尚未合入；异步 Bun.spawn 不经过 spawnSync 的等待循环。
+ * 使用异步 Bun.spawn，不使用 Bun.spawnSync。
  */
 export async function runCapturedCommand({
   cmd,

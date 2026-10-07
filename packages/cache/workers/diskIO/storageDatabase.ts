@@ -23,9 +23,9 @@ import type { PendingTemporaryAdBypassWrite } from
   "../../../types/temporaryAdBypass";
 
 /**
- * 六表各自的未 ACK 条目与字节预算，上限与主线程逐领域准入一致，保证 Worker 重建时
- * 主线程重放的已接纳写入一定装得下。写前预约、事务成功由 resetStoragePendingBudgets
- * 全部清空；容量固定六项；Worker 重建后为新 isolate 的初值，由主线程重放重新预约。
+ * 各领域（BudgetedStorageDomain）的未 ACK 条目与字节预算，上限与主线程逐领域准入一致，
+ * Worker 重建时主线程重放的已接纳写入据此重新预约。写前预约、事务成功由 resetStoragePendingBudgets
+ * 全部清空；每个领域一项；Worker 重建后为新 isolate 的初值。
  */
 export const storagePendingBudgets: Readonly<Record<BudgetedStorageDomain, StorageWriteBudget>> = {
   whitelist: new StorageWriteBudget(),
@@ -50,16 +50,14 @@ export const storageWriteRetry: { failures: number; retryAt: number; signaled: b
 export const storageWriteFatalReply: { current: (() => void) | null } = { current: null };
 
 /**
- *
- * 每条连接三条预编译的主键存在性语句（永久白/黑名单与临时广告免检各一），首次由
+ * 每条连接上永久白名单、永久黑名单与临时广告免检各一条预编译的主键存在性语句，首次由
  * workers/diskIO/storageDatabase/identityPolicy.ts 建好放进来。写入路径按条目调用
- * assertOppositePolicyAbsent，因此同一连接必须复用预编译语句。
+ * assertOppositePolicyAbsent，复用同一连接的预编译语句。
  *
- * 容量固定为「每条活着的连接一项」，而本线程同时只持有一条连接，因此无淘汰需求。
+ * 容量为每条活着的连接一项，本线程同时只持有一条连接，不设淘汰。
  * 清理交给 GC：键是连接对象本身，连接被换掉后整项随之回收，本表不额外持有强引用。
- * SQLite 预编译语句绑在它自己的连接上，库句柄被整个换掉（重开库、测试重建）后旧
- * 语句失效，因此按连接对象建索引，不做成模块级单例。Worker 崩溃重建后是全新
- * isolate，本表随之为空，下一次调用重新预编译。
+ * 预编译语句绑定所属连接，库句柄被整个换掉（重开库、测试重建）后按新连接重新建立。
+ * Worker 崩溃重建后是全新 isolate，本表随之为空，下一次调用重新预编译。
  */
 export const storedIdentityIdLookups: WeakMap<
   StorageDatabase,
@@ -67,7 +65,6 @@ export const storedIdentityIdLookups: WeakMap<
 > = new WeakMap<StorageDatabase, StoredIdentityIdLookups>();
 
 /**
- *
  * 每条连接一整套统一事务提交用的预编译写语句，首次提交时由
  * workers/diskIO/storageDatabase/flush.ts 建好放进来，同一连接的每次提交复用。容量、清理与
  * Worker 重建口径同 storedIdentityIdLookups：每条活着的连接一项，键随连接回收，关库时
@@ -79,8 +76,8 @@ export const storageDatabaseWriters: WeakMap<
 > = new WeakMap<StorageDatabase, StorageDatabaseWriter>();
 
 /**
- * 30 秒 timer 使用的 ACK 通道；Worker 启动时填充，随整个 DiskIO isolate 销毁。
- * 它不跨线程共享，只由本 Worker 的 SQLite owner 读写。
+ * 固定截止 timer 使用的 ACK 通道；Worker 启动时填充，随整个 DiskIO isolate 销毁。
+ * 不跨线程共享，只由本 Worker 的 SQLite owner 读写。
  */
 export const storagePersistenceReplyHolder: {
   current: IdentityPersistenceReply | null;
@@ -92,21 +89,28 @@ export const storageDatabaseHandle: { current: StorageDatabase | null } = {
 };
 
 /**
- * 白名单未提交最终值；容量达到 128 即触发一次显式事务。
- * 提交成功后由 flush 清空，失败时保留给 30 秒 timer 重试；resetStorageDatabaseCache
+ * 停机已关库（workers/diskIO/storageDatabase/shutdown.ts）。置位后到达的身份写消息直接忽略，
+ * AI 上下文写只进缓冲，提交与定时提交都不再执行；resetStorageDatabaseCache 复位，容量为
+ * 一个布尔值。Worker 重建后为新 isolate 的初值 false。
+ */
+export const storageDatabaseClosed: { current: boolean } = { current: false };
+
+/**
+ * 白名单未提交最终值；条数达到 IDENTITY_WRITE_BATCH_MAX_ENTRIES 即触发一次显式事务。
+ * 提交成功后由 flush 清空，失败时保留给固定截止 timer 重试；resetStorageDatabaseCache
  * 也会清空。Worker 重建后为空，主线程以未 ACK revision 重放最终值。
  */
 export const pendingWhitelistWrites: Map<number, PendingIdentityPolicyWrite> = new Map();
 
 /**
- * 黑名单未提交最终值；容量达到 128 即触发一次显式事务。
+ * 黑名单未提交最终值；条数达到 IDENTITY_WRITE_BATCH_MAX_ENTRIES 即触发一次显式事务。
  * 清理与重建路径同 pendingWhitelistWrites。
  */
 export const pendingBlocklistWrites: Map<number, PendingIdentityPolicyWrite> = new Map();
 
 /**
- * 临时广告免检累计未提交最终值；消息到达时按身份合并，容量达到 128 即触发事务。
- * 成功提交后由 flush 清理，失败时保留给 30 秒 timer 重试；Worker 重建后为空，
+ * 临时广告免检累计未提交最终值；消息到达时按身份合并，条数达到 IDENTITY_WRITE_BATCH_MAX_ENTRIES 即触发事务。
+ * 成功提交后由 flush 清理，失败时保留给固定截止 timer 重试；Worker 重建后为空，
  * 主线程以未 ACK revision 重放最终值。
  */
 export const pendingTemporaryAdBypassWrites: Map<
@@ -115,7 +119,7 @@ export const pendingTemporaryAdBypassWrites: Map<
 > = new Map();
 
 /**
- * 待踢成员未提交行变化；容量达到 128 即触发一次显式事务。
+ * 待踢成员未提交行变化；条数达到 IDENTITY_WRITE_BATCH_MAX_ENTRIES 即触发一次显式事务。
  * 清理与重建路径同 pendingWhitelistWrites。
  */
 export const pendingRemovalWrites: Map<number, PendingRemovalWrite> = new Map();
@@ -178,22 +182,17 @@ export const latestRemovalSnapshotRevision: { current: number } = { current: 0 }
  */
 export const storageFlushHold: { current: boolean } = { current: false };
 
-/** 第一条未提交变化建立的 30 秒固定截止 timer。 */
+/** 第一条未提交变化建立的固定截止 timer，间隔为 IDENTITY_WRITE_FLUSH_INTERVAL_MS。 */
 export const storageWriteFlushTimer: {
   current: ReturnType<typeof setTimeout> | null;
 } = { current: null };
 
 /**
  * 本轮未进入写缓冲的拒收领域；单领域 flush 只取走本领域的标记，all/business flush
- * 取走全部，取走即清除，避免永久失败。容量最多为七个共享 SQLite 持久化领域
- * （含 AI 上下文），Worker 重建时由 reset 清空。
+ * 取走全部，取走即清除。容量不超过共享 SQLite 持久化领域数
+ * （StorageDatabaseDomain，含 AI 上下文），Worker 重建时由 reset 清空。
  */
 export const rejectedStorageDomains: Set<StorageDatabaseDomain> = new Set();
-
-/** 记下某个存储领域本轮拒收的一条消息；下一次覆盖该领域的 flush 会按该领域回报失败。 */
-export function noteStorageWriteRejected(domain: StorageDatabaseDomain): void {
-  rejectedStorageDomains.add(domain);
-}
 
 /** Worker load/重建前重置同 isolate 状态，避免重复显式 hydrate 污染。 */
 export function resetStorageDatabaseCache(): void {
@@ -205,6 +204,7 @@ export function resetStorageDatabaseCache(): void {
     closeStorageDatabase(storageDatabaseHandle.current);
   }
   storageDatabaseHandle.current = null;
+  storageDatabaseClosed.current = false;
   pendingWhitelistWrites.clear();
   pendingBlocklistWrites.clear();
   pendingTemporaryAdBypassWrites.clear();

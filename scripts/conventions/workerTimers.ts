@@ -4,24 +4,18 @@ import ts from "typescript";
 /**
  * Worker isolate 内 timer 的 `unref()` 门禁。
  *
- * 三个 Worker 的 timer 都由 owner 缓存或状态条目持有、并在失败后重新武装自己，
- * 必须 `unref()`：isolate 的存活由主线程那条 message port 提供，与 timer 的 ref
- * 状态无关；有序停机由各自的 drain/flush 提前兑现，随后由主线程 terminate。
- * timer 不该单独扣住 isolate 的事件循环（约束见 docs/cn/04-invariants.md）。
+ * Worker 的 timer 由 owner 缓存或状态条目持有、并在失败后重新武装自己，必须
+ * `unref()`：isolate 的存活由主线程那条 message port 提供，与 timer 的 ref
+ * 状态无关；有序停机由各自的 drain/flush 兑现，随后由主线程 terminate
+ * （约束见 docs/cn/04-invariants.md）。
  *
- * 判定按**句柄逐个**核对，而不是「函数体内出现过 unref 就算数」：
- * `startVerificationTimer` 在同一函数体里装 expiry 与 dedupe 两个 timer，后一种口径
- * 下漏掉其中一个的 unref 会被同函数里另一个的 unref 掩盖。
+ * 判定按句柄逐个核对：取每次 `setTimeout`/`setInterval` 的赋值目标文本
+ * （`const t = …`、`entry.timer = …`、`holder.current = …`），要求在同一函数体内、
+ * 该调用之后、且早于下一次写同一目标的 timer 调用之前，出现一次 `<同一目标>.unref()`。
+ * 句柄没有落到任何目标上（例如直接 `return setTimeout(...)`）同样拒绝。
  *
- * 具体口径：取每次 `setTimeout`/`setInterval` 的赋值目标文本（`const t = …`、
- * `entry.timer = …`、`holder.current = …`），要求在同一函数体内、该调用之后、
- * 且早于下一次写同一目标的 timer 调用之前，出现一次 `<同一目标>.unref()`。
- * 句柄没有落到任何目标上（例如直接 `return setTimeout(...)`）同样拒绝——那种
- * 写法根本没有可以 unref 的引用。
- *
- * 范围只到 `packages/workers/`：主线程另有一批**有意**不 unref 的 timer（由
- * `finally` 清理的短命 promise race、停机硬截止），它们没有「liveness 由 message
- * port 提供」这个前提，不适用本规则。
+ * 范围只到 `packages/workers/`；主线程里有意不 unref 的 timer（由 `finally` 清理的
+ * 短命 promise race、停机硬截止）不适用本规则。
  */
 
 /** 一次 timer 安装：句柄落点与它所在的函数体范围。 */

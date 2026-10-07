@@ -30,8 +30,8 @@ export async function handleIconCommand(ctx: CommandContext<Context>): Promise<v
   );
   if (cooldownClaim.rejected) return;
 
-  // 头像任务提交即算已开始；提交前因目标解析落空或 update 取消而中止时退还冷却，
-  // 否则停机后 Telegram 重投这条命令会撞上自己留下的冷却（口径同 /copy）。
+  // 头像任务提交即算已开始；提交前因目标解析落空或 update 取消而中止时退还冷却
+  // （口径同 /copy）。
   let avatarQueued: boolean = false;
   try {
     if (subcommand === "reset") {

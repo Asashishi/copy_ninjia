@@ -323,7 +323,7 @@ describe("project convention collectors", () => {
       ...ACTIVE_COLD_MIGRATION_EDGES.map((edge: ColdMigrationEdge): unknown => expect.stringContaining(`${edge.command} must invoke`)),
     ]);
 
-    // 已移除的旧边重新暴露在 package.json 里同样要报。
+    // 不在当前迁移边清单里的迁移命令出现在 package.json 里同样要报。
     for (const legacy of ["migrate:global-state", "migrate:random-image-names"]) {
       await Bun.write(join(root, "package.json"), JSON.stringify({ scripts: { ...active, [legacy]: "bun scripts/legacy.ts" } }));
       expect(await collectColdMigrationProblems(root)).toEqual([expect.stringContaining(declared)]);
@@ -534,9 +534,8 @@ describe("逐文件源码规则", () => {
       "}\n"
     ))).toEqual([message(2, "setTimeout")]);
 
-    // 回归：同一函数里装多个 timer 时，逐个句柄核对——不得被同函数里
-    // 另一个句柄的 unref 掩盖（startVerificationTimer、runLockdownEffects 都是
-    // 这种形态）。
+    // 同一函数里装多个 timer 时，逐个句柄核对，不被同函数里另一个句柄的 unref 掩盖
+    // （startVerificationTimer、runLockdownEffects 都是这种形态）。
     expect(collectWorkerTimerProblems(projectRoot, path, source(
       path,
       "function startTwo(): void {\n" +
@@ -546,7 +545,7 @@ describe("逐文件源码规则", () => {
       "}\n"
     ))).toEqual([message(2, "setTimeout")]);
 
-    // 回归：同一目标被连续写两次时，前一次必须在被覆盖之前 unref。
+    // 同一目标被连续写两次时，前一次在被覆盖之前必须 unref。
     expect(collectWorkerTimerProblems(projectRoot, path, source(
       path,
       "function scheduleTwice(): void {\n" +

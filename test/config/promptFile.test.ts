@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadPromptFile } from "../../packages/config/promptFile";
 
-/** 各用例独占的临时目录；afterEach 整棵删掉，不给 tmpdir 留残留。 */
+/** 各用例独占的临时目录；afterEach 整棵删掉。 */
 const tempDirs: string[] = [];
 
 afterEach((): void => {

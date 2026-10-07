@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { DAY_MS } from "../../packages/consts/diskIO/common";
+import { DAY_MS } from "../../packages/consts/time";
 import {
   TEMPORARY_AD_BYPASS_DAILY_MESSAGE_THRESHOLD,
   TEMPORARY_AD_BYPASS_REQUIRED_DAYS,
@@ -76,7 +76,7 @@ describe("临时广告免检连续日状态机", () => {
     }
     expect(isTemporaryAdBypassActive(activity, FIRST_QUALIFIED_AT + 64)).toBeTrue();
 
-    // 冻结值必须留在严格解码器与 SQLite CHECK 的合法域内。
+    // 冻结值留在严格解码器与 SQLite CHECK 的合法域内。
     expect(activity).toEqual({
       adBypass: true,
       adBypassGrantedAt: FIRST_QUALIFIED_AT,

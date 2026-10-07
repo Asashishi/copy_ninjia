@@ -44,8 +44,8 @@ export function jsonbTextProjection(column: SQLiteColumn): SQL<string> {
 }
 
 /**
- * 启动分页先核对 BLOB 与严格 JSONB，再安全投影正文；非法值返回 null，避免
- * `json()` 抢先抛出没有表、主键和字段路径的 SQLite 底层错误。
+ * 启动分页先核对 BLOB 与严格 JSONB，再安全投影正文；非法值返回 null，
+ * 不在投影时抛出 SQLite 底层错误。
  */
 export function guardedStrictJsonbTextProjection(
   column: SQLiteColumn

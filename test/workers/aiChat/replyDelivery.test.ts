@@ -64,7 +64,7 @@ test("同窗容纳多轮链，直接轮当即放行，后轮先就绪也必须�
   expect(replyDeliveryCounts.get(1)).toBe(total);
   for (let i: number = turns.length - 1; i > 0; i--) turns[i]!.commit();
   await Promise.resolve();
-  // 第一轮是直接轮：占位即放行；后面的轮都已 commit，仍要等它发完。
+  // 第一轮是直接轮：占位即放行；其余各轮已 commit，仍等它发完。
   expect(order).toEqual([0]);
   turns[0]!.commit();
   for (let i: number = 0; i < total; i++) {

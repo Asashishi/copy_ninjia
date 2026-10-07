@@ -36,9 +36,9 @@ export async function searchGeminiWeb(
   capability: AiWebSearchCapability,
   request: AiWebSearchRequest
 ): Promise<AiWebSearchResult> {
-  const result: GeminiRequestResult = await requestGeminiResult(
+  const result: GeminiRequestResult = await requestGeminiResult({
     capability,
-    (): GenerateContentParameters => {
+    buildBody: (): GenerateContentParameters => {
       // web_search 没配时抛错，由 requestGeminiResult 的 try 归一成失败；text 取对话模型。
       const model: string = requireAgentCapabilityConfig(capability).model;
       return {
@@ -52,8 +52,8 @@ export async function searchGeminiWeb(
         },
       };
     },
-    GEMINI_WEB_SEARCH_ERROR_LABEL
-  );
+    errorLabel: GEMINI_WEB_SEARCH_ERROR_LABEL,
+  });
   const response: GenerateContentResponse | undefined = result.response;
   const searchCalls: number = response === undefined ? 0 : countGoogleSearchCalls(response);
 

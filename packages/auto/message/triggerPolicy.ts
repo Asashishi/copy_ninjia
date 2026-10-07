@@ -8,7 +8,7 @@ import {
 } from "../../consts/auto";
 import type { MessageTriggerContext, RandomMediaTrigger } from "../../types/auto";
 
-/** 文本和四类媒体（photo/sticker/animation/voice）共用的随机搭话/评价掷骰条件。 */
+/** 文本和各媒体 handler（photo/sticker/animation/voice）共用的随机搭话/评价掷骰条件。 */
 export function shouldAttemptRandomTrigger(context: MessageTriggerContext): boolean {
   return context.directTriggerReason === undefined &&
     !context.isQuiet &&
@@ -18,12 +18,12 @@ export function shouldAttemptRandomTrigger(context: MessageTriggerContext): bool
 }
 
 /**
- * 四类媒体 handler（photo/sticker/animation/voice）共用的随机评价判定：先掷骰
+ * 各媒体 handler（photo/sticker/animation/voice）共用的随机评价判定：先掷骰
  * 看这份媒体是否成为解析后评价的候选，命中再占用「群 × 发言人」冷却名额。
  *
- * 两级结果都要用：`!== "none"` 决定 handler 的返回值（是否已接管这条消息），
+ * 返回值的两级用法：`!== "none"` 决定 handler 的返回值（是否已接管这条消息），
  * `=== "claimed"` 经 recordContext.ts 的 mediaReplyBackpressurePlaceholder 决定媒体
- * 是否发起回复轮。三态取值见 types/auto.ts 的 RandomMediaTrigger。
+ * 是否发起回复轮。取值见 types/auto.ts 的 RandomMediaTrigger。
  */
 export function claimRandomMediaTrigger(
   context: MessageTriggerContext,
@@ -36,11 +36,9 @@ export function claimRandomMediaTrigger(
 }
 
 /**
- * 一个媒体 handler 是否已经接管这条消息（= 不再往下走复读/主动行为）。
- *
- * 四个媒体 handler（photo/animation/voice/sticker）的收尾判据完全相同，收在这里
- * 一处：直接回复或 @ 机器人一定接管；否则只有随机触发真的成立（`claimed` 或
- * `candidate`，见 claimRandomMediaTrigger 的三态）才算接管。
+ * 媒体 handler（photo/animation/voice/sticker）是否已经接管这条消息（不再往下走复读/主动行为）：
+ * 直接回复或 @ 机器人一定接管；否则只有随机触发成立（`claimed` 或
+ * `candidate`，见 claimRandomMediaTrigger）才算接管。
  * 解析不出可用媒体而走 replyToUnresolvableMedia 的分支不经过本函数。
  */
 export function mediaTriggerHandled(
@@ -51,8 +49,8 @@ export function mediaTriggerHandled(
 }
 
 /**
- * 删除已到期或因系统时钟回拨落到未来的冷却。统一 timer 与容量边界共用，
- * 导出以便验证精确到期和异常时间轴。
+ * 删除已到期或因系统时钟回拨落到未来的冷却，并重算满表有效区间。统一 timer 与容量边界共用；
+ * 导出供边界测试。
  */
 export function sweepUserReplyTriggerTimes(now: number = Date.now()): void {
   let earliest: number = Number.POSITIVE_INFINITY;
@@ -106,24 +104,24 @@ function scheduleUserReplyTriggerSweep(now: number): void {
 
 /**
  * 按「群 × 发言人」占用一次随机回复冷却名额。明确回复或 @ 机器人的直接
- * 交互不经过这里，由 Worker 的有界直接触发队列承接。
+ * 交互不经过这里，由 Worker 侧的直接触发队列承接。
  */
 export function tryClaimUserReplyTrigger(chatId: number, speakerId: number, now: number = Date.now()): boolean {
   let users: Map<number, number> | undefined = userReplyTriggerTimes.get(chatId);
   const lastTime: number | undefined = users?.get(speakerId);
-  // 时钟回拨时旧冷却点位于未来；先失效它，再从新时间轴计时。
+  // 时钟回拨时旧冷却点位于未来，先失效它，再从新时间轴计时。
   if (lastTime !== undefined) {
     if (lastTime <= now && now - lastTime < USER_REPLY_TRIGGER_COOLDOWN_MS) return false;
     users!.delete(speakerId);
     userReplyTriggerSweepState.size--;
-    // 满表中的条目已换代，旧有效区间不能在后续时钟回拨时复用。
+    // 满表中的条目已换代，旧有效区间失效。
     if (userReplyTriggerSweepState.size === USER_REPLY_TRIGGER_CACHE_MAX - 1) {
       userReplyTriggerSweepState.validUntil = Number.NEGATIVE_INFINITY;
     }
   }
 
-  // 正常到期由唯一 timer 清理；只有逼近硬顶时在热路径补扫一次，避免每次
-  // 随机命中都 O(n)。仍满说明所有现存冷却都有效，fail closed 放弃本次随机回复。
+  // 正常到期由唯一 timer 清理；逼近硬顶时在热路径补扫一次，补扫后仍满说明
+  // 所有现存冷却都有效，fail closed 放弃本次随机回复。
   if (userReplyTriggerSweepState.size >= USER_REPLY_TRIGGER_CACHE_MAX) {
     if (now >= userReplyTriggerSweepState.validFrom && now < userReplyTriggerSweepState.validUntil) return false;
     sweepUserReplyTriggerTimes(now);

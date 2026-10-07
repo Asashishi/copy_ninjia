@@ -32,8 +32,8 @@ import { isWhitelisted } from "../infra/identityPolicy/whitelist";
 import { canBypassAdDetection } from "./memberFacts";
 
 /**
- * 摘出正文不可见的 text_link URL；与正文分开限额，避免超长填充文本把落地页
- * 挤出 Worker 的正文截断范围。
+ * 摘出正文不可见的 text_link URL；与正文分开限额（AD_DETECT_MAX_LINK_URLS、
+ * AD_DETECT_LINK_URL_MAX_CHARS）。
  */
 function collectHiddenLinkUrls(
   text: string,
@@ -68,9 +68,9 @@ function replySourceIdentityId(message: Message): number | undefined {
 }
 
 /**
- * 引用来源的受保护身份三态。永久白名单成员不以自己的内容连坐回复者，临时广告
- * 豁免同样跳过；三张身份缓存都热才能确证 false。冷缺失表示 update 前置预取
- * 失败，不能把未知身份送进永久封禁的升级路径。
+ * 引用来源的受保护身份三态：永久白名单成员或临时广告豁免返回 true；
+ * 身份策略缓存已就绪（isIdentityPolicyCached）且不受保护返回 false；
+ * 缓存冷缺失（update 前置预取失败）返回 undefined。
  */
 function sourceWhitelistStatus(
   sourceId: number,
@@ -84,8 +84,8 @@ function sourceWhitelistStatus(
 }
 
 /**
- * 摘出非白名单来源的引用段与被回复原文，让“编辑旧消息后再顶上来”的广告仍进入
- * 判定；关联频道自动转发与白名单来源不连坐评论者，因此显式忽略其回复上下文。
+ * 摘出非白名单来源的引用段与被回复原文；关联频道自动转发与白名单来源的回复上下文
+ * 忽略（返回 undefined）。
  */
 function buildSampleContext(
   message: Message,
@@ -106,7 +106,7 @@ function buildSampleContext(
   ) {
     return undefined;
   }
-  // 截断可能停在空格后面；去掉末尾空白，交给 Worker 的就是清洗完成的单行文本，
+  // 截断后去掉末尾空白，交给 Worker 的是清洗完成的单行文本，
   // Worker 侧只再收一次长度（见 workers/antiRaid/adDetect/bundle.ts 的 boundSampleContext）。
   const quote: string = truncateInline(
     sanitizeInline(rawQuote ?? ""),
@@ -142,7 +142,7 @@ export function adDetectionSenderId(
 
 /**
  * 收敛一条已通过 adDetectionSenderId 前置判定的待判定消息。受保护身份返回 undefined；
- * 频道黑名单落地空档仍投递，以便 Worker 删除漏网消息。
+ * 频道黑名单落地空档仍投递，由 Worker 删除漏网消息。
  */
 export function buildAdCandidate(
   {
@@ -158,14 +158,8 @@ export function buildAdCandidate(
   const blocked: boolean = isUserBlocked(senderId);
   if (blocked && senderChat === undefined) return undefined;
 
-  // 本 bot 自己的 inline 结果送检的是**用户打进 inline 查询的源文本**，不是落群
-  // 的那段正文：后者整段由本 bot 渲染——gag 按字形随机插点、替换字符，正落在提示
-  // 词 B 条「联系方式或关键词被刻意变形……看到就几乎可以判 true」这个最强单项信号
-  // 上；运势那边则是问候、抽签结果与防伪回执，用户写的只有所求事项一段。拿渲染
-  // 结果送检等于按本 bot 自己的排版判人。源文本只在应答那一刻登记得到（见
-  // infra/inlineResultSources.ts），取不到就整条不判——登记被容量挤掉、进程在发言
-  // 之后重启，或客户端发出的是上一次按键那条结果，都不足以拿另一段文本去判一条
-  // 真实消息，而本 bot 的渲染结果一个字都不该流进判定。
+  // 本 bot 自己的 inline 结果送检用户打进 inline 查询的源文本，不送检落群的渲染正文。
+  // 源文本只在应答时登记（见 infra/inlineResultSources.ts），取不到就整条不判。
   const selfInlineResult: boolean = message.via_bot?.id === botId;
   let inlineSource: string | undefined;
   if (selfInlineResult) {
@@ -186,12 +180,8 @@ export function buildAdCandidate(
   const text: string = sanitizeInline(
     inlineSource ?? message.text ?? message.caption ?? ""
   );
-  // 送检的是源文本时，实体属于本 bot 渲染出来的那段正文，与源文本对不上号，
-  // 一律不补。本 bot 的 inline 结果里 text_link 也**全部**是自己拼上去的（结果按
-  // 显式 entities 发出，用户打的字只是纯文本；Telegram 自动识别出来的裸链接是
-  // `url` 实体，不是这里读的 `text_link`），补进去只会给每条运势结果凭空添一个
-  // 「把人带离本群的落点」——那是运势的防伪回执链接。用户自己打进查询的链接留在
-  // 源文本里，照常参与判定。
+  // 送检源文本时不补 text_link：实体属于本 bot 渲染的正文，与源文本对不上；
+  // 用户打进查询的链接留在源文本里参与判定。
   const linkUrls: string[] | undefined = selfInlineResult
     ? undefined
     : collectHiddenLinkUrls(
@@ -203,11 +193,9 @@ export function buildAdCandidate(
 
   const meta: Readonly<TelegramIdentityMetadata> =
     messageIdentityMetadata(message, senderChat);
-  // 可缺席的字段无条件写在初始化处：事后 `if (x !== undefined) candidate.x = …`
-  // 会让每条开启广告检测的群消息产出多种 hidden class，把 adDetect 队列的读点与
-  // structured clone 边界一起多态化。口径同 aiChat/workerBridge.ts 的「字段一律
-  // 发出，不用条件展开」与 auto/message/facts.ts。元数据与引用上下文平铺成原始值
-  // 字段，载荷保持扁平（见 types/antiRaid/adDetect.ts 的 AdCandidateMessage）。
+  // 可缺席的字段无条件写在初始化处，保持对象 shape 一致，口径同 aiChat/workerBridge.ts
+  // 的「字段一律发出，不用条件展开」与 auto/message/facts.ts。元数据与引用上下文平铺成
+  // 原始值字段，载荷保持扁平（见 types/antiRaid/adDetect.ts 的 AdCandidateMessage）。
   return {
     type: "adCandidate",
     chatId,
@@ -221,7 +209,7 @@ export function buildAdCandidate(
     isChannel: senderChat !== undefined,
     isForwarded,
     blocked,
-    // 同 updateIngress.ts：空表上不必先拼复合键，`has()` 本来也只会返回 false。
+    // 同 updateIngress.ts：空表时跳过复合键构造。
     justJoined: activeVerificationSnapshots.size > 0 &&
       activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
     linkUrls,

@@ -47,11 +47,11 @@ function deleteAlias(username: string): void {
 
 /**
  * 原子维护 username <-> sender id 双向缓存，以及按 id 直查身份的 identityById。
- * 所有身份写入（消息观察与启动预热）都必须走这里，避免改名、去名、username 换绑
- * 和容量淘汰产生悬空映射。
+ * 所有身份写入（消息观察与启动预热）都必须走这里；改名、去名、username 换绑
+ * 和容量淘汰都在此同步维护各张表。
  *
  * identityById 的每一次写入和删除都紧贴同一条 senderUsernameCache 语句：两张表
- * 的键集恒等是 cacheSender 直查的前提，漏掉一侧会让稳态判定读到已经作废的身份。
+ * 的键集恒等是 cacheSender 直查的前提。
  */
 export function updateCachedIdentity(identity: CachedUser): void {
   const username: string | undefined = identity.username
@@ -78,10 +78,9 @@ export function updateCachedIdentity(identity: CachedUser): void {
     identityById.delete(previousIdentity.id);
   }
 
-  // 只有新增正向 key 才占容量。同名资料刷新和 username 换绑都不增长条数。
-  // 这里不能换成 libs/boundedMap.ts 的 setBoundedMapValue：淘汰要连带摘掉
-  // senderUsernameCache 与 identityById 两份按 id 的索引（deleteAlias），而共享
-  // 实现只认识单张 Map，用它会留下一批指向已淘汰 username 的悬空反查项。
+  // 只有新增正向 key 才占容量，同名资料刷新和 username 换绑不增长条数。
+  // 淘汰经 deleteAlias 连带摘掉 senderUsernameCache 与 identityById 两份按 id 的索引，
+  // 不使用只维护单张 Map 的 libs/boundedMap.ts 的 setBoundedMapValue。
   if (!previousIdentity && userCache.size >= USER_CACHE_MAX) {
     const oldestUsername: string | undefined = userCache.keys().next().value;
     if (oldestUsername !== undefined) deleteAlias(oldestUsername);
@@ -94,7 +93,7 @@ export function updateCachedIdentity(identity: CachedUser): void {
 
 /**
  * 记录/刷新某个发送者的缓存条目（两类身份见上方 resolveSenderIdentity），
- * 以便之后 /copy @username 能找到 TA。没有公开 username 的发送者不入缓存
+ * 供 /copy @username 查找。没有公开 username 的发送者不入缓存
  * （见 CachedUser 注释），但仍可经 resolveReplyTarget 定位。
  * @returns 解析出的发送者 id（若以频道身份发送则为频道 id，否则为用户 id）。
  */
@@ -106,18 +105,16 @@ export function cacheSender(message: Message): number | undefined {
   const username: string | undefined = senderChat !== undefined
     ? ("username" in senderChat ? senderChat.username : undefined)
     : fromUser!.username;
-  // 直查按 id 的身份，而不是先取 alias 再用字符串键回查 userCache：两张表的键集
-  // 恒等（见 cache/main/senderIdentity.ts 的 identityById），这里只是同一个结果的
-  // 一次查找形式。这条判定跑在每条群消息上，省下的正是那次字符串键查找。
+  // 直查按 id 的身份，不经 alias 再回查 userCache；两张表的键集恒等
+  // （见 cache/main/senderIdentity.ts 的 identityById）。这条判定跑在每条群消息上。
   const cached: CachedUser | undefined = identityById.get(identityId);
   if (username === undefined && cached === undefined) {
     return identityId;
   }
-  // 逐字段比对而不是先构造一个 CachedUser 再比：每条群消息都会走到这里，绝大多数
-  // 消息的发送者资料没变，构造一个只为比较的临时对象等于白付一次分配。两种身份形态
-  // 缺席的字段也要比（频道没有 first/last_name，用户没有 title/isChannel），否则同一
-  // id 在两种形态之间切换时会被误判成「未变」。字段清单必须与 resolveSenderIdentity
-  // 构造的两种形态一致，见 test/users/senderIdentity.test.ts 的形态同步用例。
+  // 逐字段比对，不构造临时 CachedUser（每条群消息都走到这里）。两种身份形态
+  // 缺席的字段也要比（频道没有 first/last_name，用户没有 title/isChannel）。
+  // 字段清单必须与 resolveSenderIdentity 构造的两种形态一致，
+  // 见 test/users/senderIdentity.test.ts 的形态同步用例。
   if (senderChat !== undefined) {
     const title: string | undefined = "title" in senderChat
       ? senderChat.title
@@ -145,17 +142,15 @@ export function cacheSender(message: Message): number | undefined {
 
   // 只有确实要写入时才构造，且一律走 resolveSenderIdentity：两种身份形态的字面量
   // 只在 users/visibleSender.ts 的 channelIdentity / userIdentity 各一处，本文件与
-  // commands/commandActor.ts 都调它们，不再各写一份可能悄悄漂移的字面量。
-  // 这条路只在资料真的变了时才走到。
+  // commands/commandActor.ts 都调它们。这条路只在资料变化时才走到。
   const identity: CachedUser | undefined = resolveSenderIdentity(message);
   if (identity !== undefined) updateCachedIdentity(identity);
   return identityId;
 }
 
 /**
- * 从 /copy 指令所回复的消息中解析出目标，这样即使对方没有公开 @username（或者
- * 机器人还没缓存过 TA，比如因为 privacy mode 屏蔽了 TA 之前的消息），只要能回复到
- * TA 的一条消息，依然可以将其设为目标。只认显式回复：论坛话题里 Bot API 自动填入的
+ * 从 /copy 指令所回复的消息中解析出目标；对方没有公开 @username 或尚未被缓存时，
+ * 只要能回复到其一条消息即可定位。只认显式回复：论坛话题里 Bot API 自动填入的
  * 话题创建消息不算（见 libs/forumTopic.ts 的 explicitReplyTo）。
  */
 export function resolveReplyTarget(message: Message): CachedUser | undefined {
@@ -172,8 +167,7 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
   const identity: CachedUser | undefined = userCache.get(normalizedUsername);
   if (!identity) return undefined;
 
-  // 已知不一致的 alias 一律拒绝，并顺手清除坏的正向记录。/block 等破坏性命令
-  // 因此不会继续相信仅存在于单边缓存中的陈旧身份；提示层会建议回复消息定位。
+  // 已知不一致的 alias 一律拒绝，并清除坏的正向记录；提示层建议回复消息定位。
   if (senderUsernameCache.get(identity.id) !== normalizedUsername) {
     userCache.delete(normalizedUsername);
     return undefined;
@@ -186,23 +180,18 @@ export function resolveUsernameTarget(username: string): CachedUser | undefined 
  * 按裸 id 取目标身份，供 `/block … enable`、`/block … disable`、`/gag`、`/ungag`、
  * `/permission` 与 `/white` 解析 id 形式的参数，见 commands/targetResolution.ts。
  *
- * **与 @username 那条路的关键差别：查不到不是失败。** id 本身就是权威目标，
- * 缓存只用来给回执配一个人类可读的标签；而用户名是会被释放、被别人重新注册的
- * ——那正是「破坏性操作优先回复消息、别信历史用户名」这条建议的由来（同
- * `/icon steal` 的现查要求，见 docs/cn/04-invariants.md）。按 id 下的命令没有这个
- * 问题，因此这里在缓存落空时返回只带 id 的最小身份，让命令照常执行。
+ * **与 @username 那条路的差别：查不到不是失败。** id 本身就是权威目标，
+ * 缓存只用来给回执配一个人类可读的标签；缓存落空时返回只带 id 的最小身份，
+ * 命令照常执行（@username 目标的现查要求见 docs/cn/04-invariants.md）。
  *
- * 负数 id 一律标成频道身份。这不是猜的：负 id 只可能来自 `sender_chat`，处置侧
- * 也早就按同一个符号分派（见 workers/antiRaid/blocklistEffects.ts 的 removeOne）。
- * 这个标记是承重的——`/block disable` 靠它决定走 unbanChatSenderChat 还是
- * unbanChatMemberIfBanned，漏标就会拿一个负数去调后者，报错记进 failedCount，
- * 管理员收到一份「还有 N 个群没解开」的假战报。缓存命中那条路不必重复标：
- * 负 id 的缓存条目只有两个来源，都已经带上 isChannel——消息观察一律经
+ * 负数 id 一律标成频道身份：负 id 只来自 `sender_chat`，处置侧按同一符号分派
+ * （见 workers/antiRaid/blocklistEffects.ts 的 removeOne）。`/block disable` 据此
+ * 决定走 unbanChatSenderChat 还是 unbanChatMemberIfBanned。缓存命中那条路不重复标：
+ * 负 id 的缓存条目都已带上 isChannel——消息观察一律经
  * resolveSenderIdentity 构造（cacheSender 与 resolveReplyTarget 都走它），启动预热的
  * updateCachedIdentity 写入的是持久化状态里原样保留该标记的身份。
  *
- * 双向一致才采信缓存里的那份，同 resolveUsernameTarget：单边残留的别名
- * 会把标签写成另一个人的名字。
+ * 双向一致才采信缓存里的那份，同 resolveUsernameTarget。
  */
 export function resolveIdTarget(targetId: number): CachedUser {
   const minimalIdentity: CachedUser = targetId < 0 ? { id: targetId, isChannel: true } : { id: targetId };

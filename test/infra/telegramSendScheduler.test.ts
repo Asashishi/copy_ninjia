@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, spyOn, test } from "bun:test";
 import type { RawApi, Transformer } from "grammy";
 import { telegramOutboundGateState } from "../../packages/cache/main/telegram";
 import { sendChatLanes, sendSchedulerState } from "../../packages/cache/main/telegramSend";
 import {
+  TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX,
   TELEGRAM_MESSAGE_GROUP_PENDING_MAX,
   TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX,
   TELEGRAM_SEND_CHAT_BURST,
@@ -12,6 +13,7 @@ import {
   TELEGRAM_SEND_GLOBAL_WINDOW_MS,
   TELEGRAM_SEND_GROUP_LIMIT,
   TELEGRAM_SEND_GROUP_WINDOW_MS,
+  TELEGRAM_TIMER_MAX_DELAY_MS,
 } from "../../packages/consts/telegram";
 import { telegramOutboundGate } from "../../packages/infra/telegram/outboundGate";
 import { drainTelegramOutbound, initTelegramOutbound } from "../../packages/infra/telegram/outboundLifecycle";
@@ -155,6 +157,45 @@ describe("每聊天发送调度器", () => {
       .toEqual([`c${TELEGRAM_SEND_GLOBAL_LIMIT}`, `c${TELEGRAM_SEND_GLOBAL_LIMIT + 1}`]);
   });
 
+  test("全局额度逐个腾出时轮转队列每次只放一条，后面的车道续挂定时器等下一个空位", async () => {
+    const half: number = TELEGRAM_SEND_GLOBAL_WINDOW_MS / 2;
+    await send(1_000, "early");
+    await advance(half);
+    const fill: Promise<unknown>[] = Array.from({ length: TELEGRAM_SEND_GLOBAL_LIMIT - 1 }, (_: unknown, index: number): Promise<unknown> => send(2_000 + index, `fill${index}`));
+    const waiting: Promise<unknown>[] = [send(3_000, "first-waiting"), send(3_001, "second-waiting")];
+    await flush();
+    expect(sent).toHaveLength(TELEGRAM_SEND_GLOBAL_LIMIT);
+
+    // 最早那条滑出窗口只腾出一个空位：轮转队首放行，第二条续挂到下一个空位。
+    await advance(half);
+    expect(textsOf(3_000)).toEqual(["first-waiting"]);
+    expect(textsOf(3_001)).toEqual([]);
+    await advance(half);
+    await settleTestBatch([...fill, ...waiting]);
+    expect(textsOf(3_001)).toEqual(["second-waiting"]);
+  });
+
+  test("批量复制与转发按条数扣额度", async () => {
+    const ids: readonly number[] = Array.from({ length: TELEGRAM_SEND_CHAT_BURST }, (_: unknown, index: number): number => index + 1);
+    const copied: Promise<unknown> = send(42, "copy-batch", { method: "copyMessages", extra: { message_ids: ids } });
+    const next: Promise<unknown> = send(42, "after-copy");
+    await flush();
+    expect(textsOf(42)).toEqual(["copy-batch"]);
+    await advance(TELEGRAM_SEND_CHAT_REFILL_MS);
+    await settleTestBatch([copied, next]);
+    expect(textsOf(42)).toEqual(["copy-batch", "after-copy"]);
+
+    sent.length = 0;
+    await advance(TELEGRAM_SEND_CHAT_BURST * TELEGRAM_SEND_CHAT_REFILL_MS);
+    const forwarded: Promise<unknown> = send(43, "forward-batch", { method: "forwardMessages", extra: { message_ids: ids } });
+    const afterForward: Promise<unknown> = send(43, "after-forward");
+    await flush();
+    expect(textsOf(43)).toEqual(["forward-batch"]);
+    await advance(TELEGRAM_SEND_CHAT_REFILL_MS);
+    await settleTestBatch([forwarded, afterForward]);
+    expect(textsOf(43)).toEqual(["forward-batch", "after-forward"]);
+  });
+
   test("相册按张数扣额度；单次条数超过桶容量时等桶满放行，欠额顺延到下一条", async () => {
     const album: readonly object[] = Array.from({ length: TELEGRAM_SEND_CHAT_BURST + 2 }, (): object => ({ type: "photo", media: "f" }));
     const first: Promise<unknown> = send(42, "album", { method: "sendMediaGroup", extra: { media: album } });
@@ -191,7 +232,7 @@ describe("每聊天发送调度器", () => {
     await advance(1);
     await hot;
     expect(telegramOutboundGateState.lanes.message.pendingCount).toBe(0);
-    // 保守档突发容量为 1：重发用掉唯一的令牌，后面每条隔一个补充周期。
+    // 保守档突发容量只有一个令牌：重发用掉它，后面每条隔一个补充周期。
     expect(textsOf(-1001)).toEqual(["hot", "hot"]);
     await advance(TELEGRAM_SEND_CHAT_REFILL_MS);
     expect(textsOf(-1001)).toEqual(["hot", "hot", "f1"]);
@@ -202,6 +243,42 @@ describe("每聊天发送调度器", () => {
     sent.length = 0;
     await settleTestBatch(Array.from({ length: TELEGRAM_SEND_CHAT_BURST }, (_: unknown, index: number): Promise<unknown> => send(-1001, `b${index}`)));
     expect(textsOf(-1001)).toHaveLength(TELEGRAM_SEND_CHAT_BURST);
+  });
+
+  test("retry_after 超过单个定时器上限时车道定时器分段等待，冻结期满才重发", async () => {
+    const retryAfterMs: number = (Math.ceil(TELEGRAM_TIMER_MAX_DELAY_MS / 1_000) + 60) * 1_000;
+    let throttled: boolean = true;
+    respond = (): Promise<unknown> => {
+      if (throttled) {
+        throttled = false;
+        return Promise.resolve(TOO_MANY_REQUESTS(retryAfterMs / 1_000));
+      }
+      return Promise.resolve({ ok: true, result: true });
+    };
+    const delays: number[] = [];
+    const fakeSetTimeout: typeof setTimeout = globalThis.setTimeout;
+    const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+      ((callback: () => void, delay?: number, ...args: unknown[]): ReturnType<typeof setTimeout> => {
+        delays.push(delay ?? 0);
+        return fakeSetTimeout(callback, delay, ...args) as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout
+    );
+    try {
+      const hot: Promise<unknown> = send(-1001, "hot");
+      await flush();
+      expect(delays.length).toBeGreaterThan(0);
+      for (const delay of delays) expect(delay).toBeLessThanOrEqual(TELEGRAM_TIMER_MAX_DELAY_MS);
+      await advance(TELEGRAM_TIMER_MAX_DELAY_MS);
+      expect(textsOf(-1001)).toEqual(["hot"]);
+      await advance(retryAfterMs - TELEGRAM_TIMER_MAX_DELAY_MS - 1);
+      expect(textsOf(-1001)).toEqual(["hot"]);
+      await advance(1);
+      await hot;
+      expect(textsOf(-1001)).toEqual(["hot", "hot"]);
+      for (const delay of delays) expect(delay).toBeLessThanOrEqual(TELEGRAM_TIMER_MAX_DELAY_MS);
+    } finally {
+      timerSpy.mockRestore();
+    }
   });
 
   test("@username 不分大小写归入同一个群类车道，数字字符串与数字 id 同车道", async () => {
@@ -255,6 +332,50 @@ describe("每聊天发送调度器", () => {
     for (const outcome of await settleTestBatch(outcomes)) expect(outcome).toMatchObject({ name: "AbortError" });
     expect(sendSchedulerState.queuedTotal).toBe(0);
     expect(telegramOutboundGateState.lanes.message.activeCount).toBe(0);
+  });
+
+  test("全部聊天合计的排队达到上限时当即以 global 拒绝新请求", async () => {
+    const never: Promise<unknown> = new Promise<unknown>((): void => {});
+    respond = (): Promise<unknown> => never;
+    const outcomes: Promise<unknown>[] = [];
+    let chat: number = 1;
+    while (sendSchedulerState.queuedTotal < TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX) {
+      // 全局秒窗口用完后的车道连在途位都拿不到，整条都在排队，所以每条车道只放到单聊天上限。
+      const lanePending: number = Math.min(
+        TELEGRAM_MESSAGE_PRIVATE_PENDING_MAX,
+        TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX - sendSchedulerState.queuedTotal
+      );
+      for (let index: number = 0; index < lanePending; index++) {
+        outcomes.push(send(chat, `p${chat}-${index}`).catch((error: unknown): unknown => error));
+      }
+      chat++;
+    }
+    const rejected: unknown = await send(chat, "overflow").catch((error: unknown): unknown => error);
+    expect(rejected).toBeInstanceOf(TelegramSendQueueFullError);
+    expect((rejected as Error).message).toContain(String(TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX));
+    expect(sendSchedulerState.queuedTotal).toBe(TELEGRAM_MESSAGE_GLOBAL_PENDING_MAX);
+    await drainTelegramOutbound(0);
+    for (const outcome of await settleTestBatch(outcomes)) expect(outcome).toMatchObject({ name: "AbortError" });
+    expect(sendSchedulerState.queuedTotal).toBe(0);
+  });
+
+  test("网络 reject 与同步抛错都按失败结算，释放车道在途位并让后续请求继续", async () => {
+    const previousThrowing: PreviousCall = ((_method: string, payload: { chat_id: unknown; text?: string }): Promise<unknown> => {
+      const text: string = payload.text ?? "";
+      sent.push({ chatId: payload.chat_id, text, at: performance.now() - startedAt });
+      if (text === "sync") throw new Error("boom-sync");
+      if (text === "net") return Promise.reject(new Error("boom-net"));
+      return Promise.resolve({ ok: true, result: true });
+    }) as PreviousCall;
+    const sendVia = (text: string): Promise<unknown> =>
+      gate(previousThrowing, "sendMessage", { chat_id: -1001, text } as never) as Promise<unknown>;
+
+    const outcomes: PromiseSettledResult<unknown>[] = await Promise.allSettled([sendVia("net"), sendVia("sync"), sendVia("ok")]);
+
+    expect(outcomes.map((outcome: PromiseSettledResult<unknown>): string => outcome.status)).toEqual(["rejected", "rejected", "fulfilled"]);
+    expect(telegramOutboundGateState.activeCount).toBe(0);
+    expect(telegramOutboundGateState.lanes.message.activeCount).toBe(0);
+    expect(textsOf(-1001)).toEqual(["net", "sync", "ok"]);
   });
 
   test("空闲车道在分钟窗口过去后删除", async () => {

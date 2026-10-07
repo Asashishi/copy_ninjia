@@ -21,7 +21,7 @@ import type { Chat } from "grammy/types";
  * 落盘后补一次观测，被容量门禁拒绝的 `/init` 不留下镜像。
  *
  * 投递失败不补偿也不记错误日志：`postAntiRaid` 返回 false 只发生在 Worker 已放弃
- * 或正在重建时，onRespawn 会整表重放。本地缓存仍需写入——它是重放的数据来源。
+ * 或正在重建时，onRespawn 会整表重放。本地缓存照常写入，作为重放的数据来源。
  */
 export function observeChatKind(chat: Pick<Chat, "id" | "type">): void {
   if (chat.type !== "group" && chat.type !== "supergroup") return;

@@ -5,12 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /**
- * 原子写的全部价值都在失败路径上：write/fsync/close/rename 各自失败后都必须
- * 清掉临时文件、保留原始错误，并且绝不把半份数据 rename 到目标路径。这些分支
- * 在正常运行里永远走不到，只能靠故障注入覆盖（见 package.json 的
- * test:fault-injection）。
+ * 原子写的失败路径：write/fsync/close/rename 各自失败后都清掉临时文件、保留原始错误，
+ * 且不把半份数据 rename 到目标路径。这些分支在正常运行里走不到，由故障注入覆盖
+ * （见 package.json 的 test:fault-injection）。
  */
-// mock.module 会就地改写命名空间对象；真实实现必须先快照，否则包装会自我递归。
+// mock.module 会就地改写命名空间对象；真实实现先快照下来。
 const realFsSnapshot = { ...realFs };
 const realFsPromisesSnapshot = { ...realFsPromises };
 const realOpen = realFsPromisesSnapshot.open;
@@ -63,7 +62,7 @@ mock.module("node:fs/promises", () => ({
         await handle.chmod(fileMode as number);
       },
       close: async (): Promise<void> => {
-        // 即使注入失败也要真正释放 fd，否则测试进程会泄漏句柄。
+        // 即使注入失败也真正释放 fd。
         await handle.close();
         step("close");
       },
@@ -75,11 +74,9 @@ mock.module("node:fs/promises", () => ({
   },
 }));
 
-// 异步清理走 Bun 原生 BunFile.delete()（见 packages/libs/atomicFile.ts），
-// mock.module("node:fs/promises") 拦不到它。这里就地包一层 Bun.file：delete 仍按
-// "unlink" 记名并可注入失败，其余属性绑回真实 BunFile，不影响同 isolate 的其它读写。
-// 与摘不掉的 mock.module 不同，Bun.file 是普通可写属性，afterAll 里原样还原——
-// 否则非隔离运行时这层包装会带着注入的 unlink 失败泄漏进后续测试文件。
+// 异步清理走 Bun 原生 BunFile.delete()（见 packages/libs/atomicFile.ts），mock.module("node:fs/promises") 拦不到它。
+// 这里就地包一层 Bun.file：delete 仍按 "unlink" 记名并可注入失败，其余属性绑回真实 BunFile；
+// Bun.file 是普通可写属性，afterAll 里原样还原。
 const fdFiles = new WeakSet<Bun.BunFile>();
 const realBunWrite = Bun.write;
 Bun.write = (async (target: any, input: any, options?: any): Promise<number> => {
@@ -238,7 +235,7 @@ describe("atomicWriteText 的失败清理", () => {
 
 describe("atomicWriteText 的权限接管", () => {
   test("沿用目标原有权限：部署方 chmod 0600 过的文件不被一次普通写入放宽", async () => {
-    // rename 替换目标前，临时文件须接管目标的权限；原子写入后仍保持 0600。
+    // rename 替换目标前，临时文件接管目标的权限；原子写入后仍保持 0600。
     realFsSnapshot.writeFileSync(targetPath, "old");
     realFsSnapshot.chmodSync(targetPath, 0o600);
 
@@ -311,14 +308,13 @@ describe("atomicWriteTextSync 的失败清理", () => {
   });
 
   test("rename 已成功后目录 fsync 失败：抛出原始错误但不误删已发布的目标文件", () => {
-    // 第 1 次 fsyncSync 是写临时文件，第 2 次才是 syncDirectorySync 的目录同步。
+    // 第一次 fsyncSync 是写临时文件，第二次是 syncDirectorySync 的目录同步。
     injectFailure("fsyncSync", "injected directory fsync failure", 2);
 
     expect(() => atomicWriteTextSync(targetPath, "payload")).toThrow("injected directory fsync failure");
 
     expect(operations).toContain("renameSync");
-    // 清理里的 unlinkSync 会因为临时路径已被 rename 掉而 ENOENT，必须被吞掉且
-    // 不影响原始错误；目标文件已经发布，不能被删。
+    // 清理里的 unlinkSync 因临时路径已被 rename 掉而 ENOENT，被吞掉且不影响原始错误；目标文件已经发布，不删。
     expect(realFsSnapshot.existsSync(targetPath)).toBe(true);
     expect(realFsSnapshot.readFileSync(targetPath, "utf8")).toBe("payload");
     expect(leftoverTempFiles()).toEqual([]);
@@ -387,10 +383,9 @@ describe("atomicWriteTextChunksSync 的分块与失败清理", () => {
 });
 
 describe("同步原子写的权限接管", () => {
-  // 临时文件是新建的，`0666 & ~umask`（常见 0644）与目标原有权限没有任何关系，
-  // 而 rename 直接把它替换上去。异步版 atomicWriteText 早就为此显式读了目标现有
-  // mode，同步版却漏了——追加型日志正是刻意不传 mode 来「保持原有部署权限策略」的
-  // （见 workers/diskIO/appendOnlyDayFile.ts），于是每次重写都把它悄悄放宽。
+  // 临时文件是新建的，其权限是 `0666 & ~umask`，与目标原有权限无关，rename 直接替换上去；
+  // 同步版与异步版 atomicWriteText 一样显式读取目标现有 mode。追加型日志刻意不传 mode
+  // 来「保持原有部署权限策略」（见 workers/diskIO/appendOnlyDayFile.ts）。
   function modeOf(path: string): number {
     return realFsSnapshot.statSync(path).mode & 0o777;
   }

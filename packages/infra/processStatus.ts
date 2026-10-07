@@ -21,8 +21,8 @@ function finiteNonNegative(value: number): number {
 }
 
 /**
- * 把一次同步采样换算成稳定、有限的展示值。CPU 使用运行期累计值而非伪造瞬时值；
- * 多 Worker 消耗按可用逻辑核归一，因此结果表达整台可用算力中的平均份额。
+ * 把一次同步采样换算成有限的展示值。CPU 使用运行期累计值；
+ * 多 Worker 消耗按可用逻辑核归一，结果表达可用算力中的平均份额。
  */
 export function calculateBotProcessStatus({
   uptimeSeconds,

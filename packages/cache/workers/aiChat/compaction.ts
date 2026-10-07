@@ -4,8 +4,8 @@ import { createKeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner
 import type { KeyedSerialTaskRunner } from "../../../libs/keyedSerialTaskRunner";
 
 /** 中期记忆压缩任务的运行时 owner。链和计数都不落盘；同群任务完成后自动
- * 删除。群失效时不能提前删链，否则旧任务与新任务会并发；回复代际负责让
- * 旧结果失效，链仍自然排空。Worker 重建会连同在途任务一起销毁。
+ * 删除。群失效时不删链，回复代际使
+ * 旧结果失效，链自然排空。Worker 重建会连同在途任务一起销毁。
  * 容量：同时有在途压缩的群数，上界为持有记忆的群数（AI_MEMORY_MAX_CHATS）；
  * 不设淘汰，链排空即自动删除条目。 */
 export const compactionChains: Map<number, Promise<void>> = new Map();

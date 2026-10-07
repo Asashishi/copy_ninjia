@@ -20,8 +20,7 @@ export function pickTypoCorrectionMode(): TypoCorrectionMode {
 /**
  * 把 originalChar 在 text 里的第一个出现位置换成 replacementChar，构造出
  * 错字版本的整句话。模型只提供「原字」「错字」两个孤立单字，整句由本函数就地
- * 替换：结果在结构上必然只差一处、必然和 text 等长，不依赖模型对长句的复现
- * 保真度。
+ * 替换，结果与 text 只差一个字。
  * @returns 两个字长度不为 1、彼此相同、含空白、含 emoji，或 originalChar
  *   压根不在 text 里时返回 null。
  */

@@ -328,9 +328,8 @@ describe("send_message 可点击命令守卫", () => {
   });
 
   test("靠错字替换凑出命令时只作废这次手滑，正文照常发出", async () => {
-    // 替换字由模型给：`/` 既不是空白也不是 emoji，能过 buildCharacterTypo 的
-    // 全部校验。正文写「喵 xbatch_kick」、替换 x→/ 就凑出了可点击的命令，而
-    // 正文那道守卫看的是替换**前**的串。
+    // 替换字由模型给：`/` 既不是空白也不是 emoji，能过 buildCharacterTypo 的全部校验。
+    // 正文写「喵 xbatch_kick」、替换 x→/ 凑出可点击的命令；正文那道守卫看的是替换前的串。
     const originalRandom = Math.random;
     Math.random = () => 0;
     try {

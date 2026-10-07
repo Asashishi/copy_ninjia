@@ -12,11 +12,10 @@ import type { SelfSentWaiter } from "../types/telegram";
 
 /**
  * 登记「机器人自己刚发出的消息」，供自动流水线（packages/auto/message/）识别
- * 出「这条更新其实是自己发的」并整体跳过——普通群消息 Telegram 不会把机器人
+ * 「这条更新其实是自己发的」并整体跳过。普通群消息 Telegram 不会把机器人
  * 自己发的推回来，但机器人在自己管理的频道里发帖时，channel_post 更新会
  * 不区分发帖者原样推回（转发进关联讨论组的副本同理，见 forward_origin 的
- * 用法）；这类回环若被当成新内容处理，会被 AI 随机回复/随机复读/洗澡触发
- * 等自动流水线再次响应，形成自说自话的循环。
+ * 用法）；识别后这类回环不进入 AI 随机回复、随机复读、洗澡触发等自动流水线。
  *
  * 各线程持有独立实例。Worker 的发送请求由主线程 workerRequests.ts 执行，
  * 成功后在主线程登记 markSelfSent，再向 Worker 返回回执。
@@ -26,10 +25,7 @@ import type { SelfSentWaiter } from "../types/telegram";
  * 机器人自己的帖子必然已经登记，未登记即判为外部消息。
  * @see ../../docs/cn/04-invariants.md
  *
- * **isBotOwnMessage 是每条群消息都要走的判定，且一条消息会走多次**：
- * antiRaid/temporaryAdBypass.ts、antiRaid/adCandidate.ts、commands/qa/ingress.ts、
- * commands/cjkAction.ts、auto/message/index.ts 各查一次，自动转发那条还会查第二次。
- * 这里按 (chatId, messageId) 两级整数键直查。
+ * isBotOwnMessage 在每条群消息的多个入口各查一次，按 (chatId, messageId) 两级整数键直查。
  */
 
 /** TTL 到期：摘掉这一条，并在该群最后一条消失时把内层表一并删除。 */
@@ -140,15 +136,15 @@ export function endSelfSentSend(chatId: number): void {
 
 /** 某条消息是否是机器人自己刚发出的。 */
 export function isSelfSent(chatId: number, messageId: number): boolean {
-  // 本线程一条都没发过时连内层表都不必取；活跃线程则只多付一次整数键查找。
+  // 本线程没有登记过任何消息时直接返回 false。
   if (sentMessages.size === 0) return false;
   return sentMessages.get(chatId)?.has(messageId) === true;
 }
 
 /**
  * 识别机器人自己发送内容的频道/关联讨论组回弹。任何会对消息产生输出的入口
- * 都必须先过这一关，否则机器人会对自己的帖子作出反应，形成自说自话的循环
- * （见本文件头注）。自动流水线与注册在其前面的 `/<中文字>` 动作命令共用此边界。
+ * 都必须先过这一关（见本文件头注）。自动流水线与注册在其前面的 `/<中文字>`
+ * 动作命令共用此边界。
  */
 export function isBotOwnMessage(message: Message): boolean {
   if (isSelfSent(message.chat.id, message.message_id)) return true;
@@ -160,7 +156,7 @@ export function isBotOwnMessage(message: Message): boolean {
 
 /**
  * 跨线程发送专用门禁：标记已到则立即返回；可能回投的频道消息只在目标 chat 有
- * 在途发送时等待，最多一个有界窗口：`markSelfSent` 立即以 true 唤醒，该 chat 的
+ * 在途发送时等待，最多等 timeoutMs：`markSelfSent` 立即以 true 唤醒，该 chat 的
  * 在途发送全部结算时以 false 唤醒。普通群/私聊与无在途发送的频道不创建 timer。
  */
 export function waitForBotOwnMessage(

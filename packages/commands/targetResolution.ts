@@ -10,7 +10,7 @@ import { parseChatIdArgument, parseUserIdArgument } from "../libs/telegramId";
 
 import { prefetchIdentityPolicies } from "../infra/identityStorage";
 
-/** 参数那一路的解析结果；三态各自对应一句不同的提示。 */
+/** 参数那一路的解析结果；各状态对应不同的提示。 */
 type ArgumentTarget =
   | { readonly kind: "resolved"; readonly user: CachedUser }
   /** 形态就不对：既不是合法 @username，也不是（按开关放行的）id。 */
@@ -25,9 +25,9 @@ interface ResolveArgumentTargetParams {
 }
 
 /**
- * resolveCommandTarget 的入参。这里只收命令消息本身与几个标量，不收 grammY 的
- * CommandContext：`/咬` 这类中文动作命令拿不到 bot_command 实体、走的是
- * bot.hears，根本没有 CommandContext 可传（见 commands/cjkAction.ts）。
+ * resolveCommandTarget 的入参，只含命令消息与标量字段，不含 grammY 的
+ * CommandContext：`/咬` 这类中文动作命令走 bot.hears，没有 CommandContext
+ * （见 commands/cjkAction.ts）。
  */
 export interface ResolveCommandTargetParams {
   /** 命令所在会话 id，失败提示发到这里。 */
@@ -69,35 +69,33 @@ export interface ResolveCommandTargetParams {
   requireIdentityPolicies?: boolean;
   /**
    * 是否允许把机器人自己当目标（缺省不允许）。只读的查询命令（`/info`）打开；会改动目标
-   * 状态的命令一律保持缺省，避免拿机器人自己开刀。
+   * 状态的命令保持缺省。
    */
   allowSelfTarget?: boolean;
   /**
    * 目标落在「当前群自己的 identity」上时的拒绝文案（缺省不拒绝）。
    *
    * 匿名管理员以当前群为 sender_chat 发言时，Telegram 只提供 sender_chat=本群、
-   * 不暴露皮套底下的真实用户，解析结果因此就是这个群自己的频道 identity；开了
-   * acceptChatId 的命令还能由用户把本群 id 直接粘进参数，落点完全相同。`/copy`
-   * 一类要保留该身份（复制群头像、复读同一皮套），所以缺省放行；`/block`、
-   * `/block disable`、`/white`、`/permission` 这些会据此做破坏性处置或发权限的
-   * 命令传入各自文案，命中时发送它并返回 undefined。
-   * 这道闸排在身份名单预热之后，与 requireIdentityPolicies 的顺序不变。
+   * 不暴露皮套底下的真实用户，解析结果是这个群自己的频道 identity；开了
+   * acceptChatId 的命令把本群 id 粘进参数，落点相同。`/copy` 一类保留该身份
+   * （复制群头像、复读同一皮套），缺省放行；`/block`、`/block disable`、`/white`、
+   * `/permission` 这些会据此做破坏性处置或发权限的命令传入各自文案，命中时发送它
+   * 并返回 undefined。这道闸排在身份名单预热之后。
    */
   currentChatTargetText?: string;
 }
 
 /**
- * 把参数原文解析成目标。不发送任何提示、不看回复目标：调用方要先拿这个结果与
- * 回复目标比对，才判断得出「两个目标撞了」。
+ * 把参数原文解析成目标。不发送任何提示、不看回复目标；调用方用这个结果与
+ * 回复目标比对，判断两个目标是否冲突。
  */
 function resolveArgumentTarget({
   trimmedArgument,
   acceptUserId,
   acceptChatId,
 }: ResolveArgumentTargetParams): ArgumentTarget {
-  // 裸 id 先认：它与用户名的形态互斥（用户名必须字母开头），谁先试都一样，
-  // 但 id 这条路命中即成立——不查缓存，也就不存在「这个人还没说过话」。
-  // 正负两条路各自按开关放行，形态同样互斥（只有会话 id 带负号）。
+  // 裸 id 先认：与用户名形态互斥（用户名字母开头），命中即成立，不查缓存。
+  // 用户 id 与会话 id 各自按开关放行，形态互斥（只有会话 id 带负号）。
   const targetId: number | undefined = (acceptUserId ? parseUserIdArgument(trimmedArgument) : undefined) ??
     (acceptChatId ? parseChatIdArgument(trimmedArgument) : undefined);
   if (targetId !== undefined) return { kind: "resolved", user: resolveIdTarget(targetId) };
@@ -109,31 +107,23 @@ function resolveArgumentTarget({
 }
 
 /**
- * 把用户完全可控的参数原文压成能安全插进提示语的一段。
+ * 把用户可控的参数原文压成能插进提示语的一段：先经 libs/text.ts 的
+ * sanitizeDisplayName 中和双向控制符与可点击命令并压成单行，再按
+ * INVALID_USERNAME_ECHO_MAX_CHARS 截断（见 consts/commands.ts）。
  *
- * 先压成单行再收长度：参数原文可以长到近 4096 字符，原样插回提示语就会拼出一条
- * 超过 Telegram 单条上限的消息，发不出去，用户只收到沉默（见 consts/commands.ts
- * 的 INVALID_USERNAME_ECHO_MAX_CHARS）。用 sanitizeDisplayName 而不是 sanitizeInline：
- * 这段要被拼进机器人自己写的句子中间，和昵称是同一处境——一个 RLO 就能让整句的
- * 其余部分反向渲染，一个 `/batch_kick 1d` 参数则让机器人自己印出可点击命令
- * （两条都见 libs/text.ts 的 sanitizeDisplayName，中和已在那一层做掉）。
- *
- * **不要在这里或 sendCommandMessage 上加整条 containsRenderableCommand 守卫**：
- * 命令回执是机器人自己写的句子，`/unquiet`、`/batch_kick`、`/x` 这些用法提示本来
- * 就该可点，整条判定会把它们全部换成固定文案。守的是片段，不是整条。
+ * 只处理回显片段；命令回执整条不套 containsRenderableCommand 判定，
+ * `/unquiet`、`/batch_kick`、`/x` 这些用法提示保持可点。
  */
 function echoArgument(trimmedArgument: string): string {
   return truncateInline(sanitizeDisplayName(trimmedArgument), INVALID_USERNAME_ECHO_MAX_CHARS);
 }
 
 /**
- * 只读地看一眼命令目标：回复目标优先，其次查缓存里的 @username。**不发送任何
- * 提示消息**，解析不出来就是 undefined。
+ * 只读地看一眼命令目标：回复目标优先，其次查缓存里的 @username。不发送任何
+ * 提示消息，解析不出来就是 undefined。
  *
- * 用在「这条命令注定要被拒绝、只是想知道目标是谁来挑一句文案」的分支上。那种
- * 地方不能调 resolveCommandTarget：它会为解析失败自己发一条「@x 都还没说过话
- * 呢」然后返回 undefined，用户收到的是一句答非所问的拒绝，真正的原因反而
- * 永远没说出口。
+ * 用在命令已确定被拒绝、只需知道目标是谁来挑文案的分支上；这类分支不调用
+ * resolveCommandTarget，它在解析失败时会自行发送提示。
  */
 export function peekCommandTarget(message: Message, rawArgument: string): CachedUser | undefined {
   const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
@@ -166,15 +156,14 @@ export async function resolveCommandTarget({
   const messageId: number = message.message_id;
   const replyTarget: CachedUser | undefined = resolveReplyTarget(message);
   const trimmedArgument: string = rawArgument.trim();
-  // 回显收在这一层而不是各命令的文案里：所有目标型命令共用同一份 rawArgument。
+  // 参数回显统一在这一层经 echoArgument 处理。
   const argument: ArgumentTarget | undefined = trimmedArgument.length === 0
     ? undefined
     : resolveArgumentTarget({ trimmedArgument, acceptUserId, acceptChatId });
 
   let targetUser: CachedUser;
   if (replyTarget !== undefined) {
-    // 参数与回复指向同一个人是无害的重复（回复某人、又把他的 id 打了一遍），
-    // 照常放行；其余情形一律报冲突，见函数头注。
+    // 参数与回复指向同一个 id 时照常放行；其余情形一律报冲突，见函数头注。
     if (argument !== undefined && (argument.kind !== "resolved" || argument.user.id !== replyTarget.id)) {
       await sendCommandMessage({
         chatId,
@@ -201,15 +190,14 @@ export async function resolveCommandTarget({
     targetUser = argument.user;
   }
 
-  // 缺省不能把本天才自己设成目标：/copy 会自己套自己没完没了，/block 更是无稽之谈；只读的 /info 例外。
+  // 缺省不允许把机器人自己设成目标；只读的 /info 例外（allowSelfTarget）。
   if (!allowSelfTarget && targetUser.id === botUserId) {
     await sendCommandMessage({ chatId, text: messages.selfTarget, replyToMessageId: messageId });
     return undefined;
   }
 
-  // 「目标是当前群自己的 identity」缺省放行：/copy 要保留该身份来复制群头像并
-  // 复读同一皮套的消息，Telegram 不会提供皮套背后的真实用户。会据此做破坏性
-  // 处置或发权限的命令传 currentChatTargetText 打开下面那道闸。
+  // 目标是当前群自己的 identity 时缺省放行（/copy 保留该身份）；
+  // 传 currentChatTargetText 的命令由下面那道闸拦下。
   const prefetched: boolean = await prefetchIdentityPolicies([targetUser.id]);
   if (!prefetched && requireIdentityPolicies) {
     await sendCommandMessage({ chatId, text: chatAtmosphere().IDENTITY_POLICY_UNAVAILABLE_TEXT, replyToMessageId: messageId });

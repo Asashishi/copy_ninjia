@@ -6,5 +6,5 @@ export type BotAtmosphere = "mesugaki" | "normal";
 /** 通知文案表的内部风格键；由启动总闸确定，优先映射 Bot 显式配置，缺省规则见 docs/cn/04-invariants.md。 */
 export type Atmosphere = "teasing" | "plain";
 
-/** 两套文案必须提供相同的键和格式化函数签名。 */
+/** 各风格文案表必须提供相同的键和格式化函数签名。 */
 export type AtmosphereTexts = typeof TeasingTexts;

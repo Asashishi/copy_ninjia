@@ -8,50 +8,41 @@ export const AD_DETECT_QUEUE_TICK_MS: number = 1_000;
 
 /**
  * 单个节拍最多并发送检的发言者数（一次 Promise.allSettled）。队列只排键，
- * 同一个键在一个节拍里只会被取走一次，因此这同时也是「每个发言者每秒最多
+ * 同一个键在一个节拍里只会被取走一次，因此这同时也是「每个发言者每个节拍最多
  * 判定一次」的上界。
  *
  * **这道闸是整条入群守卫线程的总量，不按群分配**：待检队列只有一条，键
- * （`chatId:senderId`）跨群混排走 FIFO，取键时不看 chatId，没有任何按群的配额。
- * 一个正在被刷的群因此能吃光整份预算，其余群的判定跟着排队。
+ * （`chatId:senderId`）跨群混排走 FIFO，取键时不看 chatId。
  *
- * 这个数字是**派发速率而不是并发上限**：节拍不等上一批回来。在途并发另由
- * AD_DETECT_MAX_IN_FLIGHT 兜底，两者必须一起看——只调这一个不会提高吞吐，
- * 只会让更多键卡在那道闸前面。
+ * 本值是**派发速率而不是并发上限**：节拍不等上一批回来；在途并发另由
+ * AD_DETECT_MAX_IN_FLIGHT 限制，吞吐受两者共同约束。
  */
 export const AD_DETECT_BATCH_SIZE: number = 35;
 
 /**
- * 同时在途的判定请求上限——整条入群守卫线程的总量闸，不按群分配。
+ * 同时在途的判定请求上限，整条入群守卫线程的总量闸，不按群分配。
  *
- * 没有这道闸时，provider 一变慢在途请求就按「派发速率 × 单次耗时」堆积：
- * 35 × `AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS`(60 秒) ≈ 2100 个，算上重试还要翻几倍，
- * 每个都钉住自己那一串消息。provider socket 池、Worker 在途集合与堆一起涨，
- * 验证状态机和封禁业务调度也会受累——广告判定只是尽力而为的启发式，不该拖它下水。
+ * 在途请求数随「派发速率 × 单次耗时」增长，本闸给它封顶（单次耗时上限见
+ * AD_DETECT_OPENAI_REQUEST_TIMEOUT_MS）。
  *
- * 健康时吞吐约为本闸 / 单次耗时（95 / 3 秒 ≈ 31 个/秒）。长期撑满时队列会
- * 变长，但已经接纳的 key 不设等待 TTL，必须保留到至少发生一次判定尝试；本闸
- * 的意义是保护同线程的验证状态与封禁业务调度不被启发式判定拖垮；Telegram HTTP
- * 仍只由主线程唯一客户端发起。
+ * 长期撑满时队列变长，已接纳的 key 不设等待 TTL，必须保留到至少发生一次判定尝试；
+ * 本闸保护同线程的验证状态与封禁业务调度，Telegram HTTP 仍只由主线程唯一客户端发起。
  * 所属模块：workers/antiRaid/adDetect/queue.ts。
  */
 export const AD_DETECT_MAX_IN_FLIGHT: number = 95;
 
 /**
  * 处置抑制与已消费上下文的保留 TTL：判成广告的 key 从处置那一刻起独立计时，
- * 窗口内抢跑进来的消息不再重判；等待派发期间新说的话只并进消息串，那一侧由
+ * 窗口内抢跑进来的消息不重判；等待派发期间新说的话只并进消息串，那一侧由
  * queuedAdDetectKeys 表达，不靠计时器。
  *
  * 只有已经判过（seq <= checkedSeq）的旧上下文能在窗口外裁掉；已接纳但尚未判定
- * 的条目没有时间 TTL，无论队列积压多久都必须保留。90 秒同时约束已消费上下文，
+ * 的条目没有时间 TTL，无论队列积压多久都保留。本窗口约束已消费上下文，
  * 不是判定任务的保鲜期。
  *
- * **这 90 秒不是「同一个人多久判一次」**。待检位置在出队那一刻就释放、结算时
- * 只要有新内容立刻补排，因此持续发言的人稳态判定间隔是「1 秒节拍 +
- * 一次分类往返」，约 3~4 秒，而不是一个窗口一次。这是有意的：窗口一次的节奏
- * 会把整场刷屏压成一次判定，中间几十条广告只能靠水位事后补。代价是 provider
- * 调用量按活跃刷屏人数线性上去，最终由 AD_DETECT_MAX_IN_FLIGHT 与
- * AD_DETECT_BATCH_SIZE 两道闸封顶（见上），改这个窗口不会改变那个速率。
+ * 本窗口**不是「同一个人多久判一次」**：待检位置在出队时释放、结算时有新内容即补排，
+ * 持续发言者的判定间隔是一个 AD_DETECT_QUEUE_TICK_MS 节拍加一次分类往返。
+ * provider 调用量由 AD_DETECT_MAX_IN_FLIGHT 与 AD_DETECT_BATCH_SIZE 封顶，与本窗口无关。
  */
 export const AD_DETECT_JUDGED_RETENTION_WINDOW_MS: number = 90_000;
 
@@ -65,56 +56,48 @@ export const AD_REFERENCE_WARNING_WINDOW_MS: number = 300_000;
  * 已接纳的待检发送者 key 容量上限。达到上限后拒绝新的不同 key，不淘汰已经
  * 入队的旧 key；同一 key 的后续消息仍受单 key 条数/字符上限约束。
  *
- * 这个数字直接乘出入群守卫线程 isolate 的常驻上界：每个 key 最多
- * AD_DETECT_MAX_MESSAGES_PER_SENDER（15）条，每条 AdCandidateEntry 同时持有送检
+ * 入群守卫线程 isolate 的常驻上界为本值乘以每个 key 的最大占用：每个 key 最多
+ * AD_DETECT_MAX_MESSAGES_PER_SENDER 条，每条 AdCandidateEntry 同时持有送检
  * 文本 `text`（AD_DETECT_MESSAGE_MAX_CHARS 正文、两段 AD_DETECT_SENDER_NAME_MAX_CHARS
  * 姓名、AD_DETECT_MAX_LINK_URLS × AD_DETECT_LINK_URL_MAX_CHARS 的 URL 段与两段
  * AD_SAMPLE_CONTEXT_MAX_CHARS 引用上下文）、归因文本 `directText`（姓名与正文）以及
- * 单独保存的 `quote` / `replyTo`，合计约 3.6k 字符。满载约 15 × 8,192 × 3.6k ≈
- * 4.4 亿字符，按 Latin-1 / UTF-16 存储约 0.44–0.88 GB。撑满不是 OOM 一个启发式那么
- * 简单——入群验证、封锁、黑名单执行都在同一个 isolate 里，跟着一起死，
- * supervisedWorker 烧完 WORKER_MAX_RESTARTS 后验证就静默失效了。上限因此按
- * 「撑满也还活着」定，而不是按「能接纳多少人」定。8,192 与 15 条是一起调下来的，
- * 改任何一个都要重算这个乘积。
+ * 单独保存的 `quote` / `replyTo`。入群验证、封锁、黑名单执行与判定同在一个 isolate，
+ * 上限按撑满时该 isolate 仍存活来定；改动本值或 AD_DETECT_MAX_MESSAGES_PER_SENDER
+ * 都要重算这个乘积。
  *
- * 同一个上限还兜住 recentlyDisposedAdKeys（setBoundedMapValue 直接顶住）；待检
- * 位置由 queuedAdDetectKeys 表达，每键最多一个位置，长度天然被这个数兜住。
+ * 同一个上限还约束 recentlyDisposedAdKeys（setBoundedMapValue）；待检
+ * 位置由 queuedAdDetectKeys 表达，每键最多一个位置，长度被本值约束。
  */
 export const AD_DETECT_MAX_PENDING_SENDERS: number = 8_192;
 
 /**
- * 单个键最多保留的**完整**消息条数（正文 + 样本上下文）；越界时丢弃最早的一条。
+ * 单个键最多保留的**完整**消息条数（正文 + 样本上下文）；越界时丢弃最早的一条，
+ * 优先丢已经判过的旧上下文。
  *
- * 丢的优先是已经判过的旧上下文。整串都还没判过时只能丢没判过的，那时正文不再
- * 留，但消息 id 会转存进 AdMessageBundle.pendingDeleteIds——判定命中后靠它把
- * 这些消息一并删掉，同时记一行错误日志（每个发送者只记一次）。
+ * 整串都还没判过时只能丢没判过的：不保留正文，消息 id 转存进
+ * AdMessageBundle.pendingDeleteIds，判定命中后据此一并删除，并记一行错误日志
+ * （每个发送者只记一次）。
  *
- * 15 条不是「够用」而是「撑满也还活着」的分摊结果：它乘上
- * AD_DETECT_MAX_PENDING_SENDERS 才是 isolate 常驻上界。代价是丢正文的门槛
- * 随之降低——1 秒节拍内发够 16 条就会触发，不是罕见情形，因此那条路径必须
- * 有日志。真正的漏判边界由 AD_DETECT_MAX_PENDING_DELETE_IDS 兜住：正文没了，
- * 消息 id 还在，命中后照样删得掉。
+ * 本值乘以 AD_DETECT_MAX_PENDING_SENDERS 得到 isolate 常驻上界。正文丢失后的漏判
+ * 边界由 AD_DETECT_MAX_PENDING_DELETE_IDS 约束：消息 id 仍在，命中后照样删除。
  *
- * 它与 AD_DETECT_BUNDLE_MAX_CHARS 的关系：15 × 512 = 7,680 字符对 4,096 的送检
- * 预算，只有不到两倍。预算装不下的部分仍是未判内容，由结算后的
- * requeueIfUnchecked 排进下一批，不会被记成判过。
+ * 与 AD_DETECT_BUNDLE_MAX_CHARS 的关系：本值乘以 AD_DETECT_MESSAGE_MAX_CHARS 超出
+ * 送检预算；预算装不下的部分仍是未判内容，由结算后的 requeueIfUnchecked 排进下一批，
+ * 不记为判过。
  */
 export const AD_DETECT_MAX_MESSAGES_PER_SENDER: number = 15;
 
 /**
  * 单个键最多转存多少条「已被挤出上下文、但仍要删」的消息 id。
  *
- * 只存 id，不存正文，因此比 AD_DETECT_MAX_MESSAGES_PER_SENDER 宽得多：这道闸
- * 兜的是「爆发速度快到判定还没回来就已经刷了几百条」，而删除本身是尽力而为的
- * 清理，不是安全边界。撑满时丢最旧的一条并记一行错误日志——那意味着确实有
- * 广告消息会留在群里，运维需要看得见。
+ * 只存 id，不存正文，因此比 AD_DETECT_MAX_MESSAGES_PER_SENDER 宽得多；删除是尽力而为的
+ * 清理，不是安全边界。撑满时丢最旧的一条并记一行错误日志。
  */
 export const AD_DETECT_MAX_PENDING_DELETE_IDS: number = 500;
 
 /**
  * 单条消息**正文**参与判定的最大字符数，超出部分从尾部截断。text_link 的落地页
- * URL 不占这份额度（见 AD_DETECT_MAX_LINK_URLS 与 AD_DETECT_LINK_URL_MAX_CHARS）
- * ——共用额度的话，一段填充文本就能把 URL 顶出去。
+ * URL 不占这份额度（见 AD_DETECT_MAX_LINK_URLS 与 AD_DETECT_LINK_URL_MAX_CHARS）。
  */
 export const AD_DETECT_MESSAGE_MAX_CHARS: number = 512;
 
@@ -134,30 +117,25 @@ export const AD_DETECT_BUNDLE_MAX_CHARS: number = 4_096;
 /**
  * 单条消息最多补进几个 text_link 实体里的 URL。
  *
- * 超链接的可见文字可以完全无害（「点这里」「看这个」），真正的落地页只存在于
- * 实体的 url 字段里——只读 message.text 的话，模型看到的是一段没有任何落点的
- * 正常句子，而「有没有把人带离本群的落点」正是判定规则里最硬的一条。
- * 上限只是防一条消息挂几十个链接把送检文本撑爆，正常广告一两个就够用。
+ * 超链接的落地页只存在于实体的 url 字段里，不在 message.text 中；这些 URL 单独补进
+ * 送检文本，本值限制补入个数。
  */
 export const AD_DETECT_MAX_LINK_URLS: number = 5;
 
-/** 补进送检文本的单个 URL 最大字符数；带一长串跟踪参数的链接照样能认出域名。 */
+/** 补进送检文本的单个 URL 最大字符数。 */
 export const AD_DETECT_LINK_URL_MAX_CHARS: number = 256;
 
 /**
- * 判定输出的 token 上限。结果本身只有一小段 JSON，但这个额度是**推理与正文
- * 共用**的——广告检测模型（config/dynamic/agent.json 的 agent.ad_detect.model）可能是推理模型，
- * 长而杂乱的消息串会消耗大量 reasoning token。给得太紧的后果不是截断出半个 JSON，而是推理把额度吃光、正文
- * 一个字都没写出来（finish_reason=length、content 为空），上层只能当作「本次
- * 没判定」把这条广告放过去。因此额度按最坏情况给足，而不是按结果长度给
- * ——计费只看真正产出的 token，留白不花钱。
+ * 判定输出的 token 上限。结果本身只有一小段 JSON，但这个额度由**推理与正文共用**
+ * （广告检测模型可能是推理模型，见 config/dynamic/agent.json 的 agent.ad_detect.model）；
+ * 推理耗尽额度时正文为空（finish_reason=length、content 为空），上层按「本次没判定」
+ * 处理。额度因此按最坏情况给足，而不是按结果长度给。
  */
 export const AD_DETECT_MAX_OUTPUT_TOKENS: number = 16_384;
 
 /**
- * 采样温度。判定要的是稳定，但**不能取 0**：贪心解码在推理模型上更容易走进
- * 空转（只产出推理、正文为空），而传输层的空正文重试正是靠重新
- * 采样翻盘的——温度为 0 时重试只会逐字复现同一条空结果，那道兜底等于不存在。
+ * 采样温度，取非零值：传输层的空正文重试靠重新采样得到不同结果
+ * （见 AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS）。
  */
 export const AD_DETECT_TEMPERATURE: number = 0.5;
 
@@ -222,14 +200,11 @@ export const AD_DETECT_REASON_MAX_CHARS: number = 80;
 /**
  * 随每条消息一起带的「被引用段」与「被回复原文」的最大字符数。
  *
- * 这两样**与正文一起送检**，并且各自独占这份配额、不占正文的
- * AD_DETECT_MESSAGE_MAX_CHARS——同 AD_DETECT_MAX_LINK_URLS：共用额度的话，
- * 一段填充文本就能把引文顶出去，而「先发正常消息、隔一段时间编辑成广告、再用
- * 回复/引用顶上来」正是当前最主流的广告发法（见 docs/cn/04-invariants.md 与
- * workers/antiRaid/adDetect/bundle.ts 的 claimSampleContextParts）。
- * 同一份内容还会原样留进命中样本：人回头看「这条为什么被判成广告」时，需要分得清
- * 哪一段是他自己写的、哪一段是引来的。
- * 上限比正文短——它们只用来还原上下文，不需要全文。
+ * 这两样**与正文一起送检**，各自独占这份配额、不占正文的
+ * AD_DETECT_MESSAGE_MAX_CHARS（同 AD_DETECT_MAX_LINK_URLS）；
+ * 见 docs/cn/04-invariants.md 与 workers/antiRaid/adDetect/bundle.ts 的 claimSampleContextParts。
+ * 同一份内容原样留进命中样本，样本中可分辨哪一段是发送者自己写的、哪一段是引来的。
+ * 上限比正文短，只用于还原上下文。
  */
 export const AD_SAMPLE_CONTEXT_MAX_CHARS: number = 200;
 
@@ -242,26 +217,17 @@ const AD_DETECT_FACT_LABEL: string = "【系统事实】";
 /**
  * 判定器的系统提示词，**只写判定规则**。
  *
- * 这里刻意不列「博彩/刷单/换汇/卡料」这类题材清单：题材口径由部署配置
- * config/dynamic/ad_samples.json 的示例承担（拼装见 buildAdDetectInstructions），两处
- * 各写一份就会各自漂移——改了示例却忘了改提示词，模型看到的就是两套互相打架
- * 的口径。规则管「凭什么算广告」，示例管「本部署认的是哪几类」，分工不重叠。
- * 规则本身也按结构而非关键词来写：广告的用词天天换，骨架不变。
+ * 不列题材清单：题材口径由部署配置 config/dynamic/ad_samples.json 的示例承担
+ * （拼装见 buildAdDetectInstructions）。规则按结构而非关键词来写，管「凭什么算广告」，
+ * 示例管「本部署认的是哪几类」。
  *
- * **收紧任何一条规则前先拿 config/dynamic/ad_samples.json 的正样本对一遍。** 那份清单是
- * 部署方从真实命中里攒的，规则说「通常不是」而样本说「命中同类即判 true」时，
- * 模型收到的是一对互相打脸的指令，而受损的一侧是召回——被放过的广告不留任何
- * 日志痕迹，没人会发现。招工诈骗那一类尤其容易踩：「招聘客服，包吃住，月入过万，
- * 免费机票」根本不留联系方式，引流全靠对方私聊，A 条要是写成「三样同时凑齐」，
- * 清单里那十几条正样本就整批判 false。
+ * 收紧任何一条规则前，须对照 config/dynamic/ad_samples.json 的正样本。
  *
- * 只要 JSON 结果，不产出面向群成员的文案——处置播报由代码拼装，模型输出永远
- * 不会被当成指令执行。
+ * 只要 JSON 结果，不产出面向群成员的文案；处置播报由代码拼装，模型输出不被当成指令执行。
  *
  * **提示词里必须出现「JSON」这个词**：请求带 `response_format: json_object`，
- * OpenAI 兼容 JSON 模式常会校验提示词是否提到 json，没提到会直接拒绝
- * （错误文案：Prompt must contain the word 'json' in some form）。改写这段文案
- * 时不要把最后那句要求删掉。
+ * OpenAI 兼容 JSON 模式会校验提示词是否提到 json（错误文案：Prompt must contain the
+ * word 'json' in some form）。改写这段文案时保留最后那句要求。
  */
 const AD_DETECT_SYSTEM_PROMPT: string =
   "你是 Telegram 中文群组的广告检测器。用户消息里给出的是同一个发言者最近一分半钟内的若干条消息，" +
@@ -309,17 +275,12 @@ const AD_DETECT_SAMPLES_HEADER: string =
   "命中同类话术即判 true，但不要求逐字相同：";
 
 /**
- * 「刚进群、还没通过入群验证」这条事实的两种表述。
- *
- * 两种都要显式说出来，不能只在成立时追加一句：只说一边的话，模型会把「这次没
- * 提」当成信息缺失去猜，而这条信号恰恰只有在确证时才该加分。事实由主线程按
- * 入群验证镜像给出（见 antiRaid/adCandidate.ts），模型无从自行判断——群聊转录里
- * 根本没有入群时间，让它去推只会推出一个编造的理由。
+ * 「刚进群、还没通过入群验证」这条事实的两种表述；成立与不成立两侧都显式给出。
+ * 事实由主线程按入群验证镜像确定（见 antiRaid/adCandidate.ts）。
  *
  * 事实行独立于待判定正文、由各传输放在固定位置：OpenAI 兼容路径拼在 system 段末尾，
- * Gemini 路径作为 user 轮里排在待判定正文之前的独立 part（正文之前、不在规则与样本
- * 之内，规则与样本才能进显式缓存）。正文全是用户可控内容，事实绝不拼进正文；正文里
- * 伪造的「【系统事实】」由 E 条声明为被引用的群聊内容。
+ * Gemini 路径作为 user 轮里排在待判定正文之前的独立 part（规则与样本进显式缓存，事实
+ * 不进）。事实不拼进正文；正文里伪造的「【系统事实】」由 E 条声明为被引用的群聊内容。
  */
 const AD_DETECT_JUST_JOINED_FACT: string =
   `${AD_DETECT_FACT_LABEL}该发送者刚加入本群、尚未通过入群验证。`;
@@ -329,7 +290,7 @@ const AD_DETECT_ESTABLISHED_FACT: string =
 
 /**
  * 拼出判定规则与部署示例段（不含系统事实），各家传输共用、逐字相同。示例为空时
- * 不追加示例段——空清单下多写一句「以下是示例：」只会让模型去猜一个并不存在的口径。
+ * 不追加示例段。
  * @param samples 已校验的部署者广告示例（config/dynamic/ad_samples.json）。
  */
 export function buildAdDetectInstructions(samples: readonly string[]): string {

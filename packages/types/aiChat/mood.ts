@@ -4,8 +4,7 @@ export type WeatherBucket = "clear" | "cloudy" | "rain" | "snow" | "storm" | "fo
 export type TimeBucket = "lateNight" | "morning" | "daytime" | "evening" | "night";
 
 /**
- * 一档心情。字段全部 `readonly`：这是从 config/dynamic/mood.json 解析出来、此后只被读取
- * 的配置快照，不可变性由类型表达。
+ * 一档心情，从 config/dynamic/mood.json 解析得到，字段全部 `readonly`。
  */
 export interface MoodOption {
   readonly name: string;

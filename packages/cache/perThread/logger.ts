@@ -15,7 +15,7 @@ import type { LoggerSecretsSnapshot } from "../../types/logger";
  * logger.error 填充，主线程的 __logBatchAccepted 回执逐批排空；整个 Worker
  * isolate 销毁后随堆释放，重建 isolate 从空队列开始。
  * 单批在途并保留到 ACK；总消息数与 JSON 载荷字节有硬顶。越界 error 已经写入
- * 本线程 stderr，不再保留对象引用，只累计两个标量；主线程恢复消费后补发一条
+ * 本线程 stderr，不再保留对象引用，只累计丢弃条数与字节数；主线程恢复消费后补发一条
  * 汇总日志。本线程同步投递拒绝后由后续日志触发原批重试。
  */
 export const forwardedLogQueue: AcknowledgedBatchQueue<LogMessage> =
@@ -42,9 +42,9 @@ export const forwardedLogDropState: {
 };
 
 /**
- * 每条线程各持一份（同 cache/perThread/config.ts 的三个凭据 holder）。
+ * 每条线程各持一份（同 cache/perThread/config.ts 的各凭据 holder）。
  *
- * `infra/logger/serialization.ts` 的 currentSecrets 按三个配置 holder 的对象身份缓存
+ * `infra/logger/serialization.ts` 的 currentSecrets 按各配置 holder 的对象身份缓存
  * 文本凭据、JSON 转义片段与遍历回调；配置在启动与 config/dynamic/ 热重载时整体替换。
  * 首次使用或任一配置身份变化时一次构造完整快照，再替换 current；配置未变时复用
  * 快照。当前凭据排在退役凭据之前，上一份快照里不再生效的旧凭据继续保留。
@@ -56,3 +56,13 @@ export const forwardedLogDropState: {
 export const loggerSecretsMemo: {
   current: LoggerSecretsSnapshot | null;
 } = { current: null };
+
+/**
+ * 主线程 error 日志的落盘出口：infra/diskIO.ts 的 initDiskIO 装上 relayLogMessage，之后不清除
+ * （落盘线程终止后 relayLogMessage 自行返回 false）。
+ *
+ * 只有主线程会装；业务 Worker 与 Disk I/O Worker 里保持 null，infra/logger.ts 在 Worker 里走
+ * 转发模式，不读它。主线程装上之前的 error 只写 stderr，与落盘线程初始化前相同。容量恒为
+ * 一个函数；进程退出随堆释放。
+ */
+export const logRelaySink: { current: ((message: LogMessage) => boolean) | null } = { current: null };

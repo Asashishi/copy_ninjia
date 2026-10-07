@@ -35,10 +35,7 @@ describe("abortable sleep", () => {
     await expect(sleep(30, controller.signal)).resolves.toBeUndefined();
     expect(Date.now() - startedAt).toBeGreaterThanOrEqual(25);
 
-    // 结算后必须摘掉监听：sleep 的 signal 常常是整条停机链路那个长生命周期
-    // controller，每留一个监听就多钉住一份已经结算的闭包。事后 abort 不得再
-    // 触发任何回调（真触发了会去 clearTimeout 一个已结算的 timer 并 reject
-    // 一个已 resolve 的 promise）。
+    // 结算后摘掉监听：sleep 的 signal 常是整条停机链路那个长生命周期 controller。事后 abort 不再触发任何回调。
     let listenerFired: boolean = false;
     controller.signal.addEventListener("abort", (): void => { listenerFired = true; });
     controller.abort(new Error("late"));

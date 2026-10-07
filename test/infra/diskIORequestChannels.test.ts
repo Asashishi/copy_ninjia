@@ -7,6 +7,7 @@ import type {
   IdentityPolicyRawReadResult,
 } from "../../packages/types/identityStorage";
 import { onDiskIOReply } from "../../packages/infra/diskIO/observers";
+import { requestDiskIO } from "../../packages/infra/diskIO/requests";
 import {
   blocklistIdPageReadRequests,
   diskIORuntime,
@@ -15,7 +16,10 @@ import {
   pendingLoad,
   luckSecretRequests,
 } from "../../packages/cache/main/diskIO";
-import { DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES } from "../../packages/consts/diskIO/diagnostics";
+import {
+  DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES,
+  DISK_DIAGNOSTIC_MAX_SERIALIZED_BYTES,
+} from "../../packages/consts/diskIO/diagnostics";
 import {
   acceptDiskIODiagnosticBatch,
   pauseDiskIODiagnosticChannel,
@@ -124,8 +128,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       worker.onmessage!({ data: stalled } as MessageEvent<DiskIOReply>);
       expect(seen).toEqual([stalled]);
 
-      // 换掉当前 Worker 之后，旧实例的迟到诊断不得再进日志：那条已经不代表
-      // 现役落盘线程的状态，会把运维引到一个其实已经不存在的故障上。
+      // 换掉当前 Worker 之后，旧实例的迟到诊断不再进日志（它不代表现役落盘线程的状态）。
       await diskIO.terminateDiskIO();
       worker.onmessage!({ data: stalled } as MessageEvent<DiskIOReply>);
       expect(seen).toEqual([stalled]);
@@ -429,7 +432,8 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
     } finally {
       diskIORuntime.respawnListeners.length = 0;
       diskIORuntime.respawnListeners.push(...registrations);
-      await diskIO.terminateDiskIO();
+      // 手写的 Worker 替身不回执 closeStorage，收尾的 terminateDiskIO 按无法确认残余写提交 reject。
+      await diskIO.terminateDiskIO().catch((): undefined => undefined);
       error.mockRestore();
       globalThis.Worker = originalWorker;
     }
@@ -447,7 +451,8 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       await loadedPromise;
       worker.messages.length = 0;
 
-      for (let index: number = 0; index < 33; index++) {
+      // 第一条立即单独成批在途，其余正好排满第二批。
+      for (let index: number = 0; index < DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES + 1; index++) {
         diskIO.relayLogMessage({ timestamp: index, level: "error", args: [String(index)] });
       }
       const flushPromise: Promise<string> = diskIO.flushDiskIO(1_000);
@@ -462,7 +467,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
       } as MessageEvent<DiskIOReply>);
       const secondBatch = worker.messages[1];
       if (secondBatch?.type !== "diagnosticBatch") throw new Error("missing second diagnostic batch");
-      expect(secondBatch.messages).toHaveLength(32);
+      expect(secondBatch.messages).toHaveLength(DISK_DIAGNOSTIC_BATCH_MAX_MESSAGES);
       worker.onmessage!({
         data: { type: "diagnosticBatchAccepted", batchId: secondBatch.batchId },
       } as MessageEvent<DiskIOReply>);
@@ -554,8 +559,28 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
   test("Worker 未初始化时领域 flush 不会复用旧回执误报成功", async () => {
     await diskIO.terminateDiskIO();
     await expect(diskIO.flushDiskIODomain("blocklist", 1_000)).resolves.toBe("failed");
-    // 没有本次请求的回执时不得报出任何领域名：那只会是别的 flush 留下的旧值，
-    // 把运维引向一个跟本次失败无关的文件。
+    // 没有本次请求的回执时不报出任何领域名：别的 flush 留下的旧值不带出。
     await expect(diskIO.flushDiskIODomainOutcome("blocklist", 1_000)).resolves.toEqual({ result: "failed" });
+  });
+});
+
+describe("Disk I/O 逐请求投递同步抛错", () => {
+  test("组装请求时抛错先写一行诊断，再按投递被拒结算且不留等待者", async () => {
+    const error = spyOn(console, "error").mockImplementation((): void => {});
+    try {
+      const thrown: Error = new Error("request builder failed");
+      await expect(requestDiskIO({
+        worker: {} as Worker,
+        channel: luckSecretRequests,
+        timeoutMs: 1_000,
+        buildRequest: (): never => {
+          throw thrown;
+        },
+      })).rejects.toThrow(`persistence Worker rejected the ${luckSecretRequests.label} request`);
+      expect(error).toHaveBeenCalledWith(`[diskIO] failed to post the ${luckSecretRequests.label} request:`, thrown);
+      expect(luckSecretRequests.table.waiters.size).toBe(0);
+    } finally {
+      error.mockRestore();
+    }
   });
 });

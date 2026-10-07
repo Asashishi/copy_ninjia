@@ -21,13 +21,13 @@ export interface SendGagSpeakNoticeOptions {
   /**
    * 这条入口要发进哪个论坛话题；General、非论坛群为 undefined。
    *
-   * 显式传入而不是读 `session.speakNoticeThreadId`：搬家时要发的是**新**话题，
-   * 而那个字段在发送成功之前仍指向旧话题（见 types/gag.ts 的同名字段）。
+   * 显式传入，不读 `session.speakNoticeThreadId`：该字段在发送成功之前仍指向旧话题
+   * （见 types/gag.ts 的同名字段）。
    */
   readonly messageThreadId: number | undefined;
   /** 仅频道公开入口可回复原命令；用户临时入口没有普通 message_id。 */
   readonly replyToMessageId?: number;
-  /** 远端返回 id 后同步登记，关闭停机 abort 丢失身份的窗口。 */
+  /** 远端返回 id 后同步登记。 */
   readonly onSent?: (messageId: number) => void;
 }
 
@@ -62,7 +62,7 @@ export async function sendGagSpeakNotice({
   });
 }
 
-/** 按入口身份精确删除；相同数字 id 在不同接收者之间不会互相串删。 */
+/** 按入口身份精确删除：用户入口按 receiverUserId 删除临时消息，频道入口按群消息 id 删除。 */
 function deleteGagSpeakNotice(
   session: GagSession,
   noticeMessageId: number
@@ -77,7 +77,7 @@ function deleteGagSpeakNotice(
   return deleteMessageWithOutcome(session.chatId, noticeMessageId);
 }
 
-/** GagSession 上记着一条提示 message id 的四个槽位。 */
+/** GagSession 上记着提示 message id 的各槽位。 */
 export type GagNoticeSlot =
   | "publicNoticeMessageId"
   | "speakNoticeMessageId"

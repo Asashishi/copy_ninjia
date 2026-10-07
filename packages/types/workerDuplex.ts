@@ -21,7 +21,7 @@ export interface WorkerDuplexError {
   readonly telegramDescription: string | undefined;
 }
 
-/** 主线程对 Worker 能力请求的统一回执；所有字段固定出现以保持对象 shape。 */
+/** 主线程对 Worker 能力请求的统一回执；所有字段固定出现。 */
 export interface WorkerDuplexResponse {
   readonly __duplex: "response";
   readonly requestId: number;

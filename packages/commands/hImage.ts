@@ -4,7 +4,7 @@
  * 接纳后立即返回。
  *
  * 群是否已 `/init`、私聊是否放行由 infra/updateGate.ts 的前置网关统一判定，这里不再
- * 重复。用法与忙碌提示走 sendCommandMessage，30 秒后删除。
+ * 重复。用法与忙碌提示走 sendCommandMessage 的默认自动清理。
  *
  * 命令入口先过全局滑动窗口配额（tryConsumeHImageRateLimit），超额的那几次直接返回，
  * 不解析参数、不提交任务、也不回任何消息。
@@ -28,9 +28,8 @@ import { handleHImageAddCommand } from "./hImage/add";
 import { deliverRandomImage } from "./hImage/draw";
 
 /**
- * 全局滑动窗口配额：一张图就是一次图片上传，成本远高于普通文本应答，因此不分群、不分
- * 用户合并计数（窗口与上限见 consts/hImage.ts，队列见 cache/main/hImage.ts）。超额立即
- * 拒绝、不排队。
+ * 全局滑动窗口配额：不分群、不分用户合并计数（窗口与上限见 consts/hImage.ts，
+ * 队列见 cache/main/hImage.ts）。超额立即拒绝、不排队。
  * @param now 当前时刻；默认取墙钟，测试可注入固定值。
  * @returns 仍在配额内为 true，本次调用已记账；超额为 false。
  */

@@ -123,8 +123,7 @@ describe("黑名单入群秒踢的投递侧", () => {
       joinGuardEnabled: true, now: 1_050 })).toBeTrue();
 
     expect(messages).toHaveLength(2);
-    // 两条投递路径（chat_member 与 new_chat_members）会为同一次入群各来一次；
-    // 两条都带 joinedAt 就是记两次，阈值对黑名单账号实际减半。
+    // 两条投递路径（chat_member 与 new_chat_members）会为同一次入群各来一次；只有一条带 joinedAt，入群只记一次。
     expect(messages.map((message) => (message as RemoveBlockedMembersParams).joinedAt)).toEqual([1_000, undefined]);
     // 每批处置都登记下它取代掉的那条 join：批次被并发 /block disable 取消时，
     // durable 对账要靠它把验证窗口补回来（见 blocklistDelivery.ts）。
@@ -148,7 +147,7 @@ describe("黑名单入群秒踢的投递侧", () => {
   });
 
   test("登记失败不上抛：那会在更新中间件里换来一个重启循环", () => {
-    // 登记失败不上抛，避免单条 update 处理异常导致重启循环。
+    // 登记失败不上抛。
     blockedIds.add(42);
     trackFails = true;
     const messages: AntiRaidWorkerMessage[] = [];

@@ -507,7 +507,7 @@ test("直接轮：还没接纳过动作的请求亮「正在输入」；send_mes
     expect(sleep).not.toHaveBeenCalled();
     expect(events).toEqual(["typing", "typing", "idle", "message sent"]);
     expect(ctx.onMessageSent).not.toHaveBeenCalled();
-    // 已经接纳过动作，下一次请求多半是收尾：不亮状态，免得最后一条消息之后还挂着一段「正在输入」。
+    // 已经接纳过动作，下一次请求多半是收尾：不亮状态。
     toolset.beforeModelRequest();
     toolset.afterModel();
     expect(events).toEqual(["typing", "typing", "idle", "message sent"]);

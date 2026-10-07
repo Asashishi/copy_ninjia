@@ -1,38 +1,27 @@
 /**
- * OpenAI 侧的生图。无参考图走 images.generate，有参考图走 images.edit——
- * 后者才接受输入图片，是 Gemini 那边「参考图 + 提示词同在一个请求里」的对等
- * 路径。
+ * OpenAI 侧的生图。无参考图走 images.generate，有参考图走 images.edit。
  *
- * 与 Gemini 的画幅差异在这里收口。OpenAI 官方 gpt-image-2 协议按十档发送满足
- * 16 像素倍数约束的 `size`；其它 GPT Image 模型可显式选择全系共同支持的三种
- * 标准尺寸；xAI 的 Grok Imagine 改用 `aspect_ratio`。领域侧始终按十档表达意图，
- * 三套映射都留在实现包内部，换供应商无需改调用点。
+ * 画幅映射收在本包内：OpenAI 官方 gpt-image-2 协议（`openai`）发送满足 16 像素倍数约束的
+ * `size`；`openai-standard` 取全系共同支持的标准尺寸；xAI 的 Grok Imagine 改用 `aspect_ratio`。
+ * 领域侧始终按 ImageGenerationAspectRatio 表达意图（见 consts/aiChat/openai.ts 的
+ * OPENAI_FLEXIBLE_IMAGE_SIZE_BY_ASPECT_RATIO、OPENAI_STANDARD_IMAGE_SIZE_BY_ASPECT_RATIO
+ * 与下方 pickXAiAspectRatio）。
  *
- * 载荷校验（base64 规范性、大小上限、文件签名）走两家共用的
- * aiChat/ai/utils/imagePayload.ts；images 接口的响应不带权威 MIME 字段，
- * 因此按字节签名自行判定格式。OpenAI 原生请求以 output_format 钉死格式，
- * xAI 协议则用 response_format 钉死 base64 信封；解码器同时接受 PNG/JPEG。
+ * 载荷校验（base64 规范性、大小上限、文件签名）走 aiChat/ai/utils/imagePayload.ts，
+ * 按字节签名判定格式。OpenAI 原生请求以 output_format 指定格式，
+ * xAI 协议用 response_format 指定 base64 信封；解码器同时接受 PNG/JPEG。
  *
- * 注意 output_format 钉死的是 png/jpeg/webp 这一层，**不是** url-vs-base64 那层
- * 信封：后者在官方口径下由模型族决定（gpt-image 恒回 base64，dall-e 系默认回
- * url，见 SDK 的 response_format 说明）。本模块只读 base64，而
- * `agent.image.model` 是自由文本、解析器只校验非空，因此响应里只有 url 的
- * 情况必须在日志里与「模型没画出来」分开点名，见下方读取处。
+ * 本模块只读 `b64_json`：响应里只有 url 的情况在日志里与「一条也没有」分开点名，见下方读取处。
  *
- * xAI 还有第二处协议差异：官方明确不支持 OpenAI SDK `images.edit()` 使用的
- * multipart 请求，参考图必须作为 base64 data URI 放进 JSON。因此 xAI edit 复用
- * 同一个 SDK 客户端的底层 `post`（保留认证、超时和重试），只替换请求体形状。
+ * xAI edit 不走 SDK `images.edit()` 的 multipart 请求，参考图作为 base64 data URI 放进 JSON：
+ * 复用同一个 SDK 客户端的底层 `post`（保留认证、超时和重试），只替换请求体形状。
  *
- * OpenAI 原生两条分支的内容审核档位**不对称**：只有 generate 带 moderation，
- * 因为 SDK 只在 generate 的参数类型上声明了它（见 consts/aiChat/openai.ts 的
- * OPENAI_IMAGE_MODERATION）。xAI 官方只把 `respect_moderation` 公开为响应状态，
- * 没有公开请求级的降档或关闭字段；因此 xAI 两条分支采用其客户端可表达的最低
- * 限制——不发送任何额外审核字段，服务端最终策略仍由 xAI 决定。
+ * 内容审核档位：只有 OpenAI 原生 generate 带 moderation（SDK 只在 generate 的参数类型上声明它，
+ * 见 consts/aiChat/openai.ts 的 OPENAI_IMAGE_MODERATION）；xAI 两条分支不发送审核字段。
  *
  * 线协议由 config/agentCapability.ts 从 agent.image 的必填 image_protocol 解析，随 agent
  * 配置快照缓存。
- * 新增协议必须扩展 OpenAiImageProtocol 与下方各处穷举 switch，
- * 不得再把端点/模型特判散落到请求路径。
+ * 新增协议必须扩展 OpenAiImageProtocol 与下方各处穷举 switch。
  */
 
 import { toFile } from "openai";
@@ -95,7 +84,7 @@ interface XAiImageEditParams {
 
 /**
  * 按显式能力档读取 OpenAI 官方尺寸；不解析模型名，也不在失败后换档重试。
- * 两张固定 Record 让新增领域比例在编译期暴露缺项，并避免每次请求计算最近邻。
+ * 两张固定 Record 在编译期要求覆盖全部领域比例。
  */
 function pickOpenAiImageSize(
   protocol: OpenAiNativeImageProtocol,
@@ -112,11 +101,8 @@ function pickOpenAiImageSize(
 }
 
 /**
- * 领域十档到 xAI 官方画幅的映射。
- *
- * 七档可原样发送；5:4、4:5 分别取最近的 4:3、3:4，21:9 取最近的 20:9。
- * 用穷举 switch 让新增领域比例时由返回类型与测试一起暴露，不在低频请求里建立
- * 临时表或排序数组。
+ * 领域比例到 xAI 官方画幅的映射：5:4、4:5 分别取最近的 4:3、3:4，21:9 取最近的 20:9，
+ * 其余原样发送。
  */
 function pickXAiAspectRatio(aspectRatio: ImageGenerationAspectRatio): XAiImageAspectRatio {
   switch (aspectRatio) {
@@ -134,17 +120,15 @@ function toReferenceUpload(referenceImage: VisionImage): Promise<Uploadable> {
 }
 
 /**
- * xAI JSON edit 的参考图 data URI。直接用 Bun 的 Uint8Array 编码；base64 字符串
- * 是 JSON 协议要求的唯一新增大对象。
+ * xAI JSON edit 的参考图 data URI，字节经 `Uint8Array.toBase64()` 编码。
  */
 function toXAiReferenceDataUri(referenceImage: VisionImage): string {
   return `data:${referenceImage.mime};base64,${referenceImage.bytes.toBase64()}`;
 }
 
 /**
- * 按已缓存的线协议分派一次网络请求。switch 保持有限、无运行期注册表和增长型缓存；
- * OpenAiImageProtocol 新增成员时，never 断言会强制实现对应适配分支。直接传现有
- * config 与 request 上下文，避免为适配层另建投影 options 对象。
+ * 按已缓存的线协议分派一次网络请求；OpenAiImageProtocol 新增成员时，never 断言要求补上
+ * 对应分支。
  * @param signal 调用方合成好的整次调用 deadline；每个分支都把它与每次尝试的
  *   timeout 一起交给 SDK，request 自带的调用方 signal 不在这里读取。
  */
@@ -163,8 +147,7 @@ async function requestOpenAiCompatibleImage(
   switch (protocol) {
     case "xai": {
       if (referenceImage !== undefined) {
-        // xAI 单图 edit 的输出比例跟随输入图；aspect_ratio 只对纯生成与多图 edit
-        // 生效。本仓一次只带一张参考图，因此这里刻意不发送一个会被忽略的字段。
+        // xAI 单图 edit 的输出比例跟随输入图，不发送 aspect_ratio。
         const body: XAiImageEditParams = {
           model,
           prompt,
@@ -228,7 +211,7 @@ async function requestOpenAiCompatibleImage(
   }
 }
 
-/** 日志使用的实际画幅；xAI 单参考图 edit 不发送画幅，必须明确标记为跟随输入。 */
+/** 日志使用的实际画幅；xAI 单参考图 edit 不发送画幅，标记为 follows-reference。 */
 function imageCanvasForLog(
   protocol: OpenAiImageProtocol,
   aspectRatio: ImageGenerationAspectRatio,
@@ -248,8 +231,7 @@ function imageCanvasForLog(
 /**
  * 调 OpenAI 生图接口生成一张图片；请求失败或无可用载荷时返回 null（已记日志）。
  *
- * 超时用独立的 OPENAI_IMAGE_REQUEST_TIMEOUT_MS：一次 1024px 生成常年跑到分钟
- * 级，套用聊天那份预算会在模型还在画的时候把连接掐掉。它同时是每次尝试的
+ * 超时用独立的 OPENAI_IMAGE_REQUEST_TIMEOUT_MS，它同时是每次尝试的
  * timeout 与整次调用（含 SDK 全部重试与退避）的 deadline，见
  * docs/cn/04-invariants.md「AI 闲聊运行时」。deadline 到期按普通请求失败记日志；
  * 只有调用方 signal 中止才静默返回。SDK 已按 maxRetries 重试过这类请求失败，
@@ -263,9 +245,7 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
   }: AiImageRequest = request;
   try {
     signal?.throwIfAborted();
-    // 配置取一次就够：两条分支用的是同一个模型，分别取只会让「换模型时两边不一致」
-    // 成为可能。取用放在 try 内，因为 config/dynamic/agent.json 写坏时解析会抛——留在外面
-    // 就等于让一次配置笔误把异常掀给调用方，而本函数的契约是「失败返回 null」。
+    // 配置取一次，两条分支共用；取用放在 try 内，读取抛错按失败返回 null。
     const capabilityConfig: AgentImageCapabilityConfig | undefined = getAgentDeploymentConfig().image;
     if (capabilityConfig === undefined) {
       throw new Error('Agent capability "image" is not configured.');
@@ -276,9 +256,8 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     const config: OpenAiAgentImageCapabilityConfig = capabilityConfig;
     const model: string = config.model;
     const protocol: OpenAiImageProtocol = config.imageProtocol;
-    // SDK 的 timeout 是每次尝试各自的期限。同一份合成 signal 同时交给 SDK 与外层
-    // 等待：网络层据此停止后续尝试，调用方则在整次 deadline 到期或上游取消时立即
-    // 结算，不受 SDK 内部退避计时器影响。
+    // SDK 的 timeout 是每次尝试各自的期限；同一份合成 signal 同时交给 SDK 与外层
+    // 等待：网络层据此停止后续尝试，调用方在整次 deadline 到期或上游取消时立即结算。
     const requestSignal: AbortSignal = signalWithTimeout(signal, OPENAI_IMAGE_REQUEST_TIMEOUT_MS);
     requestSignal.throwIfAborted();
     const response: OpenAI.Images.ImagesResponse = await raceAbortOrThrow(
@@ -302,13 +281,8 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     const entry: OpenAI.Images.Image | undefined = response.data?.[0];
     const encoded: string | undefined = entry?.b64_json;
     if (encoded === undefined) {
-      // 拿不到 base64 说明服务端换了返回形态或整体空转，与「模型没画出来」不可
-      // 区分，点名记一条否则查无原因。两种成因必须能在日志里分开：
-      //
-      // 「一条也没有」是模型/服务端空转；「有条目却只有 url」则是**配置问题**
-      // ——`agent.image.model` 是自由文本，填成非 gpt-image 模型、或指向一个
-      // 默认回 URL 信封的兼容网关时就是这个形状。不点名的话，日志只会说「没有
-      // 载荷」，而运维手里那份配置看上去完全正常，图却每张都白计费。
+      // 拿不到 base64 时记日志并区分成因：「一条也没有」是模型或服务端空转；
+      // 「有条目却只有 url」说明 `agent.image.model` 指向了默认回 URL 信封的模型或网关。
       const kind: string = entry === undefined
         ? "no entries"
         : (typeof entry.url === "string" ? "url envelope instead of base64" : "entry without b64_json");
@@ -322,7 +296,7 @@ export async function generateOpenAiImage(request: AiImageRequest): Promise<Gene
     }
     const decoded: GeneratedImageDecodeResult = decodeGeneratedImageBySignature(encoded);
     if (!decoded.ok) {
-      // 解码拒绝必须写明格式不匹配或大小越界，便于定位已经计费但无法交付的响应。
+      // 解码被拒时日志写明 reason（格式不匹配或大小越界）。
       const canvas: string = imageCanvasForLog(protocol, aspectRatio, referenceImage !== undefined);
       logger.error(
         `${OPENAI_IMAGE_ERROR_LABEL} returned an unusable image payload: ${decoded.reason} ` +

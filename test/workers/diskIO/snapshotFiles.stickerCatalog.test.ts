@@ -85,12 +85,9 @@ describe("workers/diskIO/snapshotFiles recoverStickerCatalogs 白名单对账", 
   });
 
   test("回归用例：键名恰好是 __proto__ 的条目照常恢复，不被原型 setter 吃掉", async () => {
-    // JSON.parse 会把 __proto__ 建成普通自有属性，写进 `{}` 时却会触发
-    // Object.prototype 的 setter：条目没进对象、原型被改，那张贴纸通过了校验、
-    // 被报告为已恢复，却在重新序列化的快照里彻底消失，描述永久丢失且无任何日志。
+    // 键名为 __proto__ 的条目经 JSON.parse 成为普通自有属性，恢复结果按自有属性保留它。
     mkdirSync(stickerDir, { recursive: true });
-    // 只能写字面 JSON 文本：对象字面量里的 `__proto__:` 同样会被当成设原型，
-    // 用 JSON.stringify 造出来的夹具压根不含这个键。
+    // 夹具只能写字面 JSON 文本：对象字面量里的 `__proto__:` 会被当成设原型，JSON.stringify 造出的夹具不含这个键。
     await Bun.write(join(stickerDir, "pack_a.json"), [
       "{",
       "  \"version\": 1,",

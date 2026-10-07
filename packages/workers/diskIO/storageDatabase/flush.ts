@@ -13,6 +13,7 @@ import {
   pendingTemporaryAdBypassWrites,
   pendingWhitelistWrites,
   rejectedStorageDomains,
+  storageDatabaseClosed,
   storageDatabaseWriters,
   storagePersistenceReplyHolder,
   storageFlushHold,
@@ -63,11 +64,16 @@ export function hasPendingStorageWrites(): boolean {
 }
 
 /**
- * 为已排入缓冲的变化建立固定截止 timer；没有待写变化、已有 timer 或已停止自动提交时
- * 不重复装。AI 上下文的普通快照、事务失败后的退避与重放区间都走这条定时提交。
+ * 为已排入缓冲的变化建立固定截止 timer；没有待写变化、已有 timer、已停止自动提交或
+ * 停机已关库时不重复装。AI 上下文的普通快照、事务失败后的退避与重放区间都走这条定时提交。
  */
 export function scheduleStorageCommit(): void {
-  if (!hasPendingStorageWrites() || storageWriteFlushTimer.current !== null || storageWriteRetry.signaled) return;
+  if (
+    !hasPendingStorageWrites() ||
+    storageWriteFlushTimer.current !== null ||
+    storageWriteRetry.signaled ||
+    storageDatabaseClosed.current
+  ) return;
   storageWriteFlushTimer.current = setTimeout((): void => {
     storageWriteFlushTimer.current = null;
     if (storageFlushHold.current) {
@@ -125,13 +131,15 @@ export function flushIfStorageFull(reply: IdentityPersistenceReply): void {
  * 当前各表与 AI 上下文的待写值在一个显式事务中提交；成功后才清缓冲并回 ACK，AI 上下文
  * 另按 AI 记忆协议发出删除与即时写入回执。事务失败时记日志、累计失败并按退避重排提交，
  * 结束时都会为剩余变化重排 timer。拒收标记不影响返回值，由统一 flush 经
- * collectStorageDatabaseFailures 按领域回报。
+ * collectStorageDatabaseFailures 按领域回报。停机已关库（storageDatabaseClosed）时不再提交，
+ * 有待写值即返回 false，不计入连续失败。
  * @returns true 表示本轮全部变化已 durable 或本来无变化。
  */
 export function flushStorageDatabase(reply: IdentityPersistenceReply): boolean {
   // outbox 快照 revision 只与待写行一同挂起（没有行变化时当场确认，见 pendingRemoval.ts），
   // 待写缓冲只在提交成功或整表复位时清空，两处都同时清掉 revision：无待写即无待确认的 revision。
   if (!hasPendingStorageWrites()) return true;
+  if (storageDatabaseClosed.current) return false;
   if (storageWriteFlushTimer.current !== null) {
     clearTimeout(storageWriteFlushTimer.current);
     storageWriteFlushTimer.current = null;

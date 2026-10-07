@@ -8,11 +8,11 @@ import { isQuietUntilActive } from "../libs/chatState";
 
 /**
  * 处理 /quiet 指令：让机器人在本群安静一段时间——期间不触发 AI 随机插话、
- * 洗澡「看看」和随机复读这些主动刷存在感的行为；回复机器人 / @ 机器人的
- * AI 必回、各类指令、以及 /copy 锁定目标的复读均不受影响（对话缓存也照常
- * 攒，静默结束后 AI 不缺上下文）。时长参数为十进制整数分钟数，缺省 3 分钟，其它形态
- * 回用法提示；超出 1~15 的整数会被收敛到边界；静默期内不允许重复使用（不能续时/重新计时），
- * 想提前解除或重设时长要先 /unquiet。
+ * 洗澡「看看」和随机复读这些主动行为；回复机器人 / @ 机器人的 AI 必回、
+ * 各类指令、以及 /copy 锁定目标的复读不受影响，对话缓存也照常累积。
+ * 时长参数为十进制整数分钟数（QUIET_MINUTES_PATTERN），缺省 QUIET_DEFAULT_MINUTES，
+ * 其它形态回用法提示；超出 QUIET_MIN_MINUTES ~ QUIET_MAX_MINUTES 的整数收敛到边界。
+ * 静默期内重复使用只回执剩余分钟数，不续时、不重新计时；提前解除或重设时长要先 /unquiet。
  */
 export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -43,8 +43,7 @@ export async function handleQuietCommand(ctx: CommandContext<Context>): Promise<
 }
 
 /**
- * 处理 /unquiet 指令：提前解除 /quiet 静默。本群没在静默中时只嘲讽一句，
- * 不改任何状态。
+ * 处理 /unquiet 指令：提前解除 /quiet 静默。本群没在静默中时只回执，不改任何状态。
  */
 export async function handleUnquietCommand(ctx: CommandContext<Context>): Promise<void> {
   const chatId: number = ctx.chat.id;
@@ -56,8 +55,7 @@ export async function handleUnquietCommand(ctx: CommandContext<Context>): Promis
     return;
   }
 
-  // 静默生效中说明 /quiet 写过真实状态；统一清字段，并在它是最后一个字段时
-  // 同步回收 Map 条目。
+  // clearChatStateField 清除 quietUntil；它是最后一个字段时同步回收 Map 条目。
   clearChatStateField(chatId, "quietUntil");
   await persistChatState(chatId, "quiet cleared");
 

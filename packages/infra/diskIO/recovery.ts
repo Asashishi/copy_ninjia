@@ -158,8 +158,7 @@ function createRecoveryTransportScope(worker: Worker, revisions: DiskIORecoveryR
 
 /**
  * 开合一对恢复区间标记，投递失败按 fatal 处理：
- * - recoveryReplay：重放区间，开标记确保区间内写失败升级为停机，关标记确保恢复完成后的在线写
- *   回到常规失败语义。
+ * - recoveryReplay：重放区间，区间内写失败升级为停机，关标记后在线写恢复常规失败语义。
  * - storageFlushHold：镜像重放区间，区间内 Worker 暂缓共享 SQLite 的满批与定时提交，关标记后
  *   按批次阈值一次提交（见 types/diskIO/messages.ts 的 StorageFlushHoldRequest）。
  * @param noun 日志里的标记名（如 `recovery replay mark`）。
@@ -186,7 +185,7 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
   const revisions: DiskIORecoveryRevisions = new DiskIORecoveryRevisions();
   if (replayMirrors) {
     // 按显式优先级等待各领域镜像；整个握手保持不可写，恢复 timer 继续覆盖
-    // 异步 listener，普通业务增量则留在有硬顶的 FIFO 缓冲里。各领域镜像全部投递
+    // 异步 listener，普通业务增量留在有上限的 FIFO 缓冲里。各领域镜像全部投递
     // 完成前共享 SQLite 不做满批提交。
     if (!postRecoveryMarker(worker, { type: "storageFlushHold", active: true }, "storage flush hold")) return;
     for (const registration of diskIORuntime.respawnListeners) {
@@ -217,9 +216,9 @@ export async function activateDiskIOWorker(worker: Worker, replayMirrors: boolea
     }
     if (!postRecoveryMarker(worker, { type: "storageFlushHold", active: false }, "storage flush hold")) return;
   }
-  // 重放区间要圈起来告诉 Worker：区间内的写失败没有任何后续 flush 会去问，
-  // 只能按 fatal 停机处理（见 types/diskIO/messages.ts 的 RecoveryReplayRequest）。整段
-  // 排空是同步的，中间不会插进在线消息，因此这对标记框住的恰好是重放的那一批。
+  // 重放区间用 recoveryReplay 标记框住：区间内的写失败按 fatal 停机处理
+  // （见 types/diskIO/messages.ts 的 RecoveryReplayRequest）。整段排空是同步的，
+  // 两个标记之间只有重放的那一批。
   if (diskIORuntime.pendingBusinessMessages.size > 0) {
     if (!postRecoveryMarker(worker, { type: "recoveryReplay", active: true }, "recovery replay mark")) return;
     while (diskIORuntime.pendingBusinessMessages.size > 0) {
@@ -276,7 +275,7 @@ interface RecoverDiskIOWorkerOptions {
 
 /**
  * 当前 DiskIO 代际失效后的唯一恢复入口。未捕获异常与诊断连续写盘失败共用同一套
- * 等待者结算、重启节流、load 握手和镜像重放，避免两条恢复链并行改写宿主状态。
+ * 等待者结算、重启节流、load 握手和镜像重放。
  */
 export function recoverDiskIOWorker({
   createWorker,
@@ -345,8 +344,8 @@ export function recoverDiskIOWorker({
 }
 
 /**
- * 诊断故障触发受控重建前只刷业务领域；失败的日志批次仍由主线程 ACK 队列持有，
- * 不能让通用 flush 先等待它而永远走不到业务刷盘。
+ * 诊断故障触发受控重建前只刷业务领域（scope 为 business），不等待诊断批次；
+ * 失败的日志批次仍由主线程 ACK 队列持有。
  */
 async function flushBusinessBeforeDiagnosticRecycle(
   worker: Worker

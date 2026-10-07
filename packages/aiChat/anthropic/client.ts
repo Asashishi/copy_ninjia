@@ -29,8 +29,8 @@ import type { AnthropicRequestResult } from "../../types/aiChat/anthropic";
 import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
 
-/** 按能力取得 Anthropic 客户端；每项能力的 api_key/base_url 独立。 */
-function getAnthropicClient(capability: AgentCapability): Anthropic {
+/** 按能力取得 Anthropic 客户端；每项能力的 api_key/base_url 独立。导出供本包回复会话固定客户端。 */
+export function getAnthropicClient(capability: AgentCapability): Anthropic {
   return capabilityClient({
     provider: "anthropic",
     capability,
@@ -55,13 +55,14 @@ function isUnusableStopReason(message: Anthropic.Message): boolean {
 export interface AnthropicRequestOptions {
   readonly capability: AgentCapability;
   /**
-   * 就地构造完整请求体（官方 SDK 的参数类型）。收构造器而不是构造好的对象：模型名与端点来自
-   * config/dynamic/agent.json，配置写坏时解析会抛，必须发生在本函数的 try 内，口径同
-   * aiChat/openai/client.ts 的 requestOpenAiResult。
+   * 就地构造完整请求体（官方 SDK 的参数类型）。构造发生在本函数的 try 内，构造抛错按请求失败处理，
+   * 口径同 aiChat/openai/client.ts 的 requestOpenAiResult。
    */
   readonly buildBody: () => Anthropic.MessageCreateParamsNonStreaming;
   readonly errorLabel: string;
   readonly signal?: AbortSignal;
+  /** 回复会话创建时固定的客户端；缺省时在 try 内按 capability 现取（getAnthropicClient）。 */
+  readonly client?: Anthropic;
 }
 
 /**
@@ -73,6 +74,7 @@ export async function requestAnthropicMessage({
   buildBody,
   errorLabel,
   signal,
+  client,
 }: AnthropicRequestOptions): Promise<AnthropicRequestResult> {
   let message: Anthropic.Message;
   try {
@@ -81,7 +83,7 @@ export async function requestAnthropicMessage({
     const requestSignal: AbortSignal = signalWithTimeout(signal, ANTHROPIC_REQUEST_TIMEOUTS_MS[capability]);
     requestSignal.throwIfAborted();
     message = await raceAbortOrThrow(
-      getAnthropicClient(capability).messages.create(body, { signal: requestSignal })
+      (client ?? getAnthropicClient(capability)).messages.create(body, { signal: requestSignal })
         .then((result: Anthropic.Message): Anthropic.Message => {
           reportAnthropicUsage({ capability, model: body.model, usage: result.usage, searchCalls: countAnthropicWebSearches(result) });
           return result;

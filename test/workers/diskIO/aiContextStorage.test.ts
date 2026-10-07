@@ -235,7 +235,7 @@ test("回归：teardown 后 forgetAiMemoryChat 让重新启用的 revision 1 不
   deleteAiMemorySnapshot(chatId, 14);
   expect(aiMemoryRevisions.get(chatId)).toBe(14);
 
-  // 主线程 teardown 把自己的计数器归零，Worker 侧必须同一时刻丢掉水位线。
+  // 主线程 teardown 把计数器归零时，Worker 侧同时丢掉水位线。
   forgetAiMemoryChat(chatId);
   expect(aiMemoryRevisions.has(chatId)).toBeFalse();
 

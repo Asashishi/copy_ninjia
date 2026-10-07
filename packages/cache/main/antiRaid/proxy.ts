@@ -14,7 +14,7 @@ export const antiRaidBarrier: ReturnType<typeof createFlushBarrier> = createFlus
 /**
  * Anti-Raid 主线程代理的代际与初始化状态。容量固定为一个对象，随进程生死；
  * Worker 重建时由 antiRaid/workerBridge/controller.ts 递增 generation，不重置本对象。
- * 两个镜像版本号分别在待验证镜像（`verification` 领域）与 lockdown 记录（`chatState`
+ * 镜像版本号分别在待验证镜像（`verification` 领域）与 lockdown 记录（`chatState`
  * 领域）变化时递增，durable 投递据此只刷变化过的领域；initAntiRaid 归零。
  */
 export const antiRaidRuntimeState: {

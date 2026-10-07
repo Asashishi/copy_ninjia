@@ -97,8 +97,7 @@ describe("热路径门禁记录 performance-result.json", () => {
   });
 
   test("容忍全量基准写的 fullSuite 节，但拒绝未知顶层节", async () => {
-    // 同一份文件里还住着 perf:full 的记录。门禁既不读也不写它，但必须容忍它
-    // 存在——否则全量基准跑完一次，热路径门禁就会整份拒绝解析。
+    // 同一份文件里还住着 perf:full 的记录。门禁既不读也不写它，但容忍它存在。
     const withFullSuite: Record<string, unknown> = validDocument();
     withFullSuite.fullSuite = { lastRun: { rounds: 3 } };
     await expect(readHotPathGateCalibration(await writeDocument(withFullSuite)))

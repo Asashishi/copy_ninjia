@@ -23,8 +23,7 @@ describe("Anti-Raid lockdown permission restore boundary", () => {
     });
 
     expect(api.getChat).toHaveBeenCalledWith(-1001);
-    // 第三个参数不能省：不带 use_independent_chat_permissions 时 Bot API 会按
-    // 蕴含规则把读回来的权限展开，一次锁定进出就把媒体权限全放开了。
+    // 第三个参数 use_independent_chat_permissions 不能省：不带时 Bot API 会按蕴含规则展开读回来的权限。
     expect(api.setChatPermissions).toHaveBeenCalledWith(
       -1001,
       {

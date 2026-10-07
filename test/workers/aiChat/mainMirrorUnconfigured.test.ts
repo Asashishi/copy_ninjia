@@ -3,12 +3,10 @@ import type { TtsDailyUsage } from "../../../packages/types/aiChat/voiceMessage"
 import { diskIOStub } from "../../helpers/diskIOMock";
 /**
  * AI agent 核心配置不可用时主线程侧代理的行为。与 mainMirrorRecovery.test.ts
- * 是同一批入口的另一种进程状态，因此必须另开一个文件：readiness mock 整文件生效。
+ * 是同一批入口的另一种进程状态，readiness mock 整文件生效，因此单独成文件。
  *
- * 这里守的是一条会造成不可逆数据损失的边：hydrate 那条路把「本群没开 AI 闲聊」
- * 当成删除磁盘记忆的依据，而配置不可用时每个群看起来都是关的——一次配置失误后的
- * 重启就会把 memory/ 里所有群的 AI 记忆一起删光，修好配置也找不回来。配置不可用
- * 时记忆只进镜像；热重载补齐前提后 resumeAiChat 才按群开关投递或删除。
+ * 配置不可用时 hydrate 不依据「本群没开 AI 闲聊」删除磁盘记忆，记忆只进镜像；
+ * 热重载补齐前提后 resumeAiChat 才按群开关投递或删除。
  */
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -121,8 +119,7 @@ describe("AI main-thread proxy with unavailable agent config", () => {
     aiChat.hydrateStickerCatalog(new Map([["pack_a", "restored-catalog"]]));
 
     expect(workerPosts).toEqual([]);
-    // 关键断言：没有任何 deleteAiMemory 投出去。配置可用的那条路会为 -1001
-    // 安排 durable 删除（见 mainMirrorRecovery.test.ts），这里一条都不该有。
+    // 不投出任何 deleteAiMemory；配置可用时才为 -1001 安排 durable 删除（见 mainMirrorRecovery.test.ts）。
     expect(diskPosts).toEqual([]);
     expect(pendingAiMemoryDeletes.size).toBe(0);
     expect([...latestAiMemories]).toEqual([[-1001, "disabled-memory"], [-1002, "enabled-memory"]]);

@@ -11,7 +11,6 @@ import { MARKDOWN_V2_PARSE_MODE } from "../../packages/consts/telegramMarkdown";
 import {
   deleteEphemeralMessageWithOutcome,
   editMessageText,
-  isChatMember,
   kickChatMemberWithOutcome,
   muteChatMemberWithOutcome,
   probeChatAdmin,
@@ -241,7 +240,7 @@ describe("Telegram 常规动作封装", () => {
 
     await sendMessageWithResult({ chatId: -1001, text: "abc def", entities, api });
     expect(sendMessageMock).toHaveBeenLastCalledWith(-1001, "abc def", { entities }, undefined);
-    // 传入的只读数组不能被后续改动波及，payload 必须是自己的副本。
+    // 传入的只读数组不被后续改动波及，payload 是自己的副本。
     expect((sendMessageMock.mock.calls[0]![2] as { entities: unknown[] }).entities).not.toBe(entities);
 
     await sendMessageWithResult({ chatId: -1001, text: "abc def", entities: [], api });
@@ -261,7 +260,7 @@ describe("Telegram 常规动作封装", () => {
     expect(other.parse_mode).toBe(MARKDOWN_V2_PARSE_MODE);
     expect(other.entities).toBeUndefined();
 
-    // Bot API 规定两者互斥，同时给出必须在编译期被拒绝。
+    // Bot API 规定两者互斥，同时给出在编译期被拒绝。
     function assertFormatsExclusive(): void {
       void sendMessageWithResult({
         chatId: -1001,
@@ -328,8 +327,7 @@ describe("Telegram 常规动作封装", () => {
       caption: "照着你说的画了一张 <b>不该被解析</b>",
     });
 
-    // 图注是自由文本，一旦按 HTML/Markdown 解析就会形成注入，并让未闭合的
-    // 实体把整条发送打回；这里必须只有 caption 一个字段。
+    // 图注是自由文本：不按 HTML/Markdown 解析，只有 caption 一个字段。
     expect(sendPhotoMock).toHaveBeenCalledWith(-1001, {
       bytes: new Uint8Array([1, 2, 3]),
       fileName: "generated.jpg",
@@ -409,10 +407,8 @@ describe("Telegram 常规动作封装", () => {
       api,
     });
 
-    // payload 按定形一次初始化，可选字段恒定出现、缺席时取值 undefined，因此
-    // 这里判的是**取值**而不是「有没有这个键」。要守住的事实没变：空图注绝不能
-    // 变成空串发出去。「undefined 不会进请求体」由
-    // test/infra/telegramSendPayload.test.ts 直接对着 grammY 的序列化边界钉住。
+    // payload 按定形一次初始化，可选字段恒定出现、缺席时取值 undefined，这里判取值而不是键是否存在；
+    // 空图注不会变成空串发出去。「undefined 不进请求体」由 test/infra/telegramSendPayload.test.ts 对着 grammY 的序列化边界验证。
     const other: Readonly<Record<string, unknown>> =
       sendPhotoMock.mock.calls[0]?.[2] as Readonly<Record<string, unknown>>;
     expect(other.caption).toBeUndefined();
@@ -422,11 +418,11 @@ describe("Telegram 常规动作封装", () => {
     const apiFor = (member: unknown): TelegramApi =>
       ({ getChatMember: mock(async (..._args: unknown[]) => member) }) as unknown as TelegramApi;
 
-    expect(await isChatMember(-1001, 1, apiFor({ status: "member" }))).toBe(true);
-    expect(await isChatMember(-1001, 2, apiFor({ status: "administrator" }))).toBe(true);
-    expect(await isChatMember(-1001, 3, apiFor({ status: "restricted", is_member: true }))).toBe(true);
-    expect(await isChatMember(-1001, 4, apiFor({ status: "restricted", is_member: false }))).toBe(false);
-    expect(await isChatMember(-1001, 5, apiFor({ status: "left" }))).toBe(false);
+    expect(await probeChatMembership(-1001, 1, apiFor({ status: "member" }))).toBe(true);
+    expect(await probeChatMembership(-1001, 2, apiFor({ status: "administrator" }))).toBe(true);
+    expect(await probeChatMembership(-1001, 3, apiFor({ status: "restricted", is_member: true }))).toBe(true);
+    expect(await probeChatMembership(-1001, 4, apiFor({ status: "restricted", is_member: false }))).toBe(false);
+    expect(await probeChatMembership(-1001, 5, apiFor({ status: "left" }))).toBe(false);
   });
 
   test("成员与管理员探测保留查询失败的 unknown，不把它压成否定结论", async () => {
@@ -445,7 +441,6 @@ describe("Telegram 常规动作封装", () => {
     expect(await probeChatAdmin({ chatId: -1001, userId: 5, api: apiFor({ status: "member" }) })).toBe(false);
     expect(await probeChatMembership(-1001, 6, failedApi)).toBeUndefined();
     expect(await probeChatAdmin({ chatId: -1001, userId: 6, api: failedApi })).toBeUndefined();
-    expect(await isChatMember(-1001, 6, failedApi)).toBe(false);
   });
 
   test("读取成员身份不解释成员状态：离群同样返回身份，查询失败回落 undefined", async () => {
@@ -469,13 +464,11 @@ describe("Telegram 常规动作封装", () => {
     const restrictMock = mock(async (..._args: unknown[]) => true as const);
     const api = { restrictChatMember: restrictMock } as unknown as TelegramApi;
 
-    // 1500 ms 落在两秒之间：向下取整会把时长抹短，而 Bot API 把「距现在不足
-    // 30 秒」的 until_date 当成永久限制，边界上宁可多一秒。
+    // mutedUntil 为 1_500 ms，落在两秒之间：截止时刻向上取整。
     expect(await muteChatMemberWithOutcome({
       chatId: -1001, userId: 7, mutedUntil: 1_500, dispatchTimeoutMs: 60_000, api,
     })).toBe("muted");
-    // 第五个实参是派发截止合成出来的 signal：它必须一路下传到真实请求，
-    // 否则 429 车道里排队的那一份不会因超时被撤销（见 MuteChatMemberParams）。
+    // 第五个实参是派发截止合成出来的 signal，一路下传到真实请求（见 MuteChatMemberParams）。
     expect(restrictMock).toHaveBeenCalledWith(
       -1001,
       7,
@@ -483,19 +476,17 @@ describe("Telegram 常规动作封装", () => {
       { until_date: 2 },
       expect.any(AbortSignal)
     );
-    // 权限集里不允许有任何一项为真，否则那不叫禁言。
+    // 权限集里没有任何一项为真。
     expect(Object.values(MUTED_CHAT_PERMISSIONS).every((allowed: boolean | undefined): boolean => allowed === false))
       .toBe(true);
   });
 
   test("派发截止到期即放弃这次禁言，不让它变成永久限制", async () => {
-    // 请求排在 restrict 类 429 车道里迟迟发不出去：until_date 是入队前算好的
-    // 绝对时刻，排到它距当下不足 30 秒时 Bot API 会当成永久限制，而两条禁言
-    // 路径都不排恢复计时器。到期必须放弃，并归到可重试的 failed 一档。
+    // 请求排在 restrict 类 429 车道里迟迟发不出去：until_date 是入队前算好的绝对时刻；
+    // 派发截止到期即放弃，归到可重试的 failed 一档，两条禁言路径都不排恢复计时器。
     //
-    // 替身照生产形态消费最后那个 signal：真实链路上它直接交给 grammY，
-    // 再由出站总闸挂成 job 的 abort 监听（infra/telegram/outboundGate.ts 的
-    // createOutboundJob），排在 429 队列里的那一份因此会被取消而不是一直等下去。
+    // 替身照生产形态消费最后那个 signal：真实链路上它交给 grammY，再由出站总闸挂成 job 的 abort 监听
+    // （infra/telegram/outboundGate.ts 的 createOutboundJob），排在 429 队列里的那一份因此被取消。
     const api = {
       restrictChatMember: mock((
         ..._args: readonly unknown[]
@@ -528,8 +519,7 @@ describe("Telegram 常规动作封装", () => {
         chatId: -1001, userId: 7, mutedUntil: 60_000, dispatchTimeoutMs: 30_000, api,
       });
 
-    // 缺 can_restrict_members 与「目标本身是管理员」共用这一句 400；两者都是
-    // 「再试一次也一样」，归到 forbidden。
+    // 缺 can_restrict_members 与「目标本身是管理员」共用这一句 400，都归到 forbidden。
     expect(await mute(failWith(new GrammyError(
       "Bad Request: not enough rights",
       { ok: false, error_code: 400, description: "Bad Request: not enough rights" },
@@ -543,7 +533,7 @@ describe("Telegram 常规动作封装", () => {
       "restrictChatMember",
       {}
     )))).toBe("forbidden");
-    // 限流/网络抖动值得等一等再来，不能和上面混成一档。
+    // 限流/网络抖动归到可重试的一档，与上面分开。
     expect(await mute(failWith(new Error("socket hang up")))).toBe("failed");
     expect(await mute(failWith(new GrammyError(
       "Too Many Requests",
@@ -558,11 +548,10 @@ describe("Telegram 常规动作封装", () => {
     const api = { restrictChatMember: restrictMock } as unknown as TelegramApi;
 
     expect(await unmuteChatMemberWithOutcome({ chatId: -1001, userId: 7, api })).toBe("unmuted");
-    // 第四个实参必须是空 other：带上 until_date 会把「恢复」又变成一次限时限制。
+    // 第四个实参是空 other：不带 until_date。
     expect(restrictMock).toHaveBeenCalledWith(-1001, 7, UNMUTED_CHAT_PERMISSIONS, {}, undefined);
 
-    // 调用方给了 signal 就必须一路下传到真实请求，否则 429 车道里排队的那一份
-    // 不会因停机或 update 取消被撤销。
+    // 调用方给了 signal 就一路下传到真实请求。
     const controller: AbortController = new AbortController();
     expect(await unmuteChatMemberWithOutcome({
       chatId: -1001, userId: 7, api, signal: controller.signal,
@@ -574,7 +563,7 @@ describe("Telegram 常规动作封装", () => {
       {},
       controller.signal
     );
-    // 权限集里不允许有任何一项为假，否则那不叫解除禁言。
+    // 权限集里没有任何一项为假。
     expect(Object.values(UNMUTED_CHAT_PERMISSIONS).every((allowed: boolean | undefined): boolean => allowed === true))
       .toBe(true);
   });
@@ -586,7 +575,7 @@ describe("Telegram 常规动作封装", () => {
     const unmute = (api: TelegramApi): Promise<string> =>
       unmuteChatMemberWithOutcome({ chatId: -1001, userId: 7, api });
 
-    // 与禁言同一判据：400「权限不足」和 403 都是再试一次也一样，归 forbidden。
+    // 与禁言同一判据：400「权限不足」和 403 都归 forbidden。
     expect(await unmute(failWith(new GrammyError(
       "Bad Request: not enough rights",
       { ok: false, error_code: 400, description: "Bad Request: not enough rights" },
@@ -599,7 +588,7 @@ describe("Telegram 常规动作封装", () => {
       "restrictChatMember",
       {}
     )))).toBe("forbidden");
-    // 限流与网络抖动值得重试，必须和上面分开。
+    // 限流与网络抖动归可重试，与上面分开。
     expect(await unmute(failWith(new Error("socket hang up")))).toBe("failed");
     expect(await unmute(failWith(new GrammyError(
       "Too Many Requests",
@@ -653,10 +642,8 @@ describe("Telegram 常规动作封装", () => {
   });
 
   test("确证是普通群时走 banChatMember，超级群走 unbanChatMember", async () => {
-    // unbanChatMember 的官方说明是「unban a previously banned user in a
-    // supergroup or channel」，普通群用不了；banChatMember 覆盖「a group, a
-    // supergroup or a channel」，而「踢了回不来」那句只限超级群/频道，所以普通
-    // 群里它就是一次纯移除。类型未知时调用方必须先查清楚，不允许在这里猜。
+    // unbanChatMember 的官方说明限超级群/频道，banChatMember 覆盖普通群、超级群与频道，普通群里它是一次纯移除。
+    // 类型未知时调用方先查清楚，这里不猜。
     const calls: string[] = [];
     const api = {
       unbanChatMember: async (): Promise<true> => { calls.push("unban"); return true; },

@@ -4,9 +4,8 @@
  * 精确落盘水位线都只属于仍在活动快照里的 key（test/helpers/verificationMirrorInvariants.ts
  * 逐条断言）。
  *
- * 这里全是**主线程**状态，与 cache/workers/antiRaid/verification.ts 那份入群守卫线程
- * 的验证状态机没有任何共享：权威状态机在 Worker 内，本模块只保存供两类 Worker
- * 崩溃重放的纯数据。
+ * 本模块是主线程状态，不与 cache/workers/antiRaid/verification.ts 的入群守卫线程验证状态机共享：
+ * 权威状态机在 Worker 内，本模块只保存供两类 Worker 崩溃重放的纯数据。
  */
 
 import type {
@@ -15,18 +14,16 @@ import type {
 } from "../../../types/antiRaid/verification";
 
 /**
- * 主线程持有的待验证纯数据镜像，key 为 verificationKey(chatId, userId)；
- * 不是验证状态机本身——权威状态在 Anti-Raid Worker 内，这里只做两类 Worker
- * 崩溃重放的数据源。hydratePendingVerifications 在启动时先清空、再用 Disk
- * I/O 恢复出的记录整体重建；此后 antiRaid/verificationMirror.ts 按
- * generation+revision 拒绝迟到事件后增量更新/删除。Anti-Raid Worker
- * 崩溃重建时（onRespawn）本镜像不清空，只原地把
- * 每条记录的 generation 提升到新代际后整体回放给新 Worker；Disk I/O Worker
- * 崩溃重建时（onDiskIORespawn）同样整体重放给它补齐。
+ * 主线程持有的待验证纯数据镜像，key 为 verificationKey(chatId, userId)，
+ * 作为 Anti-Raid Worker 与 Disk I/O Worker 崩溃重放的数据源；权威状态机在 Anti-Raid Worker 内。
+ * hydratePendingVerifications 在启动时先清空、再用 Disk I/O 恢复出的记录整体重建；
+ * 此后 antiRaid/verificationMirror.ts 按 generation+revision 拒绝迟到事件后增量更新/删除。
+ * Anti-Raid Worker 崩溃重建时（onRespawn）本镜像不清空，只原地把每条记录的 generation
+ * 提升到新代际后整体回放给新 Worker；Disk I/O Worker 崩溃重建时（onDiskIORespawn）
+ * 同样整体重放给它补齐。
  *
- * 容量：不在本层设淘汰——条目代表「这个人还欠一次处置」，按容量丢掉等于放过
- * 刷群者；硬顶由 antiRaid/verificationMirror.ts 按 VERIFICATION_RECORD_CAPACITY 拒收
- * 新记录并请求受监督重启，落盘侧 workers/diskIO/verificationWrites.ts 再核一次；延后的终态改由
+ * 容量：本层不设淘汰；硬顶由 antiRaid/verificationMirror.ts 按 VERIFICATION_RECORD_CAPACITY 拒收
+ * 新记录并请求受监督重启，落盘侧 workers/diskIO/verificationWrites.ts 再核一次；延后的终态由
  * deferredVerificationRecords 以最小索引保留。
  */
 export const activeVerificationSnapshots: Map<string, VerificationSnapshot> = new Map();
@@ -41,8 +38,7 @@ export const persistedVerificationRevisions: Map<string, { generation: number; r
 /**
  * 已从 active 镜像删除、但尚未收到当天 JSON 追加确认的终结变化。
  * 清理：收到该 revision 的追加确认时移出，完整启动 hydrate 时整表清空。
- * 容量：同时在途的终结写入数，被 Disk I/O 的写预算封住；不设淘汰——丢掉一条
- * 墓碑会让已经结束的验证记录在重启后复活。
+ * 容量：同时在途的终结写入数，被 Disk I/O 的写预算封住；不设淘汰。
  */
 export const pendingVerificationDeletes: Map<string, {
   chatId: number;
@@ -80,7 +76,7 @@ export const pendingVerificationDeferrals: Map<string, DeferredVerificationRecor
 /**
  * 验证记录容量首次越界后置位，确保同一停机链只向应用生命周期
  * 报告一次 fatal；完整启动 hydrate 与 terminate 重置。容量恒为一个 boolean，
- * Worker 崩溃不清理，因为换 isolate 不能解除进程级容量越界。
+ * Worker 崩溃不清理。
  */
 export const verificationCapacityFatalState: { current: boolean } = {
   current: false,

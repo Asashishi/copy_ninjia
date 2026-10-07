@@ -1,9 +1,8 @@
 /**
- * AI 回复链路上的四条场景：逐字缓存条目构造、整段转录渲染、回复引用解析与提及判定。
+ * AI 回复链路上的场景：逐字缓存条目构造、整段转录渲染、回复引用解析与提及判定。
  *
  * 与 scenarios.ts 分开：逐字缓存条目构造与整段转录渲染共用同一批 AI 记录夹具
- * （RECORD_SOURCES/RECORD_TEXTS），四条量的都是 aiChat 那一侧的读写形状，与
- * 容器/时间窗那批叶子场景无关。
+ * （RECORD_SOURCES/RECORD_TEXTS），量的是 aiChat 一侧的读写形状。
  */
 
 import type { Message } from "grammy/types";
@@ -19,7 +18,7 @@ import { buildBufferedMessage } from "../../../packages/workers/aiChat/bufferedM
 import { BENCHMARK_CHAT_ID, BENCHMARK_EPOCH_MS, BENCHMARK_SENDER_ID } from "./fixtures";
 import type { Scenario } from "./types";
 
-/** AI 记录输入表：混合「可选字段有没有」的四种组合（有无 username、forwardedFrom、replyTo），由 buffered-message-build 与 transcript-render 轮换取用。 */
+/** AI 记录输入表：混合可选字段有无的各种组合（username、forwardedFrom、replyTo），由 buffered-message-build 与 transcript-render 轮换取用。 */
 const RECORD_SOURCES: readonly AiRecordContext[] = [
   {
     chatId: BENCHMARK_CHAT_ID, senderId: 101, firstName: "Alice", lastName: "Chen",
@@ -51,7 +50,7 @@ const RECORD_TEXTS: readonly string[] = [
   "今天天气不错", "在吗 有人吗", "哈哈哈哈哈", "这个功能怎么用",
 ];
 
-/** 一条 AI 记录进入逐字缓存时的构造成本（workers/aiChat/bufferedMessage.ts）；输入轮换 RECORD_SOURCES 的四种组合。 */
+/** 一条 AI 记录进入逐字缓存时的构造成本（workers/aiChat/bufferedMessage.ts）；输入轮换 RECORD_SOURCES 的各组合。 */
 export function bufferedMessageBuildScenario(): Scenario {
   return {
     iterations: 500_000,
@@ -73,23 +72,17 @@ export function bufferedMessageBuildScenario(): Scenario {
 }
 
 /**
- * 一次 AI 回复要付的转录渲染：把逐字缓存（生产上限 VERBATIM_CONTEXT_MAX，这里取
- * 生产同量级的 150 条，含最新 COMPACT_BATCH_SIZE 条的最热分层与其之前的较早分层）
- * 逐行拼成提示词。
+ * 一次 AI 回复要付的转录渲染：把逐字缓存（条数与生产上限 `VERBATIM_CONTEXT_MAX`
+ * 同量级，含最新 `COMPACT_BATCH_SIZE` 条的最热分层与其之前的较早分层）逐行拼成提示词。
  *
- * 这是 BufferedMessage 形状是否稳定的**读取侧**。缓存在场景构造时建好，采样
- * 只量渲染，不把构造成本混进来。
- *
- * 场景显式展平最终字符串，覆盖每次 AI 回复都经过的完整转录渲染成本；构造侧
- * shape 稳定性由 buffered-message-build 单独观测。
+ * 这是 BufferedMessage 形状稳定性的读取侧。缓存在场景构造时建好，采样只量渲染。
+ * 场景显式展平最终字符串，覆盖转录渲染的完整成本；构造侧 shape 稳定性由
+ * buffered-message-build 单独观测。
  */
 export function transcriptRenderScenario(): Scenario {
   const messages: BufferedMessage[] = [];
   for (let index: number = 0; index < 150; index += 1) {
-    // message_id 逐条递增，与生产同形：RECORD_SOURCES 里那四个 id 循环用下去
-    // 会让整段窗口只有四个不同的编号，而渲染侧要按 message_id 去重（同一条
-    // update 被重投、快照 hydrate 各记一份），夹具一重复就把 150 条压成 4 条，
-    // 这条哨兵量的就不再是生产那次渲染了。
+    // message_id 逐条递增：渲染侧按 message_id 去重，重复的编号会使窗口塌缩。
     const source: AiRecordContext = {
       ...RECORD_SOURCES[index % RECORD_SOURCES.length]!,
       messageId: index + 1,
@@ -112,11 +105,10 @@ export function transcriptRenderScenario(): Scenario {
       let checksum: number = 0;
       for (let index: number = 0; index < iterations; index += 1) {
         const text: string = buildTieredVerbatimTranscript(messages, options).text;
-        // **必须强制展平**，不能只读 `.length`：JSC 的 rope 自带长度，`.length` 不会让它
-        // materialize。渲染侧逐行 `+=` 累加（见 chatTranscript.ts 的 renderRange），返回的
-        // 是一棵几百个节点的 rope；只读长度的话这条场景量到的是「建了棵树」而不是「拿到
-        // 一个可用的字符串」。生产里这段转录会在拼提示词、跨线程 clone 或网络发送时
-        // 展平，因此展平成本属于本场景；charCodeAt 负责以固定方式触发解析。
+        // 强制展平：JSC 的 rope 自带长度，只读 `.length` 不会 materialize。渲染侧逐行
+        // `+=` 累加（见 chatTranscript.ts 的 renderRange），返回的是 rope；生产里这段
+        // 转录在拼提示词、跨线程 clone 或网络发送时展平，展平成本属于本场景，
+        // charCodeAt 以固定方式触发解析。
         checksum += text.charCodeAt(text.length - 1);
       }
       return checksum;
@@ -130,8 +122,7 @@ export function replyReferenceScenario(): Scenario {
   const chat: Message["chat"] = {
     id: BENCHMARK_CHAT_ID, type: "supergroup", title: "Performance fixture",
   };
-  // grammY 的 reply_to_message 用的是不可再嵌套的 ReplyMessage，显式标注它，
-  // 别让 Message 的自嵌套字段污染这份 fixture 的类型。
+  // grammY 的 reply_to_message 是不可再嵌套的 ReplyMessage，显式标注该类型。
   const replied: NonNullable<Message["reply_to_message"]> = {
     message_id: 40, date: 1, chat,
     from: { id: BENCHMARK_SENDER_ID + 2, is_bot: false, first_name: "Bob", username: "bob_dev" },
@@ -157,9 +148,8 @@ export function replyReferenceScenario(): Scenario {
 }
 
 /**
- * 提及判定。两个变体分开量：`mention-facts` 混入带 entity 的消息（真正扫实体
- * 表那条路），`mention-facts-plain` 全是无 entity 的普通消息（生产上占绝大多数，
- * 量的是早退成本）。
+ * 提及判定，分两个变体：`mention-facts` 混入带 entity 的消息（扫描实体表的路径），
+ * `mention-facts-plain` 全是无 entity 的普通消息（量早退成本）。
  */
 export function mentionFactsScenario(withEntities: boolean): Scenario {
   const chat: Message["chat"] = {

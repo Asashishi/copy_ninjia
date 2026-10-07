@@ -9,7 +9,7 @@ export function mean(values: readonly number[]): number {
   return sum / values.length;
 }
 
-/** 总体标准差（除以 n，不是 n-1）；`average` 由调用方先算好，避免重复遍历。 */
+/** 总体标准差（除以 n）；`average` 由调用方传入。 */
 export function standardDeviation(
   values: readonly number[],
   average: number

@@ -5,9 +5,8 @@ import type { BLOCKLIST_REMOVAL_FAILURE_TYPES } from "../consts/antiRaid/blockli
 /**
  * BlockedMemberRemover 的入参，也是投给 Worker 的 wire 形态。
  *
- * **投递出去的批次一定带着一份具体名单**——`userIds` 在这里是必填的。补扫在
- * outbox 里不冻结名单（见 PendingBlockedRemovalParams），那一份是投递/重放的
- * 那一刻按当时的黑名单现算出来的。
+ * 投递出去的批次一定带着一份具体名单，`userIds` 必填。补扫在 outbox 里不冻结名单
+ * （见 PendingBlockedRemovalParams），投递或重放时按当时的黑名单现算。
  */
 export interface RemoveBlockedMembersParams {
   /** 要清理的群。 */
@@ -25,29 +24,25 @@ export interface RemoveBlockedMembersParams {
    */
   removalId: number;
   /**
-   * 入群那一刻的时间戳，只有秒踢路径有。Worker 用它补记一次入群计数：
-   * 黑名单入群不再走 join 消息，若不补记，一波以黑名单账号为主的刷群就
-   * 凑不够反刷群窗口的阈值，群不会进紧急私密模式。
+   * 入群那一刻的时间戳，只有秒踢路径有。Worker 用它补记一次入群计数，计入反刷群窗口。
    */
   joinedAt?: number;
   /**
-   * 入群服务消息 id，只有秒踢路径且群没隐藏入群消息时有。处置落地后一并
-   * 删掉——不投 join 就没人再管这条公告了。
+   * 入群服务消息 id，只有秒踢路径且群没隐藏入群消息时有；处置落地后一并删除。
    */
   announcementMessageId?: number;
 }
 
 /**
- * outbox 里**持久化并镜像**的那一份任务参数，按 `probeMembership` 分成两种形态。
+ * outbox 里持久化并镜像的任务参数，按 `probeMembership` 区分形态。
  *
- * 补扫（`probeMembership: true`）不带 `userIds`：它欠的活是「拿**此刻**的黑名单把
- * 这个群扫一遍」，投递与重放按页从 Disk I/O 边界读取当前名单。因此
- * `pending_blocked_removals` 里补扫行的大小不随黑名单长度增长，Worker 重建后重投时
- * 扫的也是当时的名单；`forgetUserBlocklistRemovals` 不改写补扫行，只在黑名单清空时
- * 整条删除。约束全文见 docs/cn/04-invariants.md。
+ * 补扫（`probeMembership: true`）不带 `userIds`：投递与重放按页从 Disk I/O 边界读取
+ * 当时的黑名单，`pending_blocked_removals` 里补扫行的大小不随黑名单长度增长；
+ * `forgetUserBlocklistRemovals` 不改写补扫行，只在黑名单清空时整条删除。
+ * 约束全文见 docs/cn/04-invariants.md。
  *
- * 秒踢与广告处置（`probeMembership: false`）相反，名单**必须**随任务冻结：那批人
- * 是「此刻确定在群里的这几个」，与名单当前内容无关，现算会扫到一群不相干的人。
+ * 秒踢与广告处置（`probeMembership: false`）的名单随任务冻结，是投递时确定在群里的
+ * 那几个，与黑名单当前内容无关。
  */
 export type PendingBlockedRemovalParams =
   | {
@@ -65,8 +60,7 @@ export type PendingBlockedRemovalParams =
   };
 
 /**
- * trackBlockedRemoval 的入参。用判别联合而不是「userIds 可选」：补扫带上名单、
- * 或秒踢漏掉名单，都该是编译期就过不去的写法。
+ * trackBlockedRemoval 的入参；判别联合：补扫不带 `userIds`，秒踢与广告处置必带 `userIds`。
  */
 export type TrackBlockedRemovalInput =
   | { readonly chatId: number; readonly probeMembership: true }
@@ -106,18 +100,17 @@ export interface BlocklistSweepRecord {
   /** 上一次没能全部落定后，允许再试的最早时刻。 */
   nextRetryAt: number;
   /**
-   * 在途批次落定后是否必须立刻再欠一次。显式标志避免迟到的 complete 回执
-   * 把新到达的重扫请求覆盖掉。
+   * 在途批次落定后是否必须立刻再欠一次；迟到的 complete 回执不覆盖它。
    */
   resweepRequested: boolean;
   /**
-   * 连续未能全部落定的补扫次数，只用于放大退避；成功回执清零，达到最大
-   * 退避档后不再增长。
+   * 连续未能全部落定的补扫次数，只用于计算退避延迟；成功回执清零，延迟达到上限后
+   * 不再增长。
    */
   failedSweeps: number;
   /**
-   * 是否已确认卡在机器人缺少封禁权限。置真后停止时间重试，只能由一次确证
-   * 的权限变更观测解除，避免永久重扫和重复错误日志。
+   * 是否已确认卡在机器人缺少封禁权限。置真后停止按时间重试，只能由一次确证
+   * 的权限变更观测解除。
    */
   permissionBlocked: boolean;
 }
@@ -150,19 +143,14 @@ export interface BlocklistSweepSchedulerState {
 /**
  * 把一批黑名单 id 清出某个群的执行 owner。判定在主线程做完后调用它，真正的
  * 探测与封禁由入群守卫线程执行（见 workers/antiRaid/blocklistEffects.ts）。
- * 返回只代表「Worker 已经收下这些处置」，不代表踢完了——副作用按该线程的
- * 惯例事后跑，处置结果由 Worker 自己记日志。
+ * 返回只代表 Worker 已经收下这些处置，处置结果由 Worker 自己记日志。
  *
- * Worker 未收到、屏障失败或落盘失败都会向调用方抛错，但都不得销毁 durable
- * outbox 条目；它与 Telegram update 重投共同提供恢复，不能互相替代。
+ * Worker 未收到、屏障失败或落盘失败都会向调用方抛错，抛错时 durable outbox 条目保留；
+ * 它与 Telegram update 重投共同提供恢复，不能互相替代。
  *
- * @returns **真正投给 Worker 的处置条数**。正常 resolve 不等于「都投出去了」：
- *   durable 对账（antiRaid/blocklistDelivery.ts）在并发 `/block disable` 反复裁剪
- *   同一批时会把整批 removeBlockedMembers 全部扣下、只留其余消息，随后 post
- *   路径以 `length === 0` 早退并正常 resolve。调用方（infra/blocklist/sweep.ts）
- *   必须据此把「一条都没投出去」判成失败并推进退避，否则 claim 里的 removalId
- *   停在原值、回执永不会来，`prepareBlocklistSweep` 对这个群永久早退——本进程
- *   生命周期内它再也不会被清扫。
+ * @returns 真正投给 Worker 的处置条数。durable 对账（antiRaid/blocklistDelivery.ts）
+ *   在 BLOCKLIST_REMOVAL_RECONCILE_MAX_ROUNDS 轮内未收敛时扣下整批 removeBlockedMembers，
+ *   此时正常 resolve 且返回 0。调用方（infra/blocklist/sweep.ts）把 0 判成失败并推进退避。
  */
 export type BlockedMemberRemover = (
   removals: readonly RemoveBlockedMembersParams[]

@@ -34,7 +34,7 @@ describe("messageImageCandidate", () => {
 
 describe("isSendablePhotoDimensions", () => {
   test("宽高之和的边界：恰好 10000 放行，多 1 像素就拒", () => {
-    // w + h = 10000 且长宽比仍在 20 以内的最扁一档。
+    // w + h 恰为 TELEGRAM_PHOTO_MAX_DIMENSION_SUM 且长宽比仍在上限以内的最扁一档。
     expect(isSendablePhotoDimensions({ width: 9_523, height: 477 })).toBeTrue();
     expect(9_523 + 477).toBe(TELEGRAM_PHOTO_MAX_DIMENSION_SUM);
     expect(isSendablePhotoDimensions({ width: 9_524, height: 477 })).toBeFalse();

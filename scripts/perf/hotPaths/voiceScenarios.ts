@@ -5,7 +5,7 @@
  * 那一段（aiChat/ai/voiceSynthesis.ts 的 synthesizeVoiceMessage）：供应商交回 WAV 之后的
  * 解析与 Opus 编码，这段在 AI Worker 线程上同步占用 CPU；供应商用固定 WAV 的替身。
  * proxy-tts-detect 量的是 `/send` 代发会话里每条私聊消息都要先过的 TTS 判定，按普通
- * 文字、非 TTS 代码块与 TTS 请求三种消息轮转。
+ * 文字、非 TTS 代码块与 TTS 请求轮转。
  */
 
 import { encodeVoiceMessage } from "../../../packages/aiChat/ai/voiceEncoding";
@@ -23,7 +23,7 @@ import type {
 } from "../../../packages/types/aiChat/voiceMessage";
 import type { Scenario } from "./types";
 
-/** 合成上限的 1/64：24 kHz 单声道 16 bit 下约 2.7 秒，一两句台词的量级。 */
+/** 合成上限 `VOICE_SPEECH_MAX_BYTES` 的固定分数，对应一两句台词的量级。 */
 const VOICE_ENCODE_PCM_BYTES: number = VOICE_SPEECH_MAX_BYTES / 64;
 
 /** 固定 WAV 替身交给公共实现，逐次核对产出的是 OGG 容器。 */
@@ -61,7 +61,7 @@ function privateMessage(text: string, codeBlock: boolean): Message {
   };
 }
 
-/** 三种消息轮转；逐次核对判定结果没有漂移。 */
+/** 各类消息轮转；逐次核对判定结果。 */
 export function proxyTtsDetectScenario(): Scenario {
   const request: string = `{
   "type": "tts",

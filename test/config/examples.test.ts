@@ -1,17 +1,16 @@
 /**
- * `config_example/{static,dynamic}/*.json` 必须能被自己那份严格解析器接受。
+ * `config_example/{static,dynamic}/*.json` 能被自己那份严格解析器接受。
  *
  * install.sh 的「准备配置目录」一步把这些示例逐份复制成部署方的初始
  * `config/<name>.json`（agent.json、g-auth.json 与 cron.json 除外：agent.json 含故意不可用的
  * 占位凭据，由问卷生成；g-auth.json 只示意服务账号密钥的结构，由部署方带外放入真实密钥；
  * cron.json 只示意定时任务的写法，会话 id 与地址都是假的，本地来源也不存在）。
- * 因此示例一旦与解析器脱节，新装的部署会在第一次启动就按「不为用户行为兜底」
- * 拒绝启动，而全套门禁不会有任何反应——这里把示例本身纳入门禁。
+ * 示例与解析器脱节时，新装的部署会在第一次启动按「不为用户行为兜底」拒绝启动；
+ * 这里把示例本身纳入门禁。
  *
- * bot.json 是唯一的例外：它的示例 token 就是占位符，**必须**被拒绝。
- * 那条断言同时把占位符字面量与 `TELEGRAM_BOT_TOKEN_PLACEHOLDER` 常量对拍，
- * 免得两边各自漂移（install.sh 里还有第三份，由
- * test/scripts/installScript.test.ts 覆盖）。
+ * bot.json 是唯一的例外：它的示例 token 是占位符，必须被拒绝。
+ * 那条断言同时把占位符字面量与 `TELEGRAM_BOT_TOKEN_PLACEHOLDER` 常量对拍
+ * （install.sh 里的那份由 test/scripts/installScript.test.ts 覆盖）。
  */
 
 import { describe, expect, test } from "bun:test";
@@ -71,8 +70,7 @@ describe("config_example 与解析器保持同步", () => {
     expect(parse).toThrow(
       `${path}: $.bot_token must be a configured non-placeholder string`
     );
-    // 拒绝理由必须只是占位 token：把它换成真值后同一份示例要能解析通过，
-    // 否则示例的其余字段（键集合、super_admin_user_id 形态）已经与解析器脱节。
+    // 拒绝理由只是占位 token：换成真值后同一份示例能解析通过，示例的其余字段（键集合、super_admin_user_id 形态）与解析器一致。
     expect(
       parseBotConfig(
         { ...(raw as Readonly<Record<string, unknown>>), bot_token: "123456789:example" },
@@ -110,7 +108,7 @@ describe("config_example 与解析器保持同步", () => {
     expect((raw as readonly Readonly<Record<string, unknown>>[]).some((entry: Readonly<Record<string, unknown>>): boolean => entry.time_zone !== undefined)).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.cron.startsWith("@"))).toBe(true);
     expect(config.some((entry: CronTask): boolean => entry.justOnce)).toBe(true);
-    // chat_id 的三种写法各至少一例。
+    // chat_id 的各种写法各至少一例。
     const targetKinds = new Set<string>(config.map((entry: CronTask): string => entry.chatTargets.kind));
     expect([...targetKinds].sort()).toEqual(["all", "except", "list"]);
     expect(config.some((entry: CronTask): boolean =>
@@ -163,8 +161,7 @@ describe("config_example 与解析器保持同步", () => {
   });
 
   test("agent.json 示例的七项能力形状被解析器接受", async () => {
-    // 七份占位凭据各自被拒绝这一点由 test/config/agent.test.ts 覆盖；这里只
-    // 补它没覆盖的另一半——示例自身的键集合与字段形态仍然合法。
+    // 各占位凭据被拒绝由 test/config/agent.test.ts 覆盖；这里补另一半：示例自身的键集合与字段形态合法。
     const { parseAgentDeploymentConfig } = await import("../../packages/config/agent");
     const raw: Readonly<{ agent: Readonly<Record<string, unknown>> }> =
       await readJsonInput(examplePath(AGENT_CONFIG_PATH)) as Readonly<{

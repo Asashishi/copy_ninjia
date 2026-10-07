@@ -18,7 +18,7 @@ import {
   pendingWhitelistWrites,
   resetStorageDatabaseCache,
   storageDatabaseHandle,
-  noteStorageWriteRejected,
+  rejectedStorageDomains,
   pendingChatQaWrites,
   storagePersistenceReplyHolder,
   storageWriteFlushTimer,
@@ -158,8 +158,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
   });
 
   test("节拍到点时提交仍然失败：点名记一行并重排下一拍，不丢最终值", (): void => {
-    // 没有这一次重排，一次瞬时的 SQLite 故障就会让这批最终值永远停在内存里：
-    // 定时器已经自清，而 dirty 标记只在下一条写入到达时才会重新建表。
+    // 提交失败时重排下一拍：定时器已自清，dirty 标记保留，最终值留在内存等下一拍。
     const error = spyOn(console, "error").mockImplementation((): void => {});
     try {
       jest.useFakeTimers();
@@ -182,9 +181,8 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
   });
 
   test("失败领域取走即清空：拒收标记与本轮仍 dirty 的表合并上报一次", (): void => {
-    // 拒收标记不清空的话，那个领域会在此后每一次 flush 都被回报成失败，
-    // 停机排空于是永远等不到「全部落盘」。
-    noteStorageWriteRejected("blocklistRemovalOutbox");
+    // 取走即清空拒收标记，该领域此后的 flush 不再回报失败。
+    rejectedStorageDomains.add("blocklistRemovalOutbox");
     handleIdentityPolicyWrite(whitelistWrite(12, 7), reply);
     pendingChatQaWrites.set(-1001, new Map([["问", { answer: "答", revision: 1 }]]) as never);
 
@@ -199,8 +197,8 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
   });
 
   test("单领域屏障只取走本领域的拒收标记，别的领域留给它自己的屏障回报", (): void => {
-    noteStorageWriteRejected("chatState");
-    noteStorageWriteRejected("whitelist");
+    rejectedStorageDomains.add("chatState");
+    rejectedStorageDomains.add("whitelist");
     handleIdentityPolicyWrite(whitelistWrite(13, 8), reply);
 
     expect(flushStorageDatabase(reply)).toBeTrue();
@@ -208,7 +206,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     collectStorageDatabaseFailures("whitelist", whitelistBarrier);
     expect(whitelistBarrier).toEqual(["whitelist"]);
 
-    // whitelist 屏障不得带走 chatState 的拒收：那次失败要由 chatState 屏障看到。
+    // whitelist 屏障不带走 chatState 的拒收，该失败由 chatState 屏障回报。
     const chatStateBarrier: DiskIODomain[] = [];
     collectStorageDatabaseFailures("chatState", chatStateBarrier);
     expect(chatStateBarrier).toEqual(["chatState"]);
@@ -221,7 +219,7 @@ describe("DiskIO Worker SQLite 定时提交与失败重试", (): void => {
     const error = spyOn(console, "error").mockImplementation((): void => {});
     try {
       jest.useFakeTimers();
-      noteStorageWriteRejected("chatQa");
+      rejectedStorageDomains.add("chatQa");
       handleIdentityPolicyWrite(whitelistWrite(14, 9), reply);
       storagePersistenceReplyHolder.current = reply;
 

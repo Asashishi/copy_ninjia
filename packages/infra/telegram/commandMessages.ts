@@ -27,7 +27,7 @@ export type SendCommandMessageParams = SendCommandMessageBaseParams & SendMessag
 
 /**
  * 发送命令相关文本。Telegram 群组、超级群和频道的 chat id 都是负数；在这些
- * 会话里发送成功后统一安排 30 秒清理，私聊消息保持原样。提示落在触发消息
+ * 会话里发送成功后统一安排 COMMAND_MESSAGE_AUTO_DELETE_MS 后清理，私聊消息保持原样。提示落在触发消息
  * 所在的论坛话题，见 SendCommandMessageParams。
  */
 export async function sendCommandMessage({
@@ -39,8 +39,7 @@ export async function sendCommandMessage({
   const callerOnSent: SendMessageParams["onSent"] = params.onSent;
   return sendMessage({
     ...params,
-    // 删除 owner 必须在拿到 id 的同步时点认领；远端成功后 update
-    // 若立即 abort，runTelegramAction 会丢掉返回值，但不能丢掉已发消息的清理责任。
+    // 在 onSent 回调（拿到 id 的同步时点）登记删除，早于 runTelegramAction 的取消判定。
     onSent: (messageId: number): void => {
       deleteMessageAfter({
         chatId: params.chatId,

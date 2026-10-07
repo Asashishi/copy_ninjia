@@ -1,5 +1,5 @@
 /**
- * media 模态四档状态机（packages/states/mediaInputSupport.ts）的纯判定。
+ * media 模态状态机（packages/states/mediaInputSupport.ts）的纯判定。
  * 不碰 holder、不记日志：落定 misconfigured 时只交出一条效果，由 AI Chat
  * Worker 的 owner 缓存去执行。
  */

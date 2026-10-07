@@ -14,195 +14,231 @@
 
 | Command | Purpose | Notes |
 | :--- | :--- | :--- |
-| `bun run start` | Start long polling | Production environment entry point |
-| `bun run lint`<br>`bun run lint:fix` | ESLint check / auto-fix | Strict code convention checks; quality gates always use uncached `lint` |
-| `bun run lint:fast` | Local cached ESLint | With `--cache`, for local edit loop only |
-| `bun run typecheck` | TypeScript type check | `tsc --noEmit --incremental`, fully strict mode, incremental cache in `tsconfig.tsbuildinfo` |
-| `bun run test` | Full test suite | Forced file isolation (`bun test --isolate`) |
-| `bun run test:random` | Random-order test suite | Fixed-seed random-order test suite to expose cross-test residue and mock leaks |
-| `bun run test:coverage` | Tests + coverage | Run full test suite and measure all-source coverage metrics |
-| `bun run check:install-script-syntax` | Install script syntax check | `bash -n` parses `install.sh` and its declared shell modules without executing them |
-| `bun run check:install-isolation` | Installer isolation verification | Runs real `install.sh` fixtures in dedicated temporary root, verifying rollback, interrupted resumption, backup retention, and credential isolation |
-| `bun run check:conventions` | Repository convention check | Runs `scripts/checkProjectConventions.ts`, validating constants, cache ownership, links, and architectural boundaries |
-| `bun run check` | **Full integration gate** | Syntax + install isolation + conventions + lint + typecheck + coverage + random tests + hot-path gate (required before merge to `master`) |
-| `bun run check:coverage` | Coverage metrics reconciliation | Verifies metrics across trilingual READMEs, docs, and SVG badges match real readings |
-| `bun run test:fault-injection` | Deterministic fault-injection suite | Verifies recovery consistency across process crashes, abnormal exits, database interruptions, and Worker respawns |
-| `bun run perf:hot-paths` | Hot-path standalone measurement | Measures individual hot-path scenario (supports `--profile` sampling analysis) |
-| `bun run perf:hot-path-gate` | **Hot-path performance gate** | Memory/GC/JIT hard gate over 12 selected hot-path scenarios (included in `check`) |
-| `bun run perf:join-log` | Join-log performance benchmark | Standalone process benchmark for 250k join-log capacity/snapshot/append accounting |
-| `bun run perf:identity-database` | Identity database benchmark | Standalone process benchmark for 6 cold/hot read and write operations in identity database |
-| `bun run perf:full` | Full performance benchmark suite | 6 sections × 3 rounds in independent child processes (`--write-doc` updates all three 10 performance pages and `performance-result.json`) |
-| `bun run perf:review` | Targeted performance review | Covers hot spots, AI reply/payload/voice encoding, full command chains, and Disk I/O Worker pressure |
-| `bun run build -- --version <tag>` | Build binary package | Requires explicit version with no prefix; produces `dist/` archive and SHA-256 |
+| `bun run start` | Start long polling | Production entry point |
+| `bun run lint`<br>`bun run lint:fix` | ESLint check / auto-fix | Strict code conventions. Quality gates always run uncached `lint` |
+| `bun run lint:fast` | Local cached ESLint | Appends `--cache` for fast iterative feedback during local dev |
+| `bun run typecheck` | TypeScript type check | Strict check with `tsc --noEmit --incremental`. Cache stored in `tsconfig.tsbuildinfo` |
+| `bun run test` | Full test suite | Forces process context isolation (`bun test --isolate`) |
+| `bun run test:random` | Random-order test suite | Fixed-seed shuffled test suite to uncover cross-test state leaks and lingering mocks |
+| `bun run test:coverage` | Tests + coverage | Runs the full test suite and measures coverage across all production source files |
+| `bun run check:install-script-syntax` | Install script syntax check | Uses `bash -n` to parse `install.sh` and all included shell modules without executing |
+| `bun run check:install-isolation` | Installer isolation test | Runs real `install.sh` fixtures in a dedicated temp root to verify rollback, resumption, backup safety, credential isolation, and service supervision |
+| `bun run check:conventions` | Repository convention check | Runs `scripts/checkProjectConventions.ts` to validate constants, cache ownership, doc links, and architecture boundaries |
+| `bun run check` | **Full integration gate** | Syntax + installer isolation + conventions + lint + typecheck + coverage + shuffled tests + hot-path gate (required before merge to `master`) |
+| `bun run check:coverage` | Coverage metrics reconciliation | Validates that figures in trilingual READMEs, docs, and SVG badges match actual test readings |
+| `bun run test:fault-injection` | Deterministic fault-injection suite | Validates state recovery across process crashes, abnormal exits, database drops, and Worker respawns |
+| `bun run perf:hot-paths -- <scenario> [--profile]` | Hot-path standalone measurement | Profiles a single hot-path scenario (pass `--profile` for detailed CPU sampling) |
+| `bun run perf:hot-path-gate` | **Hot-path performance gate** | Enforces hard memory/GC/JIT limits on core hot paths (included in `check`) |
+| `bun run perf:join-log` | Join-log performance benchmark | Standalone benchmark for join-log capacity limits, snapshots, and append accounting |
+| `bun run perf:identity-database` | Identity database benchmark | Standalone benchmark for cold/hot SQLite reads/writes, main-thread LRU cache, and write-through pipelines |
+| `bun run perf:full` | Full performance benchmark suite | Runs each section across independent child processes for default rounds (`--write-doc` syncs all three 10 performance docs and `performance-result.json`) |
+| `bun run perf:review` | Targeted performance review | In-depth evaluation covering hot paths, AI replies, audio encoding, full command chains, and Disk I/O Worker pressure |
+| `bun run build -- --version <tag>` | Build binary package | Requires an explicit version with no prefix; produces the `dist/` archive and SHA-256 for the current platform |
 | `bun run release:check -- --version <tag>` | Pre-release full validation | frozen lockfile + check + coverage check + fault injection + binary build verification |
-| `bun run release:build -- --version <tag>` | Build release package | Natively builds the current platform's binary on clean `dev`; build other platforms in their matching environments |
-| `bun run release:verify -- --version <tag> --platforms <list>` | Release package verification | Verifies archives, SHA-256, version, and Git tree consistency across declared platforms |
-| `bun run release:publish -- --version <tag> --platforms <list> --notes-file <file>` | Publish to GitHub | Verifies remote references, creates draft, uploads and verifies assets, publishes as Latest |
-| `bun run audit:release` | Dependency security audit | Scans dependencies for vulnerabilities (moderate and above) |
+| `bun run release:build -- --version <tag>` | Build release package | Natively builds the current platform binary on a clean `dev` branch. Other platforms must be built natively in their own matching environments |
+| `bun run release:verify -- --version <tag> --platforms <list>` | Release package verification | Verifies archives, SHA-256 sums, versions, and Git tree alignment across all declared platforms |
+| `bun run release:publish -- --version <tag> --platforms <list> --notes-file <file>` | Publish to GitHub | Verifies remote refs, creates a draft, uploads and validates assets, and officially publishes as Latest |
+| `bun run audit:release` | Dependency security audit | Scans installed dependencies for vulnerabilities (moderate and above) |
 
 ---
 
 ## Quality-Gate Definitions
 
-- **Isolated installer startup**: Fixtures use separate temporary configuration and data roots, mock system management, dependency installation, and network outbound calls, and execute real `index.ts`, Workers, and shutdown persistence. Each Worker installs a network stub through Bun `preload`: weather receives a canned response, and other requests are rejected; tests verify stubs loaded, polling succeeded, SIGTERM drained work, and the lock file was cleaned up.
-- **File length and scan scope**: Handwritten TS, JS, and shell files over 1,024 lines fail; files over 512 lines require a split review. Checks include tracked files and new unstaged files, while Git-ignored deployment data stays outside the scan. Installer syntax checks cover `install.sh` and all shell modules it declares.
-- **The coverage denominator includes all source code**: `bun run check` adds every production runtime module to the denominator. Modules untouched by any test count as 0% covered; both function and line coverage thresholds are 95%. Adding an untested module directly lowers global coverage.
-- **ESLint + fully strict tsc**: `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters` are all enabled; `any` is forbidden in production code (exempted in tests).
-- **Separate type imports**: Source code, scripts, and tests use standalone `import type` declarations; ESLint's `no-restricted-syntax` rejects inline type specifiers such as `import { value, type Shape }`.
-- **Explicit type annotations are lint-enforced**: In production code (`index.ts`, `packages/`, `scripts/`), variables, parameters, and destructuring are enforced by `@typescript-eslint/typedef`, and function/callback return types by `@typescript-eslint/explicit-function-return-type` — neither accepts contextual inference. TypeScript forbids annotating `for...of` / `for...in` loop variables, so the rule skips them automatically; consts whose initializer is an arrow function are also exempt. Test files are not subject to this rule.
-- **Convention checks (`check:conventions`)**:
-  - **Structure and links**: Checks code placement, local Markdown links, existence of files listed in directory maps, and execution permissions of tracked files.
-  - **Boundary isolation**: Verifies constant and cache ownership (`packages/cache/<owner>/` thread-single-property boundary), and validates Worker and Telegram capability isolation against the real module graph.
-  - **Call safety**: Every timer in `packages/workers/` must be `unref()`ed; verifies Node API compatibility modules and `Buffer` allowlists; enforces `Bun.argv` for argument reading.
-  - **Gate reconciliation**: Statically verifies Telegram prompt cleanup exemptions, active cold migration entries, fault-injection suite manifests, direct dependencies in `package.json`, 14 declared coverage metric locations, and performance records. Tests may not compare uppercase constants against numeric literals; matcher arguments may not spell out a literal equal to a `packages/consts` string constant, nor copy a fragment of its text containing six or more CJK characters (take the expectation from the constant or from the fixed parts of a rendered template constant, see `test/helpers/templateText.ts`). Prompt-contract tests that assert the prompt wording itself are listed by file and test name in `CONSTANT_TEXT_CONTRACT_EXEMPTIONS` in `scripts/conventions/testAssertionFragments.ts`, and an exemption no hit uses is reported as well.
+- **Isolated installer startup verification**:
+  - Test fixtures run against completely isolated temporary configuration and data roots. They mock out system service managers, package downloads, and outbound network traffic while executing genuine `index.ts` startup, background Worker threads, and graceful shutdown persistence.
+  - Workers use Bun's `preload` mechanism to install network stubs: the weather API returns a canned response, while all other outbound network calls are strictly rejected.
+  - The suite asserts that stubs loaded successfully, the polling loop stayed intact, SIGTERM cleanly drained all in-flight work, and lock files were released.
+- **Source file line limit (`MAX_SOURCE_LINES`)**:
+  - Handwritten TypeScript, JavaScript, and Shell files exceeding `MAX_SOURCE_LINES` (defined in `scripts/conventions/fileLength.ts`) fail the gate immediately.
+  - Review files for refactoring once they exceed 512 lines; files exceeding 1024 lines must be split.
+  - The check scans all Git-tracked files and staged new files, while ignoring ignored deployment data. Installer syntax checks cover `install.sh` and every standalone shell module it invokes.
+- **Universal source code coverage**:
+  - `test/productionModules.test.ts` eagerly imports `index.ts` and all runtime modules under `packages/` (except pure type declarations in `packages/types/`). Any module untouched by tests is factored into the denominator with 0% coverage.
+  - Both function and line coverage must satisfy the `coverageThreshold` in `bunfig.toml`. Adding business code without tests will fail the build.
+- **Strict typing and syntax standards**:
+  - `tsconfig.json` enforces `strict`, `noUncheckedIndexedAccess`, `noUnusedLocals`, and `noUnusedParameters`.
+  - Production code strictly forbids `any` (exempted in test files). The native `Promise.all` is disallowed by ESLint (`no-restricted-syntax`); use `Promise.allSettled` with bounded concurrency instead.
+- **Standalone type imports**:
+  - Production code, scripts, and tests must use explicit, separate `import type` declarations. ESLint strictly rejects mixed import statements like `import { value, type Shape }`.
+- **Explicit type annotations**:
+  - All variables, function parameters, and destructuring patterns in production code must specify explicit types (enforced by `@typescript-eslint/typedef`). Functions and callbacks must declare explicit return types (enforced by `@typescript-eslint/explicit-function-return-type`), avoiding reliance on contextual inference.
+  - Loop variables in `for...of` and `for...in` statements are exempt because TypeScript does not permit syntax annotations there. Const variables initialized directly with fully annotated arrow functions are also exempt.
+- **Repository convention checks (`check:conventions`)**:
+  - **Structure and links**: Verifies source line counts, file locations, relative Markdown links, and in-page anchor IDs. Confirms that all file paths referenced in docs actually exist on disk, verifies script execution bits, and ensures installer step numbers match module references.
+  - **Architectural boundaries**: Validates constant and cache ownership (`packages/cache/<owner>/` thread-single-owner policy) and verifies Worker and Telegram capability isolation against the actual import graph. Environment variables may only be read in `consts/paths.ts` and `consts/environment.ts`. The `consts/` layer may only depend on `consts` at runtime (other `packages/` modules only through `import type`). The `states/` layer may only depend on `consts`, `libs`, `types`, and `states`. The `infra/` layer cannot import business modules. The benchmark parent process may only import pure constants and types.
+  - **Constant table rules**: exported constant tables with object elements (regular expressions and function values excluded) must have an access in `test/consts/immutability.test.ts` on the line right after a `@ts-expect-error` comment (`scripts/conventions/constImmutability.ts`). Exported array tables whose elements are a literal union must be written as `exhaustiveList<U>()([...])` (`packages/consts/exhaustiveList.ts`), with `U` equal to the declared element type and every item a string or number literal, so adding or removing a member of the type without updating the table fails to compile. Tables that intentionally list a subset are registered as `<relative path>#<table name>` in `PARTIAL_LITERAL_TABLES` in `scripts/conventions/constExhaustiveLists.ts`; stale registrations are reported as well.
+  - **Runtime safety and APIs**: Every timer in `packages/workers/` must explicitly call `.unref()`. Node compatibility modules and `Buffer` usage are restricted to an explicit whitelist; unused registrations trigger errors. CLI arguments must be read via `Bun.argv`. Runtime packages imported bare must be declared directly in the root `package.json`.
+  - **Gate reconciliation**: Statically verifies Telegram prompt cleanup exemptions and topic ownership. Validates that active cold migration scripts match `migrate:*` entries in `package.json`. Checks that test coverage and performance metrics documented in trilingual files match `performance-result.json`.
+  - **Test assertion rules**: Test assertions must not compare uppercase constants against raw numeric or string literals. Never hardcode strings or long Chinese prompt fragments identical to those in `packages/consts` directly in test assertions (import the constant or use `test/helpers/templateText.ts`). Contract tests verifying exact prompt wording must be registered in `scripts/conventions/testAssertionFragments.ts`.
 
 ---
 
 ### Dependency Release-Age Gate
 
-Dependency installation always uses the 7-day release-age gate in `bunfig.toml` (`minimumReleaseAge = 604800`):
-- Exact versions younger than 7 days may receive a temporary package-specific exemption only after informed user approval and verification of upstream source, npm integrity, and install scripts; the exemption is removed immediately after installation, recording package name, reason, and removal time.
-- The Bun runtime and `@types/bun` are both pinned to 1.4.2; `packageManager` and `install.sh` jointly pin the runtime version.
-- `bun run typecheck` uses the TypeScript 7.0.2 compiler provided by `@typescript/native` (`npm:typescript@~7.0.2`). The `typescript` dependency uses `npm:@typescript/typescript6@^6.0.2`, resolved in the lockfile to `@typescript/typescript6` 6.0.2; through `@typescript/old`, it provides the TypeScript 6.0.3 compiler API for ESLint and convention checks. Current `typescript-eslint` is 8.70.1.
+All dependency installations enforce a 7-day release cooling period defined in `bunfig.toml` (`minimumReleaseAge = 604_800`):
+- **Emergency security patch exemption**: When an urgent vulnerability fix is under 7 days old, add only that single package name to `install.minimumReleaseAgeExcludes`. Remove the exemption immediately after installation. Bypassing the gate via the command-line flag `--minimum-release-age` is strictly prohibited.
+- **Verification protocol**: The exempted package version must be cross-checked against at least two independent security incident advisories. You must verify the package `integrity` hash in the npm registry, inspect install scripts for backdoors, and log the package name, CVE/incident ID, and removal date in the commit message.
+- **Pinned runtime versions**: The Bun runtime and `@types/bun` are pinned to the exact version declared in `package.json`. The `packageManager` field and `install.sh` lock the runtime environment.
+- **TypeScript compilers**: `bun run typecheck` runs `@typescript/native` (`npm:typescript@~7.0.2`). ESLint and convention checks use `@typescript/old` (TypeScript 6 compiler API).
 
 ---
 
 ### Bun Runtime Boundaries
 
-- **Runtime mode**: The project sets `run.bun = true` in `bunfig.toml`, so dependency CLIs with a Node shebang also run under the current Bun.
-- **Image transcoding**: Uses Bun's built-in `Bun.Image` for transcoding (`packages/infra/image.ts`):
-  - JPEG/PNG pass through as-is; WebP/GIF convert to PNG with transparency preserved; GIF takes the first frame; animated WebP repackages its first `ANMF` frame as a static WebP before decoding.
-  - Capped at `VISION_TRANSCODE_MAX_PIXELS` (8K UHD, 7680×4320); oversized images are rejected before allocation. Codecs ship with Bun runtime with no native C++ module dependencies.
-- **Native file I/O**: File content writes and deletions prioritize `Bun.write` and `Bun.file`; exclusive writes use `Bun.write(Bun.file(handle.fd), content)` with fsync and atomic rename; directory traversal, paths, synchronous persistence, permissions, and hard links use `node:` compatibility modules.
-- **Performance calibration**: After a runtime upgrade, performance calibrations must be remeasured against the same Bun version/revision.
+- **Execution mode**: `bunfig.toml` sets `run.bun = true`, so CLI dependencies with Node shebangs run directly under Bun.
+- **Image transcoding**: Images are processed via native `Bun.Image` (`packages/infra/image.ts`):
+  - JPEG and PNG images pass through without modification. WebP and GIF convert to PNG with full Alpha transparency preserved. For GIFs, the first frame is extracted; for animated WebP, the first `ANMF` frame is repackaged as static WebP before decoding.
+  - Single-image decoding is capped at `VISION_TRANSCODE_MAX_PIXELS`. Excessively large images are rejected before memory allocation. Codecs are built into Bun, eliminating any need for external C/C++ native addons in `node_modules`.
+- **Native file I/O guidelines**: Reading, writing, and deleting files prioritize native `Bun.write` and `Bun.file`. Exclusive atomic writes (`atomicWriteText`) use `Bun.write(Bun.file(handle.fd), content)` followed by `fsync` and atomic rename. Synchronous file I/O, directory traversal, path handling, and hard links use explicit `node:` compatibility modules.
+- **Performance recalibration**: After upgrading the Bun runtime, all performance benchmarks must be re-calibrated against the new Bun version.
 
 ---
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **6117 tests / 515 files / 436787 `expect()` calls**; full-source **function coverage 98.24% / line coverage 98.69%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **6269 tests / 526 files / 446227 `expect()` calls**; full-source **function coverage 98.24% / line coverage 98.75%**. The Coverage badge in each project README displays line coverage.
 
 ---
 
 ## Test Isolation
 
-Tests must run through `bun run test` (which invokes `bun test --isolate`), protected by four layers of automatic isolation:
+All tests must be run via `bun run test` (which invokes `bun test --isolate`), providing comprehensive automated isolation:
 
-1. **File context isolation**: Bun creates a fresh global object for every test file; `mock.module` and module-level global state never pollute across files.
-2. **Temporary data root injection**: `test/preloadEnv.ts` injects an independent temporary data root (`mktemp -d`) for each isolate before any production module loads; real file I/O never touches production directories (`state.json`, `bot.lock`, `logs/`, `memory/`, `database/`), automatically cleaned up after tests.
-3. **Dedicated configuration root**: Copies `config_example/` completely into `config/` under the temporary data root and directs `COPY_NINJIA_CONFIG_ROOT` to the copy; placeholder credentials are automatically replaced with test values.
-4. **Configuration snapshots**: `test/preload.ts` adopts `agent.json`, `ad_samples.json`, `mood.json`, `stickers.json`, Bot atmosphere and time zone, and persona copies from the test root into the isolate's holders once, simulating main-thread message injection.
+1. **Test file context isolation**: Bun creates a clean, independent global context for every test file. Mock overrides (`mock.module`) and module-level variables never leak across files.
+2. **Dedicated temporary data root**: `test/preloadEnv.ts` creates a fresh temporary data directory via `mkdtempSync` before any production code loads and assigns it to `COPY_NINJIA_DATA_ROOT`. Real file I/O never touches production directories (`memory/`, `logs/`, `database/`, `bot.lock`), and the entire temporary tree is deleted after tests finish.
+3. **Isolated configuration root**: Copies `config_example/` to `config/` inside the temporary root and points `COPY_NINJIA_CONFIG_ROOT` to it. Placeholder keys are replaced with safe mock credentials, `g-auth.json` is masked, and `cron.json` is initialized as an empty task schedule.
+4. **Snapshot sync and empty database setup**: `test/preload.ts` loads copies of `agent.json`, `ad_samples.json`, `mood.json`, `stickers.json`, `cron.json`, bot atmosphere settings, and built-in personas into isolate holders, while provisioning an empty SQLite database with time zone markers. All readiness flags are set to available.
 
 ### Key Test Suite Distribution
 
-- **Installation and upgrade tests**: `test/scripts/installStartup.test.ts`, `test/scripts/installMigration.test.ts` verify install scripts, new database initialization, and major-version upgrades.
-- **Cold migration tests**: `test/scripts/migrateChatPersonaRemoval.test.ts` verifies that only the 16.3.2 schema v11 lineages are accepted, the v11 → v13 database migration (including the Asia/Tokyo time-zone marker), and production startup validation before and after migration.
-- **Media and outbound tests**: `test/aiChat/ai/mediaAdmission.test.ts`, `test/aiChat/ai/imageDescription.test.ts`, and `test/infra/telegramWorkerCapabilities.test.ts` verify multimodal recognition and Telegram duplex outbound gates.
-- **Unified outbound integration tests**: `test/infra/telegramOutboundIntegration.test.ts` uses real client initialization, the outbound gate, and the per-chat send scheduler, replacing only the innermost network responses. It verifies same-chat FIFO across the main thread, contexts, both Workers, and cron; category-local 429 replays; target queries; shared backoff for default-avatar and file downloads; cancellation; and shutdown drains.
-- **Security and logger tests**: `test/infra/loggerSecurity.test.ts` verifies credential redaction.
+- **Installation and upgrade suites**: `test/scripts/installStartup.test.ts` and `test/scripts/installMigration.test.ts` test installation scripts, fresh database provisioning, and full startup sequences. They ensure the installer safely halts without mutating existing data when encountering unrecognized schemas or configs.
+- **Cold migration suites**: `test/scripts/migrateChatPersonaRemoval.test.ts` verifies migrations from schema version 16.3.2 (`CHAT_PERSONA_REMOVAL_SOURCE_SCHEMA_VERSION`) to the current version (`IDENTITY_DATABASE_SCHEMA_VERSION`, including the Asia/Tokyo time zone stamp), checking validation both before and after migration.
+- **Media and outbound suites**: `test/aiChat/ai/mediaAdmission.test.ts`, `test/aiChat/ai/imageDescription.test.ts`, and `test/infra/telegramWorkerCapabilities.test.ts` test multimodal safety filters and duplex outbound gates.
+- **Unified outbound integration suites**: `test/infra/telegramOutboundIntegration.test.ts` uses real client initialization, outbound gates, and per-chat lanes, stubbing out only innermost network responses. It validates per-chat FIFO queues across threads, category-specific 429 exponential backoffs, download throttling, and shutdown drain.
+- **Security and logger suites**: `test/infra/loggerSecurity.test.ts` ensures sensitive tokens and credentials are redacted across all error-logging formats.
 
 ---
 
 ## Fault-Injection Suite
 
-`bun run test:fault-injection` covers application/Worker lifecycles, lockdown recovery, reply capacity and cancellation, credential snapshots, Telegram outbound and delayed deletion shutdown drains, chat teardown, join-log unacknowledged mirrors and disposal receipts, Anti-Raid task draining and verification recovery, duplex Worker respawn cancellation, SQLite startup row validation, cold migrations, and Disk I/O inspection, atomic writes, and recovery faults; see [`package.json`](../../package.json) for the complete manifest.
-
-- **Convention checks**: `check:conventions` checks registered harnesses and production recovery/lifecycle boundaries against real reference paths.
-- **Welcome copy and notices**: `test/workers/antiRaid/verificationWelcome.test.ts` exercises the real duplex protocol, main-thread ephemeral messages, and deletion boundaries.
-- **`/wed` interaction state machine**: Verifies the 25-group capacity ceiling, teardown queue cancellation, avatar fetching, and shutdown draining.
+`bun run test:fault-injection` validates system consistency under process crashes, unexpected shutdowns, and boundary failures (see [`package.json`](../../package.json) for the full list):
+- **Lifecycle and recovery limits**: Covers application and Worker lifecycles, group lockdown recovery, AI reply limits and cancellations, credential snapshots, Telegram outbound shutdown drains, delayed-deletion queues, and chat teardown cleanup.
+- **Data durability and consistency**: Verifies join-log pending mirrors, Anti-Raid task draining and verification recovery, duplex Worker respawn cancellation, SQLite startup row validation and shutdown close (remaining-write commit, WAL checkpoint), cold migrations, and Disk I/O Worker atomic write failures.
+- **Interactive state machines**: Includes `test/workers/antiRaid/verificationWelcome.test.ts` (duplex protocol and temporary notice self-deletion) and `/wed` state machines (chat capacity cap `STATE_MANAGED_CHAT_LIMIT`, queue cancellation, avatar downloads, and shutdown drains).
 
 ---
 
 ## Hot-Path Gate
 
-`bun run perf:hot-path-gate` is a hard gate in `bun run check`. It launches two independent child processes per scenario in `HOT_PATH_PROFILE_SCENARIOS` under `packages/consts/performance.ts`:
-- `steadyProfile`: Measures GC pause time percentage and JIT tiers under `BUN_JSC_logGC=1` in formal loops.
-- `retained`: Measures real RSS peak, heapUsed peak, and post-full-GC retained memory without profiler interference.
+`bun run perf:hot-path-gate` is a hard requirement within the `bun run check` gate. It evaluates scenarios defined in `HOT_PATH_PROFILE_SCENARIOS` under `packages/consts/performance.ts`, running each across two independent child processes for `HOT_PATH_PROFILE_REPEATS` iterations:
+- `steadyProfile`: Measures GC pause time percentage and JIT compilation tiers under `BUN_JSC_logGC=1` in steady-state loops.
+- `retained`: Measures physical memory (RSS) peak, heapUsed peak, and retained memory after full GC without profiler overhead.
 
 ### Gate Metrics and Tiers
 
-- **GC pause budget**: Automatically tiered by CPU core count (25% for >= 4 cores, 30% for 2–3 cores, 35% for single-core). Exceeding budget by 5 percentage points fails the gate.
-- **Hard metric gates**: GC pause time ratio, sampled RSS peak and lifecycle RSS high watermark, sampled heapUsed growth, post-full-GC heap/object retention, DFG/FTL compilation stability.
-- **Recording results**: Baseline calibration records are saved in [`performance-result.json`](../../performance-result.json). Use `--write-result` to write back current readings.
+- **GC pause budget**: Tiered dynamically based on available CPU cores (`HOT_PATH_GC_CPU_BUDGETS`). If a single process exceeds the budget by `HOT_PATH_GC_SOFT_OVERRUN_PERCENT` percentage points, the gate fails immediately. Moderate increases below this threshold trigger soft warnings.
+- **Hard gate thresholds**: Strict ceilings on GC pause percentage, sampled RSS peak, process RSS peak, heap growth, post-full-GC retained memory/objects, sample count minimums, and pre-warm entry into DFG JIT. Baseline numbers come from `calibration.limits` in [`performance-result.json`](../../performance-result.json).
+- **Soft warning alerts**: If median execution time exceeds `calibration.medianNsPerOpReportThresholds`, or if baseline limits become significantly looser than real readings (`HOT_PATH_CALIBRATION_STALE_RATIO`), a warning is printed to stderr without failing the gate.
+- **Calibration record management**: The `calibration` baseline must be updated manually on an idle machine and checked into version control. The gate treats this file as read-only, updating `lastRun` only when `--write-result` is passed.
 
 ---
 
 ## Join-Log Performance Benchmark
 
-`bun run perf:join-log` benchmarks 250,000 capacity, `FLUSH_MAX_ENTRIES` (256) overflow, and 10,000 warmup entries; snapshot (`snapshot`), capacity (`capacity`), and append-accounting (`append-accounting`) paths run 5 independent Bun processes per baseline/current, comparing checksums and verifying throughput and heap behavior.
+`bun run perf:join-log` aligns fixture sizes directly with production constants: daily group capacity `JOIN_LOG_MAX_USERS_PER_CHAT_DAY`, flush threshold `FLUSH_MAX_ENTRIES`, and append batch size `JOIN_LOG_MAX_BUFFERED_ENTRIES`. It tests three core paths—snapshots (`snapshot`), capacity (`capacity`), and append accounting (`append-accounting`)—comparing baseline and current implementations in independent child processes to verify data checksums, throughput, and heap behavior.
 
 ---
 
 ## Identity-Database Performance Benchmark
 
-`bun run perf:identity-database` benchmarks six real operations in temporary data roots and SQLite: dual-table reads (cold/hot), 128-row transaction writes (cold/hot), main-thread 8,192-item LRU hot reads, and write-through pipelines. The write-through scenario runs 65,536 operations with a 4,096 primary-key working set.
+`bun run perf:identity-database` benchmarks end-to-end performance within a temporary data root and SQLite database. It covers main-thread LRU reads, main-thread write-through (Worker IPC, JSONB transactions, and ACKs), hot-connection reads/writes, and cold-connection reads/writes. Sample sizes are taken from production constants `IDENTITY_READ_CACHE_MAX_ENTRIES` and `IDENTITY_WRITE_BATCH_MAX_ENTRIES`. Operations run in isolated processes, with GC and integrity checks performed outside the measured timing window.
 
 ---
 
 ## Targeted Scenarios and Transport Stress Validation
 
-`bun run perf:review` provides targeted in-depth review of specific system bottlenecks:
-- `--hot-paths`: Covers 12 scenarios including senders, message sliding windows, permission reads, AI active windows, pending verification snapshots.
-- `--ai`: Measures reply admission decisions, normal sending, capacity stress, Base64 transcoding, and Opus voice encoding.
-- `--chains`: Runs `ad-detect-command`, `ai-reply-command`, and `cron-send-voice` complete command chains.
-- `--worker`: Stress-tests batched writes, graceful shutdown, and 25-group recovery via real Disk I/O Worker.
-- `--cooldown` / `--text`: Dedicated benchmarks for cooldown tables and text sanitization. Cooldown scenarios distribute identities across `STATE_MANAGED_CHAT_LIMIT` chats, use production capacity and windows, and cover hits, renewal, growth, saturated rejection, and batch expiry.
-- `bun run perf:disk-transport`: Measures single-batch ACKs, normal draining, and capacity rejection mechanisms.
+`bun run perf:review` performs in-depth stress testing on system bottlenecks. Each test runs for `FULL_SUITE_ROUNDS` rounds in isolated child processes. By default, it runs `--hot-paths`, `--chains`, `--ai`, and `--worker` in sequence:
+- `--hot-paths`: Covers sender resolution, message sliding windows, permission evaluations, AI active windows, pending verification snapshots, bounded streaming responses, and middleware pipelines.
+- `--ai`: Tests reply admission gates, normal outbound sending, concurrent load handling, Base64 transcoding, and Opus audio encoding.
+- `--chains`: Runs full end-to-end flows for ad detection (`ad-detect-command`), AI chat (`ai-reply-command`), and scheduled voice messages (`cron-send-voice`).
+- `--worker`: Stress-tests batched writes, transaction ACKs, and Worker respawn recovery using the real Disk I/O Worker (with chat limit `STATE_MANAGED_CHAT_LIMIT`).
+- `--cooldown` / `--text`: Targeted benchmarks for cooldown tracking and text sanitization (run on demand). Verifies hit rates, renewals, capacity limits, and batch expiries under production scales.
+- `bun run perf:disk-transport`: Uses a mock Worker to measure queue overhead, ACK throughput, and latency in the main thread's business transport channel, isolating disk I/O latency.
 
 ---
 
 ## Full Performance Benchmark
 
-`bun run perf:full` runs only during releases and on explicit instruction, with no failure thresholds, averaging three independent child process rounds across six sections:
-1. **Cold start**: Startup recovery duration on full-database fixtures.
-2. **Production hot paths**: High-frequency path duration for messages entering ingress and completing dispatch.
-3. **End-to-end persistence**: Receipt duration from main thread through Worker to disk flush.
-4. **SQLite and main-thread caches**: Database and LRU cache interactions.
-5. **Containers and algorithms**: Core state containers and computation time.
-6. **Join-log capacity line**: Join-log processing performance at 250,000 entries scale.
+`bun run perf:full` runs only during releases or upon explicit request. It does not enforce hard pass/fail thresholds. The suite runs six sections in independent child processes over `FULL_SUITE_ROUNDS` rounds, reporting averages, minimums, maximums, and coefficients of variation:
+1. **Cold start**: Service boot and state recovery duration using fully populated fixtures.
+2. **Production hot paths**: High-frequency path duration from message ingress to dispatch.
+3. **End-to-end persistence**: Round-trip latency from main-thread trigger through Worker persistence to disk, alongside full command chains.
+4. **SQLite and main-thread caches**: Interaction efficiency between SQLite and the main thread's hot LRU cache.
+5. **Containers and algorithms**: CPU time spent in core state containers and high-frequency algorithms.
+6. **Join-log capacity line**: Join-log processing throughput and memory stability at capacity limits.
 
-All data is written to `performance/` at the repository root (automatically cleaned up); `--write-doc` writes results back to `docs/{cn,en,ja}/10-performance.md` and `performance-result.json`.
+Benchmark data is written to `performance/` at the repository root and purged immediately upon completion. Running with `--write-doc` writes results to all three `10-performance.md` docs and `performance-result.json`. The `--rounds <n>` option is reserved for local testing and must never be committed to documentation.
 
 ---
 
 ## Commit Workflow
 
-1. **Branch principle**: Development must occur on `dev`; direct commits to `master` are strictly prohibited.
-2. **Pre-commit checks**: Run `git diff --stat` to confirm no unintended files; run `git branch --show-current` to confirm current branch.
-3. **Local full gate**: Before merge, run and pass `bun run check`; when touching persistence, shutdown, or Worker lifecycles, `bun run test:fault-injection` must pass.
-4. **Commit message conventions**: Follow Conventional Commits style (e.g. `feat(ai): ...`, `fix(runtime): ...`, `docs: ...`).
+1. **Branch policy**: The repository uses only `master` and `dev`. Feature branches are prohibited. All development occurs on `dev`; never commit directly to `master`.
+2. **Pre-commit checks**:
+   - Run `git diff --stat` to ensure no untracked files or deployment artifacts linger.
+   - Run `git branch --show-current` to confirm you are on `dev`.
+   - Run `bun run lint && bun run typecheck` or the full `bun run check`.
+3. **Pre-merge gate**: All tests in `bun run check` must pass before merging into `master`. If changes touch persistence formats, shutdown sequences, or Worker lifecycles, `bun run test:fault-injection` must also pass. Never merge on a failing gate.
+4. **Merge procedure**: Merge `dev` into `master` exclusively via `git merge --squash` to create a single clean commit.
+5. **Commit message convention**: Messages must thoroughly describe changes and rationale using conventional prefixes (`feat:`, `fix:`, `perf:`, `docs:`, etc.). Release commits must use `release: <version>`.
 
 ### Updating README Metrics
 
-Only when the user explicitly requests documentation or metric synchronization, update the following locations from the current gate's measured output:
+Only update documentation metrics when explicitly requested by the user, using output from the local full test suite:
 ```bash
-bun run test:coverage 2>&1 | tail -5          # test count, file count, expect() count
-bun run test:coverage 2>&1 | grep 'All files'  # function/line coverage
+bun run test:coverage 2>&1 | tail -5          # Test count, file count, expect() count
+bun run test:coverage 2>&1 | grep 'All files'  # Function and line coverage
 ```
-- **Trilingual README badge lines** (Tests / Coverage).
-- **Coverage vector images**: `public/coverage_light.svg` and `public/coverage_dark.svg`.
+- **Trilingual README badges** (Tests and Coverage figures).
+- **Coverage vector badges**: `public/coverage_light.svg` and `public/coverage_dark.svg`.
 - **`<img alt>` text in trilingual READMEs**.
-- **The "Measurements for This Documentation Version" paragraph in trilingual copies of this document**.
+- **The "Measurements for This Documentation Version" section across all trilingual docs**.
 
 ---
 
 ## Release
 
-Every release creates a GitHub Release with binary assets in this order:
+Every release produces a GitHub Release containing native binary packages built across all supported architectures:
 
-1. **Version and gates**: Synchronize remote tags and read the Latest Release with `gh release list`. Choose an unused `MAJOR.MINOR.PATCH` tag without a `v` prefix. Finish development on `dev` and pass `bun run check`; also run `bun run test:fault-injection` when persistence, shutdown, or Worker lifecycles change.
-2. **Benchmark readings**: Stop this repository's service process and other heavy workloads on the machine. After the gate finishes and the machine is idle, run `bun run perf:full -- --write-doc`. Commit the readings in all three 10 performance pages and `performance-result.json` together with the code on `dev`.
-3. **Native build for each platform**: On **each platform declared for this release**, use the same Git tree and Bun version/revision, and run `bun run release:build -- --version <tag>` on clean, committed `dev`. Each run produces only that host platform's archive and `.sha256` file. Collect them in one directory.
-4. **Verify collected assets**: On a clean checkout of the same Git tree, verify the complete list of declared platforms. Stop if an asset for any declared platform is missing:
-   ```bash
-   bun run release:verify -- --version <tag> --platforms <comma-separated-platforms> --directory <collected-directory>
-   ```
-5. **Merge and remote refs**: Complete the deployment-protection Git checks, merge into `master` with `git merge --squash`, and create one commit. Confirm its Git tree matches the build tree. Push `master`, then create and separately push an annotated version tag on that commit.
-6. **Publish and confirm**: Write English notes covering the changes since the previous Latest Release, with Highlights, Compatibility / Migration Notes, and Validation. Run the command below; confirm Latest status, remote refs, and downloaded checksums for every declared asset:
-   ```bash
-   bun run release:publish -- --version <tag> --platforms <comma-separated-platforms> --notes-file <notes-file> --directory <collected-directory>
-   ```
-7. **Align `dev`**: Only after the Release is fully confirmed, run `git diff dev master --quiet`, then on `dev` run `git reset --hard master` and `git push --force-with-lease origin dev`. Confirm local and remote `dev` and `master` all point to the same commit.
+1. **Version selection and gate verification**:
+   - Synchronize remote tags and identify the current Latest Release via `gh release list`.
+   - Select an incremented semantic version number without a `v` prefix (`MAJOR.MINOR.PATCH`).
+   - Finalize development on `dev`, passing `bun run check` and running `bun run test:fault-injection` when relevant.
+2. **Update performance benchmark readings**:
+   - Stop background bot services and ensure the host system is idle.
+   - Run `bun run perf:full -- --write-doc` with default rounds. Commit the updated readings in all three `10-performance.md` files and `performance-result.json` to `dev`.
+3. **Native cross-platform builds**:
+   - Target platforms are defined in `RELEASE_PLATFORMS` (`linux-x64`, `linux-arm64`, `linux-x64-musl`, `linux-arm64-musl`).
+   - In each platform's native environment, checkout the clean release commit and run `bun run release:build -- --version <tag>`.
+   - Collect the generated archive and `.sha256` checksum files into a single staging directory.
+4. **Release asset verification**:
+   - On a clean working tree, verify all collected assets:
+     ```bash
+     bun run release:verify -- --version <tag> --platforms <comma-separated-platforms> --directory <staging-directory>
+     ```
+   - The script verifies SHA-256 checksums, version metadata, target architectures, dependency integrity, and confirms no `.map` files or `node_modules` were packaged.
+5. **Merge and tag creation**:
+   - Merge `dev` into `master` using `git merge --squash`, ensuring the Git tree hash matches the built binaries exactly.
+   - Push `master`, then create and push an annotated version tag on that commit.
+6. **Publish to GitHub**:
+   - Draft English Release notes outlining Highlights, Compatibility / Migration Notes, and test coverage figures.
+   - Run the publishing script to create a draft, upload assets, verify downloads, and publish as Latest:
+     ```bash
+     bun run release:publish -- --version <tag> --platforms <comma-separated-platforms> --notes-file <notes-file> --directory <staging-directory>
+     ```
+7. **Align `dev` branch**:
+   - Once the release is published and verified, confirm `git diff dev master --quiet`.
+   - Fast-forward `dev` via `git reset --hard master` and push with `git push --force-with-lease origin dev`.
 
 ---
 

@@ -93,9 +93,8 @@ describe("createKeyedSerialTaskRunner", () => {
     });
     const firstNext: Promise<void> = chains.get("chat-1")!;
     first.resolve();
-    // 第一个任务的收尾清理与第二次 run 之间人为制造竞争：在第一个任务的
-    // then 清理执行之前就提交第二个任务，验证清理不会把第二个任务的链
-    // 顶替记录误删。
+    // 第一个任务的收尾清理与第二次 run 之间制造竞争：在第一个任务的 then 清理执行之前提交第二个任务，
+    // 验证清理不误删第二个任务的链顶替记录。
     runner.run("chat-1", async () => {});
     await Bun.sleep(0);
 

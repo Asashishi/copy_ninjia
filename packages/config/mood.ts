@@ -21,8 +21,8 @@ interface MultiplierParseOptions<Bucket extends string> {
   readonly sourcePath: string;
 }
 
-/** 解码倍率表：键必须是对应维度的合法桶名，倍率必须是正有限数——
- *  computeAdjustedWeight 假定倍率乘完权重仍为正（见 aiChat/ai/mood.ts）。
+/** 解码倍率表：键必须是对应维度的合法桶名，倍率必须是不超过 MOOD_MULTIPLIER_MAX 的正有限数
+ *  （computeAdjustedWeight 假定倍率乘完权重仍为正，见 aiChat/ai/mood.ts）。
  *  非法键与非法值分别以 `<fieldPath>.<key>`、`<fieldPath>.<value>` 报出。 */
 function parseMultipliers<Bucket extends string>(
   value: unknown,
@@ -103,7 +103,7 @@ function parseMoodOption(value: unknown, index: number, sourcePath: string): Moo
 
 /**
  * 穷举配置能进入的全部天气/时段组合，确保每个调整权重和累计总权重都有限。
- * 当前倍率上限已把数值控制在安全范围内；这层校验保留为抽选算法的直接契约。
+ * 倍率上限 MOOD_MULTIPLIER_MAX 已限定数值范围；本校验是抽选算法的直接契约。
  */
 function validateAdjustedWeights(moods: readonly MoodOption[], sourcePath: string): void {
   const weatherBuckets: readonly (WeatherBucket | null)[] =
@@ -127,8 +127,7 @@ function validateAdjustedWeights(moods: readonly MoodOption[], sourcePath: strin
   }
 }
 
-/** 严格解码 mood.json；base weight 必须是正整数且总和恰好为 MOOD_WEIGHT_TOTAL（限定
- *  整数让总和判断走精确的整数算术，没有浮点误差）。 */
+/** 严格解码 mood.json；base weight 必须是正整数且总和恰好为 MOOD_WEIGHT_TOTAL。 */
 export function parseMoodConfig(
   value: unknown,
   sourcePath: string = MOOD_CONFIG_PATH

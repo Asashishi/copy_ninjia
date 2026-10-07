@@ -39,7 +39,7 @@ import type { SeededFixtureCounts } from "./fixture";
 /** 播种模式：冷启动要满库，链路测量要空库。 */
 type SeedMode = "cold-start" | "chain";
 
-/** 链路模式回传的空计数；空库本身就是它要的初始条件。 */
+/** 链路模式回传的空计数。 */
 const EMPTY_COUNTS: SeededFixtureCounts = {
   permissionList: 0,
   blocklistEntries: 0,
@@ -57,8 +57,7 @@ function parseSeedMode(value: string | undefined): SeedMode {
 
 async function seedWorkerOwnedFiles(mode: SeedMode): Promise<void> {
   await loadPersistedData();
-  // 全局状态文件也要真的存在：冷启动那一段量的是「读到一份完整部署数据」的成本，
-  // 缺文件时 loadState 只是一次 ENOENT 早退，与生产走的不是同一条路。
+  // 写出全局状态文件，供冷启动的 loadState 读取。
   await persistGlobalState("performance benchmark fixture");
   if (mode === "chain") return;
   for (let index: number = 0; index < COLD_START_AI_MEMORY_CHATS; index += 1) {
@@ -89,19 +88,15 @@ async function seedWorkerOwnedFiles(mode: SeedMode): Promise<void> {
 async function runSeedChild(mode: SeedMode): Promise<SeededFixtureCounts> {
   assertBenchmarkRuntimeRoot(RUNTIME_DATA_ROOT);
   installOutboundGuards();
-  // 先取实例锁，顺序与生产启动一致。这一步不只是仪式：数据根预检会按生产口径
-  // 建出 logs/、memory/、database/ 并钉住权限，跳过它的话这三个目录会由落盘
-  // Worker 用默认 umask 建成 0755，随后真正的冷启动会判 `database/` 的 0755
-  // 宽于 IDENTITY_DATABASE_DIRECTORY_MODE 的 0770（other 位不允许）而拒绝启动
-  // ——那是一次 fixture 造错了，不是被测代码的问题。
+  // 先取实例锁，顺序与生产启动一致；数据根预检按生产口径建出 logs/、memory/、
+  // database/ 并钉住权限（database/ 取 IDENTITY_DATABASE_DIRECTORY_MODE）。
   await acquireSingleInstanceLock(BOT_TOKEN);
   try {
     if (mode === "chain") createEmptyBenchmarkDatabase();
     else createBenchmarkDatabase();
-    // 与生产启动同序（见 coldStart.ts 的分段计时）：部署输入预检必须先于 Disk I/O
-    // 完成。贴纸配置快照由它填进本线程 holder，loadPersistedData 组装 load 请求时经
-    // stickerPacksForRecovery 取用；缺了它，启动恢复会按「贴纸配置缺省」跳过目录
-    // 白名单对账，播种走的就不是生产那条恢复路径。
+    // 与生产启动同序（见 coldStart.ts 的分段计时）：部署输入预检先于 Disk I/O 完成；
+    // 贴纸配置快照由它填进本线程 holder，loadPersistedData 组装 load 请求时经
+    // stickerPacksForRecovery 取用。
     await validateExistingDeploymentInputs();
     initDiskIO();
     try {

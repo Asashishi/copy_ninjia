@@ -8,11 +8,11 @@ import type { BotChatPermissions } from "../../packages/types/telegram";
 import type { ChatTeardownReason } from "../../packages/types/chatTeardown";
 
 /**
- * Anti-Raid 主线程侧的四个观察者（权限镜像、群 teardown、Disk I/O 重生重放、
+ * Anti-Raid 主线程侧的观察者（权限镜像、群 teardown、Disk I/O 重生重放、
  * 验证落盘回执），均为「注册一次、由上游在别的时刻回调」的闭包。
  *
  * 覆盖点：Worker 重生后整份重放镜像（中途投递失败立刻停手并报失败）；落盘回执
- * 按代际/修订号核对，不匹配则整条丢弃。这里直接抓取四个回调驱动执行。
+ * 按代际/修订号核对，不匹配则整条丢弃。这里直接抓取各回调驱动执行。
  */
 
 const post = mock((_message: AntiRaidWorkerMessage): boolean => true);

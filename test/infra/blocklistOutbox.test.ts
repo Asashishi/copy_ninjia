@@ -1,10 +1,8 @@
 /**
  * 黑名单 outbox owner 的丢弃与销账分支。
  *
- * 这些路径都会**去掉已经登记的待踢任务**并重写落盘快照：启动恢复时群不再受管、
- * 机器人不再是管理员、补扫名单已空；运行期 /block disable 摘掉最后一个目标、群被停止
- * 管理。出错时表现为「有人被 /block 了却一直留在群里」或「解封后仍被踢」，而且
- * 没有任何日志会点名是哪一步丢的，因此必须逐条钉死。
+ * 这些路径都会去掉已经登记的待踢任务并重写落盘快照：启动恢复时群不再受管、
+ * 机器人不再是管理员、补扫名单已空；运行期 /block disable 摘掉最后一个目标、群被停止管理。
  */
 
 import { describe, expect, spyOn, test } from "bun:test";
@@ -90,8 +88,7 @@ function frozenTask(
 
 describe("黑名单 outbox 的启动恢复过滤", () => {
   test("群已不再受管：任务被丢弃并重写快照，编号水位仍前进", () => {
-    // 编号水位必须跟着被丢弃的那条走，否则重启后新任务会复用旧编号，
-    // Worker 端的回执按编号匹配，就会把新批次的结果记到旧批次头上。
+    // 编号水位跟着被丢弃的那条走：重启后新任务不复用旧编号（Worker 端的回执按编号匹配）。
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     states.set(-1001, { isInitEnabled: false, botPermissions: botPermissions() });
 
@@ -148,13 +145,12 @@ describe("黑名单 outbox 的启动恢复过滤", () => {
       failedSweeps: 2,
       permissionBlocked: false,
     });
-    // 一条都没被过滤掉，就不该多写一次快照。
+    // 一条都没被过滤掉，不多写一次快照。
     expect(postDiskIO).not.toHaveBeenCalled();
   });
 
   test("同群既有缺权限闩锁又有普通补扫：闩锁不被后来的普通任务覆盖", () => {
-    // 闩锁是「确证过没有封禁权限」，普通补扫只是「还没轮到」。让后者覆盖前者
-    // 会让补扫在没有权限的群里空转，每一轮都打一次注定失败的请求。
+    // 闩锁是「确证过没有封禁权限」，普通补扫只是「还没轮到」；后者不覆盖前者。
     governedChat();
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
 
@@ -171,8 +167,7 @@ describe("黑名单 outbox 的启动恢复过滤", () => {
   });
 
   test("过滤后的快照投不出去：点名记一行错误，不静默", () => {
-    // 投不出去意味着落盘侧仍留着那条已经被主线程丢弃的任务，两边不一致；
-    // 没有这行日志，运维手上唯一的线索就只有「有人没被踢」。
+    // 投不出去时落盘侧仍留着那条已经被主线程丢弃的任务，两边不一致，记一行日志。
     const error = spyOn(logger, "error").mockImplementation((): void => {});
     postDiskIO.mockImplementation((): boolean => false);
 
@@ -195,8 +190,7 @@ describe("黑名单 outbox 的启动恢复过滤", () => {
   });
 
   test("冻结名单任务上次因缺权限失败：恢复出的补扫同样是闩锁态", () => {
-    // 闩锁只跟「上次为什么失败」有关，与任务带不带冻结名单无关；漏了这一支，
-    // 一条确证过没有封禁权限的处置会在重启后被当成普通任务反复重投。
+    // 闩锁只跟「上次为什么失败」有关，与任务带不带冻结名单无关；冻结名单那一支同样保留闩锁。
     governedChat();
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
 
@@ -235,7 +229,7 @@ describe("黑名单 outbox 的启动恢复过滤", () => {
 
 describe("黑名单 outbox 的运行期销账", () => {
   test("最后一个目标被 /block disable 摘掉：整条任务销账并释放 sweep claim", () => {
-    // 留一条空名单任务下来，补扫每一轮都会为它跑一次注定没有目标的投递。
+    // 不留空名单任务。
     governedChat();
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     hydrateBlocklist(new Map([frozenTask(21, [7])]));
@@ -250,8 +244,7 @@ describe("黑名单 outbox 的运行期销账", () => {
   });
 
   test("权威名单被清空：连补扫任务一起销账", () => {
-    // 补扫不冻结名单，只有名单整体空了才轮得到它销账；名单还有人时不能动它，
-    // 否则解封一个人会顺手取消掉针对其他人的补扫。
+    // 补扫不冻结名单，只有名单整体空了才销账；名单还有人时不动它，解封一个人不取消针对其他人的补扫。
     governedChat();
     blockedUserIds.set(7, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
     blockedUserIds.set(8, { isBlocked: true, blockedAt: "2026/08/11 00:00:00" });
@@ -323,7 +316,7 @@ describe("黑名单 outbox 的运行期销账", () => {
   });
 
   test("登记一条没有任何目标的处置：立刻抛错，且不把它留在镜像里", () => {
-    // 留下来就是一条永远投不出去、却一直占着 outbox 容量的任务。
+    // 不留下永远投不出去、占着 outbox 容量的任务。
     governedChat();
 
     expect(() => trackBlockedRemoval({
@@ -336,8 +329,7 @@ describe("黑名单 outbox 的运行期销账", () => {
 
 describe("黑名单 outbox 的投递边界", () => {
   test("write-ahead 快照投不出去时抛错，不让处置抢在落盘之前发出去", async () => {
-    // 先斩后奏的话，进程在封禁请求发出与落盘之间崩掉，重启后 outbox 里没有这批
-    // 任务，被封的人却已经被踢——没有任何一轮补扫会再确认它。
+    // write-ahead：快照投不出去时抛错，处置不先于落盘发出。
     postDiskIO.mockImplementation((): boolean => false);
 
     await expect(persistPendingBlockedRemovals()).rejects.toThrow(

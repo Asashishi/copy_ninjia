@@ -107,6 +107,12 @@ test("image 缺省时明确不提供生图实现", () => {
   expect(imageAiProvider()).toBeNull();
 });
 
+test("image 选中的实现缺席 generateImage 时没有生图门面", () => {
+  // Anthropic 实现不提供生图；配置类型不允许这样选，这里绕过类型直接走路由。
+  agentConfig = { ...agentConfig, image: { ...agentConfig.image!, provider: "anthropic" } } as unknown as AgentDeploymentConfig;
+  expect(imageAiProvider()).toBeNull();
+});
+
 test("Google 与 OpenAI 装配齐对话、摘要、媒体、生图、检索与 JSON 能力", () => {
   for (const provider of [geminiProvider, openAiProvider] as const) {
     expect(typeof provider.createReplySession).toBe("function");
@@ -214,8 +220,8 @@ function withoutOpenAiSpeech(run: () => void): void {
   }
 }
 
-test("anthropic 没有生图能力：generateImage 只为满足契约，恒交回 null", async () => {
-  await expect(anthropicProvider.generateImage({} as never)).resolves.toBeNull();
+test("anthropic 没有生图能力：generateImage 缺席", () => {
+  expect(anthropicProvider.generateImage).toBeUndefined();
 });
 
 test("media 选 anthropic 时语音转写缺席，只在启动时记一次诊断；正文、检索与结构化 JSON 照常路由到它", () => {
@@ -282,10 +288,7 @@ test("已实现的能力不刷诊断", () => {
   expect(loggerWarn).not.toHaveBeenCalled();
 });
 
-/**
- * 断言写在不会被调用的闭包内：闭包从不执行，`@ts-expect-error` 只在编译期
- * 生效，一旦对应类型收窄失效就会变成「未使用的抑制」而让 typecheck 失败。
- */
+/** 断言写在不会被调用的闭包内：闭包从不执行，`@ts-expect-error` 只在编译期生效。 */
 test("跨能力调用无法通过类型检查", () => {
   const assertCrossCapabilityCallsRejected = (): void => {
     // 用完即弃的本地收集器，只为让每条断言成为一条语句。

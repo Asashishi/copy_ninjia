@@ -18,7 +18,7 @@ function rollFortunePercent([min, max]: readonly [number, number], fraction: num
   return Math.round(raw * 100) / 100;
 }
 
-/** 从固定 32 字节摘要读取无符号大端整数，不建立 DataView 或 Buffer 视图。 */
+/** 从摘要读取无符号大端 32 位整数，不建立 DataView 或 Buffer 视图。 */
 function readUint32BE(bytes: Uint8Array, offset: number): number {
   return bytes[offset]! * 0x1_000000 +
     bytes[offset + 1]! * 0x1_0000 +

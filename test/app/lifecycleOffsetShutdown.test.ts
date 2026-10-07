@@ -121,8 +121,7 @@ describe("应用最终 offset 确认与排空", () => {
       expect.any(Error)
     );
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
-    // offsetWithheld 档：各 owner 都排空落盘、Worker 已终止，没有任何东西还会写
-    // 共享数据目录，扣住锁只会留下一条陈旧 bot.lock 记录并误导排查方向。
+    // offsetWithheld 档：各 owner 都排空落盘、Worker 已终止，没有任何东西还会写共享数据目录，锁照常释放。
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
@@ -226,10 +225,9 @@ describe("应用最终 offset 确认与排空", () => {
     expect(getUpdates).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
     expect(loggerError).toHaveBeenCalledWith(expect.stringContaining("offset=false"));
-    // 迟到落定改写不了 offset 结论（上一条断言），但它确实证明了那个维护任务
-    // 已经结束：dispose 自己那轮 waitForBackgroundMaintenance 因此是 settled，
-    // 三态落在 offsetWithheld，锁可以释放。维护任务若到 dispose 仍未落定，
-    // dispose 那轮同样会超时，三态变成 unsettled，锁才扣住。
+    // 迟到落定改写不了 offset 结论（上一条断言），但它证明维护任务已结束：dispose 自己那轮
+    // waitForBackgroundMaintenance 是 settled，三态落在 offsetWithheld，锁可以释放；
+    // 维护任务到 dispose 仍未落定时，那一轮超时，三态为 unsettled，锁扣住。
     expect(releaseSingleInstanceLock).toHaveBeenCalledTimes(1);
   });
 
@@ -335,7 +333,7 @@ describe("应用最终 offset 确认与排空", () => {
   });
 
   test("并发 update 乱序完成时不会跨过仍在途的较小 update", async () => {
-    // 较大的 update 已经完成，但较小的 update 仍占据 runner，因此 size 始终非零。
+    // 较大的 update 已经完成，但较小的 update 仍占据 runner，size 始终非零。
     runnerSize.mockReturnValue(1);
     sleep.mockImplementation(async (): Promise<void> => { advanceMonotonicTime(5_000); });
     setLastSeenUpdateId(900);

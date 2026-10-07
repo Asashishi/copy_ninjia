@@ -17,7 +17,7 @@ import {
   trackReplyGenerationTask,
 } from "./replyGeneration";
 
-/** notifyRateLimited 的入参；话题落点是第四项，因此收成 options。 */
+/** notifyRateLimited 的入参。 */
 export interface NotifyRateLimitedParams {
   chatId: number;
   now: number;
@@ -28,11 +28,10 @@ export interface NotifyRateLimitedParams {
 }
 
 /**
- * 触发被限频或队列溢出时发送明确反馈。提示本身按群冷却，避免刷屏；发送
- * 成功后与普通 AI 回复一样登记自发消息并写入滚动记忆。
+ * 触发被限频或队列溢出时发送明确反馈。提示按群冷却（RATE_LIMIT_NOTICE_COOLDOWN_MS）；
+ * 发送成功后与普通 AI 回复一样登记自发消息并写入滚动记忆。
  *
- * 提示与它所回应的那条触发在同一个话题里发出——话题群里不带 message_thread_id
- * 的发送一律掉进 General，那样被限频的人在自己的话题里只会看到沉默。
+ * 提示经 messageThreadId 落在触发消息所在的话题。
  */
 export function notifyRateLimited({
   chatId,

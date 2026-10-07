@@ -31,7 +31,7 @@ export interface GagSession {
   readonly chatLabel: string;
   /** 命令给出的用具；已压成单行并剥掉双向控制符。 */
   readonly tool: string;
-  /** 会话长度，只允许 5、10 或 15 分钟。 */
+  /** 会话长度，取值见 GagDurationMinutes。 */
   readonly durationMinutes: GagDurationMinutes;
   /** starting 只占容量不拦消息；active 才执行删除；ending 已被唯一结束方认领。 */
   phase: "starting" | "active" | "ending";
@@ -43,17 +43,15 @@ export interface GagSession {
   speakNoticeMessageId: number;
   /** 滚动换新已经发出但尚未提交的入口 id；没有在途替换时为 0。 */
   pendingSpeakNoticeMessageId: number;
-  /** 已被新入口取代但删除失败的入口 id；至多保留一个，避免无界堆积。 */
+  /** 已被新入口取代但删除失败的入口 id；至多保留一个。 */
   retiredSpeakNoticeMessageId: number;
   /**
    * 当前发言入口**实际所在**的论坛话题；General、非论坛群为 undefined。
    *
-   * 被管教的人换个话题说话时，入口必须跟着搬过去，否则他在话题 B 被删消息、
-   * 按钮却留在话题 A，等于被封了口还找不到说话的地方。搬家复用换新那套
-   * current/pending/retired 槽位：先在新话题发一条，再删旧的（见
-   * commands/gag/refresh.ts 的 replaceGagSpeakNotice）。本字段只在发送成功后
-   * 更新，因此它永远指向「群里现在真的挂着按钮的那个话题」，判定是否需要搬家
-   * 就拿它和来消息的话题比。删除不需要话题，故 pending/retired 只存 id。
+   * 目标在另一话题发言时，入口按 current/pending/retired 槽位换新到该话题：先在新话题
+   * 发一条，再删旧的（见 commands/gag/refresh.ts 的 replaceGagSpeakNotice）。本字段只在
+   * 发送成功后更新，指向当前挂着按钮的话题；是否搬家由它与来消息的话题比较得出。
+   * 删除不需要话题，pending/retired 只存 id。
    */
   speakNoticeThreadId: number | undefined;
   /** 当前入口发出后本群收到的消息数；达到固定阈值才换新。 */
@@ -72,7 +70,7 @@ export interface GagSession {
   cleanupRetryIndex: number;
   /** 提示清理重试 timer；未排定或正在执行时为 null。 */
   cleanupTimer: ReturnType<typeof setTimeout> | null;
-  /** ending 阶段唯一的完整 Telegram 收尾，防止 timer、命令与停机重复或穿插。 */
+  /** ending 阶段唯一的完整 Telegram 收尾；timer、命令与停机共用这一个任务。 */
   endingTask: Promise<boolean> | null;
 }
 

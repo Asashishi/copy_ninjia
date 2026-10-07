@@ -85,7 +85,7 @@ async function passesGagCommandGate(
   return true;
 }
 
-/** 构造一次容量预约；字段固定顺序与类型避免 active 时再改变对象 shape。 */
+/** 构造一次容量预约；字段一次初始化，进入 active 后不再增删字段。 */
 function createGagReservation(
   ctx: CommandContext<Context>,
   target: CachedUser,
@@ -190,8 +190,8 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     });
     return;
   }
-  // 目标解析与成员查询后必须再同步预约，才能在任何调用入口下严格守住全局
-  // 容量。starting 不拦消息，发送失败只撤销本对象。
+  // 目标解析与成员查询之后同步预约，守住全局容量；starting 阶段不拦消息，
+  // 发送失败只撤销本会话。
   const session: GagSession = createGagReservation(ctx, target, parsed);
   const reservation: GagReservationOutcome = reserveGagSession(session);
   if (reservation === "quiescing") return;
@@ -211,14 +211,13 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     });
     return;
   }
-  // 普通用户先在群里留一条无按钮状态，再发 receiver_user_id 限定的入口；
-  // 频道没有接收用户，公开状态本身就是其发言入口。两个身份分开登记，结束某个
-  // 会话时只能删除该会话的精确入口，不能把相同数字的临时 id 当成群消息 id。
+  // 普通用户先在群里留一条无按钮的公开状态，再发 receiver_user_id 限定的发言入口；
+  // 频道没有接收用户，只发一条发言入口提示。两个 message id 分开登记，结束会话时
+  // 按各自的精确 id 删除。
   //
-  // onSent 是这条路径的**结算保险**：停机 abort 可能落在「远端已收下提示、这里
-  // 还没走到 commitGagNotices」的窗口里，await 会以 AbortError 解开并带走
-  // message id。先同步登记，abort 之后这条会话仍是「已发出、可删除」的完整状态，
-  // 由停机排空按正常 ending 路径删掉。
+  // onSent 在发送返回前同步登记 message id：停机 abort 落在发送完成与
+  // commitGagNotices 之间时，会话仍是「已发出、可删除」的状态，由停机排空按 ending
+  // 路径删除。
   const recordPublicNotice = (sentMessageId: number): void => {
     recordGagPublicNotice(session, sentMessageId);
   };
@@ -246,9 +245,8 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
       chatId: session.chatId,
       text: renderGagPublicNotice(session),
       replyToMessageId: ctx.msgId,
-      // 公开状态是「这个人被管教了」的一次性播报，留在下命令的话题即可，不搬家；
-      // 它同样由状态机而非固定延迟清理持有，属长期留存，因此挂了回复也照样
-      // 带话题；判定口径见 SendMessageParams.messageThreadId。
+      // 公开状态留在下命令的话题，不随发言搬家；它由状态机而非固定延迟清理持有，
+      // 属长期留存，显式带话题（见 SendMessageParams.messageThreadId）。
       messageThreadId: session.speakNoticeThreadId,
       onSent: recordPublicNotice,
     });
@@ -277,9 +275,8 @@ export async function handleGagCommand(ctx: CommandContext<Context>): Promise<vo
     recordGagSpeakNotice(session, speakNoticeMessageId);
     await commitGagNotices(session);
   } catch (error: unknown) {
-    // 判据是整段发送流程是否仍未提交，不是「最后一次 onSent 有没有被调用」。
-    // failGagNotice 会删除所有已同步登记的提示；删除失败才保留 ending owner 重试，
-    // 绝不能把已发出的公开或临时消息连同 id 一起丢掉。
+    // 判据是整段发送流程是否仍未提交（session.noticePending）。failGagNotice 删除
+    // 所有已同步登记的提示；删除失败时保留 ending owner 重试，已登记的 id 不丢弃。
     if (session.noticePending) await failGagNotice(session);
     throw error;
   }

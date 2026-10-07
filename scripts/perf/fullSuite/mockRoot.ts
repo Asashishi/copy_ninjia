@@ -1,10 +1,9 @@
 /**
  * mock 数据根的建立、校验与清理。
  *
- * 全量基准的全部落盘只允许发生在仓库根下的 `performance/` 里：部署机上同一个
- * 工作目录里还摆着真实的 `database/`、`memory/`（含全局状态）与 `bot.lock`。
- * 建目录、复制、写文件都先过 `assertInsidePerformanceMockRoot`，删除先过同一道
- * 形态闸加父链核对，越界一律抛错。词法前缀判定挡不住软链接，真实分量的核对在
+ * 全量基准的全部落盘只发生在仓库根下的 `performance/` 里。建目录、复制、写文件
+ * 都先过 `assertInsidePerformanceMockRoot`，删除先过同一道形态闸加父链核对，越界
+ * 一律抛错。词法前缀判定不识别软链接，真实分量的核对在
  * `scripts/fixtures/pathBoundary.ts`。
  *
  * 本文件只从 `packages/` import 纯常量，不加载生产实现模块图。
@@ -32,7 +31,7 @@ import { AGENT_API_KEY_PLACEHOLDERS } from
 import { TELEGRAM_BOT_TOKEN_PLACEHOLDER } from
   "../../../packages/consts/telegram";
 
-/** 仓库根目录；本文件位于 scripts/perf/fullSuite/ 下，往上跳三级。 */
+/** 仓库根目录；由本文件所在目录逐级上溯解析。 */
 export const PROJECT_ROOT: string = resolve(import.meta.dir, "..", "..", "..");
 
 /** 全量基准唯一允许写入的 mock 数据根；不进 Git，见仓库 .gitignore。 */
@@ -44,16 +43,12 @@ export const PERFORMANCE_MOCK_ROOT: string = join(
 /** 受版本控制的配置示例只作为模板读取，基准子进程不直接加载其中的占位凭据。 */
 const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
 
-/**
- * 运行时数据根允许的最宽权限；与 `RUNTIME_DATA_ROOT_MAX_MODE` 对齐。
- * 显式配置数据根后，生产预检会拒绝比这更宽的目录，mock 根必须同样严格，
- * 否则冷启动那一段量到的是一条生产走不到的分支。
- */
+/** 运行时数据根允许的最宽权限；与 `RUNTIME_DATA_ROOT_MAX_MODE` 对齐，mock 根按生产预检的同一上限创建。 */
 const RUNTIME_ROOT_MODE: number = 0o755;
 
 /**
- * 纯词法形态判定：`resolve()` 只处理 `..` 和相对段，不读文件系统，因此**挡不住**
- * 指向 mock 根之外的软链接。真正会建目录、复制或删除的入口必须再过
+ * 纯词法形态判定：`resolve()` 只处理 `..` 和相对段，不读文件系统，不识别指向
+ * mock 根之外的软链接。建目录、复制或删除的入口必须再过
  * `assertInsidePerformanceMockRoot`，由它补上分量核对。
  */
 export function isInsidePerformanceMockRoot(path: string): boolean {
@@ -80,7 +75,7 @@ function assertMockRootShape(path: string): void {
 }
 
 /**
- * 越界即抛；建目录、复制、写文件三侧共用这一道闸。
+ * 越界即抛；建目录、复制、写文件共用这一道闸。
  *
  * 先判形态再核对真实分量：形态不合的路径直接报「必须落在 mock 根下」，形态合
  * 但中途经过软链接的报出具体那一段（见 scripts/fixtures/pathBoundary.ts）。
@@ -91,8 +86,8 @@ export function assertInsidePerformanceMockRoot(path: string): void {
 }
 
 /**
- * 建立本次运行独占的目录；同一 mock 根下可以并存多次历史运行的残留。
- * mkdir 之前先核对 `performance/` 自身：它被换成软链接时整轮基准都会写到别处。
+ * 建立本次运行独占的目录；同一 mock 根下可以并存多次运行的目录。
+ * mkdir 之前先对 `performance/` 自身做分量核对。
  */
 export function createRunRoot(): string {
   assertInsidePerformanceMockRoot(PERFORMANCE_MOCK_ROOT);
@@ -103,15 +98,14 @@ export function createRunRoot(): string {
 /**
  * 在单次运行目录内建立可被严格解析的隔离配置副本。
  *
- * 示例文件必须保留面向部署者的占位值，因此只在 mock 根内替换凭据。出站能力仍
- * 由 `scripts/perf/outboundGuard.ts` 截断；这份配置只让基准走过与生产一致的启动
+ * 示例文件保留面向部署者的占位值，只在 mock 根内的副本里替换凭据。出站由
+ * `scripts/perf/outboundGuard.ts` 截断；这份配置让基准走过与生产一致的启动
  * 校验和客户端装配路径。
  */
 export async function createBenchmarkConfigRoot(runRoot: string): Promise<string> {
   assertInsidePerformanceMockRoot(runRoot);
   const configRoot: string = join(runRoot, BENCHMARK_CONFIG_ROOT_NAME);
-  // 目标树可能已经存在：逐个落点都要核对，否则残留的软链接会让复制和随后的
-  // Bun.write 经链接写到 mock 根之外。
+  // 目标树可能已经存在：逐个落点都过 assertInsidePerformanceMockRoot。
   await copyFixtureTree(CONFIG_EXAMPLE_ROOT, configRoot, assertInsidePerformanceMockRoot);
 
   const agentPath: string = join(configRoot, DYNAMIC_CONFIG_DIR_NAME, "agent.json");
@@ -142,11 +136,11 @@ export async function createBenchmarkConfigRoot(runRoot: string): Promise<string
   assertInsidePerformanceMockRoot(telegramPath);
   await Bun.write(telegramPath, botConfig);
 
-  // 翻译凭据示例的占位私钥必然被启动总闸拒绝；与安装器一样不物化它，基准里翻译保持缺省。
+  // 翻译凭据示例的占位私钥会被启动校验拒绝；与安装器一致，不物化该文件，基准里翻译保持缺省。
   const googleAuthPath: string = join(configRoot, STATIC_CONFIG_DIR_NAME, "g-auth.json");
   assertInsidePerformanceMockRoot(googleAuthPath);
   await Bun.file(googleAuthPath).delete();
-  // 定时任务示例的会话 id 与地址都是假的，本地来源也不存在；基准里定时任务保持缺省。
+  // 定时任务示例引用的会话 id、地址与本地来源均为占位，删除该文件，基准里定时任务保持缺省。
   const cronPath: string = join(configRoot, DYNAMIC_CONFIG_DIR_NAME, "cron.json");
   assertInsidePerformanceMockRoot(cronPath);
   await Bun.file(cronPath).delete();
@@ -176,7 +170,7 @@ export function isBenchmarkRuntimeRoot(path: string): boolean {
     basename(dirname(resolved)).startsWith(RUN_ROOT_PREFIX);
 }
 
-/** 子进程入口的自检：数据根不是本基准建的就立刻失败，绝不继续写。 */
+/** 子进程入口的自检：数据根不是本基准建的就立刻失败。 */
 export function assertBenchmarkRuntimeRoot(path: string): void {
   if (!isBenchmarkRuntimeRoot(path)) {
     throw new Error(
@@ -190,8 +184,8 @@ export function assertBenchmarkRuntimeRoot(path: string): void {
 /**
  * 删除 mock 根内的一棵子树；越界时抛错而不是静默跳过。
  *
- * 只核对父链：末端本身是软链接时 `rmSync` 只摘链接、不动目标，那正是要保留的
- * 安全清理语义；中间任何一段是链接都会让删除落到 mock 根之外，必须拒绝。
+ * 只核对父链：末端本身是软链接时 `rmSync` 只摘链接、不动目标；中间任何一段是
+ * 软链接即拒绝。
  */
 export function removeMockPath(path: string): void {
   assertMockRootShape(path);

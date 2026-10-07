@@ -212,8 +212,7 @@ describe("chatActionHeartbeat", () => {
     await settleBackgroundWork();
     expect(sendChooseSticker).toHaveBeenCalledTimes(1);
 
-    // A 轮在选择贴纸挡结束（翻了包没发贴纸）：挡位必须随 stop 收回 idle，
-    // B 轮还持有条目，但不该继承 A 遗留的「正在选择贴纸…」被心跳一直重发。
+    // A 轮在选择贴纸挡结束（翻了包没发贴纸）：挡位随 stop 收回 idle；B 轮还持有条目，不继承 A 遗留的「正在选择贴纸…」。
     await roundA.stop();
     expect(deps.entries.get(111)?.action).toBe("idle");
     expect(deps.entries.has(111)).toBe(true);
@@ -274,8 +273,7 @@ describe("chatActionHeartbeat", () => {
 
     heartbeat.set("typing");
     await settleBackgroundWork();
-    // 可节流的切挡补发先排队，随后一个 tick 合并进来：第一发落定时刚记过
-    // 节流账，排队那发若仍按可节流执行会被跳过，tick 的刷新语义要求必发。
+    // 可节流的切挡补发先排队，随后一个 tick 合并进来：第一发落定时刚记过节流账，排队那发按 tick 的刷新语义必发。
     heartbeat.set("typing");
     pumpChatAction({
       chatId: 987,
@@ -335,8 +333,7 @@ describe("chatActionHeartbeat", () => {
     const deps = dependencies(sendTyping, async () => true, 3);
     const heartbeat = startChatActionHeartbeat({ chatId: 321, messageThreadId: undefined, dependencies: deps });
 
-    // 节流记忆只记真正送达的状态：前一发失败后，同挡位补发不会被「刚发过」
-    // 误拦，三连败照常累计到阈值。
+    // 节流记忆只记真正送达的状态：前一发失败后，同挡位补发不被「刚发过」拦下，连续失败照常累计到阈值。
     heartbeat.set("typing");
     await settleBackgroundWork();
     expect(deps.entries.has(321)).toBe(true);

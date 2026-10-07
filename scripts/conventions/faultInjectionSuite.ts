@@ -9,9 +9,7 @@ import type { RuntimeModuleReference } from "./sourceAnalysis";
 /**
  * `bun run test:fault-injection` 的清单必须覆盖全部持久化 / 停机 / Worker 生命周期用例。
  *
- * 清单手工维护在 `package.json` 里，而它就是这套套件的唯一权威（三份
- * `05-dev-workflow.md` 都写「完整清单见 package.json 的脚本定义」）。漏登记不会让任何
- * 门禁变红，套件却在无声中变窄——合入前跑的那一套不再覆盖新写的落盘或重建用例。
+ * 清单手工维护在 `package.json` 的脚本定义里，是这套套件的唯一权威。
  *
  * 本模块按测试 harness 与生产恢复/生命周期边界的值导入给出机器可判的下界。
  * 归属按解析后的路径判定，包含动态 import 与目录入口 `index.ts`，忽略纯类型引用。
@@ -25,7 +23,7 @@ import type { RuntimeModuleReference } from "./sourceAnalysis";
 
 /** 受约束的持久化校验、恢复和生命周期边界，包含生产模块及测试 harness。 */
 interface FaultInjectionBoundary {
-  /** 仓库相对路径；缺失即判失败，避免改名后判定静默失效。 */
+  /** 仓库相对路径；缺失即判失败。 */
   readonly path: string;
   /** 该边界覆盖的故障面，用于失败文案。 */
   readonly purpose: string;
@@ -40,11 +38,10 @@ interface ProjectPackageJson {
 /**
  * 判定所依据的持久化校验、恢复和生命周期边界清单。
  *
- * 只收「主题就是持久化 / 停机 / Worker 生命周期」的那几个。刻意不收
- * `verificationEffectsHarness`（验证副作用解释器，主题是踢人与删消息）和
- * `adDetectQueueHarness`（广告判定队列随 isolate 生死、主线程不做镜像，见
- * `packages/cache/workers/antiRaid/adDetect.ts` 的模块头注）：它们不落盘，
- * 进这套套件只会拖长发布前的必跑面而换不到恢复能力。
+ * 只收主题是持久化、停机或 Worker 生命周期的模块。`verificationEffectsHarness`
+ * （验证副作用解释器，主题是踢人与删消息）和 `adDetectQueueHarness`（广告判定队列
+ * 随 isolate 生死、主线程不做镜像，见 `packages/cache/workers/antiRaid/adDetect.ts`
+ * 的模块头注）不落盘，不在清单内。
  */
 export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   ...ACTIVE_COLD_MIGRATION_EDGES.map((edge: ColdMigrationEdge): FaultInjectionBoundary => ({
@@ -71,6 +68,10 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   { path: "packages/workers/diskIO/luckSecretFile.ts", purpose: "luck secret atomic publication and recovery" },
   { path: "packages/workers/diskIO/snapshotFiles.ts", purpose: "snapshot inspect, adoption and recovery maintenance" },
   { path: "packages/database/validation/storageRows.ts", purpose: "strict SQLite startup row validation" },
+  {
+    path: "packages/workers/diskIO/storageDatabase/shutdown.ts",
+    purpose: "clean-shutdown residual commit, WAL checkpoint and storage database close",
+  },
   { path: "packages/workers/aiChat/replyPipeline.ts", purpose: "reply admission, draining and cancellation" },
   { path: "packages/workers/aiChat/replyRound.ts", purpose: "reply model, action and resource lifecycle" },
   { path: "packages/workers/aiChat/replyDelivery.ts", purpose: "reply delivery capacity and generation cleanup" },
@@ -120,8 +121,8 @@ function usesBoundary(reference: RuntimeModuleReference, boundary: FaultInjectio
  * 相对说明符解析成绝对 `.ts` 路径，供与 harness 的真实路径比对：优先 `<说明符>.ts`，
  * 不存在时取目录入口 `<说明符>/index.ts`。
  *
- * 按**路径**而不是按基名比对：同名不同目录的模块不该被误判成 harness。裸说明符
- * （`bun:test`、`grammy/types`）返回 undefined，直接跳过。
+ * 按路径比对，同名不同目录的模块不计入。裸说明符（`bun:test`、`grammy/types`）
+ * 返回 undefined，直接跳过。
  */
 function resolvedSpecifierPath(importerPath: string, specifier: string): string | undefined {
   if (!specifier.startsWith(".")) return undefined;

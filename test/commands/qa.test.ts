@@ -98,8 +98,7 @@ function context(
     chat,
     msgId: 10,
     match,
-    // grammY 的 CommandContext 恒带 msg；夹具始终提供最小消息，再叠加覆写，
-    // 避免制造生产中不存在的 undefined 形态。
+    // grammY 的 CommandContext 恒带 msg；夹具始终提供最小消息再叠加覆写。
     msg: { message_id: 10, chat, ...overrides.msg },
     ...(fromId === undefined ? {} : { from: { id: fromId } }),
   } as never;
@@ -245,8 +244,7 @@ describe("/qa set", () => {
       msg: { is_topic_message: true, message_thread_id: 77 },
     }));
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    // 表单由状态机而非 30 秒清理持有，会一直留到填齐/超时/teardown，因此必须
-    // 自己带话题：只靠 reply_parameters 的话，命令消息被删就掉进 General。
+    // 表单由状态机而非固定延迟清理持有，一直留到填齐/超时/teardown；表单自己带话题（命令消息被删后仍落在话题里，不只靠 reply_parameters）。
     expect(sendMessage.mock.calls[0]?.[0]).toMatchObject({ messageThreadId: 77 });
   });
 
@@ -430,8 +428,7 @@ describe("停机排空未完成表单", () => {
 
 describe("表单填齐后的结算", () => {
   test("本群没有未完成表单时同步返回 false，不为每条群消息分配 Promise", () => {
-    // 判定只需一次以群 id 为键的 Map.get；本 handler 挂在每条群消息与频道帖之前
-    // （见 app/registerHandlers.ts），返回值必须同步。
+    // 判定只需一次以群 id 为键的 Map.get；本 handler 挂在每条群消息与频道帖之前（见 app/registerHandlers.ts），返回值同步。
     expect(qaFormSessions.has(CHAT_ID)).toBeFalse();
     expect(handleQaMessageIngress(delivered("问题:\n怎么入群？"))).toBe(false);
   });
@@ -455,10 +452,10 @@ describe("表单填齐后的结算", () => {
 
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
 
-    // 上面那条回执 30 秒后自删，之后只有表单还说得出这张单子填到了哪。
+    // 上面那条回执自删之后，只有表单还说得出这张单子填到了哪。
     const edited: EditedMessage = editMessageText.mock.calls.at(-1)![0];
     expect(edited.text).toBe(renderQaFormPrompt("怎么入群？", undefined, ATMOSPHERE_TEXTS.teasing));
-    // 改写而不是重发：表单 id 是状态机持有的删除责任，换一条就再也删不掉旧的。
+    // 改写而不是重发：表单 id 是状态机持有的删除责任。
     expect(edited.chatId).toBe(CHAT_ID);
     expect(edited.messageId).toBe(55);
   });
@@ -472,12 +469,29 @@ describe("表单填齐后的结算", () => {
       `问题:\n${"长".repeat(CHAT_QA_QUESTION_MAX_CHARS + 1)}\n回答:\n点置顶`
     ));
 
-    // 回执只点名被挡下的那一项，合规的那项却已经进了会话——表单必须说得出来，
-    // 否则用户只会以为整条消息都没被收下。
+    // 回执只点名被挡下的那一项，合规的那项已经进了会话：表单说明这一点。
     expect(lastText()).toBe(QA_COMMAND_TEXTS.questionTooLong);
     expect(qaFormSessions.get(CHAT_ID)?.a).toBe("点置顶");
     expect(editMessageText.mock.calls.at(-1)![0].text)
       .toBe(renderQaFormPrompt(undefined, "点置顶", ATMOSPHERE_TEXTS.teasing));
+  });
+
+  test("含可点命令的那一项按对应文案回执，合规的另一项照常进表单", async () => {
+    await handleQaCommand(context(OWNER, "set"));
+    editMessageText.mockClear();
+    sendCommandMessage.mockClear();
+
+    await handleQaMessageIngress(delivered("问题:\n怎么入群？\n回答:\n发 /join"));
+
+    expect(lastText()).toBe(QA_COMMAND_TEXTS.answerHasCommand);
+    expect(qaFormSessions.get(CHAT_ID)?.q).toBe("怎么入群？");
+    expect(qaFormSessions.get(CHAT_ID)?.a).toBeUndefined();
+    expect(editMessageText.mock.calls.at(-1)![0].text)
+      .toBe(renderQaFormPrompt("怎么入群？", undefined, ATMOSPHERE_TEXTS.teasing));
+
+    await handleQaMessageIngress(delivered("问题:\n/start 是什么"));
+    expect(lastText()).toBe(QA_COMMAND_TEXTS.questionHasCommand);
+    expect(qaFormSessions.get(CHAT_ID)?.q).toBe("怎么入群？");
   });
 
   test("整条都被挡下时不改表单——会话一个字都没变", async () => {
@@ -488,7 +502,7 @@ describe("表单填齐后的结算", () => {
       delivered(`问题:\n${"长".repeat(CHAT_QA_QUESTION_MAX_CHARS + 1)}`)
     );
 
-    // 改写成同一份正文只会换来一次 Telegram 的「内容没有变化」，白跑一趟。
+    // 正文没有变化时不改写。
     expect(editMessageText).not.toHaveBeenCalled();
     expect(lastText()).toBe(QA_COMMAND_TEXTS.questionTooLong);
   });
@@ -614,7 +628,7 @@ describe("落盘失败与容量拒绝的回执分流", () => {
   test("发布前 revision 耗尽时报告持久化失败，保持热表原值", async () => {
     await handleQaCommand(context(OWNER, "set"));
     await handleQaMessageIngress(delivered("问题:\n怎么入群？"));
-    // revision 空间耗尽在发布前拒绝，不能把它解释为条数已满。
+    // revision 空间耗尽在发布前拒绝，不解释为条数已满。
     nextChatQaRevision.current = Number.MAX_SAFE_INTEGER;
     sendCommandMessage.mockClear();
 
@@ -637,7 +651,7 @@ describe("落盘失败与容量拒绝的回执分流", () => {
 
     await handleQaMessageIngress(delivered("回答:\n点置顶"));
 
-    // 容量拒绝时那条根本没进热表；说成「盘写不进去」会让人去查磁盘。
+    // 容量拒绝时那条没进热表；回执不说「盘写不进去」。
     expect(lastText()).toBe(QA_COMMAND_TEXTS.full);
     expect(chatQaEntries.get(CHAT_ID)?.has("怎么入群？")).toBeFalse();
   });
@@ -674,7 +688,7 @@ describe("填到一半时重来", () => {
 
     await handleQaCommand(context(OWNER, "set"));
 
-    // 旧那条表单消息不挂固定延迟清理，重开时不删就永远留在群里。
+    // 旧那条表单消息不挂固定延迟清理，重开时删除它。
     expect(deleteMessageWithOutcome).toHaveBeenCalledWith(CHAT_ID, first);
     const session = qaFormSessions.get(CHAT_ID);
     expect(session).toBeDefined();

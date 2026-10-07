@@ -111,6 +111,10 @@ export const flushJoinLogBuffer = mock((): boolean => true);
 export const handleBlocklistRemovalsMessage = mock((_message: unknown): void => {});
 export const handleIdentityPolicyWrite = mock((_message: unknown): void => {});
 export const setStorageFlushHold = mock((_active: boolean, _reply: unknown): void => {});
+export const closeStorageDatabaseForShutdown = mock((_reply: unknown): { committed: boolean; checkpointBusy: boolean } => ({
+  committed: true,
+  checkpointBusy: false,
+}));
 export const handleChatStateWrite = mock((_message: unknown): void => {});
 export const handleChatQaWrite = mock((_message: unknown): void => {});
 export const handleTemporaryAdBypassWrite = mock((_message: unknown): void => {});
@@ -211,6 +215,7 @@ mock.module("../../packages/workers/diskIO/snapshotFiles", () => ({
 }));
 mock.module("../../packages/workers/diskIO/storageDatabase", () => ({
   adoptStorageDatabase,
+  closeStorageDatabaseForShutdown,
   flushStorageDatabase: flushBlocklistRemovalOutbox,
   handleIdentityPolicyWrite,
   handleChatStateWrite,
@@ -249,6 +254,7 @@ const { stopDiskIOMaintenanceCron } = await import(
 );
 export const {
   rejectedStorageDomains,
+  storageDatabaseClosed,
 } = await import("../../packages/cache/workers/diskIO/storageDatabase");
 export const {
   diskIOOperationTail,
@@ -323,10 +329,11 @@ beforeEach(() => {
     consoleError,
     inspectStorageDatabase,
     adoptStorageDatabase,
+    closeStorageDatabaseForShutdown,
   ]) fn.mockClear();
-  // 重放窗口是 Worker 独占的模块级状态：某个用例遗留的 true 会让后面每一次
-  // 写失败都误报成停机回执。
+  // 重放窗口是 Worker 独占的模块级状态，每个用例复位。
   diskIOReplayWindow.current = false;
+  storageDatabaseClosed.current = false;
   diskIOOperationTail.current = Promise.resolve();
   luckWorkerCache.current = null;
   hydratedLuckEntries.current = new Map();
