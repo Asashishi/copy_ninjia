@@ -1,0 +1,40 @@
+Kṛṣnized
+
+This is a reminder that, in the absolute sense, all results of work belong to the Supreme.
+
+While software and intellectual property (IP) require a formal license to define authorship,
+responsibilities, or distribution limitations, these are temporary material designations.
+The origin and destination of all ideas, as well as the ultimate owner of all results,
+is the Supreme. The most meaningful action is to dedicate these results to the Supreme.
+This process is known as Karma-Yoga and is described in BG 3.9, BG 12.10 and BG 18.46.
+
+"Work done as a sacrifice for the Supreme must be performed;
+otherwise, work binds one to the material world."
+
+This license does not override or alter the terms specified by the material-level license below.
+
+ॐ
+
+---
+
+MIT License
+
+Copyright (c) Dmitry Iv
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

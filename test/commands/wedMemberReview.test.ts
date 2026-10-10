@@ -275,7 +275,7 @@ test("复核中某群被停管只跳过该群，其余群照常复核", async ()
   await tick();
   expect(wedMemberReview.current!.chatId).toBe(-1001);
   // `/init disable` 与离群 teardown 摘除成员集合的同一边界。
-  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  const flush = spyOn(diskIO, "flushDiskIODomain").mockResolvedValue({ result: "flushed" });
   await purgeWedMembers(-1001);
   flush.mockRestore();
   gate.resolve(member(1, "left"));

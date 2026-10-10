@@ -229,6 +229,31 @@ describe("/h_image add", () => {
     expect(loggerError).toHaveBeenCalledTimes(2);
   });
 
+  test("单张的两段下载超时计为失败并各记一条日志，超限与空文件只计失败", async () => {
+    mediaGroupImages.set("album", {
+      chatId: CHAT_ID,
+      items: [
+        { fileId: "file-meta", fileUniqueId: "meta", fileSize: 10 },
+        { fileId: "file-slow", fileUniqueId: "slow", fileSize: 10 },
+        { fileId: "file-large", fileUniqueId: "large", fileSize: 10 },
+        { fileId: "file-empty", fileUniqueId: "empty", fileSize: 10 },
+      ],
+    });
+    downloads.set("file-meta", { status: "metadataTimeout" });
+    downloads.set("file-slow", { status: "downloadTimeout" });
+    downloads.set("file-large", { status: "tooLarge", observedBytes: 11 });
+    downloads.set("file-empty", { status: "empty" });
+
+    await runAdd(photo("meta", { media_group_id: "album" }));
+    expect(sendCommandMessage).toHaveBeenCalledWith({
+      chatId: CHAT_ID, text: texts.addResult({ added: 0, librarySize: 0, existing: 0, invalidDimensions: 0, failed: 4 }), replyToMessageId: 10,
+    });
+    expect(loggerError.mock.calls.map((call: unknown[]): string => String(call[0]))).toEqual([
+      "Failed to download a picture for /h_image add (metadataTimeout).",
+      "Failed to download a picture for /h_image add (downloadTimeout).",
+    ]);
+  });
+
   test("写盘失败记错误日志并计为失败，同页其余照常写盘", async () => {
     mediaGroupImages.set("album", {
       chatId: CHAT_ID,

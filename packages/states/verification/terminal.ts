@@ -1,5 +1,6 @@
 import { NO_VERIFICATION_EFFECTS } from "../../consts/antiRaid/verification";
 import type {
+  ExpelNoticeKind,
   TimeoutInviterVerdictEvent,
   VerificationEffect,
   VerificationState,
@@ -91,6 +92,29 @@ export function handleExpelSettled(
 ): VerificationTransition {
   if (state?.kind === "expelling") return { next: undefined, effects: NO_VERIFICATION_EFFECTS };
   return { next: state, effects: NO_VERIFICATION_EFFECTS };
+}
+
+/** 驱逐播报发出后置位对应标记；只作用于当前 expelling 终态，快照随之重发。 */
+export function handleExpelNoticeSent(
+  state: VerificationState | undefined,
+  notice: ExpelNoticeKind
+): VerificationTransition {
+  if (state?.kind !== "expelling") return { next: state, effects: NO_VERIFICATION_EFFECTS };
+  if (notice === "success") state.successNoticeSent = true;
+  else if (notice === "failure") state.failureNoticeSent = true;
+  else state.unconfirmedNoticeSent = true;
+  return { next: state, effects: NO_VERIFICATION_EFFECTS, snapshotChanged: true };
+}
+
+/** 踢人确认成功但成功播报没发出：记下 removalConfirmed；只作用于当前 expelling 终态，已记过时不重发快照。 */
+export function handleRemovalConfirmed(
+  state: VerificationState | undefined
+): VerificationTransition {
+  if (state?.kind !== "expelling" || state.removalConfirmed === true) {
+    return { next: state, effects: NO_VERIFICATION_EFFECTS };
+  }
+  state.removalConfirmed = true;
+  return { next: state, effects: NO_VERIFICATION_EFFECTS, snapshotChanged: true };
 }
 
 /** 私密模式踢人失败后的重试只对尚未执行的原 token 生效。 */

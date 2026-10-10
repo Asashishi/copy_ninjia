@@ -170,10 +170,6 @@ WantedBy=multi-user.target
 - **`memory/ai-daily-usage/usage.json`**：AI 模型调用的 Token 与请求量统计（不含任何用户对话正文）。
   - **数据结构**：最顶部的 `summary` 对象保存最近一个已结束自然日的用量汇总（按能力、供应商、模型名称分组归纳），其余键值为当天尚未汇总的实时逐条调用统计。
   - **覆盖能力范围**：全面覆盖 `AGENT_CAPABILITY_NAMES` 中定义的所有能力维度。
-  - **停机数据维护**：若需剔除联网搜索的用量统计，可在服务停机后使用维护脚本 [`scripts/removeWebSearchUsage.ts`](../../scripts/removeWebSearchUsage.ts) 重新计算：
-    ```bash
-    bun run usage:remove-web-search --source-root <停机备份根目录> --output-root <不存在的独立目标目录>
-    ```
 
 ### 8. 日志与实例锁：`logs/` 与 `bot.lock`
 - **`logs/`**：英文结构化错误日志目录，由 Disk I/O Worker 负责批量异步写入。

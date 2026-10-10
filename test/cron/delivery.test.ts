@@ -375,6 +375,7 @@ describe("cron send_web_digest", () => {
     ["ai unconfigured", "permanent"],
     ["no sources", "permanent"],
     ["invalid digest", "permanent"],
+    ["refused", "permanent"],
     ["too long", "permanent"],
   ] as const)("组稿失败 %s 按 %s 返回，不发送也不登记", async (reason, kind) => {
     const digests: CronRoundDigests = new Map();

@@ -90,14 +90,21 @@ export function buildQaBoardKeyboard(page: number, total: number, atmosphere: At
 /**
  * 处理看板翻页按钮的点击。
  *
- * @returns 是否由本领域认领。带本领域前缀的 callback 一律认领并应答，页号解析
- *   失败或条目已被删光时同样如此。
+ * 没有 callback，或 data 不是本领域前缀时同步返回 false，不分配 Promise。
+ * 带本领域前缀的 callback 一律认领并应答；页号解析失败、页码指示按钮或条目已被删光时同样如此。
+ *
+ * @returns 是否由本领域认领。
  */
-export async function handleQaBoardCallback(ctx: Context): Promise<boolean> {
+export function handleQaBoardCallback(ctx: Context): boolean | Promise<boolean> {
   const query: CallbackQuery | undefined = ctx.callbackQuery;
   const data: string | undefined = query?.data;
   if (query === undefined || data === undefined) return false;
   if (!data.startsWith(QA_QUERY_PAGE_CALLBACK_PREFIX)) return false;
+  return answerClaimedQaBoardCallback(query, data);
+}
+
+/** 已认领的翻页：先应答 callback，再按页号改写同一条看板消息。 */
+async function answerClaimedQaBoardCallback(query: CallbackQuery, data: string): Promise<boolean> {
   await answerCallbackQuery({ callbackQueryId: query.id });
   // 页码指示按钮：不发编辑请求。
   if (data === QA_QUERY_PAGE_NOOP_DATA) return true;

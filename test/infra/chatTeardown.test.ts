@@ -188,6 +188,7 @@ describe("chat runtime teardown", () => {
       intentId: 7,
       originalPermissions: {},
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 9_000,
     };
     states.set(-1001, {

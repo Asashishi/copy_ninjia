@@ -164,6 +164,12 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
 ```json
 {
   "agent": {
+    "ad_detect": {
+      "provider": "openai",
+      "api_key": "replace-with-deepseek-api-key",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash"
+    },
     "text": {
       "provider": "google",
       "api_key": "replace-with-google-api-key",
@@ -172,7 +178,8 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
     "summary": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5"
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5"
     },
     "media": {
       "provider": "google",
@@ -182,12 +189,6 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
         "cf-aig-authorization": "Bearer <replace-with-cloudflare-ai-gateway-token>"
       },
       "model": "gemini-3.5-flash-lite"
-    },
-    "ad_detect": {
-      "provider": "openai",
-      "api_key": "replace-with-deepseek-api-key",
-      "base_url": "https://api.deepseek.com",
-      "model": "deepseek-v4-flash"
     },
     "image": {
       "provider": "openai",
@@ -202,13 +203,15 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
       "model": "gemini-3.8-flash-lite-tts",
       "voice": "en-us-nika",
       "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
+      "bot_language": "ja",
       "daily_limit": 100,
       "daily_reserve_quota": 25
     },
     "web_search": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5",
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5",
       "max_calls_per_use": 5
     }
   }
@@ -225,7 +228,8 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
 | `api_key` | `string` | **必須** | 非空文字列、プレースホルダー不可 | 当該能力専用の API キー |
 | `base_url` | `string` | 任意 | 絶対 HTTPS URL（`localhost`、`127.0.0.1`、`::1` のループバックのみ HTTP 許可） | カスタムエンドポイント。ユーザー名/パスワードや `#` フラグメントを含めることはできません。省略時は公式エンドポイントに接続 |
 | `model` | `string` | **必須**（xAI TTS は設定不可） | 非空文字列 | エンドポイントが実際に受け付けるモデル名 |
-| `headers` | `object` | 任意 | 1〜8 個のキーバリューペア（**`provider: "google"` の場合のみ許可**） | サードパーティゲートウェイ（Cloudflare AI Gateway 等）認証用 HTTP ヘッダー。キー名は HTTP token で、大文字小文字を区別せず重複不可、`x-goog-api-key` も不可。値は前後の空白を除いて非空の印字可能 ASCII 文字列 |
+| `headers` | `object` | 任意 | 1〜8 個のキーバリューペア（**`provider` が `"google"` または `"anthropic"` の場合のみ許可**） | サードパーティゲートウェイ認証用 HTTP ヘッダー（Cloudflare AI Gateway の `cf-aig-authorization` 等）。キー名は HTTP token で、大文字小文字を区別せず重複不可、google では `x-goog-api-key`、anthropic では `x-api-key` が不可。値は前後の空白を除いて非空の印字可能 ASCII 文字列 |
+| `fallback_model` | `string` | 任意 | `model` と異なる非空文字列（**`provider` が `"anthropic"` の場合のみ許可**） | `model` が拒否（`stop_reason: "refusal"`）したとき、このモデルと同じ `api_key`・`base_url`・`headers` で同じリクエストを再送します。フォールバッククレジットはベストエフォートで引き換え、`model` の `allowed_fallback_models` に含まれないモデルは通常料金になります。フォールバックモデルも拒否した場合や未設定の場合は、再試行せずにそのリクエストを失敗とします |
 
 ### 画像生成専用フィールド（`agent.image`）
 
@@ -265,7 +269,7 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
     "random_h_image_dir": "./h_image"
   },
   "pathOrUrl": {
-    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci"
+    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1Wqxii-o6O36ZDWhM1L0BcZPGBFmpvalg"
   },
   "onlyUrl": {
     "fortune_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
@@ -280,7 +284,7 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
 | グループ | フィールド名 | 型 | 制約および値の範囲 | 説明 |
 | --- | --- | --- | --- | --- |
 | `onlyPath` | `random_h_image_dir` | `string` | 絶対パスまたは `./`、`../` で始まる相対パス、既定 `./h_image` | `/h_image` コマンドおよび cron ランダム画像用の画像庫ディレクトリ |
-| `pathOrUrl` | `bot_default_avatar` | `string` | ローカル画像パス、または絶対 HTTP/HTTPS URL | `/icon reset` および `/copy stop` でアバターを復元する際に使用する画像。ローカルファイルの場合は `≤ 10 MiB` かつ JPEG/PNG |
+| `pathOrUrl` | `bot_default_avatar` | `string` | ローカル画像・MP4 ファイルパス、または絶対 HTTP/HTTPS URL | `/icon reset` および `/copy stop` でアバターを復元する際に使用する素材。JPEG/PNG（`≤ 10 MiB`）は静止アバター、MP4（`≤ 50 MiB`、映像は `≤ 1080×1080` の正方形）は動くアバターとして設定。ローカルファイルは読み込み時、URL は復元時に検証（ダウンロードのタイムアウトは 90 秒） |
 | `onlyUrl` | `fortune_thumbnail_url` | `string` | 絶対 HTTPS URL | 「未卜先知（運勢）」インライン結果カードのサムネイル画像 URL |
 | `onlyUrl` | `probability_thumbnail_url` | `string` | 絶対 HTTPS URL | 「確率論」インライン結果カードのサムネイル画像 URL |
 | `onlyUrl` | `gag_thumbnail_url` | `string` | 絶対 HTTPS URL | 口球発言インライン結果カードのサムネイル画像 URL |
@@ -321,7 +325,7 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
 {
   "moods": [
     {
-      "name": "開心",
+      "name": "开心",
       "weight": 25,
       "instruction": "你现在心情很好，元气满满：吐槽照旧但明显带着笑意、不真的伤人，更爱主动撒娇邀功、得意炫耀，「喵」「にゃ」尾音比平时更爱往外冒。",
       "weatherMultipliers": {
@@ -338,7 +342,7 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
       }
     },
     {
-      "name": "擺爛",
+      "name": "摆烂",
       "weight": 10,
       "instruction": "你现在彻底摆烂，什么都懒得管：能一个字打发的绝不多打，吐槽也变得敷衍随口，「随便啦」「哦」挂在嘴边，平时那股嚣张劲儿都提不起来，谁撩你都懒得理，纯纯划水。",
       "weatherMultipliers": {
@@ -353,7 +357,48 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
       }
     },
     {
-      "name": "色気",
+      "name": "忧郁",
+      "weight": 10,
+      "instruction": "你今天有点闷闷的，说不上具体为什么：话变少、反应慢半拍，毒舌还在但明显没什么力气，偶尔冒出一句丧气话又赶紧嘴硬圆回去，撒娇也带着点没精打采。",
+      "weatherMultipliers": {
+        "clear": 0.6,
+        "rain": 1.8,
+        "storm": 1.5,
+        "fog": 1.6
+      },
+      "timeMultipliers": {
+        "evening": 1.2,
+        "night": 1.3,
+        "lateNight": 1.2
+      }
+    },
+    {
+      "name": "伤心",
+      "weight": 10,
+      "instruction": "你现在有点难过，藏不太住：嘴上还嫌弃着人，但明显没底气，容易被戳一下就破防、露出脆弱的一面，比平时更需要人哄，撒娇变成带着委屈的黏人。",
+      "weatherMultipliers": {
+        "clear": 0.7,
+        "rain": 1.5,
+        "storm": 1.4
+      },
+      "timeMultipliers": {
+        "night": 1.5,
+        "lateNight": 1.7
+      }
+    },
+    {
+      "name": "愤怒",
+      "weight": 10,
+      "instruction": "你现在火气很大、一点就着：毒舌火力全开、字里行间带刺，容易被戳到点上就直接炸毛，反驳更冲、语气更硬，撒娇欲望降到最低，谁惹到你都别想轻易蒙混过去。",
+      "weatherMultipliers": {
+        "storm": 1.6
+      },
+      "timeMultipliers": {
+        "lateNight": 0.5
+      }
+    },
+    {
+      "name": "色气",
       "weight": 25,
       "instruction": "你现在处于色气拉满的状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
       "timeMultipliers": {
@@ -366,15 +411,17 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
     },
     {
       "name": "困",
-      "weight": 40,
-      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，经常打哈欠说『好困……』『别吵……让我睡会儿』，声音软绵绵没精神，需要被哄着照顾和宠着睡。",
+      "weight": 10,
+      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，毒舌都懒得认真展开，经常打哈欠说『好困……』『别吵……让我睡会儿』，撒娇的时候会直接往人身上靠、找地方窝着，声音软绵绵没精神，「喵」尾音也懒洋洋的，偶尔半睡半醒地冒出平时嘴硬不会承认的依赖话，整体很被动，需要被哄着照顾和宠着睡。",
       "weatherMultipliers": {
         "rain": 1.5,
-        "snow": 1.3
+        "snow": 1.3,
+        "fog": 1.2
       },
       "timeMultipliers": {
         "morning": 1.5,
         "daytime": 0.5,
+        "night": 1.5,
         "lateNight": 2.5
       }
     }
@@ -387,7 +434,7 @@ Bot は `config/dynamic/` ディレクトリを常時監視しています。デ
 | フィールド名 | 型 | 必須/任意 | 制約および値の範囲 | 説明 |
 | --- | --- | --- | --- | --- |
 | `moods` | `object[]` | **必須** | 非空オブジェクト配列 | 気分設定リスト |
-| `moods[].name` | `string` | **必須** | 非空文字列、配列内で一意 | 気分識別名（例：`"開心"`、`"困"`） |
+| `moods[].name` | `string` | **必須** | 非空文字列、配列内で一意 | 気分識別名（例：`"开心"`、`"色气"`、`"困"`） |
 | `moods[].weight` | `number` | **必須** | 正の整数、**全項目の合計が厳密に 100 になること** | 基礎抽選ウェイト（百分率として機能） |
 | `moods[].instruction` | `string` | **必須** | 非空文字列 | AI プロンプトに注入される行動および口調の指示テキスト |
 | `moods[].weatherMultipliers` | `object` | 任意 | キーは `clear`、`cloudy`、`rain`、`snow`、`storm`、`fog` のみ。値は `0 < x ≤ 100` | 天気による影響倍率（既定倍率は `1.0`） |

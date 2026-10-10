@@ -71,12 +71,11 @@ async function isMissingLeaf(path: string): Promise<boolean> {
 }
 
 /**
- * 状态文件的默认读取边界：目标必须是普通文件，内容必须是严格 UTF-8。
+ * 状态文件的默认读取边界：叶子路径本身必须是普通文件，内容必须是严格 UTF-8。
  *
- * 存在性经 `BunFile.stat()` 判定，不用 `exists()`。目录、指向目录的链接、其它非普通文件、悬空链接以及
- * EACCES/ELOOP/ENOTDIR 等访问失败一律是已配置但非法，按 AGENTS.md 的
- * 「不为用户行为兜底」拒绝启动；stat 成功之后的读取或解码失败也不降级为缺失。
- * 指向普通文件的软链接继续接受。
+ * 类型经 `lstat` 判定，不跟随软链接：软链接（含指向普通文件的链接与悬空链接）、目录、其它非普通文件以及
+ * EACCES/ELOOP/ENOTDIR 等访问失败一律是已配置但非法，按 AGENTS.md 的「不为用户行为兜底」拒绝启动；
+ * 只有 `lstat` 报 ENOENT 才按缺失处理。lstat 成功之后的读取或解码失败也不降级为缺失。
  *
  * 错误统一收敛为 InputValidationError，只带文件路径、字段路径和期望形态，不回显
  * 底层异常与状态内容（见 docs/cn/04-invariants.md 的严格解析约束）。
@@ -85,12 +84,12 @@ async function isMissingLeaf(path: string): Promise<boolean> {
 async function readExistingText(path: string): Promise<string | null> {
   let stats: Stats;
   try {
-    stats = await Bun.file(path).stat();
+    stats = await lstat(path);
   } catch (error: unknown) {
-    if (isErrno(error, "ENOENT") && await isMissingLeaf(path)) return null;
+    if (isErrno(error, "ENOENT")) return null;
     return invalidInput(path, "$", "an accessible regular file");
   }
-  if (!stats.isFile()) return invalidInput(path, "$", "a regular file");
+  if (!stats.isFile()) return invalidInput(path, "$", "a regular file, not a symbolic link");
   try {
     return await readUtf8TextInput(path);
   } catch {
@@ -237,11 +236,17 @@ export class StateStore {
     }
     // 本次序列化的是完整最新状态，窗口内挂着的后台值随这次写入一并落盘。
     this.clearBackgroundTimer();
-    const persisted: Promise<void> = new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
-      this.persistenceWaiters.push({ revision: write.revision, resolve, reject });
-    });
-    void this.push(write);
+    const persisted: Promise<void> = this.waitForRevision(write.revision);
+    // 失败重试已排期时由重试 timer 按退避写出最新值，等待落盘的写入不额外消耗重试次数。
+    if (this.retryTimer === null) void this.push(write);
     return persisted;
+  }
+
+  /** 登记一个等待者，revision（或更新的 revision）落盘时 resolve，进入 fatal 或 quiesce 后的写失败时 reject。 */
+  private waitForRevision(revision: number): Promise<void> {
+    return new Promise((resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: unknown) => void): void => {
+      this.persistenceWaiters.push({ revision, resolve, reject });
+    });
   }
 
   /**
@@ -337,14 +342,20 @@ export class StateStore {
     this.retryTimer.unref();
   }
 
+  /**
+   * 在 timeoutMs 内等待最新值落盘。quiesce 为 true 时此后不再接受写入，并取消重试退避立即做最后一次写出；
+   * 非 quiesce 时若失败重试已排期，等重试 timer 按退避写出，不提前投递、不额外消耗重试次数。
+   */
   flush(timeoutMs: number = STATE_FLUSH_TIMEOUT_MS, quiesce: boolean = false): Promise<FlushResult> {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
       throw new RangeError("StateStore flush timeout must be a positive finite number.");
     }
-    if (quiesce) this.quiescing = true;
-    if (this.retryTimer !== null) {
-      clearTimeout(this.retryTimer);
-      this.retryTimer = null;
+    if (quiesce) {
+      this.quiescing = true;
+      if (this.retryTimer !== null) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      }
     }
     this.clearBackgroundTimer();
     const write: StateWrite | null = this.dirtyWrite;
@@ -352,7 +363,9 @@ export class StateStore {
     const alreadyQueued: boolean = write !== null && write === this.pushedWrite && this.observedWriterPromise !== null;
     const run: Promise<void> | null = write === null || alreadyQueued
       ? this.observedWriterPromise
-      : this.push(write);
+      : this.retryTimer !== null
+        ? this.waitForRevision(write.revision)
+        : this.push(write);
     if (run === null) return Promise.resolve("flushed");
     return new Promise((resolve: (value: FlushResult | PromiseLike<FlushResult>) => void): void => {
       let settled: boolean = false;

@@ -43,9 +43,9 @@ export const ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS: number = 3;
  * Messages API 内建联网检索工具的类型名。`allowed_callers: ["direct"]` 让它只由模型直接调用，
  * 不依赖程序化工具调用。
  */
-export const ANTHROPIC_WEB_SEARCH_TOOL_TYPE: Anthropic.WebSearchTool20260209["type"] = "web_search_20260209";
+export const ANTHROPIC_WEB_SEARCH_TOOL_TYPE: Anthropic.Beta.BetaWebSearchTool20260209["type"] = "web_search_20260209";
 /** 内建联网检索工具在请求里的固定名字。 */
-export const ANTHROPIC_WEB_SEARCH_TOOL_NAME: Anthropic.WebSearchTool20260209["name"] = "web_search";
+export const ANTHROPIC_WEB_SEARCH_TOOL_NAME: Anthropic.Beta.BetaWebSearchTool20260209["name"] = "web_search";
 
 /** 回复往返在错误日志里的调用名。 */
 export const ANTHROPIC_REPLY_ERROR_LABEL: string = "Anthropic Messages API";

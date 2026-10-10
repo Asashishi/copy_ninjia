@@ -168,7 +168,7 @@ export async function confirmIdentityPolicyPersisted(
     unacknowledgedIdentityWrites(table).get(id);
   if (pending === undefined) return;
   if (retryUnacknowledged) requeueUnacknowledgedIdentityWrite(table, id);
-  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome(table);
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomain(table);
   if (outcome.result !== "flushed") {
     throw new Error(
       `Persistence flush ${outcome.result} for ${table} identity ${id} revision ${pending.revision}; ${describeFlushFailure(outcome)}.`

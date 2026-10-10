@@ -287,7 +287,7 @@ test("机器人离群时不删除任何结果，忙碌会话结束后也不补�
 
   // 离群连奖池一并删除；本用例只看 Telegram 出站，落盘边界直接放行。
   const post = spyOn(diskIO, "postDiskIO").mockReturnValue(true);
-  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  const flush = spyOn(diskIO, "flushDiskIODomain").mockResolvedValue({ result: "flushed" });
   try {
     await teardownWedInChat(chat.id, "departed");
   } finally {
@@ -315,7 +315,7 @@ test("重抽途中机器人离群：被替换的旧结果同样不再删除", as
   expect(avatar).toHaveBeenCalledTimes(2);
 
   const post = spyOn(diskIO, "postDiskIO").mockReturnValue(true);
-  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  const flush = spyOn(diskIO, "flushDiskIODomain").mockResolvedValue({ result: "flushed" });
   try {
     await teardownWedInChat(chat.id, "departed");
   } finally {
@@ -342,7 +342,7 @@ test("重抽的新图在机器人离群后才送达：新旧结果都不发删�
   expect(photo).toHaveBeenCalledTimes(2);
 
   const post = spyOn(diskIO, "postDiskIO").mockReturnValue(true);
-  const flush = spyOn(diskIO, "flushDiskIODomainOutcome").mockResolvedValue({ result: "flushed" });
+  const flush = spyOn(diskIO, "flushDiskIODomain").mockResolvedValue({ result: "flushed" });
   try {
     await teardownWedInChat(chat.id, "departed");
   } finally {

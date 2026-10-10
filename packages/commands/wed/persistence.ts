@@ -2,7 +2,7 @@ import { pendingWedMemberDeletes, wedMemberDeleteCounter, wedMemberFlushState, w
 import { FLUSH_INTERVAL_MS, FLUSH_MAX_ENTRIES } from "../../consts/diskIO/appendOnly";
 import { DISK_IO_RESPAWN_PRIORITIES } from "../../consts/diskIO/common";
 import { STATE_MANAGED_CHAT_LIMIT } from "../../consts/storage";
-import { flushDiskIODomainOutcome, onDiskIORespawn, postDiskIO } from "../../infra/diskIO";
+import { flushDiskIODomain, onDiskIORespawn, postDiskIO } from "../../infra/diskIO";
 import { onDiskIOReply } from "../../infra/diskIO/observers";
 import type { DiskIORecoveryTransport, WedMembersDeleteDiskMessage, WedMembersDiskMessage } from "../../types/diskIO/messages";
 import type { DomainFlushOutcome, WedMembersDeletedPersistedReply } from "../../types/diskIO/replies";
@@ -88,7 +88,7 @@ export async function purgeWedMembers(chatId: number): Promise<void> {
     scheduleWedMemberFlush(false);
     throw new Error(`Disk I/O refused the wed member deletion for chat ${chatId}.`);
   }
-  const outcome: DomainFlushOutcome = await flushDiskIODomainOutcome("wedMembers");
+  const outcome: DomainFlushOutcome = await flushDiskIODomain("wedMembers");
   if (outcome.result !== "flushed") {
     throw new Error(
       `Failed to delete the wed member snapshot for chat ${chatId}: flush ${outcome.result}.`

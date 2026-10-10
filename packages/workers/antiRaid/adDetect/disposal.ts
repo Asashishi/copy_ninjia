@@ -27,7 +27,6 @@ import { botCanDeleteIn } from "../botPermissions";
 import {
   AD_DETECT_MAX_IN_FLIGHT,
 } from "../../../consts/antiRaid/adDetect";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
 import { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } from "../../../consts/telegram";
 import type {
   AdCandidateEntry,
@@ -90,7 +89,6 @@ export function warnReferencedAdSender(
     chatId: bundle.chatId,
     identityId: bundle.senderId,
     text: atmosphere.NOTICE_TEXTS.adReferenceWarning(adSenderLabel(bundle, atmosphere)),
-    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   });
 }
 

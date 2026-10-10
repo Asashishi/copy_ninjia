@@ -15,13 +15,14 @@ import OpenAI from "openai";
 import { openAiClientCache } from "../../cache/workers/aiChat/openai";
 import { capabilityClient } from "../capabilityClient";
 import { logger } from "../../infra/logger";
-import { reportAiCacheUsage } from "../../infra/aiCacheUsage";
+import { reportOpenAiResponsesUsage } from "../../infra/aiCacheUsage";
 import {
   OPENAI_REQUEST_MAX_RETRIES,
   OPENAI_REQUEST_TIMEOUTS_MS,
 } from "../../consts/aiChat/openai";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
+import { diagnosticWithDetails } from "../ai/utils/finishDetails";
 import {
   classifyProviderApiFailure,
   numericErrorStatus,
@@ -33,6 +34,7 @@ import {
   countWebSearchCalls,
   isTruncatedByTokenLimit,
   normalizedFinishReason,
+  openAiFinishDetails,
   responseOutputText,
 } from "./response";
 import type { OpenAiRequestResult } from "../../types/aiChat/openai";
@@ -57,17 +59,6 @@ export function getOpenAiClient(capability: AgentCapability): OpenAI {
   });
 }
 
-/**
- * Responses 用量里命中缓存的输入 token：官方字段是 `input_tokens_details.cached_tokens`；
- * DeepSeek 等兼容端点缺它时读 `prompt_cache_hit_tokens`。都没有时为 undefined。
- */
-function responsesCachedTokens(usage: OpenAI.Responses.ResponseUsage | undefined): unknown {
-  if (usage === undefined) return undefined;
-  const cached: unknown = (usage.input_tokens_details as { cached_tokens?: unknown } | undefined)?.cached_tokens;
-  if (cached !== undefined) return cached;
-  return (usage as unknown as Readonly<Record<string, unknown>>).prompt_cache_hit_tokens;
-}
-
 /** OpenAI Responses 调用的完整参数；能力决定客户端端点。 */
 export interface OpenAiRequestOptions {
   readonly capability: AgentCapability;
@@ -79,8 +70,9 @@ export interface OpenAiRequestOptions {
 }
 
 /**
- * 调一次 Responses 接口。请求失败、超时、非 2xx 或产出不可用返回带诊断的
- * 失败结果（已记日志）；被 max_output_tokens 截断的响应另记一条 token 诊断日志。
+ * 调一次 Responses 接口。请求失败、超时、非 2xx 或产出不可用（含 `refusal` 内容块拒答）返回带诊断的
+ * 失败结果（已记日志，产出不可用时连同收尾详情一起记）；被 max_output_tokens 截断的响应另记一条
+ * token 诊断日志。
  * @param buildBody 就地构造完整请求体，直接使用官方 SDK 的参数类型。构造发生在本函数的
  *   try 内，抛错（如 config/dynamic/agent.json 缺对应能力，见 config/agent.ts）按
  *   `failureKind: "request"` 归一。
@@ -109,13 +101,7 @@ export async function requestOpenAiResult({
     response = await raceAbortOrThrow(
       (client ?? getOpenAiClient(capability)).responses.create(body, { signal: requestSignal })
         .then((result: OpenAI.Responses.Response): OpenAI.Responses.Response => {
-          reportAiCacheUsage({
-            capability, provider: "openai", model,
-            inputTokens: result.usage?.input_tokens,
-            cachedInputTokens: responsesCachedTokens(result.usage),
-            outputTokens: result.usage?.output_tokens,
-            searchCalls: countWebSearchCalls(result),
-          });
+          reportOpenAiResponsesUsage({ capability, model, usage: result.usage, searchCalls: countWebSearchCalls(result) });
           return result;
         }),
       requestSignal
@@ -155,11 +141,13 @@ export async function requestOpenAiResult({
 
   const abnormal: string | null = abnormalResponseDiagnostic(response);
   if (abnormal) {
-    logger.error(`${errorLabel} returned an unusable response: ${abnormal}.`);
+    const finishDetails: string | undefined = openAiFinishDetails(response);
+    logger.error(`${errorLabel} returned an unusable response: ${diagnosticWithDetails(abnormal, finishDetails)}.`);
     return {
       ok: false,
       failureKind: "response",
       finishReason: normalizedFinishReason(response),
+      finishDetails,
       response,
     };
   }

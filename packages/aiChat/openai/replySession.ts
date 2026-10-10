@@ -209,9 +209,9 @@ export function createOpenAiReplySession(
       const response: OpenAI.Responses.Response | undefined = result.response;
       const webSearchCalls: number = response === undefined ? 0 : countWebSearchCalls(response);
 
-      // Responses 没有 finishMessage 与「服务端工具调用过多」的对等信号，失败轮走共用构造；
+      // Responses 没有「服务端工具调用过多」的对等信号，失败轮走共用构造；
       // 成功分支按同一顺序初始化同一组字段。
-      if (!result.ok) return failedReplyTurn(webSearchCalls, result.finishReason);
+      if (!result.ok) return failedReplyTurn(webSearchCalls, result.finishReason, result.finishDetails);
       // 经 responseOutputItems 读取 output，缺失时按空列表处理（见 response.ts）。
       pendingModelItems = toInputItems(responseOutputItems(result.response));
       return {
@@ -220,7 +220,7 @@ export function createOpenAiReplySession(
         functionCalls: extractFunctionCalls(result.response),
         webSearchCalls,
         finishReason: undefined,
-        finishMessage: undefined,
+        finishDetails: undefined,
         toolCallLimitHit: false,
       };
     },

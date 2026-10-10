@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../../helpers/loggerMock";
-import { FinishReason } from "@google/genai";
+import { BlockedReason, FinishReason, HarmCategory, HarmProbability } from "@google/genai";
 import type {
   GenerateContentParameters,
   GenerateContentResponse,
   GoogleGenAIOptions,
 } from "@google/genai";
 import { geminiResponse } from "../../helpers/geminiResponse";
+import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
+import type { AgentCapability } from "../../../packages/types/config";
 import {
   GEMINI_REQUEST_RETRY_ATTEMPTS,
   GEMINI_REQUEST_TIMEOUTS_MS,
@@ -49,10 +51,19 @@ mock.module("../../../packages/infra/logger", () => ({
 }));
 
 const {
-  requestGeminiResponse,
   requestGeminiResult,
   requestGeminiTextResult,
 } = await import("../../../packages/aiChat/gemini/client");
+
+/** 只有正常 STOP candidate 才交回响应、其余为 null 的断言视角；经 requestGeminiResult 发请求。 */
+async function requestGeminiResponse(
+  capability: AgentCapability,
+  buildBody: () => GenerateContentParameters,
+  errorLabel: string
+): Promise<GenerateContentResponse | null> {
+  const result: GeminiRequestResult = await requestGeminiResult({ capability, buildBody, errorLabel });
+  return result.ok ? result.response : null;
+}
 const { geminiClientCache } = await import("../../../packages/cache/workers/aiChat/gemini");
 const { installAiCacheUsageSink } = await import("../../../packages/infra/aiCacheUsage");
 const { searchGeminiWeb } = await import("../../../packages/aiChat/gemini/search");
@@ -212,7 +223,7 @@ describe("Gemini request safety settings", () => {
       .resolves.toEqual({ ok: false, retryable: false });
   });
 
-  test("判别结果保留未知 finish reason 与 finishMessage 供无副作用降级判断", async () => {
+  test("判别结果保留未知 finish reason 与收尾详情供无副作用降级判断", async () => {
     generateContent.mockResolvedValueOnce(geminiResponse({
       candidates: [{
         finishReason: "TOO_MANY_TOOL_CALLS" as FinishReason,
@@ -225,8 +236,32 @@ describe("Gemini request safety settings", () => {
       ok: false,
       failureKind: "response",
       finishReason: "TOO_MANY_TOOL_CALLS",
-      finishMessage: "server tool limit",
+      finishDetails: JSON.stringify({ finishMessage: "server tool limit" }),
     });
+  });
+
+  test("安全拦截把 finishMessage、safetyRatings 或 promptFeedback 记进日志", async () => {
+    const safetyRatings = [{ category: HarmCategory.HARM_CATEGORY_HARASSMENT, probability: HarmProbability.HIGH, blocked: true }];
+    generateContent.mockResolvedValueOnce(geminiResponse({
+      candidates: [{ finishReason: FinishReason.SAFETY, finishMessage: "blocked", safetyRatings }],
+    }));
+    const blocked = await requestGeminiResult({ capability: "summary", buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), errorLabel: "Gemini test" });
+    const candidateDetails: string = JSON.stringify({ finishMessage: "blocked", safetyRatings });
+    expect(blocked).toMatchObject({ ok: false, failureKind: "response", finishReason: FinishReason.SAFETY, finishDetails: candidateDetails });
+    expect(loggerError).toHaveBeenLastCalledWith(`Gemini test returned an unusable response: finishReason=SAFETY, details=${candidateDetails}.`);
+
+    const promptFeedback = { blockReason: BlockedReason.PROHIBITED_CONTENT };
+    generateContent.mockResolvedValueOnce(geminiResponse({ promptFeedback }));
+    const rejected = await requestGeminiResult({ capability: "summary", buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), errorLabel: "Gemini test" });
+    expect(rejected).toMatchObject({ ok: false, failureKind: "response", finishReason: undefined, finishDetails: JSON.stringify({ promptFeedback }) });
+    expect(loggerError).toHaveBeenLastCalledWith(
+      `Gemini test returned an unusable response: no candidates, details=${JSON.stringify({ promptFeedback })}.`
+    );
+
+    generateContent.mockResolvedValueOnce(geminiResponse({ candidates: [{ finishReason: FinishReason.RECITATION }] }));
+    expect(await requestGeminiResult({ capability: "summary", buildBody: (): GenerateContentParameters => ({ model: "gemini-test", contents: "hello" }), errorLabel: "Gemini test" }))
+      .toMatchObject({ ok: false, failureKind: "response", finishDetails: undefined });
+    expect(loggerError).toHaveBeenLastCalledWith("Gemini test returned an unusable response: finishReason=RECITATION.");
   });
 
   test("文本业务重采样只接受成功请求中的不可用响应", async () => {

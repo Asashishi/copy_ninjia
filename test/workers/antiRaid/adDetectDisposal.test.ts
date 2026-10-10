@@ -35,7 +35,6 @@ const {
 } = await import("../../../packages/workers/antiRaid/adDetect/disposal");
 const { adDetectPublishHolder, inFlightReferencedAdCleanupTasks } =
   await import("../../../packages/cache/workers/antiRaid/adDetect");
-const { COMMAND_MESSAGE_AUTO_DELETE_MS } = await import("../../../packages/consts/commands");
 const { TELEGRAM_DELETE_MESSAGES_BATCH_MAX } = await import("../../../packages/consts/telegram");
 const { AD_DETECT_MAX_IN_FLIGHT } = await import(
   "../../../packages/consts/antiRaid/adDetect"
@@ -287,7 +286,6 @@ describe("广告处置副作用", () => {
       chatId: -1001,
       identityId: 7,
       text: warning,
-      deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     });
     expect(result).toEqual({ messageId: 555, sentAt: 1_500 });
     expect(deleteMessages.mock.calls[0]?.[1]).toEqual([11, 12]);

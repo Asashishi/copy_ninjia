@@ -111,10 +111,10 @@ test("已有数据库绑定的时区与 bot.json 不一致时安装器在注册�
   expect(await Bun.file(fixture.outboundLog).text()).not.toContain("systemctl:guarded:start");
 }, 30_000);
 
-test.each([false, true])("16.3.2 格式 mock 备份经源码冷迁移、安装与真实启动保留业务数据、全局状态、空字符串身份与配置（历史谱系=%s）", async (historical: boolean): Promise<void> => {
+test("16.3.2 格式 mock 备份经源码冷迁移、安装与真实启动保留业务数据、全局状态、空字符串身份与配置", async (): Promise<void> => {
   const fixture: InstallerFixture = await createFixture(true);
   const migrated: MigratedDeployment = await prepareMigratedDeployment({
-    packageRoot: join(import.meta.dir, "../.."), root: join(fixture.root, "migration"), historical,
+    packageRoot: join(import.meta.dir, "../.."), root: join(fixture.root, "migration"),
   });
   await deployMigratedFixture(migrated, fixture.configRoot, fixture.runtimeRoot);
   const path: string = join(fixture.runtimeRoot, "database/storage.sqlite");

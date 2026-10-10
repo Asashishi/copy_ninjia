@@ -1,5 +1,6 @@
 import type * as TelegramModule from "../../packages/infra/telegram";
 import { mock } from "bun:test";
+import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../packages/consts/commands";
 import type { SendTemporaryMessageFromMainParams } from "../../packages/infra/telegram/workerClient";
 import type { TelegramWorkerTemporaryMessageResult } from "../../packages/types/telegramWorker";
 
@@ -15,7 +16,7 @@ export function installTemporaryMessageWorkerMock(): void {
       const telegram: typeof TelegramModule = await import("../../packages/infra/telegram");
       let registered: TelegramWorkerTemporaryMessageResult | undefined;
       const register = (messageId: number): void => {
-        telegram.deleteMessageAfter({ chatId: params.chatId, messageId, delayMs: params.deleteAfterMs, api: telegram.telegramApi });
+        telegram.deleteMessageAfter({ chatId: params.chatId, messageId, delayMs: COMMAND_MESSAGE_AUTO_DELETE_MS, api: telegram.telegramApi });
         registered = { messageId, sentAt: Date.now() };
       };
       const messageId: number | undefined = await telegram.sendMessage({

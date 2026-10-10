@@ -22,7 +22,7 @@ export interface DrainWaiterParams {
  *
  * 当前唯一的 owner 是头像更新队列（copy/avatarQueue.ts 的 drainAvatarUpdates）。
  * 预算为 0 时不抛校验错，立刻 abort 并按 timedOut 结算；登记 waiter 之后再触发一次
- * 空闲检查。新增 owner 复用本函数。
+ * 空闲检查。
  * @see ../../docs/cn/04-invariants.md
  * @returns 归零返回 `"flushed"`；预算耗尽时先 abort 再返回 `"timedOut"`。
  */

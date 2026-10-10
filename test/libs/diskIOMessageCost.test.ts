@@ -321,10 +321,10 @@ describe("Disk I/O 消息计价", () => {
         ...base,
         phase: "expelling",
         expelReason: "timeout",
-        successNoticeSent: false,
-        failureNoticeSent: false,
-        unconfirmedNoticeSent: false,
-        removalConfirmed: false,
+        successNoticeSent: true,
+        failureNoticeSent: true,
+        unconfirmedNoticeSent: true,
+        removalConfirmed: true,
       },
     ];
     for (const record of records) {

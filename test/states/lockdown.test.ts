@@ -42,6 +42,7 @@ const RESTORING: LockdownState = {
   originalPermissions: PERMS,
   intentId: 2,
   restoreAfterPersist: false,
+  restoreReason: "expired",
   ...ANNOUNCED,
 };
 const PREPARED: LockdownState = {
@@ -138,7 +139,6 @@ describe("封锁公告", () => {
     const pending: LockdownState = { ...PREPARED, ...SILENT, announcementPending: true };
     const sent = transitionLockdown(pending, {
       type: "announcementResult",
-      ok: true,
       messageId: ANNOUNCEMENT_MESSAGE_ID,
     });
     expect(sent.next).toEqual({ ...pending, ...ANNOUNCED });
@@ -148,14 +148,13 @@ describe("封锁公告", () => {
   test("没有在途公告时的结果一律忽略（重复回执不得再写一次状态）", () => {
     expect(transitionLockdown(PREPARED, {
       type: "announcementResult",
-      ok: true,
       messageId: 901,
     })).toEqual({ next: PREPARED, effects: [] });
   });
 
   test("公告发送失败 → 只落下「不再在途」，announced 保持 false", () => {
     const pending: LockdownState = { ...PREPARED, ...SILENT, announcementPending: true };
-    const { next, effects } = transitionLockdown(pending, { type: "announcementResult", ok: false });
+    const { next, effects } = transitionLockdown(pending, { type: "announcementResult", messageId: undefined });
     expect(next).toEqual({ ...pending, announcementPending: false });
     expect(effects).toEqual([]);
   });
@@ -170,7 +169,6 @@ describe("封锁公告", () => {
     };
     const { next, effects } = transitionLockdown(preparing, {
       type: "announcementResult",
-      ok: true,
       messageId: ANNOUNCEMENT_MESSAGE_ID,
     });
     expect(next).toEqual({ ...preparing, ...ANNOUNCED });
@@ -180,7 +178,6 @@ describe("封锁公告", () => {
   test("本轮已经结束后才拿到公告 ID → 直接删掉这条没有主人的公告", () => {
     const { next, effects } = transitionLockdown(undefined, {
       type: "announcementResult",
-      ok: true,
       messageId: ANNOUNCEMENT_MESSAGE_ID,
     });
     expect(next).toBeUndefined();
@@ -188,7 +185,7 @@ describe("封锁公告", () => {
       { kind: "deleteLockdownAnnouncement", messageId: ANNOUNCEMENT_MESSAGE_ID },
     ]);
 
-    expect(transitionLockdown(undefined, { type: "announcementResult", ok: false })).toEqual({
+    expect(transitionLockdown(undefined, { type: "announcementResult", messageId: undefined })).toEqual({
       next: undefined,
       effects: [],
     });
@@ -260,6 +257,7 @@ describe("加锁落地", () => {
       originalPermissions: PERMS,
       intentId: 8,
       restoreAfterPersist: true,
+      restoreReason: "lifted",
       ...ANNOUNCED,
     });
     expect(effects).toEqual([{ kind: "persistState" }]);
@@ -345,6 +343,7 @@ describe("落盘失败一律 fail-safe 打开", () => {
       originalPermissions: PERMS,
       intentId: 1,
       restoreAfterPersist: false,
+      restoreReason: "lifted",
       ...ANNOUNCED,
     });
     expect(effects).toEqual([
@@ -372,6 +371,7 @@ describe("落盘失败一律 fail-safe 打开", () => {
       originalPermissions: PERMS,
       intentId: 1,
       restoreAfterPersist: false,
+      restoreReason: "lifted",
       ...ANNOUNCED,
     });
     expect(effects).toEqual([
@@ -429,6 +429,7 @@ describe("到期恢复", () => {
       originalPermissions: PERMS,
       intentId: 2,
       restoreAfterPersist: true,
+      restoreReason: "expired",
       ...ANNOUNCED,
     });
     expect(effects).toEqual([{ kind: "persistState" }]);
@@ -453,7 +454,7 @@ describe("到期恢复", () => {
     expect(effects).toEqual([
       { kind: "reportUnlock" },
       { kind: "deleteLockdownAnnouncement", messageId: ANNOUNCEMENT_MESSAGE_ID },
-      { kind: "announceUnlock" },
+      { kind: "announceUnlock", reason: "expired" },
     ]);
   });
 
@@ -483,8 +484,29 @@ describe("到期恢复", () => {
       originalPermissions: PERMS,
       intentId: 8,
       restoreAfterPersist: true,
+      restoreReason: "lifted",
       ...ANNOUNCED,
     });
+  });
+
+  test("ACTIVE 被解除 → RESTORING 记为提前解除，恢复成功发 lifted 公告", () => {
+    const { next } = transitionLockdown(ACTIVE, { type: "deactivate", intentId: 8 });
+    expect(next).toEqual({
+      kind: "restoring",
+      originalPermissions: PERMS,
+      intentId: 8,
+      restoreAfterPersist: true,
+      restoreReason: "lifted",
+      ...ANNOUNCED,
+    });
+    expect(transitionLockdown(next, { type: "restoreResult", ok: true }).effects).toContainEqual(
+      { kind: "announceUnlock", reason: "lifted" }
+    );
+  });
+
+  test("到期恢复进行中再被解除 → 沿用到期原因", () => {
+    const { next } = transitionLockdown(RESTORING, { type: "deactivate", intentId: 9 });
+    expect(next).toMatchObject({ kind: "restoring", intentId: 9, restoreReason: "expired" });
   });
 
   test("preparing 阶段被解除 → 直接撤销占位并撤掉公告", () => {
@@ -602,7 +624,7 @@ describe("adopt 接管", () => {
     });
     expect(transitionLockdown(persisted.next, { type: "restoreResult", ok: true }).effects).toEqual([
       { kind: "reportUnlock" },
-      { kind: "announceUnlock" },
+      { kind: "announceUnlock", reason: "expired" },
     ]);
   });
 
@@ -626,7 +648,6 @@ describe("adopt 接管", () => {
     ]);
     expect(transitionLockdown(active.next, {
       type: "announcementResult",
-      ok: true,
       messageId: ANNOUNCEMENT_MESSAGE_ID,
     }).next).toEqual({
       kind: "active",
@@ -693,6 +714,7 @@ describe("adopt 接管", () => {
       originalPermissions: PERMS,
       intentId: 8,
       restoreAfterPersist: false,
+      restoreReason: "lifted",
       ...SILENT,
     });
     expect(restoring.effects.map((effect) => effect.kind)).toEqual(["prefetchAdmins", "beginRestore"]);

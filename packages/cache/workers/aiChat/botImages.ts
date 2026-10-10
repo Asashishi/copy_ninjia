@@ -14,11 +14,6 @@
  */
 export const repliedBotImageBackfills: Map<number, Map<number, Promise<void>>> = new Map();
 
-/** 按群失效：丢弃该群全部登记，在途识别仍按代际自行作废。 */
-export function clearChatBotImageCache(chatId: number): void {
-  repliedBotImageBackfills.delete(chatId);
-}
-
 /** 测试隔离用的全量清理。 */
 export function resetAiChatBotImageCache(): void {
   repliedBotImageBackfills.clear();

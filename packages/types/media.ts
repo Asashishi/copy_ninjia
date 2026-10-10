@@ -35,3 +35,9 @@ export interface VoiceClip {
   /** 供应商可接收的音频 mime；取自 Telegram 声明并经白名单归一。 */
   mime: string;
 }
+
+/** MP4 中一条视频轨的展示宽高：tkhd 的 16.16 定点值换算成的像素，可含小数（解析见 infra/video.ts）。 */
+export interface Mp4VideoTrack {
+  readonly width: number;
+  readonly height: number;
+}

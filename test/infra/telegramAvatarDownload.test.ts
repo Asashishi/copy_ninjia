@@ -1,5 +1,5 @@
 /**
- * 头像下载结果的归类（infra/telegram/avatar/download.ts）：文件服务器非 2xx 按可重试，
+ * 头像下载结果的归类（infra/telegram/avatar/download.ts）：两段超时与文件服务器非 2xx 按可重试，
  * 缺 file_path、超限与空文件按确定性失败，每种失败记一条日志。
  */
 
@@ -41,7 +41,9 @@ describe("downloadAvatarFile", () => {
 
   test.each([
     [{ status: "missingPath" }, "permanent-failure", "returned no file_path"],
+    [{ status: "metadataTimeout" }, "transient-failure", "timed out (metadataTimeout)"],
     [{ status: "httpError", httpStatus: 502 }, "transient-failure", "(502)"],
+    [{ status: "downloadTimeout" }, "transient-failure", "timed out (downloadTimeout)"],
     [{ status: "tooLarge", observedBytes: 9 }, "permanent-failure", "(9 bytes)"],
     [{ status: "empty" }, "permanent-failure", "downloaded empty"],
   ] as const)("%o 归为 %s 并记一条日志", async (

@@ -17,8 +17,9 @@
   - 恢复链在首个 `await` 之前同步读取当前群状态，每个处于锁定态的群仅触发一次恢复接管并在日志中打印一次。
   - 若某群的恢复任务已在册且 `phase` 与 `intentId` 相同，`startEmergencyLockdownRecovery` 直接返回；若锁定意图不同，则先注销旧任务再开启新恢复。
 - **镜像格式与严格校验**：
-  - 运行时 lockdown 镜像必须包含 `phase` 与正整数 `intentId`；`announcementMessageId` 仅允许在 `announced === true` 时出现。
+  - 运行时 lockdown 镜像必须包含 `phase` 与正整数 `intentId`；`announcementMessageId` 与 `announced === true` 同时成立或同时不成立。
   - 验证快照必须包含 `phase` 与 `trackedMessageTimes`。选填字段 `reminderMessageId` 与 `announcementMessageId` 缺失仅表示提醒尚未成功发出或未检测到入群公告，恢复后各自独立执行补发或清理逻辑。
+  - 验证快照的回复提醒三字段交叉校验：`pending` 阶段 `replyReminderRequested`、`reminderSuperseded` 与「`welcomeAnchorMessageId` 已知」同真同假；其余阶段只能是 `false`、无锚点、`true`。`expelling` 的四个播报与确认标志只接受缺省或 `true`。
   - 其它字段缺失或格式不符时由解码器严格拒绝启动，必须在停机期间人工修复，生产读取路径不保留向前兼容降级。
 - **终态播报标志持久化**：
   - 终态提示的三个状态标志必须持久化落盘：
@@ -26,7 +27,7 @@
     - `failureNoticeSent`：无法执行踢人或缺乏 `can_restrict_members` 权限；
     - `unconfirmedNoticeSent`：无法确认成员在群状态或群类型。
   - 三类提示发送成功后，均通过主线程挂载 `COMMAND_MESSAGE_AUTO_DELETE_MS` 定时自动删除。
-  - 三个标志各自独立防止对应消息在 Worker 重建或服务重启后重复发送，不可相互替代；设置标志时发布新 revision 并等待持久化确认。
+  - 三个标志各自独立防止对应消息在 Worker 重建或服务重启后重复发送，不可相互替代。标志经状态机事件（`expelNoticeSent`、`removalConfirmed`）写入，只作用于播报 await 结束后仍是当前终态的条目，随后发布新 revision 并等待持久化确认。
   - **踢人成功未播报时的断点保护**：若踢人已成功但战报发送失败，严禁直接结算。先将 `removalConfirmed` 写入快照并进入退避重试；下一轮探测确认目标已离群时，据此认定为已被本 bot 踢出并补发战报。`removalConfirmed` 仅在战报失败时持久化写入。
 - **权限缺失短路门禁（`cleanupSettled`）**：
   - 确证无封禁权限（`botCanRestrictIn === false`）时的提前短路，必须以**关联清理已全部完成**（`cleanupSettled === true`）为前提：仅当 `failureNoticeSent` 与 `cleanupSettled` 同时为真时才短路，此时每轮只发一次成员探测，成员已离群即结算，否则继续退避。

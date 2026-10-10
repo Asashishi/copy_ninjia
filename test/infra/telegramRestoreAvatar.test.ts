@@ -6,14 +6,15 @@
  *    /copy、/icon steal 那几条的 `redirect: "error"`（见 telegramAvatar / telegram.copyAvatar 两份用例）
  *    归 Telegram 自有资产域 allowlist 约束管，与这一条无关。
  * 2. 响应仍走有界读取。
- * 3. 上传前认一遍字节签名：HTTP 200 返回的 HTML 插页（如 Drive 的配额超限/病毒扫描警告页）不交给 Telegram。
+ * 3. 上传前认一遍字节签名：JPEG/PNG 按静态头像、MP4 按动态头像上传；HTTP 200 返回的 HTML 插页
+ *    （如 Drive 的配额超限/病毒扫描警告页）不交给 Telegram。
  * 4. 瞬时失败按 AVATAR_FETCH_MAX_ATTEMPTS 重试，确定性失败立刻放弃。
  * 5. 失败日志点名地址但不带查询串（地址可能是预签名地址）。
  *
- * 本机文件来源同样有界读取、上传前认字节签名；读不到、超限与非图片都是确定性失败。
+ * 本机文件来源同样有界读取、上传前认字节签名；读不到、超限与签名不符都是确定性失败。
  */
 
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { loggerStub } from "../helpers/loggerMock";
@@ -21,11 +22,15 @@ import { GrammyError } from "grammy";
 import type { InputFile } from "grammy";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
-  AVATAR_MAX_DOWNLOAD_BYTES,
+  BOT_PROFILE_PHOTO_MAX_BYTES,
+  DEFAULT_AVATAR_EXPECTED_FORM,
+  DEFAULT_AVATAR_FETCH_TIMEOUT_MS,
+  DEFAULT_AVATAR_MAX_READ_BYTES,
 } from "../../packages/consts/telegram";
 import { RUNTIME_DATA_ROOT } from "../../packages/consts/paths";
 import { BOT_DEFAULT_AVATAR_URL, DEFAULT_ASSET_CONFIG } from "../../packages/consts/ui/assets";
 import type { DefaultAvatarSource } from "../../packages/types/config";
+import { MP4_BYTES, ftypBox, moovBox, mp4OfSize, trakBox } from "../helpers/mp4";
 
 const loggerErrorMock = mock((..._args: unknown[]): void => {});
 mock.module("../../packages/infra/logger", () => ({
@@ -69,6 +74,23 @@ const JPEG_BYTES: Uint8Array = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 8, 7])
 
 function imageResponse(bytes: Uint8Array = PNG_BYTES): Response {
   return new Response(bytes, { status: 200 });
+}
+
+/** 分块流出 DEFAULT_AVATAR_MAX_READ_BYTES + 1 字节的响应：各块复用同一段缓冲，不一次分配整段响应体。 */
+function oversizedResponse(): Response {
+  const chunk: Uint8Array = new Uint8Array(1024 * 1024);
+  let remaining: number = DEFAULT_AVATAR_MAX_READ_BYTES + 1;
+  return new Response(new ReadableStream<Uint8Array>({
+    pull(controller: ReadableStreamDefaultController<Uint8Array>): void {
+      if (remaining === 0) {
+        controller.close();
+        return;
+      }
+      const size: number = Math.min(remaining, chunk.length);
+      controller.enqueue(chunk.subarray(0, size));
+      remaining -= size;
+    },
+  }), { status: 200 });
 }
 
 /** HTTP 200 返回的 HTML 插页（如 Drive 的配额超限/病毒扫描警告页）：正文是网页。 */
@@ -122,8 +144,31 @@ describe("默认头像的取图口径", () => {
     stubFetch([(): Response => imageResponse(JPEG_BYTES)]);
 
     await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(true);
-    const [payload] = setMyProfilePhotoMock.mock.calls[0] as [{ type: string; photo: unknown }];
+    const [payload] = setMyProfilePhotoMock.mock.calls[0] as [{ type: string; photo: InputFile }];
     expect(payload.type).toBe("static");
+    expect(await payload.photo.toRaw()).toEqual(JPEG_BYTES);
+  });
+
+  test("直链下载按 DEFAULT_AVATAR_FETCH_TIMEOUT_MS 计时", async () => {
+    const timeoutSpy = spyOn(AbortSignal, "timeout");
+    stubFetch([(): Response => imageResponse(MP4_BYTES)]);
+    try {
+      await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(true);
+      expect(timeoutSpy.mock.calls).toEqual([[DEFAULT_AVATAR_FETCH_TIMEOUT_MS]]);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
+  test("直链返回 MP4 时按动态头像上传，字节原样交出", async () => {
+    stubFetch([(): Response => imageResponse(MP4_BYTES)]);
+
+    await expect(restoreDefaultProfilePhoto({ kind: "url", url: "https://cdn.example/face.mp4" })).resolves.toBe(true);
+    const [payload] = setMyProfilePhotoMock.mock.calls[0] as [Record<string, unknown>];
+    expect(payload.type).toBe("animated");
+    expect(payload).not.toHaveProperty("photo");
+    expect(payload).not.toHaveProperty("main_frame_timestamp");
+    expect(await (payload.animation as InputFile).toRaw()).toEqual(MP4_BYTES);
   });
 });
 
@@ -136,7 +181,7 @@ describe("上传前的字节校验", () => {
     // 配额/病毒扫描插页是确定性失败：不重试。
     expect(fetchCalls).toHaveLength(1);
     expect(loggerErrorMock).toHaveBeenCalledWith(
-      expect.stringContaining("did not return a JPEG or PNG image (sniffed=unknown")
+      expect.stringContaining(`did not return ${DEFAULT_AVATAR_EXPECTED_FORM} (sniffed=unknown`)
     );
   });
 
@@ -146,6 +191,39 @@ describe("上传前的字节校验", () => {
     await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("bytes=0"));
+  });
+
+  test("JPEG/PNG 超过 Bot API 图片上限时不上传、不重试", async () => {
+    const png: Uint8Array = new Uint8Array(BOT_PROFILE_PHOTO_MAX_BYTES + 1);
+    png.set(PNG_BYTES);
+    stubFetch([(): Response => imageResponse(png)]);
+
+    await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(false);
+    expect(fetchCalls).toHaveLength(1);
+    expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining(`did not return ${DEFAULT_AVATAR_EXPECTED_FORM} (sniffed=png, bytes=${png.byteLength})`)
+    );
+  });
+
+  test("MP4 超过图片上限、不超过其他文件上限时照常按动态头像上传", async () => {
+    const mp4: Uint8Array = mp4OfSize(BOT_PROFILE_PHOTO_MAX_BYTES + 1);
+    stubFetch([(): Response => imageResponse(mp4)]);
+
+    await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(true);
+    const [payload] = setMyProfilePhotoMock.mock.calls[0] as [{ type: string; animation: InputFile }];
+    expect(payload.type).toBe("animated");
+    expect(await payload.animation.toRaw()).toEqual(mp4);
+  });
+
+  test("MP4 视频轨不是正方形时不上传、不重试，日志写出视频轨尺寸", async () => {
+    const parts: readonly Uint8Array[] = [ftypBox({ major: "isom" }), moovBox(trakBox({ width: 1_280, height: 720 }))];
+    stubFetch([(): Response => imageResponse(Bun.concatArrayBuffers([...parts], Infinity, true))]);
+
+    await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(false);
+    expect(fetchCalls).toHaveLength(1);
+    expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
+    expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("sniffed=mp4 video tracks 1280x720"));
   });
 
   test("WebP 之类 Telegram 不收的静态图也在本地就挡掉", async () => {
@@ -182,7 +260,7 @@ describe("失败分类", () => {
   });
 
   test("超限是确定性失败：立刻放弃，不浪费剩余重试次数", async () => {
-    stubFetch([(): Response => imageResponse(new Uint8Array(AVATAR_MAX_DOWNLOAD_BYTES + 1))]);
+    stubFetch([oversizedResponse]);
 
     await expect(restoreDefaultProfilePhoto(DEFAULT_SOURCE)).resolves.toBe(false);
     expect(fetchCalls).toHaveLength(1);
@@ -250,7 +328,7 @@ describe("失败日志的地址脱敏", () => {
     const cases: readonly (() => Response)[] = [
       (): Response => new Response("nope", { status: 503 }),
       (): Response => interstitialResponse(),
-      (): Response => imageResponse(new Uint8Array(AVATAR_MAX_DOWNLOAD_BYTES + 1)),
+      oversizedResponse,
       (): Response => imageResponse(),
     ];
     setMyProfilePhotoMock.mockImplementation(async (): Promise<boolean> => {
@@ -301,7 +379,7 @@ describe("本机文件来源", () => {
   });
 
   test("超限是确定性失败，不上传", async () => {
-    const source: DefaultAvatarSource = await fileSource("huge.png", new Uint8Array(AVATAR_MAX_DOWNLOAD_BYTES + 1));
+    const source: DefaultAvatarSource = await fileSource("huge.png", new Uint8Array(DEFAULT_AVATAR_MAX_READ_BYTES + 1));
 
     await expect(restoreDefaultProfilePhoto(source)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
@@ -309,13 +387,22 @@ describe("本机文件来源", () => {
     expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("exceeds the size limit"));
   });
 
-  test("不是 JPEG/PNG 是确定性失败，不上传", async () => {
+  test("MP4 文件按动态头像上传", async () => {
+    const source: DefaultAvatarSource = await fileSource("face.mp4", MP4_BYTES);
+
+    await expect(restoreDefaultProfilePhoto(source)).resolves.toBe(true);
+    const [payload] = setMyProfilePhotoMock.mock.calls[0] as [{ type: string; animation: InputFile }];
+    expect(payload.type).toBe("animated");
+    expect(await payload.animation.toRaw()).toEqual(MP4_BYTES);
+  });
+
+  test("既非 JPEG/PNG 也非 MP4 是确定性失败，不上传", async () => {
     const source: DefaultAvatarSource = await fileSource("face.txt", new TextEncoder().encode("not an image"));
 
     await expect(restoreDefaultProfilePhoto(source)).resolves.toBe(false);
     expect(setMyProfilePhotoMock).not.toHaveBeenCalled();
     expect(loggerErrorMock).toHaveBeenCalledTimes(1);
-    expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("is not a JPEG or PNG image (sniffed=unknown"));
+    expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining(`is not ${DEFAULT_AVATAR_EXPECTED_FORM} (sniffed=unknown`));
   });
 
   test("上传抛瞬时错误时按上限重试，每次重新读文件", async () => {

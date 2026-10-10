@@ -29,12 +29,12 @@ export const IMAGE_DESCRIPTION_MAX_CHARS: number = 125;
 /** 贴纸和 GIF 短描述的最大字符数。 */
 export const SHORT_MEDIA_DESCRIPTION_MAX_CHARS: number = 100;
 /** Telegram 文件下载请求（从发出到读完）的超时；只覆盖取回文件字节那一次 fetch。getFile 的超时见 MEDIA_FILE_METADATA_TIMEOUT_MS，字节上限见 MEDIA_MAX_DOWNLOAD_BYTES。 */
-export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 25_000;
+export const MEDIA_DOWNLOAD_TIMEOUT_MS: number = 60_000;
 /**
  * 取文件元数据（`getFile`）的独立超时预算，与下载分开计时。取消信号
  * （回复代际失效）同时合入两段超时，见 infra/telegram/fileDownload.ts。
  */
-export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 10_000;
+export const MEDIA_FILE_METADATA_TIMEOUT_MS: number = 15_000;
 /**
  * 内联媒体请求的整体字节预算：取 Gemini 官方对内联数据整个请求（提示词、system
  * 指令与 base64 字节合计）的上限，各家实现共用同一份媒体字节、按这一上限取。Anthropic 的单图

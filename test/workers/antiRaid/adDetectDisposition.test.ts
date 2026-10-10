@@ -103,7 +103,10 @@ mock.module("../../../packages/infra/blocklist/outbox", () => ({
   trackBlockedRemoval,
 }));
 mock.module("../../../packages/infra/blocklist/sweep", () => ({ requestBlocklistResweep }));
-mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({ activeVerificationSnapshots }));
+mock.module("../../../packages/cache/main/antiRaid/verificationMirror", () => ({
+  activeVerificationSnapshots,
+  isActiveVerificationUser: (chatId: number, userId: number): boolean => activeVerificationSnapshots.has(`${chatId}:${userId}`),
+}));
 mock.module("../../../packages/infra/diskIO", () => (diskIOStub({ postDiskIODiagnostic: postDiskIO })));
 mock.module("../../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: () => chatStates,

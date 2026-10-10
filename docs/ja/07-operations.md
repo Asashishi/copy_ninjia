@@ -162,10 +162,6 @@ WantedBy=multi-user.target
 - **`memory/ai-daily-usage/usage.json`**：モデルリクエスト利用量の統計（対話内容は含みません）。
   - **データ構造**：先頭の `summary` は直近の終了済み設定タイムゾーンの暦日利用量集計（機能 / プロバイダ / モデル別に集約）、残りのキーは未集計の個別記録。
   - **対象機能**：`AGENT_CAPABILITY_NAMES` のすべての機能。
-  - **停止時クリーンアップツール**：[`scripts/removeWebSearchUsage.ts`](../../scripts/removeWebSearchUsage.ts) を使用して `web_search` の利用量を除去し再集計可能：
-    ```bash
-    bun run usage:remove-web-search --source-root <停止時バックアップルート> --output-root <存在しない独立成果物ディレクトリ>
-    ```
 
 ### 8. ログとインスタンスロック：`logs/` と `bot.lock`
 - **`logs/`**：英語の構造化エラーログ。Disk I/O Worker により一括非同期追記されます。

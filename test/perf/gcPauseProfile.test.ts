@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { HOT_PATH_GC_WINDOW_END, HOT_PATH_GC_WINDOW_START } from "../../packages/consts/performance";
 import { JSC_GC_LOG_ENV } from "../../packages/consts/environment";
 import { summarizeGcPauseProfile } from "../../scripts/perf/hotPaths/gcProfile";
+import { perfChildEnvironment } from "../../scripts/perf/childEnvironment";
 
 const HANDSHAKE: string = "[GC<0x123>: starting 0.03ms]\n";
+const FOREIGN_HANDSHAKE: string = "[GC<0x456>: starting 0.02ms]\n";
 const COLLECTION: string = "[GC<0x123>: START M 8832kb => EdenCollection, p=2ms (max 2), cycle 2ms END]\nGC END!\n";
 
 function logWindow(body: string): string {
@@ -42,6 +44,17 @@ describe("JSC GC 暂停计量", () => {
     expect(() => summarizeGcPauseProfile(log)).toThrow();
   });
 
+  test.each([
+    FOREIGN_HANDSHAKE + logWindow("[GC<0x456>: START M 688kb => EdenCollection, p=1ms (max 1), cycle 1ms END]\n"),
+    FOREIGN_HANDSHAKE + logWindow(
+      "[GC<0x123>: START M 8832kb => EdenCollection, [GC<0x456>: START M 688kb => EdenCollection, " +
+      "p=1ms (max 1), cycle 1ms END]\np=2ms (max 2), cycle 2ms END]\n"
+    ),
+    logWindow("") + FOREIGN_HANDSHAKE,
+  ])("第二个堆（调试器或 Worker VM）写入同一 stderr 时拒绝给出读数：%#", (log: string) => {
+    expect(() => summarizeGcPauseProfile(log)).toThrow("came from 2 heaps");
+  });
+
   test("真实分配触发的 GC 可被计量，不依赖函数名或强制 GC", async () => {
     const source: string = `
       import { beginGcProfileWindow, endGcProfileWindow } from ${JSON.stringify(new URL("../../scripts/perf/hotPaths/gcProfile.ts", import.meta.url).pathname)};
@@ -52,7 +65,7 @@ describe("JSC GC 暂停计量", () => {
       console.log(checksum);
     `;
     const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([Bun.argv[0]!, "-e", source], {
-      env: { ...process.env, [JSC_GC_LOG_ENV]: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      env: perfChildEnvironment({ [JSC_GC_LOG_ENV]: "1" }), stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const output: Promise<string> = child.stdout.text();
     const errors: Promise<string> = child.stderr.text();

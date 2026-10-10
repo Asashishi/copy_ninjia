@@ -1,51 +1,14 @@
-import {
-  EMPTY_OUTPUT_ITEMS,
-  OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS,
-} from "../../consts/aiChat/openai";
+import { EMPTY_OUTPUT_ITEMS } from "../../consts/aiChat/openai";
 import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
 /**
  * OpenAI Responses 响应里的项目级诊断与 output item 解析。正文直接读 SDK 的
- * `output_text` 访问器，本文件只补 SDK 没有提供的异常收尾诊断、函数调用抽取
+ * `output_text` 访问器，本文件只补 SDK 没有提供的异常收尾诊断与详情、函数调用抽取
  * 与服务端联网检索计数。职责与 aiChat/gemini/response.ts 一一对应。
  */
 
-import { isPlainRecord } from "../../libs/record";
+import { finishDetailsJson } from "../ai/utils/finishDetails";
 import type OpenAI from "openai";
 import type { AiFunctionCall } from "../../types/aiChat/provider";
-
-/**
- * 诊断串里的一个字段：缺省返回 undefined（JSON.stringify 会把这个键整个略掉），
- * 其余一律截断成有界文本。
- *
- * 对象与数组先试序列化；序列化不出来（循环引用、BigInt、函数）时退成类型标记，
- * 本函数不抛错（见下方 describeResponseError），降级口径与 infra/logger/redaction.ts 的
- * safeStringify 兜底一致。
- */
-function errorDiagnosticField(value: unknown): string | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === "string") return value.slice(0, OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS);
-  try {
-    // JSON.stringify 在运行时对 function/symbol/undefined 返回 undefined，按可能缺失处理。
-    const encoded: string | undefined = JSON.stringify(value);
-    if (encoded !== undefined) return encoded.slice(0, OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS);
-  } catch {
-    // 落到下面的类型标记。
-  }
-  return `[unserializable ${typeof value}]`;
-}
-
-/**
- * 服务端错误对象的诊断串：`error` 可能只有 `code`、也可能是字符串，两个字段都经
- * errorDiagnosticField 限长。本函数不抛错；唯一的调用点在 requestOpenAiResult 的
- * try/catch 之外（见 openai/client.ts 里 abnormalResponseDiagnostic 的调用位置）。
- */
-function describeResponseError(error: unknown): string {
-  if (!isPlainRecord(error)) return JSON.stringify({ message: errorDiagnosticField(error) });
-  return JSON.stringify({
-    code: errorDiagnosticField(error.code),
-    message: errorDiagnosticField(error.message),
-  });
-}
 
 /**
  * 响应的 output item 列表。`output` 缺失（不是数组）一律按「没有 output item」处理，
@@ -57,23 +20,52 @@ export function responseOutputItems(response: OpenAI.Responses.Response): readon
 }
 
 /**
+ * 模型拒答的说明：message item 里全部 `refusal` 内容块的文本，按出现顺序拼接；一个 `refusal`
+ * 块都没有时返回 undefined（与「有拒答块但文本为空」区分开）。兼容网关缺 content 数组或
+ * 文本不是字符串时跳过该处。
+ */
+export function responseRefusal(response: OpenAI.Responses.Response): string | undefined {
+  let refusal: string | undefined;
+  for (const item of responseOutputItems(response)) {
+    if (item.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const part of item.content) {
+      if (part.type !== "refusal") continue;
+      refusal = (refusal ?? "") + (typeof part.refusal === "string" ? part.refusal : "");
+    }
+  }
+  return refusal;
+}
+
+/**
  * 响应在 HTTP 层成功、内容却不可用时的诊断串：服务端明确报错、状态不是
  * `completed`（`incomplete` 会附上 max_output_tokens / content_filter 的具体
- * 原因），或压根没有任何 output item。正常响应返回 null。
+ * 原因）、模型以 `refusal` 内容块拒答，或压根没有任何 output item。正常响应返回 null。
+ * 错误对象与拒答说明见 openAiFinishDetails。
  *
  * 口径同 aiChat/gemini/response.ts 的 abnormalFinishDiagnostic。
  */
 export function abnormalResponseDiagnostic(response: OpenAI.Responses.Response): string | null {
-  if (response.error) {
-    return `error=${describeResponseError(response.error)}`;
-  }
+  if (response.error) return "error";
   // status 缺失按正常处理，与下面的 normalizedFinishReason 同一口径。
   if (response.status !== undefined && response.status !== "completed") {
     const reason: string | undefined = response.incomplete_details?.reason;
     return `status=${response.status}` + (reason === undefined ? "" : `, reason=${reason}`);
   }
+  if (responseRefusal(response) !== undefined) return "refusal";
   if (responseOutputItems(response).length === 0) return "no output items";
   return null;
+}
+
+/**
+ * 收尾详情的诊断串（见 aiChat/ai/utils/finishDetails.ts）：`{ error, refusal }`，error 是服务端
+ * 错误对象原样（兼容网关可能只给 code、或整个是字符串），refusal 见 responseRefusal。两者都没有时
+ * 返回 undefined。
+ */
+export function openAiFinishDetails(response: OpenAI.Responses.Response): string | undefined {
+  const error: unknown = response.error ?? undefined;
+  const refusal: string | undefined = responseRefusal(response);
+  if (error === undefined && refusal === undefined) return undefined;
+  return finishDetailsJson({ error, refusal });
 }
 
 /**
@@ -85,9 +77,14 @@ export function responseOutputText(response: OpenAI.Responses.Response): string 
   return typeof text === "string" ? text : "";
 }
 
-/** 归一化的收尾原因，供上层日志与重试判断使用；正常收尾返回 undefined。 */
+/**
+ * 归一化的收尾原因，供上层日志与重试判断使用：状态不是 `completed` 时为 `status` 或
+ * `status:reason`，正常收尾但带 `refusal` 内容块时为 `refusal`，其余返回 undefined。
+ */
 export function normalizedFinishReason(response: OpenAI.Responses.Response): string | undefined {
-  if (response.status === undefined || response.status === "completed") return undefined;
+  if (response.status === undefined || response.status === "completed") {
+    return responseRefusal(response) === undefined ? undefined : "refusal";
+  }
   const reason: string | undefined = response.incomplete_details?.reason;
   return reason === undefined ? response.status : `${response.status}:${reason}`;
 }

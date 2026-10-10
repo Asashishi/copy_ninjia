@@ -1,6 +1,8 @@
 import { GrammyError, InputFile } from "grammy";
+import type { InputProfilePhoto } from "grammy/types";
 import {
   AVATAR_FETCH_MAX_ATTEMPTS,
+  BOT_PROFILE_ANIMATION_FILE_NAME,
   BOT_PROFILE_PHOTO_FILE_NAME,
 } from "../../../consts/telegram";
 import { telegramSignal } from "../../../libs/telegramSignal";
@@ -45,19 +47,22 @@ export async function runAvatarFetchAttempts(
 }
 
 /**
- * 把一段图片字节换成机器人头像。三条头像路径（复制目标头像、t.me 页面兜底、
+ * 把一段素材字节换成机器人头像。三条头像路径（复制目标头像、t.me 页面兜底、
  * 复原默认头像）唯一的上传出口。
  *
  * 只负责这一次 Bot API 调用：不 catch，异常原样上抛由调用点归类——复制与复原按
  * avatarFailureFor 分成可重试与确定性失败，t.me 页面兜底失败即放弃。
- * 文件名固定为 BOT_PROFILE_PHOTO_FILE_NAME，取消信号照常下传。
+ * `static` 以 BOT_PROFILE_PHOTO_FILE_NAME 上传为静态头像；`animated` 以
+ * BOT_PROFILE_ANIMATION_FILE_NAME 上传为 MP4 动态头像，主帧取 Bot API 缺省的第 0 秒。
+ * 取消信号照常下传。
  */
 export async function setBotProfilePhoto(
   bytes: Uint8Array,
+  type: InputProfilePhoto["type"],
   signal?: AbortSignal
 ): Promise<void> {
-  await bot.api.setMyProfilePhoto(
-    { type: "static", photo: new InputFile(bytes, BOT_PROFILE_PHOTO_FILE_NAME) },
-    telegramSignal(signal)
-  );
+  const photo: InputProfilePhoto = type === "animated"
+    ? { type, animation: new InputFile(bytes, BOT_PROFILE_ANIMATION_FILE_NAME) }
+    : { type, photo: new InputFile(bytes, BOT_PROFILE_PHOTO_FILE_NAME) };
+  await bot.api.setMyProfilePhoto(photo, telegramSignal(signal));
 }

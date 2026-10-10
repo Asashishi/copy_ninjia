@@ -8,6 +8,7 @@ import {
   UPDATE_POLL_TIMEOUT_SECONDS,
 } from "../consts/updateRunner";
 import { logger } from "../infra/logger";
+import { cappedExponentialMs } from "../libs/backoff";
 import { createMonotonicDeadline, remainingMonotonicTime } from "../libs/monotonicDeadline";
 import { telegramSignal } from "../libs/telegramSignal";
 import { sleep } from "../libs/sleep";
@@ -34,7 +35,7 @@ export function createAcknowledgedUpdateFetcher(
     };
     // 进程内耗时预算走单调时钟（口径见 docs/cn/04-invariants.md）。
     const retryDeadline: number = createMonotonicDeadline(UPDATE_POLL_RETRY_WINDOW_MS);
-    let delay: number = UPDATE_POLL_INITIAL_RETRY_MS;
+    let failedAttempts: number = 0;
     for (;;) {
       signal.throwIfAborted();
       try {
@@ -56,9 +57,10 @@ export function createAcknowledgedUpdateFetcher(
             await sleep(retryAfterMs, signal);
           }
         }
+        const delay: number = cappedExponentialMs(UPDATE_POLL_INITIAL_RETRY_MS, failedAttempts, UPDATE_POLL_MAX_RETRY_MS);
         if (delay >= remainingMonotonicTime(retryDeadline)) throw error;
         await sleep(delay, signal);
-        delay = Math.min(delay * 2, UPDATE_POLL_MAX_RETRY_MS);
+        failedAttempts++;
       }
     }
   };

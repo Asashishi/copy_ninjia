@@ -23,9 +23,10 @@
   - If recovery for a chat is already active with the identical `phase` and `intentId`, `startEmergencyLockdownRecovery` returns immediately. If a different intent is detected, it aborts the old recovery process and restarts anew.
 
 - **Mirror Validation & Optional Fields**:
-  - Active lockdown mirrors must contain `phase` and a positive integer `intentId`. `announcementMessageId` is permitted only when `announced` is true.
+  - Active lockdown mirrors must contain `phase` and a positive integer `intentId`. `announcementMessageId` is present exactly when `announced` is true.
   - Verification challenge snapshots must include `phase` and `trackedMessageTimes`.
   - `reminderMessageId` and `announcementMessageId` are optional: their absence merely indicates that a reminder has not yet landed or that no join announcement was captured, allowing recovery to follow their respective cleanup paths.
+  - The three reply-reminder fields are cross-checked: in the `pending` phase `replyReminderRequested`, `reminderSuperseded`, and "`welcomeAnchorMessageId` is known" are all true or all false; every other phase must hold `false`, no anchor, and `true`. The four notice and confirmation flags of `expelling` accept only absence or `true`.
   - Any other missing or unrecognized fields are rejected by strict validation and must be migrated offline; production read paths retain no backward-compatibility fallback logic.
 
 - **Three Independent Terminal Notice Flags**:
@@ -33,7 +34,7 @@
   - `failureNoticeSent`: Records an unsuccessful kick attempt or missing `can_restrict_members` permission.
   - `unconfirmedNoticeSent`: Records unconfirmed chat membership or invalid chat type.
   - The main thread automatically deletes all three notice types after `COMMAND_MESSAGE_AUTO_DELETE_MS` (30 seconds).
-  - Each flag independently ensures its notice is not duplicated across Worker restarts or process reboots. Setting any flag issues a new revision that terminal retry loops must await.
+  - Each flag independently ensures its notice is not duplicated across Worker restarts or process reboots. Flags are written through state machine events (`expelNoticeSent`, `removalConfirmed`) and apply only to an entry that is still the current terminal state once the notice `await` finishes; setting a flag then issues a new revision that terminal retry loops must await.
 
 - **Kick Confirmation & Report Atomicity**:
   - **A successful kick whose success report failed to send must not be marked settled.**

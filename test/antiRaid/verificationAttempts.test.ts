@@ -25,10 +25,12 @@ const { antiRaidRuntimeState } = await import(
 );
 const {
   activeVerificationSnapshots,
+  clearActiveVerificationSnapshots,
   deferredVerificationRecords,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
+  setActiveVerificationSnapshot,
   terminalVerificationAttempts,
 } = await import("../../packages/cache/main/antiRaid/verificationMirror");
 const { VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS } = await import(
@@ -57,7 +59,7 @@ function terminalRecord(generation: number, revision: number): VerificationSnaps
 
 beforeEach(() => {
   diskPosts.length = 0;
-  activeVerificationSnapshots.clear();
+  clearActiveVerificationSnapshots();
   pendingVerificationDeletes.clear();
   persistedVerificationRevisions.clear();
   resetVerificationAttemptRuntime();
@@ -66,7 +68,7 @@ beforeEach(() => {
 
 describe("verification terminal process budget", () => {
   test("许可先计数且跨 Worker 代际保留，第 16 次不再批准", () => {
-    activeVerificationSnapshots.set(KEY, terminalRecord(1, 3));
+    setActiveVerificationSnapshot(KEY, terminalRecord(1, 3));
 
     expect(grantVerificationAttempt({
       operation: "verificationAttemptPermit",
@@ -99,7 +101,7 @@ describe("verification terminal process budget", () => {
   });
 
   test("最新 revision 未落盘前保留完整镜像，精确回执后才转最小延后索引", () => {
-    activeVerificationSnapshots.set(KEY, terminalRecord(1, 3));
+    setActiveVerificationSnapshot(KEY, terminalRecord(1, 3));
     persistedVerificationRevisions.set(KEY, { generation: 1, revision: 2 });
     terminalVerificationAttempts.set(
       KEY,
@@ -129,7 +131,7 @@ describe("verification terminal process budget", () => {
   });
 
   test("延后闩锁随 Worker 代际提升，显式关闭时才写 tombstone", () => {
-    activeVerificationSnapshots.set(KEY, terminalRecord(1, 3));
+    setActiveVerificationSnapshot(KEY, terminalRecord(1, 3));
     persistedVerificationRevisions.set(KEY, { generation: 1, revision: 3 });
     expect(acceptVerificationDeferred({
       type: "verificationDeferred",

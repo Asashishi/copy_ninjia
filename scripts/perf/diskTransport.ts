@@ -9,10 +9,11 @@ import type * as Jsc from "bun:jsc";
 import type * as Profile from "./hotPaths/profileSummary";
 import { beginGcProfileWindow, endGcProfileWindow, summarizeGcPauseProfile } from "./hotPaths/gcProfile";
 import { JSC_GC_LOG_ENV } from "../../packages/consts/environment";
+import { perfChildEnvironment } from "./childEnvironment";
 
 if (Bun.argv[2] !== "--child") {
   for (let round: number = 0; round < 3; round++) {
-    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([Bun.argv[0]!, import.meta.path, "--child"], { env: { ...process.env, [JSC_GC_LOG_ENV]: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([Bun.argv[0]!, import.meta.path, "--child"], { env: perfChildEnvironment({ [JSC_GC_LOG_ENV]: "1" }), stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const output: Promise<string> = child.stdout.text();
     const errors: Promise<string> = child.stderr.text();
     const exitCode: number = await child.exited;

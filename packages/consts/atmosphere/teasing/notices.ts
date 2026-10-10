@@ -175,6 +175,7 @@ export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   lockdownInfluxUnknown: "检测到短时间内大量成员入群",
   lockdownStarted: (influx: string, durationMinutes: number): string => `哼，${influx}，本天才怀疑是有人在拉人头，先禁止普通成员邀请新人 ${durationMinutes} 分钟压压惊♡`,
   lockdownEnded: (durationMinutes: number): string => `${durationMinutes} 分钟到啦，解除限制，普通成员又能拉人了，杂鱼们悠着点哦♡`,
+  lockdownLifted: "哼，防冲群限制提前解除啦，普通成员又能拉人了，杂鱼们悠着点哦♡",
   verificationCommentExempt: (targetLabel: string): string => `哼，${targetLabel} 老实巴交的在帖子底下冒个了泡，本天才大发慈悲免了你的验证，欢迎杂鱼入群~♡`,
   verificationBotApproved: (fromLabel: string | undefined, targetLabel: string): string => `哼，既然 ${fromLabel} 大人愿意为机器人 ${targetLabel} 作保，本天才就勉为其难放这个铁疙瘩进来啦~♡`,
   verificationMemberApproved: (fromLabel: string | undefined, targetLabel: string): string => `哼，既然 ${fromLabel} 大人肯为 ${targetLabel} 作保，本天才就勉为其难放这条杂鱼进来啦~♡`,

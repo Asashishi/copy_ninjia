@@ -283,6 +283,7 @@ describe.each([...SCOPES])("scope $label", (fixture: ScopeFixture) => {
         model: "gemini-test",
         inputTokens: 6_864,
         cachedInputTokens: 0,
+        cacheWriteInputTokens: 6_864,
         outputTokens: 0,
       }));
       expect(acquireGeminiContextCache(scope, entry)).toBe("cachedContents/created-1");

@@ -35,10 +35,10 @@ mock.module("../../packages/infra/diskIO", () => ({
     return diskResult;
   },
   // durable 投递只经 verification 与 chatState 两个领域屏障；两者共用同一份结局。
-  flushDiskIODomain: async (domain: string): Promise<FlushResult> => {
+  flushDiskIODomain: async (domain: string): Promise<{ result: FlushResult }> => {
     flushedDomains.push(domain);
     if (diskResult instanceof Error) throw diskResult;
-    return diskResult;
+    return { result: diskResult };
   },
 }));
 const realStateStore = await import("../../packages/infra/storage/stateStore");

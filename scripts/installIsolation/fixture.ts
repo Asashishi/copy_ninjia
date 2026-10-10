@@ -13,7 +13,14 @@ import { runCapturedCommand } from "../fixtures/subprocess";
 import type { CapturedCommandResult } from "../fixtures/subprocess";
 import { readInstallScripts } from "../installSources";
 
+interface PackageManifest {
+  readonly packageManager: string;
+}
+
 const PROJECT_ROOT: string = join(import.meta.dir, "..", "..");
+const MANIFEST: PackageManifest = await Bun.file(join(PROJECT_ROOT, "package.json")).json() as PackageManifest;
+/** package.json 的 packageManager 锁定的 Bun 版本；替身 bun 的 `--version` 缺省报告它。 */
+export const REQUIRED_BUN_VERSION: string = MANIFEST.packageManager.slice("bun@".length);
 const CONFIG_EXAMPLE_ROOT: string = join(PROJECT_ROOT, "config_example");
 const REAL_BUN_PATH: string = Bun.argv[0]!;
 /** 替身 bun 解析数据根时直接加载的生产路径模块。 */
@@ -71,7 +78,7 @@ async function installBunGuard(fixture: InstallerFixture): Promise<void> {
     "}",
     "case \"$command_name\" in",
     "  --version)",
-    "    printf '%s\\n' \"${FAKE_BUN_VERSION-1.4.2}\"",
+    `    printf '%s\\n' "\${FAKE_BUN_VERSION-${REQUIRED_BUN_VERSION}}"`,
     "    exit 0",
     "    ;;",
     "  install)",

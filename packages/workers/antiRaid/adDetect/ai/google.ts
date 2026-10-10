@@ -9,8 +9,8 @@
  * （isGeminiContextCacheRejection）时释放登记，当场按带系统指令的完整请求补发一次。
  */
 
-import { ApiError, FinishReason, GoogleGenAI } from "@google/genai";
-import type { Candidate, GenerateContentResponse } from "@google/genai";
+import { ApiError, GoogleGenAI } from "@google/genai";
+import type { GenerateContentResponse } from "@google/genai";
 import { adDetectGoogleClientHolder } from "../../../../cache/workers/antiRaid/google";
 import { antiRaidDispatchSignal } from "../../../../cache/workers/antiRaid/tasks";
 import {
@@ -29,6 +29,8 @@ import {
 } from "../../../../consts/antiRaid/adDetect";
 import { logger } from "../../../../infra/logger";
 import { reportGeminiUsage } from "../../../../infra/aiCacheUsage";
+import { abnormalFinishDiagnostic, geminiFinishDetails } from "../../../../aiChat/gemini/response";
+import { diagnosticWithDetails } from "../../../../aiChat/ai/utils/finishDetails";
 import {
   acquireGeminiContextCache,
   createGeminiContextCacheRegistry,
@@ -114,8 +116,19 @@ function logGoogleFailure(errorLabel: string, error: unknown): void {
   }
 }
 
-/** 发一次结构化 JSON 请求；undefined 表示请求失败，null 表示成功但正文不可用。 */
-async function attemptGoogleJson(params: AdDetectJsonRequestParams): Promise<string | null | undefined> {
+/** 一次请求成功后的结果。 */
+interface GoogleAdDetectAttempt {
+  /** 去掉首尾空白的正文；收尾异常或没产出时为空串。 */
+  readonly body: string;
+  /**
+   * 收尾异常的诊断串：aiChat/gemini/response.ts 的 abnormalFinishDiagnostic 连同 geminiFinishDetails；
+   * 正常收尾时为 null。
+   */
+  readonly abnormal: string | null;
+}
+
+/** 发一次结构化 JSON 请求；undefined 表示请求失败且已经记日志。 */
+async function attemptGoogleJson(params: AdDetectJsonRequestParams): Promise<GoogleAdDetectAttempt | undefined> {
   let cachedContent: string | null = null;
   let response: GenerateContentResponse;
   try {
@@ -136,24 +149,24 @@ async function attemptGoogleJson(params: AdDetectJsonRequestParams): Promise<str
     }
   }
   reportGeminiUsage({ capability: "ad_detect", model: params.model, usage: response.usageMetadata });
-  const candidate: Candidate | undefined = response.candidates?.[0];
-  if (candidate?.finishReason !== FinishReason.STOP) return null;
-  const body: string = response.text?.trim() ?? "";
-  return body.length === 0 ? null : body;
+  const abnormal: string | null = abnormalFinishDiagnostic(response);
+  if (abnormal !== null) return { body: "", abnormal: diagnosticWithDetails(abnormal, geminiFinishDetails(response)) };
+  return { body: response.text?.trim() ?? "", abnormal: null };
 }
 
-/** 空响应有限重试；请求异常已经由 SDK 按配置重试，不在这里叠加。 */
+/**
+ * 收尾异常或空正文时有界重试，耗尽后连同最后一次的收尾原因与详情记一条日志；请求异常已经由
+ * SDK 按配置重试，不在这里叠加。
+ */
 export async function requestGoogleAdDetectJson(
   params: AdDetectJsonRequestParams
 ): Promise<string | null> {
   for (let attempt: number = 1; attempt <= AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS; attempt++) {
-    const body: string | null | undefined = await attemptGoogleJson(params);
-    if (body === undefined) return null;
-    if (body !== null) return body;
+    const result: GoogleAdDetectAttempt | undefined = await attemptGoogleJson(params);
+    if (result === undefined) return null;
+    if (result.body.length > 0) return result.body;
+    if (attempt < AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS) continue;
+    logger.error(`${params.errorLabel} returned no usable body in ${attempt} attempt(s) (${result.abnormal ?? "empty body"}).`);
   }
-  logger.error(
-    `${params.errorLabel} returned no usable body in ` +
-    `${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s).`
-  );
   return null;
 }

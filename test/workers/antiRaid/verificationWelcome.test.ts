@@ -4,7 +4,6 @@ import { loggerStub } from "../../helpers/loggerMock";
 import type { Mock } from "bun:test";
 import { Api } from "grammy";
 import type { Transformer } from "grammy";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../packages/consts/commands";
 import { pendingMessageDeletions } from "../../../packages/cache/perThread/messageDeletion";
 import { workerDuplexWaiters } from "../../../packages/cache/perThread/workerDuplex";
 import {
@@ -63,7 +62,6 @@ function run(effects: VerificationEffect[]): Promise<void> {
     userId: 123,
     effects,
     dispatchVerification(): void {},
-    publishVerificationChange(): void {},
   });
 }
 
@@ -107,7 +105,7 @@ for (const welcome of welcomes) {
       kind: "sendWelcome", variant: welcome.variant, fromLabel: "Alice", targetLabel: "Bob", anchorMessageId: 77,
     }]);
     const envelope: WorkerDuplexRequest<TelegramWorkerRequest> = request();
-    expect(envelope.request).toMatchObject({ operation: "sendTemporaryMessage", purpose: "notice", replyToMessageId: 77, deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS });
+    expect(envelope.request).toMatchObject({ operation: "sendTemporaryMessage", purpose: "notice", replyToMessageId: 77 });
     const result: unknown = await handleAntiRaidWorkerTelegramRequest(envelope.request, new AbortController().signal);
     expect(telegramRequest).toHaveBeenCalledTimes(1);
     expect(telegramRequest).toHaveBeenCalledWith("sendMessage", expect.objectContaining({

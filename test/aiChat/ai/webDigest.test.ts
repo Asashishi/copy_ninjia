@@ -217,6 +217,7 @@ test("组稿不能把正文链接的前缀当作完整来源地址", async () =>
 
 test.each([
   ["search failed", { ok: false, searchCalls: 1 }],
+  ["refused", { ok: false, searchCalls: 1, refused: true }],
   ["no sources", { ok: true, text: "要点", sources: [], searchCalls: 1 }],
 ] as const)("检索段 %s 时不组稿，判本轮失败", async (reason, research) => {
   searchResults.push(research as AiWebSearchResult);
@@ -333,6 +334,14 @@ test("组稿请求不可重试地失败时直接判 compose failed", async () =>
   composeResults.push({ ok: false, retryable: false });
   expect(await composeWebDigest(REQUEST, new AbortController().signal)).toEqual({ ok: false, reason: "compose failed" });
   expect(composeRequests).toHaveLength(1);
+});
+
+test("组稿模型拒答时直接判 refused，不重试", async () => {
+  searchResults.push(RESEARCH);
+  composeResults.push({ ok: false, retryable: false, refused: true });
+  expect(await composeWebDigest(REQUEST, new AbortController().signal)).toEqual({ ok: false, reason: "refused" });
+  expect(composeRequests).toHaveLength(1);
+  expect(loggerError).toHaveBeenCalledWith("Web digest composition failed (refused): the composition model refused the request.");
 });
 
 test("取消后按 aborted 收场，不记日志", async () => {

@@ -37,9 +37,9 @@
 
 <p align="center">
   <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
-  <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6269_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.75%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#pure-ai-development"><img src="https://img.shields.io/badge/Audits-Claude_/_Gemini_/_Grok-6d4aff?style=flat-square" alt="Audited"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6386_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -75,7 +75,7 @@
   </tr>
   <tr>
     <td><nobr>⌨️ <b>実装</b></nobr></td>
-    <td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td>
+    <td><b>Claude</b> · <b>Gemini</b> · <b>Grok</b></td>
     <td>100% の production コード、テスト、ドキュメントを作成</td>
   </tr>
   <tr>
@@ -85,7 +85,7 @@
   </tr>
   <tr>
     <td><nobr>🔬 <b>監査</b></nobr></td>
-    <td><b>GPT</b> · <b>Claude</b></td>
+    <td><b>Claude</b> · <b>Gemini</b> · <b>Grok</b></td>
     <td>リポジトリ全体の交差レビューを重ね、指摘項目を堅牢化コミットへ即時還元</td>
   </tr>
   <tr>
@@ -106,7 +106,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 6269 件のテストが全て成功 / テストファイル 526 件 / expect() 呼び出し 446,227 回 / 関数カバレッジ 98.24% / 行カバレッジ 98.75%" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 6386 件のテストが全て成功 / テストファイル 530 件 / expect() 呼び出し 445,518 回 / 関数カバレッジ 98.27% / 行カバレッジ 98.78%" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -237,13 +237,12 @@
 
 | モデル提供元 | 保守的な参考範囲 |
 | --- | --- |
-| Gemini | 60%–70% |
-| OpenAI | 80%–90% |
-| Claude | 80%–90% |
+| Gemini | 70%± |
+| OpenAI | 90%± |
+| Claude | 90%± |
 
-- **Gemini**：各応答の初回リクエストでは、利用可能な場合に固定プレフィックスの明示的キャッシュを再利用し、後続リクエストでは暗黙的キャッシュを使います。サービス側の暗黙的キャッシュの有効期限切れと、初回リクエストで暗黙的キャッシュが未準備であることがミスの原因になります。
-- **Claude**：リクエストは固定位置に `cache_control` ブレークポイントを 1 つずつ置き、Messages API がブロック境界でキャッシュにヒットさせます。キャッシュ有効期間が終了した後のリクエストはヒットしません。
-- **OpenAI**：すべてのリクエストに、安定したプレフィックスから算出した `prompt_cache_key` を付けます。初回の格納、プレフィックスの変更、新しい動的内容でミスが発生します。
+> [!TIP]
+> Google モデルのキャッシュ率が低い問題は、明示的キャッシュと暗黙的キャッシュの排他性、および暗黙的キャッシュの有効期限が制御不能である点（最短で約 20 秒での失効を観測）に起因します。キャッシュ率が気になる場合は他のモデルをご利用ください。ただし、実際の会話セッションにおける品質や応答効果は Gemini が最も優れています。
 
 ### ボイス・画像・記憶
 
@@ -302,7 +301,7 @@
 
 - **OS**：Linux（`/proc` が読み取り可能であること。他の OS ではインスタンスロックが fail-closed になります）。
 - **Telegram 資格情報**：BotFather 発行の Bot Token と、スーパー管理者の Telegram User ID。
-- **ランタイム**：ソース実行には [Bun](https://bun.sh/) 1.4.2 が必要です。バイナリ配布パッケージにはランタイムが内蔵されています。
+- **ランタイム**：ソース実行には [Bun](https://bun.sh/) 1.4.3 が必要です。バイナリ配布パッケージにはランタイムが内蔵されています。
 - **外部サービス**：有効化する AI 各機能の API Key。`/translate` には Google Cloud サービスアカウント JSON が必要です。ハードウェア目安は [07 運用マニュアル](07-operations.md#ハードウェアの目安) を参照してください。
 
 ### ワンショットインストール

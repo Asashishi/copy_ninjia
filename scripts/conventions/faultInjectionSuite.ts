@@ -48,7 +48,6 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
     path: edge.entryPath,
     purpose: `${edge.command} cold migration integrity and interruption recovery`,
   })),
-  { path: "scripts/removeWebSearchUsage.ts", purpose: "cold web search usage removal integrity and interruption recovery" },
   {
     path: "test/helpers/diskIOWorkerHarness.ts",
     purpose: "Disk I/O Worker initialization, backpressure, diagnostic restart and give-up",
@@ -64,6 +63,22 @@ export const FAULT_INJECTION_BOUNDARIES: readonly FaultInjectionBoundary[] = [
   {
     path: "test/helpers/lifecycleFixture.ts",
     purpose: "application startup and shutdown lifecycle failure injection",
+  },
+  { path: "test/helpers/storageDatabaseHydration.ts", purpose: "SQLite storage hydration and Disk I/O write handlers" },
+  {
+    path: "packages/infra/storage/stateStore.ts",
+    purpose: "global state persistence facade, fatal handler and flush",
+    exports: ["StateStore", "loadState", "persistGlobalState", "setStatePersistenceFatalHandler", "flushStateToDisk"],
+  },
+  { path: "packages/infra/storage/statePersistence.ts", purpose: "global state atomic writes, retry budget and fatal stop" },
+  { path: "packages/libs/latestValueRunner.ts", purpose: "latest-only persistence writer failure and settlement" },
+  { path: "packages/libs/acknowledgedBatchQueue.ts", purpose: "Disk I/O and log forwarding acknowledgement and redelivery" },
+  { path: "packages/infra/logger/forwarding.ts", purpose: "Worker log forwarding acknowledgement and drop summary" },
+  { path: "packages/libs/monotonicDeadline.ts", purpose: "shutdown and retry budget deadlines" },
+  { path: "packages/database/interact/connection.ts", purpose: "SQLite connection open, close and WAL enablement" },
+  {
+    path: "packages/workers/diskIO/storageDatabase/identityPolicy.ts",
+    purpose: "identity policy SQLite writes and paged startup reads",
   },
   { path: "packages/workers/diskIO/luckSecretFile.ts", purpose: "luck secret atomic publication and recovery" },
   { path: "packages/workers/diskIO/snapshotFiles.ts", purpose: "snapshot inspect, adoption and recovery maintenance" },

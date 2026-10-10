@@ -252,14 +252,5 @@ export const XAI_SPEECH_ERROR_BODY_MAX_BYTES: number = 1_024;
  */
 export const OPENAI_STORE_RESPONSES: boolean = false;
 
-/**
- * 服务端错误诊断串里每个字段的截断长度（见 aiChat/openai/response.ts 的
- * describeResponseError）。
- *
- * `error` 的形状不受本进程控制：SDK 把它标成 `{ code, message }` 两项必填字符串，
- * 而兼容网关可以在这两个位置放任意 JSON；诊断串按本值截断。
- */
-export const OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS: number = 500;
-
 /** OpenAI 响应缺省 output 时复用的只读空列表。 */
 export const EMPTY_OUTPUT_ITEMS: readonly [] = [];

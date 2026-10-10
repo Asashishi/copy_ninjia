@@ -306,7 +306,8 @@ test("主线程管理、编辑、inline 应答和 SDK raw 调用均经过统一�
   expect(telegramOutboundStats().active).toBe(0);
 });
 
-test("默认头像 429 与 Telegram 文件下载共用 download 队列，重放释放旧响应体", async (): Promise<void> => {
+test("默认头像 429 只让 externalFetch 退避，同时接纳的 Telegram 文件下载不排队；重放释放旧响应体", async (): Promise<void> => {
+  const defaultAvatarUrl: string = "https://images.example/default.png";
   const downloads: string[] = [];
   let cancelled: number = 0;
   globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
@@ -317,27 +318,91 @@ test("默认头像 429 与 Telegram 文件下载共用 download 队列，重放�
     if (downloads.length === 1) {
       expect(init?.redirect).toBe("follow");
       return new Response(new ReadableStream<Uint8Array>({ cancel(): void { cancelled++; } }), {
-        status: 429, headers: { "retry-after": "0.05" },
+        status: 429, headers: { "retry-after": "0.3" },
       });
     }
     return new Response(image);
   }) as typeof fetch;
-  const avatar: Promise<boolean> = restoreDefaultProfilePhoto({ kind: "url", url: "https://images.example/default.png" });
+  const avatar: Promise<boolean> = restoreDefaultProfilePhoto({ kind: "url", url: defaultAvatarUrl });
   await waitUntil((): boolean => telegramOutboundStats().pending === 1);
-  expect(telegramOutboundStats().pending).toBe(1);
-  const file: Promise<unknown> = downloadTelegramFileBytes({
+  await expect(downloadTelegramFileBytes({
     fileId: "file", maxBytes: 100, metadataTimeoutMs: 1_000, downloadTimeoutMs: 1_000, signal: undefined,
-  });
-  expect(downloads).toHaveLength(1);
-  expect(calls.some((call: OutboundCall): boolean => call.method === "getFile")).toBe(false);
-  const results: PromiseSettledResult<unknown>[] = await Promise.allSettled([avatar, file]);
-  expect(results).toEqual([
-    { status: "fulfilled", value: true },
-    { status: "fulfilled", value: { status: "ok", bytes: image } },
-  ]);
-  expect(downloads.slice(0, 2)).toEqual(["https://images.example/default.png", "https://images.example/default.png"]);
+  })).resolves.toEqual({ status: "ok", bytes: image });
+  expect(telegramOutboundStats().pending).toBe(1);
+  expect(downloads).toHaveLength(2);
+  expect(downloads[1]?.endsWith("/test.png")).toBe(true);
+  await expect(avatar).resolves.toBe(true);
   expect(downloads).toHaveLength(3);
+  expect([downloads[0], downloads[2]]).toEqual([defaultAvatarUrl, defaultAvatarUrl]);
   expect(cancelled).toBe(1);
+});
+
+/** 挂起到请求信号中止，再按信号原因失败，同真实传输对 abort 的反应。 */
+function hangUntilAborted(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_resolve: (value: never) => void, reject: (reason: unknown) => void): void => {
+    signal.addEventListener("abort", (): void => reject(signal.reason), { once: true });
+  });
+}
+
+test("getFile 超过自己的预算报 metadataTimeout，文件下载不出站", async (): Promise<void> => {
+  let downloads: number = 0;
+  globalThis.fetch = (async (): Promise<Response> => {
+    downloads++;
+    return new Response(image);
+  }) as unknown as typeof fetch;
+  respond = async (call: OutboundCall): Promise<any> =>
+    call.method === "getFile" ? hangUntilAborted(call.signal) : successResponse(call);
+  await expect(downloadTelegramFileBytes({
+    fileId: "file", maxBytes: 100, metadataTimeoutMs: 5, downloadTimeoutMs: 1_000, signal: undefined,
+  })).resolves.toEqual({ status: "metadataTimeout" });
+  expect(downloads).toBe(0);
+  expect(telegramOutboundStats().active).toBe(0);
+});
+
+test("文件下载在响应头之前超时报 downloadTimeout", async (): Promise<void> => {
+  globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> =>
+    hangUntilAborted(init!.signal!)) as typeof fetch;
+  await expect(downloadTelegramFileBytes({
+    fileId: "file", maxBytes: 100, metadataTimeoutMs: 1_000, downloadTimeoutMs: 5, signal: undefined,
+  })).resolves.toEqual({ status: "downloadTimeout" });
+  expect(telegramOutboundStats().active).toBe(0);
+});
+
+test("真实 fetch 读响应体中途超时同样报 downloadTimeout", async (): Promise<void> => {
+  // 先回响应头和一段字节，之后不再发送也不结束，下载段的超时只能在读响应体时触发。
+  const server: Bun.Server<undefined> = Bun.serve({
+    port: 0,
+    fetch: (): Response => new Response(new ReadableStream<Uint8Array>({
+      start(controller: ReadableStreamDefaultController<Uint8Array>): void {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+      },
+    })),
+  });
+  try {
+    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> =>
+      originalFetch(`http://127.0.0.1:${server.port}/`, init)) as typeof fetch;
+    await expect(downloadTelegramFileBytes({
+      fileId: "file", maxBytes: 100, metadataTimeoutMs: 1_000, downloadTimeoutMs: 100, signal: undefined,
+    })).resolves.toEqual({ status: "downloadTimeout" });
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("调用方取消与调用方自身预算耗尽照旧上抛，不归入分段超时", async (): Promise<void> => {
+  respond = async (call: OutboundCall): Promise<any> =>
+    call.method === "getFile" ? hangUntilAborted(call.signal) : successResponse(call);
+  const controller: AbortController = new AbortController();
+  const cancelled: Promise<unknown> = downloadTelegramFileBytes({
+    fileId: "file", maxBytes: 100, metadataTimeoutMs: 1_000, downloadTimeoutMs: 1_000, signal: controller.signal,
+  });
+  await waitUntil((): boolean => calls.some((call: OutboundCall): boolean => call.method === "getFile"));
+  controller.abort();
+  await expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+  await expect(downloadTelegramFileBytes({
+    fileId: "file", maxBytes: 100, metadataTimeoutMs: 1_000, downloadTimeoutMs: 1_000, signal: AbortSignal.timeout(5),
+  })).rejects.toMatchObject({ name: "TimeoutError" });
+  expect(telegramOutboundStats().active).toBe(0);
 });
 
 test("默认头像下载在停机预算耗尽时取消真实 fetch，后续重试不再出站", async (): Promise<void> => {

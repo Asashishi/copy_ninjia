@@ -14,7 +14,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -40,6 +40,15 @@ afterEach((): void => {
 });
 
 describe("共享存储数据库连接", () => {
+  test("建库目标是悬空软链接时拒绝创建，不顺着链接在目标处建库", () => {
+    const root: string = tempRoot();
+    const path: string = join(root, "storage.sqlite");
+    const target: string = join(root, "elsewhere.sqlite");
+    symlinkSync(target, path);
+    expect(() => createStorageDatabase(path)).toThrow("target already exists; refusing to overwrite it.");
+    expect(existsSync(target)).toBe(false);
+  });
+
   test("数据库文件不存在时拒绝打开，且指明要先初始化", () => {
     const path: string = join(tempRoot(), "storage.sqlite");
 

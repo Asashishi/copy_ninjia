@@ -101,8 +101,7 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   relayLogMessage: (): boolean => true,
   flushDiskIO: async (): Promise<FlushResult> => "flushed",
   // /block 只等黑名单这一个领域的落盘回执（见 confirmBlocklistPersisted）。
-  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
-  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
+  flushDiskIODomain: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
 })));
 mock.module("../../packages/infra/storage/stateStore", () => ({
   getChatStateCache: (): ReadonlyMap<number, Record<string, unknown>> => states,

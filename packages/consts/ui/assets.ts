@@ -18,7 +18,7 @@ export const GAG_THUMBNAIL_URL: string =
 
 /** `/icon reset`、`/copy stop` 复原机器人头像时下载的缺省直链（DEFAULT_ASSET_CONFIG 以 url 来源引用）。 */
 export const BOT_DEFAULT_AVATAR_URL: string =
-  "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci";
+  "https://drive.google.com/uc?export=download&id=1Wqxii-o6O36ZDWhM1L0BcZPGBFmpvalg";
 
 /**
  * `onlyPath.random_h_image_dir` 的缺省值：随机图片（`/h_image`）的来源目录。相对路径按运行时

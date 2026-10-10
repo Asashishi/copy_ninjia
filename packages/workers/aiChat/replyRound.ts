@@ -279,7 +279,7 @@ export function startReplyRound(
         : queuedTrigger;
       const promptSections: ReplyPromptSections | null = buildReplyPromptSections(chatId, selfInfo, {
         triggerMessageId: replyToMessageId,
-        ...(directInvokerId !== undefined ? { directInvokerId } : {}),
+        directInvokerId,
         isRandomTrigger,
         mediaComment: queuedTrigger ? undefined : resolvedMedia,
         queuedTrigger: resolvedQueuedTrigger,

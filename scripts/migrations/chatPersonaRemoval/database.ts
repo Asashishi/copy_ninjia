@@ -2,8 +2,6 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import {
   IDENTITY_DATABASE_MIGRATIONS_DIR,
-  IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT, IDENTITY_DATABASE_TEXT_MIGRATION_HASH,
-  IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT, IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
   CHAT_PERSONA_REMOVAL_MIGRATION_CREATED_AT, CHAT_PERSONA_REMOVAL_MIGRATION_HASH,
   TIME_ZONE_MARKER_MIGRATION_CREATED_AT, TIME_ZONE_MARKER_MIGRATION_HASH,
 } from "../../../packages/consts/identityStorage";
@@ -39,13 +37,8 @@ function assertSourceLineage(database: StorageDatabase, source: string): void {
   const expected: readonly StorageDatabaseMigrationJournalEntry[] = migrations.slice(0, -2).map(
     (entry: MigrationMeta): StorageDatabaseMigrationJournalEntry => ({ createdAt: entry.folderMillis, hash: entry.hash })
   );
-  const historical: readonly StorageDatabaseMigrationJournalEntry[] = [
-    { createdAt: IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT, hash: IDENTITY_DATABASE_TEXT_MIGRATION_HASH },
-    { createdAt: IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT, hash: IDENTITY_DATABASE_JSONB_MIGRATION_HASH },
-    ...expected.slice(1),
-  ];
   const actual: string = JSON.stringify(readStorageDatabaseMigrationJournal(database, source));
-  if (actual !== JSON.stringify(expected) && actual !== JSON.stringify(historical)) {
+  if (actual !== JSON.stringify(expected)) {
     return invalidInput(source, "__drizzle_migrations", "the exact schema v11 lineage");
   }
 }

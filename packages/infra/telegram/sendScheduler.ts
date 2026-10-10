@@ -47,8 +47,8 @@ import type {
   TelegramSendLane,
 } from "../../types/telegramOutbound";
 import {
-  abortReason,
   detachAbortListener,
+  jobAbortReason,
   releaseResponseBody,
   settleDrainWaitersIfIdle,
 } from "./outboundSettle";
@@ -444,7 +444,7 @@ export function abortSendJob(job: TelegramOutboundJob): void {
   if (job.state === "settled" || lane === null) return;
   if (job.state === "sendQueued") removeQueued(lane, job);
   settleSendJob(job);
-  job.reject(abortReason());
+  job.reject(jobAbortReason(job.signal));
   if (isLaneLive(lane)) pumpSendLane(lane, false);
   settleDrainWaitersIfIdle();
 }

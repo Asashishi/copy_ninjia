@@ -216,8 +216,9 @@ describe("翻页回调", () => {
     expect(buttonTexts(call.keyboard)).toContain(QA_QUERY_PAGE_PREV_TEXT);
   });
 
-  test("不是本领域前缀的一律不认领", async () => {
-    expect(await handleQaBoardCallback(callbackContext("verify:42"))).toBeFalse();
+  test("不是本领域前缀时同步返回 false，不认领", () => {
+    const claimed: boolean | Promise<boolean> = handleQaBoardCallback(callbackContext("verify:42"));
+    expect(claimed).toBe(false);
     expect(answerCallbackQuery).not.toHaveBeenCalled();
   });
 

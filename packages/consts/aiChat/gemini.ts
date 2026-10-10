@@ -1,7 +1,7 @@
 /**
  * Gemini 实现包（packages/aiChat/gemini/）独占的常量：请求超时与 SDK 重试次数、
  * 采样温度与输出 token 上限、生图分辨率、内容过滤与工具配置、语音合成参数、日志调用名，
- * 以及回复共用显式缓存（text scope）的前缀、槽数与日志名。
+ * 以及回复共用显式缓存（text scope）的前缀、槽数、日志名与首轮触发间隔。
  *
  * **模型名不在这里**：provider=google 的能力从 config/dynamic/agent.json 各自读取 model
  * 与可选 base_url，代码不持有任何模型默认值（见 config/agent.ts）。
@@ -114,6 +114,14 @@ export const GEMINI_SAFETY_SETTINGS: readonly Readonly<SafetySetting>[] = [
 export const GEMINI_SERVER_TOOL_CONFIG: Readonly<{ includeServerSideToolInvocations: true }> = {
   includeServerSideToolInvocations: true,
 };
+
+/**
+ * 本群上一次成功的回复 generateContent 发出后，下一轮第 1 次请求仍走完整结构、由隐式前缀缓存
+ * 命中的最长时间（毫秒，按 performance.now() 计）。距该发出时刻不超过此时长（含相等）时不引用
+ * 显式缓存；超过此时长或本群还没有成功请求时才引用。第 2 次及后续请求不看这个间隔。
+ * 所属模块：aiChat/gemini/replySession.ts。
+ */
+export const GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS: number = 30_000;
 
 /**
  * 回复共用显式缓存（text scope）的 displayName 前缀，后接「分槽指纹:内容指纹」两段

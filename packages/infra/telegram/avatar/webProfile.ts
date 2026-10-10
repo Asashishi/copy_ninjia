@@ -198,7 +198,7 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
   try {
     const pageSignal: AbortSignal = signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS);
     const pageRes: Response = await runTelegramCategorizedRequest({
-      category: "download",
+      category: "externalFetch",
       signal: pageSignal,
       execute: (requestSignal: AbortSignal): Promise<Response> => fetch(`https://telegram.me/${encodeURIComponent(username)}`, {
         redirect: "error",
@@ -224,7 +224,7 @@ export async function fetchAvatarFromWebProfile(username: string, signal?: Abort
 
     const imageSignal: AbortSignal = signalWithTimeout(signal, AVATAR_FETCH_TIMEOUT_MS);
     const imgRes: Response = await runTelegramCategorizedRequest({
-      category: "download",
+      category: "externalFetch",
       signal: imageSignal,
       execute: (requestSignal: AbortSignal): Promise<Response> => fetch(photoUrl, {
         redirect: "error",

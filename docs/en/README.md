@@ -37,9 +37,9 @@
 
 <p align="center">
   <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
-  <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6269_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.75%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-pure-ai-development"><img src="https://img.shields.io/badge/Audits-Claude_/_Gemini_/_Grok-6d4aff?style=flat-square" alt="Audited"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6386_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="../../LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@ Every line of production code, every test case, and this README itself was writt
   </tr>
   <tr>
     <td><nobr>⌨️ <b>Implementation</b></nobr></td>
-    <td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td>
+    <td><b>Claude</b> · <b>Gemini</b> · <b>Grok</b></td>
     <td>Writes 100% of production business code, automated tests, and trilingual documentation</td>
   </tr>
   <tr>
@@ -83,7 +83,7 @@ Every line of production code, every test case, and this README itself was writt
   </tr>
   <tr>
     <td><nobr>🔬 <b>Repository Audits</b></nobr></td>
-    <td><b>GPT</b> · <b>Claude</b></td>
+    <td><b>Claude</b> · <b>Gemini</b> · <b>Grok</b></td>
     <td>Conducts repeated cross-model audits across the entire codebase; findings immediately turn into hardening commits</td>
   </tr>
   <tr>
@@ -104,7 +104,7 @@ From commit-by-commit human/AI co-review to repeated full-repository audits and 
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="../../public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="../../public/coverage_light.svg">
-    <img alt="bun run test:coverage — 6269 tests passed, 526 test files, 446,227 expect() calls, 98.24% function coverage, 98.75% line coverage" src="../../public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage — 6386 tests passed, 530 test files, 445,518 expect() calls, 98.27% function coverage, 98.78% line coverage" src="../../public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -233,13 +233,12 @@ Benchmark figures (cold/hot paths · total throughput and I/O · end-to-end chai
 
 | Model provider | Conservative reference range |
 | --- | --- |
-| Gemini | 60%–70% |
-| OpenAI | 80%–90% |
-| Claude | 80%–90% |
+| Gemini | 70%± |
+| OpenAI | 90%± |
+| Claude | 90%± |
 
-- **Gemini**: The first request of each turn reuses the fixed prompt prefix via explicit caching when available, while subsequent turns leverage implicit context caching; cache expirations and cold first-turn caches account for misses.
-- **Claude**: Injects `cache_control` breakpoints at stable message boundaries; the Anthropic Messages API matches prompt cache at block prefixes, with misses occurring only after the cache time-to-live expires.
-- **OpenAI**: Attaches a deterministically hashed `prompt_cache_key` computed from the invariant prefix; cache misses occur during initial population, prefix edits, or dynamic prompt changes.
+> [!TIP]
+> The lower cache hit rate for Google models stems from mutual exclusion between explicit and implicit caching, as well as unpredictable server-side implicit cache expiration (observed expiring in as little as ~20 seconds). If cache hit rates are a primary concern, consider other models; however, Gemini models deliver the best conversational results.
 
 ### Voice, images, and memory
 
@@ -294,7 +293,7 @@ The full command reference and permission matrix are documented in **[📖 09 Co
 
 - **OS**: Linux with a readable `/proc` filesystem (the instance lock enforces fail-closed behavior on unsupported platforms).
 - **Telegram Credentials**: A Bot Token from BotFather and your personal Telegram user ID as super administrator.
-- **Runtime**: [Bun](https://bun.sh/) 1.4.2 for source installs; official binary releases bundle the runtime statically.
+- **Runtime**: [Bun](https://bun.sh/) 1.4.3 for source installs; official binary releases bundle the runtime statically.
 - **External Services**: API keys for enabled AI capabilities; Google Cloud service-account JSON credentials for `/translate`. Hardware sizing recommendations: [07 Operations](07-operations.md#hardware-guidance).
 
 ### One-Shot Installation

@@ -21,6 +21,7 @@ import {
   serializeJoinLogSnapshotEntry,
   trimJoinLogRecordsToCapacity,
 } from "../../packages/workers/diskIO/joinLogRecords";
+import { perfChildEnvironment } from "./childEnvironment";
 import type { HeapSnapshot } from "./heapSnapshot";
 import type { JoinLogRecord } from "../../packages/types/diskIO/storage";
 
@@ -363,7 +364,7 @@ function runIndependentChild(
     "--child",
     operation,
     variant,
-  ]);
+  ], { env: perfChildEnvironment() });
   if (!result.success) {
     throw new Error(
       `Join log benchmark child failed: ${decoder.decode(result.stderr)}`

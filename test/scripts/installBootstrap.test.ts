@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
 import { storageMetadataRows } from "../../packages/database/interact/initialization";
-import { createFixture, writeText, cleanupFixtures } from "../../scripts/installIsolation/fixture";
+import { createFixture, writeText, cleanupFixtures, REQUIRED_BUN_VERSION } from "../../scripts/installIsolation/fixture";
 import type { InstallerFixture } from "../../scripts/installIsolation/fixture";
 import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
 import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
@@ -63,7 +63,7 @@ test("空环境 bootstrap 安装并启动真实应用，系统操作与网络由
     '  printf "mock:bun-install\\n" >> "$FAKE_CALL_LOG"',
     "  cat <<'MOCK_INSTALL'",
     "set -Eeuo pipefail",
-    '[ "$1" = "bun-v1.4.2" ] || exit 98',
+    `[ "$1" = "bun-v${REQUIRED_BUN_VERSION}" ] || exit 98`,
     'mkdir -p -- "$HOME/.bun/bin"',
     'cp -- "$FAKE_BIN_ROOT/bun-template" "$HOME/.bun/bin/bun"',
     'cp -- "$FAKE_BIN_ROOT/bun-template" "$FAKE_BIN_ROOT/bun"',

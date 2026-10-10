@@ -86,6 +86,7 @@ export function handlePersistFailed(
       originalPermissions: state.originalPermissions,
       intentId: state.intentId,
       restoreAfterPersist: false,
+      restoreReason: "lifted",
       ...announcementOf(state),
     },
     effects: [

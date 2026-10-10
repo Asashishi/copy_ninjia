@@ -66,6 +66,7 @@ const LOCKDOWN_ROWS: Readonly<Record<LockdownRowLabel, () => LockdownState | und
     originalPermissions: PERMS,
     intentId: MATRIX_INTENT_ID,
     restoreAfterPersist: true,
+    restoreReason: "expired",
     ...ANNOUNCED,
   }),
 };
@@ -116,7 +117,6 @@ const LOCKDOWN_COLUMNS: Readonly<Record<
   "reapplyResult:failed": (): LockdownMachineEvent => ({ type: "reapplyResult", ok: false }),
   announcementResult: (): LockdownMachineEvent => ({
     type: "announcementResult",
-    ok: true,
     messageId: ANNOUNCEMENT_MESSAGE_ID + 1,
   }),
   adopt: (): LockdownMachineEvent => ({

@@ -11,7 +11,7 @@ export type GeminiRequestResult =
      */
     failureKind: "request";
     finishReason?: undefined;
-    finishMessage?: undefined;
+    finishDetails?: undefined;
     response?: undefined;
   }
   | {
@@ -22,7 +22,7 @@ export type GeminiRequestResult =
      */
     failureKind: "rejected";
     finishReason?: undefined;
-    finishMessage?: undefined;
+    finishDetails?: undefined;
     response?: undefined;
   }
   | {
@@ -30,7 +30,7 @@ export type GeminiRequestResult =
     /** 端点以确定性的 4xx 说明它不接受这种输入模态。 */
     failureKind: "unsupported";
     finishReason?: undefined;
-    finishMessage?: undefined;
+    finishDetails?: undefined;
     response?: undefined;
   }
   | {
@@ -41,7 +41,7 @@ export type GeminiRequestResult =
      */
     failureKind: "misconfigured";
     finishReason?: undefined;
-    finishMessage?: undefined;
+    finishDetails?: undefined;
     response?: undefined;
   }
   | {
@@ -49,7 +49,8 @@ export type GeminiRequestResult =
     /** HTTP 成功但模型结果不可用；可由无副作用调用方决定是否重新采样。 */
     failureKind: "response";
     finishReason?: string;
-    finishMessage?: string;
+    /** 收尾详情的诊断串（见 aiChat/gemini/response.ts 的 geminiFinishDetails）。 */
+    finishDetails?: string;
     /** 仅供异常分支做预算/重试判断；不得解析其中的文本或 functionCall。 */
     response: GenerateContentResponse;
   };

@@ -112,9 +112,9 @@ async function rotateCompaction({
 }
 
 /**
- * 带退避重采样的镜像压缩：只有 HTTP 成功但 candidate 异常或清洗后正文为空
- * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败由供应商 SDK 重试，
- * 此处不再重试。本函数在该群的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
+ * 带退避重采样的镜像压缩：只有 HTTP 成功但 candidate 异常（Anthropic 拒答除外）或清洗后正文为空
+ * 才按 SUMMARY_RETRY_DELAYS_MS 再发请求。网络/HTTP 失败由供应商 SDK 重试；Anthropic 拒答不重采样（配置了
+ * fallback_model 时回退模型已在同一次调用里接手过），此处都不再重试。本函数在该群的轮换串行链上执行，只顺延本群后续轮换，不阻塞消息分发。
  */
 async function summarizeBatchWithRetry(
   chatId: number,

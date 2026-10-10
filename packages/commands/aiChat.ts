@@ -37,6 +37,6 @@ export async function handleAiChatCommand(ctx: CommandContext<Context>): Promise
         feature: "AI chat",
         text: (file: string): string => chatAtmosphere().NOTICE_TEXTS.aiConfigInvalid(file),
       }),
-    teardown: (chatId: number): Promise<void> => invalidateAiChat(chatId),
+    teardown: invalidateAiChat,
   });
 }

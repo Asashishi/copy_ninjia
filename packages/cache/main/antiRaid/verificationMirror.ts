@@ -13,6 +13,9 @@ import type {
   VerificationSnapshot,
 } from "../../../types/antiRaid/verification";
 
+/** activeVerificationSnapshots 的可变实例；只经下面三个写入函数修改。 */
+const activeSnapshots: Map<string, VerificationSnapshot> = new Map();
+
 /**
  * 主线程持有的待验证纯数据镜像，key 为 verificationKey(chatId, userId)，
  * 作为 Anti-Raid Worker 与 Disk I/O Worker 崩溃重放的数据源；权威状态机在 Anti-Raid Worker 内。
@@ -25,8 +28,52 @@ import type {
  * 容量：本层不设淘汰；硬顶由 antiRaid/verificationMirror.ts 按 VERIFICATION_RECORD_CAPACITY 拒收
  * 新记录并请求受监督重启，落盘侧 workers/diskIO/verificationWrites.ts 再核一次；延后的终态由
  * deferredVerificationRecords 以最小索引保留。
+ *
+ * 导出只读视图；写入只经 setActiveVerificationSnapshot、deleteActiveVerificationSnapshot 与
+ * clearActiveVerificationSnapshots，三者同步维护下面的按群二级索引。
  */
-export const activeVerificationSnapshots: Map<string, VerificationSnapshot> = new Map();
+export const activeVerificationSnapshots: ReadonlyMap<string, VerificationSnapshot> = activeSnapshots;
+
+/**
+ * activeVerificationSnapshots 的按群二级索引：chatId -> 该群活动镜像里的 userId 集合，供每条群消息判定
+ * 「发送者是否待验证」时按数值键查表、不拼复合键（isActiveVerificationUser）。随活动镜像的三个写入函数
+ * 同步填充与清理，群的集合清空时删除该群条目；Worker 崩溃不清理（主线程状态）。容量与活动镜像同阶。
+ */
+const activeUsersByChat: Map<number, Set<number>> = new Map();
+
+/** 写入或替换一条活动快照，并把 snapshot 的 chatId/userId 登记进按群索引；key 为 verificationKey(chatId, userId)。 */
+export function setActiveVerificationSnapshot(key: string, snapshot: VerificationSnapshot): void {
+  activeSnapshots.set(key, snapshot);
+  let users: Set<number> | undefined = activeUsersByChat.get(snapshot.chatId);
+  if (users === undefined) {
+    users = new Set();
+    activeUsersByChat.set(snapshot.chatId, users);
+  }
+  users.add(snapshot.userId);
+}
+
+/** 删除一条活动快照及其按群索引；key 不在镜像里时不做任何事。 */
+export function deleteActiveVerificationSnapshot(key: string): void {
+  const snapshot: VerificationSnapshot | undefined = activeSnapshots.get(key);
+  if (snapshot === undefined) return;
+  activeSnapshots.delete(key);
+  const users: Set<number> | undefined = activeUsersByChat.get(snapshot.chatId);
+  if (users === undefined) return;
+  users.delete(snapshot.userId);
+  if (users.size === 0) activeUsersByChat.delete(snapshot.chatId);
+}
+
+/** 清空活动镜像与按群索引。 */
+export function clearActiveVerificationSnapshots(): void {
+  activeSnapshots.clear();
+  activeUsersByChat.clear();
+}
+
+/** userId 在 chatId 群的活动镜像里是否有待验证快照；按数值键查按群索引，不分配对象。 */
+export function isActiveVerificationUser(chatId: number, userId: number): boolean {
+  if (activeUsersByChat.size === 0) return false;
+  return activeUsersByChat.get(chatId)?.has(userId) === true;
+}
 
 /**
  * 主线程已收到 Disk I/O 回执的最新 active revision，用于 Anti-Raid Worker 重建。

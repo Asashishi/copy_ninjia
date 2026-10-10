@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import { BetaFallbackState } from "@anthropic-ai/sdk";
 import type { AnthropicRequestResult } from "../../../packages/types/aiChat/anthropic";
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
 import type { AgentCapability } from "../../../packages/types/config";
@@ -17,10 +18,16 @@ const WEB_SEARCH_CAPABILITY: AgentCapability = "web_search";
 const TEXT_CAPABILITY: AgentCapability = "text";
 
 const results: AnthropicRequestResult[] = [];
-const calls: { capability: string; body: Anthropic.MessageCreateParamsNonStreaming }[] = [];
+const calls: { capability: string; body: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming }[] = [];
+const fallbackStates: unknown[] = [];
 const requestAnthropicMessage = mock(async (...args: unknown[]): Promise<AnthropicRequestResult> => {
-  const options = args[0] as { capability: string; buildBody: () => Anthropic.MessageCreateParamsNonStreaming };
+  const options = args[0] as {
+    capability: string;
+    buildBody: () => Anthropic.Beta.Messages.MessageCreateParamsNonStreaming;
+    fallbackState: unknown;
+  };
   calls.push({ capability: options.capability, body: structuredClone(options.buildBody()) });
+  fallbackStates.push(options.fallbackState);
   return results.shift() ?? { ok: false, failureKind: "request" };
 });
 mock.module("../../../packages/aiChat/anthropic/client", () => ({ requestAnthropicMessage }));
@@ -32,14 +39,15 @@ const {
   ANTHROPIC_WEB_SEARCH_TOOL_TYPE,
 } = await import("../../../packages/consts/aiChat/anthropic");
 
-function message(content: unknown[], stopReason: string, searches: number): Anthropic.Message {
-  return { content, stop_reason: stopReason, usage: { server_tool_use: { web_search_requests: searches } } } as unknown as Anthropic.Message;
+function message(content: unknown[], stopReason: string, searches: number): Anthropic.Beta.BetaMessage {
+  return { content, stop_reason: stopReason, usage: { server_tool_use: { web_search_requests: searches } } } as unknown as Anthropic.Beta.BetaMessage;
 }
 
 const reported: AiCacheUsage[] = [];
 beforeEach(() => {
   results.length = 0;
   calls.length = 0;
+  fallbackStates.length = 0;
   reported.length = 0;
   installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
 });
@@ -86,9 +94,18 @@ test("text 能力用对话模型；pause_turn 续发后合并正文与来源，�
   expect(calls[0]!.capability).toBe(TEXT_CAPABILITY);
   expect(calls[0]!.body.model).toBe(getAgentDeploymentConfig().text.model);
   expect(calls[1]!.body.messages as unknown).toEqual([{ role: "user", content: "q" }, { role: "assistant", content: paused }]);
+  expect(fallbackStates[0]).toBeInstanceOf(BetaFallbackState);
+  expect(fallbackStates[1]).toBe(fallbackStates[0]);
 
-  results.push({ ok: false, failureKind: "response", stopReason: "max_tokens", message: message([], "max_tokens", 3) });
+  results.push({ ok: false, failureKind: "response", stopReason: "max_tokens", stopDetails: undefined, message: message([], "max_tokens", 3) });
   expect(await searchAnthropicWeb(TEXT_CAPABILITY, { instruction: "i", query: "q" })).toEqual({ ok: false, searchCalls: 3 });
+});
+
+test("拒答按带 refused 的失败交回并如实交回已执行的检索次数；其余失败不带 refused", async () => {
+  results.push({ ok: false, failureKind: "refused", stopReason: "refusal", stopDetails: undefined, message: message([], "refusal", 1) });
+  expect(await searchAnthropicWeb(WEB_SEARCH_CAPABILITY, { instruction: "i", query: "q" })).toEqual({ ok: false, searchCalls: 1, refused: true });
+  results.push({ ok: false, failureKind: "request" });
+  expect(await searchAnthropicWeb(WEB_SEARCH_CAPABILITY, { instruction: "i", query: "q" })).toEqual({ ok: false, searchCalls: 0 });
 });
 
 test("HTTP 成功但检索工具报错时失败，不把解释文字交作检索结论", async () => {
@@ -109,7 +126,7 @@ test("缺计量字段时只数成功的检索结果；未执行的调用与错�
     ],
     stop_reason: "end_turn",
     usage: {},
-  } as unknown as Anthropic.Message });
+  } as unknown as Anthropic.Beta.BetaMessage });
   expect(await searchAnthropicWeb(TEXT_CAPABILITY, { instruction: "i", query: "q" }))
     .toMatchObject({ ok: true, searchCalls: 1 });
 });

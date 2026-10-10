@@ -1,23 +1,24 @@
 /**
  * config/dynamic/agent.json 里单项 AI 能力的严格解码（纯函数，不读盘、不接触缓存）：通用字段
  * provider、api_key、base_url、model（provider 为 google、openai 或 anthropic；anthropic 不支持
- * image 与 tts，那两项拒绝它），google provider 独有的 headers，image 的
- * image_protocol、tts 的 speech_protocol、voice、style、language、bot_language 与每日额度字段，
- * 以及 web_search 的 max_calls_per_use。
+ * image 与 tts，那两项拒绝它），google 与 anthropic provider 可选的 headers，anthropic provider
+ * 可选的 fallback_model，image 的 image_protocol、tts 的 speech_protocol、voice、style、language、
+ * bot_language 与每日额度字段，以及 web_search 的 max_calls_per_use。
  * 文件级加载、分段快照与 holder 在 config/agent.ts。报错只写来源路径、字段路径与期望形态，
  * 不回显配置值。
  */
 
 import {
   LOOPBACK_HOSTS,
+  EXPECTED_AGENT_FALLBACK_MODEL,
   EXPECTED_AGENT_HEADER_VALUE,
   EXPECTED_AGENT_HEADERS,
   EXPECTED_BASE_URL,
   AGENT_API_KEY_PLACEHOLDERS,
+  AGENT_CREDENTIAL_HEADER_NAMES,
   AGENT_HEADER_NAME_PATTERN,
   AGENT_HEADER_VALUE_PATTERN,
   AGENT_HEADERS_MAX_ENTRIES,
-  AGENT_RESERVED_HEADER_NAMES,
   WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE,
   isAgentProvider,
 } from "../consts/agent";
@@ -34,6 +35,7 @@ import { invalidInput } from "../libs/inputValidation";
 import { hasOnlyKeys, isPlainRecord } from "../libs/record";
 import type {
   AgentCapabilityConfig,
+  AgentHeadersProvider,
   AgentImageCapabilityConfig,
   AgentProvider,
   AgentTtsCapabilityConfig,
@@ -65,7 +67,7 @@ function requiredApiKey(value: unknown, context: string, sourcePath: string): st
  *
  * 只接受 HTTPS；LOOPBACK_HOSTS 内的本机主机可用明文 HTTP。
  *
- * userinfo 一律拒绝：供应商凭据走 api_key，三方网关鉴权走 google provider 的 headers。
+ * userinfo 一律拒绝：供应商凭据走 api_key，三方网关鉴权走 google 或 anthropic provider 的 headers。
  *
  * fragment 一律拒绝：SDK 把 base_url 当路径前缀拼接，`#` 之后的部分不会被发到服务端。
  */
@@ -122,28 +124,40 @@ function requiredSpeechProtocol(
   return invalidInput(sourcePath, context, '"openai" or "xai"');
 }
 
+/** optionalHeaders 的参数。 */
+interface OptionalHeadersOptions {
+  readonly value: unknown;
+  readonly context: string;
+  readonly sourcePath: string;
+  /** 决定禁用的凭据头名与报错期望形态。 */
+  readonly provider: AgentHeadersProvider;
+}
+
 /**
- * 解码 google provider 的可选 headers：1～AGENT_HEADERS_MAX_ENTRIES 条，名为 HTTP token、
- * 忽略大小写不重复且不在 AGENT_RESERVED_HEADER_NAMES 内；值去掉首尾空白后非空，
+ * 解码 google 或 anthropic provider 的可选 headers：1～AGENT_HEADERS_MAX_ENTRIES 条，名为 HTTP token、
+ * 忽略大小写不重复且不是该 provider 的 AGENT_CREDENTIAL_HEADER_NAMES；值去掉首尾空白后非空，
  * 只含可打印 ASCII 与空格、制表符。报错只写字段路径与期望形态，不回显请求头值。
  */
-function optionalHeaders(
-  value: unknown,
-  context: string,
-  sourcePath: string
-): Readonly<Record<string, string>> | undefined {
+function optionalHeaders({
+  value,
+  context,
+  sourcePath,
+  provider,
+}: OptionalHeadersOptions): Readonly<Record<string, string>> | undefined {
   if (value === undefined) return undefined;
-  if (!isPlainRecord(value)) return invalidInput(sourcePath, context, EXPECTED_AGENT_HEADERS);
+  const credentialHeader: string = AGENT_CREDENTIAL_HEADER_NAMES[provider];
+  const expected: string = EXPECTED_AGENT_HEADERS[provider];
+  if (!isPlainRecord(value)) return invalidInput(sourcePath, context, expected);
   const entries: [string, unknown][] = Object.entries(value);
   if (entries.length === 0 || entries.length > AGENT_HEADERS_MAX_ENTRIES) {
-    return invalidInput(sourcePath, context, EXPECTED_AGENT_HEADERS);
+    return invalidInput(sourcePath, context, expected);
   }
   const headers: [string, string][] = [];
   const seen: Set<string> = new Set<string>();
   for (const [name, raw] of entries) {
     const lowerName: string = name.toLowerCase();
-    if (!AGENT_HEADER_NAME_PATTERN.test(name) || AGENT_RESERVED_HEADER_NAMES.includes(lowerName) || seen.has(lowerName)) {
-      return invalidInput(sourcePath, context, EXPECTED_AGENT_HEADERS);
+    if (!AGENT_HEADER_NAME_PATTERN.test(name) || lowerName === credentialHeader || seen.has(lowerName)) {
+      return invalidInput(sourcePath, context, expected);
     }
     seen.add(lowerName);
     const fieldContext: string = `${context}.${name}`;
@@ -156,23 +170,45 @@ function optionalHeaders(
   return Object.fromEntries(headers);
 }
 
-/** 某个 provider 下一项能力允许的全部字段：通用字段、google 独有的 headers，再加能力自己的字段。 */
+/**
+ * 某个 provider 下一项能力允许的全部字段：通用字段、google 与 anthropic 的 headers、anthropic 的
+ * fallback_model，再加能力自己的字段。
+ */
 function capabilityKeys(provider: AgentProvider, extraKeys: readonly string[]): readonly string[] {
-  const common: readonly string[] = provider === "google"
-    ? ["provider", "api_key", "base_url", "headers", "model"]
-    : ["provider", "api_key", "base_url", "model"];
-  return [...common, ...extraKeys];
+  if (provider === "openai") return ["provider", "api_key", "base_url", "model", ...extraKeys];
+  if (provider === "google") return ["provider", "api_key", "base_url", "headers", "model", ...extraKeys];
+  return ["provider", "api_key", "base_url", "headers", "model", "fallback_model", ...extraKeys];
 }
 
 /** 字段集不符时的期望形态；extraShape 是能力自己的字段，以 `, ` 开头或为空串。 */
 function capabilityShape(provider: AgentProvider, extraShape: string): string {
-  const headers: string = provider === "google" ? "headers?, " : "";
-  return `exactly { provider, api_key, base_url?, ${headers}model${extraShape} } when provider is ${provider}`;
+  const headers: string = provider === "openai" ? "" : "headers?, ";
+  const fallbackModel: string = provider === "anthropic" ? ", fallback_model?" : "";
+  return `exactly { provider, api_key, base_url?, ${headers}model${fallbackModel}${extraShape} } when provider is ${provider}`;
+}
+
+/** optionalFallbackModel 的参数。 */
+interface OptionalFallbackModelOptions {
+  readonly value: unknown;
+  /** 同一能力已解出的 model。 */
+  readonly model: string;
+  readonly context: string;
+  readonly sourcePath: string;
+}
+
+/** 解码 anthropic provider 可选的 fallback_model：存在时去掉首尾空白后非空，且与 model 不同。 */
+function optionalFallbackModel({ value, model, context, sourcePath }: OptionalFallbackModelOptions): string | undefined {
+  if (value === undefined) return undefined;
+  const fallbackModel: string = typeof value === "string" ? value.trim() : "";
+  if (fallbackModel.length === 0 || fallbackModel === model) {
+    return invalidInput(sourcePath, context, EXPECTED_AGENT_FALLBACK_MODEL);
+  }
+  return fallbackModel;
 }
 
 /**
- * 解码通用字段；调用方须先按 capabilityKeys 核对过字段集。google 分支另解 headers，
- * 其余分支 headers 恒为 undefined。
+ * 解码通用字段；调用方须先按 capabilityKeys 核对过字段集。google 与 anthropic 分支另解 headers，
+ * openai 分支 headers 恒为 undefined；anthropic 分支另解 fallback_model。
  */
 function parseCapabilityFields(
   value: Readonly<Record<string, unknown>>,
@@ -183,12 +219,13 @@ function parseCapabilityFields(
   const apiKey: string = requiredApiKey(value.api_key, `${context}.api_key`, sourcePath);
   const baseUrl: string | undefined = optionalBaseUrl(value.base_url, `${context}.base_url`, sourcePath);
   const model: string = requiredString(value.model, `${context}.model`, sourcePath);
-  if (provider === "google") {
-    const headers: Readonly<Record<string, string>> | undefined =
-      optionalHeaders(value.headers, `${context}.headers`, sourcePath);
-    return { provider, apiKey, baseUrl, headers, model };
-  }
-  return { provider, apiKey, baseUrl, headers: undefined, model };
+  if (provider === "openai") return { provider, apiKey, baseUrl, headers: undefined, model };
+  const headers: Readonly<Record<string, string>> | undefined =
+    optionalHeaders({ value: value.headers, context: `${context}.headers`, sourcePath, provider });
+  if (provider === "google") return { provider, apiKey, baseUrl, headers, model };
+  const fallbackModel: string | undefined =
+    optionalFallbackModel({ value: value.fallback_model, model, context: `${context}.fallback_model`, sourcePath });
+  return { provider, apiKey, baseUrl, headers, model, fallbackModel };
 }
 
 /** 能力值必须是普通对象；字段集由调用方在解出 provider 后按 capabilityKeys 核对。 */

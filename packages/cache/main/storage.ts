@@ -5,8 +5,9 @@ import type { TtsDailyUsage } from "../../types/aiChat/voiceMessage";
 import type { GlobalCopyState } from "../../types/chatState";
 
 /**
- * 进程唯一 StateStore 的惰性 holder。首次持久化操作时填充，应用生命周期
- * 结束后对象保持 quiesced 直到进程退出；新进程从空 holder 创建全新 writer。
+ * 进程唯一 StateStore 的惰性 holder。首次经 infra/storage/stateStore.ts 门面访问时创建（启动时
+ * 登记致命处理器即是第一次），应用生命周期结束后对象保持 quiesced 直到进程退出；新进程从空 holder
+ * 创建全新 writer。
  */
 export const stateStoreHolder: { current: StateStore | null } = { current: null };
 

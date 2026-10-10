@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import {
   blockValue,
   diskMessages,
-  flushDiskIODomainOutcome,
+  flushDiskIODomain,
   pageReadImplementation,
   readBlocklistIdPage,
   readImplementation,
@@ -52,7 +52,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       done: true,
     });
 
-    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("blocklist");
+    expect(flushDiskIODomain).toHaveBeenCalledWith("blocklist");
     expect(unacknowledgedBlocklistWrites.size).toBe(0);
     expect(readBlocklistIdPage).toHaveBeenCalledWith(null);
   });
@@ -60,7 +60,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
   test("flush 没有精确 ACK 时拒绝开始补扫，不拿数据库旧页继续", async () => {
     seedMissing(7);
     queueIdentityPolicyWrite("blocklist", 7, blockValue());
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => ({ result: "flushed" })
     );
 
@@ -71,7 +71,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
 
   test("flush 期间并发排入的黑名单写不属于本页：核对只看 flush 前已登记的 revision", async () => {
     seedMissing(8);
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => {
         queueIdentityPolicyWrite("blocklist", 8, blockValue());
         return { result: "flushed" };
@@ -118,7 +118,7 @@ describe("补扫游标页 fail-closed 校验", () => {
 
     await expect(readBlocklistSweepPage(afterId)).rejects.toThrow(message);
 
-    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("blocklist");
+    expect(flushDiskIODomain).toHaveBeenCalledWith("blocklist");
     expect(readBlocklistIdPage).toHaveBeenCalledTimes(1);
     expect(readBlocklistIdPage).toHaveBeenCalledWith(afterId);
     expect(diskMessages).toEqual([]);

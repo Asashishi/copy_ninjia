@@ -6,12 +6,18 @@
 
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { loggerStub } from "../helpers/loggerMock";
+import { QA_QUERY_PAGE_CALLBACK_PREFIX } from "../../packages/consts/qa";
 import type { Bot, Context } from "grammy";
 
 /** 本次 update 命中的 handler 名，按调用顺序。 */
 const calls: string[] = [];
 /** 统一命令入口从 grammY 收到的参数，保留子命令和目标原文。 */
 const commandArguments: { handler: string; argument: string }[] = [];
+/**
+ * `/wed` 与看板翻页的 mock 是否直接返回布尔。
+ * 缺省返回 Promise，覆盖分发函数等待后再决定的路径。
+ */
+let callbackClaimsAreSync: boolean = false;
 /** 三条 ingress 是否认领本条 update；每个用例自行设置。 */
 const claims: { antiRaid: boolean; gag: boolean; qa: boolean; qaBoard: boolean; wed: boolean } = {
   antiRaid: false,
@@ -86,13 +92,13 @@ const commandsModule: Record<string, unknown> = {
     calls.push("handleQaMessageIngress");
     return Promise.resolve(claims.qa);
   },
-  dispatchWedCallback: (): Promise<boolean> => {
+  dispatchWedCallback: (): boolean | Promise<boolean> => {
     calls.push("dispatchWedCallback");
-    return Promise.resolve(claims.wed);
+    return callbackClaimsAreSync ? claims.wed : Promise.resolve(claims.wed);
   },
-  handleQaBoardCallback: (): Promise<boolean> => {
+  handleQaBoardCallback: (): boolean | Promise<boolean> => {
     calls.push("handleQaBoardCallback");
-    return Promise.resolve(claims.qaBoard);
+    return callbackClaimsAreSync ? claims.qaBoard : Promise.resolve(claims.qaBoard);
   },
   handleInlineQuery: record("handleInlineQuery"),
   handleLuckChosenInlineResult: record("handleLuckChosenInlineResult"),
@@ -206,6 +212,7 @@ beforeEach((): void => {
   claims.qa = false;
   claims.qaBoard = false;
   claims.wed = false;
+  callbackClaimsAreSync = false;
   gates.init = true;
   gates.privateCommand = true;
   gates.privateProxy = false;
@@ -408,7 +415,7 @@ describe("registerHandlers 分发", () => {
       id: "q1",
       from: FROM,
       chat_instance: "ci",
-      data: "qa_board:2",
+      data: `${QA_QUERY_PAGE_CALLBACK_PREFIX}2`,
       message: { message_id: 7, date: 1, chat: CHAT },
     };
     claims.qaBoard = true;
@@ -422,6 +429,26 @@ describe("registerHandlers 分发", () => {
     claims.wed = true;
     expect(await dispatch({ update_id: ++nextUpdateId, callback_query: { ...query, data: "wed:42:2:change" } }))
       .toEqual(["dispatchWedCallback"]);
+  });
+
+  test("翻页与 /wed 同步返回布尔时，认领顺序与终止行为不变", async () => {
+    callbackClaimsAreSync = true;
+    const query = {
+      id: "q1",
+      from: FROM,
+      chat_instance: "ci",
+      data: "verify:42",
+      message: { message_id: 7, date: 1, chat: CHAT },
+    };
+    expect(await dispatch({ update_id: ++nextUpdateId, callback_query: query }))
+      .toEqual(["dispatchWedCallback", "handleQaBoardCallback", "handleVerificationCallback"]);
+    claims.wed = true;
+    expect(await dispatch({ update_id: ++nextUpdateId, callback_query: query }))
+      .toEqual(["dispatchWedCallback"]);
+    claims.wed = false;
+    claims.qaBoard = true;
+    expect(await dispatch({ update_id: ++nextUpdateId, callback_query: query }))
+      .toEqual(["dispatchWedCallback", "handleQaBoardCallback"]);
   });
 
   test("非消息 update 各自落到对应 handler", async () => {

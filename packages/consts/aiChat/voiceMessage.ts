@@ -146,9 +146,3 @@ export const VOICE_OPUS_APPLICATION: "voip" | "audio" | "lowdelay" = "audio";
  * 块间让出 AI Worker 事件循环；单块同步占用随块长增加，整段总耗时不变。
  */
 export const VOICE_OPUS_ENCODE_CHUNK_SECONDS: number = 1;
-
-/**
- * 分块重采样时每块前后各带上的输入样本数，属 aiChat/ai/voiceEncoding.ts。须不小于
- * 重采样核单侧触及的样本数，块边界的输出才与整段一次重采样相同。
- */
-export const VOICE_OPUS_RESAMPLE_CONTEXT_SAMPLES: number = 8;

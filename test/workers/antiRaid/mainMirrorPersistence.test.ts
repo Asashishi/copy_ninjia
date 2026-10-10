@@ -7,7 +7,8 @@ import type { AntiRaidWorkerEvent } from "../../../packages/types/antiRaid/event
 import type { AntiRaidWorkerMessage } from "../../../packages/types/antiRaid/protocol";
 
 const {
-  activeVerificationSnapshots,
+  deleteActiveVerificationSnapshot,
+  setActiveVerificationSnapshot,
   antiRaidRuntimeState,
   chatStates,
   flushDiskIODomain,
@@ -63,6 +64,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
         intentId: 90,
         originalPermissions: { can_invite_users: true },
         announced: true,
+        announcementMessageId: 7001,
         expiresAt,
       });
       await Bun.sleep(0);
@@ -91,6 +93,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: 91,
       originalPermissions: { can_invite_users: true, can_send_confetti: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 700_000,
     } as unknown as AntiRaidWorkerEvent;
 
@@ -119,6 +122,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: 92,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 800_000,
     });
     await Bun.sleep(0);
@@ -156,6 +160,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: 92,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 800_000,
     });
     await Bun.sleep(0);
@@ -178,6 +183,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: 94,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 900_000,
     });
     await waitUntil((): boolean => !pendingLockdownPersistence.has(-2008));
@@ -242,6 +248,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: 96,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt,
     });
 
@@ -271,6 +278,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: 97,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 900_000,
     });
     workerHooks.supervisorOptions!.onEvent({ type: "unlock", chatId: -2011 });
@@ -304,6 +312,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId: firstIntentId,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 900_000,
     });
     expect(pendingLockdownPersistence.has(chatId)).toBeTrue();
@@ -330,6 +339,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       intentId,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 900_000 + intentId,
     });
     // 前 LOCKDOWN_PERSIST_RECONCILE_MAX_ROUNDS 次落盘途中各到达一条换代的意图，之后不再换代。
@@ -642,7 +652,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
   });
 
   test("待验证发送者的评论区消息仍走 durable 投递：先投消息再加投 barrier", async () => {
-    activeVerificationSnapshots.set("-4001:93", { ...record(1, 1), chatId: -4001, userId: 93 });
+    setActiveVerificationSnapshot("-4001:93", { ...record(1, 1), chatId: -4001, userId: 93 });
     workerPosts.length = 0;
     const pending = antiRaid.handleAntiRaidMessageIngress({
       chat: { id: -4001 },
@@ -659,7 +669,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: barrier.barrierId });
     }
     expect(await pending).toBeFalse();
-    activeVerificationSnapshots.delete("-4001:93");
+    deleteActiveVerificationSnapshot("-4001:93");
   });
 
   test("论坛话题消息不是评论区候选：不投递、不加投 barrier", async () => {
@@ -678,7 +688,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
   });
 
   test("待验证用户在论坛话题里发言仍被追踪，但不标记为评论线索", async () => {
-    activeVerificationSnapshots.set("-4001:92", { ...record(1, 1), chatId: -4001, userId: 92 });
+    setActiveVerificationSnapshot("-4001:92", { ...record(1, 1), chatId: -4001, userId: 92 });
     workerPosts.length = 0;
 
     const topicMessage = antiRaid.handleAntiRaidMessageIngress({
@@ -702,7 +712,7 @@ describe("Anti-Raid mirror persistence barriers", () => {
       workerHooks.supervisorOptions!.onEvent({ type: "barrierComplete", barrierId: topicBarrier.barrierId });
     }
     await topicMessage;
-    activeVerificationSnapshots.delete("-4001:92");
+    deleteActiveVerificationSnapshot("-4001:92");
   });
 
   test("Worker 放弃自愈后主线程恢复权限、重试失败群且不清除更新后的 intent", async () => {

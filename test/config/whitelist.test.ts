@@ -18,7 +18,7 @@ const diskMessages: DiskBusinessMessage[] = [];
 const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
 /** Worker 放弃自愈、恢复缓冲顶到硬顶或同步拒收时，postDiskIO 返回 false。 */
 let acceptDiskMessages: boolean = true;
-const flushDiskIODomainOutcome = mock(
+const flushDiskIODomain = mock(
   async (domain: DiskIODomain) => {
     const writes: { table: "whitelist" | "blocklist"; id: number; revision: number }[] = [];
     for (const message of diskMessages) {
@@ -51,7 +51,7 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
     diskMessages.push(message);
     return acceptDiskMessages;
   },
-  flushDiskIODomainOutcome,
+  flushDiskIODomain,
 })));
 
 const {
@@ -88,7 +88,7 @@ beforeEach(() => {
   diskMessages.length = 0;
   acceptDiskMessages = true;
   resetIdentityStorageCache();
-  flushDiskIODomainOutcome.mockClear();
+  flushDiskIODomain.mockClear();
 });
 
 describe("SQLite 白名单运行时视图", () => {
@@ -368,7 +368,7 @@ describe("落盘投递被拒收时不得回执成功", () => {
     await expect(confirmIdentityPolicyPersisted("whitelist", 7, true)).resolves.toBeUndefined();
 
     expect(diskMessages).toHaveLength(2);
-    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("whitelist");
+    expect(flushDiskIODomain).toHaveBeenCalledWith("whitelist");
     expect(unacknowledgedWhitelistWrites.has(7)).toBeFalse();
   });
 });

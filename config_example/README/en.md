@@ -164,6 +164,12 @@ Dynamic configuration file located at `config/dynamic/agent.json`. The root cont
 ```json
 {
   "agent": {
+    "ad_detect": {
+      "provider": "openai",
+      "api_key": "replace-with-deepseek-api-key",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash"
+    },
     "text": {
       "provider": "google",
       "api_key": "replace-with-google-api-key",
@@ -172,7 +178,8 @@ Dynamic configuration file located at `config/dynamic/agent.json`. The root cont
     "summary": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5"
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5"
     },
     "media": {
       "provider": "google",
@@ -182,12 +189,6 @@ Dynamic configuration file located at `config/dynamic/agent.json`. The root cont
         "cf-aig-authorization": "Bearer <replace-with-cloudflare-ai-gateway-token>"
       },
       "model": "gemini-3.5-flash-lite"
-    },
-    "ad_detect": {
-      "provider": "openai",
-      "api_key": "replace-with-deepseek-api-key",
-      "base_url": "https://api.deepseek.com",
-      "model": "deepseek-v4-flash"
     },
     "image": {
       "provider": "openai",
@@ -202,13 +203,15 @@ Dynamic configuration file located at `config/dynamic/agent.json`. The root cont
       "model": "gemini-3.8-flash-lite-tts",
       "voice": "en-us-nika",
       "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
+      "bot_language": "ja",
       "daily_limit": 100,
       "daily_reserve_quota": 25
     },
     "web_search": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5",
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5",
       "max_calls_per_use": 5
     }
   }
@@ -225,7 +228,8 @@ Applies to all capabilities (`text`, `summary`, `media`, `ad_detect`, `image`, `
 | `api_key` | `string` | **Required** | Non-empty string, not equal to placeholder | Dedicated API key for this capability |
 | `base_url` | `string` | Optional | Absolute HTTPS URL (`http` only allowed for loopback `localhost`, `127.0.0.1`, `::1`) | Custom endpoint URL. Must not contain userinfo credentials or `#` fragments |
 | `model` | `string` | **Required** (forbidden for xAI TTS) | Non-empty string | Actual model name accepted by the endpoint |
-| `headers` | `object` | Optional | 1–8 key-value pairs (**Only allowed when `provider: "google"`**) | Custom HTTP request headers for third-party gateway authentication (e.g. Cloudflare AI Gateway). Keys must be HTTP tokens, must be unique ignoring case, and cannot be `x-goog-api-key`; values must be non-empty printable ASCII strings after trimming |
+| `headers` | `object` | Optional | 1–8 key-value pairs (**Only allowed when `provider` is `"google"` or `"anthropic"`**) | Custom HTTP request headers for third-party gateway authentication (e.g. Cloudflare AI Gateway `cf-aig-authorization`). Keys must be HTTP tokens, must be unique ignoring case, and cannot be `x-goog-api-key` under google or `x-api-key` under anthropic; values must be non-empty printable ASCII strings after trimming |
+| `fallback_model` | `string` | Optional | Non-empty string different from `model` (**Only allowed when `provider` is `"anthropic"`**) | When `model` refuses (`stop_reason: "refusal"`), the same request is resent with this model and the same `api_key`, `base_url`, and `headers`. The fallback credit is redeemed best-effort; a fallback model outside `model`'s `allowed_fallback_models` is billed at the normal rate. If the fallback model also refuses, or none is configured, the request fails without retrying |
 
 ### Image Generation Keys (`agent.image`)
 
@@ -265,7 +269,7 @@ Dynamic configuration file located at `config/dynamic/assets.json`. Optional fil
     "random_h_image_dir": "./h_image"
   },
   "pathOrUrl": {
-    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci"
+    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1Wqxii-o6O36ZDWhM1L0BcZPGBFmpvalg"
   },
   "onlyUrl": {
     "fortune_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
@@ -280,7 +284,7 @@ Dynamic configuration file located at `config/dynamic/assets.json`. Optional fil
 | Group | Key | Type | Constraints & Values | Description |
 | --- | --- | --- | --- | --- |
 | `onlyPath` | `random_h_image_dir` | `string` | Absolute path or explicit relative path (`./`, `../`), default `./h_image` | Image directory for `/h_image` commands and cron random draws, resolved against runtime data root |
-| `pathOrUrl` | `bot_default_avatar` | `string` | Local image file path or absolute HTTP/HTTPS URL | Image used to reset avatar in `/icon reset` and `/copy stop`. Local files must be `≤ 10 MiB` and JPEG/PNG |
+| `pathOrUrl` | `bot_default_avatar` | `string` | Local image or MP4 file path, or absolute HTTP/HTTPS URL | Media used to reset the avatar in `/icon reset` and `/copy stop`: JPEG/PNG (`≤ 10 MiB`) becomes a static avatar, MP4 (`≤ 50 MiB`, square video `≤ 1080×1080`) an animated one. Local files are validated at load time, URLs when restoring with a 90-second download timeout |
 | `onlyUrl` | `fortune_thumbnail_url` | `string` | Absolute HTTPS URL | Thumbnail URL displayed on "Fortune" inline result card |
 | `onlyUrl` | `probability_thumbnail_url` | `string` | Absolute HTTPS URL | Thumbnail URL displayed on "Probability" inline result card |
 | `onlyUrl` | `gag_thumbnail_url` | `string` | Absolute HTTPS URL | Thumbnail URL displayed on "Gag" inline speech result card |
@@ -353,6 +357,47 @@ Dynamic configuration file located at `config/dynamic/mood.json`. Defines AI moo
       }
     },
     {
+      "name": "忧郁",
+      "weight": 10,
+      "instruction": "你今天有点闷闷的，说不上具体为什么：话变少、反应慢半拍，毒舌还在但明显没什么力气，偶尔冒出一句丧气话又赶紧嘴硬圆回去，撒娇也带着点没精打采。",
+      "weatherMultipliers": {
+        "clear": 0.6,
+        "rain": 1.8,
+        "storm": 1.5,
+        "fog": 1.6
+      },
+      "timeMultipliers": {
+        "evening": 1.2,
+        "night": 1.3,
+        "lateNight": 1.2
+      }
+    },
+    {
+      "name": "伤心",
+      "weight": 10,
+      "instruction": "你现在有点难过，藏不太住：嘴上还嫌弃着人，但明显没底气，容易被戳一下就破防、露出脆弱的一面，比平时更需要人哄，撒娇变成带着委屈的黏人。",
+      "weatherMultipliers": {
+        "clear": 0.7,
+        "rain": 1.5,
+        "storm": 1.4
+      },
+      "timeMultipliers": {
+        "night": 1.5,
+        "lateNight": 1.7
+      }
+    },
+    {
+      "name": "愤怒",
+      "weight": 10,
+      "instruction": "你现在火气很大、一点就着：毒舌火力全开、字里行间带刺，容易被戳到点上就直接炸毛，反驳更冲、语气更硬，撒娇欲望降到最低，谁惹到你都别想轻易蒙混过去。",
+      "weatherMultipliers": {
+        "storm": 1.6
+      },
+      "timeMultipliers": {
+        "lateNight": 0.5
+      }
+    },
+    {
       "name": "色气",
       "weight": 25,
       "instruction": "你现在处于色气拉满的状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
@@ -366,15 +411,17 @@ Dynamic configuration file located at `config/dynamic/mood.json`. Defines AI moo
     },
     {
       "name": "困",
-      "weight": 40,
-      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，经常打哈欠说『好困……』『别吵……让我睡会儿』，声音软绵绵没精神，需要被哄着照顾和宠着睡。",
+      "weight": 10,
+      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，毒舌都懒得认真展开，经常打哈欠说『好困……』『别吵……让我睡会儿』，撒娇的时候会直接往人身上靠、找地方窝着，声音软绵绵没精神，「喵」尾音也懒洋洋的，偶尔半睡半醒地冒出平时嘴硬不会承认的依赖话，整体很被动，需要被哄着照顾和宠着睡。",
       "weatherMultipliers": {
         "rain": 1.5,
-        "snow": 1.3
+        "snow": 1.3,
+        "fog": 1.2
       },
       "timeMultipliers": {
         "morning": 1.5,
         "daytime": 0.5,
+        "night": 1.5,
         "lateNight": 2.5
       }
     }

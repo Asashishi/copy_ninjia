@@ -76,13 +76,13 @@ export interface ExpellingVerificationSnapshot
   /** expelling 终态的处置原因。 */
   expelReason: "timeout" | "flood";
   /** 成功处置播报已发送；仅 expelling 终态可携带。 */
-  successNoticeSent?: boolean;
+  successNoticeSent?: true;
   /** 「踢不动」告警已发送；仅 expelling 终态可携带（见 ExpellingState）。 */
-  failureNoticeSent?: boolean;
+  failureNoticeSent?: true;
   /** 「没能确认成员是否仍在群里或群类型」告警已发送；仅 expelling 终态可携带。 */
-  unconfirmedNoticeSent?: boolean;
+  unconfirmedNoticeSent?: true;
   /** 踢人已确认成功、成功播报还欠着；仅 expelling 终态可携带（见 ExpellingState）。 */
-  removalConfirmed?: boolean;
+  removalConfirmed?: true;
 }
 
 /**

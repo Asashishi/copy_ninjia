@@ -92,7 +92,7 @@ Comprehensive multi-page developer documentation covering environment setup, sys
 ## 📑 Page Index & Summary
 
 1. **[01 Environment Setup and First Run](01-getting-started.md)**
-   - System requirements: Linux `/proc` filesystem, Bun 1.4.2, Telegram Bot Token, and AI provider credentials.
+   - System requirements: Linux `/proc` filesystem, Bun 1.4.3, Telegram Bot Token, and AI provider credentials.
    - One-shot automated installation via `install.sh` (standalone binary package or source clone) and manual setup instructions.
    - Strict validation of static deployment files (`config/static/bot.json`) and dynamic configs.
    - @BotFather configuration: Privacy Mode, Admin permissions, Inline Mode, and Bot-to-Bot Communication.

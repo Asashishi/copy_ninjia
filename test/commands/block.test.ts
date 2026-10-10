@@ -97,9 +97,10 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   onDiskIORespawn: (): void => {},
   // /block 只等黑名单这一个领域的落盘回执：统一 flush 是各领域的合取，
   // 无关领域失败不让它报「小本本没能写进硬盘」（见 confirmBlocklistPersisted）。
-  flushDiskIODomain: flushDiskIO,
   // confirmBlocklistPersisted 经 confirmIdentityPolicyPersisted 走带回执的出口，并核对精确 revision ACK。
-  flushDiskIODomainOutcome: flushBlocklistDomain,
+  // 身份表的确认等精确 revision ACK（flushBlocklistDomain），其余领域只看 flush 结果。
+  flushDiskIODomain: async (domain: string): Promise<{ result: FlushResult }> =>
+    domain === "blocklist" || domain === "whitelist" ? flushBlocklistDomain() : { result: await flushDiskIO() },
   onDiskIOReply: diskIOReplyStub({
     identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
       persistedListeners.push(listener);

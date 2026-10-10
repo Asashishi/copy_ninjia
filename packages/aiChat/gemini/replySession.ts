@@ -10,12 +10,20 @@ import { EMPTY_FUNCTION_CALLS } from "../../consts/aiChat/tools";
  * functionCall 形式抛回；与函数工具混用时经 includeServerSideToolInvocations
  * （GEMINI_SERVER_TOOL_CONFIG）要求 SDK 把服务端工具调用记录接回 content。
  *
- * 两套请求结构：每轮回复的第 1 次请求引用全群共用的显式缓存（cachedContent，只装
- * systemInstruction + tools + toolConfig，scope 见 contextCache.ts），请求里只发全部 contents；
- * 缓存暂不可用时这一次也走完整请求。第 2 次起一律发送完整的 systemInstruction、tools、
- * toolConfig 与 contents。两套结构的 token 序列逐字一致，contents 与模型 content
- * （含思考签名）的处理完全相同，只有 config 在 cachedContent 与三项完整字段之间切换。
+ * 两套请求结构：每轮回复的第 1 次请求在本群没有触发时刻记录（本线程还没有成功的回复请求、记录
+ * 已被清理），或距记录超过 GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS 时，引用
+ * 全群共用的显式缓存（cachedContent，只装 systemInstruction + tools + toolConfig，scope 见
+ * contextCache.ts），请求里只发全部 contents。距记录落在此时长内（含相等）时这一次改发完整
+ * 请求。缓存暂不可用，或会话固定的 text 快照已被热重载替换时，也走完整请求。
+ * 第 2 次起一律发送完整的 systemInstruction、tools、toolConfig 与 contents，不看间隔。
+ * 完整请求由服务端隐式前缀缓存按公共前缀命中。两套结构的 token 序列逐字一致，contents 与模型
+ * content（含思考签名）的处理完全相同，只有 config 在 cachedContent 与三项完整字段之间切换。
  * 稳定区块排在易变区块之前，工具往返只向 contents 尾部追加。
+ *
+ * 触发时刻是本群上一次成功的 generateContent 的发出时刻，取本线程单调时钟 performance.now()，
+ * 按群各记一个（见 cache/workers/aiChat/geminiContextCache.ts）。请求成功后才写入，失败的请求
+ * 不写；并行请求可能乱序完成，不晚于本群已记录值的发出时刻不覆盖。显式缓存被拒后的完整结构
+ * 补发按补发时刻计。
  *
  * 会话创建时固定 text 能力的配置与客户端，整轮的每次请求都用它们；agent 配置热重载只影响
  * 之后新建的会话。第 1 次请求时 agent 配置已被热重载替换（text 快照不再是同一个对象）的，
@@ -34,11 +42,13 @@ import type {
 import {
   GEMINI_GROUNDED_REPLY_TEMPERATURE,
   GEMINI_REPLY_ERROR_LABEL,
+  GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS,
   GEMINI_REPLY_MAX_TOKENS,
   GEMINI_REPLY_TEMPERATURE,
   GEMINI_SERVER_TOOL_CONFIG,
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
+import { geminiReplyLastRequestAt } from "../../cache/workers/aiChat/geminiContextCache";
 import { isPlainRecord } from "../../libs/record";
 import { getGeminiClient, requestGeminiResult } from "./client";
 import {
@@ -94,9 +104,28 @@ function extractFunctionCalls(data: GenerateContentResponse): readonly AiFunctio
   return calls.length === 0 ? EMPTY_FUNCTION_CALLS : calls;
 }
 
+/**
+ * 本群触发时刻是否仍落在隐式缓存窗口内（now 与记录同取 performance.now()）。
+ * 没有记录，或经过时长超过 GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS 时为 false。
+ */
+function implicitCacheStillWarm(chatId: number, now: number): boolean {
+  const lastRequestAt: number | undefined = geminiReplyLastRequestAt.get(chatId);
+  return lastRequestAt !== undefined && now - lastRequestAt <= GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS;
+}
+
+/**
+ * 把一次成功请求的发出时刻 sentAt 记为本群触发时刻。并行请求可能乱序完成，
+ * 不晚于本群已记录值的不覆盖。
+ */
+function noteGeminiReplyRequest(chatId: number, sentAt: number): void {
+  const recordedAt: number | undefined = geminiReplyLastRequestAt.get(chatId);
+  if (recordedAt !== undefined && sentAt <= recordedAt) return;
+  geminiReplyLastRequestAt.set(chatId, sentAt);
+}
+
 /** 建立一轮 Gemini 回复会话。会话随本轮结束即弃，不跨轮复用。 */
 export function createGeminiReplySession(
-  { stableBlocks, volatileBlocks, signal }: AiReplySessionParams
+  { chatId, stableBlocks, volatileBlocks, signal }: AiReplySessionParams
 ): AiReplySession {
   const textConfig: AgentCapabilityConfig = getAgentDeploymentConfig().text;
   const client: GoogleGenAI = getGeminiClient("text");
@@ -111,7 +140,7 @@ export function createGeminiReplySession(
   // 上一次 request() 拿到的模型 content，等 appendToolOutputs() 接回 contents。
   let pendingModelContent: Content | undefined;
 
-  // 本轮回复还没发过请求：只有第 1 次请求尝试引用共用显式缓存。
+  // 本轮回复还没发过请求。只有第 1 次请求可能引用显式缓存，还要看本群上一次触发间隔。
   let firstRequest: boolean = true;
 
   /**
@@ -148,39 +177,47 @@ export function createGeminiReplySession(
     };
   }
 
-  /** 按完整结构发一次请求（不引用显式缓存）。 */
-  function requestFull(request: AiReplyTurnRequest, tools: Tool[]): Promise<GeminiRequestResult> {
-    return requestGeminiResult({
+  /**
+   * 发一次请求。sentAt 是发出时的 performance.now()，请求成功才记为本群触发时刻，失败不记。
+   * 请求体由 buildRequestBody 在发送时求值，抛错由 requestGeminiResult 归一成失败结果。
+   */
+  async function send(
+    buildRequestBody: () => GenerateContentParameters,
+    sentAt: number
+  ): Promise<GeminiRequestResult> {
+    const result: GeminiRequestResult = await requestGeminiResult({
       capability: "text",
-      buildBody: (): GenerateContentParameters => buildBody(request, tools, null),
+      buildBody: buildRequestBody,
       errorLabel: GEMINI_REPLY_ERROR_LABEL,
       client,
     });
+    if (result.ok) noteGeminiReplyRequest(chatId, sentAt);
+    return result;
+  }
+
+  /** 按完整结构发一次请求（不引用显式缓存）。 */
+  function requestFull(request: AiReplyTurnRequest, tools: Tool[], sentAt: number): Promise<GeminiRequestResult> {
+    return send((): GenerateContentParameters => buildBody(request, tools, null), sentAt);
   }
 
   /**
-   * 第 1 次请求：先取共用显式缓存，取到就按显式结构发；端点以 4xx 拒绝（failureKind 为
-   * misconfigured 或 rejected）时释放登记，再按完整结构补发一次。取不到缓存或其它失败
-   * 与完整请求的处理相同，不补发。会话固定的配置已被热重载替换时直接发完整请求。请求体
-   * 闭包内求值抛错由 requestGeminiResult 归一成失败结果。
+   * 本群隐式窗口未覆盖的第 1 次请求（没有记录或超过间隔）：先取共用显式缓存，取到就按显式结构发；
+   * 端点以 4xx 拒绝（failureKind 为 misconfigured 或 rejected）时释放登记，再按完整结构补发一次，
+   * 补发的发出时刻另取。取不到缓存或其它失败与完整请求的处理相同，不补发。会话固定的配置已被
+   * 热重载替换时直接发完整请求。
    */
-  async function requestFirst(request: AiReplyTurnRequest, tools: Tool[]): Promise<GeminiRequestResult> {
-    if (getAgentDeploymentConfig().text !== textConfig) return requestFull(request, tools);
+  async function requestFirst(request: AiReplyTurnRequest, tools: Tool[], sentAt: number): Promise<GeminiRequestResult> {
+    if (getAgentDeploymentConfig().text !== textConfig) return requestFull(request, tools, sentAt);
     const acquired: { name: string | null } = { name: null };
-    const result: GeminiRequestResult = await requestGeminiResult({
-      capability: "text",
-      buildBody: (): GenerateContentParameters => {
-        acquired.name = acquireGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, geminiContextCacheContent({
-          model: textConfig.model,
-          systemInstruction: request.systemPrompt,
-          tools,
-          toolConfig: request.webSearchEnabled ? GEMINI_SERVER_TOOL_CONFIG : undefined,
-        }));
-        return buildBody(request, tools, acquired.name);
-      },
-      errorLabel: GEMINI_REPLY_ERROR_LABEL,
-      client,
-    });
+    const result: GeminiRequestResult = await send((): GenerateContentParameters => {
+      acquired.name = acquireGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, geminiContextCacheContent({
+        model: textConfig.model,
+        systemInstruction: request.systemPrompt,
+        tools,
+        toolConfig: request.webSearchEnabled ? GEMINI_SERVER_TOOL_CONFIG : undefined,
+      }));
+      return buildBody(request, tools, acquired.name);
+    }, sentAt);
     const cachedContent: string | null = acquired.name;
     if (
       cachedContent === null ||
@@ -190,18 +227,20 @@ export function createGeminiReplySession(
       return result;
     }
     releaseGeminiContextCache(TEXT_GEMINI_CONTEXT_CACHE_SCOPE, cachedContent);
-    return requestFull(request, tools);
+    return requestFull(request, tools, performance.now());
   }
 
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingModelContent = undefined;
       const tools: Tool[] = buildTools(request);
-      const first: boolean = firstRequest;
+      // now 既用于判定，也是这次请求的发出时刻；判定只看此前已成功请求留下的记录。
+      const now: number = performance.now();
+      const useExplicitCache: boolean = firstRequest && !implicitCacheStillWarm(chatId, now);
       firstRequest = false;
-      const result: GeminiRequestResult = first
-        ? await requestFirst(request, tools)
-        : await requestFull(request, tools);
+      const result: GeminiRequestResult = useExplicitCache
+        ? await requestFirst(request, tools, now)
+        : await requestFull(request, tools, now);
 
       // 失败分支同样累计检索次数。
       const response: GenerateContentResponse | undefined = result.response;
@@ -216,7 +255,7 @@ export function createGeminiReplySession(
           functionCalls: EMPTY_FUNCTION_CALLS,
           webSearchCalls,
           finishReason: result.finishReason,
-          finishMessage: result.finishMessage,
+          finishDetails: result.finishDetails,
           toolCallLimitHit: result.finishReason === "TOO_MANY_TOOL_CALLS",
         };
       }
@@ -227,7 +266,7 @@ export function createGeminiReplySession(
         functionCalls: extractFunctionCalls(result.response),
         webSearchCalls,
         finishReason: undefined,
-        finishMessage: undefined,
+        finishDetails: undefined,
         toolCallLimitHit: false,
       };
     },

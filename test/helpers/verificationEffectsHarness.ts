@@ -16,7 +16,9 @@ import type {
   VerificationEffect,
   VerificationEvent,
   VerificationState,
+  VerificationTransition,
 } from "../../packages/types/states/verification";
+import { transitionVerification } from "../../packages/states/verification";
 
 /**
  * 副作用解释器里两条「踢人前先确认拉人者身份」的异步分支：管理员拉人豁免的
@@ -248,13 +250,24 @@ export function run(
     userId: USER_ID,
     effects,
     dispatchVerification: (_chatId: number, userId: number, event: VerificationEvent): void => {
-      dispatched.push({ userId, event });
-    },
-    publishVerificationChange: (): void => {
-      testState.publishedChanges++;
+      if (!applyFlagEvent(event, (): void => { testState.publishedChanges++; })) dispatched.push({ userId, event });
     },
     requestTerminalAttempt: async (): Promise<VerificationAttemptPermitResult> => permit,
   } as never);
+}
+
+/**
+ * 驱逐播报标记的两个事件（expelNoticeSent、removalConfirmed）按生产状态机真实转移当前条目，快照有变化时调用
+ * onPublished（对应生产 dispatchVerification 发布新 revision）；它们不记入 dispatched。
+ * @returns event 是否属于这两个事件。
+ */
+export function applyFlagEvent(event: VerificationEvent, onPublished: () => void): boolean {
+  if (event.type !== "expelNoticeSent" && event.type !== "removalConfirmed") return false;
+  const entry: { state: unknown } | undefined = requireDeps().verificationEntries.get(KEY);
+  const { snapshotChanged = false }: VerificationTransition =
+    transitionVerification(entry?.state as VerificationState | undefined, event);
+  if (snapshotChanged) onPublished();
+  return true;
 }
 
 /** 两个验证副作用用例文件共用的隔离钩子；每份都要登记一次。 */

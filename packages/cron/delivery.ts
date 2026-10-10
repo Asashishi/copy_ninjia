@@ -201,7 +201,7 @@ async function roundVoice(
 
 /**
  * 组稿失败的分类：Worker 暂不可用、等待超时、检索或组稿请求失败可重试；
- * 没有对话能力、没有来源与重试后仍不合格不重试。分类只依据失败原因，不读取搜索次数。
+ * 没有对话能力、Anthropic 模型拒答、没有来源与重试后仍不合格不重试。分类只依据失败原因，不读取搜索次数。
  */
 function classifyDigestFailure(reason: WebDigestFailure): CronDeliveryOutcome {
   switch (reason) {

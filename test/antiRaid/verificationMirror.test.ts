@@ -29,10 +29,14 @@ const { assertVerificationMirrorInvariants } = await import("../helpers/verifica
 const { antiRaidRuntimeState } = await import("../../packages/cache/main/antiRaid/proxy");
 const {
   activeVerificationSnapshots,
+  clearActiveVerificationSnapshots,
   deferredVerificationRecords,
+  deleteActiveVerificationSnapshot,
+  isActiveVerificationUser,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
+  setActiveVerificationSnapshot,
   verificationCapacityFatalState,
 } =
   await import("../../packages/cache/main/antiRaid/verificationMirror");
@@ -66,7 +70,7 @@ function record(generation: number, revision: number): VerificationSnapshot {
 
 beforeEach(() => {
   diskPosts.length = 0;
-  activeVerificationSnapshots.clear();
+  clearActiveVerificationSnapshots();
   deferredVerificationRecords.clear();
   pendingVerificationDeferrals.clear();
   pendingVerificationDeletes.clear();
@@ -147,13 +151,13 @@ describe("antiRaid/verificationMirror 的 revision 水位线", () => {
   });
 
   test("记录达到硬顶时允许更新旧 key，但新 key 只触发一次 fail-closed fatal", () => {
-    activeVerificationSnapshots.set(KEY, record(1, 1));
+    setActiveVerificationSnapshot(KEY, record(1, 1));
     for (
       let index: number = 1;
       index < VERIFICATION_RECORD_CAPACITY;
       index++
     ) {
-      activeVerificationSnapshots.set(`-2000:${index}`, record(1, 1));
+      setActiveVerificationSnapshot(`-2000:${index}`, record(1, 1));
     }
 
     expect(acceptVerificationUpsert({
@@ -177,6 +181,31 @@ describe("antiRaid/verificationMirror 的 revision 水位线", () => {
     expect(activeVerificationSnapshots.size).toBe(VERIFICATION_RECORD_CAPACITY);
     expect(fatalErrors).toHaveLength(1);
     expect(fatalErrors[0]?.message).toContain("record capacity");
+  });
+});
+
+describe("活动快照的按群索引", () => {
+  test("写入、替换、删除与清空都同步维护按群索引，其它群与同群其它成员不受影响", () => {
+    expect(isActiveVerificationUser(-1001, 42)).toBeFalse();
+    setActiveVerificationSnapshot("-1001:42", record(1, 1));
+    setActiveVerificationSnapshot("-1001:43", { ...record(1, 1), userId: 43 });
+    setActiveVerificationSnapshot("-2002:42", { ...record(1, 1), chatId: -2002 });
+    setActiveVerificationSnapshot("-1001:42", record(1, 2));
+    expect(isActiveVerificationUser(-1001, 42)).toBeTrue();
+    expect(isActiveVerificationUser(-1001, 44)).toBeFalse();
+    expect(isActiveVerificationUser(-3003, 42)).toBeFalse();
+
+    deleteActiveVerificationSnapshot("-1001:42");
+    expect(isActiveVerificationUser(-1001, 42)).toBeFalse();
+    expect(isActiveVerificationUser(-1001, 43)).toBeTrue();
+    expect(isActiveVerificationUser(-2002, 42)).toBeTrue();
+    deleteActiveVerificationSnapshot("-1001:42");
+    expect(activeVerificationSnapshots.size).toBe(2);
+
+    clearActiveVerificationSnapshots();
+    expect(isActiveVerificationUser(-1001, 43)).toBeFalse();
+    expect(isActiveVerificationUser(-2002, 42)).toBeFalse();
+    expect(activeVerificationSnapshots.size).toBe(0);
   });
 });
 
@@ -247,7 +276,7 @@ describe("主线程验证镜像的具名写入口与五表不变量", () => {
   });
 
   test("不变量断言本身能拦住违例：同一 key 同时处在活动与墓碑", () => {
-    activeVerificationSnapshots.set(KEY, record(1, 1));
+    setActiveVerificationSnapshot(KEY, record(1, 1));
     pendingVerificationDeletes.set(KEY, { chatId: -1001, userId: 42, generation: 1, revision: 2 });
     expect(assertVerificationMirrorInvariants).toThrow(`${KEY}: active and pending delete`);
   });

@@ -70,9 +70,9 @@ describe("全量性能链路编排", () => {
         });
         return true;
       },
-      flushDiskIODomain: async (): Promise<"flushed"> => {
+      flushDiskIODomain: async (): Promise<{ result: "flushed" }> => {
         unacknowledged.clear();
-        return "flushed";
+        return { result: "flushed" };
       },
       readIdentityPolicies: async (): Promise<{
         readonly whitelist: readonly [];
@@ -129,13 +129,13 @@ test.each(["complete", "missing", "stale"])("AI 快照链路先持久化群行�
       pending = { chatId: message.chatId, snapshot: message.snapshot };
       return true;
     },
-    flushDiskIODomain: async (domain: string): Promise<"flushed"> => {
+    flushDiskIODomain: async (domain: string): Promise<{ result: "flushed" }> => {
       expect(domain).toBe("aiMemory");
       if (pending === undefined) throw new Error("Missing pending write");
       snapshots.set(pending.chatId, pending.snapshot);
       writes.push(pending.snapshot);
       pending = undefined;
-      return "flushed";
+      return { result: "flushed" };
     },
     readBenchmarkAiMemories: (): ReadonlyMap<number, string> => snapshots,
   } as unknown as StorageChainDependencies;

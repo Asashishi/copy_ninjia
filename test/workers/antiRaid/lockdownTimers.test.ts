@@ -3,16 +3,18 @@
  *
  * 状态机本身由 test/states/lockdown.test.ts 覆盖，这里覆盖 lockdownRuntime.ts 的
  * `restoreTimerFired` / `restoreRetryFired` / `reapplyRetryFired` 三个回调体：
- * 句柄归零、派发的事件、重试 timer 的排定。
+ * 句柄归零、派发的事件、重试 timer 的排定；以及恢复成功后按恢复原因选用的解锁公告。
  */
 
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import type { ChatPermissions } from "grammy/types";
 import {
+  LOCKDOWN_MS,
   RESTORE_PERMANENT_FAILURE_LOG_LIMIT,
   RESTORE_PERMANENT_RETRY_MAX_MS,
   RESTORE_RETRY_MS,
 } from "../../../packages/consts/antiRaid/lockdown";
+import { workerAtmosphere } from "../../../packages/workers/antiRaid/atmosphere";
 import { loggerStub } from "../../helpers/loggerMock";
 import type { LockdownEntry } from "../../../packages/types/antiRaid/internal";
 import type { LockdownState } from "../../../packages/types/states/lockdown";
@@ -30,6 +32,8 @@ const persisted: number[] = [];
  */
 const restoreOutcomes: (false | "denied" | "aborted")[] = [];
 const restoreCalls: number[] = [];
+/** 经 sendTemporaryMessageFromMain 发出的公告正文，按发送顺序。 */
+const sentNotices: string[] = [];
 const loggerError = mock((..._args: unknown[]): void => {});
 const loggerWarn = mock((..._args: unknown[]): void => {});
 
@@ -69,7 +73,10 @@ mock.module("../../../packages/infra/telegram", () => ({
   telegramApi: {},
 }));
 mock.module("../../../packages/infra/telegram/workerClient", () => ({
-  sendTemporaryMessageFromMain: (): Promise<undefined> => Promise.resolve(undefined),
+  sendTemporaryMessageFromMain: ({ text }: { text: string }): Promise<undefined> => {
+    sentNotices.push(text);
+    return Promise.resolve(undefined);
+  },
 }));
 mock.module("../../../packages/workers/antiRaid/taskTracker", () => ({
   trackAntiRaidTask: ({ task }: { task: Promise<void> }): Promise<void> => task,
@@ -79,6 +86,7 @@ const { lockdownApiChains, lockdownEntries } =
   await import("../../../packages/cache/workers/antiRaid/lockdown");
 const {
   adoptLockdowns,
+  deactivateLockdownChat,
   handleLockdownPersisted,
   retryDeniedLockdownRestore,
   stopLockdownRuntime,
@@ -101,6 +109,7 @@ function adoptActiveLockdown(): void {
     intentId: 1,
     originalPermissions: ORIGINAL_PERMISSIONS,
     announced: true,
+    announcementMessageId: 7001,
     persisted: true,
     remainingMs: REMAINING_MS,
   }]);
@@ -110,6 +119,7 @@ beforeEach((): void => {
   persisted.length = 0;
   restoreCalls.length = 0;
   restoreOutcomes.length = 0;
+  sentNotices.length = 0;
   loggerError.mockClear();
   loggerWarn.mockClear();
   // reportUnlock 走 `self.postMessage`；基准线程没有 Worker 通道，替掉即可。
@@ -188,6 +198,30 @@ describe("私密模式 timer 接线", (): void => {
     await drainLockdownApiChain();
     return entry;
   }
+
+  test("到期恢复成功 → 解锁公告写明锁定时长", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    await enterRestoring();
+    expect(lockdownEntries.has(CHAT_ID)).toBeFalse();
+    expect(sentNotices).toEqual([workerAtmosphere().NOTICE_TEXTS.lockdownEnded(LOCKDOWN_MS / 60_000)]);
+  });
+
+  test("到期前被解除 → 恢复成功后发提前解除公告，不写锁定时长", async (): Promise<void> => {
+    jest.useFakeTimers({ now: BASE_MS });
+    adoptActiveLockdown();
+    deactivateLockdownChat(CHAT_ID);
+    const restoring: LockdownState = lockdownEntries.get(CHAT_ID)!.state;
+    if (restoring.kind !== "restoring") throw new Error("deactivate did not enter restoring");
+    handleLockdownPersisted({
+      type: "lockdownPersisted",
+      chatId: CHAT_ID,
+      phase: "restoring",
+      intentId: restoring.intentId,
+    });
+    await drainLockdownApiChain();
+    expect(lockdownEntries.has(CHAT_ID)).toBeFalse();
+    expect(sentNotices).toEqual([workerAtmosphere().NOTICE_TEXTS.lockdownLifted]);
+  });
 
   test("连续权限被拒超过上限后降为 warn，重试间隔翻倍封顶，记录照旧保留", async (): Promise<void> => {
     jest.useFakeTimers({ now: BASE_MS });

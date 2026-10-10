@@ -1,10 +1,14 @@
 import { FinishReason, ToolType } from "@google/genai";
 import type { Candidate, GenerateContentResponse, Part } from "@google/genai";
+import { finishDetailsJson } from "../ai/utils/finishDetails";
 
 /**
  * Gemini generateContent 响应的读取辅助：自定义函数调用直接使用 SDK 的
- * response.functionCalls，本文件保留正文读取、异常收尾诊断与服务端 Google Search
- * 预算统计。三者都只看第一个 candidate。
+ * response.functionCalls，本文件保留正文读取、异常收尾诊断与详情、服务端 Google Search
+ * 预算统计。全部只看第一个 candidate。
+ *
+ * 纯函数模块，不接触任何缓存：Anti-Raid Worker 的 ad_detect 传输层
+ * （workers/antiRaid/adDetect/ai/google.ts）复用其中的异常收尾诊断与详情。
  */
 
 function firstCandidate(data: GenerateContentResponse): Candidate | undefined {
@@ -32,23 +36,30 @@ export function responseText(data: GenerateContentResponse): string | undefined 
   return hasTextPart ? text : undefined;
 }
 
-/** 响应在 HTTP 层成功、内容却不可用时的诊断串：candidates 缺失（附上
- *  promptFeedback——提示词层被拦截时 blockReason 就在里面），或 finishReason
+/** 响应在 HTTP 层成功、内容却不可用时的诊断串：candidates 缺失，或 finishReason
  *  不是正常收尾的 STOP（MAX_TOKENS 会由 requestGeminiResult 额外记录 token
- *  诊断，但契约上同样不可用）。正常响应返回 null。 */
+ *  诊断，但契约上同样不可用）。正常响应返回 null。具体详情见 geminiFinishDetails。 */
 export function abnormalFinishDiagnostic(data: GenerateContentResponse): string | null {
   const candidate: Candidate | undefined = firstCandidate(data);
-  if (!candidate) {
-    return `no candidates (promptFeedback=${JSON.stringify(data.promptFeedback ?? null)})`;
-  }
+  if (!candidate) return "no candidates";
   const finishReason: FinishReason | undefined = candidate.finishReason;
   if (finishReason === undefined) return "missing finishReason";
-  if (finishReason !== FinishReason.STOP) {
-    const finishMessage: string | undefined = candidate.finishMessage;
-    return `finishReason=${finishReason}` +
-      (finishMessage === undefined ? "" : `, finishMessage=${JSON.stringify(finishMessage.slice(0, 500))}`);
-  }
+  if (finishReason !== FinishReason.STOP) return `finishReason=${finishReason}`;
   return null;
+}
+
+/**
+ * 收尾详情的诊断串（见 aiChat/ai/utils/finishDetails.ts）。有 candidate 时是它的
+ * `{ finishMessage, safetyRatings }`；没有 candidate 时是 `{ promptFeedback }`——提示词被拦截时
+ * blockReason 与 safetyRatings 就在里面。对应字段都缺省时返回 undefined。
+ */
+export function geminiFinishDetails(data: GenerateContentResponse): string | undefined {
+  const candidate: Candidate | undefined = firstCandidate(data);
+  if (!candidate) {
+    return data.promptFeedback === undefined ? undefined : finishDetailsJson({ promptFeedback: data.promptFeedback });
+  }
+  if (candidate.finishMessage === undefined && candidate.safetyRatings === undefined) return undefined;
+  return finishDetailsJson({ finishMessage: candidate.finishMessage, safetyRatings: candidate.safetyRatings });
 }
 
 /**

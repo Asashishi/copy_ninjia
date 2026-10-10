@@ -20,7 +20,7 @@ import { LinkedQueue } from "../../packages/libs/linkedQueue";
 import type { DomainFlushOutcome } from "../../packages/types/diskIO/replies";
 
 const post = spyOn(diskIO, "postDiskIO");
-const flush = spyOn(diskIO, "flushDiskIODomainOutcome");
+const flush = spyOn(diskIO, "flushDiskIODomain");
 
 function speak(id: number): void {
   const chat = { id: -1001, type: "supergroup" };

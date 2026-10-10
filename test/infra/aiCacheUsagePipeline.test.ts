@@ -20,7 +20,7 @@ import { acceptDiskIODiagnosticBatch, resetDiskIODiagnosticChannel } from "../..
 import { handleAntiRaidWorkerEvent } from "../../packages/antiRaid/workerBridge/events";
 import { requestOpenAiAdDetectJson } from "../../packages/workers/antiRaid/adDetect/ai/openai";
 import { requestGoogleAdDetectJson } from "../../packages/workers/antiRaid/adDetect/ai/google";
-import { requestGeminiResponse } from "../../packages/aiChat/gemini/client";
+import { requestGeminiResult } from "../../packages/aiChat/gemini/client";
 import { generateGeminiImage } from "../../packages/aiChat/gemini/image";
 import { synthesizeGeminiSpeech } from "../../packages/aiChat/gemini/speech";
 import { generateOpenAiImage } from "../../packages/aiChat/openai/image";
@@ -106,7 +106,11 @@ test("六种能力的真实响应适配经 Worker 转发和诊断 ACK 落盘，t
     adoptAiCacheFile(await inspectAiCacheFile());
     installAiCacheUsageSink(fromWorker);
     for (const capability of ["text", "summary", "media"] as const) {
-      expect(await requestGeminiResponse(capability, () => ({ model: google.model, contents: capability === "text" ? "fixture-search" : "fixture" }), "fixture")).not.toBeNull();
+      expect((await requestGeminiResult({
+        capability,
+        buildBody: () => ({ model: google.model, contents: capability === "text" ? "fixture-search" : "fixture" }),
+        errorLabel: "fixture",
+      })).ok).toBeTrue();
     }
     expect(await generateGeminiImage({ prompt: "fixture", aspectRatio: "1:1" })).not.toBeNull();
     expect(await synthesizeGeminiSpeech({ text: "fixture" })).not.toBeNull();

@@ -70,7 +70,7 @@ export function identityWrites(domain: DiskIODomain): IdentityPolicyWriteDiskMes
   return writes;
 }
 
-export const flushDiskIODomainOutcome = mock(async (domain: DiskIODomain): Promise<DomainFlushOutcome> => {
+export const flushDiskIODomain = mock(async (domain: DiskIODomain): Promise<DomainFlushOutcome> => {
   const covered: IdentityPolicyWriteDiskMessage[] = identityWrites(domain);
   const gate: Promise<void> | null = participantInvalidHarness.flushGate;
   if (gate !== null) await gate;
@@ -107,8 +107,7 @@ export function participantInvalidDiskIO(): typeof diskIO {
       participantInvalidHarness.diskMessages.push(message);
       return true;
     },
-    flushDiskIODomain: async (): Promise<"flushed"> => "flushed",
-    flushDiskIODomainOutcome,
+    flushDiskIODomain,
     readIdentityPolicies,
     readBlocklistIdPage: async (afterId: number | null): Promise<BlocklistIdPage> => ({
       ids: [],
@@ -187,5 +186,5 @@ export function resetParticipantInvalidHarness(): void {
   participantInvalidHarness.readFailure = null;
   participantInvalidHarness.flushGate = null;
   readIdentityPolicies.mockClear();
-  flushDiskIODomainOutcome.mockClear();
+  flushDiskIODomain.mockClear();
 }

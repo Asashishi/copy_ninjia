@@ -373,12 +373,16 @@ export function classifyShutdown(results: ShutdownResults): ShutdownOutcome {
   return results.offsetConfirmed ? "clean" : "offsetWithheld";
 }
 
+/** 各 owner 排空结果的诊断片段，字段顺序固定；停机结果与确认 offset 前的结果共用。 */
+function formatOwnerDrainResults(results: OwnerDrainResults): string {
+  return `avatar=${results.avatar}, translate=${results.translate}, gag=${results.gag}, wed=${results.wed}, ` +
+    `antiRaid=${results.antiRaid}, ai=${results.ai}, telegram=${results.telegram}, disk=${results.disk}`;
+}
+
 /** 停机结果的单行诊断文案（英文，见 AGENTS.md 日志约定）。 */
 export function formatShutdownResults(results: ShutdownResults): string {
   return `runner=${results.runnerDrained}, maintenance=${results.maintenanceSettled}, ` +
-    `offset=${results.offsetConfirmed}, ` +
-    `avatar=${results.avatar}, translate=${results.translate}, gag=${results.gag}, wed=${results.wed}, ` +
-    `antiRaid=${results.antiRaid}, ai=${results.ai}, telegram=${results.telegram}, disk=${results.disk}, ` +
+    `offset=${results.offsetConfirmed}, ${formatOwnerDrainResults(results)}, ` +
     `terminate=${results.terminate}, state=${results.state}`;
 }
 
@@ -419,9 +423,7 @@ export async function flushAllToDisk({
   if (unsettled) {
     process.exitCode = 1;
     dependencies.logger.error(
-      `Pre-confirmation drain/flush results: avatar=${results.avatar}, antiRaid=${results.antiRaid}, ` +
-      `translate=${results.translate}, gag=${results.gag}, wed=${results.wed}, ai=${results.ai}, ` +
-      `telegram=${results.telegram}, disk=${results.disk}, state=${state}; ` +
+      `Pre-confirmation drain/flush results: ${formatOwnerDrainResults(results)}, state=${state}; ` +
       "the final Telegram update offset will not be confirmed."
     );
     return false;

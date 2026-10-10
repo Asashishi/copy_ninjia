@@ -56,7 +56,7 @@ function lockdown(intentId: number): LockdownRecord {
     phase: "active",
     intentId,
     originalPermissions: { can_invite_users: true },
-    announced: true,
+    announced: false,
     expiresAt: 10_000 + intentId,
   };
 }
@@ -186,7 +186,7 @@ describe("主线程紧急恢复收尾时清理本轮封锁公告", () => {
   const silentChatId: number = -7102;
 
   function announcedLockdown(intentId: number, announcementMessageId: number): LockdownRecord {
-    return { ...lockdown(intentId), announcementMessageId };
+    return { ...lockdown(intentId), announced: true, announcementMessageId };
   }
 
   beforeEach(() => {

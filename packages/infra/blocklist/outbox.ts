@@ -189,7 +189,7 @@ export async function persistPendingBlockedRemovals(): Promise<void> {
   if (!queuePendingBlockedRemovalsSnapshot()) {
     throw new Error("Persistence Worker rejected the blocklist removal outbox snapshot.");
   }
-  const result: FlushResult = await flushDiskIODomain("blocklistRemovalOutbox");
+  const result: FlushResult = (await flushDiskIODomain("blocklistRemovalOutbox")).result;
   if (result !== "flushed") {
     throw new Error(`Blocklist removal outbox flush ${result}.`);
   }

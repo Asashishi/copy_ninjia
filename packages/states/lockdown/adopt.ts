@@ -51,6 +51,7 @@ export function handleAdopt(
         originalPermissions: event.originalPermissions,
         intentId: event.intentId,
         restoreAfterPersist: !event.persisted,
+        restoreReason: "lifted",
         ...announcement,
       },
       effects: [

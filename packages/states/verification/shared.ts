@@ -69,10 +69,10 @@ export function kickedOf(label: string, isBot: boolean, kickedAt: number): Kicke
 
 /** 落盘快照里带过来的终态播报记账；新建终态时各项均为 undefined。 */
 export interface PersistedExpelNotices {
-  readonly failureNoticeSent?: boolean;
-  readonly unconfirmedNoticeSent?: boolean;
-  readonly successNoticeSent?: boolean;
-  readonly removalConfirmed?: boolean;
+  readonly failureNoticeSent?: true;
+  readonly unconfirmedNoticeSent?: true;
+  readonly successNoticeSent?: true;
+  readonly removalConfirmed?: true;
 }
 
 /**

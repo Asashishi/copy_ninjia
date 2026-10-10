@@ -4,6 +4,8 @@ import { DEFAULT_WHITELIST_PERMISSIONS } from
 import { IDENTITY_DATABASE_PATH } from "../../../packages/consts/paths";
 import {
   IDENTITY_DATABASE_METADATA_KEYS,
+  IDENTITY_DATABASE_BASE_MIGRATION_CREATED_AT,
+  IDENTITY_DATABASE_BASE_MIGRATION_HASH,
   IDENTITY_DATABASE_SCHEMA_KEY,
   IDENTITY_DATABASE_SCHEMA_VERSION,
   IDENTITY_DATABASE_TIME_ZONE_KEY,
@@ -222,6 +224,29 @@ describe("共享存储库的启动 schema 闸", () => {
     expect(() => inspectStorageDatabase()).toThrow(
       /temporary_ad_bypass_entries\[23\].*qualified_at/
     );
+  });
+
+  test("8.0.0 之前 dev 构建留下的 text + jsonb 两步基础谱系拒绝启动", () => {
+    // 夹具字面量：被压缩前的两条历史 migration（文本初始建表与文本转 JSONB），表结构与当前基础相同。
+    withDatabase((database: StorageDatabase): void => {
+      database.$client.run("UPDATE __drizzle_migrations SET hash = ?1 WHERE created_at = ?2;", [
+        "be64993ef4059e0fff1491bdbacc67ee9bb6b6d8097842036c7903c8c4aed93a", 20_260_811_000_000,
+      ]);
+      database.$client.run("INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?1, ?2);", [
+        "cb91b39a954c1638dcdc98e97ea0bfec947ea3cc1c377f39f45834bbda9d0cd3", 20_260_811_010_000,
+      ]);
+    });
+    try {
+      expect(() => inspectStorageDatabase()).toThrow("expected the exact supported schema v13 migration lineage.");
+    } finally {
+      withDatabase((database: StorageDatabase): void => {
+        database.$client.run("DELETE FROM __drizzle_migrations WHERE created_at = ?1;", [20_260_811_010_000]);
+        database.$client.run("UPDATE __drizzle_migrations SET hash = ?1 WHERE created_at = ?2;", [
+          IDENTITY_DATABASE_BASE_MIGRATION_HASH, IDENTITY_DATABASE_BASE_MIGRATION_CREATED_AT,
+        ]);
+      });
+    }
+    expect(() => inspectStorageDatabase()).not.toThrow();
   });
 
   test("群状态字段损坏时拒绝启动而不按宽松 JSON 恢复", () => {

@@ -95,10 +95,10 @@ const VERIFICATION_SNAPSHOT_TEMPLATE: Readonly<Record<AllKeys<VerificationSnapsh
   countedJoinAt: LONGEST_SAFE_INTEGER,
   terminalInviterId: LONGEST_SAFE_INTEGER,
   expelReason: "timeout",
-  successNoticeSent: false,
-  failureNoticeSent: false,
-  unconfirmedNoticeSent: false,
-  removalConfirmed: false,
+  successNoticeSent: true,
+  failureNoticeSent: true,
+  unconfirmedNoticeSent: true,
+  removalConfirmed: true,
 };
 /** verificationUpsert 消息的上界模板。 */
 const VERIFICATION_UPSERT_TEMPLATE: Readonly<Record<keyof VerificationUpsertDiskMessage, unknown>> = {

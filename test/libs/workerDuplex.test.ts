@@ -140,6 +140,45 @@ describe("Worker 双工能力边界", () => {
     expect(workerDuplexRequestSignal.current).toBeNull();
   });
 
+  test("请求信号因超时中止时本地结算为 TimeoutError 并撤销主线程工作，生命周期取消仍为 AbortError", async () => {
+    const outbound: WorkerDuplexOutbound<TestRequest>[] = [];
+    initializeWorkerDuplex<TestRequest>((
+      message: WorkerDuplexOutbound<TestRequest>
+    ): void => {
+      outbound.push(message);
+    });
+    const lifecycle: AbortController = new AbortController();
+    setWorkerDuplexRequestSignal(lifecycle.signal);
+
+    const timed: Promise<number> = requestMainThread<TestRequest, number>(
+      { value: "timed" },
+      AbortSignal.timeout(5)
+    );
+    const timedRequest: WorkerDuplexOutbound<TestRequest> | undefined = outbound[0];
+    if (timedRequest?.__duplex !== "request") throw new Error("timed request envelope missing");
+    await expect(timed).rejects.toMatchObject({
+      name: "TimeoutError",
+      message: "Worker duplex request timed out.",
+    });
+    expect(outbound[1]).toEqual({ __duplex: "cancel", requestId: timedRequest.requestId });
+
+    const expired: AbortSignal = AbortSignal.timeout(1);
+    await new Promise<void>((resolve: () => void): void => {
+      expired.addEventListener("abort", (): void => resolve(), { once: true });
+    });
+    await expect(requestMainThread<TestRequest, number>({ value: "expired" }, expired))
+      .rejects.toMatchObject({ name: "TimeoutError" });
+    expect(outbound).toHaveLength(2);
+
+    const inherited: Promise<number> = requestMainThread<TestRequest, number>(
+      { value: "inherited" },
+      AbortSignal.timeout(60_000)
+    );
+    lifecycle.abort();
+    await expect(inherited).rejects.toMatchObject({ name: "AbortError" });
+    expect(workerDuplexWaiters.size).toBe(0);
+  });
+
   test("主线程只回投当前代际；取消或 Worker 重建会中止能力请求", async () => {
     const originalWorker: typeof Worker = globalThis.Worker;
     globalThis.Worker = FakeWorker as unknown as typeof Worker;

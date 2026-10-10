@@ -172,7 +172,7 @@ export const AD_DETECT_GEMINI_CACHE_MAX_SLOTS: number = 2;
 /** ad_detect 显式缓存的创建、续期、删除与扫描在日志里的调用名。所属模块：workers/antiRaid/adDetect/ai/google.ts。 */
 export const AD_DETECT_GEMINI_CACHE_ERROR_LABEL: string = "Gemini ad detection cache API";
 
-/** 模型成功响应但正文不可用时的总尝试次数（含首次），三种 provider 共用。 */
+/** 模型成功响应但正文不可用时的总尝试次数（含首次），三种 provider 共用；Anthropic 拒答不重采样。 */
 export const AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS: number = 2;
 
 /** Google 与 Anthropic 广告检测的结构化输出 Schema；只允许 ad 与 reason。所属模块：workers/antiRaid/adDetect/ai/。 */

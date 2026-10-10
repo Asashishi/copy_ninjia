@@ -4,6 +4,7 @@ import { STATIC_CONFIG_DIR_NAME } from "../../packages/consts/configLayout";
 import {
   cleanupFixtures,
   createFixture,
+  REQUIRED_BUN_VERSION,
   runInstaller,
   systemdPrompt,
   validTelegram,
@@ -15,10 +16,6 @@ import { runCapturedCommand } from "../../scripts/fixtures/subprocess";
 import type { CapturedCommandResult } from "../../scripts/fixtures/subprocess";
 
 const INSTALL_SCRIPT: string = await expandedInstallSource(join(import.meta.dir, "../.."));
-const MANIFEST: { readonly packageManager: string } = await Bun.file(
-  join(import.meta.dir, "../../package.json")
-).json();
-const REQUIRED_VERSION: string = MANIFEST.packageManager.slice("bun@".length);
 
 /** 只执行安装器中指定的原始片段，外部能力由测试夹具替换。 */
 function scriptRange(startMarker: string, endMarker: string): string {
@@ -77,7 +74,7 @@ describe("安装器精确运行时边界", () => {
       const fixture: InstallerFixture = await createFixture();
       const result: InstallerRunResult = await runInstaller(fixture, [], { FAKE_BUN_VERSION: version });
       expect(result.exitCode).not.toBe(0);
-      expect(result.output).toContain(`需要 Bun ${REQUIRED_VERSION}`);
+      expect(result.output).toContain(`需要 Bun ${REQUIRED_BUN_VERSION}`);
       expect(await installationCalls(fixture)).toBe("");
       await expectReadOnlyServiceQueries(fixture);
       expect(await Bun.file(join(fixture.configRoot, STATIC_CONFIG_DIR_NAME, "bot.json")).exists()).toBe(false);
@@ -137,11 +134,11 @@ describe("安装器精确运行时边界", () => {
     ].join("\n"), {
       BUN_INSTALL: join(fixture.root, "bun-install"),
       INSTALL_TAG_LOG: tagLog,
-      REQUIRED_BUN_VERSION: REQUIRED_VERSION,
+      REQUIRED_BUN_VERSION,
       REAL_BUN_PATH: Bun.argv[0]!,
     });
     expect(result).toEqual({ exitCode: 0, output: "" });
-    expect((await Bun.file(tagLog).text()).trim()).toBe(`bun-v${REQUIRED_VERSION}`);
+    expect((await Bun.file(tagLog).text()).trim()).toBe(`bun-v${REQUIRED_BUN_VERSION}`);
   });
 });
 

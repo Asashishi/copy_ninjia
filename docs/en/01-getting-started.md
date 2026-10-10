@@ -15,9 +15,9 @@ This guide walks you through the quickest path to take a clean server environmen
 ## Prerequisites
 
 - **Linux Operating System** (must have a readable `/proc` filesystem): The instance lock depends strictly on `/proc/<pid>/stat` and the system boot ID. Unsupported operating systems will fail closed and refuse to start.
-- **Bun 1.4.2**: Required for source installs and local development. Install via:
+- **Bun 1.4.3**: Required for source installs and local development. Install via:
   ```bash
-  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2
+  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.3
   ```
   > [!NOTE]
   > Binary release packages bundle a standalone Bun runtime, requiring no pre-installed Bun or Node.js on the host. Node.js is not used anywhere in this project.
@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
   <tr>
     <td><nobr>⚙️ <b>Dependencies</b></nobr></td>
     <td>Zero external tool requirements; no Bun, git, or compiler needed on the server</td>
-    <td>Requires git and Bun 1.4.2; the installer will attempt to install missing tools if permitted</td>
+    <td>Requires git and Bun 1.4.3; the installer will attempt to install missing tools if permitted</td>
   </tr>
   <tr>
     <td><nobr>🚀 <b>Runtime</b></nobr></td>
@@ -203,7 +203,8 @@ config/
        - `api_key`: API key string (placeholders trigger startup failure).
        - `model`: Provider model identifier.
        - `base_url`: Custom HTTPS proxy or API gateway endpoint.
-       - `headers`: Custom HTTP headers (allowed for `google` provider, e.g. for Cloudflare AI Gateway authentication).
+       - `headers`: Custom HTTP headers (allowed for `google` and `anthropic` providers, 1 to `AGENT_HEADERS_MAX_ENTRIES` entries, e.g. for Cloudflare AI Gateway authentication).
+       - `fallback_model`: Fallback model, allowed only for the `anthropic` provider (must differ from `model`). When `model` refuses, the same request is resent with it; if the fallback model also refuses, or none is configured, the request fails without retrying.
 
 ---
 
@@ -264,7 +265,7 @@ Customize visual assets and local image library paths in `config/dynamic/assets.
 ```
 
 - **`onlyPath`**: Local path (relative paths resolve against the data root). `random_h_image_dir` sets the dedicated image library directory used by `/h_image` and cron tasks.
-- **`pathOrUrl`**: Local filesystem path or HTTP(S) URL. `bot_default_avatar` provides the fallback image used when restoring the bot's original avatar.
+- **`pathOrUrl`**: Local filesystem path or HTTP(S) URL. `bot_default_avatar` provides the media used when restoring the bot's original avatar: a JPEG/PNG image (up to 10 MiB) becomes a static avatar, and an MP4 video (up to 50 MiB, with square video no larger than 1080×1080) becomes an animated avatar. Each URL download times out after 90 seconds.
 - **`onlyUrl`**: Direct HTTPS URLs providing thumbnail icons for fortunes, probability rolls, and `/gag` buttons.
 
 ---

@@ -21,14 +21,15 @@ import type { AiCacheCapability, AiCacheDocument, AiCacheRow, AiCacheSummary, Ai
 import { AppendOnlyFileFormatError } from "./appendOnlyDayFile";
 
 /**
- * 可累加的合计；命中率在输出时才计算，costInUsdTicks 与 searchCalls 在计入第一条对应记录前
- * 为 undefined。
+ * 可累加的合计；命中率在输出时才计算，cacheWriteInputTokens、costInUsdTicks 与 searchCalls 在计入第一条
+ * 对应记录前为 undefined。
  */
 interface MutableTotals {
   requests: number;
   inputTokens: number;
   reportedInputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number | undefined;
   outputTokens: number;
   costInUsdTicks: number | undefined;
   searchCalls: number | undefined;
@@ -81,9 +82,12 @@ function decodeRow(path: string, index: number, value: unknown): AiCacheRow {
     !isTokenCount(value.inputTokens) ||
     (value.cachedInputTokens !== null &&
       (!isTokenCount(value.cachedInputTokens) || value.cachedInputTokens > value.inputTokens)) ||
+    (Object.hasOwn(value, "cacheWriteInputTokens") &&
+      (!isTokenCount(value.cacheWriteInputTokens) ||
+        value.cacheWriteInputTokens > value.inputTokens - (value.cachedInputTokens ?? 0))) ||
     !isTokenCount(value.outputTokens)
   ) {
-    return invalid(path, `contains an invalid usage record at entry[${index}]; expected non-negative safe-integer token counts, cachedInputTokens null or at most inputTokens, and optional positive searchCalls.`);
+    return invalid(path, `contains an invalid usage record at entry[${index}]; expected non-negative safe-integer token counts, cachedInputTokens null or at most inputTokens, optional cacheWriteInputTokens at most inputTokens minus cachedInputTokens, and optional positive searchCalls.`);
   }
   return {
     capability: capability as AiCacheCapability,
@@ -91,6 +95,7 @@ function decodeRow(path: string, index: number, value: unknown): AiCacheRow {
     model,
     inputTokens: value.inputTokens,
     cachedInputTokens: value.cachedInputTokens,
+    cacheWriteInputTokens: value.cacheWriteInputTokens as number | undefined,
     outputTokens: value.outputTokens,
     searchCalls: value.searchCalls as number | undefined,
   };
@@ -113,8 +118,8 @@ function hasTotalsKeys(value: Record<string, unknown>, required: readonly string
 
 /**
  * 解码一份合计；汇总本身比 byModel 分组多 day 与 byModel，由 field 选择必填字段集合。
- * costInUsdTicks 与 searchCalls 可缺省；命中数不得超过有缓存口径的输入数，后者不得超过总输入数，命中率
- * 必须等于按同一口径重算的值。
+ * cacheWriteInputTokens、costInUsdTicks 与 searchCalls 可缺省；命中数不得超过有缓存口径的输入数，后者不得
+ * 超过总输入数，写入数不得超过总输入数减命中数，命中率必须等于按同一口径重算的值。
  */
 function decodeTotals(path: string, value: unknown, field: string): AiCacheTotals {
   const keys: readonly string[] = field === AI_CACHE_SUMMARY_KEY ? AI_CACHE_SUMMARY_FIELDS : AI_CACHE_TOTALS_FIELDS;
@@ -130,15 +135,19 @@ function decodeTotals(path: string, value: unknown, field: string): AiCacheTotal
     !isTokenCount(value.outputTokens) ||
     value.reportedInputTokens > value.inputTokens ||
     value.cachedInputTokens > value.reportedInputTokens ||
+    (value.cacheWriteInputTokens !== undefined &&
+      (!isTokenCount(value.cacheWriteInputTokens) ||
+        value.cacheWriteInputTokens > value.inputTokens - value.cachedInputTokens)) ||
     value.cacheHitRate !== hitRate(value.cachedInputTokens, value.reportedInputTokens)
   ) {
-    return invalid(path, `contains invalid totals at ${field}. Expected non-negative safe-integer counters, cachedInputTokens <= reportedInputTokens <= inputTokens, and the calculated cacheHitRate.`);
+    return invalid(path, `contains invalid totals at ${field}. Expected non-negative safe-integer counters, cachedInputTokens <= reportedInputTokens <= inputTokens, optional cacheWriteInputTokens <= inputTokens - cachedInputTokens, and the calculated cacheHitRate.`);
   }
   return {
     requests: value.requests,
     inputTokens: value.inputTokens,
     reportedInputTokens: value.reportedInputTokens,
     cachedInputTokens: value.cachedInputTokens,
+    cacheWriteInputTokens: value.cacheWriteInputTokens,
     outputTokens: value.outputTokens,
     cacheHitRate: hitRate(value.cachedInputTokens, value.reportedInputTokens),
     costInUsdTicks: value.costInUsdTicks,
@@ -208,6 +217,7 @@ function emptyTotals(): MutableTotals {
     inputTokens: 0,
     reportedInputTokens: 0,
     cachedInputTokens: 0,
+    cacheWriteInputTokens: undefined,
     outputTokens: 0,
     costInUsdTicks: undefined,
     searchCalls: undefined,
@@ -225,6 +235,9 @@ function addRow(totals: MutableTotals, row: AiCacheRow): void {
   }
   totals.inputTokens += row.inputTokens;
   totals.outputTokens += row.outputTokens;
+  if (row.cacheWriteInputTokens !== undefined) {
+    totals.cacheWriteInputTokens = (totals.cacheWriteInputTokens ?? 0) + row.cacheWriteInputTokens;
+  }
   if (row.cachedInputTokens === null) return;
   totals.reportedInputTokens += row.inputTokens;
   totals.cachedInputTokens += row.cachedInputTokens;
@@ -236,6 +249,9 @@ function addTotals(totals: MutableTotals, other: AiCacheTotals): void {
   totals.reportedInputTokens += other.reportedInputTokens;
   totals.cachedInputTokens += other.cachedInputTokens;
   totals.outputTokens += other.outputTokens;
+  if (other.cacheWriteInputTokens !== undefined) {
+    totals.cacheWriteInputTokens = (totals.cacheWriteInputTokens ?? 0) + other.cacheWriteInputTokens;
+  }
   if (other.costInUsdTicks !== undefined) {
     totals.costInUsdTicks = (totals.costInUsdTicks ?? 0) + other.costInUsdTicks;
   }
@@ -250,6 +266,7 @@ function finishTotals(totals: MutableTotals): AiCacheTotals {
     inputTokens: totals.inputTokens,
     reportedInputTokens: totals.reportedInputTokens,
     cachedInputTokens: totals.cachedInputTokens,
+    cacheWriteInputTokens: totals.cacheWriteInputTokens,
     outputTokens: totals.outputTokens,
     cacheHitRate: hitRate(totals.cachedInputTokens, totals.reportedInputTokens),
     costInUsdTicks: totals.costInUsdTicks,

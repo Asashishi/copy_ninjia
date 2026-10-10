@@ -17,7 +17,7 @@
 | `bun run start` | ロングポーリング起動 | 本番環境エントリポイント |
 | `bun run lint`<br>`bun run lint:fix` | ESLint 検査 / 自動修正 | コード規約を厳格に検査。品質ゲートでは一貫してキャッシュなしの `lint` を使用 |
 | `bun run lint:fast` | ローカルキャッシュ付き ESLint | `--cache` 有効。ローカルの開発デバッグループでのみ使用 |
-| `bun run typecheck` | TypeScript 型検査 | `tsc --noEmit --incremental`、完全 strict モード。増分情報は `tsconfig.tsbuildinfo` にキャッシュ |
+| `bun run typecheck` | TypeScript 型検査 | `bun --check` が `tsconfig.json` に従いプロジェクト全体を完全 strict モードで検査。増分キャッシュは書き出しません |
 | `bun run test` | 全量テスト | ファイル単位の完全分離を強制（`bun test --isolate`） |
 | `bun run test:random` | ランダム順全量テスト | 固定シードによるランダム順テスト。テスト間の状態残留やモック漏れを検知 |
 | `bun run test:coverage` | テスト + カバレッジ | 全量テストを実行し、全ソースコードのカバレッジ指標を集計 |
@@ -47,7 +47,7 @@
 - **インストーラー起動の隔離**：フィクスチャは独立した一時設定・一時データルートを使用し、システム管理コマンド、パッケージマネージャー、ネットワーク通信をモック化して、実際の `index.ts`、Worker、終了時永続化を実行します。各 Worker は Bun の `preload` でモック化されたネットワークスタックを読み込み、天気 API には固定値を返し、それ以外の外部リクエストは安全に拒否します。起動完了、ポーリング開始、SIGTERM 時の安全な排空、ロックファイル解放が検証されます。
 - **ファイル行数制限と走査対象**：手書きの TS / JS / シェルファイルは `MAX_SOURCE_LINES`（`scripts/conventions/fileLength.ts`）を超えてはならず、長大なファイルは分割が義務付けられます（[`AGENTS.md`](../../AGENTS.md) 参照）。Git 追跡対象および未ステージングの新規ファイルが検査対象となり、`.gitignore` されたデプロイデータは除外されます。インストーラー構文検査は `install.sh` と定義済みの全シェルモジュールを網羅します。
 - **全ソースコードを分母とするカバレッジ計測**：`test/productionModules.test.ts` が `index.ts` および `packages/types/` を除く `packages/` 配下の全ランタイムモジュールをロードします。どのテストからも実行されなかったモジュールは 0% として分母に算入されます。関数・行カバレッジはともに `bunfig.toml` の `coverageThreshold` を満たす必要があります。テストを伴わない新規モジュールの追加は、全体カバレッジを直接低下させます。
-- **ESLint + 完全 strict な tsc**：`tsconfig.json` で `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` を有効化しています。本番コードでは `any` の使用を禁止し（テストコードのみ例外）、`Promise.all` は `no-restricted-syntax` で禁止されているため、安全な `Promise.allSettled` による有界並行処理を用います。
+- **ESLint + 完全 strict な型検査**：`tsconfig.json` で `strict`、`noUncheckedIndexedAccess`、`noUnusedLocals`、`noUnusedParameters` を有効化しています。本番コードでは `any` の使用を禁止し（テストコードのみ例外）、`Promise.all` は `no-restricted-syntax` で禁止されているため、安全な `Promise.allSettled` による有界並行処理を用います。
 - **型 import の明示的分離**：本番コード・スクリプト・テストのすべてで独立した `import type` を使用します。ESLint の `no-restricted-syntax` が `import { value, type Shape }` のようなインライン型指定を禁止しています。
 - **明示的な型注釈の強制**：本番コード（`index.ts`、`packages/`、`scripts/`）の変数・引数・分割代入は `@typescript-eslint/typedef`、関数・コールバックの戻り値型は `@typescript-eslint/explicit-function-return-type` で強制され、文脈からの暗黙推論は認められません。`for...of` / `for...in` のループ変数は TypeScript の構文上型注釈を記述できないためルール側で自動除外されます。また、初期化子が完全注釈付きアロー関数である const も除外されます。テストコードはこの制限を受けません。
 - **規約自己検査（`check:conventions`）**：
@@ -65,7 +65,7 @@
 依存関係のインストールでは、`bunfig.toml` で規定された 7 日間のリリース待機期間（`minimumReleaseAge = 604_800`）を厳格に適用します：
 - 待機期間を満たしていない緊急セキュリティ修正を取り込む場合、該当するパッケージ名 1 件のみを `install.minimumReleaseAgeExcludes` に一時追加し、インストール完了後ただちに削除します。`--minimum-release-age` オプションによる全体緩和は禁止されています。除外対象のバージョンは少なくとも 2 つの独立したセキュリティ情報源と照合し、npm registry の `integrity` ハッシュやインストールスクリプト、バックドアの不在を確認した上で、パッケージ名、理由（CVE 番号等）、削除日時を記録します。
 - 使用する Bun ランタイムと `@types/bun` は、`package.json` に宣言されたバージョンに固定されています。`packageManager` と `install.sh` がランタイムバージョンを共同でロックします。
-- `bun run typecheck` は `@typescript/native`（`npm:typescript@~7.0.2`）のコンパイラを使用します。また、ESLint および規約検査ツールに TypeScript 6 のコンパイラ API を提供するため、`npm:@typescript/typescript6@^6.0.2` が `@typescript/old` 経由で利用されます。
+- `bun run typecheck` は Bun 内蔵の型検査器を `bun --check` で呼び出します。`bun check` はリポジトリの `check` スクリプトを実行します。また、ESLint および規約検査ツールに TypeScript 6 のコンパイラ API を提供するため、`npm:@typescript/typescript6@^6.0.2` が `@typescript/old` 経由で利用されます。
 
 ---
 
@@ -82,7 +82,7 @@
 
 ### このドキュメント版の実測値
 
-`bun run test:coverage`：**6269 tests / 526 files / 446227 `expect()` calls**。全ソースコードの**関数カバレッジは 98.24%、行カバレッジは 98.75%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
+`bun run test:coverage`：**6386 tests / 530 files / 445518 `expect()` calls**。全ソースコードの**関数カバレッジは 98.27%、行カバレッジは 98.78%**です。3 言語の各プロジェクト README の Coverage badge は行カバレッジを表示します。
 
 ---
 
@@ -120,6 +120,8 @@
 `bun run perf:hot-path-gate` は `bun run check` に組み込まれたハードゲートです。`packages/consts/performance.ts` の `HOT_PATH_PROFILE_SCENARIOS` に基づき、シナリオごとに `HOT_PATH_PROFILE_REPEATS` 回ずつ 2 つの独立した子プロセスを起動して測定します：
 - `steadyProfile`：`BUN_JSC_logGC=1` の下で定常ループを実行し、GC 停止時間の比率および JIT コンパイル階層を測定。
 - `retained`：プロファイラーによる干渉を排除した状態で、実際の RSS ピーク、heapUsed ピーク、および full-GC 後のメモリ残存量を測定。
+
+ゲートの子プロセスと、フルスイート・`perf:review`・`perf:disk-transport`・`perf:identity-database`・`perf:join-log` の子プロセスは、いずれも `scripts/perf/childEnvironment.ts` の `perfChildEnvironment` から環境を取得します。親プロセスの環境を継承して分離ルートなどの変数を重ね、`BUN_INSPECTOR_ENVS` に列挙された Bun デバッガー接続用の変数（VS Code のターミナルが注入する `BUN_INSPECT_CONNECT_TO` など）を取り除くため、子プロセスの JSC ヒープはメインスレッドの 1 つだけになります。GC ログの `starting` ハンドシェイクはちょうど 1 行でなければならず、複数のヒープが現れた場合は GC の読み取り値を出しません。
 
 ### ゲート指標と段階区分
 

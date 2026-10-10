@@ -1,4 +1,3 @@
-import type { FlushResult } from "../../packages/types/lifecycle";
 import { diskIOReplyStub, diskIOStub } from "../helpers/diskIOMock";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type {
@@ -21,8 +20,7 @@ const diskMessages: DiskBusinessMessage[] = [];
 const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [];
 
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
-  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
-  flushDiskIODomainOutcome: async (): Promise<{ result: "flushed" }> => ({ result: "flushed" }),
+  flushDiskIODomain: async (): Promise<{ result: "flushed" }> => ({ result: "flushed" }),
   isDiskIOInitialized: (): boolean => false,
   onDiskIORespawn: (): void => {},
   onDiskIOReply: diskIOReplyStub({

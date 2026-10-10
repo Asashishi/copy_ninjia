@@ -137,6 +137,9 @@
   - **429 智能退避与故障隔离**：
     - 若某个群的消息发送触发了 Telegram 429 限流，出站调度器仅将**该群**的消息队列暂停指定的 `retry_after` 时长，其他群的消息发送完全不受影响。
     - 非消息类请求（如删除、查询、禁言等）按类别各自维护独立的退避窗口，某一类请求受限不会阻塞其他类别的执行。
+    - `download` 类只承载 `getFile` 与 Telegram 文件服务的下载；默认头像直链、`telegram.me` 公开主页及其头像图走 `externalFetch` 类，外部主机的 429 不拖住 Telegram 文件下载。两类同样经主线程出站总闸。
+    - 某个类别开始一段新的退避等待时记一条 warn（类别与毫秒数），等待期间的后续 429 不重复记录。
+  - **超时与取消分开报错**：任务因调用方的超时预算耗尽而结算时，出站总闸、发送调度器与 Worker 双工请求给 `TimeoutError`；停机撤销与调用方主动取消给 `AbortError`。文件下载（`infra/telegram/fileDownload.ts`）把 `getFile` 与下载两段各自的超时分别报为 `metadataTimeout`、`downloadTimeout`，调用方取消或其自身预算耗尽照旧上抛。
 
 - **防止机器人消息自发自收与死循环回环**：
   - 机器人自身发出的消息在出站代理边界会自动打上标识并登记。
@@ -178,6 +181,7 @@
   - **主线程**：持有 Telegram runner、各 Worker 监督句柄，以及 `cache/main/storage.ts` 中的 `memory/global/state.json` 权威内存镜像。
     - `infra/storage/stateStore.ts` 是业务门面，负责在恢复时填充内存镜像、构建领域快照并提供访问器。
     - `infra/storage/statePersistence.ts` 的 `StateStore` 负责底层严格解码、latest-only 原子落盘、有限失败重试与退出时的 flush。
+    - 失败重试已排期时，等待落盘的写入与非停机 flush 都由重试 timer 按退避写出最新值，不提前投递、不额外消耗重试次数；停机 flush 取消退避立即做最后一次写出。
     - 有限重试耗尽属于致命持久化故障（fatal durability failure），系统必须立刻停止 runner，绝不能继续确认 Telegram update。
   - **AI Worker**：独占群聊滚动记忆、回复准入判断、多模态媒体描述流水线、全局心情以及贴纸包目录生成的运行时状态。
   - **Anti-Raid Worker**：独占入群验证与防冲群私密模式（Lockdown）的状态机及其关联计时器。主线程仅保存用于崩溃恢复的镜像。
@@ -251,7 +255,7 @@
   - **命令外闸聚合**：所有斜杠命令必须收敛在单个 `:entities:bot_command` 外闸背后的子 Composer 中，严禁逐条直接挂载在 `bot` 根实例上。外闸使用 grammY 的 `matchFilter(":entities:bot_command")`，不带 `bot_command` 实体的消息能在一瞬间跳过整组命令匹配。
   - **前置链批量注入**：从 update_id 记账到兜底消息处理的前置链（包含 Anti-Raid、gag、`/qa set` 投递的消息 ingress、命令外闸、中文动作命令外闸与消息兜底），按顺序放入数组并通过 `bot.use(...preamble)` 批量注册，执行顺序与认领生命周期由 grammY 统一调度。
   - **消息入口判据统一**：`message` 与 `channel_post` 的 ingress 与兜底处理不调用 `bot.on`，而是直接校验统一判据（`allowed_updates` 不含 `edited_*`，且 `ctx.msg` 等于 `message ?? channelPost`）。中文动作命令收敛在「原文首字符是 `/`」外闸下的子 Composer，该外闸是 `CJK_ACTION_COMMAND_PATTERN` 的严格超集。
-  - **同步 vs 异步 Promise 契约**：每条群消息前置的各 ingress 及其自身的管理员权限判定，统一返回 `boolean | Promise<boolean>`。稳定状态下同步返回布尔值（不分配 Promise 内存）；仅在需要现查网络权限、实际删除消息或等待落盘 barrier 时才返回 Promise，由 `app/registerHandlers.ts` 的 `claimOrContinue` 统一接管。
+  - **同步 vs 异步 Promise 契约**：每条群消息前置的各 ingress 及其自身的管理员权限判定，统一返回 `boolean | Promise<boolean>`。稳定状态下同步返回布尔值（不分配 Promise 内存）；仅在需要现查网络权限、实际删除消息或等待落盘 barrier 时才返回 Promise，由 `app/registerHandlers.ts` 的 `claimOrContinue` 统一接管。`callback_query:data` 上的 `/wed` 与 `/qa query` 翻页使用同一返回类型：前缀未命中时同步返回 false。`dispatchCallbackQuery` 本身不是 `async`，两条都同步未命中时直接调用 `next()`；只有某一条返回 Promise 时才等待结果，再决定是否继续交给入群验证。
   - **必须严格遵守 Promise 返回语义**：等待持久化确认的入口（如入群/离群服务消息、验证按钮交互）必须返回 Promise，若误写为同步返回，会导致 Telegram update 在数据尚未安全落盘前就被提前确认；相反，恒为假值的同步逻辑严禁声明为 `async`。测试中对这两种情况均有断言覆盖。
 
 - **`packages/workers/` 内自持的 Timer 必须调用 `unref()`**：
@@ -282,8 +286,9 @@
 - **解锁解除公告判定**：
   - 仅当本轮封锁确实发送过锁定公告（`announced === true`）时，才在恢复权限后发送解除提示。
   - 锁定到期、管理员手动解除、提交结果不确定以及持久化失败，均统一进入恢复状态；权限恢复成功后，根据本轮的公告标志决定是否播发解锁公告。
+  - 解锁公告按进入恢复的原因选文案：本轮到期用 `lockdownEnded`（带锁定分钟数）；到期前恢复（主动解除、提交结果不确定、持久化失败）用 `lockdownLifted`。原因只活在内存里，接管落盘的 `RESTORING` 时按到期前恢复处理；到期恢复进行中再被解除，仍按到期公告。
   - 公告状态记录沿 `APPLYING → ACTIVE → RESTORING → RECONCILING` 阶段透传；`RESTORING` 期间若再次超过入群阈值，仍保持恢复意图，不开启新的一轮。
-  - `announced` 与 `announcementMessageId` 随 `{phase, intentId, originalPermissions, announced, announcementMessageId?, expiresAt}` 持久化。ID 必须来自成功的发送回执，未发送公告却持有 ID 的记录视为非法。
+  - `announced` 与 `announcementMessageId` 随 `{phase, intentId, originalPermissions, announced, announcementMessageId?, expiresAt}` 持久化。ID 必须来自成功的发送回执，两者同时成立或同时不成立：未发送公告却持有 ID、已公告却没有 ID 的记录都视为非法。
   - Worker 重建后若需要接管并继续锁定，且尚未发送过公告，会触发补发；处于 `RESTORING` 阶段时不再补发公告。本轮恢复完成时向主线程发送 `reportUnlock`，由主线程清理持久化记录。
 
 - **私密模式到期恢复机制**：
@@ -351,7 +356,9 @@
 - **模型供应商请求、超时与重试规范**：
   - 网络传输、429 与 5xx 重试完全由供应商官方 SDK 自行处理（Gemini 使用 `@google/genai` 的 `retryOptions`，OpenAI 与 Anthropic 使用各 SDK 的 `maxRetries`，对应预算常量分别为 `GEMINI_REQUEST_RETRY_ATTEMPTS`、`OPENAI_REQUEST_MAX_RETRIES`、`ANTHROPIC_REQUEST_MAX_RETRIES`）。
   - 各 SDK 的内置超时为**单次尝试**的期限；底层的封装层（`aiChat/gemini/client.ts`、`openai/client.ts`、`anthropic/client.ts`）使用 `signalWithTimeout` 合成一个覆盖整次调用（含全部重试与退避）的全局 deadline。一旦该 deadline 到期，SDK 立即短路重试，最长挂起时间由 `GEMINI_REQUEST_TIMEOUTS_MS` / `OPENAI_REQUEST_TIMEOUTS_MS` / `ANTHROPIC_REQUEST_TIMEOUTS_MS` 严格界定。
-  - 调用方的 invalidate signal 与该 deadline 合成生效。当请求已明确以 `failureKind: "request"` 失败时，外层严禁再套一层整次重试；业务级重采样仅允许在 HTTP 成功但模型响应不可用或异常结束（`failureKind: "response"`）以及规范化文本为空时触发。
+  - 调用方的 invalidate signal 与该 deadline 合成生效。当请求已明确以 `failureKind: "request"` 失败时，外层严禁再套一层整次重试；业务级重采样仅允许在 HTTP 成功但模型响应不可用或异常结束（`failureKind: "response"`）以及规范化文本为空时触发。Anthropic 拒答归为 `failureKind: "refused"`（文本结果带 `refused: true` 与 `retryable: false`），不重采样。
+  - OpenAI Responses 的 `status` 为 `completed` 时，message 中只要含 `refusal` 内容块即按拒答处理：以 `failureKind: "response"` 交回，收尾原因为 `refusal`。
+  - 响应不可用时，客户端的 `unusable response` 日志连同供应商的收尾详情对象一起记录（Anthropic 另带产出该响应的 `model`）：Anthropic 为 `stop_details`，Gemini 为 candidate 的 `finishMessage` 与 `safetyRatings`（无 candidate 时为 `promptFeedback`），OpenAI 为 `error` 与 `refusal` 文本。详情由 `aiChat/ai/utils/finishDetails.ts` 序列化为 JSON 并截断到 `AI_FINISH_DETAILS_MAX_CHARS`，再由同一模块的 `diagnosticWithDetails` 以 `, details=<JSON>` 接在收尾原因之后，没有详情时省略该段；同一份串经 `AiReplyTurn.finishDetails` 交给回复层，`AI reply unusable response` 日志同样经 `diagnosticWithDetails` 以 `, details=<JSON>` 接在 `finish_reason` 之后，供应商未给详情时省略该段。
   - `aiChat/openai/image.ts` 同样使用 `OPENAI_IMAGE_REQUEST_TIMEOUT_MS` 统筹生图的单次尝试与整次调用。
 
 - **模型调用配额与车道隔离（Lane Isolation）**：
@@ -419,7 +426,7 @@
     - 仅在 TTS 供应商调用成功后才正式记入 `agentCount`（`settleAiTtsReservation`）；若合成前取消或失败，释放预留额度；合成成功后的编码或网络发送失败不退回额度。
     - 每日配额由 `agent.tts.daily_limit` 减去 `daily_reserve_quota` 算出，与运维入口独立。
   - **音频编码管线**：
-    - WAV：单声道 PCM 分块重采样至 `OPUS_RATE`（分块大小 `VOICE_OPUS_ENCODE_CHUNK_SECONDS`），编码为 OGG/Opus，块间主动让出事件循环。
+    - WAV：取出单声道 PCM，按 `VOICE_OPUS_ENCODE_CHUNK_SECONDS` 分块交给 `@audio/encode-opus` 编码为 OGG/Opus，块间主动让出事件循环。编码器按 PCM 的原始采样率建立，由依赖跨块连续重采样到 48 kHz；各块产出的页由 `Bun.concatArrayBuffers` 拼成整段。
     - OGG/Opus 与 MP3：校验容器结构完整性（Ogg 页结构与 OpusHead，或 MPEG Layer III 帧序列）并计算时长，校验通过后原样封装。
     - 响应体读取上限为 `VOICE_SPEECH_MAX_BYTES`。
 
@@ -429,14 +436,18 @@
   - 运维口径的每日额度由主线程 tts 门面（`createSpeechFacade`）独立记入 `reserveCount`，上限为 `daily_reserve_quota`，与 AI 闲聊额度严格互不挤占。
 
 - **Anthropic 模型响应处理**：
-  - 命中 `max_tokens`、`refusal` 或 `model_context_window_exceeded` 结束原因时，响应正文视为不可用。
-  - 广告检测在正文为空时最多重采样 `AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS` 次。
+  - 请求统一走 SDK 的 beta Messages 端点。命中 `max_tokens` 或 `model_context_window_exceeded` 时按产出不可用（`failureKind: "response"`）交回；命中 `refusal`（任何 `stop_details.category`）时按拒答（`failureKind: "refused"`）交回，调用方不重采样：摘要压缩、贴纸目录与广告检测直接放弃，`web_search` 工具回拒答说明，cron 联网摘要判 `refused` 且不重试。
+  - 能力配置了 `fallback_model` 时，客户端挂 SDK 的 `betaRefusalFallbackMiddleware`（默认选项）：每个请求带 `fallback-credit-2026-07-01` beta；`model` 拒答后以 `fallback_model`、同一凭据与端点重发同一请求，拒答带回的额度令牌按 `best_effort` 兑换，兑换失败照常执行、按原价计费；回退模型也拒答时交回该次拒答。回复会话（含工具往返与 `pause_turn` 续发）与一次检索各持一份 `BetaFallbackState`，改道后其余请求直接发给回退模型，下一轮回复重新从 `model` 起发。
+  - 改道按本次调用前后 `BetaFallbackState` 钉住的回退下标判定（`aiChat/anthropic/sdkClient.ts`），每次改道记一条以 `fell back after a refusal:` 开头的告警：回退模型产出时接 `from=…, to=…, trigger=…, fallback_credit=…`，`trigger` 与 `fallback_credit` 按 `aiChat/ai/utils/finishDetails.ts` 序列化；回退模型也拒答时接 `from/to` 与回退响应的 `stop_reason`；回退请求失败或超时时接 `from/to` 与 `the fallback request did not complete`。会话已钉在回退项、本次直接发给回退模型时不记。
+  - 用量记在部署配置里的模型名下：改道后记 `fallback_model`，否则记请求体的 `model`，不取响应回显的规范模型 ID；被拒那一次的用量不入账。日志与回复轮次 `finishDetails` 里的 `stop_details` 先去掉 `fallback_credit_token`（拒答带回的、可兑换的回退额度令牌）再序列化。
+  - 广告检测在正文为空时最多重采样 `AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS` 次，Anthropic 拒答立即放弃；三家传输层都只在放弃后记一条日志，带最后一次的收尾原因与收尾详情（Anthropic 为 `model` 与 `stop_details`，Gemini 同上，OpenAI 兼容 Chat Completions 为 `finish_reason` 与 `message.refusal`；三家的详情都经 `diagnosticWithDetails` 记为 `details=`，没有详情时省略）。
   - 对话与检索遇到 `pause_turn` 时，原样延续 assistant 历史继续交互，最多续发 `ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS` 次并合并检索次数。
 
 - **Token 与用量核算**：
   - 用量统计以供应商 SDK 返回的权威 `usage` 为准，由 `packages/infra/aiCacheUsage.ts` 集中校验上报。
   - 取消或中断时，若 SDK 依然返回了有效用量，仍计入统计；SDK 未返回则不进行估算。
   - Gemini 正文 token 与 thinking token 校验后累加；OpenAI 输出不重复累加 reasoning token。
+  - 缓存命中与缓存写入都计在输入总量内、互不重叠。Anthropic 的 `input_tokens` 不含缓存部分，输入总量记 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`，命中取 `cache_read_input_tokens`、写入取 `cache_creation_input_tokens`；OpenAI 写入取 Responses 的 `input_tokens_details.cache_write_tokens` 或 Chat Completions 的 `prompt_tokens_details.cache_write_tokens`；Gemini 单次请求不给写入，只有显式缓存创建按写入等于输入记录。命中与写入之和超过输入时整条 token 记录按非法丢弃（检索次数保留）；供应商未给出写入时不记该项，日度聚合只累加给出写入的请求。
   - 仅返回费用的模型（如 xAI 生图的 `cost_in_usd_ticks`）单独记录为费用指标，不折算 token。
   - 联网检索次数与模型 token 合并记录，日度聚合只算一次请求；独立检索调用记录为 search usage。Anthropic 以 `server_tool_use.web_search_requests` 为准，OpenAI 仅统计 `action.type === "search"` 且状态完成的动作。
 
@@ -482,7 +493,7 @@
   - **通用查证原则**：采用供应商中立的固定说明，同一回复的每次模型调用复用完全相同的 system prompt。遇到实时变动或未确证的事实时，若本轮挂载了检索工具，必须「先检索、再行动」；主观聊天、文学创作或转录中已给出的事实不发起检索；搜索结论优先于模糊记忆，工具不可用时诚实表达不确定，且不向群友暴露搜索的技术过程。
   - **双模态检索实现**：
     - **内建检索（未配置 `agent.web_search`）**：在系统提示词中使用 `WEB_SEARCH_INSTRUCTION`，挂载 `text` 模型的服务端内建检索。软预算通过 `MAX_WEB_SEARCH_CALLS_PER_REPLY` 约束，真实调用次数由 `replyModel.ts` 统计，超额时仅记录，不动态篡改系统提示词，也不卸载检索工具。
-    - **独立函数检索（配置了 `agent.web_search`）**：在系统提示词中使用 `WEB_SEARCH_FUNCTION_INSTRUCTION`，挂载本地函数工具 `web_search`。每轮初始化时锁定调用上限（缺省 `WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE`）；每次函数调用扣除一次额度，超额后直接拒绝。该工具由 `aiChat/ai/tools/webSearch.ts` 异步执行，使用具备检索能力的小模型单轮查证，将结果整理为「提示语 + 结论 + 编号来源」并限制在 `WEB_SEARCH_RESULT_MAX_CHARS` 与 `WEB_SEARCH_MAX_SOURCES` 条来源内喂回。若入参非法、请求超时、未执行检索或结果为空，工具统一返回「模型搜索失败」，避免将幻觉当成检索结论。
+    - **独立函数检索（配置了 `agent.web_search`）**：在系统提示词中使用 `WEB_SEARCH_FUNCTION_INSTRUCTION`，挂载本地函数工具 `web_search`。每轮初始化时锁定调用上限（缺省 `WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE`）；每次函数调用扣除一次额度，超额后直接拒绝。该工具由 `aiChat/ai/tools/webSearch.ts` 异步执行，使用具备检索能力的小模型单轮查证，将结果整理为「提示语 + 结论 + 编号来源」并限制在 `WEB_SEARCH_RESULT_MAX_CHARS` 与 `WEB_SEARCH_MAX_SOURCES` 条来源内喂回。若入参非法、请求超时、未执行检索或结果为空，工具统一返回「模型搜索失败」，避免将幻觉当成检索结论；Anthropic 检索模型拒答时改回「模型安全策略拒绝了这次搜索」并带 `retryable: false`。
   - **时区核对**：涉及「今天」「最新」等时间词时，查证规则依据配置时区的时间核实事实适用日期，不将网页发布时间误判为事件发生时间。
   - 只要触发了检索（服务端或本地），后续请求即打上 `grounded: true` 标记，Gemini 据此自动降低采样温度以收敛幻觉。
 
@@ -501,7 +512,7 @@
   - **系统提示词严格逐字恒定**：系统提示词仅通过独立的系统字段传入，动态的状态数据（时间、心情、工具状态）必须放入 user 内容中的运行时状态区块，严禁混入系统提示词。
 
 - **Gemini 显式上下文缓存（Explicit Context Cache）**：
-  - **两套请求结构**：每轮回复的第 1 次请求若缓存就绪，直接引用显式缓存（`cachedContent`），且请求体只包含 `contents`，不再携带 `systemInstruction`、`tools`、`toolConfig`；若缓存未就绪，则发送包含完整配置的请求。第 2 次及后续往返携带静态 `systemInstruction` 与工具配置，由服务端隐式前缀缓存接管。
+  - **两套请求结构**：每轮回复的第 1 次请求，仅当本群还没有触发时刻记录、或距记录超过 `GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS`，且显式缓存就绪时，引用显式缓存（`cachedContent`），请求体只包含 `contents`，不携带 `systemInstruction`、`tools`、`toolConfig`。距记录落在该时长内（含相等）、缓存未就绪，或会话固定的 text 快照已被热重载替换时，发送完整配置。第 2 次及后续往返一律携带静态 `systemInstruction` 与工具配置，由服务端隐式前缀缓存接管。触发时刻是本群上一次成功的 `generateContent` 的发出时刻，取本线程单调时钟 `performance.now()`，按群各记一个内存值（`chatId` 经回复会话参数传入，只有 Gemini 实现读取），其它群的请求不影响本群。失败的请求不写入；并行请求乱序完成时，较早的发出时刻不覆盖较晚的记录；显式缓存被拒后的完整结构补发按补发时刻计。`/ai_chat disable`、`/clear_context`、群级清理、记忆淘汰与停机时删除本群的值，AI Worker 维护节拍删除已超过 `GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS` 的值（与没有记录等价），`agent.text` 热重载不清除。Worker 换 isolate 后全部为空，各群下一次回复的第 1 次请求按上述条件决定。
   - **显式缓存内容**：仅缓存「系统提示词 + 工具声明 + toolConfig」，不缓存参考记忆、转录与运行时状态。
   - **分槽管理**：按系统提示词指纹分槽，全群共享同一槽位。槽数上限为 `GEMINI_TEXT_CACHE_MAX_SLOTS`，超出时按 `lastUsedAt` 淘汰最久未用的槽及服务端条目。`displayName` 格式为 `copy-ninjia:text:<槽指纹>:<内容指纹>`。
   - **非阻塞取用**：调用 `acquireGeminiContextCache` 时从不等待创建完成。首次使用时当前请求直接发送完整配置，并在后台启动扫描与创建；命中缓存时刷新 `lastUsedAt`；若剩余生命周期不足 `GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS`，在后台静默续期回完整 TTL。
@@ -844,7 +855,7 @@
 
 - **持久化输入严格校验与祖先路径核验**：
   - `libs/fileAccess.ts` 的 `inspectOptionalDirectory` 与 `inspectOptionalFile` 在文件或目录缺失时，递归核验其所有祖先路径：遇到断链、死循环软链接、目录被文件占用、`ENOTDIR` 或 `EACCES` 均直接拒绝启动。
-  - 领域目录允许有效软链接，但普通持久化数据文件严禁为软链接（`memory/global/state.json` 保持自身链接规则）。
+  - 领域目录允许有效软链接，但普通持久化数据文件（含 `memory/global/state.json`）严禁为软链接。
   - 启动阶段对身份库、验证、日志、运势、AI 记忆与成员文件执行全域只读 inspect；任何领域校验失败，均严禁对外发布状态、生成密钥或执行清理，保持磁盘数据原样不动。
 
 ### 落盘与快照契约
@@ -865,12 +876,12 @@
   - 每群保存至多 `TRANSLATE_CHAT_USER_LIMIT` 个不同身份及其目标语言（`ja|cn|en|uk|ru`）；无会话时为 `undefined`。`memory/global/state.json` 中出现 `translate` 字段直接报错拒绝启动。
   - 翻译消息由 `translate/message.ts` 按群串行异步发送，不阻塞 update 中间件；每群等待队列上限 `TRANSLATE_CHAT_BACKLOG_MAX`，满载时丢弃新消息翻译并记录日志。会话开启与关闭必须等待 `persistChatState` 精确持久化确认后才反馈成功。
 - **状态文件只读探测边界**：
-  - `memory/global/state.json` 必须为普通文件或指向普通文件的有效软链接。若为目录、损坏链接或遭遇权限拒绝，直接拒绝启动；仅在 `lstat` 返回 `ENOENT` 时按文件不存在处理。
+  - `memory/global/state.json` 本身必须为普通文件（按 `lstat` 判定，不跟随链接）。若为软链接（含指向普通文件的链接与损坏链接）、目录或遭遇 `EACCES`/`ELOOP`/`ENOTDIR` 等访问错误，直接拒绝启动；仅在 `lstat` 返回 `ENOENT` 时按文件不存在处理。
   - 文件读取使用致命模式 `TextDecoder` 严格解码 UTF-8 并剥离 BOM，解析失败保留原文件。
 - **素材配置 `config/dynamic/assets.json`**：
   - 顶层严格分为三组：`onlyPath`（随机图库路径 `random_h_image_dir`）、`pathOrUrl`（机器人默认头像 `bot_default_avatar`）、`onlyUrl`（内联抽签与 gag 缩略图直链）。
   - 字段缺省统一回退到代码内置常量（`consts/ui/assets.ts`），不沿用旧运行态。机器人从不修改或回写此文件；出现未声明分组或字段时整份拒绝。
-  - 缩略图由 Telegram 客户端下载，仅允许 `https` 协议；本地抓取的默认头像允许明文 `http` 或本机文件路径（支持绝对路径或 `./`、`../` 开头的相对路径）。本地头像文件大小不超过 `AVATAR_MAX_DOWNLOAD_BYTES`，且校验必须具备合法的 JPEG/PNG 字节签名。
+  - 缩略图由 Telegram 客户端下载，仅允许 `https` 协议；本地抓取的默认头像允许明文 `http` 或本机文件路径（支持绝对路径或 `./`、`../` 开头的相对路径）。默认头像素材按字节签名、大小与视频轨尺寸判定（`defaultAvatarPhotoType`）：JPEG/PNG 不超过 `BOT_PROFILE_PHOTO_MAX_BYTES`，上传为静态头像；MP4 不超过 `BOT_PROFILE_ANIMATION_MAX_BYTES`、至少有一条视频轨（`hdlr` 为 `vide`），且每条视频轨的 `tkhd` 展示尺寸都是边长不超过 `BOT_PROFILE_ANIMATION_MAX_SIDE` 的非零正方形，上传为动态头像。MP4 须首个 box 为声明 MP4 品牌的 `ftyp`，其后顶层 box 恰好铺满整个文件且恰有一个 `moov`；`moov`、`trak`、`mdia` 的子 box 同样恰好铺满各自载荷，各层合计读取不超过 `MP4_MAX_SCANNED_BOXES` 个 box，长度字段越界或截断一律判否。本机文件在加载期核对、复原时按同一规则重新核对，直链只在复原时核对；读取上限为 `DEFAULT_AVATAR_MAX_READ_BYTES`，直链单次下载超时为 `DEFAULT_AVATAR_FETCH_TIMEOUT_MS`。
 - **统一日志脱敏边界**：
   - 写入 journal、Worker 信封或 `logs/` 前，自动脱敏已加载配置中的所有敏感凭据（Tokens、API Keys、密钥、Google Provider Header 等）。
   - 日志中的 HTTP(S) URL 统一收敛为 `origin + pathname`，丢弃 query 参数、fragment 与 userinfo。
@@ -1053,7 +1064,7 @@
   - runner 轮询严格使用 `limit: 1`，保证每条消息在独立的确认边界内落定，杜绝批次内非幂等操作重复执行。
 - **长轮询与网络退避机制**（`app/updateFetcher.ts`）：
   - 长轮询超时为 `UPDATE_POLL_TIMEOUT_SECONDS`，重试窗口 `UPDATE_POLL_RETRY_WINDOW_MS`。
-  - 遭遇网络抖动时，在 `UPDATE_POLL_INITIAL_RETRY_MS` 至 `UPDATE_POLL_MAX_RETRY_MS` 之间执行指数退避；遇到 429 时严格等待 `retry_after`；遭遇 401/409 等凭据冲突时直接抛出致命错误退出。
+  - 取数失败时，在 `UPDATE_POLL_INITIAL_RETRY_MS` 至 `UPDATE_POLL_MAX_RETRY_MS` 之间执行指数退避；遇到带 `retry_after` 的 429 时先等满 `retry_after`，再照常执行本次指数退避，两段等待共用重试窗口，任一段达到剩余窗口即抛出最后错误；遭遇 401/409 等凭据冲突时直接抛出致命错误退出。
   - 关联频道查询使用 `LINKED_CHANNEL_FETCH_TIMEOUT_MS` 独立超时，超时后返回 `undefined`，不授予免检权限。
 - **最终 Offset 确认与停机三态分类**：
   - 停机确认最终 offset 的 `getUpdates(timeout: 0)` 调用受 `FINAL_OFFSET_CONFIRM_TIMEOUT_MS` 截止时间保护。

@@ -2,6 +2,7 @@ import { antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
 import {
   activeVerificationSnapshots,
   deferredVerificationRecords,
+  deleteActiveVerificationSnapshot,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
@@ -95,7 +96,7 @@ function finalizeVerificationDeferral(
   key: string,
   record: DeferredVerificationRecord
 ): void {
-  activeVerificationSnapshots.delete(key);
+  deleteActiveVerificationSnapshot(key);
   persistedVerificationRevisions.delete(key);
   pendingVerificationDeletes.delete(key);
   pendingVerificationDeferrals.delete(key);
@@ -155,7 +156,7 @@ export function deleteDeferredVerificationsForChat(chatId: number): number {
     };
     deferredVerificationRecords.delete(key);
     pendingVerificationDeferrals.delete(key);
-    activeVerificationSnapshots.delete(key);
+    deleteActiveVerificationSnapshot(key);
     terminalVerificationAttempts.delete(key);
     persistedVerificationRevisions.delete(key);
     pendingVerificationDeletes.set(key, deletion);

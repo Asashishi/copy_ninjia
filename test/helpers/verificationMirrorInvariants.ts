@@ -6,11 +6,13 @@
  * - 等待落盘的延后请求始终仍在活动快照里（DiskIO 重建要靠它重放完整快照）。
  * - 精确落盘水位线只属于仍在活动快照里的 key；同代际时水位不超过活动快照的 revision。
  * - 终态执行预算只属于活动快照或延后索引里的 key。
+ * - 活动快照里的每个 (chatId, userId) 都能经按群索引查到（isActiveVerificationUser）。
  */
 
 import {
   activeVerificationSnapshots,
   deferredVerificationRecords,
+  isActiveVerificationUser,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
@@ -37,6 +39,9 @@ export function assertVerificationMirrorInvariants(): void {
     } else if (persisted.generation === active.generation && persisted.revision > active.revision) {
       violations.push(`${key}: persisted revision ${persisted.revision} ahead of active ${active.revision}`);
     }
+  }
+  for (const [key, active] of activeVerificationSnapshots) {
+    if (!isActiveVerificationUser(active.chatId, active.userId)) violations.push(`${key}: active snapshot missing from the per-chat index`);
   }
   for (const key of terminalVerificationAttempts.keys()) {
     if (!activeVerificationSnapshots.has(key) && !deferredVerificationRecords.has(key)) {

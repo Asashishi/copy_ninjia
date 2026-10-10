@@ -24,6 +24,7 @@ import type { StorageDatabase } from
   "../../../packages/types/storageDatabase";
 import { RUN_ROOT_PREFIX } from "../fullSuite/constants";
 import { PERFORMANCE_MOCK_ROOT, PROJECT_ROOT } from "../fullSuite/mockRoot";
+import { perfChildEnvironment } from "../childEnvironment";
 import {
   assertUnlinkedFixtureParent,
   assertUnlinkedFixturePath,
@@ -144,9 +145,8 @@ export function assertMainBenchmarkDatabase(temporaryRoot: string): void {
 export function mainBenchmarkEnvironment(
   temporaryRoot: string
 ): Readonly<Record<string, string | undefined>> {
-  return {
-    ...process.env,
+  return perfChildEnvironment({
     [RUNTIME_DATA_ROOT_ENV]: temporaryRoot,
     [CONFIG_ROOT_ENV]: join(process.cwd(), "config_example"),
-  };
+  });
 }

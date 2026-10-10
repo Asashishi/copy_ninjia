@@ -25,7 +25,6 @@ import { requestBlocklistResweep } from "../infra/blocklist/sweep";
 import { getChatStateCache, getChatState } from "../infra/storage/stateStore";
 import { postDiskIODiagnostic } from "../infra/diskIO";
 import { sendTemporaryMessageOnMain } from "../infra/telegram/temporaryMessage";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../consts/commands";
 import { inFlightAdDisposals } from "../cache/main/antiRaid/adDisposal";
 import { trackBackgroundTask } from "../infra/backgroundTasks";
 import { settleWithinBudget } from "../libs/inflight";
@@ -228,7 +227,6 @@ async function announceAdDisposal(
   await sendTemporaryMessageOnMain({
     chatId: event.chatId,
     text: formatAdNotice({ label: event.label, reason: event.reason, enforcedChats, failedChats, atmosphere: chatAtmosphere() }),
-    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
   });
 }
 

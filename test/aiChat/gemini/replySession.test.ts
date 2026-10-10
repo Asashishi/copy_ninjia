@@ -2,15 +2,23 @@
  * Gemini 回复会话：中立请求到 generateContent 请求体的映射，以及多轮工具往返
  * 的对话记录累积。
  *
- * 覆盖：上一轮模型的整个 content（含 thought signature）原样接回，以及服务端检索调用在失败分支也计数。
+ * 覆盖：上一轮模型的整个 content（含 thought signature）原样接回，服务端检索调用在失败分支也计数，
+ * 以及第 1 次请求按本群上一次触发间隔在显式缓存与隐式前缀缓存之间切换。
  */
 
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { Mock } from "bun:test";
 import type { Content, GenerateContentParameters } from "@google/genai";
 import type { GeminiRequestResult } from "../../../packages/types/aiChat/gemini";
 import type { GeminiRequestOptions } from "../../../packages/aiChat/gemini/client";
 import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition } from "../../../packages/types/aiChat/provider";
 import { DUPLICATE_REPLY_RESULT } from "../../../packages/consts/aiChat/tools";
+import {
+  geminiReplyLastRequestAt,
+  resetGeminiContextCache,
+  sweepGeminiReplyRequestTimes,
+} from "../../../packages/cache/workers/aiChat/geminiContextCache";
+import { invalidateChatRuntimeCache } from "../../../packages/cache/workers/aiChat/index";
 import { getAgentDeploymentConfig } from "../../../packages/config/agent";
 import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/config";
 import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
@@ -21,6 +29,10 @@ const requestGeminiResult = mock(async (..._args: unknown[]): Promise<GeminiRequ
   ok: false,
   failureKind: "request",
 }));
+
+/** 按群记录触发时刻的用例所用的夹具群 ID；其余用例不给 chatId。 */
+const CHAT_ID: number = -100_100;
+const OTHER_CHAT_ID: number = -100_200;
 
 /** 会话创建时固定的客户端替身；请求经被替换的 requestGeminiResult 发出，不触达它。 */
 const PINNED_CLIENT: object = { label: "pinned gemini client" };
@@ -46,8 +58,10 @@ mock.module("../../../packages/aiChat/gemini/contextCache", () => ({
 const { createGeminiReplySession } = await import("../../../packages/aiChat/gemini/replySession");
 const {
   GEMINI_GROUNDED_REPLY_TEMPERATURE,
+  GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS,
   GEMINI_REPLY_MAX_TOKENS,
   GEMINI_REPLY_TEMPERATURE,
+  GEMINI_SERVER_TOOL_CONFIG,
 } = await import("../../../packages/consts/aiChat/gemini");
 
 const SEND_MESSAGE: AiToolDefinition = {
@@ -90,6 +104,7 @@ beforeEach(() => {
   acquireGeminiContextCache.mockImplementation((): string | null => null);
   releaseGeminiContextCache.mockClear();
   builtBodies.length = 0;
+  resetGeminiContextCache();
 });
 
 /** 像真实 requestGeminiResult 一样在调用时拼请求体，记下拼出的请求体后交回 result。 */
@@ -110,7 +125,7 @@ describe("Gemini 回复会话的热重载边界", () => {
   test("会话创建时固定模型与客户端：工具往返之间热重载 text 配置，后续请求仍用旧模型与旧客户端", async () => {
     const original = agentDeploymentConfigCache.current!;
     requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     const request: AiReplyTurnRequest = { systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: false, grounded: false };
     const first: AiReplyTurn = await session.request(request);
     expect(session.appendToolOutputs([{ call: first.functionCalls[0]!, responseJson: DUPLICATE_REPLY_RESULT }])).toBeTrue();
@@ -131,7 +146,7 @@ describe("Gemini 回复会话的热重载边界", () => {
     const original = agentDeploymentConfigCache.current!;
     acquireGeminiContextCache.mockReturnValue("cachedContents/shared");
     requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     try {
       agentDeploymentConfigCache.current = { ...original, text: { ...original.text } };
       await session.request({ systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: false, grounded: false });
@@ -149,10 +164,10 @@ describe("Gemini 回复会话的热重载边界", () => {
 describe("两套请求结构", () => {
   const REQUEST: AiReplyTurnRequest = { systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: true, grounded: false };
 
-  test("第 1 次请求引用共用显式缓存：只发 contents，不带 systemInstruction、tools 与 toolConfig", async () => {
+  test("本群还没有过回复请求时，第 1 次请求引用共用显式缓存：只发 contents，不带 systemInstruction、tools 与 toolConfig", async () => {
     acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
     requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     await session.request(REQUEST);
 
     const body: GenerateContentParameters = bodyAt(0);
@@ -174,7 +189,7 @@ describe("两套请求结构", () => {
   test("第 2 次起换回完整结构，contents 与模型 content（含思考签名）照常接回，不再取缓存", async () => {
     acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
     requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     const turn: AiReplyTurn = await session.request(REQUEST);
     session.appendToolOutputs([{ call: turn.functionCalls[0]!, responseJson: "{\"success\":true}" }]);
     await session.request(REQUEST);
@@ -194,7 +209,7 @@ describe("两套请求结构", () => {
       failureKind: "misconfigured",
     }));
     requestGeminiResult.mockImplementationOnce(respond(okResult(modelContent(), "好")));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     const turn: AiReplyTurn = await session.request(REQUEST);
 
     expect(turn.ok).toBe(true);
@@ -207,18 +222,207 @@ describe("两套请求结构", () => {
   test("端点故障不补发，也不释放缓存登记", async () => {
     acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
     requestGeminiResult.mockImplementation(respond({ ok: false, failureKind: "request" }));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
     const turn: AiReplyTurn = await session.request(REQUEST);
 
     expect(turn.ok).toBe(false);
     expect(requestGeminiResult).toHaveBeenCalledTimes(1);
     expect(releaseGeminiContextCache).not.toHaveBeenCalled();
   });
+
+  test("距本群上一次触发不超过阈值（含相等）时，第 1 次请求不取显式缓存，发送完整结构", async () => {
+    const now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockReturnValue(now);
+    try {
+      geminiReplyLastRequestAt.set(CHAT_ID, now - GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS);
+      acquireGeminiContextCache.mockReturnValue("cachedContents/shared");
+      requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
+      const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      await session.request(REQUEST);
+
+      expect(acquireGeminiContextCache).not.toHaveBeenCalled();
+      expect(bodyAt(0).config?.cachedContent).toBeUndefined();
+      expect(bodyAt(0).config?.systemInstruction).toBe("系统提示词");
+      expect(bodyAt(0).config?.tools).toBeDefined();
+      expect(bodyAt(0).config?.toolConfig).toEqual(GEMINI_SERVER_TOOL_CONFIG);
+      expect(geminiReplyLastRequestAt.get(CHAT_ID)).toBe(now);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("距本群上一次触发超过阈值时，第 1 次请求引用显式缓存", async () => {
+    const now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockReturnValue(now);
+    try {
+      geminiReplyLastRequestAt.set(CHAT_ID, now - GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS - 1);
+      acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
+      requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
+      const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      await session.request(REQUEST);
+
+      expect(bodyAt(0).config?.cachedContent).toBe("cachedContents/shared");
+      expect(bodyAt(0).config?.systemInstruction).toBeUndefined();
+      expect(geminiReplyLastRequestAt.get(CHAT_ID)).toBe(now);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("失败的请求不写入触发时刻", async () => {
+    const now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockReturnValue(now);
+    try {
+      const recordedAt: number = now - GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS;
+      geminiReplyLastRequestAt.set(CHAT_ID, recordedAt);
+      requestGeminiResult.mockImplementation(respond({ ok: false, failureKind: "request" }));
+      const warm: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      const cold: AiReplySession = createGeminiReplySession({ chatId: OTHER_CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      const warmTurn: AiReplyTurn = await warm.request(REQUEST);
+      const coldTurn: AiReplyTurn = await cold.request(REQUEST);
+
+      expect(warmTurn.ok).toBe(false);
+      expect(coldTurn.ok).toBe(false);
+      expect(acquireGeminiContextCache).toHaveBeenCalledTimes(1);
+      expect(geminiReplyLastRequestAt.get(CHAT_ID)).toBe(recordedAt);
+      expect(geminiReplyLastRequestAt.has(OTHER_CHAT_ID)).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("并行请求乱序完成时，较早发出的请求不覆盖较晚的触发时刻", async () => {
+    let now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockImplementation((): number => now);
+    try {
+      const settle: ((result: GeminiRequestResult) => void)[] = [];
+      requestGeminiResult.mockImplementation((...args: unknown[]): Promise<GeminiRequestResult> => {
+        builtBodies.push((args[0] as GeminiRequestOptions).buildBody());
+        return new Promise((resolve: (result: GeminiRequestResult) => void): void => {
+          settle.push(resolve);
+        });
+      });
+      const earlier: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      const later: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      const earlierTurn: Promise<AiReplyTurn> = earlier.request(REQUEST);
+      now += 1_000;
+      const laterTurn: Promise<AiReplyTurn> = later.request(REQUEST);
+
+      settle[1]!(okResult(modelContent()));
+      await laterTurn;
+      settle[0]!(okResult(modelContent()));
+      await earlierTurn;
+
+      expect(geminiReplyLastRequestAt.get(CHAT_ID)).toBe(now);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("后续请求刷新触发时刻：阈值内的新会话走隐式，超过阈值再走显式", async () => {
+    let now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockImplementation((): number => now);
+    try {
+      acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
+      requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
+      const blocks: { chatId: number; stableBlocks: string[]; volatileBlocks: string[] } = {
+        chatId: CHAT_ID,
+        stableBlocks: ["参考记忆"],
+        volatileBlocks: ["转录"],
+      };
+      const first: AiReplySession = createGeminiReplySession(blocks);
+      await first.request(REQUEST);
+      now += GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS + 1;
+      await first.request(REQUEST);
+      expect(bodyAt(1).config?.cachedContent).toBeUndefined();
+      expect(bodyAt(1).config?.systemInstruction).toBe("系统提示词");
+      expect(acquireGeminiContextCache).toHaveBeenCalledTimes(1);
+
+      now += 1;
+      const second: AiReplySession = createGeminiReplySession(blocks);
+      await second.request(REQUEST);
+      expect(acquireGeminiContextCache).toHaveBeenCalledTimes(1);
+      expect(bodyAt(2).config?.systemInstruction).toBe("系统提示词");
+      expect(bodyAt(2).config?.cachedContent).toBeUndefined();
+
+      now += GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS + 1;
+      const third: AiReplySession = createGeminiReplySession(blocks);
+      await third.request(REQUEST);
+      expect(acquireGeminiContextCache).toHaveBeenCalledTimes(2);
+      expect(bodyAt(3).config?.cachedContent).toBe("cachedContents/shared");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("显式缓存被拒后的补发把触发时刻写成补发当时", async () => {
+    let now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockImplementation((): number => now);
+    try {
+      acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/gone");
+      requestGeminiResult.mockImplementationOnce(async (...args: unknown[]): Promise<GeminiRequestResult> => {
+        builtBodies.push((args[0] as GeminiRequestOptions).buildBody());
+        now += GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS + 1;
+        return { ok: false, failureKind: "misconfigured" };
+      });
+      requestGeminiResult.mockImplementationOnce(async (...args: unknown[]): Promise<GeminiRequestResult> => {
+        builtBodies.push((args[0] as GeminiRequestOptions).buildBody());
+        return okResult(modelContent(), "好");
+      });
+      const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      const turn: AiReplyTurn = await session.request(REQUEST);
+
+      expect(turn.ok).toBe(true);
+      expect(geminiReplyLastRequestAt.get(CHAT_ID)).toBe(now);
+      expect(bodyAt(1).config?.systemInstruction).toBe("系统提示词");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("其它群在阈值内的触发不影响本群：第 1 次请求仍引用显式缓存", async () => {
+    const now: number = 5_000_000_000;
+    const clock: Mock<() => number> = spyOn(performance, "now").mockReturnValue(now);
+    try {
+      geminiReplyLastRequestAt.set(OTHER_CHAT_ID, now);
+      acquireGeminiContextCache.mockImplementation((): string | null => "cachedContents/shared");
+      requestGeminiResult.mockImplementation(respond(okResult(modelContent())));
+      const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录"] });
+      await session.request(REQUEST);
+
+      expect(bodyAt(0).config?.cachedContent).toBe("cachedContents/shared");
+      expect(geminiReplyLastRequestAt.get(CHAT_ID)).toBe(now);
+      expect(geminiReplyLastRequestAt.get(OTHER_CHAT_ID)).toBe(now);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
+describe("按群记录的触发时刻", () => {
+  test("按群失效只删除本群的触发时刻", () => {
+    geminiReplyLastRequestAt.set(CHAT_ID, 1);
+    geminiReplyLastRequestAt.set(OTHER_CHAT_ID, 2);
+    invalidateChatRuntimeCache(CHAT_ID);
+
+    expect(geminiReplyLastRequestAt.has(CHAT_ID)).toBe(false);
+    expect(geminiReplyLastRequestAt.get(OTHER_CHAT_ID)).toBe(2);
+  });
+
+  test("维护清扫只删除已超过阈值的触发时刻，恰好等于阈值的保留", () => {
+    const now: number = 1_000_000;
+    geminiReplyLastRequestAt.set(CHAT_ID, now - GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS - 1);
+    geminiReplyLastRequestAt.set(OTHER_CHAT_ID, now - GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS);
+    sweepGeminiReplyRequestTimes(now);
+
+    expect(geminiReplyLastRequestAt.has(CHAT_ID)).toBe(false);
+    expect(geminiReplyLastRequestAt.get(OTHER_CHAT_ID)).toBe(now - GEMINI_REPLY_EXPLICIT_CACHE_IDLE_MS);
+  });
 });
 
 describe("Gemini 回复会话的请求映射", () => {
   test("初始上下文按稳定区块在前、易变区块在后的两个 user 轮次映射", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["区块一"], volatileBlocks: ["区块二", "区块三"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["区块一"], volatileBlocks: ["区块二", "区块三"] });
     await session.request({
       systemPrompt: "系统提示词",
       functions: [SEND_MESSAGE],
@@ -237,7 +441,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("采样温度与 token 上限取自本包 consts，未查证轮用常规温度", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -251,7 +455,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("已查证轮压低采样随机性，让模型照搜索结果讲", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -264,7 +468,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("开检索时挂 googleSearch 并要求接回服务端调用记录", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -287,7 +491,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("关检索时摘掉 googleSearch，也不再要求接回服务端调用记录", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -310,7 +514,7 @@ describe("Gemini 回复会话的请求映射", () => {
   });
 
   test("函数全被摘掉时不挂空的 functionDeclarations", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [],
@@ -336,7 +540,7 @@ describe("Gemini 回复会话的检索计量", () => {
           candidates: [{ finishReason: "MAX_TOKENS", groundingMetadata: { webSearchQueries: ["a", "b"] } }],
         } as never,
       } as GeminiRequestResult));
-      const session: AiReplySession = createGeminiReplySession({ stableBlocks: [], volatileBlocks: ["区块"] });
+      const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: [], volatileBlocks: ["区块"] });
       const turn: AiReplyTurn = await session.request({
         systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: true, grounded: false,
       });
@@ -352,7 +556,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
   test("重复跳过回执只追加，隐式缓存前缀和思考签名保持不变", async () => {
     const content: Content = modelContent();
     requestGeminiResult.mockResolvedValueOnce(okResult(content));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["当前会话"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["当前会话"] });
     const request: AiReplyTurnRequest = {
       systemPrompt: "系统提示词", functions: [SEND_MESSAGE], webSearchEnabled: true, grounded: false,
     };
@@ -380,7 +584,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
     const content: Content = modelContent();
     requestGeminiResult.mockResolvedValueOnce(okResult(content));
 
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     const turn = await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -416,7 +620,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
   });
 
   test("每轮都发送完整前缀并只使用 Gemini 隐式缓存", async () => {
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["转录", "运行时状态", "回复任务"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["转录", "运行时状态", "回复任务"] });
     for (let round: number = 0; round < 2; round += 1) {
       await session.request({
         systemPrompt: "系统提示词",
@@ -451,7 +655,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
       },
     } as unknown as GeminiRequestResult);
 
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -465,7 +669,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
 
   test("工具返回非对象 JSON 时按不变量抛错", async () => {
     requestGeminiResult.mockResolvedValueOnce(okResult(modelContent()));
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -478,17 +682,18 @@ describe("Gemini 回复会话的对话记录累积", () => {
     ])).toThrow(/non-object JSON value/);
   });
 
-  test("请求失败时把服务端工具调用超限显式带回上层", async () => {
+  test("请求失败时把服务端工具调用超限与收尾详情显式带回上层", async () => {
     requestGeminiResult.mockResolvedValueOnce({
       ok: false,
       failureKind: "response",
       finishReason: "TOO_MANY_TOOL_CALLS",
+      finishDetails: "{\"finishMessage\":\"limit\"}",
       response: {
         candidates: [{ finishReason: "TOO_MANY_TOOL_CALLS", content: { role: "model", parts: [] } }],
       },
     } as unknown as GeminiRequestResult);
 
-    const session: AiReplySession = createGeminiReplySession({ stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
+    const session: AiReplySession = createGeminiReplySession({ chatId: CHAT_ID, stableBlocks: ["参考记忆"], volatileBlocks: ["区块"] });
     const turn = await session.request({
       systemPrompt: "s",
       functions: [SEND_MESSAGE],
@@ -497,6 +702,7 @@ describe("Gemini 回复会话的对话记录累积", () => {
     });
     expect(turn.ok).toBe(false);
     expect(turn.toolCallLimitHit).toBe(true);
+    expect(turn.finishDetails).toBe("{\"finishMessage\":\"limit\"}");
     expect(turn.text).toBeNull();
     expect(turn.functionCalls).toEqual([]);
   });

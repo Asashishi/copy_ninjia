@@ -9,10 +9,6 @@ import { DEFAULT_WHITELIST_PERMISSIONS, SUPER_ADMIN_WHITELIST_PERMISSIONS } from
 import {
   CHAT_PERSONA_REMOVAL_MIGRATION_CREATED_AT,
   CHAT_PERSONA_REMOVAL_MIGRATION_HASH,
-  IDENTITY_DATABASE_TEXT_MIGRATION_HASH,
-  IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
-  IDENTITY_DATABASE_JSONB_MIGRATION_HASH,
-  IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT,
   TIME_ZONE_MARKER_MIGRATION_CREATED_AT,
   TIME_ZONE_MARKER_MIGRATION_HASH,
 } from "../../packages/consts/identityStorage";
@@ -55,7 +51,6 @@ export interface CreateMigrationDatabaseOptions {
   readonly packageRoot: string;
   readonly root: string;
   readonly source: string;
-  readonly historical?: boolean;
 }
 
 /**
@@ -78,7 +73,7 @@ async function writeMigrationPrefix(packageRoot: string, target: string, drop: 1
 
 /** 以发行包自带的迁移 SQL 建出源 schema 库；从持有未 checkpoint WAL 的测试库复制一致性快照，源三件套不再打开。 */
 export async function createMigrationDatabase({
-  packageRoot, root, source, historical = false,
+  packageRoot, root, source,
 }: CreateMigrationDatabaseOptions): Promise<MigrationDatabaseFixture> {
   await mkdir(join(source, "database"), { recursive: true });
   const schemaV11: string = join(root, "schema-v11-migrations");
@@ -90,12 +85,6 @@ export async function createMigrationDatabase({
     client.run("PRAGMA journal_mode = WAL");
     client.run("PRAGMA wal_autocheckpoint = 0");
     client.run("INSERT INTO storage_metadata VALUES ('schema-version', jsonb(?))", [JSON.stringify({ version: CHAT_PERSONA_REMOVAL_SOURCE_SCHEMA_VERSION })]);
-    if (historical) {
-      client.run("UPDATE __drizzle_migrations SET hash = ? WHERE created_at = ?", [
-        IDENTITY_DATABASE_TEXT_MIGRATION_HASH, IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT,
-      ]);
-      client.run("INSERT INTO __drizzle_migrations(hash, created_at) VALUES (?, ?)", [IDENTITY_DATABASE_JSONB_MIGRATION_HASH, IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT]);
-    }
     for (const [index, permissions] of [
       { ...SUPER_ADMIN_WHITELIST_PERMISSIONS, isCanConfigAiPrompt: true },
       { ...DEFAULT_WHITELIST_PERMISSIONS, isCanConfigAiPrompt: false },

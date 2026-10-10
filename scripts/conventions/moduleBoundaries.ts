@@ -37,7 +37,8 @@ const ENVIRONMENT_BOUNDARY_FILES: readonly string[] = [
  * `process.env` 与 `Bun.env` 的读取边界。
  *
  * 环境变量名集中在 consts/environment.ts，env 派生配置集中在 consts/paths.ts；
- * 其余文件读取即报错。`Bun.env` 与 `process.env` 指向同一份环境，属性访问与具名直接解构
+ * packages/ 与 index.ts 的其余文件读取即报错，scripts/ 与 test/ 不在判定范围内。
+ * `Bun.env` 与 `process.env` 指向同一份环境，属性访问与具名直接解构
  * 使用相同的静态识别，类型位置不参与。
  */
 export function collectEnvironmentAccessProblems({

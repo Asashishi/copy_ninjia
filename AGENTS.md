@@ -92,7 +92,7 @@
 
 ### 常量与不可变性
 
-- 字面量常量放在 `packages/consts/<domain>.ts`；env 派生配置放在 `packages/consts/paths.ts`，环境变量名放在 `packages/consts/environment.ts`（这两处是全仓唯一读取 `process.env` 的边界）；部署 JSON 的严格解析放在 `packages/config/<domain>.ts`。
+- 字面量常量放在 `packages/consts/<domain>.ts`；env 派生配置放在 `packages/consts/paths.ts`，环境变量名放在 `packages/consts/environment.ts`（这两处是 `packages/` 与 `index.ts` 中唯一读取 `process.env` 的边界）；部署 JSON 的严格解析放在 `packages/config/<domain>.ts`。
 - 常量使用 `SCREAMING_SNAKE_CASE` 和显式类型；长数值使用 `_` 分隔。
 - `packages/` 下禁止使用 `Object.freeze`。
 - 不可变性必须在编译期表达；容器必须声明为 `readonly T[]`、`Readonly<T>`、`ReadonlyArray<T>`、`ReadonlyMap` 或 `ReadonlySet` 等只读类型。

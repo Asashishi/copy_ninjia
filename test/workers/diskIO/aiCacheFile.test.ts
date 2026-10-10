@@ -358,6 +358,41 @@ describe("diskIO/aiCacheFile 每日汇总", () => {
     expect((await inspectAiCacheFile()).document.summary).toEqual(merged);
   });
 
+  test("缓存写入随记录落盘并恢复；汇总与分组只累加给出写入的请求，从没给出过写入的分组不写该键", async () => {
+    await initAiCache();
+    const anthropic = { provider: "anthropic", model: "claude-test" } as const;
+    await handleAiCacheUsageMessage(usage("2026-09-25", { ...anthropic, cacheWriteInputTokens: 150 }));
+    await handleAiCacheUsageMessage(usage("2026-09-25", { ...anthropic, cachedInputTokens: null, cacheWriteInputTokens: 0 }));
+    await handleAiCacheUsageMessage(usage("2026-09-25", anthropic));
+    await handleAiCacheUsageMessage(usage("2026-09-25"));
+    expect(await flushAiCacheBuffer()).toBeTrue();
+    expect(Object.values(await readDocument())).toEqual([
+      { capability: "text", ...anthropic, inputTokens: 1_000, cachedInputTokens: 800, cacheWriteInputTokens: 150, outputTokens: 50 },
+      { capability: "text", ...anthropic, inputTokens: 1_000, cachedInputTokens: null, cacheWriteInputTokens: 0, outputTokens: 50 },
+      { capability: "text", ...anthropic, inputTokens: 1_000, cachedInputTokens: 800, outputTokens: 50 },
+      { capability: "text", provider: "openai", model: "deepseek-flash", inputTokens: 1_000, cachedInputTokens: 800, outputTokens: 50 },
+    ]);
+
+    resetAiCacheState();
+    await initAiCache();
+    await summarizeAiCache("2026-09-26");
+    const summary: Record<string, unknown> = (await readDocument())[AI_CACHE_SUMMARY_KEY] as Record<string, unknown>;
+    expect(summary).toMatchObject({ requests: 4, inputTokens: 4_000, cachedInputTokens: 2_400, cacheWriteInputTokens: 150 });
+    const byModel: Record<string, Record<string, unknown>> = summary.byModel as Record<string, Record<string, unknown>>;
+    expect(byModel["text/anthropic/claude-test"]).toMatchObject({ requests: 3, inputTokens: 3_000, cacheWriteInputTokens: 150 });
+    expect(byModel["text/openai/deepseek-flash"]).not.toHaveProperty("cacheWriteInputTokens");
+
+    // 带写入的汇总被重新接管，同日再汇总时写入继续相加。
+    resetAiCacheState();
+    await initAiCache();
+    await handleAiCacheUsageMessage(usage("2026-09-25", { ...anthropic, cacheWriteInputTokens: 25 }));
+    await summarizeAiCache("2026-09-26");
+    expect((await inspectAiCacheFile()).document.summary).toMatchObject({
+      cacheWriteInputTokens: 175,
+      byModel: { "text/anthropic/claude-test": { requests: 4, cacheWriteInputTokens: 175 } },
+    });
+  });
+
   test("费用为 0 的请求仍算有过费用请求，汇总照写费用键", async () => {
     await initAiCache();
     await handleAiCacheUsageMessage(costUsage("2026-09-25", 0));
@@ -444,7 +479,7 @@ const ROW_KEY: string = `${formatLogTimestamp(tokyoNoon("2026-09-26"))}_00000000
 const ROW = { capability: "text", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 4, outputTokens: 1 } as const;
 const TOTALS = {
   requests: 1, inputTokens: 10, reportedInputTokens: 10, cachedInputTokens: 4, outputTokens: 1, cacheHitRate: expectedHitRate(4, 10),
-  costInUsdTicks: undefined, searchCalls: undefined,
+  cacheWriteInputTokens: undefined, costInUsdTicks: undefined, searchCalls: undefined,
 } as const;
 const SUMMARY = { day: "2026-09-25", ...TOTALS, byModel: { "text/openai/m": TOTALS } } as const;
 
@@ -474,6 +509,16 @@ describe("diskIO/aiCacheFile 严格解码", () => {
       expect(await Bun.file(AI_CACHE_FILE_PATH).text()).toBe(content);
     }
   );
+
+  test("写入恰为输入减命中的记录与合计被接管", async () => {
+    mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });
+    const totals = { ...TOTALS, cacheWriteInputTokens: 6 };
+    const document = { [AI_CACHE_SUMMARY_KEY]: { ...totals, day: SUMMARY.day, byModel: { "text/anthropic/m": totals } }, [ROW_KEY]: { ...ROW, cacheWriteInputTokens: 6 } };
+    await Bun.write(AI_CACHE_FILE_PATH, JSON.stringify(document, null, DAY_FILE_JSON_INDENT));
+    const inspection = await inspectAiCacheFile();
+    expect(inspection.document.rows.get(ROW_KEY)).toEqual({ ...ROW, cacheWriteInputTokens: 6 });
+    expect(inspection.document.summary).toMatchObject({ cacheWriteInputTokens: 6, byModel: { "text/anthropic/m": { cacheWriteInputTokens: 6 } } });
+  });
 
   test("anthropic 记录与分组键被接管", async () => {
     mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });
@@ -523,6 +568,13 @@ describe("diskIO/aiCacheFile 严格解码", () => {
     ["token 记录检索次数为 0", { [ROW_KEY]: { ...ROW, searchCalls: 0 } }, "contains an invalid usage record"],
     ["token 记录检索次数为小数", { [ROW_KEY]: { ...ROW, searchCalls: 0.5 } }, "contains an invalid usage record"],
     ["token 记录检索次数为 null", { [ROW_KEY]: { ...ROW, searchCalls: null } }, "contains an invalid usage record"],
+    ["写入为负的记录", { [ROW_KEY]: { ...ROW, cacheWriteInputTokens: -1 } }, "contains an invalid usage record"],
+    ["写入为 null 的记录", { [ROW_KEY]: { ...ROW, cacheWriteInputTokens: null } }, "contains an invalid usage record"],
+    ["写入加命中超过输入的记录", { [ROW_KEY]: { ...ROW, cacheWriteInputTokens: 7 } }, "contains an invalid usage record"],
+    ["没有命中口径时写入超过输入的记录", { [ROW_KEY]: { ...ROW, cachedInputTokens: null, cacheWriteInputTokens: 11 } }, "contains an invalid usage record"],
+    ["费用记录带写入", { [ROW_KEY]: { capability: "image", provider: "openai", model: "m", costInUsdTicks: 1, cacheWriteInputTokens: 0 } }, "contains an invalid usage record"],
+    ["汇总写入非法", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, cacheWriteInputTokens: 0.5 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
+    ["汇总写入加命中超过输入", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, cacheWriteInputTokens: 7, byModel: { "text/openai/m": { ...TOTALS, cacheWriteInputTokens: 7 } } } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.byModel[0].`],
     ["汇总检索次数非法", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, searchCalls: -1 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["汇总费用非法", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, costInUsdTicks: 1.5 } }, `contains invalid totals at ${AI_CACHE_SUMMARY_KEY}.`],
     ["非法汇总日期", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, day: "2026-02-30" } }, `contains an invalid ${AI_CACHE_SUMMARY_KEY}.day.`],
@@ -537,6 +589,7 @@ describe("diskIO/aiCacheFile 严格解码", () => {
     ["总输出与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, outputTokens: 2 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.outputTokens.`],
     ["总检索次数与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, searchCalls: 1 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.searchCalls.`],
     ["总费用与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, costInUsdTicks: 1 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.costInUsdTicks.`],
+    ["总写入与分组不符", { [AI_CACHE_SUMMARY_KEY]: { ...SUMMARY, cacheWriteInputTokens: 1 } }, `contains totals inconsistent with ${AI_CACHE_SUMMARY_KEY}.byModel at ${AI_CACHE_SUMMARY_KEY}.cacheWriteInputTokens.`],
     ["汇总不在首位", { [ROW_KEY]: ROW, [AI_CACHE_SUMMARY_KEY]: SUMMARY }, `must put ${AI_CACHE_SUMMARY_KEY} first.`],
   ])("%s 拒绝接管并保留原字节", async (_label: string, document: unknown, message: string) => {
     mkdirSync(AI_CACHE_MEMORY_DIR, { recursive: true });

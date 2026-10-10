@@ -99,7 +99,7 @@ export const BOT_CONFIG_PATH: string = join(STATIC_CONFIG_DIR, "bot.json");
 
 /**
  * AI 部署配置（可选、可热重载）；agent 下的各项能力分别配置 provider、api_key、model 与可选
- * base_url（google provider 另可配置 headers），文件级加载见 packages/config/agent.ts，
+ * base_url（google 与 anthropic provider 另可配置 headers），文件级加载见 packages/config/agent.ts，
  * 单项能力的字段解码见 packages/config/agentCapability.ts。
  */
 export const AGENT_CONFIG_PATH: string = join(DYNAMIC_CONFIG_DIR, "agent.json");

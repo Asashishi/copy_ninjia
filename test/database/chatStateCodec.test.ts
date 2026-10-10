@@ -80,6 +80,16 @@ describe("chat_states codec", () => {
     });
   });
 
+  test("announced 与公告 message ID 必须同时成立或同时不成立", () => {
+    const lockdown = (fields: Record<string, unknown>): string => JSON.stringify({
+      lockdown: { phase: "active", intentId: 5, originalPermissions: { can_invite_users: true }, expiresAt: 9_000, ...fields },
+    });
+    expect(() => decodeChatStateData(lockdown({ announced: true }), "chat_states[-1001].status"))
+      .toThrow("$.lockdown.announcementMessageId must be a message id while announced is true.");
+    expect(() => decodeChatStateData(lockdown({ announced: false, announcementMessageId: 900 }), "chat_states[-1001].status"))
+      .toThrow("$.lockdown.announcementMessageId must be absent while announced is false.");
+  });
+
   test("权限快照必须完整，非管理员时其它权限必须全 false", () => {
     const incomplete: Record<string, boolean> = {
       ...botPermissions({ canDeleteMessages: true }),

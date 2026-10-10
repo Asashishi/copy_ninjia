@@ -25,8 +25,6 @@ export interface MigrationDeploymentOptions {
   readonly packageRoot: string;
   readonly root: string;
   readonly binary?: boolean;
-  /** 源库使用历史 Drizzle 谱系（TEXT 与 JSONB 两条基础迁移）。 */
-  readonly historical?: boolean;
 }
 
 export interface MigratedDeployment {
@@ -70,7 +68,7 @@ function migrationArguments(command: string, data: string): readonly string[] {
  * 只替换数据库，其余文件原样沿用。
  */
 export async function prepareMigratedDeployment({
-  packageRoot, root, binary = false, historical = false,
+  packageRoot, root, binary = false,
 }: MigrationDeploymentOptions): Promise<MigratedDeployment> {
   await mkdir(root);
   const config: string = join(root, "source config");
@@ -113,7 +111,7 @@ export async function prepareMigratedDeployment({
   await Bun.write(join(data, "memory/wed/-1001.json"), "[42,43]");
   await mkdir(join(data, "logs"));
   await Bun.write(join(data, "logs/mock-history.json"), "[]");
-  const database: MigrationDatabaseFixture = await createMigrationDatabase({ packageRoot, root, source: data, historical });
+  const database: MigrationDatabaseFixture = await createMigrationDatabase({ packageRoot, root, source: data });
   const sources: MigrationFileSnapshot[] = [];
   for (const directory of [config, data]) {
     for await (const name of new Bun.Glob("**/*").scan({ cwd: directory, onlyFiles: true })) {

@@ -512,13 +512,13 @@ describe("AI 单轮回复生命周期", () => {
     );
 
     await runRound({ triggerSenderId: 8, isRandomTrigger: true });
-    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).not.toHaveProperty("directInvokerId");
+    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).toHaveProperty("directInvokerId", undefined);
 
     await runRound({
       triggerSenderId: 9,
       mediaComment: { kind: "photo", senderId: 9, senderName: "Carol", description: "一张夜景" },
     });
-    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).not.toHaveProperty("directInvokerId");
+    expect(buildReplyPromptSections.mock.calls.at(-1)?.[2]).toHaveProperty("directInvokerId", undefined);
 
     await runRound({
       triggerSenderId: 10,

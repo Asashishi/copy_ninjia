@@ -13,16 +13,19 @@ export type AiRequestFailureKind =
   | "request"
   | "rejected"
   | "response"
+  | "refused"
   | "unsupported"
   | "misconfigured";
 
 /**
  * 把一次失败的请求收窄成业务结果，并带出对整条媒体模态的结论。
  *
- * 四条口径各自独立：
+ * 五条口径各自独立：
  * - `response`（HTTP 成功但产出不可用）只说明这一次采样不行，允许业务层重采样。
  * - `rejected`（普通 4xx 拒绝这次请求内容）说明这一份输入被拒，不可重采样。
- *   两者都不带 mediaFailure。
+ * - `refused`（Anthropic 模型拒答，配置了回退模型时回退模型也拒答）说明这一份输入被安全策略拒绝，
+ *   不可重采样，结果带 `refused: true`。
+ *   三者都不带 mediaFailure。
  * - `unsupported` / `misconfigured` 是确定性模态结论；模态状态机据此阻止新下载与请求，
  *   同配置代次的在途成功仍可恢复支持结论。
  * - `request`（端点故障：网络、超时、408/429/5xx）对媒体是瞬时结论：模态结论
@@ -35,6 +38,7 @@ export function classifyAiTextFailure(
   capability: "summary" | "media" | "text"
 ): AiTextResult {
   if (failureKind === "response") return { ok: false, retryable: true };
+  if (failureKind === "refused") return { ok: false, retryable: false, refused: true };
   if (capability !== "media" || failureKind === "rejected") return { ok: false, retryable: false };
   if (failureKind === "unsupported") return { ok: false, retryable: false, mediaFailure: "unsupported" };
   if (failureKind === "misconfigured") return { ok: false, retryable: false, mediaFailure: "misconfigured" };

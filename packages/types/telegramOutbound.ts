@@ -3,12 +3,15 @@ import type { TimestampDeque } from "../libs/timestampDeque";
 /**
  * Telegram 429 的独立退避域。同一域共享 Telegram 返回的 retry_after，不同域
  * 互不阻塞；message 类不走域级退避，由每聊天发送调度器（infra/telegram/sendScheduler.ts）
- * 主动控速并按聊天冻结。
+ * 主动控速并按聊天冻结。download 只承载 getFile 与 Telegram 文件服务的下载；
+ * externalFetch 承载 Bot API 文件服务以外的抓取（默认头像直链、telegram.me 公开主页
+ * 及其头像图），两者的 429 互不牵连。
  */
 export type TelegramRetryCategory =
   | "message"
   | "inline"
   | "download"
+  | "externalFetch"
   | "kick"
   | "query"
   | "restrict"

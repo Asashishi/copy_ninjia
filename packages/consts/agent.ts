@@ -1,4 +1,4 @@
-import type { AgentProvider } from "../types/config";
+import type { AgentHeadersProvider, AgentProvider } from "../types/config";
 import { exhaustiveList } from "./exhaustiveList";
 
 /**
@@ -72,7 +72,7 @@ export const EXPECTED_BASE_URL: string =
   "(plain http is allowed only for localhost, 127.0.0.1, and ::1)";
 
 /**
- * google provider 能力的 headers 最多条数。每个值都进日志值级脱敏名单，
+ * google 与 anthropic provider 能力的 headers 最多条数。每个值都进日志值级脱敏名单，
  * 各项能力按上限配满时名单仍在 LOGGER_MAX_REDACTED_SECRETS 之内。
  * 所属模块：AI 能力部署配置。
  */
@@ -82,10 +82,13 @@ export const AGENT_HEADERS_MAX_ENTRIES: number = 8;
 export const WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE: number = 5;
 
 /**
- * headers 里禁止出现的请求头名（小写）：Google 凭据只走 api_key，由 SDK 写进
- * x-goog-api-key。所属模块：AI 能力部署配置。
+ * 接受 headers 的 provider 各自的 SDK 凭据头名（小写）：凭据只走 api_key，由 SDK 写进该头；headers 里
+ * 出现同名头（忽略大小写）即拒绝。所属模块：AI 能力部署配置。
  */
-export const AGENT_RESERVED_HEADER_NAMES: readonly string[] = ["x-goog-api-key"];
+export const AGENT_CREDENTIAL_HEADER_NAMES: Readonly<Record<AgentHeadersProvider, string>> = {
+  google: "x-goog-api-key",
+  anthropic: "x-api-key",
+};
 
 /** headers 的请求头名形态：RFC 9110 token。所属模块：AI 能力部署配置。 */
 export const AGENT_HEADER_NAME_PATTERN: RegExp = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
@@ -93,10 +96,20 @@ export const AGENT_HEADER_NAME_PATTERN: RegExp = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
 /** headers 去掉首尾空白后的请求头值形态：可打印 ASCII 与空格、制表符。所属模块：AI 能力部署配置。 */
 export const AGENT_HEADER_VALUE_PATTERN: RegExp = /^[\t\x20-\x7e]+$/;
 
-/** headers 对象严格校验的期望形态，不含用户配置值。所属模块：AI 能力部署配置。 */
-export const EXPECTED_AGENT_HEADERS: string =
-  `an object of 1 to ${AGENT_HEADERS_MAX_ENTRIES} HTTP header names (tokens, unique ignoring case, ` +
-  "not x-goog-api-key; use api_key) mapped to string values";
+/** 按 provider 的凭据头名拼出 headers 对象的期望形态。 */
+function expectedAgentHeaders(credentialHeader: string): string {
+  return `an object of 1 to ${AGENT_HEADERS_MAX_ENTRIES} HTTP header names (tokens, unique ignoring case, ` +
+    `not ${credentialHeader}; use api_key) mapped to string values`;
+}
+
+/** headers 对象严格校验的期望形态（按 provider），不含用户配置值。所属模块：AI 能力部署配置。 */
+export const EXPECTED_AGENT_HEADERS: Readonly<Record<AgentHeadersProvider, string>> = {
+  google: expectedAgentHeaders(AGENT_CREDENTIAL_HEADER_NAMES.google),
+  anthropic: expectedAgentHeaders(AGENT_CREDENTIAL_HEADER_NAMES.anthropic),
+};
 
 /** headers 单个请求头值严格校验的期望形态，不含用户配置值。所属模块：AI 能力部署配置。 */
 export const EXPECTED_AGENT_HEADER_VALUE: string = "a non-empty string of printable ASCII characters";
+
+/** anthropic provider 能力的 fallback_model 严格校验的期望形态，不含用户配置值。所属模块：AI 能力部署配置。 */
+export const EXPECTED_AGENT_FALLBACK_MODEL: string = "a non-empty string different from model";

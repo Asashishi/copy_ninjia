@@ -15,7 +15,9 @@ import {
 } from "./verification/pending";
 import {
   handleDedupeExpired,
+  handleExpelNoticeSent,
   handleExpelSettled,
+  handleRemovalConfirmed,
   handleKickRetry,
   handleKickSettled,
   handleTerminalAttemptBudgetExhausted,
@@ -81,6 +83,10 @@ export function transitionVerification(
       return handleTimeoutInviterVerdict(state, event);
     case "expelSettled":
       return handleExpelSettled(state);
+    case "expelNoticeSent":
+      return handleExpelNoticeSent(state, event.notice);
+    case "removalConfirmed":
+      return handleRemovalConfirmed(state);
     case "kickRetry":
       return handleKickRetry(state);
     case "kickSettled":

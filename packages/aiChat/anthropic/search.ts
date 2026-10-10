@@ -2,11 +2,13 @@
  * Anthropic 侧的联网检索执行器（web_search 或 text 能力）：用该能力的模型发一次挂内建
  * 检索工具（ANTHROPIC_WEB_SEARCH_TOOL_TYPE，`allowed_callers: ["direct"]`）的单轮请求，交回结论正文、引用与检索结果
  * 给出的来源与实际检索次数。服务端工具循环暂停（`pause_turn`）时把已得内容作为续写前缀再发，
- * 最多 ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS 次。收发与失败归一化走 client.ts 的
- * requestAnthropicMessage；token 与检索次数在那里按同一响应上报。HTTP 成功中的工具错误按失败交回。
+ * 最多 ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS 次，续发与首次请求共用一份 BetaFallbackState。收发与失败
+ * 归一化走 client.ts 的 requestAnthropicMessage；token 与检索次数在那里按同一响应上报。HTTP 成功中的
+ * 工具错误按失败交回，拒答按带 `refused` 的失败交回。
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
+import { BetaFallbackState } from "@anthropic-ai/sdk";
 import {
   ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS,
   ANTHROPIC_WEB_SEARCH_ERROR_LABEL,
@@ -34,15 +36,16 @@ export async function searchAnthropicWeb(
   let searchCalls: number = 0;
   let text: string = "";
   const sources: AiWebSearchSource[] = [];
-  let paused: Anthropic.ContentBlockParam[] | null = null;
+  const fallbackState: BetaFallbackState = new BetaFallbackState();
+  let paused: Anthropic.Beta.BetaContentBlockParam[] | null = null;
   for (let continuation: number = 0; ; continuation++) {
-    const prefix: Anthropic.ContentBlockParam[] | null = paused;
+    const prefix: Anthropic.Beta.BetaContentBlockParam[] | null = paused;
     const result: AnthropicRequestResult = await requestAnthropicMessage({
       capability,
-      buildBody: (): Anthropic.MessageCreateParamsNonStreaming => {
+      buildBody: (): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming => {
         // web_search 没配时抛错，由 requestAnthropicMessage 的 try 归一成失败；text 取对话模型。
         const model: string = requireAgentCapabilityConfig(capability).model;
-        const messages: Anthropic.MessageParam[] = [{ role: "user", content: request.query }];
+        const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content: request.query }];
         if (prefix !== null) messages.push({ role: "assistant", content: prefix });
         return {
           model,
@@ -54,11 +57,12 @@ export async function searchAnthropicWeb(
       },
       errorLabel: ANTHROPIC_WEB_SEARCH_ERROR_LABEL,
       signal: request.signal,
+      fallbackState,
     });
     const searches: number = result.message === undefined ? 0 : countAnthropicWebSearches(result.message);
     searchCalls += searches;
 
-    if (!result.ok) return { ok: false, searchCalls };
+    if (!result.ok) return result.failureKind === "refused" ? { ok: false, searchCalls, refused: true } : { ok: false, searchCalls };
     const searchError: string | undefined = anthropicSearchError(result.message);
     if (searchError !== undefined) {
       logger.error(`${ANTHROPIC_WEB_SEARCH_ERROR_LABEL} tool failed: ${searchError}.`);

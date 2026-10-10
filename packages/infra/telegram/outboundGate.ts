@@ -30,11 +30,13 @@ import {
 import {
   abortReason,
   detachAbortListener,
+  jobAbortReason,
   releaseResponseBody,
   settleDrainWaitersIfIdle,
 } from "./outboundSettle";
 import { abortSendJob, admitSendJob } from "./sendScheduler";
 import { toErrorOr } from "../../libs/errorMessage";
+import { logger } from "../logger";
 
 type PreviousCall = Parameters<Transformer<RawApi>>[0];
 type UnbanChatMemberPayload = Parameters<RawApi["unbanChatMember"]>[0];
@@ -129,6 +131,10 @@ function onRetryTimer(category: TelegramRetryCategory): void {
   pumpRetryLane(lane);
 }
 
+/**
+ * 按真实 429 设定或延长类别的退避截止；不晚于已排期截止的 429 不改状态。开始一段新的
+ * 等待（此前没有排期中的退避 timer）时记一条 warn，等待期间的后续 429 不重复记录。
+ */
 function extendRetry(
   category: TelegramRetryCategory,
   retryAfterMs: number
@@ -139,6 +145,9 @@ function extendRetry(
     lane.retryTimer !== null &&
     retryAt <= lane.retryAt
   ) return;
+  if (lane.retryTimer === null) {
+    logger.warn(`Telegram ${category} requests hit 429; backing off for ${retryAfterMs} ms.`);
+  }
   lane.retryAt = retryAt;
   lane.recovering = true;
   lane.recoveryLimit = 1;
@@ -213,7 +222,7 @@ function rejectActiveJob(job: TelegramOutboundJob, error: unknown): void {
 
 /**
  * 从任一阶段只结算一次取消；非发送类只有 active/retryQueued 占着队列或并发计数，已接纳的
- * 发送类交给发送调度器。
+ * 发送类交给发送调度器。交给调用方的错误按 jobAbortReason 区分超时与取消。
  */
 export function abortJob(job: TelegramOutboundJob): void {
   if (job.sendLane !== null) {
@@ -226,7 +235,7 @@ export function abortJob(job: TelegramOutboundJob): void {
   else if (job.state === "active") releaseActiveJob(job);
   job.state = "settled";
   detachAbortListener(job);
-  job.reject(abortReason());
+  job.reject(jobAbortReason(job.signal));
   if (!telegramOutboundGateState.aborting) pumpRetryLane(lane);
   resetRecoveryIfIdle(lane);
   settleDrainWaitersIfIdle();
@@ -248,7 +257,7 @@ function handleActiveResponse(job: TelegramOutboundJob, response: unknown): void
     releaseResponseBody(response);
     job.state = "settled";
     detachAbortListener(job);
-    job.reject(abortReason());
+    job.reject(jobAbortReason(job.signal));
   } else if (enqueueRetryJob(job)) {
     // 按接纳序号回到原有 FIFO 位置，下一次尝试取新响应，本次响应丢弃。
     releaseResponseBody(response);
@@ -317,7 +326,7 @@ function pumpRetryLane(lane: TelegramRetryLane): void {
     if (job.signal.aborted) {
       job.state = "settled";
       detachAbortListener(job);
-      job.reject(abortReason());
+      job.reject(jobAbortReason(job.signal));
       continue;
     }
     startJob(job, true);
@@ -391,7 +400,7 @@ function runTelegramCategorizedRequestInternal<T>({
     return Promise.reject(abortReason());
   }
   const jobSignal: AbortSignal = outboundSignal(signal);
-  if (jobSignal.aborted) return Promise.reject(abortReason());
+  if (jobSignal.aborted) return Promise.reject(jobAbortReason(jobSignal));
   return new Promise<T>((
     resolve: (value: T | PromiseLike<T>) => void,
     reject: (reason?: unknown) => void
@@ -408,8 +417,9 @@ function runTelegramCategorizedRequestInternal<T>({
 }
 
 /**
- * 让 Telegram 文件 CDN 等非 Bot API HTTP 请求复用同一组分类型 429 队列。
- * execute 只能发起一次尝试；返回 429 时调度器会在对应域内重新调用它。
+ * 让 Telegram 文件下载（download）与外部抓取（externalFetch）等非 Bot API HTTP 请求
+ * 复用同一组分类型 429 队列与出站生命周期。execute 只能发起一次尝试；返回 429 时
+ * 调度器会在对应域内重新调用它。
  */
 export function runTelegramCategorizedRequest<T>(
   options: TelegramCategorizedRequestOptions<T>
@@ -430,7 +440,7 @@ export function telegramOutboundGate(): Transformer<RawApi> {
     if (method === "getUpdates") return previous(method, payload, signal);
     if (!telegramOutboundAccepting.current) return Promise.reject(abortReason());
     const jobSignal: AbortSignal = outboundSignal(signal as AbortSignal | undefined);
-    if (jobSignal.aborted) return Promise.reject(abortReason());
+    if (jobSignal.aborted) return Promise.reject(jobAbortReason(jobSignal));
     const category: TelegramRetryCategory = telegramRetryCategoryFor(method);
     // resolve 的实际泛型由上面的 Transformer 上下文给出，grammY 未公开 Payload。
     // eslint-disable-next-line @typescript-eslint/typedef

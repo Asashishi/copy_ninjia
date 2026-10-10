@@ -211,9 +211,16 @@ describe("失败分类", () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.failureKind).toBe("response");
     expect(result.ok === false && result.finishReason).toBe("incomplete:content_filter");
-    expect(loggerError).toHaveBeenCalledWith(
-      expect.stringContaining("AI test API returned an unusable response: status=incomplete, reason=content_filter")
-    );
+    expect(result.ok === false && result.finishDetails).toBeUndefined();
+    expect(loggerError).toHaveBeenCalledWith("AI test API returned an unusable response: status=incomplete, reason=content_filter.");
+  });
+
+  test("refusal 内容块拒答按响应失败交回，拒答说明记进日志与失败结果", async () => {
+    respondWith({ output: [{ type: "message", content: [{ type: "refusal", refusal: "no" }] }] });
+    const result = await requestOpenAiResult({ capability: "text", buildBody: () => BODY, errorLabel: "AI test API" });
+
+    expect(result).toMatchObject({ ok: false, failureKind: "response", finishReason: "refusal", finishDetails: "{\"refusal\":\"no\"}" });
+    expect(loggerError).toHaveBeenCalledWith("AI test API returned an unusable response: refusal, details={\"refusal\":\"no\"}.");
   });
 
   test("被 max_output_tokens 腰斩时点名记录 token 诊断", async () => {
@@ -234,11 +241,11 @@ describe("失败分类", () => {
     );
   });
 
-  test("拿到响应即上报缓存用量：官方字段优先，兼容端点回落到 prompt_cache_hit_tokens", async () => {
+  test("拿到响应即上报缓存用量：官方字段优先，兼容端点回落到 prompt_cache_hit_tokens；写入只读官方字段", async () => {
     const reported: AiCacheUsage[] = [];
     installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
     try {
-      respondWith({ usage: { input_tokens: 1_000, input_tokens_details: { cached_tokens: 600 }, output_tokens: 20 } });
+      respondWith({ usage: { input_tokens: 1_000, input_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 }, output_tokens: 20 } });
       await requestOpenAiResult({ capability: "text", buildBody: () => BODY, errorLabel: "Test" });
       respondWith({ usage: { input_tokens: 900, output_tokens: 10, prompt_cache_hit_tokens: 512 } });
       await requestOpenAiResult({ capability: "summary", buildBody: () => BODY, errorLabel: "Test" });
@@ -250,7 +257,7 @@ describe("失败分类", () => {
       installAiCacheUsageSink(null);
     }
     expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
-      { kind: "tokens", capability: "text", provider: "openai", model: "test-model", inputTokens: 1_000, cachedInputTokens: 600, outputTokens: 20 },
+      { kind: "tokens", capability: "text", provider: "openai", model: "test-model", inputTokens: 1_000, cachedInputTokens: 600, cacheWriteInputTokens: 300, outputTokens: 20 },
       { kind: "tokens", capability: "summary", provider: "openai", model: "test-model", inputTokens: 900, cachedInputTokens: 512, outputTokens: 10 },
       { kind: "tokens", capability: "media", provider: "openai", model: "test-model", inputTokens: 900, cachedInputTokens: null, outputTokens: 10 },
     ]);
@@ -277,8 +284,8 @@ describe("失败分类", () => {
       respondWith({ output, output_text: "结论" });
       await searchOpenAiWeb("web_search", { instruction: "i", query: "q" });
       expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
-        { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 1_000, cachedInputTokens: 600, outputTokens: 20, searchCalls: 8 },
-        { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 1_000, cachedInputTokens: 600, outputTokens: 20, searchCalls: 8 },
+        { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 1_000, cachedInputTokens: 600, cacheWriteInputTokens: 0, outputTokens: 20, searchCalls: 8 },
+        { kind: "tokens", capability: "web_search", provider: "openai", model: "grok-4.7", inputTokens: 1_000, cachedInputTokens: 600, cacheWriteInputTokens: 0, outputTokens: 20, searchCalls: 8 },
         { kind: "search", capability: "web_search", provider: "openai", model: "grok-4.7", searchCalls: 8 },
       ]);
     } finally {

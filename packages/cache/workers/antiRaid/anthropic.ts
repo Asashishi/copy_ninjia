@@ -1,6 +1,6 @@
 /** owner: workers/antiRaid。 */
 
-import type Anthropic from "@anthropic-ai/sdk";
+import type { AnthropicClient } from "../../../types/aiChat/anthropic";
 
 /**
  * Anthropic 广告检测客户端的线程内单例。workers/antiRaid/adDetect/ai/anthropic.ts 首次请求时填充，
@@ -9,4 +9,4 @@ import type Anthropic from "@anthropic-ai/sdk";
  *
  * 仅 Anti-Raid Worker 可 import；跨线程不共享连接池或鉴权状态。
  */
-export const adDetectAnthropicClientHolder: { current: Anthropic | null } = { current: null };
+export const adDetectAnthropicClientHolder: { current: AnthropicClient | null } = { current: null };

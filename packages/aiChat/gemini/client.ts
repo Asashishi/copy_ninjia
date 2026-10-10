@@ -8,7 +8,7 @@
  *
  * 本文件负责发请求、按业务结果分类并记录错误日志；函数调用直接读取
  * SDK 的 functionCalls 访问器；正文按 SDK 的文本拼接语义由 aiChat/gemini/response.ts
- * 读取，该模块同时提供异常结束诊断与搜索调用计数。
+ * 读取，该模块同时提供异常结束诊断、收尾详情与搜索调用计数。
  * token 与检索次数经 infra/aiCacheUsage.ts 按同一响应上报。
  */
 
@@ -25,12 +25,13 @@ import {
 } from "../../consts/aiChat/gemini";
 import { raceAbortOrThrow, signalWithTimeout } from "../../libs/abortSignal";
 import { classifyAiTextFailure, finalizeAiTextResult } from "../ai/utils/textResult";
+import { diagnosticWithDetails } from "../ai/utils/finishDetails";
 import {
   classifyProviderApiFailure,
   providerApiFailureResult,
 } from "../ai/utils/mediaSupportError";
 import type { ProviderApiFailureResult } from "../ai/utils/mediaSupportError";
-import { abnormalFinishDiagnostic, countGoogleSearchCalls, responseText } from "./response";
+import { abnormalFinishDiagnostic, countGoogleSearchCalls, geminiFinishDetails, responseText } from "./response";
 import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiTextResult } from "../../types/aiChat/provider";
 import type { AgentCapability, ProviderCapabilityConfig } from "../../types/config";
@@ -79,8 +80,8 @@ export interface GeminiRequestOptions {
 
 /**
  * 调一次 generateContent 接口。请求失败、超时、非 2xx 或异常 candidate
- * 返回带诊断的失败结果（已记日志）；finishReason=MAX_TOKENS 的失败另记一条带 token 诊断的日志
- * （见 consts/aiChat/gemini.ts 的 GEMINI_REPLY_MAX_TOKENS 注释）。
+ * 返回带诊断的失败结果（已记日志，异常 candidate 连同收尾详情一起记）；finishReason=MAX_TOKENS
+ * 的失败另记一条带 token 诊断的日志（见 consts/aiChat/gemini.ts 的 GEMINI_REPLY_MAX_TOKENS 注释）。
  */
 export async function requestGeminiResult({
   capability,
@@ -145,32 +146,21 @@ export async function requestGeminiResult({
     );
   }
 
-  // HTTP 层成功但内容不可用（无 candidates / SAFETY 等非 STOP 收尾）记日志并按 response 失败交回，
-  // 见 aiChat/gemini/response.ts 的 abnormalFinishDiagnostic。
+  // HTTP 层成功但内容不可用（无 candidates / SAFETY 等非 STOP 收尾）连同收尾详情记日志并按 response
+  // 失败交回，见 aiChat/gemini/response.ts 的 abnormalFinishDiagnostic 与 geminiFinishDetails。
   const abnormal: string | null = abnormalFinishDiagnostic(data);
   if (abnormal) {
-    logger.error(`${errorLabel} returned an unusable response: ${abnormal}.`);
+    const finishDetails: string | undefined = geminiFinishDetails(data);
+    logger.error(`${errorLabel} returned an unusable response: ${diagnosticWithDetails(abnormal, finishDetails)}.`);
     return {
       ok: false,
       failureKind: "response",
       finishReason: candidate?.finishReason,
-      finishMessage: candidate?.finishMessage,
+      finishDetails,
       response: data,
     };
   }
   return { ok: true, response: data };
-}
-
-/**
- * 供无需区分失败原因的调用方使用：只有正常 STOP candidate 才返回响应，其余返回 null。
- */
-export async function requestGeminiResponse(
-  capability: AgentCapability,
-  buildBody: () => GenerateContentParameters,
-  errorLabel: string
-): Promise<GenerateContentResponse | null> {
-  const result: GeminiRequestResult = await requestGeminiResult({ capability, buildBody, errorLabel });
-  return result.ok ? result.response : null;
 }
 
 /** Google 无状态文本调用参数。 */

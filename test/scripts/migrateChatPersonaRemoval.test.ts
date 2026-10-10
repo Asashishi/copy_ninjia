@@ -146,13 +146,21 @@ test("输出目录不得位于源备份内部", async () => {
     .rejects.toThrow("a new directory outside the source backup");
 });
 
-test("接受前次迁移产出的历史 JSONB 基础谱系", async () => {
-  const historicalRoot: string = join(root, "historical");
-  const historicalSource: string = join(historicalRoot, "source");
-  await mkdir(historicalRoot);
-  const historical: MigrationDatabaseFixture = await createMigrationDatabase({ packageRoot: PROJECT_ROOT, root: historicalRoot, source: historicalSource, historical: true });
-  const result: ChatPersonaRemovalMigrationResult = await prepareChatPersonaRemovalMigration({ sourceRoot: historicalSource, outputRoot: join(root, "output") });
-  assertMigratedDatabase(join(result.outputRoot, "database/storage.sqlite"), historical);
+test("拒绝 8.0.0 之前 dev 构建留下的 text + jsonb 两步基础谱系", async () => {
+  // 夹具字面量：被压缩前的两条历史 migration（文本初始建表与文本转 JSONB）。
+  const client: Database = new Database(path);
+  try {
+    client.run("UPDATE __drizzle_migrations SET hash = ? WHERE created_at = ?", [
+      "be64993ef4059e0fff1491bdbacc67ee9bb6b6d8097842036c7903c8c4aed93a", 20_260_811_000_000,
+    ]);
+    client.run("INSERT INTO __drizzle_migrations(hash, created_at) VALUES (?, ?)", [
+      "cb91b39a954c1638dcdc98e97ea0bfec947ea3cc1c377f39f45834bbda9d0cd3", 20_260_811_010_000,
+    ]);
+  } finally {
+    client.close();
+  }
+  await expect(prepareChatPersonaRemovalMigration({ sourceRoot: source, outputRoot: join(root, "output") }))
+    .rejects.toThrow("__drizzle_migrations must be the exact schema v11 lineage.");
 });
 
 test.each([0, 1])("outbox 容量与生产启动门禁一致：上限加 %s", async (extra: number): Promise<void> => {

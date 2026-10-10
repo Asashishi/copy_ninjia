@@ -70,6 +70,9 @@ export type OpenAiImageProtocol = "openai" | "openai-standard" | "xai";
  */
 export type AgentProvider = "google" | "openai" | "anthropic";
 
+/** 部署配置接受 headers 字段的 provider；openai 协议不接受（见 config/agentCapability.ts）。 */
+export type AgentHeadersProvider = Exclude<AgentProvider, "openai">;
+
 /**
  * agent 配置中的能力名（与 agent.json 的键一致）；每项分别选择 provider、模型与端点。
  * `web_search` 在 AgentDeploymentConfig 上对应 `webSearch` 字段（见 config/agent.ts 的
@@ -114,9 +117,18 @@ export interface AnthropicAgentCapabilityConfig {
   readonly apiKey: string;
   /** 留空表示走 Anthropic SDK 的官方端点。 */
   readonly baseUrl: string | undefined;
-  /** Anthropic 协议不接受 headers，恒为 undefined。 */
-  readonly headers: undefined;
+  /**
+   * 经 SDK defaultHeaders 附加到每个请求的请求头，例如 Cloudflare AI Gateway 的 `cf-aig-authorization`；
+   * 不含 x-api-key（凭据只走 apiKey）。留空表示不附加。每个值都按凭据进日志值级脱敏名单。
+   */
+  readonly headers: Readonly<Record<string, string>> | undefined;
   readonly model: string;
+  /**
+   * 部署字段 fallback_model：model 拒答（`stop_reason: "refusal"`）时，SDK 的 betaRefusalFallbackMiddleware
+   * 用这一模型、同一凭据与端点重发同一请求，拒答带回的回退额度令牌按 `best_effort` 兑换（回退模型不在 model 的
+   * `allowed_fallback_models` 内等兑换失败时照常计价）。与 model 不同；留空表示不回退，拒答直接按失败交回。
+   */
+  readonly fallbackModel: string | undefined;
 }
 
 /** 不涉及生图请求体差异的通用能力配置。 */

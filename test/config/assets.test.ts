@@ -10,7 +10,11 @@ import {
   parseAssetConfig,
 } from "../../packages/config/assets";
 import { ASSETS_CONFIG_PATH, RUNTIME_DATA_ROOT } from "../../packages/consts/paths";
-import { AVATAR_MAX_DOWNLOAD_BYTES } from "../../packages/consts/telegram";
+import {
+  BOT_PROFILE_ANIMATION_MAX_BYTES,
+  BOT_PROFILE_PHOTO_MAX_BYTES,
+  DEFAULT_AVATAR_EXPECTED_FORM,
+} from "../../packages/consts/telegram";
 import {
   ASSET_CONFIG_GROUPS,
   ASSET_ONLY_PATH_GROUP,
@@ -27,6 +31,7 @@ import {
   RANDOM_H_IMAGE_DIR_FIELD,
 } from "../../packages/consts/ui/assets";
 import type { AssetConfig } from "../../packages/types/config";
+import { MOOV_BOX, MP4_BYTES, ftypBox, moovBox, mp4OfSize, trakBox } from "../helpers/mp4";
 
 /** 默认头像既不是直链也不是显式本机路径时的诊断。 */
 const AVATAR_SOURCE_ERROR: string = `assets.json: ${BOT_DEFAULT_AVATAR_FIELD} must be an absolute http or https URL, ` +
@@ -273,22 +278,45 @@ describe("默认头像本机文件的加载期核对", () => {
     }
   });
 
-  test("超过下载上限时拒绝", async () => {
+  /** 默认头像不符合期望形态时的报错。 */
+  const EXPECTED_FORM_ERROR: string = `${CONFIG_PATH}: ${BOT_DEFAULT_AVATAR_FIELD} must be ${DEFAULT_AVATAR_EXPECTED_FORM}.`;
+
+  test("JPEG/PNG 超过 Bot API 图片上限时拒绝", async () => {
     const path: string = join(FIXTURE_DIR, "huge.png");
-    const bytes: Uint8Array = new Uint8Array(AVATAR_MAX_DOWNLOAD_BYTES + 1);
+    const bytes: Uint8Array = new Uint8Array(BOT_PROFILE_PHOTO_MAX_BYTES + 1);
     bytes.set(PNG_BYTES);
     await Bun.write(path, bytes);
-    await expect(loadWithAvatar(path)).rejects.toThrow(
-      `${CONFIG_PATH}: ${BOT_DEFAULT_AVATAR_FIELD} must be a file of at most ${AVATAR_MAX_DOWNLOAD_BYTES} bytes.`
-    );
+    await expect(loadWithAvatar(path)).rejects.toThrow(EXPECTED_FORM_ERROR);
   });
 
-  test("字节签名不是 JPEG/PNG 时拒绝", async () => {
-    const path: string = join(FIXTURE_DIR, "face.txt");
-    await Bun.write(path, "not an image");
-    await expect(loadWithAvatar(path)).rejects.toThrow(
-      `${CONFIG_PATH}: ${BOT_DEFAULT_AVATAR_FIELD} must be a JPEG or PNG image file.`
+  test("MP4 通过；超过 Bot API 其他文件上限时拒绝", async () => {
+    const path: string = join(FIXTURE_DIR, "face.mp4");
+    await Bun.write(path, MP4_BYTES);
+    expect((await loadWithAvatar(path)).botDefaultAvatar).toEqual({ kind: "path", path });
+    await Bun.write(path, mp4OfSize(BOT_PROFILE_ANIMATION_MAX_BYTES + 1));
+    await expect(loadWithAvatar(path)).rejects.toThrow(EXPECTED_FORM_ERROR);
+  });
+
+  test("既非 JPEG/PNG 也非 MP4，或 MP4 视频轨不是正方形时拒绝", async () => {
+    const quickTime: Uint8Array = Bun.concatArrayBuffers(
+      [ftypBox({ major: "qt  ", compatible: ["qt  "] }), MOOV_BOX],
+      Infinity,
+      true
     );
+    const wide: Uint8Array = Bun.concatArrayBuffers(
+      [ftypBox({ major: "isom" }), moovBox(trakBox({ width: 1_280, height: 720 }))],
+      Infinity,
+      true
+    );
+    for (const [name, bytes] of [
+      ["face.txt", new TextEncoder().encode("not an image")],
+      ["face.mov", quickTime],
+      ["wide.mp4", wide],
+    ] as const) {
+      const path: string = join(FIXTURE_DIR, name);
+      await Bun.write(path, bytes);
+      await expect(loadWithAvatar(path)).rejects.toThrow(EXPECTED_FORM_ERROR);
+    }
   });
 
   test("直链来源不在加载期访问网络", async () => {

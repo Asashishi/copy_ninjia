@@ -122,8 +122,8 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO,
-  flushDiskIODomain,
-  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
+  flushDiskIODomain: async (domain: string, timeoutMs?: number): Promise<{ result: FlushResult }> =>
+    ({ result: await flushDiskIODomain(domain, timeoutMs) }),
   postDiskIO: (message: DiskBusinessMessage): boolean => {
     if (message.type !== "verificationUpsert" && message.type !== "verificationDelete") throw new Error("Unexpected Disk I/O write.");
     diskPosts.push(message);
@@ -139,7 +139,7 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
 })));
 
 import {
-  activeVerificationSnapshots,
+  clearActiveVerificationSnapshots,
   deferredVerificationRecords,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
@@ -169,6 +169,8 @@ import {
 export {
   activeVerificationSnapshots,
   deferredVerificationRecords,
+  deleteActiveVerificationSnapshot,
+  setActiveVerificationSnapshot,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
@@ -205,7 +207,7 @@ export async function resetAntiRaidTestState(): Promise<void> {
   rejectedWorkerPostTypes.clear();
   diskPosts.length = 0;
   chatStates.clear();
-  activeVerificationSnapshots.clear();
+  clearActiveVerificationSnapshots();
   deferredVerificationRecords.clear();
   pendingVerificationDeferrals.clear();
   pendingVerificationDeletes.clear();

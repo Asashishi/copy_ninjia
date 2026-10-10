@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
@@ -9,9 +9,9 @@ import type {
   StorageDatabaseMigrationJournalEntry,
 } from "../../types/storageDatabase";
 
-/** 创建新库并交给 Drizzle 内建 migrator 建表；已存在时拒绝覆盖。 */
+/** 创建新库并交给 Drizzle 内建 migrator 建表；目标目录项已存在（含悬空软链接）时拒绝覆盖。 */
 export function createStorageDatabase(path: string): void {
-  if (existsSync(path)) {
+  if (lstatSync(path, { throwIfNoEntry: false }) !== undefined) {
     throw new Error(`${path}: target already exists; refusing to overwrite it.`);
   }
   const client: Database = new Database(path, {

@@ -15,7 +15,7 @@ import {
   resetRecoveryIfIdle,
 } from "./outboundGate";
 import { laneFor } from "./outboundQueue";
-import { abortReason } from "./outboundSettle";
+import { abortReason, settleAllDrainWaiters } from "./outboundSettle";
 import { resetSendScheduler } from "./sendScheduler";
 
 /**
@@ -54,14 +54,6 @@ function clearIdleRetryCooldowns(): void {
     if (lane.head !== null || lane.activeCount !== 0) continue;
     resetRecoveryIfIdle(lane);
   }
-}
-
-function settleAllDrainWaiters(drained: boolean): void {
-  for (const waiter of telegramOutboundGateState.drainWaiters) {
-    clearTimeout(waiter.timer);
-    waiter.resolve(drained);
-  }
-  telegramOutboundGateState.drainWaiters.clear();
 }
 
 /**

@@ -8,7 +8,6 @@ import { telegramRetryCategoryFor } from "../../packages/infra/telegram/outbound
 import { telegramOutboundGate } from "../../packages/infra/telegram/outboundGate";
 import { drainTelegramOutbound, initTelegramOutbound, telegramOutboundStats } from "../../packages/infra/telegram/outboundLifecycle";
 import { isSelfSent } from "../../packages/infra/selfSentTracker";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../packages/consts/commands";
 
 const calls: { readonly method: string; readonly payload: any; readonly signal: AbortSignal | undefined }[] = [];
 let owner: "ai" | "antiRaid" = "ai";
@@ -155,16 +154,8 @@ test("能力白名单之内仍按操作核对 429 类别与临时消息参数，
       "downloadFile must use the download category",
     ],
     [
-      { operation: "sendTemporaryMessage", category: "download", purpose: "notice", chatId: -1001, text: "x", deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS } as unknown as TelegramWorkerRequest,
+      { operation: "sendTemporaryMessage", category: "download", purpose: "notice", chatId: -1001, text: "x" } as unknown as TelegramWorkerRequest,
       "temporary messages must use the message category",
-    ],
-    [
-      { operation: "sendTemporaryMessage", category: "message", purpose: "notice", chatId: -1001, text: "x", deleteAfterMs: 0 } as unknown as TelegramWorkerRequest,
-      "deletion delay must be a positive safe integer",
-    ],
-    [
-      { operation: "sendTemporaryMessage", category: "message", purpose: "notice", chatId: -1001, text: "x", deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS + 1 } as unknown as TelegramWorkerRequest,
-      "must use the standard deletion delay",
     ],
   ];
   for (const [request, message] of rejected) {

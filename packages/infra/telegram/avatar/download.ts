@@ -9,7 +9,7 @@ import { downloadTelegramFileBytes } from "../fileDownload";
 /**
  * 下载头像到有界内存；复用共享的 Telegram 文件下载（download 类出站闸、取消与超时，
  * getFile 与下载各自按 AVATAR_FETCH_TIMEOUT_MS 计时），不创建本地文件。
- * 文件服务器的非 2xx 按可重试处理，其余失败按确定性失败处理。
+ * 两段超时与文件服务器的非 2xx 按可重试处理，其余失败按确定性失败处理。
  */
 export async function downloadAvatarFile(
   fileId: string,
@@ -29,6 +29,10 @@ export async function downloadAvatarFile(
     case "missingPath":
       logger.error(`getFile for target ${targetId}'s avatar returned no file_path`);
       return { status: "permanent-failure" };
+    case "metadataTimeout":
+    case "downloadTimeout":
+      logger.error(`Downloading the avatar file of target ${targetId} timed out (${download.status})`);
+      return { status: "transient-failure" };
     case "httpError":
       logger.error(`Failed to download the avatar file of target ${targetId} (${download.httpStatus})`);
       return { status: "transient-failure" };

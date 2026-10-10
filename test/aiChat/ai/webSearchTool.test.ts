@@ -17,6 +17,7 @@ const { createWebSearchExecutor, formatWebSearchResult } = await import("../../.
 const {
   WEB_SEARCH_FAILED_TEXT,
   WEB_SEARCH_MAX_SOURCES,
+  WEB_SEARCH_REFUSED_TEXT,
   WEB_SEARCH_QUERY_MAX_CHARS,
   WEB_SEARCH_RESULT_MAX_CHARS,
   WEB_SEARCH_RESULT_NOTICE,
@@ -93,6 +94,21 @@ test("未成功的各种情形一律只回「模型搜索失败」，检索次�
   expect(loggerError).toHaveBeenCalledTimes(5);
   // 日志只写原因，不写检索问题。
   for (const [message] of loggerError.mock.calls) expect(String(message)).not.toContain("凭空写的");
+});
+
+test("检索模型拒答时回拒答说明与 retryable: false，检索次数如实交回；本轮已作废时不记日志", async () => {
+  const refused: string = JSON.stringify({ error: WEB_SEARCH_REFUSED_TEXT, retryable: false });
+  const { provider } = fakeProvider([{ ok: false, searchCalls: 1, refused: true }, { ok: false, searchCalls: 0, refused: true }]);
+  expect(await createWebSearchExecutor(provider, TEST_MAX_CALLS_PER_USE, undefined)(JSON.stringify({ query: "被拒的问题" })))
+    .toEqual({ result: refused, searchCalls: 1 });
+  expect(loggerError).toHaveBeenCalledTimes(1);
+  expect(String(loggerError.mock.calls[0]?.[0])).not.toContain("被拒的问题");
+
+  const controller: AbortController = new AbortController();
+  controller.abort();
+  expect(await createWebSearchExecutor(provider, TEST_MAX_CALLS_PER_USE, controller.signal)(JSON.stringify({ query: "q" })))
+    .toEqual({ result: refused, searchCalls: 0 });
+  expect(loggerError).toHaveBeenCalledTimes(1);
 });
 
 test.each([1, TEST_MAX_CALLS_PER_USE])("每轮按配置最多调用 %i 次，超出时不发请求；新一轮重新计数", async (maxCallsPerUse: number) => {

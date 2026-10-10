@@ -1,6 +1,9 @@
 import { antiRaidRuntimeState } from "../cache/main/antiRaid/proxy";
 import {
   activeVerificationSnapshots,
+  clearActiveVerificationSnapshots,
+  deleteActiveVerificationSnapshot,
+  setActiveVerificationSnapshot,
   deferredVerificationRecords,
   pendingVerificationDeferrals,
   pendingVerificationDeletes,
@@ -86,7 +89,7 @@ export function acceptVerificationUpsert(
   if (snapshot.revision <= latestRevision) return false;
   const critical: boolean = !activeVerificationSnapshots.has(key) ||
     isTerminalVerificationPhase(snapshot.phase);
-  activeVerificationSnapshots.set(key, {
+  setActiveVerificationSnapshot(key, {
     ...snapshot,
     trackedMessageTimes: [...snapshot.trackedMessageTimes],
   });
@@ -120,7 +123,7 @@ export function acceptVerificationDelete(
       pendingRevision
     )
   ) return false;
-  activeVerificationSnapshots.delete(key);
+  deleteActiveVerificationSnapshot(key);
   deferredVerificationRecords.delete(key);
   pendingVerificationDeferrals.delete(key);
   terminalVerificationAttempts.delete(key);
@@ -144,11 +147,11 @@ export function acceptVerificationDelete(
 export function replaceActiveVerificationMirror(
   records: ReadonlyMap<string, VerificationSnapshot>
 ): void {
-  activeVerificationSnapshots.clear();
+  clearActiveVerificationSnapshots();
   pendingVerificationDeletes.clear();
   persistedVerificationRevisions.clear();
   for (const [key, record] of records) {
-    activeVerificationSnapshots.set(key, {
+    setActiveVerificationSnapshot(key, {
       ...record,
       trackedMessageTimes: [...record.trackedMessageTimes],
     });
@@ -164,7 +167,7 @@ export function advanceActiveVerificationGeneration(generation: number): void {
   for (const [key, record] of activeVerificationSnapshots) {
     const persisted: { generation: number; revision: number } | undefined =
       persistedVerificationRevisions.get(key);
-    activeVerificationSnapshots.set(key, { ...record, generation });
+    setActiveVerificationSnapshot(key, { ...record, generation });
     if (
       persisted?.generation === record.generation &&
       persisted.revision === record.revision

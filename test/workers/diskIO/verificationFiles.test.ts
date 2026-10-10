@@ -30,6 +30,7 @@ import {
   VERIFICATION_PRIOR_DAY_DECODE_MAX_ATTEMPTS,
 } from "../../../packages/consts/diskIO/verification";
 import { VERIFICATION_RECORD_CAPACITY } from "../../../packages/consts/antiRaid/verification";
+import { DAY_FILE_JSON_INDENT } from "../../../packages/consts/diskIO/appendOnly";
 
 const DAY_ONE = "2026-07-19";
 const DAY_TWO = "2026-07-20";
@@ -685,7 +686,8 @@ describe("pending verification daily append JSON", () => {
   });
 
   test("成功播报标记只允许出现在 expelling 终态并可完整恢复", async () => {
-    const { phase: _phase, ...pending } = snapshot(1);
+    // 终态快照的回复提醒字段固定为 false、无锚点、true（见 workers/antiRaid/verificationSnapshot.ts）。
+    const { phase: _phase, ...pending } = snapshot(1, { reminderSuperseded: true });
     await upsert({
       type: "verificationUpsert",
       record: {
@@ -708,8 +710,28 @@ describe("pending verification daily append JSON", () => {
     await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("$.<record> must be a current verification record");
   });
 
+  test("回复提醒三字段不一致的记录整份拒绝：pending 须同真同假，终态须为快照写出的组合", async () => {
+    for (const record of [
+      { ...snapshot(1, { replyReminderRequested: true, reminderSuperseded: true }) },
+      { ...snapshot(1, { welcomeAnchorMessageId: 77 }) },
+      { ...snapshot(1), phase: "checkingInviter", terminalInviterId: 88 },
+    ]) {
+      await Bun.write(join(dir, `${DAY_ONE}.json`), JSON.stringify({
+        "-1001:42": { version: VERIFICATION_FILE_VERSION, ...record },
+      }));
+      await expect(recoverVerificationDay(DAY_ONE, dir)).rejects.toThrow("$.<record> must be a current verification record");
+    }
+    await Bun.write(join(dir, `${DAY_ONE}.json`), JSON.stringify({
+      "-1001:42": {
+        version: VERIFICATION_FILE_VERSION,
+        ...snapshot(1, { replyReminderRequested: true, reminderSuperseded: true, welcomeAnchorMessageId: 77 }),
+      },
+    }, null, DAY_FILE_JSON_INDENT));
+    expect((await recoverVerificationDay(DAY_ONE, dir)).get("-1001:42")?.welcomeAnchorMessageId).toBe(77);
+  });
+
   test("checkingInviter 阶段可完整持久化并恢复", async () => {
-    const { phase: _phase, ...pending } = snapshot(1);
+    const { phase: _phase, ...pending } = snapshot(1, { reminderSuperseded: true });
     const record: VerificationSnapshot = {
       ...pending,
       phase: "checkingInviter",

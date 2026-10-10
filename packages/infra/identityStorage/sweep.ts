@@ -73,7 +73,7 @@ export async function readBlocklistSweepPage(
   afterId: number | null
 ): Promise<BlocklistIdPage> {
   const coveredRevision: number = identityWriteRevision.current;
-  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("blocklist");
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomain("blocklist");
   if (outcome.result !== "flushed") {
     throw new Error(`Blocklist sweep flush ${outcome.result}.`);
   }

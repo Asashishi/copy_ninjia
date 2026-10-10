@@ -15,9 +15,9 @@
 ## 前提条件
 
 - **`/proc` にアクセス可能な Linux 環境**：インスタンスの二重起動防止ロックは、`/proc/<pid>/stat` とシステムの boot ID に依存しています。その他の OS では安全のため起動を拒否（fail-closed）します。
-- **Bun 1.4.2**：ソースコードからの実行およびローカル開発に必須です。次のコマンドでインストールできます：
+- **Bun 1.4.3**：ソースコードからの実行およびローカル開発に必須です。次のコマンドでインストールできます：
   ```bash
-  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2
+  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.3
   ```
   > [!NOTE]
   > バイナリ配布版には内蔵ランタイムが同梱されているため、ホストマシンへの Bun のインストールは不要です。なお、プロジェクト全体を通じて Node.js は一切使用しません。
@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
   <tr>
     <td><nobr>⚙️ <b>依存要件</b></nobr></td>
     <td>ホストの Bun、git、ビルドツールは不要。展開に必要な基本コマンドが不足していればインストーラーが導入を試行</td>
-    <td>git および Bun 1.4.2 が必要。不足ツールはインストーラーが導入を試行しますが、Bun バージョンの不整合は手動解決が必要</td>
+    <td>git および Bun 1.4.3 が必要。不足ツールはインストーラーが導入を試行しますが、Bun バージョンの不整合は手動解決が必要</td>
   </tr>
   <tr>
     <td><nobr>🚀 <b>ランタイム構成</b></nobr></td>
@@ -208,7 +208,8 @@ config/
        - `api_key`：アクセスキー。サンプル内のプレースホルダー文字列は拒否されます。
        - `model`：モデル識別子文字列。
        - `base_url`：カスタムエンドポイント（`https` のみ。プレーン `http` は localhost / 127.0.0.1 / ::1 のみ許可。userinfo や `#` フラグメントは不可）。
-       - `headers`：`google` プロバイダのみ、追加のリクエストヘッダー（1〜`AGENT_HEADERS_MAX_ENTRIES` 個。Cloudflare AI Gateway 等の認証用）を設定可能。
+       - `headers`：`google` と `anthropic` プロバイダのみ、追加のリクエストヘッダー（1〜`AGENT_HEADERS_MAX_ENTRIES` 個。Cloudflare AI Gateway 等の認証用）を設定可能。
+       - `fallback_model`：`anthropic` プロバイダのみ設定可能なフォールバックモデル（`model` と異なること）。`model` が拒否した場合は同じリクエストをこのモデルで再送し、フォールバックモデルも拒否した場合や未設定の場合は再試行せずにそのリクエストを失敗とします。
 
 ---
 
@@ -271,7 +272,7 @@ chmod 660 database/storage.sqlite
 ファイル自体、各カテゴリブロック、および内部の各フィールドはすべて任意であり、省略された場合は内蔵の既定アセットが使用されます。ただし、指定された値が不正な場合や、未知のキーが含まれている場合は設定ファイル全体が拒否されます。
 
 - **`onlyPath`**：ローカルの絶対パスまたは `./` / `../` 相対パス（データルート基準）のみを受け付けます。`random_h_image_dir` はランダム画像ライブラリのディレクトリであり、`/h_image` コマンドや `cron.json` の `send_image`（ディレクトリ未指定時）で使用されます。
-- **`pathOrUrl`**：ローカルファイルパスまたは HTTP(S) の直リンク。`bot_default_avatar` は Bot のデフォルトアバター復元時に使用される画像です。ローカルファイルを指定する場合、JPEG または PNG 形式の通常ファイルで、サイズは `AVATAR_MAX_DOWNLOAD_BYTES` 以下である必要があります。
+- **`pathOrUrl`**：ローカルファイルパスまたは HTTP(S) の直リンク。`bot_default_avatar` は Bot のデフォルトアバター復元時に使用される素材で、JPEG/PNG 画像（`BOT_PROFILE_PHOTO_MAX_BYTES` 以下）は静止アバター、MP4 動画（`BOT_PROFILE_ANIMATION_MAX_BYTES` 以下で、映像が一辺 `BOT_PROFILE_ANIMATION_MAX_SIDE` 以下の正方形）は動くアバターとして設定されます。URL の 1 回のダウンロードのタイムアウトは `DEFAULT_AVATAR_FETCH_TIMEOUT_MS` です。ローカルファイルを指定する場合は、上記の形式とサイズを満たす通常ファイルである必要があります。
 - **`onlyUrl`**：画像バイナリを直接取得可能な `https://` 絶対 URL である必要があります。おみくじ（`/fortune`）、確率判定（`/probability`）、および gag 発言入口のインラインサムネイル画像として使用されます。
 
 ---

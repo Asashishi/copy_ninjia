@@ -16,6 +16,7 @@ import { expectTemplateRendered, longestTemplatePart } from "../../helpers/templ
 const {
   CHAT_ID,
   KEY,
+  applyFlagEvent,
   USER_ID,
   autoDeleted,
   deletedMessageIds,
@@ -613,7 +614,7 @@ describe("验证终态进程级尝试预算", () => {
     )).toBeTrue();
   });
 
-  /** 与生产 publishVerificationChange 一样，每次发布都把本 key 的 revision 推进一格。 */
+  /** 驱逐播报标记事件与生产 dispatchVerification 一样，快照变化时把本 key 的 revision 推进一格。 */
   function runPublishingRevisions(
     effects: VerificationEffect[],
     permit: VerificationAttemptPermitResult
@@ -625,13 +626,13 @@ describe("验证终态进程级尝试预算", () => {
       userId: USER_ID,
       effects,
       dispatchVerification: (_chatId: number, userId: number, event: VerificationEvent): void => {
-        dispatched.push({ userId, event });
-      },
-      publishVerificationChange: (): void => {
-        testState.publishedChanges++;
-        verificationRevisions.set(KEY, {
-          revision: (verificationRevisions.get(KEY)?.revision ?? 0) + 1,
+        const isFlagEvent: boolean = applyFlagEvent(event, (): void => {
+          testState.publishedChanges++;
+          verificationRevisions.set(KEY, {
+            revision: (verificationRevisions.get(KEY)?.revision ?? 0) + 1,
+          });
         });
+        if (!isFlagEvent) dispatched.push({ userId, event });
       },
       requestTerminalAttempt: async (): Promise<VerificationAttemptPermitResult> => permit,
     });

@@ -153,6 +153,8 @@ import {
   AGENT_AI_CHAT_REQUIRED_CAPABILITIES,
   AGENT_API_KEY_PLACEHOLDERS,
   AGENT_CAPABILITY_NAMES,
+  AGENT_CREDENTIAL_HEADER_NAMES,
+  EXPECTED_AGENT_HEADERS,
 } from "../../packages/consts/agent";
 import { LUCK_TIERS } from "../../packages/consts/luckChallenge";
 import { GAG_MIN_OPERATION_TIERS, GAG_REPLACEMENT_CHARACTERS } from "../../packages/consts/gag";
@@ -289,6 +291,10 @@ test("Readonly<Record<…>> 形态的常量不可写入", () => {
   expect(() => { MUTED_CHAT_PERMISSIONS.can_send_messages = true; }).toBeDefined();
   // @ts-expect-error Readonly<Record<number, string>> 不允许新增/覆盖键
   expect(() => { WEATHER_CODE_DESCRIPTIONS[0] = "篡改"; }).toBeDefined();
+  // @ts-expect-error 各 provider 的凭据头名表只读，headers 校验按它拒绝凭据头。
+  expect(() => { AGENT_CREDENTIAL_HEADER_NAMES.anthropic = "x-other"; }).toBeDefined();
+  // @ts-expect-error headers 期望形态表只读。
+  expect(() => { EXPECTED_AGENT_HEADERS.google = "changed"; }).toBeDefined();
   // @ts-expect-error 权限中文名表被 /bot_status 回执与缺权限提示共用，改坏它等于
   // 对着所有群报错一个权限位的含义。
   expect(() => { BOT_CHAT_PERMISSION_LABELS.canDeleteMessages = "篡改"; }).toBeDefined();

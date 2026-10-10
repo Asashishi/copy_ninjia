@@ -15,9 +15,9 @@
 ## 前置条件
 
 - **Linux 系统**（必须具备可读的 `/proc` 目录）：系统的单实例锁机制强依赖 `/proc/<pid>/stat` 与内核 boot ID，以此防止多进程并发冲突。不支持非 Linux 系统，启动时若检测到不支持的平台将直接退出以保障安全。
-- **Bun 1.4.2**：源码安装与本地开发所需，可通过以下命令快速安装：
+- **Bun 1.4.3**：源码安装与本地开发所需，可通过以下命令快速安装：
   ```bash
-  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.2
+  curl -fsSL https://bun.sh/install | bash -s bun-v1.4.3
   ```
   > [!NOTE]
   > 二进制发行包已内置 Bun 运行时，无需宿主机预先安装 Bun。整个项目都不需要 Node.js。
@@ -69,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/Asashishi/copy_ninjia/master/instal
   <tr>
     <td><nobr>⚙️ <b>系统依赖</b></nobr></td>
     <td>无需系统预装 Bun、git 或编译工具链；脚本会自动尝试补齐基础下载工具</td>
-    <td>需要 git 与 Bun 1.4.2；安装脚本会尝试辅助安装缺失工具，若版本不符需手动调整</td>
+    <td>需要 git 与 Bun 1.4.3；安装脚本会尝试辅助安装缺失工具，若版本不符需手动调整</td>
   </tr>
   <tr>
     <td><nobr>🚀 <b>运行时封装</b></nobr></td>
@@ -205,6 +205,8 @@ config/
        - `api_key`：访问密钥；占位字符串会被校验拦截。
        - `model`：具体的模型名称。
        - `base_url`：可选的自定义 API 端点（用于代理或内网网关）。
+       - `headers`：仅 `google` 与 `anthropic` provider 可配置的附加请求头（1～`AGENT_HEADERS_MAX_ENTRIES` 个，用于 Cloudflare AI Gateway 等三方网关鉴权）。
+       - `fallback_model`：仅 `anthropic` provider 可配置的回退模型（不能与 `model` 相同）。`model` 拒答时用它重发同一请求；回退模型也拒答或未配置时，该请求直接失败、不重试。
 
 ---
 
@@ -266,7 +268,7 @@ chmod 660 database/storage.sqlite
 
 各字段说明如下：
 - **`onlyPath`**：仅支持本地文件路径（绝对路径或以 `./`、`../` 开头的相对数据根路径）。`random_h_image_dir` 指定随机图库目录，供 `/h_image` 命令与定时发图任务读取。
-- **`pathOrUrl`**：支持本地路径或 HTTP(S) 图片直链。`bot_default_avatar` 为复原默认头像时所使用的图片。
+- **`pathOrUrl`**：支持本地路径或 HTTP(S) 直链。`bot_default_avatar` 为复原默认头像时所使用的素材：JPEG/PNG 图片（不超过 10 MiB）设为静态头像，MP4 视频（不超过 50 MiB，视频画面须为正方形且不超过 1080×1080）设为动态头像。直链单次下载超时为 90 秒。
 - **`onlyUrl`**：必须为有效的 `https://` 图片绝对地址。分别用于运势抽签、概率计算与口球发言入口的卡片缩略图。
 
 ---

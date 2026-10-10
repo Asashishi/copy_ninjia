@@ -9,7 +9,8 @@
  *    再渲染成 MarkdownV2（libs/webDigestMarkdown.ts）并核对可见正文不超过 Telegram 上限。任何一项
  *    不合格都带着诊断重试，总尝试次数为 WEB_DIGEST_COMPOSE_ATTEMPTS，仍不合格就判本轮失败，不截断、不拆条。
  *
- * 未检索时记一行带有界模型正文的告警；失败时记英文错误日志。取消后不再记错误。
+ * 检索或组稿的 Anthropic 模型拒答时立即判本轮失败（`refused`），不再重试。未检索时记一行带有界模型正文的告警；
+ * 失败时记英文错误日志。取消后不再记错误。
  */
 
 import { textWebSearchAiProvider, structuredTextAiProvider, webSearchAiProvider } from "../provider";
@@ -175,7 +176,11 @@ export async function composeWebDigest(
     signal,
   });
   if (signal.aborted) return { ok: false, reason: "aborted" };
-  if (!research.ok) return failed("search failed", "the search request failed", signal);
+  if (!research.ok) {
+    return research.refused === true
+      ? failed("refused", "the search model refused the request", signal)
+      : failed("search failed", "the search request failed", signal);
+  }
   if (research.searchCalls === 0) {
     const response: string = research.text.trim();
     if (response.length === 0) return failed("search failed", "the endpoint returned no text", signal);
@@ -203,6 +208,7 @@ export async function composeWebDigest(
     });
     if (signal.aborted) return { ok: false, reason: "aborted" };
     if (!result.ok) {
+      if (result.refused === true) return failed("refused", "the composition model refused the request", signal);
       if (!result.retryable) return failed("compose failed", "the composition request failed", signal);
       lastReason = "compose failed";
       problem = "the previous request returned no usable output";

@@ -59,8 +59,8 @@ export const PRODUCTION_NODE_IMPORTS: Readonly<
   },
   "packages/database/interact/migration.ts": {
     "node:fs": {
-      symbols: ["existsSync"],
-      purpose: "cold database creation precondition",
+      symbols: ["lstatSync"],
+      purpose: "cold database creation precondition: any existing entry, including a dangling symbolic link, blocks creation",
     },
   },
   "packages/infra/processStatus.ts": {

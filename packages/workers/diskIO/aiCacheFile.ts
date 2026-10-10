@@ -2,11 +2,12 @@
  * AI 缓存使用统计落盘：memory/ai-daily-usage/usage.json 一份文件，内容是一个顶层 JSON 对象。
  *
  * - `summary`（写在首位）：最近一个已结束的配置时区自然日的汇总，见 types/aiCache.ts 的 AiCacheSummary；
- *   有过费用请求的合计另带 costInUsdTicks，没有时省略该键。
+ *   有过费用请求的合计另带 costInUsdTicks，有请求给出过缓存写入用量的合计另带 cacheWriteInputTokens，
+ *   没有时省略对应的键。
  * - 其余键：尚未汇总的逐条用量，键为「配置时区的时间 YYYY-MM-DD HH:mm:ss.SSS_uuid」，值为
- *   capability、provider、model 加上三项 token 数或 costInUsdTicks。执行过检索的 token 记录
- *   同时带 searchCalls；没有有效 token 的检索响应只记 searchCalls，不计入 requests。
- *   有过检索的合计另带 searchCalls，没有时省略该键。
+ *   capability、provider、model 加上三项 token 数或 costInUsdTicks。供应商给出缓存写入用量的 token
+ *   记录另带 cacheWriteInputTokens，执行过检索的 token 记录同时带 searchCalls；没有有效 token 的检索
+ *   响应只记 searchCalls，不计入 requests。有过检索的合计另带 searchCalls，没有时省略该键。
  *
  * 逐条记录经诊断通道到达后先进内存缓冲（cache/workers/diskIO/aiCache.ts），达到
  * FLUSH_MAX_ENTRIES 或等满 FLUSH_INTERVAL_MS 后按 appendOnlyDayFile.ts 的机制追加到文件末尾，
@@ -126,6 +127,7 @@ export async function handleAiCacheUsageMessage(message: AiCacheUsageDiskMessage
         model: message.model,
         inputTokens: message.inputTokens,
         cachedInputTokens: message.cachedInputTokens,
+        cacheWriteInputTokens: message.cacheWriteInputTokens,
         outputTokens: message.outputTokens,
         searchCalls: message.searchCalls,
       };

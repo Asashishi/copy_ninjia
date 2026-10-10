@@ -92,7 +92,7 @@
 ## 📑 ページ一覧と概要
 
 1. **[01 環境構築と初回実行](01-getting-started.md)**
-   - 依存関係（Bun 1.4.2 / Linux / Bot Token / AI provider API Key）
+   - 依存関係（Bun 1.4.3 / Linux / Bot Token / AI provider API Key）
    - `install.sh` によるワンショットインストール（ソースまたはバイナリ配布版）と手動ソースインストール
    - `config/static/bot.json` など deployment 設定のフィールドと厳格な検証
    - Telegram BotFather 設定（Privacy Mode / 管理者権限 / Inline Mode / Bot-to-Bot）
@@ -151,7 +151,7 @@
 
 11. **[11 よくある質問](11-faq.md)**
     - Bot が動いているのに返信しない場合の順次確認：初期化、プライバシーモード、AI の反応条件、個人チャット、通知の自動削除、Inline Mode、Bot-to-Bot、既定で無効な保護機能、プロセスの状態
-    - 通知の口調、画像ライブラリによる起動拒否、定時タスクの再送、定時ボイスと `/send` のボイス、ボイスの長さとメモリ設定、サードパーティゲートウェイ経由の Google モデル呼び出し
+    - 通知の口調、画像ライブラリによる起動拒否、定時タスクの再送、定時ボイスと `/send` のボイス、ボイスの長さとメモリ設定、サードパーティゲートウェイ経由の Google モデル呼び出し、Cloudflare AI Gateway 経由の Anthropic モデル呼び出し
 
 ---
 

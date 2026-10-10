@@ -164,6 +164,12 @@ done
 ```json
 {
   "agent": {
+    "ad_detect": {
+      "provider": "openai",
+      "api_key": "replace-with-deepseek-api-key",
+      "base_url": "https://api.deepseek.com",
+      "model": "deepseek-v4-flash"
+    },
     "text": {
       "provider": "google",
       "api_key": "replace-with-google-api-key",
@@ -172,7 +178,8 @@ done
     "summary": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5"
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5"
     },
     "media": {
       "provider": "google",
@@ -182,12 +189,6 @@ done
         "cf-aig-authorization": "Bearer <replace-with-cloudflare-ai-gateway-token>"
       },
       "model": "gemini-3.5-flash-lite"
-    },
-    "ad_detect": {
-      "provider": "openai",
-      "api_key": "replace-with-deepseek-api-key",
-      "base_url": "https://api.deepseek.com",
-      "model": "deepseek-v4-flash"
     },
     "image": {
       "provider": "openai",
@@ -202,13 +203,15 @@ done
       "model": "gemini-3.8-flash-lite-tts",
       "voice": "en-us-nika",
       "style": "いたずらすきそうな音調が高い小悪魔の甘く、弾むようなツンデレ音色",
+      "bot_language": "ja",
       "daily_limit": 100,
       "daily_reserve_quota": 25
     },
     "web_search": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5",
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5",
       "max_calls_per_use": 5
     }
   }
@@ -225,7 +228,8 @@ done
 | `api_key` | `string` | **必填** | 非空字符串，不能是示例占位符 | 该能力专属的 API 密钥 |
 | `base_url` | `string` | 可选 | 绝对 HTTPS URL（仅 `localhost`、`127.0.0.1`、`::1` 本地回环允许 HTTP） | 自定义端点地址。不能包含用户名/密码，不能包含 `#` 片段。缺省时直连对应官方 API |
 | `model` | `string` | **必填**（xAI TTS 禁止配置） | 非空字符串 | 端点实际接受的模型名称 |
-| `headers` | `object` | 可选 | 1–8 个键值对（**仅 `provider: "google"` 时允许**） | 附加 HTTP 请求头，用于第三方网关鉴权（如 Cloudflare AI Gateway）。键名须为 HTTP token，忽略大小写不得重复，且不能是 `x-goog-api-key`；键值去掉首尾空白后为非空的可打印 ASCII 字符串 |
+| `headers` | `object` | 可选 | 1–8 个键值对（**仅 `provider: "google"` 或 `"anthropic"` 时允许**） | 附加 HTTP 请求头，用于第三方网关鉴权（如 Cloudflare AI Gateway 的 `cf-aig-authorization`）。键名须为 HTTP token，忽略大小写不得重复，google 下不能是 `x-goog-api-key`，anthropic 下不能是 `x-api-key`；键值去掉首尾空白后为非空的可打印 ASCII 字符串 |
+| `fallback_model` | `string` | 可选 | 非空字符串，不能与 `model` 相同（**仅 `provider: "anthropic"` 时允许**） | `model` 拒答（`stop_reason: "refusal"`）时，用该模型与同一 `api_key`、`base_url`、`headers` 重发同一请求；回退额度按 best-effort 兑换，回退模型不在 `model` 的 `allowed_fallback_models` 内时按原价计费。回退模型也拒答或未配置时，该请求直接失败、不重试 |
 
 ### 生图专属键说明（`agent.image`）
 
@@ -265,7 +269,7 @@ done
     "random_h_image_dir": "./h_image"
   },
   "pathOrUrl": {
-    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1M72eDI8DLUbL2-SI4lyzZQSXOhfwxBci"
+    "bot_default_avatar": "https://drive.google.com/uc?export=download&id=1Wqxii-o6O36ZDWhM1L0BcZPGBFmpvalg"
   },
   "onlyUrl": {
     "fortune_thumbnail_url": "https://drive.google.com/uc?export=view&id=1RMluRcTHBUTqYrkNISoVEZCI84ZQEosA",
@@ -280,7 +284,7 @@ done
 | 分组 | 键名 | 类型 | 约束与取值范围 | 说明 |
 | --- | --- | --- | --- | --- |
 | `onlyPath` | `random_h_image_dir` | `string` | 绝对路径或 `./`、`../` 开头的目录路径，缺省 `./h_image` | `/h_image` 命令与 cron 随机抽图的图库目录，基于运行时数据根解析 |
-| `pathOrUrl` | `bot_default_avatar` | `string` | 本机图片文件路径，或绝对 HTTP/HTTPS URL | `/icon reset` 与 `/copy stop` 复原机器人头像时使用的源图。若为本地文件，体积必须 `≤ 10 MiB` 且为 JPG/PNG |
+| `pathOrUrl` | `bot_default_avatar` | `string` | 本机图片或 MP4 文件路径，或绝对 HTTP/HTTPS URL | `/icon reset` 与 `/copy stop` 复原机器人头像时使用的素材：JPG/PNG（`≤ 10 MiB`）设为静态头像，MP4（`≤ 50 MiB`，画面为正方形且 `≤ 1080×1080`）设为动态头像。本地文件在加载时校验，直链在复原时校验，单次下载超时 90 秒 |
 | `onlyUrl` | `fortune_thumbnail_url` | `string` | 绝对 HTTPS URL | 「未卜先知」inline 结果卡片展示的缩略图直链 |
 | `onlyUrl` | `probability_thumbnail_url` | `string` | 绝对 HTTPS URL | 「概率论」inline 结果卡片展示的缩略图直链 |
 | `onlyUrl` | `gag_thumbnail_url` | `string` | 绝对 HTTPS URL | gag 口球发言 inline 结果卡片展示的缩略图直链 |
@@ -353,6 +357,47 @@ done
       }
     },
     {
+      "name": "忧郁",
+      "weight": 10,
+      "instruction": "你今天有点闷闷的，说不上具体为什么：话变少、反应慢半拍，毒舌还在但明显没什么力气，偶尔冒出一句丧气话又赶紧嘴硬圆回去，撒娇也带着点没精打采。",
+      "weatherMultipliers": {
+        "clear": 0.6,
+        "rain": 1.8,
+        "storm": 1.5,
+        "fog": 1.6
+      },
+      "timeMultipliers": {
+        "evening": 1.2,
+        "night": 1.3,
+        "lateNight": 1.2
+      }
+    },
+    {
+      "name": "伤心",
+      "weight": 10,
+      "instruction": "你现在有点难过，藏不太住：嘴上还嫌弃着人，但明显没底气，容易被戳一下就破防、露出脆弱的一面，比平时更需要人哄，撒娇变成带着委屈的黏人。",
+      "weatherMultipliers": {
+        "clear": 0.7,
+        "rain": 1.5,
+        "storm": 1.4
+      },
+      "timeMultipliers": {
+        "night": 1.5,
+        "lateNight": 1.7
+      }
+    },
+    {
+      "name": "愤怒",
+      "weight": 10,
+      "instruction": "你现在火气很大、一点就着：毒舌火力全开、字里行间带刺，容易被戳到点上就直接炸毛，反驳更冲、语气更硬，撒娇欲望降到最低，谁惹到你都别想轻易蒙混过去。",
+      "weatherMultipliers": {
+        "storm": 1.6
+      },
+      "timeMultipliers": {
+        "lateNight": 0.5
+      }
+    },
+    {
       "name": "色气",
       "weight": 25,
       "instruction": "你现在处于色气拉满的状态，身体和情绪都特别敏感躁动：吐槽和毒舌还是会出来，但明显带着软软的媚态和试探，容易因为对方的一句话或动作就脸红心跳，主动撒娇邀宠的频率大幅增加，身体会不由自主地往对方身边靠、蹭，整体傲娇属性降低很多，黏人和被调戏、被支配的欲望都很强。",
@@ -366,15 +411,17 @@ done
     },
     {
       "name": "困",
-      "weight": 40,
-      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，经常打哈欠说『好困……』『别吵……让我睡会儿』，声音软绵绵没精神，需要被哄着照顾和宠着睡。",
+      "weight": 10,
+      "instruction": "你现在特别困、状态像只犯困的大猫：回复会变慢、话明显变少，毒舌都懒得认真展开，经常打哈欠说『好困……』『别吵……让我睡会儿』，撒娇的时候会直接往人身上靠、找地方窝着，声音软绵绵没精神，「喵」尾音也懒洋洋的，偶尔半睡半醒地冒出平时嘴硬不会承认的依赖话，整体很被动，需要被哄着照顾和宠着睡。",
       "weatherMultipliers": {
         "rain": 1.5,
-        "snow": 1.3
+        "snow": 1.3,
+        "fog": 1.2
       },
       "timeMultipliers": {
         "morning": 1.5,
         "daytime": 0.5,
+        "night": 1.5,
         "lateNight": 2.5
       }
     }

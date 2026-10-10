@@ -53,8 +53,9 @@ function hasCurrentVerificationKeys(value: Record<string, unknown>): boolean {
   return true;
 }
 
-function isOptionalBoolean(value: unknown): value is boolean | undefined {
-  return value === undefined || typeof value === "boolean";
+/** expelling 的四个播报标记只会从缺省变成 true，落盘值只接受缺省或 true。 */
+function isOptionalTrue(value: unknown): value is true | undefined {
+  return value === undefined || value === true;
 }
 
 /**
@@ -136,7 +137,7 @@ function decodeCheckingInviter(
   return { ...base, phase: "checkingInviter", terminalInviterId };
 }
 
-/** expelling：处置原因与可选的播报/确认标志。 */
+/** expelling：处置原因与可选的播报/确认标志（只为 true 或缺省）。 */
 function decodeExpelling(
   base: VerificationSnapshotBase,
   value: Record<string, unknown>
@@ -148,10 +149,10 @@ function decodeExpelling(
   const removalConfirmed: unknown = value.removalConfirmed;
   if (
     (expelReason !== "timeout" && expelReason !== "flood") ||
-    !isOptionalBoolean(successNoticeSent) ||
-    !isOptionalBoolean(failureNoticeSent) ||
-    !isOptionalBoolean(unconfirmedNoticeSent) ||
-    !isOptionalBoolean(removalConfirmed)
+    !isOptionalTrue(successNoticeSent) ||
+    !isOptionalTrue(failureNoticeSent) ||
+    !isOptionalTrue(unconfirmedNoticeSent) ||
+    !isOptionalTrue(removalConfirmed)
   ) return null;
   return {
     ...base,
@@ -162,6 +163,17 @@ function decodeExpelling(
     unconfirmedNoticeSent,
     removalConfirmed,
   };
+}
+
+/**
+ * 回复提醒三字段的一致性：pending 阶段 replyReminderRequested、reminderSuperseded 与「welcomeAnchorMessageId 已知」
+ * 同真同假（只由 states/verification/pending.ts 一并置位）；其余阶段只能是快照写出的 false、无锚点、true
+ * （见 workers/antiRaid/verificationSnapshot.ts）。
+ */
+function hasConsistentReplyReminder(phase: unknown, base: VerificationSnapshotBase): boolean {
+  const anchored: boolean = base.welcomeAnchorMessageId !== undefined;
+  if (phase === "pending") return base.replyReminderRequested === anchored && base.reminderSuperseded === anchored;
+  return !base.replyReminderRequested && !anchored && base.reminderSuperseded;
 }
 
 /**
@@ -176,7 +188,7 @@ function decodeVerificationSnapshot(
 ): VerificationSnapshot | null {
   if (!isPlainRecord(value) || !hasCurrentVerificationKeys(value)) return null;
   const base: VerificationSnapshotBase | null = decodeVerificationBase(key, value);
-  if (base === null) return null;
+  if (base === null || !hasConsistentReplyReminder(value.phase, base)) return null;
   switch (value.phase) {
     case "pending":
       return { ...base, phase: "pending" };

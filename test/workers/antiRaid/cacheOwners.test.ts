@@ -543,7 +543,7 @@ describe("Lockdown write-ahead runtime", () => {
     }
   });
 
-  test("解除封锁 → 删掉群里那条封锁公告，再发解除通知", async () => {
+  test("接管 RESTORING 后解除封锁 → 删掉群里那条封锁公告，再发不写时长的解除通知（接管时原因未知）", async () => {
     const chatId = -1007;
     currentPermissions = { can_invite_users: false, can_send_messages: true };
     lockdownRuntime.adoptLockdowns([{
@@ -559,7 +559,7 @@ describe("Lockdown write-ahead runtime", () => {
     await settleLockdownCalls();
 
     expect(deletedMessages).toEqual([{ chatId, messageId: 640 }]);
-    expect(sentMessages[0]?.text).toContain("解除限制");
+    expect(sentMessages[0]?.text).toBe(ATMOSPHERE_TEXTS.teasing.NOTICE_TEXTS.lockdownLifted);
   });
 
   test("落盘失败 → 撤销占位、撤掉公告、报解锁，并在冷却期内不再触发", async () => {
@@ -768,6 +768,7 @@ describe("Lockdown write-ahead runtime", () => {
       intentId: 8,
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: true,
+      announcementMessageId: 7001,
       remainingMs: 0,
       persisted: true,
     }]);
@@ -842,6 +843,7 @@ describe("Lockdown write-ahead runtime", () => {
       intentId: 11,
       originalPermissions: { can_invite_users: true, can_send_messages: true },
       announced: true,
+      announcementMessageId: 7001,
       remainingMs: 60_000,
       persisted: true,
     }]);

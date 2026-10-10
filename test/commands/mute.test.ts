@@ -11,6 +11,8 @@ import {
   MUTE_MAX_DURATION_MS,
   MUTE_MIN_DURATION_MS,
 } from "../../packages/consts/commands";
+import { DAY_MS } from "../../packages/consts/time";
+import { TELEGRAM_RESTRICTION_FOREVER_AFTER_MS } from "../../packages/consts/telegram";
 
 const sendMessage = mock(async (..._args: unknown[]): Promise<number | undefined> => 55);
 const muteChatMemberWithOutcome = mock(async (..._args: unknown[]): Promise<string> => "muted");
@@ -83,13 +85,13 @@ describe("parseMuteDurationMs", () => {
     expect(parseMuteDurationMs("2h")).toBe(2 * 60 * 60_000);
     expect(parseMuteDurationMs("1d")).toBe(24 * 60 * 60_000);
     expect(parseMuteDurationMs("90M")).toBe(90 * 60_000);
-    expect(parseMuteDurationMs("365D")).toBe(MUTE_MAX_DURATION_MS);
+    expect(parseMuteDurationMs(`${MUTE_MAX_DURATION_MS / DAY_MS}D`)).toBe(MUTE_MAX_DURATION_MS);
   });
 
   test("越界值收敛到 Bot API 的临时禁言区间边界", () => {
     // 上限相对 Bot API 的永久禁言分界留有余量：贴顶时排队耗时与 until_date 的向上取整不会越界（见 MUTE_MAX_DURATION_MS）。
-    expect(MUTE_MAX_DURATION_MS).toBeLessThan(366 * 24 * 60 * 60_000);
-    expect(parseMuteDurationMs("366d")).toBe(MUTE_MAX_DURATION_MS);
+    expect(MUTE_MAX_DURATION_MS).toBeLessThan(TELEGRAM_RESTRICTION_FOREVER_AFTER_MS);
+    expect(parseMuteDurationMs(`${TELEGRAM_RESTRICTION_FOREVER_AFTER_MS / DAY_MS}d`)).toBe(MUTE_MAX_DURATION_MS);
     expect(parseMuteDurationMs("500d")).toBe(MUTE_MAX_DURATION_MS);
     // 数值大到超出安全整数也落在最大值上，不会绕回小数。
     expect(parseMuteDurationMs("99999999999999999999d")).toBe(MUTE_MAX_DURATION_MS);

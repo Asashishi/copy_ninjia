@@ -19,13 +19,13 @@ import { JOIN_LOG_MAX_BUFFERED_ENTRIES } from "../../packages/consts/diskIO/join
  */
 
 const postDiskIO = mock((_message: DiskBusinessMessage): boolean => true);
-const flushDiskIODomain = mock(async (): Promise<FlushResult> => "flushed");
+const flushDiskIODomain = mock(async (_domain: string): Promise<FlushResult> => "flushed");
 let persistedListener: ((reply: JoinLogPersistedReply) => void) | undefined;
 let respawnListener: DiskIORespawnListener | undefined;
 
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
-  flushDiskIODomain,
+  flushDiskIODomain: async (domain: string): Promise<{ result: FlushResult }> => ({ result: await flushDiskIODomain(domain) }),
   onDiskIOReply: diskIOReplyStub({
     joinLogPersisted: (listener: (reply: JoinLogPersistedReply) => void): void => {
       persistedListener = listener;

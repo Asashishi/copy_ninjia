@@ -50,6 +50,13 @@ function kickPendingState(
   };
 }
 
+/** 已要求过回复式提醒的 pending：三个字段同真并带锚点（唯一写入点见 states/verification/pending.ts）。 */
+const REPLY_REMINDER_REQUESTED: Partial<PendingState> = {
+  replyReminderRequested: true,
+  reminderSuperseded: true,
+  welcomeAnchorMessageId: 40,
+};
+
 function pendingState(overrides: Partial<PendingState> = {}): PendingState {
   return {
     kind: "pending",
@@ -298,7 +305,7 @@ describe("trackedMessage", () => {
   });
 
   test("连发多条只补发一次回复式提醒", () => {
-    const state = pendingState({ replyReminderRequested: true });
+    const state = pendingState(REPLY_REMINDER_REQUESTED);
     const result = transitionVerification(state, { type: "trackedMessage", messageId: 41, inCommentThread: false, now: 1_000 });
     expect(state.trackedMessageTimes).toEqual([1_000]);
     expect(result.effects).toEqual([]);
@@ -314,7 +321,7 @@ describe("trackedMessage", () => {
   });
 
   test("同一分钟第 45 条继续追踪，第 46 条同步终结并进入刷屏提前踢出", () => {
-    const state = pendingState({ replyReminderRequested: true });
+    const state = pendingState(REPLY_REMINDER_REQUESTED);
     for (let count = 1; count <= ANTI_RAID_PER_MINUTE_LIMIT; count++) {
       const result = transitionVerification(state, {
         type: "trackedMessage",
@@ -419,7 +426,7 @@ describe("trackedMessage", () => {
   });
 
   test("窗口修剪一分钟外的旧消息，且不同成员/群各自持有独立计数", () => {
-    const first = pendingState({ replyReminderRequested: true, trackedMessageTimes: [0, 1_000] });
+    const first = pendingState({ ...REPLY_REMINDER_REQUESTED, trackedMessageTimes: [0, 1_000] });
     transitionVerification(first, {
       type: "trackedMessage",
       messageId: 90,
@@ -428,8 +435,8 @@ describe("trackedMessage", () => {
     });
     expect(first.trackedMessageTimes).toEqual([1_000, JOIN_WINDOW_MS]);
 
-    const otherMember = pendingState({ replyReminderRequested: true });
-    const otherChat = pendingState({ replyReminderRequested: true });
+    const otherMember = pendingState(REPLY_REMINDER_REQUESTED);
+    const otherChat = pendingState(REPLY_REMINDER_REQUESTED);
     transitionVerification(otherMember, { type: "trackedMessage", messageId: 91, inCommentThread: false, now: JOIN_WINDOW_MS });
     transitionVerification(otherChat, { type: "trackedMessage", messageId: 92, inCommentThread: false, now: JOIN_WINDOW_MS });
     expect(otherMember.trackedMessageTimes).toEqual([JOIN_WINDOW_MS]);

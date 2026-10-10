@@ -270,10 +270,10 @@ describe("explicit Worker initialization", () => {
         failedDomains: ["blocklist"],
       };
       first.onmessage!({ data: targetDomainFlushReply } as MessageEvent<DiskIOReply>);
-      expect(await targetDomainFlushPromise).toBe("failed");
+      expect(await targetDomainFlushPromise).toEqual({ result: "failed", failedDomains: ["blocklist"] });
 
-      // 带回执的出口把领域名一并带出，且只带本次请求回执里的那一份：上一次失败留下的 aiMemory 不出现在这一次的诊断里。
-      const outcomePromise = diskIO.flushDiskIODomainOutcome("blocklist", 1_000);
+      // 结果只带本次请求回执里的领域名：上一次失败留下的 aiMemory 不出现在这一次的诊断里。
+      const outcomePromise = diskIO.flushDiskIODomain("blocklist", 1_000);
       const outcomeFlush = first.messages.at(-1)!;
       expect(outcomeFlush).toMatchObject({ type: "flush", scope: "blocklist" });
       const outcomeFlushReply: DiskIOReply = {

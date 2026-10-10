@@ -1,7 +1,6 @@
 import type { AtmosphereTexts } from "../../types/atmosphere";
 import { workerAtmosphere } from "./atmosphere";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 /**
  * 刷屏禁言的执行侧（入群守卫线程）：窗口（FLOOD_WINDOW_MS）内同一个人发言达到阈值
  * （FLOOD_MESSAGE_LIMIT），就地禁言 FLOOD_MUTE_DURATION_MS 并在群里说明一句。
@@ -240,7 +239,6 @@ async function muteFlooder({ message, entry }: MuteFlooderParams): Promise<void>
     purpose: "notice",
     chatId: message.chatId,
     text: floodMuteNoticeText(message.name, workerAtmosphere()),
-    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     signal: signalWithTimeout(dispatchAbort, FLOOD_NOTICE_DISPATCH_TIMEOUT_MS),
   });
 }

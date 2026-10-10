@@ -10,7 +10,8 @@
 import OpenAI from "openai";
 import { adDetectOpenAiClientHolder } from "../../../../cache/workers/antiRaid/openai";
 import { logger } from "../../../../infra/logger";
-import { reportAiCacheUsage } from "../../../../infra/aiCacheUsage";
+import { reportOpenAiChatUsage } from "../../../../infra/aiCacheUsage";
+import { diagnosticWithDetails, finishDetailsJson } from "../../../../aiChat/ai/utils/finishDetails";
 import { getAdDetectAgentConfig } from "../../../../config/agent";
 import {
   AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS,
@@ -35,23 +36,14 @@ function getAdDetectOpenAiClient(): OpenAI {
   return adDetectOpenAiClientHolder.current;
 }
 
-/**
- * Chat Completions 用量里命中缓存的输入 token：官方字段是 `prompt_tokens_details.cached_tokens`；
- * DeepSeek 给出 `prompt_cache_hit_tokens`。都没有时为 undefined。
- */
-function completionCachedTokens(usage: OpenAI.CompletionUsage | undefined): unknown {
-  if (usage === undefined) return undefined;
-  const cached: unknown = usage.prompt_tokens_details?.cached_tokens;
-  if (cached !== undefined) return cached;
-  return (usage as unknown as Readonly<Record<string, unknown>>).prompt_cache_hit_tokens;
-}
-
 /** 一次尝试的结果；null 表示请求失败且已经记日志。 */
 interface OpenAiAdDetectAttempt {
   /** 模型正文；空串表示这一轮什么都没产出。 */
   readonly body: string;
-  /** 额度用尽收尾（finish_reason=length），正文多半只有半截。 */
-  readonly truncated: boolean;
+  /** 原样的 `finish_reason`；`length` 表示额度用尽、正文多半只有半截。choices 为空时为 undefined。 */
+  readonly finishReason: string | undefined;
+  /** `message.refusal` 的诊断串 `{ refusal }`（见 aiChat/ai/utils/finishDetails.ts）；没有拒答时为 undefined。 */
+  readonly finishDetails: string | undefined;
   readonly reasoningTokens: number | "?";
 }
 
@@ -76,18 +68,14 @@ async function attemptOpenAiAdDetectJson({
           { role: "user", content: userContent },
         ],
       });
-    reportAiCacheUsage({
-      capability: "ad_detect",
-      provider: "openai",
-      model,
-      inputTokens: completion.usage?.prompt_tokens,
-      cachedInputTokens: completionCachedTokens(completion.usage),
-      outputTokens: completion.usage?.completion_tokens,
-    });
+    reportOpenAiChatUsage({ capability: "ad_detect", model, usage: completion.usage });
     const choice: OpenAI.Chat.Completions.ChatCompletion.Choice | undefined = completion.choices[0];
+    // 兼容端点可能不带 refusal 字段。
+    const refusal: string | null | undefined = choice?.message.refusal;
     return {
       body: choice?.message.content ?? "",
-      truncated: choice?.finish_reason === "length",
+      finishReason: choice?.finish_reason,
+      finishDetails: typeof refusal === "string" ? finishDetailsJson({ refusal }) : undefined,
       reasoningTokens: completion.usage?.completion_tokens_details?.reasoning_tokens ?? "?",
     };
   } catch (error: unknown) {
@@ -115,12 +103,12 @@ export async function requestOpenAiAdDetectJson(
   for (let attempt: number = 1; attempt <= AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS; attempt++) {
     const result: OpenAiAdDetectAttempt | null = await attemptOpenAiAdDetectJson(params);
     if (result === null) return null;
-    if (!result.truncated && result.body.trim().length > 0) return result.body;
+    if (result.finishReason !== "length" && result.body.trim().length > 0) return result.body;
     if (attempt < AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS) continue;
     logger.error(
       `${params.errorLabel} produced no usable body in ${attempt} attempt(s) ` +
-      `(truncated=${result.truncated}, hasPartialText=${result.body.length > 0}, ` +
-      `reasoning_tokens=${result.reasoningTokens}, max_tokens=${params.maxOutputTokens}).`
+      `(${diagnosticWithDetails(`finish_reason=${result.finishReason ?? "?"}`, result.finishDetails)}, ` +
+      `hasPartialText=${result.body.length > 0}, reasoning_tokens=${result.reasoningTokens}, max_tokens=${params.maxOutputTokens}).`
     );
   }
   return null;

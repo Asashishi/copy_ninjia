@@ -125,13 +125,19 @@ function okTurn(options: {
 }
 
 /** 一次不可用的模型轮次。 */
-function failTurn(options: { finishReason?: string; toolCallLimitHit?: boolean; webSearchCalls?: number }): AiReplyTurn {
+function failTurn(options: {
+  finishReason?: string;
+  finishDetails?: string;
+  toolCallLimitHit?: boolean;
+  webSearchCalls?: number;
+}): AiReplyTurn {
   return {
     ok: false,
     text: null,
     functionCalls: [],
     webSearchCalls: options.webSearchCalls ?? 0,
     finishReason: options.finishReason,
+    finishDetails: options.finishDetails,
     toolCallLimitHit: options.toolCallLimitHit ?? false,
   };
 }
@@ -446,7 +452,18 @@ test("模型轮次不可用时零执行、零最终文本并记录诊断", async
     execute,
   }))).resolves.toBeNull();
   expect(execute).not.toHaveBeenCalled();
-  expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("finish_reason=PROHIBITED_CONTENT"));
+  expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining("finish_reason=PROHIBITED_CONTENT, side_effects="));
+});
+
+test("不可用轮次的收尾详情原样写进诊断", async () => {
+  const finishDetails: string = JSON.stringify({ type: "refusal", category: "cyber", explanation: "declined" });
+  turns.push(failTurn({ finishReason: "refusal", finishDetails }));
+
+  await expect(generateReply(-1001, promptSections("上下文"), toolset({
+    functions: [declaration(SEND_MESSAGE_TOOL)],
+    has: (): boolean => true,
+  }))).resolves.toBeNull();
+  expect(loggerErrorMock).toHaveBeenCalledWith(expect.stringContaining(`finish_reason=refusal, details=${finishDetails}, side_effects=`));
 });
 
 test("请求在途时被禁用，响应回来后不再执行任何行动", async () => {

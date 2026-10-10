@@ -19,7 +19,14 @@ import {
   agentDeploymentConfigCache,
 } from "../../packages/cache/perThread/config";
 import { AGENT_CONFIG_PATH, CONFIG_ROOT } from "../../packages/consts/paths";
-import { AGENT_CAPABILITY_NAMES, AGENT_HEADERS_MAX_ENTRIES, WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE } from "../../packages/consts/agent";
+import {
+  AGENT_CAPABILITY_NAMES,
+  AGENT_CREDENTIAL_HEADER_NAMES,
+  AGENT_HEADERS_MAX_ENTRIES,
+  EXPECTED_AGENT_FALLBACK_MODEL,
+  EXPECTED_AGENT_HEADERS,
+  WEB_SEARCH_DEFAULT_MAX_CALLS_PER_USE,
+} from "../../packages/consts/agent";
 import {
   EXPECTED_TTS_BOT_LANGUAGE,
   TTS_BOT_LANGUAGES,
@@ -122,14 +129,14 @@ describe("agent capability config", () => {
     }
   });
 
-  test("anthropic 按通用字段解码，不接受 headers；image 与 tts 不受理 anthropic", () => {
+  test("anthropic 按通用字段解码，headers 缺省为 undefined；image 与 tts 不受理 anthropic", () => {
     const anthropic = { provider: "anthropic", api_key: "anthropic-key", base_url: "https://proxy.example/anthropic", model: "claude-test" };
     expect(parseAgentDeploymentConfig({ ...AGENT, text: anthropic, web_search: anthropic }, "agent.json")).toMatchObject({
       text: { provider: "anthropic", apiKey: "anthropic-key", baseUrl: "https://proxy.example/anthropic", headers: undefined, model: "claude-test" },
       webSearch: { provider: "anthropic", model: "claude-test" },
     });
-    expect(() => parseAgentDeploymentConfig({ ...AGENT, text: { ...anthropic, headers: { "x-a": "b" } } }, "agent.json"))
-      .toThrow(/agent\.text must be exactly \{ provider, api_key, base_url\?, model \} when provider is anthropic/);
+    expect(() => parseAgentDeploymentConfig({ ...AGENT, text: { ...anthropic, extra: "x" } }, "agent.json"))
+      .toThrow(/agent\.text must be exactly \{ provider, api_key, base_url\?, headers\?, model, fallback_model\? \} when provider is anthropic/);
     expect(() => parseAgentDeploymentConfig({ ...AGENT, image: { ...anthropic, image_protocol: "openai" } }, "agent.json"))
       .toThrow(/agent\.image\.provider must be "google" or "openai"/);
     expect(() => parseAgentDeploymentConfig({ ...AGENT, tts: { ...anthropic, voice: "v" } }, "agent.json"))
@@ -309,7 +316,7 @@ describe("agent capability config", () => {
   });
 });
 
-describe("agent google headers", () => {
+describe("agent capability headers", () => {
   const GATEWAY_TOKEN: string = "Bearer cf-aig-secret-token";
 
   test("google provider 的 headers 原样生效，各能力都可声明", () => {
@@ -335,6 +342,89 @@ describe("agent google headers", () => {
       "agent.json"
     );
     expect(adDetect.headers).toStrictEqual({ "cf-aig-authorization": GATEWAY_TOKEN });
+  });
+
+  test("anthropic provider 的 headers 原样生效，各通用能力与 ad_detect 都可声明", () => {
+    const baseUrl: string = "https://gateway.ai.cloudflare.com/v1/acc/gw/anthropic";
+    const parsed: AgentDeploymentConfig = parseAgentDeploymentConfig({
+      ...AGENT,
+      text: { provider: "anthropic", api_key: "key", base_url: baseUrl, model: "m", headers: { "cf-aig-authorization": GATEWAY_TOKEN } },
+      summary: { provider: "anthropic", api_key: "key", base_url: baseUrl, model: "m", headers: { "X-Trace": " trace-1 " } },
+      media: { provider: "anthropic", api_key: "key", base_url: baseUrl, model: "m" },
+      web_search: { provider: "anthropic", api_key: "key", base_url: baseUrl, model: "m", headers: { "cf-aig-authorization": GATEWAY_TOKEN } },
+    }, "agent.json");
+    expect(parsed.text).toStrictEqual({
+      provider: "anthropic", apiKey: "key", baseUrl, headers: { "cf-aig-authorization": GATEWAY_TOKEN }, model: "m",
+      fallbackModel: undefined,
+    });
+    expect(parsed.summary.headers).toStrictEqual({ "X-Trace": "trace-1" });
+    expect(parsed.media.headers).toBeUndefined();
+    expect(parsed.webSearch?.headers).toStrictEqual({ "cf-aig-authorization": GATEWAY_TOKEN });
+    const adDetect: AdDetectAgentConfig = parseAdDetectAgentConfig(
+      { provider: "anthropic", api_key: "key", base_url: baseUrl, model: "m", headers: { "cf-aig-authorization": GATEWAY_TOKEN } },
+      "agent.json"
+    );
+    expect(adDetect.headers).toStrictEqual({ "cf-aig-authorization": GATEWAY_TOKEN });
+  });
+
+  test("anthropic provider 的 fallback_model 去掉首尾空白后生效，各通用能力与 ad_detect 都可声明，缺省为 undefined", () => {
+    const parsed: AgentDeploymentConfig = parseAgentDeploymentConfig({
+      ...AGENT,
+      text: { provider: "anthropic", api_key: "key", model: "m", fallback_model: " fb " },
+      summary: { provider: "anthropic", api_key: "key", model: "m", fallback_model: "fb" },
+      media: { provider: "anthropic", api_key: "key", model: "m" },
+      web_search: { provider: "anthropic", api_key: "key", model: "m", fallback_model: "fb", max_calls_per_use: 2 },
+    }, "agent.json");
+    expect(parsed.text).toStrictEqual({
+      provider: "anthropic", apiKey: "key", baseUrl: undefined, headers: undefined, model: "m", fallbackModel: "fb",
+    });
+    expect(parsed.summary).toHaveProperty("fallbackModel", "fb");
+    expect(parsed.media).toHaveProperty("fallbackModel", undefined);
+    expect(parsed.webSearch).toMatchObject({ fallbackModel: "fb", maxCallsPerUse: 2 });
+    expect(parseAdDetectAgentConfig({ provider: "anthropic", api_key: "key", model: "m", fallback_model: "fb" }, "agent.json"))
+      .toHaveProperty("fallbackModel", "fb");
+  });
+
+  test("fallback_model 为空白、非字符串或与 model 相同时拒绝在 fallback_model 路径上", () => {
+    for (const fallbackModel of ["", "  ", 1, null, " m "]) {
+      expect(() => parseAgentDeploymentConfig({
+        ...AGENT,
+        summary: { provider: "anthropic", api_key: "key", model: "m", fallback_model: fallbackModel },
+      }, "agent.json")).toThrow(`$.agent.summary.fallback_model must be ${EXPECTED_AGENT_FALLBACK_MODEL}`);
+    }
+    expect(() => parseAdDetectAgentConfig({ provider: "anthropic", api_key: "key", model: "m", fallback_model: "m" }, "agent.json"))
+      .toThrow(`$.agent.ad_detect.fallback_model must be ${EXPECTED_AGENT_FALLBACK_MODEL}`);
+  });
+
+  test("google 与 openai provider 不接受 fallback_model；anthropic 的期望形态列出它", () => {
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      text: { provider: "google", api_key: "key", model: "m", fallback_model: "fb" },
+    }, "agent.json")).toThrow(/agent\.text must be exactly \{ provider, api_key, base_url\?, headers\?, model \} when provider is google/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      web_search: { provider: "openai", api_key: "key", model: "m", fallback_model: "fb" },
+    }, "agent.json")).toThrow(/agent\.web_search must be exactly \{ provider, api_key, base_url\?, model, max_calls_per_use\? \} when provider is openai/);
+    expect(() => parseAgentDeploymentConfig({
+      ...AGENT,
+      media: { provider: "anthropic", api_key: "key", model: "m", fallback: "fb" },
+    }, "agent.json")).toThrow(/agent\.media must be exactly \{ provider, api_key, base_url\?, headers\?, model, fallback_model\? \} when provider is anthropic/);
+  });
+
+  test("凭据头按 provider 区分：各自的凭据头不论大小写都拒绝，另一家的凭据头照常放行", () => {
+    for (const [provider, other] of [["google", "anthropic"], ["anthropic", "google"]] as const) {
+      const name: string = AGENT_CREDENTIAL_HEADER_NAMES[provider];
+      for (const variant of [name, name.toUpperCase()]) {
+        expect(() => parseAgentDeploymentConfig({
+          ...AGENT,
+          text: { provider, api_key: "key", model: "m", headers: { [variant]: "v" } },
+        }, "agent.json")).toThrow(`$.agent.text.headers must be ${EXPECTED_AGENT_HEADERS[provider]}`);
+      }
+      expect(parseAgentDeploymentConfig({
+        ...AGENT,
+        text: { provider: other, api_key: "key", model: "m", headers: { [name]: "v" } },
+      }, "agent.json").text.headers).toStrictEqual({ [name]: "v" });
+    }
   });
 
   test("openai provider 不接受 headers", () => {

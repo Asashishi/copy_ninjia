@@ -36,7 +36,7 @@ interface SerializationBudget {
   readonly secrets: LogRedactionSecrets;
 }
 
-/** 一项能力的凭据：api_key，以及 google provider headers 的每个值。 */
+/** 一项能力的凭据：api_key，以及 google 与 anthropic provider headers 的每个值。 */
 function pushCapabilitySecrets(secrets: string[], config: AgentCapabilityConfig | AgentTtsCapabilityConfig): void {
   secrets.push(config.apiKey);
   if (config.headers === undefined) return;

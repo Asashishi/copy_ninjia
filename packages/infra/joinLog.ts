@@ -100,7 +100,7 @@ export async function purgeChatJoinLog(chatId: number): Promise<void> {
   }
   // 删除消息排在该群所有已投递事实之后，Worker 丢掉仍在缓冲里的那些；镜像同步摘除。
   dropChatJoinLogs(chatId);
-  if (await diskIO.flushDiskIODomain("joinLogPurge") !== "flushed") {
+  if ((await diskIO.flushDiskIODomain("joinLogPurge")).result !== "flushed") {
     throw new Error(`Failed to delete the join logs for chat ${chatId}.`);
   }
 }

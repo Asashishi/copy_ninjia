@@ -103,7 +103,7 @@ function joinLogChain(
         throw new Error(`Join-log event ${sequence} was refused before reaching the Worker.`);
       }
       // 生产入口只进批次；显式领域屏障把这一条追写并取得落盘回执。
-      if (await dependencies.flushDiskIODomain("joinLog") !== "flushed") {
+      if ((await dependencies.flushDiskIODomain("joinLog")).result !== "flushed") {
         throw new Error(`Join-log event ${sequence} did not reach the disk.`);
       }
     },
@@ -152,7 +152,7 @@ function identityPolicyChain(
           );
         }
       }
-      if (await dependencies.flushDiskIODomain("whitelist") !== "flushed") {
+      if ((await dependencies.flushDiskIODomain("whitelist")).result !== "flushed") {
         throw new Error(`Identity write batch ${sequence} was not committed.`);
       }
     },
@@ -200,7 +200,7 @@ function temporaryAdBypassWriteChain(
         );
       }
       if (
-        await dependencies.flushDiskIODomain("temporaryAdBypass") !== "flushed"
+        (await dependencies.flushDiskIODomain("temporaryAdBypass")).result !== "flushed"
       ) {
         throw new Error(
           `Temporary-whitelist activity ${sequence} was not committed.`
@@ -282,7 +282,7 @@ function chatQaChain(
         "性能基准问题",
         `性能基准答案 ${sequence}`
       );
-      if (await dependencies.flushDiskIODomain("chatQa") !== "flushed") {
+      if ((await dependencies.flushDiskIODomain("chatQa")).result !== "flushed") {
         throw new Error(`Chat Q&A write ${sequence} was not committed.`);
       }
     },
@@ -317,7 +317,7 @@ function aiMemoryChain(
           `AI memory snapshot ${sequence} was rejected before reaching the Worker.`
         );
       }
-      if (await dependencies.flushDiskIODomain("aiMemory") !== "flushed") {
+      if ((await dependencies.flushDiskIODomain("aiMemory")).result !== "flushed") {
         throw new Error(`AI memory snapshot ${sequence} was not written.`);
       }
     },

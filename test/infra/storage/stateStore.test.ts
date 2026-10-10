@@ -27,6 +27,7 @@ import {
 } from "../../../packages/cache/main/storage";
 import { DEFAULT_CHAT_STATE } from "../../../packages/libs/chatState";
 import { decodeGlobalStateFile } from "../../../packages/libs/stateFileCodec";
+import type { FlushResult } from "../../../packages/types/lifecycle";
 import type {
   ChatState,
   DecodedGlobalState,
@@ -42,10 +43,10 @@ async function settleMicrotasks(condition: () => boolean = (): boolean => false)
 }
 
 /**
- * 让某一条路径的 stat 或 bytes 以给定 errno 失败，其余路径走真实 Bun.file。
+ * 让某一条路径的 bytes 以给定 errno 失败，其余路径走真实 Bun.file。
  * 测试账号常为 root，chmod 挡不住读取，权限类失败只能在这一层注入。
  */
-function failBunFile(target: string, stage: "stat" | "bytes", error: Error): () => void {
+function failBunFile(target: string, stage: "bytes", error: Error): () => void {
   const original = Bun.file.bind(Bun);
   const spy = spyOn(Bun, "file");
   spy.mockImplementation(((path: string) => {
@@ -144,7 +145,7 @@ describe("StateStore", () => {
     await expect(store.flush(20, true)).resolves.toBe("failed");
   });
 
-  /** 下面三条按合并窗口与重试退避的先后关系断言，用假时钟逐毫秒推进。 */
+  /** 下面几条按合并窗口与重试退避的先后关系断言，用假时钟逐毫秒推进。 */
   describe("后台合并窗口（假时钟）", () => {
     beforeEach((): void => { jest.useFakeTimers(); });
     afterEach((): void => { jest.useRealTimers(); });
@@ -218,6 +219,70 @@ describe("StateStore", () => {
       await settleMicrotasks((): boolean => writes.length === 1);
       expect(attempts).toBe(2);
       expect(JSON.parse(writes[0]!)).toEqual(schema(81));
+    });
+
+    test("失败重试排期期间等待落盘的写入不另写，不消耗重试次数，随重试一起结算", async () => {
+      const writes: string[] = [];
+      const fatalErrors: Error[] = [];
+      let attempts: number = 0;
+      const store = new StateStore({
+        retryDelaysMs: [60],
+        maxAttempts: 2,
+        onRetryError: () => {},
+        onFatal: (error) => { fatalErrors.push(error); },
+        writeText: async (_path, content) => {
+          attempts++;
+          if (attempts === 1) throw new Error("disk hiccup");
+          writes.push(content);
+        },
+      });
+
+      const first: Promise<void> = store.save(schema(90));
+      await settleMicrotasks((): boolean => attempts === 1);
+      await settleMicrotasks();
+      const later: Promise<void>[] = [store.save(schema(91)), store.save(schema(92)), store.save(schema(93))];
+      await settleMicrotasks();
+      // 退避未到期：三次等待落盘的写入都没有触发写盘，也没有把有限重试耗尽。
+      expect(attempts).toBe(1);
+      expect(fatalErrors).toEqual([]);
+
+      jest.advanceTimersByTime(60);
+      await first;
+      for (const saved of later) await saved;
+      expect(attempts).toBe(2);
+      expect(writes.map((content: string): unknown => JSON.parse(content))).toEqual([schema(93)]);
+    });
+
+    test("失败重试排期期间非 quiesce 的 flush 等重试写出，quiesce 的 flush 立即写最后一次", async () => {
+      let attempts: number = 0;
+      const store = new StateStore({
+        retryDelaysMs: [60],
+        backgroundDelayMs: 1,
+        onRetryError: () => {},
+        writeText: async () => {
+          attempts++;
+          if (attempts === 1) throw new Error("disk hiccup");
+        },
+      });
+
+      await store.save(schema(94), { waitForPersistence: false });
+      jest.advanceTimersByTime(1);
+      await settleMicrotasks((): boolean => attempts === 1);
+      await settleMicrotasks();
+      const drained: Promise<FlushResult> = store.flush(1_000);
+      await settleMicrotasks();
+      expect(attempts).toBe(1);
+      jest.advanceTimersByTime(60);
+      await expect(drained).resolves.toBe("flushed");
+      expect(attempts).toBe(2);
+
+      attempts = 0;
+      await store.save(schema(95), { waitForPersistence: false });
+      jest.advanceTimersByTime(1);
+      await settleMicrotasks((): boolean => attempts === 1);
+      await settleMicrotasks();
+      await expect(store.flush(1_000, true)).resolves.toBe("flushed");
+      expect(attempts).toBe(2);
     });
   });
 
@@ -448,21 +513,16 @@ describe("StateStore 默认读取边界", () => {
     });
   }
 
-  test("stat 报权限失败时是安全错误而不是缺失", async () => {
-    const denied: Error & { code?: string } = new Error("EACCES: permission denied, stat");
-    denied.code = "EACCES";
-    const restore: () => void = failBunFile(statePath, "stat", denied);
-    const store = storeAt();
+  test("lstat 报 ENOENT 以外的访问错误（上级路径是文件）时是安全错误而不是缺失", async () => {
+    const parentFile: string = join(dir, "parent-file");
+    await Bun.write(parentFile, "");
+    const blockedPath: string = join(parentFile, "state.json");
+    const store = new StateStore({ stateFilePath: blockedPath, writeText: async () => {} });
 
-    try {
-      await expect(store.load()).rejects.toThrow(`${statePath}: $ must be an accessible regular file.`);
-      expect(writes).toEqual([]);
-    } finally {
-      restore();
-    }
+    await expect(store.load()).rejects.toThrow(`${blockedPath}: $ must be an accessible regular file.`);
   });
 
-  test("stat 通过后读取阶段文件消失同样报错，不降级为缺失", async () => {
+  test("lstat 通过后读取阶段文件消失同样报错，不降级为缺失", async () => {
     await Bun.write(statePath, legal);
     const vanished: Error & { code?: string } = new Error("ENOENT: no such file or directory, read");
     vanished.code = "ENOENT";
@@ -491,13 +551,15 @@ describe("StateStore 默认读取边界", () => {
     expect(writes).toEqual([]);
   });
 
-  test("指向普通文件的软链接继续接受", async () => {
+  test("指向普通文件的软链接同样拒绝，链接与目标原样保留", async () => {
     const target: string = join(dir, "real-state.json");
     await Bun.write(target, legal);
     symlinkSync(target, statePath);
     const store = storeAt();
-    await expect(store.load()).resolves.toEqual(decodeGlobalStateFile(JSON.parse(legal), "state.json"));
+    await expect(store.load()).rejects.toThrow(`${statePath}: $ must be a regular file, not a symbolic link.`);
     expect(writes).toEqual([]);
+    expect(lstatSync(statePath).isSymbolicLink()).toBeTrue();
+    expect(await Bun.file(target).text()).toBe(legal);
   });
 
   test("UTF-8 BOM 被剥离后正常解析", async () => {
@@ -521,6 +583,7 @@ describe("群级状态门面", () => {
       intentId: 3,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 1_700_000_000_000,
     };
     chatStateCache.set(-1001, chatStateOf({ isAIChatEnabled: true, botPermissions: permissions }));

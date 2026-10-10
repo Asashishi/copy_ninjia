@@ -446,6 +446,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       intentId: 88,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 200_000,
     });
     // 真正推进了一个阶段：属于「完成后要补写」的变化。
@@ -456,6 +457,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       intentId: 89,
       originalPermissions: { can_invite_users: true },
       announced: true,
+      announcementMessageId: 7001,
       expiresAt: 300_000,
     });
     expect(saveState).toHaveBeenCalledTimes(1);
@@ -488,6 +490,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
       intentId: 90,
       originalPermissions: { can_invite_users: true },
       announced,
+      announcementMessageId: announced ? 7001 : undefined,
       expiresAt: 400_000,
     });
     publish(false);
@@ -528,6 +531,7 @@ describe("Anti-Raid main-thread persistence mirror", () => {
         intentId,
         originalPermissions: { can_invite_users: true },
         announced: true,
+        announcementMessageId: 7001,
         expiresAt: 500_000 + intentId,
       });
     };

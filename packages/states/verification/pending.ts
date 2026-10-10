@@ -152,17 +152,14 @@ export function handleVerifyTimeout(
     event.now - state.joinedAt < VERIFICATION_REMINDER_UNDELIVERED_MAX_MS
   ) {
     state.expiresAt = event.now + VERIFICATION_TIMEOUT_MS;
-    const canReply: boolean =
-      state.replyReminderRequested && state.welcomeAnchorMessageId !== undefined;
-    if (!canReply) {
-      state.replyReminderRequested = false;
-      state.reminderSuperseded = false;
-    }
-    const effects: VerificationEffect[] = canReply
+    // replyReminderRequested、reminderSuperseded 与锚点同真同假（写入只在 handleTrackedMessage，
+    // 落盘恢复由 verificationCodec 校验），有锚点即要求过回复式提醒。
+    const anchorMessageId: number | undefined = state.welcomeAnchorMessageId;
+    const effects: VerificationEffect[] = anchorMessageId !== undefined
       ? [{
         kind: "sendReplyReminder",
         label: state.label,
-        targetMessageId: state.welcomeAnchorMessageId!,
+        targetMessageId: anchorMessageId,
       }]
       : [{ kind: "sendReminder", label: state.label, isBot: state.isBot }];
     return pendingUpdated(state, effects, true);

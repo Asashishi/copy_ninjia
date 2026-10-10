@@ -17,7 +17,7 @@
 | `bun run start` | 启动长轮询 | 生产环境入口 |
 | `bun run lint`<br>`bun run lint:fix` | ESLint 检查 / 自动修复 | 严格检查代码规范；CI 与门禁一律使用不带缓存的 `lint` |
 | `bun run lint:fast` | 本地带缓存 ESLint | 附加 `--cache`，仅供本地开发调试回路快速迭代使用 |
-| `bun run typecheck` | TypeScript 类型检查 | `tsc --noEmit --incremental` 全严格模式，增量信息缓存于 `tsconfig.tsbuildinfo` |
+| `bun run typecheck` | TypeScript 类型检查 | `bun --check` 按 `tsconfig.json` 全严格模式检查整个项目，不写增量缓存 |
 | `bun run test` | 全量测试 | 强制启用进程上下文隔离（`bun test --isolate`） |
 | `bun run test:random` | 乱序全量测试 | 固定种子的乱序全量测试，专门用于暴露测试间的全局状态残留与 mock 泄漏 |
 | `bun run test:coverage` | 测试 + 覆盖率 | 运行全量测试并统计全源码覆盖率指标 |
@@ -79,7 +79,7 @@
 - **紧急安全补丁豁免**：未满 7 天冷却期的紧急漏洞修复，仅允许将该单一包名加入 `install.minimumReleaseAgeExcludes`，完成安装后必须立即移除，禁止使用命令行参数 `--minimum-release-age` 全局绕过。
 - **安全核验要求**：被豁免的包版本必须交叉核对至少两个独立的安全受害清单，校验 npm registry 的 `integrity` 哈希，排查安装脚本与持久化后门，并在提交记录中注明包名、CVE 编号及移除时间。
 - **运行时版本锁定**：Bun 运行时及 `@types/bun` 严格固定为 `package.json` 声明的版本；`packageManager` 与 `install.sh` 共同锁定运行环境。
-- **TypeScript 编译器**：`bun run typecheck` 使用 `@typescript/native`（`npm:typescript@~7.0.2`）提供的编译器；ESLint 与约定检查工具通过 `@typescript/old` 使用 TypeScript 6 编译器 API。
+- **TypeScript 编译器**：`bun run typecheck` 以 `bun --check` 调用 Bun 内置的类型检查器；`bun check` 执行的是仓库的 `check` 脚本。ESLint 与约定检查工具通过 `@typescript/old` 使用 TypeScript 6 编译器 API。
 
 ---
 
@@ -96,7 +96,7 @@
 
 ### 当前文档版本实测
 
-`bun run test:coverage`：**6269 tests / 526 files / 446227 次 `expect()`**；全源码**函数覆盖率 98.24% / 行覆盖率 98.75%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
+`bun run test:coverage`：**6386 tests / 530 files / 445518 次 `expect()`**；全源码**函数覆盖率 98.27% / 行覆盖率 98.78%**。三语项目 README 的 Coverage 徽章展示行覆盖率。
 
 ---
 
@@ -133,6 +133,8 @@
 `bun run perf:hot-path-gate` 是 `bun run check` 集成门禁中的硬性关卡。测试按照 `packages/consts/performance.ts` 中的 `HOT_PATH_PROFILE_SCENARIOS` 场景，每个场景独立启动两个子进程重复运行 `HOT_PATH_PROFILE_REPEATS` 次：
 - `steadyProfile`：在开启 `BUN_JSC_logGC=1` 的环境下，高精度测量核心循环中的 GC 暂停时间占比与 JIT 编译层级。
 - `retained`：在无 profiler 侵入的干净环境下，测量真实的物理内存（RSS）峰值、堆内存（heapUsed）波峰以及 full-GC 触发后的残留内存。
+
+门禁子进程与全量基准、`perf:review`、`perf:disk-transport`、`perf:identity-database`、`perf:join-log` 的子进程统一经 `scripts/perf/childEnvironment.ts` 的 `perfChildEnvironment` 取环境：继承父进程环境并叠加隔离根等变量，再去掉 `BUN_INSPECTOR_ENVS` 列出的 Bun 调试器接入变量（例如 VS Code 终端注入的 `BUN_INSPECT_CONNECT_TO`），子进程只有主线程一个 JSC 堆。GC 日志里的 `starting` 握手必须恰好一行；出现多个堆时拒绝给出 GC 读数。
 
 ### 门禁指标与分档
 

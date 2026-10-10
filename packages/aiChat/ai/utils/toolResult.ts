@@ -21,7 +21,7 @@ export interface ParsedToolResult {
 }
 
 /**
- * 一条工具失败结果。message 直接是给模型看的英文说明，不做本地化。
+ * 一条工具失败结果。message 直接是给模型看的说明，按调用方给出的原文，不做本地化。
  * @param extra 少数失败结果还要带上模型需要的附加字段（`retryable`、
  *   `retry_after_seconds`、`required_action` 等，见 replyToolset/imageGeneration.ts）。
  *   它们按传入顺序拼在 `error` 之后。

@@ -4,7 +4,6 @@ import {
   diskIOFlushBarrier,
   diskIORestartThrottle,
   diskIORuntime,
-  pendingFlushFailedDomains,
 } from "../../cache/main/diskIO";
 import {
   DISK_DIAGNOSTIC_FATAL_REBUILD_THRESHOLD,
@@ -14,7 +13,6 @@ import { WORKER_MAX_RESTARTS, WORKER_RESTART_WINDOW_MS } from
   "../../consts/workerSupervisor";
 import type {
   DiskBusinessMessage,
-  DiskFlushRequest,
   DiskIORecoveryTransport,
   LoadRequest,
   RecoveryReplayRequest,
@@ -35,7 +33,7 @@ import {
   rejectAllPendingDiskIORequests,
   requestLuckSecretFromWorker,
 } from "./requests";
-import { pauseDiskIOOperations, postBufferedDiskIOBusiness, safePostDiskIO } from "./transport";
+import { beginDiskIOFlush, pauseDiskIOOperations, postBufferedDiskIOBusiness, safePostDiskIO } from "./transport";
 import { signalDiskIOFatal } from "./fatal";
 import { DiskIORecoveryRevisions } from "../../libs/diskIORecoveryRevisions";
 import { diskIOMessageCost } from "../../libs/diskIOMessageCost";
@@ -350,21 +348,7 @@ export function recoverDiskIOWorker({
 async function flushBusinessBeforeDiagnosticRecycle(
   worker: Worker
 ): Promise<FlushResult> {
-  let flushId: number | null = null;
-  const result: FlushResult = await diskIOFlushBarrier.begin(
-    (id: number): boolean => {
-      flushId = id;
-      const request: DiskFlushRequest = {
-        type: "flush",
-        flushId: id,
-        scope: "business",
-      };
-      return safePostDiskIO(worker, request, "diagnostic recycle business flush");
-    },
-    DISK_IO_FLUSH_TIMEOUT_MS
-  );
-  if (flushId !== null) pendingFlushFailedDomains.delete(flushId);
-  return result;
+  return (await beginDiskIOFlush(worker, "business", DISK_IO_FLUSH_TIMEOUT_MS)).result;
 }
 
 /** 日志连续失败达到阈值后先封住业务入口并确保非日志事实 durable，再替换 Worker。 */

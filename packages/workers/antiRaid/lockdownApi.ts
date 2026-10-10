@@ -64,11 +64,7 @@ export function beginLockdownAnnouncement(chatId: number, joinCount: number | un
       if (messageId !== undefined) deleteLockdownAnnouncement(chatId, messageId);
       return;
     }
-    dispatchLockdown(chatId, {
-      type: "announcementResult",
-      ok: messageId !== undefined,
-      messageId,
-    });
+    dispatchLockdown(chatId, { type: "announcementResult", messageId });
   });
 }
 

@@ -21,6 +21,7 @@ export function handleRestoreTimerFired(
       originalPermissions: state.originalPermissions,
       intentId: event.intentId,
       restoreAfterPersist: true,
+      restoreReason: "expired",
       ...announcementOf(state),
     },
     effects: [{ kind: "persistState" }],
@@ -60,6 +61,8 @@ export function handleDeactivate(
       originalPermissions,
       intentId: event.intentId,
       restoreAfterPersist: true,
+      // 到期恢复进行中再被解除时，解锁仍按到期公告。
+      restoreReason: state.kind === "restoring" ? state.restoreReason : "lifted",
       ...announcementOf(state),
     },
     effects: [{ kind: "persistState" }],
@@ -94,7 +97,7 @@ export function handleRestoreResult(
         ? [
           { kind: "reportUnlock" },
           ...announcementCleanupEffects(state),
-          { kind: "announceUnlock" },
+          { kind: "announceUnlock", reason: state.restoreReason },
         ]
         : [{ kind: "reportUnlock" }, ...announcementCleanupEffects(state)],
     };

@@ -5,12 +5,13 @@
  */
 
 import { CHILD_TIMEOUT_MS } from "./constants";
+import { perfChildEnvironment } from "../childEnvironment";
 
 /** 一次子进程调用的参数。 */
 export interface SpawnChildOptions {
   /** `bun` 之后的完整参数表，通常以脚本路径开头。 */
   readonly args: readonly string[];
-  /** 追加到当前环境的变量；主要是各根目录变量。 */
+  /** 叠加到 `perfChildEnvironment` 继承环境上的变量；主要是各根目录变量。 */
   readonly env?: Readonly<Record<string, string>>;
   /** 出错信息里用来指认是哪一项测量。 */
   readonly label: string;
@@ -38,7 +39,7 @@ export async function spawnJsonChild<TResult>({
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
+      env: perfChildEnvironment(env),
     }
   );
   const stdoutPromise: Promise<string> = subprocess.stdout.text();

@@ -295,7 +295,7 @@ describe("project convention collectors", () => {
     expect(problems.some((problem: string): boolean => problem.includes("cron/delivery.ts:"))).toBeFalse();
 
     await Bun.write(welcomePath,
-      'import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient"; function runVerificationEffects() { return sendTemporaryMessageFromMain({purpose: "notice", chatId: 1, text: "welcome", deleteAfterMs: 30000}); }');
+      'import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient"; function runVerificationEffects() { return sendTemporaryMessageFromMain({purpose: "notice", chatId: 1, text: "welcome"}); }');
     await Bun.write(join(sourceRoot, "workers", "antiRaid", "verificationReminders.ts"),
       'import { sendMessage } from "../../../infra/telegram"; function attemptReminderDelivery() { return sendMessage({chatId: 1, text: "verify", keyboard: {inline_keyboard: []}}); }');
     const fixedProblems: readonly string[] = await collectTelegramMessageProblems(root, sourceRoot, commandsRoot);

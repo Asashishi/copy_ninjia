@@ -6,7 +6,6 @@ import {
   verificationRevisions,
 } from "../../cache/workers/antiRaid/verification";
 import { VERIFICATION_TERMINAL_MAX_ATTEMPTS_PER_PROCESS } from "../../consts/antiRaid/verification";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { logger } from "../../infra/logger";
 import {
   deleteMessage,
@@ -29,7 +28,6 @@ import {
   runExpelEffect,
   runRecheckInviterEffect,
 } from "./verificationEffects/terminal";
-import type { VerificationChangePublisher } from "./verificationEffects/terminal";
 import {
   sendReplyReminder,
   sendVerificationReminder,
@@ -52,7 +50,6 @@ export interface RunVerificationEffectsParams {
   userId: number;
   effects: readonly VerificationEffect[];
   dispatchVerification: VerificationDispatcher;
-  publishVerificationChange: VerificationChangePublisher;
   requestTerminalAttempt?: VerificationAttemptRequester;
 }
 
@@ -152,7 +149,6 @@ export async function runVerificationEffects({
   userId,
   effects,
   dispatchVerification,
-  publishVerificationChange,
   requestTerminalAttempt = requestVerificationAttemptPermit,
 }: RunVerificationEffectsParams): Promise<void> {
   const key: string = verificationKey(chatId, userId);
@@ -200,7 +196,6 @@ export async function runVerificationEffects({
             userId,
             effect,
             dispatchVerification,
-            publishVerificationChange,
           });
           break;
         case "recheckInviter":
@@ -238,7 +233,6 @@ export async function runVerificationEffects({
               chatId,
               text: welcomeText,
               replyToMessageId: effect.anchorMessageId,
-              deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
               signal,
             })
           );

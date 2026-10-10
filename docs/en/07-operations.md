@@ -174,10 +174,6 @@ Accompanied at runtime by SQLite temporary WAL (`-wal`) and shared memory (`-shm
 - **`memory/ai-daily-usage/usage.json`**: Model token and request counts (contains zero conversation text).
   - **Data structure**: The root `summary` object tracks usage for the most recent completed calendar day (aggregated by capability, provider, and model name); all other keys represent individual unsummarized daily calls.
   - **Capability coverage**: Tracks all capabilities listed in `AGENT_CAPABILITY_NAMES`.
-  - **Maintenance tool**: Strip web search tokens and recalculate totals offline using [`scripts/removeWebSearchUsage.ts`](../../scripts/removeWebSearchUsage.ts):
-    ```bash
-    bun run usage:remove-web-search --source-root <backup-root> --output-root <new-staging-dir>
-    ```
 
 ### 8. Logs and Instance Lock: `logs/` and `bot.lock`
 - **`logs/`**: English structured error log files written asynchronously in batches by the Disk I/O Worker.

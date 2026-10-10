@@ -33,6 +33,7 @@ import {
   mainBenchmarkEnvironment,
   removeMockRoot,
 } from "./identityDatabase/roots";
+import { perfChildEnvironment } from "./childEnvironment";
 import {
   runColdReadChild,
   runColdWriteChild,
@@ -109,9 +110,9 @@ function runIndependentChild(
       cmd: [Bun.argv[0]!, import.meta.path, "--child", operation, mockRoot],
       stdout: "pipe",
       stderr: "inherit",
-      ...(temporaryRoot === null
-        ? {}
-        : { env: mainBenchmarkEnvironment(temporaryRoot) }),
+      env: temporaryRoot === null
+        ? perfChildEnvironment()
+        : mainBenchmarkEnvironment(temporaryRoot),
     });
     if (child.exitCode !== 0) {
       throw new Error(

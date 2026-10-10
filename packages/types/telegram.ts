@@ -181,14 +181,18 @@ export interface BotActionPermissions {
 /**
  * 一次 Telegram 文件下载（getFile + 有界读取）的结局，见 infra/telegram/fileDownload.ts。
  * - missingPath：getFile 没有返回 file_path；
+ * - metadataTimeout：getFile 的超时预算耗尽（含在 download 类 429 队列里等待的时间）；
  * - httpError：文件服务器回了非 2xx；
+ * - downloadTimeout：下载的超时预算在读完响应体之前耗尽（含 429 排队时间）；
  * - tooLarge：读到的字节超过调用方给的上限，observedBytes 是停下时已读到的量；
  * - empty：下载成功但一个字节都没有。
  */
 export type TelegramFileDownloadResult =
   | { readonly status: "ok"; readonly bytes: Uint8Array }
   | { readonly status: "missingPath" }
+  | { readonly status: "metadataTimeout" }
   | { readonly status: "httpError"; readonly httpStatus: number }
+  | { readonly status: "downloadTimeout" }
   | { readonly status: "tooLarge"; readonly observedBytes: number }
   | { readonly status: "empty" };
 

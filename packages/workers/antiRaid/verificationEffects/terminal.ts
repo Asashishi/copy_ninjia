@@ -2,7 +2,6 @@ import { workerAtmosphere } from "../atmosphere";
 import type { TelegramWorkerTemporaryMessageResult } from "../../../types/telegramWorker";
 import { sendTemporaryMessageFromMain } from "../../../infra/telegram/workerClient";
 import { runTelegramAction } from "../../../infra/telegram/actions/core";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../../consts/commands";
 import { verificationEntries } from "../../../cache/workers/antiRaid/verification";
 import { logger } from "../../../infra/logger";
 import {
@@ -28,13 +27,6 @@ import { resolveChatIsSupergroup } from "../chatKind";
 import { scheduleTerminalRetry } from "./retry";
 import { expelNoticeText } from "./expelNotice";
 import type { ExpelRemovalOutcome, VerificationCleanupResult } from "../../../types/antiRaid/verification";
-
-/** 终态原地标记变化后发布新 revision 的边界。 */
-export type VerificationChangePublisher = (
-  chatId: number,
-  userId: number,
-  previousWasPersisted: boolean
-) => void;
 
 interface RunRecheckInviterEffectParams {
   chatId: number;
@@ -98,7 +90,6 @@ interface RunExpelEffectParams {
   userId: number;
   effect: Extract<VerificationEffect, { kind: "expel" | "expelFlood" }>;
   dispatchVerification: VerificationDispatcher;
-  publishVerificationChange: VerificationChangePublisher;
 }
 
 /** 执行仍匹配快照的处置终态，并为未结算动作安排有上限的指数退避。 */
@@ -107,7 +98,6 @@ export async function runExpelEffect({
   userId,
   effect,
   dispatchVerification,
-  publishVerificationChange,
 }: RunExpelEffectParams): Promise<void> {
   const key: string = verificationKey(chatId, userId);
   const expectedState: VerificationState | undefined =
@@ -167,7 +157,7 @@ export async function runExpelEffect({
     reason,
     canRestrict: !permissionBlocked,
     expectedState,
-    publishVerificationChange,
+    dispatchVerification,
   });
   if (settled && verificationEntries.get(key)?.state === expectedState) {
     dispatchVerification(chatId, userId, { type: "expelSettled" });
@@ -219,7 +209,7 @@ interface ExpelMemberParams {
    */
   canRestrict: boolean;
   expectedState: VerificationTerminalState & { kind: "expelling" };
-  publishVerificationChange: VerificationChangePublisher;
+  dispatchVerification: VerificationDispatcher;
 }
 
 /**
@@ -330,7 +320,7 @@ async function expelMember({
   reason,
   canRestrict,
   expectedState,
-  publishVerificationChange,
+  dispatchVerification,
 }: ExpelMemberParams): Promise<boolean> {
   const stillCurrent = (): boolean =>
     verificationEntries.get(verificationKey(chatId, userId))?.state === expectedState;
@@ -376,7 +366,6 @@ async function expelMember({
       action: "send message",
       execute: (signal?: AbortSignal): Promise<TelegramWorkerTemporaryMessageResult | undefined> => sendTemporaryMessageFromMain({
         purpose: "notice",
-        deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
         chatId,
         text: expelNoticeText({
           texts: workerAtmosphere().NOTICE_TEXTS,
@@ -394,25 +383,20 @@ async function expelMember({
       fallback: undefined,
     })
     : undefined;
-  if (!kicked && shouldSendNotice && noticeMessageId !== undefined) {
-    if (unconfirmed) {
-      expectedState.unconfirmedNoticeSent = true;
-    } else expectedState.failureNoticeSent = true;
-    publishVerificationChange(chatId, userId, true);
-  }
-  if (noticeMessageId !== undefined && kicked) {
-    expectedState.successNoticeSent = true;
-    publishVerificationChange(chatId, userId, true);
+  // 播报 await 期间条目可能已被替换或移除；持久标记只经状态机写给仍是 expectedState 的条目。
+  if (!stillCurrent()) return false;
+  if (noticeMessageId !== undefined) {
+    dispatchVerification(chatId, userId, {
+      type: "expelNoticeSent",
+      notice: kicked ? "success" : unconfirmed ? "unconfirmed" : "failure",
+    });
+    // 成功播报已进入新快照：等落盘回执结束终态。
+    if (kicked) return false;
+  } else if (kicked && shouldSendNotice) {
+    // 踢成功但播报没发出去：不结算，先把 removalConfirmed 记进快照再退避重试
+    // （见上面 kicked 的两条来路）。
+    dispatchVerification(chatId, userId, { type: "removalConfirmed" });
     return false;
   }
-  // 踢成功但播报没发出去：不结算，先把 removalConfirmed 记进快照再退避重试
-  // （见上面 kicked 的两条来路）。
-  if (kicked && shouldSendNotice) {
-    if (expectedState.removalConfirmed !== true) {
-      expectedState.removalConfirmed = true;
-      publishVerificationChange(chatId, userId, true);
-    }
-    return false;
-  }
-  return kicked && stillCurrent();
+  return kicked;
 }

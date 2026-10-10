@@ -175,6 +175,7 @@ export const NOTICE_TEXTS: Readonly<AtmosphereNotices> = {
   lockdownInfluxUnknown: "检测到短时间内大量成员入群",
   lockdownStarted: (influx: string, durationMinutes: number): string => `${influx}，触发防冲群限制，暂停普通成员邀请新人 ${durationMinutes} 分钟。`,
   lockdownEnded: (durationMinutes: number): string => `${durationMinutes} 分钟限制已结束，普通成员已恢复邀请权限。`,
+  lockdownLifted: "防冲群限制已解除，普通成员已恢复邀请权限。",
   verificationCommentExempt: (targetLabel: string): string => `${targetLabel} 已通过帖子评论身份检查，免除入群验证，欢迎加入。`,
   verificationBotApproved: (fromLabel: string | undefined, targetLabel: string): string => `管理员 ${fromLabel} 已为机器人 ${targetLabel} 通过入群验证。`,
   verificationMemberApproved: (fromLabel: string | undefined, targetLabel: string): string => `管理员 ${fromLabel} 已为 ${targetLabel} 通过入群验证，欢迎加入。`,

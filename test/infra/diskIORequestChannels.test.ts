@@ -360,7 +360,7 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
 
       worker.rejectedTypes.add("flush");
       await expect(diskIO.flushDiskIO(60_000)).resolves.toBe("failed");
-      await expect(diskIO.flushDiskIODomain("blocklist", 60_000)).resolves.toBe("failed");
+      await expect(diskIO.flushDiskIODomain("blocklist", 60_000)).resolves.toEqual({ result: "failed" });
 
       worker.rejectedTypes.add("diagnosticBatch");
       expect(diskIO.relayLogMessage({ timestamp: 1, level: "error", args: ["boom"] })).toBe(true);
@@ -558,9 +558,8 @@ describe("Disk I/O 请求通道、运行时恢复与诊断缓冲", () => {
 
   test("Worker 未初始化时领域 flush 不会复用旧回执误报成功", async () => {
     await diskIO.terminateDiskIO();
-    await expect(diskIO.flushDiskIODomain("blocklist", 1_000)).resolves.toBe("failed");
     // 没有本次请求的回执时不报出任何领域名：别的 flush 留下的旧值不带出。
-    await expect(diskIO.flushDiskIODomainOutcome("blocklist", 1_000)).resolves.toEqual({ result: "failed" });
+    await expect(diskIO.flushDiskIODomain("blocklist", 1_000)).resolves.toEqual({ result: "failed" });
   });
 });
 

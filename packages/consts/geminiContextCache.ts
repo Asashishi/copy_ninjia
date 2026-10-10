@@ -10,6 +10,9 @@
  */
 export const GEMINI_CONTEXT_CACHE_TTL_SECONDS: number = 86_400;
 
+/** GEMINI_CONTEXT_CACHE_TTL_SECONDS 写成 cachedContent 创建与续期请求的 `ttl` 字段形态（`<秒>s`）。所属模块：infra/geminiContextCache.ts。 */
+export const GEMINI_CONTEXT_CACHE_TTL: string = `${GEMINI_CONTEXT_CACHE_TTL_SECONDS}s`;
+
 /**
  * displayName 里两段指纹各自的形态：libs/prefixFingerprint.ts 产出的定长
  * base64url。启动扫描据此认出本部署的条目；前缀加两段指纹不超过 displayName 的

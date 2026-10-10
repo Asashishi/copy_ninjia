@@ -30,6 +30,8 @@ export interface AiTokenUsage extends AiUsageBase {
   readonly inputTokens: number;
   /** 命中缓存的输入 token；供应商没有给出缓存用量时为 null。 */
   readonly cachedInputTokens: number | null;
+  /** 写入缓存的输入 token，属于 inputTokens、与 cachedInputTokens 不重叠；供应商没有给出缓存写入用量时缺省。 */
+  readonly cacheWriteInputTokens?: number;
   readonly outputTokens: number;
   /** 同一次请求执行的检索次数；无检索时缺省，计入 requests 一次。 */
   readonly searchCalls?: number;
@@ -63,6 +65,11 @@ export interface AiCacheTotals {
   /** 给出了缓存用量的那些请求的输入 token 合计；命中率的分母。 */
   readonly reportedInputTokens: number;
   readonly cachedInputTokens: number;
+  /**
+   * 给出了缓存写入用量的那些请求的写入 token 合计；这组没有这类请求时为 undefined，落盘时省略该键，
+   * 文件里缺省即为从没有请求给出过缓存写入用量。
+   */
+  readonly cacheWriteInputTokens: number | undefined;
   readonly outputTokens: number;
   /** cachedInputTokens / reportedInputTokens，保留 AI_CACHE_HIT_RATE_DIGITS 位小数；分母为 0 时为 null。 */
   readonly cacheHitRate: number | null;

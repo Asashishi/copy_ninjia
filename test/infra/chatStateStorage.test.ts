@@ -17,7 +17,7 @@ const persistedListeners: ((reply: IdentityStoragePersistedReply) => void)[] = [
 const respawnListeners: DiskIORespawnListener[] = [];
 let acknowledgeFlush: boolean = true;
 let postAccepted: boolean = true;
-const flushDiskIODomainOutcome = mock(
+const flushDiskIODomain = mock(
   async (_domain: DiskIODomain): Promise<DomainFlushOutcome> => {
     if (acknowledgeFlush) {
       const latest = new Map<number, number>();
@@ -45,7 +45,7 @@ const flushDiskIODomainOutcome = mock(
 );
 
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
-  flushDiskIODomainOutcome,
+  flushDiskIODomain,
   onDiskIORespawn: (
     _owner: string,
     _priority: number,
@@ -86,7 +86,7 @@ beforeEach(() => {
   diskMessages.length = 0;
   acknowledgeFlush = true;
   postAccepted = true;
-  flushDiskIODomainOutcome.mockClear();
+  flushDiskIODomain.mockClear();
   resetChatStateCache();
 });
 
@@ -148,7 +148,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
     chatStateCache.set(-1001, chatStateOf({ isInitEnabled: true, title: "Test" }));
     await expect(persistChatState(-1001, "test update")).resolves.toBeUndefined();
 
-    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("chatState");
+    expect(flushDiskIODomain).toHaveBeenCalledWith("chatState");
     expect(unacknowledgedChatStateWrites.has(-1001)).toBeFalse();
     const message: DiskBusinessMessage = diskMessages[0]!;
     expect(message.type).toBe("chatStateWrite");
@@ -203,7 +203,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
 
   test("领域 flush 失败时报错逐字点名结局、revision 与失败领域；无回执时如实说明", async () => {
     chatStateCache.set(-1001, chatStateOf({ isInitEnabled: true }));
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => ({ result: "failed", failedDomains: ["chatState", "luck"] })
     );
     const first: Error = await persistChatState(-1001, "ctx").then(
@@ -215,7 +215,7 @@ describe("主线程 chat-state LRU 与 SQLite 最终一致性", () => {
       `Failed to persist chat state update (ctx): flush failed for chat -1001 revision ${firstRevision}; failed domains: chatState, luck.`
     );
 
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => ({ result: "timedOut" })
     );
     const second: Error = await persistChatState(-1001, "ctx").then(

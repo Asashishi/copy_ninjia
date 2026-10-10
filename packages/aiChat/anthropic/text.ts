@@ -26,7 +26,7 @@ import type {
 export function generateAnthropicText(request: AiTextRequest): Promise<AiTextResult> {
   return requestAnthropicTextResult({
     capability: "summary",
-    buildBody: (): Anthropic.MessageCreateParamsNonStreaming => ({
+    buildBody: (): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming => ({
       model: getAgentDeploymentConfig().summary.model,
       system: request.systemPrompt,
       messages: [{ role: "user", content: request.userContent }],
@@ -47,7 +47,7 @@ export function generateAnthropicText(request: AiTextRequest): Promise<AiTextRes
 export function generateAnthropicJson(request: AiJsonRequest): Promise<AiTextResult> {
   return requestAnthropicTextResult({
     capability: "text",
-    buildBody: (): Anthropic.MessageCreateParamsNonStreaming => ({
+    buildBody: (): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming => ({
       model: getAgentDeploymentConfig().text.model,
       system: request.systemPrompt,
       messages: [{ role: "user", content: request.userContent }],
@@ -64,7 +64,7 @@ export function generateAnthropicJson(request: AiJsonRequest): Promise<AiTextRes
 export function describeAnthropicVision(request: AiVisionRequest): Promise<AiTextResult> {
   return requestAnthropicTextResult({
     capability: "media",
-    buildBody: (): Anthropic.MessageCreateParamsNonStreaming => ({
+    buildBody: (): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming => ({
       model: getAgentDeploymentConfig().media.model,
       system: request.prompt,
       messages: [{

@@ -46,6 +46,7 @@ import {
   waitForDiskIODiagnostics,
 } from "./diskIO/diagnosticChannel";
 import {
+  beginDiskIOFlush,
   fitsDiskIOBusiness,
   queueDiskIOOperationMessage,
   resetDiskIOOperations,
@@ -65,7 +66,6 @@ import type { FlushResult } from "../types/lifecycle";
 import type {
   CloseStorageRequest,
   DiskBusinessMessage,
-  DiskFlushRequest,
   DiskFlushScope,
   LoadRequest,
   QueuedDiskIOOperationMessage,
@@ -387,51 +387,29 @@ export async function flushDiskIO(timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS):
   }
   const remaining: number = deadline - performance.now();
   if (remaining <= 0) return "timedOut";
-  return (await requestDiskIOFlush(remaining, "all")).result;
+  return (await flushWritableScope("all", remaining)).result;
 }
 
-async function requestDiskIOFlush(
-  timeoutMs: number,
-  scope: DiskFlushScope
-): Promise<DomainFlushOutcome> {
+/** 当前代际可写时经 beginDiskIOFlush 发起 scope 范围的 flush；没有 Worker 或已不可写时直接按 failed 结算。 */
+async function flushWritableScope(scope: DiskFlushScope, timeoutMs: number): Promise<DomainFlushOutcome> {
   requirePositiveFinite(timeoutMs, "Disk I/O flush timeout");
   const worker: Worker | null = diskIORuntime.worker;
   if (!worker || !diskIORuntime.writable) return { result: "failed" };
-  let flushId: number | null = null;
-  const result: FlushResult = await diskIOFlushBarrier.begin((id: number): boolean => {
-    flushId = id;
-    const request: DiskFlushRequest = { type: "flush", flushId: id, scope };
-    return safePostDiskIO(worker, request, "flush request");
-  }, timeoutMs);
-  if (flushId === null) return { result };
-  const failedDomains: readonly DiskIODomain[] | undefined =
-    pendingFlushFailedDomains.get(flushId);
-  pendingFlushFailedDomains.delete(flushId);
-  return failedDomains === undefined ? { result } : { result, failedDomains };
+  return beginDiskIOFlush(worker, scope, timeoutMs);
 }
 
 /**
  * 单个领域的落盘屏障：Worker 只刷这一个领域（共享 SQLite 的各领域共用一个事务，见
  * types/diskIO/messages.ts 的 DiskFlushScope），回执只带该领域自己的失败
  * （见 workers/diskIO/domainFlush.ts）。
- * @returns 该领域已 durable 为 "flushed"；"timedOut"/"failed" 表示没写进去。
+ * @returns result 为 "flushed" 表示该领域已 durable，"timedOut"/"failed" 表示没写进去；failedDomains 为本次
+ *   回执里的失败领域名，超时或 Worker 崩溃中途结算时没有本次回执，为 undefined。
  */
-export async function flushDiskIODomain(
-  domain: DiskIODomain,
-  timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
-): Promise<FlushResult> {
-  return (await requestDiskIOFlush(timeoutMs, domain)).result;
-}
-
-/**
- * 同 flushDiskIODomain，并带出本次请求回执里的失败领域名 failedDomains。
- * 超时或 Worker 崩溃中途结算时没有本次回执，failedDomains 为 undefined。
- */
-export function flushDiskIODomainOutcome(
+export function flushDiskIODomain(
   domain: DiskIODomain,
   timeoutMs: number = DISK_IO_FLUSH_TIMEOUT_MS
 ): Promise<DomainFlushOutcome> {
-  return requestDiskIOFlush(timeoutMs, domain);
+  return flushWritableScope(domain, timeoutMs);
 }
 
 /**

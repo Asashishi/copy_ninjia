@@ -54,7 +54,7 @@ export interface TelegramWorkerDownloadFileRequest {
 
 /**
  * Worker 请求主线程发送一条固定期限的群提示。发送成功与登记延迟删除由主线程
- * 同步完成。
+ * 同步完成，删除期限统一为 COMMAND_MESSAGE_AUTO_DELETE_MS（infra/telegram/temporaryMessage.ts）。
  */
 interface TelegramWorkerTemporaryMessageBase {
   readonly operation: "sendTemporaryMessage";
@@ -63,7 +63,6 @@ interface TelegramWorkerTemporaryMessageBase {
   readonly messageThreadId?: number;
   readonly replyToMessageId?: number;
   readonly text: string;
-  readonly deleteAfterMs: number;
 }
 
 /** 广告提示保留身份复查，其余群提示仅请求发送与清理。 */

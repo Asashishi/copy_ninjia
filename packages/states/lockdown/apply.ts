@@ -107,6 +107,7 @@ export function handleApplyResult(
         originalPermissions: state.originalPermissions,
         intentId: event.restoreIntentId,
         restoreAfterPersist: true,
+        restoreReason: "lifted",
         ...announcementOf(state),
       },
       effects: [{ kind: "persistState" }],

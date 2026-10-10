@@ -145,9 +145,12 @@ function decodeLockdown(
   const announced: boolean = requiredBoolean(value, "announced", context);
   const announcementMessageId: number | undefined =
     optionalMessageId(value, "announcementMessageId", context);
+  // 消息 ID 来自一次成功的发送，与 announced 必须同时成立或同时不成立。
   if (announcementMessageId !== undefined && !announced) {
-    // 消息 ID 来自一次成功的发送，与 announced 必须同时成立。
     return invalidInput(source, `${path}.announcementMessageId`, "absent while announced is false");
+  }
+  if (announcementMessageId === undefined && announced) {
+    return invalidInput(source, `${path}.announcementMessageId`, "a message id while announced is true");
   }
   return {
     phase,

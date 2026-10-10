@@ -148,7 +148,6 @@ export function dispatchVerification(
         userId,
         effects,
         dispatchVerification,
-        publishVerificationChange,
       }).catch((error: unknown): void => {
         logger.error("Error running join verification effects:", error);
       }),
@@ -352,6 +351,21 @@ export function handleVerificationPersisted(
   dispatchVerification(chatId, userId, terminalResumeEvent(state));
 }
 
+/** 删除本群（key 以 prefix 开头）的全部 thread comment 确认 owner。 */
+function forgetChatThreadCommentConfirmations(prefix: string): void {
+  for (const key of threadCommentConfirmations.keys()) {
+    if (key.startsWith(prefix)) threadCommentConfirmations.delete(key);
+  }
+}
+
+/** 删除本群（key 以 prefix 开头）的全部延后验证记录。 */
+function deleteChatDeferredVerifications(chatId: number, prefix: string): void {
+  for (const key of [...deferredVerificationRecords.keys()]) {
+    if (!key.startsWith(prefix)) continue;
+    deleteDeferredVerification(chatId, requireVerificationKey(key).userId);
+  }
+}
+
 /**
  * `/antiraid disable`：把这个群每一条验证记录**经状态机**收摊。
  *
@@ -365,25 +379,18 @@ export function handleVerificationPersisted(
  */
 export function disableJoinGuardChat(chatId: number): void {
   const prefix: string = verificationKeyPrefix(chatId);
-  for (const key of threadCommentConfirmations.keys()) {
-    if (key.startsWith(prefix)) threadCommentConfirmations.delete(key);
-  }
+  forgetChatThreadCommentConfirmations(prefix);
   for (const key of [...verificationEntries.keys()]) {
     if (!key.startsWith(prefix)) continue;
     dispatchVerification(chatId, requireVerificationKey(key).userId, { type: "guardDisabled" });
   }
-  for (const key of [...deferredVerificationRecords.keys()]) {
-    if (!key.startsWith(prefix)) continue;
-    deleteDeferredVerification(chatId, requireVerificationKey(key).userId);
-  }
+  deleteChatDeferredVerifications(chatId, prefix);
 }
 
 /** 取消某群所有验证 owner，并为每条持久化记录发布 tombstone。 */
 export function deactivateVerificationChat(chatId: number): void {
   const prefix: string = verificationKeyPrefix(chatId);
-  for (const key of threadCommentConfirmations.keys()) {
-    if (key.startsWith(prefix)) threadCommentConfirmations.delete(key);
-  }
+  forgetChatThreadCommentConfirmations(prefix);
   for (const [key, entry] of [...verificationEntries]) {
     if (!key.startsWith(prefix)) continue;
     const userId: number = requireVerificationKey(key).userId;
@@ -392,10 +399,7 @@ export function deactivateVerificationChat(chatId: number): void {
     verificationEntries.delete(key);
     if (isPersistedVerificationState(entry.state)) publishVerificationChange(chatId, userId, true);
   }
-  for (const key of [...deferredVerificationRecords.keys()]) {
-    if (!key.startsWith(prefix)) continue;
-    deleteDeferredVerification(chatId, requireVerificationKey(key).userId);
-  }
+  deleteChatDeferredVerifications(chatId, prefix);
 }
 
 /** Worker 停止时清理所有本地 timer/owner；主线程镜像仍保留恢复数据。 */

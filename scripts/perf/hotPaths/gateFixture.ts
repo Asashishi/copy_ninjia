@@ -10,6 +10,7 @@ import {
   createRuntimeRoot,
   removeMockPath,
 } from "../fullSuite/mockRoot";
+import { perfChildEnvironment } from "../childEnvironment";
 
 /** 一次热路径门禁共用的运行目录与严格配置副本。 */
 export interface HotPathGateFixture {
@@ -38,16 +39,15 @@ export function createHotPathGateRuntimeRoot(
   return createRuntimeRoot(fixture.runRoot);
 }
 
-/** 子进程只读取隔离配置和数据根，同时保留与父进程相同的其余环境。 */
+/** 子进程只读取隔离配置和数据根，其余环境按 `perfChildEnvironment` 继承父进程。 */
 export function hotPathGateChildEnvironment(
   fixture: HotPathGateFixture,
   runtimeRoot: string
 ): Readonly<Record<string, string | undefined>> {
-  return {
-    ...process.env,
+  return perfChildEnvironment({
     [CONFIG_ROOT_ENV]: fixture.configRoot,
     [RUNTIME_DATA_ROOT_ENV]: runtimeRoot,
-  };
+  });
 }
 
 /** 清理整次门禁根及其中的严格配置副本。 */

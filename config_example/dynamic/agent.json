@@ -14,7 +14,8 @@
     "summary": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5"
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5"
     },
     "media": {
       "provider": "google",
@@ -41,7 +42,8 @@
     "web_search": {
       "provider": "anthropic",
       "api_key": "replace-with-anthropic-api-key",
-      "model": "claude-haiku-4-5",
+      "model": "claude-sonnet-5-5",
+      "fallback_model": "claude-sonnet-5",
       "max_calls_per_use": 5
     }
   }

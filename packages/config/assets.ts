@@ -17,7 +17,7 @@ import type { BunFile } from "bun";
 import { isAbsolute, resolve } from "node:path";
 import { assetConfigCache } from "../cache/main/assets";
 import { ASSETS_CONFIG_PATH, RUNTIME_DATA_ROOT } from "../consts/paths";
-import { AVATAR_MAX_DOWNLOAD_BYTES } from "../consts/telegram";
+import { DEFAULT_AVATAR_EXPECTED_FORM, DEFAULT_AVATAR_MAX_READ_BYTES } from "../consts/telegram";
 import {
   ASSET_CONFIG_GROUPS,
   ASSET_ONLY_PATH_GROUP,
@@ -30,8 +30,7 @@ import {
   DEFAULT_ASSET_CONFIG,
   RANDOM_H_IMAGE_DIR_FIELD,
 } from "../consts/ui/assets";
-import { sniffImageFormat } from "../infra/image";
-import type { SniffedImageFormat } from "../infra/image";
+import { defaultAvatarPhotoType } from "../infra/telegram/avatar/photoType";
 import { invalidInput, readJsonInput } from "../libs/inputValidation";
 import { isPlainRecord } from "../libs/record";
 import type { AssetConfig, DefaultAvatarSource } from "../types/config";
@@ -137,24 +136,21 @@ function assetDirectory(group: AssetGroup): string {
 }
 
 /**
- * 核对默认头像的本机文件：存在且是普通文件（跟随符号链接）、不超过 AVATAR_MAX_DOWNLOAD_BYTES
- * 且字节签名是 JPEG 或 PNG。最多读上限加一个字节；读不到一律按不存在处理。
+ * 核对默认头像的本机文件：存在且是普通文件（跟随符号链接），且字节签名、大小与 MP4 视频轨尺寸符合
+ * DEFAULT_AVATAR_EXPECTED_FORM（判定见 defaultAvatarPhotoType）。最多读 DEFAULT_AVATAR_MAX_READ_BYTES
+ * 加一个字节，超出的文件必然超过所属形态的上限；读不到一律按不存在处理。
  */
 async function verifyDefaultAvatarFile(path: string, sourcePath: string): Promise<void> {
   let bytes: Uint8Array | null;
   try {
     const file: BunFile = Bun.file(path);
-    bytes = (await file.stat()).isFile() ? await file.slice(0, AVATAR_MAX_DOWNLOAD_BYTES + 1).bytes() : null;
+    bytes = (await file.stat()).isFile() ? await file.slice(0, DEFAULT_AVATAR_MAX_READ_BYTES + 1).bytes() : null;
   } catch {
     bytes = null;
   }
   if (bytes === null) return invalidInput(sourcePath, BOT_DEFAULT_AVATAR_FIELD, "an existing readable regular file");
-  if (bytes.byteLength > AVATAR_MAX_DOWNLOAD_BYTES) {
-    return invalidInput(sourcePath, BOT_DEFAULT_AVATAR_FIELD, `a file of at most ${AVATAR_MAX_DOWNLOAD_BYTES} bytes`);
-  }
-  const format: SniffedImageFormat = sniffImageFormat(bytes);
-  if (format !== "jpeg" && format !== "png") {
-    return invalidInput(sourcePath, BOT_DEFAULT_AVATAR_FIELD, "a JPEG or PNG image file");
+  if (defaultAvatarPhotoType(bytes) === null) {
+    return invalidInput(sourcePath, BOT_DEFAULT_AVATAR_FIELD, DEFAULT_AVATAR_EXPECTED_FORM);
   }
 }
 

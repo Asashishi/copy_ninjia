@@ -11,7 +11,8 @@ import {
 } from "../../consts/aiChat/gemini";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { decodeGeneratedImage } from "../ai/utils/imagePayload";
-import { requestGeminiResponse } from "./client";
+import { requestGeminiResult } from "./client";
+import type { GeminiRequestResult } from "../../types/aiChat/gemini";
 import type { AiImageRequest } from "../../types/aiChat/provider";
 import type { GeneratedChatImage } from "../../types/aiChat/imageGeneration";
 
@@ -46,9 +47,9 @@ export async function generateGeminiImage({
       ],
     }]
     : prompt;
-  const response: GenerateContentResponse | null = await requestGeminiResponse(
-    "image",
-    (): GenerateContentParameters => {
+  const result: GeminiRequestResult = await requestGeminiResult({
+    capability: "image",
+    buildBody: (): GenerateContentParameters => {
       const model: string | undefined = getAgentDeploymentConfig().image?.model;
       if (model === undefined) throw new Error('Agent capability "image" is not configured.');
       return {
@@ -61,7 +62,7 @@ export async function generateGeminiImage({
         },
       };
     },
-    GEMINI_IMAGE_ERROR_LABEL
-  );
-  return response ? extractGeneratedImage(response) : null;
+    errorLabel: GEMINI_IMAGE_ERROR_LABEL,
+  });
+  return result.ok ? extractGeneratedImage(result.response) : null;
 }

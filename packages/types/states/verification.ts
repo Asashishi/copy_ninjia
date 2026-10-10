@@ -116,21 +116,21 @@ export interface ExpellingState {
    * Worker 重生/进程重启后不重发；发出去的那条消息本身走统一临时发送边界，到期自删
    * （见 workers/antiRaid/verificationEffects/terminal.ts 的 sendTemporaryMessageFromMain）。
    */
-  failureNoticeSent: boolean | undefined;
+  failureNoticeSent: true | undefined;
   /** 「没能确认成员是否仍在群里或群类型」告警已发送；语义同 failureNoticeSent。 */
-  unconfirmedNoticeSent: boolean | undefined;
+  unconfirmedNoticeSent: true | undefined;
   /**
    * 成功播报已经发出并进入持久化快照。落盘确认后可直接结束终态，Worker
    * 重建不再重放踢人、删消息和成功播报。
    */
-  successNoticeSent: boolean | undefined;
+  successNoticeSent: true | undefined;
   /**
    * 踢人请求已被 Telegram 确认成功，但那条成功播报还没发出去。
    *
    * 随快照持久化，只在播报发送失败时写（正常一轮里踢人与播报同轮结算）。
    * 下一轮据此把成员探测得到的「不在群里」认作本机器人踢人成功，继续发送成功播报。
    */
-  removalConfirmed: boolean | undefined;
+  removalConfirmed: true | undefined;
   /**
    * 机器人自己的验证消息已经全部清理完毕。
    *
@@ -227,6 +227,9 @@ export interface ReminderLandedEvent {
   now: number;
 }
 
+/** 驱逐播报的三类：成功处置、踢不动、没能确认；各对应 ExpellingState 的一个持久标记。 */
+export type ExpelNoticeKind = "success" | "failure" | "unconfirmed";
+
 export type VerificationEvent =
   | JoinEvent
   | { type: "left" }
@@ -247,6 +250,10 @@ export type VerificationEvent =
   | { type: "terminalAttemptBudgetExhausted" }
   | TimeoutInviterVerdictEvent
   | { type: "expelSettled" }
+  /** 驱逐播报已发出：expelling 终态置位 notice 对应的标记并发布快照，其余状态不变。 */
+  | { type: "expelNoticeSent"; notice: ExpelNoticeKind }
+  /** 踢人已确认成功、成功播报未发出：expelling 终态记下 removalConfirmed 并发布快照，其余状态不变。 */
+  | { type: "removalConfirmed" }
   | { type: "kickRetry" }
   | { type: "kickSettled"; now: number }
   | ReminderLandedEvent

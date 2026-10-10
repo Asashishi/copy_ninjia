@@ -64,8 +64,8 @@ export interface WebDigestRequest {
  * - `ai unconfigured`：没有对话核心能力配置，不投递；
  * - `worker unavailable`：AI Worker 不在、正在重建或排空；
  * - `timed out` / `aborted`：主线程等待超时，或调用方取消；
- * - `search failed`：检索请求失败、超时或没交回正文；`no sources`：已执行检索但
- *   来源元数据和正文都没交回来源地址；
+ * - `search failed`：检索请求失败、超时或没交回正文；`refused`：检索或组稿的 Anthropic 模型拒答；`no sources`：
+ *   已执行检索但来源元数据和正文都没交回来源地址；
  * - `compose failed`：组稿请求失败；`invalid digest`：重试后 JSON 仍不合格；`too long`：重试后
  *   渲染出的可见正文仍超过 Telegram 上限。
  */
@@ -73,6 +73,7 @@ export type WebDigestFailure =
   | "ai unconfigured"
   | AiWorkerJobFailureReason
   | "search failed"
+  | "refused"
   | "no sources"
   | "compose failed"
   | "invalid digest"

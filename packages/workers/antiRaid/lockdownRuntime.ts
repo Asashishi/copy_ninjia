@@ -9,7 +9,6 @@ import {
   reapplyLockdownRestriction,
 } from "./lockdownApi";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { logger } from "../../infra/logger";
 import {
   LOCKDOWN_MS,
@@ -236,9 +235,10 @@ function runLockdownEffects(chatId: number, effects: readonly LockdownEffect[]):
         void trackAntiRaidTask({
           task: sendTemporaryMessageFromMain({
             purpose: "notice",
-            deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
             chatId,
-            text: workerAtmosphere().NOTICE_TEXTS.lockdownEnded(LOCKDOWN_MS / 60_000),
+            text: effect.reason === "expired"
+              ? workerAtmosphere().NOTICE_TEXTS.lockdownEnded(LOCKDOWN_MS / 60_000)
+              : workerAtmosphere().NOTICE_TEXTS.lockdownLifted,
           }),
         });
         break;

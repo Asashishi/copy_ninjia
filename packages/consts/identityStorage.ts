@@ -46,27 +46,15 @@ export const CHAT_QA_WRITE_BATCH_MAX_ENTRIES: number = 32;
 /** SQLite 当前唯一受支持的 schema 版本。 */
 export const IDENTITY_DATABASE_SCHEMA_VERSION: number = 13;
 
-/** 历史文本初始 migration 的时间戳；用于核验当前库的已发布谱系。 */
-export const IDENTITY_DATABASE_TEXT_MIGRATION_CREATED_AT: number =
+/** 初始 migration（0000_identity_storage，直建 JSONB 表）的时间戳；迁移谱系的第一条。所属模块：database/interact/inspection.ts。 */
+export const IDENTITY_DATABASE_BASE_MIGRATION_CREATED_AT: number =
   20_260_811_000_000;
 
-/** 历史文本初始 migration 的 SHA-256；用于核验历史 JSONB 转换谱系。 */
-export const IDENTITY_DATABASE_TEXT_MIGRATION_HASH: string =
-  "be64993ef4059e0fff1491bdbacc67ee9bb6b6d8097842036c7903c8c4aed93a";
-
-/** 历史文本转 JSONB migration 的时间戳；与文本来源指纹配对。 */
-export const IDENTITY_DATABASE_JSONB_MIGRATION_CREATED_AT: number =
-  20_260_811_010_000;
-
-/** 历史文本转 JSONB migration 的 SHA-256；用于拒绝缺失、乱序或被改写的来源。 */
-export const IDENTITY_DATABASE_JSONB_MIGRATION_HASH: string =
-  "cb91b39a954c1638dcdc98e97ea0bfec947ea3cc1c377f39f45834bbda9d0cd3";
-
-/** 当前直建 JSONB 的初始 migration SHA-256；与历史文本、历史文本转 JSONB 两条来源互斥。 */
-export const IDENTITY_DATABASE_CURRENT_BASE_MIGRATION_HASH: string =
+/** 初始 migration（0000_identity_storage）的 SHA-256。所属模块：database/interact/inspection.ts。 */
+export const IDENTITY_DATABASE_BASE_MIGRATION_HASH: string =
   "6c68bc6862efa69ffc2fbd29284275a7e4094de3e8e3206f7ae19ca3b9da0000";
 
-/** 新增白名单代加权限 migration 的时间戳；各合法基础谱系都必须包含。 */
+/** 新增白名单代加权限 migration 的时间戳；迁移谱系的第二条。 */
 export const IDENTITY_DATABASE_WHITELIST_PERMISSION_MIGRATION_CREATED_AT: number =
   20_260_812_000_000;
 

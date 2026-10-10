@@ -37,9 +37,9 @@
 
 <p align="center">
   <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Code-100%25_AI--written-e91e63?style=flat-square" alt="100% AI-written"></a>
-  <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-GPT_/_Claude-6d4aff?style=flat-square" alt="Audited"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6269_Passed-2ea44f?style=flat-square" alt="Tests"></a>
-  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.75%25-2ea44f?style=flat-square" alt="Coverage"></a>
+  <a href="#-纯-ai-开发"><img src="https://img.shields.io/badge/Audits-Claude_/_Gemini_/_Grok-6d4aff?style=flat-square" alt="Audited"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Tests-6386_Passed-2ea44f?style=flat-square" alt="Tests"></a>
+  <a href="docs/cn/05-dev-workflow.md"><img src="https://img.shields.io/badge/Coverage-98.78%25-2ea44f?style=flat-square" alt="Coverage"></a>
   <a href="LICENSES/LICENSE"><img src="https://img.shields.io/badge/License-MIT-007ec6?style=flat-square" alt="License: MIT"></a>
 </p>
 
@@ -73,7 +73,7 @@
   </tr>
   <tr>
     <td><nobr>⌨️ <b>编码实现</b></nobr></td>
-    <td><b>Claude Code</b> · <b>Codex</b> · <b>Antigravity</b></td>
+    <td><b>Claude</b> · <b>Gemini</b> · <b>Grok</b></td>
     <td>编写 100% 的生产业务代码、自动化测试套件与多语言文档</td>
   </tr>
   <tr>
@@ -83,7 +83,7 @@
   </tr>
   <tr>
     <td><nobr>🔬 <b>全仓审查</b></nobr></td>
-    <td><b>GPT</b> · <b>Claude</b></td>
+    <td><b>Claude</b> · <b>Gemini</b> · <b>Grok</b></td>
     <td>组织多轮全仓库交叉代码审查，发现的潜在缺陷直接转化为防御性代码提交</td>
   </tr>
   <tr>
@@ -104,7 +104,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="public/coverage_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="public/coverage_light.svg">
-    <img alt="bun run test:coverage：6269 项测试全部通过 / 526 个测试文件 / 446,227 次 expect() 调用 / 函数覆盖率 98.24% / 行覆盖率 98.75%" src="public/coverage_light.svg" width="780">
+    <img alt="bun run test:coverage：6386 项测试全部通过 / 530 个测试文件 / 445,518 次 expect() 调用 / 函数覆盖率 98.27% / 行覆盖率 98.78%" src="public/coverage_light.svg" width="780">
   </picture>
 </p>
 
@@ -233,13 +233,12 @@
 
 | 模型提供商 | 保守参考范围 |
 | --- | --- |
-| Gemini | 60%–70% |
-| OpenAI | 80%–90% |
-| Claude | 80%–90% |
+| Gemini | 70%± |
+| OpenAI | 90%± |
+| Claude | 90%± |
 
-- **Gemini**：每轮会话首个请求在缓存就绪时复用固定前缀的显式缓存，后续轮次使用隐式上下文缓存；服务端隐式缓存过期或首轮未充分预热会导致未命中。
-- **Claude**：在固定上下文位置注入 `cache_control` 断点，由 Anthropic Messages API 在系统提示词与历史边界精准命中缓存；超出缓存有效期后重新计费。
-- **OpenAI**：请求附带基于稳定前缀计算的 `prompt_cache_key`；仅在首次构建、前缀变更或插入动态数据时产生未命中。
+> [!TIP]
+> 谷歌模型缓存率较低的问题主要来自显式与隐式缓存互斥，以及隐式缓存过期时间不可控（最快观测到 20s 左右过期）。如果在意请使用其他模型，但是 Gemini 的模型在会话效果中是最好的。
 
 ### 语音、图片与记忆
 
@@ -294,7 +293,7 @@
 
 - **操作系统**：Linux 系统（必须具备标准可读的 `/proc` 文件系统；其他平台因缺乏实例锁将自动拒绝启动）。
 - **Telegram 凭据**：Bot Token 与超级管理员的 Telegram User ID。
-- **运行时环境**：源码运行需 [Bun](https://bun.sh/) 1.4.2；官方二进制发行包已静态内置运行时，无需在宿主机额外安装。
+- **运行时环境**：源码运行需 [Bun](https://bun.sh/) 1.4.3；官方二进制发行包已静态内置运行时，无需在宿主机额外安装。
 - **外部依赖**：开启 AI 需准备对应服务商的 API Key；翻译功能需准备 Google Cloud 服务账号 JSON 凭据。硬件配置建议请参考 [07 运维手册](docs/cn/07-operations.md#硬件参考)。
 
 ### 一键安装

@@ -24,13 +24,20 @@ export function endGcProfileWindow(startedAt: number): void {
 }
 
 /**
- * 从唯一正式窗口提取 JSC 的 p= 暂停时长；starting 握手必须存在，未启用日志、
- * 窗口不完整或暂停格式变化时拒绝给出读数。并发收集周期可以跨窗口，每段暂停
- * 在恢复 mutator 前输出 p=；mutator 写下的边界因此能按暂停段精确切开周期。
+ * 从唯一正式窗口提取 JSC 的 p= 暂停时长；starting 握手必须恰好出现一次，即整份
+ * 日志只来自主线程一个堆。未启用日志、多个堆、窗口不完整或暂停格式变化时拒绝
+ * 给出读数。并发收集周期可以跨窗口，每段暂停在恢复 mutator 前输出 p=；mutator
+ * 写下的边界因此能按暂停段精确切开周期。
  */
 export function summarizeGcPauseProfile(stderr: string): GcPauseProfile {
-  if (!/\[GC<0x[\da-f]+>: starting [\d.]+ms\]/i.test(stderr)) {
+  const heaps: number = [...stderr.matchAll(/\[GC<0x[\da-f]+>: starting [\d.]+ms\]/gi)].length;
+  if (heaps === 0) {
     throw new Error("JSC GC logging did not provide its startup handshake.");
+  }
+  if (heaps > 1) {
+    throw new Error(
+      `JSC GC log came from ${heaps} heaps; a debugger or Worker VM shares this stderr, so pauses cannot be attributed.`
+    );
   }
   const start: number = stderr.indexOf(HOT_PATH_GC_WINDOW_START);
   const end: number = stderr.indexOf(HOT_PATH_GC_WINDOW_END);

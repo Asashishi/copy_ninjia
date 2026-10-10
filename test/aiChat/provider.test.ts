@@ -35,7 +35,7 @@ const {
   webSearchAiProvider,
 } = await import("../../packages/aiChat/provider");
 const { geminiClientCache } = await import("../../packages/cache/workers/aiChat/gemini");
-const { textGeminiContextCache } = await import("../../packages/cache/workers/aiChat/geminiContextCache");
+const { geminiReplyLastRequestAt, textGeminiContextCache } = await import("../../packages/cache/workers/aiChat/geminiContextCache");
 const { createGeminiContextCacheRegistry } = await import("../../packages/infra/geminiContextCache");
 const { ttsDailyUsage } = await import("../../packages/cache/workers/aiChat/ttsUsage");
 const { openAiClientCache } = await import("../../packages/cache/workers/aiChat/openai");
@@ -225,7 +225,9 @@ test("anthropic 没有生图能力：generateImage 缺席", () => {
 });
 
 test("media 选 anthropic 时语音转写缺席，只在启动时记一次诊断；正文、检索与结构化 JSON 照常路由到它", () => {
-  const anthropic = { provider: "anthropic", apiKey: "anthropic-key", baseUrl: undefined, headers: undefined, model: "claude-test" } as const;
+  const anthropic = {
+    provider: "anthropic", apiKey: "anthropic-key", baseUrl: undefined, headers: undefined, model: "claude-test", fallbackModel: undefined,
+  } as const;
   agentConfig = { ...agentConfig, text: anthropic, media: anthropic, webSearch: { ...anthropic, maxCallsPerUse: 7 } };
   expect(anthropicProvider.transcribeVoice).toBeUndefined();
   expect(anthropicProvider.synthesizeSpeech).toBeUndefined();
@@ -608,6 +610,16 @@ test("只有 media 能力变化时两种输入模态才回到未探测状态", (
   reloadAgentDeploymentConfig({ ...agentConfig, media: { ...agentConfig.media, model: "gemini-media-2" } });
   expect(getMediaInputState("voice").support).toBe("unknown");
   expect(getMediaInputState("voice").configGeneration).toBe(1);
+});
+
+test("text 能力变化丢弃登记表时，各群上一次回复请求的触发时刻原样保留", () => {
+  geminiReplyLastRequestAt.set(-100, 1);
+  try {
+    reloadAgentDeploymentConfig({ ...agentConfig, text: { ...agentConfig.text, model: "gemini-text-reloaded" } });
+    expect(geminiReplyLastRequestAt.get(-100)).toBe(1);
+  } finally {
+    geminiReplyLastRequestAt.clear();
+  }
 });
 
 test("只有 text 能力变化时才丢弃 Gemini 回复共用显式缓存的登记表", () => {

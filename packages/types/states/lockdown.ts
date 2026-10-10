@@ -12,8 +12,8 @@ import type { LockdownPhase } from "../chatState";
  * 回投）。只活在内存里；跨进程接管时，落盘为「公告过」即照单接受，为「没公告过」而
  * 锁定仍要继续时补发一次并重新置位。
  *
- * announcementMessageId：公告消息 ID，解除封锁时按它删除，随状态持久化。发送失败、
- * 或接管的是老进程留下的记录时为 undefined，此时不删。
+ * announcementMessageId：公告消息 ID，与 announced 同时成立（落盘恢复由 database/codec/chatState.ts
+ * 校验）；解除封锁时按它删除，随状态持久化。没公告过时为 undefined，此时不删。
  */
 export interface LockdownAnnouncement {
   announced: boolean;
@@ -64,7 +64,15 @@ export type LockdownState =
     intentId: number;
     /** true 时只等本阶段落盘回执，回执到达后恰好启动一次恢复。 */
     restoreAfterPersist: boolean;
+    /** 恢复成功时解锁公告用哪句文案；只活在内存里，见 LockdownRestoreReason。 */
+    restoreReason: LockdownRestoreReason;
   } & LockdownAnnouncement);
+
+/**
+ * 进入 RESTORING 的原因：`expired` 为本轮到期，`lifted` 为到期前恢复（主动解除、加锁结果不确定后的补偿、
+ * 落盘失败）。不随状态持久化；接管落盘的 RESTORING 时原因未知，按 `lifted` 处理。
+ */
+export type LockdownRestoreReason = "expired" | "lifted";
 
 export type LockdownMachineEvent =
   | { type: "thresholdExceeded"; joinCount: number }
@@ -85,8 +93,8 @@ export type LockdownMachineEvent =
   | { type: "deactivate"; intentId: number }
   | { type: "restoreResult"; ok: boolean }
   | { type: "reapplyResult"; ok: boolean }
-  /** 公告发送结果；messageId 只在发送成功时存在，供解除时定向删除。 */
-  | { type: "announcementResult"; ok: boolean; messageId?: number }
+  /** 公告发送结果：发送成功时为消息 ID，供解除时定向删除；发送失败为 undefined。 */
+  | { type: "announcementResult"; messageId: number | undefined }
   | {
     type: "adopt";
     phase: LockdownPhase;
@@ -133,7 +141,8 @@ export type LockdownEffect =
   | { kind: "deleteLockdownAnnouncement"; messageId: number }
   /** 本轮作废：在冷却期内不再让入群把这个群重新推进私密模式。 */
   | { kind: "suppressRetrigger"; reason: LockdownAbandonReason; durationMs: number }
-  | { kind: "announceUnlock" };
+  /** 恢复成功且本轮公告过：按 reason 发到期或提前解除的解锁公告。 */
+  | { kind: "announceUnlock"; reason: LockdownRestoreReason };
 
 export interface LockdownTransition {
   /** 下一个状态：undefined = 删除记录；与传入同一对象 = 保持（计时器由 scheduleRestore 副作用管理）。 */

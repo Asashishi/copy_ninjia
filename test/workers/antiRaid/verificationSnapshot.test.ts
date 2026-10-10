@@ -38,8 +38,8 @@ test("终态快照保留各阶段字段且不会回写状态对象", (): void =>
   const states: readonly Exclude<VerificationState, { kind: "pending" | "exempt" | "kicked" }>[] = [
     { kind: "kickPending", label: "bot", isBot: true, requestedAt: source.joinedAt, countedJoinAt: source.joinedAt, announcementMessageId: undefined, effectStarted: true, executionStarted: false },
     checkingInviterOf(23, source),
-    expellingOf("timeout", source, { successNoticeSent: true, failureNoticeSent: false, unconfirmedNoticeSent: false, removalConfirmed: true }),
-    expellingOf("flood", source, { successNoticeSent: false, failureNoticeSent: true, unconfirmedNoticeSent: true }),
+    expellingOf("timeout", source, { successNoticeSent: true, removalConfirmed: true }),
+    expellingOf("flood", source, { failureNoticeSent: true, unconfirmedNoticeSent: true }),
   ];
   for (const state of states) {
     const before: typeof state = structuredClone(state);

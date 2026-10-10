@@ -1,7 +1,6 @@
 import { aiChatAtmosphere } from "./atmosphere";
 import type { TelegramWorkerTemporaryMessageResult } from "../../types/telegramWorker";
 import { sendTemporaryMessageFromMain } from "../../infra/telegram/workerClient";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { RATE_LIMIT_NOTICE_COOLDOWN_MS } from "../../consts/aiChat/rateLimit";
 
 import {
@@ -46,7 +45,6 @@ export function notifyRateLimited({
   const text: string = aiChatAtmosphere().RATE_LIMIT_NOTICE_TEXT;
   const task: Promise<void> = sendTemporaryMessageFromMain({
     purpose: "notice",
-    deleteAfterMs: COMMAND_MESSAGE_AUTO_DELETE_MS,
     chatId,
     text,
     signal,

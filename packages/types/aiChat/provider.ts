@@ -61,7 +61,7 @@ export type MediaInputFailure =
   | "transient";
 
 /**
- * 单次文本生成的业务结果。供应商 SDK 已耗尽 HTTP 重试时 retryable=false；
+ * 单次文本生成的业务结果。供应商 SDK 已耗尽 HTTP 重试或 Anthropic 模型拒答时 retryable=false；
  * HTTP 成功但正文不可用时才允许业务层重采样。
  */
 export type AiTextResult =
@@ -74,6 +74,11 @@ export type AiTextResult =
      * 模态状态。非媒体流水线（摘要、贴纸整包简介）恒为缺席。
      */
     readonly mediaFailure?: MediaInputFailure;
+    /**
+     * Anthropic 模型拒答（`stop_reason: "refusal"`，配置了 fallback_model 时回退模型也拒答），
+     * 与 retryable=false 同现；缺席表示不是 Anthropic 拒答。
+     */
+    readonly refused?: true;
   };
 
 /** media 模型两种独立探测的输入模态。 */
@@ -114,7 +119,12 @@ export interface AiReplyTurn {
   /** 本次请求中服务端已执行的联网检索次数，用于整轮检索预算核销。 */
   readonly webSearchCalls: number;
   readonly finishReason?: string;
-  readonly finishMessage?: string;
+  /**
+   * 供应商随收尾原因给出的详情对象的有界 JSON 串（见 aiChat/ai/utils/finishDetails.ts）：Anthropic 是
+   * `stop_details`，Gemini 是 `finishMessage` 与 `safetyRatings`（无 candidate 时是 `promptFeedback`），
+   * OpenAI 是 `error` 与 `refusal` 内容块。只用于诊断日志；供应商没给详情时为 undefined。
+   */
+  readonly finishDetails?: string;
   /**
    * 供应商明确报告「服务端工具调用过多」（Gemini 的 TOO_MANY_TOOL_CALLS）。
    * 没有对等信号的供应商恒为 false；上层据此决定是否关掉检索重试一次，
@@ -227,7 +237,7 @@ export interface AiWebSearchSource {
 /**
  * 一次联网检索的结果。`searchCalls` 是供应商在这次请求里实际执行的检索次数，两种结果都带：
  * 请求成功但一次都没检索（端点忽略了检索工具）时 ok 仍为 true、searchCalls 为 0，由调用方
- * 按调用场景决定是否放行。ok=false 表示请求失败、超时、被取消或正文不可用（已记日志）。
+ * 按调用场景决定是否放行。ok=false 表示请求失败、超时、被取消、模型拒答或正文不可用（已记日志）。
  */
 export type AiWebSearchResult =
   | {
@@ -238,7 +248,12 @@ export type AiWebSearchResult =
     readonly sources: readonly AiWebSearchSource[];
     readonly searchCalls: number;
   }
-  | { readonly ok: false; readonly searchCalls: number };
+  | {
+    readonly ok: false;
+    readonly searchCalls: number;
+    /** Anthropic 检索模型拒答（含回退模型也拒答）；缺席表示其他失败。 */
+    readonly refused?: true;
+  };
 
 /**
  * 经 tts 门面发起的语音合成请求：在供应商请求之外带上本调用方的额度口径。
@@ -260,6 +275,11 @@ export interface AiMeteredSpeechRequest extends AiSpeechRequest {
  * conversationSettledOffsets 把当前会话切开。
  */
 export interface AiReplySessionParams {
+  /**
+   * 本轮回复所在的群。只有 Gemini 实现读取：按群记录上一次成功回复请求的发出时刻，决定第 1 次
+   * 请求是否引用显式缓存（见 aiChat/gemini/replySession.ts）；其余实现不读。
+   */
+  readonly chatId: number;
   /**
    * 跨轮回复逐字不变的区块（当前是只读参考记忆），内容只在冷记忆压缩轮换或机器人
    * 账号身份变化时改变；排在易变组之前。

@@ -85,8 +85,7 @@ mock.module("../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO: async (): Promise<FlushResult> => "flushed",
-  flushDiskIODomain: async (): Promise<FlushResult> => "flushed",
-  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
+  flushDiskIODomain: async (): Promise<{ result: FlushResult }> => ({ result: "flushed" }),
   onDiskIORespawn: (): void => {},
   postDiskIO: (message: TestDiskMessage): boolean => {
     diskPosts.push(message);
@@ -118,7 +117,7 @@ const { runWithUpdateAbortSignal, updateNow } = await import("../../packages/inf
 const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
 const { replayChatKinds } = await import("../../packages/antiRaid/workerBridge/replay");
 const { STATE_MANAGED_CHAT_LIMIT } = await import("../../packages/consts/storage");
-const { activeVerificationSnapshots } = await import("../../packages/cache/main/antiRaid/verificationMirror");
+const { clearActiveVerificationSnapshots } = await import("../../packages/cache/main/antiRaid/verificationMirror");
 
 /** 一条「从不在群里变成群成员」的 chat_member 更新。 */
 function joinUpdate(userId: number): never {
@@ -179,7 +178,7 @@ beforeEach(() => {
   temporaryAdBypassActivityTimes.length = 0;
   blocklistEntryCache.clear();
   whitelistEntryCache.clear();
-  activeVerificationSnapshots.clear();
+  clearActiveVerificationSnapshots();
   chatIsSupergroupById.clear();
   unmanagedChatIds.clear();
   for (const key of Object.keys(chatState)) delete chatState[key];

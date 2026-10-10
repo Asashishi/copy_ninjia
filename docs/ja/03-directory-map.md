@@ -104,7 +104,6 @@
   - **性能ベンチマーク**：`perf/identityDatabase.ts`、`perf/joinLog.ts`、`perf/hotPaths.ts`、`perf/hotPathProfileGate.ts`、`perf/hotPaths/gateResult.ts`（`performance-result.json` のゲートセクション厳格パース）、`perf/performanceResult.ts`（同ファイルの共有書き込み境界。各ベンチマークは自身のセクションのみを更新）、リリース時専用の全量ベンチマーク `perf/fullSuite.ts` と `perf/fullSuite/`、ならびにベンチマーク間で共用される `fixtures/copyTree.ts`（ディレクトリツリー複製）と `fixtures/pathBoundary.ts`（書き込みパス境界検証）。
   - **インストーラー**：`install.sh` は対象ワークツリーを特定し、そのバージョンのインストーラーへ処理を委譲。`scripts/install/` 配下の shell モジュール群は構文と可読性を一括確認した上で順次ロード。`installSources.ts` は構文検証および分離テスト用フィクスチャへ同一のモジュールリストを提供。
   - **コールドマイグレーション**：`migrateChatPersonaRemoval.ts` はバージョン 16.3.2 が出力した停止時バックアップ（移行元スキーマ `CHAT_PERSONA_REMOVAL_SOURCE_SCHEMA_VERSION`）のみを受け付け、データベースの複製を現行スキーマ（`IDENTITY_DATABASE_SCHEMA_VERSION`）へ移行し、`chat_states.ai_persona` と `isCanConfigAiPrompt` を削除して `Asia/Tokyo` タイムゾーンマーカーを書き込みます。移行元ディレクトリは読み取り専用で保護され、`ready.json` が完了マーカーとなります。`migrations/files.ts` と `migrations/cli.ts` はパス判定や引数パースを共通化しており、起動依存グラフには含まれません。
-  - **データ保守**：`removeWebSearchUsage.ts`（`bun run usage:remove-web-search`）は停止時バックアップから `web_search` の利用量を安全に除去し、合計値を再計算します。詳細は [07 運用手順](07-operations.md) を参照してください。
   - **ファイルハッシュ計算**：`fileSha256.ts` は `Bun.file(path).stream()` と `Bun.CryptoHasher` を用いて SHA-256 16進ハッシュをストリーミング計算し、リリース検証、マイグレーション、テスト用フィクスチャで共用されます。
 
 `scripts/migrations/active.ts` は、ビルド・配布物検証・規約検査で共通利用される有効なマイグレーション一覧です。バイナリ配布版にもこの一覧に含まれる CLI が内包されており、`BUN_BE_BUN=1 ./copy-ninjia scripts/migrations/<エントリ>.js` の形式で実行できます。配置と運用手順は [07 運用手順](07-operations.md) を参照してください。

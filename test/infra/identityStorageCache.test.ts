@@ -10,7 +10,7 @@ import {
   acceptDiskMessages,
   blockValue,
   diskMessages,
-  flushDiskIODomainOutcome,
+  flushDiskIODomain,
   persistedListeners,
   readIdentityPolicies,
   readImplementation,
@@ -189,7 +189,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       .resolves.toBeUndefined();
 
     expect(diskMessages).toHaveLength(2);
-    expect(flushDiskIODomainOutcome).toHaveBeenCalledWith("whitelist");
+    expect(flushDiskIODomain).toHaveBeenCalledWith("whitelist");
     expect(unacknowledgedWhitelistWrites.has(7)).toBeFalse();
   });
 
@@ -199,7 +199,7 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       permissions: DEFAULT_WHITELIST_PERMISSIONS,
       meta: { firstName: "Alice", lastName: "", username: "alice" },
     })).toBeTrue();
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => ({ result: "flushed" })
     );
 
@@ -216,13 +216,13 @@ describe("主线程身份 LRU 与数据库最终一致性", () => {
       meta: { firstName: "Alice", lastName: "", username: "alice" },
     })).toBeTrue();
     const revision: number = unacknowledgedWhitelistWrites.get(7)!.revision;
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => ({ result: "failed", failedDomains: ["whitelist", "luck"] })
     );
     await expect(confirmIdentityPolicyPersisted("whitelist", 7, false)).rejects.toThrow(
       `Persistence flush failed for whitelist identity 7 revision ${revision}; failed domains: whitelist, luck.`
     );
-    flushDiskIODomainOutcome.mockImplementationOnce(
+    flushDiskIODomain.mockImplementationOnce(
       async (): Promise<DomainFlushOutcome> => ({ result: "timedOut" })
     );
     await expect(confirmIdentityPolicyPersisted("whitelist", 7, false)).rejects.toThrow(

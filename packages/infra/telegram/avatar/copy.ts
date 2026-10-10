@@ -93,7 +93,7 @@ async function attemptCopyUserProfilePhoto(
     const download: AvatarDownloadResult = await downloadAvatarFile(fileId, targetId, signal);
     if (download.status !== "ok") return download.status;
 
-    await setBotProfilePhoto(download.bytes, signal);
+    await setBotProfilePhoto(download.bytes, "static", signal);
     return "ok";
   } catch (error: unknown) {
     if (signal?.aborted) return "permanent-failure";
@@ -143,7 +143,7 @@ export async function copyUserProfilePhoto(
     const imgBuffer: Uint8Array | null = await fetchAvatarFromWebProfile(fallbackUsername, signal);
     if (imgBuffer) {
       try {
-        await setBotProfilePhoto(imgBuffer, signal);
+        await setBotProfilePhoto(imgBuffer, "static", signal);
         return true;
       } catch (error: unknown) {
         if (signal?.aborted) return false;

@@ -3,7 +3,7 @@ import { STATE_MANAGED_CHAT_LIMIT } from "../storage";
 /** 冷消息压缩请求在错误日志里的调用名；供应商中立，各家实现包共用。 */
 export const CHAT_SUMMARY_ERROR_LABEL: string = "AI summarize API";
 
-/** HTTP 成功但摘要正文不可用时，两次业务重采样之间的退避。 */
+/** HTTP 成功但摘要正文不可用（Anthropic 拒答除外）时，两次业务重采样之间的退避。 */
 export const SUMMARY_RETRY_DELAYS_MS: readonly number[] = [15_000, 60_000];
 
 /**

@@ -206,8 +206,25 @@ The payload is parsed as JSONC (supporting trailing commas and comments). If par
      "cf-aig-authorization": "Bearer <token>"
    }
    ```
-3. **Retain Google API Key**: The `api_key` field remains mandatory; provide your valid Google AI Studio API key. The `headers` option is supported for `provider: "google"`; sensitive credentials are redacted from logs automatically.
+3. **Retain Google API Key**: The `api_key` field remains mandatory; provide your valid Google AI Studio API key. With gateway-stored keys (BYOK / Unified Billing), set it to the Cloudflare token instead and omit `headers`. The `headers` option is supported for `provider: "google"` and `provider: "anthropic"` (not `openai`); sensitive credentials are redacted from logs automatically.
 4. **Endpoint routing**: Text chat, vision, and image generation automatically route through `generateContent`; voice synthesis routes through the `Interactions API`. Test connectivity using `/send` with a voice payload in private chat.
+
+---
+
+## How Do I Call Anthropic Models via Cloudflare AI Gateway?
+
+Capabilities with `provider: "anthropic"` (`text`, `summary`, `media`, `web_search`, `ad_detect`) attach `headers` to every request through the SDK's `defaultHeaders`. Set `base_url` to:
+`https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/anthropic`
+
+1. **Bring your own Anthropic key**: Put the Anthropic API key in `api_key` (sent by the SDK as `x-api-key`). If the gateway is an Authenticated Gateway, also add:
+   ```json
+   "headers": {
+     "cf-aig-authorization": "Bearer <CF_AIG_TOKEN>"
+   }
+   ```
+   No `headers` are needed when gateway authentication is disabled.
+2. **Gateway-stored keys (BYOK / Unified Billing)**: Set `api_key` to the Cloudflare token `<CF_AIG_TOKEN>`; no `headers` are needed. The gateway recognizes the Cloudflare token in `x-api-key` and switches to the stored Anthropic key or Unified Billing. A placeholder `api_key` is forwarded to Anthropic unchanged and fails authentication.
+3. **Field constraints**: `headers` cannot contain `x-api-key` (case-insensitive); the Anthropic credential is only passed through `api_key`. Other constraints match the Google provider. Every header value is added to the log redaction list.
 
 ---
 

@@ -119,7 +119,7 @@ export function runMainLruReadChild(): ChildResult {
 }
 
 async function flushMainWriteThrough(context: string): Promise<void> {
-  const result: FlushResult = await flushDiskIODomain("whitelist", 120_000);
+  const result: FlushResult = (await flushDiskIODomain("whitelist", 120_000)).result;
   if (result !== "flushed") {
     throw new Error(`${context} write-through flush ended as ${result}.`);
   }

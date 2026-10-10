@@ -62,7 +62,7 @@ export const readBlocklistIdPage = mock(
  * 领域 flush 替身：把已投出的该领域身份写逐条作为精确 ACK 交给回执回调，再报告
  * flushed。用例可用 mockImplementationOnce 模拟缺少精确 ACK 或 flush 失败。
  */
-export const flushDiskIODomainOutcome = mock(
+export const flushDiskIODomain = mock(
   async (domain: DiskIODomain): Promise<DomainFlushOutcome> => {
     const writes: { table: "whitelist" | "blocklist"; id: number; revision: number }[] = [];
     for (const message of diskMessages) {
@@ -100,7 +100,7 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
     diskMessages.push(message);
     return acceptDiskMessages.current;
   },
-  flushDiskIODomainOutcome,
+  flushDiskIODomain,
   readBlocklistIdPage,
   readIdentityPolicies,
   relayLogMessage: (): boolean => true,
@@ -136,7 +136,7 @@ export function resetIdentityStorageHarness(): void {
   resetIdentityStorageCache();
   readIdentityPolicies.mockClear();
   readBlocklistIdPage.mockClear();
-  flushDiskIODomainOutcome.mockClear();
+  flushDiskIODomain.mockClear();
   readImplementation.current = emptyIdentityPolicyRead;
   pageReadImplementation.current = emptyBlocklistIdPage;
 }

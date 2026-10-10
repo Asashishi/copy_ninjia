@@ -1,8 +1,8 @@
 /** owner: workers/aiChat。本文件不持有状态，只聚合本线程各领域缓存模块的失效与清理边界。 */
 
-import { clearChatBotImageCache, resetAiChatBotImageCache } from "./botImages";
+import { repliedBotImageBackfills, resetAiChatBotImageCache } from "./botImages";
 import { resetAiChatCompactionCache } from "./compaction";
-import { resetGeminiContextCache } from "./geminiContextCache";
+import { geminiReplyLastRequestAt, resetGeminiContextCache } from "./geminiContextCache";
 import { clearChatHeartbeatCache, resetAiChatHeartbeatCache } from "./heartbeat";
 import { resetAiChatIdentityCache } from "./identity";
 import { resetImageGenerationCache } from "./imageGeneration";
@@ -16,7 +16,9 @@ import { invalidateChatReplyCache, resetAiChatReplyCache } from "./replies";
 export function invalidateChatRuntimeCache(chatId: number): void {
   invalidateChatReplyCache(chatId);
   clearChatHeartbeatCache(chatId);
-  clearChatBotImageCache(chatId);
+  // 在途识别仍按代际自行作废；在途 Gemini 回复请求成功时仍会写回触发时刻（见 geminiContextCache.ts）。
+  repliedBotImageBackfills.delete(chatId);
+  geminiReplyLastRequestAt.delete(chatId);
 }
 
 /**

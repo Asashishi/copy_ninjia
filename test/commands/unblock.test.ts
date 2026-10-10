@@ -79,8 +79,9 @@ mock.module("../../packages/infra/diskIO", () => (diskIOStub({
   postDiskIO,
   onDiskIORespawn: (): void => {},
   relayLogMessage: (): boolean => true,
-  flushDiskIODomain: flushDiskIO,
-  flushDiskIODomainOutcome: flushBlocklistDomain,
+  // 身份表的确认等精确 revision ACK（flushBlocklistDomain），其余领域只看 flush 结果。
+  flushDiskIODomain: async (domain: string): Promise<{ result: FlushResult }> =>
+    domain === "blocklist" || domain === "whitelist" ? flushBlocklistDomain() : { result: await flushDiskIO() },
   onDiskIOReply: diskIOReplyStub({
     identityStoragePersisted: (listener: (reply: IdentityStoragePersistedReply) => void): void => {
       persistedListeners.push(listener);

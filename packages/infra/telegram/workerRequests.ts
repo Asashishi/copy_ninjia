@@ -1,5 +1,4 @@
 import { InputFile } from "grammy";
-import { COMMAND_MESSAGE_AUTO_DELETE_MS } from "../../consts/commands";
 import { bot } from "./mainClient";
 import { downloadTelegramFileBytes } from "./fileDownload";
 import type { SendTemporaryMessageOnMainParams } from "./temporaryMessage";
@@ -23,15 +22,6 @@ async function sendTemporaryMessage(
   request: Extract<TelegramWorkerRequest, { operation: "sendTemporaryMessage" }>,
   signal: AbortSignal
 ): Promise<TelegramWorkerTemporaryMessageResult | undefined> {
-  if (
-    !Number.isSafeInteger(request.deleteAfterMs) ||
-    request.deleteAfterMs <= 0
-  ) {
-    throw new Error("Telegram temporary message deletion delay must be a positive safe integer.");
-  }
-  if (request.purpose === "notice" && request.deleteAfterMs !== COMMAND_MESSAGE_AUTO_DELETE_MS) {
-    throw new Error("Telegram group notices must use the standard deletion delay.");
-  }
   // 动态导入：组合能力依赖线程内 Telegram 动作层，只在执行时加载。
   const temporarySender: (
     params: SendTemporaryMessageOnMainParams
@@ -40,7 +30,6 @@ async function sendTemporaryMessage(
   return temporarySender({
     chatId: request.chatId,
     text: request.text,
-    deleteAfterMs: request.deleteAfterMs,
     messageThreadId: request.messageThreadId,
     replyToMessageId: request.replyToMessageId,
     signal,

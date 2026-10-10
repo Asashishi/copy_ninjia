@@ -80,8 +80,7 @@ mock.module("../../../packages/infra/supervisedWorker", () => ({
 }));
 mock.module("../../../packages/infra/diskIO", () => (diskIOStub({
   flushDiskIO: async (): Promise<FlushResult> => "flushed",
-  flushDiskIODomain,
-  flushDiskIODomainOutcome: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIODomain() }),
+  flushDiskIODomain: async (): Promise<{ result: FlushResult }> => ({ result: await flushDiskIODomain() }),
   onDiskIORespawn: (): void => {},
   readBlocklistIdPage: async (afterId: number | null): Promise<{
     ids: readonly number[];

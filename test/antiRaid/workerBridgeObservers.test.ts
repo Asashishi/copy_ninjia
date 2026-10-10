@@ -58,9 +58,10 @@ const { registerAntiRaidBridgeObservers } = await import(
   "../../packages/antiRaid/workerBridge/observers"
 );
 const {
-  activeVerificationSnapshots,
+  clearActiveVerificationSnapshots,
   pendingVerificationDeletes,
   persistedVerificationRevisions,
+  setActiveVerificationSnapshot,
 } = await import("../../packages/cache/main/antiRaid/verificationMirror");
 const { chatIsSupergroupById } = await import("../../packages/cache/main/antiRaid/chatKind");
 
@@ -91,7 +92,7 @@ beforeEach(() => {
   settleDeferral.mockClear();
   settleDeferral.mockImplementation((): boolean => false);
   loggerError.mockClear();
-  activeVerificationSnapshots.clear();
+  clearActiveVerificationSnapshots();
   pendingVerificationDeletes.clear();
   persistedVerificationRevisions.clear();
   chatIsSupergroupById.clear();
@@ -133,8 +134,8 @@ describe("Anti-Raid 主线程观察者", () => {
   });
 
   test("Worker 重生重放把镜像与在途删除整份交出去", () => {
-    activeVerificationSnapshots.set("-1001:7", snapshot(7, 1) as never);
-    activeVerificationSnapshots.set("-1001:8", snapshot(8, 1) as never);
+    setActiveVerificationSnapshot("-1001:7", snapshot(7, 1) as never);
+    setActiveVerificationSnapshot("-1001:8", snapshot(8, 1) as never);
     pendingVerificationDeletes.set("-1001:9", {
       chatId: -1001, userId: 9, generation: 1, revision: 3,
     });
@@ -153,8 +154,8 @@ describe("Anti-Raid 主线程观察者", () => {
   });
 
   test("重放中途投递失败立即停手并报失败，不谎称整份都放完了", () => {
-    activeVerificationSnapshots.set("-1001:7", snapshot(7, 1) as never);
-    activeVerificationSnapshots.set("-1001:8", snapshot(8, 1) as never);
+    setActiveVerificationSnapshot("-1001:7", snapshot(7, 1) as never);
+    setActiveVerificationSnapshot("-1001:8", snapshot(8, 1) as never);
     pendingVerificationDeletes.set("-1001:9", {
       chatId: -1001, userId: 9, generation: 1, revision: 3,
     });
@@ -170,7 +171,7 @@ describe("Anti-Raid 主线程观察者", () => {
   });
 
   test("落盘回执按代际与修订号核对，对不上的整条丢弃", () => {
-    activeVerificationSnapshots.set("-1001:7", snapshot(7, 5) as never);
+    setActiveVerificationSnapshot("-1001:7", snapshot(7, 5) as never);
 
     // 代际对不上：既不记修订号，也不回投 Worker。
     captured.persisted?.({ type: "verificationPersisted", key: "-1001:7", generation: 2, revision: 5, deleted: false });
@@ -192,7 +193,7 @@ describe("Anti-Raid 主线程观察者", () => {
   });
 
   test("回执已被本地延迟结算认领时不再回投 Worker", () => {
-    activeVerificationSnapshots.set("-1001:7", snapshot(7, 5) as never);
+    setActiveVerificationSnapshot("-1001:7", snapshot(7, 5) as never);
     settleDeferral.mockImplementation((): boolean => true);
 
     captured.persisted?.({ type: "verificationPersisted", key: "-1001:7", generation: 1, revision: 5, deleted: false });
@@ -201,7 +202,7 @@ describe("Anti-Raid 主线程观察者", () => {
   });
 
   test("Worker 拒收回执时留一行日志，交给重生重放补投", () => {
-    activeVerificationSnapshots.set("-1001:7", snapshot(7, 5) as never);
+    setActiveVerificationSnapshot("-1001:7", snapshot(7, 5) as never);
     post.mockImplementation((): boolean => false);
 
     captured.persisted?.({ type: "verificationPersisted", key: "-1001:7", generation: 1, revision: 5, deleted: false });

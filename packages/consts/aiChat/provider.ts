@@ -29,3 +29,10 @@ export const AI_TELEGRAM_MESSAGE_ACTIVE_HIGH_WATER: number = 64;
  * Telegram message 域一旦已有真实 429 等待项就立即触发 AI 软背压。
  */
 export const AI_TELEGRAM_MESSAGE_RETRY_HIGH_WATER: number = 1;
+
+/**
+ * 供应商收尾详情诊断串（见 aiChat/ai/utils/finishDetails.ts）的截断长度：整段 JSON 按本值截断，
+ * 不保证截断后仍是合法 JSON。详情对象来自响应体，兼容网关可以在其中放任意 JSON，
+ * aiChat 各实现包与 ad_detect 传输层的不可用响应日志、回复轮次的 finishDetails 共用这一份上限。
+ */
+export const AI_FINISH_DETAILS_MAX_CHARS: number = 1_000;

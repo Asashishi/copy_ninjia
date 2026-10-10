@@ -71,6 +71,7 @@ export const telegramOutboundGateState: {
     message: createRetryLane(),
     inline: createRetryLane(),
     download: createRetryLane(),
+    externalFetch: createRetryLane(),
     kick: createRetryLane(),
     query: createRetryLane(),
     restrict: createRetryLane(),

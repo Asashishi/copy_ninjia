@@ -126,7 +126,6 @@ describe("adoptVerificationState：落盘快照重建成内存状态", () => {
         phase: "expelling",
         expelReason: "flood",
         successNoticeSent: true,
-        failureNoticeSent: false,
         unconfirmedNoticeSent: true,
         removalConfirmed: true,
       }),
@@ -146,7 +145,7 @@ describe("adoptVerificationState：落盘快照重建成内存状态", () => {
         expiresAt: NOW + 120_000,
       },
       executionStarted: false,
-      failureNoticeSent: false,
+      failureNoticeSent: undefined,
       unconfirmedNoticeSent: true,
       successNoticeSent: true,
       removalConfirmed: true,
@@ -154,8 +153,7 @@ describe("adoptVerificationState：落盘快照重建成内存状态", () => {
     });
   });
 
-  test("没有播报记账的 expelling 快照重建出四项 undefined，而不是 false", () => {
-    // 「还没播报过」与「播报过但结果是 false」是两回事：没有播报记账时各项取 undefined。
+  test("没有播报记账的 expelling 快照重建出四项 undefined", () => {
     const state: VerificationState = adoptVerificationState(
       snapshot({ phase: "expelling", expelReason: "timeout" }),
       NOW

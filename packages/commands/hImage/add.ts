@@ -63,8 +63,9 @@ function collectCandidates(chatId: number, replied: Message): MessageImageCandid
 type DownloadedImage = Uint8Array | "invalidDimensions" | "failed";
 
 /**
- * 下载一张图并过尺寸闸：返回待写盘的字节，或不再写盘的结局；失败只记日志并计为
- * failed，取消与预算超时不记日志（停机取消由 addRandomImages 在整页结算后收场）。
+ * 下载一张图并过尺寸闸：返回待写盘的字节，或不再写盘的结局。失败都计为 failed：
+ * 超限与空文件不记日志，单张的两段下载超时与其它失败记日志，取消与整批预算超时不记日志
+ * （停机取消由 addRandomImages 在整页结算后收场）。
  *
  * 去重排在下载之后：图库文件名是内容的 SHA-256（见 infra/randomImage.ts 的
  * storeRandomImage）。已收录的图同样会被下载一次；同一张图换个人转发
@@ -81,7 +82,7 @@ async function downloadImage(candidate: MessageImageCandidate, signal: AbortSign
       signal,
     });
     if (download.status !== "ok") {
-      if (download.status === "httpError" || download.status === "missingPath") {
+      if (download.status !== "tooLarge" && download.status !== "empty") {
         logger.error(`Failed to download a picture for /h_image add (${download.status}).`);
       }
       return "failed";

@@ -10,6 +10,7 @@ import type {
   WorkerDuplexResponse,
 } from "../types/workerDuplex";
 import type { WorkerDuplexWaiter } from "../cache/perThread/workerDuplex";
+import { isTimeoutAbort } from "./abortSignal";
 import { toErrorOr } from "./errorMessage";
 
 /** 主线程能力请求失败后在 Worker 侧重建的安全错误。 */
@@ -50,8 +51,11 @@ export function setWorkerDuplexRequestSignal(signal: AbortSignal | null): void {
   workerDuplexRequestSignal.current = signal;
 }
 
-function abortError(): Error {
-  return new DOMException("Worker duplex request was aborted.", "AbortError");
+/** 请求信号中止时本地结算的错误：超时预算耗尽给 TimeoutError，其余取消给 AbortError。 */
+function abortError(signal: AbortSignal): Error {
+  return isTimeoutAbort(signal)
+    ? new DOMException("Worker duplex request timed out.", "TimeoutError")
+    : new DOMException("Worker duplex request was aborted.", "AbortError");
 }
 
 /**
@@ -69,7 +73,7 @@ export function requestMainThread<TRequest, TResult>(
     : signal === undefined || signal === defaultSignal
       ? defaultSignal
       : AbortSignal.any([defaultSignal, signal]);
-  if (requestSignal?.aborted === true) return Promise.reject(abortError());
+  if (requestSignal?.aborted === true) return Promise.reject(abortError(requestSignal));
   const poster: ((
     message: WorkerDuplexOutbound<unknown>,
     transfer?: Bun.Transferable[]
@@ -95,7 +99,7 @@ export function requestMainThread<TRequest, TResult>(
         } catch {
           // 本地 waiter 已经结算；Worker 退出时由主线程代际 signal 收尾。
         }
-        reject(abortError());
+        reject(abortError(requestSignal));
       };
     const waiter: WorkerDuplexWaiter = {
       resolve: (value: unknown): void => resolve(value as TResult),

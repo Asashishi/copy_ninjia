@@ -19,6 +19,7 @@ import { registerBlocklistRemoval } from "./blocklistGuard";
 import { prepareDurableAntiRaidMessages } from "./blocklistDelivery";
 import { postAntiRaid } from "./workerBridge/controller";
 import type { FlushResult } from "../types/lifecycle";
+import type { DomainFlushOutcome } from "../types/diskIO/replies";
 import type { AntiRaidWorkerMessage } from "../types/antiRaid/protocol";
 
 /** FIFO mailbox barrier：只证明此前消息已同步路由，不等待后台网络副作用。 */
@@ -138,6 +139,11 @@ interface ChangedAntiRaidMirrors {
   readonly lockdown: boolean;
 }
 
+/** 领域屏障回执只取落盘结果。 */
+function flushOutcomeResult(outcome: DomainFlushOutcome): FlushResult {
+  return outcome.result;
+}
+
 /**
  * Anti-Raid 镜像的领域落盘屏障：待验证镜像在 `verification` 领域，锁定记录随群状态
  * 在共享 SQLite 的 `chatState` 领域。只刷发生变化的那一格（`chatState` 屏障会提交
@@ -149,8 +155,8 @@ function flushAntiRaidMirrors(
   timeoutMs: number
 ): Promise<[PromiseSettledResult<FlushResult>, PromiseSettledResult<FlushResult>]> {
   return Promise.allSettled([
-    changed.verification ? flushDiskIODomain("verification", timeoutMs) : "flushed",
-    changed.lockdown ? flushDiskIODomain("chatState", timeoutMs) : "flushed",
+    changed.verification ? flushDiskIODomain("verification", timeoutMs).then(flushOutcomeResult) : "flushed",
+    changed.lockdown ? flushDiskIODomain("chatState", timeoutMs).then(flushOutcomeResult) : "flushed",
   ]);
 }
 

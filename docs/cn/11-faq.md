@@ -206,8 +206,25 @@
      "cf-aig-authorization": "Bearer <token>"
    }
    ```
-3. **保留 Google API Key**：`api_key` 仍然是必填项，填写原生的 Google AI API 密钥。`headers` 选项仅对 `provider: "google"` 有效，日志输出时敏感信息会自动脱敏。
+3. **保留 Google API Key**：`api_key` 仍然是必填项，填写原生的 Google AI API 密钥；使用网关托管密钥（BYOK / Unified Billing）时改为填写 Cloudflare 令牌，此时不需要 `headers`。`headers` 选项对 `provider: "google"` 与 `provider: "anthropic"` 有效（openai 不接受），日志输出时敏感信息会自动脱敏。
 4. **接口路由适配**：文本对话、图像理解与图片生成路由自动走 `generateContent` 端点；语音合成走 `Interactions API`。配置完成后，超级管理员可在私聊中使用 `/send` 发送一条测试语音验证网关转发是否通畅。
+
+---
+
+## 如何经 Cloudflare AI Gateway 调用 Anthropic 模型？
+
+`provider: "anthropic"` 的能力（`text`、`summary`、`media`、`web_search`、`ad_detect`）把 `headers` 经 SDK 的 `defaultHeaders` 附加到每个请求上。`base_url` 统一填写：
+`https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/anthropic`
+
+1. **自带 Anthropic 密钥**：`api_key` 填写 Anthropic API Key（SDK 以 `x-api-key` 发送）。网关开启鉴权（Authenticated Gateway）时再加：
+   ```json
+   "headers": {
+     "cf-aig-authorization": "Bearer <CF_AIG_TOKEN>"
+   }
+   ```
+   网关未开启鉴权时不需要 `headers`。
+2. **网关托管密钥（BYOK / Unified Billing）**：`api_key` 直接填写 Cloudflare 令牌 `<CF_AIG_TOKEN>`，不需要 `headers`。网关识别 `x-api-key` 中的 Cloudflare 令牌后，改用已存储的 Anthropic 密钥或 Unified Billing。`api_key` 填占位串时，占位串会被原样转发给 Anthropic 并返回鉴权失败。
+3. **字段约束**：`headers` 不能包含 `x-api-key`（忽略大小写），Anthropic 凭据只经 `api_key` 传递；其余约束与 Google 一致。每个请求头值都会进入日志脱敏名单。
 
 ---
 

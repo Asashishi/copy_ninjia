@@ -101,6 +101,26 @@ function claimOrContinue(
 }
 
 /**
+ * `callback_query:data` 的认领链：先 `/wed`，再 `/qa query` 翻页，都未认领才 `next()`
+ * 交给入群验证。
+ *
+ * 函数本身不是 `async`。两条前缀判定同步返回 false 时不分配 Promise，直接调用
+ * `next()`；只有返回 Promise 时才等待后再决定是否继续。
+ * 见 @see ../../docs/cn/04-invariants.md 的「线程与状态归属」。
+ */
+function dispatchCallbackQuery(
+  ctx: Filter<Context, "callback_query:data">,
+  next: NextFunction
+): Promise<void> | undefined {
+  const wed: boolean | Promise<boolean> = dispatchWedCallback(ctx);
+  if (typeof wed !== "boolean") {
+    return wed.then((claimed: boolean): Promise<void> | undefined =>
+      claimed ? undefined : claimOrContinue(handleQaBoardCallback(ctx), next));
+  }
+  return wed ? undefined : claimOrContinue(handleQaBoardCallback(ctx), next);
+}
+
+/**
  * 显式安装完整的 grammY 更新链。模块导入本身不修改 Bot；调用一次本函数才
  * 注册 middleware、命令和各类 update handler。
  *
@@ -310,14 +330,7 @@ export function registerHandlers(bot: Bot): HandlerRegistration {
   bot.on("my_chat_member", handleMyChatMemberUpdate);
   // /wed 结果和 /qa query 翻页按钮排在入群验证之前：前缀各自独立，认领了就
   // 不再往下走，没认领的原样交给验证按钮。
-  bot.on("callback_query:data", async (
-    ctx: Filter<Context, "callback_query:data">,
-    next: NextFunction
-  ): Promise<void> => {
-    if (await dispatchWedCallback(ctx)) return;
-    if (await handleQaBoardCallback(ctx)) return;
-    return next();
-  });
+  bot.on("callback_query:data", dispatchCallbackQuery);
   bot.on("callback_query:data", handleVerificationCallback);
   bot.on("inline_query", handleInlineQuery);
   bot.on("chosen_inline_result", handleLuckChosenInlineResult);

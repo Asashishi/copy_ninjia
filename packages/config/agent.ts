@@ -27,8 +27,9 @@ import type {
  * config/dynamic/agent.json：所有 AI 能力的统一部署配置。
  *
  * 顶层只含 agent；其下按能力分组。ad_detect、text、summary、media、image、tts、web_search 各自声明
- * provider、api_key、model 与可选 base_url；google provider 另可声明 headers，给每个请求附加
- * 请求头（三方网关鉴权等），openai 与 anthropic provider 不接受该字段。provider 只表示调用协议，接受
+ * provider、api_key、model 与可选 base_url；google 与 anthropic provider 另可声明 headers，给每个请求
+ * 附加请求头（Cloudflare AI Gateway 等三方网关鉴权），openai provider 不接受该字段；anthropic provider 另可
+ * 声明与 model 不同的 fallback_model，model 拒答时用它重发同一请求。provider 只表示调用协议，接受
  * google、openai 与 anthropic；Grok 等 OpenAI 兼容模型使用 openai provider 加对应端点。
  * text、summary、media 是对话核心能力；ad_detect、image、tts、web_search
  * 均可缺省，由对应功能门禁或工具装配单独处理。web_search 由它的模型执行带内建检索的单轮请求，

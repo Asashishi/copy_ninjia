@@ -24,6 +24,7 @@ import { textGeminiContextCache } from "../cache/workers/aiChat/geminiContextCac
 import { resetMediaInputSupport } from "../cache/workers/aiChat/mediaInputSupport";
 import { openAiClientCache } from "../cache/workers/aiChat/openai";
 import { anthropicClientCache } from "../cache/workers/aiChat/anthropic";
+import { failedReplyTurn } from "./ai/utils/replyTurn";
 import { adoptAgentDeploymentConfig, getAgentDeploymentConfig, requireAgentCapabilityConfig } from "../config/agent";
 import { logger } from "../infra/logger";
 import { pruneQuotaLanes, quotaRunnerFor } from "./providerLanes";
@@ -72,15 +73,7 @@ const AI_CHAT_PROVIDERS: Readonly<Record<AgentCapabilityConfig["provider"], AiCh
 
 /** 下列 queueRejected* 是配额 lane 没有执行任务（队列已满或排队期间被取消）时各能力的结算值。 */
 function queueRejectedReplyTurn(): AiReplyTurn {
-  return {
-    ok: false,
-    text: null,
-    functionCalls: [],
-    webSearchCalls: 0,
-    finishReason: "LOCAL_PROVIDER_QUEUE_FULL",
-    finishMessage: "The local AI provider queue is full.",
-    toolCallLimitHit: false,
-  };
+  return failedReplyTurn(0, "LOCAL_PROVIDER_QUEUE_FULL", undefined);
 }
 
 function queueRejectedTextResult(): AiTextResult {
@@ -469,7 +462,8 @@ export function reportUnimplementedAgentCapabilities(): void {
  * 与旧客户端直至结算（会话在创建时固定，见各实现包的 replySession.ts）。同一协议、端点
  * 与凭据的配额 lane 原样保留，并发额度跨重载延续；不再被任何能力引用的 lane
  * 从表中摘除。media 能力变化时两种输入模态回到未探测状态；text 能力变化时丢弃
- * Gemini 回复共用显式缓存的登记表，下一次回复按新客户端重新扫描。
+ * Gemini 回复共用显式缓存的登记表，下一次走显式缓存的回复按新客户端重新扫描。
+ * 各群上一次回复请求的触发时刻不随登记表丢弃。
  */
 export function reloadAgentDeploymentConfig(config: AgentDeploymentConfig): void {
   const previous: AgentDeploymentConfig = getAgentDeploymentConfig();

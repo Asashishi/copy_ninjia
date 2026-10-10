@@ -45,9 +45,10 @@ class FakeApiError extends Error {
   }
 }
 
+const googleGenAi = await import("@google/genai");
 mock.module("@google/genai", () => ({
+  ...googleGenAi,
   ApiError: FakeApiError,
-  FinishReason: { STOP: "STOP" },
   GoogleGenAI: class FakeGoogleGenAI {
     models: { generateContent: typeof generateContent } = { generateContent };
     caches: object = { create: cacheCreate, delete: cacheDelete, update: cacheUpdate, list: cacheList };
@@ -191,7 +192,7 @@ describe("Google 广告检测请求入口", () => {
     expect(errorLogs[0]).toBe("Test request failed: 429 rate limited");
   });
 
-  test("非 STOP 结束或空正文有限重试，耗尽后记一条错误并返回 null", async () => {
+  test("非 STOP 结束或空正文有限重试，耗尽后连同最后一次的收尾原因与详情记一条错误并返回 null", async () => {
     generateContent.mockImplementation(async (): Promise<unknown> => ({
       candidates: [{ finishReason: "MAX_TOKENS" }],
       text: "{\"ad\":",
@@ -199,8 +200,22 @@ describe("Google 广告检测请求入口", () => {
     await expect(requestGoogleAdDetectJson(params)).resolves.toBeNull();
     expect(generateContent).toHaveBeenCalledTimes(AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS);
     expect(errorLogs).toEqual([
-      `Test request returned no usable body in ${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s).`,
+      `Test request returned no usable body in ${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s) (finishReason=MAX_TOKENS).`,
     ]);
+
+    errorLogs.length = 0;
+    const safetyRatings = [{ category: "HARM_CATEGORY_HARASSMENT", probability: "HIGH", blocked: true }];
+    generateContent.mockImplementation(async (): Promise<unknown> => ({ candidates: [{ finishReason: "SAFETY", safetyRatings }] }));
+    await expect(requestGoogleAdDetectJson(params)).resolves.toBeNull();
+    expect(errorLogs).toEqual([
+      `Test request returned no usable body in ${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s) ` +
+      `(finishReason=SAFETY, details=${JSON.stringify({ safetyRatings })}).`,
+    ]);
+
+    errorLogs.length = 0;
+    generateContent.mockImplementation(async (): Promise<unknown> => ({ candidates: [{ finishReason: "STOP" }], text: " " }));
+    await expect(requestGoogleAdDetectJson(params)).resolves.toBeNull();
+    expect(errorLogs).toEqual([`Test request returned no usable body in ${AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS} attempt(s) (empty body).`]);
   });
 
   test("空白正文按不可用处理，下一次拿到正文即返回", async () => {

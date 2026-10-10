@@ -88,8 +88,8 @@ export interface UserContentOptions {
    *  的 replyToMessageId）：用于从热区索引定位触发消息的身份，
    *  并在转录中保留触发消息的消息号。 */
   triggerMessageId: number;
-  /** 明确 @/回复机器人的唤起者 id。仅直接触发传入；随机文字插话和随机媒体
-   *  评价省略。用于在回复任务开头声明「正在跟你说话的是谁」，身份段按这个
+  /** 明确 @/回复机器人的唤起者 id。仅直接触发有值；随机文字插话和随机媒体
+   *  评价为 undefined。用于在回复任务开头声明「正在跟你说话的是谁」，身份段按这个
    *  id 从逐字缓存里回填 first/last name 与 username，见 resolveInvoker。 */
   directInvokerId?: number;
   /** 是否是随机插话触发（见 replyPipeline.ts 的 generateAndSendReply 的

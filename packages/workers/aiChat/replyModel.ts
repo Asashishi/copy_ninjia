@@ -18,6 +18,7 @@ import { logger } from "../../infra/logger";
 import { textAiProvider } from "../../aiChat/provider";
 import { TOOL_BUDGET_EXHAUSTED_RESULT, WEB_SEARCH_TOOL } from "../../consts/tools";
 import { callTool } from "../../aiChat/ai/tools";
+import { diagnosticWithDetails } from "../../aiChat/ai/utils/finishDetails";
 import type { ReplyPromptSections, ReplyToolset, WebSearchToolOutcome } from "../../types/aiChat/replies";
 import type {
   AiFunctionCall,
@@ -119,7 +120,7 @@ async function runFunctionCalls(
 
 /**
  * 跑完一轮回复对话。
- * @param chatId 群聊 ID，仅用于诊断日志。
+ * @param chatId 群聊 ID，用于诊断日志，并交给回复会话（Gemini 按群记录请求触发时刻）。
  * @param promptSections promptContext.ts 拼好的只读参考记忆、当前会话与本轮
  *   回复任务；这三段恒定出现，直接触发只体现为回复任务开头多一句唤起者声明。
  *   本文件在转录与回复任务之间补上第四段运行时状态（心情、当前时间与本轮工具状态）。
@@ -143,6 +144,7 @@ export async function generateReply(
   // 读取一次，同一回复的工具往返复用同一个字符串。转录已定切点随当前会话一起交给
   // 实现包，只有在区块边界命中缓存的实现会用它。
   const session: AiReplySession = textAiProvider().createReplySession({
+    chatId,
     stableBlocks: [promptSections.referenceMemory],
     volatileBlocks: [
       promptSections.currentConversation,
@@ -182,8 +184,9 @@ export async function generateReply(
       logger.error(
         `AI reply unusable response for chat ${chatId}: round=${round}, ` +
         `custom_calls=${counters.customToolCalls}, per_tool=${toolCountsDiagnostic(counters.customToolCallsByName)}, ` +
-        `server_tool_invocations=${turn.webSearchCalls}, finish_reason=${turn.finishReason ?? "?"}, ` +
-        `finish_message=${JSON.stringify((turn.finishMessage ?? "").slice(0, 500))}, side_effects=${toolset.actionsUsed()}.`
+        `server_tool_invocations=${turn.webSearchCalls}, ` +
+        `${diagnosticWithDetails(`finish_reason=${turn.finishReason ?? "?"}`, turn.finishDetails)}, ` +
+        `side_effects=${toolset.actionsUsed()}.`
       );
       // 降级重试是本轮唯一一次改变工具形态；已经产生过副作用时不降级重试。
       if (turn.toolCallLimitHit && webSearchEnabled && toolset.actionsUsed() === 0) {

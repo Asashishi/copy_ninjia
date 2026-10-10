@@ -21,7 +21,7 @@
  *
  * 服务端条目 TTL 为 GEMINI_CONTEXT_CACHE_TTL_SECONDS，到期由 Google 自动删除；本模块在换
  * 内容、新建后发现接管以来从未用过的条目、超出槽数上限时主动删除。创建时的输入 token
- * 经 reportAiCacheUsage 以 scope.capability、命中 0 上报。后台请求在发起时取
+ * 经 reportAiCacheUsage 以 scope.capability、命中 0、写入等于输入上报。后台请求在发起时取
  * scope.signal()，停机时一并取消。
  */
 
@@ -35,6 +35,7 @@ import {
   GEMINI_CONTEXT_CACHE_REJECTION_RETRY_AFTER_MS,
   GEMINI_CONTEXT_CACHE_RENEW_BEFORE_MS,
   GEMINI_CONTEXT_CACHE_RETRY_AFTER_MS,
+  GEMINI_CONTEXT_CACHE_TTL,
   GEMINI_CONTEXT_CACHE_TTL_SECONDS,
 } from "../consts/geminiContextCache";
 import { isRecordedWithin } from "../libs/clockWindow";
@@ -105,10 +106,6 @@ export function isGeminiContextCacheRejection(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
   const status: number = error.status;
   return status >= 400 && status < 500 && status !== 408 && status !== 429;
-}
-
-function cacheTtl(): string {
-  return `${GEMINI_CONTEXT_CACHE_TTL_SECONDS}s`;
 }
 
 /** 服务端给的过期时刻；缺失或无法解析时用 fallback。 */
@@ -223,7 +220,7 @@ async function createSlot(
       model: content.model,
       config: {
         abortSignal: signal,
-        ttl: cacheTtl(),
+        ttl: GEMINI_CONTEXT_CACHE_TTL,
         displayName: scope.displayNamePrefix + slotKey + ":" + content.contentKey,
         systemInstruction: content.systemInstruction,
         tools: content.tools,
@@ -236,6 +233,7 @@ async function createSlot(
       model: content.model,
       inputTokens: cache.usageMetadata?.totalTokenCount,
       cachedInputTokens: 0,
+      cacheWriteInputTokens: cache.usageMetadata?.totalTokenCount,
       outputTokens: 0,
     });
     if (cache.name === undefined) throw new Error("the created cached content has no resource name");
@@ -322,7 +320,7 @@ function renewSlot(
     try {
       const updated: CachedContent = await registry.client.caches.update({
         name: slot.name,
-        config: { ttl: cacheTtl(), abortSignal: signal },
+        config: { ttl: GEMINI_CONTEXT_CACHE_TTL, abortSignal: signal },
       });
       slot.expireAt = expireAtOf(updated, Date.now() + GEMINI_CONTEXT_CACHE_TTL_SECONDS * 1_000);
       slot.renewFailedAt = 0;

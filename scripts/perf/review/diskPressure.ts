@@ -24,7 +24,7 @@ async function burst(sequence: number): Promise<void> {
     state.title = `Pressure ${sequence}:${index}`;
     queueChatStateWrite(chatId);
   }
-  if (await flushDiskIODomain("chatState") !== "flushed" || unacknowledgedChatStateWrites.size !== 0 || diskIORuntime.pendingBusinessMessages.size !== 0) {
+  if ((await flushDiskIODomain("chatState")).result !== "flushed" || unacknowledgedChatStateWrites.size !== 0 || diskIORuntime.pendingBusinessMessages.size !== 0) {
     throw new Error("Disk pressure burst did not receive every final revision ACK.");
   }
 }

@@ -17,7 +17,7 @@
 | `bun run start` | Start long polling | Production entry point |
 | `bun run lint`<br>`bun run lint:fix` | ESLint check / auto-fix | Strict code conventions. Quality gates always run uncached `lint` |
 | `bun run lint:fast` | Local cached ESLint | Appends `--cache` for fast iterative feedback during local dev |
-| `bun run typecheck` | TypeScript type check | Strict check with `tsc --noEmit --incremental`. Cache stored in `tsconfig.tsbuildinfo` |
+| `bun run typecheck` | TypeScript type check | Strict check of the whole project with `bun --check`, driven by `tsconfig.json`; writes no incremental cache |
 | `bun run test` | Full test suite | Forces process context isolation (`bun test --isolate`) |
 | `bun run test:random` | Random-order test suite | Fixed-seed shuffled test suite to uncover cross-test state leaks and lingering mocks |
 | `bun run test:coverage` | Tests + coverage | Runs the full test suite and measures coverage across all production source files |
@@ -79,7 +79,7 @@ All dependency installations enforce a 7-day release cooling period defined in `
 - **Emergency security patch exemption**: When an urgent vulnerability fix is under 7 days old, add only that single package name to `install.minimumReleaseAgeExcludes`. Remove the exemption immediately after installation. Bypassing the gate via the command-line flag `--minimum-release-age` is strictly prohibited.
 - **Verification protocol**: The exempted package version must be cross-checked against at least two independent security incident advisories. You must verify the package `integrity` hash in the npm registry, inspect install scripts for backdoors, and log the package name, CVE/incident ID, and removal date in the commit message.
 - **Pinned runtime versions**: The Bun runtime and `@types/bun` are pinned to the exact version declared in `package.json`. The `packageManager` field and `install.sh` lock the runtime environment.
-- **TypeScript compilers**: `bun run typecheck` runs `@typescript/native` (`npm:typescript@~7.0.2`). ESLint and convention checks use `@typescript/old` (TypeScript 6 compiler API).
+- **TypeScript compilers**: `bun run typecheck` invokes Bun's built-in type checker as `bun --check`; `bun check` runs the repository's `check` script. ESLint and convention checks use `@typescript/old` (TypeScript 6 compiler API).
 
 ---
 
@@ -96,7 +96,7 @@ All dependency installations enforce a 7-day release cooling period defined in `
 
 ### Measurements for This Documentation Version
 
-`bun run test:coverage`: **6269 tests / 526 files / 446227 `expect()` calls**; full-source **function coverage 98.24% / line coverage 98.75%**. The Coverage badge in each project README displays line coverage.
+`bun run test:coverage`: **6386 tests / 530 files / 445518 `expect()` calls**; full-source **function coverage 98.27% / line coverage 98.78%**. The Coverage badge in each project README displays line coverage.
 
 ---
 
@@ -133,6 +133,8 @@ All tests must be run via `bun run test` (which invokes `bun test --isolate`), p
 `bun run perf:hot-path-gate` is a hard requirement within the `bun run check` gate. It evaluates scenarios defined in `HOT_PATH_PROFILE_SCENARIOS` under `packages/consts/performance.ts`, running each across two independent child processes for `HOT_PATH_PROFILE_REPEATS` iterations:
 - `steadyProfile`: Measures GC pause time percentage and JIT compilation tiers under `BUN_JSC_logGC=1` in steady-state loops.
 - `retained`: Measures physical memory (RSS) peak, heapUsed peak, and retained memory after full GC without profiler overhead.
+
+Gate children, along with the child processes of the full suite, `perf:review`, `perf:disk-transport`, `perf:identity-database`, and `perf:join-log`, all take their environment from `perfChildEnvironment` in `scripts/perf/childEnvironment.ts`: it inherits the parent environment, layers on variables such as the isolated roots, then removes the Bun debugger attach variables listed in `BUN_INSPECTOR_ENVS` (for example `BUN_INSPECT_CONNECT_TO`, which VS Code terminals inject), so each child has only the main-thread JSC heap. The GC log must contain exactly one `starting` handshake; when more than one heap appears, no GC reading is produced.
 
 ### Gate Metrics and Tiers
 

@@ -186,6 +186,8 @@ export interface AtmosphereNotices {
   readonly lockdownInfluxUnknown: string;
   readonly lockdownStarted: (influx: string, durationMinutes: number) => string;
   readonly lockdownEnded: (durationMinutes: number) => string;
+  /** 未到期就恢复邀请权限（主动解除、加锁结果不确定后的补偿、落盘失败、接管时原因未知）时的解锁公告。 */
+  readonly lockdownLifted: string;
   readonly verificationCommentExempt: (targetLabel: string) => string;
   readonly verificationBotApproved: (fromLabel: string | undefined, targetLabel: string) => string;
   readonly verificationMemberApproved: (fromLabel: string | undefined, targetLabel: string) => string;

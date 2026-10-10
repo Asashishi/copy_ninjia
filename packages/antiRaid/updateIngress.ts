@@ -18,9 +18,8 @@ import {
 import { VERIFY_APPROVE_CALLBACK_PREFIX, VERIFY_SELF_CALLBACK_PREFIX } from "../consts/antiRaid/verification";
 
 import { isAdminStatus, isPresentMember } from "../libs/chatMember";
-import { verificationKey } from "../libs/verificationKey";
 import { hasUserMessageContent } from "../users/messageContent";
-import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
+import { isActiveVerificationUser } from "../cache/main/antiRaid/verificationMirror";
 import { adCandidatePostRejected } from "../cache/main/antiRaid/proxy";
 import { getChatState } from "../infra/storage/stateStore";
 import { updateNow } from "../infra/updateContext";
@@ -355,10 +354,7 @@ function ingestAdmittedMessage(
     message.reply_to_message?.is_automatic_forward === true ||
     isCommentThreadReply;
   if (userId === undefined) return false;
-  // 先看表空不空再拼键，空表时跳过复合键构造。
-  const senderPending: boolean =
-    activeVerificationSnapshots.size > 0 &&
-    activeVerificationSnapshots.has(verificationKey(message.chat.id, userId));
+  const senderPending: boolean = isActiveVerificationUser(message.chat.id, userId);
   if (
     !(senderPending || mayPrecedeJoinInCommentThread) ||
     // 排在最后：守卫关着的群没有验证窗口，不需要这条投递。

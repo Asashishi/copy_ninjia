@@ -19,13 +19,13 @@ export function handleAnnouncementResult(
     // 拿到 ID 即删除。
     return {
       next: state,
-      effects: event.ok && event.messageId !== undefined
+      effects: event.messageId !== undefined
         ? [{ kind: "deleteLockdownAnnouncement", messageId: event.messageId }]
         : NO_LOCKDOWN_EFFECTS,
     };
   }
   if (!state.announcementPending) return { next: state, effects: NO_LOCKDOWN_EFFECTS };
-  if (!event.ok) return { next: { ...state, announcementPending: false }, effects: NO_LOCKDOWN_EFFECTS };
+  if (event.messageId === undefined) return { next: { ...state, announcementPending: false }, effects: NO_LOCKDOWN_EFFECTS };
   const next: LockdownState = {
     ...state,
     announced: true,

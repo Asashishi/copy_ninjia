@@ -19,6 +19,7 @@ import { botInfoState, superAdminUserIdState, atmosphereState } from "../cache/w
 import { adoptTimeZone } from "../config/time";
 import { TOKYO_TIME_ZONE } from "../consts/time";
 import { sweepImageGenerationCache } from "../cache/workers/aiChat/imageGeneration";
+import { sweepGeminiReplyRequestTimes } from "../cache/workers/aiChat/geminiContextCache";
 import { clearChatMemoryCache } from "../cache/workers/aiChat/memory";
 import { sweepAiChatReplyCache } from "../cache/workers/aiChat/replies";
 import { voiceToolPromptCache } from "../cache/perThread/config";
@@ -273,6 +274,8 @@ export function runAiChatWorkerMaintenance(now: number = Date.now()): void {
   // 推动队列（见 aiChat/replyPipeline.ts）。
   drainPendingReplyQueues(now);
   sweepImageGenerationCache(now);
+  // 触发时刻按单调时钟记录，清扫同取 performance.now()。
+  sweepGeminiReplyRequestTimes(performance.now());
   // 配置轮换、任务结算与上报均会清理旧包；维护节拍复核仍在途或待上报的条目。
   pruneStickerCatalogs(getStickerConfig().packs);
   // 启动对账中整包失败的贴纸包在这里重试。

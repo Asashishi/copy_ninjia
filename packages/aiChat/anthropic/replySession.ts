@@ -18,10 +18,12 @@
  * 请求不带采样温度：中立契约的 `grounded` 在本包不影响采样。
  *
  * 会话创建时固定 text 能力的模型与客户端，整轮的每次请求（含 `pause_turn` 续发）都用它们；
- * agent 配置热重载只影响之后新建的会话。
+ * agent 配置热重载只影响之后新建的会话。会话另持一份 BetaFallbackState：某次请求拒答后由回退模型
+ * 接手时，本会话之后的请求直接从回退模型起发。
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
+import { BetaFallbackState } from "@anthropic-ai/sdk";
 import {
   ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS,
   ANTHROPIC_REPLY_ERROR_LABEL,
@@ -33,7 +35,7 @@ import { failedReplyTurn } from "../ai/utils/replyTurn";
 import { getAgentDeploymentConfig } from "../../config/agent";
 import { getAnthropicClient, requestAnthropicMessage } from "./client";
 import { countAnthropicWebSearches, messageText, toolUseCalls } from "./response";
-import type { AnthropicRequestResult } from "../../types/aiChat/anthropic";
+import type { AnthropicClient, AnthropicRequestResult } from "../../types/aiChat/anthropic";
 import type {
   AiReplySession,
   AiReplySessionParams,
@@ -44,17 +46,17 @@ import type {
 } from "../../types/aiChat/provider";
 
 /** 中立工具声明转 Messages 的自定义工具；参数 JSON Schema 按引用透传。 */
-function toCustomTool(definition: AiToolDefinition): Anthropic.Tool {
+function toCustomTool(definition: AiToolDefinition): Anthropic.Beta.BetaTool {
   return {
     name: definition.name,
     description: definition.description,
-    input_schema: definition.parametersJsonSchema as Anthropic.Tool.InputSchema,
+    input_schema: definition.parametersJsonSchema as Anthropic.Beta.BetaTool.InputSchema,
   };
 }
 
 /** 按本轮配置拼请求要挂的工具集合：内建检索在前，自定义工具在后。 */
-function buildTools(request: AiReplyTurnRequest): Anthropic.ToolUnion[] {
-  const tools: Anthropic.ToolUnion[] = [];
+function buildTools(request: AiReplyTurnRequest): Anthropic.Beta.BetaToolUnion[] {
+  const tools: Anthropic.Beta.BetaToolUnion[] = [];
   if (request.webSearchEnabled) {
     tools.push({ type: ANTHROPIC_WEB_SEARCH_TOOL_TYPE, name: ANTHROPIC_WEB_SEARCH_TOOL_NAME, allowed_callers: ["direct"] });
   }
@@ -67,7 +69,7 @@ function buildTools(request: AiReplyTurnRequest): Anthropic.ToolUnion[] {
  * 余段不带。没有切点时整块原样追加。
  */
 function pushConversationSegments(
-  content: Anthropic.TextBlockParam[],
+  content: Anthropic.Beta.BetaTextBlockParam[],
   text: string,
   settledOffsets: readonly number[]
 ): void {
@@ -91,8 +93,9 @@ export function createAnthropicReplySession(
   { stableBlocks, volatileBlocks, conversationSettledOffsets = [], signal }: AiReplySessionParams
 ): AiReplySession {
   const model: string = getAgentDeploymentConfig().text.model;
-  const client: Anthropic = getAnthropicClient("text");
-  const content: Anthropic.TextBlockParam[] = [];
+  const client: AnthropicClient = getAnthropicClient("text");
+  const fallbackState: BetaFallbackState = new BetaFallbackState();
+  const content: Anthropic.Beta.BetaTextBlockParam[] = [];
   for (let index: number = 0; index < stableBlocks.length; index++) {
     const text: string = stableBlocks[index]!;
     content.push(index === stableBlocks.length - 1
@@ -104,25 +107,25 @@ export function createAnthropicReplySession(
     if (index === 0) pushConversationSegments(content, text, conversationSettledOffsets);
     else content.push({ type: "text", text });
   }
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content }];
+  const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: "user", content }];
   // 上一次 request() 拿到的 assistant 内容，等 appendToolOutputs() 接回 messages。
-  let pendingAssistant: Anthropic.ContentBlockParam[] | undefined;
+  let pendingAssistant: Anthropic.Beta.BetaContentBlockParam[] | undefined;
 
   return {
     async request(request: AiReplyTurnRequest): Promise<AiReplyTurn> {
       pendingAssistant = undefined;
-      const tools: Anthropic.ToolUnion[] = buildTools(request);
-      const system: Anthropic.TextBlockParam[] = [
+      const tools: Anthropic.Beta.BetaToolUnion[] = buildTools(request);
+      const system: Anthropic.Beta.BetaTextBlockParam[] = [
         { type: "text", text: request.systemPrompt, cache_control: { type: "ephemeral" } },
       ];
-      let paused: Anthropic.ContentBlockParam[] | null = null;
+      let paused: Anthropic.Beta.BetaContentBlockParam[] | null = null;
       let webSearchCalls: number = 0;
       let text: string = "";
       for (let continuation: number = 0; ; continuation++) {
-        const prefix: Anthropic.ContentBlockParam[] | null = paused;
+        const prefix: Anthropic.Beta.BetaContentBlockParam[] | null = paused;
         const result: AnthropicRequestResult = await requestAnthropicMessage({
           capability: "text",
-          buildBody: (): Anthropic.MessageCreateParamsNonStreaming => ({
+          buildBody: (): Anthropic.Beta.Messages.MessageCreateParamsNonStreaming => ({
             model,
             system,
             messages: prefix === null ? messages : [...messages, { role: "assistant", content: prefix }],
@@ -133,18 +136,19 @@ export function createAnthropicReplySession(
           errorLabel: ANTHROPIC_REPLY_ERROR_LABEL,
           signal,
           client,
+          fallbackState,
         });
         // 失败分支同样累计检索次数。
         const searches: number = result.message === undefined ? 0 : countAnthropicWebSearches(result.message);
         webSearchCalls += searches;
 
-        if (!result.ok) return failedReplyTurn(webSearchCalls, result.failureKind === "response" ? result.stopReason : undefined);
+        if (!result.ok) return failedReplyTurn(webSearchCalls, result.stopReason, result.stopDetails);
         text += messageText(result.message);
-        const blocks: Anthropic.ContentBlockParam[] = prefix === null
+        const blocks: Anthropic.Beta.BetaContentBlockParam[] = prefix === null
           ? result.message.content
           : [...prefix, ...result.message.content];
         if (result.message.stop_reason === "pause_turn") {
-          if (continuation >= ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS) return failedReplyTurn(webSearchCalls, "pause_turn");
+          if (continuation >= ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS) return failedReplyTurn(webSearchCalls, "pause_turn", undefined);
           paused = blocks;
           continue;
         }
@@ -155,7 +159,7 @@ export function createAnthropicReplySession(
           functionCalls: toolUseCalls(result.message),
           webSearchCalls,
           finishReason: undefined,
-          finishMessage: undefined,
+          finishDetails: undefined,
           toolCallLimitHit: false,
         };
       }
@@ -163,7 +167,7 @@ export function createAnthropicReplySession(
 
     appendToolOutputs(outputs: readonly AiToolOutput[]): boolean {
       if (pendingAssistant === undefined) return false;
-      const results: Anthropic.ToolResultBlockParam[] = [];
+      const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
       for (const output of outputs) {
         results.push({ type: "tool_result", tool_use_id: output.call.id ?? "", content: output.responseJson });
       }

@@ -52,7 +52,6 @@ memory
 # caches
 .eslintcache
 .cache
-*.tsbuildinfo
 
 # IntelliJ based IDEs
 .idea

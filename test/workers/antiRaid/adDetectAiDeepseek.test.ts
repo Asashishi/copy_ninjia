@@ -97,7 +97,7 @@ describe("OpenAI 兼容广告检测请求入口", () => {
     ]);
   });
 
-  test("每次成功响应都按 ad_detect 上报用量，DeepSeek 的命中数读 prompt_cache_hit_tokens", async () => {
+  test("每次成功响应都按 ad_detect 上报用量，DeepSeek 的命中数读 prompt_cache_hit_tokens，写入读官方字段", async () => {
     const reported: AiCacheUsage[] = [];
     installAiCacheUsageSink((usage: AiCacheUsage): void => { reported.push(usage); });
     try {
@@ -106,11 +106,17 @@ describe("OpenAI 兼容广告检测请求入口", () => {
         usage: { prompt_tokens: 1_200, completion_tokens: 30, prompt_cache_hit_tokens: 1_152, prompt_cache_miss_tokens: 48 },
       });
       await requestOpenAiAdDetectJson(request());
+      create.mockResolvedValueOnce({
+        choices: [{ message: { content: "{\"ok\": true}" } }],
+        usage: { prompt_tokens: 1_200, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 1_024, cache_write_tokens: 176 } },
+      });
+      await requestOpenAiAdDetectJson(request());
     } finally {
       installAiCacheUsageSink(null);
     }
     expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
       { kind: "tokens", capability: "ad_detect", provider: "openai", model: "deepseek-v4-flash", inputTokens: 1_200, cachedInputTokens: 1_152, outputTokens: 30 },
+      { kind: "tokens", capability: "ad_detect", provider: "openai", model: "deepseek-v4-flash", inputTokens: 1_200, cachedInputTokens: 1_024, cacheWriteInputTokens: 176, outputTokens: 30 },
     ]);
   });
 
@@ -145,11 +151,20 @@ describe("OpenAI 兼容广告检测请求入口", () => {
       usage: { completion_tokens_details: { reasoning_tokens: 64 } },
     }));
     await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
-    // reasoning 占满额度被截断时返回 null，错误日志带 truncated/hasPartialText/reasoning_tokens/max_tokens 字段。
-    expect(errorLogs[0]).toContain("truncated=true");
+    // reasoning 占满额度被截断时返回 null，错误日志带 finish_reason/hasPartialText/reasoning_tokens/max_tokens 字段。
+    expect(errorLogs[0]).toContain("(finish_reason=length, hasPartialText=true");
     expect(errorLogs[0]).toContain("hasPartialText=true");
     expect(errorLogs[0]).toContain("reasoning_tokens=64");
     expect(errorLogs[0]).toContain("max_tokens=256");
+  });
+
+  test("拒答时重来，最终失败把 message.refusal 记进诊断", async () => {
+    create.mockImplementation(async (): Promise<unknown> => ({
+      choices: [{ finish_reason: "stop", message: { content: null, refusal: "I can't help with that." } }],
+    }));
+    await expect(requestOpenAiAdDetectJson(request())).resolves.toBeNull();
+    expect(create).toHaveBeenCalledTimes(AD_DETECT_EMPTY_BODY_MAX_ATTEMPTS);
+    expect(errorLogs[0]).toContain(`finish_reason=stop, details=${JSON.stringify({ refusal: "I can't help with that." })}, hasPartialText=false`);
   });
 
   test("请求本身失败时不再自旋：SDK 已按 maxRetries 重试过", async () => {

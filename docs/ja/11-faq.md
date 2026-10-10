@@ -203,8 +203,25 @@ Bot プロセスは稼働しているのにグループで応答がないとき�
      "cf-aig-authorization": "Bearer <token>"
    }
    ```
-3. **API Key の保持**：`api_key` には引き続き必須の Google API キーを設定します。`headers` は `provider: "google"` の場合にのみ有効であり、機密値はログ出力時に自動的にマスキングされます。
+3. **API Key の保持**：`api_key` には引き続き必須の Google API キーを設定します。ゲートウェイ保管キー（BYOK / Unified Billing）を使う場合は代わりに Cloudflare トークンを設定し、`headers` は不要です。`headers` は `provider: "google"` と `provider: "anthropic"` の場合にのみ有効であり（openai は不可）、機密値はログ出力時に自動的にマスキングされます。
 4. **ルーティングの網羅**：テキスト、画像認識、画像生成は generateContent ルーティングを通過し、音声合成は Interactions API を通過します。設定完了後、`/send` 経由で音声を 1 回送信してゲートウェイの疎通を確認できます。
+
+---
+
+## Cloudflare AI Gateway 経由で Anthropic モデルを呼び出すには？
+
+`provider: "anthropic"` の能力（`text`、`summary`、`media`、`web_search`、`ad_detect`）は、`headers` を SDK の `defaultHeaders` としてすべてのリクエストに付加します。`base_url` は次のとおり設定します：
+`https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway_id>/anthropic`
+
+1. **自前の Anthropic キーを使う場合**：`api_key` に Anthropic API キーを設定します（SDK が `x-api-key` として送信）。ゲートウェイ認証（Authenticated Gateway）が有効な場合は次を追加します：
+   ```json
+   "headers": {
+     "cf-aig-authorization": "Bearer <CF_AIG_TOKEN>"
+   }
+   ```
+   ゲートウェイ認証が無効な場合は `headers` は不要です。
+2. **ゲートウェイ保管キー（BYOK / Unified Billing）**：`api_key` に Cloudflare トークン `<CF_AIG_TOKEN>` をそのまま設定します。`headers` は不要です。ゲートウェイは `x-api-key` 内の Cloudflare トークンを認識し、保管済みの Anthropic キーまたは Unified Billing に切り替えます。`api_key` にプレースホルダーを設定すると、そのまま Anthropic に転送されて認証エラーになります。
+3. **フィールド制約**：`headers` に `x-api-key`（大文字小文字を区別しない）は含められず、Anthropic の資格情報は `api_key` のみで渡します。その他の制約は Google プロバイダと同一です。各ヘッダー値はログのマスキング対象に登録されます。
 
 ---
 

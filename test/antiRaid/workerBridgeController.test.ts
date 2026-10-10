@@ -237,7 +237,6 @@ describe("Anti-Raid 双工能力分派", () => {
       chatId: CHAT_ID,
       identityId: 7,
       text: "warning",
-      deleteAfterMs: 30_000,
     } as never;
 
     adBypassIds.add(7);

@@ -6,6 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type Anthropic from "@anthropic-ai/sdk";
+import { BetaFallbackState } from "@anthropic-ai/sdk";
 import type { AnthropicRequestResult } from "../../../packages/types/aiChat/anthropic";
 import type { AiReplySession, AiReplyTurn, AiReplyTurnRequest, AiToolDefinition } from "../../../packages/types/aiChat/provider";
 import type { AiCacheUsage } from "../../../packages/types/aiCache";
@@ -14,9 +15,9 @@ import { agentDeploymentConfigCache } from "../../../packages/cache/perThread/co
 import { installAiCacheUsageSink } from "../../../packages/infra/aiCacheUsage";
 
 const results: AnthropicRequestResult[] = [];
-const bodies: Anthropic.MessageCreateParamsNonStreaming[] = [];
+const bodies: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming[] = [];
 const requestAnthropicMessage = mock(async (...args: unknown[]): Promise<AnthropicRequestResult> => {
-  bodies.push(structuredClone((args[0] as { buildBody: () => Anthropic.MessageCreateParamsNonStreaming }).buildBody()));
+  bodies.push(structuredClone((args[0] as { buildBody: () => Anthropic.Beta.Messages.MessageCreateParamsNonStreaming }).buildBody()));
   return results.shift() ?? { ok: false, failureKind: "request" };
 });
 /** 会话创建时固定的客户端替身；请求经被替换的 requestAnthropicMessage 发出，不触达它。 */
@@ -37,12 +38,12 @@ const {
 const SEND: AiToolDefinition = { name: "send_message", description: "发言", parametersJsonSchema: { type: "object", properties: { text: { type: "string" } } } };
 const REQUEST: AiReplyTurnRequest = { systemPrompt: "系统提示词", functions: [SEND], webSearchEnabled: true, grounded: false };
 
-function message(content: unknown[], stopReason: string = "end_turn", searches: number = 0): Anthropic.Message {
+function message(content: unknown[], stopReason: string = "end_turn", searches: number = 0): Anthropic.Beta.BetaMessage {
   return {
     content,
     stop_reason: stopReason,
     usage: { input_tokens: 1, output_tokens: 1, server_tool_use: { web_search_requests: searches, web_fetch_requests: 0 } },
-  } as unknown as Anthropic.Message;
+  } as unknown as Anthropic.Beta.BetaMessage;
 }
 
 const reported: AiCacheUsage[] = [];
@@ -59,7 +60,7 @@ describe("Anthropic 回复会话的热重载边界", () => {
   test("会话创建时固定模型与客户端：工具往返之间热重载 text 配置，后续请求仍用旧模型与旧客户端", async () => {
     const original = agentDeploymentConfigCache.current!;
     results.push({ ok: true, message: message([{ type: "tool_use", id: "tu-1", name: SEND.name, input: { text: "嗨" } }], "tool_use") });
-    const session: AiReplySession = createAnthropicReplySession({ stableBlocks: ["记忆"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createAnthropicReplySession({ chatId: -1001, stableBlocks: ["记忆"], volatileBlocks: ["转录"] });
     const first: AiReplyTurn = await session.request(REQUEST);
     expect(session.appendToolOutputs([{ call: first.functionCalls[0]!, responseJson: "{}" }])).toBeTrue();
     try {
@@ -69,18 +70,37 @@ describe("Anthropic 回复会话的热重载边界", () => {
       agentDeploymentConfigCache.current = original;
     }
 
-    expect(bodies.map((body: Anthropic.MessageCreateParamsNonStreaming): string => body.model))
+    expect(bodies.map((body: Anthropic.Beta.Messages.MessageCreateParamsNonStreaming): string => body.model))
       .toEqual([original.text.model, original.text.model]);
     for (const call of requestAnthropicMessage.mock.calls) {
       expect((call[0] as { client?: unknown }).client).toBe(PINNED_CLIENT);
     }
+  });
+
+  test("一个会话的全部请求共用一份 fallbackState，不同会话各持一份", async () => {
+    const stateOf = (index: number): unknown => (requestAnthropicMessage.mock.calls[index]![0] as { fallbackState?: unknown }).fallbackState;
+    results.push(
+      { ok: true, message: message([{ type: "tool_use", id: "tu-1", name: SEND.name, input: { text: "嗨" } }], "tool_use") },
+      { ok: true, message: message([{ type: "text", text: "好" }]) },
+      { ok: true, message: message([{ type: "text", text: "好" }]) }
+    );
+    const session: AiReplySession = createAnthropicReplySession({ chatId: -1001, stableBlocks: ["记忆"], volatileBlocks: ["转录"] });
+    const first: AiReplyTurn = await session.request(REQUEST);
+    expect(session.appendToolOutputs([{ call: first.functionCalls[0]!, responseJson: "{}" }])).toBeTrue();
+    await session.request(REQUEST);
+    await createAnthropicReplySession({ chatId: -1001, stableBlocks: ["记忆"], volatileBlocks: ["转录"] }).request(REQUEST);
+
+    expect(stateOf(0)).toBeInstanceOf(BetaFallbackState);
+    expect(stateOf(1)).toBe(stateOf(0));
+    expect(stateOf(2)).toBeInstanceOf(BetaFallbackState);
+    expect(stateOf(2)).not.toBe(stateOf(0));
   });
 });
 
 describe("Anthropic 回复会话", () => {
   test("请求体：内建检索在前且只许直接调用，自定义工具透传 Schema；系统提示词、最后一个稳定区块与请求顶层带缓存断点，不带温度", async () => {
     results.push({ ok: true, message: message([{ type: "text", text: "好" }]) });
-    const session: AiReplySession = createAnthropicReplySession({ stableBlocks: ["记忆一", "记忆二"], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createAnthropicReplySession({ chatId: -1001, stableBlocks: ["记忆一", "记忆二"], volatileBlocks: ["转录"] });
     const turn: AiReplyTurn = await session.request(REQUEST);
 
     expect(turn).toMatchObject({ ok: true, text: "好", functionCalls: [], webSearchCalls: 0 });
@@ -109,13 +129,14 @@ describe("Anthropic 回复会话", () => {
     const conversation: string = "第一格\n第二格\n未定的最新格";
     const offsets: readonly number[] = [conversation.indexOf("\n第二格"), conversation.indexOf("\n未定")];
     const session: AiReplySession = createAnthropicReplySession({
+      chatId: -1001,
       stableBlocks: ["记忆"],
       volatileBlocks: [conversation, "运行时状态"],
       conversationSettledOffsets: offsets,
     });
     await session.request(REQUEST);
 
-    const content = bodies[0]!.messages[0]!.content as Anthropic.TextBlockParam[];
+    const content = bodies[0]!.messages[0]!.content as Anthropic.Beta.BetaTextBlockParam[];
     expect(content).toEqual([
       { type: "text", text: "记忆", cache_control: { type: "ephemeral" } },
       { type: "text", text: "第一格" },
@@ -123,10 +144,10 @@ describe("Anthropic 回复会话", () => {
       { type: "text", text: "\n未定的最新格" },
       { type: "text", text: "运行时状态" },
     ]);
-    expect(content.slice(1, 4).map((block: Anthropic.TextBlockParam): string => block.text).join("")).toBe(conversation);
+    expect(content.slice(1, 4).map((block: Anthropic.Beta.BetaTextBlockParam): string => block.text).join("")).toBe(conversation);
     // 系统提示词、参考记忆、已定段与顶层自动断点合计不超过端点的缓存断点上限。
-    const markers: number = content.filter((block: Anthropic.TextBlockParam): boolean => block.cache_control !== undefined).length +
-      (bodies[0]!.system as Anthropic.TextBlockParam[]).length + (bodies[0]!.cache_control === undefined ? 0 : 1);
+    const markers: number = content.filter((block: Anthropic.Beta.BetaTextBlockParam): boolean => block.cache_control !== undefined).length +
+      (bodies[0]!.system as Anthropic.Beta.BetaTextBlockParam[]).length + (bodies[0]!.cache_control === undefined ? 0 : 1);
     expect(markers).toBe(4);
   });
 
@@ -136,7 +157,7 @@ describe("Anthropic 回复会话", () => {
       { type: "tool_use", id: "call-1", name: "send_message", input: { text: "你好" } },
     ];
     results.push({ ok: true, message: message(assistant, "tool_use", 1) }, { ok: true, message: message([{ type: "text", text: "完" }]) });
-    const session: AiReplySession = createAnthropicReplySession({ stableBlocks: [], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createAnthropicReplySession({ chatId: -1001, stableBlocks: [], volatileBlocks: ["转录"] });
     const first: AiReplyTurn = await session.request(REQUEST);
     expect(first.functionCalls).toEqual([{ id: "call-1", name: "send_message", argumentsJson: "{\"text\":\"你好\"}" }]);
     expect(first.webSearchCalls).toBe(1);
@@ -163,7 +184,7 @@ describe("Anthropic 回复会话", () => {
       { type: "tool_use", id: "call-1", name: "send_message", input: {} },
     ];
     results.push({ ok: true, message: message(paused, "pause_turn", 1) }, { ok: true, message: message(rest, "tool_use", 1) });
-    const session: AiReplySession = createAnthropicReplySession({ stableBlocks: [], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createAnthropicReplySession({ chatId: -1001, stableBlocks: [], volatileBlocks: ["转录"] });
     const turn: AiReplyTurn = await session.request(REQUEST);
 
     expect(turn.webSearchCalls).toBe(2);
@@ -175,14 +196,20 @@ describe("Anthropic 回复会话", () => {
     expect(bodies[2]!.messages[1] as unknown).toEqual({ role: "assistant", content: [...paused, ...rest] });
   });
 
-  test("续发用尽仍暂停按失败收尾；请求失败时已执行的检索照样计入", async () => {
+  test("续发用尽仍暂停按失败收尾；请求失败时已执行的检索照样计入，收尾详情透传", async () => {
     for (let index: number = 0; index <= ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS; index++) {
       results.push({ ok: true, message: message([], "pause_turn", 1) });
     }
-    const session: AiReplySession = createAnthropicReplySession({ stableBlocks: [], volatileBlocks: ["转录"] });
+    const session: AiReplySession = createAnthropicReplySession({ chatId: -1001, stableBlocks: [], volatileBlocks: ["转录"] });
     expect(await session.request(REQUEST)).toMatchObject({ ok: false, finishReason: "pause_turn", webSearchCalls: ANTHROPIC_PAUSE_TURN_MAX_CONTINUATIONS + 1 });
 
-    results.push({ ok: false, failureKind: "response", stopReason: "max_tokens", message: message([], "max_tokens", 2) });
-    expect(await session.request(REQUEST)).toMatchObject({ ok: false, finishReason: "max_tokens", webSearchCalls: 2, toolCallLimitHit: false });
+    results.push({ ok: false, failureKind: "response", stopReason: "refusal", stopDetails: "{\"type\":\"refusal\"}", message: message([], "refusal", 2) });
+    expect(await session.request(REQUEST)).toMatchObject({
+      ok: false,
+      finishReason: "refusal",
+      finishDetails: "{\"type\":\"refusal\"}",
+      webSearchCalls: 2,
+      toolCallLimitHit: false,
+    });
   });
 });

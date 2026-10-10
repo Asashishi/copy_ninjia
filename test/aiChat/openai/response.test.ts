@@ -1,5 +1,5 @@
 /**
- * OpenAI 响应的项目级诊断：HTTP 成功但产出不可用的归一化说明、收尾原因、
+ * OpenAI 响应的项目级诊断：HTTP 成功但产出不可用的归一化说明、收尾详情、收尾原因、
  * token 腰斩判定。职责与 test/aiChat/gemini/response.test.ts 一一对应。
  */
 
@@ -11,10 +11,12 @@ import {
   extractFunctionCalls,
   isTruncatedByTokenLimit,
   normalizedFinishReason,
+  openAiFinishDetails,
   responseOutputText,
+  responseRefusal,
 } from "../../../packages/aiChat/openai/response";
 import { EMPTY_FUNCTION_CALLS } from "../../../packages/consts/aiChat/tools";
-import { OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS } from "../../../packages/consts/aiChat/openai";
+import { AI_FINISH_DETAILS_MAX_CHARS } from "../../../packages/consts/aiChat/provider";
 import { SEND_MESSAGE_TOOL } from "../../../packages/consts/tools";
 
 function response(overrides: Record<string, unknown>): OpenAI.Responses.Response {
@@ -35,12 +37,50 @@ describe("异常产出诊断", () => {
     }))).toBeNull();
   });
 
-  test("服务端明确报错时点名 code 与 message", () => {
-    const diagnostic: string | null = abnormalResponseDiagnostic(response({
-      error: { code: "server_error", message: "boom" },
+  test("服务端明确报错时判为不可用，错误对象整个进收尾详情", () => {
+    const failed: OpenAI.Responses.Response = response({
+      status: "failed",
+      error: {
+        code: "misalignment_policy_violation",
+        message: "boom",
+        misalignment: { detailed_explanation: "blocked", error_type: "other" },
+      },
+    });
+    expect(abnormalResponseDiagnostic(failed)).toBe("error");
+    expect(openAiFinishDetails(failed)).toBe(JSON.stringify({
+      error: {
+        code: "misalignment_policy_violation",
+        message: "boom",
+        misalignment: { detailed_explanation: "blocked", error_type: "other" },
+      },
     }));
-    expect(diagnostic).toContain("server_error");
-    expect(diagnostic).toContain("boom");
+  });
+
+  test("completed 但带 refusal 内容块时判为拒答，拒答说明进收尾详情", () => {
+    const refused: OpenAI.Responses.Response = response({
+      output: [{ type: "message", content: [{ type: "refusal", refusal: "I'm sorry, I cannot assist with that request." }] }],
+    });
+    expect(responseRefusal(refused)).toBe("I'm sorry, I cannot assist with that request.");
+    expect(abnormalResponseDiagnostic(refused)).toBe("refusal");
+    expect(normalizedFinishReason(refused)).toBe("refusal");
+    expect(openAiFinishDetails(refused)).toBe(JSON.stringify({ refusal: "I'm sorry, I cannot assist with that request." }));
+
+    // 空文本的拒答块照样算拒答；没有拒答块、content 缺失的 message 不算。
+    expect(responseRefusal(response({ output: [{ type: "message", content: [{ type: "refusal", refusal: "" }] }] }))).toBe("");
+    expect(responseRefusal(response({ output: [{ type: "message" }, { type: "message", content: [{ type: "output_text", text: "x" }] }] })))
+      .toBeUndefined();
+    expect(openAiFinishDetails(response({ output: [{ type: "message", content: [] }] }))).toBeUndefined();
+  });
+
+  test("incomplete 时拒答说明与具体原因一起保留", () => {
+    const filtered: OpenAI.Responses.Response = response({
+      status: "incomplete",
+      incomplete_details: { reason: "content_filter" },
+      output: [{ type: "message", content: [{ type: "refusal", refusal: "filtered" }] }],
+    });
+    expect(abnormalResponseDiagnostic(filtered)).toBe("status=incomplete, reason=content_filter");
+    expect(normalizedFinishReason(filtered)).toBe("incomplete:content_filter");
+    expect(openAiFinishDetails(filtered)).toBe(JSON.stringify({ refusal: "filtered" }));
   });
 
   test("状态不是 completed 时附上具体原因", () => {
@@ -55,33 +95,33 @@ describe("异常产出诊断", () => {
     expect(abnormalResponseDiagnostic(response({ output: [] }))).toBe("no output items");
   });
 
-  test("error 缺 message 或干脆是字符串时照样出诊断，不抛 TypeError", () => {
+  test("error 缺 message 或干脆是字符串时照样出诊断与详情，不抛 TypeError", () => {
     // SDK 把 error 标成 { code, message } 必填，但兼容网关经常只给 code、
     // 或者把 error 整个写成一个字符串。
-    const missingMessage: string | null = abnormalResponseDiagnostic(response({
-      error: { code: "rate_limit" },
-    }));
-    expect(missingMessage).toContain("rate_limit");
+    const missingMessage: OpenAI.Responses.Response = response({ error: { code: "rate_limit" } });
+    expect(abnormalResponseDiagnostic(missingMessage)).toBe("error");
+    expect(openAiFinishDetails(missingMessage)).toContain("rate_limit");
 
-    expect(abnormalResponseDiagnostic(response({ error: "rate limited" }))).toContain("rate limited");
-    expect(abnormalResponseDiagnostic(response({ error: { message: "boom" } }))).toContain("boom");
+    const stringError: OpenAI.Responses.Response = response({ error: "rate limited" });
+    expect(abnormalResponseDiagnostic(stringError)).toBe("error");
+    expect(openAiFinishDetails(stringError)).toContain("rate limited");
   });
 
   test("error 字段是结构化对象时保留内容，序列化不出来才退成类型标记，且长度有界", () => {
     // message 可能是网关透传的结构化上游错误体；序列化失败（如循环引用）
     // 时退化为 [unserializable object] 标记，长度另外封顶。
-    expect(abnormalResponseDiagnostic(response({ error: { message: { upstream: "quota exhausted" } } })))
+    expect(openAiFinishDetails(response({ error: { message: { upstream: "quota exhausted" } } })))
       .toContain("quota exhausted");
 
     const circular: Record<string, unknown> = {};
     circular.self = circular;
-    expect(abnormalResponseDiagnostic(response({ error: { code: "loop", message: circular } })))
-      .toContain("[unserializable object]");
+    expect(openAiFinishDetails(response({ error: { code: "loop", message: circular } })))
+      .toBe("[unserializable object]");
 
-    const diagnostic: string | null = abnormalResponseDiagnostic(response({
-      error: { message: "x".repeat(OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS * 3) },
+    const details: string | undefined = openAiFinishDetails(response({
+      error: { message: "x".repeat(AI_FINISH_DETAILS_MAX_CHARS * 3) },
     }));
-    expect(diagnostic!.length).toBeLessThan(OPENAI_ERROR_DIAGNOSTIC_MAX_CHARS * 2);
+    expect(details!.length).toBe(AI_FINISH_DETAILS_MAX_CHARS);
   });
 
   test("网关省略 output 时按「没有 output item」处理，不抛 TypeError", () => {

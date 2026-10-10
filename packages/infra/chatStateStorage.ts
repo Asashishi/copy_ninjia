@@ -122,7 +122,7 @@ export function queueChatStateWrite(chatId: number): number {
 export async function persistChatState(chatId: number, context: string): Promise<void> {
   throwIfUpdateAborted();
   const revision: number = queueChatStateWrite(chatId);
-  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomainOutcome("chatState");
+  const outcome: DomainFlushOutcome = await diskIO.flushDiskIODomain("chatState");
   throwIfUpdateAborted();
   if (outcome.result !== "flushed") {
     throw new Error(

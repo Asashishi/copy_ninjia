@@ -51,6 +51,39 @@ describe("AI 缓存用量上报边界", () => {
     expect(reported).toEqual([]);
   });
 
+  test("缓存写入不超过输入减命中时随 token 记录上报；没有命中口径时上限是输入", () => {
+    install();
+    reportAiCacheUsage({ capability: "text", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: 4, cacheWriteInputTokens: 6, outputTokens: 2 });
+    reportAiCacheUsage({ capability: "text", provider: "openai", model: "m", inputTokens: 10, cachedInputTokens: undefined, cacheWriteInputTokens: 10, outputTokens: 2 });
+    expect(reported).toMatchObject([
+      { kind: "tokens", inputTokens: 10, cachedInputTokens: 4, cacheWriteInputTokens: 6 },
+      { kind: "tokens", inputTokens: 10, cachedInputTokens: null, cacheWriteInputTokens: 10 },
+    ]);
+  });
+
+  test.each([
+    ["写入为负", [10, 4, -1]],
+    ["写入为小数", [10, 4, 0.5]],
+    ["写入为 null", [10, 4, null]],
+    ["写入不是数字", [10, 4, "6"]],
+    ["写入加命中超过输入", [10, 4, 7]],
+    ["没有命中口径时写入超过输入", [10, undefined, 11]],
+  ] as const)("%s 时丢弃 token 记录并诊断，只保留检索次数", (_label: string, [inputTokens, cachedInputTokens, cacheWriteInputTokens]: readonly unknown[]) => {
+    install();
+    const warning = spyOn(logger, "warn").mockImplementation((): void => {});
+    try {
+      reportAiCacheUsage({ capability: "web_search", provider: "openai", model: "m", inputTokens, cachedInputTokens, cacheWriteInputTokens, outputTokens: 2, searchCalls: 3 });
+      expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
+        { kind: "search", capability: "web_search", provider: "openai", model: "m", searchCalls: 3 },
+      ]);
+      expect(warning.mock.calls.map((call: unknown[]): unknown => call[0])).toEqual([
+        "AI token usage unavailable: capability=web_search, provider=openai, reason=invalid.",
+      ]);
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
   test("Gemini 用量：缺 usageMetadata 不上报，缺命中数按 0，输出计入思考", () => {
     install();
     reportGeminiUsage({ capability: "ad_detect", model: "g", usage: undefined });
@@ -115,13 +148,15 @@ test("用量诊断按固定维度去重、不回显模型或异常，重装出�
   }
 });
 
-test("Anthropic 用量的输入含缓存写入与命中两项，命中取 cache_read；缓存字段为 null 时按 0 与未给出处理", () => {
+test("Anthropic 用量的输入含缓存写入与命中两项，命中取 cache_read、写入取 cache_creation；缓存字段为 null 时求和按 0、分项按未给出处理", () => {
   install();
   reportAnthropicUsage({ capability: "text", model: "m", usage: { input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: 30, cache_read_input_tokens: 60 } as never });
   reportAnthropicUsage({ capability: "text", model: "m", usage: { input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: null, cache_read_input_tokens: null } as never });
+  reportAnthropicUsage({ capability: "text", model: "m", usage: { input_tokens: 10, output_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 5 } as never });
   expect(reported.map(({ timestamp: _timestamp, ...rest }: AiCacheUsage) => rest)).toEqual([
-    { kind: "tokens", capability: "text", provider: "anthropic", model: "m", inputTokens: 100, cachedInputTokens: 60, outputTokens: 2 },
+    { kind: "tokens", capability: "text", provider: "anthropic", model: "m", inputTokens: 100, cachedInputTokens: 60, cacheWriteInputTokens: 30, outputTokens: 2 },
     { kind: "tokens", capability: "text", provider: "anthropic", model: "m", inputTokens: 10, cachedInputTokens: null, outputTokens: 2 },
+    { kind: "tokens", capability: "text", provider: "anthropic", model: "m", inputTokens: 15, cachedInputTokens: 5, cacheWriteInputTokens: 0, outputTokens: 2 },
   ]);
 });
 

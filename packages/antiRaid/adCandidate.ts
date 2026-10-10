@@ -6,7 +6,7 @@ import type {
   MessageEntity,
   MessageOrigin,
 } from "grammy/types";
-import { activeVerificationSnapshots } from "../cache/main/antiRaid/verificationMirror";
+import { isActiveVerificationUser } from "../cache/main/antiRaid/verificationMirror";
 import { adDetectConfigReadiness } from "../config/readiness";
 import {
   AD_DETECT_LINK_URL_MAX_CHARS,
@@ -18,7 +18,6 @@ import { isIdentityPolicyCached } from "../infra/identityStorage";
 import { inlineResultSourceOf } from "../infra/inlineResultSources";
 import { isBotOwnMessage } from "../infra/selfSentTracker";
 import { sanitizeInline, truncateInline } from "../libs/text";
-import { verificationKey } from "../libs/verificationKey";
 import type {
   AdCandidateMessage,
   AdDetectionMessageContext,
@@ -209,9 +208,7 @@ export function buildAdCandidate(
     isChannel: senderChat !== undefined,
     isForwarded,
     blocked,
-    // 同 updateIngress.ts：空表时跳过复合键构造。
-    justJoined: activeVerificationSnapshots.size > 0 &&
-      activeVerificationSnapshots.has(verificationKey(chatId, senderId)),
+    justJoined: isActiveVerificationUser(chatId, senderId),
     linkUrls,
     sampleQuote: sampleContext?.quote,
     sampleReplyTo: sampleContext?.replyTo,

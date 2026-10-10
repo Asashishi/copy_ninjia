@@ -10,7 +10,15 @@ import { GEMINI_IMAGE_ERROR_LABEL } from "../../../packages/consts/aiChat/gemini
 
 const requestGeminiResponse = mock(async (..._args: unknown[]): Promise<unknown> => null);
 
-mock.module("../../../packages/aiChat/gemini/client", () => ({ requestGeminiResponse }));
+// 替身按 (capability, buildBody, errorLabel) 记录调用、交回响应或 null；模块边界上换算成 requestGeminiResult 的结果。
+mock.module("../../../packages/aiChat/gemini/client", () => ({
+  requestGeminiResult: async (
+    { capability, buildBody, errorLabel }: { capability: string; buildBody: () => unknown; errorLabel: string }
+  ): Promise<unknown> => {
+    const response: unknown = await requestGeminiResponse(capability, buildBody, errorLabel);
+    return response === null ? { ok: false, failureKind: "request" } : { ok: true, response };
+  },
+}));
 
 const { generateGeminiImage } = await import("../../../packages/aiChat/gemini/image");
 const {
